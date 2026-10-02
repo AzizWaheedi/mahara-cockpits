@@ -44,6 +44,7 @@ export type DriverKey =
   | "upsellCash"
   | "labour"
   | "overhead"
+  | "otherMarketing"
   | "feeRate"
   | "callLeads"
   | "callLeadToBooking"
@@ -79,6 +80,7 @@ export const DRIVERS: Record<
   upsellCash: { unit: "usd", better: null },
   labour: { unit: "usd", better: null },
   overhead: { unit: "usd", better: null },
+  otherMarketing: { unit: "usd", better: null },
   feeRate: { unit: "rate", better: "down" },
   callLeads: { unit: "count", better: null },
   callLeadToBooking: { unit: "rate", better: "up" },
@@ -149,6 +151,7 @@ export function project(d: Drivers): Projection {
     d.spendRetargeting,
     d.labour,
     d.overhead,
+    d.otherMarketing,
     processingFees,
   );
   const profit =
@@ -210,6 +213,7 @@ export function driversFromTargets(t: ByKey): Drivers {
     upsellCash: t.upsellCash ?? null,
     labour: t.labour ?? null,
     overhead: t.overhead ?? null,
+    otherMarketing: null,
     feeRate: over(t.processingFees, t.totalCash),
     callLeads: t.callLeads ?? null,
     // Combined: the typed client lead to booking is the same number, so a
@@ -255,6 +259,7 @@ export function driversFromActuals(
     upsellCash: fallback.upsellCash,
     labour: fallback.labour,
     overhead: fallback.overhead,
+    otherMarketing: fallback.otherMarketing,
     feeRate: fallback.feeRate,
     callLeads: pick(whole(m.callLeads), "callLeads"),
     callLeadToBooking: pick(m.callLeadToBooking, "callLeadToBooking"),
@@ -406,7 +411,7 @@ export function modelTargets(
     [
       "moneyOut",
       p.moneyOut,
-      "Ad spend, retargeting, payroll, overhead and processing fees.",
+      "Ad spend, retargeting, payroll, overhead, other marketing and processing fees.",
     ],
     ["profit", p.profit, `${$(p.totalCash)} in, ${$(p.moneyOut)} out.`],
     ["margin", p.margin, null],

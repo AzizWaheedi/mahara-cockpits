@@ -1,5 +1,6 @@
 import type { LucideIcon } from "lucide-react";
 import {
+  Calculator,
   CalendarClock,
   Cpu,
   Film,
@@ -38,6 +39,7 @@ export const CEO_NAV: { title: string | null; items: CeoNavItem[] }[] = [
       { key: "today", label: "Today", icon: Sun },
       { key: "goals", label: "Goals", icon: Target },
       { key: "money", label: "Money", icon: Wallet },
+      { key: "costs", label: "Costs", icon: Calculator },
       { key: "billing", label: "Billing", icon: CalendarClock },
       { key: "transactions", label: "Transactions", icon: ReceiptText },
     ],

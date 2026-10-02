@@ -16,6 +16,7 @@ import { BackendTab } from "./ceo/BackendTab";
 import { BillingTab } from "./ceo/BillingTab";
 import { CallsTab } from "./ceo/CallsTab";
 import { ClientSuccessTab } from "./ceo/ClientSuccessTab";
+import { CostsTab } from "./ceo/CostsTab";
 import { DeliveryTab } from "./ceo/DeliveryTab";
 import { FrontendTab } from "./ceo/FrontendTab";
 import { GoalsTab } from "./ceo/GoalsTab";
@@ -53,6 +54,7 @@ const TAB_VIEWS: Record<CeoTabKey, (props: CeoTabProps) => ReactNode> = {
   team: TeamTab,
   hiring: HiringTab,
   money: MoneyTab,
+  costs: CostsTab,
   billing: BillingTab,
   transactions: TransactionsTab,
   machine: MachineTab,

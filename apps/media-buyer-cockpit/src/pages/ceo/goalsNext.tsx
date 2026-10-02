@@ -10,6 +10,7 @@ import { DateInput } from "@/components/ui/date-input";
 import { BOOKING_RATE_GATE, CPB_GATE, CPL_GATE } from "@/lib/kpi";
 import { cn } from "@/lib/utils";
 import { api } from "../../../convex/_generated/api";
+import { payroll } from "../../../convex/ceo/costsModel";
 import type { Board, TargetRow } from "../../../convex/ceo/goals";
 import { fmt, paceTone, planTitle, worstThree } from "./goalsKit";
 import {
@@ -160,10 +161,13 @@ export function NextMonth({
   board,
   onClose,
   onSaved,
+  onCosts,
 }: {
   board: Board;
   onClose: () => void;
   onSaved: (planId: number) => void;
+  /** Opens the Costs page, where pay, commission and software are changed. */
+  onCosts?: () => void;
 }) {
   const savePlan = useAction(api.ceo.goals.savePlan);
   const saveTargets = useAction(api.ceo.goals.saveTargets);
@@ -227,7 +231,42 @@ export function NextMonth({
       ) as Drivers,
     [text],
   );
-  const p = useMemo(() => project(drivers), [drivers]);
+  // Payroll, software and other marketing come from the Costs page when it
+  // can be read: pay is the roster plus each person's commission priced on
+  // this plan's own numbers, so projecting more new cash raises the closer's
+  // pay with it (Aziz, 2026-10-02).
+  const costs = board.costs ?? null;
+  const pay = useMemo(() => {
+    if (!costs) return null;
+    const first = project(drivers);
+    return payroll(
+      costs.people,
+      {
+        newCash: first.newCash,
+        contracted: first.contracted,
+        introsShown: first.introsShown,
+        demosShown: first.demosShown,
+        closes: first.closes,
+        mrrDue: drivers.mrrDue,
+      },
+      costs.usdPer,
+      { money, count },
+    );
+  }, [costs, drivers]);
+  const used = useMemo(
+    () =>
+      costs && pay
+        ? {
+            ...drivers,
+            labour: pay.total,
+            overhead:
+              Math.round((costs.softwareUsd + costs.overheadUsd) * 100) / 100,
+            otherMarketing: costs.marketingUsd,
+          }
+        : drivers,
+    [costs, pay, drivers],
+  );
+  const p = useMemo(() => project(used), [used]);
 
   // Everything the funnel does not cover stays a row you type.
   const tableGroups = useMemo(
@@ -289,10 +328,22 @@ export function NextMonth({
   );
   const model = useMemo(
     () =>
-      modelTargets(drivers, p, { money, count, pct }).filter(t =>
-        wanted.includes(t.key),
-      ),
-    [drivers, p, wanted],
+      modelTargets(used, p, { money, count, pct })
+        .filter(t => wanted.includes(t.key))
+        .map(t =>
+          costs && pay && t.key === "labour"
+            ? {
+                ...t,
+                how: `From the Costs page: ${money(pay.base)} pay and ${money(pay.commission)} commission on this plan.`,
+              }
+            : costs && t.key === "overhead"
+              ? {
+                  ...t,
+                  how: `From the Costs page: ${money(costs.softwareUsd)} software and ${money(costs.overheadUsd)} other overhead.`,
+                }
+              : t,
+        ),
+    [used, p, wanted, costs, pay],
   );
   const missing = wanted.filter(k => !model.some(t => t.key === k));
   const total = model.length + tableRows.length;
@@ -575,10 +626,43 @@ export function NextMonth({
                 <Line label="Retargeting">
                   {input("spendRetargeting", "Retargeting spend")}
                 </Line>
-                <Line label="Payroll">{input("labour", "Payroll")}</Line>
-                <Line label="Software and overhead">
-                  {input("overhead", "Software and overhead")}
-                </Line>
+                {costs && pay ? (
+                  <>
+                    <Line label="Payroll, from Costs">
+                      <Worked value={pay.total} unit="usd" />
+                    </Line>
+                    <p className="text-xs text-muted-foreground">
+                      {`${money(pay.base)} pay and ${money(pay.commission)} commission on this plan's numbers${pay.noPay.length ? `; no pay set for ${pay.noPay.length}` : ""}${pay.unpriced.length ? `; ${pay.unpriced.length} commission${pay.unpriced.length === 1 ? "" : "s"} not priced` : ""}.`}
+                    </p>
+                    <Line label="Software and overhead, from Costs">
+                      <Worked
+                        value={costs.softwareUsd + costs.overheadUsd}
+                        unit="usd"
+                      />
+                    </Line>
+                    {costs.marketingUsd > 0 ? (
+                      <Line label="Other marketing, from Costs">
+                        <Worked value={costs.marketingUsd} unit="usd" />
+                      </Line>
+                    ) : null}
+                    {onCosts ? (
+                      <button
+                        type="button"
+                        className="justify-self-start text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                        onClick={onCosts}
+                      >
+                        Change pay, commission or software on Costs
+                      </button>
+                    ) : null}
+                  </>
+                ) : (
+                  <>
+                    <Line label="Payroll">{input("labour", "Payroll")}</Line>
+                    <Line label="Software and overhead">
+                      {input("overhead", "Software and overhead")}
+                    </Line>
+                  </>
+                )}
                 <Line label="Processing fees">
                   <span className="inline-flex flex-wrap items-center gap-2">
                     {input("feeRate", "Processing fee rate")}

@@ -156,7 +156,8 @@ export const TEAM_ROLES = [
 
 const round2 = (x: number) => Math.round(x * 100) / 100;
 
-function shape(r: Row): Person {
+/** A roster row as the cockpit reads it; the Costs page shares it. */
+export function shape(r: Row): Person {
   const cost = r.monthly_cost === null ? null : Number(r.monthly_cost);
   const currency = String(r.currency ?? "USD").toUpperCase();
   const rate = USD_PER[currency];
@@ -479,6 +480,85 @@ export const save = authenticatedAction({
       by: email,
     });
     return { ok: true, id };
+  },
+});
+
+/**
+ * Change only someone's pay and commission, from the Costs page. The rest of
+ * their row stays as it is: save() rewrites every column, and the sheet holds
+ * none of the others.
+ */
+export const setPay = authenticatedAction({
+  args: {
+    id: v.number(),
+    monthlyCost: v.optional(v.union(v.number(), v.null())),
+    currency: v.optional(v.string()),
+    commissionBasis: v.optional(
+      v.union(...COMMISSION_BASES.map(b => v.literal(b))),
+    ),
+    /** A fraction for the share bases, an amount in the person's currency otherwise. */
+    commissionRate: v.optional(v.union(v.number(), v.null())),
+  },
+  returns: v.any(),
+  handler: async (ctx, a): Promise<{ ok: true; id: number }> => {
+    const email: string = await ctx.runQuery(internal.ceo.people.gate, {
+      userId: ctx.userId,
+    });
+    const found = await rest(`${TABLE}?id=eq.${a.id}&select=*`);
+    if (found === null) throw new Error(NO_TABLE);
+    if (!found.length) throw new Error("Nobody on the roster has that id.");
+    const before = found[0];
+    const body: Row = {};
+    if (a.monthlyCost !== undefined) {
+      if (
+        a.monthlyCost !== null &&
+        (!Number.isFinite(a.monthlyCost) || a.monthlyCost < 0)
+      )
+        throw new Error("A monthly cost cannot be below zero.");
+      if (before.engagement === "bot" && a.monthlyCost !== null)
+        throw new Error("A bot is never paid.");
+      body.monthly_cost = a.monthlyCost;
+    }
+    if (a.currency !== undefined) {
+      const currency = a.currency.trim().toUpperCase();
+      if (!/^[A-Z]{3}$/.test(currency))
+        throw new Error("A currency is three letters, like USD or KWD.");
+      body.currency = currency;
+    }
+    if (a.commissionBasis !== undefined || a.commissionRate !== undefined) {
+      const rule = commissionRule({
+        basis:
+          a.commissionBasis ??
+          ((before.commission_basis as CommissionBasis | null) || "none"),
+        rate:
+          a.commissionRate === undefined
+            ? before.commission_rate === null ||
+              before.commission_rate === undefined
+              ? null
+              : Number(before.commission_rate)
+            : a.commissionRate,
+      });
+      body.commission_basis = rule.basis;
+      body.commission_rate = rule.rate;
+      body.commission_pct = rule.pct;
+    }
+    if (!Object.keys(body).length) return { ok: true, id: a.id };
+    const done = await rest(`${TABLE}?id=eq.${a.id}`, {
+      method: "PATCH",
+      prefer: "return=representation",
+      body,
+    });
+    if (done === null) throw new Error(NO_TABLE);
+    const keys = Object.keys(body);
+    await ctx.runMutation(internal.ceo.people.record, {
+      action: "people.pay",
+      rowId: String(a.id),
+      what: `Changed ${before.name}'s pay or commission on the Costs page.`,
+      before: pick(before, keys),
+      ...(done[0] ? { after: pick(done[0], keys) } : {}),
+      by: email,
+    });
+    return { ok: true, id: a.id };
   },
 });
 

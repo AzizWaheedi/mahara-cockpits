@@ -328,7 +328,7 @@ function PlanBadge({ status }: { status: string }) {
   );
 }
 
-export function GoalsTab({ sections }: CeoTabProps) {
+export function GoalsTab({ sections, goTab }: CeoTabProps) {
   void sections;
   const read = useAction(api.ceo.goals.board);
   const [board, setBoard] = useState<Board | null>(null);
@@ -494,6 +494,7 @@ export function GoalsTab({ sections }: CeoTabProps) {
       {planning ? (
         <NextMonth
           board={board}
+          onCosts={() => goTab("costs")}
           onClose={() => setPlanning(false)}
           onSaved={id => {
             setPlanning(false);

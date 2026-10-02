@@ -3,6 +3,7 @@ import { internal } from "../_generated/api";
 import { internalMutation } from "../_generated/server";
 import { authenticatedAction } from "../functions";
 import { readCallCenterReport } from "./callCenterSource";
+import { type CostsSummary, costsSummary } from "./costs";
 import { rest } from "./sbWrite";
 import {
   GROUPS,
@@ -129,6 +130,8 @@ export type Board = {
   callClients:
     | { name: string; leads: number; bookings: number; rate: number | null }[]
     | null;
+  /** The Costs page's totals and payroll, for next month's plan; null when unreadable. */
+  costs: CostsSummary | null;
 };
 
 function workingDaysBetween(from: string, to: string): number {
@@ -251,6 +254,7 @@ export async function buildBoard(
         bounds,
         measured: {},
         callClients: null,
+        costs: await costsSummary().catch(() => null),
       };
 
     const plan = toPlan(row);
@@ -439,6 +443,7 @@ export async function buildBoard(
       bounds,
       measured,
       callClients,
+      costs: await costsSummary().catch(() => null),
     };
   }
 }

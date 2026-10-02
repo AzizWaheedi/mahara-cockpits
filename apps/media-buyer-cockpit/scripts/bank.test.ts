@@ -4,12 +4,12 @@ import {
   categorise,
   classifyLine,
   isExcluded,
+  isStatementPdfText,
   lineHash,
   matchPayouts,
   parseAmount,
-  parseDay,
-  isStatementPdfText,
   parseAnyStatement,
+  parseDay,
   parseStatement,
   parseStatementPdfText,
   statementId,
@@ -66,7 +66,9 @@ describe("parseStatement", () => {
     expect(p.closingBalance).toBe(175.735);
     expect(p.problems).toEqual([]);
     expect(statementId(p)).toBe("537015XXXXXX4348:2026-05-01:2026-05-31");
-    expect(lineHash(p.account, p.lines[0])).toBe("4348:2026-05-01:-0.150:673.191");
+    expect(lineHash(p.account, p.lines[0])).toBe(
+      "4348:2026-05-01:-0.150:673.191",
+    );
   });
   test("reads an account export with quoted thousands", () => {
     const p = parseStatement(ACCOUNT);
@@ -100,6 +102,13 @@ describe("classifyLine", () => {
     expect(card(-12.5, "OPENAI *CHATGPT SUBSCR")).toBe("expense");
     expect(card(-30, "WHOP* SKOOL COURSE")).toBe("expense");
     expect(card(20, "REFUND OPENAI")).toBe("refund_in");
+  });
+  test("a purchase whose merchant path says charge is software, not a bank fee", () => {
+    const ref = "P-232503-ZAPIER.COM/CHARGE /162786461 (USD 29.99)";
+    expect(card(-30.9, ref)).toBe("expense");
+    expect(categorise(ref)).toBe("software");
+    // A real fee on the card still is one.
+    expect(categorise("Non Sufficient Bal. Decline Fee")).toBe("bank");
   });
   test("account credits are client money unless Whop, Tap or an own account", () => {
     expect(acct(150, "TRF FROM DECOR PLUS CO")).toBe("client_payment");
@@ -285,11 +294,13 @@ describe("the statement PDF", () => {
   });
 
   test("a row that breaks the running balance is reported, not trusted", () => {
-    const broken = PDF_PDFJS.replace("- 0.150 629.578 CR", "- 0.150 600.000 CR");
+    const broken = PDF_PDFJS.replace(
+      "- 0.150 629.578 CR",
+      "- 0.150 600.000 CR",
+    );
     const p = parseStatementPdfText(broken);
     expect(p.lines.length).toBe(4);
     expect(p.problems.length).toBe(2);
     expect(p.problems[0]).toContain("does not give the printed balance");
   });
 });
-

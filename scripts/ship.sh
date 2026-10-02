@@ -56,8 +56,8 @@ fi
 # Next month's plan: a cost per lead turns ad spend into leads and every
 # count follows from the rates. Wrong is a plan whose targets do not add up.
 if [ -f apps/media-buyer-cockpit/scripts/goals-model.test.ts ]; then
-  (cd apps/media-buyer-cockpit && bun test scripts/goals-model.test.ts >/dev/null 2>&1) \
-    || { echo "the goals model tests fail"; exit 1; }
+  (cd apps/media-buyer-cockpit && bun test scripts/goals-model.test.ts scripts/costs-model.test.ts >/dev/null 2>&1) \
+    || { echo "the goals and costs model tests fail"; exit 1; }
 fi
 # The webinar room: attendance, the retention curve, the pitches. Wrong is a
 # pitch that looks like it lost the room, or a show rate that counts the team.

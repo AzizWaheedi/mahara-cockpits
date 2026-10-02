@@ -514,6 +514,12 @@ const TAP = /\btap\b|tap payments|tap company|tap\.company/i;
 const FEE =
   /non sufficient|decline fee|ann\.?\s*sub\.?\s*fee|service charge|\bcommission\b|\bfee\b|charges?\b/i;
 const REFUND = /refund|reversal|chargeback|revers/i;
+/**
+ * A card purchase reads "P-<number>-MERCHANT". A merchant whose own path says
+ * charge ("ZAPIER.COM/CHARGE") is still a purchase, never a bank fee
+ * (2026-10-02: Zapier was filed as a fee for three months).
+ */
+const PURCHASE = /^P-\d+-/i;
 /** Money moved onto the card from Aziz's own account (the statement's own words). */
 const CARD_TOPUP = /card payment|tijari (mobile|online)|control card/i;
 const OWN_MASK =
@@ -560,7 +566,7 @@ export function classifyLine(
     if (isExcluded(ref, account, exclusions)) return "excluded";
     if (WHOP_PURCHASE.test(ref)) return "expense";
     if (WHOP.test(ref)) return "whop_topup";
-    if (FEE.test(ref)) return "fee";
+    if (FEE.test(ref) && !PURCHASE.test(ref)) return "fee";
     // Money moved between Mahara's own accounts, cards and wallets (a card
     // unload, a Weyay top-up, a transfer to another own account) is not a cost.
     if (OWN_MASK.test(ref)) return "own_transfer";
@@ -591,16 +597,16 @@ const CATEGORY_RULES: { category: ExpenseCategory; test: RegExp }[] = [
     // A transfer to a named person from the card account ("QPA…|Bill Payment |NAME", Ziina) is a person paid, not a vendor.
     test: /salary|salaries|payroll|wages|freelanc|upwork|fiverr|khamsat|mostaql|payoneer|hired!|deel\b|remote\.com|\|\s*(bill payment|services payment|business income|other)\s*\||\bziina\b/i,
   },
-  { category: "bank", test: FEE },
   {
     category: "software",
     test: /openai|anthropic|claude|chatgpt|notion|slack|zoom|canva|adobe|vercel|supabase|github|make\.com|integromat|typeform|clickup|apple\.com\/bill|google\s*\*|gsuite|google workspace|google cloud|microsoft|dropbox|figma|loom|calendly|zapier|twilio|maqsam|whapi|resend|convex|namecheap|godaddy|hostinger|elevenlabs|heygen|runway|frame\.io|foreplay|apify|composio|gohighlevel|highlevel|goghl|\bghl\b|cursor|linear\.app|1password|cloudflare|aws\b|amazon web|digitalocean|hetzner|render\.com|railway|descript|capcut|midjourney|perplexity|grammarly|manychat|klaviyo|mailchimp|webflow|framer|squarespace|wix\b|shopify|proton|windsor|wistia|fathom|higgsfield|pitch\.com|gamma\.app|hubstaff|viktor|roasform|vidalytics|leadsie|manus|atlassian|elfsigh|wispr|brain\.fm|waghl|excalidraw|fireflies|otter\.ai|tldv|riverside|veed|submagic|opus|synthesia|pictory|airtable|smartsheet|monday\.com|asana|trello|miro|lucid|semrush|ahrefs|similarweb|hotjar|mixpanel|posthog|segment|hubspot|pipedrive|zoho|intercom|crisp|tidio|drift|aircall|ringcentral|dialpad|justcall|openphone|skype|viber|telegram|whatsapp business|wati|interakt|respond\.io|chatwoot|bunny\.net|mux\b|vimeo|youtube premium|spotify for|linkedin|sales navigator|apollo\.io|lusha|hunter\.io|snov|instantly|smartlead|lemlist|beehiiv|substack|convertkit|kit\.com|carrd|tally\.so|jotform|paperform|docusign|pandadoc|dropbox sign|hellosign|calendly|cal\.com|savvycal|zcal/i,
   },
 ];
 
-/** Which P&L line an expense sits on, by the reference alone. */
+/** Which P&L line an expense sits on, by the reference alone. A named vendor wins over the word "charge". */
 export function categorise(reference: string): ExpenseCategory {
   for (const r of CATEGORY_RULES) if (r.test.test(reference)) return r.category;
+  if (FEE.test(reference) && !PURCHASE.test(reference)) return "bank";
   return "other";
 }
 
