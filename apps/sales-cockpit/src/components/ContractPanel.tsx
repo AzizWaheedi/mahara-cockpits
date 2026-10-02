@@ -461,7 +461,8 @@ function NewContract({
         payment_structure: uses(template, "payment_structure")
           ? payment
           : undefined,
-        daily_ad_spend: uses(template, "daily_ad_spend") ? spend : undefined,
+        // Asked for every contract, printed or not (Aziz, 2026-10-02).
+        daily_ad_spend: spend,
       });
       toast.success(
         out.reused
@@ -526,22 +527,26 @@ function NewContract({
           </select>
         </label>
       ) : null}
-      {uses(template, "daily_ad_spend") ? (
-        <label className="block">
-          <span className="muted mb-1 block text-xs">
-            Daily ad spend, in dollars
+      <label className="block">
+        <span className="muted mb-1 block text-xs">
+          Daily ad spend, in dollars
+        </span>
+        <input
+          className={`${field} w-40 tabular-nums`}
+          value={spend}
+          onChange={e => setSpend(e.target.value)}
+          inputMode="decimal"
+          placeholder="40"
+          dir="ltr"
+          required
+        />
+        {template && !uses(template, "daily_ad_spend") ? (
+          <span className="muted mt-1 block text-xs">
+            This contract does not print it. It goes on the lead's record for
+            the onboarding and the New Client Form.
           </span>
-          <input
-            className={`${field} w-40 tabular-nums`}
-            value={spend}
-            onChange={e => setSpend(e.target.value)}
-            inputMode="decimal"
-            placeholder="40"
-            dir="ltr"
-            required
-          />
-        </label>
-      ) : null}
+        ) : null}
+      </label>
       {error ? (
         <p className="callout-bad rounded-[var(--radius-md)] border px-2.5 py-1.5 text-xs">
           {error}

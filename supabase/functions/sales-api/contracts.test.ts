@@ -49,6 +49,22 @@ describe("contractTerms", () => {
     expect(contractTerms({ company_name: "Ardon", daily_ad_spend: 0 }, SPECIAL, SETTING).ok).toBe(false);
     expect(contractTerms({ company_name: "Ardon", daily_ad_spend: 200000 }, SPECIAL, SETTING).ok).toBe(false);
   });
+
+  test("every contract asks for the daily ad spend, even one that does not print it", () => {
+    const seven: ContractTemplate = {
+      id: "6abe230d6bbbd5d9235bb774",
+      name: "90 Day Agreement (7 Day Satisfaction Guarantee)",
+      fields: ["company_name", "payment_structure"],
+    };
+    expect(contractTerms({ company_name: "Ardon", payment_structure: "Monthly" }, seven, SETTING)).toEqual({
+      ok: false,
+      error: "Write the daily ad spend in dollars, for example 40.",
+    });
+    expect(contractTerms({ company_name: "Ardon", payment_structure: "Monthly", daily_ad_spend: "50" }, seven, SETTING)).toEqual({
+      ok: true,
+      terms: { company_name: "Ardon", payment_structure: "Monthly", daily_ad_spend: 50 },
+    });
+  });
 });
 
 describe("contactFill", () => {

@@ -72,13 +72,15 @@ export function contractTerms(
       return { ok: false, error: `Pick how the client pays: ${options.join(", ")}.` };
     terms.payment_structure = pick;
   }
-  if (template.fields.includes("daily_ad_spend")) {
-    const raw = String(b.daily_ad_spend ?? "").replace(/[,\s$]/g, "");
-    const n = Number(raw);
-    if (!raw || !Number.isFinite(n) || n <= 0 || n > AD_SPEND_MAX)
-      return { ok: false, error: "Write the daily ad spend in dollars, for example 40." };
-    terms.daily_ad_spend = Math.round(n * 100) / 100;
-  }
+  // The daily ad spend is asked for every contract, printed or not (Aziz,
+  // 2026-10-02: the money is required "even for the 7-day contract"). The
+  // onboarding and the New Client Form need it; it goes on the lead's
+  // HighLevel field whichever template prints it.
+  const raw = String(b.daily_ad_spend ?? "").replace(/[,\s$]/g, "");
+  const n = Number(raw);
+  if (!raw || !Number.isFinite(n) || n <= 0 || n > AD_SPEND_MAX)
+    return { ok: false, error: "Write the daily ad spend in dollars, for example 40." };
+  terms.daily_ad_spend = Math.round(n * 100) / 100;
   return { ok: true, terms };
 }
 
