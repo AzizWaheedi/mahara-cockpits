@@ -1,4 +1,5 @@
 import { useQuery } from "convex/react";
+import { useEffect, useState } from "react";
 import { api } from "../../convex/_generated/api";
 
 /** Minutes after which a feed counts as stale during Kuwait working hours. */
@@ -11,10 +12,15 @@ const STALE_MINUTES = 50;
  */
 export function SyncStrip() {
   const s = useQuery(api.csm.syncStatus, {});
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 60000);
+    return () => clearInterval(timer);
+  }, []);
   if (!s) return null;
 
   const at = s.at;
-  const ageMin = at ? Math.round((Date.now() - at) / 60000) : null;
+  const ageMin = at ? Math.round((now - at) / 60000) : null;
   const hour = Number(
     new Date().toLocaleString("en-GB", {
       timeZone: "Asia/Kuwait",
@@ -44,8 +50,8 @@ export function SyncStrip() {
     <div className="callout-warn mx-auto mb-6 w-full max-w-6xl rounded-2xl border px-4 py-3 text-sm">
       <p>
         <span className="font-semibold">Some numbers may be out of date.</span>{" "}
-        {sentence} It retries every 30 minutes, so keep working; the numbers
-        will catch up.
+        {sentence} Check the source before making a decision that depends on
+        these numbers.
       </p>
       {raw ? (
         <details className="mt-1 text-xs opacity-90">

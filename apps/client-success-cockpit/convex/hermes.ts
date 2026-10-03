@@ -23,7 +23,10 @@ const MAX_CONTEXT = 6000;
 /** What this cockpit knows that Hermes should see for this question. */
 // biome-ignore lint/suspicious/noExplicitAny: db ctx
 async function contextFor(ctx: any, clientName?: string): Promise<string> {
-  const clients = await ctx.db.query("clients").collect();
+  const scope = await allowedClients(ctx);
+  const clients = (await ctx.db.query("clients").collect()).filter(
+    (c: Any) => !scope || scope.has(c.name.trim().toLowerCase()),
+  );
   if (clientName) {
     const c = clients.find((x: Any) => x.name === clientName);
     const p = await currentProfile(ctx, clientName);

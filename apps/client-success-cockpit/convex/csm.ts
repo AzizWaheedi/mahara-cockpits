@@ -15,7 +15,7 @@ import {
   metricOfHotType,
   wonAction,
 } from "./projectionsCore";
-import { allowedClients, assertRole, userEmail } from "./roles";
+import { allowedClients, assertRole, requireClient, userEmail } from "./roles";
 
 function kuwaitToday(): string {
   return new Date(Date.now() + 3 * 3600 * 1000).toISOString().slice(0, 10);
@@ -32,6 +32,34 @@ async function assertInScope(ctx: any, clientName: string): Promise<void> {
   const scope = await allowedClients(ctx);
   if (scope && !scope.has(norm(clientName)))
     throw new Error("That client is not on your list.");
+}
+
+async function recordRequest(
+  ctx: any,
+  operation: string,
+  requestId: string,
+  payload: unknown,
+): Promise<boolean> {
+  if (!/^[A-Za-z0-9_-]{8,100}$/.test(requestId))
+    throw new Error("Refresh the page before saving.");
+  const key = `${await userEmail(ctx)}|${operation}|${requestId}`;
+  const fingerprint = JSON.stringify(payload);
+  const prior = await ctx.db
+    .query("actionReceipts")
+    .withIndex("by_key", (q: any) => q.eq("key", key))
+    .unique();
+  if (prior) {
+    if (prior.fingerprint !== fingerprint)
+      throw new Error("This action changed. Reopen it before saving.");
+    return true;
+  }
+  await ctx.db.insert("actionReceipts", {
+    key,
+    fingerprint,
+    status: "queued",
+    at: Date.now(),
+  });
+  return false;
 }
 
 /** A real calendar day, YYYY-MM-DD; anything else must never reach ClickUp's Next POC. */
@@ -71,7 +99,12 @@ function matchClient<T extends { name: string }>(
  * the month's first roster day is not the 1st — early months are honest about that.
  */
 // biome-ignore lint/suspicious/noExplicitAny: convex query ctx
-async function churnThisMonth(ctx: any, month: string) {
+async function churnThisMonth(
+  ctx: any,
+  month: string,
+  scope: Set<string> | null = null,
+) {
+  const visible = (name: string) => !scope || scope.has(norm(name));
   const days = await ctx.db
     .query("rosterDays")
     .withIndex("by_month", (q: any) => q.eq("month", month))
@@ -80,7 +113,9 @@ async function churnThisMonth(ctx: any, month: string) {
   days.sort((a: any, b: any) => (a.day < b.day ? -1 : 1));
   const first = days[0];
   const latest = days[days.length - 1];
-  const baseline = first.clients.filter((c: any) => c.paying);
+  const baseline = first.clients.filter(
+    (c: any) => c.paying && visible(c.name),
+  );
   const nowByKey = new Map<string, { paying: boolean; status: string }>(
     latest.clients.map((c: any) => [c.key as string, c]),
   );
@@ -88,6 +123,7 @@ async function churnThisMonth(ctx: any, month: string) {
     .query("churnEvents")
     .withIndex("by_month", (q: any) => q.eq("month", month))
     .collect();
+  const scopedEvents = events.filter((e: any) => visible(e.name));
 
   const lost: { key: string; name: string; reason: string; day?: string }[] =
     [];
@@ -95,7 +131,7 @@ async function churnThisMonth(ctx: any, month: string) {
   let roster: any[] | undefined;
   for (const b of baseline) {
     const now = nowByKey.get(b.key);
-    const event = events
+    const event = scopedEvents
       .filter((e: any) => e.key === b.key && e.kind === "lost")
       .sort((x: any, y: any) => (x.day < y.day ? 1 : -1))[0];
     if (!now) {
@@ -142,6 +178,7 @@ async function churnThisMonth(ctx: any, month: string) {
   // A renewal date that went by with the plan still "planned" is a missed
   // renewal (Projections), counted the same way: once, by id or by name.
   for (const m of await missedRenewals(ctx, month, kuwaitToday())) {
+    if (!visible(m.name)) continue;
     if (lost.some(l => l.key === m.key || norm(l.name) === norm(m.name)))
       continue;
     lost.push({
@@ -155,7 +192,7 @@ async function churnThisMonth(ctx: any, month: string) {
   // A client the CSM confirmed offboarded counts even if ClickUp still says otherwise.
   // Matched by the ClickUp id when the EOD line resolved to a card, else by name,
   // case-insensitively, so the same client is never counted twice.
-  for (const e of events.filter((x: any) => x.kind === "offboarded")) {
+  for (const e of scopedEvents.filter((x: any) => x.kind === "offboarded")) {
     if (lost.some(l => l.key === e.key || norm(l.name) === norm(e.name)))
       continue;
     lost.push({
@@ -168,7 +205,9 @@ async function churnThisMonth(ctx: any, month: string) {
   // One event per client per kind for the month: a line typed on two days is one pause.
   const uniqueKeys = (kinds: string[]) =>
     new Set(
-      events.filter((e: any) => kinds.includes(e.kind)).map((e: any) => e.key),
+      scopedEvents
+        .filter((e: any) => kinds.includes(e.kind))
+        .map((e: any) => e.key),
     ).size;
 
   const pct = baseline.length
@@ -197,6 +236,7 @@ async function churnThisMonth(ctx: any, month: string) {
 export const syncStatus = authenticatedQuery({
   args: {},
   handler: async ctx => {
+    await assertRole(ctx);
     const rows = await ctx.db
       .query("syncRuns")
       .withIndex("by_at")
@@ -206,10 +246,14 @@ export const syncStatus = authenticatedQuery({
     const feed = rows.find(r => r.role === "csm" && r.kind !== "health");
     return {
       at: health?.at ?? feed?.at ?? null,
-      ok: health?.ok ?? true,
+      ok: health?.ok ?? Boolean(feed?.at),
       profiles: health?.profiles ?? 0,
       clients: health?.campaigns ?? feed?.campaigns ?? 0,
-      errors: health?.errors ?? [],
+      errors: health?.errors?.length
+        ? [
+            "A data feed did not complete. Ask the system owner to check the sync log.",
+          ]
+        : [],
     };
   },
 });
@@ -230,11 +274,16 @@ export async function buildSnapshot(
   ctx: QueryCtx,
   smoke: boolean,
 ): Promise<any> {
+  if (!smoke) await assertRole(ctx);
   const day = kuwaitToday();
   // Client access set in the portal: an empty list means every client.
   const scope = smoke ? null : await allowedClients(ctx);
-  const clients = await ctx.db.query("clients").withIndex("by_rank").collect();
-  const tasks = await ctx.db.query("csTasks").collect();
+  const clients = (
+    await ctx.db.query("clients").withIndex("by_rank").collect()
+  ).filter(c => !scope || scope.has(norm(c.name)));
+  // The legacy task feed has no client identity. Do not guess it from a task title.
+  const tasks = scope ? [] : await ctx.db.query("csTasks").collect();
+  const myEmail = smoke ? "smoke" : await userEmail(ctx);
   const checks = await ctx.db
     .query("checks")
     .withIndex("by_role_day", q => q.eq("role", "csm").eq("day", day))
@@ -244,15 +293,24 @@ export async function buildSnapshot(
       .query("decisions")
       .withIndex("by_day", q => q.eq("day", day))
       .collect()
-  ).filter(d => d.role === "csm");
-  const plan = await ctx.db
+  ).filter(d => d.role === "csm" && (!scope || scope.has(norm(d.subject))));
+  const planRows = await ctx.db
     .query("planItems")
     .withIndex("by_role_day", q => q.eq("role", "csm").eq("day", day))
     .collect();
-  const eod = await ctx.db
-    .query("eodReports")
-    .withIndex("by_role_day", q => q.eq("role", "csm").eq("day", day))
-    .first();
+  const plan = planRows.filter(
+    p =>
+      !scope ||
+      (p.clientName && scope.has(norm(p.clientName))) ||
+      p.byEmail === myEmail,
+  );
+  const eod =
+    (
+      await ctx.db
+        .query("eodReports")
+        .withIndex("by_role_day", q => q.eq("role", "csm").eq("day", day))
+        .collect()
+    ).find(r => norm(r.email) === myEmail) ?? null;
   const recentRuns = await ctx.db
     .query("syncRuns")
     .withIndex("by_at")
@@ -284,15 +342,16 @@ export async function buildSnapshot(
   const dismissed = new Set(
     (await ctx.db.query("looseDismissed").collect()).map(d => d.key),
   );
-  const prefs = await ctx.db.query("clientPrefs").collect();
+  const prefs = (await ctx.db.query("clientPrefs").collect()).filter(
+    p => !scope || scope.has(norm(p.clientName)),
+  );
   // The client-list restriction covers every per-client row, not only the cards.
   const inScope = (name: unknown) => !scope || scope.has(norm(name));
   const hotRows = (await ctx.db.query("hotList").collect()).filter(r =>
     inScope(r.clientName),
   );
   const kpis = await ctx.db.query("kpi").collect();
-  const churn = await churnThisMonth(ctx, month);
-  const myEmail = await (smoke ? Promise.resolve("smoke") : userEmail(ctx));
+  const churn = await churnThisMonth(ctx, month, scope);
   const money = await ctx.db
     .query("moneyGoals")
     .withIndex("by_month_email", q =>
@@ -328,6 +387,7 @@ export async function buildSnapshot(
         ),
       })),
     tasks,
+    tasksRestricted: Boolean(scope),
     checks: checks.sort((a, b) => a.key.localeCompare(b.key)),
     decisions,
     plan,
@@ -407,13 +467,14 @@ export const clearLooseEnds = authenticatedMutation({
 });
 
 export const toggleCheck = authenticatedMutation({
-  args: { id: v.id("checks") },
+  args: { id: v.id("checks"), done: v.optional(v.boolean()) },
   returns: v.null(),
-  handler: async (ctx, { id }) => {
+  handler: async (ctx, { id, done }) => {
     await assertRole(ctx, "csm");
     const row = await ctx.db.get(id);
-    if (!row) return null;
-    await ctx.db.patch(id, { done: !row.done, doneAt: Date.now() });
+    if (!row || row.role !== "csm" || row.day !== kuwaitToday())
+      throw new Error("Refresh today before changing this checklist.");
+    await ctx.db.patch(id, { done: done ?? !row.done, doneAt: Date.now() });
     return null;
   },
 });
@@ -430,6 +491,7 @@ export const act = authenticatedMutation({
     /** The ClickUp id: survives the sync replacing every client row. */
     taskId: v.optional(v.string()),
     action: v.string(),
+    requestId: v.optional(v.string()),
     kind: v.string(), // touchpoint | call | report | stage | happiness | booked | upsell | ticket | left
     note: v.optional(v.string()),
     reason: v.optional(v.string()),
@@ -452,8 +514,44 @@ export const act = authenticatedMutation({
         : null);
     if (!client)
       throw new Error("That client row was just refreshed, open it again.");
-    await assertInScope(ctx, client.name);
-    if (args.kind === "booked" && args.value && !isIsoDay(args.value))
+    await requireClient(ctx, {
+      taskId: args.taskId ?? client.taskId,
+      clientName: client.name,
+    });
+    if (args.taskId && args.taskId !== client.taskId)
+      throw new Error("The client changed. Reopen it before saving.");
+    if (
+      ![
+        "touchpoint",
+        "call",
+        "report",
+        "stage",
+        "service",
+        "happiness",
+        "booked",
+        "upsell",
+        "referral",
+        "review",
+        "ticket",
+        "left",
+      ].includes(args.kind)
+    )
+      throw new Error("Choose a supported client action.");
+    if (
+      !args.action.trim() ||
+      args.action.length > 500 ||
+      (args.note?.length ?? 0) > 10000
+    )
+      throw new Error("Use a short action and a note under 10,000 characters.");
+    if (
+      args.requestId &&
+      (await recordRequest(ctx, "act", args.requestId, {
+        ...args,
+        clientId: undefined,
+      }))
+    )
+      return null;
+    if (args.kind === "booked" && !isIsoDay(args.value))
       throw new Error("Pick a date (YYYY-MM-DD) for the next call.");
     const id = await ctx.db.insert("decisions", {
       day: kuwaitToday(),
@@ -471,6 +569,7 @@ export const act = authenticatedMutation({
       reroutedTo: args.department,
       evidence: client.todo,
       clickupTaskId: client.taskId,
+      byEmail: await userEmail(ctx),
       at: Date.now(),
     });
     await ctx.db.insert("outbox", {
@@ -556,12 +655,24 @@ export const submitEod = authenticatedMutation({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
+    await assertRole(ctx);
+    if (JSON.stringify(args).length > 40000)
+      throw new Error("Shorten the end-of-day report before saving.");
     const user = await ctx.db.get(ctx.userId);
     const day = kuwaitToday();
     const existing = await ctx.db
       .query("eodReports")
       .withIndex("by_role_day", q => q.eq("role", "csm").eq("day", day))
-      .first();
+      .collect();
+    const own = existing.find(r => norm(r.email) === norm(user?.email));
+    if (
+      own &&
+      JSON.stringify(own.answers) === JSON.stringify(args.answers) &&
+      JSON.stringify(own.computed) === JSON.stringify(args.computed) &&
+      own.energy === args.energy &&
+      own.stress === args.stress
+    )
+      return null;
     const row = {
       role: "csm",
       day,
@@ -572,8 +683,8 @@ export const submitEod = authenticatedMutation({
       computed: args.computed,
       at: Date.now(),
     };
-    if (existing) await ctx.db.patch(existing._id, row);
-    else await ctx.db.insert("eodReports", row);
+    if (own) await ctx.db.patch(own._id, { ...row, exportError: undefined });
+    const reportId = own?._id ?? (await ctx.db.insert("eodReports", row));
 
     // And out to Slack and the EOD sheet. Saving it here was never
     // enough: the tracking sheet is built from what EOD Radar sees in
@@ -583,6 +694,8 @@ export const submitEod = authenticatedMutation({
       answers: args.answers,
       computed: args.computed,
       email: row.email,
+      reportId,
+      version: row.at,
     });
 
     // The three churn-ledger answers become dated events, so the churn number is built
@@ -594,7 +707,10 @@ export const submitEod = authenticatedMutation({
       ["extended", "extension"],
       ["paused", "paused_by_csm"],
     ];
-    const roster = await ctx.db.query("clients").collect();
+    const scope = await allowedClients(ctx);
+    const roster = (await ctx.db.query("clients").collect()).filter(
+      c => !scope || scope.has(norm(c.name)),
+    );
     const already = await ctx.db
       .query("churnEvents")
       .withIndex("by_month", q => q.eq("month", day.slice(0, 7)))
@@ -606,6 +722,7 @@ export const submitEod = authenticatedMutation({
         .map(l => l.trim())
         .filter(Boolean)) {
         const match = matchClient(line, roster);
+        if (scope && !match) continue;
         const key = match ? match.taskId : `eod:${line}`;
         const name = match ? match.name : line;
         if (
@@ -637,6 +754,9 @@ export const reportIssue = authenticatedMutation({
   args: { page: v.string(), text: v.string() },
   returns: v.null(),
   handler: async (ctx, { page, text }) => {
+    await assertRole(ctx);
+    if (!text.trim() || text.length > 6000 || page.length > 300)
+      throw new Error("Use a short issue description.");
     const user = await ctx.db.get(ctx.userId);
     const id = await ctx.db.insert("feedback", {
       role: "csm",
@@ -673,11 +793,21 @@ export const addPlanItems = authenticatedMutation({
   handler: async (ctx, { items }) => {
     await assertRole(ctx, "csm");
     const day = kuwaitToday();
+    if (items.length > 30) throw new Error("Add up to 30 tasks at a time.");
     for (const it of items) {
+      if (
+        !it.text.trim() ||
+        it.text.length > 1000 ||
+        (it.dueDate && !isIsoDay(it.dueDate))
+      )
+        throw new Error("Use a task title and a valid due date.");
+      if (it.clientName)
+        await requireClient(ctx, { clientName: it.clientName });
       const planId = await ctx.db.insert("planItems", {
         ...it,
         role: "csm",
         day,
+        byEmail: await userEmail(ctx),
         listName: "Client Success",
         confirmed: false,
         createdAt: Date.now(),
@@ -702,7 +832,9 @@ export const setClientLanguage = authenticatedMutation({
   returns: v.null(),
   handler: async (ctx, { clientName, language }) => {
     await assertRole(ctx, "csm");
-    await assertInScope(ctx, clientName);
+    await requireClient(ctx, { clientName });
+    if (!["ar", "en"].includes(language))
+      throw new Error("Choose Arabic or English.");
     const row = await ctx.db
       .query("clientPrefs")
       .withIndex("by_client", q => q.eq("clientName", clientName))
@@ -741,6 +873,7 @@ export const saveHotRow = authenticatedMutation({
       .query("hotList")
       .withIndex("by_key", q => q.eq("key", args.key))
       .first();
+    if (existing) await assertInScope(ctx, existing.clientName);
     let id = existing?._id;
     if (existing) await ctx.db.patch(existing._id, { ...args, at: Date.now() });
     else id = await ctx.db.insert("hotList", { ...args, at: Date.now() });
@@ -802,6 +935,15 @@ export const saveMoneyGoals = authenticatedMutation({
   returns: v.null(),
   handler: async (ctx, args) => {
     await assertRole(ctx, "csm");
+    if (
+      !/^\d{4}-(0[1-9]|1[0-2])$/.test(args.month) ||
+      [args.target, args.clients, ...Object.values(args.counts ?? {})].some(
+        n =>
+          n !== undefined &&
+          (typeof n !== "number" || !Number.isFinite(n) || n < 0),
+      )
+    )
+      throw new Error("Use a valid month and non-negative numbers.");
     const byEmail = await userEmail(ctx);
     const existing = await ctx.db
       .query("moneyGoals")
@@ -844,9 +986,13 @@ export async function buildPerformanceOverview(
     // onboarding or inactive from its ClickUp stage; that is the one place
     // the rule lives. The stage regex below is only the fallback for a
     // profile with no client row.
-    const byName = new Map<string, { bucket?: string; stage?: string }>();
+    const byName = new Map<
+      string,
+      { bucket?: string; stage?: string; taskId?: string }
+    >();
     for (const c of await ctx.db.query("clients").collect())
       byName.set(String(c.name ?? "").toLowerCase(), {
+        taskId: c.taskId,
         bucket: (c as Any).bucket,
         stage: (c as Any).stage,
       });
@@ -969,6 +1115,7 @@ export async function buildPerformanceOverview(
             | undefined;
           return {
             clientName: r.clientName,
+            taskId: cl?.taskId ?? r.taskId,
             stage: r.stage ?? cl?.stage,
             group,
             happiness: r.happiness,
@@ -1144,7 +1291,20 @@ export const addTask = authenticatedMutation({
   returns: v.id("outbox"),
   handler: async (ctx, args) => {
     await assertRole(ctx, "csm");
-    await assertInScope(ctx, args.clientName);
+    await requireClient(ctx, args);
+    if (
+      !args.title.trim() ||
+      (args.note?.length ?? 0) > 10000 ||
+      (args.due !== undefined && !Number.isFinite(args.due))
+    )
+      throw new Error("Add a task title and a valid due date.");
+    if (
+      args.department &&
+      !["creative", "tech", "call_center", "media_buyer"].includes(
+        args.department,
+      )
+    )
+      throw new Error("Choose a team from the list.");
     const by = await userEmail(ctx);
     return await ctx.db.insert("outbox", {
       kind: "task",
@@ -1170,7 +1330,7 @@ export const tasksAdded = authenticatedQuery({
   args: { taskId: v.string() },
   returns: v.array(v.any()),
   handler: async (ctx, { taskId }) => {
-    await assertRole(ctx, "csm");
+    await requireClient(ctx, { taskId });
     return (await ctx.db.query("outbox").collect())
       .filter(o => o.clientTaskId === taskId && o.kind === "task")
       .sort((a, b) => b.createdAt - a.createdAt)

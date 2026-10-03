@@ -7,7 +7,7 @@ import {
   Send,
   Users,
 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { api } from "../../convex/_generated/api";
 
@@ -43,6 +43,7 @@ type Draft = {
 type Thread = {
   id: string;
   contact_name: string | null;
+  client_name?: string;
   phone: string | null;
   is_group: boolean;
   desk: string;
@@ -92,6 +93,8 @@ function Thread({
   const [lang, setLang] = useState<"ar" | "en">(hasAr ? "ar" : "en");
   const [text, setText] = useState((hasAr ? t.draft?.ar : t.draft?.en) ?? "");
   const [busy, setBusy] = useState(false);
+  const lock = useRef(false);
+  const [receipt, setReceipt] = useState("");
   const [edited, setEdited] = useState(false);
 
   // Switching language replaces an untouched draft but never an edit
@@ -105,137 +108,172 @@ function Thread({
 
   return (
     <li className="rounded-2xl border bg-card">
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b px-4 py-2 sm:px-6">
-        <span className="text-sm font-medium" dir="auto">
-          {t.contact_name || t.phone || "Unknown"}
-        </span>
-        {t.is_group ? (
-          <span
-            title="A WhatsApp group, with the client's own people in it"
-            className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs text-muted-foreground"
-          >
-            <Users className="size-3" />
-            Group
+      <details>
+        <summary className="cursor-pointer px-4 py-4 sm:px-6">
+          <span className="font-semibold">
+            {t.client_name || t.contact_name}
           </span>
-        ) : null}
-        <span className="text-xs text-muted-foreground">
-          {ago(t.last_inbound_at)}
-        </span>
-        <button
-          type="button"
-          disabled={busy}
-          onClick={async () => {
-            setBusy(true);
-            try {
-              await archive({ threadId: t.id, desk });
-              toast.success("Archived.");
-              onDone();
-            } catch (e) {
-              toast.error(
-                e instanceof Error ? e.message : "That did not work.",
-              );
-            } finally {
-              setBusy(false);
-            }
-          }}
-          className="-mr-2 ml-auto inline-flex h-8 items-center gap-1 rounded-lg px-2 text-xs text-muted-foreground hover:bg-muted disabled:opacity-50"
-        >
-          <Archive className="size-3.5" />
-          Archive
-        </button>
-      </div>
-
-      <div className="space-y-1.5 px-4 py-3 sm:px-6">
-        {t.messages.map(m => (
-          <p
-            key={`${m.at}-${m.direction}`}
-            className={`text-sm leading-snug ${
-              m.direction === "inbound" ? "" : "text-muted-foreground"
-            }`}
-          >
-            <span className="mr-1.5 font-medium">
-              {m.speaker ?? (m.direction === "inbound" ? "Them" : "Us")}
-            </span>
-            <Body m={m} />
-          </p>
-        ))}
-      </div>
-
-      {t.draft?.sent_at ? (
-        <p className="flex items-center gap-1.5 border-t px-4 py-3 text-xs text-muted-foreground sm:px-6">
-          <CheckCheck className="size-3.5 text-success" />
-          Sent by {t.draft.sent_by}
-        </p>
-      ) : noDraft ? (
-        <p className="border-t px-4 py-3 text-xs text-muted-foreground sm:px-6">
-          {t.draft?.why ?? "No reply drafted for this one."}
-        </p>
-      ) : (
-        <div className="border-t px-4 py-3 sm:px-6 sm:py-4">
-          {t.draft?.why ? (
-            <p className="mb-2 text-xs text-muted-foreground">{t.draft.why}</p>
-          ) : null}
-          <div className="mb-2 inline-flex gap-1">
-            {(["ar", "en"] as const).map(l => (
-              <button
-                key={l}
-                type="button"
-                onClick={() => switchTo(l)}
-                disabled={!t.draft?.[l]}
-                aria-pressed={lang === l}
-                className={`inline-flex h-8 items-center rounded-full px-3 text-xs font-medium disabled:opacity-40 ${
-                  lang === l
-                    ? "bg-primary/15 text-foreground ring-1 ring-inset ring-primary/40"
-                    : "text-muted-foreground hover:bg-muted hover:text-foreground"
-                }`}
-              >
-                {l === "ar" ? "العربية" : "English"}
-              </button>
-            ))}
-          </div>
-          <textarea
-            value={text}
-            dir="auto"
-            rows={3}
-            onChange={e => {
-              setText(e.target.value);
-              setEdited(true);
-            }}
-            className="w-full rounded-lg border bg-background p-2 text-sm leading-relaxed"
-          />
-          <div className="mt-2 flex items-center gap-2">
-            <button
-              type="button"
-              disabled={busy || !text.trim()}
-              onClick={async () => {
-                setBusy(true);
-                try {
-                  await send({ threadId: t.id, desk, body: text, lang });
-                  toast.success("Sent.");
-                  onDone();
-                } catch (e) {
-                  toast.error(
-                    e instanceof Error ? e.message : "That did not send.",
-                  );
-                } finally {
-                  setBusy(false);
-                }
-              }}
-              className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground disabled:opacity-50"
+          <span className="ml-2 text-xs text-muted-foreground">
+            {ago(t.last_inbound_at)} · Open conversation
+          </span>
+        </summary>
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 border-y px-4 py-2 sm:px-6">
+          <span className="text-sm font-medium" dir="auto">
+            {t.contact_name || t.phone || "Unknown"}
+          </span>
+          {t.is_group ? (
+            <span
+              title="A WhatsApp group, with the client's own people in it"
+              className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs text-muted-foreground"
             >
-              {busy ? (
-                <LoaderCircle className="size-3.5 animate-spin" />
-              ) : (
-                <Send className="size-3.5" />
-              )}
-              Send
-            </button>
-            {edited ? (
-              <span className="text-xs text-muted-foreground">Edited</span>
-            ) : null}
-          </div>
+              <Users className="size-3" />
+              Group
+            </span>
+          ) : null}
+          <span className="text-xs text-muted-foreground">
+            {ago(t.last_inbound_at)}
+          </span>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={async () => {
+              setBusy(true);
+              try {
+                await archive({ threadId: t.id, desk });
+                toast.success("Archived.");
+                onDone();
+              } catch (e) {
+                toast.error(
+                  e instanceof Error ? e.message : "That did not work.",
+                );
+              } finally {
+                setBusy(false);
+              }
+            }}
+            className="-mr-2 ml-auto inline-flex h-8 items-center gap-1 rounded-lg px-2 text-xs text-muted-foreground hover:bg-muted disabled:opacity-50"
+          >
+            <Archive className="size-3.5" />
+            Archive
+          </button>
         </div>
-      )}
+
+        <div className="space-y-1.5 px-4 py-3 sm:px-6">
+          {t.messages.map(m => (
+            <p
+              key={`${m.at}-${m.direction}`}
+              className={`text-sm leading-snug ${
+                m.direction === "inbound" ? "" : "text-muted-foreground"
+              }`}
+            >
+              <span className="mr-1.5 font-medium">
+                {m.speaker ?? (m.direction === "inbound" ? "Them" : "Us")}
+              </span>
+              <Body m={m} />
+            </p>
+          ))}
+        </div>
+
+        {t.draft?.sent_at ? (
+          <p className="flex items-center gap-1.5 border-t px-4 py-3 text-xs text-muted-foreground sm:px-6">
+            <CheckCheck className="size-3.5 text-success" />
+            Sent by {t.draft.sent_by}
+          </p>
+        ) : noDraft ? (
+          <p className="border-t px-4 py-3 text-xs text-muted-foreground sm:px-6">
+            {t.draft?.why ?? "No reply drafted for this one."}
+          </p>
+        ) : (
+          <div className="border-t px-4 py-3 sm:px-6 sm:py-4">
+            {t.draft?.why ? (
+              <p className="mb-2 text-xs text-muted-foreground">
+                {t.draft.why}
+              </p>
+            ) : null}
+            <div className="mb-2 inline-flex gap-1">
+              {(["ar", "en"] as const).map(l => (
+                <button
+                  key={l}
+                  type="button"
+                  onClick={() => switchTo(l)}
+                  disabled={!t.draft?.[l]}
+                  aria-pressed={lang === l}
+                  className={`inline-flex h-8 items-center rounded-full px-3 text-xs font-medium disabled:opacity-40 ${
+                    lang === l
+                      ? "bg-primary/15 text-foreground ring-1 ring-inset ring-primary/40"
+                      : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                  }`}
+                >
+                  {l === "ar" ? "العربية" : "English"}
+                </button>
+              ))}
+            </div>
+            <textarea
+              aria-label={`Reply to ${t.client_name || t.contact_name}`}
+              value={text}
+              dir="auto"
+              rows={3}
+              onChange={e => {
+                setText(e.target.value);
+                setEdited(true);
+              }}
+              className="w-full rounded-lg border bg-background p-2 text-sm leading-relaxed"
+            />
+            <div className="mt-2 flex items-center gap-2">
+              <button
+                type="button"
+                disabled={busy || Boolean(receipt) || !text.trim()}
+                onClick={async () => {
+                  if (lock.current) return;
+                  lock.current = true;
+                  setBusy(true);
+                  try {
+                    const result = await send({
+                      threadId: t.id,
+                      desk,
+                      body: text,
+                      lang,
+                    });
+                    const message = result.sent
+                      ? "The provider confirms this message was sent."
+                      : result.status === "failed"
+                        ? "The provider could not deliver this message. Check it in the CRM."
+                        : "The send is recorded. Check the CRM for delivery before sending again.";
+                    setReceipt(message);
+                    if (result.sent) toast.success(message);
+                    else toast.message(message);
+                  } catch (e) {
+                    toast.error(
+                      e instanceof Error ? e.message : "That did not send.",
+                    );
+                  } finally {
+                    lock.current = false;
+                    setBusy(false);
+                  }
+                }}
+                className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground disabled:opacity-50"
+              >
+                {busy ? (
+                  <LoaderCircle className="size-3.5 animate-spin" />
+                ) : (
+                  <Send className="size-3.5" />
+                )}
+                {busy ? "Sending…" : receipt ? "Send recorded" : "Send reply"}
+              </button>
+              {edited ? (
+                <span className="text-xs text-muted-foreground">Edited</span>
+              ) : null}
+            </div>
+          </div>
+        )}
+        {receipt && (
+          <p
+            role="status"
+            className="border-t px-4 py-3 text-sm text-muted-foreground"
+          >
+            {receipt}
+          </p>
+        )}
+      </details>
     </li>
   );
 }
@@ -260,19 +298,34 @@ export function WhatsAppDesk({ desk }: { desk: Desk }) {
   const inbox = useAction(api.wa.inbox);
   const [threads, setThreads] = useState<Thread[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [query, setQuery] = useState("");
+  const generation = useRef(0);
 
   const load = useCallback(async () => {
+    const current = ++generation.current;
+    setRefreshing(true);
     try {
       const out = (await inbox({ desk })) as { threads: Thread[] };
+      if (current !== generation.current) return;
       setThreads(out.threads ?? []);
       setError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "The desk did not load.");
+      if (current === generation.current)
+        setError(
+          (e as { data?: { message?: string } })?.data?.message ||
+            (e instanceof Error ? e.message : "The inbox did not load."),
+        );
+    } finally {
+      if (current === generation.current) setRefreshing(false);
     }
   }, [inbox, desk]);
 
   useEffect(() => {
     if (CONNECTED[desk]) void load();
+    return () => {
+      generation.current++;
+    };
   }, [load, desk]);
 
   // Not connected: one quiet line, the why folded under it, so a desk
@@ -291,9 +344,17 @@ export function WhatsAppDesk({ desk }: { desk: Desk }) {
 
   if (error)
     return (
-      <p className="text-sm text-muted-foreground">
-        WhatsApp did not load: {error}
-      </p>
+      <div role="alert" className="rounded-2xl border bg-card p-5 text-sm">
+        <p>{error}</p>
+        <button
+          type="button"
+          disabled={refreshing}
+          className="mt-3 rounded-xl border px-4 py-2"
+          onClick={() => void load()}
+        >
+          Try again
+        </button>
+      </div>
     );
   if (threads === null)
     return (
@@ -306,18 +367,49 @@ export function WhatsAppDesk({ desk }: { desk: Desk }) {
   return (
     <section>
       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-        <h2 className="text-[15px] font-semibold tracking-tight">WhatsApp</h2>
+        <h2 className="text-[15px] font-semibold tracking-tight">
+          Client messages
+        </h2>
         <span className="text-xs text-muted-foreground">
           {threads.length
             ? `${threads.length} waiting on a reply`
-            : "Every conversation is answered. New ones appear here within fifteen minutes of a client writing."}
+            : "No linked client conversations need a reply in this snapshot. Unlinked contacts are excluded."}
         </span>
+      </div>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <input
+          type="search"
+          aria-label="Find a client conversation"
+          placeholder="Find a client conversation"
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+          className="h-11 min-w-0 flex-1 rounded-xl border bg-card px-3 text-sm"
+        />
+        <button
+          type="button"
+          disabled={refreshing}
+          className="rounded-xl border px-4 py-2 text-sm disabled:opacity-50"
+          onClick={() => void load()}
+        >
+          {refreshing ? "Refreshing…" : "Refresh inbox"}
+        </button>
       </div>
       {threads.length ? (
         <ul className="mt-3 space-y-3">
-          {threads.map(t => (
-            <Thread key={t.id} t={t} desk={desk} onDone={() => void load()} />
-          ))}
+          {threads
+            .filter(t =>
+              `${t.client_name} ${t.contact_name}`
+                .toLowerCase()
+                .includes(query.toLowerCase()),
+            )
+            .map(t => (
+              <Thread
+                key={`${t.id}:${t.last_inbound_at}`}
+                t={t}
+                desk={desk}
+                onDone={() => void load()}
+              />
+            ))}
         </ul>
       ) : null}
     </section>

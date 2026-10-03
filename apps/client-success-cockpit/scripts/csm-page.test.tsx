@@ -173,7 +173,7 @@ test("the hot list and the message drafts render real client copy", async () => 
   });
   // A client name from the fixture must appear, so we know rows actually built.
   const html = host.innerHTML;
-  expect(html).toContain("Hot list");
+  expect(html).toContain("Opportunities");
   await reactAct(async () => root.unmount());
 });
 
@@ -202,11 +202,23 @@ test("client performance renders the overview then a single client", async () =>
   try {
     queryResult = undefined;
     await reactAct(async () => {
-      root.render(createElement(ClientPerformancePage, {}));
+      root.render(
+        createElement(
+          MemoryRouter,
+          null,
+          createElement(ClientPerformancePage, {}),
+        ),
+      );
     });
     queryByName = { performanceOverview: perfFixture.overview };
     await reactAct(async () => {
-      root.render(createElement(ClientPerformancePage, {}));
+      root.render(
+        createElement(
+          MemoryRouter,
+          null,
+          createElement(ClientPerformancePage, {}),
+        ),
+      );
     });
     expect(host.innerHTML).toContain("Client performance");
     expect(host.innerHTML).toContain(

@@ -6,9 +6,10 @@ import {
   ChevronRight,
   X,
 } from "lucide-react";
-import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router";
 import { toast } from "sonner";
+import { ClientCheckIn } from "@/components/ClientCheckIn";
 import {
   Chip,
   Dot,
@@ -26,7 +27,6 @@ import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
 import { DateInput } from "@/components/ui/date-input";
 import { Textarea } from "@/components/ui/textarea";
-import { WhatsAppDesk } from "@/components/WhatsAppDesk";
 import { opportunitiesFor, rankOpportunities } from "@/lib/csmHotList";
 import { LINK_GROUPS } from "@/lib/csmLinks";
 import {
@@ -1023,6 +1023,10 @@ function HotSheet({
 
 export function CsmPage({ section }: { section: Section }) {
   const snap = useQuery(api.csm.snapshot, {});
+  const [clientSearch, setClientSearch] = useState("");
+  const saving = useRef(false);
+  const requests = useRef(new Map<string, string>());
+  const [busy, setBusy] = useState(false);
   const toggleCheck = useMutation(api.csm.toggleCheck);
   const act = useMutation(api.csm.act);
   const addPlanItems = useMutation(api.csm.addPlanItems);
@@ -1132,7 +1136,13 @@ export function CsmPage({ section }: { section: Section }) {
     /upsell|referral|review/i.test(d.action),
   ).length;
   const ticketsToday = ds.filter(d => d.kind === "rerouted").length;
-  const clients: Client[] = snap.clients;
+  const clients: Client[] = snap.clients.filter(
+    (c: Client) =>
+      section !== "clients" ||
+      `${c.name} ${c.taskId}`
+        .toLowerCase()
+        .includes(clientSearch.trim().toLowerCase()),
+  );
   // Today = the combined priority list across both motions; the other two tabs are the
   // split, so he can work one motion at a time.
   const needsAction = (c: Client) => c.rank < 40 && c.level !== "green";
@@ -1169,6 +1179,12 @@ export function CsmPage({ section }: { section: Section }) {
     kind: string,
     extra: Record<string, unknown> = {},
   ) => {
+    if (saving.current) return;
+    saving.current = true;
+    setBusy(true);
+    const signature = JSON.stringify([c.taskId, action, kind, extra]);
+    const requestId = requests.current.get(signature) ?? crypto.randomUUID();
+    requests.current.set(signature, requestId);
     try {
       // The ClickUp id survives the sync replacing every row; the document id may not.
       await act({
@@ -1176,21 +1192,26 @@ export function CsmPage({ section }: { section: Section }) {
         taskId: c.taskId,
         action,
         kind,
+        requestId,
         ...extra,
       });
     } catch (e) {
       toast.error(String((e as Error).message ?? e));
       return;
+    } finally {
+      saving.current = false;
+      setBusy(false);
     }
+    requests.current.delete(signature);
     setOpen(null);
     setNote("");
     setTicketNote("");
     toast.success(
       kind === "ticket"
-        ? "Ticket created on the right board"
+        ? "Ticket queued for the team. Its ClickUp link will appear after sync."
         : kind === "left"
           ? "Left, with a reason logged"
-          : "Logged to ClickUp",
+          : "Saved here and queued for ClickUp",
     );
   };
 
@@ -1201,11 +1222,21 @@ export function CsmPage({ section }: { section: Section }) {
       .filter(Boolean)
       .map(text => ({ text }));
     if (!items.length) return;
-    await addPlanItems({ items });
-    setDump("");
-    toast.success(
-      `${items.length} task${items.length > 1 ? "s" : ""} created for tomorrow`,
-    );
+    if (saving.current) return;
+    saving.current = true;
+    setBusy(true);
+    try {
+      await addPlanItems({ items });
+      setDump("");
+      toast.success(
+        `${items.length} task${items.length > 1 ? "s" : ""} queued for ClickUp`,
+      );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Tasks could not be saved.");
+    } finally {
+      saving.current = false;
+      setBusy(false);
+    }
   };
 
   const row = (c: Client) => {
@@ -1284,7 +1315,23 @@ export function CsmPage({ section }: { section: Section }) {
         </button>
 
         {isOpen && (
-          <div className="space-y-4 border-t px-4 py-4 sm:px-6">
+          <fieldset
+            disabled={busy}
+            aria-busy={busy}
+            className="min-w-0 space-y-4 border-t px-4 py-4 sm:px-6"
+          >
+            <ClientCheckIn
+              taskId={c.taskId}
+              clientName={c.name}
+              nextCallAt={c.nextCallAt}
+            />
+            <Link
+              className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline"
+              to={`/performance?client=${encodeURIComponent(c.taskId)}`}
+            >
+              Open client profile{" "}
+              <ArrowUpRight className="size-4" aria-hidden />
+            </Link>
             <PillRow>
               {(
                 [
@@ -1298,11 +1345,11 @@ export function CsmPage({ section }: { section: Section }) {
               ).map(p => (
                 <Pill key={p} active={panel === p} onClick={() => setPanel(p)}>
                   {p === "message"
-                    ? "Message (SOP template)"
+                    ? "Message templates"
                     : p === "actions"
                       ? "Log a touchpoint"
                       : p === "book"
-                        ? "Book the next call"
+                        ? "Onboarding & other calls"
                         : p === "update"
                           ? "Update the board"
                           : p === "ticket"
@@ -1348,16 +1395,6 @@ export function CsmPage({ section }: { section: Section }) {
                   >
                     Logged a call and summary
                   </Button>
-                  <BookDate
-                    c={c}
-                    today={snap.day}
-                    label="Book the next touchpoint"
-                    onBook={d =>
-                      run(c, `Booked the next touchpoint for ${d}`, "booked", {
-                        value: d,
-                      })
-                    }
-                  />
                 </div>
                 {c.sheetLink || c.taskUrl ? (
                   <div className="flex flex-wrap gap-x-4 gap-y-2 text-xs">
@@ -1666,26 +1703,27 @@ export function CsmPage({ section }: { section: Section }) {
                 </Button>
               </div>
             )}
-          </div>
+          </fieldset>
         )}
       </div>
     );
   };
 
   const TITLE: Record<Section, string> = {
-    start: "Start of day",
-    clients: "Clients & touchpoints",
-    tasks: "Task list",
-    hot: "Hot list",
-    links: "Key links",
-    money: "My money",
+    start: "Today",
+    clients: "Client follow-ups",
+    tasks: "Tasks",
+    hot: "Opportunities",
+    links: "Resources",
+    money: "My income",
     eod: "End of day",
   };
   /** The pill for each tab. The order the pills sit in follows TABS, so the default is first. */
   const TAB_LABEL: Record<string, string> = {
-    today: `Today (${todayList.length})`,
-    management: `Client management (${managementList.filter(needsAction).length}/${managementList.length})`,
-    onboarding: `Client onboarding (${onboardingList.filter(needsAction).length}/${onboardingList.length})`,
+    today: `Needs attention (${todayList.length})`,
+    touchpoints: "Contact schedule",
+    management: `Active clients (${managementList.filter(needsAction).length}/${managementList.length})`,
+    onboarding: `Onboarding (${onboardingList.filter(needsAction).length}/${onboardingList.length})`,
     hot: `Hot list (${hotRows.length})`,
     loose: `Loose ends (${looseList.length})`,
     tasks: `ClickUp tasks (${snap.tasks.length})`,
@@ -1715,7 +1753,7 @@ export function CsmPage({ section }: { section: Section }) {
       {section === "start" && (
         <p className="text-[15px] leading-6">
           {t.dueToday === 0
-            ? "Nothing is waiting on you. Use the time on the hot list."
+            ? "No client follow-ups are due in this snapshot. Check messages or work on opportunities."
             : `${t.dueToday} ${t.dueToday === 1 ? "client needs" : "clients need"} a message or a call today.`}
           {t.pastDue > 0
             ? ` ${t.pastDue} ${t.pastDue === 1 ? "invoice is" : "invoices are"} past due.`
@@ -1820,7 +1858,11 @@ export function CsmPage({ section }: { section: Section }) {
               const doneCount = rows.filter(c => c.done).length;
               const allDone = doneCount === rows.length;
               return (
-                <details key={block} open={!allDone} className="group">
+                <details
+                  key={block}
+                  open={block === "sprint_am" && !allDone}
+                  className="group"
+                >
                   <summary className="no-marker flex cursor-pointer flex-wrap items-center justify-between gap-x-3 gap-y-1 px-4 py-3 sm:px-6">
                     <span
                       className={cn(
@@ -1852,7 +1894,14 @@ export function CsmPage({ section }: { section: Section }) {
                         aria-pressed={c.done}
                         className="flex w-full items-start gap-3 px-4 py-2 text-left text-sm hover:bg-muted/40 sm:px-6"
                         onClick={() =>
-                          toggleCheck({ id: c._id as Id<"checks"> })
+                          toggleCheck({
+                            id: c._id as Id<"checks">,
+                            done: !c.done,
+                          }).catch(() =>
+                            toast.error(
+                              "The checklist could not be saved. Try again.",
+                            ),
+                          )
                         }
                       >
                         <span
@@ -1897,12 +1946,55 @@ export function CsmPage({ section }: { section: Section }) {
 
       {/* The replies waiting on her, after the plan for the day. The
           desk keeps the replies drafted, with a send button on each. */}
-      {section === "start" && <WhatsAppDesk desk="csm" />}
+      {section === "start" && (
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Link
+            to="/clients"
+            className="rounded-2xl border bg-card p-5 transition-colors hover:border-primary/50"
+          >
+            <span className="font-semibold">
+              Work through client follow-ups
+            </span>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Open a client, book a check-in or log your update.
+            </p>
+          </Link>
+          <Link
+            to="/meetings"
+            className="rounded-2xl border bg-card p-5 transition-colors hover:border-primary/50"
+          >
+            <span className="font-semibold">Open meetings and messages</span>
+            <p className="mt-1 text-sm text-muted-foreground">
+              See your calendar and reply to linked clients.
+            </p>
+          </Link>
+        </div>
+      )}
 
       {/* Sending a cut for review, folded until it is needed: the reply
           a client is waiting for is often "here it is". */}
-      {section === "start" && <SendForReview folded />}
+      {section === "clients" && <SendForReview folded />}
 
+      {section === "clients" && (
+        <div className="space-y-2">
+          <label htmlFor="client-search" className="text-sm font-medium">
+            Find a client
+          </label>
+          <input
+            id="client-search"
+            type="search"
+            placeholder="Search by name or Client ID"
+            value={clientSearch}
+            onChange={e => setClientSearch(e.target.value)}
+            className="block h-11 w-full rounded-xl border bg-card px-4 text-sm sm:max-w-md"
+          />
+          {clients.length === 0 && (
+            <p role="status" className="text-sm text-muted-foreground">
+              No clients match this search. Try a name or ClickUp Client ID.
+            </p>
+          )}
+        </div>
+      )}
       {TABS[section].length > 1 && (
         <PillRow>
           {TABS[section]
@@ -1941,7 +2033,7 @@ export function CsmPage({ section }: { section: Section }) {
             {
               key: "nopoc",
               title: "No next call booked",
-              hint: "Every client needs a booked next call. Send the booking link here and save the date, it writes to the Next POC field in ClickUp. Messages are tracked automatically, they do not need booking.",
+              hint: "Every client needs a booked next call. Open the client and choose Book check-in. The confirmed booking queues the Next POC update in ClickUp. Messages are tracked automatically, they do not need booking.",
               rows: clients.filter(c => {
                 const poc = nextPocState(c, snap.day);
                 return poc.missing || poc.past;
@@ -2067,6 +2159,13 @@ export function CsmPage({ section }: { section: Section }) {
             <div className="space-y-3">{looseList.map(row)}</div>
           )}
         </div>
+      )}
+      {snap.tasksRestricted && tab === "tasks" && (
+        <p className="callout-warn rounded-2xl border p-4 text-sm">
+          The shared task feed has no client IDs, so it is hidden for your
+          client-limited seat. Open a client profile to view or add that
+          client’s tasks.
+        </p>
       )}
       {tab === "tasks" && (
         <div className="space-y-6">
@@ -2415,7 +2514,12 @@ export function CsmPage({ section }: { section: Section }) {
               placeholder="Arabic or English. One line per thing."
               dir="auto"
             />
-            <Button size="sm" variant="secondary" onClick={submitPlan}>
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={busy || !dump.trim()}
+              onClick={submitPlan}
+            >
               Create tomorrow's tasks
             </Button>
           </div>
@@ -2429,7 +2533,7 @@ export function CsmPage({ section }: { section: Section }) {
           title={
             <span className="inline-flex flex-wrap items-center gap-2">
               Your EOD
-              {snap.eod ? <Chip tone="good">Submitted</Chip> : null}
+              {snap.eod ? <Chip tone="good">Saved</Chip> : null}
             </span>
           }
         >
@@ -2576,44 +2680,62 @@ export function CsmPage({ section }: { section: Section }) {
               placeholder="Daily roll up, fires, anything leadership should know"
               dir="auto"
             />
+            {snap.eod?.exportError && (
+              <p role="alert" className="text-sm txt-warn">
+                Saved here. Delivery needs attention: {snap.eod.exportError}
+              </p>
+            )}
             <Button
+              disabled={busy}
               onClick={async () => {
-                await submitEod({
-                  energy,
-                  stress,
-                  answers: {
-                    callSummary,
-                    expectations,
-                    touchpoints,
-                    fathom,
-                    newSignups,
-                    upsells,
-                    reviews,
-                    referrals,
-                    lost,
-                    onePercent,
-                    rollup,
-                    offboarded,
-                    extended,
-                    paused: pausedToday,
-                  },
-                  computed: {
-                    handled: snap.decisions.length,
-                    calls: callsToday,
-                    signups: signupsToday,
-                    hot: hotToday,
-                    tickets: ticketsToday,
-                    left: snap.decisions.filter(
-                      (d: { kind: string }) => d.kind === "left",
-                    ).length,
-                  },
-                });
-                toast.success(
-                  "EOD filed. It posts to the EOD channel and the sheet on its own.",
-                );
+                if (saving.current) return;
+                saving.current = true;
+                setBusy(true);
+                try {
+                  await submitEod({
+                    energy,
+                    stress,
+                    answers: {
+                      callSummary,
+                      expectations,
+                      touchpoints,
+                      fathom,
+                      newSignups,
+                      upsells,
+                      reviews,
+                      referrals,
+                      lost,
+                      onePercent,
+                      rollup,
+                      offboarded,
+                      extended,
+                      paused: pausedToday,
+                    },
+                    computed: {
+                      handled: snap.decisions.length,
+                      calls: callsToday,
+                      signups: signupsToday,
+                      hot: hotToday,
+                      tickets: ticketsToday,
+                      left: snap.decisions.filter(
+                        (d: { kind: string }) => d.kind === "left",
+                      ).length,
+                    },
+                  });
+                  toast.success("EOD saved. Delivery to the team is queued.");
+                } catch (e) {
+                  toast.error(
+                    e instanceof Error
+                      ? e.message
+                      : "The EOD could not be saved.",
+                  );
+                } finally {
+                  saving.current = false;
+                  setBusy(false);
+                }
               }}
             >
-              File my EOD
+              {busy ? "Saving…" : "Save my EOD"}
             </Button>
           </div>
         </SectionCard>

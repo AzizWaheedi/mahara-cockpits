@@ -7,7 +7,20 @@
  * are the same object with the same rules.
  */
 import { v } from "convex/values";
+import { internal } from "./_generated/api";
 import { authenticatedAction } from "./functions";
+
+type Seat = { email: string; clients: { name: string; taskId: string }[] };
+function clientFor(seat: Seat, name?: string, taskId?: string) {
+  const hits = seat.clients.filter(
+    c =>
+      (!taskId || c.taskId === taskId) &&
+      c.name.trim().toLowerCase() === name?.trim().toLowerCase(),
+  );
+  if (hits.length !== 1)
+    throw new Error("Select one of your clients before creating a review.");
+  return hits[0];
+}
 
 declare const process: { env: Record<string, string | undefined> };
 
@@ -22,6 +35,7 @@ async function rpc(fn: string, args: Record<string, unknown>) {
     throw new Error("Supabase is not configured for this cockpit.");
   const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${fn}`, {
     method: "POST",
+    signal: AbortSignal.timeout(20000),
     headers: {
       apikey: SUPABASE_KEY,
       Authorization: `Bearer ${SUPABASE_KEY}`,
@@ -30,18 +44,10 @@ async function rpc(fn: string, args: Record<string, unknown>) {
     body: JSON.stringify(args),
   });
   const text = await res.text();
-  if (!res.ok) {
-    // Postgres raises these as plain sentences on purpose, so show the
-    // sentence rather than a wall of JSON.
-    let why = text.slice(0, 300);
-    try {
-      const parsed = JSON.parse(text) as { message?: string };
-      if (parsed.message) why = parsed.message;
-    } catch {
-      // not JSON; the raw text is the best we have
-    }
-    throw new Error(why);
-  }
+  if (!res.ok)
+    throw new Error(
+      `The review service could not complete the request (${res.status}). Refresh its status before trying again.`,
+    );
   return text ? JSON.parse(text) : null;
 }
 
@@ -80,8 +86,13 @@ export const create = authenticatedAction({
   },
   returns: v.any(),
   handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    const by = String(identity?.email ?? identity?.name ?? "unknown");
+    const seat: Seat = await ctx.runQuery(internal.roles.actionSeat, {
+      userId: ctx.userId,
+    });
+    const client = clientFor(seat, args.client);
+    const by = seat.email;
+    if (args.videos.length > 30 || (args.note?.length ?? 0) > 5000)
+      throw new Error("Use up to 30 items and a short note.");
 
     const videos = args.videos
       .map(x => ({ ...x, url: x.url.trim() }))
@@ -96,8 +107,8 @@ export const create = authenticatedAction({
     const made = (await rpc("review_create", {
       p_title: args.title.trim() || "Videos for review",
       p_note: (args.note ?? "").trim() || null,
-      p_client: (args.client ?? "").trim() || null,
-      p_client_task_id: null,
+      p_client: client.name,
+      p_client_task_id: client.taskId,
       p_by: by,
       p_items: videos.map((x, i) => {
         const kind = kindOf(x.url);
@@ -122,14 +133,26 @@ export const sent = authenticatedAction({
   args: {},
   returns: v.any(),
   handler: async ctx => {
-    await ctx.auth.getUserIdentity();
+    const seat: Seat = await ctx.runQuery(internal.roles.actionSeat, {
+      userId: ctx.userId,
+    });
     const rows = (await rpc("review_list", { p_limit: 25 })) as Array<
       Record<string, unknown>
     > | null;
-    return (rows ?? []).map(r => ({
-      ...r,
-      url: `${REVIEW_BASE}/${String(r.token)}`,
-    }));
+    return (rows ?? [])
+      .filter(r =>
+        seat.clients.some(
+          c =>
+            c.name.trim().toLowerCase() ===
+            String(r.client_name ?? "")
+              .trim()
+              .toLowerCase(),
+        ),
+      )
+      .map(r => ({
+        ...r,
+        url: `${REVIEW_BASE}/${String(r.token)}`,
+      }));
   },
 });
 
@@ -138,8 +161,10 @@ export const clients = authenticatedAction({
   args: {},
   returns: v.any(),
   handler: async ctx => {
-    await ctx.auth.getUserIdentity();
-    return (await rpc("review_clients", {})) ?? [];
+    const seat: Seat = await ctx.runQuery(internal.roles.actionSeat, {
+      userId: ctx.userId,
+    });
+    return seat.clients.map(c => ({ name: c.name, task_id: c.taskId }));
   },
 });
 
@@ -161,17 +186,24 @@ export const importFolder = authenticatedAction({
   },
   returns: v.any(),
   handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
+    const seat: Seat = await ctx.runQuery(internal.roles.actionSeat, {
+      userId: ctx.userId,
+    });
+    const client = clientFor(seat, args.client, args.clientTaskId);
     const folder = args.folder.trim();
-    if (!/drive\.google\.com|^[A-Za-z0-9_-]{20,}$/.test(folder))
+    if (
+      !/^(?:https:\/\/drive\.google\.com\/(?:drive\/folders\/|folders\/)[A-Za-z0-9_-]+(?:\?[^\s]*)?|[A-Za-z0-9_-]{20,})$/.test(
+        folder,
+      )
+    )
       throw new Error("Paste the Google Drive folder link.");
     return await rpc("review_import_folder", {
       p_folder: folder,
       p_title: (args.title ?? "").trim() || "Videos for review",
       p_note: (args.note ?? "").trim() || null,
-      p_client: (args.client ?? "").trim() || null,
-      p_client_task_id: args.clientTaskId ?? null,
-      p_by: String(identity?.email ?? "unknown"),
+      p_client: client.name,
+      p_client_task_id: client.taskId,
+      p_by: seat.email,
     });
   },
 });
@@ -180,11 +212,31 @@ export const importStatus = authenticatedAction({
   args: { id: v.number() },
   returns: v.any(),
   handler: async (ctx, { id }) => {
-    await ctx.auth.getUserIdentity();
-    const out = (await rpc("review_import_status", { p_id: id })) as Record<
-      string,
-      unknown
-    > | null;
+    const seat: Seat = await ctx.runQuery(internal.roles.actionSeat, {
+      userId: ctx.userId,
+    });
+    if (!Number.isSafeInteger(id) || id < 1)
+      throw new Error("Choose a valid import.");
+    if (!SUPABASE_URL || !SUPABASE_KEY)
+      throw new Error("The review service is not configured.");
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/review_imports?select=id,status,token,found,copied,error,client_task_id,client_name,requested_by&id=eq.${id}&limit=1`,
+      {
+        signal: AbortSignal.timeout(15000),
+        headers: {
+          apikey: SUPABASE_KEY,
+          Authorization: `Bearer ${SUPABASE_KEY}`,
+        },
+      },
+    );
+    if (!res.ok)
+      throw new Error(
+        "The import status could not be read. Try refreshing it.",
+      );
+    const rows = (await res.json()) as Record<string, unknown>[];
+    const out = rows[0];
+    if (out && !seat.clients.some(c => c.taskId === out.client_task_id))
+      throw new Error("That import is not for one of your clients.");
     if (!out) return null;
     return out.token
       ? { ...out, url: `${REVIEW_BASE}/${String(out.token)}` }

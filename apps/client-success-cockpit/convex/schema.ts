@@ -19,6 +19,14 @@ const schema = defineSchema({
     updatedAt: v.number(),
   }).index("by_key", ["key"]),
 
+  actionReceipts: defineTable({
+    key: v.string(),
+    fingerprint: v.string(),
+    status: v.string(),
+    at: v.number(),
+    receipt: v.optional(v.string()),
+  }).index("by_key", ["key"]),
+
   clients: defineTable({
     taskId: v.string(),
     taskUrl: v.optional(v.string()),
@@ -399,6 +407,7 @@ const schema = defineSchema({
   }).index("by_role_day", ["role", "day"]),
 
   planItems: defineTable({
+    byEmail: v.optional(v.string()),
     role: v.string(),
     day: v.string(),
     text: v.string(),

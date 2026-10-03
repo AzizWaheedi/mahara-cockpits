@@ -10,7 +10,8 @@
  * rights to the EOD sheet already live.
  */
 import { v } from "convex/values";
-import { internalAction } from "./_generated/server";
+import { internal } from "./_generated/api";
+import { internalAction, internalMutation } from "./_generated/server";
 
 declare const process: { env: Record<string, string | undefined> };
 
@@ -18,7 +19,7 @@ const SUPABASE_URL = (process.env.SUPABASE_URL ?? "").replace(/\/+$/, "");
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 
 /** From the tracking sheet's Roster: the radar matches on this id. */
-const SALEH = { name: "Saleh", slackId: "U09SHBK2C9F", channel: "#eods-csms" };
+const CHANNEL = "#eods-csms";
 const TAB = "Account Manager";
 
 /** `DD-MM-YYYY`, which is the form the live EOD posts use. */
@@ -33,10 +34,39 @@ export const send = internalAction({
     answers: v.any(),
     computed: v.any(),
     email: v.optional(v.string()),
+    reportId: v.optional(v.id("eodReports")),
+    version: v.optional(v.number()),
   },
   returns: v.null(),
-  handler: async (_ctx, { day, answers, computed }) => {
-    if (!SUPABASE_URL || !SUPABASE_KEY) return null;
+  handler: async (
+    ctx,
+    { day, answers, computed, email, reportId, version },
+  ) => {
+    const record = async (error?: string) => {
+      if (reportId)
+        await ctx.runMutation(internal.eodOut.record, {
+          reportId,
+          version,
+          error,
+        });
+    };
+    if (!SUPABASE_URL || !SUPABASE_KEY) {
+      await record("The EOD delivery connection is not configured.");
+      return null;
+    }
+    let roster: Record<string, { name: string; slackId: string }> = {};
+    try {
+      roster = JSON.parse(process.env.CSM_EOD_ROSTER ?? "{}");
+    } catch {
+      /* Fail closed for a malformed mapping. */
+    }
+    const person = roster[(email ?? "").trim().toLowerCase()];
+    if (!person?.name || !/^U[A-Z0-9]+$/.test(person.slackId)) {
+      await record(
+        "Ask the system owner to connect your email to the EOD roster. Your report is saved.",
+      );
+      return null;
+    }
     const a = (answers ?? {}) as Record<string, string>;
     const c = (computed ?? {}) as Record<string, unknown>;
 
@@ -46,11 +76,11 @@ export const send = internalAction({
       "*CSM EOD*",
       `*Date - ${asDate(day)}`,
       "",
-      `*Name - ${SALEH.name}*`,
-      `Submitted by: <@${SALEH.slackId}>`,
+      `*Name - ${person.name}*`,
+      `Submitted by: <@${person.slackId}>`,
       "",
       "*HEALTH*",
-      `Focus - ${a.focus ?? ""}`,
+      `Focus - ${a.focus ?? a.stress ?? ""}`,
       `Energy - ${a.energy ?? ""}`,
       "",
       "*OUTPUT*",
@@ -59,59 +89,84 @@ export const send = internalAction({
       `Clients at risk - ${c.atRisk ?? a.atRisk ?? ""}`,
       "",
       "*WINS*",
-      String(a.wins ?? "--"),
+      String(a.wins ?? a.onePercent ?? "--"),
       "",
       "*BLOCKERS*",
-      String(a.blockers ?? "--"),
+      String(a.blockers ?? a.expectations ?? "--"),
       "",
       "*TOMORROW*",
       String(a.tomorrow ?? "--"),
       "",
       "*DAY SUMMARY*",
-      String(a.summary ?? "--"),
+      String(a.summary ?? a.rollup ?? "--"),
     ].join("\n");
 
     const values = [
       new Date().toISOString().slice(0, 19).replace("T", " "),
-      SALEH.name,
+      person.name,
       `cockpit-${day}`,
       asDate(day),
       String(a.energy ?? ""),
-      String(a.focus ?? ""),
-      String(a.wins ?? ""),
-      String(a.blockers ?? ""),
+      String(a.focus ?? a.stress ?? ""),
+      String(a.wins ?? a.onePercent ?? ""),
+      String(a.blockers ?? a.expectations ?? ""),
       String(a.tomorrow ?? ""),
-      String(a.summary ?? ""),
+      String(a.summary ?? a.rollup ?? ""),
     ];
 
-    await fetch(
-      `${SUPABASE_URL}/rest/v1/eod_outbox?on_conflict=role,day,person`,
-      {
-        method: "POST",
-        headers: {
-          apikey: SUPABASE_KEY,
-          Authorization: `Bearer ${SUPABASE_KEY}`,
-          "Content-Type": "application/json",
-          // A resubmit replaces the queued row rather than posting twice.
-          Prefer: "resolution=merge-duplicates,return=minimal",
-        },
-        body: JSON.stringify([
-          {
-            role: "csm",
-            day,
-            person: SALEH.name,
-            slack_id: SALEH.slackId,
-            channel: SALEH.channel,
-            tab: TAB,
-            body,
-            row_values: values,
-            status: "queued",
-            attempts: 0,
-            error: null,
+    try {
+      const response = await fetch(
+        `${SUPABASE_URL}/rest/v1/eod_outbox?on_conflict=role,day,person`,
+        {
+          method: "POST",
+          signal: AbortSignal.timeout(15000),
+          headers: {
+            apikey: SUPABASE_KEY,
+            Authorization: `Bearer ${SUPABASE_KEY}`,
+            "Content-Type": "application/json",
+            // A resubmit replaces the queued row rather than posting twice.
+            Prefer: "resolution=merge-duplicates,return=minimal",
           },
-        ]),
-      },
-    );
+          body: JSON.stringify([
+            {
+              role: "csm",
+              day,
+              person: person.name,
+              slack_id: person.slackId,
+              channel: CHANNEL,
+              tab: TAB,
+              body,
+              row_values: values,
+              status: "queued",
+              attempts: 0,
+              error: null,
+            },
+          ]),
+        },
+      );
+      if (!response.ok)
+        throw new Error(
+          `Delivery queue refused the report (${response.status}).`,
+        );
+      await record();
+    } catch {
+      await record(
+        "The delivery queue did not confirm this report. Ask the system owner to check it before resubmitting.",
+      );
+    }
     return null;
+  },
+});
+
+export const record = internalMutation({
+  args: {
+    reportId: v.id("eodReports"),
+    version: v.optional(v.number()),
+    error: v.optional(v.string()),
+  },
+  handler: async (ctx, a) => {
+    const row = await ctx.db.get(a.reportId);
+    if (row && (a.version === undefined || row.at === a.version))
+      await ctx.db.patch(a.reportId, { exportError: a.error });
   },
 });

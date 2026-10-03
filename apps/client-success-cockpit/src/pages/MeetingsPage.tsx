@@ -1,6 +1,10 @@
 import { useMutation, useQuery } from "convex/react";
 import { ArrowUpRight } from "lucide-react";
 import { useState } from "react";
+import { Link, useSearchParams } from "react-router";
+import { toast } from "sonner";
+import { Pill, PillRow } from "@/components/kit";
+import { WhatsAppDesk } from "@/components/WhatsAppDesk";
 import { api } from "../../convex/_generated/api";
 
 // biome-ignore lint/suspicious/noExplicitAny: feed rows
@@ -75,12 +79,13 @@ function CalendarLink({ link, saEmail }: { link: Any; saEmail: string }) {
   const [email, setEmail] = useState("");
   const [open, setOpen] = useState(false);
   const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
   if (link) {
     const status =
       link.status === "ok"
         ? `connected, ${link.events ?? 0} event${link.events === 1 ? "" : "s"} in view`
         : link.status === "pending"
-          ? "checking, under a minute"
+          ? "connection check queued"
           : "not readable yet";
     return (
       <div className="text-xs text-muted-foreground">
@@ -89,7 +94,17 @@ function CalendarLink({ link, saEmail }: { link: Any; saEmail: string }) {
         <button
           type="button"
           className="underline underline-offset-2 hover:text-foreground"
-          onClick={() => unlinkCalendar({})}
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true);
+            try {
+              await unlinkCalendar({});
+            } catch {
+              toast.error("The calendar could not be disconnected.");
+            } finally {
+              setBusy(false);
+            }
+          }}
         >
           Disconnect
         </button>
@@ -114,12 +129,16 @@ function CalendarLink({ link, saEmail }: { link: Any; saEmail: string }) {
       className="mt-2 w-full max-w-xl rounded-xl bg-muted/40 p-4 text-xs"
       onSubmit={async e => {
         e.preventDefault();
+        if (busy) return;
+        setBusy(true);
         setErr("");
         try {
           await linkCalendar({ calendarId: email });
           setOpen(false);
         } catch (x) {
           setErr(String((x as Error).message ?? x));
+        } finally {
+          setBusy(false);
         }
       }}
     >
@@ -138,6 +157,9 @@ function CalendarLink({ link, saEmail }: { link: Any; saEmail: string }) {
       </ol>
       <div className="mt-2 flex flex-wrap items-center gap-2">
         <input
+          aria-label="Google Calendar email"
+          type="email"
+          required
           value={email}
           onChange={e => setEmail(e.target.value)}
           placeholder="you@maharamedia.com"
@@ -145,7 +167,7 @@ function CalendarLink({ link, saEmail }: { link: Any; saEmail: string }) {
         />
         <button
           type="submit"
-          disabled={!email.includes("@")}
+          disabled={busy || !email.includes("@")}
           className="inline-flex h-9 items-center rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground disabled:opacity-50"
         >
           Connect
@@ -165,27 +187,18 @@ function CalendarLink({ link, saEmail }: { link: Any; saEmail: string }) {
 
 export function MeetingsPage() {
   const data = useQuery(api.comms.overview, {});
-  const sendReply = useMutation(api.comms.sendReply);
-  const [drafts, setDrafts] = useState<Record<string, string>>({});
-  const [sending, setSending] = useState<Record<string, boolean>>({});
-  const [openThread, setOpenThread] = useState<string | null>(null);
+  const [params, setParams] = useSearchParams();
+  const messages = params.get("view") === "messages";
   if (!data)
     return (
-      <p className="mx-auto w-full max-w-6xl text-sm text-muted-foreground">
-        Loading…
+      <p
+        className="mx-auto max-w-6xl text-sm text-muted-foreground"
+        role="status"
+      >
+        Loading your schedule…
       </p>
     );
-  const {
-    today,
-    upcoming,
-    nextCall,
-    threads,
-    calendarConfigured,
-    whatsappConfigured,
-    syncedAt,
-    myCalendar,
-    saEmail,
-  } = data as Any;
+  const { today, upcoming, syncedAt, myCalendar, saEmail } = data as Any;
   const todayCounts = (today as Any[]).reduce(
     (acc: Record<string, number>, e) => {
       const k = e.kind ?? (e.clientName ? "client" : "other");
@@ -194,326 +207,137 @@ export function MeetingsPage() {
     },
     {},
   );
-  const waiting = (threads as Any[]).filter(
-    t => t.waitingSince && !t.repliedAt && !t.sendingAt,
-  );
-  const inFlight = (threads as Any[]).filter(t => t.sendingAt);
-  const quiet = (threads as Any[]).filter(
-    t => !t.waitingSince && (t.silentDays ?? 0) >= 3 && t.clientName,
-  );
-
   return (
     <div className="mx-auto w-full max-w-6xl space-y-6">
       <header>
-        <h1 className="text-2xl font-semibold tracking-tight sm:text-[28px] sm:leading-9">
+        <h1 className="text-2xl font-semibold tracking-tight sm:text-[28px]">
           Meetings and messages
         </h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          {syncedAt ? `Refreshed ${ago(syncedAt)} ago. ` : ""}
-          {!calendarConfigured ? "No calendar events yet. " : ""}
-          {!whatsappConfigured ? "WhatsApp not connected yet." : ""}
+          Your calendar and linked client conversations. Times are shown in
+          Kuwait time.
+          {syncedAt ? ` Calendar refreshed ${ago(syncedAt)} ago.` : ""}
         </p>
       </header>
-
-      <section className={CARD}>
-        <div className="mb-4 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-2">
-          <h2 className={CARD_TITLE}>
-            Today
-            {today.length ? (
-              <span className="ml-2 text-xs font-normal text-muted-foreground">
-                {[
-                  todayCounts.client ? `${todayCounts.client} client` : "",
-                  todayCounts.team ? `${todayCounts.team} team` : "",
-                  todayCounts.other ? `${todayCounts.other} other` : "",
-                ]
-                  .filter(Boolean)
-                  .join(", ")}
-              </span>
-            ) : null}
-          </h2>
-          <CalendarLink link={myCalendar} saEmail={saEmail} />
-        </div>
-        {today.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            Nothing in the calendar today.
-          </p>
-        ) : (
-          <ul className="divide-y">
-            {(today as Any[]).map(e => (
-              <li
-                key={e.eventId}
-                className="flex flex-wrap items-baseline gap-x-3 gap-y-1 py-3 text-sm first:pt-0 last:pb-0"
-              >
-                <span className="w-14 shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
-                  {e.allDay ? "All day" : clock(e.start)}
-                </span>
-                <span className="min-w-0 font-medium" dir="auto">
-                  {e.title}
-                </span>
-                {(() => {
-                  const k = e.kind ?? (e.clientName ? "client" : "other");
-                  return KIND_LABEL[k] ? (
-                    <span className="inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs font-medium">
-                      <span
-                        aria-hidden
-                        className={`size-1.5 rounded-full ${KIND_DOT[k]}`}
-                      />
-                      {KIND_LABEL[k]}
-                    </span>
-                  ) : null;
-                })()}
-                {e.clientName ? (
-                  <span className="rounded-full bg-muted px-2 py-0.5 text-xs">
-                    {e.clientName}
-                  </span>
-                ) : null}
-                {e.meetLink ? <Ext href={e.meetLink}>Join</Ext> : null}
-                {e.attendees?.length ? (
-                  <span className="basis-full text-xs text-muted-foreground sm:ml-auto sm:basis-auto">
-                    {e.attendees.slice(0, 3).join(", ")}
-                  </span>
-                ) : null}
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
-
-      {inFlight.length ? (
-        <section className={CARD}>
-          <h2 className={`mb-4 ${CARD_TITLE}`}>Sending</h2>
-          <ul className="divide-y text-sm">
-            {inFlight.map(t => (
-              <li
-                key={t.chatId}
-                className="flex flex-wrap items-baseline gap-x-2 gap-y-1 py-3 first:pt-0 last:pb-0"
-              >
-                <span className="font-medium">{t.name}</span>
-                <span className="text-muted-foreground">
-                  Reply leaving within a minute, queued {ago(t.sendingAt)} ago
-                </span>
-              </li>
-            ))}
-          </ul>
-        </section>
-      ) : null}
-
-      <section className={CARD}>
-        <h2 className={`mb-4 ${CARD_TITLE}`}>Next check-in per client</h2>
-        {nextCall.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            No client calls booked in the next three weeks.
-          </p>
-        ) : (
-          <div className="-mx-4 overflow-x-auto px-4 sm:-mx-6 sm:px-6">
-            <table className="w-full text-sm">
-              <tbody className="divide-y">
-                {(nextCall as Any[]).map(n => (
-                  <tr key={n.clientName} className="align-baseline">
-                    <td className="py-2 pr-4">
-                      <div className="font-medium">{n.clientName}</div>
-                      {/* On a phone the title sits under the name, so the
-                          date keeps its place on the right. */}
-                      <div
-                        className="text-xs text-muted-foreground sm:hidden"
-                        dir="auto"
-                      >
-                        {n.title}
-                      </div>
-                    </td>
-                    <td
-                      className="py-2 pr-4 text-muted-foreground max-sm:hidden"
-                      dir="auto"
-                    >
-                      {n.title}
-                    </td>
-                    <td className="whitespace-nowrap py-2 text-right font-mono text-xs tabular-nums">
-                      {day(n.start)} {n.allDay ? "" : clock(n.start)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+      <PillRow>
+        <Pill active={!messages} onClick={() => setParams({})}>
+          Schedule
+        </Pill>
+        <Pill active={messages} onClick={() => setParams({ view: "messages" })}>
+          Client messages
+        </Pill>
+      </PillRow>
+      {messages ? (
+        <WhatsAppDesk desk="csm" />
+      ) : (
+        <>
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border bg-card p-4">
+            <p className="text-sm text-muted-foreground">
+              Book the next check-in from the client's card.
+            </p>
+            <Link
+              to="/clients"
+              className="text-sm font-medium text-primary hover:underline"
+            >
+              Find a client
+            </Link>
           </div>
-        )}
-      </section>
-
-      <section className={CARD}>
-        <h2 className={`mb-4 ${CARD_TITLE}`}>Waiting on you in WhatsApp</h2>
-        {waiting.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            Nobody is waiting for a reply.
-          </p>
-        ) : (
-          <ul className="divide-y">
-            {waiting.map(t => {
-              const text = drafts[t.chatId] ?? t.draft ?? "";
-              return (
-                <li
-                  key={t.chatId}
-                  className="py-4 text-sm first:pt-0 last:pb-0"
-                >
-                  <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-                    <span className="font-medium">{t.name}</span>
-                    {t.clientName ? (
-                      <span className="rounded-full bg-muted px-2 py-0.5 text-xs">
-                        {t.clientName}
-                      </span>
-                    ) : null}
-                    <span className="ml-auto text-xs text-muted-foreground">
-                      Waiting {ago(t.waitingSince)}
+          <section className={CARD}>
+            <div className="mb-4 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-2">
+              <h2 className={CARD_TITLE}>
+                Today
+                {today.length ? (
+                  <span className="ml-2 text-xs font-normal text-muted-foreground">
+                    {[
+                      todayCounts.client ? `${todayCounts.client} client` : "",
+                      todayCounts.team ? `${todayCounts.team} team` : "",
+                      todayCounts.other ? `${todayCounts.other} other` : "",
+                    ]
+                      .filter(Boolean)
+                      .join(", ")}
+                  </span>
+                ) : null}
+              </h2>
+              <CalendarLink link={myCalendar} saEmail={saEmail} />
+            </div>
+            {today.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                Nothing in the calendar today.
+              </p>
+            ) : (
+              <ul className="divide-y">
+                {(today as Any[]).map(e => (
+                  <li
+                    key={e.eventId}
+                    className="flex flex-wrap items-baseline gap-x-3 gap-y-1 py-3 text-sm first:pt-0 last:pb-0"
+                  >
+                    <span className="w-14 shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
+                      {e.allDay ? "All day" : clock(e.start)}
                     </span>
-                  </div>
-                  <p className="mt-1 text-muted-foreground" dir="auto">
-                    {t.recent?.length
-                      ? `${t.recent[t.recent.length - 1].who}: ${t.recent[t.recent.length - 1].text}`
-                      : ""}
-                  </p>
-                  <div className="mt-3 rounded-xl bg-muted/40 p-3">
-                    <p className="mb-2 text-xs font-medium text-muted-foreground">
-                      Recommended reply
-                      {t.draft ? ", from the communication SOP" : ""}
-                    </p>
-                    {t.sendError ? (
-                      <p className="mb-2 text-xs txt-bad">
-                        The last send failed: {t.sendError}. Fix and send again.
-                      </p>
+                    <span className="min-w-0 font-medium" dir="auto">
+                      {e.title}
+                    </span>
+                    {(() => {
+                      const k = e.kind ?? (e.clientName ? "client" : "other");
+                      return KIND_LABEL[k] ? (
+                        <span className="inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs font-medium">
+                          <span
+                            aria-hidden
+                            className={`size-1.5 rounded-full ${KIND_DOT[k]}`}
+                          />
+                          {KIND_LABEL[k]}
+                        </span>
+                      ) : null;
+                    })()}
+                    {e.clientName ? (
+                      <span className="rounded-full bg-muted px-2 py-0.5 text-xs">
+                        {e.clientName}
+                      </span>
                     ) : null}
-                    <textarea
-                      value={text}
-                      onChange={e =>
-                        setDrafts(d => ({ ...d, [t.chatId]: e.target.value }))
-                      }
-                      rows={3}
-                      placeholder={
-                        t.draft
-                          ? ""
-                          : "Hermes is drafting a reply from the SOP…"
-                      }
-                      dir="auto"
-                      className="w-full resize-y rounded-lg border bg-background px-3 py-2 text-sm"
-                    />
-                    <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
-                      <button
-                        type="button"
-                        disabled={!text.trim() || sending[t.chatId]}
-                        onClick={async () => {
-                          setSending(x => ({ ...x, [t.chatId]: true }));
-                          try {
-                            await sendReply({ chatId: t.chatId, text });
-                          } finally {
-                            setSending(x => ({ ...x, [t.chatId]: false }));
-                          }
-                        }}
-                        className="inline-flex h-9 items-center rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground disabled:opacity-50"
-                      >
-                        {sending[t.chatId] ? "Sending…" : "Send on WhatsApp"}
-                      </button>
-                      <span className="text-xs text-muted-foreground">
-                        Edit it first if you want. It leaves within a minute.
+                    {e.meetLink ? <Ext href={e.meetLink}>Join</Ext> : null}
+                    {e.attendees?.length ? (
+                      <span className="basis-full text-xs text-muted-foreground sm:ml-auto sm:basis-auto">
+                        {e.attendees.slice(0, 3).join(", ")}
                       </span>
-                    </div>
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </section>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
 
-      {quiet.length > 0 ? (
-        <section className={CARD}>
-          <h2 className={`mb-4 ${CARD_TITLE}`}>Quiet clients</h2>
-          <ul className="flex flex-wrap gap-2 text-sm">
-            {quiet.map(t => (
-              <li key={t.chatId} className="rounded-full border px-3 py-1">
-                {t.clientName}{" "}
-                <span className="text-muted-foreground">
-                  · silent {t.silentDays}d
-                </span>
-              </li>
-            ))}
-          </ul>
-        </section>
-      ) : null}
-
-      <section className={CARD}>
-        <h2 className={`mb-4 ${CARD_TITLE}`}>Next 7 days</h2>
-        {upcoming.length === 0 ? (
-          <p className="text-sm text-muted-foreground">Nothing booked.</p>
-        ) : (
-          <ul className="divide-y">
-            {(upcoming as Any[]).map(e => (
-              <li
-                key={e.eventId}
-                className="flex flex-wrap items-baseline gap-x-3 gap-y-1 py-3 text-sm first:pt-0 last:pb-0"
-              >
-                <span className="w-24 shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
-                  {day(e.start)}
-                </span>
-                <span className="w-12 shrink-0 font-mono text-xs tabular-nums">
-                  {e.allDay ? "" : clock(e.start)}
-                </span>
-                <span className="min-w-0" dir="auto">
-                  {e.title}
-                </span>
-                {e.clientName ? (
-                  <span className="rounded-full bg-muted px-2 py-0.5 text-xs">
-                    {e.clientName}
-                  </span>
-                ) : null}
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
-
-      <section className={CARD}>
-        <h2 className={`mb-4 ${CARD_TITLE}`}>All WhatsApp threads</h2>
-        <ul className="divide-y">
-          {(threads as Any[]).map(t => (
-            <li key={t.chatId} className="text-sm">
-              <button
-                type="button"
-                aria-expanded={openThread === t.chatId}
-                className="flex w-full flex-wrap items-baseline gap-x-2 gap-y-1 py-3 text-left"
-                onClick={() =>
-                  setOpenThread(v => (v === t.chatId ? null : t.chatId))
-                }
-              >
-                <span className="font-medium" dir="auto">
-                  {t.name}
-                </span>
-                {!t.isGroup ? (
-                  <span className="text-xs text-muted-foreground">Private</span>
-                ) : null}
-                {t.clientName ? (
-                  <span className="rounded-full bg-muted px-2 py-0.5 text-xs">
-                    {t.clientName}
-                  </span>
-                ) : null}
-                <span className="ml-auto text-xs text-muted-foreground">
-                  {t.lastAt
-                    ? `${t.lastFromUs ? "We wrote" : "They wrote"} ${ago(t.lastAt)} ago`
-                    : (t.error ?? "")}
-                </span>
-              </button>
-              {openThread === t.chatId ? (
-                <ul className="mb-3 space-y-2 rounded-xl bg-muted/40 p-3">
-                  {(t.recent as Any[]).map((m, i) => (
-                    <li key={i} className={m.fromMe ? "text-right" : ""}>
-                      <span className="text-xs text-muted-foreground">
-                        {m.who} · {ago(m.at)} ago
+          <section className={CARD}>
+            <h2 className={`mb-4 ${CARD_TITLE}`}>Next 7 days</h2>
+            {upcoming.length === 0 ? (
+              <p className="text-sm text-muted-foreground">Nothing booked.</p>
+            ) : (
+              <ul className="divide-y">
+                {(upcoming as Any[]).map(e => (
+                  <li
+                    key={e.eventId}
+                    className="flex flex-wrap items-baseline gap-x-3 gap-y-1 py-3 text-sm first:pt-0 last:pb-0"
+                  >
+                    <span className="w-24 shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
+                      {day(e.start)}
+                    </span>
+                    <span className="w-12 shrink-0 font-mono text-xs tabular-nums">
+                      {e.allDay ? "" : clock(e.start)}
+                    </span>
+                    <span className="min-w-0" dir="auto">
+                      {e.title}
+                    </span>
+                    {e.clientName ? (
+                      <span className="rounded-full bg-muted px-2 py-0.5 text-xs">
+                        {e.clientName}
                       </span>
-                      <p dir="auto">{m.text}</p>
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
-            </li>
-          ))}
-        </ul>
-      </section>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        </>
+      )}
     </div>
   );
 }

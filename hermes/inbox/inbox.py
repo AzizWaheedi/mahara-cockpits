@@ -276,8 +276,29 @@ def scan(sb: Store, token: str, location: str, since: str) -> tuple[int, int]:
     return threads, messages
 
 
+CLIENT_ID_FIELD = "Csj6vsVH3wSRseT3OkMU"
+CLIENT_LOCATION = "wwG426bwruWWv9W3fazQ"
+
+
+def client_id(contact: dict, location: str) -> str | None:
+    if location != CLIENT_LOCATION or contact.get("locationId") != location:
+        return None
+    values = [str(f.get("value") or "").strip() for f in contact.get("customFields", [])
+              if f.get("id") == CLIENT_ID_FIELD]
+    return values[0] if len(values) == 1 and re.fullmatch(r"[A-Za-z0-9_-]{5,100}", values[0]) else None
+
+
 def pull_thread(sb: Store, token: str, location: str, cv: dict, cutoff) -> int:
     cid = str(cv.get("id"))
+    contact_id = str(cv.get("contactId") or "")
+    if not contact_id:
+        return 0
+    contact = ghl(f"/contacts/{urllib.parse.quote(contact_id)}", token).get("contact") or {}
+    task_id = client_id(contact, location) if contact.get("id") == contact_id else None
+    if not task_id:
+        # A missing Client ID is not permission to read or draft private conversations.
+        sb.patch(f"wa_threads?id=eq.{urllib.parse.quote(cid)}", {"client_task_id": None})
+        return 0
     data = ghl(f"/conversations/{urllib.parse.quote(cid)}/messages?limit=50", token)
     raw = data.get("messages")
     msgs = raw.get("messages") if isinstance(raw, dict) else (raw or [])
@@ -316,6 +337,7 @@ def pull_thread(sb: Store, token: str, location: str, cv: dict, cutoff) -> int:
     sb.upsert("wa_threads", [{
         "id": cid,
         "location_id": location,
+        "client_task_id": task_id,
         "is_group": is_group(name, phone),
         "contact_id": str(cv.get("contactId") or ""),
         "contact_name": name[:120] or None,
@@ -428,6 +450,7 @@ def main() -> int:
 
     waiting = sb.get(
         "wa_threads?select=id,contact_name,is_group,last_inbound_at"
+        f"&location_id=eq.{urllib.parse.quote(location)}&client_task_id=not.is.null"
         "&awaiting_us=is.true&archived=is.false&order=last_inbound_at.desc&limit=40"
     )
     drafted = failed = 0

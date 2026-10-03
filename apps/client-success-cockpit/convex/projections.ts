@@ -21,6 +21,7 @@ import {
   type QueryCtx,
 } from "./_generated/server";
 import { sb } from "./billingCore";
+import { ghlRequest, prepareCheckIn } from "./checkInCore";
 import {
   authenticatedAction,
   authenticatedMutation,
@@ -101,14 +102,6 @@ const GHL_TOKEN = process.env.GHL_MAHARA_PIT ?? "";
 const GHL_LOCATION = process.env.GHL_MAHARA_LOCATION ?? "";
 /** The channel this cockpit already posts to (the end of day, eodOut.ts). */
 const TEAM_CHANNEL = "#eods-csms";
-/**
- * GoHighLevel sits behind a Cloudflare rule that answers a default agent
- * 403 (wa.ts): the browser User-Agent is load-bearing.
- */
-const UA =
-  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
-  "(KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36";
-
 const norm = (s: unknown) =>
   String(s ?? "")
     .trim()
@@ -1301,58 +1294,6 @@ export const bookingContext = internalQuery({
   },
 });
 
-async function ghl(method: string, path: string, body?: unknown): Promise<Any> {
-  if (!GHL_TOKEN || !GHL_LOCATION)
-    throw new Error(
-      "GoHighLevel is not set up for this cockpit (GHL_MAHARA_PIT, GHL_MAHARA_LOCATION).",
-    );
-  let res: Response;
-  try {
-    res = await fetch(`https://services.leadconnectorhq.com${path}`, {
-      method,
-      headers: {
-        Authorization: `Bearer ${GHL_TOKEN}`,
-        Version: "2021-04-15",
-        Accept: "application/json",
-        "User-Agent": UA,
-        ...(body === undefined ? {} : { "Content-Type": "application/json" }),
-      },
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
-  } catch (e) {
-    console.error(`ghl ${method} ${path}: ${String(e).slice(0, 160)}`);
-    throw new Error("GoHighLevel did not answer. Try again in a minute.");
-  }
-  const text = await res.text();
-  if (!res.ok) {
-    console.error(`ghl ${method} ${path}: ${res.status} ${text.slice(0, 200)}`);
-    throw new Error(
-      `GoHighLevel refused it (${res.status}): ${text.slice(0, 160)}`,
-    );
-  }
-  return text ? JSON.parse(text) : {};
-}
-
-/** The client check-in calendar in the client-facing sub-account. */
-async function checkInCalendar(): Promise<{ id: string; userId?: string }> {
-  const d = await ghl(
-    "GET",
-    `/calendars/?locationId=${encodeURIComponent(GHL_LOCATION)}`,
-  );
-  const cals: Any[] = d?.calendars ?? [];
-  const hit = cals.find(
-    c => c.isActive !== false && /check[\s-]*in/i.test(String(c.name ?? "")),
-  );
-  if (!hit)
-    throw new Error(
-      "There is no check-in calendar in GoHighLevel to book the call on.",
-    );
-  const member =
-    ((hit.teamMembers ?? []) as Any[]).find(m => m.isPrimary) ??
-    (hit.teamMembers ?? [])[0];
-  return { id: String(hit.id), userId: member?.userId };
-}
-
 async function book(
   ctx: ActionCtx,
   viewer: ViewerArg,
@@ -1376,44 +1317,42 @@ async function book(
     });
   const title = reviewTitle(b.clientName);
   assertNeutralTitle(title);
-  let contactId = b.contactId;
-  for (const id of b.apptIds) {
-    if (contactId) break;
-    const got = await ghl(
-      "GET",
-      `/calendars/events/appointments/${encodeURIComponent(id)}`,
-    ).catch(() => null);
-    contactId = got?.appointment?.contactId ?? got?.event?.contactId ?? null;
-  }
-  if (!contactId)
-    throw new Error(
-      `No GoHighLevel contact is linked to ${b.clientName}. Book the call in GoHighLevel, then put its date here.`,
-    );
-  const cal = await checkInCalendar();
-  const endIso = new Date(start + minutes * 60_000)
-    .toISOString()
-    .replace(/\.\d{3}Z$/, "+00:00");
-  const made = await ghl("POST", "/calendars/events/appointments", {
-    calendarId: cal.id,
-    locationId: GHL_LOCATION,
-    contactId,
-    startTime: startIso,
-    endTime: endIso,
-    title,
-    appointmentStatus: "confirmed",
-    ignoreFreeSlotValidation: true,
-    toNotify: true,
-    ...(cal.userId ? { assignedUserId: cal.userId } : {}),
+  if (minutes !== 30)
+    throw new Error("The client check-in calendar uses 30-minute calls.");
+  const userId = await ctx.runQuery(internal.projections.bookingUser, {
+    viewer,
   });
-  const appointmentId = String(made?.id ?? made?.appointment?.id ?? "");
+  const ready = await prepareCheckIn(
+    ghlRequest(GHL_TOKEN, GHL_LOCATION),
+    a.taskId,
+    a.day,
+  );
+  const receipt = await ctx.runAction(internal.checkIns.bookForUser, {
+    userId,
+    taskId: a.taskId,
+    contactId: ready.contact.id,
+    startTime: startIso,
+  });
   await ctx.runMutation(internal.projections.recordBooking, {
     viewer,
     taskId: a.taskId,
-    when: startIso,
-    appointmentId: appointmentId || undefined,
+    when: receipt.startTime,
+    appointmentId: receipt.appointmentId,
   });
-  return { when: startIso, title };
+  return { when: receipt.startTime, title };
 }
+
+export const bookingUser = internalQuery({
+  args: { viewer: vViewer },
+  handler: async (ctx, { viewer }) => {
+    const user = (await ctx.db.query("users").collect()).find(
+      u => u.email?.trim().toLowerCase() === viewer.email.trim().toLowerCase(),
+    );
+    if (!user || !(await hasAccess(ctx, user.email)))
+      throw new Error("Open the Client Success cockpit to book this call.");
+    return user._id;
+  },
+});
 
 export const recordBooking = internalMutation({
   args: {
@@ -1427,7 +1366,11 @@ export const recordBooking = internalMutation({
     const viewer = viewerFrom(a.viewer);
     const today = kuwaitDay();
     const { plan, client } = await ensurePlan(ctx, viewer, a.taskId, today);
-    const day = a.when.slice(0, 10);
+    if (a.appointmentId && plan.ghlAppointmentId === a.appointmentId)
+      return null;
+    const day = new Date(Date.parse(a.when) + 3 * 3600_000)
+      .toISOString()
+      .slice(0, 10);
     await ctx.db.patch(plan._id, {
       callBookedFor: a.when,
       ghlAppointmentId: a.appointmentId,
@@ -1435,18 +1378,7 @@ export const recordBooking = internalMutation({
       updatedBy: viewer.email,
       updatedAt: Date.now(),
     });
-    // The next point of contact on the ClickUp card, through the same
-    // outbox every other booking uses.
-    await ctx.db.insert("outbox", {
-      kind: "booked",
-      clientTaskId: client.taskId,
-      clientName: client.name,
-      action: "Proactive results call booked",
-      evidence: "Booked from Projections in the client success cockpit.",
-      value: day,
-      createdAt: Date.now(),
-    });
-    await ctx.db.patch(client._id, { nextPoc: day });
+    // checkIns.finish already queued the Next POC update with a provider receipt.
     await audit(
       ctx,
       viewer,

@@ -2,6 +2,8 @@ import { ConvexError, v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import {
+  type ActionCtx,
+  internalAction,
   internalMutation,
   internalQuery,
   type QueryCtx,
@@ -210,82 +212,87 @@ export const finish = internalMutation({
   },
 });
 
+export async function bookChecked(
+  ctx: ActionCtx & { userId: Id<"users"> },
+  a: { taskId: string; contactId: string; startTime: string },
+): Promise<{ appointmentId: string; startTime: string }> {
+  return plainly(async () => {
+    const start = Date.parse(a.startTime);
+    if (!Number.isFinite(start)) throw new Error("Choose an available time.");
+    const startTime = new Date(start).toISOString();
+    const client = await ctx.runQuery(internal.checkIns.clientContext, {
+      userId: ctx.userId,
+      taskId: a.taskId,
+      startTime,
+    });
+    // A confirmed slot is no longer free. Return its receipt before checking availability.
+    if (client.previous && client.previous.status !== "failed") {
+      if (
+        client.previous.status === "confirmed" &&
+        client.previous.appointmentId
+      )
+        return { appointmentId: client.previous.appointmentId, startTime };
+      throw new Error(
+        "A booking for this client and time is already being checked. Check the Mahara Media calendar before trying again.",
+      );
+    }
+    const api = request();
+    const selection = await verifySelection(
+      api,
+      a.taskId,
+      a.contactId,
+      a.startTime,
+    );
+    const claimed = await ctx.runMutation(internal.checkIns.claim, {
+      userId: ctx.userId,
+      taskId: a.taskId,
+      contactId: selection.contact.id,
+      startTime: selection.startTime,
+    });
+    if (claimed.existing) {
+      if (claimed.status === "confirmed" && claimed.appointmentId)
+        return {
+          appointmentId: claimed.appointmentId,
+          startTime: selection.startTime,
+        };
+      throw new Error(
+        "A booking for this client and time is already being checked. Check the Mahara Media calendar before trying again.",
+      );
+    }
+    let appointmentId: string | undefined;
+    try {
+      // The final provider request validates availability again; never override a busy slot.
+      const receipt = await createCheckIn(api, selection, client.name);
+      appointmentId = receipt.appointmentId;
+      await ctx.runMutation(internal.checkIns.finish, {
+        id: claimed.id,
+        appointmentId,
+        calendarName: selection.calendar.name,
+      });
+      return { appointmentId, startTime: selection.startTime };
+    } catch (error) {
+      await ctx.runMutation(internal.checkIns.markUncertain, {
+        id: claimed.id,
+        definitive:
+          error instanceof ProviderError && error.definitive && !appointmentId,
+        ...(appointmentId ? { appointmentId } : {}),
+      });
+      throw new Error(
+        appointmentId
+          ? "The call was booked, but the cockpit update needs checking. Do not book it again."
+          : error instanceof Error
+            ? error.message
+            : "Check the calendar before trying again.",
+      );
+    }
+  });
+}
 export const book = authenticatedAction({
   args: { taskId: v.string(), contactId: v.string(), startTime: v.string() },
-  handler: async (
-    ctx,
-    a,
-  ): Promise<{ appointmentId: string; startTime: string }> =>
-    plainly(async () => {
-      const start = Date.parse(a.startTime);
-      if (!Number.isFinite(start)) throw new Error("Choose an available time.");
-      const startTime = new Date(start).toISOString();
-      const client = await ctx.runQuery(internal.checkIns.clientContext, {
-        userId: ctx.userId,
-        taskId: a.taskId,
-        startTime,
-      });
-      // A confirmed slot is no longer free. Return its receipt before checking availability.
-      if (client.previous && client.previous.status !== "failed") {
-        if (
-          client.previous.status === "confirmed" &&
-          client.previous.appointmentId
-        )
-          return { appointmentId: client.previous.appointmentId, startTime };
-        throw new Error(
-          "A booking for this client and time is already being checked. Check the Mahara Media calendar before trying again.",
-        );
-      }
-      const api = request();
-      const selection = await verifySelection(
-        api,
-        a.taskId,
-        a.contactId,
-        a.startTime,
-      );
-      const claimed = await ctx.runMutation(internal.checkIns.claim, {
-        userId: ctx.userId,
-        taskId: a.taskId,
-        contactId: selection.contact.id,
-        startTime: selection.startTime,
-      });
-      if (claimed.existing) {
-        if (claimed.status === "confirmed" && claimed.appointmentId)
-          return {
-            appointmentId: claimed.appointmentId,
-            startTime: selection.startTime,
-          };
-        throw new Error(
-          "A booking for this client and time is already being checked. Check the Mahara Media calendar before trying again.",
-        );
-      }
-      let appointmentId: string | undefined;
-      try {
-        // The final provider request validates availability again; never override a busy slot.
-        const receipt = await createCheckIn(api, selection, client.name);
-        appointmentId = receipt.appointmentId;
-        await ctx.runMutation(internal.checkIns.finish, {
-          id: claimed.id,
-          appointmentId,
-          calendarName: selection.calendar.name,
-        });
-        return { appointmentId, startTime: selection.startTime };
-      } catch (error) {
-        await ctx.runMutation(internal.checkIns.markUncertain, {
-          id: claimed.id,
-          definitive:
-            error instanceof ProviderError &&
-            error.definitive &&
-            !appointmentId,
-          ...(appointmentId ? { appointmentId } : {}),
-        });
-        throw new Error(
-          appointmentId
-            ? "The call was booked, but the cockpit update needs checking. Do not book it again."
-            : error instanceof Error
-              ? error.message
-              : "Check the calendar before trying again.",
-        );
-      }
-    }),
+  handler: bookChecked,
+});
+export const bookForUser = internalAction({
+  args: { ...identityArgs, contactId: v.string(), startTime: v.string() },
+  handler: (ctx, a): Promise<{ appointmentId: string; startTime: string }> =>
+    bookChecked({ ...ctx, userId: a.userId }, a),
 });
