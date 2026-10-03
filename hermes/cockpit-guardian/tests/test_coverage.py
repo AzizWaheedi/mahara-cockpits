@@ -81,7 +81,8 @@ class C1WatcherIsWatched(unittest.TestCase):
         puts = []
         for extra, want in (([], 1), (["--dry-run"], 0)):
             tmp = Path(tempfile.mkdtemp())
-            with mock.patch.dict(os.environ, CF), \
+            # GUARDIAN_KEY_FILES: never the host's real key files (on the VPS they hold GUARDIAN_BEAT=off).
+            with mock.patch.dict(os.environ, dict(CF, GUARDIAN_KEY_FILES="/nonexistent")), \
                     mock.patch.object(guardian, "open_db", return_value=fakes.FakeDb({"cockpit_guardian_incidents": []})), \
                     mock.patch.object(guardian, "open_host", return_value=fakes.FakeHost(fakes.snapshot())), \
                     mock.patch.object(checks_mod, "all_checks", return_value=[b.check]), \
