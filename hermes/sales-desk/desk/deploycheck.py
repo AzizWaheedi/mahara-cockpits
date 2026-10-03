@@ -395,8 +395,61 @@ def check_cron(report: Report, crontab: Optional[str], why: str) -> None:
                                            "README's Cron block with crontab -l > f, edit f, crontab f")
 
 
+DOOR_HEALTH = "/functions/v1/sales-live/health"
+
+
+def read_door(sb: Any) -> tuple[Optional[int], Any, str]:
+    """GET sales-live/health with no key at all, as Zoom, Slack and pg_cron
+    reach the door: (status or None when nothing answered, the JSON, why)."""
+    import json
+    base = str(getattr(sb, "url", "") or "").rstrip("/")
+    if not base:
+        return None, None, "the database URL is not known on this box"
+    try:
+        status, _headers, body = http.request("GET", base + DOOR_HEALTH, headers={"Accept": "application/json"},
+                                              timeout=10, retries=0, ok_statuses=(200,))
+    except http.HttpError as e:
+        return (e.status or None), None, http.scrub(str(e))[:160]
+    except Exception as e:  # noqa: BLE001 - no answer is said, never counted as one
+        return None, None, http.scrub(str(e))[:160]
+    try:
+        return status, json.loads(body.decode("utf-8")), ""
+    except (ValueError, UnicodeDecodeError, AttributeError):
+        return status, None, "the answer was not JSON"
+
+
+def check_door(report: Report, door: tuple[Optional[int], Any, str]) -> None:
+    """The room sweep reaches sales-api only through sales-live/cron: a door
+    deployed with verify_jwt on, or not deployed, refuses every replay,
+    settle and re-check, and the sweep's row turns red only after its first
+    posts. Asked here first, read only."""
+    sec = "The door (sales-live), read only"
+    status, out, why = door
+    if status in (401, 403):
+        report.add(sec, "sales-live reachable", False,
+                   f"it answers {status} before its own code runs: it is deployed with verify_jwt on. Deploy it with "
+                   "--no-verify-jwt, or the sweep's replays, settles and re-checks never reach sales-api")
+        return
+    if status == 404:
+        report.add(sec, "sales-live reachable", False,
+                   "it answers 404: sales-live is not deployed, so Zoom's events, Slack's presses, the short link and "
+                   "the sweep's calls go nowhere")
+        return
+    if status != 200 or not isinstance(out, dict):
+        report.add(sec, "sales-live reachable", None, f"not known: {why or f'it answered {status}'}")
+        return
+    routes = out.get("routes") if isinstance(out.get("routes"), dict) else {}
+    cron = str(routes.get("cron") or "not said")
+    report.add(sec, "sales-live reachable", True, "it answers, with verify_jwt off")
+    report.add(sec, "the sweep's door (cron)", cron == "ready",
+               "ready; the sweep's row says on its next posts whether CRON_SECRET equals the vault's "
+               "cockpit_sync_secret" if cron == "ready" else
+               f"{cron}: the sweep's replays, settles and re-checks are refused until it is set")
+
+
 def run(sb: Optional[Any], *, now: Optional[datetime] = None,
-        crontab: Optional[Callable[[], tuple[Optional[str], str]]] = None) -> Report:
+        crontab: Optional[Callable[[], tuple[Optional[str], str]]] = None,
+        door: Optional[Callable[[Any], tuple[Optional[int], Any, str]]] = None) -> Report:
     report = Report()
     now = now or datetime.now(timezone.utc)
     report.add("This box", "python", sys.version_info >= (3, 9), sys.version.split()[0] + (
@@ -408,6 +461,7 @@ def run(sb: Optional[Any], *, now: Optional[datetime] = None,
     if sb is not None:
         check_switches(report, sb, settings)
         check_status_rows(report, sb, now)
+        check_door(report, (door or read_door)(sb))
     else:
         report.add("Database (read only)", "database", False,
                    "not asked: DESK_SUPABASE_URL and DESK_SUPABASE_KEY are not set")

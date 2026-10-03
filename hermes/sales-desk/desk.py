@@ -323,8 +323,12 @@ def cmd_doctor(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
                     add("database clock", False, f"this VPS's clock is {n} seconds {way} the database's: the room worker "
                                                  "makes no room until it is fixed (timedatectl, or chrony)", True)
                 elif n > 10:
-                    add("database clock", None, f"this VPS's clock is {n} seconds {way} the database's: rooms may close "
-                                                "early; fix it (timedatectl, or chrony)")
+                    # A fault, not a warning: the waves job paces its sends and
+                    # counts the sender ceiling against the database's times,
+                    # and the rooms' times are on that clock too.
+                    add("database clock", False, f"this VPS's clock is {n} seconds {way} the database's: the waves "
+                                                 "job's paced sends and the rooms' times go wrong; fix it "
+                                                 "(timedatectl, or chrony)", True)
                 else:
                     add("database clock", True, f"within {max(n, 1)} second{'s' if n > 1 else ''} of the database's")
             guarded("database clock", False, db_clock)

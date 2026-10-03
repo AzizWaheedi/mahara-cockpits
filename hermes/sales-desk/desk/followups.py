@@ -916,6 +916,50 @@ def _in(ids: list[str]) -> str:
     return f"in.({','.join(_q(x) for x in ids)})"
 
 
+ROOMS = "cockpit_sales_rooms"
+LIVE_CALENDAR = "live"
+
+
+def live_calls(sb: Any, contacts: Optional[list[str]] = None, *, since: Optional[datetime] = None,
+               until: Optional[datetime] = None) -> list[dict[str, Any]]:
+    """The live calls the count booked or moved when a lead joined a video
+    room (rooms.ts runCount, D2), as calendar rows: held ("showed") calls of
+    the room's kind at the minute the lead joined. They are on
+    rooms.live_calendar_id, which D25 keeps out of B2B's map, so the
+    cockpit's calendar copy never has them; the room is their only record.
+    A count taken back (count_undo_at) is no call. `since` and `until`
+    bound the join time."""
+    base = (f"select=id,contact_id,call_kind,lead_in_at,count_result,count_appointment_id,count_undo_at"
+            f"&lead_in_at=not.is.null&count_result=in.(booked,moved)&count_appointment_id=not.is.null"
+            f"&count_undo_at=is.null")
+    if since:
+        base += f"&lead_in_at=gte.{_q(since.isoformat())}"
+    if until:
+        base += f"&lead_in_at=lte.{_q(until.isoformat())}"
+    rows: list[dict[str, Any]] = []
+    if contacts is None:
+        rows = sb.select_all(ROOMS, base, order="id")
+    else:
+        for chunk in _chunks(sorted({str(c) for c in contacts if c})):
+            rows += sb.select_all(ROOMS, f"{base}&contact_id={_in(chunk)}", order="id")
+    out = []
+    for r in rows:
+        kind = str(r.get("call_kind") or "")
+        if kind not in ("intro", "demo") or not r.get("contact_id"):
+            continue
+        out.append({"appointment_id": str(r.get("count_appointment_id")), "contact_id": str(r["contact_id"]),
+                    "calendar_id": LIVE_CALENDAR, "call_type": kind, "start_at": r.get("lead_in_at"),
+                    "booked_at": r.get("lead_in_at"), "status": "showed", "live": True})
+    return out
+
+
+def with_live(calendar: list[dict[str, Any]], live: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The calendar copy and the live calls together; a moved call the copy
+    already holds (the same appointment id) is kept once, as the copy has it."""
+    seen = {str(a.get("appointment_id")) for a in calendar}
+    return calendar + [a for a in live if str(a.get("appointment_id")) not in seen]
+
+
 # The lead's time zone by the ISO country code the lead copy keeps (about 250
 # leads are outside the Gulf). A country that spans zones lists its first and
 # last: a first message goes only in hours that are daytime in both. The same
@@ -1553,9 +1597,10 @@ def close_gone(sb: Any, now: datetime) -> int:
     booking = sorted({str(d["contact_id"]) for d in drafts if d.get("segment") != "reply"})
     replying = sorted({str(d["contact_id"]) for d in drafts if d.get("segment") in ("reply", "reactivate")})
     for chunk in _chunks(booking):
-        for a in sb.select_all("cockpit_sales_calendar", "select=appointment_id,contact_id,call_type,start_at,booked_at,status"
-                                                         f"&contact_id={_in(chunk)}&call_type=in.(intro,demo)",
-                               order="appointment_id"):
+        found = sb.select_all("cockpit_sales_calendar", "select=appointment_id,contact_id,call_type,start_at,booked_at,status"
+                                                        f"&contact_id={_in(chunk)}&call_type=in.(intro,demo)",
+                              order="appointment_id")
+        for a in with_live(found, live_calls(sb, chunk)):
             calls.setdefault(str(a.get("contact_id") or ""), []).append(a)
     if replying:
         oldest = min((_ts(d.get("created_at")) or now) for d in drafts if d.get("segment") in ("reply", "reactivate"))
@@ -1849,6 +1894,11 @@ def run(sb: Any, provider: Any, log: Callable[[str], None], *, settings: dict[st
                                   f"&start_at=gte.{_q((now - timedelta(days=back)).isoformat())}"
                                   f"&start_at=lte.{_q((now + timedelta(days=21)).isoformat())}{only}",
         order="appointment_id"), sb.setting("calendars") or {})
+    # A live call the count booked when the lead joined a video room is a held
+    # call of its kind: the "new" and "no_show" messages never ask a lead who
+    # just had their intro live to book it.
+    calendar = with_live(calendar, live_calls(sb, [only_contact] if test and only_contact else None,
+                                              since=now - timedelta(days=back), until=now + timedelta(days=21)))
     if test:
         leads = [dict(test_lead or {})]
     else:

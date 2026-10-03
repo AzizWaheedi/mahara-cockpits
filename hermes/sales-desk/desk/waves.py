@@ -109,7 +109,11 @@ SEGMENT_REFUSED = ("The database refuses the reactivate kind: migration 20261003
                    "has not landed, so no opener can be written.")
 # A refusal from sales-api that holds every send, not just this lead's.
 HOLD_ALL_WORDS = ("today's", "switched off", "are paused", "paused:", "wallet", "funds", "insufficient", "budget",
-                  "30 messages in ten minutes", "single-copy")
+                  "30 messages in ten minutes", "single-copy",
+                  # The template's setup, not the lead's (sales-api index.ts templateRoute and
+                  # sendTemplate, code "setup"): every opener of the template waits in the queue.
+                  "template is not set up", "template is not in the cockpit", "contact fields are not set",
+                  "contact fields for the room code", "setting wa_fields")
 # A refusal about the lead's hours: the draft waits an hour, it is not set aside.
 HOURS_WORDS = ("between 9", "their time", "their clock", "day off", "friday", "quiet hours", "first message goes",
                "does not send", "time zone")
@@ -117,7 +121,10 @@ HOURS_WORDS = ("between 9", "their time", "their clock", "day off", "friday", "q
 # it, a manager paused the wave, sales-api's clock is a moment behind): the
 # draft is not at fault, so it is never set aside for a person.
 STATE_RACE = re.compile(r"someone else has just dealt with this draft|this draft was already|not approved to go yet"
-                        r"|paused or stopped|is held, so it was not sent|backlog opener was taken back", re.I)
+                        r"|paused or stopped|is held, so it was not sent|backlog opener was taken back"
+                        r"|kind of opener is off|already going out", re.I)
+# followup.level's table: a kind a manager switched Off gets no opener written or sent.
+LEVELS = "cockpit_sales_followup_levels"
 # An approved opener may still go this long after its turn (followups.APPROVED_KEEP).
 APPROVED_KEEP = timedelta(hours=72)
 # How a send_due run ended, and which endings are a fault (the row turns red).
@@ -269,7 +276,8 @@ def judge(status: int, res: dict[str, Any]) -> tuple[str, str]:
     msg = res.get("message") if isinstance(res.get("message"), dict) else {}
     err = str(res.get("error") or msg.get("error") or f.get("error") or "").strip()
     e = err.lower()
-    if res.get("hold_all") is True or status in (429, 503) or any(w in e for w in HOLD_ALL_WORDS):
+    if res.get("hold_all") is True or res.get("code") == "setup" or status in (429, 503) \
+            or any(w in e for w in HOLD_ALL_WORDS):
         return "hold_all", err or f"sales-api answered {status}"
     if status in (502, 504) or "highlevel did not send" in e:
         return "outage", err or f"sales-api answered {status}"
@@ -367,6 +375,10 @@ def _calls_of(sb: Any, contacts: Optional[list[str]] = None) -> tuple[dict[str, 
     else:
         for chunk in fu._chunks(sorted(set(contacts))):
             rows += sb.select_all("cockpit_sales_calendar", f"{cols}&contact_id={fu._in(chunk)}", order="appointment_id")
+    # A live call the count booked when the lead joined a video room is a held
+    # call of its kind (never on B2B's calendars, D25): a lead who had their
+    # intro live is in no "never booked" pool, and booked, not closed, in a wave.
+    rows = fu.with_live(rows, fu.live_calls(sb, contacts))
     out: dict[str, list[dict[str, Any]]] = {}
     for a in fu.with_kinds(rows, calendars):
         out.setdefault(str(a.get("contact_id") or ""), []).append(a)
@@ -531,7 +543,7 @@ def sync(sb: Any, wave_ids: list[str], now: datetime) -> dict[str, int]:
     out = {"sent": 0, "excluded": 0, "failed": 0, "back": 0}
     if not wave_ids:
         return out
-    drafted = sb.select_all(MEMBERS, f"select=wave_id,contact_id,followup_id,fail_count&wave_id={fu._in(wave_ids)}"
+    drafted = sb.select_all(MEMBERS, f"select=wave_id,contact_id,followup_id,fail_count,due_at&wave_id={fu._in(wave_ids)}"
                                      "&state=eq.drafted&followup_id=not.is.null", order="contact_id,wave_id")
     by_id = {str(m["followup_id"]): m for m in drafted}
     drafts: dict[str, dict[str, Any]] = {}
@@ -548,11 +560,13 @@ def sync(sb: Any, wave_ids: list[str], now: datetime) -> dict[str, int]:
     for fid, m in by_id.items():
         f = drafts.get(fid) or {}
         s = f.get("status") if f else None
+        # The member's turn, stamped when it came: never moved.
+        turn = m.get("due_at") or now.isoformat()
         if s == "sent":
             body, k = {"state": "sent", "sent_at": f.get("decided_at") or now.isoformat()}, "sent"
         elif s == "skipped":
             body, k = {"state": "excluded", "excluded_reason": "A rep skipped the opener.",
-                       "due_at": now.isoformat()}, "excluded"
+                       "due_at": turn}, "excluded"
         elif s == "failed":
             n = int(m.get("fail_count") or 0) + 1
             err = http.scrub(str(f.get("error") or ""))[:200]
@@ -565,12 +579,12 @@ def sync(sb: Any, wave_ids: list[str], now: datetime) -> dict[str, int]:
                 body, k = {"state": "sent", "sent_at": sent_at or f.get("decided_at") or now.isoformat(),
                            "last_error": err}, "sent"
             elif went == "unclear":
-                body = {"state": "excluded", "fail_count": n, "last_error": err, "due_at": now.isoformat(),
+                body = {"state": "excluded", "fail_count": n, "last_error": err, "due_at": turn,
                         "excluded_reason": ("The opener may have gone; a person checks HighLevel before anyone "
                                             "writes to the lead again.")}
                 k = "excluded"
             elif n >= FAIL_LIMIT or PERMANENT.search(err):
-                body = {"state": "excluded", "fail_count": n, "last_error": err, "due_at": now.isoformat(),
+                body = {"state": "excluded", "fail_count": n, "last_error": err, "due_at": turn,
                         "excluded_reason": (f"The opener failed{' twice' if n >= FAIL_LIMIT else ''}: "
                                             f"{err or 'no reason given'}")[:300]}
             else:
@@ -593,13 +607,19 @@ def sync(sb: Any, wave_ids: list[str], now: datetime) -> dict[str, int]:
 
 def _t0(m: dict[str, Any]) -> Optional[datetime]:
     """When a member's 14 days start (intent to treat at the turn, both arms
-    alike): the send, or the day their place in the order came up (due_at),
-    for the holdout and for a wave member taken out at their turn. A member
-    whose turn never came (a stopped wave let them go first) has neither and
-    is in neither arm's comparison (waves.ts countMembers)."""
-    if m.get("arm") == "wave" and m.get("sent_at"):
-        return fu._ts(m.get("sent_at"))
-    return fu._ts(m.get("due_at"))
+    alike): the moment their place in the order came up (due_at), stamped
+    once on the wave member whose turn it is (drafted, put off or taken
+    out) and on the holdout twins level with them, and never moved after.
+    sent_at only records when the opener went: a manager's approval the next
+    morning, or a turn put off a day, never starts the wave arm's clock
+    later than the holdout's. A member whose turn never came (a stopped wave
+    let them go first) has no due_at and is in neither arm's comparison
+    (waves.ts countMembers); an older wave member with only sent_at counts
+    from it."""
+    t = fu._ts(m.get("due_at"))
+    if t:
+        return t
+    return fu._ts(m.get("sent_at")) if m.get("arm") == "wave" else None
 
 
 def outcomes(sb: Any, wave_ids: list[str], now: datetime) -> dict[str, int]:
@@ -626,10 +646,12 @@ def outcomes(sb: Any, wave_ids: list[str], now: datetime) -> dict[str, int]:
     booked: dict[str, list[datetime]] = {}
     inbound: dict[str, datetime] = {}
     for chunk in fu._chunks(contacts):
-        for a in fu.with_kinds(sb.select_all(
-                "cockpit_sales_calendar", "select=appointment_id,contact_id,calendar_id,call_type,booked_at,status"
-                                          f"&contact_id={fu._in(chunk)}&booked_at=gte.{_q(since.isoformat())}",
-                order="appointment_id")):
+        found = sb.select_all(
+            "cockpit_sales_calendar", "select=appointment_id,contact_id,calendar_id,call_type,booked_at,status"
+                                      f"&contact_id={fu._in(chunk)}&booked_at=gte.{_q(since.isoformat())}",
+            order="appointment_id")
+        # A live call the opener led to (the lead joined a video room) is its booking too.
+        for a in fu.with_kinds(fu.with_live(found, fu.live_calls(sb, chunk, since=since))):
             t = fu._ts(a.get("booked_at"))
             if t and a.get("call_type") in ("intro", "demo"):
                 booked.setdefault(str(a["contact_id"]), []).append(t)
@@ -831,24 +853,96 @@ def _draft_row(lead: dict[str, Any], o: dict[str, Any], owner: Optional[dict[str
     }
 
 
+def _ensure_meta(sb: Any, fid: str, wid: str, language: Any, warn: Callable[[str], None]) -> bool:
+    """The opener's meta row, with its wave and kind, written if it is not
+    there (ignore-duplicates: one written before stays as it is). Without it
+    Approve all would make one with no wave, and a paused or stopped wave
+    would no longer hold the opener. A failure is said; the next run's
+    repair_meta writes it."""
+    lang = str(language or "")
+    row: dict[str, Any] = {"followup_id": fid, "wave_id": wid}
+    if lang in OPENERS:
+        row["kind_key"] = f"reactivate.{lang}.whatsapp_template"
+    try:
+        sb.rest("POST", f"{META}?on_conflict=followup_id", prefer="resolution=ignore-duplicates,return=minimal",
+                json_body=[row])
+        return True
+    except http.HttpError as e:
+        warn(f"waves: opener {fid} has no meta row yet ({http.scrub(str(e))[:120]}); the next run writes it")
+        return False
+
+
+def repair_meta(sb: Any, wave_ids: list[str], warn: Callable[[str], None]) -> int:
+    """Every open opener of these waves gets its meta row (its wave and
+    kind), and a meta row made without its wave (Approve all on an opener
+    whose meta was lost) gets it back, before anything is approved or sent."""
+    if not wave_ids:
+        return 0
+    drafts = sb.select_all(FOLLOWUPS, "select=id,context&segment=eq.reactivate&status=eq.draft"
+                                      f"&context->>wave_id={fu._in(wave_ids)}", order="id")
+    if not drafts:
+        return 0
+    have: dict[str, dict[str, Any]] = {}
+    for chunk in fu._chunks(sorted(str(f["id"]) for f in drafts)):
+        for m in sb.select(META, f"select=followup_id,wave_id&followup_id={fu._in(chunk)}&limit=1000"):
+            have[str(m["followup_id"])] = m
+    fixed = 0
+    for f in drafts:
+        fid, ctx = str(f["id"]), (f.get("context") or {})
+        wid = str(ctx.get("wave_id") or "")
+        m = have.get(fid)
+        if m is None:
+            fixed += _ensure_meta(sb, fid, wid, ctx.get("language"), warn)
+        elif not m.get("wave_id") and wid:
+            try:
+                sb.rest("PATCH", f"{META}?followup_id=eq.{_q(fid)}&wave_id=is.null", json_body={"wave_id": wid},
+                        prefer="return=minimal")
+                fixed += 1
+            except http.HttpError as e:
+                warn(f"waves: opener {fid}'s meta row has no wave ({http.scrub(str(e))[:120]})")
+    return fixed
+
+
+def levels_of(sb: Any) -> dict[str, str]:
+    """followup.level's word for each opener kind ({kind_key: level}); a kind
+    switched Off gets no opener written or sent."""
+    rows = sb.select(LEVELS, "select=kind_key,level&limit=500")
+    return {str(r["kind_key"]): str(r.get("level") or "") for r in rows
+            if str(r.get("kind_key") or "").startswith("reactivate.")}
+
+
 # ---------------------------------------------------------------------------
 # The day's batch
 # ---------------------------------------------------------------------------
 
-def _undecided_old(sb: Any, midnight: str) -> int:
-    """An earlier day's wave openers nobody has decided on yet: still a
-    draft, not approved into a batch (no send_after) and not held. One a rep
-    held, or one approved and waiting for the lead's hours, is decided."""
-    old = sb.select(FOLLOWUPS, "select=id&segment=eq.reactivate&status=eq.draft&context->>wave_id=not.is.null"
+def _undecided_old(sb: Any, midnight: str, running: Optional[set[str]] = None) -> dict[str, int]:
+    """An earlier day's wave openers nobody has decided on yet, by wave:
+    still a draft, not approved into a batch (no send_after) and not held.
+    One a rep held, or one approved and waiting for the lead's hours, is
+    decided. Only a running wave's count (`running`, when given): a paused
+    wave's old openers wait for its resume and hold no other wave's batch."""
+    old = sb.select(FOLLOWUPS, "select=id,context&segment=eq.reactivate&status=eq.draft&context->>wave_id=not.is.null"
                                f"&created_at=lt.{_q(midnight)}&limit=500")
     if not old:
-        return 0
+        return {}
     decided: set[str] = set()
+    wave_of: dict[str, str] = {}
     for chunk in fu._chunks([str(f["id"]) for f in old]):
-        for m in sb.select(META, f"select=followup_id,send_after,held_by&followup_id={fu._in(chunk)}&limit=1000"):
+        for m in sb.select(META, f"select=followup_id,send_after,held_by,wave_id&followup_id={fu._in(chunk)}&limit=1000"):
             if m.get("send_after") or m.get("held_by"):
                 decided.add(str(m["followup_id"]))
-    return sum(1 for f in old if str(f["id"]) not in decided)
+            if m.get("wave_id"):
+                wave_of[str(m["followup_id"])] = str(m["wave_id"])
+    out: dict[str, int] = {}
+    for f in old:
+        fid = str(f["id"])
+        if fid in decided:
+            continue
+        wid = wave_of.get(fid) or str((f.get("context") or {}).get("wave_id") or "")
+        if running is not None and wid not in running:
+            continue
+        out[wid] = out.get(wid, 0) + 1
+    return out
 
 
 def draft_day(sb: Any, now: datetime, *, settings: dict[str, Any], w: dict[str, Any], waves: list[dict[str, Any]],
@@ -873,15 +967,27 @@ def draft_day(sb: Any, now: datetime, *, settings: dict[str, Any], w: dict[str, 
             or k.hour < int(first_hours[0]):
         return {**out, "waiting": f"The next batch is written after {int(first_hours[0])}:00 on a working day."}
     midnight = kuwait_midnight(now).isoformat()
-    undecided = _undecided_old(sb, midnight)
+    # Each running wave waits only on its own earlier openers nobody decided
+    # on; a paused wave's wait for its resume and hold no other wave's batch.
+    undecided = _undecided_old(sb, midnight, {str(x["id"]) for x in running})
     if undecided:
-        return {**out, "blocked": True,
-                "waiting": (f"{undecided} of an earlier day's openers still wait for approval, so no new batch is "
-                            "written. Approve, hold or skip them on the Follow-ups page.")}
+        out["blocked_waves"] = undecided
+        running = [x for x in running if not undecided.get(str(x["id"]))]
+        if not running:
+            return {**out, "blocked": True,
+                    "waiting": (f"{sum(undecided.values())} of an earlier day's openers still wait for approval, so no "
+                                "new batch is written. Approve, hold or skip them on the Follow-ups page.")}
     routes = _routes(sb)
     if not routes:
         return {**out, "setup": True,
                 "waiting": "The opener templates (opener_ar, opener_en) are not set up yet, so no opener can be written."}
+    try:
+        levels = levels_of(sb)
+    except http.HttpError as e:
+        return {**out, "waiting": f"The opener levels could not be read ({http.scrub(str(e))[:120]}); the next run "
+                                  "writes the batch."}
+    if all(levels.get(f"reactivate.{lang}.whatsapp_template") == "off" for lang in routes):
+        return {**out, "waiting": "Every opener kind is switched off (Follow-ups, levels), so no opener is written."}
     today = sb.select(FOLLOWUPS, "select=id,context&segment=eq.reactivate&context->>wave_id=not.is.null"
                                  f"&created_at=gte.{_q(midnight)}&limit=1000")
     by_wave: dict[str, int] = {}
@@ -891,7 +997,7 @@ def draft_day(sb: Any, now: datetime, *, settings: dict[str, Any], w: dict[str, 
     room = int(w["per_day"]) - len(today)
     if room <= 0:
         return {**out, "waiting": f"Today's {w['per_day']} openers are written. The next batch is tomorrow."}
-    ctx = {"owners": _owners(sb), "routes": routes, "ghl_token": ghl_token,
+    ctx = {"owners": _owners(sb), "routes": routes, "ghl_token": ghl_token, "levels": levels,
            "pause_days": int(settings.get("stop_pause_days", fu.STOP_PAUSE_DAYS) or fu.STOP_PAUSE_DAYS),
            "gap_hours": float(settings.get("automation_gap_hours", 20))}
     try:
@@ -975,7 +1081,7 @@ def _draft_wave(sb: Any, wave: dict[str, Any], wave_room: int, now: datetime, ct
             # run that stopped between the draft and the member is never a
             # second opener (expired and failed ones are history: sync has
             # already put the member back for a new one).
-            for f in sb.select(FOLLOWUPS, f"select=id,contact_id,status&segment=eq.reactivate"
+            for f in sb.select(FOLLOWUPS, f"select=id,contact_id,status,context&segment=eq.reactivate"
                                           f"&context->>wave_id=eq.{_q(wid)}&contact_id={fu._in(chunk)}&limit=1000"):
                 s = str(f.get("status") or "")
                 c = str(f["contact_id"])
@@ -992,16 +1098,21 @@ def _draft_wave(sb: Any, wave: dict[str, Any], wave_room: int, now: datetime, ct
                 break
             c = str(m["contact_id"])
 
+            # Their turn has come: due_at is stamped now, once (never moved
+            # after), whatever happens next (drafted, put off, taken out), and
+            # the holdout twins level with them get the same moment below, so
+            # both arms' 14 days start together (intent to treat at the turn).
+            turn = {"due_at": m.get("due_at") or now.isoformat()}
+            events.append(m.get("event_at"))
+
             def exclude(why: str) -> None:
-                # Taken out at their turn: due_at is that turn, so they are
-                # watched like their twins in the holdout (intent to treat).
-                if _move(sb, wid, c, "waiting", {"state": "excluded", "excluded_reason": why[:300],
-                                                 "due_at": now.isoformat()}):
+                # Taken out at their turn: watched like their twins in the holdout.
+                if _move(sb, wid, c, "waiting", {"state": "excluded", "excluded_reason": why[:300], **turn}):
                     out["excluded"] += 1
                     excluded.append(c)
 
             def later(why: str, until: datetime) -> None:
-                _move(sb, wid, c, "waiting", {"next_try_at": until.isoformat(), "later_reason": why[:300]})
+                _move(sb, wid, c, "waiting", {"next_try_at": until.isoformat(), "later_reason": why[:300], **turn})
                 out["later"] += 1
 
             lead = leads.get(c)
@@ -1010,11 +1121,14 @@ def _draft_wave(sb: Any, wave: dict[str, Any], wave_room: int, now: datetime, ct
                 continue
             p = prior.get(c)
             if p:
+                # A run that stopped between its draft and the rest: the opener
+                # is adopted, and its meta row (the wave every gate reads) is
+                # written now if that run did not get to it.
+                _ensure_meta(sb, str(p["id"]), wid, (p.get("context") or {}).get("language"), warn)
                 if _move(sb, wid, c, "waiting", {"state": "drafted", "followup_id": str(p["id"]),
-                                                 "drafted_at": now.isoformat()}):
+                                                 "drafted_at": now.isoformat(), **turn}):
                     made += 1
                     out["drafted"] += 1
-                    events.append(m.get("event_at"))
                 continue
             if c in other:
                 later("Another draft for this lead is open.", now + LATER["open_draft"])
@@ -1024,6 +1138,9 @@ def _draft_wave(sb: Any, wave: dict[str, Any], wave_room: int, now: datetime, ct
             lang = fu.language_for(lead, [])
             if lang not in routes:
                 later(f"The {OPENERS[lang]} template is not set up yet.", now + LATER["route"])
+                continue
+            if ctx["levels"].get(f"reactivate.{lang}.whatsapp_template") == "off":
+                later("This kind of opener is switched off (Follow-ups, levels).", now + LATER["route"])
                 continue
             kept = fu.hold_of(stop_rows, c, now)
             if kept:
@@ -1075,14 +1192,9 @@ def _draft_wave(sb: Any, wave: dict[str, Any], wave_room: int, now: datetime, ct
                 out["raced"] += 1
                 later("Another draft for this lead was written meanwhile.", now + LATER["open_draft"])
                 continue
-            try:
-                sb.rest("POST", f"{META}?on_conflict=followup_id", prefer="resolution=ignore-duplicates,return=minimal",
-                        json_body=[{"followup_id": fid, "kind_key": f"reactivate.{o['language']}.whatsapp_template",
-                                    "wave_id": wid}])
-            except http.HttpError as e:
-                warn(f"waves: {c}'s opener has no meta row ({http.scrub(str(e))[:120]}); it can be approved on its own, "
-                     "not in a batch")
-            if not _move(sb, wid, c, "waiting", {"state": "drafted", "followup_id": fid, "drafted_at": now.isoformat()}):
+            _ensure_meta(sb, fid, wid, o["language"], warn)
+            if not _move(sb, wid, c, "waiting", {"state": "drafted", "followup_id": fid, "drafted_at": now.isoformat(),
+                                                 **turn}):
                 sb.rest("PATCH", f"{FOLLOWUPS}?id=eq.{_q(fid)}&status=eq.draft", prefer="return=minimal",
                         json_body={"status": "expired", "decided_at": now.isoformat(),
                                    "error": "Another run moved this lead in the wave meanwhile, so this opener was taken back."})
@@ -1090,7 +1202,6 @@ def _draft_wave(sb: Any, wave: dict[str, Any], wave_room: int, now: datetime, ct
             written.append(fid)
             made += 1
             out["drafted"] += 1
-            events.append(m.get("event_at"))
             log(f"waves: opener ({o['language']}) drafted for {c}")
         if len(page) < size:
             break
@@ -1098,8 +1209,9 @@ def _draft_wave(sb: Any, wave: dict[str, Any], wave_room: int, now: datetime, ct
         audit(sb, "waves.draft", WAVES, wid, after={"drafted": len(written), "excluded": len(excluded)},
               metadata={"followup_ids": written[:200], "excluded": excluded[:200]})
     if events:
-        # The held-back leads level with today's batch (newest first) start
-        # their 14 days now, so each arm is measured over the same days.
+        # The held-back leads level with today's turns (newest first) start
+        # their 14 days now, as the wave members whose turn came did: each arm
+        # is measured over the same days.
         dated = [fu._ts(e) for e in events]
         cut = "" if any(d is None for d in dated) else f"&event_at=gte.{_q(min(dated).isoformat())}"
         sb.rest("PATCH", f"{MEMBERS}?wave_id=eq.{_q(wid)}&arm=eq.holdout&state=eq.held_out&due_at=is.null{cut}",
@@ -1205,29 +1317,61 @@ def send_due(sb: Any, api: Callable[[str, dict[str, Any]], tuple[int, dict[str, 
     run stops before its budget runs out; the next one carries on."""
     started = clock()
     out: dict[str, Any] = {"due": 0, "sent": 0, "refused": 0, "failed": 0, "set_aside": 0, "held": 0, "gone": 0,
-                           "outside_hours": 0, "gate": 0, "wave_not_running": 0, "raced": 0, "left_pool": 0,
-                           "stopped": None, "stop_kind": None}
-    drafts = sb.select_all(FOLLOWUPS, "select=id,contact_id,channel,segment,touch,expires_at&status=eq.draft", order="id")
+                           "outside_hours": 0, "gate": 0, "wave_not_running": 0, "kind_off": 0, "raced": 0,
+                           "left_pool": 0, "stopped": None, "stop_kind": None}
+    # The database's clock, for every comparison with a time the database
+    # wrote (a message's created_at): the Date header's offset when the
+    # client has one. Times the desk writes itself (its lease, last_at) are on
+    # the same clock, so a VPS clock off the database's never slows the pace.
+    off = getattr(sb, "clock_offset", None)
+    skew = timedelta(seconds=float(off)) if isinstance(off, (int, float)) and abs(float(off)) < 3600 else timedelta(0)
+
+    def db_now() -> datetime:
+        return clock() + skew
+
+    drafts = sb.select_all(FOLLOWUPS, "select=id,contact_id,channel,segment,touch,expires_at,context&status=eq.draft",
+                           order="id")
     if not drafts:
         return out
     fups = {str(f["id"]): f for f in drafts}
     meta: list[dict[str, Any]] = []
     for chunk in fu._chunks(sorted(fups)):
-        meta += sb.select(META, f"select=followup_id,send_after,held_by,wave_id&followup_id={fu._in(chunk)}"
-                                f"&send_after=lte.{_q(started.isoformat())}&held_by=is.null&limit=1000")
+        meta += sb.select(META, f"select=followup_id,send_after,held_by,wave_id,kind_key&followup_id={fu._in(chunk)}"
+                                f"&send_after=lte.{_q((started + skew).isoformat())}&held_by=is.null&limit=1000")
     if not meta:
         return out
     meta.sort(key=lambda m: (fu._ts(m.get("send_after")) or started, str(m["followup_id"])))
+
+    def wave_of(m: dict[str, Any]) -> str:
+        """The opener's wave: its meta's, else the draft's own (a meta row made without it)."""
+        return str(m.get("wave_id") or (fups[str(m["followup_id"])].get("context") or {}).get("wave_id") or "")
+
+    def kind_of(m: dict[str, Any]) -> str:
+        f = fups[str(m["followup_id"])]
+        lang = str((f.get("context") or {}).get("language") or "")
+        return str(m.get("kind_key") or (f"reactivate.{lang}.{f.get('channel')}" if f.get("segment") == "reactivate"
+                                          and lang else ""))
+
     state_of = {str(x["id"]): str(x.get("state") or "") for x in waves}
-    unknown = sorted({str(m["wave_id"]) for m in meta if m.get("wave_id")} - set(state_of))
+    unknown = sorted({wave_of(m) for m in meta if wave_of(m)} - set(state_of))
     for chunk in fu._chunks(unknown):
         for x in sb.select(WAVES, f"select=id,state&id={fu._in(chunk)}&limit=1000"):
             state_of[str(x["id"])] = str(x.get("state") or "")
+    try:
+        levels = levels_of(sb) if any(kind_of(m) for m in meta) else {}
+    except http.HttpError as e:
+        # Missing is never zero: a kind that may be switched off is not sent on a guess.
+        out["stopped"], out["stop_kind"] = (f"The opener levels could not be read ({http.scrub(str(e))[:120]}); "
+                                            "nothing is sent until they can be."), "error"
+        return out
     due = []
     for m in meta:
-        wid = str(m.get("wave_id") or "")
+        wid = wave_of(m)
         if wid and state_of.get(wid) != "running":
             out["wave_not_running"] += 1
+            continue
+        if levels.get(kind_of(m)) == "off":
+            out["kind_off"] += 1
             continue
         due.append(m)
     out["due"] = len(due)
@@ -1291,7 +1435,7 @@ def send_due(sb: Any, api: Callable[[str, dict[str, Any]], tuple[int, dict[str, 
             if spent:
                 stop("budget", spent)
                 break
-        recent = _desk_sends_since(sb, now - CEILING_WINDOW)
+        recent = _desk_sends_since(sb, db_now() - CEILING_WINDOW)
         if len(recent) >= CEILING - RESERVE:
             stop("ceiling", f"The desk sent {len(recent)} messages in ten minutes; the rest wait so the sender "
                             f"ceiling keeps {RESERVE} for the demo chat.")
@@ -1299,21 +1443,28 @@ def send_due(sb: Any, api: Callable[[str, dict[str, Any]], tuple[int, dict[str, 
         out_of_time = False
         for _ in range(6):
             now = clock()
-            newest = next(iter(_desk_sends_since(sb, now - timedelta(seconds=gap))), None)
+            dbn = db_now()
+            newest = next(iter(_desk_sends_since(sb, dbn - timedelta(seconds=gap))), None)
             try:
                 held = _lease_at(sb, SEND_LEASE)
             except http.HttpError:
                 held = None
             # The gap counts from this run's last send, the desk's last message,
-            # and the last send another run is making right now (its lease).
-            t = max((x for x in (last_at, fu._ts((newest or {}).get("created_at")), held) if x), default=None)
-            wait = 0.0 if not t else gap - (now - t).total_seconds()
+            # and the last send another run is making right now (its lease), all
+            # on the database's clock. A message time ahead of that clock (a VPS
+            # clock behind the database's, with no offset known yet) says
+            # nothing the lease does not, and never stretches the wait.
+            last_msg = fu._ts((newest or {}).get("created_at"))
+            if last_msg and last_msg > dbn + timedelta(seconds=2):
+                last_msg = None
+            t = max((x for x in (last_at, last_msg, held) if x), default=None)
+            wait = 0.0 if not t else min(gap, gap - (dbn - t).total_seconds())
             if (now - started).total_seconds() + max(0.0, wait) + 20 > budget_s:
                 out_of_time = True
                 break
             if wait <= 0:
                 try:
-                    if _take_lease(sb, SEND_LEASE, now, max(1.0, gap - 1)):
+                    if _take_lease(sb, SEND_LEASE, dbn, max(1.0, gap - 1)):
                         break
                 except http.HttpError:
                     break  # no lease row to be had: the gap read above stands
@@ -1345,7 +1496,7 @@ def send_due(sb: Any, api: Callable[[str, dict[str, Any]], tuple[int, dict[str, 
         if not sb.select(FOLLOWUPS, f"select=id&id=eq.{_q(fid)}&status=eq.draft&limit=1"):
             out["gone"] += 1  # sent, skipped or expired meanwhile (another run, a rep)
             continue
-        wid = str(m.get("wave_id") or "")
+        wid = wave_of(m)
         now_state = next(iter(sb.select(WAVES, f"select=state&id=eq.{_q(wid)}&limit=1")), None) if wid else None
         if now_state is not None and now_state.get("state") != "running":
             out["wave_not_running"] += 1  # a manager paused or stopped it while this run waited
@@ -1358,14 +1509,14 @@ def send_due(sb: Any, api: Callable[[str, dict[str, Any]], tuple[int, dict[str, 
         res = res if isinstance(res, dict) else {}
         verdict, err = judge(status, res)
         if verdict == "sent":
-            last_at = clock()
+            last_at = db_now()
             out["sent"] += 1
             in_a_row = 0
             log(f"waves: sent {fid}")
             continue
         if verdict in ("hold_all", "outage", "error"):
             if res.get("message"):
-                last_at = clock()
+                last_at = db_now()
             stop(verdict, err)
             break
         if verdict == "hours":
@@ -1381,7 +1532,7 @@ def send_due(sb: Any, api: Callable[[str, dict[str, Any]], tuple[int, dict[str, 
             continue
         in_a_row += 1
         if verdict == "failed":
-            last_at = clock()
+            last_at = db_now()
             out["failed"] += 1
             warn(f"waves: {fid} failed at HighLevel or Meta: {err[:160]}")
         else:
@@ -1467,6 +1618,10 @@ def run(sb: Any, api: Callable[[str, dict[str, Any]], tuple[int, dict[str, Any]]
         out["synced"] = {k: synced[k] + more[k] for k in synced}
         ids = [str(x["id"]) for x in waves] + [str(x["id"]) for x in winding]
         out["outcomes"] = outcomes(sb, ids, started)
+        try:
+            out["meta_repaired"] = repair_meta(sb, [str(x["id"]) for x in waves], warn)
+        except http.HttpError as e:
+            warn(f"waves: the openers' meta rows could not be checked ({http.scrub(str(e))[:120]})")
         if not ghl_token:
             out["drafted"] = {"waiting": "GHL_B2B_API_KEY is not set, so no lead's conversation can be read and no "
                                          "opener is written.", "setup": True}
@@ -1512,6 +1667,9 @@ def words(out: dict[str, Any]) -> tuple[bool, str]:
         legacy = any(s in str(d["waiting"]) for s in ("not set up", "single-copy", "is not set"))
         if (d.get("setup") or d.get("blocked") or legacy) and running:
             ok = False
+    if d.get("blocked_waves") and not d.get("blocked"):
+        n = sum(int(v) for v in d["blocked_waves"].values())
+        parts.append(f"{n} of an earlier day's openers wait for approval, so their wave writes no new batch")
     if d.get("drafted"):
         parts.append(f"{d['drafted']} openers written for approval")
     if d.get("excluded"):
@@ -1541,6 +1699,8 @@ def words(out: dict[str, Any]) -> tuple[bool, str]:
         parts.append(f"{sent['held']} held by a person")
     if sent.get("wave_not_running"):
         parts.append(f"{sent['wave_not_running']} approved for a wave that is paused or stopped, so not sent")
+    if sent.get("kind_off"):
+        parts.append(f"{sent['kind_off']} approved but their kind of opener is switched off, so not sent")
     if sent.get("failed"):
         parts.append(f"{sent['failed']} failed at HighLevel or Meta")
     if sent.get("refused"):
@@ -1551,7 +1711,7 @@ def words(out: dict[str, Any]) -> tuple[bool, str]:
         if sent.get("stop_kind") in FAULTS:
             ok = False
     explained = any(sent.get(k) for k in ("sent", "gate", "outside_hours", "held", "gone", "refused", "failed",
-                                          "wave_not_running")) or sent.get("stop_kind") in ("time", "ceiling")
+                                          "wave_not_running", "kind_off")) or sent.get("stop_kind") in ("time", "ceiling")
     if sent.get("due") and not explained:
         parts.append(f"{sent['due']} approved openers are due and none went")
         ok = False

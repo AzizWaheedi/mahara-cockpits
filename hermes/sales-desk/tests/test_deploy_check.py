@@ -69,6 +69,9 @@ class Catalog:
         self.functions = {deploycheck.LEASE_FN}
         self.asked: list[tuple[str, str]] = []
         self.refuse_key = False
+        # sales-live/health: its status (401 when deployed with verify_jwt on) and its cron route.
+        self.door = 200
+        self.cron = "ready"
         self.pg.put("cockpit_sales_settings", {"key": "rooms", "value": json.loads(json.dumps(ROOMS_AS_SHIPPED))})
         self.pg.put("cockpit_sales_settings", {"key": "live", "value": json.loads(json.dumps(LIVE_AS_SHIPPED))})
         self.pg.put("cockpit_sales_settings", {"key": "followups", "value": {"enabled": True}})
@@ -88,9 +91,17 @@ class Catalog:
             raise AssertionError(f"the deploy check wrote: {method} {url}")
         if "supabase.co" not in url:
             raise AssertionError(f"the deploy check reached outside the database: {url}")
+        parts = urllib.parse.urlsplit(url)
+        if parts.path == deploycheck.DOOR_HEALTH:
+            # The door, as a sales-live deployed with verify_jwt off answers it (no key sent).
+            if self.door != 200:
+                body = json.dumps({"message": "Missing authorization header"})
+                raise HttpError(self.door, body, body.encode(), url)
+            return 200, {}, json.dumps({"ok": True, "function": "sales-live",
+                                        "routes": {"zoom": "ready", "slack": "ready", "open": "ready", "go": "ready",
+                                                   "cron": self.cron}}).encode()
         if self.refuse_key:
             raise HttpError(401, '{"message":"Invalid API key"}', b'{"message":"Invalid API key"}', url)
-        parts = urllib.parse.urlsplit(url)
         table = parts.path[len("/rest/v1/"):]
         if table.startswith("rpc/"):
             name = table[4:]
@@ -128,6 +139,34 @@ def run(argv: list[str], db: Catalog, keys: Optional[dict[str, str]] = None, cro
 
 def line(out: str, check: str) -> str:
     return next((ln for ln in out.splitlines() if ln[4:].startswith(check)), "")
+
+
+class TheDoor(unittest.TestCase):
+    """sweep-door-refusals-invisible: the room sweep reaches sales-api only
+    through sales-live/cron. deploy-check asks the door before anything is
+    switched on, so a door deployed with verify_jwt on, or not at all, or
+    without CRON_SECRET, is said here, not first noticed as a red sweep row."""
+
+    def test_a_door_deployed_with_verify_jwt_on_blocks_the_deploy(self):
+        db = Catalog()
+        db.door = 401
+        code, out, _ = run(["deploy-check"], db)
+        self.assertEqual(code, 1, out)
+        self.assertIn("verify_jwt on", line(out, "sales-live reachable"))
+
+    def test_a_door_not_deployed_blocks_the_deploy(self):
+        db = Catalog()
+        db.door = 404
+        code, out, _ = run(["deploy-check"], db)
+        self.assertEqual(code, 1, out)
+        self.assertIn("not deployed", line(out, "sales-live reachable"))
+
+    def test_a_door_without_its_cron_secret_blocks_the_deploy(self):
+        db = Catalog()
+        db.cron = "missing CRON_SECRET"
+        code, out, _ = run(["deploy-check"], db)
+        self.assertEqual(code, 1, out)
+        self.assertIn("missing CRON_SECRET", line(out, "the sweep's door (cron)"))
 
 
 class DeployCheck(unittest.TestCase):

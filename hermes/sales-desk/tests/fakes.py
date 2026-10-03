@@ -62,6 +62,10 @@ PK = {
     "cockpit_sales_followup_waves": ("id",),
     "cockpit_sales_followup_wave_members": ("wave_id", "contact_id"),
     "cockpit_sales_followup_meta": ("followup_id",),
+    # The video rooms (20261003a): the desk reads the live calls the count booked.
+    "cockpit_sales_rooms": ("id",),
+    # followup.level's word per kind (20261003c): a kind switched Off gets no opener.
+    "cockpit_sales_followup_levels": ("kind_key",),
 }
 
 
