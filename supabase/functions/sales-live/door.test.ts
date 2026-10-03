@@ -192,8 +192,10 @@ describe("devices", () => {
 });
 
 describe("addresses", () => {
-  test("the first forwarded address, then the fallbacks", () => {
-    expect(clientIp(new Headers({ "x-forwarded-for": "203.0.113.9, 10.0.0.1" }))).toBe("203.0.113.9");
+  test("the address the edge saw: Cloudflare's, else the last forwarded hop (a client writes the first), then the fallbacks", () => {
+    expect(clientIp(new Headers({ "x-forwarded-for": "203.0.113.9, 10.0.0.1" }))).toBe("10.0.0.1");
+    expect(clientIp(new Headers({ "x-forwarded-for": "203.0.113.9" }))).toBe("203.0.113.9");
+    expect(clientIp(new Headers({ "x-forwarded-for": "1.2.3.4, 10.0.0.1", "cf-connecting-ip": "198.51.100.7" }))).toBe("198.51.100.7");
     expect(clientIp(new Headers({ "x-real-ip": "198.51.100.2" }))).toBe("198.51.100.2");
     expect(clientIp(new Headers())).toBe("unknown");
   });

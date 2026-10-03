@@ -9,7 +9,7 @@ route checks its own key first. Not deployed yet.
 | --- | --- | --- | --- |
 | `POST /zoom` | Zoom's event subscription | `x-zm-signature` = `v0=` + hex HMAC-SHA256 of `v0:{x-zm-request-timestamp}:{raw body}`, constant time, no time window (Zoom retries 5, 20 and 60 minutes later with the first timestamp) | `endpoint.url_validation` (only after the signature matches, so the door is never an HMAC oracle); one room lookup (500 ms); a meeting that is no cockpit room: 200 `{ignored: "not a room"}` and nothing kept; a room's event: stored once, 200 inside Zoom's 3 s; other events 200 and ignored |
 | `POST /slack` | Slack: slash commands, interactivity, events | `X-Slack-Signature` v0 with the 300 s window | `url_verification`; `/available`, `/unavailable` (and `/away`), `block_actions` and `app_home_opened` passed to `live.press`; an empty 200 inside Slack's 3 s |
-| `GET /open/{code}` | the short page's script | origin (`call.maharamedia.com`, the one `CALL_SITE_URL`, localhost); 30 a minute per salted address and device, 120 a minute per address; all reads inside 4.5 s | where the room is: `open` with `join_url`, `provider` and the host's first names, `preparing`, `ended` (with the official WhatsApp number), or `unknown` |
+| `GET /open/{code}` | the short page's script | origin (`call.maharamedia.com`, the one `CALL_SITE_URL`, localhost); 30 a minute per salted address and device, 120 a minute per address, 150 a minute per room code from every address; all reads inside 4.5 s. The address is the one the edge saw (`cf-connecting-ip`, else the last `X-Forwarded-For` hop), never the first hop a client writes; bodies on `/zoom` and `/slack` are read a chunk at a time and cut off past their cap | where the room is: `open` with `join_url`, `provider` and the host's first names, `preparing`, `ended` (with the official WhatsApp number), or `unknown` |
 | `GET /go/{code}` | the page's no-script link | the same limits | 302 to the room, to `/ended?c={code}` or to the site; records nothing |
 | `POST /cron` | pg_cron (`mahara-sales-rooms-sweep`, later `mahara-sales-threads`) | `x-cron-secret` against `CRON_SECRET`, constant time | 202 at once for the sweep's replays and `thread.tick` only; the forward runs after, its outcome in the status row |
 | `GET /health` | the doctor, a person | none | which routes are ready, by secret name only, never a value |
@@ -164,6 +164,12 @@ bun test supabase/functions/sales-live sites/call-link   # no network
 python3 deploy_fn.py sales-live supabase/functions/sales-live   # verify_jwt off; NOT run yet
 curl -s https://bldgtotkfmhoxmlzowdx.supabase.co/functions/v1/sales-live/health
 ```
+
+On the first deploy, check which address header Supabase's edge sets
+(`cf-connecting-ip`, or `X-Forwarded-For` with its own hop last): the open
+limiter keys on that one (door.ts `clientIp`). If the edge passes on a
+client's `X-Forwarded-For` unchanged with nothing after it, fix `clientIp`
+before any link goes to a lead.
 
 Then, in this order: Zoom's Event Subscriptions URL
 `https://bldgtotkfmhoxmlzowdx.supabase.co/functions/v1/sales-live/zoom`

@@ -767,6 +767,18 @@ function LiveRoomPanel({
           apply((await roomsApi.end(r, "on_phone")).room);
           return;
         case "retry":
+          if (r.state === "cancelled" && r.result === "admit_blocked") {
+            // The Meet room is closed and its Zoom replacement was not made:
+            // ask again for that same replacement (sales-api makes it once).
+            const out = await roomsApi.end(r, "admit_blocked");
+            apply(out.room);
+            const next = afterAdmitBlocked(out);
+            if (next.kind === "show") setShown(next.room);
+            else if (next.kind === "refused")
+              setNotice({ tone: "bad", text: next.text });
+            else await retry(r, otherProvider(r.provider));
+            return;
+          }
           await retry(r, otherProvider(r.provider));
           return;
       }

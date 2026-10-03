@@ -374,12 +374,13 @@ describe("the message service", () => {
   test("every channel fails: the failures are saved, and the tick's re-ask a minute later sends once with the same request ids", async () => {
     const w = setup({ rooms: { send: { whatsapp_text: true, whatsapp_template: false, email: false } } });
     let fail = true;
-    w.knobs.text = () => (fail ? new ApiRefusal("HighLevel did not send it: 500", 502) : { id: "m-ok", state: "sent" });
+    // A refusal that is certain (HighLevel said no): the cascade goes on. A lost answer or a 5xx is not certain (stress_chaos_rooms).
+    w.knobs.text = () => (fail ? new ApiRefusal("HighLevel said 400: the number is not on WhatsApp", 400) : { id: "m-ok", state: "sent" });
     const id = String((await w.make()).id);
     await w.workerOpens(id);
     await w.rooms.desk["room.event"]!(desk, { kind: "worker.ready", room_id: id, payload: {} });
     await w.flush();
-    expect(String(w.room(id).refusal)).toContain("HighLevel did not send it");
+    expect(String(w.room(id).refusal)).toContain("the number is not on WhatsApp");
     fail = false;
     w.clock.now += 61 * S;
     const t = await w.rooms.desk["room.event"]!(desk, { kind: "tick", payload: { room_ids: [id] } });
@@ -560,6 +561,7 @@ describe("defect 2: booked intros are settled as no-shows (room.event sweep.sett
     const start = w.clock.now - 25 * MIN;
     w.db.seed("cockpit_sales_appointments", [{ appointment_id: "appt-1", contact_id: LEAD, call_type: "intro", start_at: new Date(start).toISOString(), status: "confirmed", assigned_user_id: "G-setter" }]);
     const id = fakeUuid();
+    // A Zoom room whose join events were all read: the evidence a no-show needs (Meet sends no join signal).
     w.db.seed("cockpit_sales_rooms", [
       {
         id,
@@ -567,14 +569,15 @@ describe("defect 2: booked intros are settled as no-shows (room.event sweep.sett
         contact_id: LEAD,
         purpose: "booked",
         call_kind: "intro",
-        provider: "meet",
+        provider: "zoom",
         host_email: SETTER,
         made_by: SETTER,
         appointment_id: "appt-1",
+        appointment_start_at: new Date(start).toISOString(),
         state: "expired",
         result: "no_join",
         ended_at: w.db.iso(),
-        join_url: MEET_URL,
+        join_url: "https://us06web.zoom.us/j/81234567890?pwd=abc",
         ...over,
       },
     ]);

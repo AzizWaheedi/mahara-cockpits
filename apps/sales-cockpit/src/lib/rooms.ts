@@ -46,7 +46,10 @@ export type CountResult =
   | "moved"
   | "not_a_lead"
   | "failed"
-  | "undone";
+  | "undone"
+  | "unclear"
+  | "already_counted"
+  | "self_reported";
 export type RoomResult =
   | "joined"
   | "no_join"
@@ -295,6 +298,9 @@ const COUNT_RESULTS: readonly CountResult[] = [
   "not_a_lead",
   "failed",
   "undone",
+  "unclear",
+  "already_counted",
+  "self_reported",
 ];
 const PRESENCE_STATES: readonly PresenceState[] = [
   "on_call",
@@ -775,6 +781,7 @@ export type RoomMoment =
   | "standby_in"
   | "sent"
   | "not_sent"
+  | "link_late"
   | "not_confirmed"
   | "opened"
   | "waiting_room"
@@ -811,8 +818,29 @@ export function roomMoment(room: RoomView, now: number): RoomMoment {
   if (room.first_open_at) return "opened";
   if (room.link_unconfirmed_at) return "not_confirmed";
   if (room.link_sent_at) return "sent";
+  // Well past a minute open with a lead, nothing sent and no reason: the link
+  // was never asked for (a lost worker.ready) or its send died. The rep reads
+  // it out. Not a booked call's room (its link went with the booking), nor a
+  // handover room before its closer is in (its link waits for them).
+  const opened = t(room.created_at);
+  const waitsForHost = room.purpose === "handover" && s === "open";
+  if (
+    room.contact_id &&
+    room.purpose !== "booked" &&
+    !waitsForHost &&
+    opened !== null &&
+    now - opened >= LINK_LATE_MS
+  )
+    return "link_late";
   return "ready";
 }
+
+/**
+ * How long a room with a lead may say "Room ready." before the panel says
+ * the link has not gone: the sweep asks for a link never claimed a minute
+ * after the room opened, and a send takes up to half a minute more.
+ */
+export const LINK_LATE_MS = 90_000;
 
 /** The moment, with "Still on the call?" answered "Still on it" for now. */
 export function momentFor(room: RoomView, ctx: RoomCtx): RoomMoment {
@@ -927,6 +955,21 @@ function joinedSentence(room: RoomView, v: Voice): Sentence {
       ];
     case "failed":
       return [head, at, ". Not in HighLevel: book and mark it by hand."];
+    case "unclear":
+      // The booking's answer was lost: never "book it by hand" while one may stand.
+      return [
+        head,
+        at,
+        ". HighLevel may have booked it. Check the lead's calendar before booking by hand.",
+      ];
+    case "already_counted":
+      return [head, at, ". Already counted: nothing more is booked."];
+    case "self_reported":
+      return [
+        head,
+        at,
+        ". Not booked yet: a manager confirms a join marked by hand.",
+      ];
     default:
       return [head, at, "."];
   }
@@ -1012,6 +1055,12 @@ export function roomSentence(room: RoomView, ctx: RoomCtx): Sentence {
             "HighLevel did not confirm the WhatsApp template. The link went by email.",
           ]
         : ["Not confirmed on WhatsApp. Sent by email too."];
+    case "link_late": {
+      const said = readOut(room);
+      if (!said)
+        return ["The link has not gone yet. Copy it and send it another way."];
+      return ["The link has not gone yet. Read it out: ", { mono: said }];
+    }
     case "not_sent": {
       const said = readOut(room);
       // Ours: a link nobody could say (a Zoom link before the short link).
@@ -1079,6 +1128,7 @@ export function roomTone(m: RoomMoment): Tone {
     case "still_on_call":
       return "good";
     case "not_sent":
+    case "link_late":
     case "not_confirmed":
     case "expired":
       return "owed";
@@ -1219,6 +1269,23 @@ export function roomActions(
           : [],
       };
     case "closed":
+      // "I can't let them in" closed this room and its replacement was not
+      // made (the server's answer was an error): the lead is knocking at a
+      // closed room, so the one right action is the other provider.
+      if (
+        room.state === "cancelled" &&
+        room.result === "admit_blocked" &&
+        hasLead &&
+        !booked
+      )
+        return {
+          primary: act(
+            "retry",
+            `Try ${providerName(otherProvider(room.provider))}`,
+          ),
+          quiet: [],
+        };
+      return { primary: null, quiet: [] };
     case "standby_in":
       return { primary: null, quiet: [] };
     case "standby_open":
@@ -1243,15 +1310,22 @@ export function roomActions(
   const meet = room.provider === "meet";
   const hostIn = room.state === "host_in";
   const quiet: RoomAction[] = [];
-  const primary = hostIn
-    ? act("lead_in", "The lead is in")
-    : act("open", "Open my room");
+  const late = m === "link_late" && Boolean(shortLink(room));
+  const primary = late
+    ? act("copy", "Copy link")
+    : hostIn
+      ? act("lead_in", "The lead is in")
+      : act("open", "Open my room");
   // Only someone in the room can let the lead in, so "The lead is in"
   // waits for "I'm in" (or Zoom's own word that the host joined).
+  if (late)
+    quiet.push(
+      hostIn ? act("lead_in", "The lead is in") : act("open", "Open my room"),
+    );
   if (hostIn) quiet.push(act("open", "Open my room"));
   else if (meet) quiet.push(act("host_in", "I'm in the room"));
   else if (manualButtons(room, ctx.now)) quiet.push(act("host_in", "I'm in"));
-  if (shortLink(room)) quiet.push(act("copy", "Copy link"));
+  if (shortLink(room) && !late) quiet.push(act("copy", "Copy link"));
   if (hasLead && !booked && !room.link_channels.includes("email"))
     quiet.push(act("email", "Also send by email"));
   if (room.purpose === "fallback" || room.purpose === "manual")
@@ -1366,7 +1440,7 @@ export function bannerRoomSentence(room: RoomView, now: number): Sentence {
   const Name = name ?? "The lead";
   if (m === "making")
     return [`Making your ${providerName(room.provider)} room...`];
-  if (m === "waiting_room" || m === "not_sent")
+  if (m === "waiting_room" || m === "not_sent" || m === "link_late")
     return roomSentence(room, { now });
   if (m === "joined" || m === "still_on_call") return [`${Name} joined.`];
   if (room.first_open_at) return [`${Name} opened the link.`];
@@ -1727,6 +1801,29 @@ export function stripLine(i: StripInput): StripLine {
     );
 
   const until = i.me.until ? { mono: clock(i.me.until) } : null;
+  // The room closed for a booked call: said until the call starts, with no
+  // button, because I'm available now would open a room again. The database
+  // serves this while the rep is still Available (or Away), so it comes
+  // before both, and no offer reaches them meanwhile.
+  const bookedAt = t(i.me.booked_at);
+  if (
+    i.me.state !== "on_call" &&
+    i.me.state !== "ready" &&
+    BOOKED_REASONS.has(i.me.reason ?? "") &&
+    bookedAt !== null &&
+    bookedAt > i.now
+  )
+    return line(
+      "booked_call",
+      [
+        `Your booked ${i.me.booked_kind === "intro" ? "intro" : "demo"} starts at `,
+        { mono: clock(i.me.booked_at) },
+        ", so your room is closed. Press I'm available after it.",
+      ],
+      null,
+      [],
+      "quiet",
+    );
   switch (i.me.state) {
     case "on_call":
       // Ours: the specs give this state no line.
@@ -1791,21 +1888,6 @@ export function stripLine(i: StripInput): StripLine {
       );
     }
     default: {
-      const at = t(i.me.booked_at);
-      // The room closed for a booked call: said until the call starts, with
-      // no button, because I'm available now would open a room again.
-      if (BOOKED_REASONS.has(i.me.reason ?? "") && at !== null && at > i.now)
-        return line(
-          "booked_call",
-          [
-            `Your booked ${i.me.booked_kind === "intro" ? "intro" : "demo"} starts at `,
-            { mono: clock(i.me.booked_at) },
-            ", so your room is closed. Press I'm available after it.",
-          ],
-          null,
-          [],
-          "quiet",
-        );
       return line(
         "away",
         ["Away"],

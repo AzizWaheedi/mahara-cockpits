@@ -80,6 +80,8 @@ export interface Deps {
   limiter: RateLimiter;
   /** Per address, all devices together: 120 a minute (two tabs, a family on one Wi-Fi). */
   wideLimiter?: RateLimiter;
+  /** Opens of one room code a minute, from every address (150). */
+  codeLimiter?: RateLimiter;
   log: (line: string) => void;
   /** Shorter waits for tests; production uses BUDGET as it stands. */
   budget?: Partial<Record<keyof typeof BUDGET, number>>;
@@ -187,12 +189,35 @@ function redirect(location: string): Response {
   });
 }
 
-/** The raw body, or null when it is larger than `max`. */
+/**
+ * The raw body, or null when it is larger than `max`. Read a chunk at a time
+ * with a running count, so a body with no content-length (chunked) or a false
+ * one is cut off just past the cap, never held whole in memory.
+ */
 async function readBody(req: Request, max: number): Promise<Uint8Array | null> {
   const declared = Number(req.headers.get("content-length") ?? "0");
   if (Number.isFinite(declared) && declared > max) return null;
-  const bytes = new Uint8Array(await req.arrayBuffer());
-  return bytes.length > max ? null : bytes;
+  if (!req.body) return new Uint8Array(0);
+  const reader = req.body.getReader();
+  const parts: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > max) {
+      await reader.cancel().catch(() => {});
+      return null;
+    }
+    parts.push(value);
+  }
+  const out = new Uint8Array(size);
+  let at = 0;
+  for (const p of parts) {
+    out.set(p, at);
+    at += p.byteLength;
+  }
+  return out;
 }
 
 /** A database answer that was not 2xx; `status` 0 when there was no answer. */
@@ -212,6 +237,11 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
   const B: Record<keyof typeof BUDGET, number> = { ...BUDGET, ...(deps.budget ?? {}) };
   const clock = deps.clock ?? (() => performance.now());
   const wide = deps.wideLimiter ?? new RateLimiter(120, 60_000, 10_000);
+  // One room code is opened by one lead: 150 a minute from every address
+  // together is far past that, and stops one room being hammered from many
+  // addresses. It sits above one address's own 120, so a single address can
+  // never use up a lead's room for them.
+  const perCode = deps.codeLimiter ?? new RateLimiter(150, 60_000, 10_000);
   const statusMemo = new Map<string, { ok: boolean; at: number }>();
   const alertMemo = new Map<string, { on: boolean; at: number }>();
   let ignoredZoom = 0;
@@ -778,7 +808,7 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
     const ua = req.headers.get("user-agent") ?? "";
     const deviceId = url.searchParams.get("d");
     const hash = await ipHash(salt, clientIp(req.headers));
-    if (!withinLimits(hash, deviceId))
+    if (!withinLimits(hash, deviceId) || !perCode.hit(code, deps.now()))
       return json(
         { ok: false, state: "busy", error: "Too many tries from this network. Wait a minute, then try again." },
         429,

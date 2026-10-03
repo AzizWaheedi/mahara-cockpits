@@ -80,7 +80,7 @@ const countOn = roomCtx({ ...DEFAULT_ROOMS_SETTING, count_on_join: true });
 const W = ctx.waits;
 const at = (t: number) => new Date(t).toISOString();
 const ON = roomsSetting({ ...DEFAULT_ROOMS_JSON, enabled: true, test_only: false, providers: { zoom: true, meet: true } });
-const COUNT_ON = roomsSetting({ ...DEFAULT_ROOMS_JSON, count_on_join: true, test_calendar_id: "TESTCAL" });
+const COUNT_ON = roomsSetting({ ...DEFAULT_ROOMS_JSON, count_on_join: true, test_calendar_id: "TESTCAL", live_calendar_id: "LIVECAL" });
 const LEAD = { phone: "+96550001234", email: "lead@example.com", tags: ["roas-qualified"], dnd: false, dndSettings: {} };
 
 function room(over: Partial<RoomRow> = {}): RoomRow {
@@ -546,13 +546,15 @@ describe("#10 #11 #12 #13 #25 settle, Zoom's end, the grace, the hold and the wr
   test("settle: expired or ended with no join; never moved to the phone, cancelled, or a real join", () => {
     const sent = step(opened({ appointment_id: "APPT1" }), { kind: "link_sent" }, T0 + 10 * S);
     const ended = step(sent, { kind: "end", reason: "end" }, T0 + 4 * MIN);
-    expect(settleDue(ended, at(T0), false, T0 + 20 * MIN, W)).toBe(true);
+    // The short link went and was never opened: evidence that nobody came (Meet sends no join signal).
+    expect(settleDue(ended, at(T0), false, T0 + 20 * MIN, W, { short_link: true })).toBe(true);
+    expect(settleDue(ended, at(T0), false, T0 + 20 * MIN, W)).toBe(false);
     for (const reason of ["on_phone", "cancel"] as const) expect(settleDue(step(sent, { kind: "end", reason }, T0 + 4 * MIN), at(T0), false, T0 + 20 * MIN, W)).toBe(false);
     const joined = step(step(sent, { kind: "lead_in", source: "mark" }, T0 + MIN), { kind: "end", reason: "finished" }, T0 + 9 * MIN);
     expect(settleDue(joined, at(T0), false, T0 + 20 * MIN, W)).toBe(false);
     // A join taken back is no join.
     const taken = step(step(step(sent, { kind: "lead_in", source: "mark" }, T0 + MIN), { kind: "not_lead", actor: { email: SETTER } }, T0 + 2 * MIN), { kind: "end", reason: "end" }, T0 + 3 * MIN);
-    expect(settleDue(taken, at(T0), false, T0 + 20 * MIN, W)).toBe(true);
+    expect(settleDue(taken, at(T0), false, T0 + 20 * MIN, W, { short_link: true })).toBe(true);
     // The panel asks for the mark on an ended booked intro too.
     const v = toRoomView(ended, { short_link: true, contact_first_name: "Sara" });
     expect(panelLine(v, { now: T0 + 5 * MIN, booked_intro: true }).text).toBe(LANE_COPY.ended_mark_intro);
@@ -616,7 +618,7 @@ describe("#14 a test contact's booked call", () => {
   test("a real lead's booked intro is still marked; upcoming() needs no kind of its own", () => {
     const real = countLive({ room: joined({ appointment_id: "APPT" }), setting: COUNT_ON, contact: LEAD, upcoming: null, host_ghl_user_id: "G", location_id: "L", link: null });
     expect(real.action).toBe("mark");
-    const moved = countLive({ room: joined({}), setting: COUNT_ON, contact: LEAD, upcoming: { id: "UP", start: T0 + 86_400_000 }, host_ghl_user_id: "G", location_id: "L", link: null });
+    const moved = countLive({ room: joined({}), setting: COUNT_ON, contact: LEAD, upcoming: { id: "UP", start: T0 + 86_400_000, end: T0 + 86_400_000 + 1_800_000, assigned_user_id: "G-REP" }, host_ghl_user_id: "G", location_id: "L", link: null });
     expect(moved.action).toBe("move");
   });
 });

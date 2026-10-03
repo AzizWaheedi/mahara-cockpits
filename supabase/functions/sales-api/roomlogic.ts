@@ -13,8 +13,9 @@
 //
 // These rules hold everywhere and are tested on 10,000 random runs:
 // - a final room (ended, expired, failed, cancelled) never changes state
-//   again; the one write it still takes is "That was not the lead" within
-//   5 minutes of the join, which only takes the count back;
+//   again; the writes it still takes are "That was not the lead" within
+//   5 minutes of the join, which only takes the count back, and a lead join
+//   a timer's close raced, kept as evidence only (lateLeadIn);
 // - no timer ends a room with the lead in it: a lead_in room is only closed
 //   in the books at ends_at + no_end_signal ("No end signal"), and no
 //   provider call is ever made for a room that reached lead_in;
@@ -86,7 +87,23 @@ export const TRIGGERS = ["no_answer", "busy", "did_not_connect", "no_talk", "hun
 export type Trigger = (typeof TRIGGERS)[number];
 export const ROOM_RESULTS = ["joined", "no_join", "moved_to_phone", "cancelled", "failed", "admit_blocked"] as const;
 export type RoomResult = (typeof ROOM_RESULTS)[number];
-export const COUNT_RESULTS = ["booked", "moved", "not_a_lead", "failed", "undone"] as const;
+/**
+ * The live count's outcome. unclear: HighLevel may have made the booking (its
+ * answer was lost) and nothing could confirm it, so nobody books by hand until
+ * a person checks; already_counted: another room of the lead's already
+ * counted this conversation; self_reported: only a hand press says the lead
+ * came in, so nothing is booked until a manager confirms it.
+ */
+export const COUNT_RESULTS = [
+  "booked",
+  "moved",
+  "not_a_lead",
+  "failed",
+  "undone",
+  "unclear",
+  "already_counted",
+  "self_reported",
+] as const;
 export type CountResult = (typeof COUNT_RESULTS)[number];
 export const SETTLED_MARKS = ["showed", "noshow", "none"] as const;
 export type SettledMark = (typeof SETTLED_MARKS)[number];
@@ -223,6 +240,12 @@ export interface RoomsSetting {
   test_only: boolean;
   test_contacts: string[];
   test_calendar_id: string | null;
+  /**
+   * The dedicated "Live" calendar a joined lead's new booking goes on (D25):
+   * outside B2B's show-rate map, so live calls never move the 60% and 75%
+   * targets. Null: no new live booking is made at all.
+   */
+  live_calendar_id: string | null;
   providers: Record<Provider, boolean>;
   default_provider: { setter: Provider; closer: Provider };
   send: { whatsapp_text: boolean; whatsapp_template: boolean; email: boolean };
@@ -242,6 +265,7 @@ export const DEFAULT_ROOMS_JSON = Object.freeze({
   test_only: true,
   test_contacts: ["VjPfR4Cc1Y0OFvaqeor5"],
   test_calendar_id: null,
+  live_calendar_id: null,
   providers: { zoom: false, meet: false },
   default_provider: { setter: "meet", closer: "zoom" },
   send: { whatsapp_text: false, whatsapp_template: false, email: false },
@@ -269,6 +293,7 @@ export function roomsSetting(raw: unknown): RoomsSetting {
     test_only: r.test_only !== false,
     test_contacts: strList(r.test_contacts),
     test_calendar_id: str(r.test_calendar_id, 80),
+    live_calendar_id: str(r.live_calendar_id, 80),
     providers: { zoom: on(prov.zoom), meet: on(prov.meet) },
     default_provider: {
       setter: isProvider(def.setter) ? def.setter : "meet",
@@ -299,7 +324,86 @@ export const DEFAULT_ROOMS_SETTING: RoomsSetting = roomsSetting(DEFAULT_ROOMS_JS
  */
 export function whatsappGuardOpen(guard: unknown): boolean {
   const g = obj(guard);
-  return g.connector_off === true && ms(g.single_copy_ok_at) !== null;
+  const ok = ms(g.single_copy_ok_at);
+  const off = ms(g.connector_off_at);
+  // A single-copy test from before the connector last went off proves nothing (sendrules.ts gateOpen).
+  return g.connector_off === true && ok !== null && (off === null || ok >= off);
+}
+
+/**
+ * live.hours (glossary 1.10): the days live calls run (0 Sunday to 6
+ * Saturday, on the zone's own calendar) and the clock window, "10:00" to
+ * "20:00" (the end not included). A damaged value falls back to the shipped
+ * window, never to "always".
+ */
+export interface LiveHours {
+  days: number[];
+  /** Minutes after the zone's midnight. */
+  from: number;
+  to: number;
+  tz: string;
+}
+export const DEFAULT_LIVE_HOURS: Readonly<LiveHours> = Object.freeze({
+  days: [6, 0, 1, 2, 3, 4],
+  from: 10 * 60,
+  to: 20 * 60,
+  tz: "Asia/Kuwait",
+});
+
+function clockMinutes(v: unknown): number | null {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(String(v ?? "").trim());
+  if (!m) return null;
+  const h = Number(m[1]);
+  const min = Number(m[2]);
+  return h <= 24 && min < 60 && h * 60 + min <= 24 * 60 ? h * 60 + min : null;
+}
+
+function zoneOk(tz: string): boolean {
+  try {
+    new Intl.DateTimeFormat("en-GB", { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function liveHoursOf(raw: unknown): LiveHours {
+  const r = obj(raw);
+  const days = Array.isArray(r.days)
+    ? [...new Set(r.days.map(Number).filter(d => Number.isInteger(d) && d >= 0 && d <= 6))]
+    : null;
+  const from = clockMinutes(r.from);
+  const to = clockMinutes(r.to);
+  const tz = typeof r.tz === "string" && r.tz.trim() && zoneOk(r.tz.trim()) ? r.tz.trim() : DEFAULT_LIVE_HOURS.tz;
+  if (!days?.length || from === null || to === null || to <= from) return { ...DEFAULT_LIVE_HOURS, days: [...DEFAULT_LIVE_HOURS.days], tz };
+  return { days, from, to, tz };
+}
+
+/** The zone's weekday (0 Sunday) and the time of day in seconds at `t`. */
+function zoneClock(t: number, tz: string): { day: number; seconds: number } {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: tz,
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(new Date(t));
+  const get = (k: string) => parts.find(p => p.type === k)?.value ?? "";
+  const day = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(get("weekday"));
+  return { day, seconds: Number(get("hour")) * 3600 + Number(get("minute")) * 60 + Number(get("second")) };
+}
+
+/**
+ * Whether live calls run at `now` (live.hours), and when today's window
+ * closes. Outside the window nobody is made Available with a standby room,
+ * and Available never runs past the window's end.
+ */
+export function liveWindow(hours: unknown, now: number): { open: boolean; ends_at: number | null } {
+  const h = liveHoursOf(hours);
+  const { day, seconds } = zoneClock(now, h.tz);
+  const open = h.days.includes(day) && seconds >= h.from * 60 && seconds < h.to * 60;
+  return { open, ends_at: open ? now + (h.to * 60 - seconds) * S - (now % S) : null };
 }
 
 /** The context every room rule needs. */
@@ -872,6 +976,8 @@ export interface RoomRow {
   trigger?: string | null;
   made_by?: string | null;
   appointment_id?: string | null;
+  /** The booked intro's start when the room was made, so a later move of that intro is never settled by this room. */
+  appointment_start_at?: string | null;
   handover_id?: string | null;
   replaced_by?: string | null;
   attempt_id?: string | null;
@@ -1151,6 +1257,8 @@ export const ROOM_EVENT_KINDS = [
  */
 export type Effect =
   | { kind: "send_link"; retry?: true }
+  /** The link was due and never claimed: claim it with a guarded write, then send (the sweep's re-ask). */
+  | { kind: "claim_link" }
   | { kind: "close_provider" }
   | { kind: "delete_secret" }
   | { kind: "count_live"; retry?: true }
@@ -1444,6 +1552,32 @@ function notLead(room: RoomRow, now: number, ctx: RoomCtx): Applied {
   return change(room, "host_in", patch, effects);
 }
 
+/** The end reasons of a room a timer closed (the SQL sweep's R3, R4 and R9), not a person or the provider. */
+export const TIMER_END_REASONS = ["lead_no_show", "not_admitted", "host_not_in", "no_deadline"] as const;
+/** A late join's own time may sit this far before the room opened (clocks are never exact). */
+const LATE_JOIN_EARLY_S = 60;
+
+/**
+ * A lead join on a room a timer closed with nobody in it (contract v2 S1:
+ * the sweep owns the timers and cannot see a webhook not yet stored): Zoom's
+ * join whose own time is before the close, or that came within open_grace of
+ * it, or the host's "The lead is in" pressed within open_grace of it. The
+ * room stays closed (a final room never moves) but keeps the join: lead_in_at
+ * and result joined, so the sweep's settle never marks the intro a no-show
+ * and the count runs as for any join. Null when the rule does not apply.
+ */
+function lateLeadIn(room: RoomRow, event: Extract<RoomEvent, { kind: "lead_in" }>, now: number, ctx: RoomCtx): Changed | null {
+  if (room.state !== "expired" || !room.contact_id || room.lead_in_at || room.result === "joined") return null;
+  if (room.end_reason && !(TIMER_END_REASONS as readonly string[]).includes(room.end_reason)) return null;
+  const ended = ms(room.ended_at);
+  if (ended === null) return null;
+  const t = event.source === "mark" ? now : eventTime(event.at, now);
+  const opened = ms(room.opened_at) ?? ms(room.requested_at);
+  if (opened !== null && t < opened - LATE_JOIN_EARLY_S * S) return null;
+  if (t > ended + ctx.waits.open_grace * S) return null;
+  return change(room, room.state, { lead_in_at: iso(t), result: "joined" }, [{ kind: "count_live" }]);
+}
+
 /**
  * Applies one event to a room at time `now`. Pure: it returns the patch, the
  * conditional-write guard and the follow-up effects; the caller writes it
@@ -1473,10 +1607,24 @@ export function applyRoomEvent(room: RoomRow, event: RoomEvent, now: number, ctx
       if (given && Number(seen) !== ver(room) && Number(seen) !== ver(room) - 1) return refuse("stale");
       return notLead(room, now, ctx);
     }
+    // A lead join the timer's close raced (Zoom's webhook lag, or the lead
+    // in the meeting a moment after the sweep ran): kept as evidence only.
+    if (event.kind === "lead_in" && (!given || Number(seen) === ver(room) || Number(seen) === ver(room) - 1)) {
+      const late = lateLeadIn(room, event, now, ctx);
+      if (late) return late;
+    }
     if (actor) return refuse("stale");
     const r = refuse("final");
     if (event.kind === "ready") r.cleanup = true;
     return r;
+  }
+  // The same press from a second tab (or a retry whose answer was slow): the
+  // room is already where the press wanted it, one version on. A no-op, never
+  // "This changed a moment ago." (contract: a repeat press is a no-op).
+  if (actor && given && Number(seen) === ver(room) - 1) {
+    if (event.kind === "lead_in" && room.state === "lead_in") return same(room);
+    if (event.kind === "host_in" && room.state === "host_in") return same(room);
+    if (event.kind === "not_lead" && room.state === "host_in" && room.count_undo_at && !leadJoined(room)) return same(room);
   }
   // A rep's press one version behind a room the worker has only claimed since
   // (requested to creating is the one move into creating) still cancels it
@@ -1680,6 +1828,13 @@ function reaskPlan(room: RoomRow, ctx: RoomCtx): { at: number; until: number; ef
     claimed !== null
   )
     out.push({ at: claimed + again, until: Number.POSITIVE_INFINITY, effect: { kind: "send_link", retry: true } });
+  // The link was due and nobody ever claimed it (worker.ready was lost or
+  // given up, so the one write that asks for it never ran): the sweep claims
+  // it itself, REASK_AFTER_S after the room opened. rooms.ts writes the claim
+  // with the guarded write first, so two ticks never both send.
+  const opened = ms(room.opened_at);
+  if (claimed === null && opened !== null && linkDue(room))
+    out.push({ at: opened + again, until: Number.POSITIVE_INFINITY, effect: { kind: "claim_link" } });
   const joined = ms(room.lead_in_at);
   if (ctx.count_on_join && room.contact_id && room.purpose !== "booked" && joined !== null && leadJoined(room)) {
     const until = joined + REASK_WINDOW_S * S;
@@ -1853,14 +2008,71 @@ export function replayDue(ev: { handled_at?: unknown; received_at?: unknown; cre
 }
 
 /**
+ * What the settle knows beyond the room row (rooms.ts reads it; the SQL
+ * sweep's S1 reads the same things). Left out, every fact is unknown, and an
+ * unknown never counts as evidence that nobody came.
+ */
+export interface SettleFacts {
+  /** rooms.short_link: the lead got the short link, so an open of it would have been seen. */
+  short_link?: boolean;
+  /** A Zoom event for this room is still unhandled or was given up: what Zoom said is not known. */
+  zoom_unclear?: boolean;
+  /** Another room for the same intro (or for the lead since its start) has a lead join that stands, or is still live. */
+  sibling_joined?: boolean;
+  /** A test contact whose intro is not on rooms.test_calendar_id (C34): never an official number. */
+  test_off_calendar?: boolean;
+}
+
+/**
+ * Why a room that closed with nobody in it is still not evidence that the
+ * lead stayed away ("missing is never zero"), or null when it is. A no-show
+ * is a hard number in the B2B show rate, so it is written only on evidence:
+ * a Zoom room whose join events were all read, or a short link the lead
+ * never opened. Meet sends no join signal (the host's press is the only one),
+ * so an unpressed Meet room is evidence only when the short link went and
+ * was never opened.
+ */
+export function noShowDoubt(room: RoomRow, facts: SettleFacts = {}): string | null {
+  if (room.first_open_at || room.last_open_at) return "the lead opened the link";
+  if (room.lead_waiting_at) return "the lead knocked";
+  if (facts.sibling_joined) return "the lead joined another room for this call";
+  if (facts.test_off_calendar) return "a test contact's call is not on the test calendar";
+  if (room.provider === "meet" && (room.purpose === "booked" || facts.short_link !== true))
+    return "Meet sends no join signal and nobody pressed The lead is in";
+  if (room.provider === "zoom" && facts.zoom_unclear !== false) return "a Zoom event for this room was not read";
+  return null;
+}
+
+/**
+ * The room was made for the intro as it stands now: the intro's start it
+ * stored when it was made, or, for a room made before that column, a room
+ * asked for between an hour before the start and the settle time. A room
+ * from before the intro was moved never settles the moved call.
+ */
+export function roomForThisStart(room: RoomRow, start: number, w: Waits): boolean {
+  const stored = ms(room.appointment_start_at);
+  if (stored !== null) return Math.abs(stored - start) < S;
+  const asked = ms(room.requested_at) ?? ms(room.created_at);
+  return asked !== null && asked >= start - HOUR && asked <= start + w.settle * S;
+}
+
+/**
  * P1, decision D14: a fallback room for a booked intro that closed with
  * nobody joining becomes a no-show at the intro's start + 20 minutes
  * (room.settle). That is a room that expired, or one ended with no join
  * (End room, or Zoom's end before anyone came, F8), including a join taken
  * back by "That was not the lead". A room moved to the phone or cancelled
- * writes nothing, and nor does a room with no booking.
+ * writes nothing, and nor does a room with no booking, a room from before
+ * the intro moved, or one with any sign the lead came (noShowDoubt).
  */
-export function settleDue(room: RoomRow, appointmentStart: unknown, marked: boolean, now: number, w: Waits): boolean {
+export function settleDue(
+  room: RoomRow,
+  appointmentStart: unknown,
+  marked: boolean,
+  now: number,
+  w: Waits,
+  facts: SettleFacts = {},
+): boolean {
   if (room.purpose === "booked" || room.call_kind !== "intro") return false;
   const closedEmpty =
     (room.state === "expired" && (room.result == null || room.result === "no_join")) ||
@@ -1868,7 +2080,8 @@ export function settleDue(room: RoomRow, appointmentStart: unknown, marked: bool
   if (!closedEmpty || leadJoined(room)) return false;
   if (!room.appointment_id || room.settled_mark || marked) return false;
   const start = ms(appointmentStart);
-  return start !== null && now >= start + w.settle * S;
+  if (start === null || now < start + w.settle * S || !roomForThisStart(room, start, w)) return false;
+  return noShowDoubt(room, facts) === null;
 }
 
 /**
@@ -1877,15 +2090,24 @@ export function settleDue(room: RoomRow, appointmentStart: unknown, marked: bool
  * a booked intro (room.wrap) that expired with no lead in it, settled at its
  * start + settle (D14: "becomes a no-show at start + 20 minutes"). A room
  * closed admit_blocked (the lead knocked and could not be let in) is never
- * a no-show, and neither is one already marked or settled.
+ * a no-show, and neither is one already marked or settled, nor one with any
+ * sign the lead came.
  */
-export function settleWanted(room: RoomRow, appointmentStart: unknown, marked: boolean, now: number, w: Waits): boolean {
+export function settleWanted(
+  room: RoomRow,
+  appointmentStart: unknown,
+  marked: boolean,
+  now: number,
+  w: Waits,
+  facts: SettleFacts = {},
+): boolean {
   if (room.result === "admit_blocked") return false;
-  if (room.purpose !== "booked") return settleDue(room, appointmentStart, marked, now, w);
+  if (room.purpose !== "booked") return settleDue(room, appointmentStart, marked, now, w, facts);
   if (room.call_kind !== "intro" || room.state !== "expired" || room.lead_in_at) return false;
   if (!room.appointment_id || room.settled_mark || marked) return false;
   const start = ms(appointmentStart);
-  return start !== null && now >= start + w.settle * S;
+  if (start === null || now < start + w.settle * S || !roomForThisStart(room, start, w)) return false;
+  return noShowDoubt(room, facts) === null;
 }
 
 // ---------------------------------------------------------------------------
@@ -1909,7 +2131,16 @@ export function holdUntil(room: RoomRow, ctx: RoomCtx): number | null {
   if (room.state === "requested" || room.state === "creating")
     return timers(room, ctx).find(t => t.reason === "fail")?.at ?? null;
   const t = ms(room.lead_by) ?? ms(room.host_by);
-  if (t !== null) return t;
+  if (t !== null) {
+    // The sweep keeps a room open past lead_by for an open or a knock in the
+    // last open_grace (R4, capped by graceCap): the lead is held that long too.
+    const w = ctx.waits;
+    const cap = graceCap(room, w) ?? Number.POSITIVE_INFINITY;
+    const open = ms(room.last_open_at) ?? ms(room.first_open_at);
+    const knock = ms(room.lead_waiting_at);
+    const grace = (x: number | null) => (x === null ? Number.NEGATIVE_INFINITY : Math.min(x + w.open_grace * S, cap));
+    return room.contact_id && ms(room.lead_by) !== null ? Math.max(t, grace(open), grace(knock)) : t;
+  }
   const base = ms(room.requested_at) ?? ms(room.created_at);
   return base === null ? null : base + ctx.waits.fail * S;
 }
@@ -2374,10 +2605,19 @@ export interface CountInput {
   contact: Row | null;
   /**
    * upcoming(contact, room.call_kind) (index.ts): the lead's next call of
-   * the room's kind booked ahead, if any. upcoming() already filters by
-   * kind and returns no kind; one given that differs is not moved.
+   * the room's kind booked ahead, if any, with its end, its rep and its
+   * status, so a move can be put back whole. upcoming() already filters by
+   * kind; one given that differs is not moved. A call ahead with no known
+   * end or rep is never moved: what cannot be put back is not taken.
    */
-  upcoming: { id: string; start: number; kind?: CallKind | null } | null;
+  upcoming: {
+    id: string;
+    start: number;
+    end?: number | null;
+    assigned_user_id?: string | null;
+    status?: string | null;
+    kind?: CallKind | null;
+  } | null;
   /** The calendar of the booked intro the room is for (room.appointment_id), when there is one. */
   appointment_calendar_id?: string | null;
   host_ghl_user_id: string | null;
@@ -2385,6 +2625,24 @@ export interface CountInput {
   /** The short link, or the room's own link before the CNAME. */
   link: string | null;
   calendars?: { intro_qualified: string; intro_unqualified: string; demo: string };
+  /**
+   * B2B's own calendars beyond BOOKING_CALENDARS (the calendars setting's
+   * intro and demo ids): neither a test booking nor a live booking ever goes
+   * on one of them (C34, D25).
+   */
+  official_calendar_ids?: readonly string[];
+  /** Another room of this lead's already counted this conversation (a booking or a move that stands, the same day). */
+  standing_count?: boolean;
+  /**
+   * Something from the lead says they came: Zoom's join, the short link
+   * opened, or a knock. False when only a hand press says so; then a real
+   * lead's join is recorded as self_reported and nothing is booked or marked
+   * until a manager confirms it. Test contacts are exempt (their bookings
+   * never move an official number).
+   */
+  lead_evidence?: boolean;
+  /** The booked intro is already marked shown (a rep's own mark, or HighLevel's status): the count adds nothing. */
+  appointment_shown?: boolean;
 }
 
 export type CountSkip =
@@ -2396,18 +2654,42 @@ export type CountSkip =
   | "client"
   | "not_a_lead"
   | "test_calendar_missing"
+  | "test_calendar_official"
   | "test_not_on_test_calendar"
-  | "host_not_in_highlevel";
+  | "host_not_in_highlevel"
+  | "live_calendar_missing"
+  | "already_counted"
+  | "upcoming_unknown"
+  | "self_reported";
 
 export type CountPlan =
   | { action: "none"; claim: boolean; count_result: CountResult | null; reason: CountSkip }
   | { action: "mark"; claim: true; appointment_id: string }
-  | { action: "move"; claim: true; appointment_id: string; from_start: string; start: string; end: string; body: Row }
+  | {
+      action: "move";
+      claim: true;
+      appointment_id: string;
+      from_start: string;
+      from_end: string;
+      from_assigned_user_id: string;
+      from_status: string;
+      start: string;
+      end: string;
+      body: Row;
+    }
   | { action: "create"; claim: true; test: boolean; calendar_id: string; start: string; end: string; body: Row };
 
 /** The claim may be taken: never taken, or taken and then undone ("That was not the lead"). */
 export function countClaimable(room: RoomRow): boolean {
   return !room.count_claimed_at || room.count_result === "undone";
+}
+
+/** B2B's calendars: BOOKING_CALENDARS and any other intro or demo calendar the caller names. */
+export function officialCalendars(
+  extra: readonly string[] = [],
+  cal: { intro_qualified: string; intro_unqualified: string; demo: string } = BOOKING_CALENDARS,
+): Set<string> {
+  return new Set([...Object.values(cal), ...extra].map(x => String(x ?? "").trim()).filter(Boolean));
 }
 
 /**
@@ -2422,18 +2704,23 @@ export function countClaimable(room: RoomRow): boolean {
  * - A booked room (the closer's own demo): nothing; the closer marks it.
  * - A client: not a lead.
  * - A test contact first (C34): booked only on rooms.test_calendar_id,
- *   never moved, and nothing at all when that calendar is not set; its
- *   booked intro is marked only when it sits on the test calendar (F12).
+ *   never moved, and nothing at all when that calendar is not set or is one
+ *   of B2B's; its booked intro is marked only when it sits on the test
+ *   calendar (F12).
+ * - A real lead whose join only a hand press reports: self_reported.
  * - A fallback room for a booked intro: mark that intro shown.
  * - No roas tag: not a lead, nothing booked.
+ * - Already counted from another room of theirs: nothing more.
  * - A host with no HighLevel user: failed (refuseMark needs one).
- * - A call of the same kind booked ahead: moved to now (PUT).
- * - Otherwise a new booking (POST): the intro calendar by tag, or the demo
- *   calendar, at the minute the lead joined, 15 or 45 minutes long.
+ * - A call of the same kind booked ahead: moved to now (PUT), when its end
+ *   and its rep are known, so the undo can put it back whole.
+ * - Otherwise a new booking (POST) on rooms.live_calendar_id (D25: never on
+ *   an intro or demo calendar B2B's show rate counts), at the minute the
+ *   lead joined, 15 or 45 minutes long; failed when that calendar is not set.
  */
 export function countLive(i: CountInput): CountPlan {
   const { room, setting } = i;
-  const cal = i.calendars ?? BOOKING_CALENDARS;
+  const official = officialCalendars(i.official_calendar_ids ?? [], i.calendars ?? BOOKING_CALENDARS);
   const none = (reason: CountSkip, claim: boolean, count_result: CountResult | null = null): CountPlan => ({
     action: "none",
     claim,
@@ -2450,12 +2737,16 @@ export function countLive(i: CountInput): CountPlan {
   if (isClient(c)) return none("client", true, "not_a_lead");
   const test = isTestContact(room.contact_id, c.tags, setting);
   if (test && !setting.test_calendar_id) return none("test_calendar_missing", true, "not_a_lead");
+  if (test && official.has(setting.test_calendar_id as string)) return none("test_calendar_official", true, "not_a_lead");
+  if (!test && i.lead_evidence === false) return none("self_reported", true, "self_reported");
   if (room.appointment_id) {
     if (test && str(i.appointment_calendar_id, 80) !== setting.test_calendar_id)
       return none("test_not_on_test_calendar", true, "not_a_lead");
+    if (i.appointment_shown) return none("already_counted", true, "already_counted");
     return { action: "mark", claim: true, appointment_id: room.appointment_id };
   }
   if (!test && !isTaggedLead(c.tags)) return none("not_a_lead", true, "not_a_lead");
+  if (i.standing_count) return none("already_counted", true, "already_counted");
   const host = str(i.host_ghl_user_id, 80);
   if (!host) return none("host_not_in_highlevel", true, "failed");
 
@@ -2468,12 +2759,26 @@ export function countLive(i: CountInput): CountPlan {
     overrideLocationConfig: true,
   };
   const up = i.upcoming;
-  if (!test && up && up.id && (!up.kind || up.kind === room.call_kind) && Number.isFinite(up.start))
+  const upEnd = finiteOrNull(up?.end ?? null);
+  const upRep = str(up?.assigned_user_id, 80);
+  if (
+    !test &&
+    up &&
+    up.id &&
+    (!up.kind || up.kind === room.call_kind) &&
+    Number.isFinite(up.start) &&
+    upEnd !== null &&
+    upEnd > up.start &&
+    upRep
+  )
     return {
       action: "move",
       claim: true,
       appointment_id: up.id,
       from_start: iso(up.start),
+      from_end: iso(upEnd),
+      from_assigned_user_id: upRep,
+      from_status: str(up.status, 20) ?? "confirmed",
       start: iso(start),
       end: iso(end),
       body: {
@@ -2486,13 +2791,12 @@ export function countLive(i: CountInput): CountPlan {
         ...where,
       },
     };
-  const calendarId = test
-    ? (setting.test_calendar_id as string)
-    : room.call_kind === "demo"
-      ? cal.demo
-      : leadClassOf(c.tags) === "qualified"
-        ? cal.intro_qualified
-        : cal.intro_unqualified;
+  // A call ahead whose end or rep is not known is neither moved nor booked
+  // beside (two intros for one lead): the sweep asks again.
+  if (!test && up && up.id && (!up.kind || up.kind === room.call_kind)) return none("upcoming_unknown", false);
+  const live = str(setting.live_calendar_id, 80);
+  if (!test && (!live || official.has(live))) return none("live_calendar_missing", true, "failed");
+  const calendarId = test ? (setting.test_calendar_id as string) : (live as string);
   return {
     action: "create",
     claim: true,
@@ -2517,31 +2821,76 @@ export function countLive(i: CountInput): CountPlan {
   };
 }
 
+/** What the count recorded before it changed the lead's own booked call, so its undo can put it back. */
+export interface CountBefore {
+  /** move: the call's start, end, rep and status before the move. */
+  from_start?: unknown;
+  from_end?: unknown;
+  from_assigned_user_id?: unknown;
+  from_status?: unknown;
+  /** mark: the intro's status and its active disposition before the count's mark, and the count's own disposition. */
+  prior_status?: unknown;
+  prior_disposition_id?: unknown;
+  own_disposition_id?: unknown;
+}
+
 export type UndoPlan =
   | { action: "none"; reason: "nothing" | "in_flight" | "moved_from_unknown" }
   | { action: "delete"; appointment_id: string }
-  | { action: "move_back"; appointment_id: string; start: string }
-  | { action: "unmark"; appointment_id: string };
+  | {
+      action: "move_back";
+      appointment_id: string;
+      start: string;
+      end: string | null;
+      assigned_user_id: string | null;
+      status: string;
+    }
+  | {
+      action: "unmark";
+      appointment_id: string;
+      status: string;
+      own_disposition_id: string | null;
+      prior_disposition_id: string | null;
+    };
 
 /**
  * "That was not the lead": delete a booking countLive made, move a moved one
- * back (its old start is read from the room's count event), or take back the
- * mark on a booked intro. Never a mark of invalid, which B2B counts as shown.
+ * back whole (its start, end, rep and status as the count recorded them
+ * before the move), or take back the count's own mark on a booked intro,
+ * putting back the status it had. Never a mark of invalid, which B2B counts
+ * as shown. `before` is the count's own record (the count.moving or
+ * count.marking event); an older room's count.moved held only from_start.
  */
-export function countUndo(room: RoomRow, movedFrom: unknown = null): UndoPlan {
+export function countUndo(room: RoomRow, before: CountBefore | string | null | unknown = null): UndoPlan {
   if (!room.count_claimed_at) return { action: "none", reason: "nothing" };
   const appt = str(room.count_appointment_id, 80);
+  const b: CountBefore = typeof before === "string" ? { from_start: before } : (obj(before) as CountBefore);
   switch (room.count_result ?? null) {
     case "booked":
       return appt ? { action: "delete", appointment_id: appt } : { action: "none", reason: "in_flight" };
     case "moved": {
-      const from = isoOrNull(movedFrom);
+      const from = isoOrNull(b.from_start);
       if (!appt) return { action: "none", reason: "in_flight" };
-      return from ? { action: "move_back", appointment_id: appt, start: from } : { action: "none", reason: "moved_from_unknown" };
+      if (!from) return { action: "none", reason: "moved_from_unknown" };
+      const end = isoOrNull(b.from_end);
+      return {
+        action: "move_back",
+        appointment_id: appt,
+        start: from,
+        end: end && (ms(end) as number) > (ms(from) as number) ? end : null,
+        assigned_user_id: str(b.from_assigned_user_id, 80),
+        status: str(b.from_status, 20) ?? "confirmed",
+      };
     }
     case null:
       return appt && appt === room.appointment_id
-        ? { action: "unmark", appointment_id: appt }
+        ? {
+            action: "unmark",
+            appointment_id: appt,
+            status: str(b.prior_status, 20) ?? "confirmed",
+            own_disposition_id: str(String(b.own_disposition_id ?? ""), 80),
+            prior_disposition_id: str(String(b.prior_disposition_id ?? ""), 80),
+          }
         : { action: "none", reason: "in_flight" };
     default:
       return { action: "none", reason: "nothing" };

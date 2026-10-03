@@ -150,10 +150,15 @@ describe("cancel while the worker has only claimed the room (lc-worker finding 2
 
 describe("settleWanted: what sweep.settle settles", () => {
   const start = T0;
-  const expiredBooked = room({ purpose: "booked", appointment_id: "a1", state: "expired", result: "no_join", ended_at: at(T0 + 20 * MIN) });
+  // A booked Zoom call whose join events were all read: Zoom would have said if the lead came.
+  const expiredBooked = room({ purpose: "booked", provider: "zoom", appointment_id: "a1", state: "expired", result: "no_join", ended_at: at(T0 + 20 * MIN) });
+  const read = { zoom_unclear: false };
   test("a booked intro that expired with no lead is due at start + settle; never before, never once marked", () => {
-    expect(settleWanted(expiredBooked, at(start), false, start + W.settle * S - 1, W)).toBe(false);
-    expect(settleWanted(expiredBooked, at(start), false, start + W.settle * S, W)).toBe(true);
+    expect(settleWanted(expiredBooked, at(start), false, start + W.settle * S - 1, W, read)).toBe(false);
+    expect(settleWanted(expiredBooked, at(start), false, start + W.settle * S, W, read)).toBe(true);
+    // Unread Zoom events, or a booked Meet call (no join signal at all): a person marks it.
+    expect(settleWanted(expiredBooked, at(start), false, start + W.settle * S, W)).toBe(false);
+    expect(settleWanted({ ...expiredBooked, provider: "meet" }, at(start), false, start + W.settle * S, W, { ...read, short_link: true })).toBe(false);
     expect(settleWanted(expiredBooked, at(start), true, start + W.settle * S, W)).toBe(false);
     expect(settleWanted({ ...expiredBooked, settled_mark: "noshow" }, at(start), false, start + 2 * W.settle * S, W)).toBe(false);
     expect(settleWanted({ ...expiredBooked, call_kind: "demo" }, at(start), false, start + 2 * W.settle * S, W)).toBe(false);
@@ -162,7 +167,8 @@ describe("settleWanted: what sweep.settle settles", () => {
   });
   test("a fallback room for a booked intro follows settleDue", () => {
     const fb = { ...expiredBooked, purpose: "fallback" as const };
-    expect(settleWanted(fb, at(start), false, start + W.settle * S, W)).toBe(settleDue(fb, at(start), false, start + W.settle * S, W));
+    expect(settleWanted(fb, at(start), false, start + W.settle * S, W, read)).toBe(settleDue(fb, at(start), false, start + W.settle * S, W, read));
+    expect(settleWanted(fb, at(start), false, start + W.settle * S, W, read)).toBe(true);
     expect(settleWanted({ ...fb, result: "admit_blocked" }, at(start), false, start + W.settle * S, W)).toBe(false);
   });
 });

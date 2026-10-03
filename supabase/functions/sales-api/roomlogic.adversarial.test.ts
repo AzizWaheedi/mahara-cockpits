@@ -251,7 +251,7 @@ describe("F8 settleDue only settles expired rooms", () => {
   test("a fallback room for a booked intro ended with no join is settled as a no-show too", () => {
     const r = step(step(opened({ appointment_id: "APPT1" }), { kind: "link_sent" }, T0 + 10 * S), { kind: "end", reason: "end", actor: { email: SETTER } }, T0 + 4 * MIN);
     expect([r.state, r.result]).toEqual(["ended", "no_join"]);
-    expect(settleDue(r, at(T0), false, T0 + 21 * MIN, ctx.waits)).toBe(true);
+    expect(settleDue(r, at(T0), false, T0 + 21 * MIN, ctx.waits, { short_link: true })).toBe(true);
   });
 });
 

@@ -14,29 +14,99 @@ type Row = Record<string, unknown>;
 const HOUR = 3_600_000;
 
 // ---------------------------------------------------------------------------
-// The lead's clock (followups.py PLUS_FOUR, finding 23: one list, two doors)
+// The lead's clock (followups.py LEAD_ZONES, finding 23: one table, two doors)
 // ---------------------------------------------------------------------------
 
 /** Every UAE and Oman place the desk knows, in English and Arabic: UTC+4. Everyone else in the Gulf is UTC+3. */
 export const PLUS_FOUR =
   /^\s*(ae|om)\s*$|emirates|\buae\b|u\.a\.e|dubai|abu dhabi|sharjah|ajman|\boman\b|muscat|الإمارات|الامارات|دبي|أبوظبي|ابوظبي|الشارقة|مسقط/i;
+const OMAN = /^\s*om\s*$|\boman\b|muscat|مسقط|عمان/i;
 
+/**
+ * The lead's time zone by the ISO country code the cockpit stores (about 250
+ * leads are outside the Gulf: US, Egypt, Singapore, the UK and more). A
+ * country that spans zones lists its first and last, and a first message
+ * goes only in hours that are daytime in both. The desk keeps the same
+ * table (desk/followups.py LEAD_ZONES); tests/test_stress_time.py compares them.
+ */
+export const LEAD_ZONES: Readonly<Record<string, readonly string[]>> = Object.freeze({
+  kw: ["Asia/Kuwait"], sa: ["Asia/Riyadh"], qa: ["Asia/Qatar"], bh: ["Asia/Bahrain"], ae: ["Asia/Dubai"], om: ["Asia/Muscat"],
+  iq: ["Asia/Baghdad"], jo: ["Asia/Amman"], lb: ["Asia/Beirut"], sy: ["Asia/Damascus"], ye: ["Asia/Aden"], ps: ["Asia/Gaza"],
+  il: ["Asia/Jerusalem"], ir: ["Asia/Tehran"], tr: ["Europe/Istanbul"], eg: ["Africa/Cairo"], ly: ["Africa/Tripoli"],
+  tn: ["Africa/Tunis"], dz: ["Africa/Algiers"], ma: ["Africa/Casablanca"], sd: ["Africa/Khartoum"], et: ["Africa/Addis_Ababa"],
+  ke: ["Africa/Nairobi"], ng: ["Africa/Lagos"], za: ["Africa/Johannesburg"], gh: ["Africa/Accra"],
+  gb: ["Europe/London"], uk: ["Europe/London"], ie: ["Europe/Dublin"], fr: ["Europe/Paris"], de: ["Europe/Berlin"],
+  it: ["Europe/Rome"], es: ["Europe/Madrid"], pt: ["Europe/Lisbon"], nl: ["Europe/Amsterdam"], be: ["Europe/Brussels"],
+  ch: ["Europe/Zurich"], at: ["Europe/Vienna"], se: ["Europe/Stockholm"], no: ["Europe/Oslo"], dk: ["Europe/Copenhagen"],
+  fi: ["Europe/Helsinki"], pl: ["Europe/Warsaw"], cz: ["Europe/Prague"], gr: ["Europe/Athens"], ro: ["Europe/Bucharest"],
+  hu: ["Europe/Budapest"], ua: ["Europe/Kyiv"], cy: ["Asia/Nicosia"], ru: ["Europe/Moscow", "Asia/Vladivostok"],
+  pk: ["Asia/Karachi"], in: ["Asia/Kolkata"], bd: ["Asia/Dhaka"], lk: ["Asia/Colombo"], np: ["Asia/Kathmandu"],
+  af: ["Asia/Kabul"], cn: ["Asia/Shanghai"], hk: ["Asia/Hong_Kong"], tw: ["Asia/Taipei"], jp: ["Asia/Tokyo"],
+  kr: ["Asia/Seoul"], sg: ["Asia/Singapore"], my: ["Asia/Kuala_Lumpur"], th: ["Asia/Bangkok"], vn: ["Asia/Ho_Chi_Minh"],
+  ph: ["Asia/Manila"], id: ["Asia/Jakarta", "Asia/Jayapura"], au: ["Australia/Perth", "Australia/Sydney"],
+  nz: ["Pacific/Auckland"], us: ["America/New_York", "America/Los_Angeles"], ca: ["America/Halifax", "America/Vancouver"],
+  mx: ["America/Mexico_City", "America/Tijuana"], br: ["America/Sao_Paulo", "America/Manaus"], ar: ["America/Argentina/Buenos_Aires"],
+  cl: ["America/Santiago"], co: ["America/Bogota"], pe: ["America/Lima"],
+});
+
+/**
+ * The lead's zones: the ISO code's, the Gulf by name (UAE and Oman UTC+4),
+ * Kuwait for no country at all (the cockpit's leads, as before), and null
+ * for a code the table does not know: then a first message waits for a person.
+ */
+export function leadZones(country: unknown): readonly string[] | null {
+  const c = String(country ?? "").trim();
+  if (!c) return LEAD_ZONES.kw as readonly string[];
+  const code = c.toLowerCase();
+  if (LEAD_ZONES[code]) return LEAD_ZONES[code] as readonly string[];
+  if (PLUS_FOUR.test(c)) return OMAN.test(c) ? (LEAD_ZONES.om as readonly string[]) : (LEAD_ZONES.ae as readonly string[]);
+  if (/^[a-z]{2}$/i.test(c)) return null;
+  return LEAD_ZONES.kw as readonly string[];
+}
+
+const zoneFormats = new Map<string, Intl.DateTimeFormat>();
+function zoneClock(zone: string, now: number): { hour: number; day: number } {
+  let f = zoneFormats.get(zone);
+  if (!f) {
+    f = new Intl.DateTimeFormat("en-GB", { timeZone: zone, hour: "2-digit", hourCycle: "h23", weekday: "short" });
+    zoneFormats.set(zone, f);
+  }
+  const parts = f.formatToParts(now);
+  return {
+    hour: Number(parts.find(p => p.type === "hour")?.value),
+    day: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(String(parts.find(p => p.type === "weekday")?.value)),
+  };
+}
+
+/** UTC+4 for the UAE and Oman, else UTC+3: the old two-zone rule, kept for the words that name the lead's clock. */
 export function leadOffsetHours(country: unknown): 3 | 4 {
   return PLUS_FOUR.test(String(country ?? "")) ? 4 : 3;
 }
+/** The hour on the lead's clock (their first zone; Kuwait's when the country is unknown). */
 export function leadHour(country: unknown, now: number): number {
-  return new Date(now + leadOffsetHours(country) * HOUR).getUTCHours();
+  return zoneClock((leadZones(country) ?? (LEAD_ZONES.kw as readonly string[]))[0] as string, now).hour;
 }
 /** 0 Sunday to 6 Saturday, on the lead's clock. */
 export function leadWeekday(country: unknown, now: number): number {
-  return new Date(now + leadOffsetHours(country) * HOUR).getUTCDay();
+  return zoneClock((leadZones(country) ?? (LEAD_ZONES.kw as readonly string[]))[0] as string, now).day;
 }
 
 export const HOURS_COPY = {
   first: "A first message goes between {from} and {to}, their time.",
   night: "It is night where the lead is. Send it after 9 in the morning, their time.",
   friday: "It is Friday where the lead is, their day off. It goes on Saturday.",
+  day_off: "It is {day} where the lead is, a day the agent does not send. It goes on their next working day.",
+  zone_unknown: "The cockpit does not know the lead's time zone ({country}), so a person sends this first message.",
 } as const;
+
+const DAY_NAMES = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"] as const;
+
+/** followups.quiet_days: the days on the lead's clock the agent does not send (Friday when not set). */
+export function quietDays(followups: unknown): Set<number> {
+  const v = (followups as Row | null)?.quiet_days;
+  const list = Array.isArray(v) ? v.map(d => String(d).toLowerCase()) : ["friday"];
+  return new Set(list.map(d => DAY_NAMES.indexOf(d as (typeof DAY_NAMES)[number])).filter(d => d >= 0));
+}
 
 function clock(h: number): string {
   if (h === 0 || h === 24) return "midnight";
@@ -67,7 +137,9 @@ export function laterHours(followups: unknown): [number, number] {
  * Why a follow-up may not go now, on the lead's clock, or null. An answer to
  * a lead who just wrote goes any time; a first message (touch 1, not a reply
  * or a confirmation) only within first_hours; anything else within 9 to 21.
- * `dayOff` adds the Friday rule (the desk's own sends: followup.send_due).
+ * A lead in a country that spans zones gets it only in hours that hold in
+ * every one of them. `dayOff` adds followups.quiet_days (Friday as shipped;
+ * the desk's own sends: followup.send_due), on the lead's own calendar.
  */
 export function hoursRefusal(o: {
   segment: unknown;
@@ -78,16 +150,24 @@ export function hoursRefusal(o: {
   dayOff?: boolean;
 }): string | null {
   if (o.segment === "reply") return null;
-  if (o.dayOff && leadWeekday(o.country, o.now) === 5) return HOURS_COPY.friday;
-  const h = leadHour(o.country, o.now);
+  const zones = leadZones(o.country);
   const first = o.segment !== "confirm" && Number(o.touch ?? 1) <= 1;
+  if (!zones) return first ? HOURS_COPY.zone_unknown.replace("{country}", String(o.country ?? "").trim().toUpperCase()) : null;
+  const clocks = zones.map(z => zoneClock(z, o.now));
+  if (o.dayOff) {
+    const off = quietDays(o.followups);
+    const day = clocks.find(c => off.has(c.day))?.day;
+    if (day !== undefined)
+      return day === 5 ? HOURS_COPY.friday : HOURS_COPY.day_off.replace("{day}", (DAY_NAMES[day] as string).replace(/^./, ch => ch.toUpperCase()));
+  }
   if (first) {
     const [from, to] = firstHours(o.followups);
-    if (h < from || h >= to) return HOURS_COPY.first.replace("{from}", clock(from)).replace("{to}", clock(to));
+    if (clocks.some(c => c.hour < from || c.hour >= to))
+      return HOURS_COPY.first.replace("{from}", clock(from)).replace("{to}", clock(to));
     return null;
   }
   const [from, to] = laterHours(o.followups);
-  return h < from || h >= to ? HOURS_COPY.night : null;
+  return clocks.some(c => c.hour < from || c.hour >= to) ? HOURS_COPY.night : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -212,10 +292,18 @@ export function sourceHealth(
   };
 }
 
-/** The WhatsApp gate (glossary 1.4): open only once the WA Connector is off and the single-copy test has passed. */
+/**
+ * The WhatsApp gate (glossary 1.4): open only once the WA Connector is off
+ * and the single-copy test has passed since it went off (connector_off_at):
+ * a test from before the connector came back on proves nothing.
+ */
 export function gateOpen(guard: unknown): boolean {
   const g = (guard ?? {}) as Row;
-  return g.connector_off === true && typeof g.single_copy_ok_at === "string" && Number.isFinite(Date.parse(g.single_copy_ok_at));
+  if (g.connector_off !== true || typeof g.single_copy_ok_at !== "string") return false;
+  const ok = Date.parse(g.single_copy_ok_at);
+  if (!Number.isFinite(ok)) return false;
+  const off = typeof g.connector_off_at === "string" ? Date.parse(g.connector_off_at) : Number.NaN;
+  return !Number.isFinite(off) || ok >= off;
 }
 export const GATE_SHUT = "WhatsApp sends from the desk are off until the WA Connector is off and the single-copy test passes.";
 
@@ -236,7 +324,17 @@ export function budgetOf(guard: unknown): { budget: number; rate: number } {
   return { budget: Number.isFinite(b) && b >= 0 ? b : 100, rate: Number.isFinite(r) && r > 0 && r <= 1 ? r : 0.0792 };
 }
 
-/** This month's spend estimate, and the refusal when it has reached the budget. */
+/** The most templates a month the budget pays for: the desk's floor(budget / rate) (desk/waves.py template_budget). */
+export function budgetCap(guard: unknown): number {
+  const { budget, rate } = budgetOf(guard);
+  return Math.floor(budget / rate + 1e-9);
+}
+
+/**
+ * This month's spend estimate, and the refusal when the next template would
+ * take it past the budget (a ceiling: the month never ends above it). The
+ * desk stops at the same template (budgetCap).
+ */
 export function budgetCheck(sentThisMonth: number, guard: unknown): { spend: number; budget: number; refusal: string | null } {
   const { budget, rate } = budgetOf(guard);
   const spend = Math.round(sentThisMonth * rate * 100) / 100;
@@ -244,7 +342,7 @@ export function budgetCheck(sentThisMonth: number, guard: unknown): { spend: num
     spend,
     budget,
     refusal:
-      spend >= budget
+      sentThisMonth >= budgetCap(guard)
         ? `This month's WhatsApp template budget of $${budget} is spent: about $${spend.toFixed(2)} so far (estimate). A manager raises it under Follow-ups, How it works, after checking the wallet.`
         : null,
   };
@@ -352,6 +450,16 @@ export function whatsappGuardValue(before: Row, v: Row, now: number): Check<Row>
   };
   if (v.connector_off !== undefined) {
     if (typeof v.connector_off !== "boolean") return { ok: false, error: "Say whether the WA Connector is off (yes or no)." };
+    // The connector on again makes every earlier single-copy test void; off
+    // again needs a new one (the time it went off is kept to compare).
+    if (v.connector_off && before.connector_off !== true) {
+      value.connector_off_at = new Date(now).toISOString();
+      if (v.single_copy_ok_at === undefined) value.single_copy_ok_at = null;
+    }
+    if (!v.connector_off) {
+      value.connector_off_at = null;
+      value.single_copy_ok_at = null;
+    }
     value.connector_off = v.connector_off;
   }
   if (v.single_copy_ok_at !== undefined) {

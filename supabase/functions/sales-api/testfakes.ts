@@ -129,6 +129,39 @@ export class FakeDb {
     this.rpcs.cockpit_sales_room_event_lease = a => this.lease(a);
     this.rpcs.cockpit_sales_alert_set = a => this.alertSet(a);
     this.rpcs.cockpit_sales_live_claim = a => this.liveClaim(a);
+    this.rpcs.cockpit_sales_message_slot = a => this.messageSlot(a);
+  }
+
+  /**
+   * cockpit_sales_message_slot, as the SQL function decides it: under one
+   * lock (here, one synchronous step) the request id's repeat, the sender's
+   * 30 in ten minutes, and for a template the lead's two minutes, the day's
+   * ceiling and the month's cap, then the "sending" row.
+   */
+  messageSlot(a: Row): Row {
+    const row = (a.p_row ?? {}) as Row;
+    const lim = (a.p_limits ?? {}) as Row;
+    const list = this.t("cockpit_sales_messages");
+    const twin = list.find(m => m.request_id === row.request_id);
+    if (twin) return { code: "repeat", row: structuredClone(twin) };
+    const now = this.clock.now;
+    const since = (iso: unknown) => (m: Row) => Date.parse(String(m.created_at)) >= Date.parse(String(iso));
+    const sender = String(row.sent_by ?? "").toLowerCase();
+    if (sender) {
+      const n = list.filter(m => String(m.sent_by ?? "").toLowerCase() === sender && Date.parse(String(m.created_at)) >= now - Number(lim.sender_window_s ?? 600) * 1000).length;
+      if (n >= Number(lim.sender_max ?? 30)) return { code: "sender_ceiling", count: n };
+    }
+    if (row.via === "workflow") {
+      const live = list.filter(m => m.via === "workflow" && m.state !== "failed");
+      if (live.some(m => m.contact_id === row.contact_id && Date.parse(String(m.created_at)) >= now - Number(lim.lead_gap_s ?? 120) * 1000))
+        return { code: "lead_gap" };
+      const day = live.filter(since(lim.day_start)).length;
+      if (day >= Number(lim.per_day ?? 250)) return { code: "per_day", count: day };
+      const month = live.filter(since(lim.month_start)).length;
+      if (month >= Number(lim.month_cap ?? 1_000_000)) return { code: "budget", count: month };
+    }
+    const made = this.insertOne("cockpit_sales_messages", { ...row, state: "sending" }, "error") as Row;
+    return { code: "ok", row: structuredClone(made) };
   }
 
   t(name: string): Row[] {

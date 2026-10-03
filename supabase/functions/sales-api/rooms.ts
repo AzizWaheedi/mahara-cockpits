@@ -15,17 +15,20 @@
 //
 //   bun test supabase/functions/sales-api
 
+import { ghlTime } from "./dialer.ts";
 import { cleanText, greetingName, redact, type Who } from "./lib.ts";
-import { ApiRefusal, DbError, isUnique, type LiveIO, uuidFrom } from "./liveio.ts";
+import { ApiRefusal, DbError, GhlError, isUnique, type LiveIO, uuidFrom } from "./liveio.ts";
 import {
   adoptRefusal,
   type Applied,
+  COUNT_STUCK_S,
   applyRoomEvent,
   type CallKind,
   type Changed,
   channelPlan,
+  type CountBefore,
   countClaim,
-  countFinish,
+  countClaimable,
   countLive,
   type CountPlan,
   countUndo,
@@ -42,13 +45,19 @@ import {
   isFinal,
   isProvider,
   isPurpose,
+  isTestContact,
   isUuid,
   LANE_COPY,
+  leadJoined,
+  linkDue,
+  liveWindow,
   type LinkChannel,
   markEvent,
   MAX_WRITE_TRIES,
   ms,
   newRoomRow,
+  noShowDoubt,
+  officialCalendars,
   type Provider,
   type Purpose,
   REPLAY_MAX_AGE_S,
@@ -63,8 +72,10 @@ import {
   roomCtx,
   roomsHealth,
   roomsSetting,
+  type SettleFacts,
   settleWanted,
   shortUrl,
+  standbyEmpty,
   standbyToEnd,
   sweepRoom,
   toRoomView,
@@ -80,6 +91,18 @@ import {
 type Row = Record<string, unknown>;
 type Action = (who: Who, b: Row) => Promise<Row>;
 
+/** What one channel's send came to (rooms.ts sendOn). */
+type SendOutcome =
+  | { ok: true; message_id: string | null; unseen: boolean }
+  | { ok: false; why: string; status: number; inflight?: true; stopped?: true; unclear?: true; since?: number; text?: string | null };
+
+/**
+ * How long a send may still be running when it is asked for again: HighLevel's
+ * answer (25 s at most), the read-back (20 s) and the database writes. A
+ * repeat that finds its row still "sending" after this was orphaned.
+ */
+const SEND_BUDGET_MS = 90_000;
+
 const S = 1000;
 const enc = encodeURIComponent;
 const ROOMS = "cockpit_sales_rooms";
@@ -90,6 +113,9 @@ const LOCATION = "7NI8yyJtwsh2OOWA5Icr";
 
 /** live.take, live.decline and live.press while live.enabled is false. */
 export const LIVE_OFF = "Live handover is not switched on yet.";
+/** finishClaim's mark on an answer whose handover could not be pointed at its room yet (never sent to a browser). */
+const UNLINKED = "__unlinked";
+
 /** The offer is gone (taken, ended, never yours): the strip's "gone". */
 export const OFFER_GONE = "This offer has ended.";
 
@@ -106,6 +132,16 @@ export const ROOMS_COPY = {
   all_failed: "the link did not go on any channel ({why})",
   handover_only_claimed: "Take the live lead first. A handover room is made for the closer who took it.",
   ask_not_yet: "Asking for a live handover is not built yet. Book the call for now.",
+  /** A send whose answer was lost: it may have reached the lead, so nothing else goes until a person checks. */
+  may_have_gone_whatsapp: "The link may have gone on WhatsApp. Check the conversation before sending it again, or read it out",
+  may_have_gone_email: "The link may have gone by email. Check the conversation before sending it again, or read it out",
+  /** I can't let them in: the room was closed and its replacement could not be made in this request. */
+  replacement_not_made: "The {provider} room could not be made yet. Press Try {provider}.",
+  count_unclear_alert:
+    "Room {code}: HighLevel may have made the live booking, but its answer was lost and no booking could be found. Check the lead's calendar before anyone books by hand.",
+  mark_intro_alert: "Room {code}: the booked intro was not marked a no-show because {why}. Mark it shown or a no-show.",
+  undo_stuck_alert: "Room {code}: That was not the lead was pressed, and the live booking could not be taken back in HighLevel. Remove it by hand.",
+  count_unread_alert: "Room {code}: the lead joined, and the lead's booked calls could not be read, so nothing was counted yet. Check HighLevel.",
 } as const;
 
 /** Timeline lines this file writes (room_events.text): plain, no names, no links. */
@@ -206,8 +242,18 @@ export interface RoomDeps {
   markAppointment(who: Who, id: string, status: string, opts: MarkOpts): Promise<Row>;
   sendText(who: Who, b: SendTextInput, opts: { source: "room"; readBackMs?: number }): Promise<{ message: Row; repeated?: boolean }>;
   sendTemplate(who: Who, o: SendTemplateInput): Promise<{ message: Row; repeated?: boolean }>;
-  /** The lead's next intro or demo booked ahead (index.ts upcoming). */
-  upcoming(contactId: string, kind: CallKind): Promise<{ id: string; start: number } | null>;
+  /** The lead's next intro or demo booked ahead (index.ts upcoming), with its end, rep and status when HighLevel gives them. */
+  upcoming(
+    contactId: string,
+    kind: CallKind,
+  ): Promise<{ id: string; start: number; end?: number | null; assigned_user_id?: string | null; status?: string | null } | null>;
+  /**
+   * Whether a WhatsApp message with these words reached the lead's
+   * conversation since `since` (index.ts whatsappSentSince): true, false,
+   * or null when the conversation could not be read. Used after a send whose
+   * outcome was lost, before anything else goes.
+   */
+  sentSince?(contactId: string, since: number, text: string | null): Promise<boolean | null>;
 }
 
 // ---------------------------------------------------------------------------
@@ -416,7 +462,7 @@ export function makeRooms(deps: RoomDeps): Rooms {
    */
   async function applyLoop(
     id: string,
-    make: (room: RoomRow) => RoomEvent,
+    make: (room: RoomRow) => RoomEvent | null,
     setting: RoomsSetting,
     first?: RoomRow | null,
   ): Promise<{ room: RoomRow; applied: Changed } | { room: RoomRow | null; refused: Refused }> {
@@ -425,7 +471,11 @@ export function makeRooms(deps: RoomDeps): Rooms {
     const host = await personOf(lower(room.host_email)).catch(() => null);
     const ctx = { ...roomCtx(setting), host_first_name: greetingName(host?.name, null) || null };
     for (let i = 0; i < MAX_WRITE_TRIES; i++) {
-      const a: Applied = applyRoomEventSafe(room, make(room), io.now(), ctx);
+      // make() decides on every try, from the row as it is now: null means
+      // there is nothing to do any more (the row changed under the caller).
+      const event = make(room);
+      if (!event) return { room, applied: unchanged(room) };
+      const a: Applied = applyRoomEventSafe(room, event, io.now(), ctx);
       if (!a.ok) return { room, refused: a };
       if (!a.changed) return { room, applied: a };
       const landed = await patchRoom(room.id, a.patch, a.expect);
@@ -496,9 +546,26 @@ export function makeRooms(deps: RoomDeps): Rooms {
     for (const e of effects) {
       if (e.kind === "delete_secret") await deleteSecret(room.id);
       else if (e.kind === "send_link") io.background(sendLink(room.id));
+      else if (e.kind === "claim_link") io.background(claimLinkNow(room.id));
       else if (e.kind === "count_live") io.background(runCount(room.id));
       else if (e.kind === "undo_count") io.background(runUndo(room.id));
       else if (e.kind === "alert") await alertSet(e, room);
+    }
+  }
+
+  /**
+   * The sweep's claim of a link that was due and never claimed (worker.ready
+   * lost or given up): the same guarded write worker.ready makes (the
+   * missing deadlines and link_claimed_at), so two ticks never both send.
+   */
+  async function claimLinkNow(roomId: string): Promise<void> {
+    const { rooms: setting } = await roomsAndLive();
+    const out = await applyLoop(roomId, r => (linkDue(r) ? { kind: "ready" } : null), setting);
+    if ("applied" in out && out.applied.changed) {
+      await deps.audit(DESK, "room.link.claim", ROOMS, out.room.id, { link_claimed_at: null }, {
+        link_claimed_at: out.room.link_claimed_at ?? null,
+      }, { why: "the link was due and never asked for" });
+      await carryOut(out.room, out.applied.effects);
     }
   }
 
@@ -525,6 +592,9 @@ export function makeRooms(deps: RoomDeps): Rooms {
     const repeat = (await io.db(`${ROOMS}?request_id=eq.${enc(a.request_id)}&select=*`))[0] as unknown as RoomRow | undefined;
     if (repeat) {
       if (lower(repeat.host_email) !== a.host) return { refused: refuse("bad_input") };
+      // The insert landed and its answer was lost: finish its audit row and timeline line now.
+      const asked = await io.db(`${EVENTS}?dedupe_key=eq.${enc(`room.asked:${repeat.id}`)}&select=id`).catch(() => [{}]);
+      if (!asked.length) await recordCreate(a, repeat);
       return { room: repeat };
     }
     const contact = a.contact_id ? await readContact(a.contact_id) : null;
@@ -561,7 +631,15 @@ export function makeRooms(deps: RoomDeps): Rooms {
       booked_demo: demos.length > 0,
       booked_intro: bookedIntro,
     });
-    if (no) return { refused: no };
+    if (no) {
+      // The same request may have landed between the first read and the
+      // lead's check (two tabs, a retry): that room is the answer, not a refusal.
+      if (no.code === "lead_has_room" || no.code === "host_has_room") {
+        const twin = (await io.db(`${ROOMS}?request_id=eq.${enc(a.request_id)}&select=*`))[0] as unknown as RoomRow | undefined;
+        if (twin && lower(twin.host_email) === a.host) return { room: twin };
+      }
+      return { refused: no };
+    }
     const row: Row = {
       ...newRoomRow({
         id: io.uuid(),
@@ -580,6 +658,8 @@ export function makeRooms(deps: RoomDeps): Rooms {
         handover_id: a.handover_id ?? null,
       }),
       contact_first_name: greetingName(contact?.firstName, contact?.name) || null,
+      // The intro's start as it stands now: a later move of that intro is never settled by this room.
+      appointment_start_at: bookedIntro && appt?.start_at ? String(appt.start_at) : null,
     };
     // The database picks a code no room has (the guard trigger).
     delete row.code;
@@ -592,10 +672,21 @@ export function makeRooms(deps: RoomDeps): Rooms {
         if (twin && lower(twin.host_email) === a.host) return { room: twin };
         return { refused: refuse("bad_input") };
       }
-      if (isUnique(e, "cockpit_sales_rooms_one_per_lead")) return { refused: refuse("lead_has_room", {}, a.purpose) };
-      if (isUnique(e, "cockpit_sales_rooms_one_per_host")) return { refused: refuse("host_has_room") };
+      if (isUnique(e, "cockpit_sales_rooms_one_per_lead") || isUnique(e, "cockpit_sales_rooms_one_per_host")) {
+        const twin = (await io.db(`${ROOMS}?request_id=eq.${enc(a.request_id)}&select=*`))[0] as unknown as RoomRow | undefined;
+        if (twin && lower(twin.host_email) === a.host) return { room: twin };
+        return {
+          refused: isUnique(e, "cockpit_sales_rooms_one_per_lead") ? refuse("lead_has_room", {}, a.purpose) : refuse("host_has_room"),
+        };
+      }
       throw e;
     }
+    await recordCreate(a, inserted);
+    return { room: inserted };
+  }
+
+  /** room.create's audit row and timeline line; both idempotent, so a retry that finds its room finishes them. */
+  async function recordCreate(a: Pick<CreateAsk, "who" | "purpose" | "provider" | "call_kind" | "contact_id" | "host">, inserted: RoomRow): Promise<void> {
     await deps.audit(a.who, "room.create", ROOMS, inserted.id, null, {
       purpose: a.purpose,
       provider: a.provider,
@@ -608,7 +699,6 @@ export function makeRooms(deps: RoomDeps): Rooms {
     await note(inserted.id, "room.asked", fill(EVENT_TEXT.asked, { provider: a.provider === "zoom" ? "Zoom" : "Meet" }), {
       purpose: a.purpose,
     }, `room.asked:${inserted.id}`);
-    return { room: inserted };
   }
 
   /** room.create's wait: the worker has 15 s; the browser polls room.status after that. */
@@ -758,28 +848,48 @@ export function makeRooms(deps: RoomDeps): Rooms {
       await deps.audit(who, "room.end", ROOMS, room.id, { state: applied.from }, { state: applied.to, result: room.result }, { reason });
       await note(room.id, "room.end", fill(EVENT_TEXT.ended, { reason: reason.replaceAll("_", " ") }), { reason });
       await carryOut(room, applied.effects);
-      const replace = applied.effects.find(e => e.kind === "replace");
-      if (replace && replace.kind === "replace") {
-        // "I can't let them in": the same lead, the other provider, in this request.
-        const made = await createRoom({
-          who,
-          host: lower(room.host_email),
-          request_id: await uuidFrom(`mahara-room/replace/${room.id}`),
-          purpose: room.purpose,
-          provider: replace.provider,
-          call_kind: room.call_kind,
-          contact_id: room.contact_id,
-          trigger: room.trigger ?? null,
-          attempt_id: room.attempt_id ?? null,
-          appointment_id: room.appointment_id ?? null,
-          handover_id: room.handover_id ?? null,
-          setting,
-        });
-        if ("refused" in made) answer.replacement_refusal = made.refused.message;
-        else answer.replacement = await view(await waitForWorker(made.room, setting), setting);
-      }
+    }
+    const replace = applied.effects.find(e => e.kind === "replace");
+    // "I can't let them in": the same lead, the other provider. A second press
+    // (another tab, or a retry after a lost answer) on the room it closed asks
+    // again for the same replacement, by the same request id.
+    const again = !applied.changed && reason === "admit_blocked" && room.state === "cancelled" && room.result === "admit_blocked";
+    if ((replace && replace.kind === "replace") || again) {
+      const provider: Provider = replace && replace.kind === "replace" ? replace.provider : room.provider === "zoom" ? "meet" : "zoom";
+      Object.assign(answer, await replacementFor(who, room, provider, setting));
     }
     return { room: await view(room, setting), ...answer };
+  }
+
+  /**
+   * The admit_blocked replacement room. Its create never fails the press: the
+   * Meet room is already cancelled, so a database stall or any other error
+   * answers a sentence and the panel offers Try {provider} (the same request
+   * id, so a retry finds the room this one may have made).
+   */
+  async function replacementFor(who: Who, room: RoomRow, provider: Provider, setting: RoomsSetting): Promise<Row> {
+    const name = provider === "zoom" ? "Zoom" : "Meet";
+    try {
+      const made = await createRoom({
+        who,
+        host: lower(room.host_email),
+        request_id: await uuidFrom(`mahara-room/replace/${room.id}`),
+        purpose: room.purpose,
+        provider,
+        call_kind: room.call_kind,
+        contact_id: room.contact_id,
+        trigger: room.trigger ?? null,
+        attempt_id: room.attempt_id ?? null,
+        appointment_id: room.appointment_id ?? null,
+        handover_id: room.handover_id ?? null,
+        setting,
+      });
+      if ("refused" in made) return { replacement_refusal: made.refused.message };
+      return { replacement: await view(await waitForWorker(made.room, setting), setting) };
+    } catch (e) {
+      io.log(`rooms: the replacement room was not made: ${redact(String((e as Error)?.message ?? e))}`);
+      return { replacement_refusal: fill(ROOMS_COPY.replacement_not_made, { provider: name }) };
+    }
   }
 
   async function roomSend(who: Who, b: Row): Promise<Row> {
@@ -796,7 +906,11 @@ export function makeRooms(deps: RoomDeps): Rooms {
     if (isFinal(room.state)) throw no("final");
     if (room.state === "requested" || room.state === "creating") throw no("too_early");
     if (!setting.send.email) throw plain(`Not sent: ${LANE_COPY.why_email_off}.`, 409, "disabled");
-    const sent = await sendOn(room, "email", requestId, setting, who);
+    // One email with the link per room, whatever the presses (two tabs, a
+    // double tap, or the backup that already went): the message service's
+    // own key for this room's email, so a repeat answers the email that went.
+    void requestId;
+    const sent = await sendOn(room, "email", await uuidFrom(`mahara-room/link/${room.id}/email`), setting, who);
     if (!sent.ok) throw plain(`Not sent: ${sent.why}.`, sent.status, "send_failed");
     const after = await recordSent(room, "email", sent.message_id, setting);
     await deps.audit(who, "room.send", ROOMS, room.id, null, { channel: "email", message_id: sent.message_id });
@@ -862,7 +976,14 @@ export function makeRooms(deps: RoomDeps): Rooms {
         const twin = (await io.db(`${ROOMS}?request_id=eq.${enc(requestId)}&select=*`))[0] as unknown as RoomRow;
         return { room: await view(twin, setting) };
       }
-      if (isUnique(e, "cockpit_sales_rooms_one_per_lead")) throw no("lead_has_room");
+      if (isUnique(e, "cockpit_sales_rooms_one_per_lead")) {
+        // Two tabs opened the same booked call at once: the room the other one made is this call's room.
+        const twin = (await io.db(
+          `${ROOMS}?appointment_id=eq.${enc(apptId)}&purpose=eq.booked&state=in.(${LIVE_STATES})&select=*&limit=1`,
+        ))[0] as unknown as RoomRow | undefined;
+        if (twin) return { room: await view(twin, setting) };
+        throw no("lead_has_room");
+      }
       throw e;
     }
     await deps.audit(who, "room.wrap", ROOMS, inserted.id, null, { appointment_id: apptId, provider: plan.provider, state: inserted.state });
@@ -877,7 +998,18 @@ export function makeRooms(deps: RoomDeps): Rooms {
   /**
    * One channel, one message, keyed so a retry can never send twice: the
    * rep's own request id for "Also send by email", else an id made from the
-   * room and the channel. Answers what went, or why not.
+   * room and the channel. Answers what went, or why not:
+   * - ok: the message service says sent, delivered or read;
+   * - inflight: an earlier try of this very send is still running (its row
+   *   says sending and is younger than a send's own budget): the link stays
+   *   claimed and the next minute's check finishes it;
+   * - unclear: it may have gone (an answer lost, a 5xx, a database write
+   *   after HighLevel failed, or a send that started long ago and never
+   *   finished): nothing else may go until a person checks;
+   * - stopped: the room closed while the send was being prepared;
+   * - otherwise a refusal that is certain, and the next channel may go.
+   * `stillOpen` is asked right before the message goes, so an End pressed
+   * meanwhile stops it.
    */
   async function sendOn(
     room: RoomRow,
@@ -886,7 +1018,8 @@ export function makeRooms(deps: RoomDeps): Rooms {
     setting: RoomsSetting,
     by?: Who,
     contact?: Row | null,
-  ): Promise<{ ok: true; message_id: string | null; unseen: boolean } | { ok: false; why: string; status: number }> {
+    stillOpen?: () => Promise<boolean>,
+  ): Promise<SendOutcome> {
     const sender = by ?? (await hostWho(room.host_email));
     const c = contact ?? (room.contact_id ? await readContact(room.contact_id) : null);
     const host = await personOf(lower(room.host_email)).catch(() => null);
@@ -898,62 +1031,95 @@ export function makeRooms(deps: RoomDeps): Rooms {
       rep: greetingName(host?.name, null) || "the sales team",
       link,
     };
+    const t = channel === "whatsapp_template" ? null : leadText(room, channel === "email" ? "email" : "whatsapp_text", vars);
+    if (stillOpen && !(await stillOpen())) return { ok: false, stopped: true, why: LANE_COPY.final, status: 409 };
+    let m: Row;
     try {
       if (channel === "whatsapp_template") {
         const key = `${setting.template_route}_${leadLanguage(c)}`;
-        const out = await deps.sendTemplate(sender, {
-          contactId: room.contact_id,
-          key,
-          line: "",
-          requestId,
-          followupId: null,
-          source: "room",
-          signAs: lower(room.host_email),
-          buttonVariable: { join_code: room.code },
-          readBackMs: setting.waits_s.unconfirmed * S,
-        });
-        const m = out.message;
-        if (m.state === "failed") return { ok: false, why: String(m.error ?? "the template failed"), status: 502 };
-        return { ok: true, message_id: String(m.id ?? "") || null, unseen: String(m.provider_status ?? "") === "enrolled" };
+        m = (
+          await deps.sendTemplate(sender, {
+            contactId: room.contact_id,
+            key,
+            line: "",
+            requestId,
+            followupId: null,
+            source: "room",
+            signAs: lower(room.host_email),
+            buttonVariable: { join_code: room.code },
+            readBackMs: setting.waits_s.unconfirmed * S,
+          })
+        ).message;
+      } else {
+        m = (
+          await deps.sendText(
+            sender,
+            {
+              contact_id: room.contact_id,
+              channel: channel === "email" ? "email" : "whatsapp",
+              body: (t as { body: string }).body,
+              subject: (t as { subject: string | null }).subject,
+              request_id: requestId,
+            },
+            { source: "room", readBackMs: setting.waits_s.unconfirmed * S },
+          )
+        ).message;
       }
-      const t = leadText(room, channel === "email" ? "email" : "whatsapp_text", vars);
-      const out = await deps.sendText(
-        sender,
-        {
-          contact_id: room.contact_id,
-          channel: channel === "email" ? "email" : "whatsapp",
-          body: t.body,
-          subject: t.subject,
-          request_id: requestId,
-        },
-        { source: "room", readBackMs: setting.waits_s.unconfirmed * S },
-      );
-      const m = out.message;
-      if (m.state === "failed") return { ok: false, why: String(m.error ?? "the message failed"), status: 502 };
-      return { ok: true, message_id: String(m.id ?? "") || null, unseen: false };
     } catch (e) {
-      const why = e instanceof ApiRefusal ? e.message : redact(String((e as Error)?.message ?? e));
-      const status = e instanceof ApiRefusal ? e.status : 502;
-      return { ok: false, why: why.replace(/\.+$/, ""), status };
+      const why = (e instanceof ApiRefusal ? e.message : redact(String((e as Error)?.message ?? e))).replace(/\.+$/, "");
+      if (unclearSend(e)) return { ok: false, unclear: true, why, status: 502, since: io.now(), text: t?.body ?? null };
+      return { ok: false, why, status: e instanceof ApiRefusal ? e.status : 502 };
     }
+    const state = String(m.state ?? "");
+    if (state === "sent" || state === "delivered" || state === "read")
+      return {
+        ok: true,
+        message_id: String(m.id ?? "") || null,
+        unseen: channel === "whatsapp_template" && String(m.provider_status ?? "") === "enrolled",
+      };
+    if (state === "failed") return { ok: false, why: String(m.error ?? "the message failed").replace(/\.+$/, ""), status: 502 };
+    if (state === "sending") {
+      // A repeat of a send that has not finished: still running, or orphaned
+      // by a deploy or the wall-clock limit between its row and HighLevel.
+      const started = ms(m.created_at);
+      if (started !== null && io.now() - started < SEND_BUDGET_MS) return { ok: false, inflight: true, why: "the send is still running", status: 409 };
+      await io
+        .db(`cockpit_sales_messages?id=eq.${enc(String(m.id ?? ""))}&state=eq.sending`, {
+          method: "PATCH",
+          body: { state: "unclear", error: "The send started and never finished, so it may or may not have gone." },
+          prefer: "return=minimal",
+        })
+        .catch(e => io.log(`rooms: an orphaned send was not marked unclear: ${redact(String((e as Error)?.message ?? e))}`));
+    }
+    // sending (orphaned), unclear, or a state this code does not know: it may have gone.
+    return { ok: false, unclear: true, why: "the send did not finish", status: 502, since: ms(m.created_at) ?? io.now(), text: t?.body ?? null };
   }
 
   /** A send that went: the link_sent event (the lead's 10 minutes start), the channel and the message id. */
   async function recordSent(room: RoomRow, channel: LinkChannel, messageId: string | null, setting: RoomsSetting): Promise<RoomRow> {
     const out = await applyLoop(room.id, () => ({ kind: "link_sent", channel, at: io.now() }), setting);
-    const cur = ("refused" in out ? out.room : out.room) ?? room;
-    const fresh = (await readRoom(room.id)) ?? cur;
-    const channels = [...new Set([...(Array.isArray(fresh.link_channels) ? (fresh.link_channels as string[]) : []), channel])];
-    const ids = { ...obj(fresh.link_message_ids), ...(messageId ? { [channel]: messageId } : {}) };
-    // link_channels and link_message_ids never move the version; one send
-    // per room per channel (the claim), so a plain write by id is enough.
-    const rows = await io.db(`${ROOMS}?id=eq.${enc(room.id)}`, {
-      method: "PATCH",
-      body: { link_channels: channels, link_message_ids: ids, ...(fresh.refusal ? { refusal: null } : {}) },
-      prefer: "return=representation",
-    });
+    let fresh = ("refused" in out ? out.room : out.room) ?? room;
+    // link_channels and link_message_ids never move the version. Two channels
+    // can be recorded at once (the link and "Also send by email"), so the
+    // write holds only while the channels are as read: a write that misses
+    // reads again and adds its own to what the other one wrote.
+    for (let i = 0; i < MAX_WRITE_TRIES; i++) {
+      fresh = (await readRoom(room.id)) ?? fresh;
+      const had = Array.isArray(fresh.link_channels) ? (fresh.link_channels as string[]) : [];
+      const channels = [...new Set([...had, channel])];
+      const ids = { ...obj(fresh.link_message_ids), ...(messageId ? { [channel]: messageId } : {}) };
+      const rows = await io.db(`${ROOMS}?id=eq.${enc(room.id)}&link_channels=eq.${enc(`{${had.join(",")}}`)}`, {
+        method: "PATCH",
+        body: { link_channels: channels, link_message_ids: ids, ...(fresh.refusal ? { refusal: null } : {}) },
+        prefer: "return=representation",
+      });
+      if (rows[0]) {
+        fresh = rows[0] as unknown as RoomRow;
+        break;
+      }
+    }
     await note(room.id, "link.sent", channel === "email" ? EVENT_TEXT.link_sent_email : EVENT_TEXT.link_sent, { channel }, `link.sent:${room.id}:${channel}`);
-    return (rows[0] as unknown as RoomRow | undefined) ?? fresh;
+    return fresh;
   }
 
   async function recordNotSent(room: RoomRow, why: string): Promise<void> {
@@ -1025,11 +1191,22 @@ export function makeRooms(deps: RoomDeps): Rooms {
       await recordNotSent(room, plan.not_sent_reason ?? LANE_COPY.why_wa_off);
       return;
     }
+    // Every message goes only to a room that is still open: an End pressed
+    // while the link was on its way stops what has not gone yet.
+    const stillOpen = async () => {
+      const cur = await readRoom(room.id).catch(() => null);
+      return Boolean(cur && (cur.state === "open" || cur.state === "host_in" || cur.state === "lead_in"));
+    };
     const fails: string[] = [];
     for (const channel of plan.order) {
       const requestId = await uuidFrom(`mahara-room/link/${room.id}/${channel}`);
-      const sent = await sendOn(room, channel, requestId, setting, undefined, contact);
+      const sent = await sendOn(room, channel, requestId, setting, undefined, contact, stillOpen);
       if (!sent.ok) {
+        if (sent.stopped || sent.inflight) return;
+        if (sent.unclear) {
+          await maybeSent(room, channel, sent, setting);
+          return;
+        }
         fails.push(sent.why);
         continue;
       }
@@ -1037,7 +1214,7 @@ export function makeRooms(deps: RoomDeps): Rooms {
       let unconfirmed = false;
       if (sent.unseen && plan.email_backup && channel === "whatsapp_template") {
         const backupId = await uuidFrom(`mahara-room/link/${room.id}/email`);
-        const mail = await sendOn(after, "email", backupId, setting, undefined, contact);
+        const mail = await sendOn(after, "email", backupId, setting, undefined, contact, stillOpen);
         if (mail.ok) {
           after = await recordSent(after, "email", mail.message_id, setting);
           await io.db(`${ROOMS}?id=eq.${enc(room.id)}&link_unconfirmed_at=is.null`, {
@@ -1059,33 +1236,202 @@ export function makeRooms(deps: RoomDeps): Rooms {
     await recordNotSent(room, fill(ROOMS_COPY.all_failed, { why: fails.join("; ") || "no reason given" }));
   }
 
+  /**
+   * A send that may have gone (contract: never two links to one lead): the
+   * conversation is read for it first. Found, it counts as sent; not found
+   * or not readable, the cascade stops and the panel says to check the
+   * conversation before sending again, or to read the link out.
+   */
+  async function maybeSent(room: RoomRow, channel: LinkChannel, sent: { since?: number; text?: string | null; why: string }, setting: RoomsSetting): Promise<void> {
+    let seen: boolean | null = null;
+    if (channel !== "email" && deps.sentSince && room.contact_id) {
+      seen = await deps
+        .sentSince(room.contact_id, (sent.since ?? io.now()) - 5 * S, channel === "whatsapp_text" ? (sent.text ?? null) : null)
+        .catch(() => null);
+    }
+    if (seen === true) {
+      const after = await recordSent(room, channel, null, setting);
+      await deps.audit(DESK, "room.link", ROOMS, room.id, { link_sent_at: null }, {
+        link_sent_at: after.link_sent_at ?? null,
+        link_channels: after.link_channels ?? [channel],
+        confirmed_from_conversation: true,
+      }, { host_email: lower(room.host_email) });
+      return;
+    }
+    await recordNotSent(room, channel === "email" ? ROOMS_COPY.may_have_gone_email : ROOMS_COPY.may_have_gone_whatsapp);
+    await deps.audit(DESK, "room.link.unclear", ROOMS, room.id, null, { channel, why: sent.why }, { host_email: lower(room.host_email) });
+  }
+
   // ------------------------------------------------------------- the live booking
+
+  /** One alert per incident (cockpit_sales_alert_set); never fatal. */
+  async function raise(key: string, kind: string, room: RoomRow, message: string): Promise<void> {
+    try {
+      await io.rpc("cockpit_sales_alert_set", {
+        p_key: key,
+        p_on: true,
+        p_kind: kind,
+        p_subject: `Room ${room.code}`,
+        p_message: message.slice(0, 1000),
+        p_detail: { room_id: room.id, code: room.code },
+      });
+    } catch (err) {
+      io.log(`rooms: an alert was not raised: ${redact(String((err as Error)?.message ?? err))}`);
+    }
+  }
+
+  /** The calendars setting's intro and demo calendars: B2B's own, beside BOOKING_CALENDARS. */
+  function officialIds(calendars: unknown): string[] {
+    return Object.entries(obj(calendars))
+      .filter(([, v]) => ["intro", "demo"].includes(String(obj(v).type)))
+      .map(([k]) => k);
+  }
+
+  /** Something from the lead says they came: the short link opened, a knock, or Zoom's join of someone outside the team. */
+  async function leadEvidence(room: RoomRow): Promise<boolean> {
+    if (room.first_open_at || room.last_open_at || room.lead_waiting_at) return true;
+    if (room.provider !== "zoom") return false;
+    const evs = await io.db(
+      `${EVENTS}?room_id=eq.${enc(room.id)}&source=eq.zoom&kind=eq.zoom.meeting.participant_joined&select=detail&limit=50`,
+    );
+    return evs.some(e => obj(e.detail).role === "lead");
+  }
+
+  /** Another room of this lead's already counted a call today (a booking or a move that stands). */
+  async function standingCount(room: RoomRow): Promise<boolean> {
+    const rows = await io.db(
+      `${ROOMS}?contact_id=eq.${enc(String(room.contact_id))}&id=neq.${enc(room.id)}&count_result=in.(booked,moved)&count_appointment_id=not.is.null&lead_in_at=gte.${enc(kuwaitMidnight(io.now()))}&select=id&limit=1`,
+    );
+    return rows.length > 0;
+  }
+
+  /** HighLevel's appointment by id (its own words for the fields); null when it cannot be read. */
+  async function ghlAppointment(id: string): Promise<Row | null> {
+    try {
+      const out = await io.ghl("GET", `/calendars/events/appointments/${enc(id)}`);
+      const a = obj(out.appointment ?? out.event ?? out);
+      return Object.keys(a).length ? a : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * The lead's call ahead, whole: its end, rep and status, from upcoming(),
+   * else HighLevel's appointment, else the cockpit's mirror. `unread` when
+   * the list itself could not be read: that is never "nothing booked".
+   */
+  async function upcomingWhole(contactId: string, kind: CallKind): Promise<{ value: Parameters<typeof countLive>[0]["upcoming"]; unread: boolean }> {
+    let up: Awaited<ReturnType<RoomDeps["upcoming"]>>;
+    try {
+      up = await deps.upcoming(contactId, kind);
+    } catch {
+      return { value: null, unread: true };
+    }
+    if (!up) return { value: null, unread: false };
+    let end = up.end ?? null;
+    let rep = up.assigned_user_id ?? null;
+    let status = up.status ?? null;
+    if (end === null || !rep) {
+      const a = await ghlAppointment(up.id);
+      const m = await appointment(up.id).catch(() => null);
+      end ??= ghlTime(a?.endTime) || ms(m?.end_at) || null;
+      rep ||= String(a?.assignedUserId ?? m?.assigned_user_id ?? "") || null;
+      status ||= String(a?.appointmentStatus ?? m?.status ?? "") || null;
+    }
+    return { value: { ...up, end: Number.isFinite(end) ? end : null, assigned_user_id: rep, status }, unread: false };
+  }
+
+  /** The count's own record before it changes the lead's booked call; written first, so its undo can always put the call back. */
+  async function recordBefore(room: RoomRow, kind: "count.moving" | "count.marking", claimedAt: string, detail: Row, text: string): Promise<boolean> {
+    try {
+      await io.db(`${EVENTS}?on_conflict=dedupe_key`, {
+        method: "POST",
+        body: { room_id: room.id, kind, source: "sales-api", dedupe_key: `${kind}:${room.id}:${claimedAt}`.slice(0, 300), handled_at: isoAt(io.now()), text, detail },
+        prefer: "resolution=ignore-duplicates,return=minimal",
+      });
+      return true;
+    } catch (e) {
+      io.log(`rooms: the count's record was not stored: ${redact(String((e as Error)?.message ?? e))}`);
+      return false;
+    }
+  }
+
+  /** Gives the count's claim back when nothing was changed, so the sweep's re-ask tries again. */
+  async function releaseClaim(room: RoomRow, claimedAt: string): Promise<void> {
+    await patchRoom(
+      room.id,
+      {
+        count_claimed_at: room.count_claimed_at ?? null,
+        count_result: room.count_result ?? null,
+        count_appointment_id: room.count_appointment_id ?? null,
+        count_undo_at: room.count_undo_at ?? null,
+      },
+      { count_claimed_at: claimedAt, count_result: null, count_appointment_id: null },
+    ).catch(e => io.log(`rooms: the count's claim was not given back: ${redact(String((e as Error)?.message ?? e))}`));
+  }
+
+  /** A booking the count made whose answer was lost: found on the lead's calendar near its start, or null. */
+  async function findBooking(contactId: string, calendarId: string, start: string): Promise<string | null> {
+    try {
+      const d = await io.ghl("GET", `/contacts/${enc(contactId)}/appointments`, undefined, "2021-07-28");
+      const at = ms(start) ?? 0;
+      const hit = ((d.events ?? d.appointments ?? []) as Row[]).find(
+        e =>
+          !e.deleted &&
+          String(e.calendarId ?? "") === calendarId &&
+          !["cancelled", "invalid"].includes(String(e.appointmentStatus ?? "")) &&
+          Math.abs((ghlTime(e.startTime) || 0) - at) < 60 * S,
+      );
+      return hit ? String(hit.id ?? "") || null : null;
+    } catch {
+      return null;
+    }
+  }
 
   async function runCount(roomId: string): Promise<void> {
     const room = await readRoom(roomId);
     if (!room?.contact_id) return;
-    const raw = await settingsOf(["rooms"]);
+    const raw = await settingsOf(["rooms", "calendars"]);
     const setting = roomsSetting(raw.rooms);
-    if (!setting.count_on_join) return;
-    const [contact, host, upcoming, appt] = await Promise.all([
+    if (!setting.count_on_join || !countClaimable(room) || !leadJoined(room)) return;
+    const [contact, host, appt, marks] = await Promise.all([
       readContact(room.contact_id),
       hostWho(room.host_email),
-      deps.upcoming(room.contact_id, room.call_kind).catch(() => null),
       appointment(room.appointment_id).catch(() => null),
+      room.appointment_id
+        ? io.db(`cockpit_sales_dispositions?appointment_id=eq.${enc(room.appointment_id)}&superseded_at=is.null&select=id,status`)
+        : Promise.resolve([] as Row[]),
     ]);
     if (!contact) return; // the sweep's re-ask comes back for it
+    const test = isTestContact(room.contact_id, contact.tags, setting);
+    const [up, standing, evidence] = await Promise.all([
+      test || room.appointment_id ? Promise.resolve({ value: null, unread: false }) : upcomingWhole(room.contact_id, room.call_kind),
+      standingCount(room),
+      leadEvidence(room),
+    ]);
+    if (up.unread) {
+      // Missing is never zero: nothing is booked beside a call that could not
+      // be read. The sweep asks again each minute; a person is told when it lasts.
+      if (io.now() - (ms(room.lead_in_at) ?? io.now()) >= COUNT_STUCK_S * S)
+        await raise(`room:${room.id}:count_unread`, "room_count_stuck", room, fill(ROOMS_COPY.count_unread_alert, { code: room.code }));
+      return;
+    }
     const plan: CountPlan = countLive({
       room,
       setting,
       contact,
-      upcoming,
+      upcoming: up.value,
       appointment_calendar_id: (appt?.calendar_id as string | null) ?? null,
       host_ghl_user_id: host.ghl_user_id ?? null,
       location_id: LOCATION,
       link: shortUrl(room.code, room.join_url, setting.short_link),
+      official_calendar_ids: officialIds(raw.calendars),
+      standing_count: standing,
+      lead_evidence: evidence,
+      appointment_shown: marks.some(m => m.status === "showed") || String(appt?.status ?? "") === "showed",
     });
-    const now = io.now();
-    const claim = countClaim(room, now, plan);
+    const claim = countClaim(room, io.now(), plan);
     if (!claim) return;
     const claimed = await patchRoom(room.id, claim.patch, claim.expect);
     if (!claimed) return; // another count holds it
@@ -1094,92 +1440,268 @@ export function makeRooms(deps: RoomDeps): Rooms {
       await deps.audit(DESK, "room.count", ROOMS, room.id, null, { result: plan.count_result, reason: plan.reason });
       return;
     }
-    let done: { count_result: "booked" | "moved" | "failed" | null; count_appointment_id: string | null };
-    let what = "";
-    try {
-      if (plan.action === "mark") {
-        await deps.markAppointment(host, plan.appointment_id, "showed", { quiet: true, anyRep: true, note: "Joined the video room." });
-        done = { count_result: null, count_appointment_id: plan.appointment_id };
-        what = "the booked intro is marked shown";
-      } else if (plan.action === "move") {
-        await io.ghl("PUT", `/calendars/events/appointments/${enc(plan.appointment_id)}`, plan.body);
-        await io.ghl("PUT", `/calendars/events/appointments/${enc(plan.appointment_id)}`, { appointmentStatus: "showed", toNotify: false });
-        await note(room.id, "count.moved", "The lead's booked call was moved to now and marked shown.", {
-          appointment_id: plan.appointment_id,
-          from_start: plan.from_start,
-        }, `count.moved:${room.id}:${claimedAt}`);
-        done = { count_result: "moved", count_appointment_id: plan.appointment_id };
-        what = "the booked call moved to now and marked shown";
-      } else {
-        const out = await io.ghl("POST", "/calendars/events/appointments", plan.body);
-        const id = String(out.id ?? obj(out.appointment).id ?? obj(out.event).id ?? "");
-        if (!id) throw new Error("HighLevel made no booking id");
-        await io.ghl("PUT", `/calendars/events/appointments/${enc(id)}`, { appointmentStatus: "showed", toNotify: false });
-        done = { count_result: "booked", count_appointment_id: id };
-        what = plan.test ? "booked on the test calendar and marked shown" : "booked as a live call and marked shown";
-      }
-    } catch (e) {
-      io.log(`rooms: the live booking failed: ${redact(String((e as Error)?.message ?? e))}`);
-      done = { count_result: "failed", count_appointment_id: null };
-      what = "the booking failed";
-    }
-    const fin = countFinish(claimedAt, done);
-    const landed = await patchRoom(room.id, fin.patch, fin.expect);
+    if (plan.action === "mark") return await countMark(room, claimedAt, plan.appointment_id, host, appt, marks);
+    if (plan.action === "move") return await countMove(room, claimedAt, plan, setting);
+    return await countCreate(room, claimedAt, plan, setting);
+  }
+
+  /**
+   * The count's result, written only while its own claim stands and no undo
+   * came in while it ran (F7). If that write misses, what the count made is
+   * taken back at once and the count is marked undone.
+   */
+  async function countResult(
+    room: RoomRow,
+    claimedAt: string,
+    done: { count_result: "booked" | "moved" | "failed" | "unclear" | null; count_appointment_id: string | null },
+    what: string,
+    meta: Row,
+    before: CountBefore | null = null,
+  ): Promise<boolean> {
+    const landed = await patchRoom(room.id, done, {
+      count_claimed_at: claimedAt,
+      count_result: null,
+      count_appointment_id: null,
+      count_undo_at: null,
+    });
     if (!landed && done.count_appointment_id) {
       // "That was not the lead" came in while the count ran: take back what it made, then say so.
       const cur = (await readRoom(room.id)) ?? room;
-      await undoPlan({ ...cur, ...fin.patch }, plan.action === "move" ? plan.from_start : null);
-      await patchRoom(room.id, { count_result: "undone" }, { count_claimed_at: cur.count_claimed_at ?? null, count_result: cur.count_result ?? null });
-      await deps.audit(DESK, "room.count", ROOMS, room.id, null, { result: "undone", made: done });
-      return;
+      try {
+        await undoPlan({ ...cur, ...done, count_claimed_at: claimedAt }, before);
+        await patchRoom(room.id, { count_result: "undone" }, { count_claimed_at: cur.count_claimed_at ?? null, count_result: cur.count_result ?? null });
+        await deps.audit(DESK, "room.count", ROOMS, room.id, null, { result: "undone", made: done }, meta);
+      } catch (e) {
+        io.log(`rooms: what the count made was not taken back: ${redact(String((e as Error)?.message ?? e))}`);
+        await patchRoom(room.id, done, { count_claimed_at: claimedAt, count_result: null, count_appointment_id: null }).catch(() => null);
+        await deps.audit(DESK, "room.count", ROOMS, room.id, null, { result: "undo_failed", made: done }, meta);
+      }
+      return false;
     }
-    await deps.audit(DESK, "room.count", ROOMS, room.id, null, done, { plan: plan.action });
-    await note(room.id, "count.done", fill(EVENT_TEXT.counted, { what }), { result: done.count_result }, `count.done:${room.id}:${claimedAt}`);
+    await deps.audit(DESK, "room.count", ROOMS, room.id, null, done, meta);
+    await note(room.id, "count.done", fill(EVENT_TEXT.counted, { what }), { result: done.count_result, appointment_id: done.count_appointment_id }, `count.done:${room.id}:${claimedAt}`);
+    return Boolean(landed);
   }
 
-  /** Carries out one undo plan. Never a mark of invalid, which B2B counts as shown. */
-  async function undoPlan(room: RoomRow, movedFrom: unknown): Promise<boolean> {
-    const plan = countUndo(room, movedFrom);
+  /** Marks the booked intro shown, recording first what it was, so the undo puts back the status and the rep's own mark. */
+  async function countMark(room: RoomRow, claimedAt: string, apptId: string, host: Who, appt: Row | null, marks: Row[]): Promise<void> {
+    const prior = marks[0] ?? null;
+    const before: CountBefore = {
+      prior_status: String(appt?.status ?? prior?.status ?? "") || "confirmed",
+      prior_disposition_id: prior?.id ? String(prior.id) : null,
+    };
+    if (!(await recordBefore(room, "count.marking", claimedAt, { appointment_id: apptId, ...before }, "The booked intro is being marked shown."))) {
+      await releaseClaim(room, claimedAt);
+      return;
+    }
+    let made: Row;
+    try {
+      made = await deps.markAppointment(host, apptId, "showed", { quiet: true, anyRep: true, note: "Joined the video room." });
+    } catch (e) {
+      io.log(`rooms: the booked intro was not marked: ${redact(String((e as Error)?.message ?? e))}`);
+      await countResult(room, claimedAt, { count_result: "failed", count_appointment_id: null }, "the mark failed", { plan: "mark", appointment_id: apptId });
+      return;
+    }
+    const own = made.repeated ? null : made.id ? String(made.id) : null;
+    if (own)
+      await io
+        .db(`${EVENTS}?dedupe_key=eq.${enc(`count.marking:${room.id}:${claimedAt}`.slice(0, 300))}`, {
+          method: "PATCH",
+          body: { detail: { appointment_id: apptId, ...before, own_disposition_id: own } },
+          prefer: "return=minimal",
+        })
+        .catch(() => null);
+    await countResult(
+      room,
+      claimedAt,
+      { count_result: null, count_appointment_id: apptId },
+      "the booked intro is marked shown",
+      { plan: "mark", appointment_id: apptId },
+      { ...before, own_disposition_id: own },
+    );
+  }
+
+  /** Moves the lead's own booked call to now and marks it shown, recording first its start, end, rep and status. */
+  async function countMove(room: RoomRow, claimedAt: string, plan: Extract<CountPlan, { action: "move" }>, setting: RoomsSetting): Promise<void> {
+    const before: CountBefore = {
+      from_start: plan.from_start,
+      from_end: plan.from_end,
+      from_assigned_user_id: plan.from_assigned_user_id,
+      from_status: plan.from_status,
+    };
+    if (!(await recordBefore(room, "count.moving", claimedAt, { appointment_id: plan.appointment_id, ...before, to_start: plan.start }, "The lead's booked call is being moved to now."))) {
+      await releaseClaim(room, claimedAt);
+      return;
+    }
+    const path = `/calendars/events/appointments/${enc(plan.appointment_id)}`;
+    try {
+      await io.ghl("PUT", path, plan.body);
+    } catch (e) {
+      let moved: boolean | null = false;
+      if (unclearSend(e)) {
+        const a = await ghlAppointment(plan.appointment_id);
+        moved = a ? Math.abs((ghlTime(a.startTime) || 0) - (ms(plan.start) ?? 0)) < 60 * S : null;
+      }
+      if (moved === false) {
+        io.log(`rooms: the booked call was not moved: ${redact(String((e as Error)?.message ?? e))}`);
+        await countResult(room, claimedAt, { count_result: "failed", count_appointment_id: null }, "the move failed", { plan: "move", appointment_id: plan.appointment_id });
+        return;
+      }
+      if (moved === null) {
+        await countResult(room, claimedAt, { count_result: "unclear", count_appointment_id: null }, "the move may have landed", { plan: "move", appointment_id: plan.appointment_id });
+        await raise(`room:${room.id}:count_unclear`, "room_count_stuck", room, fill(ROOMS_COPY.count_unclear_alert, { code: room.code }));
+        return;
+      }
+    }
+    // Moved: it is counted, whatever the showed status does next (confirmed and past counts as shown).
+    const landed = await countResult(
+      room,
+      claimedAt,
+      { count_result: "moved", count_appointment_id: plan.appointment_id },
+      "the booked call moved to now and marked shown",
+      { plan: "move", appointment_id: plan.appointment_id, from_start: plan.from_start },
+      before,
+    );
+    if (landed) await markShowed(room, plan.appointment_id);
+    void setting;
+  }
+
+  /** Books the live call on the live (or test) calendar and marks it shown; a lost answer is looked up, never booked again. */
+  async function countCreate(room: RoomRow, claimedAt: string, plan: Extract<CountPlan, { action: "create" }>, setting: RoomsSetting): Promise<void> {
+    let id: string | null = null;
+    try {
+      const out = await io.ghl("POST", "/calendars/events/appointments", plan.body);
+      id = String(out.id ?? obj(out.appointment).id ?? obj(out.event).id ?? "") || null;
+      if (!id) throw new GhlError("HighLevel made no booking id", 0);
+    } catch (e) {
+      if (!unclearSend(e)) {
+        io.log(`rooms: the live booking was refused: ${redact(String((e as Error)?.message ?? e))}`);
+        await countResult(room, claimedAt, { count_result: "failed", count_appointment_id: null }, "the booking failed", { plan: "create", calendar_id: plan.calendar_id });
+        return;
+      }
+      // HighLevel may have made it: look for it on the lead's calendar before anything else.
+      id = await findBooking(String(room.contact_id), plan.calendar_id, plan.start);
+      if (!id) {
+        await countResult(room, claimedAt, { count_result: "unclear", count_appointment_id: null }, "the booking may have been made", { plan: "create", calendar_id: plan.calendar_id });
+        await raise(`room:${room.id}:count_unclear`, "room_count_stuck", room, fill(ROOMS_COPY.count_unclear_alert, { code: room.code }));
+        return;
+      }
+    }
+    const landed = await countResult(
+      room,
+      claimedAt,
+      { count_result: "booked", count_appointment_id: id },
+      plan.test ? "booked on the test calendar and marked shown" : "booked as a live call and marked shown",
+      { plan: "create", calendar_id: plan.calendar_id, appointment_id: id },
+    );
+    if (landed) await markShowed(room, id);
+    void setting;
+  }
+
+  /** The showed status on a live booking or a moved call. A failure is recorded; the booking stands as confirmed, which counts as shown. */
+  async function markShowed(room: RoomRow, apptId: string): Promise<void> {
+    try {
+      await io.ghl("PUT", `/calendars/events/appointments/${enc(apptId)}`, { appointmentStatus: "showed", toNotify: false });
+    } catch (e) {
+      io.log(`rooms: the showed status was not written: ${redact(String((e as Error)?.message ?? e))}`);
+      await deps.audit(DESK, "room.count.showed_failed", ROOMS, room.id, null, { appointment_id: apptId }, {
+        error: redact(String((e as Error)?.message ?? e)).slice(0, 300),
+      });
+    }
+  }
+
+  /**
+   * Carries out one undo plan. Never a mark of invalid, which B2B counts as
+   * shown. A delete HighLevel answers 404 or 410 to is already gone (a
+   * first try whose answer was lost); a move back or a status write whose
+   * answer was lost is read back before it counts as failed.
+   */
+  async function undoPlan(room: RoomRow, before: unknown): Promise<boolean> {
+    const plan = countUndo(room, before);
     if (plan.action === "none") return plan.reason !== "in_flight";
     if (plan.action === "delete") {
-      await io.ghl("DELETE", `/calendars/events/${enc(plan.appointment_id)}`);
-    } else if (plan.action === "move_back") {
-      await io.ghl("PUT", `/calendars/events/appointments/${enc(plan.appointment_id)}`, {
-        startTime: plan.start,
-        appointmentStatus: "confirmed",
-        ignoreFreeSlotValidation: true,
-        ignoreDateRange: true,
-        toNotify: false,
+      try {
+        await io.ghl("DELETE", `/calendars/events/${enc(plan.appointment_id)}`);
+      } catch (e) {
+        const status = (e as { status?: unknown })?.status;
+        if (status !== 404 && status !== 410) throw e;
+      }
+      return true;
+    }
+    if (plan.action === "move_back") {
+      const startMs = ms(plan.start) as number;
+      const end = plan.end ?? isoAt(startMs + (room.call_kind === "demo" ? 45 : 15) * 60 * S);
+      try {
+        await io.ghl("PUT", `/calendars/events/appointments/${enc(plan.appointment_id)}`, {
+          startTime: plan.start,
+          endTime: end,
+          ...(plan.assigned_user_id ? { assignedUserId: plan.assigned_user_id } : {}),
+          appointmentStatus: plan.status,
+          ignoreFreeSlotValidation: true,
+          ignoreDateRange: true,
+          toNotify: false,
+        });
+      } catch (e) {
+        const a = unclearSend(e) ? await ghlAppointment(plan.appointment_id) : null;
+        if (!a || Math.abs((ghlTime(a.startTime) || 0) - startMs) >= 60 * S) throw e;
+      }
+      return true;
+    }
+    await io.ghl("PUT", `/calendars/events/appointments/${enc(plan.appointment_id)}`, { appointmentStatus: plan.status, toNotify: false });
+    // Only the count's own mark is taken back; the mark that was there before comes back.
+    const now = isoAt(io.now());
+    if (plan.own_disposition_id)
+      await io.db(`cockpit_sales_dispositions?id=eq.${enc(plan.own_disposition_id)}&superseded_at=is.null`, {
+        method: "PATCH",
+        body: { superseded_at: now },
+        prefer: "return=minimal",
       });
-    } else {
-      await io.ghl("PUT", `/calendars/events/appointments/${enc(plan.appointment_id)}`, { appointmentStatus: "confirmed", toNotify: false });
+    else
       await io.db(
-        `cockpit_sales_dispositions?appointment_id=eq.${enc(plan.appointment_id)}&status=eq.showed&superseded_at=is.null`,
-        { method: "PATCH", body: { superseded_at: isoAt(io.now()) }, prefer: "return=minimal" },
+        `cockpit_sales_dispositions?appointment_id=eq.${enc(plan.appointment_id)}&status=eq.showed&superseded_at=is.null${plan.prior_disposition_id ? `&id=neq.${enc(plan.prior_disposition_id)}` : ""}`,
+        { method: "PATCH", body: { superseded_at: now }, prefer: "return=minimal" },
       );
+    if (plan.prior_disposition_id) {
+      const active = await io.db(`cockpit_sales_dispositions?appointment_id=eq.${enc(plan.appointment_id)}&superseded_at=is.null&select=id&limit=1`);
+      if (!active.length)
+        await io.db(`cockpit_sales_dispositions?id=eq.${enc(plan.prior_disposition_id)}`, {
+          method: "PATCH",
+          body: { superseded_at: null },
+          prefer: "return=minimal",
+        });
     }
     return true;
+  }
+
+  /** The count's own record of what it changed (count.moving, count.marking, or an older count.moved). */
+  async function countBefore(roomId: string): Promise<Row | undefined> {
+    const rows = await io
+      .db(`${EVENTS}?room_id=eq.${enc(roomId)}&kind=in.(count.moving,count.marking,count.moved)&select=kind,detail&order=at.desc&limit=1`)
+      .catch(() => []);
+    return rows[0]?.detail as Row | undefined;
   }
 
   async function runUndo(roomId: string): Promise<void> {
     const room = await readRoom(roomId);
     if (!room) return;
-    const moved = room.count_result === "moved"
-      ? ((await io
-          .db(`${EVENTS}?room_id=eq.${enc(roomId)}&kind=eq.count.moved&select=detail&order=at.desc&limit=1`)
-          .catch(() => []))[0]?.detail as Row | undefined)
-      : undefined;
+    const before = room.count_result === "moved" || (!room.count_result && room.count_appointment_id) ? await countBefore(roomId) : undefined;
     try {
-      const did = await undoPlan(room, moved?.from_start ?? null);
+      const did = await undoPlan(room, before ?? null);
       if (!did) return;
     } catch (e) {
       io.log(`rooms: the undo failed, the sweep asks again: ${redact(String((e as Error)?.message ?? e))}`);
+      const undoAt = ms(room.count_undo_at);
+      if (undoAt !== null && io.now() - undoAt >= 10 * 60 * S)
+        await raise(`room:${room.id}:undo_stuck`, "room_count_stuck", room, fill(ROOMS_COPY.undo_stuck_alert, { code: room.code }));
       return;
     }
     const w = countUndone(room);
     const landed = await patchRoom(room.id, w.patch, w.expect);
     if (landed) {
-      await deps.audit(DESK, "room.count.undo", ROOMS, room.id, { count_result: room.count_result }, { count_result: "undone" });
+      await deps.audit(DESK, "room.count.undo", ROOMS, room.id, { count_result: room.count_result }, {
+        count_result: "undone",
+        appointment_id: room.count_appointment_id ?? null,
+      });
       await note(room.id, "count.undone", EVENT_TEXT.undone, {}, `count.undone:${room.id}:${room.count_claimed_at ?? ""}`);
     }
   }
@@ -1242,7 +1764,16 @@ export function makeRooms(deps: RoomDeps): Rooms {
     if (!setting.enabled && !liveOn(live)) throw no("disabled");
     const now = io.now();
     const before = (await io.db(`cockpit_sales_availability?email=eq.${enc(email)}&select=*`))[0] ?? null;
-    const until = state === "available" ? isoAt(now + setting.available_hours * 3_600_000) : null;
+    // Live calls run in live.hours only (Saturday to Thursday, 10:00 to
+    // 20:00 Kuwait, as shipped): outside them a press makes nobody Available
+    // and no standby room, and the strip says when live calls run.
+    const window = liveWindow(live.hours, now);
+    if (state === "available" && !window.open) {
+      await deps.audit(who, "live.availability.refused", "cockpit_sales_availability", email, before, null, { why: "outside_hours" });
+      return { me: await presenceOfSeat(email, now), standby_error: ROOM_COPY.refusals.outside_hours };
+    }
+    const until =
+      state === "available" ? isoAt(Math.min(now + setting.available_hours * 3_600_000, window.ends_at ?? Number.POSITIVE_INFINITY)) : null;
     await io.db("cockpit_sales_availability?on_conflict=email", {
       method: "POST",
       body: { email, state, until, via: "cockpit", reason: null },
@@ -1253,7 +1784,9 @@ export function makeRooms(deps: RoomDeps): Rooms {
     const mine = (await io.db(`${ROOMS}?host_email=eq.${enc(email)}&state=in.(${LIVE_STATES})&select=*`)) as unknown as RoomRow[];
     if (state === "away") {
       for (const r of standbyToEnd(mine, email)) {
-        const out = await applyLoop(r.id, () => ({ kind: "end", reason: "end" }), setting, r);
+        // Decided on every try from the row as it is: a Take may adopt the
+        // room for a lead between the read and the write, and then it stays.
+        const out = await applyLoop(r.id, cur => (standbyEmpty(cur) ? { kind: "end", reason: "end" } : null), setting, r);
         if ("applied" in out && out.applied.changed) {
           await deps.audit(who, "room.end", ROOMS, r.id, { state: out.applied.from }, { state: out.applied.to }, { reason: "away" });
           await carryOut(out.room, out.applied.effects);
@@ -1274,7 +1807,16 @@ export function makeRooms(deps: RoomDeps): Rooms {
           contact_id: null,
           setting,
         });
-        if ("refused" in made) standbyError = made.refused.message;
+        if ("refused" in made) {
+          // Two presses at once (the phone and the laptop): the other one's standby room is this seat's room too.
+          const other =
+            made.refused.code === "host_has_room"
+              ? await io
+                  .db(`${ROOMS}?host_email=eq.${enc(email)}&purpose=eq.standby&state=in.(${LIVE_STATES})&select=id&limit=1`)
+                  .catch(() => [])
+              : [];
+          if (!other.length) standbyError = made.refused.message;
+        }
       }
     }
     const me = await presenceOfSeat(email, now);
@@ -1385,18 +1927,23 @@ export function makeRooms(deps: RoomDeps): Rooms {
       setting,
     });
     if ("refused" in made) return { claim_room: via, line: made.refused.message };
+    // The handover points at its room, or the sweep's L2 ends it at claim +
+    // 120 s under a live call. A write that fails is not the end: the room is
+    // answered, and the live.claimed event stays for the sweep's replay,
+    // which links it (the room create is idempotent on this request id).
+    let linked = false;
     try {
-      const linked = await io.db(`cockpit_sales_live?id=eq.${enc(String(l.id))}&room_id=is.null`, {
+      const rows = await io.db(`cockpit_sales_live?id=eq.${enc(String(l.id))}&room_id=is.null`, {
         method: "PATCH",
         body: { room_id: made.room.id },
         prefer: "return=representation",
       });
-      if (linked.length)
-        await deps.audit(who, "live.room", "cockpit_sales_live", String(l.id), { room_id: null }, { room_id: made.room.id });
+      if (rows.length) await deps.audit(who, "live.room", "cockpit_sales_live", String(l.id), { room_id: null }, { room_id: made.room.id });
+      linked = rows.length > 0 || String((await io.db(`cockpit_sales_live?id=eq.${enc(String(l.id))}&select=room_id`))[0]?.room_id ?? "") === made.room.id;
     } catch (e) {
       io.log(`rooms: the handover's room was not linked: ${redact(String((e as Error)?.message ?? e))}`);
     }
-    return { claim_room: via, room: await view(made.room, setting) };
+    return { claim_room: via, room: await view(made.room, setting), ...(linked ? {} : { [UNLINKED]: true }) };
   }
 
   async function liveTake(who: Who, b: Row): Promise<Row> {
@@ -1408,8 +1955,10 @@ export function makeRooms(deps: RoomDeps): Rooms {
     if (!l) throw plain(OFFER_GONE, 409, "gone");
     const email = lower(who.email);
     // Already this seat's (a second press of the same Take): finish it again.
-    if (lower(l.claimed_by) === email && ["claimed", "room_ready", "lead_joined"].includes(String(l.state)))
-      return await finishClaim(who, l, setting);
+    if (lower(l.claimed_by) === email && ["claimed", "room_ready", "lead_joined"].includes(String(l.state))) {
+      const { [UNLINKED]: _unlinked, ...answer } = await finishClaim(who, l, setting);
+      return answer;
+    }
     const contact = await readContact(String(l.contact_id));
     const r = adoptRefusal({ setting, contact_id: String(l.contact_id), contact });
     if (r) throw asRefusal(r);
@@ -1422,13 +1971,25 @@ export function makeRooms(deps: RoomDeps): Rooms {
       throw e;
     }
     const claimed = Array.isArray(rows) ? rows[0] : null;
-    if (!claimed) throw plain(ROOM_COPY.refusals.taken, 409, "taken");
+    if (!claimed) {
+      // Empty: someone else holds it, or this very seat does (a second press
+      // from another tab or a retry raced the first). Only the first is "taken".
+      const now = (await io.db(`cockpit_sales_live?id=eq.${enc(liveId)}&select=*`))[0];
+      if (now && lower(now.claimed_by) === email && ["claimed", "room_ready", "lead_joined"].includes(String(now.state))) {
+        const out = await finishClaim(who, now, setting);
+        const { [UNLINKED]: _unlinked, ...answer } = out;
+        return answer;
+      }
+      throw plain(ROOM_COPY.refusals.taken, 409, "taken");
+    }
     const key = `live.claimed:${claimed.id}:${Number(claimed.reoffers ?? 0)}`;
     try {
       const out = await finishClaim(who, claimed, setting);
-      await finishEvent({ dedupe_key: key }, {});
+      const { [UNLINKED]: unlinked, ...answer } = out;
+      if (unlinked) await releaseEvent({ dedupe_key: key });
+      else await finishEvent({ dedupe_key: key }, {});
       await deps.audit(who, "live.take", "cockpit_sales_live", String(claimed.id), { state: "offered" }, { state: claimed.state, claim_room: claimed.claim_room });
-      return out;
+      return answer;
     } catch (e) {
       // The sweep replays live.claimed; every branch is idempotent.
       await releaseEvent({ dedupe_key: key });
@@ -1442,8 +2003,12 @@ export function makeRooms(deps: RoomDeps): Rooms {
     const { live } = await roomsAndLive();
     if (!liveOn(live)) throw plain(LIVE_OFF, 409, "disabled");
     const email = lower(who.email);
-    for (let i = 0; i < MAX_WRITE_TRIES; i++) {
+    // Each try that misses lost to another Not now that landed, so every
+    // closer the offer went to gets through within that many tries.
+    let tries = MAX_WRITE_TRIES;
+    for (let i = 0; i < tries; i++) {
       const l = (await io.db(`cockpit_sales_live?id=eq.${enc(liveId)}&select=id,state,offer_until,offered_to,declined_by`))[0];
+      tries = Math.min(60, MAX_WRITE_TRIES + (Array.isArray(l?.offered_to) ? (l.offered_to as unknown[]).length : 0));
       if (l?.state !== "offered" || (ms(l.offer_until) ?? 0) <= io.now()) throw plain(OFFER_GONE, 409, "gone");
       const declined = Array.isArray(l.declined_by) ? (l.declined_by as string[]) : [];
       if (declined.includes(email)) return {};
@@ -1551,6 +2116,9 @@ export function makeRooms(deps: RoomDeps): Rooms {
     const { rooms: setting } = await roomsAndLive();
     const out = await applyLoop(room.id, () => effect.room_event, setting, room);
     if ("refused" in out) return await settleRefusal(by, out.refused);
+    // The event is marked handled, with who joined, before its effects run:
+    // the live count reads a Zoom join of the lead as the lead's own evidence.
+    await finishEvent(by, { role: effect.role }, eventText(ev));
     if (out.applied.changed) {
       await deps.audit(DESK, `room.event.${String(ev.kind).slice(0, 60)}`, ROOMS, out.room.id, { state: out.applied.from }, { state: out.applied.to }, {
         event_id: eventId,
@@ -1558,7 +2126,6 @@ export function makeRooms(deps: RoomDeps): Rooms {
       });
       await carryOut(out.room, out.applied.effects);
     }
-    await finishEvent(by, { role: effect.role }, eventText(ev));
     return { ok: true, handled: true, room: await view(out.room, setting) };
   }
 
@@ -1613,11 +2180,16 @@ export function makeRooms(deps: RoomDeps): Rooms {
       return { ok: true, handled: true, skipped: "handover over" };
     }
     const { rooms: setting } = await roomsAndLive();
+    let out: Row;
     try {
-      await finishClaim(await hostWho(String(l.claimed_by)), l, setting);
+      out = await finishClaim(await hostWho(String(l.claimed_by)), l, setting);
     } catch (e) {
       await releaseEvent({ id: eventId });
       throw e;
+    }
+    if (out[UNLINKED]) {
+      await releaseEvent({ id: eventId });
+      return { ok: true, handled: false };
     }
     await finishEvent({ id: eventId }, {});
     return { ok: true, handled: true };
@@ -1656,6 +2228,35 @@ export function makeRooms(deps: RoomDeps): Rooms {
     return { handled: results.filter(r => r.handled).length, results };
   }
 
+  /**
+   * What the settle needs beyond the room row (roomlogic SettleFacts), read
+   * fresh: another room for the same intro with a join that stands or still
+   * live, a Zoom event not read, and a test contact off the test calendar.
+   */
+  async function settleFacts(room: RoomRow, appt: Row | null, setting: RoomsSetting, contact: Row | null): Promise<SettleFacts> {
+    const start = ms(appt?.start_at);
+    const sinceStart = start === null ? null : isoAt(start - 60 * 60 * S);
+    const [byAppt, byLead, zoom] = await Promise.all([
+      io.db(`${ROOMS}?appointment_id=eq.${enc(String(room.appointment_id))}&id=neq.${enc(room.id)}&select=*&limit=50`),
+      sinceStart && room.contact_id
+        ? io.db(`${ROOMS}?contact_id=eq.${enc(room.contact_id)}&id=neq.${enc(room.id)}&requested_at=gte.${enc(sinceStart)}&select=*&limit=50`)
+        : Promise.resolve([] as Row[]),
+      room.provider === "zoom"
+        ? io.db(`${EVENTS}?room_id=eq.${enc(room.id)}&source=eq.zoom&select=handled_at,detail&limit=200`)
+        : Promise.resolve([] as Row[]),
+    ]);
+    const siblings = [...byAppt, ...byLead] as unknown as RoomRow[];
+    return {
+      short_link: setting.short_link,
+      sibling_joined: siblings.some(r => leadJoined(r) || !isFinal(r.state)),
+      zoom_unclear: zoom.some(e => !e.handled_at || obj(e.detail).gave_up === true),
+      test_off_calendar:
+        Boolean(room.contact_id) &&
+        isTestContact(room.contact_id, contact?.tags, setting) &&
+        String(appt?.calendar_id ?? "") !== String(setting.test_calendar_id ?? ""),
+    };
+  }
+
   async function settle(roomIds: string[]): Promise<Row> {
     const results: Row[] = [];
     const { rooms: setting } = await roomsAndLive();
@@ -1672,17 +2273,37 @@ export function makeRooms(deps: RoomDeps): Rooms {
           results.push({ room_id: roomId, handled: true, skipped: "no room" });
           continue;
         }
-        const [appt, marks] = await Promise.all([
+        const [appt, marks, contact] = await Promise.all([
           appointment(room.appointment_id),
           room.appointment_id
             ? io.db(`cockpit_sales_dispositions?appointment_id=eq.${enc(room.appointment_id)}&superseded_at=is.null&select=status`)
             : Promise.resolve([]),
+          room.contact_id ? readContact(room.contact_id) : Promise.resolve(null),
         ]);
+        if (room.contact_id && !contact) {
+          // The contact could not be read (a test contact is told by its tag): try again next sweep.
+          await releaseEvent(by);
+          results.push({ room_id: roomId, handled: false, skipped: "contact not read" });
+          continue;
+        }
         const marked =
           marks.length > 0 || ["showed", "noshow", "cancelled", "invalid"].includes(String(appt?.status ?? ""));
-        if (!settleWanted(room, appt?.start_at, marked, io.now(), setting.waits_s)) {
-          const why = marked ? "the call was already marked" : !appt ? "the booked call is not in the cockpit" : "not due";
-          if (marked && !room.settled_mark) {
+        const start = ms(appt?.start_at);
+        if (!marked && appt && start !== null && io.now() < start + setting.waits_s.settle * S) {
+          // Posted early: left for the next sweep, never dropped.
+          await releaseEvent(by);
+          results.push({ room_id: roomId, handled: false, skipped: "not due" });
+          continue;
+        }
+        const facts = room.appointment_id ? await settleFacts(room, appt, setting, contact) : {};
+        if (!settleWanted(room, appt?.start_at, marked, io.now(), setting.waits_s, facts)) {
+          const doubt = !marked && appt ? noShowDoubt(room, facts) : null;
+          const why = marked
+            ? "the call was already marked"
+            : !appt
+              ? "the booked call is not in the cockpit"
+              : doubt ?? "this room was not for the intro as it is booked now";
+          if (!room.settled_mark) {
             const none = await patchRoom(room.id, { settled_mark: "none" }, { settled_mark: null }).catch(() => null);
             if (none)
               await deps.audit(DESK, "room.settle", ROOMS, room.id, { settled_mark: null }, { settled_mark: "none" }, {
@@ -1690,6 +2311,8 @@ export function makeRooms(deps: RoomDeps): Rooms {
                 why,
               });
           }
+          // Not evidence that nobody came: a person marks the intro, never the timer.
+          if (doubt) await raise(`room:${room.id}:mark_intro`, "room_mark_intro", room, fill(ROOMS_COPY.mark_intro_alert, { code: room.code, why: doubt }));
           await finishEvent(by, { skipped: why });
           await note(room.id, "room.settle", fill(EVENT_TEXT.settle_skipped, { why }), {}, `room.settle:${room.id}`);
           results.push({ room_id: roomId, handled: true, skipped: why });
@@ -1697,8 +2320,10 @@ export function makeRooms(deps: RoomDeps): Rooms {
         }
         const host = await hostWho(room.host_email);
         try {
+          // quiet: a timer never sets off HighLevel's no-show automations at the lead.
           await deps.markAppointment(host, String(room.appointment_id), "noshow", {
             anyRep: true,
+            quiet: true,
             note: "Nobody joined the video room, so the intro is marked a no-show.",
           });
         } catch (e) {
@@ -1757,7 +2382,9 @@ export function makeRooms(deps: RoomDeps): Rooms {
         owner: "sql",
       });
       const effects = a.ok ? a.effects : [];
-      const asked = effects.filter(e => e.kind === "send_link" || e.kind === "count_live" || e.kind === "undo_count" || e.kind === "alert");
+      const asked = effects.filter(
+        e => e.kind === "send_link" || e.kind === "claim_link" || e.kind === "count_live" || e.kind === "undo_count" || e.kind === "alert",
+      );
       if (asked.length) io.background(carryOut(room, asked));
       results.push({ room_id: id, effects: asked.map(e => e.kind) });
     }
@@ -1847,6 +2474,28 @@ export function makeRooms(deps: RoomDeps): Rooms {
     cron: ["room.event", "live.press", "thread.tick", "reply.seen"],
     held,
   };
+}
+
+/** No change, for a make() that found nothing left to do. */
+function unchanged(room: RoomRow): Changed {
+  return { ok: true, changed: false, from: room.state, to: room.state, room, patch: {}, expect: {}, effects: [], reason: null };
+}
+
+/**
+ * A send whose outcome is not known: HighLevel may have sent it and its
+ * answer was lost (a timeout, a 5xx, a dropped connection), or the database
+ * write after it failed. Such a send is treated as possibly sent: nothing
+ * else goes to the lead until a person checks.
+ */
+export function unclearSend(e: unknown): boolean {
+  if (e instanceof ApiRefusal) {
+    if (e.extra?.unclear === true) return true;
+    return e.status === 0 || e.status >= 500;
+  }
+  if (e instanceof GhlError) return e.status === 0 || e.status >= 500;
+  const status = (e as { status?: unknown })?.status;
+  if (typeof status === "number") return status === 0 || status >= 500;
+  return true;
 }
 
 /** applyRoomEvent that never throws (a damaged row is a refusal, never a crash). */

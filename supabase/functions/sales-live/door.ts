@@ -122,11 +122,18 @@ export function osOf(ua: string | null | undefined): Os {
   return "other";
 }
 
-/** The caller's address as Supabase's edge passes it on. */
+/**
+ * The caller's address as the edge in front of the door sees it, never one
+ * the caller wrote: cf-connecting-ip when Cloudflare set it, else the LAST
+ * X-Forwarded-For entry (the one the edge appended; a client can put anything
+ * in front of it), else x-real-ip. Which of these Supabase's edge sets is
+ * checked on the first deploy (README).
+ */
 export function clientIp(headers: Headers): string {
-  const fwd = headers.get("x-forwarded-for") ?? "";
-  const first = fwd.split(",")[0]?.trim();
-  return first || headers.get("x-real-ip")?.trim() || headers.get("cf-connecting-ip")?.trim() || "unknown";
+  const cf = headers.get("cf-connecting-ip")?.trim();
+  if (cf) return cf;
+  const hops = (headers.get("x-forwarded-for") ?? "").split(",").map(x => x.trim()).filter(Boolean);
+  return hops.at(-1) || headers.get("x-real-ip")?.trim() || "unknown";
 }
 
 /** The only form an address is ever kept in: salted, hashed, cut to 32 hex. */

@@ -738,8 +738,19 @@ describe("small timing rules", () => {
   test("an expired booked intro with no mark becomes a no-show at start + 20 minutes; no booking, nothing", () => {
     const start = T0;
     const exp = { ...opened({ appointment_id: "a1" }), state: "expired" as RoomState };
-    expect(settleDue(exp, at(start), false, start + 1199 * S, W)).toBe(false);
-    expect(settleDue(exp, at(start), false, start + 1200 * S, W)).toBe(true);
+    // Evidence that nobody came: the short link went and was never opened (Meet sends no join signal).
+    const seen = { short_link: true };
+    expect(settleDue(exp, at(start), false, start + 1199 * S, W, seen)).toBe(false);
+    expect(settleDue(exp, at(start), false, start + 1200 * S, W, seen)).toBe(true);
+    // Without that evidence a Meet room never settles itself: a person marks the intro.
+    expect(settleDue(exp, at(start), false, start + 1200 * S, W)).toBe(false);
+    expect(settleDue({ ...exp, first_open_at: at(start) }, at(start), false, start + 1200 * S, W, seen)).toBe(false);
+    expect(settleDue({ ...exp, provider: "zoom" }, at(start), false, start + 1200 * S, W, { zoom_unclear: false })).toBe(true);
+    expect(settleDue({ ...exp, provider: "zoom" }, at(start), false, start + 1200 * S, W, { zoom_unclear: true })).toBe(false);
+    expect(settleDue(exp, at(start), false, start + 1200 * S, W, { ...seen, sibling_joined: true })).toBe(false);
+    expect(settleDue(exp, at(start), false, start + 1200 * S, W, { ...seen, test_off_calendar: true })).toBe(false);
+    // A room made a day before the intro's (moved) start never settles it.
+    expect(settleDue(exp, at(start + 86_400_000), false, start + 86_400_000 + 1200 * S, W, seen)).toBe(false);
     expect(settleDue(exp, at(start), true, start + 1200 * S, W)).toBe(false);
     expect(settleDue({ ...exp, settled_mark: "noshow" }, at(start), false, start + 1300 * S, W)).toBe(false);
     expect(settleDue({ ...exp, appointment_id: null }, at(start), false, start + 1300 * S, W)).toBe(false);
@@ -1039,7 +1050,7 @@ describe("the Google event id", () => {
 // countLive
 // ---------------------------------------------------------------------------
 
-const COUNT_ON = roomsSetting({ ...DEFAULT_ROOMS_JSON, count_on_join: true, test_calendar_id: "TESTCAL" });
+const COUNT_ON = roomsSetting({ ...DEFAULT_ROOMS_JSON, count_on_join: true, test_calendar_id: "TESTCAL", live_calendar_id: "LIVECAL" });
 const JOIN = Date.parse("2026-10-04T08:04:37.000Z");
 function joinedRoom(over: Partial<RoomRow> = {}): RoomRow {
   return { ...opened(), state: "lead_in", lead_in_at: at(JOIN), ...over };
@@ -1086,14 +1097,14 @@ describe("countLive", () => {
     expect(count({ host_ghl_user_id: null })).toMatchObject({ action: "none", count_result: "failed", reason: "host_not_in_highlevel" });
   });
 
-  test("a new live intro: the calendar by tag, the join minute, 15 minutes, quiet, our link", () => {
+  test("a new live intro: the Live calendar (never B2B's), the join minute, 15 minutes, quiet, our link", () => {
     const p = count();
     if (p.action !== "create") throw new Error(p.action);
-    expect(p.calendar_id).toBe("dsqmJ393Dwl9fDSbIVOI");
+    expect(p.calendar_id).toBe("LIVECAL");
     expect(p.start).toBe("2026-10-04T08:04:00.000Z");
     expect(p.end).toBe("2026-10-04T08:19:00.000Z");
     expect(p.body).toEqual({
-      calendarId: "dsqmJ393Dwl9fDSbIVOI",
+      calendarId: "LIVECAL",
       locationId: "7NI8yyJtwsh2OOWA5Icr",
       contactId: "c1",
       startTime: "2026-10-04T08:04:00.000Z",
@@ -1109,17 +1120,31 @@ describe("countLive", () => {
       overrideLocationConfig: true,
     });
     const unq = count({ contact: { firstName: "Omar", tags: ["roas-unqualified"] } });
-    expect(unq.action === "create" && unq.calendar_id).toBe("cFeDl0FY8iaXll61lus8");
+    expect(unq.action === "create" && unq.calendar_id).toBe("LIVECAL");
     const demo = count({ room: joinedRoom({ call_kind: "demo" }) });
-    expect(demo.action === "create" && [demo.calendar_id, demo.end]).toEqual(["jQqXS1YuFnmGZKLkrE62", "2026-10-04T08:49:00.000Z"]);
+    expect(demo.action === "create" && [demo.calendar_id, demo.end]).toEqual(["LIVECAL", "2026-10-04T08:49:00.000Z"]);
+    // D25: no Live calendar, or one of B2B's own, and nothing is booked.
+    for (const live of [null, "dsqmJ393Dwl9fDSbIVOI", "cFeDl0FY8iaXll61lus8", "jQqXS1YuFnmGZKLkrE62"])
+      expect(count({ setting: { ...COUNT_ON, live_calendar_id: live } })).toMatchObject({ action: "none", reason: "live_calendar_missing", count_result: "failed" });
+    expect(count({ official_calendar_ids: ["LIVECAL"] })).toMatchObject({ action: "none", reason: "live_calendar_missing" });
   });
 
   test("a call of the same kind booked ahead is moved to now; another kind is not", () => {
-    const up = { id: "UP1", start: Date.parse("2026-10-08T07:00:00Z"), kind: "intro" as const };
+    const up = {
+      id: "UP1",
+      start: Date.parse("2026-10-08T07:00:00Z"),
+      end: Date.parse("2026-10-08T07:30:00Z"),
+      assigned_user_id: "GHLCLOSER",
+      status: "confirmed",
+      kind: "intro" as const,
+    };
     const p = count({ upcoming: up });
     if (p.action !== "move") throw new Error(p.action);
     expect(p.appointment_id).toBe("UP1");
     expect(p.from_start).toBe("2026-10-08T07:00:00.000Z");
+    expect([p.from_end, p.from_assigned_user_id, p.from_status]).toEqual(["2026-10-08T07:30:00.000Z", "GHLCLOSER", "confirmed"]);
+    // A call ahead whose end or rep is not known is neither moved nor booked beside.
+    expect(count({ upcoming: { id: "UP1", start: up.start, kind: "intro" } })).toMatchObject({ action: "none", reason: "upcoming_unknown", claim: false });
     expect(p.body).toMatchObject({ startTime: "2026-10-04T08:04:00.000Z", endTime: "2026-10-04T08:19:00.000Z", toNotify: false, assignedUserId: "GHLSETTER", meetingLocationType: "custom" });
     expect(count({ upcoming: { ...up, kind: "demo" } }).action).toBe("create");
   });
@@ -1149,9 +1174,29 @@ describe("countLive", () => {
       action: "move_back",
       appointment_id: "UP1",
       start: "2026-10-08T07:00:00.000Z",
+      end: null,
+      assigned_user_id: null,
+      status: "confirmed",
     });
+    expect(
+      countUndo(joinedRoom({ ...claimed, count_result: "moved", count_appointment_id: "UP1" }), {
+        from_start: "2026-10-08T07:00:00Z",
+        from_end: "2026-10-08T07:30:00Z",
+        from_assigned_user_id: "GHLCLOSER",
+        from_status: "new",
+      }),
+    ).toEqual({ action: "move_back", appointment_id: "UP1", start: "2026-10-08T07:00:00.000Z", end: "2026-10-08T07:30:00.000Z", assigned_user_id: "GHLCLOSER", status: "new" });
     expect(countUndo(joinedRoom({ ...claimed, count_result: "moved", count_appointment_id: "UP1" }))).toEqual({ action: "none", reason: "moved_from_unknown" });
-    expect(countUndo(joinedRoom({ ...claimed, appointment_id: "A1", count_appointment_id: "A1" }))).toEqual({ action: "unmark", appointment_id: "A1" });
+    expect(countUndo(joinedRoom({ ...claimed, appointment_id: "A1", count_appointment_id: "A1" }))).toEqual({
+      action: "unmark",
+      appointment_id: "A1",
+      status: "confirmed",
+      own_disposition_id: null,
+      prior_disposition_id: null,
+    });
+    expect(
+      countUndo(joinedRoom({ ...claimed, appointment_id: "A1", count_appointment_id: "A1" }), { prior_status: "noshow", prior_disposition_id: "7", own_disposition_id: "9" }),
+    ).toMatchObject({ action: "unmark", status: "noshow", prior_disposition_id: "7", own_disposition_id: "9" });
     expect(countUndo(joinedRoom({ ...claimed }))).toEqual({ action: "none", reason: "in_flight" });
     expect(countUndo(joinedRoom({ ...claimed, count_result: "not_a_lead" }))).toEqual({ action: "none", reason: "nothing" });
     for (const r of ["booked", "moved", null] as const)
@@ -1668,13 +1713,15 @@ describe("10,000 random event sequences", () => {
         const firsts = a.effects.filter(x => x.kind === "send_link" && !x.retry).length;
         firstSends += firsts;
 
-        // 1. A final room never changes state; the one write it takes is "That was not the lead", which only takes the count back.
+        // 1. A final room never changes state; the two writes it takes are "That was not the lead", which only
+        // takes the count back, and a lead join the timer's close raced, kept as evidence only (lead_in_at, result).
         if (isFinal(before.state)) {
           if (a.changed) {
-            expect(e.kind).toBe("not_lead");
+            expect(["not_lead", "lead_in"]).toContain(e.kind);
             expect([after.state, after.version]).toEqual([before.state, before.version]);
-            expect(Object.keys(a.patch).every(k => ["count_undo_at", "count_result", "result"].includes(k))).toBe(true);
-            finalUndos++;
+            const keys = e.kind === "lead_in" ? ["lead_in_at", "result"] : ["count_undo_at", "count_result", "result"];
+            expect(Object.keys(a.patch).every(k => keys.includes(k))).toBe(true);
+            if (e.kind === "not_lead") finalUndos++;
           } else expect(after).toBe(before);
           expect(a.effects.some(x => x.kind === "send_link" || x.kind === "close_provider")).toBe(false);
           r = after;

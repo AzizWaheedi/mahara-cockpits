@@ -120,11 +120,13 @@ describe("WhatsApp health per source (C27) and the gate", () => {
 });
 
 describe("the template budget (D18)", () => {
-  test("refused once this month's estimate reaches the budget, with the words the desk holds on", () => {
-    expect(budgetCheck(1262, { template_budget_usd_month: 100 }).refusal).toBeNull();
-    const r = budgetCheck(1263, { template_budget_usd_month: 100 });
-    expect(r.spend).toBe(100.03);
+  test("refused once the next template would take the month past the budget, with the words the desk holds on", () => {
+    // 1,261 sent ($99.87): the 1,262nd ends the month at $99.95. 1,262 sent: the 1,263rd would be $100.03.
+    expect(budgetCheck(1261, { template_budget_usd_month: 100 }).refusal).toBeNull();
+    const r = budgetCheck(1262, { template_budget_usd_month: 100 });
+    expect(r.spend).toBe(99.95);
     expect(r.refusal).toContain("budget");
+    expect(budgetCheck(1263, { template_budget_usd_month: 100 }).spend).toBe(100.03);
     expect(budgetCheck(0, { template_budget_usd_month: 0 }).refusal).not.toBeNull();
     expect(budgetCheck(10, { template_rate_usd: 10 }).spend).toBe(0.79);
   });
