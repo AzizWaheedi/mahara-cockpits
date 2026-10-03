@@ -310,6 +310,25 @@ def cmd_doctor(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
                     "these do not answer, so the migration 20260924a_sales_cockpit.sql is not applied: " + "; ".join(bad), True)
             guarded("supabase tables", True, tables)
 
+            def db_clock() -> None:
+                # The SQL sweep owns every room timer and compares with the
+                # database's clock; the room worker writes on this one.
+                off = sb.clock_offset
+                if off is None:
+                    add("database clock", None, "not compared: the database's answer carried no Date header")
+                    return
+                n = int(round(abs(off)))
+                way = "behind" if off > 0 else "ahead of"
+                if n > 60:
+                    add("database clock", False, f"this VPS's clock is {n} seconds {way} the database's: the room worker "
+                                                 "makes no room until it is fixed (timedatectl, or chrony)", True)
+                elif n > 10:
+                    add("database clock", None, f"this VPS's clock is {n} seconds {way} the database's: rooms may close "
+                                                "early; fix it (timedatectl, or chrony)")
+                else:
+                    add("database clock", True, f"within {max(n, 1)} second{'s' if n > 1 else ''} of the database's")
+            guarded("database clock", False, db_clock)
+
             def bucket() -> None:
                 try:
                     b = sb.bucket_info()

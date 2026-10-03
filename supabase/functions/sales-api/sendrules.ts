@@ -150,9 +150,12 @@ export function hoursRefusal(o: {
   dayOff?: boolean;
 }): string | null {
   if (o.segment === "reply") return null;
-  const zones = leadZones(o.country);
+  const known = leadZones(o.country);
   const first = o.segment !== "confirm" && Number(o.touch ?? 1) <= 1;
-  if (!zones) return first ? HOURS_COPY.zone_unknown.replace("{country}", String(o.country ?? "").trim().toUpperCase()) : null;
+  // A first message to a lead whose zone is not known waits for a person; a
+  // later one keeps to Kuwait's clock, as before.
+  if (!known && first) return HOURS_COPY.zone_unknown.replace("{country}", String(o.country ?? "").trim().toUpperCase());
+  const zones = known ?? (LEAD_ZONES.kw as readonly string[]);
   const clocks = zones.map(z => zoneClock(z, o.now));
   if (o.dayOff) {
     const off = quietDays(o.followups);

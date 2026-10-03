@@ -23,6 +23,7 @@ import sys
 from datetime import datetime, timezone
 from typing import Any, Callable, Optional
 
+from . import followups as fu
 from . import http
 from .config import key
 from .rooms import GOOGLE_KEY_SETS, LEASE_FN, ZOOM_KEYS, db_reason, parse_ts
@@ -76,8 +77,9 @@ DELTA: dict[str, tuple[tuple[str, ...], str]] = {
     "cockpit_sales_followup_meta": (("hold_reason",), "an opener set aside for a person cannot say why"),
 }
 DELTA_WHERE = "the current 20261003a_sales_rooms.sql and 20261003c_sales_followup_agent.sql (contract-v2 section 10)"
+HARDENING_COLUMN = "appointment_start_at"
 
-SETTINGS = ("rooms", "live", "followups", "whatsapp_guard", "threads")
+SETTINGS = ("rooms", "live", "followups", "whatsapp_guard", "threads", "calendars")
 
 # (where, value it must have, what it means when it does not). Every one of
 # them ships off (glossary 1.4 and updates.md: "Everything ships switched off").
@@ -253,6 +255,16 @@ def check_database(report: Report, sb: Any) -> dict[str, Any]:
         # A GET runs read-only: the function exists whether it answers or
         # refuses to write.
         report.add(sec, LEASE_FN, True, "there")
+    # 20261003d (the first stress round's hardening): the room's intro start
+    # and the send ceilings' one-step slot. Without it, sales-api's room
+    # create fails on the new column, and its sends fall back to the old
+    # ceilings, which a burst can pass.
+    status, _rows, reason = _get(sb, f"cockpit_sales_rooms?select={HARDENING_COLUMN}&limit=1")
+    report.add(sec, "20261003d hardening", status == 200 if status in (200, 400, 404) else None,
+               "there (cockpit_sales_rooms.appointment_start_at)" if status == 200 else
+               (f"not applied ({reason}): apply 20261003d_live_calls_hardening.sql before this sales-api is deployed, "
+                "or a room for a booked intro is refused" if status in (400, 404) else
+                f"could not be read ({reason or 'no answer'})"))
     status, rows, reason = _get(sb, "cockpit_sales_settings?select=key,value&key=in.("
                                     + ",".join(SETTINGS) + ")")
     if status != 200 or not isinstance(rows, list):
@@ -289,6 +301,27 @@ def check_switches(report: Report, sb: Any, settings: dict[str, Any]) -> None:
             shown = "on, as it ships" if ok else ("not set" if value is None else f"{value!r}")
         report.add(sec, name, ok, shown if ok else f"{'on' if want is False else shown}: {meaning}. Set it to "
                                                   f"{str(want).lower()} until the CEO says go")
+    # D25: a joined lead's live booking goes on its own "Live" calendar,
+    # outside B2B's show-rate map. count_on_join may go on only with one set
+    # that is not an intro or demo calendar the B2B rule counts.
+    rooms = settings.get("rooms") if isinstance(settings.get("rooms"), dict) else {}
+    live_cal = str(rooms.get("live_calendar_id") or "").strip()
+    cals = settings.get("calendars") if isinstance(settings.get("calendars"), dict) else {}
+    official = set(fu.CALL_KINDS) | {str(k) for k, v in cals.items() if isinstance(v, dict) and v.get("type") in ("intro", "demo")}
+    test_cal = str(rooms.get("test_calendar_id") or "").strip()
+    if not live_cal:
+        report.add(sec, "rooms.live_calendar_id", False if rooms.get("count_on_join") is True else None,
+                   "not set: a joined lead is never booked as a live call. Set a dedicated Live calendar (outside "
+                   "B2B's show-rate map) before count_on_join goes on")
+    else:
+        report.add(sec, "rooms.live_calendar_id", live_cal not in official,
+                   "a calendar of its own, outside the intro and demo calendars" if live_cal not in official else
+                   f"{live_cal} is an intro or demo calendar B2B's show rate counts: live calls would move the 60% "
+                   "and 75% targets (D25). Set a dedicated Live calendar")
+    if test_cal and test_cal in official:
+        report.add(sec, "rooms.test_calendar_id", False,
+                   f"{test_cal} is an intro or demo calendar B2B counts: a test contact's booking would be an official "
+                   "number (C34). Set a calendar only tests use")
     guard = settings.get("whatsapp_guard") if isinstance(settings.get("whatsapp_guard"), dict) else {}
     gate_open = guard.get("connector_off") is True and bool(guard.get("single_copy_ok_at"))
     report.add(sec, "whatsapp_guard gate", None if not gate_open else True,

@@ -639,6 +639,11 @@ describe("waves: rows, counts and lines", () => {
       settledWave: 2,
       settledHoldout: 1,
       excluded: 1,
+      // In the comparison: the wave members whose opener went (6), and the
+      // held-back member whose turn came (booked); held_out rows without
+      // due_at and the excluded one (taken out before their turn) are not.
+      measuredWave: 6,
+      measuredHoldout: 1,
     });
     expect(W.countsFor(W.countMembers(rows), "nobody").total).toBe(0);
   });
@@ -733,6 +738,74 @@ describe("waves: rows, counts and lines", () => {
     expect(line).toContain("Difference 5.0 points, range");
     // Every member has had their 14 days: nothing more can move.
     expect(line).not.toContain("can still book");
+  });
+
+  test("the effect compares like with like: members whose turn came, in both arms (stress round 1)", () => {
+    const at = "2026-10-01T06:00:00.000Z";
+    const rows: W.MemberRow[] = [
+      // 50 had their opener (10 booked), 50 let go when the wave was stopped before their turn.
+      ...Array(40).fill({
+        wave_id: "w",
+        arm: "wave",
+        state: "closed",
+        sent_at: at,
+      }),
+      ...Array(10).fill({
+        wave_id: "w",
+        arm: "wave",
+        state: "booked",
+        sent_at: at,
+      }),
+      ...Array(50).fill({
+        wave_id: "w",
+        arm: "wave",
+        state: "excluded",
+        sent_at: null,
+        due_at: null,
+      }),
+      // 10 taken out at their turn (a rep skipped them), watched like their twins: 2 booked.
+      ...Array(8).fill({
+        wave_id: "w",
+        arm: "wave",
+        state: "closed",
+        sent_at: null,
+        due_at: at,
+      }),
+      ...Array(2).fill({
+        wave_id: "w",
+        arm: "wave",
+        state: "booked",
+        sent_at: null,
+        due_at: at,
+      }),
+      // The holdout: 60 whose turn came (12 booked), 50 never measured.
+      ...Array(48).fill({
+        wave_id: "w",
+        arm: "holdout",
+        state: "closed",
+        due_at: at,
+      }),
+      ...Array(12).fill({
+        wave_id: "w",
+        arm: "holdout",
+        state: "booked",
+        due_at: at,
+      }),
+      ...Array(50).fill({
+        wave_id: "w",
+        arm: "holdout",
+        state: "excluded",
+        due_at: null,
+      }),
+    ];
+    const c = W.countsFor(W.countMembers(rows), "w");
+    expect([c.measuredWave, c.measuredHoldout, c.messaged]).toEqual([
+      60, 60, 50,
+    ]);
+    const line = W.effectLine(c);
+    expect(line).toContain("Booked: 12 of 60 (20.0%) in the wave");
+    expect(line).toContain("12 of 60 (20.0%) held back");
+    expect(line).toContain("Difference 0.0 points");
   });
 
   test("the batch: approved, held, set aside, or waiting for a person", () => {

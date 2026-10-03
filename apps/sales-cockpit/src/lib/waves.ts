@@ -60,6 +60,29 @@ export interface MemberRow {
   wave_id: string;
   arm: "wave" | "holdout";
   state: string;
+  /** The holdout's turn, or a wave member's turn when they were taken out at it (desk waves.py). */
+  due_at?: string | null;
+  sent_at?: string | null;
+}
+
+/**
+ * A member is in its arm's comparison once their turn came (intent to treat
+ * at the turn, desk waves.py _t0): the opener went, or due_at was set (the
+ * holdout's turn, or a wave member taken out at their turn, watched like
+ * their twins). A member a stopped wave let go of before their turn is in
+ * neither arm, so the two arms compare like with like.
+ */
+export function measured(m: MemberRow): boolean {
+  if (m.arm === "holdout")
+    return Boolean(m.due_at) || m.state === "booked" || m.state === "closed";
+  return (
+    m.state === "sent" ||
+    m.state === "replied" ||
+    m.state === "booked" ||
+    m.state === "closed" ||
+    m.state === "done" ||
+    (m.state === "excluded" && Boolean(m.due_at))
+  );
 }
 
 const STATES: readonly WaveState[] = [
@@ -123,6 +146,9 @@ export interface WaveCounts {
   settledWave: number;
   settledHoldout: number;
   excluded: number;
+  /** Members in each arm's comparison (their turn came): the effect's denominators. */
+  measuredWave: number;
+  measuredHoldout: number;
 }
 
 const EMPTY: WaveCounts = {
@@ -137,6 +163,8 @@ const EMPTY: WaveCounts = {
   settledWave: 0,
   settledHoldout: 0,
   excluded: 0,
+  measuredWave: 0,
+  measuredHoldout: 0,
 };
 
 /** Counts per wave from the member rows (one read, every wave on screen). */
@@ -151,6 +179,10 @@ export function countMembers(
     const hold = m.arm === "holdout";
     if (hold) c.holdout += 1;
     else c.wave += 1;
+    if (measured(m)) {
+      if (hold) c.measuredHoldout += 1;
+      else c.measuredWave += 1;
+    }
     switch (m.state) {
       case "waiting":
         if (!hold) c.waiting += 1;
@@ -167,7 +199,8 @@ export function countMembers(
           c.bookedHoldout += 1;
           c.settledHoldout += 1;
         } else {
-          c.messaged += 1;
+          // A member taken out at their turn (sent_at null) had no opener.
+          if (m.sent_at !== null) c.messaged += 1;
           c.bookedWave += 1;
           c.settledWave += 1;
         }
@@ -176,7 +209,7 @@ export function countMembers(
       case "done":
         if (hold) c.settledHoldout += 1;
         else {
-          c.messaged += 1;
+          if (m.sent_at !== null) c.messaged += 1;
           c.settledWave += 1;
         }
         break;
@@ -302,17 +335,21 @@ export function effectLine(c: WaveCounts): string {
     const had = c.wave - due;
     return `The effect is read once every lead in the wave has had their opener: ${had.toLocaleString("en-US")} of ${c.wave.toLocaleString("en-US")} so far. It is the wave's booking rate against the held-back leads', 14 days after each opener.`;
   }
-  if (c.holdout < 10 || c.wave < 10)
+  // Each arm over the members whose turn came: a stopped wave's leads whose
+  // turn never came are in neither (like with like).
+  const nWave = c.measuredWave;
+  const nHold = c.measuredHoldout;
+  if (nHold < 10 || nWave < 10)
     return "Too few leads to read the effect. It is the wave's booking rate against the held-back leads', 14 days after each opener.";
-  const p1 = c.bookedWave / c.wave;
-  const p2 = c.bookedHoldout / c.holdout;
+  const p1 = c.bookedWave / nWave;
+  const p2 = c.bookedHoldout / nHold;
   const diff = p1 - p2;
-  const se = Math.sqrt((p1 * (1 - p1)) / c.wave + (p2 * (1 - p2)) / c.holdout);
+  const se = Math.sqrt((p1 * (1 - p1)) / nWave + (p2 * (1 - p2)) / nHold);
   const pts = (x: number) => `${(x * 100).toFixed(1)}`;
   const pct = (n: number, d: number) =>
     `${n.toLocaleString("en-US")} of ${d.toLocaleString("en-US")} (${pts(n / d)}%)`;
   const open = c.settledWave < c.wave || c.settledHoldout < c.holdout;
-  return `Booked: ${pct(c.bookedWave, c.wave)} in the wave, ${pct(c.bookedHoldout, c.holdout)} held back. Difference ${pts(diff)} points, range ${pts(diff - 1.96 * se)} to ${pts(diff + 1.96 * se)}.${open ? " Leads still inside their 14 days can still book, so this moves." : ""}`;
+  return `Booked: ${pct(c.bookedWave, nWave)} in the wave, ${pct(c.bookedHoldout, nHold)} held back. Difference ${pts(diff)} points, range ${pts(diff - 1.96 * se)} to ${pts(diff + 1.96 * se)}.${open ? " Leads still inside their 14 days can still book, so this moves." : ""}`;
 }
 
 // ---------------------------------------------------------------------------

@@ -201,3 +201,20 @@ describe("settings saves keep every key (finding 17)", () => {
 test("hours stay on whole hours (no drift across the day)", () => {
   for (let h = 0; h < 24; h++) expect(leadHour("KW", Date.parse("2026-10-04T00:00:00Z") + h * H)).toBe((h + 3) % 24);
 });
+
+describe("the lead's zone (stress round 1: leads outside the Gulf)", () => {
+  test("a code the table does not know: a first message waits for a person, a later one keeps to Kuwait's clock", () => {
+    const noonKuwait = Date.parse("2026-10-04T09:00:00Z");
+    expect(hoursRefusal({ segment: "reactivate", touch: 1, country: "ZZ", now: noonKuwait, followups: {} })).toContain("time zone");
+    expect(hoursRefusal({ segment: "no_show", touch: 2, country: "ZZ", now: noonKuwait, followups: {} })).toBeNull();
+    const nightKuwait = Date.parse("2026-10-04T20:00:00Z");
+    expect(hoursRefusal({ segment: "no_show", touch: 2, country: "ZZ", now: nightKuwait, followups: {} })).not.toBeNull();
+  });
+
+  test("a country across zones gets a first message only in hours that are daytime in all of them", () => {
+    // 09:30 in New York is 06:30 in Los Angeles: not yet.
+    expect(hoursRefusal({ segment: "reactivate", touch: 1, country: "US", now: Date.parse("2027-01-14T14:30:00Z"), followups: {} })).not.toBeNull();
+    // 13:00 in New York is 10:00 in Los Angeles.
+    expect(hoursRefusal({ segment: "reactivate", touch: 1, country: "US", now: Date.parse("2027-01-14T18:00:00Z"), followups: {} })).toBeNull();
+  });
+});

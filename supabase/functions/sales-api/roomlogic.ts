@@ -2021,6 +2021,8 @@ export interface SettleFacts {
   sibling_joined?: boolean;
   /** A test contact whose intro is not on rooms.test_calendar_id (C34): never an official number. */
   test_off_calendar?: boolean;
+  /** Zoom reported a join after the room closed (a join the close raced), or the worker kept the meeting open for someone in it. */
+  late_join?: boolean;
 }
 
 /**
@@ -2037,6 +2039,7 @@ export function noShowDoubt(room: RoomRow, facts: SettleFacts = {}): string | nu
   if (room.lead_waiting_at) return "the lead knocked";
   if (facts.sibling_joined) return "the lead joined another room for this call";
   if (facts.test_off_calendar) return "a test contact's call is not on the test calendar";
+  if (facts.late_join) return "someone joined the meeting after the room closed";
   if (room.provider === "meet" && (room.purpose === "booked" || facts.short_link !== true))
     return "Meet sends no join signal and nobody pressed The lead is in";
   if (room.provider === "zoom" && facts.zoom_unclear !== false) return "a Zoom event for this room was not read";
@@ -2972,6 +2975,8 @@ export interface PresenceInput {
   open_attempt: boolean;
   /** An appointment of theirs is running now. */
   appointment_now: boolean;
+  /** A booked call of theirs starts within booked_guard (the view's booked_soon): away, so no live lead is offered. */
+  booked_soon?: boolean;
   /** room_hosts.zoom_live_until: a live Zoom meeting seen by the host check. */
   zoom_live_until?: unknown;
   zoom_status?: ZoomStatus | null;
@@ -3014,6 +3019,7 @@ export function presenceOf(i: PresenceInput): Presence & { why: string } {
   if (i.appointment_now) return { ...base, state: "on_call", until: null, room_id: null, why: "appointment" };
   if (zoomLive) return { ...base, state: "on_call", until: null, room_id: null, why: "zoom" };
   if (waiting) return { ...base, state: "on_call", until: null, room_id: waiting.id, why: "room_waiting" };
+  if (i.booked_soon) return { ...base, state: "away", until: null, room_id: null, why: "booked_soon" };
   if (availUntil === null) return { ...base, state: "away", until: null, room_id: null, why: "away" };
   if (standby) return { ...base, state: "ready", until, room_id: standby.id, why: "standby" };
   const openStandby = mine.find(r => standbyEmpty(r));

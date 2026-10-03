@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Prove the live-calls migrations on Creative Triage without leaving anything behind.
 
-    python3 supabase/migrations/tests/run_checks.py            # apply a, b, c + all checks, then roll back
+    python3 supabase/migrations/tests/run_checks.py            # apply a, b, c, d + all checks, then roll back
     python3 supabase/migrations/tests/run_checks.py --twice    # apply each migration twice (idempotent), all checks, roll back
     python3 supabase/migrations/tests/run_checks.py --applied  # the migrations are live: catalog checks only, rolled back
 
@@ -44,7 +44,8 @@ import urllib.request
 REF = "bldgtotkfmhoxmlzowdx"
 HERE = os.path.dirname(os.path.abspath(__file__))
 MIGRATIONS = os.path.dirname(HERE)
-FILES = ["20261003a_sales_rooms.sql", "20261003b_sales_hooks.sql", "20261003c_sales_followup_agent.sql"]
+FILES = ["20261003a_sales_rooms.sql", "20261003b_sales_hooks.sql", "20261003c_sales_followup_agent.sql",
+         "20261003d_live_calls_hardening.sql"]
 CATALOG = os.path.join(HERE, "20261003_rooms_catalog.sql")
 CHECKS = os.path.join(HERE, "20261003_rooms_checks.sql")
 PRESENCE_FIXTURES = os.path.join(HERE, "presence_fixtures.json")
@@ -159,6 +160,16 @@ def strip_transaction(name: str, sql: str) -> str:
     return sql
 
 
+HARDENING = "20261003d_live_calls_hardening.sql"
+
+
+def hardening_sql() -> str:
+    """Migration d's statements without its own begin and commit, for a stress
+    run's rolled-back transaction: the run then tests the repo's sweep, view
+    and functions whether or not d is applied yet (d is idempotent)."""
+    return strip_transaction(HARDENING, open(os.path.join(MIGRATIONS, HARDENING)).read())
+
+
 def presence_fixtures_sql() -> str:
     """The shared presence fixtures as a temp table, for section E2 of the checks."""
     doc = json.load(open(PRESENCE_FIXTURES))
@@ -224,10 +235,16 @@ select 'function ' || p.proname from pg_proc as p
    'cockpit_sales_jsonb_add_missing', 'cockpit_sales_settings_add_missing', 'cockpit_sales_kind_key_ok',
    'cockpit_sales_followup_levels_guard', 'cockpit_sales_followup_waves_guard',
    'cockpit_sales_followup_waves_close_members', 'cockpit_sales_followup_wave_members_touch',
-   'cockpit_sales_followup_meta_touch', 'cockpit_sales_followup_stops_touch')
+   'cockpit_sales_followup_meta_touch', 'cockpit_sales_followup_stops_touch',
+   'cockpit_sales_message_slot', 'cockpit_sales_live_hours_open', 'cockpit_sales_worker_status_clock')
 union all
 select 'column cockpit_sales_wa_templates.button_variable' from information_schema.columns
  where table_schema = 'public' and table_name = 'cockpit_sales_wa_templates' and column_name = 'button_variable'
+union all
+select 'column cockpit_sales_rooms.appointment_start_at' from information_schema.columns
+ where table_schema = 'public' and table_name = 'cockpit_sales_rooms' and column_name = 'appointment_start_at'
+union all
+select 'trigger ' || tgname from pg_trigger where tgname = 'cockpit_sales_worker_status_clock'
 union all
 select 'template ' || key from public.cockpit_sales_wa_templates
  where key in ('call_link_en', 'call_link_ar', 'demo_host_en', 'demo_host_ar', 'opener_en', 'opener_ar')
@@ -256,6 +273,8 @@ union all
 select 'constraint ' || conname from pg_constraint
  where (conname = 'cockpit_sales_messages_source_check' and pg_get_constraintdef(oid) like '%room%')
     or (conname = 'cockpit_sales_followups_segment_check' and pg_get_constraintdef(oid) like '%reactivate%')
+    or (conname = 'cockpit_sales_messages_state_check' and pg_get_constraintdef(oid) like '%unclear%')
+    or (conname = 'cockpit_sales_rooms_count_result_check' and pg_get_constraintdef(oid) like '%unclear%')
 union all
 select 'people ' || email from public.cockpit_sales_people where email like 'lc-test-%'
 union all

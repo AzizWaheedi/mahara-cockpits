@@ -76,6 +76,14 @@
     {"name": "the lead in their room comes before an appointment", "role": "closer", "availability": null,
      "appointment_now": true,
      "rooms": [{"purpose": "fallback", "state": "lead_in", "provider": "zoom", "lead": true}],
+     "expect": {"state": "on_call", "why": "lead_in", "room": 0, "until": false}},
+    {"name": "a booked call of theirs starts within 10 minutes: away, no offer reaches them (20261003d)", "role": "closer",
+     "availability": {"state": "available", "until_s": 3600}, "appointment_soon": true,
+     "rooms": [{"purpose": "standby", "state": "host_in", "provider": "zoom", "lead": false}],
+     "expect": {"state": "away", "why": "booked_soon", "room": null, "until": false}},
+    {"name": "a booked call within 10 minutes never hides the lead in their room", "role": "closer",
+     "availability": {"state": "available", "until_s": 3600}, "appointment_soon": true,
+     "rooms": [{"purpose": "fallback", "state": "lead_in", "provider": "zoom", "lead": true}],
      "expect": {"state": "on_call", "why": "lead_in", "room": 0, "until": false}}
   ],
   "default_provider": [

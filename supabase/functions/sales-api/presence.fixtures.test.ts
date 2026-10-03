@@ -15,6 +15,7 @@ type Fixture = {
   rooms: { state: string; purpose: string; provider: string; lead: boolean }[];
   open_attempt?: boolean;
   appointment_now?: boolean;
+  appointment_soon?: boolean;
   zoom_live_s?: number | null;
   expect: { state: string; why: string; room: number | null; until: boolean };
 };
@@ -48,6 +49,7 @@ describe("presence: the view's fixtures agree with presenceOf", () => {
         rooms,
         open_attempt: Boolean(f.open_attempt),
         appointment_now: Boolean(f.appointment_now),
+        booked_soon: Boolean(f.appointment_soon),
         zoom_live_until: f.zoom_live_s == null ? null : iso(f.zoom_live_s),
         zoom_status: null,
         default_provider: "meet",

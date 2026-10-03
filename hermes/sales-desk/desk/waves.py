@@ -52,6 +52,7 @@ from typing import Any, Callable, Optional
 
 from . import followups as fu
 from . import http
+from .supabase import STATUS, audit
 
 WAVES = "cockpit_sales_followup_waves"
 MEMBERS = "cockpit_sales_followup_wave_members"
@@ -110,7 +111,15 @@ SEGMENT_REFUSED = ("The database refuses the reactivate kind: migration 20261003
 HOLD_ALL_WORDS = ("today's", "switched off", "are paused", "paused:", "wallet", "funds", "insufficient", "budget",
                   "30 messages in ten minutes", "single-copy")
 # A refusal about the lead's hours: the draft waits an hour, it is not set aside.
-HOURS_WORDS = ("between 9", "their time", "their clock", "day off", "friday", "quiet hours", "first message goes")
+HOURS_WORDS = ("between 9", "their time", "their clock", "day off", "friday", "quiet hours", "first message goes",
+               "does not send", "time zone")
+# Refusals that only say the draft's own state moved (another run is sending
+# it, a manager paused the wave, sales-api's clock is a moment behind): the
+# draft is not at fault, so it is never set aside for a person.
+STATE_RACE = re.compile(r"someone else has just dealt with this draft|this draft was already|not approved to go yet"
+                        r"|paused or stopped|is held, so it was not sent", re.I)
+# An approved opener may still go this long after its turn (followups.APPROVED_KEEP).
+APPROVED_KEEP = timedelta(hours=72)
 # How a send_due run ended, and which endings are a fault (the row turns red).
 FAULTS = ("refusals", "hold_all", "outage", "error", "no_answer", "budget")
 
@@ -297,6 +306,42 @@ def _q(v: Any) -> str:
     return fu._q(str(v))
 
 
+# Two waves runs at once (a manual run beside the cron's, outside flock) must
+# never both write the day's batch or both send inside one gap: a lease on a
+# status row, taken with a compare-and-set on its time, decides.
+LEASE_FREE = "1970-01-01T00:00:00+00:00"
+DRAFT_LEASE = "waves-draft-lease"
+SEND_LEASE = "waves-send-lease"
+DRAFT_LEASE_S = 200
+
+
+def _lease_at(sb: Any, job: str) -> Optional[datetime]:
+    """When the lease was last taken, or None (free, or no row yet)."""
+    rows = sb.select(STATUS, f"select=at&worker=eq.{DESK}&job=eq.{_q(job)}&limit=1")
+    t = fu._ts(rows[0].get("at")) if rows else None
+    return t if t and t > datetime(1971, 1, 1, tzinfo=timezone.utc) else None
+
+
+def _take_lease(sb: Any, job: str, now: datetime, hold_s: float) -> bool:
+    """Takes the lease when the last holder took it more than `hold_s` ago
+    (or let it go): one PATCH that only lands on the row as it was read."""
+    sb.rest("POST", f"{STATUS}?on_conflict=worker,job", prefer="resolution=ignore-duplicates,return=minimal",
+            json_body=[{"worker": DESK, "job": job, "ok": True, "at": LEASE_FREE,
+                        "detail": "A lease that keeps two waves runs from working at once."}])
+    got = sb.rest("PATCH", f"{STATUS}?worker=eq.{DESK}&job=eq.{_q(job)}"
+                           f"&at=lt.{_q((now - timedelta(seconds=hold_s)).isoformat())}",
+                  json_body={"at": now.isoformat(), "ok": True}, prefer="return=representation")
+    return bool(isinstance(got, list) and got)
+
+
+def _let_go(sb: Any, job: str, taken_at: datetime) -> None:
+    try:
+        sb.rest("PATCH", f"{STATUS}?worker=eq.{DESK}&job=eq.{_q(job)}&at=eq.{_q(taken_at.isoformat())}",
+                json_body={"at": LEASE_FREE}, prefer="return=minimal")
+    except Exception:  # noqa: BLE001 - it runs out by itself
+        pass
+
+
 # ---------------------------------------------------------------------------
 # Reads
 # ---------------------------------------------------------------------------
@@ -447,6 +492,8 @@ def enroll(sb: Any, wave: dict[str, Any], now: datetime, w: dict[str, Any],
     else:
         log(f"waves: {POOL_WORDS[pool]}: {added} leads enrolled, {held} held back to measure the effect")
     sb.rest("PATCH", f"{WAVES}?id=eq.{_q(wid)}&enrolled_at=is.null", json_body=body, prefer="return=minimal")
+    audit(sb, "waves.enroll", WAVES, wid, after=out,
+          metadata={"pool": pool, "holdout_share": share, "arms": {"wave": len(rows) - held, "holdout": held}})
     return out
 
 
@@ -454,10 +501,31 @@ def enroll(sb: Any, wave: dict[str, Any], now: datetime, w: dict[str, Any],
 # Keeping members in step with their drafts, and with what the opener did
 # ---------------------------------------------------------------------------
 
+# Words a failed draft carries when its send may have gone after all (free_stuck,
+# sendFollowup's "may have gone"): never retried, a person reads HighLevel.
+MAY_HAVE_GONE = re.compile(r"may (not )?have gone|stopped halfway|did not confirm", re.I)
+
+
+def _maybe_went(f: dict[str, Any], msgs: list[dict[str, Any]]) -> Optional[str]:
+    """Whether a failed opener may have reached the lead: "sent" when its
+    message says it went (HighLevel's id, a sent state, or the workflow
+    enrolled), "unclear" when it may have (a row still sending or unclear, or
+    the draft's own error says so), else None (it certainly did not go)."""
+    if any(m.get("ghl_message_id") or str(m.get("state") or "") in ("sent", "delivered", "read")
+           or str(m.get("provider_status") or "").lower() == "enrolled" for m in msgs):
+        return "sent"
+    if any(str(m.get("state") or "") in ("sending", "unclear") for m in msgs):
+        return "unclear"
+    if MAY_HAVE_GONE.search(str(f.get("error") or "")):
+        return "unclear"
+    return None
+
+
 def sync(sb: Any, wave_ids: list[str], now: datetime) -> dict[str, int]:
     """Each drafted member's state from its draft: sent (the 14 days start),
-    skipped by a rep (out of the wave), failed (drafted again the next day,
-    once, unless the reason will not change), or expired with nobody
+    skipped by a rep (out of the wave, watched from their turn), failed
+    (drafted again the next day, once, unless the reason will not change, or
+    the send may have gone: then never again), or expired with nobody
     deciding (back to waiting, so no lead leaves the wave without a
     message). A missing draft is one a run never finished: back to waiting."""
     out = {"sent": 0, "excluded": 0, "failed": 0, "back": 0}
@@ -470,19 +538,39 @@ def sync(sb: Any, wave_ids: list[str], now: datetime) -> dict[str, int]:
     for chunk in fu._chunks(sorted(by_id)):
         for f in sb.select(FOLLOWUPS, f"select=id,status,error,decided_at&id={fu._in(chunk)}&limit=1000"):
             drafts[str(f["id"])] = f
+    failed_ids = sorted(fid for fid, f in drafts.items() if f.get("status") == "failed")
+    msgs: dict[str, list[dict[str, Any]]] = {}
+    for chunk in fu._chunks(failed_ids):
+        for m in sb.select(MESSAGES, "select=followup_id,state,provider_status,ghl_message_id,created_at"
+                                     f"&followup_id={fu._in(chunk)}&limit=1000"):
+            msgs.setdefault(str(m.get("followup_id") or ""), []).append(m)
+    moved: dict[str, list[str]] = {}
     for fid, m in by_id.items():
         f = drafts.get(fid) or {}
         s = f.get("status") if f else None
         if s == "sent":
             body, k = {"state": "sent", "sent_at": f.get("decided_at") or now.isoformat()}, "sent"
         elif s == "skipped":
-            body, k = {"state": "excluded", "excluded_reason": "A rep skipped the opener."}, "excluded"
+            body, k = {"state": "excluded", "excluded_reason": "A rep skipped the opener.",
+                       "due_at": now.isoformat()}, "excluded"
         elif s == "failed":
             n = int(m.get("fail_count") or 0) + 1
             err = http.scrub(str(f.get("error") or ""))[:200]
             k = "failed"
-            if n >= FAIL_LIMIT or PERMANENT.search(err):
-                body = {"state": "excluded", "fail_count": n, "last_error": err,
+            went = _maybe_went(f, msgs.get(fid, []))
+            if went == "sent":
+                # It went (the workflow ran, or HighLevel has the message):
+                # the lead had their opener, and is watched as sent.
+                sent_at = next((x.get("created_at") for x in msgs.get(fid, []) if x.get("created_at")), None)
+                body, k = {"state": "sent", "sent_at": sent_at or f.get("decided_at") or now.isoformat(),
+                           "last_error": err}, "sent"
+            elif went == "unclear":
+                body = {"state": "excluded", "fail_count": n, "last_error": err, "due_at": now.isoformat(),
+                        "excluded_reason": ("The opener may have gone; a person checks HighLevel before anyone "
+                                            "writes to the lead again.")}
+                k = "excluded"
+            elif n >= FAIL_LIMIT or PERMANENT.search(err):
+                body = {"state": "excluded", "fail_count": n, "last_error": err, "due_at": now.isoformat(),
                         "excluded_reason": (f"The opener failed{' twice' if n >= FAIL_LIMIT else ''}: "
                                             f"{err or 'no reason given'}")[:300]}
             else:
@@ -494,14 +582,24 @@ def sync(sb: Any, wave_ids: list[str], now: datetime) -> dict[str, int]:
             continue
         done = sb.rest("PATCH", f"{_member(str(m['wave_id']), str(m['contact_id']), 'drafted')}"
                                 f"&followup_id=eq.{_q(fid)}", json_body=body, prefer="return=representation")
-        out[k] += bool(isinstance(done, list) and done)
+        if isinstance(done, list) and done:
+            out[k] += 1
+            moved.setdefault(str(m["wave_id"]), []).append(f"{m['contact_id']}:{body['state']}")
+    for wid, changes in moved.items():
+        audit(sb, "waves.sync", WAVES, wid, after={k: v for k, v in out.items() if v},
+              metadata={"members": changes[:200]})
     return out
 
 
 def _t0(m: dict[str, Any]) -> Optional[datetime]:
-    """When a member's 14 days start: the send, or for the holdout the day
-    their place in the order came up."""
-    return fu._ts(m.get("sent_at")) if m.get("arm") == "wave" else fu._ts(m.get("due_at"))
+    """When a member's 14 days start (intent to treat at the turn, both arms
+    alike): the send, or the day their place in the order came up (due_at),
+    for the holdout and for a wave member taken out at their turn. A member
+    whose turn never came (a stopped wave let them go first) has neither and
+    is in neither arm's comparison (waves.ts countMembers)."""
+    if m.get("arm") == "wave" and m.get("sent_at"):
+        return fu._ts(m.get("sent_at"))
+    return fu._ts(m.get("due_at"))
 
 
 def outcomes(sb: Any, wave_ids: list[str], now: datetime) -> dict[str, int]:
@@ -511,17 +609,20 @@ def outcomes(sb: Any, wave_ids: list[str], now: datetime) -> dict[str, int]:
     wave's effect is its booking rate minus the holdout's, both counted over
     every member of their arm. "replied" is read from the inbox copy, which
     keeps a conversation's latest message, so replied_at is their latest
-    message after the send, not always their first."""
+    message after the send, not always their first. Members taken out of the
+    wave arm at their turn, and members of a stopped wave whose turn never
+    came are not (they are in neither arm's comparison)."""
     out = {"replied": 0, "booked": 0, "closed": 0}
     if not wave_ids:
         return out
     watched = [m for m in sb.select_all(
-        MEMBERS, f"select=wave_id,contact_id,arm,state,sent_at,due_at,replied_at&wave_id={fu._in(wave_ids)}"
-                 f"&state=in.({','.join(WATCHED)})", order="contact_id,wave_id") if _t0(m)]
+        MEMBERS, f"select=wave_id,contact_id,arm,state,sent_at,due_at,added_at,replied_at&wave_id={fu._in(wave_ids)}"
+                 f"&state=in.({','.join(WATCHED + ('excluded',))})", order="contact_id,wave_id") if _t0(m)]
     if not watched:
         return out
     contacts = sorted({str(m["contact_id"]) for m in watched})
     since = min(_t0(m) for m in watched)
+    moved: dict[str, list[str]] = {}
     booked: dict[str, list[datetime]] = {}
     inbound: dict[str, datetime] = {}
     for chunk in fu._chunks(contacts):
@@ -549,11 +650,15 @@ def outcomes(sb: Any, wave_ids: list[str], now: datetime) -> dict[str, int]:
         elif now >= end:
             body, k = {"state": "closed", "closed_at": now.isoformat(),
                        **({"replied_at": wrote.isoformat()} if wrote and not m.get("replied_at") else {})}, "closed"
-        elif wrote and state != "replied":
+        elif wrote and state not in ("replied", "excluded"):
             body, k = {"state": "replied", "replied_at": wrote.isoformat()}, "replied"
         else:
             continue
-        out[k] += _move(sb, str(m["wave_id"]), c, state, body)
+        if _move(sb, str(m["wave_id"]), c, state, body):
+            out[k] += 1
+            moved.setdefault(str(m["wave_id"]), []).append(f"{c}:{m.get('arm')}:{body['state']}")
+    for wid, changes in moved.items():
+        audit(sb, "waves.outcomes", WAVES, wid, after={k: v for k, v in out.items() if v}, metadata={"members": changes[:200]})
     return out
 
 
@@ -585,6 +690,9 @@ def wind_down(sb: Any, done: list[dict[str, Any]], now: datetime) -> dict[str, i
     for m in rows:
         wid, c, state = str(m["wave_id"]), str(m["contact_id"]), str(m.get("state"))
         stopped = why_of.get(wid) or "The wave was stopped."
+        # Both arms let go of the leads whose turn never came: no due_at, so
+        # neither arm's comparison counts them (like with like), and a wave
+        # started again on the pool may take them at once.
         if state == "waiting":
             reason = f"{stopped.rstrip('.')} before their opener went."
         elif state == "drafted" and status.get(str(m.get("followup_id") or ""), "") in ("expired", ""):
@@ -594,6 +702,9 @@ def wind_down(sb: Any, done: list[dict[str, Any]], now: datetime) -> dict[str, i
         else:
             continue  # sending: the next run's sync sees how it ended
         out["excluded"] += _move(sb, wid, c, state, {"state": "excluded", "excluded_reason": reason[:300]})
+    for x in done:
+        if out["taken_back"] or out["excluded"]:
+            audit(sb, "waves.wind_down", WAVES, str(x["id"]), after=out, metadata={"reason": why_of.get(str(x["id"]))})
     return out
 
 
@@ -614,6 +725,7 @@ def finish(sb: Any, running: list[dict[str, Any]], now: datetime, log: Callable[
         if isinstance(done, list) and done:
             sb.rest("PATCH", f"{MEMBERS}?wave_id=eq.{_q(wid)}&arm=eq.holdout&state=eq.held_out&due_at=is.null",
                     json_body={"due_at": now.isoformat()}, prefer="return=minimal")
+            audit(sb, "waves.finish", WAVES, wid, before={"state": "running"}, after={"state": "done"})
             ended.append(wid)
             log(f"waves: {POOL_WORDS.get(str(x.get('pool')), x.get('pool'))}: every lead has had its opener or left; "
                 "the wave is done")
@@ -626,11 +738,14 @@ def settle(sb: Any, done: list[dict[str, Any]], now: datetime) -> list[str]:
     settled = []
     for x in done:
         wid = str(x["id"])
+        # A member taken out at their turn is watched to their 14 days too (outcomes closes them).
         if sb.select(MEMBERS, f"select=contact_id&wave_id=eq.{_q(wid)}"
-                              f"&state=in.({','.join(sorted(set(OPEN_STATES) | set(WATCHED)))})&limit=1"):
+                              f"&state=in.({','.join(sorted(set(OPEN_STATES) | set(WATCHED)))})&limit=1") \
+                or sb.select(MEMBERS, f"select=contact_id&wave_id=eq.{_q(wid)}&state=eq.excluded&due_at=not.is.null&limit=1"):
             continue
         sb.rest("PATCH", f"{WAVES}?id=eq.{_q(wid)}&settled_at=is.null", json_body={"settled_at": now.isoformat()},
                 prefer="return=minimal")
+        audit(sb, "waves.settle", WAVES, wid, after={"settled_at": now.isoformat()})
         settled.append(wid)
     return settled
 
@@ -779,9 +894,39 @@ def draft_day(sb: Any, now: datetime, *, settings: dict[str, Any], w: dict[str, 
     ctx = {"owners": _owners(sb), "routes": routes, "ghl_token": ghl_token,
            "pause_days": int(settings.get("stop_pause_days", fu.STOP_PAUSE_DAYS) or fu.STOP_PAUSE_DAYS),
            "gap_hours": float(settings.get("automation_gap_hours", 20))}
+    try:
+        leased = _take_lease(sb, DRAFT_LEASE, now, DRAFT_LEASE_S)
+    except http.HttpError as e:
+        return {**out, "waiting": f"The drafting lease could not be read ({http.scrub(str(e))[:120]}); the next run writes the batch."}
+    if not leased:
+        return {**out, "waiting": "Another waves run is writing today's batch; this one leaves it to that run."}
+    try:
+        return _draft_waves(sb, running, room, by_wave, now, ctx, out, w, log, warn, deadline)
+    finally:
+        _let_go(sb, DRAFT_LEASE, now)
+
+
+def _draft_waves(sb: Any, running: list[dict[str, Any]], room: int, by_wave: dict[str, int], now: datetime,
+                 ctx: dict[str, Any], out: dict[str, Any], w: dict[str, Any], log: Callable[[str], None],
+                 warn: Callable[[str], None], deadline: Optional[Callable[[], bool]]) -> dict[str, Any]:
+    """The running waves' openers for today, under the drafting lease."""
+    # The day's count again, now that this run holds the lease: a run that
+    # wrote some meanwhile has used that room.
+    midnight = kuwait_midnight(now).isoformat()
+    today = sb.select(FOLLOWUPS, "select=id,context&segment=eq.reactivate&context->>wave_id=not.is.null"
+                                 f"&created_at=gte.{_q(midnight)}&limit=1000")
+    by_wave = {}
+    for f in today:
+        wid = str((f.get("context") or {}).get("wave_id") or "")
+        by_wave[wid] = by_wave.get(wid, 0) + 1
+    room = int(w["per_day"]) - len(today)
+    if room <= 0:
+        return {**out, "waiting": f"Today's {w['per_day']} openers are written. The next batch is tomorrow."}
     for wave in running:
         wid = str(wave["id"])
-        wave_room = min(room, int(wave.get("per_day") or w["per_day"]) - by_wave.get(wid, 0))
+        # A wave started at 0 openers a day writes none (0 is a number, not "unset").
+        per_day = wave.get("per_day") if wave.get("per_day") is not None else w["per_day"]
+        wave_room = min(room, int(per_day) - by_wave.get(wid, 0))
         if wave_room <= 0:
             continue
         made, refused = _draft_wave(sb, wave, wave_room, now, ctx, out, log, warn, deadline)
@@ -804,6 +949,8 @@ def _draft_wave(sb: Any, wave: dict[str, Any], wave_room: int, now: datetime, ct
     routes, owners = ctx["routes"], ctx["owners"]
     made = 0
     events: list[Any] = []
+    written: list[str] = []
+    excluded: list[str] = []
     seen: set[str] = set()
     for _ in range(PAGES):
         if made >= wave_room or (deadline and deadline()):
@@ -846,7 +993,12 @@ def _draft_wave(sb: Any, wave: dict[str, Any], wave_room: int, now: datetime, ct
             c = str(m["contact_id"])
 
             def exclude(why: str) -> None:
-                out["excluded"] += _move(sb, wid, c, "waiting", {"state": "excluded", "excluded_reason": why[:300]})
+                # Taken out at their turn: due_at is that turn, so they are
+                # watched like their twins in the holdout (intent to treat).
+                if _move(sb, wid, c, "waiting", {"state": "excluded", "excluded_reason": why[:300],
+                                                 "due_at": now.isoformat()}):
+                    out["excluded"] += 1
+                    excluded.append(c)
 
             def later(why: str, until: datetime) -> None:
                 _move(sb, wid, c, "waiting", {"next_try_at": until.isoformat(), "later_reason": why[:300]})
@@ -902,21 +1054,20 @@ def _draft_wave(sb: Any, wave: dict[str, Any], wave_room: int, now: datetime, ct
             if o.get("later"):
                 later(o["later"], o["until"])
                 continue
-            # The member is marked first, with the draft's own id, then the
-            # draft is written: a run that dies between the two leaves a
-            # member pointing at no draft, which sync puts back to waiting.
-            # Never a draft no member points at, so never a second opener.
+            # The draft first (with the wave's id in its context), then its
+            # meta row, then the member points at it: the member's followup_id
+            # is a foreign key to the draft, so the member can never point at
+            # a draft that is not there. A run that dies between the two
+            # leaves a draft this wave's next run adopts (`prior` above),
+            # never a second opener; a member another run moved meanwhile
+            # leaves the draft just written, which is taken back.
             fid = str(uuid.uuid4())
-            if not _move(sb, wid, c, "waiting", {"state": "drafted", "followup_id": fid, "drafted_at": now.isoformat()}):
-                continue
             row = _draft_row(lead, o, owner, now, why=(f"Backlog wave, {POOL_WORDS.get(pool, pool)}: the CEO's opener, "
                                                       "no AI text. Their answer opens the window for a written reply."),
                              context={"wave_id": wid, "pool": pool, "event_at": m.get("event_at"), "arm": "wave"})
             try:
                 sb.rest("POST", FOLLOWUPS, json_body=[{"id": fid, **row}], prefer="return=minimal")
             except http.HttpError as e:
-                sb.rest("PATCH", f"{_member(wid, c, 'drafted')}&followup_id=eq.{_q(fid)}", prefer="return=minimal",
-                        json_body={"state": "waiting", "followup_id": None, "drafted_at": None})
                 if _check_violation(e):
                     return made, SEGMENT_REFUSED
                 if not fu._raced(e):
@@ -931,12 +1082,21 @@ def _draft_wave(sb: Any, wave: dict[str, Any], wave_room: int, now: datetime, ct
             except http.HttpError as e:
                 warn(f"waves: {c}'s opener has no meta row ({http.scrub(str(e))[:120]}); it can be approved on its own, "
                      "not in a batch")
+            if not _move(sb, wid, c, "waiting", {"state": "drafted", "followup_id": fid, "drafted_at": now.isoformat()}):
+                sb.rest("PATCH", f"{FOLLOWUPS}?id=eq.{_q(fid)}&status=eq.draft", prefer="return=minimal",
+                        json_body={"status": "expired", "decided_at": now.isoformat(),
+                                   "error": "Another run moved this lead in the wave meanwhile, so this opener was taken back."})
+                continue
+            written.append(fid)
             made += 1
             out["drafted"] += 1
             events.append(m.get("event_at"))
             log(f"waves: opener ({o['language']}) drafted for {c}")
         if len(page) < size:
             break
+    if written or excluded:
+        audit(sb, "waves.draft", WAVES, wid, after={"drafted": len(written), "excluded": len(excluded)},
+              metadata={"followup_ids": written[:200], "excluded": excluded[:200]})
     if events:
         # The held-back leads level with today's batch (newest first) start
         # their 14 days now, so each arm is measured over the same days.
@@ -1045,8 +1205,9 @@ def send_due(sb: Any, api: Callable[[str, dict[str, Any]], tuple[int, dict[str, 
     run stops before its budget runs out; the next one carries on."""
     started = clock()
     out: dict[str, Any] = {"due": 0, "sent": 0, "refused": 0, "failed": 0, "set_aside": 0, "held": 0, "gone": 0,
-                           "outside_hours": 0, "gate": 0, "wave_not_running": 0, "stopped": None, "stop_kind": None}
-    drafts = sb.select_all(FOLLOWUPS, "select=id,contact_id,channel,segment,touch&status=eq.draft", order="id")
+                           "outside_hours": 0, "gate": 0, "wave_not_running": 0, "raced": 0, "left_pool": 0,
+                           "stopped": None, "stop_kind": None}
+    drafts = sb.select_all(FOLLOWUPS, "select=id,contact_id,channel,segment,touch,expires_at&status=eq.draft", order="id")
     if not drafts:
         return out
     fups = {str(f["id"]): f for f in drafts}
@@ -1072,10 +1233,26 @@ def send_due(sb: Any, api: Callable[[str, dict[str, Any]], tuple[int, dict[str, 
     out["due"] = len(due)
     if not due:
         return out
+    # An approved opener waits for the lead's hours and day off, never long
+    # enough to go stale: it may go until 72 hours past its turn.
+    for m in due:
+        fid = str(m["followup_id"])
+        turn = fu._ts(m.get("send_after"))
+        keep = (turn + APPROVED_KEEP) if turn else None
+        stale = fu._ts(fups[fid].get("expires_at"))
+        if keep and fups[fid].get("segment") == "reactivate" and (stale is None or stale < keep):
+            try:
+                sb.rest("PATCH", f"{FOLLOWUPS}?id=eq.{_q(fid)}&status=eq.draft", prefer="return=minimal",
+                        json_body={"expires_at": keep.isoformat()})
+            except http.HttpError as e:
+                warn(f"waves: {fid}'s expiry was not moved ({http.scrub(str(e))[:120]})")
     countries: dict[str, Any] = {}
-    for chunk in fu._chunks(sorted({str(fups[str(m["followup_id"])]["contact_id"]) for m in due})):
-        for l in sb.select("cockpit_sales_leads", f"select=contact_id,country&contact_id={fu._in(chunk)}"):
+    leads: dict[str, dict[str, Any]] = {}
+    due_contacts = sorted({str(fups[str(m["followup_id"])]["contact_id"]) for m in due})
+    for chunk in fu._chunks(due_contacts):
+        for l in sb.select("cockpit_sales_leads", f"{LEAD_COLS}&contact_id={fu._in(chunk)}"):
             countries[str(l["contact_id"])] = l.get("country")
+            leads[str(l["contact_id"])] = l
     gate = fu.wa_gate(guard)
     gap = float(w["batch_gap_s"])
     first_hours = settings.get("first_hours") or fu.FIRST_HOURS
@@ -1099,12 +1276,13 @@ def send_due(sb: Any, api: Callable[[str, dict[str, Any]], tuple[int, dict[str, 
             out["gate"] += 1
             continue
         country = countries.get(str(f["contact_id"]))
-        local = now + fu.lead_offset(country)
         # A first message (an opener) keeps to 09:00 to 18:00 on the lead's
-        # clock; a later step or a reply to 09:00 to 21:00, as sendFollowup does.
+        # clock (every zone of a country that spans several; a person sends
+        # it when the zone is not known); a later step or a reply to 09:00 to
+        # 21:00, as sendFollowup does; never on the lead's day off.
         first = int(f.get("touch") or 1) == 1 and f.get("segment") not in ("reply", "confirm")
         hours = first_hours if first else later_hours
-        if not fu.in_hours(now, country, hours) or local.strftime("%A").lower() in days_off:
+        if not fu.in_hours(now, country, hours, first=first) or fu.lead_days(now, country) & set(days_off):
             out["outside_hours"] += 1
             continue
         if channel == "whatsapp_template":
@@ -1119,16 +1297,27 @@ def send_due(sb: Any, api: Callable[[str, dict[str, Any]], tuple[int, dict[str, 
                             f"ceiling keeps {RESERVE} for the demo chat.")
             break
         out_of_time = False
-        for _ in range(3):
+        for _ in range(6):
             now = clock()
             newest = next(iter(_desk_sends_since(sb, now - timedelta(seconds=gap))), None)
-            t = max((x for x in (last_at, fu._ts((newest or {}).get("created_at"))) if x), default=None)
+            try:
+                held = _lease_at(sb, SEND_LEASE)
+            except http.HttpError:
+                held = None
+            # The gap counts from this run's last send, the desk's last message,
+            # and the last send another run is making right now (its lease).
+            t = max((x for x in (last_at, fu._ts((newest or {}).get("created_at")), held) if x), default=None)
             wait = 0.0 if not t else gap - (now - t).total_seconds()
             if (now - started).total_seconds() + max(0.0, wait) + 20 > budget_s:
                 out_of_time = True
                 break
             if wait <= 0:
-                break
+                try:
+                    if _take_lease(sb, SEND_LEASE, now, max(1.0, gap - 1)):
+                        break
+                except http.HttpError:
+                    break  # no lease row to be had: the gap read above stands
+                continue  # another run took it between the read and now: read again
             sleep(wait)
         if out_of_time:
             stop("time", "This run's time is up; the next run carries on.")
@@ -1137,6 +1326,22 @@ def send_due(sb: Any, api: Callable[[str, dict[str, Any]], tuple[int, dict[str, 
         if fresh.get("held_by"):
             out["held"] += 1
             continue
+        if f.get("segment") == "reactivate":
+            # The lead may have left the backlog since the batch was approved:
+            # booked (a call still to come), a deal, a client. Then the opener
+            # is taken back, never sent ("How are you?" to a booked lead).
+            c = str(f["contact_id"])
+            try:
+                left = _left_pool(sb, c, leads.get(c), now)
+            except Exception as e:  # noqa: BLE001 - unreadable: it waits, never goes on a guess
+                warn(f"waves: {fid} waits: whether the lead is still in the backlog could not be read "
+                     f"({http.scrub(str(e))[:120]})")
+                continue
+            if left:
+                gone = sb.rest("PATCH", f"{FOLLOWUPS}?id=eq.{_q(fid)}&status=eq.draft", prefer="return=representation",
+                               json_body={"status": "expired", "decided_at": now.isoformat(), "error": left})
+                out["left_pool"] += bool(isinstance(gone, list) and gone)
+                continue
         if not sb.select(FOLLOWUPS, f"select=id&id=eq.{_q(fid)}&status=eq.draft&limit=1"):
             out["gone"] += 1  # sent, skipped or expired meanwhile (another run, a rep)
             continue
@@ -1169,6 +1374,11 @@ def send_due(sb: Any, api: Callable[[str, dict[str, Any]], tuple[int, dict[str, 
                     json_body={"send_after": (clock() + timedelta(hours=1)).isoformat()})
             out["outside_hours"] += 1
             continue
+        if verdict == "lead" and STATE_RACE.search(err):
+            # Another run is sending it, the wave was paused, or sales-api's
+            # clock is a moment behind: left in the queue, never set aside.
+            out["raced"] += 1
+            continue
         in_a_row += 1
         if verdict == "failed":
             last_at = clock()
@@ -1193,7 +1403,27 @@ def send_due(sb: Any, api: Callable[[str, dict[str, Any]], tuple[int, dict[str, 
         if in_a_row >= 3:
             stop("refusals", f"Three sends in a row were refused or failed; the last: {err[:200]}")
             break
+    if out["sent"] or out["set_aside"] or out["left_pool"] or out["failed"]:
+        audit(sb, "waves.send", META, None, after={k: v for k, v in out.items() if v and k not in ("due",)})
     return out
+
+
+def _left_pool(sb: Any, contact: str, lead: Optional[dict[str, Any]], now: datetime) -> Optional[str]:
+    """Why a lead whose opener was approved is no longer in a backlog pool,
+    or None: a call of theirs still to come, a deal, a client tag, a deal
+    won or closed. Only a positive reason takes the opener back."""
+    if lead and fu.is_client(lead):
+        return "The lead is a client now, so the backlog opener was taken back."
+    if lead and (str(lead.get("opp_status") or "").lower() == "won" or "closed" in str(lead.get("stage_name") or "").lower()):
+        return "The lead's deal is won or closed, so the backlog opener was taken back."
+    (calls, _cals), dealt = _calls_of(sb, [contact]), _dealt(sb, [contact])
+    if contact in dealt:
+        return "The lead has a deal now, so the backlog opener was taken back."
+    for a in calls.get(contact, []):
+        start = fu._ts(a.get("start_at"))
+        if a.get("call_type") in ("intro", "demo") and start and start > now and a.get("status") not in fu.NOT_KEPT:
+            return fu.OPENER_BOOKED
+    return None
 
 
 # ---------------------------------------------------------------------------

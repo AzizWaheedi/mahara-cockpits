@@ -62,6 +62,7 @@ class Catalog:
         self.schema: dict[str, set[str]] = {t: set(cols) for t, (_w, cols) in deploycheck.TABLES.items()}
         for table, (cols, _meaning) in deploycheck.DELTA.items():
             self.schema[table] |= set(cols)
+        self.schema["cockpit_sales_rooms"].add(deploycheck.HARDENING_COLUMN)  # 20261003d applied
         for table in self.schema:
             self.pg.tables.setdefault(table, {})
             fakes.PK.setdefault(table, ("id",))

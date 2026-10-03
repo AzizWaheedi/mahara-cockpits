@@ -235,6 +235,13 @@ class FakePostgrest:
                     r.get("contact_id") == row.get("contact_id") and r.get("status") in OPEN_DRAFT for r in others):
                 return HttpError(409, '{"code":"23505","message":"duplicate key value violates unique constraint '
                                       '\\"cockpit_sales_followups_one_open\\""}', b"", url)
+        if table == "cockpit_sales_followup_wave_members" and row.get("followup_id") is not None \
+                and (str(row["followup_id"]),) not in self.tables.get("cockpit_sales_followups", {}):
+            # Production's foreign key (20261003c): followup_id references
+            # cockpit_sales_followups(id), not deferrable; PostgREST answers 409.
+            return HttpError(409, '{"code":"23503","message":"insert or update on table '
+                                  '\\"cockpit_sales_followup_wave_members\\" violates foreign key constraint '
+                                  '\\"cockpit_sales_followup_wave_members_followup_id_fkey\\""}', b"", url)
         if table == "cockpit_sales_followup_wave_members" and row.get("state", "waiting") in OPEN_MEMBER and any(
                 r.get("contact_id") == row.get("contact_id") and r.get("state") in OPEN_MEMBER for r in others):
             return HttpError(409, '{"code":"23505","message":"duplicate key value violates unique constraint '

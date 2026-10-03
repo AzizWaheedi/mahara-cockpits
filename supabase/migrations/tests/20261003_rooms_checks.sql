@@ -720,6 +720,11 @@ begin
     if coalesce((fx.f ->> 'open_attempt')::boolean, false) then
       insert into public.cockpit_sales_attempts (contact_id, rep_email, state) values (format('lc-test-pf%s-dial', fx.i), v_email, 'dialing');
     end if;
+    if coalesce((fx.f ->> 'appointment_soon')::boolean, false) then
+      insert into public.cockpit_sales_appointments (appointment_id, contact_id, call_type, status, assigned_user_id, start_at, origin)
+      values (format('lc-test-appt-pfsoon%s', fx.i), format('lc-test-pf%s-soon', fx.i), 'demo', 'confirmed', ghl,
+              now() + interval '5 minutes', 'ghl');
+    end if;
     if coalesce((fx.f ->> 'appointment_now')::boolean, false) then
       insert into public.cockpit_sales_appointments (appointment_id, contact_id, call_type, status, assigned_user_id, start_at, origin)
       values (format('lc-test-appt-pfnow%s', fx.i), format('lc-test-pf%s-appt', fx.i), 'intro', 'confirmed', ghl,
@@ -785,13 +790,16 @@ begin
       where email = 'lc-test-pr1@example.invalid'));
   perform pg_temp.ck('E2 reason: Available again clears the miss',
     (select state = 'available' and reason is null from public.cockpit_sales_presence where email = 'lc-test-pr3@example.invalid'));
-  perform pg_temp.ck('E2 reason: the standby room closed for a booked call says booked_call_soon, with that call''s time and kind',
-    (select state = 'available' and reason = 'booked_call_soon' and booked_at = now() + interval '8 minutes' and booked_kind = 'demo'
+  -- 20261003d: a booked call of theirs within booked_guard makes them away
+  -- (why booked_soon), so no live lead is offered while it is near.
+  perform pg_temp.ck('E2 reason: a booked call within 10 minutes says booked_call_soon, with that call''s time and kind, and no offer reaches them (away)',
+    (select state = 'away' and why = 'booked_soon' and reason = 'booked_call_soon' and booked_at = now() + interval '8 minutes'
+            and booked_kind = 'demo'
        from public.cockpit_sales_presence where email = 'lc-test-pr2@example.invalid'),
     (select row_to_json(pr)::text from public.cockpit_sales_presence as pr where pr.email = 'lc-test-pr2@example.invalid'));
-  update public.cockpit_sales_availability set state = 'away', until = null where email = 'lc-test-pr2@example.invalid';
-  perform pg_temp.ck('E2 reason: once Away, booked_call_soon is no longer the reason',
-    (select state = 'away' and reason is null and booked_at is null from public.cockpit_sales_presence
+  update public.cockpit_sales_appointments set start_at = now() + interval '1 day' where appointment_id = 'lc-test-appt-pr2';
+  perform pg_temp.ck('E2 reason: once the booked call is no longer near, booked_call_soon is no longer the reason',
+    (select reason is null and booked_at is null and why <> 'booked_soon' from public.cockpit_sales_presence
       where email = 'lc-test-pr2@example.invalid'));
 exception when others then
   perform pg_temp.ck('E2 presence fixtures section crashed', false, sqlstate || ': ' || sqlerrm);
@@ -818,6 +826,11 @@ begin
   -- made again (R5); every other rule ignores these switches.
   update public.cockpit_sales_settings
      set value = jsonb_set(jsonb_set(value, '{enabled}', 'true'), '{providers,zoom}', 'true') where key = 'rooms';
+  -- Live calls run at any hour for this run (R5 makes a fresh standby room
+  -- only inside live.hours; 20261003d).
+  update public.cockpit_sales_settings
+     set value = jsonb_set(value, '{hours}', '{"days": [0, 1, 2, 3, 4, 5, 6], "from": "00:00", "to": "24:00", "tz": "Asia/Kuwait"}')
+   where key = 'live';
 
   -- Rooms f[1]..f[32]. Hosts and leads are all different.
   f[1] := pg_temp.room('lc-test-f1', 'lc-test-f1@example.invalid', 'fallback');
@@ -884,8 +897,9 @@ begin
   update public.cockpit_sales_rooms set requested_at = now() - interval '2 minutes', claimed_at = now() - interval '10 seconds' where id = f[24];
   -- f[25]: the setter's fallback room for a booked intro (D14): the host never came.
   f[25] := pg_temp.room('lc-test-f25', 'lc-test-f25@example.invalid', 'fallback', 'open', 'intro');
+  -- Made a minute after the intro's start (a room never settles an intro it was not made for; 20261003d).
   update public.cockpit_sales_rooms set appointment_id = 'lc-test-appt-f25', host_by = now() - interval '6 minutes',
-                                        lead_by = now() - interval '1 minute' where id = f[25];
+                                        lead_by = now() - interval '1 minute', requested_at = now() - interval '20 minutes' where id = f[25];
   -- f[26]: the host is in, no lead_by, the link never went (read out, or
   -- every channel refused), 3 hours ago: the room still has a deadline.
   f[26] := pg_temp.room('lc-test-f26', 'lc-test-f26@example.invalid', 'fallback', 'host_in');
@@ -943,6 +957,9 @@ begin
   f[38] := pg_temp.room('lc-test-f38', 'lc-test-f38@example.invalid', 'fallback', 'lead_in', 'intro');
   update public.cockpit_sales_rooms set appointment_id = 'lc-test-appt-f38' where id = f[38];
   update public.cockpit_sales_rooms set state = 'ended', result = 'joined' where id = f[38];
+  -- Each made a minute after its intro's start (20261003d: the settle relates the room to the intro as booked now).
+  update public.cockpit_sales_rooms set requested_at = now() - interval '24 minutes'
+   where id = any (array[f[33], f[34], f[35], f[36], f[37], f[38]]);
 
   -- The pending-events hold (contract-v2 section 10, item 4): a timer waits
   -- for the room's unhandled Zoom, worker or claim event, at most 300 s past
@@ -1056,7 +1073,7 @@ begin
     (null, 'zoom.meeting.participant_joined', 'zoom', 'lc-test-e2', now() - interval '5 seconds', null, 0, null),
     (null, 'link_sent', 'sales-api', 'lc-test-e3', now() - interval '1 minute', null, 0, null),
     (null, 'zoom.meeting.started', 'zoom', 'lc-test-e4', now() - interval '1 minute', now() - interval '50 seconds', 0, null),
-    (null, 'zoom.meeting.ended', 'zoom', 'lc-test-e5', now() - interval '5 minutes', null, 3, null),
+    (null, 'zoom.meeting.ended', 'zoom', 'lc-test-e5', now() - interval '5 minutes', null, 10, null),
     (null, 'worker.ready', 'worker', 'lc-test-e6', now() - interval '25 seconds', null, 0, null),
     (null, 'zoom.meeting.participant_left', 'zoom', 'lc-test-e7', now() - interval '1 minute', null, 0, now() + interval '30 seconds'),
     (null, 'live.claimed', 'claim', 'lc-test-e8', now() - interval '2 minutes', null, 0, now() - interval '1 minute'),
@@ -1220,12 +1237,14 @@ begin
   perform pg_temp.ck('F replay: zoom, worker and claim events unhandled past 20 s and not held go back to room.event, once each',
     (s1 -> 'replay') @> to_jsonb(array[ev[1]::text, ev[6]::text, ev[8]::text]) and jsonb_array_length(s1 -> 'replay') = 3,
     (s1 -> 'replay')::text);
-  perform pg_temp.ck('F replay: tries counted on the replayed events only; a held event (lease) is left alone',
-    (select bool_and(tries = case when id in (ev[1], ev[6], ev[8]) then 1 when id = ev[5] then 3 else 0 end)
-       from public.cockpit_sales_room_events where id = any (ev))
-    and (select handled_at is null and tries = 0 from public.cockpit_sales_room_events where id = ev[7]));
-  perform pg_temp.ck('F an event that had its 3 tries is given up: handled, detail.gave_up',
-    (select handled_at = now() and (detail ->> 'gave_up')::boolean and tries = 3 from public.cockpit_sales_room_events where id = ev[5])
+  -- 20261003d: a pick is not a try (an outage never uses up a Zoom join);
+  -- the try is counted when room.event leases the event.
+  perform pg_temp.ck('F replay: a pick spaces the event (last_try_at) and counts no try; a held event (lease) is left alone',
+    (select bool_and(tries = case when id = ev[5] then 10 else 0 end) from public.cockpit_sales_room_events where id = any (ev))
+    and (select bool_and(last_try_at = now()) from public.cockpit_sales_room_events where id in (ev[1], ev[6], ev[8]))
+    and (select handled_at is null and tries = 0 and last_try_at is null from public.cockpit_sales_room_events where id = ev[7]));
+  perform pg_temp.ck('F an event room.event took 10 times and never handled is given up: handled, detail.gave_up',
+    (select handled_at = now() and (detail ->> 'gave_up')::boolean and tries = 10 from public.cockpit_sales_room_events where id = ev[5])
     and (s1 ->> 'gave_up')::integer >= 2);
   perform pg_temp.ck('F an event older than a day is never replayed: given up as too old (left for a person, one alert a day)',
     (select handled_at = now() and (detail ->> 'gave_up')::boolean and (detail ->> 'too_old')::boolean and tries = 0
@@ -1603,7 +1622,8 @@ begin
     values ('lc-test-appt-h2', 'lc-test-h2', 'intro', 'confirmed', 'lc-test-ghl-h2', now() - interval '25 minutes', 'ghl');
   -- The setter's fallback room for that booked intro; the host never came.
   rm := pg_temp.room('lc-test-h2', 'lc-test-h2@example.invalid', 'fallback', 'open', 'intro');
-  update public.cockpit_sales_rooms set appointment_id = 'lc-test-appt-h2', host_by = now() - interval '1 minute' where id = rm;
+  update public.cockpit_sales_rooms set appointment_id = 'lc-test-appt-h2', host_by = now() - interval '1 minute',
+                                        requested_at = now() - interval '24 minutes' where id = rm;
   select coalesce(max(q.id), 0) into max_id from net.http_request_queue as q;
   r := public.cockpit_sales_rooms_tick();
   perform pg_temp.ck('H the tick runs the sweep and posts twice: sweep.replay and sweep.settle',
@@ -2098,9 +2118,9 @@ begin
     public.cockpit_sales_room_event_lease(e) is null
     and public.cockpit_sales_room_event_lease(p_dedupe_key => 'lc-test-lease') is null);
   s := public.cockpit_sales_rooms_sweep();
-  perform pg_temp.ck('L the sweep neither replays nor gives up a held event',
+  perform pg_temp.ck('L the sweep neither replays nor gives up a held event (its one try is the lease)',
     not ((s -> 'replay') ? e::text)
-    and (select handled_at is null and tries = 0 from public.cockpit_sales_room_events where id = e), s ->> 'replay');
+    and (select handled_at is null and tries = 1 from public.cockpit_sales_room_events where id = e), s ->> 'replay');
   update public.cockpit_sales_room_events set lease_until = now() - interval '1 second' where id = e;
   perform pg_temp.ck('L a hold that ran out can be taken again', public.cockpit_sales_room_event_lease(p_dedupe_key => 'lc-test-lease') = e);
   update public.cockpit_sales_room_events set handled_at = now(), lease_until = null where id = e;

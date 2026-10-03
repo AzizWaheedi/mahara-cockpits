@@ -382,8 +382,10 @@ class Finding8SecondOpenerAfterACrash(unittest.TestCase):
         with self.assertRaises(KeyboardInterrupt):
             run(pg)
         m = members(pg, "w1")[0]
-        self.assertEqual((m["state"], pg.rows(FOLLOWUPS)), ("drafted", []))  # the member was marked first
-        run(pg, now=NOW + timedelta(minutes=5))  # sync: no draft, back to waiting; drafted again
+        # The draft is written first (the member's followup_id is a foreign key
+        # to it, 20261003c): a run that dies before the draft leaves the member waiting.
+        self.assertEqual((m["state"], pg.rows(FOLLOWUPS)), ("waiting", []))
+        run(pg, now=NOW + timedelta(minutes=5))  # drafted again, once
         drafts = [f for f in pg.rows(FOLLOWUPS) if f["contact_id"] == "n00"]
         self.assertEqual(len(drafts), 1)
         self.assertEqual(members(pg, "w1")[0]["followup_id"], drafts[0]["id"])

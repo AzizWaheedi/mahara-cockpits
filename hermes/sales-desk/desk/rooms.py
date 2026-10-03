@@ -133,7 +133,7 @@ from typing import Any, Callable, Optional
 
 from . import http
 from .config import WORKER, key
-from .supabase import STATUS, Supabase, SupabaseError
+from .supabase import STATUS, Supabase, SupabaseError, audit, clock_offset_of
 
 ROOMS = "cockpit_sales_rooms"
 SECRETS = "cockpit_sales_room_secrets"
@@ -172,6 +172,12 @@ STATUS_EVERY = 25.0       # the status row, at least every 30 s
 SETTINGS_EVERY = 25.0     # the rooms setting is read again this often
 SETTINGS_STALE_S = 60.0   # with no good read of it for this long, nothing new is claimed
 CLOSE_SCAN_EVERY = 10.0   # finished rooms are looked for this often
+# The VPS clock against the database's (the sweep compares every deadline
+# with the database's now()): within 5 s is the same; past 10 s the status row
+# warns; past 60 s no room is made until it is fixed.
+CLOCK_SLACK_S = 5.0
+CLOCK_WARN_S = 10.0
+CLOCK_STOP_S = 60.0
 STALE_S = 600.0           # a room asked for this long ago is failed, not made or looked for: the sweep fails
                           # one still requested at 60 s and one still creating at claim + 120 s (contract-v2
                           # section 7, item 10), so this is only for when the sweep is not running
@@ -721,8 +727,11 @@ class RoomsDb(Supabase):
         if json_body is not None:
             headers["Content-Type"] = "application/json"
             data = json.dumps(json_body, ensure_ascii=False, default=str).encode("utf-8")
-        _, _, body = http.request(method, f"{self.url}/rest/v1/{path}", headers=headers, data=data,
-                                  timeout=timeout, retries=0, ok_statuses=(200, 201, 204))
+        _, answered, body = http.request(method, f"{self.url}/rest/v1/{path}", headers=headers, data=data,
+                                         timeout=timeout, retries=0, ok_statuses=(200, 201, 204))
+        off = clock_offset_of(answered, time.time())
+        if off is not None:
+            self.clock_offset = off
         if not body:
             return None
         try:
@@ -1203,6 +1212,11 @@ class Worker:
         self._close_scan_due = 0.0
         self._settings_due = 0.0
         self._warned: set[str] = set()
+        # How far behind the database this VPS's clock is (seconds), from a
+        # room asked for "in the future" by this clock (sales-api writes
+        # requested_at on its own, right clock); the Date header measures it
+        # when the database sends one.
+        self._seen_ahead = 0.0
         self.total = self._counts()
         self.window = self._counts()
         self._window_from = clock()
@@ -1226,6 +1240,26 @@ class Worker:
     def left(self) -> float:
         """Seconds until the hard stop: no call may run past it."""
         return self.hard_stop - self.clock()
+
+    # ---- the database's clock ------------------------------------------------
+    def clock_skew(self) -> float:
+        """How far the database's clock is ahead of this machine's (negative:
+        behind): the Date header's reading when there is one, else what the
+        rooms' own requested_at showed. The SQL sweep owns every timer and
+        compares with the database's now(), so every time the worker writes
+        is on that clock."""
+        off = getattr(self.sb, "clock_offset", None)
+        return float(off) if off is not None else self._seen_ahead
+
+    def db_now(self) -> float:
+        """Now on the database's clock, as far as this run can tell."""
+        return self.clock() + self.clock_skew()
+
+    def _clock_sentence(self, skew: float) -> str:
+        n = int(round(abs(skew)))
+        way = "behind" if skew > 0 else "ahead of"
+        return (f"The VPS clock is {n} seconds {way} the database's, so no room is made until it is fixed "
+                "(timedatectl, or chrony on the VPS); rooms would otherwise close early.")
 
     @staticmethod
     def _counts() -> dict[str, Any]:
@@ -1336,6 +1370,19 @@ class Worker:
 
     def _claims(self, rows: list[dict[str, Any]], max_claims: int) -> None:
         claimed = 0
+        now = self.clock()
+        for r in rows:
+            asked = parse_ts(r.get("requested_at"))
+            if asked is not None and asked - now > CLOCK_SLACK_S:
+                self._seen_ahead = max(self._seen_ahead, asked - now)
+        skew = self.clock_skew()
+        if abs(skew) > CLOCK_STOP_S and any(r.get("state") == "requested" for r in rows):
+            # A clock this far off would make every deadline wrong for the
+            # sweep: no room is claimed, and the status row says why.
+            sentence = self._clock_sentence(skew)
+            self._fault(sentence)
+            self._warn_once("clock", f"rooms: {sentence}")
+            return
         for r in rows:
             if r.get("state") != "requested":
                 continue
@@ -1454,7 +1501,7 @@ class Worker:
     # ---- claim and make ------------------------------------------------------
     def claim(self, room: dict[str, Any]) -> Optional[dict[str, Any]]:
         """Only the update that still sees `requested` gets the row back."""
-        body = {"state": "creating", "claimed_at": iso(self.clock()), "worker_run": self.run_id,
+        body = {"state": "creating", "claimed_at": iso(self.db_now()), "worker_run": self.run_id,
                 "version": int(room.get("version") or 0) + 1, "error": None}
         try:
             got = self.sb.patch_returning(ROOMS, f"id=eq.{_q(room['id'])}&state=eq.requested", body)
@@ -1463,7 +1510,14 @@ class Worker:
         except (SupabaseError, http.HttpError) as e:
             self._db_trouble(e)
             return None
+        if got:
+            self._audit("room.worker.claim", got[0], {"state": "requested"}, {"state": "creating"})
         return got[0] if got else None
+
+    def _audit(self, action: str, room: dict[str, Any], before: dict[str, Any], after: dict[str, Any]) -> None:
+        """One audit row for a room change the worker made; never fatal."""
+        audit(self.sb, action, ROOMS, str(room.get("id")), before=before, after=after,
+              metadata={"code": room.get("code"), "worker_run": self.run_id, "provider": room.get("provider")})
 
     def _guard(self, room: dict[str, Any], step: Callable[[dict[str, Any]], Any]) -> None:
         """One room's fault never stops the loop or another room."""
@@ -2041,7 +2095,7 @@ class Worker:
         self._store_failed(rid, sentence)
         got = self._patch_or_lost(
             f"id=eq.{_q(rid)}&state=eq.requested",
-            {"state": "failed", "error": sentence, "result": "failed", "ended_at": iso(self.clock()),
+            {"state": "failed", "error": sentence, "result": "failed", "ended_at": iso(self.db_now()),
              "version": int(room.get("version") or 0) + 1})
         row = got[0] if got else None
         if row is None:
@@ -2050,6 +2104,8 @@ class Worker:
                 row = current
             else:
                 self._fail_missed(rid, current)
+        elif got:
+            self._audit("room.worker.fail", row, {"state": "requested"}, {"state": "failed", "error": sentence})
         if row:
             self._after_fail(row, sentence, fault=not refusal, refusal=refusal)
 
@@ -2086,7 +2142,7 @@ class Worker:
 
     def finish(self, room: dict[str, Any], *, provider: str, meeting_id: Any, join_url: str, start_url: str) -> bool:
         rid = str(room["id"])
-        now = self.clock()
+        now = self.db_now()
         self.pending.pop(rid, None)
         if not join_url:
             self.fail(room, SAY["zoom_down"] if provider == "zoom" else SAY["meet_pending"], fault=True)
@@ -2108,6 +2164,9 @@ class Worker:
                 **self._host_by_and_ends(room, now)}
         got = self._patch_or_lost(f"id=eq.{_q(rid)}&state=eq.creating&worker_run=eq.{_q(self.run_id)}", body)
         opened = got[0] if got else None
+        if opened is not None:
+            self._audit("room.worker.open", opened, {"state": "creating"},
+                        {"state": "open", "provider_meeting_id": str(meeting_id)})
         if opened is None:
             current = self._read(rid)
             if (current and current.get("state") in LIVE_STATES and current.get("worker_run") == self.run_id
@@ -2166,7 +2225,7 @@ class Worker:
         self.pending.pop(rid, None)
         made = self._made.get(rid) or {}
         body: dict[str, Any] = {"state": "failed", "error": sentence, "result": "failed",
-                                "ended_at": iso(self.clock()), "version": int(room.get("version") or 0) + 1}
+                                "ended_at": iso(self.db_now()), "version": int(room.get("version") or 0) + 1}
         if made.get("id"):
             # A meeting was made for a room that never opened: it is noted on
             # the room with its host link, and closed like any finished room's.
@@ -2181,6 +2240,8 @@ class Worker:
         self._store_failed(rid, sentence)
         got = self._patch_or_lost(f"id=eq.{_q(rid)}&state=in.(requested,creating)", body)
         row = got[0] if got else None
+        if row is not None:
+            self._audit("room.worker.fail", row, {"state": room.get("state")}, {"state": "failed", "error": sentence})
         if row is None:
             current = self._read(rid)
             if current and current.get("state") == "failed" and current.get("error") == sentence:
@@ -2805,6 +2866,10 @@ class Worker:
                         "the sweep sends them again.")
             if self.api is not None and self.api.breaker.blocked():
                 ok = False
+        skew = self.clock_skew()
+        if CLOCK_WARN_S < abs(skew) <= CLOCK_STOP_S:
+            bits.append(f"The VPS clock is {int(round(abs(skew)))} seconds {'behind' if skew > 0 else 'ahead of'} the "
+                        "database's; the times the worker writes are corrected, but fix it (timedatectl, or chrony).")
         faults = list(dict.fromkeys(w["faults"]))
         if faults:
             bits.append(f"Last problem: {faults[-1]}")
@@ -2825,7 +2890,7 @@ class Worker:
     def _write_status(self, ok: bool, detail: str, job: str = JOB) -> None:
         try:
             self.sb.upsert(STATUS, [{"worker": WORKER, "job": job, "ok": bool(ok),
-                                     "detail": http.scrub(detail)[:1000], "at": iso(self.clock())}], "worker,job")
+                                     "detail": http.scrub(detail)[:1000], "at": iso(self.db_now())}], "worker,job")
         except (SupabaseError, http.HttpError) as e:
             self.log.warn(f"rooms: the status row was not written: {db_reason(e)}")
 

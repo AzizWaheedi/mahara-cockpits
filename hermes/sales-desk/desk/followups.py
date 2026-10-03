@@ -272,13 +272,34 @@ def quiet(now: datetime, q: dict[str, Any]) -> bool:
     return h >= a or h < b if a > b else a <= h < b
 
 
+_TIME = re.compile(r"^(\d{4}-\d{2}-\d{2})(?:[T ](\d{2}:\d{2}(?::\d{2})?)(?:\.(\d+))?)?\s*(Z|z|[+-]\d{2}(?::?\d{2})?)?$")
+
+
 def _ts(v: Any) -> Optional[datetime]:
+    """A database time, whatever form PostgREST gives it: Postgres trims a
+    fraction's trailing zeros ('...:00.12+00:00'), which Python 3.9's
+    fromisoformat refuses for 1, 2, 4 or 5 digits, and may answer '+03',
+    '+0300' or a space for the T. Every one of them reads; nothing else does."""
     if not v:
         return None
     if isinstance(v, datetime):
         return v if v.tzinfo else v.replace(tzinfo=timezone.utc)
+    m = _TIME.match(str(v).strip())
+    if not m:
+        return None
+    day, clock, frac, zone = m.groups()
+    clock = clock or "00:00:00"
+    if len(clock) == 5:
+        clock += ":00"
+    frac = ((frac or "") + "000000")[:6]
+    if not zone or zone in ("Z", "z"):
+        zone = "+00:00"
+    elif len(zone) == 3:
+        zone += ":00"
+    elif ":" not in zone:
+        zone = zone[:3] + ":" + zone[3:]
     try:
-        t = datetime.fromisoformat(str(v).replace("Z", "+00:00"))
+        t = datetime.fromisoformat(f"{day}T{clock}.{frac}{zone}")
     except ValueError:
         return None
     return t if t.tzinfo else t.replace(tzinfo=timezone.utc)
@@ -317,14 +338,27 @@ def with_kinds(calendar: list[dict[str, Any]], calendars: Optional[dict[str, Any
     return out
 
 
-def in_hours(now: datetime, country: Any, hours: Any = FIRST_HOURS) -> bool:
-    """Whether it is between the hours given (from, to) on the lead's own clock."""
+def in_hours(now: datetime, country: Any, hours: Any = FIRST_HOURS, *, first: bool = True) -> bool:
+    """Whether it is between the hours given (from, to) on the lead's own
+    clock, in every zone of a country that spans several. A first message to
+    a lead whose zone is not known never goes by itself (a person sends it);
+    a later one keeps to Kuwait's clock."""
     try:
         a, b = int(hours[0]), int(hours[1])
     except (TypeError, ValueError, IndexError):
         a, b = FIRST_HOURS
-    h = (now + lead_offset(country)).hour
-    return a <= h < b
+    zones = lead_zones(country)
+    if zones is None:
+        if first:
+            return False
+        zones = LEAD_ZONES["kw"]
+    return all(a <= (now + _zone_offset(z, now)).hour < b for z in zones)
+
+
+def lead_days(now: datetime, country: Any) -> set[str]:
+    """The weekday names (lower case) on the lead's clock now, one per zone."""
+    zones = lead_zones(country) or LEAD_ZONES["kw"]
+    return {(now + _zone_offset(z, now)).strftime("%A").lower() for z in zones}
 
 
 # ---------------------------------------------------------------------------
@@ -882,14 +916,76 @@ def _in(ids: list[str]) -> str:
     return f"in.({','.join(_q(x) for x in ids)})"
 
 
-def lead_offset(country: Any) -> timedelta:
-    """The lead's clock: UTC+4 in the UAE and Oman, UTC+3 elsewhere in the Gulf (and when unknown)."""
-    return timedelta(hours=4) if PLUS_FOUR.search(str(country or "")) else KUWAIT
+# The lead's time zone by the ISO country code the lead copy keeps (about 250
+# leads are outside the Gulf). A country that spans zones lists its first and
+# last: a first message goes only in hours that are daytime in both. The same
+# table as sales-api (sendrules.ts LEAD_ZONES); tests/test_stress_time.py
+# compares them.
+LEAD_ZONES: dict[str, tuple[str, ...]] = {
+    "kw": ("Asia/Kuwait",), "sa": ("Asia/Riyadh",), "qa": ("Asia/Qatar",), "bh": ("Asia/Bahrain",),
+    "ae": ("Asia/Dubai",), "om": ("Asia/Muscat",), "iq": ("Asia/Baghdad",), "jo": ("Asia/Amman",),
+    "lb": ("Asia/Beirut",), "sy": ("Asia/Damascus",), "ye": ("Asia/Aden",), "ps": ("Asia/Gaza",),
+    "il": ("Asia/Jerusalem",), "ir": ("Asia/Tehran",), "tr": ("Europe/Istanbul",), "eg": ("Africa/Cairo",),
+    "ly": ("Africa/Tripoli",), "tn": ("Africa/Tunis",), "dz": ("Africa/Algiers",), "ma": ("Africa/Casablanca",),
+    "sd": ("Africa/Khartoum",), "et": ("Africa/Addis_Ababa",), "ke": ("Africa/Nairobi",), "ng": ("Africa/Lagos",),
+    "za": ("Africa/Johannesburg",), "gh": ("Africa/Accra",), "gb": ("Europe/London",), "uk": ("Europe/London",),
+    "ie": ("Europe/Dublin",), "fr": ("Europe/Paris",), "de": ("Europe/Berlin",), "it": ("Europe/Rome",),
+    "es": ("Europe/Madrid",), "pt": ("Europe/Lisbon",), "nl": ("Europe/Amsterdam",), "be": ("Europe/Brussels",),
+    "ch": ("Europe/Zurich",), "at": ("Europe/Vienna",), "se": ("Europe/Stockholm",), "no": ("Europe/Oslo",),
+    "dk": ("Europe/Copenhagen",), "fi": ("Europe/Helsinki",), "pl": ("Europe/Warsaw",), "cz": ("Europe/Prague",),
+    "gr": ("Europe/Athens",), "ro": ("Europe/Bucharest",), "hu": ("Europe/Budapest",), "ua": ("Europe/Kyiv",),
+    "cy": ("Asia/Nicosia",), "ru": ("Europe/Moscow", "Asia/Vladivostok"), "pk": ("Asia/Karachi",),
+    "in": ("Asia/Kolkata",), "bd": ("Asia/Dhaka",), "lk": ("Asia/Colombo",), "np": ("Asia/Kathmandu",),
+    "af": ("Asia/Kabul",), "cn": ("Asia/Shanghai",), "hk": ("Asia/Hong_Kong",), "tw": ("Asia/Taipei",),
+    "jp": ("Asia/Tokyo",), "kr": ("Asia/Seoul",), "sg": ("Asia/Singapore",), "my": ("Asia/Kuala_Lumpur",),
+    "th": ("Asia/Bangkok",), "vn": ("Asia/Ho_Chi_Minh",), "ph": ("Asia/Manila",), "id": ("Asia/Jakarta", "Asia/Jayapura"),
+    "au": ("Australia/Perth", "Australia/Sydney"), "nz": ("Pacific/Auckland",),
+    "us": ("America/New_York", "America/Los_Angeles"), "ca": ("America/Halifax", "America/Vancouver"),
+    "mx": ("America/Mexico_City", "America/Tijuana"), "br": ("America/Sao_Paulo", "America/Manaus"),
+    "ar": ("America/Argentina/Buenos_Aires",), "cl": ("America/Santiago",), "co": ("America/Bogota",),
+    "pe": ("America/Lima",),
+}
+_OMAN = re.compile(r"^\s*om\s*$|\boman\b|muscat|مسقط|عمان", re.I)
+
+
+def lead_zones(country: Any) -> Optional[tuple[str, ...]]:
+    """The lead's zones: the ISO code's, the Gulf by name (UAE and Oman
+    UTC+4), Kuwait's for no country at all, and None for a code the table
+    does not know (a first message then waits for a person)."""
+    c = str(country or "").strip()
+    if not c:
+        return LEAD_ZONES["kw"]
+    if c.lower() in LEAD_ZONES:
+        return LEAD_ZONES[c.lower()]
+    if PLUS_FOUR.search(c):
+        return LEAD_ZONES["om"] if _OMAN.search(c) else LEAD_ZONES["ae"]
+    if re.fullmatch(r"[A-Za-z]{2}", c):
+        return None
+    return LEAD_ZONES["kw"]
+
+
+def _zone_offset(zone: str, at: datetime) -> timedelta:
+    try:
+        from zoneinfo import ZoneInfo
+        off = at.astimezone(ZoneInfo(zone)).utcoffset()
+        if off is not None:
+            return off
+    except Exception:  # noqa: BLE001 - no tz database on this machine: the Gulf's fixed offsets
+        pass
+    return timedelta(hours=4) if zone in ("Asia/Dubai", "Asia/Muscat") else KUWAIT
+
+
+def lead_offset(country: Any, at: Optional[datetime] = None) -> timedelta:
+    """The lead's clock at `at` (now when not given): their first zone's
+    offset; UTC+4 in the UAE and Oman, UTC+3 elsewhere in the Gulf and when
+    the country is not known."""
+    zones = lead_zones(country) or LEAD_ZONES["kw"]
+    return _zone_offset(zones[0], at or datetime.now(timezone.utc))
 
 
 def call_words(start: datetime, now: datetime, country: Any = None) -> dict[str, str]:
     """A booked call's day and time on the lead's own clock, as the message may name them."""
-    off = lead_offset(country)
+    off = lead_offset(country, start)
     k, today = start + off, (now + off).date()
     rel = "today" if k.date() == today else "tomorrow" if k.date() == today + timedelta(days=1) else k.strftime("%A")
     return {"day": k.strftime("%A %d %B"), "relative": rel, "time_24h": k.strftime("%H:%M"),
@@ -1285,16 +1381,42 @@ def track_replies(sb: Any, now: datetime) -> int:
     return marked
 
 
+# An approved backlog opener waits only for the lead's hours and day off: it
+# may still go this long after its turn (sales-api followup.batch keeps it).
+APPROVED_KEEP = timedelta(hours=72)
+
+
 def expire_stale(sb: Any, now: datetime) -> int:
     """Drafts past their time (a WhatsApp window that closed, two days
     unanswered) are marked expired: the page already hides them, and while
     they stayed drafts they held the lead's one open draft, so the agent
-    never wrote them a fresh one."""
-    out = sb.rest("PATCH", f"cockpit_sales_followups?status=eq.draft&expires_at=lt.{_q(now.isoformat())}",
-                  json_body={"status": "expired", "decided_at": now.isoformat(),
-                             "error": "Went stale before anyone sent it."},
-                  prefer="return=representation")
-    return len(out) if isinstance(out, list) else 0
+    never wrote them a fresh one. A backlog opener a manager approved is a
+    template (no window) waiting for the lead's hours: it is kept until 72
+    hours past its turn, unless someone holds it."""
+    stale = {"status": "expired", "decided_at": now.isoformat(), "error": "Went stale before anyone sent it."}
+    out = sb.rest("PATCH", f"cockpit_sales_followups?status=eq.draft&segment=neq.reactivate"
+                           f"&expires_at=lt.{_q(now.isoformat())}",
+                  json_body=stale, prefer="return=representation")
+    n = len(out) if isinstance(out, list) else 0
+    openers = sb.select("cockpit_sales_followups", "select=id&status=eq.draft&segment=eq.reactivate"
+                                                   f"&expires_at=lt.{_q(now.isoformat())}&limit=500")
+    if not openers:
+        return n
+    approved: dict[str, Optional[datetime]] = {}
+    for chunk in _chunks([str(f["id"]) for f in openers]):
+        for m in sb.select("cockpit_sales_followup_meta", f"select=followup_id,send_after,held_by&followup_id={_in(chunk)}"
+                                                          "&limit=1000"):
+            if m.get("send_after") and not m.get("held_by"):
+                approved[str(m["followup_id"])] = _ts(m.get("send_after"))
+    for f in openers:
+        fid = str(f["id"])
+        turn = approved.get(fid)
+        if fid in approved and turn and turn + APPROVED_KEEP > now:
+            continue
+        gone = sb.rest("PATCH", f"cockpit_sales_followups?id=eq.{_q(fid)}&status=eq.draft", json_body=stale,
+                       prefer="return=representation")
+        n += bool(isinstance(gone, list) and gone)
+    return n
 
 
 def _settle(settle: Optional[Callable[[str], dict[str, Any]]], followup_id: str, warn: Callable[[str], None]) -> None:
@@ -1390,14 +1512,38 @@ def gone_reason(d: dict[str, Any], calls: list[dict[str, Any]], inbox: list[dict
     return None
 
 
+OPENER_REPLIED = "The lead wrote in after this opener was written; a person answers them."
+OPENER_BOOKED = "The lead has a call booked now, so the backlog opener was taken back."
+
+
+def opener_gone(d: dict[str, Any], calls: list[dict[str, Any]], inbox: list[dict[str, Any]],
+                now: datetime) -> Optional[str]:
+    """Why an open backlog opener (reactivate) is no longer wanted, or None:
+    the lead wrote in after it was written (their own message is the one to
+    answer, and an open opener would hold back the reply draft for up to two
+    days), or a call of theirs is booked and still to come (a "How are you?"
+    to a lead booked for tomorrow)."""
+    made = _ts(d.get("created_at"))
+    t_in, _ = last_inbound(inbox)
+    if made and t_in and t_in > made:
+        return OPENER_REPLIED
+    for a in calls:
+        start = _ts(a.get("start_at"))
+        if a.get("call_type") in ("intro", "demo") and start and start > now and a.get("status") not in NOT_KEPT:
+            return OPENER_BOOKED
+    return None
+
+
 def close_gone(sb: Any, now: datetime) -> int:
     """Open drafts whose reason has gone, closed as stale with the reason: a
     no-show or cancellation message once the lead booked again, a reply once
     a message went to them, a confirmation once its call was cancelled, moved
-    or held. Left open, each waited for a rep who could only skip it, and
-    held the lead's one open draft meanwhile."""
+    or held, and a backlog opener once the lead wrote in or booked a call.
+    Left open, each waited for a rep who could only skip it, and held the
+    lead's one open draft meanwhile."""
     drafts = sb.select_all("cockpit_sales_followups", "select=id,contact_id,segment,channel,appointment_id,created_at,"
-                                                      "context&status=eq.draft&segment=in.(reply,confirm,no_show,cancelled)",
+                                                      "context&status=eq.draft"
+                                                      "&segment=in.(reply,confirm,no_show,cancelled,reactivate)",
                            order="id")
     if not drafts:
         return 0
@@ -1405,17 +1551,17 @@ def close_gone(sb: Any, now: datetime) -> int:
     inbox: dict[str, list[dict[str, Any]]] = {}
     sends: dict[str, list[dict[str, Any]]] = {}
     booking = sorted({str(d["contact_id"]) for d in drafts if d.get("segment") != "reply"})
-    replying = sorted({str(d["contact_id"]) for d in drafts if d.get("segment") == "reply"})
+    replying = sorted({str(d["contact_id"]) for d in drafts if d.get("segment") in ("reply", "reactivate")})
     for chunk in _chunks(booking):
         for a in sb.select_all("cockpit_sales_calendar", "select=appointment_id,contact_id,call_type,start_at,booked_at,status"
                                                          f"&contact_id={_in(chunk)}&call_type=in.(intro,demo)",
                                order="appointment_id"):
             calls.setdefault(str(a.get("contact_id") or ""), []).append(a)
     if replying:
-        oldest = min((_ts(d.get("created_at")) or now) for d in drafts if d.get("segment") == "reply")
+        oldest = min((_ts(d.get("created_at")) or now) for d in drafts if d.get("segment") in ("reply", "reactivate"))
         for chunk in _chunks(replying):
-            for r in sb.select_all("cockpit_sales_inbox", f"select=contact_id,last_message_at,last_direction,last_type"
-                                                          f"&contact_id={_in(chunk)}", order="conversation_id"):
+            for r in sb.select_all("cockpit_sales_inbox", f"select=contact_id,last_message_at,last_direction,last_type,"
+                                                          f"inbound_whatsapp_at&contact_id={_in(chunk)}", order="conversation_id"):
                 inbox.setdefault(str(r.get("contact_id") or ""), []).append(r)
             for m in sb.select_all("cockpit_sales_messages", f"select=contact_id,created_at,state,channel"
                                                              f"&contact_id={_in(chunk)}"
@@ -1424,7 +1570,10 @@ def close_gone(sb: Any, now: datetime) -> int:
     closed = 0
     for d in drafts:
         c = str(d["contact_id"])
-        why = gone_reason(d, calls.get(c, []), inbox.get(c, []), sends.get(c, []), now)
+        if d.get("segment") == "reactivate":
+            why = opener_gone(d, calls.get(c, []), inbox.get(c, []), now)
+        else:
+            why = gone_reason(d, calls.get(c, []), inbox.get(c, []), sends.get(c, []), now)
         if not why:
             continue
         out = sb.rest("PATCH", f"cockpit_sales_followups?id=eq.{_q(str(d['id']))}&status=eq.draft",
@@ -1561,7 +1710,12 @@ def wa_gate(guard: Optional[dict[str, Any]]) -> Optional[str]:
     marked the connector off and the single-copy test passed. Unreadable is
     closed, never open."""
     g = guard if isinstance(guard, dict) else {}
-    if g.get("connector_off") is not True or not _ts(g.get("single_copy_ok_at")):
+    ok = _ts(g.get("single_copy_ok_at"))
+    if g.get("connector_off") is not True or not ok:
+        return GATE_CLOSED
+    # A single-copy test from before the connector last went off proves nothing (sendrules.ts gateOpen).
+    off = _ts(g.get("connector_off_at"))
+    if off and ok < off:
         return GATE_CLOSED
     return None
 

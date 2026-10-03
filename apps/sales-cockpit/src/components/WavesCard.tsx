@@ -105,7 +105,7 @@ export function WavesCard({
         ? readAll<MemberRow>((from, to) =>
             supabase
               .from("cockpit_sales_followup_wave_members")
-              .select("wave_id,arm,state")
+              .select("wave_id,arm,state,due_at,sent_at")
               .in("wave_id", ids.split(","))
               .range(from, to),
           )

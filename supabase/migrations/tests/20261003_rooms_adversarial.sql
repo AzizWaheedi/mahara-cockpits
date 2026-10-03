@@ -583,7 +583,9 @@ begin
     ('lc-test-appt-x20a', 'lc-test-x20a', 'intro', 'confirmed', 'lc-test-ghl-x20a', now() - interval '25 minutes', 'ghl'),
     ('lc-test-appt-x20b', 'lc-test-x20b', 'intro', 'confirmed', 'lc-test-ghl-x20b', now() - interval '25 minutes', 'ghl');
   fb := pg_temp.room('lc-test-x20a', 'lc-test-x20ah@example.invalid', 'fallback', 'open');
-  update public.cockpit_sales_rooms set appointment_id = 'lc-test-appt-x20a', host_by = now() - interval '1 minute' where id = fb;
+  -- Made a minute after the intro's start (20261003d: a room settles only the intro it was made for).
+  update public.cockpit_sales_rooms set appointment_id = 'lc-test-appt-x20a', host_by = now() - interval '1 minute',
+                                        requested_at = now() - interval '24 minutes' where id = fb;
   bk := pg_temp.room('lc-test-x20b', 'lc-test-x20bh@example.invalid', 'booked', 'open', 'intro', 'lc-test-appt-x20b');
   update public.cockpit_sales_rooms set host_by = now() - interval '1 minute' where id = bk;
   select coalesce(max(q.id), 0) into max_id from net.http_request_queue as q;

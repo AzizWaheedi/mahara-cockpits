@@ -15,6 +15,7 @@ Rules the writes follow, as in the editor desk:
 from __future__ import annotations
 
 import json
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Optional
 
@@ -82,6 +83,38 @@ class SupabaseError(Exception):
     pass
 
 
+def clock_offset_of(headers: Any, local: float) -> Optional[float]:
+    """How far the database's clock is ahead of this machine's in seconds
+    (negative: behind), from an answer's Date header, or None without one."""
+    try:
+        v = headers.get("Date") or headers.get("date") if headers else None
+    except AttributeError:
+        return None
+    if not v:
+        return None
+    try:
+        from email.utils import parsedate_to_datetime
+        return parsedate_to_datetime(str(v)).timestamp() - local
+    except (TypeError, ValueError, IndexError, OverflowError):
+        return None
+
+
+def audit(sb: Any, action: str, entity_type: str, entity_id: Optional[str], *, before: Any = None, after: Any = None,
+          metadata: Optional[dict[str, Any]] = None) -> bool:
+    """One cockpit_audit_log row for a change the desk made (the standing
+    rule: every write leaves an audit row). Never fatal: the change stands,
+    and a row that could not be written is answered False for the log."""
+    try:
+        sb.rest("POST", "cockpit_audit_log", json_body={
+            "action": action[:120], "entity_type": entity_type, "entity_id": entity_id,
+            "actor_email": None, "source_app": "sales", "source_system": "sales-desk",
+            "before": before, "after": after, "metadata": metadata or {},
+        }, prefer="return=minimal", retries=0)
+        return True
+    except Exception:  # noqa: BLE001 - an audit row never stops the desk
+        return False
+
+
 class Supabase:
     def __init__(self, url: str, key: str, *, bucket: str = "sales-proposals", timeout: float = 60):
         if not url or not key:
@@ -90,6 +123,9 @@ class Supabase:
         self.key = key
         self.bucket = bucket
         self.timeout = timeout
+        # The database's clock against this machine's, from the last answer's
+        # Date header (seconds; None until an answer carried one).
+        self.clock_offset: Optional[float] = None
 
     # ---- plumbing --------------------------------------------------------
     def _headers(self, prefer: Optional[str] = None, extra: Optional[dict[str, str]] = None) -> dict[str, str]:
@@ -106,10 +142,13 @@ class Supabase:
         if json_body is not None:
             headers["Content-Type"] = "application/json"
             data = json.dumps(json_body, ensure_ascii=False, default=str).encode("utf-8")
-        _, _, body = http.request(
+        _, answered, body = http.request(
             method, f"{self.url}/rest/v1/{path}", headers=headers, data=data,
             timeout=self.timeout, retries=retries, ok_statuses=(200, 201, 204),
         )
+        off = clock_offset_of(answered, time.time())
+        if off is not None:
+            self.clock_offset = off
         if not body:
             return None
         try:

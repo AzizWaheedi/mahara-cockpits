@@ -2236,20 +2236,26 @@ export function makeRooms(deps: RoomDeps): Rooms {
   async function settleFacts(room: RoomRow, appt: Row | null, setting: RoomsSetting, contact: Row | null): Promise<SettleFacts> {
     const start = ms(appt?.start_at);
     const sinceStart = start === null ? null : isoAt(start - 60 * 60 * S);
-    const [byAppt, byLead, zoom] = await Promise.all([
+    const [byAppt, byLead, events] = await Promise.all([
       io.db(`${ROOMS}?appointment_id=eq.${enc(String(room.appointment_id))}&id=neq.${enc(room.id)}&select=*&limit=50`),
       sinceStart && room.contact_id
         ? io.db(`${ROOMS}?contact_id=eq.${enc(room.contact_id)}&id=neq.${enc(room.id)}&requested_at=gte.${enc(sinceStart)}&select=*&limit=50`)
         : Promise.resolve([] as Row[]),
-      room.provider === "zoom"
-        ? io.db(`${EVENTS}?room_id=eq.${enc(room.id)}&source=eq.zoom&select=handled_at,detail&limit=200`)
-        : Promise.resolve([] as Row[]),
+      io.db(`${EVENTS}?room_id=eq.${enc(room.id)}&source=in.(zoom,worker)&select=kind,source,at,handled_at,detail&limit=200`),
     ]);
     const siblings = [...byAppt, ...byLead] as unknown as RoomRow[];
+    const zoom = events.filter(e => e.source === "zoom");
+    const ended = ms(room.ended_at);
     return {
       short_link: setting.short_link,
       sibling_joined: siblings.some(r => leadJoined(r) || !isFinal(r.state)),
       zoom_unclear: zoom.some(e => !e.handled_at || obj(e.detail).gave_up === true),
+      late_join: events.some(
+        e =>
+          e.kind === "worker.held" ||
+          (e.kind === "zoom.meeting.participant_joined" &&
+            ((ended !== null && (ms(e.at) ?? 0) > ended) || obj(obj(e.detail).refused).code === "final")),
+      ),
       test_off_calendar:
         Boolean(room.contact_id) &&
         isTestContact(room.contact_id, contact?.tags, setting) &&
