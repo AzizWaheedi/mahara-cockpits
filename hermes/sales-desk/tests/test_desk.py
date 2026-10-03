@@ -1034,9 +1034,14 @@ class QueueTests(unittest.TestCase):
         self.assertTrue(queue.sync_offer(self.sb, changed, lambda _m: None))
         self.assertEqual(self.pg.one("cockpit_sales_settings", key="offer")["value"]["payments"][0]["label"], "Paid in full")
 
-    def test_the_real_offer_json_gives_the_three_keys_the_cockpit_was_seeded_with(self):
-        value = offer.cockpit_setting(offer.load())
-        self.assertEqual([p["key"] for p in value["payments"]], ["pif", "two_payments", "monthly"])
+    def test_the_real_offer_json_gives_the_two_plans_new_clients_get(self):
+        # Aziz, 2026-10-03: $6,000 paid in full, or $3,000 and $3,000 30 days later.
+        real = offer.load()
+        value = offer.cockpit_setting(real)
+        self.assertEqual([p["key"] for p in value["payments"]], ["pif", "two_payments"])
+        split = offer.resolve(real, {"payment": "two_payments"})["instalments"]
+        self.assertEqual([(i["amount"], i["due_days"]) for i in split], [(3000, 0), (3000, 30)])
+        self.assertEqual(offer.resolve(real, {"payment": "pif"})["instalments"][0]["amount"], 6000)
         self.assertEqual(value["guarantee"]["label"], "Include the 7-day satisfaction guarantee")
         unlabelled = copy.deepcopy(TEST_OFFER)
         del unlabelled["guarantee"]["label"]

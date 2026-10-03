@@ -104,7 +104,7 @@ setting `cockpit_sales_settings.offer`, so the form a closer picks from is
 always the file's.
 
 The closer's choice rides on the request:
-`{"lang": "ar"|"en", "recording_id"?, "proposal_id", "offer": {"guarantee": true|false, "payment": "pif"|"two_payments"|"monthly", "price"?: number, "months"?: number}}`.
+`{"lang": "ar"|"en", "recording_id"?, "proposal_id", "offer": {"guarantee": true|false, "payment": "pif"|"two_payments", "price"?: number, "months"?: number}}`.
 An option that is not in the file fails the request with a sentence naming
 the ones that are. The drafter is told exactly the chosen figures, the
 instalments and where each goes; it may not invent a schedule, and the
@@ -129,9 +129,12 @@ guaranteed, fails the validator whatever was chosen, while a line saying
 results cannot be guaranteed passes. The cockpit's form shows the file's
 `label`.
 
-**Aziz to confirm** (defaults written by the engineer, marked `confirm` in
-the file): the `two_payments` plan (half at the start, half 45 days in) and
-the `monthly` plan (one equal payment a month, the first at the start).
+**The payment plans** (Aziz, 2026-10-03: "we only have 2 options for newer
+clients $3k $3k after 30 days or $6k pif"): `pif`, the price paid in full at
+the start, and `two_payments`, half at the start and half 30 days later
+($3,000 and $3,000 at the program price). The monthly plan is gone. The New
+Client Form and HighLevel's Payment Structure For Program carry the same two
+as "Paid in full ($6,000)" and "Split pay ($3,000 + $3,000 after 30 days)".
 
 ## The model
 

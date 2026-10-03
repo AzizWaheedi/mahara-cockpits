@@ -26,6 +26,7 @@
   },
   "payment": {
     "default": "pif",
+    "source": "Aziz, 2026-10-03: \"we only have 2 options for newer clients $3k $3k after 30 days or $6k pif\". At the program price that is $6,000 paid in full, or $3,000 at the start and $3,000 30 days later; the monthly plan is no longer offered. The New Client Form and HighLevel's Payment Structure For Program say the same two: \"Paid in full ($6,000)\" and \"Split pay ($3,000 + $3,000 after 30 days)\".",
     "options": {
       "pif": {
         "label": "Paid in full at the start",
@@ -34,17 +35,11 @@
         ]
       },
       "two_payments": {
-        "label": "Two payments",
-        "confirm": "Aziz to confirm: half at the start, half 45 days in.",
+        "label": "Two payments: half at the start, half 30 days later",
         "instalments": [
           {"share": 1, "due_days": 0, "due": "at the start"},
-          {"share": 1, "due_days": 45, "due": "45 days after the start"}
+          {"share": 1, "due_days": 30, "due": "30 days after the start"}
         ]
-      },
-      "monthly": {
-        "label": "Monthly across the term",
-        "confirm": "Aziz to confirm: one equal payment a month, the first at the start.",
-        "per_month": true
       }
     }
   },

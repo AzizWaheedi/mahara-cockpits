@@ -1114,11 +1114,8 @@ export const CLIENT_FORM: Row = {
           type: "dropdown",
           required: false,
           choices: [
-            "Paid in full (90 days)",
-            "Split Pay (2x payments)",
-            "1.5K Start / $2.5K Months After",
-            "Monthly",
-            "Performance Offer",
+            "Paid in full ($6,000)",
+            "Split pay ($3,000 + $3,000 after 30 days)",
           ],
           description: "Select the payment structure agreed for this program.",
         },
@@ -1134,11 +1131,10 @@ export const CLIENT_FORM: Row = {
           type: "dropdown",
           required: false,
           choices: [
-            "3 Month Program / 30-Appointment Guarantee",
+            "3 Month Program / 7-Day Satisfaction Guarantee",
             "3 Month Program / No Guarantee",
             "60 Day Agreement",
             "Month To Month",
-            "Special Offer",
             "NA - Already Sent",
           ],
           description:
@@ -1257,8 +1253,11 @@ export const SETTINGS: Row[] = [
     key: "offer",
     value: {
       payments: [
-        { key: "pif", label: "Paid in full" },
-        { key: "plan_3", label: "Deposit, then three payments" },
+        { key: "pif", label: "Paid in full at the start" },
+        {
+          key: "two_payments",
+          label: "Two payments: half at the start, half 30 days later",
+        },
       ],
       guarantee: {
         label: "Include the 7-day satisfaction guarantee",
@@ -1270,9 +1269,9 @@ export const SETTINGS: Row[] = [
     value: {
       templates: [
         {
-          id: "6905c43fc69d72f15bd69206",
-          name: "90 Day Agreement",
-          fields: ["company_name", "payment_structure", "daily_ad_spend"],
+          id: "6abe230d6bbbd5d9235bb774",
+          name: "90 Day Agreement (7 Day Satisfaction Guarantee)",
+          fields: ["company_name", "payment_structure"],
         },
         {
           id: "69d25fce5d2b0f67fa21caab",
@@ -1290,10 +1289,8 @@ export const SETTINGS: Row[] = [
         payment_structure: {
           id: "pay",
           options: [
-            "Paid in full (90 days)",
-            "Split Pay (2x payments)",
-            "1.0K Start / $2K Months After",
-            "Monthly",
+            "Paid in full ($6,000)",
+            "Split pay ($3,000 + $3,000 after 30 days)",
           ],
         },
       },
