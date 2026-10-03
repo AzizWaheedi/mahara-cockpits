@@ -57,13 +57,63 @@ export type RoomResult =
 
 /**
  * Where the link went: the glossary's `rooms.send` keys (1.4), which are
- * also sales-api's LINK_CHANNELS. The contract types `link_channels` as
- * `string[]`; the database's check also allows `whatsapp` (read as
- * WhatsApp) and `read_out` (no message went), and anything else is
- * ignored. Whether a template went unconfirmed is not a channel: it is
- * `link_unconfirmed_at`.
+ * also sales-api's LINK_CHANNELS and the only values the database's check
+ * allows (contract v2 section 3). There is no `read_out` and no bare
+ * `whatsapp`: a link nobody sent is a room with no `link_sent_at`, and
+ * anything else in the list is ignored. Whether a template went
+ * unconfirmed is not a channel either: it is `link_unconfirmed_at`.
  */
 export type LinkChannel = "whatsapp_text" | "whatsapp_template" | "email";
+export const LINK_CHANNELS: readonly LinkChannel[] = [
+  "whatsapp_text",
+  "whatsapp_template",
+  "email",
+];
+
+/** What the short page saw the lead open the link on; null when not known. */
+export type Device = "phone" | "tablet" | "computer";
+export const DEVICES: readonly Device[] = ["phone", "tablet", "computer"];
+
+/**
+ * Every key of a RoomView as contract v2 serves it (section 3): roomlogic's
+ * ROOM_VIEW_KEYS plus the six it adds. `start_url` is never one of them.
+ */
+export const ROOM_VIEW_KEYS = [
+  "id",
+  "code",
+  "contact_id",
+  "contact_first_name",
+  "purpose",
+  "call_kind",
+  "provider",
+  "host_email",
+  "state",
+  "version",
+  "short_url",
+  "join_url",
+  "link_channels",
+  "link_sent_at",
+  "link_unconfirmed_at",
+  "first_open_at",
+  "open_device",
+  "lead_waiting_at",
+  "host_in_at",
+  "lead_in_at",
+  "ended_at",
+  "host_by",
+  "lead_by",
+  "ends_at",
+  "starts_at",
+  "result",
+  "count_result",
+  "error",
+  "refusal",
+  "created_at",
+  "trigger",
+  "attempt_id",
+  "appointment_id",
+  "handover_id",
+] as const;
 
 /** A room as the browser sees it. `start_url` is never part of it. */
 export interface RoomView {
@@ -83,7 +133,7 @@ export interface RoomView {
   link_channels: string[];
   link_sent_at: string | null;
   first_open_at: string | null;
-  open_device: string | null;
+  open_device: Device | null;
   lead_waiting_at: string | null;
   host_in_at: string | null;
   lead_in_at: string | null;
@@ -99,7 +149,8 @@ export interface RoomView {
   refusal: string | null;
   /** sales-api sends null when the row has neither time (roomlogic toRoomView). */
   created_at: string | null;
-  // Asked of the contract by this lane (not served yet; read when present):
+  // Contract v2 adds these six (section 3). They are read when present, so
+  // an answer from a sales-api that does not send them yet still draws.
   /** The WhatsApp template was not seen within 20 s, so email went too. */
   link_unconfirmed_at?: string | null;
   /** What made the room, so "Try Zoom" makes the same kind of room. */
@@ -139,7 +190,7 @@ export interface Presence {
   room_id: string | null;
   zoom_status: ZoomStatus | null;
   default_provider: Provider;
-  // Asked of the contract by this lane (read when present):
+  // Contract v2 (section 3), read when present:
   /**
    * Why the seat is Away, as the database writes it: `missed_offer` (one
    * miss), `booked_call_soon` (the sweep closed the room before a booked
@@ -173,8 +224,11 @@ export interface LiveStatus {
   offers: Offer[];
   /** null when the answer carried none it could read. */
   health: Health | null;
-  // Asked of the contract by this lane (read when present):
-  /** False while live calls are off but rooms are on: no presence, no offers. */
+  // Contract v2 (section 4), read when present:
+  /**
+   * False while rooms are on and live calls are off: presence is still
+   * sent, but `offers` is empty and the strip stays out of the way.
+   */
   live_enabled?: boolean;
   /** Why the seat's standby room could not be made, as a sentence. */
   standby_error?: string | null;
@@ -333,7 +387,7 @@ export function normalizeRoom(v: unknown): RoomView | null {
     ),
     link_sent_at: when(v.link_sent_at),
     first_open_at: when(v.first_open_at),
-    open_device: str(v.open_device),
+    open_device: oneOf(DEVICES, v.open_device) ? v.open_device : null,
     lead_waiting_at: when(v.lead_waiting_at),
     host_in_at: when(v.host_in_at),
     lead_in_at: when(v.lead_in_at),
@@ -582,14 +636,10 @@ export function readOut(room: RoomView): string | null {
   return said;
 }
 
-/**
- * The glossary's names, and the database's `whatsapp` too. `read_out` and
- * anything unknown say nothing.
- */
+/** The glossary's three channels; anything else says nothing. */
 const CHANNEL: Record<string, string> = {
   whatsapp_text: "WhatsApp",
   whatsapp_template: "WhatsApp",
-  whatsapp: "WhatsApp",
   email: "email",
 };
 
@@ -597,7 +647,7 @@ const CHANNEL: Record<string, string> = {
 export function channelWords(channels: readonly string[]): string | null {
   const names: string[] = [];
   for (const c of channels) {
-    const n = CHANNEL[c];
+    const n = Object.hasOwn(CHANNEL, c) ? CHANNEL[c] : undefined;
     if (n && !names.includes(n)) names.push(n);
   }
   if (!names.length) return null;
@@ -2057,17 +2107,42 @@ function nudge<T extends { room?: RoomView }>(p: Promise<T>): Promise<T> {
   });
 }
 
-/** room.end's answer; `replacement` is the Zoom room an "I can't let them in" made. */
+/**
+ * room.end's answer. After "I can't let them in" (`admit_blocked`)
+ * sales-api makes the room on the other provider inside the same request:
+ * `replacement` is that room, or `replacement_refusal` says why it could
+ * not be made (contract v2 section 4).
+ */
 export interface EndAnswer {
   room: RoomView;
   replacement?: RoomView;
+  replacement_refusal?: string;
 }
 
-function endAnswer(v: unknown): EndAnswer {
+export function endAnswer(v: unknown): EndAnswer {
   const out: EndAnswer = roomAnswer(v);
   const next = isObj(v) ? normalizeRoom(v.replacement) : null;
   if (next) out.replacement = next;
+  const no = isObj(v) ? str(v.replacement_refusal) : null;
+  if (no && !next) out.replacement_refusal = no;
   return out;
+}
+
+/**
+ * What the panel does after "I can't let them in" closed the Meet room:
+ * show the room sales-api made, say why it could not, or (from a sales-api
+ * that answers with neither) make the Zoom room itself.
+ */
+export function afterAdmitBlocked(
+  out: EndAnswer,
+):
+  | { kind: "show"; room: RoomView }
+  | { kind: "refused"; text: string }
+  | { kind: "make" } {
+  if (out.replacement) return { kind: "show", room: out.replacement };
+  if (out.replacement_refusal)
+    return { kind: "refused", text: out.replacement_refusal };
+  return { kind: "make" };
 }
 
 export const roomsApi = {
@@ -2153,14 +2228,35 @@ export const roomsApi = {
     ),
 };
 
-/** A refusal the server sends when a press saw an older room. */
-export function isStale(e: unknown): boolean {
-  return e instanceof ApiError && /changed a moment ago/i.test(e.message);
+/**
+ * The refusal's code when the server sent one (contract v2 section 3),
+ * else null. Screens read the code first and match words only for an
+ * answer without one.
+ */
+export function refusalCode(e: unknown): string | null {
+  return e instanceof ApiError ? e.code : null;
 }
 
-/** The server asks before it ends a room with the lead still in it. */
+/**
+ * A refusal the server sends when a press saw an older room: code `stale`,
+ * or, from a sales-api that sends no code yet, its pinned sentence "This
+ * changed a moment ago." (roomlogic.copy.test.ts).
+ */
+export function isStale(e: unknown): boolean {
+  if (!(e instanceof ApiError)) return false;
+  if (e.code) return e.code === "stale";
+  return /changed a moment ago/i.test(e.message);
+}
+
+/**
+ * The server asks before it ends a room with the lead still in it: code
+ * `confirm_end`, or the pinned sentence "The lead is still in this room.
+ * End it anyway?".
+ */
 export function needsEndConfirm(e: unknown): boolean {
-  return e instanceof ApiError && /still in this room/i.test(e.message);
+  if (!(e instanceof ApiError)) return false;
+  if (e.code) return e.code === "confirm_end";
+  return /still in this room/i.test(e.message);
 }
 
 /**
@@ -2641,30 +2737,141 @@ export interface LiveFeed extends Poll<LiveStatus> {
   off: boolean;
 }
 
-/** The strip's single poll: presence, offers, open rooms and health. */
-export function useLiveStatus(enabled: boolean): LiveFeed {
-  const poll = usePoll<LiveStatus>(
-    enabled ? "live.status" : null,
-    roomsApi.liveStatus,
-    liveDelay,
-    mergeLive,
-    null,
-    { whileHidden: true, serverNow: d => d.now },
-  );
-  const { reload, set } = poll;
-  useEffect(() => {
-    if (!enabled) return;
-    const changed = (e: Event) => {
-      const room = normalizeRoom((e as CustomEvent).detail);
-      if (room) set(prev => (prev ? withRoom(prev, room) : prev));
-      reload();
-    };
-    window.addEventListener(ROOMS_CHANGED, changed);
-    return () => window.removeEventListener(ROOMS_CHANGED, changed);
-  }, [enabled, reload, set]);
+// ---------------------------------------------------------------------------
+// live.status, read once for the whole page
+// ---------------------------------------------------------------------------
+
+/** What a page needs to subscribe to one shared read. */
+export interface LiveStore {
+  /** Listen; the current snapshot is said at once. Returns the way out. */
+  join: (fn: (s: PollSnapshot<LiveStatus>) => void) => () => void;
+  kick: () => void;
+  set: (fn: (prev: LiveStatus | null) => LiveStatus | null) => void;
+  snapshot: () => PollSnapshot<LiveStatus> | null;
+  /** Whether a read is running (tests). */
+  running: () => boolean;
+}
+
+/**
+ * One live.status read for everyone on the page: the banner, the dialer's
+ * room and the lead page's room all listen to the same poll, so a page with
+ * three of them still reads every 4 s, not three times as often. The poll
+ * starts with the first listener and stops a moment after the last one
+ * leaves (a quick remount, as React's strict mode does, keeps it).
+ */
+export function createLiveStore(o: {
+  fetcher: () => Promise<LiveStatus>;
+  env?: PollEnv;
+  /** How long the poll outlives its last listener (ms). */
+  linger?: number;
+}): LiveStore {
+  const linger = o.linger ?? 1500;
+  const subs = new Set<(s: PollSnapshot<LiveStatus>) => void>();
+  let poller: Poller<LiveStatus> | null = null;
+  let snap: PollSnapshot<LiveStatus> | null = null;
+  let stopTimer: number | null = null;
+  const env = () => o.env ?? browserPollEnv();
+  const say = (next: PollSnapshot<LiveStatus>) => {
+    snap = next;
+    for (const fn of [...subs]) fn(next);
+  };
+  const start = () => {
+    poller = startPoll<LiveStatus>({
+      fetcher: o.fetcher,
+      delay: liveDelay,
+      merge: mergeLive,
+      whileHidden: true,
+      serverNow: d => d.now,
+      onChange: say,
+      env: env(),
+    });
+  };
   return {
-    ...poll,
-    off: poll.errorKind === "refused" || poll.errorKind === "signin",
+    join(fn) {
+      subs.add(fn);
+      if (stopTimer !== null) {
+        env().win.clearTimeout(stopTimer);
+        stopTimer = null;
+      }
+      if (!poller) start();
+      // A read that had stopped (a refusal, a sign-in that lapsed) is
+      // tried again for a page that comes to it fresh.
+      else if (snap?.stopped) poller.kick();
+      const now = poller?.snapshot() ?? snap;
+      if (now) fn(now);
+      return () => {
+        subs.delete(fn);
+        if (subs.size || stopTimer !== null) return;
+        stopTimer = env().win.setTimeout(() => {
+          stopTimer = null;
+          if (subs.size) return;
+          poller?.stop();
+          poller = null;
+          snap = null;
+        }, linger);
+      };
+    },
+    kick: () => poller?.kick(),
+    set: fn => poller?.set(fn),
+    snapshot: () => poller?.snapshot() ?? snap,
+    running: () => poller !== null,
+  };
+}
+
+let pageLive: LiveStore | null = null;
+
+/** The page's one live.status store, made on first use. */
+function liveStore(): LiveStore {
+  if (!pageLive) {
+    const store = createLiveStore({ fetcher: () => roomsApi.liveStatus() });
+    pageLive = store;
+    // A press that made, changed or ended a room tells the strip at once,
+    // with the room, so a read already on its way cannot bring it back.
+    try {
+      window.addEventListener(ROOMS_CHANGED, e => {
+        const room = normalizeRoom((e as CustomEvent).detail);
+        if (room) store.set(prev => (prev ? withRoom(prev, room) : prev));
+        store.kick();
+      });
+    } catch {
+      // No window (tests).
+    }
+  }
+  return pageLive;
+}
+
+/**
+ * The strip's single poll, shared by every part of the page that needs
+ * the seat's presence, offers, open rooms and health.
+ */
+export function useLiveStatus(enabled: boolean): LiveFeed {
+  const [snap, setSnap] = useState<PollSnapshot<LiveStatus> | null>(null);
+  useEffect(() => {
+    if (!enabled) {
+      setSnap(null);
+      return;
+    }
+    return liveStore().join(setSnap);
+  }, [enabled]);
+  const reload = useCallback(() => liveStore().kick(), []);
+  const set = useCallback(
+    (fn: (prev: LiveStatus | null) => LiveStatus | null) => liveStore().set(fn),
+    [],
+  );
+  const s = enabled ? snap : null;
+  const { kind, status } = failureOf(s?.error ?? null);
+  return {
+    data: s?.data ?? null,
+    error: s?.error ? errorText(s.error) : null,
+    errorKind: kind,
+    errorStatus: status,
+    okAt: s?.okAt ?? null,
+    failures: s?.failures ?? 0,
+    stopped: s?.stopped ?? false,
+    offset: s?.offset ?? 0,
+    reload,
+    set,
+    off: kind === "refused" || kind === "signin",
   };
 }
 

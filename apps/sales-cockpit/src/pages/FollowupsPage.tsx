@@ -23,6 +23,7 @@ import {
   select,
   type Tone,
 } from "../components/kit";
+import { WavesCard } from "../components/WavesCard";
 import { useWorkflows, WhatsAppLibrary } from "../components/WhatsAppLibrary";
 import { api } from "../lib/api";
 import { useLeadsById, useQuery, useSetting, useTemplates } from "../lib/data";
@@ -54,8 +55,10 @@ type Segment =
   | "no_show"
   | "cancelled"
   | "new"
+  | "good_intro"
   | "after_call"
-  | "nurture";
+  | "nurture"
+  | "reactivate";
 type FChannel = "whatsapp" | "whatsapp_template" | "email";
 
 interface Followup {
@@ -122,10 +125,20 @@ const SEGMENT: Record<Segment, { label: string; tone: Tone }> = {
   no_show: { label: "Missed their call", tone: "warning" },
   cancelled: { label: "Cancelled", tone: "warning" },
   new: { label: "New lead", tone: "good" },
+  good_intro: { label: "Good intro, no demo", tone: "neutral" },
   after_call: { label: "After the demo", tone: "neutral" },
   nurture: { label: "Long-term", tone: "neutral" },
+  // A backlog wave's opener (desk NOTES section 5): the CEO's fixed words,
+  // approved by the batch on the waves card, never sent by itself.
+  reactivate: { label: "Backlog opener", tone: "neutral" },
 };
-const SEGMENTS = Object.keys(SEGMENT) as Segment[];
+/** A kind this page does not know yet still has a label. */
+const segmentOf = (s: string) =>
+  SEGMENT[s as Segment] ?? { label: "Follow-up", tone: "neutral" as Tone };
+/** The kinds a rep decides one by one; backlog openers go by the batch. */
+const SEGMENTS: Segment[] = (Object.keys(SEGMENT) as Segment[]).filter(
+  s => s !== "reactivate",
+);
 const CHANNEL: Record<FChannel, string> = {
   whatsapp: "WhatsApp",
   whatsapp_template: "WhatsApp template",
@@ -195,12 +208,13 @@ export default function FollowupsPage({ me }: { me: Me }) {
   const templates = useTemplates();
   const all = rows.data ?? [];
   // The most urgent kind first, and within a kind the hottest lead first.
+  const open = (f: Followup) =>
+    f.status === "draft" &&
+    (!f.expires_at || Date.parse(f.expires_at) > Date.now());
+  // Backlog openers are approved together on the waves card.
+  const openers = all.filter(f => f.segment === "reactivate" && open(f));
   const waiting = all
-    .filter(
-      f =>
-        f.status === "draft" &&
-        (!f.expires_at || Date.parse(f.expires_at) > Date.now()),
-    )
+    .filter(f => f.segment !== "reactivate" && open(f))
     .sort(
       (a, b) =>
         SEGMENTS.indexOf(a.segment) - SEGMENTS.indexOf(b.segment) ||
@@ -292,6 +306,17 @@ export default function FollowupsPage({ me }: { me: Me }) {
         jobs={[{ job: "followups", what: "The follow-up agent", staleMin: 75 }]}
       />
       <WhatsappHealth />
+
+      {tab === "waiting" && (me.manager || openers.length) ? (
+        <WavesCard
+          manager={Boolean(me.manager)}
+          enabled={settings.data ? settings.data.enabled !== false : null}
+          settings={settings.data}
+          openers={openers}
+          nameOf={nameOf}
+          onChanged={rows.reload}
+        />
+      ) : null}
 
       {tab === "library" ? (
         <WhatsAppLibrary manager={Boolean(me.manager)} />
@@ -390,7 +415,7 @@ function DraftCard({
   const [settled, setSettled] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [skipping, setSkipping] = useState(false);
-  const seg = SEGMENT[f.segment];
+  const seg = segmentOf(f.segment);
   const template =
     f.channel === "whatsapp_template"
       ? ((templates.data ?? []).find(t => t.key === f.template_key) ?? null)
@@ -721,7 +746,7 @@ function SentList({
                   {nameOf.get(f.contact_id) ?? "A lead"}
                 </Link>{" "}
                 <span className="muted">
-                  · {SEGMENT[f.segment].label} · {CHANNEL[f.channel]}
+                  · {segmentOf(f.segment).label} · {CHANNEL[f.channel]}
                 </span>
               </p>
               <p className="muted truncate text-xs" dir="auto">

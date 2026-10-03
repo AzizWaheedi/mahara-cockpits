@@ -4,7 +4,8 @@
  * Nothing here is a real lead; "Faisal" is the harness's lead-1 and the
  * hosts are the harness's made-up team.
  *
- * Stage 2 wires the knobs into src/dev/harness.tsx:
+ * src/dev/harness.tsx reads these knobs (src/dev/liveHarness.ts keeps the
+ * room's state between presses):
  *   room   making | ready | sent | not_sent | not_sent_zoom | not_confirmed |
  *          opened | waiting | host_in | joined | joined_marked |
  *          joined_not_lead | still_on_call | expired | failed |
@@ -115,6 +116,13 @@ export function baseRoom(now: number, over: Partial<RoomView> = {}): RoomView {
     error: null,
     refusal: null,
     created_at: iso(now - MIN),
+    // Contract v2's six (section 3): served on every room, null when not known.
+    link_unconfirmed_at: null,
+    starts_at: null,
+    trigger: null,
+    attempt_id: null,
+    appointment_id: null,
+    handover_id: null,
     ...over,
   };
 }
@@ -154,7 +162,8 @@ export function healthFixture(now: number, down = false): Health {
   };
 }
 
-function events(now: number, room: RoomView): RoomEvent[] {
+/** The room's timeline as room.status sends it, from its own times. */
+export function roomEvents(now: number, room: RoomView): RoomEvent[] {
   const made = room.created_at ?? iso(now - MIN);
   const out: RoomEvent[] = [
     {
@@ -358,6 +367,7 @@ export function roomFixture(
       room = baseRoom(now, {
         ...ZOOM,
         purpose: "handover",
+        handover_id: "live-1",
         call_kind: "demo",
         contact_first_name: "Mona",
         host_email: "omar@example.com",
@@ -376,6 +386,8 @@ export function roomFixture(
         ...ZOOM,
         purpose: "booked",
         call_kind: "demo",
+        appointment_id: "appt-demo-1",
+        starts_at: iso(start),
         host_email: "omar@example.com",
         host_by: iso(start + 15 * MIN),
         lead_by: iso(start + 20 * MIN),
@@ -397,7 +409,11 @@ export function roomFixture(
       break;
   }
   return {
-    feed: { room, events: events(now, room), health: healthFixture(now, down) },
+    feed: {
+      room,
+      events: roomEvents(now, room),
+      health: healthFixture(now, down),
+    },
     canMarkIntro,
   };
 }
@@ -424,7 +440,7 @@ export function standbyFixture(
   });
 }
 
-function presence(over: Partial<Presence> = {}): Presence {
+export function presence(over: Partial<Presence> = {}): Presence {
   return {
     email: "omar@example.com",
     state: "away",

@@ -24,11 +24,22 @@ export class ApiError extends Error {
   readonly kind: ApiFailure;
   /** The HTTP status, when an answer came back. */
   readonly status: number | null;
-  constructor(message: string, kind: ApiFailure, status: number | null = null) {
+  /**
+   * The refusal's code (`stale`, `confirm_end`, `disabled` and the rest),
+   * when the server sent one: screens read it before they match words.
+   */
+  readonly code: string | null;
+  constructor(
+    message: string,
+    kind: ApiFailure,
+    status: number | null = null,
+    code: string | null = null,
+  ) {
     super(message);
     this.name = "ApiError";
     this.kind = kind;
     this.status = status;
+    this.code = code;
   }
 }
 
@@ -36,6 +47,13 @@ export class ApiError extends Error {
 export interface ApiBody {
   ok?: boolean;
   error?: string;
+  /** A refusal's code (contract v2 section 3), when the server sends one. */
+  code?: string;
+}
+
+/** A code is a short snake_case word; anything else is not one. */
+function codeOf(v: unknown): string | null {
+  return typeof v === "string" && /^[a-z][a-z0-9_]{0,39}$/.test(v) ? v : null;
 }
 
 export const UNREACHED =
@@ -75,6 +93,7 @@ export function answerFailure(
     body?.error ?? `The server answered ${status}. Try again.`,
     status >= 500 || !body?.error ? "server" : "refused",
     status,
+    codeOf(body?.code),
   );
 }
 

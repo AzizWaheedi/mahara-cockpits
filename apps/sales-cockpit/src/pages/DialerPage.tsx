@@ -45,6 +45,7 @@ import {
 import { Answers } from "../components/LeadAnswers";
 import { LeadTimeline, type LiveMessage } from "../components/LeadTimeline";
 import { ResearchPanel } from "../components/ResearchPanel";
+import { RoomPanel } from "../components/RoomPanel";
 import {
   Blocks,
   BranchGroup,
@@ -57,6 +58,15 @@ import {
   useScript,
   writePrefs,
 } from "../components/ScriptParts";
+import {
+  AutoVideoStrip,
+  createAsk,
+  type RoomsSetup,
+  useLeadRoom,
+  useRoomsSetup,
+  VideoLinkButton,
+  VideoPicker,
+} from "../components/VideoLink";
 import { ApiError, api, uncertain } from "../lib/api";
 import { assetStage, objectionsFrom } from "../lib/assets";
 import { CLIENT_NOTE, isClient } from "../lib/clients";
@@ -118,10 +128,19 @@ import {
   plainStage,
   when,
 } from "../lib/format";
+import { errorText, roomsApi } from "../lib/rooms";
 import { type Fill, groupBlocks, personalise } from "../lib/script";
 import { toast } from "../lib/toast";
 import type { Lead, Me } from "../lib/types";
-import { leadLanguage, type Moment } from "../lib/whatsapp";
+import {
+  linkPlanLine,
+  missTrigger,
+  NOBODY_SPOKE_VIDEO,
+  providerChoice,
+  type Trigger,
+  videoLinkGate,
+} from "../lib/videoLink";
+import { firstWord, leadLanguage, type Moment } from "../lib/whatsapp";
 
 /**
  * The power dialer, level with the call centre's (mahara-power-dialer): the
@@ -512,6 +531,8 @@ export default function DialerPage({ me }: { me: Me }) {
   const [resent, setResent] = useState<ReadonlySet<string>>(() => new Set());
   const maqsam = useAgent();
   const wa = useWaKit();
+  // The video room switches, read once for every lead the page shows.
+  const roomsSetup = useRoomsSetup();
   // The call this page placed, and when: a read of the queue asked before
   // it cannot know it, so that read must not end it on screen.
   const placed = useRef<{ attempt: Attempt; at: number } | null>(null);
@@ -862,6 +883,7 @@ export default function DialerPage({ me }: { me: Me }) {
             callRef={callRef}
             nextRef={nextRef}
             wa={wa}
+            roomsSetup={roomsSetup}
             talk={talk}
             onCalled={a => {
               placed.current = { attempt: a, at: Date.now() };
@@ -922,6 +944,7 @@ function LeadWork({
   callRef,
   nextRef,
   wa,
+  roomsSetup,
   talk,
   onCalled,
   onFinished,
@@ -942,6 +965,7 @@ function LeadWork({
   /** Next lead, for Alt+→, while it shows. */
   nextRef: MutableRefObject<(() => void) | null>;
   wa: WaKit;
+  roomsSetup: RoomsSetup;
   talk: { n: number; moment: Moment | null };
   onCalled: (a: Attempt) => void;
   onFinished: (
@@ -973,6 +997,7 @@ function LeadWork({
         nextRef={nextRef}
         convo={convo}
         wa={wa}
+        roomsSetup={roomsSetup}
         onCalled={onCalled}
         onFinished={onFinished}
         onStay={onStay}
@@ -1501,6 +1526,7 @@ function CallPane({
   nextRef,
   convo,
   wa,
+  roomsSetup,
   onCalled,
   onFinished,
   onStay,
@@ -1520,6 +1546,7 @@ function CallPane({
   nextRef: MutableRefObject<(() => void) | null>;
   convo: ReturnType<typeof useConversation>;
   wa: WaKit;
+  roomsSetup: RoomsSetup;
   onCalled: (a: Attempt) => void;
   onFinished: (
     contactId: string,
@@ -1586,17 +1613,102 @@ function CallPane({
   const miss = missStep(missMoment, convo, wa);
   const noteRef = useRef<HTMLTextAreaElement>(null);
   const saveRef = useRef<HTMLButtonElement>(null);
+  // The video link after a call that did not connect (P1): how it missed,
+  // and for which call, kept after the call is saved; the picker; and
+  // automatic mode's ten seconds.
+  const [missed, setMissed] = useState<{
+    trigger: Trigger;
+    attemptId: string | null;
+  } | null>(null);
+  const [picking, setPicking] = useState(false);
+  const [autoAt, setAutoAt] = useState<number | null>(null);
+  const [autoError, setAutoError] = useState<string | null>(null);
+  // Automatic mode runs once for each call that missed, Stop or not.
+  const autoRan = useRef(new Set<string>());
+  const video = useLeadRoom(contactId);
   const status = useCallStatus(open, () => {
     // Maqsam's record saved it as No answer. A save of the rep's own on its
     // way decides what shows (only one of the two can land); otherwise the
     // lead stays with Next lead ready for Enter.
     if (busyRef.current) return;
+    setMissed(m => m ?? { trigger: "no_answer", attemptId: open?.id ?? null });
     onStay(contactId);
     setSaved("Saved from Maqsam's record: No answer");
     setMissBy("auto");
     setMode(m => (m === "outcomes" ? "unanswered" : m));
     toast.success("No answer, saved from Maqsam's record.");
   });
+  const liveMiss = missTrigger({
+    attemptFailed: open?.state === "failed",
+    call: status.call,
+  });
+  const openId = open?.id ?? null;
+  useEffect(() => {
+    if (liveMiss) setMissed({ trigger: liveMiss, attemptId: openId });
+  }, [liveMiss, openId]);
+  const bookedIntro =
+    (kind === "intro" || kind === "confirm") && appt?.type === "intro";
+  const gate = videoLinkGate({
+    setting: roomsSetup.rooms,
+    contactId,
+    seatEmail: me.email,
+    purpose: "fallback",
+    bookedIntro,
+    bookedDemo: appt?.type === "demo",
+    client: isClient(l),
+    dnd: Boolean(l?.dnd),
+  });
+  const choice = roomsSetup.rooms
+    ? providerChoice({
+        setting: roomsSetup.rooms,
+        role: as,
+        me: video.presence,
+        kind: "intro",
+      })
+    : null;
+  const videoAsk = {
+    contactId,
+    purpose: "fallback" as const,
+    callKind: "intro" as const,
+    attemptId: missed?.attemptId ?? null,
+    appointmentId: bookedIntro ? (appt?.id ?? null) : null,
+  };
+  // "Send a video link" shows on every outcome but Answered, never for a
+  // client, while no room is open for the lead (P1).
+  const offerVideo =
+    gate.show && missed !== null && choice !== null && !video.open;
+  const autoKey = missed ? `${contactId}:${missed.attemptId ?? "save"}` : "";
+  useEffect(() => {
+    if (
+      !offerVideo ||
+      !roomsSetup.rooms?.fallback.auto_on_miss ||
+      autoRan.current.has(autoKey)
+    )
+      return;
+    autoRan.current.add(autoKey);
+    setAutoAt(Date.now());
+  }, [offerVideo, autoKey, roomsSetup.rooms?.fallback.auto_on_miss]);
+  async function autoSend() {
+    setAutoAt(null);
+    if (!choice || video.open) return;
+    const ask = createAsk({ ...videoAsk, trigger: "auto" }, choice.first);
+    try {
+      const out = await roomsApi.create(ask);
+      video.setRoom(out.room, ask);
+    } catch (e) {
+      // Said in the picker, which stays for a press of the rep's own.
+      setAutoError(errorText(e));
+      setPicking(true);
+    }
+  }
+  async function markIntro(status: "noshow" | "showed") {
+    if (!appt) return;
+    await api("mark", {
+      appointment_id: appt.id,
+      status,
+      reason: null,
+    });
+  }
   const outcomes = OUTCOMES[kind];
   const chosen = outcomes.find(o => o.key === draft.outcome) ?? null;
   const dnd = Boolean(l?.dnd);
@@ -1655,6 +1767,11 @@ function CallPane({
       });
       onCalled(out.attempt);
       if (!mounted.current) return;
+      // A new call: whether it connects is this call's question now.
+      setMissed(null);
+      setPicking(false);
+      setAutoAt(null);
+      setAutoError(null);
       // Calling again after a saved call: back to saying how this one went.
       setSaved(null);
       setSaveNote(null);
@@ -1759,6 +1876,10 @@ function CallPane({
         return;
       }
       // A no-answer to message: the box opens with the ready message.
+      if (outcome === "no_answer")
+        setMissed(
+          m => m ?? { trigger: "no_answer", attemptId: attempt?.id ?? null },
+        );
       setSaved(words);
       setMissBy("message");
       setMode("unanswered");
@@ -1840,6 +1961,11 @@ function CallPane({
         dnd={dnd}
         saved={saved}
         doubt={doubt}
+        onVideo={
+          offerVideo && !picking && autoAt === null
+            ? () => setPicking(true)
+            : null
+        }
       />
       <div className="space-y-4 p-4">
         <div className="flex flex-wrap items-center gap-2">
@@ -1891,6 +2017,47 @@ function CallPane({
           onCheck={() => void agent.check()}
         />
 
+        {/* A room still running always shows; a closed one gives way to a
+            new link being asked for. */}
+        {video.room && (video.open || (!picking && autoAt === null)) ? (
+          <RoomPanel
+            room={video.room}
+            request={video.request}
+            onRoomChange={r => video.setRoom(r)}
+            onMarkIntro={bookedIntro && appt ? markIntro : undefined}
+          />
+        ) : autoAt !== null && offerVideo ? (
+          <AutoVideoStrip
+            name={firstWord(l?.name ?? null)}
+            startedAt={autoAt}
+            onStop={() => setAutoAt(null)}
+            onSend={() => void autoSend()}
+          />
+        ) : picking && offerVideo && choice && missed ? (
+          <VideoPicker
+            {...videoAsk}
+            trigger={missed.trigger}
+            choice={choice}
+            planLine={linkPlanLine({
+              setting: roomsSetup.rooms as NonNullable<typeof roomsSetup.rooms>,
+              whatsapp: convo.data?.channels.whatsapp,
+              email: convo.data?.channels.email,
+              guardOpen: roomsSetup.guard,
+              templateLive: roomsSetup.templateLive,
+            })}
+            initialError={autoError}
+            onRoom={(room, ask) => {
+              video.setRoom(room, ask);
+              setPicking(false);
+              setAutoError(null);
+            }}
+            onCancel={() => {
+              setPicking(false);
+              setAutoError(null);
+            }}
+          />
+        ) : null}
+
         {mode === "held" ? (
           <NextStep
             title="The intro is marked held. What next?"
@@ -1925,6 +2092,11 @@ function CallPane({
             focusNext={missBy === "auto"}
             onTalk={onTalk}
             onNext={toNext}
+            onVideo={
+              offerVideo && !picking && autoAt === null
+                ? () => setPicking(true)
+                : null
+            }
           />
         ) : mode === "book" || mode === "move" ? (
           <BookForm
@@ -2178,6 +2350,7 @@ function AfterMissStep({
   focusNext,
   onTalk,
   onNext,
+  onVideo = null,
 }: {
   step: AfterMiss;
   moment: MissMoment;
@@ -2185,6 +2358,8 @@ function AfterMissStep({
   focusNext: boolean;
   onTalk: (moment?: Moment) => void;
   onNext: () => void;
+  /** "Send a video link" (P1), while one can be sent for this lead. */
+  onVideo?: (() => void) | null;
 }) {
   return (
     <NextStep title={step.title} text={step.text}>
@@ -2199,6 +2374,7 @@ function AfterMissStep({
           {step.send === "whatsapp" ? "WhatsApp them" : "Email them"}
         </button>
       ) : null}
+      {onVideo ? <VideoLinkButton onPress={onVideo} /> : null}
     </NextStep>
   );
 }
@@ -2217,6 +2393,7 @@ function CallBand({
   dnd,
   saved,
   doubt,
+  onVideo = null,
 }: {
   item: DialItem | null;
   open: Attempt | null;
@@ -2227,6 +2404,8 @@ function CallBand({
   saved: string | null;
   /** A call that may have gone out although no clear answer came back. */
   doubt: string | null;
+  /** "Send a video link" (P1) on the line of a call that did not connect. */
+  onVideo?: (() => void) | null;
 }) {
   const now = useNow(1000);
   const urgent = useMemo(
@@ -2242,6 +2421,8 @@ function CallBand({
   let title: string;
   let detail: string | null = null;
   let big: string | null = null;
+  // The video link sits on the line only while it says the call did not connect.
+  let video = false;
   if (dnd) {
     color = "var(--destructive)";
     title = "Do not disturb is on";
@@ -2253,15 +2434,19 @@ function CallBand({
     detail = open.error
       ? plainError(open.error, 200)
       : "Maqsam did not take it. Call again or save.";
+    video = Boolean(onVideo);
   } else if (open) {
     const since = now - Date.parse(open.started_at);
     if (call?.final) {
       color = call.answered ? "var(--success)" : "var(--muted-foreground)";
       title = `Maqsam: ${call.words}`;
       big = call.answered ? mmss(call.seconds * 1000) : null;
+      video = !call.answered && Boolean(onVideo);
       detail = call.answered
         ? "Save how it went."
-        : "Nobody spoke. Save it as No answer or Call back.";
+        : video
+          ? NOBODY_SPOKE_VIDEO
+          : "Nobody spoke. Save it as No answer or Call back.";
     } else {
       color = "var(--now)";
       title = "Ringing you in Maqsam, then the lead";
@@ -2336,6 +2521,9 @@ function CallBand({
         <p className="shrink-0 font-mono text-xl font-semibold tabular-nums tracking-tight">
           {big}
         </p>
+      ) : null}
+      {video && onVideo ? (
+        <VideoLinkButton onPress={onVideo} className="shrink-0" />
       ) : null}
     </div>
   );

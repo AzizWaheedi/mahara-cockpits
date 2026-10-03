@@ -120,7 +120,10 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 describe("1. channels: P1's wait is said even when the server names no channel", () => {
-  test("a link read out only (read_out) still counts down for the lead", () => {
+  test("a link sent on a channel the server did not name still counts down for the lead", () => {
+    expect(say(sentRoom({ link_channels: [] }))).toBe(
+      "Link sent at 14:11. Waiting for Faisal (9:12 left).",
+    );
     expect(say(sentRoom({ link_channels: ["read_out"] }))).toBe(
       "Link sent at 14:11. Waiting for Faisal (9:12 left).",
     );
@@ -130,13 +133,8 @@ describe("1. channels: P1's wait is said even when the server names no channel",
   });
 
   test("every room fixture uses only channel names the database and sales-api accept", () => {
-    const ok = new Set([
-      "whatsapp_text",
-      "whatsapp_template",
-      "email",
-      "whatsapp",
-      "read_out",
-    ]);
+    // Contract v2 section 3: the glossary's three, nothing else.
+    const ok = new Set(R.LINK_CHANNELS);
     for (const knob of F.ROOM_KNOBS)
       for (const c of F.roomFixture(knob, NOW).feed.room.link_channels)
         expect(ok.has(c)).toBe(true);
@@ -1058,6 +1056,9 @@ describe("29. the host's link when the browser blocks the tab", () => {
 // ---------------------------------------------------------------------------
 
 describe("14. every fixture draws", () => {
+  // Contract v2 section 3: roomlogic's 28 keys plus the six v2 adds
+  // (link_unconfirmed_at, starts_at, trigger, attempt_id, appointment_id,
+  // handover_id). Pinned here so a change on either side is seen.
   const ROOM_VIEW_KEYS = [
     "id",
     "code",
@@ -1087,8 +1088,6 @@ describe("14. every fixture draws", () => {
     "error",
     "refusal",
     "created_at",
-  ];
-  const ASKED = [
     "link_unconfirmed_at",
     "trigger",
     "attempt_id",
@@ -1097,12 +1096,15 @@ describe("14. every fixture draws", () => {
     "starts_at",
   ];
 
+  test("the browser's key list is contract v2's, in full", () => {
+    expect([...R.ROOM_VIEW_KEYS].sort()).toEqual([...ROOM_VIEW_KEYS].sort());
+  });
+
   test("every room fixture is a RoomView sales-api can serve (roomlogic ROOM_VIEW_KEYS)", () => {
     for (const knob of F.ROOM_KNOBS) {
       const room = F.roomFixture(knob, NOW).feed.room;
       for (const k of ROOM_VIEW_KEYS) expect(k in room).toBe(true);
-      for (const k of Object.keys(room))
-        expect([...ROOM_VIEW_KEYS, ...ASKED]).toContain(k);
+      for (const k of Object.keys(room)) expect(ROOM_VIEW_KEYS).toContain(k);
       expect(R.normalizeRoom(room)).toEqual(room);
       expect(JSON.stringify(room)).not.toMatch(/start_url|zak=/);
     }

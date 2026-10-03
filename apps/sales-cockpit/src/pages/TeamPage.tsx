@@ -9,6 +9,7 @@ import {
   SectionCard,
   StatusChip,
 } from "../components/kit";
+import { RoomsHealthCard } from "../components/RoomsHealth";
 import { TeamSwitch } from "../components/TeamControls";
 import { type GhlUser, TeamSeat } from "../components/TeamSeat";
 import { api } from "../lib/api";
@@ -149,6 +150,7 @@ export default function TeamPage({ me }: { me: Me }) {
 
         <div className="min-w-0 space-y-4 lg:col-span-4 lg:space-y-6">
           <CrmWritesCard />
+          <RoomsHealthCard people={people.data ?? []} />
           <HealthCard now={now} />
         </div>
       </div>
