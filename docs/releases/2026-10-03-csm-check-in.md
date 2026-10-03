@@ -1,6 +1,6 @@
 # CSM client check-in booking and Client ID
 
-Status: implemented and locally tested, awaiting visual verification and release. No real appointment, invitation or production deployment was made during this work.
+Status: implemented, locally tested and visually verified, awaiting release. No real appointment, invitation or production deployment was made during this work.
 
 ## Client journey
 
@@ -44,13 +44,15 @@ For a `pending` or `unknown` record, an operator must inspect the exact contact,
 - 20 existing projection tests pass.
 - 12 CSM render tests pass, including the real client profile and Copy ID interaction. Updated stale action mocks and DOM globals required by current main.
 - Backend TypeScript, frontend production build and PHI authentication scanner pass. Changed-file lint passes with pre-existing unused suppression warnings in the render test.
-- Browser preview attempts were blocked by automatic approval timeouts, so desktop/mobile visual acceptance is still pending.
+- Desktop (1280px) and mobile (390px) browser acceptance passed using fictional data: Copy ID confirmation, matched contact, native date selection clearing the selected time, disabled confirmation without a selection, successful booking, next-call display and reopening the dialog. Browser access initially timed out and succeeded after Aziz explicitly approved opening the local preview. Clipboard contents are asserted in the component test; browser verification checks the visible copied state.
+
+Fictional preview evidence: [client panel](assets/csm-check-in-20261003/client-desktop.png), [desktop booking](assets/csm-check-in-20261003/booking-desktop.png), [mobile booking](assets/csm-check-in-20261003/booking-mobile.png).
 
 Local fictional preview: from `apps/client-success-cockpit`, run `bun run dev --host 127.0.0.1 --port 4178`, then open `/client-success/scripts/check-in-preview.html`. This uses the actual UI component with fictional provider functions. It is not a production route or build entry and sends no invitations.
 
 ## Release and rollback
 
-1. Complete desktop/mobile checks in the fictional preview: copy ID, open booking, change date, select a time, confirm, view the next call and reopen.
+1. Desktop/mobile checks in the fictional preview are complete. Review the screenshots and exact source before release.
 2. Review and merge the exact source after release authorization. Keep the existing backend environment values and verify they point at the client account above.
 3. Use `scripts/ship.sh client-success` from clean GitHub main. It now includes the booking test gate. The script deploys the additive backend before the frontend and runs the existing smoke check.
 4. Verify the authenticated deployed client journey read-only, existing reliability monitor and outbox health. Any appointment acceptance test needs an explicitly selected staff/test contact and agreed time because normal calendar notifications apply.
