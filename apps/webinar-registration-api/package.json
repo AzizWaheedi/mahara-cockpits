@@ -2,5 +2,6 @@
   "name": "webby-live-training",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=20" }
+  "engines": { "node": ">=20" },
+  "scripts": { "test": "node --test test/*.test.mjs", "work": "node scripts/work.mjs" }
 }

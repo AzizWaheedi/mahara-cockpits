@@ -10,6 +10,10 @@ import { kuwaitDay } from "../time";
 import type { Adapter, SourceStamp } from "../types";
 import { NOT_VOIDED } from "../voids";
 import {
+  collectionHealth,
+  WEBINAR_COLLECTION_HEALTH_SQL,
+} from "../webinarCollectionHealth";
+import {
   type MessageCount,
   type ObjectionCall,
   objectionStats,
@@ -1417,7 +1421,15 @@ export const webinar: Adapter = {
         roundTargetStart(round),
       );
 
+    let sourceHealth = collectionHealth(null, now);
+    try {
+      const [row] = await sql(TRIAGE, WEBINAR_COLLECTION_HEALTH_SQL);
+      sourceHealth = collectionHealth(row, now);
+    } catch {
+      sourceHealth = collectionHealth(null, now);
+    }
     const payload: WebinarPayload = {
+      collectionHealth: sourceHealth,
       today,
       rounds: built,
       readiness: webinarReadiness(

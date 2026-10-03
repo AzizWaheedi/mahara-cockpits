@@ -1,0 +1,1224 @@
+{
+  "source": "User-run GHL audit and draft install attempt",
+  "at": "2026-09-27T09:52:27.562Z",
+  "version": 2,
+  "source_sha256": "a69f6124aedff169f017cb981ec2fc181be2d9403ac65029820c598bf255d708",
+  "location": "7NI8yyJtwsh2OOWA5Icr",
+  "auditComplete": true,
+  "installComplete": false,
+  "installError": "Missing workflow steps",
+  "published_count": 60,
+  "webinar_draft_count": 6,
+  "relevant_workflows": [
+    {
+      "id": "94887b79-44f7-4278-951d-34deecdda896",
+      "name": "1.2 Short Term Nurture [DAY 2-7]",
+      "status": "published",
+      "version": 39,
+      "allowMultiple": true,
+      "stepCounts": {
+        "add_contact_tag": 1,
+        "update_contact_field": 1,
+        "slack_message": 5,
+        "sms": 7,
+        "whatsapp_v2": 6,
+        "email": 5,
+        "wait": 9,
+        "chatgpt": 1,
+        "add_to_workflow": 1
+      },
+      "pipelineTargets": [],
+      "triggers": [
+        {
+          "id": "M2hufIjY7GqPZVGmiN1A",
+          "type": "pipeline_stage_updated",
+          "active": true,
+          "conditions": [
+            {
+              "field": "opportunity.pipelineId",
+              "operator": "==",
+              "value": "\"96oywOezX39jQzXP3Mg0\""
+            },
+            {
+              "field": "opportunity.pipelineStageId",
+              "operator": "==",
+              "value": "\"712ff5d2-e7cc-471c-a169-7ebb9059673b\""
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "d7ec270b-bb68-4443-a969-9feb8dfee058",
+      "name": "1.3 Long Term Nurture",
+      "status": "published",
+      "version": 26,
+      "allowMultiple": true,
+      "stepCounts": {
+        "chatgpt": 1,
+        "update_contact_field": 16,
+        "remove_from_workflow": 1,
+        "wait": 44,
+        "drip": 1,
+        "email": 44,
+        "if_else": 3
+      },
+      "pipelineTargets": [],
+      "triggers": [
+        {
+          "id": "SkMsa0JQT9NvFWOP6vYv",
+          "type": "pipeline_stage_updated",
+          "active": true,
+          "conditions": [
+            {
+              "field": "opportunity.pipelineId",
+              "operator": "==",
+              "value": "\"96oywOezX39jQzXP3Mg0\""
+            },
+            {
+              "field": "opportunity.pipelineStageId",
+              "operator": "==",
+              "value": "\"a565b3a6-f195-4640-929c-8e0e8f810f52\""
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "f55a5830-45fd-4611-9e0b-c3dd9bbf6d7a",
+      "name": "2.2 Call Cancelled Sequence",
+      "status": "published",
+      "version": 31,
+      "allowMultiple": true,
+      "stepCounts": {
+        "if_else": 6,
+        "update_contact_field": 2,
+        "add_contact_tag": 1,
+        "custom_webhook": 1,
+        "update_appointment_status": 1,
+        "add_to_workflow": 2,
+        "slack_message": 4,
+        "create_opportunity": 1,
+        "wait": 6,
+        "whatsapp_v2": 3,
+        "email": 4,
+        "sms": 4
+      },
+      "pipelineTargets": [
+        {
+          "pipeline": "96oywOezX39jQzXP3Mg0",
+          "stage": "fadc2f9c-bb2b-4836-ac48-b29c143124fb"
+        }
+      ],
+      "triggers": [
+        {
+          "id": "0pwjPI38oX7NbHtLlfmC",
+          "type": "appointment",
+          "active": true,
+          "conditions": [
+            {
+              "field": "appointment.eventType",
+              "operator": "==",
+              "value": "\"normal\""
+            },
+            {
+              "field": "appointment.status",
+              "operator": "==",
+              "value": "\"cancelled\""
+            },
+            {
+              "field": "calendar.id",
+              "operator": "==",
+              "value": "\"NDBNz6Og4yfpdpWmHrue\""
+            },
+            {
+              "field": "contactMode",
+              "operator": "is-any-of",
+              "value": "[\"contact\"]"
+            },
+            {
+              "field": "appointment.modifiedBy",
+              "operator": "==",
+              "value": "\"customer\""
+            }
+          ]
+        },
+        {
+          "id": "5k58HQxAi2grBhwaARtb",
+          "type": "appointment",
+          "active": true,
+          "conditions": [
+            {
+              "field": "appointment.eventType",
+              "operator": "==",
+              "value": "\"normal\""
+            },
+            {
+              "field": "appointment.status",
+              "operator": "==",
+              "value": "\"cancelled\""
+            },
+            {
+              "field": "calendar.id",
+              "operator": "==",
+              "value": "\"NDBNz6Og4yfpdpWmHrue\""
+            },
+            {
+              "field": "contactMode",
+              "operator": "is-any-of",
+              "value": "[\"contact\"]"
+            },
+            {
+              "field": "appointment.modifiedBy",
+              "operator": "==",
+              "value": "\"user\""
+            }
+          ]
+        },
+        {
+          "id": "aG3PYmlk65leDk2mgooe",
+          "type": "appointment",
+          "active": true,
+          "conditions": [
+            {
+              "field": "appointment.eventType",
+              "operator": "==",
+              "value": "\"normal\""
+            },
+            {
+              "field": "appointment.status",
+              "operator": "==",
+              "value": "\"cancelled\""
+            },
+            {
+              "field": "calendar.id",
+              "operator": "==",
+              "value": "\"jQqXS1YuFnmGZKLkrE62\""
+            },
+            {
+              "field": "contactMode",
+              "operator": "is-any-of",
+              "value": "[\"contact\"]"
+            },
+            {
+              "field": "appointment.modifiedBy",
+              "operator": "==",
+              "value": "\"customer\""
+            }
+          ]
+        },
+        {
+          "id": "kWxA4m6EEzw7Rgl2QH9H",
+          "type": "pipeline_stage_updated",
+          "active": true,
+          "conditions": [
+            {
+              "field": "opportunity.pipelineId",
+              "operator": "==",
+              "value": "\"96oywOezX39jQzXP3Mg0\""
+            },
+            {
+              "field": "opportunity.pipelineStageId",
+              "operator": "==",
+              "value": "\"fadc2f9c-bb2b-4836-ac48-b29c143124fb\""
+            }
+          ]
+        },
+        {
+          "id": "myWRLmK7Zgv533pRKZrb",
+          "type": "appointment",
+          "active": true,
+          "conditions": [
+            {
+              "field": "appointment.eventType",
+              "operator": "==",
+              "value": "\"normal\""
+            },
+            {
+              "field": "appointment.status",
+              "operator": "==",
+              "value": "\"cancelled\""
+            },
+            {
+              "field": "calendar.id",
+              "operator": "==",
+              "value": "\"jQqXS1YuFnmGZKLkrE62\""
+            },
+            {
+              "field": "contactMode",
+              "operator": "is-any-of",
+              "value": "[\"contact\"]"
+            },
+            {
+              "field": "appointment.modifiedBy",
+              "operator": "==",
+              "value": "\"user\""
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "04d5a67b-4e93-4fb9-9f9f-19ef9ef70282",
+      "name": "2.2 Call Cancelled Sequence (Intro)",
+      "status": "published",
+      "version": 15,
+      "allowMultiple": true,
+      "stepCounts": {
+        "if_else": 6,
+        "update_contact_field": 2,
+        "add_contact_tag": 1,
+        "update_appointment_status": 1,
+        "slack_message": 3,
+        "add_to_workflow": 2,
+        "create_opportunity": 1,
+        "wait": 6,
+        "email": 4,
+        "whatsapp_v2": 3,
+        "sms": 4
+      },
+      "pipelineTargets": [
+        {
+          "pipeline": "96oywOezX39jQzXP3Mg0",
+          "stage": "adc92378-1e0a-4841-90ea-e052b0bc68be"
+        }
+      ],
+      "triggers": [
+        {
+          "id": "I6O8elJlMhYYMzYYKxZS",
+          "type": "appointment",
+          "active": true,
+          "conditions": [
+            {
+              "field": "appointment.eventType",
+              "operator": "==",
+              "value": "\"normal\""
+            },
+            {
+              "field": "appointment.status",
+              "operator": "==",
+              "value": "\"cancelled\""
+            },
+            {
+              "field": "calendar.id",
+              "operator": "==",
+              "value": "\"cFeDl0FY8iaXll61lus8\""
+            },
+            {
+              "field": "contactMode",
+              "operator": "is-any-of",
+              "value": "[\"contact\"]"
+            },
+            {
+              "field": "appointment.modifiedBy",
+              "operator": "==",
+              "value": "\"customer\""
+            }
+          ]
+        },
+        {
+          "id": "OG9XybyNp6waCNIsNhQk",
+          "type": "appointment",
+          "active": true,
+          "conditions": [
+            {
+              "field": "appointment.eventType",
+              "operator": "==",
+              "value": "\"normal\""
+            },
+            {
+              "field": "calendar.id",
+              "operator": "==",
+              "value": "\"fh7udY6uaxfsL1gotnIi\""
+            },
+            {
+              "field": "appointment.status",
+              "operator": "==",
+              "value": "\"cancelled\""
+            }
+          ]
+        },
+        {
+          "id": "Ud4eT4mETvzwdInv7LxJ",
+          "type": "appointment",
+          "active": true,
+          "conditions": [
+            {
+              "field": "appointment.eventType",
+              "operator": "==",
+              "value": "\"normal\""
+            },
+            {
+              "field": "appointment.status",
+              "operator": "==",
+              "value": "\"cancelled\""
+            },
+            {
+              "field": "calendar.id",
+              "operator": "==",
+              "value": "\"ESL5U2fZZJ71kgo0Xb2B\""
+            }
+          ]
+        },
+        {
+          "id": "VB6TpsphTkhXhZUBHbQj",
+          "type": "appointment",
+          "active": true,
+          "conditions": [
+            {
+              "field": "appointment.eventType",
+              "operator": "==",
+              "value": "\"normal\""
+            },
+            {
+              "field": "appointment.status",
+              "operator": "==",
+              "value": "\"cancelled\""
+            },
+            {
+              "field": "calendar.id",
+              "operator": "==",
+              "value": "\"cFeDl0FY8iaXll61lus8\""
+            },
+            {
+              "field": "contactMode",
+              "operator": "is-any-of",
+              "value": "[\"contact\"]"
+            },
+            {
+              "field": "appointment.modifiedBy",
+              "operator": "==",
+              "value": "\"user\""
+            }
+          ]
+        },
+        {
+          "id": "hQN0YAx0t5EjP5Scgy2J",
+          "type": "appointment",
+          "active": true,
+          "conditions": [
+            {
+              "field": "appointment.eventType",
+              "operator": "==",
+              "value": "\"normal\""
+            },
+            {
+              "field": "appointment.status",
+              "operator": "==",
+              "value": "\"cancelled\""
+            },
+            {
+              "field": "calendar.id",
+              "operator": "==",
+              "value": "\"dsqmJ393Dwl9fDSbIVOI\""
+            },
+            {
+              "field": "contactMode",
+              "operator": "is-any-of",
+              "value": "[\"contact\"]"
+            },
+            {
+              "field": "appointment.modifiedBy",
+              "operator": "==",
+              "value": "\"customer\""
+            }
+          ]
+        },
+        {
+          "id": "uRmrEo8DhLVVMaU92Zoj",
+          "type": "appointment",
+          "active": true,
+          "conditions": [
+            {
+              "field": "appointment.eventType",
+              "operator": "==",
+              "value": "\"normal\""
+            },
+            {
+              "field": "appointment.status",
+              "operator": "==",
+              "value": "\"cancelled\""
+            },
+            {
+              "field": "calendar.id",
+              "operator": "==",
+              "value": "\"dsqmJ393Dwl9fDSbIVOI\""
+            },
+            {
+              "field": "contactMode",
+              "operator": "is-any-of",
+              "value": "[\"contact\"]"
+            },
+            {
+              "field": "appointment.modifiedBy",
+              "operator": "==",
+              "value": "\"user\""
+            }
+          ]
+        },
+        {
+          "id": "ur0RjxWw4jEPiLA83boV",
+          "type": "pipeline_stage_updated",
+          "active": true,
+          "conditions": [
+            {
+              "field": "opportunity.pipelineId",
+              "operator": "==",
+              "value": "\"96oywOezX39jQzXP3Mg0\""
+            },
+            {
+              "field": "opportunity.pipelineStageId",
+              "operator": "==",
+              "value": "\"adc92378-1e0a-4841-90ea-e052b0bc68be\""
+            }
+          ]
+        },
+        {
+          "id": "vJezwxlkDP8D6oO2oo7t",
+          "type": "appointment",
+          "active": true,
+          "conditions": [
+            {
+              "field": "appointment.eventType",
+              "operator": "==",
+              "value": "\"normal\""
+            },
+            {
+              "field": "calendar.id",
+              "operator": "==",
+              "value": "\"8fnawes96A3EjT3kwE3N\""
+            },
+            {
+              "field": "appointment.status",
+              "operator": "==",
+              "value": "\"cancelled\""
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "d8f6b1d3-16d4-4db2-8f5f-16e8e3cd8956",
+      "name": "2.3 Call No Show Sequence",
+      "status": "published",
+      "version": 24,
+      "allowMultiple": true,
+      "stepCounts": {
+        "update_contact_field": 1,
+        "create_opportunity": 1,
+        "add_contact_tag": 1,
+        "slack_message": 4,
+        "wait": 7,
+        "email": 4,
+        "whatsapp_v2": 3,
+        "sms": 4,
+        "add_to_workflow": 1
+      },
+      "pipelineTargets": [
+        {
+          "pipeline": "eU5KW4TRt3haofQSnWC1",
+          "stage": "44605a7d-ef78-4ba3-ac26-d047ede5305e"
+        }
+      ],
+      "triggers": [
+        {
+          "id": "5NoOrvVvQ6E4CR7JzpXc",
+          "type": "appointment",
+          "active": true,
+          "conditions": [
+            {
+              "field": "appointment.eventType",
+              "operator": "==",
+              "value": "\"normal\""
+            },
+            {
+              "field": "appointment.status",
+              "operator": "==",
+              "value": "\"noshow\""
+            },
+            {
+              "field": "calendar.id",
+              "operator": "==",
+              "value": "\"jQqXS1YuFnmGZKLkrE62\""
+            }
+          ]
+        },
+        {
+          "id": "Q8VwttoZyo6GpXS5kucc",
+          "type": "pipeline_stage_updated",
+          "active": true,
+          "conditions": [
+            {
+              "field": "opportunity.pipelineId",
+              "operator": "==",
+              "value": "\"96oywOezX39jQzXP3Mg0\""
+            },
+            {
+              "field": "opportunity.pipelineStageId",
+              "operator": "==",
+              "value": "\"ec9bccc2-8a23-4ea7-b92c-3225604cfd7a\""
+            }
+          ]
+        },
+        {
+          "id": "tCGHG3XfSY3znAA1o0vj",
+          "type": "appointment",
+          "active": true,
+          "conditions": [
+            {
+              "field": "appointment.eventType",
+              "operator": "==",
+              "value": "\"normal\""
+            },
+            {
+              "field": "appointment.status",
+              "operator": "==",
+              "value": "\"noshow\""
+            },
+            {
+              "field": "calendar.id",
+              "operator": "==",
+              "value": "\"NDBNz6Og4yfpdpWmHrue\""
+            },
+            {
+              "field": "contactMode",
+              "operator": "is-any-of",
+              "value": "[\"contact\"]"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "b322dd8f-8b02-4ee8-bb09-c8fc3206a143",
+      "name": "2.3 Call No Show Sequence (Intro)",
+      "status": "published",
+      "version": 14,
+      "allowMultiple": true,
+      "stepCounts": {
+        "update_contact_field": 1,
+        "create_opportunity": 1,
+        "add_contact_tag": 1,
+        "slack_message": 4,
+        "wait": 7,
+        "email": 4,
+        "whatsapp_v2": 3,
+        "sms": 4,
+        "add_to_workflow": 1
+      },
+      "pipelineTargets": [
+        {
+          "pipeline": "96oywOezX39jQzXP3Mg0",
+          "stage": "cc65a0f4-6b2a-4c7c-b657-bf6cfe971dbb"
+        }
+      ],
+      "triggers": [
+        {
+          "id": "CAXXlEBhxUw6qjHlbOSJ",
+          "type": "pipeline_stage_updated",
+          "active": true,
+          "conditions": [
+            {
+              "field": "opportunity.pipelineId",
+              "operator": "==",
+              "value": "\"96oywOezX39jQzXP3Mg0\""
+            },
+            {
+              "field": "opportunity.pipelineStageId",
+              "operator": "==",
+              "value": "\"cc65a0f4-6b2a-4c7c-b657-bf6cfe971dbb\""
+            }
+          ]
+        },
+        {
+          "id": "Lc4Lb8GWkCnwuuadqOOq",
+          "type": "appointment",
+          "active": true,
+          "conditions": [
+            {
+              "field": "appointment.eventType",
+              "operator": "==",
+              "value": "\"normal\""
+            },
+            {
+              "field": "calendar.id",
+              "operator": "==",
+              "value": "\"ESL5U2fZZJ71kgo0Xb2B\""
+            },
+            {
+              "field": "appointment.status",
+              "operator": "==",
+              "value": "\"noshow\""
+            }
+          ]
+        },
+        {
+          "id": "ZMW4UrrywsMhBifB6uft",
+          "type": "appointment",
+          "active": true,
+          "conditions": [
+            {
+              "field": "appointment.eventType",
+              "operator": "==",
+              "value": "\"normal\""
+            },
+            {
+              "field": "calendar.id",
+              "operator": "==",
+              "value": "\"dsqmJ393Dwl9fDSbIVOI\""
+            },
+            {
+              "field": "appointment.status",
+              "operator": "==",
+              "value": "\"noshow\""
+            }
+          ]
+        },
+        {
+          "id": "aRqxFvcywsvE4badlAom",
+          "type": "appointment",
+          "active": true,
+          "conditions": [
+            {
+              "field": "appointment.eventType",
+              "operator": "==",
+              "value": "\"normal\""
+            },
+            {
+              "field": "calendar.id",
+              "operator": "==",
+              "value": "\"fh7udY6uaxfsL1gotnIi\""
+            },
+            {
+              "field": "appointment.status",
+              "operator": "==",
+              "value": "\"noshow\""
+            }
+          ]
+        },
+        {
+          "id": "kgNdpfQtIC2pu0bBcMEA",
+          "type": "appointment",
+          "active": true,
+          "conditions": [
+            {
+              "field": "appointment.eventType",
+              "operator": "==",
+              "value": "\"normal\""
+            },
+            {
+              "field": "calendar.id",
+              "operator": "==",
+              "value": "\"8fnawes96A3EjT3kwE3N\""
+            },
+            {
+              "field": "appointment.status",
+              "operator": "==",
+              "value": "\"noshow\""
+            }
+          ]
+        },
+        {
+          "id": "pNaPl5WbZIzSnedlI3R7",
+          "type": "appointment",
+          "active": true,
+          "conditions": [
+            {
+              "field": "appointment.eventType",
+              "operator": "==",
+              "value": "\"normal\""
+            },
+            {
+              "field": "calendar.id",
+              "operator": "==",
+              "value": "\"cFeDl0FY8iaXll61lus8\""
+            },
+            {
+              "field": "appointment.status",
+              "operator": "==",
+              "value": "\"noshow\""
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "77f70345-15c9-46b4-9a9f-3a25fc6f286f",
+      "name": "4.1 Add \"Confirmed\" Tag when someone moves to confirmed",
+      "status": "published",
+      "version": 6,
+      "allowMultiple": true,
+      "stepCounts": {
+        "add_contact_tag": 1,
+        "create_opportunity": 1
+      },
+      "pipelineTargets": [
+        {
+          "pipeline": "eU5KW4TRt3haofQSnWC1",
+          "stage": "7233ad66-990d-4525-8223-740651658c19"
+        }
+      ],
+      "triggers": [
+        {
+          "id": "XULCxR9fvo42yP7INwSS",
+          "type": "contact_tag",
+          "active": true,
+          "conditions": [
+            {
+              "field": "tagsAdded",
+              "operator": "index-of-true",
+              "value": "\"call confirmed\""
+            }
+          ]
+        },
+        {
+          "id": "x1QSvzWVNyiea1QSXwuD",
+          "type": "pipeline_stage_updated",
+          "active": true,
+          "conditions": [
+            {
+              "field": "opportunity.pipelineId",
+              "operator": "==",
+              "value": "\"96oywOezX39jQzXP3Mg0\""
+            },
+            {
+              "field": "opportunity.pipelineStageId",
+              "operator": "==",
+              "value": "\"7f7720ff-5f55-4d0a-b93f-c5104d0c9312\""
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "e35ef250-54d2-4caa-b28b-e02ac64c0612",
+      "name": "4.3 Post Demo Follow Up - Tag & Lead Stage Updates",
+      "status": "published",
+      "version": 3,
+      "allowMultiple": true,
+      "stepCounts": {
+        "add_contact_tag": 1,
+        "update_contact_field": 1
+      },
+      "pipelineTargets": [],
+      "triggers": [
+        {
+          "id": "OINWCYpe2BLeAdGysugc",
+          "type": "pipeline_stage_updated",
+          "active": true,
+          "conditions": [
+            {
+              "field": "opportunity.pipelineId",
+              "operator": "==",
+              "value": "\"96oywOezX39jQzXP3Mg0\""
+            },
+            {
+              "field": "opportunity.pipelineStageId",
+              "operator": "==",
+              "value": "\"065e3cba-17d3-4105-97ee-44e3bafeb72b\""
+            }
+          ]
+        },
+        {
+          "id": "ge0qxJrQrtNwkFKdmLmF",
+          "type": "pipeline_stage_updated",
+          "active": true,
+          "conditions": [
+            {
+              "field": "opportunity.pipelineId",
+              "operator": "==",
+              "value": "\"96oywOezX39jQzXP3Mg0\""
+            },
+            {
+              "field": "opportunity.pipelineStageId",
+              "operator": "==",
+              "value": "\"d1266bbc-6406-4eec-b990-9b9dd74d3390\""
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "93838be8-002a-4f77-8ea9-9a384a60e603",
+      "name": "4.5 Closed",
+      "status": "published",
+      "version": 3,
+      "allowMultiple": true,
+      "stepCounts": {
+        "add_contact_tag": 1
+      },
+      "pipelineTargets": [],
+      "triggers": [
+        {
+          "id": "fld7al1j3H4aKGR3E9WK",
+          "type": "pipeline_stage_updated",
+          "active": true,
+          "conditions": [
+            {
+              "field": "opportunity.pipelineId",
+              "operator": "==",
+              "value": "\"96oywOezX39jQzXP3Mg0\""
+            },
+            {
+              "field": "opportunity.pipelineStageId",
+              "operator": "==",
+              "value": "\"1d47f28d-7b3e-4e6c-a1e6-b64247790d88\""
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "10a82b89-5cfe-4abd-bc86-031cc17ed6f1",
+      "name": "DQ move to DQ",
+      "status": "published",
+      "version": 7,
+      "allowMultiple": false,
+      "stepCounts": {
+        "create_opportunity": 1,
+        "add_contact_tag": 1,
+        "update_contact_field": 1,
+        "webhook": 1
+      },
+      "pipelineTargets": [
+        {
+          "pipeline": "96oywOezX39jQzXP3Mg0",
+          "stage": "b18d6490-e079-47a3-bc4a-ca960a24c6d4"
+        }
+      ],
+      "triggers": [
+        {
+          "id": "N9lWNbAcHnpCjotiKIbt",
+          "type": "opportunity_changed",
+          "active": true,
+          "conditions": [
+            {
+              "field": "opportunity.pipelineId",
+              "operator": "==",
+              "value": "\"eU5KW4TRt3haofQSnWC1\""
+            },
+            {
+              "field": "opportunity.pipelineStageId",
+              "operator": "==",
+              "value": "\"7ca17b2e-b032-4c8c-b47e-66d9a8b53294\""
+            }
+          ]
+        },
+        {
+          "id": "TjVCKJV15L37hHkmBGNN",
+          "type": "contact_tag",
+          "active": true,
+          "conditions": [
+            {
+              "field": "tagsAdded",
+              "operator": "index-of-true",
+              "value": "\"disqualified\""
+            }
+          ]
+        },
+        {
+          "id": "rSIJR9LnLUcO63ni9FxQ",
+          "type": "appointment",
+          "active": true,
+          "conditions": [
+            {
+              "field": "appointment.eventType",
+              "operator": "==",
+              "value": "\"normal\""
+            },
+            {
+              "field": "contactMode",
+              "operator": "is-any-of",
+              "value": "[\"contact\"]"
+            },
+            {
+              "field": "appointment.status",
+              "operator": "==",
+              "value": "\"invalid\""
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "73ebf436-9939-4d9c-9907-2b2007db6e5e",
+      "name": "WEBBY - W1 Registration",
+      "status": "draft",
+      "version": 5,
+      "allowMultiple": false,
+      "stepCounts": {
+        "chatgpt": 1,
+        "update_contact_field": 2,
+        "add_contact_tag": 1,
+        "create_opportunity": 1,
+        "webhook": 1,
+        "custom_webhook": 4,
+        "wait": 2,
+        "sms": 2,
+        "if_else": 3
+      },
+      "pipelineTargets": [
+        {
+          "pipeline": "YjQyluOjucZNw6b780lt",
+          "stage": "e04d9afd-9cc9-459c-acf4-f76182e352e6"
+        }
+      ],
+      "triggers": [
+        {
+          "id": "uenwe5aCJmZHPb5ZBC94",
+          "type": "form_submission",
+          "active": false,
+          "conditions": [
+            {
+              "field": "form.id",
+              "operator": "is-any-of",
+              "value": "[\"5wC0SkFcgCfFzbpOUBWk\"]"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "c7120ac8-cd5c-4e47-860e-00243df3b166",
+      "name": "WEBBY - W2 Reminders",
+      "status": "draft",
+      "version": 2,
+      "allowMultiple": false,
+      "stepCounts": {
+        "wait": 7,
+        "sms": 7
+      },
+      "pipelineTargets": [],
+      "triggers": [
+        {
+          "id": "ypirTvtiYxuoAwaKxmGM",
+          "type": "appointment",
+          "active": false,
+          "conditions": [
+            {
+              "field": "appointment.eventType",
+              "operator": "==",
+              "value": "\"normal\""
+            },
+            {
+              "field": "appointment.status",
+              "operator": "==",
+              "value": "\"confirmed\""
+            },
+            {
+              "field": "calendar.id",
+              "operator": "==",
+              "value": "\"jRmgyFgUvWoiqQ83bPJj\""
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "db64d272-b974-4dbc-8d45-cbb5cdeb252e",
+      "name": "WEBBY - W4a Attended",
+      "status": "draft",
+      "version": 2,
+      "allowMultiple": false,
+      "stepCounts": {
+        "create_opportunity": 1,
+        "custom_webhook": 2,
+        "wait": 2,
+        "if_else": 6,
+        "sms": 2
+      },
+      "pipelineTargets": [
+        {
+          "pipeline": "YjQyluOjucZNw6b780lt",
+          "stage": "7018fbe5-5eff-41b1-99e8-19604b2dd683"
+        }
+      ],
+      "triggers": [
+        {
+          "id": "XvqiY7vyQ7gUH0G1X470",
+          "type": "contact_tag",
+          "active": true,
+          "conditions": [
+            {
+              "field": "tagsAdded",
+              "operator": "index-of-true",
+              "value": "\"webby-attended\""
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "3fa77db6-a95c-4ee9-956f-7a6a9f840655",
+      "name": "WEBBY - W4b No-Show",
+      "status": "draft",
+      "version": 2,
+      "allowMultiple": false,
+      "stepCounts": {
+        "create_opportunity": 1,
+        "custom_webhook": 2,
+        "wait": 2,
+        "sms": 2,
+        "if_else": 3
+      },
+      "pipelineTargets": [
+        {
+          "pipeline": "YjQyluOjucZNw6b780lt",
+          "stage": "108cc26e-977f-4e75-8b2f-83247ea6b75c"
+        }
+      ],
+      "triggers": [
+        {
+          "id": "IoKdm4rAyZAjgqjl62KR",
+          "type": "contact_tag",
+          "active": false,
+          "conditions": [
+            {
+              "field": "tagsAdded",
+              "operator": "index-of-true",
+              "value": "\"webby-noshow\""
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "7e34da1a-b418-410c-8e03-c992377e9640",
+      "name": "WEBBY - W5 Survey Gift",
+      "status": "draft",
+      "version": 2,
+      "allowMultiple": false,
+      "stepCounts": {
+        "update_contact_field": 1,
+        "custom_webhook": 1,
+        "sms": 1,
+        "if_else": 3,
+        "slack_message": 1
+      },
+      "pipelineTargets": [],
+      "triggers": [
+        {
+          "id": "YmVeHW99M9O94M8zo8py",
+          "type": "contact_tag",
+          "active": true,
+          "conditions": [
+            {
+              "field": "tagsAdded",
+              "operator": "index-of-true",
+              "value": "\"webby-survey-done\""
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "d5a66df6-c428-4fca-b044-6d62121de248",
+      "name": "WEBBY - W6 Call Booked",
+      "status": "draft",
+      "version": 2,
+      "allowMultiple": false,
+      "stepCounts": {
+        "if_else": 3,
+        "add_contact_tag": 1,
+        "create_opportunity": 1,
+        "custom_webhook": 1
+      },
+      "pipelineTargets": [
+        {
+          "pipeline": "YjQyluOjucZNw6b780lt",
+          "stage": "01f2fa73-b4df-4dc9-ad69-4170d8994836"
+        }
+      ],
+      "triggers": [
+        {
+          "id": "Cf0lXGpOvjpSwifqgufr",
+          "type": "appointment",
+          "active": false,
+          "conditions": [
+            {
+              "field": "appointment.eventType",
+              "operator": "==",
+              "value": "\"normal\""
+            },
+            {
+              "field": "appointment.status",
+              "operator": "==",
+              "value": "\"confirmed\""
+            },
+            {
+              "field": "calendar.id",
+              "operator": "==",
+              "value": "\"NDBNz6Og4yfpdpWmHrue\""
+            }
+          ]
+        },
+        {
+          "id": "NjEDvhyMNgP7tSioEGCW",
+          "type": "appointment",
+          "active": false,
+          "conditions": [
+            {
+              "field": "appointment.eventType",
+              "operator": "==",
+              "value": "\"normal\""
+            },
+            {
+              "field": "appointment.status",
+              "operator": "==",
+              "value": "\"confirmed\""
+            },
+            {
+              "field": "calendar.id",
+              "operator": "==",
+              "value": "\"dsqmJ393Dwl9fDSbIVOI\""
+            }
+          ]
+        },
+        {
+          "id": "ag4msd4qPohk746L9NjG",
+          "type": "appointment",
+          "active": false,
+          "conditions": [
+            {
+              "field": "appointment.eventType",
+              "operator": "==",
+              "value": "\"normal\""
+            },
+            {
+              "field": "appointment.status",
+              "operator": "==",
+              "value": "\"confirmed\""
+            },
+            {
+              "field": "calendar.id",
+              "operator": "==",
+              "value": "\"cFeDl0FY8iaXll61lus8\""
+            }
+          ]
+        },
+        {
+          "id": "gWOzo9KsJjtpuAQXBBrv",
+          "type": "appointment",
+          "active": false,
+          "conditions": [
+            {
+              "field": "appointment.eventType",
+              "operator": "==",
+              "value": "\"normal\""
+            },
+            {
+              "field": "appointment.status",
+              "operator": "==",
+              "value": "\"confirmed\""
+            },
+            {
+              "field": "calendar.id",
+              "operator": "==",
+              "value": "\"jQqXS1YuFnmGZKLkrE62\""
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

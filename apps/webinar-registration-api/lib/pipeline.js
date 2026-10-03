@@ -1,0 +1,234 @@
+// GHL is a projection of the occurrence ledger, never the evidence for attendance or money.
+export const PIPELINE_NAME = "WEBBY | Webinar Journey";
+export const LOCATION_ID = "7NI8yyJtwsh2OOWA5Icr";
+export const STAGES = [
+  { key: "registered", name: "Registered" },
+  { key: "attended", name: "Webinar attended" },
+  { key: "webinar_missed", name: "Missed webinar" },
+  { key: "qualified_not_booked", name: "Qualified - Not Booked" },
+  { key: "call_booked", name: "Call booked" },
+  { key: "call_attended", name: "Call showed" },
+  { key: "call_no_show", name: "Call no-show" },
+  { key: "call_cancelled", name: "Call cancelled" },
+  { key: "call_follow_up", name: "Follow-up needed" },
+  { key: "client_won", name: "Showed Won" },
+  { key: "closed_lost", name: "Showed Lost" },
+  { key: "disqualified", name: "Disqualified" },
+];
+export const LEGACY_STAGE_NAMES = {
+  registered: "Registered",
+  attended: "Attended",
+  survey_completed: "Survey completed",
+  call_booked: "Call booked",
+  call_attended: "Call attended",
+  client_won: "Client won",
+  webinar_missed: "Missed webinar",
+  call_follow_up: "Call follow-up",
+};
+export class PipelineError extends Error {
+  constructor(code) {
+    super(code);
+    this.code = code;
+  }
+}
+export function pipelineBody() {
+  return {
+    name: PIPELINE_NAME,
+    locationId: LOCATION_ID,
+    showInFunnel: false,
+    showInPieChart: false,
+    useOpportunityProbability: false,
+    colorRenderMode: "dot",
+    stages: STAGES.map(({ name }, position) => ({
+      name,
+      position,
+      showInFunnel: false,
+      showInPieChart: false,
+      stageWinProbability: 0,
+    })),
+  };
+}
+export function verifyPipeline(row) {
+  if (
+    !row?.id ||
+    row.name !== PIPELINE_NAME ||
+    (row.locationId && row.locationId !== LOCATION_ID) ||
+    !Array.isArray(row.stages)
+  )
+    throw new PipelineError("pipeline_scope_mismatch");
+  // Display order is editable in GHL. Route by the exact unique name and ID,
+  // so rearranging columns never routes a card into another outcome.
+  const stages = STAGES.map(({ name }) =>
+    row.stages.find((s) => s.name === name),
+  );
+  if (
+    row.stages.length !== STAGES.length ||
+    stages.some((s) => !s?.id) ||
+    new Set(stages.map((s) => s.id)).size !== STAGES.length
+  )
+    throw new PipelineError("pipeline_stages_changed");
+  return {
+    location_id: LOCATION_ID,
+    pipeline_id: row.id,
+    name: row.name,
+    stages: Object.fromEntries(STAGES.map((s, i) => [s.key, stages[i].id])),
+  };
+}
+export function createPipelineProvider({
+  env = process.env,
+  fetcher = fetch,
+} = {}) {
+  async function request(path, method = "GET", body) {
+    if (!env.GHL_TOKEN) throw new PipelineError("ghl_not_configured");
+    let response;
+    try {
+      response = await fetcher("https://services.leadconnectorhq.com" + path, {
+        method,
+        redirect: "error",
+        signal: AbortSignal.timeout(15000),
+        headers: {
+          Authorization: `Bearer ${env.GHL_TOKEN}`,
+          Version: "v3",
+          "Content-Type": "application/json",
+        },
+        body: body ? JSON.stringify(body) : undefined,
+      });
+    } catch {
+      throw new PipelineError("ghl_response_uncertain");
+    }
+    if (!response.ok) throw new PipelineError(`ghl_http_${response.status}`);
+    try {
+      return await response.json();
+    } catch {
+      throw new PipelineError("ghl_response_invalid");
+    }
+  }
+  return {
+    request,
+    list: async () => {
+      const data = await request(
+        "/opportunities/pipelines?" +
+          new URLSearchParams({ locationId: LOCATION_ID }),
+      );
+      if (
+        !Array.isArray(data.pipelines) ||
+        data.meta?.nextPageUrl ||
+        data.nextPageToken
+      )
+        throw new PipelineError("pipeline_list_incomplete");
+      return data.pipelines;
+    },
+    update: (id, body) =>
+      request(
+        `/opportunities/pipelines/${encodeURIComponent(id)}`,
+        "PUT",
+        body,
+      ),
+    create: () => request("/opportunities/pipelines", "POST", pipelineBody()),
+  };
+}
+export async function provisionPipeline(provider, { apply = false } = {}) {
+  const find = (rows) =>
+    rows.filter((p) => p.name?.toLowerCase() === PIPELINE_NAME.toLowerCase());
+  const before = find(await provider.list());
+  if (before.length > 1) throw new PipelineError("ambiguous_pipeline");
+  if (before.length === 1)
+    return { status: "existing", ...verifyPipeline(before[0]) };
+  if (!apply) return { status: "planned", body: pipelineBody() };
+  // A failed POST is never repeated. Readback resolves a lost response by exact unique name.
+  let failure;
+  try {
+    await provider.create();
+  } catch (error) {
+    failure = error;
+  }
+  const after = find(await provider.list());
+  if (after.length !== 1)
+    throw failure || new PipelineError("pipeline_readback_failed");
+  return { status: "created_and_verified", ...verifyPipeline(after[0]) };
+}
+
+// Preserve every existing stage ID. GHL's PUT replaces the entire stage array.
+export function expansionBody(row, previous) {
+  if (
+    row?.id !== previous.pipeline_id ||
+    row.locationId !== LOCATION_ID ||
+    row.name !== PIPELINE_NAME
+  )
+    throw new PipelineError("pipeline_scope_mismatch");
+  const keys = Object.keys(LEGACY_STAGE_NAMES);
+  if (
+    !Array.isArray(row.stages) ||
+    row.stages.length !== keys.length ||
+    keys.some(
+      (k) =>
+        !row.stages.some(
+          (s) =>
+            s.id === previous.stages[k] && s.name === LEGACY_STAGE_NAMES[k],
+        ),
+    )
+  )
+    throw new PipelineError("legacy_pipeline_changed");
+  return {
+    name: row.name,
+    showInFunnel: row.showInFunnel,
+    showInPieChart: row.showInPieChart,
+    useOpportunityProbability: row.useOpportunityProbability,
+    colorRenderMode: row.colorRenderMode,
+    stages: STAGES.map((s, position) => ({
+      ...(previous.stages[s.key] ||
+      (s.key === "qualified_not_booked" && previous.stages.survey_completed)
+        ? { id: previous.stages[s.key] || previous.stages.survey_completed }
+        : {}),
+      name: s.name,
+      position,
+      showInFunnel: false,
+      showInPieChart: false,
+      stageWinProbability: 0,
+      color: "#64748B",
+    })),
+  };
+}
+export async function expandPipeline(
+  provider,
+  previous,
+  { apply = false } = {},
+) {
+  const read = async () => {
+    const matches = (await provider.list()).filter(
+      (p) => p.id === previous.pipeline_id,
+    );
+    if (matches.length !== 1)
+      throw new PipelineError("pipeline_scope_mismatch");
+    return matches[0];
+  };
+  const verify = (row) => {
+    const result = verifyPipeline(row);
+    if (
+      Object.entries(previous.stages).some(
+        ([k, id]) =>
+          result.stages[
+            k === "survey_completed" ? "qualified_not_booked" : k
+          ] !== id,
+      )
+    )
+      throw new PipelineError("existing_stage_id_changed");
+    return result;
+  };
+  const before = await read();
+  if (before.stages?.length === STAGES.length)
+    return { status: "existing", ...verify(before) };
+  const body = expansionBody(before, previous);
+  if (!apply) return { status: "planned", pipeline_id: before.id, body };
+  let error;
+  try {
+    await provider.update(before.id, body);
+  } catch (e) {
+    error = e;
+  }
+  // Never repeat an ambiguous PUT; a readback may prove that it already applied.
+  const after = await read();
+  if (after.stages?.length !== STAGES.length)
+    throw error || new PipelineError("pipeline_readback_failed");
+  return { status: "expanded_and_verified", ...verify(after) };
+}

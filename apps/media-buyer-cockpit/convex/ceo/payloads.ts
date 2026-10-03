@@ -2145,6 +2145,7 @@ export type WebinarRound = {
 };
 
 export type WebinarPayload = {
+  collectionHealth?: import("./webinarCollectionHealth").CollectionHealth;
   /** Read-only configuration checks, separate from a successful data pull. */
   readiness?: WebinarReadiness;
   today: string;

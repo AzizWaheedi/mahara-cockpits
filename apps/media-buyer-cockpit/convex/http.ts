@@ -5,6 +5,11 @@ import { type Infer, v } from "convex/values";
 import { internal } from "./_generated/api";
 import { httpAction, internalQuery } from "./_generated/server";
 import { auth } from "./auth";
+import { sql, TRIAGE } from "./ceo/sb";
+import {
+  collectionHealth,
+  WEBINAR_COLLECTION_HEALTH_SQL,
+} from "./ceo/webinarCollectionHealth";
 import { RUNBOOK } from "./health";
 import { isMetaId, type PreviewResult } from "./metaMedia";
 import { previewFor } from "./previews";
@@ -708,6 +713,22 @@ http.route({
       );
     }
     const now = Date.now();
+    // Read the collectors directly. A freshly rendered CEO section is not a source heartbeat.
+    let webinar = collectionHealth(null, now);
+    try {
+      const [row] = await sql(TRIAGE, WEBINAR_COLLECTION_HEALTH_SQL);
+      webinar = collectionHealth(row, now);
+    } catch {
+      webinar = collectionHealth(null, now);
+    }
+    for (const check of webinar.checks) {
+      if (check.status === "needs_attention" || check.status === "unavailable")
+        facts.sources.push({
+          key: check.key,
+          name: check.label,
+          error: check.detail,
+        });
+    }
     const age = (at: number | null) =>
       at === null ? null : Math.max(0, Math.floor((now - at) / 60_000));
     const fresh = (min: number | null) =>

@@ -751,7 +751,7 @@ def survey_row(item: dict, pulled: str) -> Optional[dict]:
             value = a.get(t) if t in a else a.get("text")
         by_ref[ref] = value
         compact.append({"ref": ref, "type": t, "value": value})
-    hidden = {k: v for k, v in (item.get("hidden") or {}).items() if v not in (None, "")}
+    hidden = {k: v for k, v in (item.get("hidden") or {}).items() if v not in (None, "") and k != "webinar_ref"}
     email = str(by_ref.get(REFS["email"]) or hidden.get("email") or "").strip().lower() or None
     phone = digits(by_ref.get(REFS["phone"]) or hidden.get("phone_number"))
     uid = str(hidden.get("user_id") or "").strip()
@@ -1113,7 +1113,7 @@ class Supabase:
                    "Content-Type": "application/json", "Accept": "application/json"}
         if prefer:
             headers["Prefer"] = prefer
-        status, _h, content = call(method, f"{self.url}/rest/v1/{path}", headers, body, retry_safe=path == "rpc/cockpit_ingest_webinar_snapshot" or "on_conflict=" in path)
+        status, _h, content = call(method, f"{self.url}/rest/v1/{path}", headers, body, retry_safe=path in ("rpc/cockpit_ingest_webinar_snapshot", "rpc/cockpit_accept_webinar_survey") or "on_conflict=" in path)
         if status >= 300:
             raise Failure(f"Supabase {status} on {path.split('?')[0]}: {content[:200].decode('utf-8', 'replace')}")
         return json.loads(content) if content.strip() else []
@@ -1365,6 +1365,7 @@ def pull_survey(sb: Supabase, composio: Composio, full: bool = False) -> dict:
         t = parse_ts(last[0]["submitted_at"])
         since = iso(t - dt.timedelta(days=2)) if t else None
     rows: list[dict] = []
+    receipts: list[dict] = []
     before = ""
     seen_cursors: set[str] = set()
     expected = None
@@ -1380,9 +1381,19 @@ def pull_survey(sb: Supabase, composio: Composio, full: bool = False) -> dict:
             raise Failure("Typeform response page has no items list")
         if expected is None and isinstance(page.get("total_items"), int):
             expected = page["total_items"]
-        items = [i for i in page["items"] if isinstance(i, dict)]
+        if any(not isinstance(i, dict) for i in page["items"]):
+            raise Failure("Typeform page includes an invalid response")
+        items = page["items"]
         received += len(items)
-        rows.extend(r for r in (survey_row(i, pulled) for i in items) if r)
+        for item in items:
+            row = survey_row(item, pulled)
+            if row is None:
+                raise Failure("Typeform response is missing its receipt or submission time")
+            rows.append(row)
+            ref = (item.get("hidden") or {}).get("webinar_ref")
+            ref_hash = hashlib.sha256(ref.encode()).hexdigest() if isinstance(ref, str) and re.fullmatch(r"[A-Za-z0-9_-]{43}", ref) else None
+            receipts.append({"p_form": SURVEY_ID, "p_response": row["response_id"], "p_at": row["submitted_at"],
+                             "p_payload": item, "p_ref_hash": ref_hash})
         if len(items) < 1000:
             break
         before = str(items[-1].get("token") or "")
@@ -1395,6 +1406,11 @@ def pull_survey(sb: Supabase, composio: Composio, full: bool = False) -> dict:
         raise Failure("Typeform source count does not reconcile; no watermark advanced")
     if len({r["response_id"] for r in rows}) != len(rows):
         raise Failure("Typeform returned duplicate response pages")
+    # A failed receipt write prevents the projection watermark from advancing.
+    # Webhook/backfill envelopes deduplicate inside the same service-only RPC.
+    if not sb.dry:
+        for receipt in receipts:
+            sb.req("POST", "rpc/cockpit_accept_webinar_survey", receipt)
     sb.upsert("cockpit_webinar_forms", rows, "response_id")
     note(f"survey {SURVEY_ID}: {len(rows)} responses read{' since ' + since if since else ''}")
     return {"responses": len(rows), "received": received, "source_total": expected,
