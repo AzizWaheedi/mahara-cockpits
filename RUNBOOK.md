@@ -274,7 +274,7 @@ copy run and the writer's status.
 
 ## Sales desk
 
-The worker on the VPS (`hermes/sales-desk`) that drafts the sales cockpit's proposals from the lead's demo call in Fathom, rebuilds them after the closer fills the gaps, indexes every rep's sales calls, copies the Obsidian vault's sales calls and every answered Maqsam phone call in, writes Vince's call reviews, researches leads, and drafts follow-ups. Cron as `hermes`, each job under its own lock: requests and research every two minutes, recordings at :11 and :41, calls-vault at :26 and :56, maqsam-calls at :16 and :46, reviews at :03 and :33 and asked reviews every two minutes, followups at :07 and :37, call notes at :19 and :49, the digest at 03:15 UTC; log `~/.sales-desk.log`. `calls-b2b-fathom --once` (Ahmed's private Fathom calls, which only B2B holds) is a one-off, never on cron. `python3 desk.py doctor` names what is wrong; `python3 desk.py status` shows the queue.
+The worker on the VPS (`hermes/sales-desk`) that drafts the sales cockpit's proposals from the lead's demo call in Fathom, rebuilds them after the closer fills the gaps, indexes every rep's sales calls, copies the Obsidian vault's sales calls and every answered Maqsam phone call in, writes Vince's call reviews, researches leads, drafts follow-ups, runs the backlog waves, makes the live-call video rooms and sends the Slack replies the door keeps. Cron as `hermes`, each job under its own lock: requests and research every two minutes, recordings at :11 and :41, calls-vault at :26 and :56, maqsam-calls at :16 and :46, reviews at :03 and :33 and asked reviews every two minutes, followups at :07 and :37, call notes at :19 and :49, the digest at 03:15 UTC, the room worker every minute (`flock -w 10`, a 57 s run that also sends Slack replies), the room host check every 10 minutes, the doctor hourly at :05, waves every 5 minutes (the exact lines are in `hermes/sales-desk/README.md`, Cron); log `~/.sales-desk.log`. `calls-b2b-fathom --once` (Ahmed's private Fathom calls, which only B2B holds) is a one-off, never on cron. `python3 desk.py doctor` names what is wrong; `python3 desk.py status` shows the queue; `python3 desk.py deploy-check` says whether the box is ready for live calls with every switch off, and changes nothing.
 
 | Symptom | Fix | Who |
 | --- | --- | --- |
@@ -300,6 +300,67 @@ The worker on the VPS (`hermes/sales-desk`) that drafts the sales cockpit's prop
 | Every proposal's notes say "No reference deal on this machine" | Put a finished proposal per variant in ~/.sales-desk/reference with extract_reference.py (README) | Aziz |
 | A request stays "running" for over half an hour | The run died. It goes back in the queue by itself and is parked as failed, with the reason, after four tries | nobody |
 | The cockpit's payment choices differ from offer.json | `python3 desk.py offer-sync` (requests does it every run) | Aziz |
+
+### Live calls: video rooms and the Slack poster
+
+The room worker (`desk.py rooms`, every minute) makes the video rooms the cockpit asks for on Zoom or Meet, and the same run sends the Slack replies the door (`sales-live`) keeps for App Home presses. The SQL sweep (`mahara-sales-rooms-sweep`, every minute) owns every room timer; the watchdog (`mahara-sales-watchdog`, every 5 minutes) posts alerts to #sales-alerts. Everything ships switched off (`rooms.enabled`, `live.enabled`, `live.slack` false). Status rows: `sales-desk` / `rooms` (red on the health line at 90 s, alert at 10 minutes), `room-hosts` (20 minutes), `slack` (10 minutes, watched while `live.enabled` and `live.slack` are on), and `sales-api` / `sweep` (5 minutes).
+
+| Symptom | Fix | Who |
+| --- | --- | --- |
+| Before switching anything on, or after a deploy | On the VPS as `hermes`, in `hermes/sales-desk`: `python3 desk.py deploy-check`. It changes nothing; every `--` line says what is missing (a migration, a column, the lease function, a key) or which switch is on, and what that means. Ready means every table, column, function and setting is there and every switch is off | Hermes |
+| Before switching Zoom rooms on (once) | Read the two Zoom endpoints on Mahara's plan: the live participant list (`/metrics/meetings/{id}/participants?type=live`) and the past-meeting participant report (`/past_meetings/{uuid}/participants`). If either is refused, the worker says so: a finished meeting is then left open with an alert rather than ended, which is safe but noisy, and the host check's report line turns red. The CEO adds the missing permission to the server-to-server app | Hermes, then the CEO |
+| Before switching Zoom rooms on (once, the phase-0 test) | On the test contact: open a Zoom room, join as host, leave as host, and see whether `meeting.ended` reaches `sales-live/zoom` and what its fields say (lc-logic F9). Write the answer into the room plan; the end rules assume it | Hermes |
+| The cockpit says "Rooms are down" (status row `rooms` older than 90 s) | On the VPS as `hermes`: `crontab -l` has the `rooms` line; `tail ~/.sales-desk.log`; `python3 desk.py rooms --once` shows what one tick does. A run that cannot reach the database says so in the log | Hermes |
+| Rooms fail with the sweep's "did not start this room within a minute" | The worker was not running when the room was asked for (same checks as above). The rep makes a new room | Hermes |
+| A room stays "being made" for about two minutes, then fails | A create went to Zoom and its answer never came, and Zoom's list never showed the meeting. The worker only looks for it (never a second create); the sweep fails the room at claim + 120 s and the worker closes the meeting if it shows up later. The rep makes a new room; check Zoom's status page if it repeats | The rep, then Hermes |
+| The status row says "The video room tables are not in the database yet" | Apply `supabase/migrations/20261003a_sales_rooms.sql` | Hermes |
+| The status row says "The rooms setting could not be read" | The worker claims nothing until it can read `rooms` in `cockpit_sales_settings`; check the database answers (`python3 desk.py doctor`) | Hermes |
+| "Zoom is not connected on the room worker" | Set `ZOOM_ACCOUNT_ID`, `ZOOM_CLIENT_ID` and `ZOOM_CLIENT_SECRET` in /opt/data/bibi/api-keys.env; the next minute's run uses them | The CEO |
+| "Zoom is not answering" or "Google is not answering" in the status row | The provider timed out twice in a minute; its rooms fail at once for 30 s, then one call tests it again. Reps use the other provider meanwhile; check the provider's status page | Hermes |
+| "Google is not connected on the room worker", "cannot use Calendar", or the doctor says the sign-in has no Calendar permission | Connect Google Calendar for the CEO's account and put the `GOOGLE_CAL_*` trio in /opt/data/bibi/api-keys.env; set `SALES_ROOMS_CALENDAR_ID` | The CEO |
+| "Google refused the room worker's sign-in" | The Calendar sign-in lapsed or was revoked: connect Google Calendar again | The CEO |
+| "Google would not make the Sales rooms calendar" | Create a calendar named "Sales rooms" in the CEO's Google Calendar, or set `SALES_ROOMS_CALENDAR_ID` in ~/.sales-desk/env | The CEO |
+| "Google did not make the Meet link. Try Zoom." more than now and then | Google left the Meet link pending for 30 s. Use Zoom meanwhile; check Google Workspace status | The rep, then Hermes |
+| "Your Zoom invite is not accepted yet" or "Your email has no Zoom user" | The rep accepts Zoom's invite, or the CEO adds them in Zoom, or a manager links their Zoom user on the Team page | The rep, the CEO or a manager |
+| The host check says a seat's default room "will fail" | Set the other room as the seat's default on the Team page until the seat's Zoom or Google works | A manager |
+| "The closer's Zoom is Basic and ends at 40 minutes" | The closer's seat lost its licence: set it to Licensed in Zoom, or run the demo on Meet | The CEO |
+| "Your Zoom is in another meeting" | The host ends the other meeting, or picks Meet | The rep |
+| Alert "Room ... has ended, but ... is still in its Zoom meeting" | The lead may be in a room the cockpit thinks is over (a lost join). The host checks the meeting in Zoom; the worker closes it once nobody outside the team is left, and stops checking after three hours | The rep, then a manager |
+| Alert `room_stray_held` ("An extra Zoom meeting made for room ... is running with someone outside the team in it") | Two runs worked on one room and someone joined the meeting the room does not use. The host checks it in Zoom; the worker closes it once nobody outside the team is left | The rep, then a manager |
+| The status row says "N extra Zoom meetings from overlapping runs closed" | Two runs worked on one room (most often a run by hand during the cron run); the extra meeting was closed. Run by hand only under the lock: `flock -w 10 $HOME/.sales-desk/rooms.lock python3 desk.py rooms --once` | Hermes |
+| The host check says participant reports "could not be read" | The Zoom app lacks the report permission (past meeting participants): the CEO adds it to the server-to-server app | The CEO |
+| A participant report does not match the cockpit (alert `room_report`) | A join was lost or marked by hand wrongly: check the room's events and correct the call's outcome | A manager |
+| A cancelled room's Zoom meeting is still there | The worker deletes it within a minute (found by its code if it was never saved) and drops its host link after ten minutes even if Zoom refuses; `tail ~/.sales-desk.log` names Zoom's answer | Hermes |
+| "sales-api refused the room message for N rooms" | sales-api does not take `room.event` (not deployed yet, or the key is refused). Links wait for the sweep or are not sent: deploy the rooms actions or check the service key | Hermes |
+| "sales-api did not answer for N room messages" | The sweep replays the stored events about 20 s later. If it lasts, check sales-api answers `room.event` in under 2 s | Hermes |
+| The log says "an event could not be taken with the lease" | The lease function is missing or refused: run `python3 desk.py deploy-check` and apply `20261003a_sales_rooms.sql` if it says so. Meanwhile the sweep replays the events, only slower | Hermes |
+| Alert "N room events were given up today after 3 tries" | A Zoom, Slack, worker or claim event no room acted on: open the room's events (`cockpit_sales_room_events` with `detail.gave_up`) and check sales-live and sales-api were up | Hermes |
+| Daily: a "Live ·" booking in HighLevel that the cockpit never counted | A count that crashed between its own result write and deleting its booking leaves an orphan booking (contract-v2 section 16). Once a day while `rooms.count_on_join` is on: list HighLevel's appointments titled "Live ·" for the day and compare with `select code, count_appointment_id, count_result from cockpit_sales_rooms where count_claimed_at > now() - interval '1 day'`; any booking whose room's `count_result` is not `booked` is cancelled in HighLevel by hand | A manager |
+| The `slack` status row says "SLACK_SALES_BOT_TOKEN is not set on the VPS" | Put the Mahara Sales app's Bot User OAuth Token in /opt/data/bibi/api-keys.env as `SLACK_SALES_BOT_TOKEN` (never in chat); the next minute's run uses it | The CEO |
+| The `slack` status row says "Slack refused the Mahara Sales bot token" | The app was uninstalled or the token revoked: reinstall the Mahara Sales app and put its new bot token in /opt/data/bibi/api-keys.env | The CEO |
+| The `slack` status row says replies were "refused by Slack (channel_not_found)" or `user_not_found` | The seat's Slack ID on the Team page is not that person's member id; a manager fixes it. A refused reply is closed, not retried | A manager |
+| The `slack` status row says a reply "Slack did not confirm in time" | Slack took longer than 4 s; such a reply is not sent again (it may have arrived). If it repeats, check Slack's status page | Hermes |
+| Slack replies wait while Slack is switched off | By design: the poster sends only while `live.enabled` and `live.slack` are on, and closes a reply older than ten minutes unsent | Nobody |
+
+### Follow-up agent and backlog waves
+
+`desk.py followups` (at :07 and :37) drafts follow-ups for approval; `desk.py waves` (every 5 minutes) runs the backlog waves a manager starts: it enrols, writes the day's openers and sends the approved ones paced. `followups.enabled` is the agent's off switch for both. Status rows `sales-desk` / `followups`, `waves`, `model` and `doctor` (the hourly `doctor --cron`). Details: `hermes/sales-desk/NOTES-followup-agent.md`.
+
+| Symptom | Fix | Who |
+| --- | --- | --- |
+| Before any wave copy shows a number | Count the pools read only: `python3 desk.py waves --pools` on the VPS (it writes nothing). The 24-hour wait and the demo-calendar rule lower the earlier counts (179 good intros, 227 unclosed demos), so the old numbers are never shown | Hermes |
+| "No drafts can be written: The Claude sign-in on the VPS has lapsed" | SSH to the VPS as the CEO, run `claude`, then `/login`. Drafting resumes at the next :07 or :37 | The CEO |
+| Waves row says "WhatsApp sends from the desk are off until the WA Connector is off and the single-copy test passes." | Uninstall the WA Connector. Send one template to the second test contact and see exactly one message. A manager then marks both in the cockpit | The CEO |
+| Waves row says the opener templates are not set up | Create `opener_ar` and `opener_en` in HighLevel, each with a one-step workflow with "Allow re-entry". A manager saves the routes under Follow-ups, WhatsApp library | The CEO, then a manager |
+| Waves row says "The database refuses the reactivate kind" | Apply migration `20261003b` (the follow-ups segment check) | Hermes |
+| Waves row says an earlier day's openers still wait for approval | Approve, hold or skip them on the Follow-ups page | The setter or the closer |
+| Waves row says the template budget is spent | A manager raises `whatsapp_guard.template_budget_usd_month`, after checking the wallet | The CEO |
+| Waves row says sending stopped: HighLevel did not send it, or sales-api answered 5xx | Check HighLevel's status and the sales-api logs. The run tries again in 5 minutes, one send at a time | Hermes |
+| Waves row says "The follow-up agent is switched off" | Intended while `followups.enabled` is false. Turn it on under Follow-ups settings, or pause the running waves | A manager |
+| Openers set aside for a person | Follow-ups page: the draft shows the refusal. Fix it, release the hold, or skip it | The setter or the closer |
+| A stop word left a lead waiting | Follow-ups page, stop task: "Yes, stop WhatsApp" or "No, pause the agent for 30 days" | The setter or the closer |
+| Testing the agent | `python3 desk.py followups --contact <cockpit-test id> --segment no_show`. The draft says when do-not-disturb is on. Approving it must be refused | Hermes |
+| A run by hand next to the cron | Use the same lock: `flock -n $HOME/.sales-desk/waves.lock python3 desk.py waves`. Two runs never send a draft twice, but each would write the day's batch | Hermes |
 
 ## What never needs a person
 

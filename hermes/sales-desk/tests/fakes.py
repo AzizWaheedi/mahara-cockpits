@@ -131,6 +131,10 @@ class FakePostgrest:
         # The database's unique indexes and checks (see the module's note).
         self.enforce = True
         self.segments = SEGMENTS_ALLOWED
+        # Column defaults a test stands up, by table: column -> a function
+        # giving the value, applied to a new row that leaves the column out
+        # (as `at timestamptz default now()` on cockpit_sales_room_events).
+        self.defaults: dict[str, dict[str, Any]] = {}
 
     # ---- seeding and reading ----
     def put(self, table: str, row: dict[str, Any]) -> dict[str, Any]:
@@ -283,6 +287,8 @@ class FakePostgrest:
                 key = tuple(str(row[k]) for k in PK[table])
                 if "ignore-duplicates" in prefer and key in self.tables[table]:
                     continue  # ON CONFLICT DO NOTHING: the row stays as it was and is not returned
+                if key not in self.tables[table]:
+                    row = {**{c: make() for c, make in self.defaults.get(table, {}).items() if c not in row}, **row}
                 bad = self._violation(table, key, {**self.tables[table].get(key, {}), **row}, url)
                 if bad:
                     raise bad

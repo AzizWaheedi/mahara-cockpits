@@ -408,9 +408,15 @@ class EndOfRun(RoomsCase):
         self.unclear_end(made=False)
         self.assertEqual(self.env.zoom.count("POST", "/meetings"), 2)
         row = self.env.room()
+        # Still only looked for: the sweep fails it at claim + 120 s, its own
+        # timer (contract-v2 S1 and section 7, item 10), never the worker at 60.
+        self.assertEqual((row["state"], row["error"]), ("creating", None))
+        # With no sweep running, the worker fails it once it is ten minutes old.
+        self.env.clock.advance(rooms.STALE_S)
+        self.env.worker("run-c").run(seconds=0)
+        row = self.env.room()
         self.assertEqual((row["state"], row["error"]), ("failed", rooms.SAY["lost"]))
-        # Failed just past its minute (the sweep's own rule), not later.
-        self.assertLess(rooms.parse_ts(row["ended_at"]) - rooms.parse_ts(row["claimed_at"]), 63)
+        self.assertEqual(self.env.zoom.count("POST", "/meetings"), 2)
 
     def test_a_create_zoom_did_make_is_found_by_the_next_run(self):
         self.unclear_end(made=True)
@@ -618,6 +624,21 @@ class HarshStress(RoomsCase):
 
         env.clock.at(T0 + 100, expire_some)
         env.clock.at(T0 + 200, expire_some)
+
+        # The SQL sweep owns the timers (contract-v2 S1), every minute: R1
+        # fails a room still requested at 60 s, R2 one still creating at claim
+        # + 120 s. The worker only looks for a lost meeting until then.
+        def sweep():
+            now = env.clock()
+            for r in env.pg.rows(rooms.ROOMS):
+                asked, claimed = rooms.parse_ts(r.get("requested_at")), rooms.parse_ts(r.get("claimed_at"))
+                if (r["state"] == "requested" and asked and now - asked > 60) or \
+                        (r["state"] == "creating" and claimed and now - claimed > 120):
+                    r.update({"state": "failed", "result": "failed", "ended_at": rooms.iso(now),
+                              "error": "The room was not made in time. Make a new one."})
+
+        for k in range(1, 12):
+            env.clock.at(T0 + 60 * k, sweep)
         # A run by hand lands in the middle of the second cron run.
         env.clock.at(T0 + 95.5, lambda: env.worker("once-by-hand").run(seconds=0))
         ends = []

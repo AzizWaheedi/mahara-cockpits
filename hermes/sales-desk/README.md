@@ -338,8 +338,17 @@ but Playwright is the path to rely on here.
 * * * * *    flock -w 10 $HOME/.sales-desk/rooms.lock bash -c "cd $HOME/mahara-cockpits/hermes/sales-desk && set -a; . $HOME/.editor-desk/env; . /opt/data/bibi/api-keys.env; . $HOME/.sales-desk/env; set +a; python3 desk.py --quiet rooms --for 57" >> $HOME/.sales-desk.log 2>&1
 */10 * * * * flock -n $HOME/.sales-desk/room-hosts.lock bash -c "cd $HOME/mahara-cockpits/hermes/sales-desk && set -a; . $HOME/.editor-desk/env; . /opt/data/bibi/api-keys.env; . $HOME/.sales-desk/env; set +a; python3 desk.py --quiet rooms --check-hosts" >> $HOME/.sales-desk.log 2>&1
 5 * * * *    flock -n $HOME/.sales-desk/doctor.lock bash -c "cd $HOME/mahara-cockpits/hermes/sales-desk && set -a; . $HOME/.editor-desk/env; . /opt/data/bibi/api-keys.env; . $HOME/.sales-desk/env; set +a; python3 desk.py --quiet doctor --cron" >> $HOME/.sales-desk.log 2>&1
+7,37 * * * * flock -n $HOME/.sales-desk/followups.lock bash -c "cd $HOME/mahara-cockpits/hermes/sales-desk && set -a; . $HOME/.editor-desk/env; . /opt/data/bibi/api-keys.env; . $HOME/.sales-desk/env; set +a; python3 desk.py --quiet followups" >> $HOME/.sales-desk.log 2>&1
 */5 * * * *  flock -n $HOME/.sales-desk/waves.lock bash -c "cd $HOME/mahara-cockpits/hermes/sales-desk && set -a; . $HOME/.editor-desk/env; . /opt/data/bibi/api-keys.env; . $HOME/.sales-desk/env; set +a; python3 desk.py --quiet waves" >> $HOME/.sales-desk.log 2>&1
 ```
+
+These are the lines for live calls and the follow-up agent (contract-v2
+section 13, item 2): the room worker every minute, the room host check every
+10 minutes, the doctor hourly at :05, follow-ups at :07 and :37 as they run
+today, and the waves every 5 minutes. The other jobs the runbook lists
+(calls-vault, reviews, research, notes, the digest) keep the lines they have
+on the VPS; they are not repeated here, so never install this block alone
+over the crontab.
 
 The `doctor --cron` line is the hourly doctor of the follow-up agent: one
 model token, no render, and its status rows written whatever happens. The
@@ -352,8 +361,13 @@ The `rooms` line is the video room worker (below): every minute, a run of
 57 s that polls every second and never runs more than 2 s past its end. It
 waits up to 10 s for the lock (`-w 10`) rather than skipping a minute when the
 last run is a little late, which would leave the rooms asked for in that
-minute waiting. The `--check-hosts` line is the room host check, on its own
-line and lock so it never holds a new room up.
+minute waiting. The same run sends the Slack replies the door keeps (the
+Slack poster, below), so Slack needs no line of its own. The
+`--check-hosts` line is the room host check, on its own line and lock so it
+never holds a new room up.
+
+Before the first switch is turned on, and after every deploy, run
+`python3 desk.py deploy-check` on the VPS (below): it changes nothing.
 
 The first `maqsam-calls` (since 2026-01-01) and `calls-vault --fathom-days 700`
 (the vault's history against Fathom's flag) are run once by hand before the
@@ -392,13 +406,61 @@ editor desk's README says. Never pipe a stale copy.
    in the link, for up to 30 s;
 3. puts the host link in `cockpit_sales_room_secrets` (service role only),
    stores a `worker.ready` event, then saves `join_url` and
-   `provider_meeting_id` and sets the room `open`, then calls sales-api
-   `room.event` once (4 s, no retry). The stored event is the guarantee: the
-   sweep replays it if sales-api did not mark it handled, so a slow or lost
-   call costs about 20 seconds, never the link, and never a second send;
-4. on a refusal or a provider failure sets the room `failed` with a sentence
-   the rep can act on ("Your Zoom is in another meeting. End it or use
-   Meet."), stores `worker.failed` and calls `room.event` the same way.
+   `provider_meeting_id` and sets the room `open` (with `opened_at`, and
+   `host_by` and `ends_at` only where sales-api left them empty; never
+   `lead_by`), then calls sales-api `room.event` once (4 s, no retry). The
+   stored event is the guarantee: the sweep replays it if sales-api did not
+   mark it handled, so a slow or lost call costs about 20 seconds, never the
+   link, and never a second send;
+4. on a refusal or a provider failure stores `worker.failed`, sets the room
+   `failed` with a sentence the rep can act on ("Your Zoom is in another
+   meeting. End it or use Meet."), and calls `room.event` the same way. A
+   room asked for while `rooms.enabled` or its provider is off is never
+   claimed: it fails from `requested` with the switch's sentence.
+
+**The handshake with sales-api (contract-v2 sections 5 to 7).** The worker
+opens the room, and sales-api sends the link. The call is exactly
+`{action: 'room.event', kind, room_id, request_id, dedupe_key, payload}`:
+`request_id` is uuid5 (URL namespace) of `mahara-room/{kind}/{room_id}`,
+`dedupe_key` is `{kind}:{room_id}`, and `payload` is `{provider,
+provider_meeting_id, worker_run, seconds}` for `worker.ready` and `{error,
+worker_run}` for `worker.failed`. sales-api leases the stored event by that
+dedupe key (`cockpit_sales_room_event_lease`), never by stamping
+`handled_at` first, and the worker never sets `lease_until` on what it
+stores. The answer is read this way: `{ok: true, handled}` is delivered
+(`handled: false` means the sweep replays it); a 4xx or `ok: false` is a
+refusal, said on the status row, unless it carries `retry: true` (sales-api
+released the event and the sweep replays it); a 5xx, a 429, a timeout or no
+answer is unclear, left to the sweep. A `worker.ready` refused with
+`cleanup: true` closes the meeting only when the room carries another one;
+the room's own meeting is never closed on that word alone.
+
+**Every stored event has `text`**, a plain sentence for the room's timeline
+("Room made on Zoom in 4.2 s.", "The room was not made. Your Zoom invite is
+not accepted yet..."), with no link, address or key. When the open or fail
+write misses because the room went another way, the event stored for that
+write is closed by the worker with the lease (`detail.closed_by: worker`),
+so the sweep does not replay it: a `worker.ready` once the room is final, a
+`worker.failed` once the room is gone, open, or final other than `failed`
+(a failed room's event stays for sales-api).
+
+**Timers belong to the SQL sweep (contract-v2 S1).** It fails a room still
+`requested` at 60 s and one still `creating` at claim + 120 s. Until then
+the worker keeps looking for a lost Zoom meeting by its code (never sending
+a second create) and makes a room no create was ever sent for. It fails a
+room itself only once the room is ten minutes old (the sweep is not
+running), and a Meet link Google left pending for 30 s.
+
+**A meeting an overlapping run may adopt (contract-v2 section 7, step 5).**
+When a run's open write misses because another run holds the room (it
+adopted it while this one was slow), or the database failed mid-make, the
+Zoom meeting this run made is watched and noted as `worker.stray`: kept when
+the room opens with it (the other run finds a lost meeting by its code),
+closed otherwise, and, when the room opened with another meeting, the room's
+host link is put back first if this run's had overwritten it. A later run
+picks up the notes of the last six hours, so nothing is left behind when the
+first run ends. A running extra meeting with someone in it is never ended:
+it is left open with an alert (`room_stray_held`).
 
 **One provider never stops the other.** Every call has a short timeout (4 s
 a read, 8 s a create, 3 s a close). Two calls to one provider that time out
@@ -457,22 +519,83 @@ been given for Drive only: `python3 desk.py doctor` checks it live and says
 so, and a Meet room then fails with "The room worker's Google sign-in cannot
 use Calendar." Optional: `SALES_ROOMS_CALENDAR` (default "Sales rooms") and
 `SALES_ROOMS_CALENDAR_ID` (use this calendar and never list or make one;
-recommended, because it needs only the events permission). Rooms ship
-switched off (`rooms.enabled=false` in `cockpit_sales_settings`); the worker
-also fails a waiting room while the switch is off.
+recommended, because it needs only the events permission);
+`SLACK_SALES_BOT_TOKEN` (the Mahara Sales app's bot token, for the Slack
+poster; needed before `live.slack` is switched on). Rooms ship switched off
+(`rooms.enabled=false` in `cockpit_sales_settings`); the worker also fails a
+waiting room while the switch is off.
 
 By hand: `python3 desk.py rooms --once` (one tick), `python3 desk.py rooms
 --check-hosts`, `python3 desk.py doctor` (the "rooms: zoom" and "rooms:
 google" lines check the keys live; `--offline` only names them).
 
-**What sales-api must do with the worker's events** (contract for its
-`room.event` handler): handle `worker.ready` only when the room is open, and
-take the send with one atomic claim (for example `link_claimed_at` set where
-it is null) so the call and the sweep's replay can never both send; answer
-in under 2 s and send inside `waitUntil`; leave `worker.ready` unhandled
-while the room is still `creating`; handle `worker.failed` only when the room
-is failed. `worker.create_sent`, `worker.closing`, `worker.held` and
+**What sales-api does with the worker's events** (contract-v2 section 7,
+step 7; the API lane builds it): lease `worker.ready` by its dedupe key;
+release it and answer `handled: false` while the room is `creating`; on an
+`open` or `host_in` room fill in only the missing deadlines and claim the
+link (`link_claimed_at`) in the same guarded write, set `handled_at`, and
+send inside `waitUntil`, answering in under 2 s; on a final room set
+`handled_at`. `worker.failed` is acted on only when the room is `failed`.
+`worker.create_sent`, `worker.closing`, `worker.held`, `worker.stray` and
 `report.checked` are notes (stored handled).
+
+### The Slack poster
+
+A Slack button on App Home comes with no `response_url`, so the door
+(sales-live) keeps its answer as a room event: kind `slack.reply`, source
+`door`, `room_id` null, `text` the sentence, `detail.slack_user_id` the
+person who pressed, `handled_at` null. The sweep never replays a `door`
+event; the poster (`desk/slackpost.py`) is its only reader, inside the
+`rooms` run, every 2 seconds:
+
+- only while `live.enabled` and `live.slack` are both true (a setting it
+  cannot read is off), and only with `SLACK_SALES_BOT_TOKEN` set;
+- it takes each reply with the database's lease, posts `chat.postMessage` to
+  the person's Slack user id (the app's DM) as the Mahara Sales bot, and
+  sets `handled_at` with Slack's `ts`, or with Slack's refusal
+  (`detail.refused`, such as `channel_not_found`);
+- Slack down or busy: the lease is released and the reply tried again, at
+  most three times, ten seconds apart; "slow down" (`ratelimited`, a 429)
+  pauses the poster for 30 s without spending a try; a call that timed out
+  is never repeated (Slack may have posted it) and is said as not
+  confirmed; a reply over ten minutes old is closed unsent
+  (`detail.dropped`; never `gave_up`, which the watchdog counts as a lost
+  room signal); a mark that did not land is tried again, never the send;
+- a refused token (`invalid_auth`, `token_revoked` ...) stops the sends at
+  once and turns the row red.
+
+Its status row is `sales-desk` / `slack`, written once a run with a plain
+sentence: green when switched off (it says whether the token is set and how
+many replies wait), red when switched on and it cannot send ("SLACK_SALES_BOT_TOKEN
+is not set on the VPS, so Slack replies to App Home presses cannot be
+sent...", or Slack refused the token). The watchdog reads it while
+`live.enabled` and `live.slack` are on (10 minutes stale).
+
+### Deploy check
+
+`python3 desk.py deploy-check` (or `deploy check`), run on the VPS as
+`hermes` after the migrations and before anything is switched on. It
+changes nothing: no row, no status row, no folder, and no call to Zoom,
+Google, Slack or HighLevel; keys are read by name and never printed. It
+checks, and says what each missing piece means:
+
+- the keys: the database pair (required), Zoom, Google Calendar,
+  `SALES_ROOMS_CALENDAR_ID`, `SLACK_SALES_BOT_TOKEN` and the HighLevel key
+  (each needed only before its switch is turned on, and a blocker once that
+  switch is on);
+- the tables and the columns the code uses (20261003a and 20261003c), the
+  contract-v2 room columns (`link_claimed_at`, `count_undo_at`,
+  `link_unconfirmed_at`), the lease function (asked with a read-only GET),
+  and the settings `rooms`, `live`, `followups` and `whatsapp_guard`;
+- every switch off as it ships: `rooms.enabled`, `rooms.test_only` (on),
+  both providers, the three `rooms.send` channels, `count_on_join`,
+  `fallback.auto_on_miss`, `short_link`, `live.enabled`, `live.slack`, both
+  `live.kinds`, `threads.enabled`, `followups.autosend.reactivate`, and no
+  backlog wave running; the WhatsApp gate is reported;
+- the status rows (each against its own threshold) and the crontab lines.
+
+`OK` is ready, `--` is missing or switched on (exit 1), `??` is not known or
+only needed before a switch is turned on. `--json` gives the same as data.
 
 ### Runbook: video rooms
 
@@ -498,6 +621,15 @@ is failed. `worker.create_sent`, `worker.closing`, `worker.held` and
 | A cancelled room's Zoom meeting is still there | The worker deletes it within a minute (found by its code if it was never saved) and drops its host link after ten minutes even if Zoom refuses; `tail ~/.sales-desk.log` names Zoom's answer | Hermes |
 | "sales-api refused the room message for N rooms" | sales-api does not take `room.event` (not deployed yet, or the key is refused). Links wait for the sweep or are not sent: deploy the rooms hooks or check the service key | Hermes |
 | "sales-api did not answer for N room messages" | The sweep replays the stored events about 20 s later. If it lasts, check sales-api answers `room.event` in under 2 s | Hermes |
+| A room stays "being made" for about two minutes, then fails with the sweep's sentence | A create went to Zoom and its answer never came, and Zoom's list never showed the meeting. The worker only looks for it (it never sends a second create); the sweep fails the room at claim + 120 s, and the worker closes the meeting if it shows up later. The rep makes a new room; check Zoom's status page if it repeats | The rep, then Hermes |
+| The status row says "N extra Zoom meetings from overlapping runs closed" | Two runs worked on one room (most often a run by hand during the cron run, or a run slower than its minute); the extra meeting was closed. If it repeats, run by hand only under the lock: `flock -w 10 $HOME/.sales-desk/rooms.lock python3 desk.py rooms --once` | Hermes |
+| Alert `room_stray_held` ("An extra Zoom meeting made for room ... is running with someone outside the team in it") | Someone joined a meeting the room does not use. The host checks it in Zoom; the worker closes it once nobody outside the team is left | The rep, then the manager |
+| The log says "an event could not be taken with the lease" | The lease function is missing or refused: run `python3 desk.py deploy-check`; apply `20261003a_sales_rooms.sql` if it says so. Meanwhile the sweep replays the events, only slower | Hermes |
+| The `slack` status row says "SLACK_SALES_BOT_TOKEN is not set on the VPS" | Put the Mahara Sales app's Bot User OAuth Token in /opt/data/bibi/api-keys.env as `SLACK_SALES_BOT_TOKEN` (never in chat); the next minute's run uses it | The CEO |
+| The `slack` status row says "Slack refused the Mahara Sales bot token" | The app was uninstalled or the token revoked: reinstall the app in Slack and put its new bot token in /opt/data/bibi/api-keys.env | The CEO |
+| The `slack` status row says replies were "refused by Slack (channel_not_found)" or `user_not_found` | The seat's Slack ID on the Team page is not that person's member id; the manager fixes it. The refused reply is closed, not retried | The manager |
+| The `slack` status row says replies "Slack did not confirm in time" | Slack took longer than 4 s; each such reply is not sent again (it may have arrived). If it repeats, check Slack's status page | Hermes |
+| `deploy-check` shows a `--` line | The line says what is missing and what it means: apply the named migration, set the named key in /opt/data/bibi/api-keys.env, or set the named switch back off in Settings | Hermes, or the CEO for keys and switches |
 
 ## Settings (environment, all optional)
 
@@ -547,10 +679,15 @@ In Creative Triage (`supabase/migrations/20260924a_sales_cockpit.sql` and
   `error`; `cockpit_sales_room_secrets` (the host link, dropped at the end);
   `cockpit_sales_room_events` (`worker.ready`, `worker.failed`, and the
   notes `worker.create_sent`, `worker.closing`, `worker.held`,
-  `report.checked`); `cockpit_sales_room_hosts` (the host check, never over
-  the Team page's `zoom_user_id` or `default_provider`);
-  `cockpit_sales_alerts` (a meeting left open with someone in it, a
+  `worker.stray`, `report.checked`, each with a `text` sentence; the
+  worker's own `worker.ready` or `worker.failed` marked handled, with the
+  lease, when its room went another way; the `slack.reply` events the
+  poster sent or closed, with `handled_at`, `tries` and what Slack said);
+  `cockpit_sales_room_hosts` (the host check, never over the Team page's
+  `zoom_user_id` or `default_provider`); `cockpit_sales_alerts` (a meeting
+  left open with someone in it, an extra meeting with someone in it, a
   participant report that does not match).
+- `cockpit_sales_worker_status` rows `rooms`, `room-hosts` and `slack`.
 - Storage `sales-proposals` (private): `proposals/<id>/v<n>.html` and `.pdf`.
 
 On the VPS, `~/.sales-desk/out/<proposal id>/` keeps the working files of
@@ -606,4 +743,14 @@ switches, the end of a run, no real sleeps, Google's permission, scrubbed
 secrets, and a harsher four-minute stress run (every provider and the
 database failing and hanging, sales-api slow and refusing, cancels and
 expiries, a run by hand in the middle of a cron run) that leaves nothing
-stuck, doubled or leaked.
+stuck, doubled or leaked (the sweep's 60 s and 120 s rules run inside it,
+since the sweep owns those timers). `tests/test_ops_contract.py` holds the
+worker and the Slack poster to contract-v2: the `room.event` body and how
+each answer is read, the stored event before the room write and the call
+after it, `text` on every event, the lease (never over a hold, nothing
+closed without it), claims only while switched on, the meeting an
+overlapping run may adopt, every path of the Slack poster, and a stress run
+of overlapping runs, the sweep, flaky sales-api, Slack and database together
+that leaves no meeting behind, no reply sent twice and no event without
+text. `tests/test_deploy_check.py` covers `deploy-check`: GETs only, no
+folder made, no key value printed, and each missing piece said.

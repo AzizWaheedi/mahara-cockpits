@@ -393,7 +393,7 @@ The followups row now reads `ok=false` with "No drafts can be written: …" whil
 
 ## 6. VPS cron lines and runbook rows
 
-These lines are not added to the README, which is a shared file with a hand-off window. The integration lane adds them, and the runbook rows, in the format of `README.md` "Cron".
+The integration lane added these lines to `README.md` "Cron" (with the `followups` line at :07 and :37 and the room worker's lines), and the runbook rows below to the top-level `RUNBOOK.md`, "Follow-up agent and backlog waves" (3 October 2026).
 
 ```
 5 * * * *    flock -n $HOME/.sales-desk/doctor.lock bash -c "cd $HOME/mahara-cockpits/hermes/sales-desk && set -a; . $HOME/.editor-desk/env; . /opt/data/bibi/api-keys.env; . $HOME/.sales-desk/env; set +a; python3 desk.py --quiet doctor --cron" >> $HOME/.sales-desk.log 2>&1

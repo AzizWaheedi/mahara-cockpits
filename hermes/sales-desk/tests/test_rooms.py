@@ -782,9 +782,27 @@ class Recovery(RoomsCase):
         self.assertEqual(self.env.pg.one(rooms.SECRETS, room_id=rid(1))["start_url"], made["start_url"])
         self.assertEqual(self.env.api.kinds(), ["worker.ready"])
 
-    def test_a_lost_zoom_room_that_zoom_never_made_fails(self):
+    def test_a_lost_zoom_room_no_create_was_sent_for_is_made_while_the_sweep_still_waits(self):
+        # The sweep fails a room still creating at claim + 120 s (contract-v2
+        # section 7, item 10); before that, a room whose create never went
+        # out is made, so the rep gets it.
         self.lost(age=90)
         self.tick(self.env.worker())
+        self.assertEqual(self.env.room()["state"], "open")
+        self.assertEqual(self.env.zoom.count("POST", "/meetings"), 1)
+
+    def test_a_lost_zoom_room_whose_create_went_out_is_only_looked_for_until_ten_minutes(self):
+        room = self.lost(age=90)
+        self.env.pg.put(rooms.EVENTS, {"room_id": room["id"], "kind": "worker.create_sent", "source": "worker",
+                                       "dedupe_key": f"worker.create_sent:{room['id']}", "handled_at": rooms.iso(T0)})
+        self.tick(self.env.worker())
+        # Not failed by the worker: the timer is the sweep's (S1).
+        self.assertEqual((self.env.room()["state"], self.env.room().get("error")), ("creating", None))
+        self.assertEqual(self.env.zoom.count("POST", "/meetings"), 0)
+        self.assertGreaterEqual(self.env.zoom.count("GET", "/meetings"), 1)  # looked for by its code
+        # With no sweep running, the worker fails it once it is ten minutes old.
+        self.env.room()["requested_at"] = rooms.iso(T0 - rooms.STALE_S - 1)
+        self.tick(self.env.worker("run-b"))
         self.assertEqual((self.env.room()["state"], self.env.room()["error"]), ("failed", rooms.SAY["lost"]))
         self.assertEqual(self.env.zoom.count("POST", "/meetings"), 0)
 
