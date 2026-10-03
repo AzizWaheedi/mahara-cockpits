@@ -10,7 +10,7 @@
 # Two copies may differ only in their imports, because the Convex cockpits
 # reach Supabase through an action holding the service key and the editor
 # talks to PostgREST with the editor's own session. So the comparison drops
-# import lines and compares everything below them.
+# import lines and compares everything below them, ignoring LF/CRLF differences.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
@@ -23,6 +23,7 @@ fails=0
 # Everything below the import block, which is the part that must match.
 body() {
   awk '
+    { sub(/\r$/, "") }
     !started && (/^import / || /^} from / || /^  [A-Za-z{}]/ && importing) { importing = 1; next }
     /^$/ && importing { next }
     { started = 1; print }

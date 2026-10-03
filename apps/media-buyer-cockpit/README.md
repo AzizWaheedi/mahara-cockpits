@@ -88,6 +88,10 @@ Scripts using `scripts/auth.ts` also need the automated sign-in configuration:
 `VIKTOR_SPACES_PROJECT_SECRET`, and `TOOL_TOKEN`, or a valid saved auth state.
 Do not commit credentials or auth-state files.
 
+From the repository root, `bash scripts/check-shared.sh` checks shared
+cockpit source. It ignores imports and LF/CRLF differences, but still rejects
+different shared statements. Shell scripts stay LF through `.gitattributes`.
+
 Note: The Convex backend is always running in the cloud after running the sync command — only the frontend server needs to be started locally.
 
 Your app is automatically built and deployed when you use the deploy tool.
