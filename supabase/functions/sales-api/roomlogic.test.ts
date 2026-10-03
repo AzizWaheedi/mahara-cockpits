@@ -27,6 +27,7 @@ import {
   DEFAULT_WAITS,
   defaultProvider,
   deviceOf,
+  eventTime,
   FINAL_STATES,
   fill,
   GOOGLE_EVENT_ID_RE,
@@ -39,6 +40,7 @@ import {
   isTestContact,
   kuwaitClock,
   LANE_COPY,
+  leadJoined,
   linkChannelsOf,
   liveTitle,
   makeCode,
@@ -47,10 +49,13 @@ import {
   meetingFromAddress,
   meetPendingExpired,
   newRoomRow,
+  nextDueAt,
   panelLine,
+  PENDING_HOLD_MAX_S,
   parseCode,
   presenceOf,
   readOutLink,
+  REASK_AFTER_S,
   replayDue,
   resolveShortLink,
   ROOM_COPY,
@@ -97,6 +102,8 @@ const ZOOM_URL = "https://us06web.zoom.us/j/81234567890?pwd=AbC123";
 const MEET_URL = "https://meet.google.com/abc-defg-hij";
 const ctx = roomCtx(DEFAULT_ROOMS_SETTING);
 const W = ctx.waits;
+/** Rooms on for everyone (room.wrap checks the switch and the test list). */
+const WRAP_ON = roomsSetting({ ...DEFAULT_ROOMS_JSON, enabled: true, test_only: false });
 const at = (t: number) => new Date(t).toISOString();
 
 function room(over: Partial<RoomRow> = {}): RoomRow {
@@ -285,7 +292,7 @@ describe("the short link", () => {
   });
 
   test("a booked room keeps working until the call's end, because the meeting is the closer's own", () => {
-    const plan = wrapPlan({ start: at(T0 + 15 * MIN), end: at(T0 + 60 * MIN), address: ZOOM_URL, call_kind: "demo", now: T0, ctx });
+    const plan = wrapPlan({ setting: WRAP_ON, contact_id: "c1", start: at(T0 + 15 * MIN), end: at(T0 + 60 * MIN), address: ZOOM_URL, call_kind: "demo", now: T0, ctx });
     if (!plan.ok) throw new Error(plan.message);
     const b = wrapRoomRow({ id: ROOM_ID, request_id: REQ_ID, code: "K7Q2MX", contact_id: "c1", call_kind: "demo", host_email: CLOSER, made_by: CLOSER, now: T0 }, plan);
     const expired = ok(sweepRoom(b, T0 + 31 * MIN, ctx)).room;
@@ -532,7 +539,7 @@ describe("ending a room", () => {
     const c = ok(apply(joined, { kind: "meeting_ended" }, T0 + 20 * MIN));
     expect([c.to, c.room.result]).toEqual(["ended", "joined"]);
     expect(kinds(c)).toEqual(["delete_secret"]);
-    const plan = wrapPlan({ start: at(T0 + 15 * MIN), address: ZOOM_URL, call_kind: "demo", now: T0, ctx });
+    const plan = wrapPlan({ setting: WRAP_ON, contact_id: "c1", start: at(T0 + 15 * MIN), address: ZOOM_URL, call_kind: "demo", now: T0, ctx });
     if (!plan.ok) throw new Error("wrap");
     const b = wrapRoomRow({ id: ROOM_ID, request_id: REQ_ID, code: "K7Q2MX", contact_id: "c1", call_kind: "demo", host_email: CLOSER, made_by: CLOSER, now: T0 }, plan);
     expect(kinds(ok(apply(b, { kind: "end", reason: "cancel" }, T0 + MIN)))).toEqual(["delete_secret"]);
@@ -626,14 +633,17 @@ describe("the sweep and its timers", () => {
     expect(ok(sweepRoom(r, T0 + 5 * S + 120 * S, ctx)).reason).toBe("host_by");
   });
 
-  test("a standby room expires at 300 s with no host, and is refreshed at 35 minutes", () => {
+  test("a standby room expires at 300 s with no host, and is refreshed at 35 minutes while the host is available", () => {
     const sb = opened({ purpose: "standby", contact_id: null, call_kind: "demo", provider: "zoom", host_email: CLOSER }, ZOOM_URL);
     expect(ok(sweepRoom(sb, T0 + 5 * S + 300 * S, ctx)).reason).toBe("host_by");
     const inRoom = step(sb, { kind: "host_in", source: "zoom" }, T0 + 60 * S);
-    expect(ok(sweepRoom(inRoom, T0 + 5 * S + 2099 * S, ctx)).changed).toBe(false);
-    const c = ok(sweepRoom(inRoom, T0 + 5 * S + 2100 * S, ctx));
+    const avail = { available_until: at(T0 + 2 * 3_600_000) };
+    expect(ok(sweepRoom(inRoom, T0 + 5 * S + 2099 * S, ctx, null, avail)).changed).toBe(false);
+    const c = ok(sweepRoom(inRoom, T0 + 5 * S + 2100 * S, ctx, null, avail));
     expect([c.to, c.reason]).toEqual(["expired", "standby_max"]);
     expect(kinds(c)).toEqual(["delete_secret", "close_provider", "refresh_standby"]);
+    // Availability not given: the room still closes, and no fresh one is made that nobody asked to keep.
+    expect(kinds(ok(sweepRoom(inRoom, T0 + 5 * S + 2100 * S, ctx)))).toEqual(["delete_secret", "close_provider"]);
   });
 
   test("the booked-call guard closes an empty standby room 10 minutes before; anything else only alerts", () => {
@@ -680,7 +690,7 @@ describe("the sweep and its timers", () => {
       ends_at: at(start + 45 * MIN),
     });
     expect(bookedDeadlines(start, null, "demo", ctx).ends_at).toBe(at(start + 60 * MIN));
-    const plan = wrapPlan({ start: at(start), end: at(start + 45 * MIN), address: ZOOM_URL, call_kind: "demo", now: T0, ctx });
+    const plan = wrapPlan({ setting: WRAP_ON, contact_id: "c1", start: at(start), end: at(start + 45 * MIN), address: ZOOM_URL, call_kind: "demo", now: T0, ctx });
     if (!plan.ok) throw new Error("wrap");
     const b = wrapRoomRow({ id: ROOM_ID, request_id: REQ_ID, code: "K7Q2MX", contact_id: "c1", call_kind: "demo", host_email: CLOSER, made_by: CLOSER, now: T0 }, plan);
     expect(ok(sweepRoom(b, start + 15 * MIN - S, ctx)).changed).toBe(false);
@@ -905,24 +915,27 @@ describe("Zoom: staff or lead", () => {
     expect(zoomRole(GUEST_P, "HOSTZOOMID", ZCTX)).toBe("lead");
   });
 
-  test("signed in to some Zoom is staff, unless they came through the waiting room", () => {
+  test("being signed in to Zoom says nothing: only the host and room_hosts are staff (F17)", () => {
     const signedIn = { id: "EXT", participant_user_id: "EXT", email: "sara@gmail.com", participant_uuid: "p-sara" };
-    expect(zoomRole(signedIn, "HOSTZOOMID", ZCTX)).toBe("staff");
-    expect(zoomRole(signedIn, "HOSTZOOMID", { ...ZCTX, waited: ["p-sara"] })).toBe("lead");
-    // The host is never made a lead by the waiting-room rule.
+    expect(zoomRole(signedIn, "HOSTZOOMID", ZCTX)).toBe("lead");
+    // The waiting room's uuid no longer decides anything, either way.
+    expect(zoomRole(signedIn, "HOSTZOOMID", { ...ZCTX, waited: ["p-other"] })).toBe("lead");
     expect(zoomRole(HOST_P, "HOSTZOOMID", { ...ZCTX, waited: ["p-host"] })).toBe("host");
+    expect(zoomRole({ ...signedIn, email: CLOSER }, "OTHERHOST", ZCTX)).toBe("host");
+    expect(zoomRole({ ...signedIn, id: "SETTERZOOMID" }, "HOSTZOOMID", ZCTX)).toBe("staff");
   });
 
-  test("the seven events map onto the room; anything else is ignored", () => {
-    expect(zoomEffect(zoomEvt("meeting.started"), ZCTX)).toEqual({ room_event: { kind: "host_in", source: "zoom" }, role: null });
-    expect(zoomEffect(zoomEvt("meeting.ended"), ZCTX)).toEqual({ room_event: { kind: "meeting_ended" }, role: null });
-    expect(zoomEffect(zoomEvt("meeting.participant_joined", HOST_P), ZCTX)).toEqual({ room_event: { kind: "host_in", source: "zoom" }, role: "host" });
-    expect(zoomEffect(zoomEvt("meeting.participant_joined", GUEST_P), ZCTX)).toEqual({ room_event: { kind: "lead_in", source: "zoom" }, role: "lead" });
+  test("the seven events map onto the room, each with when it happened; anything else is ignored", () => {
+    const TS = 1_759_564_810_000;
+    expect(zoomEffect(zoomEvt("meeting.started"), ZCTX)).toEqual({ room_event: { kind: "host_in", source: "zoom", at: TS }, role: null });
+    expect(zoomEffect(zoomEvt("meeting.ended"), ZCTX)).toEqual({ room_event: { kind: "meeting_ended", at: TS }, role: null });
+    expect(zoomEffect(zoomEvt("meeting.participant_joined", HOST_P), ZCTX)).toEqual({ room_event: { kind: "host_in", source: "zoom", at: HOST_P.join_time }, role: "host" });
+    expect(zoomEffect(zoomEvt("meeting.participant_joined", GUEST_P), ZCTX)).toEqual({ room_event: { kind: "lead_in", source: "zoom", at: GUEST_P.join_time }, role: "lead" });
     expect(zoomEffect(zoomEvt("meeting.participant_jbh_joined", GUEST_P), ZCTX)).toMatchObject({ room_event: { kind: "lead_in" } });
     expect(zoomEffect(zoomEvt("meeting.participant_joined", { email: SETTER, participant_uuid: "s" }), ZCTX)).toMatchObject({ ignore: "staff joined" });
-    expect(zoomEffect(zoomEvt("meeting.participant_left", HOST_P), ZCTX)).toEqual({ room_event: { kind: "host_left" }, role: "host" });
+    expect(zoomEffect(zoomEvt("meeting.participant_left", { ...HOST_P, leave_time: "2026-10-04T08:05:00Z" }), ZCTX)).toEqual({ room_event: { kind: "host_left", at: "2026-10-04T08:05:00Z" }, role: "host" });
     expect(zoomEffect(zoomEvt("meeting.participant_left", GUEST_P), ZCTX)).toMatchObject({ role: "lead" });
-    expect(zoomEffect(zoomEvt("meeting.participant_joined_waiting_room", GUEST_P), ZCTX)).toEqual({ room_event: { kind: "lead_waiting" }, role: "lead" });
+    expect(zoomEffect(zoomEvt("meeting.participant_joined_waiting_room", { ...GUEST_P, join_time: undefined, date_time: "2026-10-04T08:02:30Z" }), ZCTX)).toEqual({ room_event: { kind: "lead_waiting", at: "2026-10-04T08:02:30Z" }, role: "lead" });
     expect(zoomEffect(zoomEvt("meeting.participant_jbh_waiting", GUEST_P), ZCTX)).toMatchObject({ room_event: { kind: "lead_waiting" } });
     expect(zoomEffect(zoomEvt("meeting.participant_joined_waiting_room", HOST_P), ZCTX)).toMatchObject({ ignore: "staff waiting" });
     expect(zoomEffect(zoomEvt("endpoint.url_validation"), ZCTX)).toMatchObject({ ignore: "not a room event" });
@@ -1279,7 +1292,7 @@ describe("room.create's checks", () => {
   const ON = roomsSetting({ ...DEFAULT_ROOMS_JSON, enabled: true, test_only: false, providers: { zoom: true, meet: true } });
   const okHost = { zoom_status: "licensed" as const, zoom_live: false, google_ok: true };
   const input = (over: Partial<Parameters<typeof createRefusal>[0]> = {}) =>
-    createRefusal({ setting: ON, purpose: "fallback", provider: "meet", call_kind: "intro", contact_id: "c1", contact: LEAD, host: okHost, lead_room_open: false, host_room_open: false, booked_demo: false, ...over });
+    createRefusal({ setting: ON, purpose: "fallback", provider: "meet", call_kind: "intro", contact_id: "c1", contact: LEAD, host: okHost, host_email: SETTER, lead_room_open: false, host_room_open: false, booked_demo: false, booked_intro: true, ...over });
   const code = (r: ReturnType<typeof createRefusal>) => r?.code ?? null;
 
   test("a good request passes", () => {
@@ -1329,12 +1342,12 @@ describe("room.wrap: a booked call keeps its own meeting", () => {
   });
 
   test("a phone call has no link, a finished call none either; a good one is open at once", () => {
-    const phone = wrapPlan({ start: at(T0), address: "+96550001234", call_kind: "intro", now: T0, ctx });
+    const phone = wrapPlan({ setting: WRAP_ON, contact_id: "c1", start: at(T0), address: "+96550001234", call_kind: "intro", now: T0, ctx });
     expect(!phone.ok && phone.message).toBe("This call is on the phone. There is no link to send.");
-    const over = wrapPlan({ start: at(T0 - 2 * 3_600_000), end: at(T0 - 3_600_000), address: ZOOM_URL, call_kind: "demo", now: T0, ctx });
+    const over = wrapPlan({ setting: WRAP_ON, contact_id: "c1", start: at(T0 - 2 * 3_600_000), end: at(T0 - 3_600_000), address: ZOOM_URL, call_kind: "demo", now: T0, ctx });
     expect(!over.ok && over.code).toBe("call_over");
-    expect(wrapPlan({ start: "never", address: ZOOM_URL, call_kind: "demo", now: T0, ctx }).ok).toBe(false);
-    const p = wrapPlan({ start: at(T0 + 15 * MIN), end: at(T0 + 60 * MIN), address: ZOOM_URL, call_kind: "demo", now: T0, ctx });
+    expect(wrapPlan({ setting: WRAP_ON, contact_id: "c1", start: "never", address: ZOOM_URL, call_kind: "demo", now: T0, ctx }).ok).toBe(false);
+    const p = wrapPlan({ setting: WRAP_ON, contact_id: "c1", start: at(T0 + 15 * MIN), end: at(T0 + 60 * MIN), address: ZOOM_URL, call_kind: "demo", now: T0, ctx });
     if (!p.ok) throw new Error(p.message);
     const row = wrapRoomRow({ id: ROOM_ID, request_id: REQ_ID, code: "K7Q2MX", contact_id: "c1", call_kind: "demo", host_email: CLOSER, made_by: CLOSER, now: T0 }, p);
     expect(row).toMatchObject({ purpose: "booked", state: "open", provider: "zoom", join_url: ZOOM_URL, provider_meeting_id: "81234567890", version: 1 });
@@ -1578,7 +1591,7 @@ function mulberry32(seed: number) {
 }
 
 describe("10,000 random event sequences", () => {
-  test("no final state reopens, no timer ends a lead_in room early, deadlines only move later", () => {
+  test("no final state reopens, no timer ends a lead_in room early or under a pending event, deadlines only move later, the link and the count are asked for once", () => {
     const RUNS = 10_000;
     const purposes = ["fallback", "handover", "standby", "booked", "manual"] as const;
     const seenStates = new Map<string, number>();
@@ -1586,10 +1599,16 @@ describe("10,000 random event sequences", () => {
     const reasons = new Map<string, number>();
     let events = 0;
     let leadInTicks = 0;
+    let heldTicks = 0;
+    let finalUndos = 0;
+    let linkReasks = 0;
+    let countReasks = 0;
+    const countOn = roomCtx({ ...DEFAULT_ROOMS_SETTING, count_on_join: true });
 
     for (let run = 1; run <= RUNS; run++) {
       const rnd = mulberry32(run);
       const pick = <T,>(xs: readonly T[]) => xs[Math.floor(rnd() * xs.length)] as T;
+      const cx = run % 2 ? countOn : ctx;
       const purpose = pick(purposes);
       const provider = rnd() < 0.5 ? "zoom" : "meet";
       const call_kind = rnd() < 0.5 ? "intro" : "demo";
@@ -1597,13 +1616,14 @@ describe("10,000 random event sequences", () => {
       let t = T0;
       let r: RoomRow;
       if (purpose === "booked") {
-        const p = wrapPlan({ start: at(T0 + Math.floor(rnd() * 40 - 10) * MIN), address: provider === "zoom" ? ZOOM_URL : MEET_URL, call_kind, now: T0, ctx });
+        const p = wrapPlan({ setting: WRAP_ON, contact_id: "c1", start: at(T0 + Math.floor(rnd() * 40 - 10) * MIN), address: provider === "zoom" ? ZOOM_URL : MEET_URL, call_kind, now: T0, ctx: cx });
         if (!p.ok) continue;
         r = wrapRoomRow({ id: ROOM_ID, request_id: REQ_ID, code: "K7Q2MX", contact_id: "c1", call_kind, host_email: host, made_by: host, now: T0 }, p);
       } else {
         r = room({ purpose, provider, call_kind, host_email: host, contact_id: purpose === "standby" ? null : "c1", send_on: purpose === "handover" ? "host_in" : "open" });
       }
       (r as unknown as Record<string, unknown>).start_url = "https://zoom.us/s/1?zak=RANDOMSECRET";
+      let firstSends = 0;
 
       const length = 1 + Math.floor(rnd() * 40);
       for (let i = 0; i < length; i++) {
@@ -1611,25 +1631,32 @@ describe("10,000 random event sequences", () => {
         t += u < 0.5 ? Math.floor(rnd() * 20 * S) : u < 0.8 ? Math.floor(rnd() * 200 * S) : u < 0.95 ? Math.floor(rnd() * 1000 * S) : Math.floor(rnd() * 4000 * S);
         const actor = rnd() < 0.9 ? { email: host } : rnd() < 0.5 ? { email: "ceo@maharamedia.com", manager: true } : { email: "other@maharamedia.com" };
         const version = rnd() < 0.85 ? r.version : r.version - 1;
+        // Zoom's own time: usually a little before it is handled (a replay), sometimes ahead of our clock, sometimes none.
+        const when = rnd() < 0.5 ? { at: at(t - Math.floor(rnd() * 40 * S) + (rnd() < 0.1 ? 30 * S : 0)) } : {};
         const roll = rnd();
         const e: RoomEvent =
           roll < 0.08 ? { kind: "claim" }
           : roll < 0.16 ? { kind: "ready", join_url: rnd() < 0.9 ? (provider === "zoom" ? ZOOM_URL : MEET_URL) : "nope" }
           : roll < 0.18 ? { kind: "fail", error: "Zoom refused the meeting." }
-          : roll < 0.24 ? { kind: "link_sent" }
-          : roll < 0.29 ? { kind: "opened", device: "phone" }
-          : roll < 0.33 ? { kind: "lead_waiting" }
-          : roll < 0.41 ? { kind: "host_in", source: rnd() < 0.5 ? "zoom" : "mark", ...(rnd() < 0.5 ? { actor, version } : {}) }
-          : roll < 0.45 ? { kind: "host_left" }
-          : roll < 0.53 ? { kind: "lead_in", source: rnd() < 0.5 ? "zoom" : "mark", ...(rnd() < 0.5 ? { actor, version } : {}) }
+          : roll < 0.24 ? { kind: "link_sent", ...when }
+          : roll < 0.29 ? { kind: "opened", device: "phone", ...when }
+          : roll < 0.33 ? { kind: "lead_waiting", ...when }
+          : roll < 0.41 ? { kind: "host_in", source: rnd() < 0.5 ? "zoom" : "mark", ...when, ...(rnd() < 0.5 ? { actor, version } : {}) }
+          : roll < 0.45 ? { kind: "host_left", ...when }
+          : roll < 0.53 ? { kind: "lead_in", source: rnd() < 0.5 ? "zoom" : "mark", ...when, ...(rnd() < 0.5 ? { actor, version } : {}) }
           : roll < 0.58 ? { kind: "not_lead", actor, version }
           : roll < 0.64 ? { kind: "end", reason: pick(["end", "on_phone", "finished", "cancel", "admit_blocked"] as const), actor, version, confirm: rnd() < 0.5 }
-          : roll < 0.67 ? { kind: "meeting_ended" }
+          : roll < 0.67 ? { kind: "meeting_ended", ...when }
           : roll < 0.70 ? { kind: "adopt", contact_id: "c7", call_kind: "demo", actor }
-          : { kind: "tick", next_booked_start: rnd() < 0.3 ? t + Math.floor(rnd() * 25 - 5) * MIN : null };
+          : {
+              kind: "tick",
+              next_booked_start: rnd() < 0.3 ? t + Math.floor(rnd() * 25 - 5) * MIN : null,
+              ...(rnd() < 0.2 ? { pending_events: rnd() < 0.8 ? 1 + Math.floor(rnd() * 3) : null } : {}),
+              ...(rnd() < 0.5 ? { available_until: rnd() < 0.7 ? at(t + Math.floor(rnd() * 120 - 20) * MIN) : null } : {}),
+            };
 
         const before = r;
-        const a = applyRoomEvent(before, e, t, ctx);
+        const a = applyRoomEvent(before, e, t, cx);
         events++;
         if (!a.ok) {
           expect(Object.keys(a)).toEqual(["ok", "code", "message", "status", "retry", "cleanup"]);
@@ -1638,11 +1665,19 @@ describe("10,000 random event sequences", () => {
         }
         const after = a.room;
         seenStates.set(after.state, (seenStates.get(after.state) ?? 0) + 1);
+        const firsts = a.effects.filter(x => x.kind === "send_link" && !x.retry).length;
+        firstSends += firsts;
 
-        // 1. A final room never changes.
+        // 1. A final room never changes state; the one write it takes is "That was not the lead", which only takes the count back.
         if (isFinal(before.state)) {
-          expect(a.changed).toBe(false);
-          expect(after).toBe(before);
+          if (a.changed) {
+            expect(e.kind).toBe("not_lead");
+            expect([after.state, after.version]).toEqual([before.state, before.version]);
+            expect(Object.keys(a.patch).every(k => ["count_undo_at", "count_result", "result"].includes(k))).toBe(true);
+            finalUndos++;
+          } else expect(after).toBe(before);
+          expect(a.effects.some(x => x.kind === "send_link" || x.kind === "close_provider")).toBe(false);
+          r = after;
           continue;
         }
         // 2. Only allowed moves; the version goes up by exactly one on a move.
@@ -1650,11 +1685,12 @@ describe("10,000 random event sequences", () => {
           expect(canMove(before.state, after.state)).toBe(true);
           seenMoves.add(`${before.state}>${after.state}`);
           expect(after.version).toBe(before.version + 1);
-          if (isFinal(after.state)) expect(after.ended_at).toBe(at(t));
+          const stamped = e.kind === "meeting_ended" ? eventTime((e as { at?: unknown }).at, t) : t;
+          if (isFinal(after.state)) expect(after.ended_at).toBe(at(stamped));
         } else {
           expect(after.version === before.version || (e.kind === "adopt" && after.version === before.version + 1)).toBe(true);
         }
-        // 3. Deadlines only move later and never go away.
+        // 3. Deadlines only move later and never go away; the open grace never runs past one grace after the lead's 10 minutes.
         for (const k of ["host_by", "lead_by", "ends_at"] as const) {
           const b = before[k] ? Date.parse(before[k] as string) : null;
           const n = after[k] ? Date.parse(after[k] as string) : null;
@@ -1663,32 +1699,69 @@ describe("10,000 random event sequences", () => {
             expect(n as number).toBeGreaterThanOrEqual(b);
           }
         }
+        if ((e.kind === "opened" || e.kind === "lead_waiting") && after.lead_by !== before.lead_by && before.purpose !== "booked") {
+          const base = Date.parse((before.link_sent_at ?? before.opened_at) as string);
+          expect(Date.parse(after.lead_by as string)).toBeLessThanOrEqual(base + (W.lead + W.open_grace) * S);
+        }
         // 4. No timer ends a room with the lead in it, before ends_at + 30 minutes, and never with a provider call.
         if (before.state === "lead_in" && e.kind === "tick") {
           leadInTicks++;
           const due = (Date.parse(before.ends_at as string) || 0) + W.no_end_signal * S;
           if (t < due) expect(after.state).toBe("lead_in");
-          else expect([after.state, a.reason]).toEqual(["ended", "no_end_signal"]);
+          else expect(after.state === "lead_in" || (after.state === "ended" && a.reason === "no_end_signal")).toBe(true);
         }
         if (before.state === "lead_in" && after.state === "ended" && e.kind === "end")
           expect(e.reason === "finished" || e.confirm === true).toBe(true);
-        // 5. Never a provider call for a room a lead reached, or for someone's booked meeting.
+        // 5. A tick with events still waiting closes nothing until 5 minutes past the earliest timer.
+        if (e.kind === "tick" && e.pending_events !== undefined && e.pending_events !== 0 && ["open", "host_in", "lead_in"].includes(before.state)) {
+          const ats = timers(before, cx).map(x => x.at);
+          if (e.next_booked_start != null) ats.push(e.next_booked_start - W.booked_guard * S);
+          if (e.available_until !== undefined) ats.push(e.available_until ? Date.parse(e.available_until as string) : t);
+          if (after.state !== before.state) expect(t).toBeGreaterThanOrEqual(Math.min(...ats) + PENDING_HOLD_MAX_S * S);
+          else heldTicks++;
+        }
+        // 6. Never a provider call for a room a lead reached, or for someone's booked meeting.
         if (a.effects.some(x => x.kind === "close_provider")) {
           expect(before.lead_in_at ?? null).toBe(null);
           expect(before.purpose).not.toBe("booked");
         }
+        // 7. The link is asked for once, by the write that claims it; a re-ask only repeats a claim that never became a send.
+        if (firsts) {
+          expect(firsts).toBe(1);
+          expect(before.link_claimed_at ?? null).toBe(null);
+          expect(after.link_claimed_at).toBe(at(t));
+        }
+        if (a.effects.some(x => x.kind === "send_link" && x.retry)) {
+          linkReasks++;
+          expect(before.link_claimed_at).not.toBe(null);
+          expect(before.link_sent_at ?? null).toBe(null);
+          expect(t - Date.parse(before.link_claimed_at as string)).toBeGreaterThanOrEqual(REASK_AFTER_S * S);
+        }
+        // 8. A count is asked for on the move into lead_in, and asked again only for a real join whose count can be claimed, with the switch on.
+        for (const x of a.effects.filter(x => x.kind === "count_live")) {
+          if (x.kind === "count_live" && x.retry) {
+            countReasks++;
+            expect(cx.count_on_join).toBe(true);
+            expect(leadJoined(before)).toBe(true);
+            expect(countClaimable(before)).toBe(true);
+          } else expect(before.state !== "lead_in" && after.state === "lead_in").toBe(true);
+        }
         if (a.reason) reasons.set(a.reason, (reasons.get(a.reason) ?? 0) + 1);
-        // 6. Everything not final has a timer that will fire.
+        // 9. Everything not final has a timer that will fire, and a lead held out of the queue is held for a bounded time.
         if (!isFinal(after.state)) {
-          const ts = timers(after, ctx);
+          const ts = timers(after, cx);
           expect(ts.length).toBeGreaterThan(0);
           for (const x of ts) expect(Number.isFinite(x.at)).toBe(true);
-          if (after.contact_id) expect(Number.isFinite(holdUntil(after, ctx) as number)).toBe(true);
+          if (after.contact_id && after.purpose !== "booked") expect(Number.isFinite(holdUntil(after, cx) as number)).toBe(true);
+          if (after.purpose === "booked") expect(holdUntil(after, cx)).toBe(null);
+          expect(Number.isFinite(nextDueAt(after, t, cx) as number)).toBe(true);
         }
-        // 7. The browser's view never carries the host link.
+        // 10. The browser's view never carries the host link.
         expect(JSON.stringify(toRoomView(after, { short_link: rnd() < 0.5 }))).not.toContain("RANDOMSECRET");
         r = after;
       }
+      // 11. Over the whole run, the link was asked for at most once.
+      expect(firstSends).toBeLessThanOrEqual(1);
     }
 
     // The runs reached every state, every allowed move and every timer, so the checks above were not empty.
@@ -1696,9 +1769,13 @@ describe("10,000 random event sequences", () => {
     const allowed = ROOM_STATES.flatMap(f => TRANSITIONS[f].map(to => `${f}>${to}`));
     for (const m of allowed) expect([m, seenMoves.has(m)]).toEqual([m, true]);
     expect([...seenMoves].every(m => allowed.includes(m))).toBe(true);
-    for (const reason of ["fail", "recover", "host_by", "lead_by", "standby_max", "booked_guard", "no_end_signal"])
+    for (const reason of ["fail", "recover", "host_by", "lead_by", "standby_max", "booked_guard", "availability", "no_end_signal"])
       expect([reason, (reasons.get(reason) ?? 0) > 0]).toEqual([reason, true]);
     expect(leadInTicks).toBeGreaterThan(1_000);
+    expect(heldTicks).toBeGreaterThan(500);
+    expect(finalUndos).toBeGreaterThanOrEqual(5);
+    expect(linkReasks).toBeGreaterThan(50);
+    expect(countReasks).toBeGreaterThan(30);
     expect(events).toBeGreaterThan(100_000);
   });
 });

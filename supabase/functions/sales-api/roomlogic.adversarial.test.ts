@@ -1,10 +1,13 @@
 // Adversarial review of roomlogic.ts (review lane, 2026-10-03).
 //
-// Each `test.failing` below states the behaviour the specs need and fails on
-// the current code, so `bun test` stays green while the finding is open. When
-// a finding is fixed its test starts to pass, bun reports it, and the
-// `.failing` comes off. Plain `test`s pin behaviour the review checked and
-// found sound. Finding numbers match the review's list.
+// Each test below states the behaviour the specs need. They were written as
+// `test.failing` against the first roomlogic.ts; every finding is now fixed,
+// so they run as plain tests and pin the fixes. The last block pins rules the
+// review checked and found sound. Finding numbers match the review's list
+// (F1 to F20; the fix commit's tests in roomlogic.test.ts cover the rest).
+// Two setups changed with the fixes: wrapPlan now takes the rooms setting and
+// the contact (F17), and the sweep re-asks for a count only with
+// count_on_join on (the scenario of F20 needs the switch on).
 
 import { describe, expect, test } from "bun:test";
 import {
@@ -45,6 +48,8 @@ const CLOSER = "closer@maharamedia.com";
 const ZOOM_URL = "https://us06web.zoom.us/j/81234567890?pwd=AbC123";
 const MEET_URL = "https://meet.google.com/abc-defg-hij";
 const ctx = roomCtx(DEFAULT_ROOMS_SETTING);
+/** Rooms on for everyone, so room.wrap's switch and test list pass. */
+const WRAP_ON = roomsSetting({ ...DEFAULT_ROOMS_JSON, enabled: true, test_only: false });
 const at = (t: number) => new Date(t).toISOString();
 
 function room(over: Partial<RoomRow> = {}): RoomRow {
@@ -83,7 +88,7 @@ const kinds = (a: Applied) => (a.ok ? a.effects.map(e => e.kind) : []);
 // ---------------------------------------------------------------------------
 
 describe("F1 send_link is not claimed atomically", () => {
-  test.failing("ready then the host joining before link_sent is written asks for the link once, not twice", () => {
+  test("ready then the host joining before link_sent is written asks for the link once, not twice", () => {
     // Fallback room, send_on=open: `ready` asks for the send. The message
     // service then reads back for up to 20 s before link_sent lands. The
     // setter presses Open my room and Zoom (or "I'm in") moves the room to
@@ -96,7 +101,7 @@ describe("F1 send_link is not claimed atomically", () => {
     expect(sends).toBe(1);
   });
 
-  test.failing("a host who leaves and comes back before link_sent lands does not ask for a third send", () => {
+  test("a host who leaves and comes back before link_sent lands does not ask for a third send", () => {
     const r = opened({ purpose: "handover", send_on: "host_in", provider: "zoom", host_email: CLOSER, call_kind: "demo" }, ZOOM_URL);
     const a = ok(apply(r, { kind: "host_in", source: "zoom" }, T0 + 20 * S));
     const b = ok(apply(a.room, { kind: "host_left" }, T0 + 25 * S));
@@ -117,12 +122,12 @@ describe("F2 presence ignores availability for a standby room", () => {
   });
   const base = { email: CLOSER, now: T0, rooms: [] as RoomRow[], open_attempt: false, appointment_now: false, default_provider: "zoom" as const };
 
-  test.failing("a closer who pressed Go away is not offered leads, even while still in the standby room", () => {
+  test("a closer who pressed Go away is not offered leads, even while still in the standby room", () => {
     const p = presenceOf({ ...base, availability: { state: "away", until: null }, rooms: [sbIn()] });
     expect(p.state).not.toBe("ready");
   });
 
-  test.failing("once Available runs out the strip never shows a raw {until}", () => {
+  test("once Available runs out the strip never shows a raw {until}", () => {
     const p = presenceOf({ ...base, availability: { state: "available", until: at(T0 - MIN) }, rooms: [sbIn()] });
     const line = fill(ROOM_COPY.strip.ready, { until: p.until });
     expect(line).not.toContain("{until}");
@@ -136,13 +141,13 @@ describe("F2 presence ignores availability for a standby room", () => {
 describe("F3 room.wrap accepts a Zoom host (start) link", () => {
   const START = "https://us06web.zoom.us/s/81234567890?zak=eyJhbGciOiJIUzI1NiJ9.HOSTTOKEN.sig";
 
-  test.failing("a /s/ start link with a zak token is never taken as the lead's join link", () => {
+  test("a /s/ start link with a zak token is never taken as the lead's join link", () => {
     const m = meetingFromAddress(`Zoom: ${START}`);
     expect(m?.join_url ?? "").not.toContain("zak=");
   });
 
-  test.failing("so the browser's view and the short link cannot carry the host token", () => {
-    const plan = wrapPlan({ start: at(T0 + 10 * MIN), end: at(T0 + 55 * MIN), address: START, call_kind: "demo", now: T0, ctx });
+  test("so the browser's view and the short link cannot carry the host token", () => {
+    const plan = wrapPlan({ setting: WRAP_ON, contact_id: "c1", start: at(T0 + 10 * MIN), end: at(T0 + 55 * MIN), address: START, call_kind: "demo", now: T0, ctx });
     if (!plan.ok) return; // refusing the address is also a pass
     const row = wrapRoomRow({ id: ROOM_ID, request_id: "r", code: "K7Q2MX", contact_id: "c1", call_kind: "demo", host_email: CLOSER, made_by: CLOSER, now: T0 }, plan);
     expect(JSON.stringify(toRoomView(row, { short_link: false }))).not.toContain("HOSTTOKEN");
@@ -155,7 +160,7 @@ describe("F3 room.wrap accepts a Zoom host (start) link", () => {
 
 describe("F4 createRefusal fails open on an unread contact", () => {
   const ON = roomsSetting({ ...DEFAULT_ROOMS_JSON, enabled: true, test_only: false, providers: { zoom: true, meet: true } });
-  test.failing("a room for a lead whose HighLevel contact could not be read is refused, not made", () => {
+  test("a room for a lead whose HighLevel contact could not be read is refused, not made", () => {
     const r = createRefusal({
       setting: ON,
       purpose: "fallback",
@@ -167,6 +172,8 @@ describe("F4 createRefusal fails open on an unread contact", () => {
       lead_room_open: false,
       host_room_open: false,
       booked_demo: false,
+      host_email: SETTER,
+      booked_intro: true,
     });
     expect(r).not.toBe(null);
   });
@@ -177,7 +184,7 @@ describe("F4 createRefusal fails open on an unread contact", () => {
 // ---------------------------------------------------------------------------
 
 describe("F5 the sweep does not wait for unhandled events, and events carry no time of their own", () => {
-  test.failing("a tick on a room with a queued (unhandled) Zoom event does not expire it", () => {
+  test("a tick on a room with a queued (unhandled) Zoom event does not expire it", () => {
     const r = step(opened({ provider: "zoom" }, ZOOM_URL), { kind: "link_sent" }, T0 + 10 * S);
     const leadBy = Date.parse(r.lead_by as string);
     // The lead knocked at leadBy - 5 s; the door stored the event but the
@@ -188,7 +195,7 @@ describe("F5 the sweep does not wait for unhandled events, and events carry no t
     expect(a.changed).toBe(false);
   });
 
-  test.failing("a lead_in from Zoom is stamped with Zoom's join_time, not with when it was handled", () => {
+  test("a lead_in from Zoom is stamped with Zoom's join_time, not with when it was handled", () => {
     const eff = zoomEffect(
       {
         event: "meeting.participant_joined",
@@ -211,7 +218,7 @@ describe("F5 the sweep does not wait for unhandled events, and events carry no t
 // ---------------------------------------------------------------------------
 
 describe("F6 not_lead after the room closed", () => {
-  test.failing("within 5 minutes of the join, a closed room still undoes the count", () => {
+  test("within 5 minutes of the join, a closed room still undoes the count", () => {
     // A staff member who was not signed in joined (lead_in, counted), then
     // left and the host ended the meeting a minute later. The rep presses
     // "That was not the lead" at +2 min: the booking must still be undone.
@@ -227,7 +234,7 @@ describe("F6 not_lead after the room closed", () => {
 // ---------------------------------------------------------------------------
 
 describe("F7 not_lead while countLive is still booking", () => {
-  test.failing("the not_lead write leaves a durable mark, so the finishing count undoes itself", () => {
+  test("the not_lead write leaves a durable mark, so the finishing count undoes itself", () => {
     const joined = { ...step(opened({ provider: "zoom" }, ZOOM_URL), { kind: "lead_in", source: "zoom" }, T0 + MIN), count_claimed_at: at(T0 + MIN) };
     // count_result is still null: the booking POST is in flight. countUndo
     // answers in_flight and nothing records that an undo was asked for.
@@ -241,7 +248,7 @@ describe("F7 not_lead while countLive is still booking", () => {
 // ---------------------------------------------------------------------------
 
 describe("F8 settleDue only settles expired rooms", () => {
-  test.failing("a fallback room for a booked intro ended with no join is settled as a no-show too", () => {
+  test("a fallback room for a booked intro ended with no join is settled as a no-show too", () => {
     const r = step(step(opened({ appointment_id: "APPT1" }), { kind: "link_sent" }, T0 + 10 * S), { kind: "end", reason: "end", actor: { email: SETTER } }, T0 + 4 * MIN);
     expect([r.state, r.result]).toEqual(["ended", "no_join"]);
     expect(settleDue(r, at(T0), false, T0 + 21 * MIN, ctx.waits)).toBe(true);
@@ -253,7 +260,7 @@ describe("F8 settleDue only settles expired rooms", () => {
 // ---------------------------------------------------------------------------
 
 describe("F9 meeting.ended before the lead came", () => {
-  test.failing("a handover room whose host left an empty meeting goes back to open, as P2's host_left rule says", () => {
+  test("a handover room whose host left an empty meeting goes back to open, as P2's host_left rule says", () => {
     let r = opened({ purpose: "handover", send_on: "host_in", provider: "zoom", host_email: CLOSER, call_kind: "demo" }, ZOOM_URL);
     r = step(r, { kind: "host_in", source: "zoom" }, T0 + 20 * S);
     r = step(r, { kind: "link_sent" }, T0 + 25 * S);
@@ -271,13 +278,13 @@ describe("F9 meeting.ended before the lead came", () => {
 // ---------------------------------------------------------------------------
 
 describe("F10 fill() treats an empty value as missing", () => {
-  test.failing("an open from an unknown device reads as a sentence, not with a raw {device}", () => {
+  test("an open from an unknown device reads as a sentence, not with a raw {device}", () => {
     const r = step(step(opened({ purpose: "manual" }), { kind: "link_sent" }, T0 + 10 * S), { kind: "opened", device: null }, T0 + 2 * MIN);
     const line = panelLine(toRoomView(r, { short_link: true, contact_first_name: "Sara" }), { now: T0 + 3 * MIN });
     expect(line.text).not.toContain("{device}");
   });
 
-  test.failing("an offer for a lead with no company (Offer.company is null by contract) has no raw {company}", () => {
+  test("an offer for a lead with no company (Offer.company is null by contract) has no raw {company}", () => {
     const text = fill(ROOM_COPY.slack.offer, { name: "Sara", company: null, country: "Kuwait", note: "Wants pricing" });
     expect(text).not.toContain("{company}");
   });
@@ -288,7 +295,7 @@ describe("F10 fill() treats an empty value as missing", () => {
 // ---------------------------------------------------------------------------
 
 describe("F11 provider_off names an alternative that is also off", () => {
-  test.failing("with both providers off the refusal does not tell the rep to use the other", () => {
+  test("with both providers off the refusal does not tell the rep to use the other", () => {
     const ON = roomsSetting({ ...DEFAULT_ROOMS_JSON, enabled: true, test_only: false });
     const r = createRefusal({
       setting: ON,
@@ -301,6 +308,8 @@ describe("F11 provider_off names an alternative that is also off", () => {
       lead_room_open: false,
       host_room_open: false,
       booked_demo: false,
+      host_email: SETTER,
+      booked_intro: true,
     });
     expect(r?.message ?? "").not.toContain("Use Zoom");
   });
@@ -311,7 +320,7 @@ describe("F11 provider_off names an alternative that is also off", () => {
 // ---------------------------------------------------------------------------
 
 describe("F12 countLive marks a test contact's appointment before the test check", () => {
-  test.failing("a test contact never marks an appointment outside the test calendar", () => {
+  test("a test contact never marks an appointment outside the test calendar", () => {
     const COUNT_ON = roomsSetting({ ...DEFAULT_ROOMS_JSON, count_on_join: true, test_calendar_id: "TESTCAL" });
     const r = { ...opened({ contact_id: "VjPfR4Cc1Y0OFvaqeor5", appointment_id: "REALAPPT" }), state: "lead_in" as const, lead_in_at: at(T0 + MIN) };
     const plan = countLive({
@@ -332,7 +341,7 @@ describe("F12 countLive marks a test contact's appointment before the test check
 // ---------------------------------------------------------------------------
 
 describe("F13 roomsHealth returns 0 for counts it could not read", () => {
-  test.failing("rooms_today is not 0 when the count could not be read", () => {
+  test("rooms_today is not 0 when the count could not be read", () => {
     const h = roomsHealth({ now: T0, last_run_at: at(T0 - S), rooms_today: null, failed_today: undefined });
     expect(h.rooms_today).not.toBe(0);
   });
@@ -343,7 +352,7 @@ describe("F13 roomsHealth returns 0 for counts it could not read", () => {
 // ---------------------------------------------------------------------------
 
 describe("F14 a second, different link for an open room", () => {
-  test.failing("is refused with the clean-up flag so the orphan meeting is deleted", () => {
+  test("is refused with the clean-up flag so the orphan meeting is deleted", () => {
     const r = opened({ provider: "zoom" }, ZOOM_URL);
     const a = apply(r, { kind: "ready", join_url: "https://us06web.zoom.us/j/89999999999?pwd=X" }, T0 + 70 * S);
     expect(!a.ok && a.cleanup).toBe(true);
@@ -355,8 +364,8 @@ describe("F14 a second, different link for an open room", () => {
 // ---------------------------------------------------------------------------
 
 describe("F15 roomHolds on booked rooms", () => {
-  test.failing("a wrapped booked call does not take the lead out of the queue (its own call items stay)", () => {
-    const plan = wrapPlan({ start: at(T0 + 30 * MIN), end: at(T0 + 75 * MIN), address: ZOOM_URL, call_kind: "demo", now: T0, ctx });
+  test("a wrapped booked call does not take the lead out of the queue (its own call items stay)", () => {
+    const plan = wrapPlan({ setting: WRAP_ON, contact_id: "c1", start: at(T0 + 30 * MIN), end: at(T0 + 75 * MIN), address: ZOOM_URL, call_kind: "demo", now: T0, ctx });
     if (!plan.ok) throw new Error(plan.message);
     const b = wrapRoomRow({ id: ROOM_ID, request_id: "r", code: "K7Q2MX", contact_id: "c1", call_kind: "demo", host_email: CLOSER, made_by: CLOSER, now: T0 }, plan);
     expect(holdUntil(b, ctx)).toBe(null);
@@ -368,7 +377,7 @@ describe("F15 roomHolds on booked rooms", () => {
 // ---------------------------------------------------------------------------
 
 describe("F16 standby refresh near a booked call", () => {
-  test.failing("no fresh standby room is asked for when the host's booked call is inside the next room's life", () => {
+  test("no fresh standby room is asked for when the host's booked call is inside the next room's life", () => {
     const sb = step(
       opened({ purpose: "standby", contact_id: null, call_kind: "demo", provider: "zoom", host_email: CLOSER }, ZOOM_URL),
       { kind: "host_in", source: "zoom" },
@@ -386,7 +395,7 @@ describe("F16 standby refresh near a booked call", () => {
 // ---------------------------------------------------------------------------
 
 describe("F17 a signed-in lead whose waiting-room uuid differs from the admitted one", () => {
-  test.failing("is still the lead (F: staff are only the host and room_hosts)", () => {
+  test("is still the lead (F: staff are only the host and room_hosts)", () => {
     const lead = { id: "EXTUSER", participant_user_id: "EXTUSER", email: "lead@gmail.com", participant_uuid: "p-after-admit" };
     expect(zoomRole(lead, "HOSTZOOMID", { host_zoom_user_id: "HOSTZOOMID", host_email: CLOSER, staff_emails: [CLOSER, SETTER], waited: ["p-in-waiting-room"] })).toBe("lead");
   });
@@ -397,7 +406,7 @@ describe("F17 a signed-in lead whose waiting-room uuid differs from the admitted
 // ---------------------------------------------------------------------------
 
 describe("F18 the open grace has no ceiling", () => {
-  test.failing("a page reloaded (or a script hitting /open) every 170 s cannot hold a room open past one grace", () => {
+  test("a page reloaded (or a script hitting /open) every 170 s cannot hold a room open past one grace", () => {
     let r = step(opened(), { kind: "link_sent" }, T0 + 10 * S);
     const firstLeadBy = Date.parse(r.lead_by as string);
     let t = firstLeadBy - 10 * S;
@@ -415,7 +424,7 @@ describe("F18 the open grace has no ceiling", () => {
 // ---------------------------------------------------------------------------
 
 describe("F19 worker.ready on a row the worker already set to open (contract.md 'Success')", () => {
-  test.failing("still sets the deadlines and asks for the link once", () => {
+  test("still sets the deadlines and asks for the link once", () => {
     // contract.md: the worker saves provider_meeting_id, join_url and
     // state=open, then calls room.event worker.ready. Applying `ready` to that
     // row finds state open and returns same(): no host_by/lead_by/ends_at,
@@ -432,18 +441,18 @@ describe("F19 worker.ready on a row the worker already set to open (contract.md 
 // ---------------------------------------------------------------------------
 
 describe("F20 the sweep never re-asks for count_live or send_link", () => {
-  test.failing("a lead_in room with no count claim gets count_live again from the sweep", () => {
+  test("a lead_in room with no count claim gets count_live again from the sweep", () => {
     // The lead_in write landed, then the function died before countLive ran
     // (or the HighLevel call timed out before the claim). Nothing retries:
     // the join is never booked and nobody is told (P2: booked within 1 minute
     // or flagged).
     const joined = step(opened({ provider: "zoom" }, ZOOM_URL), { kind: "lead_in", source: "zoom" }, T0 + MIN);
     expect(joined.count_claimed_at ?? null).toBe(null);
-    const a = ok(sweepRoom(joined, T0 + 3 * MIN, ctx));
+    const a = ok(sweepRoom(joined, T0 + 3 * MIN, roomCtx({ ...DEFAULT_ROOMS_SETTING, count_on_join: true })));
     expect(kinds(a)).toContain("count_live");
   });
 
-  test.failing("an open room whose link is due but was never sent gets send_link again from the sweep", () => {
+  test("an open room whose link is due but was never sent gets send_link again from the sweep", () => {
     const r = opened(); // ready landed and asked for send_link; the sender died
     const a = ok(sweepRoom(r, T0 + 2 * MIN, ctx));
     expect(kinds(a)).toContain("send_link");

@@ -11,16 +11,25 @@
 // (countLive); presence; the health line; the browser's view of a room (never
 // start_url); creating and wrapping a room; the panel's line.
 //
-// Three rules hold everywhere and are tested on 10,000 random runs:
-// - a final room (ended, expired, failed, cancelled) never changes again;
+// These rules hold everywhere and are tested on 10,000 random runs:
+// - a final room (ended, expired, failed, cancelled) never changes state
+//   again; the one write it still takes is "That was not the lead" within
+//   5 minutes of the join, which only takes the count back;
 // - no timer ends a room with the lead in it: a lead_in room is only closed
 //   in the books at ends_at + no_end_signal ("No end signal"), and no
 //   provider call is ever made for a room that reached lead_in;
-// - host_by, lead_by and ends_at only ever move later.
+// - no timer closes a room while one of its events still waits for the
+//   replay (at most 5 minutes);
+// - host_by, lead_by and ends_at only ever move later;
+// - the link is asked for once: the write that asks also claims it
+//   (link_claimed_at); the sweep asks again only for a claim that never
+//   became a send, with the same request id;
+// - a join is counted once, and an undo always lands, even after a crash:
+//   the sweep asks again for a count or an undo that never finished.
 
 import { isClient } from "./clients.ts";
 import { BOOKING_CALENDARS } from "./dialer.ts";
-import { dndFor, greetingName, whatsappWindow } from "./lib.ts";
+import { dndFor, greetingName, redact, whatsappWindow } from "./lib.ts";
 
 type Row = Record<string, unknown>;
 
@@ -164,10 +173,24 @@ export const DEFAULT_WAITS: Readonly<Waits> = Object.freeze({
 /** A booked room's own deadlines (1.9): host by start + 15 min, lead by start + 20 min. */
 export const BOOKED_HOST_MIN = 15;
 export const BOOKED_LEAD_MIN = 20;
+/** room.wrap runs from 30 minutes before a booked call, so a wrap never holds a lead or a host for hours. */
+export const WRAP_EARLY_MIN = 30;
 /** The worker's status row turns the health line red after this long (1.7). */
 export const WORKER_RED_AFTER_S = 90;
 /** A stored door event older than this is left for a person, not replayed. */
 export const REPLAY_MAX_AGE_S = 86_400;
+/** A timer waits this long at most for a room's unhandled events to be replayed. */
+export const PENDING_HOLD_MAX_S = 300;
+/** The sweep asks again for a link, a count or an undo that was asked for this long ago and never finished. */
+export const REASK_AFTER_S = 60;
+/** A count claimed this long ago with no result is flagged to a person. */
+export const COUNT_STUCK_S = 120;
+/** Re-asks for a count or an undo stop this long after the join or the undo. */
+export const REASK_WINDOW_S = 3_600;
+/** A conditional write lost to another writer is read and tried again at most this many times. */
+export const MAX_WRITE_TRIES = 5;
+/** An event time ahead of the server clock by more than this is taken as now. */
+const CLOCK_SKEW_S = 5;
 
 function obj(v: unknown): Row {
   return v && typeof v === "object" && !Array.isArray(v) ? (v as Row) : {};
@@ -285,12 +308,17 @@ export interface RoomCtx {
   lengths_min: Record<CallKind, number>;
   /** The host's first name for "This room belongs to {host}."; else taken from the email. */
   host_first_name?: string | null;
+  /** rooms.count_on_join: only then does the sweep ask again for a count that never ran. */
+  count_on_join?: boolean;
 }
 
-export function roomCtx(setting?: Pick<RoomsSetting, "waits_s" | "lengths_min"> | null): RoomCtx {
+export function roomCtx(
+  setting?: Partial<Pick<RoomsSetting, "waits_s" | "lengths_min" | "count_on_join">> | null,
+): RoomCtx {
   return {
     waits: setting?.waits_s ? { ...setting.waits_s } : { ...DEFAULT_WAITS },
     lengths_min: setting?.lengths_min ? { ...setting.lengths_min } : { intro: 30, demo: 60 },
+    count_on_join: setting?.count_on_join === true,
   };
 }
 
@@ -516,8 +544,24 @@ export const LANE_COPY = {
   disabled: "Video rooms are off for now. Call or message the lead instead.",
   provider_off: "{provider} rooms are off for now. Use {other}.",
   test_only: "Video rooms are in testing, so they work only for the test contact for now.",
-  no_contact: "Which lead?",
+  no_contact: "Choose a lead first.",
+  contact_unread: "HighLevel did not answer, so we cannot check this lead yet. Try again in a minute.",
+  fallback_scope: "For now, video links after a missed call are only for booked intros. Call again or send a message.",
+  fallback_pilot: "Video links after a missed call are in a pilot that does not include your seat yet. Ask the manager to add you.",
+  wrap_too_early: "This call's room opens at {time}, 30 minutes before it starts. Try again then.",
+  host_link:
+    "This call's link in HighLevel is the host's start link, which must never reach the lead. Put the meeting's join link in HighLevel, then try again.",
   zoom_missing: "Your Zoom user is not set up on Mahara's account yet. Ask the manager to add it on the Team page. Meet works now.",
+  // The Zoom refusals when Meet cannot be used either (off, or no Google token): no "use Meet" advice.
+  zoom_missing_no_meet: "Your Zoom user is not set up on Mahara's account yet. Ask the manager to add it on the Team page.",
+  zoom_pending_no_meet: "Your Zoom seat is not active yet. Accept Zoom's email invite.",
+  zoom_busy_no_meet: "Your Zoom is in another meeting. End it first.",
+  zoom_basic_demo_no_meet:
+    "The closer's Zoom is Basic and ends at 40 minutes, too short for a demo. Ask the manager for a Zoom licence.",
+  ended_mark_intro: "Nobody joined. The room is closed. Mark the intro:",
+  offer_intro:
+    "Live intro for you: {name}, {company}, {country}. On the phone with the setter now. Note: {note}. Take it within 2 minutes.",
+  app_home_ready: "Ready now: {closers}, {setters}.",
   not_lead_late: "They joined more than {minutes} minutes ago, so this cannot be undone here. Fix the call in HighLevel.",
   too_early: "The room is not ready yet. Try again in a moment.",
   final: "This room has closed.",
@@ -552,12 +596,35 @@ export const LANE_COPY = {
   why_email_dnd: "do not disturb is on for email",
 } as const;
 
-/** Puts values into a sentence's {placeholders}; an unknown one stays as it is. Template {{1}} slots are left alone. */
+/** Marks where an empty value was, so the comma or space before it can go too. A private-use character, never in copy. */
+const GONE = "\uE000";
+
+/**
+ * Puts values into a sentence's {placeholders}. A key that was not passed
+ * stays as it is (a later fill, or a template's {{1}} slot, which is left
+ * alone). A key passed as empty (null, undefined or "") is a value too: its
+ * placeholder goes, with the comma or space that led to it, so a screen
+ * never shows a raw "{device}" or "Sara, , Kuwait". A clause that reads
+ * badly without its value is left out by the builders below instead.
+ */
 export function fill(text: string, vars: Record<string, string | number | null | undefined> = {}): string {
-  return text.replace(/\{([a-z_]+)\}/g, (all, k: string) => {
+  let gone = false;
+  const out = text.replace(/\{([a-z_]+)\}/g, (all, k: string) => {
+    if (!Object.hasOwn(vars, k)) return all;
     const v = vars[k];
-    return v === null || v === undefined || v === "" ? all : String(v);
+    if (v === null || v === undefined || v === "") {
+      gone = true;
+      return GONE;
+    }
+    return String(v);
   });
+  if (!gone) return out;
+  return out
+    .replace(/,[ \t]*\uE000(?=[ \t]*(?:[,.;:!?)]|$))/g, "")
+    .replace(/\uE000[ \t]*,[ \t]*/g, "")
+    .replace(/[ \t]+\uE000(?=[,.;:!?)]|$)/g, "")
+    .replace(/\uE000[ \t]+/g, "")
+    .replaceAll(GONE, "");
 }
 
 // ---------------------------------------------------------------------------
@@ -583,6 +650,20 @@ export function iso(t: number): string {
 function isoOrNull(v: unknown): string | null {
   const t = ms(v);
   return t === null ? null : iso(t);
+}
+/**
+ * When an event happened: the time Zoom (or the door, or the message
+ * service) gave it, so a replayed event is stamped with when it happened,
+ * not when it was handled. A missing time, one ahead of the server clock, or
+ * one more than a day old reads as now.
+ */
+export function eventTime(at: unknown, now: number): number {
+  const t = ms(at);
+  if (t === null || t > now + CLOCK_SKEW_S * S || now - t > REPLAY_MAX_AGE_S * S) return now;
+  return Math.min(t, now);
+}
+function finiteOrNull(v: unknown): number | null {
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
 }
 const pad = (n: number) => String(n).padStart(2, "0");
 
@@ -666,15 +747,51 @@ export function codeFromTopic(topic: unknown): string | null {
 
 export const SHORT_HOST = "call.maharamedia.com";
 
+const ZOOM_HOST = /(^|\.)zoom(gov)?\.(us|com)$/i;
+
+/**
+ * A host's own link: a Zoom start link (/s/{id}, /wc/{id}/start) or any
+ * link carrying a zak token. It starts the meeting as the host, so it may
+ * reach only the host, through room.open and room_secrets; never a
+ * join_url, a RoomView, the short link or a message.
+ */
+export function isHostLink(v: unknown): boolean {
+  const s = typeof v === "string" ? v.trim() : "";
+  if (!s) return false;
+  if (/[?&;#]zak=/i.test(s)) return true;
+  try {
+    const u = new URL(s);
+    return ZOOM_HOST.test(u.hostname) && (/^\/s\//i.test(u.pathname) || /\/start(\/|$)/i.test(u.pathname));
+  } catch {
+    return /zoom(gov)?\.(us|com)\/s\//i.test(s);
+  }
+}
+
+/** A link a lead may be given: https, a host name, at most 2,000 characters, and never a host's start link. */
 function safeUrl(v: unknown): string | null {
   const s = typeof v === "string" ? v.trim() : "";
   if (!s || s.length > 2000 || !/^https:\/\/\S+$/i.test(s)) return null;
+  if (isHostLink(s)) return null;
   try {
     const u = new URL(s);
     return u.protocol === "https:" && u.hostname ? s : null;
   } catch {
     return null;
   }
+}
+
+/**
+ * Text a person or a log will see (a worker's or provider's error): through
+ * lib's redact (keys, tokens, JWTs; 300 characters), after taking out Zoom
+ * start links and zak tokens, which lib's redact does not know.
+ */
+export function redactRoom(v: unknown): string | null {
+  const s = typeof v === "string" ? v.replaceAll("\u0000", "").trim().slice(0, 4000) : "";
+  if (!s) return null;
+  const cleaned = s
+    .replace(/https?:\/\/[^\s"'<>]*zoom(?:gov)?\.(?:us|com)\/(?:s\/|wc\/[^\s"'<>]*\/start)[^\s"'<>]*/gi, "[host link]")
+    .replace(/([?&;#]zak=)[^&\s"'<>]+/gi, "$1[key]");
+  return redact(cleaned).trim() || null;
 }
 
 /** `https://call.maharamedia.com/{code}` when the short link is on, else the room's own link (contract). */
@@ -770,6 +887,8 @@ export interface RoomRow {
   requested_at?: string | null;
   claimed_at?: string | null;
   opened_at?: string | null;
+  /** Set in the same write that asks for the link, so the link is asked for once (new column). */
+  link_claimed_at?: string | null;
   link_sent_at?: string | null;
   first_open_at?: string | null;
   lead_waiting_at?: string | null;
@@ -782,6 +901,8 @@ export interface RoomRow {
   count_claimed_at?: string | null;
   count_appointment_id?: string | null;
   count_result?: CountResult | null;
+  /** "That was not the lead": when it was pressed. A count that finishes after it undoes itself (new column). */
+  count_undo_at?: string | null;
   worker_run?: string | null;
   created_at?: string | null;
 }
@@ -793,6 +914,30 @@ const ver = (room: RoomRow) => {
 /** A standby room nobody has been given yet. */
 export function standbyEmpty(room: RoomRow): boolean {
   return room.purpose === "standby" && !room.contact_id;
+}
+
+/**
+ * The lead really joined: lead_in_at is set and "That was not the lead" did
+ * not take that join back. lead_in_at itself is kept after an undo, as
+ * evidence and so no provider call is ever made for that room.
+ */
+export function leadJoined(room: RoomRow): boolean {
+  const joined = ms(room.lead_in_at);
+  if (joined === null) return false;
+  const undo = ms(room.count_undo_at);
+  return undo === null || joined > undo;
+}
+
+/** A count was claimed and has not written its result yet (a mark writes count_appointment_id). */
+export function countInFlight(room: RoomRow): boolean {
+  return Boolean(room.count_claimed_at) && !room.count_result && !room.count_appointment_id;
+}
+
+/** A booking or mark the count made still stands (an undo has something to take back). */
+export function countStands(room: RoomRow): boolean {
+  if (!room.count_claimed_at) return false;
+  if (room.count_result === "booked" || room.count_result === "moved") return true;
+  return !room.count_result && Boolean(room.count_appointment_id);
 }
 
 // ---------------------------------------------------------------------------
@@ -828,7 +973,15 @@ export function bookedDeadlines(
   };
 }
 
-export type SweepReason = "fail" | "recover" | "host_by" | "lead_by" | "standby_max" | "booked_guard" | "no_end_signal";
+export type SweepReason =
+  | "fail"
+  | "recover"
+  | "host_by"
+  | "lead_by"
+  | "standby_max"
+  | "booked_guard"
+  | "availability"
+  | "no_end_signal";
 
 /**
  * The timers running on a room, each with when it fires. Every room that is
@@ -838,7 +991,9 @@ export type SweepReason = "fail" | "recover" | "host_by" | "lead_by" | "standby_
  *
  * - requested: fail at requested + 60 s.
  * - creating: recover at claimed + 60 s (the worker looks for the code in
- *   Zoom's topics or the Google event id), failed at claimed + 120 s.
+ *   Zoom's topics or the Google event id), failed at claimed + 120 s. A
+ *   room whose link the worker saved but whose worker.ready never landed
+ *   is recovered at claimed + 15 s: the sweep opens it.
  * - open: host_by; lead_by when the room has a lead; standby_max for an
  *   empty standby room.
  * - host_in: lead_by when the room has a lead, else standby_max.
@@ -853,7 +1008,7 @@ export function timers(room: RoomRow, ctx: RoomCtx): { reason: SweepReason; at: 
     case "creating": {
       const base = ms(room.claimed_at) ?? ms(room.requested_at) ?? ms(room.created_at) ?? 0;
       return [
-        { reason: "recover", at: base + w.fail * S },
+        { reason: "recover", at: base + (safeUrl(room.join_url) ? w.ready : w.fail) * S },
         { reason: "fail", at: base + 2 * w.fail * S },
       ];
     }
@@ -894,35 +1049,60 @@ export interface Actor {
   manager?: boolean;
 }
 
+/**
+ * When the event happened, as its source gave it: Zoom's participant
+ * join_time or leave_time, or its event_ts; the door's or the message
+ * service's own clock. A person's press ignores it (the server's clock wins).
+ */
+type At = { at?: string | number | null };
+
 export type RoomEvent =
   /** The worker's conditional claim: requested → creating. */
   | { kind: "claim"; worker_run?: string | null }
-  /** The worker saved the link: creating → open. */
-  | { kind: "ready"; join_url: string; provider_meeting_id?: string | null }
-  /** The provider refused, or the worker gave up: requested or creating → failed. */
+  /**
+   * worker.ready: creating → open. The worker saved join_url and
+   * provider_meeting_id on the creating row (guarded by its worker_run);
+   * sales-api applies this, sets the deadlines and asks for the link once.
+   * Without join_url the row's own is used.
+   */
+  | { kind: "ready"; join_url?: string | null; provider_meeting_id?: string | null }
+  /** worker.failed: the provider refused, or the worker gave up: requested or creating → failed. */
   | { kind: "fail"; error: string }
   /** The message service sent the link (the first send starts the lead's 10 minutes). */
-  | { kind: "link_sent"; channel?: LinkChannel | null }
+  | ({ kind: "link_sent"; channel?: LinkChannel | null } & At)
   /** The short page counted an open (bots excluded). */
-  | { kind: "opened"; device?: Device | null }
+  | ({ kind: "opened"; device?: Device | null } & At)
   /** Zoom put the lead in the waiting room. */
-  | { kind: "lead_waiting" }
+  | ({ kind: "lead_waiting" } & At)
   /** Zoom's host joined, or the rep's "I'm in". */
-  | { kind: "host_in"; source: "zoom" | "mark"; actor?: Actor; version?: number }
+  | ({ kind: "host_in"; source: "zoom" | "mark"; actor?: Actor; version?: number } & At)
   /** Zoom's host left before the lead came. */
-  | { kind: "host_left" }
+  | ({ kind: "host_left" } & At)
   /** A Zoom join from outside the account, or the rep's "The lead is in". */
-  | { kind: "lead_in"; source: "zoom" | "mark"; actor?: Actor; version?: number }
-  /** "That was not the lead", within 5 minutes of the join. */
+  | ({ kind: "lead_in"; source: "zoom" | "mark"; actor?: Actor; version?: number } & At)
+  /** "That was not the lead", within 5 minutes of the join, also once the room has closed. */
   | { kind: "not_lead"; actor?: Actor; version?: number }
   /** room.end, or the system ending a room. */
   | { kind: "end"; reason: EndReason; actor?: Actor; version?: number; confirm?: boolean }
   /** Zoom's meeting.ended. */
-  | { kind: "meeting_ended" }
-  /** Take on a standby room: the lead is set and the room becomes a handover. */
+  | ({ kind: "meeting_ended" } & At)
+  /** Take on a standby room: the lead is set and the room becomes a handover. Run adoptRefusal first. */
   | { kind: "adopt"; contact_id: string; call_kind: CallKind; handover_id?: string | null; actor?: Actor }
-  /** The sweep, with the host's next booked call if one is near. */
-  | { kind: "tick"; next_booked_start?: number | null };
+  /**
+   * The sweep (room.event {kind: tick}), with what it read for this room:
+   * - next_booked_start: the host's next booked call, if one is near;
+   * - pending_events: this room's unhandled room_events still within the
+   *   replay age (undefined: not counted, read as 0; null or anything not a
+   *   count: could not be read, so timers wait, at most 5 minutes);
+   * - available_until: for a standby room, the host's availability (null:
+   *   away or run out; undefined: not given, so no fresh standby room).
+   */
+  | {
+      kind: "tick";
+      next_booked_start?: number | null;
+      pending_events?: number | null;
+      available_until?: string | number | null;
+    };
 
 export const ROOM_EVENT_KINDS = [
   "claim",
@@ -941,17 +1121,28 @@ export const ROOM_EVENT_KINDS = [
   "tick",
 ] as const;
 
-/** What the caller must do after a change is written. */
+/**
+ * What the caller must do after a change is written (or at once, for a
+ * tick that changed nothing).
+ * - send_link: the message service, with request_id = the room id, so a
+ *   re-ask (retry) can never send a second message.
+ * - close_provider: the worker ends or deletes the meeting, and never while
+ *   Zoom shows anyone in it but the host.
+ * - count_live: claim, then book or mark (countClaim, countLive, countFinish).
+ * - undo_count: countUndo on the row as it is read now; nothing while the
+ *   count is still in flight (the count undoes itself when it finishes).
+ * - retry: the sweep asking again for something a crash lost.
+ */
 export type Effect =
-  | { kind: "send_link" }
+  | { kind: "send_link"; retry?: true }
   | { kind: "close_provider" }
   | { kind: "delete_secret" }
-  | { kind: "count_live" }
-  | { kind: "undo_count" }
+  | { kind: "count_live"; retry?: true }
+  | { kind: "undo_count"; retry?: true }
   | { kind: "recover" }
   | { kind: "refresh_standby" }
   | { kind: "replace"; provider: Provider }
-  | { kind: "alert"; what: "booked_guard"; dedupe_key: string };
+  | { kind: "alert"; what: "booked_guard" | "count_stuck"; dedupe_key: string };
 
 export interface Changed {
   ok: true;
@@ -988,12 +1179,15 @@ export type RefusalCode =
   | "no_lead"
   | "not_standby"
   | "no_contact"
+  | "contact_unread"
   | "disabled"
   | "provider_off"
   | "test_only"
   | "client"
   | "dnd"
   | "booked_demo"
+  | "fallback_scope"
+  | "fallback_pilot"
   | "lead_has_room"
   | "host_has_room"
   | "zoom_busy"
@@ -1003,7 +1197,9 @@ export type RefusalCode =
   | "no_google"
   | "meet_pending"
   | "phone_call"
-  | "call_over";
+  | "host_link"
+  | "call_over"
+  | "wrap_too_early";
 
 export interface Refused {
   ok: false;
@@ -1034,12 +1230,15 @@ const REFUSALS: Record<RefusalCode, { text: string; status: number; retry?: bool
   no_lead: { text: LANE_COPY.no_lead, status: 409 },
   not_standby: { text: LANE_COPY.not_standby, status: 409 },
   no_contact: { text: LANE_COPY.no_contact, status: 400 },
+  contact_unread: { text: LANE_COPY.contact_unread, status: 503, retry: true },
   disabled: { text: LANE_COPY.disabled, status: 409 },
   provider_off: { text: LANE_COPY.provider_off, status: 409 },
   test_only: { text: LANE_COPY.test_only, status: 409 },
   client: { text: R.client, status: 409 },
   dnd: { text: R.dnd, status: 409 },
   booked_demo: { text: R.booked_demo, status: 409 },
+  fallback_scope: { text: LANE_COPY.fallback_scope, status: 409 },
+  fallback_pilot: { text: LANE_COPY.fallback_pilot, status: 403 },
   lead_has_room: { text: R.lead_has_room, status: 409 },
   host_has_room: { text: R.host_has_room, status: 409 },
   zoom_busy: { text: R.zoom_busy, status: 409 },
@@ -1049,7 +1248,17 @@ const REFUSALS: Record<RefusalCode, { text: string; status: number; retry?: bool
   no_google: { text: R.no_google, status: 409 },
   meet_pending: { text: R.meet_pending, status: 502 },
   phone_call: { text: R.phone_call, status: 409 },
+  host_link: { text: LANE_COPY.host_link, status: 409 },
   call_over: { text: LANE_COPY.call_over, status: 409 },
+  wrap_too_early: { text: LANE_COPY.wrap_too_early, status: 409, retry: true },
+};
+
+/** The Zoom refusals without their "use Meet" advice, for a host who cannot use Meet either. */
+const NO_MEET: Partial<Record<RefusalCode, string>> = {
+  zoom_missing: LANE_COPY.zoom_missing_no_meet,
+  zoom_pending: LANE_COPY.zoom_pending_no_meet,
+  zoom_busy: LANE_COPY.zoom_busy_no_meet,
+  zoom_basic_demo: LANE_COPY.zoom_basic_demo_no_meet,
 };
 
 /** The refusal for a code, its sentence filled in. A fallback room's "already open" uses P1's words. */
@@ -1086,12 +1295,24 @@ function finalEffects(room: RoomRow): Effect[] {
   return out;
 }
 
-/** The link is due: the room has a lead and a link, nothing went yet, and the room is at its `send_on` point (C20). */
+/**
+ * The link is due: the room has a lead and a link a lead may get, nothing
+ * was asked for or sent yet, and the room is at its `send_on` point (C20).
+ * Whoever writes the change that makes it due also writes link_claimed_at,
+ * in the same conditional write, so two writers can never both ask.
+ */
 export function linkDue(room: RoomRow): boolean {
-  if (!room.contact_id || room.link_sent_at || !room.join_url) return false;
+  if (!room.contact_id || room.link_sent_at || room.link_claimed_at || !safeUrl(room.join_url)) return false;
   if (room.purpose === "booked" || room.purpose === "standby") return false;
   if (room.send_on === "host_in") return room.state === "host_in";
   return room.state === "open" || room.state === "host_in";
+}
+
+/** Adds the link's claim and the send to a change that makes the link due. */
+function claimLink(next: RoomRow, patch: Partial<RoomRow>, effects: Effect[], at: string): void {
+  if (!linkDue(next)) return;
+  patch.link_claimed_at = at;
+  effects.push({ kind: "send_link" });
 }
 
 function change(
@@ -1118,15 +1339,76 @@ function same(room: RoomRow, effects: Effect[] = [], reason: SweepReason | null 
   return { ok: true, changed: false, from: room.state, to: room.state, room, patch: {}, expect: {}, effects, reason };
 }
 
+/** The latest time the open grace may move lead_by to: the lead's 10 minutes plus one grace (F18), or a booked call's end. */
+function graceCap(room: RoomRow, w: Waits): number | null {
+  if (room.purpose === "booked") return ms(room.ends_at);
+  const base = ms(room.link_sent_at) ?? ms(room.opened_at);
+  return base === null ? null : base + (w.lead + w.open_grace) * S;
+}
+
+/** creating (or a row an older worker opened itself) → open: the deadlines, and the link asked for once. */
+function openRoom(
+  room: RoomRow,
+  to: RoomState,
+  url: string,
+  meetingId: unknown,
+  now: number,
+  ctx: RoomCtx,
+  reason: SweepReason | null = null,
+): Changed {
+  const w = ctx.waits;
+  const at = iso(now);
+  const patch: Partial<RoomRow> = {
+    opened_at: at,
+    join_url: url,
+    provider_meeting_id: str(meetingId, 200) ?? room.provider_meeting_id ?? null,
+  };
+  if (room.purpose !== "booked") {
+    patch.host_by = laterIso(room.host_by, now + hostWaitS(room.purpose, w) * S);
+    if (room.contact_id) patch.lead_by = laterIso(room.lead_by, (ms(room.link_sent_at) ?? now) + w.lead * S);
+    patch.ends_at = laterIso(room.ends_at, now + lengthMs(room.call_kind, ctx));
+  }
+  const effects: Effect[] = [];
+  claimLink({ ...room, ...patch, state: to }, patch, effects, at);
+  return change(room, to, patch, effects, reason);
+}
+
+/**
+ * "That was not the lead", within 5 minutes of the join (lead_in → host_in),
+ * and also once the room has closed, where only the count is taken back
+ * (F6). count_undo_at records the press; a count still in flight is marked
+ * undone at once, so its own result write misses and it undoes what it
+ * made (F7).
+ */
+function notLead(room: RoomRow, now: number, ctx: RoomCtx): Applied {
+  const w = ctx.waits;
+  const final = isFinal(room.state);
+  if (!final && room.state !== "lead_in") return refuse("stale");
+  if (final && !leadJoined(room)) return room.lead_in_at && room.count_undo_at ? same(room) : refuse("stale");
+  const joined = ms(room.lead_in_at);
+  if (joined === null || now - joined > w.not_lead_undo * S)
+    return refuse("not_lead_late", { minutes: Math.round(w.not_lead_undo / 60) });
+  const patch: Partial<RoomRow> = { count_undo_at: iso(now) };
+  if (countInFlight(room)) patch.count_result = "undone";
+  const effects: Effect[] = room.count_claimed_at ? [{ kind: "undo_count" }] : [];
+  if (final) {
+    if (room.result === "joined") patch.result = "no_join";
+    return change(room, room.state, patch, effects);
+  }
+  // Back to waiting for the real lead, with at least the open grace left so the sweep does not close it at once.
+  patch.lead_by = laterIso(room.lead_by, now + w.open_grace * S);
+  return change(room, "host_in", patch, effects);
+}
+
 /**
  * Applies one event to a room at time `now`. Pure: it returns the patch, the
  * conditional-write guard and the follow-up effects; the caller writes it
- * with `state=eq.{from}` (and `version=eq.{v}` on a state change) and runs
- * the effects only if the write landed.
+ * with guardFilter(expect) and runs the effects only if the write landed.
  *
  * Order of checks: the event's shape; the actor (host or manager); a final
- * room (an End is a no-op, a person's other press is stale, a system event is
- * dropped); the version the button saw; then the event's own rule.
+ * room (an End is a no-op, a tick only re-asks, "That was not the lead" may
+ * still take the count back, a person's other press is stale, a system
+ * event is dropped); the version the button saw; then the event's own rule.
  */
 export function applyRoomEvent(room: RoomRow, event: RoomEvent, now: number, ctx: RoomCtx): Applied {
   if (!room || !isRoomState(room.state) || !isPurpose(room.purpose)) return refuse("bad_input");
@@ -1136,48 +1418,56 @@ export function applyRoomEvent(room: RoomRow, event: RoomEvent, now: number, ctx
   const at = iso(now);
   const actor = (event as { actor?: Actor }).actor;
   if (actor && !mayAct(room, actor)) return refuse("not_host", { host: hostFirstName(room, ctx) });
+  const seen = (event as { version?: unknown }).version;
+  const given = seen !== undefined && seen !== null;
 
   if (isFinal(room.state)) {
-    if (event.kind === "end" || event.kind === "tick") return same(room);
+    if (event.kind === "end") return same(room);
+    if (event.kind === "tick") return same(room, reasks(room, now, ctx));
+    // The room's end is the one move that may have landed since the rep saw it.
+    if (event.kind === "not_lead" && actor) {
+      if (given && Number(seen) !== ver(room) && Number(seen) !== ver(room) - 1) return refuse("stale");
+      return notLead(room, now, ctx);
+    }
     if (actor) return refuse("stale");
     const r = refuse("final");
     if (event.kind === "ready") r.cleanup = true;
     return r;
   }
-  const seen = (event as { version?: unknown }).version;
-  if (seen !== undefined && seen !== null && Number(seen) !== ver(room)) return refuse("stale");
+  if (given && Number(seen) !== ver(room)) return refuse("stale");
   const early = room.state === "requested" || room.state === "creating";
+  // A Zoom, door or message-service time; a person's press is now.
+  const when = (e: At & { source?: string }) => (e.source === "mark" ? now : eventTime(e.at, now));
 
   switch (event.kind) {
     case "claim":
       if (room.state !== "requested") return refuse("not_requested");
-      return change(room, "creating", {
-        claimed_at: at,
-        ...(str(event.worker_run, 80) ? { worker_run: str(event.worker_run, 80) } : {}),
-      }, []);
+      return change(
+        room,
+        "creating",
+        {
+          claimed_at: at,
+          ...(str(event.worker_run, 80) ? { worker_run: str(event.worker_run, 80) } : {}),
+        },
+        [],
+      );
 
     case "ready": {
-      const url = safeUrl(event.join_url);
+      const url = safeUrl(event.join_url ?? room.join_url);
       if (!url) return refuse("bad_link");
       if (room.state === "requested") return refuse("not_claimed");
-      if (room.state !== "creating") return room.join_url === url ? same(room) : refuse("already_open");
-      const patch: Partial<RoomRow> = {
-        opened_at: at,
-        join_url: url,
-        provider_meeting_id: str(event.provider_meeting_id, 200) ?? room.provider_meeting_id ?? null,
-      };
-      if (room.purpose !== "booked") {
-        patch.host_by = laterIso(room.host_by, now + hostWaitS(room.purpose, w) * S);
-        if (room.contact_id) patch.lead_by = laterIso(room.lead_by, (ms(room.link_sent_at) ?? now) + w.lead * S);
-        patch.ends_at = laterIso(room.ends_at, now + lengthMs(room.call_kind, ctx));
-      }
-      const next: RoomRow = { ...room, ...patch, state: "open" };
-      return change(room, "open", patch, linkDue(next) ? [{ kind: "send_link" }] : []);
+      if (room.state === "creating") return openRoom(room, "open", url, event.provider_meeting_id, now, ctx);
+      // A second, different meeting for a room already open: refused, and the worker deletes the one it made (F14).
+      if (safeUrl(room.join_url) !== url) return { ...refuse("already_open"), cleanup: true };
+      // A row an older worker set to open itself carries no deadlines and asked for no link: finish it here, once (F19).
+      if (!room.opened_at && (room.state === "open" || room.state === "host_in"))
+        return openRoom(room, room.state, url, event.provider_meeting_id, now, ctx);
+      return same(room);
     }
 
     case "fail": {
       if (!early) return refuse("already_open");
-      const error = str(event.error, 300) ?? LANE_COPY.worker_failed;
+      const error = redactRoom(event.error) ?? LANE_COPY.worker_failed;
       return change(room, "failed", { error, result: "failed", ended_at: at }, finalEffects(room));
     }
 
@@ -1185,9 +1475,12 @@ export function applyRoomEvent(room: RoomRow, event: RoomEvent, now: number, ctx
       if (!room.contact_id) return refuse("no_lead");
       if (early) return refuse("too_early");
       if (room.link_sent_at) return same(room);
-      const patch: Partial<RoomRow> = { link_sent_at: at };
+      const t = when(event);
+      const patch: Partial<RoomRow> = { link_sent_at: iso(t) };
+      // A send nobody claimed (the rep's "Also send by email" first) still closes the claim.
+      if (!room.link_claimed_at) patch.link_claimed_at = iso(t);
       if (room.state !== "lead_in") {
-        const lead = laterIso(room.lead_by, now + w.lead * S);
+        const lead = laterIso(room.lead_by, t + w.lead * S);
         if (lead !== room.lead_by) patch.lead_by = lead;
       }
       return change(room, room.state, patch, []);
@@ -1197,56 +1490,60 @@ export function applyRoomEvent(room: RoomRow, event: RoomEvent, now: number, ctx
     case "lead_waiting": {
       if (event.kind === "lead_waiting" && early) return refuse("too_early");
       if (event.kind === "lead_waiting" && (room.state === "lead_in" || !room.contact_id)) return same(room);
+      const t = when(event);
       const patch: Partial<RoomRow> = {};
       if (event.kind === "opened" && !room.first_open_at) {
-        patch.first_open_at = at;
+        patch.first_open_at = iso(t);
         const device = oneOf(DEVICES, event.device) ? event.device : null;
         if (device && !room.open_device) patch.open_device = device;
       }
-      if (event.kind === "lead_waiting" && !room.lead_waiting_at) patch.lead_waiting_at = at;
-      // An open (or a knock) in the last 3 minutes moves lead_by to open + 180 s.
+      if (event.kind === "lead_waiting" && !room.lead_waiting_at) patch.lead_waiting_at = iso(t);
+      // An open (or a knock) in the last 3 minutes moves lead_by to open + 180 s, never past one grace (F18).
       const lead = ms(room.lead_by);
-      if ((room.state === "open" || room.state === "host_in") && lead !== null && now + w.open_grace * S > lead)
-        patch.lead_by = iso(now + w.open_grace * S);
+      if ((room.state === "open" || room.state === "host_in") && lead !== null && t + w.open_grace * S > lead) {
+        const cap = graceCap(room, w);
+        const want = cap === null ? t + w.open_grace * S : Math.min(t + w.open_grace * S, cap);
+        if (want > lead) patch.lead_by = iso(want);
+      }
       return Object.keys(patch).length ? change(room, room.state, patch, []) : same(room);
     }
 
     case "host_in": {
       if (early) return refuse("too_early");
       if (room.state !== "open") return same(room);
-      const patch: Partial<RoomRow> = { host_in_at: at };
-      const next: RoomRow = { ...room, ...patch, state: "host_in" };
-      return change(room, "host_in", patch, linkDue(next) ? [{ kind: "send_link" }] : []);
+      const patch: Partial<RoomRow> = { host_in_at: iso(when(event)) };
+      const effects: Effect[] = [];
+      claimLink({ ...room, ...patch, state: "host_in" }, patch, effects, at);
+      return change(room, "host_in", patch, effects);
     }
 
     case "host_left": {
       if (early) return refuse("too_early");
       if (room.state !== "host_in") return same(room);
+      const t = when(event);
+      // Left before they last came in: an earlier session's event, late.
+      if (t < (ms(room.host_in_at) ?? Number.NEGATIVE_INFINITY)) return same(room);
       // P2: the host left before the lead came; host_by gives them 120 s more, never less than it had.
-      return change(room, "open", { host_by: laterIso(room.host_by, now + w.handover_host * S) }, []);
+      return change(room, "open", { host_by: laterIso(room.host_by, t + w.handover_host * S) }, []);
     }
 
     case "lead_in": {
       if (early) return refuse("too_early");
       if (room.state === "lead_in") return same(room);
       if (!room.contact_id) return refuse("no_lead");
-      const patch: Partial<RoomRow> = { lead_in_at: at };
+      const t = when(event);
+      // The join "That was not the lead" took back, delivered again (Zoom sends two join events): not a new join.
+      if (room.count_undo_at && t <= (ms(room.lead_in_at) ?? Number.NEGATIVE_INFINITY)) return same(room);
+      const patch: Partial<RoomRow> = { lead_in_at: iso(t) };
       if (room.purpose !== "booked") {
-        const ends = laterIso(room.ends_at, now + lengthMs(room.call_kind, ctx));
+        const ends = laterIso(room.ends_at, t + lengthMs(room.call_kind, ctx));
         if (ends !== room.ends_at) patch.ends_at = ends;
       }
       return change(room, "lead_in", patch, [{ kind: "count_live" }]);
     }
 
-    case "not_lead": {
-      if (room.state !== "lead_in") return refuse("stale");
-      const joined = ms(room.lead_in_at);
-      if (joined === null || now - joined > w.not_lead_undo * S)
-        return refuse("not_lead_late", { minutes: Math.round(w.not_lead_undo / 60) });
-      // Back to waiting for the real lead, with at least the open grace left so the sweep does not close it at once.
-      const patch: Partial<RoomRow> = { lead_by: laterIso(room.lead_by, now + w.open_grace * S) };
-      return change(room, "host_in", patch, room.count_claimed_at ? [{ kind: "undo_count" }] : []);
-    }
+    case "not_lead":
+      return notLead(room, now, ctx);
 
     case "end": {
       const reason = event.reason;
@@ -1269,8 +1566,21 @@ export function applyRoomEvent(room: RoomRow, event: RoomEvent, now: number, ctx
 
     case "meeting_ended": {
       if (early) return refuse("too_early");
+      const t = when(event);
+      // An earlier instance of the meeting ended, late; the one running now has people in it.
+      const lastIn = Math.max(ms(room.host_in_at) ?? Number.NEGATIVE_INFINITY, ms(room.lead_in_at) ?? Number.NEGATIVE_INFINITY);
+      if (t < lastIn) return same(room);
+      // Zoom ends a meeting the host left empty (F9, UNVERIFIED in phase 0). Before the lead came, while
+      // their 10 minutes run, that is the host leaving (P2): back to open, 120 s for the host, secret kept;
+      // room.open fetches a fresh start link.
+      const leadAhead = (ms(room.lead_by) ?? Number.NEGATIVE_INFINITY) > now;
+      if ((room.state === "open" || room.state === "host_in") && room.contact_id && !leadJoined(room) && leadAhead) {
+        const host_by = laterIso(room.host_by, now + w.handover_host * S);
+        if (room.state === "open" && host_by === room.host_by) return same(room);
+        return change(room, "open", { host_by }, []);
+      }
       const result: RoomResult | null = room.state === "lead_in" ? "joined" : room.contact_id ? "no_join" : null;
-      return change(room, "ended", { result, ended_at: at }, [{ kind: "delete_secret" }]);
+      return change(room, "ended", { result, ended_at: iso(t) }, [{ kind: "delete_secret" }]);
     }
 
     case "adopt": {
@@ -1291,61 +1601,163 @@ export function applyRoomEvent(room: RoomRow, event: RoomEvent, now: number, ctx
         ends_at: laterIso(room.ends_at, now + lengthMs(event.call_kind, ctx)),
       };
       if (room.state === "open") patch.host_by = laterIso(room.host_by, now + w.handover_host * S);
-      const next: RoomRow = { ...room, ...patch };
-      return change(room, room.state, patch, linkDue(next) ? [{ kind: "send_link" }] : [], null, true);
+      const effects: Effect[] = [];
+      claimLink({ ...room, ...patch }, patch, effects, at);
+      return change(room, room.state, patch, effects, null, true);
     }
 
     case "tick":
-      return tick(room, now, ctx, event.next_booked_start ?? null);
+      return tick(room, event, now, ctx);
   }
   return refuse("bad_input");
 }
 
 /**
+ * What the sweep asks for again, each from when, and until when: a link
+ * claimed and never sent; a count never claimed for a lead who joined (with
+ * count_on_join on), or claimed and stuck (an alert); an undo that never
+ * landed. Re-asks repeat on every sweep until their condition clears; each
+ * handler is idempotent (the message service on request_id = the room id;
+ * the count on its claim; the undo on the row as it is read).
+ */
+function reaskPlan(room: RoomRow, ctx: RoomCtx): { at: number; until: number; effect: Effect }[] {
+  const out: { at: number; until: number; effect: Effect }[] = [];
+  const again = REASK_AFTER_S * S;
+  const claimed = ms(room.link_claimed_at);
+  if (
+    (room.state === "open" || room.state === "host_in") &&
+    room.contact_id &&
+    room.purpose !== "booked" &&
+    room.purpose !== "standby" &&
+    !room.link_sent_at &&
+    safeUrl(room.join_url) &&
+    claimed !== null
+  )
+    out.push({ at: claimed + again, until: Number.POSITIVE_INFINITY, effect: { kind: "send_link", retry: true } });
+  const joined = ms(room.lead_in_at);
+  if (ctx.count_on_join && room.contact_id && room.purpose !== "booked" && joined !== null && leadJoined(room)) {
+    const until = joined + REASK_WINDOW_S * S;
+    const claim = ms(room.count_claimed_at);
+    // Never claimed, or claimed and then undone (a staff join taken back before the real lead came).
+    if (countClaimable(room)) out.push({ at: joined + again, until, effect: { kind: "count_live", retry: true } });
+    else if (claim !== null && countInFlight(room))
+      out.push({
+        at: claim + COUNT_STUCK_S * S,
+        until,
+        effect: { kind: "alert", what: "count_stuck", dedupe_key: `room:${room.id}:count_stuck:${iso(claim)}` },
+      });
+  }
+  // An undo pressed after the count finished, still not landed. A claim clears count_undo_at, so this
+  // undo is for the count that stands, even if the real lead has joined since: that join is counted
+  // once the undo lands.
+  const undo = ms(room.count_undo_at);
+  if (undo !== null && countStands(room))
+    out.push({ at: undo + again, until: undo + REASK_WINDOW_S * S, effect: { kind: "undo_count", retry: true } });
+  return out;
+}
+
+function reasks(room: RoomRow, now: number, ctx: RoomCtx): Effect[] {
+  return reaskPlan(room, ctx)
+    .filter(p => now >= p.at && now <= p.until)
+    .map(p => p.effect);
+}
+
+/**
+ * When the sweep next has work for this room (a timer, or a re-ask), or null
+ * for none. Final rooms can still have re-asks for a count or an undo. A
+ * standby room's availability is not in the row: the sweep also ticks every
+ * standby room each minute, or live.availability(away) ends it.
+ */
+export function nextDueAt(room: RoomRow, now: number, ctx: RoomCtx): number | null {
+  if (!room || !isRoomState(room.state)) return null;
+  const times = isFinal(room.state) ? [] : timers(room, ctx).map(t => t.at);
+  for (const p of reaskPlan(room, ctx)) if (p.until >= now) times.push(p.at);
+  const ok = times.filter(t => Number.isFinite(t));
+  return ok.length ? Math.min(...ok) : null;
+}
+
+/** The pending-events count as the sweep gave it: 0 when not given, null when it could not be read. */
+function pendingCount(v: unknown): number | null {
+  if (v === undefined) return 0;
+  return typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : null;
+}
+
+/** A fresh standby room is asked for only while the host is still available and no booked call is inside its life (F2, F16). */
+function refreshWanted(e: Extract<RoomEvent, { kind: "tick" }>, now: number, w: Waits): boolean {
+  if (e.available_until === undefined) return false;
+  const until = ms(e.available_until);
+  if (until === null || until <= now) return false;
+  const booked = finiteOrNull(e.next_booked_start);
+  return booked === null || booked - now > (w.standby_max + w.booked_guard) * S;
+}
+
+/**
  * The sweep for one room. Fires the earliest timer that is due. A standby
  * room nobody has been given closes 10 minutes before the host's next booked
- * call; any other room near that call only raises an alert, because a room
- * with a lead in it is never ended (H7).
+ * call, and when the host's availability ends; any other room near that call
+ * only raises an alert, because a room with a lead in it is never ended
+ * (H7). No timer closes a room while one of its events waits for the replay
+ * (at most 5 minutes past the timer). Re-asks ride along.
  */
-function tick(room: RoomRow, now: number, ctx: RoomCtx, nextBooked: number | null): Changed {
+function tick(room: RoomRow, e: Extract<RoomEvent, { kind: "tick" }>, now: number, ctx: RoomCtx): Changed {
   const w = ctx.waits;
   const list = timers(room, ctx);
   const alerts: Effect[] = [];
-  if (nextBooked !== null && Number.isFinite(nextBooked) && room.purpose !== "booked") {
+  const live = room.state === "open" || room.state === "host_in";
+  const nextBooked = finiteOrNull(e.next_booked_start);
+  if (nextBooked !== null && room.purpose !== "booked") {
     const guardAt = nextBooked - w.booked_guard * S;
     if (now >= guardAt) {
-      if (standbyEmpty(room) && (room.state === "open" || room.state === "host_in"))
-        list.push({ reason: "booked_guard", at: guardAt });
-      else if (room.state === "open" || room.state === "host_in" || room.state === "lead_in")
+      if (standbyEmpty(room) && live) list.push({ reason: "booked_guard", at: guardAt });
+      else if (live || room.state === "lead_in")
         alerts.push({ kind: "alert", what: "booked_guard", dedupe_key: `room:${room.id}:booked_guard:${iso(nextBooked)}` });
     }
   }
+  if (standbyEmpty(room) && live && e.available_until !== undefined) {
+    const until = ms(e.available_until);
+    if (until === null || until <= now) list.push({ reason: "availability", at: until ?? now });
+  }
+  const extra = [...alerts, ...reasks(room, now, ctx)];
   const at = iso(now);
   if (room.state === "creating") {
     const fail = list.find(t => t.reason === "fail");
     const recover = list.find(t => t.reason === "recover");
     if (fail && now >= fail.at)
       return change(room, "failed", { error: LANE_COPY.worker_lost, result: "failed", ended_at: at }, finalEffects(room), "fail");
-    if (recover && now >= recover.at) return same(room, [{ kind: "recover" }, ...alerts], "recover");
-    return same(room, alerts);
+    if (recover && now >= recover.at) {
+      // The worker saved the link but its worker.ready never landed: the sweep opens the room, once.
+      const url = safeUrl(room.join_url);
+      if (url) return openRoom(room, "open", url, null, now, ctx, "recover");
+      return same(room, [{ kind: "recover" }, ...extra], "recover");
+    }
+    return same(room, extra);
   }
   const due = list.filter(t => t.reason !== "recover" && now >= t.at).sort((a, b) => a.at - b.at)[0];
-  if (!due) return same(room, alerts);
+  if (!due) return same(room, extra);
   if (room.state === "requested")
     return change(room, "failed", { error: LANE_COPY.worker_late, result: "failed", ended_at: at }, finalEffects(room), "fail");
+  // An event for this room still waits for the replay (a knock the door could not forward): wait for it (F5).
+  const pending = pendingCount(e.pending_events);
+  if ((pending === null || pending > 0) && now < due.at + PENDING_HOLD_MAX_S * S) return same(room, extra);
   if (room.state === "lead_in") {
     // Closed in the books only. No end call goes to Zoom or Google (C15).
     const error = room.provider === "zoom" ? ROOM_COPY.panel.no_end_signal : ROOM_COPY.panel.no_end_signal_any;
     return change(room, "ended", { error, result: "joined", ended_at: at }, [{ kind: "delete_secret" }, ...alerts], "no_end_signal");
   }
   const effects = finalEffects(room);
-  if (due.reason === "standby_max") effects.push({ kind: "refresh_standby" });
+  if (due.reason === "standby_max" && refreshWanted(e, now, w)) effects.push({ kind: "refresh_standby" });
   return change(room, "expired", { result: room.contact_id ? "no_join" : null, ended_at: at }, [...effects, ...alerts], due.reason);
 }
 
 /** Runs the sweep on one room: the same as applying a tick. */
-export function sweepRoom(room: RoomRow, now: number, ctx: RoomCtx, nextBookedStart: number | null = null): Applied {
-  return applyRoomEvent(room, { kind: "tick", next_booked_start: nextBookedStart }, now, ctx);
+export function sweepRoom(
+  room: RoomRow,
+  now: number,
+  ctx: RoomCtx,
+  nextBookedStart: number | null = null,
+  read: { pending_events?: number | null; available_until?: string | number | null } = {},
+): Applied {
+  return applyRoomEvent(room, { kind: "tick", next_booked_start: nextBookedStart, ...read }, now, ctx);
 }
 
 /** room.mark's three presses as room events. */
@@ -1392,12 +1804,19 @@ export function replayDue(ev: { handled_at?: unknown; received_at?: unknown; cre
 }
 
 /**
- * P1, decision D14: a fallback room for a booked intro that expired with no
- * mark becomes a no-show at the intro's start + 20 minutes (room.settle). A
- * room with no booking writes nothing.
+ * P1, decision D14: a fallback room for a booked intro that closed with
+ * nobody joining becomes a no-show at the intro's start + 20 minutes
+ * (room.settle). That is a room that expired, or one ended with no join
+ * (End room, or Zoom's end before anyone came, F8), including a join taken
+ * back by "That was not the lead". A room moved to the phone or cancelled
+ * writes nothing, and nor does a room with no booking.
  */
 export function settleDue(room: RoomRow, appointmentStart: unknown, marked: boolean, now: number, w: Waits): boolean {
-  if (room.state !== "expired" || room.purpose === "booked" || room.call_kind !== "intro") return false;
+  if (room.purpose === "booked" || room.call_kind !== "intro") return false;
+  const closedEmpty =
+    (room.state === "expired" && (room.result == null || room.result === "no_join")) ||
+    (room.state === "ended" && room.result === "no_join");
+  if (!closedEmpty || leadJoined(room)) return false;
   if (!room.appointment_id || room.settled_mark || marked) return false;
   const start = ms(appointmentStart);
   return start !== null && now >= start + w.settle * S;
@@ -1410,13 +1829,19 @@ export function settleDue(room: RoomRow, appointmentStart: unknown, marked: bool
 
 /**
  * When the hold on a room's lead ends, or null for none:
- * coalesce(lead_by, host_by, requested_at + fail). A room with the lead in it
+ * coalesce(lead_by, host_by, requested_at + fail). A room still being made
+ * holds until the time it would fail (F25). A room with the lead in it
  * holds until its no-end-signal time, so a lead on a video call is not
- * dialled; that is still bounded, so a stuck row cannot hold anyone for good.
+ * dialled; that is still bounded, so a stuck row cannot hold anyone for
+ * good. A booked room holds nobody: its call is already on the calendar,
+ * and the lead's own confirmation and call items must stay (F15).
  */
 export function holdUntil(room: RoomRow, ctx: RoomCtx): number | null {
   if (!room.contact_id || !isRoomState(room.state) || isFinal(room.state)) return null;
+  if (room.purpose === "booked") return null;
   if (room.state === "lead_in") return timers(room, ctx)[0]?.at ?? null;
+  if (room.state === "requested" || room.state === "creating")
+    return timers(room, ctx).find(t => t.reason === "fail")?.at ?? null;
   const t = ms(room.lead_by) ?? ms(room.host_by);
   if (t !== null) return t;
   const base = ms(room.requested_at) ?? ms(room.created_at);
@@ -1622,6 +2047,8 @@ export interface ZoomParticipant {
   participant_uuid?: unknown;
   join_time?: unknown;
   leave_time?: unknown;
+  /** The waiting-room events' time. */
+  date_time?: unknown;
 }
 
 export interface ZoomEvent {
@@ -1646,7 +2073,11 @@ export interface ZoomStaffCtx {
   /** Every room_hosts email: anyone signed in as one is staff. */
   staff_emails?: readonly string[];
   staff_zoom_user_ids?: readonly string[];
-  /** participant_uuids seen in this meeting's waiting room, which only people outside the account enter. */
+  /**
+   * participant_uuids seen in this meeting's waiting room. Kept for the
+   * timeline only: whether Zoom keeps one uuid from the waiting room into
+   * the meeting is UNVERIFIED, so the role never depends on it (F17).
+   */
   waited?: readonly string[];
 }
 
@@ -1664,57 +2095,69 @@ export const ZOOM_EVENTS = [
 export type ZoomRole = "host" | "staff" | "lead";
 
 /**
- * Staff or lead (F "Who is who", P1, P2). In order:
+ * Staff or lead (F "Who is who"). In order:
  * 1. the host: Zoom's host id, the room host's Zoom user, or the host's email;
  * 2. staff: an email or Zoom user in room_hosts;
- * 3. a lead: anyone who came through the waiting room, which the account
- *    sends only people outside it to, even if they signed in to Zoom;
- * 4. staff: anyone else Zoom gives a participant_user_id (signed in);
- * 5. otherwise the lead.
- * Step 3 keeps a lead signed in to their own Zoom from looking like staff,
- * which would let the room expire around them. Zoom's field meanings are
- * UNVERIFIED on recorded payloads from this account.
+ * 3. everyone else is the lead.
+ * Being signed in to Zoom says nothing: a lead signed in to their own Zoom
+ * is still the lead, so the room never expires around them (F17). A staff
+ * member who is not signed in and not in room_hosts looks like the lead;
+ * "That was not the lead" takes that back. Zoom's field meanings are
+ * UNVERIFIED on recorded payloads from this account (phase-0 test).
  */
 export function zoomRole(p: ZoomParticipant | null | undefined, meetingHostId: unknown, ctx: ZoomStaffCtx): ZoomRole {
   const id = str(p?.id, 100);
   const puid = str(p?.participant_user_id, 100);
   const email = lower(p?.email);
-  const uuid = str(p?.participant_uuid, 100);
   const hostIds = [str(meetingHostId, 100), str(ctx.host_zoom_user_id, 100)].filter((x): x is string => Boolean(x));
   if ((id && hostIds.includes(id)) || (puid && hostIds.includes(puid))) return "host";
   if (email && email === lower(ctx.host_email)) return "host";
   if (email && (ctx.staff_emails ?? []).some(e => lower(e) === email)) return "staff";
   if ((id && (ctx.staff_zoom_user_ids ?? []).includes(id)) || (puid && (ctx.staff_zoom_user_ids ?? []).includes(puid)))
     return "staff";
-  if (uuid && (ctx.waited ?? []).includes(uuid)) return "lead";
-  if (puid) return "staff";
   return "lead";
+}
+
+/** When a Zoom event happened: the participant's own time, else the event's (RoomEvent.at). */
+function zoomAt(evt: ZoomEvent | null | undefined, which: "join" | "leave" | "wait" | "event"): string | number | null {
+  const p = evt?.payload?.object?.participant;
+  const own = which === "join" ? p?.join_time : which === "leave" ? p?.leave_time : which === "wait" ? (p?.date_time ?? p?.join_time) : null;
+  const pick = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim().slice(0, 60) : typeof v === "number" && Number.isFinite(v) ? v : null);
+  return pick(own) ?? pick(evt?.event_ts);
 }
 
 export type ZoomEffect = { room_event: RoomEvent; role: ZoomRole | null } | { ignore: string; role: ZoomRole | null };
 
-/** What a Zoom event does to its room. The first lead in sets lead_in; later ones change nothing. */
+/**
+ * What a Zoom event does to its room, stamped with when it happened (the
+ * participant's join or leave time, else event_ts), so a replay is stamped
+ * right. The first lead in sets lead_in; later ones change nothing.
+ */
 export function zoomEffect(evt: ZoomEvent | null | undefined, ctx: ZoomStaffCtx): ZoomEffect {
   const name = String(evt?.event ?? "");
   const o = evt?.payload?.object;
   const p = o?.participant;
   const role = p ? zoomRole(p, o?.host_id, ctx) : null;
+  const when = (which: "join" | "leave" | "wait" | "event") => {
+    const at = zoomAt(evt, which);
+    return at === null ? {} : { at };
+  };
   switch (name) {
     case "meeting.started":
-      return { room_event: { kind: "host_in", source: "zoom" }, role: null };
+      return { room_event: { kind: "host_in", source: "zoom", ...when("event") }, role: null };
     case "meeting.ended":
-      return { room_event: { kind: "meeting_ended" }, role: null };
+      return { room_event: { kind: "meeting_ended", ...when("event") }, role: null };
     case "meeting.participant_joined":
     case "meeting.participant_jbh_joined":
-      if (role === "host") return { room_event: { kind: "host_in", source: "zoom" }, role };
-      if (role === "lead") return { room_event: { kind: "lead_in", source: "zoom" }, role };
+      if (role === "host") return { room_event: { kind: "host_in", source: "zoom", ...when("join") }, role };
+      if (role === "lead") return { room_event: { kind: "lead_in", source: "zoom", ...when("join") }, role };
       return { ignore: "staff joined", role };
     case "meeting.participant_left":
-      if (role === "host") return { room_event: { kind: "host_left" }, role };
+      if (role === "host") return { room_event: { kind: "host_left", ...when("leave") }, role };
       return { ignore: role === "lead" ? "the lead left; the meeting's end closes the room" : "staff left", role };
     case "meeting.participant_joined_waiting_room":
     case "meeting.participant_jbh_waiting":
-      if (role === "lead") return { room_event: { kind: "lead_waiting" }, role };
+      if (role === "lead") return { room_event: { kind: "lead_waiting", ...when("wait") }, role };
       return { ignore: "staff waiting", role };
     default:
       return { ignore: "not a room event", role };
@@ -1863,8 +2306,14 @@ export interface CountInput {
   setting: RoomsSetting;
   /** The contact: tags, first name (firstName or first_name) and name. */
   contact: Row | null;
-  /** upcoming() for the room's call kind: the lead's next call booked ahead, if any. */
-  upcoming: { id: string; start: number; kind: CallKind } | null;
+  /**
+   * upcoming(contact, room.call_kind) (index.ts): the lead's next call of
+   * the room's kind booked ahead, if any. upcoming() already filters by
+   * kind and returns no kind; one given that differs is not moved.
+   */
+  upcoming: { id: string; start: number; kind?: CallKind | null } | null;
+  /** The calendar of the booked intro the room is for (room.appointment_id), when there is one. */
+  appointment_calendar_id?: string | null;
   host_ghl_user_id: string | null;
   location_id: string;
   /** The short link, or the room's own link before the CNAME. */
@@ -1881,6 +2330,7 @@ export type CountSkip =
   | "client"
   | "not_a_lead"
   | "test_calendar_missing"
+  | "test_not_on_test_calendar"
   | "host_not_in_highlevel";
 
 export type CountPlan =
@@ -1895,16 +2345,20 @@ export function countClaimable(room: RoomRow): boolean {
 }
 
 /**
- * What to do when the lead joins. The caller first claims with a
- * conditional PATCH (count_claimed_at is null, or count_result = undone)
- * whenever `claim` is true, and does nothing if the claim is lost.
+ * What to do when the lead joins. The caller first claims with
+ * countClaim (a conditional PATCH: count_claimed_at is null, or
+ * count_result = undone) whenever `claim` is true, and does nothing if the
+ * claim is lost; then it books or marks, and writes the outcome with
+ * countFinish.
  *
- * - Switched off, standby, not joined, already claimed: nothing.
+ * - Switched off, standby, not joined (or the join was taken back),
+ *   already claimed: nothing.
  * - A booked room (the closer's own demo): nothing; the closer marks it.
- * - A fallback room for a booked intro: mark that intro shown.
  * - A client: not a lead.
- * - A test contact: booked only on rooms.test_calendar_id, never moved, and
- *   nothing at all when that calendar is not set.
+ * - A test contact first (C34): booked only on rooms.test_calendar_id,
+ *   never moved, and nothing at all when that calendar is not set; its
+ *   booked intro is marked only when it sits on the test calendar (F12).
+ * - A fallback room for a booked intro: mark that intro shown.
  * - No roas tag: not a lead, nothing booked.
  * - A host with no HighLevel user: failed (refuseMark needs one).
  * - A call of the same kind booked ahead: moved to now (PUT).
@@ -1923,15 +2377,19 @@ export function countLive(i: CountInput): CountPlan {
   if (!setting.count_on_join) return none("switch_off", false);
   if (!room.contact_id) return none("no_contact", false);
   const joined = ms(room.lead_in_at);
-  if (joined === null) return none("not_joined", false);
+  if (joined === null || !leadJoined(room)) return none("not_joined", false);
   if (!countClaimable(room)) return none("claimed", false);
   if (room.purpose === "booked") return none("booked_room", false);
-  if (room.appointment_id) return { action: "mark", claim: true, appointment_id: room.appointment_id };
   const c = i.contact ?? {};
   if (isClient(c)) return none("client", true, "not_a_lead");
   const test = isTestContact(room.contact_id, c.tags, setting);
-  if (!test && !isTaggedLead(c.tags)) return none("not_a_lead", true, "not_a_lead");
   if (test && !setting.test_calendar_id) return none("test_calendar_missing", true, "not_a_lead");
+  if (room.appointment_id) {
+    if (test && str(i.appointment_calendar_id, 80) !== setting.test_calendar_id)
+      return none("test_not_on_test_calendar", true, "not_a_lead");
+    return { action: "mark", claim: true, appointment_id: room.appointment_id };
+  }
+  if (!test && !isTaggedLead(c.tags)) return none("not_a_lead", true, "not_a_lead");
   const host = str(i.host_ghl_user_id, 80);
   if (!host) return none("host_not_in_highlevel", true, "failed");
 
@@ -1943,12 +2401,13 @@ export function countLive(i: CountInput): CountPlan {
     ...(link ? { address: link } : {}),
     overrideLocationConfig: true,
   };
-  if (!test && i.upcoming && i.upcoming.id && i.upcoming.kind === room.call_kind && Number.isFinite(i.upcoming.start))
+  const up = i.upcoming;
+  if (!test && up && up.id && (!up.kind || up.kind === room.call_kind) && Number.isFinite(up.start))
     return {
       action: "move",
       claim: true,
-      appointment_id: i.upcoming.id,
-      from_start: iso(i.upcoming.start),
+      appointment_id: up.id,
+      from_start: iso(up.start),
       start: iso(start),
       end: iso(end),
       body: {
@@ -2023,6 +2482,56 @@ export function countUndo(room: RoomRow, movedFrom: unknown = null): UndoPlan {
   }
 }
 
+/** A conditional write: the columns to set and what the row must still hold (see guardFilter). */
+export interface GuardedWrite {
+  patch: Partial<RoomRow>;
+  expect: Partial<RoomRow>;
+}
+
+/**
+ * The count's claim, or null when it cannot be taken. A plan that books
+ * nothing (not a lead, failed) writes its result with the claim. A new
+ * claim clears an earlier undo, so a real lead who joins after "That was
+ * not the lead" is counted.
+ */
+export function countClaim(room: RoomRow, now: number, plan: CountPlan): GuardedWrite | null {
+  if (!plan.claim || !countClaimable(room)) return null;
+  return {
+    patch: {
+      count_claimed_at: iso(now),
+      count_result: plan.action === "none" ? plan.count_result : null,
+      count_appointment_id: null,
+      count_undo_at: null,
+    },
+    expect: { count_claimed_at: room.count_claimed_at ?? null, count_result: room.count_result ?? null },
+  };
+}
+
+/**
+ * The count's outcome, written only where its own claim still stands and no
+ * undo came in while it ran (F7). A mark keeps count_result null and sets
+ * count_appointment_id (countUndo reads it so). If this write misses, the
+ * caller takes back what it made (countUndo on the row it would have
+ * written) and then writes countUndone.
+ */
+export function countFinish(
+  claimedAt: string,
+  done: { count_result: CountResult | null; count_appointment_id: string | null },
+): GuardedWrite {
+  return {
+    patch: { count_result: done.count_result, count_appointment_id: done.count_appointment_id },
+    expect: { count_claimed_at: claimedAt, count_result: null, count_appointment_id: null, count_undo_at: null },
+  };
+}
+
+/** After an undo landed: the count is "undone" and may be claimed again by a real join. */
+export function countUndone(room: RoomRow): GuardedWrite {
+  return {
+    patch: { count_result: "undone" },
+    expect: { count_claimed_at: room.count_claimed_at ?? null, count_result: room.count_result ?? null },
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Presence (F "presence"): the first state that applies wins.
 // ---------------------------------------------------------------------------
@@ -2059,9 +2568,12 @@ export interface PresenceInput {
  *    a live Zoom meeting that is not one of their own open rooms, or a room
  *    of theirs waiting for its lead (one room per host means they cannot
  *    take another);
- * 2. ready: in their own standby room with no lead;
+ * 2. ready: in their own standby room with no lead, while Available has not
+ *    run out (F2: a closer who pressed Go away, or whose time ran out, gets
+ *    no offers even if still sitting in the room; the sweep closes it);
  * 3. available: pressed Available and the time has not run out;
  * 4. away.
+ * The `why` is for the timeline; presenceView gives the contract's shape.
  */
 export function presenceOf(i: PresenceInput): Presence & { why: string } {
   const me = lower(i.email);
@@ -2087,12 +2599,38 @@ export function presenceOf(i: PresenceInput): Presence & { why: string } {
   if (i.appointment_now) return { ...base, state: "on_call", until: null, room_id: null, why: "appointment" };
   if (zoomLive) return { ...base, state: "on_call", until: null, room_id: null, why: "zoom" };
   if (waiting) return { ...base, state: "on_call", until: null, room_id: waiting.id, why: "room_waiting" };
+  if (availUntil === null) return { ...base, state: "away", until: null, room_id: null, why: "away" };
   if (standby) return { ...base, state: "ready", until, room_id: standby.id, why: "standby" };
-  if (availUntil !== null) {
-    const openStandby = mine.find(r => standbyEmpty(r));
-    return { ...base, state: "available", until, room_id: openStandby?.id ?? null, why: "available" };
-  }
-  return { ...base, state: "away", until: null, room_id: null, why: "away" };
+  const openStandby = mine.find(r => standbyEmpty(r));
+  return { ...base, state: "available", until, room_id: openStandby?.id ?? null, why: "available" };
+}
+
+/** Presence as the contract shapes it (live.status, live.availability): no `why`. */
+export function presenceView(p: Presence & { why?: unknown }): Presence {
+  return {
+    email: p.email,
+    state: p.state,
+    until: p.until,
+    room_id: p.room_id,
+    zoom_status: p.zoom_status,
+    default_provider: p.default_provider,
+  };
+}
+
+/** live.availability(away): the rep's empty standby rooms, each to end with {kind: end, reason: end}. */
+export function standbyToEnd(rooms: readonly RoomRow[], email: string): RoomRow[] {
+  const me = lower(email);
+  return rooms.filter(r => lower(r.host_email) === me && standbyEmpty(r) && isRoomState(r.state) && !isFinal(r.state));
+}
+
+/** The strip's line for a rep's presence (F "Availability strip"); null on a call, where the room panel speaks. */
+export function stripLine(p: Pick<Presence, "state" | "until">, now: number): string | null {
+  const until = ms(p.until);
+  if (p.state === "on_call") return null;
+  if (p.state === "ready" && until !== null) return fill(ROOM_COPY.strip.ready, { until: clockWithDay(until, now) });
+  if (p.state === "available" && until !== null)
+    return fill(ROOM_COPY.strip.available, { until: clockWithDay(until, now) });
+  return ROOM_COPY.strip.away;
 }
 
 /**
@@ -2124,8 +2662,9 @@ export function defaultProvider(
 export interface Health {
   worker_ok: boolean;
   last_run_at: string | null;
-  rooms_today: number;
-  failed_today: number;
+  /** null when it could not be read: missing is never 0 (F13). */
+  rooms_today: number | null;
+  failed_today: number | null;
   line: string;
 }
 
@@ -2166,8 +2705,8 @@ export function roomsHealth(i: {
   return {
     worker_ok: ok,
     last_run_at: last === null ? null : iso(last),
-    rooms_today: made ?? 0,
-    failed_today: failed ?? 0,
+    rooms_today: made,
+    failed_today: failed,
     line,
   };
 }
@@ -2290,7 +2829,7 @@ export function toRoomView(
     ends_at: isoOrNull(row.ends_at),
     result: oneOf(ROOM_RESULTS, row.result) ? row.result : null,
     count_result: oneOf(COUNT_RESULTS, row.count_result) ? row.count_result : null,
-    error: str(row.error, 300),
+    error: redactRoom(row.error),
     refusal: str(opts.refusal, 300),
     created_at: isoOrNull(row.created_at) ?? isoOrNull(row.requested_at),
   };
@@ -2314,20 +2853,46 @@ export interface CreateInput {
   provider: unknown;
   call_kind: unknown;
   contact_id: string | null;
+  /** The HighLevel contact; null when it could not be read, and then a room for a lead is refused (F4). */
   contact: Row | null;
   host: HostFacts | null;
+  /** The rep making the room, for the fallback pilot list. */
+  host_email: string | null;
   lead_room_open: boolean;
   host_room_open: boolean;
   /** The lead has a demo booked ahead: its Zoom link comes from HighLevel. */
   booked_demo: boolean;
+  /** The lead has a booked intro (the dialer's call was for it): fallback.scope "intro" needs one. */
+  booked_intro: boolean;
 }
 
 /**
- * room.create's checks, before anything is written, in the spec's order:
- * the switches, the test list, client and do-not-disturb first (F
- * "Security"), the booked demo, one room per lead and per host, then the
- * host's provider. Null means the room may be made. Booked rooms come from
- * room.wrap, never from here (C4).
+ * The checks on the lead, the same for every way a lead reaches a room
+ * (room.create, Take on a standby room): a contact that could not be read
+ * is never treated as clear; then the test list, client and do-not-disturb.
+ */
+function contactRefusal(s: RoomsSetting, contactId: string, contact: Row | null): Refused | null {
+  if (!contact) return refuse("contact_unread");
+  if (s.test_only && !isTestContact(contactId, contact.tags, s)) return refuse("test_only");
+  if (isClient(contact)) return refuse("client");
+  if (dndEveryChannel(contact)) return refuse("dnd");
+  return null;
+}
+
+/** A Zoom refusal, with its "use Meet" advice only when the host can use Meet (F21). */
+function zoomRefusal(code: RefusalCode, meetUsable: boolean): Refused {
+  const r = refuse(code);
+  const plain = NO_MEET[code];
+  return meetUsable || !plain ? r : { ...r, message: plain };
+}
+
+/**
+ * room.create's checks, before anything is written: the switches; the
+ * request's shape; both providers off; the lead (contact read, test list,
+ * client, do-not-disturb; F "Security": before anything about the host);
+ * the booked demo; the chosen provider; the fallback scope and pilot list;
+ * one room per lead and per host; then the host's provider. Null means the
+ * room may be made. Booked rooms come from room.wrap, never from here (C4).
  */
 export function createRefusal(i: CreateInput): Refused | null {
   const s = i.setting;
@@ -2339,23 +2904,43 @@ export function createRefusal(i: CreateInput): Refused | null {
   const contact = str(i.contact_id, 80);
   if (purpose === "standby" && contact) return refuse("bad_input");
   if (purpose !== "standby" && !contact) return refuse("no_contact");
+  if (!s.providers.zoom && !s.providers.meet) return refuse("disabled");
+  if (contact) {
+    const no = contactRefusal(s, contact, i.contact);
+    if (no) return no;
+  }
+  if (i.booked_demo && (purpose === "fallback" || purpose === "manual")) return refuse("booked_demo");
   if (!s.providers[provider])
     return refuse("provider_off", { provider: providerName(provider), other: providerName(otherProvider(provider)) });
-  if (contact && s.test_only && !isTestContact(contact, i.contact?.tags, s)) return refuse("test_only");
-  if (contact && i.contact && isClient(i.contact)) return refuse("client");
-  if (contact && dndEveryChannel(i.contact)) return refuse("dnd");
-  if (i.booked_demo && (purpose === "fallback" || purpose === "manual")) return refuse("booked_demo");
+  if (purpose === "fallback") {
+    if (s.fallback.scope !== "any" && !i.booked_intro) return refuse("fallback_scope");
+    if (s.fallback.pilot_emails.length && !s.fallback.pilot_emails.includes(lower(i.host_email)))
+      return refuse("fallback_pilot");
+  }
   if (contact && i.lead_room_open) return refuse("lead_has_room", {}, purpose);
   if (i.host_room_open) return refuse("host_has_room");
   const h = i.host;
   if (provider === "zoom") {
+    const meetUsable = s.providers.meet && h?.google_ok === true;
     const st = h?.zoom_status ?? null;
-    if (!st || st === "missing") return refuse("zoom_missing");
-    if (st === "pending") return refuse("zoom_pending");
-    if (st === "basic" && i.call_kind === "demo") return refuse("zoom_basic_demo");
-    if (h?.zoom_live) return refuse("zoom_busy");
+    if (!st || st === "missing") return zoomRefusal("zoom_missing", meetUsable);
+    if (st === "pending") return zoomRefusal("zoom_pending", meetUsable);
+    if (st === "basic" && i.call_kind === "demo") return zoomRefusal("zoom_basic_demo", meetUsable);
+    if (h?.zoom_live) return zoomRefusal("zoom_busy", meetUsable);
   } else if (!h?.google_ok) return refuse("no_google");
   return null;
+}
+
+/**
+ * Take on a standby room (adopt): the lead's checks room.create runs, so a
+ * handover never skips the switch, the test list, a client or
+ * do-not-disturb (F17). Null means the room may be given the lead.
+ */
+export function adoptRefusal(i: { setting: RoomsSetting; contact_id: string | null; contact: Row | null }): Refused | null {
+  if (!i.setting.enabled) return refuse("disabled");
+  const contact = str(i.contact_id, 80);
+  if (!contact) return refuse("no_contact");
+  return contactRefusal(i.setting, contact, i.contact);
 }
 
 export interface NewRoomInput {
@@ -2408,6 +2993,7 @@ export function newRoomRow(n: NewRoomInput): RoomRow {
     requested_at: t,
     claimed_at: null,
     opened_at: null,
+    link_claimed_at: null,
     link_sent_at: null,
     first_open_at: null,
     lead_waiting_at: null,
@@ -2418,18 +3004,29 @@ export function newRoomRow(n: NewRoomInput): RoomRow {
     count_claimed_at: null,
     count_appointment_id: null,
     count_result: null,
+    count_undo_at: null,
     created_at: t,
   };
 }
 
-/** The meeting an appointment's `address` holds: a Zoom or Meet link, or null for a phone call. */
+/** Text (an appointment's address) holding a Zoom start link or a zak token anywhere in it. */
+export function holdsHostLink(text: unknown): boolean {
+  const s = typeof text === "string" ? text : "";
+  return /[?&;#]zak=/i.test(s) || /zoom(gov)?\.(us|com)\/(s\/|wc\/\S*\/start)/i.test(s);
+}
+
+/**
+ * The meeting an appointment's `address` holds: a Zoom join link (/j/ or
+ * /my/) or a Meet link, or null for a phone call. A Zoom start link (/s/,
+ * or a zak token) is never taken: it would let the lead in as the host (F3).
+ */
 export function meetingFromAddress(address: unknown): { provider: Provider; join_url: string; meeting_id: string | null } | null {
   const s = typeof address === "string" ? address : "";
-  const zoom = /https:\/\/(?:[a-z0-9-]+\.)*zoom\.us\/(?:j|w|my|s)\/[^\s<>"']+/i.exec(s);
-  if (zoom) {
+  const zooms = s.matchAll(/https:\/\/(?:[a-z0-9-]+\.)*zoom\.us\/(?:j|my)\/[^\s<>"']+/gi);
+  for (const zoom of zooms) {
     const url = safeUrl(zoom[0].replace(/[.,;)\]]+$/, ""));
     if (url) {
-      const id = /\/(?:j|w|s)\/(\d{9,12})(?:[/?#]|$)/.exec(url);
+      const id = /\/j\/(\d{9,12})(?:[/?#]|$)/.exec(url);
       return { provider: "zoom", join_url: url, meeting_id: id ? (id[1] ?? null) : null };
     }
   }
@@ -2453,10 +3050,17 @@ export interface WrapOk {
 
 /**
  * room.wrap: a booked call keeps its own meeting (C2). The room stores the
- * appointment's link in state open and makes no Zoom or Google call. A phone
- * call has no link to send; a call that is over gets none either.
+ * appointment's link in state open and makes no Zoom or Google call. The
+ * rooms switch and the test list apply (F17). A phone call has no link to
+ * send; a host's start link is refused (F3); a call that is over gets none
+ * either; and a call more than 30 minutes away is too early (F15), so a
+ * wrap never holds the lead or the one-room-per-lead slot for hours.
  */
 export function wrapPlan(i: {
+  setting: RoomsSetting;
+  contact_id: string | null;
+  /** The HighLevel contact if it was read: its cockpit-test tag counts for test_only. */
+  contact?: Row | null;
   start: unknown;
   end?: unknown;
   address: unknown;
@@ -2464,12 +3068,18 @@ export function wrapPlan(i: {
   now: number;
   ctx: RoomCtx;
 }): WrapOk | Refused {
+  if (!i.setting?.enabled) return refuse("disabled");
+  const contact = str(i.contact_id, 80);
+  if (!contact) return refuse("no_contact");
+  if (i.setting.test_only && !isTestContact(contact, i.contact?.tags, i.setting)) return refuse("test_only");
   const meeting = meetingFromAddress(i.address);
-  if (!meeting) return refuse("phone_call");
+  if (!meeting) return refuse(holdsHostLink(i.address) ? "host_link" : "phone_call");
   const start = ms(i.start);
   if (start === null || !isCallKind(i.call_kind)) return refuse("bad_input");
   const d = bookedDeadlines(start, ms(i.end), i.call_kind, i.ctx);
   if (i.now >= (ms(d.ends_at) as number)) return refuse("call_over");
+  const opens = start - WRAP_EARLY_MIN * MIN;
+  if (i.now < opens) return refuse("wrap_too_early", { time: clockWithDay(opens, i.now) });
   return { ok: true, provider: meeting.provider, join_url: meeting.join_url, provider_meeting_id: meeting.meeting_id, ...d };
 }
 
@@ -2582,9 +3192,12 @@ export function panelLine(v: RoomView, c: PanelCtx): { moment: PanelMoment; text
       return out("no_join", fill(fb && c.booked_intro ? F1.expired : P.no_join, { minutes }));
     }
     case "ended":
-      return v.lead_in_at
-        ? out("joined", fill(LANE_COPY.joined, { name: Name, time: clock(v.lead_in_at) }))
-        : out("closed", LANE_COPY.room_closed);
+      // A join "That was not the lead" took back reads as no join (its result is no_join).
+      if (v.result === "joined" || (v.result == null && v.lead_in_at))
+        return out("joined", fill(LANE_COPY.joined, { name: Name, time: clock(v.lead_in_at) }));
+      // Ended by hand, or by Zoom, with nobody in: a booked intro still needs its mark (F8).
+      if (v.contact_id && v.result === "no_join" && fb && c.booked_intro) return out("no_join", LANE_COPY.ended_mark_intro);
+      return out("closed", LANE_COPY.room_closed);
     case "lead_in": {
       const prompt = (ms(v.ends_at) ?? Number.POSITIVE_INFINITY) <= c.now ? P.still_on_call : null;
       const count = c.count ?? v.count_result ?? null;
@@ -2625,4 +3238,72 @@ export function panelLine(v: RoomView, c: PanelCtx): { moment: PanelMoment; text
     );
   }
   return out("ready", P.ready);
+}
+
+// ---------------------------------------------------------------------------
+// Lines with a clause that may be unknown (F10): the clause goes, never a
+// raw {placeholder}. Slack's lines are written by the desk from the same
+// sentences.
+// ---------------------------------------------------------------------------
+
+function plural(n: number, one: string): string {
+  const k = Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+  return `${k} ${k === 1 ? one : `${one}s`}`;
+}
+
+/** Slack's offer to a closer (P2): the company, country or note left out when not known. */
+export function offerLine(o: {
+  kind: CallKind;
+  name?: string | null;
+  company?: string | null;
+  country?: string | null;
+  note?: string | null;
+}): string {
+  const note = str(o.note, 200);
+  let text: string = o.kind === "intro" ? LANE_COPY.offer_intro : ROOM_COPY.slack.offer;
+  if (!note) text = text.replace(" Note: {note}.", "");
+  return fill(text, {
+    name: greetingName(o.name, null) || "a lead",
+    company: str(o.company, 80),
+    country: str(o.country, 60),
+    note,
+  });
+}
+
+/** The strip's offer (F): the country or note left out when not known. */
+export function stripOfferLine(o: { kind: CallKind; country?: string | null; note?: string | null; left_ms: number }): string {
+  const note = str(o.note, 200);
+  let text: string = ROOM_COPY.strip.offer;
+  if (!note) text = text.replace(" Note: {note}.", "");
+  return fill(text, { kind: o.kind, country: str(o.country, 60), note, left: countdown(o.left_ms) });
+}
+
+/** Slack's App Home count: "Ready now: 1 closer, 2 setters." (F21). */
+export function appHomeReadyLine(closers: number, setters: number): string {
+  return fill(LANE_COPY.app_home_ready, { closers: plural(closers, "closer"), setters: plural(setters, "setter") });
+}
+
+// ---------------------------------------------------------------------------
+// Conditional writes (F24)
+// ---------------------------------------------------------------------------
+
+/**
+ * The PostgREST filter for a conditional write's `expect`, every value
+ * encoded. A stored time comes back from Postgres as "...+00:00", and an
+ * unencoded "+" reads as a space, so the write would never match and a
+ * re-read loop would never end. Null is `is.null`. A value that cannot
+ * guard a write (an object or a list) throws, so a guard is never dropped
+ * quietly. A lost write is read and tried again at most MAX_WRITE_TRIES times.
+ */
+export function guardFilter(expect: Partial<RoomRow> | Record<string, unknown>): string {
+  return Object.entries(expect)
+    .map(([k, v]) => {
+      if (!/^[a-z_]+$/.test(k)) throw new Error(`Not a column: ${k}`);
+      if (v === null || v === undefined) return `${k}=is.null`;
+      if (typeof v === "number" && Number.isFinite(v)) return `${k}=eq.${v}`;
+      if (typeof v === "boolean") return `${k}=is.${v}`;
+      if (typeof v === "string") return `${k}=eq.${encodeURIComponent(v)}`;
+      throw new Error(`A ${typeof v} cannot guard a write: ${k}`);
+    })
+    .join("&");
 }
