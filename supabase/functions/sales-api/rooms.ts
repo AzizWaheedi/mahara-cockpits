@@ -2559,9 +2559,11 @@ export function makeRooms(deps: RoomDeps): Rooms {
         }
         if (!(await hostMayMark(room, appt, host))) {
           // A room carrying another rep's intro (made before room.create
-          // checked whose call it is): that rep marks their own call.
+          // checked whose call it is), or a host with no HighLevel user: the
+          // timer marks nothing with a manager's rights, and a person is told
+          // which intro to mark (never left "confirmed", a show for B2B).
           const why = "the intro is booked with another rep";
-          await settleNone(room, why, null);
+          await settleNone(room, why, why);
           await finishEvent(by, { skipped: why });
           results.push({ room_id: roomId, handled: true, skipped: why });
           continue;
