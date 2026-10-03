@@ -18,8 +18,11 @@
                     [--contact ID [--segment KIND]]
                                             the test path: one contact tagged cockpit-test, nothing else touched
     python3 desk.py waves [--pools]         backlog waves: enrol, write the day's openers, send approved ones paced
-    python3 desk.py rooms [--for 57]        make the video rooms the cockpit asks for, polling every second
-                    [--once] [--check-hosts]  (one tick by hand; or only the Zoom and Google check of every seat)
+    python3 desk.py rooms [--for 57]        make the video rooms the cockpit asks for, polling every second,
+                    [--once] [--check-hosts]  and send the Slack replies the door keeps (one tick by hand; or only
+                                            the Zoom and Google check of every seat)
+    python3 desk.py deploy-check            (or: deploy check) is this box ready for live calls and the
+                                            follow-up agent, every switch still off? Changes nothing
     python3 desk.py status                  the queue, the last proposals, the last runs
     python3 desk.py offer-sync              offer.json into the cockpit's proposal form (requests does it too)
     python3 desk.py form-sync               the New Client Form's questions into the cockpit (requests does it too, every 10 minutes)
@@ -52,6 +55,7 @@ from desk import b2b_fathom as b2b_fathom_mod  # noqa: E402
 from desk import build as build_mod  # noqa: E402
 from desk import calls_vault as calls_vault_mod  # noqa: E402
 from desk import clientform as clientform_mod  # noqa: E402
+from desk import deploycheck as deploycheck_mod  # noqa: E402
 from desk import engine as engine_mod  # noqa: E402
 from desk import fathom as fathom_mod  # noqa: E402
 from desk import http  # noqa: E402
@@ -225,6 +229,11 @@ def cmd_doctor(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     # cockpit keeps its last copy.
     add("TYPEFORM_API_TOKEN", True if key("TYPEFORM_API_TOKEN") else None,
         "set" if key("TYPEFORM_API_TOKEN") else "not set: the cockpit's New Client Form list stops following Typeform")
+    # Only the Slack poster needs it (App Home replies, inside the rooms
+    # run), and only once live.slack is switched on.
+    add("SLACK_SALES_BOT_TOKEN", True if key("SLACK_SALES_BOT_TOKEN") else None,
+        "set" if key("SLACK_SALES_BOT_TOKEN") else "not set: Slack replies to App Home presses wait (set it before "
+        "live.slack is switched on)")
     # Only calls-b2b-fathom needs it, once; its absence blocks nothing else.
     add("SALES_B2B_MGMT_TOKEN", True if key("SALES_B2B_MGMT_TOKEN") else None,
         "set" if key("SALES_B2B_MGMT_TOKEN") else "not set: only the one-off calls-b2b-fathom needs it")
@@ -934,6 +943,22 @@ def cmd_rooms(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     return 1 if out.get("blocked") else 0
 
 
+def cmd_deploy_check(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
+    """Is this box ready for live calls and the follow-up agent with every
+    switch still off? Keys by name, the tables, columns, function and
+    settings the code needs, the switches, the status rows and the crontab.
+    It changes nothing: GETs only, no status row, no file."""
+    sb = None
+    if cfg.supabase_configured:
+        sb = Supabase(cfg.supabase_url, cfg.supabase_key, timeout=10)
+    report = deploycheck_mod.run(sb)
+    if args.json:
+        _print({"checks": report.rows, "blockers": [b["detail"] for b in report.blockers]}, True)
+    else:
+        print(deploycheck_mod.words(report))
+    return 1 if report.blockers else 0
+
+
 def notes_provider(cfg: Config, log: Logger) -> Any:
     """The model the call notes and digests are written with: the desk's own
     provider on the VPS key, SALES_NOTES_MODEL when set; never DeepSeek."""
@@ -1161,6 +1186,9 @@ def main(argv: Optional[list[str]] = None) -> int:
     ro.add_argument("--once", action="store_true", help="one tick, by hand")
     ro.add_argument("--check-hosts", action="store_true",
                     help="check every seat's Zoom user and the Google sign-in now, write room_hosts, and stop")
+    sub.add_parser("deploy-check", help="is this box ready, every switch still off? changes nothing")
+    dp = sub.add_parser("deploy", help="deploy check: the same as deploy-check")
+    dp.add_argument("what", choices=["check"])
     nt = sub.add_parser("notes"); nt.add_argument("--limit", type=int); nt.add_argument("--days", type=int)
     dg = sub.add_parser("digest"); dg.add_argument("--days", type=int, choices=(7, 30))
     sub.add_parser("status")
@@ -1180,14 +1208,17 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     args = ap.parse_args(argv)
     cfg = Config.from_env()
-    cfg.ensure_dirs()
+    if args.cmd in ("deploy", "deploy-check"):
+        args.cmd = "deploy-check"  # changes nothing, not even the desk's own folders
+    else:
+        cfg.ensure_dirs()
     log = Logger(quiet=args.quiet)
     handlers: dict[str, Callable[[Config, argparse.Namespace, Logger], int]] = {
         "doctor": cmd_doctor, "requests": cmd_requests, "recordings": cmd_recordings, "status": cmd_status,
         "calls-vault": cmd_calls_vault, "reviews-import": cmd_reviews_import, "reviews": cmd_reviews,
         "maqsam-calls": cmd_maqsam_calls, "calls-b2b-fathom": cmd_calls_b2b_fathom,
         "research": cmd_research, "followups": cmd_followups, "waves": cmd_waves, "notes": cmd_notes,
-        "digest": cmd_digest, "rooms": cmd_rooms,
+        "digest": cmd_digest, "rooms": cmd_rooms, "deploy-check": cmd_deploy_check,
         "validate": cmd_validate, "build": cmd_build, "draft": cmd_draft, "offer-sync": cmd_offer_sync, "form-sync": cmd_form_sync,
     }
     if args.cmd in METERED and cfg.supabase_configured:

@@ -35,9 +35,25 @@ How a room is made
   before the room opens, so an open room always has one for the sweep to
   replay; the call is only the fast path. If the answer to the open write is
   lost, the room is read again and, when it is open with this run's meeting,
-  the run goes on as if the answer had come.
+  the run goes on as if the answer had come. This is the handshake of
+  contract-v2 section 7: the worker opens the room, and sales-api sends the
+  link (it leases the event by its dedupe key; the worker never stamps
+  `handled_at` on an event sales-api still has to act on).
 - A refusal or a provider failure sets the room `failed` with a sentence the
   rep can act on, stores `worker.failed` and calls `room.event` the same way.
+- Every event the worker stores carries `text`, a plain sentence for the
+  room's timeline (no names, links or tokens). When its open or fail write
+  misses because the room went another way (cancelled, failed by the sweep,
+  opened by an overlapping run), the event it stored for that write is
+  closed with the database's lease, so the sweep does not replay it.
+- When the open write misses because an overlapping run holds the room, the
+  Zoom meeting this run made is watched (`worker.stray`): kept if that run
+  opens the room with it (it finds a lost meeting by its code), closed
+  otherwise, and the room's host link put back if this run's overwrote it.
+- Timers belong to the SQL sweep (contract-v2 S1): it fails a room still
+  `requested` at 60 s and one still `creating` at claim + 120 s. The worker
+  fails a room it cannot finish only once it is ten minutes old (the sweep
+  is not running), and a Meet link Google left pending for 30 s.
 
 Never blocked by one provider
 - Every call has a short timeout (4 s for a read, 8 s for a create, 3 s for a
@@ -80,6 +96,11 @@ Timing
   link is deleted.
 - The status row (worker `sales-desk`, job `rooms`) is written at least every
   30 s with a plain sentence; the cockpit's health line reads its time.
+
+The Slack poster (desk/slackpost.py) runs inside the same minute: it sends
+the `slack.reply` events the door stores for App Home presses as DMs from
+the Mahara Sales bot (SLACK_SALES_BOT_TOKEN), with its own status row
+`sales-desk` / `slack`.
 
 The host check (`rooms --check-hosts`, its own cron line every 10 minutes)
 writes each seat's Zoom status into `cockpit_sales_room_hosts` without
@@ -151,9 +172,15 @@ STATUS_EVERY = 25.0       # the status row, at least every 30 s
 SETTINGS_EVERY = 25.0     # the rooms setting is read again this often
 SETTINGS_STALE_S = 60.0   # with no good read of it for this long, nothing new is claimed
 CLOSE_SCAN_EVERY = 10.0   # finished rooms are looked for this often
-STALE_S = 600.0           # a room asked for this long ago is failed, not made (the sweep fails one at 60 s)
-GIVE_UP_S = 300.0         # a lost room whose provider does not answer is failed after this
+STALE_S = 600.0           # a room asked for this long ago is failed, not made or looked for: the sweep fails
+                          # one still requested at 60 s and one still creating at claim + 120 s (contract-v2
+                          # section 7, item 10), so this is only for when the sweep is not running
 CLOSE_GIVE_UP_S = 600.0   # a meeting Zoom will not close: the host link is deleted anyway
+LEASE_FN = "cockpit_sales_room_event_lease"
+LEASE_S = 30              # how long the worker holds one of its own events while it closes it
+STRAY_EVERY = 5.0         # a meeting an overlapping run may still adopt is looked at this often
+STRAY_WINDOW_S = 6 * 3600.0  # ... and remembered (worker.stray events) this long
+TEXT_MAX = 500            # room_events.text
 HOLD_GIVE_UP_S = 3 * 3600.0  # a meeting left open with someone in it is checked this long
 HOLD_RECHECK_S = 60.0
 START_URL_TTL = 7200.0    # Zoom's start_url lasts two hours for a regular user
@@ -423,6 +450,44 @@ def meeting_uuid_path(value: Any) -> str:
     return urllib.parse.quote(once, safe="") if text.startswith("/") or "//" in text else once
 
 
+_EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+_URL = re.compile(r"(?i)\b(?:https?://|www\.)\S+")
+
+
+def plain(text: Any, limit: int = TEXT_MAX) -> str:
+    """A room event's `text` (contract-v2 section 15): plain words for the
+    room's timeline, which every seat reads. No link, no address and nothing
+    that looks like a key; cut at a whole sentence when it is long."""
+    out = http.scrub(str(text or ""))
+    out = _URL.sub("a link", out)
+    out = _EMAIL.sub("an address", out)
+    out = re.sub(r"\s+", " ", out).strip()
+    if len(out) <= limit:
+        return out
+    cut = out[:limit]
+    end = max(cut.rfind(". "), cut.rfind("? "), cut.rfind("! "))
+    return cut[: end + 1] if end > 0 else cut[: limit - 1].rstrip(" ,;:") + "."
+
+
+def provider_word(provider: Any) -> str:
+    return {"zoom": "Zoom", "meet": "Meet"}.get(str(provider or ""), "the video service")
+
+
+# What each stored event says in the room's timeline (room_events.text).
+TEXT = {
+    "worker.create_sent": "Zoom was asked to make this room's meeting.",
+    "worker.ready": "Room made on {provider} in {seconds} s.",
+    "worker.failed": "The room was not made. {sentence}",
+    "worker.closing": "The room is over, so its {provider} meeting is being closed.",
+    "worker.closing_started": "The room is over while its Zoom meeting is still running. The meeting is ended only "
+                              "once nobody outside the team is in it.",
+    "worker.stray": ("An overlapping run of the room worker made a second Zoom meeting for this room. It is closed "
+                     "unless the room opens with it."),
+    "report.matches": "Zoom's participant report matches the cockpit.",
+    "report.differs": "Zoom's participant report does not match the cockpit: {said}.",
+}
+
+
 def db_reason(e: Exception) -> str:
     """What the database said, short: PostgREST's code and message only.
     `details` and `hint` echo the row that was refused, which can carry a
@@ -456,7 +521,8 @@ def db_reason(e: Exception) -> str:
 
 class ProviderError(Exception):
     def __init__(self, status: int, message: str, *, code: Any = None, reason: str = "", where: str = "",
-                 down: bool = False, timeup: bool = False, timed_out: bool = False):
+                 down: bool = False, timeup: bool = False, timed_out: bool = False, retry: bool = False,
+                 cleanup: bool = False):
         self.status = int(status or 0)
         self.code = code
         self.reason = reason
@@ -464,6 +530,11 @@ class ProviderError(Exception):
         self.down = down            # not called: the provider's breaker is open
         self.timeup = timeup        # not called: the run's time is up
         self.timed_out = timed_out
+        # sales-api's refusal body (contract-v2 section 3): `retry` means it
+        # released the event and the sweep replays it; `cleanup` asks the
+        # worker to close the meeting it just made.
+        self.retry = retry
+        self.cleanup = cleanup
         # http.scrub hides keys, Zoom host tokens (zak=) and passcodes (pwd=),
         # whatever a provider echoes back.
         self.message = http.scrub(message)[:240]
@@ -491,11 +562,13 @@ class ProviderError(Exception):
         code: Any = None
         reason = ""
         message = ""
+        retry = cleanup = False
         try:
             data = json.loads((e.body or b"").decode("utf-8") or "null")
         except (ValueError, UnicodeDecodeError):
             data = None
         if isinstance(data, dict):
+            retry, cleanup = data.get("retry") is True, data.get("cleanup") is True
             err = data.get("error")
             if isinstance(err, dict):  # Google
                 code = err.get("code")
@@ -507,7 +580,8 @@ class ProviderError(Exception):
                 message = str(data.get("message") or data.get("reason") or err or "")
         if not message:
             message = str(e).split(": ", 1)[-1] if e.status else str(e)
-        return cls(e.status, message, code=code, reason=reason, where=where, timed_out=e.timed_out)
+        return cls(e.status, message, code=code, reason=reason, where=where, timed_out=e.timed_out,
+                   retry=retry, cleanup=cleanup)
 
 
 class Breaker:
@@ -998,6 +1072,24 @@ def doctor_lines(offline: bool) -> list[tuple[str, Optional[bool], str]]:
     return out
 
 
+@dataclass
+class Answer:
+    """How sales-api answered one `room.event` (contract-v2 section 5):
+    delivered (`{ok:true, handled}`), refused (a 4xx, or `ok:false`), or
+    unclear (a 5xx, a 429, a timeout, no answer, or a refusal that says
+    `retry`: sales-api released the event and the sweep replays it)."""
+    outcome: str
+    why: str = ""
+    cleanup: bool = False
+    handled: Optional[bool] = None
+
+
+def request_id(kind: str, room_id: str) -> str:
+    """uuid5 of 'mahara-room/{kind}/{room_id}': the same for one room and
+    kind, so the call and the sweep's replay are one request."""
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"mahara-room/{kind}/{room_id}"))
+
+
 class SalesApi:
     """sales-api's desk door, asked with the service key exactly as the
     follow-up agent asks `followup.autosend` (desk.py cmd_followups). One call,
@@ -1011,24 +1103,26 @@ class SalesApi:
         self.send = send
         self.breaker = Breaker("sales-api", send.clock)
 
-    def event(self, kind: str, room_id: str, payload: dict[str, Any]) -> tuple[str, str]:
-        """('delivered' | 'refused' | 'unclear', what happened). The request id
-        is the same for one room and kind, so sales-api can treat the sweep's
-        replay as the first call (its request-id pattern)."""
+    def event(self, kind: str, room_id: str, payload: dict[str, Any]) -> Answer:
+        """The body is contract-v2 section 5's: {action:'room.event', kind,
+        room_id, request_id, dedupe_key:'{kind}:{room_id}', payload}. sales-api
+        leases the stored event by that dedupe key and never computes one."""
         body = {"action": "room.event", "kind": kind, "room_id": room_id,
-                "request_id": str(uuid.uuid5(uuid.NAMESPACE_URL, f"mahara-room/{kind}/{room_id}")),
-                "dedupe_key": f"{kind}:{room_id}", "payload": payload}
+                "request_id": request_id(kind, room_id), "dedupe_key": f"{kind}:{room_id}", "payload": payload}
         try:
             _s, data = self.send("POST", self.url, headers={
                 "Authorization": f"Bearer {self.key}", "x-region": "eu-west-1"},
                 body=body, timeout=NOTIFY_TIMEOUT, retries=0, safe=False, breaker=self.breaker)
         except ProviderError as e:
-            if e.down or e.timeup or e.status in (0, 429) or e.status >= 500:
-                return "unclear", e.why
-            return "refused", e.why
-        if isinstance(data, dict) and data.get("error"):
-            return "refused", http.scrub(str(data.get("error"))).rstrip(". ")[:200]
-        return "delivered", ""
+            if e.down or e.timeup or e.status in (0, 429) or e.status >= 500 or e.retry:
+                return Answer("unclear", e.why, cleanup=e.cleanup)
+            return Answer("refused", e.why, cleanup=e.cleanup)
+        if isinstance(data, dict) and (data.get("ok") is False or data.get("error")):
+            why = http.scrub(str(data.get("error") or "refused with no reason")).rstrip(". ")[:200]
+            return Answer("unclear" if data.get("retry") is True else "refused", why,
+                          cleanup=data.get("cleanup") is True)
+        handled = data.get("handled") if isinstance(data, dict) and isinstance(data.get("handled"), bool) else None
+        return Answer("delivered", handled=handled)
 
 
 # ---- the worker --------------------------------------------------------------
@@ -1064,7 +1158,7 @@ class Worker:
     def __init__(self, sb: Supabase, *, zoom: Optional[Zoom], google: Optional[Google],
                  api: Optional[SalesApi], log: Any, clock: Callable[[], float] = time.time,
                  sleep: Callable[[float], None] = time.sleep, run_id: Optional[str] = None,
-                 calendar_name: str = CALENDAR_NAME, calendar_id: str = ""):
+                 calendar_name: str = CALENDAR_NAME, calendar_id: str = "", slack: Any = None):
         self.clock = clock
         self.sleep = sleep
         self.deadline = clock() + RUN_SECONDS
@@ -1100,6 +1194,11 @@ class Worker:
         self._held: set[str] = set()
         self._noted: set[str] = set()
         self._staff_cache: Optional[tuple[set[str], set[str]]] = None
+        # Zoom meetings this run (or an earlier one, from worker.stray events)
+        # made for a room an overlapping run holds: "{room}:{meeting}" -> what
+        # is known, until that run opens the room with it or it is closed.
+        self._strays: dict[str, dict[str, Any]] = {}
+        self.slack = slack                           # the Slack poster (slackpost.py), when wired
         self._status_due = 0.0
         self._close_scan_due = 0.0
         self._settings_due = 0.0
@@ -1112,12 +1211,15 @@ class Worker:
     @classmethod
     def from_env(cls, sb: Supabase, supabase_url: str, supabase_key: str, log: Any, *,
                  clock: Callable[[], float] = time.time, sleep: Callable[[float], None] = time.sleep) -> "Worker":
+        from .slackpost import SlackPoster  # it builds on this module's HTTP door
+
         holder: dict[str, Any] = {}
         send = Sender(clock, sleep, left=lambda: holder["w"].left() if "w" in holder else None)
         w = cls(sb, zoom=Zoom.from_keys(send), google=Google.from_keys(send),
                 api=SalesApi(supabase_url, supabase_key, send), log=log, clock=clock, sleep=sleep,
                 calendar_name=key("SALES_ROOMS_CALENDAR", CALENDAR_NAME).strip() or CALENDAR_NAME,
                 calendar_id=key("SALES_ROOMS_CALENDAR_ID", "").strip())
+        w.slack = SlackPoster.from_env(w, send)
         holder["w"] = w
         return w
 
@@ -1128,7 +1230,7 @@ class Worker:
     @staticmethod
     def _counts() -> dict[str, Any]:
         return {"made": 0, "zoom": 0, "meet": 0, "failed": 0, "refused": 0, "closed": 0, "withdrawn": 0,
-                "held": 0, "handed": 0, "db_errors": 0, "db_refused": "", "faults": [],
+                "held": 0, "handed": 0, "strays": 0, "db_errors": 0, "db_refused": "", "faults": [],
                 "notify_unclear": 0, "notify_refused": 0, "notify_why": ""}
 
     def _count(self, name: str, n: int = 1) -> None:
@@ -1199,11 +1301,13 @@ class Worker:
         if self.pending:
             self.log.info(f"rooms: {len(self.pending)} Meet room(s) still waiting on Google are left for the next run")
         self.status(final=True)
+        if self.slack is not None:
+            self.slack.status()
         return self.summary()
 
     def _window_empty(self) -> bool:
         w = self.window
-        return not any((w["made"], w["failed"], w["closed"], w["withdrawn"], w["held"], w["handed"],
+        return not any((w["made"], w["failed"], w["closed"], w["withdrawn"], w["held"], w["handed"], w["strays"],
                         w["db_errors"], w["notify_unclear"], w["notify_refused"], w["faults"]))
 
     def tick(self, now: float, *, max_claims: int = MAX_CLAIMS) -> None:
@@ -1226,6 +1330,9 @@ class Worker:
         if rows is not None and fresh:
             self._orphans(rows)
         self._close_step()
+        self._stray_step()
+        if self.slack is not None:
+            self.slack.step()
 
     def _claims(self, rows: list[dict[str, Any]], max_claims: int) -> None:
         claimed = 0
@@ -1245,6 +1352,13 @@ class Worker:
                 # database's clock; this is only for when it is not running.
                 self._guard(r, lambda room: self._fail_unclaimed(room, SAY["too_late"]))
                 continue
+            off = self._switched_on(r.get("provider"))
+            if off:
+                # Claimed only while rooms and that provider are switched on
+                # (contract-v2 section 7, step 2): a room asked for while one
+                # is off fails from `requested`, unclaimed, with what to do.
+                self._guard(r, lambda room, said=off: self._fail_unclaimed(room, said, refusal=True))
+                continue
             claimed += 1
             got = self.claim(r)
             if got:
@@ -1255,7 +1369,8 @@ class Worker:
         t = self.total
         return {"made": t["made"], "zoom": t["zoom"], "meet": t["meet"], "failed": t["failed"],
                 "refused": t["refused"], "closed": t["closed"], "withdrawn": t["withdrawn"], "held": t["held"],
-                "handed": t["handed"], "waiting_on_google": len(self.pending), "db_errors": t["db_errors"],
+                "handed": t["handed"], "strays_closed": t["strays"], "waiting_on_google": len(self.pending),
+                "db_errors": t["db_errors"],
                 "notify_unclear": t["notify_unclear"], "notify_refused": t["notify_refused"],
                 "problems": list(dict.fromkeys(t["faults"]))[:5], "run": self.run_id}
 
@@ -1362,8 +1477,13 @@ class Worker:
             self.log.info(f"rooms: room {room.get('code')} is left for the next run: this run's time is up")
         except (SupabaseError, http.HttpError) as e:
             # The database is the trouble: the room stays where it is and the
-            # recovery path picks it up when the database answers again.
+            # recovery path picks it up when the database answers again. A
+            # meeting this run made for it is watched as well: if another run
+            # opens or ends the room meanwhile, nobody else would close it.
             self._db_trouble(e)
+            made = self._made.get(rid) or {}
+            if made.get("id") and room.get("provider") == "zoom":
+                self._stray(room, str(made["id"]), str(made.get("start_url") or ""))
         except ProviderError as e:
             if e.timeup:
                 self._hand_over(room, unclear=False)
@@ -1602,7 +1722,8 @@ class Worker:
         if rid in self._sent:
             return
         self._sent.add(rid)
-        self.store_event(rid, "worker.create_sent", {"worker_run": self.run_id}, handled=True)
+        self.store_event(rid, "worker.create_sent", {"worker_run": self.run_id}, handled=True,
+                         text=TEXT["worker.create_sent"])
 
     def _create_was_sent(self, rid: str) -> bool:
         if rid in self._sent:
@@ -1615,10 +1736,13 @@ class Worker:
             return True  # not knowing: never risk a second meeting; the room fails as lost at worst
         return bool(rows)
 
-    def recover_zoom(self, room: dict[str, Any], age: float, *, unclear: bool = False) -> None:
+    def recover_zoom(self, room: dict[str, Any], old: bool, *, unclear: bool = False) -> None:
         """A Zoom room left in `creating`: the meeting this run made is read by
         its id; else it is found by the code in its topic; else made now when
-        it is young and no create was ever sent for it; else failed."""
+        no create was ever sent for it. A create that was sent is only ever
+        looked for. The sweep fails the room at claim + 120 s if it is not
+        found by then (its timer, contract-v2 S1); the worker fails it itself
+        only once it is ten minutes old (`old`: the sweep is not running)."""
         if not self.zoom:
             self.fail(room, SAY["zoom_keys"], fault=True)
             return
@@ -1628,7 +1752,7 @@ class Worker:
             return
         rid = str(room["id"])
         if self._zoom_down():
-            if age > GIVE_UP_S:
+            if old:
                 self.fail(room, SAY["lost"], fault=True)
             return
         known = self._made.get(rid) or {}
@@ -1649,7 +1773,7 @@ class Worker:
         except ProviderError as e:
             if e.timeup:
                 raise
-            if age > GIVE_UP_S:
+            if old:
                 self.fail(room, SAY["lost"], fault=True)
             else:
                 self.log.warn(f"rooms: room {room.get('code')} could not be looked up in Zoom yet: {e.why}")
@@ -1661,11 +1785,12 @@ class Worker:
             self.finish(room, provider="zoom", meeting_id=meeting.get("id"),
                         join_url=with_passcode(str(meeting.get("join_url") or ""), meeting),
                         start_url=str(meeting.get("start_url") or ""))
-        elif age > self.waits("fail", 60):
+        elif old:
             self.fail(room, SAY["lost"], fault=True)
         elif unclear or self._create_was_sent(rid):
             # A create went out and its answer never came: Zoom's list can
-            # lag, so it is looked for again rather than made a second time.
+            # lag, so it is looked for again rather than made a second time,
+            # until it is found or the sweep fails the room.
             self.log.info(f"rooms: room {room.get('code')} is not in Zoom's list yet; looking again")
         else:
             # Never sent: the claim's answer was lost, or the last run handed
@@ -1821,9 +1946,11 @@ class Worker:
                 self._busy.discard(rid)
             self._maybe_status()
 
-    def resume_meet(self, room: dict[str, Any], age: float) -> None:
+    def resume_meet(self, room: dict[str, Any], old: bool) -> None:
         """A Meet room another run left in `creating` (its run ended while
-        Google was still pending, or it died): read by its event id."""
+        Google was still pending, or it died): read by its event id. An
+        event that was never inserted is inserted while the room is inside
+        its 30 s Meet wait, and failed after it."""
         if not self.google:
             self.fail(room, SAY["google_keys"], fault=True)
             return
@@ -1844,7 +1971,7 @@ class Worker:
                     self.start_meet(room)  # it was claimed and never inserted
                 else:
                     self.fail(room, SAY["lost"], fault=True)
-            elif (e.unclear or e.status == 429) and not e.down and age <= GIVE_UP_S:
+            elif (e.unclear or e.status == 429) and not e.down and not old:
                 pass  # asked again after the room's back-off
             else:
                 self.fail(room, self._google_sentence(e), fault=True)
@@ -1882,15 +2009,11 @@ class Worker:
     def orphan(self, room: dict[str, Any]) -> None:
         rid = str(room["id"])
         now = self.clock()
-        since = parse_ts(room.get("claimed_at")) or parse_ts(room.get("requested_at")) or now
-        age = now - since
+        asked = parse_ts(room.get("requested_at")) or parse_ts(room.get("claimed_at")) or now
+        old = now - asked > STALE_S
         n = self._tries.get(rid, 0)
         self._tries[rid] = n + 1
-        wait = min(15.0, 2.0 ** n)
-        fail_s = self.waits("fail", 60)
-        if age <= fail_s:
-            wait = min(wait, max(1.0, since + fail_s + 1.0 - now))  # looked at again just past its minute
-        self._retry_at[rid] = now + wait
+        self._retry_at[rid] = now + min(15.0, 2.0 ** n)
         was = str(room.get("worker_run") or "")
         adopted = self.adopt(room)
         if not adopted:
@@ -1901,9 +2024,9 @@ class Worker:
         elif off:
             self.fail(adopted, off, refusal=True)
         elif adopted.get("provider") == "meet":
-            self.resume_meet(adopted, age)
+            self.resume_meet(adopted, old)
         else:
-            self.recover_zoom(adopted, age, unclear=was.startswith("unclear:"))
+            self.recover_zoom(adopted, old, unclear=was.startswith("unclear:"))
 
     def adopt(self, room: dict[str, Any]) -> Optional[dict[str, Any]]:
         old = room.get("worker_run")
@@ -1913,9 +2036,9 @@ class Worker:
         got = self.sb.patch_returning(ROOMS, where, {"worker_run": self.run_id})
         return got[0] if got else None
 
-    def _fail_unclaimed(self, room: dict[str, Any], sentence: str) -> None:
+    def _fail_unclaimed(self, room: dict[str, Any], sentence: str, *, refusal: bool = False) -> None:
         rid = str(room["id"])
-        self.store_event(rid, "worker.failed", {"error": sentence, "worker_run": self.run_id})
+        self._store_failed(rid, sentence)
         got = self._patch_or_lost(
             f"id=eq.{_q(rid)}&state=eq.requested",
             {"state": "failed", "error": sentence, "result": "failed", "ended_at": iso(self.clock()),
@@ -1925,8 +2048,24 @@ class Worker:
             current = self._read(rid)
             if current and current.get("state") == "failed" and current.get("error") == sentence:
                 row = current
+            else:
+                self._fail_missed(rid, current)
         if row:
-            self._after_fail(row, sentence, fault=True)
+            self._after_fail(row, sentence, fault=not refusal, refusal=refusal)
+
+    def _store_failed(self, rid: str, sentence: str) -> None:
+        self.store_event(rid, "worker.failed", {"error": sentence, "worker_run": self.run_id},
+                         text=TEXT["worker.failed"].format(sentence=sentence))
+
+    def _fail_missed(self, rid: str, current: Optional[dict[str, Any]]) -> None:
+        """A fail write that missed: the room went another way. The
+        worker.failed stored for it is closed (with the lease) once nothing
+        can make it true any more: the room is gone, open, or final other
+        than failed. A failed room's event stays for sales-api; a room another
+        run still holds keeps it too, since that run may yet fail it."""
+        state = (current or {}).get("state")
+        if current is None or state in LIVE_STATES or (state in FINAL and state != "failed"):
+            self.close_event(f"worker.failed:{rid}", f"the room is {state or 'gone'}, not failed by this run")
 
     # ---- the two endings of a make ---------------------------------------------
     def _host_by_and_ends(self, room: dict[str, Any], now: float) -> dict[str, Any]:
@@ -1959,8 +2098,11 @@ class Worker:
         #    for the sweep to replay, whatever happens to the call below.
         payload = {"provider": provider, "provider_meeting_id": str(meeting_id), "worker_run": self.run_id,
                    "seconds": round(now - (parse_ts(room.get("requested_at")) or now), 1)}
-        self.store_event(rid, "worker.ready", payload, must=True)
-        # 3. The room, open, only if it is still this run's and still being made.
+        self.store_event(rid, "worker.ready", payload, must=True,
+                         text=TEXT["worker.ready"].format(provider=provider_word(provider), seconds=payload["seconds"]))
+        # 3. The room, open, only if it is still this run's and still being
+        #    made. The worker never sets lead_by: sales-api fills it when it
+        #    claims the link (contract-v2 S2).
         body = {"state": "open", "join_url": join_url, "provider_meeting_id": str(meeting_id),
                 "opened_at": iso(now), "error": None, "version": int(room.get("version") or 0) + 1,
                 **self._host_by_and_ends(room, now)}
@@ -1972,10 +2114,20 @@ class Worker:
                     and str(current.get("provider_meeting_id")) == str(meeting_id)):
                 opened = current  # it opened; only the answer was lost
             elif current and current.get("state") in FINAL:
+                # Final meanwhile (a cancel, the sweep): no link is due, so
+                # the stored worker.ready is closed here, not replayed.
+                self.close_event(f"worker.ready:{rid}", f"the room was {current.get('state')} before it opened")
                 self._withdrawn(room, current, meeting_id)
                 return False
             else:
-                self._made.pop(rid, None)
+                # An overlapping run holds the room (it adopted it while this
+                # run was slow), or the row is gone. The meeting this run made
+                # is the room's only if that run opens the room with it (it
+                # finds a lost meeting by its code); otherwise it is closed
+                # (contract-v2 section 7, step 5).
+                made = self._made.pop(rid, None) or {}
+                if provider == "zoom" and meeting_id:
+                    self._stray(room, str(meeting_id), str(made.get("start_url") or start_url or ""))
                 return False
         self._made.pop(rid, None)
         self._retry_at.pop(rid, None)
@@ -2026,7 +2178,7 @@ class Worker:
                 except (SupabaseError, http.HttpError) as e:
                     self.log.warn(f"rooms: the meeting of failed room {room.get('code')} could not be noted: "
                                   f"{db_reason(e)}")
-        self.store_event(rid, "worker.failed", {"error": sentence, "worker_run": self.run_id})
+        self._store_failed(rid, sentence)
         got = self._patch_or_lost(f"id=eq.{_q(rid)}&state=in.(requested,creating)", body)
         row = got[0] if got else None
         if row is None:
@@ -2034,8 +2186,14 @@ class Worker:
             if current and current.get("state") == "failed" and current.get("error") == sentence:
                 row = current  # it failed; only the answer was lost
             else:
+                self._fail_missed(rid, current)
                 if made.get("id") and current and current.get("state") in FINAL:
                     self._withdrawn(room, current, made["id"])
+                elif made.get("id") and room.get("provider") == "zoom":
+                    # Open or held by an overlapping run: this run's meeting
+                    # is closed unless that run opens the room with it.
+                    self._made.pop(rid, None)
+                    self._stray(room, str(made["id"]), str(made.get("start_url") or ""))
                 else:
                     self._made.pop(rid, None)
                 return False
@@ -2059,14 +2217,17 @@ class Worker:
         (self.log.warn if fault else self.log.info)(f"rooms: room {room.get('code')} failed: {sentence}")
 
     # ---- telling sales-api -------------------------------------------------------
-    def store_event(self, room_id: str, kind: str, detail: dict[str, Any], *, must: bool = False,
-                    handled: bool = False) -> None:
-        """The worker's event, kept like the door's Zoom events. One sales-api
-        has not marked handled is replayed by the sweep, so a stored
+    def store_event(self, room_id: str, kind: str, detail: dict[str, Any], *, text: str, must: bool = False,
+                    handled: bool = False, key: Optional[str] = None) -> None:
+        """The worker's event, kept like the door's Zoom events, with a plain
+        `text` for the room's timeline (contract-v2 section 2, item 8). One
+        sales-api has not marked handled is replayed by the sweep, so a stored
         `worker.ready` is the guarantee the link goes; `must` makes the room
-        wait for it. `handled` is a note only (a closed meeting's uuid)."""
+        wait for it. `handled` is a note only (a closed meeting's uuid). The
+        worker never sets `lease_until`: sales-api takes the event with the
+        lease (contract-v2 S3)."""
         row: dict[str, Any] = {"room_id": room_id, "kind": kind, "source": "worker",
-                               "dedupe_key": f"{kind}:{room_id}", "detail": detail}
+                               "dedupe_key": key or f"{kind}:{room_id}", "text": plain(text), "detail": detail}
         if handled:
             row["handled_at"] = iso(self.clock())
         try:
@@ -2080,22 +2241,79 @@ class Worker:
                 raise
             self._warn_once("events", f"rooms: room events are not being stored: {db_reason(e)}")
 
+    def close_event(self, dedupe_key: str, reason: str) -> bool:
+        """Marks one of the worker's own stored events handled when nothing is
+        left for sales-api to do with it (the room went another way). It is
+        taken with the database's lease first (contract-v2 section 6), never
+        by stamping `handled_at` over a hold: when sales-api holds it, or it
+        is handled already, it is left alone. False when it was not closed;
+        the sweep then replays it, which is safe, only slower."""
+        try:
+            got = self.sb.rest("POST", f"rpc/{LEASE_FN}", json_body={"p_dedupe_key": dedupe_key,
+                                                                    "p_seconds": LEASE_S})
+        except TimeUp:
+            return False
+        except (SupabaseError, http.HttpError) as e:
+            self._warn_once("lease", f"rooms: an event could not be taken with the lease, so the sweep replays it: "
+                                     f"{db_reason(e)}")
+            return False
+        if not got:
+            return False
+        where = f"{EVENTS}?dedupe_key=eq.{_q(dedupe_key)}&handled_at=is.null"
+        try:
+            rows = self.sb.select(EVENTS, f"select=detail&dedupe_key=eq.{_q(dedupe_key)}&limit=1")
+            detail = (rows[0].get("detail") if rows else None) or {}
+            self.sb.rest("PATCH", where, prefer="return=minimal", json_body={
+                "handled_at": iso(self.clock()), "lease_until": None,
+                "detail": {**(detail if isinstance(detail, dict) else {}), "closed_by": "worker",
+                           "closed_why": plain(reason, 200)}})
+        except TimeUp:
+            return False
+        except (SupabaseError, http.HttpError) as e:
+            # The lease runs out by itself; the sweep replays it then.
+            self._warn_once("lease", f"rooms: an event taken with the lease could not be closed: {db_reason(e)}")
+            return False
+        return True
+
     def notify(self, room_id: str, kind: str, payload: dict[str, Any]) -> None:
         """One call to sales-api; anything unclear is left to the stored event
         and the sweep, so the same room.event never runs twice at once."""
         if not self.api:
             return
-        outcome, why = self.api.event(kind, room_id, payload)
-        if outcome == "delivered":
+        answer = self.api.event(kind, room_id, payload)
+        if answer.outcome == "delivered":
+            if answer.handled is False:
+                self.log.info(f"rooms: sales-api left {kind} for room {room_id} to the sweep")
             return
-        if outcome == "refused":
+        if answer.outcome == "refused":
             self._count("notify_refused")
-            self.window["notify_why"] = self.total["notify_why"] = why
-            self.log.warn(f"rooms: sales-api refused {kind} for room {room_id}: {why}")
+            self.window["notify_why"] = self.total["notify_why"] = answer.why
+            self.log.warn(f"rooms: sales-api refused {kind} for room {room_id}: {answer.why}")
+            if answer.cleanup and kind == "worker.ready":
+                self._cleanup_asked(room_id, payload)
             return
         self._count("notify_unclear")
-        self.log.warn(f"rooms: sales-api did not answer {kind} for room {room_id} ({why}); "
+        self.log.warn(f"rooms: sales-api did not answer {kind} for room {room_id} ({answer.why}); "
                       "the sweep sends the stored event again")
+
+    def _cleanup_asked(self, room_id: str, payload: dict[str, Any]) -> None:
+        """sales-api refused a worker.ready with `cleanup`: the meeting in it
+        is not the room's. It is closed only when the room really carries
+        another meeting (or none); the room's own meeting is never closed on
+        sales-api's word alone."""
+        mid = str(payload.get("provider_meeting_id") or "")
+        if payload.get("provider") != "zoom" or not mid:
+            return  # a Meet link cannot be stopped; its host link goes with the room
+        try:
+            current = self._read(room_id)
+        except (SupabaseError, http.HttpError) as e:
+            self._db_trouble(e)
+            return
+        if current and str(current.get("provider_meeting_id") or "") == mid:
+            self.log.warn(f"rooms: sales-api asked to close room {current.get('code')}'s meeting, but it is the "
+                          "room's own meeting, so it was kept")
+            return
+        self._stray(current or {"id": room_id}, mid, "")
 
     def _alert(self, dedupe_key: str, kind: str, subject: str, message: str, detail: dict[str, Any]) -> None:
         """One alert row per incident (cockpit_sales_alerts); the watchdog posts
@@ -2153,6 +2371,7 @@ class Worker:
         meeting is looked for by its code and closed."""
         self._staff_cache = None
         self._scan_unsaved()
+        self._scan_strays()
         secrets = self.sb.select(SECRETS, "select=room_id&limit=200")
         ids = [str(s["room_id"]) for s in secrets if s.get("room_id")]
         if not ids:
@@ -2303,8 +2522,11 @@ class Worker:
         if rid in self._noted:
             return
         self._noted.add(rid)
+        started = str(m.get("status") or "").lower() == "started"
         self.store_event(rid, "worker.closing", {"meeting_id": str(meeting_id), "meeting_uuid": m.get("uuid"),
-                                                  "status": m.get("status")}, handled=True)
+                                                  "status": m.get("status")}, handled=True,
+                         text=TEXT["worker.closing_started"] if started else
+                         TEXT["worker.closing"].format(provider=provider_word(room.get("provider") or "zoom")))
 
     def _staff(self) -> tuple[set[str], set[str]]:
         """(Zoom user ids, emails) of the team: every room host and every seat.
@@ -2370,9 +2592,156 @@ class Worker:
         self._count("held")
         self.log.warn(f"rooms: {sentence}")
         self.store_event(rid, "worker.held", {"outside": outside, "meeting_id": str(room.get("provider_meeting_id"))},
-                         handled=True)
+                         handled=True, text=sentence)
         self._alert(f"room_held:{rid}", "room_held", f"Room {code}", sentence,
                     {"room_id": rid, "code": code, "outside": outside})
+
+    # ---- meetings an overlapping run may adopt (contract-v2 section 7, step 5) ----
+    def _stray(self, room: dict[str, Any], meeting_id: str, start_url: str = "") -> None:
+        """A Zoom meeting this run made for a room it no longer holds: an
+        overlapping run adopted the room while this one was slow. That run
+        finds a lost meeting by its code, so this one may become the room's;
+        it is watched, kept if the room opens with it, and closed otherwise.
+        Noted as a `worker.stray` event (handled, a note), so a later run
+        finishes the job when this one ends first."""
+        rid = str(room.get("id"))
+        key = f"{rid}:{meeting_id}"
+        if key in self._strays:
+            return
+        detail = {"meeting_id": meeting_id, "worker_run": self.run_id}
+        self._strays[key] = {"room_id": rid, "code": room.get("code"), "host_email": room.get("host_email"),
+                             "meeting_id": meeting_id, "start_url": start_url, "next_at": self.clock(),
+                             "detail": detail}
+        self.store_event(rid, "worker.stray", detail, handled=True, text=TEXT["worker.stray"],
+                         key=f"worker.stray:{key}")
+        self.log.warn(f"rooms: room {room.get('code')} is held by another run; the Zoom meeting this run made for "
+                      "it is closed unless that run opens the room with it")
+
+    def _scan_strays(self) -> None:
+        """worker.stray notes of the last six hours not settled yet, from any
+        run, picked up so none is left behind when the run that noted it
+        ended first."""
+        if not self.zoom:
+            return
+        rows = self.sb.select(EVENTS, "select=room_id,detail&kind=eq.worker.stray"
+                                      f"&at=gte.{_q(iso(self.clock() - STRAY_WINDOW_S))}"
+                                      "&detail->>done=is.null&order=at.asc&limit=20")
+        for e in rows:
+            d = e.get("detail") if isinstance(e.get("detail"), dict) else {}
+            mid, rid = str(d.get("meeting_id") or ""), str(e.get("room_id") or "")
+            if mid and rid and f"{rid}:{mid}" not in self._strays:
+                self._strays[f"{rid}:{mid}"] = {"room_id": rid, "code": None, "host_email": None, "meeting_id": mid,
+                                                "start_url": "", "next_at": self.clock(), "detail": d}
+
+    def _stray_step(self) -> None:
+        """One watched meeting a tick, each looked at every 5 s: left while
+        the room is still being made, kept when the room opened with it,
+        else closed (after the room's host link is put back, when this run's
+        had overwritten it)."""
+        now = self.clock()
+        if not self._strays or self.zoom is None or self._zoom_down():
+            return
+        due = [k for k, s in self._strays.items() if s["next_at"] <= now]
+        if not due:
+            return
+        key = min(due, key=lambda k: self._strays[k]["next_at"])
+        s = self._strays[key]
+        s["next_at"] = now + STRAY_EVERY
+        try:
+            room = self._read(s["room_id"])
+            state = (room or {}).get("state")
+            if room:
+                s["code"], s["host_email"] = room.get("code"), room.get("host_email")
+            if state in ("requested", "creating"):
+                return  # the run that holds it may still open it with this meeting
+            if room and str(room.get("provider_meeting_id") or "") == s["meeting_id"]:
+                self._stray_done(key, "adopted")  # the room's own meeting now: closed with the room
+                return
+            if state in LIVE_STATES and not self._repair_secret(room or {}, s):
+                return  # the host link is put back first, then the meeting is closed
+            if self._close_stray(s) == "closed":
+                self._stray_done(key, "closed")
+        except TimeUp:
+            return
+        except (SupabaseError, http.HttpError) as e:
+            self._db_trouble(e)
+        except ProviderError as e:
+            if not (e.timeup or e.down):
+                self._warn_once(f"stray:{key}", f"rooms: Zoom did not close the extra meeting of room "
+                                                f"{s.get('code')} yet: {e.why}")
+
+    def _repair_secret(self, room: dict[str, Any], s: dict[str, Any]) -> bool:
+        """The room opened with another run's meeting, but its host link may be
+        this run's (both wrote it before their open write). Put back the
+        room's own: True when nothing was wrong or it is fixed."""
+        if room.get("provider") != "zoom" or self.zoom is None:
+            return True
+        rmid = str(room.get("provider_meeting_id") or "")
+        rows = self.sb.select(SECRETS, f"select=start_url&room_id=eq.{_q(room['id'])}&limit=1")
+        url = str((rows[0] if rows else {}).get("start_url") or "")
+        ours = bool(url) and (url == s.get("start_url") or f"/s/{s['meeting_id']}" in url)
+        if not url or not rmid or f"/s/{rmid}" in url or not ours:
+            return True
+        fresh = str(self.zoom.meeting(rmid, timeout=CLOSE_TIMEOUT, retries=0).get("start_url") or "")
+        if not fresh:
+            return False
+        self.sb.upsert(SECRETS, [{"room_id": str(room["id"]), "start_url": fresh,
+                                  "expires_at": iso(self.clock() + START_URL_TTL)}], "room_id")
+        self.log.info(f"rooms: room {room.get('code')}'s host link pointed at the extra meeting; it is the room's "
+                      "own again")
+        return True
+
+    def _close_stray(self, s: dict[str, Any]) -> str:
+        """'closed' or 'held'. Like a finished room's meeting: deleted when it
+        never started, ended first when nobody outside the team is in it, and
+        left open with an alert otherwise (H7). Nothing is noted under the
+        room's own `worker.closing`, which the participant report reads."""
+        assert self.zoom is not None
+        mid = s["meeting_id"]
+        try:
+            m = self.zoom.meeting(mid, timeout=CLOSE_TIMEOUT, retries=0)
+        except ProviderError as e:
+            if e.gone:
+                return "closed"
+            raise
+        if str(m.get("status") or "").lower() == "started":
+            room_like = {"id": s["room_id"], "code": s.get("code"), "host_email": s.get("host_email")}
+            outside = self._outside(room_like, mid, m)
+            if outside is None or outside > 0:
+                if not s.get("alerted"):
+                    s["alerted"] = True
+                    code = str(s.get("code") or "")
+                    sentence = (f"An extra Zoom meeting made for room {code} by an overlapping run is running with "
+                                + ("someone outside the team in it" if outside else "people Zoom would not list")
+                                + ", so it was left open. Check it in Zoom.")
+                    self._fault(sentence)
+                    self._alert(f"room_stray_held:{mid}", "room_held", f"Room {code}", sentence,
+                                {"room_id": s["room_id"], "code": code, "outside": outside})
+                return "held"
+            self.zoom.end(mid)
+        try:
+            self.zoom.delete(mid)
+        except ProviderError as e:
+            if not e.gone:
+                raise
+        self.closed_ids.add(str(mid))
+        if s.get("alerted"):
+            self._resolve_alert(f"room_stray_held:{mid}")
+        return "closed"
+
+    def _stray_done(self, key: str, how: str) -> None:
+        s = self._strays.pop(key, None)
+        if not s:
+            return
+        if how == "closed":
+            self._count("strays")
+            self.log.info(f"rooms: the extra Zoom meeting of room {s.get('code')} is closed")
+        try:
+            self.sb.rest("PATCH", f"{EVENTS}?dedupe_key=eq.{_q('worker.stray:' + key)}", prefer="return=minimal",
+                         json_body={"detail": {**(s.get("detail") or {}), "done": how,
+                                               "done_at": iso(self.clock())}})
+        except (SupabaseError, http.HttpError) as e:
+            self._warn_once("stray-note", f"rooms: a settled extra meeting could not be noted: {db_reason(e)}")
 
     # ---- status ------------------------------------------------------------------
     def _maybe_status(self) -> None:
@@ -2395,6 +2764,8 @@ class Worker:
             bits.append(f"{w['withdrawn']} cancelled while being made, and closed.")
         if w["handed"]:
             bits.append(f"{_s(w['handed'], 'Zoom room')} handed to the next run because this run ran out of time.")
+        if w["strays"]:
+            bits.append(f"{_s(w['strays'], 'extra Zoom meeting')} from overlapping runs closed.")
         if self.pending:
             bits.append(f"{len(self.pending)} Meet room{'s are' if len(self.pending) != 1 else ' is'} waiting on Google.")
         ok = True
@@ -2600,15 +2971,16 @@ class Worker:
             host = {str(r.get("host_email") or "").strip().lower()} - {""}
             outside = [p for p in people if not self._is_staff(p, ids, emails | host)]
             joined, seen = bool(outside), bool(r.get("lead_in_at"))
+            said = ("someone outside the team joined, but the cockpit never saw the lead come in" if joined else
+                    "the cockpit marked the lead in, but Zoom's report shows nobody outside the team")
             self.store_event(rid, "report.checked", {"outside_joined": joined, "cockpit_lead_in": seen,
                                                      "match": joined == seen, "participants": len(people)},
-                             handled=True)
+                             handled=True, text=TEXT["report.matches"] if joined == seen else
+                             TEXT["report.differs"].format(said=said))
             checked += 1
             if joined != seen:
                 code = str(r.get("code") or "")
                 bad.append(code)
-                said = ("someone outside the team joined, but the cockpit never saw the lead come in" if joined else
-                        "the cockpit marked the lead in, but Zoom's report shows nobody outside the team")
                 self._alert(f"room_report:{rid}", "room_report", f"Room {code}",
                             f"Room {code}: {said}. Check the room's joins.", {"room_id": rid, "code": code})
         if not checked and not unread:

@@ -33,6 +33,8 @@ _KEEP_PREFIX = (
 )
 _WHOLE = (
     re.compile(r"\b(?:sk|pk|rk)-[A-Za-z0-9_\-*.]{6,}"),
+    # Slack tokens (the Mahara Sales bot's SLACK_SALES_BOT_TOKEN is xoxb-).
+    re.compile(r"\bxox[abeoprs]-[A-Za-z0-9\-]{6,}"),
     re.compile(r"\beyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{4,}"),
 )
 
