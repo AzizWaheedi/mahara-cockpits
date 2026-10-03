@@ -90,7 +90,13 @@ Do not commit credentials or auth-state files.
 
 From the repository root, `bash scripts/check-shared.sh` checks shared
 cockpit source. It ignores imports and LF/CRLF differences, but still rejects
-different shared statements. Shell scripts stay LF through `.gitattributes`.
+different shared statements. `.gitattributes` keeps shell scripts and canonical
+generated webinar schedule artifacts LF, so Windows checkout conversion does
+not trip the schedule's immutable-revision or stale-artifact checks.
+
+The shipping script needs `python3`. If Windows only exposes Python as
+`python`, use an exported Bash function for that invocation:
+`python3() { python "$@"; }; export -f python3; bash scripts/ship.sh media-buyer`.
 
 Note: The Convex backend is always running in the cloud after running the sync command — only the frontend server needs to be started locally.
 
