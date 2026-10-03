@@ -185,6 +185,10 @@ describe("a settle is written once, and never for a room the lead knocked on", (
   test("fifty sweep.settle posts for one room at once mark one no-show", async () => {
     const w = setup();
     const id = w.closedRoom({ provider: "zoom", join_url: ZOOM_URL });
+    // Zoom reported the meeting (its start, read by room.event): its silence about the lead is evidence.
+    w.db.seed("cockpit_sales_room_events", [
+      { room_id: id, kind: "zoom.meeting.started", source: "zoom", dedupe_key: `zoom:meeting.started:${id}`, at: new Date(w.start + 2 * 60_000).toISOString(), handled_at: new Date(w.start + 2 * 60_000).toISOString() },
+    ]);
     w.db.insertOne("cockpit_sales_room_events", { room_id: id, kind: "sweep.settle", source: "settle", dedupe_key: `sweep.settle:${id}`, text: "Due." }, "ignore", "dedupe_key");
     w.clock.now = w.start + 21 * 60_000;
     await Promise.all(Array.from({ length: 50 }, () => w.api.desk["room.event"]!(desk, { kind: "sweep.settle", payload: { room_ids: [id] } })));

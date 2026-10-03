@@ -237,11 +237,15 @@ describe("boundaries, to the millisecond", () => {
   const wrap = (now: number) =>
     wrapPlan({ setting, contact_id: "stress-time-lead", start: iso(start), end: iso(start + 45 * MIN), address: JOIN, call_kind: "demo", now, ctx });
 
-  test("room.wrap opens exactly 30 minutes before the call and closes at its end", () => {
+  test("room.wrap opens exactly 30 minutes before the call and closes once the host could no longer get in before its end", () => {
     expect(wrap(start - 30 * MIN - 1).ok).toBe(false);
     expect(wrap(start - 30 * MIN).ok).toBe(true);
-    expect(wrap(start + 45 * MIN - 1).ok).toBe(true);
-    expect(wrap(start + 45 * MIN).ok).toBe(false);
+    // A late wrap gives the host the handover wait from now: refused once that runs past the call's end.
+    expect(wrap(start + 45 * MIN - W.handover_host * S - 1).ok).toBe(true);
+    const nearly = wrap(start + 45 * MIN - W.handover_host * S);
+    expect(nearly.ok ? "accepted" : nearly.code).toBe("call_nearly_over");
+    const over = wrap(start + 45 * MIN);
+    expect(over.ok ? "accepted" : over.code).toBe("call_over");
     const d = bookedDeadlines(start, start + 45 * MIN, "demo", ctx);
     expect([kuwaitDay(Date.parse(d.host_by)), kuwaitClock(Date.parse(d.host_by))]).toEqual(["2026-10-09", "00:05"]);
     expect(kuwaitClock(Date.parse(d.lead_by))).toBe("00:10");

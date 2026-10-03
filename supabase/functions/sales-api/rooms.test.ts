@@ -581,7 +581,11 @@ describe("defect 2: booked intros are settled as no-shows (room.event sweep.sett
         ...over,
       },
     ]);
-    w.db.seed("cockpit_sales_room_events", [{ room_id: id, kind: "sweep.settle", source: "settle", dedupe_key: `sweep.settle:${id}` }]);
+    // Zoom reported the meeting (its start, read by room.event), so its silence about the lead is evidence.
+    w.db.seed("cockpit_sales_room_events", [
+      { room_id: id, kind: "zoom.meeting.started", source: "zoom", dedupe_key: `zoom:meeting.started:${id}`, at: new Date(start).toISOString(), handled_at: new Date(start).toISOString() },
+      { room_id: id, kind: "sweep.settle", source: "settle", dedupe_key: `sweep.settle:${id}` },
+    ]);
     return id;
   }
 
@@ -627,6 +631,9 @@ describe("defect 2: booked intros are settled as no-shows (room.event sweep.sett
     const out = await w.rooms.desk["room.event"]!(desk, { kind: "sweep.settle", payload: { room_ids: [id] } });
     expect(((out.results as Row[])[0] as Row).refused).toContain("not linked");
     expect(w.events(id).find(e => e.kind === "sweep.settle")?.handled_at).toBeTruthy();
+    // The no-show was not written: the room says so and a person is told which intro to mark.
+    expect(w.room(id).settled_mark).toBe("none");
+    expect(w.db.t("cockpit_sales_alerts").filter(a => a.dedupe_key === `room:${id}:mark_intro` && !a.resolved_at)).toHaveLength(1);
   });
 
   test("a database fault mid-settle releases the lease for the next sweep", async () => {

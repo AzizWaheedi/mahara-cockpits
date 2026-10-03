@@ -30,7 +30,10 @@ begin
     perform pg_temp.ck('A seat-read table ' || t || ': RLS on, one seat policy, authenticated select only, anon none',
       (select c.relrowsecurity from pg_class as c where c.oid = ('public.' || t)::regclass)
       and (select count(*) = 1 and bool_and(p.policyname = t || '_seat_read' and p.cmd = 'SELECT'
-                                            and p.qual = 'cockpit_sales_seat()')
+                                            -- 20261003d: room events only with a room (no unplaced Zoom attendee).
+                                            and p.qual = case when t = 'cockpit_sales_room_events'
+                                                              then '(cockpit_sales_seat() AND (room_id IS NOT NULL))'
+                                                              else 'cockpit_sales_seat()' end)
              from pg_policies as p where p.schemaname = 'public' and p.tablename = t)
       and has_table_privilege('authenticated', 'public.' || t, 'select')
       and not has_table_privilege('authenticated', 'public.' || t, 'insert')
@@ -49,7 +52,7 @@ begin
     and not has_table_privilege('authenticated', 'public.cockpit_sales_followup_meta', 'update')
     and not has_table_privilege('anon', 'public.cockpit_sales_followup_meta', 'select')
     and has_table_privilege('service_role', 'public.cockpit_sales_followup_meta', 'insert'));
-  foreach t in array array['cockpit_sales_room_secrets', 'cockpit_sales_alerts'] loop
+  foreach t in array array['cockpit_sales_room_secrets', 'cockpit_sales_alerts', 'cockpit_sales_room_posts'] loop
     perform pg_temp.ck('A service-only table ' || t || ': RLS on, no policy, no seat or anon access',
       (select c.relrowsecurity from pg_class as c where c.oid = ('public.' || t)::regclass)
       and not exists (select 1 from pg_policies as p where p.schemaname = 'public' and p.tablename = t)

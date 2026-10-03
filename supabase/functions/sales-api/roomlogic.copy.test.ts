@@ -229,6 +229,10 @@ const LANE_SENTENCES = {
   bad_link: "The room link is not a web address.",
   bad_input: "Something in this request is not right. Reload the page and try again.",
   call_over: "This call has already ended. There is no link to send.",
+  call_nearly_over:
+    "This call ends in under {minutes} minutes, so a room would close before the lead could join. Send the lead the call's own link.",
+  take_host_busy: "You already have a live call or room open. End it, then take the next lead.",
+  booked_other_rep: "This call is booked with another rep. Only they or a manager can make a room for it.",
   worker_late: "The room worker did not pick this room up in time.",
   worker_lost: "The room worker stopped half way through making this room.",
   worker_failed: "The room could not be made.",

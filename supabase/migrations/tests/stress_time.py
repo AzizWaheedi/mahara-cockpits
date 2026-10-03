@@ -329,6 +329,9 @@ def settle_room(name: str, *, req_ago: int, ended_ago: int, start: str, end_reas
 SETTLE = "(select count(*) from public.cockpit_sales_room_events as e where e.room_id = r.id and e.source = 'settle')"
 settle_room("s1-1201", req_ago=1500, ended_ago=890, start=ago(1201))
 settle_room("s1-1199", req_ago=1500, ended_ago=890, start=ago(1199))
+# Zoom reported each meeting (its start, read): its silence about the lead is evidence (20261003d).
+for n in ("s1-1201", "s1-1199"):
+    event(n, at=ago(1490), handled=ago(1489), kind="zoom.meeting.started")
 check("S1 start + 1201 s: the closed-empty fallback room is due to settle", "s1-1201", f"{SETTLE} = 1",
       f"'settle events=' || {SETTLE}")
 check("S1 start + 1199 s: not yet", "s1-1199", f"{SETTLE} = 0", f"'settle events=' || {SETTLE}")

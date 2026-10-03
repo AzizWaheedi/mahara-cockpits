@@ -430,7 +430,12 @@ describe("host and lead in the room", () => {
     expect(c.to).toBe("host_in");
     expect(c.room.host_in_at).toBe(at(T0 + 30 * S));
     expect(c.room.version).toBe(4);
-    expect(ok(apply(c.room, { kind: "host_in", source: "zoom" }, T0 + 31 * S)).changed).toBe(false);
+    // The same join again (Zoom's retry carries the same time): nothing changes.
+    expect(ok(apply(c.room, { kind: "host_in", source: "zoom", at: at(T0 + 30 * S) }, T0 + 31 * S)).changed).toBe(false);
+    // A later join (a rejoin after a drop) moves host_in_at on, never the state or the version.
+    const rejoin = ok(apply(c.room, { kind: "host_in", source: "zoom" }, T0 + 31 * S));
+    expect([rejoin.to, rejoin.room.version, rejoin.room.host_in_at]).toEqual(["host_in", 4, at(T0 + 31 * S)]);
+    expect(rejoin.expect).toEqual({ state: "host_in", host_in_at: at(T0 + 30 * S) });
     const early = no(apply(room(), { kind: "host_in", source: "zoom" }, T0));
     expect(early.code).toBe("too_early");
     expect(early.retry).toBe(true);
@@ -745,7 +750,9 @@ describe("small timing rules", () => {
     // Without that evidence a Meet room never settles itself: a person marks the intro.
     expect(settleDue(exp, at(start), false, start + 1200 * S, W)).toBe(false);
     expect(settleDue({ ...exp, first_open_at: at(start) }, at(start), false, start + 1200 * S, W, seen)).toBe(false);
-    expect(settleDue({ ...exp, provider: "zoom" }, at(start), false, start + 1200 * S, W, { zoom_unclear: false })).toBe(true);
+    expect(settleDue({ ...exp, provider: "zoom" }, at(start), false, start + 1200 * S, W, { zoom_unclear: false, zoom_reported: true })).toBe(true);
+    // Zoom's silence (no event at all, not even the meeting's start) is no evidence.
+    expect(settleDue({ ...exp, provider: "zoom" }, at(start), false, start + 1200 * S, W, { zoom_unclear: false })).toBe(false);
     expect(settleDue({ ...exp, provider: "zoom" }, at(start), false, start + 1200 * S, W, { zoom_unclear: true })).toBe(false);
     expect(settleDue(exp, at(start), false, start + 1200 * S, W, { ...seen, sibling_joined: true })).toBe(false);
     expect(settleDue(exp, at(start), false, start + 1200 * S, W, { ...seen, test_off_calendar: true })).toBe(false);
@@ -1187,7 +1194,9 @@ describe("countLive", () => {
       }),
     ).toEqual({ action: "move_back", appointment_id: "UP1", start: "2026-10-08T07:00:00.000Z", end: "2026-10-08T07:30:00.000Z", assigned_user_id: "GHLCLOSER", status: "new" });
     expect(countUndo(joinedRoom({ ...claimed, count_result: "moved", count_appointment_id: "UP1" }))).toEqual({ action: "none", reason: "moved_from_unknown" });
-    expect(countUndo(joinedRoom({ ...claimed, appointment_id: "A1", count_appointment_id: "A1" }))).toEqual({
+    // No record of the status before the count's mark: nothing is guessed (confirmed on a past intro is a show).
+    expect(countUndo(joinedRoom({ ...claimed, appointment_id: "A1", count_appointment_id: "A1" }))).toEqual({ action: "none", reason: "unmark_unknown" });
+    expect(countUndo(joinedRoom({ ...claimed, appointment_id: "A1", count_appointment_id: "A1" }), { prior_status: "confirmed" })).toEqual({
       action: "unmark",
       appointment_id: "A1",
       status: "confirmed",

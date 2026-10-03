@@ -72,13 +72,25 @@ function parseList(v: string): string[] {
   return inner.split(",").map(x => x.replace(/^"|"$/g, ""));
 }
 
+/** A column, or a JSON path in PostgREST's form (detail->payload->object->>id). */
+function valueAt(row: Row, col: string): unknown {
+  if (!col.includes("->")) return row[col];
+  const parts = col.split(/->>?/);
+  let v: unknown = row[parts[0] as string];
+  for (const k of parts.slice(1)) {
+    if (!v || typeof v !== "object" || Array.isArray(v)) return undefined;
+    v = (v as Row)[k];
+  }
+  return col.includes("->>") && v !== null && v !== undefined && typeof v !== "object" ? String(v) : v;
+}
+
 function match(row: Row, col: string, expr: string): boolean {
   const neg = expr.startsWith("not.");
   const e = neg ? expr.slice(4) : expr;
   const dot = e.indexOf(".");
   const op = e.slice(0, dot);
   const val = e.slice(dot + 1);
-  const v = row[col];
+  const v = valueAt(row, col);
   let ok: boolean;
   switch (op) {
     case "eq":
@@ -415,6 +427,19 @@ export class FakeDb {
     const me = String(a.p_email).toLowerCase();
     const l = this.t("cockpit_sales_live").find(x => x.id === a.p_live_id);
     if (!l || l.state !== "offered" || Date.parse(String(l.offer_until)) <= this.clock.now || !(l.offered_to as string[]).includes(me)) return [];
+    // 20261003d: a taker who hosts a room that is not their empty standby
+    // room, a booked call's room or this lead's own is refused before anything moves.
+    if (
+      this.t("cockpit_sales_rooms").some(
+        x =>
+          String(x.host_email).toLowerCase() === me &&
+          LIVE.includes(String(x.state)) &&
+          x.purpose !== "booked" &&
+          !(x.purpose === "standby" && !x.contact_id) &&
+          x.contact_id !== l.contact_id,
+      )
+    )
+      throw new DbError("database 400: take_host_busy: You already have a live call or room open.", 400, "P0001");
     if (this.t("cockpit_sales_live").some(x => x !== l && x.claimed_by === me && ["claimed", "room_ready", "lead_joined"].includes(String(x.state))))
       throw new DbError('database 409: duplicate key value violates unique constraint "cockpit_sales_live_one_claim_per_closer"', 409, "23505", "cockpit_sales_live_one_claim_per_closer");
     l.state = "claimed";

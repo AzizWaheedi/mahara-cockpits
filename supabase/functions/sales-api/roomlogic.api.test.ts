@@ -152,7 +152,7 @@ describe("settleWanted: what sweep.settle settles", () => {
   const start = T0;
   // A booked Zoom call whose join events were all read: Zoom would have said if the lead came.
   const expiredBooked = room({ purpose: "booked", provider: "zoom", appointment_id: "a1", state: "expired", result: "no_join", ended_at: at(T0 + 20 * MIN) });
-  const read = { zoom_unclear: false };
+  const read = { zoom_unclear: false, zoom_reported: true };
   test("a booked intro that expired with no lead is due at start + settle; never before, never once marked", () => {
     expect(settleWanted(expiredBooked, at(start), false, start + W.settle * S - 1, W, read)).toBe(false);
     expect(settleWanted(expiredBooked, at(start), false, start + W.settle * S, W, read)).toBe(true);

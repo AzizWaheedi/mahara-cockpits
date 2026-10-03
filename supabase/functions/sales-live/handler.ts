@@ -3,8 +3,10 @@
 // with the real environment; the tests wire it to fakes.
 //
 //   POST /zoom        Zoom's meeting events. Signature, then url_validation,
-//                     then one room lookup: an event for a meeting that is
-//                     not a cockpit room is answered 200 and kept nowhere;
+//                     then the room lookup (one quick retry): an event for a
+//                     meeting that is not a cockpit room is answered 200 and
+//                     kept nowhere (when the lookup fails, kept with no room
+//                     and, without a room code in its topic, no names);
 //                     a room's event is stored once (dedupe key) and
 //                     answered 200 inside Zoom's 3 s, then passed to
 //                     sales-api room.event with the stored row's id.
@@ -65,6 +67,7 @@ import {
   zoomKind,
   zoomLookup,
   type ZoomRoomRow,
+  withoutPerson,
   zoomRoomQuery,
   zoomText,
 } from "./zoom.ts";
@@ -107,9 +110,11 @@ export const NOT_HOOKED = (action: string) =>
 
 /** Budgets, in ms. Zoom and Slack want an answer within 3 s; the page waits 6 s. */
 export const BUDGET = {
-  /** The one room lookup for a Zoom event. */
+  /** The room lookup for a Zoom event. */
   zoomFind: 500,
-  /** Storing a Zoom event. zoomFind + zoomStore leaves a second of Zoom's 3 s for a cold start. */
+  /** Its one quick retry. zoomFind + zoomFindRetry + zoomStore leaves 0.7 s of Zoom's 3 s for a cold start. */
+  zoomFindRetry: 300,
+  /** Storing a Zoom event. */
   zoomStore: 1500,
   /** Every read /open makes, together (the page gives up at 6 s, call.js REQUEST_MS). */
   openTotal: 4500,
@@ -499,19 +504,36 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
       ignoredZoom++;
       return json({ ok: true, ignored: "not a room" });
     }
-    let roomId: string | null;
-    try {
-      const pick = pickZoomRoom((await rest(query, { ms: B.zoomFind })) as ZoomRoomRow[] | null, look);
-      if (!pick.room) {
-        ignoredZoom++;
-        return json({ ok: true, ignored: "not a room" });
+    let roomId: string | null = null;
+    let kept: ZoomDetail = detail;
+    let found = false;
+    let lastError = "";
+    // The lookup, and one quick retry: a slow moment of the database should
+    // not leave a lead's join unplaced.
+    for (const ms of [B.zoomFind, B.zoomFindRetry]) {
+      try {
+        const pick = pickZoomRoom((await rest(query, { ms })) as ZoomRoomRow[] | null, look);
+        if (!pick.room) {
+          ignoredZoom++;
+          return json({ ok: true, ignored: "not a room" });
+        }
+        roomId = pick.room_id;
+        found = true;
+        break;
+      } catch (e) {
+        lastError = redact((e as Error).message);
       }
-      roomId = pick.room_id;
-    } catch (e) {
-      // The lookup failed or ran out of time: keep the event (it may be a
-      // lead joining) with no room, and let sales-api look again.
-      deps.log(`sales-live zoom: the room lookup failed, stored with no room: ${redact((e as Error).message)}`);
-      roomId = null;
+    }
+    if (!found) {
+      // Both tries failed: the event is kept with no room for sales-api (and
+      // the sweep, by its meeting id) to place, because it may be a lead
+      // joining. A meeting whose topic carries no room code may be no room
+      // at all (the webinar, a client call, an interview on the same Zoom
+      // account): its people's names and emails are not kept, only their
+      // Zoom ids and times, which is all the room logic needs to tell the
+      // host from the lead.
+      if (!look.code) kept = withoutPerson(detail);
+      deps.log(`sales-live zoom: the room lookup failed twice, stored with no room: ${lastError}`);
     }
 
     const key = zoomDedupeKey(detail);
@@ -519,7 +541,7 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
     let stored: { id: string | null } | null;
     try {
       stored = await insertEvent(
-        { room_id: roomId, kind, source: "zoom", dedupe_key: key, text: zoomText(detail), detail },
+        { room_id: roomId, kind, source: "zoom", dedupe_key: key, text: zoomText(kept), detail: kept },
         B.zoomStore,
       );
     } catch (e) {
@@ -527,7 +549,7 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
       // A 5xx makes Zoom retry (5, 20 and 60 minutes later).
       return json({ ok: false, error: "The event could not be stored. Zoom will retry it." }, 503);
     }
-    if (stored) deps.background(forwardZoom(kind, stored.id, roomId, key, detail));
+    if (stored) deps.background(forwardZoom(kind, stored.id, roomId, key, kept));
     return json({ ok: true, stored: stored ? "new" : "duplicate" });
   }
 

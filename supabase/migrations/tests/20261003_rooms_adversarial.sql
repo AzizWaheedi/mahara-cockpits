@@ -586,6 +586,9 @@ begin
   -- Made a minute after the intro's start (20261003d: a room settles only the intro it was made for).
   update public.cockpit_sales_rooms set appointment_id = 'lc-test-appt-x20a', host_by = now() - interval '1 minute',
                                         requested_at = now() - interval '24 minutes' where id = fb;
+  -- Zoom reported the meeting (read): its silence about the lead is evidence (20261003d).
+  insert into public.cockpit_sales_room_events (room_id, kind, source, dedupe_key, at, handled_at)
+    values (fb, 'zoom.meeting.started', 'zoom', 'lc-test-x20a-started', now() - interval '20 minutes', now() - interval '20 minutes');
   bk := pg_temp.room('lc-test-x20b', 'lc-test-x20bh@example.invalid', 'booked', 'open', 'intro', 'lc-test-appt-x20b');
   update public.cockpit_sales_rooms set host_by = now() - interval '1 minute' where id = bk;
   select coalesce(max(q.id), 0) into max_id from net.http_request_queue as q;

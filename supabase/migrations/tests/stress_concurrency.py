@@ -27,6 +27,13 @@ What it does
   its own connection. PARALLEL stays at 20: the database allows 90
   connections and the cockpits need theirs.
 
+Round 2 (r2_*): Not now from thirty closers at once on a real handover row;
+the real claim function (rolled back) for a closer who hosts another lead's
+room; the claim's standby read racing the sweep's standby refresh (two
+sessions in a set order, committed synthetic standby rooms that live for
+seconds); the real sweep (rolled back) racing the worker's open, and twenty
+sweeps at once.
+
 Exit code 0 only when every check held and no synthetic row is left.
 """
 import json
@@ -74,6 +81,14 @@ class SqlError(Exception):
         return m.group(1) if m else None
 
 
+def hardening() -> str:
+    """Migration 20261003d's statements (not applied in production yet), for a
+    rolled-back transaction, so a check reads the repo's functions."""
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import run_checks  # noqa: E402
+    return run_checks.hardening_sql()
+
+
 def q(sql: str, write: bool = True):
     """One request on its own connection. A throttled or refused-for-connections
     request never ran, so it is sent again; any other error is the answer."""
@@ -113,7 +128,7 @@ def lit(v) -> str:
     return "'" + str(v).replace("'", "''") + "'"
 
 
-def burst(sqls, lead_s: float = 2.5):
+def burst(sqls, lead_s: float = 2.5, width: int = PARALLEL):
     """Every statement waits for one shared moment, then runs: real parallel presses.
     It waits first while the database is busy (other agents, the cockpits), so a
     burst never takes the connections the cockpits need."""
@@ -135,7 +150,7 @@ def burst(sqls, lead_s: float = 2.5):
         except SqlError as e:
             return ("err", e)
 
-    with ThreadPoolExecutor(min(PARALLEL, len(wrapped))) as ex:
+    with ThreadPoolExecutor(min(width, len(wrapped))) as ex:
         out = list(ex.map(one, wrapped))
     # The management API throttles bursts: a short rest keeps the next one parallel.
     time.sleep(PACE_S)
@@ -171,10 +186,10 @@ def in_window():
 # Rows this run makes, and their removal (only this run's rows, by prefix)
 # ---------------------------------------------------------------------------
 
-def room_sql(i, *, request_id=None, contact=None, host=None, state="requested", purpose="manual", extra=None):
+def room_sql(i, *, request_id=None, contact=None, host=None, state="requested", purpose="manual", extra=None, no_contact=False):
     cols = {
         "request_id": request_id or str(uuid.uuid4()),
-        "contact_id": contact if contact is not None else f"{RUN}-lead-{i}",
+        "contact_id": None if no_contact else contact if contact is not None else f"{RUN}-lead-{i}",
         "purpose": purpose,
         "call_kind": "intro",
         "provider": "meet",
@@ -460,6 +475,212 @@ def t_claim_function_same_closer():
           got == {"first": 1, "same_closer_again": 0, "other_closer": 0, "claimed_events": 1}, json.dumps(got))
 
 
+# ---------------------------------------------------------------------------
+# Round 2: wider bursts, two sessions in a set order, the sweep itself
+# ---------------------------------------------------------------------------
+
+def staggered(sqls_with_delay):
+    """Each (sql, delay_s) starts delay_s after one shared moment, on its own
+    connection: session A takes its locks, session B arrives while A holds them."""
+    row = q("select (clock_timestamp() + interval '2.5 seconds')::text as at", write=False)[0]
+    at = row["at"]
+
+    def one(item):
+        sql, delay = item
+        t0 = time.time()
+        try:
+            out = ("ok", q(f"select pg_sleep_until({lit(at)}::timestamptz + make_interval(secs => {delay}));\n{sql}"))
+        except SqlError as e:
+            out = ("err", e)
+        return out + (round(time.time() - t0, 2),)
+
+    with ThreadPoolExecutor(len(sqls_with_delay)) as ex:
+        out = list(ex.map(one, sqls_with_delay))
+    time.sleep(PACE_S)
+    return out
+
+
+def t_r2_decline():
+    """Not now from thirty closers at once, each the way rooms.ts liveDecline
+    writes it (read declined_by, write only where it is still what was read,
+    up to min(60, 5 + offered_to) tries), on a real handover row: every one
+    lands, none is told "This changed a moment ago.", and the version (what a
+    closer acts on) never moves."""
+    in_window()
+    n = 30
+    closers = [f"{RUN}-dcl-{i}{HOST}" for i in range(n)]
+    arr = "array[" + ",".join(lit(c) for c in closers) + "]::text[]"
+    try:
+        lid = q(f"""insert into public.cockpit_sales_live (request_id, contact_id, asked_by, kind, reason, offered_to, offer_until)
+                    values ({lit(str(uuid.uuid4()))}, {lit(RUN + '-lead-decline')}, {lit(RUN + '-setter' + HOST)}, 'demo', 'on_call',
+                            {arr}, now() + interval '10 minutes') returning id""")[0]["id"]
+        tries = min(60, 5 + n)
+        fn = """create function pg_temp.decline(p_id uuid, p_me text, p_tries int) returns int language plpgsql as $f$
+                declare d text[]; s text; i int;
+                begin
+                  for i in 1 .. p_tries loop
+                    select x.declined_by, x.state into d, s from public.cockpit_sales_live as x where x.id = p_id;
+                    if s is distinct from 'offered' then return -2; end if;
+                    if p_me = any (d) then return i; end if;
+                    update public.cockpit_sales_live as x set declined_by = d || p_me
+                     where x.id = p_id and x.state = 'offered' and x.declined_by = d;
+                    if found then return i; end if;
+                  end loop;
+                  return -1;
+                end $f$;"""
+        out = burst([f"{fn}\nselect pg_temp.decline({lit(lid)}::uuid, {lit(c)}, {tries}) as tries" for c in closers], width=n)
+        got = [int(o[1][0]["tries"]) for o in out if o[0] == "ok" and o[1]]
+        errs = [o[1].text[:120] for o in out if o[0] == "err"]
+        row = q(f"select version, cardinality(declined_by) as n, (select count(distinct v) from unnest(declined_by) as v) as uniq "
+                f"from public.cockpit_sales_live where id = {lit(lid)}", write=False)[0]
+        check(f"{n} closers press Not now at once: every one lands within its tries, the list holds each once, the version stays",
+              len(got) == n and all(g >= 1 for g in got) and int(row["n"]) == n and int(row["uniq"]) == n and int(row["version"]) == 1 and not errs,
+              f"landed={sum(1 for g in got if g >= 1)} gave_up={sum(1 for g in got if g < 0)} most_tries={max(got or [0])} "
+              f"list={row['n']} version={row['version']} errors={errs[:2]}")
+    finally:
+        cleanup()
+
+
+def t_r2_claim_other_room():
+    """The real claim function (20261003d applied in the same rolled-back
+    transaction): the offer reached a closer while they were Ready; they then
+    opened a room for another lead from the dialer and pressed Take. Before
+    the fix the claim succeeded, cancelled the setter's room that the lead is
+    being handed over from ("replaced") and adopted nothing, so sales-api's
+    room for the closer was refused (one room per host): the lead lost their
+    room and the closer held a lead with none. Now it is refused
+    (take_host_busy) before anything moves."""
+    me = f"{RUN}-closer-busy{HOST}"
+    setter_ = f"{RUN}-setter-busy{HOST}"
+    rows = q(f"""
+      begin;
+      {hardening()}
+      insert into public.cockpit_sales_live (id, request_id, contact_id, asked_by, kind, reason, offered_to, offer_until)
+      values ('00000000-0000-4000-8000-0000000c0de2', {lit(str(uuid.uuid4()))}, {lit(RUN + '-lead-take')}, {lit(setter_)},
+              'demo', 'on_call', array[{lit(me)}]::text[], now() + interval '10 minutes');
+      insert into public.cockpit_sales_rooms (id, request_id, contact_id, purpose, trigger, call_kind, provider, host_email, made_by, state, join_url)
+      values ('00000000-0000-4000-8000-0000000c0de3', {lit(str(uuid.uuid4()))}, {lit(RUN + '-lead-take')}, 'fallback', 'no_answer', 'intro', 'meet',
+              {lit(setter_)}, 'stress-conc', 'host_in', 'https://meet.google.com/str-ess-tst');
+      insert into public.cockpit_sales_rooms (request_id, contact_id, purpose, trigger, call_kind, provider, host_email, made_by, state, join_url)
+      values ({lit(str(uuid.uuid4()))}, {lit(RUN + '-lead-other')}, 'fallback', 'no_answer', 'intro', 'zoom',
+              {lit(me)}, 'stress-conc', 'host_in', 'https://us06web.zoom.us/j/1');
+      create temp table sc_claim (claim_room text, state text, room_id uuid, refused text) on commit drop;
+      do $c$
+      begin
+        insert into sc_claim (claim_room, state, room_id)
+        select claim_room, state, room_id from public.cockpit_sales_live_claim('00000000-0000-4000-8000-0000000c0de2', {lit(me)}, null);
+      exception when others then
+        insert into sc_claim (refused) values (left(sqlerrm, 200));
+      end
+      $c$;
+      select (select count(*) from sc_claim where refused is null)::int as claimed,
+             (select claim_room from sc_claim where refused is null) as claim_room,
+             (select refused from sc_claim where refused is not null) as refused,
+             (select state from public.cockpit_sales_rooms where id = '00000000-0000-4000-8000-0000000c0de3') as setter_room,
+             (select end_reason from public.cockpit_sales_rooms where id = '00000000-0000-4000-8000-0000000c0de3') as setter_reason;
+      rollback;
+    """)
+    got = rows[0] if rows else {}
+    check("a Take from a closer who hosts another lead's room leaves the setter's room with this lead open (or is refused)",
+          int(got.get("claimed") or 0) == 0 or got.get("setter_room") in ("open", "host_in", "lead_in"), json.dumps(got))
+
+
+def t_r2_standby_refresh_vs_claim():
+    """The sweep's R5 refresh (end the old standby room and make a fresh one
+    in the same transaction) and a Take arriving while it runs. The claim's
+    standby read (cockpit_sales_live_claim, word for word) waits for the old
+    room's lock, then finds it ended, and cannot see the fresh room the sweep
+    made: it adopts nothing, although the closer has a standby room. Then
+    sales-api's handover room is refused (one room per host)."""
+    in_window()
+    h = f"{RUN}-host-sb{HOST}"
+    try:
+        old = q(room_sql(0, host=h, no_contact=True, purpose="standby", state="open"))[0]["id"]
+        refresh = f"""
+          begin;
+          select x.id from public.cockpit_sales_rooms as x where x.id = {lit(old)} for update;
+          update public.cockpit_sales_rooms set state = 'ended', end_reason = 'standby_refresh' where id = {lit(old)};
+          insert into public.cockpit_sales_rooms (request_id, purpose, call_kind, provider, host_email, made_by)
+          values (gen_random_uuid(), 'standby', 'intro', 'meet', {lit(h)}, 'stress-conc');
+          select pg_sleep(3);
+          commit;
+          select 1 as done;"""
+        claim_read = f"""
+          begin;
+          with picked as (
+            select x.id from public.cockpit_sales_rooms as x
+             where x.host_email = {lit(h)} and x.purpose = 'standby' and x.contact_id is null
+               and x.state in ('requested', 'creating', 'open', 'host_in')
+             order by x.requested_at desc
+             limit 1
+             for update)
+          select (select count(*) from picked)::int as adopted;
+          rollback;"""
+        out = staggered([(refresh, 0), (claim_read, 1)])
+        b = out[1]
+        adopted = int(b[1][0]["adopted"]) if b[0] == "ok" and b[1] else None
+        fresh = q(f"select count(*)::int as n from public.cockpit_sales_rooms where host_email = {lit(h)} "
+                  f"and purpose = 'standby' and state in ('requested', 'creating', 'open', 'host_in')", write=False)[0]["n"]
+        check("a Take during the standby refresh finds the closer's standby room (old or fresh) to adopt",
+              adopted == 1, f"adopted={adopted} fresh_standby_rooms_now={fresh} waited={b[2]}s "
+              f"refresh={'ok' if out[0][0] == 'ok' else out[0][1].text[:120]}")
+    finally:
+        cleanup()
+
+
+def t_r2_sweep_vs_worker():
+    """The worker opening a room (its guarded write, held in a transaction for
+    a few seconds as a slow answer holds it) while the real sweep runs
+    (rolled back) with that room past R2's create timeout: the sweep skips
+    the locked room, never waits on it, never fails it; the worker's open
+    lands. Then twenty sweeps at once (rolled back): exactly one runs."""
+    in_window()
+    try:
+        run = f"{RUN}-run"
+        rid = q(room_sql(0, state="creating", extra={"worker_run": run}))[0]["id"]
+        q(f"update public.cockpit_sales_rooms set claimed_at = now() - interval '5 minutes', requested_at = now() - interval '5 minutes' "
+          f"where id = {lit(rid)}")
+        worker = f"""
+          begin;
+          update public.cockpit_sales_rooms set state = 'open', join_url = 'https://meet.google.com/str-ess-tst',
+                 provider_meeting_id = 'stress', opened_at = now(), error = null, version = version + 1
+           where id = {lit(rid)} and state = 'creating' and worker_run = {lit(run)};
+          select pg_sleep(4);
+          commit;
+          select 1 as done;"""
+        sweep = """
+          begin;
+          create temp table sw_t on commit drop as select clock_timestamp() as t0;
+          create temp table sw_out on commit drop as select public.cockpit_sales_rooms_sweep() as r;
+          select (r ? 'skipped') as skipped, coalesce((r ->> 'create_timeout')::int, -1) as create_timeout,
+                 coalesce(r -> 'errors', '[]'::jsonb)::text as errors,
+                 round(extract(epoch from clock_timestamp() - (select t0 from sw_t))::numeric, 2)::float as secs from sw_out;
+          rollback;"""
+        out = staggered([(worker, 0), (sweep, 1)])
+        s = out[1]
+        res = s[1][0] if s[0] == "ok" and s[1] else {}
+        row = q(f"select state from public.cockpit_sales_rooms where id = {lit(rid)}", write=False)[0]
+        check("the sweep runs past a room the worker is opening (skip locked): no wait, no failure, the open lands",
+              s[0] == "ok" and not res.get("skipped") and int(res.get("create_timeout", -1)) == 0 and res.get("errors") == "[]"
+              and float(res.get("secs", 99)) < 2.0 and row["state"] == "open",
+              f"sweep={res or s[1].text[:160]} room={row['state']}")
+        cleanup()
+        in_window()
+        many = """
+          begin;
+          create temp table sw_many on commit drop as select public.cockpit_sales_rooms_sweep() as r;
+          select pg_sleep(1.5);
+          select (r ? 'skipped') as skipped from sw_many;
+          rollback;"""
+        out = burst([many for _ in range(20)])
+        ran = [o for o in out if o[0] == "ok" and o[1] and o[1][0].get("skipped") is False]
+        errs = [o[1].text[:120] for o in out if o[0] == "err"]
+        check("twenty sweeps at once (rolled back): exactly one runs, the rest step aside", len(ran) == 1 and not errs,
+              f"ran={len(ran)} errors={errs[:2]}")
+    finally:
+        cleanup()
+
+
 CHECKS = {
     "lease": t_lease,
     "same_request": t_same_request,
@@ -468,6 +689,10 @@ CHECKS = {
     "worker_vs_cancel": t_worker_vs_cancel,
     "claim": t_claim_statement,
     "claim_fn": t_claim_function_same_closer,
+    "r2_decline": t_r2_decline,
+    "r2_claim_other_room": t_r2_claim_other_room,
+    "r2_standby_refresh": t_r2_standby_refresh_vs_claim,
+    "r2_sweep_vs_worker": t_r2_sweep_vs_worker,
 }
 
 

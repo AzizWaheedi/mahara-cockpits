@@ -207,6 +207,17 @@ export function pickZoomRoom(
   return { room: true, room_id: null };
 }
 
+/**
+ * The event without the person's name and email (their Zoom ids and times
+ * stay): what the door keeps of a meeting it could not tell is a room.
+ */
+export function withoutPerson(d: ZoomDetail): ZoomDetail {
+  const p = d.payload.object.participant;
+  if (!p) return d;
+  const { user_name: _name, email: _email, ...rest } = p;
+  return { ...d, payload: { ...d.payload, object: { ...d.payload.object, participant: rest } } };
+}
+
 /** room_events.kind for a Zoom event: "zoom." plus Zoom's own name. */
 export function zoomKind(event: string): string {
   return `zoom.${event}`;

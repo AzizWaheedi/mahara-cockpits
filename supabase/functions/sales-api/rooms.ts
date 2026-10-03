@@ -118,6 +118,9 @@ const UNLINKED = "__unlinked";
 /** The offer is gone (taken, ended, never yours): the strip's "gone". */
 export const OFFER_GONE = "This offer has ended.";
 
+/** The note on the settle's no-show (index.ts markAppointment keeps it on the disposition). */
+export const SETTLE_NOTE = "Nobody joined the video room, so the intro is marked a no-show.";
+
 /** The words room.event and the screens use that roomlogic does not hold. */
 export const ROOMS_COPY = {
   room_missing: "That room is not here any more. Reload the page.",
@@ -139,6 +142,15 @@ export const ROOMS_COPY = {
   count_unclear_alert:
     "Room {code}: HighLevel may have made the live booking, but its answer was lost and no booking could be found. Check the lead's calendar before anyone books by hand.",
   mark_intro_alert: "Room {code}: the booked intro was not marked a no-show because {why}. Mark it shown or a no-show.",
+  /** The {why} in mark_intro_alert when the settle's no-show was refused for good. */
+  settle_refused_why: "the no-show could not be written",
+  undo_unknown_alert:
+    "Room {code}: That was not the lead was pressed, but the count's record of how the call was before is missing, so nothing was put back. Put the call back by hand in HighLevel.",
+  count_confirm_manager: "Only a manager can count a join that was marked by hand.",
+  count_confirm_off: "Live calls are not counted at the join yet, so there is nothing to confirm.",
+  count_confirm_nothing: "This join is not waiting to be confirmed. Reload the room.",
+  count_confirm_alert:
+    "Room {code}: {name} joined, but only a press of The lead is in says so. A manager counts it from the room panel, or leaves it uncounted.",
   undo_stuck_alert: "Room {code}: That was not the lead was pressed, and the live booking could not be taken back in HighLevel. Remove it by hand.",
   count_unread_alert: "Room {code}: the lead joined, and the lead's booked calls could not be read, so nothing was counted yet. Check HighLevel.",
 } as const;
@@ -201,6 +213,12 @@ export interface MarkOpts {
   anyRep?: boolean;
   /** The mark changes the status in HighLevel without its automations. */
   quiet?: boolean;
+  /**
+   * A timer's mark: written only where no mark stands, in the same step
+   * (insert without superseding; the one-current-mark index refuses a second).
+   * A person's mark is never superseded by it: refused with code "marked".
+   */
+  onlyIfUnmarked?: boolean;
 }
 
 export interface SendTextInput {
@@ -260,6 +278,11 @@ export interface RoomDeps {
 // ---------------------------------------------------------------------------
 
 const lower = (v: unknown) => String(v ?? "").trim().toLowerCase();
+/** A short status word, or null when there is none. */
+const str20 = (v: unknown): string | null => {
+  const t = typeof v === "string" ? v.trim() : "";
+  return t ? t.slice(0, 20) : null;
+};
 const obj = (v: unknown): Row => (v && typeof v === "object" && !Array.isArray(v) ? (v as Row) : {});
 const isoAt = (t: number) => new Date(t).toISOString();
 
@@ -616,6 +639,17 @@ export function makeRooms(deps: RoomDeps): Rooms {
         String(appt.contact_id ?? "") === String(a.contact_id ?? "") &&
         !["cancelled", "invalid"].includes(String(appt.status ?? "")),
     );
+    // The room carries the intro (the settle marks it a no-show, the count
+    // marks it shown) only when the call is the host's own, or a manager made
+    // the room: the same rule as room.wrap and the dialer's mark. A seat's room
+    // for another rep's intro is a plain room for the lead.
+    let ownIntro = false;
+    if (bookedIntro) {
+      const assigned = String(appt?.assigned_user_id ?? "");
+      const hostGhl =
+        lower(a.who.email) === a.host ? (a.who.ghl_user_id ?? null) : (((await personOf(a.host).catch(() => null))?.ghl_user_id as string | null) ?? null);
+      ownIntro = a.who.manager === true || (Boolean(assigned) && Boolean(hostGhl) && assigned === hostGhl);
+    }
     const no = createRefusal({
       setting: a.setting,
       purpose: a.purpose,
@@ -653,12 +687,12 @@ export function makeRooms(deps: RoomDeps): Rooms {
         now,
         trigger: a.trigger ?? null,
         attempt_id: isUuid(a.attempt_id) ? a.attempt_id : null,
-        appointment_id: a.appointment_id && bookedIntro ? a.appointment_id : null,
+        appointment_id: a.appointment_id && bookedIntro && ownIntro ? a.appointment_id : null,
         handover_id: a.handover_id ?? null,
       }),
       contact_first_name: greetingName(contact?.firstName, contact?.name) || null,
       // The intro's start as it stands now: a later move of that intro is never settled by this room.
-      appointment_start_at: bookedIntro && appt?.start_at ? String(appt.start_at) : null,
+      appointment_start_at: bookedIntro && ownIntro && appt?.start_at ? String(appt.start_at) : null,
     };
     // The database picks a code no room has (the guard trigger).
     delete row.code;
@@ -826,6 +860,33 @@ export function makeRooms(deps: RoomDeps): Rooms {
       await carryOut(room, applied.effects);
     }
     return { room: await view(room, setting) };
+  }
+
+  /**
+   * room.count_confirm (managers): a join only a hand press reported
+   * (count_result self_reported) is counted as the lead's own, as if Zoom or
+   * the short link had seen them. Audited; the room's count alert is resolved.
+   */
+  async function roomCountConfirm(who: Who, b: Row): Promise<Row> {
+    const id = roomIdOf(b.room_id);
+    if (!who.manager) throw plain(ROOMS_COPY.count_confirm_manager, 403, "not_manager");
+    const { rooms: setting } = await roomsAndLive();
+    const room = await readRoom(id);
+    if (!room) throw plain(ROOMS_COPY.room_missing, 404, "gone");
+    if (!setting.count_on_join) throw plain(ROOMS_COPY.count_confirm_off, 409, "disabled");
+    if (room.count_result !== "self_reported" || !leadJoined(room))
+      throw plain(ROOMS_COPY.count_confirm_nothing, 409, "nothing_to_confirm");
+    await deps.audit(who, "room.count_confirm", ROOMS, room.id, { count_result: room.count_result }, { confirmed: true }, {
+      contact_id: room.contact_id,
+    });
+    await runCount(room.id, true);
+    const after = (await readRoom(room.id)) ?? room;
+    if (after.count_result !== "self_reported") {
+      await io
+        .rpc("cockpit_sales_alert_set", { p_key: `room:${room.id}:count_confirm`, p_on: false, p_kind: "room_count_confirm", p_subject: null, p_message: null, p_detail: null })
+        .catch(() => null);
+    }
+    return { room: await view(after, setting) };
   }
 
   async function roomEnd(who: Who, b: Row): Promise<Row> {
@@ -1295,12 +1356,23 @@ export function makeRooms(deps: RoomDeps): Rooms {
     return evs.some(e => obj(e.detail).role === "lead");
   }
 
-  /** Another room of this lead's already counted a call today (a booking or a move that stands). */
+  /**
+   * Another room of this lead's already counted this kind of call today: a
+   * live booking or a move that stands, the booked intro marked shown (a mark
+   * keeps count_result empty and sets count_appointment_id), or a booking
+   * whose answer was lost (unclear: it may stand, and missing is never zero).
+   */
   async function standingCount(room: RoomRow): Promise<boolean> {
     const rows = await io.db(
-      `${ROOMS}?contact_id=eq.${enc(String(room.contact_id))}&id=neq.${enc(room.id)}&count_result=in.(booked,moved)&count_appointment_id=not.is.null&lead_in_at=gte.${enc(kuwaitMidnight(io.now()))}&select=id&limit=1`,
+      `${ROOMS}?contact_id=eq.${enc(String(room.contact_id))}&id=neq.${enc(room.id)}&lead_in_at=gte.${enc(kuwaitMidnight(io.now()))}&count_claimed_at=not.is.null&select=id,call_kind,count_result,count_appointment_id,count_undo_at&limit=50`,
     );
-    return rows.length > 0;
+    return rows.some(r => {
+      if (r.call_kind && room.call_kind && r.call_kind !== room.call_kind) return false;
+      const result = r.count_result ?? null;
+      if (result === "unclear") return true;
+      if ((result === "booked" || result === "moved") && r.count_appointment_id) return true;
+      return result === null && Boolean(r.count_appointment_id) && !r.count_undo_at;
+    });
   }
 
   /** HighLevel's appointment by id (its own words for the fields); null when it cannot be read. */
@@ -1387,12 +1459,17 @@ export function makeRooms(deps: RoomDeps): Rooms {
     }
   }
 
-  async function runCount(roomId: string): Promise<void> {
+  /**
+   * The live count for a room whose lead joined. `confirmed`: a manager
+   * confirmed a join only a hand press reported (room.count_confirm), so it
+   * counts as the lead's own evidence and a self_reported claim is taken again.
+   */
+  async function runCount(roomId: string, confirmed = false): Promise<void> {
     const room = await readRoom(roomId);
     if (!room?.contact_id) return;
     const raw = await settingsOf(["rooms", "calendars"]);
     const setting = roomsSetting(raw.rooms);
-    if (!setting.count_on_join || !countClaimable(room) || !leadJoined(room)) return;
+    if (!setting.count_on_join || !countClaimable(room, confirmed) || !leadJoined(room)) return;
     const [contact, host, appt, marks] = await Promise.all([
       readContact(room.contact_id),
       hostWho(room.host_email),
@@ -1428,14 +1505,23 @@ export function makeRooms(deps: RoomDeps): Rooms {
       standing_count: standing,
       lead_evidence: evidence,
       appointment_shown: marks.some(m => m.status === "showed") || String(appt?.status ?? "") === "showed",
+      confirmed,
     });
-    const claim = countClaim(room, io.now(), plan);
+    const claim = countClaim(room, io.now(), plan, confirmed);
     if (!claim) return;
     const claimed = await patchRoom(room.id, claim.patch, claim.expect);
     if (!claimed) return; // another count holds it
     const claimedAt = String(claimed.count_claimed_at ?? claim.patch.count_claimed_at);
     if (plan.action === "none") {
       await deps.audit(DESK, "room.count", ROOMS, room.id, null, { result: plan.count_result, reason: plan.reason });
+      // Only a hand press says the lead came: a manager decides, and is told so.
+      if (plan.count_result === "self_reported")
+        await raise(
+          `room:${room.id}:count_confirm`,
+          "room_count_confirm",
+          room,
+          fill(ROOMS_COPY.count_confirm_alert, { code: room.code, name: greetingName(contact.firstName, contact.name) || "The lead" }),
+        );
       return;
     }
     if (plan.action === "mark") return await countMark(room, claimedAt, plan.appointment_id, host, appt, marks);
@@ -1466,7 +1552,8 @@ export function makeRooms(deps: RoomDeps): Rooms {
       // "That was not the lead" came in while the count ran: take back what it made, then say so.
       const cur = (await readRoom(room.id)) ?? room;
       try {
-        await undoPlan({ ...cur, ...done, count_claimed_at: claimedAt }, before);
+        if (!(await undoPlan({ ...cur, ...done, count_claimed_at: claimedAt }, before)))
+          throw new Error("what the count made could not be planned back");
         await patchRoom(room.id, { count_result: "undone" }, { count_claimed_at: cur.count_claimed_at ?? null, count_result: cur.count_result ?? null });
         await deps.audit(DESK, "room.count", ROOMS, room.id, null, { result: "undone", made: done }, meta);
       } catch (e) {
@@ -1483,9 +1570,29 @@ export function makeRooms(deps: RoomDeps): Rooms {
 
   /** Marks the booked intro shown, recording first what it was, so the undo puts back the status and the rep's own mark. */
   async function countMark(room: RoomRow, claimedAt: string, apptId: string, host: Who, appt: Row | null, marks: Row[]): Promise<void> {
+    if (!(await hostMayMark(room, appt, host))) {
+      // A room carrying another rep's intro (made before room.create checked
+      // whose call it is): never marked with a manager's rights.
+      await countResult(room, claimedAt, { count_result: "failed", count_appointment_id: null }, "the intro is booked with another rep", {
+        plan: "mark",
+        appointment_id: apptId,
+        reason: "booked_other_rep",
+      });
+      return;
+    }
     const prior = marks[0] ?? null;
+    // The status the undo puts back: HighLevel's own, else the rep's active
+    // mark, else the cockpit's copy (which lags HighLevel by minutes), in the
+    // order the calendar view reads them. Nothing readable: no mark now, the
+    // claim goes back and the sweep asks again. Never guessed as confirmed.
+    const ghl = await ghlAppointment(apptId);
+    const status = str20(ghl?.appointmentStatus) ?? str20(prior?.status) ?? str20(appt?.status);
+    if (!status) {
+      await releaseClaim(room, claimedAt);
+      return;
+    }
     const before: CountBefore = {
-      prior_status: String(appt?.status ?? prior?.status ?? "") || "confirmed",
+      prior_status: status,
       prior_disposition_id: prior?.id ? String(prior.id) : null,
     };
     if (!(await recordBefore(room, "count.marking", claimedAt, { appointment_id: apptId, ...before }, "The booked intro is being marked shown."))) {
@@ -1614,7 +1721,16 @@ export function makeRooms(deps: RoomDeps): Rooms {
    */
   async function undoPlan(room: RoomRow, before: unknown): Promise<boolean> {
     const plan = countUndo(room, before);
-    if (plan.action === "none") return plan.reason !== "in_flight";
+    if (plan.action === "none") {
+      if (plan.reason === "moved_from_unknown" || plan.reason === "unmark_unknown") {
+        // The count changed the lead's own call and its record of how the call
+        // was before is missing: nothing can be put back by guessing. The
+        // count stays as it is (never "undone"), and a person is told.
+        await raise(`room:${room.id}:undo_unknown`, "room_count_stuck", room, fill(ROOMS_COPY.undo_unknown_alert, { code: room.code }));
+        return false;
+      }
+      return plan.reason !== "in_flight";
+    }
     if (plan.action === "delete") {
       try {
         await io.ghl("DELETE", `/calendars/events/${enc(plan.appointment_id)}`);
@@ -1670,18 +1786,23 @@ export function makeRooms(deps: RoomDeps): Rooms {
   }
 
   /** The count's own record of what it changed (count.moving, count.marking, or an older count.moved). */
+  /**
+   * The count's own record of what it changed (count.moving, count.marking,
+   * or an older count.moved). A read that fails throws: "no record" is only
+   * ever an answer the database gave, never a read that did not happen.
+   */
   async function countBefore(roomId: string): Promise<Row | undefined> {
-    const rows = await io
-      .db(`${EVENTS}?room_id=eq.${enc(roomId)}&kind=in.(count.moving,count.marking,count.moved)&select=kind,detail&order=at.desc&limit=1`)
-      .catch(() => []);
+    const rows = await io.db(
+      `${EVENTS}?room_id=eq.${enc(roomId)}&kind=in.(count.moving,count.marking,count.moved)&select=kind,detail&order=at.desc&limit=1`,
+    );
     return rows[0]?.detail as Row | undefined;
   }
 
   async function runUndo(roomId: string): Promise<void> {
     const room = await readRoom(roomId);
     if (!room) return;
-    const before = room.count_result === "moved" || (!room.count_result && room.count_appointment_id) ? await countBefore(roomId) : undefined;
     try {
+      const before = room.count_result === "moved" || (!room.count_result && room.count_appointment_id) ? await countBefore(roomId) : undefined;
       const did = await undoPlan(room, before ?? null);
       if (!did) return;
     } catch (e) {
@@ -1958,11 +2079,20 @@ export function makeRooms(deps: RoomDeps): Rooms {
     const contact = await readContact(String(l.contact_id));
     const r = adoptRefusal({ setting, contact_id: String(l.contact_id), contact });
     if (r) throw asRefusal(r);
+    // The taker already hosts a room that is not their empty standby room, a
+    // booked call's room, or this lead's own (an offer made while they were
+    // Ready, then a dial and a room for another lead): refused before anything
+    // moves, so the setter's room with this lead is never closed for a room
+    // the taker cannot have. The claim checks the same under its own lock.
+    const mine = await io.db(`${ROOMS}?host_email=eq.${enc(email)}&state=in.(${LIVE_STATES})&purpose=neq.booked&select=id,purpose,contact_id&limit=10`);
+    if (mine.some(x => !(x.purpose === "standby" && !x.contact_id) && String(x.contact_id ?? "") !== String(l.contact_id)))
+      throw asRefusal(refuse("take_host_busy"));
     let rows: Row[];
     try {
       rows = (await io.rpc("cockpit_sales_live_claim", { p_live_id: liveId, p_email: email, p_version: null })) as Row[];
     } catch (e) {
       if (isUnique(e, "cockpit_sales_live_one_claim_per_closer")) throw plain(ROOM_COPY.refusals.live_call_open, 409, "live_call_open");
+      if (e instanceof DbError && /take_host_busy/.test(e.message)) throw asRefusal(refuse("take_host_busy"));
       if (e instanceof DbError && e.code === "55P03") throw plain(ROOMS_COPY.claim_locked, 503, "busy", { retry: true });
       throw e;
     }
@@ -2101,7 +2231,27 @@ export function makeRooms(deps: RoomDeps): Rooms {
         await io.db(`${EVENTS}?id=eq.${enc(eventId)}`, { method: "PATCH", body: { room_id: room.id }, prefer: "return=minimal" });
     }
     if (!room) {
-      await finishEvent(by, { refused: { code: "no_room", message: "No cockpit room has this meeting." } });
+      // A meeting that is no cockpit room (the webinar, a client call, an
+      // interview on the same Zoom account), kept by the door only because its
+      // room lookup failed: nothing of the people in it stays in a table every
+      // seat can read. The event, its meeting id and time stay for the record.
+      const kept = obj(obj(detail.payload).object);
+      await io.db(`${EVENTS}?id=eq.${enc(eventId)}`, {
+        method: "PATCH",
+        body: {
+          handled_at: isoAt(io.now()),
+          lease_until: null,
+          text: "Zoom: an event for a meeting that is no cockpit room.",
+          detail: {
+            event: detail.event ?? null,
+            event_ts: detail.event_ts ?? null,
+            // No participant and no topic: a topic can name a client or a candidate.
+            payload: { object: { id: kept.id ?? null, uuid: kept.uuid ?? null } },
+            refused: { code: "no_room", message: "No cockpit room has this meeting." },
+          },
+        },
+        prefer: "return=minimal",
+      });
       return { ok: true, handled: true, skipped: "no room" };
     }
     const effect = zoomEffect(detail, await staffCtx(room));
@@ -2232,13 +2382,24 @@ export function makeRooms(deps: RoomDeps): Rooms {
   async function settleFacts(room: RoomRow, appt: Row | null, setting: RoomsSetting, contact: Row | null): Promise<SettleFacts> {
     const start = ms(appt?.start_at);
     const sinceStart = start === null ? null : isoAt(start - 60 * 60 * S);
-    const [byAppt, byLead, events] = await Promise.all([
+    const meeting = room.provider === "zoom" && room.provider_meeting_id ? String(room.provider_meeting_id) : null;
+    const since = isoAt((ms(room.requested_at) ?? ms(room.created_at) ?? io.now()) - 60 * S);
+    const [byAppt, byLead, placed, unplaced] = await Promise.all([
       io.db(`${ROOMS}?appointment_id=eq.${enc(String(room.appointment_id))}&id=neq.${enc(room.id)}&select=*&limit=50`),
       sinceStart && room.contact_id
         ? io.db(`${ROOMS}?contact_id=eq.${enc(room.contact_id)}&id=neq.${enc(room.id)}&requested_at=gte.${enc(sinceStart)}&select=*&limit=50`)
         : Promise.resolve([] as Row[]),
       io.db(`${EVENTS}?room_id=eq.${enc(room.id)}&source=in.(zoom,worker)&select=kind,source,at,handled_at,detail&limit=200`),
+      // A Zoom event the door kept with no room (its lookup ran out of time)
+      // that sales-api has not placed yet: it belongs to this room by its
+      // meeting id, and is read like one placed.
+      meeting
+        ? io.db(
+            `${EVENTS}?room_id=is.null&source=eq.zoom&detail->payload->object->>id=eq.${enc(meeting)}&at=gte.${enc(since)}&select=kind,source,at,handled_at,detail&limit=200`,
+          )
+        : Promise.resolve([] as Row[]),
     ]);
+    const events = [...placed, ...unplaced];
     const siblings = [...byAppt, ...byLead] as unknown as RoomRow[];
     const zoom = events.filter(e => e.source === "zoom");
     const ended = ms(room.ended_at);
@@ -2246,6 +2407,13 @@ export function makeRooms(deps: RoomDeps): Rooms {
       short_link: setting.short_link,
       sibling_joined: siblings.some(r => leadJoined(r) || !isFinal(r.state)),
       zoom_unclear: zoom.some(e => !e.handled_at || obj(e.detail).gave_up === true),
+      zoom_reported: zoom.some(
+        e =>
+          Boolean(e.handled_at) &&
+          obj(e.detail).gave_up !== true &&
+          (e.kind === "zoom.meeting.started" ||
+            ((e.kind === "zoom.meeting.participant_joined" || e.kind === "zoom.meeting.participant_jbh_joined") && obj(e.detail).role === "host")),
+      ),
       late_join: events.some(
         e =>
           e.kind === "worker.held" ||
@@ -2257,6 +2425,37 @@ export function makeRooms(deps: RoomDeps): Rooms {
         isTestContact(room.contact_id, contact?.tags, setting) &&
         String(appt?.calendar_id ?? "") !== String(setting.test_calendar_id ?? ""),
     };
+  }
+
+  /**
+   * Whether the room's host may mark the room's booked intro: it is booked
+   * with them, they are a manager, or a manager made the room for them. The
+   * same rule as room.wrap and the dialer's own mark (refuseMark), checked
+   * again before a timer or the count marks with anyRep.
+   */
+  async function hostMayMark(room: RoomRow, appt: Row | null, host: Who): Promise<boolean> {
+    if (!appt) return false;
+    const assigned = String(appt.assigned_user_id ?? "");
+    if (host.manager || (assigned && host.ghl_user_id && assigned === host.ghl_user_id)) return true;
+    if (room.made_by && lower(room.made_by) !== lower(room.host_email)) {
+      const maker = await personOf(lower(room.made_by)).catch(() => null);
+      if (maker?.role === "manager") return true;
+    }
+    return false;
+  }
+
+  /** settled_mark none (a person marks the intro), once, with its audit row and timeline line. */
+  async function settleNone(room: RoomRow, why: string, alert: string | null): Promise<void> {
+    if (!room.settled_mark) {
+      const none = await patchRoom(room.id, { settled_mark: "none" }, { settled_mark: null }).catch(() => null);
+      if (none)
+        await deps.audit(DESK, "room.settle", ROOMS, room.id, { settled_mark: null }, { settled_mark: "none" }, {
+          appointment_id: room.appointment_id,
+          why,
+        });
+    }
+    if (alert) await raise(`room:${room.id}:mark_intro`, "room_mark_intro", room, fill(ROOMS_COPY.mark_intro_alert, { code: room.code, why: alert }));
+    await note(room.id, "room.settle", fill(EVENT_TEXT.settle_skipped, { why }), {}, `room.settle:${room.id}`);
   }
 
   async function settle(roomIds: string[]): Promise<Row> {
@@ -2278,14 +2477,25 @@ export function makeRooms(deps: RoomDeps): Rooms {
         const [appt, marks, contact] = await Promise.all([
           appointment(room.appointment_id),
           room.appointment_id
-            ? io.db(`cockpit_sales_dispositions?appointment_id=eq.${enc(room.appointment_id)}&superseded_at=is.null&select=status`)
+            ? io.db(`cockpit_sales_dispositions?appointment_id=eq.${enc(room.appointment_id)}&superseded_at=is.null&select=status,marked_by,note`)
             : Promise.resolve([]),
           room.contact_id ? readContact(room.contact_id) : Promise.resolve(null),
         ]);
         if (room.contact_id && !contact) {
-          // The contact could not be read (a test contact is told by its tag): try again next sweep.
+          // The contact could not be read (a test contact is told by its tag):
+          // released, so the sweep posts it again. Each try is counted when
+          // room.event leases it; after ten, the sweep gives it up and a
+          // person is told which intro to mark.
           await releaseEvent(by);
           results.push({ room_id: roomId, handled: false, skipped: "contact not read" });
+          continue;
+        }
+        const host = await hostWho(room.host_email);
+        // The timer's own no-show from an earlier try that stopped before it
+        // wrote settled_mark: that try's record is finished, nothing is marked again.
+        const own = marks.find(m => m.status === "noshow" && m.note === SETTLE_NOTE && lower(m.marked_by) === lower(host.email));
+        if (own && marks.length === 1 && !room.settled_mark) {
+          await settled(room, by, results);
           continue;
         }
         const marked =
@@ -2305,50 +2515,62 @@ export function makeRooms(deps: RoomDeps): Rooms {
             : !appt
               ? "the booked call is not in the cockpit"
               : doubt ?? "this room was not for the intro as it is booked now";
-          if (!room.settled_mark) {
-            const none = await patchRoom(room.id, { settled_mark: "none" }, { settled_mark: null }).catch(() => null);
-            if (none)
-              await deps.audit(DESK, "room.settle", ROOMS, room.id, { settled_mark: null }, { settled_mark: "none" }, {
-                appointment_id: room.appointment_id,
-                why,
-              });
-          }
           // Not evidence that nobody came: a person marks the intro, never the timer.
-          if (doubt) await raise(`room:${room.id}:mark_intro`, "room_mark_intro", room, fill(ROOMS_COPY.mark_intro_alert, { code: room.code, why: doubt }));
+          await settleNone(room, why, doubt);
           await finishEvent(by, { skipped: why });
-          await note(room.id, "room.settle", fill(EVENT_TEXT.settle_skipped, { why }), {}, `room.settle:${room.id}`);
           results.push({ room_id: roomId, handled: true, skipped: why });
           continue;
         }
-        const host = await hostWho(room.host_email);
+        if (!(await hostMayMark(room, appt, host))) {
+          // A room carrying another rep's intro (made before room.create
+          // checked whose call it is): that rep marks their own call.
+          const why = "the intro is booked with another rep";
+          await settleNone(room, why, null);
+          await finishEvent(by, { skipped: why });
+          results.push({ room_id: roomId, handled: true, skipped: why });
+          continue;
+        }
         try {
           // quiet: a timer never sets off HighLevel's no-show automations at the lead.
+          // onlyIfUnmarked: a person's mark that landed while this ran stands.
           await deps.markAppointment(host, String(room.appointment_id), "noshow", {
             anyRep: true,
             quiet: true,
-            note: "Nobody joined the video room, so the intro is marked a no-show.",
+            onlyIfUnmarked: true,
+            note: SETTLE_NOTE,
           });
         } catch (e) {
           if (e instanceof ApiRefusal) {
+            const already = e.extra.code === "marked";
+            const why = already ? "the call was already marked" : `the no-show was refused: ${redact(e.message).slice(0, 200)}`;
+            // Refused for good: the no-show was not written, so a person marks
+            // the intro (never left as confirmed, which B2B counts as shown).
+            await settleNone(room, why, already ? null : ROOMS_COPY.settle_refused_why);
             await finishEvent(by, { refused: { message: e.message, status: e.status } });
             results.push({ room_id: roomId, handled: true, refused: e.message });
             continue;
           }
           throw e;
         }
-        await patchRoom(room.id, { settled_mark: "noshow" }, { settled_mark: null });
-        await deps.audit(DESK, "room.settle", ROOMS, room.id, { settled_mark: null }, { settled_mark: "noshow" }, {
-          appointment_id: room.appointment_id,
-        });
-        await note(room.id, "room.settle", EVENT_TEXT.settled, {}, `room.settle:${room.id}`);
-        await finishEvent(by, { settled: "noshow" });
-        results.push({ room_id: roomId, handled: true, settled: "noshow" });
+        await settled(room, by, results);
       } catch (e) {
         await releaseEvent(by);
         results.push({ room_id: roomId, handled: false, error: redact(String((e as Error)?.message ?? e)) });
       }
     }
     return { handled: results.filter(r => r.handled).length, results };
+  }
+
+  /** The settle's no-show is written: settled_mark, one audit row, the timeline line, the event finished. */
+  async function settled(room: RoomRow, by: { dedupe_key: string }, results: Row[]): Promise<void> {
+    const landed = await patchRoom(room.id, { settled_mark: "noshow" }, { settled_mark: null });
+    if (landed)
+      await deps.audit(DESK, "room.settle", ROOMS, room.id, { settled_mark: null }, { settled_mark: "noshow" }, {
+        appointment_id: room.appointment_id,
+      });
+    await note(room.id, "room.settle", EVENT_TEXT.settled, {}, `room.settle:${room.id}`);
+    await finishEvent(by, { settled: "noshow" });
+    results.push({ room_id: room.id, handled: true, settled: "noshow" });
   }
 
   /** The tick (S1): no timers here, only the re-asks and alerts SQL cannot do. */
@@ -2457,6 +2679,7 @@ export function makeRooms(deps: RoomDeps): Rooms {
       "room.status": roomStatus,
       "room.open": roomOpen,
       "room.mark": roomMark,
+      "room.count_confirm": roomCountConfirm,
       "room.end": roomEnd,
       "room.send": roomSend,
       "room.wrap": roomWrap,

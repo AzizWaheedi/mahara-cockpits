@@ -95,6 +95,11 @@ select case host_email when 's1@stress.invalid' then 'meet_opened' when 's2@stre
 -- intro it was made for: 20261003d roomForThisStart).
 update public.cockpit_sales_rooms as x set requested_at = x.opened_at - interval '30 seconds'
   from pg_temp.sn_rooms as r where r.id = x.id;
+-- Zoom reported the plain room's meeting (its start, read by room.event):
+-- only then is Zoom's silence about the lead evidence (20261003d).
+insert into public.cockpit_sales_room_events (room_id, kind, source, dedupe_key, at, handled_at)
+select r.id, 'zoom.meeting.started', 'zoom', 'stress-numbers-started-' || r.id::text, now() - interval '24 minutes', now() - interval '24 minutes'
+  from pg_temp.sn_rooms as r where r.name = 'plain';
 
 -- 5. An open Zoom room whose lead never came: the sweep closes it, and the close leaves an audit row.
 insert into public.cockpit_sales_rooms

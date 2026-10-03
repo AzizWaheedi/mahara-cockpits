@@ -32,7 +32,21 @@ export const APPROVED_KEEP_MS = 72 * 3_600_000;
  * is not at fault, so it is never set aside for a person.
  */
 export const STATE_RACE =
-  /someone else has just dealt with this draft|this draft was already|not approved to go yet|paused or stopped|is held, so it was not sent|backlog opener was taken back/i;
+  /someone else has just dealt with this draft|this draft was already|not approved to go yet|paused or stopped|is held, so it was not sent|backlog opener was taken back|kind of opener is off|already going out/i;
+
+/**
+ * Refusals about the template's setup, not the lead (the template not set up
+ * or not in the cockpit, the HighLevel contact fields not set): they hold
+ * every opener of that template, so the batch waits in the queue (hold_all,
+ * code setup) and nothing is set aside lead by lead.
+ */
+export const SETUP_FAULT =
+  /template is not set up|whatsapp template is not in the cockpit|contact fields? (?:for the room code and the call's time )?are not set|setting wa_fields/i;
+
+/** held_by while followup.send_due sends an opener: a Hold that lands now is told it is already going out. */
+export const SENDING = "sales-desk:sending";
+/** A sending mark older than this is a send that stopped half way: the next send_due may take it again. */
+export const SENDING_STALE_MS = 5 * 60_000;
 
 export const AGENT_COPY = {
   manager_only: "Only a sales manager can change this.",
@@ -61,6 +75,11 @@ export const AGENT_COPY = {
   kind_bad: "That is not a kind of follow-up.",
   lead_missing: "That lead is not in the cockpit.",
   opener_booked: "The lead has a call booked now, so the backlog opener was taken back.",
+  sending: "This opener is already going out, so it cannot be held now.",
+  raced: "Someone else has just dealt with this draft.",
+  kind_off: "This kind of opener is off ({kind}), so it waits in the queue. A manager switches it back on under Follow-ups, or pauses the wave.",
+  batch_partial:
+    "{done} of {total} openers were approved and go from {time}, one every {gap} seconds. The rest were not: press Approve all again for them.",
 } as const;
 
 export interface AgentDeps {
@@ -76,6 +95,24 @@ const refusal = (message: string, status = 409, extra: Row = {}) => new ApiRefus
 const holdAll = (message: string, status = 409) => new ApiRefusal(message, status, { hold_all: true });
 const lower = (v: unknown) => String(v ?? "").trim().toLowerCase();
 const obj = (v: unknown): Row => (v && typeof v === "object" && !Array.isArray(v) ? (v as Row) : {});
+
+/** "14:02", Kuwait time (no daylight saving). */
+function kuwaitClock(t: number): string {
+  return new Date(t + 3 * 3_600_000).toISOString().slice(11, 16);
+}
+
+/** A backlog opener's meta as the desk writes it: its wave and its kind, from the draft's own context. */
+export function openerMeta(f: Row): Row {
+  const c = obj(f.context);
+  const wave = String(c.wave_id ?? "");
+  const lang = String(c.language ?? "");
+  const channel = String(f.channel ?? "");
+  const kind = `reactivate.${lang}.${channel}`;
+  return {
+    ...(UUID.test(wave) ? { wave_id: wave } : {}),
+    ...(f.segment === "reactivate" && KIND_KEY.test(kind) ? { kind_key: kind } : {}),
+  };
+}
 
 function needManager(who: Who): void {
   if (!who.manager) throw refusal(AGENT_COPY.manager_only, 403);
@@ -202,14 +239,14 @@ export function makeFollowupAgent(deps: AgentDeps): { actions: Record<string, Ac
    * Approve all never lifts it. The desk's set-aside (held_by sales-desk) is
    * a refusal a manager's approval answers, so that one is cleared.
    */
-  const repHold = (m: Row | undefined) => Boolean(m?.held_by) && lower(m?.held_by) !== "sales-desk";
+  const repHold = (m: Row | undefined) => Boolean(m?.held_by) && lower(m?.held_by) !== "sales-desk" && lower(m?.held_by) !== SENDING;
 
   /**
    * One opener's approval, written only where no person holds it: a Hold
    * that lands first wins, and one that lands after holds it again (the
    * desk's send_due refuses a held draft). Answers whether it was approved.
    */
-  async function approveOne(id: string, patch: Row): Promise<boolean> {
+  async function approveOne(id: string, patch: Row, made_with: Row = {}): Promise<boolean> {
     for (const guard of ["held_by=is.null", "held_by=eq.sales-desk"]) {
       const rows = await io.db(`cockpit_sales_followup_meta?followup_id=eq.${enc(id)}&${guard}`, {
         method: "PATCH",
@@ -218,10 +255,12 @@ export function makeFollowupAgent(deps: AgentDeps): { actions: Record<string, Ac
       });
       if (rows.length) return true;
     }
-    // No meta row yet: made here, unless a Hold made it first.
+    // No meta row yet (the desk stopped between the draft and its meta): made
+    // here with the draft's own wave and kind, so a paused wave still holds
+    // it, unless a Hold made it first.
     const made = await io.db("cockpit_sales_followup_meta?on_conflict=followup_id", {
       method: "POST",
-      body: { followup_id: id, ...patch, held_by: null, hold_reason: null },
+      body: { followup_id: id, ...made_with, ...patch, held_by: null, hold_reason: null },
       prefer: "resolution=ignore-duplicates,return=representation",
     });
     if (made.length) return true;
@@ -264,7 +303,7 @@ export function makeFollowupAgent(deps: AgentDeps): { actions: Record<string, Ac
     }
     if (!ids.length) throw refusal(AGENT_COPY.batch_empty, 409);
     if (ids.length > BATCH_MAX) throw refusal(AGENT_COPY.batch_too_many, 400);
-    const drafts = await io.db(`cockpit_sales_followups?id=in.(${ids.map(enc).join(",")})&select=id,status,segment,owner_email,expires_at`);
+    const drafts = await io.db(`cockpit_sales_followups?id=in.(${ids.map(enc).join(",")})&select=id,status,segment,owner_email,expires_at,channel,context`);
     if (drafts.length !== ids.length || drafts.some(d => d.status !== "draft")) throw refusal(AGENT_COPY.batch_not_open, 409);
     if (drafts.some(d => d.segment !== "reactivate")) throw refusal(AGENT_COPY.batch_not_opener, 409);
     for (const d of drafts) mayAct(who, d);
@@ -274,27 +313,60 @@ export function makeFollowupAgent(deps: AgentDeps): { actions: Record<string, Ac
     const sorted = [...drafts].sort((a, c) => (order.get(String(a.id)) ?? 0) - (order.get(String(c.id)) ?? 0));
     const approved: string[] = [];
     let i = 0;
-    for (const d of sorted) {
-      const sendAfter = start + i * gap * 1000;
-      const ok = await approveOne(String(d.id), { send_after: iso(sendAfter), approved_by: lower(who.email), approved_at: iso(start) });
-      if (!ok) {
-        // A rep held it (before or while this press ran): the hold stands.
-        held.push(String(d.id));
-        continue;
+    try {
+      for (const d of sorted) {
+        const sendAfter = start + i * gap * 1000;
+        const ok = await approveOne(
+          String(d.id),
+          { send_after: iso(sendAfter), approved_by: lower(who.email), approved_at: iso(start) },
+          openerMeta(d),
+        );
+        if (!ok) {
+          // A rep held it (before or while this press ran): the hold stands.
+          held.push(String(d.id));
+          continue;
+        }
+        approved.push(String(d.id));
+        // An approved opener waits for the lead's hours and day off, and never
+        // goes stale meanwhile: it may go until 72 hours past its turn.
+        const keep = sendAfter + APPROVED_KEEP_MS;
+        if (!d.expires_at || Date.parse(String(d.expires_at)) < keep)
+          await io
+            .db(`cockpit_sales_followups?id=eq.${enc(String(d.id))}&status=eq.draft`, {
+              method: "PATCH",
+              body: { expires_at: iso(keep) },
+              prefer: "return=minimal",
+            })
+            .catch(e => io.log(`followups: an approved opener's expiry was not moved: ${redact(String((e as Error)?.message ?? e))}`));
+        i++;
       }
-      approved.push(String(d.id));
-      // An approved opener waits for the lead's hours and day off, and never
-      // goes stale meanwhile: it may go until 72 hours past its turn.
-      const keep = sendAfter + APPROVED_KEEP_MS;
-      if (!d.expires_at || Date.parse(String(d.expires_at)) < keep)
-        await io
-          .db(`cockpit_sales_followups?id=eq.${enc(String(d.id))}&status=eq.draft`, {
-            method: "PATCH",
-            body: { expires_at: iso(keep) },
-            prefer: "return=minimal",
-          })
-          .catch(e => io.log(`followups: an approved opener's expiry was not moved: ${redact(String((e as Error)?.message ?? e))}`));
-      i++;
+    } catch (e) {
+      // A write failed part way (a database stall): what went through is
+      // scheduled and the desk sends it, so it is audited now and the answer
+      // names it. Nothing went through: the error stands as it is.
+      if (!approved.length) throw e;
+      const err = redact(String((e as Error)?.message ?? e)).slice(0, 200);
+      const partial: Row = {
+        count: approved.length,
+        of: sorted.length,
+        first_at: iso(start),
+        last_at: iso(start + (approved.length - 1) * gap * 1000),
+        gap_s: gap,
+        partial: true,
+        error: err,
+      };
+      await deps
+        .audit(who, "followup.batch", "cockpit_sales_followup_meta", null, null, partial, { ids: approved, held })
+        .catch(a => io.log(`followups: the part-way batch was not audited: ${redact(String((a as Error)?.message ?? a))}`));
+      throw refusal(
+        AGENT_COPY.batch_partial
+          .replace("{done}", String(approved.length))
+          .replace("{total}", String(sorted.length))
+          .replace("{time}", kuwaitClock(start))
+          .replace("{gap}", String(gap)),
+        503,
+        { code: "partial", approved: approved.length, ids: approved },
+      );
     }
     if (!approved.length) throw refusal(AGENT_COPY.batch_all_held, 409);
     const out: Row = {
@@ -310,17 +382,44 @@ export function makeFollowupAgent(deps: AgentDeps): { actions: Record<string, Ac
 
   // ------------------------------------------------------------- followup.hold
 
+  /** followup.send_due's mark on an opener it is sending right now (not one left by a send that stopped half way). */
+  const sendingNow = (m: Row | null | undefined) =>
+    lower(m?.held_by) === SENDING && (Date.parse(String(m?.held_at ?? "")) || 0) > io.now() - SENDING_STALE_MS;
+
   async function hold(who: Who, b: Row): Promise<Row> {
     const f = await draft(String(b.id ?? ""));
     mayAct(who, f);
     const on = b.on === true;
-    const before = await metaOf(String(f.id));
-    const meta = await putMeta(
-      String(f.id),
-      on ? { held_by: lower(who.email), hold_reason: cleanText(b.reason, 300) || null } : { held_by: null, hold_reason: null },
-    );
-    await deps.audit(who, on ? "followup.hold" : "followup.unhold", "cockpit_sales_followup_meta", String(f.id), before, meta);
-    return { meta };
+    const id = String(f.id);
+    if (on && f.status !== "draft") throw refusal(f.status === "sending" ? AGENT_COPY.sending : AGENT_COPY.not_draft.replace("{status}", String(f.status)));
+    const want = on ? { held_by: lower(who.email), held_at: iso(io.now()), hold_reason: cleanText(b.reason, 300) || null } : { held_by: null, hold_reason: null };
+    // Written only from what was read: a send that claimed the opener in
+    // between wins (it is already going out), and the press says so; it
+    // never shows as held while the opener goes.
+    for (let i = 0; i < 3; i++) {
+      const before = await metaOf(id);
+      if (sendingNow(before)) throw refusal(AGENT_COPY.sending);
+      let rows: Row[];
+      if (!before) {
+        rows = await io.db("cockpit_sales_followup_meta?on_conflict=followup_id", {
+          method: "POST",
+          body: { followup_id: id, ...openerMeta(f), ...want },
+          prefer: "resolution=ignore-duplicates,return=representation",
+        });
+      } else {
+        const guard = before.held_by ? `held_by=eq.${enc(String(before.held_by))}` : "held_by=is.null";
+        rows = await io.db(`cockpit_sales_followup_meta?followup_id=eq.${enc(id)}&${guard}`, {
+          method: "PATCH",
+          body: want,
+          prefer: "return=representation",
+        });
+      }
+      if (rows.length) {
+        await deps.audit(who, on ? "followup.hold" : "followup.unhold", "cockpit_sales_followup_meta", id, before, rows[0]);
+        return { meta: rows[0] };
+      }
+    }
+    throw refusal("This opener changed a moment ago. Reload the page.", 409);
   }
 
   // ------------------------------------------------------------- followup.send_due (desk)
@@ -342,12 +441,28 @@ export function makeFollowupAgent(deps: AgentDeps): { actions: Record<string, Ac
     const followups = obj(s.followups);
     if (followups.enabled === false) throw holdAll(AGENT_COPY.agent_off);
     if (f.status !== "draft") throw refusal(AGENT_COPY.not_draft.replace("{status}", String(f.status)));
-    if (!meta || meta.held_by) throw refusal(AGENT_COPY.held);
+    // A sending mark left by a send that stopped half way (the draft is still
+    // a draft) is no hold: this send takes it again.
+    const staleMark = lower(meta?.held_by) === SENDING && !sendingNow(meta);
+    // Another send_due is sending it right now: this one only lost the race.
+    if (sendingNow(meta)) throw refusal(AGENT_COPY.raced);
+    if (!meta || (meta.held_by && !staleMark)) throw refusal(AGENT_COPY.held);
     const due = Date.parse(String(meta.send_after ?? ""));
     if (!Number.isFinite(due) || due > io.now()) throw refusal(AGENT_COPY.not_due);
-    if (meta.wave_id) {
-      const w = (await io.db(`cockpit_sales_followup_waves?id=eq.${enc(String(meta.wave_id))}&select=state`))[0];
+    // The opener's wave: its meta's, else the draft's own (a meta row made
+    // without it), so a paused or stopped wave always holds it.
+    const own = openerMeta(f);
+    const waveId = (meta.wave_id as string | null) || (own.wave_id as string | undefined) || null;
+    if (waveId) {
+      const w = (await io.db(`cockpit_sales_followup_waves?id=eq.${enc(String(waveId))}&select=state`))[0];
       if (w?.state !== "running") throw refusal(AGENT_COPY.wave_not_running);
+    }
+    // The kind's own switch (followup.level): an opener of a kind a manager
+    // switched off waits in the queue, never set aside.
+    const kind = (meta.kind_key as string | null) || (own.kind_key as string | undefined) || null;
+    if (kind) {
+      const lv = (await io.db(`cockpit_sales_followup_levels?kind_key=eq.${enc(kind)}&select=level`))[0];
+      if (lv?.level === "off") throw refusal(AGENT_COPY.kind_off.replace("{kind}", kind), 409, { code: "kind_off" });
     }
     const whatsapp = f.channel === "whatsapp" || f.channel === "whatsapp_template";
     if (whatsapp) {
@@ -379,8 +494,33 @@ export function makeFollowupAgent(deps: AgentDeps): { actions: Record<string, Ac
         throw refusal(AGENT_COPY.opener_booked);
       }
     }
+    // The opener is claimed for this send, in one write, only while no person
+    // holds it: a Hold that landed during the checks above wins (nothing goes),
+    // and one that lands from now on is told the opener is already going out.
+    const id = String(f.id);
+    const mark = { held_by: SENDING, held_at: iso(io.now()) };
+    let claimed = await io.db(`cockpit_sales_followup_meta?followup_id=eq.${enc(id)}&held_by=is.null`, {
+      method: "PATCH",
+      body: mark,
+      prefer: "return=representation",
+    });
+    if (!claimed.length && staleMark)
+      claimed = await io.db(
+        `cockpit_sales_followup_meta?followup_id=eq.${enc(id)}&held_by=eq.${enc(SENDING)}&held_at=eq.${enc(String(meta.held_at))}`,
+        { method: "PATCH", body: mark, prefer: "return=representation" },
+      );
+    if (!claimed.length) throw refusal(sendingNow(await metaOf(id)) ? AGENT_COPY.raced : AGENT_COPY.held);
+    const release = () =>
+      io
+        .db(`cockpit_sales_followup_meta?followup_id=eq.${enc(id)}&held_by=eq.${enc(SENDING)}`, {
+          method: "PATCH",
+          body: { held_by: null, held_at: null },
+          prefer: "return=minimal",
+        })
+        .catch(e => io.log(`followups: an opener's sending mark was not cleared: ${redact(String((e as Error)?.message ?? e))}`));
     try {
       const out = await deps.sendFollowup(who, f, {}, false, { decidedBy: (meta.approved_by as string | null) ?? null });
+      await release();
       const m = obj(out.message);
       const err = String(m.error ?? "");
       // A 200 whose message failed for the wallet or funds holds every send.
@@ -388,11 +528,16 @@ export function makeFollowupAgent(deps: AgentDeps): { actions: Record<string, Ac
       return out;
     } catch (e) {
       if (e instanceof ApiRefusal) {
-        const all = e.extra.hold_all === true || holdsEverything(e.message, e.status);
+        // The template is not set up, or HighLevel's contact fields are not
+        // set: every opener of the template waits, the batch stays in the queue.
+        const setup = e.extra.code === "setup" || SETUP_FAULT.test(e.message);
+        const all = setup || e.extra.hold_all === true || holdsEverything(e.message, e.status);
         const hoursWords = /their time|day off|friday|time zone/i.test(e.message);
-        if (!all && !hoursWords && e.status !== 502 && !STATE_RACE.test(e.message)) await setAside(who, String(f.id), e.message);
-        if (all && e.extra.hold_all !== true) throw new ApiRefusal(e.message, e.status, { ...e.extra, hold_all: true });
-      }
+        if (!all && !hoursWords && e.status !== 502 && !STATE_RACE.test(e.message)) await setAside(who, id, e.message);
+        else await release();
+        if (all && (e.extra.hold_all !== true || (setup && e.extra.code !== "setup")))
+          throw new ApiRefusal(e.message, e.status, { ...e.extra, hold_all: true, ...(setup ? { code: "setup" } : {}) });
+      } else await release();
       throw e;
     }
   }

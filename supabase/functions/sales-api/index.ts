@@ -340,7 +340,7 @@ async function markAppointment(
   who: Who,
   id: string,
   status: string,
-  opts: { reason?: string | null; note?: string | null; anyRep?: boolean; quiet?: boolean } = {},
+  opts: { reason?: string | null; note?: string | null; anyRep?: boolean; quiet?: boolean; onlyIfUnmarked?: boolean } = {},
 ): Promise<Row> {
   const appt = (await svc(
     `cockpit_sales_appointments?appointment_id=eq.${enc(id)}&select=*`,
@@ -358,6 +358,11 @@ async function markAppointment(
   const current = (await svc(
     `cockpit_sales_dispositions?appointment_id=eq.${enc(id)}&superseded_at=is.null&select=*`,
   ))[0];
+  // A timer's mark (the settle's no-show) goes only where nobody has marked
+  // the call: a person's mark that landed while the timer ran is never
+  // superseded. The same mark by the same seat is its own earlier try.
+  if (opts.onlyIfUnmarked && current && !(current.status === status && current.marked_by === who.email))
+    throw new Refusal("This call was already marked, so the timer left it as it is.", 409, { code: "marked" });
   // The same mark again (a second tap, a retry after a dropped connection)
   // is not sent to HighLevel twice: only a new note is kept.
   if (current && current.status === status && current.crm !== "failed") {
@@ -375,21 +380,31 @@ async function markAppointment(
       body: { superseded_at: new Date(now).toISOString() },
       prefer: "return=minimal",
     });
-  const row = (await svc("cockpit_sales_dispositions", {
-    method: "POST",
-    body: {
-      appointment_id: id,
-      contact_id: appt.contact_id,
-      call_type: appt.call_type,
-      start_at: appt.start_at,
-      status,
-      reason: opts.reason ?? null,
-      note: opts.note ?? null,
-      marked_by: who.email,
-      crm: decision === "write" || decision === "quiet" ? "pending" : decision,
-    },
-    prefer: "return=representation",
-  }))[0];
+  let row: Row;
+  try {
+    row = (await svc("cockpit_sales_dispositions", {
+      method: "POST",
+      body: {
+        appointment_id: id,
+        contact_id: appt.contact_id,
+        call_type: appt.call_type,
+        start_at: appt.start_at,
+        status,
+        reason: opts.reason ?? null,
+        note: opts.note ?? null,
+        marked_by: who.email,
+        crm: decision === "write" || decision === "quiet" ? "pending" : decision,
+      },
+      prefer: "return=representation",
+    }))[0];
+  } catch (e) {
+    // A person's mark landed between the read and this insert: the one
+    // current mark per call (cockpit_sales_dispositions_current) refuses the
+    // timer's, and the person's stands.
+    if (opts.onlyIfUnmarked && /cockpit_sales_dispositions_current|23505/.test(String((e as Error)?.message ?? e)))
+      throw new Refusal("This call was already marked, so the timer left it as it is.", 409, { code: "marked" });
+    throw e;
+  }
   let result: Row = { ...row };
   // quiet: the status changes in HighLevel and none of its automations run
   // (a live call counted at the join, D2), whatever crm_writes says.
@@ -1241,11 +1256,14 @@ async function assetSent(who: Who, assetId: string, contactId: string, channel: 
 
 async function templateRoute(key: string): Promise<TemplateRoute> {
   const r = (await svc(`cockpit_sales_wa_templates?key=eq.${enc(key)}&select=*`))[0] as unknown as TemplateRoute | undefined;
-  if (!r) throw new Refusal("That WhatsApp template is not in the cockpit.", 404);
+  // A setup fault, not the lead's: every send of this template waits (code
+  // setup, hold_all), so the desk leaves its batch in the queue.
+  if (!r) throw new Refusal("That WhatsApp template is not in the cockpit.", 404, { code: "setup", hold_all: true });
   if (!r.active || !r.workflow_id)
     throw new Refusal(
       `The ${r.name} template is not set up yet. A manager picks the HighLevel workflow that sends it, under Follow-ups, WhatsApp library.`,
       409,
+      { code: "setup", hold_all: true },
     );
   return r;
 }
@@ -1433,9 +1451,12 @@ async function sendTemplate(
   const text = renderTemplate(route.preview, route.variables, { first_name: firstName, rep_name: signature, line, call_time: callTime });
   const fields = (await setting<{ line?: { id: string }; rep?: { id: string }; join?: { id: string | null }; when?: { id: string | null } }>("wa_fields")) ?? {};
   if ((needsLine && !fields.line?.id) || (route.variables.includes("rep_name") && !fields.rep?.id))
-    throw new Refusal("The cockpit's two HighLevel contact fields are not set (setting wa_fields).", 409);
+    throw new Refusal("The cockpit's two HighLevel contact fields are not set (setting wa_fields).", 409, { code: "setup", hold_all: true });
   if ((button && !fields.join?.id) || (callTime && !fields.when?.id))
-    throw new Refusal("The HighLevel contact fields for the room code and the call's time are not set (setting wa_fields, join and when).", 409);
+    throw new Refusal("The HighLevel contact fields for the room code and the call's time are not set (setting wa_fields, join and when).", 409, {
+      code: "setup",
+      hold_all: true,
+    });
 
   const fresh: Row = {
     request_id: o.requestId,
@@ -2235,22 +2256,34 @@ async function sendFollowup(who: Who, f: Row, b: Row, auto: boolean, opts: { dec
     // second opener is ever written for it. Only a send that certainly did
     // not go ends the draft as failed.
     const fixable = e instanceof Refusal && e.status !== 502 && e.extra?.unclear !== true;
-    const row = fixable
-      ? null
-      : ((await svc(`cockpit_sales_messages?request_id=eq.${enc(String(f.id))}&select=id,state`).catch(() => []))[0] ?? null);
-    const mayHaveGone = !fixable && (e instanceof Refusal ? e.extra?.unclear === true : true) && (!row || row.state !== "failed");
+    // Whether it may have gone is read from the message row alone: the row is
+    // written (the slot, or the insert) before HighLevel is ever asked, so no
+    // row means nothing went (HighLevel's contact read, a database read or
+    // the slot's lock failing first): the draft waits again with the reason.
+    // A lookup that itself fails cannot tell, so the doubt stays.
+    let row: Row | null = null;
+    let unread = false;
+    if (!fixable) {
+      try {
+        row = (await svc(`cockpit_sales_messages?request_id=eq.${enc(String(f.id))}&select=id,state`))[0] ?? null;
+      } catch {
+        unread = true;
+      }
+    }
+    const notSent = !fixable && !unread && !row;
+    const mayHaveGone = !fixable && (unread || (row !== null && row.state !== "failed"));
     const doubt = `${MAY_HAVE_GONE} (${err.slice(0, 200)})`;
     await svc(`cockpit_sales_followups?id=eq.${enc(String(f.id))}`, {
       method: "PATCH",
-      body: fixable
+      body: fixable || notSent
         ? { status: "draft", error: err, decided_by: null, decided_at: null }
-        : mayHaveGone || (row && row.state !== "failed")
+        : mayHaveGone
           ? { status: "sent", error: doubt, final_body: body, final_subject: subject, edited, message_id: row?.id ?? null, auto, ...(switched ? { channel } : {}) }
           : { status: "failed", error: err, final_body: body, final_subject: subject, edited, ...(switched ? { channel } : {}) },
       prefer: "return=minimal",
     });
     await audit(who, auto ? "followup.autosend" : "followup.approve", "cockpit_sales_followups", String(f.id), f,
-      { status: fixable ? "draft" : mayHaveGone ? "sent" : "failed", error: err, ...(mayHaveGone ? { unclear: true } : {}) });
+      { status: fixable || notSent ? "draft" : mayHaveGone ? "sent" : "failed", error: err, ...(mayHaveGone ? { unclear: true } : {}) });
     throw e;
   }
 }

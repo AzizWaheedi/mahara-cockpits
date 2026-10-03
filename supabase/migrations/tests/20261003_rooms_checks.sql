@@ -1067,6 +1067,12 @@ begin
   perform 1 from public.cockpit_sales_live_claim(lv[13], 'lc-test-l13@example.invalid');
   update public.cockpit_sales_live set claimed_at = now() - interval '3 minutes' where id = lv[13];
 
+  -- Zoom reported each room's meeting that is settled below (its start, read
+  -- by room.event): only then is Zoom's silence about the lead evidence (20261003d).
+  insert into public.cockpit_sales_room_events (room_id, kind, source, dedupe_key, at, handled_at)
+  select x, 'zoom.meeting.started', 'zoom', 'lc-test-started-' || x::text, now() - interval '20 minutes', now() - interval '20 minutes'
+    from unnest(array[f[25], f[36], f[37]]) as x;
+
   -- Events ev[1]..ev[9], on no room (a room's unhandled event would hold its timers).
   insert into public.cockpit_sales_room_events (room_id, kind, source, dedupe_key, at, handled_at, tries, lease_until) values
     (null, 'zoom.meeting.participant_joined', 'zoom', 'lc-test-e1', now() - interval '30 seconds', null, 0, null),
@@ -1152,7 +1158,8 @@ begin
     (select state = 'expired' and result = 'no_join' from public.cockpit_sales_rooms where id = f[25])
     and (s1 ->> 'settle_due')::integer >= 3
     and exists (select 1 from public.cockpit_sales_room_events
-                 where dedupe_key = 'sweep.settle:' || f[25]::text and source = 'settle' and tries = 1 and handled_at is null),
+                 where dedupe_key = 'sweep.settle:' || f[25]::text and source = 'settle' and tries = 0
+                   and last_try_at = now() and handled_at is null),
     s1 ->> 'settle');
   perform pg_temp.ck('F settle (roomlogic.ts settleDue): the empty fallback room, End room before anyone came, and a join taken back after the close; nothing else',
     (s1 -> 'settle') @> to_jsonb(array[f[25]::text, f[36]::text, f[37]::text]) and jsonb_array_length(s1 -> 'settle') = 3,
@@ -1478,21 +1485,29 @@ begin
        from public.cockpit_sales_alerts where dedupe_key = 'failing:sales-desk/followups'),
     (select message from public.cockpit_sales_alerts where dedupe_key = 'failing:sales-desk/followups'));
 
-  insert into public.cockpit_sales_alerts (dedupe_key, kind, message) values ('room_events_gave_up:2026-01-01', 'room_events_gave_up', 'Old.');
+  -- An earlier day's alert that was posted, and one raised late on a Friday
+  -- (or after 21:00) that was never posted.
+  insert into public.cockpit_sales_alerts (dedupe_key, kind, message, raised_at, posted_at) values
+    ('room_events_gave_up:2026-01-01', 'room_events_gave_up', 'Old.', now() - interval '1 day', now() - interval '1 day'),
+    ('room_events_gave_up:2026-01-02', 'room_events_gave_up', 'Old, never posted.', now() - interval '10 hours', null);
   insert into public.cockpit_sales_room_events (room_id, kind, source, dedupe_key, at, handled_at, tries, detail) values
     (null, 'zoom.meeting.started', 'zoom', 'lc-test-g3-gaveup', now() - interval '5 minutes', now(), 3, '{"gave_up": true}'),
     (null, 'zoom.meeting.started', 'zoom', 'lc-test-g3-gaveup-old', now() - interval '2 days', now() - interval '2 days', 3, '{"gave_up": true}');
   w := public.cockpit_sales_watchdog();
-  perform pg_temp.ck('G3 events given up today raise one alert for the day; an earlier day''s alert resolves',
+  perform pg_temp.ck('G3 events given up today raise one alert for the day; an earlier day''s alert resolves once it was posted, and one never posted waits to be posted',
     exists (select 1 from public.cockpit_sales_alerts where dedupe_key = today and resolved_at is null and (detail ->> 'count')::integer = 1)
     and not exists (select 1 from public.cockpit_sales_alerts where dedupe_key = 'room_events_gave_up:2026-01-01')
+    and exists (select 1 from public.cockpit_sales_alerts where dedupe_key = 'room_events_gave_up:2026-01-02' and resolved_at is null)
     and (w ->> 'raised')::integer >= 1, w::text);
+  -- The day's alert was posted; then another event is given up.
+  update public.cockpit_sales_alerts set posted_at = now(), post_tries = 1, post_status = 200 where dedupe_key = today;
   insert into public.cockpit_sales_room_events (room_id, kind, source, dedupe_key, at, handled_at, tries, detail) values
     (null, 'zoom.meeting.ended', 'zoom', 'lc-test-g3-gaveup2', now() - interval '4 minutes', now(), 3, '{"gave_up": true}');
   w := public.cockpit_sales_watchdog();
-  perform pg_temp.ck('G3 another give-up the same day raises nothing new, the count follows',
+  perform pg_temp.ck('G3 another give-up the same day raises nothing new; the count follows and the alert is posted again with it',
     (w ->> 'raised')::integer = 0
-    and exists (select 1 from public.cockpit_sales_alerts where dedupe_key = today and (detail ->> 'count')::integer = 2), w::text);
+    and exists (select 1 from public.cockpit_sales_alerts where dedupe_key = today and (detail ->> 'count')::integer = 2
+                   and posted_at is null and post_tries = 0 and message like '2 room events were given up today%'), w::text);
   insert into public.cockpit_sales_room_events (room_id, kind, source, dedupe_key, at)
     values (null, 'zoom.meeting.ended', 'zoom', 'lc-test-g3-stuck', now() - interval '11 minutes');
   w := public.cockpit_sales_watchdog();
@@ -1624,6 +1639,9 @@ begin
   rm := pg_temp.room('lc-test-h2', 'lc-test-h2@example.invalid', 'fallback', 'open', 'intro');
   update public.cockpit_sales_rooms set appointment_id = 'lc-test-appt-h2', host_by = now() - interval '1 minute',
                                         requested_at = now() - interval '24 minutes' where id = rm;
+  -- Zoom reported the meeting (read): its silence about the lead is evidence.
+  insert into public.cockpit_sales_room_events (room_id, kind, source, dedupe_key, at, handled_at)
+    values (rm, 'zoom.meeting.started', 'zoom', 'lc-test-h2-started', now() - interval '20 minutes', now() - interval '20 minutes');
   select coalesce(max(q.id), 0) into max_id from net.http_request_queue as q;
   r := public.cockpit_sales_rooms_tick();
   perform pg_temp.ck('H the tick runs the sweep and posts twice: sweep.replay and sweep.settle',

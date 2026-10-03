@@ -17,6 +17,12 @@ Safety (the live tables are in production, dark and empty):
   - Before and after, a read-only leftovers query proves no `stress-sec-` row
     is left anywhere it could have been written.
 
+Round 2 (3 October 2026) adds section D (what a seat's token reads that it
+should not: a Zoom attendee of a meeting that is no room) and a static check
+of the migrations not applied yet (20261003d): every function and view they
+make is revoked from public, anon and authenticated, and every
+security-definer function pins its search_path.
+
 Each check prints PASS or FAIL. A FAIL is a finding. The management token is
 read from SUPABASE_ACCESS_TOKEN or ~/.config/mahara/sb_mgmt_token and never
 printed. Exit code 0 only when every check passed and nothing persisted.
@@ -361,6 +367,56 @@ exception when others then
   perform pg_temp.ck('C section crashed', false, sqlstate || ': ' || sqlerrm);
 end;
 $c$;
+
+-- D. Round 2 (3 October 2026): what a seat's token reads that it should not ---
+
+do $d$
+declare
+  seat uuid := gen_random_uuid();
+  made text;
+  said text;
+begin
+  -- A Zoom join of a meeting that is no cockpit room (the webinar, a client
+  -- call, an interview on the same Zoom account), as the door keeps it when
+  -- its 500 ms room lookup fails: room_id null, the attendee's name and email
+  -- in detail. sales-api's no_room path leaves it as it is.
+  insert into public.cockpit_sales_room_events (room_id, kind, source, dedupe_key, handled_at, text, detail)
+  values (null, 'zoom.meeting.participant_joined', 'zoom', 'stress-sec:foreign-meeting:1', now(),
+          'Zoom: Stress Attendee joined.',
+          jsonb_build_object('event', 'meeting.participant_joined',
+            'refused', jsonb_build_object('code', 'no_room'),
+            'payload', jsonb_build_object('object', jsonb_build_object(
+              'id', '99887766554', 'topic', 'Mahara weekly webinar',
+              'participant', jsonb_build_object('user_name', 'Stress Attendee',
+                                                'email', 'stress-sec-attendee@stress.invalid')))));
+  begin
+    insert into auth.users (id, email, email_confirmed_at, aud, role)
+    values (seat, 'stress-sec-seat-d@stress.invalid', now(), 'authenticated', 'authenticated');
+    made := 'none';
+  exception when others then
+    made := sqlstate || ': ' || sqlerrm;
+  end;
+  if made <> 'none' then
+    perform pg_temp.ck('D skipped: a test sign-in could not be made', true, made);
+    return;
+  end if;
+  insert into public.cockpit_sales_people (email, name, role, active, via_portal)
+  values ('stress-sec-seat-d@stress.invalid', 'Stress Seat D', 'setter', true, true);
+
+  -- zoom-foreign-meeting-attendees-kept, the database side: the seat policy
+  -- reads every room event, including one that belongs to no room.
+  said := pg_temp.as_role('authenticated', seat,
+    $q$select count(*) from public.cockpit_sales_room_events
+        where dedupe_key = 'stress-sec:foreign-meeting:1'
+          and detail #>> '{payload,object,participant,email}' = 'stress-sec-attendee@stress.invalid'$q$);
+  perform pg_temp.ck('D1 a seat cannot read the name and email of an attendee of a Zoom meeting that is no room',
+    said = 'ok:0', said);
+
+exception when others then
+  reset role;
+  perform pg_temp.ck('D section crashed', false, sqlstate || ': ' || sqlerrm);
+end;
+$d$;
 """
 
 FINAL = "select name, ok, detail from pg_temp.ss_checks order by n;"
@@ -412,17 +468,68 @@ def compose() -> str:
     for word in ("\ncommit", "\nrollback", "\nbegin;", "\nabort", "\nstart transaction"):
         if word in low:
             raise SystemExit(f"Refusing to run: the checks contain a transaction statement ({word.strip()}).")
+    # Migration 20261003d (not applied in production yet) goes in first, in
+    # the same rolled-back transaction, so section D checks the repo's seat
+    # policy on room events (only events that belong to a room).
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import run_checks  # noqa: E402  (migration d's text without its own begin and commit)
     return "\n".join([
         "begin;",
         "set local lock_timeout = '5s';",
         "set local statement_timeout = '60s';",
+        "-- ===== 20261003d (the repo's hardening, rolled back with the rest) =====",
+        run_checks.hardening_sql(),
         body,
         FINAL,
         "rollback;",
     ])
 
 
+UNAPPLIED = ["20261003d_live_calls_hardening.sql"]
+
+
+def static_checks() -> list[tuple[str, bool, str]]:
+    """Round 2: the migrations not applied in production yet cannot be run
+    against real roles, so their text is checked: every function and view
+    they make is revoked from public, anon and authenticated in the same
+    file, and every security-definer function pins its search_path."""
+    import re
+    here = os.path.dirname(os.path.abspath(__file__))
+    out: list[tuple[str, bool, str]] = []
+    for name in UNAPPLIED:
+        path = os.path.join(here, "..", name)
+        if not os.path.exists(path):
+            out.append((f"S0 {name} is here to check", False, "missing"))
+            continue
+        sql = open(path).read()
+        low = sql.lower()
+        for m in re.finditer(r"create or replace function public\.(\w+)\(", low):
+            fn = m.group(1)
+            body_end = low.find("$$;", m.end())
+            head = low[m.end(): low.find("$$", m.end())]
+            revoked = re.search(rf"revoke all on function public\.{fn}\([^)]*\) from public, anon, authenticated", low)
+            out.append((f"S1 {name}: {fn} is revoked from public, anon and authenticated", bool(revoked), ""))
+            if "security definer" in head:
+                out.append((f"S2 {name}: security-definer {fn} pins its search_path", "set search_path" in head, ""))
+            if body_end < 0:
+                out.append((f"S1 {name}: {fn} has a body", False, "no closing $$;"))
+        for m in re.finditer(r"create (?:or replace )?view public\.(\w+)", low):
+            v = m.group(1)
+            revoked = re.search(rf"revoke all on public\.{v} from public, anon, authenticated", low)
+            out.append((f"S3 {name}: view {v} is revoked from public, anon and authenticated", bool(revoked), ""))
+        for m in re.finditer(r"create table (?:if not exists )?public\.(\w+)", low):
+            t = m.group(1)
+            ok = f"alter table public.{t} enable row level security" in low and \
+                re.search(rf"revoke all on public\.{t} from public, anon, authenticated", low) is not None
+            out.append((f"S4 {name}: table {t} has row security and its revoke", ok, ""))
+    return out
+
+
 def main():
+    statics = static_checks()
+    for n, ok, d in statics:
+        print(f"{'PASS' if ok else 'FAIL'}  {n}" + (f"  ({d})" if d else ""))
+    static_failed = [x for x in statics if not x[1]]
     before = query(LEFTOVERS, write=False) or []
     if before:
         print("stress-sec rows exist before the run (another run left them?):", [r["?column?"] for r in before])
@@ -437,7 +544,7 @@ def main():
         print("LEFT BEHIND after the rollback:", after)
         sys.exit(1)
     print("Nothing persisted: no stress-sec row is in any table the run touched.")
-    sys.exit(0 if rows and not failed else 1)
+    sys.exit(0 if rows and not failed and not static_failed else 1)
 
 
 if __name__ == "__main__":

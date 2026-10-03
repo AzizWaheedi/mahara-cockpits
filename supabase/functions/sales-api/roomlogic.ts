@@ -677,6 +677,10 @@ export const LANE_COPY = {
   bad_link: "The room link is not a web address.",
   bad_input: "Something in this request is not right. Reload the page and try again.",
   call_over: "This call has already ended. There is no link to send.",
+  call_nearly_over:
+    "This call ends in under {minutes} minutes, so a room would close before the lead could join. Send the lead the call's own link.",
+  take_host_busy: "You already have a live call or room open. End it, then take the next lead.",
+  booked_other_rep: "This call is booked with another rep. Only they or a manager can make a room for it.",
   worker_late: "The room worker did not pick this room up in time.",
   worker_lost: "The room worker stopped half way through making this room.",
   worker_failed: "The room could not be made.",
@@ -1323,6 +1327,9 @@ export type RefusalCode =
   | "phone_call"
   | "host_link"
   | "call_over"
+  | "call_nearly_over"
+  | "take_host_busy"
+  | "booked_other_rep"
   | "wrap_too_early";
 
 export interface Refused {
@@ -1374,6 +1381,9 @@ const REFUSALS: Record<RefusalCode, { text: string; status: number; retry?: bool
   phone_call: { text: R.phone_call, status: 409 },
   host_link: { text: LANE_COPY.host_link, status: 409 },
   call_over: { text: LANE_COPY.call_over, status: 409 },
+  call_nearly_over: { text: LANE_COPY.call_nearly_over, status: 409 },
+  take_host_busy: { text: LANE_COPY.take_host_busy, status: 409 },
+  booked_other_rep: { text: LANE_COPY.booked_other_rep, status: 403 },
   wrap_too_early: { text: LANE_COPY.wrap_too_early, status: 409, retry: true },
 };
 
@@ -1704,7 +1714,17 @@ export function applyRoomEvent(room: RoomRow, event: RoomEvent, now: number, ctx
 
     case "host_in": {
       if (early) return refuse("too_early");
-      if (room.state !== "open") return same(room);
+      if (room.state !== "open") {
+        // The host is already in: a later join (a rejoin after a drop, or
+        // Zoom's meeting.started again) moves host_in_at on, so a leave Zoom
+        // sent before it, delivered after it, reads as old (host_left and
+        // meeting_ended compare with host_in_at). Never earlier, no new version.
+        const t = when(event);
+        const cur = ms(room.host_in_at);
+        if ((room.state === "host_in" || room.state === "lead_in") && event.source !== "mark" && (cur === null || t > cur))
+          return change(room, room.state, { host_in_at: iso(t) }, []);
+        return same(room);
+      }
       const patch: Partial<RoomRow> = { host_in_at: iso(when(event)) };
       const effects: Effect[] = [];
       claimLink({ ...room, ...patch, state: "host_in" }, patch, effects, at);
@@ -2023,13 +2043,21 @@ export interface SettleFacts {
   test_off_calendar?: boolean;
   /** Zoom reported a join after the room closed (a join the close raced), or the worker kept the meeting open for someone in it. */
   late_join?: boolean;
+  /**
+   * Zoom itself reported this room's meeting: a handled meeting.started, or
+   * a handled join of the host. Without it, Zoom's silence says nothing about
+   * the lead (the subscription switched off, the door's secret changed, the
+   * door down), so a Zoom room is no evidence that nobody came.
+   */
+  zoom_reported?: boolean;
 }
 
 /**
  * Why a room that closed with nobody in it is still not evidence that the
  * lead stayed away ("missing is never zero"), or null when it is. A no-show
  * is a hard number in the B2B show rate, so it is written only on evidence:
- * a Zoom room whose join events were all read, or a short link the lead
+ * a Zoom room whose join events were all read and whose meeting Zoom itself
+ * reported (it started, or the host joined), or a short link the lead
  * never opened. Meet sends no join signal (the host's press is the only one),
  * so an unpressed Meet room is evidence only when the short link went and
  * was never opened.
@@ -2043,6 +2071,7 @@ export function noShowDoubt(room: RoomRow, facts: SettleFacts = {}): string | nu
   if (room.provider === "meet" && (room.purpose === "booked" || facts.short_link !== true))
     return "Meet sends no join signal and nobody pressed The lead is in";
   if (room.provider === "zoom" && facts.zoom_unclear !== false) return "a Zoom event for this room was not read";
+  if (room.provider === "zoom" && facts.zoom_reported !== true) return "Zoom reported nothing for this room";
   return null;
 }
 
@@ -2646,6 +2675,8 @@ export interface CountInput {
   lead_evidence?: boolean;
   /** The booked intro is already marked shown (a rep's own mark, or HighLevel's status): the count adds nothing. */
   appointment_shown?: boolean;
+  /** A manager confirmed a join only a hand press reported (room.count_confirm): it counts as evidence. */
+  confirmed?: boolean;
 }
 
 export type CountSkip =
@@ -2682,9 +2713,13 @@ export type CountPlan =
     }
   | { action: "create"; claim: true; test: boolean; calendar_id: string; start: string; end: string; body: Row };
 
-/** The claim may be taken: never taken, or taken and then undone ("That was not the lead"). */
-export function countClaimable(room: RoomRow): boolean {
-  return !room.count_claimed_at || room.count_result === "undone";
+/**
+ * The claim may be taken: never taken, or taken and then undone ("That was
+ * not the lead"). A join only a hand press reported (self_reported) is taken
+ * again only when a manager confirms it (room.count_confirm).
+ */
+export function countClaimable(room: RoomRow, confirmed = false): boolean {
+  return !room.count_claimed_at || room.count_result === "undone" || (confirmed && room.count_result === "self_reported");
 }
 
 /** B2B's calendars: BOOKING_CALENDARS and any other intro or demo calendar the caller names. */
@@ -2734,14 +2769,14 @@ export function countLive(i: CountInput): CountPlan {
   if (!room.contact_id) return none("no_contact", false);
   const joined = ms(room.lead_in_at);
   if (joined === null || !leadJoined(room)) return none("not_joined", false);
-  if (!countClaimable(room)) return none("claimed", false);
+  if (!countClaimable(room, i.confirmed === true)) return none("claimed", false);
   if (room.purpose === "booked") return none("booked_room", false);
   const c = i.contact ?? {};
   if (isClient(c)) return none("client", true, "not_a_lead");
   const test = isTestContact(room.contact_id, c.tags, setting);
   if (test && !setting.test_calendar_id) return none("test_calendar_missing", true, "not_a_lead");
   if (test && official.has(setting.test_calendar_id as string)) return none("test_calendar_official", true, "not_a_lead");
-  if (!test && i.lead_evidence === false) return none("self_reported", true, "self_reported");
+  if (!test && i.lead_evidence === false && i.confirmed !== true) return none("self_reported", true, "self_reported");
   if (room.appointment_id) {
     if (test && str(i.appointment_calendar_id, 80) !== setting.test_calendar_id)
       return none("test_not_on_test_calendar", true, "not_a_lead");
@@ -2838,7 +2873,7 @@ export interface CountBefore {
 }
 
 export type UndoPlan =
-  | { action: "none"; reason: "nothing" | "in_flight" | "moved_from_unknown" }
+  | { action: "none"; reason: "nothing" | "in_flight" | "moved_from_unknown" | "unmark_unknown" }
   | { action: "delete"; appointment_id: string }
   | {
       action: "move_back";
@@ -2885,16 +2920,21 @@ export function countUndo(room: RoomRow, before: CountBefore | string | null | u
         status: str(b.from_status, 20) ?? "confirmed",
       };
     }
-    case null:
-      return appt && appt === room.appointment_id
-        ? {
-            action: "unmark",
-            appointment_id: appt,
-            status: str(b.prior_status, 20) ?? "confirmed",
-            own_disposition_id: str(String(b.own_disposition_id ?? ""), 80),
-            prior_disposition_id: str(String(b.prior_disposition_id ?? ""), 80),
-          }
-        : { action: "none", reason: "in_flight" };
+    case null: {
+      if (!appt || appt !== room.appointment_id) return { action: "none", reason: "in_flight" };
+      // The status the intro had before the count's mark, as the count read it
+      // (HighLevel's own, else the rep's mark, else the copy). Never guessed:
+      // "confirmed" on a past intro is a show by the B2B rule.
+      const prior = str(b.prior_status, 20);
+      if (!prior) return { action: "none", reason: "unmark_unknown" };
+      return {
+        action: "unmark",
+        appointment_id: appt,
+        status: prior,
+        own_disposition_id: str(String(b.own_disposition_id ?? ""), 80),
+        prior_disposition_id: str(String(b.prior_disposition_id ?? ""), 80),
+      };
+    }
     default:
       return { action: "none", reason: "nothing" };
   }
@@ -2912,8 +2952,8 @@ export interface GuardedWrite {
  * claim clears an earlier undo, so a real lead who joins after "That was
  * not the lead" is counted.
  */
-export function countClaim(room: RoomRow, now: number, plan: CountPlan): GuardedWrite | null {
-  if (!plan.claim || !countClaimable(room)) return null;
+export function countClaim(room: RoomRow, now: number, plan: CountPlan, confirmed = false): GuardedWrite | null {
+  if (!plan.claim || !countClaimable(room, confirmed)) return null;
   return {
     patch: {
       count_claimed_at: iso(now),
@@ -3519,10 +3559,31 @@ export function wrapPlan(i: {
   const start = ms(i.start);
   if (start === null || !isCallKind(i.call_kind)) return refuse("bad_input");
   const d = bookedDeadlines(start, ms(i.end), i.call_kind, i.ctx);
-  if (i.now >= (ms(d.ends_at) as number)) return refuse("call_over");
+  const ends = ms(d.ends_at) as number;
+  if (i.now >= ends) return refuse("call_over");
   const opens = start - WRAP_EARLY_MIN * MIN;
   if (i.now < opens) return refuse("wrap_too_early", { time: clockWithDay(opens, i.now) });
-  return { ok: true, provider: meeting.provider, join_url: meeting.join_url, provider_meeting_id: meeting.meeting_id, ...d };
+  // A late wrap (the lead is late, or P4's late step) gets real deadlines from
+  // now: the host the handover wait, the lead their 10 minutes, never past the
+  // call's end. A room born past its own deadlines would close at the next
+  // sweep and record a no-join before anyone could come in.
+  const w = i.ctx.waits;
+  const hostWait = i.now + w.handover_host * S;
+  if (hostWait >= ends) return refuse("call_nearly_over", { minutes: Math.max(1, Math.ceil((w.handover_host * S) / MIN)) });
+  const bookedHost = ms(d.host_by) as number;
+  const bookedLead = ms(d.lead_by) as number;
+  const hostBy = Math.max(bookedHost, hostWait);
+  const leadWait = i.now + w.lead * S;
+  const leadBy = bookedLead >= leadWait ? bookedLead : Math.max(hostBy, Math.min(leadWait, Math.max(ends, bookedLead)));
+  return {
+    ok: true,
+    provider: meeting.provider,
+    join_url: meeting.join_url,
+    provider_meeting_id: meeting.meeting_id,
+    host_by: iso(hostBy),
+    lead_by: iso(leadBy),
+    ends_at: d.ends_at,
+  };
 }
 
 /** The booked room row for a wrap that passed. */
