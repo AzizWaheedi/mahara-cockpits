@@ -18,11 +18,15 @@ export class ProviderError extends Error {
   }
 }
 
-export function ghlRequest(token: string, location: string): GhlRequest {
+export function ghlRequest(
+  token: string,
+  location: string,
+  purpose: "booking" | "messages" = "booking",
+): GhlRequest {
   return async (method, path, body) => {
     if (!token || location !== CLIENT_ACCOUNT)
       throw new ProviderError(
-        "The Mahara Media client account is not connected for booking.",
+        `The Mahara Media client account is not connected for ${purpose}.`,
         true,
       );
     let res: Response;
@@ -41,16 +45,18 @@ export function ghlRequest(token: string, location: string): GhlRequest {
       });
     } catch {
       throw new ProviderError(
-        "Mahara Media did not return a booking result. Check the calendar before trying again.",
+        purpose === "booking"
+          ? "Mahara Media did not return a booking result. Check the calendar before trying again."
+          : "The CRM did not confirm the message request. Check the conversation before trying again.",
       );
     }
     if (!res.ok) {
       const definitive =
         res.status >= 400 && res.status < 500 && res.status !== 408;
       throw new ProviderError(
-        res.status === 409 || res.status === 400
+        purpose === "booking" && (res.status === 409 || res.status === 400)
           ? "That time is no longer available. Choose another time."
-          : `The calendar service could not complete this request (${res.status}).`,
+          : `The ${purpose === "booking" ? "calendar" : "CRM"} service could not complete this request (${res.status}).`,
         definitive,
       );
     }
@@ -58,7 +64,9 @@ export function ghlRequest(token: string, location: string): GhlRequest {
       return await res.json();
     } catch {
       throw new ProviderError(
-        "The calendar returned an incomplete result. Check the calendar before trying again.",
+        purpose === "booking"
+          ? "The calendar returned an incomplete result. Check the calendar before trying again."
+          : "The CRM returned an incomplete message result. Check the conversation before trying again.",
       );
     }
   };

@@ -1,5 +1,5 @@
 import { useAction } from "convex/react";
-import { useMemo } from "react";
+import { useMemo, useRef } from "react";
 import {
   type BillingApi,
   type BillingPayload,
@@ -15,6 +15,7 @@ import type { Account } from "../../convex/billingCore";
  * billing inbox until the CEO cockpit takes it into the ledger.
  */
 export function BillingPage() {
+  const requests = useRef(new Map<string, string>());
   const sheet = useAction(api.billing.sheet);
   const edit = useAction(api.billing.edit);
   const logPayment = useAction(api.billing.logPayment);
@@ -23,8 +24,40 @@ export function BillingPage() {
     () => ({
       sheet: a => sheet(a) as Promise<BillingPayload>,
       edit: a => edit(a) as Promise<Account>,
-      logPayment: p =>
-        logPayment({
+      logPayment: async p => {
+        const fingerprint = JSON.stringify({
+          taskId: p.account.taskId,
+          day: p.day,
+          amount: p.amount,
+          currency: p.currency,
+          rail: p.rail,
+          reference: p.reference,
+          evidenceUrl: p.evidenceUrl,
+          note: p.note,
+          nextDate: p.nextDate,
+        });
+        const digest = await crypto.subtle.digest(
+          "SHA-256",
+          new TextEncoder().encode(fingerprint),
+        );
+        const storageKey = `csm-payment-request:${Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, "0")).join("")}`;
+        let requestId = requests.current.get(storageKey);
+        if (!requestId) {
+          try {
+            requestId = sessionStorage.getItem(storageKey) || undefined;
+          } catch {
+            /* Memory fallback. */
+          }
+          requestId ||= crypto.randomUUID();
+          requests.current.set(storageKey, requestId);
+          try {
+            sessionStorage.setItem(storageKey, requestId);
+          } catch {
+            /* Memory fallback. */
+          }
+        }
+        const result = await logPayment({
+          requestId,
           taskId: p.account.taskId,
           day: p.day,
           amount: p.amount,
@@ -34,9 +67,17 @@ export function BillingPage() {
           ...(p.evidenceUrl ? { evidenceUrl: p.evidenceUrl } : {}),
           ...(p.note ? { note: p.note } : {}),
           ...(p.nextDate ? { nextDate: p.nextDate } : {}),
-        }),
+        });
+        requests.current.delete(storageKey);
+        try {
+          sessionStorage.removeItem(storageKey);
+        } catch {
+          /* Memory fallback. */
+        }
+        return result;
+      },
       ledgerLine:
-        "It waits for the CEO cockpit's next refresh, then counts toward cash and the client's LTV; a payment already in the ledger is caught, not counted twice.",
+        "Payments stay in the billing inbox until the CEO cockpit reconciles them with the ledger.",
     }),
     [sheet, edit, logPayment],
   );

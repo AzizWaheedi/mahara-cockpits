@@ -1,6 +1,6 @@
 import { ConvexError, v } from "convex/values";
 import { internal } from "./_generated/api";
-import { internalQuery } from "./_generated/server";
+import { internalMutation, internalQuery } from "./_generated/server";
 import {
   type Account,
   accountRow,
@@ -239,8 +239,47 @@ const DAY = /^\d{4}-\d{2}-\d{2}$/;
  * CEO cockpit takes it into the ledger; the next payment date moves on the
  * card now, because that is what the ladder reads.
  */
+export const claimPayment = internalMutation({
+  args: { key: v.string(), fingerprint: v.string() },
+  handler: async (ctx, a) => {
+    const old = await ctx.db
+      .query("actionReceipts")
+      .withIndex("by_key", q => q.eq("key", a.key))
+      .unique();
+    if (old) {
+      if (old.fingerprint !== a.fingerprint)
+        throw new Error(
+          "This payment request has changed. Check the billing inbox before starting another payment.",
+        );
+      return {
+        id: old._id,
+        existing: true,
+        status: old.status,
+        receipt: old.receipt,
+      };
+    }
+    const id = await ctx.db.insert("actionReceipts", {
+      ...a,
+      status: "pending",
+      at: Date.now(),
+    });
+    return { id, existing: false, status: "pending", receipt: undefined };
+  },
+});
+export const settlePayment = internalMutation({
+  args: {
+    id: v.id("actionReceipts"),
+    status: v.string(),
+    receipt: v.optional(v.string()),
+  },
+  handler: async (ctx, { id, ...row }) => {
+    await ctx.db.patch(id, { ...row, at: Date.now() });
+  },
+});
+
 export const logPayment = authenticatedAction({
   args: {
+    requestId: v.optional(v.string()),
     taskId: v.string(),
     day: v.string(),
     amount: v.number(),
@@ -284,6 +323,8 @@ export const logPayment = authenticatedAction({
       if (a.nextDate && (!DAY.test(a.nextDate) || a.nextDate <= a.day))
         throw new Error("Their next payment has to be after this one.");
 
+      if (!a.requestId || !/^[a-zA-Z0-9_-]{16,100}$/.test(a.requestId))
+        throw new Error("Refresh the cockpit before logging this payment.");
       const current = await readAccount(e.token, a.taskId);
       if (!mayBill(w, current.name))
         throw new Error(
@@ -291,41 +332,79 @@ export const logPayment = authenticatedAction({
         );
       const clip = (s: string | undefined, n: number) =>
         (s ?? "").replace(/\s+/g, " ").trim().slice(0, n) || null;
-      const [row] = await sb(e.url, e.key, "cockpit_billing_inbox", {
-        method: "POST",
-        body: {
-          clickup_task_id: current.taskId,
-          client_name: current.name,
-          paid_on: a.day,
-          amount: Math.round(a.amount * 1000) / 1000,
-          currency: a.currency,
-          method: a.rail,
-          reference: clip(a.reference, 120),
-          evidence_url: evidence || null,
-          note: clip(a.note, 500),
-          source: "csm",
-          logged_by: w.email,
-        },
-        prefer: "return=representation",
+      const { requestId, ...payment } = a;
+      const claim = await ctx.runMutation(internal.billing.claimPayment, {
+        key: `billing-payment|${w.email}|${requestId}`,
+        fingerprint: JSON.stringify(payment),
       });
-
-      let moved = "";
-      if (a.nextDate && a.nextDate !== current.nextDate) {
-        const { next, event } = await applyEdit(
-          e.token,
-          current,
-          { kind: "date", value: a.nextDate, reason: "Paid; next payment set" },
-          { by: w.email, source: "csm" },
-          today,
+      if (claim.existing) {
+        if (claim.status === "saved" && claim.receipt) return claim.receipt;
+        throw new Error(
+          "This payment may already be recorded. Check the billing inbox before retrying. This request will not create another payment.",
         );
-        await upsert(e, next);
-        await logEvent(e.url, e.key, event);
-        moved = `, and the card says they pay next on ${a.nextDate}`;
       }
-      const paid =
-        a.currency === "KWD"
-          ? `${a.amount.toLocaleString("en-US")} KWD`
-          : `$${a.amount.toLocaleString("en-US")}`;
-      return `Logged ${paid} from ${current.name} (inbox ${row?.id ?? "row"})${moved}. It reaches the ledger and the client's LTV at the CEO cockpit's next refresh.`;
+      try {
+        const [row] = await sb(e.url, e.key, "cockpit_billing_inbox", {
+          method: "POST",
+          body: {
+            clickup_task_id: current.taskId,
+            client_name: current.name,
+            paid_on: a.day,
+            amount: Math.round(a.amount * 1000) / 1000,
+            currency: a.currency,
+            method: a.rail,
+            reference: clip(a.reference, 120),
+            evidence_url: evidence || null,
+            note: clip(a.note, 500),
+            source: "csm",
+            logged_by: w.email,
+          },
+          prefer: "return=representation",
+        });
+
+        if (!row?.id)
+          throw new Error("The payment response did not include a receipt.");
+        let moved = "";
+        if (a.nextDate && a.nextDate !== current.nextDate) {
+          try {
+            const { next, event } = await applyEdit(
+              e.token,
+              current,
+              {
+                kind: "date",
+                value: a.nextDate,
+                reason: "Paid; next payment set",
+              },
+              { by: w.email, source: "csm" },
+              today,
+            );
+            await upsert(e, next);
+            await logEvent(e.url, e.key, event);
+            moved = `, and the card says they pay next on ${a.nextDate}`;
+          } catch {
+            moved =
+              ". The next-payment date update needs checking on the ClickUp card. The payment is recorded; do not log it again";
+          }
+        }
+        const paid =
+          a.currency === "KWD"
+            ? `${a.amount.toLocaleString("en-US")} KWD`
+            : `$${a.amount.toLocaleString("en-US")}`;
+        const result = `Recorded ${paid} from ${current.name} (inbox ${row.id})${moved}. It is queued for the CEO cockpit to reconcile with the ledger.`;
+        await ctx.runMutation(internal.billing.settlePayment, {
+          id: claim.id,
+          status: "saved",
+          receipt: result,
+        });
+        return result;
+      } catch {
+        await ctx.runMutation(internal.billing.settlePayment, {
+          id: claim.id,
+          status: "unknown",
+        });
+        throw new Error(
+          "The payment result is not confirmed. Check the billing inbox before retrying. This request will not create another payment.",
+        );
+      }
     }),
 });

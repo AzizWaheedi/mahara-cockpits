@@ -671,8 +671,11 @@ export const submitEod = authenticatedMutation({
       JSON.stringify(own.computed) === JSON.stringify(args.computed) &&
       own.energy === args.energy &&
       own.stress === args.stress
-    )
-      return null;
+    ) {
+      if (!own.exportError) return null;
+      if (!/not configured|connect your email/.test(own.exportError))
+        throw new Error(own.exportError);
+    }
     const row = {
       role: "csm",
       day,
@@ -691,7 +694,7 @@ export const submitEod = authenticatedMutation({
     // the channels, so an EOD that stays in Convex is one nobody filed.
     await ctx.scheduler.runAfter(0, internal.eodOut.send, {
       day,
-      answers: args.answers,
+      answers: { ...args.answers, energy: args.energy, stress: args.stress },
       computed: args.computed,
       email: row.email,
       reportId,
@@ -883,7 +886,7 @@ export const saveHotRow = authenticatedMutation({
     // the team once.
     const metric = metricOfHotType(args.type);
     const wasClosed = existing?.status === "Closed";
-    const isClosed = args.status === "Closed";
+    const isClosed = (args.status ?? existing?.status) === "Closed";
     const client = args.clientName.trim();
     if (metric && client && wasClosed !== isClosed) {
       const email = await userEmail(ctx);

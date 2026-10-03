@@ -15,7 +15,8 @@ type Seat = {
 const enc = encodeURIComponent;
 const norm = (s: unknown) => String(s ?? "").trim();
 const location = () => process.env.GHL_MAHARA_LOCATION ?? "";
-const request = () => ghlRequest(process.env.GHL_MAHARA_PIT ?? "", location());
+const request = () =>
+  ghlRequest(process.env.GHL_MAHARA_PIT ?? "", location(), "messages");
 const plain = async <T>(fn: () => Promise<T>): Promise<T> => {
   try {
     return await fn();

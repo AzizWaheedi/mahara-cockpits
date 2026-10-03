@@ -1,4 +1,5 @@
 import { useMutation } from "convex/react";
+import { useEffect } from "react";
 import { Outlet, useLocation } from "react-router";
 import { api } from "../../convex/_generated/api";
 import { AppSidebar } from "./AppSidebar";
@@ -12,6 +13,9 @@ import { WorkspaceNav } from "./WorkspaceNav";
 export function AppLayout() {
   const { pathname } = useLocation();
   const report = useMutation(api.csm.reportIssue);
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0 });
+  }, [pathname]);
   return (
     <SidebarProvider>
       <AppSidebar />

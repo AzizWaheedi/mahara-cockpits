@@ -30,7 +30,9 @@
     "screenshot": "bun run --bun /work/.viktor-spaces-internal/client-success-ba089198934f-d3d76f8685bfe988/screenshot.ts",
     "env:get": "bunx convex env get",
     "env:list": "bunx convex env list",
-    "test:csm": "bun test scripts/csm-page.test.tsx"
+    "test:csm": "bun test scripts/csm-page.test.tsx",
+    "test:csm-reliability": "bash scripts/test-csm-reliability.sh",
+    "preview:design": "vite --config scripts/design-preview/vite.config.ts"
   },
   "dependencies": {
     "@convex-dev/auth": "^0.0.94",

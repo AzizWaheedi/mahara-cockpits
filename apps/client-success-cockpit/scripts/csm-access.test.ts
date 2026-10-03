@@ -402,3 +402,100 @@ describe("retries, ownership and provider receipts", () => {
     ).rejects.toThrow(/Select one/);
   });
 });
+
+test("a partial opportunity edit does not undo a closed win", async () => {
+  app.seed("hotList", [
+    {
+      key: "won",
+      clientName: "Example Design",
+      type: "Review",
+      status: "Closed",
+      at: NOW,
+    },
+  ]);
+  await run("csm:saveHotRow", {
+    key: "won",
+    clientName: "Example Design",
+    type: "Review",
+    notes: "New note",
+  });
+  expect(
+    (await app.inlineRun("query", ctx => ctx.db.query("hotList").first()))
+      .status,
+  ).toBe("Closed");
+  expect(
+    await app.inlineRun("query", ctx => ctx.db.query("decisions").collect()),
+  ).toHaveLength(0);
+});
+test("missing EOD identity saves an actionable error and does not send under another person", async () => {
+  await run("csm:submitEod", {
+    energy: "8",
+    stress: "3",
+    answers: { rollup: "Fictional report" },
+    computed: {},
+  });
+  await app.flushScheduled(NOW);
+  const row = await app.inlineRun("query", ctx =>
+    ctx.db.query("eodReports").first(),
+  );
+  expect(row.energy).toBe("8");
+  expect(row.exportError).toContain("connect your email");
+  expect(app.meter.total.fetches).toBe(0);
+});
+test("changed reply text cannot send a second message for the same inbound", async () => {
+  const args = {
+    threadId: "thread-one",
+    desk: "csm",
+    body: "First reply",
+    lang: "en",
+  };
+  await run("wa:send", args);
+  await expect(
+    run("wa:send", { ...args, body: "Another reply" }),
+  ).rejects.toThrow(/already recorded/);
+  expect(posts).toBe(1);
+});
+test("scoped retention reports exclude other clients and global manual counts", async () => {
+  web.clear();
+  web.on("https://csm.test/", req => {
+    const p = new URL(req.url).pathname;
+    if (p.endsWith("cockpit_churn_departures"))
+      return [
+        {
+          id: 1,
+          client: "Example Design",
+          clickup_task_id: "client-one",
+          left_on: DAY,
+          launched_on: "2026-09-01",
+          reason: "Cancelled",
+          mrr_lost_usd: 500,
+        },
+        {
+          id: 2,
+          client: "Private Design",
+          clickup_task_id: "client-two",
+          left_on: DAY,
+          launched_on: "2026-09-01",
+          reason: "Cancelled",
+          mrr_lost_usd: 9999,
+        },
+      ];
+    if (p.endsWith("cockpit_churn_months"))
+      return [{ month: "2026-10", active_at_start: 999, new_clients: 100 }];
+    if (p.endsWith("cockpit_billing_accounts"))
+      return [
+        { clickup_task_id: "client-one", client_name: "Example Design" },
+        { clickup_task_id: "client-two", client_name: "Private Design" },
+      ];
+    if (p.endsWith("cockpit_churn_log"))
+      return [{ detail: { secret: "Private Design" } }];
+    throw new Error("Unexpected path");
+  });
+  const page = await run("churn:page");
+  expect(page.me.canEditMonths).toBe(false);
+  expect(JSON.stringify(page)).not.toContain("Private Design");
+  expect(JSON.stringify(page)).not.toContain("999");
+  await expect(
+    run("churn:saveMonth", { month: "2026-10", activeAtStart: 2 }),
+  ).rejects.toThrow(/assigned|global|whole|all clients/i);
+});
