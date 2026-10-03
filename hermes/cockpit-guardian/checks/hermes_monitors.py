@@ -1,0 +1,85 @@
+"""The monitors that already run on the VPS. The guardian reads them and does
+not rebuild them: their findings are listed (they alert on their own), and
+the guardian alerts only when a monitor itself stops ticking.
+"""
+from __future__ import annotations
+
+from guard.context import Context, SourceError
+from guard.model import Check, Result, age_min, ago, fail, ok, parse_time, warn
+from guard.redact import clean
+
+TICK_LIMIT_MIN = 3
+
+
+def monitor_check(name: str, label: str):
+    def run(ctx: Context) -> Result:
+        mons = ctx.snap_part("monitors")
+        m = mons.get(name)
+        if not m or "error" in m and len(m) == 1:
+            raise SourceError(f"the {label} monitor's state could not be read: {clean((m or {}).get('error'), 120)}")
+        age = age_min(m.get("at"), ctx.now)
+        incidents = m.get("incidents") or {}
+        ev = {"tick_age_min": age, "not_ok": m.get("not_ok"), "incidents": {k: v.get("summary") for k, v in incidents.items()}}
+        if age is None or age > TICK_LIMIT_MIN:
+            return fail(f"The Hermes {label} monitor last ticked {ago(age)} ago (every minute), so its alerts have stopped.",
+                        since=parse_time(m.get("at")), evidence=ev, data={"monitor_down": True})
+        if incidents:
+            text = "; ".join(f"{k}: {clean(v.get('summary'), 100)}" for k, v in list(incidents.items())[:4])
+            return warn(f"The Hermes {label} monitor has {len(incidents)} open incident(s): {text}.", evidence=ev)
+        return ok(f"The Hermes {label} monitor ticked {ago(age)} ago; all {m.get('checks')} checks ok.", evidence=ev)
+
+    return run
+
+
+def run_jobs(ctx: Context) -> Result:
+    jobs = ctx.snap_part("hermes_jobs")
+    if not isinstance(jobs, list) or not jobs:
+        raise SourceError("Hermes's jobs file is empty")
+    failing = [j for j in jobs if j.get("enabled") and j.get("last_status") not in ("ok", None)]
+    off = [j["name"] for j in jobs if not j.get("enabled")]
+    ev = {"jobs": len(jobs), "failing": [{"name": j["name"], "error": clean(j.get("last_error"), 120),
+                                          "last_run_at": j.get("last_run_at")} for j in failing], "switched_off": off}
+    if failing:
+        text = "; ".join(f"{j['name']} ({clean(j.get('last_error'), 60)})" for j in failing[:4])
+        return warn(f"{len(failing)} Hermes scheduled job(s) failed their last run: {text}.", evidence=ev)
+    return ok(f"All {len(jobs) - len(off)} enabled Hermes jobs passed their last run ({len(off)} switched off).", evidence=ev)
+
+
+def run_backup(ctx: Context) -> Result:
+    mons = ctx.snap_part("monitors")
+    sites = mons.get("public-sites") or {}
+    inc = (sites.get("incidents") or {}).get("backup-vps")
+    try:
+        jobs = ctx.snap_part("hermes_jobs")
+    except SourceError:
+        jobs = []
+    nightly = next((j for j in jobs if "backup" in str(j.get("name", "")).lower()), None)
+    ev = {"monitor": (inc or {}).get("summary"), "nightly": nightly and {k: nightly.get(k) for k in ("last_status", "last_run_at")}}
+    if inc or (nightly and nightly.get("last_status") == "error"):
+        what = clean((inc or {}).get("summary") or "the last backup failed", 120)
+        err = f" The Nightly Backup job's last run ended with: {clean(nightly.get('last_error'), 80)}." if nightly and nightly.get("last_status") == "error" else ""
+        return fail(f"The VPS backup is old: {what}.{err}", since=parse_time((inc or {}).get("opened")), evidence=ev)
+    return ok("The VPS backup is current.", evidence=ev)
+
+
+CHECKS = [
+    Check(id="hermes-monitor-cockpits", area="monitors", name="Hermes cockpit monitor",
+          means="The per-minute Hermes reliability monitor for the cockpits keeps ticking.", severity="high",
+          reads="/docker/hermes-agent-ff5p/data/portal-monitor/state/mahara-cockpits/state.json (last_tick, incidents)",
+          threshold=f"No tick for {TICK_LIMIT_MIN} min: fail; open incidents: listed (it alerts on its own).",
+          run=monitor_check("mahara-cockpits", "cockpits"), quiet_because="hermes", owner="Hermes",
+          action="Check Hermes job f0bb4f23a170 (Reliability monitor: Mahara cockpits)."),
+    Check(id="hermes-monitor-sites", area="monitors", name="Hermes public sites monitor",
+          means="The per-minute monitor for public sites, TLS and backups keeps ticking.", severity="high",
+          reads=".../state/public-sites/state.json", threshold=f"No tick for {TICK_LIMIT_MIN} min: fail; open incidents: listed.",
+          run=monitor_check("public-sites", "public sites"), quiet_because="hermes", owner="Hermes",
+          action="Check Hermes job cd922bc5e4d6 (Public sites, TLS and backups)."),
+    Check(id="hermes-jobs", area="monitors", name="Hermes scheduled jobs",
+          means="Hermes's own scheduled jobs pass.", severity="low", reads="/opt/data/cron/jobs.json (last_status, last_error)",
+          threshold="An enabled job whose last run failed: warn (the Cron guardian job already watches these).",
+          run=run_jobs, quiet_because="hermes", owner="Hermes", action="Read the job's last_error in Hermes."),
+    Check(id="vps-backup", area="monitors", name="VPS backup", means="The VPS is backed up to GitHub nightly.",
+          severity="medium", reads="The public-sites monitor's backup-vps incident and the Nightly Backup job",
+          threshold="Either says the backup failed or is old: fail.", run=run_backup, quiet_because="hermes",
+          owner="Hermes", action="Run the Nightly Backup job by hand in Hermes and read why it exits with 1."),
+]
