@@ -1016,7 +1016,10 @@ function Cockpit({ view }: { view: View }) {
     setClientLogosError(false);
     void loadClientLogos({}).then(
       logos => {
-        if (!cancelled) setClientLogos(logos);
+        if (!cancelled)
+          setClientLogos(
+            Object.fromEntries(logos.map(logo => [logo.clientKey, logo.url])),
+          );
       },
       () => {
         if (!cancelled) setClientLogosError(true);

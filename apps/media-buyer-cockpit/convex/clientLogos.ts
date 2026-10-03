@@ -28,8 +28,8 @@ const STORAGE_PATH =
 
 export const list = authenticatedAction({
   args: {},
-  returns: v.record(v.string(), v.string()),
-  handler: async (ctx): Promise<Record<string, string>> => {
+  returns: v.array(v.object({ clientKey: v.string(), url: v.string() })),
+  handler: async (ctx): Promise<{ clientKey: string; url: string }[]> => {
     try {
       const clients: string[] | null = await ctx.runQuery(
         internal.clientLogos.scope,
@@ -41,7 +41,7 @@ export const list = authenticatedAction({
       const rows = await creativeRequestRest<
         { client_key: string; storage_path: string }[]
       >("cockpit_client_logos?select=client_key,storage_path");
-      const logos: Record<string, string> = {};
+      const logos: { clientKey: string; url: string }[] = [];
       for (const row of rows) {
         const client = row.client_key.trim().toLowerCase();
         if (allowed !== null && !allowed.has(client)) continue;
@@ -49,9 +49,12 @@ export const list = authenticatedAction({
         // Match sync.ts clientTag normalization, only after exact scope matching.
         const key = client.replace(/[^\p{L}\p{N}]/gu, "");
         if (!key) continue;
-        logos[key] =
-          PUBLIC_BUCKET +
-          row.storage_path.split("/").map(encodeURIComponent).join("/");
+        logos.push({
+          clientKey: key,
+          url:
+            PUBLIC_BUCKET +
+            row.storage_path.split("/").map(encodeURIComponent).join("/"),
+        });
       }
       return logos;
     } finally {

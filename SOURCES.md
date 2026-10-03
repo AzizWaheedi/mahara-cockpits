@@ -45,8 +45,10 @@ brand image files. Registry inserts, updates and deletes leave a
 
 Use the client's exact Ads Management tag, trimmed and lowercased, as
 `client_key`; keep its Clients - Mahara task id in `clickup_task_id`.
-The API normalizes display keys the same way as the campaign sync. It does
-not guess client identity from campaign titles.
+The API normalizes display keys the same way as the campaign sync. It returns
+an array of `{clientKey, url}` entries because Convex object keys are ASCII-only;
+Arabic client names remain string values. The screen builds its local lookup.
+The API does not guess client identity from campaign titles.
 
 To add or replace a verified logo, upload a PNG, JPEG or WebP (at most 2 MiB)
 through the service credential to a new content-versioned path in

@@ -1,4 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
+import { convexToJson } from "convex/values";
 import { list, scope } from "../convex/clientLogos";
 
 const invoke = (fn: unknown, ctx: unknown, args: unknown = {}) => {
@@ -71,9 +72,12 @@ test("client logos use exact normalized scope and durable bucket URLs", async ()
     { client_key: "other", storage_path: "other.png" },
   ]);
   const ctx = context(["media_buyer"], [" AcMe "]);
-  expect(await invoke(list, ctx)).toEqual({
-    acme: "https://bldgtotkfmhoxmlzowdx.supabase.co/storage/v1/object/public/cockpit-client-logos/verified/acme.png",
-  });
+  expect(await invoke(list, ctx)).toEqual([
+    {
+      clientKey: "acme",
+      url: "https://bldgtotkfmhoxmlzowdx.supabase.co/storage/v1/object/public/cockpit-client-logos/verified/acme.png",
+    },
+  ]);
 });
 
 test("client logos normalize display keys without widening client scope", async () => {
@@ -82,10 +86,12 @@ test("client logos normalize display keys without widening client scope", async 
     { client_key: "citywood", storage_path: "not-allowed.png" },
   ]);
   expect(await invoke(list, context(["media_buyer"], [" City Wood "]))).toEqual(
-    {
-      citywood:
-        "https://bldgtotkfmhoxmlzowdx.supabase.co/storage/v1/object/public/cockpit-client-logos/city-wood.png",
-    },
+    [
+      {
+        clientKey: "citywood",
+        url: "https://bldgtotkfmhoxmlzowdx.supabase.co/storage/v1/object/public/cockpit-client-logos/city-wood.png",
+      },
+    ],
   );
 });
 
@@ -103,14 +109,30 @@ test("client logos omit unsafe paths and non-raster files", async () => {
     ].map((storage_path, i) => ({ client_key: `bad${i}`, storage_path })),
     { client_key: "valid", storage_path: "client/logo-2.webp" },
   ]);
-  expect(await invoke(list, context(["admin"]))).toEqual({
-    valid:
-      "https://bldgtotkfmhoxmlzowdx.supabase.co/storage/v1/object/public/cockpit-client-logos/client/logo-2.webp",
-  });
+  expect(await invoke(list, context(["admin"]))).toEqual([
+    {
+      clientKey: "valid",
+      url: "https://bldgtotkfmhoxmlzowdx.supabase.co/storage/v1/object/public/cockpit-client-logos/client/logo-2.webp",
+    },
+  ]);
 });
 
 test("client logo store failures remain errors rather than missing logos", async () => {
   serve({ message: "unavailable" }, 503);
   const ctx = context();
   await expect(invoke(list, ctx)).rejects.toThrow("503");
+});
+
+test("Arabic client logos survive Convex serialization without widening scope", async () => {
+  serve([
+    { client_key: "شركة العلا", storage_path: "alola.png" },
+    { client_key: "شركةالعلا", storage_path: "not-allowed.png" },
+  ]);
+  const result = await invoke(list, context(["media_buyer"], ["شركة العلا"]));
+  expect(convexToJson(result)).toEqual([
+    {
+      clientKey: "شركةالعلا",
+      url: "https://bldgtotkfmhoxmlzowdx.supabase.co/storage/v1/object/public/cockpit-client-logos/alola.png",
+    },
+  ]);
 });
