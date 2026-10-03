@@ -143,7 +143,7 @@ const SPEC_SENTENCES = {
   },
   health: {
     working: "Rooms: working. Last run {time}. {rooms} today, {failed} failed.",
-    down: "Rooms are down. The room worker last ran at {time}. New rooms cannot be made.",
+    down: "Rooms are down. The room worker last ran at {time}. Call the lead on the phone, or send your own Zoom or Meet link.",
     mismatch: "Zoom and the cockpit disagree on {rooms} today. Open its timeline.",
   },
   slack: {
@@ -238,7 +238,8 @@ const LANE_SENTENCES = {
   worker_failed: "The room could not be made.",
   room_closed: "Room closed.",
   joined: "{name} joined at {time}.",
-  health_never: "Rooms are down. The room worker has not run yet. New rooms cannot be made.",
+  health_never: "Rooms are down. The room worker has not run yet. Call the lead on the phone, or send your own Zoom or Meet link.",
+  worker_down: "Video rooms are down right now. Call the lead on the phone, or send your own Zoom or Meet link.",
   health_working_no_counts: "Rooms: working. Last run {time}.",
   health_mismatch_many: "Zoom and the cockpit disagree on {rooms} today. Open their timelines.",
   watchdog_never: "The room worker has never run. New video rooms cannot be made.",
@@ -250,6 +251,7 @@ const LANE_SENTENCES = {
   why_wa_health: "WhatsApp video links are failing",
   why_window: "the WhatsApp window is closed",
   why_no_template: "no call link template is live",
+  why_template_waiting: "an earlier WhatsApp template to this lead has not arrived yet",
   why_no_short_link: "the short link is not live yet",
   why_email_off: "email is off for video links",
   why_no_email: "the lead has no email address",

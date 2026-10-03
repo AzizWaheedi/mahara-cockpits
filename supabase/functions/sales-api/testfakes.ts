@@ -143,6 +143,58 @@ export class FakeDb {
     this.rpcs.cockpit_sales_alert_set = a => this.alertSet(a);
     this.rpcs.cockpit_sales_live_claim = a => this.liveClaim(a);
     this.rpcs.cockpit_sales_message_slot = a => this.messageSlot(a);
+    this.rpcs.cockpit_sales_room_count_claim = a => this.countClaim(a);
+  }
+
+  /**
+   * cockpit_sales_room_count_claim (20261003d, fix round 4), as the SQL
+   * function decides it: under the lead's lock (here, one synchronous step)
+   * the room's row as the count read it, then, for a count that books, the
+   * lead's other rooms joined within three hours.
+   */
+  countClaim(a: Row): Row {
+    const r = this.t("cockpit_sales_rooms").find(x => x.id === a.p_room_id);
+    if (!r || !r.contact_id) return { code: "missed" };
+    const e = (a.p_expect ?? {}) as Row;
+    const same = (col: string, time: boolean) => {
+      if (!(col in e)) return true;
+      const want = e[col] ?? null;
+      const have = r[col] ?? null;
+      if (want === null || have === null) return want === have;
+      return time ? Date.parse(String(want)) === Date.parse(String(have)) : String(want) === String(have);
+    };
+    if (
+      !same("count_claimed_at", true) ||
+      !same("count_result", false) ||
+      !same("count_appointment_id", false) ||
+      !same("count_undo_at", true) ||
+      !same("lead_in_at", true)
+    )
+      return { code: "missed" };
+    const claimedAt = String(a.p_claimed_at ?? this.iso());
+    if (a.p_siblings !== false) {
+      const joined = Date.parse(String(r.lead_in_at ?? "")) || this.clock.now;
+      const sibs = this.t("cockpit_sales_rooms").filter(x => {
+        if (x === r || x.contact_id !== r.contact_id || !x.count_claimed_at) return false;
+        const t = Date.parse(String(x.lead_in_at ?? ""));
+        if (!Number.isFinite(t) || Math.abs(t - joined) > 3 * 3_600_000) return false;
+        return !(x.call_kind && r.call_kind && x.call_kind !== r.call_kind);
+      });
+      const res = (x: Row) => x.count_result ?? null;
+      const stands = sibs.some(
+        x =>
+          res(x) === "unclear" ||
+          (["booked", "moved"].includes(String(res(x))) && Boolean(x.count_appointment_id)) ||
+          (res(x) === null && Boolean(x.count_appointment_id) && !x.count_undo_at),
+      );
+      if (stands) {
+        Object.assign(r, { count_claimed_at: claimedAt, count_result: "already_counted", count_appointment_id: null, count_undo_at: null });
+        return { code: "already_counted", row: structuredClone(r) };
+      }
+      if (sibs.some(x => res(x) === null && !x.count_appointment_id)) return { code: "in_flight" };
+    }
+    Object.assign(r, { count_claimed_at: claimedAt, count_result: a.p_result ?? null, count_appointment_id: null, count_undo_at: null });
+    return { code: "claimed", row: structuredClone(r) };
   }
 
   /**
@@ -567,6 +619,30 @@ export function fakeWorld(start = Date.parse("2026-10-04T07:00:00Z")) {
       for (const r of routes) {
         const out = await r(method, path, body);
         if (out) return out;
+      }
+      // HighLevel's own appointment, when no route answers it: the cockpit's
+      // copy of it (B2B's mirror) as HighLevel would have it, with the
+      // dialer's active mark (which writes HighLevel) ahead of the lagging
+      // copy. The settle reads HighLevel's status before its no-show (fix round 4).
+      const appt = method === "GET" ? /^\/calendars\/events\/appointments\/([^/?]+)$/.exec(path) : null;
+      if (appt) {
+        const apptId = decodeURIComponent(appt[1] as string);
+        const a = db.t("cockpit_sales_appointments").find(x => x.appointment_id === apptId);
+        const mark = db
+          .t("cockpit_sales_dispositions")
+          .find(x => x.appointment_id === apptId && !x.superseded_at && !["failed", "pending"].includes(String(x.crm ?? "")));
+        if (a)
+          return {
+            appointment: {
+              id: a.appointment_id,
+              contactId: a.contact_id,
+              calendarId: a.calendar_id,
+              appointmentStatus: mark?.status ?? a.status,
+              startTime: a.start_at,
+              endTime: a.end_at ?? undefined,
+              assignedUserId: a.assigned_user_id,
+            },
+          };
       }
       throw new GhlError(`HighLevel said 404: no fake for ${method} ${path}`, 404);
     },

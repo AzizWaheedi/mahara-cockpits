@@ -1342,7 +1342,9 @@ describe("GET /go/{code}", () => {
     expect(res.headers.get("location")).toBe("https://us06web.zoom.us/j/85023456789?pwd=abc");
     expect(res.headers.get("referrer-policy")).toBe("no-referrer");
     await world.settle();
-    expect(world.events).toHaveLength(0);
+    // The open is recorded as /open records it (fix round 4): the call
+    // page's own fallback comes here when /open could not answer.
+    expect(world.events.filter(e => e.kind === "door.open").map(e => e.detail.via)).toEqual(["go"]);
   });
 
   test("an ended room goes to the ended page with its code only; the page asks the door for the number", async () => {
@@ -1388,12 +1390,16 @@ describe("GET /go/{code}", () => {
     expect(res.headers.get("location")).toBeNull();
   });
 
-  test("works without IP_SALT, because it stores nothing", async () => {
+  test("works without IP_SALT, and then keeps no address with the open", async () => {
     const h = fresh(w => {
       w.rooms.push(liveRoom());
       delete w.env.IP_SALT;
     });
     expect((await h(goRequest("K7Q2MX"))).status).toBe(302);
+    await world.settle();
+    const opens = world.events.filter(e => e.kind === "door.open");
+    expect(opens).toHaveLength(1);
+    expect(opens[0].detail.ip_hash).toBeUndefined();
   });
 });
 

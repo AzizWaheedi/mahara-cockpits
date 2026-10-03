@@ -727,12 +727,24 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
    * the last 3 minutes keeps the room open). The rooms guard (lc-db) leaves
    * `version` alone when only these columns change.
    */
-  async function recordOpen(room: RoomRow, code: string, ua: string, hash: string, deviceId: string | null) {
+  async function recordOpen(
+    room: RoomRow,
+    code: string,
+    ua: string,
+    hash: string | null,
+    deviceId: string | null,
+    via: "open" | "go" = "open",
+  ) {
     const now = deps.now();
     const at = new Date(now).toISOString();
     const device = deviceOf(ua);
     const over = roomIsOver(room, now);
-    const deviceKey = deviceIdOk(deviceId) ? `d:${deviceId}` : `h:${hash}:${await sha256Hex(ua)}`;
+    // No salted address (IP_SALT missing on /go): one open per code and device kind, and no address kept.
+    const deviceKey = deviceIdOk(deviceId)
+      ? `d:${deviceId}`
+      : hash
+        ? `h:${hash}:${await sha256Hex(ua)}`
+        : `c:${code}:${await sha256Hex(ua)}`;
     const dedupe = `open:${room.id}:${(await sha256Hex(deviceKey)).slice(0, 32)}`;
     try {
       await insertEvent(
@@ -746,7 +758,8 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
           detail: {
             device,
             os: osOf(ua),
-            ip_hash: hash,
+            ...(hash ? { ip_hash: hash } : {}),
+            ...(via === "go" ? { via: "go" } : {}),
             room_state: room.state,
             ...(over ? { after_end: true } : {}),
             ...(code !== room.code ? { via_code: code } : {}),
@@ -874,7 +887,7 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
       return text("This call link cannot be opened right now. Reply to our message and we will send it again.", 503);
     }
     const ua = req.headers.get("user-agent") ?? "";
-    // Nothing is stored here, so the limit can key on any salt.
+    // The limit can key on any salt; only a hash made with IP_SALT is ever stored.
     const hash = await ipHash(env("IP_SALT") || "sales-live", clientIp(req.headers));
     if (!withinLimits(hash, null))
       return text("Too many tries from this network. Wait a minute, then open the link again.", 429, {
@@ -896,7 +909,16 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
     if (roomIsOver(room, now)) return redirect(`${home}/ended?c=${code}`);
     noteStatus("go", true, "Last no-script link opened.");
     const view = doorView(code, room, { en: null, ar: null }, now);
-    if (view.state === "open") return redirect(view.join_url);
+    if (view.state === "open") {
+      // The lead's open, as /open records it (fix round 4): /go is also the
+      // call page's own fallback when /open could not answer, and on Meet an
+      // open is the one sign the lead came that the settle reads. Keyed on
+      // the salted address when IP_SALT is set, else per code.
+      const salt = env("IP_SALT");
+      const stored = salt ? await ipHash(salt, clientIp(req.headers)) : null;
+      deps.background(recordOpen(room, code, ua, stored, null, "go"));
+      return redirect(view.join_url);
+    }
     if (view.state === "preparing") return text(both(GO_COPY.preparing), 200, { refresh: "3" });
     return text("This room's link cannot be opened. Reply to our message and we will send a new one.", 502);
   }

@@ -145,7 +145,7 @@ function setup() {
       },
     });
     if (o.leadOpened !== false)
-      await w.io.db(`cockpit_sales_rooms?id=eq.${id}`, { method: "PATCH", body: { first_open_at: w.db.iso(), last_open_at: w.db.iso() } });
+      await w.io.db(`cockpit_sales_rooms?id=eq.${id}`, { method: "PATCH", body: { link_sent_at: w.db.iso(), first_open_at: w.db.iso(), last_open_at: w.db.iso() } });
     return id;
   }
   async function mark(who: Who, id: string, what: "lead_in" | "not_lead" | "host_in") {

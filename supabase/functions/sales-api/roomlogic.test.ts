@@ -1283,8 +1283,8 @@ describe("the health line", () => {
     expect(roomsHealth({ now, last_run_at: at(now - 90 * S), rooms_today: 0, failed_today: 0 }).worker_ok).toBe(true);
     const down = roomsHealth({ now, last_run_at: "2026-10-04T10:52:00Z", rooms_today: 6, failed_today: 0 });
     expect(down.worker_ok).toBe(false);
-    expect(down.line).toBe("Rooms are down. The room worker last ran at 13:52. New rooms cannot be made.");
-    expect(roomsHealth({ now, last_run_at: "2026-10-02T10:52:00Z", rooms_today: 0, failed_today: 0 }).line).toBe("Rooms are down. The room worker last ran at 13:52 on Fri 2 Oct. New rooms cannot be made.");
+    expect(down.line).toBe("Rooms are down. The room worker last ran at 13:52. Call the lead on the phone, or send your own Zoom or Meet link.");
+    expect(roomsHealth({ now, last_run_at: "2026-10-02T10:52:00Z", rooms_today: 0, failed_today: 0 }).line).toBe("Rooms are down. The room worker last ran at 13:52 on Fri 2 Oct. Call the lead on the phone, or send your own Zoom or Meet link.");
     expect(roomsHealth({ now, last_run_at: null, rooms_today: 0, failed_today: 0 }).line).toBe(LANE_COPY.health_never);
     expect(roomsHealth({ now, last_run_at: at(now + 10 * MIN), rooms_today: 0, failed_today: 0 }).worker_ok).toBe(false);
   });

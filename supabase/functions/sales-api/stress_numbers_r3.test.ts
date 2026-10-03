@@ -135,7 +135,7 @@ function setup(start?: number) {
         version: Number(room(id).version) + 1,
       },
     });
-    await w.io.db(`cockpit_sales_rooms?id=eq.${id}`, { method: "PATCH", body: { first_open_at: w.db.iso(), last_open_at: w.db.iso() } });
+    await w.io.db(`cockpit_sales_rooms?id=eq.${id}`, { method: "PATCH", body: { link_sent_at: w.db.iso(), first_open_at: w.db.iso(), last_open_at: w.db.iso() } });
     return id;
   }
   async function mark(who: Who, id: string, what: "lead_in" | "not_lead" | "host_in") {
@@ -349,6 +349,7 @@ describe("one conversation is one shown call", () => {
         join_url: MEET_URL,
         requested_at: new Date(w.clock.now - 20 * MIN).toISOString(),
         opened_at: new Date(w.clock.now - 19 * MIN).toISOString(),
+        link_sent_at: new Date(w.clock.now - 18 * MIN).toISOString(),
         first_open_at: new Date(w.clock.now - 15 * MIN).toISOString(),
         lead_in_at: new Date(w.clock.now - 10 * MIN).toISOString(),
         ended_at: new Date(w.clock.now - 3 * MIN).toISOString(),
@@ -419,6 +420,7 @@ describe("one conversation is one shown call", () => {
         join_url: ZOOM_URL,
         requested_at: new Date(day1 + 15 * MIN).toISOString(),
         opened_at: new Date(day1 + 16 * MIN).toISOString(),
+        link_sent_at: new Date(day1 + 17 * MIN).toISOString(),
         first_open_at: new Date(day1 + 18 * MIN).toISOString(),
         lead_in_at: new Date(day1 + 20 * MIN).toISOString(),
         ended_at: new Date(day1 + 45 * MIN).toISOString(),

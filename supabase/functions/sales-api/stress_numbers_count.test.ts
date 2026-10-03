@@ -148,7 +148,7 @@ function setup(o: Opts = {}) {
     });
     // The lead opened the short link (the door's write): evidence from the lead, so a hand-pressed
     // "The lead is in" counts (without it, it is self_reported: stress_security_rooms).
-    await w.io.db(`cockpit_sales_rooms?id=eq.${id}`, { method: "PATCH", body: { first_open_at: w.db.iso(), last_open_at: w.db.iso() } });
+    await w.io.db(`cockpit_sales_rooms?id=eq.${id}`, { method: "PATCH", body: { link_sent_at: w.db.iso(), first_open_at: w.db.iso(), last_open_at: w.db.iso() } });
     return id;
   }
   async function mark(id: string, what: "lead_in" | "not_lead" | "host_in") {

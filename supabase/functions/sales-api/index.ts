@@ -291,6 +291,52 @@ async function setting<T>(key: string): Promise<T | null> {
   return (rows[0]?.value as T) ?? null;
 }
 
+/** A save that found nothing to write (saveSettingIf's `make` throws it): the setting is left as it is. */
+class NothingToSave extends Error {}
+
+/**
+ * A setting written only over the value it was read as (fix round 4): two
+ * managers saving at once (the agent's switch on one screen, openers a day on
+ * another), or a save beside the duplicate detector's pause, never write
+ * back a key the other just changed. `make` builds the value from the row as
+ * read (and may refuse); a write another save beat (its updated_at moved) is
+ * read again and made again, at most five times, then "Reload".
+ */
+async function saveSettingIf(
+  key: string,
+  by: string,
+  make: (before: Row | null) => Row,
+): Promise<{ before: Row | null; value: Row }> {
+  for (let i = 0; i < 5; i++) {
+    const row = (await svc(`cockpit_sales_settings?key=eq.${enc(key)}&select=value,updated_at`))[0] ?? null;
+    const before = (row?.value ?? null) as Row | null;
+    const value = make(before);
+    const at = new Date().toISOString();
+    if (!row) {
+      try {
+        await svc("cockpit_sales_settings", {
+          method: "POST",
+          body: { key, value, updated_by: by, updated_at: at },
+          prefer: "return=minimal",
+        });
+        return { before, value };
+      } catch (e) {
+        // Another save made the row a moment ago: read it and merge again.
+        if (/23505|duplicate/.test(String((e as Error).message ?? e))) continue;
+        throw e;
+      }
+    }
+    const since = row.updated_at ? `updated_at=eq.${enc(String(row.updated_at))}` : "updated_at=is.null";
+    const out = await svc(`cockpit_sales_settings?key=eq.${enc(key)}&${since}`, {
+      method: "PATCH",
+      body: { value, updated_by: by, updated_at: at },
+      prefer: "return=representation",
+    });
+    if (out.length) return { before, value };
+  }
+  throw new Refusal("The settings changed a moment ago. Reload.", 409);
+}
+
 function needManager(who: Who) {
   if (!who.manager) throw new Refusal("Only a sales manager can change this.", 403);
 }
@@ -864,13 +910,8 @@ async function settingSave(who: Who, b: Row) {
   if (!Number.isInteger(days) || days < 1 || days > 60)
     throw new Refusal("Old calls are counted in whole days, 1 to 60.");
   const value = { dispositions: Boolean(v.dispositions), backlog_days: days };
-  const before = await setting<Row>(key);
-  await svc("cockpit_sales_settings?on_conflict=key", {
-    method: "POST",
-    body: { key, value, updated_by: who.email, updated_at: new Date().toISOString() },
-    prefer: "resolution=merge-duplicates,return=minimal",
-  });
-  await audit(who, "setting.save", "cockpit_sales_settings", key, before, value);
+  const saved = await saveSettingIf(key, String(who.email ?? ""), () => value);
+  await audit(who, "setting.save", "cockpit_sales_settings", key, saved.before, value);
   return { setting: { key, value } };
 }
 
@@ -1365,13 +1406,19 @@ async function duplicateWatch(contactId: string, conversationId: string, seen?: 
   if (!pair) return;
   const at = new Date().toISOString();
   const reason = `Two identical WhatsApp messages went to one lead ${Math.round(Math.abs(Date.parse(String(pair[1].at)) - Date.parse(String(pair[0].at))) / 1000)} seconds apart.`;
-  const value = { ...guard, dup_paused_at: at, dup_reason: reason };
-  await svc("cockpit_sales_settings?on_conflict=key", {
-    method: "POST",
-    body: { key: "whatsapp_guard", value, updated_by: "sales-api", updated_at: at },
-    prefer: "resolution=merge-duplicates,return=minimal",
-  });
-  await audit({ signed_in: true, email: "sales-api" }, "whatsapp.duplicate_pause", "cockpit_sales_settings", "whatsapp_guard", guard, value, {
+  // Written over the guard as it stands (a manager's save a moment ago is
+  // kept), and never on top of a pause another check wrote meanwhile.
+  let saved: { before: Row | null; value: Row };
+  try {
+    saved = await saveSettingIf("whatsapp_guard", "sales-api", read => {
+      if (!duplicateWatchOn((read ?? {}) as Row)) throw new NothingToSave();
+      return { ...(read ?? {}), dup_paused_at: at, dup_reason: reason };
+    });
+  } catch (e) {
+    if (e instanceof NothingToSave) return;
+    throw e;
+  }
+  await audit({ signed_in: true, email: "sales-api" }, "whatsapp.duplicate_pause", "cockpit_sales_settings", "whatsapp_guard", saved.before, saved.value, {
     contact_id: contactId,
     message_ids: [pair[0].id, pair[1].id],
   });
@@ -1379,7 +1426,9 @@ async function duplicateWatch(contactId: string, conversationId: string, seen?: 
     await svc("rpc/cockpit_sales_alert_set", {
       method: "POST",
       body: {
-        p_key: `wa_duplicate:${at.slice(0, 10)}`,
+        // One alert per pause (fix round 4): a second pause the same day,
+        // after a manager cleared the first, reaches #sales-alerts again.
+        p_key: `wa_duplicate:${at}`,
         p_on: true,
         p_kind: "wa_duplicate",
         p_subject: "WhatsApp paused",
@@ -1474,6 +1523,21 @@ async function sendTemplate(
   if (!(await messagingSwitch()).whatsapp) throw new Refusal("Sending by WhatsApp is switched off in the cockpit.", 409);
   await duplicatePauseCheck();
   await senderCeiling(who);
+  // An earlier template to this lead that HighLevel took and nobody saw yet
+  // is still in HighLevel's workflow queue (fix round 4): when it runs it
+  // reads the contact fields as they are then, so writing them now and
+  // enrolling again sends these words twice (and the duplicate detector
+  // pauses WhatsApp for every rep). Refused before anything is written, so
+  // certainly not sent: a room's link moves on to email.
+  const waiting = (await svc(
+    `cockpit_sales_messages?contact_id=eq.${enc(o.contactId)}&via=eq.workflow&state=eq.sent&provider_status=eq.enrolled&created_at=gte.${enc(new Date(Date.now() - TEMPLATE_WAIT_MS).toISOString())}&select=id&limit=1`,
+  ))[0];
+  if (waiting)
+    throw new Refusal(
+      "An earlier WhatsApp template to this lead has not arrived yet. Wait for it, or send by email.",
+      409,
+      { certain: true, code: "template_waiting" },
+    );
   const lead = (await svc(`cockpit_sales_leads?contact_id=eq.${enc(o.contactId)}&select=contact_id,name`))[0];
   if (!lead) throw new Refusal("That lead is not in the cockpit.", 404);
   // The template ceilings (two minutes a lead, the day's templates, the
@@ -1623,6 +1687,9 @@ async function sendTemplate(
   if (read.length) background(duplicateWatch(o.contactId, "", read));
   return { message: saved };
 }
+
+/** An earlier template HighLevel took and nobody saw this recently may still be in its workflow queue (rooms.ts TEMPLATE_WAIT_MS). */
+const TEMPLATE_WAIT_MS = 6 * 3_600_000;
 
 /** A rep sends an approved template from the lead's conversation. */
 async function waTemplateSend(who: Who, b: Row) {
@@ -1828,16 +1895,21 @@ async function referenceAnswer(who: Who, b: Row) {
 async function whatsappGuardSave(who: Who, b: Row) {
   needManager(who);
   const v = (b.value ?? {}) as Row;
-  const before = await setting<Row>("whatsapp_guard");
-  const checked = whatsappGuardValue((before ?? {}) as Row, v, Date.now());
-  if (!checked.ok) throw new Refusal(checked.error);
-  const value = checked.value;
-  await svc("cockpit_sales_settings?on_conflict=key", {
-    method: "POST",
-    body: { key: "whatsapp_guard", value, updated_by: who.email, updated_at: new Date().toISOString() },
-    prefer: "resolution=merge-duplicates,return=minimal",
+  const { before, value } = await saveSettingIf("whatsapp_guard", String(who.email ?? ""), read => {
+    const checked = whatsappGuardValue((read ?? {}) as Row, v, Date.now());
+    if (!checked.ok) throw new Refusal(checked.error);
+    return checked.value;
   });
   await audit(who, "whatsapp.guard", "cockpit_sales_settings", "whatsapp_guard", before, value);
+  // "Clear the pause" resolves that pause's alert (fix round 4), so the next
+  // pause is a fresh alert that reaches #sales-alerts.
+  const paused = String((before ?? {}).dup_paused_at ?? "");
+  if (paused && !value.dup_paused_at)
+    for (const k of [`wa_duplicate:${paused}`, `wa_duplicate:${paused.slice(0, 10)}`])
+      await svc("rpc/cockpit_sales_alert_set", {
+        method: "POST",
+        body: { p_key: k, p_on: false, p_kind: "wa_duplicate", p_subject: null, p_message: null, p_detail: null },
+      }).catch(e => console.error("duplicate alert resolve", redact(String(e))));
   return { setting: { key: "whatsapp_guard", value } };
 }
 
@@ -2460,19 +2532,20 @@ async function followupSkip(who: Who, b: Row) {
 async function followupSettings(who: Who, b: Row) {
   needManager(who);
   const v = (b.value ?? {}) as Row;
-  const before = (await setting<Row>("followups")) ?? {};
   // Only what was sent changes: a switch flipped on the page, or the form's
   // own fields. Everything else keeps its value, including the keys this
   // form does not know (sendrules.ts followupSettingsValue), so a form
-  // opened before a switch was flipped can never flip it back.
-  const checked = followupSettingsValue(before, v, FOLLOWUP_SEGMENTS);
-  if (!checked.ok) throw new Refusal(checked.error);
-  const value = checked.value;
-  await svc("cockpit_sales_settings?on_conflict=key", {
-    method: "POST",
-    body: { key: "followups", value, updated_by: who.email, updated_at: new Date().toISOString() },
-    prefer: "resolution=merge-duplicates,return=minimal",
+  // opened before a switch was flipped can never flip it back. The write
+  // holds only over the value it merged into (saveSettingIf: a compare on
+  // updated_at, read and merged again on a miss), so two managers saving at
+  // once never write back each other's key (fix round 4).
+  const saved = await saveSettingIf("followups", String(who.email ?? ""), read => {
+    const checked = followupSettingsValue(read ?? {}, v, FOLLOWUP_SEGMENTS);
+    if (!checked.ok) throw new Refusal(checked.error);
+    return checked.value as Row;
   });
+  const before = saved.before ?? {};
+  const value = saved.value;
   await audit(who, "followup.settings", "cockpit_sales_settings", "followups", before, value);
   return { setting: { key: "followups", value } };
 }
@@ -3876,12 +3949,24 @@ async function freeSlots(calendarId: string, from: number, to: number, userId: s
 /**
  * The lead's next intro or demo on HighLevel's calendar, if one is booked,
  * with its end, its rep and its status (the live count moves it only when it
- * can put all of them back).
+ * can put all of them back). `booked_before`: only a call HighLevel says was
+ * booked (dateAdded) before then, so the live count reads the lead's calls
+ * as they stood at the join (a call booked during the conversation is its
+ * outcome, never the call itself). A call with no dateAdded is kept.
  */
 async function upcoming(
   contactId: string,
   kind: BookingKind,
-): Promise<{ id: string; start: number; end: number | null; assigned_user_id: string | null; status: string | null } | null> {
+  opts: { booked_before?: number | null } = {},
+): Promise<{
+  id: string;
+  start: number;
+  end: number | null;
+  assigned_user_id: string | null;
+  status: string | null;
+  booked_at: number | null;
+} | null> {
+  const bound = typeof opts.booked_before === "number" && Number.isFinite(opts.booked_before) ? opts.booked_before : null;
   const [d, types] = await Promise.all([
     ghl("GET", `/contacts/${enc(contactId)}/appointments`, undefined, "2021-07-28"),
     setting<Record<string, { type: string }>>("calendars"),
@@ -3891,15 +3976,18 @@ async function upcoming(
     .filter(e => types?.[String(e.calendarId ?? "")]?.type === kind)
     .map(e => {
       const end = ghlTime(e.endTime);
+      const added = ghlTime(e.dateAdded);
       return {
         id: String(e.id ?? ""),
         start: ghlTime(e.startTime),
         end: Number.isFinite(end) ? end : null,
         assigned_user_id: (e.assignedUserId as string | undefined) || null,
         status: String(e.appointmentStatus ?? e.appoinmentStatus ?? "") || null,
+        booked_at: Number.isFinite(added) && added > 0 ? added : null,
       };
     })
     .filter(e => e.id && Number.isFinite(e.start) && e.start > Date.now())
+    .filter(e => bound === null || e.booked_at === null || e.booked_at < bound)
     .sort((x, y) => x.start - y.start);
   return events[0] ?? null;
 }
@@ -5421,7 +5509,7 @@ const rooms = makeRooms({
   resendMark: (who, id) => resendMark(who, id),
   sendText: (who, b, opts) => convoSend(who, { ...b, followup_id: undefined }, opts) as Promise<{ message: Row; repeated?: boolean }>,
   sendTemplate: (who, o) => sendTemplate(who, o) as Promise<{ message: Row; repeated?: boolean }>,
-  upcoming: (contactId, kind) => upcoming(contactId, kind),
+  upcoming: (contactId, kind, opts) => upcoming(contactId, kind, opts ?? {}),
   // "Did this link go?" after its answer was lost: only a message with the
   // send's own words that reached the lead counts (never a failed one, never
   // any other WhatsApp to the lead), and with no words known nothing counts.

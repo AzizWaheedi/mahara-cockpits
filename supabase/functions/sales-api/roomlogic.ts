@@ -110,7 +110,7 @@ export type SettledMark = (typeof SETTLED_MARKS)[number];
 export const SEND_ON = ["open", "host_in"] as const;
 export type SendOn = (typeof SEND_ON)[number];
 /** room.mark's `what` (contract). */
-export const ROOM_MARKS = ["host_in", "lead_in", "not_lead"] as const;
+export const ROOM_MARKS = ["host_in", "lead_in", "not_lead", "still_on"] as const;
 export type RoomMark = (typeof ROOM_MARKS)[number];
 /** room.end's `reason` (contract), plus P1's "I can't let them in". */
 export const END_REASONS = ["end", "on_phone", "finished", "cancel", "admit_blocked"] as const;
@@ -194,6 +194,18 @@ export const BOOKED_LEAD_MIN = 20;
 export const WRAP_EARLY_MIN = 30;
 /** The worker's status row turns the health line red after this long (1.7). */
 export const WORKER_RED_AFTER_S = 90;
+/**
+ * A room worker whose last report is older than this is down for room.create
+ * (fix round 4): the rep is told at once to phone the lead or send their own
+ * meeting link, never left on "Making your room" for a minute.
+ */
+export const WORKER_DOWN_AFTER_S = 180;
+
+/** The room worker is down for room.create: it reported, and not for WORKER_DOWN_AFTER_S. A row never written says nothing here. */
+export function workerDown(lastRunAt: unknown, now: number): boolean {
+  const last = ms(lastRunAt);
+  return last !== null && now - last > WORKER_DOWN_AFTER_S * S;
+}
 /** A stored door event older than this is left for a person, not replayed. */
 export const REPLAY_MAX_AGE_S = 86_400;
 /** A timer waits this long at most for a room's unhandled events to be replayed. */
@@ -607,7 +619,7 @@ export const ROOM_COPY = {
   /** Health line (F "Health line"). */
   health: {
     working: "Rooms: working. Last run {time}. {rooms} today, {failed} failed.",
-    down: "Rooms are down. The room worker last ran at {time}. New rooms cannot be made.",
+    down: "Rooms are down. The room worker last ran at {time}. Call the lead on the phone, or send your own Zoom or Meet link.",
     mismatch: "Zoom and the cockpit disagree on {rooms} today. Open its timeline.",
   },
   /** Slack, app "Mahara Sales" (P2's table replaces F's, C43; the watchdog line is F's). */
@@ -723,7 +735,8 @@ export const LANE_COPY = {
   worker_failed: "The room could not be made.",
   room_closed: "Room closed.",
   joined: "{name} joined at {time}.",
-  health_never: "Rooms are down. The room worker has not run yet. New rooms cannot be made.",
+  health_never: "Rooms are down. The room worker has not run yet. Call the lead on the phone, or send your own Zoom or Meet link.",
+  worker_down: "Video rooms are down right now. Call the lead on the phone, or send your own Zoom or Meet link.",
   health_working_no_counts: "Rooms: working. Last run {time}.",
   health_mismatch_many: "Zoom and the cockpit disagree on {rooms} today. Open their timelines.",
   watchdog_never: "The room worker has never run. New video rooms cannot be made.",
@@ -735,6 +748,7 @@ export const LANE_COPY = {
   why_wa_health: "WhatsApp video links are failing",
   why_window: "the WhatsApp window is closed",
   why_no_template: "no call link template is live",
+  why_template_waiting: "an earlier WhatsApp template to this lead has not arrived yet",
   why_no_short_link: "the short link is not live yet",
   why_email_off: "email is off for video links",
   why_no_email: "the lead has no email address",
@@ -1262,6 +1276,12 @@ export type RoomEvent =
   | ({ kind: "lead_in"; source: "zoom" | "mark"; actor?: Actor; version?: number } & At)
   /** "That was not the lead", within 5 minutes of the join, also once the room has closed. */
   | { kind: "not_lead"; actor?: Actor; version?: number }
+  /**
+   * "Still on it", the answer to "Still on the call?" (fix round 4): the
+   * room's end moves to STILL_ON_ASK_AGAIN_S from now, so the sweep's R7
+   * (ends_at + no_end_signal) counts from the rep's last answer.
+   */
+  | { kind: "still_on"; actor?: Actor; version?: number }
   /** room.end, or the system ending a room. */
   | { kind: "end"; reason: EndReason; actor?: Actor; version?: number; confirm?: boolean }
   /** Zoom's meeting.ended. */
@@ -1302,6 +1322,7 @@ export const ROOM_EVENT_KINDS = [
   "host_left",
   "lead_in",
   "not_lead",
+  "still_on",
   "end",
   "meeting_ended",
   "adopt",
@@ -1391,7 +1412,8 @@ export type RefusalCode =
   | "call_nearly_over"
   | "take_host_busy"
   | "booked_other_rep"
-  | "wrap_too_early";
+  | "wrap_too_early"
+  | "worker_down";
 
 export interface Refused {
   ok: false;
@@ -1446,6 +1468,7 @@ const REFUSALS: Record<RefusalCode, { text: string; status: number; retry?: bool
   take_host_busy: { text: LANE_COPY.take_host_busy, status: 409 },
   booked_other_rep: { text: LANE_COPY.booked_other_rep, status: 403 },
   wrap_too_early: { text: LANE_COPY.wrap_too_early, status: 409, retry: true },
+  worker_down: { text: LANE_COPY.worker_down, status: 503 },
 };
 
 /** The Zoom refusals without their "use Meet" advice, for a host who cannot use Meet either. */
@@ -1825,6 +1848,11 @@ export function applyRoomEvent(room: RoomRow, event: RoomEvent, now: number, ctx
     case "not_lead":
       return notLead(room, now, ctx);
 
+    case "still_on":
+      // Only a call with the lead in it runs on; the end only moves later.
+      if (room.state !== "lead_in") return refuse("stale");
+      return change(room, "lead_in", { ends_at: laterIso(room.ends_at, now + STILL_ON_ASK_AGAIN_S * S) }, []);
+
     case "end": {
       const reason = event.reason;
       if (!oneOf(END_REASONS, reason)) return refuse("bad_input");
@@ -2056,8 +2084,14 @@ export function markEvent(what: unknown, actor: Actor, version: number): RoomEve
   if (what === "host_in") return { kind: "host_in", source: "mark", actor, version };
   if (what === "lead_in") return { kind: "lead_in", source: "mark", actor, version };
   if (what === "not_lead") return { kind: "not_lead", actor, version };
+  // Only ever moves the end later, so it carries no version: an answer from a
+  // tab a version behind still lands.
+  if (what === "still_on") return { kind: "still_on", actor };
   return null;
 }
+
+/** "Still on the call?" is asked again this long after "Still on it" (the panel's STILL_ON_ASK_AGAIN_MS). */
+export const STILL_ON_ASK_AGAIN_S = 600;
 
 // ---------------------------------------------------------------------------
 // Small timing rules for the worker, the door and the panel
@@ -2117,6 +2151,12 @@ export interface SettleFacts {
    * door down), so a Zoom room is no evidence that nobody came.
    */
   zoom_reported?: boolean;
+  /**
+   * The door stored the lead's open of this room's link (a door.open event,
+   * not one after the room ended), whether or not its write of the room's
+   * open times landed (fix round 4: a slow database).
+   */
+  opened?: boolean;
 }
 
 /**
@@ -2130,11 +2170,14 @@ export interface SettleFacts {
  * was never opened.
  */
 export function noShowDoubt(room: RoomRow, facts: SettleFacts = {}): string | null {
-  if (room.first_open_at || room.last_open_at) return "the lead opened the link";
+  if (facts.opened || room.first_open_at || room.last_open_at) return "the lead opened the link";
   if (room.lead_waiting_at) return "the lead knocked";
   // A link that never reached the lead (refused on every channel, or "it may
   // have gone" and never confirmed): their staying away says nothing.
   if (room.purpose !== "booked" && !room.link_sent_at) return "the link never reached the lead";
+  // Its only channel a WhatsApp template nobody saw (no text, no email that
+  // went): the link may never have reached the lead either (fix round 4).
+  if (room.purpose !== "booked" && unconfirmedOnly(room)) return "the link was not confirmed to have reached the lead";
   if (facts.sibling_joined) return "the lead joined another room for this call";
   if (facts.test_off_calendar) return "a test contact's call is not on the test calendar";
   if (facts.late_join) return "someone joined the meeting after the room closed";
@@ -2143,6 +2186,13 @@ export function noShowDoubt(room: RoomRow, facts: SettleFacts = {}): string | nu
   if (room.provider === "zoom" && facts.zoom_unclear !== false) return "a Zoom event for this room was not read";
   if (room.provider === "zoom" && facts.zoom_reported !== true) return "Zoom reported nothing for this room";
   return null;
+}
+
+/** The link went only as a WhatsApp template nobody saw: no free text and no email went with it. */
+export function unconfirmedOnly(room: RoomRow): boolean {
+  if (!room.link_unconfirmed_at) return false;
+  const ch = Array.isArray(room.link_channels) ? (room.link_channels as unknown[]).map(String) : [];
+  return !ch.includes("whatsapp_text") && !ch.includes("email");
 }
 
 /**
@@ -2332,6 +2382,13 @@ export interface ChannelInput {
   wa_paused?: boolean;
   /** "Bad number": email goes first (P1). */
   email_first?: boolean;
+  /**
+   * An earlier workflow template to this lead is still waiting in HighLevel
+   * (enrolled, never seen): HighLevel's delayed workflow would send it with
+   * the join field as it is now, so a second enrolment sends this room's
+   * link twice (fix round 4). The template is skipped.
+   */
+  template_waiting?: boolean;
 }
 
 export interface ChannelPlan {
@@ -2420,7 +2477,9 @@ export function channelPlan(i: ChannelInput): ChannelPlan {
           ? L.why_no_short_link
           : !i.template_live
             ? L.why_no_template
-            : null),
+            : i.template_waiting
+              ? L.why_template_waiting
+              : null),
     email: !i.setting.send.email ? L.why_email_off : !hasEmail(c) ? L.why_no_email : emailDnd ? L.why_email_dnd : null,
   };
   const ranked: LinkChannel[] = i.email_first
@@ -2440,6 +2499,15 @@ export function channelPlan(i: ChannelInput): ChannelPlan {
     not_sent_reason: primary === null ? joinWords(reasons) : null,
     line: primary ? fill(ROOM_COPY.dialer.picker, { channel: CHANNEL_WORDS[primary] }) : ROOM_COPY.dialer.picker_none,
   };
+}
+
+/**
+ * The link may go by email to this lead: email sends are on, the contact has
+ * an address and no email do-not-disturb (channelPlan's email rule), so a
+ * WhatsApp template nobody saw can be backed up by email.
+ */
+export function emailPossible(contact: Row | null, setting: Pick<RoomsSetting, "send">): boolean {
+  return setting.send.email && hasEmail(contact) && !(contact ? dndFor(contact, "email") : false);
 }
 
 /** Do-not-disturb covers both channels a link can go on. */
@@ -2762,7 +2830,11 @@ export interface CountInput {
    * never move an official number).
    */
   lead_evidence?: boolean;
-  /** The booked intro is already marked shown (a rep's own mark, or HighLevel's status): the count adds nothing. */
+  /**
+   * The booked intro is already held by B2B's rule (a rep's showed or
+   * invalid mark, or HighLevel's status): the count adds nothing, and a
+   * disqualification is never turned into a show.
+   */
   appointment_shown?: boolean;
   /**
    * The start of the booked intro the room carries (room.appointment_id),
@@ -2908,7 +2980,8 @@ export function countLive(i: CountInput): CountPlan {
   // intro running now, a room made from the lead page): the join is that call.
   const cur = i.current_call;
   if (!test && cur && cur.id) {
-    if (String(cur.status ?? "") === "showed" || !cur.mine) return none("already_counted", true, "already_counted");
+    // Held already by B2B's rule (showed, or invalid: a disqualified call is held): nothing to add.
+    if (["showed", "invalid"].includes(String(cur.status ?? "")) || !cur.mine) return none("already_counted", true, "already_counted");
     return { action: "mark", claim: true, appointment_id: cur.id };
   }
   if (!test && !isTaggedLead(c.tags)) return none("not_a_lead", true, "not_a_lead");
@@ -3004,11 +3077,19 @@ export interface CountBefore {
   prior_status?: unknown;
   prior_disposition_id?: unknown;
   own_disposition_id?: unknown;
+  /** move: the call the count moved, and where it moved it to (count.moving). */
+  appointment_id?: unknown;
+  to_start?: unknown;
+  /** create: the calendar and start of the live booking the count asked for (count.creating, fix round 4). */
+  calendar_id?: unknown;
+  start?: unknown;
 }
 
 export type UndoPlan =
-  | { action: "none"; reason: "nothing" | "in_flight" | "moved_from_unknown" | "unmark_unknown" }
+  | { action: "none"; reason: "nothing" | "in_flight" | "moved_from_unknown" | "unmark_unknown" | "unclear_unknown" }
   | { action: "delete"; appointment_id: string }
+  /** An unclear booking: looked for on the lead's calendar at its start, and deleted if it was made. */
+  | { action: "find_delete"; calendar_id: string; start: string }
   | {
       action: "move_back";
       appointment_id: string;
@@ -3070,6 +3151,29 @@ export function countUndo(room: RoomRow, before: CountBefore | string | null | u
         prior_disposition_id: str(String(b.prior_disposition_id ?? ""), 80),
       };
     }
+    case "unclear": {
+      // The count's change may have landed (its answer was lost): put back
+      // what it may have done, from its own record (fix round 4). A move is
+      // moved back whole (writing the call as it was is harmless if the move
+      // never landed); a booking is looked for and deleted if it was made.
+      const moved = str(String(b.appointment_id ?? ""), 80);
+      const from = isoOrNull(b.from_start);
+      if (moved && from) {
+        const end = isoOrNull(b.from_end);
+        return {
+          action: "move_back",
+          appointment_id: moved,
+          start: from,
+          end: end && (ms(end) as number) > (ms(from) as number) ? end : null,
+          assigned_user_id: str(b.from_assigned_user_id, 80),
+          status: str(b.from_status, 20) ?? "confirmed",
+        };
+      }
+      const cal = str(String(b.calendar_id ?? ""), 80);
+      const start = isoOrNull(b.start);
+      if (cal && start) return { action: "find_delete", calendar_id: cal, start };
+      return { action: "none", reason: "unclear_unknown" };
+    }
     default:
       return { action: "none", reason: "nothing" };
   }
@@ -3086,9 +3190,16 @@ export interface GuardedWrite {
  * nothing (not a lead, failed) writes its result with the claim. A new
  * claim clears an earlier undo, so a real lead who joins after "That was
  * not the lead" is counted.
+ *
+ * The claim lands only on the row as the count read it: its claim, its
+ * result, its undo and its join (fix round 4). "That was not the lead"
+ * pressed while the count was still reading HighLevel writes count_undo_at
+ * only (no claim yet), so the claim misses and the press is never erased;
+ * the sweep's next re-ask reads the fresh row, where the join was taken back.
+ * Only a claim built from a row whose join came after the undo clears it.
  */
 export function countClaim(room: RoomRow, now: number, plan: CountPlan, confirmed = false): GuardedWrite | null {
-  if (!plan.claim || !countClaimable(room, confirmed)) return null;
+  if (!plan.claim || !countClaimable(room, confirmed) || !leadJoined(room)) return null;
   return {
     patch: {
       count_claimed_at: iso(now),
@@ -3096,7 +3207,12 @@ export function countClaim(room: RoomRow, now: number, plan: CountPlan, confirme
       count_appointment_id: null,
       count_undo_at: null,
     },
-    expect: { count_claimed_at: room.count_claimed_at ?? null, count_result: room.count_result ?? null },
+    expect: {
+      count_claimed_at: room.count_claimed_at ?? null,
+      count_result: room.count_result ?? null,
+      count_undo_at: room.count_undo_at ?? null,
+      lead_in_at: room.lead_in_at ?? null,
+    },
   };
 }
 

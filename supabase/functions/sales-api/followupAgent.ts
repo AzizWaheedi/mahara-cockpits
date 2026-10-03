@@ -10,7 +10,7 @@
 
 import { cleanText, redact, type Who } from "./lib.ts";
 import { ApiRefusal, DbError, isUnique, type LiveIO } from "./liveio.ts";
-import { GATE_SHUT, gateOpen, hoursRefusal } from "./sendrules.ts";
+import { budgetCap, budgetCheck, GATE_SHUT, gateOpen, hoursRefusal, kuwaitMonthStart } from "./sendrules.ts";
 
 type Row = Record<string, unknown>;
 type Action = (who: Who, b: Row) => Promise<Row>;
@@ -32,7 +32,76 @@ export const APPROVED_KEEP_MS = 72 * 3_600_000;
  * is not at fault, so it is never set aside for a person.
  */
 export const STATE_RACE =
-  /someone else has just dealt with this draft|this draft was already|not approved to go yet|paused or stopped|is held, so it was not sent|backlog opener was taken back|kind of opener is off|already going out|conversation has moved on/i;
+  /someone else has just dealt with this draft|this draft was already|not approved to go yet|paused or stopped|is held, so it was not sent|backlog opener was taken back|kind of opener is off|already going out|conversation has moved on|agent is paused for this lead|has not arrived yet/i;
+
+/** A call the B2B rule counts as held this long ago still takes a backlog opener back (the desk's waves.py HELD_WAIT). */
+export const HELD_WAIT_MS = 24 * 3_600_000;
+
+/**
+ * What the cockpit's stops rows say about a lead now (the desk's followups.py
+ * hold_of): an unsubscribe nobody answered (asked), WhatsApp do-not-disturb
+ * (dnd), or a pause (a stop word's, or a rep's own) still running. Only a
+ * rep's resume lifts a row said before it. Null: nothing holds the lead.
+ */
+export function stopHoldOf(rows: Row[], now: number): string | null {
+  const t = (v: unknown) => {
+    const n = Date.parse(String(v ?? ""));
+    return Number.isFinite(n) ? n : null;
+  };
+  const resumed = rows
+    .filter(r => r.state === "resumed")
+    .map(r => t(r.decided_at) ?? t(r.said_at))
+    .filter((x): x is number => x !== null);
+  const resumedAt = resumed.length ? Math.max(...resumed) : null;
+  for (const r of [...rows].sort((a, b) => (t(b.said_at) ?? 0) - (t(a.said_at) ?? 0))) {
+    const state = String(r.state ?? "");
+    const said = t(r.said_at);
+    if (state === "resumed" || (resumedAt !== null && said !== null && said <= resumedAt)) continue;
+    if (state === "asked") return "the lead asked to stop and a rep has not answered yet";
+    if (state === "dnd") return "the lead asked to stop and a rep put WhatsApp on do-not-disturb";
+    const until = t(r.paused_until);
+    if (state === "paused" && until !== null && now < until) return r.kind === "manual" ? "a rep paused it" : "the lead wrote a stop word";
+  }
+  return null;
+}
+
+/**
+ * Why an approved backlog opener is no longer for this lead at send time, by
+ * the pools' own rules (the desk's waves.py pool_of and _left_pool), or null:
+ * a call still to come; a call held (the B2B rule: showed, or confirmed once
+ * started) within HELD_WAIT_MS; a latest call marked invalid (disqualified);
+ * or any call booked after the opener was written.
+ */
+export function openerTakenBack(calls: Row[], now: number, draftedAt: number | null): string | null {
+  const t = (v: unknown) => {
+    const n = Date.parse(String(v ?? ""));
+    return Number.isFinite(n) ? n : null;
+  };
+  const mine = calls
+    .filter(a => (a.call_type === "intro" || a.call_type === "demo") && t(a.start_at) !== null)
+    .sort((a, b) => (t(a.start_at) as number) - (t(b.start_at) as number));
+  const status = (a: Row) => String(a.status ?? "").toLowerCase();
+  if (mine.some(a => (t(a.start_at) as number) > now && !["cancelled", "noshow", "invalid"].includes(status(a))))
+    return AGENT_COPY.opener_booked;
+  if (draftedAt !== null && mine.some(a => (t(a.booked_at) ?? Number.NEGATIVE_INFINITY) > draftedAt)) return AGENT_COPY.opener_booked_since;
+  const latest = mine[mine.length - 1];
+  if (latest && status(latest) === "invalid") return AGENT_COPY.opener_disqualified;
+  const start = (a: Row) => t(a.start_at) as number;
+  if (mine.some(a => ["showed", "confirmed"].includes(status(a)) && start(a) <= now && start(a) > now - HELD_WAIT_MS))
+    return AGENT_COPY.opener_held;
+  return null;
+}
+
+/**
+ * A HighLevel refusal about this lead's own contact (merged or deleted, a
+ * field it will not take): 400, 404 or 422 from HighLevel. Never one about
+ * every send (401 and 403 are the token's or the location's; 429 and 5xx are
+ * HighLevel's own state).
+ */
+export function contactRefused(e: unknown): boolean {
+  if (e instanceof ApiRefusal) return false;
+  return /HighLevel said (400|404|422)\b/.test(String((e as Error)?.message ?? e));
+}
 
 /**
  * Refusals about the template's setup, not the lead (the template not set up
@@ -75,6 +144,13 @@ export const AGENT_COPY = {
   kind_bad: "That is not a kind of follow-up.",
   lead_missing: "That lead is not in the cockpit.",
   opener_booked: "The lead has a call booked now, so the backlog opener was taken back.",
+  opener_booked_since: "The lead booked a call after this opener was written, so the backlog opener was taken back.",
+  opener_held: "The lead had a call in the last day, so the backlog opener was taken back.",
+  opener_disqualified: "The lead's latest call was marked invalid (disqualified), so the backlog opener was taken back.",
+  stop_paused: "The agent is paused for this lead ({why}), so the opener waits. A rep resumes the lead, or holds the opener.",
+  stop_answered: "This stop was already answered ({state}). Reload to see it.",
+  stop_dnd_kept: "This lead asked to stop for good, so the agent stays off. Take do-not-disturb off in HighLevel first if they asked to hear from us again.",
+  contact_refused: "HighLevel would not take this lead's contact ({why}), so the opener was set aside for a person. Check the lead in HighLevel.",
   sending: "This opener is already going out, so it cannot be held now.",
   raced: "Someone else has just dealt with this draft.",
   kind_off: "This kind of opener is off ({kind}), so it waits in the queue. A manager switches it back on under Follow-ups, or pauses the wave.",
@@ -311,6 +387,19 @@ export function makeFollowupAgent(deps: AgentDeps): { actions: Record<string, Ac
     if (drafts.length !== ids.length || drafts.some(d => d.status !== "draft")) throw refusal(AGENT_COPY.batch_not_open, 409);
     if (drafts.some(d => d.segment !== "reactivate")) throw refusal(AGENT_COPY.batch_not_opener, 409);
     for (const d of drafts) mayAct(who, d);
+    if (drafts.some(d => d.channel === "whatsapp_template")) {
+      // The month's template budget (fix round 4): spent, nothing is approved
+      // that could not go this month (each approved opener holds its lead's
+      // one open draft). Not readable: nothing is approved on a guess.
+      const cap = budgetCap(s.whatsapp_guard);
+      const month = await io
+        .db(`cockpit_sales_messages?via=eq.workflow&state=neq.failed&created_at=gte.${enc(kuwaitMonthStart(io.now()))}&select=id&limit=${Math.max(1, cap)}`)
+        .catch(() => null);
+      if (month === null)
+        throw refusal("This month's WhatsApp template spend could not be read, so nothing was approved. Try again in a minute.", 503);
+      const spent = budgetCheck(month.length, s.whatsapp_guard).refusal;
+      if (spent) throw refusal(spent, 409, { code: "budget" });
+    }
     const gap = Math.max(30, Math.min(3600, Number(obj(obj(s.followups).waves).batch_gap_s ?? 45) || 45));
     const start = io.now();
     const order = new Map(ids.map((x, i) => [x, i]));
@@ -484,24 +573,37 @@ export function makeFollowupAgent(deps: AgentDeps): { actions: Record<string, Ac
     const lead = (await io.db(`cockpit_sales_leads?contact_id=eq.${enc(String(f.contact_id))}&select=country`))[0];
     const hours = hoursRefusal({ segment: f.segment, touch: f.touch, country: lead?.country, now: io.now(), followups, dayOff: true });
     if (hours) throw refusal(hours);
+    // A rep paused the agent for this lead, or the lead asked to stop, since
+    // the opener was approved (the stops rows, as the desk's hold_of reads
+    // them; fix round 4): it waits in the queue, never set aside and never
+    // sent. Not readable: it waits too.
+    const stops = await io
+      .db(`cockpit_sales_followup_stops?contact_id=eq.${enc(String(f.contact_id))}&select=state,kind,said_at,paused_until,decided_at&limit=200`)
+      .catch(() => null);
+    const stopped = stops === null ? "it could not be read" : stopHoldOf(stops, io.now());
+    if (stopped) throw refusal(AGENT_COPY.stop_paused.replace("{why}", stopped), 409, { code: "paused" });
     if (f.segment === "reactivate") {
-      // A backlog opener never goes to a lead who has booked since the batch
-      // was approved ("How are you?" to a lead booked for tomorrow): the
-      // opener is taken back, whatever the desk read before it asked.
-      const ahead = await io.db(
-        `cockpit_sales_calendar?contact_id=eq.${enc(String(f.contact_id))}&call_type=in.(intro,demo)&start_at=gt.${enc(iso(io.now()))}&status=not.in.(cancelled,noshow,invalid)&select=appointment_id&limit=1`,
+      // A backlog opener never goes to a lead who has left the backlog since
+      // the batch was approved, by the pools' own rules: a call booked ahead
+      // or since the opener was written, a call held in the last day, a
+      // latest call marked invalid (fix round 4). The opener is taken back,
+      // whatever the desk read before it asked.
+      const calls = await io.db(
+        `cockpit_sales_calendar?contact_id=eq.${enc(String(f.contact_id))}&call_type=in.(intro,demo)&select=appointment_id,status,start_at,booked_at&order=start_at.desc&limit=100`,
       );
-      if (ahead.length) {
+      const drafted = Date.parse(String(f.created_at ?? ""));
+      const why = openerTakenBack(calls, io.now(), Number.isFinite(drafted) ? drafted : null);
+      if (why) {
         await io.db(`cockpit_sales_followups?id=eq.${enc(String(f.id))}&status=eq.draft`, {
           method: "PATCH",
-          body: { status: "expired", decided_at: iso(io.now()), error: AGENT_COPY.opener_booked },
+          body: { status: "expired", decided_at: iso(io.now()), error: why },
           prefer: "return=minimal",
         });
         await deps.audit(who, "followup.send_due", "cockpit_sales_followups", String(f.id), { status: "draft" }, {
           status: "expired",
-          why: AGENT_COPY.opener_booked,
+          why,
         });
-        throw refusal(AGENT_COPY.opener_booked);
+        throw refusal(why);
       }
     }
     // The opener is claimed for this send, in one write, only while no person
@@ -556,6 +658,13 @@ export function makeFollowupAgent(deps: AgentDeps): { actions: Record<string, Ac
         } else await release();
         if (all && (e.extra.hold_all !== true || (setup && e.extra.code !== "setup")))
           throw new ApiRefusal(e.message, e.status, { ...e.extra, hold_all: true, ...(setup ? { code: "setup" } : {}) });
+      } else if (contactRefused(e)) {
+        // HighLevel will not take this lead's contact (merged or deleted
+        // since the opener was written): a refusal about this lead, set aside
+        // for a person, never a 500 that stops every desk run (fix round 4).
+        const why = AGENT_COPY.contact_refused.replace("{why}", redact(String((e as Error)?.message ?? e)).slice(0, 160));
+        await setAside(who, id, why);
+        throw refusal(why, 409, { code: "lead" });
       } else await release();
       throw e;
     }
@@ -585,16 +694,47 @@ export function makeFollowupAgent(deps: AgentDeps): { actions: Record<string, Ac
       const filter = `cockpit_sales_followup_stops?contact_id=eq.${enc(contactId)}&said_at=eq.${enc(new Date(Date.parse(saidAt)).toISOString())}`;
       const before = (await io.db(`${filter}&select=*`))[0];
       if (!before) throw refusal(AGENT_COPY.stop_missing, 404);
-      if (answer === "dnd") {
+      // The answer lands only on the task as the press saw it (`from`, asked
+      // unless the page says otherwise; fix round 4): a tab still showing an
+      // answered task, or a second press at the same moment, is told it was
+      // answered and writes nothing. Stop for good is never undone here.
+      const from = String(b.from ?? "asked");
+      if (!["asked", "paused", "resumed", "dnd"].includes(from)) throw refusal(AGENT_COPY.stop_answer, 400);
+      const answered = (state: unknown) =>
+        refusal(
+          AGENT_COPY.stop_answered.replace(
+            "{state}",
+            ({ dnd: "stop for good", paused: "paused", resumed: "resumed", asked: "asked" } as Record<string, string>)[String(state)] ?? String(state),
+          ),
+          409,
+          { code: "answered", state: String(state ?? "") },
+        );
+      if (String(before.state) !== from) throw answered(before.state);
+      if (from === "dnd" && answer !== "dnd") throw refusal(AGENT_COPY.stop_dnd_kept, 409, { code: "dnd" });
+      const patch = answer === "dnd" ? { state: "dnd" } : answer === "pause" ? { state: "paused", paused_until: until } : { state: "resumed" };
+      // The answer is claimed first, guarded on the state read; HighLevel's
+      // do-not-disturb is written only by the press that claimed it.
+      const rows = await io.db(`${filter}&state=eq.${enc(from)}`, { method: "PATCH", body: { ...patch, ...decided }, prefer: "return=representation" });
+      if (!rows.length) {
+        const now2 = (await io.db(`${filter}&select=state`).catch(() => []))[0];
+        throw answered(now2?.state ?? "answered");
+      }
+      if (answer === "dnd" && from !== "dnd") {
         // Do-not-disturb on WhatsApp only, in HighLevel (D21: a rep confirms every stop).
         try {
           await io.ghl("PUT", `/contacts/${enc(contactId)}`, { dndSettings: { WhatsApp: { status: "active", message: "Asked to stop (cockpit)" } } }, "2021-07-28");
         } catch (e) {
+          // HighLevel refused: the task goes back to how the press found it, so the row never says dnd without it.
+          await io
+            .db(`${filter}&state=eq.dnd&decided_at=eq.${enc(decided.decided_at)}`, {
+              method: "PATCH",
+              body: { state: before.state, paused_until: before.paused_until ?? null, decided_by: before.decided_by ?? null, decided_at: before.decided_at ?? null },
+              prefer: "return=minimal",
+            })
+            .catch(x => io.log(`followups: a stop task was not put back: ${redact(String((x as Error)?.message ?? x))}`));
           throw refusal(`HighLevel did not take the stop: ${redact(String((e as Error)?.message ?? e))}. Try again.`, 502);
         }
       }
-      const patch = answer === "dnd" ? { state: "dnd" } : answer === "pause" ? { state: "paused", paused_until: until } : { state: "resumed" };
-      const rows = await io.db(filter, { method: "PATCH", body: { ...patch, ...decided }, prefer: "return=representation" });
       await deps.audit(who, `followup.stop_task.${answer}`, "cockpit_sales_followup_stops", contactId, before, rows[0] ?? null);
       return { stop: rows[0] ?? null };
     }
