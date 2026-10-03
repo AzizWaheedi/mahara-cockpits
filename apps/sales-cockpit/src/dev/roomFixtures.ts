@@ -5,11 +5,13 @@
  * hosts are the harness's made-up team.
  *
  * Stage 2 wires the knobs into src/dev/harness.tsx:
- *   room   making | ready | sent | not_sent | not_confirmed | opened |
- *          waiting | host_in | joined | joined_not_lead | expired |
- *          failed | down | pending_zoom
+ *   room   making | ready | sent | not_sent | not_sent_zoom | not_confirmed |
+ *          opened | waiting | host_in | joined | joined_marked |
+ *          joined_not_lead | still_on_call | expired | failed |
+ *          failed_handover | down | pending_zoom | booked
  *   offer  incoming | taken | lost | missed | expired | refresh | standby |
- *          away | available | ready | booked | on_call | down
+ *          making | standby_failed | away | available | ready | booked |
+ *          on_call | down | live_off
  * and answers sales-api's room and live actions with `answerRoomsAction`.
  */
 import { clock } from "../lib/format";
@@ -36,16 +38,21 @@ export const ROOM_KNOBS = [
   "ready",
   "sent",
   "not_sent",
+  "not_sent_zoom",
   "not_confirmed",
   "opened",
   "waiting",
   "host_in",
   "joined",
+  "joined_marked",
   "joined_not_lead",
+  "still_on_call",
   "expired",
   "failed",
+  "failed_handover",
   "down",
   "pending_zoom",
+  "booked",
 ] as const;
 export type RoomKnob = (typeof ROOM_KNOBS)[number];
 
@@ -57,12 +64,15 @@ export const OFFER_KNOBS = [
   "expired",
   "refresh",
   "standby",
+  "making",
+  "standby_failed",
   "away",
   "available",
   "ready",
   "booked",
   "on_call",
   "down",
+  "live_off",
 ] as const;
 export type OfferKnob = (typeof OFFER_KNOBS)[number];
 
@@ -109,12 +119,12 @@ export function baseRoom(now: number, over: Partial<RoomView> = {}): RoomView {
   };
 }
 
-/** Sent 48 s ago on WhatsApp: 9:12 left for the lead. */
+/** Sent 48 s ago as free WhatsApp text: 9:12 left for the lead. */
 function sent(now: number, over: Partial<RoomView> = {}): RoomView {
   const at = now - 48 * S;
   return baseRoom(now, {
     version: 4,
-    link_channels: ["whatsapp"],
+    link_channels: ["whatsapp_text"],
     link_sent_at: iso(at),
     lead_by: iso(at + 600 * S),
     ...over,
@@ -145,9 +155,10 @@ export function healthFixture(now: number, down = false): Health {
 }
 
 function events(now: number, room: RoomView): RoomEvent[] {
+  const made = room.created_at ?? iso(now - MIN);
   const out: RoomEvent[] = [
     {
-      at: room.created_at,
+      at: made,
       kind: "room.requested",
       source: "cockpit",
       text: "The setter asked for a room.",
@@ -158,7 +169,7 @@ function events(now: number, room: RoomView): RoomEvent[] {
     !["requested", "creating", "failed"].includes(room.state)
   )
     out.push({
-      at: iso(Date.parse(room.created_at) + 6 * S),
+      at: iso(Date.parse(made) + 6 * S),
       kind: "worker.ready",
       source: "worker",
       text: `Room made on ${room.provider === "zoom" ? "Zoom" : "Meet"}.`,
@@ -244,8 +255,24 @@ export function roomFixture(
         refusal: "No message can reach this lead.",
       });
       break;
+    case "not_sent_zoom": {
+      // Before the short link exists: a Zoom link nobody can read out.
+      const url =
+        "https://us06web.zoom.us/j/81234567890?pwd=aBcD3fGhIjKlMnOpQrStUvWxYz012345.1";
+      room = baseRoom(now, {
+        provider: "zoom",
+        short_url: url,
+        join_url: url,
+        refusal: "No message can reach this lead.",
+      });
+      break;
+    }
     case "not_confirmed":
-      room = sent(now, { link_channels: ["template_unconfirmed", "email"] });
+      // The template went, was not seen within 20 s, and email went too.
+      room = sent(now, {
+        link_channels: ["whatsapp_template", "email"],
+        link_unconfirmed_at: iso(now - 28 * S),
+      });
       break;
     case "opened":
       room = sent(now, {
@@ -271,6 +298,7 @@ export function roomFixture(
       });
       break;
     case "joined":
+    case "joined_marked":
     case "joined_not_lead":
       room = sent(now, {
         ...ZOOM,
@@ -281,7 +309,25 @@ export function roomFixture(
         host_in_at: iso(now - 45 * S),
         lead_waiting_at: iso(now - 35 * S),
         lead_in_at: iso(now - 25 * S),
-        count_result: knob === "joined" ? "booked" : "not_a_lead",
+        // A booked intro moved to now is marked, not booked again.
+        count_result:
+          knob === "joined"
+            ? "booked"
+            : knob === "joined_marked"
+              ? "moved"
+              : "not_a_lead",
+      });
+      break;
+    case "still_on_call":
+      room = sent(now, {
+        ...ZOOM,
+        state: "lead_in",
+        version: 9,
+        first_open_at: iso(now - 31 * MIN),
+        host_in_at: iso(now - 31 * MIN),
+        lead_in_at: iso(now - 30 * MIN),
+        ends_at: iso(now - 10 * S),
+        count_result: "booked",
       });
       break;
     case "expired":
@@ -289,7 +335,7 @@ export function roomFixture(
       room = baseRoom(now, {
         state: "expired",
         version: 7,
-        link_channels: ["whatsapp"],
+        link_channels: ["whatsapp_text"],
         link_sent_at: iso(now - 11 * MIN),
         lead_by: iso(now - MIN),
         ended_at: iso(now - MIN),
@@ -308,6 +354,35 @@ export function roomFixture(
         result: "failed",
       });
       break;
+    case "failed_handover":
+      room = baseRoom(now, {
+        ...ZOOM,
+        purpose: "handover",
+        call_kind: "demo",
+        contact_first_name: "Mona",
+        host_email: "omar@example.com",
+        state: "failed",
+        version: 3,
+        short_url: null,
+        join_url: null,
+        error: "the host was not found",
+        result: "failed",
+      });
+      break;
+    case "booked": {
+      // P4's booked demo, wrapped 15 minutes before the call.
+      const start = now + 15 * MIN;
+      room = sent(now, {
+        ...ZOOM,
+        purpose: "booked",
+        call_kind: "demo",
+        host_email: "omar@example.com",
+        host_by: iso(start + 15 * MIN),
+        lead_by: iso(start + 20 * MIN),
+        ends_at: iso(start + 45 * MIN),
+      });
+      break;
+    }
     case "pending_zoom":
       room = baseRoom(now, {
         ...ZOOM,
@@ -394,6 +469,8 @@ export function liveFixture(
   let offers: Offer[] = [];
   let flash: StripFlash | null = null;
   let down = false;
+  let standbyError: string | null = null;
+  let liveOff = false;
   switch (knob) {
     case "away":
       break;
@@ -413,6 +490,24 @@ export function liveFixture(
           join_url: null,
         }),
       ];
+      break;
+    case "making":
+      me = presence({ state: "available", until });
+      rooms = [
+        standbyFixture(now, {
+          state: "creating",
+          version: 2,
+          short_url: null,
+          join_url: null,
+        }),
+      ];
+      break;
+    case "standby_failed":
+      me = presence({ state: "available", until });
+      standbyError = "the host's Zoom user was not found";
+      break;
+    case "live_off":
+      liveOff = true;
       break;
     case "ready":
       me = presence({ state: "ready", until, room_id: inRoom.id });
@@ -454,8 +549,9 @@ export function liveFixture(
     }
     case "booked":
       me = presence({
-        reason: "booked_call",
+        reason: "booked_call_soon",
         booked_at: iso(now + 38 * MIN),
+        booked_kind: "demo",
       });
       break;
     case "on_call":
@@ -467,10 +563,15 @@ export function liveFixture(
     if (!["ended", "expired", "failed", "cancelled"].includes(own.state))
       rooms = [own, ...rooms];
   }
-  return {
-    live: { me, rooms, offers, health: healthFixture(now, down) },
-    flash,
+  const live: LiveStatus = {
+    me,
+    rooms,
+    offers,
+    health: healthFixture(now, down),
   };
+  if (standbyError) live.standby_error = standbyError;
+  if (liveOff) live.live_enabled = false;
+  return { live, flash };
 }
 
 /** P3's reply alert, three minutes old, with a closer free. */
@@ -530,11 +631,40 @@ export function answerRoomsAction(
     }
     case "room.end": {
       const reason = String(body.reason ?? "end");
-      return bump({
-        state: reason === "cancel" ? "cancelled" : "ended",
+      const ended = bump({
+        state:
+          reason === "cancel" ||
+          reason === "on_phone" ||
+          reason === "admit_blocked"
+            ? "cancelled"
+            : "ended",
         ended_at: iso(now),
-        result: reason === "on_phone" ? "moved_to_phone" : null,
+        result:
+          reason === "on_phone"
+            ? "moved_to_phone"
+            : reason === "admit_blocked"
+              ? "admit_blocked"
+              : null,
       });
+      // "I can't let them in": sales-api makes the Zoom room that replaces it.
+      if (reason === "admit_blocked")
+        return {
+          ...ended,
+          replacement: {
+            ...room.room,
+            provider: "zoom",
+            id: "room-z9r3tq",
+            code: "Z9R3TQ",
+            short_url: null,
+            join_url: null,
+            state: "creating",
+            version: 1,
+            link_channels: [],
+            link_sent_at: null,
+            created_at: iso(now),
+          },
+        };
+      return ended;
     }
     case "room.send":
       return bump({

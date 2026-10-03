@@ -56,16 +56,14 @@ export type RoomResult =
   | "admit_blocked";
 
 /**
- * Where the link went. The contract types this as `string[]`; these are the
- * values the screens read. `template_unconfirmed` is a WhatsApp template
- * HighLevel took but that never showed in the conversation within 20 s,
- * after which email went too.
+ * Where the link went: the glossary's `rooms.send` keys (1.4), which are
+ * also sales-api's LINK_CHANNELS. The contract types `link_channels` as
+ * `string[]`; the database's check also allows `whatsapp` (read as
+ * WhatsApp) and `read_out` (no message went), and anything else is
+ * ignored. Whether a template went unconfirmed is not a channel: it is
+ * `link_unconfirmed_at`.
  */
-export type LinkChannel =
-  | "whatsapp"
-  | "template"
-  | "template_unconfirmed"
-  | "email";
+export type LinkChannel = "whatsapp_text" | "whatsapp_template" | "email";
 
 /** A room as the browser sees it. `start_url` is never part of it. */
 export interface RoomView {
@@ -99,7 +97,19 @@ export interface RoomView {
   error: string | null;
   /** Why the link could not go, as a plain sentence. */
   refusal: string | null;
-  created_at: string;
+  /** sales-api sends null when the row has neither time (roomlogic toRoomView). */
+  created_at: string | null;
+  // Asked of the contract by this lane (not served yet; read when present):
+  /** The WhatsApp template was not seen within 20 s, so email went too. */
+  link_unconfirmed_at?: string | null;
+  /** What made the room, so "Try Zoom" makes the same kind of room. */
+  trigger?: string | null;
+  attempt_id?: string | null;
+  /** The booked call a fallback or booked room is for. */
+  appointment_id?: string | null;
+  handover_id?: string | null;
+  /** A booked call's start; without it, host_by minus 15 minutes. */
+  starts_at?: string | null;
 }
 
 export interface RoomEvent {
@@ -112,8 +122,9 @@ export interface RoomEvent {
 export interface Health {
   worker_ok: boolean;
   last_run_at: string | null;
-  rooms_today: number;
-  failed_today: number;
+  /** null when sales-api could not count them: missing is never 0. */
+  rooms_today: number | null;
+  failed_today: number | null;
   /** The exact health sentence from the foundation spec. */
   line: string;
 }
@@ -128,13 +139,17 @@ export interface Presence {
   room_id: string | null;
   zoom_status: ZoomStatus | null;
   default_provider: Provider;
+  // Asked of the contract by this lane (read when present):
   /**
-   * Not in the contract yet: why the seat is Away. With `booked_call` and
-   * `booked_at`, the strip says the booked-call line; without them it says
-   * "Away".
+   * Why the seat is Away, as the database writes it: `missed_offer` (one
+   * miss), `booked_call_soon` (the sweep closed the room before a booked
+   * call), `expired`. When the key is absent the strip guesses a miss from
+   * Away, as before.
    */
   reason?: string | null;
+  /** The booked call's start and kind, with `booked_call_soon`. */
   booked_at?: string | null;
+  booked_kind?: CallKind | null;
 }
 
 /** A live lead offered to this seat (project 2; empty until then). */
@@ -156,7 +171,17 @@ export interface LiveStatus {
   /** This seat's rooms that are not final. */
   rooms: RoomView[];
   offers: Offer[];
-  health: Health;
+  /** null when the answer carried none it could read. */
+  health: Health | null;
+  // Asked of the contract by this lane (read when present):
+  /** False while live calls are off but rooms are on: no presence, no offers. */
+  live_enabled?: boolean;
+  /** Why the seat's standby room could not be made, as a sentence. */
+  standby_error?: string | null;
+  /** The server's clock when it answered, so countdowns do not drift. */
+  now?: string | null;
+  /** The browser's own: rooms a press ended, by the version it saw. */
+  gone?: Record<string, number>;
 }
 
 /** `room.status`; health is null only on a room seeded before its first read. */
@@ -164,10 +189,293 @@ export interface RoomFeed {
   room: RoomView;
   events: RoomEvent[];
   health: Health | null;
+  /** The server's clock when it answered (asked of the contract). */
+  now?: string | null;
 }
 
 export type MarkWhat = "host_in" | "lead_in" | "not_lead";
-export type EndReason = "end" | "on_phone" | "finished" | "cancel";
+/** room.end's reasons; `admit_blocked` is P1's "I can't let them in" (roomlogic END_REASONS). */
+export type EndReason =
+  | "end"
+  | "on_phone"
+  | "finished"
+  | "cancel"
+  | "admit_blocked";
+
+// ---------------------------------------------------------------------------
+// Reading an answer: whatever sales-api sends, the screens get these shapes
+// or a failed read, never a throw while drawing.
+// ---------------------------------------------------------------------------
+
+const ROOM_STATES: readonly RoomState[] = [
+  "requested",
+  "creating",
+  "open",
+  "host_in",
+  "lead_in",
+  "ended",
+  "expired",
+  "failed",
+  "cancelled",
+];
+const PURPOSES: readonly RoomPurpose[] = [
+  "fallback",
+  "handover",
+  "standby",
+  "booked",
+  "manual",
+];
+const CALL_KINDS: readonly CallKind[] = ["intro", "demo"];
+const PROVIDERS: readonly Provider[] = ["meet", "zoom"];
+const ROOM_RESULTS: readonly RoomResult[] = [
+  "joined",
+  "no_join",
+  "moved_to_phone",
+  "cancelled",
+  "failed",
+  "admit_blocked",
+];
+const COUNT_RESULTS: readonly CountResult[] = [
+  "booked",
+  "moved",
+  "not_a_lead",
+  "failed",
+  "undone",
+];
+const PRESENCE_STATES: readonly PresenceState[] = [
+  "on_call",
+  "ready",
+  "available",
+  "away",
+];
+const ZOOM_STATUSES: readonly ZoomStatus[] = [
+  "licensed",
+  "basic",
+  "pending",
+  "missing",
+];
+
+type Raw = Record<string, unknown>;
+
+function isObj(v: unknown): v is Raw {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+function oneOf<T extends string>(list: readonly T[], v: unknown): v is T {
+  return typeof v === "string" && (list as readonly string[]).includes(v);
+}
+
+/** A string with something in it, else null. */
+function str(v: unknown): string | null {
+  return typeof v === "string" && v.trim() ? v : null;
+}
+
+/** A time the browser can read, else null. */
+function when(v: unknown): string | null {
+  return typeof v === "string" && Number.isFinite(Date.parse(v)) ? v : null;
+}
+
+/** Only web links: nothing else is ever copied or opened. */
+function webUrl(v: unknown): string | null {
+  return typeof v === "string" && /^https?:\/\/\S+$/i.test(v.trim())
+    ? v.trim()
+    : null;
+}
+
+function count(v: unknown): number | null {
+  return typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : null;
+}
+
+function list(v: unknown): unknown[] {
+  return Array.isArray(v) ? v : [];
+}
+
+const OPTIONAL_TIMES = ["link_unconfirmed_at", "starts_at"] as const;
+const OPTIONAL_TEXT = [
+  "trigger",
+  "attempt_id",
+  "appointment_id",
+  "handover_id",
+] as const;
+
+/**
+ * A room as the screens can draw it, or null when it lacks what a room
+ * cannot do without (an id, a known state, a version, a provider). Optional
+ * fields are kept only when the answer had them, so a well-formed room
+ * reads back unchanged.
+ */
+export function normalizeRoom(v: unknown): RoomView | null {
+  if (!isObj(v)) return null;
+  const id = str(v.id);
+  if (
+    !id ||
+    !oneOf(ROOM_STATES, v.state) ||
+    typeof v.version !== "number" ||
+    !Number.isFinite(v.version) ||
+    !oneOf(PROVIDERS, v.provider)
+  )
+    return null;
+  const room: RoomView = {
+    id,
+    code: str(v.code) ?? "",
+    contact_id: str(v.contact_id),
+    contact_first_name: str(v.contact_first_name),
+    purpose: oneOf(PURPOSES, v.purpose) ? v.purpose : "manual",
+    call_kind: oneOf(CALL_KINDS, v.call_kind) ? v.call_kind : "intro",
+    provider: v.provider,
+    host_email: str(v.host_email) ?? "",
+    state: v.state,
+    version: v.version,
+    short_url: webUrl(v.short_url),
+    join_url: webUrl(v.join_url),
+    link_channels: list(v.link_channels).filter(
+      (c): c is string => typeof c === "string",
+    ),
+    link_sent_at: when(v.link_sent_at),
+    first_open_at: when(v.first_open_at),
+    open_device: str(v.open_device),
+    lead_waiting_at: when(v.lead_waiting_at),
+    host_in_at: when(v.host_in_at),
+    lead_in_at: when(v.lead_in_at),
+    ended_at: when(v.ended_at),
+    host_by: when(v.host_by),
+    lead_by: when(v.lead_by),
+    ends_at: when(v.ends_at),
+    result: oneOf(ROOM_RESULTS, v.result) ? v.result : null,
+    count_result: oneOf(COUNT_RESULTS, v.count_result) ? v.count_result : null,
+    error: str(v.error),
+    refusal: str(v.refusal),
+    created_at: when(v.created_at),
+  };
+  for (const k of OPTIONAL_TIMES) if (k in v) room[k] = when(v[k]);
+  for (const k of OPTIONAL_TEXT) if (k in v) room[k] = str(v[k]);
+  return room;
+}
+
+export function normalizePresence(v: unknown): Presence | null {
+  if (!isObj(v) || !oneOf(PRESENCE_STATES, v.state)) return null;
+  const me: Presence = {
+    email: str(v.email) ?? "",
+    state: v.state,
+    until: when(v.until),
+    room_id: str(v.room_id),
+    zoom_status: oneOf(ZOOM_STATUSES, v.zoom_status) ? v.zoom_status : null,
+    default_provider: oneOf(PROVIDERS, v.default_provider)
+      ? v.default_provider
+      : "meet",
+  };
+  if ("reason" in v) me.reason = str(v.reason);
+  if ("booked_at" in v) me.booked_at = when(v.booked_at);
+  if ("booked_kind" in v)
+    me.booked_kind = oneOf(CALL_KINDS, v.booked_kind) ? v.booked_kind : null;
+  return me;
+}
+
+export function normalizeHealth(v: unknown): Health | null {
+  if (!isObj(v)) return null;
+  return {
+    worker_ok: v.worker_ok === true,
+    last_run_at: when(v.last_run_at),
+    rooms_today: count(v.rooms_today),
+    failed_today: count(v.failed_today),
+    line: typeof v.line === "string" ? v.line : "",
+  };
+}
+
+export function normalizeOffer(v: unknown): Offer | null {
+  if (!isObj(v)) return null;
+  const id = str(v.id);
+  const until = when(v.offer_until);
+  if (!id || !until) return null;
+  return {
+    id,
+    version:
+      typeof v.version === "number" && Number.isFinite(v.version)
+        ? v.version
+        : 0,
+    kind: str(v.kind) ?? "call",
+    contact_first_name: str(v.contact_first_name),
+    company: str(v.company),
+    country: str(v.country),
+    reason: str(v.reason) ?? "manual",
+    note: str(v.note),
+    offer_until: until,
+  };
+}
+
+/** A read the browser could not use; the last good copy stays on screen. */
+export const UNREADABLE =
+  "The cockpit got an answer it could not read. It tries again by itself.";
+/** A press whose answer could not be read: it may have gone through. */
+export const UNREADABLE_PRESS =
+  "The cockpit could not read the answer. Check the room before you press again.";
+
+function unreadable(press = false): ApiError {
+  return new ApiError(press ? UNREADABLE_PRESS : UNREADABLE, "server");
+}
+
+/**
+ * live.status as the strip can draw it. Lists are coerced, rooms and offers
+ * the screens cannot use are dropped, and an answer with no readable
+ * presence is a failed read: "Away" is never said for "not known".
+ */
+export function normalizeLive(v: unknown): LiveStatus {
+  if (!isObj(v)) throw unreadable();
+  const me = normalizePresence(v.me);
+  if (!me) throw unreadable();
+  const out: LiveStatus = {
+    me,
+    rooms: list(v.rooms)
+      .map(normalizeRoom)
+      .filter((r): r is RoomView => r !== null),
+    offers: list(v.offers)
+      .map(normalizeOffer)
+      .filter((o): o is Offer => o !== null),
+    health: normalizeHealth(v.health),
+  };
+  if (typeof v.live_enabled === "boolean") out.live_enabled = v.live_enabled;
+  if ("standby_error" in v) out.standby_error = str(v.standby_error);
+  if ("now" in v) out.now = when(v.now);
+  return out;
+}
+
+/** The same, for drawing: null instead of a throw. */
+export function readLive(v: unknown): LiveStatus | null {
+  try {
+    return normalizeLive(v);
+  } catch {
+    return null;
+  }
+}
+
+export function normalizeRoomFeed(v: unknown): RoomFeed {
+  if (!isObj(v)) throw unreadable();
+  const room = normalizeRoom(v.room);
+  if (!room) throw unreadable();
+  const events: RoomEvent[] = [];
+  for (const e of list(v.events)) {
+    if (!isObj(e)) continue;
+    const at = when(e.at);
+    const text = str(e.text);
+    if (!at || !text) continue;
+    events.push({
+      at,
+      kind: str(e.kind) ?? "",
+      source: str(e.source) ?? "",
+      text,
+    });
+  }
+  const out: RoomFeed = { room, events, health: normalizeHealth(v.health) };
+  if ("now" in v) out.now = when(v.now);
+  return out;
+}
+
+/** A press's `{ room }` answer, or a failed press that may have landed. */
+export function roomAnswer(v: unknown): { room: RoomView } {
+  const room = isObj(v) ? normalizeRoom(v.room) : null;
+  if (!room) throw unreadable(true);
+  return { room };
+}
 
 // ---------------------------------------------------------------------------
 // Waits and small helpers
@@ -183,6 +491,21 @@ export const WAITS_S = {
 
 /** A press with an Undo waits this long before it is sent (MarkControls). */
 export const UNDO_MS = 5000;
+
+/**
+ * "That was not the lead" goes behind a 5 s Undo, and sales-api refuses it
+ * after 300 s (not_lead_late). The button leaves this long before that, so a
+ * press always lands in time: the Undo, plus 15 s for the trip.
+ */
+export const NOT_LEAD_SLACK_MS = 15_000;
+export const NOT_LEAD_LAST_PRESS_MS =
+  WAITS_S.not_lead_undo * 1000 - UNDO_MS - NOT_LEAD_SLACK_MS;
+
+/** A booked call's host_by is its start plus this (glossary 1.9). */
+const BOOKED_HOST_MS = 15 * 60_000;
+
+/** "Still on the call?" asks again this long after "Still on it" (ours). */
+export const STILL_ON_ASK_AGAIN_MS = 10 * 60_000;
 
 /** The refresh prompt shows this long before the worker swaps the room (ours). */
 const REFRESH_AHEAD_S = 300;
@@ -243,16 +566,30 @@ export function shortLink(room: RoomView): string | null {
   return room.short_url || room.join_url || null;
 }
 
-/** The link as it is read out: "call.maharamedia.com/K7Q2MX". */
-export function readOut(room: RoomView): string {
+/** Longer than this, a link is not something a person can say on the phone. */
+const READ_OUT_MAX = 40;
+
+/**
+ * The link as it is read out: "call.maharamedia.com/K7Q2MX", or a Meet
+ * link. Null when nobody could say it: a Zoom link with its passcode in the
+ * query (before the short link exists) is copied, not read.
+ */
+export function readOut(room: RoomView): string | null {
   const url = shortLink(room);
-  if (!url) return room.code;
-  return url.replace(/^https?:\/\//i, "").replace(/\/$/, "");
+  if (!url) return room.code || null;
+  const said = url.replace(/^https?:\/\//i, "").replace(/\/$/, "");
+  if (/[?#]/.test(said) || said.length > READ_OUT_MAX) return null;
+  return said;
 }
 
+/**
+ * The glossary's names, and the database's `whatsapp` too. `read_out` and
+ * anything unknown say nothing.
+ */
 const CHANNEL: Record<string, string> = {
+  whatsapp_text: "WhatsApp",
+  whatsapp_template: "WhatsApp",
   whatsapp: "WhatsApp",
-  template: "WhatsApp",
   email: "email",
 };
 
@@ -278,28 +615,54 @@ export function deviceWords(d: string | null | undefined): string | null {
   return null;
 }
 
-const KEEP_CAPS = new Set([
-  "I",
-  "Zoom",
-  "Meet",
-  "Google",
-  "Slack",
-  "Mahara",
-  "Maqsam",
-  "Gmail",
+/**
+ * The words that open a sentence and are not names. Only these lose their
+ * capital after a colon; any other first word may be a name ("Sara",
+ * "Zoom", "HighLevel") and keeps it.
+ */
+const OPENERS = new Set([
+  "The",
+  "This",
+  "That",
+  "These",
+  "Those",
+  "There",
+  "No",
+  "Nobody",
+  "Nothing",
+  "Your",
+  "A",
+  "An",
+  "It",
+  "Its",
+  "We",
+  "Our",
+  "They",
+  "Their",
+  "You",
+  "He",
+  "She",
+  "Do",
+  "Did",
+  "Not",
+  "Only",
+  "Every",
+  "Some",
+  "If",
+  "When",
+  "Too",
 ]);
 
 /**
  * A server sentence set after a colon: no closing full stop, and a lower
- * first letter unless the first word is a name ("Zoom", "WhatsApp").
+ * first letter only when the first word is a known sentence opener.
  */
 export function reasonWords(text: string | null | undefined): string {
   const s = String(text ?? "")
     .trim()
     .replace(/[.!]+$/, "");
   const word = s.split(/\s/, 1)[0] ?? "";
-  if (/^[A-Z][a-z]+$/.test(word) && !KEEP_CAPS.has(word))
-    return s.charAt(0).toLowerCase() + s.slice(1);
+  if (OPENERS.has(word)) return s.charAt(0).toLowerCase() + s.slice(1);
   return s;
 }
 
@@ -310,13 +673,27 @@ export function reasonWords(text: string | null | undefined): string {
 /**
  * One piece of a sentence. A string is words; `mono` is a time or a code;
  * `left` is a countdown, drawn "(9:12 left)" or "1:47 left." and left out
- * of what a screen reader hears, so it is not read out every second.
+ * of what a screen reader hears, so it is not read out every second. Its
+ * `lead` (", ") is drawn before it and dropped with it; `spoken` is what a
+ * screen reader hears instead (".").
  */
 export type Part =
   | string
   | { mono: string }
-  | { left: number; form: "paren" | "sentence" };
+  | {
+      left: number;
+      form: "paren" | "sentence";
+      lead?: string;
+      spoken?: string;
+    };
 export type Sentence = Part[];
+
+/** "(9:12 left)" or "9:12 left." */
+export function leftText(p: { left: number; form: "paren" | "sentence" }) {
+  return p.form === "paren"
+    ? `(${mmss(p.left)} left)`
+    : `${mmss(p.left)} left.`;
+}
 
 /** The sentence as text; `speak` drops the countdowns. */
 export function sentenceText(s: Sentence, speak = false): string {
@@ -324,10 +701,8 @@ export function sentenceText(s: Sentence, speak = false): string {
     .map(p => {
       if (typeof p === "string") return p;
       if ("mono" in p) return p.mono;
-      if (speak) return "";
-      return p.form === "paren"
-        ? `(${mmss(p.left)} left)`
-        : `${mmss(p.left)} left.`;
+      if (speak) return p.spoken ?? "";
+      return `${p.lead ?? ""}${leftText(p)}`;
     })
     .join("");
   if (!speak) return out;
@@ -378,15 +753,21 @@ export function roomMoment(room: RoomView, now: number): RoomMoment {
     const end = t(room.ends_at);
     return end !== null && now >= end ? "still_on_call" : "joined";
   }
-  // open or host_in
+  // open or host_in. A lead waiting in the room is the news even when no
+  // message could go (the rep read the link out), so it comes first.
   if (room.lead_waiting_at) return "waiting_room";
   if (!room.link_sent_at && room.refusal) return "not_sent";
   if (s === "host_in") return "host_in";
   if (room.first_open_at) return "opened";
-  if (room.link_channels.includes("template_unconfirmed"))
-    return "not_confirmed";
+  if (room.link_unconfirmed_at) return "not_confirmed";
   if (room.link_sent_at) return "sent";
   return "ready";
+}
+
+/** The moment, with "Still on the call?" answered "Still on it" for now. */
+export function momentFor(room: RoomView, ctx: RoomCtx): RoomMoment {
+  const m = roomMoment(room, ctx.now);
+  return m === "still_on_call" && ctx.stillOn ? "joined" : m;
 }
 
 /**
@@ -431,11 +812,15 @@ export function manualButtons(room: RoomView, now: number): boolean {
   return now - from >= WAITS_S.manual_buttons * 1000;
 }
 
-/** "That was not the lead" is allowed for 5 minutes after the join. */
+/**
+ * "That was not the lead" is allowed for 5 minutes after the join; the
+ * button leaves early enough that a press, held 5 s behind its Undo, still
+ * reaches sales-api inside them.
+ */
 export function canSayNotLead(room: RoomView, now: number): boolean {
   if (room.state !== "lead_in") return false;
   const at = t(room.lead_in_at);
-  return at !== null && now - at <= WAITS_S.not_lead_undo * 1000;
+  return at !== null && now - at <= NOT_LEAD_LAST_PRESS_MS;
 }
 
 /** Sentences the server sends whole; they are shown as they are. */
@@ -468,8 +853,13 @@ function joinedSentence(room: RoomView, v: Voice): Sentence {
   switch (room.count_result) {
     case "booked":
     case "moved":
-      if (v === "p1" && room.call_kind === "intro")
+      if (v === "p1" && room.call_kind === "intro") {
+        // The intro was already booked (moved to now, or this room was
+        // made for it): it is marked, not booked again (P1 "Joined").
+        if (room.count_result === "moved" || room.appointment_id)
+          return [head, at, ". The intro is marked shown."];
         return [`${name} joined. Booked as a live intro and marked shown.`];
+      }
       return [
         "The lead joined at ",
         at,
@@ -521,11 +911,13 @@ export interface RoomCtx {
   canMarkIntro?: boolean;
   /** The seat's Available-until, for a standby room. */
   until?: string | null;
+  /** "Still on the call?" was answered "Still on it" a moment ago. */
+  stillOn?: boolean;
 }
 
 /** The status sentence under the room line. */
 export function roomSentence(room: RoomView, ctx: RoomCtx): Sentence {
-  const m = roomMoment(room, ctx.now);
+  const m = momentFor(room, ctx);
   const v = voiceOf(room);
   const name = first(room) ?? "";
   const P = providerName(room.provider);
@@ -552,17 +944,17 @@ export function roomSentence(room: RoomView, ctx: RoomCtx): Sentence {
     case "sent": {
       const ch = channelWords(room.link_channels);
       const at = { mono: clock(room.link_sent_at) };
-      // Ours: a link went but the server did not say where.
-      if (!ch) return ["Link sent at ", at, "."];
+      // Ours: a link went but the server did not say where ("on" is left out).
+      const head = ch ? `Link sent on ${ch} at ` : "Link sent at ";
       if (v === "p1" && left !== null)
         return [
-          `Link sent on ${ch} at `,
+          head,
           at,
           `. Waiting for ${name} `,
           { left, form: "paren" },
           ".",
         ];
-      return [`Link sent on ${ch} at `, at, "."];
+      return [head, at, "."];
     }
     case "not_confirmed":
       return v === "p1"
@@ -570,11 +962,18 @@ export function roomSentence(room: RoomView, ctx: RoomCtx): Sentence {
             "HighLevel did not confirm the WhatsApp template. The link went by email.",
           ]
         : ["Not confirmed on WhatsApp. Sent by email too."];
-    case "not_sent":
+    case "not_sent": {
+      const said = readOut(room);
+      // Ours: a link nobody could say (a Zoom link before the short link).
+      if (!said)
+        return [
+          `Not sent: ${reasonWords(room.refusal)}. Copy the link and send it another way.`,
+        ];
       return [
         `Not sent: ${reasonWords(room.refusal)}. Read it out: `,
-        { mono: readOut(room) },
+        { mono: said },
       ];
+    }
     case "opened": {
       const at = { mono: clock(room.first_open_at) };
       if (v === "p1") return [`${name} opened the link at `, at, ". Join now."];
@@ -667,7 +1066,7 @@ export function roomSteps(room: RoomView): Step[] {
       at: room.link_sent_at,
       done: Boolean(room.link_sent_at),
       current: false,
-      note: readOutOnly ? "read out" : null,
+      note: readOutOnly ? (readOut(room) ? "read out" : "not sent") : null,
     },
     {
       key: "opened",
@@ -721,6 +1120,8 @@ export type RoomActionKey =
   | "not_lead"
   | "on_phone"
   | "finished"
+  | "still_on"
+  | "admit_blocked"
   | "retry"
   | "noshow"
   | "showed";
@@ -740,20 +1141,26 @@ export function roomActions(
   room: RoomView,
   ctx: RoomCtx,
 ): { primary: RoomAction | null; quiet: RoomAction[] } {
-  const m = roomMoment(room, ctx.now);
+  const m = momentFor(room, ctx);
   const hasLead = Boolean(room.contact_id);
   const booked = room.purpose === "booked";
   switch (m) {
     case "making":
       return { primary: null, quiet: booked ? [] : [act("end", "End room")] };
-    case "failed":
+    case "failed": {
+      const other = providerName(otherProvider(room.provider));
       return {
         primary:
           hasLead && !booked
-            ? act("retry", `Try ${providerName(otherProvider(room.provider))}`)
+            ? // P2 says the handover's button as [Use Meet]; P1 says "Try Zoom".
+              act(
+                "retry",
+                room.purpose === "handover" ? `Use ${other}` : `Try ${other}`,
+              )
             : null,
         quiet: [],
       };
+    }
     case "expired":
       return {
         primary: null,
@@ -771,8 +1178,13 @@ export function roomActions(
       const quiet: RoomAction[] = [];
       if (canSayNotLead(room, ctx.now))
         quiet.push(act("not_lead", "That was not the lead"));
+      // "Still on the call?" can be answered either way; Finished waits
+      // behind its Undo, so a reflex tap does not end a call in progress.
       if (m === "still_on_call")
-        return { primary: act("finished", "Finished"), quiet };
+        return {
+          primary: act("finished", "Finished"),
+          quiet: [...quiet, act("still_on", "Still on it")],
+        };
       quiet.push(act("finished", "Finished"));
       return { primary: null, quiet };
     }
@@ -794,6 +1206,9 @@ export function roomActions(
     quiet.push(act("email", "Also send by email"));
   if (room.purpose === "fallback" || room.purpose === "manual")
     quiet.push(act("on_phone", "We are on the phone"));
+  // P1 edge case 9: a Meet knock the setter cannot admit moves the lead to Zoom.
+  if (meet && room.purpose === "fallback" && hasLead)
+    quiet.push(act("admit_blocked", "I can't let them in"));
   if (!booked) quiet.push(act("end", "End room"));
   return { primary, quiet };
 }
@@ -809,19 +1224,54 @@ export function undoLabel(key: RoomActionKey): string {
       return "Marking no-show";
     case "showed":
       return "Marking that you spoke on the phone";
+    case "finished":
+      return "Ending the room";
+    case "admit_blocked":
+      return "Moving the lead to Zoom";
     default:
       return "Sending";
   }
 }
 
-/** Presses that wait 5 seconds behind an Undo before they are sent. */
+/**
+ * Presses that wait 5 seconds behind an Undo before they are sent: the
+ * ones that write to HighLevel, end a call in progress, or send the lead a
+ * second message.
+ */
 export function needsUndo(key: RoomActionKey): boolean {
   return (
     key === "lead_in" ||
     key === "not_lead" ||
     key === "noshow" ||
-    key === "showed"
+    key === "showed" ||
+    key === "finished" ||
+    key === "admit_blocked"
   );
+}
+
+/**
+ * The request "Try Zoom" sends: the same lead, kind and purpose as the
+ * room that failed, and what made it (trigger, attempt, booked call), so
+ * the new room counts where the first would have.
+ */
+export function retryRequest(
+  room: RoomView,
+  firstAsk: CreateRoom | null | undefined,
+  provider: Provider,
+): CreateRoom {
+  const out: CreateRoom = {
+    contact_id: room.contact_id,
+    provider,
+    call_kind: room.call_kind,
+    purpose: room.purpose,
+  };
+  const trigger = firstAsk?.trigger ?? room.trigger;
+  const attempt = firstAsk?.attempt_id ?? room.attempt_id;
+  const appointment = firstAsk?.appointment_id ?? room.appointment_id;
+  if (trigger) out.trigger = trigger;
+  if (attempt) out.attempt_id = attempt;
+  if (appointment) out.appointment_id = appointment;
+  return out;
 }
 
 /** A note before a Zoom room is made (the dialer's picker). */
@@ -840,6 +1290,25 @@ export function zoomNote(
 // The banner's room line (P1's strip)
 // ---------------------------------------------------------------------------
 
+/** A booked call's start: `starts_at`, else host_by minus 15 minutes. */
+export function bookedStart(room: RoomView): number | null {
+  if (room.purpose !== "booked") return null;
+  const start = t(room.starts_at);
+  if (start !== null) return start;
+  const hostBy = t(room.host_by);
+  return hostBy === null ? null : hostBy - BOOKED_HOST_MS;
+}
+
+/** Something has happened in the room: the lead opened it, knocked, or someone is in. */
+function stirred(room: RoomView): boolean {
+  return Boolean(
+    room.first_open_at ||
+      room.lead_waiting_at ||
+      room.state === "host_in" ||
+      room.state === "lead_in",
+  );
+}
+
 /** "Video room: Faisal, 7:40 left.", then "Faisal opened the link." */
 export function bannerRoomSentence(room: RoomView, now: number): Sentence {
   const m = roomMoment(room, now);
@@ -851,13 +1320,21 @@ export function bannerRoomSentence(room: RoomView, now: number): Sentence {
     return roomSentence(room, { now });
   if (m === "joined" || m === "still_on_call") return [`${Name} joined.`];
   if (room.first_open_at) return [`${Name} opened the link.`];
+  const start = bookedStart(room);
+  // Ours: a booked call says when it is, not how long its room waits.
+  if (start !== null && !stirred(room))
+    return [
+      `Booked ${room.call_kind} with ${name ?? "the lead"} at `,
+      { mono: clock(new Date(start).toISOString()) },
+      ".",
+    ];
   const left = roomLeft(room, now);
   const head: Sentence = name
     ? [`Video room: ${name}`]
     : ["Video room: ", { mono: room.code }];
   return left === null
     ? [...head, "."]
-    : [...head, ", ", { left, form: "sentence" }];
+    : [...head, { left, form: "sentence", lead: ", ", spoken: "." }];
 }
 
 /** Get in while the room waits for its host; after that, go to the lead. */
@@ -878,12 +1355,20 @@ const ROOM_URGENCY: Partial<Record<RoomMoment, number>> = {
   host_in: 3,
 };
 
-/** The room the banner shows: the seat's own live room with a lead in it. */
+/**
+ * The room the banner shows: the seat's own live room with a lead in it.
+ * A booked call's room waits until the call starts (or something happens
+ * in it), so a link sent 15 minutes ahead does not cover the seat's strip.
+ */
 export function myRoom(
   rooms: readonly RoomView[],
   now: number,
 ): RoomView | null {
-  const live = rooms.filter(r => !isFinal(r.state) && !isStandby(r));
+  const live = rooms.filter(r => {
+    if (isFinal(r.state) || isStandby(r)) return false;
+    const start = bookedStart(r);
+    return start === null || now >= start || stirred(r);
+  });
   if (!live.length) return null;
   return [...live].sort((a, b) => {
     const ua = ROOM_URGENCY[roomMoment(a, now)] ?? 9;
@@ -920,6 +1405,8 @@ export type StripMoment =
   | "refresh"
   | "booked_call"
   | "down"
+  | "standby_failed"
+  | "making"
   | "away"
   | "available"
   | "ready"
@@ -950,6 +1437,8 @@ export interface StripLine {
   /** True for an offer and what follows a press on it: it outranks a room. */
   urgent: boolean;
   tone: Tone;
+  /** A press on the offer that failed, said under it (the offer stays). */
+  note: string | null;
 }
 
 const OFFER_REASON: Record<string, string> = {
@@ -978,10 +1467,32 @@ export function offerSentence(o: Offer, now: number): Sentence {
   return out;
 }
 
+/** The offers the strip can still put in front of the seat, soonest to close first. */
+export function liveOffers(
+  offers: readonly Offer[],
+  now: number,
+  hidden: readonly string[] = [],
+): Offer[] {
+  const gone = new Set(hidden);
+  return offers
+    .filter(o => !gone.has(o.id) && offerLeft(o, now) > 0)
+    .sort((a, b) => (t(a.offer_until) ?? 0) - (t(b.offer_until) ?? 0));
+}
+
+/**
+ * The sweep set this seat Away for a missed offer. With the database's
+ * reason served, only `missed_offer` is a miss (Go away during an offer is
+ * not); without it, Away after an offer left is read as one.
+ */
+function awayForMiss(me: Presence): boolean {
+  if (me.state !== "away") return false;
+  return me.reason === undefined || me.reason === "missed_offer";
+}
+
 /**
  * An offer that was on the strip and is gone: missed when the seat is now
- * Away (one miss sets Away), else closed by someone else or the setter.
- * Offers this seat answered are not news.
+ * Away for it (one miss sets Away), else closed by someone else or the
+ * setter. Offers this seat answered are not news.
  */
 export function offerGone(
   prev: readonly Offer[],
@@ -992,7 +1503,7 @@ export function offerGone(
 ): StripFlash | null {
   for (const o of prev) {
     if (answered.has(o.id) || next.some(n => n.id === o.id)) continue;
-    if (me.state === "away") {
+    if (awayForMiss(me)) {
       const until = t(o.offer_until);
       return {
         kind: "missed",
@@ -1051,11 +1562,15 @@ export interface StripInput {
   health: Health | null;
   now: number;
   flash: StripFlash | null;
-  /** Offers declined here, hidden until the server drops them. */
+  /** Offers answered here, hidden until the server drops them. */
   hidden?: readonly string[];
   /** Standby rooms the rep chose to keep. */
   kept?: readonly string[];
+  /** Why the standby room could not be made (live.status `standby_error`). */
+  standbyError?: string | null;
 }
+
+const BOOKED_REASONS = new Set(["booked_call", "booked_call_soon"]);
 
 const A = (
   key: StripActionKey,
@@ -1085,8 +1600,26 @@ export function stripLine(i: StripInput): StripLine {
       moment === "closed" ||
       moment === "error",
     tone,
+    note: null,
   });
   const f = i.flash;
+
+  // An offer still open comes first: no flash hides it. A press on it that
+  // failed is said under it, so it can be pressed again.
+  const offer = liveOffers(i.offers, i.now, i.hidden)[0] ?? null;
+  if (offer) {
+    const l = line(
+      "offer",
+      offerSentence(offer, i.now),
+      A("take", "Take it"),
+      [A("decline", "Not now")],
+      "now",
+      offer,
+    );
+    if (f?.kind === "error") l.note = f.text;
+    return l;
+  }
+
   if (f?.kind === "error") return line("error", [f.text], null, [], "bad");
   if (f?.kind === "taken")
     return line("taken", ["Taken. Sending the link..."], null, [], "good");
@@ -1113,22 +1646,6 @@ export function stripLine(i: StripInput): StripLine {
       null,
       [],
       "quiet",
-    );
-
-  const hidden = new Set(i.hidden ?? []);
-  const offer =
-    [...i.offers]
-      .filter(o => !hidden.has(o.id))
-      .sort((a, b) => (t(a.offer_until) ?? 0) - (t(b.offer_until) ?? 0))[0] ??
-    null;
-  if (offer)
-    return line(
-      "offer",
-      offerSentence(offer, i.now),
-      A("take", "Take it"),
-      [A("decline", "Not now")],
-      "now",
-      offer,
     );
 
   if (f?.kind === "missed" && i.me.state === "away")
@@ -1186,25 +1703,57 @@ export function stripLine(i: StripInput): StripLine {
           [A("away", "Go away")],
           "bad",
         );
+      if (open)
+        return line(
+          "available",
+          until
+            ? [
+                "Available until ",
+                until,
+                ". Join your room to get leads first.",
+              ]
+            : ["Available. Join your room to get leads first."],
+          A("join", "Join my room"),
+        );
+      // Ours, below: the room is not there to join, and the strip says why.
+      if (standby && isMaking(standby.state))
+        return line(
+          "making",
+          until
+            ? ["Available until ", until, ". Making your room..."]
+            : ["Available. Making your room..."],
+          A("join", "Join my room", true),
+        );
+      if (i.standbyError)
+        return line(
+          "standby_failed",
+          [`Your room could not be made: ${reasonWords(i.standbyError)}.`],
+          A("available", "I'm available"),
+          [A("away", "Go away")],
+          "owed",
+        );
+      // No room and no reason given (rooms for standby may be switched off).
       return line(
         "available",
-        until
-          ? ["Available until ", until, ". Join your room to get leads first."]
-          : ["Available. Join your room to get leads first."],
-        A("join", "Join my room", !open),
+        until ? ["Available until ", until, "."] : ["Available."],
+        null,
+        [A("away", "Go away")],
       );
     }
-    default:
-      if (i.me.reason === "booked_call" && i.me.booked_at)
+    default: {
+      const at = t(i.me.booked_at);
+      // The room closed for a booked call: said until the call starts, with
+      // no button, because I'm available now would open a room again.
+      if (BOOKED_REASONS.has(i.me.reason ?? "") && at !== null && at > i.now)
         return line(
           "booked_call",
           [
-            "Your booked demo starts at ",
+            `Your booked ${i.me.booked_kind === "intro" ? "intro" : "demo"} starts at `,
             { mono: clock(i.me.booked_at) },
             ", so your room is closed. Press I'm available after it.",
           ],
           null,
-          [A("available", "I'm available")],
+          [],
           "quiet",
         );
       return line(
@@ -1214,6 +1763,7 @@ export function stripLine(i: StripInput): StripLine {
         [],
         "quiet",
       );
+    }
   }
 }
 
@@ -1263,6 +1813,41 @@ export function bannerSlot(i: {
   return null;
 }
 
+/** Room moments worth calling a rep back to the cockpit's tab for. */
+const CALL_BACK: ReadonlySet<RoomMoment> = new Set(["opened", "waiting_room"]);
+
+/**
+ * What a hidden tab should call the rep back for, comparing two reads: a
+ * new offer, or the seat's room turning to "opened" or "waiting room". The
+ * key names the news once, so it is said once.
+ */
+export function liveNews(
+  prev: LiveStatus | null,
+  next: LiveStatus,
+  now: number,
+  hidden: readonly string[] = [],
+): { key: string; text: string } | null {
+  const had = new Set((prev?.offers ?? []).map(o => o.id));
+  const offer = liveOffers(next.offers, now, hidden).find(o => !had.has(o.id));
+  if (offer)
+    return {
+      key: `offer:${offer.id}`,
+      text: sentenceText(offerSentence(offer, now), true),
+    };
+  const before = new Map((prev?.rooms ?? []).map(r => [r.id, r]));
+  for (const r of next.rooms) {
+    const m = roomMoment(r, now);
+    if (!CALL_BACK.has(m)) continue;
+    const was = before.get(r.id);
+    if (was && roomMoment(was, now) === m) continue;
+    return {
+      key: `room:${r.id}:${m}`,
+      text: sentenceText(bannerRoomSentence(r, now), true),
+    };
+  }
+  return null;
+}
+
 // ---------------------------------------------------------------------------
 // The health line
 // ---------------------------------------------------------------------------
@@ -1277,8 +1862,12 @@ export function healthTone(h: Health): "good" | "owed" | "bad" {
 export function healthSentence(h: Health): string {
   const line = String(h.line ?? "").trim();
   if (line) return line;
-  if (h.worker_ok)
-    return `Rooms: working. Last run ${clockSec(h.last_run_at)}. ${h.rooms_today} rooms today, ${h.failed_today} failed.`;
+  if (h.worker_ok) {
+    const head = `Rooms: working. Last run ${clockSec(h.last_run_at)}.`;
+    // Counts that could not be read are left out, never shown as 0.
+    if (h.rooms_today === null || h.failed_today === null) return head;
+    return `${head} ${h.rooms_today} ${h.rooms_today === 1 ? "room" : "rooms"} today, ${h.failed_today} failed.`;
+  }
   if (!h.last_run_at)
     // Ours: the worker has never written its row.
     return "Rooms are down. The room worker has not run yet. New rooms cannot be made.";
@@ -1298,19 +1887,49 @@ export function newer(a: RoomView | null | undefined, b: RoomView): RoomView {
   return a && a.id === b.id && a.version > b.version ? a : b;
 }
 
-export function mergeRoomFeed(prev: RoomFeed | null, next: RoomFeed): RoomFeed {
+/**
+ * A read merged into what is on screen. `afterSet` is true when a press put
+ * its answer on screen while this read was on its way: the read is older
+ * than the press, so it may not take back what the press showed.
+ */
+export function mergeRoomFeed(
+  prev: RoomFeed | null,
+  next: RoomFeed,
+  _afterSet = false,
+): RoomFeed {
   if (!prev || prev.room.id !== next.room.id) return next;
   const room = newer(prev.room, next.room);
   return room === next.room ? next : { ...next, room };
 }
 
+/**
+ * live.status merged into what is on screen. A room a press ended stays
+ * gone from a read that left before the press (`gone`, by version), until
+ * a read no longer lists it; presence from a read older than a press keeps
+ * the press's answer, because presence has no version.
+ */
 export function mergeLive(
   prev: LiveStatus | null,
   next: LiveStatus,
+  afterSet = false,
 ): LiveStatus {
   if (!prev) return next;
+  const listed = new Set(next.rooms.map(r => r.id));
+  const gone: Record<string, number> = {};
+  for (const [id, v] of Object.entries(prev.gone ?? {}))
+    if (listed.has(id)) gone[id] = v;
   const old = new Map(prev.rooms.map(r => [r.id, r]));
-  return { ...next, rooms: next.rooms.map(r => newer(old.get(r.id), r)) };
+  const rooms = next.rooms
+    .filter(r => !(r.id in gone && r.version <= gone[r.id]))
+    .map(r => newer(old.get(r.id), r));
+  const out: LiveStatus = {
+    ...next,
+    rooms,
+    me: afterSet ? prev.me : next.me,
+  };
+  if (Object.keys(gone).length) out.gone = gone;
+  else delete out.gone;
+  return out;
 }
 
 /** A room a press returned, put into the strip's list (or taken out when final). */
@@ -1318,7 +1937,12 @@ export function withRoom(live: LiveStatus, room: RoomView): LiveStatus {
   const have = live.rooms.find(r => r.id === room.id);
   const next = newer(have, room);
   const rest = live.rooms.filter(r => r.id !== room.id);
-  return { ...live, rooms: isFinal(next.state) ? rest : [next, ...rest] };
+  if (!isFinal(next.state)) return { ...live, rooms: [next, ...rest] };
+  return {
+    ...live,
+    rooms: rest,
+    gone: { ...(live.gone ?? {}), [next.id]: next.version },
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1386,10 +2010,27 @@ export function heldRequestId(key: string): string | null {
   return intents.get(key)?.id ?? null;
 }
 
-/** Forget every held request id (tests). */
+/** Forget every held request id: on sign-out, on a change of seat, and in tests. */
 export function forgetRequests(): void {
   intents.clear();
   inflight.clear();
+  seat = null;
+}
+
+let seat: string | null = null;
+
+/**
+ * Tie held request ids to the signed-in seat: when another seat signs in on
+ * the same tab, the last seat's retries are forgotten, so sales-api never
+ * hands one seat's room to another.
+ */
+export function scopeRequests(email: string | null | undefined): void {
+  const e = String(email ?? "")
+    .trim()
+    .toLowerCase();
+  if (!e) return;
+  if (seat !== null && seat !== e) forgetRequests();
+  seat = e;
 }
 
 // ---------------------------------------------------------------------------
@@ -1409,11 +2050,24 @@ export interface CreateRoom {
 type Versioned = Pick<RoomView, "id" | "version">;
 
 /** A new room for this seat: the strip reads now instead of at its next poll. */
-function nudge<T>(p: Promise<T>): Promise<T> {
+function nudge<T extends { room?: RoomView }>(p: Promise<T>): Promise<T> {
   return p.then(out => {
-    roomsChanged();
+    roomsChanged(out.room ?? null);
     return out;
   });
+}
+
+/** room.end's answer; `replacement` is the Zoom room an "I can't let them in" made. */
+export interface EndAnswer {
+  room: RoomView;
+  replacement?: RoomView;
+}
+
+function endAnswer(v: unknown): EndAnswer {
+  const out: EndAnswer = roomAnswer(v);
+  const next = isObj(v) ? normalizeRoom(v.replacement) : null;
+  if (next) out.replacement = next;
+  return out;
 }
 
 export const roomsApi = {
@@ -1422,58 +2076,81 @@ export const roomsApi = {
       once(
         `room.create:${input.contact_id ?? "standby"}:${input.purpose}:${input.provider}`,
         request_id =>
-          api<{ room: RoomView }>("room.create", { ...input, request_id }),
+          api<unknown>("room.create", { ...input, request_id }).then(
+            roomAnswer,
+          ),
       ),
     ),
   status: (roomId: string) =>
-    api<RoomFeed & { health: Health }>("room.status", { room_id: roomId }),
+    api<unknown>("room.status", { room_id: roomId }).then(v => {
+      const feed = normalizeRoomFeed(v);
+      // Another room's answer is never drawn as this one.
+      if (feed.room.id !== roomId) throw unreadable();
+      return feed;
+    }),
   open: (roomId: string) =>
-    api<{ start_url: string }>("room.open", { room_id: roomId }),
+    api<unknown>("room.open", { room_id: roomId }).then(v => {
+      const url = isObj(v) ? webUrl(v.start_url) : null;
+      if (!url) throw unreadable(true);
+      return { start_url: url };
+    }),
   mark: (room: Versioned, what: MarkWhat) =>
-    api<{ room: RoomView }>("room.mark", {
+    api<unknown>("room.mark", {
       room_id: room.id,
       version: room.version,
       what,
-    }),
+    }).then(roomAnswer),
   end: (room: Versioned, reason: EndReason, confirm = false) =>
-    api<{ room: RoomView }>("room.end", {
+    api<unknown>("room.end", {
       room_id: room.id,
       version: room.version,
       reason,
       ...(confirm ? { confirm: true } : {}),
-    }),
+    }).then(endAnswer),
   sendEmail: (roomId: string) =>
     once(`room.send:${roomId}:email`, request_id =>
-      api<{ room: RoomView }>("room.send", {
+      api<unknown>("room.send", {
         room_id: roomId,
         request_id,
         channel: "email",
-      }),
+      }).then(roomAnswer),
     ),
   wrap: (appointmentId: string) =>
     nudge(
       once(`room.wrap:${appointmentId}`, request_id =>
-        api<{ room: RoomView }>("room.wrap", {
+        api<unknown>("room.wrap", {
           appointment_id: appointmentId,
           request_id,
-        }),
+        }).then(roomAnswer),
       ),
     ),
   availability: (state: "available" | "away") =>
-    api<{ me: Presence }>("live.availability", { state }),
-  liveStatus: () => api<LiveStatus>("live.status", {}),
-  take: (offer: Pick<Offer, "id" | "version">) =>
+    api<unknown>("live.availability", { state }).then(v => {
+      const me = isObj(v) ? normalizePresence(v.me) : null;
+      if (!me) throw unreadable(true);
+      return { me };
+    }),
+  liveStatus: () => api<unknown>("live.status", {}).then(normalizeLive),
+  /**
+   * The claim carries no version: cockpit_sales_live_claim checks the
+   * offer's own state, time and seat, so another write to the row (a Slack
+   * post saved) does not make a Take fail.
+   */
+  take: (offer: Pick<Offer, "id">) =>
     nudge(
       once(`live.take:${offer.id}`, request_id =>
-        api<{ room?: RoomView }>("live.take", {
-          live_id: offer.id,
-          version: offer.version,
-          request_id,
+        api<unknown>("live.take", { live_id: offer.id, request_id }).then(v => {
+          const room = isObj(v) ? normalizeRoom(v.room) : null;
+          return room ? { room } : {};
         }),
       ),
     ),
-  decline: (offer: Pick<Offer, "id" | "version">) =>
-    api("live.decline", { live_id: offer.id, version: offer.version }),
+  decline: (offer: Pick<Offer, "id">) =>
+    once(`live.decline:${offer.id}`, request_id =>
+      api<unknown>("live.decline", { live_id: offer.id, request_id }).then(
+        () => ({}),
+      ),
+    ),
 };
 
 /** A refusal the server sends when a press saw an older room. */
@@ -1484,6 +2161,41 @@ export function isStale(e: unknown): boolean {
 /** The server asks before it ends a room with the lead still in it. */
 export function needsEndConfirm(e: unknown): boolean {
   return e instanceof ApiError && /still in this room/i.test(e.message);
+}
+
+/**
+ * What a failed Take means for the strip: the offer changed under the press
+ * (read again, keep it up), another seat won (it goes, "lost"), or it may
+ * have gone through (it stays, with the sentence under it, and a second
+ * press is the same request).
+ */
+export function takeFailure(e: unknown): "stale" | "lost" | "uncertain" {
+  if (isStale(e)) return "stale";
+  if (e instanceof ApiError && e.kind === "refused") return "lost";
+  return "uncertain";
+}
+
+/**
+ * What a failed Not now means: a clear no is an offer already gone (nothing
+ * to put back); anything else was not recorded, so the offer comes back,
+ * because ending unanswered would set the seat Away as a miss.
+ */
+export function declineFailure(e: unknown): "gone" | "again" {
+  return e instanceof ApiError && e.kind === "refused" ? "gone" : "again";
+}
+
+export const DECLINE_AGAIN =
+  "Not now did not reach the server. Press it again.";
+
+/**
+ * The room a press held behind its Undo goes to: the one it was pressed on,
+ * only while that room is still the one on show.
+ */
+export function heldTarget(
+  heldRoomId: string,
+  onShow: RoomView | null,
+): RoomView | null {
+  return onShow && onShow.id === heldRoomId ? onShow : null;
 }
 
 /** A failure as one sentence a rep can act on. */
@@ -1505,6 +2217,9 @@ export type Opened = { kind: "opened" } | { kind: "blocked"; url: string };
  * caller shows the link to tap.
  */
 export async function openHostRoom(roomId: string): Promise<Opened> {
+  // The press is the rep's gesture: the moment to wake the alerts that call
+  // them back while they sit in the room's tab.
+  primeAlerts();
   let tab: Window | null = null;
   try {
     tab = window.open("", "_blank");
@@ -1566,10 +2281,14 @@ export async function copyText(text: string): Promise<boolean> {
 
 const ROOMS_CHANGED = "mahara:rooms-changed";
 
-/** Tell the strip a room changed, so it reads now instead of in 30 s. */
-export function roomsChanged(): void {
+/**
+ * Tell the strip a room changed, so it reads now instead of in 30 s. With
+ * the room a press returned, the strip puts it on screen at once, and a
+ * read already on its way cannot bring an ended room back.
+ */
+export function roomsChanged(room: RoomView | null = null): void {
   try {
-    window.dispatchEvent(new Event(ROOMS_CHANGED));
+    window.dispatchEvent(new CustomEvent(ROOMS_CHANGED, { detail: room }));
   } catch {
     // No window (tests).
   }
@@ -1622,6 +2341,191 @@ export function roomDelay(
   return backoff(data && !isMaking(data.room.state) ? 4000 : 2000, failures);
 }
 
+/**
+ * How far the server's clock is ahead of the browser's, from one read: the
+ * server's `now` against the middle of the trip. Null when it sent none.
+ */
+export function clockOffset(
+  serverNow: string | null | undefined,
+  sentAt: number,
+  gotAt: number,
+): number | null {
+  const s = t(serverNow);
+  if (s === null) return null;
+  return Math.round(s - (sentAt + gotAt) / 2);
+}
+
+/** The parts of a page the poller uses; the tests pass their own. */
+export interface PollEnv {
+  doc: {
+    visibilityState: string;
+    addEventListener(type: string, fn: () => void): void;
+    removeEventListener(type: string, fn: () => void): void;
+  };
+  win: {
+    setTimeout(fn: () => void, ms: number): number;
+    clearTimeout(id: number): void;
+    addEventListener(type: string, fn: () => void): void;
+    removeEventListener(type: string, fn: () => void): void;
+  };
+  now(): number;
+}
+
+function browserPollEnv(): PollEnv {
+  return {
+    doc: document,
+    win: {
+      setTimeout: (fn, ms) => window.setTimeout(fn, ms),
+      clearTimeout: id => window.clearTimeout(id),
+      addEventListener: (type, fn) => window.addEventListener(type, fn),
+      removeEventListener: (type, fn) => window.removeEventListener(type, fn),
+    },
+    now: () => Date.now(),
+  };
+}
+
+export interface PollSnapshot<T> {
+  data: T | null;
+  error: unknown;
+  /** When the last good read landed (browser ms). */
+  okAt: number | null;
+  failures: number;
+  /** The poll stopped: the room is final, or the server refused this seat. */
+  stopped: boolean;
+  /** Server clock minus browser clock, from the last read that said. */
+  offset: number;
+}
+
+export interface PollOptions<T> {
+  fetcher: () => Promise<T>;
+  delay: (data: T | null, failures: number, error: unknown) => number;
+  merge: (prev: T | null, next: T, afterSet: boolean) => T;
+  seed?: T | null;
+  /**
+   * Keep reading while the tab is hidden. Both live feeds do: a closer in
+   * Zoom and a setter in Meet have the cockpit's tab in the background,
+   * and that is exactly when an offer or a knock arrives.
+   */
+  whileHidden?: boolean;
+  /** The server's clock in an answer, for the offset. */
+  serverNow?: (data: T) => string | null | undefined;
+  onChange: (s: PollSnapshot<T>) => void;
+  env?: PollEnv;
+}
+
+export interface Poller<T> {
+  /** Read now (or as soon as the read on its way lands). */
+  kick: () => void;
+  /** Put a press's answer on screen now; a read already on its way merges as older. */
+  set: (fn: (prev: T | null) => T | null) => void;
+  stop: () => void;
+  snapshot: () => PollSnapshot<T>;
+}
+
+/**
+ * Read, then read again after `delay` (0 stops). One read at a time; one
+ * at once when the tab comes back or the connection returns. The last good
+ * answer stays through a failure. Every read is numbered against the
+ * presses: a read that left before a press merges as the older copy.
+ */
+export function startPoll<T>(o: PollOptions<T>): Poller<T> {
+  const env = o.env ?? browserPollEnv();
+  let alive = true;
+  let timer = 0;
+  let busy = false;
+  let again = false;
+  let sets = 0;
+  let snap: PollSnapshot<T> = {
+    data: o.seed ?? null,
+    error: null,
+    okAt: null,
+    failures: 0,
+    stopped: false,
+    offset: 0,
+  };
+  const emit = (next: Partial<PollSnapshot<T>>) => {
+    snap = { ...snap, ...next };
+    o.onChange(snap);
+  };
+
+  const schedule = (ms: number) => {
+    env.win.clearTimeout(timer);
+    snap = { ...snap, stopped: ms <= 0 };
+    if (ms > 0) timer = env.win.setTimeout(() => void run(), ms);
+  };
+
+  async function run(): Promise<void> {
+    if (!alive) return;
+    if (busy) {
+      again = true;
+      return;
+    }
+    if (!o.whileHidden && env.doc.visibilityState === "hidden") return;
+    busy = true;
+    const setsAtStart = sets;
+    const sentAt = env.now();
+    let err: unknown = null;
+    try {
+      const next = await o.fetcher();
+      if (!alive) return;
+      const gotAt = env.now();
+      const merged = o.merge(snap.data, next, sets !== setsAtStart);
+      const off = clockOffset(o.serverNow?.(next), sentAt, gotAt);
+      emit({
+        data: merged,
+        error: null,
+        okAt: gotAt,
+        failures: 0,
+        offset: off ?? snap.offset,
+      });
+    } catch (e) {
+      if (!alive) return;
+      err = e;
+      emit({ error: e, failures: snap.failures + 1 });
+    } finally {
+      busy = false;
+    }
+    if (!alive) return;
+    if (again) {
+      again = false;
+      schedule(1);
+      return;
+    }
+    schedule(o.delay(snap.data, snap.failures, err));
+    if (snap.stopped) emit({});
+  }
+
+  const onVisible = () => {
+    if (env.doc.visibilityState === "visible" && !snap.stopped) schedule(1);
+  };
+  // Back online after a drop: read now rather than wait out the backoff.
+  const onOnline = () => {
+    if (!snap.stopped) schedule(1);
+  };
+  env.doc.addEventListener("visibilitychange", onVisible);
+  env.win.addEventListener("online", onOnline);
+  void run();
+
+  return {
+    kick: () => {
+      if (!alive) return;
+      if (busy) again = true;
+      else schedule(1);
+    },
+    set: fn => {
+      sets += 1;
+      emit({ data: fn(snap.data) });
+    },
+    stop: () => {
+      alive = false;
+      env.win.clearTimeout(timer);
+      env.doc.removeEventListener("visibilitychange", onVisible);
+      env.win.removeEventListener("online", onOnline);
+    },
+    snapshot: () => snap,
+  };
+}
+
 export interface Poll<T> {
   data: T | null;
   error: string | null;
@@ -1630,30 +2534,27 @@ export interface Poll<T> {
   /** When the last good read landed (ms). */
   okAt: number | null;
   failures: number;
+  /** Reading stopped (final, refused or signed out); `error` says why if it failed. */
+  stopped: boolean;
+  /** Server clock minus browser clock (ms); add it to Date.now() for countdowns. */
+  offset: number;
   reload: () => void;
   /** Put a press's answer on screen now, through the same merge as a read. */
   set: (fn: (prev: T | null) => T | null) => void;
 }
 
-interface PollState<T> {
+interface PollState<T> extends PollSnapshot<T> {
   key: string | null;
-  data: T | null;
-  error: unknown;
-  okAt: number | null;
-  failures: number;
 }
 
-/**
- * Read, then read again after `delay` (0 stops). One read at a time, none
- * while the tab is hidden, one at once when it comes back. The last good
- * answer stays on screen through a failure.
- */
+/** startPoll as a hook, restarted whenever `key` changes; null reads nothing. */
 function usePoll<T>(
   key: string | null,
   fetcher: () => Promise<T>,
   delay: (data: T | null, failures: number, error: unknown) => number,
-  merge: (prev: T | null, next: T) => T,
+  merge: (prev: T | null, next: T, afterSet: boolean) => T,
   seed: T | null = null,
+  extra: Pick<PollOptions<T>, "whileHidden" | "serverNow"> = {},
 ): Poll<T> {
   const [st, setSt] = useState<PollState<T>>({
     key,
@@ -1661,6 +2562,8 @@ function usePoll<T>(
     error: null,
     okAt: null,
     failures: 0,
+    stopped: false,
+    offset: 0,
   });
   const fetchRef = useRef(fetcher);
   fetchRef.current = fetcher;
@@ -1670,102 +2573,34 @@ function usePoll<T>(
   mergeRef.current = merge;
   const seedRef = useRef(seed);
   seedRef.current = seed;
-  const dataRef = useRef<T | null>(seed);
-  const kickRef = useRef<() => void>(() => undefined);
+  const extraRef = useRef(extra);
+  extraRef.current = extra;
+  const pollRef = useRef<Poller<T> | null>(null);
 
   useEffect(() => {
     if (!key) return;
-    let alive = true;
-    let timer = 0;
-    let busy = false;
-    let again = false;
-    let stopped = false;
-    let failures = 0;
-    dataRef.current = seedRef.current;
-    setSt({
-      key,
-      data: seedRef.current,
-      error: null,
-      okAt: null,
-      failures: 0,
+    const poller = startPoll<T>({
+      fetcher: () => fetchRef.current(),
+      delay: (d, f, e) => delayRef.current(d, f, e),
+      merge: (p, n, a) => mergeRef.current(p, n, a),
+      seed: seedRef.current,
+      whileHidden: extraRef.current.whileHidden,
+      serverNow: extraRef.current.serverNow,
+      onChange: s => setSt({ ...s, key }),
     });
-
-    const schedule = (ms: number) => {
-      window.clearTimeout(timer);
-      stopped = ms <= 0;
-      if (!stopped) timer = window.setTimeout(run, ms);
-    };
-
-    async function run(): Promise<void> {
-      if (!alive) return;
-      if (busy) {
-        again = true;
-        return;
-      }
-      if (document.visibilityState === "hidden") return;
-      busy = true;
-      let err: unknown = null;
-      try {
-        const next = await fetchRef.current();
-        if (!alive) return;
-        failures = 0;
-        const merged = mergeRef.current(dataRef.current, next);
-        dataRef.current = merged;
-        setSt({ key, data: merged, error: null, okAt: Date.now(), failures });
-      } catch (e) {
-        if (!alive) return;
-        err = e;
-        failures += 1;
-        const f = failures;
-        setSt(s => ({
-          ...s,
-          key,
-          data: dataRef.current,
-          error: e,
-          failures: f,
-        }));
-      } finally {
-        busy = false;
-      }
-      if (!alive) return;
-      if (again) {
-        again = false;
-        schedule(1);
-        return;
-      }
-      schedule(delayRef.current(dataRef.current, failures, err));
-    }
-
-    const onVisible = () => {
-      if (document.visibilityState === "visible" && !stopped) schedule(1);
-    };
-    // Back online after a drop: read now rather than wait out the backoff.
-    const onOnline = () => {
-      if (!stopped) schedule(1);
-    };
-    kickRef.current = () => {
-      if (!alive) return;
-      if (busy) again = true;
-      else schedule(1);
-    };
-    document.addEventListener("visibilitychange", onVisible);
-    window.addEventListener("online", onOnline);
-    void run();
+    pollRef.current = poller;
+    setSt({ ...poller.snapshot(), key });
     return () => {
-      alive = false;
-      window.clearTimeout(timer);
-      document.removeEventListener("visibilitychange", onVisible);
-      window.removeEventListener("online", onOnline);
-      kickRef.current = () => undefined;
+      poller.stop();
+      if (pollRef.current === poller) pollRef.current = null;
     };
   }, [key]);
 
-  const reload = useCallback(() => kickRef.current(), []);
-  const set = useCallback((fn: (prev: T | null) => T | null) => {
-    const next = fn(dataRef.current);
-    dataRef.current = next;
-    setSt(s => ({ ...s, data: next }));
-  }, []);
+  const reload = useCallback(() => pollRef.current?.kick(), []);
+  const set = useCallback(
+    (fn: (prev: T | null) => T | null) => pollRef.current?.set(fn),
+    [],
+  );
 
   const mine = st.key === key;
   const { kind, status } = failureOf(mine ? st.error : null);
@@ -1776,6 +2611,8 @@ function usePoll<T>(
     errorStatus: status,
     okAt: mine ? st.okAt : null,
     failures: mine ? st.failures : 0,
+    stopped: mine ? st.stopped : false,
+    offset: mine ? st.offset : 0,
     reload,
     set,
   };
@@ -1783,6 +2620,21 @@ function usePoll<T>(
 
 /** How old the strip's last good read may be before it says so. */
 export const STALE_MS = 20_000;
+
+/**
+ * Whether what shows may be out of date, and since when: two failed reads
+ * in a row, or a last good read older than 20 s. `since` is null when no
+ * read has landed at all.
+ */
+export function readIsOld(
+  poll: Pick<Poll<unknown>, "error" | "failures" | "okAt" | "stopped">,
+  now: number,
+): { since: number | null } | null {
+  if (!poll.error || poll.stopped) return null;
+  const old =
+    poll.failures >= 2 || (poll.okAt !== null && now - poll.okAt > STALE_MS);
+  return old ? { since: poll.okAt } : null;
+}
 
 export interface LiveFeed extends Poll<LiveStatus> {
   /** live.status refused this seat (switched off, or no seat): show nothing. */
@@ -1796,13 +2648,20 @@ export function useLiveStatus(enabled: boolean): LiveFeed {
     roomsApi.liveStatus,
     liveDelay,
     mergeLive,
+    null,
+    { whileHidden: true, serverNow: d => d.now },
   );
-  const { reload } = poll;
+  const { reload, set } = poll;
   useEffect(() => {
     if (!enabled) return;
-    window.addEventListener(ROOMS_CHANGED, reload);
-    return () => window.removeEventListener(ROOMS_CHANGED, reload);
-  }, [enabled, reload]);
+    const changed = (e: Event) => {
+      const room = normalizeRoom((e as CustomEvent).detail);
+      if (room) set(prev => (prev ? withRoom(prev, room) : prev));
+      reload();
+    };
+    window.addEventListener(ROOMS_CHANGED, changed);
+    return () => window.removeEventListener(ROOMS_CHANGED, changed);
+  }, [enabled, reload, set]);
   return {
     ...poll,
     off: poll.errorKind === "refused" || poll.errorKind === "signin",
@@ -1823,7 +2682,214 @@ export function useRoomStatus(
     seed && seed.id === roomId
       ? { room: seed, events: [], health: null }
       : null,
+    { whileHidden: true, serverNow: d => d.now },
   );
+}
+
+// ---------------------------------------------------------------------------
+// Calling a rep back to a hidden tab: the title, a short sound, and a
+// notification when the browser allows one
+// ---------------------------------------------------------------------------
+
+export interface AlertEnv {
+  doc: {
+    visibilityState: string;
+    title: string;
+    addEventListener(type: string, fn: () => void): void;
+    removeEventListener(type: string, fn: () => void): void;
+  } | null;
+  chime?: () => void;
+  notify?: (text: string, tag: string) => void;
+}
+
+let audio: AudioContext | null = null;
+
+function chime(): void {
+  const Ctx =
+    globalThis.AudioContext ??
+    (globalThis as unknown as { webkitAudioContext?: typeof AudioContext })
+      .webkitAudioContext;
+  if (!Ctx) return;
+  audio ??= new Ctx();
+  const a = audio;
+  void a.resume?.();
+  const at = a.currentTime;
+  for (const [i, hz] of [880, 1320].entries()) {
+    const osc = a.createOscillator();
+    const gain = a.createGain();
+    osc.frequency.value = hz;
+    gain.gain.setValueAtTime(0.0001, at + i * 0.16);
+    gain.gain.exponentialRampToValueAtTime(0.08, at + i * 0.16 + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, at + i * 0.16 + 0.15);
+    osc.connect(gain).connect(a.destination);
+    osc.start(at + i * 0.16);
+    osc.stop(at + i * 0.16 + 0.16);
+  }
+}
+
+function notify(text: string, tag: string): void {
+  if (typeof Notification === "undefined") return;
+  if (Notification.permission !== "granted") return;
+  const n = new Notification("Mahara sales", { body: text, tag });
+  n.onclick = () => {
+    window.focus();
+    n.close();
+  };
+}
+
+function browserAlertEnv(): AlertEnv {
+  return {
+    doc: typeof document === "undefined" ? null : document,
+    chime,
+    notify,
+  };
+}
+
+/**
+ * Called from a press (a user gesture): ask once for notifications, and
+ * wake the sound, which a browser keeps silent until a person has pressed
+ * something on the page.
+ */
+export function primeAlerts(): void {
+  try {
+    if (
+      typeof Notification !== "undefined" &&
+      Notification.permission === "default"
+    )
+      void Notification.requestPermission().catch(() => undefined);
+  } catch {
+    // An old browser with the callback form only: the title still works.
+  }
+  try {
+    const Ctx = globalThis.AudioContext;
+    if (Ctx) {
+      audio ??= new Ctx();
+      void audio.resume?.();
+    }
+  } catch {
+    // No sound here; the title and the notification still work.
+  }
+}
+
+const alerted = new Set<string>();
+let baseTitle: string | null = null;
+let watching: (() => void) | null = null;
+
+/**
+ * Say `text` to a rep whose cockpit tab is hidden, once per `key`: in the
+ * tab's title (put back when the tab shows), with a short sound, and as a
+ * notification when allowed. A visible tab is already saying it, so this
+ * does nothing there. True when it alerted.
+ */
+export function alertWhileHidden(
+  key: string,
+  text: string,
+  env: AlertEnv = browserAlertEnv(),
+): boolean {
+  const doc = env.doc;
+  if (doc?.visibilityState !== "hidden" || alerted.has(key)) return false;
+  alerted.add(key);
+  if (alerted.size > 200) {
+    const oldest = alerted.values().next().value;
+    if (oldest !== undefined) alerted.delete(oldest);
+  }
+  if (baseTitle === null) baseTitle = doc.title;
+  doc.title = `${text} · ${baseTitle}`;
+  if (!watching) {
+    const back = () => {
+      if (doc.visibilityState !== "visible") return;
+      if (baseTitle !== null) doc.title = baseTitle;
+      baseTitle = null;
+      doc.removeEventListener("visibilitychange", back);
+      watching = null;
+    };
+    watching = back;
+    doc.addEventListener("visibilitychange", back);
+  }
+  try {
+    env.chime?.();
+  } catch {
+    // Sound is a nicety; the title already says it.
+  }
+  try {
+    env.notify?.(text, key);
+  } catch {
+    // Notifications refused or unsupported; the title already says it.
+  }
+  return true;
+}
+
+/** Forget what was alerted and put the title back (tests). */
+export function resetAlerts(): void {
+  alerted.clear();
+  baseTitle = null;
+  watching = null;
+}
+
+// ---------------------------------------------------------------------------
+// Focus: a press that removes its own button leaves the keyboard where it was
+// ---------------------------------------------------------------------------
+
+/**
+ * When the button that had focus goes (a press swaps it for the Undo strip,
+ * the end question, or the next step), focus moves to the element marked
+ * `data-autofocus` (Undo, "Keep it"), else back to the button pressed if it
+ * is there again (`data-key`), else to the first button. Only when focus
+ * was inside `ref` and has fallen to the page; a click elsewhere lets go.
+ */
+export function useFocusRescue(
+  ref: { current: HTMLElement | null },
+  shape: string,
+): void {
+  const had = useRef(false);
+  const lastKey = useRef<string | null>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const onIn = (e: FocusEvent) => {
+      had.current = true;
+      const k = (e.target as HTMLElement | null)?.dataset?.key;
+      if (k) lastKey.current = k;
+    };
+    const onOut = (e: FocusEvent) => {
+      const to = e.relatedTarget as Node | null;
+      if (to && !el.contains(to)) had.current = false;
+    };
+    const onDown = (e: Event) => {
+      if (!el.contains(e.target as Node)) had.current = false;
+    };
+    el.addEventListener("focusin", onIn);
+    el.addEventListener("focusout", onOut);
+    document.addEventListener("pointerdown", onDown, true);
+    return () => {
+      el.removeEventListener("focusin", onIn);
+      el.removeEventListener("focusout", onOut);
+      document.removeEventListener("pointerdown", onDown, true);
+    };
+  }, [ref]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: runs when the buttons change shape
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || !had.current) return;
+    const active = document.activeElement;
+    if (
+      active &&
+      active !== document.body &&
+      active !== document.documentElement
+    )
+      return;
+    const pick = (sel: string) =>
+      el.querySelector<HTMLElement>(`${sel}:not([disabled])`);
+    // While a press is on its way every action waits disabled: focus waits
+    // with them (the next shape, enabled again, places it) rather than
+    // landing on something unrelated such as the timeline.
+    const target =
+      pick("[data-autofocus]") ??
+      (lastKey.current ? pick(`[data-key="${lastKey.current}"]`) : null) ??
+      pick("[data-key]") ??
+      (el.querySelector("[data-key]") ? null : pick("button"));
+    target?.focus();
+  }, [shape]);
 }
 
 /**

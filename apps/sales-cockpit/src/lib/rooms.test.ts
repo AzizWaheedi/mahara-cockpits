@@ -35,7 +35,7 @@ const room = (over: Partial<RoomView> = {}) => F.baseRoom(NOW, over);
 /** Sent at 14:11:12 on WhatsApp; the lead has until 14:21:12 (9:12 left). */
 const sentRoom = (over: Partial<RoomView> = {}) =>
   room({
-    link_channels: ["whatsapp"],
+    link_channels: ["whatsapp_text"],
     link_sent_at: iso(NOW - 48 * S),
     lead_by: iso(NOW + 552 * S),
     ...over,
@@ -107,14 +107,25 @@ describe("small helpers", () => {
     expect(R.readOut(room({ short_url: null, join_url: null }))).toBe("K7Q2MX");
   });
 
-  test("channels read as words, once each", () => {
-    expect(R.channelWords(["whatsapp"])).toBe("WhatsApp");
-    expect(R.channelWords(["template"])).toBe("WhatsApp");
+  test("channels read as words, once each, in the glossary's names", () => {
+    expect(R.channelWords(["whatsapp_text"])).toBe("WhatsApp");
+    expect(R.channelWords(["whatsapp_template"])).toBe("WhatsApp");
     expect(R.channelWords(["email"])).toBe("email");
-    expect(R.channelWords(["whatsapp", "email"])).toBe("WhatsApp and email");
-    expect(R.channelWords(["whatsapp", "template"])).toBe("WhatsApp");
+    expect(R.channelWords(["whatsapp_text", "email"])).toBe(
+      "WhatsApp and email",
+    );
+    expect(R.channelWords(["whatsapp_template", "email"])).toBe(
+      "WhatsApp and email",
+    );
+    expect(R.channelWords(["whatsapp_text", "whatsapp_template"])).toBe(
+      "WhatsApp",
+    );
+    // The database's check also allows these two.
+    expect(R.channelWords(["whatsapp"])).toBe("WhatsApp");
+    expect(R.channelWords(["read_out"])).toBeNull();
     expect(R.channelWords([])).toBeNull();
-    expect(R.channelWords(["template_unconfirmed"])).toBeNull();
+    // Names nothing serves say nothing.
+    expect(R.channelWords(["template", "template_unconfirmed"])).toBeNull();
   });
 
   test("devices", () => {
@@ -173,12 +184,17 @@ describe("which moment a room is in", () => {
       ["creating", { state: "creating" }, "making"],
       ["failed", { state: "failed" }, "failed"],
       ["open, nothing sent", {}, "ready"],
-      ["sent", { link_sent_at: iso(NOW), link_channels: ["whatsapp"] }, "sent"],
+      [
+        "sent",
+        { link_sent_at: iso(NOW), link_channels: ["whatsapp_text"] },
+        "sent",
+      ],
       [
         "not confirmed",
         {
           link_sent_at: iso(NOW),
-          link_channels: ["template_unconfirmed", "email"],
+          link_channels: ["whatsapp_template", "email"],
+          link_unconfirmed_at: iso(NOW),
         },
         "not_confirmed",
       ],
@@ -268,7 +284,10 @@ describe("the room panel's words, as the specs write them", () => {
   });
 
   test("not confirmed", () => {
-    const r = sentRoom({ link_channels: ["template_unconfirmed", "email"] });
+    const r = sentRoom({
+      link_channels: ["whatsapp_template", "email"],
+      link_unconfirmed_at: iso(NOW - 20 * S),
+    });
     expect(say(r)).toBe(
       "HighLevel did not confirm the WhatsApp template. The link went by email.",
     );
@@ -608,6 +627,7 @@ describe("the one right button", () => {
         "Copy link",
         "Also send by email",
         "We are on the phone",
+        "I can't let them in",
         "End room",
       ],
     });
@@ -639,31 +659,36 @@ describe("the one right button", () => {
     expect(a.quiet[0]).toBe("Open my room");
   });
 
-  test("lead in: That was not the lead for five minutes, then only Finished", () => {
-    const r = sentRoom({ state: "lead_in", lead_in_at: iso(NOW - 299 * S) });
+  test("lead in: That was not the lead while a press still lands inside 300 s, then only Finished", () => {
+    // The last press: 300 s, less the 5 s Undo, less 15 s for the trip.
+    const r = sentRoom({ state: "lead_in", lead_in_at: iso(NOW - 280 * S) });
     expect(acts(r)).toEqual({
       primary: null,
       quiet: ["That was not the lead", "Finished"],
     });
-    expect(acts({ ...r, lead_in_at: iso(NOW - 301 * S) })).toEqual({
+    expect(acts({ ...r, lead_in_at: iso(NOW - 281 * S) })).toEqual({
       primary: null,
       quiet: ["Finished"],
     });
   });
 
-  test("still on the call: Finished is the one button", () => {
-    expect(
-      acts(
-        room({
-          state: "lead_in",
-          ends_at: iso(NOW - S),
-          lead_in_at: iso(NOW - 40 * MIN),
-        }),
-      ),
-    ).toEqual({
-      primary: "Finished",
-      quiet: [],
+  test("still on the call: Finished, or Still on it", () => {
+    const r = room({
+      state: "lead_in",
+      ends_at: iso(NOW - S),
+      lead_in_at: iso(NOW - 40 * MIN),
     });
+    expect(acts(r)).toEqual({
+      primary: "Finished",
+      quiet: ["Still on it"],
+    });
+    // Answered "Still on it": the question goes and Finished is quiet again.
+    const a = R.roomActions(r, { now: NOW, stillOn: true });
+    expect(a.primary).toBeNull();
+    expect(a.quiet.map(q => q.label)).toEqual(["Finished"]);
+    expect(
+      R.sentenceText(R.roomSentence(r, { now: NOW, stillOn: true })),
+    ).not.toBe("Still on the call?");
   });
 
   test("failed: try the other provider", () => {
@@ -698,7 +723,7 @@ describe("the one right button", () => {
 
   test("email is offered until the link went by email", () => {
     expect(
-      acts(sentRoom({ link_channels: ["whatsapp", "email"] })).quiet,
+      acts(sentRoom({ link_channels: ["whatsapp_text", "email"] })).quiet,
     ).not.toContain("Also send by email");
   });
 
@@ -725,8 +750,12 @@ describe("the one right button", () => {
     expect(R.needsUndo("not_lead")).toBe(true);
     expect(R.needsUndo("noshow")).toBe(true);
     expect(R.needsUndo("showed")).toBe(true);
+    // Ending a call in progress and moving the lead to Zoom wait too.
+    expect(R.needsUndo("finished")).toBe(true);
+    expect(R.needsUndo("admit_blocked")).toBe(true);
     expect(R.needsUndo("open")).toBe(false);
     expect(R.needsUndo("end")).toBe(false);
+    expect(R.needsUndo("still_on")).toBe(false);
   });
 });
 
@@ -905,13 +934,16 @@ describe("the availability strip", () => {
     expect(text(strip({ me: me({ state: "on_call" }) }))).toBe("On a call.");
   });
 
-  test("an error after a press outranks everything and says what to do", () => {
-    const l = strip({
-      flash: { kind: "error", at: NOW, text: "Sign in again." },
-      offers: [F.offerFixture(NOW)],
-    });
-    expect(l.moment).toBe("error");
-    expect(text(l)).toBe("Sign in again.");
+  test("an error after a press says what to do, under the offer while one is open", () => {
+    const flash = { kind: "error" as const, at: NOW, text: "Sign in again." };
+    const withOffer = strip({ flash, offers: [F.offerFixture(NOW)] });
+    expect(withOffer.moment).toBe("offer");
+    expect(withOffer.primary?.key).toBe("take");
+    expect(withOffer.note).toBe("Sign in again.");
+    const alone = strip({ flash });
+    expect(alone.moment).toBe("error");
+    expect(text(alone)).toBe("Sign in again.");
+    expect(alone.note).toBeNull();
   });
 });
 
@@ -1427,7 +1459,13 @@ describe("the calls sales-api gets", () => {
     answer = async c =>
       c.action === "room.open"
         ? { ok: true, start_url: "https://example.com/s" }
-        : { ok: true, room: sentRoom() };
+        : c.action === "live.availability"
+          ? { ok: true, me: me({ state: "available" }) }
+          : c.action === "live.status"
+            ? { ok: true, ...F.liveFixture("away", NOW).live }
+            : c.action === "room.status"
+              ? { ok: true, room: sentRoom({ id: "room-1" }) }
+              : { ok: true, room: sentRoom() };
     await R.roomsApi.sendEmail("room-1");
     await R.roomsApi.status("room-1");
     await R.roomsApi.open("room-1");
@@ -1452,8 +1490,18 @@ describe("the calls sales-api gets", () => {
     });
     expect(typeof calls[0].body.request_id).toBe("string");
     expect(calls[3].body).toEqual({ state: "available" });
-    expect(calls[5].body).toMatchObject({ live_id: "live-1", version: 2 });
+    // The claim carries no version: a stale one would refuse a live offer.
+    expect(Object.keys(calls[5].body).sort()).toEqual([
+      "live_id",
+      "request_id",
+    ]);
+    expect(calls[5].body.live_id).toBe("live-1");
     expect(typeof calls[5].body.request_id).toBe("string");
+    // Not now is retried as the same request too.
+    expect(Object.keys(calls[6].body).sort()).toEqual([
+      "live_id",
+      "request_id",
+    ]);
     expect(calls[7].body).toMatchObject({ appointment_id: "appt-1" });
   });
 
@@ -1544,16 +1592,21 @@ describe("the fixtures cover every state in the copy tables", () => {
     ready: "ready",
     sent: "sent",
     not_sent: "not_sent",
+    not_sent_zoom: "not_sent",
     not_confirmed: "not_confirmed",
     opened: "opened",
     waiting: "waiting_room",
     host_in: "host_in",
     joined: "joined",
+    joined_marked: "joined",
     joined_not_lead: "joined",
+    still_on_call: "still_on_call",
     expired: "expired",
     failed: "failed",
+    failed_handover: "failed",
     down: "making",
     pending_zoom: "failed",
+    booked: "sent",
   };
   for (const knob of F.ROOM_KNOBS)
     test(`room=${knob}`, () => {
@@ -1602,17 +1655,26 @@ describe("the fixtures cover every state in the copy tables", () => {
     expired: "missed",
     refresh: "refresh",
     standby: "available",
+    making: "making",
+    standby_failed: "standby_failed",
     away: "away",
     available: "available",
     ready: "ready",
     booked: "booked_call",
     on_call: "on_call",
     down: "down",
+    // Live calls off: the strip's own line is the Away one (the banner hides it).
+    live_off: "away",
   };
   for (const knob of F.OFFER_KNOBS)
     test(`offer=${knob}`, () => {
       const { live, flash } = F.liveFixture(knob, NOW);
-      const l = R.stripLine({ ...live, now: NOW, flash });
+      const l = R.stripLine({
+        ...live,
+        now: NOW,
+        flash,
+        standbyError: live.standby_error ?? null,
+      });
       expect(l.moment).toBe(offerWant[knob] as StripLine["moment"]);
       expect(R.sentenceText(l.sentence)).not.toMatch(
         /undefined|null|NaN|\{|--:--/,
@@ -1681,8 +1743,9 @@ describe("the harness's answers", () => {
     ) as {
       room: RoomView;
     };
+    // "We are on the phone" cancels the room (roomlogic: on_phone → cancelled).
     expect(ended.room).toMatchObject({
-      state: "ended",
+      state: "cancelled",
       result: "moved_to_phone",
     });
   });

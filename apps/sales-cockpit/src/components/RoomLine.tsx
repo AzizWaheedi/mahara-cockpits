@@ -1,3 +1,4 @@
+import { Component, type ErrorInfo, type ReactNode } from "react";
 import { clock } from "../lib/format";
 import {
   mmss,
@@ -145,6 +146,17 @@ function StepDot({ state }: { state: "done" | "current" | "todo" }) {
   );
 }
 
+/**
+ * The countdown's ink. Pure teal and the owed orange are under 3:1 on the
+ * white card, so in light mode the digits mix them with the foreground
+ * (55%, as txt-warn does) to pass 4.5:1; on the dark card they stay pure.
+ * The dots keep pure teal in both.
+ */
+export const COUNTDOWN_INK = {
+  now: "text-[color:color-mix(in_oklch,var(--now)_55%,var(--foreground))] dark:text-[color:var(--now)]",
+  owed: "text-[color:color-mix(in_oklch,var(--owed)_55%,var(--foreground))] dark:text-[color:var(--owed)]",
+} as const;
+
 /** "9:12 left", teal, turning to the owed colour in the last minute. */
 export function Countdown({
   ms,
@@ -165,8 +177,9 @@ export function Countdown({
       className={`shrink-0 whitespace-nowrap text-right leading-5 ${className}`}
     >
       <span
-        className="font-mono text-[15px] font-semibold"
-        style={{ color: ms < 60_000 ? "var(--owed)" : "var(--now)" }}
+        className={`font-mono text-[15px] font-semibold ${
+          ms < 60_000 ? COUNTDOWN_INK.owed : COUNTDOWN_INK.now
+        }`}
       >
         {mmss(ms)}
       </span>
@@ -192,10 +205,12 @@ function SayPart({ p }: { p: Part }) {
     return <span className="font-mono text-[0.94em]">{p.mono}</span>;
   return p.form === "paren" ? (
     <>
-      (<span className="font-mono text-[0.94em]">{mmss(p.left)}</span> left)
+      {p.lead}(<span className="font-mono text-[0.94em]">{mmss(p.left)}</span>{" "}
+      left)
     </>
   ) : (
     <>
+      {p.lead}
       <span className="font-mono text-[0.94em]">{mmss(p.left)}</span> left.
     </>
   );
@@ -214,18 +229,23 @@ export function toneColor(tone: Tone): string {
 }
 
 /**
- * A status sentence: drawn for the eye, and said to a screen reader through
- * a polite live region without the ticking countdown, so it is announced
- * when it changes, not every second. An offer is said assertively.
+ * A status sentence: drawn for the eye, and said to a screen reader without
+ * the ticking countdown, so it is announced when it changes, not every
+ * second. On its own it carries a polite live region (an offer's is
+ * assertive). Inside the banner, `live={false}`: the banner keeps one
+ * always-mounted live region of its own, because a region that mounts with
+ * its words already in it is usually not announced.
  */
 export function Spoken({
   s,
   className = "",
   assertive = false,
+  live = true,
 }: {
   s: Sentence;
   className?: string;
   assertive?: boolean;
+  live?: boolean;
 }) {
   // Never clamped: a cut sentence loses the part that says what to do.
   return (
@@ -235,11 +255,49 @@ export function Spoken({
       </p>
       <p
         className="sr-only"
-        aria-live={assertive ? "assertive" : "polite"}
-        aria-atomic
+        aria-live={live ? (assertive ? "assertive" : "polite") : undefined}
+        aria-atomic={live ? true : undefined}
       >
         {sentenceText(s, true)}
       </p>
     </div>
   );
+}
+
+/**
+ * A live-call screen that throws while drawing shows `fallback` instead of
+ * taking the page (or, above the routes, the whole cockpit) with it, and
+ * tries again after `retryMs`: a bad answer is usually followed by a good one.
+ */
+export class LiveBoundary extends Component<
+  { fallback: ReactNode; children: ReactNode; retryMs?: number },
+  { failed: boolean }
+> {
+  state = { failed: false };
+  private timer: ReturnType<typeof setTimeout> | null = null;
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error("A live-call screen stopped:", error, info.componentStack);
+    const ms = this.props.retryMs ?? 30_000;
+    this.clear();
+    if (ms > 0)
+      this.timer = setTimeout(() => this.setState({ failed: false }), ms);
+  }
+
+  componentWillUnmount() {
+    this.clear();
+  }
+
+  private clear() {
+    if (this.timer !== null) clearTimeout(this.timer);
+    this.timer = null;
+  }
+
+  render() {
+    return this.state.failed ? this.props.fallback : this.props.children;
+  }
 }

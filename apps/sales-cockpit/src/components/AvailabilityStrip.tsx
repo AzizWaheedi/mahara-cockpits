@@ -63,13 +63,33 @@ export function PresenceDot({
   );
 }
 
-/** The strip's reads have failed for a while: what shows may be old (ours). */
-export function StaleNote({ since }: { since: number }) {
+/**
+ * Reads have failed for a while: what shows may be old (ours). The same
+ * words on the strip and the room panel; `never` is said instead when no
+ * read has landed at all.
+ */
+export function StaleNote({
+  since,
+  never = "Live calls could not be read. Check the connection.",
+  className = "",
+}: {
+  since: number | null;
+  never?: string;
+  className?: string;
+}) {
   return (
-    <p className="txt-warn text-[12px] leading-4">
-      Not updated since{" "}
-      <span className="font-mono">{clock(new Date(since).toISOString())}</span>.
-      Check the connection.
+    <p className={`txt-warn text-[12px] leading-4 ${className}`}>
+      {since === null ? (
+        never
+      ) : (
+        <>
+          Not updated since{" "}
+          <span className="font-mono">
+            {clock(new Date(since).toISOString())}
+          </span>
+          . Check the connection.
+        </>
+      )}
     </p>
   );
 }
@@ -93,6 +113,7 @@ function StripButton({
       onClick={() => onAction(a.key)}
       disabled={busy !== null || a.disabled}
       aria-busy={busy === a.key}
+      data-key={a.key}
       className={`${primary ? buttonPrimary : button} ${BTN}`}
     >
       {busy === a.key ? (
@@ -152,9 +173,14 @@ export function AvailabilityStrip({
             <div className="min-w-0 flex-1">
               <Spoken
                 s={line.sentence}
-                assertive
+                live={false}
                 className="text-[14px] leading-5 [overflow-wrap:anywhere]"
               />
+              {line.note ? (
+                <p className="txt-bad mt-1 text-[12px] leading-4 [overflow-wrap:anywhere]">
+                  {line.note}
+                </p>
+              ) : null}
               {stale}
             </div>
           </div>
@@ -189,7 +215,7 @@ export function AvailabilityStrip({
         <div className="min-w-0 flex-1 py-1">
           <Spoken
             s={line.sentence}
-            assertive={line.urgent}
+            live={false}
             className="text-[13px] leading-5"
           />
           {stale}

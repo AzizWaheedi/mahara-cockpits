@@ -2,41 +2,52 @@ import { Check, Loader2, RotateCcw } from "lucide-react";
 import { type CSSProperties, useEffect, useId, useRef, useState } from "react";
 import { useNow } from "../lib/data";
 import {
+  alertWhileHidden,
+  bannerRoomSentence,
+  type CreateRoom,
   clockSec,
   copyText,
   errorText,
   type Health,
   healthSentence,
   healthTone,
+  heldTarget,
   isMaking,
   isStale,
   mergeRoomFeed,
+  momentFor,
   needsEndConfirm,
   needsUndo,
+  normalizeRoom,
   openHostRoom,
   otherProvider,
+  type Provider,
   providerName,
   type RoomAction,
   type RoomActionKey,
   type RoomEvent,
   type RoomFeed,
   type RoomView,
+  readIsOld,
+  retryRequest,
   roomActions,
   roomHint,
-  roomMoment,
   roomSentence,
   roomsApi,
   roomsChanged,
   roomTone,
+  STILL_ON_ASK_AGAIN_MS,
   sentenceText,
   shortLink,
   UNDO_MS,
   undoLabel,
+  useFocusRescue,
   useRoomStatus,
   useUndo,
 } from "../lib/rooms";
-import { button, buttonPrimary, Failed, Reading } from "./kit";
-import { RoomLine, Spoken, toneColor } from "./RoomLine";
+import { StaleNote } from "./AvailabilityStrip";
+import { button, buttonPrimary } from "./kit";
+import { LiveBoundary, RoomLine, Spoken, toneColor } from "./RoomLine";
 
 /**
  * The video room card on the dialer and the lead page: what the room is,
@@ -49,7 +60,12 @@ import { RoomLine, Spoken, toneColor } from "./RoomLine";
 export interface Notice {
   tone: "good" | "owed" | "bad";
   text: string;
-  link?: { href: string; label: string };
+  /**
+   * A link to open with a press (the host's room when the browser blocked
+   * the new tab). It is opened from a button, never written into the page,
+   * and the panel clears it after a minute.
+   */
+  open?: { url: string; label: string };
 }
 
 const TOUCH = "pointer-coarse:min-h-11";
@@ -65,13 +81,24 @@ export interface RoomPanelViewProps {
   undo?: RoomActionKey | null;
   confirmEnd?: boolean;
   copied?: boolean;
-  /** The last read failed and what shows is the last good one. */
-  readError?: string | null;
+  /** What shows may be old: since the last good read, or never read. */
+  stale?: { since: number | null } | null;
+  /**
+   * The server stopped answering for this room (not yours, gone, signed
+   * out): its sentence, said at once, and no buttons that would fail too.
+   */
+  blocked?: string | null;
   /** The booked intro is marked already, so its two buttons go. */
   introMarked?: boolean;
+  /** A handover's retry belongs to project 2; without it, no retry here. */
+  canRetry?: boolean;
+  /** "Still on the call?" was answered "Still on it" a moment ago. */
+  stillOn?: boolean;
   onAction?: (key: RoomActionKey) => void;
   onUndo?: () => void;
   onConfirmEnd?: (yes: boolean) => void;
+  /** The notice's link was opened: the panel lets it go. */
+  onNoticeOpened?: () => void;
   className?: string;
 }
 
@@ -84,23 +111,32 @@ export function RoomPanelView({
   undo = null,
   confirmEnd = false,
   copied = false,
-  readError = null,
+  stale = null,
+  blocked = null,
   introMarked = false,
+  canRetry = true,
+  stillOn = false,
   onAction = () => undefined,
   onUndo = () => undefined,
   onConfirmEnd = () => undefined,
+  onNoticeOpened = () => undefined,
   className = "",
 }: RoomPanelViewProps) {
   const { room, events, health } = feed;
-  const ctx = { now, canMarkIntro };
-  const moment = roomMoment(room, now);
+  const ctx = { now, canMarkIntro, stillOn };
+  const moment = momentFor(room, ctx);
   const sentence = roomSentence(room, ctx);
   const hint = roomHint(room, now);
   const actions = roomActions(room, ctx);
-  const primary = actions.primary;
-  const quiet = introMarked
-    ? actions.quiet.filter(a => a.key !== "noshow" && a.key !== "showed")
-    : actions.quiet;
+  const primary =
+    blocked || (actions.primary?.key === "retry" && !canRetry)
+      ? null
+      : actions.primary;
+  const quiet = blocked
+    ? []
+    : introMarked
+      ? actions.quiet.filter(a => a.key !== "noshow" && a.key !== "showed")
+      : actions.quiet;
   const tone = roomTone(moment);
   // A failed room never got as far as a step, and a standby room has no
   // lead to wait for: neither draws the line.
@@ -108,9 +144,21 @@ export function RoomPanelView({
     room.state !== "failed" &&
     (room.purpose !== "standby" || Boolean(room.contact_id));
   const red = health && healthTone(health) !== "good";
+  const zone = useRef<HTMLElement>(null);
+  useFocusRescue(
+    zone,
+    [
+      undo,
+      confirmEnd,
+      busy,
+      primary?.key,
+      quiet.map(a => a.key).join(","),
+    ].join("|"),
+  );
 
   return (
     <section
+      ref={zone}
       aria-label={`Video room ${room.code}`}
       className={`panel min-w-0 p-4 sm:p-5 ${className}`}
     >
@@ -121,8 +169,11 @@ export function RoomPanelView({
             {room.code}
           </span>
         </h2>
-        {readError ? (
-          <span className="txt-warn text-[12px]">Not updated: {readError}</span>
+        {stale && !blocked ? (
+          <StaleNote
+            since={stale.since}
+            never="This room could not be read. Check the connection."
+          />
         ) : null}
       </header>
 
@@ -147,7 +198,16 @@ export function RoomPanelView({
         </div>
       </div>
 
-      {notice ? <NoticeLine notice={notice} /> : null}
+      {blocked ? (
+        <p
+          role="alert"
+          className="callout-bad mt-3 rounded-[var(--radius-md)] border px-3 py-2 text-sm [overflow-wrap:anywhere]"
+        >
+          {blocked}
+        </p>
+      ) : null}
+
+      {notice ? <NoticeLine notice={notice} onOpened={onNoticeOpened} /> : null}
 
       {/* Said right under the sentence: a room still "making" while the
           worker is down will not be made. */}
@@ -203,6 +263,7 @@ function Actions({
           onClick={() => onAction(primary.key)}
           disabled={busy !== null}
           aria-busy={busy === primary.key}
+          data-key={primary.key}
           className={`${buttonPrimary} h-9 w-full sm:w-auto ${TOUCH}`}
         >
           {icon(primary)}
@@ -218,6 +279,7 @@ function Actions({
               onClick={() => onAction(a.key)}
               disabled={busy !== null}
               aria-busy={busy === a.key}
+              data-key={a.key}
               className={`${button} h-9 min-w-0 whitespace-normal text-center leading-tight ${TOUCH}`}
             >
               {icon(a)}
@@ -246,9 +308,12 @@ function UndoStrip({ label, onUndo }: { label: string; onUndo: () => void }) {
       <span className="min-w-0 flex-1" role="status">
         {label}
       </span>
+      {/* Focus lands here when the press that started it goes, so a
+          keyboard can take it back inside the five seconds. */}
       <button
         type="button"
         onClick={onUndo}
+        data-autofocus
         className={`inline-flex shrink-0 items-center gap-1 px-1 text-sm font-medium underline-offset-2 hover:underline ${TOUCH}`}
       >
         <RotateCcw className="size-3.5" aria-hidden />
@@ -286,6 +351,7 @@ function ConfirmEnd({
           type="button"
           disabled={busy}
           onClick={() => onAnswer(false)}
+          data-autofocus
           className={`${buttonPrimary} h-9 ${TOUCH}`}
         >
           Keep it
@@ -295,30 +361,40 @@ function ConfirmEnd({
   );
 }
 
-function NoticeLine({ notice }: { notice: Notice }) {
+function NoticeLine({
+  notice,
+  onOpened,
+}: {
+  notice: Notice;
+  onOpened: () => void;
+}) {
   const cls =
     notice.tone === "good"
       ? "callout-good"
       : notice.tone === "owed"
         ? "callout-warn"
         : "callout-bad";
+  const open = notice.open;
   return (
     <p
       role={notice.tone === "bad" ? "alert" : "status"}
       className={`${cls} mt-3 rounded-[var(--radius-md)] border px-3 py-2 text-sm [overflow-wrap:anywhere]`}
     >
       {notice.text}
-      {notice.link ? (
+      {open ? (
         <>
           {" "}
-          <a
-            href={notice.link.href}
-            target="_blank"
-            rel="noopener noreferrer"
+          <button
+            type="button"
+            onClick={() => {
+              window.open(open.url, "_blank", "noopener,noreferrer");
+              onOpened();
+            }}
+            data-autofocus
             className={`inline-flex items-center font-medium underline underline-offset-2 ${TOUCH}`}
           >
-            {notice.link.label}
-          </a>
+            {open.label}
+          </button>
         </>
       ) : null}
     </p>
@@ -388,6 +464,24 @@ export function HealthLine({
 // The connected panel
 // ---------------------------------------------------------------------------
 
+export interface RoomPanelProps {
+  room: RoomView;
+  /**
+   * What room.create was asked for this room, so "Try Zoom" asks for the
+   * same room on the other provider, with its trigger, attempt and booked
+   * call (the room's own fields are the fallback).
+   */
+  request?: CreateRoom | null;
+  /**
+   * A handover's "Use Meet": project 2's own action makes the new room
+   * inside the claim. Without it a handover room shows no retry here.
+   */
+  onRetry?: (provider: Provider) => Promise<RoomView>;
+  onMarkIntro?: (status: "noshow" | "showed") => Promise<void>;
+  onRoomChange?: (room: RoomView) => void;
+  className?: string;
+}
+
 /**
  * The room panel as a page uses it: give it the room `room.create` (or
  * `room.wrap`) returned and it reads the room until it is final, runs the
@@ -397,30 +491,58 @@ export function HealthLine({
  * `onMarkIntro` is for a booked intro: with it, an expired room asks for
  * the intro's mark ("No-show", "We spoke on the phone") instead of saying
  * "Call again or send a message".
+ *
+ * Behind its own boundary: a room that cannot be drawn says so in place,
+ * and the dialer around it keeps working.
  */
-export function RoomPanel({
+export function RoomPanel(props: RoomPanelProps) {
+  return (
+    <LiveBoundary
+      fallback={
+        <p
+          role="alert"
+          className={`callout-bad rounded-[var(--radius-md)] border px-3 py-2 text-sm ${props.className ?? ""}`}
+        >
+          The video room could not be shown. Reload the page to see it again.
+        </p>
+      }
+    >
+      <LiveRoomPanel {...props} />
+    </LiveBoundary>
+  );
+}
+
+/** A press held behind its Undo, and the room it was pressed on. */
+interface Held {
+  key: RoomActionKey;
+  roomId: string;
+}
+
+function LiveRoomPanel({
   room: start,
+  request = null,
+  onRetry,
   onMarkIntro,
   onRoomChange,
   className = "",
-}: {
-  room: RoomView;
-  onMarkIntro?: (status: "noshow" | "showed") => Promise<void>;
-  onRoomChange?: (room: RoomView) => void;
-  className?: string;
-}) {
+}: RoomPanelProps) {
   // The room on show, and what was known of it before its first read: the
   // page's room, or the one "Try Zoom" made.
   const [shown, setShown] = useState<RoomView>(start);
   // biome-ignore lint/correctness/useExhaustiveDependencies: a new room from the page replaces the one on show
   useEffect(() => setShown(start), [start.id]);
   const feed = useRoomStatus(shown.id, shown);
-  const now = useNow(1000);
+  const localNow = useNow(1000);
+  // The server's clock, for every countdown and gate.
+  const now = localNow + feed.offset;
   const [busy, setBusy] = useState<RoomActionKey | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [confirmEnd, setConfirmEnd] = useState(false);
   const [copied, setCopied] = useState(false);
   const [introMarked, setIntroMarked] = useState(false);
+  const [stillAt, setStillAt] = useState<{ id: string; at: number } | null>(
+    null,
+  );
   const busyRef = useRef(false);
   const latest = useRef<RoomView | null>(feed.data?.room ?? null);
   latest.current = feed.data?.room ?? latest.current;
@@ -428,10 +550,20 @@ export function RoomPanel({
   changed.current = onRoomChange;
   const markIntro = useRef(onMarkIntro);
   markIntro.current = onMarkIntro;
+  const asked = useRef(request);
+  asked.current = request;
+  const swap = useRef(onRetry);
+  swap.current = onRetry;
+  const linkTimer = useRef<number | null>(null);
   const { set: setFeed, reload } = feed;
 
   const room = feed.data?.room ?? null;
-  const moment = room ? roomMoment(room, now) : null;
+  const stillOn = Boolean(
+    room &&
+      stillAt?.id === room.id &&
+      localNow - stillAt.at < STILL_ON_ASK_AGAIN_MS,
+  );
+  const moment = room ? momentFor(room, { now, stillOn }) : null;
 
   // The page above hears of every change (the dialer hides its own button
   // while a room is open).
@@ -440,23 +572,24 @@ export function RoomPanel({
     if (room) changed.current?.(room);
   }, [room?.id, room?.version]);
 
-  // A rep in the Meet tab sees the cockpit's tab say the lead is coming.
+  // A rep in the Meet or Zoom tab is called back: the tab's title, a short
+  // sound and a notification, once for each moment (the banner uses the
+  // same key, so the two never say it twice).
   // biome-ignore lint/correctness/useExhaustiveDependencies: only the moment matters
   useEffect(() => {
     if (!room || (moment !== "opened" && moment !== "waiting_room")) return;
-    const was = document.title;
-    const say = () => {
-      if (document.visibilityState === "hidden")
-        document.title = `${sentenceText(roomSentence(room, { now: Date.now() }), true)} · ${was}`;
-      else document.title = was;
-    };
-    say();
-    document.addEventListener("visibilitychange", say);
-    return () => {
-      document.removeEventListener("visibilitychange", say);
-      document.title = was;
-    };
+    alertWhileHidden(
+      `room:${room.id}:${moment}`,
+      sentenceText(bannerRoomSentence(room, Date.now()), true),
+    );
   }, [moment, room?.id]);
+
+  useEffect(
+    () => () => {
+      if (linkTimer.current) window.clearTimeout(linkTimer.current);
+    },
+    [],
+  );
 
   /** A press's answer on screen now; a later read never takes it back. */
   function apply(next: RoomView) {
@@ -467,6 +600,9 @@ export function RoomPanel({
         health: prev?.health ?? null,
       }),
     );
+    // The strip hears of it too, with the room, so its own read on the
+    // way cannot bring an ended room back.
+    roomsChanged(next);
   }
 
   function failed(e: unknown) {
@@ -486,7 +622,6 @@ export function RoomPanel({
     setNotice(null);
     try {
       await work();
-      roomsChanged();
     } catch (e) {
       failed(e);
     } finally {
@@ -495,31 +630,97 @@ export function RoomPanel({
     }
   }
 
-  const held = useUndo<RoomActionKey>(key => {
-    const r = latest.current;
-    if (!r) return;
-    void run(key, async () => {
-      if (key === "lead_in" || key === "not_lead") {
-        apply((await roomsApi.mark(r, key)).room);
-        return;
-      }
-      const mark = markIntro.current;
-      if (!mark) return;
-      await mark(key === "noshow" ? "noshow" : "showed");
-      setIntroMarked(true);
+  /** The host link the browser would not open in a new tab: a button, for a minute. */
+  function offerHostLink(url: string) {
+    setNotice({
+      tone: "owed",
+      text: "Your browser blocked the new tab.",
+      open: { url, label: "Open my room" },
+    });
+    if (linkTimer.current) window.clearTimeout(linkTimer.current);
+    linkTimer.current = window.setTimeout(() => {
+      linkTimer.current = null;
+      setNotice(n =>
+        n?.open
+          ? {
+              tone: "owed",
+              text: "The host link was cleared after a minute. Press Open my room again.",
+            }
+          : n,
+      );
+    }, 60_000);
+  }
+
+  async function retry(r: RoomView, provider: Provider) {
+    if (r.purpose === "handover") {
+      const make = swap.current;
+      if (!make) return;
+      const next = normalizeRoom(await make(provider));
+      if (next) setShown(next);
+      return;
+    }
+    const out = await roomsApi.create(retryRequest(r, asked.current, provider));
+    setShown(out.room);
+  }
+
+  const held = useUndo<Held>(({ key, roomId }) => {
+    // The press was for the room on show when it was pressed; if another
+    // room has taken its place in the five seconds, it is not sent.
+    const r = heldTarget(roomId, latest.current);
+    if (!r) {
       setNotice({
-        tone: "good",
-        text: key === "noshow" ? "Marked no-show." : "Marked showed.",
+        tone: "owed",
+        text: "The room changed before that press went, so it was not sent. Press it again if you still mean it.",
       });
+      return;
+    }
+    void run(key, async () => {
+      switch (key) {
+        case "lead_in":
+        case "not_lead":
+          apply((await roomsApi.mark(r, key)).room);
+          return;
+        case "finished":
+          // The rep says the call is over, so the lead-in question is answered.
+          apply((await roomsApi.end(r, "finished", true)).room);
+          return;
+        case "admit_blocked": {
+          // P1 edge case 9: this Meet room closes and the lead moves to Zoom.
+          const out = await roomsApi.end(r, "admit_blocked");
+          apply(out.room);
+          if (out.replacement) {
+            setShown(out.replacement);
+            return;
+          }
+          await retry(r, "zoom");
+          return;
+        }
+        case "noshow":
+        case "showed": {
+          const mark = markIntro.current;
+          if (!mark) return;
+          await mark(key);
+          setIntroMarked(true);
+          setNotice({
+            tone: "good",
+            text: key === "noshow" ? "Marked no-show." : "Marked showed.",
+          });
+          return;
+        }
+      }
     });
   });
 
   async function onAction(key: RoomActionKey) {
     const r = latest.current;
     if (!r || busyRef.current || held.pending) return;
+    if (key === "still_on") {
+      setStillAt({ id: r.id, at: Date.now() });
+      return;
+    }
     if (needsUndo(key)) {
       setNotice(null);
-      held.start(key);
+      held.start({ key, roomId: r.id });
       return;
     }
     if (key === "copy") {
@@ -543,12 +744,7 @@ export function RoomPanel({
       switch (key) {
         case "open": {
           const out = await openHostRoom(r.id);
-          if (out.kind === "blocked")
-            setNotice({
-              tone: "owed",
-              text: "Your browser blocked the new tab.",
-              link: { href: out.url, label: "Open my room" },
-            });
+          if (out.kind === "blocked") offerHostLink(out.url);
           return;
         }
         case "host_in":
@@ -566,20 +762,9 @@ export function RoomPanel({
         case "on_phone":
           apply((await roomsApi.end(r, "on_phone")).room);
           return;
-        case "finished":
-          // The rep says the call is over, so the lead-in question is answered.
-          apply((await roomsApi.end(r, "finished", true)).room);
+        case "retry":
+          await retry(r, otherProvider(r.provider));
           return;
-        case "retry": {
-          const out = await roomsApi.create({
-            contact_id: r.contact_id,
-            provider: otherProvider(r.provider),
-            call_kind: r.call_kind,
-            purpose: r.purpose,
-          });
-          setShown(out.room);
-          return;
-        }
       }
     });
   }
@@ -597,15 +782,16 @@ export function RoomPanel({
   }
 
   if (!feed.data) {
-    if (feed.error)
-      return (
-        <div className={className}>
-          <Failed what="The video room" error={feed.error} retry={reload} />
-        </div>
-      );
-    return <Reading what="the video room" className={`text-sm ${className}`} />;
+    // Never reached with a room from the page (it seeds the read), but a
+    // panel with nothing to draw still says so.
+    return (
+      <p className={`muted text-sm ${className}`} role="status">
+        {feed.error ?? "Reading the video room..."}
+      </p>
+    );
   }
 
+  const blocked = feed.stopped && feed.error ? feed.error : null;
   return (
     <RoomPanelView
       feed={feed.data}
@@ -613,14 +799,22 @@ export function RoomPanel({
       canMarkIntro={Boolean(onMarkIntro)}
       busy={busy}
       notice={notice}
-      undo={held.pending}
+      undo={held.pending?.key ?? null}
       confirmEnd={confirmEnd}
       copied={copied}
-      readError={feed.failures >= 2 ? feed.error : null}
+      stale={readIsOld(feed, localNow)}
+      blocked={blocked}
       introMarked={introMarked}
+      canRetry={shown.purpose !== "handover" || Boolean(onRetry)}
+      stillOn={stillOn}
       onAction={key => void onAction(key)}
       onUndo={held.undo}
       onConfirmEnd={yes => void answerEnd(yes)}
+      onNoticeOpened={() => {
+        if (linkTimer.current) window.clearTimeout(linkTimer.current);
+        linkTimer.current = null;
+        setNotice(null);
+      }}
       className={className}
     />
   );
