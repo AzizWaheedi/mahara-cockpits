@@ -270,7 +270,7 @@ export function redact(s: string): string {
     .replace(/sbp_[A-Za-z0-9]+/g, "[key]")
     .replace(/pit-[A-Za-z0-9-]+/g, "[key]")
     .replace(/eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g, "[jwt]")
-    .replace(/((?:api_?key|access_token|token|secret)=)[^&\s"']+/gi, "$1[key]")
+    .replace(/((?:api_?key|access_token|token|secret|zak|pwd)=)[^&\s"']+/gi, "$1[key]")
     .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/g, "Bearer [key]")
     .slice(0, 300);
 }
@@ -654,11 +654,14 @@ export function checkCoachReview(b: Record<string, unknown>):
 // WhatsApp templates and the ready-made messages
 // ---------------------------------------------------------------------------
 
-export const FOLLOWUP_SEGMENTS = ["reply", "confirm", "no_show", "cancelled", "new", "after_call", "nurture"] as const;
+// reactivate: the backlog wave's opener (P3 phase 1). good_intro joins in phase 2.
+export const FOLLOWUP_SEGMENTS = ["reply", "confirm", "no_show", "cancelled", "new", "after_call", "nurture", "reactivate"] as const;
 export type FollowupSegment = (typeof FOLLOWUP_SEGMENTS)[number];
 
 /** What each {{n}} of a template carries, in order. */
-export const TEMPLATE_VARIABLES = ["first_name", "rep_name", "line"] as const;
+// call_time: a booked call's day and time on the lead's clock (demo_host). The
+// room code is a button variable (wa_templates.button_variable), never here.
+export const TEMPLATE_VARIABLES = ["first_name", "rep_name", "line", "call_time"] as const;
 export type TemplateVariable = (typeof TEMPLATE_VARIABLES)[number];
 
 export const SNIPPET_MOMENTS = [
@@ -720,6 +723,8 @@ export interface TemplateRoute {
   active: boolean;
   segments: FollowupSegment[];
   sort: number;
+  /** The URL button's variable (join_code), when the template has one. Saved only when the save names it. */
+  button_variable?: "join_code" | null;
 }
 
 /** A template route as a manager saves it, or why it cannot be saved. */
@@ -737,7 +742,7 @@ export function checkTemplateRoute(b: Record<string, unknown>): { ok: true; valu
   if (!preview || preview.length > 1024) return { ok: false, error: "Paste the approved text (1,024 characters at most)." };
   const variables = (Array.isArray(b.variables) ? b.variables : []).map(v => String(v)) as TemplateVariable[];
   if (variables.some(v => !(TEMPLATE_VARIABLES as readonly string[]).includes(v)))
-    return { ok: false, error: "Each {{n}} is the first name, the rep's name or the line." };
+    return { ok: false, error: "Each {{n}} is the first name, the rep's name, the line or the call's time." };
   const slots = [...new Set([...preview.matchAll(/\{\{(\d+)\}\}/g)].map(m => Number(m[1])))].sort((a, b) => a - b);
   if (slots.length !== variables.length || slots.some((n, i) => n !== i + 1))
     return { ok: false, error: `The text has ${slots.length} {{n}} and ${variables.length} values are named; they have to match, from {{1}} on.` };
@@ -751,7 +756,12 @@ export function checkTemplateRoute(b: Record<string, unknown>): { ok: true; valu
     return { ok: false, error: "That is not a kind of follow-up." };
   const sort = Number(b.sort ?? 100);
   if (!Number.isInteger(sort) || sort < 0 || sort > 1000) return { ok: false, error: "The order is a whole number from 0 to 1000." };
-  return { ok: true, value: { key, name, language, purpose, preview, variables, workflow_id: workflow, active, segments, sort } };
+  // The button variable changes only when the save names it, so a save from a
+  // screen that does not know it never clears call_link's join_code.
+  if ("button_variable" in b && b.button_variable !== null && b.button_variable !== "join_code")
+    return { ok: false, error: "The button takes the room code (join_code) or nothing." };
+  const button = "button_variable" in b ? { button_variable: (b.button_variable === "join_code" ? "join_code" : null) as TemplateRoute["button_variable"] } : {};
+  return { ok: true, value: { key, name, language, purpose, preview, variables, workflow_id: workflow, active, segments, sort, ...button } };
 }
 
 /** A ready-made message as a manager saves it, or why it cannot be saved. */

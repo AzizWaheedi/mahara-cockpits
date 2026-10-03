@@ -249,7 +249,8 @@ describe("#3 start links and zak tokens", () => {
 
   test("redactRoom takes out start links and zak tokens before lib's redact", () => {
     expect(redactRoom(`failed at ${START_URL} for user`)).toBe("failed at [host link] for user");
-    expect(redactRoom("https://us06web.zoom.us/j/1?zak=SECRET&pwd=x")).toBe("https://us06web.zoom.us/j/1?zak=[key]&pwd=x");
+    // Contract v2 section 9: lib's redact hides pwd= too (only in errors and logs; a join link is never redacted).
+    expect(redactRoom("https://us06web.zoom.us/j/1?zak=SECRET&pwd=x")).toBe("https://us06web.zoom.us/j/1?zak=[key]&pwd=[key]");
     expect(redactRoom("Bearer abc.def")).toBe("Bearer [key]");
     expect(redactRoom("")).toBe(null);
     expect((redactRoom("x".repeat(5000)) as string).length).toBe(300);
