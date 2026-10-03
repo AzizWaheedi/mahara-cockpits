@@ -932,6 +932,16 @@ def stop_hold(stop: Optional[dict[str, Any]], row: Optional[dict[str, Any]], now
     return "asked to stop; a rep confirms it before anything else goes"
 
 
+def manual_hold(rows: Optional[dict[str, dict[str, Any]]], contact: str, now: datetime) -> Optional[str]:
+    """A rep's own pause from the lead page ("Pause the agent for this
+    lead"): a stops row of kind manual, paused until a time still to come."""
+    r = (rows or {}).get(contact) or {}
+    until = _ts(r.get("paused_until"))
+    if r.get("kind") == "manual" and r.get("state") == "paused" and until and now < until:
+        return f"paused by a rep until {until.date().isoformat()}"
+    return None
+
+
 def record_stop(sb: Any, contact: str, stop: dict[str, Any], now: datetime, pause_days: int = STOP_PAUSE_DAYS,
                 warn: Callable[[str], None] = lambda _m: None) -> bool:
     """The stop kept where a rep sees it: an unsubscribe as a question for a
@@ -1726,6 +1736,11 @@ def run(sb: Any, provider: Any, log: Callable[[str], None], *, settings: dict[st
             why_not = None  # a test contact need not sit in a pipeline
         if why_not or not lead or (lead.get("dnd") and not test):
             not_leads += 1
+            continue
+        manual = manual_hold(stop_rows, contact, now)
+        if manual:
+            paused += 1
+            log(f"followups: {contact} {manual}; nothing written")
             continue
         owner = str(lead.get("assigned_to") or "")
         owner_ghl = owner or None

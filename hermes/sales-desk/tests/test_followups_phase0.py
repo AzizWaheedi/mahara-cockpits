@@ -406,6 +406,17 @@ class StopRule(unittest.TestCase):
         self.assertIsNone(fu.stop_of([{"from": "lead", "text": "not interested", "at": ago(hours=3)},
                                       {"from": "lead", "text": "actually, tell me more", "at": ago(hours=1)}]))
 
+    def test_a_reps_own_pause_holds_every_kind_until_its_day(self):
+        pg = FakePostgrest()
+        lead(pg, lead_created_at=ago(hours=3))
+        pg.put("cockpit_sales_followup_stops", {"contact_id": "a", "said_at": ago(days=1), "kind": "manual",
+                                                "state": "paused", "paused_until": ahead(days=6), "said": None})
+        out, _, _ = self.run_with(pg, "Hello", ago(hours=30))
+        self.assertEqual((out["written"], out["paused"]), (0, 1))
+        pg.one("cockpit_sales_followup_stops", contact_id="a")["paused_until"] = ago(minutes=1)
+        out, _, _ = self.run_with(pg, "Hello", ago(hours=30), provider=FakeProvider([DRAFT_EMAIL]))
+        self.assertEqual((out["written"], out["paused"]), (1, 0))
+
     def test_an_unreadable_stops_table_still_leaves_the_lead_alone_and_says_so(self):
         pg = FakePostgrest()
         del pg.tables["cockpit_sales_followup_stops"]
