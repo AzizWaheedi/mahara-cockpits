@@ -9,6 +9,8 @@ here only while Convex itself looks down.
 """
 from __future__ import annotations
 
+import re
+
 from guard import http
 from guard.config import CONVEX_DEPLOYMENTS
 from guard.context import Context, SourceError
@@ -22,19 +24,38 @@ EXPECTED_SECTIONS = 14
 
 
 def run_deployments(ctx: Context) -> Result:
-    bad, seen = [], {}
+    """/version answers even for a deployment switched off; the Convex Auth discovery
+    route (GET /.well-known/openid-configuration on convex.site) is an HTTP action, so a
+    200 with an issuer there shows the deployment runs code. All three cockpits use it:
+    media buyer, client success (impressive-dinosaur-375), creative director
+    (colorful-wombat-644)."""
+    bad, seen, names = [], {}, []
     for dep in CONVEX_DEPLOYMENTS:
         try:
             r = ctx.get(f"https://{dep}.convex.cloud/version", timeout=10)
             seen[dep] = r.status
             if r.status != 200:
                 bad.append(f"{dep} answers {r.status}")
+                names.append(dep)
+                continue
         except (http.HttpError, SourceError) as e:
             seen[dep] = 0
             bad.append(f"{dep} does not answer ({clean(e, 80)})")
+            names.append(dep)
+            continue
+        try:
+            a = ctx.get(f"https://{dep}.convex.site/.well-known/openid-configuration", timeout=10)
+            seen[f"{dep} code"] = a.status
+            if a.status != 200 or "issuer" not in a.text(2000):
+                bad.append(f"{dep} answers /version but its code does not run (an HTTP action answers {a.status})")
+                names.append(dep)
+        except (http.HttpError, SourceError) as e:
+            seen[f"{dep} code"] = 0
+            bad.append(f"{dep} answers /version but its HTTP actions do not answer ({clean(e, 80)})")
+            names.append(dep)
     if bad:
-        return fail("Convex: " + "; ".join(bad) + ".", evidence=seen)
-    return ok("All three Convex deployments answer /version (this alone does not prove they run).", evidence=seen)
+        return fail("Convex: " + "; ".join(bad) + ".", evidence=seen, items=names)
+    return ok("All three Convex deployments answer and run code (an HTTP action answered).", evidence=seen)
 
 
 def run_sections(ctx: Context) -> Result:
@@ -46,19 +67,21 @@ def run_sections(ctx: Context) -> Result:
     broken = [f"{r['key']} ({clean(r.get('error'), 80)})" for r in rows if r.get("ok") is False]
     newest = min((a for a in ages.values() if a is not None), default=None)
     ev = {"sections": len(rows), "stale": stale, "not_ok": broken, "newest_min": newest}
+    names = sorted(set(stale) | {str(r["key"]) for r in rows if r.get("ok") is False})
     if len(stale) == len(rows):
         return fail(f"None of the {len(rows)} CEO sections has refreshed for {ago(newest)}: Convex is switched off or "
                     "its jobs have stopped, and people may be stuck on 'One moment'.",
                     since=parse_time(max((r.get('computed_at') for r in rows if r.get('computed_at')), default=None)),
-                    evidence=ev, action="Run `bunx convex logs` or open dashboard.convex.dev: if it says 'exceeded the free "
-                                        "plan limits', move team aziz-00129 to Pro; the cockpits come back by themselves.")
+                    evidence=ev, items=names,
+                    action="Run `bunx convex logs` or open dashboard.convex.dev: if it says 'exceeded the free "
+                           "plan limits', move team aziz-00129 to Pro; the cockpits come back by themselves.")
     if stale or broken:
         parts = []
         if stale:
             parts.append(f"{len(stale)} section(s) older than {SECTION_LIMIT_MIN} min ({', '.join(stale[:5])})")
         if broken:
             parts.append(f"{len(broken)} failing ({', '.join(broken[:3])})")
-        return warn("CEO sections: " + "; ".join(parts) + ".", evidence=ev)
+        return warn("CEO sections: " + "; ".join(parts) + ".", evidence=ev, items=names)
     if len(rows) < EXPECTED_SECTIONS:
         return warn(f"Only {len(rows)} of {EXPECTED_SECTIONS} CEO sections exist.", evidence=ev)
     return ok(f"All {len(rows)} CEO sections refreshed within {ago(max(a for a in ages.values() if a is not None))}.",
@@ -73,32 +96,55 @@ def _machine(ctx: Context) -> dict:
     return sec.get("payload") or {}
 
 
+# salesWatch.ts joins its problems with "; " and each starts with one of these (the
+# sign-in sentence itself holds a "; ", so a plain split would cut it in two).
+_PROBLEM_START = re.compile(r";\s+(?=sales desk \"|the sales mirror\b)")
+
+
+def only_signin(error: object) -> bool:
+    """It is the sign-in's alone only when every problem in the error says so:
+    "requests last ran 47 min ago; reviews failed: the Claude sign-in has lapsed"
+    is two problems, not one."""
+    parts = [p for p in _PROBLEM_START.split(str(error or "")) if p.strip()]
+    return bool(parts) and all(signed_out_text(p) for p in parts)
+
+
 def run_jobs(ctx: Context) -> Result:
     m = _machine(ctx)
     jobs = m.get("jobs") or []
     if not jobs:
         return unknown("The machine section lists no Convex jobs.")
+    sources = {str(s.get("source")): s for s in m.get("sources") or []}
+    slack = sources.get("slack")
     now_ms = ctx.now.timestamp() * 1000
-    failing, stale, signin = [], [], []
+    failing, stale, signin, names = [], [], [], []
+    watch = None
     for j in jobs:
         every = int(j.get("everyMin") or 15)
         age = (now_ms - float(j.get("at") or 0)) / 60000.0
+        if j.get("job") == "sales watch":
+            watch = {"ok": j.get("ok"), "streak": int(j.get("streak") or 0), "everyMin": every,
+                     "error": clean(j.get("error"), 400)}
         if j.get("ok") is False:
-            if signed_out_text(j.get("error")):
+            if only_signin(j.get("error")):
                 signin.append(j["job"])
             else:
                 failing.append(f"{j['job']} ({brief_error(j.get('error'), 90)})")
+                names.append(str(j["job"]))
         elif age > max(3 * every, 45):
             stale.append(f"{j['job']} ({ago(age)})")
+            names.append(str(j["job"]))
     ev = {"jobs": len(jobs), "failing": failing, "stale": stale, "signin": signin}
+    # What covered() needs: Convex posts once per streak, and only while its Slack works.
+    data = {"sales_watch": watch, "slack_ok": (slack.get("ok") is True) if slack else None}
     if failing or stale:
         return fail("Convex jobs: " + "; ".join(filter(None, [
             f"failing {', '.join(failing)}" if failing else "", f"late {', '.join(stale)}" if stale else ""])) + ".",
-            evidence=ev)
+            evidence=ev, data=data, items=sorted(names))
     if signin:
         return fail(f"Convex's {', '.join(signin)} fails because the Claude sign-in on the VPS has lapsed.", evidence=ev,
-                    caused_by="claude-signin")
-    return ok(f"All {len(jobs)} Convex jobs ran on time.", evidence=ev)
+                    caused_by="claude-signin", data=data)
+    return ok(f"All {len(jobs)} Convex jobs ran on time.", evidence=ev, data=data)
 
 
 def run_sources(ctx: Context) -> Result:
@@ -109,7 +155,8 @@ def run_sources(ctx: Context) -> Result:
     bad = [f"{s['source']} ({brief_error(s.get('lastError'), 90)})" for s in sources if s.get("ok") is False]
     if bad:
         return fail(f"{len(bad)} cockpit data source(s) failing in Convex's ledger: {', '.join(bad)}.",
-                    evidence={"failing": bad, "of": len(sources)})
+                    evidence={"failing": bad, "of": len(sources)},
+                    items=sorted(str(s["source"]) for s in sources if s.get("ok") is False))
     return ok(f"All {len(sources)} sources in Convex's health ledger are ok.")
 
 
@@ -148,8 +195,11 @@ CHECKS = [
     ),
     Check(
         id="convex-deployments", area="convex", name="Convex deployments answer",
-        means="The three Convex deployments answer on the internet.", severity="high",
-        reads="GET https://<deployment>.convex.cloud/version for all three", threshold="Any answer other than 200: fail.",
+        means="The three Convex deployments (media buyer, client success, creative director) answer and run code.",
+        severity="high",
+        reads="GET https://<deployment>.convex.cloud/version, then the Convex Auth discovery route on convex.site (an "
+              "HTTP action, so it runs only while the deployment runs code)",
+        threshold="Either answer not 200, or no issuer in the second: fail.",
         run=run_deployments, confirm=2, action="Open dashboard.convex.dev for that deployment.",
     ),
     Check(

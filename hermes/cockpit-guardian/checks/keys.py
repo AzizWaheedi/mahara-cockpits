@@ -74,7 +74,8 @@ def run_names(ctx: Context) -> Result:
     if missing or empty:
         lines = missing + empty
         return fail(f"{len(lines)} key(s) the workers need are not set: {'; '.join(lines[:4])}.", evidence=ev,
-                    action="Put each value in the file named, on the VPS, never in chat.")
+                    action="Put each value in the file named, on the VPS, never in chat.",
+                    items=sorted(l.split(" ", 1)[0] for l in lines))
     if unread:
         return unknown(f"Could not read {', '.join(unread)}.", evidence=ev)
     tail = f" Note: {'; '.join(notes)}." if notes else ""

@@ -1,6 +1,7 @@
 """Thresholds of the VPS checks: Claude, memory, disk, tunnels, crontab, logs, hung runs."""
 import tempfile
 import unittest
+from datetime import timedelta
 from pathlib import Path
 
 from tests import fakes  # noqa: F401  (sets the import path)
@@ -149,11 +150,16 @@ class Logs(unittest.TestCase):
 
 class Hung(unittest.TestCase):
     def test_hard_age(self):
-        procs = {"jobs": [{"pid": 7, "job": "desk-recordings", "etimes": 119 * 60, "user": "hermes", "mine": True}],
-                 "top": [], "cloudflared": {"n": 0}}
+        procs = {"jobs": [{"pid": 7, "job": "desk-recordings", "etimes": 119 * 60, "user": "hermes", "mine": True,
+                           "start": 1, "cpu": 50}], "top": [], "cloudflared": {"n": 0}}
         self.assertEqual(vps_cron.run_hung(make(fakes.snapshot(procs=procs))).status, OK)
         procs["jobs"][0]["etimes"] = 121 * 60    # 4 x 30 min = 120 min
-        self.assertEqual(vps_cron.run_hung(make(fakes.snapshot(procs=procs))).status, FAIL)
+        state = {}
+        first = vps_cron.run_hung(make(fakes.snapshot(procs=procs), state=state))
+        self.assertEqual(first.status, WARN)     # past its age, but its CPU time has not been watched yet
+        later = vps_cron.run_hung(make(fakes.snapshot(procs=procs), state=state, now=fakes.NOW + timedelta(minutes=16)))
+        self.assertEqual(later.status, FAIL)     # no CPU for 16 minutes: stuck
+        self.assertEqual(later.data["stuck"], ["7:1"])
 
     def test_sending_job_asks_a_person_to_read_the_log(self):
         procs = {"jobs": [{"pid": 8, "job": "desk-followups", "etimes": 200 * 60, "user": "hermes", "mine": True}],

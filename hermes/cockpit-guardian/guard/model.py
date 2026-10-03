@@ -18,6 +18,8 @@ NOT_DEPLOYED = "not_deployed"
 PAUSED = "paused"
 STATUSES = (OK, WARN, FAIL, UNKNOWN, NOT_DEPLOYED, PAUSED)
 BAD = (WARN, FAIL)
+# How bad an open incident reads; a rise re-alerts (unknown < warn < fail).
+LEVEL_RANK = {UNKNOWN: 0, WARN: 1, FAIL: 2}
 
 SEVERITIES = ("critical", "high", "medium", "low")
 OWNERS = ("the CEO", "Hermes", "the systems manager", "the creative director", "whoever deployed",
@@ -34,6 +36,8 @@ class Result:
     caused_by: Optional[str] = None      # another check id whose incident covers this one
     coverage_gap: bool = False           # unknown because an optional key or door is missing here
     data: dict[str, Any] = field(default_factory=dict)  # for the fix, never shown
+    urgent: bool = False                 # this reading is urgent even when the check is not (a fail goes any hour)
+    items: Optional[list[str]] = None    # the names of what is failing; a new name re-alerts
 
     def __post_init__(self) -> None:
         if self.status not in STATUSES:
@@ -72,6 +76,8 @@ class Check:
     catalogue: str = ""                  # failure catalogue ids (H1, S4, ...)
     urgent: bool = False                 # alert at any hour, Friday too
     confirm: int = 1                     # bad readings in a row before an incident opens
+    confirm_minutes: Optional[int] = None  # and bad for at least this long (time, not scans: scans can be skipped)
+    clear: int = 1                       # ok readings in a row before an open incident resolves
     quiet_because: Optional[str] = None  # convex | hermes | sales-watchdog: someone else already alerts
     alert: bool = True                   # False: the daily summary carries it, never its own message
 

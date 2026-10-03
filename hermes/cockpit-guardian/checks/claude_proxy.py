@@ -10,7 +10,7 @@ import re
 from typing import Any
 
 from guard import http
-from guard.context import Context, SourceError
+from guard.context import Context, SourceError, parent_of
 from guard.model import Check, Result, fail, ok, parse_time, unknown, warn
 
 SIGNED_OUT = re.compile(r"(?i)sign[- ]?in[^.]{0,60}(lapsed|expired)|signed out|run claude, then /login|/login\b")
@@ -27,6 +27,7 @@ def run_signin(ctx: Context) -> Result:
     desk_jobs: list[str] = []
     earliest = None
     errors: list[str] = []
+    raised: list[SourceError] = []
     try:
         rows = ctx.rows("cockpit_sales_worker_status", "worker,job,ok,detail,at", where=[("worker", "eq", "sales-desk")])
         for r in rows:
@@ -40,6 +41,7 @@ def run_signin(ctx: Context) -> Result:
                     earliest = t
     except SourceError as e:
         errors.append(str(e))
+        raised.append(e)
     try:
         rows = ctx.rows("social_worker_status", "check_name,ok,detail,checked_at", where=[("check_name", "eq", "captions")])
         for r in rows:
@@ -48,6 +50,7 @@ def run_signin(ctx: Context) -> Result:
                 signed_out.append("Salma's captions")
     except SourceError as e:
         errors.append(str(e))
+        raised.append(e)
     salma_state = None
     try:
         sv = ctx.snap_part("salma_vps")
@@ -58,8 +61,10 @@ def run_signin(ctx: Context) -> Result:
                 signed_out.append("~/.salma-vps.json")
     except SourceError as e:
         errors.append(str(e))
+        raised.append(e)
     if not seen:
-        return unknown("Neither the workers' status rows nor ~/.salma-vps.json could be read: " + "; ".join(errors)[:200])
+        return unknown("Neither the workers' status rows nor ~/.salma-vps.json could be read: " + "; ".join(errors)[:200],
+                       caused_by=parent_of(*raised) if raised else None)
     if desk_jobs:
         order = [j for j in AI_ROWS if j in desk_jobs]
         signed_out.insert(0, "the sales desk's " + (", ".join(order[:-1]) + " and " + order[-1] if len(order) > 1 else order[0]))
@@ -127,6 +132,7 @@ CHECKS = [
         means="The Claude proxy accepts connections only from the VPS itself.",
         severity="high", reads="The VPS's listening sockets (/proc/net/tcp); from off the box also an outside GET",
         threshold="Listening on 0.0.0.0 or [::], or an outside GET answers 200: fail.", run=run_exposed,
-        action="Bind the proxy to 127.0.0.1, or run sudo ufw deny 3456.",
+        action="Bind the proxy to 127.0.0.1 (as aziz, in openclaw-claude-proxy's start command). A firewall rule alone "
+               "does not clear this check: it reads the address the proxy listens on.",
     ),
 ]

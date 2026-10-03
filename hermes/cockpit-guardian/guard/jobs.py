@@ -66,7 +66,10 @@ JOBS: tuple[Job, ...] = (
 BY_NAME = {j.name: j for j in JOBS}
 
 # The process markers the snapshot looks for, with the folder the process
-# runs in (both desks run desk.py; their working folder tells them apart).
+# runs in (both desks run desk.py; their working folder tells them apart) and
+# the lock its cron line holds: a process counts as that job's cron run only
+# when an ancestor is `flock -n <that lock>` (a manual backfill or another
+# user's process with the same words in its command line is never touched).
 def _folder(job: Job) -> str:
     if job.name.startswith("editor-"):
         return "editor-desk"
@@ -75,8 +78,8 @@ def _folder(job: Job) -> str:
     return ""
 
 
-PROCESS_MARKERS = {j.name: [j.marker, _folder(j)] for j in JOBS}
-PROCESS_MARKERS["rooms-worker"] = ["rooms", "sales-desk"]
+PROCESS_MARKERS = {j.name: [j.marker, _folder(j), j.lock] for j in JOBS}
+PROCESS_MARKERS["rooms-worker"] = ["rooms", "sales-desk", ""]
 
 COPY_JOBS = tuple(j.name for j in JOBS if j.kind == "copy")
 

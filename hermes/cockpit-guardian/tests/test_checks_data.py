@@ -6,7 +6,7 @@ from pathlib import Path
 from tests import fakes
 from checks import convex, edge_functions, pg_cron, queues, supabase, syncs, whatsapp, worker_status
 from guard.context import SourceError
-from guard.model import FAIL, OK, PAUSED, UNKNOWN, WARN
+from guard.model import FAIL, NOT_DEPLOYED, OK, PAUSED, UNKNOWN, WARN, Result
 
 SIGNED_OUT = "The Claude sign-in on the VPS has lapsed, so nothing can be drafted. run claude, then /login"
 
@@ -41,10 +41,11 @@ class SalesDesk(unittest.TestCase):
     def test_missing_row_is_unknown_never_ok(self):
         self.assertEqual(worker_status.desk_check("notes")(make({"cockpit_sales_worker_status": []})).status, UNKNOWN)
 
-    def test_desk_rows_are_quiet_while_convex_alerts(self):
-        ids = [c for c in worker_status.CHECKS if c.id.startswith("desk-") and c.id != "desk-doctor"]
-        self.assertTrue(ids)
-        self.assertTrue(all(c.quiet_because == "convex" for c in ids))
+    def test_desk_rows_are_quiet_only_when_convex_sales_watch_posted(self):
+        ids = [c for c in worker_status.CHECKS if c.id.startswith("desk-") and c.id in
+               {f"desk-{j}" for j in worker_status.DESK_LIMITS}]
+        self.assertEqual(len(ids), len(worker_status.DESK_LIMITS))
+        self.assertTrue(all(c.quiet_because == "convex-sales-watch" for c in ids))
 
     def test_only_copy_jobs_have_a_catch_up_fix(self):
         fixed = {c.id for c in worker_status.CHECKS if c.fix and c.id.startswith("desk-") and c.id != "desk-doctor"}
@@ -109,7 +110,10 @@ class Tap(unittest.TestCase):
                "last_ok_at": fakes.ago(8500)}
         r = worker_status.run_tap(make({"cockpit_sync_state": [row]}))
         self.assertEqual(r.status, FAIL)
-        self.assertIn("empty window", r.summary)
+        self.assertIn("window with no charges", r.summary)
+        self.assertIn("No payment is lost", r.summary)
+        self.assertIn("ai-fix", r.action)
+        self.assertNotIn("may be", r.summary)
         row.update(ok=True, last_ok_at=fakes.ago(10))
         self.assertEqual(worker_status.run_tap(make({"cockpit_sync_state": [row]})).status, OK)
 
@@ -237,10 +241,13 @@ class PgCron(unittest.TestCase):
         self.assertEqual(pg_cron.run_runs(make(db=fakes.FakeDb(probe=self.probe()))).status, OK)
         self.assertEqual(pg_cron.run_runs(make(db=fakes.FakeDb(probe=self.probe(http_1h={"200": 9, "500": 1})))).status, FAIL)
         self.assertEqual(pg_cron.run_runs(make(db=fakes.FakeDb(probe=self.probe(http_1h={"timeout": 2})))).status, FAIL)
-        r = pg_cron.run_runs(make(db=fakes.FakeDb(probe=self.probe(http_1h={"200": 29, "missing_function": 2}))))
+        c = make(db=fakes.FakeDb(probe=self.probe(http_1h={"200": 29, "missing_function": 2})))
+        c.results["live-function"] = Result(NOT_DEPLOYED, "sales-live is not deployed yet")
+        c.results["live-settings"] = Result(PAUSED, "switched off")
+        r = pg_cron.run_runs(c)
         self.assertEqual(r.status, OK)          # sales-live not deployed yet is the function checks' to say
         self.assertIn("not deployed", r.summary)
-        runs = [{"jobid": 0, "runs_24h": 48, "failed_24h": 1, "last_error": "job startup timeout"}]
+        runs = [{"jobid": 0, "runs_24h": 48, "failed_24h": 2, "last_error": "job startup timeout"}]
         self.assertEqual(pg_cron.run_runs(make(db=fakes.FakeDb(probe=self.probe(cron_runs=runs)))).status, WARN)
 
     def test_probe_missing_names_the_migration(self):
@@ -288,9 +295,9 @@ class SupabaseHealth(unittest.TestCase):
         self.assertEqual(supabase.run_health(make(db=db)).status, FAIL)
         self.assertEqual(supabase.run_health(make()).status, OK)
 
-    def test_needs_three_scans_and_resends_the_radar_after(self):
+    def test_needs_fifteen_minutes_and_resends_the_radar_after(self):
         c = supabase.CHECKS[0]
-        self.assertEqual(c.confirm, 3)
+        self.assertEqual(c.confirm_minutes, 15)
         self.assertEqual(c.on_resolve.name, "radar-resend")
 
 

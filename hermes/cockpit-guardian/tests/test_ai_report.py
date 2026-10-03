@@ -89,7 +89,7 @@ class Brief(unittest.TestCase):
             return subprocess.CompletedProcess(argv, 1, b"Please run /login", b"")
 
         with mock.patch.object(ai.shutil, "which", return_value="/usr/bin/claude"):
-            ok_, detail = ai.ai_fix(fakes.config(tmp), inc, check, runner=runner, github_token="x")
+            ok_, detail = ai.ai_fix(fakes.config(tmp, mode="fix"), inc, check, runner=runner, github_token="x")
         self.assertFalse(ok_)
         self.assertIn("not signed in", detail)
         self.assertEqual(len(calls), 1)          # the one-word question, and no clone

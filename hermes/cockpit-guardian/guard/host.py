@@ -13,6 +13,7 @@ import os
 import signal
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any, Optional
 
@@ -34,11 +35,19 @@ ENV_FILES = (
 )
 
 
-def snapshot_spec(repo: str = "~/mahara-cockpits") -> dict[str, Any]:
+# A catch-up run gets cron's environment, not the guardian's: the cron command
+# sources its own env files, so nothing else (no key) is passed down.
+SPAWN_ENV_KEYS = ("HOME", "SHELL", "LOGNAME", "LANG")
+SPAWN_PATH = "/usr/bin:/bin"
+SPAWN_WATCH_S = 2.0
+
+
+def snapshot_spec(repo: str = "~/mahara-cockpits", offsets: Optional[dict[str, int]] = None) -> dict[str, Any]:
     logs = list(HERMES_LOGS)
     return {
         "markers": PROCESS_MARKERS,
         "logs": logs,
+        "log_offsets": dict(offsets or {}),
         "tail_lines": 80,
         "files": logs + list(ENV_FILES) + ["~/.salma-vps.json", "~/.cockpit-guardian/state.json", "~/.cockpit-guardian"],
         "env_files": list(ENV_FILES),
@@ -49,6 +58,8 @@ def snapshot_spec(repo: str = "~/mahara-cockpits") -> dict[str, Any]:
         "monitors": {
             "mahara-cockpits": f"{MONITOR_ROOT}/mahara-cockpits/state.json",
             "public-sites": f"{MONITOR_ROOT}/public-sites/state.json",
+            "portal": f"{MONITOR_ROOT}/state.json",
+            "dialer": f"{MONITOR_ROOT}/dialer/state.json",
         },
         "jobs_json": "/opt/data/cron/jobs.json",
         "fixer_attempts": "/opt/data/bibi/workspace/reliability/fixer-attempts.json",
@@ -68,8 +79,13 @@ class Host:
         raise NotImplementedError
 
     # Only LocalHost does these.
-    def spawn(self, command: str) -> int:
+    def spawn(self, command: str) -> tuple[int, Optional[int]]:
+        """Start `command`; (pid, exit code if it ended within 2 s, else None)."""
         raise HostError("a remote run never starts anything on the VPS")
+
+    def proc_stat(self, pid: int) -> Optional[tuple[int, int]]:
+        """(start time in ticks, CPU time in ticks) of a live process, or None when it is gone."""
+        raise HostError("a remote run never looks at one process")
 
     def run(self, argv: list[str], timeout: int = 60, stdin: Optional[str] = None) -> tuple[int, str, str]:
         raise HostError("a remote run never runs a command on the VPS besides the snapshot")
@@ -104,12 +120,27 @@ class LocalHost(Host):
             raise HostError(f"snapshot failed: {scrub(p.stderr.decode('utf-8', 'replace')[-300:])}")
         return _decode(p.stdout.decode("utf-8", "replace"))
 
-    def spawn(self, command: str) -> int:
-        """Start `command` detached through bash, as cron would, and return its pid.
-        The command carries its own flock and its own log redirect."""
+    def spawn(self, command: str) -> tuple[int, Optional[int]]:
+        """Start `command` detached through bash, as cron would, with cron's bare
+        environment (the command sources its own env files), and watch it for 2 s:
+        `flock -n` exits 1 at once when another run holds the lock."""
+        env = {k: os.environ[k] for k in SPAWN_ENV_KEYS if os.environ.get(k)}
+        env.setdefault("HOME", str(Path.home()))
+        env["PATH"] = SPAWN_PATH
         p = subprocess.Popen(["bash", "-c", command], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                             stderr=subprocess.DEVNULL, start_new_session=True, cwd=str(Path.home()))
-        return p.pid
+                             stderr=subprocess.DEVNULL, start_new_session=True, cwd=str(Path.home()), env=env)
+        try:
+            return p.pid, p.wait(timeout=SPAWN_WATCH_S)
+        except subprocess.TimeoutExpired:
+            return p.pid, None
+
+    def proc_stat(self, pid: int) -> Optional[tuple[int, int]]:
+        try:
+            with open(f"/proc/{int(pid)}/stat") as fh:
+                fields = fh.read().rsplit(")", 1)[1].split()
+        except (OSError, IndexError):
+            return None
+        return int(fields[19]), int(fields[11]) + int(fields[12])
 
     def run(self, argv, timeout=60, stdin=None):
         p = subprocess.run(argv, input=(stdin.encode() if stdin is not None else None), stdout=subprocess.PIPE,
@@ -162,4 +193,23 @@ def open_host(cfg: Any) -> Host:
     return SshHost(cfg.ssh) if cfg.ssh else LocalHost()
 
 
-__all__ = ["Host", "LocalHost", "SshHost", "HostError", "snapshot_spec", "open_host", "ROOT"]
+def write_monitor_state(path: str, incidents: dict[str, Any], now: float) -> None:
+    """The guardian's Hermes-owned incidents in the Hermes monitor's own shape, so the
+    reliability fixer's trigger can pick them up once a person adds a cockpit-guardian
+    row to fixer-projects.json. Written atomically, mode 640 like the monitors' files."""
+    folder = os.path.dirname(path)
+    os.makedirs(folder, exist_ok=True)
+    tmp = f"{path}.{os.getpid()}.tmp"
+    body = {"incidents": incidents, "last_tick": {"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now)),
+                                                  "status": {}}, "outbox": []}
+    try:
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(body, fh, ensure_ascii=False, sort_keys=True)
+        os.chmod(tmp, 0o640)
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+
+
+__all__ = ["Host", "LocalHost", "SshHost", "HostError", "snapshot_spec", "open_host", "write_monitor_state", "ROOT"]

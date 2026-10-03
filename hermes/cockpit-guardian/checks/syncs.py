@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 import re
 
-from guard.context import Context, SourceError
+from guard.context import Context, SourceError, parent_of
 from guard.model import Check, Result, age_min, ago, fail, ok, parse_time, unknown, warn
 from guard.redact import brief_error, clean
 
@@ -27,12 +27,13 @@ def run_mirror(ctx: Context) -> Result:
     last_err = brief_error(next((r.get("error") for r in rows if r.get("error")), ""), 220)
     ev = {"newest_age_min": round(age or 0, 1), "failed_in_a_row": streak, "last_error": last_err}
     if age is None or age > 15:
+        # The setters and closers work from this copy: a stale mirror is urgent at any hour.
         return fail(f"The sales cockpit's CRM copy has not run for {ago(age)} (every 3 min).",
-                    since=parse_time(rows[0].get("started_at")), evidence=ev)
+                    since=parse_time(rows[0].get("started_at")), evidence=ev, urgent=True, items=["stale"])
     if streak >= 3:
         first_bad = rows[streak - 1]
         return fail(f"The sales mirror failed {streak} runs in a row: {last_err}", since=parse_time(first_bad.get("started_at")),
-                    evidence=ev)
+                    evidence=ev, items=["failing"])
     return ok(f"The sales mirror ran {ago(age)} ago" + (f" (the last failure: {last_err})" if streak else "") + ".", evidence=ev)
 
 
@@ -62,9 +63,18 @@ def run_locks(ctx: Context) -> Result:
     return ok(f"No sales lock is held past its lease ({len(rows)} lock row(s)).")
 
 
+RATE_LIMITED = re.compile(r"\b429\b|rate.?limit|too many requests", re.I)
+RATE_LIMIT_GRACE_MIN = 120
+
+
 def run_crm(ctx: Context) -> Result:
+    """A 429 clears by itself: it counts only once the sub-account has read 429 for
+    over 2 hours (remembered across scans, since a retry stamps a fresh time)."""
     bad = []
+    names = []
     seen = 0
+    first_429 = ctx.state.setdefault("history", {}).setdefault("crm_429", {})
+    still_429 = set()
     for table, label in (("appointment_sync_state", "appointments"), ("lead_sync_state", "leads"),
                          ("pipeline_sync_state", "pipelines")):
         rows = ctx.rows(table, "location_id,last_synced_at,last_status")
@@ -73,14 +83,25 @@ def run_crm(ctx: Context) -> Result:
             status = str(r.get("last_status") or "")
             age = age_min(r.get("last_synced_at"), ctx.now)
             if status and status.lower() not in ("ok", "success", "succeeded", "done"):
+                if RATE_LIMITED.search(status):
+                    key = f"{r['location_id']}:{label}"
+                    still_429.add(key)
+                    since = parse_time(first_429.setdefault(key, ctx.now.isoformat()))
+                    if since is not None and (ctx.now - since).total_seconds() / 60 <= RATE_LIMIT_GRACE_MIN:
+                        continue
                 bad.append(f"{r['location_id']} {label} ({status[:40]})")
+                names.append(f"{r['location_id']} {label}")
             elif age is not None and age > 26 * 60:
                 bad.append(f"{r['location_id']} {label} ({ago(age)} old)")
+                names.append(f"{r['location_id']} {label}")
+    for key in list(first_429):
+        if key not in still_429:
+            first_429.pop(key, None)
     if not seen:
         return unknown("No CRM sync state rows could be read.")
     if bad:
         return warn(f"{len(bad)} CRM sub-account sync(s) are failing or old: {', '.join(bad[:6])}.",
-                    evidence={"failing": bad[:20]})
+                    evidence={"failing": bad[:20]}, items=sorted(names))
     return ok(f"Every CRM sub-account sync is current ({seen} rows).")
 
 
@@ -95,25 +116,28 @@ def run_panels(ctx: Context) -> Result:
 
 
 def run_meta(ctx: Context) -> Result:
-    signals, since = [], None
+    signals, since, names = [], None, []
     read_any = False
+    raised: list[SourceError] = []
     try:
         feeds = (ctx.section("machine").get("payload") or {}).get("feeds") or []
         read_any = True
         for f in feeds:
             if "meta" in str(f.get("name", "")).lower() and not f.get("ok"):
                 signals.append(f"B2B's Meta ads feed ({brief_error(f.get('error'), 120)})")
+                names.append("b2b-feed")
                 since = parse_time(f.get("lastSuccessAt"))
-    except SourceError:
-        pass
+    except SourceError as e:
+        raised.append(e)
     try:
         rows = ctx.rows("sync_jobs", "client_id,last_sync_status,last_error")
         read_any = True
         blocked = [r for r in rows if BLOCKED.search(str(r.get("last_error") or ""))]
         if blocked:
             signals.append(f"the creative dashboard's Meta sync for {len(blocked)} of {len(rows)} clients")
-    except SourceError:
-        pass
+            names.append("creative-dashboard-sync")
+    except SourceError as e:
+        raised.append(e)
     token, account = ctx.key("META_ACCESS_TOKEN"), ctx.key("META_AD_ACCOUNT_ID")
     status = None
     if token and account:
@@ -126,15 +150,18 @@ def run_meta(ctx: Context) -> Result:
             status = body.get("account_status")
             if r.status != 200:
                 signals.append(f"Meta answers {r.status} for the ad account: {brief_error(json.dumps(body), 100)}")
+                names.append("ad-account")
             elif status != 1:
                 signals.append(f"the ad account's status is {status} (1 is active)")
+                names.append(f"ad-account-status-{status}")
         except Exception:  # noqa: BLE001 - a probe that fails is a missing reading, not a Meta fault
             pass
     if not read_any:
-        return unknown("Neither the machine section, sync_jobs nor Meta itself could be read.")
+        return unknown("Neither the machine section, sync_jobs nor Meta itself could be read.",
+                       caused_by=parent_of(*raised) if raised else None)
     if signals:
         return fail("Meta blocks Mahara's access: " + "; ".join(signals) + ".", since=since,
-                    evidence={"signals": signals, "account_status": status})
+                    evidence={"signals": signals, "account_status": status}, items=sorted(names))
     return ok("Meta answers the B2B sync and the creative dashboard sync.")
 
 
@@ -172,8 +199,8 @@ CHECKS = [
         id="sales-mirror", area="supabase", name="Sales mirror", catalogue="S4",
         means="The sales cockpit's copy of the CRM refreshes every 3 minutes.",
         severity="high", reads="cockpit_sales_mirror_runs (newest 10)",
-        threshold="Newest run older than 15 min, or 3 failures in a row: fail.", run=run_mirror,
-        quiet_because="convex", owner="Hermes",
+        threshold="Newest run older than 15 min (urgent), or 3 failures in a row: fail.", run=run_mirror,
+        quiet_because="convex-sales-watch", owner="Hermes",
         action="Read the failing step in the run's error; a 401 means a secret changed (B2B, HighLevel or the vault).",
     ),
     Check(
@@ -193,7 +220,8 @@ CHECKS = [
         id="crm-syncs", area="supabase", name="CRM sub-account syncs",
         means="Appointments, leads and pipelines sync for every sub-account.", severity="low",
         reads="appointment_sync_state, lead_sync_state, pipeline_sync_state",
-        threshold="Any last_status that is not ok, or older than 26 h: warn.", run=run_crm, owner="the systems manager",
+        threshold="Any last_status that is not ok (a 429 only once older than 2 h), or older than 26 h: warn.", run=run_crm,
+        owner="the systems manager", clear=2,
         action="429 clears by itself; an error that stays means that sub-account's token or permissions changed.",
     ),
     Check(

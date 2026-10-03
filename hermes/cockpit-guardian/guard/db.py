@@ -35,7 +35,9 @@ select jsonb_build_object(
   'at', now(),
   'cron_jobs', coalesce((
     select jsonb_agg(jsonb_build_object('jobid', j.jobid, 'jobname', j.jobname,
-                                        'schedule', j.schedule, 'active', j.active) order by j.jobid)
+                                        'schedule', j.schedule, 'active', j.active,
+                                        'has_literal_auth', j.command ~* 'Bearer [A-Za-z0-9_.-]{20,}')
+                     order by j.jobid)
       from cron.job as j), '[]'::jsonb),
   'cron_runs', coalesce((
     select jsonb_agg(to_jsonb(x)) from (
@@ -83,6 +85,41 @@ class Unavailable(DbError):
     """This door cannot answer that question (no management token)."""
 
 
+class DbDown(DbError):
+    """The database did not answer, or answered 5xx: an outage, not a wrong question."""
+
+
+class DbConflict(DbError):
+    """A write refused for a unique key (409, 23505): for incidents, another open row for the check."""
+
+
+class DbRejected(DbError):
+    """A write refused for the row itself (another 4xx): retrying the same row never helps."""
+
+
+class DbMissingTable(DbError):
+    """The table is not there yet (its migration is not applied): keep the rows, try later."""
+
+
+_MISSING_TABLE = ("PGRST205", "42P01", "Could not find the table")
+
+
+def _write_error(table: str, status: int, body: str) -> DbError:
+    text = f"{table}: write {status} {scrub(body[:200])}"
+    if status >= 500 or status == 0:
+        return DbDown(text)
+    if any(m in body for m in _MISSING_TABLE):
+        return DbMissingTable(text)
+    if status == 409 or "23505" in body:
+        return DbConflict(text)
+    return DbRejected(text)
+
+
+def _read_error(table: str, status: int, body: str) -> DbError:
+    text = f"{table}: {status} {scrub(body[:200])}"
+    return DbDown(text) if status >= 500 or status == 0 else DbError(text)
+
+
 def _check_ident(name: str) -> str:
     if not _IDENT.match(name):
         raise DbError(f"not a plain column or table name: {name[:40]}")
@@ -124,7 +161,7 @@ class Mgmt:
                          headers={"Authorization": f"Bearer {self.token}"},
                          json_body={"query": query, "read_only": True}, timeout=self.timeout)
         if r.status not in (200, 201):
-            raise DbError(f"SQL {r.status}: {scrub(r.text(300))}")
+            raise (DbDown if r.status >= 500 else DbError)(f"SQL {r.status}: {scrub(r.text(300))}")
         out = r.json()
         return out if isinstance(out, list) else []
 
@@ -161,6 +198,9 @@ class Db:
 
     # writes: only RestDb has them
     def upsert(self, table: str, rows: list[dict[str, Any]], on_conflict: str) -> None:
+        raise DbError(f"{self.name} is read-only")
+
+    def update(self, table: str, where: Sequence[tuple[str, str, Any]], values: dict[str, Any]) -> None:
         raise DbError(f"{self.name} is read-only")
 
     def ping_seconds(self) -> float:
@@ -214,7 +254,7 @@ class RestDb(Db):
         r = http.get(f"{self.url}/rest/v1/{_check_ident(table)}?{self._query(select, where, order, limit)}",
                      headers=self._headers(), timeout=self.timeout)
         if r.status != 200:
-            raise DbError(f"{table}: {r.status} {scrub(r.text(200))}")
+            raise _read_error(table, r.status, r.text(200))
         out = r.json()
         return out if isinstance(out, list) else []
 
@@ -223,7 +263,7 @@ class RestDb(Db):
         r = http.get(f"{self.url}/rest/v1/{_check_ident(table)}?{q}", headers=self._headers({"Prefer": "count=exact"}),
                      timeout=self.timeout)
         if r.status not in (200, 206):
-            raise DbError(f"{table}: {r.status} {scrub(r.text(200))}")
+            raise _read_error(table, r.status, r.text(200))
         rng = r.headers.get("content-range", "")
         try:
             return int(rng.rsplit("/", 1)[1])
@@ -238,7 +278,7 @@ class RestDb(Db):
         body = r.text(400)
         if r.status in (404, 400) and ("PGRST205" in body or "42P01" in body or "Could not find the table" in body):
             return False
-        raise DbError(f"{table}: {r.status} {scrub(body[:200])}")
+        raise _read_error(table, r.status, body)
 
     def probe(self):
         r = http.request("POST", f"{self.url}/rest/v1/rpc/{PROBE_FN}", headers=self._headers(), json_body={},
@@ -251,7 +291,7 @@ class RestDb(Db):
             if self.mgmt:
                 return _probe_from_rows(self.mgmt.sql(f"select ({PROBE_SQL}) as probe"))
             raise ProbeMissing("public.cockpit_guardian_probe() is not installed yet (migration 20261003e)")
-        raise DbError(f"probe: {r.status} {scrub(body[:200])}")
+        raise _read_error("probe", r.status, body)
 
     def upsert(self, table, rows, on_conflict):
         if not rows:
@@ -260,13 +300,23 @@ class RestDb(Db):
                          headers=self._headers({"Prefer": "resolution=merge-duplicates,return=minimal"}),
                          json_body=rows, timeout=self.timeout)
         if r.status not in (200, 201, 204):
-            raise DbError(f"{table}: write {r.status} {scrub(r.text(200))}")
+            raise _write_error(table, r.status, r.text(400))
+
+    def update(self, table, where, values):
+        """PATCH the rows `where` matches (never an insert, so no column is needed but the ones set)."""
+        if not where:
+            raise DbError("an update needs a filter")
+        q = "&".join(p for p in self._query("*", where, None, None).split("&") if not p.startswith("select="))
+        r = http.request("PATCH", f"{self.url}/rest/v1/{_check_ident(table)}?{q}",
+                         headers=self._headers({"Prefer": "return=minimal"}), json_body=values, timeout=self.timeout)
+        if r.status not in (200, 204):
+            raise _write_error(table, r.status, r.text(400))
 
     def ping_seconds(self):
         r = http.get(f"{self.url}/rest/v1/cockpit_sections?select=key&limit=1", headers=self._headers(),
                      timeout=self.timeout)
         if r.status != 200:
-            raise DbError(f"PostgREST answered {r.status}")
+            raise _read_error("PostgREST", r.status, r.text(200))
         return r.seconds
 
     def storage(self, method: str, path: str, body: Any = None) -> http.Response:

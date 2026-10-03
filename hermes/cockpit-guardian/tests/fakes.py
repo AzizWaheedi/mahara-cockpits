@@ -9,7 +9,7 @@ from typing import Any, Callable, Optional
 from guard import http
 from guard.config import Config, Keys
 from guard.context import Context
-from guard.db import Db, DbError, ProbeMissing, Unavailable
+from guard.db import Db, DbConflict, DbDown, DbError, DbMissingTable, DbRejected, ProbeMissing, Unavailable
 from guard.host import Host
 from guard.model import parse_time
 
@@ -42,11 +42,15 @@ class FakeDb(Db):
         self.can_write = can_write
         self.down = down
         self.writes: list[tuple[str, dict]] = []
+        self.updates: list[tuple[str, list, dict]] = []
         self.reads: list[str] = []
+        self.conflict_once: set[str] = set()     # check ids whose next open-row write answers 23505
+        self.reject: set[str] = set()            # check ids whose rows are refused (a 400)
+        self.table_missing = False               # the incidents table is not there (PGRST205)
 
     def _guard(self) -> None:
         if self.down:
-            raise DbError("connection refused")
+            raise DbDown("connection refused")
 
     def rows(self, table, select="*", where=(), order=None, limit=None):
         self._guard()
@@ -116,7 +120,18 @@ class FakeDb(Db):
     def upsert(self, table, rows, on_conflict):
         self._guard()
         for r in rows:
+            if self.table_missing:
+                raise DbMissingTable(f"{table}: write 404 PGRST205")
+            if r.get("check_id") in self.reject:
+                raise DbRejected(f"{table}: write 400 bad row")
+            if r.get("status") == "open" and r.get("check_id") in self.conflict_once:
+                self.conflict_once.discard(r["check_id"])
+                raise DbConflict(f"{table}: write 409 23505 duplicate key")
             self.writes.append((table, json.loads(json.dumps(r, default=str))))
+
+    def update(self, table, where, values):
+        self._guard()
+        self.updates.append((table, list(where), dict(values)))
 
 
 def _sortable(v: Any) -> Any:
@@ -133,6 +148,9 @@ class FakeHost(Host):
         self.killed: list[tuple[int, int]] = []
         self.ran: list[list[str]] = []
         self.alive_pids: set[int] = set()
+        self.spawn_rc = None                     # the exit code seen within 2 s (None: still running)
+        self.stats: dict[int, tuple[int, int]] = {}   # pid -> (start ticks, cpu ticks) as /proc says now
+        self.crontab_raw: Optional[str] = None
 
     def snapshot(self, spec):
         if isinstance(self.snap, Exception):
@@ -143,11 +161,19 @@ class FakeHost(Host):
         if self.remote:
             return super().spawn(command)
         self.spawned.append(command)
-        return 4242
+        return 4242, self.spawn_rc
+
+    def proc_stat(self, pid):
+        if self.remote:
+            return super().proc_stat(pid)
+        return self.stats.get(pid)
 
     def run(self, argv, timeout=60, stdin=None):
         self.ran.append(argv)
-        return 0, "* * * * * true\n", ""
+        if self.crontab_raw is not None:
+            return 0, self.crontab_raw, ""
+        lines = ((self.snap or {}).get("crontab") or {}).get("lines") if isinstance(self.snap, dict) else None
+        return 0, "\n".join(lines or ["* * * * * true"]) + "\n", ""
 
     def alive(self, pid):
         return pid in self.alive_pids
@@ -217,7 +243,7 @@ def snapshot(**over: Any) -> dict:
     from guard.jobs import manifest_lines
     snap = {
         "at": now_s, "user": "hermes", "home": "/home/hermes",
-        "crontab": {"lines": manifest_lines()},
+        "crontab": {"lines": manifest_lines(), "commented": []},
         "mem": {"MemTotal": 16_000_000, "MemAvailable": 4_000_000, "MemFree": 1_000_000, "SwapTotal": 0},
         "disk": {"pct": 72.0, "avail_gb": 57.0, "size_gb": 200.0},
         "load": {"load": [1.0, 1.0, 1.0], "cpus": 4},
@@ -232,11 +258,17 @@ def snapshot(**over: Any) -> dict:
         "salma_vps": {"state": "signed in", "at": NOW.isoformat()},
         "git": {"head": "abc1234", "date": NOW.isoformat(), "dirty": 0},
         "monitors": {
-            "mahara-cockpits": {"at": NOW.isoformat(), "not_ok": {}, "checks": 20, "incidents": {}},
-            "public-sites": {"at": NOW.isoformat(), "not_ok": {}, "checks": 18, "incidents": {}},
+            "mahara-cockpits": {"at": NOW.isoformat(), "not_ok": {}, "checks": 20, "incidents": {}, "outbox": 0,
+                                "outbox_oldest": None},
+            "public-sites": {"at": NOW.isoformat(), "not_ok": {}, "checks": 18, "incidents": {}, "outbox": 0,
+                             "outbox_oldest": None},
+            "portal": {"at": NOW.isoformat(), "not_ok": {}, "checks": 62, "incidents": {}, "outbox": 0,
+                       "outbox_oldest": None},
+            "dialer": {"at": NOW.isoformat(), "not_ok": {}, "checks": 39, "incidents": {}, "outbox": 0,
+                       "outbox_oldest": None},
         },
         "hermes_jobs": [{"id": "a", "name": "Nightly Backup", "enabled": True, "last_status": "ok"}],
-        "fixer": {"mtime": now_s - 7200},
+        "fixer": {"mtime": now_s - 7200, "last_action_at": now_s - 7200},
         "rooms": {"file": False, "unit": "inactive"},
     }
     snap.update(over)

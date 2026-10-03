@@ -24,8 +24,11 @@ class Migration(unittest.TestCase):
         body = self.sql.split("$probe$")[1]
         self.assertEqual(norm(body), norm(db_mod.PROBE_SQL))
 
-    def test_probe_never_reads_the_cron_command(self):
-        self.assertNotIn("command", db_mod.PROBE_SQL)
+    def test_probe_never_returns_the_cron_command(self):
+        # The command is only ever tested inside one boolean, never returned.
+        self.assertEqual(db_mod.PROBE_SQL.count("command"), 1)
+        self.assertIn("'has_literal_auth', j.command ~* 'Bearer [A-Za-z0-9_.-]{20,}')", db_mod.PROBE_SQL)
+        self.assertNotIn("'command'", db_mod.PROBE_SQL)
 
     def test_service_role_only_with_rls(self):
         self.assertIn("alter table public.cockpit_guardian_incidents enable row level security;", self.sql)

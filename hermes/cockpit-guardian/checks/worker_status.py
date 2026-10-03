@@ -1,19 +1,22 @@
 """The workers' own status rows in Creative Triage (catalogue H5, W2, W9 to W14).
 
 Age limits for the sales desk come from apps/media-buyer-cockpit/convex/salesWatch.ts. Convex's
-salesWatch already alerts on the desk rows, so those incidents are recorded
-here but only posted while Convex itself is down (quiet_because="convex").
+salesWatch alerts on the desk rows, but only ONCE, when its failure streak
+reaches 3 (health.ts), and never again while it keeps failing. So a desk
+incident is quiet only when Convex's one message already covered it
+(quiet_because="convex-sales-watch"; engine.covered says exactly when).
 Rows that write only when there is work (research, status, doctor) are not
 watched by age.
 """
 from __future__ import annotations
 
 import re
+from datetime import timedelta
 from typing import Callable
 
 from guard import fixes
 from guard.context import Context, SourceError
-from guard.model import Check, Result, age_min, ago, fail, ok, parse_time, paused, unknown, warn
+from guard.model import Check, Result, age_min, ago, fail, kuwait, ok, parse_time, paused, unknown, warn
 from guard.redact import brief_error, clean
 
 from .claude_proxy import signed_out_text
@@ -61,7 +64,10 @@ def desk_check(job: str) -> Callable[[Context], Result]:
 
 def run_desk_doctor(ctx: Context) -> Result:
     """Nothing schedules doctor, so its row is old by design. It matters once the
-    live-calls watchdog lands: that treats sales-desk/doctor as stale after 75 min."""
+    live-calls watchdog lands: that treats sales-desk/doctor as stale after 75 min.
+    No automatic fix: running doctor each time the row went stale launched Chrome and
+    read Maqsam and HighLevel about 18 times a day; the fix is a cron line or a
+    watchdog exemption, which a person decides."""
     r = _desk_rows(ctx).get("doctor")
     try:
         watchdog = ctx.exists("cockpit_sales_alerts")
@@ -79,6 +85,9 @@ def run_desk_doctor(ctx: Context) -> Result:
 
 
 def run_salma(ctx: Context) -> Result:
+    """The sign-in rule applies to the captions row only (the Claude sign-in). A
+    Higgsfield sign-out is its own failure, and publishing switched off for every
+    client (SOCIAL_PUBLISHING=off) is a decision, not a fault."""
     rows = ctx.rows("social_worker_status", "check_name,ok,detail,checked_at")
     if not rows:
         return unknown("social_worker_status has no rows, so Salma's state is unknown.")
@@ -87,17 +96,26 @@ def run_salma(ctx: Context) -> Result:
     ev = {"checks": len(rows), "freshest_min": round(freshest, 1), "failing": {r["check_name"]: clean(r.get("detail"), 160) for r in bad}}
     if freshest > 15:
         return fail(f"Salma has not reported for {ago(freshest)}; she checks in every minute.", evidence=ev)
-    real = [r for r in bad if not signed_out_text(r.get("detail"))]
+    off = [r for r in bad if r.get("check_name") == "publishing"]
+    signin = [r for r in bad if r.get("check_name") == "captions" and signed_out_text(r.get("detail"))]
+    real = [r for r in bad if r not in off and r not in signin]
     if real:
         names = ", ".join(r["check_name"] for r in real)
         first = clean(real[0].get("detail"), 180)
         action = None
-        if any(r["check_name"] == "higgsfield" for r in real):
+        higgs = next((r for r in real if r["check_name"] == "higgsfield"), None)
+        if higgs is not None and signed_out_text(higgs.get("detail")):
+            action = "Sign Higgsfield in again on the VPS (M4); pictures and covers wait until then."
+        elif higgs is not None:
             action = "Top up the Higgsfield API wallet at open.higgsfield.ai/billing; waiting pictures go on by themselves."
-        return fail(f"Salma reports {names} failing: {first}", evidence=ev, action=action)
-    if bad:
+        return fail(f"Salma reports {names} failing: {first}", evidence=ev, action=action,
+                    items=sorted(r["check_name"] for r in real))
+    if signin:
         return fail("Salma's captions are paused because the Claude sign-in on the server has lapsed.", evidence=ev,
                     caused_by="claude-signin")
+    if off:
+        return paused(f"Salma's automatic posting is stopped for every client on purpose: {clean(off[0].get('detail'), 160)}",
+                      evidence=ev)
     return ok(f"Salma's {len(rows)} checks are ok, the newest {ago(freshest)} old.", evidence=ev)
 
 
@@ -159,6 +177,9 @@ def freshness(table: str, column: str, limit_min: int, label: str, where=()) -> 
     return run
 
 
+EMPTY_WINDOW = re.compile(r"\b1249\b|Charges not found")
+
+
 def run_tap(ctx: Context) -> Result:
     rows = ctx.rows("cockpit_sync_state", "key,ok,note,last_run_at,last_ok_at", where=[("key", "eq", "tap-charges-sync")])
     if not rows:
@@ -169,12 +190,78 @@ def run_tap(ctx: Context) -> Result:
     note = brief_error(r.get("note"), 200)
     ev = {"ok": r.get("ok"), "last_ok_age_min": ok_age, "last_run_age_min": run_age, "note": note}
     if r.get("ok") is False or ok_age is None or ok_age > 60:
-        hint = ""
-        if "not found" in note.lower():
-            hint = " This may be an empty window counted as an error; the function needs checking."
-        return fail(f"Tap payments have not synced for {ago(ok_age)}: {note}.{hint}",
-                    since=parse_time(r.get("last_ok_at")), evidence=ev)
+        if EMPTY_WINDOW.search(str(r.get("note") or "")):
+            # A window with no charges: Tap answers 1249 "Charges not found" and listPage() in
+            # supabase/functions/tap-charges-sync throws on it instead of reading zero charges.
+            return fail(f"Tap payments have not synced for {ago(ok_age)} because Tap answers 1249 'Charges not found' "
+                        "for a window with no charges and tap-charges-sync throws on it. No payment is lost (there "
+                        "were none in that window), but no new one is copied while it fails.",
+                        since=parse_time(r.get("last_ok_at")), evidence=ev, items=["empty-window"],
+                        action="A code fault in supabase/functions/tap-charges-sync (listPage must read 1249 as zero "
+                               "charges): a candidate for guardian.py ai-fix, then a person deploys the function.")
+        return fail(f"Tap payments have not synced for {ago(ok_age)}: {note}.", since=parse_time(r.get("last_ok_at")),
+                    evidence=ev, items=[f"error: {clean(note, 60)}"])
     return ok(f"Tap payments synced {ago(ok_age)} ago.", evidence=ev)
+
+
+def run_vault_lag(ctx: Context) -> Result:
+    """W3: the vault copy (calls-vault) can read ok while the vault itself stopped
+    getting new calls; the desk's own Fathom index (source null) shows what exists."""
+    vault = ctx.rows("cockpit_sales_recordings", "started_at", where=[("source", "eq", "vault")],
+                     order="started_at.desc", limit=1)
+    fathom = ctx.rows("cockpit_sales_recordings", "started_at", where=[("source", "is", None)],
+                      order="started_at.desc", limit=1)
+    v = parse_time(vault[0].get("started_at")) if vault else None
+    f = parse_time(fathom[0].get("started_at")) if fathom else None
+    if v is None or f is None:
+        return unknown("cockpit_sales_recordings has no vault or no Fathom recording to compare.")
+    behind = (f - v).total_seconds() / 86400
+    ev = {"vault_newest": v.isoformat(), "fathom_newest": f.isoformat(), "days_behind": round(behind, 1)}
+    if behind >= 3:
+        return warn(f"The Obsidian vault's newest call is {behind:.1f} days older than the newest Fathom recording, so "
+                    "new calls are not reaching the vault (the desk's calls-vault job itself reads ok).", evidence=ev)
+    return ok(f"The vault keeps up with Fathom ({max(behind, 0):.1f} days apart).", evidence=ev)
+
+
+def run_maqsam(ctx: Context) -> Result:
+    """W4: what Maqsam itself reports per day (cockpit_sales_dial_checks) against what
+    was copied in."""
+    since = (ctx.now - timedelta(days=8)).date().isoformat()
+    rows = ctx.rows("cockpit_sales_dial_checks", "day,maqsam_calls,copied_calls,checked_at", where=[("day", "gte", since)],
+                    order="day.desc", limit=500)
+    if not rows:
+        return unknown("cockpit_sales_dial_checks has no row for the last 8 days, so Maqsam cannot be compared.")
+    days: dict[str, list[int]] = {}
+    for r in rows:
+        d = days.setdefault(str(r.get("day")), [0, 0])
+        d[0] += int(r.get("maqsam_calls") or 0)
+        d[1] += int(r.get("copied_calls") or 0)
+    recent = sorted(days)[-3:]
+    gaps = [f"{d} ({days[d][0] - days[d][1]} of {days[d][0]})" for d in recent if days[d][0] > days[d][1]]
+    ev = {"days": {d: {"maqsam": v[0], "copied": v[1]} for d, v in sorted(days.items())}}
+    if gaps:
+        return fail(f"Maqsam reports calls that were not copied in: {', '.join(gaps)}.", evidence=ev, items=gaps)
+    if len(days) >= 7 and all(v[0] == 0 for v in days.values()):
+        last = ctx.rows("cockpit_sales_recordings", "started_at", where=[("source", "eq", "maqsam")],
+                        order="started_at.desc", limit=1)
+        when = f" since {kuwait(parse_time(last[0].get('started_at')))}" if last else ""
+        return warn(f"Maqsam reports no calls at all for {len(days)} days{when}: either nobody dialled through Maqsam or "
+                    "its read is broken.", evidence=ev,
+                    action="Ask the sales team whether they still dial through Maqsam; if they do, check MAQSAM_ACCESS_KEY.")
+    return ok(f"Maqsam's calls were all copied in for the last {len(recent)} days.", evidence=ev)
+
+
+def run_hiring_engine(ctx: Context) -> Result:
+    """W15: the hiring message engine was left disarmed on purpose; arming it starts
+    messaging applicants."""
+    sec = ctx.section("hiring")
+    engine = (sec.get("payload") or {}).get("engine")
+    if not isinstance(engine, dict) or "armed" not in engine:
+        return unknown("The hiring section has no engine.armed reading.")
+    if engine.get("armed"):
+        return warn("The hiring message engine is armed: it now messages applicants. It was left disarmed on purpose.",
+                    evidence={"armed": True}, action="If that was not a decision, disarm it on the Recruiting tab.")
+    return ok("The hiring message engine is disarmed, as decided.", evidence={"armed": False})
 
 
 def run_radar_scan(ctx: Context) -> Result:
@@ -187,14 +274,15 @@ CHECKS = [
         means="The sales desk's doctor row is current once the live-calls watchdog watches it.",
         severity="low", reads="cockpit_sales_worker_status (sales-desk, doctor) and whether cockpit_sales_alerts exists",
         threshold="Older than 75 min while the live-calls watchdog exists: warn.",
-        run=run_desk_doctor, fix=fixes.SALES_DOCTOR, owner="Hermes", quiet_because="sales-watchdog",
+        run=run_desk_doctor, owner="Hermes", quiet_because="sales-watchdog",
         action="Run desk.py doctor hourly (a cron line), or tell the watchdog to skip the doctor row.",
     ),
     Check(
         id="salma-status", area="workers", name="Salma", catalogue="W10, M3",
         means="Salma, the social producer, reports in every minute and every one of her checks is ok.",
         severity="medium", reads="social_worker_status (8 checks)",
-        threshold="Newest row older than 15 min, or a check failing: fail.", run=run_salma,
+        threshold="Newest row older than 15 min, or a check failing: fail; captions paused by the Claude sign-in: "
+                  "folded into claude-signin; publishing switched off for every client: paused.", run=run_salma,
         owner="the CEO", action="Read ~/.salma.log on the VPS; the failing check's detail says what is needed.",
     ),
     Check(
@@ -256,7 +344,27 @@ CHECKS = [
         means="Tap card charges are copied in every 15 minutes.",
         severity="medium", reads="cockpit_sync_state key tap-charges-sync", threshold="ok false, or no ok run in 1 h: fail.",
         run=run_tap, owner="Hermes",
-        action="Open the tap-charges-sync function's log in Supabase; 'Charges not found' may be an empty window counted as an error.",
+        action="Open the tap-charges-sync function's log in Supabase.",
+    ),
+    Check(
+        id="desk-vault-lag", area="workers", name="Sales calls reach the vault", catalogue="W3",
+        means="New sales calls reach the Obsidian vault, not only the desk's Fathom index.", severity="medium",
+        reads="max(started_at) in cockpit_sales_recordings for source vault against source null (the Fathom index)",
+        threshold="The vault 3 or more days behind: warn.", run=run_vault_lag, owner="the CEO",
+        action="Check the vault sync on the machine that writes the Obsidian vault; the desk only copies what is there.",
+    ),
+    Check(
+        id="desk-maqsam", area="workers", name="Maqsam calls copied in", catalogue="W4",
+        means="Every call Maqsam reports is copied in, and Maqsam is still being read.", severity="medium",
+        reads="cockpit_sales_dial_checks for the last 8 days (Maqsam's own count against the copied count)",
+        threshold="Fewer copied than Maqsam reports on any of the last 3 days: fail; no call at all for 7 days: warn.",
+        run=run_maqsam, owner="the CEO", action="Read ~/.sales-desk.log for the maqsam-calls job.",
+    ),
+    Check(
+        id="hiring-engine", area="workers", name="Hiring message engine", catalogue="W15",
+        means="The hiring message engine stays disarmed until the CEO arms it.", severity="medium",
+        reads="cockpit_sections hiring, payload.engine.armed", threshold="Armed: warn.", run=run_hiring_engine,
+        action="Disarm it on the Recruiting tab if arming it was not a decision.",
     ),
 ]
 
@@ -267,7 +375,7 @@ for _job, (_limit, _kind, _label) in DESK_LIMITS.items():
         severity="medium" if _kind == "copy" else "high",
         reads=f"cockpit_sales_worker_status (sales-desk, {_job})",
         threshold=f"ok false, or older than {ago(_limit)}: fail. A missing row: unknown.",
-        run=desk_check(_job), quiet_because="convex", owner="Hermes",
+        run=desk_check(_job), quiet_because="convex-sales-watch", owner="Hermes",
         fix=fixes.catch_up(f"desk-{_job}") if _kind == "copy" else None,
         action="Read ~/.sales-desk.log on the VPS; the row's detail names the blocker.",
     ))

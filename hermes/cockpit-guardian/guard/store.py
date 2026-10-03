@@ -8,7 +8,12 @@
   upserted there by id; a write that fails is queued in the state file and
   sent on a later scan.
 
-A dry run uses its own state file (--state-dir) and never writes Supabase.
+A dry run uses its own state file (a scratch copy unless --state-dir names
+one) and never writes Supabase; nor does a run off the VPS.
+
+The state file holds every throttle and backoff, so a run that cannot save
+it (a full disk) must not act: `checkpoint()` saves straight after each post
+and each fix attempt and raises StateUnwritable, which ends the run.
 """
 from __future__ import annotations
 
@@ -21,9 +26,9 @@ from pathlib import Path
 from typing import Any, Optional
 
 from .config import INCIDENTS_TABLE
-from .db import Db, DbError
+from .db import Db, DbConflict, DbError, DbMissingTable, DbRejected
 from .http import HttpError
-from .model import iso, parse_time
+from .model import iso, now_utc, parse_time
 from .redact import clean, clean_obj
 
 KEEP_RESOLVED_DAYS = 7
@@ -36,9 +41,19 @@ ROW_COLUMNS = (
 )
 
 
+# Touched with os.utime (no free blocks needed) to throttle the one "cannot write" message.
+UNWRITABLE_MARKER = ".unwritable-alerted"
+
+
+class StateUnwritable(Exception):
+    """The state file could not be saved; the run stops before it posts or fixes again."""
+
+
 def empty_state() -> dict[str, Any]:
     return {"version": VERSION, "open": {}, "resolved": [], "streaks": {}, "last_alert": {}, "pending_db": [],
-            "history": {}, "daily_sent": None, "last_scan": None}
+            "pending_db_since": None, "db_rejected": [], "history": {}, "daily_sent": None, "last_scan": None,
+            "fix_history": {}, "pending_hooks": [], "seen_deployed": {}, "log_offsets": {}, "hung_cpu": {},
+            "killed": {}, "beat": {}, "due_since": {}}
 
 
 class Store:
@@ -95,11 +110,28 @@ class Store:
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as fh:
                 json.dump(self.state, fh, ensure_ascii=False, indent=1, default=str)
+                fh.flush()
+                os.fsync(fh.fileno())
             os.chmod(tmp, 0o600)
             os.replace(tmp, self.path)
         finally:
             if os.path.exists(tmp):
                 os.unlink(tmp)
+        marker = self.path.parent / UNWRITABLE_MARKER
+        if not marker.exists():
+            # Made while there is room, so a later full disk can still throttle with os.utime.
+            try:
+                marker.touch(mode=0o600)
+                os.utime(marker, (0, 0))
+            except OSError:
+                pass
+
+    def checkpoint(self) -> None:
+        """Save now; StateUnwritable when it cannot (the caller stops acting)."""
+        try:
+            self.save()
+        except OSError as e:
+            raise StateUnwritable(clean(e, 160)) from e
 
     def _trim(self) -> None:
         cutoff = datetime.now().astimezone() - timedelta(days=KEEP_RESOLVED_DAYS)
@@ -145,6 +177,8 @@ class Store:
             "alerted_at": None,
             "resolve_alerted_at": None,
             "mode": mode,
+            "urgent": bool(result.urgent),
+            "items": sorted({clean(i, 120) for i in result.items or []}),
         }
         self.open[check.id] = inc
         self.write(inc)
@@ -161,6 +195,8 @@ class Store:
             "last_seen_at": iso(now),
             "updated_at": iso(now),
             "seen": int(inc.get("seen") or 0) + 1,
+            "urgent": bool(result.urgent),
+            "items": sorted({clean(i, 120) for i in result.items or []}),
         })
         if result.since and parse_time(inc.get("first_seen_at")) and result.since < parse_time(inc["first_seen_at"]):
             inc["first_seen_at"] = iso(result.since)
@@ -169,12 +205,15 @@ class Store:
             self.write(inc)
         return changed
 
-    def resolve(self, check_id: str, now: datetime, resolved_by: str) -> Optional[dict[str, Any]]:
+    def resolve(self, check_id: str, now: datetime, resolved_by: str,
+                folded_into: Optional[str] = None) -> Optional[dict[str, Any]]:
         inc = self.open.pop(check_id, None)
         if inc is None:
             return None
         inc.update({"status": "resolved", "resolved_at": iso(now), "updated_at": iso(now),
                     "resolved_by": clean(resolved_by, 300)})
+        if folded_into:
+            inc["folded_into"] = folded_into
         self.state["resolved"].append(inc)
         self.write(inc)
         return inc
@@ -196,26 +235,69 @@ class Store:
         if inc["id"] not in pending:
             pending.append(inc["id"])
 
-    def flush(self) -> Optional[str]:
-        """Send every queued incident row. Returns a sentence when Supabase refused."""
+    def _supersede(self, row: dict[str, Any], now: datetime) -> None:
+        """Another open row holds this check's one-open slot (a run that lost its state):
+        mark that row resolved, superseded by this one."""
+        others = self.db.rows(INCIDENTS_TABLE, "id", where=[("check_id", "eq", row["check_id"]), ("status", "eq", "open")],
+                              limit=20)
+        stamp = iso(now)
+        for o in others:
+            if o.get("id") and o["id"] != row["id"]:
+                self.db.update(INCIDENTS_TABLE, [("id", "eq", o["id"])],
+                               {"status": "resolved", "resolved_at": stamp, "updated_at": stamp,
+                                "resolved_by": f"superseded by incident {row['id'][:8]} (the guardian lost track of this row)"})
+
+    def flush(self, now: Optional[datetime] = None) -> Optional[str]:
+        """Send every queued incident row. Returns a sentence when Supabase refused.
+
+        - an outage (no answer, 5xx): stop, keep every row queued for a later scan;
+        - a unique-key conflict on an open row: resolve the stale open row, retry once;
+        - any other refusal of a row: set that row aside (db_rejected) and go on, so
+          one bad row never stops every later row."""
         if not self.write_db:
             return None
+        now = now or now_utc()
         pending = self.state.get("pending_db") or []
         if not pending:
+            self.state["pending_db_since"] = None
             return None
         by_id = {i["id"]: i for i in list(self.open.values()) + self.state["resolved"]}
         rows = [self._row(by_id[pid]) for pid in pending if pid in by_id]
         # Resolved rows first, so the one-open-per-check index never sees two open rows.
         rows.sort(key=lambda r: 0 if r["status"] == "resolved" else 1)
         left = [pid for pid in pending if pid in by_id]
+        notes = []
         for r in rows:
             try:
-                self.db.upsert(INCIDENTS_TABLE, [r], on_conflict="id")
+                try:
+                    self.db.upsert(INCIDENTS_TABLE, [r], on_conflict="id")
+                except DbConflict:
+                    if r["status"] != "open":
+                        raise
+                    self._supersede(r, now)
+                    self.db.upsert(INCIDENTS_TABLE, [r], on_conflict="id")
+            except DbMissingTable:
+                self.state["pending_db"] = left
+                self.state["db_table_missing"] = True
+                self.db_note = ("the incidents table does not exist yet (apply supabase/migrations/"
+                                "20261003e_guardian_incidents.sql); incidents live in the state file until then")
+                return self.db_note
+            except (DbConflict, DbRejected) as e:
+                rejected = self.state.setdefault("db_rejected", [])
+                rejected.append({"id": r["id"], "check_id": r["check_id"], "at": iso(now), "error": clean(e, 200)})
+                del rejected[:-50]
+                notes.append(f"Supabase refused the {r['check_id']} incident row ({clean(e, 120)}); it was set aside")
+                left.remove(r["id"])
+                continue
             except (DbError, HttpError, OSError) as e:
                 self.state["pending_db"] = left
+                self.state["pending_db_since"] = self.state.get("pending_db_since") or iso(now)
                 self.db_note = (f"Supabase did not take {len(left)} incident row(s) ({clean(e, 160)}); they wait in the "
                                 "state file and go on a later scan.")
                 return self.db_note
             left.remove(r["id"])
         self.state["pending_db"] = []
-        return None
+        self.state["pending_db_since"] = None
+        self.state["db_table_missing"] = False
+        self.db_note = "; ".join(notes) + "." if notes else None
+        return self.db_note

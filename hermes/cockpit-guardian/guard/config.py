@@ -26,6 +26,13 @@ PROBE_FN = "cockpit_guardian_probe"
 
 MODES = ("report-only", "fix")
 
+# The Hermes reliability monitor's env file: the Cloudflare KV keys for the
+# dead-man heartbeat (PORTAL_MONITOR_CF_*) and SUPABASE_ACCESS_TOKEN.
+MONITOR_ENV = "/docker/hermes-agent-ff5p/data/portal-monitor/monitor.env"
+# Every env file on the VPS whose values are hidden from anything the guardian writes.
+SECRET_FILES = ("~/.editor-desk/env", "~/.ideation-radar/env", "~/.sales-desk/env", "/opt/data/bibi/api-keys.env",
+                "/opt/data/.cockpit-worker/env", "~/.team-sync/env", "~/.cockpit-guardian/env", MONITOR_ENV)
+
 
 def _default_key_files() -> list[str]:
     home = Path.home()
@@ -33,6 +40,7 @@ def _default_key_files() -> list[str]:
         str(home / ".cockpit-guardian" / "env"),
         str(home / ".editor-desk" / "env"),
         "/opt/data/bibi/api-keys.env",
+        MONITOR_ENV,
     ]
 
 
@@ -88,6 +96,22 @@ class Keys:
     def has(self, name: str) -> bool:
         return bool(self.get(name).strip())
 
+    def secret_values(self, extra_files: tuple[str, ...] = SECRET_FILES) -> list[str]:
+        """Every value worth hiding: secret-looking values in the key files (and the
+        other workers' env files this user can read), and secret-named variables in
+        the environment. Values only ever go to redact.register_values."""
+        from .redact import SECRET_NAME, secretish
+        out: list[str] = []
+        if self.use_files:
+            seen: set[str] = set()
+            for path in list(self.files) + [os.path.expanduser(f) for f in extra_files]:
+                if path in seen or not path or not os.path.exists(path):
+                    continue
+                seen.add(path)
+                out += [v for k, v in parse_env_file(path).items() if secretish(k, v)]
+        out += [v for k, v in self.environ.items() if SECRET_NAME.search(k) and secretish(k, v)]
+        return out
+
 
 @dataclass
 class Config:
@@ -133,6 +157,8 @@ def load(*, mode: Optional[str] = None, dry_run: bool = False, quiet: bool = Fal
         except OSError:
             token = ""
     ssh_raw = keys.get("GUARDIAN_SSH")
+    from .redact import register_values
+    register_values(keys.secret_values() + ([token] if token else []))
     return Config(
         keys=keys,
         home=home,

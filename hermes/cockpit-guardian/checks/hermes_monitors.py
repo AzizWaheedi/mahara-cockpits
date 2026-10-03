@@ -1,6 +1,9 @@
-"""The monitors that already run on the VPS. The guardian reads them and does
-not rebuild them: their findings are listed (they alert on their own), and
-the guardian alerts only when a monitor itself stops ticking.
+"""The monitors that already run on the VPS: cockpits, public sites, the
+portal and the dialer (the clients' call centre). The guardian reads them and
+does not rebuild them: their findings are listed (they alert on their own),
+and the guardian alerts when a monitor stops ticking or stops delivering: an
+outbox item older than 30 minutes means its alerts are not reaching anyone,
+so "Hermes already alerts" no longer holds.
 """
 from __future__ import annotations
 
@@ -9,6 +12,7 @@ from guard.model import Check, Result, age_min, ago, fail, ok, parse_time, warn
 from guard.redact import clean
 
 TICK_LIMIT_MIN = 3
+OUTBOX_STUCK_MIN = 30
 
 
 def monitor_check(name: str, label: str):
@@ -19,14 +23,27 @@ def monitor_check(name: str, label: str):
             raise SourceError(f"the {label} monitor's state could not be read: {clean((m or {}).get('error'), 120)}")
         age = age_min(m.get("at"), ctx.now)
         incidents = m.get("incidents") or {}
-        ev = {"tick_age_min": age, "not_ok": m.get("not_ok"), "incidents": {k: v.get("summary") for k, v in incidents.items()}}
+        oldest = m.get("outbox_oldest")
+        stuck = age_min(oldest, ctx.now) if oldest else None
+        delivering = not (stuck is not None and stuck > OUTBOX_STUCK_MIN)
+        ev = {"tick_age_min": age, "not_ok": m.get("not_ok"), "incidents": {k: v.get("summary") for k, v in incidents.items()},
+              "outbox": m.get("outbox"), "outbox_oldest_min": stuck, "delivery_last_ok": m.get("delivery_last_ok")}
         if age is None or age > TICK_LIMIT_MIN:
             return fail(f"The Hermes {label} monitor last ticked {ago(age)} ago (every minute), so its alerts have stopped.",
-                        since=parse_time(m.get("at")), evidence=ev, data={"monitor_down": True})
+                        since=parse_time(m.get("at")), evidence=ev, data={"monitor_down": True, "delivering": False})
+        if not delivering:
+            text = "; ".join(f"{k}: {clean(v.get('summary'), 100)}" for k, v in list(incidents.items())[:4])
+            return fail(f"The Hermes {label} monitor ticks but {m.get('outbox')} of its alert(s) have waited "
+                        f"{ago(stuck)} undelivered, so nobody hears what it finds" + (f" ({text})" if text else "") + ".",
+                        evidence=ev, data={"delivering": False}, items=sorted(incidents),
+                        action="Check SLACK_BOT_TOKEN and the channel in the monitor's monitor.env; its outbox drains "
+                               "by itself once Slack takes it.")
         if incidents:
             text = "; ".join(f"{k}: {clean(v.get('summary'), 100)}" for k, v in list(incidents.items())[:4])
-            return warn(f"The Hermes {label} monitor has {len(incidents)} open incident(s): {text}.", evidence=ev)
-        return ok(f"The Hermes {label} monitor ticked {ago(age)} ago; all {m.get('checks')} checks ok.", evidence=ev)
+            return warn(f"The Hermes {label} monitor has {len(incidents)} open incident(s): {text}.", evidence=ev,
+                        data={"delivering": True}, items=sorted(incidents))
+        return ok(f"The Hermes {label} monitor ticked {ago(age)} ago; all {m.get('checks')} checks ok.", evidence=ev,
+                  data={"delivering": True})
 
     return run
 
@@ -66,14 +83,31 @@ CHECKS = [
     Check(id="hermes-monitor-cockpits", area="monitors", name="Hermes cockpit monitor",
           means="The per-minute Hermes reliability monitor for the cockpits keeps ticking.", severity="high",
           reads="/docker/hermes-agent-ff5p/data/portal-monitor/state/mahara-cockpits/state.json (last_tick, incidents)",
-          threshold=f"No tick for {TICK_LIMIT_MIN} min: fail; open incidents: listed (it alerts on its own).",
+          threshold=f"No tick for {TICK_LIMIT_MIN} min, or an alert undelivered for {OUTBOX_STUCK_MIN} min: fail; open "
+                    "incidents: listed (it alerts on its own).",
           run=monitor_check("mahara-cockpits", "cockpits"), quiet_because="hermes", owner="Hermes",
           action="Check Hermes job f0bb4f23a170 (Reliability monitor: Mahara cockpits)."),
     Check(id="hermes-monitor-sites", area="monitors", name="Hermes public sites monitor",
           means="The per-minute monitor for public sites, TLS and backups keeps ticking.", severity="high",
-          reads=".../state/public-sites/state.json", threshold=f"No tick for {TICK_LIMIT_MIN} min: fail; open incidents: listed.",
+          reads=".../state/public-sites/state.json",
+          threshold=f"No tick for {TICK_LIMIT_MIN} min, or an alert undelivered for {OUTBOX_STUCK_MIN} min: fail; open "
+                    "incidents: listed.",
           run=monitor_check("public-sites", "public sites"), quiet_because="hermes", owner="Hermes",
           action="Check Hermes job cd922bc5e4d6 (Public sites, TLS and backups)."),
+    Check(id="hermes-monitor-portal", area="monitors", name="Hermes portal monitor",
+          means="The per-minute Hermes monitor for the client portal keeps ticking and delivering.", severity="high",
+          reads=".../state/state.json (last_tick, incidents, outbox)",
+          threshold=f"No tick for {TICK_LIMIT_MIN} min, or an alert undelivered for {OUTBOX_STUCK_MIN} min: fail; open "
+                    "incidents: listed.",
+          run=monitor_check("portal", "portal"), quiet_because="hermes", owner="Hermes",
+          action="Check the Hermes reliability monitor job for the portal."),
+    Check(id="hermes-monitor-dialer", area="monitors", name="Hermes dialer monitor",
+          means="The per-minute Hermes monitor for the dialer (the clients' call centre) keeps ticking and delivering.",
+          severity="high", reads=".../state/dialer/state.json (last_tick, incidents, outbox)",
+          threshold=f"No tick for {TICK_LIMIT_MIN} min, or an alert undelivered for {OUTBOX_STUCK_MIN} min: fail; open "
+                    "incidents: listed.",
+          run=monitor_check("dialer", "dialer"), quiet_because="hermes", owner="Hermes",
+          action="Check the Hermes reliability monitor job for the dialer."),
     Check(id="hermes-jobs", area="monitors", name="Hermes scheduled jobs",
           means="Hermes's own scheduled jobs pass.", severity="low", reads="/opt/data/cron/jobs.json (last_status, last_error)",
           threshold="An enabled job whose last run failed: warn (the Cron guardian job already watches these).",

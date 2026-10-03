@@ -14,7 +14,8 @@
 -- cockpit_guardian_probe(): pg_cron job names, schedules and run results,
 -- pg_net answer codes for the last hour, and a count of auth accounts whose
 -- role is not authenticated. It never returns cron.job.command, which holds
--- a literal Authorization value for three jobs. Service role only.
+-- a literal Authorization value for three jobs; it says only whether a job's
+-- command carries one (has_literal_auth, a boolean). Service role only.
 
 create table if not exists public.cockpit_guardian_incidents (
   id                 uuid primary key,
@@ -65,7 +66,9 @@ select jsonb_build_object(
   'at', now(),
   'cron_jobs', coalesce((
     select jsonb_agg(jsonb_build_object('jobid', j.jobid, 'jobname', j.jobname,
-                                        'schedule', j.schedule, 'active', j.active) order by j.jobid)
+                                        'schedule', j.schedule, 'active', j.active,
+                                        'has_literal_auth', j.command ~* 'Bearer [A-Za-z0-9_.-]{20,}')
+                     order by j.jobid)
       from cron.job as j), '[]'::jsonb),
   'cron_runs', coalesce((
     select jsonb_agg(to_jsonb(x)) from (

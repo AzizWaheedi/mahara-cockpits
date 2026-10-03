@@ -10,6 +10,7 @@ from .model import FAIL, NOT_DEPLOYED, OK, PAUSED, UNKNOWN, WARN, ago, kuwait, p
 from .redact import clean
 
 ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+STALE_SCAN = timedelta(minutes=15)
 
 
 def build(state: dict[str, Any], checks: dict[str, Any], now: datetime, *, for_slack: bool = False) -> str:
@@ -18,6 +19,10 @@ def build(state: dict[str, Any], checks: dict[str, Any], now: datetime, *, for_s
     at = parse_time(scan.get("at"))
     lines: list[str] = []
     mode = scan.get("mode", "report-only")
+    if at and now - at > STALE_SCAN:
+        # Everything below is as old as the last scan; say so first.
+        lines.append(f"The guardian has not scanned for {ago((now - at).total_seconds() / 60)}; read "
+                     "~/.cockpit-guardian/cron.log on the VPS. What follows is from that last scan.")
     head = f"Cockpit guardian, {kuwait(now)}"
     if at:
         head += f". Last scan {ago((now - at).total_seconds() / 60)} ago in {mode} mode"

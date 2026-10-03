@@ -38,22 +38,34 @@ def part(fn):
         return {"error": "%s: %s" % (type(e).__name__, str(e)[:200])}
 
 
+_CRON_LINE = re.compile(r"^\s*(?:@\w+|(?:\S+\s+){5})\S")
+
+
+def _mask(line):
+    # A literal NAME=value assignment inline would be a secret: mask it.
+    return re.sub(r"(?i)\b([A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD)[A-Z0-9_]*=)[^\s;\"']+", r"\1<hidden>", line)
+
+
 def crontab():
     p = subprocess.run(["crontab", "-l"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20)
     if p.returncode != 0:
         err = p.stderr.decode("utf-8", "replace").strip()
         if "no crontab" in err.lower():
-            return {"lines": []}
+            return {"lines": [], "commented": []}
         return {"error": err[:200]}
-    lines = []
+    lines, commented = [], []
     for raw in p.stdout.decode("utf-8", "replace").splitlines():
         line = raw.strip()
-        if not line or line.startswith("#"):
+        if not line:
             continue
-        # A literal NAME=value assignment inline would be a secret: mask it.
-        line = re.sub(r"(?i)\b([A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD)[A-Z0-9_]*=)[^\s;\"']+", r"\1<hidden>", line)
-        lines.append(line)
-    return {"lines": lines}
+        if line.startswith("#"):
+            # A job line commented out on purpose (paused), told apart from prose comments.
+            body = line.lstrip("#").strip()
+            if _CRON_LINE.match(body) and ("flock" in body or "python" in body):
+                commented.append(_mask(body))
+            continue
+        lines.append(_mask(line))
+    return {"lines": lines, "commented": commented}
 
 
 def meminfo():
@@ -83,13 +95,18 @@ def _uptime():
         return float(fh.read().split()[0])
 
 
+def _lock_path(lock):
+    return x(lock.replace("~", "$HOME", 1)) if lock.startswith("~") else x(lock)
+
+
 def processes(markers):
     hz = os.sysconf("SC_CLK_TCK")
     page = os.sysconf("SC_PAGE_SIZE")
     up = _uptime()
     me = os.getpid()
     jobs, top, users = [], [], {}
-    tunnels = {"n": 0, "rss_kb": 0, "users": {}}
+    tunnels = {"n": 0, "rss_kb": 0, "users": {}, "started": {}}
+    table = {}
     for d in glob.glob("/proc/[0-9]*"):
         pid = int(os.path.basename(d))
         if pid == me:
@@ -104,10 +121,15 @@ def processes(markers):
             uid = os.stat(d).st_uid
         except (OSError, ValueError, IndexError):
             continue
+        fields = stat.rsplit(")", 1)[1].split()
+        table[pid] = {"ppid": int(fields[1]), "argv": argv, "start": int(fields[19]),
+                      "cpu": int(fields[11]) + int(fields[12]), "uid": uid, "rss_kb": rss_kb}
+    for pid, info in table.items():
+        argv = info["argv"]
         if not argv:
             continue
-        fields = stat.rsplit(")", 1)[1].split()
-        etimes = int(up - int(fields[19]) / hz)
+        uid = info["uid"]
+        etimes = int(up - info["start"] / hz)
         if uid not in users:
             try:
                 users[uid] = pwd.getpwuid(uid).pw_name
@@ -118,30 +140,47 @@ def processes(markers):
         args = " ".join(argv)
         if "cloudflared" in comm:
             tunnels["n"] += 1
-            tunnels["rss_kb"] += rss_kb
+            tunnels["rss_kb"] += info["rss_kb"]
             tunnels["users"][user] = tunnels["users"].get(user, 0) + 1
+            started = int(time.time() - etimes)
+            span = tunnels["started"].setdefault(user, [started, started])
+            span[0], span[1] = min(span[0], started), max(span[1], started)
         if comm.startswith("python"):
             cwd = None
-            for job, (marker, folder) in markers.items():
+            for job, spec in markers.items():
+                marker, folder = spec[0], spec[1]
+                lock = spec[2] if len(spec) > 2 else ""
                 if not marker or marker not in args:
                     continue
                 if folder:
                     if cwd is None:
                         try:
-                            cwd = os.readlink(d + "/cwd")
+                            cwd = os.readlink("/proc/%d/cwd" % pid)
                         except OSError:
                             cwd = ""
                     if folder not in cwd and folder not in args:
                         continue
-                jobs.append({"pid": pid, "job": job, "etimes": etimes, "user": user, "mine": uid == os.getuid()})
+                # Is this the cron run itself? An ancestor must be `flock -n <its lock>`.
+                flock = False
+                if lock:
+                    want = _lock_path(lock)
+                    up_pid, hops = info["ppid"], 0
+                    while up_pid in table and hops < 6:
+                        a = table[up_pid]["argv"]
+                        if a and os.path.basename(a[0]) == "flock" and want in a:
+                            flock = True
+                            break
+                        up_pid, hops = table[up_pid]["ppid"], hops + 1
+                jobs.append({"pid": pid, "job": job, "etimes": etimes, "user": user, "mine": uid == os.getuid(),
+                             "start": info["start"], "ppid": info["ppid"], "cpu": info["cpu"], "flock": flock})
         label = comm
         if comm in ("node", "python3", "python", "bun", "deno") and len(argv) > 1:
             first = next((a for a in argv[1:] if not a.startswith("-") and "=" not in a), "")
             if first:
                 label = comm + " " + os.path.basename(first)[:40]
-        top.append({"user": user, "name": label, "rss_mb": rss_kb // 1024})
+        top.append({"user": user, "name": label, "rss_mb": info["rss_kb"] // 1024})
     top.sort(key=lambda r: -r["rss_mb"])
-    return {"jobs": jobs, "top": top[:6], "cloudflared": tunnels}
+    return {"jobs": jobs, "top": top[:6], "cloudflared": tunnels, "hz": hz}
 
 
 def listeners():
@@ -186,7 +225,11 @@ def files(paths):
 FLAG = re.compile(r"Traceback \(most recent call last\)|^\S*Error: |\bERROR\b")
 
 
-def tails(paths, n):
+def tails(paths, n, offsets=None):
+    """The last n lines of each log, and the tracebacks written since the size the
+    guardian saw at its previous scan (offsets), so one old traceback is not read
+    again and again until it scrolls out of the tail."""
+    offsets = offsets or {}
     out = {}
     for p in paths:
         fp = x(p)
@@ -194,15 +237,23 @@ def tails(paths, n):
             with open(fp, "rb") as fh:
                 fh.seek(0, 2)
                 size = fh.tell()
+                seen = offsets.get(p)
+                start = max(0, size - 64 * 1024)
+                if isinstance(seen, int) and 0 <= seen <= size:
+                    start = max(start, seen)
+                fh.seek(start)
+                new_text = fh.read().decode("utf-8", "replace")
                 fh.seek(max(0, size - 64 * 1024))
                 lines = fh.read().decode("utf-8", "replace").splitlines()[-n:]
         except OSError:
             out[p] = None
             continue
-        flagged = [l.strip()[:240] for l in lines if FLAG.search(l)]
-        out[p] = {"tracebacks": sum(1 for l in lines if "Traceback (most recent call last)" in l),
+        fresh = new_text.splitlines()[-n:] if isinstance(offsets.get(p), int) else lines
+        flagged = [l.strip()[:240] for l in fresh if FLAG.search(l)]
+        out[p] = {"tracebacks": sum(1 for l in fresh if "Traceback (most recent call last)" in l),
                   "flagged": flagged[-3:], "last": (lines[-1].strip()[:240] if lines else ""),
-                  "rotated": len(glob.glob(fp + ".*.gz"))}
+                  "rotated": len(glob.glob(fp + ".*.gz")), "size": size,
+                  "since_offset": isinstance(offsets.get(p), int)}
     return out
 
 
@@ -278,7 +329,9 @@ def git_copy(repo):
     if head.returncode != 0:
         return {"error": head.stderr.decode("utf-8", "replace")[:160]}
     h, _, date = head.stdout.decode().strip().partition("|")
-    st = subprocess.run(["git", "-C", r, "status", "--porcelain"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
+    # --no-optional-locks: a read must not take .git/index.lock or rewrite the index.
+    st = subprocess.run(["git", "--no-optional-locks", "-C", r, "status", "--porcelain"], stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE, timeout=60)
     return {"head": h, "date": date, "dirty": len([l for l in st.stdout.decode("utf-8", "replace").splitlines() if l.strip()])}
 
 
@@ -297,8 +350,12 @@ def monitors(paths):
             if isinstance(v, dict):
                 incidents[k] = {"summary": str(v.get("summary") or "")[:200], "severity": v.get("severity"),
                                 "opened": v.get("opened"), "component": str(v.get("component") or "")[:80]}
+        box = d.get("outbox") or []
+        ats = [i.get("at") for i in box if isinstance(i, dict) and isinstance(i.get("at"), (int, float))]
         out[name] = {"at": tick.get("at"), "not_ok": {k: v for k, v in status.items() if v != "ok"},
-                     "checks": len(status), "incidents": incidents}
+                     "checks": len(status), "incidents": incidents, "outbox": len(box),
+                     "outbox_oldest": min(ats) if ats else None,
+                     "delivery_last_ok": (d.get("delivery") or {}).get("last_ok")}
     return out
 
 
@@ -318,9 +375,42 @@ def hermes_jobs(path):
     return out
 
 
+# Log classes that are not an action: a no-op, a diagnosis (FIXER.md: data/ops issues are
+# reported, never touched) or an escalation to the CEO.
+QUIET_PREFIXES = ("no-op", "data/ops")
+QUIET_WORDS = ("escalation only",)
+
+
 def fixer(path):
-    st = os.stat(x(path))
-    return {"mtime": int(st.st_mtime)}
+    """When the reliability fixer last really acted. Its file is rewritten on every
+    no-op run too, so the mtime alone would block the guardian most of the day."""
+    fp = x(path)
+    st = os.stat(fp)
+    out = {"mtime": int(st.st_mtime), "last_action_at": None}
+    try:
+        d = read_json(path)
+    except Exception:  # noqa: BLE001 - unreadable: fall back to the mtime
+        out["last_action_at"] = int(st.st_mtime)
+        return out
+    log = d.get("log") if isinstance(d, dict) else None
+    newest = None
+    for item in log or []:
+        if not isinstance(item, dict):
+            continue
+        cls = str(item.get("class") or "").strip().lower()
+        if cls.startswith(QUIET_PREFIXES) or any(w in cls for w in QUIET_WORDS):
+            continue
+        at = str(item.get("at") or "").replace("Z", "+00:00")
+        try:
+            import datetime as _dt
+            t = _dt.datetime.fromisoformat(at).timestamp()
+        except ValueError:
+            continue
+        newest = t if newest is None or t > newest else newest
+    if newest is not None:
+        # The fixer's clock in that file can run ahead; it cannot have acted after the file was written.
+        out["last_action_at"] = int(min(newest, st.st_mtime))
+    return out
 
 
 def rooms(spec):
@@ -344,7 +434,8 @@ def main():
     snap["procs"] = part(lambda: processes(spec.get("markers") or {}))
     snap["listen"] = part(listeners)
     snap["files"] = part(lambda: files(spec.get("files") or []))
-    snap["logs"] = part(lambda: tails(spec.get("logs") or [], int(spec.get("tail_lines") or 80)))
+    snap["logs"] = part(lambda: tails(spec.get("logs") or [], int(spec.get("tail_lines") or 80),
+                                      spec.get("log_offsets") or {}))
     snap["env_keys"] = part(lambda: env_keys(spec.get("env_files") or []))
     snap["settings"] = part(lambda: settings(spec.get("settings") or {}))
     if spec.get("proxy"):

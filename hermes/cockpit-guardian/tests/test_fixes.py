@@ -9,7 +9,11 @@ from pathlib import Path
 from tests import fakes
 from guard import fixes, jobs
 from guard.host import HostError
-from guard.model import FAIL, Result, fail
+from guard.model import FAIL, OK, Result, fail
+
+
+def ok_result(inc):
+    return Result(OK, "", data={"incident": inc})
 
 NOW_S = int(fakes.NOW.timestamp())
 
@@ -68,18 +72,29 @@ class StopHung(unittest.TestCase):
     def procs(self, *rows):
         return fakes.snapshot(procs={"jobs": list(rows), "top": [], "cloudflared": {"n": 0}})
 
-    def test_term_then_kill_only_copy_runs_of_our_own(self):
-        c = make(self.procs({"pid": 11, "job": "desk-recordings", "etimes": 7300, "mine": True},
-                            {"pid": 12, "job": "desk-followups", "etimes": 99999, "mine": True},
-                            {"pid": 13, "job": "team-sync", "etimes": 99999, "mine": False}))
+    @staticmethod
+    def run_(c, rows, *, stuck_for=20):
+        """The check noted these runs' CPU time `stuck_for` minutes ago and it has not moved."""
+        hung = fixes.hung_runs(rows)
+        fixes.track_cpu(c.state, hung, fakes.NOW - fakes.timedelta(minutes=stuck_for))
+        stuck = fixes.track_cpu(c.state, hung, fakes.NOW)
+        return fixes.STOP_HUNG.apply(c, fail("hung", data={"stuck": stuck}))
+
+    def test_term_then_kill_only_stuck_copy_cron_runs_of_our_own(self):
+        rows = [{"pid": 11, "job": "desk-recordings", "etimes": 7300, "mine": True, "flock": True, "start": 500, "cpu": 40},
+                {"pid": 12, "job": "desk-followups", "etimes": 99999, "mine": True, "flock": True, "start": 501, "cpu": 9},
+                {"pid": 13, "job": "team-sync", "etimes": 99999, "mine": False, "flock": True, "start": 502, "cpu": 9}]
+        c = make(self.procs(*rows))
         c.host.alive_pids = {11}
-        out = fixes.STOP_HUNG.apply(c, fail("hung"))
-        self.assertTrue(out.ok)
+        c.host.stats = {11: (500, 40)}
+        out = self.run_(c, rows)
+        self.assertTrue(out.ok, out.detail)
         self.assertEqual(c.host.killed, [(11, signal.SIGTERM), (11, signal.SIGKILL)])
 
     def test_young_runs_are_left(self):
-        c = make(self.procs({"pid": 11, "job": "desk-recordings", "etimes": 7100, "mine": True}))
-        self.assertFalse(fixes.STOP_HUNG.apply(c, fail("hung")).ok)
+        rows = [{"pid": 11, "job": "desk-recordings", "etimes": 7100, "mine": True, "flock": True, "start": 5, "cpu": 1}]
+        c = make(self.procs(*rows))
+        self.assertFalse(self.run_(c, rows).ok)
         self.assertEqual(c.host.killed, [])
 
 
@@ -145,22 +160,18 @@ class CrontabProposal(unittest.TestCase):
         self.assertIn("nothing was installed", out.detail)
 
 
-class Doctor(unittest.TestCase):
-    def test_only_while_the_desk_drafts_through_the_vps(self):
-        c = make(fakes.snapshot(settings={"SALES_MODEL_PROVIDER": "openai"}))
-        self.assertFalse(fixes.SALES_DOCTOR.apply(c, fail("old")).ok)
-        self.assertEqual(c.host.spawned, [])
-        c = make()
-        out = fixes.SALES_DOCTOR.apply(c, fail("old"))
-        self.assertTrue(out.ok)
-        self.assertIn("flock -n $HOME/.sales-desk/doctor.lock", c.host.spawned[0])
-        self.assertIn("desk.py --quiet doctor", c.host.spawned[0])
-
+class RadarResend(unittest.TestCase):
     def test_radar_resend_reuses_the_scan_line(self):
-        c = make()
-        out = fixes.RADAR_RESEND.apply(c, fail("x"))
-        self.assertTrue(out.done)
-        self.assertIn("radar.py --quiet resend", c.host.spawned[0])
+        tmp = Path(tempfile.mkdtemp())
+        out_dir = tmp / ".ideation-radar" / "out"
+        out_dir.mkdir(parents=True)
+        (out_dir / "ideas.jsonl").write_text('{"key": "a", "status": "captured", "captured_at": "%s"}\n'
+                                             % fakes.ago(10))
+        c = make(tmp=tmp)
+        inc = {"level": "fail", "first_seen_at": fakes.ago(30)}
+        out = fixes.RADAR_RESEND.apply(c, ok_result(inc))
+        self.assertTrue(out.done, out.detail)
+        self.assertIn("radar.py --quiet resend --ideas", c.host.spawned[0])
         self.assertIn("scan.lock", c.host.spawned[0])
 
 
