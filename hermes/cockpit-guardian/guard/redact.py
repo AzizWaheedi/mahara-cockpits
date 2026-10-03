@@ -52,6 +52,7 @@ _values: set[str] = set()
 _short: list[str] = []
 _windows: set[str] = set()
 SECRET_NAME = re.compile(r"(?i)KEY|TOKEN|SECRET|PASS|PWD|AUTH|CRED|PRIVATE|WEBHOOK|DSN|COOKIE|SESSION|SIGNING")
+_SHELL_NAMES = frozenset({"PWD", "OLDPWD"})
 _PLAIN_VALUE = re.compile(r"^(?:true|false|yes|no|on|off|none|null|\d{1,7}|[a-z]+(?:[-_][a-z]+)*)$", re.I)
 
 
@@ -61,6 +62,14 @@ def secretish(name: str, value: str) -> bool:
     or it carries a password."""
     v = (value or "").strip()
     if len(v) < MIN_VALUE:
+        return False
+    if (name or "") in _SHELL_NAMES:
+        # PWD and OLDPWD match "PWD" but hold the working folder; hiding it hid
+        # every "mahara-cockpits" in the alerts (2026-10-03).
+        return False
+    if _EMAIL.fullmatch(v) and not SECRET_NAME.search(name or ""):
+        # An address is hidden whole by _EMAIL anyway; as a value its pieces
+        # would also hide the bare domain wherever it appears.
         return False
     if v.startswith(("/", "~", "./")) and not SECRET_NAME.search(name or ""):
         return False

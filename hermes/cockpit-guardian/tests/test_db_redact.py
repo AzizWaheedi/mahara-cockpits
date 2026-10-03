@@ -100,6 +100,26 @@ class MgmtDoor(unittest.TestCase):
 
 
 class Redaction(unittest.TestCase):
+    def test_the_working_folder_and_plain_addresses_are_not_secrets(self):
+        from guard import redact
+        self.assertFalse(redact.secretish("PWD", "/home/hermes/mahara-cockpits/hermes/cockpit-guardian"))
+        self.assertFalse(redact.secretish("OLDPWD", "home-hermes-mahara-cockpits"))
+        self.assertFalse(redact.secretish("AZIZ_COCKPIT_WORKER_EMAIL", "worker@example-domain.com"))
+        self.assertTrue(redact.secretish("SMTP_PASSWORD", "hunter2-hunter2"))
+        self.assertTrue(redact.secretish("ALERT_WEBHOOK_EMAIL", "secret-inbox@example-domain.com"))
+        self.assertTrue(redact.secretish("ZOOM_ACCOUNT_ID", "Ab3dEf9hIjKl"))
+        redact.reset_values()
+        try:
+            redact.register_values([v for n, v in (("PWD", "/home/hermes/mahara-cockpits/x"),
+                                                   ("WORKER_EMAIL", "worker@maharamedia.com"))
+                                    if redact.secretish(n, v)])
+            text = redact.clean("cockpit.maharamedia.com and mahara-cockpits answer; worker@maharamedia.com wrote")
+            self.assertIn("cockpit.maharamedia.com", text)
+            self.assertIn("mahara-cockpits", text)
+            self.assertNotIn("worker@maharamedia.com", text)
+        finally:
+            redact.reset_values()
+
     def test_keys_phones_emails_and_dashes(self):
         text = ("Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJyb2xlIjoic2VydmljZSJ9.abcdefghij token=abc123 "
                 "call +965 5555 1234 or 96555551234, mail ali@example.com — on 2026-10-03 13:45:00")
