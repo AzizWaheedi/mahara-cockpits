@@ -66,7 +66,7 @@ const down: Health = {
   last_run_at: iso(NOW - 20 * MIN),
   rooms_today: 6,
   failed_today: 1,
-  line: "Rooms are down. The room worker last ran at 13:52. New rooms cannot be made.",
+  line: "Rooms are down. The room worker last ran at 13:52. Call the lead on the phone, or send your own Zoom or Meet link.",
 };
 const strip = (over: Partial<Parameters<typeof R.stripLine>[0]> = {}) =>
   R.stripLine({
@@ -806,7 +806,7 @@ describe("the availability strip", () => {
     });
     expect(l.moment).toBe("down");
     expect(text(l)).toBe(
-      "Rooms are down. The room worker last ran at 13:52. New rooms cannot be made.",
+      "Rooms are down. The room worker last ran at 13:52. Call the lead on the phone, or send your own Zoom or Meet link.",
     );
   });
 
@@ -1130,10 +1130,10 @@ describe("the health line", () => {
       "Rooms: working. Last run 14:11:58. 6 rooms today, 0 failed.",
     );
     expect(R.healthSentence({ ...down, line: "" })).toBe(
-      "Rooms are down. The room worker last ran at 13:52. New rooms cannot be made.",
+      "Rooms are down. The room worker last ran at 13:52. Call the lead on the phone, or send your own Zoom or Meet link.",
     );
     expect(R.healthSentence({ ...down, line: "", last_run_at: null })).toBe(
-      "Rooms are down. The room worker has not run yet. New rooms cannot be made.",
+      "Rooms are down. The room worker has not run yet. Call the lead on the phone, or send your own Zoom or Meet link.",
     );
   });
 });

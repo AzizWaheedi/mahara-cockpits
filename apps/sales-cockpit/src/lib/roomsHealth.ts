@@ -29,7 +29,8 @@ export interface RoomJob {
 /**
  * The rows the watchdog reads (contract v2 section 10, item 8): the room
  * worker red at 90 s, the host check at 20 minutes, and the door's five
- * routes, which report on use and count only when they fail.
+ * routes, which report on use and count only when they fail; then the
+ * database's own sweep (every minute) and watchdog (every five).
  */
 export const ROOM_JOBS: readonly RoomJob[] = [
   { worker: "sales-desk", job: "rooms", what: "The room worker", staleS: 90 },
@@ -53,6 +54,15 @@ export const ROOM_JOBS: readonly RoomJob[] = [
     job: "cron",
     what: "The minute sweep's posts",
     staleS: null,
+  },
+  // Fix round 4: the sweep and the watchdog themselves, so a pg_net that
+  // stopped answering (or a sweep that stopped) shows here without Slack.
+  { worker: "sales-api", job: "sweep", what: "The room sweep", staleS: 5 * 60 },
+  {
+    worker: "sales-api",
+    job: "watchdog",
+    what: "The alert watchdog",
+    staleS: 15 * 60,
   },
 ];
 

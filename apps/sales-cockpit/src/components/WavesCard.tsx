@@ -483,7 +483,9 @@ export function WavesCard({
                         >
                           Release
                         </button>
-                      ) : st === "undecided" ? (
+                      ) : st === "undecided" || st === "approved" ? (
+                        // An approved opener waiting for the lead's hours can be
+                        // held too (fix round 4): the hold takes its approval back.
                         <button
                           type="button"
                           disabled={busy !== null}
@@ -493,7 +495,9 @@ export function WavesCard({
                                 id: d.id,
                                 on: true,
                               });
-                              return "Held. It stays out of the batch until you release it.";
+                              return st === "approved"
+                                ? "Held. It will not go; release it and approve it again to send."
+                                : "Held. It stays out of the batch until you release it.";
                             })
                           }
                           className={`${button} h-7 ${TOUCH}`}

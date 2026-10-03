@@ -3454,6 +3454,8 @@ export interface RoomView {
   lead_waiting_at: string | null;
   host_in_at: string | null;
   lead_in_at: string | null;
+  /** When the room first showed the join (a Zoom join read late keeps its own time in lead_in_at). */
+  lead_in_seen_at: string | null;
   ended_at: string | null;
   host_by: string | null;
   lead_by: string | null;
@@ -3494,6 +3496,7 @@ export const ROOM_VIEW_KEYS = [
   "lead_waiting_at",
   "host_in_at",
   "lead_in_at",
+  "lead_in_seen_at",
   "ended_at",
   "host_by",
   "lead_by",
@@ -3552,6 +3555,9 @@ export function toRoomView(
     // A join "That was not the lead" took back is kept in the row as
     // evidence, and shown as nobody: the panel never says the lead joined.
     lead_in_at: leadJoined(row) ? isoOrNull(row.lead_in_at) : null,
+    // When the room first showed the join: That was not the lead's five
+    // minutes count from the later of this and lead_in_at (fix round 4).
+    lead_in_seen_at: leadJoined(row) ? isoOrNull(row.lead_in_seen_at) : null,
     ended_at: isoOrNull(row.ended_at),
     host_by: isoOrNull(row.host_by),
     lead_by: isoOrNull(row.lead_by),

@@ -107,6 +107,7 @@ export function baseRoom(now: number, over: Partial<RoomView> = {}): RoomView {
     lead_waiting_at: null,
     host_in_at: null,
     lead_in_at: null,
+    lead_in_seen_at: null,
     ended_at: null,
     host_by: iso(now + 14 * MIN),
     lead_by: null,
@@ -151,7 +152,7 @@ export function healthFixture(now: number, down = false): Health {
       last_run_at: iso(now - 11 * MIN),
       rooms_today: 6,
       failed_today: 1,
-      line: `Rooms are down. The room worker last ran at ${clock(iso(now - 11 * MIN))}. New rooms cannot be made.`,
+      line: `Rooms are down. The room worker last ran at ${clock(iso(now - 11 * MIN))}. Call the lead on the phone, or send your own Zoom or Meet link.`,
     };
   return {
     worker_ok: true,

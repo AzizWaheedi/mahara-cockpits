@@ -951,6 +951,9 @@ describe("the rooms card's lines", () => {
       "quiet",
       "quiet",
       "quiet",
+      // The sweep and the watchdog (fix round 4): missing is never zero.
+      "bad",
+      "bad",
     ]);
     expect(lines[0].text).toBe("The room worker has not run yet.");
     expect(lines[2].text).toBe("Zoom's meeting events: no report yet.");

@@ -102,6 +102,7 @@ export const ROOM_VIEW_KEYS = [
   "lead_waiting_at",
   "host_in_at",
   "lead_in_at",
+  "lead_in_seen_at",
   "ended_at",
   "host_by",
   "lead_by",
@@ -156,6 +157,8 @@ export interface RoomView {
   // an answer from a sales-api that does not send them yet still draws.
   /** The WhatsApp template was not seen within 20 s, so email went too. */
   link_unconfirmed_at?: string | null;
+  /** When the room first showed the join (fix round 4): That was not the lead counts from the later of this and lead_in_at. */
+  lead_in_seen_at?: string | null;
   /** What made the room, so "Try Zoom" makes the same kind of room. */
   trigger?: string | null;
   attempt_id?: string | null;
@@ -250,7 +253,7 @@ export interface RoomFeed {
   now?: string | null;
 }
 
-export type MarkWhat = "host_in" | "lead_in" | "not_lead";
+export type MarkWhat = "host_in" | "lead_in" | "not_lead" | "still_on";
 /** room.end's reasons; `admit_blocked` is P1's "I can't let them in" (roomlogic END_REASONS). */
 export type EndReason =
   | "end"
@@ -350,7 +353,11 @@ function list(v: unknown): unknown[] {
   return Array.isArray(v) ? v : [];
 }
 
-const OPTIONAL_TIMES = ["link_unconfirmed_at", "starts_at"] as const;
+const OPTIONAL_TIMES = [
+  "link_unconfirmed_at",
+  "starts_at",
+  "lead_in_seen_at",
+] as const;
 const OPTIONAL_TEXT = [
   "trigger",
   "attempt_id",
@@ -897,8 +904,12 @@ export function manualButtons(room: RoomView, now: number): boolean {
  */
 export function canSayNotLead(room: RoomView, now: number): boolean {
   if (room.state !== "lead_in") return false;
-  const at = t(room.lead_in_at);
-  return at !== null && now - at <= NOT_LEAD_LAST_PRESS_MS;
+  const joined = t(room.lead_in_at);
+  if (joined === null) return false;
+  // The server counts its five minutes from when the room first showed the
+  // join (a Zoom join read late keeps Zoom's own time in lead_in_at).
+  const at = Math.max(joined, t(room.lead_in_seen_at ?? null) ?? joined);
+  return now - at <= NOT_LEAD_LAST_PRESS_MS;
 }
 
 /** Sentences the server sends whole; they are shown as they are. */
@@ -1008,6 +1019,8 @@ export interface RoomCtx {
   stillOn?: boolean;
   /** The viewer is a manager: a join marked by hand can be counted (room.count_confirm). */
   manager?: boolean;
+  /** The room worker is down (the health line is red): no room can be made, so a failed room offers no retry. */
+  workerDown?: boolean;
 }
 
 /** The status sentence under the room line. */
@@ -1051,12 +1064,23 @@ export function roomSentence(room: RoomView, ctx: RoomCtx): Sentence {
         ];
       return [head, at, "."];
     }
-    case "not_confirmed":
+    case "not_confirmed": {
+      // Fix round 4: a template nobody saw whose email backup did not go is
+      // no send at all; the rep reads the link out.
+      if (!(room.link_channels ?? []).includes("email")) {
+        const said = readOut(room);
+        const head =
+          "WhatsApp did not confirm the template and the email did not go.";
+        return said
+          ? [`${head} Read the link out: `, { mono: said }]
+          : [`${head} Copy the link and send it another way.`];
+      }
       return v === "p1"
         ? [
             "HighLevel did not confirm the WhatsApp template. The link went by email.",
           ]
         : ["Not confirmed on WhatsApp. Sent by email too."];
+    }
     case "link_late": {
       const said = readOut(room);
       if (!said)
@@ -1269,7 +1293,7 @@ function momentActions(
       const other = providerName(otherProvider(room.provider));
       return {
         primary:
-          hasLead && !booked
+          hasLead && !booked && !ctx.workerDown
             ? // P2 says the handover's button as [Use Meet]; P1 says "Try Zoom".
               act(
                 "retry",
@@ -2020,8 +2044,8 @@ export function healthSentence(h: Health): string {
   }
   if (!h.last_run_at)
     // Ours: the worker has never written its row.
-    return "Rooms are down. The room worker has not run yet. New rooms cannot be made.";
-  return `Rooms are down. The room worker last ran at ${clock(h.last_run_at)}. New rooms cannot be made.`;
+    return "Rooms are down. The room worker has not run yet. Call the lead on the phone, or send your own Zoom or Meet link.";
+  return `Rooms are down. The room worker last ran at ${clock(h.last_run_at)}. Call the lead on the phone, or send your own Zoom or Meet link.`;
 }
 
 // ---------------------------------------------------------------------------

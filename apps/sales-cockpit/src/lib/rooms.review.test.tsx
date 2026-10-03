@@ -1079,6 +1079,7 @@ describe("14. every fixture draws", () => {
     "lead_waiting_at",
     "host_in_at",
     "lead_in_at",
+    "lead_in_seen_at",
     "ended_at",
     "host_by",
     "lead_by",

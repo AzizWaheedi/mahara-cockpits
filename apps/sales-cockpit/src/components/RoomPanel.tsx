@@ -127,7 +127,15 @@ export function RoomPanelView({
   className = "",
 }: RoomPanelViewProps) {
   const { room, events, health } = feed;
-  const ctx = { now, canMarkIntro, stillOn, manager };
+  // The room worker down: a failed room offers no "Try {other}" (no worker
+  // makes that room either); its sentence says to phone the lead.
+  const ctx = {
+    now,
+    canMarkIntro,
+    stillOn,
+    manager,
+    workerDown: health?.worker_ok === false,
+  };
   const moment = momentFor(room, ctx);
   const sentence = roomSentence(room, ctx);
   const hint = roomHint(room, now);
@@ -724,7 +732,13 @@ function LiveRoomPanel({
     const r = latest.current;
     if (!r || busyRef.current || held.pending) return;
     if (key === "still_on") {
+      // Shown at once, and told to sales-api (room.mark still_on), which moves
+      // the room's end ten minutes on: the sweep then counts from this answer
+      // and never closes a call the rep says is still running (fix round 4).
       setStillAt({ id: r.id, at: Date.now() });
+      await run(key, async () =>
+        apply((await roomsApi.mark(r, "still_on")).room),
+      );
       return;
     }
     if (needsUndo(key)) {
