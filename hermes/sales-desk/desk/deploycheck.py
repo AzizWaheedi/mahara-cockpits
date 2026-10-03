@@ -78,6 +78,9 @@ DELTA: dict[str, tuple[tuple[str, ...], str]] = {
 }
 DELTA_WHERE = "the current 20261003a_sales_rooms.sql and 20261003c_sales_followup_agent.sql (contract-v2 section 10)"
 HARDENING_COLUMN = "appointment_start_at"
+# Every room column 20261003d adds: the intro's start, and (fix round 3)
+# when the room first showed the lead in. A d from before round 3 lacks the second.
+HARDENING_COLUMNS = (HARDENING_COLUMN, "lead_in_seen_at")
 
 SETTINGS = ("rooms", "live", "followups", "whatsapp_guard", "threads", "calendars")
 
@@ -259,9 +262,9 @@ def check_database(report: Report, sb: Any) -> dict[str, Any]:
     # and the send ceilings' one-step slot. Without it, sales-api's room
     # create fails on the new column, and its sends fall back to the old
     # ceilings, which a burst can pass.
-    status, _rows, reason = _get(sb, f"cockpit_sales_rooms?select={HARDENING_COLUMN}&limit=1")
+    status, _rows, reason = _get(sb, f"cockpit_sales_rooms?select={','.join(HARDENING_COLUMNS)}&limit=1")
     report.add(sec, "20261003d hardening", status == 200 if status in (200, 400, 404) else None,
-               "there (cockpit_sales_rooms.appointment_start_at)" if status == 200 else
+               f"there (cockpit_sales_rooms.{' and '.join(HARDENING_COLUMNS)})" if status == 200 else
                (f"not applied ({reason}): apply 20261003d_live_calls_hardening.sql before this sales-api is deployed, "
                 "or a room for a booked intro is refused" if status in (400, 404) else
                 f"could not be read ({reason or 'no answer'})"))

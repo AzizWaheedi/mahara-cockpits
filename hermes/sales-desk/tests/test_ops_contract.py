@@ -561,6 +561,14 @@ class Poster(OpsCase):
         self.assertTrue(self.row()["ok"])
         self.assertIn("1 Slack reply sent", self.row()["detail"])
 
+    def test_words_a_lead_wrote_reach_slack_escaped_never_as_markup(self):
+        # Fix round 3 (slack-markup-from-lead-name): a name typed on the ad's
+        # form inside the door's sentence is escaped at this last step.
+        reply(self.env, 1, text="<!channel> was taken by <https://evil.stress.invalid|Check HighLevel> & co.")
+        self.worker().run(seconds=5)
+        self.assertEqual(self.slack.posts, [("U0TESTREP", "&lt;!channel&gt; was taken by "
+                                                          "&lt;https://evil.stress.invalid|Check HighLevel&gt; &amp; co.")])
+
     def test_two_runs_at_once_send_it_once(self):
         reply(self.env, 1)
         a, b = self.worker("run-a"), self.worker("run-b")

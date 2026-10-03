@@ -341,24 +341,30 @@ def with_kinds(calendar: list[dict[str, Any]], calendars: Optional[dict[str, Any
 def in_hours(now: datetime, country: Any, hours: Any = FIRST_HOURS, *, first: bool = True) -> bool:
     """Whether it is between the hours given (from, to) on the lead's own
     clock, in every zone of a country that spans several. A first message to
-    a lead whose zone is not known never goes by itself (a person sends it);
-    a later one keeps to Kuwait's clock."""
+    a lead whose zone is not known (or whose clock this machine cannot read:
+    no time zone database) never goes by itself (a person sends it); a later
+    one keeps to Kuwait's clock."""
     try:
         a, b = int(hours[0]), int(hours[1])
     except (TypeError, ValueError, IndexError):
         a, b = FIRST_HOURS
     zones = lead_zones(country)
-    if zones is None:
+    offsets = [_zone_offset(z, now) for z in zones] if zones is not None else [None]
+    if any(o is None for o in offsets):
         if first:
             return False
-        zones = LEAD_ZONES["kw"]
-    return all(a <= (now + _zone_offset(z, now)).hour < b for z in zones)
+        offsets = [KUWAIT]
+    return all(a <= (now + o).hour < b for o in offsets)
 
 
 def lead_days(now: datetime, country: Any) -> set[str]:
     """The weekday names (lower case) on the lead's clock now, one per zone."""
     zones = lead_zones(country) or LEAD_ZONES["kw"]
-    return {(now + _zone_offset(z, now)).strftime("%A").lower() for z in zones}
+    out = set()
+    for z in zones:
+        off = _zone_offset(z, now)
+        out.add((now + (off if off is not None else KUWAIT)).strftime("%A").lower())
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -447,16 +453,48 @@ def heat(lead: dict[str, Any], now: datetime, *, hot: bool = False,
     return score, reasons[:3]
 
 
-def confirm_from(start: datetime) -> datetime:
+def confirm_from(start: datetime, country: Any = None) -> datetime:
     """When a call booked more than a day ahead is confirmed: 18:00 the evening
     before a call that starts before noon (Kuwait), otherwise 09:00 that day
-    (the dialer's rule, the call centre's too)."""
+    (the dialer's rule, the call centre's too).
+
+    A lead outside the Gulf is confirmed on their own clock: the same rule
+    there, and when no moment between it and the call is 09:00 to 21:00 in
+    every zone of their country (a 09:00 call in New York is 06:00 in Los
+    Angeles), from the start of the last stretch of the day before that is."""
     k = start + KUWAIT
     if k.hour < 12:
         at = (k - timedelta(days=1)).replace(hour=18, minute=0, second=0, microsecond=0)
     else:
         at = k.replace(hour=9, minute=0, second=0, microsecond=0)
-    return at - KUWAIT
+    kuwait_rule = at - KUWAIT
+    zones = lead_zones(country)
+    if not zones or all(z in _FIXED_HOURS for z in zones):
+        return kuwait_rule
+    off = _zone_offset(zones[0], start)
+    if off is None:
+        return kuwait_rule
+    local = start + off
+    if local.hour < 12:
+        at = (local - timedelta(days=1)).replace(hour=18, minute=0, second=0, microsecond=0) - off
+    else:
+        at = local.replace(hour=9, minute=0, second=0, microsecond=0) - off
+    step = timedelta(minutes=15)
+    t = at
+    while t < start - timedelta(minutes=30):
+        if in_hours(t, country, CONFIRM_HOURS, first=False):
+            return at
+        t += step
+    # The last moment before the call that is daytime in every zone, then back
+    # to where that stretch began.
+    t = start - timedelta(minutes=30)
+    while t > start - timedelta(hours=48) and not in_hours(t, country, CONFIRM_HOURS, first=False):
+        t -= step
+    if not in_hours(t, country, CONFIRM_HOURS, first=False):
+        return at
+    while in_hours(t - step, country, CONFIRM_HOURS, first=False) and t - step > start - timedelta(hours=48):
+        t -= step
+    return t
 
 
 # ---------------------------------------------------------------------------
@@ -748,7 +786,7 @@ def pick(now: datetime, *, inbox: list[dict[str, Any]], calendar: list[dict[str,
         aid = str(a.get("appointment_id") or "")
         if a.get("status") in live or not booked or not aid or start <= now or start - now > timedelta(hours=36):
             continue
-        if start - booked < timedelta(hours=24) or now < confirm_from(start):
+        if start - booked < timedelta(hours=24) or now < confirm_from(start, (by_lead.get(c) or {}).get("country")):
             continue
         if aid in confirmed or aid in drafted_appts or (inbound.get(c) and inbound[c] > booked):
             continue
@@ -1008,32 +1046,70 @@ def lead_zones(country: Any) -> Optional[tuple[str, ...]]:
     return LEAD_ZONES["kw"]
 
 
-def _zone_offset(zone: str, at: datetime) -> timedelta:
+# The Gulf's zones keep one offset all year (no daylight saving): known even
+# on a machine with no time zone database. Every other zone's offset comes
+# from zoneinfo only; without it the zone's clock is not known (None).
+_FIXED_HOURS = {"Asia/Kuwait": 3, "Asia/Riyadh": 3, "Asia/Qatar": 3, "Asia/Bahrain": 3, "Asia/Baghdad": 3,
+                "Asia/Aden": 3, "Asia/Dubai": 4, "Asia/Muscat": 4}
+# A confirmation goes between these hours on the lead's clock (sales-api's later-message hours).
+CONFIRM_HOURS = (9, 21)
+
+
+def _zone_offset(zone: str, at: datetime) -> Optional[timedelta]:
+    """The zone's UTC offset at `at`, or None when this machine cannot read
+    it (no time zone database) and the zone is not one of the Gulf's fixed
+    ones: missing is never zero, and never silently Kuwait's."""
     try:
         from zoneinfo import ZoneInfo
         off = at.astimezone(ZoneInfo(zone)).utcoffset()
         if off is not None:
             return off
-    except Exception:  # noqa: BLE001 - no tz database on this machine: the Gulf's fixed offsets
+    except Exception:  # noqa: BLE001 - no tz database on this machine
         pass
-    return timedelta(hours=4) if zone in ("Asia/Dubai", "Asia/Muscat") else KUWAIT
+    h = _FIXED_HOURS.get(zone)
+    return timedelta(hours=h) if h is not None else None
 
 
 def lead_offset(country: Any, at: Optional[datetime] = None) -> timedelta:
     """The lead's clock at `at` (now when not given): their first zone's
     offset; UTC+4 in the UAE and Oman, UTC+3 elsewhere in the Gulf and when
-    the country is not known."""
+    the country (or its clock on this machine) is not known."""
     zones = lead_zones(country) or LEAD_ZONES["kw"]
-    return _zone_offset(zones[0], at or datetime.now(timezone.utc))
+    off = _zone_offset(zones[0], at or datetime.now(timezone.utc))
+    return off if off is not None else KUWAIT
+
+
+def _utc_words(off: timedelta) -> str:
+    minutes = int(off.total_seconds() // 60)
+    sign = "+" if minutes >= 0 else "-"
+    h, m = divmod(abs(minutes), 60)
+    return f"UTC{sign}{h}" + (f":{m:02d}" if m else "")
+
+
+def _place(zone: str) -> str:
+    return zone.rsplit("/", 1)[-1].replace("_", " ")
 
 
 def call_words(start: datetime, now: datetime, country: Any = None) -> dict[str, str]:
-    """A booked call's day and time on the lead's own clock, as the message may name them."""
-    off = lead_offset(country, start)
+    """A booked call's day and time on the lead's own clock, as the message
+    may name them, and the words for which clock that is: the offset at the
+    call's time and the place whose clock it is (New York's for a country
+    that spans zones), never "as Kuwait" unless it is Kuwait's clock."""
+    zones = lead_zones(country) or LEAD_ZONES["kw"]
+    off = _zone_offset(zones[0], start)
+    known = off is not None
+    off = off if known else KUWAIT
     k, today = start + off, (now + off).date()
     rel = "today" if k.date() == today else "tomorrow" if k.date() == today + timedelta(days=1) else k.strftime("%A")
-    return {"day": k.strftime("%A %d %B"), "relative": rel, "time_24h": k.strftime("%H:%M"),
-            "zone": "their own time (UTC+4)" if off == timedelta(hours=4) else "their own time (UTC+3, as Kuwait)"}
+    if not known:
+        zone = f"Kuwait time ({_utc_words(KUWAIT)}): the lead's own clock could not be read"
+    elif zones[0] in _FIXED_HOURS:
+        zone = "their own time (UTC+4)" if off == timedelta(hours=4) else "their own time (UTC+3, as Kuwait)"
+    elif len(zones) > 1:
+        zone = f"{_place(zones[0])} time ({_utc_words(off)}); the country has more than one clock"
+    else:
+        zone = f"their own time ({_utc_words(off)}, {_place(zones[0])})"
+    return {"day": k.strftime("%A %d %B"), "relative": rel, "time_24h": k.strftime("%H:%M"), "zone": zone}
 
 
 def asked_to_stop(thread: list[dict[str, Any]]) -> bool:
@@ -1430,6 +1506,10 @@ def track_replies(sb: Any, now: datetime) -> int:
 APPROVED_KEEP = timedelta(hours=72)
 
 
+# The error a draft closed as stale carries (here and in the waves' send).
+STALE_DRAFT = "Went stale before anyone sent it."
+
+
 def expire_stale(sb: Any, now: datetime) -> int:
     """Drafts past their time (a WhatsApp window that closed, two days
     unanswered) are marked expired: the page already hides them, and while
@@ -1437,7 +1517,7 @@ def expire_stale(sb: Any, now: datetime) -> int:
     never wrote them a fresh one. A backlog opener a manager approved is a
     template (no window) waiting for the lead's hours: it is kept until 72
     hours past its turn, unless someone holds it."""
-    stale = {"status": "expired", "decided_at": now.isoformat(), "error": "Went stale before anyone sent it."}
+    stale = {"status": "expired", "decided_at": now.isoformat(), "error": STALE_DRAFT}
     out = sb.rest("PATCH", f"cockpit_sales_followups?status=eq.draft&segment=neq.reactivate"
                            f"&expires_at=lt.{_q(now.isoformat())}",
                   json_body=stale, prefer="return=representation")

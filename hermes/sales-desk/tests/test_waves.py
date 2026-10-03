@@ -258,7 +258,10 @@ class Enrol(unittest.TestCase):
         ms = members(pg, "w1")
         self.assertEqual(len(ms), 60)
         held = {m["contact_id"] for m in ms if m["arm"] == "holdout"}
-        self.assertEqual(held, {f"n{i:02d}" for i in range(60) if waves.holdout(f"n{i:02d}", 0.1)})
+        # Drawn with the wave's own salt (fix round 3): the same lead lands the
+        # same way every run of this wave, and afresh in the next wave.
+        salt = waves.wave_salt("waves", "w1")
+        self.assertEqual(held, {f"n{i:02d}" for i in range(60) if waves.holdout(f"n{i:02d}", 0.1, salt)})
         self.assertTrue(all(m["state"] == ("held_out" if m["arm"] == "holdout" else "waiting") for m in ms))
         self.assertEqual(out["enrolled"]["w1"], {"enrolled": 60, "held_back": len(held), "skipped_busy": 0})
         self.assertEqual(pg.one("cockpit_sales_followup_wave_members", wave_id="w1", contact_id="n00")["event_at"], ago(days=1))

@@ -15,7 +15,9 @@ How a wave runs. sales-api holds the buttons; this is the desk's half.
    cockpit_sales_followup_waves, state running.
 2. The desk enrols the pool, chunk by chunk, until every chunk is in
    (enrolled_at). Every lead in it becomes a member, and a tenth is held
-   back by sha256('waves:'||contact_id). Held-back members are never
+   back by sha256('waves:{wave id}:'||contact_id), drawn afresh for each
+   wave (a second wave on the same pool never holds back the same tenth
+   again). Held-back members are never
    written to; they are what the wave is measured against.
 3. On working days from 09:00 Kuwait, the desk drafts the day's openers:
    at most waves.per_day (40) across the running waves, served in the pool
@@ -132,6 +134,11 @@ LEVELS = "cockpit_sales_followup_levels"
 APPROVED_KEEP = timedelta(hours=72)
 # How a send_due run ended, and which endings are a fault (the row turns red).
 FAULTS = ("refusals", "hold_all", "outage", "error", "no_answer", "budget")
+# sales-api's mark on an opener it is sending (followupAgent.ts SENDING), and
+# the age past which it is a send that stopped half way (SENDING_STALE_MS):
+# such an opener is asked for again, never stranded.
+SENDING = "sales-desk:sending"
+SENDING_STALE = timedelta(minutes=5)
 
 
 def settings_of(followups: Optional[dict[str, Any]]) -> dict[str, Any]:
@@ -150,6 +157,14 @@ def settings_of(followups: Optional[dict[str, Any]]) -> dict[str, Any]:
     salt = str(w.get("salt") or DEFAULTS["salt"]).strip() or DEFAULTS["salt"]
     return {"per_day": num("per_day", 0, 200, int), "holdout_share": num("holdout_share", 0.0, 0.5, float),
             "batch_gap_s": num("batch_gap_s", 30, 3600, float), "salt": salt}
+
+
+def wave_salt(salt: str, wave_id: str) -> str:
+    """One wave's own holdout salt: the waves' salt and the wave's id, so a
+    second wave on the same pool draws its arms afresh (never the same tenth
+    held back from every wave), and still apart from the demo chat's
+    ('threads:'||contact_id, C36)."""
+    return f"{salt}:{wave_id}"
 
 
 def holdout(contact_id: str, share: float = 0.1, salt: str = "waves") -> bool:
@@ -469,8 +484,9 @@ def enroll(sb: Any, wave: dict[str, Any], now: datetime, w: dict[str, Any],
     in_pool = pools(sb, now)[pool]
     members = [(c, at) for c, at in in_pool if c not in busy]
     taken = len(in_pool) - len(members)
-    rows = [{"wave_id": wid, "contact_id": c, "arm": "holdout" if holdout(c, share, w["salt"]) else "wave",
-             "state": "held_out" if holdout(c, share, w["salt"]) else "waiting",
+    salt = wave_salt(w["salt"], wid)
+    rows = [{"wave_id": wid, "contact_id": c, "arm": "holdout" if holdout(c, share, salt) else "wave",
+             "state": "held_out" if holdout(c, share, salt) else "waiting",
              "event_at": at.isoformat() if at else None, "added_at": now.isoformat()} for c, at in members]
     added = 0
 
@@ -508,7 +524,8 @@ def enroll(sb: Any, wave: dict[str, Any], now: datetime, w: dict[str, Any],
         log(f"waves: {POOL_WORDS[pool]}: {added} leads enrolled, {held} held back to measure the effect")
     sb.rest("PATCH", f"{WAVES}?id=eq.{_q(wid)}&enrolled_at=is.null", json_body=body, prefer="return=minimal")
     audit(sb, "waves.enroll", WAVES, wid, after=out,
-          metadata={"pool": pool, "holdout_share": share, "arms": {"wave": len(rows) - held, "holdout": held}})
+          metadata={"pool": pool, "holdout_share": share, "salt": salt,
+                    "arms": {"wave": len(rows) - held, "holdout": held}})
     return out
 
 
@@ -526,8 +543,12 @@ def _maybe_went(f: dict[str, Any], msgs: list[dict[str, Any]]) -> Optional[str]:
     message says it went (HighLevel's id, a sent state, or the workflow
     enrolled), "unclear" when it may have (a row still sending or unclear, or
     the draft's own error says so), else None (it certainly did not go)."""
-    if any(m.get("ghl_message_id") or str(m.get("state") or "") in ("sent", "delivered", "read")
-           or str(m.get("provider_status") or "").lower() == "enrolled" for m in msgs):
+    # A message Meta failed (an empty wallet, the per-person marketing limit,
+    # a number not on WhatsApp) never went, though HighLevel keeps its id:
+    # only a row that is not failed counts (as free_stuck reads it).
+    if any(str(m.get("state") or "") != "failed"
+           and (m.get("ghl_message_id") or str(m.get("state") or "") in ("sent", "delivered", "read")
+                or str(m.get("provider_status") or "").lower() == "enrolled") for m in msgs):
         return "sent"
     if any(str(m.get("state") or "") in ("sending", "unclear") for m in msgs):
         return "unclear"
@@ -1142,6 +1163,14 @@ def _draft_wave(sb: Any, wave: dict[str, Any], wave_room: int, now: datetime, ct
             if c in other:
                 later("Another draft for this lead is open.", now + LATER["open_draft"])
                 continue
+            # A lead whose clock the cockpit does not know (a country code
+            # with no time zone in the table): sales-api lets no first message
+            # go by itself to them, so no opener is written for the desk to
+            # send; they are taken out with the reason, and a person writes.
+            if fu.lead_zones(lead.get("country")) is None:
+                exclude(f"A person writes this lead's first message: their time zone is not known "
+                        f"(country {str(lead.get('country') or '').strip().upper()}).")
+                continue
             # The route first, from what the lead copy says: a lead whose
             # template is not set up waits a day without HighLevel being read.
             lang = fu.language_for(lead, [])
@@ -1344,9 +1373,17 @@ def send_due(sb: Any, api: Callable[[str, dict[str, Any]], tuple[int, dict[str, 
         return out
     fups = {str(f["id"]): f for f in drafts}
     meta: list[dict[str, Any]] = []
+    stale_mark = _q((started + skew - SENDING_STALE).isoformat())
     for chunk in fu._chunks(sorted(fups)):
-        meta += sb.select(META, f"select=followup_id,send_after,held_by,wave_id,kind_key&followup_id={fu._in(chunk)}"
-                                f"&send_after=lte.{_q((started + skew).isoformat())}&held_by=is.null&limit=1000")
+        cols = f"select=followup_id,send_after,held_by,held_at,wave_id,kind_key&followup_id={fu._in(chunk)}" \
+               f"&send_after=lte.{_q((started + skew).isoformat())}"
+        meta += sb.select(META, f"{cols}&held_by=is.null&limit=1000")
+        # An opener whose send stopped half way (the Edge Function's wall
+        # clock, a crash before its message row, a clear that failed): its
+        # sending mark is older than five minutes, and sales-api takes it again.
+        stalled = sb.select(META, f"{cols}&held_by=eq.{_q(SENDING)}&held_at=lt.{stale_mark}&limit=1000")
+        out["stalled"] = out.get("stalled", 0) + len(stalled)
+        meta += stalled
     if not meta:
         return out
     meta.sort(key=lambda m: (fu._ts(m.get("send_after")) or started, str(m["followup_id"])))
@@ -1450,6 +1487,7 @@ def send_due(sb: Any, api: Callable[[str, dict[str, Any]], tuple[int, dict[str, 
                             f"ceiling keeps {RESERVE} for the demo chat.")
             break
         out_of_time = False
+        leased = False
         for _ in range(6):
             now = clock()
             dbn = db_now()
@@ -1474,16 +1512,26 @@ def send_due(sb: Any, api: Callable[[str, dict[str, Any]], tuple[int, dict[str, 
             if wait <= 0:
                 try:
                     if _take_lease(sb, SEND_LEASE, dbn, max(1.0, gap - 1)):
+                        leased = True
                         break
                 except http.HttpError:
+                    leased = True
                     break  # no lease row to be had: the gap read above stands
                 continue  # another run took it between the read and now: read again
             sleep(wait)
         if out_of_time:
             stop("time", "This run's time is up; the next run carries on.")
             break
-        fresh = next(iter(sb.select(META, f"select=held_by,wave_id&followup_id=eq.{_q(fid)}&limit=1")), {})
-        if fresh.get("held_by"):
+        if not leased:
+            # Six tries and another run held the send lease each time: that run
+            # is sending, so this one never sends beside it.
+            stop("busy", "Another waves run is sending now; this one leaves the batch to it.")
+            break
+        fresh = next(iter(sb.select(META, f"select=held_by,held_at,wave_id&followup_id=eq.{_q(fid)}&limit=1")), {})
+        held_by = fresh.get("held_by")
+        mark_at = fu._ts(fresh.get("held_at"))
+        stalled_mark = held_by == SENDING and (mark_at is None or mark_at < db_now() - SENDING_STALE)
+        if held_by and not stalled_mark:
             out["held"] += 1
             continue
         if f.get("segment") == "reactivate":
@@ -1504,6 +1552,16 @@ def send_due(sb: Any, api: Callable[[str, dict[str, Any]], tuple[int, dict[str, 
                 continue
         if not sb.select(FOLLOWUPS, f"select=id&id=eq.{_q(fid)}&status=eq.draft&limit=1"):
             out["gone"] += 1  # sent, skipped or expired meanwhile (another run, a rep)
+            continue
+        expires = fu._ts(f.get("expires_at"))
+        if expires and expires <= db_now():
+            # Past its 72 hours while nothing could go (the agent switched off
+            # over a long weekend): it went stale. Closed here, never asked
+            # for: sales-api would close it and refuse, which is no refusal
+            # about the lead and must never stop this morning's openers.
+            closed = sb.rest("PATCH", f"{FOLLOWUPS}?id=eq.{_q(fid)}&status=eq.draft", prefer="return=representation",
+                             json_body={"status": "expired", "decided_at": now.isoformat(), "error": fu.STALE_DRAFT})
+            out["stale"] = out.get("stale", 0) + bool(isinstance(closed, list) and closed)
             continue
         wid = wave_of(m)
         now_state = next(iter(sb.select(WAVES, f"select=state&id=eq.{_q(wid)}&limit=1")), None) if wid else None
@@ -1538,6 +1596,13 @@ def send_due(sb: Any, api: Callable[[str, dict[str, Any]], tuple[int, dict[str, 
             # Another run is sending it, the wave was paused, or sales-api's
             # clock is a moment behind: left in the queue, never set aside.
             out["raced"] += 1
+            continue
+        if verdict == "lead" and (res.get("closed") or not sb.select(
+                FOLLOWUPS, f"select=id&id=eq.{_q(fid)}&status=eq.draft&limit=1")):
+            # The refusal closed the draft itself (it went stale, the lead is an
+            # active client): no page shows a closed draft, so it is not set
+            # aside for a person, and it is no refusal about this batch.
+            out["gone"] += 1
             continue
         in_a_row += 1
         if verdict == "failed":
@@ -1646,7 +1711,11 @@ def run(sb: Any, api: Callable[[str, dict[str, Any]], tuple[int, dict[str, Any]]
                                          "opener is written.", "setup": True}
         else:
             half = budget_s / 2
-            out["drafted"] = draft_day(sb, started, settings=settings, w=w, waves=waves, guard=guard,
+            # Only a wave whose whole pool is in (enrolled_at) writes a batch:
+            # one whose enrolment broke half way would serve its first chunk
+            # (the leads by contact id) before the newest of the pool.
+            ready = [x for x in waves if x.get("enrolled_at") or x.get("state") != "running"]
+            out["drafted"] = draft_day(sb, started, settings=settings, w=w, waves=ready, guard=guard,
                                        ghl_token=ghl_token, log=log, warn=warn,
                                        deadline=lambda: (clock() - started).total_seconds() > half)
         out["finished"] = finish(sb, [x for x in waves if x.get("state") == "running"], started, log)
@@ -1720,6 +1789,14 @@ def words(out: dict[str, Any]) -> tuple[bool, str]:
         parts.append(f"{sent['outside_hours']} wait for 09:00 to 18:00 on the lead's clock")
     if sent.get("held"):
         parts.append(f"{sent['held']} held by a person")
+    if sent.get("stalled"):
+        n = sent["stalled"]
+        parts.append(f"{n} opener{'s' if n != 1 else ''} whose send had stopped half way "
+                     f"{'were' if n != 1 else 'was'} asked for again")
+    if sent.get("stale"):
+        n = sent["stale"]
+        parts.append(f"{n} approved opener{'s' if n != 1 else ''} went stale before {'they' if n != 1 else 'it'} "
+                     f"could go and {'were' if n != 1 else 'was'} closed; the wave writes {'them' if n != 1 else 'it'} again")
     if sent.get("wave_not_running"):
         parts.append(f"{sent['wave_not_running']} approved for a wave that is paused or stopped, so not sent")
     if sent.get("kind_off"):
@@ -1734,7 +1811,8 @@ def words(out: dict[str, Any]) -> tuple[bool, str]:
         if sent.get("stop_kind") in FAULTS:
             ok = False
     explained = any(sent.get(k) for k in ("sent", "gate", "outside_hours", "held", "gone", "refused", "failed",
-                                          "wave_not_running", "kind_off")) or sent.get("stop_kind") in ("time", "ceiling")
+                                          "wave_not_running", "kind_off", "stale", "raced", "left_pool")) \
+        or sent.get("stop_kind") in ("time", "ceiling", "busy")
     if sent.get("due") and not explained:
         parts.append(f"{sent['due']} approved openers are due and none went")
         ok = False

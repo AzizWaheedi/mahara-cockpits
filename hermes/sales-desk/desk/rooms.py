@@ -191,6 +191,9 @@ HOLD_GIVE_UP_S = 3 * 3600.0  # a meeting left open with someone in it is checked
 HOLD_RECHECK_S = 60.0
 START_URL_TTL = 7200.0    # Zoom's start_url lasts two hours for a regular user
 HOSTS_EVERY = 600.0
+# A live Zoom meeting holds its host on a call this long past the next host
+# check, so presence never reads them free between two checks.
+LIVE_MARGIN_S = 300.0
 HOSTS_BUDGET = 240.0      # the host check's own time limit
 REPORT_WINDOW_S = 24 * 3600.0
 REPORT_PER_RUN = 10
@@ -2140,6 +2143,23 @@ class Worker:
             out["ends_at"] = iso(now + minutes * 60)
         return out
 
+    def _fill_deadlines(self, row: dict[str, Any], now: float) -> dict[str, Any]:
+        """host_by and ends_at the opened room still lacks (sales-api and the
+        database's guard set them first when they can), each written only
+        where it is still null, from the row as it is now (its purpose and
+        kind may have changed since the claim: a Take adopted it)."""
+        out = dict(row)
+        for key, value in self._host_by_and_ends(row, now).items():
+            try:
+                got = self.sb.patch_returning(ROOMS, f"id=eq.{_q(str(row['id']))}&{key}=is.null", {key: value})
+            except (SupabaseError, http.HttpError) as e:
+                self.log.warn(f"rooms: room {row.get('code')}'s {key} was not set: {db_reason(e)}; the sweep's "
+                              "own deadline stands")
+                continue
+            if got:
+                out.update(got[0])
+        return out
+
     def finish(self, room: dict[str, Any], *, provider: str, meeting_id: Any, join_url: str, start_url: str) -> bool:
         rid = str(room["id"])
         now = self.db_now()
@@ -2159,9 +2179,13 @@ class Worker:
         # 3. The room, open, only if it is still this run's and still being
         #    made. The worker never sets lead_by: sales-api fills it when it
         #    claims the link (contract-v2 S2).
+        #    The deadlines are not in this write: they are filled after it,
+        #    from the row as it is then and only where still unset, so a Take
+        #    that adopted the room while it was being made (purpose handover,
+        #    the handover's 120 s, the call's own length) is never overwritten
+        #    from this run's copy of the standby room it claimed.
         body = {"state": "open", "join_url": join_url, "provider_meeting_id": str(meeting_id),
-                "opened_at": iso(now), "error": None, "version": int(room.get("version") or 0) + 1,
-                **self._host_by_and_ends(room, now)}
+                "opened_at": iso(now), "error": None, "version": int(room.get("version") or 0) + 1}
         got = self._patch_or_lost(f"id=eq.{_q(rid)}&state=eq.creating&worker_run=eq.{_q(self.run_id)}", body)
         opened = got[0] if got else None
         if opened is not None:
@@ -2188,6 +2212,7 @@ class Worker:
                 if provider == "zoom" and meeting_id:
                     self._stray(room, str(meeting_id), str(made.get("start_url") or start_url or ""))
                 return False
+        opened = self._fill_deadlines(opened, now)
         self._made.pop(rid, None)
         self._retry_at.pop(rid, None)
         self._tries.pop(rid, None)
@@ -2912,16 +2937,25 @@ class Worker:
         if status is None:
             return {"status": None, "line": f"{who}: Zoom did not answer; the last known status stays."}
         live_until = None
+        live_unread = False
         if status in ("licensed", "basic") and user and user.get("id"):
             try:
                 ends = []
+                # A meeting Zoom lists as live holds the host on a call at least
+                # until the next check has looked again (a demo that runs past its
+                # slot, a meeting started late on its schedule, one with no
+                # duration): never a scheduled end that is already past.
+                floor = self.clock() + HOSTS_EVERY + LIVE_MARGIN_S
                 for m in self.zoom.live(str(user["id"])):
                     start = parse_ts(m.get("start_time"))
                     minutes = float(m.get("duration") or 0)
-                    ends.append((start + minutes * 60) if start and minutes else self.clock() + HOSTS_EVERY)
+                    ends.append(max((start + minutes * 60) if start and minutes else 0.0, floor))
                 live_until = iso(max(ends)) if ends else None
             except ProviderError:
-                live_until = None
+                # The live list could not be read: the last known value stays
+                # (missing is never zero: never "not in a meeting" from a list
+                # nobody read).
+                live_unread = True
         line = {
             "licensed": f"{who}: Zoom licensed, so Zoom rooms have no time limit.",
             "basic": f"{who}: Zoom Basic, so meetings end at 40 minutes and demos go on Meet.",
@@ -2932,7 +2966,10 @@ class Worker:
             line += " Zoom user set on the Team page."
         if live_until:
             line += " In a Zoom meeting now."
-        return {"status": status, "user_id": (user or {}).get("id"), "live_until": live_until, "line": line}
+        if live_unread:
+            line += " Zoom's live meetings could not be read; the last known stays."
+        return {"status": status, "user_id": (user or {}).get("id"), "live_until": live_until,
+                "live_unread": live_unread, "line": line}
 
     def check_hosts(self) -> dict[str, Any]:
         """Every seat's Zoom user and status and whether Google works, into
@@ -2974,8 +3011,9 @@ class Worker:
             if google_ok is not None:
                 row["google_ok"] = google_ok
             if seat["status"] is not None:
-                row.update({"zoom_status": seat["status"], "zoom_live_until": seat["live_until"],
-                            "checked_at": iso(now)})
+                row.update({"zoom_status": seat["status"], "checked_at": iso(now)})
+                if not seat.get("live_unread"):
+                    row["zoom_live_until"] = seat["live_until"]
                 if seat.get("user_id") and not linked:
                     row["zoom_user_id"] = str(seat["user_id"])
             rows.append(row)

@@ -106,6 +106,13 @@ class HardeningMigration(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("apply 20261003d_live_calls_hardening.sql", line(out, "20261003d hardening"))
 
+    def test_a_20261003d_from_before_round_3_is_not_ready(self):
+        db = Catalog()
+        db.schema["cockpit_sales_rooms"].discard("lead_in_seen_at")
+        code, out, _ = run(["deploy-check"], db)
+        self.assertEqual(code, 1)
+        self.assertIn("apply 20261003d_live_calls_hardening.sql", line(out, "20261003d hardening"))
+
 
 if __name__ == "__main__":
     unittest.main()

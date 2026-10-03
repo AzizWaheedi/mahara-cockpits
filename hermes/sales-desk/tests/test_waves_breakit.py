@@ -111,13 +111,16 @@ class Finding2StoppedWaveStillSends(unittest.TestCase):
         wave(pg, "w1", "no_show_cancelled")
         for i in range(4):
             due_draft(pg, i, send_after=ago(minutes=10 - i))
-        clock = Clock(NOW)
+        api = Api(pg, Clock(NOW))
 
         def sleep(s):
-            clock.sleep(s)
+            # The wait moves the clock send_due reads (send() gives the Api its
+            # clock): before round 3 it moved another clock, so the waits never
+            # ended and only the lease loop's fall-through let the run go on.
+            api.clock.sleep(s)
             pg.one(WAVES, id="w1")["state"] = "done"
 
-        out, api = send(pg, Api(pg, clock), sleep=sleep)
+        out, api = send(pg, api, sleep=sleep)
         self.assertEqual([i for _, _, i in api.calls], ["f000"])
         self.assertEqual(out["wave_not_running"], 3)
 
@@ -673,8 +676,10 @@ class MembersFollowWhatTheOpenerDid(unittest.TestCase):
     def setUp(self):
         self.pg = FakePostgrest()
         routes(self.pg)
+        # Contacts whose holdout draw (wave w1's own salt, fix round 3) puts
+        # some of the ten newest in the holdout, level with the first batch.
         for i in range(40):
-            seed(self.pg, f"n{i:02d}", "no_show_cancelled", days=i + 1)
+            seed(self.pg, f"k{i:02d}", "no_show_cancelled", days=i + 1)
         wave(self.pg, "w1", "no_show_cancelled", per_day=10)
         run(self.pg)
         for f in self.pg.rows(FOLLOWUPS):

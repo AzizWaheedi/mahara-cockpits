@@ -49,6 +49,12 @@ KIND = "slack.reply"
 LIVE = "live"
 POST_URL = "https://slack.com/api/chat.postMessage"
 
+
+def slack_escape(text: str) -> str:
+    """Text as Slack wants it escaped (&, <, >): it then shows as written
+    and is never read as a mention, a channel ping or a labelled link."""
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
 EVERY = 2.0               # replies are looked for this often (P2: DMs out within 5 s)
 SETTINGS_EVERY = 25.0     # the live setting is read again this often
 SETTINGS_STALE_S = 60.0   # with no good read of it for this long, nothing is sent
@@ -206,8 +212,11 @@ class SlackPoster:
         detail = e.get("detail") if isinstance(e.get("detail"), dict) else {}
         user = str(detail.get("slack_user_id") or "").strip()
         # The door's own sentence, as it wrote it (it may carry a cockpit
-        # link); only anything that looks like a key is hidden.
-        text = re.sub(r"\s+", " ", http.scrub(str(e.get("text") or ""))).strip()[:3000]
+        # link); only anything that looks like a key is hidden. Escaped for
+        # Slack at this last step (& < >), so words that came from a lead (a
+        # name, a company) never reach it as markup (<!channel>, <@U...>, a
+        # link with a label of their choosing). A bare link still links.
+        text = slack_escape(re.sub(r"\s+", " ", http.scrub(str(e.get("text") or ""))).strip()[:3000])
         if not SLACK_USER.match(user):
             return self._close(e, {"refused": "no_slack_user"}, "refused")
         if not text:
