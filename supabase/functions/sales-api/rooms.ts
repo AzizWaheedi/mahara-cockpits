@@ -51,6 +51,7 @@ import {
   leadJoined,
   linkDue,
   liveWindow,
+  outsideHoursText,
   type LinkChannel,
   markEvent,
   MAX_WRITE_TRIES,
@@ -1181,20 +1182,32 @@ export function makeRooms(deps: RoomDeps): Rooms {
     return fresh;
   }
 
-  async function recordNotSent(room: RoomRow, why: string): Promise<void> {
+  /**
+   * Why the link did not go, on the room (the panel's "Not sent: ...") with
+   * its audit row and timeline line, once: the tick re-asks a claimed link
+   * every minute, and a reason already said is not said again (eight copies
+   * would push the room's real history off the panel). Answers whether it
+   * was written now.
+   */
+  async function recordNotSent(room: RoomRow, why: string): Promise<boolean> {
     const sentence = why.charAt(0).toUpperCase() + why.slice(1).replace(/\.+$/, "");
+    const text = `${sentence}.`.slice(0, 500);
+    if ((room.refusal ?? null) === text) return false;
     try {
-      const rows = await io.db(`${ROOMS}?id=eq.${enc(room.id)}&link_sent_at=is.null`, {
+      const guard = room.refusal ? `refusal=eq.${enc(room.refusal)}` : "refusal=is.null";
+      const rows = await io.db(`${ROOMS}?id=eq.${enc(room.id)}&link_sent_at=is.null&${guard}`, {
         method: "PATCH",
-        body: { refusal: `${sentence}.`.slice(0, 500) },
+        body: { refusal: text },
         prefer: "return=representation",
       });
-      if (rows.length)
-        await deps.audit(DESK, "room.link.not_sent", ROOMS, room.id, { refusal: room.refusal ?? null }, { refusal: rows[0]?.refusal ?? null });
+      // Another run said it a moment ago: said once.
+      if (!rows.length) return false;
+      await deps.audit(DESK, "room.link.not_sent", ROOMS, room.id, { refusal: room.refusal ?? null }, { refusal: rows[0]?.refusal ?? null });
     } catch (e) {
       io.log(`rooms: the reason the link did not go was not saved: ${redact(String((e as Error)?.message ?? e))}`);
     }
     await note(room.id, "link.not_sent", fill(EVENT_TEXT.not_sent, { why: sentence.charAt(0).toLowerCase() + sentence.slice(1) }), {});
+    return true;
   }
 
   /**
@@ -1317,8 +1330,9 @@ export function makeRooms(deps: RoomDeps): Rooms {
       }, { host_email: lower(room.host_email) });
       return;
     }
-    await recordNotSent(room, channel === "email" ? ROOMS_COPY.may_have_gone_email : ROOMS_COPY.may_have_gone_whatsapp);
-    await deps.audit(DESK, "room.link.unclear", ROOMS, room.id, null, { channel, why: sent.why }, { host_email: lower(room.host_email) });
+    // Said once: a re-ask that finds the same send still unclear adds nothing.
+    if (await recordNotSent(room, channel === "email" ? ROOMS_COPY.may_have_gone_email : ROOMS_COPY.may_have_gone_whatsapp))
+      await deps.audit(DESK, "room.link.unclear", ROOMS, room.id, null, { channel, why: sent.why }, { host_email: lower(room.host_email) });
   }
 
   // ------------------------------------------------------------- the live booking
@@ -1887,7 +1901,7 @@ export function makeRooms(deps: RoomDeps): Rooms {
     const window = liveWindow(live.hours, now);
     if (state === "available" && !window.open) {
       await deps.audit(who, "live.availability.refused", "cockpit_sales_availability", email, before, null, { why: "outside_hours" });
-      return { me: await presenceOfSeat(email, now), standby_error: ROOM_COPY.refusals.outside_hours };
+      return { me: await presenceOfSeat(email, now), standby_error: outsideHoursText(live.hours) };
     }
     const until =
       state === "available" ? isoAt(Math.min(now + setting.available_hours * 3_600_000, window.ends_at ?? Number.POSITIVE_INFINITY)) : null;
@@ -1933,6 +1947,18 @@ export function makeRooms(deps: RoomDeps): Rooms {
                   .catch(() => [])
               : [];
           if (!other.length) standbyError = made.refused.message;
+        } else {
+          // Away pressed on another device while this room was being asked
+          // for: the last press wins, so the standby room it would leave
+          // behind (the worker would make a meeting nobody is in) ends now.
+          const after = (await io.db(`cockpit_sales_availability?email=eq.${enc(email)}&select=state`).catch(() => []))[0];
+          if (after && after.state !== "available") {
+            const out = await applyLoop(made.room.id, cur => (standbyEmpty(cur) ? { kind: "end", reason: "end" } : null), setting, made.room);
+            if ("applied" in out && out.applied.changed) {
+              await deps.audit(who, "room.end", ROOMS, made.room.id, { state: out.applied.from }, { state: out.applied.to }, { reason: "away" });
+              await carryOut(out.room, out.applied.effects);
+            }
+          }
         }
       }
     }
@@ -2199,13 +2225,23 @@ export function makeRooms(deps: RoomDeps): Rooms {
     return { ok: false, refusal: asRefusal(r) };
   }
 
+  /**
+   * Who is the team in a Zoom meeting (contract S7): every room host and
+   * every seat (cockpit_sales_people), so a manager listening in, or a seat
+   * whose room_hosts row the host check has not written yet, is never read
+   * as the lead. A read that fails throws: the event is left for the replay,
+   * never judged against an empty team.
+   */
   async function staffCtx(room: RoomRow): Promise<Parameters<typeof zoomEffect>[1]> {
-    const hosts = await io.db("cockpit_sales_room_hosts?select=email,zoom_user_id&limit=500").catch(() => []);
+    const [hosts, people] = await Promise.all([
+      io.db("cockpit_sales_room_hosts?select=email,zoom_user_id&limit=500"),
+      io.db("cockpit_sales_people?select=email&limit=1000"),
+    ]);
     const host = hosts.find(h => lower(h.email) === lower(room.host_email));
     return {
       host_email: lower(room.host_email),
       host_zoom_user_id: (host?.zoom_user_id as string | null) ?? null,
-      staff_emails: hosts.map(h => lower(h.email)).filter(Boolean),
+      staff_emails: [...new Set([...hosts, ...people].map(h => lower(h.email)).filter(Boolean))],
       staff_zoom_user_ids: hosts.map(h => String(h.zoom_user_id ?? "")).filter(Boolean),
     };
   }

@@ -403,7 +403,44 @@ export function liveWindow(hours: unknown, now: number): { open: boolean; ends_a
   const h = liveHoursOf(hours);
   const { day, seconds } = zoneClock(now, h.tz);
   const open = h.days.includes(day) && seconds >= h.from * 60 && seconds < h.to * 60;
-  return { open, ends_at: open ? now + (h.to * 60 - seconds) * S - (now % S) : null };
+  if (!open) return { open, ends_at: null };
+  let end = now + (h.to * 60 - seconds) * S - (now % S);
+  // A window that runs to midnight and starts again at midnight the next
+  // day (an all-day window) is one window: Available is not cut at 00:00.
+  if (h.from === 0 && h.to === 24 * 60)
+    for (let d = 1; d < 7 && h.days.includes((day + d) % 7); d++) end += 24 * 3600 * S;
+  return { open, ends_at: end };
+}
+
+const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+/**
+ * "Live calls run Saturday to Thursday, 10:00 to 20:00 Kuwait time.", for
+ * the window live.hours sets (a manager may change it), so the strip's
+ * refusal names the hours that really apply.
+ */
+export function outsideHoursText(hours: unknown): string {
+  const h = liveHoursOf(hours);
+  // The week as Kuwait counts it: Saturday first.
+  const week = [6, 0, 1, 2, 3, 4, 5];
+  const on = week.filter(d => h.days.includes(d));
+  const idx = on.map(d => week.indexOf(d));
+  const run = idx.every((v, i) => i === 0 || v === (idx[i - 1] as number) + 1);
+  const days =
+    on.length === 7
+      ? "every day"
+      : on.length === 1
+        ? `on ${DAY_NAMES[on[0] as number]}`
+        : run
+          ? `${DAY_NAMES[on[0] as number]} to ${DAY_NAMES[on[on.length - 1] as number]}`
+          : `on ${on
+              .slice(0, -1)
+              .map(d => DAY_NAMES[d])
+              .join(", ")} and ${DAY_NAMES[on[on.length - 1] as number]}`;
+  const hm = (m: number) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+  const zone = h.tz === "Asia/Kuwait" ? "Kuwait" : (h.tz.split("/").pop() ?? h.tz).replace(/_/g, " ");
+  const times = h.from === 0 && h.to === 24 * 60 ? "all day" : `${hm(h.from)} to ${hm(h.to)}`;
+  return `Live calls run ${days}, ${times} ${zone} time.`;
 }
 
 /** The context every room rule needs. */

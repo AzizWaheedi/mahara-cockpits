@@ -2163,13 +2163,20 @@ async function sendFollowup(who: Who, f: Row, b: Row, auto: boolean, opts: { dec
   const madeAt = String(f.created_at);
   const forWhatsapp = f.channel !== "email";
   const [inbox, ours] = await Promise.all([
-    svc(`cockpit_sales_inbox?contact_id=eq.${enc(String(f.contact_id))}&last_message_at=gt.${enc(madeAt)}&select=last_message_at,last_direction,last_type&limit=5`),
+    // The inbox copy keeps a conversation's latest message, and the lead's
+    // latest WhatsApp apart (inbound_whatsapp_at): a reply followed by an
+    // automation's email still moved the conversation on.
+    svc(`cockpit_sales_inbox?contact_id=eq.${enc(String(f.contact_id))}&or=${enc(`(last_message_at.gt."${madeAt}",inbound_whatsapp_at.gt."${madeAt}")`)}&select=last_message_at,last_direction,last_type,inbound_whatsapp_at&limit=5`),
     svc(`cockpit_sales_messages?contact_id=eq.${enc(String(f.contact_id))}&created_at=gt.${enc(madeAt)}&state=neq.failed&select=created_at,channel&limit=5`),
   ]);
   const emailType = (t: unknown) => /email/i.test(String(t ?? ""));
-  const inboxMoved = inbox.find(i => i.last_direction === "inbound" || !(forWhatsapp && emailType(i.last_type)));
+  const after = (t: unknown) => typeof t === "string" && Date.parse(t) > Date.parse(madeAt);
+  const inboxMoved = inbox.find(
+    i => after(i.last_message_at) && (i.last_direction === "inbound" || !(forWhatsapp && emailType(i.last_type))),
+  );
+  const repliedOnWhatsapp = inbox.find(i => after(i.inbound_whatsapp_at));
   const oursMoved = ours.find(m => !(forWhatsapp && m.channel === "email"));
-  const since = inboxMoved?.last_message_at ?? oursMoved?.created_at;
+  const since = inboxMoved?.last_message_at ?? repliedOnWhatsapp?.inbound_whatsapp_at ?? oursMoved?.created_at;
   if (since) {
     await svc(`cockpit_sales_followups?id=eq.${enc(String(f.id))}&status=eq.draft`, {
       method: "PATCH",

@@ -122,7 +122,10 @@ HOURS_WORDS = ("between 9", "their time", "their clock", "day off", "friday", "q
 # draft is not at fault, so it is never set aside for a person.
 STATE_RACE = re.compile(r"someone else has just dealt with this draft|this draft was already|not approved to go yet"
                         r"|paused or stopped|is held, so it was not sent|backlog opener was taken back"
-                        r"|kind of opener is off|already going out", re.I)
+                        r"|kind of opener is off|already going out"
+                        # The lead wrote (or a rep did) since the opener was written:
+                        # sales-api took it back, which is the opener working as meant.
+                        r"|conversation has moved on", re.I)
 # followup.level's table: a kind a manager switched Off gets no opener written or sent.
 LEVELS = "cockpit_sales_followup_levels"
 # An approved opener may still go this long after its turn (followups.APPROVED_KEEP).
@@ -740,6 +743,12 @@ def finish(sb: Any, running: list[dict[str, Any]], now: datetime, log: Callable[
         if not x.get("enrolled_at"):
             continue  # enrolment not finished: the next run finishes it first
         if sb.select(MEMBERS, f"select=contact_id&wave_id=eq.{_q(wid)}&state=in.(waiting,drafted)&limit=1"):
+            continue
+        # An opener of the wave still open (approved and waiting for its turn,
+        # or being sent) is work left: the wave is not done under it.
+        mine = [str(m["followup_id"]) for m in sb.select(META, f"select=followup_id&wave_id=eq.{_q(wid)}&limit=1000")]
+        if any(sb.select(FOLLOWUPS, f"select=id&id={fu._in(chunk)}&status=in.(draft,sending)&limit=1")
+               for chunk in fu._chunks(mine)):
             continue
         done = sb.rest("PATCH", f"{WAVES}?id=eq.{_q(wid)}&state=eq.running", prefer="return=representation",
                        json_body={"state": "done",
@@ -1610,7 +1619,17 @@ def run(sb: Any, api: Callable[[str, dict[str, Any]], tuple[int, dict[str, Any]]
         enrolled: dict[str, Any] = {}
         for x in waves:
             if x.get("state") == "running" and not x.get("enrolled_at"):
-                enrolled[str(x["id"])] = enroll(sb, x, started, w, log)
+                # One wave's enrolment that fails (a statement timeout on the
+                # members' insert, an outage reading the pool) is said and
+                # tried again next run; every other wave's approved openers
+                # still go below.
+                try:
+                    enrolled[str(x["id"])] = enroll(sb, x, started, w, log)
+                except Exception as e:  # noqa: BLE001 - said on the row, never fatal to the sends
+                    why = http.scrub(str(e))[:160]
+                    enrolled[str(x["id"])] = {"error": why}
+                    warn(f"waves: {POOL_WORDS.get(str(x.get('pool')), x.get('pool'))}: the enrolment failed ({why}); "
+                         "the next run tries again")
         out["enrolled"] = enrolled
         if enrolled:
             waves, winding = _waves(sb), _winding(sb)
@@ -1659,6 +1678,10 @@ def words(out: dict[str, Any]) -> tuple[bool, str]:
         parts.append(f"{len(running)} wave{'s' if len(running) != 1 else ''} running"
                      + (f", {len(waves) - len(running)} paused" if len(waves) > len(running) else ""))
     for e in (out.get("enrolled") or {}).values():
+        if e.get("error"):
+            parts.append(f"a wave's leads could not be enrolled ({str(e['error']).rstrip('.')}); the next run tries again")
+            ok = False
+            continue
         parts.append(e["done"] if e.get("done") else
                      f"{e['enrolled']} leads enrolled, {e['held_back']} held back to measure the effect")
     d = out.get("drafted") or {}

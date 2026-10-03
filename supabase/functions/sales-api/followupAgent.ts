@@ -32,7 +32,7 @@ export const APPROVED_KEEP_MS = 72 * 3_600_000;
  * is not at fault, so it is never set aside for a person.
  */
 export const STATE_RACE =
-  /someone else has just dealt with this draft|this draft was already|not approved to go yet|paused or stopped|is held, so it was not sent|backlog opener was taken back|kind of opener is off|already going out/i;
+  /someone else has just dealt with this draft|this draft was already|not approved to go yet|paused or stopped|is held, so it was not sent|backlog opener was taken back|kind of opener is off|already going out|conversation has moved on/i;
 
 /**
  * Refusals about the template's setup, not the lead (the template not set up

@@ -15,6 +15,7 @@ import {
   DEFAULT_ROOMS_JSON,
   DEFAULT_ROOMS_SETTING,
   liveWindow,
+  outsideHoursText,
   ROOM_COPY,
   type RoomRow,
   roomCtx,
@@ -142,8 +143,10 @@ describe("the live-call window (live.hours)", () => {
     // 11:00 Kuwait on a Saturday: before a 12:00 to 22:00 window.
     const hours = { days: [6, 0, 1, 2, 3, 4], from: "12:00", to: "22:00", tz: "Asia/Kuwait" };
     expect(liveWindow(hours, at("2026-10-10T08:00:00Z")).open).toBe(false);
-    // The sentence the strip shows (rooms.ts live.availability) is fixed to the shipped window.
-    expect(ROOM_COPY.refusals.outside_hours).toContain("12:00");
+    // The sentence the strip shows (rooms.ts live.availability) names the window that applies.
+    expect(outsideHoursText(hours)).toBe("Live calls run Saturday to Thursday, 12:00 to 22:00 Kuwait time.");
+    // As shipped, it is the spec's own sentence.
+    expect(outsideHoursText(undefined)).toBe(ROOM_COPY.refusals.outside_hours);
   });
 
   test("an all-day window keeps a rep Available across midnight (Available is capped at the window's end)", () => {

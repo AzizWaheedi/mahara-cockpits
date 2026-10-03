@@ -177,7 +177,10 @@ class Finding3HeadOfLineBlocking(unittest.TestCase):
         pg = FakePostgrest()
         for i in range(6):
             due_draft(pg, i, send_after=ago(minutes=30 - i))
-        lead = (409, {"error": "The conversation has moved on."})
+        # A refusal for the lead (round 2: "The conversation has moved on" is
+        # the opener taken back for a reply, never set aside; a lead's
+        # do-not-disturb still is).
+        lead = (409, {"error": "This lead asked not to be contacted on WhatsApp (do not disturb is on in HighLevel)."})
         out, api = send(pg, Api(pg, Clock(NOW), script=[lead, None, lead, None, lead, None]))
         self.assertEqual((out["sent"], out["refused"], out["set_aside"], out["stopped"]), (3, 3, 3, None))
         ok, line = row_ok(out)
@@ -843,7 +846,10 @@ class TheDatabaseRefusesTheKind(unittest.TestCase):
 class AnOutageIsNeverBusy(unittest.TestCase):
     """Finding 26: only a 409 falls back to single inserts; anything else stops the job and is said."""
 
-    def test_a_database_error_on_enrolment_is_raised_not_counted_as_busy(self):
+    def test_a_database_error_on_enrolment_is_said_not_counted_as_busy(self):
+        # Round 2: the error no longer kills the whole run (every other wave's
+        # approved openers still go); it is said on the row, in red, and the
+        # wave is enrolled again next run, never counted as busy.
         class Down(FakePostgrest):
             def __call__(self, method, url, **kw):
                 if method == "POST" and MEMBERS in url:
@@ -854,8 +860,12 @@ class AnOutageIsNeverBusy(unittest.TestCase):
         for i in range(3):
             seed(pg, f"n{i}", "no_show_cancelled")
         wave(pg, "w1", "no_show_cancelled")
-        with self.assertRaises(http.HttpError):
-            run(pg, guard={})
+        out, _, _, _ = run(pg, guard={})
+        self.assertIn("statement timeout", out["enrolled"]["w1"]["error"])
+        self.assertNotIn("skipped_busy", out["enrolled"]["w1"])
+        ok, line = waves.words(out)
+        self.assertFalse(ok, line)
+        self.assertIn("could not be enrolled", line)
         self.assertIsNone(pg.one(WAVES, id="w1").get("enrolled_at"))
 
 
