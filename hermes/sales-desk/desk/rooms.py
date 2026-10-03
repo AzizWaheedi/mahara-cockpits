@@ -167,6 +167,9 @@ CLAIM_MARGIN = 3.0        # no new claim in the last 3 s of a run
 ZOOM_CLAIM_MARGIN = 12.0  # ... and no new Zoom claim in its last 12 s: a Zoom room takes several calls
 HARD_SLACK = 2.0          # nothing runs more than 2 s past the run's end
 PROVIDER_RESERVE = 1.5    # provider calls end this long before that, so the run can still write down
+# Zoom's sign-in failing (5xx, 429) with less than this left in the run: the
+# room is handed to the next run (nothing was sent), never failed for a blip.
+SIGNIN_HANDOVER_S = 15.0
                           # what it did (a room handed over, the status row)
 STATUS_EVERY = 25.0       # the status row, at least every 30 s
 SETTINGS_EVERY = 25.0     # the rooms setting is read again this often
@@ -1725,6 +1728,7 @@ class Worker:
                          self.settings.get("lengths_min") or {})
         last: Optional[ProviderError] = None
         sent_unclear = False
+        signin_only = True  # every try so far stopped at Zoom's sign-in: no create left this VPS
         for attempt in range(3):
             if attempt:
                 if self._zoom_down():
@@ -1737,6 +1741,20 @@ class Worker:
             if self.left() - PROVIDER_RESERVE <= 1.0:
                 self._hand_over(room, unclear=sent_unclear)
                 return None
+            # Zoom's sign-in first (fix round 4): a token Zoom would not give
+            # means no create left this VPS, so it is never written down as
+            # sent (the next run makes the room, never only looks for it).
+            try:
+                self.zoom.token()
+            except ProviderError as e:
+                last = e
+                if e.timeup:
+                    self._hand_over(room, unclear=sent_unclear)
+                    return None
+                if e.down or not (e.unclear or e.status == 429):
+                    break  # Zoom not answering at all, or the app's keys refused
+                continue  # a 5xx or 429 at the sign-in: nothing was sent; try again
+            signin_only = False
             self._note_create(room)
             try:
                 made = self.zoom.create(user, body)
@@ -1765,6 +1783,14 @@ class Worker:
                     self._hand_over(room, unclear=True)
                     return None
                 self.log.warn(f"rooms: Zoom's meeting list did not answer for room {room.get('code')}: {e.why}")
+        if (signin_only and last is not None and not last.down and (last.unclear or last.status == 429)
+                and self.left() - PROVIDER_RESERVE < SIGNIN_HANDOVER_S):
+            # Every try stopped at Zoom's sign-in, nothing was sent, and this
+            # run is nearly over: a blip at its end is the next run's to try
+            # (it makes the room from the start; the room keeps its two
+            # minutes), never a failed room the rep must start again.
+            self._hand_over(room, unclear=False)
+            return None
         if last is not None and not last.unclear and not last.down and last.status != 429:
             self.fail(room, SAY["zoom_refused"].format(why=last.why), fault=True)
         else:

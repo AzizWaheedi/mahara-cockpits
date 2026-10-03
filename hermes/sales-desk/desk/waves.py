@@ -127,7 +127,10 @@ STATE_RACE = re.compile(r"someone else has just dealt with this draft|this draft
                         r"|kind of opener is off|already going out"
                         # The lead wrote (or a rep did) since the opener was written:
                         # sales-api took it back, which is the opener working as meant.
-                        r"|conversation has moved on", re.I)
+                        r"|conversation has moved on"
+                        # A rep paused the agent for the lead, or an earlier
+                        # template to them is still on its way: it waits (fix round 4).
+                        r"|agent is paused for this lead|has not arrived yet", re.I)
 # followup.level's table: a kind a manager switched Off gets no opener written or sent.
 LEVELS = "cockpit_sales_followup_levels"
 # An approved opener may still go this long after its turn (followups.APPROVED_KEEP).
@@ -138,6 +141,10 @@ FAULTS = ("refusals", "hold_all", "outage", "error", "no_answer", "budget")
 # the age past which it is a send that stopped half way (SENDING_STALE_MS):
 # such an opener is asked for again, never stranded.
 SENDING = "sales-desk:sending"
+# An opener sales-api failed on (a 500) waits this long, behind the rest of the batch.
+ERROR_WAIT = timedelta(minutes=30)
+# HighLevel's 400, 404 or 422 about one lead's contact (passed on in a 500): that lead's refusal, not every send's.
+LEAD_4XX = re.compile(r"HighLevel said (400|404|422)\b", re.I)
 SENDING_STALE = timedelta(minutes=5)
 
 
@@ -990,6 +997,12 @@ def draft_day(sb: Any, now: datetime, *, settings: dict[str, Any], w: dict[str, 
     gate = fu.wa_gate(guard)
     if gate:
         return {**out, "waiting": gate, "setup": True}
+    # The month's template budget (fix round 4): spent (or unreadable), no
+    # opener is written for approval that could not go this month; each one
+    # would hold its lead's one open draft until it went stale.
+    spent = template_budget(sb, guard, now)
+    if spent:
+        return {**out, "waiting": spent, "setup": True}
     k = fu.kuwait_now(now)
     days_off = [str(d).lower() for d in settings.get("quiet_days", ["friday"])]
     first_hours = settings.get("first_hours") or fu.FIRST_HOURS
@@ -1367,8 +1380,8 @@ def send_due(sb: Any, api: Callable[[str, dict[str, Any]], tuple[int, dict[str, 
     def db_now() -> datetime:
         return clock() + skew
 
-    drafts = sb.select_all(FOLLOWUPS, "select=id,contact_id,channel,segment,touch,expires_at,context&status=eq.draft",
-                           order="id")
+    drafts = sb.select_all(FOLLOWUPS, "select=id,contact_id,channel,segment,touch,expires_at,context,created_at"
+                                      "&status=eq.draft", order="id")
     if not drafts:
         return out
     fups = {str(f["id"]): f for f in drafts}
@@ -1534,13 +1547,24 @@ def send_due(sb: Any, api: Callable[[str, dict[str, Any]], tuple[int, dict[str, 
         if held_by and not stalled_mark:
             out["held"] += 1
             continue
+        # A rep paused the agent for this lead, or the lead asked to stop,
+        # since the opener was approved (fix round 4): it waits in the queue,
+        # never sent and never set aside. Unreadable: it waits too.
+        c = str(f["contact_id"])
+        rows = fu.stops_for(sb, [c])
+        stopped = "the stops could not be read" if rows is None else (fu.hold_of(rows, c, now) or (None, None))[1]
+        if stopped:
+            out["paused"] = out.get("paused", 0) + 1
+            log(f"waves: {fid} waits: {stopped}")
+            continue
         if f.get("segment") == "reactivate":
-            # The lead may have left the backlog since the batch was approved:
-            # booked (a call still to come), a deal, a client. Then the opener
-            # is taken back, never sent ("How are you?" to a booked lead).
-            c = str(f["contact_id"])
+            # The lead may have left the backlog since the batch was approved,
+            # by the pools' own rules: booked (a call still to come, or one
+            # booked since the opener was written), a call held in the last
+            # day, a latest call marked invalid, a deal, a client, no longer a
+            # tagged lead. Then the opener is taken back, never sent.
             try:
-                left = _left_pool(sb, c, leads.get(c), now)
+                left = _left_pool(sb, c, leads.get(c), now, since=f.get("created_at"))
             except Exception as e:  # noqa: BLE001 - unreadable: it waits, never goes on a guess
                 warn(f"waves: {fid} waits: whether the lead is still in the backlog could not be read "
                      f"({http.scrub(str(e))[:120]})")
@@ -1575,6 +1599,11 @@ def send_due(sb: Any, api: Callable[[str, dict[str, Any]], tuple[int, dict[str, 
             break
         res = res if isinstance(res, dict) else {}
         verdict, err = judge(status, res)
+        if verdict == "error" and LEAD_4XX.search(err):
+            # HighLevel refused this lead's own contact (merged or deleted),
+            # passed on as sales-api's 500: this lead's refusal, set aside for
+            # a person, never a stop for every run (fix round 4).
+            verdict = "lead"
         if verdict == "sent":
             last_at = db_now()
             out["sent"] += 1
@@ -1584,6 +1613,15 @@ def send_due(sb: Any, api: Callable[[str, dict[str, Any]], tuple[int, dict[str, 
         if verdict in ("hold_all", "outage", "error"):
             if res.get("message"):
                 last_at = db_now()
+            if verdict == "error":
+                # sales-api failed on this opener: it waits behind the batch, so
+                # the next run does not stop at the same opener again (fix round 4).
+                try:
+                    sb.rest("PATCH", f"{META}?followup_id=eq.{_q(fid)}&held_by=is.null", prefer="return=minimal",
+                            json_body={"send_after": (clock() + ERROR_WAIT).isoformat()})
+                    err = f"{err} (that opener waits {int(ERROR_WAIT.total_seconds() // 60)} minutes; the rest go first)"
+                except http.HttpError as e:
+                    warn(f"waves: {fid} could not be moved behind the batch ({http.scrub(str(e))[:120]})")
             stop(verdict, err)
             break
         if verdict == "hours":
@@ -1633,21 +1671,37 @@ def send_due(sb: Any, api: Callable[[str, dict[str, Any]], tuple[int, dict[str, 
     return out
 
 
-def _left_pool(sb: Any, contact: str, lead: Optional[dict[str, Any]], now: datetime) -> Optional[str]:
+def _left_pool(sb: Any, contact: str, lead: Optional[dict[str, Any]], now: datetime,
+               since: Any = None) -> Optional[str]:
     """Why a lead whose opener was approved is no longer in a backlog pool,
-    or None: a call of theirs still to come, a deal, a client tag, a deal
-    won or closed. Only a positive reason takes the opener back."""
+    or None, by pool_of's own rules (fix round 4): a call of theirs still to
+    come, or booked after the opener was written (`since`); a call held (the
+    B2B rule) within HELD_WAIT; a latest call marked invalid (disqualified);
+    a deal; a client tag or a customer; a deal won or closed; no longer a
+    tagged lead. Only a positive reason takes the opener back."""
     if lead and fu.is_client(lead):
         return "The lead is a client now, so the backlog opener was taken back."
+    if lead and str(lead.get("contact_type") or "").lower() == "customer":
+        return "The lead is a customer now, so the backlog opener was taken back."
     if lead and (str(lead.get("opp_status") or "").lower() == "won" or "closed" in str(lead.get("stage_name") or "").lower()):
         return "The lead's deal is won or closed, so the backlog opener was taken back."
+    if lead and isinstance(lead.get("tags"), list) and not is_lead(lead):
+        return "The lead is no longer tagged as a lead, so the backlog opener was taken back."
     (calls, _cals), dealt = _calls_of(sb, [contact]), _dealt(sb, [contact])
     if contact in dealt:
         return "The lead has a deal now, so the backlog opener was taken back."
-    for a in calls.get(contact, []):
-        start = fu._ts(a.get("start_at"))
-        if a.get("call_type") in ("intro", "demo") and start and start > now and a.get("status") not in fu.NOT_KEPT:
+    mine = sorted((a for a in calls.get(contact, []) if a.get("call_type") in ("intro", "demo") and fu._ts(a.get("start_at"))),
+                  key=lambda a: fu._ts(a["start_at"]))
+    for a in mine:
+        if fu._ts(a["start_at"]) > now and a.get("status") not in fu.NOT_KEPT:
             return fu.OPENER_BOOKED
+    written = fu._ts(since)
+    if written and any((fu._ts(a.get("booked_at")) or written) > written for a in mine):
+        return "The lead booked a call after this opener was written, so the backlog opener was taken back."
+    if mine and str(mine[-1].get("status") or "").lower() == "invalid":
+        return "The lead's latest call was marked invalid (disqualified), so the backlog opener was taken back."
+    if any(fu.shown(a, now) and fu._ts(a["start_at"]) > now - HELD_WAIT for a in mine):
+        return "The lead had a call in the last day, so the backlog opener was taken back."
     return None
 
 
