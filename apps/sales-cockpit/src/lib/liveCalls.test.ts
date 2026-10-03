@@ -831,6 +831,73 @@ describe("waves: rows, counts and lines", () => {
     expect(ids).not.toContain("f1");
   });
 
+  test("an opener being sent, and one whose send stopped half way (fix round 3)", () => {
+    const d = (over: Partial<W.BatchDraft>): W.BatchDraft => ({
+      id: "f",
+      contact_id: "c",
+      wave_id: "w1",
+      send_after: iso(NOW),
+      held_by: null,
+      hold_reason: null,
+      ...over,
+    });
+    const now = Date.parse(iso(NOW));
+    const fresh = d({
+      held_by: W.SENDING_MARK,
+      held_at: new Date(now - 60_000).toISOString(),
+    });
+    const stale = d({
+      id: "f2",
+      held_by: W.SENDING_MARK,
+      held_at: new Date(now - 30 * 60_000).toISOString(),
+    });
+    expect(W.batchState(fresh, now)).toBe("sending");
+    expect(W.batchState(stale, now)).toBe("stalled");
+    // Never "held by a rep": Approve all sends a stopped one again, and leaves one in flight.
+    expect(W.toApprove([fresh, stale], now)).toEqual(["f2"]);
+  });
+
+  test("the follow-ups' own WhatsApp pause: the last day, or since a manager cleared it (fix round 3)", () => {
+    const now = Date.parse("2026-10-04T08:00:00Z");
+    const at = (msAgo: number) => new Date(now - msAgo).toISOString();
+    const failed = (msAgo: number) => ({
+      state: "failed",
+      error: "Insufficient funds",
+      source: "followup",
+      created_at: at(msAgo),
+    });
+    const six = [1, 2, 3, 4, 5, 6].map(i => failed(i * 60_000));
+    expect(W.sourcePause(six, {}, "followup", now)).toMatchObject({
+      paused: true,
+      sent: 6,
+      failed: 6,
+      reason: "Insufficient funds",
+    });
+    // The same six three days ago: not paused for good.
+    expect(
+      W.sourcePause(
+        [1, 2, 3, 4, 5, 6].map(i => failed(3 * 86_400_000 + i * 60_000)),
+        {},
+        "followup",
+        now,
+      ).paused,
+    ).toBe(false);
+    // Cleared by a manager after the six: nothing counts from before.
+    expect(
+      W.sourcePause(six, { health_cleared_at: at(10_000) }, "followup", now)
+        .paused,
+    ).toBe(false);
+    // Another source's failures never pause follow-ups.
+    expect(
+      W.sourcePause(
+        six.map(r => ({ ...r, source: "room" })),
+        {},
+        "followup",
+        now,
+      ).paused,
+    ).toBe(false);
+  });
+
   test("the approved line and the settings' defaults", () => {
     expect(
       W.approvedLine(

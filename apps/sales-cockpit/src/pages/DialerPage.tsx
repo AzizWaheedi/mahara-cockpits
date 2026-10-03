@@ -1648,6 +1648,10 @@ function CallPane({
   }, [liveMiss, openId]);
   const bookedIntro =
     (kind === "intro" || kind === "confirm") && appt?.type === "intro";
+  // The intro itself, not its confirmation call (the evening before, or that
+  // morning): only the intro's own room carries it, so an empty confirmation
+  // room never settles the intro and a join there never marks it shown.
+  const introCall = kind === "intro" && appt?.type === "intro";
   const gate = videoLinkGate({
     setting: roomsSetup.rooms,
     contactId,
@@ -1671,7 +1675,7 @@ function CallPane({
     purpose: "fallback" as const,
     callKind: "intro" as const,
     attemptId: missed?.attemptId ?? null,
-    appointmentId: bookedIntro ? (appt?.id ?? null) : null,
+    appointmentId: introCall ? (appt?.id ?? null) : null,
   };
   // "Send a video link" shows on every outcome but Answered, never for a
   // client, while no room is open for the lead (P1).
@@ -2024,7 +2028,7 @@ function CallPane({
             room={video.room}
             request={video.request}
             onRoomChange={r => video.setRoom(r)}
-            onMarkIntro={bookedIntro && appt ? markIntro : undefined}
+            onMarkIntro={introCall && appt ? markIntro : undefined}
           />
         ) : autoAt !== null && offerVideo ? (
           <AutoVideoStrip

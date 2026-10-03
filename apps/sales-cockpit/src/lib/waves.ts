@@ -376,17 +376,40 @@ export interface BatchDraft {
   send_after: string | null;
   held_by: string | null;
   hold_reason: string | null;
+  /** When held_by was written: tells a send in flight from one that stopped half way. */
+  held_at?: string | null;
 }
 
-export type BatchState = "undecided" | "approved" | "held" | "set_aside";
+export type BatchState =
+  | "undecided"
+  | "approved"
+  | "held"
+  | "set_aside"
+  | "sending"
+  | "stalled";
+
+/** sales-api's mark on an opener it is sending now (followupAgent.ts SENDING). */
+export const SENDING_MARK = "sales-desk:sending";
+/** A sending mark older than this is a send that stopped half way (followupAgent.ts SENDING_STALE_MS). */
+export const SENDING_STALE_MS = 5 * 60_000;
 
 /**
- * Where an opener stands: approved (it has a send time), held by a person,
- * set aside by the desk after a refusal (it says why), or waiting for a
- * person to decide.
+ * Where an opener stands: approved (it has a send time), going out now,
+ * stopped half way through its send (Approve all sends it again), held by a
+ * person, set aside by the desk after a refusal (it says why), or waiting
+ * for a person to decide.
  */
-export function batchState(d: BatchDraft): BatchState {
+export function batchState(
+  d: BatchDraft,
+  now: number = Date.now(),
+): BatchState {
   if (d.held_by === "sales-desk") return "set_aside";
+  if (d.held_by === SENDING_MARK) {
+    const at = d.held_at ? Date.parse(d.held_at) : Number.NaN;
+    return Number.isFinite(at) && now - at < SENDING_STALE_MS
+      ? "sending"
+      : "stalled";
+  }
   if (d.held_by) return "held";
   if (d.send_after) return "approved";
   return "undecided";
@@ -395,10 +418,13 @@ export function batchState(d: BatchDraft): BatchState {
 /** At most this many openers go in one approval (followup.batch refuses more). */
 export const BATCH_MAX = 40;
 
-/** The openers "Approve all" sends: undecided ones, oldest first, at most 40. */
-export function toApprove(drafts: readonly BatchDraft[]): string[] {
+/** The openers "Approve all" sends: undecided ones and sends that stopped half way, oldest first, at most 40. */
+export function toApprove(
+  drafts: readonly BatchDraft[],
+  now: number = Date.now(),
+): string[] {
   return drafts
-    .filter(d => batchState(d) === "undecided")
+    .filter(d => ["undecided", "stalled"].includes(batchState(d, now)))
     .slice(0, BATCH_MAX)
     .map(d => d.id);
 }
@@ -445,5 +471,74 @@ export function waveSettings(raw: unknown): {
     daysOff: Array.isArray(r.quiet_days)
       ? r.quiet_days.filter((d): d is string => typeof d === "string")
       : ["friday"],
+  };
+}
+
+/** One WhatsApp message row as the Follow-ups page reads it. */
+export interface WaSendRow {
+  state: string;
+  error: string | null;
+  source?: string | null;
+  created_at: string;
+}
+
+/**
+ * One source's own WhatsApp pause (follow-ups, rooms), the rule sales-api
+ * holds the desk's sends with (index.ts whatsappHealth({source}),
+ * sendrules.ts healthCfg and sourceHealth): its last `window` settled sends
+ * (20) from the last day, or from a manager's "Clear the pause"
+ * (whatsapp_guard.health_cleared_at), paused when at least `min_sends` (5)
+ * went and a `fail_share` (30%) of them failed.
+ */
+export function sourcePause(
+  rows: readonly WaSendRow[],
+  guard: unknown,
+  source: string,
+  now: number,
+): { paused: boolean; sent: number; failed: number; reason: string | null } {
+  const g = (
+    typeof guard === "object" && guard !== null ? guard : {}
+  ) as Record<string, unknown>;
+  const health = (
+    typeof g.health === "object" && g.health !== null ? g.health : {}
+  ) as Record<string, unknown>;
+  const per = (
+    typeof health[source] === "object" && health[source] !== null
+      ? health[source]
+      : {}
+  ) as Record<string, unknown>;
+  const num = (v: unknown, d: number, lo: number, hi: number) => {
+    const x = Number(v);
+    return v !== undefined &&
+      v !== null &&
+      Number.isFinite(x) &&
+      x >= lo &&
+      x <= hi
+      ? x
+      : d;
+  };
+  const window = Math.round(num(per.window, 20, 1, 1000));
+  const share = num(per.fail_share, 0.3, 0.01, 1);
+  const min = Math.round(num(per.min_sends ?? g.pause_min_sends, 5, 1, 1000));
+  const cleared = Date.parse(String(g.health_cleared_at ?? ""));
+  const floor = Math.max(
+    now - 86_400_000,
+    Number.isFinite(cleared) ? cleared : 0,
+  );
+  const last = rows
+    .filter(
+      r =>
+        r.source === source &&
+        ["sent", "delivered", "read", "failed"].includes(r.state) &&
+        Date.parse(r.created_at) >= floor,
+    )
+    .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))
+    .slice(0, window);
+  const failed = last.filter(r => r.state === "failed");
+  return {
+    paused: last.length >= min && failed.length / last.length >= share,
+    sent: last.length,
+    failed: failed.length,
+    reason: failed.map(r => r.error).find(Boolean) ?? null,
   };
 }

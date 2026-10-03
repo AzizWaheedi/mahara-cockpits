@@ -120,6 +120,7 @@ export function WavesCard({
       wave_id: string | null;
       send_after: string | null;
       held_by: string | null;
+      held_at?: string | null;
       hold_reason?: string | null;
     }[]
   >(
@@ -149,6 +150,7 @@ export function WavesCard({
           wave_id: m?.wave_id ?? null,
           send_after: m?.send_after ?? null,
           held_by: m?.held_by ?? null,
+          held_at: m?.held_at ?? null,
           hold_reason: m?.hold_reason ?? null,
         };
       });
@@ -211,7 +213,7 @@ export function WavesCard({
       api("followup.wave", { request_id, op, ...body }),
     );
 
-  const approve = toApprove(batch);
+  const approve = toApprove(batch, now);
 
   return (
     <SectionCard title="Backlog waves">
@@ -423,7 +425,7 @@ export function WavesCard({
               {said?.where === "batch" ? <Said said={said} /> : null}
               <ul className="mt-3 divide-y hairline">
                 {batch.map(d => {
-                  const st = batchState(d);
+                  const st = batchState(d, now);
                   const o = openers.find(x => x.id === d.id);
                   return (
                     <li
@@ -442,22 +444,26 @@ export function WavesCard({
                       </span>
                       <StatusChip
                         tone={
-                          st === "approved"
+                          st === "approved" || st === "sending"
                             ? "good"
                             : st === "set_aside"
                               ? "critical"
-                              : st === "held"
+                              : st === "held" || st === "stalled"
                                 ? "warning"
                                 : "neutral"
                         }
                         label={
                           st === "approved"
                             ? "Approved"
-                            : st === "set_aside"
-                              ? "Set aside"
-                              : st === "held"
-                                ? "Held"
-                                : "Waiting"
+                            : st === "sending"
+                              ? "Sending"
+                              : st === "stalled"
+                                ? "Stopped mid-send"
+                                : st === "set_aside"
+                                  ? "Set aside"
+                                  : st === "held"
+                                    ? "Held"
+                                    : "Waiting"
                         }
                       />
                       {st === "held" || st === "set_aside" ? (
@@ -494,6 +500,11 @@ export function WavesCard({
                         >
                           Hold
                         </button>
+                      ) : null}
+                      {st === "stalled" ? (
+                        <p className="muted w-full text-xs">
+                          Its send stopped half way. Approve all sends it again.
+                        </p>
                       ) : null}
                       {st === "set_aside" && d.hold_reason ? (
                         <p className="muted w-full text-xs [overflow-wrap:anywhere]">

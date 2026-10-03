@@ -272,17 +272,26 @@ export function CrmLine({
         : "sent to HighLevel without its automations";
   else if (row.mark_crm === "skipped") text = "kept here, older than a week";
   else if (row.mark_crm === "off") text = "kept here";
-  else if (row.mark_crm === "pending") text = "sending to HighLevel";
+  // A send cut off half way (the server stopped between the cockpit's mark
+  // and HighLevel's answer) stays "pending": after two minutes it is offered
+  // again like a refusal, never left as "sending" for good.
+  const markedAt = row.marked_at ? Date.parse(row.marked_at) : Number.NaN;
+  const stuck =
+    row.mark_crm === "pending" &&
+    Number.isFinite(markedAt) &&
+    Date.now() - markedAt >= 120_000;
+  if (row.mark_crm === "pending" && !stuck) text = "sending to HighLevel";
   return (
     <span className="muted text-xs">
       {statusLabel(row.marked_status)} by {who}
       {text ? ` · ${text}` : ""}
-      {row.mark_crm === "failed" ? (
+      {row.mark_crm === "failed" || stuck ? (
         <>
           {" · "}
           <span style={{ color: "var(--destructive)" }}>
-            HighLevel refused it
-            {row.mark_crm_error ? `: ${row.mark_crm_error}` : ""}
+            {stuck
+              ? "HighLevel has not confirmed it"
+              : `HighLevel refused it${row.mark_crm_error ? `: ${row.mark_crm_error}` : ""}`}
           </span>{" "}
           <button
             type="button"

@@ -32,6 +32,7 @@ import { supabase } from "../lib/supabase";
 import { toast } from "../lib/toast";
 import type { Me } from "../lib/types";
 import { guardOpen } from "../lib/videoLink";
+import { sourcePause } from "../lib/waves";
 import { firstWord, renderTemplate } from "../lib/whatsapp";
 
 /**
@@ -311,7 +312,7 @@ export default function FollowupsPage({ me }: { me: Me }) {
             : []),
         ]}
       />
-      <WhatsappHealth />
+      <WhatsappHealth manager={Boolean(me.manager)} />
 
       {tab === "waiting" && (me.manager || openers.length) ? (
         <WavesCard
@@ -999,19 +1000,26 @@ function Learning({
  * ceiling, and what failed at Meta. Automatic sends pause by themselves
  * when too many fail (sales-api whatsappHealth); this says so.
  */
-function WhatsappHealth() {
+function WhatsappHealth({ manager }: { manager: boolean }) {
   const since = useMemo(
     () => new Date(Date.now() - 86_400_000).toISOString(),
     [],
   );
   const guard = useSetting<Guard>("whatsapp_guard");
+  const [clearing, setClearing] = useState(false);
   const sends = useQuery<
-    { state: string; error: string | null; via: string; created_at: string }[]
+    {
+      state: string;
+      error: string | null;
+      via: string;
+      source: string | null;
+      created_at: string;
+    }[]
   >(
     () =>
       supabase
         .from("cockpit_sales_messages")
-        .select("state,error,via,created_at")
+        .select("state,error,via,source,created_at")
         .eq("channel", "whatsapp")
         .gte("created_at", since)
         .limit(2000),
@@ -1046,31 +1054,73 @@ function WhatsappHealth() {
       settled.length >= g.pause_min_sends &&
       failed.length / settled.length >= g.pause_fail_share,
   );
-  if (!settled.length && !templatesToday) return null;
+  // The follow-ups' own pause, the rule that holds the desk's openers.
+  const desk = g ? sourcePause(rows, g, "followup", Date.now()) : null;
+  async function clearPause() {
+    setClearing(true);
+    try {
+      await api("whatsapp.guard", { value: { health_cleared_at: true } });
+      toast.success("Cleared. Openers and follow-ups go again.");
+      guard.reload();
+    } catch (err) {
+      toast.error(String((err as Error).message ?? err));
+    } finally {
+      setClearing(false);
+    }
+  }
+  const deskLine = desk?.paused ? (
+    <div
+      role="alert"
+      className="callout-bad flex flex-wrap items-center gap-2 rounded-[var(--radius-md)] border px-3 py-2 text-xs"
+    >
+      <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">
+        Backlog openers and automatic follow-ups are paused: {desk.failed} of
+        the last {desk.sent} follow-up WhatsApp messages failed
+        {desk.reason ? ` (${desk.reason})` : ""}. They go again once fewer fail
+        {manager ? ", or clear the pause once the cause is fixed" : ""}.
+      </span>
+      {manager ? (
+        <button
+          type="button"
+          disabled={clearing}
+          onClick={() => void clearPause()}
+          className={button}
+        >
+          {clearing ? "Clearing…" : "Clear the pause"}
+        </button>
+      ) : null}
+    </div>
+  ) : null;
+  if (!settled.length && !templatesToday) return deskLine;
   const reasons = [...new Set(failed.map(r => r.error).filter(Boolean))].slice(
     0,
     2,
   );
   return (
-    <p className={`flex items-start gap-1.5 text-xs ${paused ? "" : "muted"}`}>
-      {paused ? (
-        <CircleAlert
-          className="mt-px size-3.5 shrink-0"
-          style={{ color: "var(--warning)" }}
-          aria-hidden
-        />
-      ) : null}
-      <span>
-        WhatsApp, last day: {settled.length} sent, {failed.length} failed
-        {reasons.length ? ` (${reasons.join("; ")})` : ""}.{" "}
-        {g
-          ? `${templatesToday} of today's ${g.templates_per_day} templates.`
-          : ""}
-        {paused
-          ? " Automatic sends are paused until fewer fail; people can still send."
-          : ""}
-      </span>
-    </p>
+    <>
+      {deskLine}
+      <p
+        className={`flex items-start gap-1.5 text-xs ${paused ? "" : "muted"}`}
+      >
+        {paused ? (
+          <CircleAlert
+            className="mt-px size-3.5 shrink-0"
+            style={{ color: "var(--warning)" }}
+            aria-hidden
+          />
+        ) : null}
+        <span>
+          WhatsApp, last day: {settled.length} sent, {failed.length} failed
+          {reasons.length ? ` (${reasons.join("; ")})` : ""}.{" "}
+          {g
+            ? `${templatesToday} of today's ${g.templates_per_day} templates.`
+            : ""}
+          {paused
+            ? " Automatic sends are paused until fewer fail; people can still send."
+            : ""}
+        </span>
+      </p>
+    </>
   );
 }
 
