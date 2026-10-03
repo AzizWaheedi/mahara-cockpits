@@ -13,14 +13,24 @@ says "error" for that part and the rest still answer.
 
 Standard library only, Python 3.6 or later.
 """
+import os
+import sys
+
+# Run as a file (python3 guard/vps_snapshot.py), Python puts guard/ first on
+# sys.path, and guard/http.py would then stand in for the standard http
+# package that urllib.request imports. Drop this folder before any import.
+try:
+    _HERE = os.path.dirname(os.path.abspath(__file__))
+    sys.path[:] = [p for p in sys.path if os.path.abspath(p or os.curdir) != _HERE]
+except NameError:  # read from stdin over ssh: no __file__, nothing to drop
+    pass
+
 import base64
 import glob
 import json
-import os
 import pwd
 import re
 import subprocess
-import sys
 import time
 import urllib.request
 
