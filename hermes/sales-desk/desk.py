@@ -14,6 +14,8 @@
     python3 desk.py reviews [--limit N]     Vince reviews the newest unreviewed calls
     python3 desk.py research [--limit N]    research the leads a rep asked about (web search, sources kept)
     python3 desk.py followups               draft follow-ups for the leads who need one now, for approval
+    python3 desk.py rooms [--for 57]        make the video rooms the cockpit asks for, polling every second
+                    [--once] [--check-hosts]  (one tick by hand; or only the Zoom and Google check of every seat)
     python3 desk.py status                  the queue, the last proposals, the last runs
     python3 desk.py offer-sync              offer.json into the cockpit's proposal form (requests does it too)
     python3 desk.py form-sync               the New Client Form's questions into the cockpit (requests does it too, every 10 minutes)
@@ -59,6 +61,7 @@ from desk import render as render_mod  # noqa: E402
 from desk import followups as followups_mod  # noqa: E402
 from desk import research as research_mod  # noqa: E402
 from desk import reviews as reviews_mod  # noqa: E402
+from desk import rooms as rooms_mod  # noqa: E402
 from desk import validate as validate_mod  # noqa: E402
 from desk.config import DEFAULT_MODELS, WORKER, Config, key  # noqa: E402
 from desk.errors import NotNow, Refused  # noqa: E402
@@ -156,6 +159,12 @@ def cmd_doctor(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     # Only calls-b2b-fathom needs it, once; its absence blocks nothing else.
     add("SALES_B2B_MGMT_TOKEN", True if key("SALES_B2B_MGMT_TOKEN") else None,
         "set" if key("SALES_B2B_MGMT_TOKEN") else "not set: only the one-off calls-b2b-fathom needs it")
+    # The room worker's keys, checked live unless --offline: keys that are
+    # present can still be refused, or (Google) carry no Calendar permission.
+    # Without them the worker's own status row says which video service
+    # cannot be made; nothing else waits on them.
+    for name, ok, detail in rooms_mod.doctor_lines(offline=args.offline):
+        add(name, ok, detail)
     add("model", True, f"SALES_MODEL_PROVIDER={cfg.provider}, SALES_PROPOSAL_MODEL={cfg.model}"
                        + ("" if cfg.model != DEFAULT_MODELS.get(cfg.provider) else " (the default)"))
 
@@ -676,6 +685,31 @@ def cmd_followups(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     return 0
 
 
+def cmd_rooms(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
+    """Make the video rooms the cockpit asks for: about a minute a run, a tick
+    every second, under a cron line every minute (README, Video rooms)."""
+    sb = rooms_mod.supabase(cfg.supabase_url, cfg.supabase_key)
+    worker = rooms_mod.Worker.from_env(sb, cfg.supabase_url, cfg.supabase_key, log)
+    if args.check_hosts:
+        # Its own cron line every 10 minutes (README), so it never holds a
+        # new room up; its status row is room-hosts.
+        try:
+            out = worker.check_hosts()
+        except (SupabaseError, http.HttpError, rooms_mod.TablesMissing) as e:
+            reason = rooms_mod.db_reason(e) if isinstance(e, http.HttpError) else http.scrub(str(e))[:300]
+            log.error(f"rooms: the host check stopped: {reason}")
+            _status(cfg, log, rooms_mod.HOSTS_JOB, False, f"The host check stopped: {reason}")
+            return 1
+        if args.json or not out["ok"] or not args.quiet:
+            _print(out if args.json else "\n".join(out["lines"]), args.json)
+        return 0 if out["ok"] else 1
+    seconds = 0.0 if args.once else max(0.0, args.for_s)
+    out = worker.run(seconds=seconds, every=max(0.2, args.every), max_claims=max(1, args.max_claims))
+    if args.json or out["made"] or out["failed"] or out.get("blocked"):
+        _print(out, True)
+    return 1 if out.get("blocked") else 0
+
+
 def notes_provider(cfg: Config, log: Logger) -> Any:
     """The model the call notes and digests are written with: the desk's own
     provider on the VPS key, SALES_NOTES_MODEL when set; never DeepSeek."""
@@ -888,6 +922,14 @@ def main(argv: Optional[list[str]] = None) -> int:
     rv.add_argument("--asked", action="store_true", help="only the calls reps asked to have reviewed")
     rs = sub.add_parser("research"); rs.add_argument("--limit", type=int)
     sub.add_parser("followups")
+    ro = sub.add_parser("rooms")
+    ro.add_argument("--for", dest="for_s", type=float, default=rooms_mod.RUN_SECONDS,
+                    help="seconds this run polls for (57 under the every-minute cron line)")
+    ro.add_argument("--every", type=float, default=rooms_mod.EVERY, help="seconds between ticks")
+    ro.add_argument("--max-claims", type=int, default=rooms_mod.MAX_CLAIMS, help="rooms claimed per tick")
+    ro.add_argument("--once", action="store_true", help="one tick, by hand")
+    ro.add_argument("--check-hosts", action="store_true",
+                    help="check every seat's Zoom user and the Google sign-in now, write room_hosts, and stop")
     nt = sub.add_parser("notes"); nt.add_argument("--limit", type=int); nt.add_argument("--days", type=int)
     dg = sub.add_parser("digest"); dg.add_argument("--days", type=int, choices=(7, 30))
     sub.add_parser("status")
@@ -914,6 +956,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         "calls-vault": cmd_calls_vault, "reviews-import": cmd_reviews_import, "reviews": cmd_reviews,
         "maqsam-calls": cmd_maqsam_calls, "calls-b2b-fathom": cmd_calls_b2b_fathom,
         "research": cmd_research, "followups": cmd_followups, "notes": cmd_notes, "digest": cmd_digest,
+        "rooms": cmd_rooms,
         "validate": cmd_validate, "build": cmd_build, "draft": cmd_draft, "offer-sync": cmd_offer_sync, "form-sync": cmd_form_sync,
     }
     if args.cmd in METERED and cfg.supabase_configured:
@@ -923,7 +966,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     except (SupabaseError, http.HttpError, NotNow, Refused) as e:
         log.error(http.scrub(str(e))[:400])
         if args.cmd in ("requests", "recordings", "status", "offer-sync", "form-sync", "calls-vault", "reviews", "research",
-                        "followups", "maqsam-calls", "notes", "digest") and not getattr(args, "dry", False):
+                        "followups", "maqsam-calls", "notes", "digest", "rooms") and not getattr(args, "dry", False):
             _status(cfg, log, args.cmd, False, http.scrub(str(e))[:400])
         return 1
     except KeyboardInterrupt:
