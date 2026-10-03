@@ -13,6 +13,7 @@ import {
   PortalAutoSignIn,
   portalSignInPending,
 } from "./components/PortalAutoSignIn";
+import { SalesBanner } from "./components/SalesBanner";
 import Sidebar from "./components/Sidebar";
 import { Wordmark } from "./components/Wordmark";
 import { SessionProvider, useWho } from "./lib/auth";
@@ -176,7 +177,9 @@ function Shell() {
       isAdmin={isAdmin}
       drawer={drawer}
       setDrawer={setDrawer}
-      banner={portalBanner}
+      // The banner slot: a live offer, the seat's open room, then presence,
+      // with the portal's sign-in banner kept mounted underneath it.
+      banner={<SalesBanner portal={portalBanner} />}
     />
   );
 }

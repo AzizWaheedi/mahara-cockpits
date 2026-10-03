@@ -120,9 +120,12 @@ describe("small helpers", () => {
     expect(R.channelWords(["whatsapp_text", "whatsapp_template"])).toBe(
       "WhatsApp",
     );
-    // The database's check also allows these two.
-    expect(R.channelWords(["whatsapp"])).toBe("WhatsApp");
+    // Contract v2: only the glossary's three. A bare "whatsapp" or
+    // "read_out" is not a channel the database or sales-api allows.
+    expect(R.channelWords(["whatsapp"])).toBeNull();
     expect(R.channelWords(["read_out"])).toBeNull();
+    // A key on Object's prototype is not a channel either.
+    expect(R.channelWords(["constructor", "toString"])).toBeNull();
     expect(R.channelWords([])).toBeNull();
     // Names nothing serves say nothing.
     expect(R.channelWords(["template", "template_unconfirmed"])).toBeNull();

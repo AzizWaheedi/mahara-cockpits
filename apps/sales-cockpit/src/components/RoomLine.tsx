@@ -18,7 +18,9 @@ import {
  * word, and the countdown at the right. Done steps are solid ink; the step
  * the room is waiting on carries the teal dot with its one soft pulse, the
  * only animation in the live-call screens, and still under reduced motion.
- * On a phone the line wraps to two rows of two steps.
+ * Where the card is narrow (a phone, or the dialer's call column on a
+ * laptop) the line wraps to two rows of two steps: it reads the card's own
+ * width (a container query), not the window's, so a word is never cut.
  */
 export function RoomLine({
   room,
@@ -32,25 +34,27 @@ export function RoomLine({
   const steps = roomSteps(room);
   const left = roomLeft(room, now);
   return (
-    <div className={`flex min-w-0 items-start gap-3 ${className}`}>
-      <ol
-        aria-label="Room steps"
-        className="grid min-w-0 flex-1 grid-cols-2 gap-x-2 gap-y-3 sm:grid-cols-4"
-      >
-        {steps.map((st, i) => (
-          <StepItem
-            key={st.key}
-            step={st}
-            // The hairline to the next step; none after the last, and none
-            // at the end of the first row on a phone.
-            joins={
-              i === steps.length - 1 ? null : i === 1 ? "sm-only" : "always"
-            }
-            nextDone={steps[i + 1]?.done ?? false}
-          />
-        ))}
-      </ol>
-      {left !== null ? <Countdown ms={left} /> : null}
+    <div className={`@container min-w-0 ${className}`}>
+      <div className="flex min-w-0 items-start gap-3">
+        <ol
+          aria-label="Room steps"
+          className="grid min-w-0 flex-1 grid-cols-2 gap-x-2 gap-y-3 @md:grid-cols-4"
+        >
+          {steps.map((st, i) => (
+            <StepItem
+              key={st.key}
+              step={st}
+              // The hairline to the next step; none after the last, and none
+              // at the end of the first row when the line wraps.
+              joins={
+                i === steps.length - 1 ? null : i === 1 ? "wide-only" : "always"
+              }
+              nextDone={steps[i + 1]?.done ?? false}
+            />
+          ))}
+        </ol>
+        {left !== null ? <Countdown ms={left} /> : null}
+      </div>
     </div>
   );
 }
@@ -61,7 +65,7 @@ function StepItem({
   nextDone,
 }: {
   step: Step;
-  joins: "always" | "sm-only" | null;
+  joins: "always" | "wide-only" | null;
   nextDone: boolean;
 }) {
   const state = step.current ? "current" : step.done ? "done" : "todo";
@@ -80,7 +84,7 @@ function StepItem({
         {joins ? (
           <span
             aria-hidden
-            className={`ml-2 h-px min-w-3 flex-1 ${joins === "sm-only" ? "max-sm:hidden" : ""}`}
+            className={`ml-2 h-px min-w-3 flex-1 ${joins === "wide-only" ? "@max-md:hidden" : ""}`}
             style={{
               background: nextDone
                 ? "color-mix(in oklch, var(--foreground) 45%, transparent)"

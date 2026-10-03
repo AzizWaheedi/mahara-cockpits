@@ -2,6 +2,7 @@ import { Check, Loader2, RotateCcw } from "lucide-react";
 import { type CSSProperties, useEffect, useId, useRef, useState } from "react";
 import { useNow } from "../lib/data";
 import {
+  afterAdmitBlocked,
   alertWhileHidden,
   bannerRoomSentence,
   type CreateRoom,
@@ -685,14 +686,17 @@ function LiveRoomPanel({
           apply((await roomsApi.end(r, "finished", true)).room);
           return;
         case "admit_blocked": {
-          // P1 edge case 9: this Meet room closes and the lead moves to Zoom.
+          // P1 edge case 9: this Meet room closes and the lead moves to
+          // Zoom. sales-api makes the Zoom room in the same request; the
+          // panel makes it only when the answer carries neither the room
+          // nor why it could not be made (contract v2 section 4).
           const out = await roomsApi.end(r, "admit_blocked");
           apply(out.room);
-          if (out.replacement) {
-            setShown(out.replacement);
-            return;
-          }
-          await retry(r, "zoom");
+          const next = afterAdmitBlocked(out);
+          if (next.kind === "show") setShown(next.room);
+          else if (next.kind === "refused")
+            setNotice({ tone: "bad", text: next.text });
+          else await retry(r, "zoom");
           return;
         }
         case "noshow":

@@ -33,12 +33,43 @@
  *
  * `window.harnessLog` lists every sales-api call the page made (action,
  * body, when), to count what a double tap sent.
+ *
+ * Live calls and waves have knobs of their own (src/dev/liveHarness.ts):
+ *
+ *   room     a video room to start on, for the lead on screen: making |
+ *            ready | sent | not_sent | not_sent_zoom | not_confirmed |
+ *            opened | waiting | host_in | joined | joined_marked |
+ *            joined_not_lead | still_on_call | expired | failed |
+ *            failed_handover | down | pending_zoom | booked
+ *   offer    the banner: incoming | taken | lost | missed | expired |
+ *            refresh | standby | making | standby_failed | away |
+ *            available | ready | booked | on_call | down | live_off
+ *   rooms    on | test | off   (on here, so the buttons show)
+ *   live     on | off          (off, as it ships)
+ *   auto     1                 automatic mode after a missed call
+ *   create   ok | refused | failed
+ *   waves    running | paused | none | off   (the Follow-ups page)
+ *
+ * e.g. /sales/harness.html?path=/dialer&room=sent,
+ * /sales/harness.html?path=/dialer&call=noanswer&auto=1,
+ * /sales/harness.html?path=/lead/lead-1&room=waiting&offer=incoming,
+ * /sales/harness.html?path=/followups&waves=running
  */
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { MemoryRouter } from "react-router";
 import "../index.css";
 import * as F from "./fixtures";
+import {
+  answerWaves,
+  hostRows,
+  Refused as LiveRefused,
+  liveKnobs,
+  liveSettings,
+  RoomStage,
+  roomStatusRows,
+  waveTables,
+} from "./liveHarness";
 
 // The Supabase client keeps the fetch it was created with, so the stand-in
 // below is installed before the client module is loaded (dynamic imports
@@ -70,6 +101,21 @@ for (const k of Object.keys(knobs) as (keyof typeof knobs)[]) {
     typeof knobs[k] === "number" ? Number(v) : v;
 }
 (window as unknown as { harness: typeof knobs }).harness = knobs;
+
+// Live calls and waves: the room for the lead on screen (the lead page's
+// lead, else the dialer's first), the seat's presence, and the waves.
+const live = liveKnobs(params);
+const startPath = params.get("path") ?? "/";
+const roomLead =
+  /^\/lead\/([^/?#]+)/.exec(startPath)?.[1] ??
+  String(F.dialItems("setter", Date.now())[0]?.contact_id ?? "lead-1");
+const stage = new RoomStage(live, Date.now(), roomLead);
+const waves = waveTables(
+  live.waves,
+  Date.now(),
+  F.LEADS as { contact_id: string }[],
+);
+(window as unknown as { harnessRooms: RoomStage }).harnessRooms = stage;
 
 /**
  * A lead comes in (or back) at the top of the queue, as a new lead does
@@ -384,6 +430,11 @@ async function salesApi(b: Row, signal?: AbortSignal | null): Promise<Row> {
   }
   await sleep(knobs.wait, signal);
   const now = Date.now();
+  // Video rooms, live calls and waves keep their own state.
+  const rooms = stage.answer(String(b.action), b, now);
+  if (rooms) return rooms;
+  const wave = answerWaves(String(b.action), b, waves, now);
+  if (wave) return wave;
   switch (b.action) {
     case "dial.agent": {
       const state = knobs.agent;
@@ -860,11 +911,26 @@ async function main() {
     cockpit_sales_team: F.TEAM_ROWS,
     cockpit_sales_reps: F.REPS,
     cockpit_sales_links: F.LINKS,
-    cockpit_sales_settings: F.SETTINGS,
+    cockpit_sales_settings: [
+      ...F.SETTINGS.filter(
+        r =>
+          !["rooms", "live", "whatsapp_guard", "followups"].includes(
+            String(r.key),
+          ),
+      ),
+      ...liveSettings(live, roomLead),
+    ],
     cockpit_sales_mirror_runs: [F.MIRROR_RUN],
-    cockpit_sales_worker_status: [],
+    cockpit_sales_worker_status: roomStatusRows(Date.now()),
+    cockpit_sales_room_hosts: hostRows(
+      Date.now(),
+      F.PEOPLE.map(p => String(p.email)),
+    ),
+    cockpit_sales_followup_waves: waves.waves,
+    cockpit_sales_followup_wave_members: waves.members,
+    cockpit_sales_followup_meta: waves.meta,
     cockpit_sales_inbox: [...F.INBOX, ...F.HOT_INBOX],
-    cockpit_sales_followups: F.FOLLOWUPS,
+    cockpit_sales_followups: [...F.FOLLOWUPS, ...waves.openers],
     cockpit_sales_contracts: F.CONTRACTS,
     cockpit_sales_hot: F.HOT,
     cockpit_sales_messages: F.MESSAGES,
@@ -906,8 +972,13 @@ async function main() {
       } catch (e) {
         // The cockpit gave up waiting: the fetch fails as a browser's does.
         if ((e as Error).name === "AbortError") throw e;
-        const status = e instanceof Refusal ? e.status : 500;
-        return json({ ok: false, error: (e as Error).message }, status);
+        const status =
+          e instanceof Refusal || e instanceof LiveRefused ? e.status : 500;
+        const code = e instanceof LiveRefused ? e.code : null;
+        return json(
+          { ok: false, error: (e as Error).message, ...(code ? { code } : {}) },
+          status,
+        );
       }
     }
     if (path.startsWith("/storage/v1/object")) {
@@ -1004,6 +1075,7 @@ async function main() {
   setApiTimeout(knobs.timeout);
 
   const { Seated } = await import("../App");
+  const { SalesBanner } = await import("../components/SalesBanner");
   const { useState } = await import("react");
   function Harness() {
     const [drawer, setDrawer] = useState(false);
@@ -1014,13 +1086,13 @@ async function main() {
         isAdmin
         drawer={drawer}
         setDrawer={setDrawer}
-        banner={null}
+        banner={<SalesBanner portal={null} />}
       />
     );
   }
   const { Toaster } = await import("../lib/toast");
   const { SessionProvider } = await import("../lib/auth");
-  const start = params.get("path") ?? "/";
+  const start = startPath;
   const root = document.getElementById("root");
   if (!root) throw new Error("no #root");
   createRoot(root).render(

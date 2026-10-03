@@ -31,7 +31,7 @@ const iso = (ms: number) => new Date(ms).toISOString();
 
 const sentRoom = (over: Partial<RoomView> = {}) =>
   F.baseRoom(NOW, {
-    link_channels: ["whatsapp"],
+    link_channels: ["whatsapp_text"],
     link_sent_at: iso(NOW - 48 * S),
     lead_by: iso(NOW + 552 * S),
     ...over,
@@ -64,8 +64,8 @@ const strip = (over: Partial<Parameters<typeof R.stripLine>[0]> = {}) =>
     ...over,
   });
 
-/** cockpit_sales_rooms.link_channels check (lc-db 20261003a_sales_rooms.sql:132). */
-const DB_CHANNELS = ["whatsapp", "whatsapp_template", "email", "read_out"];
+/** cockpit_sales_rooms.link_channels check (20261003a_sales_rooms.sql, as merged). */
+const DB_CHANNELS = ["whatsapp_text", "whatsapp_template", "email"];
 /** roomlogic.ts LINK_CHANNELS (lc-logic), the glossary's rooms.send keys. */
 const API_CHANNELS = ["whatsapp_text", "whatsapp_template", "email"];
 
