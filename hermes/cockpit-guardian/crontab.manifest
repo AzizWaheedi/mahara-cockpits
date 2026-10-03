@@ -1,4 +1,4 @@
-# The hermes crontab as it ran on 2026-10-03 (28 job lines), read with crontab -l.
+# The hermes crontab as it ran on 2026-10-03 (28 job lines, then the guardian's own at install: 29), read with crontab -l.
 # The guardian compares the live crontab with these lines by the command each one runs
 # (vps-crontab). A line missing from the live crontab is reported; extra live lines are fine.
 # When a line is changed or removed on purpose, change it here in the same commit.
@@ -32,3 +32,6 @@
 16,46 * * * * flock -n $HOME/.sales-desk/maqsam-calls.lock bash -c "cd $HOME/mahara-cockpits/hermes/sales-desk && set -a; . $HOME/.editor-desk/env; . /opt/data/bibi/api-keys.env; . $HOME/.sales-desk/env; set +a; ulimit -v 1500000; python3 desk.py --quiet maqsam-calls" >> $HOME/.sales-desk.log 2>&1
 7 4 * * 6   flock -n $HOME/.ideation-radar/scan.lock    bash -c "set -a; . $HOME/.ideation-radar/env; . /opt/data/bibi/api-keys.env; set +a; cd $HOME/mahara-cockpits/hermes/ideation-radar && python3 radar.py --quiet scan" >> $HOME/.ideation-radar/out/cron.log 2>&1
 */5 * * * * flock -n $HOME/.ideation-radar/pending.lock bash -c "set -a; . $HOME/.ideation-radar/env; . /opt/data/bibi/api-keys.env; set +a; cd $HOME/mahara-cockpits/hermes/ideation-radar && python3 radar.py --quiet pending" >> $HOME/.ideation-radar/out/cron.log 2>&1
+
+# The guardian itself, installed 2026-10-03 in report-only mode.
+*/5 * * * *  flock -n $HOME/.cockpit-guardian/run.lock bash -c "cd $HOME/mahara-cockpits/hermes/cockpit-guardian && set -a; . $HOME/.editor-desk/env; . /opt/data/bibi/api-keys.env; [ -f $HOME/.cockpit-guardian/env ] && . $HOME/.cockpit-guardian/env; set +a; python3 guardian.py --mode report-only --quiet run" >> $HOME/.cockpit-guardian/cron.log 2>&1
