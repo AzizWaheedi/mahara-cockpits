@@ -1770,3 +1770,43 @@ describe("the harness's answers", () => {
     expect(R.offerLeft(o, NOW)).toBe(107_000);
   });
 });
+
+// Stress round 2 (self-reported-join-has-no-confirm-path): a join only a
+// hand press reported is not counted until a manager says so; the manager
+// sees the button, the press is the audited room.count_confirm, and the line
+// says what waits.
+describe("a join marked by hand waits for a manager to count it", () => {
+  const handPressed = () =>
+    sentRoom({
+      state: "ended",
+      result: "joined",
+      lead_in_at: iso(NOW - 5 * MIN),
+      ended_at: iso(NOW - MIN),
+      count_result: "self_reported",
+    });
+
+  test("a manager sees Count this join; a rep does not", () => {
+    const r = handPressed();
+    expect(
+      R.roomActions(r, { now: NOW, manager: true }).quiet.map(a => a.key),
+    ).toContain("count_confirm");
+    expect(R.roomActions(r, { now: NOW }).quiet.map(a => a.key)).not.toContain(
+      "count_confirm",
+    );
+    expect(
+      R.roomActions(sentRoom(), { now: NOW, manager: true }).quiet.map(
+        a => a.key,
+      ),
+    ).not.toContain("count_confirm");
+  });
+
+  test("the press is room.count_confirm with the room's id", async () => {
+    const r = handPressed();
+    answer = async () => ({ ok: true, room: { ...r, count_result: "booked" } });
+    await R.roomsApi.countConfirm(r.id);
+    expect(calls.at(-1)).toEqual({
+      action: "room.count_confirm",
+      body: { room_id: r.id },
+    });
+  });
+});

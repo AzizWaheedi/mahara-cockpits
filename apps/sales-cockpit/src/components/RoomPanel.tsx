@@ -1,6 +1,6 @@
 import { Check, Loader2, RotateCcw } from "lucide-react";
 import { type CSSProperties, useEffect, useId, useRef, useState } from "react";
-import { useNow } from "../lib/data";
+import { useMe, useNow } from "../lib/data";
 import {
   afterAdmitBlocked,
   alertWhileHidden,
@@ -95,6 +95,8 @@ export interface RoomPanelViewProps {
   canRetry?: boolean;
   /** "Still on the call?" was answered "Still on it" a moment ago. */
   stillOn?: boolean;
+  /** The viewer is a manager (a join marked by hand can be counted). */
+  manager?: boolean;
   onAction?: (key: RoomActionKey) => void;
   onUndo?: () => void;
   onConfirmEnd?: (yes: boolean) => void;
@@ -117,6 +119,7 @@ export function RoomPanelView({
   introMarked = false,
   canRetry = true,
   stillOn = false,
+  manager = false,
   onAction = () => undefined,
   onUndo = () => undefined,
   onConfirmEnd = () => undefined,
@@ -124,7 +127,7 @@ export function RoomPanelView({
   className = "",
 }: RoomPanelViewProps) {
   const { room, events, health } = feed;
-  const ctx = { now, canMarkIntro, stillOn };
+  const ctx = { now, canMarkIntro, stillOn, manager };
   const moment = momentFor(room, ctx);
   const sentence = roomSentence(room, ctx);
   const hint = roomHint(room, now);
@@ -559,6 +562,8 @@ function LiveRoomPanel({
   const { set: setFeed, reload } = feed;
 
   const room = feed.data?.room ?? null;
+  // Who is looking, read only when a join marked by hand waits to be counted.
+  const me = useMe(room?.count_result === "self_reported");
   const stillOn = Boolean(
     room &&
       stillAt?.id === room.id &&
@@ -754,6 +759,13 @@ function LiveRoomPanel({
         case "host_in":
           apply((await roomsApi.mark(r, "host_in")).room);
           return;
+        case "count_confirm":
+          apply((await roomsApi.countConfirm(r.id)).room);
+          setNotice({
+            tone: "good",
+            text: "Counted: the join is booked and marked shown in HighLevel.",
+          });
+          return;
         case "email":
           apply((await roomsApi.sendEmail(r.id)).room);
           setNotice({ tone: "good", text: "Sent by email." });
@@ -823,6 +835,7 @@ function LiveRoomPanel({
       introMarked={introMarked}
       canRetry={shown.purpose !== "handover" || Boolean(onRetry)}
       stillOn={stillOn}
+      manager={Boolean(me.data?.manager)}
       onAction={key => void onAction(key)}
       onUndo={held.undo}
       onConfirmEnd={yes => void answerEnd(yes)}

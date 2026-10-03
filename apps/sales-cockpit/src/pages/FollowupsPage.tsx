@@ -304,7 +304,12 @@ export default function FollowupsPage({ me }: { me: Me }) {
       </header>
 
       <DeskStatus
-        jobs={[{ job: "followups", what: "The follow-up agent", staleMin: 75 }]}
+        jobs={[
+          { job: "followups", what: "The follow-up agent", staleMin: 75 },
+          ...(me.manager || openers.length
+            ? [{ job: "waves", what: "The backlog wave run", staleMin: 15 }]
+            : []),
+        ]}
       />
       <WhatsappHealth />
 

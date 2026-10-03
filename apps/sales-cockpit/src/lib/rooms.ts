@@ -968,7 +968,7 @@ function joinedSentence(room: RoomView, v: Voice): Sentence {
       return [
         head,
         at,
-        ". Not booked yet: a manager confirms a join marked by hand.",
+        ". Not booked yet: a join marked by hand waits for a manager to count it.",
       ];
     default:
       return [head, at, "."];
@@ -1006,6 +1006,8 @@ export interface RoomCtx {
   until?: string | null;
   /** "Still on the call?" was answered "Still on it" a moment ago. */
   stillOn?: boolean;
+  /** The viewer is a manager: a join marked by hand can be counted (room.count_confirm). */
+  manager?: boolean;
 }
 
 /** The status sentence under the room line. */
@@ -1224,7 +1226,8 @@ export type RoomActionKey =
   | "admit_blocked"
   | "retry"
   | "noshow"
-  | "showed";
+  | "showed"
+  | "count_confirm";
 
 export interface RoomAction {
   key: RoomActionKey;
@@ -1238,6 +1241,21 @@ const act = (key: RoomActionKey, label: string): RoomAction => ({
 
 /** The one right button, and the quiet ones beside it. */
 export function roomActions(
+  room: RoomView,
+  ctx: RoomCtx,
+): { primary: RoomAction | null; quiet: RoomAction[] } {
+  const out = momentActions(room, ctx);
+  // A join only a hand press reported is not counted until a manager says
+  // so (room.count_confirm); the manager sees the button, everyone the line.
+  if (ctx.manager && room.count_result === "self_reported")
+    return {
+      ...out,
+      quiet: [...out.quiet, act("count_confirm", "Count this join")],
+    };
+  return out;
+}
+
+function momentActions(
   room: RoomView,
   ctx: RoomCtx,
 ): { primary: RoomAction | null; quiet: RoomAction[] } {
@@ -2257,6 +2275,9 @@ export const roomsApi = {
       version: room.version,
       what,
     }).then(roomAnswer),
+  /** A manager counts a join only a hand press reported. */
+  countConfirm: (roomId: string) =>
+    api<unknown>("room.count_confirm", { room_id: roomId }).then(roomAnswer),
   end: (room: Versioned, reason: EndReason, confirm = false) =>
     api<unknown>("room.end", {
       room_id: room.id,

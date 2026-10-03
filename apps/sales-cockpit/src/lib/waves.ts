@@ -68,8 +68,9 @@ export interface MemberRow {
 /**
  * A member is in its arm's comparison once their turn came (intent to treat
  * at the turn, desk waves.py _t0): the opener went, or due_at was set (the
- * holdout's turn, or a wave member taken out at their turn, watched like
- * their twins). A member a stopped wave let go of before their turn is in
+ * turn, stamped once on both arms alike, which is where each member's 14
+ * days start; a wave member taken out at their turn is watched like their
+ * twins). A member a stopped wave let go of before their turn is in
  * neither arm, so the two arms compare like with like.
  */
 export function measured(m: MemberRow): boolean {
@@ -305,6 +306,13 @@ export function waveLine(
   w: Wave,
   c: WaveCounts,
   next: { at: number; now: number } | null,
+  /**
+   * The waves job's own status row (sales-desk/waves): when it is not ok,
+   * the line says what holds the batch (a shut gate, a spent budget, a
+   * template not set up, an earlier batch nobody decided on) instead of
+   * "being written now".
+   */
+  desk: { ok: boolean; detail: string | null } | null = null,
 ): string {
   const noun = POOL_WORDS[w.pool].noun;
   if (w.state === "done" || w.state === "cancelled") {
@@ -317,6 +325,10 @@ export function waveLine(
   const head = `${plural(c.total, "lead", "leads")} in ${noun}, ${w.per_day} a day, newest first; ${c.holdout.toLocaleString("en-US")} held back to measure the effect.`;
   if (w.state === "paused") return `${head} Paused: no batch is written.`;
   if (!next) return head;
+  if (desk && !desk.ok) {
+    const why = (desk.detail ?? "").trim().replace(/[.\s]+$/, "");
+    return `${head} The wave run is held: ${why || "it reported a problem and gave no reason"}. Nothing is written or sent until that is fixed.`;
+  }
   if (next.at <= next.now) return `${head} Today's batch is being written now.`;
   return `${head} Next batch ${batchWhen(next.at, next.now)}.`;
 }

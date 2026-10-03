@@ -2,7 +2,7 @@ import { Loader2, Waves as WavesIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Link } from "react-router";
 import { api } from "../lib/api";
-import { readAll, useNow, useQuery } from "../lib/data";
+import { readAll, useNow, useQuery, useWorkerStatus } from "../lib/data";
 import { errorText, once, reasonWords } from "../lib/rooms";
 import { supabase } from "../lib/supabase";
 import {
@@ -168,6 +168,14 @@ export function WavesCard({
     now,
   };
   const off = enabled === false;
+  // The waves job's own sentence (sales-desk/waves): what holds the batch.
+  const status = useWorkerStatus();
+  const wavesRow = status.data?.find(
+    x => x.worker === "sales-desk" && x.job === "waves",
+  );
+  const desk = wavesRow
+    ? { ok: wavesRow.ok !== false, detail: wavesRow.detail ?? null }
+    : null;
 
   const [busy, setBusy] = useState<string | null>(null);
   // What the last press did, said beside the part of the card it was in.
@@ -255,7 +263,12 @@ export function WavesCard({
                 ) : (
                   <>
                     <p className="text-sm">
-                      {waveLine(w, c, w.state === "running" ? next : null)}
+                      {waveLine(
+                        w,
+                        c,
+                        w.state === "running" ? next : null,
+                        desk,
+                      )}
                     </p>
                     {c.total ? <WaveBar c={c} /> : null}
                     {c.total ? (
