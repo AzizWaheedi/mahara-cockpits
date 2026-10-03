@@ -24,15 +24,24 @@
 -- Rules the database keeps:
 --   * one running wave per contact (waiting, held_out or drafted) and one
 --     running or paused wave per pool;
---   * a holdout member is never drafted or sent, but its replies and
---     bookings are recorded, so the 14-day wave-versus-holdout comparison is
---     stored per member;
---   * a wave that is done or cancelled closes its running members, so a
---     contact is never stuck out of the next wave;
+--   * a holdout member is never drafted or sent, but its replies, bookings
+--     and 14-day close are recorded, so the wave-versus-holdout comparison
+--     is stored per member;
+--   * a wave that is done keeps its members as they are: the desk winds it
+--     down (desk/waves.py wind_down and finish: open openers taken back,
+--     waiting members and held-back members whose turn never came excluded)
+--     and watches the rest to their 14 days, so no opener is left open and
+--     no holdout member drops out of the comparison;
 --   * a kind key names a known segment, language and channel, and a WhatsApp
 --     kind cannot be set to send without a person (Sends unless stopped,
 --     Sends by itself) until whatsapp_guard has connector_off true and a
 --     single_copy_ok_at time (glossary 1.4).
+--
+-- Integration pass (contract-v2.md section 10, item 9, 2026-10-03): the
+-- columns the desk writes (waves enrolled_at, done_reason, settled_at;
+-- members next_try_at, later_reason, fail_count, last_error, due_at,
+-- replied_at, booked_at, closed_at; meta hold_reason), the member state
+-- closed, and the indexes the desk reads by.
 --
 -- Settings: whatsapp_guard and followups gain only the keys they lack
 -- (glossary 1.4), with one audit row each; opener_en/ar template rows are
@@ -113,48 +122,71 @@ create table if not exists public.cockpit_sales_followup_waves (
                   ('reply', 'confirm', 'no_show', 'cancelled', 'new', 'after_call', 'nurture', 'good_intro', 'reactivate')),
   per_day       integer not null default 40 check (per_day between 0 and 200),
   holdout_share numeric(4, 3) not null default 0.1 check (holdout_share >= 0 and holdout_share <= 0.5),
-  state         text not null default 'draft' check (state in ('draft', 'running', 'paused', 'done', 'cancelled')),
+  -- The desk's four states (NOTES section 2): a manager's stop and the
+  -- desk's own end are both done, with done_reason.
+  state         text not null default 'draft' check (state in ('draft', 'running', 'paused', 'done')),
   made_by       text not null check (length(made_by) between 1 and 200),
   note          text check (note is null or length(note) <= 500),
   version       integer not null default 1 check (version >= 1),
   created_at    timestamptz not null default now(),
   started_at    timestamptz,
+  -- Set by the desk once every chunk of the pool is in the wave.
+  enrolled_at   timestamptz,
   ended_at      timestamptz,
+  -- Why the wave ended: the desk's sentence, or "Stopped by a manager."
+  done_reason   text check (done_reason is null or length(done_reason) <= 300),
+  -- Set by the desk once a done wave has no member left to let go of or watch.
+  settled_at    timestamptz,
   updated_at    timestamptz not null default now(),
-  constraint cockpit_sales_followup_waves_final_check check (state not in ('done', 'cancelled') or ended_at is not null)
+  constraint cockpit_sales_followup_waves_final_check check (state <> 'done' or ended_at is not null)
 );
 comment on table public.cockpit_sales_followup_waves is
-  'Reactivation waves over the backlog: pool (no_show_cancelled, good_intro, unclosed_demo, never_booked), the segment its drafts use (reactivate), per_day (40), and the holdout share (0.1, by sha256(''waves:''||contact_id) in the desk). sales-api followup.wave starts it (running), pauses, resumes and stops it (done); the desk sets done when the pool is empty. Wave sends do not count toward followups.per_day.';
+  'Reactivation waves over the backlog: pool (no_show_cancelled, good_intro, unclosed_demo, never_booked), the segment its drafts use (reactivate), per_day (40), and the holdout share (0.1, by sha256(''waves:''||contact_id) in the desk). sales-api followup.wave starts it (running), pauses, resumes and stops it (done, done_reason "Stopped by a manager."); the desk sets enrolled_at once the pool is in, done when nobody is left to write to, and settled_at once nobody is left to watch. Wave sends do not count toward followups.per_day.';
 
 create unique index if not exists cockpit_sales_followup_waves_one_running_pool
   on public.cockpit_sales_followup_waves (pool)
   where state in ('running', 'paused');
 create index if not exists cockpit_sales_followup_waves_state
   on public.cockpit_sales_followup_waves (state, created_at desc);
+create index if not exists cockpit_sales_followup_waves_settled
+  on public.cockpit_sales_followup_waves (state, settled_at);
 
 create table if not exists public.cockpit_sales_followup_wave_members (
   wave_id         uuid not null references public.cockpit_sales_followup_waves (id) on delete cascade,
   contact_id      text not null check (contact_id <> ''),
   arm             text not null check (arm in ('wave', 'holdout')),
+  -- closed: 14 days after the opener (or a holdout member's due_at) with no
+  -- booking. done and failed stay valid for older writers.
   state           text not null default 'waiting'
-                    check (state in ('waiting', 'held_out', 'drafted', 'sent', 'excluded', 'failed', 'replied', 'booked', 'done')),
+                    check (state in ('waiting', 'held_out', 'drafted', 'sent', 'excluded', 'failed', 'replied', 'booked',
+                                     'closed', 'done')),
   followup_id     uuid references public.cockpit_sales_followups (id) on delete set null,
   event_at        timestamptz,
   excluded_reason text check (excluded_reason is null or length(excluded_reason) <= 300),
   added_at        timestamptz not null default now(),
   drafted_at      timestamptz,
+  -- A waiting member is not looked at before this, and later_reason says why.
+  next_try_at     timestamptz,
+  later_reason    text check (later_reason is null or length(later_reason) <= 300),
+  fail_count      integer not null default 0 check (fail_count >= 0),
+  last_error      text check (last_error is null or length(last_error) <= 300),
+  -- Wave arm: when the opener went. Holdout arm: when their 14 days start.
   sent_at         timestamptz,
+  due_at          timestamptz,
+  replied_at      timestamptz,
+  booked_at       timestamptz,
+  closed_at       timestamptz,
   outcome_at      timestamptz,
   updated_at      timestamptz not null default now(),
   primary key (wave_id, contact_id),
   -- A holdout member is never written to: no draft, no send, no failure.
   constraint cockpit_sales_followup_wave_members_holdout_check
-    check (arm = 'wave' or state in ('held_out', 'replied', 'booked', 'excluded', 'done')),
+    check (arm = 'wave' or state in ('held_out', 'replied', 'booked', 'closed', 'excluded', 'done')),
   constraint cockpit_sales_followup_wave_members_wave_check
     check (arm = 'holdout' or state <> 'held_out')
 );
 comment on table public.cockpit_sales_followup_wave_members is
-  'Who is in each wave and which arm. Running states are waiting, held_out and drafted (a contact is in at most one running wave). A drafted member follows its draft: sent, excluded (a rep skipped it, excluded_reason), failed, or waiting again when the draft expired. Outcomes (replied, booked, done) are recorded for both arms, for the 14-day comparison. event_at is when the lead entered the pool.';
+  'Who is in each wave and which arm. Running states are waiting, held_out and drafted (a contact is in at most one running wave, whatever that wave''s state). A drafted member follows its draft: sent, excluded (a rep skipped it, excluded_reason), or waiting again (next_try_at, later_reason, fail_count, last_error) when the draft expired or failed once. Outcomes (replied, booked, closed after 14 days) are recorded for both arms from sent_at (wave) or due_at (holdout), for the comparison. event_at is when the lead entered the pool.';
 
 create unique index if not exists cockpit_sales_followup_wave_members_one_running
   on public.cockpit_sales_followup_wave_members (contact_id)
@@ -165,6 +197,12 @@ create index if not exists cockpit_sales_followup_wave_members_drafted
   on public.cockpit_sales_followup_wave_members (wave_id, drafted_at);
 create index if not exists cockpit_sales_followup_wave_members_state
   on public.cockpit_sales_followup_wave_members (state, drafted_at);
+create index if not exists cockpit_sales_followup_wave_members_next_try
+  on public.cockpit_sales_followup_wave_members (wave_id, state, next_try_at);
+create index if not exists cockpit_sales_followup_wave_members_sent
+  on public.cockpit_sales_followup_wave_members (sent_at) where sent_at is not null;
+create index if not exists cockpit_sales_followup_wave_members_due
+  on public.cockpit_sales_followup_wave_members (due_at) where due_at is not null;
 
 create or replace function public.cockpit_sales_followup_waves_guard()
 returns trigger
@@ -174,14 +212,14 @@ as $$
 begin
   if tg_op = 'UPDATE' then
     new.version := old.version + 1;
-    if old.state in ('done', 'cancelled') and new.state is distinct from old.state then
+    if old.state = 'done' and new.state is distinct from old.state then
       raise exception 'This wave has already ended (%). Start a new wave instead.', old.state
         using errcode = 'P0001';
     end if;
   end if;
   new.updated_at := now();
   if new.state = 'running' and new.started_at is null then new.started_at := now(); end if;
-  if new.state in ('done', 'cancelled') and new.ended_at is null then new.ended_at := now(); end if;
+  if new.state = 'done' and new.ended_at is null then new.ended_at := now(); end if;
   return new;
 end;
 $$;
@@ -192,33 +230,13 @@ create trigger cockpit_sales_followup_waves_guard
   before insert or update on public.cockpit_sales_followup_waves
   for each row execute function public.cockpit_sales_followup_waves_guard();
 
--- When a wave ends, its running members close: a lead never reached is
--- excluded, a holdout lead is done (its outcomes can still be recorded), and
--- a drafted lead is done (its draft keeps its own life). Sent members keep
--- their state and outcomes.
-create or replace function public.cockpit_sales_followup_waves_close_members()
-returns trigger
-language plpgsql
-set search_path = ''
-as $$
-begin
-  update public.cockpit_sales_followup_wave_members as m
-     set state = case when m.state = 'waiting' then 'excluded' else 'done' end,
-         excluded_reason = case when m.state = 'waiting'
-                                then coalesce(m.excluded_reason, 'The wave ended before this lead got an opener.')
-                                else m.excluded_reason end
-   where m.wave_id = new.id and m.state in ('waiting', 'held_out', 'drafted');
-  return null;
-end;
-$$;
-revoke all on function public.cockpit_sales_followup_waves_close_members() from public, anon, authenticated;
-
+-- A wave that ends keeps its members: the desk winds it down within five
+-- minutes (desk/waves.py wind_down and finish) because only it knows which
+-- openers are still open and whose 14 days have started. An earlier draft of
+-- this migration closed them here, which hid held-back members from the
+-- comparison and left open openers behind; it is removed if present.
 drop trigger if exists cockpit_sales_followup_waves_close_members on public.cockpit_sales_followup_waves;
-create trigger cockpit_sales_followup_waves_close_members
-  after update of state on public.cockpit_sales_followup_waves
-  for each row
-  when (new.state in ('done', 'cancelled') and old.state is distinct from new.state)
-  execute function public.cockpit_sales_followup_waves_close_members();
+drop function if exists public.cockpit_sales_followup_waves_close_members();
 
 create or replace function public.cockpit_sales_followup_wave_members_touch()
 returns trigger
@@ -229,7 +247,10 @@ begin
   new.updated_at := now();
   if new.state = 'drafted' and new.drafted_at is null then new.drafted_at := now(); end if;
   if new.state = 'sent' and new.sent_at is null then new.sent_at := now(); end if;
-  if new.state in ('replied', 'booked') and new.outcome_at is null then new.outcome_at := now(); end if;
+  if new.state = 'replied' and new.replied_at is null then new.replied_at := now(); end if;
+  if new.state = 'booked' and new.booked_at is null then new.booked_at := now(); end if;
+  if new.state = 'closed' and new.closed_at is null then new.closed_at := now(); end if;
+  if new.state in ('replied', 'booked', 'closed') and new.outcome_at is null then new.outcome_at := now(); end if;
   return new;
 end;
 $$;
@@ -250,6 +271,8 @@ create table if not exists public.cockpit_sales_followup_meta (
   send_after     timestamptz,
   held_by        text check (held_by is null or length(held_by) between 1 and 200),
   held_at        timestamptz,
+  -- The refusal that set the draft aside (held_by sales-desk), or null.
+  hold_reason    text check (hold_reason is null or length(hold_reason) <= 300),
   approved_by    text check (approved_by is null or length(approved_by) between 1 and 200),
   approved_at    timestamptz,
   intent         text check (intent is null or intent ~ '^[a-z][a-z0-9_]{0,39}$'),
@@ -266,7 +289,7 @@ create table if not exists public.cockpit_sales_followup_meta (
   updated_at     timestamptz not null default now()
 );
 comment on table public.cockpit_sales_followup_meta is
-  'One row per draft the agent manages: kind_key (segment.language.channel), the level when it was drafted, wave_id for a backlog opener, send_after for an approved batch (one every followups.waves.batch_gap_s), held_by when someone held it (the desk re-reads it before each send), approved_by, how much a rep edited it, the handover or room it led to, the HighLevel note, and the outcome times.';
+  'One row per draft the agent manages: kind_key (segment.language.channel), the level when it was drafted, wave_id for a backlog opener, send_after for an approved batch (one every followups.waves.batch_gap_s), held_by when someone held it (sales-desk when a send was refused, with hold_reason; the desk re-reads it before each send), approved_by, how much a rep edited it, the handover or room it led to, the HighLevel note, and the outcome times.';
 
 create index if not exists cockpit_sales_followup_meta_due
   on public.cockpit_sales_followup_meta (send_after)
@@ -282,7 +305,7 @@ as $$
 begin
   new.updated_at := now();
   if new.held_by is not null and new.held_at is null then new.held_at := now(); end if;
-  if new.held_by is null then new.held_at := null; end if;
+  if new.held_by is null then new.held_at := null; new.hold_reason := null; end if;
   if new.approved_by is not null and new.approved_at is null then new.approved_at := now(); end if;
   return new;
 end;

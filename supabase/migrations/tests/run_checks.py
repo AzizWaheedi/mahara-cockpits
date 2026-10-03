@@ -24,6 +24,11 @@ What it does
      no table, view, function, cron job, setting, audit row, status row or
      vault secret from the run was left behind.
 
+The behaviour checks also read tests/presence_fixtures.json, the one fixture
+set the presence view and roomlogic.ts presenceOf/defaultProvider share: the
+runner loads it into a temp table (pg_temp.lc_presence_fixtures) in the same
+rolled-back transaction, right before the check file.
+
 The management token is read from SUPABASE_ACCESS_TOKEN or
 ~/.config/mahara/sb_mgmt_token and is never printed. Exit code 0 only when every
 check passed and (unless --applied) nothing persisted.
@@ -42,6 +47,7 @@ MIGRATIONS = os.path.dirname(HERE)
 FILES = ["20261003a_sales_rooms.sql", "20261003b_sales_hooks.sql", "20261003c_sales_followup_agent.sql"]
 CATALOG = os.path.join(HERE, "20261003_rooms_catalog.sql")
 CHECKS = os.path.join(HERE, "20261003_rooms_checks.sql")
+PRESENCE_FIXTURES = os.path.join(HERE, "presence_fixtures.json")
 FINAL = "select name, ok, detail from pg_temp.lc_checks order by n;"
 
 
@@ -153,6 +159,18 @@ def strip_transaction(name: str, sql: str) -> str:
     return sql
 
 
+def presence_fixtures_sql() -> str:
+    """The shared presence fixtures as a temp table, for section E2 of the checks."""
+    doc = json.load(open(PRESENCE_FIXTURES))
+    if not isinstance(doc.get("presence"), list) or not isinstance(doc.get("default_provider"), list):
+        raise SystemExit("presence_fixtures.json needs a presence list and a default_provider list.")
+    text = json.dumps(doc, ensure_ascii=True)
+    if "$fx$" in text:
+        raise SystemExit("presence_fixtures.json must not contain $fx$.")
+    return ("create temp table lc_presence_fixtures (doc jsonb not null) on commit drop;\n"
+            f"insert into pg_temp.lc_presence_fixtures (doc) values ($fx${text}$fx$::jsonb);")
+
+
 def compose(applied: bool, twice: bool = False, files=None, final: bool = True) -> str:
     """One transaction: the migrations (unless applied), the check files, the
     final select of pg_temp.lc_checks (unless a check file has its own), and
@@ -174,6 +192,8 @@ def compose(applied: bool, twice: bool = False, files=None, final: bool = True) 
         checks = open(path).read()
         if [s for s in top_level_statements(checks) if TX.match(s)]:
             raise SystemExit(f"{os.path.basename(path)} must not contain transaction statements.")
+        if os.path.abspath(path) == os.path.abspath(CHECKS):
+            parts += ["-- ===== presence_fixtures.json =====", presence_fixtures_sql()]
         parts += [f"-- ===== {os.path.basename(path)} =====", checks]
     if final:
         parts.append(FINAL)
@@ -197,6 +217,7 @@ select 'function ' || p.proname from pg_proc as p
  where p.pronamespace = 'public'::regnamespace and p.proname in (
    'cockpit_sales_setting_int', 'cockpit_sales_room_code', 'cockpit_sales_rooms_guard', 'cockpit_sales_live_guard',
    'cockpit_sales_rooms_link_replaced', 'cockpit_sales_room_event_lease', 'cockpit_sales_rooms_tick',
+   'cockpit_sales_room_pending',
    'cockpit_sales_touch_version', 'cockpit_sales_touch_updated', 'cockpit_sales_live_claim',
    'cockpit_sales_rooms_close', 'cockpit_sales_live_move', 'cockpit_sales_rooms_sweep', 'cockpit_sales_alert_hours',
    'cockpit_sales_alert_words', 'cockpit_sales_alert_set', 'cockpit_sales_watchdog',

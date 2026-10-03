@@ -66,6 +66,7 @@ begin
                            'public.cockpit_sales_rooms_tick()', 'public.cockpit_sales_watchdog()',
                            'public.cockpit_sales_room_code()',
                            'public.cockpit_sales_room_event_lease(uuid, text, integer)',
+                           'public.cockpit_sales_room_pending(uuid, timestamptz)',
                            'public.cockpit_sales_rooms_close(uuid[], text[], text, text, text, text, text)',
                            'public.cockpit_sales_live_move(uuid, text[], text, text, text)',
                            'public.cockpit_sales_alert_set(text, boolean, text, text, text, jsonb)',
@@ -130,11 +131,78 @@ begin
       where table_schema = 'public' and table_name = 'cockpit_sales_followup_wave_members' and column_name = 'excluded_reason')
     and exists (select 1 from information_schema.columns
       where table_schema = 'public' and table_name = 'cockpit_sales_wa_templates' and column_name = 'button_variable'));
-  perform pg_temp.ck('A triggers: room guard, the replaced_by link, handover guard, levels gate, wave close, meta and stops touch',
-    (select count(*) = 7 from pg_trigger as g
+  perform pg_temp.ck('A triggers: room guard, the replaced_by link, handover guard, levels gate, wave guard, member, meta and stops touch',
+    (select count(*) = 8 from pg_trigger as g
       where not g.tgisinternal and g.tgname in ('cockpit_sales_rooms_guard', 'cockpit_sales_rooms_link_replaced',
-        'cockpit_sales_live_guard', 'cockpit_sales_followup_levels_guard', 'cockpit_sales_followup_waves_close_members',
-        'cockpit_sales_followup_meta_touch', 'cockpit_sales_followup_stops_touch')));
+        'cockpit_sales_live_guard', 'cockpit_sales_followup_levels_guard', 'cockpit_sales_followup_waves_guard',
+        'cockpit_sales_followup_wave_members_touch', 'cockpit_sales_followup_meta_touch', 'cockpit_sales_followup_stops_touch')));
+  perform pg_temp.ck('A no trigger closes a done wave''s members (the desk winds a wave down; contract-v2 section 10)',
+    not exists (select 1 from pg_trigger as g where not g.tgisinternal and g.tgname = 'cockpit_sales_followup_waves_close_members')
+    and to_regprocedure('public.cockpit_sales_followup_waves_close_members()') is null);
+
+  -- Integration pass (contract-v2.md section 2 and section 10).
+  select string_agg(x.c, ', ' order by x.c) into v
+    from (values ('cockpit_sales_rooms', 'link_claimed_at'), ('cockpit_sales_rooms', 'count_undo_at'),
+                 ('cockpit_sales_rooms', 'link_unconfirmed_at'),
+                 ('cockpit_sales_followup_waves', 'enrolled_at'), ('cockpit_sales_followup_waves', 'settled_at'),
+                 ('cockpit_sales_followup_wave_members', 'next_try_at'), ('cockpit_sales_followup_wave_members', 'due_at'),
+                 ('cockpit_sales_followup_wave_members', 'replied_at'), ('cockpit_sales_followup_wave_members', 'booked_at'),
+                 ('cockpit_sales_followup_wave_members', 'closed_at')) as w(t, c0)
+    cross join lateral (select w.t || '.' || w.c0 as c) as x
+   where not exists (select 1 from information_schema.columns as ic
+                      where ic.table_schema = 'public' and ic.table_name = w.t and ic.column_name = w.c0
+                        and ic.data_type = 'timestamp with time zone' and ic.is_nullable = 'YES' and ic.column_default is null);
+  perform pg_temp.ck('A the new time columns exist, timestamptz, null, no default (rooms link_claimed_at, count_undo_at, link_unconfirmed_at; waves; members)',
+    v is null, v);
+  select string_agg(x.c, ', ' order by x.c) into v
+    from (values ('cockpit_sales_followup_waves', 'done_reason', 300), ('cockpit_sales_followup_wave_members', 'later_reason', 300),
+                 ('cockpit_sales_followup_wave_members', 'last_error', 300), ('cockpit_sales_followup_meta', 'hold_reason', 300)) as w(t, c0, n)
+    cross join lateral (select w.t || '.' || w.c0 as c) as x
+   where not exists (select 1 from information_schema.columns as ic
+                      where ic.table_schema = 'public' and ic.table_name = w.t and ic.column_name = w.c0
+                        and ic.data_type = 'text' and ic.is_nullable = 'YES')
+      or not exists (select 1 from pg_constraint as k
+                      where k.conrelid = ('public.' || w.t)::regclass and k.contype = 'c'
+                        and pg_get_constraintdef(k.oid) like '%length(' || w.c0 || ') <= ' || w.n || '%');
+  perform pg_temp.ck('A the desk''s reason columns exist, text, at most 300 characters (done_reason, later_reason, last_error, hold_reason)',
+    v is null, v);
+  perform pg_temp.ck('A wave_members.fail_count is integer not null default 0, never negative',
+    exists (select 1 from information_schema.columns
+             where table_schema = 'public' and table_name = 'cockpit_sales_followup_wave_members' and column_name = 'fail_count'
+               and data_type = 'integer' and is_nullable = 'NO' and column_default = '0')
+    and exists (select 1 from pg_constraint as k
+                 where k.conrelid = 'public.cockpit_sales_followup_wave_members'::regclass
+                   and pg_get_constraintdef(k.oid) = 'CHECK ((fail_count >= 0))'));
+  perform pg_temp.ck('A open_device takes phone, tablet or computer, or null (the door''s and roomlogic''s names)',
+    (select pg_get_constraintdef(k.oid) from pg_constraint as k where k.conname = 'cockpit_sales_rooms_open_device_check'
+       and k.conrelid = 'public.cockpit_sales_rooms'::regclass)
+      = 'CHECK (((open_device IS NULL) OR (open_device = ANY (ARRAY[''phone''::text, ''tablet''::text, ''computer''::text]))))',
+    (select pg_get_constraintdef(k.oid) from pg_constraint as k where k.conname = 'cockpit_sales_rooms_open_device_check'));
+  perform pg_temp.ck('A wave states are the desk''s four (draft, running, paused, done)',
+    (select pg_get_constraintdef(k.oid) from pg_constraint as k where k.conname = 'cockpit_sales_followup_waves_state_check')
+      = 'CHECK ((state = ANY (ARRAY[''draft''::text, ''running''::text, ''paused''::text, ''done''::text])))');
+  perform pg_temp.ck('A wave member states include closed (the 14-day close) and keep done and failed',
+    (select pg_get_constraintdef(k.oid) like '%''closed''%' and pg_get_constraintdef(k.oid) like '%''done''%'
+            and pg_get_constraintdef(k.oid) like '%''failed''%' and pg_get_constraintdef(k.oid) like '%''held_out''%'
+       from pg_constraint as k where k.conname = 'cockpit_sales_followup_wave_members_state_check')
+    and (select pg_get_constraintdef(k.oid) like '%''closed''%'
+           from pg_constraint as k where k.conname = 'cockpit_sales_followup_wave_members_holdout_check'));
+  for r in select * from (values
+      ('cockpit_sales_rooms_provider_meeting', 'cockpit_sales_rooms', '(provider_meeting_id)', 'provider_meeting_id IS NOT NULL'),
+      ('cockpit_sales_followup_waves_settled', 'cockpit_sales_followup_waves', '(state, settled_at)', null),
+      ('cockpit_sales_followup_wave_members_next_try', 'cockpit_sales_followup_wave_members', '(wave_id, state, next_try_at)', null),
+      ('cockpit_sales_followup_wave_members_sent', 'cockpit_sales_followup_wave_members', '(sent_at)', 'sent_at IS NOT NULL'),
+      ('cockpit_sales_followup_wave_members_due', 'cockpit_sales_followup_wave_members', '(due_at)', 'due_at IS NOT NULL'),
+      ('cockpit_sales_followup_wave_members_state', 'cockpit_sales_followup_wave_members', '(state, drafted_at)', null))
+      as x(idx, tbl, cols, pred) loop
+    perform pg_temp.ck('A index ' || r.idx || ' on ' || r.tbl || ' ' || r.cols || coalesce(' where ' || r.pred, '') || ', not unique',
+      exists (select 1 from pg_index as i join pg_indexes as pi on pi.indexname = r.idx and pi.schemaname = 'public'
+               where i.indexrelid = ('public.' || r.idx)::regclass and not i.indisunique
+                 and i.indrelid = ('public.' || r.tbl)::regclass
+                 and pi.indexdef like '%' || r.cols || '%'
+                 and coalesce(pg_get_expr(i.indpred, i.indrelid), '') = coalesce('(' || r.pred || ')', '')),
+      (select indexdef from pg_indexes where schemaname = 'public' and indexname = r.idx));
+  end loop;
 exception when others then
   perform pg_temp.ck('A catalog section crashed', false, sqlstate || ': ' || sqlerrm);
 end;
