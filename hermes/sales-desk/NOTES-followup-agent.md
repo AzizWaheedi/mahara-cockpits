@@ -54,9 +54,10 @@ The desk side is built and tested. The sales-api side and the database side are 
 - It also checks the agent tables, the WhatsApp gate and the opener templates, and states each one plainly. None of these blocks the other jobs.
 
 **7. An honest follow-ups row.**
-- Every real run probes the model first.
-- When the probe fails, the run still does its housekeeping and counts who is due. It asks no model.
+- Every real run probes the model first, and writes the `(sales-desk, model)` row.
+- When the probe finds an outage (the sign-in lapsed, the proxy gone, the plan's usage limit), the run still does its housekeeping and counts who is due. It asks no model.
 - The status row is then `ok=false`, reading "No drafts can be written: <reason>. N leads are due and wait". It is never "0 drafts written" as if all were well.
+- A probe that only timed out is said on the model row, and drafting is still tried. Each draft has its own retries.
 
 **8. The desk's own WhatsApp sends.**
 - `autosend` of a `whatsapp` or `whatsapp_template` draft waits for a person while either of these holds:

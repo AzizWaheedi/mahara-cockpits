@@ -795,15 +795,19 @@ def cmd_followups(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     # One token first: a lapsed sign-in is said on the status row every run,
     # not only when a draft happens to be tried (it hid for days behind
     # "0 drafts written").
+    # Only an outage (the sign-in, the proxy gone, the plan's limit) stops
+    # the drafting; a probe that merely timed out is said, and drafting is
+    # still tried, each draft with its own retries.
     model_down = None
     if getattr(args, "segment", None) != "reactivate":
         try:
-            ok, said = model_probe(p, 30)
-        except Exception as e:  # noqa: BLE001 - a probe that breaks proves nothing either way
-            ok, said = True, f"the probe itself failed: {http.scrub(str(e))[:120]}"
-            log.warn(f"followups: model probe: {said}")
-        if not ok:
+            ok, said = True, p.ping(timeout=30)
+        except NotNow as e:
+            ok, said = False, str(e)
             model_down = said
+        except Exception as e:  # noqa: BLE001 - a probe that breaks proves nothing either way
+            ok, said = False, f"The model did not answer a one-token call: {http.scrub(str(e))[:200]}"
+            log.warn(f"followups: {said}; drafting is tried all the same")
         if not test:
             _model_status(cfg, log, ok, said)
     try:

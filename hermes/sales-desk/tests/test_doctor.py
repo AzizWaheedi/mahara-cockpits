@@ -44,6 +44,8 @@ class World:
         if "127.0.0.1:3456" in url:
             if url.endswith("/models"):
                 return 200, {}, json.dumps({"data": [{"id": "opus"}]}).encode()
+            if self.model_ok == "slow":
+                raise http.HttpError(0, "TimeoutError: timed out", b"", url)
             if not self.model_ok:
                 raise http.HttpError(500, "proxy_error", LAPSED, url)
             return 200, {}, json.dumps({"model": "opus", "choices": [{"message": {"content": "OK"}}]}).encode()
@@ -158,6 +160,17 @@ class HonestFollowupsRow(unittest.TestCase):
         self.assertIn("No lead is due right now", r["detail"])
         self.assertFalse(row(pg, "model")["ok"])
         self.assertEqual(pg.rows("cockpit_sales_followups"), [])
+
+    def test_a_probe_that_only_timed_out_does_not_stop_the_drafting(self):
+        pg = FakePostgrest()
+        pg.put("cockpit_sales_settings", {"key": "followups", "value": {"enabled": True, "quiet": {"from": 24, "to": 0}}})
+        world = World(pg, model_ok="slow")
+        with tempfile.TemporaryDirectory() as tmp:
+            code, _, err = run_cli(["--quiet", "followups"], world, tmp)
+        self.assertEqual(code, 0)
+        self.assertTrue(row(pg, "followups")["ok"])
+        self.assertFalse(row(pg, "model")["ok"])
+        self.assertIn("drafting is tried all the same", err)
 
     def test_a_test_run_writes_no_status_row(self):
         pg = FakePostgrest()
