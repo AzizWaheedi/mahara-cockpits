@@ -49,4 +49,28 @@ export async function fetchWithin(
   }
 }
 
+/**
+ * fetch plus reading the body, both inside the same `ms`: a server that
+ * sends its headers and then stalls cannot hold the caller past its budget.
+ */
+export async function fetchTextWithin(
+  fetcher: typeof fetch,
+  url: string,
+  init: RequestInit,
+  ms: number,
+): Promise<{ ok: boolean; status: number; text: string }> {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), ms);
+  try {
+    const res = await fetcher(url, { ...init, signal: ctl.signal });
+    const text = await res.text();
+    return { ok: res.ok, status: res.status, text };
+  } catch (e) {
+    if (ctl.signal.aborted) throw new Timeout(ms);
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));

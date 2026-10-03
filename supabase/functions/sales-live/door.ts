@@ -57,14 +57,23 @@ export function isPreviewBot(ua: string | null | undefined): boolean {
   return BOT.test(s);
 }
 
-export type Device = "mobile" | "tablet" | "desktop";
+/** The values cockpit_sales_rooms.open_device allows (migration 20261003a). */
+export type Device = "phone" | "tablet" | "desktop" | "unknown";
 
 export function deviceOf(ua: string | null | undefined): Device {
   const s = ua ?? "";
+  if (!s.trim()) return "unknown";
   if (/iPad|Tablet|PlayBook|Silk|Kindle/i.test(s)) return "tablet";
   if (/Android/i.test(s) && !/Mobi/i.test(s)) return "tablet";
-  if (/Mobi|iPhone|iPod|Android|Windows Phone/i.test(s)) return "mobile";
+  if (/Mobi|iPhone|iPod|Android|Windows Phone/i.test(s)) return "phone";
   return "desktop";
+}
+
+/** The timeline line for an open (room_events.text). */
+export function openText(device: Device, afterEnd: boolean): string {
+  if (afterEnd) return "The lead opened the link after the room closed.";
+  const on = { phone: " on a phone", tablet: " on a tablet", desktop: " on a computer", unknown: "" }[device];
+  return `The lead opened the link${on}.`;
 }
 
 export type Os = "ios" | "android" | "mac" | "windows" | "other";

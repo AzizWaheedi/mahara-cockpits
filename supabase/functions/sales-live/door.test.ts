@@ -10,6 +10,7 @@ import {
   ipHash,
   isPreviewBot,
   normalizeCode,
+  openText,
   osOf,
   RateLimiter,
   type RoomRow,
@@ -110,13 +111,25 @@ describe("the bot filter", () => {
 
 describe("devices", () => {
   test("phone, tablet or computer", () => {
-    expect(deviceOf(UA.iphoneSafari)).toBe("mobile");
-    expect(deviceOf(UA.androidChrome)).toBe("mobile");
+    expect(deviceOf(UA.iphoneSafari)).toBe("phone");
+    expect(deviceOf(UA.androidChrome)).toBe("phone");
     expect(deviceOf(UA.ipad)).toBe("tablet");
     expect(deviceOf(UA.androidTablet)).toBe("tablet");
     expect(deviceOf(UA.macChrome)).toBe("desktop");
     expect(deviceOf(UA.windowsEdge)).toBe("desktop");
-    expect(deviceOf("")).toBe("desktop");
+    expect(deviceOf("")).toBe("unknown");
+  });
+
+  test("only the values open_device allows", () => {
+    for (const ua of [...Object.values(UA), "", "curl/8"])
+      expect(["phone", "tablet", "desktop", "unknown"]).toContain(deviceOf(ua));
+  });
+
+  test("the timeline line for an open", () => {
+    expect(openText("phone", false)).toBe("The lead opened the link on a phone.");
+    expect(openText("desktop", false)).toBe("The lead opened the link on a computer.");
+    expect(openText("unknown", false)).toBe("The lead opened the link.");
+    expect(openText("phone", true)).toBe("The lead opened the link after the room closed.");
   });
 
   test("the system, for the Meet hint", () => {

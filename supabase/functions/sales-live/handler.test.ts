@@ -39,6 +39,8 @@ class World {
   firstOpenWrites = 0;
   dbDown = false;
   dbDelayMs = 0;
+  /** Headers arrive, then the body never does (until the caller gives up). */
+  dbStallBody = false;
   salesApiCalls: { headers: Headers; body: Row }[] = [];
   salesApiReply: (body: Row, n: number) => { status: number; json: Row } = () => ({ status: 200, json: { ok: true } });
   salesApiDelayMs = 0;
@@ -98,14 +100,42 @@ class World {
     if (headers.get("authorization") !== `Bearer ${SERVICE_KEY}`) return new Response("no key", { status: 401 });
     await this.wait(this.dbDelayMs, init.signal);
     if (this.dbDown) return new Response('{"message":"connection refused"}', { status: 503 });
+    if (this.dbStallBody) {
+      const signal = init.signal;
+      return new Response(
+        new ReadableStream({
+          start(c) {
+            signal?.addEventListener("abort", () => c.error(new AbortErr("aborted")));
+          },
+        }),
+        { status: 200 },
+      );
+    }
     return this.rest(url, method, body);
   };
+
+  /** One PostgREST condition: eq, lt or is.null. */
+  private test(r: Row, col: string, cond: string): boolean {
+    if (cond === "is.null") return r[col] == null;
+    if (cond.startsWith("eq.")) return String(r[col]) === cond.slice(3);
+    if (cond.startsWith("lt.")) return r[col] != null && String(r[col]) < cond.slice(3);
+    throw new Error(`fake PostgREST does not know ${col}=${cond}`);
+  }
 
   private match(rows: Row[], params: URLSearchParams): Row[] {
     return rows.filter(r => {
       for (const [k, v] of params) {
         if (["select", "limit", "on_conflict", "order"].includes(k)) continue;
-        if (v === "is.null" ? r[k] != null : v.startsWith("eq.") ? String(r[k]) !== v.slice(3) : true) return false;
+        if (k === "or") {
+          const parts = v.replace(/^\(|\)$/g, "").split(",");
+          const any = parts.some(part => {
+            const dot = part.indexOf(".");
+            return this.test(r, part.slice(0, dot), part.slice(dot + 1));
+          });
+          if (!any) return false;
+          continue;
+        }
+        if (!this.test(r, k, v)) return false;
       }
       return true;
     });
@@ -321,7 +351,12 @@ describe("POST /zoom", () => {
     expect(await res.json()).toEqual({ ok: true, stored: "new" });
     expect(world.events).toHaveLength(1);
     const ev = world.events[0];
-    expect(ev).toMatchObject({ room_id: "room-1", kind: "zoom.meeting.participant_joined", source: "zoom" });
+    expect(ev).toMatchObject({
+      room_id: "room-1",
+      kind: "zoom.meeting.participant_joined",
+      source: "zoom",
+      text: "Zoom: Lead Person joined.",
+    });
     expect(ev.dedupe_key).toMatch(/^zoom:meeting\.participant_joined:/);
     expect(ev.handled_at).toBeUndefined();
     expect(JSON.stringify(ev.detail)).not.toContain("+96550000000");
@@ -339,7 +374,9 @@ describe("POST /zoom", () => {
       room_id: "room-1",
       dedupe_key: ev.dedupe_key,
     });
-    expect(call.body.payload.participant.email).toBe("lead@example.com");
+    expect(call.body.payload.event).toBe("meeting.participant_joined");
+    expect(call.body.payload.payload.object.participant.email).toBe("lead@example.com");
+    expect(call.body.payload.payload.object.host_id).toBe("host-1");
     expect(world.status.get("sales-live/zoom")).toMatchObject({ ok: true });
   });
 
@@ -453,6 +490,16 @@ describe("POST /zoom", () => {
     expect(res.status).toBe(503);
     expect(took).toBeLessThan(3000);
     expect(took).toBeGreaterThanOrEqual(BUDGET.zoomStore - 50);
+  });
+
+  test("a database that sends headers and then stalls is cut off inside 3 s too", async () => {
+    const h = fresh(w => {
+      w.dbStallBody = true;
+    });
+    const started = performance.now();
+    const res = await h(zoomRequest(zoomBody("meeting.participant_joined")));
+    expect(res.status).toBe(503);
+    expect(performance.now() - started).toBeLessThan(3000);
   });
 
   test("sales-api failing is retried once, then left for the sweep with a red status row", async () => {
@@ -712,12 +759,35 @@ describe("GET /open/{code}", () => {
     await world.settle();
     const opens = world.events.filter(e => e.kind === "door.open");
     expect(opens).toHaveLength(2);
-    expect(opens[0]).toMatchObject({ room_id: "room-1", source: "door", detail: { device: "mobile", os: "ios" } });
+    expect(opens[0]).toMatchObject({
+      room_id: "room-1",
+      source: "door",
+      text: "The lead opened the link on a phone.",
+      detail: { device: "phone", os: "ios" },
+    });
     expect(opens[0].handled_at).toBeTruthy();
     expect(opens[0].detail.ip_hash).toMatch(/^[0-9a-f]{32}$/);
     expect(JSON.stringify(opens)).not.toContain("203.0.113.9");
     expect(world.rooms[0].first_open_at).toBe(new Date(NOW).toISOString());
-    expect(world.rooms[0].open_device).toBe("mobile");
+    expect(world.rooms[0].open_device).toBe("phone");
+  });
+
+  test("later opens move last_open_at for the open grace, at most every 30 s", async () => {
+    const h = fresh(w => w.rooms.push(liveRoom()));
+    await h(openRequest("K7Q2MX", { d: "device-aaaa-1111" }));
+    await world.settle();
+    expect(world.rooms[0].last_open_at).toBe(new Date(NOW).toISOString());
+    world.now = NOW + 10_000;
+    await h(openRequest("K7Q2MX", { d: "device-aaaa-1111" }));
+    await world.settle();
+    expect(world.rooms[0].last_open_at).toBe(new Date(NOW).toISOString());
+    world.now = NOW + 40_000;
+    await h(openRequest("K7Q2MX", { d: "device-aaaa-1111" }));
+    await world.settle();
+    expect(world.rooms[0].last_open_at).toBe(new Date(NOW + 40_000).toISOString());
+    expect(world.rooms[0].first_open_at).toBe(new Date(NOW).toISOString());
+    // A reload is not a second counted open.
+    expect(world.events.filter(e => e.kind === "door.open")).toHaveLength(1);
   });
 
   test("fifty devices opening at once: fifty opens, one first open", async () => {
@@ -795,7 +865,9 @@ describe("GET /open/{code}", () => {
     });
     await world.settle();
     expect(world.events[0].detail.after_end).toBe(true);
+    expect(world.events[0].text).toBe("The lead opened the link after the room closed.");
     expect(world.rooms[0].first_open_at).toBeNull();
+    expect(world.rooms[0].last_open_at).toBeUndefined();
   });
 
   test("the link follows a replaced room, and the open counts on the new room", async () => {

@@ -28,6 +28,7 @@ import {
   isPreviewBot,
   MAX_HOPS,
   normalizeCode,
+  openText,
   osOf,
   type RateLimiter,
   type Rep,
@@ -46,7 +47,7 @@ import {
   zoomValidationAnswer,
 } from "./sign.ts";
 import { type Press, parseSlack, pressFor, SLACK_COPY } from "./slack.ts";
-import { fetchWithin, redact, sleep, Timeout } from "./util.ts";
+import { fetchTextWithin, fetchWithin, redact, sleep, Timeout } from "./util.ts";
 import {
   cleanZoom,
   codeFromTopic,
@@ -55,6 +56,7 @@ import {
   type ZoomDetail,
   zoomDedupeKey,
   zoomKind,
+  zoomText,
 } from "./zoom.ts";
 
 export interface Deps {
@@ -97,6 +99,7 @@ export const BUDGET = {
 const ZOOM_MAX_BYTES = 256_000;
 const SLACK_MAX_BYTES = 64_000;
 const STATUS_EVERY_MS = 60_000;
+const LAST_OPEN_EVERY_MS = 30_000;
 const DEFAULT_SITE = "https://call.maharamedia.com";
 
 /** Answers that are the sales-api gateway's own, not a sentence for a person. */
@@ -178,9 +181,9 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
   ): Promise<unknown> {
     const cfg = db();
     if (!cfg) throw new Error(MISSING.db);
-    let res: Response;
+    let res: { ok: boolean; status: number; text: string };
     try {
-      res = await fetchWithin(
+      res = await fetchTextWithin(
         deps.fetch,
         `${cfg.base}/rest/v1/${path}`,
         {
@@ -198,7 +201,7 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
     } catch (e) {
       throw new Error(`database ${e instanceof Timeout ? e.message : redact((e as Error)?.message ?? e)} on ${path.split("?")[0]}`);
     }
-    const body = await res.text();
+    const body = res.text;
     if (!res.ok) throw new Error(`database ${res.status} on ${path.split("?")[0]}: ${redact(body)}`);
     if (!body) return null;
     try {
@@ -256,7 +259,7 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
     let last = { ok: false, status: 0, text: "", json: null as Row | null };
     for (let attempt = 1; attempt <= Math.max(1, opts.tries); attempt++) {
       try {
-        const res = await fetchWithin(
+        const res = await fetchTextWithin(
           deps.fetch,
           `${cfg.base}/functions/v1/sales-api`,
           {
@@ -271,7 +274,7 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
           },
           opts.ms,
         );
-        const t = await res.text();
+        const t = res.text;
         let j: Row | null = null;
         try {
           j = JSON.parse(t) as Row;
@@ -291,7 +294,7 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
   // ------------------------------------------------------------------ zoom
 
   async function findZoomRoom(d: ZoomDetail): Promise<string | null> {
-    const id = d.meeting.id;
+    const id = d.payload.object.id;
     if (id && /^\d{6,20}$/.test(id)) {
       const rows = (await rest(
         `cockpit_sales_rooms?provider_meeting_id=eq.${id}&select=id,state&limit=10`,
@@ -303,7 +306,7 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
       if (live.length === 0 && all.length === 1) return all[0].id;
       // None, or several (a booked room re-wraps the same meeting): the topic may say.
     }
-    const code = codeFromTopic(d.meeting.topic);
+    const code = codeFromTopic(d.payload.object.topic);
     if (code) {
       const rows = (await rest(`cockpit_sales_rooms?code=eq.${code}&select=id&limit=1`, {
         ms: B.zoomFind,
@@ -377,7 +380,7 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
     let inserted: boolean;
     try {
       inserted = await insertEvent(
-        { room_id: roomId, kind, source: "zoom", dedupe_key: key, detail },
+        { room_id: roomId, kind, source: "zoom", dedupe_key: key, text: zoomText(detail), detail },
         B.zoomStore,
       );
     } catch (e) {
@@ -510,8 +513,11 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
   }
 
   /**
-   * One door.open event per room and device (dedupe key), then the room's
-   * first open, written once whoever wins (first_open_at=is.null).
+   * One door.open event per room and device (dedupe key: the counted open),
+   * then the room's times: first_open_at once, whoever wins
+   * (first_open_at=is.null), and last_open_at on any later open at most every
+   * 30 s, which the sweep's open grace reads (an open in the last 3 minutes
+   * keeps the room open). Every room write bumps its version, hence the 30 s.
    */
   async function recordOpen(room: RoomRow, code: string, ua: string, hash: string, deviceId: string | null) {
     const now = deps.now();
@@ -528,6 +534,7 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
           source: "door",
           dedupe_key: dedupe,
           handled_at: at,
+          text: openText(device, over),
           detail: {
             device,
             os: osOf(ua),
@@ -539,13 +546,23 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
         },
         B.record,
       );
+      const id = encodeURIComponent(room.id);
       if (!over && !room.first_open_at)
-        await rest(`cockpit_sales_rooms?id=eq.${encodeURIComponent(room.id)}&first_open_at=is.null`, {
+        await rest(`cockpit_sales_rooms?id=eq.${id}&first_open_at=is.null`, {
           method: "PATCH",
-          body: { first_open_at: at, open_device: device },
+          body: { first_open_at: at, last_open_at: at, open_device: device },
           prefer: "return=minimal",
           ms: B.record,
         });
+      else if (!over) {
+        const since = encodeURIComponent(new Date(now - LAST_OPEN_EVERY_MS).toISOString());
+        await rest(`cockpit_sales_rooms?id=eq.${id}&or=(last_open_at.is.null,last_open_at.lt.${since})`, {
+          method: "PATCH",
+          body: { last_open_at: at },
+          prefer: "return=minimal",
+          ms: B.record,
+        });
+      }
     } catch (e) {
       noteStatus("open", false, `An open was not recorded: ${redact((e as Error).message)}`);
     }

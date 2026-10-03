@@ -1,6 +1,6 @@
 // bun test supabase/functions/sales-live
 import { describe, expect, test } from "bun:test";
-import { cleanZoom, codeFromTopic, ZOOM_EVENTS, zoomDedupeKey, zoomKind } from "./zoom.ts";
+import { cleanZoom, codeFromTopic, ZOOM_EVENTS, zoomDedupeKey, zoomKind, zoomText } from "./zoom.ts";
 
 /** A participant_joined body shaped like Zoom's reference. */
 function joined(over: Record<string, unknown> = {}, participant: Record<string, unknown> = {}) {
@@ -43,28 +43,36 @@ describe("cleanZoom", () => {
     const d = cleanZoom(joined());
     expect(d).not.toBeNull();
     expect(d?.event).toBe("meeting.participant_joined");
-    expect(d?.meeting.id).toBe("85023456789");
-    expect(d?.meeting.topic).toBe("Mahara call K7Q2MX");
-    expect(d?.participant?.email).toBe("lead@example.com");
-    expect(d?.participant?.join_time).toBe("2026-10-03T11:02:10Z");
+    expect(d?.payload.object.id).toBe("85023456789");
+    expect(d?.payload.object.topic).toBe("Mahara call K7Q2MX");
+    expect(d?.payload.object.participant?.email).toBe("lead@example.com");
+    expect(d?.payload.object.participant?.join_time).toBe("2026-10-03T11:02:10Z");
     const text = JSON.stringify(d);
     for (const gone of ["+96550000000", "203.0.113.9", "customer_key", "registrant_id", "reg", "timezone"])
       expect(text).not.toContain(gone);
     // Empty strings are not kept as values.
-    expect(d?.participant?.participant_user_id).toBeUndefined();
+    expect(d?.payload.object.participant?.participant_user_id).toBeUndefined();
+  });
+
+  test("the kept event has Zoom's own shape, for sales-api's zoomEffect", () => {
+    const d = cleanZoom(joined());
+    expect(Object.keys(d ?? {})).toEqual(["event", "event_ts", "payload"]);
+    expect(d?.payload.account_id).toBe("AAAA");
+    expect(d?.payload.object.host_id).toBe("z8yAAAAA8bbbQ");
+    expect(d?.payload.object.participant?.participant_uuid).toBe("pu-1");
   });
 
   test("a body with no event is not an event", () => {
     expect(cleanZoom({})).toBeNull();
     expect(cleanZoom(null)).toBeNull();
     expect(cleanZoom([1, 2])).toBeNull();
-    expect(cleanZoom({ event: "meeting.started" })?.meeting).toEqual({});
+    expect(cleanZoom({ event: "meeting.started" })?.payload).toEqual({ object: {} });
   });
 
   test("control characters and long strings are cut", () => {
     const d = cleanZoom(joined({}, { user_name: `a\u0000b${"x".repeat(500)}` }));
-    expect(d?.participant?.user_name?.includes("\u0000")).toBe(false);
-    expect(d?.participant?.user_name?.length).toBeLessThanOrEqual(120);
+    expect(d?.payload.object.participant?.user_name?.includes("\u0000")).toBe(false);
+    expect(d?.payload.object.participant?.user_name?.length).toBeLessThanOrEqual(120);
   });
 });
 
@@ -156,5 +164,21 @@ describe("topics, kinds and the subscribed set", () => {
       "meeting.participant_left",
       "meeting.started",
     ]);
+  });
+});
+
+describe("zoomText", () => {
+  test("a plain line per event, with the display name when there is one", () => {
+    const d = cleanZoom(joined());
+    if (!d) throw new Error("no detail");
+    expect(zoomText(d)).toBe("Zoom: Lead Person joined.");
+    expect(zoomText({ ...d, event: "meeting.participant_joined_waiting_room" })).toBe(
+      "Zoom: Lead Person is in the waiting room.",
+    );
+    expect(zoomText({ event: "meeting.started", payload: { object: {} } })).toBe("Zoom: the meeting started.");
+    expect(zoomText({ event: "meeting.participant_left", payload: { object: { participant: {} } } })).toBe(
+      "Zoom: Someone left.",
+    );
+    for (const e of ZOOM_EVENTS) expect(zoomText({ event: e, payload: { object: {} } }).length).toBeLessThanOrEqual(500);
   });
 });
