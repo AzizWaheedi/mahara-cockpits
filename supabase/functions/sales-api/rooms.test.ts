@@ -271,6 +271,10 @@ describe("defect 1: worker.ready on a room the worker opened sends the lead's li
     expect(Object.keys(after.link_message_ids as Row)).toEqual(["whatsapp_text"]);
     expect(w.events(id).find(e => e.kind === "worker.ready")?.handled_at).toBeTruthy();
     expect(w.events(id).find(e => e.kind === "link.sent")?.text).toBe("Link sent on WhatsApp.");
+    // The room's link write leaves its own audit row (the send's own row is index.ts's).
+    expect(w.audits.filter(a => a.action === "room.link").map(a => [a.entityId, (a.after as Row).link_channels])).toEqual([
+      [id, ["whatsapp_text"]],
+    ]);
     // A second call (the sweep's replay of a lost answer) finds the event handled and sends nothing.
     const again = await w.rooms.desk["room.event"]!(desk, { kind: "worker.ready", room_id: id, payload: {} });
     await w.flush();
@@ -312,7 +316,7 @@ describe("defect 1: worker.ready on a room the worker opened sends the lead's li
     await w.flush();
     expect(out.handled).toBe(true);
     expect(w.texts).toHaveLength(0);
-    expect((w.events(id).find(e => e.kind === "worker.ready")?.detail as Row).worker_run_mismatch).toBeTruthy();
+    expect((w.events(id).find(e => e.kind === "worker.ready")?.detail as Row | undefined)?.worker_run_mismatch).toBeTruthy();
   });
 
   test("worker.failed is handled only once the room is failed", async () => {
@@ -364,6 +368,7 @@ describe("the message service", () => {
     expect(w.texts.length + w.templates.length).toBe(0);
     expect(w.room(id).refusal).toBe(`${LANE_COPY.why_wa_off.charAt(0).toUpperCase()}${LANE_COPY.why_wa_off.slice(1)} and ${LANE_COPY.why_email_off}.`);
     expect(w.room(id).link_sent_at).toBeUndefined();
+    expect(w.audits.filter(a => a.action === "room.link.not_sent").map(a => a.entityId)).toEqual([id]);
   });
 
   test("every channel fails: the failures are saved, and the tick's re-ask a minute later sends once with the same request ids", async () => {
@@ -609,6 +614,7 @@ describe("defect 2: booked intros are settled as no-shows (room.event sweep.sett
     expect(w2.marks).toHaveLength(0);
     expect(((out.results as Row[])[0] as Row).skipped).toBe("the call was already marked");
     expect(w2.room(marked).settled_mark).toBe("none");
+    expect(w2.audits.filter(a => a.action === "room.settle").map(a => (a.after as Row).settled_mark)).toEqual(["none"]);
   });
 
   test("a mark the dialer refuses is recorded and handled, never retried forever", async () => {
@@ -857,6 +863,34 @@ describe("live.status and live.availability", () => {
     expect(out.now).toBe(w.db.iso());
   });
 
+  test("the view's own reason, booked_at and booked_kind win over the stand-in reads (S5)", async () => {
+    const w = setup();
+    w.db.seed("cockpit_sales_presence", [
+      {
+        email: CLOSER,
+        state: "available",
+        until: w.db.iso(),
+        room_id: null,
+        zoom_status: "licensed",
+        default_provider: "zoom",
+        why: "available",
+        reason: "booked_call_soon",
+        booked_at: "2026-10-03T12:00:00.000Z",
+        booked_kind: "demo",
+        availability: "available",
+        availability_reason: "missed_offer",
+      },
+    ]);
+    const out = await w.rooms.actions["live.status"]!(closer, {});
+    expect(out.me).toMatchObject({ reason: "booked_call_soon", booked_at: "2026-10-03T12:00:00.000Z", booked_kind: "demo" });
+    w.db.t("cockpit_sales_presence").splice(0);
+    w.db.seed("cockpit_sales_presence", [
+      { email: CLOSER, state: "away", until: null, room_id: null, zoom_status: null, default_provider: "zoom", reason: null, booked_at: "2026-10-03T12:00:00.000Z", booked_kind: "demo", availability: "away", availability_reason: "missed_offer" },
+    ]);
+    const again = await w.rooms.actions["live.status"]!(closer, {});
+    expect(again.me).toMatchObject({ reason: null, booked_at: null, booked_kind: null });
+  });
+
   test("a seat the view does not know is Away, never an error or a guess", async () => {
     const w = setup();
     const out = await w.rooms.actions["live.status"]!(setter, {});
@@ -917,6 +951,8 @@ describe("live.take and live.decline", () => {
     expect(w.texts).toHaveLength(1);
     expect(w.db.t("cockpit_sales_room_events").find(e => e.kind === "live.claimed")?.handled_at).toBeTruthy();
     expect(w.audits.map(a => a.action)).toContain("live.take");
+    // The adopted room's link claim is its own write, so it leaves its own audit row.
+    expect(w.audits.filter(a => a.action === "live.room.ready").map(a => [a.entityId, (a.after as Row).link_claimed])).toEqual([[sb, true]]);
   });
 
   test("no standby room: the taker's handover room is made with the live id as its request id", async () => {
@@ -967,6 +1003,19 @@ describe("the dialer's queue hold", () => {
 });
 
 describe("not built yet, switched off", () => {
+  test("live.ask and live.cancel say live calls are off, then that asking is not built yet, never Unknown action", async () => {
+    const off = setup();
+    for (const a of ["live.ask", "live.cancel"]) {
+      const r = await refused(off.rooms.actions[a]!(setter, { request_id: crypto.randomUUID(), contact_id: LEAD, kind: "demo", host: "closer", note: "Wants pricing" }));
+      expect([a, r.message, r.extra.code]).toEqual([a, LIVE_OFF, "disabled"]);
+    }
+    const on = setup({ live: { enabled: true } });
+    const r = await refused(on.rooms.actions["live.ask"]!(setter, { request_id: crypto.randomUUID(), contact_id: LEAD }));
+    expect([r.status, r.extra.code]).toEqual([409, "disabled"]);
+    expect(r.message).not.toContain("Unknown");
+    expect(on.audits).toHaveLength(0);
+  });
+
   test("live.press says live calls are off; thread.tick and reply.seen answer quietly", async () => {
     const w = setup();
     expect((await refused(w.rooms.desk["live.press"]!(desk, {}))).message).toBe(LIVE_OFF);

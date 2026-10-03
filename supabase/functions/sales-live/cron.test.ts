@@ -1,6 +1,6 @@
 // bun test supabase/functions/sales-live
 import { describe, expect, test } from "bun:test";
-import { CRON_FORWARD, cronForwardable, REPLAY_MAX } from "./cron.ts";
+import { CRON_FORWARD, CRON_KINDS, cronForwardable, REPLAY_MAX } from "./cron.ts";
 
 const ID1 = "0b6f2d1e-4c3a-4f7e-9a51-2d8c6b0e7f11";
 const ID2 = "5e9a7c3b-1d2f-4a6e-8b40-7f1c2e3d4a52";
@@ -26,8 +26,32 @@ describe("the cron door's allow-list", () => {
     });
   });
 
+  test("the sweep's settle and tick pass on as their room ids only (contract-v2 S4)", () => {
+    expect(Object.keys(CRON_KINDS).sort()).toEqual(["sweep.replay", "sweep.settle", "tick"]);
+    for (const kind of ["sweep.settle", "tick"]) {
+      expect(
+        cronForwardable({
+          action: "room.event",
+          kind,
+          room_id: "r1",
+          payload: { room_ids: [ID1, ID2.toUpperCase(), ID1], event_ids: [ID2], pending_events: 3 },
+        }),
+      ).toEqual({ ok: true, body: { action: "room.event", kind, payload: { room_ids: [ID1, ID2] } } });
+      // A settle or tick carries room ids, never event ids.
+      expect(cronForwardable({ action: "room.event", kind, payload: { event_ids: [ID1] } })).toMatchObject({ ok: false, status: 400 });
+      for (const room_ids of [undefined, null, [], "x", [ID1, "room-1"], [ID1, 7], Array.from({ length: 51 }, () => ID1)])
+        expect(cronForwardable({ action: "room.event", kind, payload: { room_ids } })).toMatchObject({ ok: false, status: 400 });
+      expect(cronForwardable({ action: "room.event", kind, payload: { room_ids: Array.from({ length: 50 }, () => ID1) } }).ok).toBe(true);
+    }
+    // A replay carries event ids, never room ids.
+    expect(cronForwardable({ action: "room.event", kind: "sweep.replay", payload: { room_ids: [ID1] } })).toMatchObject({
+      ok: false,
+      status: 400,
+    });
+  });
+
   test("a room.event of any other kind is refused: the cron secret cannot stand in for Zoom's signature", () => {
-    for (const kind of ["zoom.meeting.participant_joined", "zoom.meeting.started", "worker.ready", "lead_in", "", undefined]) {
+    for (const kind of ["zoom.meeting.participant_joined", "zoom.meeting.started", "worker.ready", "worker.failed", "live.claimed", "room.settle", "toString", "constructor", "lead_in", "", undefined]) {
       const out = cronForwardable({ action: "room.event", kind, room_id: "room-1", payload: { event_ids: [ID1] } });
       expect([kind, out.ok, out.ok ? 0 : out.status]).toEqual([kind, false, 403]);
     }

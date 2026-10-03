@@ -184,6 +184,30 @@ class Finding3HeadOfLineBlocking(unittest.TestCase):
         self.assertTrue(ok)
         self.assertIn("3 set aside for a person on the Follow-ups page", line)
 
+    def test_a_draft_sales_api_already_set_aside_is_still_counted_as_set_aside(self):
+        # The real followup.send_due sets a refused draft aside itself (held_by
+        # sales-desk, with the reason and an audit row) before it answers, so
+        # the desk's own write finds it held; the run must still count it.
+        pg = FakePostgrest()
+        for i in range(3):
+            due_draft(pg, i, send_after=ago(minutes=30 - i))
+        words = "This lead asked not to be contacted on WhatsApp (do not disturb is on in HighLevel)."
+
+        class SetsAside(Api):
+            def __call__(self, action, payload):
+                if payload["id"] == "f001":
+                    self.calls.append((self.clock(), action, payload["id"]))
+                    m = self.pg.one(META, followup_id="f001")
+                    m.update({"held_by": "sales-desk", "send_after": None, "hold_reason": words})
+                    return 409, {"ok": False, "error": words}
+                return super().__call__(action, payload)
+
+        out, api = send(pg, SetsAside(pg, Clock(NOW)))
+        self.assertEqual((out["sent"], out["refused"], out["set_aside"], out["stopped"]), (2, 1, 1, None))
+        m = pg.one(META, followup_id="f001")
+        self.assertEqual((m["held_by"], m["hold_reason"]), ("sales-desk", words))
+        self.assertIn("1 set aside for a person on the Follow-ups page", row_ok(out)[1])
+
     def test_a_refusal_for_the_leads_hours_keeps_the_draft_in_the_queue_an_hour_on(self):
         pg = FakePostgrest()
         for i in range(4):

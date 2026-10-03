@@ -15,7 +15,8 @@
 //                     once per device. One deadline for all its reads.
 //   GET  /go/{code}   The no-script fallback: a 302 to the room or the
 //                     ended page. Records nothing.
-//   POST /cron        pg_cron's way in to sales-api: the sweep's replays and
+//   POST /cron        pg_cron's way in to sales-api: the sweep's room.event
+//                     posts (sweep.replay, sweep.settle, tick) and
 //                     thread.tick only, answered 202 at once.
 //   GET  /health      Which routes are ready, by name only, never a value.
 
@@ -903,8 +904,19 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
     // Answered at once, inside pg_net's 10 s: the replay itself may take
     // longer, and its outcome goes to the status row (sales-live/cron).
     deps.background(forwardCron(check.body));
-    const ids = (check.body.payload as { event_ids?: string[] } | undefined)?.event_ids;
-    return json({ ok: true, accepted: check.body.action, ...(ids ? { events: ids.length } : {}) }, 202);
+    const payload = check.body.payload as { event_ids?: string[]; room_ids?: string[] } | undefined;
+    const ids = payload?.event_ids;
+    const rooms = payload?.room_ids;
+    return json(
+      {
+        ok: true,
+        accepted: check.body.action,
+        ...(check.body.kind ? { kind: check.body.kind } : {}),
+        ...(ids ? { events: ids.length } : {}),
+        ...(rooms ? { rooms: rooms.length } : {}),
+      },
+      202,
+    );
   }
 
   // ---------------------------------------------------------------- health

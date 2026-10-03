@@ -1180,7 +1180,13 @@ def send_due(sb: Any, api: Callable[[str, dict[str, Any]], tuple[int, dict[str, 
                 kept = sb.rest("PATCH", f"{META}?followup_id=eq.{_q(fid)}&held_by=is.null", prefer="return=representation",
                                json_body={"send_after": None, "held_by": DESK, "held_at": clock().isoformat(),
                                           "hold_reason": err[:300]})
-                out["set_aside"] += bool(isinstance(kept, list) and kept)
+                if not (isinstance(kept, list) and kept):
+                    # sales-api's followup.send_due sets a refused draft aside
+                    # itself (with an audit row) before it answers, so the
+                    # desk's own write finds it held: it is set aside all the same.
+                    now_meta = next(iter(sb.select(META, f"select=held_by&followup_id=eq.{_q(fid)}&limit=1")), {})
+                    kept = [now_meta] if now_meta.get("held_by") == DESK else []
+                out["set_aside"] += bool(kept)
             except http.HttpError as e:
                 warn(f"waves: {fid} could not be set aside ({http.scrub(str(e))[:120]})")
             warn(f"waves: {fid} not sent, set aside for a person: {err[:160]}")

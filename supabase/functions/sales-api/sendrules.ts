@@ -157,6 +157,18 @@ export function duplicatePair<T extends SeenMessage>(list: T[], windowS = 60): [
   return null;
 }
 
+/**
+ * Whether the duplicate detector watches the sends that just went (C28). It
+ * proves the WA Connector is really off, so it watches only once a manager
+ * has said so (whatsapp_guard.connector_off), and not while a pause already
+ * stands. Before that every send is known to be copied, and a watch would
+ * pause WhatsApp for every rep on the first one.
+ */
+export function duplicateWatchOn(guard: unknown): boolean {
+  const g = (guard ?? {}) as Row;
+  return g.connector_off === true && !g.dup_paused_at;
+}
+
 export const DUPLICATE_PAUSED =
   "WhatsApp sends are paused: two identical messages went to one lead within {seconds} seconds, so the WA Connector may still be on. A manager clears the pause under Follow-ups, How it works, once only one copy goes.";
 

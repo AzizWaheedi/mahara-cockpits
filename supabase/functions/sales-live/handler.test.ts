@@ -1409,12 +1409,39 @@ describe("POST /cron", () => {
       cronRequest({ action: "room.event", kind: "sweep.replay", payload: { event_ids: [ID1, ID2], extra: 1 }, room_id: "room-1" }),
     );
     expect(res.status).toBe(202);
-    expect(await res.json()).toEqual({ ok: true, accepted: "room.event", events: 2 });
+    expect(await res.json()).toEqual({ ok: true, accepted: "room.event", kind: "sweep.replay", events: 2 });
     await world.settle();
     expect(world.salesApiCalls[0].body).toEqual({ action: "room.event", kind: "sweep.replay", payload: { event_ids: [ID1, ID2] } });
     expect(world.salesApiCalls[0].headers.get("x-cron-secret")).toBe(SECRETS.CRON_SECRET);
     expect(world.salesApiCalls[0].headers.get("authorization")).toBe(`Bearer ${SERVICE_KEY}`);
     expect(world.status.get("sales-live/cron")).toMatchObject({ ok: true, detail: "Last room.event passed on." });
+  });
+
+  test("the sweep's settle and tick posts are passed on as exactly their room ids (contract-v2 S4)", async () => {
+    const h = fresh();
+    for (const kind of ["sweep.settle", "tick"]) {
+      const res = await h(
+        cronRequest({ action: "room.event", kind, room_id: "room-1", payload: { room_ids: [ID1, ID2.toUpperCase(), ID1], event_ids: [ID2] } }),
+      );
+      expect(res.status).toBe(202);
+      expect(await res.json()).toEqual({ ok: true, accepted: "room.event", kind, rooms: 2 });
+    }
+    await world.settle();
+    expect(world.salesApiCalls.map(c => c.body)).toEqual([
+      { action: "room.event", kind: "sweep.settle", payload: { room_ids: [ID1, ID2] } },
+      { action: "room.event", kind: "tick", payload: { room_ids: [ID1, ID2] } },
+    ]);
+    expect(world.status.get("sales-live/cron")).toMatchObject({ ok: true, detail: "Last room.event passed on." });
+  });
+
+  test("a settle or tick with no room ids, too many, or ids that are not UUIDs is refused", async () => {
+    const h = fresh();
+    for (const kind of ["sweep.settle", "tick"])
+      for (const room_ids of [[], undefined, "x", [ID1, "room-1"], Array.from({ length: 51 }, () => ID1)]) {
+        const res = await h(cronRequest({ action: "room.event", kind, payload: { room_ids, event_ids: [ID1] } }));
+        expect([kind, res.status]).toEqual([kind, 400]);
+      }
+    expect(world.salesApiCalls).toHaveLength(0);
   });
 
   test("thread.tick is passed on with nothing but its name", async () => {

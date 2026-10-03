@@ -38,6 +38,7 @@ export const AGENT_COPY = {
   not_yours: "That is another rep's lead.",
   draft_missing: "That draft is not here any more.",
   agent_off: "The follow-up agent is switched off (followups.enabled), so nothing is sent.",
+  agent_off_screen: "The follow-up agent is switched off, so no wave starts and no opener is approved. A manager switches it on under Follow-ups, How it works.",
   wa_off: "Sending by WhatsApp is switched off in the cockpit.",
   held: "This draft is held, so it was not sent. Release the hold or approve it again.",
   not_due: "This draft is not approved to go yet.",
@@ -114,6 +115,8 @@ export function makeFollowupAgent(deps: AgentDeps): { actions: Record<string, Ac
     if (op === "start") {
       const pool = String(b.pool ?? "");
       if (!(POOLS as readonly string[]).includes(pool)) throw refusal(AGENT_COPY.bad_pool, 400);
+      // The agent's switch holds every wave (the screen disables the press too).
+      if (obj(s.followups).enabled === false) throw refusal(AGENT_COPY.agent_off_screen, 409);
       if (!gateOpen(s.whatsapp_guard)) throw refusal(GATE_SHUT, 409, { hold_all: true });
       const w = obj(obj(s.followups).waves);
       const perDay = b.per_day === undefined ? Number(w.per_day ?? 40) : Number(b.per_day);
@@ -160,6 +163,8 @@ export function makeFollowupAgent(deps: AgentDeps): { actions: Record<string, Ac
     if (before.state === m.to) return { wave: before, repeated: true };
     if (!m.from.includes(String(before.state)))
       throw refusal(AGENT_COPY.wave_state.replace("{state}", String(before.state)).replace("{op}", op === "stop" ? "stopped" : `${op}d`));
+    // Pause and stop always work; a resume waits for the switch and the gate.
+    if (op === "resume" && obj(s.followups).enabled === false) throw refusal(AGENT_COPY.agent_off_screen, 409);
     if (op === "resume" && !gateOpen(s.whatsapp_guard)) throw refusal(GATE_SHUT, 409, { hold_all: true });
     const rows = await io.db(`cockpit_sales_followup_waves?id=eq.${enc(id)}&state=eq.${enc(String(before.state))}`, {
       method: "PATCH",
@@ -175,6 +180,7 @@ export function makeFollowupAgent(deps: AgentDeps): { actions: Record<string, Ac
 
   async function batch(who: Who, b: Row): Promise<Row> {
     const s = await settings(["followups", "whatsapp_guard"]);
+    if (obj(s.followups).enabled === false) throw refusal(AGENT_COPY.agent_off_screen, 409);
     if (!gateOpen(s.whatsapp_guard)) throw refusal(GATE_SHUT, 409, { hold_all: true });
     let ids: string[];
     if (b.wave_id !== undefined && b.wave_id !== null) {
@@ -234,9 +240,11 @@ export function makeFollowupAgent(deps: AgentDeps): { actions: Record<string, Ac
 
   // ------------------------------------------------------------- followup.send_due (desk)
 
-  async function setAside(id: string, reason: string): Promise<void> {
+  async function setAside(who: Who, id: string, reason: string): Promise<void> {
     try {
-      await putMeta(id, { send_after: null, held_by: "sales-desk", hold_reason: reason.slice(0, 300) });
+      const before = await metaOf(id);
+      const after = await putMeta(id, { send_after: null, held_by: "sales-desk", hold_reason: reason.slice(0, 300) });
+      await deps.audit(who, "followup.set_aside", "cockpit_sales_followup_meta", id, before, after);
     } catch (e) {
       io.log(`followups: a refused draft was not set aside: ${redact(String((e as Error)?.message ?? e))}`);
     }
@@ -277,7 +285,7 @@ export function makeFollowupAgent(deps: AgentDeps): { actions: Record<string, Ac
       if (e instanceof ApiRefusal) {
         const all = e.extra.hold_all === true || holdsEverything(e.message, e.status);
         const hoursWords = /their time|day off|friday/i.test(e.message);
-        if (!all && !hoursWords && e.status !== 502) await setAside(String(f.id), e.message);
+        if (!all && !hoursWords && e.status !== 502) await setAside(who, String(f.id), e.message);
         if (all && e.extra.hold_all !== true) throw new ApiRefusal(e.message, e.status, { ...e.extra, hold_all: true });
       }
       throw e;

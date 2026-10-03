@@ -58,7 +58,7 @@ can name a Vercel project `call-link-something`.
     `door`, `room_id` null, `dedupe_key` `slack.reply:{request_id}`,
     `text` the sentence, `detail` `{slack_user_id, slack_team_id, view_id,
     container_type}`, `handled_at` null. Work for the VPS Slack poster (below);
-    the sweep never replays it (it replays `zoom`, `slack` and `worker` only).
+    the sweep never replays it (it replays `zoom`, `slack`, `worker` and `claim` only).
 - `cockpit_sales_rooms`: only `first_open_at`, `last_open_at` and
   `open_device` (door.ts `OPEN_COLUMNS`). `open_device` is `phone`, `tablet`
   or `computer` (door.ts `OPEN_DEVICES`, the room logic's `DEVICES`), left
@@ -96,26 +96,36 @@ can name a Vercel project `call-link-something`.
   channel_id?, message_ts?, container_type?, view_id?, event_id?, text?, tab?}`.
   `request_id` is the same for every retry of one Slack request. One try (a
   second "Take it" after a slow first one would read as lost).
-- From the cron door, rebuilt field by field, nothing else passed through:
-  `{action: "room.event", kind: "sweep.replay", payload: {event_ids}}`
-  (1 to 50 UUIDs) and `{action: "thread.tick"}`. Any other `room.event` is
-  refused with a 403: the cron secret is shared with sales-mirror and
-  sales-api, and must not stand in for Zoom's signature.
+- From the cron door, rebuilt field by field, nothing else passed through
+  (contract-v2 S4):
+  - `{action: "room.event", kind: "sweep.replay", payload: {event_ids}}`;
+  - `{action: "room.event", kind: "sweep.settle", payload: {room_ids}}`;
+  - `{action: "room.event", kind: "tick", payload: {room_ids}}`;
+  - `{action: "thread.tick"}`.
+
+  Each id list is 1 to 50 UUIDs, lower-cased and de-duplicated. Any other
+  `room.event` is refused with a 403: the cron secret is shared with
+  sales-mirror and sales-api, and must not stand in for Zoom's signature. A
+  tick moves no timer, so a forged one can only ask for a re-check of rows
+  as they stand.
 
 `room.event`, `live.press` and `thread.tick` must be in sales-api's
 `CRON_ACTIONS` and `DESK_ACTIONS` (the hooks commit).
 
 ## The contract the other lanes keep
 
-- **room.event claims before it acts (lc-logic).** For a Zoom event it
-  claims the stored row by `event_id`, atomically, before anything else:
-  `update cockpit_sales_room_events set handled_at = now() where id = $1 and
-  handled_at is null returning id`. No row back: another pass has it, so it
-  does nothing. A `sweep.replay` claims each id the same way. It never works
-  out a dedupe key of its own: roomlogic.ts `zoomDedupeKey` gives a different
-  key for the same event and must be deleted (or replaced by an import of
-  `zoom.ts`). If the claimed work then fails, it puts `handled_at` back to
-  null so the sweep replays it.
+- **room.event takes the event with the lease (contract-v2 S3 and section
+  6).** For a Zoom event it takes the stored row by `event_id` with
+  `cockpit_sales_room_event_lease(p_event_id => $id, p_seconds => 30)`
+  before anything else. A null answer means the event is handled or someone
+  else holds it, so it does nothing and answers `{ok: true, handled:
+  false}`. When the work is done it sets `handled_at = now(), lease_until =
+  null`; when it fails or must wait it sets only `lease_until = null`, and
+  the sweep replays the event after 20 s, 3 tries at most. A `sweep.replay`
+  takes each id the same way. It never works out a dedupe key of its own: the
+  door's `event_id` is the key (roomlogic.ts `zoomDedupeKey` stays only as a
+  test of the door's key). The door itself never sets `lease_until`: a
+  lease set at insert would make sales-api's own lease call return null.
 - **Opens do not move a room's version (lc-db).** `cockpit_sales_rooms_guard`
   raises `version` only when a column outside `first_open_at`,
   `last_open_at`, `open_device` and `updated_at` changes, for example
@@ -131,8 +141,8 @@ can name a Vercel project `call-link-something`.
   rows with no stale check (they write only when traffic comes), switched on
   with `rooms.enabled` (the Slack row with `live.slack`). Give events the
   sweep gave up on (3 tries) a final mark, `handled_at` plus
-  `detail.gave_up`, so `room_events_unhandled` can clear (a claimed event
-  already has `handled_at`, so the sweep never replays one being worked on). Index
+  `detail.gave_up`, so `room_events_unhandled` can clear (an event under a
+  lease is never replayed while the lease holds). Index
   `cockpit_sales_rooms (provider_meeting_id)` for the Zoom lookup.
 - **Time rules belong to the sweep (lc-db, lc-logic).** The door treats a
   room as over only in a final state. Adopting a standby room must reset

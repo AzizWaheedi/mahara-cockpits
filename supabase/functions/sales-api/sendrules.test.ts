@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import {
   budgetCheck,
   duplicatePair,
+  duplicateWatchOn,
   firstHours,
   followupSettingsValue,
   gateOpen,
@@ -91,6 +92,12 @@ describe("the duplicate detector (C28)", () => {
     expect(duplicatePair([m("a", "Hi Huda", 0), m("b", "Hi Sara", 5)])).toBeNull();
     expect(duplicatePair([m("a", "Hi Huda", 0), m("a", "Hi Huda", 5)])).toBeNull();
     expect(duplicatePair([m("a", "Hi", 0), { ...m("b", "Hi", 3), direction: "inbound" }])).toBeNull();
+    // It watches only once a manager has said the WA Connector is off (the connector copies every send until then).
+    expect(duplicateWatchOn({})).toBe(false);
+    expect(duplicateWatchOn({ connector_off: false })).toBe(false);
+    expect(duplicateWatchOn({ connector_off: "true" })).toBe(false);
+    expect(duplicateWatchOn({ connector_off: true })).toBe(true);
+    expect(duplicateWatchOn({ connector_off: true, dup_paused_at: "2026-10-03T10:00:00Z" })).toBe(false);
   });
 });
 

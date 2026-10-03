@@ -31,6 +31,7 @@ import { ago, clock, day } from "../lib/format";
 import { supabase } from "../lib/supabase";
 import { toast } from "../lib/toast";
 import type { Me } from "../lib/types";
+import { guardOpen } from "../lib/videoLink";
 import { firstWord, renderTemplate } from "../lib/whatsapp";
 
 /**
@@ -1072,34 +1073,54 @@ interface Guard {
   templates_per_day: number;
   pause_fail_share: number;
   pause_min_sends: number;
+  connector_off?: boolean;
+  single_copy_ok_at?: string | null;
+  dup_paused_at?: string | null;
+  dup_reason?: string | null;
 }
 
 function GuardForm() {
   const guard = useSetting<Guard>("whatsapp_guard");
   const [perDay, setPerDay] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<string | null>(null);
   const g = guard.data;
   if (!g) return null;
   const value = perDay ?? String(g.templates_per_day);
+  // Only what this card changes is sent: sales-api keeps every other key, so
+  // a card opened before the gate moved can never move it back.
+  async function save(
+    key: string,
+    change: Record<string, unknown>,
+    done: string,
+  ) {
+    setBusy(key);
+    try {
+      await api("whatsapp.guard", { value: change });
+      toast.success(done);
+      if (key === "ceiling") setPerDay(null);
+      guard.reload();
+    } catch (err) {
+      toast.error(String((err as Error).message ?? err));
+    } finally {
+      setBusy(null);
+    }
+  }
+  const open = guardOpen(g) === true;
   return (
     <SectionCard title="WhatsApp ceilings">
       <form
         className="flex flex-wrap items-end gap-3"
-        onSubmit={async e => {
+        onSubmit={e => {
           e.preventDefault();
-          setBusy(true);
-          try {
-            await api("whatsapp.guard", {
-              value: { ...g, templates_per_day: Number(value) },
-            });
-            toast.success("Saved.");
-            setPerDay(null);
-            guard.reload();
-          } catch (err) {
-            toast.error(String((err as Error).message ?? err));
-          } finally {
-            setBusy(false);
-          }
+          void save(
+            "ceiling",
+            {
+              templates_per_day: Number(value),
+              pause_fail_share: g.pause_fail_share,
+              pause_min_sends: g.pause_min_sends,
+            },
+            "Saved.",
+          );
         }}
       >
         <label className="block space-y-1 text-sm">
@@ -1113,8 +1134,12 @@ function GuardForm() {
             className={`${field} w-32`}
           />
         </label>
-        <button type="submit" disabled={busy} className={buttonPrimary}>
-          {busy ? "Saving…" : "Save"}
+        <button
+          type="submit"
+          disabled={busy !== null}
+          className={buttonPrimary}
+        >
+          {busy === "ceiling" ? "Saving…" : "Save"}
         </button>
         <p className="muted w-full text-xs">
           Meta limits how many conversations a number may start in a day and
@@ -1125,6 +1150,108 @@ function GuardForm() {
           gone out).
         </p>
       </form>
+
+      <div className="mt-4 space-y-2 border-t hairline pt-3 text-sm">
+        <p className="font-medium">
+          WhatsApp from the desk is {open ? "on" : "off"}
+        </p>
+        {g.dup_paused_at ? (
+          <div
+            role="alert"
+            className="callout-bad flex flex-wrap items-center gap-2 rounded-[var(--radius-md)] border px-3 py-2"
+          >
+            <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">
+              Every WhatsApp send is paused since {clock(g.dup_paused_at)}
+              {g.dup_reason ? `: ${g.dup_reason}` : "."} Clear it once a test
+              message arrives as one copy.
+            </span>
+            <button
+              type="button"
+              disabled={busy !== null}
+              onClick={() =>
+                void save(
+                  "pause",
+                  { dup_paused_at: null },
+                  "Cleared. WhatsApp sends again.",
+                )
+              }
+              className={button}
+            >
+              {busy === "pause" ? "Clearing…" : "Clear the pause"}
+            </button>
+          </div>
+        ) : null}
+        <p className="muted text-xs">
+          The desk sends WhatsApp only once the WA Connector is off and a test
+          message to one lead arrived as a single copy. While the connector is
+          off, two identical messages to one lead within a minute pause every
+          WhatsApp send until you clear it here.
+        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          {g.connector_off === true ? (
+            <>
+              <StatusChip tone="good" label="WA Connector off" />
+              <button
+                type="button"
+                disabled={busy !== null}
+                onClick={() =>
+                  void save(
+                    "connector",
+                    { connector_off: false, single_copy_ok_at: null },
+                    "Saved. The desk sends no WhatsApp until the connector is off again.",
+                  )
+                }
+                className={button}
+              >
+                {busy === "connector" ? "Saving…" : "It is on again"}
+              </button>
+            </>
+          ) : (
+            <>
+              <StatusChip tone="warning" label="WA Connector on" />
+              <button
+                type="button"
+                disabled={busy !== null}
+                onClick={() =>
+                  void save(
+                    "connector",
+                    { connector_off: true },
+                    "Saved. Now send one test message and check it arrives once.",
+                  )
+                }
+                className={button}
+              >
+                {busy === "connector" ? "Saving…" : "The WA Connector is off"}
+              </button>
+            </>
+          )}
+          {g.connector_off === true ? (
+            g.single_copy_ok_at ? (
+              <StatusChip
+                tone="good"
+                label={`One copy arrived, ${day(g.single_copy_ok_at)}`}
+              />
+            ) : (
+              <button
+                type="button"
+                disabled={busy !== null}
+                onClick={() =>
+                  void save(
+                    "single",
+                    { single_copy_ok_at: true },
+                    "Saved. WhatsApp from the desk is on.",
+                  )
+                }
+                className={buttonPrimary}
+              >
+                {busy === "single"
+                  ? "Saving…"
+                  : "The test message arrived once"}
+              </button>
+            )
+          ) : null}
+        </div>
+      </div>
     </SectionCard>
   );
 }

@@ -105,6 +105,7 @@ export const ROOMS_COPY = {
   contact_unread_send: "HighLevel did not answer, so the link has not gone yet. It is tried again in a minute.",
   all_failed: "the link did not go on any channel ({why})",
   handover_only_claimed: "Take the live lead first. A handover room is made for the closer who took it.",
+  ask_not_yet: "Asking for a live handover is not built yet. Book the call for now.",
 } as const;
 
 /** Timeline lines this file writes (room_events.text): plain, no names, no links. */
@@ -958,11 +959,13 @@ export function makeRooms(deps: RoomDeps): Rooms {
   async function recordNotSent(room: RoomRow, why: string): Promise<void> {
     const sentence = why.charAt(0).toUpperCase() + why.slice(1).replace(/\.+$/, "");
     try {
-      await io.db(`${ROOMS}?id=eq.${enc(room.id)}&link_sent_at=is.null`, {
+      const rows = await io.db(`${ROOMS}?id=eq.${enc(room.id)}&link_sent_at=is.null`, {
         method: "PATCH",
         body: { refusal: `${sentence}.`.slice(0, 500) },
-        prefer: "return=minimal",
+        prefer: "return=representation",
       });
+      if (rows.length)
+        await deps.audit(DESK, "room.link.not_sent", ROOMS, room.id, { refusal: room.refusal ?? null }, { refusal: rows[0]?.refusal ?? null });
     } catch (e) {
       io.log(`rooms: the reason the link did not go was not saved: ${redact(String((e as Error)?.message ?? e))}`);
     }
@@ -979,7 +982,7 @@ export function makeRooms(deps: RoomDeps): Rooms {
    */
   async function sendLink(roomId: string): Promise<void> {
     const room = await readRoom(roomId);
-    if (!room || !room.contact_id || room.link_sent_at || !room.link_claimed_at) return;
+    if (!room?.contact_id || room.link_sent_at || !room.link_claimed_at) return;
     if (room.state !== "open" && room.state !== "host_in") return;
     const raw = await settingsOf(["rooms", "whatsapp_guard", "messaging"]);
     const setting = roomsSetting(raw.rooms);
@@ -1031,6 +1034,7 @@ export function makeRooms(deps: RoomDeps): Rooms {
         continue;
       }
       let after = await recordSent(room, channel, sent.message_id, setting);
+      let unconfirmed = false;
       if (sent.unseen && plan.email_backup && channel === "whatsapp_template") {
         const backupId = await uuidFrom(`mahara-room/link/${room.id}/email`);
         const mail = await sendOn(after, "email", backupId, setting, undefined, contact);
@@ -1041,9 +1045,15 @@ export function makeRooms(deps: RoomDeps): Rooms {
             body: { link_unconfirmed_at: isoAt(io.now()) },
             prefer: "return=minimal",
           });
+          unconfirmed = true;
           await note(room.id, "link.unconfirmed", EVENT_TEXT.link_unconfirmed, {}, `link.unconfirmed:${room.id}`);
         }
       }
+      await deps.audit(DESK, "room.link", ROOMS, room.id, { link_sent_at: null }, {
+        link_sent_at: after.link_sent_at ?? null,
+        link_channels: after.link_channels ?? [channel],
+        link_unconfirmed: unconfirmed,
+      }, { host_email: lower(room.host_email) });
       return;
     }
     await recordNotSent(room, fill(ROOMS_COPY.all_failed, { why: fails.join("; ") || "no reason given" }));
@@ -1053,7 +1063,7 @@ export function makeRooms(deps: RoomDeps): Rooms {
 
   async function runCount(roomId: string): Promise<void> {
     const room = await readRoom(roomId);
-    if (!room || !room.contact_id) return;
+    if (!room?.contact_id) return;
     const raw = await settingsOf(["rooms"]);
     const setting = roomsSetting(raw.rooms);
     if (!setting.count_on_join) return;
@@ -1189,6 +1199,16 @@ export function makeRooms(deps: RoomDeps): Rooms {
       booked_at: null,
       booked_kind: null,
     };
+    // The view is the one source (contract-v2 S5): it carries reason,
+    // booked_at and booked_kind itself. The reads below stand in only for a
+    // view built before those columns.
+    if (p && "reason" in p) {
+      const reason = String(p.reason ?? "");
+      me.reason = ["missed_offer", "expired", "booked_call_soon"].includes(reason) ? reason : null;
+      me.booked_at = me.reason === "booked_call_soon" ? (p.booked_at ?? null) : null;
+      me.booked_kind = me.reason === "booked_call_soon" && isCallKind(p.booked_kind) ? p.booked_kind : null;
+      return me;
+    }
     const why = String(p?.availability_reason ?? "");
     if (me.state === "away" && (why === "missed_offer" || why === "expired")) me.reason = why;
     if (p?.availability === "available") {
@@ -1337,7 +1357,13 @@ export function makeRooms(deps: RoomDeps): Rooms {
       if (r.state !== "open" && r.state !== "host_in") return { claim_room: via, room: await view(r, setting) };
       const out = await applyLoop(r.id, () => ({ kind: "ready" }), setting, r);
       if ("applied" in out) {
-        if (out.applied.changed) await carryOut(out.room, out.applied.effects);
+        if (out.applied.changed) {
+          await deps.audit(who, "live.room.ready", ROOMS, out.room.id, { state: out.applied.from }, {
+            state: out.applied.to,
+            link_claimed: Boolean(out.applied.patch.link_claimed_at),
+          }, { handover_id: String(l.id), claim_room: via });
+          await carryOut(out.room, out.applied.effects);
+        }
         return { claim_room: via, room: await view(out.room, setting) };
       }
       return { claim_room: via, room: await view(out.room ?? r, setting) };
@@ -1360,11 +1386,13 @@ export function makeRooms(deps: RoomDeps): Rooms {
     });
     if ("refused" in made) return { claim_room: via, line: made.refused.message };
     try {
-      await io.db(`cockpit_sales_live?id=eq.${enc(String(l.id))}&room_id=is.null`, {
+      const linked = await io.db(`cockpit_sales_live?id=eq.${enc(String(l.id))}&room_id=is.null`, {
         method: "PATCH",
         body: { room_id: made.room.id },
-        prefer: "return=minimal",
+        prefer: "return=representation",
       });
+      if (linked.length)
+        await deps.audit(who, "live.room", "cockpit_sales_live", String(l.id), { room_id: null }, { room_id: made.room.id });
     } catch (e) {
       io.log(`rooms: the handover's room was not linked: ${redact(String((e as Error)?.message ?? e))}`);
     }
@@ -1416,7 +1444,7 @@ export function makeRooms(deps: RoomDeps): Rooms {
     const email = lower(who.email);
     for (let i = 0; i < MAX_WRITE_TRIES; i++) {
       const l = (await io.db(`cockpit_sales_live?id=eq.${enc(liveId)}&select=id,state,offer_until,offered_to,declined_by`))[0];
-      if (!l || l.state !== "offered" || (ms(l.offer_until) ?? 0) <= io.now()) throw plain(OFFER_GONE, 409, "gone");
+      if (l?.state !== "offered" || (ms(l.offer_until) ?? 0) <= io.now()) throw plain(OFFER_GONE, 409, "gone");
       const declined = Array.isArray(l.declined_by) ? (l.declined_by as string[]) : [];
       if (declined.includes(email)) return {};
       const next = [...declined, email];
@@ -1654,8 +1682,14 @@ export function makeRooms(deps: RoomDeps): Rooms {
           marks.length > 0 || ["showed", "noshow", "cancelled", "invalid"].includes(String(appt?.status ?? ""));
         if (!settleWanted(room, appt?.start_at, marked, io.now(), setting.waits_s)) {
           const why = marked ? "the call was already marked" : !appt ? "the booked call is not in the cockpit" : "not due";
-          if (marked && !room.settled_mark)
-            await patchRoom(room.id, { settled_mark: "none" }, { settled_mark: null }).catch(() => null);
+          if (marked && !room.settled_mark) {
+            const none = await patchRoom(room.id, { settled_mark: "none" }, { settled_mark: null }).catch(() => null);
+            if (none)
+              await deps.audit(DESK, "room.settle", ROOMS, room.id, { settled_mark: null }, { settled_mark: "none" }, {
+                appointment_id: room.appointment_id,
+                why,
+              });
+          }
           await finishEvent(by, { skipped: why });
           await note(room.id, "room.settle", fill(EVENT_TEXT.settle_skipped, { why }), {}, `room.settle:${room.id}`);
           results.push({ room_id: roomId, handled: true, skipped: why });
@@ -1765,6 +1799,12 @@ export function makeRooms(deps: RoomDeps): Rooms {
     if (!liveOn(live)) throw plain(LIVE_OFF, 409, "disabled");
     throw plain("Slack presses are not built yet. Use the cockpit.", 409, "disabled");
   }
+  /** live.ask and live.cancel (project 2): a plain sentence, never "Unknown action.", until they are built. */
+  async function liveAsk(_who: Who, _b: Row): Promise<Row> {
+    const { live } = await roomsAndLive();
+    if (!liveOn(live)) throw plain(LIVE_OFF, 409, "disabled");
+    throw plain(ROOMS_COPY.ask_not_yet, 409, "disabled");
+  }
   async function threadTick(): Promise<Row> {
     return { handled: false, note: ROOMS_COPY.not_yet };
   }
@@ -1795,6 +1835,8 @@ export function makeRooms(deps: RoomDeps): Rooms {
       "live.status": liveStatus,
       "live.take": liveTake,
       "live.decline": liveDecline,
+      "live.ask": liveAsk,
+      "live.cancel": liveAsk,
     },
     desk: {
       "room.event": roomEventAction,

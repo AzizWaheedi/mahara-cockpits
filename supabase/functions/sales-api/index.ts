@@ -114,6 +114,7 @@ import {
   budgetCheck,
   DUPLICATE_PAUSED,
   duplicatePair,
+  duplicateWatchOn,
   followupSettingsValue,
   GATE_SHUT,
   gateOpen,
@@ -1191,7 +1192,8 @@ async function whatsappSentSince(
  */
 async function duplicateWatch(contactId: string, conversationId: string, seen?: ThreadMessage[]): Promise<void> {
   const guard = ((await setting<Row>("whatsapp_guard")) ?? {}) as Row;
-  if (guard.dup_paused_at) return;
+  // Only once a manager has said the WA Connector is off, and never on top of a pause.
+  if (!duplicateWatchOn(guard)) return;
   const windowS = Number.isInteger(Number(guard.dup_window_s)) && Number(guard.dup_window_s) > 0 ? Number(guard.dup_window_s) : 60;
   let list = seen ?? [];
   if (!list.length && conversationId) {

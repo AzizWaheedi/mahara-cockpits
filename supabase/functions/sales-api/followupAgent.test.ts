@@ -98,6 +98,23 @@ describe("followup.wave", () => {
     expect((await refused(w.agent.actions["followup.wave"]!(boss, { op: "resume", wave_id: id }))).message).toContain("done");
     expect((await w.agent.actions["followup.wave"]!(boss, { op: "stop", wave_id: id })).repeated).toBe(true);
   });
+
+  test("while the agent is switched off: no start, no resume, no batch; pause, stop and hold still work", async () => {
+    const on = setup();
+    const id = String(((await on.agent.actions["followup.wave"]!(boss, { op: "start", pool: "never_booked" })).wave as Row).id);
+    await on.agent.actions["followup.wave"]!(boss, { op: "pause", wave_id: id });
+    const value = (on.db.t("cockpit_sales_settings").find(s => s.key === "followups") as Row).value as Row;
+    value.enabled = false;
+    const start = await refused(on.agent.actions["followup.wave"]!(boss, { op: "start", pool: "good_intro" }));
+    const resume = await refused(on.agent.actions["followup.wave"]!(boss, { op: "resume", wave_id: id }));
+    const batch = await refused(on.agent.actions["followup.batch"]!(rep, { ids: [on.draft()] }));
+    for (const r of [start, resume, batch]) expect([r.status, r.message]).toEqual([409, AGENT_COPY.agent_off_screen]);
+    expect(((await on.agent.actions["followup.wave"]!(boss, { op: "stop", wave_id: id })).wave as Row).state).toBe("done");
+    const held = on.draft();
+    await on.agent.actions["followup.hold"]!(rep, { id: held, on: true });
+    expect(on.meta(held)?.held_by).toBe(rep.email);
+    expect(on.audits.map(a => a.action)).toEqual(["followup.wave.start", "followup.wave.pause", "followup.wave.stop", "followup.hold"]);
+  });
 });
 
 describe("followup.batch and followup.hold", () => {
@@ -197,6 +214,7 @@ describe("followup.send_due (the desk's paced send)", () => {
     w.knobs.send = () => new ApiRefusal("This lead asked not to be contacted on WhatsApp.", 409);
     await refused(w.agent.desk["followup.send_due"]!(desk, { id }));
     expect([w.meta(id)?.held_by, w.meta(id)?.send_after, w.meta(id)?.hold_reason]).toEqual(["sales-desk", null, "This lead asked not to be contacted on WhatsApp."]);
+    expect(w.audits.filter(a => a.action === "followup.set_aside").map(a => a.id)).toEqual([id]);
     const id2 = due(w);
     w.knobs.send = () => new ApiRefusal("Today's 250 WhatsApp templates have gone out.", 409);
     const r = await refused(w.agent.desk["followup.send_due"]!(desk, { id: id2 }));

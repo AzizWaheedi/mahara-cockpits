@@ -61,8 +61,10 @@ TABLES: dict[str, tuple[str, tuple[str, ...]]] = {
     "cockpit_sales_wa_templates": ("the WhatsApp templates migration", ("key",)),
 }
 
-# Columns contract-v2 section 10 adds (the database lane's delta migration
-# after 20261003c), with what fails without them.
+# Columns contract-v2 section 10 adds, with what fails without them. The
+# database lane folded them into 20261003a (rooms) and 20261003c (waves,
+# members, meta) in place, before either was applied, instead of a separate
+# delta migration.
 DELTA: dict[str, tuple[tuple[str, ...], str]] = {
     "cockpit_sales_rooms": (("link_claimed_at", "count_undo_at", "link_unconfirmed_at"),
                             "sales-api's link claim and its count undo fail, so no lead gets a room link"),
@@ -73,7 +75,7 @@ DELTA: dict[str, tuple[tuple[str, ...], str]] = {
         "the waves job cannot keep its members in step, so no opener is written"),
     "cockpit_sales_followup_meta": (("hold_reason",), "an opener set aside for a person cannot say why"),
 }
-DELTA_WHERE = "the delta migration after 20261003c (contract-v2 section 10)"
+DELTA_WHERE = "the current 20261003a_sales_rooms.sql and 20261003c_sales_followup_agent.sql (contract-v2 section 10)"
 
 SETTINGS = ("rooms", "live", "followups", "whatsapp_guard", "threads")
 
