@@ -3,6 +3,8 @@ import {
   type ContractSetting,
   type ContractTemplate,
   cleanTemplates,
+  keepPayments,
+  paymentOptions,
   contactFill,
   contractName,
   contractPatch,
@@ -142,6 +144,53 @@ describe("contractPatch", () => {
     expect(p.status).toBe("viewed");
     expect(p.viewed_at).toBe("2026-09-30T17:53:51.358Z");
     expect(p.signed_at).toBeUndefined();
+  });
+});
+
+describe("each template's own payment structures", () => {
+  // Aziz, 2026-10-03: the 60 Day and Month To Month contracts get plans that fit their fees.
+  const SIXTY: ContractTemplate = {
+    id: "t60",
+    name: "60 Day Agreement",
+    fields: ["company_name", "payment_structure"],
+    payments: ["Paid in full ($4,000)", "Split pay ($2,000 + $2,000 after 30 days)"],
+  };
+  const MONTHLY: ContractTemplate = {
+    id: "tmm",
+    name: "Month To Month Agreement",
+    fields: ["company_name", "payment_structure"],
+    payments: ["Monthly ($2,000 a month)"],
+  };
+  test("a pick must be one of the template's own plans", () => {
+    expect(paymentOptions(SIXTY, SETTING)).toEqual(SIXTY.payments ?? []);
+    expect(paymentOptions(NINETY, SETTING)).toEqual(SETTING.fields?.payment_structure?.options ?? []);
+    const ok = contractTerms({ company_name: "Ardon", payment_structure: "Paid in full ($4,000)", daily_ad_spend: 40 }, SIXTY, SETTING);
+    expect(ok.ok && ok.terms.payment_structure).toBe("Paid in full ($4,000)");
+    const wrong = contractTerms({ company_name: "Ardon", payment_structure: "Monthly", daily_ad_spend: 40 }, SIXTY, SETTING);
+    expect(wrong).toEqual({
+      ok: false,
+      error: "Pick how the client pays: Paid in full ($4,000), Split pay ($2,000 + $2,000 after 30 days).",
+    });
+    expect(contractTerms({ company_name: "Ardon", payment_structure: "Paid in full ($4,000)", daily_ad_spend: 40 }, MONTHLY, SETTING).ok).toBe(false);
+  });
+
+  test("the lists survive cleaning and a manager's save without them", () => {
+    expect(
+      cleanTemplates([{ id: "6995853c5831c3bd20e03db7", name: "60 Day Agreement", fields: ["payment_structure"], payments: [" Paid in full ($4,000) ", "", "Paid in full ($4,000)", 7] }]),
+    ).toEqual([
+      { id: "6995853c5831c3bd20e03db7", name: "60 Day Agreement", fields: ["company_name", "payment_structure"], payments: ["Paid in full ($4,000)", "7"] },
+    ]);
+    const saved = keepPayments(
+      [
+        { id: "t60", name: "60 Day Agreement", fields: ["company_name", "payment_structure"] },
+        { id: "tnew", name: "New", fields: ["company_name"] },
+      ],
+      [SIXTY, MONTHLY],
+    );
+    expect(saved[0].payments).toEqual(SIXTY.payments);
+    expect(saved[1].payments).toBeUndefined();
+    const changed = keepPayments([{ ...SIXTY, payments: ["Paid in full ($4,000)"] }], [SIXTY]);
+    expect(changed[0].payments).toEqual(["Paid in full ($4,000)"]);
   });
 });
 

@@ -465,7 +465,6 @@ function NewContract({
   onCancel: (() => void) | null;
 }) {
   const templates = setting.templates ?? [];
-  const options = setting.fields?.payment_structure?.options ?? [];
   const [templateId, setTemplateId] = useState(
     templates.find(t => t.id === last?.template_id)?.id ??
       templates[0]?.id ??
@@ -475,8 +474,19 @@ function NewContract({
     () => templates.find(t => t.id === templateId) ?? null,
     [templates, templateId],
   );
+  // Each contract offers the plans that fit its own fee (Aziz, 2026-10-03);
+  // a template without its own list offers the whole one.
+  const options = template?.payments?.length
+    ? template.payments
+    : (setting.fields?.payment_structure?.options ?? []);
   const [company, setCompany] = useState(start);
   const [payment, setPayment] = useState(last?.fields.payment_structure ?? "");
+  // A plan that does not fit the chosen contract is dropped; the only one is chosen.
+  useEffect(() => {
+    setPayment(p =>
+      options.includes(p) ? p : options.length === 1 ? options[0] : "",
+    );
+  }, [options]);
   const [spend, setSpend] = useState(
     last?.fields.daily_ad_spend ? String(last.fields.daily_ad_spend) : "",
   );

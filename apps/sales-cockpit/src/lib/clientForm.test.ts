@@ -222,17 +222,53 @@ describe("the answers the cockpit already has", () => {
     });
   });
 
-  test("without a plan the money questions show both plans' amounts", () => {
+  test("without a plan the money questions show every contract's amounts", () => {
     const old = contract({
       fields: { payment_structure: "Split Pay (2x payments)" },
     });
     expect(fillFor(q(REF.cashAtOnboarding), ctx({ contracts: [old] }))).toEqual(
-      { kind: "type", hint: "Paid in full: 5500. Split pay: 2500." },
+      {
+        kind: "type",
+        hint: "3 months: 5500 paid in full, 2500 split. 60 days: 3500 paid in full, 1500 split. Monthly: 1500.",
+      },
     );
     expect(fillFor(q(REF.totalRevenue), ctx({ contracts: [] }))).toEqual({
       kind: "type",
-      hint: "Paid in full: 6000. Split pay: 6000.",
+      hint: "3 months: 6000. 60 days: 4000. Monthly: 2000.",
     });
+  });
+
+  test("the 60-day and monthly contracts' own plans", () => {
+    const value = (ref: string, label: string) => {
+      const f = fillFor(
+        q(ref),
+        ctx({
+          contracts: [contract({ fields: { payment_structure: label } })],
+        }),
+      );
+      return f.kind === "copy" ? f.value : null;
+    };
+    const sixty = "Split pay ($2,000 + $2,000 after 30 days)";
+    expect(
+      [
+        REF.cashOnCall,
+        REF.cashAtOnboarding,
+        REF.secondPayment,
+        REF.totalRevenue,
+      ].map(r => value(r, sixty)),
+    ).toEqual(["500", "1500", "2000", "4000"]);
+    const monthly = "Monthly ($2,000 a month)";
+    expect(
+      [
+        REF.cashOnCall,
+        REF.cashAtOnboarding,
+        REF.secondPayment,
+        REF.totalRevenue,
+      ].map(r => value(r, monthly)),
+    ).toEqual(["500", "1500", "2000", "2000"]);
+    expect(value(REF.paymentDetails, monthly)).toBe(
+      "Monthly ($2,000 a month): $500 on the call, $1,500 on or before the onboarding call, then $2,000 every month it continues. Total $2,000.",
+    );
   });
 
   test("a contract made in HighLevel, with no fields, does not hide the plan", () => {

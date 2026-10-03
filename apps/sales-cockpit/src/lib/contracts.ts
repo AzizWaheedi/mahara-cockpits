@@ -14,6 +14,8 @@ export interface ContractTemplate {
   id: string;
   name: string;
   fields: ContractField[];
+  /** The payment structures this template may print; the setting's whole list when absent. */
+  payments?: string[];
 }
 
 export interface ContractSetting {
