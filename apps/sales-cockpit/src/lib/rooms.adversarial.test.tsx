@@ -109,7 +109,7 @@ describe("1. link channel names match the database, sales-api and the glossary",
   });
 });
 
-describe("3. P1's joined lines", () => {
+describe("4. P1's joined lines", () => {
   test.failing("a booked intro moved to now says the intro is marked shown", () => {
     expect(say(joined({ count_result: "moved" }))).toBe(
       "Faisal joined at 14:11. The intro is marked shown.",
@@ -123,7 +123,7 @@ describe("3. P1's joined lines", () => {
   });
 });
 
-describe("4. 'That was not the lead' and the server's 300 s", () => {
+describe("5. 'That was not the lead' and the server's 300 s", () => {
   test.failing("the button is gone before a held press would land after 300 s", () => {
     // 296 s after the join: pressed now, sent after the 5 s Undo, it reaches
     // sales-api at 301 s, which refuses it (roomlogic not_lead_late), and the
@@ -136,7 +136,7 @@ describe("4. 'That was not the lead' and the server's 300 s", () => {
   });
 });
 
-describe("5. a late poll and a press", () => {
+describe("6. a late poll and a press", () => {
   test.failing("a poll that left before End room does not bring the ended room back", () => {
     const before = F.liveFixture("away", NOW, "host_in").live;
     const own = before.rooms[0];
@@ -163,7 +163,7 @@ describe("5. a late poll and a press", () => {
   });
 });
 
-describe("6. a flash never hides a live offer", () => {
+describe("7. a flash never hides a live offer", () => {
   test.failing("a new offer shows through the last offer's 'closed' line", () => {
     const line = strip({
       me: me({ state: "ready" }),
@@ -187,7 +187,7 @@ describe("6. a flash never hides a live offer", () => {
   });
 });
 
-describe("7. a booked call's room in the banner", () => {
+describe("8. a booked call's room in the banner", () => {
   const start = NOW + 15 * MIN;
   const booked = F.baseRoom(NOW, {
     purpose: "booked",
@@ -209,7 +209,7 @@ describe("7. a booked call's room in the banner", () => {
   });
 });
 
-describe("9. a handover's failed Zoom room", () => {
+describe("11. a handover's failed Zoom room", () => {
   const r = F.baseRoom(NOW, {
     purpose: "handover",
     provider: "zoom",
@@ -226,7 +226,7 @@ describe("9. a handover's failed Zoom room", () => {
   });
 });
 
-describe("11. the countdown can be read in light mode", () => {
+describe("13. the countdown can be read in light mode", () => {
   const lum = (hex: string) => {
     const c = [1, 3, 5].map(
       i => Number.parseInt(hex.slice(i, i + 2), 16) / 255,
@@ -248,7 +248,7 @@ describe("11. the countdown can be read in light mode", () => {
   });
 });
 
-describe("16. an offer whose time is up", () => {
+describe("19. an offer whose time is up", () => {
   test.failing("is not offered for Take", () => {
     const line = strip({
       me: me({ state: "ready" }),
@@ -258,7 +258,7 @@ describe("16. an offer whose time is up", () => {
   });
 });
 
-describe("17. the booked-call line", () => {
+describe("20. the booked-call line", () => {
   test.failing("does not offer the button it says to press after the call", () => {
     const line = strip({
       me: me({ reason: "booked_call", booked_at: iso(NOW + 38 * MIN) }),
@@ -268,7 +268,7 @@ describe("17. the booked-call line", () => {
   });
 });
 
-describe("18. the banner's handover slot", () => {
+describe("21. the banner's handover slot", () => {
   test.failing("a handover strip that renders nothing does not hide the seat's strip", () => {
     const Idle = () => null;
     const html = renderToStaticMarkup(
@@ -289,7 +289,7 @@ describe("18. the banner's handover slot", () => {
   });
 });
 
-describe("20. a reason after a colon", () => {
+describe("23. a reason after a colon", () => {
   test.failing("keeps a person's name capitalised", () => {
     expect(R.reasonWords("Sara has the only Zoom seat.")).toBe(
       "Sara has the only Zoom seat",
@@ -297,7 +297,7 @@ describe("20. a reason after a colon", () => {
   });
 });
 
-describe("21. reading a link out", () => {
+describe("24. reading a link out", () => {
   test.failing("a Zoom room with no short link gives something a person can say", () => {
     const url =
       "https://us06web.zoom.us/j/81234567890?pwd=aBcD3fGhIjKlMnOpQrStUvWxYz012345.1";
@@ -311,14 +311,14 @@ describe("21. reading a link out", () => {
   });
 });
 
-describe("24. the spoken banner line", () => {
+describe("27. the spoken banner line", () => {
   test.failing("has no dangling comma once the countdown is left out", () => {
     const s = R.bannerRoomSentence(sentRoom(), NOW);
     expect(R.sentenceText(s, true)).toBe("Video room: Faisal.");
   });
 });
 
-describe("2b. a malformed live.status never takes the whole cockpit down", () => {
+describe("2. a malformed live.status never takes the whole cockpit down", () => {
   // The banner renders above the routes' PageBoundary (App.tsx:247 vs 254),
   // so a throw here reaches main.tsx's boundary and replaces every page.
   const draw = (data: unknown) => () =>
