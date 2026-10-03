@@ -57,7 +57,6 @@ import {
   ms,
   newRoomRow,
   noShowDoubt,
-  officialCalendars,
   type Provider,
   type Purpose,
   REPLAY_MAX_AGE_S,
@@ -894,7 +893,7 @@ export function makeRooms(deps: RoomDeps): Rooms {
 
   async function roomSend(who: Who, b: Row): Promise<Row> {
     const id = roomIdOf(b.room_id);
-    const requestId = requestIdOf(b.request_id);
+    requestIdOf(b.request_id);
     if (b.channel !== "email") throw no("bad_input");
     const { rooms: setting } = await roomsAndLive();
     const room = await mustRoom(id);
@@ -909,7 +908,6 @@ export function makeRooms(deps: RoomDeps): Rooms {
     // One email with the link per room, whatever the presses (two tabs, a
     // double tap, or the backup that already went): the message service's
     // own key for this room's email, so a repeat answers the email that went.
-    void requestId;
     const sent = await sendOn(room, "email", await uuidFrom(`mahara-room/link/${room.id}/email`), setting, who);
     if (!sent.ok) throw plain(`Not sent: ${sent.why}.`, sent.status, "send_failed");
     const after = await recordSent(room, "email", sent.message_id, setting);
@@ -1441,8 +1439,8 @@ export function makeRooms(deps: RoomDeps): Rooms {
       return;
     }
     if (plan.action === "mark") return await countMark(room, claimedAt, plan.appointment_id, host, appt, marks);
-    if (plan.action === "move") return await countMove(room, claimedAt, plan, setting);
-    return await countCreate(room, claimedAt, plan, setting);
+    if (plan.action === "move") return await countMove(room, claimedAt, plan);
+    return await countCreate(room, claimedAt, plan);
   }
 
   /**
@@ -1522,7 +1520,7 @@ export function makeRooms(deps: RoomDeps): Rooms {
   }
 
   /** Moves the lead's own booked call to now and marks it shown, recording first its start, end, rep and status. */
-  async function countMove(room: RoomRow, claimedAt: string, plan: Extract<CountPlan, { action: "move" }>, setting: RoomsSetting): Promise<void> {
+  async function countMove(room: RoomRow, claimedAt: string, plan: Extract<CountPlan, { action: "move" }>): Promise<void> {
     const before: CountBefore = {
       from_start: plan.from_start,
       from_end: plan.from_end,
@@ -1563,11 +1561,10 @@ export function makeRooms(deps: RoomDeps): Rooms {
       before,
     );
     if (landed) await markShowed(room, plan.appointment_id);
-    void setting;
   }
 
   /** Books the live call on the live (or test) calendar and marks it shown; a lost answer is looked up, never booked again. */
-  async function countCreate(room: RoomRow, claimedAt: string, plan: Extract<CountPlan, { action: "create" }>, setting: RoomsSetting): Promise<void> {
+  async function countCreate(room: RoomRow, claimedAt: string, plan: Extract<CountPlan, { action: "create" }>): Promise<void> {
     let id: string | null = null;
     try {
       const out = await io.ghl("POST", "/calendars/events/appointments", plan.body);
@@ -1595,7 +1592,6 @@ export function makeRooms(deps: RoomDeps): Rooms {
       { plan: "create", calendar_id: plan.calendar_id, appointment_id: id },
     );
     if (landed) await markShowed(room, id);
-    void setting;
   }
 
   /** The showed status on a live booking or a moved call. A failure is recorded; the booking stands as confirmed, which counts as shown. */

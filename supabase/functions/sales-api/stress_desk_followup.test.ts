@@ -166,3 +166,23 @@ describe("followup.approve on a backlog opener (index.ts, read as source: the mo
     expect(/reactivate|wave|gateOpen|enabled/.test(body)).toBe(true);
   });
 });
+
+describe("followup.send_due: a lead who booked after the batch was approved (stress round 1)", () => {
+  test("the opener is taken back, never sent, and the draft is not put in front of a person", async () => {
+    const w = setup();
+    const id = w.draft({}, { send_after: new Date(SUN_11 - 1000).toISOString(), approved_by: rep.email });
+    let sent = 0;
+    w.knobs.send = async () => {
+      sent++;
+      return { followup: { status: "sent" }, message: { state: "sent" } };
+    };
+    w.db.seed("cockpit_sales_calendar", [
+      { appointment_id: "a1", contact_id: "c1", call_type: "intro", status: "confirmed", start_at: new Date(SUN_11 + 86_400_000).toISOString() },
+    ]);
+    const r = await outcome(w.agent.desk["followup.send_due"]!(desk, { id }));
+    expect(r instanceof ApiRefusal ? r.message : "").toContain("taken back");
+    expect(sent).toBe(0);
+    expect(w.db.t("cockpit_sales_followups").find(f => f.id === id)?.status).toBe("expired");
+    expect(w.audits.filter(a => a.action === "followup.set_aside")).toHaveLength(0);
+  });
+});

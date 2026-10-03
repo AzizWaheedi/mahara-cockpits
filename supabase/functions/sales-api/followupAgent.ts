@@ -32,7 +32,7 @@ export const APPROVED_KEEP_MS = 72 * 3_600_000;
  * is not at fault, so it is never set aside for a person.
  */
 export const STATE_RACE =
-  /someone else has just dealt with this draft|this draft was already|not approved to go yet|paused or stopped|is held, so it was not sent/i;
+  /someone else has just dealt with this draft|this draft was already|not approved to go yet|paused or stopped|is held, so it was not sent|backlog opener was taken back/i;
 
 export const AGENT_COPY = {
   manager_only: "Only a sales manager can change this.",
@@ -60,6 +60,7 @@ export const AGENT_COPY = {
   level_bad: "Pick approve, sends unless stopped, sends by itself or off.",
   kind_bad: "That is not a kind of follow-up.",
   lead_missing: "That lead is not in the cockpit.",
+  opener_booked: "The lead has a call booked now, so the backlog opener was taken back.",
 } as const;
 
 export interface AgentDeps {
@@ -358,6 +359,26 @@ export function makeFollowupAgent(deps: AgentDeps): { actions: Record<string, Ac
     const lead = (await io.db(`cockpit_sales_leads?contact_id=eq.${enc(String(f.contact_id))}&select=country`))[0];
     const hours = hoursRefusal({ segment: f.segment, touch: f.touch, country: lead?.country, now: io.now(), followups, dayOff: true });
     if (hours) throw refusal(hours);
+    if (f.segment === "reactivate") {
+      // A backlog opener never goes to a lead who has booked since the batch
+      // was approved ("How are you?" to a lead booked for tomorrow): the
+      // opener is taken back, whatever the desk read before it asked.
+      const ahead = await io.db(
+        `cockpit_sales_calendar?contact_id=eq.${enc(String(f.contact_id))}&call_type=in.(intro,demo)&start_at=gt.${enc(iso(io.now()))}&status=not.in.(cancelled,noshow,invalid)&select=appointment_id&limit=1`,
+      );
+      if (ahead.length) {
+        await io.db(`cockpit_sales_followups?id=eq.${enc(String(f.id))}&status=eq.draft`, {
+          method: "PATCH",
+          body: { status: "expired", decided_at: iso(io.now()), error: AGENT_COPY.opener_booked },
+          prefer: "return=minimal",
+        });
+        await deps.audit(who, "followup.send_due", "cockpit_sales_followups", String(f.id), { status: "draft" }, {
+          status: "expired",
+          why: AGENT_COPY.opener_booked,
+        });
+        throw refusal(AGENT_COPY.opener_booked);
+      }
+    }
     try {
       const out = await deps.sendFollowup(who, f, {}, false, { decidedBy: (meta.approved_by as string | null) ?? null });
       const m = obj(out.message);

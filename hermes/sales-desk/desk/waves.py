@@ -117,7 +117,7 @@ HOURS_WORDS = ("between 9", "their time", "their clock", "day off", "friday", "q
 # it, a manager paused the wave, sales-api's clock is a moment behind): the
 # draft is not at fault, so it is never set aside for a person.
 STATE_RACE = re.compile(r"someone else has just dealt with this draft|this draft was already|not approved to go yet"
-                        r"|paused or stopped|is held, so it was not sent", re.I)
+                        r"|paused or stopped|is held, so it was not sent|backlog opener was taken back", re.I)
 # An approved opener may still go this long after its turn (followups.APPROVED_KEEP).
 APPROVED_KEEP = timedelta(hours=72)
 # How a send_due run ended, and which endings are a fault (the row turns red).
