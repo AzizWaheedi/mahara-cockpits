@@ -17,6 +17,7 @@ import {
 } from "../lib/contracts";
 import { useQuery, useSetting } from "../lib/data";
 import { ago, day } from "../lib/format";
+import { planFor } from "../lib/plans";
 import { supabase } from "../lib/supabase";
 import { toast } from "../lib/toast";
 import type { Me } from "../lib/types";
@@ -28,6 +29,12 @@ import { button, buttonPrimary, Failed, field, Reading, select } from "./kit";
  * the draft is made in HighLevel, anything else is changed there, and the
  * rep sends it by email or as a link for WhatsApp. HighLevel locks a
  * contract once it is sent.
+ *
+ * Since 2026-10-03 HighLevel's workflow "3. WhatsApp the Contract Link
+ * (Arabic)" also sends the client the signing link on WhatsApp, in Arabic,
+ * whenever one of its templates is sent either way (the setting's
+ * `whatsapp.template_ids`). The buttons say so only when it is true: the
+ * template is one of those and the lead has a number.
  */
 
 /** Closers and managers make and send contracts; everyone else reads them. */
@@ -107,6 +114,7 @@ export function ContractPanel({
   contactId,
   company,
   hasEmail,
+  hasPhone,
   language,
   onShare,
 }: {
@@ -115,6 +123,7 @@ export function ContractPanel({
   /** The company name on file, to start the contract with. */
   company: string | null;
   hasEmail: boolean;
+  hasPhone: boolean;
   language: "ar" | "en";
   /** Puts words in the lead's WhatsApp box. */
   onShare: (text: string) => void;
@@ -160,6 +169,13 @@ export function ContractPanel({
           c={c}
           actor={actor}
           hasEmail={hasEmail}
+          whatsapp={
+            hasPhone &&
+            Boolean(
+              c.template_id &&
+                setting.data?.whatsapp?.template_ids?.includes(c.template_id),
+            )
+          }
           language={language}
           editorUrl={setting.data?.editor_url ?? null}
           onChange={rows.reload}
@@ -208,6 +224,7 @@ function ContractCard({
   c,
   actor,
   hasEmail,
+  whatsapp,
   language,
   editorUrl,
   onChange,
@@ -216,6 +233,8 @@ function ContractCard({
   c: Contract;
   actor: boolean;
   hasEmail: boolean;
+  /** HighLevel also sends the client the link on WhatsApp, in Arabic, once it is sent. */
+  whatsapp: boolean;
   language: "ar" | "en";
   editorUrl: string | null;
   onChange: () => void;
@@ -238,9 +257,14 @@ function ContractCard({
         setLink(out.link);
         await copy(
           out.link,
-          "Sent. The link is copied: share it with the lead.",
+          whatsapp
+            ? "Sent. The client gets the link on WhatsApp in a minute; it is copied for you too."
+            : "Sent. The link is copied: share it with the lead.",
         );
-      } else toast.success("Sent by email.");
+      } else
+        toast.success(
+          whatsapp ? "Sent by email and on WhatsApp." : "Sent by email.",
+        );
       setConfirm(null);
       onChange();
     } catch (e) {
@@ -306,8 +330,12 @@ function ContractCard({
           >
             <p>
               {confirm === "email"
-                ? "HighLevel emails the contract to the lead and locks it. Send it now?"
-                : "HighLevel marks it sent and locks it, and you get the link to share. Send it now?"}
+                ? whatsapp
+                  ? "HighLevel emails the contract and locks it, and the client gets the link on WhatsApp in Arabic from the company number. Send it now?"
+                  : "HighLevel emails the contract to the lead and locks it. Send it now?"
+                : whatsapp
+                  ? "HighLevel locks it and the client gets the link on WhatsApp in Arabic from the company number. You get the link too. Send it now?"
+                  : "HighLevel marks it sent and locks it, and you get the link to share. Send it now?"}
             </p>
             <div className="mt-2 flex flex-wrap gap-2">
               <button
@@ -320,8 +348,12 @@ function ContractCard({
                 {busy
                   ? "Sending…"
                   : confirm === "email"
-                    ? "Send by email"
-                    : "Send as a link"}
+                    ? whatsapp
+                      ? "Send by email and WhatsApp"
+                      : "Send by email"
+                    : whatsapp
+                      ? "Send on WhatsApp only"
+                      : "Send as a link"}
               </button>
               <button
                 type="button"
@@ -358,19 +390,21 @@ function ContractCard({
               title={
                 hasEmail
                   ? undefined
-                  : "This lead has no email address. Send it as a link."
+                  : whatsapp
+                    ? "This lead has no email address. Send it on WhatsApp only."
+                    : "This lead has no email address. Send it as a link."
               }
               onClick={() => setConfirm("email")}
             >
               <Send className="size-3.5" aria-hidden />
-              Send by email
+              {whatsapp ? "Send by email and WhatsApp" : "Send by email"}
             </button>
             <button
               type="button"
               className={button}
               onClick={() => setConfirm("link")}
             >
-              Send as a link
+              {whatsapp ? "Send on WhatsApp only" : "Send as a link"}
             </button>
           </div>
         )
@@ -525,6 +559,11 @@ function NewContract({
               </option>
             ))}
           </select>
+          {planFor(payment) ? (
+            <span className="muted mt-1 block text-xs">
+              {planFor(payment)?.schedule}
+            </span>
+          ) : null}
         </label>
       ) : null}
       <label className="block">

@@ -457,6 +457,7 @@ export default function LeadPage({ me }: { me: Me }) {
               contactId={l.contact_id}
               company={l.company}
               hasEmail={Boolean(l.email?.trim())}
+              hasPhone={Boolean(l.phone?.trim())}
               language={leadLanguage(
                 convo.thread
                   .filter(m => m.direction === "inbound")

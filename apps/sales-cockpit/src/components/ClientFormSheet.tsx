@@ -475,6 +475,9 @@ function RailItem({
             {f.value}
           </bdi>
         </p>
+        {f.kind === "copy" && f.note ? (
+          <p className="muted text-[11px]">{f.note}</p>
+        ) : null}
       </div>
       <button
         type="button"
