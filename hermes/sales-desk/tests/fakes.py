@@ -50,6 +50,11 @@ PK = {
     "cockpit_sales_hot": ("contact_id",),
     "cockpit_sales_desk_failures": ("job", "item_id"),
     "cockpit_sales_dial_checks": ("day", "agent_email"),
+    # The follow-up agent's own tables (20261003c, as the desk lane's NOTES name them).
+    "cockpit_sales_followup_stops": ("contact_id", "said_at"),
+    "cockpit_sales_followup_waves": ("id",),
+    "cockpit_sales_followup_wave_members": ("wave_id", "contact_id"),
+    "cockpit_sales_followup_meta": ("followup_id",),
 }
 
 
