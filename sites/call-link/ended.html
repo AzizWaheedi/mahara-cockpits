@@ -16,7 +16,7 @@
 <script src="/core.js" defer></script>
 <script src="/call.js" defer></script>
 </head>
-<!-- Where /go sends a link whose room is over (?wa= adds the WhatsApp button). -->
+<!-- Where /go sends a link whose room is over: /ended?c={code}. The script asks sales-live/open/{code} for the official WhatsApp number; nothing is read from the address but the code. -->
 <body data-page="ended" data-state="ended">
 <main class="page">
   <img class="brand" src="/logo.png" alt="Mahara Media" width="720" height="192">

@@ -8,11 +8,29 @@ import { stripControl } from "./util.ts";
 /** Six characters, no I, O, 0 or 1 (1.07 billion codes). */
 export const CODE_RE = /^[A-HJ-NP-Z2-9]{6}$/;
 
-/** A code as a lead may type it: any case, stray spaces or a slash. */
+/**
+ * Marks a message app can leave inside or right after a link and that nobody
+ * can see: zero-width spaces and joiners, the left-to-right and right-to-left
+ * marks (common after a link in an Arabic message), the bidi embeddings and
+ * isolates, the Arabic letter mark and the byte order mark.
+ */
+const INVISIBLE = /[\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\u061C\uFEFF]/g;
+
+/** The code at the start, when what follows it is not another letter or digit of the alphabet. */
+const LEADING_CODE = /^([A-HJ-NP-Z2-9]{6})(?![A-Z0-9])/;
+
+/**
+ * A code as a lead may type or tap it: any case, stray spaces or a slash,
+ * invisible marks, and punctuation glued to the end of the link by the
+ * sentence around it ("Join here: {link}." or an Arabic comma). A seventh
+ * letter or digit is still refused, so a mistyped code never opens a room.
+ * sites/call-link/core.js codeFromPath follows the same rule.
+ */
 export function normalizeCode(x: unknown): string | null {
   if (typeof x !== "string") return null;
-  const c = x.replace(/[\s/]+/g, "").toUpperCase();
-  return CODE_RE.test(c) ? c : null;
+  const c = x.replace(INVISIBLE, "").replace(/[\s/]+/g, "").toUpperCase();
+  const m = LEADING_CODE.exec(c);
+  return m ? m[1] : null;
 }
 
 export type RouteName = "zoom" | "slack" | "open" | "go" | "cron" | "health";
@@ -47,34 +65,51 @@ export function routeOf(pathname: string): Route {
 // Deliberately not here: in-app browsers (FBAN, Instagram, Snapchat, Line's
 // browser), which are people, and a bare "bot" inside a word (the CUBOT
 // phone brand). A wrong match only costs one counted open, never the call.
+// WhatsApp's preview fetcher is matched only at the start of the agent
+// ("WhatsApp/2.x"), as roomlogic.ts does: a person's browser may carry
+// "WhatsApp/" further along.
+const WHATSAPP_PREVIEW = /^whatsapp\//i;
 const BOT =
-  /facebookexternalhit|facebot|meta-external(?:agent|fetcher)|whatsapp\/|telegrambot|twitterbot|slackbot|slack-imgproxy|discordbot|linkedinbot|skypeuripreview|applebot|googlebot|google-pagerenderer|google-inspectiontool|adsbot|mediapartners-google|bingbot|bingpreview|yandex(?:bot|images)|baiduspider|duckduckbot|petalbot|embedly|iframely|pinterestbot|redditbot|vkshare|line-poker|kakaotalk-scrap|headlesschrome|phantomjs|lighthouse|pingdom|uptimerobot|statuscake|curl\/|wget\/|python-requests|python-urllib|aiohttp|go-http-client|okhttp|node-fetch|undici|axios\/|java\/|libwww-perl|crawler|spider|slurp|[a-z]bot\/|(?:^|[\s(;])bot(?:[\s);/]|$)/i;
+  /facebookexternalhit|facebot|meta-external(?:agent|fetcher)|telegrambot|twitterbot|slackbot|slack-imgproxy|discordbot|linkedinbot|skypeuripreview|applebot|googlebot|google-pagerenderer|google-inspectiontool|adsbot|mediapartners-google|bingbot|bingpreview|yandex(?:bot|images)|baiduspider|duckduckbot|petalbot|embedly|iframely|pinterestbot|redditbot|vkshare|line-poker|kakaotalk-scrap|headlesschrome|phantomjs|lighthouse|pingdom|uptimerobot|statuscake|curl\/|wget\/|python-requests|python-urllib|aiohttp|go-http-client|okhttp|node-fetch|undici|axios\/|java\/|libwww-perl|crawler|spider|slurp|[a-z]bot\/|(?:^|[\s(;])bot(?:[\s);/]|$)/i;
 
 /** True for a link preview or crawler (or no user agent at all). */
 export function isPreviewBot(ua: string | null | undefined): boolean {
   const s = (ua ?? "").trim();
   if (!s) return true;
-  return BOT.test(s);
+  return WHATSAPP_PREVIEW.test(s) || BOT.test(s);
 }
 
-/** The values cockpit_sales_rooms.open_device allows (migration 20261003a). */
-export type Device = "phone" | "tablet" | "desktop" | "unknown";
+/**
+ * The one set of device names (roomlogic.ts DEVICES): what
+ * cockpit_sales_rooms.open_device may hold, with null for "not known".
+ */
+export const OPEN_DEVICES = ["phone", "tablet", "computer"] as const;
+export type Device = (typeof OPEN_DEVICES)[number];
 
-export function deviceOf(ua: string | null | undefined): Device {
+/** What the lead opened the link on, by roomlogic.ts deviceOf's rules; null when not known. */
+export function deviceOf(ua: string | null | undefined): Device | null {
   const s = ua ?? "";
-  if (!s.trim()) return "unknown";
-  if (/iPad|Tablet|PlayBook|Silk|Kindle/i.test(s)) return "tablet";
-  if (/Android/i.test(s) && !/Mobi/i.test(s)) return "tablet";
-  if (/Mobi|iPhone|iPod|Android|Windows Phone/i.test(s)) return "phone";
-  return "desktop";
+  if (!s.trim()) return null;
+  if (/iPad|Tablet|PlayBook|Silk|Kindle/i.test(s) || (/Android/i.test(s) && !/Mobile/i.test(s))) return "tablet";
+  if (/iPhone|iPod|Android|Mobile|Windows Phone|BlackBerry|BB10|Opera Mini|IEMobile/i.test(s)) return "phone";
+  if (/Windows NT|Macintosh|Mac OS X|X11|Linux|CrOS/i.test(s)) return "computer";
+  return null;
 }
 
 /** The timeline line for an open (room_events.text). */
-export function openText(device: Device, afterEnd: boolean): string {
+export function openText(device: Device | null, afterEnd: boolean): string {
   if (afterEnd) return "The lead opened the link after the room closed.";
-  const on = { phone: " on a phone", tablet: " on a tablet", desktop: " on a computer", unknown: "" }[device];
+  const on = device === "phone" ? " on a phone" : device === "tablet" ? " on a tablet" : device === "computer" ? " on a computer" : "";
   return `The lead opened the link${on}.`;
 }
+
+/**
+ * The only cockpit_sales_rooms columns the door ever writes. An open is not a
+ * change a person acted on, so the rooms guard (lc-db) must not raise
+ * `version` when nothing else changed; otherwise a setter's press made just
+ * after the lead tapped the link reads "This changed a moment ago."
+ */
+export const OPEN_COLUMNS = ["first_open_at", "last_open_at", "open_device"] as const;
 
 export type Os = "ios" | "android" | "mac" | "windows" | "other";
 
@@ -186,11 +221,8 @@ export function whatsappDigits(x: unknown): string | null {
 
 export const FINAL_STATES = new Set(["ended", "expired", "failed", "cancelled"]);
 
-/** A lead_in room with no end signal is over this long after ends_at (no_end_signal). */
-export const NO_END_SIGNAL_MS = 1_800_000;
-
-/** How many replaced rooms the link follows before it gives up. */
-export const MAX_HOPS = 3;
+/** How many replaced rooms the link follows before it gives up (each is one read inside /open's deadline). */
+export const MAX_HOPS = 2;
 
 export interface RoomRow {
   id: string;
@@ -220,11 +252,14 @@ export type DoorView =
 const provider = (p: string | null): "zoom" | "meet" | null =>
   p === "zoom" || p === "meet" ? p : null;
 
-/** Is this room over, as far as the lead's link goes? */
-export function roomIsOver(room: RoomRow, nowMs: number): boolean {
-  if (FINAL_STATES.has(room.state)) return true;
-  const ends = room.ends_at ? Date.parse(room.ends_at) : Number.NaN;
-  return Number.isFinite(ends) && nowMs > ends + NO_END_SIGNAL_MS;
+/**
+ * Is this room over, as far as the lead's link goes? Only a final state says
+ * so. The time rules (lead, no_end_signal, standby_max) belong to the sweep,
+ * which writes the final state; the door never adds one of its own, so a long
+ * demo past ends_at still opens for a lead who reopens the link.
+ */
+export function roomIsOver(room: Pick<RoomRow, "state">, _nowMs?: number): boolean {
+  return FINAL_STATES.has(room.state);
 }
 
 /**
@@ -254,8 +289,16 @@ export function doorView(
   return { ok: true, state: "open", code, provider: p, join_url: url, rep };
 }
 
-/** Origins whose page may read /open: the live site, its Vercel previews, a local run. */
-export function allowedOrigin(origin: string | null): string | null {
+export const LIVE_SITE = "https://call.maharamedia.com";
+
+/**
+ * Origins whose page may read /open: the live site, the one extra site named
+ * in CALL_SITE_URL (exactly that origin), and a local run. No wildcard on
+ * vercel.app: anyone can name a Vercel project "call-link-something", and a
+ * page there could make a visitor's browser count an open. A preview build
+ * points its mm-door meta at a local fake door instead.
+ */
+export function allowedOrigin(origin: string | null, extra: string | null = null): string | null {
   if (!origin) return null;
   let u: URL;
   try {
@@ -263,10 +306,27 @@ export function allowedOrigin(origin: string | null): string | null {
   } catch {
     return null;
   }
-  const host = u.host.toLowerCase();
-  if (u.protocol === "https:" && host === "call.maharamedia.com") return origin;
-  if (u.protocol === "https:" && /^(mahara-)?call-link(-[a-z0-9-]+)?\.vercel\.app$/.test(host))
-    return origin;
-  if (u.protocol === "http:" && /^(localhost|127\.0\.0\.1)(:\d+)?$/.test(host)) return origin;
+  if (u.origin !== origin) return null;
+  if (u.protocol === "https:" && u.host.toLowerCase() === "call.maharamedia.com") return origin;
+  if (extra && u.protocol === "https:" && origin === extra) return origin;
+  if (u.protocol === "http:" && /^(localhost|127\.0\.0\.1)(:\d+)?$/.test(u.host.toLowerCase())) return origin;
   return null;
 }
+
+/**
+ * The no-script route's plain answers (GET /go). The Arabic lines are DRAFT:
+ * new for this route, written under aziz-kuwaiti-voice and waiting for the
+ * CEO's review (README "Arabic still to approve"). `preparing` is the same
+ * pair as the page's own (sites/call-link/core.js COPY.preparing); a test
+ * keeps the two equal.
+ */
+export const GO_COPY = {
+  preview: {
+    en: "Open this link on your phone to join the call.",
+    ar: "افتح هاللينك من تلفونك عشان تدخل المكالمة.", // DRAFT
+  },
+  preparing: {
+    en: "Your call is almost ready. This page opens it by itself.",
+    ar: "مكالمتك قاعدة تتجهز.. بنفتحها لك أول ما تجهز.", // DRAFT
+  },
+} as const;

@@ -7,9 +7,11 @@ import {
   deviceOf,
   doorView,
   firstName,
+  GO_COPY,
   ipHash,
   isPreviewBot,
   normalizeCode,
+  OPEN_DEVICES,
   openText,
   osOf,
   RateLimiter,
@@ -70,10 +72,35 @@ describe("codes", () => {
   });
 
   test("I, O, 0 and 1 never appear, and lengths are exact", () => {
-    for (const bad of ["K7Q2MO", "K7Q2M0", "K7Q2MI", "K7Q2M1", "K7Q2M", "K7Q2MXX", "", "K7Q2M!"])
-      expect(normalizeCode(bad)).toBeNull();
+    for (const bad of ["K7Q2MO", "K7Q2M0", "K7Q2MI", "K7Q2M1", "K7Q2M", "K7Q2MXX", "", "K7Q2M!", "K7Q2MX2", "K7Q2MXa"])
+      expect([bad, normalizeCode(bad)]).toEqual([bad, null]);
     expect(normalizeCode(undefined)).toBeNull();
     expect(normalizeCode(123456)).toBeNull();
+  });
+
+  test("punctuation and invisible marks a message leaves around the link are not part of the code", () => {
+    for (const raw of [
+      "K7Q2MX.", // "Join here: {link}." in the email body
+      "K7Q2MX,",
+      "K7Q2MX)",
+      "K7Q2MX!",
+      "K7Q2MX\u060C", // Arabic comma
+      "K7Q2MX\u200F", // right-to-left mark
+      "K7Q2MX\u200E",
+      "\u200FK7Q2MX",
+      "K7Q2MX\u200B",
+      "K7Q2MX\u2069",
+      "K7Q2MX\u061C",
+      "K7Q2MX\uFEFF",
+      "K7Q2MX\u200F.",
+      "K7Q2MXهلا", // Arabic text glued on
+    ])
+      expect([raw, normalizeCode(raw)]).toEqual([raw, "K7Q2MX"]);
+  });
+
+  test("through the route, as the lead's browser sends it", () => {
+    for (const tail of [".", "%D8%8C", "%E2%80%8F", ")", "%E2%80%8E%E2%80%8F"])
+      expect(normalizeCode(routeOf(`/sales-live/open/K7Q2MX${tail}`).code)).toBe("K7Q2MX");
   });
 });
 
@@ -107,28 +134,43 @@ describe("the bot filter", () => {
   test("people are never bots, in-app browsers and the CUBOT phone included", () => {
     for (const [name, ua] of Object.entries(UA)) expect([name, isPreviewBot(ua)]).toEqual([name, false]);
   });
+
+  test("WhatsApp's preview fetcher only at the start of the agent, as roomlogic.ts reads it", () => {
+    expect(isPreviewBot("WhatsApp/2.24.20.80 A")).toBe(true);
+    expect(isPreviewBot("whatsapp/2.23.20.0")).toBe(true);
+    expect(isPreviewBot("Mozilla/5.0 (Linux; Android 13; SM-A536B) Chrome/120 Mobile Safari/537.36 WhatsApp/2.24")).toBe(false);
+  });
 });
 
 describe("devices", () => {
-  test("phone, tablet or computer", () => {
+  test("phone, tablet or computer, the room logic's own names", () => {
+    expect(OPEN_DEVICES).toEqual(["phone", "tablet", "computer"]);
     expect(deviceOf(UA.iphoneSafari)).toBe("phone");
     expect(deviceOf(UA.androidChrome)).toBe("phone");
     expect(deviceOf(UA.ipad)).toBe("tablet");
     expect(deviceOf(UA.androidTablet)).toBe("tablet");
-    expect(deviceOf(UA.macChrome)).toBe("desktop");
-    expect(deviceOf(UA.windowsEdge)).toBe("desktop");
-    expect(deviceOf("")).toBe("unknown");
+    expect(deviceOf(UA.macChrome)).toBe("computer");
+    expect(deviceOf(UA.windowsEdge)).toBe("computer");
+    expect(deviceOf("Mozilla/5.0 (X11; Linux x86_64) Firefox/131.0")).toBe("computer");
+  });
+
+  test("a device that cannot be told apart is null, never a guess", () => {
+    expect(deviceOf("")).toBeNull();
+    expect(deviceOf(null)).toBeNull();
+    expect(deviceOf("SomeSmartTV/3.1 (compatible)")).toBeNull();
   });
 
   test("only the values open_device allows", () => {
-    for (const ua of [...Object.values(UA), "", "curl/8"])
-      expect(["phone", "tablet", "desktop", "unknown"]).toContain(deviceOf(ua));
+    for (const ua of [...Object.values(UA), "", "curl/8"]) {
+      const d = deviceOf(ua);
+      if (d !== null) expect(OPEN_DEVICES as readonly string[]).toContain(d);
+    }
   });
 
   test("the timeline line for an open", () => {
     expect(openText("phone", false)).toBe("The lead opened the link on a phone.");
-    expect(openText("desktop", false)).toBe("The lead opened the link on a computer.");
-    expect(openText("unknown", false)).toBe("The lead opened the link.");
+    expect(openText("computer", false)).toBe("The lead opened the link on a computer.");
+    expect(openText(null, false)).toBe("The lead opened the link.");
     expect(openText("phone", true)).toBe("The lead opened the link after the room closed.");
   });
 
@@ -299,12 +341,15 @@ describe("what the page is told", () => {
     }
   });
 
-  test("a room with no end signal 30 minutes after ends_at is over", () => {
-    const late = room({ state: "lead_in", ends_at: new Date(NOW - 30 * 60_000 - 1).toISOString() });
-    expect(roomIsOver(late, NOW)).toBe(true);
-    expect(doorView("K7Q2MX", late, rep, NOW).state).toBe("ended");
-    const justInside = room({ state: "lead_in", ends_at: new Date(NOW - 30 * 60_000).toISOString() });
-    expect(roomIsOver(justInside, NOW)).toBe(false);
+  test("only a final state is over: the sweep owns every time rule", () => {
+    // A long demo, or an adopted standby room still on the standby's ends_at.
+    const late = room({ state: "lead_in", ends_at: new Date(NOW - 3 * 60 * 60_000).toISOString() });
+    expect(roomIsOver(late, NOW)).toBe(false);
+    expect(doorView("K7Q2MX", late, rep, NOW).state).toBe("open");
+    for (const state of ["requested", "creating", "open", "host_in", "lead_in"])
+      expect([state, roomIsOver(room({ state, ends_at: "2020-01-01T00:00:00Z" }), NOW)]).toEqual([state, false]);
+    for (const state of ["ended", "expired", "failed", "cancelled"])
+      expect([state, roomIsOver(room({ state }), NOW)]).toEqual([state, true]);
   });
 
   test("a link on a host the door does not trust is never handed out", () => {
@@ -321,11 +366,24 @@ describe("what the page is told", () => {
 });
 
 describe("origins", () => {
-  test("the live site, its previews and a local run may read /open", () => {
+  test("the live site, the one configured extra site and a local run may read /open", () => {
     expect(allowedOrigin("https://call.maharamedia.com")).toBe("https://call.maharamedia.com");
-    expect(allowedOrigin("https://call-link-abc123-team.vercel.app")).not.toBeNull();
-    expect(allowedOrigin("https://mahara-call-link.vercel.app")).not.toBeNull();
     expect(allowedOrigin("http://localhost:5173")).not.toBeNull();
+    expect(allowedOrigin("http://127.0.0.1:8080")).not.toBeNull();
+    expect(allowedOrigin("https://mahara-call-link.vercel.app", "https://mahara-call-link.vercel.app")).toBe(
+      "https://mahara-call-link.vercel.app",
+    );
+  });
+
+  test("names anyone can register on vercel.app may not", () => {
+    for (const o of [
+      "https://call-link-abc123-team.vercel.app",
+      "https://mahara-call-link.vercel.app",
+      "https://mahara-call-link-x1y2z3-anyone.vercel.app",
+      "https://call-link.vercel.app",
+    ])
+      expect([o, allowedOrigin(o)]).toEqual([o, null]);
+    expect(allowedOrigin("https://mahara-call-link-git-x.vercel.app", "https://mahara-call-link.vercel.app")).toBeNull();
   });
 
   test("other sites may not", () => {
@@ -333,11 +391,28 @@ describe("origins", () => {
       "https://evil.example",
       "http://call.maharamedia.com",
       "https://call.maharamedia.com.evil.example",
+      "https://call.maharamedia.com/path",
       "https://other.vercel.app",
       "null",
       "",
     ])
-      expect(allowedOrigin(o)).toBeNull();
+      expect([o, allowedOrigin(o)]).toEqual([o, null]);
     expect(allowedOrigin(null)).toBeNull();
+  });
+});
+
+describe("the no-script route's copy", () => {
+  const core = require("../../../sites/call-link/core.js");
+
+  test("preparing is the page's own line, in both languages", () => {
+    expect(GO_COPY.preparing).toEqual(core.COPY.preparing);
+  });
+
+  test("every line has both languages and no em dash", () => {
+    for (const pair of Object.values(GO_COPY)) {
+      expect(pair.en.length).toBeGreaterThan(10);
+      expect(pair.ar.length).toBeGreaterThan(10);
+    }
+    expect(JSON.stringify(GO_COPY)).not.toContain("—");
   });
 });

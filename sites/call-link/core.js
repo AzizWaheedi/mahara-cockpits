@@ -12,7 +12,30 @@
   /** Six characters, no I, O, 0 or 1: the sales-live code alphabet. */
   const CODE_RE = /^[A-HJ-NP-Z2-9]{6}$/;
 
-  /** The code in the page's path ("/k7q2mx" works too), or null. */
+  /** How long the page waits for the door, per try (sales-live answers inside 4.5 s). */
+  const REQUEST_MS = 6000;
+
+  /* Marks nobody can see that a message app may leave in or after a link:
+     zero-width spaces and joiners, the left-to-right and right-to-left marks,
+     bidi embeddings and isolates, the Arabic letter mark, the byte order mark. */
+  const INVISIBLE = /[\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\u061C\uFEFF]/g;
+
+  /** The code at the start, when no other letter or digit of the alphabet follows it. */
+  const LEADING_CODE = /^([A-HJ-NP-Z2-9]{6})(?![A-Z0-9])/;
+
+  /** A code as a lead may tap it: any case, spaces, invisible marks, punctuation after it. */
+  function normalizeCode(x) {
+    if (typeof x !== "string") return null;
+    const c = x.replace(INVISIBLE, "").replace(/[\s/]+/g, "").toUpperCase();
+    const m = LEADING_CODE.exec(c);
+    return m ? m[1] : null;
+  }
+
+  /**
+   * The code in the page's path ("/k7q2mx" works too), or null. A full stop,
+   * an Arabic comma or a right-to-left mark glued to the link by the message
+   * around it is not part of the code (the same rule as sales-live door.ts).
+   */
   function codeFromPath(path) {
     let first = String(path || "").split("/").filter(Boolean)[0] || "";
     try {
@@ -20,8 +43,30 @@
     } catch (_e) {
       return null;
     }
-    const code = first.replace(/\s+/g, "").toUpperCase();
-    return CODE_RE.test(code) ? code : null;
+    return normalizeCode(first);
+  }
+
+  /** The ended page's code (/ended?c=K7Q2MX), or null. Nothing else is read from the address. */
+  function endedCode(search) {
+    let c = null;
+    try {
+      c = new URLSearchParams(String(search || "")).get("c");
+    } catch (_e) {
+      return null;
+    }
+    return normalizeCode(c);
+  }
+
+  /**
+   * What the ended page does with the door's answer for its code: the room
+   * is over (with the official WhatsApp number when the door has one), or it
+   * is not over after all and the call page takes over. An error or an
+   * unknown code leaves the plain ended lines, with no button.
+   */
+  function endedNext(view) {
+    const v = view && typeof view === "object" ? view : {};
+    if (v.state === "opening" || v.state === "preparing") return { go: "call" };
+    return { state: "ended", whatsapp: v.state === "ended" ? v.whatsapp || null : null };
   }
 
   /** Which language leads: Arabic when the phone's first language is Arabic. */
@@ -63,7 +108,8 @@
     return d.length >= 8 && d.length <= 15 ? `https://wa.me/${d}` : null;
   }
 
-  const FALLBACK_REP = { en: "the Mahara Media team", ar: "فريق المبيعات" };
+  /* final_arabic.md: {rep_first_name} falls back to فريق المبيعات, the sales team. */
+  const FALLBACK_REP = { en: "the sales team", ar: "فريق المبيعات" };
 
   const COPY = {
     openingPlain: { en: "Opening your call...", ar: "لحظة.. قاعدين نفتح لك مكالمتك" },
@@ -188,9 +234,13 @@
 
   return {
     CODE_RE: CODE_RE,
+    REQUEST_MS: REQUEST_MS,
     COPY: COPY,
     FALLBACK_REP: FALLBACK_REP,
+    normalizeCode: normalizeCode,
     codeFromPath: codeFromPath,
+    endedCode: endedCode,
+    endedNext: endedNext,
     langOrder: langOrder,
     isIos: isIos,
     safeJoinUrl: safeJoinUrl,

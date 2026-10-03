@@ -14,15 +14,19 @@
   const OPEN_DELAY_MS = 1400; // the ring fills, then the room opens
   const CHECK_AFTER_MS = 2600; // still here after that: offer the button
   const PREPARING_FOR_MS = 90000;
-  const REQUEST_MS = 6000;
+  const REQUEST_MS = C.REQUEST_MS || 6000;
 
   const order = C.langOrder(navigator.languages || [navigator.language]);
   const lead = order[0];
   const ios = C.isIos(navigator.userAgent, navigator.maxTouchPoints);
   const page = body.getAttribute("data-page") || "call";
-  const code = page === "call" ? C.codeFromPath(location.pathname) : null;
+  // The ended page knows its room only by ?c= and asks the door about it;
+  // nothing it shows (the WhatsApp number included) comes from the address.
+  const code = page === "call" ? C.codeFromPath(location.pathname) : C.endedCode(location.search);
   let startedAt = Date.now();
   let current = null;
+  // Focus was in the buttons when they were redrawn, and moved to the line.
+  let focusFollows = false;
 
   html.lang = lead;
   html.dir = lead === "ar" ? "rtl" : "ltr";
@@ -128,6 +132,8 @@
     if (hintPair) setPair($(".h1"), $(".h2"), hintPair);
 
     const actions = $(".actions");
+    const active = doc.activeElement;
+    const hadFocus = Boolean(active && active !== body && actions.contains(active));
     const made = actions.querySelectorAll(".made");
     for (let i = 0; i < made.length; i++) actions.removeChild(made[i]);
     if (view.state === "opening" || view.state === "opened") {
@@ -145,8 +151,24 @@
       actions.appendChild(button(C.COPY.tryAgain, null, true, retry));
     }
 
+    // Keyboard and screen-reader users keep their place: when "Try again"
+    // (or any button) is redrawn, focus goes to the first new button, or to
+    // the line while there is none, and on to the first button that follows.
+    const l1 = $(".l1");
+    const first = actions.querySelector(".made");
+    if (hadFocus || (focusFollows && doc.activeElement === l1)) {
+      if (first) {
+        first.focus();
+        focusFollows = false;
+      } else {
+        l1.setAttribute("tabindex", "-1");
+        l1.focus();
+        focusFollows = true;
+      }
+    }
+
     const foot = $(".code");
-    if (code && view.state !== "unknown") {
+    if (page === "call" && code && view.state !== "unknown") {
       foot.hidden = false;
       setPair($(".code .c1"), $(".code .c2"), C.COPY.codeLabel);
       $(".code b").textContent = code;
@@ -233,8 +255,13 @@
   });
 
   if (page === "ended") {
-    const wa = C.whatsappLink(new URLSearchParams(location.search).get("wa"));
-    return render({ state: "ended", whatsapp: wa });
+    render({ state: "ended", whatsapp: null });
+    if (!code || !DOOR) return;
+    return ask(2).then((view) => {
+      const next = C.endedNext(view);
+      if (next.go === "call") return location.replace(`/${code}`);
+      if (next.whatsapp) render(next);
+    });
   }
   if (!code || !DOOR) return render({ state: "unknown" });
   render({ state: "loading" });

@@ -29,8 +29,10 @@ Deno.serve(
     fetch: (input, init) => fetch(input, init),
     now: () => Date.now(),
     background,
-    // 30 opens a minute per salted address, per running instance.
+    // Per running instance: 30 opens a minute per salted address and device,
+    // and 120 a minute per address (two tabs, or a family on one Wi-Fi).
     limiter: new RateLimiter(30, 60_000, 10_000),
+    wideLimiter: new RateLimiter(120, 60_000, 10_000),
     log: line => console.error(redact(line)),
   }),
 );

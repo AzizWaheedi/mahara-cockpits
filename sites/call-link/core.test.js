@@ -12,8 +12,54 @@ describe("the code in the path", () => {
   });
 
   test("anything else is no code", () => {
-    for (const p of ["/", "", "/ended", "/K7Q2M0", "/K7Q2MXX", "/%E0%A4%A", "/index.html"])
+    for (const p of ["/", "", "/ended", "/K7Q2M0", "/K7Q2MXX", "/K7Q2MX2", "/%E0%A4%A", "/index.html"])
       expect([p, C.codeFromPath(p)]).toEqual([p, null]);
+  });
+
+  test("a full stop, an Arabic comma, a bracket or a right-to-left mark after the link is not part of it", () => {
+    for (const p of [
+      "/K7Q2MX.",
+      "/K7Q2MX%D8%8C",
+      "/K7Q2MX%E2%80%8F",
+      "/K7Q2MX)",
+      "/K7Q2MX,",
+      "/%E2%80%8FK7Q2MX",
+      "/K7Q2MX%E2%80%8F.",
+      "/K7Q2MX%E2%81%A9",
+      "/k7q2mx%EF%BB%BF",
+    ])
+      expect([p, C.codeFromPath(p)]).toEqual([p, "K7Q2MX"]);
+  });
+
+  test("the page and the door read a code the same way", () => {
+    const door = require("../../supabase/functions/sales-live/door.ts");
+    for (const raw of ["K7Q2MX", "k7q2mx.", "K7Q2MX\u060C", "K7Q2MX\u200F", "K7Q2MXX", "K7Q2M0", " k7q 2mx/", "K7Q2MXهلا", ""])
+      expect([raw, C.normalizeCode(raw)]).toEqual([raw, door.normalizeCode(raw)]);
+  });
+});
+
+describe("the ended page", () => {
+  test("its only input is the code in ?c=", () => {
+    expect(C.endedCode("?c=K7Q2MX")).toBe("K7Q2MX");
+    expect(C.endedCode("?c=k7q2mx.")).toBe("K7Q2MX");
+    expect(C.endedCode("?wa=96550000000")).toBeNull();
+    expect(C.endedCode("?c=K7Q2M0")).toBeNull();
+    expect(C.endedCode("")).toBeNull();
+    expect(C.endedCode(undefined)).toBeNull();
+  });
+
+  test("the WhatsApp button comes only from the door's answer for that room", () => {
+    const ended = C.viewFor(200, { state: "ended", whatsapp: "96590054963" });
+    expect(C.endedNext(ended)).toEqual({ state: "ended", whatsapp: "https://wa.me/96590054963" });
+    expect(C.endedNext(C.viewFor(200, { state: "ended", whatsapp: null }))).toEqual({ state: "ended", whatsapp: null });
+    expect(C.endedNext({ state: "error" })).toEqual({ state: "ended", whatsapp: null });
+    expect(C.endedNext({ state: "unknown" })).toEqual({ state: "ended", whatsapp: null });
+    expect(C.endedNext(null)).toEqual({ state: "ended", whatsapp: null });
+  });
+
+  test("a room that is not over after all goes back to the call page", () => {
+    expect(C.endedNext({ state: "opening" })).toEqual({ go: "call" });
+    expect(C.endedNext({ state: "preparing" })).toEqual({ go: "call" });
   });
 });
 
@@ -78,9 +124,10 @@ describe("the lines", () => {
     });
   });
 
-  test("with no names it falls back to the team", () => {
+  test("with no names it falls back to the sales team, the same words in both languages", () => {
+    expect(C.FALLBACK_REP).toEqual({ en: "the sales team", ar: "فريق المبيعات" });
     expect(C.linesFor({ state: "opening", rep: { en: null, ar: null } })).toEqual({
-      en: "Opening your call with the Mahara Media team...",
+      en: "Opening your call with the sales team...",
       ar: "لحظة.. قاعدين نفتح لك مكالمتك مع فريق المبيعات",
     });
   });

@@ -21,6 +21,7 @@ function str(x: unknown, max: number): string | undefined {
 }
 
 const USER = /^[UW][A-Z0-9]{2,30}$/;
+const VIEW = /^V[A-Z0-9]{2,30}$/;
 const TEAM = /^[TE][A-Z0-9]{2,30}$/;
 
 const userId = (x: unknown) => {
@@ -75,6 +76,10 @@ export type SlackInbound =
       trigger_id?: string;
       channel_id?: string;
       message_ts?: string;
+      /** Where the button was: "message", "view" (App Home or a modal), "ephemeral_message". */
+      container_type?: string;
+      /** The App Home view the button was on, so live.press can publish it again. */
+      view_id?: string;
       actions: SlackAction[];
     }
   | {
@@ -139,6 +144,9 @@ export function parseSlack(contentType: string, raw: string): SlackInbound {
     const channel = isObj(p.channel) ? p.channel : {};
     const message = isObj(p.message) ? p.message : {};
     const container = isObj(p.container) ? p.container : {};
+    const view = isObj(p.view) ? p.view : {};
+    const containerType = str(container.type, 30);
+    const viewId = str(view.id, 40) ?? str(container.view_id, 40);
     const actions: SlackAction[] = (Array.isArray(p.actions) ? p.actions : [])
       .slice(0, 5)
       .filter(isObj)
@@ -157,6 +165,8 @@ export function parseSlack(contentType: string, raw: string): SlackInbound {
       trigger_id: str(p.trigger_id, 120),
       channel_id: str(channel.id, 40),
       message_ts: str(message.ts, 40) ?? str(container.message_ts, 40),
+      container_type: containerType && /^[a-z_]+$/.test(containerType) ? containerType : undefined,
+      view_id: viewId && VIEW.test(viewId) ? viewId : undefined,
       actions,
     };
   }
@@ -219,6 +229,8 @@ export async function pressFor(
       response_url: inbound.response_url ?? null,
       channel_id: inbound.channel_id ?? null,
       message_ts: inbound.message_ts ?? null,
+      container_type: inbound.container_type ?? null,
+      view_id: inbound.view_id ?? null,
       actions: inbound.actions,
     };
   }
@@ -238,6 +250,18 @@ export async function pressFor(
   }
   return null;
 }
+
+/**
+ * Who answers a press in Slack (the contract with sales-api's live.press):
+ * - live.press posts its own success (through response_url, or for an App
+ *   Home press by publishing the Home view again with view_id);
+ * - on a refusal it posts nothing and answers 4xx {ok: false, error}; the
+ *   door then says that sentence to the person, once;
+ * - when sales-api cannot be reached or fails, the door says
+ *   SLACK_COPY.didNotGoThrough.
+ * A press with no response_url (App Home has none) is answered through a
+ * `slack.reply` room event that the VPS Slack poster sends as a DM.
+ */
 
 /** What the person sees when their press could not reach sales-api. */
 export const SLACK_COPY = {

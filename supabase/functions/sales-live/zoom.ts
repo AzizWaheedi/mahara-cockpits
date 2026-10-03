@@ -6,7 +6,6 @@
 // object: {..., participant}}}) with fewer fields, so sales-api's room.event
 // reads it exactly as it would read Zoom's body (roomlogic.ts zoomEffect).
 
-import { sha256Hex } from "./sign.ts";
 import { stripControl } from "./util.ts";
 
 /** The seven events the foundation subscribes to (glossary C19). */
@@ -122,30 +121,90 @@ export function cleanZoom(body: unknown): ZoomDetail | null {
 }
 
 /**
- * One key per real event, the same on every retry of it: the event name, the
- * meeting (instance uuid, else id), the participant, and the event's own time.
- * Zoom resends the identical body on a retry, so its retries collapse; two
- * joins by the same person (they left and came back) have two join times and
- * stay two events. event_ts is used only when an event carries no time of its
- * own (the join-before-host events).
+ * One key per real event, the same on every retry of it, in exactly the form
+ * roomlogic.ts zoomDedupeKey builds (P1): `zoom:{event}:{meeting instance
+ * uuid, else id}` for a meeting event, plus `:{participant_uuid, else
+ * user_id, else id}:{join_time, else leave_time, else event_ts}` for a
+ * participant's. Zoom resends the identical body on a retry, so its retries
+ * collapse; a second join by the same person has a second join time and is a
+ * second event. Built from the cleaned event, which is what room.event
+ * receives, so both lanes get the same key for the same event; a test pins
+ * the form. Cleaned fields are short, so the key stays under the table's 300.
+ *
+ * room.event does not need to work the key out at all: the door passes the
+ * stored row's `event_id` (and this key), and room.event claims that row by
+ * id (README "The contract the other lanes keep").
  */
-export async function zoomDedupeKey(d: ZoomDetail): Promise<string> {
-  const o = d.payload.object;
-  const p = o.participant ?? {};
-  const meeting = o.uuid ?? o.id ?? "";
-  const who = p.participant_uuid ?? p.participant_user_id ?? p.user_id ?? p.id ?? "";
-  let when = [p.join_time, p.leave_time, p.date_time].filter(Boolean).join("|");
-  if (!when && d.event === "meeting.started") when = o.start_time ?? "";
-  if (!when && d.event === "meeting.ended") when = o.end_time ?? "";
-  if (!when) when = d.event_ts !== undefined ? `ts${d.event_ts}` : "";
-  const parts = [d.event, meeting, o.id ?? "", who, when];
-  return `zoom:${d.event}:${(await sha256Hex(parts.join("\n"))).slice(0, 40)}`;
+export function zoomDedupeKey(d: ZoomDetail): string {
+  const name = String(d.event ?? "unknown").slice(0, 80);
+  const o = d.payload?.object ?? {};
+  const meeting = String(o.uuid ?? o.id ?? "").slice(0, 120);
+  const p = o.participant;
+  if (!p) return `zoom:${name}:${meeting}`;
+  const who = String(p.participant_uuid ?? p.user_id ?? p.id ?? "").slice(0, 120);
+  const when = String(p.join_time ?? p.leave_time ?? d.event_ts ?? "").slice(0, 60);
+  return `zoom:${name}:${meeting}:${who}:${when}`;
 }
 
 /** The room code in a topic the worker wrote ("Mahara call K7Q2MX"). */
 export function codeFromTopic(topic: string | undefined): string | null {
   const m = /\bMahara call ([A-HJ-NP-Z2-9]{6})\b/.exec(topic ?? "");
   return m ? m[1] : null;
+}
+
+/** What a Zoom event's room can be found by: its meeting id and the code in its topic. */
+export type ZoomLookup = { meetingId: string | null; code: string | null };
+
+export function zoomLookup(d: ZoomDetail): ZoomLookup {
+  const id = d.payload.object.id;
+  return {
+    meetingId: id && /^\d{6,20}$/.test(id) ? id : null,
+    code: codeFromTopic(d.payload.object.topic),
+  };
+}
+
+/**
+ * The one PostgREST query that finds every room a Zoom event could belong
+ * to (by meeting id or by the topic's code), newest first, or null when the
+ * event carries neither, so it cannot be a cockpit room.
+ */
+export function zoomRoomQuery(look: ZoomLookup): string | null {
+  const parts: string[] = [];
+  if (look.meetingId) parts.push(`provider_meeting_id.eq.${look.meetingId}`);
+  if (look.code) parts.push(`code.eq.${look.code}`);
+  if (!parts.length) return null;
+  return `cockpit_sales_rooms?or=(${parts.join(",")})&select=id,state,code,provider_meeting_id&order=created_at.desc&limit=10`;
+}
+
+export type ZoomRoomRow = { id: string; state: string; code: string | null; provider_meeting_id: string | null };
+
+const FINAL = new Set(["ended", "expired", "failed", "cancelled"]);
+
+/**
+ * Which room the event is about, from the rows zoomRoomQuery found.
+ * - `{ room: false }`: no row. The meeting is not a cockpit room (the
+ *   webinar, a client call, an interview on the same Zoom account), so the
+ *   door keeps nothing of it.
+ * - `{ room: true, room_id }`: the room. The topic's code decides first;
+ *   else the one live room on that meeting; else the only room on it.
+ * - `{ room: true, room_id: null }`: a cockpit meeting, but two rooms wrap
+ *   it and the topic does not say which; sales-api decides.
+ */
+export function pickZoomRoom(
+  rows: ZoomRoomRow[] | null | undefined,
+  look: ZoomLookup,
+): { room: false } | { room: true; room_id: string | null } {
+  const all = Array.isArray(rows) ? rows.filter(r => r && typeof r.id === "string") : [];
+  if (!all.length) return { room: false };
+  if (look.code) {
+    const byCode = all.find(r => r.code === look.code);
+    if (byCode) return { room: true, room_id: byCode.id };
+  }
+  const onMeeting = look.meetingId ? all.filter(r => String(r.provider_meeting_id ?? "") === look.meetingId) : [];
+  const live = onMeeting.filter(r => !FINAL.has(r.state));
+  if (live.length === 1) return { room: true, room_id: live[0].id };
+  if (live.length === 0 && onMeeting.length === 1) return { room: true, room_id: onMeeting[0].id };
+  return { room: true, room_id: null };
 }
 
 /** room_events.kind for a Zoom event: "zoom." plus Zoom's own name. */

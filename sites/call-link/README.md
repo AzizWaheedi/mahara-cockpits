@@ -8,7 +8,7 @@ CNAME `call` waits for the CEO (F build day 5).
 | File | Served at | What it is |
 | --- | --- | --- |
 | `index.html` | `/{code}` (any case), `/` | The page. Its script asks `sales-live/open/{code}`, fills the ring, then opens the room |
-| `ended.html` | `/ended`, `/ended?wa={digits}` | Where `/go` sends a link whose room is over; `wa` adds the WhatsApp button |
+| `ended.html` | `/ended?c={code}` | Where `/go` sends a link whose room is over. Its script asks `sales-live/open/{code}`, and the WhatsApp button shows only the number the door gives (`rooms.fallback.ended_page_whatsapp`); nothing but the code is read from the address, so nobody can send leads a Mahara page with their own number on it |
 | `core.js` | | The page's rules and every line it shows (tested) |
 | `call.js` | | What the page does |
 | `call.css`, `noscript.css` | | Brand styles; the no-script tweak |
@@ -19,17 +19,20 @@ CNAME `call` waits for the CEO (F build day 5).
 
 | State | When | Lines (English; Arabic beside it) |
 | --- | --- | --- |
-| Opening | the room has its link | "Opening your call with {first name}..." and the app hint; the ring fills, then the room opens |
+| Opening | the room has its link | "Opening your call with {first name}..." ("...with the sales team..." when the host has no name on file) and the app hint; the ring fills, then the room opens |
 | Not in yet | back from the app, or still here 2.6 s later | "Not in the call yet? Tap the button below." [Join the call] |
 | Preparing | the room is still being made | "Your call is almost ready. This page opens it by itself." Asks again every 2 s, for 90 s |
-| Ended | the room is over | "This call has ended. Reply to our last message and we will find a new time." [Message us on WhatsApp] when `rooms.fallback.ended_page_whatsapp` is set |
-| Not valid | unknown or mistyped code | "This link is not valid. Reply to our message and we will send a new one." |
-| Busy | 30 opens a minute from one network | "Too many tries from this network..." [Try again] |
+| Ended | the room is in a final state (only the sweep decides) | "This call has ended. Reply to our last message and we will find a new time." [Message us on WhatsApp] when `rooms.fallback.ended_page_whatsapp` is set |
+| Not valid | unknown or mistyped code | "This link is not valid. Reply to our message and we will send a new one." A full stop, an Arabic comma or a right-to-left mark glued to the link does not make it invalid |
+| Busy | 30 opens a minute from one browser on one network, or 120 from one network | "Too many tries from this network..." [Try again] |
 | Error | the door did not answer (6 s, one retry) | "We could not load your call..." [Join the call] (the no-script route) [Try again] |
 
 The language that leads follows the phone (Arabic first when the phone's
 first language is Arabic, and when nothing is known). The Zoom hint shows on
 every device, the Meet hint only on an iPhone or iPad.
+
+When the buttons are redrawn (Try again), keyboard and screen-reader focus
+stays in the page: on the line while it loads, then on the first new button.
 
 Without scripts the page shows a "Join the call" link to `/go`. If the script
 fails to load, the same link appears after 6 s.
@@ -48,7 +51,14 @@ New lines for this page, written under aziz-kuwaiti-voice, marked DRAFT in
 `core.js`: the "Not in yet", "Preparing", "Error" and "Busy" lines, "Try
 again" (حاول مرة ثانية) and "Call code" (كود المكالمة). The opening line, both
 hints, the ended lines, the not-valid line and both button labels come from
-`final_arabic.md`.
+`final_arabic.md`; the host-name fallback is فريق المبيعات, "the sales team"
+in English too.
+
+Two more DRAFT lines are the no-script route's plain answers, in
+`supabase/functions/sales-live/door.ts` `GO_COPY`: for a link preview,
+افتح هاللينك من تلفونك عشان تدخل المكالمة. ("Open this link on your phone to
+join the call."), and the "Preparing" pair, which a test keeps equal to the
+page's own.
 
 ## Deploy (not done)
 
@@ -58,9 +68,14 @@ hints, the ended lines, the not-valid line and both button labels come from
 3. The CEO adds the CNAME `call` with the value Vercel shows.
 4. Check: `curl -sI https://call.maharamedia.com/K7Q2MX` has the CSP header,
    and `/K7Q2MX?go=1` answers 307 to `sales-live/go/K7Q2MX`.
+   A preview deployment cannot read `/open` (the door allows only
+   `call.maharamedia.com`, one exact `CALL_SITE_URL`, and localhost); preview
+   the look against a local fake door instead.
 5. Turn on `rooms.short_link` only after both pass.
 
 ## Test locally
 
-`bun test sites/call-link` checks the rules and lines. To see the page, serve
-the folder with the rewrites above and point the `mm-door` meta at a fake door.
+`bun test sites/call-link` checks the rules and lines (`core.test.js`) and
+runs `call.js` against a small fake DOM (`call.test.js`: the ended page's
+button, focus after Try again). To see the page, serve the folder with the
+rewrites above and point the `mm-door` meta at a fake door.

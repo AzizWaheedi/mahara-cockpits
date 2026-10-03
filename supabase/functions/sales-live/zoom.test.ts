@@ -1,6 +1,16 @@
 // bun test supabase/functions/sales-live
 import { describe, expect, test } from "bun:test";
-import { cleanZoom, codeFromTopic, ZOOM_EVENTS, zoomDedupeKey, zoomKind, zoomText } from "./zoom.ts";
+import {
+  cleanZoom,
+  codeFromTopic,
+  pickZoomRoom,
+  ZOOM_EVENTS,
+  zoomDedupeKey,
+  zoomKind,
+  zoomLookup,
+  zoomRoomQuery,
+  zoomText,
+} from "./zoom.ts";
 
 /** A participant_joined body shaped like Zoom's reference. */
 function joined(over: Record<string, unknown> = {}, participant: Record<string, unknown> = {}) {
@@ -112,16 +122,16 @@ describe("zoomDedupeKey", () => {
     expect(await key(joined())).not.toBe(await key(b));
   });
 
-  test("meeting.started and meeting.ended key on their own times", async () => {
-    const started = (t: string) => ({
+  test("meeting.started and meeting.ended key on the meeting instance (each start is a new uuid)", async () => {
+    const started = (uuid: string, ts: number) => ({
       event: "meeting.started",
-      event_ts: 5,
-      payload: { object: { id: "85023456789", uuid: "u1", start_time: t } },
+      event_ts: ts,
+      payload: { object: { id: "85023456789", uuid, start_time: "2026-10-03T11:00:00Z" } },
     });
-    expect(await key(started("2026-10-03T11:00:00Z"))).toBe(await key({ ...started("2026-10-03T11:00:00Z"), event_ts: 9 }));
-    expect(await key(started("2026-10-03T11:00:00Z"))).not.toBe(await key(started("2026-10-03T12:00:00Z")));
+    expect(await key(started("u1", 5))).toBe(await key(started("u1", 9)));
+    expect(await key(started("u1", 5))).not.toBe(await key(started("u2", 5)));
     const ended = { event: "meeting.ended", payload: { object: { id: "85023456789", uuid: "u1", end_time: "2026-10-03T11:40:00Z" } } };
-    expect(await key(ended)).toMatch(/^zoom:meeting\.ended:[0-9a-f]{40}$/);
+    expect(await key(ended)).toBe("zoom:meeting.ended:u1");
   });
 
   test("the join-before-host events, which carry no time, fall back to event_ts", async () => {
@@ -134,10 +144,35 @@ describe("zoomDedupeKey", () => {
     expect(await key(jbh(1))).not.toBe(await key(jbh(2)));
   });
 
-  test("keys are short and start with the event name", async () => {
-    const k = await key(joined());
-    expect(k).toMatch(/^zoom:meeting\.participant_joined:[0-9a-f]{40}$/);
-    expect(k.length).toBeLessThan(120);
+  test("the key is the room logic's own form, so both lanes name one event the same", async () => {
+    // roomlogic.ts zoomDedupeKey on this event (scratchpad/review-door/keys.ts):
+    const evt = {
+      event: "meeting.participant_joined",
+      event_ts: 1759489200123,
+      payload: {
+        account_id: "acc",
+        object: {
+          id: "85023456789",
+          uuid: "abc==",
+          host_id: "h1",
+          topic: "Mahara call K7Q2MX",
+          participant: { user_id: "16778240", participant_uuid: "pu-1", user_name: "Lead", join_time: "2026-10-03T11:00:00Z" },
+        },
+      },
+    };
+    expect(await key(evt)).toBe("zoom:meeting.participant_joined:abc==:pu-1:2026-10-03T11:00:00Z");
+    expect(await key(joined())).toBe("zoom:meeting.participant_joined:4444AAAiAAAAAiAiAiiAii==:pu-1:2026-10-03T11:02:10Z");
+    const noPerson = { event: "meeting.started", payload: { object: { id: 85023456789 } } };
+    expect(await key(noPerson)).toBe("zoom:meeting.started:85023456789");
+  });
+
+  test("keys stay inside the table's 300 characters, whatever Zoom sends", async () => {
+    const long = joined(
+      { event_ts: 9 },
+      { participant_uuid: "p".repeat(500), join_time: "t".repeat(500), user_name: "x".repeat(500) },
+    );
+    (long.payload.object as Record<string, unknown>).uuid = "u".repeat(500);
+    expect((await key(long)).length).toBeLessThanOrEqual(300);
   });
 });
 
@@ -180,5 +215,67 @@ describe("zoomText", () => {
       "Zoom: Someone left.",
     );
     for (const e of ZOOM_EVENTS) expect(zoomText({ event: e, payload: { object: {} } }).length).toBeLessThanOrEqual(500);
+  });
+});
+
+describe("which room a Zoom event is about", () => {
+  const d = (object: Record<string, unknown>) => {
+    const out = cleanZoom({ event: "meeting.participant_joined", payload: { object } });
+    if (!out) throw new Error("no detail");
+    return out;
+  };
+  const row = (id: string, state: string, code: string, provider_meeting_id: string | null = "85023456789") => ({
+    id,
+    state,
+    code,
+    provider_meeting_id,
+  });
+
+  test("an event is looked up by its meeting id and its topic's code, in one query", () => {
+    const look = zoomLookup(d({ id: 85023456789, topic: "Mahara call K7Q2MX" }));
+    expect(look).toEqual({ meetingId: "85023456789", code: "K7Q2MX" });
+    expect(zoomRoomQuery(look)).toBe(
+      "cockpit_sales_rooms?or=(provider_meeting_id.eq.85023456789,code.eq.K7Q2MX)&select=id,state,code,provider_meeting_id&order=created_at.desc&limit=10",
+    );
+    expect(zoomRoomQuery(zoomLookup(d({ id: 85023456789, topic: "Weekly sync" })))).toContain(
+      "or=(provider_meeting_id.eq.85023456789)",
+    );
+  });
+
+  test("an event with neither (or a meeting id that is not Zoom's digits) needs no query: it is no room", () => {
+    expect(zoomRoomQuery(zoomLookup(d({ topic: "Interview" })))).toBeNull();
+    expect(zoomLookup(d({ id: "1,code.eq.K7Q2MX", topic: "x" })).meetingId).toBeNull();
+  });
+
+  test("no row: not a cockpit room (the webinar, a client call)", () => {
+    expect(pickZoomRoom([], { meetingId: "81234567890", code: null })).toEqual({ room: false });
+    expect(pickZoomRoom(null, { meetingId: "81234567890", code: null })).toEqual({ room: false });
+  });
+
+  test("the topic's code decides first, then the one live room on the meeting, then the only room", () => {
+    const rows = [row("a", "open", "AAAAAA"), row("b", "open", "K7Q2MX")];
+    expect(pickZoomRoom(rows, { meetingId: "85023456789", code: "K7Q2MX" })).toEqual({ room: true, room_id: "b" });
+    expect(pickZoomRoom([row("old", "ended", "AAAAAA"), row("now", "host_in", "BBBBBB")], { meetingId: "85023456789", code: null })).toEqual({
+      room: true,
+      room_id: "now",
+    });
+    expect(pickZoomRoom([row("only", "ended", "AAAAAA")], { meetingId: "85023456789", code: null })).toEqual({
+      room: true,
+      room_id: "only",
+    });
+  });
+
+  test("two live rooms on one meeting and no code: a room's meeting, which room left to sales-api", () => {
+    expect(pickZoomRoom([row("a", "open", "AAAAAA"), row("b", "open", "BBBBBB")], { meetingId: "85023456789", code: null })).toEqual({
+      room: true,
+      room_id: null,
+    });
+  });
+
+  test("a room found by its code whose meeting id is not saved yet", () => {
+    expect(pickZoomRoom([row("r", "creating", "K7Q2MX", null)], { meetingId: "85023456789", code: "K7Q2MX" })).toEqual({
+      room: true,
+      room_id: "r",
+    });
   });
 });

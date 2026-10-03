@@ -82,6 +82,24 @@ describe("interactivity", () => {
     });
   });
 
+  test("a press on App Home says so: container type and view id, and no response_url", () => {
+    const home = {
+      type: "block_actions",
+      user: { id: "U2CERLKJA", team_id: "T1DC2JH3J" },
+      team: { id: "T1DC2JH3J" },
+      container: { type: "view", view_id: "V0HOME123" },
+      view: { id: "V0HOME123", type: "home" },
+      trigger_id: "333.444.def",
+      actions: [{ action_id: "live.available", value: "available" }],
+    };
+    const out = parseSlack(FORM, blockActions(home));
+    expect(out).toMatchObject({ type: "block_actions", container_type: "view", view_id: "V0HOME123" });
+    expect(out.type === "block_actions" && out.response_url).toBeUndefined();
+    const odd = parseSlack(FORM, blockActions({ ...home, container: { type: "VIEW; drop" }, view: { id: "not a view" } }));
+    expect(odd).toMatchObject({ type: "block_actions" });
+    expect(odd.type === "block_actions" && [odd.container_type, odd.view_id]).toEqual([undefined, undefined]);
+  });
+
   test("other interactions, broken payloads and empty actions are ignored", () => {
     expect(parseSlack(FORM, blockActions({ ...press, type: "view_submission" })).type).toBe("ignored");
     expect(parseSlack(FORM, "payload=%7Bnot-json").type).toBe("ignored");
@@ -148,7 +166,14 @@ describe("pressFor and request ids", () => {
       slack_user_id: "U2CERLKJA",
       actions: [{ action_id: "live.take", value: "offer-uuid" }],
       response_url: RESPONSE_URL,
+      container_type: null,
+      view_id: null,
     });
+    const home = await pressFor(
+      parseSlack(FORM, blockActions({ ...press, response_url: undefined, container: { type: "view" }, view: { id: "V0HOME123" } })),
+      NOW,
+    );
+    expect(home).toMatchObject({ response_url: null, container_type: "view", view_id: "V0HOME123" });
   });
 
   test("app_home_opened becomes its own kind", async () => {
