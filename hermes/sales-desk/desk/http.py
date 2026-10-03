@@ -27,6 +27,9 @@ RETRY_STATUSES = (408, 425, 429, 500, 502, 503, 504, 529)
 _KEEP_PREFIX = (
     re.compile(r"(?i)(bearer\s+)[^\s\"',)}\]]+"),
     re.compile(r"(?i)((?:x-api-key|apikey|api[_-]key|access_token|refresh_token|client_secret|token|key)\s*[=:]\s*[\"']?)[^\s\"'&,)}\]]+"),
+    # A Zoom host link carries the host's token as zak=, and a join link its
+    # passcode as pwd=: a database or provider error can echo either back.
+    re.compile(r"(?i)(?<![a-z0-9_])((?:zak|pwd)=[\"']?)[^&\s\"'<>,)]+"),
 )
 _WHOLE = (
     re.compile(r"\b(?:sk|pk|rk)-[A-Za-z0-9_\-*.]{6,}"),

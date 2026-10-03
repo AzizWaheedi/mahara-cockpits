@@ -38,6 +38,7 @@ fakes.PK.setdefault(rooms.ROOMS, ("id",))
 fakes.PK.setdefault(rooms.SECRETS, ("room_id",))
 fakes.PK.setdefault(rooms.EVENTS, ("dedupe_key",))
 fakes.PK.setdefault(rooms.HOSTS, ("email",))
+fakes.PK.setdefault(rooms.ALERTS, ("dedupe_key",))
 
 DB = "https://db.test"
 T0 = datetime(2026, 10, 3, 10, 0, tzinfo=timezone.utc).timestamp()  # 13:00 Kuwait, a Saturday
@@ -117,6 +118,14 @@ class FakeZoom:
         self.after_create: Optional[Callable[[dict[str, Any]], None]] = None
         self.next_id = 81000000001
         self.tokens = 0
+        # Who is in each live meeting now (the dashboard list), by meeting id;
+        # `participants_api` False answers as an account without that API.
+        self.participants: dict[str, list[dict[str, Any]]] = {}
+        self.participants_api = True
+        # Zoom's participant report of finished meetings, by uuid or id.
+        self.past: dict[str, list[dict[str, Any]]] = {}
+        self.past_api = True
+        self.call_timeout = 60.0   # the timeout of the call in flight, set by Net
 
     def uid(self, who: str) -> str:
         return self.users[who]["id"] if who in self.users else who
@@ -129,7 +138,8 @@ class FakeZoom:
     def _make(self, user: str, body: dict[str, Any]) -> dict[str, Any]:
         mid = str(self.next_id)
         self.next_id += 1
-        m = {"id": int(mid), "topic": body["topic"], "host": self.uid(user), "status": "waiting",
+        m = {"id": int(mid), "uuid": f"uuid{mid}==", "topic": body["topic"], "host": self.uid(user),
+             "host_id": self.uid(user), "status": "waiting",
              "join_url": f"https://zoom.example.test/j/{mid}", "start_url": f"https://zoom.example.test/s/{mid}?zak=host-only",
              "password": "x1y2z3", "encrypted_password": f"enc{mid}", "settings": body.get("settings")}
         self.meetings[mid] = m
@@ -147,6 +157,12 @@ class FakeZoom:
                 self.script.pop(i)
                 if s.get("make"):
                     self._make(path.split("/")[2], body)
+                # `delay`: the answer comes this late, or the caller's timeout
+                # ends the call first.
+                if s.get("delay", 0.0) > self.call_timeout:
+                    self.clock.advance(self.call_timeout)
+                    raise HttpError(0, "TimeoutError: timed out", b"", url)
+                self.clock.advance(s.get("delay", 0.0))
                 raise _err(s["status"], s.get("body", {"code": 0, "message": "scripted failure"}), url)
         seg = path.strip("/").split("/")
         if seg[0] == "users" and len(seg) == 1:
@@ -167,6 +183,17 @@ class FakeZoom:
                 return self._ok({"meetings": self.live.get(host, [])})
             return self._ok({"meetings": [{"id": m["id"], "topic": m["topic"]} for m in self.meetings.values()
                                           if m["host"] == host]})
+        if seg[0] == "metrics" and seg[3] == "participants":
+            if not self.participants_api:
+                raise _err(400, {"code": 4711, "message": "Invalid access token, does not contain scopes."}, url)
+            return self._ok({"participants": self.participants.get(seg[2], [])})
+        if seg[0] == "past_meetings" and seg[2] == "participants":
+            if not self.past_api:
+                raise _err(400, {"code": 4711, "message": "Invalid access token, does not contain scopes."}, url)
+            ref = urllib.parse.unquote(seg[1])
+            if ref not in self.past:
+                raise _err(404, {"code": 3001, "message": "Meeting does not exist."}, url)
+            return self._ok({"participants": self.past[ref]})
         if seg[0] == "meetings":
             m = self.meetings.get(seg[1])
             if not m:
@@ -204,12 +231,21 @@ class FakeGoogle:
         self.calls: list[tuple[str, str, dict[str, str], Any]] = []
         self.script: list[dict[str, Any]] = []
         self.tokens = 0
+        self.latency = 0.0
+        self.scope: Optional[str] = None   # the token answer's "scope", when a test gives one
+        self.token_status = 200
 
     def token(self, method: str, data: Optional[bytes]) -> tuple[int, dict, bytes]:
         self.tokens += 1
         form = dict(urllib.parse.parse_qsl((data or b"").decode()))
         assert method == "POST" and form.get("grant_type") == "refresh_token"
-        return 200, {}, json.dumps({"access_token": "google-test-token", "expires_in": 3600}).encode()
+        if self.token_status != 200:
+            raise _err(self.token_status, {"error": "invalid_grant", "error_description": "Token has been revoked."},
+                       "https://oauth2.googleapis.com/token")
+        answer = {"access_token": "google-test-token", "expires_in": 3600}
+        if self.scope is not None:
+            answer["scope"] = self.scope
+        return 200, {}, json.dumps(answer).encode()
 
     def _event(self, ev: dict[str, Any]) -> dict[str, Any]:
         n = self.reads.get(ev["id"], 0)
@@ -230,12 +266,15 @@ class FakeGoogle:
         query = dict(urllib.parse.parse_qsl(parts.query))
         body = json.loads(data.decode()) if data else None
         self.calls.append((method, path, query, body))
+        self.clock.advance(self.latency)
         for i, s in enumerate(self.script):
             if s["method"] == method and s["path"] in path:
                 self.script.pop(i)
                 raise _err(s["status"], s.get("body", {"error": {"code": s["status"], "message": "scripted"}}), url)
         if path == "users/me/calendarList":
             return 200, {}, json.dumps({"items": self.calendars}).encode()
+        if path.endswith("/events") and method == "GET":
+            return 200, {}, json.dumps({"items": []}).encode()
         if path == "calendars" and method == "POST":
             cal = {"id": f"sales-rooms-{len(self.calendars) + 1}@group.calendar.example.test", "summary": body["summary"]}
             self.calendars.append(cal)
@@ -268,6 +307,7 @@ class FakeApi:
         self.bodies: list[dict[str, Any]] = []
         self.headers: list[dict[str, str]] = []
         self.script: list[int] = []
+        self.latency = 0.0
 
     def __call__(self, method: str, url: str, headers: dict[str, str], data: Optional[bytes]) -> tuple[int, dict, bytes]:
         body = json.loads((data or b"{}").decode())
@@ -298,6 +338,11 @@ class Net:
         host = urllib.parse.urlsplit(url).netloc
         if host == "db.test":
             if "/functions/v1/sales-api" in url:
+                if self.api.latency > timeout:
+                    self.clock.advance(timeout)
+                    self.api.bodies.append(json.loads((data or b"{}").decode()))
+                    raise HttpError(0, "TimeoutError: timed out", b"", url)
+                self.clock.advance(self.api.latency)
                 return self.api(method, url, headers or {}, data)
             with self.lock:
                 return self.pg(method, url, headers=headers, data=data, json_body=json_body, timeout=timeout,
@@ -305,6 +350,7 @@ class Net:
         if host == "zoom.us":
             return self.zoom.token(method, url)
         if host == "api.zoom.us":
+            self.zoom.call_timeout = timeout
             if self.zoom.latency > timeout:
                 self.clock.advance(timeout)
                 raise HttpError(0, "TimeoutError: timed out", b"", url)
@@ -312,6 +358,9 @@ class Net:
         if host == "oauth2.googleapis.com":
             return self.google.token(method, data)
         if host == "www.googleapis.com":
+            if self.google.latency > timeout:
+                self.clock.advance(timeout)
+                raise HttpError(0, "TimeoutError: timed out", b"", url)
             return self.google(method, url, data)
         raise AssertionError(f"a test reached for the network: {url}")
 
@@ -418,6 +467,11 @@ class Claim(RoomsCase):
         self.assertEqual((self.env.room()["state"], self.env.room()["worker_run"]), ("creating", "run-a"))
 
     def test_fifty_claims_at_once_give_exactly_one_winner(self):
+        # The fake database answers one call at a time (Net.lock), so this
+        # proves the filter the worker sends, not Postgres's row lock: that
+        # one conditional UPDATE wins is the database's guarantee, tested on
+        # the SQL side. What the worker owns is checked below: every claim is
+        # conditional on `requested`, and a lost race is no claim.
         self.env.add_room()
         snapshot = dict(self.env.room())
         workers = [self.env.worker(f"run-{i}") for i in range(50)]
@@ -436,6 +490,9 @@ class Claim(RoomsCase):
             t.join()
         self.assertEqual(len(wins), 1)
         self.assertEqual(self.env.room()["worker_run"], wins[0])
+        claims = [u for _t, m, u, _to, _r in self.env.net.log if m == "PATCH" and "cockpit_sales_rooms?" in u]
+        self.assertEqual(len(claims), 50)
+        self.assertTrue(all(urllib.parse.unquote(u).endswith("&state=eq.requested") for u in claims))
 
     def test_runs_that_overlap_make_each_room_once(self):
         for n in (1, 2, 3):
@@ -591,7 +648,10 @@ class ZoomRooms(RoomsCase):
         self.env.add_room()
         self.tick(self.env.worker())
         self.assertEqual(self.env.zoom.count("POST", "/meetings"), 3)
-        self.assertEqual(sum(1 for c in self.env.zoom.calls if c[2].get("type") == "scheduled"), 3)
+        # Read for the code after each try, and once more by the clean-up of
+        # finished rooms a create was sent for (a 429 can follow the work).
+        self.assertEqual(sum(1 for c in self.env.zoom.calls if c[2].get("type") == "scheduled"), 4)
+        self.assertEqual(self.env.zoom.meetings, {})
         self.assertEqual(self.env.room()["error"], "Zoom did not answer. Try again in a minute, or use Meet.")
 
     def test_reads_are_retried_at_most_twice_on_server_errors(self):
@@ -609,7 +669,7 @@ class ZoomRooms(RoomsCase):
         self.env.add_room()
         self.tick(self.env.worker())
         self.assertEqual(self.env.room()["error"],
-                         "Zoom refused to make the room: Meeting hosting is not allowed for this user. Use Meet, or try again.")
+                         "Zoom refused to make the room: Meeting hosting is not allowed for this user. Use Meet.")
         self.assertEqual(self.env.zoom.count("POST", "/meetings"), 1)
 
     def test_a_room_cancelled_while_it_was_made_leaves_nothing_open(self):
@@ -751,11 +811,20 @@ class Recovery(RoomsCase):
         self.assertEqual((self.env.room()["state"], self.env.room()["error"]), ("failed", rooms.SAY["lost"]))
         self.assertEqual(self.env.google.count("POST", "/events"), 0)
 
-    def test_a_room_left_requested_past_a_minute_is_failed_not_made(self):
+    def test_a_room_asked_for_75_s_ago_is_still_made_the_sweep_owns_the_minute(self):
+        # The sweep fails a room nobody claimed at 60 s on the database's
+        # clock; the worker's clock is not compared with it to the second,
+        # so a VPS clock that runs ahead never fails rooms (finding 20).
         self.env.add_room(requested_at=rooms.iso(T0 - 75))
+        self.tick(self.env.worker())
+        self.assertEqual(self.env.room()["state"], "open")
+
+    def test_a_room_left_requested_ten_minutes_is_failed_not_made(self):
+        self.env.add_room(requested_at=rooms.iso(T0 - rooms.STALE_S - 5))
         self.tick(self.env.worker())
         self.assertEqual((self.env.room()["state"], self.env.room()["error"]), ("failed", rooms.SAY["too_late"]))
         self.assertEqual(self.env.zoom.calls, [])
+        self.assertEqual(self.env.api.kinds(), ["worker.failed"])
 
     def test_the_kill_switch_stops_rooms_already_asked_for(self):
         self.env.pg.one("cockpit_sales_settings", key="rooms")["value"]["enabled"] = False
@@ -785,7 +854,7 @@ class Closing(RoomsCase):
         started = self.final(1)
         self.env.zoom.meetings[started]["status"] = "started"
         idle = self.final(2, state="expired")
-        self.tick(self.env.worker())
+        self.env.worker().run(seconds=3)   # one Zoom close a tick
         self.assertNotIn(started, self.env.zoom.meetings)
         self.assertNotIn(idle, self.env.zoom.meetings)
         self.assertEqual(self.env.zoom.count("PUT", f"/meetings/{started}/status"), 1)
@@ -845,10 +914,16 @@ class Loop(RoomsCase):
 
     def test_a_zoom_that_hangs_never_keeps_the_run_past_its_hard_stop(self):
         self.env.zoom.latency = 30.0
-        self.env.clock.at(T0 + 53.0, lambda: self.env.add_room(1, requested_at=rooms.iso(T0 + 53.0)))
+        self.env.clock.at(T0 + 40.0, lambda: self.env.add_room(1, requested_at=rooms.iso(T0 + 40.0)))
+        self.env.clock.at(T0 + 53.0, lambda: self.env.add_room(2, host_email=CLOSER, requested_at=rooms.iso(T0 + 53.0)))
         self.env.worker().run(seconds=57)
         self.assertLessEqual(self.env.clock() - T0, 57 + rooms.HARD_SLACK + 0.01)
-        self.assertEqual(self.env.room()["error"], "Zoom did not answer. Try again in a minute, or use Meet.")
+        # Two timeouts trip Zoom's breaker: the room fails in about 8 s, not 30.
+        row = self.env.room(1)
+        self.assertEqual(row["error"], "Zoom did not answer. Try again in a minute, or use Meet.")
+        self.assertLessEqual(rooms.parse_ts(row["ended_at"]) - (T0 + 40.0), 2 * rooms.READ_TIMEOUT + 1.5)
+        # A Zoom room asked for in the last 12 s is left for the next run.
+        self.assertEqual(self.env.room(2)["state"], "requested")
 
     def test_one_room_s_error_does_not_stop_the_others(self):
         self.env.add_room(1)
@@ -983,21 +1058,41 @@ class Stress(RoomsCase):
 
 
 class Notify(RoomsCase):
-    def test_an_unclear_answer_is_sent_again_and_a_refusal_is_not(self):
+    def test_one_call_and_an_unclear_answer_is_left_to_the_stored_event(self):
+        # A repeat could run sales-api's handler, and send, a second time while
+        # the first still runs (finding 2): one call, no retry, a short timeout.
         self.env.api.script = [503, 503, 503]
         self.env.add_room(1)
         self.env.worker().run(seconds=12)
-        # Three tries in the first call (two retries), then once more 5 s later.
-        self.assertEqual(self.env.api.kinds(rid(1)), ["worker.ready"] * 4)
-        self.assertEqual(len({b["request_id"] for b in self.env.api.bodies}), 1)
+        self.assertEqual(self.env.api.kinds(rid(1)), ["worker.ready"])
+        sent = [x for x in self.env.net.log if "/functions/v1/sales-api" in x[2]]
+        self.assertEqual([(to, r) for _t, _m, _u, to, r in sent], [(rooms.NOTIFY_TIMEOUT, 0)])
+        self.assertIsNotNone(self.env.pg.one(rooms.EVENTS, dedupe_key=f"worker.ready:{rid(1)}"))
+        row = self.env.pg.one("cockpit_sales_worker_status", job="rooms")
+        self.assertIn("sales-api did not answer for 1 room message; the sweep sends them again.", row["detail"])
 
-        env2 = Env()
-        with mock.patch.object(http, "request", env2.net):
-            env2.api.script = [403]
-            env2.add_room(1)
-            env2.worker().run(seconds=8)
-            self.assertEqual(env2.api.kinds(rid(1)), ["worker.ready"])
-            self.assertTrue(any("refused worker.ready" in m for _l, m in env2.log.lines))
+    def test_a_refusal_is_said_and_turns_the_status_red(self):
+        self.env.api.script = [400]
+        self.env.add_room(1)
+        self.env.worker().run(seconds=0)
+        self.assertEqual(self.env.api.kinds(rid(1)), ["worker.ready"])
+        self.assertTrue(any("refused worker.ready" in m for _l, m in self.env.log.lines))
+        row = self.env.pg.one("cockpit_sales_worker_status", job="rooms")
+        self.assertIs(row["ok"], False)
+        self.assertIn("sales-api refused the room message for 1 room: scripted.", row["detail"])
+
+    def test_a_sales_api_that_hangs_is_skipped_after_two_timeouts(self):
+        self.env.api.latency = 30.0
+        for n in range(1, 5):
+            self.env.add_room(n, host_email=f"rep{n}@example.test")
+            self.env.zoom.users[f"rep{n}@example.test"] = {"id": f"zu-{n}", "type": 2, "status": "active"}
+        out = self.env.worker().run(seconds=20)
+        self.assertEqual(out["made"], 4)
+        # Two calls of 4 s each, then the breaker: the other rooms do not wait.
+        self.assertEqual(len(self.env.api.bodies), 2)
+        self.assertEqual(out["notify_unclear"], 4)
+        for n in range(1, 5):
+            self.assertIsNotNone(self.env.pg.one(rooms.EVENTS, dedupe_key=f"worker.ready:{rid(n)}"))
 
 
 # ---- the status row ----------------------------------------------------------------------
@@ -1047,26 +1142,31 @@ class Status(RoomsCase):
 
 class Hosts(RoomsCase):
     def seats(self):
-        for email, role, active in ((SETTER, "setter", True), (CLOSER, "closer", True),
-                                    ("manager@example.test", "manager", True), ("both@example.test", "both", True),
-                                    ("gone@example.test", "closer", False)):
-            self.env.pg.put("cockpit_sales_people", {"email": email, "name": "Invented Name", "role": role, "active": active})
+        for email, role, active, portal in ((SETTER, "setter", True, True), (CLOSER, "closer", True, True),
+                                            ("manager@example.test", "manager", True, True),
+                                            ("both@example.test", "both", True, True),
+                                            ("gone@example.test", "closer", False, True),
+                                            ("noportal@example.test", "closer", True, False)):
+            self.env.pg.put("cockpit_sales_people", {"email": email, "name": "Invented Name", "role": role,
+                                                     "active": active, "via_portal": portal})
         self.env.zoom.users.pop(SETTER)
         self.env.zoom.pending.add(SETTER)
         self.env.zoom.users["manager@example.test"] = {"id": "zu-manager", "type": 1, "status": "active"}
         self.env.zoom.live["zu-closer"] = [{"id": 1, "start_time": "2026-10-03T09:50:00Z", "duration": 60}]
         self.env.google.calendars = [{"id": "rooms@group.example.test", "summary": "Sales rooms"}]
 
-    def test_each_seat_gets_its_zoom_status_google_and_default_room(self):
+    def test_each_seat_gets_its_zoom_status_and_google_and_the_team_page_s_values_stay(self):
         self.seats()
         out = self.env.worker().check_hosts()
         rows = {r["email"]: r for r in self.env.pg.rows(rooms.HOSTS)}
+        # Only seats that can sign in (cockpit_sales_seat: via_portal and active).
         self.assertEqual(set(rows), {SETTER, CLOSER, "manager@example.test", "both@example.test"})
         self.assertEqual({e: r["zoom_status"] for e, r in rows.items()},
                          {SETTER: "pending", CLOSER: "licensed", "manager@example.test": "basic",
                           "both@example.test": "missing"})
-        self.assertEqual({e: r["default_provider"] for e, r in rows.items()},
-                         {SETTER: "meet", CLOSER: "zoom", "manager@example.test": "zoom", "both@example.test": "meet"})
+        # The default room is the Team page's to set: the check never writes it
+        # (empty means the role's default in cockpit_sales_presence).
+        self.assertTrue(all("default_provider" not in r for r in rows.values()))
         self.assertTrue(all(r["google_ok"] is True for r in rows.values()))
         self.assertEqual(rows[CLOSER]["zoom_user_id"], "zu-closer")
         self.assertEqual(rows[CLOSER]["zoom_live_until"], "2026-10-03T10:50:00.000Z")
@@ -1080,9 +1180,21 @@ class Hosts(RoomsCase):
         self.assertIn("manager@example.test (manager): Zoom Basic, so meetings end at 40 minutes and demos go on Meet.", lines)
         self.assertIn("both@example.test (both): no Zoom user that can host on Mahara's account, so rooms go on Meet.", lines)
         self.assertNotIn("gone@example.test", lines)
+        self.assertNotIn("noportal@example.test", lines)
         status = self.env.pg.one("cockpit_sales_worker_status", job="room-hosts")
         self.assertIs(status["ok"], True)
         self.assertEqual(self.env.google.count("POST", "calendars"), 0)  # the check never writes to Google
+
+    def test_a_default_the_team_page_set_is_kept_and_a_failing_one_is_said(self):
+        self.seats()
+        self.env.zoom.users[CLOSER]["status"] = "pending"
+        self.env.pg.put(rooms.HOSTS, {"email": CLOSER, "zoom_user_id": None, "default_provider": "zoom"})
+        out = self.env.worker().check_hosts()
+        row = self.env.pg.one(rooms.HOSTS, email=CLOSER)
+        self.assertEqual(row["default_provider"], "zoom")
+        self.assertIn(f"{CLOSER} (closer): Zoom invite not accepted yet, so rooms go on Meet until it is. Default "
+                      "room: Zoom, set on the Team page. Zoom rooms will fail for this seat: set Meet on the Team page.",
+                      "\n".join(out["lines"]))
 
     def test_without_zoom_keys_nothing_is_written_as_missing(self):
         self.seats()
@@ -1090,16 +1202,19 @@ class Hosts(RoomsCase):
         rows = self.env.pg.rows(rooms.HOSTS)
         self.assertTrue(rows)
         self.assertTrue(all("zoom_status" not in r and "checked_at" not in r for r in rows))
-        self.assertIn(f"{CLOSER} (closer): Zoom not checked, because the Zoom keys are not set on the VPS.",
-                      "\n".join(out["lines"]))
+        lines = "\n".join(out["lines"])
+        self.assertIn(f"{CLOSER} (closer): Zoom not checked, because the Zoom keys are not set on the VPS.", lines)
+        # Finding 19: without Zoom keys a closer's Zoom default cannot work.
+        self.assertIn(f"{CLOSER} (closer): Zoom not checked, because the Zoom keys are not set on the VPS. "
+                      "Default room: Zoom. Zoom rooms will fail for this seat: set Meet on the Team page.", lines)
         self.assertIs(out["ok"], False)
 
     def test_without_google_the_check_says_meet_cannot_be_made(self):
         self.seats()
         out = self.env.worker(google=False).check_hosts()
         self.assertTrue(out["lines"][0].startswith("Google: no sign-in is set on the VPS"))
+        self.assertIn("Ask the CEO to connect Google Calendar on the VPS.", out["lines"][0])
         self.assertTrue(all(r["google_ok"] is False for r in self.env.pg.rows(rooms.HOSTS)))
-        self.assertEqual(self.env.pg.one(rooms.HOSTS, email=SETTER)["default_provider"], "meet")
 
     def test_a_calendar_sign_in_without_calendar_access_is_said(self):
         self.seats()
@@ -1109,17 +1224,22 @@ class Hosts(RoomsCase):
         self.assertIn("cannot use Calendar (Insufficient Permission)", out["lines"][0])
         self.assertEqual(self.env.pg.one(rooms.HOSTS, email=SETTER)["google_ok"], False)
 
-    def test_the_loop_runs_the_check_every_ten_minutes_when_idle(self):
+    def test_a_sign_in_given_for_drive_is_said_without_asking_calendar(self):
+        # Finding 11: the editor desk's GOOGLE_* sign-in is for Drive.
+        self.seats()
+        self.env.google.scope = "https://www.googleapis.com/auth/drive"
+        out = self.env.worker().check_hosts()
+        self.assertIn("has no Calendar permission", out["lines"][0])
+        self.assertEqual(self.env.google.calls, [])
+        self.assertIs(out["ok"], False)
+
+    def test_the_loop_never_runs_the_host_check(self):
+        # Finding 10: it has its own cron line, so it never holds a room up.
         self.seats()
         self.env.worker().run(seconds=20)
-        self.assertEqual(len(self.env.pg.rows(rooms.HOSTS)), 4)
-        before = len(self.env.zoom.calls)
-        self.env.clock.advance(40)
-        self.env.worker("run-b").run(seconds=20)
-        self.assertEqual(len(self.env.zoom.calls), before)  # checked 60 s ago: not again
-        self.env.clock.advance(600)
-        self.env.worker("run-c").run(seconds=20)
-        self.assertGreater(len(self.env.zoom.calls), before)
+        self.assertEqual(self.env.pg.rows(rooms.HOSTS), [])
+        self.assertIsNone(self.env.pg.one("cockpit_sales_worker_status", job="room-hosts"))
+        self.assertEqual([c for c in self.env.zoom.calls if c[1].startswith("/users")], [])
 
 
 # ---- the command --------------------------------------------------------------------------

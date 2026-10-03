@@ -159,14 +159,12 @@ def cmd_doctor(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     # Only calls-b2b-fathom needs it, once; its absence blocks nothing else.
     add("SALES_B2B_MGMT_TOKEN", True if key("SALES_B2B_MGMT_TOKEN") else None,
         "set" if key("SALES_B2B_MGMT_TOKEN") else "not set: only the one-off calls-b2b-fathom needs it")
-    # The room worker's keys: without them its own status row says which
-    # video service cannot be made; nothing else waits on them.
-    zoom_missing = [n for n in rooms_mod.ZOOM_KEYS if not key(n)]
-    add("rooms: zoom", None if zoom_missing else True,
-        "set" if not zoom_missing else f"not set ({', '.join(zoom_missing)}): Zoom rooms cannot be made")
-    google = rooms_mod.google_key_source()
-    add("rooms: google", True if google else None,
-        f"{google[3]} set" if google else "no Google sign-in (GOOGLE_CAL_* or GOOGLE_*): Meet rooms cannot be made")
+    # The room worker's keys, checked live unless --offline: keys that are
+    # present can still be refused, or (Google) carry no Calendar permission.
+    # Without them the worker's own status row says which video service
+    # cannot be made; nothing else waits on them.
+    for name, ok, detail in rooms_mod.doctor_lines(offline=args.offline):
+        add(name, ok, detail)
     add("model", True, f"SALES_MODEL_PROVIDER={cfg.provider}, SALES_PROPOSAL_MODEL={cfg.model}"
                        + ("" if cfg.model != DEFAULT_MODELS.get(cfg.provider) else " (the default)"))
 
@@ -693,8 +691,17 @@ def cmd_rooms(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     sb = rooms_mod.supabase(cfg.supabase_url, cfg.supabase_key)
     worker = rooms_mod.Worker.from_env(sb, cfg.supabase_url, cfg.supabase_key, log)
     if args.check_hosts:
-        out = worker.check_hosts()
-        _print(out if args.json else "\n".join(out["lines"]), args.json)
+        # Its own cron line every 10 minutes (README), so it never holds a
+        # new room up; its status row is room-hosts.
+        try:
+            out = worker.check_hosts()
+        except (SupabaseError, http.HttpError, rooms_mod.TablesMissing) as e:
+            reason = rooms_mod.db_reason(e) if isinstance(e, http.HttpError) else http.scrub(str(e))[:300]
+            log.error(f"rooms: the host check stopped: {reason}")
+            _status(cfg, log, rooms_mod.HOSTS_JOB, False, f"The host check stopped: {reason}")
+            return 1
+        if args.json or not out["ok"] or not args.quiet:
+            _print(out if args.json else "\n".join(out["lines"]), args.json)
         return 0 if out["ok"] else 1
     seconds = 0.0 if args.once else max(0.0, args.for_s)
     out = worker.run(seconds=seconds, every=max(0.2, args.every), max_claims=max(1, args.max_claims))

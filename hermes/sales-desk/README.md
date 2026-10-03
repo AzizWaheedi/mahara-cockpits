@@ -335,12 +335,16 @@ but Playwright is the path to rely on here.
 */2 * * * *  flock -n $HOME/.sales-desk/requests.lock bash -c "cd $HOME/mahara-cockpits/hermes/sales-desk && set -a; . $HOME/.editor-desk/env; . /opt/data/bibi/api-keys.env; . $HOME/.sales-desk/env; set +a; python3 desk.py --quiet requests" >> $HOME/.sales-desk.log 2>&1
 11,41 * * * * flock -n $HOME/.sales-desk/recordings.lock bash -c "cd $HOME/mahara-cockpits/hermes/sales-desk && set -a; . $HOME/.editor-desk/env; . /opt/data/bibi/api-keys.env; . $HOME/.sales-desk/env; set +a; python3 desk.py --quiet recordings" >> $HOME/.sales-desk.log 2>&1
 16,46 * * * * flock -n $HOME/.sales-desk/maqsam-calls.lock bash -c "cd $HOME/mahara-cockpits/hermes/sales-desk && set -a; . $HOME/.editor-desk/env; . /opt/data/bibi/api-keys.env; . $HOME/.sales-desk/env; set +a; ulimit -v 1500000; python3 desk.py --quiet maqsam-calls" >> $HOME/.sales-desk.log 2>&1
-* * * * *    flock -n $HOME/.sales-desk/rooms.lock bash -c "cd $HOME/mahara-cockpits/hermes/sales-desk && set -a; . $HOME/.editor-desk/env; . /opt/data/bibi/api-keys.env; . $HOME/.sales-desk/env; set +a; python3 desk.py --quiet rooms --for 57" >> $HOME/.sales-desk.log 2>&1
+* * * * *    flock -w 10 $HOME/.sales-desk/rooms.lock bash -c "cd $HOME/mahara-cockpits/hermes/sales-desk && set -a; . $HOME/.editor-desk/env; . /opt/data/bibi/api-keys.env; . $HOME/.sales-desk/env; set +a; python3 desk.py --quiet rooms --for 57" >> $HOME/.sales-desk.log 2>&1
+*/10 * * * * flock -n $HOME/.sales-desk/room-hosts.lock bash -c "cd $HOME/mahara-cockpits/hermes/sales-desk && set -a; . $HOME/.editor-desk/env; . /opt/data/bibi/api-keys.env; . $HOME/.sales-desk/env; set +a; python3 desk.py --quiet rooms --check-hosts" >> $HOME/.sales-desk.log 2>&1
 ```
 
 The `rooms` line is the video room worker (below): every minute, a run of
-57 s that polls every second, so the lock is always free when the next minute
-starts.
+57 s that polls every second and never runs more than 2 s past its end. It
+waits up to 10 s for the lock (`-w 10`) rather than skipping a minute when the
+last run is a little late, which would leave the rooms asked for in that
+minute waiting. The `--check-hosts` line is the room host check, on its own
+line and lock so it never holds a new room up.
 
 The first `maqsam-calls` (since 2026-01-01) and `calls-vault --fathom-days 700`
 (the vault's history against Fathom's flag) are run once by hand before the
@@ -362,62 +366,129 @@ editor desk's README says. Never pipe a stale copy.
 `requested` after its own checks; this worker:
 
 1. claims it with a conditional update (`state=eq.requested`), so a room is
-   made once however many runs see it, up to 3 rooms a second;
-2. makes it on the host's own **Zoom** user (after checking the host has no
-   live meeting, and that a demo is not on a Basic seat), type 2 with no start
-   time, topic "Mahara call {code}", a waiting room for anyone outside the
-   account, nobody in before the host, no recording, the passcode in the
-   link; or on **Meet**, as an event on the "Sales rooms" Google calendar
-   (made once if missing) with the room's id as the event id, read every
-   second until Google fills in the link, for up to 30 s;
+   made once however many runs see it, up to 3 rooms a second, and only while
+   `rooms.enabled` and that provider's `rooms.providers` switch are on (a
+   setting that is missing or cannot be read is off: such a run claims
+   nothing, and reads the setting again the next second);
+2. makes it on the host's own **Zoom** user (the one the Team page linked in
+   `cockpit_sales_room_hosts.zoom_user_id`, else the seat's email), after
+   checking the host has no live meeting (the meetings of their own finished
+   cockpit rooms do not count, so a standby room replaced at 35 minutes is
+   not "another meeting") and that a demo is not on a Basic seat; type 2 with
+   no start time, topic "Mahara call {code}", a waiting room for anyone
+   outside the account, nobody in before the host, no recording, the passcode
+   in the link. Or on **Meet**, as an event on the "Sales rooms" Google
+   calendar (made once if missing, or the one in `SALES_ROOMS_CALENDAR_ID`)
+   with the room's id as the event id, read every second until Google fills
+   in the link, for up to 30 s;
 3. puts the host link in `cockpit_sales_room_secrets` (service role only),
-   saves `join_url` and `provider_meeting_id`, sets the room `open`, stores a
-   `worker.ready` event and calls sales-api `room.event`, which sends the lead
-   the link once;
+   stores a `worker.ready` event, then saves `join_url` and
+   `provider_meeting_id` and sets the room `open`, then calls sales-api
+   `room.event` once (4 s, no retry). The stored event is the guarantee: the
+   sweep replays it if sales-api did not mark it handled, so a slow or lost
+   call costs about 20 seconds, never the link, and never a second send;
 4. on a refusal or a provider failure sets the room `failed` with a sentence
    the rep can act on ("Your Zoom is in another meeting. End it or use
-   Meet.").
+   Meet."), stores `worker.failed` and calls `room.event` the same way.
 
-A Zoom room left in `creating` for more than 60 s (a run that died) is found
-again by the code in its topic, else failed; a Meet room is found by its
-event id. After a room's final state its Zoom meeting is ended and deleted
-and its host link dropped, never for a room a lead reached and never for a
-booked call's own meeting. Every ten minutes, when idle, it checks each seat's
-Zoom user (licensed, basic, pending, missing) and the Google sign-in into
-`cockpit_sales_room_hosts` (`rooms --check-hosts` does it now). Its status row
-is `sales-desk` / `rooms`, written at least every 30 s; the host check's is
-`sales-desk` / `room-hosts`.
+**One provider never stops the other.** Every call has a short timeout (4 s
+a read, 8 s a create, 3 s a close). Two calls to one provider that time out
+within a minute and that provider is skipped for 30 s: its new rooms fail at
+once ("Zoom did not answer. Try again in a minute, or use Meet.") and the
+other provider's rooms are made as usual. A tick claims new rooms first,
+then reads Meet rooms waiting on Google, then picks up at most one room
+another run left behind and closes at most one finished room's Zoom meeting.
+Database calls get the time the run has left as their timeout and are never
+retried inside the HTTP layer (the next tick is the retry), so a run, and
+its lock, never outlive the minute.
+
+**The end of a run.** No new Zoom room is claimed in a run's last 12 s (3 s
+for Meet). A Meet room still waiting on Google is adopted by the next run at
+once. A Zoom room whose make the end cut short is marked
+(`worker_run = handover:{run}`) and the next run makes it at once; if a
+create was already sent (`worker.create_sent`, stored before every first
+create), the meeting is only ever looked for by its code, never made a
+second time. A run's id ends in the second it stops (`-e{epoch}`), so the
+rooms of a run that died are picked up at once too. Rooms the worker could
+not save before they ended (cancelled mid-make, a crash, a database outage,
+or failed by the sweep) are found in Zoom by their code and closed.
+
+**Finished rooms (H7: never end a room with a lead in it).** The host link
+is always deleted. A Zoom meeting that never started is deleted. A started
+one is ended only when Zoom's live participant list shows nobody outside the
+team (every room host and every seat); with someone else inside, or when
+that list cannot be read, the meeting is left open, an alert goes to
+`cockpit_sales_alerts` ("Room K7Q2MB has ended, but 1 person outside the team
+is still in its Zoom meeting...") and the room is looked at again every
+minute for three hours. The meeting's uuid is stored in `room_events`
+(`worker.closing`) before it is deleted. Never anything for a room that
+reached `lead_in`, nor for a booked call's own meeting.
+
+**The host check** (`rooms --check-hosts`, every 10 minutes on its own cron
+line) writes each seat's Zoom status (licensed, basic, pending, missing) into
+`cockpit_sales_room_hosts` for seats that can sign in (`via_portal` and
+`active`). What the Team page sets is never overwritten: its Zoom user is the
+one checked and is never cleared, and the default room is never written (an
+empty one means the role's default in `cockpit_sales_presence`); the line
+says when that default cannot work ("Zoom rooms will fail for this seat: set
+Meet on the Team page."). It checks the Google sign-in live (a token, a
+Calendar permission, the calendar), and checks every Zoom room that ended in
+the last day against Zoom's participant report: someone outside the team
+joined exactly when the room reached `lead_in`. A mismatch raises an alert;
+a report that cannot be read is said, never taken as nobody. Its status row
+is `sales-desk` / `room-hosts`; the worker's is `sales-desk` / `rooms`,
+written at least every 30 s.
 
 Keys, by name, from `/opt/data/bibi/api-keys.env`: `ZOOM_ACCOUNT_ID`,
 `ZOOM_CLIENT_ID`, `ZOOM_CLIENT_SECRET` (the server-to-server app webinar-pull
 uses); `GOOGLE_CAL_CLIENT_ID`, `GOOGLE_CAL_CLIENT_SECRET`,
-`GOOGLE_CAL_REFRESH_TOKEN` (the CEO's calendar sign-in), else the editor
-desk's `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REFRESH_TOKEN`.
-Optional: `SALES_ROOMS_CALENDAR` (default "Sales rooms") and
-`SALES_ROOMS_CALENDAR_ID` (use this calendar and never make one). Rooms ship
+`GOOGLE_CAL_REFRESH_TOKEN` (the CEO's calendar sign-in), else `GOOGLE_CLIENT_ID`,
+`GOOGLE_CLIENT_SECRET`, `GOOGLE_REFRESH_TOKEN`. That second sign-in may have
+been given for Drive only: `python3 desk.py doctor` checks it live and says
+so, and a Meet room then fails with "The room worker's Google sign-in cannot
+use Calendar." Optional: `SALES_ROOMS_CALENDAR` (default "Sales rooms") and
+`SALES_ROOMS_CALENDAR_ID` (use this calendar and never list or make one;
+recommended, because it needs only the events permission). Rooms ship
 switched off (`rooms.enabled=false` in `cockpit_sales_settings`); the worker
 also fails a waiting room while the switch is off.
 
 By hand: `python3 desk.py rooms --once` (one tick), `python3 desk.py rooms
 --check-hosts`, `python3 desk.py doctor` (the "rooms: zoom" and "rooms:
-google" lines say which keys are set).
+google" lines check the keys live; `--offline` only names them).
+
+**What sales-api must do with the worker's events** (contract for its
+`room.event` handler): handle `worker.ready` only when the room is open, and
+take the send with one atomic claim (for example `link_claimed_at` set where
+it is null) so the call and the sweep's replay can never both send; answer
+in under 2 s and send inside `waitUntil`; leave `worker.ready` unhandled
+while the room is still `creating`; handle `worker.failed` only when the room
+is failed. `worker.create_sent`, `worker.closing`, `worker.held` and
+`report.checked` are notes (stored handled).
 
 ### Runbook: video rooms
 
 | Symptom | Fix | Who |
 | --- | --- | --- |
 | The cockpit says "Rooms are down" (status row `rooms` older than 90 s) | On the VPS as `hermes`: `crontab -l` has the `rooms` line; `tail ~/.sales-desk.log`; `python3 desk.py rooms --once` shows what one tick does. A run that cannot reach the database says so in the log | Hermes |
-| Rooms fail with "The room worker did not pick this room up within a minute" | The worker was not running when the room was asked for (same checks as above). The rep makes a new room | Hermes |
+| Rooms fail with "The room worker did not start this room within a minute" | The worker was not running when the room was asked for (same checks as above). The rep makes a new room | Hermes |
 | The status row says "The video room tables are not in the database yet" | Apply `supabase/migrations/20261003a_sales_rooms.sql` | Hermes |
+| The status row says "The rooms setting could not be read" | The worker claims nothing until it can read `rooms` in `cockpit_sales_settings`; check the database answers (`python3 desk.py doctor`) | Hermes |
 | "Zoom is not connected on the room worker" | Set `ZOOM_ACCOUNT_ID`, `ZOOM_CLIENT_ID` and `ZOOM_CLIENT_SECRET` in /opt/data/bibi/api-keys.env; the next minute's run uses them | The CEO |
-| "Google is not connected on the room worker", or the host check says Google cannot use Calendar | Connect Google Calendar for the CEO's account and put the `GOOGLE_CAL_*` trio in /opt/data/bibi/api-keys.env | The CEO |
-| "Google would not make the Sales rooms calendar" | Create a calendar named "Sales rooms" in the CEO's Google Calendar (or set `SALES_ROOMS_CALENDAR_ID` in ~/.sales-desk/env) | The CEO |
+| "Zoom is not answering" or "Google is not answering" in the status row | The provider timed out twice in a minute; its rooms fail at once for 30 s, then one call tests it again. Reps use the other provider meanwhile; check the provider's status page | Hermes |
+| "Google is not connected on the room worker", "cannot use Calendar", or the doctor says the sign-in has no Calendar permission | Connect Google Calendar for the CEO's account and put the `GOOGLE_CAL_*` trio in /opt/data/bibi/api-keys.env; set `SALES_ROOMS_CALENDAR_ID` | The CEO |
+| "Google refused the room worker's sign-in" | The Calendar sign-in lapsed or was revoked: connect Google Calendar again | The CEO |
+| "Google would not make the Sales rooms calendar" | Create a calendar named "Sales rooms" in the CEO's Google Calendar, or set `SALES_ROOMS_CALENDAR_ID` in ~/.sales-desk/env | The CEO |
 | "Google did not make the Meet link. Try Zoom." more than now and then | Google left the Meet link pending for 30 s. Use Zoom meanwhile; check Google Workspace status | The rep, then Hermes |
-| "Your Zoom invite is not accepted yet" or "Your email has no Zoom user" | The rep accepts Zoom's invite, or the CEO adds them in Zoom. Their rooms go on Meet until the host check sees it (ten minutes) | The rep or the CEO |
+| "Your Zoom invite is not accepted yet" or "Your email has no Zoom user" | The rep accepts Zoom's invite, or the CEO adds them in Zoom, or the manager links their Zoom user on the Team page | The rep, the CEO or the manager |
+| The host check says a seat's default room "will fail" | Set the other room as the seat's default on the Team page until the seat's Zoom or Google works | The manager |
 | "The closer's Zoom is Basic and ends at 40 minutes" | The closer's seat lost its licence: set it to Licensed in Zoom, or run the demo on Meet | The CEO |
 | "Your Zoom is in another meeting" | The host ends the other meeting, or picks Meet | The rep |
-| A cancelled room's Zoom meeting is still there | The worker ends and deletes it within a minute and drops its host link after ten minutes even if Zoom refuses; `tail ~/.sales-desk.log` names Zoom's answer | Hermes |
-| The status row says sales-api "did not take" room messages | The links are not lost: the stored `worker.ready` events are replayed by the sweep. Check that sales-api answers (`room.event`) | Hermes |
+| Alert "Room ... has ended, but ... is still in its Zoom meeting" | The lead may be in a room the cockpit thinks is over (a lost join). The host checks the meeting in Zoom; the worker closes it once nobody outside the team is left, and stops checking after three hours | The rep, then the manager |
+| The host check says participant reports "could not be read" | The Zoom app lacks the report permission (past meeting participants): the CEO adds it to the server-to-server app | The CEO |
+| A participant report does not match the cockpit (alert `room_report`) | A join was lost or marked by hand wrongly: check the room's events and correct the call's outcome | The manager |
+| A cancelled room's Zoom meeting is still there | The worker deletes it within a minute (found by its code if it was never saved) and drops its host link after ten minutes even if Zoom refuses; `tail ~/.sales-desk.log` names Zoom's answer | Hermes |
+| "sales-api refused the room message for N rooms" | sales-api does not take `room.event` (not deployed yet, or the key is refused). Links wait for the sweep or are not sent: deploy the rooms hooks or check the service key | Hermes |
+| "sales-api did not answer for N room messages" | The sweep replays the stored events about 20 s later. If it lasts, check sales-api answers `room.event` in under 2 s | Hermes |
 
 ## Settings (environment, all optional)
 
@@ -465,8 +536,12 @@ In Creative Triage (`supabase/migrations/20260924a_sales_cockpit.sql` and
   `worker_run`, `version`), then `join_url`, `provider_meeting_id`,
   `opened_at` and the deadlines sales-api left empty, or `failed` with
   `error`; `cockpit_sales_room_secrets` (the host link, dropped at the end);
-  `cockpit_sales_room_events` (`worker.ready`, `worker.failed`);
-  `cockpit_sales_room_hosts` (the host check).
+  `cockpit_sales_room_events` (`worker.ready`, `worker.failed`, and the
+  notes `worker.create_sent`, `worker.closing`, `worker.held`,
+  `report.checked`); `cockpit_sales_room_hosts` (the host check, never over
+  the Team page's `zoom_user_id` or `default_provider`);
+  `cockpit_sales_alerts` (a meeting left open with someone in it, a
+  participant report that does not match).
 - Storage `sales-proposals` (private): `proposals/<id>/v<n>.html` and `.pdf`.
 
 On the VPS, `~/.sales-desk/out/<proposal id>/` keeps the working files of
@@ -514,4 +589,12 @@ of a pending Meet room to the next run, crash recovery both ways, closing
 final rooms (never one a lead reached, never a booked call), the 57-second
 loop and its hard stop, the status row and the host check's sentences, and a
 busy three minutes with failing providers that leaves nothing stuck or
-doubled.
+doubled. `tests/test_rooms_adversarial.py` is the review's attack on it (one
+test per finding), and `tests/test_rooms_hardening.py` the fixes: provider
+breakers, the one-call `room.event`, lost answers, never ending a meeting
+with a lead in it, the participant report, the Team page's values, the
+switches, the end of a run, no real sleeps, Google's permission, scrubbed
+secrets, and a harsher four-minute stress run (every provider and the
+database failing and hanging, sales-api slow and refusing, cancels and
+expiries, a run by hand in the middle of a cron run) that leaves nothing
+stuck, doubled or leaked.
