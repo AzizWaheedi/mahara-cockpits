@@ -121,6 +121,8 @@ def window_days(segment: str, steps: Optional[list[float]] = None) -> int:
         return base
     return max(base, -(-int(max(float(x) for x in steps) + 24) // 24))
 GAP = timedelta(hours=20)
+# How long a completed dial keeps a new lead out of the "not booked" kind.
+REACHED_FOR = timedelta(hours=24)
 # After a HighLevel automation's message: the setting's hours (20) while the
 # old sequence still runs; this when the kind takes the lead out of it at the
 # send (the take-over switch), only so the two do not arrive back to back.
@@ -644,19 +646,30 @@ def pick(now: datetime, *, inbox: list[dict[str, Any]], calendar: list[dict[str,
     by_lead = {str(l.get("contact_id")): l for l in leads}
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
+    # A lead who wrote is a reply candidate, but the run may find a person
+    # answered them already (in the HighLevel app, say). Their other due kind
+    # then still goes, so a reply candidate never takes the lead's one place:
+    # it carries the next kind with it ("then"). Found 2026-10-03: a no-show
+    # who wrote "stuck in traffic" and was answered lost the no-show step for
+    # two days.
+    replies: dict[str, dict[str, Any]] = {}
 
     def add(c: str, seg: str, touch: int, tier: int, *, appointment_id: Optional[str] = None,
             start_at: Optional[datetime] = None, due_at: Optional[datetime] = None) -> bool:
-        if not c or c in seen or c in open_drafts:
+        if not c or c in open_drafts or (c in replies if seg == "reply" else c in seen):
             return False
         if seg != "reply" and c in last_sent and now - last_sent[c] < GAP:
             return False
-        seen.add(c)
         score, reasons = heat(by_lead.get(c) or {}, now, hot=c in hot, inbound_at=inbound.get(c))
-        out.append({"contact_id": c, "segment": seg, "touch": touch, "of": len(steps_of.get(seg) or [1]),
-                    "tier": tier, "heat": score, "reasons": reasons, "appointment_id": appointment_id,
-                    "start_at": start_at.isoformat() if start_at else None,
-                    "due_at": (due_at or now).isoformat()})
+        entry = {"contact_id": c, "segment": seg, "touch": touch, "of": len(steps_of.get(seg) or [1]),
+                 "tier": tier, "heat": score, "reasons": reasons, "appointment_id": appointment_id,
+                 "start_at": start_at.isoformat() if start_at else None,
+                 "due_at": (due_at or now).isoformat()}
+        if seg == "reply":
+            replies[c] = entry
+        else:
+            seen.add(c)
+            out.append(entry)
         return True
 
     def step(c: str, seg: str, since: datetime, first_due: datetime) -> Optional[tuple[int, datetime]]:
@@ -774,6 +787,12 @@ def pick(now: datetime, *, inbox: list[dict[str, Any]], calendar: list[dict[str,
             break
         added += add(str(lead.get("contact_id") or ""), "nurture", 1, 3)
 
+    for c, r in replies.items():
+        other = next((d for d in out if d["contact_id"] == c), None)
+        if other is not None:
+            out.remove(other)
+            r["then"] = other
+        out.append(r)
     out.sort(key=lambda d: (d["tier"], -d["heat"], d["due_at"]))
     return out
 
@@ -897,8 +916,9 @@ def stop_kind(text: Any) -> Optional[str]:
 
 def stop_of(thread: list[dict[str, Any]]) -> Optional[dict[str, Any]]:
     """The lead's latest message with words in it, when it asks to stop:
-    {kind, at, text}. A later message that does not ask it opens them up
-    again, so only the latest one counts."""
+    {kind, at, text}. Only the latest one is read here; once a stop is kept
+    in the cockpit (record_stop), its row holds the lead until a rep resumes
+    it, whatever the lead writes after (hold_of)."""
     theirs = [m for m in thread if m.get("from") == "lead" and str(m.get("text") or "").strip()]
     if not theirs:
         return None
@@ -932,14 +952,72 @@ def stop_hold(stop: Optional[dict[str, Any]], row: Optional[dict[str, Any]], now
     return "asked to stop; a rep confirms it before anything else goes"
 
 
-def manual_hold(rows: Optional[dict[str, dict[str, Any]]], contact: str, now: datetime) -> Optional[str]:
-    """A rep's own pause from the lead page ("Pause the agent for this
-    lead"): a stops row of kind manual, paused until a time still to come."""
-    r = (rows or {}).get(contact) or {}
-    until = _ts(r.get("paused_until"))
-    if r.get("kind") == "manual" and r.get("state") == "paused" and until and now < until:
-        return f"paused by a rep until {until.date().isoformat()}"
+def _rows_of(rows: Optional[dict[str, Any]], contact: str) -> list[dict[str, Any]]:
+    """Every stops row the cockpit holds for a lead, newest first (a single
+    row, as an older caller may pass, is read as a list of one)."""
+    r = (rows or {}).get(contact)
+    if isinstance(r, dict):
+        r = [r]
+    return sorted((x for x in (r or []) if isinstance(x, dict)), key=lambda x: _ts(x.get("said_at")) or datetime.min.replace(tzinfo=timezone.utc),
+                  reverse=True)
+
+
+def hold_of(rows: Optional[dict[str, Any]], contact: str, now: datetime) -> Optional[tuple[str, str]]:
+    """What the cockpit's stops rows say about a lead now, whatever the lead
+    wrote since: (kind, words) or None. Every row counts, not only the
+    newest, so a rep's pause is never hidden behind a newer stop word, and a
+    rep's answer is never hidden behind a newer pause.
+
+    - asked: an unsubscribe a rep has not answered; nothing goes until they do.
+    - dnd: a rep put WhatsApp on do-not-disturb.
+    - paused (a stop word) or manual (a rep's own pause): until paused_until.
+    Only a rep's resume lifts a row: a row said before the latest resume
+    holds nothing. A later message from the lead lifts nothing (spec P3 §4:
+    a paused lead leaves that state when a rep resumes it)."""
+    mine = _rows_of(rows, contact)
+    resumed = [(_ts(r.get("decided_at")) or _ts(r.get("said_at"))) for r in mine if r.get("state") == "resumed"]
+    resumed_at = max((t for t in resumed if t), default=None)
+    for r in mine:
+        state, said = str(r.get("state") or ""), _ts(r.get("said_at"))
+        if state == "resumed" or (resumed_at and said and said <= resumed_at):
+            continue
+        if state == "asked":
+            return "asked", "asked to stop; a rep confirms it before anything else goes"
+        if state == "dnd":
+            return "dnd", "asked to stop; a rep put WhatsApp on do-not-disturb"
+        until = _ts(r.get("paused_until"))
+        if state == "paused" and until and now < until:
+            if r.get("kind") == "manual":
+                return "manual", f"paused by a rep until {until.date().isoformat()}"
+            return "paused", f"paused until {until.date().isoformat()} after writing a stop word"
     return None
+
+
+def new_stop_hold(rows: Optional[dict[str, Any]], contact: str, stop: Optional[dict[str, Any]], now: datetime,
+                  pause_days: int = STOP_PAUSE_DAYS) -> tuple[Optional[str], bool]:
+    """The lead's latest stop word in their thread: (why it holds them now,
+    whether it is new to the cockpit and is to be kept for a rep). A stop the
+    cockpit already keeps is decided by its row (hold_of), never here; a new
+    one holds as stop_hold says, unless a rep resumed the lead after it was
+    written. Without the rows (the table unreadable), the words decide."""
+    if not stop:
+        return None, False
+    if stop_row_for(rows, contact, stop) is not None:
+        return None, False
+    resumed = [(_ts(r.get("decided_at")) or _ts(r.get("said_at"))) for r in _rows_of(rows, contact)
+               if r.get("state") == "resumed"]
+    resumed_at = max((t for t in resumed if t), default=None)
+    if resumed_at and stop.get("at") and stop["at"] <= resumed_at:
+        return None, False
+    return stop_hold(stop, None, now, pause_days), True
+
+
+def manual_hold(rows: Optional[dict[str, Any]], contact: str, now: datetime) -> Optional[str]:
+    """A rep's own pause from the lead page ("Pause the agent for this
+    lead") when it is what holds the lead now: a stops row of kind manual,
+    paused until a time still to come, and no rep's resume since."""
+    h = hold_of(rows, contact, now)
+    return h[1] if h and h[0] == "manual" else None
 
 
 def record_stop(sb: Any, contact: str, stop: dict[str, Any], now: datetime, pause_days: int = STOP_PAUSE_DAYS,
@@ -964,26 +1042,29 @@ def record_stop(sb: Any, contact: str, stop: dict[str, Any], now: datetime, paus
         return False
 
 
-def stops_for(sb: Any, contacts: list[str]) -> Optional[dict[str, dict[str, Any]]]:
-    """The newest stop the cockpit holds for each lead, or None when they
-    cannot be read (the table not there yet): unknown, never "no stops"."""
-    out: dict[str, dict[str, Any]] = {}
+def stops_for(sb: Any, contacts: list[str]) -> Optional[dict[str, list[dict[str, Any]]]]:
+    """Every stop the cockpit holds for each lead, newest first, or None when
+    they cannot be read (the table not there yet): unknown, never "no
+    stops". Found 2026-10-03: keeping only the newest row hid a rep's pause
+    behind a newer stop word, and a rep's answer behind a newer pause."""
+    out: dict[str, list[dict[str, Any]]] = {}
     try:
         for chunk in _chunks(sorted(set(contacts))):
-            for r in sb.select(STOPS, f"select=*&contact_id={_in(chunk)}&order=said_at.desc&limit=1000"):
-                out.setdefault(str(r.get("contact_id")), r)
+            for r in sb.select_all(STOPS, f"select=*&contact_id={_in(chunk)}", order="contact_id,said_at"):
+                out.setdefault(str(r.get("contact_id")), []).append(r)
     except Exception:  # noqa: BLE001 - said by the caller
         return None
-    return out
+    return {c: _rows_of(out, c) for c in out}
 
 
-def stop_row_for(rows: Optional[dict[str, dict[str, Any]]], contact: str,
+def stop_row_for(rows: Optional[dict[str, Any]], contact: str,
                  stop: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
-    """The cockpit's row about this very stop (the same lead message), if any."""
-    r = (rows or {}).get(contact)
-    if not r or not stop:
+    """The cockpit's row about this very stop (the same lead message), if
+    any, among every row it holds for the lead."""
+    if not stop or not stop.get("at"):
         return None
-    return r if _ts(r.get("said_at")) == stop.get("at") else None
+    return next((r for r in _rows_of(rows, contact)
+                 if r.get("kind") != "manual" and _ts(r.get("said_at")) == stop.get("at")), None)
 
 
 def context_for(sb: Any, lead: dict[str, Any], ghl_token: str, now: datetime,
@@ -1035,14 +1116,24 @@ def context_for(sb: Any, lead: dict[str, Any], ghl_token: str, now: datetime,
         "rep": (rep_name or "").split(" ")[0] or None,
         "rep_ar": (rep_ar or "").split(" ")[0] or None,
     }
+    due_context(ctx, lead, due, now)
+    ctx["_thread"] = thread
+    ctx["_thread_ok"] = thread_ok
+    return ctx
+
+
+def due_context(ctx: dict[str, Any], lead: dict[str, Any], due: Optional[dict[str, Any]], now: datetime) -> None:
+    """The parts of the brief that belong to the message being written (the
+    call it is about, its number in the sequence), set again when a run moves
+    from an answered reply to the lead's next kind."""
+    ctx.pop("the_call", None)
+    ctx.pop("message_number", None)
     if due and due.get("start_at") and due.get("segment") in ("confirm", "no_show", "cancelled"):
+        appts = ctx.get("calls_on_the_calendar") or []
         a = next((x for x in appts if _ts(x.get("start_at")) == _ts(due["start_at"])), {})
         ctx["the_call"] = {"type": a.get("call_type"), **call_words(_ts(due["start_at"]), now, lead.get("country"))}
     if due and due.get("segment") in ANGLES:
         ctx["message_number"] = f"{due.get('touch', 1)} of {due.get('of') or len(ANGLES[due['segment']])}"
-    ctx["_thread"] = thread
-    ctx["_thread_ok"] = thread_ok
-    return ctx
 
 
 def _cut(v: Any, n: int) -> Any:
@@ -1619,8 +1710,13 @@ def run(sb: Any, provider: Any, log: Callable[[str], None], *, settings: dict[st
     deals = {str(d["contact_id"]) for d in sb.select("cockpit_sales_deals",
                                                      f"select=contact_id&submitted_at=gte.{_q(week)}{only}&limit=500")
              if d.get("contact_id")}
+    # A completed dial keeps a new lead out of the "not booked" messages for a
+    # day only (spec P3 §3.2): someone spoke to them, so no message lands on
+    # top of the call, but a call that did not end in a booking is no reason
+    # to leave them for the rest of the eight days.
     reached = {str(d["contact_id"]) for d in sb.select_all(
-        "cockpit_sales_dials", f"select=contact_id&state=eq.completed&occurred_at=gte.{_q(new_since)}{only}", order="call_id")
+        "cockpit_sales_dials", f"select=contact_id&state=eq.completed"
+                               f"&occurred_at=gte.{_q((now - REACHED_FOR).isoformat())}{only}", order="call_id")
         if d.get("contact_id")}
     confirmations = sb.select_all("cockpit_sales_confirmations", "select=appointment_id,result"
                                                                  f"&start_at=gte.{_q((now - timedelta(hours=1)).isoformat())}",
@@ -1686,6 +1782,9 @@ def run(sb: Any, provider: Any, log: Callable[[str], None], *, settings: dict[st
         days_off = [str(d).lower() for d in settings.get("quiet_days", ["friday"])]
         if kuwait_now(now).strftime("%A").lower() in days_off:
             picked = [d for d in picked if d["segment"] in ("reply", "confirm")]
+            for d in picked:
+                if (d.get("then") or {}).get("segment") not in (None, "reply", "confirm"):
+                    d.pop("then", None)
     # Without a model nothing can be written: who is due is counted, said
     # beside the reason, and nobody is drafted (never "0 written" as if all
     # were well).
@@ -1737,10 +1836,16 @@ def run(sb: Any, provider: Any, log: Callable[[str], None], *, settings: dict[st
         if why_not or not lead or (lead.get("dnd") and not test):
             not_leads += 1
             continue
-        manual = manual_hold(stop_rows, contact, now)
-        if manual:
-            paused += 1
-            log(f"followups: {contact} {manual}; nothing written")
+        # What the cockpit already holds about this lead's stops (a rep's own
+        # pause, an unsubscribe waiting for a rep, a 30-day pause): it holds
+        # whatever they wrote since, until a rep resumes it.
+        kept_stop = hold_of(stop_rows, contact, now)
+        if kept_stop:
+            if kept_stop[0] in ("asked", "dnd"):
+                stopped += 1
+            else:
+                paused += 1
+            log(f"followups: {contact} {kept_stop[1]}; nothing written")
             continue
         owner = str(lead.get("assigned_to") or "")
         owner_ghl = owner or None
@@ -1756,18 +1861,16 @@ def run(sb: Any, provider: Any, log: Callable[[str], None], *, settings: dict[st
             # A stop word: an explicit unsubscribe waits for a rep; any other
             # pauses the agent for this lead for 30 days. Never do-not-disturb.
             stop = stop_of(thread)
-            if stop:
-                row = stop_row_for(stop_rows, contact, stop)
-                if row is None and stop_rows is not None:
-                    record_stop(sb, contact, stop, now, pause_days, warn)
-                hold = stop_hold(stop, row, now, pause_days)
-                if hold:
-                    if stop["kind"] == "unsubscribe" and (row or {}).get("state") != "paused":
-                        stopped += 1
-                    else:
-                        paused += 1
-                    log(f"followups: {contact} {hold}; nothing written")
-                    continue
+            hold, new = new_stop_hold(stop_rows, contact, stop, now, pause_days)
+            if new and stop_rows is not None:
+                record_stop(sb, contact, stop, now, pause_days, warn)
+            if hold:
+                if stop["kind"] == "unsubscribe":
+                    stopped += 1
+                else:
+                    paused += 1
+                log(f"followups: {contact} {hold}; nothing written")
+                continue
             # They wrote, and a person answered after it: no reply is needed
             # (the inbox copy runs minutes behind, and its last message may be
             # an automation's or an email, which answer nothing).
@@ -1776,8 +1879,15 @@ def run(sb: Any, provider: Any, log: Callable[[str], None], *, settings: dict[st
                 theirs_sends = [s for s in sends if str(s.get("contact_id")) == contact]
                 if reply_answered(thread, mine, theirs_sends, ours_by_contact.get(contact, set())):
                     answered += 1
-                    log(f"followups: {contact} was answered after they wrote; no reply drafted")
-                    continue
+                    nxt = due.get("then")
+                    if not nxt or (test and force_segment):
+                        log(f"followups: {contact} was answered after they wrote; no reply drafted")
+                        continue
+                    # Their other kind is still due (a no-show, a new lead's
+                    # step): it goes on, with every check below.
+                    due, segment = nxt, nxt["segment"]
+                    due_context(ctx, lead, due, now)
+                    log(f"followups: {contact} was answered after they wrote; their {segment} message is next")
             # A HighLevel automation messaged them lately: wait, so nobody gets
             # both. A confirmation waits less, since the reminders are generic;
             # a kind that takes the lead out of the automation at the send

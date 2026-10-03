@@ -169,8 +169,20 @@ class HonestFollowupsRow(unittest.TestCase):
             code, _, err = run_cli(["--quiet", "followups"], world, tmp)
         self.assertEqual(code, 0)
         self.assertTrue(row(pg, "followups")["ok"])
-        self.assertFalse(row(pg, "model")["ok"])
+        # One miss is said and is no outage: the watchdog would blame a lapsed sign-in.
+        self.assertTrue(row(pg, "model")["ok"])
+        self.assertIn("one miss is not an outage", row(pg, "model")["detail"])
         self.assertIn("drafting is tried all the same", err)
+        # A second miss in a row is: the row turns false and says since when.
+        with tempfile.TemporaryDirectory() as tmp:
+            run_cli(["--quiet", "followups"], world, tmp)
+        self.assertFalse(row(pg, "model")["ok"])
+        self.assertRegex(row(pg, "model")["detail"], r"Not answering since \d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC$")
+        # It answers again: green, and the next single miss is one miss again.
+        world.model_ok = True
+        with tempfile.TemporaryDirectory() as tmp:
+            run_cli(["--quiet", "followups"], world, tmp)
+        self.assertEqual(row(pg, "model")["detail"], "opus answered")
 
     def test_a_test_run_writes_no_status_row(self):
         pg = FakePostgrest()

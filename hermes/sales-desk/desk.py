@@ -129,21 +129,33 @@ def _meter(cfg: Config, job: str, log: Logger) -> None:
 MODEL_SINCE = re.compile(r"since (\d{4}-\d{2}-\d{2} \d{2}:\d{2}) UTC")
 
 
-def model_probe(p: Any, timeout: float) -> tuple[bool, str]:
-    """One token through the desk's model: (answers, a sentence). The cheap
-    check the hourly doctor and every follow-up run make, so a lapsed sign-in
-    shows the hour it happens and not when a draft is next tried."""
+def model_probe(p: Any, timeout: float) -> tuple[bool, str, bool]:
+    """One token through the desk's model: (answers, a sentence, an outage).
+    The cheap check the hourly doctor and every follow-up run make, so a
+    lapsed sign-in shows the hour it happens and not when a draft is next
+    tried. An outage is the provider saying it will not answer (NotNow: the
+    sign-in lapsed, the proxy gone, the plan's limit); anything else (a
+    timeout, an answer that is not JSON) is one miss. It never raises: a
+    probe that breaks is a sentence, never a dead doctor."""
     try:
-        return True, p.ping(timeout=timeout)
+        return True, p.ping(timeout=timeout), False
     except NotNow as e:
-        return False, str(e)
-    except (model_mod.ModelError, http.HttpError) as e:
-        return False, f"The model did not answer a one-token call: {http.scrub(str(e))[:200]}"
+        return False, str(e), True
+    except Exception as e:  # noqa: BLE001 - a 200 with an HTML body, a timeout: one miss, said
+        return False, f"The model did not answer a one-token call: {http.scrub(str(e))[:200]}", False
 
 
-def _model_status(cfg: Config, log: Logger, ok: bool, detail: str, now: Optional[datetime] = None) -> None:
+# Said on the model's row after one call that did not answer, and read
+# back: a second one in a row is an outage (the row turns false), one alone
+# is not (the watchdog's Slack line would blame a lapsed sign-in).
+ONE_MISS = "one miss is not an outage"
+
+
+def _model_status(cfg: Config, log: Logger, ok: bool, detail: str, now: Optional[datetime] = None,
+                  outage: bool = True) -> None:
     """The (sales-desk, model) status row. While it stays down, the time it
-    first went down is kept."""
+    first went down is kept. A probe that only missed (outage=False) keeps
+    the row as it was the first time and says so; two in a row are down."""
     now = now or datetime.now(timezone.utc)
     try:
         sb = _sb(cfg)
@@ -151,7 +163,11 @@ def _model_status(cfg: Config, log: Logger, ok: bool, detail: str, now: Optional
             sb.worker_status(WORKER, "model", True, detail)
             return
         prev = sb.select("cockpit_sales_worker_status", f"select=ok,detail&worker=eq.{WORKER}&job=eq.model&limit=1")
-        m = MODEL_SINCE.search(str(prev[0].get("detail") or "")) if prev and prev[0].get("ok") is False else None
+        was_down = bool(prev and prev[0].get("ok") is False)
+        if not outage and not was_down and ONE_MISS not in str((prev[0] if prev else {}).get("detail") or ""):
+            sb.worker_status(WORKER, "model", True, f"{detail.rstrip('.')}; {ONE_MISS}, so drafting goes on")
+            return
+        m = MODEL_SINCE.search(str(prev[0].get("detail") or "")) if was_down else None
         since = m.group(1) if m else now.strftime("%Y-%m-%d %H:%M")
         sb.worker_status(WORKER, "model", False, f"{detail.rstrip('.')}. Not answering since {since} UTC")
     except (SupabaseError, http.HttpError) as e:
@@ -212,6 +228,7 @@ def cmd_doctor(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     add("model", True, f"SALES_MODEL_PROVIDER={cfg.provider}, SALES_PROPOSAL_MODEL={cfg.model}"
                        + ("" if cfg.model != DEFAULT_MODELS.get(cfg.provider) else " (the default)"))
 
+    probed: Optional[tuple[bool, str, bool]] = None
     p = None
     try:
         p = model_mod.provider(cfg, log.info)
@@ -219,6 +236,9 @@ def cmd_doctor(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
             else f"{model_mod.KEY_NAMES[cfg.provider]} set for {cfg.provider}", True)
     except NotNow as e:
         add("model key", False, str(e), True)
+        # No model can be asked at all: the model's row says so, never an
+        # old "opus answered" left green.
+        probed = (False, str(e), True)
 
     refs = sorted(cfg.reference_dir.glob("*.json")) if cfg.reference_dir.is_dir() else []
     if refs:
@@ -253,7 +273,6 @@ def cmd_doctor(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     except OSError as e:
         add("working files", False, f"{cfg.out_dir} cannot be written: {e}", True)
 
-    probed: Optional[tuple[bool, str]] = None
     if not args.offline:
         if cfg.supabase_configured:
             sb = _sb(cfg)
@@ -294,7 +313,8 @@ def cmd_doctor(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
 
         if p is not None:
             probed = model_probe(p, 30 if cron else 60)
-            add("model answers", probed[0], probed[1], True)
+            # One miss is not known, not a blocker: an outage blocks.
+            add("model answers", True if probed[0] else (False if probed[2] else None), probed[1], True)
             if not cron:
                 def listed() -> None:
                     try:
@@ -394,7 +414,7 @@ def cmd_doctor(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
             ("; not known: " + " | ".join(f"{u['check']} ({u['detail']})" for u in unknown) if unknown else "")
         _status(cfg, log, "doctor", not blockers, detail)
         if probed is not None:
-            _model_status(cfg, log, probed[0], probed[1])
+            _model_status(cfg, log, probed[0], probed[1], outage=probed[2])
     return 1 if blockers else 0
 
 
@@ -416,6 +436,17 @@ def _agent_checks(sb: Supabase, add: Callable[..., None]) -> None:
         gate = followups_mod.GATE_CLOSED
     add("whatsapp gate", None if gate else True, gate.rstrip(".") if gate else
         "open: the WA Connector is off and the single-copy test passed")
+    # The database's kind check must allow `reactivate` (migration 20261003b)
+    # or it refuses every opener. Nothing is written to find out: an opener
+    # already there proves it, and none yet is said as not known.
+    try:
+        seen = sb.select("cockpit_sales_followups", "select=id&segment=eq.reactivate&limit=1")
+        add("reactivate kind", True if seen else None,
+            "accepted: openers are in the database" if seen else
+            "not known yet: no opener has been written. Until migration 20261003b lands, the database refuses "
+            "every opener and the waves row says so")
+    except (http.HttpError, SupabaseError) as e:
+        add("reactivate kind", None, f"could not be read: {http.scrub(str(e))[:120]}")
     routes = waves_mod._routes(sb)
     add("opener templates", True if len(routes) == 2 else None,
         "opener_ar and opener_en are set up" if len(routes) == 2 else
@@ -790,6 +821,7 @@ def cmd_followups(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     except model_mod.ModelUnreachable as e:
         if not test:
             _status(cfg, log, "followups", False, str(e))
+            _model_status(cfg, log, False, str(e))  # no model at all: never an old "answered" left green
         log.error(str(e))
         return 1
     # One token first: a lapsed sign-in is said on the status row every run,
@@ -800,16 +832,13 @@ def cmd_followups(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     # still tried, each draft with its own retries.
     model_down = None
     if getattr(args, "segment", None) != "reactivate":
-        try:
-            ok, said = True, p.ping(timeout=30)
-        except NotNow as e:
-            ok, said = False, str(e)
+        ok, said, outage = model_probe(p, 30)
+        if outage:
             model_down = said
-        except Exception as e:  # noqa: BLE001 - a probe that breaks proves nothing either way
-            ok, said = False, f"The model did not answer a one-token call: {http.scrub(str(e))[:200]}"
+        elif not ok:
             log.warn(f"followups: {said}; drafting is tried all the same")
         if not test:
-            _model_status(cfg, log, ok, said)
+            _model_status(cfg, log, ok, said, outage=outage)
     try:
         guard = sb.setting("whatsapp_guard")
     except (SupabaseError, http.HttpError):

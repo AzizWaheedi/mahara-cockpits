@@ -395,7 +395,7 @@ class StopRule(unittest.TestCase):
         out, _, _ = self.run_with(pg, "STOP", said_at, now=later, provider=FakeProvider([DRAFT_EMAIL]))
         self.assertEqual((out["written"], out["paused"], out["asked_to_stop"]), (1, 0, 0))
 
-    def test_a_rep_resuming_or_a_later_message_opens_them_up(self):
+    def test_only_a_rep_resuming_opens_them_up(self):
         pg = FakePostgrest()
         lead(pg, lead_created_at=ago(hours=3))
         said_at = ago(hours=2)
@@ -403,8 +403,24 @@ class StopRule(unittest.TestCase):
         pg.rows("cockpit_sales_followup_stops")[0].update({"state": "resumed", "decided_by": "closer@x.co"})
         out, _, _ = self.run_with(pg, "مو مهتم", said_at, provider=FakeProvider([DRAFT_EMAIL]))
         self.assertEqual((out["written"], out["paused"]), (1, 0))
+        # The thread alone reads only the latest message ...
         self.assertIsNone(fu.stop_of([{"from": "lead", "text": "not interested", "at": ago(hours=3)},
                                       {"from": "lead", "text": "actually, tell me more", "at": ago(hours=1)}]))
+
+    def test_a_later_message_from_the_lead_never_lifts_a_kept_stop(self):
+        # ... but a stop the cockpit keeps holds whatever the lead writes after it (spec P3 §4, D21).
+        for said, state in (("STOP", "asked"), ("Not interested, thanks", "paused")):
+            pg = FakePostgrest()
+            lead(pg, lead_created_at=ago(hours=5))
+            self.run_with(pg, said, ago(hours=4))
+            self.assertEqual(pg.rows("cockpit_sales_followup_stops")[0]["state"], state)
+            out, _, _ = self.run_with(pg, "ok", ago(hours=2), provider=FakeProvider([DRAFT_EMAIL]))
+            self.assertEqual(out["written"], 0, said)
+            self.assertEqual(out["asked_to_stop" if state == "asked" else "paused"], 1, said)
+        # A rep's do-not-disturb answer holds the same way.
+        pg.rows("cockpit_sales_followup_stops")[0].update({"state": "dnd", "decided_at": ago(hours=1)})
+        out, _, _ = self.run_with(pg, "hello?", ago(minutes=30), provider=FakeProvider([DRAFT_EMAIL]))
+        self.assertEqual((out["written"], out["asked_to_stop"]), (0, 1))
 
     def test_a_reps_own_pause_holds_every_kind_until_its_day(self):
         pg = FakePostgrest()

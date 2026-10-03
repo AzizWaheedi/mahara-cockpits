@@ -29,6 +29,7 @@ SETTINGS = {"enabled": True, "quiet": {"from": 21, "to": 9}, "quiet_days": ["fri
 OPENER_AR = {"key": "opener_ar", "name": "cockpit_opener_ar", "language": "ar", "purpose": "Backlog opener in Arabic.",
              "preview": "السلام عليكم {{1}}، معاك {{2}}. كيف حالك؟", "variables": ["first_name", "rep_name"],
              "workflow_id": "wf-opener-ar", "active": True, "segments": ["reactivate"], "sort": 30}
+DEMO_CAL = "jQqXS1YuFnmGZKLkrE62"  # the "Demo" calendar
 OPENER_EN = {**OPENER_AR, "key": "opener_en", "name": "cockpit_opener_en", "language": "en",
              "preview": "Hi {{1}}, it's {{2}} from Mahara Media. How are you?", "workflow_id": "wf-opener-en", "sort": 40}
 
@@ -129,7 +130,8 @@ def seed(pg: FakePostgrest, c: str, pool: str, *, days: float = 1, country: str 
         pg.put("cockpit_sales_calendar", {"appointment_id": f"{c}-1", "contact_id": c, "call_type": "intro",
                                           "status": "showed", "start_at": ago(days=days + 3), "booked_at": ago(days=days + 5)})
         pg.put("cockpit_sales_calendar", {"appointment_id": f"{c}-2", "contact_id": c, "call_type": "demo",
-                                          "status": "confirmed", "start_at": at, "booked_at": ago(days=days + 2)})
+                                          "calendar_id": DEMO_CAL, "status": "confirmed", "start_at": at,
+                                          "booked_at": ago(days=days + 2)})
     elif pool == "never_booked":
         pg.rows("cockpit_sales_leads")  # nothing on the calendar
         pg.one("cockpit_sales_leads", contact_id=c)["lead_created_at"] = at
@@ -192,7 +194,9 @@ class Pools(unittest.TestCase):
     L = {"contact_id": "x", "tags": ["roas-unqualified"], "lead_created_at": ago(days=50)}
 
     def call(self, kind, status, days, **over):
+        cal = {"demo": DEMO_CAL, "intro": "dsqmJ393Dwl9fDSbIVOI"}.get(kind)
         return {"appointment_id": f"{kind}{days}{status}", "contact_id": "x", "call_type": kind, "status": status,
+                "calendar_id": cal,
                 "start_at": ago(days=days) if days >= 0 else (NOW + timedelta(days=-days)).isoformat(), **over}
 
     def pool(self, calls, lead=None, dealt=False):
@@ -270,7 +274,7 @@ class Enrol(unittest.TestCase):
         pg.put("cockpit_sales_followup_wave_members", {"wave_id": "w0", "contact_id": "a", "arm": "wave", "state": "waiting"})
         wave(pg, "old", "never_booked", state="done")
         pg.put("cockpit_sales_followup_wave_members", {"wave_id": "old", "contact_id": "b", "arm": "wave", "state": "sent",
-                                                       "drafted_at": ago(days=10)})
+                                                       "drafted_at": ago(days=10), "sent_at": ago(days=10)})
         wave(pg, "w1", "never_booked")
         run(pg, guard={})
         self.assertEqual({m["contact_id"] for m in members(pg, "w1")}, {"c"})
@@ -413,7 +417,7 @@ class DayBatch(unittest.TestCase):
         self.assertIn("No phone", why["n001"])
         self.assertIn("No first name", why["n002"])
         self.assertIn("paused until", why["n003"])
-        self.assertIn("wrote in the last day", why["n004"])
+        self.assertIn("wrote to us lately", why["n004"])
         self.assertIn("No first name", why["n006"])
         self.assertIn("No longer in a backlog pool", why["n008"])
         waiting = {m["contact_id"] for m in members(pg, "w1", state="waiting")}
