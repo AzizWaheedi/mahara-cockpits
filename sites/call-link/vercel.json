@@ -1,0 +1,35 @@
+{
+  "trailingSlash": false,
+  "redirects": [
+    {
+      "source": "/:code",
+      "has": [{ "type": "query", "key": "go" }],
+      "destination": "https://bldgtotkfmhoxmlzowdx.supabase.co/functions/v1/sales-live/go/:code",
+      "permanent": false
+    }
+  ],
+  "rewrites": [
+    { "source": "/ended", "destination": "/ended.html" },
+    { "source": "/:code", "destination": "/index.html" }
+  ],
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        {
+          "key": "Content-Security-Policy",
+          "value": "default-src 'none'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src https://bldgtotkfmhoxmlzowdx.supabase.co; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+        },
+        { "key": "X-Content-Type-Options", "value": "nosniff" },
+        { "key": "Referrer-Policy", "value": "no-referrer" },
+        { "key": "X-Frame-Options", "value": "DENY" },
+        { "key": "X-Robots-Tag", "value": "noindex, nofollow" },
+        { "key": "Permissions-Policy", "value": "camera=(), microphone=(), geolocation=()" }
+      ]
+    },
+    {
+      "source": "/(core.js|call.js|call.css|noscript.css)",
+      "headers": [{ "key": "Cache-Control", "value": "public, max-age=300" }]
+    }
+  ]
+}

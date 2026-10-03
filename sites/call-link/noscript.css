@@ -1,0 +1,10 @@
+/* Loaded only when scripts are off: the <noscript> link shows at once, so the
+   delayed fallback link (for a script that failed to load) stays hidden. */
+.fallback {
+  display: none !important;
+}
+
+[data-state="loading"] .arc {
+  animation: none;
+  stroke-dashoffset: 0;
+}
