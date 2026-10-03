@@ -1,9 +1,11 @@
 -- Adversarial checks for 20261003a/b/c (review of lane lc-db, 2026-10-03).
 --
 -- Each check states the behaviour the specs, the glossary or another lane
--- expect. A FAIL here is a confirmed finding, not a broken test: these
--- checks are meant to fail until the finding is fixed, then stay as
--- regression checks.
+-- expect. They failed until the findings were fixed; now they are regression
+-- checks and every one must pass. Changed after the fixes (lc-db, same day),
+-- only where a chosen fix changed what a valid fixture is: a booked room now
+-- always carries its deadlines (helper, X6, X6b), room_ready needs its room
+-- (X7), and presence is service role only (X11).
 --
 -- Run ONLY inside a transaction that is rolled back, after the three
 -- migrations, through run_adversarial.py (same safety as run_checks.py:
@@ -36,9 +38,14 @@ declare
   v uuid;
 begin
   insert into public.cockpit_sales_rooms
-    (request_id, contact_id, purpose, call_kind, provider, host_email, made_by, state, join_url, appointment_id)
+    (request_id, contact_id, purpose, call_kind, provider, host_email, made_by, state, join_url, appointment_id,
+     host_by, lead_by, ends_at)
   values (gen_random_uuid(), p_contact, p_purpose, p_kind, 'zoom', p_host, p_host, p_state,
-          case when p_state in ('open', 'host_in', 'lead_in') then 'https://zoom.example.invalid/j/9' end, p_appt)
+          case when p_state in ('open', 'host_in', 'lead_in') then 'https://zoom.example.invalid/j/9' end, p_appt,
+          -- A booked room carries its appointment's deadlines (fix for X6).
+          case when p_purpose = 'booked' then now() + interval '15 minutes' end,
+          case when p_purpose = 'booked' then now() + interval '20 minutes' end,
+          case when p_purpose = 'booked' then now() + interval '60 minutes' end)
   returning id into v;
   return v;
 end;
@@ -209,10 +216,16 @@ do $$
 declare
   r uuid; r2 uuid; s jsonb; got text;
 begin
+  -- Wrapped 20 minutes before a call an hour away: start + 15, + 20, ends + 60.
   r := pg_temp.room('lc-test-x6', 'lc-test-x6h@example.invalid', 'booked', 'open', 'demo', 'lc-test-appt-x6');
-  update public.cockpit_sales_rooms set opened_at = now() - interval '20 minutes' where id = r;
+  update public.cockpit_sales_rooms set opened_at = now() - interval '20 minutes', requested_at = now() - interval '20 minutes',
+         host_by = now() + interval '55 minutes', lead_by = now() + interval '60 minutes', ends_at = now() + interval '100 minutes'
+   where id = r;
+  -- The link went 15 minutes before the start, 11 minutes ago.
   r2 := pg_temp.room('lc-test-x6b', 'lc-test-x6h2@example.invalid', 'booked', 'host_in', 'demo', 'lc-test-appt-x6b');
-  update public.cockpit_sales_rooms set link_sent_at = now() - interval '11 minutes' where id = r2;
+  update public.cockpit_sales_rooms set link_sent_at = now() - interval '11 minutes',
+         host_by = now() + interval '19 minutes', lead_by = now() + interval '24 minutes', ends_at = now() + interval '64 minutes'
+   where id = r2;
   s := public.cockpit_sales_rooms_sweep();
   perform pg_temp.ck('X6 a booked room wrapped 20 min before a call an hour away is not expired by the 15-minute fallback wait',
     (select state = 'open' from public.cockpit_sales_rooms where id = r),
@@ -232,11 +245,12 @@ $$;
 -- room_ready -> offered, once. Nothing goes back from lead_joined.
 do $$
 declare
-  l uuid; got text;
+  l uuid; got text; r uuid;
 begin
   l := pg_temp.live('lc-test-x7', array['lc-test-x7k@example.invalid']);
   update public.cockpit_sales_live set state = 'claimed', claimed_by = 'lc-test-x7k@example.invalid' where id = l;
-  update public.cockpit_sales_live set state = 'room_ready' where id = l;
+  r := pg_temp.room('lc-test-x7', 'lc-test-x7k@example.invalid', 'handover', 'host_in', 'demo');   -- room_ready needs its room
+  update public.cockpit_sales_live set state = 'room_ready', room_id = r where id = l;
   update public.cockpit_sales_live set state = 'lead_joined' where id = l;
   got := pg_temp.errm(format($q$update public.cockpit_sales_live set state = 'offered', claimed_by = null,
                                   offer_until = now() + interval '2 minutes' where id = %L$q$, l));
@@ -312,8 +326,10 @@ exception when others then
 end;
 $$;
 
--- X11. Presence as a seat reads it (the view is granted to authenticated and
--- is security_invoker; people is own-row for non-managers).
+-- X11. Presence as a seat would read it (security_invoker, people own-row for
+-- non-managers) gave seats wrong answers. Fix chosen: the view is service
+-- role only and sales-api serves it (live.status), so a seat cannot read a
+-- wrong answer, and sales-api's answer is the true one.
 do $$
 declare
   uid uuid := gen_random_uuid();
@@ -337,11 +353,11 @@ begin
     json_build_object('sub', uid::text, 'role', 'authenticated', 'email', 'lc-test-seat@example.invalid')::text, true);
   perform set_config('request.jwt.claim.sub', '', true);
   set local role authenticated;
-  select state, default_provider into seat from public.cockpit_sales_presence where email = 'lc-test-x11c@example.invalid';
+  made := pg_temp.errm($q$select state, default_provider from public.cockpit_sales_presence where email = 'lc-test-x11c@example.invalid'$q$);
   reset role;
-  perform pg_temp.ck('X11 a seat reading presence sees the same state and provider for a closer as sales-api does',
-    seat.state is not distinct from svc.state and seat.default_provider is not distinct from svc.default_provider,
-    format('service: %s/%s; seat: %s/%s', svc.state, svc.default_provider, seat.state, seat.default_provider));
+  perform pg_temp.ck('X11 a seat cannot read presence directly (no wrong answer to read; 42501)', made like '42501%', made);
+  perform pg_temp.ck('X11 sales-api (service role) sees the closer on the call, on their own Zoom default',
+    svc.state = 'on_call' and svc.default_provider = 'zoom', format('service: %s/%s', svc.state, svc.default_provider));
 exception when others then
   reset role;
   perform pg_temp.ck('X11 section crashed', false, sqlstate || ': ' || sqlerrm);
