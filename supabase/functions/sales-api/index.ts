@@ -92,6 +92,7 @@ import {
   type ContractSetting,
   type ContractTerms,
   cleanTemplates,
+  keepPayments,
   contactFieldsFor,
   contactFill,
   contractName,
@@ -4872,9 +4873,9 @@ async function contractTemplates(who: Who) {
 /** The templates the team may use, and the fields each one prints. */
 async function contractTemplatesSave(who: Who, b: Row) {
   needManager(who);
-  const templates = cleanTemplates(b.templates);
-  if (!templates.length) throw new Refusal("Keep at least one template for the team.");
   const before = await contractSetting();
+  const templates = keepPayments(cleanTemplates(b.templates), before.templates);
+  if (!templates.length) throw new Refusal("Keep at least one template for the team.");
   const staffNames = Array.isArray(b.staff_names)
     ? [...new Set((b.staff_names as unknown[]).map(n => cleanText(n, 120)).filter(Boolean))].slice(0, 60)
     : null;
