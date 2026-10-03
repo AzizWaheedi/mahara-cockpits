@@ -47,26 +47,46 @@ bun run logs:fetch
 
 The `sync` command uses `convex dev --once` which pushes your functions and exits immediately. Use `bun run logs:fetch` to get recent backend logs (console.log, errors, function executions) — it fetches logs and exits after 5 seconds.
 
-### Running E2E Tests
+### Running Tests
 
-To run Playwright e2e tests after building:
+Install each cockpit's locked dependencies before cross-app usage tests:
+
+```bash
+# From the repository root
+for app in media-buyer-cockpit client-success-cockpit creative-director-cockpit; do
+  (cd "apps/$app" && bun install --frozen-lockfile)
+done
+```
+
+From this app directory, run unit tests with `bun run test:unit`.
+Standalone Playwright scripts use `.e2e.ts`, so Bun does not discover them
+as unit tests. Unit tests still share module mocks; a failing broad run is
+not evidence that a single file also fails in isolation.
+
+Run Playwright scripts separately after building:
 
 ```bash
 # 1. Build the app
 bun run sync:build
 
-# 2. Run your test (starts preview server automatically)
-bun run test scripts/demo-test.ts
+# 2. Install the browser, then run a standalone script
+bunx playwright install chromium
+bun run test scripts/cockpit.e2e.ts
 
-# Or run multiple tests
-bun run test scripts/test-feature1.ts scripts/test-feature2.ts
+# Or run multiple scripts
+bun run test scripts/build.e2e.ts scripts/sections.e2e.ts
 ```
 
 The `test` command handles the Vite server lifecycle automatically:
-1. Starts `vite preview` (serves built frontend files on port 4173)
-2. Waits for server to be ready
-3. Runs your test with `APP_URL` set correctly
-4. Stops the Vite server when done
+1. Starts Vite preview on an OS-assigned loopback port
+2. Checks that the built frontend responds
+3. Runs your scripts with `APP_URL` set to that exact address
+4. Closes the preview server on success or failure
+
+Scripts using `scripts/auth.ts` also need the automated sign-in configuration:
+`VIKTOR_SPACES_API_URL`, `VIKTOR_SPACES_PROJECT_NAME`,
+`VIKTOR_SPACES_PROJECT_SECRET`, and `TOOL_TOKEN`, or a valid saved auth state.
+Do not commit credentials or auth-state files.
 
 Note: The Convex backend is always running in the cloud after running the sync command — only the frontend server needs to be started locally.
 
