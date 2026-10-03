@@ -166,7 +166,8 @@ describe("settleWanted: what sweep.settle settles", () => {
     expect(settleWanted({ ...expiredBooked, result: "admit_blocked" }, at(start), false, start + 2 * W.settle * S, W)).toBe(false);
   });
   test("a fallback room for a booked intro follows settleDue", () => {
-    const fb = { ...expiredBooked, purpose: "fallback" as const };
+    // Its link went (a fallback room whose link never reached the lead is no evidence, round 3).
+    const fb = { ...expiredBooked, purpose: "fallback" as const, link_sent_at: at(T0 + MIN) };
     expect(settleWanted(fb, at(start), false, start + W.settle * S, W, read)).toBe(settleDue(fb, at(start), false, start + W.settle * S, W, read));
     expect(settleWanted(fb, at(start), false, start + W.settle * S, W, read)).toBe(true);
     expect(settleWanted({ ...fb, result: "admit_blocked" }, at(start), false, start + W.settle * S, W)).toBe(false);

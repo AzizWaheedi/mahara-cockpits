@@ -698,6 +698,18 @@ export function renderTemplate(
   });
 }
 
+/**
+ * Text bound for Slack (an alert to #sales-alerts, an offer to a closer)
+ * with every angle bracket made harmless: Slack reads <!channel>, <!here>,
+ * <@U…>, <!subteam^…> and <https://…|label> as markup, and a lead types their
+ * own name and company on the ad's form. The brackets become ‹ and ›, which
+ * read the same in Slack and on every page and are never markup. (An & is
+ * harmless: "&lt;" reaches Slack as the words, never as a bracket.)
+ */
+export function slackSafe(v: unknown): string {
+  return String(v ?? "").replace(/</g, "\u2039").replace(/>/g, "\u203a");
+}
+
 /** The name to greet a lead by: HighLevel's first name, else the first word of the whole name. */
 export function greetingName(first: unknown, full: unknown): string {
   const f = cleanText(first, 60) || cleanText(full, 120);

@@ -108,7 +108,8 @@ function setup() {
     sendTemplate: async () => ({ message: { id: fakeUuid(), state: "sent" } }),
     upcoming: async () => {
       const u = knobs.upcoming;
-      return u ? { end: u.start + 30 * MIN, assigned_user_id: "G-closer", status: "confirmed", ...u } : u;
+      // The setter's own call (round 3: another rep's call ahead is never moved to the host).
+      return u ? { end: u.start + 30 * MIN, assigned_user_id: "G-setter", status: "confirmed", ...u } : u;
     },
   };
   const rooms = makeRooms(deps);

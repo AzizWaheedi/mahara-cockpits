@@ -247,7 +247,11 @@ export function makeFollowupAgent(deps: AgentDeps): { actions: Record<string, Ac
    * desk's send_due refuses a held draft). Answers whether it was approved.
    */
   async function approveOne(id: string, patch: Row, made_with: Row = {}): Promise<boolean> {
-    for (const guard of ["held_by=is.null", "held_by=eq.sales-desk"]) {
+    // No hold, the desk's set-aside, or a sending mark left by a send that
+    // stopped half way (older than SENDING_STALE_MS): a person's approval
+    // answers each. A send in flight, and a rep's hold, stand.
+    const staleSending = `held_by=eq.${enc(SENDING)}&held_at=lt.${enc(iso(io.now() - SENDING_STALE_MS))}`;
+    for (const guard of ["held_by=is.null", "held_by=eq.sales-desk", staleSending]) {
       const rows = await io.db(`cockpit_sales_followup_meta?followup_id=eq.${enc(id)}&${guard}`, {
         method: "PATCH",
         body: { ...patch, held_by: null, hold_reason: null },
@@ -392,7 +396,13 @@ export function makeFollowupAgent(deps: AgentDeps): { actions: Record<string, Ac
     const on = b.on === true;
     const id = String(f.id);
     if (on && f.status !== "draft") throw refusal(f.status === "sending" ? AGENT_COPY.sending : AGENT_COPY.not_draft.replace("{status}", String(f.status)));
-    const want = on ? { held_by: lower(who.email), held_at: iso(io.now()), hold_reason: cleanText(b.reason, 300) || null } : { held_by: null, hold_reason: null };
+    // A hold, and its release, both take the opener's approval back: a
+    // released opener waits for the next Approve all (as the page says),
+    // never goes on an approval given before the rep held it.
+    const unapproved = { send_after: null, approved_by: null };
+    const want = on
+      ? { held_by: lower(who.email), held_at: iso(io.now()), hold_reason: cleanText(b.reason, 300) || null, ...unapproved }
+      : { held_by: null, hold_reason: null, ...unapproved };
     // Written only from what was read: a send that claimed the opener in
     // between wins (it is already going out), and the press says so; it
     // never shows as held while the opener goes.
@@ -533,8 +543,17 @@ export function makeFollowupAgent(deps: AgentDeps): { actions: Record<string, Ac
         const setup = e.extra.code === "setup" || SETUP_FAULT.test(e.message);
         const all = setup || e.extra.hold_all === true || holdsEverything(e.message, e.status);
         const hoursWords = /their time|day off|friday|time zone/i.test(e.message);
-        if (!all && !hoursWords && e.status !== 502 && !STATE_RACE.test(e.message)) await setAside(who, id, e.message);
-        else await release();
+        if (!all && !hoursWords && e.status !== 502 && !STATE_RACE.test(e.message)) {
+          // A refusal that closed the draft itself (it went stale, the lead
+          // is an active client): no page shows a closed draft, so nothing is
+          // set aside for a person; the answer says it was closed.
+          const after = (await io.db(`cockpit_sales_followups?id=eq.${enc(id)}&select=status`).catch(() => []))[0];
+          if (after && after.status !== "draft") {
+            await release();
+            throw new ApiRefusal(e.message, e.status, { ...e.extra, closed: String(after.status) });
+          }
+          await setAside(who, id, e.message);
+        } else await release();
         if (all && (e.extra.hold_all !== true || (setup && e.extra.code !== "setup")))
           throw new ApiRefusal(e.message, e.status, { ...e.extra, hold_all: true, ...(setup ? { code: "setup" } : {}) });
       } else await release();

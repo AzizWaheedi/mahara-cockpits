@@ -113,7 +113,7 @@ async function fallbackThenSettle(w: ReturnType<typeof setup>, who: Who, apptId:
   const roomId = String((out.room as Row).id);
   const carried = w.room(roomId).appointment_id ?? null;
   // The worker opens it; Zoom reports the meeting's start; nobody comes; the sweep closes it as nobody joined.
-  Object.assign(w.room(roomId), { state: "open", join_url: ZOOM_URL, provider_meeting_id: "81234567890", opened_at: w.db.iso() });
+  Object.assign(w.room(roomId), { state: "open", join_url: ZOOM_URL, provider_meeting_id: "81234567890", opened_at: w.db.iso(), link_sent_at: w.db.iso() });
   w.db.seed("cockpit_sales_room_events", [
     { room_id: roomId, kind: "zoom.meeting.started", source: "zoom", dedupe_key: `zoom:meeting.started:${roomId}`, handled_at: w.db.iso() },
   ]);

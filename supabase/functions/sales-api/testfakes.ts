@@ -7,7 +7,8 @@
 // HighLevel router, a clock that sleep() moves, and background work the test
 // can wait for.
 
-import { DbError, type DbInit, GhlError, type LiveIO } from "./liveio.ts";
+import { DbError, type DbInit, GhlError, type LiveIO, uuidFrom } from "./liveio.ts";
+import { defaultProvider, roomsSetting } from "./roomlogic.ts";
 
 type Row = Record<string, unknown>;
 
@@ -295,6 +296,21 @@ export class FakeDb {
         if (FINAL.includes(String(next.state)) && !next.ended_at) next.ended_at = this.iso();
         if (next.state === "open" && !next.opened_at) next.opened_at = this.iso();
         if ((next.state === "host_in" || next.state === "lead_in") && !next.host_in_at) next.host_in_at = this.iso();
+        // 20261003d: "That was not the lead" (lead_in to host_in) keeps
+        // lead_in_at, the taken-back join's own time, so a re-delivered join
+        // is told from a new one; the room waits at least open_grace more.
+        if (old.state === "lead_in" && next.state === "host_in") {
+          const grace = this.clock.now + 180_000;
+          const lead = Date.parse(String(next.lead_by ?? old.lead_by ?? ""));
+          if (!Number.isFinite(lead) || lead < grace) next.lead_by = new Date(grace).toISOString();
+        }
+        if (next.state === "lead_in") {
+          // A move into lead_in that left a taken-back lead_in_at as it was: stamped now.
+          const undo = Date.parse(String(next.count_undo_at ?? ""));
+          const joined = Date.parse(String(next.lead_in_at ?? ""));
+          if (!next.lead_in_at || (next.lead_in_at === old.lead_in_at && Number.isFinite(undo) && joined <= undo)) next.lead_in_at = this.iso();
+          next.lead_in_seen_at = this.iso();
+        }
       }
     }
     if (table === "cockpit_sales_followup_waves" && next.state !== old.state) {
@@ -423,7 +439,13 @@ export class FakeDb {
   }
 
   /** The claim, as cockpit_sales_live_claim decides it (standby adoption and the five claim_room cases, simplified). */
-  liveClaim(a: Row): Row[] {
+  async liveClaim(a: Row): Promise<Row[]> {
+    // The reserved room's request id (20261003d), worked out before the claim's one synchronous step.
+    const pre = this.t("cockpit_sales_live").find(x => x.id === a.p_live_id);
+    const rid = pre && Number(pre.reoffers ?? 0) > 0 ? await uuidFrom(`mahara-live/${pre.id}/${pre.reoffers}`) : String(a.p_live_id);
+    return this.liveClaimNow(a, rid);
+  }
+  private liveClaimNow(a: Row, rid: string): Row[] {
     const me = String(a.p_email).toLowerCase();
     const l = this.t("cockpit_sales_live").find(x => x.id === a.p_live_id);
     if (!l || l.state !== "offered" || Date.parse(String(l.offer_until)) <= this.clock.now || !(l.offered_to as string[]).includes(me)) return [];
@@ -478,6 +500,31 @@ export class FakeDb {
         via = "standby";
         l.room_id = sb.id;
         if (sb.state === "host_in") l.state = "room_ready";
+      }
+      // 20261003d: no room adopted, so the taker's room is reserved in the
+      // claim itself (requested, sales-api's request id, purpose handover).
+      const cfg = (this.t("cockpit_sales_settings").find(x => x.key === "rooms")?.value ?? {}) as Row;
+      if (via === "none") {
+        const host = this.t("cockpit_sales_room_hosts").find(h => String(h.email).toLowerCase() === me) ?? null;
+        const person = this.t("cockpit_sales_people").find(p => String(p.email).toLowerCase() === me);
+        const made = this.insertOne(
+          "cockpit_sales_rooms",
+          {
+            request_id: rid,
+            contact_id: l.contact_id,
+            contact_first_name: lr?.contact_first_name ?? null,
+            purpose: "handover",
+            call_kind: l.kind,
+            provider: defaultProvider(person?.role ?? "closer", host as never, roomsSetting(cfg)),
+            host_email: me,
+            made_by: me,
+            handover_id: l.id,
+            send_on: "host_in",
+          },
+          "error",
+        ) as Row;
+        l.room_id = made.id;
+        if (lr) lr.replaced_by = made.id;
       }
     }
     l.claim_room = via;

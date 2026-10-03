@@ -125,12 +125,21 @@ export function firstHours(followups: unknown): [number, number] {
   return [9, 18];
 }
 
+/** The demo chat's holdout salt (C36): the waves' salt may never be this one. */
+export const THREADS_SALT = "threads";
+
 /** followups.quiet as the hours a later message may go: from quiet.to (9) until quiet.from (21). */
 export function laterHours(followups: unknown): [number, number] {
   const q = ((followups as Row | null)?.quiet ?? {}) as Row;
-  const from = Number(q.to ?? 9);
-  const to = Number(q.from ?? 21);
-  return Number.isInteger(from) && Number.isInteger(to) && from >= 0 && to <= 24 && from < to ? [from, to] : [9, 21];
+  const quietFrom = Number(q.from ?? 21);
+  const quietTo = Number(q.to ?? 9);
+  if (!Number.isInteger(quietFrom) || !Number.isInteger(quietTo) || quietFrom < 0 || quietFrom > 24 || quietTo < 0 || quietTo > 24)
+    return [9, 21];
+  // Quiet across midnight (21 to 9): later messages go from its end to its start.
+  if (quietTo < quietFrom) return [quietTo, quietFrom];
+  // Quiet that starts at midnight or sits inside one day (0 to 9, the desk's
+  // quiet() reads it so): later messages go from its end until midnight.
+  return quietTo < 24 ? [quietTo, 24] : [9, 21];
 }
 
 /**
@@ -213,12 +222,17 @@ export interface SeenMessage {
  * The outbound WhatsApp message a send became: after `since` (less 15 s of
  * clock drift), and with the words that were sent when they are known, so a
  * WA Connector copy or another rep's message never counts as this one.
+ * `went`: only a message that reached the lead counts (never one Meta
+ * failed or left undelivered): the question "did this send go?" after its
+ * answer was lost. The read-back right after a send leaves it off, so it
+ * sees a Meta failure and records it.
  */
-export function matchSent<T extends SeenMessage>(list: T[], since: number, text?: string | null): T | null {
+export function matchSent<T extends SeenMessage>(list: T[], since: number, text?: string | null, o: { went?: boolean } = {}): T | null {
   for (const m of list) {
     const t = Date.parse(String(m.at ?? ""));
     if (m.direction !== "outbound" || m.channel !== "whatsapp" || !Number.isFinite(t) || t < since - 15_000) continue;
     if (text && !sameText(m.body, text)) continue;
+    if (o.went && ["failed", "undelivered"].includes(String(m.status ?? "").toLowerCase())) continue;
     return m;
   }
   return null;
@@ -419,6 +433,10 @@ export function followupSettingsValue(before: Row, v: Row, segments: readonly st
       batch_gap_s: int(w.batch_gap_s ?? 45, 30, 3600, "Seconds between openers"),
       salt: typeof w.salt === "string" && w.salt.trim() ? w.salt.trim().slice(0, 40) : "waves",
     };
+    // C36: the demo chat's holdout is drawn with the salt "threads"; the same
+    // salt here would hold back the same leads in both experiments.
+    if (String((value.waves as Row).salt).toLowerCase() === THREADS_SALT)
+      errs.push("The waves' holdout salt must differ from the demo chat's (threads), so the two experiments hold back different leads.");
   }
   if (given("first_hours") !== undefined) {
     const f = given("first_hours");
@@ -493,5 +511,18 @@ export function whatsappGuardValue(before: Row, v: Row, now: number): Check<Row>
     value.dup_paused_at = null;
     value.dup_reason = null;
   }
+  // "Clear the pause" on a source's own failure share (follow-ups, rooms):
+  // sends from before now no longer count (whatsappHealth reads from here).
+  if (v.health_cleared_at !== undefined) {
+    if (v.health_cleared_at === true) value.health_cleared_at = new Date(now).toISOString();
+    else if (v.health_cleared_at === null) value.health_cleared_at = null;
+    else return { ok: false, error: "Clear the pause with a press, not a time." };
+  }
   return { ok: true, value };
+}
+
+/** The first moment a source's WhatsApp health counts sends from: the last day, or a manager's later "Clear the pause". */
+export function healthSince(guard: unknown, now: number): number {
+  const cleared = Date.parse(String(((guard ?? {}) as Row).health_cleared_at ?? ""));
+  return Math.max(now - 86_400_000, Number.isFinite(cleared) ? cleared : 0);
 }

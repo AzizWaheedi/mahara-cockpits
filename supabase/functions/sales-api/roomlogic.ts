@@ -30,7 +30,7 @@
 
 import { isClient } from "./clients.ts";
 import { BOOKING_CALENDARS } from "./dialer.ts";
-import { dndFor, greetingName, redact, whatsappWindow } from "./lib.ts";
+import { dndFor, greetingName, redact, slackSafe, whatsappWindow } from "./lib.ts";
 
 type Row = Record<string, unknown>;
 
@@ -1041,6 +1041,13 @@ export interface RoomRow {
   lead_waiting_at?: string | null;
   host_in_at?: string | null;
   lead_in_at?: string | null;
+  /**
+   * When the room first showed "The lead is in" (20261003d). A Zoom join
+   * read late (an outage, the sweep's replay) keeps its own time in
+   * lead_in_at; "That was not the lead" is measured from whichever is later,
+   * so the host always has their five minutes from what the panel showed.
+   */
+  lead_in_seen_at?: string | null;
   ended_at?: string | null;
   open_device?: string | null;
   link_message_ids?: unknown;
@@ -1082,6 +1089,23 @@ export function leadJoined(room: RoomRow): boolean {
   if (joined === null) return false;
   const undo = ms(room.count_undo_at);
   return undo === null || joined > undo;
+}
+
+/**
+ * A join at `t` is the one "That was not the lead" took back, delivered
+ * again (Zoom sends participant_jbh_joined beside participant_joined, and
+ * the sweep replays a join whose first handling lost its finish): at or
+ * before the taken-back join's own time. The guard in 20261003d keeps
+ * lead_in_at on that press; under 20261003a's guard (it cleared lead_in_at)
+ * the press's own time bounds it, since every join before the press is one
+ * the host already saw.
+ */
+export function takenBack(room: RoomRow, t: number): boolean {
+  const undo = ms(room.count_undo_at);
+  if (undo === null) return false;
+  const joined = ms(room.lead_in_at);
+  if (joined !== null && joined > undo) return false;
+  return t <= (joined ?? undo);
 }
 
 /** A count was claimed and has not written its result yet (a mark writes count_appointment_id). */
@@ -1585,7 +1609,10 @@ function notLead(room: RoomRow, now: number, ctx: RoomCtx): Applied {
   if (!final && room.state !== "lead_in") return refuse("stale");
   if (final && !leadJoined(room)) return room.lead_in_at && room.count_undo_at ? same(room) : refuse("stale");
   const joined = ms(room.lead_in_at);
-  if (joined === null || now - joined > w.not_lead_undo * S)
+  // The five minutes run from when the panel first showed the join: a Zoom
+  // join read late (an outage, the sweep's replay) keeps its own time.
+  const shown = joined === null ? null : Math.max(joined, ms(room.lead_in_seen_at) ?? joined);
+  if (shown === null || now - shown > w.not_lead_undo * S)
     return refuse("not_lead_late", { minutes: Math.round(w.not_lead_undo / 60) });
   const patch: Partial<RoomRow> = { count_undo_at: iso(now) };
   if (countInFlight(room)) patch.count_result = "undone";
@@ -1614,7 +1641,7 @@ const LATE_JOIN_EARLY_S = 60;
  * and the count runs as for any join. Null when the rule does not apply.
  */
 function lateLeadIn(room: RoomRow, event: Extract<RoomEvent, { kind: "lead_in" }>, now: number, ctx: RoomCtx): Changed | null {
-  if (room.state !== "expired" || !room.contact_id || room.lead_in_at || room.result === "joined") return null;
+  if (room.state !== "expired" || !room.contact_id || leadJoined(room) || room.result === "joined") return null;
   if (room.end_reason && !(TIMER_END_REASONS as readonly string[]).includes(room.end_reason)) return null;
   const ended = ms(room.ended_at);
   if (ended === null) return null;
@@ -1622,7 +1649,9 @@ function lateLeadIn(room: RoomRow, event: Extract<RoomEvent, { kind: "lead_in" }
   const opened = ms(room.opened_at) ?? ms(room.requested_at);
   if (opened !== null && t < opened - LATE_JOIN_EARLY_S * S) return null;
   if (t > ended + ctx.waits.open_grace * S) return null;
-  return change(room, room.state, { lead_in_at: iso(t), result: "joined" }, [{ kind: "count_live" }]);
+  // The join "That was not the lead" took back, delivered again: not a new join.
+  if (takenBack(room, t)) return null;
+  return change(room, room.state, { lead_in_at: iso(t), lead_in_seen_at: iso(now), result: "joined" }, [{ kind: "count_live" }]);
 }
 
 /**
@@ -1784,8 +1813,8 @@ export function applyRoomEvent(room: RoomRow, event: RoomEvent, now: number, ctx
       if (!room.contact_id) return refuse("no_lead");
       const t = when(event);
       // The join "That was not the lead" took back, delivered again (Zoom sends two join events): not a new join.
-      if (room.count_undo_at && t <= (ms(room.lead_in_at) ?? Number.NEGATIVE_INFINITY)) return same(room);
-      const patch: Partial<RoomRow> = { lead_in_at: iso(t) };
+      if (takenBack(room, t)) return same(room);
+      const patch: Partial<RoomRow> = { lead_in_at: iso(t), lead_in_seen_at: iso(now) };
       if (room.purpose !== "booked") {
         const ends = laterIso(room.ends_at, t + lengthMs(room.call_kind, ctx));
         if (ends !== room.ends_at) patch.ends_at = ends;
@@ -1802,8 +1831,9 @@ export function applyRoomEvent(room: RoomRow, event: RoomEvent, now: number, ctx
       if (room.state === "lead_in") {
         if (reason === "admit_blocked") return refuse("stale");
         if (reason !== "finished" && event.confirm !== true) return refuse("confirm_end");
-        // A room with the lead in it: no provider call, ever (C15).
-        return change(room, "ended", { result: "joined", ended_at: at }, [{ kind: "delete_secret" }]);
+        // A room with the lead in it: no provider call, ever (C15). "joined"
+        // only for a join that stands (a join taken back is nobody).
+        return change(room, "ended", { result: leadJoined(room) ? "joined" : "no_join", ended_at: at }, [{ kind: "delete_secret" }]);
       }
       if (reason === "cancel" || reason === "on_phone" || reason === "admit_blocked" || early) {
         const result: RoomResult =
@@ -1830,7 +1860,7 @@ export function applyRoomEvent(room: RoomRow, event: RoomEvent, now: number, ctx
         if (room.state === "open" && host_by === room.host_by) return same(room);
         return change(room, "open", { host_by }, []);
       }
-      const result: RoomResult | null = room.state === "lead_in" ? "joined" : room.contact_id ? "no_join" : null;
+      const result: RoomResult | null = room.state === "lead_in" && leadJoined(room) ? "joined" : room.contact_id ? "no_join" : null;
       return change(room, "ended", { result, ended_at: iso(t) }, [{ kind: "delete_secret" }]);
     }
 
@@ -2003,7 +2033,7 @@ function tick(room: RoomRow, e: Extract<RoomEvent, { kind: "tick" }>, now: numbe
   if (room.state === "lead_in") {
     // Closed in the books only. No end call goes to Zoom or Google (C15).
     const error = room.provider === "zoom" ? ROOM_COPY.panel.no_end_signal : ROOM_COPY.panel.no_end_signal_any;
-    return change(room, "ended", { error, result: "joined", ended_at: at }, [{ kind: "delete_secret" }, ...alerts], "no_end_signal");
+    return change(room, "ended", { error, result: leadJoined(room) ? "joined" : "no_join", ended_at: at }, [{ kind: "delete_secret" }, ...alerts], "no_end_signal");
   }
   const effects = finalEffects(room);
   if (due.reason === "standby_max" && refreshWanted(e, now, w)) effects.push({ kind: "refresh_standby" });
@@ -2102,6 +2132,9 @@ export interface SettleFacts {
 export function noShowDoubt(room: RoomRow, facts: SettleFacts = {}): string | null {
   if (room.first_open_at || room.last_open_at) return "the lead opened the link";
   if (room.lead_waiting_at) return "the lead knocked";
+  // A link that never reached the lead (refused on every channel, or "it may
+  // have gone" and never confirmed): their staying away says nothing.
+  if (room.purpose !== "booked" && !room.link_sent_at) return "the link never reached the lead";
   if (facts.sibling_joined) return "the lead joined another room for this call";
   if (facts.test_off_calendar) return "a test contact's call is not on the test calendar";
   if (facts.late_join) return "someone joined the meeting after the room closed";
@@ -2113,16 +2146,30 @@ export function noShowDoubt(room: RoomRow, facts: SettleFacts = {}): string | nu
 }
 
 /**
- * The room was made for the intro as it stands now: the intro's start it
- * stored when it was made, or, for a room made before that column, a room
- * asked for between an hour before the start and the settle time. A room
- * from before the intro was moved never settles the moved call.
+ * A moment inside a booked intro's own window: from an hour before its start
+ * to its start + waits_s.settle. A room asked for, or a lead's join, outside
+ * it is about another call (yesterday evening's confirmation call, a call
+ * the same morning), never about the intro itself.
+ */
+export function inIntroWindow(t: number | null, start: number, w: Waits): boolean {
+  return t !== null && t >= start - HOUR && t <= start + w.settle * S;
+}
+
+/**
+ * The room was made for the intro as it stands now: asked for inside the
+ * intro's own window (inIntroWindow), and, when it stored the intro's start
+ * as it was made, that start is still the intro's. A confirmation call's
+ * room the evening before, or a room from before the intro was moved, never
+ * settles the intro.
  */
 export function roomForThisStart(room: RoomRow, start: number, w: Waits): boolean {
   const stored = ms(room.appointment_start_at);
-  if (stored !== null) return Math.abs(stored - start) < S;
+  // A booked room is the appointment's own room (room.wrap): the start it
+  // stored is enough, whenever it was wrapped.
+  if (room.purpose === "booked" && stored !== null) return Math.abs(stored - start) < S;
   const asked = ms(room.requested_at) ?? ms(room.created_at);
-  return asked !== null && asked >= start - HOUR && asked <= start + w.settle * S;
+  if (!inIntroWindow(asked, start, w)) return false;
+  return stored === null || Math.abs(stored - start) < S;
 }
 
 /**
@@ -2700,8 +2747,13 @@ export interface CountInput {
    * on one of them (C34, D25).
    */
   official_calendar_ids?: readonly string[];
-  /** Another room of this lead's already counted this conversation (a booking or a move that stands, the same day). */
-  standing_count?: boolean;
+  /**
+   * Another room of this lead's already counted this conversation (a booking,
+   * a move or a mark that stands, joined within hours of this join): true.
+   * "in_flight": another room's count was claimed and has no result yet (it
+   * may have booked): nothing is claimed now, and the sweep asks again.
+   */
+  standing_count?: boolean | "in_flight";
   /**
    * Something from the lead says they came: Zoom's join, the short link
    * opened, or a knock. False when only a hand press says so; then a real
@@ -2712,6 +2764,24 @@ export interface CountInput {
   lead_evidence?: boolean;
   /** The booked intro is already marked shown (a rep's own mark, or HighLevel's status): the count adds nothing. */
   appointment_shown?: boolean;
+  /**
+   * The start of the booked intro the room carries (room.appointment_id),
+   * else room.appointment_start_at. The room marks that intro shown only for
+   * a join inside the intro's own window (inIntroWindow); a join outside it
+   * (a confirmation call's room the day before) is any other live join.
+   */
+  appointment_start?: number | null;
+  /**
+   * The lead's call of the room's kind that has already started (upcoming()
+   * keeps only calls ahead): its start within the last lengths_min, not
+   * cancelled, invalid or a no-show. `mine`: the host may mark it (their
+   * own, or a manager's). The join is that call: marked shown when it is
+   * theirs, counted already when it is another rep's; never a Live booking
+   * beside it.
+   */
+  current_call?: { id: string; start: number; status?: string | null; mine: boolean } | null;
+  /** The upcoming call is the host's own (or a manager's room): only then is it moved to now. */
+  upcoming_mine?: boolean;
   /** A manager confirmed a join only a hand press reported (room.count_confirm): it counts as evidence. */
   confirmed?: boolean;
 }
@@ -2731,6 +2801,8 @@ export type CountSkip =
   | "live_calendar_missing"
   | "already_counted"
   | "upcoming_unknown"
+  | "sibling_counting"
+  | "booked_other_rep"
   | "self_reported";
 
 export type CountPlan =
@@ -2749,6 +2821,18 @@ export type CountPlan =
       body: Row;
     }
   | { action: "create"; claim: true; test: boolean; calendar_id: string; start: string; end: string; body: Row };
+
+/**
+ * The room carries its booked intro for this join: it has one, and the join
+ * falls inside that intro's own window (from an hour before its start to
+ * its start + settle). A start that is not known keeps the room's own
+ * appointment, as rooms made before 20261003d did.
+ */
+export function carriesIntro(room: RoomRow, joined: number | null, start: number | null, w: Waits): boolean {
+  if (!room.appointment_id) return false;
+  const at = finiteOrNull(start) ?? ms(room.appointment_start_at);
+  return at === null || inIntroWindow(joined, at, w);
+}
 
 /**
  * The claim may be taken: never taken, or taken and then undone ("That was
@@ -2814,13 +2898,21 @@ export function countLive(i: CountInput): CountPlan {
   if (test && !setting.test_calendar_id) return none("test_calendar_missing", true, "not_a_lead");
   if (test && official.has(setting.test_calendar_id as string)) return none("test_calendar_official", true, "not_a_lead");
   if (!test && i.lead_evidence === false && i.confirmed !== true) return none("self_reported", true, "self_reported");
-  if (room.appointment_id) {
+  if (carriesIntro(room, joined, i.appointment_start ?? null, setting.waits_s)) {
     if (test && str(i.appointment_calendar_id, 80) !== setting.test_calendar_id)
       return none("test_not_on_test_calendar", true, "not_a_lead");
     if (i.appointment_shown) return none("already_counted", true, "already_counted");
-    return { action: "mark", claim: true, appointment_id: room.appointment_id };
+    return { action: "mark", claim: true, appointment_id: room.appointment_id as string };
+  }
+  // The lead's own call of this kind started a little before the join (the
+  // intro running now, a room made from the lead page): the join is that call.
+  const cur = i.current_call;
+  if (!test && cur && cur.id) {
+    if (String(cur.status ?? "") === "showed" || !cur.mine) return none("already_counted", true, "already_counted");
+    return { action: "mark", claim: true, appointment_id: cur.id };
   }
   if (!test && !isTaggedLead(c.tags)) return none("not_a_lead", true, "not_a_lead");
+  if (i.standing_count === "in_flight") return none("sibling_counting", false);
   if (i.standing_count) return none("already_counted", true, "already_counted");
   const host = str(i.host_ghl_user_id, 80);
   if (!host) return none("host_not_in_highlevel", true, "failed");
@@ -2836,6 +2928,11 @@ export function countLive(i: CountInput): CountPlan {
   const up = i.upcoming;
   const upEnd = finiteOrNull(up?.end ?? null);
   const upRep = str(up?.assigned_user_id, 80);
+  // Another rep's call ahead is never moved to this host (the mark path's
+  // rule): it would take that rep's call and its show. Nothing is booked
+  // beside it either (two calls for one lead).
+  if (!test && up && up.id && (!up.kind || up.kind === room.call_kind) && upRep && !(i.upcoming_mine ?? upRep === host))
+    return none("booked_other_rep", true, "failed");
   if (
     !test &&
     up &&
@@ -2958,7 +3055,8 @@ export function countUndo(room: RoomRow, before: CountBefore | string | null | u
       };
     }
     case null: {
-      if (!appt || appt !== room.appointment_id) return { action: "none", reason: "in_flight" };
+      // A mark (the room's own intro, or the lead's call that had started).
+      if (!appt) return { action: "none", reason: "in_flight" };
       // The status the intro had before the count's mark, as the count read it
       // (HighLevel's own, else the rep's mark, else the copy). Never guessed:
       // "confirmed" on a past intro is a show by the B2B rule.
@@ -3335,7 +3433,9 @@ export function toRoomView(
     open_device: oneOf(DEVICES, row.open_device) ? row.open_device : null,
     lead_waiting_at: isoOrNull(row.lead_waiting_at),
     host_in_at: isoOrNull(row.host_in_at),
-    lead_in_at: isoOrNull(row.lead_in_at),
+    // A join "That was not the lead" took back is kept in the row as
+    // evidence, and shown as nobody: the panel never says the lead joined.
+    lead_in_at: leadJoined(row) ? isoOrNull(row.lead_in_at) : null,
     ended_at: isoOrNull(row.ended_at),
     host_by: isoOrNull(row.host_by),
     lead_by: isoOrNull(row.lead_by),
@@ -3799,13 +3899,16 @@ export function offerLine(o: {
   country?: string | null;
   note?: string | null;
 }): string {
-  const note = str(o.note, 200);
+  // Posted to Slack: the lead's name and company (from their own form) and
+  // the setter's note never reach it as markup.
+  const safe = (v: string | null) => (v === null ? null : slackSafe(v));
+  const note = safe(str(o.note, 200));
   let text: string = o.kind === "intro" ? LANE_COPY.offer_intro : ROOM_COPY.slack.offer;
   if (!note) text = text.replace(" Note: {note}.", "");
   return fill(text, {
-    name: greetingName(o.name, null) || "a lead",
-    company: str(o.company, 80),
-    country: str(o.country, 60),
+    name: slackSafe(greetingName(o.name, null)) || "a lead",
+    company: safe(str(o.company, 80)),
+    country: safe(str(o.country, 60)),
     note,
   });
 }

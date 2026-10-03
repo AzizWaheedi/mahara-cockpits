@@ -247,8 +247,10 @@ describe("live.take: one offer, many presses", () => {
   test("Take, its retry and the sweep's replay of live.claimed at once (the take crashed after the claim): one room", async () => {
     const w = setup({ live: { enabled: true } });
     const id = w.offer([CLOSER]);
-    // The first take's room insert fails (a database blip): the claim stands, live.claimed is released for the replay.
-    w.db.faults.push({ prefix: "cockpit_sales_rooms", method: "POST", error: new Error("database: no answer within 8 s"), times: 1 });
+    // The first take fails right after the claim (a database blip on its first
+    // read of the room the claim reserved; before 20261003d, on the room's
+    // insert): the claim stands, live.claimed is released for the replay.
+    w.db.faults.push({ prefix: "cockpit_sales_rooms?request_id", method: "GET", error: new Error("database: no answer within 8 s"), times: 1 });
     await settle([w.rooms.actions["live.take"]!(closer, { live_id: id, request_id: crypto.randomUUID() })]);
     const ev = w.db.t("cockpit_sales_room_events").find(e => e.kind === "live.claimed") as Row;
     expect(ev.handled_at ?? null).toBeNull();

@@ -50,6 +50,7 @@ import {
   meetPendingExpired,
   newRoomRow,
   nextDueAt,
+  noShowDoubt,
   panelLine,
   PENDING_HOLD_MAX_S,
   parseCode,
@@ -596,7 +597,7 @@ describe("who may press, and stale buttons", () => {
   test("every write carries a compare-and-set guard: the state, the version on a move, and each old value", () => {
     const r = opened();
     const c = ok(apply(r, { kind: "lead_in", source: "zoom" }, T0 + MIN));
-    expect(c.expect).toEqual({ state: "open", version: r.version, lead_in_at: null, ends_at: r.ends_at });
+    expect(c.expect).toEqual({ state: "open", version: r.version, lead_in_at: null, lead_in_seen_at: null, ends_at: r.ends_at });
     expect(c.patch.version).toBe(r.version + 1);
   });
 });
@@ -742,9 +743,13 @@ describe("small timing rules", () => {
 
   test("an expired booked intro with no mark becomes a no-show at start + 20 minutes; no booking, nothing", () => {
     const start = T0;
-    const exp = { ...opened({ appointment_id: "a1" }), state: "expired" as RoomState };
+    // The link went (link_sent_at): a link that never reached the lead is no evidence (round 3).
+    const exp = { ...opened({ appointment_id: "a1" }), state: "expired" as RoomState, link_sent_at: at(T0 + 6 * S) };
     // Evidence that nobody came: the short link went and was never opened (Meet sends no join signal).
     const seen = { short_link: true };
+    // The link never reached the lead: the timer leaves the intro to a person.
+    expect(settleDue({ ...exp, link_sent_at: null }, at(start), false, start + 1200 * S, W, seen)).toBe(false);
+    expect(noShowDoubt({ ...exp, link_sent_at: null }, seen)).toBe("the link never reached the lead");
     expect(settleDue(exp, at(start), false, start + 1199 * S, W, seen)).toBe(false);
     expect(settleDue(exp, at(start), false, start + 1200 * S, W, seen)).toBe(true);
     // Without that evidence a Meet room never settles itself: a person marks the intro.
@@ -1145,7 +1150,10 @@ describe("countLive", () => {
       status: "confirmed",
       kind: "intro" as const,
     };
-    const p = count({ upcoming: up });
+    // Another rep's call ahead is never moved to this host (round 3): refused like the mark path.
+    expect(count({ upcoming: up })).toMatchObject({ action: "none", reason: "booked_other_rep", count_result: "failed" });
+    // The host's own call ahead (or a manager's room: upcoming_mine) is moved to now.
+    const p = count({ upcoming: up, upcoming_mine: true });
     if (p.action !== "move") throw new Error(p.action);
     expect(p.appointment_id).toBe("UP1");
     expect(p.from_start).toBe("2026-10-08T07:00:00.000Z");
@@ -1728,7 +1736,7 @@ describe("10,000 random event sequences", () => {
           if (a.changed) {
             expect(["not_lead", "lead_in"]).toContain(e.kind);
             expect([after.state, after.version]).toEqual([before.state, before.version]);
-            const keys = e.kind === "lead_in" ? ["lead_in_at", "result"] : ["count_undo_at", "count_result", "result"];
+            const keys = e.kind === "lead_in" ? ["lead_in_at", "lead_in_seen_at", "result"] : ["count_undo_at", "count_result", "result"];
             expect(Object.keys(a.patch).every(k => keys.includes(k))).toBe(true);
             if (e.kind === "not_lead") finalUndos++;
           } else expect(after).toBe(before);

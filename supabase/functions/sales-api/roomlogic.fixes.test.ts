@@ -618,7 +618,7 @@ describe("#14 a test contact's booked call", () => {
   test("a real lead's booked intro is still marked; upcoming() needs no kind of its own", () => {
     const real = countLive({ room: joined({ appointment_id: "APPT" }), setting: COUNT_ON, contact: LEAD, upcoming: null, host_ghl_user_id: "G", location_id: "L", link: null });
     expect(real.action).toBe("mark");
-    const moved = countLive({ room: joined({}), setting: COUNT_ON, contact: LEAD, upcoming: { id: "UP", start: T0 + 86_400_000, end: T0 + 86_400_000 + 1_800_000, assigned_user_id: "G-REP" }, host_ghl_user_id: "G", location_id: "L", link: null });
+    const moved = countLive({ room: joined({}), setting: COUNT_ON, contact: LEAD, upcoming: { id: "UP", start: T0 + 86_400_000, end: T0 + 86_400_000 + 1_800_000, assigned_user_id: "G" }, host_ghl_user_id: "G", location_id: "L", link: null });
     expect(moved.action).toBe("move");
   });
 });

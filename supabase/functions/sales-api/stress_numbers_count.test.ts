@@ -115,7 +115,8 @@ function setup(o: Opts = {}) {
       const u = knobs.upcoming;
       if (u instanceof Error) throw u;
       // As index.ts upcoming() reads it from HighLevel: the call's end, its rep and its status too.
-      return u ? { end: u.start + 30 * MIN, assigned_user_id: "G-closer", status: "confirmed", ...u } : u;
+      // The setter's own call (round 3: another rep's call ahead is never moved to the host).
+      return u ? { end: u.start + 30 * MIN, assigned_user_id: "G-setter", status: "confirmed", ...u } : u;
     },
   };
   const rooms = makeRooms(deps);
@@ -272,7 +273,7 @@ describe("a booking the count made is never lost (so the undo can always take it
     await w.mark(id, "lead_in");
     expect(w.room(id).count_result).toBe("moved");
     const forward = w.ghlCalls.find(c => c.method === "PUT" && (c.body as Row).startTime) as { body: Row };
-    expect(forward.body.assignedUserId).toBe("G-setter"); // the move gives the call to the host
+    expect(forward.body.assignedUserId).toBe("G-setter"); // the host's own call stays theirs
     await w.mark(id, "not_lead");
     const back = w.ghlCalls.filter(c => c.method === "PUT" && (c.body as Row).startTime === new Date(tomorrow).toISOString()).at(-1) as { body: Row };
     expect(back).toBeTruthy();

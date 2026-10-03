@@ -418,13 +418,25 @@ async function markAppointment(
   return result;
 }
 
+/**
+ * A mark whose HighLevel write was cut off half way (the function stopped
+ * between the cockpit's row and HighLevel's answer): "pending" long after a
+ * write takes (HighLevel's 25 s, the row's own write), so it is sent again.
+ */
+const CRM_PENDING_STUCK_MS = 120_000;
+function crmStuck(current: Row): boolean {
+  if (current.crm === "failed") return true;
+  const at = Date.parse(String(current.marked_at ?? ""));
+  return current.crm === "pending" && !current.crm_at && Number.isFinite(at) && Date.now() - at >= CRM_PENDING_STUCK_MS;
+}
+
 async function markRetry(who: Who, b: Row) {
   const id = cleanText(b.appointment_id, 80);
   const current = (await svc(
     `cockpit_sales_dispositions?appointment_id=eq.${enc(id)}&superseded_at=is.null&select=*`,
   ))[0];
   if (!current) throw new Refusal("That call has no mark to send.", 404);
-  if (current.crm !== "failed")
+  if (!crmStuck(current))
     throw new Refusal("That mark is not waiting to be sent to HighLevel.");
   if (!who.manager && current.marked_by !== who.email)
     throw new Refusal("Only the rep who marked it or a manager can send it again.", 403);
@@ -446,6 +458,36 @@ async function markRetry(who: Who, b: Row) {
   const out = await writeMarkToCrm(Number(current.id), id, String(current.status), decision === "write");
   await audit(who, "mark.retry", "cockpit_sales_dispositions", id, current, out);
   return { mark: { ...current, ...out } };
+}
+
+/**
+ * The settle's own no-show sent to HighLevel again, quietly (rooms.ts
+ * resendMark): only a mark HighLevel refused (crm failed) or whose write was
+ * cut off ("pending" past CRM_PENDING_STUCK_MS). Any other mark is answered
+ * as it stands.
+ */
+async function resendMark(who: Who, id: string): Promise<Row> {
+  const current = (await svc(
+    `cockpit_sales_dispositions?appointment_id=eq.${enc(id)}&superseded_at=is.null&select=*`,
+  ))[0];
+  if (!current) throw new Refusal("That call has no mark to send.", 404);
+  if (!crmStuck(current)) return current;
+  const appt = (await svc(`cockpit_sales_appointments?appointment_id=eq.${enc(id)}&select=*`))[0] as unknown as
+    | Appointment
+    | undefined;
+  const decision = appt ? crmDecision(await setting<CrmSettings>("crm_writes"), appt, Date.now()) : "skipped";
+  if (decision === "off" || decision === "skipped") {
+    await svc(`cockpit_sales_dispositions?id=eq.${current.id}`, {
+      method: "PATCH",
+      body: { crm: decision, crm_error: null, crm_at: new Date().toISOString() },
+      prefer: "return=minimal",
+    });
+    await audit(who, "mark.resend", "cockpit_sales_dispositions", id, current, { crm: decision });
+    return { ...current, crm: decision, crm_error: null };
+  }
+  const out = await writeMarkToCrm(Number(current.id), id, String(current.status), false);
+  await audit(who, "mark.resend", "cockpit_sales_dispositions", id, current, out, { quiet: true });
+  return { ...current, ...out };
 }
 
 // ---------------------------------------------------------------------------
@@ -1032,7 +1074,9 @@ async function convoSend(who: Who, b: Row, opts: SendOpts = {}) {
     }).catch(x => console.error("message state", redact(String(x))));
     await audit(who, "convo.send", "cockpit_sales_messages", String(row.id), null, { channel, state: unclear ? "unclear" : "failed", error: err });
     if (unclear) throw new Refusal(`${MAY_HAVE_GONE} (${err})`, 502, { unclear: true });
-    throw new Refusal(`HighLevel did not send it: ${err}`, 502);
+    // HighLevel answered and refused it (a 4xx such as 429): certainly not
+    // sent, so a caller may try again later on a fresh request id.
+    throw new Refusal(`HighLevel did not send it: ${err}`, 502, { certain: true });
   }
   const messageId = String(out.messageId ?? "");
   let status = String(out.status ?? "pending");
@@ -1118,10 +1162,16 @@ async function whatsappHealth(
 ): Promise<{ paused: boolean; why: string; sent: number; failed: number }> {
   // One source's own window (whatsapp_guard.health.{source}, C27): a bad run
   // of room links never pauses follow-ups, and the other way round.
+  // Bounded in time as the page's line is (the last day), and from a
+  // manager's "Clear the pause" (whatsapp_guard.health_cleared_at): an outage
+  // that ended never holds a source for good when nothing has gone since.
   if (o.source) {
-    const cfg = healthCfg(await setting<Row>("whatsapp_guard"), o.source);
+    const guardRaw = (await setting<Row>("whatsapp_guard")) ?? {};
+    const cfg = healthCfg(guardRaw, o.source);
+    const cleared = Date.parse(String(guardRaw.health_cleared_at ?? ""));
+    const floor = Math.max(Date.now() - 86_400_000, Number.isFinite(cleared) ? cleared : 0);
     const rows = await svc(
-      `cockpit_sales_messages?channel=eq.whatsapp&source=eq.${enc(o.source)}&state=in.(sent,delivered,read,failed)&select=state,error&order=created_at.desc&limit=${cfg.window}`,
+      `cockpit_sales_messages?channel=eq.whatsapp&source=eq.${enc(o.source)}&state=in.(sent,delivered,read,failed)&created_at=gte.${enc(new Date(floor).toISOString())}&select=state,error&order=created_at.desc&limit=${cfg.window}`,
     );
     return sourceHealth(rows, cfg, o.source);
   }
@@ -1278,6 +1328,7 @@ async function whatsappSentSince(
   contactId: string,
   since: number,
   text?: string | null,
+  o: { went?: boolean } = {},
 ): Promise<{ hit: ThreadMessage | null; seen: ThreadMessage[] }> {
   const convs = (((await ghl("GET", `/conversations/search?locationId=${LOCATION}&contactId=${enc(contactId)}&limit=5`)) as Row)
     .conversations ?? []) as Row[];
@@ -1287,7 +1338,7 @@ async function whatsappSentSince(
     const inner = ((m as Row).messages ?? {}) as Row;
     const list = toThread(Array.isArray(inner.messages) ? inner.messages : (m as Row).messages, String(cv.id));
     seen.push(...list);
-    const hit = matchSent(list, since, text);
+    const hit = matchSent(list, since, text, o);
     if (hit) return { hit, seen };
   }
   return { hit: null, seen };
@@ -1493,11 +1544,15 @@ async function sendTemplate(
     }
   }
 
-  const fail = async (e: unknown) => {
+  // `enrolling`: the failure came from the workflow enrolment itself. Only
+  // that call can send the template, so only its timeout, 5xx or lost answer
+  // may have sent it; a failure before it (the contact field write) is
+  // certain: nothing went.
+  const fail = async (e: unknown, enrolling: boolean) => {
     const err = redact(String((e as Error)?.message ?? e));
-    // A timeout, a 5xx or a dropped connection: the enrolment may have
+    // A timeout, a 5xx or a dropped connection on the enrolment: it may have
     // happened, so the template may go. Never "failed" then (C29).
-    const unclear = unclearError(e);
+    const unclear = enrolling && unclearError(e);
     await svc(`cockpit_sales_messages?id=eq.${row.id}`, {
       method: "PATCH",
       body: { state: unclear ? "unclear" : "failed", error: err, updated_at: new Date().toISOString() },
@@ -1505,7 +1560,7 @@ async function sendTemplate(
     }).catch(x => console.error("template state", redact(String(x))));
     await audit(who, "wa.template", "cockpit_sales_messages", String(row.id), null, { template: route.key, state: unclear ? "unclear" : "failed", error: err });
     if (unclear) throw new Refusal(`${MAY_HAVE_GONE} (${err})`, 502, { unclear: true });
-    throw new Refusal(`HighLevel did not send it: ${err}`, 502);
+    throw new Refusal(`HighLevel did not send it: ${err}`, 502, { certain: true });
   };
   const customFields = [
     ...(needsLine ? [{ id: fields.line?.id, field_value: line }] : []),
@@ -1513,13 +1568,17 @@ async function sendTemplate(
     ...(button ? [{ id: fields.join?.id, field_value: button }] : []),
     ...(callTime ? [{ id: fields.when?.id, field_value: callTime }] : []),
   ];
-  const startedAt = Date.now();
   try {
     if (customFields.length) await ghl("PUT", `/contacts/${enc(o.contactId)}`, { customFields }, "2021-07-28");
+  } catch (e) {
+    return await fail(e, false);
+  }
+  const startedAt = Date.now();
+  try {
     await ghl("POST", `/contacts/${enc(o.contactId)}/workflow/${enc(String(route.workflow_id))}`,
       { eventStartTime: new Date(startedAt).toISOString() }, "2021-07-28");
   } catch (e) {
-    return await fail(e);
+    return await fail(e, true);
   }
   // Read it back: the workflow sends within seconds, and Meta decides after.
   // Only a message with these words counts (C29).
@@ -5359,12 +5418,17 @@ const rooms = makeRooms({
   io: liveio,
   audit,
   markAppointment: (who, id, status, opts) => markAppointment(who, id, status, opts),
+  resendMark: (who, id) => resendMark(who, id),
   sendText: (who, b, opts) => convoSend(who, { ...b, followup_id: undefined }, opts) as Promise<{ message: Row; repeated?: boolean }>,
   sendTemplate: (who, o) => sendTemplate(who, o) as Promise<{ message: Row; repeated?: boolean }>,
   upcoming: (contactId, kind) => upcoming(contactId, kind),
+  // "Did this link go?" after its answer was lost: only a message with the
+  // send's own words that reached the lead counts (never a failed one, never
+  // any other WhatsApp to the lead), and with no words known nothing counts.
   sentSince: async (contactId, since, text) => {
+    if (!text) return null;
     try {
-      return Boolean((await whatsappSentSince(contactId, since, text)).hit);
+      return Boolean((await whatsappSentSince(contactId, since, text, { went: true })).hit);
     } catch {
       return null;
     }

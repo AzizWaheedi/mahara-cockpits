@@ -574,6 +574,10 @@ describe("defect 2: booked intros are settled as no-shows (room.event sweep.sett
         made_by: SETTER,
         appointment_id: "appt-1",
         appointment_start_at: new Date(start).toISOString(),
+        // Asked for at the intro's time, and its link went (round 3: a room
+        // outside the intro's window, or whose link never went, is no evidence).
+        requested_at: new Date(start - 2 * MIN).toISOString(),
+        link_sent_at: new Date(start - MIN).toISOString(),
         state: "expired",
         result: "no_join",
         ended_at: w.db.iso(),
@@ -1032,5 +1036,12 @@ describe("not built yet, switched off", () => {
     expect(await w.rooms.desk["thread.tick"]!(desk, {})).toMatchObject({ handled: false });
     expect(await w.rooms.desk["reply.seen"]!(desk, {})).toMatchObject({ handled: false });
     expect(w.rooms.cron).toEqual(["room.event", "live.press", "thread.tick", "reply.seen"]);
+  });
+});
+
+describe("the handover room the claim reserves (20261003d, fix round 3)", () => {
+  test("a re-offer's request id is the one the claim works out in SQL (pinned in the rooms checks, D)", async () => {
+    const { uuidFrom } = await import("./liveio.ts");
+    expect(await uuidFrom("mahara-live/00000000-0000-4000-8000-00000000d014/1")).toBe("5f3c75fe-140c-544a-85d2-1c2fe98ad064");
   });
 });
