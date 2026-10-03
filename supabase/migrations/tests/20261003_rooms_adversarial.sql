@@ -7,6 +7,9 @@
 -- always carries its deadlines (helper, X6, X6b), room_ready needs its room
 -- (X7), and presence is service role only (X11).
 --
+-- X16 to X22 were added in the integration pass (contract-v2.md section 2):
+-- each failed on the merged branch before its fix.
+--
 -- Run ONLY inside a transaction that is rolled back, after the three
 -- migrations, through run_adversarial.py (same safety as run_checks.py:
 -- one transaction, lock_timeout 5 s, rollback, leftovers query after).
@@ -193,6 +196,10 @@ begin
   l := pg_temp.live('lc-test-x5', array['lc-test-x5t@example.invalid', 'lc-test-x5u@example.invalid']);
   select * into got from public.cockpit_sales_live_claim(l, 'lc-test-x5t@example.invalid');
   perform pg_temp.ck('X5 setup: first taker adopted their room', got.room_id = r1 and got.state = 'room_ready', got.state);
+  -- sales-api finished the Take (integration pass: an unhandled live.claimed
+  -- event holds the room's timers for at most 5 minutes).
+  update public.cockpit_sales_room_events set handled_at = now(), lease_until = null
+   where dedupe_key = 'live.claimed:' || l::text || ':0';
   update public.cockpit_sales_rooms set link_sent_at = now() where id = r1;   -- the link went to the lead
   update public.cockpit_sales_rooms set state = 'open' where id = r1;          -- the taker left
   update public.cockpit_sales_rooms set host_by = now() - interval '1 second' where id = r1;
@@ -445,6 +452,215 @@ begin
   perform pg_temp.ck('X15 a mixed-case email in declined_by is refused, as in offered_to (23514)', got like '23514%', got);
 exception when others then
   perform pg_temp.ck('X15 section crashed', false, sqlstate || ': ' || sqlerrm);
+end;
+$$;
+
+-- Integration pass (contract-v2.md section 2, the defects found at merge
+-- that no lane's own tests spanned). Each states what the other lanes do.
+
+-- X16. The door writes open_device phone, tablet or computer (door.ts
+-- OPEN_DEVICES), and roomlogic.ts reads the same three.
+do $$
+declare
+  r uuid; got text;
+begin
+  r := pg_temp.room('lc-test-x16', 'lc-test-x16h@example.invalid', 'fallback', 'open');
+  got := pg_temp.errm(format($q$update public.cockpit_sales_rooms set first_open_at = now(), open_device = 'computer'
+                                 where id = %L and first_open_at is null$q$, r));
+  perform pg_temp.ck('X16 a computer''s first open is written with its device', got = 'none'
+    and (select open_device = 'computer' and version = 1 from public.cockpit_sales_rooms where id = r), got);
+  got := pg_temp.errm(format($q$update public.cockpit_sales_rooms set open_device = 'phone' where id = %L$q$, r));
+  perform pg_temp.ck('X16b a later open from another device keeps the first device read',
+    got = 'none' and (select open_device = 'computer' from public.cockpit_sales_rooms where id = r), got);
+  r := pg_temp.room('lc-test-x16c', 'lc-test-x16h2@example.invalid', 'fallback', 'open');
+  got := pg_temp.errm(format($q$update public.cockpit_sales_rooms set open_device = 'desktop' where id = %L$q$, r));
+  perform pg_temp.ck('X16c a device name outside the three is refused, never stored', got like '23514%', got);
+exception when others then
+  perform pg_temp.ck('X16 section crashed', false, sqlstate || ': ' || sqlerrm);
+end;
+$$;
+
+-- X17. Columns other lanes write: roomlogic.ts (link_claimed_at,
+-- count_undo_at), the message service (link_unconfirmed_at), and the desk
+-- (wave, member and meta columns, member state closed).
+do $$
+declare
+  r uuid; w uuid; f uuid; got text;
+begin
+  r := pg_temp.room('lc-test-x17', 'lc-test-x17h@example.invalid', 'fallback', 'host_in');
+  got := pg_temp.errm(format($q$update public.cockpit_sales_rooms set link_claimed_at = now() where id = %L and link_claimed_at is null$q$, r));
+  perform pg_temp.ck('X17 sales-api claims the link (link_claimed_at) in a guarded write', got = 'none', got);
+  got := pg_temp.errm(format($q$update public.cockpit_sales_rooms set link_unconfirmed_at = now(), count_undo_at = now() where id = %L$q$, r));
+  perform pg_temp.ck('X17b link_unconfirmed_at and count_undo_at are columns', got = 'none', got);
+  insert into public.cockpit_sales_followup_waves (pool, state, made_by) values ('never_booked', 'running', 'lc-test') returning id into w;
+  got := pg_temp.errm(format($q$update public.cockpit_sales_followup_waves set enrolled_at = now(), done_reason = 'x', settled_at = null
+                                 where id = %L$q$, w));
+  perform pg_temp.ck('X17c the desk''s wave columns (enrolled_at, done_reason, settled_at)', got = 'none', got);
+  insert into public.cockpit_sales_followup_wave_members (wave_id, contact_id, arm, state) values (w, 'lc-test-x17m', 'wave', 'waiting');
+  got := pg_temp.errm(format($q$update public.cockpit_sales_followup_wave_members
+                                 set next_try_at = now(), later_reason = 'x', fail_count = 1, last_error = 'x', due_at = now(),
+                                     replied_at = now(), booked_at = now(), closed_at = now()
+                                 where wave_id = %L$q$, w));
+  perform pg_temp.ck('X17d the desk''s member columns', got = 'none', got);
+  got := pg_temp.errm(format($q$update public.cockpit_sales_followup_wave_members set state = 'closed' where wave_id = %L$q$, w));
+  perform pg_temp.ck('X17e the desk''s 14-day close (member state closed)', got = 'none', got);
+  insert into public.cockpit_sales_followups (contact_id, segment, channel, body, why)
+    values ('lc-test-x17f', 'reactivate', 'whatsapp_template', 'Hi.', 'Test.') returning id into f;
+  insert into public.cockpit_sales_followup_meta (followup_id, kind_key, wave_id) values (f, 'reactivate.en.whatsapp_template', w);
+  got := pg_temp.errm(format($q$update public.cockpit_sales_followup_meta set send_after = null, held_by = 'sales-desk', held_at = now(),
+                                 hold_reason = 'x' where followup_id = %L and held_by is null$q$, f));
+  perform pg_temp.ck('X17f the desk sets a refused opener aside (hold_reason)', got = 'none', got);
+exception when others then
+  perform pg_temp.ck('X17 section crashed', false, sqlstate || ': ' || sqlerrm);
+end;
+$$;
+
+-- X18. A lead who reopens the link every 2 minutes cannot hold a room until
+-- the backstop: the open grace stops at the link + lead + open_grace.
+do $$
+declare
+  r uuid; s jsonb;
+begin
+  r := pg_temp.room('lc-test-x18', 'lc-test-x18h@example.invalid', 'fallback', 'host_in');
+  update public.cockpit_sales_rooms
+     set link_sent_at = now() - interval '25 minutes', first_open_at = now() - interval '24 minutes',
+         last_open_at = now() - interval '2 minutes', lead_by = now() - interval '12 minutes'
+   where id = r;
+  s := public.cockpit_sales_rooms_sweep();
+  perform pg_temp.ck('X18 a lead reopening the link 25 minutes on: the room closes (no join), not held for 30 minutes more',
+    (select state = 'expired' and result = 'no_join' from public.cockpit_sales_rooms where id = r),
+    (select state || ' ' || coalesce(end_reason, '') from public.cockpit_sales_rooms where id = r));
+exception when others then
+  perform pg_temp.ck('X18 section crashed', false, sqlstate || ': ' || sqlerrm);
+end;
+$$;
+
+-- X19. A knock the door stored but could not forward: the sweep replays it,
+-- and holds the room's timer meanwhile (at most 300 s past due), so the lead
+-- is not closed out while their knock is on its way.
+do $$
+declare
+  r uuid; e uuid; s jsonb;
+begin
+  r := pg_temp.room('lc-test-x19', 'lc-test-x19h@example.invalid', 'fallback', 'host_in');
+  update public.cockpit_sales_rooms set lead_by = now() - interval '1 minute' where id = r;
+  insert into public.cockpit_sales_room_events (room_id, kind, source, dedupe_key, at)
+    values (r, 'zoom.meeting.participant_joined_waiting_room', 'zoom', 'lc-test-x19-knock', now() - interval '40 seconds')
+    returning id into e;
+  s := public.cockpit_sales_rooms_sweep();
+  perform pg_temp.ck('X19 the unforwarded knock is replayed to room.event',
+    (s -> 'replay') ? e::text, (s -> 'replay')::text);
+  perform pg_temp.ck('X19b and the room is not closed while it waits',
+    (select state = 'host_in' from public.cockpit_sales_rooms where id = r),
+    (select state || ' ' || coalesce(end_reason, '') from public.cockpit_sales_rooms where id = r));
+  update public.cockpit_sales_rooms set lead_by = now() - interval '6 minutes' where id = r;
+  s := public.cockpit_sales_rooms_sweep();
+  perform pg_temp.ck('X19c the hold ends 300 s past due: the room closes even if room.event never handles it',
+    (select state = 'expired' from public.cockpit_sales_rooms where id = r),
+    (select state from public.cockpit_sales_rooms where id = r));
+exception when others then
+  perform pg_temp.ck('X19 section crashed', false, sqlstate || ': ' || sqlerrm);
+end;
+$$;
+
+-- X20. The settle path reaches the cron door in a body it passes on
+-- (sales-live cron.ts: room.event sweep.settle or tick, 1 to 50 room ids),
+-- for the room roomlogic.ts settleDue settles: the setter's fallback room for
+-- a booked intro, never a booked room.
+do $$
+declare
+  fb uuid; bk uuid; r jsonb; max_id bigint; made boolean := false;
+begin
+  update public.cockpit_sales_room_events set handled_at = now() where handled_at is null;
+  update public.cockpit_sales_rooms set state = 'cancelled' where state in ('requested', 'creating', 'open', 'host_in', 'lead_in');
+  update public.cockpit_sales_rooms set lead_in_at = lead_in_at - interval '2 hours' where lead_in_at > now() - interval '1 hour';
+  update public.cockpit_sales_rooms set count_undo_at = count_undo_at - interval '2 hours' where count_undo_at > now() - interval '1 hour';
+  if not exists (select 1 from vault.secrets where name = 'cockpit_sync_secret') then
+    perform vault.create_secret('lc-test-not-a-real-secret', 'cockpit_sync_secret', 'lc-db test, rolled back');
+    made := true;
+  end if;
+  insert into public.cockpit_sales_appointments (appointment_id, contact_id, call_type, status, assigned_user_id, start_at, origin) values
+    ('lc-test-appt-x20a', 'lc-test-x20a', 'intro', 'confirmed', 'lc-test-ghl-x20a', now() - interval '25 minutes', 'ghl'),
+    ('lc-test-appt-x20b', 'lc-test-x20b', 'intro', 'confirmed', 'lc-test-ghl-x20b', now() - interval '25 minutes', 'ghl');
+  fb := pg_temp.room('lc-test-x20a', 'lc-test-x20ah@example.invalid', 'fallback', 'open');
+  update public.cockpit_sales_rooms set appointment_id = 'lc-test-appt-x20a', host_by = now() - interval '1 minute' where id = fb;
+  bk := pg_temp.room('lc-test-x20b', 'lc-test-x20bh@example.invalid', 'booked', 'open', 'intro', 'lc-test-appt-x20b');
+  update public.cockpit_sales_rooms set host_by = now() - interval '1 minute' where id = bk;
+  select coalesce(max(q.id), 0) into max_id from net.http_request_queue as q;
+  r := public.cockpit_sales_rooms_tick();
+  perform pg_temp.ck('X20 the fallback room for a booked intro is posted as room.event sweep.settle with its room id only',
+    exists (select 1 from net.http_request_queue as q
+             where q.id > max_id and q.url = 'https://bldgtotkfmhoxmlzowdx.supabase.co/functions/v1/sales-live/cron'
+               and convert_from(q.body, 'utf8')::jsonb = jsonb_build_object('action', 'room.event', 'kind', 'sweep.settle',
+                     'payload', jsonb_build_object('room_ids', to_jsonb(array[fb::text])))),
+    r::text);
+  perform pg_temp.ck('X20b a booked room is never posted to settle (roomlogic.ts settleDue refuses it)',
+    not exists (select 1 from public.cockpit_sales_room_events where dedupe_key = 'sweep.settle:' || bk::text));
+  perform pg_temp.ck('X20c every body the tick posts is one the cron door forwards (room.event: sweep.replay, sweep.settle or tick; 1 to 50 ids)',
+    (select bool_and(b ->> 'action' = 'room.event'
+                     and b ->> 'kind' in ('sweep.replay', 'sweep.settle', 'tick')
+                     and jsonb_array_length(coalesce(b #> '{payload,room_ids}', b #> '{payload,event_ids}')) between 1 and 50)
+       from (select convert_from(q.body, 'utf8')::jsonb as b from net.http_request_queue as q
+              where q.id > max_id and q.url = 'https://bldgtotkfmhoxmlzowdx.supabase.co/functions/v1/sales-live/cron') as x),
+    case when made then 'a test secret was made for this run' end);
+exception when others then
+  perform pg_temp.ck('X20 section crashed', false, sqlstate || ': ' || sqlerrm);
+end;
+$$;
+
+-- X21. Presence agrees with roomlogic.ts presenceOf and defaultProvider
+-- (contract-v2 S5), the three cases where the two disagreed at merge.
+do $$
+declare
+  rooms_v jsonb;
+begin
+  insert into public.cockpit_sales_people (email, name, role, active) values
+    ('lc-test-x21a@example.invalid', 'Test', 'closer', true),
+    ('lc-test-x21b@example.invalid', 'Test', 'closer', true),
+    ('lc-test-x21c@example.invalid', 'Test', 'setter', true),
+    ('lc-test-x21d@example.invalid', 'Test', 'closer', true);
+  insert into public.cockpit_sales_availability (email, state, until) values
+    ('lc-test-x21a@example.invalid', 'available', now() - interval '1 minute'),
+    ('lc-test-x21b@example.invalid', 'available', now() + interval '1 hour');
+  perform pg_temp.room(null, 'lc-test-x21a@example.invalid', 'standby', 'host_in', 'demo');
+  perform pg_temp.room(null, 'lc-test-x21b@example.invalid', 'standby', 'host_in', 'demo');
+  insert into public.cockpit_sales_room_hosts (email, zoom_live_until, zoom_status, google_ok)
+    values ('lc-test-x21b@example.invalid', now() + interval '10 minutes', 'licensed', true),
+           ('lc-test-x21d@example.invalid', null, 'pending', true);
+  perform pg_temp.room('lc-test-x21c-lead', 'lc-test-x21c@example.invalid', 'fallback', 'open');
+  perform pg_temp.ck('X21 a closer still in the standby room after Available ran out is not ready (no offers)',
+    (select state = 'away' from public.cockpit_sales_presence where email = 'lc-test-x21a@example.invalid'));
+  perform pg_temp.ck('X21b the host''s own open Zoom room is not "a live Zoom meeting": still ready',
+    (select state = 'ready' from public.cockpit_sales_presence where email = 'lc-test-x21b@example.invalid'));
+  perform pg_temp.ck('X21c a host whose room waits for its lead is on_call',
+    (select state = 'on_call' from public.cockpit_sales_presence where email = 'lc-test-x21c@example.invalid'));
+  select value into rooms_v from public.cockpit_sales_settings where key = 'rooms';
+  update public.cockpit_sales_settings set value = jsonb_set(value, '{providers}', '{"zoom": true, "meet": true}') where key = 'rooms';
+  perform pg_temp.ck('X21d a closer with a pending Zoom seat is offered Meet by default',
+    (select default_provider = 'meet' from public.cockpit_sales_presence where email = 'lc-test-x21d@example.invalid'));
+  update public.cockpit_sales_settings set value = rooms_v where key = 'rooms';
+exception when others then
+  perform pg_temp.ck('X21 section crashed', false, sqlstate || ': ' || sqlerrm);
+end;
+$$;
+
+-- X22. A wave a manager stops keeps its held-back members for the desk, so
+-- the wave-versus-holdout comparison is not left with an empty holdout.
+do $$
+declare
+  w uuid;
+begin
+  insert into public.cockpit_sales_followup_waves (pool, state, made_by) values ('good_intro', 'running', 'lc-test') returning id into w;
+  insert into public.cockpit_sales_followup_wave_members (wave_id, contact_id, arm, state, due_at) values
+    (w, 'lc-test-x22a', 'holdout', 'held_out', now() - interval '1 day'),
+    (w, 'lc-test-x22b', 'wave', 'drafted', null);
+  update public.cockpit_sales_followup_waves set state = 'done', done_reason = 'Stopped by a manager.' where id = w;
+  perform pg_temp.ck('X22 the held-back member whose 14 days started is still watched (held_out), not closed by the database',
+    (select state = 'held_out' from public.cockpit_sales_followup_wave_members where wave_id = w and contact_id = 'lc-test-x22a'));
+  perform pg_temp.ck('X22b a drafted member stays drafted, so the desk finds and takes back its open opener',
+    (select state = 'drafted' from public.cockpit_sales_followup_wave_members where wave_id = w and contact_id = 'lc-test-x22b'));
+exception when others then
+  perform pg_temp.ck('X22 section crashed', false, sqlstate || ': ' || sqlerrm);
 end;
 $$;
 

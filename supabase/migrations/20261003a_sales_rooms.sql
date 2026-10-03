@@ -45,6 +45,17 @@
 -- sales-api, the worker and these functions write (service role). Copies the
 -- pattern of 20261002e_sales_client_forms.sql.
 --
+-- Integration pass (contract-v2.md, 2026-10-03): link_claimed_at,
+-- count_undo_at and link_unconfirmed_at; open_device phone, tablet or
+-- computer (null: not known); the door's open columns never move the version
+-- and never go back; the provider_meeting_id index; the sweep owns every
+-- timer and holds them while a Zoom, worker or claim event for the room waits
+-- (at most 5 minutes past due), caps the open grace, settles a fallback room
+-- for a booked intro (roomlogic.ts settleDue), and the tick asks room.event
+-- to re-check rooms with a lead (kind tick); presence follows roomlogic.ts
+-- presenceOf and defaultProvider (tests/presence_fixtures.json); the
+-- watchdog watches the room host check and the five sales-live routes.
+--
 -- Checks for this migration: supabase/migrations/tests/ (run_checks.py runs
 -- them inside a transaction that is rolled back).
 
@@ -143,11 +154,22 @@ create table if not exists public.cockpit_sales_rooms (
   link_channels        text[] not null default '{}'
                          check (link_channels <@ array['whatsapp_text', 'whatsapp_template', 'email']::text[]),
   link_message_ids     jsonb not null default '{}'::jsonb check (jsonb_typeof(link_message_ids) = 'object'),
-  open_device          text check (open_device is null or open_device in ('phone', 'tablet', 'desktop', 'unknown')),
+  -- The one claim on sending the link (roomlogic.ts claimLink), written in
+  -- the same guarded write that asks for it, so the link goes once.
+  link_claimed_at      timestamptz,
+  -- A WhatsApp template not seen within rooms.waits_s.unconfirmed, so email
+  -- went too ("Not confirmed" reads this, never a channel value).
+  link_unconfirmed_at  timestamptz,
+  -- The device of the first counted open: the door's and roomlogic.ts's
+  -- three names, null when it cannot be told.
+  open_device          text check (open_device is null or open_device in ('phone', 'tablet', 'computer')),
   -- The one booking claim (countLive)
   count_claimed_at     timestamptz,
   count_appointment_id text,
   count_result         text check (count_result is null or count_result in ('booked', 'moved', 'not_a_lead', 'failed', 'undone')),
+  -- "That was not the lead" pressed (room.mark not_lead): the count is taken
+  -- back; a join after this time counts again.
+  count_undo_at        timestamptz,
   created_at           timestamptz not null default now(),
   updated_at           timestamptz not null default now(),
   -- A standby room has no lead; every other room has one.
@@ -169,9 +191,19 @@ comment on table public.cockpit_sales_rooms is
 comment on column public.cockpit_sales_rooms.code is
   'Six characters from A-H, J-N, P-Z and 2-9. The short link is https://call.maharamedia.com/{code}. Left out on insert, the guard picks one no room has.';
 comment on column public.cockpit_sales_rooms.appointment_id is
-  'Only the booked call this room wraps (purpose booked). A live booking made by countLive goes in count_appointment_id.';
+  'The booked call this room wraps (purpose booked), or the booked intro a fallback room is for (when it closes with nobody in it, the sweep asks room.event to settle that intro as a no-show at start + rooms.waits_s.settle). A live booking made by countLive goes in count_appointment_id.';
 comment on column public.cockpit_sales_rooms.version is
-  'Goes up by exactly one when the state changes, or when the writer writes a new version (an adoption). Other writes (an open counted, a link sent, a message id) leave it. A button carries the version it saw; a mismatch means "This changed a moment ago."';
+  'Goes up by exactly one when the state changes, or when the writer writes a new version (an adoption). Other writes (an open counted, a link sent or claimed, a message id, a count or its undo) leave it. A button carries the version it saw; a mismatch means "This changed a moment ago."';
+comment on column public.cockpit_sales_rooms.first_open_at is
+  'The first counted open of the short link (the door, sales-live/go). Once written it only ever moves earlier (a late open event), never later and never back to empty.';
+comment on column public.cockpit_sales_rooms.open_device is
+  'phone, tablet or computer: the device of the first counted open (door.ts OPEN_DEVICES, roomlogic.ts DEVICES). Null when it cannot be told. The first one written is kept.';
+comment on column public.cockpit_sales_rooms.link_claimed_at is
+  'When sales-api claimed sending the link (roomlogic.ts claimLink, in the same guarded write that makes it due), so the message service runs once; the tick re-asks a claim that never became link_sent_at.';
+comment on column public.cockpit_sales_rooms.link_unconfirmed_at is
+  'When a WhatsApp template was not seen within rooms.waits_s.unconfirmed and email went too. The panel''s "Not confirmed" reads this.';
+comment on column public.cockpit_sales_rooms.count_undo_at is
+  'When "That was not the lead" took the count back (roomlogic.ts countUndo). A join after this time counts again; the tick re-asks an undo that never landed.';
 comment on column public.cockpit_sales_rooms.end_reason is
   'Why the room is final. The sweep writes request_timeout, create_timeout, host_not_in, lead_no_show, not_admitted, no_deadline, standby_refresh, booked_call_soon, host_away or no_end_signal; the claim writes replaced.';
 comment on column public.cockpit_sales_rooms.last_open_at is
@@ -198,6 +230,10 @@ create index if not exists cockpit_sales_rooms_appointment
   on public.cockpit_sales_rooms (appointment_id) where appointment_id is not null;
 create index if not exists cockpit_sales_rooms_handover
   on public.cockpit_sales_rooms (handover_id) where handover_id is not null;
+-- The door's Zoom lookup: or=(provider_meeting_id.eq.X,code.eq.Y). Not
+-- unique: a booked demo on a personal meeting id can share it.
+create index if not exists cockpit_sales_rooms_provider_meeting
+  on public.cockpit_sales_rooms (provider_meeting_id) where provider_meeting_id is not null;
 
 -- 2. The host link: service role only ----------------------------------------
 
@@ -227,7 +263,7 @@ create table if not exists public.cockpit_sales_room_events (
   detail      jsonb not null default '{}'::jsonb
 );
 comment on table public.cockpit_sales_room_events is
-  'Every room event, once (unique dedupe_key). room_id is null for system events. Work for room.event: an event from zoom, slack, worker or claim with handled_at null; the sweep replays it through sales-live/cron after rooms.waits_s.event_replay seconds, 3 tries at most, then marks it handled with detail.gave_up (the watchdog raises one alert a day for those). A settle event (source settle) is posted as sweep.settle until room.event handles it. Writers of log-only events set handled_at. detail is redacted: no host links, no tokens.';
+  'Every room event, once (unique dedupe_key). room_id is null for system events. Work for room.event: an event from zoom, slack, worker or claim with handled_at null, taken with cockpit_sales_room_event_lease; the sweep replays it through sales-live/cron after rooms.waits_s.event_replay seconds, 3 tries at most, then marks it handled with detail.gave_up (also an event older than a day, with detail.too_old; the watchdog raises one alert a day for those). While a zoom, worker or claim event for a room waits, the sweep holds that room''s timers, at most 5 minutes past due. A settle event (source settle) is posted as sweep.settle until room.event handles it. Writers of log-only events set handled_at. text is a plain sentence for the room''s timeline. detail is redacted: no host links, no tokens.';
 comment on column public.cockpit_sales_room_events.lease_until is
   'Whoever is handling this event right now holds it until this time (cockpit_sales_room_event_lease); the sweep neither replays nor gives up a held event, so two room.event runs never overlap.';
 create index if not exists cockpit_sales_room_events_room
@@ -384,6 +420,20 @@ begin
       new.version := old.version + 1;
     end if;
     new.updated_at := now();
+    -- The open columns, the door's only writes (door.ts OPEN_COLUMNS): the
+    -- first open only ever moves earlier, the last open never moves back,
+    -- and the first device read is kept. A late or repeated open, or 50 at
+    -- once, can never undo one; none of them moves the version, so the lead
+    -- tapping the link never makes a rep's next press "changed a moment ago".
+    if old.first_open_at is not null then
+      new.first_open_at := least(old.first_open_at, coalesce(new.first_open_at, old.first_open_at));
+    end if;
+    if old.last_open_at is not null then
+      new.last_open_at := greatest(old.last_open_at, coalesce(new.last_open_at, old.last_open_at));
+    end if;
+    if old.open_device is not null then
+      new.open_device := old.open_device;
+    end if;
     if new.state is distinct from old.state then
       if old.state = any (finals) then
         raise exception 'Room % has already %. A finished room never changes state.', old.code, old.state
@@ -552,18 +602,39 @@ create trigger cockpit_sales_room_hosts_touch
   for each row execute function public.cockpit_sales_touch_updated();
 
 -- 9. Presence: the first state that applies wins ----------------------------
---   on_call   a room with the lead in it; a handover they hold; a room for a
---             lead they are in (not standby); an open dial (dialing or
---             placed, started in the last 2 hours); an appointment of theirs
---             running now (rooms.booking_min long); or a live Zoom meeting
---   ready     in their own standby room (host_in, no lead)
---   available pressed Available and it has not ended
---   away      anything else
+-- The one source of presence (contract-v2 S5): sales-api reads a seat's row
+-- for live.status and live.availability, and the sweep's re-offer (L3) and
+-- live.ask's offer targets read the same rows, so they agree with the strip.
+-- It follows roomlogic.ts presenceOf and defaultProvider, checked on one
+-- shared fixture set (tests/presence_fixtures.json):
+--   on_call   an open dial (dialing or placed, started in the last 2 hours);
+--             a room of theirs with the lead in it; an appointment of theirs
+--             running now (rooms.booking_min long); a live Zoom meeting that
+--             is not one of their own open Zoom rooms; a room of theirs that
+--             waits for its lead (not a booked room); or, beyond presenceOf,
+--             a handover they hold (for example in the setter's room with the
+--             lead, or while the lead has a booked call open)
+--   away      Available not pressed, or run out
+--   ready     in their own empty standby room (host_in) while Available
+--   available Available and not in a standby room (room_id: their standby
+--             room being made or open, if any)
+-- why is presenceOf's word: dialing, lead_in, appointment, zoom,
+-- room_waiting, handover, away, standby or available. until is set only while
+-- ready or available. default_provider is the host's own choice, else Meet
+-- for a setter and Zoom for a closer (rooms.default_provider); it gives way to
+-- the other provider when the host cannot use theirs (a pending or missing
+-- Zoom seat, no Google connection, or the provider switched off) and can use
+-- the other.
+-- reason: missed_offer or expired (availability.reason, from the sweep's L1
+-- and A1) while Away; booked_call_soon while still Available when their latest
+-- standby room closed for a booked call, with booked_at and booked_kind from
+-- that next call; null otherwise.
 -- Service role only: people is own-row for a seat, so a seat reading this
 -- view would get another rep's role and appointments wrong. sales-api serves
 -- it to the strip through live.status.
 
-create or replace view public.cockpit_sales_presence
+drop view if exists public.cockpit_sales_presence;
+create view public.cockpit_sales_presence
 with (security_invoker = true) as
 with cfg as (
   select coalesce((select s.value from public.cockpit_sales_settings as s where s.key = 'rooms'), '{}'::jsonb) as rooms
@@ -583,21 +654,25 @@ seats as (
 )
 select
   s.email,
-  case
-    when oc.why is not null then 'on_call'
-    when rd.id is not null then 'ready'
-    when av.state = 'available' and av.until > now() then 'available'
-    else 'away'
-  end as state,
-  case when av.state = 'available' and av.until > now() then av.until end as until,
-  coalesce(oc.room_id, rd.id, own.id) as room_id,
+  case when w.why in ('dialing', 'lead_in', 'appointment', 'zoom', 'room_waiting', 'handover') then 'on_call'
+       when w.why = 'standby' then 'ready'
+       when w.why = 'available' then 'available'
+       else 'away' end as state,
+  case when w.why in ('standby', 'available') then av.until end as until,
+  case w.why
+    when 'lead_in' then mr.lead_in_id
+    when 'room_waiting' then mr.waiting_id
+    when 'handover' then ho.room_id
+    when 'standby' then mr.standby_id
+    when 'available' then mr.open_standby_id
+  end as room_id,
   h.zoom_status,
-  coalesce(
-    h.default_provider,
-    case when p.role = 'closer' then cfg.rooms #>> '{default_provider,closer}' else cfg.rooms #>> '{default_provider,setter}' end,
-    case when p.role = 'closer' then 'zoom' else 'meet' end
-  ) as default_provider,
-  oc.why as on_call_why,
+  dp.provider as default_provider,
+  w.why,
+  case when av.state = 'away' and av.reason in ('missed_offer', 'expired') then av.reason
+       when x.avail and lsb.end_reason = 'booked_call_soon' then 'booked_call_soon' end as reason,
+  case when x.avail and lsb.end_reason = 'booked_call_soon' then nb.start_at end as booked_at,
+  case when x.avail and lsb.end_reason = 'booked_call_soon' and nb.call_type in ('intro', 'demo') then nb.call_type end as booked_kind,
   p.role,
   coalesce(av.state, 'away') as availability,
   av.via as availability_via,
@@ -607,58 +682,94 @@ cross join cfg
 left join public.cockpit_sales_people as p on p.email = s.email
 left join public.cockpit_sales_availability as av on av.email = s.email
 left join public.cockpit_sales_room_hosts as h on h.email = s.email
+-- Their rooms that are not final (one that is not booked, at most, by the
+-- one-per-host index; booked rooms beside it).
 left join lateral (
-  select x.why, x.room_id
-    from (
-      select 'room'::text as why, r.id as room_id, 1 as ord
-        from public.cockpit_sales_rooms as r
-       where r.host_email = s.email and r.state = 'lead_in'
-      union all
-      select 'handover'::text, l.room_id, 2
-        from public.cockpit_sales_live as l
-       where l.claimed_by = s.email and l.state in ('claimed', 'room_ready', 'lead_joined')
-      union all
-      select 'room'::text, r.id, 3
-        from public.cockpit_sales_rooms as r
-       where r.host_email = s.email and r.state = 'host_in' and r.purpose <> 'standby'
-      union all
-      select 'attempt'::text, null::uuid, 4
-        from public.cockpit_sales_attempts as a
-       where a.rep_email = s.email and a.state in ('dialing', 'placed') and a.started_at > now() - interval '2 hours'
-      union all
-      select 'appointment'::text, null::uuid, 5
-        from public.cockpit_sales_appointments as ap
-       where p.ghl_user_id is not null
-         and ap.assigned_user_id = p.ghl_user_id
-         and ap.status in ('new', 'confirmed', 'showed')
-         and ap.start_at <= now()
-         and now() < ap.start_at + make_interval(mins => public.cockpit_sales_setting_int(
-               coalesce(cfg.rooms -> 'booking_min', '{}'::jsonb), coalesce(ap.call_type, ''), 30))
-      union all
-      select 'zoom'::text, null::uuid, 6
-       where h.zoom_live_until > now()
-    ) as x
-   order by x.ord
-   limit 1
-) as oc on true
-left join lateral (
-  select r.id
+  select
+    (array_agg(r.id order by r.requested_at desc) filter (where r.state = 'lead_in'))[1] as lead_in_id,
+    (array_agg(r.id order by r.requested_at desc)
+       filter (where r.contact_id is not null and r.purpose <> 'booked' and r.state <> 'lead_in'))[1] as waiting_id,
+    (array_agg(r.id order by r.requested_at desc)
+       filter (where r.purpose = 'standby' and r.contact_id is null and r.state = 'host_in'))[1] as standby_id,
+    (array_agg(r.id order by r.requested_at desc)
+       filter (where r.purpose = 'standby' and r.contact_id is null))[1] as open_standby_id,
+    coalesce(bool_or(r.provider = 'zoom' and r.state in ('open', 'host_in')), false) as own_zoom
     from public.cockpit_sales_rooms as r
-   where r.host_email = s.email and r.purpose = 'standby' and r.state = 'host_in'
+   where r.host_email = s.email and r.state in ('requested', 'creating', 'open', 'host_in', 'lead_in')
+) as mr on true
+left join lateral (
+  select true as held, l.room_id
+    from public.cockpit_sales_live as l
+   where l.claimed_by = s.email and l.state in ('claimed', 'room_ready', 'lead_joined')
+   order by l.claimed_at desc nulls last
+   limit 1
+) as ho on true
+cross join lateral (
+  select
+    exists (select 1 from public.cockpit_sales_attempts as a
+             where a.rep_email = s.email and a.state in ('dialing', 'placed') and a.started_at > now() - interval '2 hours') as dialing,
+    exists (select 1 from public.cockpit_sales_appointments as ap
+             where p.ghl_user_id is not null
+               and ap.assigned_user_id = p.ghl_user_id
+               and ap.status in ('new', 'confirmed', 'showed')
+               and ap.start_at <= now()
+               and now() < ap.start_at + make_interval(mins => public.cockpit_sales_setting_int(
+                     coalesce(cfg.rooms -> 'booking_min', '{}'::jsonb), coalesce(ap.call_type, ''), 30))) as appt_now,
+    coalesce(h.zoom_live_until > now(), false) and not mr.own_zoom as zoom_live,
+    coalesce(av.state = 'available' and av.until > now(), false) as avail
+) as x
+cross join lateral (
+  select case
+           when x.dialing then 'dialing'
+           when mr.lead_in_id is not null then 'lead_in'
+           when x.appt_now then 'appointment'
+           when x.zoom_live then 'zoom'
+           when mr.waiting_id is not null then 'room_waiting'
+           when coalesce(ho.held, false) then 'handover'
+           when not x.avail then 'away'
+           when mr.standby_id is not null then 'standby'
+           else 'available'
+         end as why
+) as w
+cross join lateral (
+  select case
+           when h.default_provider in ('meet', 'zoom') then h.default_provider
+           when p.role = 'closer' then case when cfg.rooms #>> '{default_provider,closer}' in ('meet', 'zoom')
+                                            then cfg.rooms #>> '{default_provider,closer}' else 'zoom' end
+           else case when cfg.rooms #>> '{default_provider,setter}' in ('meet', 'zoom')
+                     then cfg.rooms #>> '{default_provider,setter}' else 'meet' end
+         end as pref,
+         coalesce((cfg.rooms #> '{providers,zoom}') = 'true'::jsonb, false)
+           and coalesce(h.zoom_status in ('licensed', 'basic'), false) as zoom_ok,
+         coalesce((cfg.rooms #> '{providers,meet}') = 'true'::jsonb, false)
+           and coalesce(h.google_ok, false) as meet_ok
+) as pv
+cross join lateral (
+  select case
+           when (pv.pref = 'zoom' and pv.zoom_ok) or (pv.pref = 'meet' and pv.meet_ok) then pv.pref
+           when pv.pref = 'zoom' and pv.meet_ok then 'meet'
+           when pv.pref = 'meet' and pv.zoom_ok then 'zoom'
+           else pv.pref
+         end as provider
+) as dp
+left join lateral (
+  select r.end_reason
+    from public.cockpit_sales_rooms as r
+   where r.host_email = s.email and r.purpose = 'standby'
    order by r.requested_at desc
    limit 1
-) as rd on true
+) as lsb on true
 left join lateral (
-  select r.id
-    from public.cockpit_sales_rooms as r
-   where r.host_email = s.email and r.purpose <> 'booked'
-     and r.state in ('requested', 'creating', 'open', 'host_in', 'lead_in')
-   order by r.requested_at desc
+  select ap.start_at, ap.call_type
+    from public.cockpit_sales_appointments as ap
+   where p.ghl_user_id is not null and ap.assigned_user_id = p.ghl_user_id
+     and ap.status in ('new', 'confirmed') and ap.start_at > now()
+   order by ap.start_at
    limit 1
-) as own on true;
+) as nb on true;
 
 comment on view public.cockpit_sales_presence is
-  'Each rep''s live state, first that applies: on_call (lead in their room, a handover they hold, in a room for a lead, an open dial in the last 2 h, an appointment running now, a live Zoom meeting), ready (in their own standby room), available (until not passed), away. room_id is the room that matters now. Service role only; seats get it from sales-api live.status.';
+  'Each rep''s live state, the first that applies (roomlogic.ts presenceOf): on_call (an open dial, the lead in their room, an appointment now, a live Zoom meeting that is not their own room, their room waiting for its lead, or a handover they hold), away (Available not pressed or run out), ready (in their own standby room), available. why names the rule; room_id is the room that matters now; default_provider is the one the host can use; reason, booked_at and booked_kind explain an Away or a closed standby room. Service role only; seats get it from sales-api live.status.';
 
 -- 10. The claim: one Take wins ----------------------------------------------
 -- Returns the handover the caller now holds, or nothing when someone else
@@ -830,11 +941,15 @@ grant execute on function public.cockpit_sales_live_claim(uuid, text, integer) t
 -- 10b. One room.event run per event --------------------------------------
 -- room.event takes the event before it acts and sets handled_at when done:
 --   select public.cockpit_sales_room_event_lease(p_event_id => id)  -- or p_dedupe_key
--- returns the event id when this caller now holds it for p_seconds, or null
--- when it is handled already or someone else holds it (then do nothing).
--- The door may insert its Zoom and Slack events with lease_until set to its
--- forward's time budget, so the sweep never replays an event the door is
--- still passing on.
+-- returns the event id when this caller now holds it for p_seconds (1 to
+-- 600; 30 for a Zoom or worker event, 60 for a live.claimed replay), or null
+-- when it is handled already or someone else holds it (then do nothing and
+-- answer handled:false). Done: handled_at = now(), lease_until = null. Failed
+-- or not yet: lease_until = null only, and the sweep replays it after
+-- event_replay (20 s), 3 tries at most (contract-v2 section 6). The door
+-- never sets lease_until when it stores an event: its whole forward (16.4 s
+-- at most) ends before the 20 s replay, and a lease it set would make
+-- sales-api's own lease come back null (contract-v2 S3).
 
 create or replace function public.cockpit_sales_room_event_lease(
   p_event_id uuid default null, p_dedupe_key text default null, p_seconds integer default 60)
@@ -956,6 +1071,26 @@ $$;
 revoke all on function public.cockpit_sales_live_move(uuid, text[], text, text, text) from public, anon, authenticated;
 grant execute on function public.cockpit_sales_live_move(uuid, text[], text, text, text) to service_role;
 
+-- Whether a Zoom, worker or claim event for the room is still unhandled and
+-- younger than a day (roomlogic.ts REPLAY_MAX_AGE_S), so a timer waits for
+-- its replay (the sweep's hold, at most 5 minutes past due). A held (leased)
+-- event counts: room.event is working on it.
+create or replace function public.cockpit_sales_room_pending(p_room_id uuid, p_at timestamptz)
+returns boolean
+language sql
+stable
+set search_path = ''
+as $$
+  select exists (
+    select 1 from public.cockpit_sales_room_events as e
+     where e.room_id = p_room_id
+       and e.handled_at is null
+       and e.source in ('zoom', 'worker', 'claim')
+       and e.at > p_at - interval '1 day')
+$$;
+revoke all on function public.cockpit_sales_room_pending(uuid, timestamptz) from public, anon, authenticated;
+grant execute on function public.cockpit_sales_room_pending(uuid, timestamptz) to service_role;
+
 create or replace function public.cockpit_sales_rooms_sweep()
 returns jsonb
 language plpgsql
@@ -999,7 +1134,11 @@ declare
   eligible text[];
   replay jsonb := '[]'::jsonb;
   settle jsonb := '[]'::jsonb;
+  ticks jsonb := '[]'::jsonb;
   settle_due integer := 0;
+  -- roomlogic.ts PENDING_HOLD_MAX_S: a timer waits at most this long past
+  -- its due time for the room's unhandled events to be replayed.
+  w_hold constant interval := interval '300 seconds';
 begin
   if not pg_try_advisory_xact_lock(hashtext('cockpit_sales_rooms_sweep')) then
     return jsonb_build_object('skipped', 'Another sweep is running.');
@@ -1055,16 +1194,23 @@ begin
 
   -- R3. open: the host did not come in by host_by (by purpose when unset; a
   -- booked room always has its own).
+  -- R3 to R8 and R7 wait while a Zoom, worker or claim event for the room
+  -- is still unhandled (a knock or a join the door could not forward yet,
+  -- roomlogic.ts F4 and F5), at most w_hold past the rule's due time; then
+  -- the rule closes the room anyway. R1, R2 and the R9 backstop never wait.
   begin
     select coalesce(array_agg(q.id), '{}') into ids from (
       select x.id from public.cockpit_sales_rooms as x
+       cross join lateral (
+         select coalesce(x.host_by, coalesce(x.opened_at, x.requested_at) + case x.purpose
+                  when 'handover' then w_handover
+                  when 'standby' then w_standby_host
+                  else w_fallback_host end) as due) as d
        where x.state = 'open'
          and (x.purpose <> 'booked' or x.host_by is not null)
-         and coalesce(x.host_by, coalesce(x.opened_at, x.requested_at) + case x.purpose
-               when 'handover' then w_handover
-               when 'standby' then w_standby_host
-               else w_fallback_host end) < t
-       for update skip locked) as q;
+         and d.due < t
+         and (d.due + w_hold < t or not public.cockpit_sales_room_pending(x.id, t))
+       for update of x skip locked) as q;
     n := public.cockpit_sales_rooms_close(ids, array['open'], 'expired', 'host_not_in',
       'Closed: the host did not join in time.', 'no_join', null);
     summary := summary || jsonb_build_object('host_not_in', n); moved_rooms := moved_rooms + n;
@@ -1075,21 +1221,33 @@ begin
   -- R4. open or host_in with a lead: the lead did not join by lead_by, or,
   -- when unset, 10 minutes after the link went, the host came in, or the room
   -- opened (roomlogic.ts timers()). An open, or a knock in the waiting room,
-  -- in the last 3 minutes keeps the room open until that moment + open_grace.
+  -- in the last 3 minutes keeps the room open until that moment + open_grace,
+  -- never past the cap (roomlogic.ts graceCap, F12 and F18): the link (or the
+  -- open) + lead + open_grace, or a booked room's ends_at. So a lead who
+  -- reopens the link every 2 minutes cannot hold a room until the backstop.
   -- A lead who knocked and was never let in is not a no-show: not_admitted,
   -- result admit_blocked.
   begin
     select coalesce(array_agg(q.id), '{}'), coalesce(array_agg(q.id) filter (where q.knocked), '{}')
       into ids, knocked from (
       select x.id, x.lead_waiting_at is not null as knocked from public.cockpit_sales_rooms as x
+       cross join lateral (
+         select coalesce(case when x.purpose = 'booked' then x.ends_at
+                              else coalesce(x.link_sent_at, x.opened_at) + w_lead + w_grace end,
+                         'infinity'::timestamptz) as cap) as c
+       cross join lateral (
+         select greatest(coalesce(x.lead_by, x.link_sent_at + w_lead, x.host_in_at + w_lead,
+                                  x.opened_at + w_lead, x.requested_at + w_lead),
+                         case when coalesce(x.last_open_at, x.first_open_at) is not null
+                              then least(coalesce(x.last_open_at, x.first_open_at) + w_grace, c.cap) end,
+                         case when x.lead_waiting_at is not null
+                              then least(x.lead_waiting_at + w_grace, c.cap) end) as due) as d
        where x.state in ('open', 'host_in')
          and x.contact_id is not null
          and (x.purpose <> 'booked' or x.lead_by is not null)
-         and greatest(coalesce(x.lead_by, x.link_sent_at + w_lead, x.host_in_at + w_lead,
-                               x.opened_at + w_lead, x.requested_at + w_lead),
-                      coalesce(x.last_open_at, x.first_open_at) + w_grace,
-                      x.lead_waiting_at + w_grace) < t
-       for update skip locked) as q;
+         and d.due < t
+         and (d.due + w_hold < t or not public.cockpit_sales_room_pending(x.id, t))
+       for update of x skip locked) as q;
     n := public.cockpit_sales_rooms_close(knocked, array['open', 'host_in'], 'expired', 'not_admitted',
       'Closed: the lead knocked but was not let in.', 'admit_blocked', null);
     n := n + public.cockpit_sales_rooms_close(
@@ -1288,6 +1446,8 @@ begin
         from public.cockpit_sales_rooms as x
        where x.purpose = 'standby' and x.contact_id is null and x.state in ('open', 'host_in')
          and coalesce(x.host_in_at, x.opened_at, x.requested_at) + w_standby_max < t
+         and (coalesce(x.host_in_at, x.opened_at, x.requested_at) + w_standby_max + w_hold < t
+              or not public.cockpit_sales_room_pending(x.id, t))
        for update skip locked
     loop
       fresh := coalesce((cfg -> 'enabled') = 'true'::jsonb, false)
@@ -1333,15 +1493,17 @@ begin
   begin
     select coalesce(array_agg(q.id), '{}') into ids from (
       select x.id from public.cockpit_sales_rooms as x
+       cross join lateral (
+         select min(ap.start_at) - w_booked_guard as due
+           from public.cockpit_sales_people as p
+           join public.cockpit_sales_appointments as ap on ap.assigned_user_id = p.ghl_user_id
+          where p.email = x.host_email and p.ghl_user_id is not null
+            and ap.status in ('new', 'confirmed')
+            and ap.start_at > t and ap.start_at <= t + w_booked_guard) as b
        where x.purpose = 'standby' and x.contact_id is null and x.state in ('open', 'host_in')
-         and exists (
-           select 1
-             from public.cockpit_sales_people as p
-             join public.cockpit_sales_appointments as ap on ap.assigned_user_id = p.ghl_user_id
-            where p.email = x.host_email and p.ghl_user_id is not null
-              and ap.status in ('new', 'confirmed')
-              and ap.start_at > t and ap.start_at <= t + w_booked_guard)
-       for update skip locked) as q;
+         and b.due is not null
+         and (b.due + w_hold < t or not public.cockpit_sales_room_pending(x.id, t))
+       for update of x skip locked) as q;
     n := public.cockpit_sales_rooms_close(ids, array['open', 'host_in'], 'ended', 'booked_call_soon',
       format('Closed: the host has a booked call starting within %s minutes.',
              round(extract(epoch from w_booked_guard) / 60)), null, null);
@@ -1358,6 +1520,8 @@ begin
          and x.state in ('requested', 'creating', 'open', 'host_in')
          and x.requested_at < t - interval '60 seconds'
          and (a.state = 'away' or a.until <= t)
+         and (greatest(x.requested_at + interval '60 seconds', coalesce(a.until, a.updated_at)) + w_hold < t
+              or not public.cockpit_sales_room_pending(x.id, t))
        for update of x skip locked) as q;
     n := public.cockpit_sales_rooms_close(ids, array['open', 'host_in'], 'ended', 'host_away',
       'Closed: the host is no longer available.', null, null);
@@ -1373,13 +1537,16 @@ begin
   begin
     select coalesce(array_agg(q.id), '{}') into ids from (
       select x.id from public.cockpit_sales_rooms as x
+       cross join lateral (
+         select coalesce(x.ends_at,
+                         coalesce(x.lead_in_at, x.opened_at, x.requested_at)
+                           + make_interval(mins => public.cockpit_sales_setting_int(len, x.call_kind,
+                               case when x.call_kind = 'demo' then 60 else 30 end)))
+                + w_no_end as due) as d
        where x.state = 'lead_in'
-         and coalesce(x.ends_at,
-                      coalesce(x.lead_in_at, x.opened_at, x.requested_at)
-                        + make_interval(mins => public.cockpit_sales_setting_int(len, x.call_kind,
-                            case when x.call_kind = 'demo' then 60 else 30 end)))
-             + w_no_end < t
-       for update skip locked) as q;
+         and d.due < t
+         and (d.due + w_hold < t or not public.cockpit_sales_room_pending(x.id, t))
+       for update of x skip locked) as q;
     n := public.cockpit_sales_rooms_close(ids, array['lead_in'], 'ended', 'no_end_signal',
       format('Ended: no end signal %s minutes after the planned end.', round(extract(epoch from w_no_end) / 60)),
       'joined', null);
@@ -1409,18 +1576,20 @@ begin
     errs := errs || jsonb_build_object('rule', 'handover_done', 'error', sqlerrm);
   end;
 
-  -- E0. Events that had their 3 tries and the time after the last one, and
-  -- that nobody holds, are given up: handled, with detail.gave_up. The
-  -- watchdog raises one alert a day for them.
+  -- E0. Events that had their 3 tries and the time after the last one, or
+  -- that are older than a day (roomlogic.ts REPLAY_MAX_AGE_S: left for a
+  -- person, never replayed), and that nobody holds, are given up: handled,
+  -- with detail.gave_up. The watchdog raises one alert a day for them.
   begin
     with gone as (
       update public.cockpit_sales_room_events as e
          set handled_at = t, lease_until = null,
              detail = e.detail || jsonb_build_object('gave_up', true, 'gave_up_at', t, 'tries', e.tries)
+                      || case when e.tries < 3 then jsonb_build_object('too_old', true) else '{}'::jsonb end
        where e.handled_at is null
          and (e.source = any (replayable) or e.source = 'settle')
-         and e.tries >= 3
-         and (e.last_try_at is null or e.last_try_at + w_replay < t)
+         and ((e.tries >= 3 and (e.last_try_at is null or e.last_try_at + w_replay < t))
+              or e.at < t - interval '1 day')
          and (e.lease_until is null or e.lease_until < t)
       returning e.id
     )
@@ -1438,7 +1607,7 @@ begin
     with due as (
       select e.id from public.cockpit_sales_room_events as e
        where e.handled_at is null and e.source = any (replayable)
-         and e.at + w_replay < t and e.tries < 3
+         and e.at + w_replay < t and e.at >= t - interval '1 day' and e.tries < 3
          and (e.last_try_at is null or e.last_try_at + w_replay < t)
          and (e.lease_until is null or e.lease_until < t)
        order by e.at
@@ -1458,20 +1627,29 @@ begin
     errs := errs || jsonb_build_object('rule', 'event_replay', 'error', sqlerrm);
   end;
 
-  -- S1. A booked intro that expired with no lead in it and no knock becomes a
-  -- no-show at start + settle (D14). Each one gets one settle event
-  -- (sweep.settle:{room id}); the tick posts the rooms as sweep.settle until
-  -- room.event settles them (settled_mark) and marks the event handled, 3
-  -- tries, event_replay apart.
+  -- S1. D14: a fallback room for a booked intro (not a booked room: its
+  -- call is marked as any booked call is) that closed with nobody joining
+  -- becomes a no-show at the intro's start + settle, as roomlogic.ts
+  -- settleDue reads it: expired with no result or no_join, or ended no_join
+  -- (End room, Zoom's end before anyone came, or "That was not the lead"
+  -- after the room closed); never admit_blocked, moved to the phone or
+  -- cancelled, and only while the intro is still new or confirmed. Each one
+  -- gets one settle event (sweep.settle:{room id}); the tick posts the rooms
+  -- as sweep.settle until room.event settles them (settled_mark) and marks
+  -- the event handled, 3 tries, event_replay apart.
   begin
     insert into public.cockpit_sales_room_events (room_id, kind, source, dedupe_key, at, text, detail)
     select x.id, 'sweep.settle', 'settle', 'sweep.settle:' || x.id::text, t,
-           'Due to be settled: the booked intro expired with no lead in it.',
+           'Due to be settled: the room for a booked intro closed with nobody joining.',
            jsonb_build_object('appointment_id', x.appointment_id)
       from public.cockpit_sales_rooms as x
       join public.cockpit_sales_appointments as ap on ap.appointment_id = x.appointment_id
-     where x.purpose = 'booked' and x.call_kind = 'intro' and x.state = 'expired'
-       and x.settled_mark is null and x.lead_in_at is null and x.result is distinct from 'admit_blocked'
+     where x.purpose <> 'booked' and x.call_kind = 'intro' and x.appointment_id is not null
+       and ((x.state = 'expired' and (x.result is null or x.result = 'no_join'))
+            or (x.state = 'ended' and x.result = 'no_join'))
+       and (x.lead_in_at is null or (x.count_undo_at is not null and x.lead_in_at <= x.count_undo_at))
+       and x.settled_mark is null
+       and ap.status in ('new', 'confirmed')
        and ap.start_at + w_settle < t
     on conflict (dedupe_key) do nothing;
 
@@ -1501,15 +1679,42 @@ begin
     errs := errs || jsonb_build_object('rule', 'settle', 'error', sqlerrm);
   end;
 
+  -- T. The rooms room.event re-checks (contract-v2 S1 and S4): every room
+  -- with a lead that is not final, oldest first, then every final room whose
+  -- lead_in_at or count_undo_at falls in the last hour, newest first; 100 a
+  -- run at most (the tick posts them as kind tick, 50 a post). room.event
+  -- moves no timer for them (the sweep owns those): it re-asks a link claimed
+  -- and never sent, a count never claimed or stuck, an undo that never
+  -- landed, and alerts when a room with a lead runs into a booked call.
+  begin
+    select coalesce(jsonb_agg(q.id::text order by q.ord, q.k), '[]'::jsonb) into ticks from (
+      select y.id, y.ord, y.k from (
+        select x.id, 0 as ord, extract(epoch from x.requested_at) as k
+          from public.cockpit_sales_rooms as x
+         where x.state in ('requested', 'creating', 'open', 'host_in', 'lead_in') and x.contact_id is not null
+        union all
+        select x.id, 1, -extract(epoch from greatest(x.lead_in_at, x.count_undo_at))
+          from public.cockpit_sales_rooms as x
+         where x.state = any (finals) and x.contact_id is not null
+           and (x.lead_in_at > t - interval '1 hour' or x.count_undo_at > t - interval '1 hour')
+      ) as y
+      order by y.ord, y.k
+      limit 100) as q;
+    summary := summary || jsonb_build_object('tick_count', jsonb_array_length(ticks));
+  exception when others then
+    errs := errs || jsonb_build_object('rule', 'tick', 'error', sqlerrm);
+  end;
+
   summary := summary || jsonb_build_object(
     'at', t, 'rooms_moved', moved_rooms, 'handovers_moved', moved_live,
-    'replay', replay, 'settle', settle, 'errors', errs);
+    'replay', replay, 'settle', settle, 'tick', ticks, 'errors', errs);
 
   insert into public.cockpit_sales_worker_status (worker, job, ok, detail, at)
   values ('sales-api', 'sweep', jsonb_array_length(errs) = 0,
           left(case when jsonb_array_length(errs) = 0
-                 then format('%s rooms closed, %s handovers moved, %s events sent back to room.event, %s rooms to settle.',
-                             moved_rooms, moved_live, jsonb_array_length(replay), jsonb_array_length(settle))
+                 then format('%s rooms closed, %s handovers moved, %s events sent back to room.event, %s rooms to settle, %s rooms to re-check.',
+                             moved_rooms, moved_live, jsonb_array_length(replay), jsonb_array_length(settle),
+                             jsonb_array_length(ticks))
                  else format('%s rules failed: %s', jsonb_array_length(errs), errs::text) end, 500),
           t)
   on conflict (worker, job) do update
@@ -1523,13 +1728,16 @@ grant execute on function public.cockpit_sales_rooms_sweep() to service_role;
 
 -- The cron job's one statement: the sweep, then the posts to sales-live/cron
 -- with the shared cron secret (vault cockpit_sync_secret), like
--- mahara-sales-mirror:
+-- mahara-sales-mirror. Each body is one the cron door (sales-live cron.ts
+-- cronForwardable) passes on, rebuilt field by field, ids only:
 --   {"action": "room.event", "kind": "sweep.replay", "payload": {"event_ids": [...]}}
 --   {"action": "room.event", "kind": "sweep.settle", "payload": {"room_ids": [...]}}
--- room.event takes each event (cockpit_sales_room_event_lease) and sets
--- handled_at when it is done. Nothing is posted when nothing is due. The
--- sweep always runs, secret or not; without the secret the sweep's status
--- row says what is waiting.
+--   {"action": "room.event", "kind": "tick", "payload": {"room_ids": [...]}}
+-- 1 to 50 lower-case UUIDs each; at most two tick posts a run. room.event
+-- takes each event (cockpit_sales_room_event_lease) and sets handled_at when
+-- it is done; a tick reads each room as it stands. Nothing is posted when
+-- nothing is due. The sweep always runs, secret or not; without the secret
+-- the sweep's status row says what is waiting.
 create or replace function public.cockpit_sales_rooms_tick()
 returns jsonb
 language plpgsql
@@ -1541,14 +1749,20 @@ declare
   r jsonb;
   secret text;
   posted integer := 0;
-  waiting integer;
+  n_replay integer;
+  n_settle integer;
+  n_tick integer;
+  chunk jsonb;
+  i integer;
 begin
   r := public.cockpit_sales_rooms_sweep();
   if r ? 'skipped' then
     return r;
   end if;
-  waiting := jsonb_array_length(coalesce(r -> 'replay', '[]'::jsonb)) + jsonb_array_length(coalesce(r -> 'settle', '[]'::jsonb));
-  if waiting = 0 then
+  n_replay := jsonb_array_length(coalesce(r -> 'replay', '[]'::jsonb));
+  n_settle := jsonb_array_length(coalesce(r -> 'settle', '[]'::jsonb));
+  n_tick := least(jsonb_array_length(coalesce(r -> 'tick', '[]'::jsonb)), 100);
+  if n_replay + n_settle + n_tick = 0 then
     return r || jsonb_build_object('posted', 0);
   end if;
   select ds.decrypted_secret into secret
@@ -1558,11 +1772,13 @@ begin
   if secret is null or btrim(secret) = '' then
     update public.cockpit_sales_worker_status as s
        set ok = false,
-           detail = left(format('%s events wait for room.event, but the vault has no cockpit_sync_secret, so nothing was sent. Add it to the vault.', waiting), 500)
+           detail = left(format('%s %s and %s %s wait for room.event, but the vault has no cockpit_sync_secret, so nothing was sent. Add it to the vault.',
+                                n_replay + n_settle, case when n_replay + n_settle = 1 then 'event' else 'events' end,
+                                n_tick, case when n_tick = 1 then 'room check' else 'room checks' end), 500)
      where s.worker = 'sales-api' and s.job = 'sweep';
     return r || jsonb_build_object('posted', 0, 'post_note', 'The vault has no cockpit_sync_secret.');
   end if;
-  if jsonb_array_length(coalesce(r -> 'replay', '[]'::jsonb)) > 0 then
+  if n_replay > 0 then
     perform net.http_post(
       url := v_url,
       body := jsonb_build_object('action', 'room.event', 'kind', 'sweep.replay',
@@ -1571,7 +1787,7 @@ begin
       timeout_milliseconds := 10000);
     posted := posted + 1;
   end if;
-  if jsonb_array_length(coalesce(r -> 'settle', '[]'::jsonb)) > 0 then
+  if n_settle > 0 then
     perform net.http_post(
       url := v_url,
       body := jsonb_build_object('action', 'room.event', 'kind', 'sweep.settle',
@@ -1580,6 +1796,19 @@ begin
       timeout_milliseconds := 10000);
     posted := posted + 1;
   end if;
+  for i in 0 .. (n_tick - 1) / 50 loop
+    exit when n_tick = 0;
+    select jsonb_agg(e.v order by e.o) into chunk
+      from jsonb_array_elements_text(r -> 'tick') with ordinality as e(v, o)
+     where e.o > i * 50 and e.o <= least((i + 1) * 50, n_tick);
+    perform net.http_post(
+      url := v_url,
+      body := jsonb_build_object('action', 'room.event', 'kind', 'tick',
+                                 'payload', jsonb_build_object('room_ids', chunk)),
+      headers := jsonb_build_object('Content-Type', 'application/json', 'x-cron-secret', secret),
+      timeout_milliseconds := 10000);
+    posted := posted + 1;
+  end loop;
   return r || jsonb_build_object('posted', posted);
 end;
 $$;
@@ -1643,6 +1872,11 @@ grant execute on function public.cockpit_sales_alert_words(text, integer) to ser
 
 -- Opens (or keeps open) the alert for p_key, or closes it when p_on is false.
 -- Returns 1 when a new incident was raised.
+-- Every writer's message passes through cockpit_sales_alert_words (one line,
+-- roles not names, no addresses, cut at a whole sentence). A key
+-- config:{worker}/{job} is a setup problem a worker raises itself (the door,
+-- sales-live/handler.ts configAlert), so its source is that worker; every
+-- other alert is the watchdog's.
 create or replace function public.cockpit_sales_alert_set(
   p_key text, p_on boolean, p_kind text, p_subject text, p_message text, p_detail jsonb)
 returns integer
@@ -1652,10 +1886,16 @@ set search_path = ''
 as $$
 declare
   fresh boolean;
+  src text := 'watchdog';
+  words text;
 begin
   if p_on then
+    if p_key like 'config:%' and split_part(substr(p_key, 8), '/', 1) ~ '^[a-z][a-z0-9_.-]{0,39}$' then
+      src := split_part(substr(p_key, 8), '/', 1);
+    end if;
+    words := coalesce(nullif(public.cockpit_sales_alert_words(p_message, 1000), ''), 'An alert with no words. Check the alerts table.');
     insert into public.cockpit_sales_alerts as a (dedupe_key, source, kind, subject, message, detail)
-    values (p_key, 'watchdog', p_kind, p_subject, p_message, coalesce(p_detail, '{}'::jsonb))
+    values (p_key, src, p_kind, p_subject, words, coalesce(p_detail, '{}'::jsonb))
     on conflict (dedupe_key) do update
        set last_seen_at = now(), detail = excluded.detail
     returning (a.xmax = 0) into fresh;
@@ -1706,14 +1946,20 @@ begin
     return jsonb_build_object('skipped', 'Another watchdog run is going.');
   end if;
 
-  -- 1. The status rows (glossary 1.7, plus the desk's waves and model rows).
+  -- 1. The status rows (glossary 1.7, plus the desk's waves and model rows,
+  -- the room host check and the five sales-live routes).
   -- switch_on null: watched once the row exists; true or false: watched only
   -- while the feature is switched on, and then a missing row is an alert too
-  -- (missing is never zero).
+  -- (missing is never zero). stale_min null: a failing-only row (the door
+  -- writes its routes' rows only when traffic comes), so neither a missing
+  -- nor a quiet row is an alert, only a row that says it is failing.
   for rec in
     select w.worker, w.job, w.stale_min, w.label, w.effect, w.switch_on, s.ok, s.detail, s.at
       from (values
         ('sales-desk', 'rooms',     10, 'The room worker',       'New video rooms cannot be made.',
+           coalesce((rooms -> 'enabled') = 'true'::jsonb, false)),
+        ('sales-desk', 'room-hosts', 20, 'The room host check',
+           'Zoom seats and Google sign-ins are not being checked, so a room may fail without warning.',
            coalesce((rooms -> 'enabled') = 'true'::jsonb, false)),
         ('sales-desk', 'slack',     10, 'The Slack poster',      'Live offers cannot reach Slack.',
            coalesce((live -> 'enabled') = 'true'::jsonb, false) and coalesce((live -> 'slack') = 'true'::jsonb, false)),
@@ -1724,14 +1970,30 @@ begin
         ('sales-desk', 'doctor',    75, 'The sales desk doctor', 'Nobody is checking the desk. Check the VPS and the Claude sign-in.', null),
         ('sales-api',  'threads',   10, 'The demo chat tick',    'Demo chat steps are not going out.',
            coalesce((threads -> 'enabled') = 'true'::jsonb, false)),
-        ('sales-api',  'sweep',      5, 'The room sweep',        'Rooms past their time are not being closed.', null)
+        ('sales-api',  'sweep',      5, 'The room sweep',        'Rooms past their time are not being closed.', null),
+        ('sales-live', 'zoom',  null::integer, 'The Zoom webhook',
+           'Zoom joins and leaves may not reach the rooms, so reps press I''m in and The lead is in themselves.',
+           coalesce((rooms -> 'enabled') = 'true'::jsonb, false)),
+        ('sales-live', 'slack', null::integer, 'The Slack buttons',
+           'Presses on live offers in Slack may not work. Take offers from the cockpit.',
+           coalesce((live -> 'enabled') = 'true'::jsonb, false) and coalesce((live -> 'slack') = 'true'::jsonb, false)),
+        ('sales-live', 'open',  null::integer, 'The short link page',
+           'Leads may not be able to open their room links. Send them the room''s full link.',
+           coalesce((rooms -> 'enabled') = 'true'::jsonb, false)),
+        ('sales-live', 'go',    null::integer, 'The short link',
+           'Leads may not reach their room from the short link. Send them the room''s full link.',
+           coalesce((rooms -> 'enabled') = 'true'::jsonb, false)),
+        ('sales-live', 'cron',  null::integer, 'The sweep''s call to sales-api',
+           'Replays, settles and re-checks from the room sweep may not reach sales-api.',
+           coalesce((rooms -> 'enabled') = 'true'::jsonb, false))
       ) as w(worker, job, stale_min, label, effect, switch_on)
       left join public.cockpit_sales_worker_status as s on s.worker = w.worker and s.job = w.job
   loop
     subj := rec.worker || '/' || rec.job;
     watched := coalesce(rec.switch_on, rec.at is not null);
-    is_missing := watched and rec.at is null;
-    is_stale := watched and rec.at is not null and rec.at < t - make_interval(mins => rec.stale_min);
+    is_missing := watched and rec.at is null and rec.stale_min is not null;
+    is_stale := watched and rec.at is not null and rec.stale_min is not null
+                and rec.at < t - make_interval(mins => rec.stale_min);
     is_failing := watched and rec.at is not null and not is_stale and rec.ok is false;
     since := case
       when rec.at is null then null
