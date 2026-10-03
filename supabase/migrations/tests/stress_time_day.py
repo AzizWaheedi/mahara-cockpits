@@ -131,9 +131,15 @@ create temp table fake_vault (name text, decrypted_secret text) on commit drop;
 insert into pg_temp.fake_vault values ('sales_alerts_slack_webhook', 'https://stress.invalid/hook');
 create temp table fake_http_response (id bigint, status_code integer, error_msg text, timed_out boolean) on commit drop;
 create temp table fake_posts (id bigserial primary key, at timestamptz, body jsonb) on commit drop;
+-- Each post is answered 200 at once, as pg_net records a working Slack or
+-- door answer (fix round 4: a post with no answer at all is pg_net's own
+-- silence, which the watchdog posts again and the tick reports).
 create function pg_temp.fake_http_post(url text, body jsonb, headers jsonb, timeout_milliseconds integer)
 returns bigint language sql volatile as $f$
-  insert into pg_temp.fake_posts (at, body) values (pg_temp.sim_now(), body) returning id
+  with p as (insert into pg_temp.fake_posts (at, body) values (pg_temp.sim_now(), body) returning id)
+  insert into pg_temp.fake_http_response (id, status_code, error_msg, timed_out)
+  select p.id, 200, null, false from p
+  returning id
 $f$;
 """
 

@@ -68,6 +68,21 @@
 --                turn < > into look-alikes, and the watchdog escapes & < >.
 --   presence     a booked call keeps its host on a call for its whole length.
 --
+-- Fix round 4 (3 October 2026):
+--   count claim  cockpit_sales_room_count_claim: the live count's claim and
+--                its read of the lead's other rooms in one step under the
+--                lead's lock, on the row as the count read it (two counts of
+--                one conversation never both book; That was not the lead is
+--                never erased).
+--   settle (S1)  the door's own door.open event is the lead's open (its write
+--                of the room's open time may have run out of time), and a link
+--                whose only channel is a WhatsApp template nobody saw is not
+--                evidence the lead stayed away.
+--   pg_net       a post pg_net never answers is read as pg_net's silence: the
+--                watchdog posts it again and turns its row red, the tick says
+--                to restart pg_net's worker, never blames the door.
+--   R1           a room the worker never started says to phone the lead.
+--
 -- Checks: supabase/migrations/tests/run_checks.py applies a, b, c and d in
 -- one rolled-back run; stress_time.py, stress_chaos.py and stress_numbers.py
 -- apply d inside their own rolled-back runs.
@@ -432,6 +447,118 @@ end;
 $$;
 revoke all on function public.cockpit_sales_room_event_lease(uuid, text, integer) from public, anon, authenticated;
 grant execute on function public.cockpit_sales_room_event_lease(uuid, text, integer) to service_role;
+
+-- 4b. The live count's claim, one per lead (fix round 4) ---------------------
+
+-- sales-api's count read the lead's other rooms and then claimed its own row
+-- in a second request, so two counts that overlapped (the tick's re-asks run
+-- side by side, siblings reopened together, a join beside a re-ask) each
+-- found no other count and each booked a "Live ·" call: one conversation,
+-- two shows. The claim is decided here, under the lead's lock, in one step:
+--   p_expect    the room's row must still be as the count read it
+--               (count_claimed_at, count_result, count_undo_at, lead_in_at;
+--               a key left out is not compared), so "That was not the lead"
+--               pressed while the count read HighLevel makes the claim miss;
+--   p_siblings  a count that would book or move first reads the lead's other
+--               rooms joined within three hours (rooms.ts SIBLING_JOIN_H): a
+--               count that stands there makes this one already_counted
+--               (written here), one claimed and still in flight leaves this
+--               room unclaimed (the sweep asks again).
+-- Answers {code: claimed | already_counted | in_flight | missed, row}.
+create or replace function public.cockpit_sales_room_count_claim(
+  p_room_id uuid, p_claimed_at timestamptz, p_result text, p_expect jsonb, p_siblings boolean)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+set lock_timeout = '5s'
+as $$
+declare
+  r public.cockpit_sales_rooms;
+  e jsonb := coalesce(p_expect, '{}'::jsonb);
+  joined timestamptz;
+  stands boolean := false;
+  flying boolean := false;
+begin
+  select * into r from public.cockpit_sales_rooms as x where x.id = p_room_id;
+  if not found or r.contact_id is null then
+    return jsonb_build_object('code', 'missed');
+  end if;
+  perform pg_advisory_xact_lock(hashtext('cockpit_sales_rooms:count:' || r.contact_id));
+  select * into r from public.cockpit_sales_rooms as x where x.id = p_room_id for update;
+  if not found then
+    return jsonb_build_object('code', 'missed');
+  end if;
+  if (e ? 'count_claimed_at' and r.count_claimed_at is distinct from (e ->> 'count_claimed_at')::timestamptz)
+     or (e ? 'count_result' and r.count_result is distinct from (e ->> 'count_result'))
+     or (e ? 'count_appointment_id' and r.count_appointment_id is distinct from (e ->> 'count_appointment_id'))
+     or (e ? 'count_undo_at' and r.count_undo_at is distinct from (e ->> 'count_undo_at')::timestamptz)
+     or (e ? 'lead_in_at' and r.lead_in_at is distinct from (e ->> 'lead_in_at')::timestamptz) then
+    return jsonb_build_object('code', 'missed');
+  end if;
+  if coalesce(p_siblings, true) then
+    joined := coalesce(r.lead_in_at, now());
+    select coalesce(bool_or(x.count_result = 'unclear'
+                            or (x.count_result in ('booked', 'moved') and x.count_appointment_id is not null)
+                            or (x.count_result is null and x.count_appointment_id is not null and x.count_undo_at is null)), false),
+           coalesce(bool_or(x.count_result is null and x.count_appointment_id is null), false)
+      into stands, flying
+      from public.cockpit_sales_rooms as x
+     where x.contact_id = r.contact_id
+       and x.id <> r.id
+       and x.lead_in_at >= joined - interval '3 hours'
+       and x.lead_in_at <= joined + interval '3 hours'
+       and x.count_claimed_at is not null
+       and (x.call_kind is null or r.call_kind is null or x.call_kind = r.call_kind);
+    if stands then
+      update public.cockpit_sales_rooms as x
+         set count_claimed_at = coalesce(p_claimed_at, now()), count_result = 'already_counted',
+             count_appointment_id = null, count_undo_at = null
+       where x.id = r.id
+      returning * into r;
+      return jsonb_build_object('code', 'already_counted', 'row', to_jsonb(r));
+    end if;
+    if flying then
+      return jsonb_build_object('code', 'in_flight');
+    end if;
+  end if;
+  update public.cockpit_sales_rooms as x
+     set count_claimed_at = coalesce(p_claimed_at, now()), count_result = p_result,
+         count_appointment_id = null, count_undo_at = null
+   where x.id = r.id
+  returning * into r;
+  return jsonb_build_object('code', 'claimed', 'row', to_jsonb(r));
+end;
+$$;
+revoke all on function public.cockpit_sales_room_count_claim(uuid, timestamptz, text, jsonb, boolean) from public, anon, authenticated;
+grant execute on function public.cockpit_sales_room_count_claim(uuid, timestamptz, text, jsonb, boolean) to service_role;
+
+-- The same claim for a count that books (siblings read), taken from the row
+-- as it stands now: the room's id when this call holds the count, else null
+-- (stress_concurrency_r4.py's presses, and a person checking by hand).
+create or replace function public.cockpit_sales_room_count_claim(p_room_id uuid)
+returns uuid
+language plpgsql
+security definer
+set search_path = ''
+set lock_timeout = '5s'
+as $$
+declare
+  r public.cockpit_sales_rooms;
+  got jsonb;
+begin
+  select * into r from public.cockpit_sales_rooms as x where x.id = p_room_id;
+  if not found or not (r.count_claimed_at is null or r.count_result = 'undone') then
+    return null;
+  end if;
+  got := public.cockpit_sales_room_count_claim(
+    p_room_id, now(), null,
+    jsonb_build_object('count_claimed_at', r.count_claimed_at, 'count_result', r.count_result), true);
+  return case when got ->> 'code' = 'claimed' then p_room_id end;
+end;
+$$;
+revoke all on function public.cockpit_sales_room_count_claim(uuid) from public, anon, authenticated;
+grant execute on function public.cockpit_sales_room_count_claim(uuid) to service_role;
 
 -- 4a. The short link follows the handover ------------------------------------
 
@@ -976,7 +1103,9 @@ begin
        for update skip locked) as q;
     n := public.cockpit_sales_rooms_close(ids, array['requested'], 'failed', 'request_timeout',
       'Not made: the room worker did not pick this room up in time.', 'failed',
-      'The room worker did not start this room within a minute. Try again.');
+      -- Fix round 4: a worker that never started the room is likely down, so
+      -- the next step needs no worker (another room would fail the same way).
+      'The room worker did not start this room within a minute. Call the lead on the phone, or send your own Zoom or Meet link.');
     summary := summary || jsonb_build_object('request_timeout', n); moved_rooms := moved_rooms + n;
   exception when others then
     errs := errs || jsonb_build_object('rule', 'request_timeout', 'error', sqlerrm);
@@ -1548,11 +1677,24 @@ begin
      cross join lateral (
        select case
                 when x.first_open_at is not null or x.last_open_at is not null then 'the lead opened the link'
+                -- The door's own record of the lead's open (fix round 4): it
+                -- is stored first, so it stands when the door's write of the
+                -- room's open times ran out of time (a slow database).
+                when exists (select 1 from public.cockpit_sales_room_events as e
+                              where e.room_id = x.id and e.kind = 'door.open'
+                                and coalesce(e.detail ->> 'after_end', 'false') <> 'true')
+                  then 'the lead opened the link'
                 when x.lead_waiting_at is not null then 'the lead knocked'
                 -- The link never reached the lead (refused on every channel,
                 -- or "it may have gone" and never confirmed): their staying
                 -- away says nothing (roomlogic.ts noShowDoubt).
                 when x.link_sent_at is null then 'the link never reached the lead'
+                -- Its only channel a WhatsApp template nobody saw (no text and
+                -- no email went): it may never have reached the lead either
+                -- (fix round 4, roomlogic.ts unconfirmedOnly).
+                when x.link_unconfirmed_at is not null
+                     and not (coalesce(x.link_channels, '{}'::text[]) && array['whatsapp_text', 'email']::text[])
+                  then 'the link was not confirmed to have reached the lead'
                 when exists (select 1 from public.cockpit_sales_rooms as y
                               where y.id <> x.id
                                 and (y.appointment_id = x.appointment_id
@@ -1759,6 +1901,7 @@ declare
   req bigint;
   bad integer := 0;
   answered integer := 0;
+  silent integer := 0;
   last_code text;
   door_note text;
 begin
@@ -1780,22 +1923,39 @@ begin
              error = left(coalesce(h.error_msg, case when h.timed_out then 'timed out' end), 300)
         from net._http_response as h
        where h.id = p.request_id and p.checked_at is null
-      returning p.status_code, p.error
+      returning p.status_code, p.error, true as heard
     ),
     lost as (
       update public.cockpit_sales_room_posts as p
          set checked_at = now(), error = 'no answer'
        where p.checked_at is null and p.posted_at < now() - interval '3 minutes'
-      returning p.status_code, p.error
+      returning p.status_code, p.error, false as heard
     ),
     seen as (select * from ans union all select * from lost)
-    select count(*) filter (where s.status_code is null or s.status_code not between 200 and 299),
-           count(*),
+    -- An answer that refused the post is the door's; a post pg_net never
+    -- answered at all is pg_net's own silence (its worker stopped, as after a
+    -- database restart), never blamed on the door (fix round 4).
+    select count(*) filter (where s.heard and (s.status_code is null or s.status_code not between 200 and 299)),
+           count(*) filter (where s.heard),
+           count(*) filter (where not s.heard),
            string_agg(distinct coalesce(s.status_code::text, s.error), ', ')
-                filter (where s.status_code is null or s.status_code not between 200 and 299)
-      into bad, answered, last_code
+                filter (where s.heard and (s.status_code is null or s.status_code not between 200 and 299))
+      into bad, answered, silent, last_code
       from seen as s;
     delete from public.cockpit_sales_room_posts as p where p.posted_at < now() - interval '1 day';
+    if silent > 0 and answered = 0 then
+      -- (The command is put together here, so this text never names pg_net's
+      -- schema itself: the stress harnesses copy these functions and swap it.)
+      door_note := left(format('%s of the sweep''s calls to sales-live/cron got no answer from pg_net in 3 minutes, so replays, settles and re-checks are not going out. pg_net''s worker may have stopped: run select %s.worker_restart(); in the SQL editor.',
+                               silent, 'net'), 500);
+      update public.cockpit_sales_worker_status as s
+         set ok = false, detail = door_note
+       where s.worker = 'sales-api' and s.job = 'sweep';
+      perform public.cockpit_sales_alert_set('sweep:pg_net_silent', true, 'pg_net', 'sales-api/sweep', door_note,
+        jsonb_build_object('unanswered', silent));
+    elsif answered > 0 then
+      perform public.cockpit_sales_alert_set('sweep:pg_net_silent', false, 'pg_net', 'sales-api/sweep', '', '{}'::jsonb);
+    end if;
     if bad > 0 then
       door_note := left(format('%s of the sweep''s calls to sales-live/cron were not taken (%s), so replays, settles and re-checks are not reaching sales-api. Check that sales-live is deployed with verify_jwt off and that its CRON_SECRET equals the vault''s cockpit_sync_secret.',
                                bad, coalesce(last_code, 'no answer')), 500);
@@ -1949,6 +2109,7 @@ declare
   gave_up_words text;
   prev record;
   note text;
+  unanswered integer := 0;
 begin
   if not pg_try_advisory_xact_lock(hashtext('cockpit_sales_watchdog')) then
     return jsonb_build_object('skipped', 'Another watchdog run is going.');
@@ -2108,6 +2269,20 @@ begin
     from net._http_response as r
    where r.id = a.post_request_id and a.post_status is null;
 
+  -- 3b. A post pg_net never answered (fix round 4): its background worker
+  -- stops after a database restart and pg_net then only queues posts, so no
+  -- answer row ever comes. After 3 minutes the post counts as failed: posted
+  -- again (3 tries at most), then kept visible with its error, and the
+  -- watchdog's own row turns red with what to do.
+  update public.cockpit_sales_alerts as a
+     set post_status = 0,
+         post_error = 'No answer from pg_net',
+         posted_at = case when a.post_tries >= 3 then a.posted_at end
+   where a.post_request_id is not null and a.post_status is null
+     and a.posted_at < t - interval '3 minutes'
+     and not exists (select 1 from net._http_response as r where r.id = a.post_request_id);
+  get diagnostics unanswered = row_count;
+
   -- 4. Post open alerts that were not posted yet, in working hours only.
   select ds.decrypted_secret into hook
     from vault.decrypted_secrets as ds
@@ -2153,8 +2328,11 @@ begin
   select count(*) into open_n from public.cockpit_sales_alerts as a where a.resolved_at is null;
 
   insert into public.cockpit_sales_worker_status (worker, job, ok, detail, at)
-  values ('sales-api', 'watchdog', true,
-          format('%s open alerts, %s new, %s posted.%s', open_n, raised, posted, coalesce(' ' || note, '')), t)
+  values ('sales-api', 'watchdog', unanswered = 0,
+          case when unanswered > 0
+               then format('pg_net did not answer %s Slack %s in 3 minutes, so alerts may not reach #sales-alerts. Run select %s.worker_restart(); in the SQL editor. %s open alerts.',
+                           unanswered, case when unanswered = 1 then 'post' else 'posts' end, 'net', open_n)
+               else format('%s open alerts, %s new, %s posted.%s', open_n, raised, posted, coalesce(' ' || note, '')) end, t)
   on conflict (worker, job) do update
      set ok = excluded.ok, detail = excluded.detail, at = excluded.at;
 

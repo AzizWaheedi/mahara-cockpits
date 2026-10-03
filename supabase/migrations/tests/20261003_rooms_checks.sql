@@ -1123,7 +1123,8 @@ begin
 
   select * into r from public.cockpit_sales_rooms where id = f[1];
   perform pg_temp.ck('F requested past fail (60 s): failed, request_timeout, error says what to do',
-    r.state = 'failed' and r.end_reason = 'request_timeout' and r.result = 'failed' and r.error like '%Try again.' and r.ended_at = now());
+    r.state = 'failed' and r.end_reason = 'request_timeout' and r.result = 'failed'
+    and r.error like '%Call the lead on the phone, or send your own Zoom or Meet link.' and r.ended_at = now());
   perform pg_temp.ck('F requested 10 s ago: still requested', (select state = 'requested' from public.cockpit_sales_rooms where id = f[2]));
   select * into r from public.cockpit_sales_rooms where id = f[3];
   perform pg_temp.ck('F creating past 2 x fail (claimed 3 min ago): failed, create_timeout', r.state = 'failed' and r.end_reason = 'create_timeout' and r.error is not null);
@@ -2265,6 +2266,68 @@ begin
     (select state || ' ' || coalesce(settled_mark, '-') from public.cockpit_sales_rooms where id = nl));
 exception when others then
   perform pg_temp.ck('R section crashed', false, sqlstate || ': ' || sqlerrm);
+end;
+$$;
+
+-- R4. Fix round 4 (3 October 2026): the live count's claim is one per lead
+--     (cockpit_sales_room_count_claim), and the sweep's settle reads the
+--     door's own open and a template nobody saw.
+do $$
+declare
+  a uuid; b uuid; c uuid; d uuid; got jsonb; rid uuid; st record; s jsonb;
+  t0 timestamptz := now();
+begin
+  insert into public.cockpit_sales_rooms
+    (id, request_id, contact_id, purpose, call_kind, provider, host_email, made_by, state, join_url, result, lead_in_at, ended_at)
+  select x.id, gen_random_uuid(), 'lc-test-cc', 'manual', 'intro', 'meet', 'lc-test-cc-' || x.n || '@example.invalid', 'x',
+         'ended', 'https://meet.google.com/lct-cccc-cc' || x.n, 'joined', now() - make_interval(mins => 10 - x.n), now() - interval '1 minute'
+    from (values (1, gen_random_uuid()), (2, gen_random_uuid()), (3, gen_random_uuid())) as x(n, id);
+  select id into a from public.cockpit_sales_rooms where contact_id = 'lc-test-cc' and host_email = 'lc-test-cc-1@example.invalid';
+  select id into b from public.cockpit_sales_rooms where contact_id = 'lc-test-cc' and host_email = 'lc-test-cc-2@example.invalid';
+  select id into c from public.cockpit_sales_rooms where contact_id = 'lc-test-cc' and host_email = 'lc-test-cc-3@example.invalid';
+
+  got := public.cockpit_sales_room_count_claim(a, t0, null, '{"count_claimed_at": null, "count_result": null}'::jsonb, true);
+  perform pg_temp.ck('R4 the first count of a lead''s conversation is claimed', got ->> 'code' = 'claimed', got ->> 'code');
+  got := public.cockpit_sales_room_count_claim(b, t0, null, '{"count_claimed_at": null, "count_result": null}'::jsonb, true);
+  perform pg_temp.ck('R4 a second room of the lead whose sibling''s count is in flight claims nothing (in_flight)',
+    got ->> 'code' = 'in_flight' and (select count_claimed_at is null from public.cockpit_sales_rooms where id = b), got ->> 'code');
+  got := public.cockpit_sales_room_count_claim(b, t0, 'not_a_lead', '{"count_claimed_at": null, "count_result": null}'::jsonb, false);
+  perform pg_temp.ck('R4 a count that books nothing (siblings not read) is claimed beside it',
+    got ->> 'code' = 'claimed' and (select count_result = 'not_a_lead' from public.cockpit_sales_rooms where id = b), got ->> 'code');
+  update public.cockpit_sales_rooms set count_result = 'booked', count_appointment_id = 'lc-test-cc-appt' where id = a;
+  got := public.cockpit_sales_room_count_claim(c, t0, null, '{"count_claimed_at": null, "count_result": null}'::jsonb, true);
+  perform pg_temp.ck('R4 a room of the lead beside a booking that stands is written already_counted, in the same step',
+    got ->> 'code' = 'already_counted' and (select count_result = 'already_counted' from public.cockpit_sales_rooms where id = c), got ->> 'code');
+  -- That was not the lead pressed between the count's read and its claim.
+  update public.cockpit_sales_rooms set count_claimed_at = null, count_result = null, count_undo_at = now() where id = c;
+  got := public.cockpit_sales_room_count_claim(c, t0, null,
+    jsonb_build_object('count_claimed_at', null, 'count_result', null, 'count_undo_at', null,
+                       'lead_in_at', (select lead_in_at from public.cockpit_sales_rooms where id = c)), true);
+  perform pg_temp.ck('R4 a claim built before That was not the lead misses, and the press stays',
+    got ->> 'code' = 'missed' and (select count_undo_at is not null and count_claimed_at is null from public.cockpit_sales_rooms where id = c),
+    got ->> 'code');
+
+  insert into public.cockpit_sales_rooms
+    (id, request_id, contact_id, purpose, call_kind, provider, host_email, made_by, state, join_url, result, lead_in_at, ended_at)
+  values (gen_random_uuid(), gen_random_uuid(), 'lc-test-cd', 'manual', 'intro', 'meet', 'lc-test-cd-1@example.invalid', 'x', 'ended',
+          'https://meet.google.com/lct-dddd-d1', 'joined', now() - interval '6 minutes', now() - interval '1 minute'),
+         (gen_random_uuid(), gen_random_uuid(), 'lc-test-cd', 'manual', 'intro', 'meet', 'lc-test-cd-2@example.invalid', 'x', 'ended',
+          'https://meet.google.com/lct-dddd-d2', 'joined', now() - interval '5 minutes', now() - interval '1 minute');
+  select id into d from public.cockpit_sales_rooms where host_email = 'lc-test-cd-1@example.invalid';
+  rid := public.cockpit_sales_room_count_claim(d);
+  perform pg_temp.ck('R4 the one-argument claim answers the room when it holds the count', rid = d, coalesce(rid::text, 'null'));
+  select id into d from public.cockpit_sales_rooms where host_email = 'lc-test-cd-2@example.invalid';
+  rid := public.cockpit_sales_room_count_claim(d);
+  perform pg_temp.ck('R4 and null for the lead''s other room while that count is in flight', rid is null, coalesce(rid::text, 'null'));
+  perform pg_temp.ck('R4 the count claim is security definer, empty search_path, service role only',
+    (select bool_and(p.prosecdef and 'search_path=""' = any (p.proconfig)) from pg_proc as p
+      where p.oid in ('public.cockpit_sales_room_count_claim(uuid, timestamptz, text, jsonb, boolean)'::regprocedure,
+                      'public.cockpit_sales_room_count_claim(uuid)'::regprocedure))
+    and has_function_privilege('service_role', 'public.cockpit_sales_room_count_claim(uuid, timestamptz, text, jsonb, boolean)', 'execute')
+    and not has_function_privilege('authenticated', 'public.cockpit_sales_room_count_claim(uuid, timestamptz, text, jsonb, boolean)', 'execute')
+    and not has_function_privilege('anon', 'public.cockpit_sales_room_count_claim(uuid)', 'execute'));
+exception when others then
+  perform pg_temp.ck('R4 section crashed', false, sqlstate || ': ' || sqlerrm);
 end;
 $$;
 
