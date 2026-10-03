@@ -14,6 +14,8 @@ The payload has the shape the Hermes monitors send (monitor.py heartbeat()):
 ts and outbox_oldest in epoch seconds, open and outbox as counts.
 Keys by name: PORTAL_MONITOR_CF_TOKEN, PORTAL_MONITOR_CF_ACCOUNT,
 PORTAL_MONITOR_CF_KV_NAMESPACE (in monitor.env, one of the key files).
+GUARDIAN_BEAT=off in ~/.cockpit-guardian/env stops the PUT (a Cloudflare free
+plan's daily KV writes are already spent by the Hermes monitors, 2026-10-03).
 """
 from __future__ import annotations
 
@@ -43,6 +45,14 @@ def send(keys: Any, state: dict[str, Any], now: datetime,
     """PUT the beat; records the result in state["beat"] and returns it. Never raises."""
     rec = dict(state.get("beat") or {})
     rec["at"] = iso(now)
+    if (keys.get("GUARDIAN_BEAT") or "on").strip().lower() == "off":
+        # Every beat is a Cloudflare KV write; on the free plan's 1,000 a day the
+        # Hermes monitors' own beats already run out (deadman-beats says so).
+        rec.update(off=True, error=None)
+        rec.pop("missing", None)
+        state["beat"] = rec
+        return rec
+    rec.pop("off", None)
     missing = [k for k in KEYS if not keys.has(k)]
     if missing:
         rec.update(missing=", ".join(missing), error="keys missing")

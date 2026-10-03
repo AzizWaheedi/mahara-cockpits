@@ -60,6 +60,22 @@ class C1WatcherIsWatched(unittest.TestCase):
                           "error": "Cloudflare answered 403"}}
         self.assertEqual(guardian_self.run_beat(fakes.ctx(Path(tempfile.mkdtemp()), state=state)).status, FAIL)
 
+    def test_beat_off_sends_nothing_and_reads_paused(self):
+        sent = []
+        state = {"beat": {"error": "Cloudflare answered 429"}}
+        rec = beat.send(Keys(environ=dict(CF, GUARDIAN_BEAT="off"), use_files=False), state, fakes.NOW,
+                        put=lambda *a, **kw: (sent.append(a), fakes.resp(200, {"success": True}))[1])
+        self.assertEqual(sent, [])
+        self.assertTrue(rec["off"])
+        self.assertIsNone(rec["error"])
+        r = guardian_self.run_beat(fakes.ctx(Path(tempfile.mkdtemp()), state=state))
+        self.assertEqual(r.status, PAUSED)
+        self.assertIn("GUARDIAN_BEAT=off", r.summary)
+        beat.send(Keys(environ=CF, use_files=False), state, fakes.NOW,
+                  put=lambda *a, **kw: (sent.append(a), fakes.resp(200, {"success": True}))[1])
+        self.assertEqual(len(sent), 1)
+        self.assertNotIn("off", state["beat"])
+
     def test_a_full_scan_on_the_vps_beats_and_a_dry_run_never_does(self):
         b = Box(fixable=False)
         puts = []

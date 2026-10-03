@@ -5,6 +5,7 @@ from pathlib import Path
 
 from tests import fakes
 from checks import hermes_monitors, keys, sites
+from guard.context import SourceError
 from guard.model import FAIL, OK, UNKNOWN, WARN
 
 DB = b"https://bldgtotkfmhoxmlzowdx.supabase.co"
@@ -123,6 +124,35 @@ class Monitors(unittest.TestCase):
         self.assertEqual(r.status, FAIL)
         self.assertIn("code 1", r.summary)
         self.assertEqual(hermes_monitors.run_backup(make()).status, OK)
+
+    def test_deadman_blind_when_beats_are_refused(self):
+        snap = fakes.snapshot()
+        for m in ("dialer", "portal"):
+            snap["monitors"][m]["beat_last_ok"] = fakes.NOW.timestamp() - 3.5 * 3600
+            snap["monitors"][m]["beat_failures"] = 195
+        r = hermes_monitors.run_deadman(make(snap))
+        self.assertEqual(r.status, WARN)
+        self.assertEqual(sorted(r.items), ["dialer", "portal"])
+        self.assertIn("blind", r.summary)
+        self.assertIn("1,000", r.summary)
+
+    def test_deadman_warns_ahead_when_the_beats_cannot_fit_the_free_plan(self):
+        r = hermes_monitors.run_deadman(make())  # four monitors beating, all fresh: 1,440 writes a day
+        self.assertEqual(r.status, WARN)
+        self.assertIn("later today", r.summary)
+
+    def test_deadman_ok_within_the_budget(self):
+        snap = fakes.snapshot()
+        for m in ("dialer", "portal"):
+            del snap["monitors"][m]
+        self.assertEqual(hermes_monitors.run_deadman(make(snap)).status, OK)
+
+    def test_deadman_unknown_without_heartbeat_readings(self):
+        snap = fakes.snapshot()
+        for m in snap["monitors"].values():
+            m.pop("beat_last_ok", None)
+        with self.assertRaises(SourceError):  # the engine reads it as unknown, never as healthy
+            hermes_monitors.run_deadman(make(snap))
 
     def test_failing_hermes_job(self):
         snap = fakes.snapshot(hermes_jobs=[{"name": "Nightly Backup", "enabled": True, "last_status": "error", "last_error": "exit 1"},

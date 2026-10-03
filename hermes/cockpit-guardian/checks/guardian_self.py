@@ -14,7 +14,7 @@ from __future__ import annotations
 from datetime import timedelta
 
 from guard.context import SourceError
-from guard.model import Check, Result, ago, fail, not_deployed, ok, parse_time, unknown, warn
+from guard.model import Check, Result, ago, fail, not_deployed, ok, parse_time, paused, unknown, warn
 from guard.redact import clean
 
 BEAT_LATE = timedelta(minutes=15)
@@ -64,6 +64,11 @@ def run_beat(ctx) -> Result:
     if ctx.cfg.dry_run or ctx.cfg.remote:
         return unknown("Only the guardian's own run on the VPS sends its heartbeat.", coverage_gap=True)
     b = ctx.state.get("beat") or {}
+    if b.get("off"):
+        return paused("The guardian's own dead-man heartbeat is off (GUARDIAN_BEAT=off): Cloudflare's free plan allows "
+                      "1,000 storage writes a day and the Hermes monitors' beats already use them up (deadman-beats). "
+                      "Until it is back on, a stopped guardian shows only as an old last scan in its report.",
+                      action="Once deadman-beats is ok, delete GUARDIAN_BEAT=off from ~/.cockpit-guardian/env.")
     if b.get("missing"):
         return fail(f"The guardian's dead-man heartbeat is not sent: {b['missing']} cannot be read, so nobody would "
                     "notice if the guardian stopped.",

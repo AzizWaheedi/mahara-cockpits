@@ -13,6 +13,13 @@ from guard.redact import clean
 
 TICK_LIMIT_MIN = 3
 OUTBOX_STUCK_MIN = 30
+# The dead-man switch (a Cloudflare worker) reads one KV heartbeat per monitor.
+# Cloudflare's free plan takes 1,000 KV writes a day (error 10048 after that,
+# until 00:00 UTC). Each monitor beats every 5 minutes (288 a day) and the
+# worker writes its own `watcher` key every 5 minutes (288 more).
+BEAT_LATE_MIN = 15
+KV_FREE_WRITES_A_DAY = 1000
+BEATS_A_DAY = 288
 
 
 def monitor_check(name: str, label: str):
@@ -46,6 +53,35 @@ def monitor_check(name: str, label: str):
                   data={"delivering": True})
 
     return run
+
+
+def run_deadman(ctx: Context) -> Result:
+    mons = ctx.snap_part("monitors")
+    beats = {k: v for k, v in mons.items() if isinstance(v, dict) and "beat_last_ok" in v}
+    if not beats:
+        raise SourceError("no Hermes monitor's heartbeat could be read")
+    ages = {k: age_min(v.get("beat_last_ok"), ctx.now) for k, v in sorted(beats.items())}
+    blind = [k for k, a in ages.items() if a is None or a > BEAT_LATE_MIN]
+    writes = (len(beats) + 1) * BEATS_A_DAY  # the monitors' beats and the worker's watcher key
+    ev = {"beat_age_min": ages, "beat_failures": {k: beats[k].get("beat_failures") for k in ages},
+          "kv_writes_a_day": writes, "kv_free_limit": KV_FREE_WRITES_A_DAY}
+    action = ("Either move the Cloudflare account to Workers Paid ($5 a month, 1 million KV writes), or beat every 10 "
+              "minutes with the dead-man limit at 20 (monitor.py heartbeat_every_min, deadman-worker.mjs STALE_S, and "
+              "its watcher key written only when it changes).")
+    budget = (f"Cloudflare's free plan takes {KV_FREE_WRITES_A_DAY:,} storage writes a day and the monitors and the "
+              f"dead-man worker write about {writes:,}")
+    if blind:
+        worst = max((ages[k] for k in blind if ages[k] is not None), default=None)
+        return warn(f"The dead-man switch is blind: {len(blind)} of {len(ages)} Hermes monitor heartbeats have not "
+                    f"reached Cloudflare for {ago(worst)} ({', '.join(blind)}). {budget}, so every beat is refused "
+                    "until 00:00 UTC, and a stopped monitor or a dead VPS would go unnoticed until then.",
+                    items=blind, evidence=ev, action=action)
+    if writes > KV_FREE_WRITES_A_DAY:
+        return warn(f"The heartbeats reach Cloudflare now, but {budget}, so they will be refused later today (the "
+                    "free count resets at 00:00 UTC) and the dead-man switch goes blind until then.",
+                    evidence=ev, action=action)
+    return ok(f"Every Hermes monitor heartbeat reached Cloudflare in the last {BEAT_LATE_MIN} min, within the free "
+              "daily write limit.", evidence=ev)
 
 
 def run_jobs(ctx: Context) -> Result:
@@ -108,6 +144,13 @@ CHECKS = [
                     "incidents: listed.",
           run=monitor_check("dialer", "dialer"), quiet_because="hermes", owner="Hermes",
           action="Check the Hermes reliability monitor job for the dialer."),
+    Check(id="deadman-beats", area="monitors", name="Dead-man heartbeats",
+          means="The Hermes monitors' heartbeats reach the Cloudflare dead-man switch, so a stopped monitor or a dead "
+                "VPS would be noticed.",
+          severity="medium", reads=".../state/*/state.json (heartbeat.last_ok, failures) for every monitor",
+          threshold=f"A beat older than {BEAT_LATE_MIN} min, or more KV writes a day than the free plan allows: warn.",
+          run=run_deadman, owner="the CEO", clear=2,
+          action="Workers Paid on the Cloudflare account, or fewer beats (see the warning)."),
     Check(id="hermes-jobs", area="monitors", name="Hermes scheduled jobs",
           means="Hermes's own scheduled jobs pass.", severity="low", reads="/opt/data/cron/jobs.json (last_status, last_error)",
           threshold="An enabled job whose last run failed: warn (the Cron guardian job already watches these).",

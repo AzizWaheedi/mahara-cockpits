@@ -60,6 +60,7 @@ def snapshot_spec(repo: str = "~/mahara-cockpits", offsets: Optional[dict[str, i
             "public-sites": f"{MONITOR_ROOT}/public-sites/state.json",
             "portal": f"{MONITOR_ROOT}/state.json",
             "dialer": f"{MONITOR_ROOT}/dialer/state.json",
+            "aziz-cockpit": f"{MONITOR_ROOT}/aziz-cockpit/state.json",
         },
         "jobs_json": "/opt/data/cron/jobs.json",
         "fixer_attempts": "/opt/data/bibi/workspace/reliability/fixer-attempts.json",

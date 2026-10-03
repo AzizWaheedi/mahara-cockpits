@@ -362,10 +362,13 @@ def monitors(paths):
                                 "opened": v.get("opened"), "component": str(v.get("component") or "")[:80]}
         box = d.get("outbox") or []
         ats = [i.get("at") for i in box if isinstance(i, dict) and isinstance(i.get("at"), (int, float))]
+        hb = d.get("heartbeat") or {}
         out[name] = {"at": tick.get("at"), "not_ok": {k: v for k, v in status.items() if v != "ok"},
                      "checks": len(status), "incidents": incidents, "outbox": len(box),
                      "outbox_oldest": min(ats) if ats else None,
-                     "delivery_last_ok": (d.get("delivery") or {}).get("last_ok")}
+                     "delivery_last_ok": (d.get("delivery") or {}).get("last_ok"),
+                     "beat_last_ok": hb.get("last_ok") if isinstance(hb, dict) else None,
+                     "beat_failures": hb.get("failures") if isinstance(hb, dict) else None}
     return out
 
 

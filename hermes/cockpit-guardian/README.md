@@ -37,6 +37,15 @@ retire the guardian, delete `beat:cockpit-guardian` and
 says when the beat itself fails, and `report` says first when the last scan
 is more than 15 minutes old.
 
+The beat is off on the VPS for now (`GUARDIAN_BEAT=off` in
+`~/.cockpit-guardian/env`, 2026-10-03). Every beat is a Cloudflare KV write.
+The account is on the free plan, which allows 1,000 writes a day (error 10048
+after that, until 00:00 UTC). The five Hermes monitors and the worker's
+`watcher` key already write about 1,700 a day, so from mid-afternoon UTC every
+beat, theirs included, is refused and the dead-man switch is blind.
+`deadman-beats` reports this. Turn the guardian's beat back on (delete that line)
+once the account is on Workers Paid, or once the monitors beat less often.
+
 ```bash
 python3 guardian.py doctor                  # keys by name, what answers, its own files
 python3 guardian.py checks                  # every check: meaning, reading, threshold, safe fix
@@ -255,7 +264,8 @@ requires on the VPS). Every value of 8 or more characters in those files,
 and the other workers' env files it can read, is hidden by value wherever it
 might appear in an alert, a row, a brief or a log line, whole or in part.
 Optional, in `~/.cockpit-guardian/env` (mode 600): `GUARDIAN_SLACK_CHANNEL`
-to post somewhere other than `SLACK_HEALTH_CHANNEL`, `GUARDIAN_MODE`, and
+to post somewhere other than `SLACK_HEALTH_CHANNEL`, `GUARDIAN_MODE`,
+`GUARDIAN_BEAT=off` (no heartbeat PUT; see below), and
 `GITHUB_TOKEN` for `ai-fix`. Do not add `GITHUB_TOKEN` until port 3456 is
 closed (the `claude-proxy-exposed` check): the AI fixer is locked down, but
 a proxy open to the internet is a door into the same box.
@@ -352,7 +362,7 @@ Generated with `python3 guardian.py checks --json`.
 | `supabase-health` | S1 | A service not ACTIVE_HEALTHY, or no answer, for 15 minutes (by the clock, not by scans): fail; a read over 10 s: warn. |  |
 | `vps-snapshot` | H9 | No snapshot two scans running: fail (urgent); a part unreadable: warn. |  |
 | `guardian-db-copy` |  | Rows waiting over 1 h: fail (folded into supabase-health while that is down); a row refused: warn. |  |
-| `guardian-beat` |  | Keys unreadable, or no good beat for 15 min: fail. |  |
+| `guardian-beat` |  | Keys unreadable, or no good beat for 15 min: fail; `GUARDIAN_BEAT=off`: paused. |  |
 | `claude-signin` | H1 | Any of them says the sign-in lapsed or signed out: fail. |  |
 | `claude-proxy-up` | H2 | No answer, or a status other than ok: fail. |  |
 | `claude-proxy-exposed` | H3 | Listening on 0.0.0.0 or [::], or an outside GET answers 200: fail. |  |
@@ -452,5 +462,6 @@ Generated with `python3 guardian.py checks --json`.
 | `hermes-monitor-sites` |  | No tick for 3 min, or an alert undelivered for 30 min: fail; open incidents: listed. |  |
 | `hermes-monitor-portal` |  | No tick for 3 min, or an alert undelivered for 30 min: fail; open incidents: listed. |  |
 | `hermes-monitor-dialer` |  | No tick for 3 min, or an alert undelivered for 30 min: fail; open incidents: listed. |  |
+| `deadman-beats` |  | A Hermes monitor's beat older than 15 min, or more KV writes a day than Cloudflare's free 1,000: warn. |  |
 | `hermes-jobs` |  | An enabled job whose last run failed: warn (the Cron guardian job already watches these). |  |
 | `vps-backup` |  | Either says the backup failed or is old: fail. |  |
