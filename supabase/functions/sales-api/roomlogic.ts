@@ -903,6 +903,15 @@ export interface RoomRow {
   count_result?: CountResult | null;
   /** "That was not the lead": when it was pressed. A count that finishes after it undoes itself (new column). */
   count_undo_at?: string | null;
+  /** A WhatsApp template was not seen within rooms.waits_s.unconfirmed, so email went too (new column). */
+  link_unconfirmed_at?: string | null;
+  /** Why the link could not go, one sentence (the message service). */
+  refusal?: string | null;
+  /** The lead's first name when the room was made, for the panel. */
+  contact_first_name?: string | null;
+  /** Why the room is final, as the sweep or the claim wrote it. */
+  end_reason?: string | null;
+  last_open_at?: string | null;
   worker_run?: string | null;
   created_at?: string | null;
 }
@@ -1102,6 +1111,13 @@ export type RoomEvent =
       next_booked_start?: number | null;
       pending_events?: number | null;
       available_until?: string | number | null;
+      /**
+       * Who owns the timers (contract v2, S1). "sql": cockpit_sales_rooms_sweep()
+       * moves every state on its timers, so this tick moves none and only
+       * returns the re-asks and alerts SQL cannot do. Left out, roomlogic's own
+       * timers fire (the reference model the tests drive).
+       */
+      owner?: "sql" | null;
     };
 
 export const ROOM_EVENT_KINDS = [
@@ -1374,6 +1390,34 @@ function openRoom(
 }
 
 /**
+ * worker.ready on a room the worker already set open (contract v2, S2): the
+ * worker opens the room itself and writes opened_at, host_by and ends_at
+ * where they were unset, but never lead_by and never the link's claim. Two
+ * steps, in one guarded write:
+ * 1. only the deadlines that are missing: lead_by when the room has a lead,
+ *    host_by and ends_at (an older worker's row also gets opened_at);
+ * 2. the link's claim, when linkDue.
+ * A repeat finds nothing missing and the claim taken, and changes nothing.
+ */
+function readyOnOpen(room: RoomRow, meetingId: unknown, now: number, ctx: RoomCtx): Changed {
+  const w = ctx.waits;
+  const at = iso(now);
+  const patch: Partial<RoomRow> = {};
+  const opened = ms(room.opened_at);
+  if (opened === null) patch.opened_at = at;
+  const meeting = str(meetingId, 200);
+  if (!room.provider_meeting_id && meeting) patch.provider_meeting_id = meeting;
+  if (room.purpose !== "booked") {
+    if (!room.host_by) patch.host_by = laterIso(null, now + hostWaitS(room.purpose, w) * S);
+    if (room.contact_id && !room.lead_by) patch.lead_by = laterIso(null, (ms(room.link_sent_at) ?? now) + w.lead * S);
+    if (!room.ends_at) patch.ends_at = laterIso(null, now + lengthMs(room.call_kind, ctx));
+  }
+  const effects: Effect[] = [];
+  claimLink({ ...room, ...patch }, patch, effects, at);
+  return Object.keys(patch).length ? change(room, room.state, patch, effects) : same(room);
+}
+
+/**
  * "That was not the lead", within 5 minutes of the join (lead_in → host_in),
  * and also once the room has closed, where only the count is taken back
  * (F6). count_undo_at records the press; a count still in flight is marked
@@ -1434,7 +1478,11 @@ export function applyRoomEvent(room: RoomRow, event: RoomEvent, now: number, ctx
     if (event.kind === "ready") r.cleanup = true;
     return r;
   }
-  if (given && Number(seen) !== ver(room)) return refuse("stale");
+  // A rep's press one version behind a room the worker has only claimed since
+  // (requested to creating is the one move into creating) still cancels it
+  // (contract v2 section 4, lc-worker finding 23).
+  const claimedSince = event.kind === "end" && room.state === "creating" && Number(seen) === ver(room) - 1;
+  if (given && Number(seen) !== ver(room) && !claimedSince) return refuse("stale");
   const early = room.state === "requested" || room.state === "creating";
   // A Zoom, door or message-service time; a person's press is now.
   const when = (e: At & { source?: string }) => (e.source === "mark" ? now : eventTime(e.at, now));
@@ -1459,9 +1507,7 @@ export function applyRoomEvent(room: RoomRow, event: RoomEvent, now: number, ctx
       if (room.state === "creating") return openRoom(room, "open", url, event.provider_meeting_id, now, ctx);
       // A second, different meeting for a room already open: refused, and the worker deletes the one it made (F14).
       if (safeUrl(room.join_url) !== url) return { ...refuse("already_open"), cleanup: true };
-      // A row an older worker set to open itself carries no deadlines and asked for no link: finish it here, once (F19).
-      if (!room.opened_at && (room.state === "open" || room.state === "host_in"))
-        return openRoom(room, room.state, url, event.provider_meeting_id, now, ctx);
+      if (room.state === "open" || room.state === "host_in") return readyOnOpen(room, event.provider_meeting_id, now, ctx);
       return same(room);
     }
 
@@ -1719,6 +1765,9 @@ function tick(room: RoomRow, e: Extract<RoomEvent, { kind: "tick" }>, now: numbe
   }
   const extra = [...alerts, ...reasks(room, now, ctx)];
   const at = iso(now);
+  // The SQL sweep owns every timer (S1): no state moves here, only the
+  // re-asks and alerts SQL cannot do.
+  if (e.owner === "sql") return same(room, extra);
   if (room.state === "creating") {
     const fail = list.find(t => t.reason === "fail");
     const recover = list.find(t => t.reason === "recover");
@@ -1755,7 +1804,7 @@ export function sweepRoom(
   now: number,
   ctx: RoomCtx,
   nextBookedStart: number | null = null,
-  read: { pending_events?: number | null; available_until?: string | number | null } = {},
+  read: { pending_events?: number | null; available_until?: string | number | null; owner?: "sql" | null } = {},
 ): Applied {
   return applyRoomEvent(room, { kind: "tick", next_booked_start: nextBookedStart, ...read }, now, ctx);
 }
@@ -1817,6 +1866,23 @@ export function settleDue(room: RoomRow, appointmentStart: unknown, marked: bool
     (room.state === "expired" && (room.result == null || room.result === "no_join")) ||
     (room.state === "ended" && room.result === "no_join");
   if (!closedEmpty || leadJoined(room)) return false;
+  if (!room.appointment_id || room.settled_mark || marked) return false;
+  const start = ms(appointmentStart);
+  return start !== null && now >= start + w.settle * S;
+}
+
+/**
+ * What room.event's sweep.settle settles (contract v2 section 5): the
+ * fallback room settleDue describes, and the room the SQL sweep's S1 posts,
+ * a booked intro (room.wrap) that expired with no lead in it, settled at its
+ * start + settle (D14: "becomes a no-show at start + 20 minutes"). A room
+ * closed admit_blocked (the lead knocked and could not be let in) is never
+ * a no-show, and neither is one already marked or settled.
+ */
+export function settleWanted(room: RoomRow, appointmentStart: unknown, marked: boolean, now: number, w: Waits): boolean {
+  if (room.result === "admit_blocked") return false;
+  if (room.purpose !== "booked") return settleDue(room, appointmentStart, marked, now, w);
+  if (room.call_kind !== "intro" || room.state !== "expired" || room.lead_in_at) return false;
   if (!room.appointment_id || room.settled_mark || marked) return false;
   const start = ms(appointmentStart);
   return start !== null && now >= start + w.settle * S;
@@ -2751,6 +2817,15 @@ export interface RoomView {
   error: string | null;
   refusal: string | null;
   created_at: string | null;
+  /** A WhatsApp template was not seen in time, so email went too ("Not confirmed" reads this, never a channel). */
+  link_unconfirmed_at: string | null;
+  trigger: string | null;
+  attempt_id: string | null;
+  /** The booked call a booked or fallback room is for. */
+  appointment_id: string | null;
+  handover_id: string | null;
+  /** A booked room's appointment start, or the start of the booked intro a fallback room is for (not a column). */
+  starts_at: string | null;
 }
 
 export const ROOM_VIEW_KEYS = [
@@ -2782,6 +2857,12 @@ export const ROOM_VIEW_KEYS = [
   "error",
   "refusal",
   "created_at",
+  "link_unconfirmed_at",
+  "trigger",
+  "attempt_id",
+  "appointment_id",
+  "handover_id",
+  "starts_at",
 ] as const;
 
 /** The channels the link went on, from link_channels or the keys of link_message_ids. */
@@ -2800,9 +2881,9 @@ export function linkChannelsOf(row: { link_channels?: unknown; link_message_ids?
 
 export function toRoomView(
   row: RoomRow,
-  opts: { short_link: boolean; contact_first_name?: unknown; refusal?: string | null },
+  opts: { short_link: boolean; contact_first_name?: unknown; refusal?: string | null; starts_at?: unknown },
 ): RoomView {
-  const first = greetingName(opts.contact_first_name, null);
+  const first = greetingName(opts.contact_first_name ?? row.contact_first_name, null);
   return {
     id: String(row.id),
     code: String(row.code ?? ""),
@@ -2830,8 +2911,14 @@ export function toRoomView(
     result: oneOf(ROOM_RESULTS, row.result) ? row.result : null,
     count_result: oneOf(COUNT_RESULTS, row.count_result) ? row.count_result : null,
     error: redactRoom(row.error),
-    refusal: str(opts.refusal, 300),
+    refusal: redactRoom(opts.refusal ?? row.refusal),
     created_at: isoOrNull(row.created_at) ?? isoOrNull(row.requested_at),
+    link_unconfirmed_at: isoOrNull(row.link_unconfirmed_at),
+    trigger: oneOf(TRIGGERS, row.trigger) ? row.trigger : null,
+    attempt_id: str(row.attempt_id, 80),
+    appointment_id: str(row.appointment_id, 80),
+    handover_id: str(row.handover_id, 80),
+    starts_at: isoOrNull(opts.starts_at),
   };
 }
 

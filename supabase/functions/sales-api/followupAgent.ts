@@ -1,0 +1,385 @@
+// The follow-up agent's sales-api actions, phase 1 (desk NOTES sections 4 and
+// 5, glossary 1.5): backlog waves, the approved batch, holds, the desk's paced
+// send, the stop task and the levels. The desk (hermes/sales-desk/desk/waves.py)
+// enrols, drafts and paces; these are the doors it and the screens use.
+//
+// Every action is gated (a seat; needManager where the glossary says), every
+// write leaves an audit row, and every refusal says what to do next. A
+// refusal that holds every send carries hold_all, which the desk reads as
+// "stop the run".
+
+import { cleanText, redact, type Who } from "./lib.ts";
+import { ApiRefusal, DbError, isUnique, type LiveIO } from "./liveio.ts";
+import { GATE_SHUT, gateOpen, hoursRefusal } from "./sendrules.ts";
+
+type Row = Record<string, unknown>;
+type Action = (who: Who, b: Row) => Promise<Row>;
+
+const enc = encodeURIComponent;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export const POOLS = ["no_show_cancelled", "good_intro", "unclosed_demo", "never_booked"] as const;
+export const LEVELS = ["approve", "send_unless_stopped", "sends_by_itself", "off"] as const;
+export const KIND_KEY = /^(reply|confirm|no_show|cancelled|new|after_call|nurture|good_intro|reactivate)\.(ar|en)\.(whatsapp|whatsapp_template|email)$/;
+/** The most openers one approval schedules (followups.waves.per_day's ceiling for a day). */
+export const BATCH_MAX = 40;
+
+export const AGENT_COPY = {
+  manager_only: "Only a sales manager can change this.",
+  bad_pool: "Pick one of the four pools: no-shows and cancellations, good intros, unclosed demos, never booked.",
+  wave_running: "A wave for this pool is already running or paused. Resume it, or stop it first.",
+  wave_missing: "That wave is not here any more. Reload the page.",
+  wave_state: "This wave is {state}, so it cannot be {op}.",
+  stopped: "Stopped by a manager.",
+  batch_empty: "There are no open backlog openers to approve here.",
+  batch_too_many: "Approve at most 40 openers at a time.",
+  batch_not_open: "Some of these openers were already sent, skipped or taken back. Reload the page.",
+  batch_not_opener: "Only backlog openers go out in a paced batch. Approve other drafts one by one.",
+  not_yours: "That is another rep's lead.",
+  draft_missing: "That draft is not here any more.",
+  agent_off: "The follow-up agent is switched off (followups.enabled), so nothing is sent.",
+  wa_off: "Sending by WhatsApp is switched off in the cockpit.",
+  held: "This draft is held, so it was not sent. Release the hold or approve it again.",
+  not_due: "This draft is not approved to go yet.",
+  wave_not_running: "This opener was approved for a wave that is paused or stopped, so it was not sent.",
+  not_draft: "This draft was already {status}.",
+  stop_missing: "That stop is not here any more. Reload the page.",
+  stop_answer: "Answer stop, pause or resume.",
+  level_bad: "Pick approve, sends unless stopped, sends by itself or off.",
+  kind_bad: "That is not a kind of follow-up.",
+  lead_missing: "That lead is not in the cockpit.",
+} as const;
+
+export interface AgentDeps {
+  io: LiveIO;
+  audit(who: Who, action: string, entityType: string, entityId: string | null, before: unknown, after: unknown, metadata?: Row): Promise<void>;
+  /** index.ts sendFollowup, sending as `who` and recording `decidedBy` as the person who approved it. */
+  sendFollowup(who: Who, f: Row, b: Row, auto: boolean, opts?: { decidedBy?: string | null }): Promise<Row>;
+  /** WhatsApp health for one source (index.ts whatsappHealth({source})). */
+  whatsappHealth(source: "followup"): Promise<{ paused: boolean; why: string }>;
+}
+
+const refusal = (message: string, status = 409, extra: Row = {}) => new ApiRefusal(message, status, extra);
+const holdAll = (message: string, status = 409) => new ApiRefusal(message, status, { hold_all: true });
+const lower = (v: unknown) => String(v ?? "").trim().toLowerCase();
+const obj = (v: unknown): Row => (v && typeof v === "object" && !Array.isArray(v) ? (v as Row) : {});
+
+function needManager(who: Who): void {
+  if (!who.manager) throw refusal(AGENT_COPY.manager_only, 403);
+}
+
+/** Words the desk reads as a hold on every send (desk/waves.py HOLD_ALL_WORDS), as a refusal's extra. */
+const HOLD_WORDS = ["today's", "switched off", "are paused", "paused:", "wallet", "funds", "insufficient", "budget", "30 messages in ten minutes", "single-copy"];
+export function holdsEverything(message: string, status: number): boolean {
+  const m = message.toLowerCase();
+  return status === 429 || HOLD_WORDS.some(w => m.includes(w));
+}
+
+export function makeFollowupAgent(deps: AgentDeps): { actions: Record<string, Action>; desk: Record<string, Action> } {
+  const { io } = deps;
+  const iso = (t: number) => new Date(t).toISOString();
+
+  async function settings(keys: string[]): Promise<Record<string, unknown>> {
+    const rows = await io.db(`cockpit_sales_settings?key=in.(${keys.join(",")})&select=key,value`);
+    return Object.fromEntries(rows.map(r => [String(r.key), r.value]));
+  }
+
+  async function draft(id: string): Promise<Row> {
+    if (!UUID.test(id)) throw refusal(AGENT_COPY.draft_missing, 404);
+    const f = (await io.db(`cockpit_sales_followups?id=eq.${enc(id)}&select=*`))[0];
+    if (!f) throw refusal(AGENT_COPY.draft_missing, 404);
+    return f;
+  }
+  async function metaOf(id: string): Promise<Row | null> {
+    return (await io.db(`cockpit_sales_followup_meta?followup_id=eq.${enc(id)}&select=*`))[0] ?? null;
+  }
+  function mayAct(who: Who, f: Row): void {
+    if (!who.manager && f.owner_email && lower(f.owner_email) !== lower(who.email)) throw refusal(AGENT_COPY.not_yours, 403);
+  }
+  async function putMeta(id: string, patch: Row): Promise<Row> {
+    const rows = await io.db("cockpit_sales_followup_meta?on_conflict=followup_id", {
+      method: "POST",
+      body: { followup_id: id, ...patch },
+      prefer: "resolution=merge-duplicates,return=representation",
+    });
+    return rows[0] ?? {};
+  }
+
+  // ------------------------------------------------------------- followup.wave
+
+  async function wave(who: Who, b: Row): Promise<Row> {
+    needManager(who);
+    const op = String(b.op ?? "");
+    const s = await settings(["followups", "whatsapp_guard"]);
+    if (op === "start") {
+      const pool = String(b.pool ?? "");
+      if (!(POOLS as readonly string[]).includes(pool)) throw refusal(AGENT_COPY.bad_pool, 400);
+      if (!gateOpen(s.whatsapp_guard)) throw refusal(GATE_SHUT, 409, { hold_all: true });
+      const w = obj(obj(s.followups).waves);
+      const perDay = b.per_day === undefined ? Number(w.per_day ?? 40) : Number(b.per_day);
+      if (!Number.isInteger(perDay) || perDay < 0 || perDay > 200) throw refusal("Openers a day has to be a whole number from 0 to 200.", 400);
+      const share = Number(w.holdout_share ?? 0.1);
+      const row = {
+        pool,
+        segment: "reactivate",
+        per_day: perDay,
+        holdout_share: Number.isFinite(share) && share >= 0 && share <= 0.5 ? share : 0.1,
+        state: "running",
+        made_by: lower(who.email),
+        note: cleanText(b.note, 500) || null,
+      };
+      let made: Row;
+      try {
+        made = (await io.db("cockpit_sales_followup_waves", { method: "POST", body: row, prefer: "return=representation" }))[0] as Row;
+      } catch (e) {
+        if (isUnique(e)) {
+          // The same manager's second press within a minute: the wave it made.
+          const cur = (await io.db(
+            `cockpit_sales_followup_waves?pool=eq.${enc(pool)}&state=in.(running,paused)&select=*&limit=1`,
+          ))[0];
+          if (cur && lower(cur.made_by) === lower(who.email) && io.now() - Date.parse(String(cur.created_at)) < 60_000)
+            return { wave: cur, repeated: true };
+          throw refusal(AGENT_COPY.wave_running, 409);
+        }
+        throw e;
+      }
+      await deps.audit(who, "followup.wave.start", "cockpit_sales_followup_waves", String(made.id), null, made);
+      return { wave: made };
+    }
+    const id = String(b.wave_id ?? "");
+    if (!UUID.test(id)) throw refusal(AGENT_COPY.wave_missing, 404);
+    const before = (await io.db(`cockpit_sales_followup_waves?id=eq.${enc(id)}&select=*`))[0];
+    if (!before) throw refusal(AGENT_COPY.wave_missing, 404);
+    const moves: Record<string, { from: string[]; to: string; patch?: Row }> = {
+      pause: { from: ["running"], to: "paused" },
+      resume: { from: ["paused"], to: "running" },
+      stop: { from: ["running", "paused", "draft"], to: "done", patch: { done_reason: AGENT_COPY.stopped } },
+    };
+    const m = moves[op];
+    if (!m) throw refusal("Start, pause, resume or stop?", 400);
+    if (before.state === m.to) return { wave: before, repeated: true };
+    if (!m.from.includes(String(before.state)))
+      throw refusal(AGENT_COPY.wave_state.replace("{state}", String(before.state)).replace("{op}", op === "stop" ? "stopped" : `${op}d`));
+    if (op === "resume" && !gateOpen(s.whatsapp_guard)) throw refusal(GATE_SHUT, 409, { hold_all: true });
+    const rows = await io.db(`cockpit_sales_followup_waves?id=eq.${enc(id)}&state=eq.${enc(String(before.state))}`, {
+      method: "PATCH",
+      body: { state: m.to, ...(m.patch ?? {}) },
+      prefer: "return=representation",
+    });
+    if (!rows.length) throw refusal("This wave changed a moment ago. Reload the page.", 409);
+    await deps.audit(who, `followup.wave.${op}`, "cockpit_sales_followup_waves", id, before, rows[0]);
+    return { wave: rows[0] };
+  }
+
+  // ------------------------------------------------------------- followup.batch
+
+  async function batch(who: Who, b: Row): Promise<Row> {
+    const s = await settings(["followups", "whatsapp_guard"]);
+    if (!gateOpen(s.whatsapp_guard)) throw refusal(GATE_SHUT, 409, { hold_all: true });
+    let ids: string[];
+    if (b.wave_id !== undefined && b.wave_id !== null) {
+      const waveId = String(b.wave_id);
+      if (!UUID.test(waveId)) throw refusal(AGENT_COPY.wave_missing, 404);
+      const metas = await io.db(`cockpit_sales_followup_meta?wave_id=eq.${enc(waveId)}&select=followup_id&limit=500`);
+      const open = metas.length
+        ? await io.db(
+            `cockpit_sales_followups?id=in.(${metas.map(m => enc(String(m.followup_id))).join(",")})&status=eq.draft&segment=eq.reactivate&select=id&order=created_at.asc&limit=${BATCH_MAX + 1}`,
+          )
+        : [];
+      ids = open.map(r => String(r.id));
+    } else {
+      ids = [...new Set((Array.isArray(b.ids) ? b.ids : []).map(x => String(x ?? "").toLowerCase()))];
+      if (ids.some(x => !UUID.test(x))) throw refusal(AGENT_COPY.batch_not_open, 400);
+    }
+    if (!ids.length) throw refusal(AGENT_COPY.batch_empty, 409);
+    if (ids.length > BATCH_MAX) throw refusal(AGENT_COPY.batch_too_many, 400);
+    const drafts = await io.db(`cockpit_sales_followups?id=in.(${ids.map(enc).join(",")})&select=id,status,segment,owner_email`);
+    if (drafts.length !== ids.length || drafts.some(d => d.status !== "draft")) throw refusal(AGENT_COPY.batch_not_open, 409);
+    if (drafts.some(d => d.segment !== "reactivate")) throw refusal(AGENT_COPY.batch_not_opener, 409);
+    for (const d of drafts) mayAct(who, d);
+    const gap = Math.max(30, Math.min(3600, Number(obj(obj(s.followups).waves).batch_gap_s ?? 45) || 45));
+    const start = io.now();
+    const order = new Map(ids.map((x, i) => [x, i]));
+    const sorted = [...drafts].sort((a, c) => (order.get(String(a.id)) ?? 0) - (order.get(String(c.id)) ?? 0));
+    let i = 0;
+    for (const d of sorted) {
+      await putMeta(String(d.id), {
+        send_after: iso(start + i * gap * 1000),
+        approved_by: lower(who.email),
+        approved_at: iso(start),
+        held_by: null,
+        hold_reason: null,
+      });
+      i++;
+    }
+    const out = { count: sorted.length, first_at: iso(start), last_at: iso(start + (sorted.length - 1) * gap * 1000), gap_s: gap };
+    await deps.audit(who, "followup.batch", "cockpit_sales_followup_meta", null, null, out, { ids: sorted.map(d => d.id) });
+    return out;
+  }
+
+  // ------------------------------------------------------------- followup.hold
+
+  async function hold(who: Who, b: Row): Promise<Row> {
+    const f = await draft(String(b.id ?? ""));
+    mayAct(who, f);
+    const on = b.on === true;
+    const before = await metaOf(String(f.id));
+    const meta = await putMeta(
+      String(f.id),
+      on ? { held_by: lower(who.email), hold_reason: cleanText(b.reason, 300) || null } : { held_by: null, hold_reason: null },
+    );
+    await deps.audit(who, on ? "followup.hold" : "followup.unhold", "cockpit_sales_followup_meta", String(f.id), before, meta);
+    return { meta };
+  }
+
+  // ------------------------------------------------------------- followup.send_due (desk)
+
+  async function setAside(id: string, reason: string): Promise<void> {
+    try {
+      await putMeta(id, { send_after: null, held_by: "sales-desk", hold_reason: reason.slice(0, 300) });
+    } catch (e) {
+      io.log(`followups: a refused draft was not set aside: ${redact(String((e as Error)?.message ?? e))}`);
+    }
+  }
+
+  async function sendDue(who: Who, b: Row): Promise<Row> {
+    const f = await draft(String(b.id ?? ""));
+    const meta = await metaOf(String(f.id));
+    const s = await settings(["followups", "whatsapp_guard", "messaging"]);
+    const followups = obj(s.followups);
+    if (followups.enabled === false) throw holdAll(AGENT_COPY.agent_off);
+    if (f.status !== "draft") throw refusal(AGENT_COPY.not_draft.replace("{status}", String(f.status)));
+    if (!meta || meta.held_by) throw refusal(AGENT_COPY.held);
+    const due = Date.parse(String(meta.send_after ?? ""));
+    if (!Number.isFinite(due) || due > io.now()) throw refusal(AGENT_COPY.not_due);
+    if (meta.wave_id) {
+      const w = (await io.db(`cockpit_sales_followup_waves?id=eq.${enc(String(meta.wave_id))}&select=state`))[0];
+      if (w?.state !== "running") throw refusal(AGENT_COPY.wave_not_running);
+    }
+    const whatsapp = f.channel === "whatsapp" || f.channel === "whatsapp_template";
+    if (whatsapp) {
+      if (!gateOpen(s.whatsapp_guard)) throw holdAll(GATE_SHUT);
+      if (obj(s.messaging).whatsapp === false) throw holdAll(AGENT_COPY.wa_off);
+      const h = await deps.whatsappHealth("followup");
+      if (h.paused) throw holdAll(h.why);
+    }
+    const lead = (await io.db(`cockpit_sales_leads?contact_id=eq.${enc(String(f.contact_id))}&select=country`))[0];
+    const hours = hoursRefusal({ segment: f.segment, touch: f.touch, country: lead?.country, now: io.now(), followups, dayOff: true });
+    if (hours) throw refusal(hours);
+    try {
+      const out = await deps.sendFollowup(who, f, {}, false, { decidedBy: (meta.approved_by as string | null) ?? null });
+      const m = obj(out.message);
+      const err = String(m.error ?? "");
+      // A 200 whose message failed for the wallet or funds holds every send.
+      if (m.state === "failed" && /wallet|funds|insufficient|balance/i.test(err)) return { ...out, hold_all: true, error: err };
+      return out;
+    } catch (e) {
+      if (e instanceof ApiRefusal) {
+        const all = e.extra.hold_all === true || holdsEverything(e.message, e.status);
+        const hoursWords = /their time|day off|friday/i.test(e.message);
+        if (!all && !hoursWords && e.status !== 502) await setAside(String(f.id), e.message);
+        if (all && e.extra.hold_all !== true) throw new ApiRefusal(e.message, e.status, { ...e.extra, hold_all: true });
+      }
+      throw e;
+    }
+  }
+
+  // ------------------------------------------------------------- followup.stop_task
+
+  async function stopTask(who: Who, b: Row): Promise<Row> {
+    const contactId = cleanText(b.contact_id, 80);
+    const answer = String(b.answer ?? "");
+    if (!contactId) throw refusal(AGENT_COPY.lead_missing, 400);
+    if (!["dnd", "pause", "resume"].includes(answer)) throw refusal(AGENT_COPY.stop_answer, 400);
+    const lead = (await io.db(`cockpit_sales_leads?contact_id=eq.${enc(contactId)}&select=contact_id,assigned_to`))[0];
+    if (!lead) throw refusal(AGENT_COPY.lead_missing, 404);
+    if (!who.manager && lead.assigned_to) {
+      const owner = (await io.db(`cockpit_sales_people?ghl_user_id=eq.${enc(String(lead.assigned_to))}&active=eq.true&select=email`))[0];
+      if (owner && lower(owner.email) !== lower(who.email)) throw refusal(AGENT_COPY.not_yours, 403);
+    }
+    const s = await settings(["followups"]);
+    const pauseDays = Math.max(1, Math.min(90, Number(obj(s.followups).stop_pause_days ?? 30) || 30));
+    const now = io.now();
+    const decided = { decided_by: lower(who.email), decided_at: iso(now) };
+    const until = iso(now + pauseDays * 86_400_000);
+    const saidAt = b.said_at === undefined || b.said_at === null ? null : String(b.said_at);
+    if (saidAt !== null) {
+      if (!Number.isFinite(Date.parse(saidAt))) throw refusal(AGENT_COPY.stop_missing, 400);
+      const filter = `cockpit_sales_followup_stops?contact_id=eq.${enc(contactId)}&said_at=eq.${enc(new Date(Date.parse(saidAt)).toISOString())}`;
+      const before = (await io.db(`${filter}&select=*`))[0];
+      if (!before) throw refusal(AGENT_COPY.stop_missing, 404);
+      if (answer === "dnd") {
+        // Do-not-disturb on WhatsApp only, in HighLevel (D21: a rep confirms every stop).
+        try {
+          await io.ghl("PUT", `/contacts/${enc(contactId)}`, { dndSettings: { WhatsApp: { status: "active", message: "Asked to stop (cockpit)" } } }, "2021-07-28");
+        } catch (e) {
+          throw refusal(`HighLevel did not take the stop: ${redact(String((e as Error)?.message ?? e))}. Try again.`, 502);
+        }
+      }
+      const patch = answer === "dnd" ? { state: "dnd" } : answer === "pause" ? { state: "paused", paused_until: until } : { state: "resumed" };
+      const rows = await io.db(filter, { method: "PATCH", body: { ...patch, ...decided }, prefer: "return=representation" });
+      await deps.audit(who, `followup.stop_task.${answer}`, "cockpit_sales_followup_stops", contactId, before, rows[0] ?? null);
+      return { stop: rows[0] ?? null };
+    }
+    if (answer === "dnd") throw refusal("Answer the lead's stop message from its task. Here you can pause or resume the agent.", 400);
+    if (answer === "pause") {
+      const row = {
+        contact_id: contactId,
+        said_at: iso(now),
+        kind: "manual",
+        state: "paused",
+        paused_until: until,
+        created_by: lower(who.email),
+        ...decided,
+      };
+      const rows = await io.db("cockpit_sales_followup_stops", { method: "POST", body: row, prefer: "return=representation" });
+      await deps.audit(who, "followup.stop_task.pause", "cockpit_sales_followup_stops", contactId, null, rows[0] ?? row);
+      return { stop: rows[0] ?? row };
+    }
+    const rows = await io.db(`cockpit_sales_followup_stops?contact_id=eq.${enc(contactId)}&state=in.(asked,paused)`, {
+      method: "PATCH",
+      body: { state: "resumed", ...decided },
+      prefer: "return=representation",
+    });
+    await deps.audit(who, "followup.stop_task.resume", "cockpit_sales_followup_stops", contactId, null, { resumed: rows.length });
+    return { resumed: rows.length };
+  }
+
+  // ------------------------------------------------------------- followup.level
+
+  async function level(who: Who, b: Row): Promise<Row> {
+    needManager(who);
+    const key = String(b.kind_key ?? "");
+    const lv = String(b.level ?? "");
+    if (!KIND_KEY.test(key)) throw refusal(AGENT_COPY.kind_bad, 400);
+    if (!(LEVELS as readonly string[]).includes(lv)) throw refusal(AGENT_COPY.level_bad, 400);
+    if (key.startsWith("reactivate.") && lv !== "approve" && lv !== "off")
+      throw refusal("Backlog openers go only in an approved batch, so their level stays at Approve or Off.", 409);
+    const before = (await io.db(`cockpit_sales_followup_levels?kind_key=eq.${enc(key)}&select=*`))[0] ?? null;
+    let rows: Row[];
+    try {
+      rows = await io.db("cockpit_sales_followup_levels?on_conflict=kind_key", {
+        method: "POST",
+        body: { kind_key: key, level: lv, set_by: lower(who.email), reason: cleanText(b.reason, 500) || null },
+        prefer: "resolution=merge-duplicates,return=representation",
+      });
+    } catch (e) {
+      // The database's own gate (WhatsApp levels above Approve need the connector off and the single-copy test).
+      if (e instanceof DbError && (e.code === "P0001" || /single-copy|WA Connector/i.test(e.message))) throw refusal(GATE_SHUT, 409);
+      throw e;
+    }
+    await deps.audit(who, "followup.level", "cockpit_sales_followup_levels", key, before, rows[0] ?? null);
+    return { level: rows[0] ?? null };
+  }
+
+  return {
+    actions: {
+      "followup.wave": wave,
+      "followup.batch": batch,
+      "followup.hold": hold,
+      "followup.stop_task": stopTask,
+      "followup.level": level,
+    },
+    desk: { "followup.send_due": sendDue },
+  };
+}
