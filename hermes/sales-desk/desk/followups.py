@@ -27,8 +27,12 @@ heat: the hot list, qualified, revenue, money ready, wrote to us, fresh):
 - cancelled (1, then 2): cancelled an intro or demo, and booked nothing since;
 - new (1, then 2): came in during the last eight days, never booked, never
   reached on a call;
-- after_call (2): a demo showed in the last four days, no deal;
+- after_call (2): a demo held in the last four days (the B2B rule: showed,
+  or still confirmed once it has started; never invalid), no deal;
 - nurture (3): in a nurture stage, last touched a week ago or more.
+
+A sixth kind, reactivate, is never picked here: backlog waves (waves.py)
+draft it, the CEO's opener with no model text.
 
 Each kind is a sequence, like the HighLevel automation it replaces: its
 cadence (hours after the event) is in the settings, and each message has
@@ -52,11 +56,17 @@ takes the lead out of it at the send.
 The words follow Aziz's spoken-Gulf voice rules for Arabic, mirror the
 lead's own language, never invent a number, price, result or promise, and
 carry one next step. Edits reps made to earlier drafts are shown to the
-model as what good looks like. Lead data goes to OpenAI only, never to
-DeepSeek.
+model as what good looks like. Lead data goes to frontier models only, never
+to DeepSeek.
+
+A lead who asks to stop is never put on do-not-disturb by the agent (H4,
+2026-10-03): an explicit unsubscribe ("stop", "remove me", «احذف رقمي»)
+becomes a question for a rep, and every other stop word ("not interested",
+«لا تتصل») pauses the agent for that lead for 30 days. The dialer keeps them.
 """
 from __future__ import annotations
 
+import copy
 import json
 import re
 from datetime import datetime, timedelta, timezone
@@ -70,7 +80,25 @@ GHL = "https://services.leadconnectorhq.com"
 LOCATION = "7NI8yyJtwsh2OOWA5Icr"
 UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) "
       "Chrome/126.0 Safari/537.36")
-SEGMENTS = ("reply", "confirm", "no_show", "cancelled", "new", "after_call", "nurture")
+SEGMENTS = ("reply", "confirm", "no_show", "cancelled", "new", "after_call", "nurture", "reactivate")
+# The tag that makes a contact one the team tests with (--contact drafts for
+# no one else). Test contacts carry no roas tag, so no test ever books.
+TEST_TAG = "cockpit-test"
+# The calendars each kind of call is booked on (the `calendars` setting):
+# "Demo 2" is a copy of "Demo", and a call on it is a demo whatever its row's
+# call_type says.
+CALL_KINDS = {"dsqmJ393Dwl9fDSbIVOI": "intro", "cFeDl0FY8iaXll61lus8": "intro",
+              "jQqXS1YuFnmGZKLkrE62": "demo", "NDBNz6Og4yfpdpWmHrue": "demo"}
+# What the model is told about one lead, at most (characters of JSON), and
+# the messages of their conversation that always stay in it.
+BRIEF_LIMIT = 24_000
+KEEP_MESSAGES = 20
+# A first message of a sequence goes between these hours on the lead's own
+# clock (followups.first_hours); later steps follow the quiet hours.
+FIRST_HOURS = (9, 18)
+# Days the agent leaves a lead alone after a stop word that is not an
+# explicit unsubscribe (followups.stop_pause_days).
+STOP_PAUSE_DAYS = 30
 
 # Hours after the event for each message of a sequence (the settings' cadence
 # overrides these). The first no-show message goes a quarter of an hour after
@@ -82,7 +110,19 @@ CADENCE = {"new": [0.5, 24, 48, 96, 168], "no_show": [0.25, 24, 72, 144], "cance
 # fifth new-lead message (due on day seven), and three days the third
 # cancellation one after a call cancelled on the day (due five days on).
 WINDOW_DAYS = {"new": 8, "no_show": 7, "cancelled": 6, "after_call": 4}
+
+
+def window_days(segment: str, steps: Optional[list[float]] = None) -> int:
+    """How far back a kind's event may lie: its own window, or longer when the
+    settings' cadence for it runs longer (a last step plus a day), so a
+    sequence lengthened in the settings is never cut short by the window."""
+    base = WINDOW_DAYS.get(segment, 7)
+    if not steps:
+        return base
+    return max(base, -(-int(max(float(x) for x in steps) + 24) // 24))
 GAP = timedelta(hours=20)
+# How long a completed dial keeps a new lead out of the "not booked" kind.
+REACHED_FOR = timedelta(hours=24)
 # After a HighLevel automation's message: the setting's hours (20) while the
 # old sequence still runs; this when the kind takes the lead out of it at the
 # send (the take-over switch), only so the two do not arrive back to back.
@@ -115,6 +155,20 @@ OPT_OUT = re.compile(
     r"|لا ?(تراسل|ترسل|تتواصل|تتصل|تكلم)|لا عاد (تراسل|ترسل|تتواصل|تتصل)|وقف(وا)? (الرسائل|الرسايل|المراسلة)"
     r"|(احذف|احذفوا|امسح|امسحوا|شيل|شيلوا) رقمي|لا تزعج|مو مهتم|مش مهتم|غير مهتم|ما عاد مهتم",
     re.I)
+# Of those, the ones that ask to stop being messaged at all: only these may
+# end in do-not-disturb, and only once a rep confirms it. "Not interested",
+# "don't call me now" or «لا تتصل الحين» are not a legal stop; they pause
+# the agent instead (H4: automatic do-not-disturb also drops the lead from
+# the dialer and blocks every send).
+UNSUBSCRIBE = re.compile(
+    r"\b(unsubscribe|remove me|remove my (number|details)|opt[ -]?out|stop (messaging|messages|texting|sending|"
+    r"contacting|whatsapp)|don'?t (message|text|whatsapp|contact) me|do not (message|text|whatsapp|contact) me)\b"
+    r"|لا ?(تراسل|ترسل|تتواصل)|لا عاد (تراسل|ترسل|تتواصل)|وقف(وا)? (الرسائل|الرسايل|المراسلة)"
+    r"|(احذف|احذفوا|امسح|امسحوا|شيل|شيلوا) رقمي",
+    re.I)
+# "Stop" alone (or with a word of punctuation) is an explicit unsubscribe; a
+# "stop" inside a sentence ("we stop work at 5") is only a pause.
+BARE_STOP = re.compile(r"^\W*(stop|stop it|stop please|please stop|ستوب|توقف|وقف|وقفوا)\W*$", re.I)
 # Words that make a name on file a company's, not a person's (found
 # 2026-09-26: of 2,720 recent and nurture leads, 51 names were a company's
 # and 86 carried digits). Arabic ones are matched without a leading ال, لل or و.
@@ -156,6 +210,8 @@ GOAL = {
     "new": "They came in recently and have not booked a call. Get the intro call booked.",
     "after_call": "They had the demo and have not signed. Follow up on the one thing that mattered on the call.",
     "nurture": "A long-term lead. A short, useful check-in about their situation; no pressure, one soft question.",
+    # Never sent to a model: the opener is the CEO's own words (waves.py).
+    "reactivate": "A lead from the backlog. The CEO's opener only; their answer opens the window for a written reply.",
 }
 
 # What each message of a sequence does, so no two read alike.
@@ -226,6 +282,49 @@ def _ts(v: Any) -> Optional[datetime]:
     except ValueError:
         return None
     return t if t.tzinfo else t.replace(tzinfo=timezone.utc)
+
+
+# ---------------------------------------------------------------------------
+# Calls, read by the B2B rule
+# ---------------------------------------------------------------------------
+
+def shown(call: dict[str, Any], now: datetime) -> bool:
+    """Whether a call was held, by the B2B cockpit's rule (b2b_window_metrics):
+    marked showed, or still confirmed once it has started. B2B counts invalid
+    as shown as well; the agent never does, because a disqualified intro is
+    written as invalid (sales-api dialer.ts) and is no lead to follow up.
+    Found 2026-10-03: after_call asked for showed alone, and no demo in the
+    last 30 days had been marked, so it never wrote a message."""
+    start = _ts(call.get("start_at"))
+    status = str(call.get("status") or "").lower()
+    return bool(start and start <= now and status in ("showed", "confirmed"))
+
+
+def with_kinds(calendar: list[dict[str, Any]], calendars: Optional[dict[str, Any]] = None) -> list[dict[str, Any]]:
+    """The calendar copy with each call's kind filled in from its calendar
+    when the row does not say (a call on "Demo 2" is a demo). `calendars` is
+    the cockpit's setting of that name, {calendar_id: {"type": ...}}."""
+    kinds = dict(CALL_KINDS)
+    for cid, v in (calendars or {}).items():
+        if isinstance(v, dict) and v.get("type"):
+            kinds[str(cid)] = str(v["type"])
+    out = []
+    for a in calendar:
+        kind = kinds.get(str(a.get("calendar_id") or ""))
+        if a.get("call_type") not in ("intro", "demo") and kind in ("intro", "demo"):
+            a = {**a, "call_type": kind}
+        out.append(a)
+    return out
+
+
+def in_hours(now: datetime, country: Any, hours: Any = FIRST_HOURS) -> bool:
+    """Whether it is between the hours given (from, to) on the lead's own clock."""
+    try:
+        a, b = int(hours[0]), int(hours[1])
+    except (TypeError, ValueError, IndexError):
+        a, b = FIRST_HOURS
+    h = (now + lead_offset(country)).hour
+    return a <= h < b
 
 
 # ---------------------------------------------------------------------------
@@ -332,6 +431,58 @@ def confirm_from(start: datetime) -> datetime:
 
 def window_open(last_inbound_wa: Optional[datetime], now: datetime) -> bool:
     return bool(last_inbound_wa and now - last_inbound_wa < timedelta(hours=23))
+
+
+def _email(channel: Any) -> bool:
+    return "email" in str(channel or "").lower()
+
+
+def last_inbound(rows: list[dict[str, Any]]) -> tuple[Optional[datetime], str]:
+    """When the lead last wrote, across their conversations in the inbox copy,
+    and on what: a conversation's last WhatsApp from them, or its last
+    message when that was theirs (whatever came after it from our side)."""
+    best: tuple[Optional[datetime], str] = (None, "")
+    for r in rows:
+        for t, ch in ((_ts(r.get("inbound_whatsapp_at")), "whatsapp"),
+                      (_ts(r.get("last_message_at")) if r.get("last_direction") == "inbound" else None,
+                       str(r.get("last_type") or ""))):
+            if t and (best[0] is None or t > best[0]):
+                best = (t, ch)
+    return best
+
+
+def answers(channel: Any, their_channel: Any) -> bool:
+    """Whether a message of ours on `channel` answers a lead who wrote on
+    `their_channel`: an email answers only an email (a newsletter or an
+    automation's email to a lead who asked on WhatsApp answers nothing)."""
+    return not _email(channel) or _email(their_channel)
+
+
+def reply_answered(thread: list[dict[str, Any]], inbox: list[dict[str, Any]], sends: list[dict[str, Any]],
+                   ours: set[str]) -> bool:
+    """Whether a person answered the lead after they last wrote: a message of
+    ours after theirs that a person sent (not a HighLevel automation's, unless
+    it is a template the cockpit itself sent through a workflow) on a channel
+    that answers theirs. Found 2026-10-03: a reply was missed whenever the
+    conversation's last message was ours, an automation's email included."""
+    theirs = [(_ts(m.get("at")), str(m.get("channel") or "")) for m in thread if m.get("from") == "lead"]
+    t_in, ch_in = last_inbound(inbox)
+    if t_in:
+        theirs.append((t_in, ch_in))
+    theirs = [x for x in theirs if x[0]]
+    if not theirs:
+        return False
+    last_t, their_ch = max(theirs, key=lambda x: x[0])
+    for m in thread:
+        at = _ts(m.get("at"))
+        if m.get("from") != "us" or not at or at <= last_t:
+            continue
+        if m.get("source") == "workflow" and str(m.get("id")) not in ours:
+            continue  # an automation's message, not an answer
+        if answers(m.get("channel"), their_ch):
+            return True
+    return any(s.get("state") != "failed" and _ts(s.get("created_at")) and _ts(s["created_at"]) > last_t
+               and answers(s.get("channel"), their_ch) for s in sends)
 
 
 def blocked_channels(contact: dict[str, Any]) -> set[str]:
@@ -495,19 +646,30 @@ def pick(now: datetime, *, inbox: list[dict[str, Any]], calendar: list[dict[str,
     by_lead = {str(l.get("contact_id")): l for l in leads}
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
+    # A lead who wrote is a reply candidate, but the run may find a person
+    # answered them already (in the HighLevel app, say). Their other due kind
+    # then still goes, so a reply candidate never takes the lead's one place:
+    # it carries the next kind with it ("then"). Found 2026-10-03: a no-show
+    # who wrote "stuck in traffic" and was answered lost the no-show step for
+    # two days.
+    replies: dict[str, dict[str, Any]] = {}
 
     def add(c: str, seg: str, touch: int, tier: int, *, appointment_id: Optional[str] = None,
             start_at: Optional[datetime] = None, due_at: Optional[datetime] = None) -> bool:
-        if not c or c in seen or c in open_drafts:
+        if not c or c in open_drafts or (c in replies if seg == "reply" else c in seen):
             return False
         if seg != "reply" and c in last_sent and now - last_sent[c] < GAP:
             return False
-        seen.add(c)
         score, reasons = heat(by_lead.get(c) or {}, now, hot=c in hot, inbound_at=inbound.get(c))
-        out.append({"contact_id": c, "segment": seg, "touch": touch, "of": len(steps_of.get(seg) or [1]),
-                    "tier": tier, "heat": score, "reasons": reasons, "appointment_id": appointment_id,
-                    "start_at": start_at.isoformat() if start_at else None,
-                    "due_at": (due_at or now).isoformat()})
+        entry = {"contact_id": c, "segment": seg, "touch": touch, "of": len(steps_of.get(seg) or [1]),
+                 "tier": tier, "heat": score, "reasons": reasons, "appointment_id": appointment_id,
+                 "start_at": start_at.isoformat() if start_at else None,
+                 "due_at": (due_at or now).isoformat()}
+        if seg == "reply":
+            replies[c] = entry
+        else:
+            seen.add(c)
+            out.append(entry)
         return True
 
     def step(c: str, seg: str, since: datetime, first_due: datetime) -> Optional[tuple[int, datetime]]:
@@ -522,14 +684,24 @@ def pick(now: datetime, *, inbox: list[dict[str, Any]], calendar: list[dict[str,
         due = first_due if n == 1 else done[0] + timedelta(hours=steps[n - 1] - steps[0])
         return (n, due) if due <= now else None
 
-    # They wrote and nobody answered.
-    for r in sorted(inbox, key=lambda r: str(r.get("last_message_at") or ""), reverse=True):
-        t = _ts(r.get("last_message_at"))
-        if r.get("last_direction") == "inbound" and t and now - t < timedelta(hours=48):
-            add(str(r.get("contact_id") or ""), "reply", 1, 0)
+    # They wrote in the last two days and the cockpit has not answered. The
+    # conversation's own last message may be ours and still no answer (an
+    # automation's, an email to a WhatsApp question): the run reads the
+    # conversation and tells a person's answer apart.
+    rows_of: dict[str, list[dict[str, Any]]] = {}
+    for r in inbox:
+        rows_of.setdefault(str(r.get("contact_id") or ""), []).append(r)
+    wrote = {c: last_inbound(rs) for c, rs in rows_of.items() if c}
+    for c, (t, ch) in sorted(((c, w) for c, w in wrote.items() if w[0]), key=lambda x: x[1][0], reverse=True):
+        if now - t >= timedelta(hours=48):
+            continue
+        if any(str(s.get("contact_id") or "") == c and s.get("state") != "failed" and _ts(s.get("created_at"))
+               and _ts(s["created_at"]) > t and answers(s.get("channel"), ch) for s in sends):
+            continue
+        add(c, "reply", 1, 0)
 
     live = ("cancelled", "noshow", "invalid", "showed")
-    calls = [a for a in calendar if a.get("call_type") in ("intro", "demo") and _ts(a.get("start_at"))]
+    calls = [a for a in with_kinds(calendar) if a.get("call_type") in ("intro", "demo") and _ts(a.get("start_at"))]
     calls_of: dict[str, list[dict[str, Any]]] = {}
     for a in calls:
         calls_of.setdefault(str(a.get("contact_id") or ""), []).append(a)
@@ -551,7 +723,7 @@ def pick(now: datetime, *, inbox: list[dict[str, Any]], calendar: list[dict[str,
     # Missed or cancelled, and nothing booked since.
     for seg, status in (("no_show", "noshow"), ("cancelled", "cancelled")):
         latest: dict[str, dict[str, Any]] = {}
-        lo = now - timedelta(days=WINDOW_DAYS[seg])
+        lo = now - timedelta(days=window_days(seg, steps_of.get(seg)))
         hi = now if seg == "no_show" else now + timedelta(days=21)
         for a in calls:
             if a.get("status") != status:
@@ -578,7 +750,8 @@ def pick(now: datetime, *, inbox: list[dict[str, Any]], calendar: list[dict[str,
     ever_booked = {str(a.get("contact_id") or "") for a in calendar}
     for lead in sorted(leads, key=lambda l: str(l.get("lead_created_at") or ""), reverse=True):
         c, created = str(lead.get("contact_id") or ""), _ts(lead.get("lead_created_at"))
-        if not created or now - created > timedelta(days=WINDOW_DAYS["new"]) or c in ever_booked or c in reached:
+        if not created or now - created > timedelta(days=window_days("new", steps_of.get("new"))) \
+                or c in ever_booked or c in reached:
             continue
         if lead.get("lead_class") not in ("qualified", "unqualified") and not lead.get("pipeline_id"):
             continue
@@ -586,12 +759,15 @@ def pick(now: datetime, *, inbox: list[dict[str, Any]], calendar: list[dict[str,
         if nxt:
             add(c, "new", nxt[0], 1 if nxt[0] == 1 else 2, due_at=nxt[1])
 
-    # A demo that showed and no deal since.
-    for a in calls:
+    # A demo held (the B2B rule: showed, or confirmed once started; never
+    # invalid) and no deal since. An unmarked demo waits the first step's day,
+    # in which a no-show mark moves the lead to the no-show sequence instead.
+    after_days = window_days("after_call", steps_of.get("after_call"))
+    for a in sorted(calls, key=lambda a: str(a.get("start_at")), reverse=True):
         c, start = str(a.get("contact_id") or ""), _ts(a.get("start_at"))
-        if a.get("call_type") != "demo" or a.get("status") != "showed" or c in deals:
+        if a.get("call_type") != "demo" or not shown(a, now) or c in deals:
             continue
-        if not (now - timedelta(days=WINDOW_DAYS["after_call"]) <= start <= now):
+        if not (now - timedelta(days=after_days) <= start <= now):
             continue
         nxt = step(c, "after_call", start, start + timedelta(hours=(steps_of.get("after_call") or [0])[0]))
         if nxt:
@@ -611,6 +787,12 @@ def pick(now: datetime, *, inbox: list[dict[str, Any]], calendar: list[dict[str,
             break
         added += add(str(lead.get("contact_id") or ""), "nurture", 1, 3)
 
+    for c, r in replies.items():
+        other = next((d for d in out if d["contact_id"] == c), None)
+        if other is not None:
+            out.remove(other)
+            r["then"] = other
+        out.append(r)
     out.sort(key=lambda d: (d["tier"], -d["heat"], d["due_at"]))
     return out
 
@@ -717,8 +899,172 @@ def call_words(start: datetime, now: datetime, country: Any = None) -> dict[str,
 def asked_to_stop(thread: list[dict[str, Any]]) -> bool:
     """The lead's own latest message says stop or not interested (a later
     "actually, tell me more" opens them up again)."""
-    theirs = [str(m.get("text") or "") for m in thread if m.get("from") == "lead" and m.get("text")]
-    return bool(theirs) and bool(OPT_OUT.search(theirs[-1]))
+    return stop_of(thread) is not None
+
+
+def stop_kind(text: Any) -> Optional[str]:
+    """What a lead's words ask: "unsubscribe" (stop messaging me at all, which
+    a rep may confirm as do-not-disturb), "pause" (not interested, not now,
+    don't call: the agent leaves them for 30 days), or None."""
+    t = str(text or "").strip()
+    if not t:
+        return None
+    if BARE_STOP.match(t) or UNSUBSCRIBE.search(t):
+        return "unsubscribe"
+    return "pause" if OPT_OUT.search(t) else None
+
+
+def stop_of(thread: list[dict[str, Any]]) -> Optional[dict[str, Any]]:
+    """The lead's latest message with words in it, when it asks to stop:
+    {kind, at, text}. Only the latest one is read here; once a stop is kept
+    in the cockpit (record_stop), its row holds the lead until a rep resumes
+    it, whatever the lead writes after (hold_of)."""
+    theirs = [m for m in thread if m.get("from") == "lead" and str(m.get("text") or "").strip()]
+    if not theirs:
+        return None
+    last = theirs[-1]
+    kind = stop_kind(last.get("text"))
+    if not kind:
+        return None
+    return {"kind": kind, "at": _ts(last.get("at")), "text": str(last.get("text") or "").strip()[:200]}
+
+
+STOPS = "cockpit_sales_followup_stops"
+
+
+def stop_hold(stop: Optional[dict[str, Any]], row: Optional[dict[str, Any]], now: datetime,
+              pause_days: int = STOP_PAUSE_DAYS) -> Optional[str]:
+    """Why the agent leaves this lead alone now, in words for the run's log,
+    or None. `row` is what the cockpit holds about this stop (a rep's answer
+    to it), when it can be read: resumed, paused until a day, or put on
+    WhatsApp do-not-disturb. Without it, an unsubscribe waits for a rep and a
+    pause runs 30 days from the lead's message."""
+    if not stop:
+        return None
+    state = str((row or {}).get("state") or "")
+    if state == "resumed":
+        return None
+    if state == "paused" or (not state and stop["kind"] == "pause"):
+        until = _ts((row or {}).get("paused_until")) or ((stop.get("at") or now) + timedelta(days=pause_days))
+        return f"paused until {until.date().isoformat()} after writing a stop word" if now < until else None
+    if state == "dnd":
+        return "asked to stop; a rep put WhatsApp on do-not-disturb"
+    return "asked to stop; a rep confirms it before anything else goes"
+
+
+def _rows_of(rows: Optional[dict[str, Any]], contact: str) -> list[dict[str, Any]]:
+    """Every stops row the cockpit holds for a lead, newest first (a single
+    row, as an older caller may pass, is read as a list of one)."""
+    r = (rows or {}).get(contact)
+    if isinstance(r, dict):
+        r = [r]
+    return sorted((x for x in (r or []) if isinstance(x, dict)), key=lambda x: _ts(x.get("said_at")) or datetime.min.replace(tzinfo=timezone.utc),
+                  reverse=True)
+
+
+def hold_of(rows: Optional[dict[str, Any]], contact: str, now: datetime) -> Optional[tuple[str, str]]:
+    """What the cockpit's stops rows say about a lead now, whatever the lead
+    wrote since: (kind, words) or None. Every row counts, not only the
+    newest, so a rep's pause is never hidden behind a newer stop word, and a
+    rep's answer is never hidden behind a newer pause.
+
+    - asked: an unsubscribe a rep has not answered; nothing goes until they do.
+    - dnd: a rep put WhatsApp on do-not-disturb.
+    - paused (a stop word) or manual (a rep's own pause): until paused_until.
+    Only a rep's resume lifts a row: a row said before the latest resume
+    holds nothing. A later message from the lead lifts nothing (spec P3 §4:
+    a paused lead leaves that state when a rep resumes it)."""
+    mine = _rows_of(rows, contact)
+    resumed = [(_ts(r.get("decided_at")) or _ts(r.get("said_at"))) for r in mine if r.get("state") == "resumed"]
+    resumed_at = max((t for t in resumed if t), default=None)
+    for r in mine:
+        state, said = str(r.get("state") or ""), _ts(r.get("said_at"))
+        if state == "resumed" or (resumed_at and said and said <= resumed_at):
+            continue
+        if state == "asked":
+            return "asked", "asked to stop; a rep confirms it before anything else goes"
+        if state == "dnd":
+            return "dnd", "asked to stop; a rep put WhatsApp on do-not-disturb"
+        until = _ts(r.get("paused_until"))
+        if state == "paused" and until and now < until:
+            if r.get("kind") == "manual":
+                return "manual", f"paused by a rep until {until.date().isoformat()}"
+            return "paused", f"paused until {until.date().isoformat()} after writing a stop word"
+    return None
+
+
+def new_stop_hold(rows: Optional[dict[str, Any]], contact: str, stop: Optional[dict[str, Any]], now: datetime,
+                  pause_days: int = STOP_PAUSE_DAYS) -> tuple[Optional[str], bool]:
+    """The lead's latest stop word in their thread: (why it holds them now,
+    whether it is new to the cockpit and is to be kept for a rep). A stop the
+    cockpit already keeps is decided by its row (hold_of), never here; a new
+    one holds as stop_hold says, unless a rep resumed the lead after it was
+    written. Without the rows (the table unreadable), the words decide."""
+    if not stop:
+        return None, False
+    if stop_row_for(rows, contact, stop) is not None:
+        return None, False
+    resumed = [(_ts(r.get("decided_at")) or _ts(r.get("said_at"))) for r in _rows_of(rows, contact)
+               if r.get("state") == "resumed"]
+    resumed_at = max((t for t in resumed if t), default=None)
+    if resumed_at and stop.get("at") and stop["at"] <= resumed_at:
+        return None, False
+    return stop_hold(stop, None, now, pause_days), True
+
+
+def manual_hold(rows: Optional[dict[str, Any]], contact: str, now: datetime) -> Optional[str]:
+    """A rep's own pause from the lead page ("Pause the agent for this
+    lead") when it is what holds the lead now: a stops row of kind manual,
+    paused until a time still to come, and no rep's resume since."""
+    h = hold_of(rows, contact, now)
+    return h[1] if h and h[0] == "manual" else None
+
+
+def record_stop(sb: Any, contact: str, stop: dict[str, Any], now: datetime, pause_days: int = STOP_PAUSE_DAYS,
+                warn: Callable[[str], None] = lambda _m: None) -> bool:
+    """The stop kept where a rep sees it: an unsubscribe as a question for a
+    rep ("Stop WhatsApp for them?"), a pause with the day it ends. Once per
+    lead message; a rep's answer is never written over. Never do-not-disturb:
+    only a rep's yes does that, through sales-api. A failed write leaves the
+    lead alone all the same, and says so."""
+    at = stop.get("at") or now
+    row = {"contact_id": contact, "said_at": at.isoformat(), "kind": stop["kind"], "said": stop["text"][:200],
+           "state": "asked" if stop["kind"] == "unsubscribe" else "paused",
+           "paused_until": None if stop["kind"] == "unsubscribe" else (at + timedelta(days=pause_days)).isoformat(),
+           "created_by": "sales-desk"}
+    try:
+        sb.rest("POST", f"{STOPS}?on_conflict=contact_id,said_at", json_body=[row],
+                prefer="resolution=ignore-duplicates,return=minimal")
+        return True
+    except Exception as e:  # noqa: BLE001 - the lead is left alone anyway
+        warn(f"followups: {contact}'s stop could not be kept for a rep ({http.scrub(str(e))[:120]}); "
+             "the agent leaves them alone all the same")
+        return False
+
+
+def stops_for(sb: Any, contacts: list[str]) -> Optional[dict[str, list[dict[str, Any]]]]:
+    """Every stop the cockpit holds for each lead, newest first, or None when
+    they cannot be read (the table not there yet): unknown, never "no
+    stops". Found 2026-10-03: keeping only the newest row hid a rep's pause
+    behind a newer stop word, and a rep's answer behind a newer pause."""
+    out: dict[str, list[dict[str, Any]]] = {}
+    try:
+        for chunk in _chunks(sorted(set(contacts))):
+            for r in sb.select_all(STOPS, f"select=*&contact_id={_in(chunk)}", order="contact_id,said_at"):
+                out.setdefault(str(r.get("contact_id")), []).append(r)
+    except Exception:  # noqa: BLE001 - said by the caller
+        return None
+    return {c: _rows_of(out, c) for c in out}
+
+
+def stop_row_for(rows: Optional[dict[str, Any]], contact: str,
+                 stop: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
+    """The cockpit's row about this very stop (the same lead message), if
+    any, among every row it holds for the lead."""
+    if not stop or not stop.get("at"):
+        return None
+    return next((r for r in _rows_of(rows, contact)
+                 if r.get("kind") != "manual" and _ts(r.get("said_at")) == stop.get("at")), None)
 
 
 def context_for(sb: Any, lead: dict[str, Any], ghl_token: str, now: datetime,
@@ -770,14 +1116,93 @@ def context_for(sb: Any, lead: dict[str, Any], ghl_token: str, now: datetime,
         "rep": (rep_name or "").split(" ")[0] or None,
         "rep_ar": (rep_ar or "").split(" ")[0] or None,
     }
+    due_context(ctx, lead, due, now)
+    ctx["_thread"] = thread
+    ctx["_thread_ok"] = thread_ok
+    return ctx
+
+
+def due_context(ctx: dict[str, Any], lead: dict[str, Any], due: Optional[dict[str, Any]], now: datetime) -> None:
+    """The parts of the brief that belong to the message being written (the
+    call it is about, its number in the sequence), set again when a run moves
+    from an answered reply to the lead's next kind."""
+    ctx.pop("the_call", None)
+    ctx.pop("message_number", None)
     if due and due.get("start_at") and due.get("segment") in ("confirm", "no_show", "cancelled"):
+        appts = ctx.get("calls_on_the_calendar") or []
         a = next((x for x in appts if _ts(x.get("start_at")) == _ts(due["start_at"])), {})
         ctx["the_call"] = {"type": a.get("call_type"), **call_words(_ts(due["start_at"]), now, lead.get("country"))}
     if due and due.get("segment") in ANGLES:
         ctx["message_number"] = f"{due.get('touch', 1)} of {due.get('of') or len(ANGLES[due['segment']])}"
-    ctx["_thread"] = thread
-    ctx["_thread_ok"] = thread_ok
-    return ctx
+
+
+def _cut(v: Any, n: int) -> Any:
+    return v[:n] if isinstance(v, str) and len(v) > n else v
+
+
+def brief(ctx: dict[str, Any], limit: int = BRIEF_LIMIT) -> str:
+    """What the model reads about a lead, as whole JSON no longer than
+    `limit`, the newest messages of their conversation kept whatever else has
+    to give: older call summaries, research and notes shrink first, then the
+    older messages' words. Found 2026-10-03: the brief was cut at 24,000
+    characters from its end, so the conversation, last in it, lost its newest
+    messages first (and the JSON its closing)."""
+    c = copy.deepcopy(ctx)
+    c["conversation"] = list(c.get("conversation") or [])[-KEEP_MESSAGES:]
+
+    def text() -> str:
+        return json.dumps(c, ensure_ascii=False, indent=1, default=str)
+
+    def each(key: str, fn: Callable[[dict[str, Any]], dict[str, Any]], keep: Optional[int] = None) -> None:
+        items = [x for x in (c.get(key) or []) if isinstance(x, dict)]
+        c[key] = [fn(x) for x in (items[:keep] if keep is not None else items)]
+
+    def research(n: int) -> None:
+        r = c.get("research")
+        if isinstance(r, dict):
+            tp = r.get("talking_points")
+            c["research"] = {"company": _cut(r.get("company"), n),
+                             "talking_points": [_cut(t, n // 3) for t in tp[:5]] if isinstance(tp, list) else _cut(tp, n)}
+
+    def messages(n: int, keep_whole: int) -> None:
+        conv = c["conversation"]
+        for i, m in enumerate(conv[:max(0, len(conv) - keep_whole)]):
+            if isinstance(m, dict):
+                conv[i] = {**m, "text": _cut(m.get("text"), n)}
+
+    shrink: list[Callable[[], None]] = [
+        lambda: research(800),
+        lambda: each("recorded_calls", lambda r: {**r, "summary": _cut(r.get("summary"), 1000),
+                                                  "action_items": _cut(r.get("action_items"), 300)}),
+        lambda: each("what_the_calls_told_us", lambda n: {k: _cut(v, 500) for k, v in n.items()}),
+        lambda: each("rep_notes", lambda n: {**n, "text": _cut(n.get("text"), 300)}),
+        lambda: c["lead"].update({k: _cut(v, 400) for k, v in (c.get("lead") or {}).items()})
+        if isinstance(c.get("lead"), dict) else None,
+        lambda: each("recorded_calls", lambda r: {**r, "summary": _cut(r.get("summary"), 400),
+                                                  "action_items": _cut(r.get("action_items"), 150)}, keep=1),
+        lambda: each("phone_calls", lambda d: {**d, "summary_en": _cut(d.get("summary_en"), 200)}, keep=3),
+        lambda: each("calls_on_the_calendar", lambda a: a, keep=3),
+        lambda: research(200),
+        lambda: messages(300, keep_whole=5),
+        lambda: each("what_the_calls_told_us", lambda n: {k: _cut(v, 200) for k, v in n.items()}, keep=1),
+        lambda: each("rep_notes", lambda n: {**n, "text": _cut(n.get("text"), 120)}, keep=2),
+        lambda: messages(120, keep_whole=2),
+        lambda: [c.pop(k, None) for k in ("research", "recorded_calls", "phone_calls", "what_the_calls_told_us")],
+        lambda: messages(120, keep_whole=0),
+        lambda: messages(40, keep_whole=0),
+    ]
+    out = text()
+    for step in shrink:
+        if len(out) <= limit:
+            break
+        step()
+        out = text()
+    if len(out) > limit:
+        # Nothing left to give but the lead's own answers: shortened to fit,
+        # the conversation's newest messages still in it, whole JSON.
+        c["lead"] = {k: _cut(v, 60) for k, v in (c.get("lead") or {}).items()} if isinstance(c.get("lead"), dict) else None
+        out = text()
+    return out
 
 
 def examples_block(approved: list[dict[str, Any]]) -> str:
@@ -936,8 +1361,12 @@ def gone_reason(d: dict[str, Any], calls: list[dict[str, Any]], inbox: list[dict
     """Why an open draft is no longer needed, or None while it still is."""
     made = _ts(d.get("created_at"))
     if d.get("segment") == "reply":
-        after = [_ts(r.get("last_message_at")) for r in inbox if r.get("last_direction") == "outbound"]
-        after += [_ts(m.get("created_at")) for m in sends if m.get("state") != "failed"]
+        # An email after it answers only an email draft (an automation's
+        # newsletter is no answer to a WhatsApp question).
+        ch = d.get("channel") or "whatsapp"
+        after = [_ts(r.get("last_message_at")) for r in inbox
+                 if r.get("last_direction") == "outbound" and answers(r.get("last_type"), ch)]
+        after += [_ts(m.get("created_at")) for m in sends if m.get("state") != "failed" and answers(m.get("channel"), ch)]
         if made and any(t and t > made for t in after):
             return "A message went to the lead after this draft was made, so it answers an older conversation."
         return None
@@ -967,8 +1396,8 @@ def close_gone(sb: Any, now: datetime) -> int:
     a message went to them, a confirmation once its call was cancelled, moved
     or held. Left open, each waited for a rep who could only skip it, and
     held the lead's one open draft meanwhile."""
-    drafts = sb.select_all("cockpit_sales_followups", "select=id,contact_id,segment,appointment_id,created_at,context"
-                                                      "&status=eq.draft&segment=in.(reply,confirm,no_show,cancelled)",
+    drafts = sb.select_all("cockpit_sales_followups", "select=id,contact_id,segment,channel,appointment_id,created_at,"
+                                                      "context&status=eq.draft&segment=in.(reply,confirm,no_show,cancelled)",
                            order="id")
     if not drafts:
         return 0
@@ -985,10 +1414,11 @@ def close_gone(sb: Any, now: datetime) -> int:
     if replying:
         oldest = min((_ts(d.get("created_at")) or now) for d in drafts if d.get("segment") == "reply")
         for chunk in _chunks(replying):
-            for r in sb.select_all("cockpit_sales_inbox", f"select=contact_id,last_message_at,last_direction"
+            for r in sb.select_all("cockpit_sales_inbox", f"select=contact_id,last_message_at,last_direction,last_type"
                                                           f"&contact_id={_in(chunk)}", order="conversation_id"):
                 inbox.setdefault(str(r.get("contact_id") or ""), []).append(r)
-            for m in sb.select_all("cockpit_sales_messages", f"select=contact_id,created_at,state&contact_id={_in(chunk)}"
+            for m in sb.select_all("cockpit_sales_messages", f"select=contact_id,created_at,state,channel"
+                                                             f"&contact_id={_in(chunk)}"
                                                              f"&created_at=gte.{_q(oldest.isoformat())}", order="id"):
                 sends.setdefault(str(m.get("contact_id") or ""), []).append(m)
     closed = 0
@@ -1118,55 +1548,175 @@ def _line_route(templates: list[dict[str, Any]], language: str, segment: str, *,
     return None
 
 
+# The sentence every WhatsApp send from the desk waits behind until the WA
+# Connector is off and one template to a test contact showed exactly one
+# message (whatsapp_guard.connector_off and single_copy_ok_at).
+GATE_CLOSED = "WhatsApp sends from the desk are off until the WA Connector is off and the single-copy test passes."
+
+
+def wa_gate(guard: Optional[dict[str, Any]]) -> Optional[str]:
+    """Why no WhatsApp may go out from the desk now, or None when it may: the
+    WA Connector copies every WhatsApp step on the number (5,168 doubles), so
+    nothing the desk sends by itself goes on WhatsApp until a manager has
+    marked the connector off and the single-copy test passed. Unreadable is
+    closed, never open."""
+    g = guard if isinstance(guard, dict) else {}
+    if g.get("connector_off") is not True or not _ts(g.get("single_copy_ok_at")):
+        return GATE_CLOSED
+    return None
+
+
+def is_test_contact(lead: Optional[dict[str, Any]]) -> bool:
+    tags = (lead or {}).get("tags")
+    return isinstance(tags, list) and any(str(t).strip().lower() == TEST_TAG for t in tags)
+
+
+def test_refusal(lead: Optional[dict[str, Any]], contact: str) -> Optional[str]:
+    """Why --contact will not draft for this contact, or None."""
+    if not lead:
+        return f"{contact} is not in the cockpit's lead copy, so nothing was drafted."
+    if not is_test_contact(lead):
+        return f"{contact} is not tagged {TEST_TAG}. --contact drafts only for test contacts, so nothing was drafted."
+    if is_client(lead):
+        return f"{contact} is tagged client as well as {TEST_TAG}. A client gets no sales follow-up, so nothing was drafted."
+    return None
+
+
+def forced_due(contact: str, segment: str, calendar: list[dict[str, Any]], lead: dict[str, Any], now: datetime,
+               cadence: dict[str, list[float]]) -> tuple[Optional[dict[str, Any]], Optional[str]]:
+    """The first message of a kind for a test contact, due now whatever its
+    calls say (`--segment`). The call it is about is its latest of the right
+    kind, when there is one; a confirmation needs a call still to come."""
+    calls = sorted((a for a in with_kinds(calendar) if a.get("call_type") in ("intro", "demo") and _ts(a.get("start_at"))),
+                   key=lambda a: str(a.get("start_at")), reverse=True)
+    want = {"no_show": lambda a: a.get("status") == "noshow", "cancelled": lambda a: a.get("status") == "cancelled",
+            "after_call": lambda a: a.get("call_type") == "demo",
+            "confirm": lambda a: _ts(a.get("start_at")) > now and a.get("status") not in NOT_KEPT}.get(segment)
+    call = next((a for a in calls if want(a)), None) if want else None
+    if segment == "confirm" and not call:
+        return None, "This contact has no call still to come, so there is nothing to confirm."
+    score, reasons = heat(lead, now)
+    steps = {**CADENCE, **cadence}.get(segment) or [1]
+    return {"contact_id": contact, "segment": segment, "touch": 1, "of": len(steps), "tier": 0, "heat": score,
+            "reasons": reasons, "appointment_id": (call or {}).get("appointment_id"),
+            "start_at": (call or {}).get("start_at") and _ts(call["start_at"]).isoformat(),
+            "due_at": now.isoformat()}, None
+
+
+def _housekeeping(sb: Any, ghl_token: str, now: datetime, settle: Optional[Callable[[str], dict[str, Any]]],
+                  warn: Callable[[str], None]) -> dict[str, Any]:
+    return {
+        "stuck_freed": free_stuck(sb, now, settle, warn),
+        "went_stale": expire_stale(sb, now),
+        "reason_gone": close_gone(sb, now),
+        "clients_closed": close_clients(sb, now),
+        "replies_marked": track_replies(sb, now),
+        "templates": reconcile_templates(sb, ghl_token, now, settle, warn) if ghl_token else {"found": 0, "never_sent": 0},
+        "settled": settle_sends(sb, ghl_token, now, settle, warn) if ghl_token else {"read": 0, "gone": 0, "failed": 0},
+    }
+
+
+def _raced(e: Exception) -> bool:
+    """A draft refused because the lead has an open one already: another run
+    (or a rep's own) got there first. Not a failure."""
+    return isinstance(e, http.HttpError) and e.status == 409 or "23505" in str(e) or "duplicate key" in str(e)
+
+
 def run(sb: Any, provider: Any, log: Callable[[str], None], *, settings: dict[str, Any], ghl_token: str,
         now: Optional[datetime] = None, autosend: Optional[Callable[[str], dict[str, Any]]] = None,
         settle: Optional[Callable[[str], dict[str, Any]]] = None,
-        warn: Optional[Callable[[str], None]] = None) -> dict[str, Any]:
+        warn: Optional[Callable[[str], None]] = None, only_contact: Optional[str] = None,
+        force_segment: Optional[str] = None, model_down: Optional[str] = None,
+        guard: Optional[dict[str, Any]] = None) -> dict[str, Any]:
     """One pass: pick the leads, write the drafts, put them in front of the reps.
     `log` says what was done; `warn` what went wrong for one lead, which the
-    cron's log keeps even when the desk runs quiet."""
+    cron's log keeps even when the desk runs quiet.
+
+    `only_contact` is the test path (desk.py followups --contact): one
+    contact tagged cockpit-test, nobody else's rows touched, nothing sent by
+    itself, and with `force_segment` that kind's first message whether or not
+    it is due. A test contact on do-not-disturb still gets its draft, saying
+    so, for the refusal test: sales-api refuses the send.
+
+    `model_down` is the sentence the run's model check ended with (the
+    sign-in lapsed): the run keeps the books and counts who is due, and asks
+    no model."""
     now = now or datetime.now(timezone.utc)
     warn = warn or log
-    if not settings.get("enabled", True):
+    test = bool(only_contact)
+    if force_segment and force_segment not in SEGMENTS:
+        return {"skipped": f"{force_segment} is not a kind of follow-up. Use one of: {', '.join(SEGMENTS)}."}
+    if not test and not settings.get("enabled", True):
         return {"skipped": "the follow-up agent is switched off"}
-    freed = free_stuck(sb, now, settle, warn)
-    stale = expire_stale(sb, now)
-    closed = close_gone(sb, now)
-    clients_closed = close_clients(sb, now)
-    replied = track_replies(sb, now)
-    reconciled = reconcile_templates(sb, ghl_token, now, settle, warn) if ghl_token else {"found": 0, "never_sent": 0}
-    settled = settle_sends(sb, ghl_token, now, settle, warn) if ghl_token else {"read": 0, "gone": 0, "failed": 0}
+    test_lead: Optional[dict[str, Any]] = None
+    books: dict[str, Any] = {}
+    if test:
+        test_lead = next(iter(sb.select("cockpit_sales_leads", f"select=*&contact_id=eq.{_q(only_contact)}&limit=1")), None)
+        refusal = test_refusal(test_lead, str(only_contact))
+        if refusal:
+            return {"skipped": refusal}
+    else:
+        # Every other lead's rows are kept in order on a real run only: a test
+        # touches nothing but its own contact.
+        books = _housekeeping(sb, ghl_token, now, settle, warn)
     if quiet(now, settings.get("quiet") or {}):
         return {"skipped": "quiet hours"}
+    if test and force_segment == "reactivate":
+        from . import waves  # the opener, written without a model
+        return waves.draft_test_opener(sb, test_lead or {}, settings=settings, ghl_token=ghl_token, now=now,
+                                       log=log, warn=warn)
     today = (kuwait_now(now).replace(hour=0, minute=0, second=0, microsecond=0) - KUWAIT).isoformat()
-    written_today = len(sb.select("cockpit_sales_followups", f"select=id&created_at=gte.{_q(today)}&limit=500"))
-    room = min(int(settings.get("per_run", 12)), int(settings.get("per_day", 60)) - written_today)
-    if room <= 0:
-        return {"skipped": f"today's {settings.get('per_day', 60)} drafts are written"}
+    if test:
+        room = 1
+    else:
+        # Backlog openers have their own day (waves.per_day) and never take
+        # these drafts' room.
+        written_today = len(sb.select("cockpit_sales_followups",
+                                      f"select=id&created_at=gte.{_q(today)}&segment=neq.reactivate&limit=500"))
+        room = min(int(settings.get("per_run", 12)), int(settings.get("per_day", 60)) - written_today)
+        if room <= 0:
+            return {"skipped": f"today's {settings.get('per_day', 60)} drafts are written"}
+
+    cadence = {k: [float(x) for x in v] for k, v in (settings.get("cadence") or {}).items() if v}
+    steps_of = {**CADENCE, **cadence}
+    back = max(window_days(s, steps_of.get(s)) for s in WINDOW_DAYS)
+    new_days = window_days("new", steps_of.get("new"))
+    only = f"&contact_id=eq.{_q(only_contact)}" if test else ""
 
     # Every read that can pass 1,000 rows goes page by page: the API stops at
     # 1,000, and a missing row is a step that looks undone or a lead never seen.
     week = (now - timedelta(days=7)).isoformat()
-    new_since = (now - timedelta(days=WINDOW_DAYS["new"])).isoformat()
+    new_since = (now - timedelta(days=new_days)).isoformat()
     inbox = sb.select_all("cockpit_sales_inbox", "select=contact_id,last_message_at,last_direction,last_type,inbound_whatsapp_at"
-                                                 f"&last_message_at=gte.{_q((now - timedelta(days=2)).isoformat())}",
+                                                 f"&last_message_at=gte.{_q((now - timedelta(days=2)).isoformat())}{only}",
                           order="conversation_id")
-    calendar = sb.select_all("cockpit_sales_calendar", "select=appointment_id,contact_id,call_type,start_at,booked_at,status"
-                                                       f"&start_at=gte.{_q((now - timedelta(days=max(WINDOW_DAYS.values()))).isoformat())}"
-                                                       f"&start_at=lte.{_q((now + timedelta(days=21)).isoformat())}",
-                             order="appointment_id")
-    leads = sb.select_all("cockpit_sales_leads", "select=*&or=" + _q(f'(lead_created_at.gte."{new_since}",stage_name.ilike.*nurture*)'),
-                          order="contact_id")
-    sends = sb.select_all("cockpit_sales_messages", "select=contact_id,created_at,state,via,ghl_message_id"
-                                                    f"&created_at=gte.{_q((now - timedelta(days=14)).isoformat())}", order="id")
+    calendar = with_kinds(sb.select_all(
+        "cockpit_sales_calendar", "select=appointment_id,contact_id,calendar_id,call_type,start_at,booked_at,status"
+                                  f"&start_at=gte.{_q((now - timedelta(days=back)).isoformat())}"
+                                  f"&start_at=lte.{_q((now + timedelta(days=21)).isoformat())}{only}",
+        order="appointment_id"), sb.setting("calendars") or {})
+    if test:
+        leads = [dict(test_lead or {})]
+    else:
+        leads = sb.select_all("cockpit_sales_leads", "select=*&or=" + _q(f'(lead_created_at.gte."{new_since}",stage_name.ilike.*nurture*)'),
+                              order="contact_id")
+    sends = sb.select_all("cockpit_sales_messages", "select=contact_id,created_at,state,via,channel,ghl_message_id"
+                                                    f"&created_at=gte.{_q((now - timedelta(days=14)).isoformat())}{only}",
+                          order="id")
     followups = sb.select_all("cockpit_sales_followups", "select=contact_id,segment,status,created_at,decided_at,appointment_id"
-                                                         f"&created_at=gte.{_q((now - timedelta(days=30)).isoformat())}",
-                              order="id")
+                                                         f"&created_at=gte.{_q((now - timedelta(days=max(30, back + 1))).isoformat())}"
+                                                         f"{only}", order="id")
     open_drafts = {str(d["contact_id"]) for d in followups if d["status"] in ("draft", "sending")}
-    deals = {str(d["contact_id"]) for d in sb.select("cockpit_sales_deals", f"select=contact_id&submitted_at=gte.{_q(week)}&limit=500")
+    deals = {str(d["contact_id"]) for d in sb.select("cockpit_sales_deals",
+                                                     f"select=contact_id&submitted_at=gte.{_q(week)}{only}&limit=500")
              if d.get("contact_id")}
+    # A completed dial keeps a new lead out of the "not booked" messages for a
+    # day only (spec P3 §3.2): someone spoke to them, so no message lands on
+    # top of the call, but a call that did not end in a booking is no reason
+    # to leave them for the rest of the eight days.
     reached = {str(d["contact_id"]) for d in sb.select_all(
-        "cockpit_sales_dials", f"select=contact_id&state=eq.completed&occurred_at=gte.{_q(new_since)}", order="call_id")
+        "cockpit_sales_dials", f"select=contact_id&state=eq.completed"
+                               f"&occurred_at=gte.{_q((now - REACHED_FOR).isoformat())}{only}", order="call_id")
         if d.get("contact_id")}
     confirmations = sb.select_all("cockpit_sales_confirmations", "select=appointment_id,result"
                                                                  f"&start_at=gte.{_q((now - timedelta(hours=1)).isoformat())}",
@@ -1174,7 +1724,7 @@ def run(sb: Any, provider: Any, log: Callable[[str], None], *, settings: dict[st
     # Only a row still being worked is hot: a closed or lost one stays on the
     # sheet for the record (20260927f_sales_hot_sheet.sql).
     hot = {str(h["contact_id"]) for h in sb.select_all("cockpit_sales_hot",
-                                                       "select=contact_id&removed_at=is.null&status=eq.nurturing",
+                                                       f"select=contact_id&removed_at=is.null&status=eq.nurturing{only}",
                                                        order="contact_id")}
     templates = sb.select("cockpit_sales_wa_templates", "select=*&active=eq.true")
     # Leads the reads above name but the lead read left out, being older than
@@ -1188,9 +1738,10 @@ def run(sb: Any, provider: Any, log: Callable[[str], None], *, settings: dict[st
     # When a lead was last touched: our sends, their conversation's last
     # message (the whole inbox copy, not only the last two days), or a call.
     last_touch: dict[str, str] = {}
-    whole_inbox = sb.select_all("cockpit_sales_inbox", "select=contact_id,last_message_at", order="conversation_id")
+    whole_inbox = sb.select_all("cockpit_sales_inbox", f"select=contact_id,last_message_at{only}", order="conversation_id")
     calls = sb.select_all("cockpit_sales_dials", "select=contact_id,occurred_at"
-                                                 f"&occurred_at=gte.{_q((now - timedelta(days=60)).isoformat())}", order="call_id")
+                                                 f"&occurred_at=gte.{_q((now - timedelta(days=60)).isoformat())}{only}",
+                          order="call_id")
     for s, col in [(x, "created_at") for x in sends] + [(x, "decided_at") for x in followups if x["status"] == "sent"] \
             + [(x, "last_message_at") for x in whole_inbox] + [(x, "occurred_at") for x in calls]:
         c = str(s.get("contact_id") or "")
@@ -1207,20 +1758,41 @@ def run(sb: Any, provider: Any, log: Callable[[str], None], *, settings: dict[st
             failures[str(f["contact_id"])] = failures.get(str(f["contact_id"]), 0) + 1
     aside = {c for c, n in failures.items() if n >= FAILED_TWICE}
 
-    nurture_today = len(sb.select("cockpit_sales_followups",
-                                  f"select=id&segment=eq.nurture&created_at=gte.{_q(today)}&limit=500"))
-    nurture_room = max(0, int(settings.get("nurture_per_day", 20)) - nurture_today)
-    picked = pick(now, inbox=inbox, calendar=calendar, leads=leads, followups=followups, sends=sends,
-                  open_drafts=open_drafts, deals=deals, reached=reached, confirmations=confirmations, hot=hot,
-                  cadence=settings.get("cadence"), nurture_every_days=int(settings.get("nurture_every_days", 7)),
-                  nurture_room=nurture_room)
-    # The Gulf's day off: only answers to leads who wrote, and confirmations
-    # of calls coming up, are written on it.
-    days_off = [str(d).lower() for d in settings.get("quiet_days", ["friday"])]
-    if kuwait_now(now).strftime("%A").lower() in days_off:
-        picked = [d for d in picked if d["segment"] in ("reply", "confirm")]
+    if test and force_segment:
+        due, why_not = forced_due(str(only_contact), force_segment, calendar, test_lead or {}, now, cadence)
+        if not due:
+            return {"skipped": why_not}
+        if str(only_contact) in open_drafts:
+            return {"skipped": "This contact already has an open draft. Approve or skip it first."}
+        picked = [due]
+    else:
+        nurture_today = 0 if test else len(sb.select("cockpit_sales_followups",
+                                                     f"select=id&segment=eq.nurture&created_at=gte.{_q(today)}&limit=500"))
+        nurture_room = max(0, int(settings.get("nurture_per_day", 20)) - nurture_today)
+        picked = pick(now, inbox=inbox, calendar=calendar, leads=leads, followups=followups, sends=sends,
+                      open_drafts=open_drafts, deals=deals, reached=reached, confirmations=confirmations, hot=hot,
+                      cadence=cadence, nurture_every_days=int(settings.get("nurture_every_days", 7)),
+                      nurture_room=nurture_room)
+        if test:
+            picked = [d for d in picked if d["contact_id"] == str(only_contact)]
+            if not picked:
+                return {"skipped": "Nothing is due for this contact now. Name a kind with --segment to draft one anyway."}
+        # The Gulf's day off: only answers to leads who wrote, and confirmations
+        # of calls coming up, are written on it.
+        days_off = [str(d).lower() for d in settings.get("quiet_days", ["friday"])]
+        if kuwait_now(now).strftime("%A").lower() in days_off:
+            picked = [d for d in picked if d["segment"] in ("reply", "confirm")]
+            for d in picked:
+                if (d.get("then") or {}).get("segment") not in (None, "reply", "confirm"):
+                    d.pop("then", None)
+    # Without a model nothing can be written: who is due is counted, said
+    # beside the reason, and nobody is drafted (never "0 written" as if all
+    # were well).
+    if model_down:
+        return {"model_down": model_down, "picked": len(picked), "written": 0, "failed": 0, "no_open_channel": 0,
+                "by_channel": {}, "room": room, **books}
     by_id = {str(l["contact_id"]): l for l in leads}
-    people = sb.select("cockpit_sales_people", "select=email,ghl_user_id,name_ar,active&active=eq.true&limit=200")
+    people = sb.select("cockpit_sales_people", "select=email,ghl_user_id,name,name_ar,active&active=eq.true&limit=200")
     seat_of = {str(p["ghl_user_id"]): str(p["email"]) for p in people if p.get("ghl_user_id")}
     arabic_name_of = {str(p["ghl_user_id"]): str(p.get("name_ar") or "") for p in people if p.get("ghl_user_id")}
     reps = sb.select("cockpit_sales_reps", "select=ghl_user_id,display_name&limit=200")
@@ -1232,11 +1804,23 @@ def run(sb: Any, provider: Any, log: Callable[[str], None], *, settings: dict[st
     gap_hours = float(settings.get("automation_gap_hours", 20))
     takeover = settings.get("takeover") or {}
     fallback = settings.get("email_fallback") or {}
+    pause_days = int(settings.get("stop_pause_days", STOP_PAUSE_DAYS) or STOP_PAUSE_DAYS)
+    first_hours = settings.get("first_hours") or FIRST_HOURS
+    # What the cockpit holds about each due lead's stop (a rep's answer).
+    # Unreadable is unknown: the thread's own words still decide, and no stop
+    # is written over.
+    stop_rows = stops_for(sb, [d["contact_id"] for d in picked]) if picked else {}
+    if stop_rows is None:
+        warn("followups: the stops table could not be read; stop words still leave leads alone, but no rep is "
+             "asked about them until it can be")
+    gate: Optional[str] = None
+    gate_read = False
 
     # Every client, however many: a lead missing here would be pitched as a stranger.
-    dealt = {str(d["contact_id"]) for d in sb.select_all("cockpit_sales_deals", "select=contact_id", order="response_id")
+    dealt = {str(d["contact_id"]) for d in sb.select_all("cockpit_sales_deals", f"select=contact_id{only}", order="response_id")
              if d.get("contact_id")}
-    written = no_channel = failed = sent_auto = not_leads = held = talking = unread = stopped = set_aside = answered = 0
+    written = no_channel = failed = sent_auto = not_leads = held = talking = unread = stopped = paused = 0
+    set_aside = answered = raced = kept = 0
     by_channel: dict[str, int] = {}
     for due in picked:
         if written >= room:
@@ -1246,8 +1830,22 @@ def run(sb: Any, provider: Any, log: Callable[[str], None], *, settings: dict[st
             set_aside += 1
             continue
         lead = by_id.get(contact) or next(iter(sb.select("cockpit_sales_leads", f"select=*&contact_id=eq.{_q(contact)}&limit=1")), None)
-        if eligible(lead, dealt) or not lead or lead.get("dnd"):
+        why_not = eligible(lead, dealt)
+        if test and why_not and why_not != "a client":
+            why_not = None  # a test contact need not sit in a pipeline
+        if why_not or not lead or (lead.get("dnd") and not test):
             not_leads += 1
+            continue
+        # What the cockpit already holds about this lead's stops (a rep's own
+        # pause, an unsubscribe waiting for a rep, a 30-day pause): it holds
+        # whatever they wrote since, until a rep resumes it.
+        kept_stop = hold_of(stop_rows, contact, now)
+        if kept_stop:
+            if kept_stop[0] in ("asked", "dnd"):
+                stopped += 1
+            else:
+                paused += 1
+            log(f"followups: {contact} {kept_stop[1]}; nothing written")
             continue
         owner = str(lead.get("assigned_to") or "")
         owner_ghl = owner or None
@@ -1260,24 +1858,36 @@ def run(sb: Any, provider: Any, log: Callable[[str], None], *, settings: dict[st
                 unread += 1
                 warn(f"followups: {contact} waits: HighLevel's conversation could not be read")
                 continue
-            if asked_to_stop(thread):
-                stopped += 1
-                log(f"followups: {contact} asked not to be messaged; nothing written")
+            # A stop word: an explicit unsubscribe waits for a rep; any other
+            # pauses the agent for this lead for 30 days. Never do-not-disturb.
+            stop = stop_of(thread)
+            hold, new = new_stop_hold(stop_rows, contact, stop, now, pause_days)
+            if new and stop_rows is not None:
+                record_stop(sb, contact, stop, now, pause_days, warn)
+            if hold:
+                if stop["kind"] == "unsubscribe":
+                    stopped += 1
+                else:
+                    paused += 1
+                log(f"followups: {contact} {hold}; nothing written")
                 continue
-            # They wrote, and a message of ours went after it: someone has
-            # answered them already (the inbox copy runs minutes behind).
+            # They wrote, and a person answered after it: no reply is needed
+            # (the inbox copy runs minutes behind, and its last message may be
+            # an automation's or an email, which answer nothing).
             if segment == "reply":
-                theirs = [_ts(m.get("at")) for m in thread if m.get("from") == "lead"]
-                theirs += [_ts(r.get("last_message_at")) for r in inbox
-                           if str(r.get("contact_id")) == contact and r.get("last_direction") == "inbound"]
-                ours = [_ts(m.get("at")) for m in thread if m.get("from") == "us"]
-                ours += [_ts(s.get("created_at")) for s in sends
-                         if str(s.get("contact_id")) == contact and s.get("state") != "failed"]
-                last_theirs, last_ours = max((t for t in theirs if t), default=None), max((t for t in ours if t), default=None)
-                if last_theirs and last_ours and last_ours > last_theirs:
+                mine = [r for r in inbox if str(r.get("contact_id")) == contact]
+                theirs_sends = [s for s in sends if str(s.get("contact_id")) == contact]
+                if reply_answered(thread, mine, theirs_sends, ours_by_contact.get(contact, set())):
                     answered += 1
-                    log(f"followups: {contact} was answered after they wrote; no reply drafted")
-                    continue
+                    nxt = due.get("then")
+                    if not nxt or (test and force_segment):
+                        log(f"followups: {contact} was answered after they wrote; no reply drafted")
+                        continue
+                    # Their other kind is still due (a no-show, a new lead's
+                    # step): it goes on, with every check below.
+                    due, segment = nxt, nxt["segment"]
+                    due_context(ctx, lead, due, now)
+                    log(f"followups: {contact} was answered after they wrote; their {segment} message is next")
             # A HighLevel automation messaged them lately: wait, so nobody gets
             # both. A confirmation waits less, since the reminders are generic;
             # a kind that takes the lead out of the automation at the send
@@ -1306,6 +1916,14 @@ def run(sb: Any, provider: Any, log: Callable[[str], None], *, settings: dict[st
                 unread += 1
                 warn(f"followups: {contact} waits: HighLevel's contact could not be read: {http.scrub(str(e))[:160]}")
                 continue
+            blocked = blocked_channels(person)
+            reach = lead
+            dnd_note = ""
+            if test and (lead.get("dnd") or blocked):
+                # The refusal test: drafted as if open, refused at the send.
+                dnd_note = ("Test contact: do-not-disturb is on, so the cockpit should refuse to send this "
+                            "(the refusal test). ")
+                reach, blocked = {**lead, "dnd": False}, set()
             ins = [_ts(m["at"]) for m in thread if m["from"] == "lead" and m["channel"] == "whatsapp" and _ts(m.get("at"))]
             ins += [_ts(r.get("inbound_whatsapp_at")) for r in inbox
                     if str(r.get("contact_id")) == contact and _ts(r.get("inbound_whatsapp_at"))]
@@ -1318,8 +1936,8 @@ def run(sb: Any, provider: Any, log: Callable[[str], None], *, settings: dict[st
             if not window_open(last_wa_in, now):
                 route = _line_route(templates, language, segment,
                                     named=bool(first and person_name(person.get("firstName"))))
-            channel = channel_for(lead, last_wa_in, now, template=route is not None,
-                                  email_ok=fallback.get(segment, True) is not False, blocked=blocked_channels(person))
+            channel = channel_for(reach, last_wa_in, now, template=route is not None,
+                                  email_ok=fallback.get(segment, True) is not False, blocked=blocked)
             if not channel:
                 no_channel += 1
                 continue
@@ -1335,8 +1953,7 @@ def run(sb: Any, provider: Any, log: Callable[[str], None], *, settings: dict[st
                 ctx["lead"]["name"] = None
             user = (f"Channel: {channel}\nWrite in: {'Arabic' if language == 'ar' else 'English'}\n"
                     + ("" if first else "Greet them without a name: the name on file is not a person's first name.\n")
-                    + "\nWhat we know about this lead:\n"
-                    + json.dumps(ctx, ensure_ascii=False, indent=1, default=str)[:24000])
+                    + "\nWhat we know about this lead:\n" + brief(ctx))
             draft, asking = None, True
             for _ in range(2):
                 reply = provider.complete(system, user, temperature=None, timeout=300)
@@ -1354,32 +1971,59 @@ def run(sb: Any, provider: Any, log: Callable[[str], None], *, settings: dict[st
                 expires = now + timedelta(hours=48)
             # A plain insert: the one-open-draft-per-lead index refuses a
             # second one if a rep's own run raced this one.
-            made = sb.rest("POST", "cockpit_sales_followups", json_body=[{
-                "contact_id": contact, "owner_ghl": owner_ghl, "owner_email": seat_of.get(owner_ghl or ""),
-                "segment": segment, "channel": channel, "template_key": (route or {}).get("key") if channel == "whatsapp_template" else None,
-                "touch": due["touch"], "heat": due["heat"], "appointment_id": due.get("appointment_id"),
-                "subject": draft["subject"], "body": draft["body"], "why": draft["why"],
-                # The call's time as it was when this was written: a confirmation
-                # whose call moves since is closed (close_gone).
-                "context": {k: ctx.get(k) for k in ("lead", "calls_on_the_calendar", "rep_notes", "the_call")}
-                           | {"heat": due["reasons"], "start_at": due.get("start_at")},
-                "model": getattr(provider, "model", None), "status": "draft", "expires_at": expires.isoformat(),
-            }], prefer="return=representation")
+            try:
+                made = sb.rest("POST", "cockpit_sales_followups", json_body=[{
+                    "contact_id": contact, "owner_ghl": owner_ghl, "owner_email": seat_of.get(owner_ghl or ""),
+                    "segment": segment, "channel": channel,
+                    "template_key": (route or {}).get("key") if channel == "whatsapp_template" else None,
+                    "touch": due["touch"], "heat": due["heat"], "appointment_id": due.get("appointment_id"),
+                    "subject": draft["subject"], "body": draft["body"], "why": (dnd_note + draft["why"])[:300],
+                    # The call's time as it was when this was written: a confirmation
+                    # whose call moves since is closed (close_gone).
+                    "context": {k: ctx.get(k) for k in ("lead", "calls_on_the_calendar", "rep_notes", "the_call")}
+                               | {"heat": due["reasons"], "start_at": due.get("start_at")}
+                               | ({"test": True} if test else {}),
+                    "model": getattr(provider, "model", None), "status": "draft", "expires_at": expires.isoformat(),
+                }], prefer="return=representation")
+            except http.HttpError as e:
+                if not _raced(e):
+                    raise
+                raced += 1
+                log(f"followups: {contact} already has an open draft (another run wrote it); nothing more written")
+                continue
             written += 1
             by_channel[channel] = by_channel.get(channel, 0) + 1
             log(f"followups: {segment} #{due['touch']} {channel} draft for {contact} (heat {due['heat']})")
             # Only a kind of message a manager has trusted goes without a person,
-            # and it goes through the cockpit's own send with all its checks.
+            # and it goes through the cockpit's own send with all its checks. A
+            # test draft never does.
             new_id = str((made[0] if isinstance(made, list) and made else {}).get("id") or "")
-            if autosend and new_id and (settings.get("autosend") or {}).get(segment) is True:
-                try:
-                    out = autosend(new_id)
-                    if out.get("ok"):
-                        sent_auto += 1
-                    else:
-                        warn(f"followups: {contact} kept for a person: {str(out.get('error'))[:160]}")
-                except Exception as e:  # noqa: BLE001 - the draft is still there for a person
-                    warn(f"followups: {contact} kept for a person: {http.scrub(str(e))[:160]}")
+            if test or not (autosend and new_id and (settings.get("autosend") or {}).get(segment) is True):
+                continue
+            if channel.startswith("whatsapp"):
+                if not gate_read:
+                    gate_read = True
+                    try:
+                        gate = wa_gate(guard if guard is not None else sb.setting("whatsapp_guard"))
+                    except Exception:  # noqa: BLE001 - unreadable is closed
+                        gate = GATE_CLOSED
+                if gate:
+                    kept += 1
+                    warn(f"followups: {contact} kept for a person: {gate}")
+                    continue
+            if segment not in ("reply", "confirm") and due["touch"] == 1 and not in_hours(now, lead.get("country"), first_hours):
+                kept += 1
+                warn(f"followups: {contact} kept for a person: a first message goes between {int(first_hours[0])}:00 and "
+                     f"{int(first_hours[1])}:00 on the lead's clock")
+                continue
+            try:
+                out = autosend(new_id)
+                if out.get("ok"):
+                    sent_auto += 1
+                else:
+                    warn(f"followups: {contact} kept for a person: {str(out.get('error'))[:160]}")
+            except Exception as e:  # noqa: BLE001 - the draft is still there for a person
+                warn(f"followups: {contact} kept for a person: {http.scrub(str(e))[:160]}")
         except NotNow:
             raise
         except Exception as e:  # noqa: BLE001 - one lead is not worth the rest
@@ -1400,9 +2044,11 @@ def run(sb: Any, provider: Any, log: Callable[[str], None], *, settings: dict[st
                 except Exception as e2:  # noqa: BLE001 - the warning above is the record then
                     warn(f"followups: {contact}'s failure could not be kept: {http.scrub(str(e2))[:160]}")
     return {"picked": len(picked), "written": written, "by_channel": by_channel, "sent_by_itself": sent_auto,
-            "held_for_automation": held, "in_a_conversation": talking, "already_answered": answered,
-            "asked_to_stop": stopped, "conversation_unreadable": unread, "no_open_channel": no_channel,
-            "not_sales_leads": not_leads, "set_aside": set_aside, "failed": failed, "room": room,
-            "replies_marked": replied, "went_stale": stale, "reason_gone": closed, "clients_closed": clients_closed,
-            "stuck_freed": freed,
-            "templates": reconciled, "settled": settled}
+            "kept_for_a_person": kept, "held_for_automation": held, "in_a_conversation": talking,
+            "already_answered": answered, "asked_to_stop": stopped, "paused": paused,
+            "stops_unread": stop_rows is None, "conversation_unreadable": unread, "no_open_channel": no_channel,
+            "not_sales_leads": not_leads, "set_aside": set_aside, "raced": raced, "failed": failed, "room": room,
+            **({"test": True} if test else {}),
+            **{k: books.get(k, 0) for k in ("replies_marked", "went_stale", "reason_gone", "clients_closed", "stuck_freed")},
+            "templates": books.get("templates", {"found": 0, "never_sent": 0}),
+            "settled": books.get("settled", {"read": 0, "gone": 0, "failed": 0})}

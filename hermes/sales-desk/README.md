@@ -337,7 +337,16 @@ but Playwright is the path to rely on here.
 16,46 * * * * flock -n $HOME/.sales-desk/maqsam-calls.lock bash -c "cd $HOME/mahara-cockpits/hermes/sales-desk && set -a; . $HOME/.editor-desk/env; . /opt/data/bibi/api-keys.env; . $HOME/.sales-desk/env; set +a; ulimit -v 1500000; python3 desk.py --quiet maqsam-calls" >> $HOME/.sales-desk.log 2>&1
 * * * * *    flock -w 10 $HOME/.sales-desk/rooms.lock bash -c "cd $HOME/mahara-cockpits/hermes/sales-desk && set -a; . $HOME/.editor-desk/env; . /opt/data/bibi/api-keys.env; . $HOME/.sales-desk/env; set +a; python3 desk.py --quiet rooms --for 57" >> $HOME/.sales-desk.log 2>&1
 */10 * * * * flock -n $HOME/.sales-desk/room-hosts.lock bash -c "cd $HOME/mahara-cockpits/hermes/sales-desk && set -a; . $HOME/.editor-desk/env; . /opt/data/bibi/api-keys.env; . $HOME/.sales-desk/env; set +a; python3 desk.py --quiet rooms --check-hosts" >> $HOME/.sales-desk.log 2>&1
+5 * * * *    flock -n $HOME/.sales-desk/doctor.lock bash -c "cd $HOME/mahara-cockpits/hermes/sales-desk && set -a; . $HOME/.editor-desk/env; . /opt/data/bibi/api-keys.env; . $HOME/.sales-desk/env; set +a; python3 desk.py --quiet doctor --cron" >> $HOME/.sales-desk.log 2>&1
+*/5 * * * *  flock -n $HOME/.sales-desk/waves.lock bash -c "cd $HOME/mahara-cockpits/hermes/sales-desk && set -a; . $HOME/.editor-desk/env; . /opt/data/bibi/api-keys.env; . $HOME/.sales-desk/env; set +a; python3 desk.py --quiet waves" >> $HOME/.sales-desk.log 2>&1
 ```
+
+The `doctor --cron` line is the hourly doctor of the follow-up agent: one
+model token, no render, and its status rows written whatever happens. The
+`waves` line runs the backlog waves; a run is bounded to 270 s, so `flock -n`
+never stacks runs, and a manual run uses the same lock
+(`flock -n $HOME/.sales-desk/waves.lock python3 desk.py waves`).
+`NOTES-followup-agent.md` section 6 holds their runbook rows.
 
 The `rooms` line is the video room worker (below): every minute, a run of
 57 s that polls every second and never runs more than 2 s past its end. It
