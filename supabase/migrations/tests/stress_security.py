@@ -23,6 +23,17 @@ of the migrations not applied yet (20261003d): every function and view they
 make is revoked from public, anon and authenticated, and every
 security-definer function pins its search_path.
 
+Round 3 (3 October 2026) adds section E: an alert carrying text a lead wrote
+(their first name on the ad's form) reaches #sales-alerts as Slack markup,
+because neither cockpit_sales_alert_set nor the watchdog's post escapes
+< > &. Section E never calls the watchdog or pg_net; it builds the body the
+watchdog would post from the stored (rolled-back) row. It also adds the G
+checks: a real token through the real gateway and PostgREST (the public
+anon key every cockpit bundle carries, from SUPABASE_ANON_KEY or a local
+cockpit's .env.local), read-only: GETs on every new table and the presence
+view, the pure functions only, the pg_net schema (its queue holds the sweep's
+x-cron-secret header while a post waits), OpenAPI and GraphQL.
+
 Each check prints PASS or FAIL. A FAIL is a finding. The management token is
 read from SUPABASE_ACCESS_TOKEN or ~/.config/mahara/sb_mgmt_token and never
 printed. Exit code 0 only when every check passed and nothing persisted.
@@ -417,6 +428,45 @@ exception when others then
   perform pg_temp.ck('D section crashed', false, sqlstate || ': ' || sqlerrm);
 end;
 $d$;
+
+-- E. Round 3 (3 October 2026): text a lead wrote, on its way to Slack ---------
+--
+-- sales-api's count alert ("Room X: {the lead's first name} joined, but only a
+-- press of The lead is in says so.") puts a name the lead typed on the ad's
+-- form into cockpit_sales_alert_set, and cockpit_sales_watchdog() posts open
+-- alerts to #sales-alerts as {"text": message}. Slack reads <!channel>,
+-- <!here>, <@U...> and <https://...|label> in that text as markup, so every
+-- < > & from a lead must reach Slack escaped (&lt; &gt; &amp;). Nothing here
+-- calls the watchdog or pg_net: the body it would post is built the same way
+-- from the stored row, and the whole run is rolled back.
+
+do $e$
+declare
+  m text;
+  posted jsonb;
+  src text;
+begin
+  perform public.cockpit_sales_alert_set('stress-sec-r3:markup', true, 'room_count_confirm', 'Room STRESS',
+    'Room ABCDEF: <!channel> joined, but only a press of The lead is in says so. '
+      || '<https://evil.stress.invalid/login|Check HighLevel> <@U0STRESS> <!subteam^S0STRESS>',
+    '{}'::jsonb);
+  select a.message into m from public.cockpit_sales_alerts as a where a.dedupe_key = 'stress-sec-r3:markup';
+  -- Exactly the body cockpit_sales_watchdog() section 4 posts for this row.
+  posted := jsonb_build_object('text', m);
+  perform pg_temp.ck('E1 the fixture works: the alert was stored', m is not null, coalesce(m, 'no row'));
+  perform pg_temp.ck('E2 slack-markup-from-lead-name: an alert bound for #sales-alerts carries no Slack markup a lead wrote (<!channel>, <@U...>, <url|label>)',
+    (posted ->> 'text') !~ '<[!@#]|<https?:|<mailto:', posted ->> 'text');
+
+  -- Wherever the escaping lands (alert_words, alert_set or the watchdog),
+  -- the watchdog is the last step before Slack: its post must not send a
+  -- stored message as it stands.
+  select pg_get_functiondef('public.cockpit_sales_watchdog'::regproc) into src;
+  perform pg_temp.ck('E3 slack-markup-from-lead-name: the watchdog escapes < > & before it posts a message to Slack',
+    src !~ 'jsonb_build_object\(\s*''text''\s*,\s*rec\.message\s*\)', 'posts jsonb_build_object(''text'', rec.message) as stored');
+exception when others then
+  perform pg_temp.ck('E section crashed', false, sqlstate || ': ' || sqlerrm);
+end;
+$e$;
 """
 
 FINAL = "select name, ok, detail from pg_temp.ss_checks order by n;"
@@ -525,11 +575,109 @@ def static_checks() -> list[tuple[str, bool, str]]:
     return out
 
 
+PROJECT_URL = f"https://{REF}.supabase.co"
+
+# Pure functions only: if one of them were callable, calling it changes nothing.
+PURE_RPCS = {
+    "cockpit_sales_room_code": {},
+    "cockpit_sales_alert_words": {"p_text": "stress", "p_max": 20},
+    "cockpit_sales_alert_hours": {"p_at": "2026-10-03T10:00:00Z"},
+    "cockpit_sales_setting_int": {"p_value": {}, "p_key": "x", "p_default": 1},
+    "cockpit_sales_kind_key_ok": {"p_key": "reactivate.en.whatsapp_template"},
+}
+
+
+def anon_key() -> str:
+    """The project's public (anon) key: SUPABASE_ANON_KEY, else a local
+    cockpit's .env.local for this project. Public by design (it ships in every
+    cockpit's bundle); still never printed."""
+    import glob
+    import re
+    k = os.environ.get("SUPABASE_ANON_KEY", "").strip()
+    if k:
+        return k
+    root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+    homes = [root, os.path.expanduser("~/mahara-cockpits")]
+    for home in homes:
+        for f in glob.glob(os.path.join(home, "apps", "*", ".env.local")):
+            t = open(f).read()
+            if REF not in t:
+                continue
+            m = re.search(r"^(?:VITE_)?SUPABASE_ANON_KEY=(\S+)$", t, re.M)
+            if m and m.group(1).startswith("eyJ"):
+                return m.group(1)
+    return ""
+
+
+def gateway(method: str, path: str, key: str, body=None, headers=None):
+    """One request through the real gateway, as the public key: (status, parsed body or text)."""
+    h = {"apikey": key, "Authorization": f"Bearer {key}", "User-Agent": "mahara-sales-stress/1", **(headers or {})}
+    data = None
+    if body is not None:
+        data = json.dumps(body).encode()
+        h["Content-Type"] = "application/json"
+    req = urllib.request.Request(f"{PROJECT_URL}{path}", data=data, headers=h, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            raw = r.read().decode()
+            status = r.status
+    except urllib.error.HTTPError as e:
+        raw = e.read().decode()
+        status = e.code
+    try:
+        return status, json.loads(raw) if raw else None
+    except ValueError:
+        return status, raw[:200]
+
+
+def gateway_checks() -> list[tuple[str, bool, str]]:
+    """Round 3 (3 October 2026): the same doors as sections A and B, but with
+    a real token through the real gateway and PostgREST, read-only: the public
+    (anon) key every cockpit bundle carries. GETs on every new table and the
+    presence view, the pure functions only (nothing that writes), the pg_net
+    schema (its queue holds the sweep's x-cron-secret header and the alerts
+    webhook while a post waits), and what the OpenAPI root and GraphQL tell
+    the public key about the new tables."""
+    key = anon_key()
+    if not key:
+        return [("G0 a public key to test the gateway with", False, "set SUPABASE_ANON_KEY")]
+    out: list[tuple[str, bool, str]] = []
+    for t in NEW_TABLES + ["cockpit_sales_presence"]:
+        status, body = gateway("GET", f"/rest/v1/{t}?select=*&limit=1", key)
+        refused = status in (401, 403, 404) or (status == 200 and body == [])
+        code = body.get("code") if isinstance(body, dict) else None
+        out.append((f"G1 the public key reads nothing of {t}", refused, f"{status} {code or ''}".strip()))
+    for fn, args in PURE_RPCS.items():
+        status, body = gateway("POST", f"/rest/v1/rpc/{fn}", key, args)
+        code = body.get("code") if isinstance(body, dict) else None
+        out.append((f"G2 the public key cannot call {fn}", status in (401, 403, 404), f"{status} {code or ''}".strip()))
+    for t in ("http_request_queue", "_http_response"):
+        status, body = gateway("GET", f"/rest/v1/{t}?select=id&limit=1", key, headers={"Accept-Profile": "net"})
+        out.append((f"G3 the pg_net {t} (cron secret and webhook in its headers) is not reachable through the API",
+                    status in (401, 403, 404, 406), str(status)))
+    status, body = gateway("GET", "/rest/v1/", key, headers={"Accept": "application/openapi+json"})
+    text = json.dumps(body) if not isinstance(body, str) else body
+    named = [t for t in NEW_TABLES + ["cockpit_sales_presence"] if f"/{t}" in text]
+    out.append(("G4 the API's OpenAPI root names no new table to the public key", not named, ", ".join(named) or str(status)))
+    status, body = gateway("POST", "/graphql/v1", key, {"query": "{ __schema { types { name } } }"})
+    data = body.get("data") if isinstance(body, dict) else None
+    types = json.dumps(data).lower()
+    seen = [t for t in NEW_TABLES if t.replace("_", "") in types.replace("_", "")]
+    said = "; ".join(str(e.get("message", "")) for e in (body.get("errors") or [])) if isinstance(body, dict) else ""
+    out.append(("G5 GraphQL names no new table to the public key", not seen,
+                ", ".join(seen) or (said[:120] if said else f"{status}, introspection answered")))
+    return out
+
+
 def main():
     statics = static_checks()
     for n, ok, d in statics:
         print(f"{'PASS' if ok else 'FAIL'}  {n}" + (f"  ({d})" if d else ""))
     static_failed = [x for x in statics if not x[1]]
+    gates = gateway_checks()
+    for n, ok, d in gates:
+        print(f"{'PASS' if ok else 'FAIL'}  {n}" + (f"  ({d})" if d else ""))
+    static_failed += [x for x in gates if not x[1]]
     before = query(LEFTOVERS, write=False) or []
     if before:
         print("stress-sec rows exist before the run (another run left them?):", [r["?column?"] for r in before])

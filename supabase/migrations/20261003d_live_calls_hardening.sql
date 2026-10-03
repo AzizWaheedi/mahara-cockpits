@@ -51,6 +51,23 @@
 --                none, a "mark this intro" alert).
 --   watchdog     a Zoom join or worker event given up is one alert at once.
 --
+-- Fix round 3 (3 October 2026):
+--   guard        "That was not the lead" keeps lead_in_at (the taken-back
+--                join's time, before count_undo_at), so Zoom's second event
+--                for that join is never a new join; lead_in_seen_at says when
+--                the room first showed the lead in (the undo's five minutes);
+--                the handover rules and the short link's replaced_by read a
+--                taken-back join as none.
+--   claim        no room adopted: the taker's room is reserved in the claim
+--                itself, so the one-room-per-host index decides against a
+--                room the closer opens for another lead at the same moment.
+--   settle (S1)  only a room asked for inside the intro's own window (an
+--                hour before its start to start + settle) is evidence about
+--                it, and a room whose link never reached the lead is not.
+--   alerts       a lead's own words never reach Slack as markup: alert words
+--                turn < > into look-alikes, and the watchdog escapes & < >.
+--   presence     a booked call keeps its host on a call for its whole length.
+--
 -- Checks: supabase/migrations/tests/run_checks.py applies a, b, c and d in
 -- one rolled-back run; stress_time.py, stress_chaos.py and stress_numbers.py
 -- apply d inside their own rolled-back runs.
@@ -64,10 +81,31 @@ alter table public.cockpit_sales_rooms
 comment on column public.cockpit_sales_rooms.appointment_start_at is
   'The booked intro''s start when the room was made. The settle compares it with the intro''s start now, so a room never settles an intro that was moved since.';
 
+-- When the room first showed "The lead is in" (the guard stamps it on the
+-- move into lead_in). A Zoom join read late keeps its own time in lead_in_at;
+-- "That was not the lead" is measured from the later of the two, so the host
+-- has their five minutes from what the panel showed (roomlogic.ts notLead).
+alter table public.cockpit_sales_rooms
+  add column if not exists lead_in_seen_at timestamptz;
+comment on column public.cockpit_sales_rooms.lead_in_seen_at is
+  'When the room first showed the lead in (the database''s clock). That was not the lead counts its five minutes from the later of this and lead_in_at.';
+
 alter table public.cockpit_sales_rooms drop constraint if exists cockpit_sales_rooms_count_result_check;
 alter table public.cockpit_sales_rooms add constraint cockpit_sales_rooms_count_result_check
   check (count_result is null or count_result in
          ('booked', 'moved', 'not_a_lead', 'failed', 'undone', 'unclear', 'already_counted', 'self_reported'));
+
+-- Each wave draws its own holdout (desk waves.py wave_salt, fix round 3).
+-- (Guarded: the day simulations apply this file to temp copies of the rooms
+-- tables only.)
+do $wc$
+begin
+  if to_regclass('public.cockpit_sales_followup_waves') is not null then
+    comment on table public.cockpit_sales_followup_waves is
+      'Reactivation waves over the backlog: pool (no_show_cancelled, good_intro, unclosed_demo, never_booked), the segment its drafts use (reactivate), per_day (40), and the holdout share (0.1, by sha256(''waves:{wave id}:''||contact_id) in the desk, drawn afresh for each wave). sales-api followup.wave starts it (running), pauses, resumes and stops it (done, done_reason "Stopped by a manager."); the desk sets enrolled_at once the pool is in, done when nobody is left to write to, and settled_at once nobody is left to watch. Wave sends do not count toward followups.per_day.';
+  end if;
+end;
+$wc$;
 
 alter table public.cockpit_sales_messages drop constraint if exists cockpit_sales_messages_state_check;
 alter table public.cockpit_sales_messages add constraint cockpit_sales_messages_state_check
@@ -324,13 +362,23 @@ begin
             then public.cockpit_sales_setting_int(w, 'standby_host', 300)
             else public.cockpit_sales_setting_int(w, 'handover_host', 120) end));
       end if;
-      -- "That was not the lead": the room waits for the real lead a little longer.
+      -- "That was not the lead": the room waits for the real lead a little
+      -- longer. lead_in_at stays: it is the time of the join that was taken
+      -- back (count_undo_at is after it, so roomlogic.ts leadJoined reads no
+      -- join), and roomlogic tells Zoom's second event for that same join
+      -- from a new one by it.
       if old.state = 'lead_in' and new.state = 'host_in' then
-        if new.lead_in_at is not distinct from old.lead_in_at then
-          new.lead_in_at := null;
-        end if;
         new.lead_by := greatest(coalesce(new.lead_by, old.lead_by, now()), coalesce(old.lead_by, now()),
           now() + make_interval(secs => public.cockpit_sales_setting_int(w, 'open_grace', 180)));
+      end if;
+      -- Into lead_in: when the room first showed it; and a writer that left a
+      -- taken-back join's time as it was gets this join's time.
+      if new.state = 'lead_in' then
+        new.lead_in_seen_at := now();
+        if new.lead_in_at is not distinct from old.lead_in_at and old.count_undo_at is not null
+           and (old.lead_in_at is null or old.lead_in_at <= old.count_undo_at) then
+          new.lead_in_at := now();
+        end if;
       end if;
     end if;
   end if;
@@ -339,6 +387,7 @@ begin
   if new.state in ('open', 'host_in', 'lead_in') and new.opened_at is null then new.opened_at := now(); end if;
   if new.state in ('host_in', 'lead_in') and new.host_in_at is null then new.host_in_at := now(); end if;
   if new.state = 'lead_in' and new.lead_in_at is null then new.lead_in_at := now(); end if;
+  if new.state = 'lead_in' and new.lead_in_seen_at is null then new.lead_in_seen_at := now(); end if;
   if new.state = any (finals) and new.ended_at is null then new.ended_at := now(); end if;
   return new;
 end;
@@ -384,6 +433,30 @@ $$;
 revoke all on function public.cockpit_sales_room_event_lease(uuid, text, integer) from public, anon, authenticated;
 grant execute on function public.cockpit_sales_room_event_lease(uuid, text, integer) to service_role;
 
+-- 4a. The short link follows the handover ------------------------------------
+
+-- As 20261003a made it, reading "never had the lead in it" as no join that
+-- stands: the guard now keeps lead_in_at after "That was not the lead"
+-- (count_undo_at is after it), so such a room still points at the new one.
+create or replace function public.cockpit_sales_rooms_link_replaced()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  update public.cockpit_sales_rooms as x
+     set replaced_by = new.id
+   where x.handover_id = new.handover_id
+     and x.id <> new.id
+     and x.state in ('ended', 'expired', 'failed', 'cancelled')
+     and (x.lead_in_at is null or (x.count_undo_at is not null and x.lead_in_at <= x.count_undo_at))
+     and x.replaced_by is null;
+  return null;
+end;
+$$;
+revoke all on function public.cockpit_sales_rooms_link_replaced() from public, anon, authenticated;
+
 -- 4b. The handover claim: never for a closer who hosts another room ---------
 
 -- As 20261003a made it, with one check first, under the offer's lock: a
@@ -393,6 +466,20 @@ grant execute on function public.cockpit_sales_room_event_lease(uuid, text, inte
 -- the lead in it ("replaced") and adopted nothing; sales-api's room for the
 -- closer was then refused (one room per host), and the lead's link led to a
 -- closed room.
+--
+-- Fix round 3: the busy check is a read, and the closer's room for this
+-- lead used to be made only after the claim committed (sales-api's
+-- room.create path, after a HighLevel read): a room the closer opened for
+-- another lead in between took the one slot, the setter's room was already
+-- cancelled and the handover held no room. So when no room of theirs is
+-- adopted (claim_room none), the claim reserves the taker's room itself, in
+-- this transaction: a requested row with the request id sales-api uses
+-- (the live id, or the re-offer's), purpose handover. The one-room-per-host
+-- index decides atomically against any other insert: if the closer's other
+-- room is there first (committed, or committing), this claim is refused
+-- take_host_busy and nothing moves; if the claim is first, the other room is
+-- refused "You already have a room open". sales-api's room.create then finds
+-- this row by its request id and writes its audit row and timeline line.
 create or replace function public.cockpit_sales_live_claim(p_live_id uuid, p_email text, p_version integer default null)
 returns setof public.cockpit_sales_live
 language plpgsql
@@ -412,6 +499,10 @@ declare
   room uuid;
   next_state text := 'claimed';
   replaced uuid;
+  prov text;
+  rid uuid;
+  dg bytea;
+  cname text;
 begin
   if p_live_id is null or me = '' then
     return;
@@ -509,6 +600,19 @@ begin
      order by x.requested_at desc
      limit 1
      for update;
+    if not found then
+      -- The sweep's standby refresh (R5 ends the old room and makes a fresh
+      -- one in one transaction) ran while this read waited on the old room's
+      -- lock: the read found it ended and could not see the fresh one. A
+      -- second read, with a snapshot of its own, sees it (fix round 3).
+      select * into r
+        from public.cockpit_sales_rooms as x
+       where x.host_email = me and x.purpose = 'standby' and x.contact_id is null
+         and x.state in ('requested', 'creating', 'open', 'host_in')
+       order by x.requested_at desc
+       limit 1
+       for update;
+    end if;
 
     if found then
       begin
@@ -535,6 +639,43 @@ begin
       exception when unique_violation then
         -- The lead got another room in the meantime: keep the claim, adopt nothing.
         via := 'none'; room := null; next_state := 'claimed';
+      end;
+    end if;
+
+    -- No room adopted: the taker's room for this lead is reserved now (see
+    -- the note above the function), on the provider the host can use (the
+    -- presence view's default_provider). With rooms switched off the worker
+    -- never makes it: R1 fails it and L2 ends the handover, as before.
+    if via = 'none' and room is null then
+      select pr.default_provider into prov from public.cockpit_sales_presence as pr where pr.email = me;
+      prov := coalesce(prov, case when cfg #>> '{default_provider,closer}' in ('meet', 'zoom')
+                                  then cfg #>> '{default_provider,closer}' else 'zoom' end);
+      -- sales-api's request id for this claim (rooms.ts finishClaim): the live
+      -- id, or for a re-offer liveio.ts uuidFrom('mahara-live/{id}/{reoffers}').
+      if l.reoffers = 0 then
+        rid := l.id;
+      else
+        dg := substring(sha256(convert_to('mahara-live/' || l.id::text || '/' || l.reoffers::text, 'UTF8')) from 1 for 16);
+        dg := set_byte(dg, 6, (get_byte(dg, 6) & 15) | 80);
+        dg := set_byte(dg, 8, (get_byte(dg, 8) & 63) | 128);
+        rid := encode(dg, 'hex')::uuid;
+      end if;
+      begin
+        insert into public.cockpit_sales_rooms (request_id, contact_id, contact_first_name, purpose, call_kind, provider,
+                                                host_email, made_by, handover_id, send_on)
+        values (rid, l.contact_id, case when has_lr then lr.contact_first_name end, 'handover', l.kind, prov,
+                me, me, l.id, 'host_in')
+        returning id into room;
+      exception when unique_violation then
+        get stacked diagnostics cname = constraint_name;
+        if cname = 'cockpit_sales_rooms_one_per_host' then
+          -- The closer's other room got there first: the claim is undone whole.
+          raise exception 'take_host_busy: You already have a live call or room open. End it, then take the next lead.'
+            using errcode = 'P0001', hint = 'End the room you host, then take the lead.';
+        end if;
+        -- This request id's room exists already, or the lead got another
+        -- room meanwhile: no reservation; sales-api's room.create decides.
+        room := null;
       end;
     end if;
   end if;
@@ -650,8 +791,11 @@ cross join lateral (
                and ap.assigned_user_id = p.ghl_user_id
                and ap.status in ('new', 'confirmed', 'showed')
                and ap.start_at <= now()
+               -- The call's whole length (rooms.lengths_min: 30 an intro, 60
+               -- a demo), never the live booking's shorter slot (booking_min).
                and now() < ap.start_at + make_interval(mins => public.cockpit_sales_setting_int(
-                     coalesce(cfg.rooms -> 'booking_min', '{}'::jsonb), coalesce(ap.call_type, ''), 30))) as appt_now,
+                     coalesce(cfg.rooms -> 'lengths_min', '{}'::jsonb), coalesce(ap.call_type, ''),
+                     case when ap.call_type = 'demo' then 60 else 30 end))) as appt_now,
     coalesce(h.zoom_live_until > now(), false) and not mr.own_zoom as zoom_live,
     -- A booked call of theirs starts within booked_guard: no live lead is
     -- offered to them and no standby room waits (R6 closes it).
@@ -1018,7 +1162,8 @@ begin
         left join public.cockpit_sales_rooms as r on r.id = x.room_id
        where x.state = 'claimed'
          and (r.state = 'failed'
-              or (r.state = any (finals) and r.lead_in_at is null)
+              or (r.state = any (finals)
+                  and (r.lead_in_at is null or (r.count_undo_at is not null and r.lead_in_at <= r.count_undo_at)))
               or (x.claimed_at + w_handover < t and (r.id is null or r.state not in ('host_in', 'lead_in'))))
        for update of x skip locked
     loop
@@ -1051,7 +1196,10 @@ begin
              coalesce(r.lead_by, r.link_sent_at + w_lead) as room_lead_by
         from public.cockpit_sales_live as x
         join public.cockpit_sales_rooms as r on r.id = x.room_id
-       where x.state in ('room_ready', 'lead_joined') and r.state = any (finals) and r.lead_in_at is null
+       where x.state in ('room_ready', 'lead_joined') and r.state = any (finals)
+         -- No join that stands: none, or one "That was not the lead" took back
+         -- (the guard keeps its time in lead_in_at; count_undo_at is after it).
+         and (r.lead_in_at is null or (r.count_undo_at is not null and r.lead_in_at <= r.count_undo_at))
        for update of x skip locked
     loop
       eligible := null;
@@ -1248,6 +1396,7 @@ begin
         join public.cockpit_sales_rooms as r on r.id = x.room_id
        where x.state in ('claimed', 'room_ready', 'lead_joined')
          and r.state = any (finals) and r.lead_in_at is not null
+         and (r.count_undo_at is null or r.lead_in_at > r.count_undo_at)
        for update of x skip locked
     loop
       n := n + public.cockpit_sales_live_move(rec.id, array['claimed', 'room_ready', 'lead_joined'], 'done', 'room_ended',
@@ -1380,15 +1529,19 @@ begin
     -- never opened, is settled. The rest are left for a person: settled_mark
     -- none and a "mark this intro" alert.
     create temp table if not exists lc_settle_due (id uuid primary key, code text, contact_id text, doubt text,
-                                                   ok boolean) on commit drop;
+                                                   ok boolean, same_call boolean) on commit drop;
     truncate pg_temp.lc_settle_due;
-    insert into pg_temp.lc_settle_due (id, code, contact_id, doubt, ok)
-    select x.id, x.code, x.contact_id, d.doubt, d.doubt is null and m.same_call and not tc.test
+    insert into pg_temp.lc_settle_due (id, code, contact_id, doubt, ok, same_call)
+    select x.id, x.code, x.contact_id, d.doubt, d.doubt is null and m.same_call and not tc.test, m.same_call
       from public.cockpit_sales_rooms as x
       join public.cockpit_sales_appointments as ap on ap.appointment_id = x.appointment_id
+     -- The room was asked for inside the intro's own window (an hour before
+     -- its start to start + settle), and the start it stored, if any, is still
+     -- the intro's (roomlogic.ts roomForThisStart). A confirmation call's room
+     -- the evening before, or that morning, says nothing about the intro.
      cross join lateral (
-       select case when x.appointment_start_at is not null then x.appointment_start_at = ap.start_at
-                   else x.requested_at between ap.start_at - interval '1 hour' and ap.start_at + w_settle end as same_call) as m
+       select x.requested_at between ap.start_at - interval '1 hour' and ap.start_at + w_settle
+              and (x.appointment_start_at is null or x.appointment_start_at = ap.start_at) as same_call) as m
      cross join lateral (
        select coalesce(x.contact_id = any (array(select jsonb_array_elements_text(coalesce(cfg -> 'test_contacts', '[]'::jsonb)))), false)
                 and coalesce(ap.calendar_id is distinct from (cfg ->> 'test_calendar_id'), true) as test) as tc
@@ -1396,6 +1549,10 @@ begin
        select case
                 when x.first_open_at is not null or x.last_open_at is not null then 'the lead opened the link'
                 when x.lead_waiting_at is not null then 'the lead knocked'
+                -- The link never reached the lead (refused on every channel,
+                -- or "it may have gone" and never confirmed): their staying
+                -- away says nothing (roomlogic.ts noShowDoubt).
+                when x.link_sent_at is null then 'the link never reached the lead'
                 when exists (select 1 from public.cockpit_sales_rooms as y
                               where y.id <> x.id
                                 and (y.appointment_id = x.appointment_id
@@ -1474,8 +1631,10 @@ begin
       returning 1
     )
     select count(*) into n from skipped;
-    -- A person marks the intro when the reason is a sign the lead may have come.
-    for rec in select q.id, q.code, q.doubt from pg_temp.lc_settle_due as q where not q.ok and q.doubt is not null loop
+    -- A person marks the intro when the reason is a sign the lead may have
+    -- come to this room (a room that was not the intro's says nothing).
+    for rec in select q.id, q.code, q.doubt from pg_temp.lc_settle_due as q
+                where not q.ok and q.doubt is not null and q.same_call loop
       perform public.cockpit_sales_alert_set('room:' || rec.id::text || ':mark_intro', true, 'room_mark_intro',
         'Room ' || rec.code,
         format('Room %s: the booked intro was not marked a no-show because %s. Mark it shown or a no-show.', rec.code, rec.doubt),
@@ -1713,6 +1872,51 @@ grant execute on function public.cockpit_sales_rooms_tick() to service_role;
 
 -- 7. The watchdog --------------------------------------------------------------
 
+-- Every alert's words, as 20261003a made them (one line, roles not names, no
+-- addresses, cut at a whole sentence), and now never Slack markup: a lead's
+-- own words (a first name, a company typed on the ad's form) reach alerts,
+-- and Slack reads <!channel>, <@U...>, <!subteam^...> and <https://...|label>
+-- as a ping, a mention or a link whose label the lead chose. The angle
+-- brackets become the look-alike quotes U+2039 and U+203A, which read the
+-- same in Slack and on the cockpit's pages and are never markup. The
+-- watchdog also escapes & < > as Slack asks before it posts.
+create or replace function public.cockpit_sales_alert_words(p_text text, p_max integer default 160)
+returns text
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  s text := btrim(regexp_replace(translate(coalesce(p_text, ''), '<>', U&'\2039\203A'), '\s+', ' ', 'g'));
+  r record;
+  cut text;
+begin
+  s := regexp_replace(s, '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}', 'an address', 'g');
+  for r in
+    select distinct lower(split_part(btrim(p.name), ' ', 1)) as word,
+           case p.role when 'closer' then 'the closer' when 'setter' then 'the setter' else 'a manager' end as role_words
+      from public.cockpit_sales_people as p
+     where split_part(btrim(coalesce(p.name, '')), ' ', 1) ~ '^[A-Za-z]{3,30}$'
+  loop
+    s := regexp_replace(s, '\m' || r.word || '\M', r.role_words, 'gi');
+  end loop;
+  if length(s) <= p_max then
+    return s;
+  end if;
+  -- The last sentence end that fits (a . ! or ? followed by a space).
+  cut := substring(left(s, p_max + 1) from '^(.*[.!?])\s');
+  if cut is not null and length(cut) >= 20 then
+    return cut;
+  end if;
+  cut := substring(left(s, p_max) from '^(.*)\s');
+  return coalesce(nullif(cut, ''), left(s, p_max)) || '...';
+end;
+$$;
+revoke all on function public.cockpit_sales_alert_words(text, integer) from public, anon, authenticated;
+grant execute on function public.cockpit_sales_alert_words(text, integer) to service_role;
+
+
 create or replace function public.cockpit_sales_watchdog()
 returns jsonb
 language plpgsql
@@ -1932,9 +2136,11 @@ begin
        limit 10
        for update skip locked
     loop
+      -- Escaped as Slack asks (& < >): stored words are shown as written,
+      -- never read as markup.
       req := net.http_post(
         url := hook,
-        body := jsonb_build_object('text', rec.message),
+        body := jsonb_build_object('text', replace(replace(replace(rec.message, '&', '&amp;'), '<', '&lt;'), '>', '&gt;')),
         headers := jsonb_build_object('Content-Type', 'application/json'),
         timeout_milliseconds := 5000);
       update public.cockpit_sales_alerts as a

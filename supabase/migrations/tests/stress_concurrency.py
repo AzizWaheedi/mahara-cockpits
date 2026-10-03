@@ -605,16 +605,20 @@ def t_r2_standby_refresh_vs_claim():
           select pg_sleep(3);
           commit;
           select 1 as done;"""
-        claim_read = f"""
-          begin;
-          with picked as (
-            select x.id from public.cockpit_sales_rooms as x
+        # The claim's two reads since fix round 3 (20261003d): the second,
+        # with a snapshot of its own, sees the room the refresh made.
+        pick = f"""select x.id from public.cockpit_sales_rooms as x
              where x.host_email = {lit(h)} and x.purpose = 'standby' and x.contact_id is null
                and x.state in ('requested', 'creating', 'open', 'host_in')
              order by x.requested_at desc
              limit 1
-             for update)
-          select (select count(*) from picked)::int as adopted;
+             for update"""
+        claim_read = f"""
+          begin;
+          create temp table sc_pick (id uuid) on commit drop;
+          insert into sc_pick {pick};
+          insert into sc_pick select p.id from ({pick}) as p where not exists (select 1 from sc_pick);
+          select (select count(*) from sc_pick)::int as adopted;
           rollback;"""
         out = staggered([(refresh, 0), (claim_read, 1)])
         b = out[1]

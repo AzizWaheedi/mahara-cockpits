@@ -296,11 +296,16 @@ begin
   perform pg_temp.ck('C lead_in to expired is refused (P0001)', s = 'P0001', s);
   s := pg_temp.err(format('update public.cockpit_sales_rooms set state = %L where id = %L', 'failed', b));
   perform pg_temp.ck('C lead_in to failed is refused (P0001)', s = 'P0001', s);
-  update public.cockpit_sales_rooms set state = 'host_in' where id = b;
+  -- room.mark not_lead writes count_undo_at with the move (rooms.ts, roomlogic notLead).
+  update public.cockpit_sales_rooms set state = 'host_in', count_undo_at = now() where id = b;
   select * into r from public.cockpit_sales_rooms where id = b;
-  perform pg_temp.ck('C "That was not the lead": lead_in back to host_in clears lead_in_at and gives open_grace',
-    r.state = 'host_in' and r.lead_in_at is null and r.lead_by = now() + interval '180 seconds');
+  perform pg_temp.ck('C "That was not the lead": lead_in back to host_in keeps lead_in_at (the taken-back join''s time, never after count_undo_at) and gives open_grace',
+    r.state = 'host_in' and r.lead_in_at is not null and r.lead_in_at <= r.count_undo_at
+    and r.lead_by = now() + interval '180 seconds');
   update public.cockpit_sales_rooms set state = 'lead_in' where id = b;
+  select * into r from public.cockpit_sales_rooms where id = b;
+  perform pg_temp.ck('C a new move into lead_in after it, its writer leaving lead_in_at as it was: stamped now, with lead_in_seen_at',
+    r.state = 'lead_in' and r.lead_in_at = now() and r.lead_in_seen_at = now());
   update public.cockpit_sales_rooms set state = 'ended' where id = b;
   select * into r from public.cockpit_sales_rooms where id = b;
   perform pg_temp.ck('C lead_in to ended is allowed and stamps ended_at', r.state = 'ended' and r.ended_at = now());
@@ -486,8 +491,10 @@ begin
     exists (select 1 from public.cockpit_sales_live_claim(l, 'lc-test-kd@example.invalid', v)));
   l2 := pg_temp.live('lc-test-d5', array['lc-test-kd@example.invalid']);
   s := pg_temp.dry(format('select * from public.cockpit_sales_live_claim(%L, %L)', l2, 'lc-test-kd@example.invalid'));
+  -- Refused by the room the first claim reserved (take_host_busy, P0001,
+  -- 20261003d round 3) before the one-claim index (23505) is reached.
   perform pg_temp.ck('D live_one_claim_per_closer: a closer holding a live call cannot take another',
-    s = '23505:cockpit_sales_live_one_claim_per_closer', s);
+    s in ('23505:cockpit_sales_live_one_claim_per_closer', 'P0001:-'), s);
   perform pg_temp.ck('D after that refusal the second offer is still open',
     (select state = 'offered' and claimed_by is null from public.cockpit_sales_live where id = l2));
 
@@ -572,18 +579,36 @@ begin
     got.state = 'room_ready' and got.room_id = lr and got.claim_room = 'own_room'
     and (select handover_id = l and version = 2 and state = 'host_in' from public.cockpit_sales_rooms where id = lr));
 
-  -- No standby room: sales-api makes the room; the lead's old room points at it.
+  -- No standby room: the claim reserves the taker's room itself (20261003d,
+  -- fix round 3), so the one-room-per-host index decides against any other
+  -- room of theirs; sales-api finds it by its request id (the live id).
   lr := pg_temp.room('lc-test-d13', 'lc-test-setter13@example.invalid', 'fallback', 'open');
   l := pg_temp.live('lc-test-d13', array['lc-test-knone@example.invalid']);
   select * into got from public.cockpit_sales_live_claim(l, 'lc-test-knone@example.invalid');
-  perform pg_temp.ck('D no standby room: claimed, no room yet (claim_room none), the lead''s room made way',
-    got.state = 'claimed' and got.room_id is null and got.claim_room = 'none'
-    and (select state = 'cancelled' and end_reason = 'replaced' and replaced_by is null from public.cockpit_sales_rooms where id = lr));
-  insert into public.cockpit_sales_rooms (request_id, contact_id, purpose, call_kind, provider, host_email, made_by, handover_id)
-  values (gen_random_uuid(), 'lc-test-d13', 'handover', 'demo', 'zoom', 'lc-test-knone@example.invalid', 'lc-test', l)
-  returning id into nr;
-  perform pg_temp.ck('D the room sales-api then makes for the handover takes the lead''s old link (replaced_by)',
-    (select replaced_by = nr from public.cockpit_sales_rooms where id = lr));
+  select * into r from public.cockpit_sales_rooms where id = got.room_id;
+  perform pg_temp.ck('D no standby room: claimed (claim_room none) with the taker''s room reserved: requested, handover, sales-api''s request id, the lead''s room made way',
+    got.state = 'claimed' and got.claim_room = 'none' and got.room_id is not null
+    and r.state = 'requested' and r.purpose = 'handover' and r.request_id = l and r.handover_id = l
+    and r.host_email = 'lc-test-knone@example.invalid' and r.contact_id = 'lc-test-d13' and r.call_kind = 'demo'
+    and (select state = 'cancelled' and end_reason = 'replaced' from public.cockpit_sales_rooms where id = lr),
+    format('%s %s %s', got.state, got.claim_room, r.state));
+  perform pg_temp.ck('D the reserved room takes the lead''s old link (replaced_by)',
+    (select replaced_by = got.room_id from public.cockpit_sales_rooms where id = lr));
+  s := pg_temp.dry(format('insert into public.cockpit_sales_rooms (request_id, contact_id, purpose, call_kind, provider, host_email, made_by) values (gen_random_uuid(), %L, %L, %L, %L, %L, %L)',
+         'lc-test-d13-other', 'fallback', 'intro', 'zoom', 'lc-test-knone@example.invalid', 'lc-test'));
+  perform pg_temp.ck('D a room that closer then opens for another lead is refused (one room per host): never the other way round',
+    s = '23505:cockpit_sales_rooms_one_per_host', s);
+
+  -- A re-offer's claim reserves its room on the request id sales-api works
+  -- out for it (liveio.ts uuidFrom('mahara-live/{id}/{reoffers}'), pinned in
+  -- rooms.test.ts with the same value).
+  insert into public.cockpit_sales_live (id, request_id, contact_id, asked_by, kind, reason, offered_to, offer_until, reoffers)
+  values ('00000000-0000-4000-8000-00000000d014', gen_random_uuid(), 'lc-test-d14', 'lc-test-setter@example.invalid', 'demo',
+          'on_call', array['lc-test-kreoffer@example.invalid'], now() + interval '2 minutes', 1);
+  select * into got from public.cockpit_sales_live_claim('00000000-0000-4000-8000-00000000d014', 'lc-test-kreoffer@example.invalid');
+  perform pg_temp.ck('D a re-offer''s reserved room carries sales-api''s request id for it',
+    (select request_id = '5f3c75fe-140c-544a-85d2-1c2fe98ad064'::uuid from public.cockpit_sales_rooms where id = got.room_id),
+    (select request_id::text from public.cockpit_sales_rooms where id = got.room_id));
 
   perform pg_temp.ck('D a closer whose adopted room waits for the lead is on_call (room_waiting, that room)',
     (select state = 'on_call' and why = 'room_waiting' and room_id is not null
@@ -624,7 +649,8 @@ begin
     ('lc-test-p-demo@example.invalid', 'Test', 'closer', true, 'lc-test-ghl-demo');
   insert into public.cockpit_sales_appointments (appointment_id, contact_id, call_type, status, assigned_user_id, start_at, origin) values
     ('lc-test-appt-e1', 'lc-test-e-c1', 'intro', 'confirmed', 'lc-test-ghl-appt', now() - interval '5 minutes', 'ghl'),
-    ('lc-test-appt-e2', 'lc-test-e-c2', 'intro', 'confirmed', 'lc-test-ghl-appt-old', now() - interval '20 minutes', 'ghl'),
+    -- Past its whole length (an intro is 30 minutes, rooms.lengths_min; 20261003d round 3).
+    ('lc-test-appt-e2', 'lc-test-e-c2', 'intro', 'confirmed', 'lc-test-ghl-appt-old', now() - interval '40 minutes', 'ghl'),
     ('lc-test-appt-e3', 'lc-test-e-c3', 'demo', 'confirmed', 'lc-test-ghl-demo', now() - interval '40 minutes', 'ghl');
 
   for p in select * from public.cockpit_sales_presence where email like 'lc-test-p-%' loop
@@ -960,6 +986,10 @@ begin
   -- Each made a minute after its intro's start (20261003d: the settle relates the room to the intro as booked now).
   update public.cockpit_sales_rooms set requested_at = now() - interval '24 minutes'
    where id = any (array[f[33], f[34], f[35], f[36], f[37], f[38]]);
+  -- The settled rooms' links went (a link that never reached the lead is no
+  -- evidence that the lead stayed away; 20261003d round 3).
+  update public.cockpit_sales_rooms set link_sent_at = now() - interval '19 minutes'
+   where id = any (array[f[25], f[36], f[37]]);
 
   -- The pending-events hold (contract-v2 section 10, item 4): a timer waits
   -- for the room's unhandled Zoom, worker or claim event, at most 300 s past
@@ -1056,7 +1086,7 @@ begin
   update public.cockpit_sales_rooms set handover_id = lv[11] where id = rm;
   update public.cockpit_sales_live set state = 'claimed', claimed_by = 'lc-test-l11@example.invalid', room_id = rm where id = lv[11];
   update public.cockpit_sales_live set state = 'lead_joined' where id = lv[11];
-  update public.cockpit_sales_rooms set state = 'host_in' where id = rm;
+  update public.cockpit_sales_rooms set state = 'host_in', count_undo_at = now() where id = rm;
   update public.cockpit_sales_rooms set lead_by = now() - interval '1 minute' where id = rm;
   -- lv[12]: offered to a closer who took another offer meanwhile; it ends.
   lv[12] := pg_temp.live('lc-test-l12a', array['lc-test-l12@example.invalid'], interval '-1 second');
@@ -1638,7 +1668,8 @@ begin
   -- The setter's fallback room for that booked intro; the host never came.
   rm := pg_temp.room('lc-test-h2', 'lc-test-h2@example.invalid', 'fallback', 'open', 'intro');
   update public.cockpit_sales_rooms set appointment_id = 'lc-test-appt-h2', host_by = now() - interval '1 minute',
-                                        requested_at = now() - interval '24 minutes' where id = rm;
+                                        requested_at = now() - interval '24 minutes',
+                                        link_sent_at = now() - interval '23 minutes' where id = rm;
   -- Zoom reported the meeting (read): its silence about the lead is evidence.
   insert into public.cockpit_sales_room_events (room_id, kind, source, dedupe_key, at, handled_at)
     values (rm, 'zoom.meeting.started', 'zoom', 'lc-test-h2-started', now() - interval '20 minutes', now() - interval '20 minutes');
@@ -2183,6 +2214,57 @@ begin
                                        where dedupe_key = 'live.claimed:' || l5::text || ':0')]), s ->> 'replay');
 exception when others then
   perform pg_temp.ck('L section crashed', false, sqlstate || ': ' || sqlerrm);
+end;
+$$;
+
+-- R. Fix round 3 (3 October 2026): a lead's words never reach Slack as
+--    markup; an empty room is evidence about an intro only when it was the
+--    intro's own room and its link reached the lead.
+do $$
+declare
+  w text; src text; s jsonb; cf uuid; nl uuid;
+begin
+  w := public.cockpit_sales_alert_words('Room ABCDEF: <!channel> joined. <https://evil.example.invalid/x|Check> <@U0TEST> & co.', 300);
+  perform pg_temp.ck('R alert words turn a lead''s < and > into look-alikes: no Slack markup is stored',
+    w !~ '[<>]' and w like U&'%\2039!channel\203A%', w);
+  select pg_get_functiondef('public.cockpit_sales_watchdog'::regproc) into src;
+  perform pg_temp.ck('R the watchdog escapes & < > before it posts an alert to Slack',
+    src like '%replace(replace(replace(rec.message, ''&'', ''&amp;''), ''<'', ''&lt;''), ''>'', ''&gt;'')%'
+    and src !~ 'jsonb_build_object\(\s*''text''\s*,\s*rec\.message\s*\)');
+
+  insert into public.cockpit_sales_appointments (appointment_id, contact_id, call_type, status, assigned_user_id, start_at, origin) values
+    ('lc-test-appt-r1', 'lc-test-r1', 'intro', 'confirmed', 'lc-test-ghl-r1', now() - interval '25 minutes', 'ghl'),
+    ('lc-test-appt-r2', 'lc-test-r2', 'intro', 'confirmed', 'lc-test-ghl-r2', now() - interval '25 minutes', 'ghl');
+  -- r1: the setter's confirmation call the evening before (20 hours before the
+  -- intro): its room carried the intro's id and start, the link went, nobody came.
+  cf := pg_temp.room('lc-test-r1', 'lc-test-r1@example.invalid', 'fallback', 'open', 'intro', 'lc-test-appt-r1');
+  update public.cockpit_sales_rooms set appointment_start_at = now() - interval '25 minutes',
+                                        requested_at = now() - interval '20 hours', link_sent_at = now() - interval '20 hours',
+                                        host_by = now() - interval '1 minute', lead_by = now() - interval '1 minute' where id = cf;
+  -- r2: the intro's own room, asked for at its start, whose link never went.
+  nl := pg_temp.room('lc-test-r2', 'lc-test-r2@example.invalid', 'fallback', 'open', 'intro', 'lc-test-appt-r2');
+  update public.cockpit_sales_rooms set appointment_start_at = now() - interval '25 minutes',
+                                        requested_at = now() - interval '24 minutes', link_claimed_at = now() - interval '24 minutes',
+                                        refusal = 'The link did not go on any channel.',
+                                        host_by = now() - interval '1 minute', lead_by = now() - interval '1 minute' where id = nl;
+  insert into public.cockpit_sales_room_events (room_id, kind, source, dedupe_key, at, handled_at)
+  select x, 'zoom.meeting.started', 'zoom', 'lc-test-r-started-' || x::text, now() - interval '20 minutes', now() - interval '20 minutes'
+    from unnest(array[cf, nl]) as x;
+  s := public.cockpit_sales_rooms_sweep();
+  s := public.cockpit_sales_rooms_sweep();
+  perform pg_temp.ck('R a confirmation call''s empty room the day before never settles the intro (no sweep.settle), and nobody is asked to mark it from it',
+    not exists (select 1 from public.cockpit_sales_room_events where dedupe_key = 'sweep.settle:' || cf::text)
+    and (select settled_mark = 'none' from public.cockpit_sales_rooms where id = cf)
+    and not exists (select 1 from public.cockpit_sales_alerts where dedupe_key = 'room:' || cf::text || ':mark_intro'),
+    (select state || ' ' || coalesce(settled_mark, '-') from public.cockpit_sales_rooms where id = cf));
+  perform pg_temp.ck('R the intro''s own room whose link never reached the lead is no evidence: no settle, settled_mark none, a person marks the intro',
+    not exists (select 1 from public.cockpit_sales_room_events where dedupe_key = 'sweep.settle:' || nl::text)
+    and (select settled_mark = 'none' from public.cockpit_sales_rooms where id = nl)
+    and exists (select 1 from public.cockpit_sales_alerts where dedupe_key = 'room:' || nl::text || ':mark_intro'
+                  and kind = 'room_mark_intro' and message like '%the link never reached the lead%'),
+    (select state || ' ' || coalesce(settled_mark, '-') from public.cockpit_sales_rooms where id = nl));
+exception when others then
+  perform pg_temp.ck('R section crashed', false, sqlstate || ': ' || sqlerrm);
 end;
 $$;
 

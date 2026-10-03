@@ -142,8 +142,9 @@ begin
   update public.cockpit_sales_rooms set handover_id = l where id = r;
   update public.cockpit_sales_live set state = 'claimed', claimed_by = 'lc-test-x3k@example.invalid', room_id = r where id = l;
   update public.cockpit_sales_live set state = 'lead_joined' where id = l;
-  -- room.mark not_lead: lead_in back to host_in (the trigger clears lead_in_at).
-  update public.cockpit_sales_rooms set state = 'host_in' where id = r;
+  -- room.mark not_lead: lead_in back to host_in with count_undo_at (the
+  -- guard keeps lead_in_at, the taken-back join's time).
+  update public.cockpit_sales_rooms set state = 'host_in', count_undo_at = now() where id = r;
   -- The real lead never comes.
   update public.cockpit_sales_rooms set lead_by = now() - interval '1 minute' where id = r;
   s := public.cockpit_sales_rooms_sweep();
@@ -584,8 +585,10 @@ begin
     ('lc-test-appt-x20b', 'lc-test-x20b', 'intro', 'confirmed', 'lc-test-ghl-x20b', now() - interval '25 minutes', 'ghl');
   fb := pg_temp.room('lc-test-x20a', 'lc-test-x20ah@example.invalid', 'fallback', 'open');
   -- Made a minute after the intro's start (20261003d: a room settles only the intro it was made for).
+  -- Its link went (a link that never reached the lead is no evidence; 20261003d round 3).
   update public.cockpit_sales_rooms set appointment_id = 'lc-test-appt-x20a', host_by = now() - interval '1 minute',
-                                        requested_at = now() - interval '24 minutes' where id = fb;
+                                        requested_at = now() - interval '24 minutes',
+                                        link_sent_at = now() - interval '23 minutes' where id = fb;
   -- Zoom reported the meeting (read): its silence about the lead is evidence (20261003d).
   insert into public.cockpit_sales_room_events (room_id, kind, source, dedupe_key, at, handled_at)
     values (fb, 'zoom.meeting.started', 'zoom', 'lc-test-x20a-started', now() - interval '20 minutes', now() - interval '20 minutes');
