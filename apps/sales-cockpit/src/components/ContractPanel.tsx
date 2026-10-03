@@ -575,7 +575,7 @@ function NewContract({
           value={spend}
           onChange={e => setSpend(e.target.value)}
           inputMode="decimal"
-          placeholder="40"
+          placeholder="For example 40"
           dir="ltr"
           required
         />
