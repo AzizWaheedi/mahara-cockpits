@@ -1054,7 +1054,7 @@ begin
     ('lc-test-l10-other@example.invalid', 'away', null),
     ('lc-test-l12@example.invalid', 'available', now() + interval '1 hour');
   lv[1] := pg_temp.live('lc-test-l1', array['lc-test-la@example.invalid', 'lc-test-lb@example.invalid', 'lc-test-lc@example.invalid'],
-                        interval '-1 second');
+                        interval '-31 seconds');
   update public.cockpit_sales_live set declined_by = array['lc-test-lb@example.invalid'] where id = lv[1];
   lv[2] := pg_temp.live('lc-test-l2', array['lc-test-l2@example.invalid']);
   update public.cockpit_sales_live set state = 'claimed', claimed_by = 'lc-test-l2@example.invalid', claimed_at = now() - interval '3 minutes' where id = lv[2];
@@ -1099,7 +1099,7 @@ begin
   update public.cockpit_sales_rooms set state = 'host_in', count_undo_at = now() where id = rm;
   update public.cockpit_sales_rooms set lead_by = now() - interval '1 minute' where id = rm;
   -- lv[12]: offered to a closer who took another offer meanwhile; it ends.
-  lv[12] := pg_temp.live('lc-test-l12a', array['lc-test-l12@example.invalid'], interval '-1 second');
+  lv[12] := pg_temp.live('lc-test-l12a', array['lc-test-l12@example.invalid'], interval '-31 seconds');
   perform 1 from public.cockpit_sales_live_claim(pg_temp.live('lc-test-l12b', array['lc-test-l12@example.invalid']), 'lc-test-l12@example.invalid');
   -- lv[13]: taken while the lead had a booked room open (busy), 3 minutes ago.
   perform pg_temp.room('lc-test-l13', 'lc-test-l13-host@example.invalid', 'booked', 'open', 'intro', 'lc-test-appt-l13');
@@ -2377,6 +2377,49 @@ begin
     and not has_function_privilege('anon', 'public.cockpit_sales_room_count_claim(uuid)', 'execute'));
 exception when others then
   perform pg_temp.ck('R4 section crashed', false, sqlstate || ': ' || sqlerrm);
+end;
+$$;
+
+-- R5. A mark replaces the call's current mark in one step (stress2, round 2).
+do $$
+declare
+  a bigint; b bigint; ok boolean := false;
+begin
+  insert into public.cockpit_sales_dispositions (appointment_id, contact_id, status, marked_by)
+  values ('lc-test-r5-appt', 'lc-test-r5', 'noshow', 'lc-test-r5-rep@example.invalid') returning id into a;
+  select d.id into b from public.cockpit_sales_disposition_replace(a, jsonb_build_object(
+    'appointment_id', 'lc-test-r5-appt', 'contact_id', 'lc-test-r5', 'status', 'showed', 'marked_by', 'lc-test-r5-cnt@example.invalid',
+    'crm', 'pending')) as d;
+  perform pg_temp.ck('R5 the replace supersedes the current mark and inserts the new one, one current',
+    (select count(*) = 1 from public.cockpit_sales_dispositions where appointment_id = 'lc-test-r5-appt' and superseded_at is null)
+    and (select status = 'showed' from public.cockpit_sales_dispositions where id = b)
+    and (select superseded_at is not null from public.cockpit_sales_dispositions where id = a));
+  begin
+    perform 1 from public.cockpit_sales_disposition_replace(b, jsonb_build_object(
+      'appointment_id', 'lc-test-r5-appt', 'contact_id', 'lc-test-r5', 'status', 'not-a-status', 'marked_by', 'x@example.invalid'));
+  exception when others then
+    ok := true;
+  end;
+  perform pg_temp.ck('R5 a replace whose insert fails leaves the previous mark current',
+    ok and (select superseded_at is null and status = 'showed' from public.cockpit_sales_dispositions where id = b));
+  ok := false;
+  begin
+    -- Read as current before another mark landed: the insert meets the one-current index, nothing moves.
+    perform 1 from public.cockpit_sales_disposition_replace(a, jsonb_build_object(
+      'appointment_id', 'lc-test-r5-appt', 'contact_id', 'lc-test-r5', 'status', 'noshow', 'marked_by', 'x@example.invalid'));
+  exception when unique_violation then
+    ok := true;
+  end;
+  perform pg_temp.ck('R5 a replace built on a mark that changed meanwhile is refused by the one-current index',
+    ok and (select count(*) = 1 from public.cockpit_sales_dispositions where appointment_id = 'lc-test-r5-appt' and superseded_at is null));
+  perform pg_temp.ck('R5 the replace is security definer, empty search_path, service role only',
+    (select p.prosecdef and 'search_path=""' = any (p.proconfig) from pg_proc as p
+      where p.oid = 'public.cockpit_sales_disposition_replace(bigint, jsonb)'::regprocedure)
+    and has_function_privilege('service_role', 'public.cockpit_sales_disposition_replace(bigint, jsonb)', 'execute')
+    and not has_function_privilege('authenticated', 'public.cockpit_sales_disposition_replace(bigint, jsonb)', 'execute')
+    and not has_function_privilege('anon', 'public.cockpit_sales_disposition_replace(bigint, jsonb)', 'execute'));
+exception when others then
+  perform pg_temp.ck('R5 section crashed', false, sqlstate || ': ' || sqlerrm);
 end;
 $$;
 

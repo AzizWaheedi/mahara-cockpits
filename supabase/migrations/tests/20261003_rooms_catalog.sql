@@ -77,7 +77,8 @@ begin
                            'public.cockpit_sales_alert_words(text, integer)',
                            'public.cockpit_sales_settings_add_missing(text, jsonb, text, text)',
                            'public.cockpit_sales_jsonb_add_missing(jsonb, jsonb)',
-                           'public.cockpit_sales_norm_words(text)'] loop
+                           'public.cockpit_sales_norm_words(text)',
+                           'public.cockpit_sales_disposition_replace(bigint, jsonb)'] loop
     perform pg_temp.ck('A function ' || f || ': service role only',
       has_function_privilege('service_role', f, 'execute')
       and not has_function_privilege('authenticated', f, 'execute')

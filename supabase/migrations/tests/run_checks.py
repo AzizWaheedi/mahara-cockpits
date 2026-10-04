@@ -240,7 +240,7 @@ select 'function ' || p.proname from pg_proc as p
    'cockpit_sales_followup_waves_close_members', 'cockpit_sales_followup_wave_members_touch',
    'cockpit_sales_followup_meta_touch', 'cockpit_sales_followup_stops_touch',
    'cockpit_sales_message_slot', 'cockpit_sales_live_hours_open', 'cockpit_sales_worker_status_clock',
-   'cockpit_sales_norm_words')
+   'cockpit_sales_norm_words', 'cockpit_sales_disposition_replace')
 union all
 select 'column cockpit_sales_wa_templates.button_variable' from information_schema.columns
  where table_schema = 'public' and table_name = 'cockpit_sales_wa_templates' and column_name = 'button_variable'
@@ -291,6 +291,8 @@ union all
 select 'message ' || contact_id from public.cockpit_sales_messages where contact_id like 'lc-test-%'
 union all
 select 'followup ' || contact_id from public.cockpit_sales_followups where contact_id like 'lc-test-%'
+union all
+select 'disposition ' || appointment_id from public.cockpit_sales_dispositions where appointment_id like 'lc-test-%'
 union all
 select 'queued request ' || url from net.http_request_queue where url like '%example.invalid%' or url like '%sales-live/cron%'
 union all

@@ -811,13 +811,18 @@ begin
 
   -- L1. offered: nobody took it in time. Everyone it went to who did not
   -- press Not now, is still Available, and is not holding another live call
-  -- they took meanwhile, becomes Away (one miss).
+  -- they took meanwhile, becomes Away (one miss). Ended only 30 s after
+  -- offer_until, the claim's own p_at window (stress2, round 2): a Take
+  -- pressed in time whose claim lands after HighLevel's contact read still
+  -- finds the row offered, and is never told the offer ended nor made Away.
+  -- The strip stops offering it at offer_until; a press after the end is
+  -- answered by the claim's late-take branch (declined_by).
   begin
     n := 0;
     for rec in
       select x.id, x.offered_to, x.declined_by
         from public.cockpit_sales_live as x
-       where x.state = 'offered' and x.offer_until <= t
+       where x.state = 'offered' and x.offer_until + interval '30 seconds' <= t
        for update skip locked
     loop
       n := n + public.cockpit_sales_live_move(rec.id, array['offered'], 'expired', 'no_rep',
@@ -1111,6 +1116,12 @@ begin
   -- (room:{id}:mark_intro), never a silent "confirmed" (a show for B2B).
   -- The watchdog raises one alert a day for the rest, and one per lost join,
   -- worker event, settle or claim.
+  -- A settle that only waits is never given up as a failure (stress2, round
+  -- 2): while another room for the same call is still open with no join
+  -- that stands, it is left for that room (S1 holds the same rooms). One
+  -- whose intro moved since the room was made (the copy's start is not the
+  -- start the room stored, or is still ahead) is finished as "not for the
+  -- intro as it is booked now", with no alert: nothing failed.
   begin
     create temp table if not exists lc_gave_up (id uuid primary key, room_id uuid, source text, kind text) on commit drop;
     truncate pg_temp.lc_gave_up;
@@ -1124,12 +1135,55 @@ begin
          and ((e.tries >= max_tries and (e.last_try_at is null or e.last_try_at + w_replay < t))
               or e.at < t - interval '1 day')
          and (e.lease_until is null or e.lease_until < t)
+         and not (e.source = 'settle' and e.at >= t - interval '1 day' and exists (
+               select 1
+                 from public.cockpit_sales_rooms as x
+                 join public.cockpit_sales_appointments as ap on ap.appointment_id = x.appointment_id
+                 join public.cockpit_sales_rooms as y
+                   on y.id <> x.id
+                  and (y.appointment_id = x.appointment_id
+                       or (y.contact_id = x.contact_id and y.requested_at >= ap.start_at - interval '1 hour'))
+                where x.id = e.room_id
+                  and y.state in ('requested', 'creating', 'open', 'host_in', 'lead_in')
+                  and not (y.lead_in_at is not null and (y.count_undo_at is null or y.lead_in_at > y.count_undo_at))))
       returning e.id, e.room_id, e.source, e.kind
     )
     insert into pg_temp.lc_gave_up (id, room_id, source, kind)
     select g.id, g.room_id, g.source, g.kind from gone as g;
     select count(*) into n from pg_temp.lc_gave_up;
     summary := summary || jsonb_build_object('gave_up', n);
+
+    -- The intro moved since the room was made, or is still ahead: not this
+    -- room's intro, so not a failure and nobody is asked to mark it.
+    with moved as (
+      update public.cockpit_sales_rooms as x
+         set settled_mark = 'none'
+        from pg_temp.lc_gave_up as g, public.cockpit_sales_appointments as ap
+       where g.source = 'settle' and x.id = g.room_id and x.settled_mark is null
+         and ap.appointment_id = x.appointment_id
+         and ((x.appointment_start_at is not null and abs(extract(epoch from (ap.start_at - x.appointment_start_at))) >= 60)
+              or ap.start_at + w_settle > t)
+      returning x.id, x.code
+    ),
+    mev as (
+      insert into public.cockpit_sales_room_events (room_id, kind, source, dedupe_key, handled_at, text, detail)
+      select m.id, 'sweep.settle_skipped', 'sweep', 'sweep:' || m.id::text || ':settle_skipped', t,
+             'Not settled: this room was not for the intro as it is booked now.',
+             jsonb_build_object('why', 'not_this_intro')
+        from moved as m
+      on conflict (dedupe_key) do nothing
+      returning 1
+    ),
+    mau as (
+      insert into public.cockpit_audit_log (action, entity_type, entity_id, actor_email, source_app, source_system, before, after, metadata)
+      select 'room.settle', 'cockpit_sales_rooms', m.id::text, null, 'sales', 'pg_cron',
+             jsonb_build_object('settled_mark', null), jsonb_build_object('settled_mark', 'none'),
+             jsonb_build_object('rule', 'settle_not_this_intro', 'code', m.code)
+        from moved as m
+      returning 1
+    )
+    select count(*) into n from moved;
+    summary := summary || jsonb_build_object('settle_not_this_intro', n);
 
     with marked as (
       update public.cockpit_sales_rooms as x
@@ -1162,6 +1216,9 @@ begin
         from pg_temp.lc_gave_up as g
         join public.cockpit_sales_rooms as x on x.id = g.room_id
        where g.source = 'settle'
+         and not exists (select 1 from public.cockpit_sales_room_events as v
+                          where v.dedupe_key = 'sweep:' || g.room_id::text || ':settle_skipped'
+                            and v.detail ->> 'why' = 'not_this_intro')
     loop
       perform public.cockpit_sales_alert_set('room:' || rec.room_id::text || ':mark_intro', true, 'room_mark_intro',
         'Room ' || rec.code,
@@ -1229,12 +1286,13 @@ begin
     select x.id, x.code, x.contact_id, d.doubt, d.doubt is null and m.same_call and not tc.test, m.same_call
       from public.cockpit_sales_rooms as x
       join public.cockpit_sales_appointments as ap on ap.appointment_id = x.appointment_id
-     -- The room was asked for inside the intro's own window (an hour before
-     -- its start to start + settle), and the start it stored, if any, is still
-     -- the intro's (roomlogic.ts roomForThisStart). A confirmation call's room
-     -- the evening before, or that morning, says nothing about the intro.
+     -- The room was asked for inside the intro's own window (five minutes
+     -- before its start, the dialer's intro item, to start + settle; stress2,
+     -- round 2), and the start it stored, if any, is still the intro's
+     -- (roomlogic.ts roomForThisStart, INTRO_EARLY_MS). A confirmation call's
+     -- room the evening before, or in the hour before, says nothing about it.
      cross join lateral (
-       select x.requested_at between ap.start_at - interval '1 hour' and ap.start_at + w_settle
+       select x.requested_at between ap.start_at - interval '5 minutes' and ap.start_at + w_settle
               and (x.appointment_start_at is null or x.appointment_start_at = ap.start_at) as same_call) as m
      cross join lateral (
        select coalesce(x.contact_id = any (array(select jsonb_array_elements_text(coalesce(cfg -> 'test_contacts', '[]'::jsonb)))), false)
@@ -1260,6 +1318,17 @@ begin
                 when x.link_unconfirmed_at is not null
                      and not (coalesce(x.link_channels, '{}'::text[]) && array['whatsapp_text', 'email']::text[])
                   then 'the link was not confirmed to have reached the lead'
+                -- The link's WhatsApp failed after it was sent (stress2, round
+                -- 2): sales-api's late read stored link.failed_late, or every
+                -- message the link went on is failed now.
+                when exists (select 1 from public.cockpit_sales_room_events as e
+                              where e.room_id = x.id and e.kind = 'link.failed_late')
+                     or (exists (select 1 from jsonb_each_text(coalesce(x.link_message_ids, '{}'::jsonb)) as lm(k, v)
+                                   join public.cockpit_sales_messages as mm on mm.id::text = lm.v)
+                         and not exists (select 1 from jsonb_each_text(coalesce(x.link_message_ids, '{}'::jsonb)) as lm(k, v)
+                                           join public.cockpit_sales_messages as mm on mm.id::text = lm.v
+                                          where mm.state <> 'failed'))
+                  then 'the link''s WhatsApp failed after it was sent'
                 -- Only a join that stands in another room for this call; a
                 -- sibling merely still open holds this settle (below).
                 when exists (select 1 from public.cockpit_sales_rooms as y
@@ -1268,6 +1337,28 @@ begin
                                      or (y.contact_id = x.contact_id and y.requested_at >= ap.start_at - interval '1 hour'))
                                 and y.lead_in_at is not null and (y.count_undo_at is null or y.lead_in_at > y.count_undo_at))
                   then 'the lead joined another room for this call'
+                -- The lead on the phone after the room was asked for (stress2,
+                -- round 2, roomlogic.ts phoneSince): a dial they answered, a
+                -- saved attempt that spoke, or Maqsam's answered call either
+                -- way. The intro may be held by phone: a person marks it.
+                when exists (select 1 from public.cockpit_sales_attempts as pa
+                              where pa.contact_id = x.contact_id
+                                and (pa.started_at >= x.requested_at or pa.saved_at >= x.requested_at)
+                                and pa.state = 'saved'
+                                and ((lower(coalesce(pa.call_state, '')) in ('answered', 'completed', 'serviced')
+                                      and coalesce(pa.call_duration_s, 1) > 0)
+                                     or pa.outcome in ('callback', 'booked', 'not_interested', 'disqualified', 'handled',
+                                                       'confirmed', 'rescheduled', 'cancelled', 'showed')))
+                     or exists (select 1 from public.cockpit_sales_dials as dl
+                                 where (dl.contact_id = x.contact_id
+                                        or (dl.lead_phone8 is not null
+                                            and dl.lead_phone8 = (select l.phone8 from public.cockpit_sales_leads as l
+                                                                   where l.contact_id = x.contact_id limit 1)))
+                                   and dl.occurred_at >= x.requested_at
+                                   and ((dl.direction = 'outbound' and lower(coalesce(dl.state, '')) in ('answered', 'completed', 'serviced')
+                                         and coalesce(dl.duration_s, 1) > 0)
+                                        or (dl.direction = 'inbound' and dl.state = 'serviced')))
+                  then 'the lead was reached by phone'
                 when exists (select 1 from public.cockpit_sales_room_events as e
                               where e.room_id = x.id
                                 and ((e.kind = 'zoom.meeting.participant_joined'
@@ -1314,6 +1405,15 @@ begin
                         where dp.appointment_id = x.appointment_id and dp.superseded_at is null
                           and not (dp.status = 'noshow'
                                    and dp.note = 'Nobody joined the video room, so the intro is marked a no-show.'))
+       -- A call to the lead placed after the room was asked for is still
+       -- going (the setter rang again): this room waits until it is saved,
+       -- never a no-show posted into a call the lead may be on (stress2,
+       -- round 2). Bounded: an attempt left open for two hours holds nothing.
+       and not exists (select 1 from public.cockpit_sales_attempts as pa
+                        where pa.contact_id = x.contact_id
+                          and pa.started_at >= x.requested_at
+                          and pa.started_at >= t - interval '2 hours'
+                          and pa.state in ('dialing', 'placed'))
        -- Another room for this call is still live with no join that stands
        -- (the setter's second try): this room waits for it, and is settled
        -- (or told to a person) once that one closes, never read as "the lead
@@ -1460,7 +1560,56 @@ alter table public.cockpit_sales_availability
 comment on column public.cockpit_sales_availability.standby_error is
   'Why the last Available press made no standby room, as the strip says it; cleared by the next press.';
 
--- 6. Grants (the view was made again) ---------------------------------------------
+-- 5b. A meeting's end kept while its room goes back to open -------------------
+
+-- Zoom does not order its webhooks (stress2, round 2): meeting.ended read as
+-- the host leaving (the room back to open, F9) is kept here, so a lead's
+-- join from before it, delivered after it, ends the room joined instead of
+-- leaving it lead_in on a meeting that is over (roomlogic.ts lead_in).
+alter table public.cockpit_sales_rooms
+  add column if not exists meeting_ended_at timestamptz;
+comment on column public.cockpit_sales_rooms.meeting_ended_at is
+  'When Zoom said the meeting ended while the room went back to open; a lead join from before it ends the room joined.';
+
+-- 6. A mark replaces the call's current mark in one step ---------------------
+
+-- index.ts markAppointment superseded the current mark in one write and
+-- inserted the new one in a second (stress2, round 2): a write cut off
+-- between the two left the call with no current mark (the rep's own mark
+-- gone from every screen, and nothing for an undo to put back). Both now
+-- happen in one transaction under the one-current-mark index
+-- (cockpit_sales_dispositions_current): a failure leaves the previous mark
+-- current. p_current_id is the mark read as current (null: none); a mark
+-- that changed meanwhile makes the insert hit the index, and nothing moves.
+create or replace function public.cockpit_sales_disposition_replace(p_current_id bigint, p_row jsonb)
+returns setof public.cockpit_sales_dispositions
+language plpgsql
+security definer
+set search_path = ''
+set lock_timeout = '3s'
+as $$
+begin
+  if p_row is null or coalesce(p_row ->> 'appointment_id', '') = '' then
+    raise exception 'disposition_replace: which call?' using errcode = '22023';
+  end if;
+  if p_current_id is not null then
+    update public.cockpit_sales_dispositions as d
+       set superseded_at = now()
+     where d.id = p_current_id
+       and d.appointment_id = p_row ->> 'appointment_id'
+       and d.superseded_at is null;
+  end if;
+  return query
+  insert into public.cockpit_sales_dispositions (appointment_id, contact_id, call_type, start_at, status, reason, note, marked_by, crm)
+  values (p_row ->> 'appointment_id', p_row ->> 'contact_id', p_row ->> 'call_type', (p_row ->> 'start_at')::timestamptz,
+          p_row ->> 'status', p_row ->> 'reason', p_row ->> 'note', p_row ->> 'marked_by', coalesce(p_row ->> 'crm', 'off'))
+  returning *;
+end;
+$$;
+revoke all on function public.cockpit_sales_disposition_replace(bigint, jsonb) from public, anon, authenticated;
+grant execute on function public.cockpit_sales_disposition_replace(bigint, jsonb) to service_role;
+
+-- 7. Grants (the view was made again) ---------------------------------------------
 
 revoke all on public.cockpit_sales_presence from public, anon, authenticated;
 grant select on public.cockpit_sales_presence to service_role;

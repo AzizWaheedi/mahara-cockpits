@@ -170,7 +170,7 @@ declare
 begin
   insert into public.cockpit_sales_availability (email, state, until)
     values ('lc-test-x4k@example.invalid', 'available', now() + interval '1 hour');
-  a := pg_temp.live('lc-test-x4a', array['lc-test-x4k@example.invalid'], interval '-1 second');
+  a := pg_temp.live('lc-test-x4a', array['lc-test-x4k@example.invalid'], interval '-31 seconds');
   b := pg_temp.live('lc-test-x4b', array['lc-test-x4k@example.invalid']);
   perform 1 from public.cockpit_sales_live_claim(b, 'lc-test-x4k@example.invalid');
   s := public.cockpit_sales_rooms_sweep();
