@@ -143,6 +143,22 @@ FAULTS = ("refusals", "hold_all", "outage", "error", "no_answer", "budget")
 SENDING = "sales-desk:sending"
 # finish()'s done_reason: a wave that ran out of leads, never one a manager stopped.
 FINISHED = "Every lead in the wave has had its opener or left the wave."
+# HighLevel answered the contact read with "not found" (merged or deleted).
+GONE_CONTACT = "This contact is no longer in HighLevel (merged or deleted)."
+# The conversation could not be read back to the lead's own last words.
+LONG_THREAD = ("A person writes to this lead: their HighLevel conversation is too long to read back to their own "
+               "last words, so a stop could be hidden in it.")
+
+
+def contact_gone(e: Exception) -> bool:
+    """HighLevel's answer that it has no such contact (400, 404 or 422 on the
+    contact read): an answer, not an outage (0, 5xx and 429 are)."""
+    return isinstance(e, http.HttpError) and e.status in (400, 404, 422) and "/contacts/" in str(e.url or "")
+
+
+# sales-api's AGENT_COPY.opener_stage_out, word for word.
+OPENER_STAGE_OUT = ("The lead's deal is in a disqualified or lost stage in the CRM, so the backlog opener was "
+                    "taken back.")
 # An opener sales-api failed on (a 500) waits this long, behind the rest of the batch.
 ERROR_WAIT = timedelta(minutes=30)
 # HighLevel's 400, 404 or 422 about one lead's contact (passed on in a 500): that lead's refusal, not every send's.
@@ -200,6 +216,18 @@ def demo_calendars(calendars: Optional[dict[str, Any]] = None) -> set[str]:
     return out
 
 
+# A deal the team ended in the CRM: its stage says disqualified or lost (any
+# case, with or without the stage's emoji). A rep who disqualifies in
+# HighLevel moves the deal there and leaves the call as it was, so the call's
+# own mark never says so (stress2, round 1: 57 such leads in production).
+STAGE_OUT = re.compile(r"disqualif|(?<![a-z])lost(?![a-z])", re.I)
+
+
+def stage_out(lead: Optional[dict[str, Any]]) -> bool:
+    """The lead's deal sits in a CRM stage that ends it: disqualified or lost."""
+    return bool(STAGE_OUT.search(str((lead or {}).get("stage_name") or "")))
+
+
 def pool_of(lead: dict[str, Any], calls: list[dict[str, Any]], dealt: bool, now: datetime,
             demo_cals: Optional[set[str]] = None) -> Optional[tuple[str, Optional[datetime]]]:
     """The backlog pool a lead belongs to, and when the event that put them
@@ -212,11 +240,14 @@ def pool_of(lead: dict[str, Any], calls: list[dict[str, Any]], dealt: bool, now:
     - good_intro: their latest held call was an intro a day ago or more, with
       no demo after it;
     - never_booked: no intro or demo ever.
-    Nobody with a call still to come, a deal, a client tag, or a latest call
-    marked invalid (disqualified) is in a pool."""
+    Nobody with a call still to come, a deal, a client tag, a latest call
+    marked invalid (disqualified), or a deal in a disqualified or lost stage
+    in the CRM is in a pool."""
     if not is_lead(lead) or fu.is_client(lead) or dealt or str(lead.get("contact_type") or "").lower() == "customer":
         return None
     if str(lead.get("opp_status") or "").lower() == "won" or "closed" in str(lead.get("stage_name") or "").lower():
+        return None
+    if stage_out(lead):
         return None
     mine = sorted((a for a in calls if a.get("call_type") in ("intro", "demo") and fu._ts(a.get("start_at"))),
                   key=lambda a: fu._ts(a["start_at"]))
@@ -632,10 +663,91 @@ def sync(sb: Any, wave_ids: list[str], now: datetime) -> dict[str, int]:
         if isinstance(done, list) and done:
             out[k] += 1
             moved.setdefault(str(m["wave_id"]), []).append(f"{m['contact_id']}:{body['state']}")
+    _sent_then_failed(sb, wave_ids, now, out, moved)
     for wid, changes in moved.items():
         audit(sb, "waves.sync", WAVES, wid, after={k: v for k, v in out.items() if v},
               metadata={"members": changes[:200]})
     return out
+
+
+# A member counted as sent is looked at again for this long after its send:
+# Meta's answer to a template can come after the waves run counted it.
+SENT_RECHECK = timedelta(days=3)
+# Meta's own failure on the message (its code, or HighLevel's failed or
+# undelivered status): the opener certainly did not reach the lead.
+META_FAILED = re.compile(r"\b13\d{4}\b|\bmeta\b|marked it (failed|undelivered)", re.I)
+
+
+def _failed_for_certain(msgs: list[dict[str, Any]]) -> bool:
+    """Every message of the opener failed, and Meta (or HighLevel's status
+    for it) said so. A workflow that did not send within half an hour is not
+    certain: it may still run late, and a retry would be a second opener."""
+    if not msgs or any(str(m.get("state") or "") != "failed" for m in msgs):
+        return False
+    return any(str(m.get("provider_status") or "").lower() in ("failed", "undelivered")
+               or META_FAILED.search(str(m.get("error") or "")) for m in msgs)
+
+
+def _sent_then_failed(sb: Any, wave_ids: list[str], now: datetime, out: dict[str, int],
+                      moved: dict[str, list[str]]) -> None:
+    """Wave members counted as sent whose opener failed afterwards (stress2,
+    round 1): sendTemplate's read-back saw the template pending, the member
+    was moved to sent, and Meta's answer (the per-person limit 131049, a
+    number not on WhatsApp) came later, failing the message and the draft.
+    The lead never had the opener: a certain failure follows the failed rules
+    (waiting again, once, or out for a reason that will not change); one that
+    may have gone is taken out for a person to check. Never left counted as
+    messaged."""
+    sent = sb.select_all(MEMBERS, f"select=wave_id,contact_id,followup_id,fail_count,due_at,sent_at"
+                                  f"&wave_id={fu._in(wave_ids)}&arm=eq.wave&state=eq.sent&followup_id=not.is.null"
+                                  f"&sent_at=gte.{_q((now - SENT_RECHECK).isoformat())}", order="contact_id,wave_id")
+    if not sent:
+        return
+    by_id = {str(m["followup_id"]): m for m in sent}
+    failed: dict[str, dict[str, Any]] = {}
+    for chunk in fu._chunks(sorted(by_id)):
+        for f in sb.select(FOLLOWUPS, f"select=id,status,error&id={fu._in(chunk)}&status=eq.failed&limit=1000"):
+            failed[str(f["id"])] = f
+    if not failed:
+        return
+    msgs: dict[str, list[dict[str, Any]]] = {}
+    for chunk in fu._chunks(sorted(failed)):
+        for m in sb.select(MESSAGES, "select=followup_id,state,provider_status,ghl_message_id,error,created_at"
+                                     f"&followup_id={fu._in(chunk)}&limit=1000"):
+            msgs.setdefault(str(m.get("followup_id") or ""), []).append(m)
+    for fid, f in failed.items():
+        m = by_id[fid]
+        mine = msgs.get(fid, [])
+        if _maybe_went(f, mine) == "sent":
+            continue
+        n = int(m.get("fail_count") or 0) + 1
+        err = http.scrub(str(f.get("error") or ""))[:200]
+        turn = m.get("due_at") or m.get("sent_at") or now.isoformat()
+        if not _failed_for_certain(mine) or MAY_HAVE_GONE.search(err):
+            body = {"state": "excluded", "fail_count": n, "last_error": err, "due_at": turn,
+                    "excluded_reason": ("The opener may have gone; a person checks HighLevel before anyone writes "
+                                        "to the lead again.")}
+        elif n >= FAIL_LIMIT or PERMANENT.search(err):
+            body = {"state": "excluded", "fail_count": n, "last_error": err, "due_at": turn,
+                    "excluded_reason": (f"The opener failed{' twice' if n >= FAIL_LIMIT else ''}: "
+                                        f"{err or 'no reason given'}")[:300]}
+        else:
+            body = {"state": "waiting", "followup_id": None, "drafted_at": None, "sent_at": None, "fail_count": n,
+                    "last_error": err, "next_try_at": (now + RETRY_AFTER).isoformat(), "due_at": turn}
+        path = f"{_member(str(m['wave_id']), str(m['contact_id']), 'sent')}&followup_id=eq.{_q(fid)}"
+        try:
+            done = sb.rest("PATCH", path, json_body=body, prefer="return=representation")
+        except http.HttpError as e:
+            if not _conflict(e) or body["state"] != "waiting":
+                raise
+            # Waiting again would put the lead in two running waves: out instead.
+            body = {"state": "excluded", "fail_count": n, "last_error": err, "due_at": turn,
+                    "excluded_reason": f"The opener failed: {err or 'no reason given'}"[:300]}
+            done = sb.rest("PATCH", path, json_body=body, prefer="return=representation")
+        if isinstance(done, list) and done:
+            k = "failed" if body["state"] == "waiting" else "excluded"
+            out[k] += 1
+            moved.setdefault(str(m["wave_id"]), []).append(f"{m['contact_id']}:sent->{body['state']}")
 
 
 def _t0(m: dict[str, Any]) -> Optional[datetime]:
@@ -1220,13 +1332,25 @@ def _draft_wave(sb: Any, wave: dict[str, Any], wave_room: int, now: datetime, ct
                     exclude(f"The lead {kept[1]}.")
                 continue
             try:
-                thread = fu.ghl_thread(ctx["ghl_token"], c)
                 person = fu.ghl_contact(ctx["ghl_token"], c)
+                thread, whole = fu.ghl_history(ctx["ghl_token"], c)
             except Exception as e:  # noqa: BLE001 - tried again within the hour
+                if contact_gone(e):
+                    # HighLevel answered: the contact was merged away or
+                    # deleted. Let go at their turn, never retried as an
+                    # outage (stress2, round 1), so the wave can finish.
+                    exclude(GONE_CONTACT)
+                    continue
                 out["unreadable"] += 1
                 _move(sb, wid, c, "waiting", {"next_try_at": (now + LATER["unreadable"]).isoformat(),
                                               "later_reason": "HighLevel could not be read."})
                 warn(f"waves: {c} waits: HighLevel could not be read ({http.scrub(str(e))[:120]})")
+                continue
+            if not whole:
+                # The lead's own last words could not be reached (a long run
+                # of automated messages): a stop could be hidden there, so no
+                # opener is written; a person writes (stress2, round 1).
+                exclude(LONG_THREAD)
                 continue
             stop = fu.stop_of(thread)
             _, new = fu.new_stop_hold(stop_rows, c, stop, now, ctx["pause_days"])
@@ -1301,9 +1425,12 @@ def draft_test_opener(sb: Any, lead: dict[str, Any], *, settings: dict[str, Any]
     if not routes:
         return {"skipped": "The opener templates (opener_ar, opener_en) are not set up yet, so no opener can be written."}
     try:
-        thread, person = fu.ghl_thread(ghl_token, c), fu.ghl_contact(ghl_token, c)
+        person = fu.ghl_contact(ghl_token, c)
+        thread, whole = fu.ghl_history(ghl_token, c)
     except Exception as e:  # noqa: BLE001 - said in one sentence
         return {"skipped": f"HighLevel could not be read for this contact: {http.scrub(str(e))[:160]}"}
+    if not whole:
+        return {"skipped": LONG_THREAD}
     owner = _owners(sb).get(str(lead.get("assigned_to") or ""))
     o = opener_for(lead, person, thread, routes, owner, now, test=True,
                    pause_days=int(settings.get("stop_pause_days", fu.STOP_PAUSE_DAYS) or fu.STOP_PAUSE_DAYS))
@@ -1405,6 +1532,10 @@ def send_due(sb: Any, api: Callable[[str, dict[str, Any]], tuple[int, dict[str, 
         return out
     fups = {str(f["id"]): f for f in drafts}
     meta: list[dict[str, Any]] = []
+    # Openers whose send stopped half way: counted as asked for again only
+    # when followup.send_due is called for them (stress2, round 1), never
+    # when a check keeps them back (a paused wave, the hours, the time).
+    stalled_ids: set[str] = set()
     stale_mark = _q((started + skew - SENDING_STALE).isoformat())
     for chunk in fu._chunks(sorted(fups)):
         cols = f"select=followup_id,send_after,held_by,held_at,wave_id,kind_key&followup_id={fu._in(chunk)}" \
@@ -1414,7 +1545,7 @@ def send_due(sb: Any, api: Callable[[str, dict[str, Any]], tuple[int, dict[str, 
         # clock, a crash before its message row, a clear that failed): its
         # sending mark is older than five minutes, and sales-api takes it again.
         stalled = sb.select(META, f"{cols}&held_by=eq.{_q(SENDING)}&held_at=lt.{stale_mark}&limit=1000")
-        out["stalled"] = out.get("stalled", 0) + len(stalled)
+        stalled_ids |= {str(x["followup_id"]) for x in stalled}
         meta += stalled
     if not meta:
         return out
@@ -1611,6 +1742,8 @@ def send_due(sb: Any, api: Callable[[str, dict[str, Any]], tuple[int, dict[str, 
         if now_state is not None and now_state.get("state") != "running":
             out["wave_not_running"] += 1  # a manager paused or stopped it while this run waited
             continue
+        if fid in stalled_ids:
+            out["stalled"] = out.get("stalled", 0) + 1
         try:
             status, res = api("followup.send_due", {"id": fid})
         except Exception as e:  # noqa: BLE001 - the door did not answer: stop, the next run tries again
@@ -1685,7 +1818,9 @@ def send_due(sb: Any, api: Callable[[str, dict[str, Any]], tuple[int, dict[str, 
         if in_a_row >= 3:
             stop("refusals", f"Three sends in a row were refused or failed; the last: {err[:200]}")
             break
-    if out["sent"] or out["set_aside"] or out["left_pool"] or out["failed"]:
+    # Every write of the paced send has its audit row: an approved opener
+    # closed as stale is a manager's decision undone (stress2, round 1).
+    if out["sent"] or out["set_aside"] or out["left_pool"] or out["failed"] or out.get("stale"):
         audit(sb, "waves.send", META, None, after={k: v for k, v in out.items() if v and k not in ("due",)})
     return out
 
@@ -1697,13 +1832,16 @@ def _left_pool(sb: Any, contact: str, lead: Optional[dict[str, Any]], now: datet
     come, or booked after the opener was written (`since`); a call held (the
     B2B rule) within HELD_WAIT; a latest call marked invalid (disqualified);
     a deal; a client tag or a customer; a deal won or closed; no longer a
-    tagged lead. Only a positive reason takes the opener back."""
+    tagged lead; a deal moved to a disqualified or lost stage in the CRM.
+    Only a positive reason takes the opener back."""
     if lead and fu.is_client(lead):
         return "The lead is a client now, so the backlog opener was taken back."
     if lead and str(lead.get("contact_type") or "").lower() == "customer":
         return "The lead is a customer now, so the backlog opener was taken back."
     if lead and (str(lead.get("opp_status") or "").lower() == "won" or "closed" in str(lead.get("stage_name") or "").lower()):
         return "The lead's deal is won or closed, so the backlog opener was taken back."
+    if lead and stage_out(lead):
+        return OPENER_STAGE_OUT
     if lead and isinstance(lead.get("tags"), list) and not is_lead(lead):
         return "The lead is no longer tagged as a lead, so the backlog opener was taken back."
     (calls, _cals), dealt = _calls_of(sb, [contact]), _dealt(sb, [contact])

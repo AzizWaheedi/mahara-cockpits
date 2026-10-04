@@ -200,9 +200,6 @@ HOLD_GIVE_UP_S = 3 * 3600.0  # a meeting left open with someone in it is checked
 HOLD_RECHECK_S = 60.0
 START_URL_TTL = 7200.0    # Zoom's start_url lasts two hours for a regular user
 HOSTS_EVERY = 600.0
-# A live Zoom meeting holds its host on a call this long past the next host
-# check, so presence never reads them free between two checks.
-LIVE_MARGIN_S = 300.0
 HOSTS_BUDGET = 240.0      # the host check's own time limit
 REPORT_WINDOW_S = 24 * 3600.0
 REPORT_PER_RUN = 10
@@ -537,6 +534,14 @@ def db_reason(e: Exception) -> str:
 # ---- HTTP: one door for Zoom, Google and sales-api --------------------------
 
 
+# Google Calendar answers its usage limits with a 403 and one of these
+# reasons (developers.google.com/calendar/api/guides/errors), not only 429:
+# a limit that passes, never a lost permission. The first two pass in
+# seconds, so a call is tried again for them as for a 429.
+GOOGLE_LIMITS = ("rateLimitExceeded", "userRateLimitExceeded", "quotaExceeded")
+GOOGLE_RETRY = ("rateLimitExceeded", "userRateLimitExceeded")
+
+
 class ProviderError(Exception):
     def __init__(self, status: int, message: str, *, code: Any = None, reason: str = "", where: str = "",
                  down: bool = False, timeup: bool = False, timed_out: bool = False, retry: bool = False,
@@ -567,6 +572,12 @@ class ProviderError(Exception):
     @property
     def gone(self) -> bool:
         return self.status == 404 or str(self.code) in ("3001", "1001")
+
+    @property
+    def rate_limited(self) -> bool:
+        """A usage limit that passes, never a permission: a 429, or Google
+        Calendar's 403 for its usage limits (stress2, round 1)."""
+        return self.status == 429 or (self.status == 403 and self.reason in GOOGLE_LIMITS)
 
     @property
     def why(self) -> str:
@@ -694,7 +705,8 @@ class Sender:
                         breaker.answered()
                     elif e.timed_out or self.clock() - started >= SLOW_FAILURE_S:
                         breaker.failed()
-                again = (err.status == 429 or (safe and err.status >= 500)
+                again = (err.status == 429 or (err.status == 403 and err.reason in GOOGLE_RETRY)
+                         or (safe and err.status >= 500)
                          or (safe and err.status == 0 and not e.timed_out))
                 if breaker is not None and breaker.blocked():
                     again = False
@@ -1025,7 +1037,7 @@ def check_google(google: Optional[Google], calendar_name: str = CALENDAR_NAME,
     try:
         google.token()
     except ProviderError as e:
-        if e.unclear or e.status == 429:
+        if e.unclear or e.rate_limited:
             return None, f"Google: the sign-in could not be checked ({e.why}); the last known state stays.", ""
         return False, (f"Google refused the sign-in in {google.source} ({e.why}), so Meet rooms cannot be made. "
                        "Ask the CEO to connect Google Calendar again."), ""
@@ -1043,7 +1055,9 @@ def check_google(google: Optional[Google], calendar_name: str = CALENDAR_NAME,
         found = next((str(c["id"]) for c in google.calendars()
                       if str(c.get("summary") or "").strip().casefold() == name and c.get("id")), "")
     except ProviderError as e:
-        if e.unclear or e.status == 429:
+        if e.unclear or e.rate_limited:
+            # A usage limit (Google's 403 rateLimitExceeded, quotaExceeded) is
+            # no answer about the sign-in: the last known state stays.
             return None, f"Google: Calendar did not answer ({e.why}); the last known state stays.", ""
         if e.status == 404 and calendar_id:
             return False, (f"Google: the calendar in SALES_ROOMS_CALENDAR_ID is not one {google.source} can use, "
@@ -1914,7 +1928,7 @@ class Worker:
     def _google_sentence(self, e: ProviderError) -> str:
         if isinstance(e, CalendarNotMade):
             return SAY["calendar"]
-        if e.down or e.unclear or e.status == 429:
+        if e.down or e.unclear or e.rate_limited:
             return SAY["google_down"]
         if e.status == 401 or (e.where == "oauth2.googleapis.com" and 400 <= e.status < 500):
             # The token endpoint answers 400 invalid_grant for a revoked or
@@ -2065,7 +2079,7 @@ class Worker:
                     self.start_meet(room)  # it was claimed and never inserted
                 else:
                     self.fail(room, SAY["lost"], fault=True)
-            elif (e.unclear or e.status == 429) and not e.down and not old:
+            elif (e.unclear or e.rate_limited) and not e.down and not old:
                 pass  # asked again after the room's back-off
             else:
                 self.fail(room, self._google_sentence(e), fault=True)
@@ -2987,15 +3001,20 @@ class Worker:
         if status in ("licensed", "basic") and user and user.get("id"):
             try:
                 ends = []
-                # A meeting Zoom lists as live holds the host on a call at least
-                # until the next check has looked again (a demo that runs past its
-                # slot, a meeting started late on its schedule, one with no
-                # duration): never a scheduled end that is already past.
-                floor = self.clock() + HOSTS_EVERY + LIVE_MARGIN_S
+                # The meeting's own scheduled end (stress2, round 1), never a
+                # floor past it: sales-api's zoom_busy reads this column, and a
+                # meeting that ended a minute after the check must not refuse
+                # the closer's Zoom rooms for the next fifteen. A meeting with
+                # no duration is stamped with the check's own moment. The
+                # presence view (20261004a) holds a host seen live on a call
+                # for the check's 15 minutes from checked_at, so a demo that
+                # runs past its slot still reads as on a call there, and the
+                # worker reads Zoom's live list itself at a create.
+                seen = self.clock()
                 for m in self.zoom.live(str(user["id"])):
                     start = parse_ts(m.get("start_time"))
                     minutes = float(m.get("duration") or 0)
-                    ends.append(max((start + minutes * 60) if start and minutes else 0.0, floor))
+                    ends.append((start + minutes * 60) if start and minutes else seen)
                 live_until = iso(max(ends)) if ends else None
             except ProviderError:
                 # The live list could not be read: the last known value stays

@@ -349,7 +349,10 @@ def check_switches(report: Report, sb: Any, settings: dict[str, Any]) -> None:
                    f"{test_cal} is an intro or demo calendar B2B counts: a test contact's booking would be an official "
                    "number (C34). Set a calendar only tests use")
     guard = settings.get("whatsapp_guard") if isinstance(settings.get("whatsapp_guard"), dict) else {}
-    gate_open = guard.get("connector_off") is True and bool(guard.get("single_copy_ok_at"))
+    # Read as the senders read it (followups.wa_gate, sendrules.ts gateOpen):
+    # a single-copy test from before the connector last went off, or a mark
+    # that is not a time, leaves the gate shut (stress2, round 1).
+    gate_open = fu.wa_gate(guard) is None
     report.add(sec, "whatsapp_guard gate", None if not gate_open else True,
                "open: the WA Connector is off and the single-copy test passed" if gate_open else
                "shut: WhatsApp sends from the desk wait until the WA Connector is off and the single-copy test "

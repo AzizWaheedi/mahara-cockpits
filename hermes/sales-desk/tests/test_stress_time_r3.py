@@ -31,8 +31,11 @@ class AZoomDemoThatRunsPastItsSlot(RoomsCase):
     """The closer's demo was scheduled 12:00 to 13:00 Kuwait (60 minutes) and
     is still running at 13:10 (T0 is Saturday 13:00 Kuwait; the check runs
     at T0 + 10 min). Zoom's live list names it: the meeting is live now. The
-    presence view reads `zoom_live_until > now()` (cockpit_sales_presence),
-    so the closer is on a call only while that time is ahead."""
+    presence view (20261004a) reads the closer on a call while
+    `zoom_live_until > now()`, or for 15 minutes from the check that saw the
+    meeting live (checked_at); since stress2 fix round 1 the desk stores the
+    meeting's own end there (sales-api's zoom_busy reads it), never a floor
+    past it, so a meeting that ends after the check frees the host's Zoom."""
 
     def seat(self, start: float, minutes: int) -> dict:
         self.env.pg.put("cockpit_sales_people", {"email": CLOSER, "name": "Invented Closer", "role": "closer",
@@ -47,18 +50,23 @@ class AZoomDemoThatRunsPastItsSlot(RoomsCase):
         until = fu._ts(row.get("zoom_live_until"))
         now = datetime.fromtimestamp(self.env.clock(), UTC)
         self.assertIsNotNone(until, "the host check wrote no live-until for a meeting Zoom lists as live")
-        self.assertGreater(until, now + timedelta(seconds=rooms.HOSTS_EVERY),
-                           f"zoom_live_until {row.get('zoom_live_until')} is not past the next host check "
-                           f"({now.isoformat()} + {int(rooms.HOSTS_EVERY)} s): the presence view reads the closer "
-                           "as off the call while Zoom says the meeting is live")
+        # The meeting's own end (13:00), and the check's moment: the view holds
+        # the closer on a call until checked_at + 15 minutes, past the next check.
+        self.assertEqual(until, datetime.fromtimestamp(T0, UTC))
+        checked = fu._ts(row.get("checked_at"))
+        self.assertEqual(checked, now)
+        self.assertGreater(checked + timedelta(minutes=15), now + timedelta(seconds=rooms.HOSTS_EVERY),
+                           "the view's hold from the check does not reach the next host check")
 
     def test_a_meeting_started_late_on_its_schedule_reads_live_too(self):
         # Scheduled 12:30 for 30 minutes, started at 12:50 (the lead was late): live at 13:10.
         row = self.seat(T0 - 30 * 60, 30)
         until = fu._ts(row.get("zoom_live_until"))
         now = datetime.fromtimestamp(self.env.clock(), UTC)
-        self.assertTrue(until is not None and until > now,
-                        f"zoom_live_until {row.get('zoom_live_until')} is already past at {now.isoformat()}")
+        # Seen live (the column is set) with its own end past: the view holds
+        # the closer on a call from checked_at, sales-api's zoom_busy does not.
+        self.assertTrue(until is not None and until <= now and fu._ts(row.get("checked_at")) == now,
+                        f"zoom_live_until {row.get('zoom_live_until')}, checked_at {row.get('checked_at')}")
 
     def test_control_a_meeting_inside_its_slot_reads_live(self):
         row = self.seat(T0, 60)

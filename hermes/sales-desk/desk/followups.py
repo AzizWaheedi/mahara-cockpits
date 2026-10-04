@@ -906,29 +906,92 @@ def _ghl_headers(token: str, version: str = "2021-04-15") -> dict[str, str]:
     return {"Authorization": f"Bearer {token}", "Version": version, "Accept": "application/json", "User-Agent": UA}
 
 
-def ghl_thread(token: str, contact_id: str, limit: int = 20) -> list[dict[str, Any]]:
-    """The lead's last messages across their HighLevel conversations, oldest first."""
-    if not token:
-        return []
+def _conversations(token: str, contact_id: str) -> tuple[dict[str, str], list[dict[str, Any]]]:
     h = _ghl_headers(token)
     _, _, raw = http.request("GET", f"{GHL}/conversations/search?locationId={LOCATION}&contactId={_q(contact_id)}&limit=10",
                              headers=h, timeout=30, retries=1)
-    convs = (json.loads(raw.decode("utf-8") or "{}").get("conversations") or [])[:4]
+    return h, (json.loads(raw.decode("utf-8") or "{}").get("conversations") or [])[:4]
+
+
+def _message_page(h: dict[str, str], conversation: str, limit: int,
+                  cursor: Optional[str] = None) -> tuple[list[dict[str, Any]], bool, Optional[str]]:
+    """One page of a conversation as HighLevel serves it: newest first,
+    `limit` a page, `nextPage` and `lastMessageId` for the older ones."""
+    q = f"limit={limit}" + (f"&lastMessageId={_q(cursor)}" if cursor else "")
+    _, _, raw = http.request("GET", f"{GHL}/conversations/{_q(conversation)}/messages?{q}",
+                             headers=h, timeout=30, retries=1)
+    d = json.loads(raw.decode("utf-8") or "{}")
+    inner = d.get("messages") or {}
+    items = list((inner.get("messages") if isinstance(inner, dict) else inner) or [])
+    more = bool(inner.get("nextPage")) if isinstance(inner, dict) else False
+    last = (inner.get("lastMessageId") if isinstance(inner, dict) else None) or None
+    return items, more, (str(last) if last else None)
+
+
+def _as_message(m: dict[str, Any]) -> Optional[dict[str, Any]]:
+    body = str(m.get("body") or "").strip()
+    if not (body or m.get("direction") == "outbound"):
+        return None
+    return {"id": m.get("id"), "at": m.get("dateAdded"),
+            "from": "lead" if m.get("direction") == "inbound" else "us",
+            "channel": str(m.get("messageType") or "").replace("TYPE_", "").lower(),
+            "source": m.get("source"), "status": m.get("status"), "text": body[:600]}
+
+
+def ghl_thread(token: str, contact_id: str, limit: int = 20) -> list[dict[str, Any]]:
+    """The lead's last messages across their HighLevel conversations, oldest
+    first: one page of each. Never the place to look for a stop (a lead's
+    words can sit behind a page of automations): that is ghl_history."""
+    if not token:
+        return []
+    h, convs = _conversations(token, contact_id)
     msgs: list[dict[str, Any]] = []
     for c in convs:
-        _, _, raw = http.request("GET", f"{GHL}/conversations/{_q(str(c['id']))}/messages?limit={limit}",
-                                 headers=h, timeout=30, retries=1)
-        d = json.loads(raw.decode("utf-8") or "{}")
-        inner = d.get("messages") or {}
-        for m in (inner.get("messages") if isinstance(inner, dict) else inner) or []:
-            body = str(m.get("body") or "").strip()
-            if body or m.get("direction") == "outbound":
-                msgs.append({"id": m.get("id"), "at": m.get("dateAdded"),
-                             "from": "lead" if m.get("direction") == "inbound" else "us",
-                             "channel": str(m.get("messageType") or "").replace("TYPE_", "").lower(),
-                             "source": m.get("source"), "status": m.get("status"), "text": body[:600]})
+        items, _more, _last = _message_page(h, str(c["id"]), limit)
+        msgs += [x for x in (_as_message(m) for m in items) if x]
     msgs.sort(key=lambda m: str(m.get("at") or ""))
     return msgs[-limit:]
+
+
+# How far back a lead's conversation is read for their own last words:
+# HISTORY_PAGES pages of HISTORY_PAGE messages in each conversation.
+HISTORY_PAGE = 50
+HISTORY_PAGES = 6
+
+
+def ghl_history(token: str, contact_id: str, *, page: int = HISTORY_PAGE,
+                pages: int = HISTORY_PAGES) -> tuple[list[dict[str, Any]], bool]:
+    """The lead's messages across their HighLevel conversations, oldest first,
+    each conversation read back page by page (HighLevel's cursor) until the
+    lead's own latest words are in it or the conversation ends (stress2,
+    round 1: a STOP behind a page of automated emails was never read, and the
+    lead was written the opener). Answers (messages, whole): whole is False
+    when a conversation still had older pages after `pages` and none of the
+    lead's words were seen, so a stop could be hidden in it; a caller then
+    writes nothing to the lead."""
+    if not token:
+        return [], True
+    h, convs = _conversations(token, contact_id)
+    msgs: list[dict[str, Any]] = []
+    whole = True
+    for c in convs:
+        seen: set[str] = set()
+        cursor: Optional[str] = None
+        for _ in range(max(1, pages)):
+            items, more, last = _message_page(h, str(c["id"]), page, cursor)
+            fresh = [m for m in items if not m.get("id") or str(m["id"]) not in seen]
+            seen |= {str(m["id"]) for m in fresh if m.get("id")}
+            msgs += [x for x in (_as_message(m) for m in fresh) if x]
+            if any(m.get("direction") == "inbound" and str(m.get("body") or "").strip() for m in fresh) or not more:
+                break
+            cursor = last or next((str(m["id"]) for m in reversed(items) if m.get("id")), None)
+            if not fresh or not cursor:
+                whole = False
+                break
+        else:
+            whole = False
+    msgs.sort(key=lambda m: str(m.get("at") or ""))
+    return msgs, whole
 
 
 def ghl_probe(token: str) -> int:
@@ -1328,9 +1391,11 @@ def context_for(sb: Any, lead: dict[str, Any], ghl_token: str, now: datetime,
                          f"select=brief&contact_id=eq.{_q(c)}&status=eq.ready&order=requested_at.desc&limit=1")
     # A conversation that cannot be read is not an empty one: without it the
     # agent cannot see an automation's message, the lead's stop, or their
-    # window, so the lead waits for the next run instead.
+    # window, so the lead waits for the next run instead. It is read back to
+    # the lead's own last words (stress2, round 1: a stop behind a page of
+    # automations); one too long to read that far is not read either.
     try:
-        thread, thread_ok = ghl_thread(ghl_token, c), True
+        thread, thread_ok = ghl_history(ghl_token, c)
     except Exception:  # noqa: BLE001 - said in the run's counts
         thread, thread_ok = [], False
     brief = (research[0].get("brief") if research else None) or {}
@@ -1351,7 +1416,7 @@ def context_for(sb: Any, lead: dict[str, Any], ghl_token: str, now: datetime,
                                    for n in call_notes],
         "research": {"company": (brief.get("company") or {}).get("summary"),
                      "talking_points": brief.get("talking_points")} if brief else None,
-        "conversation": [{k: m.get(k) for k in ("at", "from", "channel", "text")} for m in thread],
+        "conversation": [{k: m.get(k) for k in ("at", "from", "channel", "text")} for m in thread[-20:]],
         "now_kuwait": kuwait_now(now).strftime("%A %d %B %Y, %H:%M"),
         # Who the message is from: the lead's own rep, by first name, or nobody.
         "rep": (rep_name or "").split(" ")[0] or None,
@@ -1792,24 +1857,53 @@ def settle_sends(sb: Any, token: str, now: datetime, settle: Optional[Callable[[
     return out
 
 
+_INVISIBLE = re.compile("[\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]")
+
+
+def norm_text(v: Any) -> str:
+    """Words as sales-api compares them (sendrules.ts normText): NFKC, no
+    zero-width or direction marks, one space, no case."""
+    import unicodedata
+    t = unicodedata.normalize("NFKC", str(v or ""))
+    return re.sub(r"\s+", " ", _INVISIBLE.sub("", t)).strip().lower()
+
+
+def same_text(a: Any, b: Any) -> bool:
+    """The same message (sendrules.ts sameText): equal once normalised, or one
+    starts with the other's first 60 characters (HighLevel can add a
+    template's button or footer)."""
+    x, y = norm_text(a), norm_text(b)
+    if not x or not y:
+        return False
+    if x == y:
+        return True
+    n = min(60, len(x), len(y))
+    return n >= 20 and (x.startswith(y[:n]) or y.startswith(x[:n]))
+
+
 def reconcile_templates(sb: Any, token: str, now: datetime, settle: Optional[Callable[[str], dict[str, Any]]] = None,
                         warn: Callable[[str], None] = lambda _m: None) -> dict[str, int]:
     """Template sends HighLevel took but had not shown yet: find the message
     in the conversation, or, after half an hour, say it never went. Either
     way a follow-up's send is then settled in the cockpit (followup.settle),
-    which fails a follow-up that never went."""
-    rows = sb.select("cockpit_sales_messages", "select=id,contact_id,created_at,followup_id&via=eq.workflow"
+    which fails a follow-up that never went. Only a message with the
+    template's own words is it (C29, as sales-api's matchSent): another
+    workflow's WhatsApp (one of HighLevel's old automations) never settles
+    it (stress2, round 1)."""
+    rows = sb.select("cockpit_sales_messages", "select=id,contact_id,created_at,followup_id,body&via=eq.workflow"
                                                f"&provider_status=eq.enrolled&created_at=gte.{_q((now - timedelta(hours=6)).isoformat())}"
                                                "&limit=50")
     found = gone = 0
     for r in rows:
         at = _ts(r.get("created_at"))
+        words = str(r.get("body") or "").strip()
         try:
             thread = ghl_thread(token, str(r["contact_id"]))
         except Exception:  # noqa: BLE001 - try again next run
             continue
         hit = next((m for m in reversed(thread) if m.get("from") == "us" and m.get("channel") == "whatsapp"
-                    and m.get("source") == "workflow" and _ts(m.get("at")) and _ts(m["at"]) >= at - timedelta(seconds=15)), None)
+                    and m.get("source") == "workflow" and _ts(m.get("at")) and _ts(m["at"]) >= at - timedelta(seconds=15)
+                    and (not words or same_text(m.get("text"), words))), None)
         if hit:
             status = str(hit.get("status") or "sent").lower()
             state = "failed" if status in ("failed", "undelivered") else "read" if status == "read" \
