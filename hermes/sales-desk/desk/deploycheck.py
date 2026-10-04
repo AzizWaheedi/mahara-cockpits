@@ -284,6 +284,29 @@ def check_database(report: Report, sb: Any) -> dict[str, Any]:
     return settings
 
 
+# Whether sales-api has the lead's messages in Arabic (roomlogic.ts
+# ROOM_COPY.lead_ar, written under aziz-kuwaiti-voice and picked by
+# leadLanguage). Until it does, every link a lead gets is English, though the
+# call page leads in Arabic: rooms stay on the test contacts (final review,
+# the launch gate). A test keeps this in step with roomlogic.ts.
+LEAD_ARABIC_READY = False
+
+
+def check_lead_language(report: Report, settings: dict[str, Any]) -> None:
+    sec = "Switches (every one ships off)"
+    rooms = settings.get("rooms") if isinstance(settings.get("rooms"), dict) else {}
+    if LEAD_ARABIC_READY:
+        report.add(sec, "lead messages in Arabic", True, "written: a lead in the Gulf gets the link in Arabic")
+        return
+    going_live = rooms.get("test_only") is False
+    report.add(sec, "lead messages in Arabic", False if going_live else None,
+               "not written yet, and rooms.test_only is off: every link a real lead gets is in English. Set "
+               "test_only back to true until the Arabic lines (ROOM_COPY.lead_ar, written under "
+               "aziz-kuwaiti-voice) are in sales-api" if going_live else
+               "not written yet: every link a lead gets is in English. Write ROOM_COPY.lead_ar (under "
+               "aziz-kuwaiti-voice) before rooms.test_only goes off")
+
+
 def check_switches(report: Report, sb: Any, settings: dict[str, Any]) -> None:
     sec = "Switches (every one ships off)"
     if not settings:
@@ -463,6 +486,7 @@ def run(sb: Optional[Any], *, now: Optional[datetime] = None,
     check_keys(report, settings)
     if sb is not None:
         check_switches(report, sb, settings)
+        check_lead_language(report, settings)
         check_status_rows(report, sb, now)
         check_door(report, (door or read_door)(sb))
     else:

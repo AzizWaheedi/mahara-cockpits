@@ -212,7 +212,23 @@ class DeployCheck(unittest.TestCase):
                       line(out, "rooms.enabled"))
         self.assertIn("rooms are not kept to the test contacts. Set it to true", line(out, "rooms.test_only"))
         self.assertTrue(line(out, "live.slack").startswith("-- "))
-        self.assertIn("Not ready: 4 pieces are missing or switched on:", out)
+        # test_only off with every lead message still English only: its own blocker (final review).
+        self.assertTrue(line(out, "lead messages in Arabic").startswith("-- "))
+        self.assertIn("every link a real lead gets is in English", line(out, "lead messages in Arabic"))
+        self.assertIn("Not ready: 5 pieces are missing or switched on:", out)
+
+    def test_the_arabic_lead_messages_are_said_pending_while_rooms_stay_on_the_test_contacts(self):
+        code, out, _ = run(["deploy-check"], Catalog())
+        self.assertEqual(code, 0, out)
+        self.assertTrue(line(out, "lead messages in Arabic").startswith("?? "), line(out, "lead messages in Arabic"))
+        self.assertIn("before rooms.test_only goes off", line(out, "lead messages in Arabic"))
+
+    def test_the_arabic_gate_is_in_step_with_sales_api(self):
+        here = os.path.dirname(os.path.abspath(__file__))
+        with open(os.path.join(here, "..", "..", "..", "supabase", "functions", "sales-api", "roomlogic.ts"),
+                  encoding="utf-8") as f:
+            src = f.read()
+        self.assertEqual(deploycheck.LEAD_ARABIC_READY, "  lead_ar: {" in src)
 
     def test_missing_keys_say_what_cannot_happen_and_block_only_when_their_switch_is_on(self):
         keys = {k: v for k, v in KEYS.items() if not k.startswith(("ZOOM_", "GOOGLE_CAL_", "SLACK_", "SALES_ROOMS"))}
