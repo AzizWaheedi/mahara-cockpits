@@ -101,6 +101,7 @@ export function SectionCard({
       </header>
       <div className={flush ? "" : "mt-4"}>{children}</div>
     </section>
+  );
 }
 
 /** "n/a" with the reason on hover, never a zero standing in for "unknown". */
