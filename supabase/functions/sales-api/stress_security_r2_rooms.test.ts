@@ -193,7 +193,7 @@ describe("security r2: marking another rep's booked call through a room", () => 
 });
 
 describe("security r2: request ids the server derives from what any seat can read", () => {
-  test.failing("handover-request-id-squat: a seat that makes a room under a handover's id (readable by every seat) leaves the closer who takes it with no room", async () => {
+  test("handover-request-id-squat: a seat that makes a room under a handover's id (readable by every seat) leaves the closer who takes it with no room", async () => {
     // finishClaim makes the taker's room with request_id = the handover's
     // own id (cockpit_sales_live.id), and every seat can read that table.
     // room.create takes any UUID a seat sends as its request id. A seat that

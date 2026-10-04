@@ -143,6 +143,9 @@ const EVENTS = "cockpit_sales_room_events";
 /** At most this many rooms' links go to one lead in LINK_FLOOD_WINDOW_MS (final review). */
 const LINK_FLOOD_MAX = 3;
 const LINK_FLOOD_WINDOW_MS = 60 * 60_000;
+/** One standby room per seat in each STANDBY_BUCKET_MS, and at most STANDBY_PER_HOUR an hour (final review). */
+const STANDBY_BUCKET_MS = 10 * 60_000;
+const STANDBY_PER_HOUR = 4;
 /** The sources room.event's replay takes (the SQL sweep's own list less slack, whose presses are not built). */
 const REPLAY_SOURCES = new Set(["zoom", "worker", "claim"]);
 const LIVE_STATES = "requested,creating,open,host_in,lead_in";
@@ -194,6 +197,8 @@ export const ROOMS_COPY = {
   count_confirm_nothing: "This join is not waiting to be confirmed. Reload the room.",
   count_confirm_taken: "This join was counted a moment ago. Reload the room.",
   standby_too_late: "Live calls end in under {minutes} minutes, so no standby room was made. You can still take a live lead until then.",
+  /** Available pressed again soon after Away (final review, standby-flood). */
+  standby_flood: "Your standby room closed a few minutes ago, so no new one was made yet. You can still take a live lead; a room is made when you do.",
   count_confirm_alert:
     "Room {code}: {name} joined, but only a press of The lead is in says so. A manager counts it from the room panel, or leaves it uncounted.",
   undo_stuck_alert: "Room {code}: That was not the lead was pressed, and the live booking could not be taken back in HighLevel. Remove it by hand.",
@@ -372,6 +377,17 @@ function requestIdOf(v: unknown): string {
   const s = String(v ?? "").trim().toLowerCase();
   if (!isUuid(s)) throw plain("Reload the page and try again.", 400, "bad_input");
   return s;
+}
+/**
+ * A request id a seat sent, kept apart from every id the server makes or
+ * derives (final review, handover-request-id-squat): the handover's own id,
+ * a replacement room's and a link message's keys are all readable or
+ * computable by any seat, so a seat's id is stored as a hash of its email and
+ * its id. The same press repeated is the same id; it can never be one of the
+ * server's.
+ */
+export async function seatRequestId(who: { email?: string | null }, v: unknown): Promise<string> {
+  return await uuidFrom(`seat/${String(who.email ?? "").trim().toLowerCase()}/${requestIdOf(v)}`);
 }
 function roomIdOf(v: unknown): string {
   const s = String(v ?? "").trim().toLowerCase();
@@ -853,7 +869,7 @@ export function makeRooms(deps: RoomDeps): Rooms {
   }
 
   async function roomCreate(who: Who, b: Row): Promise<Row> {
-    const requestId = requestIdOf(b.request_id);
+    const requestId = await seatRequestId(who, b.request_id);
     const host = lower(who.email);
     const { rooms: setting } = await roomsAndLive();
     const purpose = String(b.purpose ?? "");
@@ -1090,7 +1106,7 @@ export function makeRooms(deps: RoomDeps): Rooms {
   }
 
   async function roomWrap(who: Who, b: Row): Promise<Row> {
-    const requestId = requestIdOf(b.request_id);
+    const requestId = await seatRequestId(who, b.request_id);
     const apptId = cleanText(b.appointment_id, 80);
     if (!apptId) throw no("bad_input");
     const host = lower(who.email);
@@ -1101,11 +1117,14 @@ export function makeRooms(deps: RoomDeps): Rooms {
       await recordWrap(who, repeat);
       return { room: await view(repeat, setting) };
     }
-    // The booked call's room already open (another tab, another request id): that one.
+    // The booked call's room already open (another tab, another request id):
+    // that one, when it is this seat's own room or a manager asks (final
+    // review, wrap-request-id-hands-over-room). Anyone else goes on to the
+    // check of whose call it is, which refuses another rep's.
     const open = (await io.db(
       `${ROOMS}?appointment_id=eq.${enc(apptId)}&purpose=eq.booked&state=in.(${LIVE_STATES})&select=*&limit=1`,
     ))[0] as unknown as RoomRow | undefined;
-    if (open) return { room: await view(open, setting) };
+    if (open && (lower(open.host_email) === host || who.manager === true)) return { room: await view(open, setting) };
     let ap: Row;
     try {
       ap = obj((await io.ghl("GET", `/calendars/events/appointments/${enc(apptId)}`)).appointment);
@@ -1158,7 +1177,10 @@ export function makeRooms(deps: RoomDeps): Rooms {
       inserted = (await io.db(ROOMS, { method: "POST", body: compact(row), prefer: "return=representation" }))[0] as unknown as RoomRow;
     } catch (e) {
       if (isUnique(e, "cockpit_sales_rooms_request_id_key")) {
-        const twin = (await io.db(`${ROOMS}?request_id=eq.${enc(requestId)}&select=*`))[0] as unknown as RoomRow;
+        // The same press landed a moment ago: this seat's own row only, never
+        // another rep's room on the same id (final review), as createRoom.
+        const twin = (await io.db(`${ROOMS}?request_id=eq.${enc(requestId)}&select=*`))[0] as unknown as RoomRow | undefined;
+        if (!twin || lower(twin.host_email) !== host) throw no("bad_input");
         await recordWrap(who, twin);
         return { room: await view(twin, setting) };
       }
@@ -2531,20 +2553,39 @@ export function makeRooms(deps: RoomDeps): Rooms {
       const role = String(person?.role ?? who.role ?? "");
       if (hostRow && (role === "closer" || role === "both" || role === "setter")) {
         const provider = defaultProvider(role, hostRow as never, setting);
-        // Keyed on this press: Available is capped at the live window's end,
-        // so every press in its last hours has the same `until`, and a key on
-        // it alone would answer a later press with the first press's closed room.
-        const made = await createRoom({
-          who,
-          host: email,
-          request_id: await uuidFrom(`mahara-room/standby/${email}/${until}/${now}`),
-          purpose: "standby",
-          provider,
-          call_kind: role === "closer" ? "demo" : "intro",
-          contact_id: null,
-          setting,
-        });
-        if ("refused" in made) {
+        // One standby room per seat in each ten minutes, and at most
+        // STANDBY_PER_HOUR in an hour (final review, standby-flood): every
+        // room is a new meeting on the rep's own Zoom or Google, and Zoom caps
+        // meeting creates per user per day, so pressing Available and Away
+        // over and over must not spend the rep's rooms for the rest of the
+        // day. A press inside the same ten minutes is the same request: it
+        // answers that room, and when Away has closed it, says so.
+        const bucket = Math.floor(now / STANDBY_BUCKET_MS);
+        const lastHour = await io
+          .db(
+            `${ROOMS}?host_email=eq.${enc(email)}&purpose=eq.standby&requested_at=gte.${enc(isoAt(now - 60 * 60_000))}&select=id&limit=${STANDBY_PER_HOUR}`,
+          )
+          .then(rows => rows.length)
+          .catch(() => 0);
+        const made =
+          lastHour >= STANDBY_PER_HOUR
+            ? null
+            : await createRoom({
+                who,
+                host: email,
+                request_id: await uuidFrom(`mahara-room/standby/${email}/${bucket}`),
+                purpose: "standby",
+                provider,
+                call_kind: role === "closer" ? "demo" : "intro",
+                contact_id: null,
+                setting,
+              });
+        if (made === null || (!("refused" in made) && isFinal(made.room.state))) {
+          // Four rooms this hour already, or the same ten minutes' room was
+          // closed by Away: no new meeting yet, and the strip says why.
+          standbyError = ROOMS_COPY.standby_flood;
+          await deps.audit(who, "live.standby.refused", ROOMS, email, null, null, { why: made === null ? "per_hour" : "same_ten_minutes" });
+        } else if ("refused" in made) {
           // Two presses at once (the phone and the laptop): the other one's standby room is this seat's room too.
           const other =
             made.refused.code === "host_has_room"

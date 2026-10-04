@@ -108,7 +108,7 @@ import {
   signingLink,
 } from "./contracts.ts";
 import { clientFormRow, CLIENT_FORM_ID } from "./clientforms.ts";
-import { ApiRefusal, makeLiveIO } from "./liveio.ts";
+import { ApiRefusal, makeLiveIO, uuidFrom } from "./liveio.ts";
 import { makeRooms } from "./rooms.ts";
 import { makeFollowupAgent } from "./followupAgent.ts";
 import {
@@ -1692,6 +1692,18 @@ async function sendTemplate(
 
 /** An earlier template HighLevel took and nobody saw this recently may still be in its workflow queue (rooms.ts TEMPLATE_WAIT_MS). */
 const TEMPLATE_WAIT_MS = 6 * 3_600_000;
+
+/**
+ * A seat's message request id, hashed with its email (rooms.ts
+ * seatRequestId): the room link's message keys are computable from a room id
+ * every seat can read, so a seat's own id can never be one of them. A value
+ * that is not a request id passes through for the send's own refusal.
+ */
+async function seatMessageId(who: Who, v: unknown): Promise<unknown> {
+  const s = String(v ?? "").trim().toLowerCase();
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(s)) return v;
+  return await uuidFrom(`seat/${String(who.email ?? "").trim().toLowerCase()}/${s}`);
+}
 
 /** A rep sends an approved template from the lead's conversation. */
 async function waTemplateSend(who: Who, b: Row) {
@@ -5557,7 +5569,9 @@ const ACTIONS: Record<string, (who: Who, b: Row) => Promise<Row>> = {
   "eod.retry": eodRetry,
   "convo.read": convoRead,
   // A follow-up send is only ever made by followup.approve / autosend.
-  "convo.send": (who, b) => convoSend(who, { ...b, followup_id: undefined }),
+  // A seat's request id is kept apart from the ids the server derives (a
+  // room link's message keys): final review, handover-request-id-squat.
+  "convo.send": async (who, b) => convoSend(who, { ...b, followup_id: undefined, request_id: await seatMessageId(who, b.request_id) }),
   "goal.set": goalSet,
   "deal.status": dealStatus,
   "dial.resync": dialResync,
@@ -5585,7 +5599,7 @@ const ACTIONS: Record<string, (who: Who, b: Row) => Promise<Row>> = {
   "review.ask": reviewAsk,
   "coach.save": coachSave,
   "coach.delete": coachDelete,
-  "wa.template.send": waTemplateSend,
+  "wa.template.send": async (who, b) => waTemplateSend(who, { ...b, request_id: await seatMessageId(who, b.request_id) }),
   "wa.template.save": waTemplateSave,
   "ghl.workflows": ghlWorkflows,
   "snippet.save": snippetSave,

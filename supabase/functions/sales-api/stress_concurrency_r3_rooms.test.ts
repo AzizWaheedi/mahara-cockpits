@@ -19,7 +19,7 @@ import { describe, expect, test } from "bun:test";
 import type { Who } from "./lib.ts";
 import { ApiRefusal } from "./liveio.ts";
 import { DEFAULT_ROOMS_JSON } from "./roomlogic.ts";
-import { makeRooms, type RoomDeps } from "./rooms.ts";
+import { makeRooms, type RoomDeps, seatRequestId } from "./rooms.ts";
 import { fakeUuid, fakeWorld } from "./testfakes.ts";
 
 type Row = Record<string, unknown>;
@@ -312,7 +312,8 @@ describe("the same room.create request id from two tabs while the first is still
     const ids = new Set(all.map(o => (o.ok ? String((o.value.room as Row).id) : "")));
     expect(ids.size).toBe(1);
     const roomId = [...ids][0]!;
-    expect(w.db.t("cockpit_sales_rooms").filter(r => r.request_id === requestId).length).toBe(1);
+    const stored = await seatRequestId(setter, requestId);
+    expect(w.db.t("cockpit_sales_rooms").filter(r => r.request_id === stored).length).toBe(1);
     // Every write leaves one audit row: one room made is one room.create row, not one per press.
     expect(w.audits.filter(a => a.action === "room.create" && a.entityId === roomId).length).toBe(1);
   });

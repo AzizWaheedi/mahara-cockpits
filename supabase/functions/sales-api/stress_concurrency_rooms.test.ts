@@ -16,7 +16,7 @@ import { describe, expect, test } from "bun:test";
 import type { Who } from "./lib.ts";
 import { ApiRefusal } from "./liveio.ts";
 import { DEFAULT_ROOMS_JSON, ROOM_COPY } from "./roomlogic.ts";
-import { makeRooms, type RoomDeps } from "./rooms.ts";
+import { makeRooms, type RoomDeps, seatRequestId } from "./rooms.ts";
 import { fakeUuid, fakeWorld } from "./testfakes.ts";
 
 type Row = Record<string, unknown>;
@@ -310,7 +310,11 @@ describe("room presses from two tabs", () => {
       presses.map(p => w.rooms.actions["room.create"]!(setter, { request_id: p.rid, contact_id: LEAD, provider: "meet", call_kind: "intro", purpose: "manual" })),
     );
     expect(w.db.t("cockpit_sales_rooms")).toHaveLength(1);
-    const winner = String(w.db.t("cockpit_sales_rooms")[0]?.request_id);
+    // The stored id is the tab's own, hashed with the seat's email (final review).
+    const stored = String(w.db.t("cockpit_sales_rooms")[0]?.request_id);
+    const byStored = new Map(await Promise.all(tabs.map(async rid => [await seatRequestId(setter, rid), rid] as const)));
+    const winner = byStored.get(stored);
+    expect(winner).toBeDefined();
     for (let i = 0; i < presses.length; i++) {
       const o = outs[i]!;
       if (presses[i]!.rid === winner) expect(o.ok ? ((o.value as Row).room as Row).id : o.message).toBe(w.db.t("cockpit_sales_rooms")[0]?.id);

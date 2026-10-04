@@ -12,7 +12,7 @@ import { describe, expect, test } from "bun:test";
 import type { Who } from "./lib.ts";
 import { ApiRefusal } from "./liveio.ts";
 import { DEFAULT_ROOMS_JSON, meetingFromAddress, ROOM_VIEW_KEYS } from "./roomlogic.ts";
-import { eventText, makeRooms, type RoomDeps } from "./rooms.ts";
+import { eventText, makeRooms, ROOMS_COPY, type RoomDeps, seatRequestId } from "./rooms.ts";
 import { fakeUuid, fakeWorld } from "./testfakes.ts";
 
 type Row = Record<string, unknown>;
@@ -193,12 +193,20 @@ describe("security: another rep's room", () => {
   });
 
   test("a request id another rep used never hands their room over (room.create and room.wrap)", async () => {
-    const w = setup();
-    const rid = crypto.randomUUID();
-    const id = w.seedOpen({ request_id: rid });
-    const r = await refused(w.rooms.actions["room.create"]!(other, { request_id: rid, contact_id: LEAD2, provider: "meet", call_kind: "intro", purpose: "manual" }));
-    expect(r.extra.code).toBe("bad_input");
-    expect(JSON.stringify(r.extra)).not.toContain(id);
+    // A seat's request id is stored hashed with its email (final review), so
+    // the same id from another seat is that seat's own press: its own room,
+    // never the first rep's, whether the first room's id was stored raw (a
+    // server-made id) or as the first rep's own.
+    for (const stored of ["raw", "seat"] as const) {
+      const w = setup();
+      const rid = crypto.randomUUID();
+      const id = w.seedOpen({ request_id: stored === "raw" ? rid : await seatRequestId(host, rid) });
+      const out = await w.rooms.actions["room.create"]!(other, { request_id: rid, contact_id: LEAD2, provider: "meet", call_kind: "intro", purpose: "manual" });
+      const r = out.room as Row;
+      expect(r.id).not.toBe(id);
+      expect(r.host_email).toBe(OTHER);
+      expect(r.contact_id).toBe(LEAD2);
+    }
   });
 
   test("a handover room needs a handover this seat holds; another seat's claim does not count", async () => {
@@ -334,7 +342,7 @@ describe("security: injection through free text", () => {
 });
 
 describe("abuse: what one seat can make happen many times", () => {
-  test.failing("standby-flood: pressing Available and Away over and over does not make a new Zoom meeting every time", async () => {
+  test("standby-flood: pressing Available and Away over and over does not make a new Zoom meeting every time", async () => {
     // Every Available asks for a standby room with request id
     // mahara-room/standby/{email}/{until}, and `until` moves with the clock,
     // so each press is a new room, a new Zoom meeting on the host's own user
@@ -349,6 +357,21 @@ describe("abuse: what one seat can make happen many times", () => {
     }
     const made = w.db.t("cockpit_sales_rooms").filter(r => r.purpose === "standby").length;
     expect(made).toBeLessThanOrEqual(3);
+  });
+
+  test("standby-flood (the strip): Available right after Away says why no room was made, and ten minutes on a new one is made", async () => {
+    const w = setup({ live: { enabled: true } });
+    await w.rooms.actions["live.availability"]!(host, { state: "available" });
+    await w.rooms.actions["live.availability"]!(host, { state: "away" });
+    w.clock.now += 60_000;
+    const again = await w.rooms.actions["live.availability"]!(host, { state: "available" });
+    expect(again.standby_error).toBe(ROOMS_COPY.standby_flood);
+    expect(w.db.t("cockpit_sales_rooms").filter(r => r.purpose === "standby")).toHaveLength(1);
+    await w.rooms.actions["live.availability"]!(host, { state: "away" });
+    w.clock.now += 10 * 60_000;
+    const later = await w.rooms.actions["live.availability"]!(host, { state: "available" });
+    expect(later.standby_error ?? null).toBeNull();
+    expect(w.db.t("cockpit_sales_rooms").filter(r => r.purpose === "standby")).toHaveLength(2);
   });
 
   test("email-resend-unbounded: Also send by email goes at most once or twice per room, whatever the presses", async () => {

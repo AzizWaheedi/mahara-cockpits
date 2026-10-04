@@ -1841,5 +1841,5 @@ describe("10,000 random event sequences", () => {
     expect(linkReasks).toBeGreaterThan(50);
     expect(countReasks).toBeGreaterThan(30);
     expect(events).toBeGreaterThan(100_000);
-  });
+  }, 60_000); // 10,000 runs take about 1 s alone and up to 8 s on a loaded machine: never cut short by the 5 s default.
 });

@@ -14,7 +14,7 @@ import { readFileSync } from "node:fs";
 import type { Who } from "./lib.ts";
 import { ApiRefusal } from "./liveio.ts";
 import { DEFAULT_ROOMS_JSON } from "./roomlogic.ts";
-import { makeRooms, type RoomDeps } from "./rooms.ts";
+import { makeRooms, type RoomDeps, seatRequestId } from "./rooms.ts";
 import { fakeUuid, fakeWorld } from "./testfakes.ts";
 
 type Row = Record<string, unknown>;
@@ -154,16 +154,25 @@ describe("security r4: a request id read from another rep's room", () => {
     expect(r.contact_id).toBe(LEAD2);
   });
 
-  test("room.create with another rep's request id is refused and names nothing of their room (round 1 holds)", async () => {
+  test("room.create with another rep's request id makes this seat's own room and names nothing of theirs (final review: a seat's id is its own)", async () => {
     const w = setup();
     const rid = crypto.randomUUID();
     const hostRoom = seedHostRoom(w, rid);
-    const r = await refused(w.rooms.actions["room.create"]!(other, { request_id: rid, contact_id: LEAD2, provider: "meet", call_kind: "intro", purpose: "manual" }));
-    expect(r.extra.code).toBe("bad_input");
-    expect(JSON.stringify(r.extra)).not.toContain(hostRoom);
+    const out = await w.rooms.actions["room.create"]!(other, { request_id: rid, contact_id: LEAD2, provider: "meet", call_kind: "intro", purpose: "manual" });
+    expect((out.room as Row).host_email).toBe(OTHER);
+    expect(JSON.stringify(out)).not.toContain(hostRoom);
   });
 
-  test.failing("wrap-request-id-hands-over-room: room.wrap with another rep's request id answers THEIR room, and writes a room.wrap audit row and a 'room made for the booked call' line on it in this seat's name", async () => {
+  test("the same seat's double press is still one room: its request id maps to one stored id", async () => {
+    const w = setup();
+    const rid = crypto.randomUUID();
+    const body = { request_id: rid, contact_id: LEAD2, provider: "meet", call_kind: "intro", purpose: "manual" };
+    const [a, b] = await Promise.all([w.rooms.actions["room.create"]!(other, body), w.rooms.actions["room.create"]!(other, body)]);
+    expect((a.room as Row).id).toBe((b.room as Row).id);
+    expect(w.room(String((a.room as Row).id)).request_id).toBe(await seatRequestId(other, rid));
+  });
+
+  test("wrap-request-id-hands-over-room: room.wrap with another rep's request id answers THEIR room, and writes a room.wrap audit row and a 'room made for the booked call' line on it in this seat's name", async () => {
     // roomWrap's first read (`repeat`) checks the host and falls through when
     // the request id is another rep's. The seat's own booking passes every
     // check, the insert hits cockpit_sales_rooms_request_id_key, and the
@@ -196,7 +205,7 @@ describe("security r4: a request id read from another rep's room", () => {
     else expect((answer.room as Row).host_email).toBe(OTHER);
   });
 
-  test.failing("wrap-request-id-hands-over-room (the open booked room): room.wrap on another rep's booked call answers their open room to any seat, where the same press with no room open is refused 'booked with another rep'", async () => {
+  test("wrap-request-id-hands-over-room (the open booked room): room.wrap on another rep's booked call answers their open room to any seat, where the same press with no room open is refused 'booked with another rep'", async () => {
     // roomWrap answers "the booked call's room already open (another tab)"
     // before it reads who the call is assigned to, so the gate depends on
     // whether the other rep has opened their room yet: refused before,
