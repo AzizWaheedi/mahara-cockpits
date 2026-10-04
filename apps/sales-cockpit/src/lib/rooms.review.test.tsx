@@ -919,7 +919,8 @@ describe("15. the standby room", () => {
           }),
         ],
       });
-      expect(l.quiet).toEqual([{ key: "away", label: "Set me away" }]);
+      // A Meet standby room also offers I'm in (Meet sends no join signal; stress2 fix round 1).
+      expect(l.quiet.at(-1)).toEqual({ key: "away", label: "Set me away" });
     }
   });
 
@@ -947,8 +948,16 @@ describe("15. the standby room", () => {
     expect(making.primary?.disabled).toBe(true);
     const none = strip({ me: me({ state: "available", until }) });
     expect(R.sentenceText(none.sentence)).toBe("Available until 16:30.");
-    expect(none.primary).toBeNull();
+    // No room and no reason (it closed for a booked call or a lead's room):
+    // Get my room asks for one again (stress2 fix round 1) ...
+    expect(none.primary).toEqual({ key: "available", label: "Get my room" });
     expect(none.quiet.map(a => a.key)).toEqual(["away"]);
+    // ... unless standby rooms are off, where none is ever made.
+    const off = strip({
+      me: me({ state: "available", until }),
+      standbyOn: false,
+    });
+    expect(off.primary).toBeNull();
   });
 });
 
@@ -1166,6 +1175,9 @@ describe("14. every fixture draws", () => {
     "appointment_id",
     "handover_id",
     "starts_at",
+    // stress2 fix round 1.
+    "end_reason",
+    "last_open_at",
   ];
 
   test("the browser's key list is contract v2's, in full", () => {

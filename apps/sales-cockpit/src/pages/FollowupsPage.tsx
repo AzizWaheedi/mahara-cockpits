@@ -320,6 +320,7 @@ export default function FollowupsPage({ me }: { me: Me }) {
           enabled={settings.data ? !agentOff(settings.data) : null}
           settings={settings.data}
           openers={openers}
+          written={all.filter(f => f.segment === "reactivate")}
           nameOf={nameOf}
           onChanged={rows.reload}
         />

@@ -10,6 +10,7 @@ import {
   BATCH_MAX,
   type BatchDraft,
   batchState,
+  batchWrittenToday,
   countMembers,
   countsFor,
   type DeskReport,
@@ -54,6 +55,9 @@ export interface OpenerDraft {
   contact_id: string;
   template_key: string | null;
   created_at: string;
+  segment?: string | null;
+  status?: string | null;
+  context?: unknown;
   /**
    * The opener as it will go (the name filled in): shown under its row, so
    * Approve all never sends words nobody has read (final review: a lead
@@ -74,6 +78,7 @@ export function WavesCard({
   enabled,
   settings,
   openers,
+  written,
   nameOf,
   onChanged,
 }: {
@@ -84,6 +89,12 @@ export function WavesCard({
   settings: unknown;
   /** Today's open reactivate drafts this seat can see. */
   openers: readonly OpenerDraft[];
+  /**
+   * Every backlog opener this seat can see, whatever its status: today's
+   * batch counts as written once one was drafted today, even after all of
+   * it went (stress2, round 1). Left out: the open ones.
+   */
+  written?: readonly OpenerDraft[];
   nameOf: Map<string, string | null>;
   onChanged: () => void;
 }) {
@@ -110,10 +121,15 @@ export function WavesCard({
     () =>
       ids
         ? readAll<MemberRow>((from, to) =>
+            // Ordered by a unique key, as every paged read is: without it a
+            // member the desk moves between two pages is read twice or never
+            // (stress2, round 1).
             supabase
               .from("cockpit_sales_followup_wave_members")
-              .select("wave_id,arm,state,due_at,sent_at")
+              .select("wave_id,contact_id,arm,state,due_at,sent_at")
               .in("wave_id", ids.split(","))
+              .order("wave_id")
+              .order("contact_id")
               .range(from, to),
           )
         : Promise.resolve({ data: [], error: null }),
@@ -145,6 +161,10 @@ export function WavesCard({
     () => countMembers(members.data ?? []),
     [members.data],
   );
+  const waveStates = useMemo(
+    () => new Map((waves.data ?? []).map(w => [w.id, w.state])),
+    [waves.data],
+  );
   const batch: BatchDraft[] = useMemo(() => {
     const byId = new Map((meta.data ?? []).map(m => [m.followup_id, m]));
     return [...openers]
@@ -159,18 +179,18 @@ export function WavesCard({
           held_by: m?.held_by ?? null,
           held_at: m?.held_at ?? null,
           hold_reason: m?.hold_reason ?? null,
+          wave_state: m?.wave_id ? (waveStates.get(m.wave_id) ?? null) : null,
         };
       });
-  }, [openers, meta.data]);
+  }, [openers, meta.data, waveStates]);
 
   const open = shown.filter(isOpenWave);
   const ended = shown.filter(w => !isOpenWave(w) && w.state !== "draft");
-  const writtenToday = openers.some(
-    o => Date.parse(o.created_at) >= kuwaitMidnight(now),
-  );
+  const writtenToday = batchWrittenToday(written ?? openers, now);
   const next = {
     at: nextBatchAt(now, {
       firstHour: ws.firstHour,
+      quietFrom: ws.quietFrom,
       daysOff: ws.daysOff,
       writtenToday,
     }),
@@ -415,9 +435,17 @@ export function WavesCard({
                               count?: number;
                               first_at?: string;
                               last_at?: string;
+                              opens_at?: string;
+                              in_hours?: boolean;
+                              taken_back?: number;
+                              waiting_resume?: number;
                             }>("followup.batch", { request_id, ids: approve }),
                         );
-                        return approvedLine(out, ws.gapS);
+                        return approvedLine(out, ws.gapS, {
+                          from: ws.firstHour,
+                          to: ws.lastHour,
+                          daysOff: ws.daysOff,
+                        });
                       })
                     }
                     className={`${buttonPrimary} ${TOUCH}`}
@@ -481,7 +509,9 @@ export function WavesCard({
                                   ? "Set aside"
                                   : st === "held"
                                     ? "Held"
-                                    : "Waiting"
+                                    : st === "taken_back"
+                                      ? "Taken back"
+                                      : "Waiting"
                         }
                       />
                       {st === "held" || st === "set_aside" ? (
@@ -534,6 +564,12 @@ export function WavesCard({
                       {st === "stalled" ? (
                         <p className="muted w-full text-xs">
                           Its send stopped half way. Approve all sends it again.
+                        </p>
+                      ) : null}
+                      {st === "taken_back" ? (
+                        <p className="muted w-full text-xs">
+                          Its wave was stopped, so it does not go. The desk
+                          takes it back within 5 minutes.
                         </p>
                       ) : null}
                       {st === "set_aside" && d.hold_reason ? (
@@ -601,11 +637,6 @@ function Said({ said }: { said: { tone: "good" | "bad"; text: string } }) {
       {said.text}
     </p>
   );
-}
-
-function kuwaitMidnight(now: number): number {
-  const k = now + 3 * 3_600_000;
-  return k - (k % 86_400_000) - 3 * 3_600_000;
 }
 
 function StartWave({

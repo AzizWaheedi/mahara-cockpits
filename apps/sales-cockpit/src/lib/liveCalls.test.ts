@@ -929,6 +929,10 @@ describe("waves: rows, counts and lines", () => {
       holdoutShare: 0.1,
       gapS: 45,
       firstHour: 9,
+      // stress2 fix round 1: the hours' end and the quiet hours, for the next
+      // batch and the approved line.
+      lastHour: 18,
+      quietFrom: 21,
       daysOff: ["friday"],
     });
     expect(

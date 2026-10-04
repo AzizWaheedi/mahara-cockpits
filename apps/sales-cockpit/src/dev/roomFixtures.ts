@@ -124,6 +124,9 @@ export function baseRoom(now: number, over: Partial<RoomView> = {}): RoomView {
     attempt_id: null,
     appointment_id: null,
     handover_id: null,
+    // stress2 fix round 1: why the sweep closed it, and the lead's latest open.
+    end_reason: null,
+    last_open_at: null,
     ...over,
   };
 }

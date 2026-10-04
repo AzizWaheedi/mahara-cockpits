@@ -249,15 +249,22 @@ const WEEKDAYS = [
 /**
  * When the desk writes the next batch: from `firstHour`:00 Kuwait time on
  * the next day that is not a day off (Friday unless `quiet_days` says
- * otherwise). Today counts when the hour has not come yet, or when it has
- * and today's batch is not written yet (the desk writes it within five
- * minutes); `now` is returned then.
+ * otherwise), never in the quiet hours (from `quietFrom`:00, 21:00 as
+ * shipped). Today counts when the hour has not come yet, or when it has,
+ * the quiet hours have not begun, and today's batch is not written yet (the
+ * desk writes it within five minutes); `now` is returned then.
  */
 export function nextBatchAt(
   now: number,
-  o: { firstHour?: number; daysOff?: readonly string[]; writtenToday: boolean },
+  o: {
+    firstHour?: number;
+    quietFrom?: number;
+    daysOff?: readonly string[];
+    writtenToday: boolean;
+  },
 ): number {
   const first = Number.isFinite(o.firstHour) ? Number(o.firstHour) : 9;
+  const quiet = Number.isFinite(o.quietFrom) ? Number(o.quietFrom) : 21;
   const off = new Set((o.daysOff ?? ["friday"]).map(d => d.toLowerCase()));
   const k = now + KUWAIT_MS;
   const midnight = k - (((k % DAY_MS) + DAY_MS) % DAY_MS);
@@ -268,12 +275,40 @@ export function nextBatchAt(
     const at = dayStart + first * 3_600_000 - KUWAIT_MS;
     if (d === 0) {
       if (now < at) return at;
-      if (!o.writtenToday) return now;
+      const quietAt = dayStart + quiet * 3_600_000 - KUWAIT_MS;
+      if (!o.writtenToday && (quiet <= first || now < quietAt)) return now;
       continue;
     }
     return at;
   }
   return now;
+}
+
+/**
+ * Whether today's batch was written: any backlog opener of a wave drafted
+ * since Kuwait's midnight, whatever it has become since (sent, skipped or
+ * still open). Only the open drafts would say "not written" every afternoon
+ * once the batch has gone (stress2, round 1).
+ */
+export function batchWrittenToday(
+  drafts: readonly {
+    created_at: string;
+    segment?: string | null;
+    context?: unknown;
+  }[],
+  now: number,
+): boolean {
+  const k = now + KUWAIT_MS;
+  const midnight = k - (((k % DAY_MS) + DAY_MS) % DAY_MS) - KUWAIT_MS;
+  return drafts.some(d => {
+    if (d.segment !== undefined && d.segment !== "reactivate") return false;
+    const ctx =
+      typeof d.context === "object" && d.context !== null
+        ? (d.context as Record<string, unknown>)
+        : null;
+    if (d.context !== undefined && !ctx?.wave_id) return false;
+    return Date.parse(d.created_at) >= midnight;
+  });
 }
 
 /** "today at 09:00", "tomorrow at 09:00", "on Sunday at 09:00". */
@@ -405,6 +440,8 @@ export interface BatchDraft {
   hold_reason: string | null;
   /** When held_by was written: tells a send in flight from one that stopped half way. */
   held_at?: string | null;
+  /** Its wave's state: a stopped wave's openers are being taken back, never approved. */
+  wave_state?: string | null;
 }
 
 export type BatchState =
@@ -413,7 +450,8 @@ export type BatchState =
   | "held"
   | "set_aside"
   | "sending"
-  | "stalled";
+  | "stalled"
+  | "taken_back";
 
 /** sales-api's mark on an opener it is sending now (followupAgent.ts SENDING). */
 export const SENDING_MARK = "sales-desk:sending";
@@ -430,6 +468,13 @@ export function batchState(
   d: BatchDraft,
   now: number = Date.now(),
 ): BatchState {
+  // The wave was stopped: the desk takes its openers back within 5 minutes,
+  // and sales-api never approves them (stress2, round 1).
+  if (
+    (d.wave_state === "done" || d.wave_state === "cancelled") &&
+    d.held_by !== SENDING_MARK
+  )
+    return "taken_back";
   if (d.held_by === "sales-desk") return "set_aside";
   if (d.held_by === SENDING_MARK) {
     const at = d.held_at ? Date.parse(d.held_at) : Number.NaN;
@@ -445,7 +490,7 @@ export function batchState(
 /** At most this many openers go in one approval (followup.batch refuses more). */
 export const BATCH_MAX = 40;
 
-/** The openers "Approve all" sends: undecided ones and sends that stopped half way, oldest first, at most 40. */
+/** The openers "Approve all" sends: undecided ones and sends that stopped half way, oldest first, at most 40 (never a stopped wave's). */
 export function toApprove(
   drafts: readonly BatchDraft[],
   now: number = Date.now(),
@@ -457,20 +502,100 @@ export function toApprove(
 }
 
 /**
- * "Approved. One goes every 45 seconds, finishing at 09:20." from
- * followup.batch's answer; the gap is the setting's when the answer has no
- * times.
+ * Whether a first message may go at `t` by the desk's rule for a Gulf lead:
+ * from `from`:00 to `to`:00 Kuwait time, not on a day off.
+ */
+function inFirstHours(
+  t: number,
+  h: { from: number; to: number; daysOff: readonly string[] },
+): boolean {
+  const k = t + KUWAIT_MS;
+  const hour = Math.floor((((k % DAY_MS) + DAY_MS) % DAY_MS) / 3_600_000);
+  const weekday = WEEKDAYS[new Date(k).getUTCDay()] as string;
+  return (
+    hour >= h.from &&
+    hour < h.to &&
+    !h.daysOff.map(d => d.toLowerCase()).includes(weekday)
+  );
+}
+
+/** The first moment from `t` inside the first hours (quarter hours), or null within eight days. */
+function nextFirstHour(
+  t: number,
+  h: { from: number; to: number; daysOff: readonly string[] },
+): number | null {
+  const step = 15 * 60_000;
+  for (let x = Math.ceil(t / step) * step; x < t + 8 * DAY_MS; x += step)
+    if (inFirstHours(x, h)) return x;
+  return null;
+}
+
+/**
+ * The line after Approve all, from followup.batch's answer: "Approved. One
+ * goes every 45 seconds, finishing at 09:20." only when every opener can go
+ * at its turn. Openers go only inside the first hours on the lead's clock
+ * and never on their day off, so a press outside them says when they start:
+ * "Approved. They go from Saturday at 09:00, their time, one every 45
+ * seconds." (stress2, round 1). sales-api's opens_at and in_hours say it for
+ * the leads' own clocks; without them the line reads Kuwait's clock and the
+ * shipped hours (09:00 to 18:00, Friday off).
  */
 export function approvedLine(
-  out: { count?: unknown; first_at?: unknown; last_at?: unknown },
+  out: {
+    count?: unknown;
+    first_at?: unknown;
+    last_at?: unknown;
+    opens_at?: unknown;
+    in_hours?: unknown;
+    taken_back?: unknown;
+    waiting_resume?: unknown;
+  },
   gapS: number,
+  hours: { from: number; to: number; daysOff: readonly string[] } = {
+    from: 9,
+    to: 18,
+    daysOff: ["friday"],
+  },
+  now: number = Date.now(),
 ): string {
   const n = typeof out.count === "number" ? out.count : null;
+  const first = time(out.first_at);
   const last = time(out.last_at);
   const gap = Math.round(gapS);
-  if (n === 0) return "Nothing was approved: no opener was waiting.";
-  if (n === 1) return "Approved. It goes in the next few minutes.";
-  return `Approved. One goes every ${gap} seconds${last ? `, finishing at ${clock(last)}` : ""}.`;
+  const back =
+    typeof out.taken_back === "number" && out.taken_back > 0
+      ? ` ${plural(out.taken_back, "opener was", "openers were")} the stopped wave's and ${out.taken_back === 1 ? "is" : "are"} being taken back.`
+      : "";
+  const paused =
+    typeof out.waiting_resume === "number" && out.waiting_resume > 0
+      ? ` ${plural(out.waiting_resume, "opener waits", "openers wait")} for ${out.waiting_resume === 1 ? "its" : "their"} wave to resume.`
+      : "";
+  if (n === 0) return `Nothing was approved: no opener was waiting.${back}`;
+  const firstMs = first ? Date.parse(first) : Number.NaN;
+  const lastMs = last ? Date.parse(last) : Number.NaN;
+  const opensMs =
+    typeof out.opens_at === "string" ? Date.parse(out.opens_at) : Number.NaN;
+  let starts: number | null = null;
+  if (Number.isFinite(opensMs)) {
+    if (
+      out.in_hours === false ||
+      (Number.isFinite(firstMs) && opensMs > firstMs + 60_000)
+    )
+      starts = opensMs;
+  } else if (Number.isFinite(firstMs)) {
+    const end = Number.isFinite(lastMs) ? lastMs : firstMs;
+    if (!inFirstHours(firstMs, hours) || !inFirstHours(end, hours))
+      starts = nextFirstHour(firstMs, hours);
+  }
+  if (starts !== null) {
+    const when = batchWhen(starts, Number.isFinite(firstMs) ? firstMs : now);
+    return n === 1
+      ? `Approved. It goes ${when}, their time.${back}${paused}`
+      : `Approved. They go from ${when.replace(/^on /, "")}, their time, one every ${gap} seconds.${back}${paused}`;
+  }
+  if (n === 1)
+    return `Approved. It goes in the next few minutes.${back}${paused}`;
+  return `Approved. One goes every ${gap} seconds${last ? `, finishing at ${clock(last)}` : ""}.${back}${paused}`;
 }
 
 /** `followups.waves` as the screens read it, with the desk's defaults. */
@@ -479,6 +604,8 @@ export function waveSettings(raw: unknown): {
   holdoutShare: number;
   gapS: number;
   firstHour: number;
+  lastHour: number;
+  quietFrom: number;
   daysOff: string[];
 } {
   const r =
@@ -495,6 +622,15 @@ export function waveSettings(raw: unknown): {
     holdoutShare: num(w.holdout_share, 0.1, 0, 0.5),
     gapS: num(w.batch_gap_s, 45, 30, 3600),
     firstHour: num(hours[0], 9, 0, 23),
+    lastHour: num(hours[1], 18, 1, 24),
+    quietFrom: num(
+      typeof r.quiet === "object" && r.quiet !== null
+        ? (r.quiet as Raw).from
+        : undefined,
+      21,
+      0,
+      23,
+    ),
     daysOff: Array.isArray(r.quiet_days)
       ? r.quiet_days.filter((d): d is string => typeof d === "string")
       : ["friday"],

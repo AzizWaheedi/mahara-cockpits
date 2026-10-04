@@ -123,6 +123,8 @@ export const ROOM_VIEW_KEYS = [
   "attempt_id",
   "appointment_id",
   "handover_id",
+  "end_reason",
+  "last_open_at",
 ] as const;
 
 /** A room as the browser sees it. `start_url` is never part of it. */
@@ -173,6 +175,14 @@ export interface RoomView {
   handover_id?: string | null;
   /** A booked call's start; without it, host_by minus 15 minutes. */
   starts_at?: string | null;
+  /**
+   * Why the sweep closed the room: `not_admitted` (the lead knocked and was
+   * not let in), `events_lost` (Zoom's events were not all read),
+   * `lead_no_show`, `host_not_in`. The panel says each as itself.
+   */
+  end_reason?: string | null;
+  /** The lead's latest open of the link: the sweep holds the room open_grace past it. */
+  last_open_at?: string | null;
 }
 
 export interface RoomEvent {
@@ -244,6 +254,8 @@ export interface LiveStatus {
   live_enabled?: boolean;
   /** Why the seat's standby room could not be made, as a sentence. */
   standby_error?: string | null;
+  /** Whether Available makes a standby room at all (rooms and live standby on). */
+  standby_on?: boolean;
   /** The server's clock when it answered, so countdowns do not drift. */
   now?: string | null;
   /** The browser's own: rooms a press ended, by the version it saw. */
@@ -257,6 +269,12 @@ export interface RoomFeed {
   health: Health | null;
   /** The server's clock when it answered (asked of the contract). */
   now?: string | null;
+  /**
+   * Whether the room's host can use the other provider for this call now
+   * (sales-api's own check): "Try {other}" and "I can't let them in" show
+   * only then. Absent or null: not known, and they show.
+   */
+  other_ok?: boolean | null;
 }
 
 export type MarkWhat = "host_in" | "lead_in" | "not_lead" | "still_on";
@@ -363,12 +381,14 @@ const OPTIONAL_TIMES = [
   "link_unconfirmed_at",
   "starts_at",
   "lead_in_seen_at",
+  "last_open_at",
 ] as const;
 const OPTIONAL_TEXT = [
   "trigger",
   "attempt_id",
   "appointment_id",
   "handover_id",
+  "end_reason",
 ] as const;
 
 /**
@@ -514,6 +534,7 @@ export function normalizeLive(v: unknown): LiveStatus {
   };
   if (typeof v.live_enabled === "boolean") out.live_enabled = v.live_enabled;
   if ("standby_error" in v) out.standby_error = str(v.standby_error);
+  if (typeof v.standby_on === "boolean") out.standby_on = v.standby_on;
   if ("now" in v) out.now = when(v.now);
   return out;
 }
@@ -546,6 +567,8 @@ export function normalizeRoomFeed(v: unknown): RoomFeed {
   }
   const out: RoomFeed = { room, events, health: normalizeHealth(v.health) };
   if ("now" in v) out.now = when(v.now);
+  if (typeof v.other_ok === "boolean" || v.other_ok === null)
+    out.other_ok = v.other_ok;
   return out;
 }
 
@@ -566,6 +589,9 @@ export const WAITS_S = {
   not_lead_undo: 300,
   standby_max: 2100,
   offer: 120,
+  /** The lead's 10 minutes, and the 3 minutes an open or a knock holds the room past them (the sweep's R4). */
+  lead: 600,
+  open_grace: 180,
 } as const;
 
 /** A press with an Undo waits this long before it is sent (MarkControls). */
@@ -851,6 +877,12 @@ export type RoomMoment =
   /** Its deadline passed two minutes ago and the sweep has not closed it. */
   | "overdue"
   | "expired"
+  /** Closed by the sweep while the lead knocked (or after they opened the link): never "nobody joined". */
+  | "expired_knocked"
+  /** Closed with some of Zoom's events unread: whether the lead joined is not known. */
+  | "expired_unknown"
+  /** Closed after the lead opened the link and never joined: a person decides, never "nobody joined". */
+  | "expired_opened"
   /** Ended (by the rep, or by Zoom) with nobody in it. */
   | "ended_empty"
   | "closed";
@@ -873,8 +905,16 @@ export function roomMoment(room: RoomView, now: number): RoomMoment {
     return s === "open" ? "standby_open" : "standby_in";
   }
   // Only the sweep's own expiry says "did not join in 10 minutes": a room
-  // the rep (or Zoom) ended with nobody in it says it ended.
-  if (s === "expired") return "expired";
+  // the rep (or Zoom) ended with nobody in it says it ended. A knock that was
+  // never let in, an open of the link, and events never read are each said
+  // as themselves, never "nobody joined" (stress2, round 1).
+  if (s === "expired") {
+    if (room.result === "admit_blocked" || room.lead_waiting_at)
+      return "expired_knocked";
+    if (room.end_reason === "events_lost") return "expired_unknown";
+    if (room.first_open_at || room.last_open_at) return "expired_opened";
+    return "expired";
+  }
   if (s === "ended" && room.result === "no_join") return "ended_empty";
   if (s === "ended" || s === "cancelled") return "closed";
   if (s === "lead_in") {
@@ -954,15 +994,42 @@ export function voiceOf(room: RoomView): Voice {
   return "f";
 }
 
+/**
+ * When the lead's wait ends as the sweep's R4 reads it: lead_by, held
+ * open_grace past the lead's latest open of the link or knock, never past
+ * the cap (the link, or the room's start, plus the lead's 10 minutes and one
+ * grace; a booked room's end). The panel's countdown and its "overdue" use
+ * it, so a lead at the door is never "should have closed" (stress2, round 1).
+ */
+export function leadDeadline(room: RoomView): number | null {
+  const lead = t(room.lead_by);
+  if (lead === null || !room.contact_id) return lead;
+  const grace = WAITS_S.open_grace * 1000;
+  const base =
+    room.purpose === "booked"
+      ? t(room.ends_at)
+      : (t(room.link_sent_at) ?? t(room.created_at));
+  const cap =
+    base === null
+      ? Number.POSITIVE_INFINITY
+      : room.purpose === "booked"
+        ? base
+        : base + (WAITS_S.lead + WAITS_S.open_grace) * 1000;
+  const held = (x: number | null) =>
+    x === null ? Number.NEGATIVE_INFINITY : Math.min(x + grace, cap);
+  const open = t(room.last_open_at ?? null) ?? t(room.first_open_at);
+  return Math.max(lead, held(open), held(t(room.lead_waiting_at)));
+}
+
 /** When the room closes if nothing happens: the lead's or the host's deadline. */
 export function roomDeadline(room: RoomView): number | null {
   if (room.state === "open") {
-    const lead = t(room.lead_by);
+    const lead = leadDeadline(room);
     const host = t(room.host_by);
     if (lead !== null && host !== null) return Math.min(lead, host);
     return lead ?? host;
   }
-  if (room.state === "host_in") return t(room.lead_by);
+  if (room.state === "host_in") return leadDeadline(room);
   return null;
 }
 
@@ -1012,6 +1079,27 @@ const WHOLE_SENTENCES = new Set([
   "Google did not make the Meet link. Try Zoom.",
   "Your Zoom seat is not active yet. Accept Zoom's email invite. Meet works now.",
 ]);
+
+/**
+ * A failed room's sentence when the other provider cannot be used from the
+ * seat (a setter's Zoom seat still pending): its "Try {other}" advice goes,
+ * and it says to phone the lead (stress2, round 1).
+ */
+export function phoneInstead(text: string): string {
+  const cut = text
+    .replace(
+      /\s*(Try|Use) (Zoom|Meet)(, or call( the lead)? again)?\.\s*$/i,
+      "",
+    )
+    .replace(
+      /,?\s*(and )?(try|use) (zoom|meet)(, or call( the lead)? again)?\.\s*$/i,
+      ".",
+    )
+    .replace(/(Zoom|Meet) works now\.\s*$/i, "")
+    .trim();
+  const head = /[.!?]$/.test(cut) ? cut : `${cut}.`;
+  return `${head} Call the lead on the phone.`;
+}
 
 export function failedSentence(room: RoomView): Sentence {
   const P = providerName(room.provider);
@@ -1116,6 +1204,12 @@ export interface RoomCtx {
   /** The room worker is down (the health line is red): no room can be made, so a failed room offers no retry. */
   workerDown?: boolean;
   /**
+   * Whether the host can use the other provider for this call now (room.status
+   * `other_ok`). False: no "Try {other}", no "I can't let them in", and the
+   * sentence says to phone the lead. Unknown: they show.
+   */
+  otherOk?: boolean | null;
+  /**
    * The room line is on screen with its countdown: the sentence under it
    * leaves the countdown out, so it is not said twice.
    */
@@ -1149,7 +1243,7 @@ export function roomSentence(room: RoomView, ctx: RoomCtx): Sentence {
         "This room will not be made: video rooms are down. Call the lead on the phone, or send your own Zoom or Meet link.",
       ];
     case "making_late":
-      return room.purpose === "booked"
+      return room.purpose === "booked" || ctx.otherOk === false
         ? ["This room is taking too long to make. Call the lead on the phone."]
         : [
             `This room is taking too long to make. Call the lead on the phone, or end it and try ${O}.`,
@@ -1157,7 +1251,9 @@ export function roomSentence(room: RoomView, ctx: RoomCtx): Sentence {
     case "overdue":
       return ["This room should have closed. Call the lead, or end the room."];
     case "failed":
-      return failedSentence(room);
+      return ctx.otherOk === false
+        ? [phoneInstead(sentenceText(failedSentence(room)))]
+        : failedSentence(room);
     case "ready":
       return ["Room ready."];
     case "standby_open":
@@ -1257,6 +1353,30 @@ export function roomSentence(room: RoomView, ctx: RoomCtx): Sentence {
         : [
             "The lead did not join in 10 minutes. Room closed. Call again or send a message.",
           ];
+    case "expired_knocked": {
+      const who = name || "The lead";
+      const at =
+        room.lead_waiting_at ?? room.last_open_at ?? room.first_open_at;
+      return [
+        `${who} knocked at `,
+        { mono: clock(at) },
+        " and was not let in. Call them now and send a new link.",
+      ];
+    }
+    case "expired_opened": {
+      const who = name || "The lead";
+      return [
+        `${who} opened the link at `,
+        { mono: clock(room.last_open_at ?? room.first_open_at) },
+        " but did not join. Room closed. Call them now.",
+      ];
+    }
+    case "expired_unknown":
+      return [
+        `Whether ${name || "the lead"} joined is not known: Zoom's events were not all read. ${
+          ctx.canMarkIntro ? "Mark the intro by hand." : "Call them to check."
+        }`,
+      ];
     case "ended_empty": {
       const at = { mono: clock(room.ended_at ?? room.created_at) };
       return ctx.canMarkIntro
@@ -1307,6 +1427,9 @@ export function roomTone(m: RoomMoment, room?: RoomView | null): Tone {
     case "link_late":
     case "not_confirmed":
     case "expired":
+    case "expired_knocked":
+    case "expired_opened":
+    case "expired_unknown":
     case "ended_empty":
     case "making_late":
     case "overdue":
@@ -1460,7 +1583,9 @@ function momentActions(
         quiet: booked
           ? []
           : [
-              ...(hasLead ? [act("retry", `Try ${other}`)] : []),
+              ...(hasLead && ctx.otherOk !== false
+                ? [act("retry", `Try ${other}`)]
+                : []),
               act("end", "End room"),
             ],
       };
@@ -1473,7 +1598,7 @@ function momentActions(
     case "failed": {
       return {
         primary:
-          hasLead && !booked && !ctx.workerDown
+          hasLead && !booked && !ctx.workerDown && ctx.otherOk !== false
             ? // P2 says the handover's button as [Use Meet]; P1 says "Try Zoom".
               act(
                 "retry",
@@ -1490,6 +1615,16 @@ function momentActions(
         quiet: ctx.canMarkIntro
           ? [act("noshow", "No-show"), act("showed", "We spoke on the phone")]
           : [],
+      };
+    case "expired_knocked":
+    case "expired_opened":
+    case "expired_unknown":
+      // The lead knocked, opened the link, or may have joined: never a
+      // No-show press here (it is not quiet: HighLevel's no-show automation
+      // writes to the lead), only what the rep can say (stress2, round 1).
+      return {
+        primary: null,
+        quiet: ctx.canMarkIntro ? [act("showed", "We spoke on the phone")] : [],
       };
     case "closed":
       // "I can't let them in" closed this room and its replacement was not
@@ -1512,7 +1647,12 @@ function momentActions(
     case "standby_in":
       return { primary: null, quiet: [] };
     case "standby_open":
-      return { primary: act("open", "Open my room"), quiet: [] };
+      // Meet sends no join signal: the rep says they are in, so the seat is
+      // Ready and the sweep keeps the room (stress2, round 1).
+      return {
+        primary: act("open", "Open my room"),
+        quiet: room.provider === "meet" ? [act("host_in", "I'm in")] : [],
+      };
     case "joined":
     case "still_on_call": {
       const quiet: RoomAction[] = [];
@@ -1575,8 +1715,9 @@ function momentActions(
     quiet.push(act("retry", "Use Meet"));
   if (room.purpose === "fallback" || room.purpose === "manual")
     quiet.push(act("on_phone", "We are on the phone"));
-  // P1 edge case 9: a Meet knock the setter cannot admit moves the lead to Zoom.
-  if (meet && room.purpose === "fallback" && hasLead)
+  // P1 edge case 9: a Meet knock the setter cannot admit moves the lead to
+  // Zoom, only when the seat can use Zoom for this call (stress2, round 1).
+  if (meet && room.purpose === "fallback" && hasLead && ctx.otherOk !== false)
     quiet.push(act("admit_blocked", "I can't let them in"));
   if (!booked) quiet.push(act("end", "End room"));
   return { primary, quiet };
@@ -1588,7 +1729,9 @@ function momentActions(
  * reach them at all. "Send by email" would only be refused.
  */
 export function emailBlocked(room: RoomView): boolean {
-  return /email|no link can go|active client|no message can reach/i.test(
+  // "call links this hour": sales-api's cap on one lead (link_flood), which
+  // room.send holds too, so the panel never offers a send it refuses.
+  return /email|no link can go|active client|no message can reach|call links this hour/i.test(
     room.refusal ?? "",
   );
 }
@@ -1815,6 +1958,8 @@ export type StripActionKey =
   | "available"
   | "away"
   | "join"
+  /** "I'm in" for a standby room on Meet, which sends no join signal. */
+  | "host_in"
   | "take"
   | "decline"
   | "keep"
@@ -1984,6 +2129,8 @@ export interface StripInput {
   kept?: readonly string[];
   /** Why the standby room could not be made (live.status `standby_error`). */
   standbyError?: string | null;
+  /** Whether Available makes a standby room at all (live.status `standby_on`); unknown counts as yes. */
+  standbyOn?: boolean;
 }
 
 const BOOKED_REASONS = new Set(["booked_call", "booked_call_soon"]);
@@ -2112,7 +2259,11 @@ export function stripLine(i: StripInput): StripLine {
       [
         `Your booked ${i.me.booked_kind === "intro" ? "intro" : "demo"} starts at `,
         { mono: clock(i.me.booked_at) },
-        ", so your room is closed. Press I'm available after it.",
+        // The button that will be there after the call: still Available,
+        // "Get my room"; Away, "I'm available" (stress2, round 1).
+        i.me.state === "available"
+          ? ", so your room is closed. Press Get my room after it."
+          : ", so your room is closed. Press I'm available after it.",
       ],
       null,
       [],
@@ -2144,6 +2295,7 @@ export function stripLine(i: StripInput): StripLine {
           [A("away", "Set me away")],
           "bad",
         );
+      const meetOpen = standby?.provider === "meet" && standby.state === "open";
       if (open)
         return line(
           "available",
@@ -2151,13 +2303,23 @@ export function stripLine(i: StripInput): StripLine {
             ? [
                 "Available until ",
                 until,
-                ". Join your room to get leads first.",
+                meetOpen
+                  ? ". Join your room, then press I'm in to get leads first."
+                  : ". Join your room to get leads first.",
               ]
-            : ["Available. Join your room to get leads first."],
+            : [
+                meetOpen
+                  ? "Available. Join your room, then press I'm in to get leads first."
+                  : "Available. Join your room to get leads first.",
+              ],
           A("join", "Join my room"),
           // A closer who steps away must be able to say so here, or offers
-          // keep coming for up to two hours (final review).
-          [A("away", "Set me away")],
+          // keep coming for up to two hours (final review). Meet sends no
+          // join signal, so the rep says they are in (stress2, round 1).
+          [
+            ...(meetOpen ? [A("host_in", "I'm in")] : []),
+            A("away", "Set me away"),
+          ],
         );
       // Ours, below: the room is not there to join, and the strip says why.
       if (standby && isMaking(standby.state))
@@ -2177,15 +2339,27 @@ export function stripLine(i: StripInput): StripLine {
           [A("away", "Set me away")],
           "owed",
         );
-      // No room and no reason given (rooms for standby may be switched off).
+      // No room and no reason given: rooms for standby are switched off,
+      // or the room closed for a booked call or a lead's room. While
+      // standby rooms are on, the strip offers one again (stress2, round 1).
       return line(
         "available",
         until ? ["Available until ", until, "."] : ["Available."],
-        null,
+        i.standbyOn === false ? null : A("available", "Get my room"),
         [A("away", "Set me away")],
       );
     }
     default: {
+      // A press refused a moment ago (outside live hours, say): its reason,
+      // never the same Away line and button with nothing said (stress2).
+      if (i.standbyError)
+        return line(
+          "away",
+          [`Away. ${i.standbyError}`],
+          A("available", "I'm available"),
+          [],
+          "owed",
+        );
       return line(
         "away",
         ["Away. Live leads skip you."],
@@ -2627,7 +2801,8 @@ export const roomsApi = {
     api<unknown>("live.availability", { state }).then(v => {
       const me = isObj(v) ? normalizePresence(v.me) : null;
       if (!me) throw unreadable(true);
-      return { me };
+      // Why no standby room was made, kept for the strip (stress2, round 1).
+      return { me, standby_error: isObj(v) ? str(v.standby_error) : null };
     }),
   liveStatus: () =>
     api<unknown>("live.status", {}, { timeoutMs: READ_TIMEOUT_MS }).then(

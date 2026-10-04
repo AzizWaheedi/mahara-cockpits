@@ -4,6 +4,7 @@ import {
   BellRing,
   CalendarClock,
   CalendarPlus,
+  Check,
   Copy,
   ExternalLink,
   Flame,
@@ -145,6 +146,7 @@ import {
   PICKER_NONE,
   providerChoice,
   type Trigger,
+  videoAppointmentId,
   videoLinkGate,
 } from "../lib/videoLink";
 import { firstWord, leadLanguage, type Moment } from "../lib/whatsapp";
@@ -1723,7 +1725,9 @@ function CallPane({
     purpose: "fallback" as const,
     callKind: "intro" as const,
     attemptId: missed?.attemptId ?? null,
-    appointmentId: introCall ? (appt?.id ?? null) : null,
+    // The intro on its confirmation call too: sales-api keeps a room made
+    // outside the intro's window off it (stress2, round 1).
+    appointmentId: videoAppointmentId(kind, appt),
   };
   // "Send a video link" shows on every outcome but Answered, never for a
   // client, while no room is open for the lead (P1). A room that failed
@@ -1921,15 +1925,21 @@ function CallPane({
     };
   }, [callRef]);
 
-  async function save(e?: FormEvent, then: "next" | "message" = "next") {
+  async function save(
+    e?: FormEvent,
+    then: "next" | "message" = "next",
+    /** An outcome a step's own button saves (the joined step's "Held the intro"). */
+    forced?: Partial<Draft>,
+  ) {
     e?.preventDefault();
-    if (!draft.outcome || busyRef.current) return;
-    if (draft.outcome === "booked") {
+    const d: Draft = forced ? { ...draft, ...forced } : draft;
+    if (!d.outcome || busyRef.current) return;
+    if (d.outcome === "booked") {
       setBookKind(null);
       setMode("book");
       return;
     }
-    if (draft.outcome === "rescheduled") {
+    if (d.outcome === "rescheduled") {
       setMode("move");
       return;
     }
@@ -1945,14 +1955,14 @@ function CallPane({
         ...(attempt
           ? { attempt_id: attempt.id }
           : { contact_id: contactId, request_id: saveId.current }),
-        outcome: draft.outcome,
-        note: draft.note,
+        outcome: d.outcome,
+        note: d.note,
         as,
         item_kind: kind,
         appointment_id: kind === "lead" ? null : (appt?.id ?? null),
         callback_at:
-          draft.outcome === "callback" && draft.callback
-            ? new Date(draft.callback).toISOString()
+          d.outcome === "callback" && d.callback
+            ? new Date(d.callback).toISOString()
             : null,
       });
       // Stored: HighLevel's half (note, tags, stage) may still be on its
@@ -1961,7 +1971,7 @@ function CallPane({
       clearDraft(contactId);
       // Saved already (sent again after no answer came back): what landed
       // the first time is what stands.
-      const outcome = (out.repeated && out.attempt?.outcome) || draft.outcome;
+      const outcome = (out.repeated && out.attempt?.outcome) || d.outcome;
       const label = outcomes.find(o => o.key === outcome)?.label ?? outcome;
       const words = `${out.repeated ? "Already saved" : "Saved"}: ${label}`;
       const next = afterSave(kind, outcome, then === "message");
@@ -2217,18 +2227,39 @@ function CallPane({
         ) : mode === "unanswered" && joinedAt ? (
           <NextStep
             title={`${firstWord(l?.name ?? null) ?? "The lead"} joined the video call. How did the intro go?`}
-            text="Book the demo while they are warm, or save how it went."
+            text={
+              kind === "intro"
+                ? "Mark the intro held, then book the demo while they are warm, or save how it went."
+                : "Book the demo while they are warm, or save how it went."
+            }
           >
-            <button
-              type="button"
-              onClick={() => {
-                setBookKind("demo");
-                setMode("book");
-              }}
-              className={panelLeads ? button : buttonPrimary}
-            >
-              <CalendarPlus className="size-3.5" aria-hidden /> Book the demo
-            </button>
+            {kind === "intro" ? (
+              // The intro itself was had on video: it is marked held first
+              // (as the held path does), so it never comes back as "Intro
+              // call now" and B2B counts it once (stress2, round 1). The
+              // held step then offers Book the demo.
+              <button
+                type="button"
+                disabled={Boolean(busy)}
+                onClick={() =>
+                  void save(undefined, "next", { outcome: "showed" })
+                }
+                className={panelLeads ? button : buttonPrimary}
+              >
+                <Check className="size-3.5" aria-hidden /> Held the intro
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
+                  setBookKind("demo");
+                  setMode("book");
+                }}
+                className={panelLeads ? button : buttonPrimary}
+              >
+                <CalendarPlus className="size-3.5" aria-hidden /> Book the demo
+              </button>
+            )}
             <button
               type="button"
               onClick={() => setMode("outcomes")}

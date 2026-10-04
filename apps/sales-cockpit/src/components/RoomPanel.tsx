@@ -159,6 +159,9 @@ export function RoomPanelView({
     manager,
     workerDown: health?.worker_ok === false,
     lineShown: showLine,
+    // Whether the host can use the other provider now (room.status): no
+    // "Try {other}" and no "I can't let them in" when it cannot.
+    otherOk: feed.other_ok ?? null,
   };
   const moment = momentFor(room, ctx);
   const sentence = roomSentence(room, ctx);

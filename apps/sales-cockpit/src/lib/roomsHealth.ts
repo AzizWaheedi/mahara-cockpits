@@ -253,7 +253,14 @@ export function seatRoomLines(
     ? { ...ZOOM_WORDS[h.zoom_status] }
     : { tone: "quiet" as const, text: "Zoom: not checked yet" };
   const live = h.zoom_live_until ? Date.parse(h.zoom_live_until) : Number.NaN;
-  if (Number.isFinite(live) && live > now) zoom.text += ", in a meeting now";
+  // As the presence view reads it (20261004a): the meeting's own end ahead,
+  // or a meeting the last host check saw live, for 15 minutes from it.
+  const checked = h.checked_at ? Date.parse(h.checked_at) : Number.NaN;
+  if (
+    Number.isFinite(live) &&
+    (live > now || (Number.isFinite(checked) && now - checked < 15 * 60_000))
+  )
+    zoom.text += ", in a meeting now";
   const meet =
     h.google_ok === true
       ? "Meet: Google connected"

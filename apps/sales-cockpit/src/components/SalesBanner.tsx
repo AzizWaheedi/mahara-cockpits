@@ -184,6 +184,9 @@ export function SalesBannerView({
           hidden,
           kept,
           standbyError: data.standby_error ?? null,
+          ...(typeof data.standby_on === "boolean"
+            ? { standbyOn: data.standby_on }
+            : {}),
         })
       : null;
   const room = data ? myRoom(data.rooms, now) : null;
@@ -727,6 +730,9 @@ function LiveBanner({
             hidden,
             kept,
             standbyError: data.standby_error ?? null,
+            ...(typeof data.standby_on === "boolean"
+              ? { standbyOn: data.standby_on }
+              : {}),
           })
         : null;
     const offer: Offer | null = line?.offer ?? null;
@@ -748,6 +754,17 @@ function LiveBanner({
         if (sb) void run(key, () => openRoom(sb.id));
         return;
       }
+      case "host_in": {
+        // A standby room on Meet: Meet sends no join signal, so the rep's
+        // press says they are in and the seat is Ready (stress2, round 1).
+        const sb = data ? standbyRoom(data.rooms) : null;
+        if (sb)
+          void run(key, async () => {
+            const out = await roomsApi.mark(sb, "host_in");
+            setLive(prev => (prev ? withRoom(prev, out.room) : prev));
+          });
+        return;
+      }
       case "available":
       case "keep":
       case "away":
@@ -759,7 +776,14 @@ function LiveBanner({
         const sb = data ? standbyRoom(data.rooms) : null;
         void run(key, async () => {
           const out = await roomsApi.availability(state);
-          setLive(prev => (prev ? { ...prev, me: out.me } : prev));
+          // The press's own reason for no standby room is said at once
+          // (outside live hours, the cap, a provider the seat cannot use),
+          // never dropped (stress2, round 1); the next read keeps it.
+          setLive(prev =>
+            prev
+              ? { ...prev, me: out.me, standby_error: out.standby_error }
+              : prev,
+          );
           if (key === "keep" && sb) setKept(k => [...k, sb.id]);
           if (state === "available") setFlash(null);
         });

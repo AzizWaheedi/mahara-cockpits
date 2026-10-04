@@ -186,6 +186,22 @@ export interface GateInput {
  * booked demo, and for a missed call the scope and the pilot list. What depends on the
  * moment (one room per lead, the host's Zoom) stays the server's sentence.
  */
+/**
+ * The booked call a dialer's video link names: the lead's booked intro on
+ * its own call and on its confirmation call alike (stress2, round 1: a
+ * confirmation call's link was refused "only for booked intros" while the
+ * rep looked at that intro). sales-api decides whether the room carries the
+ * intro (only inside the intro's own window), so a confirmation room the
+ * evening before never settles or marks it.
+ */
+export function videoAppointmentId(
+  kind: string,
+  appt: { id: string; type: string } | null | undefined,
+): string | null {
+  if (appt?.type !== "intro") return null;
+  return kind === "intro" || kind === "confirm" ? appt.id : null;
+}
+
 export function videoLinkGate(i: GateInput): { show: boolean; why: GateWhy } {
   const no = (why: GateWhy) => ({ show: false, why });
   const s = i.setting;
