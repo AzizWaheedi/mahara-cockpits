@@ -495,14 +495,23 @@ def cmd_requests(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
         log.error(str(e))
         return 1
     busy = out["seen"] or out["reaped"]
+    done = ", ".join(f"{n} {s.replace('_', ' ')}" for s, n in sorted(out["statuses"].items()))
     if out.get("blocked"):
         detail = f"waiting: {out['blocked']}"
+        if out["done"]:
+            # A rebuild asks no model, so it goes ahead while drafts wait.
+            detail += f"; meanwhile {out['done']} done ({done})"
     elif not busy:
         detail = "nothing queued"
     else:
-        done = ", ".join(f"{n} {s.replace('_', ' ')}" for s, n in sorted(out["statuses"].items()))
         detail = (f"{out['done']} done ({done or 'none'}), {out['retry']} to try again, {out['failed']} failed"
                   + (f", {out['reaped']} reaped" if out["reaped"] else ""))
+    fell = out.get("fallback") or {}
+    if fell.get("drafts"):
+        # Never silent: a paid fallback drafting while the primary is down.
+        said = f"{fell['drafts']} drafted through the fallback: {fell.get('note') or 'the primary could not answer'}"
+        detail = f"{said.rstrip('.')}; {detail}"
+        log.warn(f"requests: {said}")
     resent = _resync_stuck(cfg, log)
     if resent:
         detail += f"; {resent}"
@@ -669,7 +678,7 @@ def review_provider(cfg: Config, log: Logger) -> Any:
 
     cfg.model = model
     # Through the fallback only when SALES_FALLBACK_JOBS names reviews.
-    return model_mod.for_job(cfg, "reviews", log.info, primary=primary, plain_text=True)
+    return model_mod.for_job(cfg, "reviews", log.info, primary=primary, plain_text=True, warn=log.warn)
 
 
 def cmd_reviews(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
@@ -764,7 +773,7 @@ def cmd_followups(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
         if model:
             model_mod.check_model(model, setting="SALES_FOLLOWUP_MODEL")
             cfg.model = model
-        p = model_mod.for_job(cfg, "followups", log.info)
+        p = model_mod.for_job(cfg, "followups", log.info, warn=log.warn)
     except model_mod.ModelUnreachable as e:
         _status(cfg, log, "followups", False, str(e))
         log.error(str(e))
@@ -824,7 +833,7 @@ def notes_provider(cfg: Config, log: Logger, job: str = "notes") -> Any:
     if model:
         model_mod.check_model(model, setting="SALES_NOTES_MODEL")
         cfg.model = model
-    return model_mod.for_job(cfg, job, log.info)
+    return model_mod.for_job(cfg, job, log.info, warn=log.warn)
 
 
 def cmd_notes(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
@@ -991,8 +1000,8 @@ def cmd_draft(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     out_dir = Path(args.out or (cfg.out_dir / "by-hand"))
     render_mod.set_timeout(cfg.render_timeout)
     outcome = engine_mod.run(call, lang=args.lang, resolved=resolved, offer=offer,
-                             p=model_mod.for_job(cfg, "proposal", log.info), cfg=cfg, log=log.info, workdir=out_dir,
-                             variant=args.variant)
+                             p=model_mod.for_job(cfg, "proposal", log.info, warn=log.warn), cfg=cfg, log=log.info,
+                             workdir=out_dir, variant=args.variant)
     final = out_dir / "proposal.html"
     build_mod.build(outcome.deal, final)
     print(f"variant {outcome.variant} ({outcome.why}); {outcome.model}; {outcome.seconds:.0f}s; "

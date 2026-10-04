@@ -221,6 +221,19 @@ provider.
   stays on the fallback for every draft left in it; the next run tries the
   primary first again. A draft that has had one answer from a provider
   stays on it, tightening and repair included.
+- **A draft that waits holds up no rebuild.** The run's other drafts wait
+  unclaimed with the reason on them (the closer's sentence too when nothing
+  can answer); a rebuild asks no model, so it still goes ahead.
+- **Never silent.** The handover is a WARN line in `~/.sales-desk.log` (the
+  cron runs `--quiet`, which keeps only warnings), and the `requests` health
+  line starts with how many drafts went through the fallback and why.
+- **The model has to be one the fallback serves**: `anthropic/...` or
+  `openai/...` through OpenRouter, bare names at OpenAI and Anthropic. An
+  OpenRouter name left in `SALES_FALLBACK_MODEL` after switching
+  `SALES_MODEL_FALLBACK` to `openai` is one sentence at once, not a 404 later.
+  Claude Opus 4.7 and later are sent no sampling temperature through
+  OpenRouter (they refuse one), and an account out of credit that OpenRouter
+  reports inside an opened stream is the same wait as a 402.
 - **Only proposals**, unless `SALES_FALLBACK_JOBS` names others (`proposal,
   notes, digest, reviews, followups`). Notes, reviews, the digest and
   follow-ups wait for the primary as they always have.

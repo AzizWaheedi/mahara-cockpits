@@ -100,10 +100,16 @@ class ModelUnreachable(NotNow):
     waiting on: what is happening and what to do, without the fix itself.
     """
 
-    def __init__(self, message: str = "", *, cause: str = "", closer: str = ""):
+    def __init__(self, message: str = "", *, cause: str = "", closer: str = "", every: bool = False,
+                 others: str = ""):
         super().__init__(message)
         self.cause = cause or cause_of(message)
         self.closer = closer
+        # The closer's sentence fits every proposal waiting, not only the one
+        # that met it (nothing can answer), so the run's other drafts carry it too.
+        self.every = every
+        # For the run's other requests, when this one's sentence is about it alone.
+        self.others = others
 
 
 def cause_of(message: str) -> str:
@@ -127,6 +133,21 @@ class NoJSON(ModelError):
     pass
 
 
+class StreamRefused(ModelError):
+    """An error the provider sent inside a stream it had already opened with a
+    200, carrying an HTTP status of its own. OpenRouter reports an error that
+    comes after it has started a stream (its keep-alive comments are a start)
+    as `data: {"error": {"code": ..., "message": ...}}`; when that code is a
+    status (402, 400) the provider turns it back into what the same status
+    means as a response, so an account out of credit is an outage (the request
+    waits) and not a failed try (four of which fail the request). A code that
+    is not a status ("server_error") stays a failed try."""
+
+    def __init__(self, status: int, message: str):
+        super().__init__(f"the provider stopped mid-answer: {status}: {http.scrub(message)[:300]}")
+        self.status, self.said = status, message
+
+
 @dataclass
 class Reply:
     text: str = ""
@@ -141,6 +162,23 @@ def is_reasoning_model(model: str) -> bool:
     """OpenAI's reasoning families refuse `temperature`; so do the same models behind OpenRouter."""
     name = model.split("/", 1)[-1].lower()
     return bool(re.match(r"^(o\d|gpt-5)", name))
+
+
+def no_sampling(model: str) -> bool:
+    """Claude models that refuse a sampling temperature: Opus 4.7 and later,
+    Sonnet 5 and later, Fable and Mythos. Older Claude models take it."""
+    m = str(model or "").strip().lower().split("/", 1)[-1].replace(".", "-")
+    found = re.match(r"^claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?:-\d{8})?$", m)
+    if not found:
+        return False
+    family, major, minor = found.group(1), int(found.group(2)), int(found.group(3) or 0)
+    if family in ("fable", "mythos"):
+        return True
+    if family == "opus":
+        return (major, minor) >= (4, 7)
+    if family == "sonnet":
+        return major >= 5
+    return False
 
 
 # ---- server-sent events -----------------------------------------------------
@@ -188,6 +226,10 @@ def read_openai_stream(lines: Iterable[Any]) -> Reply:
         if chunk.get("error"):
             err = chunk["error"]
             message = err.get("message") if isinstance(err, dict) else err
+            code = str(err.get("code") if isinstance(err, dict) else "").strip()
+            if code.isdigit() and 400 <= int(code) < 600:
+                meta = err.get("metadata") if isinstance(err.get("metadata"), dict) else {}
+                raise StreamRefused(int(code), f"{message} {meta.get('raw') or ''}".strip())
             raise ModelError(f"the provider stopped mid-answer: {http.scrub(str(message))[:300]}")
         out.model = chunk.get("model") or out.model
         if chunk.get("usage"):
@@ -379,8 +421,10 @@ def vps_reply(reply: Reply, asked: str) -> Reply:
     return reply
 
 
-def _classify(e: http.HttpError, provider: str, model: str) -> Exception:
-    """An HTTP failure as either an outage (the request waits) or a failed try."""
+def _classify(e: http.HttpError, provider: str, model: str, setting: str = "SALES_PROPOSAL_MODEL") -> Exception:
+    """An HTTP failure as either an outage (the request waits) or a failed try.
+    `setting` is the one that names this provider's model, so the fix names
+    SALES_FALLBACK_MODEL for the fallback rather than the primary's setting."""
     body = e.body.decode("utf-8", "replace") if isinstance(e.body, (bytes, bytearray)) else str(e)
     if provider == "vps":
         low = body.lower()
@@ -397,7 +441,7 @@ def _classify(e: http.HttpError, provider: str, model: str) -> Exception:
     if e.status == 404 or "model_not_found" in body or "does not exist" in body:
         return ModelUnreachable(
             f"The model {model} is not available to this {provider} key ({e.status}). Set "
-            "SALES_PROPOSAL_MODEL to one `desk.py doctor` lists; drafting waits until then.",
+            f"{setting} to one `desk.py doctor` lists; drafting waits until then.",
             cause=f"{model} is not available to the {provider} key")
     if e.status == 402 or "insufficient_quota" in body or "credit balance" in body:
         return ModelUnreachable(f"The {provider} account is out of credit ({e.status}). Top it up; drafting waits "
@@ -425,7 +469,14 @@ class OpenAIShaped:
         self.extra_headers = extra_headers or {}
         self.log = log or (lambda _m: None)
         self.stream_ok = True
-        self.temperature_ok = not is_reasoning_model(model)
+        # Claude Opus 4.7 and later refuse a sampling temperature, as the
+        # AnthropicProvider says; through OpenRouter it is not sent to them
+        # either, rather than learnt from a refusal (which can arrive inside
+        # an opened stream, where it would cost the try).
+        self.temperature_ok = not is_reasoning_model(model) and not (name != "vps" and no_sampling(model))
+        # The setting that names this model, for the sentence when a provider
+        # says it does not have it (SALES_FALLBACK_MODEL for the fallback).
+        self.model_setting = "SALES_PROPOSAL_MODEL"
 
     def _headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self.key}", **self.extra_headers}
@@ -457,7 +508,12 @@ class OpenAIShaped:
                 if stream:
                     resp = http.open_stream(url, headers=self._headers(), json_body=body, timeout=timeout)
                     with resp:
-                        reply = read_openai_stream(resp)
+                        try:
+                            reply = read_openai_stream(resp)
+                        except StreamRefused as refused:
+                            # The status it would have answered with, handled as one.
+                            raise http.HttpError(refused.status, refused.said, refused.said.encode("utf-8"),
+                                                 url) from None
                 else:
                     _, _, raw = http.request("POST", url, headers=self._headers(), json_body=body,
                                              timeout=timeout, retries=0)
@@ -476,7 +532,7 @@ class OpenAIShaped:
                 if e.status == 400 and "response_format" in text and self.json_mode:
                     self.json_mode = False
                     continue
-                raise _classify(e, self.name, self.model)
+                raise _classify(e, self.name, self.model, self.model_setting)
             except (socket.timeout, TimeoutError) as e:
                 raise ModelError(f"no answer from {self.name} for {int(timeout)} seconds ({type(e).__name__})")
             except (OSError, HTTPException) as e:
@@ -494,7 +550,7 @@ class OpenAIShaped:
             text = (e.body or b"").decode("utf-8", "replace").lower()
             if e.status == 400 and ("max_tokens" in text or "max_completion_tokens" in text or "output limit" in text):
                 return f"{self.model} answered (one token is too few for a full reply, which is expected)"
-            raise _classify(e, self.name, self.model)
+            raise _classify(e, self.name, self.model, self.model_setting)
         reply = read_openai_body(raw)
         if self.name == "vps":
             vps_reply(reply, "")
@@ -522,7 +578,7 @@ class OpenAIShaped:
         try:
             data = http.get_json(f"{self.base}/models", headers=headers, timeout=timeout, retries=1)
         except http.HttpError as e:
-            raise _classify(e, self.name, self.model)
+            raise _classify(e, self.name, self.model, self.model_setting)
         return sorted(str(m.get("id")) for m in (data or {}).get("data") or [] if isinstance(m, dict) and m.get("id"))
 
     def credit(self, timeout: float = 60) -> Optional[float]:
@@ -552,6 +608,7 @@ class AnthropicProvider:
         self.model = model
         self.max_tokens = max_tokens or ANTHROPIC_MAX_TOKENS
         self.log = log or (lambda _m: None)
+        self.model_setting = "SALES_PROPOSAL_MODEL"
         self.fallbacks_ok = model.startswith(("claude-opus-5", "claude-fable-5"))
 
     def _headers(self, beta: bool) -> dict[str, str]:
@@ -583,7 +640,7 @@ class AnthropicProvider:
                     self.log("anthropic refused the fallbacks option on this account; asking without it")
                     self.fallbacks_ok = False
                     continue
-                raise _classify(e, self.name, self.model)
+                raise _classify(e, self.name, self.model, self.model_setting)
             except (socket.timeout, TimeoutError) as e:
                 raise ModelError(f"no answer from anthropic for {int(timeout)} seconds ({type(e).__name__})")
             except (OSError, HTTPException) as e:
@@ -596,7 +653,7 @@ class AnthropicProvider:
             _, _, raw = http.request("POST", f"{ANTHROPIC_URL}/messages", headers=self._headers(False),
                                      json_body=body, timeout=timeout, retries=1)
         except http.HttpError as e:
-            raise _classify(e, self.name, self.model)
+            raise _classify(e, self.name, self.model, self.model_setting)
         d = json.loads(raw.decode("utf-8") or "{}")
         return f"{d.get('model') or self.model} answered"
 
@@ -607,7 +664,7 @@ class AnthropicProvider:
         try:
             data = http.get_json(f"{ANTHROPIC_URL}/models?limit=100", headers=self._headers(False), timeout=timeout, retries=1)
         except http.HttpError as e:
-            raise _classify(e, self.name, self.model)
+            raise _classify(e, self.name, self.model, self.model_setting)
         return sorted(str(m.get("id")) for m in (data or {}).get("data") or [] if isinstance(m, dict) and m.get("id"))
 
 
@@ -831,9 +888,36 @@ def fallback_provider(cfg: Config, log: Optional[Callable[[str], None]] = None, 
                                "or vps.")
     model = fallback_model(cfg, primary_model)
     check_model(model, setting="SALES_FALLBACK_MODEL")
+    if not serves(name, model):
+        # Caught here, in one sentence, rather than as a 404 an hour later
+        # (SALES_MODEL_FALLBACK changed to openai with an OpenRouter model left
+        # in SALES_FALLBACK_MODEL, say).
+        mine = closest_model(primary_model or cfg.model, name)
+        raise ModelUnreachable(f"SALES_FALLBACK_MODEL is {model}, which is not a model {name} serves under that name. "
+                               f"Leave SALES_FALLBACK_MODEL empty to use {mine}, or set it to one of {name}'s.",
+                               cause=f"SALES_FALLBACK_MODEL ({model}) is not a {name} model")
     room = ANTHROPIC_MAX_TOKENS if "claude-" in model.lower() else None
-    return metered(_build(name, model, cfg, log, setting_name="SALES_MODEL_FALLBACK", max_tokens=room,
-                          json_mode=False if plain_text else None))
+    p = _build(name, model, cfg, log, setting_name="SALES_MODEL_FALLBACK", max_tokens=room,
+               json_mode=False if plain_text else None)
+    p.model_setting = "SALES_FALLBACK_MODEL"
+    return metered(p)
+
+
+def serves(provider: str, model: str) -> bool:
+    """Whether a provider takes this model under this name: OpenRouter's are
+    vendor/model, OpenAI's and Anthropic's are bare, and the VPS proxy takes
+    Claude's (claude-..., or Claude Code's opus and sonnet)."""
+    m = str(model or "").strip().lower()
+    claude = m.startswith(("claude-", "opus", "sonnet"))
+    if provider == "openrouter":
+        return "/" in m
+    if provider == "openai":
+        return "/" not in m and not claude
+    if provider == "anthropic":
+        return m.startswith("claude-")
+    if provider == "vps":
+        return "/" not in m and claude
+    return False
 
 
 def label(p: Any) -> str:
@@ -860,9 +944,14 @@ class Failover:
     """
 
     def __init__(self, primary: Callable[[], Any], fallback: Optional[Callable[[], Any]], *,
-                 log: Optional[Callable[[str], None]] = None, job: str = "proposal", primary_label: str = ""):
+                 log: Optional[Callable[[str], None]] = None, job: str = "proposal", primary_label: str = "",
+                 warn: Optional[Callable[[str], None]] = None):
         self._make_primary, self._make_fallback = primary, fallback
         self.log = log or (lambda _m: None)
+        # The handover is a warning: the cron runs --quiet, which keeps only
+        # warnings, and a paid fallback drafting in place of the VPS's plan is
+        # the line someone reading the log needs to find.
+        self.warn = warn or self.log
         self.job = job
         self.p: Any = None
         self.on_fallback = False
@@ -895,7 +984,7 @@ class Failover:
             raise self._neither(e, f) from None
         self.down, self.p, self.on_fallback = e, fb, True
         self.primary = self.primary or "the primary model"
-        self.log(f"{self.primary} cannot answer ({e.cause}); this run uses {label(fb)} instead")
+        self.warn(f"{self.primary} cannot answer ({e.cause}); this run uses {label(fb)} instead")
 
     def _neither(self, e: ModelUnreachable, f: ModelUnreachable) -> ModelUnreachable:
         if self.job == "proposal":
@@ -906,7 +995,7 @@ class Failover:
             closer = (f"No model can answer right now: {e.cause}, and {f.cause}. The {self.job} job waits and carries "
                       "on by itself once either is fixed.")
         return ModelUnreachable(f"{closer} To fix it: {e} {f}"[:600], cause=f"{e.cause}, and {f.cause}",
-                                closer=closer)
+                                closer=closer, every=True)
 
     @property
     def name(self) -> str:
@@ -937,7 +1026,10 @@ class Failover:
                     f"{self.primary} stopped answering partway through ({e.cause}). Nothing it wrote is kept: this "
                     "waits and starts again from the beginning on the next run, through the fallback if "
                     f"{self.primary} is still down; there is no need to ask again. {e}"[:600],
-                    cause=e.cause, closer=closer) from None
+                    cause=e.cause, closer=closer,
+                    others=(f"Not started this run: {self.primary} stopped answering partway through another "
+                            f"proposal ({e.cause}). It is tried on the next run, through the fallback if "
+                            f"{self.primary} is still down.")) from None
             self._switch(e)
             return self.complete(system, user, temperature=temperature, timeout=timeout)
         except NotNow:
@@ -970,7 +1062,8 @@ def route_of(p: Any, answered: str = "") -> dict[str, Any]:
 
 
 def for_job(cfg: Config, job: str, log: Optional[Callable[[str], None]] = None, *,
-            primary: Optional[Callable[[], Any]] = None, plain_text: bool = False) -> Any:
+            primary: Optional[Callable[[], Any]] = None, plain_text: bool = False,
+            warn: Optional[Callable[[str], None]] = None) -> Any:
     """A job's provider: the primary as it always was, or, for a job
     SALES_FALLBACK_JOBS names, a Failover with the fallback behind it. Made
     at once either way, so a provider neither of which can be made is refused
@@ -980,7 +1073,7 @@ def for_job(cfg: Config, job: str, log: Optional[Callable[[str], None]] = None, 
         return make()
     model = cfg.model
     return Failover(make, lambda: fallback_provider(cfg, log, primary_model=model, plain_text=plain_text),
-                    log=log, job=job, primary_label=f"{cfg.provider} ({model})").ready()
+                    log=log, job=job, primary_label=f"{cfg.provider} ({model})", warn=warn).ready()
 
 
 def call_json(p: Any, system: str, user: str, *, temperature: Optional[float], attempts: int, timeout: float,

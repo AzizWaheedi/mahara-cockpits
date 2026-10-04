@@ -19,6 +19,8 @@ case anything breaks"):
 """
 from __future__ import annotations
 
+import contextlib
+import io
 import os
 import tempfile
 import unittest
@@ -630,6 +632,217 @@ class OtherJobs(unittest.TestCase):
         self.assertIsInstance(notes, model.Failover)
         self.assertEqual((notes.name, notes.model), ("openrouter", "openai/gpt-5"))
         self.assertEqual((reviews.name, reviews.json_mode), ("openrouter", False))
+
+
+
+# ---------------------------------------------------------------------------
+# The adversarial review of 2026-10-04: each test is a way the fallback could
+# have failed a closer, cost money unseen, or sent a draft somewhere wrong.
+class Streamed:
+    """An open streamed response, as http.open_stream hands back."""
+
+    def __init__(self, *chunks: str):
+        self.lines = [x for c in chunks for x in (f"data: {c}\n".encode(), b"\n")]
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        return False
+
+    def __iter__(self):
+        return iter(self.lines)
+
+
+def streamed_answer(text: str, model_name: str = CLAUDE) -> Streamed:
+    import json
+    return Streamed(json.dumps({"model": model_name, "choices": [{"delta": {"content": text},
+                                                                  "finish_reason": "stop"}]}), "[DONE]")
+
+
+def stream_error(code: Any, message: str) -> Streamed:
+    import json
+    return Streamed(json.dumps({"error": {"code": code, "message": message}, "choices": [
+        {"index": 0, "delta": {"content": ""}, "finish_reason": "error"}]}))
+
+
+def router(model_name: str = CLAUDE) -> model.OpenAIShaped:
+    return model.OpenAIShaped("openrouter", model.OPENROUTER_URL, "or-test", model_name, json_mode=False)
+
+
+class OnTheWire(unittest.TestCase):
+    def test_claude_through_openrouter_is_never_sent_a_temperature(self):
+        # Opus 4.7 and later refuse one (the AnthropicProvider never sends it);
+        # through OpenRouter the refusal could arrive inside an opened stream,
+        # where it would cost the try rather than be retried without it.
+        for name in (CLAUDE, "anthropic/claude-opus-5.5", "anthropic/claude-sonnet-5"):
+            self.assertNotIn("temperature", router(name)._body("s", "u", temperature=0.3, stream=True), name)
+        # Models that take one still get it, and the primary's request is unchanged.
+        self.assertEqual(router("anthropic/claude-sonnet-4.6")._body("s", "u", temperature=0.3, stream=True)
+                         ["temperature"], 0.3)
+        vps = model.OpenAIShaped("vps", model.VPS_URL, "vps", "opus", json_mode=False)
+        self.assertEqual(vps._body("s", "u", temperature=0.3, stream=True)["temperature"], 0.3)
+
+    def test_an_account_out_of_credit_inside_an_opened_stream_is_an_outage_not_a_failed_try(self):
+        with mock.patch.object(http, "open_stream", return_value=stream_error(402, "Insufficient credits")):
+            with self.assertRaises(model.ModelUnreachable) as e:
+                router().complete("s", "u", temperature=0.3)
+        self.assertEqual(e.exception.cause, "the openrouter account is out of credit")
+        # Through the Failover, that is the wait with both reasons, never a counted try.
+        f = failover(Named("vps", "opus", [signed_out()]), router())
+        with mock.patch.object(http, "open_stream", return_value=stream_error("402", "Insufficient credits")):
+            with self.assertRaises(model.ModelUnreachable) as e:
+                f.complete("s", "u")
+        self.assertTrue(e.exception.every)
+        self.assertIn("out of credit", e.exception.closer)
+
+    def test_a_dropped_stream_is_still_a_failed_try(self):
+        with mock.patch.object(http, "open_stream",
+                               return_value=stream_error("server_error", "Provider disconnected unexpectedly")):
+            with self.assertRaises(model.ModelError) as e:
+                router().complete("s", "u")
+        self.assertNotIsInstance(e.exception, NotNow)
+
+    def test_a_temperature_refused_inside_a_stream_is_asked_again_without_it(self):
+        p = router("anthropic/claude-sonnet-4.6")
+        answers = [stream_error(400, "temperature is not supported for this model"), streamed_answer("{}")]
+        with mock.patch.object(http, "open_stream", side_effect=answers) as opened:
+            self.assertEqual(p.complete("s", "u", temperature=0.3).text, "{}")
+        self.assertIn("temperature", opened.call_args_list[0].kwargs["json_body"])
+        self.assertNotIn("temperature", opened.call_args_list[1].kwargs["json_body"])
+
+
+class FallbackModelFits(unittest.TestCase):
+    def cfg(self, fallback: str, fallback_model: str = "") -> Config:
+        c = cfg_in(tempfile.mkdtemp())
+        c.provider, c.model, c.fallback, c.fallback_model = "vps", "opus", fallback, fallback_model
+        return c
+
+    def test_an_openrouter_model_left_behind_for_openai_is_one_sentence_not_a_404(self):
+        with mock.patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test"}), \
+                mock.patch.object(http, "open_stream", side_effect=AssertionError("asked")):
+            with self.assertRaises(model.ModelUnreachable) as e:
+                model.fallback_provider(self.cfg("openai", CLAUDE))
+        self.assertIn("SALES_FALLBACK_MODEL is anthropic/claude-opus-4.8", str(e.exception))
+        self.assertIn("Leave SALES_FALLBACK_MODEL empty to use gpt-5", str(e.exception))
+
+    def test_the_model_each_provider_is_given_by_default_is_one_it_serves(self):
+        keys = {"OPENAI_API_KEY": "sk-test", "ANTHROPIC_API_KEY": "ak-test", "OPENROUTER_API_KEY": "or-test"}
+        with mock.patch.dict(os.environ, keys):
+            for name, expect in (("openrouter", CLAUDE), ("openai", "gpt-5"), ("anthropic", "claude-opus-4-8")):
+                self.assertEqual(model.fallback_provider(self.cfg(name)).model, expect)
+            c = self.cfg("vps")
+            c.provider, c.model = "openai", "gpt-5"
+            self.assertEqual(model.fallback_provider(c).model, "opus")
+
+    def test_a_model_the_fallback_does_not_have_names_the_fallbacks_setting(self):
+        with mock.patch.dict(os.environ, {"OPENROUTER_API_KEY": "or-test"}):
+            p = model.fallback_provider(self.cfg("openrouter", "anthropic/claude-opus-9"))
+        gone = http.HttpError(404, "not found", b'{"error":{"message":"model_not_found"}}')
+        with mock.patch.object(http, "open_stream", side_effect=gone):
+            with self.assertRaises(model.ModelUnreachable) as e:
+                p.complete("s", "u")
+        self.assertIn("Set SALES_FALLBACK_MODEL to one", str(e.exception))
+        self.assertNotIn("SALES_PROPOSAL_MODEL", str(e.exception))
+
+
+class SaidOutLoud(unittest.TestCase):
+    def test_the_handover_is_a_warning_so_the_quiet_cron_log_keeps_it(self):
+        info: list[str] = []
+        warned: list[str] = []
+        f = model.Failover(lambda: Named("vps", "opus", [signed_out()]), lambda: Named("openrouter", CLAUDE, ["ok"]),
+                           log=info.append, warn=warned.append, primary_label="vps (opus)")
+        f.complete("s", "u")
+        self.assertEqual(warned, [f"vps (opus) cannot answer (the Claude sign-in on the VPS has lapsed); this run "
+                                  f"uses openrouter ({CLAUDE}) instead"])
+        self.assertEqual(info, [])
+
+    def test_the_requests_health_line_says_drafts_went_through_the_fallback(self):
+        cli = load_cli()
+        note = f"Drafted through openrouter ({CLAUDE}) because the Claude sign-in on the VPS has lapsed."
+        out = {"seen": 1, "done": 1, "failed": 0, "retry": 0, "waiting": 0, "skipped": 0, "reaped": 0,
+               "statuses": {"needs_input": 1}, "fallback": {"drafts": 1, "note": note}}
+        args = mock.Mock(limit=None, json=False)
+        err = io.StringIO()
+        with mock.patch.object(cli.queue_mod, "run_requests", return_value=out), \
+                mock.patch.object(cli, "_resync_stuck", return_value=""), \
+                mock.patch.object(cli, "_sb", return_value=None), \
+                mock.patch.object(cli, "_status") as status, contextlib.redirect_stderr(err), \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.cmd_requests(cfg_in(tempfile.mkdtemp()), args, fakes_logger()), 0)
+        ok, detail = status.call_args.args[3], status.call_args.args[4]
+        self.assertTrue(ok)
+        self.assertTrue(detail.startswith(f"1 drafted through the fallback: {note[:-1]}; 1 done (1 needs input)"),
+                        detail)
+        self.assertIn("WARN  requests: 1 drafted through the fallback", err.getvalue())
+
+
+class QueueBesideAnOutage(unittest.TestCase):
+    """The run's other requests while a draft waits for a model."""
+
+    setUp = QueueOnTheFallback.setUp
+    queue = QueueOnTheFallback.queue
+    worker = QueueOnTheFallback.worker
+
+    def rebuild_ready(self, rid: str, pid: str) -> None:
+        deal = specific_deal()
+        deal["cost"]["close"] = "USD 4,000"
+        self.pg.put(PROP, {"id": pid, "request_id": rid, "contact_id": "c-1", "lang": "en", "status": "drafting",
+                           "deal": deal, "validation": {}, "html_path": f"proposals/{pid}/v1.html", "pdf_path": None,
+                           "model": f"openrouter:{CLAUDE}", "created_by": "rep.one@maharamedia.com",
+                           "created_at": "2099-01-01T10:00:00Z", "updated_at": "2099-01-01T10:00:00Z"})
+        self.pg.put(REQ, {"id": rid, "kind": "proposal", "contact_id": "c-1",
+                          "params": {"proposal_id": pid, "rebuild": True, "lang": "en"}, "status": "queued",
+                          "requested_by": "rep.one@maharamedia.com", "requested_at": "2099-01-01T11:09:00Z",
+                          "claimed_at": None, "claimed_by": None, "attempts": 0, "finished_at": None,
+                          "error": None, "result": None})
+
+    def test_a_rebuild_behind_a_waiting_draft_still_goes_ahead(self):
+        self.queue("req-1", "p-1")
+        self.rebuild_ready("req-9", "p-9")
+        vps = Named("vps", "opus", [signed_out()])
+        out = self.worker(lambda c, l: vps, lambda c, l: Named("openrouter", CLAUDE, [no_credit()])).run()
+        self.assertEqual((out["waiting"], out["done"]), (1, 1))
+        self.assertEqual(self.pg.one(REQ, id="req-9")["status"], "done")
+        self.assertEqual((self.pg.one(REQ, id="req-1")["status"], self.pg.one(REQ, id="req-1")["attempts"]),
+                         ("queued", 0))
+        self.assertIn("No model can answer right now", out["blocked"])
+
+    def test_every_draft_waiting_on_no_model_is_told_and_the_fallback_is_asked_once(self):
+        self.queue("req-1", "p-1")
+        self.queue("req-2", "p-2")
+        vps = Named("vps", "opus", [signed_out()])
+        broke = Named("openrouter", CLAUDE, [no_credit()])
+        out = self.worker(lambda c, l: vps, lambda c, l: broke).run()
+        self.assertEqual(out["waiting"], 2)
+        self.assertEqual((len(vps.calls), len(broke.calls)), (1, 1))
+        second = self.pg.one(REQ, id="req-2")
+        self.assertEqual((second["status"], second["attempts"], second["claimed_by"]), ("queued", 0, None))
+        self.assertTrue(second["error"].startswith("No model can answer right now"), second["error"])
+        self.assertEqual(self.pg.one(PROP, id="p-2")["error"], self.pg.one(PROP, id="p-1")["error"])
+        self.assertIn("tell the CEO", self.pg.one(PROP, id="p-2")["error"])
+
+    def test_a_draft_cut_off_partway_does_not_put_its_sentence_on_the_others(self):
+        self.queue("req-1", "p-1")
+        self.queue("req-2", "p-2")
+        vps = Named("vps", "opus", [triage_answer(), signed_out()])
+        out = self.worker(lambda c, l: vps, lambda c, l: Named("openrouter", CLAUDE, ["never"])).run()
+        self.assertEqual(out["waiting"], 2)
+        self.assertIn("partway", self.pg.one(PROP, id="p-1")["error"])
+        self.assertIsNone(self.pg.one(PROP, id="p-2").get("error"))  # it never started: nothing stopped partway
+        second = self.pg.one(REQ, id="req-2")
+        self.assertEqual((second["status"], second["attempts"]), ("queued", 0))
+        self.assertTrue(second["error"].startswith("Not started this run: vps (opus) stopped answering partway "
+                                                   "through another proposal"), second["error"])
+
+    def test_a_run_on_the_fallback_reports_its_drafts(self):
+        self.queue("req-1", "p-1")
+        router_ = Named("openrouter", CLAUDE, [triage_answer(), specific_deal()])
+        out = self.worker(lambda c, l: Named("vps", "opus", [signed_out()]), lambda c, l: router_).run()
+        self.assertEqual(out["fallback"], {"drafts": 1, "note": f"Drafted through openrouter ({CLAUDE}) because the "
+                                                                "Claude sign-in on the VPS has lapsed."})
+        out = self.worker(lambda c, l: Named("vps", "opus", []), fakes.never).run()
+        self.assertNotIn("fallback", out)
 
 
 if __name__ == "__main__":

@@ -90,6 +90,9 @@ class Worker:
         self._failover: Optional[model_mod.Failover] = None
         # When no model can be made at all: the sentence for the closers waiting.
         self._model_wait: Optional[str] = None
+        # The drafts this run wrote through the fallback, and its sentence.
+        self._fallback_drafts = 0
+        self._fallback_note: Optional[str] = None
 
     def route(self) -> model_mod.Failover:
         """This run's model: one Failover for every draft in it, so the choice is made once."""
@@ -101,7 +104,8 @@ class Worker:
                     c, l, primary_model=m))
                 fallback = lambda: make(cfg, log)  # noqa: E731
             self._failover = model_mod.Failover(lambda: self.provider_factory(cfg, log), fallback, log=log,
-                                                job=KIND, primary_label=f"{cfg.provider} ({cfg.model})")
+                                                job=KIND, primary_label=f"{cfg.provider} ({cfg.model})",
+                                                warn=self.warn)
         return self._failover
 
     # ---- the drain -----------------------------------------------------
@@ -122,6 +126,7 @@ class Worker:
         out: dict[str, Any] = {"seen": 0, "done": 0, "failed": 0, "retry": 0, "waiting": 0, "skipped": 0,
                                "reaped": self.reap(), "statuses": {}}
         self._model_wait = None
+        self._fallback_drafts, self._fallback_note = 0, None
         rows = self.sb.queued(KIND, max_attempts=MAX_ATTEMPTS, limit=limit or self.cfg.requests_per_run)
         out["seen"] = len(rows)
         checked: dict[bool, Optional[str]] = {}
@@ -167,7 +172,15 @@ class Worker:
                 out["waiting"] += 1
                 out["blocked"] = str(e)
                 self.warn(f"request {rid}: waiting: {e}")
-                break
+                if rebuild:
+                    break
+                # The run's other drafts would meet the same outage: they wait
+                # unclaimed with the reason on them, as when preflight finds it.
+                # A rebuild asks no model, so a closer who filled the gaps is not
+                # kept waiting behind it.
+                checked[False] = getattr(e, "others", "") or str(e)
+                self._model_wait = (e.closer or None) if getattr(e, "every", False) else None
+                continue
             except Exception as e:  # noqa: BLE001 - one request is never worth the run
                 msg = http.scrub(f"{type(e).__name__}: {e}" if not str(e) else str(e))[:500]
                 final = attempts >= MAX_ATTEMPTS
@@ -182,6 +195,10 @@ class Worker:
                 self.warn(f"request {rid}: try {attempts} failed: {msg}")
         if blocked:
             out["blocked"] = blocked
+        if self._fallback_drafts:
+            # Said where the cockpit's health line and the log carry it: a paid
+            # fallback drafting in place of the primary is never silent.
+            out["fallback"] = {"drafts": self._fallback_drafts, "note": self._fallback_note}
         return out
 
     def preflight(self, *, draft: bool) -> Optional[str]:
@@ -201,7 +218,7 @@ class Worker:
                 self.route().ready()
                 self.fathom_factory(self.cfg, self.log)
             except NotNow as e:
-                self._model_wait = getattr(e, "closer", "") or None
+                self._model_wait = (getattr(e, "closer", "") or None) if getattr(e, "every", False) else None
                 return str(e)
         return None
 
@@ -307,6 +324,9 @@ class Worker:
             "rebuild": False,
             "model_route": outcome.route,
         }
+        if outcome.route.get("fallback"):
+            self._fallback_drafts += 1
+            self._fallback_note = outcome.route.get("note")
         return self._finish(proposal, outcome.deal, outcome.result, outcome.html_path, resolved=resolved,
                             variant=outcome.variant, model=outcome.model, notes=outcome.notes, extra=extra,
                             lang=lang, recording_id=call.recording_id)
