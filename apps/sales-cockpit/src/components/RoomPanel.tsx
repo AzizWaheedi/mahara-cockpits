@@ -174,7 +174,9 @@ export function RoomPanelView({
           !(introMarked && (a.key === "noshow" || a.key === "showed")) &&
           !(a.key === "retry" && !canRetry),
       );
-  const tone = roomTone(moment, room);
+  // A stale read draws no live teal: the dot says "not known now".
+  const own = roomTone(moment, room);
+  const tone = stale && own === "now" ? "quiet" : own;
   // Nothing on the line is moving: a stale read, a room that will not be
   // made or is late, and a room the sweep should have closed.
   const frozen =

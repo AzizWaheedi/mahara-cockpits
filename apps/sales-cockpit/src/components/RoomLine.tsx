@@ -231,8 +231,27 @@ export function Say({ s }: { s: Sentence }) {
 
 function SayPart({ p }: { p: Part }) {
   if (typeof p === "string") return <>{p}</>;
-  if ("mono" in p)
-    return <span className="font-mono text-[0.94em]">{p.mono}</span>;
+  if ("mono" in p) {
+    // A link to read out breaks only after a slash, never inside its code;
+    // anything else in mono (a time, "8 s") never breaks at all.
+    const bits = p.mono.split(/(?<=\/)/);
+    if (bits.length === 1)
+      return (
+        <span className="whitespace-nowrap font-mono text-[0.94em]">
+          {p.mono}
+        </span>
+      );
+    return (
+      <span className="font-mono text-[0.94em] [overflow-wrap:normal]">
+        {bits.map((b, i) => (
+          <span key={i}>
+            {i ? <wbr /> : null}
+            {b}
+          </span>
+        ))}
+      </span>
+    );
+  }
   return p.form === "paren" ? (
     <>
       {p.lead}(<span className="font-mono text-[0.94em]">{mmss(p.left)}</span>{" "}

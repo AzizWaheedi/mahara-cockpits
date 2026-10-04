@@ -435,7 +435,7 @@ describe("D16. the Undo window can be seen without motion", () => {
     expect(text(V.autoParts("Faisal", 8))).toBe(
       "Sending a video link to Faisal in 8 s.",
     );
-    expect(V.autoParts("Faisal", 8)).toContainEqual({ mono: "8 s" });
+    expect(V.autoParts("Faisal", 8)).toContainEqual({ mono: "8" });
   });
 });
 

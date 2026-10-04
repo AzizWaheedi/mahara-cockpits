@@ -205,6 +205,45 @@ interface Queue {
   loadedAt: number;
 }
 
+/**
+ * dial.queue's answer, or a thrown error: an answer without its queue, its
+ * counts or its day is no answer, and the last good queue stays on screen
+ * (a garbled 200 must not take the dialer, and an open video room, down).
+ */
+function readQueue(v: unknown): Omit<Queue, "loadedAt"> {
+  const o =
+    typeof v === "object" && v !== null && !Array.isArray(v)
+      ? (v as Record<string, unknown>)
+      : null;
+  const today = o?.today;
+  if (
+    !o ||
+    !Array.isArray(o.queue) ||
+    !Array.isArray(o.counts) ||
+    !o.counts.every(n => typeof n === "number" && Number.isFinite(n)) ||
+    typeof today !== "object" ||
+    today === null
+  )
+    // Said after "The queue could not be read:".
+    throw new Error(
+      "the answer was not one, and the dialer tries again by itself",
+    );
+  const out = o as unknown as Omit<Queue, "loadedAt">;
+  return {
+    ...out,
+    queue: (o.queue as unknown[]).filter(
+      (i): i is DialItem =>
+        typeof i === "object" &&
+        i !== null &&
+        typeof (i as DialItem).contact_id === "string",
+    ),
+    open:
+      typeof o.open === "object" && o.open !== null
+        ? (o.open as Attempt)
+        : null,
+  };
+}
+
 interface CallInfo {
   final: boolean;
   answered: boolean;
@@ -561,10 +600,12 @@ export default function DialerPage({ me }: { me: Me }) {
         const asked = asRef.current;
         const loadedAt = Date.now();
         try {
-          const out = await api<Omit<Queue, "loadedAt">>("dial.queue", {
-            as: asked,
-            limit: 80,
-          });
+          const out = readQueue(
+            await api<unknown>("dial.queue", {
+              as: asked,
+              limit: 80,
+            }),
+          );
           if (asked === asRef.current) {
             setQ({
               ...out,
@@ -1996,9 +2037,12 @@ function CallPane({
       />
     ) : null;
   const pickerInStep = mode === "unanswered";
-  // One teal button at a time: while a room is open, or a link is being
-  // picked or about to go, Call steps back.
-  const callQuiet = video.open || picking || autoAt !== null;
+  // One teal button at a time: while the room panel holds the primary (an
+  // open room, or a failed one offering the other provider), or a link is
+  // being picked or about to go, Call and Next lead step back.
+  const panelLeads =
+    video.open || (failedOnScreen && video.live?.health?.worker_ok !== false);
+  const callQuiet = panelLeads || picking || autoAt !== null;
 
   async function copyNumber() {
     if (!l?.phone) return;
@@ -2139,6 +2183,7 @@ function CallPane({
                 : null
             }
             picker={pickerInStep ? picker : null}
+            quietNext={panelLeads}
             videoUnread={
               roomsSetup.error && missed !== null && !video.room
                 ? ROOMS_UNREAD
@@ -2404,6 +2449,7 @@ function AfterMissStep({
   onVideo = null,
   picker = null,
   videoUnread = null,
+  quietNext = false,
 }: {
   step: AfterMiss;
   moment: MissMoment;
@@ -2417,6 +2463,8 @@ function AfterMissStep({
   picker?: ReactNode;
   /** The video setting could not be read: said where its button would be. */
   videoUnread?: string | null;
+  /** Something else on the card holds the teal button (the room panel). */
+  quietNext?: boolean;
 }) {
   return (
     <NextStep
@@ -2428,7 +2476,11 @@ function AfterMissStep({
       }
     >
       {/* While the picker is open its button is the teal one. */}
-      <NextLeadButton onNext={onNext} primary={!picker} focus={focusNext} />
+      <NextLeadButton
+        onNext={onNext}
+        primary={!picker && !quietNext}
+        focus={focusNext}
+      />
       {step.send ? (
         <button
           type="button"

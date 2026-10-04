@@ -376,7 +376,7 @@ export function autoParts(
   left: number,
 ): Sentence {
   const who = String(name ?? "").trim() || "the lead";
-  return [`Sending a video link to ${who} in `, { mono: `${left} s` }, "."];
+  return [`Sending a video link to ${who} in `, { mono: String(left) }, " s."];
 }
 
 /** "Sending a video link to Faisal in 10 s." */
