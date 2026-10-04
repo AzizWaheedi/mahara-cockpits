@@ -92,6 +92,11 @@ describe("the duplicate detector (C28)", () => {
     expect(duplicatePair([m("a", "Hi Huda", 0), m("b", "Hi Sara", 5)])).toBeNull();
     expect(duplicatePair([m("a", "Hi Huda", 0), m("a", "Hi Huda", 5)])).toBeNull();
     expect(duplicatePair([m("a", "Hi", 0), { ...m("b", "Hi", 3), direction: "inbound" }])).toBeNull();
+    // Two of the cockpit's own sends (each its own request id) are no copy; the connector's copy of one still is (stress2 fix round 1).
+    const own = new Map([["a", "req-1"], ["b", "req-2"]]);
+    const ownPair = (x: { id: string }, y: { id: string }) => own.has(x.id) && own.has(y.id) && own.get(x.id) !== own.get(y.id);
+    expect(duplicatePair([m("a", "Hi Huda", 0), m("b", "Hi Huda", 5)], 60, ownPair)).toBeNull();
+    expect(duplicatePair([m("a", "Hi Huda", 0), m("b", "Hi Huda", 5), m("copy", "Hi Huda", 6)], 60, ownPair)?.map(x => x.id)).toEqual(["a", "copy"]);
     // It watches only once a manager has said the WA Connector is off (the connector copies every send until then).
     expect(duplicateWatchOn({})).toBe(false);
     expect(duplicateWatchOn({ connector_off: false })).toBe(false);

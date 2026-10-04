@@ -72,7 +72,11 @@ export function stopHoldOf(rows: Row[], now: number): string | null {
  * started) within HELD_WAIT_MS; a latest call marked invalid (disqualified);
  * or any call booked after the opener was written.
  */
-export function openerTakenBack(calls: Row[], now: number, draftedAt: number | null): string | null {
+export function openerTakenBack(calls: Row[], now: number, draftedAt: number | null, stage: unknown = null): string | null {
+  // A deal the team ended in the CRM (its stage says disqualified or lost):
+  // a rep who disqualifies in HighLevel leaves the call as it was, so the
+  // call's own mark never says so (stress2, round 1; the desk's pool_of rule).
+  if (stageOut(stage)) return AGENT_COPY.opener_stage_out;
   const t = (v: unknown) => {
     const n = Date.parse(String(v ?? ""));
     return Number.isFinite(n) ? n : null;
@@ -90,6 +94,11 @@ export function openerTakenBack(calls: Row[], now: number, draftedAt: number | n
   if (mine.some(a => ["showed", "confirmed"].includes(status(a)) && start(a) <= now && start(a) > now - HELD_WAIT_MS))
     return AGENT_COPY.opener_held;
   return null;
+}
+
+/** A CRM stage that ends the deal: disqualified or lost, any case, with or without its emoji (waves.py STAGE_OUT). */
+export function stageOut(stage: unknown): boolean {
+  return /disqualif|(?<![a-z])lost(?![a-z])/i.test(String(stage ?? ""));
 }
 
 /**
@@ -129,6 +138,8 @@ export const AGENT_COPY = {
   batch_not_open: "Some of these openers were already sent, skipped or taken back. Reload the page.",
   batch_not_opener: "Only backlog openers go out in a paced batch. Approve other drafts one by one.",
   batch_all_held: "Every opener here is held by a rep. Ask them, or release the hold first.",
+  /** Every opener asked for belongs to a stopped wave (the desk takes them back within 5 minutes). */
+  batch_taken_back: "These {n} openers were the stopped wave's, so none was approved. The desk takes them back within 5 minutes.",
   not_yours: "That is another rep's lead.",
   draft_missing: "That draft is not here any more.",
   agent_off: "The follow-up agent is switched off (followups.enabled), so nothing is sent.",
@@ -147,6 +158,7 @@ export const AGENT_COPY = {
   opener_booked_since: "The lead booked a call after this opener was written, so the backlog opener was taken back.",
   opener_held: "The lead had a call in the last day, so the backlog opener was taken back.",
   opener_disqualified: "The lead's latest call was marked invalid (disqualified), so the backlog opener was taken back.",
+  opener_stage_out: "The lead's deal is in a disqualified or lost stage in the CRM, so the backlog opener was taken back.",
   stop_paused: "The agent is paused for this lead ({why}), so the opener waits. A rep resumes the lead, or holds the opener.",
   stop_answered: "This stop was already answered ({state}). Reload to see it.",
   stop_dnd_kept: "This lead asked to stop for good, so the agent stays off. Take do-not-disturb off in HighLevel first if they asked to hear from us again.",
@@ -233,6 +245,22 @@ export function makeFollowupAgent(deps: AgentDeps): { actions: Record<string, Ac
 
   // ------------------------------------------------------------- followup.wave
 
+  /**
+   * A wave press's audit row on the repeated path (stress2, round 1): the
+   * write landed and its answer was lost, so the press that finds it done
+   * writes the row the first never did, unless one is there for this wave
+   * and this move since `since` (the move's own time). A row that cannot be
+   * looked for is written: twice is better than none.
+   */
+  async function auditOnce(who: Who, action: string, id: string, since: string | null, before: unknown, after: unknown): Promise<void> {
+    const had = await io
+      .db(
+        `cockpit_audit_log?entity_type=eq.cockpit_sales_followup_waves&entity_id=eq.${enc(id)}&action=eq.${enc(action)}${since ? `&created_at=gte.${enc(since)}` : ""}&select=id&limit=1`,
+      )
+      .catch(() => []);
+    if (!had.length) await deps.audit(who, action, "cockpit_sales_followup_waves", id, before, after, { retry: true });
+  }
+
   async function wave(who: Who, b: Row): Promise<Row> {
     needManager(who);
     const op = String(b.op ?? "");
@@ -265,8 +293,10 @@ export function makeFollowupAgent(deps: AgentDeps): { actions: Record<string, Ac
           const cur = (await io.db(
             `cockpit_sales_followup_waves?pool=eq.${enc(pool)}&state=in.(running,paused)&select=*&limit=1`,
           ))[0];
-          if (cur && lower(cur.made_by) === lower(who.email) && io.now() - Date.parse(String(cur.created_at)) < 60_000)
+          if (cur && lower(cur.made_by) === lower(who.email) && io.now() - Date.parse(String(cur.created_at)) < 60_000) {
+            await auditOnce(who, "followup.wave.start", String(cur.id), null, null, cur);
             return { wave: cur, repeated: true };
+          }
           throw refusal(AGENT_COPY.wave_running, 409);
         }
         throw e;
@@ -289,7 +319,12 @@ export function makeFollowupAgent(deps: AgentDeps): { actions: Record<string, Ac
     for (let i = 0; i < 3; i++) {
       const before = (await io.db(`cockpit_sales_followup_waves?id=eq.${enc(id)}&select=*`))[0];
       if (!before) throw refusal(AGENT_COPY.wave_missing, 404);
-      if (before.state === m.to) return { wave: before, repeated: true };
+      if (before.state === m.to) {
+        // The move landed and its answer was lost (or another tab made it): its audit row, once.
+        const since = before.updated_at ? new Date(Date.parse(String(before.updated_at)) - 1000).toISOString() : null;
+        await auditOnce(who, `followup.wave.${op}`, id, since, null, before);
+        return { wave: before, repeated: true };
+      }
       if (!m.from.includes(String(before.state)))
         throw refusal(AGENT_COPY.wave_state.replace("{state}", String(before.state)).replace("{op}", op === "stop" ? "stopped" : `${op}d`));
       // Pause and stop always work; a resume waits for the switch and the gate.
@@ -383,21 +418,42 @@ export function makeFollowupAgent(deps: AgentDeps): { actions: Record<string, Ac
     }
     if (!ids.length) throw refusal(AGENT_COPY.batch_empty, 409);
     if (ids.length > BATCH_MAX) throw refusal(AGENT_COPY.batch_too_many, 400);
-    const drafts = await io.db(`cockpit_sales_followups?id=in.(${ids.map(enc).join(",")})&select=id,status,segment,owner_email,expires_at,channel,context`);
-    if (drafts.length !== ids.length || drafts.some(d => d.status !== "draft")) throw refusal(AGENT_COPY.batch_not_open, 409);
-    if (drafts.some(d => d.segment !== "reactivate")) throw refusal(AGENT_COPY.batch_not_opener, 409);
-    for (const d of drafts) mayAct(who, d);
+    const asked = await io.db(`cockpit_sales_followups?id=in.(${ids.map(enc).join(",")})&select=id,status,segment,owner_email,expires_at,channel,context,contact_id`);
+    if (asked.length !== ids.length || asked.some(d => d.status !== "draft")) throw refusal(AGENT_COPY.batch_not_open, 409);
+    if (asked.some(d => d.segment !== "reactivate")) throw refusal(AGENT_COPY.batch_not_opener, 409);
+    for (const d of asked) mayAct(who, d);
+    // The openers' waves (stress2, round 1): a stopped wave's openers are
+    // being taken back by the desk, so they are never approved (send_due
+    // would refuse each, and they would take the batch's 40 from a wave that
+    // runs). A paused wave's wait for its resume.
+    const metaWave = new Map(
+      (await io.db(`cockpit_sales_followup_meta?followup_id=in.(${ids.map(enc).join(",")})&select=followup_id,wave_id`)).map(m => [
+        String(m.followup_id),
+        String(m.wave_id ?? ""),
+      ]),
+    );
+    const waveOf = (d: Row) => metaWave.get(String(d.id)) || String(openerMeta(d).wave_id ?? "");
+    const waveIds = [...new Set(asked.map(waveOf).filter(x => UUID.test(x)))];
+    const waveRows = waveIds.length
+      ? await io.db(`cockpit_sales_followup_waves?id=in.(${waveIds.map(enc).join(",")})&select=id,state`)
+      : [];
+    const waveState = new Map(waveRows.map(r => [String(r.id), String(r.state)]));
+    const stateOf = (d: Row) => waveState.get(waveOf(d)) ?? null;
+    const takenBack = asked.filter(d => ["done", "cancelled"].includes(String(stateOf(d))));
+    const drafts = asked.filter(d => !takenBack.includes(d));
+    if (!drafts.length) throw refusal(AGENT_COPY.batch_taken_back.replace("{n}", String(takenBack.length)), 409, { code: "taken_back" });
+    const waiting = drafts.filter(d => stateOf(d) === "paused").length;
     if (drafts.some(d => d.channel === "whatsapp_template")) {
       // The month's template budget (fix round 4): spent, nothing is approved
       // that could not go this month (each approved opener holds its lead's
-      // one open draft). Not readable: nothing is approved on a guess.
+      // one open draft). Not readable: nothing is approved on a guess. Read
+      // page by page (PostgREST answers at most 1,000 rows a request, under
+      // the shipped cap of 1,262: stress2, round 1), never one capped GET.
       const cap = budgetCap(s.whatsapp_guard);
-      const month = await io
-        .db(`cockpit_sales_messages?via=eq.workflow&state=neq.failed&created_at=gte.${enc(kuwaitMonthStart(io.now()))}&select=id&limit=${Math.max(1, cap)}`)
-        .catch(() => null);
-      if (month === null)
+      const spentSoFar = await countMonthTemplates(cap).catch(() => null);
+      if (spentSoFar === null)
         throw refusal("This month's WhatsApp template spend could not be read, so nothing was approved. Try again in a minute.", 503);
-      const spent = budgetCheck(month.length, s.whatsapp_guard).refusal;
+      const spent = budgetCheck(spentSoFar, s.whatsapp_guard).refusal;
       if (spent) throw refusal(spent, 409, { code: "budget" });
     }
     const gap = Math.max(30, Math.min(3600, Number(obj(obj(s.followups).waves).batch_gap_s ?? 45) || 45));
@@ -462,15 +518,98 @@ export function makeFollowupAgent(deps: AgentDeps): { actions: Record<string, Ac
       );
     }
     if (!approved.length) throw refusal(AGENT_COPY.batch_all_held, 409);
+    // When the openers can first go: the desk and send_due send a first
+    // message only inside first_hours on the lead's clock and never on their
+    // day off, so a press at 20:00 on a Thursday goes from Saturday 09:00
+    // (stress2, round 1). opens_at is the earliest such moment of any of
+    // them; in_hours says whether every one can go at its own turn.
+    const timing = await openingTimes(
+      sorted.filter(d => approved.includes(String(d.id))),
+      approved.map((_, n) => start + n * gap * 1000),
+      s.followups,
+    );
     const out: Row = {
       count: approved.length,
       first_at: iso(start),
       last_at: iso(start + (approved.length - 1) * gap * 1000),
       gap_s: gap,
+      ...(timing ? { opens_at: iso(timing.opens_at), in_hours: timing.in_hours } : {}),
       ...(held.length ? { held: held.length } : {}),
+      ...(takenBack.length ? { taken_back: takenBack.length } : {}),
+      ...(waiting ? { waiting_resume: waiting } : {}),
     };
     await deps.audit(who, "followup.batch", "cockpit_sales_followup_meta", null, null, out, { ids: approved, held });
     return out;
+  }
+
+  /**
+   * This month's templates that went (or may have), counted page by page:
+   * 1,000 rows a request (PostgREST's max-rows), stopping at `cap`. Throws
+   * when a page cannot be read.
+   */
+  async function countMonthTemplates(cap: number): Promise<number> {
+    const PAGE = 1000;
+    const since = enc(kuwaitMonthStart(io.now()));
+    let n = 0;
+    for (let off = 0; off < Math.max(1, cap) + PAGE; off += PAGE) {
+      const rows = await io.db(
+        `cockpit_sales_messages?via=eq.workflow&state=neq.failed&created_at=gte.${since}&select=id&order=id.asc&limit=${PAGE}&offset=${off}`,
+      );
+      n += rows.length;
+      if (rows.length < PAGE || n >= cap) break;
+    }
+    return n;
+  }
+
+  /**
+   * The first moment each approved opener may go (hoursRefusal: first_hours
+   * on the lead's clock, never their day off), from its own turn, in
+   * quarter hours up to eight days on. Null when the leads' countries cannot
+   * be read (the line then says nothing about the hours).
+   */
+  async function openingTimes(
+    drafts: Row[],
+    turns: number[],
+    followups: unknown,
+  ): Promise<{ opens_at: number; in_hours: boolean } | null> {
+    const contacts = [...new Set(drafts.map(d => String(d.contact_id ?? "")).filter(Boolean))];
+    let leads: Row[];
+    try {
+      leads = contacts.length
+        ? await io.db(`cockpit_sales_leads?contact_id=in.(${contacts.map(c => `"${enc(c)}"`).join(",")})&select=contact_id,country`)
+        : [];
+    } catch {
+      return null;
+    }
+    const country = new Map(leads.map(l => [String(l.contact_id), l.country]));
+    const STEP = 15 * 60_000;
+    let opens = Number.POSITIVE_INFINITY;
+    let inHours = true;
+    const memo = new Map<string, number>();
+    drafts.forEach((d, i) => {
+      const turn = turns[i] ?? turns[0] ?? io.now();
+      const c = country.get(String(d.contact_id ?? "")) ?? null;
+      const ok = (t: number) => !hoursRefusal({ segment: "reactivate", touch: 1, country: c, now: t, followups, dayOff: true });
+      if (ok(turn)) {
+        opens = Math.min(opens, turn);
+        return;
+      }
+      inHours = false;
+      const key = `${String(c ?? "")}:${Math.floor(turn / STEP)}`;
+      let at = memo.get(key);
+      if (at === undefined) {
+        at = Number.POSITIVE_INFINITY;
+        const from = Math.ceil(turn / STEP) * STEP;
+        for (let t = from; t < turn + 8 * 86_400_000; t += STEP)
+          if (ok(t)) {
+            at = t;
+            break;
+          }
+        memo.set(key, at);
+      }
+      opens = Math.min(opens, at);
+    });
+    return Number.isFinite(opens) ? { opens_at: opens, in_hours: inHours } : null;
   }
 
   // ------------------------------------------------------------- followup.hold
@@ -570,7 +709,7 @@ export function makeFollowupAgent(deps: AgentDeps): { actions: Record<string, Ac
       const h = await deps.whatsappHealth("followup");
       if (h.paused) throw holdAll(h.why);
     }
-    const lead = (await io.db(`cockpit_sales_leads?contact_id=eq.${enc(String(f.contact_id))}&select=country`))[0];
+    const lead = (await io.db(`cockpit_sales_leads?contact_id=eq.${enc(String(f.contact_id))}&select=country,stage_name`))[0];
     const hours = hoursRefusal({ segment: f.segment, touch: f.touch, country: lead?.country, now: io.now(), followups, dayOff: true });
     if (hours) throw refusal(hours);
     // A rep paused the agent for this lead, or the lead asked to stop, since
@@ -592,7 +731,7 @@ export function makeFollowupAgent(deps: AgentDeps): { actions: Record<string, Ac
         `cockpit_sales_calendar?contact_id=eq.${enc(String(f.contact_id))}&call_type=in.(intro,demo)&select=appointment_id,status,start_at,booked_at&order=start_at.desc&limit=100`,
       );
       const drafted = Date.parse(String(f.created_at ?? ""));
-      const why = openerTakenBack(calls, io.now(), Number.isFinite(drafted) ? drafted : null);
+      const why = openerTakenBack(calls, io.now(), Number.isFinite(drafted) ? drafted : null, lead?.stage_name);
       if (why) {
         await io.db(`cockpit_sales_followups?id=eq.${enc(String(f.id))}&status=eq.draft`, {
           method: "PATCH",

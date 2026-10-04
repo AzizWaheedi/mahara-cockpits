@@ -350,7 +350,10 @@ describe("the undo never leaves a call counted as shown that was not", () => {
         return orig(m, p, b);
       };
       await w.rooms.actions["room.mark"]!(setter, { room_id: id, version: Number(w.room(id).version), what: "lead_in" });
-      await Promise.resolve();
+      // The count is booking (its claim landed, its POST held at the gate)
+      // when the undo comes in: waited for, not left to microtask timing.
+      for (let k = 0; k < 200 && !w.room(id).count_claimed_at; k++) await new Promise(r => setTimeout(r, 0));
+      expect(w.room(id).count_claimed_at ?? null).not.toBeNull();
       await w.rooms.actions["room.mark"]!(setter, { room_id: id, version: Number(w.room(id).version), what: "not_lead" });
       release();
       await w.flush();

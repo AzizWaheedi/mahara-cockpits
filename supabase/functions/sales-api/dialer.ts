@@ -281,6 +281,12 @@ export interface Appt {
   confirmed: boolean;
   /** The last confirmation try that did not reach them. */
   last_try: number | null;
+  /**
+   * The lead joined a video room carrying this call and the join stands (not
+   * taken back): the intro was had on video, so it never comes back as
+   * "Intro call now" while its mark catches up (stress2, round 1).
+   */
+  room_joined?: boolean;
 }
 
 /** One lead as the queue sees it. */
@@ -431,7 +437,7 @@ export function appointmentWork(
   if (!a || ENDED.has(String(a.status ?? ""))) return null;
   const mine = !meGhl || !a.assigned || a.assigned === meGhl;
   if (as === "setter" && a.type === "intro" && mine && introWindow(a, now)) {
-    if (introWaiting(a, now)) return null;
+    if (introWaiting(a, now) || a.room_joined === true) return null;
     return { tier: 0, kind: "intro", why: `Intro call now, booked for ${whenWords(a.start, now).replace(/^today at /, "")}`, sort: a.start };
   }
   const farAhead = a.booked !== null && a.start - a.booked > DAY;

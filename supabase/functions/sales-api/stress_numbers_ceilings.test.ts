@@ -46,4 +46,15 @@ describe("the month's template budget is never passed", () => {
     }
   });
 
+  test("followupAgent.ts reads the month the same way (stress2, round 1): paged or counted, never one capped GET", () => {
+    // followup.batch's budget check read the month in one GET with limit=cap
+    // (1,262 at the shipped budget): PostgREST answered 1,000, under the cap,
+    // so Approve all was never refused once the month's budget was spent.
+    const src = readFileSync(new URL("./followupAgent.ts", import.meta.url), "utf8");
+    expect(src).toContain("budgetCheck(");
+    const reads = src.split("\n").filter(l => /via=eq\.workflow/.test(l) && /created_at=gte/.test(l) && !/contact_id=eq/.test(l));
+    expect(reads.length).toBeGreaterThan(0);
+    for (const l of reads) expect({ read: l.trim(), paged: /offset=|count=exact/.test(l) }).toEqual({ read: l.trim(), paged: true });
+  });
+
 });

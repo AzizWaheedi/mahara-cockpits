@@ -274,8 +274,12 @@ export function matchSent<T extends SeenMessage>(list: T[], since: number, text?
   return null;
 }
 
-/** Two identical outbound WhatsApp messages to one lead within `windowS` seconds: the pair, or null. */
-export function duplicatePair<T extends SeenMessage>(list: T[], windowS = 60): [T, T] | null {
+/**
+ * Two identical outbound WhatsApp messages to one lead within `windowS`
+ * seconds: the pair, or null. `skip` leaves out a pair that is no copy (two
+ * of the cockpit's own sends, each with its own request id: stress2, round 1).
+ */
+export function duplicatePair<T extends SeenMessage>(list: T[], windowS = 60, skip?: (a: T, b: T) => boolean): [T, T] | null {
   const out = list
     .filter(m => m.direction === "outbound" && m.channel === "whatsapp" && normText(m.body) && Number.isFinite(Date.parse(String(m.at ?? ""))))
     .sort((a, b) => Date.parse(String(a.at)) - Date.parse(String(b.at)));
@@ -285,7 +289,7 @@ export function duplicatePair<T extends SeenMessage>(list: T[], windowS = 60): [
       const b = out[j] as T;
       if (Date.parse(String(b.at)) - Date.parse(String(a.at)) > windowS * 1000) break;
       if (a.id && a.id === b.id) continue;
-      if (normText(a.body) === normText(b.body)) return [a, b];
+      if (normText(a.body) === normText(b.body) && !skip?.(a, b)) return [a, b];
     }
   return null;
 }

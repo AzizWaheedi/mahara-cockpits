@@ -206,6 +206,7 @@ const LANE_SENTENCES = {
   test_only: "Video rooms are in testing, so they work only for the test contact for now.",
   no_contact: "Choose a lead first.",
   contact_unread: "HighLevel did not answer, so we cannot check this lead yet. Try again in a minute.",
+  contact_gone: "This lead is not in HighLevel any more (merged or deleted). Find them again in the cockpit and make the room there.",
   fallback_scope: "For now, video links after a missed call are only for booked intros. Call again or send a message.",
   fallback_pilot: "Video links after a missed call are in a pilot that does not include your seat yet. Ask the manager to add you.",
   wrap_too_early: "This call's room opens at {time}, 30 minutes before it starts. Try again then.",

@@ -235,7 +235,9 @@ describe("security r3: what one seat's presses send one lead", () => {
     // is also a new Zoom or Google meeting on the host's own account.
     const w = setup();
     for (let i = 0; i < 12; i++) {
-      const out = await w.rooms.actions["room.create"]!(host, { request_id: crypto.randomUUID(), contact_id: LEAD, provider: "meet", call_kind: "intro", purpose: "manual" });
+      // Since stress2 fix round 1 the fifth room for one lead in an hour is refused (room-create-flood).
+      const out = await w.rooms.actions["room.create"]!(host, { request_id: crypto.randomUUID(), contact_id: LEAD, provider: "meet", call_kind: "intro", purpose: "manual" }).catch(() => null);
+      if (!out) continue;
       const id = String((out.room as Row).id);
       await w.workerOpens(id);
       await w.rooms.actions["room.end"]!(host, { room_id: id, version: Number(w.room(id).version), reason: "cancel" });
@@ -243,8 +245,8 @@ describe("security r3: what one seat's presses send one lead", () => {
       w.clock.now += 5_000;
     }
     const toLead = w.sends.filter(s => (s.contact_id ?? s.contactId) === LEAD);
-    // The fixture works: every room made sent its link.
-    expect(w.db.t("cockpit_sales_rooms").length).toBe(12);
+    // The fixture works: four rooms were made (the per-lead cap), each asked to send its link.
+    expect(w.db.t("cockpit_sales_rooms").length).toBe(4);
     // At most a few links a lead an hour, however the rooms are made.
     expect(toLead.length).toBeLessThanOrEqual(3);
   });

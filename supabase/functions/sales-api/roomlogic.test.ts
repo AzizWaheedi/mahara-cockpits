@@ -879,7 +879,8 @@ describe("which channel carries the link", () => {
     // Only the newest 20 count.
     expect(roomWhatsappHealth([...sends(0, 20), ...sends(20, 20)]).ok).toBe(true);
     expect(roomWhatsappHealth(null)).toEqual({ ok: false, failed: 0, counted: 0, share: null });
-    expect(plan({ room_wa: sends(6, 20) }).order).toEqual(["email"]);
+    // The health gates the free text only (stress2 fix round 1): the template still goes, so the share can recover.
+    expect(plan({ room_wa: sends(6, 20) }).order).toEqual(["whatsapp_template", "email"]);
     expect(plan({ room_wa: null }).skipped[0]?.why).toBe("WhatsApp video links are failing");
     const tight = { ...GUARD, health: { room: { window: 10, fail_share: 0.5 } } };
     expect(plan({ guard: tight, room_wa: sends(4, 10) }).primary).toBe("whatsapp_text");

@@ -723,6 +723,8 @@ export const LANE_COPY = {
   test_only: "Video rooms are in testing, so they work only for the test contact for now.",
   no_contact: "Choose a lead first.",
   contact_unread: "HighLevel did not answer, so we cannot check this lead yet. Try again in a minute.",
+  /** HighLevel answered that the contact is not there (merged or deleted): an answer, never retried (stress2, round 1). */
+  contact_gone: "This lead is not in HighLevel any more (merged or deleted). Find them again in the cockpit and make the room there.",
   fallback_scope: "For now, video links after a missed call are only for booked intros. Call again or send a message.",
   fallback_pilot: "Video links after a missed call are in a pilot that does not include your seat yet. Ask the manager to add you.",
   wrap_too_early: "This call's room opens at {time}, 30 minutes before it starts. Try again then.",
@@ -1294,7 +1296,16 @@ export type RoomEvent =
   /** worker.failed: the provider refused, or the worker gave up: requested or creating → failed. */
   | { kind: "fail"; error: string }
   /** The message service sent the link (the first send starts the lead's 10 minutes). */
-  | ({ kind: "link_sent"; channel?: LinkChannel | null } & At)
+  | ({
+      kind: "link_sent";
+      channel?: LinkChannel | null;
+      /**
+       * The send was a WhatsApp template nobody saw yet: link_unconfirmed_at
+       * is written in the same step as link_sent_at, so a run cut off after
+       * this write never leaves a sure send behind (stress2, round 1).
+       */
+      unconfirmed?: boolean;
+    } & At)
   /** The short page counted an open (bots excluded). */
   | ({ kind: "opened"; device?: Device | null } & At)
   /** Zoom put the lead in the waiting room. */
@@ -1421,6 +1432,7 @@ export type RefusalCode =
   | "not_standby"
   | "no_contact"
   | "contact_unread"
+  | "contact_gone"
   | "disabled"
   | "provider_off"
   | "test_only"
@@ -1478,6 +1490,7 @@ const REFUSALS: Record<RefusalCode, { text: string; status: number; retry?: bool
   not_standby: { text: LANE_COPY.not_standby, status: 409 },
   no_contact: { text: LANE_COPY.no_contact, status: 400 },
   contact_unread: { text: LANE_COPY.contact_unread, status: 503, retry: true },
+  contact_gone: { text: LANE_COPY.contact_gone, status: 409 },
   disabled: { text: LANE_COPY.disabled, status: 409 },
   provider_off: { text: LANE_COPY.provider_off, status: 409 },
   test_only: { text: LANE_COPY.test_only, status: 409 },
@@ -1806,6 +1819,7 @@ export function applyRoomEvent(room: RoomRow, event: RoomEvent, now: number, ctx
       if (room.link_sent_at) return same(room);
       const t = when(event);
       const patch: Partial<RoomRow> = { link_sent_at: iso(t) };
+      if (event.unconfirmed === true && !room.link_unconfirmed_at) patch.link_unconfirmed_at = iso(t);
       // A send nobody claimed (the rep's "Also send by email" first) still closes the claim.
       if (!room.link_claimed_at) patch.link_claimed_at = iso(t);
       if (room.state !== "lead_in") {
@@ -1979,6 +1993,19 @@ function reaskPlan(room: RoomRow, ctx: RoomCtx): { at: number; until: number; ef
     claimed !== null
   )
     out.push({ at: claimed + again, until: Number.POSITIVE_INFINITY, effect: { kind: "send_link", retry: true } });
+  // The link went only as a WhatsApp template nobody saw, and its email
+  // backup may never have run (the run was cut off after link_sent_at):
+  // asked again, and rooms.ts sendLink resumes the backup unless its line
+  // says it already ran (stress2, round 1).
+  const unconfirmed = ms(room.link_unconfirmed_at);
+  if (
+    unconfirmed !== null &&
+    room.link_sent_at &&
+    room.contact_id &&
+    (room.state === "open" || room.state === "host_in" || room.state === "lead_in") &&
+    unconfirmedOnly(room)
+  )
+    out.push({ at: unconfirmed + again, until: unconfirmed + REASK_WINDOW_S * S, effect: { kind: "send_link", retry: true } });
   // The link was due and nobody ever claimed it (worker.ready was lost or
   // given up, so the one write that asks for it never ran): the sweep claims
   // it itself, REASK_AFTER_S after the room opened. rooms.ts writes the claim
@@ -2174,8 +2201,14 @@ export interface SettleFacts {
   short_link?: boolean;
   /** A Zoom event for this room is still unhandled or was given up: what Zoom said is not known. */
   zoom_unclear?: boolean;
-  /** Another room for the same intro (or for the lead since its start) has a lead join that stands, or is still live. */
+  /** Another room for the same intro (or for the lead since its start) has a lead join that stands. */
   sibling_joined?: boolean;
+  /**
+   * Another room for the same call is still open with no join (a second
+   * try): the settle waits for it (rooms.ts releases the event; the SQL
+   * sweep's S1 leaves the room out until it closes), never read as a join.
+   */
+  sibling_open?: boolean;
   /** A test contact whose intro is not on rooms.test_calendar_id (C34): never an official number. */
   test_off_calendar?: boolean;
   /** Zoom reported a join after the room closed (a join the close raced), or the worker kept the meeting open for someone in it. */
@@ -2499,12 +2532,15 @@ export function channelPlan(i: ChannelInput): ChannelPlan {
           ? L.why_wa_gate
           : i.wa_paused
             ? L.why_wa_paused
-            : !health.ok
-              ? L.why_wa_health
-              : null;
+            : null;
   const window = whatsappWindow(i.last_inbound_at, i.now);
+  // The room source's health gates the free text only (final_spec_foundation,
+  // message service 1): a template still goes, so its sends can show the
+  // number is fine again and the share recovers (stress2, round 1).
   const why: Record<LinkChannel, string | null> = {
-    whatsapp_text: common ?? (!i.setting.send.whatsapp_text ? L.why_wa_off : !window.open ? L.why_window : null),
+    whatsapp_text:
+      common ??
+      (!i.setting.send.whatsapp_text ? L.why_wa_off : !window.open ? L.why_window : !health.ok ? L.why_wa_health : null),
     whatsapp_template:
       common ??
       (!i.setting.send.whatsapp_template
@@ -3219,6 +3255,17 @@ export function countUndo(room: RoomRow, before: CountBefore | string | null | u
           status: str(b.from_status, 20) ?? "confirmed",
         };
       }
+      // A mark whose answer was lost (count.marking): taken back as a mark
+      // is, from the status the count recorded before it (stress2, round 1).
+      const prior = str(b.prior_status, 20);
+      if (moved && prior)
+        return {
+          action: "unmark",
+          appointment_id: moved,
+          status: prior,
+          own_disposition_id: str(String(b.own_disposition_id ?? ""), 80),
+          prior_disposition_id: str(String(b.prior_disposition_id ?? ""), 80),
+        };
       const cal = str(String(b.calendar_id ?? ""), 80);
       const start = isoOrNull(b.start);
       if (cal && start) return { action: "find_delete", calendar_id: cal, start };
@@ -3404,15 +3451,21 @@ export function defaultProvider(
   role: unknown,
   host: { zoom_status?: ZoomStatus | null; google_ok?: boolean; default_provider?: unknown } | null,
   setting: Pick<RoomsSetting, "providers" | "default_provider">,
+  /** The call the room is for: a closer's is a demo (60 minutes), which a Basic Zoom (40) cannot hold. */
+  kind: CallKind = role === "closer" ? "demo" : "intro",
 ): Provider {
   const pref: Provider = isProvider(host?.default_provider)
     ? host.default_provider
     : role === "closer"
       ? setting.default_provider.closer
       : setting.default_provider.setter;
+  // createRefusal's rule (stress2, round 1): a Basic Zoom is not usable for a
+  // demo, so a Basic closer's standby room is made on Meet, never refused.
   const usable = (p: Provider) =>
     setting.providers[p] &&
-    (p === "zoom" ? host?.zoom_status === "licensed" || host?.zoom_status === "basic" : host?.google_ok === true);
+    (p === "zoom"
+      ? host?.zoom_status === "licensed" || (host?.zoom_status === "basic" && kind !== "demo")
+      : host?.google_ok === true);
   if (usable(pref)) return pref;
   return usable(otherProvider(pref)) ? otherProvider(pref) : pref;
 }
@@ -3530,6 +3583,14 @@ export interface RoomView {
   handover_id: string | null;
   /** A booked room's appointment start, or the start of the booked intro a fallback room is for (not a column). */
   starts_at: string | null;
+  /**
+   * Why the sweep closed the room (lead_no_show, not_admitted, host_not_in,
+   * events_lost, ...): the panel says a knock, or an unread Zoom, as itself,
+   * never "nobody joined" (stress2, round 1).
+   */
+  end_reason: string | null;
+  /** The lead's latest open of the link: the sweep holds the room open_grace past it (R4), and so does the panel's countdown. */
+  last_open_at: string | null;
 }
 
 export const ROOM_VIEW_KEYS = [
@@ -3568,6 +3629,8 @@ export const ROOM_VIEW_KEYS = [
   "appointment_id",
   "handover_id",
   "starts_at",
+  "end_reason",
+  "last_open_at",
 ] as const;
 
 /** The channels the link went on, from link_channels or the keys of link_message_ids. */
@@ -3629,6 +3692,8 @@ export function toRoomView(
     appointment_id: str(row.appointment_id, 80),
     handover_id: str(row.handover_id, 80),
     starts_at: isoOrNull(opts.starts_at),
+    end_reason: /^[a-z_]{1,40}$/.test(String(row.end_reason ?? "")) ? String(row.end_reason) : null,
+    last_open_at: isoOrNull(row.last_open_at),
   };
 }
 
@@ -3735,7 +3800,24 @@ export function createRefusal(i: CreateInput): Refused | null {
   }
   if (contact && i.lead_room_open) return refuse("lead_has_room", {}, purpose);
   if (i.host_room_open) return refuse("host_has_room");
-  const h = i.host;
+  return providerRefusal(s, i.host, provider, i.call_kind);
+}
+
+/**
+ * The host's own provider, for this kind of call: null when the host can use
+ * it now (the provider is on, Zoom licensed or a Basic Zoom for an intro and
+ * not in another meeting, or Google working for Meet). createRefusal's last
+ * step, and the check "I can't let them in" and the panel's "Try {other}"
+ * make before they offer the other provider (stress2, round 1).
+ */
+export function providerRefusal(
+  s: Pick<RoomsSetting, "providers">,
+  h: HostFacts | null,
+  provider: Provider,
+  callKind: CallKind,
+): Refused | null {
+  if (!s.providers[provider])
+    return refuse("provider_off", { provider: providerName(provider), other: providerName(otherProvider(provider)) });
   if (provider === "zoom") {
     const meetUsable = s.providers.meet && h?.google_ok === true;
     const st = h?.zoom_status ?? null;
@@ -3743,12 +3825,12 @@ export function createRefusal(i: CreateInput): Refused | null {
     if (!st) return zoomRefusal("zoom_unchecked", meetUsable);
     if (st === "missing") return zoomRefusal("zoom_missing", meetUsable);
     if (st === "pending") return zoomRefusal("zoom_pending", meetUsable);
-    if (st === "basic" && i.call_kind === "demo") return zoomRefusal("zoom_basic_demo", meetUsable);
+    if (st === "basic" && callKind === "demo") return zoomRefusal("zoom_basic_demo", meetUsable);
     if (h?.zoom_live) return zoomRefusal("zoom_busy", meetUsable);
   } else if (!h?.google_ok) {
     const st = h?.zoom_status ?? null;
     const zoomUsable =
-      s.providers.zoom && !h?.zoom_live && (st === "licensed" || (st === "basic" && i.call_kind !== "demo"));
+      s.providers.zoom && !h?.zoom_live && (st === "licensed" || (st === "basic" && callKind !== "demo"));
     // No host row yet (before the first 10-minute check), or no Google value
     // written yet: not checked. A checked false: the worker's one Google
     // sign-in is down, which no seat can fix on its own.

@@ -1068,7 +1068,7 @@ async function convoSend(who: Who, b: Row, opts: SendOpts = {}) {
   }
   if (!(await messagingSwitch())[channel])
     throw new Refusal(`Sending by ${CHANNEL_WORD[channel]} is switched off in the cockpit.`, 409);
-  if (channel === "whatsapp") await duplicatePauseCheck();
+  const waGuard = channel === "whatsapp" ? await duplicatePauseCheck() : null;
   await senderCeiling(who);
   const lead = (await svc(`cockpit_sales_leads?contact_id=eq.${enc(contactId)}&select=contact_id,name`))[0];
   if (!lead) throw new Refusal("That lead is not in the cockpit.", 404);
@@ -1103,7 +1103,7 @@ async function convoSend(who: Who, b: Row, opts: SendOpts = {}) {
   };
   // The sender's ceiling is checked where the row is written, in one step,
   // so fifteen sends at once cannot pass it.
-  const slot = await takeSlot(fresh, { template: false });
+  const slot = await takeSlot(fresh, { template: false, guard: waGuard });
   let row: Row;
   if (slot) {
     if (slot.repeated) {
@@ -1277,6 +1277,8 @@ function unclearError(e: unknown): boolean {
 const SENDER_CEILING =
   "That is 30 messages in ten minutes from you. Wait a few minutes; the ceiling keeps a stuck page or a script from flooding leads.";
 const LEAD_GAP = "A template went to this lead a moment ago. Wait two minutes before sending another.";
+/** The message slot's same_words: one rep's two tabs, or two seats with one snippet (stress2, round 1). */
+const SAME_WORDS = "This message went to this lead a moment ago. Read the conversation before sending it again.";
 const dayCeiling = (n: number) =>
   `Today's ${n} WhatsApp templates have gone out. The ceiling protects the number's standing with Meta; more tomorrow, or a manager raises it under Follow-ups, How it works.`;
 
@@ -1308,6 +1310,11 @@ async function takeSlot(
           month_cap: o.monthCap ?? 1_000_000,
           day_start: kuwaitMidnightIso(Date.now()),
           month_start: kuwaitMonthStart(Date.now()),
+          // The duplicate window (whatsapp_guard.dup_window_s, 10 to 600 s):
+          // the same free WhatsApp words to one lead inside it are one send.
+          ...(Number.isInteger(Number(o.guard?.dup_window_s)) && Number(o.guard?.dup_window_s) > 0
+            ? { dup_window_s: Number(o.guard?.dup_window_s) }
+            : {}),
         },
       },
     }))[0] ?? {};
@@ -1318,6 +1325,9 @@ async function takeSlot(
   const code = String(out.code ?? "");
   if (code === "ok") return { message: out.row as Row };
   if (code === "repeat") return { message: out.row as Row, repeated: true };
+  // The same words went to this lead a moment ago from another tab or seat
+  // (20261004a): the lead gets them once (stress2, round 1).
+  if (code === "same_words") throw new Refusal(SAME_WORDS, 409, { code: "same_words" });
   if (code === "sender_ceiling") throw new Refusal(SENDER_CEILING, 429);
   if (code === "lead_gap") throw new Refusal(LEAD_GAP, 409);
   if (code === "per_day") throw new Refusal(dayCeiling(o.perDay ?? 250), 409, { hold_all: true });
@@ -1425,7 +1435,27 @@ async function duplicateWatch(contactId: string, conversationId: string, seen?: 
     const inner = ((m as Row).messages ?? {}) as Row;
     list = toThread(Array.isArray(inner.messages) ? inner.messages : (m as Row).messages, conversationId);
   }
-  const pair = duplicatePair(list, windowS);
+  // The cockpit's own sends, each with its own request id (two tabs, two
+  // seats with one snippet, which the message slot now answers as one
+  // send): never the WA Connector's copy (stress2, round 1). Not readable:
+  // every pair counts, as before.
+  const ids = [...new Set(list.map(m => String(m.id ?? "")).filter(Boolean))];
+  const ours = new Map<string, string>();
+  if (ids.length)
+    try {
+      for (const r of await svc(
+        `cockpit_sales_messages?ghl_message_id=in.(${ids.map(i => `"${enc(i)}"`).join(",")})&select=ghl_message_id,request_id&limit=100`,
+      ))
+        ours.set(String(r.ghl_message_id), String(r.request_id ?? ""));
+    } catch (e) {
+      console.error("duplicate watch: own sends unread", redact(String((e as Error)?.message ?? e)));
+    }
+  const ownPair = (a: ThreadMessage, b: ThreadMessage) => {
+    const x = ours.get(String(a.id ?? ""));
+    const y = ours.get(String(b.id ?? ""));
+    return x !== undefined && y !== undefined && x !== y;
+  };
+  const pair = duplicatePair(list, windowS, ownPair);
   if (!pair) return;
   const at = new Date().toISOString();
   const reason = `Two identical WhatsApp messages went to one lead ${Math.round(Math.abs(Date.parse(String(pair[1].at)) - Date.parse(String(pair[0].at))) / 1000)} seconds apart.`;
@@ -1465,12 +1495,13 @@ async function duplicateWatch(contactId: string, conversationId: string, seen?: 
 }
 
 /** Every WhatsApp send stops while the duplicate detector's pause stands. */
-async function duplicatePauseCheck(): Promise<void> {
+async function duplicatePauseCheck(): Promise<Row> {
   const guard = ((await setting<Row>("whatsapp_guard")) ?? {}) as Row;
   if (guard.dup_paused_at) {
     const windowS = Number(guard.dup_window_s) > 0 ? Number(guard.dup_window_s) : 60;
     throw new Refusal(DUPLICATE_PAUSED.replace("{seconds}", String(windowS)), 409, { hold_all: true });
   }
+  return guard;
 }
 
 /** The person a template is signed by when a send names them (signAs): the room's host. */
@@ -2888,7 +2919,7 @@ type QueueCandidate = Candidate &
 /** Everything the queue needs, read in a handful of queries, no huge id lists. */
 async function candidates(now: number): Promise<{ list: QueueCandidate[] }> {
   const soon = enc(new Date(now - 3_600_000).toISOString());
-  const [states, inbox, attempts, h, confirmations, hotList, roles, seats, introTries, roomHeld] = await Promise.all([
+  const [states, inbox, attempts, h, confirmations, hotList, roles, seats, introTries, roomHeld, roomJoins] = await Promise.all([
     svcAll("cockpit_sales_queue_state?select=*&order=contact_id"),
     svc(`cockpit_sales_inbox?select=contact_id,last_message_at,last_direction&last_direction=eq.inbound&last_message_at=gte.${enc(new Date(now - 86_400_000).toISOString())}`),
     svc("cockpit_sales_attempts?select=contact_id,rep_email,started_at,call_checked_at&state=in.(dialing,placed)"),
@@ -2910,7 +2941,25 @@ async function candidates(now: number): Promise<{ list: QueueCandidate[] }> {
       console.error("room holds unread", redact(String((e as Error)?.message ?? e)));
       return new Set<string>();
     }),
+    // Booked calls the lead joined by video in the last three hours, the join
+    // standing (not taken back by "That was not the lead"): the intro was
+    // had, so it never comes back as "Intro call now" (stress2, round 1).
+    svc(
+      `cockpit_sales_rooms?appointment_id=not.is.null&lead_in_at=gte.${enc(new Date(now - 3 * 3_600_000).toISOString())}&select=appointment_id,lead_in_at,count_undo_at&limit=1000`,
+    ).catch(e => {
+      console.error("room joins unread", redact(String((e as Error)?.message ?? e)));
+      return [] as Row[];
+    }),
   ]);
+  const joinedAppts = new Set(
+    roomJoins
+      .filter(r => {
+        const joined = ms(r.lead_in_at);
+        const undo = ms(r.count_undo_at);
+        return joined !== null && !(undo !== null && joined <= undo);
+      })
+      .map(r => String(r.appointment_id)),
+  );
   // A closed or lost hot lead stays on the list for the record, and is no
   // longer hot here (Aziz, 2026-09-27).
   const hotRows = hotList.filter(stillHot);
@@ -3104,6 +3153,7 @@ async function candidates(now: number): Promise<{ list: QueueCandidate[] }> {
             assigned: (current.assigned_user_id as string) ?? null,
             confirmed: confirmedAppt.has(String(current.appointment_id)),
             last_try: lastTry.get(String(current.appointment_id)) ?? null,
+            room_joined: joinedAppts.has(String(current.appointment_id)),
           }
         : null,
     };
@@ -3992,7 +4042,7 @@ async function freeSlots(calendarId: string, from: number, to: number, userId: s
 async function upcoming(
   contactId: string,
   kind: BookingKind,
-  opts: { booked_before?: number | null } = {},
+  opts: { booked_before?: number | null; after?: number | null } = {},
 ): Promise<{
   id: string;
   start: number;
@@ -4002,6 +4052,10 @@ async function upcoming(
   booked_at: number | null;
 } | null> {
   const bound = typeof opts.booked_before === "number" && Number.isFinite(opts.booked_before) ? opts.booked_before : null;
+  // The calls ahead of this moment: now, or the join a late count reads the
+  // calls as of (rooms.ts upcomingWhole), so a manager's confirm after the
+  // intro's time still finds the intro the join was (stress2, round 1).
+  const after = typeof opts.after === "number" && Number.isFinite(opts.after) ? Math.min(opts.after, Date.now()) : Date.now();
   const [d, types] = await Promise.all([
     ghl("GET", `/contacts/${enc(contactId)}/appointments`, undefined, "2021-07-28"),
     setting<Record<string, { type: string }>>("calendars"),
@@ -4021,7 +4075,7 @@ async function upcoming(
         booked_at: Number.isFinite(added) && added > 0 ? added : null,
       };
     })
-    .filter(e => e.id && Number.isFinite(e.start) && e.start > Date.now())
+    .filter(e => e.id && Number.isFinite(e.start) && e.start > after)
     .filter(e => bound === null || e.booked_at === null || e.booked_at < bound)
     .sort((x, y) => x.start - y.start);
   return events[0] ?? null;

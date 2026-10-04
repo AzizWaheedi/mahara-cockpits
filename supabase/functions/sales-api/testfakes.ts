@@ -217,6 +217,32 @@ export class FakeDb {
     const twin = list.find(m => m.request_id === row.request_id);
     if (twin) return { code: "repeat", row: structuredClone(twin) };
     const now = this.clock.now;
+    // 20261004a: a free WhatsApp message whose words went to this lead
+    // within the duplicate window (one rep's two tabs, two seats' snippet).
+    const via = String(row.via ?? "conversation");
+    if (via !== "workflow" && row.channel === "whatsapp") {
+      const norm = (v: unknown) =>
+        String(v ?? "")
+          .normalize("NFKC")
+          .replace(/[\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g, "")
+          .replace(/\s+/g, " ")
+          .trim()
+          .toLowerCase();
+      const words = norm(row.body);
+      const dupS = Math.max(10, Math.min(600, Number(lim.dup_window_s ?? 60) || 60));
+      const same = words
+        ? list.find(
+            m =>
+              m.contact_id === row.contact_id &&
+              m.channel === "whatsapp" &&
+              String(m.via ?? "conversation") === "conversation" &&
+              m.state !== "failed" &&
+              Date.parse(String(m.created_at)) >= now - dupS * 1000 &&
+              norm(m.body) === words,
+          )
+        : undefined;
+      if (same) return { code: "same_words", row: structuredClone(same) };
+    }
     const since = (iso: unknown) => (m: Row) => Date.parse(String(m.created_at)) >= Date.parse(String(iso));
     const sender = String(row.sent_by ?? "").toLowerCase();
     if (sender) {
@@ -515,7 +541,16 @@ export class FakeDb {
   private liveClaimNow(a: Row, rid: string): Row[] {
     const me = String(a.p_email).toLowerCase();
     const l = this.t("cockpit_sales_live").find(x => x.id === a.p_live_id);
-    if (!l || l.state !== "offered" || Date.parse(String(l.offer_until)) <= this.clock.now || !(l.offered_to as string[]).includes(me)) return [];
+    // 20261004a: the offer is judged at the press (p_at), at most 30 s back.
+    const pressed = Date.parse(String(a.p_at ?? ""));
+    const at = Number.isFinite(pressed) ? Math.max(Math.min(pressed, this.clock.now), this.clock.now - 30_000) : this.clock.now;
+    if (!l || l.state !== "offered" || !(l.offered_to as string[]).includes(me)) return [];
+    if (Date.parse(String(l.offer_until)) <= at) {
+      // A Take that came after the offer's end is the closer's answer: L1 never makes them Away for it.
+      const declined = (l.declined_by as string[] | undefined) ?? [];
+      if (!declined.includes(me)) l.declined_by = [...declined, me];
+      return [];
+    }
     // 20261003d: a taker who hosts a room that is not their empty standby
     // room, a booked call's room or this lead's own is refused before anything moves.
     if (

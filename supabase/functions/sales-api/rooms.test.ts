@@ -4,7 +4,7 @@
 // lead's link never sent; booked intros never settled).
 import { describe, expect, test } from "bun:test";
 import type { Who } from "./lib.ts";
-import { ApiRefusal } from "./liveio.ts";
+import { ApiRefusal, GhlError } from "./liveio.ts";
 import { DEFAULT_ROOMS_JSON, LANE_COPY, ROOM_COPY, ROOM_VIEW_KEYS } from "./roomlogic.ts";
 import { eventText, LIVE_OFF, leadText, makeRooms, OFFER_GONE, type RoomDeps } from "./rooms.ts";
 import { fakeWorld, fakeUuid } from "./testfakes.ts";
@@ -77,7 +77,12 @@ function setup(o: Opts = {}) {
     o.contact === undefined
       ? { id: LEAD, firstName: "Huda", name: "Huda Ali", phone: "+96550000000", email: "huda@example.com", tags: ["cockpit-test"], country: "KW" }
       : o.contact;
-  w.routes.push((m, p) => (m === "GET" && (p === `/contacts/${LEAD}` || p === `/contacts/${OTHER_LEAD}`) && contact ? { contact: { ...contact, id: p.split("/")[2] } } : (null as unknown as Row)));
+  w.routes.push((m, p) => {
+    const read = m === "GET" && (p === `/contacts/${LEAD}` || p === `/contacts/${OTHER_LEAD}`);
+    // No contact: HighLevel is down (a 503), which is not a contact it says is gone (400 or 404).
+    if (read && !contact) throw new GhlError("HighLevel said 503: unavailable", 503);
+    return read && contact ? { contact: { ...contact, id: p.split("/")[2] } } : (null as unknown as Row);
+  });
   const deps: RoomDeps = {
     io: w.io,
     audit: async (who, action, entityType, entityId, before, after, metadata) => {
@@ -510,11 +515,19 @@ describe("presses: room.mark, room.end, room.open, room.status", () => {
     expect((out.room as Row).result).toBe("admit_blocked");
     expect((out.replacement as Row).provider).toBe("zoom");
     expect((out.replacement as Row).contact_id).toBe(LEAD);
-    // A setter whose Zoom seat is pending gets the refusal sentence instead.
+    // A setter whose Zoom seat is pending: the press is refused before
+    // anything moves, and the lead's Meet room stays open (stress2 fix round 1).
     const w2 = setup();
     const id2 = await openRoom(w2);
-    const out2 = await w2.rooms.actions["room.end"]!(setter, { room_id: id2, version: Number(w2.room(id2).version), reason: "admit_blocked" });
-    expect(out2.replacement_refusal).toBe(ROOM_COPY.refusals.zoom_pending);
+    const r2 = await refused(w2.rooms.actions["room.end"]!(setter, { room_id: id2, version: Number(w2.room(id2).version), reason: "admit_blocked" }));
+    expect([r2.status, r2.extra.code, r2.message]).toEqual([
+      409,
+      "other_unusable",
+      "Zoom cannot be used from your seat yet, so this room stays open. Keep trying to let them in on Meet, or call the lead now.",
+    ]);
+    expect(w2.room(id2).state).toBe("open");
+    expect((await w2.rooms.actions["room.status"]!(setter, { room_id: id2 })).other_ok).toBe(false);
+    expect((await w.rooms.actions["room.status"]!(closer, { room_id: String((out.replacement as Row).id) })).other_ok).toBe(true);
   });
 
   test("room.open: the start link to the host only; Meet's host gets the meeting link; never before the room is made", async () => {
@@ -986,9 +999,14 @@ describe("live.take and live.decline", () => {
   test("an offer someone else took, or one that ended", async () => {
     const w = setup({ live: { enabled: true } });
     const id = offer(w);
-    (w.db.t("cockpit_sales_live")[0] as Row).offered_to = ["someone@maharamedia.com"];
+    // Taken by another seat: "Someone else took this lead."
+    Object.assign(w.db.t("cockpit_sales_live")[0] as Row, { state: "claimed", claimed_by: "someone@maharamedia.com" });
     const r = await refused(w.rooms.actions["live.take"]!(closer, { live_id: id, request_id: crypto.randomUUID() }));
     expect([r.status, r.message]).toEqual([409, "Someone else took this lead."]);
+    // Never this seat's (a re-offer left it out): the offer ended for it, nobody took it (stress2 fix round 1).
+    Object.assign(w.db.t("cockpit_sales_live")[0] as Row, { state: "offered", claimed_by: null, offered_to: ["someone@maharamedia.com"] });
+    const notMine = await refused(w.rooms.actions["live.take"]!(closer, { live_id: id, request_id: crypto.randomUUID() }));
+    expect([notMine.status, notMine.message]).toEqual([409, OFFER_GONE]);
     const gone = await refused(w.rooms.actions["live.take"]!(closer, { live_id: crypto.randomUUID(), request_id: crypto.randomUUID() }));
     expect(gone.message).toBe(OFFER_GONE);
   });
@@ -1000,7 +1018,10 @@ describe("live.take and live.decline", () => {
     await w.rooms.actions["live.decline"]!(closer, { live_id: id, request_id: crypto.randomUUID() });
     const l = w.db.t("cockpit_sales_live")[0] as Row;
     expect([l.declined_by, l.version]).toEqual([[CLOSER], 1]);
+    // Once the sweep has ended the offer, Not now is refused (a press a moment
+    // past offer_until, while the row still says offered, is taken: stress2 fix round 1).
     w.clock.now += 3 * MIN;
+    Object.assign(l, { state: "expired" });
     expect((await refused(w.rooms.actions["live.decline"]!(closer, { live_id: id, request_id: crypto.randomUUID() }))).message).toBe(OFFER_GONE);
   });
 });
