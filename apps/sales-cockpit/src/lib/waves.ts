@@ -372,7 +372,7 @@ export function effectLine(c: WaveCounts): string {
   const due = c.waiting + c.drafted;
   if (due > 0) {
     const had = c.wave - due;
-    return `The effect is read once every lead in the wave has had their opener: ${had.toLocaleString("en-US")} of ${c.wave.toLocaleString("en-US")} so far. It is the wave's booking rate against the held-back leads', 14 days after each opener.`;
+    return `The effect is read once every lead in the wave has had their turn: ${had.toLocaleString("en-US")} of ${c.wave.toLocaleString("en-US")} so far. It is the wave's booking rate against the held-back leads', 14 days after each opener.`;
   }
   // Each arm over the members whose turn came: a stopped wave's leads whose
   // turn never came are in neither (like with like).

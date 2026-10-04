@@ -905,6 +905,36 @@ describe("15. the standby room", () => {
     );
   });
 
+  test("Available with a room open or being made can still go Away (final review)", () => {
+    const until = iso(NOW + 2 * 3600 * S);
+    for (const state of ["open", "host_in", "creating"] as const) {
+      const l = strip({
+        me: me({ state: "available", until }),
+        rooms: [
+          F.baseRoom(NOW, {
+            purpose: "standby",
+            contact_id: null,
+            contact_first_name: null,
+            state,
+          }),
+        ],
+      });
+      expect(l.quiet).toEqual([{ key: "away", label: "Set me away" }]);
+    }
+  });
+
+  test("the standby cap's sentence is said whole, with Try again", () => {
+    const said =
+      "Your last standby room closed under 10 minutes ago, so no new one was made yet. Try again in a few minutes. You can still take a live lead now.";
+    expect(R.standbyFailedSentence(said)).toBe(said);
+    const l = strip({
+      me: me({ state: "available", until: iso(NOW + 3600 * S) }),
+      standbyError: said,
+    });
+    expect(R.sentenceText(l.sentence)).toBe(said);
+    expect(l.quiet).toEqual([{ key: "away", label: "Set me away" }]);
+  });
+
   test("a room on its way says so; no room and no reason claims nothing", () => {
     const until = iso(NOW + 138 * MIN);
     const making = strip({

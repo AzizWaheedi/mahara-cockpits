@@ -600,6 +600,23 @@ export function isFinal(s: RoomState): boolean {
   return FINAL.has(s);
 }
 
+/**
+ * When the lead joined this room on video, or null: the room is in its
+ * lead_in state, or it closed with the lead having joined. A join taken back
+ * ("That was not the lead") is no join. The dialer reads it after a missed
+ * call: the intro happened on video, so the card asks how it went (final
+ * review), never "No answer".
+ */
+export function videoJoinedAt(
+  room: RoomView | null | undefined,
+): string | null {
+  if (!room?.lead_in_at) return null;
+  if (room.state === "lead_in") return room.lead_in_at;
+  return isFinal(room.state) && room.result === "joined"
+    ? room.lead_in_at
+    : null;
+}
+
 export function isMaking(s: RoomState): boolean {
   return s === "requested" || s === "creating";
 }
@@ -2138,6 +2155,9 @@ export function stripLine(i: StripInput): StripLine {
               ]
             : ["Available. Join your room to get leads first."],
           A("join", "Join my room"),
+          // A closer who steps away must be able to say so here, or offers
+          // keep coming for up to two hours (final review).
+          [A("away", "Set me away")],
         );
       // Ours, below: the room is not there to join, and the strip says why.
       if (standby && isMaking(standby.state))
@@ -2147,6 +2167,7 @@ export function stripLine(i: StripInput): StripLine {
             ? ["Available until ", until, ". Making your room..."]
             : ["Available. Making your room..."],
           A("join", "Join my room", true),
+          [A("away", "Set me away")],
         );
       if (i.standbyError)
         return line(
@@ -2187,6 +2208,8 @@ export function standbyFailedSentence(error: string): string {
     .trim()
     .replace(/^not made:\s*/i, "");
   const next = "Try again, or set yourself away.";
+  // sales-api's standby cap (final review) already says what to do.
+  if (/^Your last standby room closed\b/.test(err)) return err;
   if (!err || /^(the )?room (could not be|was not) made\.?$/i.test(err))
     return `Your room was not made. ${next}`;
   if (/[.!?]\s+\S/.test(err) || /^[A-Z].*[.!?]$/.test(err))

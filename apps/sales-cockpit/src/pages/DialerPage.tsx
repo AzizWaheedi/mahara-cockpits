@@ -134,7 +134,7 @@ import {
   plainStage,
   when,
 } from "../lib/format";
-import { errorText, roomsApi } from "../lib/rooms";
+import { errorText, roomsApi, videoJoinedAt } from "../lib/rooms";
 import { type Fill, groupBlocks, personalise } from "../lib/script";
 import { toast } from "../lib/toast";
 import type { Lead, Me } from "../lib/types";
@@ -1730,12 +1730,18 @@ function CallPane({
   // on screen offers its own next step (Try Zoom, or the phone), so the
   // button waits until the rep puts it away.
   const failedOnScreen = video.room?.state === "failed";
+  // The lead joined the video room after the missed call: the intro
+  // happened, so the step after the miss becomes "How did the intro go?",
+  // and neither the missed-call WhatsApp nor another video link is offered
+  // (final review).
+  const joinedAt = videoJoinedAt(video.room);
   const offerVideo =
     gate.show &&
     missed !== null &&
     choice !== null &&
     !video.open &&
-    !failedOnScreen;
+    !failedOnScreen &&
+    !joinedAt;
   // Where the link would go, said in the picker; when nothing can reach the
   // lead, automatic mode does not send blind: the picker says so instead.
   const planLine = roomsSetup.rooms
@@ -1778,6 +1784,33 @@ function CallPane({
       setPicking(true);
     }
   }
+  /**
+   * Leaving the lead while automatic mode counts down sends the link now,
+   * as an Undo strip does when the rep moves on inside its window (final
+   * review): Next lead, Alt+→ or another lead never cancels it silently.
+   * The room is made on the server and its link goes from there, so it
+   * needs nothing more from this pane; a refusal is said in a toast.
+   */
+  const leftWithAuto = useRef<string | null>(null);
+  function sendOnLeave() {
+    if (autoAt === null || !choice || video.open || planLine === PICKER_NONE)
+      return;
+    if (leftWithAuto.current === autoKey) return;
+    leftWithAuto.current = autoKey;
+    setAutoAt(null);
+    const ask = createAsk({ ...videoAsk, trigger: "auto" }, choice.first);
+    const name = firstWord(l?.name ?? null) ?? "the lead";
+    roomsApi.create(ask).then(
+      out => {
+        if (mounted.current) video.setRoom(out.room, ask);
+        toast.success(`Video link on its way to ${name}.`);
+      },
+      e => toast.error(`The video link to ${name} did not go. ${errorText(e)}`),
+    );
+  }
+  const leaveRef = useRef(sendOnLeave);
+  leaveRef.current = sendOnLeave;
+  useEffect(() => () => leaveRef.current(), []);
   async function markIntro(status: "noshow" | "showed") {
     if (!appt) return;
     await api("mark", {
@@ -2003,12 +2036,19 @@ function CallPane({
     }
   }
 
-  // Next lead, and Alt+→ while it shows. The lead was saved already.
-  const toNext = () => onFinished(contactId, "saved");
+  // Next lead, and Alt+→ while it shows. The lead was saved already; a
+  // video link counting down goes first.
+  const toNext = () => {
+    leaveRef.current();
+    onFinished(contactId, "saved");
+  };
   const showsNext = mode === "held" || mode === "unanswered";
   useEffect(() => {
     if (!showsNext) return;
-    const go = () => onFinished(contactId, "saved");
+    const go = () => {
+      leaveRef.current();
+      onFinished(contactId, "saved");
+    };
     nextRef.current = go;
     return () => {
       if (nextRef.current === go) nextRef.current = null;
@@ -2065,7 +2105,11 @@ function CallPane({
         call={status.call}
         callError={status.error}
         dnd={dnd}
-        saved={saved}
+        saved={
+          joinedAt && mode === "unanswered"
+            ? `Joined on video at ${clock(joinedAt)}`
+            : saved
+        }
         doubt={doubt}
         onVideo={
           offerVideo && !picking && autoAt === null
@@ -2167,6 +2211,30 @@ function CallPane({
               className={button}
             >
               Set a call-back
+            </button>
+            <NextLeadButton onNext={toNext} />
+          </NextStep>
+        ) : mode === "unanswered" && joinedAt ? (
+          <NextStep
+            title={`${firstWord(l?.name ?? null) ?? "The lead"} joined the video call. How did the intro go?`}
+            text="Book the demo while they are warm, or save how it went."
+          >
+            <button
+              type="button"
+              onClick={() => {
+                setBookKind("demo");
+                setMode("book");
+              }}
+              className={panelLeads ? button : buttonPrimary}
+            >
+              <CalendarPlus className="size-3.5" aria-hidden /> Book the demo
+            </button>
+            <button
+              type="button"
+              onClick={() => setMode("outcomes")}
+              className={button}
+            >
+              Save how it went
             </button>
             <NextLeadButton onNext={toNext} />
           </NextStep>

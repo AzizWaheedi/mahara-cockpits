@@ -198,7 +198,7 @@ export const ROOMS_COPY = {
   count_confirm_taken: "This join was counted a moment ago. Reload the room.",
   standby_too_late: "Live calls end in under {minutes} minutes, so no standby room was made. You can still take a live lead until then.",
   /** Available pressed again soon after Away (final review, standby-flood). */
-  standby_flood: "Your standby room closed a few minutes ago, so no new one was made yet. You can still take a live lead; a room is made when you do.",
+  standby_flood: "Your last standby room closed under 10 minutes ago, so no new one was made yet. Try again in a few minutes. You can still take a live lead now.",
   count_confirm_alert:
     "Room {code}: {name} joined, but only a press of The lead is in says so. A manager counts it from the room panel, or leaves it uncounted.",
   undo_stuck_alert: "Room {code}: That was not the lead was pressed, and the live booking could not be taken back in HighLevel. Remove it by hand.",

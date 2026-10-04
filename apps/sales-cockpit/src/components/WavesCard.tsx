@@ -54,6 +54,12 @@ export interface OpenerDraft {
   contact_id: string;
   template_key: string | null;
   created_at: string;
+  /**
+   * The opener as it will go (the name filled in): shown under its row, so
+   * Approve all never sends words nobody has read (final review: a lead
+   * whose first name is a company name).
+   */
+  body?: string | null;
 }
 
 const TOUCH = "pointer-coarse:min-h-11";
@@ -516,6 +522,14 @@ export function WavesCard({
                         >
                           Hold
                         </button>
+                      ) : null}
+                      {o?.body ? (
+                        <p
+                          className="muted w-full whitespace-pre-line text-xs [overflow-wrap:anywhere]"
+                          dir="auto"
+                        >
+                          {o.body}
+                        </p>
                       ) : null}
                       {st === "stalled" ? (
                         <p className="muted w-full text-xs">

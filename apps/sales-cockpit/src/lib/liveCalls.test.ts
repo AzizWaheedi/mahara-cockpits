@@ -567,18 +567,30 @@ describe("the lead's room, and the Video call menu", () => {
     expect(V.roomForLead([fresh], "")).toBeNull();
   });
 
-  test("C42's three items; the live two wait with a sentence", () => {
-    const off = V.videoMenu({ linkShown: true, liveOn: false });
+  test("until live.ask is built, the menu offers only the video link, whatever the live switch (final review)", () => {
+    expect(V.LIVE_ASK_BUILT).toBe(false);
+    for (const liveOn of [false, true]) {
+      const menu = V.videoMenu({ linkShown: true, liveOn });
+      expect(menu?.items.map(i => i.key)).toEqual(["link"]);
+      expect(menu?.note).toBeNull();
+      expect(V.videoMenu({ linkShown: false, liveOn })).toBeNull();
+    }
+  });
+
+  test("C42's three items once live.ask is built; the live two wait with a sentence", () => {
+    const off = V.videoMenu({ linkShown: true, liveOn: false, askBuilt: true });
     expect(off?.items.map(i => [i.label, i.disabled])).toEqual([
       ["Send a video link", false],
       ["Demo now with a closer", true],
       ["Intro now with me", true],
     ]);
     expect(off?.note).toBe("Live handover is not switched on yet.");
-    const on = V.videoMenu({ linkShown: false, liveOn: true });
+    const on = V.videoMenu({ linkShown: false, liveOn: true, askBuilt: true });
     expect(on?.items.map(i => i.key)).toEqual(["demo_now", "intro_now"]);
     expect(on?.note).toBeNull();
-    expect(V.videoMenu({ linkShown: false, liveOn: false })).toBeNull();
+    expect(
+      V.videoMenu({ linkShown: false, liveOn: false, askBuilt: true }),
+    ).toBeNull();
   });
 });
 
@@ -721,7 +733,7 @@ describe("waves: rows, counts and lines", () => {
       "w",
     );
     expect(W.effectLine(mid)).toMatch(
-      /^The effect is read once every lead in the wave has had their opener: 30 of 100 so far\./,
+      /^The effect is read once every lead in the wave has had their turn: 30 of 100 so far\./,
     );
     const enough = W.countsFor(
       W.countMembers([

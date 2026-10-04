@@ -427,18 +427,32 @@ export interface MenuItem {
 export const LIVE_OFF = "Live handover is not switched on yet.";
 
 /**
- * C42's one "Video call" menu: "Send a video link", "Demo now with a
- * closer", "Intro now with me". The two live options wait, disabled with a
- * sentence, until live handover is switched on. Null when nothing in it
- * can be offered, so the header shows no empty menu.
+ * Whether sales-api's live.ask is built. Until it is, the two live options
+ * are left out of the menu altogether (final review): with live on they
+ * would only answer "not built yet" after the rep typed a note, and with it
+ * off every lead showed two disabled items.
  */
-export function videoMenu(i: { linkShown: boolean; liveOn: boolean }): {
+export const LIVE_ASK_BUILT = false;
+
+/**
+ * C42's one "Video call" menu: "Send a video link", and, once live.ask is
+ * built, "Demo now with a closer" and "Intro now with me" (disabled with a
+ * sentence while live handover is off). Null when nothing in it can be
+ * offered, so the header shows no empty menu.
+ */
+export function videoMenu(i: {
+  linkShown: boolean;
+  liveOn: boolean;
+  askBuilt?: boolean;
+}): {
   items: MenuItem[];
   note: string | null;
 } | null {
   const items: MenuItem[] = [];
   if (i.linkShown)
     items.push({ key: "link", label: "Send a video link", disabled: false });
+  if (!(i.askBuilt ?? LIVE_ASK_BUILT))
+    return items.length ? { items, note: null } : null;
   items.push(
     { key: "demo_now", label: "Demo now with a closer", disabled: !i.liveOn },
     { key: "intro_now", label: "Intro now with me", disabled: !i.liveOn },

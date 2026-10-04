@@ -393,9 +393,10 @@ export function AutoVideoStrip({
 
 /**
  * One "Video call" menu in the lead page's header: "Send a video link",
- * then the two live options, disabled with "Live handover is not switched
- * on yet." until live handover is on. Nothing shows when none of it can
- * be offered.
+ * then (once live.ask is built) the two live options, disabled with "Live
+ * handover is not switched on yet." until live handover is on. One item
+ * alone is a plain button, never a menu of one. Nothing shows when none of
+ * it can be offered.
  */
 export function VideoCallMenu({
   linkShown,
@@ -429,6 +430,18 @@ export function VideoCallMenu({
     };
   }, [open]);
   if (!menu) return null;
+  const only = menu.items.length === 1 ? menu.items[0] : null;
+  if (only && !only.disabled)
+    return (
+      <button
+        type="button"
+        onClick={() => onPick(only.key)}
+        className={`${button} ${TOUCH}`}
+      >
+        <Video className="size-3.5" aria-hidden />
+        {only.label}
+      </button>
+    );
   return (
     <div ref={box} className="relative">
       <button
@@ -520,10 +533,10 @@ export function LiveAskForm({
         host: kind === "demo_now" ? "closer" : "me",
         note: note.trim(),
       });
+      // No promise of the strip at the top: the banner does not carry a
+      // handover yet (final review).
       onDone(
-        kind === "demo_now"
-          ? "Finding a closer. The strip at the top says when one takes it."
-          : "Making your room. The strip at the top says when it is ready.",
+        kind === "demo_now" ? "Finding a closer now." : "Making your room now.",
       );
     } catch (e) {
       setError(errorText(e));
