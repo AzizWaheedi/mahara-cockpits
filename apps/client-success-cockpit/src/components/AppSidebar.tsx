@@ -2,15 +2,11 @@ import { useAuthActions } from "@convex-dev/auth/react";
 import { useQuery } from "convex/react";
 import { motion } from "framer-motion";
 import {
-  BarChart3,
   CalendarClock,
   CalendarDays,
-  DollarSign,
-  Flame,
   LayoutGrid,
   Link2,
   ListChecks,
-  ListTodo,
   LogOut,
   MessageSquare,
   Moon,
@@ -19,7 +15,6 @@ import {
   Sun,
   Sunrise,
   Target,
-  UserMinus,
   X,
 } from "lucide-react";
 import { Link, useLocation } from "react-router";
@@ -49,6 +44,7 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from "./ui/sidebar";
+import { clientRoutes, growthRoutes } from "./WorkspaceNav";
 
 /**
  * Grouped so the CSM reads the sidebar as a day, not as eight equal choices: the day runs
@@ -58,37 +54,23 @@ const navGroups = [
   {
     label: "My day",
     items: [
-      { href: "/dashboard", label: "Start of day", icon: Sunrise },
-      { href: "/tasks", label: "Task list", icon: ListChecks },
-      {
-        href: "/meetings",
-        label: "Meetings & messages",
-        icon: CalendarDays,
-      },
+      { href: "/dashboard", label: "Today", icon: Sunrise },
+      { href: "/tasks", label: "Tasks", icon: ListChecks },
+      { href: "/meetings", label: "Meetings & messages", icon: CalendarDays },
       { href: "/eod", label: "End of day", icon: MoonStar },
     ],
   },
   {
-    label: "Clients",
+    label: "Client work",
     items: [
-      { href: "/clients", label: "Clients & touchpoints", icon: MessageSquare },
-      { href: "/performance", label: "Client performance", icon: BarChart3 },
+      { href: "/clients", label: "Clients", icon: MessageSquare },
       { href: "/billing", label: "Billing", icon: CalendarClock },
-      { href: "/backlog", label: "Data backlog", icon: ListTodo },
-    ],
-  },
-  {
-    label: "Growth",
-    items: [
-      { href: "/projections", label: "Projections", icon: Target },
-      { href: "/churn", label: "Churn tracker", icon: UserMinus },
-      { href: "/hotlist", label: "Hot list", icon: Flame },
-      { href: "/money", label: "My money", icon: DollarSign },
+      { href: "/projections", label: "Growth", icon: Target },
     ],
   },
   {
     label: "Reference",
-    items: [{ href: "/links", label: "Key links", icon: Link2 }],
+    items: [{ href: "/links", label: "Resources", icon: Link2 }],
   },
 ];
 
@@ -217,7 +199,13 @@ function SidebarNav() {
                   href={item.href}
                   label={item.label}
                   icon={item.icon}
-                  isActive={location.pathname === item.href}
+                  isActive={
+                    location.pathname === item.href ||
+                    (item.href === "/clients" &&
+                      clientRoutes.some(r => r.href === location.pathname)) ||
+                    (item.href === "/projections" &&
+                      growthRoutes.some(r => r.href === location.pathname))
+                  }
                 />
               ))}
             </SidebarMenu>

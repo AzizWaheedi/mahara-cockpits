@@ -74,7 +74,7 @@ export function ProjectionsPage() {
   return (
     <div className="mx-auto w-full max-w-6xl space-y-6">
       <PageHeader
-        title="Projections"
+        title="Renewals and targets"
         sub="Blood is the floor and stretch the goal. Actuals fill in from what is logged."
         actions={
           <>

@@ -17,14 +17,30 @@ const snapshot = await Bun.file(
 let queryResult: unknown;
 /** Per-query results, so a screen with two queries gets the right payload in each. */
 let queryByName: Record<string, unknown> = {};
+const emptyAction = async () => null;
+const emptyListAction = async () => [];
 
 mock.module("convex/react", () => ({
   useQuery: (name: string) =>
     name in queryByName ? queryByName[name] : queryResult,
   useMutation: () => async () => null,
+  useAction: (name: string) =>
+    name === "review.clients" || name === "review.sent"
+      ? emptyListAction
+      : emptyAction,
 }));
 mock.module("../convex/_generated/api", () => ({
   api: {
+    wa: { inbox: "wa.inbox", send: "wa.send", archive: "wa.archive" },
+    churn: { thisMonth: "churn.thisMonth" },
+    review: {
+      create: "review.create",
+      sent: "review.sent",
+      clients: "review.clients",
+      importFolder: "review.importFolder",
+      importStatus: "review.importStatus",
+    },
+    checkIns: { prepare: "checkIns.prepare", book: "checkIns.book" },
     csm: {
       snapshot: "csm.snapshot",
       toggleCheck: "toggleCheck",
@@ -58,6 +74,8 @@ g.window = win;
 g.document = win.document;
 g.navigator = win.navigator;
 g.HTMLElement = win.HTMLElement;
+g.HTMLFormElement = win.HTMLFormElement;
+g.MutationObserver = win.MutationObserver;
 g.Element = win.Element;
 g.Node = win.Node;
 g.IS_REACT_ACT_ENVIRONMENT = true;
@@ -155,7 +173,7 @@ test("the hot list and the message drafts render real client copy", async () => 
   });
   // A client name from the fixture must appear, so we know rows actually built.
   const html = host.innerHTML;
-  expect(html).toContain("Hot list");
+  expect(html).toContain("Opportunities");
   await reactAct(async () => root.unmount());
 });
 
@@ -184,11 +202,23 @@ test("client performance renders the overview then a single client", async () =>
   try {
     queryResult = undefined;
     await reactAct(async () => {
-      root.render(createElement(ClientPerformancePage, {}));
+      root.render(
+        createElement(
+          MemoryRouter,
+          null,
+          createElement(ClientPerformancePage, {}),
+        ),
+      );
     });
     queryByName = { performanceOverview: perfFixture.overview };
     await reactAct(async () => {
-      root.render(createElement(ClientPerformancePage, {}));
+      root.render(
+        createElement(
+          MemoryRouter,
+          null,
+          createElement(ClientPerformancePage, {}),
+        ),
+      );
     });
     expect(host.innerHTML).toContain("Client performance");
     expect(host.innerHTML).toContain(
@@ -209,6 +239,27 @@ test("client performance renders the overview then a single client", async () =>
     });
     const html = host.innerHTML;
     expect(html).toContain("Print report");
+    expect(html).toContain("Book next check-in");
+    expect(html).toContain("Client ID · ClickUp client board");
+    expect(html).toContain(perfFixture.profile.taskId);
+    let copiedId = "";
+    const originalWrite = win.navigator.clipboard.writeText;
+    win.navigator.clipboard.writeText = async value => {
+      copiedId = value;
+    };
+    try {
+      const copyButton = host.querySelector<HTMLButtonElement>(
+        '[aria-label="Copy client ID"]',
+      );
+      expect(copyButton).not.toBeNull();
+      await reactAct(async () => {
+        copyButton!.click();
+      });
+      expect(copiedId).toBe(perfFixture.profile.taskId);
+      expect(copyButton!.textContent).toContain("Copied");
+    } finally {
+      win.navigator.clipboard.writeText = originalWrite;
+    }
     expect(html).toContain("What is holding this client back");
     expect(html).toContain("Fix this first");
     expect(html).toContain("Write the Google Doc");

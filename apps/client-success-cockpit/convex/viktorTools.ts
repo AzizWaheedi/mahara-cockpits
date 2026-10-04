@@ -10,6 +10,7 @@
  * To add a new tool, first test it to see the response shape.
  */
 import { v } from "convex/values";
+import { internal } from "./_generated/api";
 import { internalAction } from "./_generated/server";
 import { authenticatedAction } from "./functions";
 
@@ -18,7 +19,8 @@ import { callTool } from "./tools";
 export const quickAiSearch = authenticatedAction({
   args: { query: v.string() },
   returns: v.string(),
-  handler: async (_ctx, { query }) => {
+  handler: async (ctx, { query }) => {
+    await ctx.runQuery(internal.roles.actionSeat, { userId: ctx.userId });
     const result = await callTool<{ search_response: string }>(
       "quick_ai_search",
       {
@@ -43,7 +45,8 @@ export const generateImage = authenticatedAction({
     ),
   },
   returns: v.string(),
-  handler: async (_ctx, { prompt, aspectRatio }) => {
+  handler: async (ctx, { prompt, aspectRatio }) => {
+    await ctx.runQuery(internal.roles.actionSeat, { userId: ctx.userId });
     const result = await callTool<{ response_text: string }>("text2im", {
       prompt,
       aspect_ratio: aspectRatio ?? "1:1",

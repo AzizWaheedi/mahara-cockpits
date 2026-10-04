@@ -1,7 +1,9 @@
 import { useMutation, useQuery } from "convex/react";
 import { ArrowLeft, ArrowUpRight, ChevronDown } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router";
 import { toast } from "sonner";
+import { ClientCheckIn } from "@/components/ClientCheckIn";
 import { ClientUpdates } from "@/components/ClientUpdates";
 import {
   CreativePreview,
@@ -1589,6 +1591,13 @@ function Profile({ name, onBack }: { name: string; onBack: () => void }) {
           </Button>
         </div>
         {p.taskId ? (
+          <ClientCheckIn
+            taskId={String(p.taskId)}
+            clientName={String(p.clientName)}
+            nextCallAt={p.nextCallAt}
+          />
+        ) : null}
+        {p.taskId ? (
           <AddTask
             taskId={String(p.taskId)}
             clientName={String(p.clientName)}
@@ -1930,7 +1939,22 @@ const isChurnedStage = (stage: string) =>
 
 export function ClientPerformancePage() {
   const data = useQuery(api.csm.performanceOverview, {});
-  const [openClient, setOpenClient] = useState<string | null>(null);
+  const [params, setParams] = useSearchParams();
+  const openClient =
+    (data?.clients ?? []).find(
+      (c: Any) =>
+        c.taskId === params.get("client") ||
+        c.clientName === params.get("client"),
+    )?.clientName ?? null;
+  const setOpenClient = (name: string | null) => {
+    const next = new URLSearchParams(params);
+    const client = (data?.clients ?? []).find(
+      (c: Any) => c.clientName === name,
+    );
+    if (name) next.set("client", client?.taskId ?? name);
+    else next.delete("client");
+    setParams(next);
+  };
   const [query, setQuery] = useState("");
   const [group, setGroup] = useState<"active" | "onboarding" | "paused">(
     "active",
@@ -2014,7 +2038,11 @@ export function ClientPerformancePage() {
       ) : null}
 
       {openClient ? (
-        <Profile name={openClient} onBack={() => setOpenClient(null)} />
+        <Profile
+          key={openClient}
+          name={openClient}
+          onBack={() => setOpenClient(null)}
+        />
       ) : (
         <>
           <div className="space-y-2">

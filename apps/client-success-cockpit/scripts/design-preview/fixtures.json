@@ -1,0 +1,1660 @@
+{
+  "roles:me": {
+    "email": "csm@example.test",
+    "name": "Demo CSM",
+    "roles": ["csm"],
+    "isAdmin": false,
+    "isCeo": false,
+    "portalRoles": ["csm"],
+    "clients": [],
+    "memberAt": 1791014400000,
+    "home": "/dashboard"
+  },
+  "csm:snapshot": {
+    "day": "2026-10-03",
+    "month": "2026-10",
+    "appointments": [],
+    "todaysCalls": [],
+    "prefs": [],
+    "hotRows": [],
+    "kpis": [],
+    "churn": null,
+    "money": null,
+    "clients": [
+      {
+        "stageRank": 1,
+        "hot": [],
+        "loose": [],
+        "changes": [],
+        "newSignup": false,
+        "onboarding": false,
+        "csmAssigned": "Demo CSM",
+        "syncedAt": 1791014400000,
+        "name": "Example Design",
+        "taskId": "demo-client-001",
+        "stage": "Active",
+        "bucket": "management",
+        "todo": "Book the next check-in and review this month's progress.",
+        "rank": 10,
+        "level": "amber",
+        "launchDate": "2026-09-03",
+        "liveDays": 30,
+        "lastPoc": "2026-09-29",
+        "silentDays": 4,
+        "lastCall": "2026-09-20",
+        "callDays": 13,
+        "renewalDate": "2026-11-03",
+        "renewalTracked": true,
+        "happiness": "Happy",
+        "service": "DFY",
+        "reportDue": true,
+        "reportTracked": true,
+        "_id": "clients~3",
+        "_creationTime": 1791014400000.002,
+        "hotBlocked": false
+      },
+      {
+        "stageRank": 1,
+        "hot": [],
+        "loose": [],
+        "changes": [],
+        "newSignup": true,
+        "onboarding": true,
+        "csmAssigned": "Demo CSM",
+        "syncedAt": 1791014400000,
+        "name": "Sample Build Co",
+        "taskId": "demo-client-002",
+        "stage": "Needs Contacting",
+        "bucket": "onboarding",
+        "todo": "Confirm onboarding access and the launch checklist.",
+        "rank": 12,
+        "level": "amber",
+        "signupDays": 3,
+        "service": "DFY",
+        "_id": "clients~4",
+        "_creationTime": 1791014400000.003,
+        "hotBlocked": false
+      },
+      {
+        "stageRank": 1,
+        "hot": [],
+        "loose": [],
+        "changes": [],
+        "newSignup": false,
+        "onboarding": false,
+        "csmAssigned": "Demo CSM",
+        "syncedAt": 1791014400000,
+        "name": "Demo Interiors",
+        "taskId": "demo-client-003",
+        "stage": "Active",
+        "bucket": "management",
+        "todo": "Next call is booked. Review the latest client feedback.",
+        "rank": 50,
+        "level": "green",
+        "lastPoc": "2026-10-02",
+        "silentDays": 1,
+        "nextPoc": "2026-10-05",
+        "nextCallAt": "2026-10-05T10:00:00Z",
+        "liveDays": 60,
+        "launchDate": "2026-08-04",
+        "renewalDate": "2026-10-30",
+        "renewalTracked": true,
+        "service": "DWY",
+        "happiness": "Happy",
+        "_id": "clients~5",
+        "_creationTime": 1791014400000.004,
+        "hotBlocked": false
+      }
+    ],
+    "tasks": [
+      {
+        "taskId": "demo-task-001",
+        "name": "Review Example Design strategy",
+        "status": "to do",
+        "assignee": "Demo CSM",
+        "dueDate": "2026-10-03",
+        "syncedAt": 1791014400000,
+        "_id": "csTasks~16",
+        "_creationTime": 1791014400000.0146
+      }
+    ],
+    "tasksRestricted": false,
+    "checks": [
+      {
+        "role": "csm",
+        "day": "2026-10-03",
+        "key": "01",
+        "block": "sprint_am",
+        "label": "Review the clients who need a follow-up",
+        "detail": "Open Clients and work from the top.",
+        "done": false,
+        "_id": "checks~11",
+        "_creationTime": 1791014400000.0098
+      },
+      {
+        "role": "csm",
+        "day": "2026-10-03",
+        "key": "02",
+        "block": "work_am",
+        "label": "Complete the priority client tasks",
+        "done": false,
+        "_id": "checks~12",
+        "_creationTime": 1791014400000.0107
+      },
+      {
+        "role": "csm",
+        "day": "2026-10-03",
+        "key": "03",
+        "block": "sprint_midday",
+        "label": "Review replies and appointments",
+        "done": false,
+        "_id": "checks~13",
+        "_creationTime": 1791014400000.0117
+      },
+      {
+        "role": "csm",
+        "day": "2026-10-03",
+        "key": "04",
+        "block": "work_pm",
+        "label": "Follow up on the team's open tasks",
+        "done": false,
+        "_id": "checks~14",
+        "_creationTime": 1791014400000.0127
+      },
+      {
+        "role": "csm",
+        "day": "2026-10-03",
+        "key": "05",
+        "block": "sprint_pm",
+        "label": "Save your end-of-day report",
+        "done": false,
+        "_id": "checks~15",
+        "_creationTime": 1791014400000.0137
+      }
+    ],
+    "decisions": [],
+    "plan": [],
+    "eod": null,
+    "lastSyncAt": 1791014400000,
+    "syncHealth": {
+      "at": 1791014400000,
+      "ok": true,
+      "profiles": 3,
+      "errors": []
+    },
+    "totals": {
+      "clients": 3,
+      "dueToday": 2,
+      "newSignups": 1,
+      "pauses": 0,
+      "onboarding": 1,
+      "managed": 2,
+      "pastDue": 0,
+      "hot": 0,
+      "loose": 0,
+      "healthy": 1
+    }
+  },
+  "csm:performanceOverview": {
+    "trend": [],
+    "weeklyOutcomes": [],
+    "trendByGroup": {
+      "active": [],
+      "onboarding": [],
+      "paused": []
+    },
+    "weeklyByGroup": {
+      "active": [],
+      "onboarding": [],
+      "paused": []
+    },
+    "syncedAt": 1791014400000,
+    "clients": [
+      {
+        "clientName": "Example Design",
+        "taskId": "demo-client-001",
+        "stage": "Active",
+        "group": "active",
+        "happiness": "Happy",
+        "liveDays": 30,
+        "service": "DFY",
+        "hasSheet": false,
+        "month": {
+          "spend": 630,
+          "leads": 36,
+          "booked": 12,
+          "shows": 9,
+          "noshows": 1,
+          "deals": 2,
+          "revenue": 15000
+        },
+        "lastMonth": {
+          "spend": 600,
+          "leads": 30,
+          "booked": 10,
+          "shows": 7,
+          "noshows": 2,
+          "deals": 1
+        },
+        "staleCount": 0,
+        "live": null,
+        "adsAccess": null,
+        "reportNudge": null,
+        "links": {}
+      },
+      {
+        "clientName": "Sample Build Co",
+        "taskId": "demo-client-002",
+        "stage": "Needs Contacting",
+        "group": "onboarding",
+        "service": "DFY",
+        "hasSheet": false,
+        "month": null,
+        "lastMonth": null,
+        "staleCount": 0,
+        "live": null,
+        "adsAccess": null,
+        "reportNudge": null,
+        "links": {}
+      },
+      {
+        "clientName": "Demo Interiors",
+        "taskId": "demo-client-003",
+        "stage": "Active",
+        "group": "active",
+        "happiness": "Happy",
+        "liveDays": 60,
+        "service": "DWY",
+        "hasSheet": false,
+        "month": {
+          "spend": 630,
+          "leads": 36,
+          "booked": 12,
+          "shows": 9,
+          "noshows": 1,
+          "deals": 2,
+          "revenue": 15000
+        },
+        "lastMonth": {
+          "spend": 600,
+          "leads": 30,
+          "booked": 10,
+          "shows": 7,
+          "noshows": 2,
+          "deals": 1
+        },
+        "staleCount": 0,
+        "live": null,
+        "adsAccess": null,
+        "reportNudge": null,
+        "links": {}
+      }
+    ]
+  },
+  "csm:syncStatus": {
+    "at": 1791014400000,
+    "ok": true,
+    "profiles": 3,
+    "clients": 3,
+    "errors": []
+  },
+  "comms:overview": {
+    "today": [
+      {
+        "eventId": "demo-event",
+        "calendarId": "demo-calendar",
+        "title": "Example Design check-in",
+        "start": "2026-10-03T13:00:00+03:00",
+        "end": "2026-10-03T13:30:00+03:00",
+        "allDay": false,
+        "clientName": "Example Design",
+        "attendees": [],
+        "kind": "client",
+        "syncedAt": 1791014400000,
+        "_id": "calendarEvents~17",
+        "_creationTime": 1791014400000.0156
+      }
+    ],
+    "upcoming": [],
+    "nextCall": [
+      {
+        "eventId": "demo-event",
+        "calendarId": "demo-calendar",
+        "title": "Example Design check-in",
+        "start": "2026-10-03T13:00:00+03:00",
+        "end": "2026-10-03T13:30:00+03:00",
+        "allDay": false,
+        "clientName": "Example Design",
+        "attendees": [],
+        "kind": "client",
+        "syncedAt": 1791014400000,
+        "_id": "calendarEvents~17",
+        "_creationTime": 1791014400000.0156
+      }
+    ],
+    "threads": [],
+    "calendarConfigured": true,
+    "myCalendar": null,
+    "saEmail": "claude@studied-handler-508106-m5.iam.gserviceaccount.com",
+    "whatsappConfigured": false,
+    "syncedAt": 1791014400000
+  },
+  "gaps:list": {
+    "rows": [
+      {
+        "clientName": "Example Design",
+        "taskId": "demo-client-001",
+        "bucket": "management",
+        "csm": "Demo CSM",
+        "gaps": [
+          {
+            "gap": "sheet_link",
+            "label": "No stat sheet on the ClickUp card",
+            "fix": "Link the client performance sheet on the client card.",
+            "queued": false,
+            "sent": false
+          }
+        ]
+      }
+    ],
+    "counts": {
+      "sheet_link": 1
+    },
+    "activeClients": 3
+  },
+  "projections:page": {
+    "today": "2026-10-03",
+    "weekStart": "2026-09-27",
+    "owner": "csm@example.test",
+    "owners": [],
+    "thisWeek": {
+      "weekStart": "2026-09-27",
+      "weekEnd": "2026-10-03",
+      "over": false,
+      "rows": [
+        {
+          "metric": "resell",
+          "label": "Re-sells",
+          "unit": "count",
+          "blood": null,
+          "stretch": null,
+          "actual": 0,
+          "actualFrom": "source",
+          "note": "Wins logged in the cockpit: hot-list re-sell rows marked Closed and renewal plans marked re-sold.",
+          "manualAllowed": false,
+          "missReason": null,
+          "verdict": "unset"
+        },
+        {
+          "metric": "renewal",
+          "label": "Renewals",
+          "unit": "count",
+          "blood": null,
+          "stretch": null,
+          "actual": 0,
+          "actualFrom": "source",
+          "note": "Renewal plans marked renewed.",
+          "manualAllowed": false,
+          "missReason": null,
+          "verdict": "unset"
+        },
+        {
+          "metric": "cash",
+          "label": "Cash collected",
+          "unit": "usd",
+          "blood": null,
+          "stretch": null,
+          "actual": null,
+          "actualFrom": "missing",
+          "note": "Manual entry. The billing ledger has not been read yet.",
+          "manualAllowed": true,
+          "missReason": null,
+          "verdict": "unset"
+        },
+        {
+          "metric": "review",
+          "label": "Reviews",
+          "unit": "count",
+          "blood": null,
+          "stretch": null,
+          "actual": 0,
+          "actualFrom": "source",
+          "note": "Hot-list review rows marked Closed.",
+          "manualAllowed": false,
+          "missReason": null,
+          "verdict": "unset"
+        },
+        {
+          "metric": "referral",
+          "label": "Referrals",
+          "unit": "count",
+          "blood": null,
+          "stretch": null,
+          "actual": 0,
+          "actualFrom": "source",
+          "note": "Hot-list referral rows marked Closed.",
+          "manualAllowed": false,
+          "missReason": null,
+          "verdict": "unset"
+        }
+      ]
+    },
+    "lastWeek": {
+      "weekStart": "2026-09-20",
+      "weekEnd": "2026-09-26",
+      "over": true,
+      "rows": [
+        {
+          "metric": "resell",
+          "label": "Re-sells",
+          "unit": "count",
+          "blood": null,
+          "stretch": null,
+          "actual": 0,
+          "actualFrom": "source",
+          "note": "Wins logged in the cockpit: hot-list re-sell rows marked Closed and renewal plans marked re-sold.",
+          "manualAllowed": false,
+          "missReason": null,
+          "verdict": "unset"
+        },
+        {
+          "metric": "renewal",
+          "label": "Renewals",
+          "unit": "count",
+          "blood": null,
+          "stretch": null,
+          "actual": 0,
+          "actualFrom": "source",
+          "note": "Renewal plans marked renewed.",
+          "manualAllowed": false,
+          "missReason": null,
+          "verdict": "unset"
+        },
+        {
+          "metric": "cash",
+          "label": "Cash collected",
+          "unit": "usd",
+          "blood": null,
+          "stretch": null,
+          "actual": null,
+          "actualFrom": "missing",
+          "note": "Manual entry. The billing ledger has not been read yet.",
+          "manualAllowed": true,
+          "missReason": null,
+          "verdict": "unset"
+        },
+        {
+          "metric": "review",
+          "label": "Reviews",
+          "unit": "count",
+          "blood": null,
+          "stretch": null,
+          "actual": 0,
+          "actualFrom": "source",
+          "note": "Hot-list review rows marked Closed.",
+          "manualAllowed": false,
+          "missReason": null,
+          "verdict": "unset"
+        },
+        {
+          "metric": "referral",
+          "label": "Referrals",
+          "unit": "count",
+          "blood": null,
+          "stretch": null,
+          "actual": 0,
+          "actualFrom": "source",
+          "note": "Hot-list referral rows marked Closed.",
+          "manualAllowed": false,
+          "missReason": null,
+          "verdict": "unset"
+        }
+      ]
+    },
+    "history": [
+      {
+        "weekStart": "2026-09-20",
+        "weekEnd": "2026-09-26",
+        "over": true,
+        "rows": [
+          {
+            "metric": "resell",
+            "label": "Re-sells",
+            "unit": "count",
+            "blood": null,
+            "stretch": null,
+            "actual": 0,
+            "actualFrom": "source",
+            "note": "Wins logged in the cockpit: hot-list re-sell rows marked Closed and renewal plans marked re-sold.",
+            "manualAllowed": false,
+            "missReason": null,
+            "verdict": "unset"
+          },
+          {
+            "metric": "renewal",
+            "label": "Renewals",
+            "unit": "count",
+            "blood": null,
+            "stretch": null,
+            "actual": 0,
+            "actualFrom": "source",
+            "note": "Renewal plans marked renewed.",
+            "manualAllowed": false,
+            "missReason": null,
+            "verdict": "unset"
+          },
+          {
+            "metric": "cash",
+            "label": "Cash collected",
+            "unit": "usd",
+            "blood": null,
+            "stretch": null,
+            "actual": null,
+            "actualFrom": "missing",
+            "note": "Manual entry. The billing ledger has not been read yet.",
+            "manualAllowed": true,
+            "missReason": null,
+            "verdict": "unset"
+          },
+          {
+            "metric": "review",
+            "label": "Reviews",
+            "unit": "count",
+            "blood": null,
+            "stretch": null,
+            "actual": 0,
+            "actualFrom": "source",
+            "note": "Hot-list review rows marked Closed.",
+            "manualAllowed": false,
+            "missReason": null,
+            "verdict": "unset"
+          },
+          {
+            "metric": "referral",
+            "label": "Referrals",
+            "unit": "count",
+            "blood": null,
+            "stretch": null,
+            "actual": 0,
+            "actualFrom": "source",
+            "note": "Hot-list referral rows marked Closed.",
+            "manualAllowed": false,
+            "missReason": null,
+            "verdict": "unset"
+          }
+        ]
+      },
+      {
+        "weekStart": "2026-09-13",
+        "weekEnd": "2026-09-19",
+        "over": true,
+        "rows": [
+          {
+            "metric": "resell",
+            "label": "Re-sells",
+            "unit": "count",
+            "blood": null,
+            "stretch": null,
+            "actual": 0,
+            "actualFrom": "source",
+            "note": "Wins logged in the cockpit: hot-list re-sell rows marked Closed and renewal plans marked re-sold.",
+            "manualAllowed": false,
+            "missReason": null,
+            "verdict": "unset"
+          },
+          {
+            "metric": "renewal",
+            "label": "Renewals",
+            "unit": "count",
+            "blood": null,
+            "stretch": null,
+            "actual": 0,
+            "actualFrom": "source",
+            "note": "Renewal plans marked renewed.",
+            "manualAllowed": false,
+            "missReason": null,
+            "verdict": "unset"
+          },
+          {
+            "metric": "cash",
+            "label": "Cash collected",
+            "unit": "usd",
+            "blood": null,
+            "stretch": null,
+            "actual": null,
+            "actualFrom": "missing",
+            "note": "Manual entry. The billing ledger has not been read yet.",
+            "manualAllowed": true,
+            "missReason": null,
+            "verdict": "unset"
+          },
+          {
+            "metric": "review",
+            "label": "Reviews",
+            "unit": "count",
+            "blood": null,
+            "stretch": null,
+            "actual": 0,
+            "actualFrom": "source",
+            "note": "Hot-list review rows marked Closed.",
+            "manualAllowed": false,
+            "missReason": null,
+            "verdict": "unset"
+          },
+          {
+            "metric": "referral",
+            "label": "Referrals",
+            "unit": "count",
+            "blood": null,
+            "stretch": null,
+            "actual": 0,
+            "actualFrom": "source",
+            "note": "Hot-list referral rows marked Closed.",
+            "manualAllowed": false,
+            "missReason": null,
+            "verdict": "unset"
+          }
+        ]
+      },
+      {
+        "weekStart": "2026-09-06",
+        "weekEnd": "2026-09-12",
+        "over": true,
+        "rows": [
+          {
+            "metric": "resell",
+            "label": "Re-sells",
+            "unit": "count",
+            "blood": null,
+            "stretch": null,
+            "actual": 0,
+            "actualFrom": "source",
+            "note": "Wins logged in the cockpit: hot-list re-sell rows marked Closed and renewal plans marked re-sold.",
+            "manualAllowed": false,
+            "missReason": null,
+            "verdict": "unset"
+          },
+          {
+            "metric": "renewal",
+            "label": "Renewals",
+            "unit": "count",
+            "blood": null,
+            "stretch": null,
+            "actual": 0,
+            "actualFrom": "source",
+            "note": "Renewal plans marked renewed.",
+            "manualAllowed": false,
+            "missReason": null,
+            "verdict": "unset"
+          },
+          {
+            "metric": "cash",
+            "label": "Cash collected",
+            "unit": "usd",
+            "blood": null,
+            "stretch": null,
+            "actual": null,
+            "actualFrom": "missing",
+            "note": "Manual entry. The billing ledger has not been read yet.",
+            "manualAllowed": true,
+            "missReason": null,
+            "verdict": "unset"
+          },
+          {
+            "metric": "review",
+            "label": "Reviews",
+            "unit": "count",
+            "blood": null,
+            "stretch": null,
+            "actual": 0,
+            "actualFrom": "source",
+            "note": "Hot-list review rows marked Closed.",
+            "manualAllowed": false,
+            "missReason": null,
+            "verdict": "unset"
+          },
+          {
+            "metric": "referral",
+            "label": "Referrals",
+            "unit": "count",
+            "blood": null,
+            "stretch": null,
+            "actual": 0,
+            "actualFrom": "source",
+            "note": "Hot-list referral rows marked Closed.",
+            "manualAllowed": false,
+            "missReason": null,
+            "verdict": "unset"
+          }
+        ]
+      },
+      {
+        "weekStart": "2026-08-30",
+        "weekEnd": "2026-09-05",
+        "over": true,
+        "rows": [
+          {
+            "metric": "resell",
+            "label": "Re-sells",
+            "unit": "count",
+            "blood": null,
+            "stretch": null,
+            "actual": 0,
+            "actualFrom": "source",
+            "note": "Wins logged in the cockpit: hot-list re-sell rows marked Closed and renewal plans marked re-sold.",
+            "manualAllowed": false,
+            "missReason": null,
+            "verdict": "unset"
+          },
+          {
+            "metric": "renewal",
+            "label": "Renewals",
+            "unit": "count",
+            "blood": null,
+            "stretch": null,
+            "actual": 0,
+            "actualFrom": "source",
+            "note": "Renewal plans marked renewed.",
+            "manualAllowed": false,
+            "missReason": null,
+            "verdict": "unset"
+          },
+          {
+            "metric": "cash",
+            "label": "Cash collected",
+            "unit": "usd",
+            "blood": null,
+            "stretch": null,
+            "actual": null,
+            "actualFrom": "missing",
+            "note": "Manual entry. The billing ledger has not been read yet.",
+            "manualAllowed": true,
+            "missReason": null,
+            "verdict": "unset"
+          },
+          {
+            "metric": "review",
+            "label": "Reviews",
+            "unit": "count",
+            "blood": null,
+            "stretch": null,
+            "actual": 0,
+            "actualFrom": "source",
+            "note": "Hot-list review rows marked Closed.",
+            "manualAllowed": false,
+            "missReason": null,
+            "verdict": "unset"
+          },
+          {
+            "metric": "referral",
+            "label": "Referrals",
+            "unit": "count",
+            "blood": null,
+            "stretch": null,
+            "actual": 0,
+            "actualFrom": "source",
+            "note": "Hot-list referral rows marked Closed.",
+            "manualAllowed": false,
+            "missReason": null,
+            "verdict": "unset"
+          }
+        ]
+      },
+      {
+        "weekStart": "2026-08-23",
+        "weekEnd": "2026-08-29",
+        "over": true,
+        "rows": [
+          {
+            "metric": "resell",
+            "label": "Re-sells",
+            "unit": "count",
+            "blood": null,
+            "stretch": null,
+            "actual": 0,
+            "actualFrom": "source",
+            "note": "Wins logged in the cockpit: hot-list re-sell rows marked Closed and renewal plans marked re-sold.",
+            "manualAllowed": false,
+            "missReason": null,
+            "verdict": "unset"
+          },
+          {
+            "metric": "renewal",
+            "label": "Renewals",
+            "unit": "count",
+            "blood": null,
+            "stretch": null,
+            "actual": 0,
+            "actualFrom": "source",
+            "note": "Renewal plans marked renewed.",
+            "manualAllowed": false,
+            "missReason": null,
+            "verdict": "unset"
+          },
+          {
+            "metric": "cash",
+            "label": "Cash collected",
+            "unit": "usd",
+            "blood": null,
+            "stretch": null,
+            "actual": null,
+            "actualFrom": "missing",
+            "note": "Manual entry. The billing ledger has not been read yet.",
+            "manualAllowed": true,
+            "missReason": null,
+            "verdict": "unset"
+          },
+          {
+            "metric": "review",
+            "label": "Reviews",
+            "unit": "count",
+            "blood": null,
+            "stretch": null,
+            "actual": 0,
+            "actualFrom": "source",
+            "note": "Hot-list review rows marked Closed.",
+            "manualAllowed": false,
+            "missReason": null,
+            "verdict": "unset"
+          },
+          {
+            "metric": "referral",
+            "label": "Referrals",
+            "unit": "count",
+            "blood": null,
+            "stretch": null,
+            "actual": 0,
+            "actualFrom": "source",
+            "note": "Hot-list referral rows marked Closed.",
+            "manualAllowed": false,
+            "missReason": null,
+            "verdict": "unset"
+          }
+        ]
+      },
+      {
+        "weekStart": "2026-08-16",
+        "weekEnd": "2026-08-22",
+        "over": true,
+        "rows": [
+          {
+            "metric": "resell",
+            "label": "Re-sells",
+            "unit": "count",
+            "blood": null,
+            "stretch": null,
+            "actual": 0,
+            "actualFrom": "source",
+            "note": "Wins logged in the cockpit: hot-list re-sell rows marked Closed and renewal plans marked re-sold.",
+            "manualAllowed": false,
+            "missReason": null,
+            "verdict": "unset"
+          },
+          {
+            "metric": "renewal",
+            "label": "Renewals",
+            "unit": "count",
+            "blood": null,
+            "stretch": null,
+            "actual": 0,
+            "actualFrom": "source",
+            "note": "Renewal plans marked renewed.",
+            "manualAllowed": false,
+            "missReason": null,
+            "verdict": "unset"
+          },
+          {
+            "metric": "cash",
+            "label": "Cash collected",
+            "unit": "usd",
+            "blood": null,
+            "stretch": null,
+            "actual": null,
+            "actualFrom": "missing",
+            "note": "Manual entry. The billing ledger has not been read yet.",
+            "manualAllowed": true,
+            "missReason": null,
+            "verdict": "unset"
+          },
+          {
+            "metric": "review",
+            "label": "Reviews",
+            "unit": "count",
+            "blood": null,
+            "stretch": null,
+            "actual": 0,
+            "actualFrom": "source",
+            "note": "Hot-list review rows marked Closed.",
+            "manualAllowed": false,
+            "missReason": null,
+            "verdict": "unset"
+          },
+          {
+            "metric": "referral",
+            "label": "Referrals",
+            "unit": "count",
+            "blood": null,
+            "stretch": null,
+            "actual": 0,
+            "actualFrom": "source",
+            "note": "Hot-list referral rows marked Closed.",
+            "manualAllowed": false,
+            "missReason": null,
+            "verdict": "unset"
+          }
+        ]
+      },
+      {
+        "weekStart": "2026-08-09",
+        "weekEnd": "2026-08-15",
+        "over": true,
+        "rows": [
+          {
+            "metric": "resell",
+            "label": "Re-sells",
+            "unit": "count",
+            "blood": null,
+            "stretch": null,
+            "actual": 0,
+            "actualFrom": "source",
+            "note": "Wins logged in the cockpit: hot-list re-sell rows marked Closed and renewal plans marked re-sold.",
+            "manualAllowed": false,
+            "missReason": null,
+            "verdict": "unset"
+          },
+          {
+            "metric": "renewal",
+            "label": "Renewals",
+            "unit": "count",
+            "blood": null,
+            "stretch": null,
+            "actual": 0,
+            "actualFrom": "source",
+            "note": "Renewal plans marked renewed.",
+            "manualAllowed": false,
+            "missReason": null,
+            "verdict": "unset"
+          },
+          {
+            "metric": "cash",
+            "label": "Cash collected",
+            "unit": "usd",
+            "blood": null,
+            "stretch": null,
+            "actual": null,
+            "actualFrom": "missing",
+            "note": "Manual entry. The billing ledger has not been read yet.",
+            "manualAllowed": true,
+            "missReason": null,
+            "verdict": "unset"
+          },
+          {
+            "metric": "review",
+            "label": "Reviews",
+            "unit": "count",
+            "blood": null,
+            "stretch": null,
+            "actual": 0,
+            "actualFrom": "source",
+            "note": "Hot-list review rows marked Closed.",
+            "manualAllowed": false,
+            "missReason": null,
+            "verdict": "unset"
+          },
+          {
+            "metric": "referral",
+            "label": "Referrals",
+            "unit": "count",
+            "blood": null,
+            "stretch": null,
+            "actual": 0,
+            "actualFrom": "source",
+            "note": "Hot-list referral rows marked Closed.",
+            "manualAllowed": false,
+            "missReason": null,
+            "verdict": "unset"
+          }
+        ]
+      },
+      {
+        "weekStart": "2026-08-02",
+        "weekEnd": "2026-08-08",
+        "over": true,
+        "rows": [
+          {
+            "metric": "resell",
+            "label": "Re-sells",
+            "unit": "count",
+            "blood": null,
+            "stretch": null,
+            "actual": 0,
+            "actualFrom": "source",
+            "note": "Wins logged in the cockpit: hot-list re-sell rows marked Closed and renewal plans marked re-sold.",
+            "manualAllowed": false,
+            "missReason": null,
+            "verdict": "unset"
+          },
+          {
+            "metric": "renewal",
+            "label": "Renewals",
+            "unit": "count",
+            "blood": null,
+            "stretch": null,
+            "actual": 0,
+            "actualFrom": "source",
+            "note": "Renewal plans marked renewed.",
+            "manualAllowed": false,
+            "missReason": null,
+            "verdict": "unset"
+          },
+          {
+            "metric": "cash",
+            "label": "Cash collected",
+            "unit": "usd",
+            "blood": null,
+            "stretch": null,
+            "actual": null,
+            "actualFrom": "missing",
+            "note": "Manual entry. The billing ledger has not been read yet.",
+            "manualAllowed": true,
+            "missReason": null,
+            "verdict": "unset"
+          },
+          {
+            "metric": "review",
+            "label": "Reviews",
+            "unit": "count",
+            "blood": null,
+            "stretch": null,
+            "actual": 0,
+            "actualFrom": "source",
+            "note": "Hot-list review rows marked Closed.",
+            "manualAllowed": false,
+            "missReason": null,
+            "verdict": "unset"
+          },
+          {
+            "metric": "referral",
+            "label": "Referrals",
+            "unit": "count",
+            "blood": null,
+            "stretch": null,
+            "actual": 0,
+            "actualFrom": "source",
+            "note": "Hot-list referral rows marked Closed.",
+            "manualAllowed": false,
+            "missReason": null,
+            "verdict": "unset"
+          }
+        ]
+      }
+    ],
+    "window": {
+      "tracked": true,
+      "rows": [
+        {
+          "taskId": "demo-client-003",
+          "clientName": "Demo Interiors",
+          "renewalDate": "2026-10-30",
+          "days": 27,
+          "state": "red",
+          "filters": ["0-30"],
+          "planId": null,
+          "status": "planned",
+          "likelihood": null,
+          "callBookedFor": null,
+          "notThisCycleReason": null,
+          "angle": null,
+          "objection": null,
+          "objectionAnswer": null,
+          "offer": null,
+          "offerGate": {
+            "ok": true,
+            "why": null
+          },
+          "outcomeNote": null,
+          "callRecordingUrl": null,
+          "goldStandard": false,
+          "onboardedOn": null,
+          "paid": null,
+          "facts": [
+            {
+              "label": "Stage",
+              "value": "Active",
+              "source": "ClickUp status"
+            },
+            {
+              "label": "Live",
+              "value": "60 days, since 4 Aug",
+              "source": "ClickUp launch date"
+            },
+            {
+              "label": "Happiness",
+              "value": "Happy",
+              "source": "ClickUp happiness"
+            },
+            {
+              "label": "Service",
+              "value": "DWY",
+              "source": "ClickUp service"
+            },
+            {
+              "label": "Leads this month",
+              "value": "36",
+              "source": "the client's performance sheet"
+            },
+            {
+              "label": "Booked this month",
+              "value": "12",
+              "source": "the client's performance sheet"
+            }
+          ],
+          "factsSaved": false,
+          "updatedAt": null
+        },
+        {
+          "taskId": "demo-client-001",
+          "clientName": "Example Design",
+          "renewalDate": "2026-11-03",
+          "days": 31,
+          "state": "planned",
+          "filters": ["31-60"],
+          "planId": null,
+          "status": "planned",
+          "likelihood": null,
+          "callBookedFor": null,
+          "notThisCycleReason": null,
+          "angle": null,
+          "objection": null,
+          "objectionAnswer": null,
+          "offer": null,
+          "offerGate": {
+            "ok": true,
+            "why": null
+          },
+          "outcomeNote": null,
+          "callRecordingUrl": null,
+          "goldStandard": false,
+          "onboardedOn": null,
+          "paid": null,
+          "facts": [
+            {
+              "label": "Stage",
+              "value": "Active",
+              "source": "ClickUp status"
+            },
+            {
+              "label": "Live",
+              "value": "30 days, since 3 Sep",
+              "source": "ClickUp launch date"
+            },
+            {
+              "label": "Happiness",
+              "value": "Happy",
+              "source": "ClickUp happiness"
+            },
+            {
+              "label": "Service",
+              "value": "DFY",
+              "source": "ClickUp service"
+            },
+            {
+              "label": "Leads this month",
+              "value": "36",
+              "source": "the client's performance sheet"
+            },
+            {
+              "label": "Booked this month",
+              "value": "12",
+              "source": "the client's performance sheet"
+            },
+            {
+              "label": "Last call",
+              "value": "20 Sep",
+              "source": "ClickUp last call"
+            }
+          ],
+          "factsSaved": false,
+          "updatedAt": null
+        }
+      ],
+      "missing": [],
+      "field": {
+        "name": "Contract end date",
+        "type": "Date",
+        "list": "Clients - Mahara"
+      }
+    },
+    "hardest": {
+      "taskId": "demo-client-003",
+      "clientName": "Demo Interiors",
+      "renewalDate": "2026-10-30",
+      "days": 27,
+      "state": "red",
+      "filters": ["0-30"],
+      "planId": null,
+      "status": "planned",
+      "likelihood": null,
+      "callBookedFor": null,
+      "notThisCycleReason": null,
+      "angle": null,
+      "objection": null,
+      "objectionAnswer": null,
+      "offer": null,
+      "offerGate": {
+        "ok": true,
+        "why": null
+      },
+      "outcomeNote": null,
+      "callRecordingUrl": null,
+      "goldStandard": false,
+      "onboardedOn": null,
+      "paid": null,
+      "facts": [
+        {
+          "label": "Stage",
+          "value": "Active",
+          "source": "ClickUp status"
+        },
+        {
+          "label": "Live",
+          "value": "60 days, since 4 Aug",
+          "source": "ClickUp launch date"
+        },
+        {
+          "label": "Happiness",
+          "value": "Happy",
+          "source": "ClickUp happiness"
+        },
+        {
+          "label": "Service",
+          "value": "DWY",
+          "source": "ClickUp service"
+        },
+        {
+          "label": "Leads this month",
+          "value": "36",
+          "source": "the client's performance sheet"
+        },
+        {
+          "label": "Booked this month",
+          "value": "12",
+          "source": "the client's performance sheet"
+        }
+      ],
+      "factsSaved": false,
+      "updatedAt": null
+    },
+    "gold": {
+      "count": 0,
+      "target": 10,
+      "rows": []
+    },
+    "billing": {
+      "okAt": null,
+      "ledgerSyncedAt": null,
+      "error": null
+    },
+    "canGold": false,
+    "canEditOthers": false
+  },
+  "churn:page": {
+    "today": "2026-10-03",
+    "month": "2026-10",
+    "me": {
+      "email": "csm@example.test",
+      "canRemove": false,
+      "canEditMonths": true
+    },
+    "reasons": [
+      "Cancelled",
+      "Refund",
+      "Chargeback",
+      "Non-payment 14+ days",
+      "Paused past 14 days",
+      "Ghosted",
+      "Completed term, did not renew",
+      "Other"
+    ],
+    "departures": [],
+    "months": [
+      {
+        "month": "2026-10",
+        "activeAtStart": null,
+        "startCarried": false,
+        "newClients": null,
+        "churned": 0,
+        "completed": 0,
+        "unknown": 0,
+        "lostBeforeRegister": null,
+        "activeAtEnd": null,
+        "churnPct": null,
+        "retentionPct": null,
+        "netGrowth": null,
+        "rolling3Pct": null,
+        "band": null,
+        "note": null,
+        "hasData": true
+      }
+    ],
+    "waiting": [],
+    "clients": [
+      {
+        "key": "demo-client-003",
+        "name": "Demo Interiors",
+        "stage": "Active",
+        "launchedOn": "2026-08-04",
+        "csm": "Demo CSM",
+        "mrrUsd": null
+      },
+      {
+        "key": "demo-client-001",
+        "name": "Example Design",
+        "stage": "Active",
+        "launchedOn": "2026-09-03",
+        "csm": "Demo CSM",
+        "mrrUsd": null
+      },
+      {
+        "key": "demo-client-002",
+        "name": "Sample Build Co",
+        "stage": "Needs Contacting",
+        "launchedOn": null,
+        "csm": "Demo CSM",
+        "mrrUsd": null
+      }
+    ],
+    "starts": [
+      {
+        "month": "2026-07",
+        "day": null,
+        "paying": null
+      },
+      {
+        "month": "2026-08",
+        "day": null,
+        "paying": null
+      },
+      {
+        "month": "2026-09",
+        "day": null,
+        "paying": null
+      },
+      {
+        "month": "2026-10",
+        "day": null,
+        "paying": null
+      }
+    ],
+    "launches": [
+      {
+        "month": "2026-09",
+        "names": ["Example Design"]
+      },
+      {
+        "month": "2026-08",
+        "names": ["Demo Interiors"]
+      }
+    ],
+    "log": []
+  },
+  "profile:Example Design": {
+    "clientName": "Example Design",
+    "taskId": "demo-client-001",
+    "stage": "Active",
+    "service": "DFY",
+    "liveDays": 30,
+    "happiness": "Happy",
+    "links": {},
+    "ghlName": "Example Design",
+    "ads": [],
+    "calls": [],
+    "gaps": [
+      {
+        "gap": "sheet_link",
+        "label": "No stat sheet on the ClickUp card",
+        "fix": "Link the client performance sheet on the client card."
+      }
+    ],
+    "syncedAt": 1791014400000,
+    "performance": {
+      "month": {
+        "spend": 630,
+        "leads": 36,
+        "booked": 12,
+        "shows": 9,
+        "noshows": 1,
+        "deals": 2,
+        "revenue": 15000
+      },
+      "lastMonth": {
+        "spend": 600,
+        "leads": 30,
+        "booked": 10,
+        "shows": 7,
+        "noshows": 2,
+        "deals": 1
+      },
+      "allTime": {
+        "spend": 1230,
+        "booked": 22,
+        "shows": 16,
+        "deals": 3
+      },
+      "stale": [],
+      "staleCount": 0,
+      "byAd": [],
+      "source": "Fictional preview",
+      "daily": []
+    },
+    "_id": "clientProfiles~6",
+    "_creationTime": 1791014400000.005,
+    "pocDays": 4,
+    "callDays": 13,
+    "reportTracked": true,
+    "csmAssigned": "Demo CSM",
+    "language": "en",
+    "reports": []
+  },
+  "profile:Sample Build Co": {
+    "clientName": "Sample Build Co",
+    "taskId": "demo-client-002",
+    "stage": "Needs Contacting",
+    "service": "DFY",
+    "links": {},
+    "ghlName": "Sample Build Co",
+    "ads": [],
+    "calls": [],
+    "gaps": [],
+    "syncedAt": 1791014400000,
+    "performance": {},
+    "_id": "clientProfiles~7",
+    "_creationTime": 1791014400000.0059,
+    "csmAssigned": "Demo CSM",
+    "language": "en",
+    "reports": []
+  },
+  "profile:Demo Interiors": {
+    "clientName": "Demo Interiors",
+    "taskId": "demo-client-003",
+    "stage": "Active",
+    "service": "DWY",
+    "liveDays": 60,
+    "happiness": "Happy",
+    "links": {},
+    "ghlName": "Demo Interiors",
+    "ads": [],
+    "calls": [],
+    "gaps": [],
+    "syncedAt": 1791014400000,
+    "performance": {
+      "month": {
+        "spend": 630,
+        "leads": 36,
+        "booked": 12,
+        "shows": 9,
+        "noshows": 1,
+        "deals": 2,
+        "revenue": 15000
+      },
+      "lastMonth": {
+        "spend": 600,
+        "leads": 30,
+        "booked": 10,
+        "shows": 7,
+        "noshows": 2,
+        "deals": 1
+      },
+      "allTime": {
+        "spend": 1230,
+        "booked": 22,
+        "shows": 16,
+        "deals": 3
+      },
+      "stale": [],
+      "staleCount": 0,
+      "byAd": [],
+      "source": "Fictional preview",
+      "daily": []
+    },
+    "_id": "clientProfiles~8",
+    "_creationTime": 1791014400000.0068,
+    "nextCallAt": "2026-10-05T10:00:00Z",
+    "pocDays": 1,
+    "csmAssigned": "Demo CSM",
+    "language": "en",
+    "reports": []
+  },
+  "auth:currentUser": {
+    "name": "Demo CSM",
+    "email": "csm@example.test"
+  },
+  "billing:sheet": {
+    "today": "2026-10-03",
+    "rows": [
+      {
+        "taskId": "demo-client-003",
+        "name": "Demo Interiors",
+        "group": "active",
+        "stage": "Active",
+        "method": "bank_transfer",
+        "plan": "monthly",
+        "nextDate": "2026-10-10",
+        "nextUsd": 1500,
+        "mrrUsd": 1500,
+        "extensionWeeks": 0,
+        "notes": [],
+        "syncedAt": "2026-10-03T08:00:00.000Z",
+        "ladder": {
+          "rung": "confirm",
+          "label": "Confirm how they pay",
+          "days": 7,
+          "tone": "good"
+        }
+      },
+      {
+        "taskId": "demo-client-001",
+        "name": "Example Design",
+        "group": "active",
+        "stage": "Active",
+        "method": "bank_transfer",
+        "plan": "monthly",
+        "nextDate": "2026-10-10",
+        "nextUsd": 1500,
+        "mrrUsd": 1500,
+        "extensionWeeks": 0,
+        "notes": [],
+        "syncedAt": "2026-10-03T08:00:00.000Z",
+        "ladder": {
+          "rung": "confirm",
+          "label": "Confirm how they pay",
+          "days": 7,
+          "tone": "good"
+        }
+      },
+      {
+        "taskId": "demo-client-002",
+        "name": "Sample Build Co",
+        "group": "pipeline",
+        "stage": "Needs Contacting",
+        "method": "bank_transfer",
+        "plan": "monthly",
+        "nextDate": "2026-10-10",
+        "nextUsd": 1500,
+        "mrrUsd": 1500,
+        "extensionWeeks": 0,
+        "notes": [],
+        "syncedAt": "2026-10-03T08:00:00.000Z",
+        "ladder": {
+          "rung": "confirm",
+          "label": "Confirm how they pay",
+          "days": 7,
+          "tone": "good"
+        }
+      }
+    ],
+    "totals": {
+      "dueThisWeek": {
+        "count": 3,
+        "usd": 4500
+      },
+      "overdue": {
+        "count": 0,
+        "usd": 0
+      },
+      "paused": 0,
+      "extended": 0,
+      "noMethod": 0,
+      "noDate": 0
+    },
+    "events": [],
+    "inbox": [],
+    "cards": [
+      {
+        "taskId": "demo-client-001",
+        "name": "Example Design",
+        "group": "active"
+      },
+      {
+        "taskId": "demo-client-002",
+        "name": "Sample Build Co",
+        "group": "pipeline"
+      },
+      {
+        "taskId": "demo-client-003",
+        "name": "Demo Interiors",
+        "group": "active"
+      }
+    ],
+    "syncedAt": "2026-10-03T08:00:00.000Z"
+  },
+  "wa:inbox": {
+    "threads": [
+      {
+        "id": "demo-thread",
+        "client_name": "Example Design",
+        "contact_name": "Example Owner",
+        "desk": "csm",
+        "is_group": false,
+        "phone": null,
+        "last_inbound_at": "2026-10-03T07:40:00Z",
+        "messages": [
+          {
+            "direction": "inbound",
+            "body": "Can we review the strategy together this week?",
+            "at": "2026-10-03T07:40:00Z",
+            "speaker": "Example Owner",
+            "kind": "text"
+          }
+        ],
+        "draft": {
+          "ar": "يسعدنا مراجعة الاستراتيجية معك هذا الأسبوع. سأرسل لك موعد المكالمة بعد تأكيده.",
+          "en": "Of course. Let's review the strategy together this week. I'll confirm an available time for our check-in.",
+          "why": "The client asked to review the strategy.",
+          "sent_at": null,
+          "sent_by": null
+        }
+      }
+    ]
+  }
+}

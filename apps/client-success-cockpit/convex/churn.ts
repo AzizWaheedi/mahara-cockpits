@@ -66,7 +66,22 @@ function env(): { url: string; key: string } {
   return { url, key };
 }
 
-type Seat = { email: string; isCeo: boolean; isAdmin: boolean };
+type Seat = {
+  email: string;
+  isCeo: boolean;
+  isAdmin: boolean;
+  scope: string[] | null;
+};
+const maySee = (s: Seat, name: unknown) =>
+  !s.scope ||
+  s.scope.includes(
+    String(name ?? "")
+      .trim()
+      .toLowerCase(),
+  );
+function checkClient(s: Seat, name: unknown) {
+  if (!maySee(s, name)) throw new Error("That client is not on your list.");
+}
 
 export const seat = internalQuery({
   args: { userId: v.id("users") },
@@ -78,7 +93,12 @@ export const seat = internalQuery({
         "The churn tracker is for client success. Ask Aziz to add you in the portal.",
       );
     const s = await seatOf({ ...ctx, userId });
-    return { email: s.email, isCeo: s.isCeo, isAdmin: s.isAdmin };
+    return {
+      email: s.email,
+      isCeo: s.isCeo,
+      isAdmin: s.isAdmin,
+      scope: s.scope ? [...s.scope] : null,
+    };
   },
 });
 
@@ -101,11 +121,18 @@ type RosterCard = {
  * (the start a month can be filled with).
  */
 export const roster = internalQuery({
-  args: { since: v.string(), through: v.string() },
+  args: {
+    since: v.string(),
+    through: v.string(),
+    scope: v.optional(v.array(v.string())),
+  },
   returns: v.any(),
-  handler: async (ctx, { since, through }) => {
-    const cards: RosterCard[] = (await ctx.db.query("clients").collect()).map(
-      c => ({
+  handler: async (ctx, { since, through, scope }) => {
+    const visible = (name: string) =>
+      !scope || scope.includes(name.trim().toLowerCase());
+    const cards: RosterCard[] = (await ctx.db.query("clients").collect())
+      .filter(c => visible(c.name))
+      .map(c => ({
         key: String(c.taskId),
         name: String(c.name),
         stage: String(c.stage ?? ""),
@@ -113,8 +140,7 @@ export const roster = internalQuery({
         csm: c.csmAssigned ?? null,
         pausedSince: c.pausedSince ?? null,
         pausedDays: typeof c.pausedDays === "number" ? c.pausedDays : null,
-      }),
-    );
+      }));
     const left: { key: string; name: string; day: string; to: string }[] = [];
     const starts: {
       month: string;
@@ -127,7 +153,7 @@ export const roster = internalQuery({
         .withIndex("by_month", q => q.eq("month", m))
         .collect();
       for (const e of events)
-        if (LEFT.has(e.kind))
+        if (LEFT.has(e.kind) && visible(e.name))
           left.push({
             key: String(e.key),
             name: String(e.name),
@@ -142,7 +168,12 @@ export const roster = internalQuery({
       starts.push({
         month: m,
         day: first?.day ?? null,
-        paying: typeof first?.paying === "number" ? first.paying : null,
+        paying: scope
+          ? (first?.clients?.filter(c => c.paying && visible(c.name)).length ??
+            null)
+          : typeof first?.paying === "number"
+            ? first.paying
+            : null,
       });
     }
     return { cards, left, starts };
@@ -176,7 +207,7 @@ export type PickClient = {
 export type ChurnPage = {
   today: string;
   month: string;
-  me: { email: string; canRemove: boolean };
+  me: { email: string; canRemove: boolean; canEditMonths?: boolean };
   reasons: readonly string[];
   departures: Departure[];
   /** Newest first, months with something in them, the current one always. */
@@ -238,7 +269,7 @@ async function build(
   const e = env();
   const today = kuwaitToday();
   const month = monthOf(today);
-  const [deps, monthRows, cards, log] = await Promise.all([
+  const [deps, monthRows, allCards, log] = await Promise.all([
     sb(
       e.url,
       e.key,
@@ -256,13 +287,20 @@ async function build(
       "cockpit_churn_log?select=at,by_whom,what,detail&order=at.desc&limit=200",
     ),
   ]);
-  const departures = deps.map(departureOf);
+  const cards = allCards.filter(c => maySee(seatRow, c.client_name));
+  const departures = deps
+    .filter(d => maySee(seatRow, d.client))
+    .map(departureOf);
   const since = addMonths(month, -3);
   const r: {
     cards: RosterCard[];
     left: { key: string; name: string; day: string; to: string }[];
     starts: { month: string; day: string | null; paying: number | null }[];
-  } = await ctx.runQuery(internal.churn.roster, { since, through: month });
+  } = await ctx.runQuery(internal.churn.roster, {
+    since,
+    through: month,
+    ...(seatRow.scope ? { scope: seatRow.scope } : {}),
+  });
 
   const billing = new Map(cards.map(c => [String(c.clickup_task_id), c]));
   const rosterByKey = new Map(r.cards.map(c => [c.key, c]));
@@ -370,7 +408,11 @@ async function build(
       });
     }
 
-  const rows = rollUp(monthRows.map(monthInputOf), departures, month);
+  const rows = rollUp(
+    seatRow.scope ? [] : monthRows.map(monthInputOf),
+    departures,
+    month,
+  );
   const launches = new Map<string, string[]>();
   for (const c of r.cards)
     if (c.launchedOn && c.launchedOn.slice(0, 7) >= addMonths(month, -12))
@@ -385,6 +427,7 @@ async function build(
     me: {
       email: seatRow.email,
       canRemove: seatRow.isCeo || seatRow.isAdmin,
+      canEditMonths: !seatRow.scope,
     },
     reasons: REASONS,
     departures,
@@ -398,7 +441,7 @@ async function build(
       month: m,
       names: names.sort(),
     })),
-    log: log.slice(0, 30).map(l => ({
+    log: (seatRow.scope ? [] : log).slice(0, 30).map(l => ({
       at: String(l.at),
       by: String(l.by_whom),
       what: String(l.what),
@@ -448,6 +491,19 @@ export const saveDeparture = authenticatedAction({
       const s: Seat = await ctx.runQuery(internal.churn.seat, {
         userId: ctx.userId,
       });
+      checkClient(s, a.client);
+      if (a.clickupTaskId && s.scope) {
+        const seat = await ctx.runQuery(internal.roles.actionSeat, {
+          userId: ctx.userId,
+        });
+        if (
+          !seat.clients.some(
+            c =>
+              c.taskId === a.clickupTaskId && norm(c.name) === norm(a.client),
+          )
+        )
+          throw new Error("The Client ID does not match this client.");
+      }
       const fields = {
         client: a.client.replace(/\s+/g, " ").trim().slice(0, 160),
         leftOn: a.leftOn,
@@ -482,6 +538,7 @@ export const saveDeparture = authenticatedAction({
         );
         if (!before)
           throw new Error("That row is not in the register any more. Refresh.");
+        checkClient(s, before.client);
         await sb(
           e.url,
           e.key,
@@ -571,6 +628,10 @@ export const saveMonth = authenticatedAction({
       const s: Seat = await ctx.runQuery(internal.churn.seat, {
         userId: ctx.userId,
       });
+      if (s.scope)
+        throw new Error(
+          "A seat with access to all clients can update company-wide monthly counts.",
+        );
       if (!/^\d{4}-\d{2}$/.test(a.month))
         throw new Error("That is not a month.");
       if (a.month > monthOf(kuwaitToday()))
@@ -621,6 +682,7 @@ export const dismiss = authenticatedAction({
       const s: Seat = await ctx.runQuery(internal.churn.seat, {
         userId: ctx.userId,
       });
+      checkClient(s, a.client);
       await logRow(s.email, "dismissed a suggestion", {
         key: `${a.key}:${a.leftOn}`,
         client: a.client,

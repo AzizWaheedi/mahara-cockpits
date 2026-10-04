@@ -12,7 +12,8 @@ export type LinkGroup = { title: string; blurb: string; rows: LinkRow[] };
 export const LINK_GROUPS: LinkGroup[] = [
   {
     title: "Booking links",
-    blurb: "Send these, never a manual time. The client picks the slot.",
+    blurb:
+      "Book check-ins from the client card, or send a link for the client to choose a time.",
     rows: [
       {
         label: "Onboarding call",

@@ -245,6 +245,7 @@ export function ChurnPage() {
 
       <Months
         rows={page.months}
+        canEdit={page.me.canEditMonths !== false}
         onSave={(month, f) => act(() => saveMonth({ month, ...f }))}
       />
 
@@ -325,13 +326,16 @@ function ThisMonth({
             label="Active at the start"
             value={
               <NumberCell
+                readOnly={page.me.canEditMonths === false}
                 value={row.activeAtStart}
                 label={`Active clients at the start of ${monthName(row.month)}`}
                 onSave={n => onSave(row.month, { activeAtStart: n })}
               />
             }
             sub={
-              row.startCarried ? (
+              page.me.canEditMonths === false ? (
+                "Assigned clients"
+              ) : row.startCarried ? (
                 "Carried from last month"
               ) : row.activeAtStart === null &&
                 start?.paying !== null &&
@@ -355,13 +359,16 @@ function ThisMonth({
             label="New clients"
             value={
               <NumberCell
+                readOnly={page.me.canEditMonths === false}
                 value={row.newClients}
                 label={`New clients in ${monthName(row.month)}`}
                 onSave={n => onSave(row.month, { newClients: n })}
               />
             }
             sub={
-              row.newClients === null && launched.length ? (
+              page.me.canEditMonths === false ? (
+                "Assigned clients"
+              ) : row.newClients === null && launched.length ? (
                 <Suggest
                   onUse={() =>
                     onSave(row.month, { newClients: launched.length })
@@ -450,11 +457,13 @@ function Suggest({
 
 /** A count that turns into a field when clicked; Enter or leaving it saves, Escape puts it back. */
 function NumberCell({
+  readOnly = false,
   value,
   label,
   onSave,
   className,
 }: {
+  readOnly?: boolean;
   value: number | null;
   label: string;
   onSave: (n: number | null) => Promise<void>;
@@ -483,6 +492,7 @@ function NumberCell({
       setBusy(false);
     }
   };
+  if (readOnly) return <span title={label}>{value ?? "Not yet"}</span>;
   if (!editing)
     return (
       <button
@@ -1028,9 +1038,11 @@ function Register({
 
 function Months({
   rows,
+  canEdit,
   onSave,
 }: {
   rows: MonthRow[];
+  canEdit: boolean;
   onSave: (
     month: string,
     f: { activeAtStart?: number | null; newClients?: number | null },
@@ -1043,8 +1055,9 @@ function Months({
           By month
         </h2>
         <p className="mt-0.5 text-sm text-muted-foreground">
-          Click a start or a new-clients count to change it. A blank start
-          carries from the month before.
+          {canEdit
+            ? "Click a start or a new-clients count to change it. A blank start carries from the month before."
+            : "These counts use the clients assigned to you."}
         </p>
       </div>
       <div className="mt-3 overflow-x-auto border-t">
@@ -1087,6 +1100,7 @@ function Months({
                 </td>
                 <td className="px-4 py-2.5">
                   <NumberCell
+                    readOnly={!canEdit}
                     value={r.activeAtStart}
                     label={`Active clients at the start of ${monthName(r.month)}`}
                     onSave={n => onSave(r.month, { activeAtStart: n })}
@@ -1095,6 +1109,7 @@ function Months({
                 </td>
                 <td className="px-4 py-2.5">
                   <NumberCell
+                    readOnly={!canEdit}
                     value={r.newClients}
                     label={`New clients in ${monthName(r.month)}`}
                     onSave={n => onSave(r.month, { newClients: n })}

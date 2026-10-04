@@ -108,10 +108,16 @@ export async function buildOverview(
   // Shared client calendars for everyone, personal calendars only to their owner.
   const events = (
     await ctx.db.query("calendarEvents").withIndex("by_start").collect()
-  ).filter(e => !e.owner || e.owner === who);
-  const allThreads = await ctx.db.query("waThreads").collect();
-  // Threads matched to no client stay visible only to an unrestricted seat.
-  const threads = allThreads.filter(t => inScope(scope, t.clientName));
+  ).filter(
+    e =>
+      (!e.owner || e.owner === who) &&
+      (!scope ||
+        (e.clientName
+          ? inScope(scope, e.clientName)
+          : e.owner === who || e.kind === "team")),
+  );
+  // WhatsApp now uses wa.inbox with exact Client IDs. Do not expose the legacy name-matched feed.
+  const threads: import("./_generated/dataModel").Doc<"waThreads">[] = [];
   const now = Date.now();
   const todayKey = kuwaitDay(now);
   const startMs = (e: { start: string }) => new Date(e.start).getTime();
@@ -149,7 +155,7 @@ export async function buildOverview(
     calendarConfigured: events.length > 0,
     myCalendar: myLink,
     saEmail: SERVICE_ACCOUNT,
-    whatsappConfigured: allThreads.length > 0,
+    whatsappConfigured: false,
     syncedAt: syncedAt || undefined,
   };
 }
@@ -207,27 +213,11 @@ export const markReplied = internalMutation({
 export const sendReply = authenticatedMutation({
   args: { chatId: v.string(), text: v.string() },
   returns: v.null(),
-  handler: async (ctx, { chatId, text }) => {
-    await assertRole(ctx, "csm");
-    const t = (await ctx.db.query("waThreads").collect()).find(
-      x => x.chatId === chatId,
+  handler: async (ctx, _args) => {
+    await assertRole(ctx);
+    throw new Error(
+      "Open Meetings and messages to reply from the client inbox.",
     );
-    if (!t) throw new Error("thread not found");
-    if (!inScope(await allowedClients(ctx), t.clientName))
-      throw new Error("That client is not on your list.");
-    await ctx.db.insert("outbox", {
-      kind: "wa_send",
-      clientTaskId: chatId,
-      clientName: t.name,
-      action: "WhatsApp reply",
-      evidence: text.trim(),
-      value: `${t.source ?? "ghl"}/${t.channel ?? "whatsapp"}`,
-      note: t.contactId,
-      createdAt: Date.now(),
-    });
-    // Not "replied" yet: that is stamped when the CRM confirms the send.
-    await ctx.db.patch(t._id, { sendingAt: Date.now(), sendError: undefined });
-    return null;
   },
 });
 

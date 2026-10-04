@@ -1,5 +1,6 @@
 import { useMutation } from "convex/react";
-import { Outlet } from "react-router";
+import { useEffect } from "react";
+import { Outlet, useLocation } from "react-router";
 import { api } from "../../convex/_generated/api";
 import { AppSidebar } from "./AppSidebar";
 import { HermesChat } from "./HermesChat";
@@ -7,9 +8,14 @@ import { RouteErrorBoundary } from "./RouteErrorBoundary";
 import { SyncStrip } from "./SyncStrip";
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "./ui/sidebar";
 import { Wordmark } from "./Wordmark";
+import { WorkspaceNav } from "./WorkspaceNav";
 
 export function AppLayout() {
+  const { pathname } = useLocation();
   const report = useMutation(api.csm.reportIssue);
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0 });
+  }, [pathname]);
   return (
     <SidebarProvider>
       <AppSidebar />
@@ -28,8 +34,9 @@ export function AppLayout() {
           </div>
         </header>
         <main className="flex-1 px-4 pt-4 pb-24 sm:px-6 sm:pt-6 lg:px-8 lg:pt-8 lg:pb-12">
-          <SyncStrip />
+          <WorkspaceNav />
           <RouteErrorBoundary
+            key={pathname}
             report={r =>
               report({
                 page: window.location.pathname,
@@ -37,6 +44,7 @@ export function AppLayout() {
               })
             }
           >
+            <SyncStrip />
             <Outlet />
           </RouteErrorBoundary>
         </main>

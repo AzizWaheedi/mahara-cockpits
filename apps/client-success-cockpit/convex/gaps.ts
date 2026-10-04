@@ -2,7 +2,7 @@ import { v } from "convex/values";
 import { internalQuery, type QueryCtx } from "./_generated/server";
 import { authenticatedMutation, authenticatedQuery } from "./functions";
 import { currentProfiles } from "./profileRows";
-import { allowedClients, assertRole } from "./roles";
+import { allowedClients, assertRole, requireClient } from "./roles";
 
 // biome-ignore lint/suspicious/noExplicitAny: profile blobs
 type Any = any;
@@ -149,9 +149,9 @@ export const queue = authenticatedMutation({
   returns: v.null(),
   handler: async (ctx, { taskId, clientName, label, fix }) => {
     await assertRole(ctx, "csm");
-    const scope = await allowedClients(ctx);
-    if (scope && !scope.has(clientName.toLowerCase()))
-      throw new Error("That client is not on your list.");
+    await requireClient(ctx, { taskId, clientName });
+    if (!label.trim() || label.length > 300 || fix.length > 4000)
+      throw new Error("Use a short issue title and description.");
     const already = (await ctx.db.query("outbox").collect()).find(
       o =>
         o.kind === "issue" && o.clientTaskId === taskId && o.action === label,

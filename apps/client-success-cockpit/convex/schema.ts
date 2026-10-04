@@ -5,6 +5,28 @@ import { v } from "convex/values";
 const schema = defineSchema({
   ...authTables,
 
+  // Durable booking receipts prevent a double click or uncertain provider response
+  // from creating another invitation. Unknown attempts require reconciliation.
+  checkInBookings: defineTable({
+    key: v.string(),
+    taskId: v.string(),
+    clientName: v.string(),
+    contactId: v.string(),
+    startTime: v.string(),
+    userId: v.id("users"),
+    status: v.string(),
+    appointmentId: v.optional(v.string()),
+    updatedAt: v.number(),
+  }).index("by_key", ["key"]),
+
+  actionReceipts: defineTable({
+    key: v.string(),
+    fingerprint: v.string(),
+    status: v.string(),
+    at: v.number(),
+    receipt: v.optional(v.string()),
+  }).index("by_key", ["key"]),
+
   clients: defineTable({
     taskId: v.string(),
     taskUrl: v.optional(v.string()),
@@ -385,6 +407,7 @@ const schema = defineSchema({
   }).index("by_role_day", ["role", "day"]),
 
   planItems: defineTable({
+    byEmail: v.optional(v.string()),
     role: v.string(),
     day: v.string(),
     text: v.string(),

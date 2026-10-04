@@ -10,10 +10,10 @@ type Props = {
   children: ReactNode;
   report?: (r: { title: string; detail: string }) => Promise<unknown>;
 };
-type State = { error: Error | null; key: number };
+type State = { error: Error | null; key: number; reported: boolean };
 
 export class RouteErrorBoundary extends Component<Props, State> {
-  state: State = { error: null, key: 0 };
+  state: State = { error: null, key: 0, reported: false };
 
   static getDerivedStateFromError(error: Error): Partial<State> {
     return { error };
@@ -22,17 +22,28 @@ export class RouteErrorBoundary extends Component<Props, State> {
   componentDidCatch(error: Error) {
     const sig = `${window.location.pathname}|${error.message}`.slice(0, 200);
     try {
-      if (sessionStorage.getItem(`reported:${sig}`)) return;
-      sessionStorage.setItem(`reported:${sig}`, "1");
+      if (sessionStorage.getItem(`reported:${sig}`)) {
+        this.setState({ reported: true });
+        return;
+      }
     } catch {
-      // storage unavailable: report anyway
+      /* Storage may be unavailable. */
     }
+    if (!this.props.report) return;
     void this.props
-      .report?.({
-        title: `Screen crashed: ${window.location.pathname}`,
-        detail: `${error.message}\n\n${error.stack ?? ""}`.slice(0, 4000),
+      .report({
+        title: `Screen error: ${window.location.pathname}`,
+        detail: `${error.message}\n${error.stack ?? ""}`.slice(0, 4000),
       })
-      .catch(() => undefined);
+      .then(() => {
+        this.setState({ reported: true });
+        try {
+          sessionStorage.setItem(`reported:${sig}`, "1");
+        } catch {
+          /* Optional cache. */
+        }
+      })
+      .catch(() => this.setState({ reported: false }));
   }
 
   render() {
@@ -43,8 +54,10 @@ export class RouteErrorBoundary extends Component<Props, State> {
         <AlertTriangle className="size-8 text-destructive" />
         <h2 className="text-lg font-semibold">This screen hit an error</h2>
         <p className="text-sm text-muted-foreground">
-          It has been reported and Hermes will look at it. You can try again
-          now; the rest of the cockpit still works.
+          {this.state.reported
+            ? "An issue report is queued. "
+            : "The issue report has not been saved. "}
+          Try again or open another page from the menu.
         </p>
         <p className="max-w-full truncate rounded bg-muted px-2 py-1 font-mono text-xs text-muted-foreground">
           {this.state.error.message}
@@ -53,7 +66,11 @@ export class RouteErrorBoundary extends Component<Props, State> {
           <button
             type="button"
             onClick={() =>
-              this.setState(s => ({ error: null, key: s.key + 1 }))
+              this.setState(s => ({
+                error: null,
+                key: s.key + 1,
+                reported: false,
+              }))
             }
             className="rounded-md bg-primary px-3 py-1.5 text-sm font-semibold text-primary-foreground"
           >

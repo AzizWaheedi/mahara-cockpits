@@ -6,9 +6,10 @@ import {
   ChevronRight,
   X,
 } from "lucide-react";
-import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router";
 import { toast } from "sonner";
+import { ClientCheckIn } from "@/components/ClientCheckIn";
 import {
   Chip,
   Dot,
@@ -26,7 +27,6 @@ import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
 import { DateInput } from "@/components/ui/date-input";
 import { Textarea } from "@/components/ui/textarea";
-import { WhatsAppDesk } from "@/components/WhatsAppDesk";
 import { opportunitiesFor, rankOpportunities } from "@/lib/csmHotList";
 import { LINK_GROUPS } from "@/lib/csmLinks";
 import {
@@ -258,106 +258,6 @@ function ShortList({
 }
 
 /**
- * Book the next CALL, written into ClickUp's `Next POC` field.
- *
- * The company rule: next point of contact means the next call, and we always want to know when it
- * is. So this carries the right booking link for their stage (onboarding call or client
- * check-in call), the invite text to send with it, and the date field that puts it on the
- * board. Messages are not booked here, they are tracked automatically off the cadence.
- */
-function NextPocControl({
-  c,
-  today,
-  lang,
-  onLog,
-  emphasise,
-}: {
-  c: Client;
-  today: string;
-  lang: Lang;
-  onLog: (
-    c: Client,
-    action: string,
-    kind: string,
-    extra?: Record<string, unknown>,
-  ) => void;
-  emphasise?: boolean;
-}) {
-  const st = nextPocState(c, today);
-  const call = nextCall(c, lang);
-  const [date, setDate] = useState(
-    st.date && !st.past ? st.date : st.suggested,
-  );
-  const bad = st.missing || st.past;
-  return (
-    <div
-      className={cn(
-        "space-y-3 rounded-xl bg-muted/40 p-4 text-sm",
-        emphasise && bad && "ring-1 ring-destructive/50",
-      )}
-    >
-      <div className="flex flex-wrap items-center gap-2">
-        <Chip tone={bad ? "bad" : "good"}>{st.label}</Chip>
-        <span className="text-xs text-muted-foreground">{call.label}</span>
-      </div>
-      <p className="text-xs">
-        {call.doNow}
-        {call.framework ? (
-          <>
-            {" "}
-            <ExtLink href={call.framework}>Open the framework</ExtLink>
-          </>
-        ) : null}
-      </p>
-      <div className="flex flex-wrap items-center gap-2">
-        {call.url ? (
-          <Button size="sm" variant="outline" asChild>
-            <a href={call.url} target="_blank" rel="noreferrer">
-              {call.label} booking link
-              <ArrowUpRight aria-hidden />
-            </a>
-          </Button>
-        ) : (
-          <span className="text-xs text-muted-foreground">
-            {call.label}, no link needed
-          </span>
-        )}
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={() => {
-            navigator.clipboard.writeText(call.message);
-            toast.success("Invite copied, send it on WhatsApp");
-          }}
-        >
-          Copy the invite with the link
-        </Button>
-        <DateInput
-          value={date}
-          onChange={e => setDate(e.target.value)}
-          aria-label="Date of the next call"
-          className="rounded-lg border bg-background px-2 py-1 text-xs text-foreground"
-        />
-        <Button
-          size="sm"
-          variant={bad ? "default" : "outline"}
-          onClick={() =>
-            onLog(c, `Next call booked for ${date}`, "booked", {
-              value: date,
-              note: `Booked via ${call.label.toLowerCase()}${
-                call.url ? ` (${call.url})` : ""
-              }.`,
-            })
-          }
-        >
-          They booked, save it to ClickUp
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-/**
  * A date field with its button, for the places that book a call in one click.
  * A date input can only produce a real day, so free text never reaches the
  * Next POC field in ClickUp.
@@ -408,7 +308,6 @@ function TemplatePicker({
   lang,
   onLang,
   onLog,
-  today,
 }: {
   c: Client;
   lang: Lang;
@@ -424,9 +323,6 @@ function TemplatePicker({
   const drafts = draftsFor(c, lang);
   const [angle, setAngle] = useState(drafts[0].id);
   const [edits, setEdits] = useState<Record<string, string>>({});
-  // Set after she logs a message, so the next point of contact control is the thing she
-  // cannot walk past.
-  const [justSent, setJustSent] = useState(false);
   const chosen = drafts.find(d => d.id === angle) ?? drafts[0];
   const editKey = `${lang}:${chosen.id}`;
   const text = edits[editKey] ?? chosen.message;
@@ -491,7 +387,6 @@ function TemplatePicker({
             onLog(c, `Messaged the client, ${chosen.short}`, "touchpoint", {
               note: text,
             });
-            setJustSent(true);
           }}
         >
           Sent it, log the touchpoint
@@ -541,19 +436,6 @@ function TemplatePicker({
           </a>
         )}
       </div>
-      {justSent && (
-        <p className="text-xs font-medium text-primary">
-          Logged. Now set the next point of contact, we always want to know when
-          the next call is.
-        </p>
-      )}
-      <NextPocControl
-        c={c}
-        today={today}
-        lang={lang}
-        onLog={onLog}
-        emphasise={justSent}
-      />
     </div>
   );
 }
@@ -656,7 +538,12 @@ function TouchpointRow({
         </span>
       </button>
       {open && (
-        <div className="border-t px-4 py-4 sm:px-6">
+        <div className="space-y-4 border-t px-4 py-4 sm:px-6">
+          <ClientCheckIn
+            taskId={c.taskId}
+            clientName={c.name}
+            nextCallAt={c.nextCallAt}
+          />
           <TemplatePicker
             c={c}
             lang={lang}
@@ -819,26 +706,45 @@ function HotSheet({
   // Win-backs are 24 of the 25 things I can see, and a wall of them is the opposite of a
   // hot list. Best few first, the rest behind a click.
   const [showAll, setShowAll] = useState(false);
-  const allOpen = suggestions.filter(o => !takenKeys.has(o.key));
+  const seen = new Set(
+    saved.filter(r => !r.hidden).map(r => `${r.clientName}:${r.type}`),
+  );
+  const allOpen = suggestions.filter(o => {
+    const identity = `${o.client?.name}:${o.type}`;
+    if (takenKeys.has(o.key) || seen.has(identity)) return false;
+    seen.add(identity);
+    return true;
+  });
   const open = showAll ? allOpen : allOpen.slice(0, 6);
+  const [saving, setSaving] = useState(false);
+  const savingLock = useRef(false);
+  const save = async (args: Any, success?: string) => {
+    if (savingLock.current) return;
+    savingLock.current = true;
+    setSaving(true);
+    try {
+      await onSave(args);
+      if (success) toast.success(success);
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "The opportunity did not save. Try again.",
+      );
+    } finally {
+      savingLock.current = false;
+      setSaving(false);
+    }
+  };
   const patch = (row: Any, field: string, value: string) =>
-    onSave({
+    save({
       key: row.key,
       clientName: row.clientName,
       type: row.type,
-      leadType: row.leadType,
-      status: row.status,
-      lastObjection: row.lastObjection,
-      contactUrl: row.contactUrl,
-      amount: row.amount,
-      lastFu: row.lastFu,
-      nextFu: row.nextFu,
-      notes: row.notes,
-      manual: row.manual,
       [field]: value,
     });
   return (
-    <div className="space-y-6">
+    <fieldset disabled={saving} className="min-w-0 space-y-6">
       <SectionCard
         title="Your list"
         count={rows.length}
@@ -848,7 +754,7 @@ function HotSheet({
             size="sm"
             variant="secondary"
             onClick={() =>
-              onSave({
+              save({
                 key: `manual:${Date.now()}`,
                 clientName: "",
                 type: "",
@@ -863,7 +769,12 @@ function HotSheet({
       >
         {/* relative: the dropdowns' hidden native selects stay inside the
             scroller instead of widening the page on a phone. */}
-        <div className="relative overflow-x-auto">
+        {rows.length === 0 && (
+          <p className="px-4 py-4 text-sm text-muted-foreground sm:px-6">
+            Nothing on your list yet. Add a row or take a suggestion below.
+          </p>
+        )}
+        <div className={rows.length ? "relative overflow-x-auto" : "hidden"}>
           <table className="w-full min-w-max text-sm">
             <thead>
               <tr className="border-b">
@@ -920,6 +831,8 @@ function HotSheet({
                         ) : (
                           <input
                             type={DATE_FIELDS.has(field) ? "date" : "text"}
+                            key={`${r.key}:${field}:${r[field] ?? ""}`}
+                            aria-label={`${r.clientName || "New opportunity"}: ${COLS.find(c => c[0] === field)?.[1]}`}
                             defaultValue={r[field] ?? ""}
                             onBlur={e => {
                               if (e.target.value !== (r[field] ?? ""))
@@ -943,12 +856,15 @@ function HotSheet({
                         aria-label="Remove from my list"
                         className="inline-flex size-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-destructive"
                         onClick={() =>
-                          onSave({
-                            key: r.key,
-                            clientName: r.clientName,
-                            type: r.type,
-                            hidden: true,
-                          }).then(() => toast.success("Removed from your list"))
+                          save(
+                            {
+                              key: r.key,
+                              clientName: r.clientName,
+                              type: r.type,
+                              hidden: true,
+                            },
+                            "Removed from your list",
+                          )
                         }
                       >
                         <X aria-hidden className="size-4" />
@@ -988,14 +904,17 @@ function HotSheet({
                 size="sm"
                 variant="outline"
                 onClick={() =>
-                  onSave({
-                    key: o.key,
-                    clientName: o.client?.name ?? "",
-                    type: o.type ?? "",
-                    leadType: "Warm",
-                    notes: humanise(o.why ?? ""),
-                    contactUrl: o.client?.taskUrl,
-                  }).then(() => toast.success("Added to your list"))
+                  save(
+                    {
+                      key: o.key,
+                      clientName: o.client?.name ?? "",
+                      type: o.type ?? "",
+                      leadType: "Warm",
+                      notes: humanise(o.why ?? ""),
+                      contactUrl: o.client?.taskUrl,
+                    },
+                    "Added to your list",
+                  )
                 }
               >
                 Add to my list
@@ -1017,12 +936,26 @@ function HotSheet({
           </div>
         ) : null}
       </SectionCard>
-    </div>
+    </fieldset>
   );
 }
 
 export function CsmPage({ section }: { section: Section }) {
   const snap = useQuery(api.csm.snapshot, {});
+  const [clientSearch, setClientSearch] = useState("");
+  const [resourceSearch, setResourceSearch] = useState("");
+  const [eodError, setEodError] = useState("");
+  const resources = LINK_GROUPS.map(g => ({
+    ...g,
+    rows: g.rows.filter(r =>
+      `${g.title} ${r.label} ${r.note ?? ""}`
+        .toLowerCase()
+        .includes(resourceSearch.trim().toLowerCase()),
+    ),
+  })).filter(g => g.rows.length);
+  const saving = useRef(false);
+  const requests = useRef(new Map<string, string>());
+  const [busy, setBusy] = useState(false);
   const toggleCheck = useMutation(api.csm.toggleCheck);
   const act = useMutation(api.csm.act);
   const addPlanItems = useMutation(api.csm.addPlanItems);
@@ -1132,7 +1065,13 @@ export function CsmPage({ section }: { section: Section }) {
     /upsell|referral|review/i.test(d.action),
   ).length;
   const ticketsToday = ds.filter(d => d.kind === "rerouted").length;
-  const clients: Client[] = snap.clients;
+  const clients: Client[] = snap.clients.filter(
+    (c: Client) =>
+      section !== "clients" ||
+      `${c.name} ${c.taskId}`
+        .toLowerCase()
+        .includes(clientSearch.trim().toLowerCase()),
+  );
   // Today = the combined priority list across both motions; the other two tabs are the
   // split, so he can work one motion at a time.
   const needsAction = (c: Client) => c.rank < 40 && c.level !== "green";
@@ -1169,6 +1108,12 @@ export function CsmPage({ section }: { section: Section }) {
     kind: string,
     extra: Record<string, unknown> = {},
   ) => {
+    if (saving.current) return;
+    saving.current = true;
+    setBusy(true);
+    const signature = JSON.stringify([c.taskId, action, kind, extra]);
+    const requestId = requests.current.get(signature) ?? crypto.randomUUID();
+    requests.current.set(signature, requestId);
     try {
       // The ClickUp id survives the sync replacing every row; the document id may not.
       await act({
@@ -1176,21 +1121,26 @@ export function CsmPage({ section }: { section: Section }) {
         taskId: c.taskId,
         action,
         kind,
+        requestId,
         ...extra,
       });
     } catch (e) {
       toast.error(String((e as Error).message ?? e));
       return;
+    } finally {
+      saving.current = false;
+      setBusy(false);
     }
+    requests.current.delete(signature);
     setOpen(null);
     setNote("");
     setTicketNote("");
     toast.success(
       kind === "ticket"
-        ? "Ticket created on the right board"
+        ? "Ticket queued for the team. Its ClickUp link will appear after sync."
         : kind === "left"
           ? "Left, with a reason logged"
-          : "Logged to ClickUp",
+          : "Saved here and queued for ClickUp",
     );
   };
 
@@ -1201,11 +1151,21 @@ export function CsmPage({ section }: { section: Section }) {
       .filter(Boolean)
       .map(text => ({ text }));
     if (!items.length) return;
-    await addPlanItems({ items });
-    setDump("");
-    toast.success(
-      `${items.length} task${items.length > 1 ? "s" : ""} created for tomorrow`,
-    );
+    if (saving.current) return;
+    saving.current = true;
+    setBusy(true);
+    try {
+      await addPlanItems({ items });
+      setDump("");
+      toast.success(
+        `${items.length} task${items.length > 1 ? "s" : ""} queued for ClickUp`,
+      );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Tasks could not be saved.");
+    } finally {
+      saving.current = false;
+      setBusy(false);
+    }
   };
 
   const row = (c: Client) => {
@@ -1284,7 +1244,23 @@ export function CsmPage({ section }: { section: Section }) {
         </button>
 
         {isOpen && (
-          <div className="space-y-4 border-t px-4 py-4 sm:px-6">
+          <fieldset
+            disabled={busy}
+            aria-busy={busy}
+            className="min-w-0 space-y-4 border-t px-4 py-4 sm:px-6"
+          >
+            <ClientCheckIn
+              taskId={c.taskId}
+              clientName={c.name}
+              nextCallAt={c.nextCallAt}
+            />
+            <Link
+              className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline"
+              to={`/performance?client=${encodeURIComponent(c.taskId)}`}
+            >
+              Open client profile{" "}
+              <ArrowUpRight className="size-4" aria-hidden />
+            </Link>
             <PillRow>
               {(
                 [
@@ -1295,21 +1271,31 @@ export function CsmPage({ section }: { section: Section }) {
                   "ticket",
                   "leave",
                 ] as const
-              ).map(p => (
-                <Pill key={p} active={panel === p} onClick={() => setPanel(p)}>
-                  {p === "message"
-                    ? "Message (SOP template)"
-                    : p === "actions"
-                      ? "Log a touchpoint"
-                      : p === "book"
-                        ? "Book the next call"
-                        : p === "update"
-                          ? "Update the board"
-                          : p === "ticket"
-                            ? "Raise a ticket"
-                            : "Leave it"}
-                </Pill>
-              ))}
+              )
+                .filter(
+                  p =>
+                    p !== "book" ||
+                    nextCall(c, langOf(c)).url !== LINKS.checkInCall,
+                )
+                .map(p => (
+                  <Pill
+                    key={p}
+                    active={panel === p}
+                    onClick={() => setPanel(p)}
+                  >
+                    {p === "message"
+                      ? "Message templates"
+                      : p === "actions"
+                        ? "Log a touchpoint"
+                        : p === "book"
+                          ? "Onboarding & other calls"
+                          : p === "update"
+                            ? "Update the board"
+                            : p === "ticket"
+                              ? "Raise a ticket"
+                              : "Leave it"}
+                  </Pill>
+                ))}
             </PillRow>
 
             {panel === "message" && (
@@ -1318,7 +1304,14 @@ export function CsmPage({ section }: { section: Section }) {
                 today={snap.day}
                 lang={langOf(c)}
                 onLang={l =>
-                  void setClientLanguage({ clientName: c.name, language: l })
+                  void setClientLanguage({
+                    clientName: c.name,
+                    language: l,
+                  }).catch(() =>
+                    toast.error(
+                      "The language preference did not save. Try again.",
+                    ),
+                  )
                 }
                 onLog={run}
               />
@@ -1348,16 +1341,6 @@ export function CsmPage({ section }: { section: Section }) {
                   >
                     Logged a call and summary
                   </Button>
-                  <BookDate
-                    c={c}
-                    today={snap.day}
-                    label="Book the next touchpoint"
-                    onBook={d =>
-                      run(c, `Booked the next touchpoint for ${d}`, "booked", {
-                        value: d,
-                      })
-                    }
-                  />
                 </div>
                 {c.sheetLink || c.taskUrl ? (
                   <div className="flex flex-wrap gap-x-4 gap-y-2 text-xs">
@@ -1666,26 +1649,27 @@ export function CsmPage({ section }: { section: Section }) {
                 </Button>
               </div>
             )}
-          </div>
+          </fieldset>
         )}
       </div>
     );
   };
 
   const TITLE: Record<Section, string> = {
-    start: "Start of day",
-    clients: "Clients & touchpoints",
-    tasks: "Task list",
-    hot: "Hot list",
-    links: "Key links",
-    money: "My money",
+    start: "Today",
+    clients: "Client follow-ups",
+    tasks: "Tasks",
+    hot: "Opportunities",
+    links: "Resources",
+    money: "My income",
     eod: "End of day",
   };
   /** The pill for each tab. The order the pills sit in follows TABS, so the default is first. */
   const TAB_LABEL: Record<string, string> = {
-    today: `Today (${todayList.length})`,
-    management: `Client management (${managementList.filter(needsAction).length}/${managementList.length})`,
-    onboarding: `Client onboarding (${onboardingList.filter(needsAction).length}/${onboardingList.length})`,
+    today: `Needs attention (${todayList.length})`,
+    touchpoints: "Contact schedule",
+    management: `Active clients (${managementList.filter(needsAction).length}/${managementList.length})`,
+    onboarding: `Onboarding (${onboardingList.filter(needsAction).length}/${onboardingList.length})`,
     hot: `Hot list (${hotRows.length})`,
     loose: `Loose ends (${looseList.length})`,
     tasks: `ClickUp tasks (${snap.tasks.length})`,
@@ -1715,7 +1699,7 @@ export function CsmPage({ section }: { section: Section }) {
       {section === "start" && (
         <p className="text-[15px] leading-6">
           {t.dueToday === 0
-            ? "Nothing is waiting on you. Use the time on the hot list."
+            ? "No client follow-ups are due in this snapshot. Check messages or work on opportunities."
             : `${t.dueToday} ${t.dueToday === 1 ? "client needs" : "clients need"} a message or a call today.`}
           {t.pastDue > 0
             ? ` ${t.pastDue} ${t.pastDue === 1 ? "invoice is" : "invoices are"} past due.`
@@ -1820,7 +1804,11 @@ export function CsmPage({ section }: { section: Section }) {
               const doneCount = rows.filter(c => c.done).length;
               const allDone = doneCount === rows.length;
               return (
-                <details key={block} open={!allDone} className="group">
+                <details
+                  key={block}
+                  open={block === "sprint_am" && !allDone}
+                  className="group"
+                >
                   <summary className="no-marker flex cursor-pointer flex-wrap items-center justify-between gap-x-3 gap-y-1 px-4 py-3 sm:px-6">
                     <span
                       className={cn(
@@ -1852,7 +1840,14 @@ export function CsmPage({ section }: { section: Section }) {
                         aria-pressed={c.done}
                         className="flex w-full items-start gap-3 px-4 py-2 text-left text-sm hover:bg-muted/40 sm:px-6"
                         onClick={() =>
-                          toggleCheck({ id: c._id as Id<"checks"> })
+                          toggleCheck({
+                            id: c._id as Id<"checks">,
+                            done: !c.done,
+                          }).catch(() =>
+                            toast.error(
+                              "The checklist could not be saved. Try again.",
+                            ),
+                          )
                         }
                       >
                         <span
@@ -1897,12 +1892,57 @@ export function CsmPage({ section }: { section: Section }) {
 
       {/* The replies waiting on her, after the plan for the day. The
           desk keeps the replies drafted, with a send button on each. */}
-      {section === "start" && <WhatsAppDesk desk="csm" />}
+      {section === "start" && (
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Link
+            to="/clients"
+            className="rounded-2xl border bg-card p-5 transition-colors hover:border-primary/50"
+          >
+            <span className="font-semibold">
+              Work through client follow-ups
+            </span>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Open a client, book a check-in or log your update.
+            </p>
+          </Link>
+          <Link
+            to="/meetings"
+            className="rounded-2xl border bg-card p-5 transition-colors hover:border-primary/50"
+          >
+            <span className="font-semibold">Open meetings and messages</span>
+            <p className="mt-1 text-sm text-muted-foreground">
+              See your calendar and reply to linked clients.
+            </p>
+          </Link>
+        </div>
+      )}
 
       {/* Sending a cut for review, folded until it is needed: the reply
           a client is waiting for is often "here it is". */}
-      {section === "start" && <SendForReview folded />}
+      {section === "clients" && <SendForReview folded />}
 
+      {section === "clients" && (
+        <div className="space-y-2">
+          <label htmlFor="client-search" className="text-sm font-medium">
+            Find a client
+          </label>
+          <input
+            id="client-search"
+            type="search"
+            placeholder="Search by name or Client ID"
+            value={clientSearch}
+            onChange={e => setClientSearch(e.target.value)}
+            className="block h-11 w-full rounded-xl border bg-card px-4 text-sm sm:max-w-md"
+          />
+          {clients.length === 0 && (
+            <p role="status" className="text-sm text-muted-foreground">
+              {clientSearch.trim()
+                ? "No clients match this search. Try a name or ClickUp Client ID."
+                : "No clients are available in this snapshot. Check your client assignments if you expected to see them here."}
+            </p>
+          )}
+        </div>
+      )}
       {TABS[section].length > 1 && (
         <PillRow>
           {TABS[section]
@@ -1921,18 +1961,41 @@ export function CsmPage({ section }: { section: Section }) {
 
       {tab === "today" && (
         <div className="space-y-8">
-          <ShortList
-            title="Onboarding, get them live"
-            items={onboardingList.filter(needsAction)}
-            render={row}
-            empty="Every onboarding client has been dealt with today."
-          />
-          <ShortList
-            title="Management, keep them alive"
-            items={managementList.filter(needsAction)}
-            render={row}
-            empty="Every managed client has been dealt with today."
-          />
+          {clientSearch.trim() ? (
+            clients.length > 0 && (
+              <ShortList
+                title="Search results"
+                items={clients}
+                render={row}
+                empty="No matching clients."
+              />
+            )
+          ) : (
+            <>
+              {onboardingList.some(needsAction) && (
+                <ShortList
+                  title="Onboarding, get them live"
+                  items={onboardingList.filter(needsAction)}
+                  render={row}
+                  empty="No onboarding clients need attention in this view."
+                />
+              )}
+              {managementList.some(needsAction) && (
+                <ShortList
+                  title="Management, keep them alive"
+                  items={managementList.filter(needsAction)}
+                  render={row}
+                  empty="No managed clients need attention in this view."
+                />
+              )}
+              {clients.length > 0 && !clients.some(needsAction) && (
+                <p className="rounded-2xl border border-dashed px-4 py-6 text-sm text-muted-foreground">
+                  No clients need attention in the latest snapshot. Open Active
+                  clients to see the full list.
+                </p>
+              )}
+            </>
+          )}
         </div>
       )}
       {tab === "touchpoints" && (
@@ -1941,7 +2004,7 @@ export function CsmPage({ section }: { section: Section }) {
             {
               key: "nopoc",
               title: "No next call booked",
-              hint: "Every client needs a booked next call. Send the booking link here and save the date, it writes to the Next POC field in ClickUp. Messages are tracked automatically, they do not need booking.",
+              hint: "Every client needs a booked next call. Open the client and choose Book check-in. The confirmed booking queues the Next POC update in ClickUp. Messages are tracked automatically, they do not need booking.",
               rows: clients.filter(c => {
                 const poc = nextPocState(c, snap.day);
                 return poc.missing || poc.past;
@@ -2067,6 +2130,13 @@ export function CsmPage({ section }: { section: Section }) {
             <div className="space-y-3">{looseList.map(row)}</div>
           )}
         </div>
+      )}
+      {snap.tasksRestricted && tab === "tasks" && (
+        <p className="callout-warn rounded-2xl border p-4 text-sm">
+          The shared task feed has no client IDs, so it is hidden for your
+          client-limited seat. Open a client profile to view or add that
+          client’s tasks.
+        </p>
       )}
       {tab === "tasks" && (
         <div className="space-y-6">
@@ -2319,8 +2389,23 @@ export function CsmPage({ section }: { section: Section }) {
             the exit process and #csm-general. If a link is missing, say so with
             Report an issue and it gets added.
           </p>
-          <div className="grid gap-4 lg:grid-cols-2 lg:gap-6">
-            {LINK_GROUPS.map(g => (
+          <label className="block space-y-2 text-sm">
+            Find a resource
+            <input
+              type="search"
+              value={resourceSearch}
+              onChange={e => setResourceSearch(e.target.value)}
+              className="w-full rounded-xl border bg-card px-4 py-3"
+              placeholder="Search calls, forms, SOPs or boards"
+            />
+          </label>
+          {resources.length === 0 && (
+            <p className="text-sm text-muted-foreground">
+              No resources match this search.
+            </p>
+          )}
+          <div className="grid items-start gap-4 lg:grid-cols-2 lg:gap-6">
+            {resources.map(g => (
               <SectionCard key={g.title} title={g.title} sub={g.blurb} flush>
                 {g.rows.map(r => (
                   <div
@@ -2340,9 +2425,16 @@ export function CsmPage({ section }: { section: Section }) {
                     <Button
                       size="sm"
                       variant="outline"
-                      onClick={() => {
-                        void navigator.clipboard.writeText(r.url);
-                        toast.success("Link copied");
+                      aria-label={`Copy ${r.label} link`}
+                      onClick={async () => {
+                        try {
+                          await navigator.clipboard.writeText(r.url);
+                          toast.success("Link copied");
+                        } catch {
+                          toast.error(
+                            "Copy was unavailable. Open the link and copy its address.",
+                          );
+                        }
                       }}
                     >
                       Copy
@@ -2415,7 +2507,12 @@ export function CsmPage({ section }: { section: Section }) {
               placeholder="Arabic or English. One line per thing."
               dir="auto"
             />
-            <Button size="sm" variant="secondary" onClick={submitPlan}>
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={busy || !dump.trim()}
+              onClick={submitPlan}
+            >
               Create tomorrow's tasks
             </Button>
           </div>
@@ -2429,7 +2526,7 @@ export function CsmPage({ section }: { section: Section }) {
           title={
             <span className="inline-flex flex-wrap items-center gap-2">
               Your EOD
-              {snap.eod ? <Chip tone="good">Submitted</Chip> : null}
+              {snap.eod ? <Chip tone="good">Saved</Chip> : null}
             </span>
           }
         >
@@ -2477,6 +2574,7 @@ export function CsmPage({ section }: { section: Section }) {
               <div className="mb-1.5 text-xs font-medium">Call summary</div>
               <Textarea
                 rows={4}
+                aria-label="Call summary"
                 value={callSummary}
                 onChange={e => setCallSummary(e.target.value)}
                 placeholder="One line per call or client. This is the part leadership reads."
@@ -2489,6 +2587,7 @@ export function CsmPage({ section }: { section: Section }) {
               </div>
               <Textarea
                 rows={2}
+                aria-label="Daily expectations done"
                 value={expectations}
                 onChange={e => setExpectations(e.target.value)}
                 placeholder="What you said you would finish today, and whether it is finished"
@@ -2525,6 +2624,7 @@ export function CsmPage({ section }: { section: Section }) {
             </div>
             <Textarea
               rows={2}
+              aria-label="Clients lost or at risk"
               value={lost}
               onChange={e => setLost(e.target.value)}
               placeholder="Clients lost or at risk today (blank = none)"
@@ -2542,6 +2642,7 @@ export function CsmPage({ section }: { section: Section }) {
               </div>
               <Textarea
                 rows={2}
+                aria-label="Fully offboarded clients"
                 value={offboarded}
                 onChange={e => setOffboarded(e.target.value)}
                 placeholder="Fully offboarded today, one client per line (blank = none)"
@@ -2549,6 +2650,7 @@ export function CsmPage({ section }: { section: Section }) {
               />
               <Textarea
                 rows={2}
+                aria-label="Extensions given"
                 value={extended}
                 onChange={e => setExtended(e.target.value)}
                 placeholder="Extensions given today, one client per line"
@@ -2556,6 +2658,7 @@ export function CsmPage({ section }: { section: Section }) {
               />
               <Textarea
                 rows={2}
+                aria-label="Clients paused"
                 value={pausedToday}
                 onChange={e => setPausedToday(e.target.value)}
                 placeholder="Clients paused today, one client per line"
@@ -2564,6 +2667,7 @@ export function CsmPage({ section }: { section: Section }) {
             </div>
             <Textarea
               rows={2}
+              aria-label="One percent improvement"
               value={onePercent}
               onChange={e => setOnePercent(e.target.value)}
               placeholder="One 1% improvement for you or the company"
@@ -2571,49 +2675,75 @@ export function CsmPage({ section }: { section: Section }) {
             />
             <Textarea
               rows={2}
+              aria-label="Daily roll up"
               value={rollup}
               onChange={e => setRollup(e.target.value)}
               placeholder="Daily roll up, fires, anything leadership should know"
               dir="auto"
             />
+            {eodError && (
+              <p role="alert" className="text-sm text-destructive">
+                {eodError}
+              </p>
+            )}
+            {snap.eod?.exportError && (
+              <p role="alert" className="text-sm txt-warn">
+                Saved here. Delivery needs attention: {snap.eod.exportError}
+              </p>
+            )}
             <Button
+              disabled={busy}
               onClick={async () => {
-                await submitEod({
-                  energy,
-                  stress,
-                  answers: {
-                    callSummary,
-                    expectations,
-                    touchpoints,
-                    fathom,
-                    newSignups,
-                    upsells,
-                    reviews,
-                    referrals,
-                    lost,
-                    onePercent,
-                    rollup,
-                    offboarded,
-                    extended,
-                    paused: pausedToday,
-                  },
-                  computed: {
-                    handled: snap.decisions.length,
-                    calls: callsToday,
-                    signups: signupsToday,
-                    hot: hotToday,
-                    tickets: ticketsToday,
-                    left: snap.decisions.filter(
-                      (d: { kind: string }) => d.kind === "left",
-                    ).length,
-                  },
-                });
-                toast.success(
-                  "EOD filed. It posts to the EOD channel and the sheet on its own.",
-                );
+                if (saving.current) return;
+                saving.current = true;
+                setBusy(true);
+                setEodError("");
+                try {
+                  await submitEod({
+                    energy,
+                    stress,
+                    answers: {
+                      callSummary,
+                      expectations,
+                      touchpoints,
+                      fathom,
+                      newSignups,
+                      upsells,
+                      reviews,
+                      referrals,
+                      lost,
+                      onePercent,
+                      rollup,
+                      offboarded,
+                      extended,
+                      paused: pausedToday,
+                    },
+                    computed: {
+                      handled: snap.decisions.length,
+                      calls: callsToday,
+                      signups: signupsToday,
+                      hot: hotToday,
+                      tickets: ticketsToday,
+                      left: snap.decisions.filter(
+                        (d: { kind: string }) => d.kind === "left",
+                      ).length,
+                    },
+                  });
+                  toast.success("EOD saved. Delivery to the team is queued.");
+                } catch (e) {
+                  const message =
+                    e instanceof Error
+                      ? e.message
+                      : "The EOD could not be saved.";
+                  setEodError(message);
+                  toast.error(message);
+                } finally {
+                  saving.current = false;
+                  setBusy(false);
+                }
               }}
             >
-              File my EOD
+              {busy ? "Saving…" : "Save my EOD"}
             </Button>
           </div>
         </SectionCard>
@@ -2649,6 +2779,8 @@ function MoneySection({
   // biome-ignore lint/suspicious/noExplicitAny: convex mutation
   onSave: any;
 }) {
+  const [saving, setSaving] = useState(false);
+  const savingLock = useRef(false);
   const saved = snap.money ?? null;
   const kpis: {
     key: string;
@@ -2996,17 +3128,32 @@ function MoneySection({
             )}
           </div>
           <Button
+            disabled={saving}
             onClick={async () => {
-              await onSave({
-                month: snap.month,
-                target: Number(targetEdit ?? saved?.target ?? 0) || undefined,
-                clients: clients || undefined,
-                counts,
-              });
-              toast.success("Saved, this is your month");
+              if (savingLock.current) return;
+              savingLock.current = true;
+              setSaving(true);
+              try {
+                await onSave({
+                  month: snap.month,
+                  target: Number(targetEdit ?? saved?.target ?? 0) || undefined,
+                  clients: clients || undefined,
+                  counts,
+                });
+                toast.success("Your plan is saved.");
+              } catch (error) {
+                toast.error(
+                  error instanceof Error
+                    ? error.message
+                    : "Your plan did not save. Try again.",
+                );
+              } finally {
+                savingLock.current = false;
+                setSaving(false);
+              }
             }}
           >
-            Save my plan
+            {saving ? "Saving…" : "Save my plan"}
           </Button>
         </div>
       </section>

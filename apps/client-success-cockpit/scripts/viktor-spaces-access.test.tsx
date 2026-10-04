@@ -68,6 +68,8 @@ mock.module("convex/react", () => ({
   ConvexProviderWithAuth: ({ children }: { children: ReactNode }) => children,
   ConvexReactClient: class {},
   useMutation: () => mock(async () => null),
+  useAction: () => mock(async () => null),
+  useConvex: () => ({ query: mock(async () => null) }),
   useConvexAuth: () => convexAuthState,
   useQuery: () => null,
 }));
@@ -166,7 +168,7 @@ describe("Viktor Spaces auth template contract", () => {
   test("public mode uses a route entrypoint with no auth providers", async () => {
     const html = await renderAppRoute("public", "/");
 
-    expect(html).toContain("Main Headline");
+    expect(html).toContain("The client success cockpit.");
     expect(html).not.toContain("Sign In");
     expect(html).not.toContain("Get Started");
     expect(convexAuthProviderRenderCount).toBe(0);
@@ -552,7 +554,7 @@ describe("Viktor Spaces auth template contract", () => {
     );
 
     expect(html).toContain("Signing you in...");
-    expect(html).not.toContain("sign in with email and password instead");
+    expect(html).not.toContain("Sign in with email and password instead");
   });
 
   test("login page shows the failure message only with the explicit failure param", async () => {
@@ -560,10 +562,10 @@ describe("Viktor Spaces auth template contract", () => {
     const { LOGIN_FAILED_PATH } = await import("../src/auth/oauthReturn");
 
     const failedHtml = await renderAppRoute("authenticated", LOGIN_FAILED_PATH);
-    expect(failedHtml).toContain("sign in with email and password instead");
+    expect(failedHtml).toContain("Sign in with email and password instead");
 
     const plainHtml = await renderAppRoute("authenticated", "/login");
-    expect(plainHtml).not.toContain("sign in with email and password instead");
+    expect(plainHtml).not.toContain("Sign in with email and password instead");
   });
 
   test("Viktor sign-in availability requires authenticated mode and client config", () => {

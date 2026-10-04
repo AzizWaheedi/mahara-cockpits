@@ -1,5 +1,7 @@
 import { useMutation, useQuery } from "convex/react";
 import { ArrowUpRight } from "lucide-react";
+import { useState } from "react";
+import { toast } from "sonner";
 import { ExtLink, PageHeader } from "@/components/kit";
 import { Button } from "@/components/ui/button";
 import { api } from "../../convex/_generated/api";
@@ -24,6 +26,7 @@ const GAP_NAMES: Record<string, string> = {
 export function BacklogPage() {
   const data = useQuery(api.gaps.list, {});
   const queue = useMutation(api.gaps.queue);
+  const [pending, setPending] = useState<string | null>(null);
   if (!data)
     return (
       <p className="mx-auto w-full max-w-6xl text-sm text-muted-foreground">
@@ -35,8 +38,8 @@ export function BacklogPage() {
   return (
     <div className="mx-auto w-full max-w-6xl space-y-6">
       <PageHeader
-        title="Data backlog"
-        sub={`${rows.length} of ${activeClients} active clients are missing something the cockpit needs. Queue a fix and it becomes a ClickUp task on the Client Success list.`}
+        title="Data issues"
+        sub={`${rows.length} of ${activeClients} active clients have missing data. Queue a fix, then check its ClickUp link here after sync.`}
       >
         {/* Only the gaps that exist: a chip reading "0" says nothing. */}
         <ul className="mt-3 flex flex-wrap gap-2 text-xs">
@@ -53,8 +56,7 @@ export function BacklogPage() {
 
       {rows.length === 0 ? (
         <p className="rounded-2xl border border-dashed px-4 py-6 text-sm text-muted-foreground">
-          Every active client has a sheet, a GHL account, a CSM and a recent
-          call.
+          No data issues were found in the latest snapshot.
         </p>
       ) : (
         <ul className="space-y-3">
@@ -112,14 +114,30 @@ export function BacklogPage() {
                       <Button
                         size="sm"
                         variant="outline"
-                        onClick={() =>
-                          queue({
-                            taskId: r.taskId,
-                            clientName: r.clientName,
-                            label: g.label,
-                            fix: g.fix,
-                          })
-                        }
+                        disabled={pending !== null}
+                        onClick={async () => {
+                          if (pending) return;
+                          setPending(`${r.taskId}:${g.gap}`);
+                          try {
+                            await queue({
+                              taskId: r.taskId,
+                              clientName: r.clientName,
+                              label: g.label,
+                              fix: g.fix,
+                            });
+                            toast.success(
+                              "Fix queued. The ClickUp link appears after sync.",
+                            );
+                          } catch (e) {
+                            toast.error(
+                              e instanceof Error
+                                ? e.message
+                                : "The fix could not be queued.",
+                            );
+                          } finally {
+                            setPending(null);
+                          }
+                        }}
                       >
                         Queue in ClickUp
                       </Button>
