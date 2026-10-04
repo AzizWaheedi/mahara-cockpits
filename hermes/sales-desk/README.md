@@ -601,7 +601,7 @@ only needed before a switch is turned on. `--json` gives the same as data.
 
 | Symptom | Fix | Who |
 | --- | --- | --- |
-| The cockpit says "Rooms are down" (status row `rooms` older than 90 s) | On the VPS as `hermes`: `crontab -l` has the `rooms` line; `tail ~/.sales-desk.log`; `python3 desk.py rooms --once` shows what one tick does. A run that cannot reach the database says so in the log | Hermes |
+| The cockpit says "Video rooms are not being made" (status row `rooms` older than 90 s) | On the VPS as `hermes`: `crontab -l` has the `rooms` line; `tail ~/.sales-desk.log`; `python3 desk.py rooms --once` shows what one tick does. A run that cannot reach the database says so in the log | Hermes |
 | Rooms fail with "The room worker did not start this room within a minute" | The worker was not running when the room was asked for (same checks as above). The rep makes a new room | Hermes |
 | The status row says "The video room tables are not in the database yet" | Apply `supabase/migrations/20261003a_sales_rooms.sql` | Hermes |
 | The status row says "The rooms setting could not be read" | The worker claims nothing until it can read `rooms` in `cockpit_sales_settings`; check the database answers (`python3 desk.py doctor`) | Hermes |

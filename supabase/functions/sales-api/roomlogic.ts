@@ -619,7 +619,7 @@ export const ROOM_COPY = {
   /** Health line (F "Health line"). */
   health: {
     working: "Rooms: working. Last run {time}. {rooms} today, {failed} failed.",
-    down: "Rooms are down. The room worker last ran at {time}. Call the lead on the phone, or send your own Zoom or Meet link.",
+    down: "Video rooms are not being made (last check {time}). Call the lead on the phone, or send your own Zoom or Meet link.",
     mismatch: "Zoom and the cockpit disagree on {rooms} today. Open its timeline.",
   },
   /** Slack, app "Mahara Sales" (P2's table replaces F's, C43; the watchdog line is F's). */
@@ -735,7 +735,7 @@ export const LANE_COPY = {
   worker_failed: "The room could not be made.",
   room_closed: "Room closed.",
   joined: "{name} joined at {time}.",
-  health_never: "Rooms are down. The room worker has not run yet. Call the lead on the phone, or send your own Zoom or Meet link.",
+  health_never: "Video rooms are not being made: the room worker has not run yet. Call the lead on the phone, or send your own Zoom or Meet link.",
   worker_down: "Video rooms are down right now. Call the lead on the phone, or send your own Zoom or Meet link.",
   health_working_no_counts: "Rooms: working. Last run {time}.",
   health_mismatch_many: "Zoom and the cockpit disagree on {rooms} today. Open their timelines.",
