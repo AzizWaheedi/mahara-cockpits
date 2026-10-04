@@ -11,15 +11,21 @@ export function stripControl(s: string): string {
   return s.replace(CONTROL, " ");
 }
 
-/** Strips anything shaped like a key or token, and caps the length. */
+/**
+ * Strips anything shaped like a key or token, and caps the length. A Zoom
+ * host's start link (/s/ or /wc/.../start) goes whole and a zak= token goes,
+ * as sales-api's redactRoom and redact do (contract-v2 section 9).
+ */
 export function redact(s: unknown): string {
   return String(s)
+    .replace(/https?:\/\/[^\s"'<>]*zoom(?:gov)?\.(?:us|com)\/(?:s\/|wc\/[^\s"'<>]*\/start)[^\s"'<>]*/gi, "[host link]")
+    .replace(/([?&;#]zak=)[^&\s"'<>]+/gi, "$1[key]")
     .replace(/sb_(?:secret|publishable)_[A-Za-z0-9_-]+/g, "[key]")
     .replace(/sbp_[A-Za-z0-9]+/g, "[key]")
     .replace(/pit-[A-Za-z0-9-]+/g, "[key]")
     .replace(/xox[abposr]-[A-Za-z0-9-]+/g, "[key]")
     .replace(/eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g, "[jwt]")
-    .replace(/((?:api_?key|access_token|token|secret|pwd)=)[^&\s"']+/gi, "$1[key]")
+    .replace(/((?:api_?key|access_token|token|secret|zak|pwd)=)[^&\s"']+/gi, "$1[key]")
     .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/g, "Bearer [key]")
     .slice(0, 300);
 }

@@ -247,6 +247,15 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
   // addresses. It sits above one address's own 120, so a single address can
   // never use up a lead's room for them.
   const perCode = deps.codeLimiter ?? new RateLimiter(150, 60_000, 10_000);
+  // The code's limit must never lock the lead out (final review,
+  // code-limiter-locks-out-the-lead): an address's first few opens of a code
+  // each minute pass even when other addresses have spent the code's 150.
+  // Each address is still held to its own 120 a minute.
+  const perCodeAddress = new RateLimiter(5, 60_000, 10_000);
+  // New rows on one room's timeline: at most 12 opens per room in 10
+  // minutes per running instance. The room's open times are still written,
+  // so the sweep's open grace and the "Opened" step never miss an open.
+  const openRows = new RateLimiter(12, 10 * 60_000, 10_000);
   const statusMemo = new Map<string, { ok: boolean; at: number }>();
   const alertMemo = new Map<string, { on: boolean; at: number }>();
   let ignoredZoom = 0;
@@ -739,15 +748,25 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
     const at = new Date(now).toISOString();
     const device = deviceOf(ua);
     const over = roomIsOver(room, now);
-    // No salted address (IP_SALT missing on /go): one open per code and device kind, and no address kept.
-    const deviceKey = deviceIdOk(deviceId)
-      ? `d:${deviceId}`
-      : hash
-        ? `h:${hash}:${await sha256Hex(ua)}`
-        : `c:${code}:${await sha256Hex(ua)}`;
+    // One open row per room, salted address and device kind (phone, tablet,
+    // computer): a client's own device id is never the key, because a new
+    // one each time would put a new row on the room's timeline each time
+    // (final review, door-open-rows-unbounded). With no salted address
+    // (IP_SALT missing on /go): one per code and device kind, and no
+    // address kept. The device id is used only when neither is known.
+    const deviceKey = hash
+      ? `h:${hash}:${device ?? "-"}`
+      : deviceIdOk(deviceId)
+        ? `d:${deviceId}`
+        : `c:${code}:${device ?? "-"}`;
     const dedupe = `open:${room.id}:${(await sha256Hex(deviceKey)).slice(0, 32)}`;
     try {
-      await insertEvent(
+      // A slot is taken before the insert, so fifty opens at once still
+      // make at most twelve rows; a duplicate gives its slot back.
+      const slot = openRows.hit(room.id, now);
+      const stored = !slot
+        ? null
+        : await insertEvent(
         {
           room_id: room.id,
           kind: "door.open",
@@ -767,6 +786,7 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
         },
         B.record,
       );
+      if (slot && !stored) openRows.giveBack(room.id);
       const id = encodeURIComponent(room.id);
       if (!over && !room.first_open_at) {
         const first = `cockpit_sales_rooms?id=eq.${id}&first_open_at=is.null`;
@@ -797,6 +817,16 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
     } catch (e) {
       noteStatus("open", false, `An open was not recorded: ${redact((e as Error).message)}`);
     }
+  }
+
+  /**
+   * A top-level page load as Fetch Metadata tells it: Sec-Fetch-Mode
+   * "navigate", or no Sec-Fetch-Mode at all (an older browser or an in-app
+   * one that does not send it).
+   */
+  function isNavigation(h: Headers): boolean {
+    const mode = (h.get("sec-fetch-mode") ?? "").trim().toLowerCase();
+    return !mode || mode === "navigate" || mode === "nested-navigate";
   }
 
   function corsFor(origin: string | null): Record<string, string> {
@@ -843,7 +873,8 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
     const ua = req.headers.get("user-agent") ?? "";
     const deviceId = url.searchParams.get("d");
     const hash = await ipHash(salt, clientIp(req.headers));
-    if (!withinLimits(hash, deviceId) || !perCode.hit(code, deps.now()))
+    const codeOk = (now: number) => perCode.hit(code, now) || perCodeAddress.hit(`${code}:${hash}`, now);
+    if (!withinLimits(hash, deviceId) || !codeOk(deps.now()))
       return json(
         { ok: false, state: "busy", error: "Too many tries from this network. Wait a minute, then try again." },
         429,
@@ -869,7 +900,11 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
       roomIsOver(room, now) ? endedWhatsapp(left(B.settingRead)).catch(() => null) : Promise.resolve(null),
     ]);
     const view = doorView(code, room, rep, now, whatsapp);
-    if (!isPreviewBot(ua)) deps.background(recordOpen(room, code, ua, hash, deviceId));
+    // Only the call page's own read is an open (final review,
+    // open-counted-from-any-site): the page always sends its Origin, and an
+    // <img> or a no-cors fetch on another site's page sends none, so it is
+    // answered (unreadable there) and never recorded. /go records its own.
+    if (allowed && !isPreviewBot(ua)) deps.background(recordOpen(room, code, ua, hash, deviceId));
     if (view.state === "broken") noteStatus("open", false, `Room ${room.id} has a join link the door refuses to open.`);
     else noteStatus("open", true, "Last call link read and opened.");
     configAlert("open", false);
@@ -913,10 +948,13 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
       // The lead's open, as /open records it (fix round 4): /go is also the
       // call page's own fallback when /open could not answer, and on Meet an
       // open is the one sign the lead came that the settle reads. Keyed on
-      // the salted address when IP_SALT is set, else per code.
+      // the salted address when IP_SALT is set, else per code. Only a page
+      // load counts: a browser marks an <img> or a script tag on another
+      // site's page as such (Sec-Fetch-Mode no-cors), and that is never the
+      // lead opening their link.
       const salt = env("IP_SALT");
       const stored = salt ? await ipHash(salt, clientIp(req.headers)) : null;
-      deps.background(recordOpen(room, code, ua, stored, null, "go"));
+      if (isNavigation(req.headers)) deps.background(recordOpen(room, code, ua, stored, null, "go"));
       return redirect(view.join_url);
     }
     if (view.state === "preparing") return text(both(GO_COPY.preparing), 200, { refresh: "3" });

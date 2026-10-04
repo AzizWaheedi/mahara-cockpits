@@ -86,7 +86,11 @@
     return /Macintosh/i.test(s) && Number(maxTouchPoints) > 1;
   }
 
-  /** The join links the page will open: https on Zoom's or Meet's hosts only. */
+  /**
+   * The join links the page will open: https on Zoom's or Meet's hosts only,
+   * and never a host's start link (zak=, /s/ or /wc/.../start), as the
+   * door's safeJoinUrl.
+   */
   function safeJoinUrl(x) {
     if (typeof x !== "string" || x.length > 2000) return null;
     let u;
@@ -103,7 +107,10 @@
       /\.zoom\.us$/.test(h) ||
       h === "zoom.com" ||
       /\.zoom\.com$/.test(h);
-    return ok ? u.toString() : null;
+    if (!ok) return null;
+    if (/[?&;#]zak=/i.test(u.search + u.hash)) return null;
+    if (/^\/s\//i.test(u.pathname) || /^\/wc\/.*\/start(\/|$)/i.test(u.pathname)) return null;
+    return u.toString();
   }
 
   function whatsappLink(digits) {
@@ -160,8 +167,8 @@
       ar: "ما قدرنا نحمّل مكالمتك. اضغط ادخل المكالمة، أو رد على رسالتنا ونتصل فيك.", // DRAFT
     },
     busy: {
-      en: "Too many tries from this network. Wait a minute, then tap Try again.",
-      ar: "محاولات كثيرة من نفس الشبكة. انطر دقيقة وبعدين اضغط حاول مرة ثانية.", // DRAFT
+      en: "Too many tries from this network. Tap Join the call, or wait a minute and tap Try again.",
+      ar: "محاولات كثيرة من نفس الشبكة. اضغط ادخل المكالمة، أو انطر دقيقة وبعدين اضغط حاول مرة ثانية.", // DRAFT
     },
     join: { en: "Join the call", ar: "ادخل المكالمة" },
     whatsapp: { en: "Message us on WhatsApp", ar: "راسلنا على الواتساب" },

@@ -285,7 +285,7 @@ describe("security: forged and replayed Zoom callbacks", () => {
     for (const gone of ["+96550000000", "203.0.113.9", "secret-ck"]) expect(kept).not.toContain(gone);
   });
 
-  test.failing("zoom-name-link-in-timeline: a lead's Zoom display name is never put into the timeline as a link or markup (contract-v2 section 15: no links in room_events.text)", () => {
+  test("zoom-name-link-in-timeline: a lead's Zoom display name is never put into the timeline as a link or markup (contract-v2 section 15: no links in room_events.text)", () => {
     // Anyone with the join link picks their own Zoom name. The door writes
     // it into room_events.text, which every seat's room timeline shows.
     const text = zoomText({
@@ -432,7 +432,7 @@ describe("security: the short link's door", () => {
     }
   });
 
-  test.failing("door-hands-out-host-link: a Zoom start link (zak= or /s/) in join_url is never handed to the page or redirected to (defence in depth: the database only checks https)", async () => {
+  test("door-hands-out-host-link: a Zoom start link (zak= or /s/) in join_url is never handed to the page or redirected to (defence in depth: the database only checks https)", async () => {
     // rooms.join_url's only check is ~ '^https://'. Any service-role writer
     // that stores a start link by mistake would have the door hand the
     // host's own login to whoever holds the code; safeJoinUrl checks the
@@ -471,7 +471,7 @@ describe("security: the short link's door", () => {
     expect(limited).toBeGreaterThanOrEqual(880);
   });
 
-  test.failing("door-open-rows-unbounded: opens of one room from new device ids are bounded, so the room's timeline cannot be flooded", async () => {
+  test("door-open-rows-unbounded: opens of one room from new device ids are bounded, so the room's timeline cannot be flooded", async () => {
     // Every new ?d= is a new door.open row (the dedupe key is the device id
     // the client sends). From ONE address, staying under the 120-a-minute
     // cap, ten minutes of opens:

@@ -208,7 +208,7 @@ describe("security r2: what the door keeps of a Zoom meeting that is no room", (
 });
 
 describe("security r2: which room a Zoom event is pinned to", () => {
-  test.failing("zoom-topic-code-beats-meeting-id: any meeting on the Zoom account titled with a room's code drives that room, though its meeting id is another", async () => {
+  test("zoom-topic-code-beats-meeting-id: any meeting on the Zoom account titled with a room's code drives that room, though its meeting id is another", async () => {
     // pickZoomRoom lets the topic's code decide first, even when the room
     // already has its own provider_meeting_id and the event is from another
     // meeting. Anyone with a user on Mahara's Zoom account (every rep, the
@@ -241,7 +241,7 @@ describe("security r2: which room a Zoom event is pinned to", () => {
 // ---------------------------------------------------------------- /open
 
 describe("security r2: one code's own limit", () => {
-  test.failing("code-limiter-locks-out-the-lead: two addresses that know the code use up its 150 opens a minute, and the lead's own first open is refused", async () => {
+  test("code-limiter-locks-out-the-lead: two addresses that know the code use up its 150 opens a minute, and the lead's own first open is refused", async () => {
     // handler.ts openRoute checks perCode (150 a minute per code, every
     // address together) after the per-address limits. Two addresses, 75
     // opens each with a fresh device id every time, stay inside their own
@@ -254,7 +254,9 @@ describe("security r2: one code's own limit", () => {
     const { w, handler } = world([room()]);
     for (const ip of ["203.0.113.10", "203.0.113.11"])
       for (let i = 0; i < 75; i++) {
-        const res = await handler(openReq("K7Q2MX", ip, `attacker-${ip}-${i}`));
+        // A device id is letters, digits and dashes (door.ts deviceIdOk), so
+        // each open counts against its own device and only the code's limit.
+        const res = await handler(openReq("K7Q2MX", ip, `attacker-${ip.replaceAll(".", "-")}-${i}`));
         expect(res.status).toBe(200);
       }
     const lead = await handler(openReq("K7Q2MX", "198.51.100.99", "the-leads-own-phone"));

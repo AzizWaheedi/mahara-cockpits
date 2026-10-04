@@ -162,6 +162,10 @@
       if (code) actions.appendChild(button(C.COPY.join, "?go=1", false));
       actions.appendChild(button(C.COPY.tryAgain, null, true, retry));
     } else if (view.state === "busy") {
+      // The door's limits must never keep the lead out of their call: the
+      // no-script route opens the room without them (final review,
+      // code-limiter-locks-out-the-lead).
+      if (code) actions.appendChild(button(C.COPY.join, "?go=1", false));
       actions.appendChild(button(C.COPY.tryAgain, null, true, retry));
     }
 

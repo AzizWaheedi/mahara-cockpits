@@ -1100,15 +1100,23 @@ describe("GET /open/{code}", () => {
     expect(world.events.filter(e => e.kind === "door.open")).toHaveLength(1);
   });
 
-  test("fifty devices opening at once: fifty opens, one first open", async () => {
+  test("fifty devices opening at once: every one answered, one first open, and at most twelve rows on the room's timeline", async () => {
     const h = fresh(w => w.rooms.push(liveRoom()));
     const answers = await Promise.all(
       Array.from({ length: 50 }, (_, i) => h(openRequest("K7Q2MX", { d: `device-${String(i).padStart(4, "0")}-x`, ip: `198.51.100.${i}` }))),
     );
     expect(answers.every(r => r.status === 200)).toBe(true);
     await world.settle();
-    expect(world.events.filter(e => e.kind === "door.open")).toHaveLength(50);
+    expect(world.events.filter(e => e.kind === "door.open")).toHaveLength(12);
     expect(world.firstOpenWrites).toBe(1);
+  });
+
+  test("a duplicate open gives its timeline slot back: one address reloading thirty times still leaves room for a second device", async () => {
+    const h = fresh(w => w.rooms.push(liveRoom()));
+    for (let i = 0; i < 30; i++) await h(openRequest("K7Q2MX", { d: `reload-${String(i).padStart(4, "0")}-x`, ip: "198.51.100.40" }));
+    await h(openRequest("K7Q2MX", { ip: "198.51.100.41" }));
+    await world.settle();
+    expect(world.events.filter(e => e.kind === "door.open")).toHaveLength(2);
   });
 
   test("without a device id the open is keyed on the address and the browser", async () => {

@@ -182,11 +182,17 @@ const FINAL = new Set(["ended", "expired", "failed", "cancelled"]);
 
 /**
  * Which room the event is about, from the rows zoomRoomQuery found.
- * - `{ room: false }`: no row. The meeting is not a cockpit room (the
- *   webinar, a client call, an interview on the same Zoom account), so the
- *   door keeps nothing of it.
- * - `{ room: true, room_id }`: the room. The topic's code decides first;
- *   else the one live room on that meeting; else the only room on it.
+ * - `{ room: false }`: no row on this meeting. The meeting is not a cockpit
+ *   room (the webinar, a client call, an interview on the same Zoom
+ *   account), so the door keeps nothing of it. That includes a meeting
+ *   whose title names a room's code while the room is on another meeting:
+ *   anyone with a user on Mahara's Zoom account can title a meeting
+ *   "Mahara call K7Q2MX", and its joins and its end must never drive that
+ *   room (final review, zoom-topic-code-beats-meeting-id).
+ * - `{ room: true, room_id }`: the room. The topic's code decides only for a
+ *   room on this very meeting, or one whose meeting id the worker has not
+ *   written yet; else the one live room on that meeting; else the only room
+ *   on it.
  * - `{ room: true, room_id: null }`: a cockpit meeting, but two rooms wrap
  *   it and the topic does not say which; sales-api decides.
  */
@@ -196,11 +202,13 @@ export function pickZoomRoom(
 ): { room: false } | { room: true; room_id: string | null } {
   const all = Array.isArray(rows) ? rows.filter(r => r && typeof r.id === "string") : [];
   if (!all.length) return { room: false };
+  const meetingOf = (r: ZoomRoomRow) => String(r.provider_meeting_id ?? "");
   if (look.code) {
-    const byCode = all.find(r => r.code === look.code);
+    const byCode = all.find(r => r.code === look.code && (!meetingOf(r) || meetingOf(r) === look.meetingId));
     if (byCode) return { room: true, room_id: byCode.id };
   }
-  const onMeeting = look.meetingId ? all.filter(r => String(r.provider_meeting_id ?? "") === look.meetingId) : [];
+  const onMeeting = look.meetingId ? all.filter(r => meetingOf(r) === look.meetingId) : [];
+  if (!onMeeting.length) return { room: false };
   const live = onMeeting.filter(r => !FINAL.has(r.state));
   if (live.length === 1) return { room: true, room_id: live[0].id };
   if (live.length === 0 && onMeeting.length === 1) return { room: true, room_id: onMeeting[0].id };
@@ -224,11 +232,30 @@ export function zoomKind(event: string): string {
 }
 
 /**
+ * A Zoom display name as the timeline may show it. Anyone with the join link
+ * picks their own name, so links (with or without a scheme) and markup are
+ * taken out: room_events.text never carries a link (contract-v2 section 15).
+ */
+export function plainZoomName(x: unknown): string {
+  const s = typeof x === "string" ? stripControl(x) : "";
+  const cleaned = s
+    .replace(/[a-z][a-z0-9+.-]*:\/\/\S*/gi, " ")
+    .replace(/\bwww\.\S*/gi, " ")
+    .replace(/\b[a-z0-9-]+(?:\.[a-z0-9-]+)+\/\S*/gi, " ")
+    .replace(/[<>]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 60)
+    .trim();
+  return cleaned || "Someone";
+}
+
+/**
  * A plain timeline line for the event (room_events.text), before sales-api
  * decides whether the person was staff or the lead.
  */
 export function zoomText(d: ZoomDetail): string {
-  const who = d.payload.object.participant?.user_name?.slice(0, 60) || "Someone";
+  const who = plainZoomName(d.payload.object.participant?.user_name);
   switch (d.event) {
     case "meeting.started":
       return "Zoom: the meeting started.";

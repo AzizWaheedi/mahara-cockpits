@@ -170,6 +170,12 @@ export class RateLimiter {
     return s.n <= this.limit;
   }
 
+  /** Gives back one hit that turned out not to need counting (a duplicate). */
+  giveBack(key: string): void {
+    const s = this.hits.get(key);
+    if (s && s.n > 0) s.n -= 1;
+  }
+
   get size(): number {
     return this.hits.size;
   }
@@ -188,9 +194,21 @@ export class RateLimiter {
 }
 
 /**
+ * A Zoom host's start link, in the shapes roomlogic.ts isHostLink knows: a
+ * zak= token anywhere, a /s/ path, or the web client's /wc/.../start.
+ */
+export function isHostStartLink(u: URL): boolean {
+  if (/[?&;#]zak=/i.test(`${u.search}${u.hash}`)) return true;
+  return /^\/s\//i.test(u.pathname) || /^\/wc\/.*\/start(\/|$)/i.test(u.pathname);
+}
+
+/**
  * A join link the page may open: https, and on Zoom's or Google Meet's own
  * hosts. Anything else is refused, so a bad row can never turn the short link
- * into a redirect to somewhere else.
+ * into a redirect to somewhere else. A host's start link is refused too
+ * (defence in depth: the database only checks https), so whoever holds the
+ * code can never be handed the host's own login; the page then reads
+ * "broken" and the lead is asked to reply for a new link.
  */
 export function safeJoinUrl(x: unknown): string | null {
   if (typeof x !== "string" || x.length > 2000) return null;
@@ -208,7 +226,8 @@ export function safeJoinUrl(x: unknown): string | null {
     h.endsWith(".zoom.us") ||
     h === "zoom.com" ||
     h.endsWith(".zoom.com");
-  return ok ? u.toString() : null;
+  if (!ok || isHostStartLink(u)) return null;
+  return u.toString();
 }
 
 /** The first word of a name, or null. */

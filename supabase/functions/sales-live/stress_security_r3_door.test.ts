@@ -10,9 +10,10 @@
 
 import { describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
-import { RateLimiter } from "./door.ts";
+import { RateLimiter, safeJoinUrl } from "./door.ts";
 import { makeHandler } from "./handler.ts";
 import { redact } from "./util.ts";
+import { pickZoomRoom, plainZoomName } from "./zoom.ts";
 import { redact as apiRedact } from "../sales-api/lib.ts";
 
 const BASE = "https://proj.supabase.co";
@@ -145,7 +146,7 @@ describe("security r3: who can count an open", () => {
     expect(w.rooms[0].first_open_at).toBeTruthy();
   });
 
-  test.failing("open-counted-from-any-site: an <img> on another site's page (no Origin, no-cors) counts an open and stamps the room's first open", async () => {
+  test("open-counted-from-any-site: an <img> on another site's page (no Origin, no-cors) counts an open and stamps the room's first open", async () => {
     // allowedOrigin keeps another site's page from READING /open, and its
     // comment says why: "a page there could make a visitor's browser count an
     // open". But the door only refuses a request whose Origin it does not
@@ -165,7 +166,7 @@ describe("security r3: who can count an open", () => {
 });
 
 describe("security r3: the door's own redaction", () => {
-  test.failing("door-redact-misses-zak: the door's redact (its logs, status rows and the alerts the watchdog posts) strips a Zoom host token as sales-api's does", () => {
+  test("door-redact-misses-zak: the door's redact (its logs, status rows and the alerts the watchdog posts) strips a Zoom host token as sales-api's does", () => {
     // util.ts says its redact follows "the same rules as sales-api's lib.ts
     // redact", but lib.ts gained zak= (contract-v2 section 9) and util.ts
     // did not. Every door log line, every sales-live status row (read into
@@ -176,5 +177,89 @@ describe("security r3: the door's own redaction", () => {
     const line = "sales-api refused room.event (500): https://us06web.zoom.us/s/85023456789?zak=eyJ0eXAiOiJKV1Qi.stresshost";
     expect(apiRedact(line)).not.toContain("stresshost");
     expect(redact(line)).not.toContain("stresshost");
+  });
+});
+
+// ------------------------------------------------- final review (4 October)
+
+describe("final review: what counts as the lead opening their link", () => {
+  test("/go from an <img> on another site (Sec-Fetch-Mode no-cors) is redirected but never recorded", async () => {
+    const { w, handler } = world();
+    const res = await handler(req("/go/K7Q2MX", OTHER_SITE_IMG));
+    await w.settle();
+    expect(res.status).toBe(302);
+    expect(w.events.filter(e => e.kind === "door.open")).toHaveLength(0);
+    expect(w.rooms[0].first_open_at ?? null).toBeNull();
+  });
+
+  test("/go as a page load (navigate, or no Fetch Metadata at all) is recorded once", async () => {
+    const { w, handler } = world();
+    await handler(req("/go/K7Q2MX", { "sec-fetch-mode": "navigate", "sec-fetch-dest": "document" }));
+    await handler(req("/go/K7Q2MX", {}));
+    await w.settle();
+    const opens = w.events.filter(e => e.kind === "door.open");
+    expect(opens).toHaveLength(1);
+    expect(opens[0].detail.via).toBe("go");
+    expect(w.rooms[0].first_open_at).toBeTruthy();
+  });
+
+  test("/open with no Origin is still answered, so a page that cannot send one still finds its room", async () => {
+    const { w, handler } = world();
+    const res = await handler(req("/open/K7Q2MX?d=device-stress-0003", {}));
+    await w.settle();
+    expect(res.status).toBe(200);
+    expect((await res.json()).state).toBe("open");
+    expect(w.events).toHaveLength(0);
+  });
+});
+
+describe("final review: which room a Zoom event drives", () => {
+  const rows = [
+    { id: "r-made", state: "open", code: "K7Q2MX", provider_meeting_id: "85023456789" },
+    { id: "r-new", state: "creating", code: "M4N5PQ", provider_meeting_id: null },
+  ];
+  test("the topic's code decides for a room on the same meeting", () => {
+    expect(pickZoomRoom(rows, { meetingId: "85023456789", code: "K7Q2MX" })).toEqual({ room: true, room_id: "r-made" });
+  });
+  test("the topic's code decides for a room whose meeting id is not written yet", () => {
+    expect(pickZoomRoom(rows, { meetingId: "99999999999", code: "M4N5PQ" })).toEqual({ room: true, room_id: "r-new" });
+  });
+  test("a meeting that names a room's code but is another meeting is no room at all", () => {
+    expect(pickZoomRoom([rows[0]!], { meetingId: "11122233344", code: "K7Q2MX" })).toEqual({ room: false });
+    expect(pickZoomRoom([rows[0]!], { meetingId: null, code: "K7Q2MX" })).toEqual({ room: false });
+  });
+  test("the meeting id alone still finds the room", () => {
+    expect(pickZoomRoom([rows[0]!], { meetingId: "85023456789", code: null })).toEqual({ room: true, room_id: "r-made" });
+  });
+});
+
+describe("final review: what reaches the timeline and the lead", () => {
+  test("a Zoom name keeps its words and loses its links and markup", () => {
+    expect(plainZoomName("Dr.Ahmed Al-Sabah")).toBe("Dr.Ahmed Al-Sabah");
+    expect(plainZoomName("فيصل")).toBe("فيصل");
+    expect(plainZoomName("Pay www.evil.example now")).toBe("Pay now");
+    expect(plainZoomName("Pay evil.example/pay now")).toBe("Pay now");
+    expect(plainZoomName("<script>x</script>")).not.toMatch(/[<>]/);
+    expect(plainZoomName("https://evil.example")).toBe("Someone");
+    expect(plainZoomName(undefined)).toBe("Someone");
+  });
+
+  test("every shape of a Zoom start link is refused, and join links still open", () => {
+    for (const bad of [
+      "https://us06web.zoom.us/s/85023456789?zak=abc",
+      "https://us06web.zoom.us/s/85023456789",
+      "https://us06web.zoom.us/wc/85023456789/start",
+      "https://us06web.zoom.us/j/85023456789?pwd=abc#zak=abc",
+      "https://us06web.zoom.us/j/85023456789?ZAK=abc",
+    ])
+      expect([bad, safeJoinUrl(bad)]).toEqual([bad, null]);
+    for (const good of ["https://us06web.zoom.us/j/85023456789?pwd=abc", "https://us06web.zoom.us/wc/join/85023456789", "https://meet.google.com/abc-defg-hij"])
+      expect(safeJoinUrl(good)).toBe(good);
+  });
+
+  test("the door's redact takes out a web-client start link whole", () => {
+    const line = "refused: https://us06web.zoom.us/wc/85023456789/start?fromPWA=1 then more";
+    expect(redact(line)).toContain("[host link]");
+    expect(redact(line)).not.toContain("85023456789/start");
   });
 });

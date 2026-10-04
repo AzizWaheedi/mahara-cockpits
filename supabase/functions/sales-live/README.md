@@ -171,6 +171,24 @@ limiter keys on that one (door.ts `clientIp`). If the edge passes on a
 client's `X-Forwarded-For` unchanged with nothing after it, fix `clientIp`
 before any link goes to a lead.
 
+Check the opposite case too, when `cf-connecting-ip` is missing: open the
+health route from two different networks (a phone on mobile data and a
+laptop on Wi-Fi) and read the last `X-Forwarded-For` hop each time. If both
+show the same address (a shared proxy of the edge), every lead would share
+one rate-limit bucket on `/open` and `/go`, and in webinar-events, which
+reads the address the same way. Fix `clientIp` (and webinar-events) to read
+the hop before the edge's own before any link goes to a lead.
+
+What the door counts as the lead opening their link (final review): only the
+call page's own read of `/open` (it always sends an allowed `Origin`) and a
+page load of `/go` (`Sec-Fetch-Mode` navigate, or none). An image or a
+no-cors fetch on another site's page is answered and never recorded. One
+open row per room, salted address and device kind, and at most 12 new rows
+per room in 10 minutes per running instance; the room's open times are
+written either way. The code's own limit (150 a minute) never locks a new
+address out: each address's first 5 opens of a code a minute still pass,
+and the page's busy state offers Join the call through `/go`.
+
 Then, in this order: Zoom's Event Subscriptions URL
 `https://bldgtotkfmhoxmlzowdx.supabase.co/functions/v1/sales-live/zoom`
 (press Validate), the Slack app's Interactivity, Slash Commands and Event

@@ -335,17 +335,26 @@ describe("the call page", () => {
     expect(p.doc.activeElement).toBe(p.doc.body);
   });
 
-  test("Too many tries keeps focus on its Try again too", async () => {
+  test("Too many tries keeps focus on its buttons too", async () => {
     let n = 0;
     const p = page({ answer: () => (++n === 1 ? { status: 429, body: { state: "busy" } } : { status: 429, body: { state: "busy" } }) });
     await p.flush();
     expect(p.state()).toBe("busy");
-    const again = p.buttons()[0];
+    const again = p.buttons().find(b => b.tagName === "BUTTON");
     again.focus();
     again.click();
     await p.flush();
     expect(p.state()).toBe("busy");
     expect(p.doc.activeElement).toBe(p.buttons()[0]);
+  });
+
+  test("Too many tries still offers Join the call through the no-script route, first, then Try again", async () => {
+    const p = page({ answer: () => ({ status: 429, body: { state: "busy" } }) });
+    await p.flush();
+    expect(p.state()).toBe("busy");
+    const [join, again] = p.buttons();
+    expect(join.attrs.href ?? join.href).toBe("?go=1");
+    expect(again.tagName).toBe("BUTTON");
   });
 });
 
