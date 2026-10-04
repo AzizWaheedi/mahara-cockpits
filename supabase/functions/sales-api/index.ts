@@ -108,6 +108,7 @@ import {
   signingLink,
 } from "./contracts.ts";
 import { clientFormRow, CLIENT_FORM_ID } from "./clientforms.ts";
+import { archivePlan, BEING_WRITTEN, stoppedProposal } from "./proposals.ts";
 
 type Row = Record<string, unknown>;
 
@@ -528,13 +529,51 @@ async function proposalSet(who: Who, b: Row) {
     patch.sent_at = patch.updated_at;
     patch.sent_by = who.email;
   }
+  // Archiving stops the draft: its queued requests are cancelled with it,
+  // and a running one makes it wait (proposals.ts archivePlan). The cancel is
+  // conditional on queued, so a request the worker claimed in the meantime
+  // is never cancelled under it: then the archive waits too.
+  let cancelled: string[] = [];
+  if (status === "archived") {
+    const open = await svc(
+      `cockpit_sales_requests?kind=eq.proposal&params->>proposal_id=eq.${enc(id)}&status=in.(queued,running)&select=id,status`,
+    );
+    const plan = archivePlan(open.map(r => ({ id: String(r.id), status: String(r.status) })));
+    if (!plan.ok) throw new Refusal(plan.error, 409);
+    if (plan.cancel.length) {
+      const out = await svc(
+        `cockpit_sales_requests?id=in.(${plan.cancel.map(enc).join(",")})&status=eq.queued`,
+        {
+          method: "PATCH",
+          body: {
+            status: "cancelled",
+            finished_at: patch.updated_at,
+            error: `Archived by ${who.email} before it was drafted.`,
+          },
+          prefer: "return=representation",
+        },
+      );
+      cancelled = out.map(r => String(r.id));
+      if (cancelled.length < plan.cancel.length) {
+        await audit(who, "request.cancelled", "cockpit_sales_requests", id, null, null, {
+          cancelled,
+          proposal_id: id,
+          why: "archive",
+        });
+        // The worker took one between the read and the cancel: it is running now.
+        throw new Refusal(BEING_WRITTEN, 409);
+      }
+    }
+  }
   await svc(`cockpit_sales_proposals?id=eq.${enc(id)}`, {
     method: "PATCH",
     body: patch,
     prefer: "return=minimal",
   });
-  await audit(who, `proposal.${status}`, "cockpit_sales_proposals", id, p, { ...p, ...patch });
-  return { proposal: { ...p, ...patch } };
+  await audit(who, `proposal.${status}`, "cockpit_sales_proposals", id, p, { ...p, ...patch }, {
+    ...(cancelled.length ? { cancelled_requests: cancelled } : {}),
+  });
+  return { proposal: { ...p, ...patch }, cancelled };
 }
 
 /**
@@ -639,6 +678,8 @@ async function requestSet(who: Who, b: Row) {
     throw new Refusal("Only the person who asked or a manager can change it.", 403);
   let patch: Row;
   if (to === "cancelled") {
+    if (r.status === "running")
+      throw new Refusal("It is being written right now, so it cannot be stopped. Wait for it to finish.", 409);
     if (r.status !== "queued") throw new Refusal("Only a request that has not started can be cancelled.");
     patch = { status: "cancelled", finished_at: new Date().toISOString() };
   } else if (to === "queued") {
@@ -654,17 +695,24 @@ async function requestSet(who: Who, b: Row) {
   });
   if (!out.length) throw new Refusal("It changed while you were looking. Refresh and try again.", 409);
   const pid = (r.params as Row | null)?.proposal_id;
-  if (r.kind === "proposal" && pid)
+  let proposal: Row | null = null;
+  if (r.kind === "proposal" && pid) {
+    // Stopped: a first draft is archived; a retry or a rebuild of a proposal
+    // that has a version goes back to it (proposals.ts stoppedProposal).
+    const p = (await svc(`cockpit_sales_proposals?id=eq.${enc(String(pid))}&select=id,status,html_path,validation`))[0];
+    const body =
+      to === "cancelled"
+        ? { ...(p ? stoppedProposal(p) : { status: "archived" }), updated_at: new Date().toISOString() }
+        : { status: "drafting", error: null, updated_at: new Date().toISOString() };
     await svc(`cockpit_sales_proposals?id=eq.${enc(String(pid))}`, {
       method: "PATCH",
-      body:
-        to === "cancelled"
-          ? { status: "archived", updated_at: new Date().toISOString() }
-          : { status: "drafting", error: null, updated_at: new Date().toISOString() },
+      body,
       prefer: "return=minimal",
     });
-  await audit(who, `request.${to}`, "cockpit_sales_requests", id, r, out[0]);
-  return { request: out[0] };
+    proposal = { id: String(pid), ...body };
+  }
+  await audit(who, `request.${to}`, "cockpit_sales_requests", id, r, out[0], proposal ? { proposal } : {});
+  return { request: out[0], proposal };
 }
 
 // ---------------------------------------------------------------------------
