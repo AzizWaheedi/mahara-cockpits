@@ -1535,10 +1535,16 @@ begin
   insert into public.cockpit_sales_room_events (room_id, kind, source, dedupe_key, at, handled_at, tries, detail) values
     (null, 'zoom.meeting.ended', 'zoom', 'lc-test-g3-gaveup2', now() - interval '4 minutes', now(), 3, '{"gave_up": true}');
   w := public.cockpit_sales_watchdog();
+  -- "Posted again": queued afresh (outside alert hours, or with no
+  -- webhook), or, inside hours, already posted again by this same run (a new
+  -- request, its first try, no answer yet). The check holds at any hour.
   perform pg_temp.ck('G3 another give-up the same day raises nothing new; the count follows and the alert is posted again with it',
     (w ->> 'raised')::integer = 0
     and exists (select 1 from public.cockpit_sales_alerts where dedupe_key = today and (detail ->> 'count')::integer = 2
-                   and posted_at is null and post_tries = 0 and message like '2 room events were given up today%'), w::text);
+                   and message like '2 room events were given up today%'
+                   and ((posted_at is null and post_tries = 0)
+                        or ((w ->> 'in_hours')::boolean and (w ->> 'webhook')::boolean
+                            and post_tries = 1 and post_status is null and post_request_id is not null))), w::text);
   insert into public.cockpit_sales_room_events (room_id, kind, source, dedupe_key, at)
     values (null, 'zoom.meeting.ended', 'zoom', 'lc-test-g3-stuck', now() - interval '11 minutes');
   w := public.cockpit_sales_watchdog();
@@ -1632,6 +1638,39 @@ begin
   delete from public.cockpit_sales_alerts;
 exception when others then
   perform pg_temp.ck('G4 section crashed', false, sqlstate || ': ' || sqlerrm);
+end;
+$$;
+
+-- G5. Per-room alerts nobody resolved (final review): resolved three days
+--     after they were raised once posted, a week when never posted; a fresh
+--     one, and any alert that is not a room's, stays open.
+do $$
+declare
+  w jsonb;
+begin
+  delete from public.cockpit_sales_alerts;
+  insert into public.cockpit_sales_alerts (dedupe_key, kind, message, raised_at, posted_at) values
+    ('room:00000000-0000-4000-8000-0000000c5001:mark_intro', 'room_mark_intro', 'Old, posted.', now() - interval '4 days', now() - interval '4 days'),
+    ('room_event_lost:00000000-0000-4000-8000-0000000c5002', 'room_event_lost', 'Old, never posted.', now() - interval '4 days', null),
+    ('room_held:00000000-0000-4000-8000-0000000c5003', 'room_held', 'A week old, never posted.', now() - interval '8 days', null),
+    ('room:00000000-0000-4000-8000-0000000c5004:count_unread', 'room_count_stuck', 'A day old, posted.', now() - interval '1 day', now() - interval '1 day'),
+    ('failing:sales-desk/lc-test-g5', 'failing', 'Not a room''s.', now() - interval '10 days', now() - interval '10 days');
+  w := public.cockpit_sales_watchdog();
+  perform pg_temp.ck('G5 a posted room alert three days old is resolved, and never raised again under its key',
+    exists (select 1 from public.cockpit_sales_alerts
+             where dedupe_key like 'room:00000000-0000-4000-8000-0000000c5001:mark_intro:resolved:%' and resolved_at is not null)
+    and not exists (select 1 from public.cockpit_sales_alerts where dedupe_key = 'room:00000000-0000-4000-8000-0000000c5001:mark_intro'),
+    w::text);
+  perform pg_temp.ck('G5 a room alert never posted waits a week; one a week old is resolved',
+    exists (select 1 from public.cockpit_sales_alerts where dedupe_key = 'room_event_lost:00000000-0000-4000-8000-0000000c5002' and resolved_at is null)
+    and exists (select 1 from public.cockpit_sales_alerts
+                 where dedupe_key like 'room_held:00000000-0000-4000-8000-0000000c5003:resolved:%' and resolved_at is not null));
+  perform pg_temp.ck('G5 a fresh room alert and an alert that is not a room''s stay open',
+    exists (select 1 from public.cockpit_sales_alerts where dedupe_key = 'room:00000000-0000-4000-8000-0000000c5004:count_unread' and resolved_at is null)
+    and exists (select 1 from public.cockpit_sales_alerts where dedupe_key = 'failing:sales-desk/lc-test-g5' and resolved_at is null));
+  delete from public.cockpit_sales_alerts;
+exception when others then
+  perform pg_temp.ck('G5 section crashed', false, sqlstate || ': ' || sqlerrm);
 end;
 $$;
 

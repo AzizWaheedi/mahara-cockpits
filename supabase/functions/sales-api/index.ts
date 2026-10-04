@@ -375,7 +375,27 @@ async function mark(who: Who, b: Row) {
     reason: cleanText(b.reason, 300) || null,
     note: cleanText(b.note, 4000) || null,
   });
+  await resolveRoomMarkAlerts(id);
   return { mark: result };
+}
+
+/**
+ * A person marked the call: the rooms' "mark this intro" alerts for it are
+ * answered (final review: per-room alerts were never resolved, so the
+ * watchdog's open count only grew). Never fatal: the mark stands.
+ */
+async function resolveRoomMarkAlerts(appointmentId: string): Promise<void> {
+  try {
+    const rooms = await svc(`cockpit_sales_rooms?appointment_id=eq.${enc(appointmentId)}&select=id&limit=20`);
+    for (const r of rooms)
+      for (const what of ["mark_intro", "count_other_rep", "showed_failed"])
+        await svc("rpc/cockpit_sales_alert_set", {
+          method: "POST",
+          body: { p_key: `room:${r.id}:${what}`, p_on: false, p_kind: "room_mark_intro", p_subject: null, p_message: null, p_detail: null },
+        });
+  } catch (e) {
+    console.error("room mark alerts resolve", redact(String(e)));
+  }
 }
 
 /**

@@ -89,6 +89,14 @@
 
 begin;
 
+-- The whole migration gives up after 5 s waiting for a lock, rather than
+-- queue every rep's send behind it (final review): rebuilding the messages
+-- table's state check takes an exclusive lock and scans it, and the trigger
+-- on cockpit_sales_worker_status waits on the desk's minute writes. A long
+-- read in the way makes the apply fail at once with a lock timeout; nothing
+-- is changed, and the apply is simply run again.
+set local lock_timeout = '5s';
+
 -- 1. Columns and checks -------------------------------------------------------
 
 alter table public.cockpit_sales_rooms
@@ -2260,6 +2268,21 @@ begin
         jsonb_build_object('event_id', rec.id, 'room_id', rec.room_id, 'kind', rec.kind));
     end if;
   end loop;
+
+  -- 2d. Per-room alerts nobody resolved (final review): a room's mark-intro,
+  -- count, undo, showed, lost-event and held alerts are a person's to act
+  -- on, and sales-api answers some itself (a rep's mark, a count that
+  -- settled). The rest are resolved here three days after they were raised
+  -- once posted (a week when they never could be), so the open count on the
+  -- Team page stops only growing. Resolved keys are never raised again (2c).
+  update public.cockpit_sales_alerts as a
+     set resolved_at = t,
+         dedupe_key = a.dedupe_key || ':resolved:' || a.id::text
+   where a.resolved_at is null
+     and (a.dedupe_key like 'room:%' or a.dedupe_key like 'room_event_lost:%' or a.dedupe_key like 'room_held:%')
+     and a.dedupe_key not like '%:resolved:%'
+     and a.raised_at < t - interval '3 days'
+     and (a.posted_at is not null or a.raised_at < t - interval '7 days');
 
   -- 3. Answers to earlier posts: a failed post is tried again, 3 tries at most.
   update public.cockpit_sales_alerts as a

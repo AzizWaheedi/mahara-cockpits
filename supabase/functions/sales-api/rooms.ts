@@ -2119,7 +2119,18 @@ export function makeRooms(deps: RoomDeps): Rooms {
     }
     await deps.audit(DESK, "room.count", ROOMS, room.id, null, done, meta);
     await note(room.id, "count.done", fill(EVENT_TEXT.counted, { what }), { result: done.count_result, appointment_id: done.count_appointment_id }, `count.done:${room.id}:${claimedAt}`);
+    // The count settled: its earlier "could not count yet" alerts are answered (final review).
+    if (landed && (done.count_result === "booked" || done.count_result === "moved" || done.count_result === "already_counted"))
+      await resolveAlerts(room.id, ["count_unread", "count_unclear", "count_confirm"]);
     return Boolean(landed);
+  }
+
+  /** Per-room alerts the room itself has answered; never fatal (the watchdog resolves the rest after 3 days). */
+  async function resolveAlerts(roomId: string, whats: string[]): Promise<void> {
+    for (const what of whats)
+      await io
+        .rpc("cockpit_sales_alert_set", { p_key: `room:${roomId}:${what}`, p_on: false, p_kind: "room_count_stuck", p_subject: null, p_message: null, p_detail: null })
+        .catch(e => io.log(`rooms: an alert was not resolved: ${redact(String((e as Error)?.message ?? e))}`));
   }
 
   /** Marks the booked intro shown, recording first what it was, so the undo puts back the status and the rep's own mark. */

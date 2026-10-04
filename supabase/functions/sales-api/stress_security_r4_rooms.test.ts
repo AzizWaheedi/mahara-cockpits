@@ -374,6 +374,28 @@ describe("final review: only Zoom's join on the room's own meeting is the lead's
     expect(w.room(id).count_result).toBe("booked");
   });
 
+  test("a count that books answers the room's earlier count alerts (final review: per-room alerts were never resolved)", async () => {
+    const w = setup({ rooms: { count_on_join: true, test_calendar_id: "TESTCAL", live_calendar_id: "LIVECAL" } });
+    const id = await sentRoom(w, "zoom");
+    w.db.seed("cockpit_sales_alerts", [
+      { id: fakeUuid(), dedupe_key: `room:${id}:count_unread`, kind: "room_count_stuck", message: "Room: could not count yet.", raised_at: w.db.iso() },
+      { id: fakeUuid(), dedupe_key: `room:${id}:undo_stuck`, kind: "room_count_stuck", message: "Room: remove it by hand.", raised_at: w.db.iso() },
+    ]);
+    w.db.seed("cockpit_sales_room_events", [
+      {
+        room_id: id, kind: "zoom.meeting.participant_joined", source: "zoom", dedupe_key: `zoom:join:own2:${id}`, handled_at: w.db.iso(),
+        detail: { event: "meeting.participant_joined", role: "lead", payload: { object: { id: "81234567890", participant: { user_name: "Huda Ali" } } } },
+      },
+    ]);
+    await w.rooms.actions["room.mark"]!(host, { room_id: id, version: Number(w.room(id).version), what: "lead_in" });
+    await w.flush();
+    expect(w.room(id).count_result).toBe("booked");
+    const alert = (what: string) => w.db.t("cockpit_sales_alerts").find(a => a.dedupe_key === `room:${id}:${what}`) as Row;
+    expect(alert("count_unread").resolved_at).toBeTruthy();
+    // An alert that asks a person to act on HighLevel stays until a person does.
+    expect(alert("undo_stuck").resolved_at ?? null).toBeNull();
+  });
+
   test("a Zoom event pinned to a Meet room is applied to nothing, and leaves the room's timeline", async () => {
     const w = setup();
     const id = await sentRoom(w, "meet");
