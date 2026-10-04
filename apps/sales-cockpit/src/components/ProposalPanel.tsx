@@ -13,6 +13,7 @@ import type {
   WorkRequest,
 } from "../lib/types";
 import {
+  AnimatedSelect,
   buttonPrimary,
   Failed,
   field,
@@ -189,18 +190,18 @@ export function ProposalPanel({
           <div className="grid grid-cols-1 gap-3 @[26rem]:grid-cols-2">
             <label className="space-y-1 text-sm">
               <span className="muted block text-xs">Language</span>
-              <select
+              <AnimatedSelect
                 value={lang}
                 onChange={e => setLang(e.target.value as "ar" | "en")}
                 className={field}
               >
                 <option value="ar">Arabic</option>
                 <option value="en">English</option>
-              </select>
+              </AnimatedSelect>
             </label>
             <label className="space-y-1 text-sm">
               <span className="muted block text-xs">How the client pays</span>
-              <select
+              <AnimatedSelect
                 value={payment}
                 onChange={e => setPayment(e.target.value)}
                 className={field}
@@ -210,11 +211,11 @@ export function ProposalPanel({
                     {p.label}
                   </option>
                 ))}
-              </select>
+              </AnimatedSelect>
             </label>
             <label className="space-y-1 text-sm">
               <span className="muted block text-xs">Guarantee</span>
-              <select
+              <AnimatedSelect
                 value={guarantee ? "yes" : "no"}
                 onChange={e => setGuarantee(e.target.value === "yes")}
                 className={field}
@@ -223,11 +224,11 @@ export function ProposalPanel({
                 <option value="yes">
                   {offer.data?.guarantee?.label ?? "Include the guarantee"}
                 </option>
-              </select>
+              </AnimatedSelect>
             </label>
             <label className="space-y-1 text-sm">
               <span className="muted block text-xs">Call to draft from</span>
-              <select
+              <AnimatedSelect
                 value={recording}
                 onChange={e => setRecording(e.target.value)}
                 className={field}
@@ -242,7 +243,7 @@ export function ProposalPanel({
                     ])}
                   </option>
                 ))}
-              </select>
+              </AnimatedSelect>
             </label>
           </div>
           {!videos.length ? (

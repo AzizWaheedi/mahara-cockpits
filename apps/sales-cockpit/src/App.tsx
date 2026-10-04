@@ -255,13 +255,16 @@ export function Seated({
 
   return (
     <div className="flex h-full lg:pt-[env(safe-area-inset-top,0px)]">
-      <aside
-        className={`hidden shrink-0 border-r hairline bg-[color:var(--card)]/90 backdrop-blur-md transition-all duration-200 ease-out lg:block ${
-          sidebarCollapsed ? "w-16" : "w-60"
-        }`}
-      >
-        {sidebar()}
-      </aside>
+      {/* Floating Detached Sidebar Island (Mahara Soft Floating) */}
+      <div className="hidden lg:flex lg:flex-col lg:justify-center my-2.5 ml-3 shrink-0">
+        <aside
+          className={`h-[calc(100dvh-1.25rem)] rounded-[26px] border border-white/10 bg-[#091333]/90 backdrop-blur-2xl shadow-2xl transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] overflow-hidden flex flex-col ${
+            sidebarCollapsed ? "w-16" : "w-60"
+          }`}
+        >
+          {sidebar()}
+        </aside>
+      </div>
 
       {drawer ? (
         <div className="fixed inset-0 z-40 lg:hidden">
@@ -269,9 +272,9 @@ export function Seated({
             type="button"
             aria-label="Close the menu"
             onClick={() => setDrawer(false)}
-            className="absolute inset-0 bg-black/50"
+            className="absolute inset-0 bg-black/60 backdrop-blur-sm"
           />
-          <aside className="pt-safe absolute inset-y-0 left-0 w-64 border-r hairline bg-[color:var(--card)]">
+          <aside className="pt-safe absolute inset-y-2.5 left-2.5 w-64 rounded-[24px] border border-white/12 bg-[#091333]/95 shadow-2xl backdrop-blur-2xl overflow-hidden flex flex-col">
             {sidebar(() => setDrawer(false))}
           </aside>
         </div>

@@ -268,15 +268,14 @@ export default function Sidebar({
                         to={to}
                         end={to === "/"}
                         onClick={onNavigate}
-                        title={collapsed ? label : undefined}
                         className={({ isActive }) =>
                           collapsed
-                            ? `relative flex items-center justify-center rounded-[10px] p-2 transition-all ${
+                            ? `group relative flex items-center justify-center rounded-[12px] p-2.5 transition-all ${
                                 isActive
-                                  ? "border border-teal-500/40 bg-teal-500/15 text-teal-300 shadow-[0_0_10px_rgba(0,207,200,0.25)]"
-                                  : "text-white/70 hover:bg-white/[0.06] hover:text-white"
+                                  ? "border border-teal-500/40 bg-teal-500/15 text-teal-300 shadow-[0_0_12px_rgba(0,207,200,0.3)]"
+                                  : "text-white/70 hover:bg-white/[0.08] hover:text-white"
                               }`
-                            : `cockpit-nav-link ${ROW} ${
+                            : `group cockpit-nav-link ${ROW} ${
                                 isActive ? "font-medium" : ROW_IDLE
                               }`
                         }
@@ -286,11 +285,13 @@ export default function Sidebar({
                             {!collapsed && isActive ? (
                               <span aria-hidden className="cockpit-nav-lamp" />
                             ) : null}
-                            <Icon
-                              className="size-4 shrink-0"
-                              strokeWidth={1.75}
-                              aria-hidden
-                            />
+                            <div className="flex items-center justify-center transition-transform duration-200 ease-[cubic-bezier(0.34,1.56,0.64,1)] group-hover:scale-125 group-active:scale-95">
+                              <Icon
+                                className="size-4 shrink-0"
+                                strokeWidth={1.8}
+                                aria-hidden
+                              />
+                            </div>
                             {!collapsed ? (
                               <>
                                 <span className="truncate">{label}</span>
@@ -305,7 +306,7 @@ export default function Sidebar({
                               </>
                             ) : n > 0 ? (
                               <span
-                                className="absolute top-1 right-1 size-2 rounded-full"
+                                className="absolute top-1.5 right-1.5 size-2 rounded-full shadow-[0_0_6px_var(--primary)]"
                                 style={{
                                   background:
                                     badge === "owed"
@@ -313,6 +314,25 @@ export default function Sidebar({
                                       : "var(--primary)",
                                 }}
                               />
+                            ) : null}
+                            {/* macOS Floating Tooltip on Hover in Collapsed Mode */}
+                            {collapsed ? (
+                              <div className="pointer-events-none absolute left-full ml-3 z-50 hidden group-hover:flex items-center whitespace-nowrap rounded-lg border border-white/15 bg-[#091333]/95 px-2.5 py-1 text-xs font-semibold text-white shadow-2xl backdrop-blur-xl">
+                                <span>{label}</span>
+                                {n > 0 ? (
+                                  <span
+                                    className="ml-1.5 rounded-full px-1.5 py-0.2 text-[10px] font-bold text-black"
+                                    style={{
+                                      background:
+                                        badge === "owed"
+                                          ? "var(--owed)"
+                                          : "var(--primary)",
+                                    }}
+                                  >
+                                    {n}
+                                  </span>
+                                ) : null}
+                              </div>
                             ) : null}
                           </>
                         )}
@@ -333,25 +353,29 @@ export default function Sidebar({
               <li key={d.key}>
                 <a
                   href={d.href}
-                  title={collapsed ? d.label : undefined}
                   className={
                     collapsed
-                      ? "flex items-center justify-center rounded-[10px] p-2 text-white/60 hover:bg-white/[0.06] hover:text-white transition-all"
-                      : `${ROW} ${ROW_IDLE}`
+                      ? "group relative flex items-center justify-center rounded-[12px] p-2 text-white/60 hover:bg-white/[0.08] hover:text-white transition-all"
+                      : `group ${ROW} ${ROW_IDLE}`
                   }
                 >
                   {Icon ? (
-                    <Icon
-                      className="size-4 shrink-0"
-                      strokeWidth={1.75}
-                      aria-hidden
-                    />
+                    <div className="flex items-center justify-center transition-transform duration-200 ease-[cubic-bezier(0.34,1.56,0.64,1)] group-hover:scale-125 group-active:scale-95">
+                      <Icon
+                        className="size-4 shrink-0"
+                        strokeWidth={1.8}
+                        aria-hidden
+                      />
+                    </div>
                   ) : null}
                   {!collapsed ? (
                     <span className="truncate">{d.label}</span>
-                  ) : null}
+                  ) : (
+                    <div className="pointer-events-none absolute left-full ml-3 z-50 hidden group-hover:flex items-center whitespace-nowrap rounded-lg border border-white/15 bg-[#091333]/95 px-2.5 py-1 text-xs font-semibold text-white shadow-2xl backdrop-blur-xl">
+                      <span>{d.label}</span>
+                    </div>
+                  )}
                 </a>
-              </li>
             );
           })}
         </ul>

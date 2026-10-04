@@ -4,6 +4,7 @@ import { Link, useSearchParams } from "react-router";
 import { CoachReviewForm, CoachReviewList } from "../components/CoachReviews";
 import { DeskStatus } from "../components/DeskStatus";
 import {
+  AnimatedSelect,
   button,
   EmptyState,
   Failed,
@@ -189,7 +190,7 @@ function Calls({
             dir="auto"
           />
         </label>
-        <select
+        <AnimatedSelect
           aria-label="Whose calls"
           value={by}
           onChange={e => set({ by: e.target.value || null, page: null })}
@@ -201,8 +202,8 @@ function Calls({
               {r.display_name}
             </option>
           ))}
-        </select>
-        <select
+        </AnimatedSelect>
+        <AnimatedSelect
           aria-label="Video or phone"
           value={kind}
           onChange={e => set({ kind: e.target.value || null, page: null })}
@@ -211,7 +212,7 @@ function Calls({
           <option value="">Video and phone</option>
           <option value="video">Video calls</option>
           <option value="phone">Phone calls</option>
-        </select>
+        </AnimatedSelect>
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <FilterChip
@@ -361,7 +362,7 @@ function Reviews({
   return (
     <>
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <select
+        <AnimatedSelect
           aria-label="Whose reviews"
           value={rep}
           onChange={e => set({ rep: e.target.value || null })}
@@ -373,7 +374,7 @@ function Reviews({
               {r.display_name}
             </option>
           ))}
-        </select>
+        </AnimatedSelect>
         {avg !== null ? (
           <p className="muted text-sm">
             {graded.length} graded · average {Math.round(avg * 100)}% of the

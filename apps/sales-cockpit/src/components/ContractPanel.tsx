@@ -21,7 +21,7 @@ import { planFor } from "../lib/plans";
 import { supabase } from "../lib/supabase";
 import { toast } from "../lib/toast";
 import type { Me } from "../lib/types";
-import { button, buttonPrimary, Failed, field, Reading, select } from "./kit";
+import { AnimatedSelect, button, buttonPrimary, Failed, field, Reading, select } from "./kit";
 
 /**
  * A lead's contracts, made in HighLevel's Documents & Contracts from the
@@ -525,7 +525,7 @@ function NewContract({
     <form onSubmit={make} className="space-y-3" aria-label="New contract">
       <label className="block">
         <span className="muted mb-1 block text-xs">Template</span>
-        <select
+        <AnimatedSelect
           className={`${select} w-full`}
           value={templateId}
           onChange={e => setTemplateId(e.target.value)}
@@ -535,7 +535,7 @@ function NewContract({
               {t.name}
             </option>
           ))}
-        </select>
+        </AnimatedSelect>
       </label>
       <label className="block">
         <span className="muted mb-1 block text-xs">
@@ -554,7 +554,7 @@ function NewContract({
       {uses(template, "payment_structure") ? (
         <label className="block">
           <span className="muted mb-1 block text-xs">How they pay</span>
-          <select
+          <AnimatedSelect
             className={`${select} w-full`}
             value={payment}
             onChange={e => setPayment(e.target.value)}
@@ -568,7 +568,7 @@ function NewContract({
                 {o}
               </option>
             ))}
-          </select>
+          </AnimatedSelect>
           {planFor(payment) ? (
             <span className="muted mt-1 block text-xs">
               {planFor(payment)?.schedule}
