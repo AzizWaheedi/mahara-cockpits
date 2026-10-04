@@ -1366,7 +1366,9 @@ describe("room.create's checks", () => {
     expect(input({ setting: DEFAULT_ROOMS_SETTING })?.message).toBe(LANE_COPY.disabled);
     expect(input({ setting: { ...ON, providers: { zoom: true, meet: false } } })?.message).toBe("Meet rooms are off for now. Use Zoom.");
     expect(input({ setting: { ...ON, test_only: true } })?.code).toBe("test_only");
-    expect(input({ setting: { ...ON, test_only: true }, contact: { ...LEAD, tags: ["cockpit-test"] } })).toBe(null);
+    // While testing, only the listed contacts get a room; a HighLevel tag anyone can add is not enough (final review).
+    expect(input({ setting: { ...ON, test_only: true }, contact: { ...LEAD, tags: ["cockpit-test"] } })?.code).toBe("test_only");
+    expect(input({ setting: { ...ON, test_only: true, test_contacts: ["c1"] }, contact: LEAD })).toBe(null);
     expect(input({ contact: { ...LEAD, tags: ["client"] } })?.message).toBe("This contact is an active client. Client success looks after them.");
     expect(input({ contact: { ...LEAD, dnd: true } })?.message).toBe("Do not disturb is on in HighLevel. No link can go.");
     expect(input({ booked_demo: true })?.message).toBe("This lead has a booked demo. Its Zoom link comes from HighLevel, so no new room is made.");

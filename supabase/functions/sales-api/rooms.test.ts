@@ -29,6 +29,8 @@ const desk: Who = { signed_in: true, seat: true, manager: false, email: "sales-d
 const ROOMS_ON = {
   ...DEFAULT_ROOMS_JSON,
   enabled: true,
+  // test_only stays on: the two contacts are listed (a tag alone lets no room through, final review).
+  test_contacts: ["VjPfR4Cc1Y0OFvaqeor5", "otherLead0000000001"],
   providers: { zoom: true, meet: true },
   send: { whatsapp_text: true, whatsapp_template: true, email: true },
   fallback: { ...DEFAULT_ROOMS_JSON.fallback, scope: "any" },
@@ -215,8 +217,11 @@ describe("room.create", () => {
   });
 
   test("the lead checks come first: not a test contact while testing, a client, unread HighLevel", async () => {
-    const notTest = setup({ contact: { firstName: "Ali", tags: ["roas-qualified"], phone: "+96551111111" } });
+    const notTest = setup({ rooms: { test_contacts: ["VjPfR4Cc1Y0OFvaqeor5"] }, contact: { firstName: "Ali", tags: ["roas-qualified"], phone: "+96551111111" } });
     expect((await refused(notTest.make(setter, { contact_id: OTHER_LEAD }))).extra.code).toBe("test_only");
+    // Tagged cockpit-test in HighLevel but not listed: still no room while testing (final review).
+    const tagged = setup({ rooms: { test_contacts: ["VjPfR4Cc1Y0OFvaqeor5"] }, contact: { firstName: "Ali", tags: ["cockpit-test"], phone: "+96551111111" } });
+    expect((await refused(tagged.make(setter, { contact_id: OTHER_LEAD }))).extra.code).toBe("test_only");
     const client = setup({ rooms: { test_only: false }, contact: { firstName: "Ali", tags: ["client"] } });
     expect((await refused(client.make())).extra.code).toBe("client");
     const unread = setup({ contact: null });

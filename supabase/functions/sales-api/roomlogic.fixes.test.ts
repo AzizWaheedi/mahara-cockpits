@@ -467,7 +467,9 @@ describe("#7 #17 #21 room.create, Take and room.wrap", () => {
     const code = (r: ReturnType<typeof w>) => (r.ok ? null : r.code);
     expect(code(w({ setting: DEFAULT_ROOMS_SETTING }))).toBe("disabled");
     expect(code(w({ setting: { ...ON, test_only: true } }))).toBe("test_only");
-    expect(code(w({ setting: { ...ON, test_only: true }, contact: { tags: ["cockpit-test"] } }))).toBe(null);
+    // A tag alone lets no room through while test_only is on; the listed contact does (final review).
+    expect(code(w({ setting: { ...ON, test_only: true }, contact: { tags: ["cockpit-test"] } }))).toBe("test_only");
+    expect(code(w({ setting: { ...ON, test_only: true, test_contacts: ["c1"] }, contact: { tags: [] } }))).toBe(null);
     expect(code(w({ contact_id: null }))).toBe("no_contact");
   });
 });

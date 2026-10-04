@@ -2805,11 +2805,25 @@ export function leadClassOf(tags: unknown): "qualified" | "unqualified" | null {
   if (t.includes("roas-unqualified")) return "unqualified";
   return null;
 }
-/** A test contact: listed in rooms.test_contacts, or tagged cockpit-test (C34). */
+/**
+ * A test contact for the count: listed in rooms.test_contacts, or tagged
+ * cockpit-test (C34). Read where it only keeps a booking off the official
+ * calendars (the safe side), never to let a room through.
+ */
 export function isTestContact(contactId: unknown, tags: unknown, setting: Pick<RoomsSetting, "test_contacts">): boolean {
-  const id = String(contactId ?? "").trim();
-  if (id && setting.test_contacts.includes(id)) return true;
+  if (isListedTestContact(contactId, setting)) return true;
   return Array.isArray(tags) && tags.some(t => lower(t) === "cockpit-test");
+}
+
+/**
+ * Who may have a room while rooms.test_only is on: the contacts listed in
+ * rooms.test_contacts only, which the CEO sets in the database. A HighLevel
+ * tag is not enough (final review): anyone with HighLevel access could tag
+ * a real lead cockpit-test and send them room links, with no audit row here.
+ */
+export function isListedTestContact(contactId: unknown, setting: Pick<RoomsSetting, "test_contacts">): boolean {
+  const id = String(contactId ?? "").trim();
+  return Boolean(id) && setting.test_contacts.includes(id);
 }
 
 /** "Live · {first name}". */
@@ -3662,7 +3676,7 @@ export interface CreateInput {
  */
 function contactRefusal(s: RoomsSetting, contactId: string, contact: Row | null): Refused | null {
   if (!contact) return refuse("contact_unread");
-  if (s.test_only && !isTestContact(contactId, contact.tags, s)) return refuse("test_only");
+  if (s.test_only && !isListedTestContact(contactId, s)) return refuse("test_only");
   if (isClient(contact)) return refuse("client");
   if (dndEveryChannel(contact)) return refuse("dnd");
   return null;
@@ -3884,7 +3898,7 @@ export function wrapPlan(i: {
   if (!i.setting?.enabled) return refuse("disabled");
   const contact = str(i.contact_id, 80);
   if (!contact) return refuse("no_contact");
-  if (i.setting.test_only && !isTestContact(contact, i.contact?.tags, i.setting)) return refuse("test_only");
+  if (i.setting.test_only && !isListedTestContact(contact, i.setting)) return refuse("test_only");
   const meeting = meetingFromAddress(i.address);
   if (!meeting) return refuse(holdsHostLink(i.address) ? "host_link" : "phone_call");
   const start = ms(i.start);
