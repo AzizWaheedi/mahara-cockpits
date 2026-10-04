@@ -15,6 +15,9 @@
   const CHECK_AFTER_MS = 2600; // still here after that: offer the button
   const PREPARING_FOR_MS = 90000;
   const REQUEST_MS = C.REQUEST_MS || 6000;
+  const SECOND_TRY_MS = C.SECOND_TRY_MS || 15000;
+  // Still loading after both tries and their pause: something hung, say so.
+  const WATCHDOG_MS = REQUEST_MS + 1000 + SECOND_TRY_MS + 3000;
 
   const order = C.langOrder(navigator.languages || [navigator.language]);
   const lead = order[0];
@@ -25,14 +28,22 @@
   const code = page === "call" ? C.codeFromPath(location.pathname) : C.endedCode(location.search);
   let startedAt = Date.now();
   let current = null;
+  let prepTimer = 0;
+  let slowTimer = 0;
+  let watchdog = 0;
+  let checking = false;
   // Focus was in the buttons when they were redrawn, and moved to the line.
   let focusFollows = false;
 
   html.lang = lead;
   html.dir = lead === "ar" ? "rtl" : "ltr";
-  window.addEventListener("error", () => {
+  // The page's own script broke while loading: the no-script route still
+  // works. A throw inside a promise is an unhandled rejection, not an error.
+  const broke = () => {
     if (!current || current.state === "loading") fail();
-  });
+  };
+  window.addEventListener("error", broke);
+  window.addEventListener("unhandledrejection", broke);
 
   const $ = (sel) => doc.querySelector(sel);
 
@@ -142,6 +153,9 @@
           markOpened();
         }),
       );
+    } else if (view.state === "loading" && view.slow && code) {
+      // The door is slow: the no-script route is offered while it waits.
+      actions.appendChild(button(C.COPY.join, "?go=1", false));
     } else if (view.state === "ended" && view.whatsapp) {
       actions.appendChild(button(C.COPY.whatsapp, view.whatsapp, false));
     } else if (view.state === "error") {
@@ -194,26 +208,39 @@
 
   // -------------------------------------------------------------- the door
 
-  function ask(tries) {
+  /**
+   * Ask the door once per try. The first try waits 6 s, the second 15 s:
+   * a slow door is still an answer. The wait covers the whole answer, its
+   * body too, so a body that stalls is a failed try, not a spinner for ever.
+   */
+  function ask(tries, waitMs) {
+    const ms = waitMs || REQUEST_MS;
     const ctl = window.AbortController ? new AbortController() : null;
     const timer = setTimeout(() => {
       if (ctl) ctl.abort();
-    }, REQUEST_MS);
+    }, ms);
     const url = `${DOOR}/open/${code}?d=${encodeURIComponent(deviceId())}`;
     return fetch(url, { method: "GET", credentials: "omit", cache: "no-store", signal: ctl ? ctl.signal : undefined })
-      .then((res) => {
-        clearTimeout(timer);
-        return res
-          .json()
-          .catch(() => ({}))
-          .then((json) => C.viewFor(res.status, json));
-      })
+      .then((res) =>
+        res.json().then(
+          (json) => {
+            clearTimeout(timer);
+            return C.viewFor(res.status, json);
+          },
+          (e) => {
+            // Cut off by the wait: a failed try. Anything else: no answer to read.
+            if (ctl && ctl.signal.aborted) throw e;
+            clearTimeout(timer);
+            return C.viewFor(res.status, {});
+          },
+        ),
+      )
       .catch(() => {
         clearTimeout(timer);
         if (tries > 1)
           return new Promise((r) => {
             setTimeout(r, 1000);
-          }).then(() => ask(tries - 1));
+          }).then(() => ask(tries - 1, SECOND_TRY_MS));
         return { state: "error" };
       });
   }
@@ -224,34 +251,90 @@
     load();
   }
 
-  function load() {
-    ask(2).then((view) => {
-      if (view.state === "preparing") {
-        if (Date.now() - startedAt > PREPARING_FOR_MS) return render({ state: "error" });
-        render(view);
-        return setTimeout(load, view.retryMs);
-      }
-      if (view.state !== "opening") return render(view);
-      if (openedBefore()) return render(Object.assign({}, view, { state: "opened" }));
+  /** What the door said, acted on: open the room, wait for it, or say why not. */
+  function handle(view) {
+    clearTimeout(slowTimer);
+    clearTimeout(watchdog);
+    if (view.state === "preparing") {
+      if (Date.now() - startedAt > PREPARING_FOR_MS) return render({ state: "error" });
       render(view);
-      const reduce = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
-      setTimeout(
-        () => {
-          markOpened();
-          location.assign(view.joinUrl);
-          setTimeout(() => {
-            if (current && current.state === "opening") render(Object.assign({}, current, { state: "opened" }));
-          }, CHECK_AFTER_MS);
-        },
-        reduce ? 600 : OPEN_DELAY_MS,
-      );
-    });
+      clearTimeout(prepTimer);
+      prepTimer = setTimeout(load, view.retryMs);
+      return;
+    }
+    if (view.state !== "opening") return render(view);
+    if (openedBefore()) return render(Object.assign({}, view, { state: "opened" }));
+    render(view);
+    const reduce = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
+    setTimeout(
+      () => {
+        markOpened();
+        location.assign(view.joinUrl);
+        setTimeout(() => {
+          if (current && current.state === "opening") render(Object.assign({}, current, { state: "opened" }));
+        }, CHECK_AFTER_MS);
+      },
+      reduce ? 600 : OPEN_DELAY_MS,
+    );
+  }
+
+  function load() {
+    // Slow door: offer Join the call while it waits. Hung page: say so.
+    clearTimeout(slowTimer);
+    clearTimeout(watchdog);
+    if (current && current.state === "loading") {
+      slowTimer = setTimeout(() => {
+        if (current && current.state === "loading") render({ state: "loading", slow: true });
+      }, REQUEST_MS);
+      watchdog = setTimeout(() => {
+        if (!current || current.state !== "loading") return;
+        try {
+          render({ state: "error" });
+        } catch (_e) {
+          fail();
+        }
+      }, WATCHDOG_MS);
+    }
+    ask(2).then(handle);
+  }
+
+  /**
+   * Back on the page (from the call app, or a phone that slept): the room
+   * may have ended or come ready meanwhile, so the door is asked again,
+   * once. A lead whose room is over sees that, never a dead join button.
+   */
+  function recheck() {
+    if (checking || !current || !code || page !== "call") return;
+    const st = current.state;
+    if (st !== "opened" && st !== "preparing" && st !== "error" && st !== "opening") return;
+    checking = true;
+    // A phone that slept while the room was being made starts its wait again.
+    startedAt = Date.now();
+    ask(1).then(
+      (view) => {
+        checking = false;
+        if (view.state === "ended" || view.state === "unknown" || view.state === "broken") return render(view);
+        if (view.state === "opening") {
+          if (st === "opened" || st === "opening") return render(Object.assign({}, view, { state: "opened" }));
+          return handle(view);
+        }
+        if (view.state === "preparing") return handle(view);
+        // No answer this time: what shows stays.
+      },
+      () => {
+        checking = false;
+      },
+    );
   }
 
   // Back from the call app (the page comes out of the back-forward cache).
   window.addEventListener("pageshow", (e) => {
     if (e.persisted && current && (current.state === "opening" || current.state === "opened"))
       render(Object.assign({}, current, { state: "opened" }));
+    if (e.persisted) recheck();
+  });
+  window.addEventListener("visibilitychange", () => {
+    if (doc.visibilityState === "visible") recheck();
   });
 
   if (page === "ended") {

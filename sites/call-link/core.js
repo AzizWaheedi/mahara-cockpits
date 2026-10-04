@@ -12,8 +12,11 @@
   /** Six characters, no I, O, 0 or 1: the sales-live code alphabet. */
   const CODE_RE = /^[A-HJ-NP-Z2-9]{6}$/;
 
-  /** How long the page waits for the door, per try (sales-live answers inside 4.5 s). */
+  /** How long the page waits for the door on its first try (sales-live answers inside 4.5 s). */
   const REQUEST_MS = 6000;
+
+  /** The second try waits longer: a door that answers in 8 s is still an answer. */
+  const SECOND_TRY_MS = 15000;
 
   /* Marks nobody can see that a message app may leave in or after a link:
      zero-width spaces and joiners, the left-to-right and right-to-left marks,
@@ -146,9 +149,15 @@
       en: "This link is not valid. Reply to our message and we will send a new one.",
       ar: "هاللينك مو شغال. رد على رسالتنا ونرسل لك لينك يديد.",
     },
+    /* The room exists but its join link cannot be opened: no Join button,
+       because it would only lead to the same dead link. */
+    broken: {
+      en: "This link is not working. Reply to our message and we will send a new one.",
+      ar: "هاللينك مو شغال. رد على رسالتنا ونرسل لك لينك يديد.",
+    },
     error: {
-      en: "We could not load your call. Tap Join the call, or try again.",
-      ar: "ما قدرنا نحمّل مكالمتك. اضغط ادخل المكالمة، أو حاول مرة ثانية.", // DRAFT
+      en: "We could not load your call. Tap Join the call, or reply to our message and we will call you.",
+      ar: "ما قدرنا نحمّل مكالمتك. اضغط ادخل المكالمة، أو رد على رسالتنا ونتصل فيك.", // DRAFT
     },
     busy: {
       en: "Too many tries from this network. Wait a minute, then tap Try again.",
@@ -191,6 +200,7 @@
     }
     if (status === 200 && b.state === "ended") return { state: "ended", rep: rep, whatsapp: whatsappLink(b.whatsapp) };
     if (status === 404 || b.state === "unknown") return { state: "unknown" };
+    if (b.state === "broken") return { state: "broken" };
     if (status === 429) return { state: "busy" };
     return { state: "error" };
   }
@@ -210,6 +220,8 @@
         return view.whatsapp ? COPY.endedWhatsapp : COPY.ended;
       case "unknown":
         return COPY.unknown;
+      case "broken":
+        return COPY.broken;
       case "busy":
         return COPY.busy;
       default:
@@ -235,6 +247,7 @@
   return {
     CODE_RE: CODE_RE,
     REQUEST_MS: REQUEST_MS,
+    SECOND_TRY_MS: SECOND_TRY_MS,
     COPY: COPY,
     FALLBACK_REP: FALLBACK_REP,
     normalizeCode: normalizeCode,

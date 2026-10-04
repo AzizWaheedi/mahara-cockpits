@@ -1388,6 +1388,8 @@ describe("GET /go/{code}", () => {
     const res = await h(goRequest("K7Q2MX"));
     expect(res.status).toBe(502);
     expect(res.headers.get("location")).toBeNull();
+    // The lead reads it: in both languages, with what to do next.
+    expect(await res.text()).toBe(`${GO_COPY.broken.en}\n${GO_COPY.broken.ar}`);
   });
 
   test("works without IP_SALT, and then keeps no address with the open", async () => {

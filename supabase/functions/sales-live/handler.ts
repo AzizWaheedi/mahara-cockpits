@@ -884,13 +884,13 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
     if (!code) return redirect(`${home}/`);
     if (!db()) {
       noteStatus("go", false, MISSING.db);
-      return text("This call link cannot be opened right now. Reply to our message and we will send it again.", 503);
+      return text(both(GO_COPY.unavailable), 503);
     }
     const ua = req.headers.get("user-agent") ?? "";
     // The limit can key on any salt; only a hash made with IP_SALT is ever stored.
     const hash = await ipHash(env("IP_SALT") || "sales-live", clientIp(req.headers));
     if (!withinLimits(hash, null))
-      return text("Too many tries from this network. Wait a minute, then open the link again.", 429, {
+      return text(both(GO_COPY.busy), 429, {
         "retry-after": "60",
       });
     if (isPreviewBot(ua)) return text(both(GO_COPY.preview));
@@ -900,7 +900,7 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
       room = await resolveRoom(code, leftOf(until));
     } catch (e) {
       noteStatus("go", false, `Call links cannot be read: ${redact((e as Error).message)}`);
-      return text("This call link could not be read just now. Try again in a moment.", 503);
+      return text(both(GO_COPY.unread), 503);
     }
     if (!room) return redirect(`${home}/`);
     const now = deps.now();
@@ -920,7 +920,7 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
       return redirect(view.join_url);
     }
     if (view.state === "preparing") return text(both(GO_COPY.preparing), 200, { refresh: "3" });
-    return text("This room's link cannot be opened. Reply to our message and we will send a new one.", 502);
+    return text(both(GO_COPY.broken), 502);
   }
 
   // ------------------------------------------------------------------ cron

@@ -336,4 +336,22 @@ export const GO_COPY = {
     en: "Your call is almost ready. This page opens it by itself.",
     ar: "مكالمتك قاعدة تتجهز.. بنفتحها لك أول ما تجهز.", // DRAFT
   },
+  // The lead reads these when the no-script link cannot open the room, so
+  // each says what to do next, in both languages (the page's own pattern).
+  unavailable: {
+    en: "This call link cannot be opened right now. Reply to our message and we will send it again.",
+    ar: "ما نقدر نفتح لينك المكالمة الحين. رد على رسالتنا ونرسله لك مرة ثانية.", // DRAFT
+  },
+  busy: {
+    en: "Too many tries from this network. Wait a minute, then open the link again.",
+    ar: "محاولات كثيرة من نفس الشبكة. انطر دقيقة وبعدين افتح اللينك مرة ثانية.", // DRAFT
+  },
+  unread: {
+    en: "This call link could not be read just now. Try again in a moment.",
+    ar: "ما قدرنا نقرا لينك المكالمة الحين. حاول مرة ثانية بعد شوي.", // DRAFT
+  },
+  broken: {
+    en: "This room's link cannot be opened. Reply to our message and we will send a new one.",
+    ar: "هاللينك مو شغال. رد على رسالتنا ونرسل لك لينك يديد.",
+  },
 } as const;

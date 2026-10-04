@@ -45,7 +45,8 @@ describe("security r4: the shipped pages and the door they may reach", () => {
     }
   });
 
-  test.failing("ended-page-never-asks-door: /ended?c={code} ships without the mm-door meta, so call.js never asks the door: no WhatsApp button, and a room that is not over is never handed back to the call page", () => {
+  // Fixed 4 October (fallback review): ended.html names the same door.
+  test("ended-page-never-asks-door: /ended?c={code} ships without the mm-door meta, so call.js never asks the door: no WhatsApp button, and a room that is not over is never handed back to the call page", () => {
     // call.js reads DOOR from <meta name="mm-door"> and, on the ended page,
     // returns at once when it is empty (`if (!code || !DOOR) return;`).
     // ended.html's own comment says the script asks sales-live/open/{code}

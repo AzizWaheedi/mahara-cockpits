@@ -110,7 +110,9 @@ describe("what /open answered", () => {
     expect(C.viewFor(404, { state: "unknown" }).state).toBe("unknown");
     expect(C.viewFor(429, {}).state).toBe("busy");
     expect(C.viewFor(503, { state: "error" }).state).toBe("error");
-    expect(C.viewFor(502, { state: "broken" }).state).toBe("error");
+    // A room whose join link the door refuses: no Join button that leads nowhere.
+    expect(C.viewFor(502, { state: "broken" }).state).toBe("broken");
+    expect(C.linesFor({ state: "broken" })).toEqual(C.COPY.broken);
     expect(C.viewFor(200, null).state).toBe("error");
     expect(C.viewFor(200, "nonsense").state).toBe("error");
   });

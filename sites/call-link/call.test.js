@@ -135,6 +135,7 @@ function page({ kind = "call", path = "/K7Q2MX", search = "", answer, languages 
   doc.createElement = tag => new El(doc, tag);
 
   const timers = new Map();
+  const scheduled = [];
   let nextTimer = 1;
   const requests = [];
   const moves = [];
@@ -149,7 +150,11 @@ function page({ kind = "call", path = "/K7Q2MX", search = "", answer, languages 
     sessionStorage: store(),
     crypto: { randomUUID: () => "2b0c3f7e-5d1a-4c1b-9b7e-3a1f0d2c4e5f" },
     matchMedia: () => ({ matches: true }),
-    addEventListener() {},
+    listeners: {},
+    addEventListener(type, fn) {
+      if (!this.listeners[type]) this.listeners[type] = [];
+      this.listeners[type].push(fn);
+    },
   };
   const env = {
     window: win,
@@ -161,15 +166,24 @@ function page({ kind = "call", path = "/K7Q2MX", search = "", answer, languages 
       assign: u => moves.push(["assign", u]),
       replace: u => moves.push(["replace", u]),
     },
-    fetch: url => {
+    fetch: (url, init) => {
       requests.push(url);
       const a = answer(url, requests.length);
       if (a instanceof Error) return Promise.reject(a);
+      // A body that never arrives, until the page's own wait cuts it off.
+      if (a.stall)
+        return Promise.resolve({
+          status: a.status,
+          json: () =>
+            new Promise((_, reject) => init?.signal?.addEventListener("abort", () => reject(new Error("aborted")))),
+        });
+      if (a.hang) return new Promise(() => {});
       return Promise.resolve({ status: a.status, json: () => Promise.resolve(a.body) });
     },
     setTimeout: (fn, ms) => {
       const id = nextTimer++;
       timers.set(id, { fn, ms });
+      scheduled.push(ms);
       return id;
     },
     clearTimeout: id => timers.delete(id),
@@ -190,6 +204,27 @@ function page({ kind = "call", path = "/K7Q2MX", search = "", answer, languages 
     /** Lets every pending promise settle. */
     async flush() {
       for (let i = 0; i < 20; i++) await new Promise(r => setImmediate(r));
+    },
+    win,
+    timers,
+    scheduled,
+    /** Says to the page that it is showing again (a phone that woke). */
+    async wake() {
+      doc.visibilityState = "visible";
+      for (const fn of win.listeners.visibilitychange || []) fn();
+      await this.flush();
+    },
+    /** Runs every timer that waits `ms`, as if that long passed. */
+    async run(ms) {
+      let ran = false;
+      for (const [id, t] of [...timers.entries()]) {
+        if (t.ms !== ms || !timers.has(id)) continue;
+        timers.delete(id);
+        t.fn();
+        ran = true;
+      }
+      await this.flush();
+      return ran;
     },
     /** Runs the timers due now (the shortest first), once. */
     async tick() {
@@ -311,5 +346,115 @@ describe("the call page", () => {
     await p.flush();
     expect(p.state()).toBe("busy");
     expect(p.doc.activeElement).toBe(p.buttons()[0]);
+  });
+});
+
+describe("the call page's fallbacks", () => {
+  test("a body that stalls is cut off by the wait and tried again, never a spinner for ever", async () => {
+    let n = 0;
+    const p = page({
+      answer: () => (++n === 1 ? { status: 200, stall: true } : { status: 200, body: { state: "ended" } }),
+    });
+    await p.flush();
+    expect(p.state()).toBe("loading");
+    // The 6 s wait aborts the stalled body; after a second the door is asked again.
+    expect(await p.run(C.REQUEST_MS)).toBe(true);
+    expect(await p.run(1000)).toBe(true);
+    expect(n).toBe(2);
+    expect(p.state()).toBe("ended");
+  });
+
+  test("the second try waits 15 s, so a door that answers in 8 s is heard", async () => {
+    let n = 0;
+    const p = page({
+      answer: () => (++n === 1 ? new Error("timed out") : { status: 200, body: { state: "ended" } }),
+    });
+    await p.flush();
+    await p.run(1000);
+    expect(p.scheduled).toContain(C.SECOND_TRY_MS);
+    expect(p.state()).toBe("ended");
+  });
+
+  test("a slow door offers Join the call after 6 s while it keeps waiting", async () => {
+    const p = page({ answer: () => ({ hang: true }) });
+    await p.flush();
+    expect(p.buttons().length).toBe(0);
+    // The page's own 6 s: the slow line, with the no-script route to join.
+    const slow = [...p.timers.entries()].filter(([, t]) => t.ms === C.REQUEST_MS);
+    expect(slow.length).toBeGreaterThan(0);
+    for (const [id, t] of slow) {
+      p.timers.delete(id);
+      t.fn();
+    }
+    await p.flush();
+    expect(p.state()).toBe("loading");
+    expect(p.buttons().map(b => b.attrs.href ?? b.href)).toContain("?go=1");
+  });
+
+  test("still loading when every try is over: the page says so instead of spinning", async () => {
+    const p = page({ answer: () => ({ hang: true }) });
+    await p.flush();
+    const wait = C.REQUEST_MS + 1000 + C.SECOND_TRY_MS + 3000;
+    expect(await p.run(wait)).toBe(true);
+    expect(p.state()).toBe("error");
+    expect(p.l1().textContent).toContain("reply to our message and we will call you");
+  });
+
+  test("a broken link says so, with no Join button that leads nowhere", async () => {
+    const p = page({ answer: () => ({ status: 502, body: { ok: false, state: "broken" } }) });
+    await p.flush();
+    expect(p.state()).toBe("broken");
+    expect(p.buttons().length).toBe(0);
+  });
+
+  test("a throw inside a promise is caught: the page shows its own error, not a spinner", () => {
+    const p = page({ answer: () => ({ hang: true }) });
+    expect(p.win.listeners.unhandledrejection?.length).toBe(1);
+    p.win.listeners.unhandledrejection[0]();
+    expect(p.state()).toBe("error");
+  });
+
+  test("back on the page after the call ended, the lead sees it ended, not a dead Join button", async () => {
+    let n = 0;
+    const p = page({
+      answer: () =>
+        ++n === 1
+          ? {
+              status: 200,
+              body: { state: "open", provider: "meet", join_url: "https://meet.google.com/abc-defg-hij", rep: {} },
+            }
+          : { status: 200, body: { state: "ended" } },
+    });
+    await p.flush();
+    expect(p.state()).toBe("opening");
+    await p.wake();
+    expect(n).toBe(2);
+    expect(p.state()).toBe("ended");
+  });
+
+  test("a phone that slept while the room was made asks again on waking, not an error", async () => {
+    let n = 0;
+    const p = page({
+      answer: () =>
+        ++n === 1
+          ? { status: 200, body: { state: "preparing", retry_ms: 2000 } }
+          : {
+              status: 200,
+              body: { state: "open", provider: "zoom", join_url: "https://us06web.zoom.us/j/81234567890", rep: {} },
+            },
+    });
+    await p.flush();
+    expect(p.state()).toBe("preparing");
+    await p.wake();
+    expect(p.state()).toBe("opening");
+  });
+});
+
+describe("the pages as they ship", () => {
+  test("both pages name the door, so the ended page can ask whether the room is over", () => {
+    for (const file of ["index.html", "ended.html"]) {
+      const html = readFileSync(join(import.meta.dir, file), "utf8");
+      expect([file, /<meta name="mm-door" content="https:\/\/[a-z0-9]+\.supabase\.co\/functions\/v1\/sales-live">/.test(html)]).toEqual([file, true]);
+    }
   });
 });
