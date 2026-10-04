@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronRight, Search } from "lucide-react";
+import { Search } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
 import { useQuery } from "../lib/data";
 import { isArabic } from "../lib/format";
