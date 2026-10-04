@@ -201,8 +201,29 @@ export const WORKER_RED_AFTER_S = 90;
  */
 export const WORKER_DOWN_AFTER_S = 180;
 
-/** The room worker is down for room.create: it reported, and not for WORKER_DOWN_AFTER_S. A row never written says nothing here. */
-export function workerDown(lastRunAt: unknown, now: number): boolean {
+/**
+ * What the room worker writes at the start of its status detail whenever it
+ * is running but claims no room (its clock more than a minute off, the
+ * rooms setting unreadable, the rooms tables missing): hermes/sales-desk
+ * desk/rooms.py NOT_MAKING, the same words.
+ */
+export const NOT_MAKING_PREFIX = "Not making rooms: ";
+
+/** The worker's own word that it is alive and making no rooms (final review). */
+export function workerNotMaking(row: { ok?: unknown; detail?: unknown } | null | undefined): boolean {
+  return row?.ok === false && String(row?.detail ?? "").startsWith(NOT_MAKING_PREFIX);
+}
+
+/**
+ * The room worker is down for room.create: it last reported more than
+ * WORKER_DOWN_AFTER_S ago, or its fresh report says it makes no rooms. The
+ * create gate and the health line read the worker the same way (final
+ * review), so a rep never sees "Making your room" for a room no run will
+ * claim. A row never written is handled by the caller (the health line says
+ * the worker has not run yet; room.create refuses).
+ */
+export function workerDown(lastRunAt: unknown, now: number, row?: { ok?: unknown; detail?: unknown } | null): boolean {
+  if (workerNotMaking(row)) return true;
   const last = ms(lastRunAt);
   return last !== null && now - last > WORKER_DOWN_AFTER_S * S;
 }
@@ -3415,14 +3436,20 @@ export function roomsHealth(i: {
   rooms_today: unknown;
   failed_today: unknown;
   mismatched_today?: unknown;
+  /** The worker's status row (ok and detail): a fresh row that says it makes no rooms is down. */
+  status?: { ok?: unknown; detail?: unknown } | null;
 }): Health {
   const last = ms(i.last_run_at);
-  const ok = last !== null && i.now - last <= WORKER_RED_AFTER_S * S && last - i.now <= 5 * MIN;
+  const fresh = last !== null && i.now - last <= WORKER_RED_AFTER_S * S && last - i.now <= 5 * MIN;
+  const notMaking = fresh && workerNotMaking(i.status);
+  const ok = fresh && !notMaking;
   const made = countOf(i.rooms_today);
   const failed = countOf(i.failed_today);
   const mismatched = countOf(i.mismatched_today);
   let line: string;
-  if (!ok)
+  if (notMaking)
+    line = `The room worker is running but making no rooms: ${clause(String(i.status?.detail ?? "").slice(NOT_MAKING_PREFIX.length) || "no reason given")}. Call the lead or send your own link until it is fixed.`;
+  else if (!ok)
     line = last === null ? LANE_COPY.health_never : fill(ROOM_COPY.health.down, { time: clockWithDay(last, i.now) });
   else if (mismatched !== null && mismatched > 0)
     line = fill(mismatched === 1 ? ROOM_COPY.health.mismatch : LANE_COPY.health_mismatch_many, { rooms: rooms(mismatched) });

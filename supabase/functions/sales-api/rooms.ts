@@ -710,8 +710,12 @@ export function makeRooms(deps: RoomDeps): Rooms {
     // The room worker is down (the VPS, its cron or its lock): no room can be
     // made, so the rep is told at once what to do instead (fix round 4),
     // never left on "Making your room" for the minute the sweep waits.
-    const status = await io.db("cockpit_sales_worker_status?worker=eq.sales-desk&job=eq.rooms&select=at").catch(() => null);
-    if (status && workerDown(status[0]?.at ?? null, now)) return { refused: refuse("worker_down") };
+    // Read and answered: no row at all is a worker that never ran, and a row
+    // that says it makes no rooms is a worker no room will be made by
+    // (final review). Not readable: the room goes ahead (the sweep fails it
+    // at a minute if no worker claims it), never refused on a blip.
+    const status = await io.db("cockpit_sales_worker_status?worker=eq.sales-desk&job=eq.rooms&select=at,ok,detail").catch(() => null);
+    if (status && (!status[0] || workerDown(status[0].at ?? null, now, status[0]))) return { refused: refuse("worker_down") };
     const contact = a.contact_id ? await readContact(a.contact_id) : null;
     const [{ facts }, leadRooms, hostRooms, demos, appt] = await Promise.all([
       hostFacts(a.host, now),
@@ -927,6 +931,7 @@ export function makeRooms(deps: RoomDeps): Rooms {
       rooms_today: made,
       failed_today: failed,
       mismatched_today: mism,
+      status: status[0] ?? null,
     }) as unknown as Row;
   }
 

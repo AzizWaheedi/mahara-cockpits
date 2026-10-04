@@ -20,7 +20,7 @@
 import { describe, expect, test } from "bun:test";
 import type { Who } from "./lib.ts";
 import { ApiRefusal, type LiveIO } from "./liveio.ts";
-import { DEFAULT_ROOMS_JSON, roomsHealth } from "./roomlogic.ts";
+import { DEFAULT_ROOMS_JSON, NOT_MAKING_PREFIX, roomsHealth } from "./roomlogic.ts";
 import { makeRooms, SETTLE_NOTE, type RoomDeps } from "./rooms.ts";
 import { matchSent, type SeenMessage } from "./sendrules.ts";
 import { fakeUuid, fakeWorld } from "./testfakes.ts";
@@ -454,6 +454,57 @@ describe("chaos r4: the room worker is down", () => {
     expect(String((answer as ApiRefusal).message)).toMatch(/phone|your own|read/i);
     expect(w.db.t("cockpit_sales_rooms")).toHaveLength(0);
     expect(w.clock.now - started).toBeLessThan(5 * S);
+  });
+
+  const ask = (w: ReturnType<typeof world>) =>
+    w.rooms.actions["room.create"]!(setter, {
+      request_id: crypto.randomUUID(),
+      contact_id: LEAD,
+      provider: "meet",
+      call_kind: "intro",
+      purpose: "fallback",
+      appointment_id: "appt-r4",
+    }).then(
+      () => null,
+      e => e as ApiRefusal,
+    );
+
+  test("room.create while the worker writes fresh rows but makes no rooms (its clock a minute off, its setting unread): refused at once, and the health line says the same (final review)", async () => {
+    const w = world();
+    const st = w.db.t("cockpit_sales_worker_status").find(s => s.job === "rooms") as Row;
+    Object.assign(st, {
+      ok: false,
+      at: new Date(w.clock.now - 20 * S).toISOString(),
+      detail: `${NOT_MAKING_PREFIX}The VPS clock is 95 seconds ahead of the database's, so no room is claimed until it is fixed.`,
+    });
+    const refusal = await ask(w);
+    expect(refusal).toBeInstanceOf(ApiRefusal);
+    expect(refusal?.extra.code).toBe("worker_down");
+    expect(w.db.t("cockpit_sales_rooms")).toHaveLength(0);
+    const h = roomsHealth({ now: w.clock.now, last_run_at: st.at, rooms_today: 0, failed_today: 0, status: st });
+    expect(h.worker_ok).toBe(false);
+    expect(h.line).toBe(
+      "The room worker is running but making no rooms: the VPS clock is 95 seconds ahead of the database's, so no room is claimed until it is fixed. Call the lead or send your own link until it is fixed.",
+    );
+  });
+
+  test("a fresh row that is only failing (a provider down) still makes rooms: room.create goes ahead", async () => {
+    const w = world();
+    const st = w.db.t("cockpit_sales_worker_status").find(s => s.job === "rooms") as Row;
+    Object.assign(st, { ok: false, at: new Date(w.clock.now - 20 * S).toISOString(), detail: "Working. Zoom is not answering, so new Zoom rooms fail at once until it answers again." });
+    expect(await ask(w)).toBeNull();
+    expect(w.db.t("cockpit_sales_rooms")).toHaveLength(1);
+  });
+
+  test("a worker that never ran (no status row, the read worked): refused at once; a read that failed lets the room go ahead", async () => {
+    const w = world();
+    w.db.tables.cockpit_sales_worker_status = [];
+    w.db.roomWorkerRunning = false;
+    expect((await ask(w))?.extra.code).toBe("worker_down");
+    expect(w.db.t("cockpit_sales_rooms")).toHaveLength(0);
+    const w2 = world();
+    w2.db.faults.push({ prefix: "cockpit_sales_worker_status", method: "GET", error: new Error("database blip"), times: 1 });
+    expect(await ask(w2)).toBeNull();
   });
 
   test("the health line when the worker is down names a next step that does not need the worker", () => {

@@ -137,6 +137,13 @@ export class FakeDb {
   /** Runs before a PATCH lands, for interleaving a second writer. */
   beforePatch: ((table: string, rows: Row[]) => void) | null = null;
   rpcs: Record<string, (args: Row) => unknown> = {};
+  /**
+   * The room worker is running: while no (sales-desk, rooms) status row was
+   * written, reads see a fresh one, as they would beside a worker writing
+   * every minute (room.create refuses when the worker never ran, final
+   * review). A test of a worker that never ran sets this false.
+   */
+  roomWorkerRunning = true;
 
   constructor(public clock: { now: number }) {
     this.rpcs.cockpit_sales_room_event_lease = a => this.lease(a);
@@ -400,6 +407,14 @@ export class FakeDb {
     const prefer = init.prefer ?? "";
     if (method === "GET") {
       let rows = this.pick(table, filters).map(r => ({ ...r }));
+      if (
+        table === "cockpit_sales_worker_status" &&
+        this.roomWorkerRunning &&
+        !this.t(table).some(r => r.worker === "sales-desk" && r.job === "rooms")
+      ) {
+        const alive: Row = { worker: "sales-desk", job: "rooms", ok: true, detail: "Working. No rooms were asked for in the last 60 seconds.", at: this.iso() };
+        if (filters.every(([c, e]) => match(alive, c, e))) rows.push(alive);
+      }
       if (params.order) {
         const [col, dir] = params.order.split(".");
         rows.sort((a, b) => {

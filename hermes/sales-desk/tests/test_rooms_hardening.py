@@ -368,6 +368,33 @@ class Switches(RoomsCase):
         self.assertEqual(self.env.google.calls, [])
         row = self.env.pg.one("cockpit_sales_worker_status", job="rooms")
         self.assertIn("The rooms setting could not be read, so no new room is made until it can be.", row["detail"])
+        # Final review: running but claiming nothing is said first, in the
+        # words sales-api reads (room.create refuses, the health line says so).
+        self.assertIs(row["ok"], False)
+        self.assertTrue(row["detail"].startswith(rooms.NOT_MAKING + "The rooms setting could not be read"), row["detail"])
+
+    def test_a_clock_past_the_stop_says_it_makes_no_rooms_in_the_words_sales_api_reads(self):
+        self.env.add_room(1, provider="meet")
+        w = self.env.worker("run-a")
+        w.sb.clock_offset = -(rooms.CLOCK_STOP_S + 35)
+        w.run(seconds=3)
+        self.assertEqual(self.env.room(1)["state"], "requested")
+        row = self.env.pg.one("cockpit_sales_worker_status", job="rooms")
+        self.assertIs(row["ok"], False)
+        self.assertTrue(row["detail"].startswith(rooms.NOT_MAKING + "The VPS clock is 95 seconds ahead of"), row["detail"])
+        self.assertEqual(row["detail"].count("The VPS clock is"), 1, row["detail"])
+
+    def test_a_healthy_run_never_says_it_makes_no_rooms(self):
+        self.env.add_room(1, provider="meet")
+        self.env.worker("run-a").run(seconds=3)
+        row = self.env.pg.one("cockpit_sales_worker_status", job="rooms")
+        self.assertFalse(row["detail"].startswith(rooms.NOT_MAKING), row["detail"])
+
+    def test_the_prefix_is_the_one_sales_api_reads(self):
+        here = os.path.dirname(os.path.abspath(__file__))
+        with open(os.path.join(here, "..", "..", "..", "supabase", "functions", "sales-api", "roomlogic.ts"), encoding="utf-8") as f:
+            src = f.read()
+        self.assertIn(f'export const NOT_MAKING_PREFIX = "{rooms.NOT_MAKING}";', src)
 
 
 # ---- finding 8: the end of a run ---------------------------------------------------

@@ -181,6 +181,12 @@ CLOSE_SCAN_EVERY = 10.0   # finished rooms are looked for this often
 CLOCK_SLACK_S = 5.0
 CLOCK_WARN_S = 10.0
 CLOCK_STOP_S = 60.0
+# The start of the status detail whenever the worker runs but claims no room
+# (its clock past CLOCK_STOP_S, the rooms setting unreadable, the rooms tables
+# missing). sales-api reads it (roomlogic.ts NOT_MAKING_PREFIX, the same
+# words): room.create refuses at once and the health line says so, rather
+# than "Making your room" for a minute (final review).
+NOT_MAKING = "Not making rooms: "
 STALE_S = 600.0           # a room asked for this long ago is failed, not made or looked for: the sweep fails
                           # one still requested at 60 s and one still creating at claim + 120 s (contract-v2
                           # section 7, item 10), so this is only for when the sweep is not running
@@ -1318,7 +1324,7 @@ class Worker:
         try:
             self._read_settings(start)
         except TablesMissing as e:
-            self._write_status(False, str(e))
+            self._write_status(False, NOT_MAKING + str(e))
             self.log.error(str(e))
             return {**self.summary(), "blocked": str(e)}
         while True:
@@ -1326,7 +1332,7 @@ class Worker:
             try:
                 self.tick(t0, max_claims=max_claims)
             except TablesMissing as e:
-                self._write_status(False, str(e))
+                self._write_status(False, NOT_MAKING + str(e))
                 self.log.error(str(e))
                 return {**self.summary(), "blocked": str(e)}
             self._maybe_status()
@@ -2930,6 +2936,15 @@ class Worker:
         if faults:
             bits.append(f"Last problem: {faults[-1]}")
             ok = False
+        # Running but claiming nothing: said first, in words sales-api reads.
+        blocked = ""
+        if not self._settings_fresh():
+            blocked = "The rooms setting could not be read, so no new room is made until it can be."
+        elif abs(skew) > CLOCK_STOP_S:
+            blocked = self._clock_sentence(skew)
+        if blocked:
+            rest = [b for b in bits if b != blocked and b != f"Last problem: {blocked}"]
+            return False, NOT_MAKING + " ".join([blocked, *rest])
         return ok, " ".join(bits)
 
     def status(self, final: bool = False) -> None:
