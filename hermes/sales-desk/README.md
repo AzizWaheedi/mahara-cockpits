@@ -17,7 +17,7 @@ sent. It writes the draft, checks it and says what is left for the closer.
 
 | Command | What happens |
 |---|---|
-| `doctor` | every key by name (never its value), the tables, the bucket, a one-token call to the model, the model list, Fathom, Playwright, the reference deals; each blocker named in one sentence |
+| `doctor` | every key by name (never its value), the tables, the bucket, a one-token call to the model, the model list, Fathom, the browser (and, online, a real page and PDF printed with it), the reference deals; each blocker named in one sentence |
 | `requests` | drafts, or rebuilds, the proposals the cockpit asked for; quiet when nothing is queued |
 | `recordings` | indexes Fathom's sales calls for every rep and matches each to a lead |
 | `calls-vault` | copies every sales call in the Obsidian vault in, summary and transcript too; `--fathom-days N` asks Fathom about the calls whose note cannot say whether the lead joined |
@@ -389,15 +389,18 @@ python3 desk.py offer-sync
 python3 desk.py recordings --days 60   # once, to fill the index
 ```
 
-The PDF and the overflow measurement need Playwright and a Chrome the
-`hermes` user can run: `python3 -m pip install --user playwright`, then
-either `python3 -m playwright install chromium` or `CHROME_PATH` pointing at
-an existing Chrome. `doctor`'s playwright and render lines say whether it
-works. Without it the HTML is still made, and the proposal's notes say the PDF
-was skipped. Chrome's one-shot flags were measured hanging on this box
-(render.py's note, from the B2B account); the fallback now takes Chrome's
-answer as soon as it is complete, which is what makes it usable on a laptop,
-but Playwright is the path to rely on here.
+The PDF and the overflow measurement need a Chrome the `hermes` user can
+run. On the VPS that is Playwright's headless shell, already in the cache:
+`CHROME_PATH=/home/hermes/.cache/ms-playwright/chromium_headless_shell-1193/chrome-linux/headless_shell`
+in `~/.sales-desk/env` (render.py also finds the newest one there by itself).
+Chrome's one-shot flags print through it in about half a second, the same
+pages, pixel for pixel, as Playwright prints from it (measured 2026-10-04), so
+Python Playwright is optional; when installed it is used first. `doctor`'s
+browser line says which path is taken, and its render line (online only)
+prints a real page and a real PDF to say whether it works. Without a browser
+the HTML is still made, and the proposal's notes say the PDF was skipped.
+`SALES_RENDER_LIVE=1 python3 -m unittest tests.test_render` prints real
+proposals on the box: one A4 page per sheet.
 
 ### Cron
 

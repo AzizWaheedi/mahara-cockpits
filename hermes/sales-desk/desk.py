@@ -285,6 +285,34 @@ def model_rows(cfg: Config, log: Logger, *, online: bool, primary: Callable[...,
     return rows
 
 
+HEADLESS_SHELL_HINT = ("set CHROME_PATH in ~/.sales-desk/env to Playwright's headless shell "
+                       "(~/.cache/ms-playwright/chromium_headless_shell-*/chrome-linux/headless_shell)")
+
+
+def _browser_row(engine: str, chrome: Optional[str]) -> tuple[str, Optional[bool], str]:
+    """Which browser path this machine takes. Whether it works is the render
+    line's to say, from a real page (online doctor only)."""
+    if engine == "playwright":
+        return "browser", True, "Playwright, driving " + (chrome or "its own Chromium")
+    if engine == "chrome one-shot":
+        return "browser", True, (f"Chrome's one-shot flags on {chrome}; Playwright is not installed and is not "
+                                 "needed while the render line passes")
+    return "browser", None, ("no browser at all: the HTML is still made, but the PDF is skipped and overflow is not "
+                             "measured, so nothing is tightened; " + HEADLESS_SHELL_HINT)
+
+
+def _render_row(found: dict[str, Any]) -> tuple[str, Optional[bool], str]:
+    """render.probe()'s answer as one sentence."""
+    how, took = found.get("engine") or "the browser", found.get("seconds") or 0
+    if found.get("dom") and found.get("pdf"):
+        return "render", True, f"{how} rendered a page and printed a PDF in {took:g}s"
+    if found.get("dom"):
+        return "render", None, (f"{how} renders a page but printed no PDF, so drafts are measured and the PDF is "
+                                "skipped: " + HEADLESS_SHELL_HINT)
+    return "render", None, (f"{how} could not render a page, so overflow is not measured, nothing is tightened and "
+                            "the PDF is skipped: " + HEADLESS_SHELL_HINT)
+
+
 def cmd_doctor(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     rows: list[dict[str, Any]] = []
 
@@ -341,14 +369,7 @@ def cmd_doctor(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
                                      "makes one from a finished proposal")
 
     engine = render_mod.engine()
-    if engine == "playwright":
-        add("playwright", True, "installed: PDFs are printed and every draft is measured for overflow")
-    elif engine == "chrome one-shot":
-        add("playwright", None, "not installed, so Chrome's one-shot flags are used: they work on a laptop and hang "
-                                "on the VPS (render.py). On the VPS: pip install --user playwright")
-    else:
-        add("playwright", None, "no browser at all: the HTML is still made, but the PDF is skipped and overflow is "
-                                "not measured, so nothing is tightened. Install Playwright and Chrome")
+    add(*_browser_row(engine, render_mod.find_chrome()))
 
     try:
         cfg.ensure_dirs()
@@ -433,14 +454,9 @@ def cmd_doctor(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
             add("highlevel", False, "GHL_B2B_API_KEY is not set, so the follow-up agent cannot read a conversation "
                                     "and writes nothing", True)
 
-        if engine == "playwright":
-            with tempfile.TemporaryDirectory() as tmp:
-                page = Path(tmp) / "probe.html"
-                page.write_text("<!doctype html><title>probe</title><p>ok</p>", encoding="utf-8")
-                ok = bool(render_mod.dom(page))
-                add("render", ok or None, "Chrome renders a page through Playwright" if ok else
-                    "Playwright is installed but could not render a page: run python3 -m playwright install "
-                    "chromium, or set CHROME_PATH to a Chrome this user can run")
+        if engine != "none":
+            # Measured, never assumed: the browser line only says what was found.
+            add(*_render_row(render_mod.probe()))
 
     blockers = [r for r in rows if r["required"] and r["ok"] is False]
     if args.json:
@@ -980,7 +996,7 @@ def cmd_build(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
             print("wrote", pdf_path)
         else:
             print(f"The PDF was skipped: no browser here could print it ({render_mod.engine()}). "
-                  "Open the HTML and print it, or install Playwright.")
+                  "Open the HTML and print it, or set CHROME_PATH (doctor's browser line).")
             return 1
     return 0
 

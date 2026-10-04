@@ -397,7 +397,8 @@ class Worker:
             else:
                 notes.append("The PDF was skipped: no browser on this machine could print it "
                              f"({engine_mod.engine_name(self.renderer)}). The HTML is complete: open it and print to PDF, "
-                             "or install Playwright on the VPS.")
+                             "or point CHROME_PATH on the VPS at Playwright's headless shell (doctor's render line "
+                             "says whether it prints).")
         else:
             notes.append("No PDF yet: it is made when the proposal passes the send gate, with nothing left to fill.")
         validation = validation_json(result, variant=variant, resolved=resolved, notes=notes, extra=extra,
