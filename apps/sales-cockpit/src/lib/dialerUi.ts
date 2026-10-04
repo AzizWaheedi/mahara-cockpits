@@ -496,8 +496,44 @@ export function afterMiss(o: {
   templatesLive: boolean | null;
   /** Whether a ready-made message exists for the moment; null while being read. */
   messageReady: boolean | null;
+  /**
+   * The lead's video room after this miss, as the room panel reads it: while
+   * its link is out (or on its way), the step says so and offers no
+   * missed-call message, never a second "I tried to call you" (stress2,
+   * round 2).
+   */
+  video?: {
+    state: string;
+    link_sent_at: string | null;
+    link_channels?: readonly string[] | null;
+    refusal?: string | null;
+  } | null;
 }): AfterMiss {
   const { moment } = o;
+  const v = o.video;
+  const live =
+    v &&
+    ["requested", "creating", "open", "host_in", "lead_in"].includes(v.state);
+  if (v && live && v.link_sent_at) {
+    const ch = v.link_channels ?? [];
+    const how =
+      ch.includes("whatsapp_text") || ch.includes("whatsapp_template")
+        ? " on WhatsApp"
+        : ch.includes("email")
+          ? " by email"
+          : "";
+    return {
+      title: "The video link went",
+      text: `The video link went${how} at ${clock(v.link_sent_at)}. Wait for them here, or go to the next lead.`,
+      send: null,
+    };
+  }
+  if (v && live && !v.refusal)
+    return {
+      title: "The video link is on its way",
+      text: "The video link is on its way to them. Wait for them here, or go to the next lead.",
+      send: null,
+    };
   const tail = TAIL[moment];
   const unknown: AfterMiss = {
     title: ASK_WHATSAPP,

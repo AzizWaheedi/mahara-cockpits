@@ -137,6 +137,8 @@ export interface VideoPickerProps {
   trigger: Trigger;
   attemptId?: string | null;
   appointmentId?: string | null;
+  /** The dialer item the link is for (intro, confirm, lead): a confirmation call's room never carries the intro. */
+  itemKind?: "intro" | "confirm" | "lead" | null;
   choice: ProviderChoice;
   /** "The lead gets the link on WhatsApp." or null when it cannot be said yet. */
   planLine: string | null;
@@ -157,6 +159,7 @@ export function createAsk(
     | "trigger"
     | "attemptId"
     | "appointmentId"
+    | "itemKind"
   >,
   provider: Provider,
 ): CreateRoom {
@@ -169,6 +172,7 @@ export function createAsk(
   };
   if (p.attemptId) ask.attempt_id = p.attemptId;
   if (p.appointmentId) ask.appointment_id = p.appointmentId;
+  if (p.itemKind) ask.item_kind = p.itemKind;
   return ask;
 }
 

@@ -135,7 +135,13 @@ import {
   plainStage,
   when,
 } from "../lib/format";
-import { errorText, roomsApi, videoJoinedAt } from "../lib/rooms";
+import {
+  errorText,
+  type RoomView,
+  roomsApi,
+  spokeAt,
+  videoJoinedAt,
+} from "../lib/rooms";
 import { type Fill, groupBlocks, personalise } from "../lib/script";
 import { toast } from "../lib/toast";
 import type { Lead, Me } from "../lib/types";
@@ -1544,6 +1550,7 @@ function missStep(
   moment: MissMoment,
   convo: ReturnType<typeof useConversation>,
   wa: WaKit,
+  video: RoomView | null = null,
 ): AfterMiss {
   const channels = convo.data?.channels;
   return afterMiss({
@@ -1552,6 +1559,7 @@ function missStep(
     email: channels?.email ?? null,
     templatesLive: wa.templatesLive,
     messageReady: wa.moments ? wa.moments.has(moment) : null,
+    video,
   });
 }
 
@@ -1660,7 +1668,6 @@ function CallPane({
   // lands. Another lead is another pane, so another id.
   const saveId = useRef<string | null>(null);
   const missMoment: MissMoment = kind === "confirm" ? "confirm" : "missed_call";
-  const miss = missStep(missMoment, convo, wa);
   const noteRef = useRef<HTMLTextAreaElement>(null);
   const saveRef = useRef<HTMLButtonElement>(null);
   // The video link after a call that did not connect (P1): how it missed,
@@ -1676,6 +1683,9 @@ function CallPane({
   // Automatic mode runs once for each call that missed, Stop or not.
   const autoRan = useRef(new Set<string>());
   const video = useLeadRoom(contactId);
+  // While the lead's room has its link out (or on its way), the step after
+  // the miss says so and offers no missed-call message (stress2, round 2).
+  const miss = missStep(missMoment, convo, wa, video.room ?? null);
   const status = useCallStatus(open, () => {
     // Maqsam's record saved it as No answer. A save of the rep's own on its
     // way decides what shows (only one of the two can land); otherwise the
@@ -1726,8 +1736,11 @@ function CallPane({
     callKind: "intro" as const,
     attemptId: missed?.attemptId ?? null,
     // The intro on its confirmation call too: sales-api keeps a room made
-    // outside the intro's window off it (stress2, round 1).
+    // outside the intro's window off it (stress2, round 1), and a
+    // confirmation call's room off it always (round 2: the item kind).
     appointmentId: videoAppointmentId(kind, appt),
+    itemKind:
+      kind === "intro" || kind === "confirm" || kind === "lead" ? kind : null,
   };
   // "Send a video link" shows on every outcome but Answered, never for a
   // client, while no room is open for the lead (P1). A room that failed
@@ -1739,13 +1752,20 @@ function CallPane({
   // and neither the missed-call WhatsApp nor another video link is offered
   // (final review).
   const joinedAt = videoJoinedAt(video.room);
+  // We are on the phone: the room closed as moved to the phone, or the rep
+  // marked the intro from the panel (stress2, round 2). Neither the
+  // missed-call WhatsApp nor another video link is offered after it.
+  const spoke = spokeAt(video.room);
+  const [introMarked, setIntroMarked] = useState(false);
   const offerVideo =
     gate.show &&
     missed !== null &&
     choice !== null &&
     !video.open &&
     !failedOnScreen &&
-    !joinedAt;
+    !joinedAt &&
+    !spoke &&
+    !introMarked;
   // Where the link would go, said in the picker; when nothing can reach the
   // lead, automatic mode does not send blind: the picker says so instead.
   const planLine = roomsSetup.rooms
@@ -1822,6 +1842,13 @@ function CallPane({
       status,
       reason: null,
     });
+    // Marked from the room panel: the panel stops asking, and "We spoke on
+    // the phone" moves the pane to the held step (stress2, round 2).
+    setIntroMarked(true);
+    if (status === "showed") {
+      setSaved("Intro marked held");
+      setMode("held");
+    }
   }
   const outcomes = OUTCOMES[kind];
   const chosen = outcomes.find(o => o.key === draft.outcome) ?? null;
@@ -2184,7 +2211,9 @@ function CallPane({
             room={video.room}
             request={video.request}
             onRoomChange={r => video.setRoom(r)}
-            onMarkIntro={introCall && appt ? markIntro : undefined}
+            onMarkIntro={
+              introCall && appt && !introMarked ? markIntro : undefined
+            }
           />
         ) : autoAt !== null && offerVideo ? (
           <AutoVideoStrip
@@ -2226,14 +2255,31 @@ function CallPane({
           </NextStep>
         ) : mode === "unanswered" && joinedAt ? (
           <NextStep
-            title={`${firstWord(l?.name ?? null) ?? "The lead"} joined the video call. How did the intro go?`}
+            title={`${firstWord(l?.name ?? null) ?? "The lead"} joined the video call. ${kind === "confirm" ? "Are they coming to the intro?" : "How did the intro go?"}`}
             text={
               kind === "intro"
                 ? "Mark the intro held, then book the demo while they are warm, or save how it went."
-                : "Book the demo while they are warm, or save how it went."
+                : kind === "confirm"
+                  ? "Save that they are coming, or save how it went."
+                  : "Book the demo while they are warm, or save how it went."
             }
           >
-            {kind === "intro" ? (
+            {kind === "confirm" ? (
+              // A confirmation call (the evening before, or that morning):
+              // the intro is still ahead, so the step saves the lead's
+              // confirmation, never "Book the demo" before it (stress2,
+              // round 2).
+              <button
+                type="button"
+                disabled={Boolean(busy)}
+                onClick={() =>
+                  void save(undefined, "next", { outcome: "confirmed" })
+                }
+                className={panelLeads ? button : buttonPrimary}
+              >
+                <Check className="size-3.5" aria-hidden /> Confirmed the call
+              </button>
+            ) : kind === "intro" ? (
               // The intro itself was had on video: it is marked held first
               // (as the held path does), so it never comes back as "Intro
               // call now" and B2B counts it once (stress2, round 1). The
@@ -2264,6 +2310,40 @@ function CallPane({
               type="button"
               onClick={() => setMode("outcomes")}
               className={button}
+            >
+              Save how it went
+            </button>
+            <NextLeadButton onNext={toNext} />
+          </NextStep>
+        ) : mode === "unanswered" && spoke ? (
+          // We are on the phone (the room closed as moved to the phone): the
+          // rep and the lead are talking, so the step after the miss is the
+          // call's own question, never the missed-call WhatsApp or another
+          // video link (stress2, round 2).
+          <NextStep
+            title={`You moved to the phone with ${firstWord(l?.name ?? null) ?? "the lead"}. ${kind === "confirm" ? "Are they coming to the intro?" : kind === "intro" ? "How did the intro go?" : "How did it go?"}`}
+            text={
+              kind === "intro"
+                ? "Mark the intro held, then book the demo while they are warm, or save how it went."
+                : "Save how it went."
+            }
+          >
+            {kind === "intro" ? (
+              <button
+                type="button"
+                disabled={Boolean(busy)}
+                onClick={() =>
+                  void save(undefined, "next", { outcome: "showed" })
+                }
+                className={panelLeads ? button : buttonPrimary}
+              >
+                <Check className="size-3.5" aria-hidden /> Held the intro
+              </button>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => setMode("outcomes")}
+              className={kind === "intro" ? button : buttonPrimary}
             >
               Save how it went
             </button>

@@ -274,6 +274,9 @@ export const ROOMS_COPY = {
   /** The sweep closed the standby room: nobody pressed I'm in (live.status). */
   standby_host_not_in:
     "Your last standby room closed at {at} because nobody pressed I'm in. Press Try again, then I'm in once you are in the room.",
+  /** The same on Zoom: Zoom did not see the host join, and the strip offers I'm in after 30 s of Zoom silence (stress2, round 2). */
+  standby_host_not_in_zoom:
+    "Your last standby room closed at {at} because Zoom did not see you join and nobody pressed I'm in. Press Try again, join the room, then press I'm in if the strip still asks you to join.",
   standby_flood: "Your last standby room closed under 10 minutes ago, so no new one was made yet. Try again in a few minutes. You can still take a live lead now.",
   /** I'm available inside booked_guard of the seat's own booked call (stress2, round 2). */
   standby_booked_soon: "Your booked call at {at} starts soon, so no standby room was made. Press I'm available again after it.",
@@ -849,7 +852,7 @@ export function makeRooms(deps: RoomDeps): Rooms {
     const [{ facts }, leadRooms, hostRooms, demos, appt] = await Promise.all([
       hostFacts(a.host, now),
       a.contact_id
-        ? io.db(`${ROOMS}?contact_id=eq.${enc(a.contact_id)}&state=in.(${LIVE_STATES})&select=id`)
+        ? io.db(`${ROOMS}?contact_id=eq.${enc(a.contact_id)}&state=in.(${LIVE_STATES})&select=id,host_email,lead_by,host_by,requested_at`)
         : Promise.resolve([]),
       io.db(`${ROOMS}?host_email=eq.${enc(a.host)}&state=in.(${LIVE_STATES})&purpose=neq.booked&select=id`),
       a.contact_id
@@ -903,6 +906,17 @@ export function makeRooms(deps: RoomDeps): Rooms {
       if (no.code === "lead_has_room" || no.code === "host_has_room") {
         const twin = (await io.db(`${ROOMS}?request_id=eq.${enc(a.request_id)}&select=*`))[0] as unknown as RoomRow | undefined;
         if (twin && lower(twin.host_email) === a.host) return { room: twin };
+      }
+      // Another seat's room holds the lead (the setter's link, and a closer
+      // on the lead's page): said whose it is, by role, and when it closes,
+      // never "Open it", which only its host can (stress2, round 2).
+      const others = no.code === "lead_has_room" ? leadRooms.find(r => lower(r.host_email) !== a.host) : undefined;
+      if (others) {
+        const p = await personOf(lower(others.host_email)).catch(() => null);
+        const role = p?.role === "closer" ? "closer" : p?.role === "manager" ? "manager" : "setter";
+        const until =
+          ms(others.lead_by) ?? ms(others.host_by) ?? (ms(others.requested_at) ?? now) + a.setting.waits_s.fail * S;
+        return { refused: { ...no, message: fill(LANE_COPY.lead_has_others_room, { role, until: kuwaitClock(until) }) } };
       }
       return { refused: no };
     }
@@ -3548,17 +3562,21 @@ export function makeRooms(deps: RoomDeps): Rooms {
     if (!standbyError && a?.state === "available" && !(mine as Row[]).some(r => r.purpose === "standby")) {
       const last = (await io
         .db(
-          `${ROOMS}?host_email=eq.${enc(email)}&purpose=eq.standby&requested_at=gte.${enc(String(a.updated_at))}&select=state,error,end_reason,ended_at&order=requested_at.desc&limit=1`,
+          `${ROOMS}?host_email=eq.${enc(email)}&purpose=eq.standby&requested_at=gte.${enc(String(a.updated_at))}&select=state,error,end_reason,ended_at,provider&order=requested_at.desc&limit=1`,
         )
         .catch(() => []))[0];
       if (last?.state === "failed") standbyError = (last.error as string | null) ?? LANE_COPY.worker_failed;
       // The sweep closed it because nobody pressed I'm in (a Meet room sends
       // no join signal): said, with the way to a room again (stress2, round 1).
       else if (last && last.end_reason === "host_not_in")
-        standbyError = fill(ROOMS_COPY.standby_host_not_in, { at: kuwaitClock(ms(last.ended_at) ?? now) });
+        standbyError = fill(last.provider === "zoom" ? ROOMS_COPY.standby_host_not_in_zoom : ROOMS_COPY.standby_host_not_in, {
+          at: kuwaitClock(ms(last.ended_at) ?? now),
+        });
     }
     return {
-      me,
+      // The seat's own last press beside the view's state (stress2, round 2):
+      // an Away seat with a booked call never had a room to close.
+      me: { ...me, availability: a?.state === "available" ? "available" : "away" },
       rooms: await views(mine as unknown as RoomRow[], setting),
       offers,
       health: h,

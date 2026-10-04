@@ -55,7 +55,11 @@ describe("after a video intro, the dialer asks how it went", () => {
   });
 
   test("the step says joined, offers Book the demo, Save how it went and Next lead, and the band says when", () => {
-    expect(dialer).toContain("joined the video call. How did the intro go?");
+    // Since stress2 round 2 a confirmation call's join asks "Are they coming
+    // to the intro?" instead; the intro's own call still asks how it went.
+    expect(dialer).toMatch(
+      /joined the video call\. \$\{kind === "confirm" \? "Are they coming to the intro\?" : "How did the intro go\?"\}/,
+    );
     expect(dialer).toMatch(
       /Book the demo[\s\S]{0,400}Save how it went[\s\S]{0,200}<NextLeadButton/,
     );

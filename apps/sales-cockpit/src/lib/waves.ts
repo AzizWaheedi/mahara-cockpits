@@ -371,6 +371,11 @@ export function waveLine(
     const ended = `${noun.charAt(0).toUpperCase()}${noun.slice(1)}: ended${w.ended_at ? ` ${clock(w.ended_at)}` : ""}.`;
     return `${ended}${why}`.trim();
   }
+  // Paused before the desk added its leads: the desk enrols running waves
+  // only, so the promise of "within 5 minutes" waits for a Resume (stress2,
+  // round 2).
+  if (!c.total && !w.enrolled_at && w.state === "paused")
+    return `${noun.charAt(0).toUpperCase()}${noun.slice(1)}: paused before its leads were added. Resume it, and the desk adds them at its next run.`;
   if (!c.total && !w.enrolled_at)
     return `${noun.charAt(0).toUpperCase()}${noun.slice(1)}, ${w.per_day} a day, newest first. The desk adds the pool's leads within 5 minutes; nothing is counted before then.`;
   const head = `${plural(c.total, "lead", "leads")} in ${noun}, ${w.per_day} a day, newest first; ${c.holdout.toLocaleString("en-US")} held back to measure the effect.`;
@@ -447,6 +452,8 @@ export interface BatchDraft {
 export type BatchState =
   | "undecided"
   | "approved"
+  /** Approved, and its wave is paused: nothing goes until a Resume (stress2, round 2). */
+  | "waits_resume"
   | "held"
   | "set_aside"
   | "sending"
@@ -483,7 +490,8 @@ export function batchState(
       : "stalled";
   }
   if (d.held_by) return "held";
-  if (d.send_after) return "approved";
+  if (d.send_after)
+    return d.wave_state === "paused" ? "waits_resume" : "approved";
   return "undecided";
 }
 
@@ -571,6 +579,20 @@ export function approvedLine(
       ? ` ${plural(out.waiting_resume, "opener waits", "openers wait")} for ${out.waiting_resume === 1 ? "its" : "their"} wave to resume.`
       : "";
   if (n === 0) return `Nothing was approved: no opener was waiting.${back}`;
+  // Every approved opener's wave is paused: nothing goes until a Resume, so
+  // the line never says they go now (stress2, round 2).
+  const waiting =
+    typeof out.waiting_resume === "number" ? out.waiting_resume : 0;
+  if (n !== null && waiting >= n)
+    return n === 1
+      ? `Approved. It goes once you resume its wave.${back}`
+      : `Approved. They go once you resume the wave.${back}`;
+  // A mix: the pace for the running wave's openers only (the finish time
+  // would count the paused ones too).
+  if (n !== null && waiting > 0) {
+    const going = n - waiting;
+    return `Approved. ${going === 1 ? "One goes in the next few minutes" : `${going} go one every ${gap} seconds`}.${back}${paused}`;
+  }
   const firstMs = first ? Date.parse(first) : Number.NaN;
   const lastMs = last ? Date.parse(last) : Number.NaN;
   const opensMs =

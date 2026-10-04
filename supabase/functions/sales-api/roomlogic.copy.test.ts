@@ -201,6 +201,7 @@ const SPEC_SENTENCES = {
 };
 
 const LANE_SENTENCES = {
+  lead_has_others_room: "The {role}'s video room for this lead is open until {until}. Call the lead, or send a link after that.",
   disabled: "Video rooms are off for now. Call or message the lead instead.",
   provider_off: "{provider} rooms are off for now. Use {other}.",
   test_only: "Video rooms are in testing, so they work only for the test contact for now.",

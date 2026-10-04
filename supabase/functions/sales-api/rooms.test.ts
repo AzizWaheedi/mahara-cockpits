@@ -238,7 +238,13 @@ describe("room.create", () => {
     const w = setup();
     await w.make();
     const r = await refused(w.make(closer, { provider: "zoom", call_kind: "demo" }));
-    expect([r.extra.code, r.message]).toEqual(["lead_has_room", ROOM_COPY.refusals.lead_has_room]);
+    // Another seat's room holds the lead: said whose it is and until when,
+    // never "Open it", which only its host can (stress2, round 2).
+    expect(r.extra.code).toBe("lead_has_room");
+    expect(r.message).toMatch(/^The setter's video room for this lead is open until \d\d:\d\d\. Call the lead, or send a link after that\.$/);
+    // The seat's own room for the lead keeps the spec's sentence.
+    const own = await refused(w.make(setter, { request_id: crypto.randomUUID() }));
+    expect([own.extra.code, own.message]).toEqual(["lead_has_room", ROOM_COPY.refusals.lead_has_room]);
     const host = await refused(w.make(setter, { contact_id: OTHER_LEAD }));
     expect(host.extra.code).toBe("host_has_room");
   });

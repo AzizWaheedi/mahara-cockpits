@@ -718,6 +718,8 @@ export const ROOM_COPY = {
 
 /** Sentences the specs did not set, in the same voice. Each one is for review. */
 export const LANE_COPY = {
+  /** The lead's open room is another seat's (stress2, round 2): never "Open it", which only its host can. */
+  lead_has_others_room: "The {role}'s video room for this lead is open until {until}. Call the lead, or send a link after that.",
   disabled: "Video rooms are off for now. Call or message the lead instead.",
   provider_off: "{provider} rooms are off for now. Use {other}.",
   test_only: "Video rooms are in testing, so they work only for the test contact for now.",

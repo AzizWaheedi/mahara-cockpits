@@ -223,6 +223,12 @@ export interface Presence {
   /** The booked call's start and kind, with `booked_call_soon`. */
   booked_at?: string | null;
   booked_kind?: CallKind | null;
+  /**
+   * The seat's own last press (live.status, stress2 round 2): "away" when it
+   * never pressed I'm available or set itself away, so a booked call's line
+   * never says its room was closed.
+   */
+  availability?: "available" | "away" | null;
 }
 
 /** A live lead offered to this seat (project 2; empty until then). */
@@ -461,6 +467,11 @@ export function normalizePresence(v: unknown): Presence | null {
   if ("booked_at" in v) me.booked_at = when(v.booked_at);
   if ("booked_kind" in v)
     me.booked_kind = oneOf(CALL_KINDS, v.booked_kind) ? v.booked_kind : null;
+  if ("availability" in v)
+    me.availability =
+      v.availability === "available" || v.availability === "away"
+        ? v.availability
+        : null;
   return me;
 }
 
@@ -641,6 +652,18 @@ export function videoJoinedAt(
   return isFinal(room.state) && room.result === "joined"
     ? room.lead_in_at
     : null;
+}
+
+/**
+ * When the rep and the lead moved to the phone instead (We are on the
+ * phone: the room closed moved_to_phone), or null. The dialer's step after
+ * the miss then asks how the call went, never the missed-call WhatsApp or
+ * another video link (stress2, round 2).
+ */
+export function spokeAt(room: RoomView | null | undefined): string | null {
+  if (!room || !isFinal(room.state) || room.result !== "moved_to_phone")
+    return null;
+  return room.ended_at ?? room.created_at ?? null;
 }
 
 export function isMaking(s: RoomState): boolean {
@@ -899,7 +922,13 @@ export function roomMoment(room: RoomView, now: number): RoomMoment {
       ? "making_late"
       : "making";
   }
-  if (s === "failed") return "failed";
+  // A room whose Zoom meeting was deleted in Zoom closes cancelled with
+  // result failed and its sentence in error (stress2, round 2).
+  if (
+    s === "failed" ||
+    (s === "cancelled" && room.result === "failed" && room.error)
+  )
+    return "failed";
   if (isStandby(room)) {
     if (isFinal(s)) return "closed";
     return s === "open" ? "standby_open" : "standby_in";
@@ -915,7 +944,15 @@ export function roomMoment(room: RoomView, now: number): RoomMoment {
     if (room.first_open_at || room.last_open_at) return "expired_opened";
     return "expired";
   }
-  if (s === "ended" && room.result === "no_join") return "ended_empty";
+  // A room the rep (or Zoom) ended with nobody seen in it reads the same way
+  // (stress2, round 2): a knock, or an open of the link, is never "nobody
+  // joined" with a No-show press (the lead may have talked on Meet, which
+  // sends no join signal).
+  if (s === "ended" && room.result === "no_join") {
+    if (room.lead_waiting_at) return "expired_knocked";
+    if (room.first_open_at || room.last_open_at) return "expired_opened";
+    return "ended_empty";
+  }
   if (s === "ended" || s === "cancelled") return "closed";
   if (s === "lead_in") {
     const end = t(room.ends_at);
@@ -1149,6 +1186,14 @@ function joinedSentence(room: RoomView, v: Voice): Sentence {
         ". Not counted: this contact is not a tagged lead.",
       ];
     case "failed":
+      // The room carried the lead's booked intro: it is booked already, so
+      // the rep marks it shown, never books a second call (stress2, round 2).
+      if (room.appointment_id)
+        return [
+          head,
+          at,
+          ". The booked intro was not marked shown: mark it shown in the dialer.",
+        ];
       return [head, at, ". Not in HighLevel: book and mark it by hand."];
     case "unclear":
       // The booking's answer was lost: never "book it by hand" while one may stand.
@@ -1365,6 +1410,14 @@ export function roomSentence(room: RoomView, ctx: RoomCtx): Sentence {
     }
     case "expired_opened": {
       const who = name || "The lead";
+      // Meet sends no join signal: the room cannot say they did not join
+      // (stress2, round 2: the rep may have let them in and talked).
+      if (room.provider === "meet")
+        return [
+          `${who} opened the link at `,
+          { mono: clock(room.last_open_at ?? room.first_open_at) },
+          ". The room is closed, and Meet cannot say whether they came in. If you spoke, say so below; if not, call them now.",
+        ];
       return [
         `${who} opened the link at `,
         { mono: clock(room.last_open_at ?? room.first_open_at) },
@@ -1860,6 +1913,18 @@ export function bannerRoomSentence(
   if (BANNER_SAYS_PANEL.has(m))
     return roomSentence(room, { now, workerDown: ctx.workerDown });
   if (m === "joined" || m === "still_on_call") return [`${Name} joined.`];
+  // The host opened their Meet room: Meet will not say when the lead is in,
+  // so the banner says the next step (stress2, round 2).
+  if (
+    room.provider === "meet" &&
+    room.state === "open" &&
+    openedHere.has(room.id)
+  )
+    return room.first_open_at
+      ? [
+          `${Name} opened the link. Let them in, then open the lead and press The lead is in.`,
+        ]
+      : ["In your Meet room? Open the lead and press I'm in."];
   if (room.first_open_at) return [`${Name} opened the link.`];
   const start = bookedStart(room);
   // Ours: a booked call says when it is, not how long its room waits.
@@ -1878,12 +1943,25 @@ export function bannerRoomSentence(
     : [...head, { left, form: "sentence", lead: ", ", spoken: "." }];
 }
 
+/**
+ * Rooms this tab opened with Open my room. Meet sends no signal when the host
+ * goes in, so once the host has opened a Meet room the banner leads to the
+ * lead's page, where I'm in and The lead is in are (stress2, round 2).
+ */
+const openedHere = new Set<string>();
+
+/** Whether this tab opened the room (Open my room). */
+export function roomOpenedHere(roomId: string): boolean {
+  return openedHere.has(roomId);
+}
+
 /** Get in while the room waits for its host; after that, go to the lead. */
 export function bannerRoomAction(room: RoomView): {
   key: "open_room" | "open_lead";
   label: string;
 } {
-  return room.state === "open" && room.contact_id
+  const meetOpened = room.provider === "meet" && openedHere.has(room.id);
+  return room.state === "open" && room.contact_id && !meetOpened
     ? { key: "open_room", label: "Open my room" }
     : { key: "open_lead", label: "Open the lead" };
 }
@@ -2135,6 +2213,10 @@ export interface StripInput {
 
 const BOOKED_REASONS = new Set(["booked_call", "booked_call_soon"]);
 
+/** sales-api's standby refusals a press again would only repeat (ROOMS_COPY standby_too_late, standby_booked_soon). */
+const NO_RETRY_STANDBY =
+  /^Live calls end in under \d+ minutes?\b|^Your booked call at .* starts soon\b/;
+
 const A = (
   key: StripActionKey,
   label: string,
@@ -2260,10 +2342,13 @@ export function stripLine(i: StripInput): StripLine {
         `Your booked ${i.me.booked_kind === "intro" ? "intro" : "demo"} starts at `,
         { mono: clock(i.me.booked_at) },
         // The button that will be there after the call: still Available,
-        // "Get my room"; Away, "I'm available" (stress2, round 1).
+        // "Get my room"; Away, "I'm available" (stress2, round 1). An Away
+        // seat never had a room to close (stress2, round 2).
         i.me.state === "available"
           ? ", so your room is closed. Press Get my room after it."
-          : ", so your room is closed. Press I'm available after it.",
+          : i.me.availability === "away"
+            ? ". Press I'm available after it."
+            : ", so your room is closed. Press I'm available after it.",
       ],
       null,
       [],
@@ -2295,7 +2380,14 @@ export function stripLine(i: StripInput): StripLine {
           [A("away", "Set me away")],
           "bad",
         );
+      // Meet sends no join signal, and a Zoom room that has said nothing for
+      // manual_buttons (30 s) gets the rep's own I'm in too, as every other
+      // Zoom room does (stress2, round 2: a lost host-join event).
       const meetOpen = standby?.provider === "meet" && standby.state === "open";
+      const imIn =
+        standby !== null &&
+        standby.state === "open" &&
+        (meetOpen || manualButtons(standby, i.now));
       if (open)
         return line(
           "available",
@@ -2316,10 +2408,7 @@ export function stripLine(i: StripInput): StripLine {
           // A closer who steps away must be able to say so here, or offers
           // keep coming for up to two hours (final review). Meet sends no
           // join signal, so the rep says they are in (stress2, round 1).
-          [
-            ...(meetOpen ? [A("host_in", "I'm in")] : []),
-            A("away", "Set me away"),
-          ],
+          [...(imIn ? [A("host_in", "I'm in")] : []), A("away", "Set me away")],
         );
       // Ours, below: the room is not there to join, and the strip says why.
       if (standby && isMaking(standby.state))
@@ -2330,6 +2419,17 @@ export function stripLine(i: StripInput): StripLine {
             : ["Available. Making your room..."],
           A("join", "Join my room", true),
           [A("away", "Set me away")],
+        );
+      // A refusal a press again would only repeat (live calls end in under
+      // five minutes, the seat's booked call starts soon): said as it is,
+      // with no Try again (stress2, round 2).
+      if (i.standbyError && NO_RETRY_STANDBY.test(i.standbyError))
+        return line(
+          "standby_failed",
+          [i.standbyError],
+          null,
+          [A("away", "Set me away")],
+          "owed",
         );
       if (i.standbyError)
         return line(
@@ -2649,6 +2749,7 @@ export function heldRequestId(key: string): string | null {
 export function forgetRequests(): void {
   intents.clear();
   inflight.clear();
+  openedHere.clear();
   seat = null;
 }
 
@@ -2680,6 +2781,8 @@ export interface CreateRoom {
   trigger?: string;
   attempt_id?: string;
   appointment_id?: string;
+  /** The dialer item: a confirmation call's room never carries the intro (stress2, round 2). */
+  item_kind?: "intro" | "confirm" | "lead";
 }
 
 type Versioned = Pick<RoomView, "id" | "version">;
@@ -2762,6 +2865,7 @@ export const roomsApi = {
     api<unknown>("room.open", { room_id: roomId }).then(v => {
       const url = isObj(v) ? webUrl(v.start_url) : null;
       if (!url) throw unreadable(true);
+      openedHere.add(roomId);
       return { start_url: url };
     }),
   mark: (room: Versioned, what: MarkWhat) =>
