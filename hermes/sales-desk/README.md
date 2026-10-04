@@ -78,7 +78,24 @@ The proposal row then says one of three things:
 
 `validation` carries `ok`, `errors`, `warnings`, `fills` (the fields still
 to fill), `variant` and `offer`, then the full record: every check's row,
-the triage answer, the reference used, the tightening rounds, the notes.
+the triage answer, the reference used, the tightening rounds, the notes, and
+`model_route`: the provider and model that wrote it.
+
+**When the model cannot answer.** Steps 4 to 7 go through one provider. When
+the primary (`SALES_MODEL_PROVIDER`, the VPS's Claude) cannot answer at all
+(the sign-in lapsed, the proxy is down, a refused key, no credit) before the
+draft's first answer, the run hands over to the fallback
+(`SALES_MODEL_FALLBACK`, below) for that draft and every one after it in the
+run, and the proposal's first note says so: *Drafted through openrouter
+(anthropic/claude-opus-4.8) because the Claude sign-in on the VPS has
+lapsed.* A primary that stops partway is never finished by another model:
+the request waits, its try not counted, and starts again from the beginning
+on the next run. When neither answers, the request waits the same way, with
+the fix on the request row and this on the proposal, for the closer: *No
+model can answer right now: the Claude sign-in on the VPS has lapsed, and the
+openrouter account is out of credit. This proposal waits and drafts by itself
+once either is fixed, so there is no need to ask again; if it is still
+waiting in an hour, tell the CEO.*
 
 ### The rebuild
 
@@ -180,6 +197,43 @@ answer that was cut short is never taken for a whole deal.
 A missing or refused key, or a model the key cannot use, is an outage, not
 a failed try: nothing is claimed, the requests wait with the reason on them,
 and `doctor` names the fix.
+
+### The fallback
+
+The CEO, 2026-10-04: "fallbacks just in case anything breaks". One lapsed
+Claude sign-in on the VPS used to stop every proposal. Now
+`SALES_MODEL_FALLBACK` names a second provider (`openrouter` by default when
+`OPENROUTER_API_KEY` is on the box, `openai`, `anthropic` or `vps`; `none`
+turns it off), and proposals draft through it whenever the primary cannot
+answer at all. A failed try (a timeout, a garbled answer) is not an outage
+and never switches; nor does the day's AI ceiling, which counts every
+provider.
+
+- **The model** is `SALES_FALLBACK_MODEL`, else the primary's own as the
+  fallback names it: Claude Code's `opus` (the VPS proxy lists it beside
+  `claude-opus-4-8`) is `anthropic/claude-opus-4.8` through OpenRouter and
+  `claude-opus-4-8` at Anthropic; `gpt-5` is `openai/gpt-5` through
+  OpenRouter; OpenAI has no Claude, so there it is `gpt-5`. The allowlist
+  applies to it as to any model. A Claude model gets 64,000 tokens of room,
+  as from Anthropic directly: OpenRouter holds credit against the most a
+  reply may be.
+- **Once a run, never mid-draft.** The run decides at the first outage and
+  stays on the fallback for every draft left in it; the next run tries the
+  primary first again. A draft that has had one answer from a provider
+  stays on it, tightening and repair included.
+- **Only proposals**, unless `SALES_FALLBACK_JOBS` names others (`proposal,
+  notes, digest, reviews, followups`). Notes, reviews, the digest and
+  follow-ups wait for the primary as they always have.
+- **What it costs is counted**: each `cockpit_sales_ai_usage` row names the
+  provider that answered (`20261004a_sales_ai_usage_provider.sql`; until it
+  is applied the provider goes inside `model`, `openrouter:anthropic/...`). A
+  reply that reports no usage is counted at three characters a token, never
+  as nothing.
+- **`doctor`** shows both: the primary's key, answer and model list, the
+  fallback's key, answer, model list and, for OpenRouter, the credit left on
+  the account (a key's own limit can have room while the account is spent).
+  It is blocked only when neither can answer; a primary that cannot while
+  the fallback can is a warning that says where proposals are going.
 
 ## Fathom and the recordings
 
@@ -310,6 +364,9 @@ mkdir -p ~/.sales-desk/reference && chmod 700 ~/.sales-desk
 cat > ~/.sales-desk/env <<'EOF'
 SALES_MODEL_PROVIDER=vps
 SALES_PROPOSAL_MODEL=opus
+SALES_MODEL_FALLBACK=openrouter
+SALES_FALLBACK_MODEL=anthropic/claude-opus-4.8
+SALES_FALLBACK_JOBS=proposal
 EOF
 chmod 600 ~/.sales-desk/env
 cd hermes/sales-desk
@@ -356,6 +413,9 @@ editor desk's README says. Never pipe a stale copy.
 |---|---|
 | `SALES_MODEL_PROVIDER` | `vps` |
 | `SALES_PROPOSAL_MODEL` | per provider, above |
+| `SALES_MODEL_FALLBACK` | `openrouter` when `OPENROUTER_API_KEY` is set, else `none` |
+| `SALES_FALLBACK_MODEL` | the primary's model as the fallback names it (`anthropic/claude-opus-4.8` for `opus`) |
+| `SALES_FALLBACK_JOBS` | `proposal` (add `notes`, `digest`, `reviews`, `followups` to let them fall back too) |
 | `SALES_MODEL_TIMEOUT` | `900` seconds of silence per try |
 | `SALES_MODEL_ATTEMPTS` | `3` tries per model call |
 | `SALES_MAX_TOKENS` | unset (the model's own limit); Anthropic uses 64,000 |
@@ -392,6 +452,8 @@ In Creative Triage (`supabase/migrations/20260924a_sales_cockpit.sql` and
 - Storage `sales-calls` (private): each call's transcript, `<recording id>.md`
   and `maqsam/<id>.md`.
 - `cockpit_sales_worker_status`: one row per job.
+- `cockpit_sales_ai_usage`: one row per model call, with the job, the
+  provider and the model that answered, and its tokens.
 - Storage `sales-proposals` (private): `proposals/<id>/v<n>.html` and `.pdf`.
 
 On the VPS, `~/.sales-desk/out/<proposal id>/` keeps the working files of

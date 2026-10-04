@@ -19,6 +19,12 @@ A row running for more than half an hour with no sign of life belongs to a
 run that died; it goes back in the queue, or is parked after four tries. A
 live draft touches its row between stages, so a long one is never mistaken
 for a dead one.
+
+The model is the run's one model.Failover: the primary provider, and the
+fallback (SALES_MODEL_FALLBACK) once the primary cannot answer at all, decided
+once a run and never mid-draft. When neither answers, the request waits with
+its try uncounted and the sentence on it, and the next run (two minutes later)
+tries again.
 """
 from __future__ import annotations
 
@@ -66,6 +72,7 @@ class Worker:
 
     def __init__(self, cfg: Config, log: Callable[[str], None], sb: Supabase, *, host: str = "",
                  provider: Callable[..., Any] = model_mod.provider,
+                 fallback: Optional[Callable[..., Any]] = None,
                  fathom: Callable[..., Any] = fathom_client,
                  renderer: Any = render_mod, offer: Optional[dict[str, Any]] = None,
                  warn: Optional[Callable[[str], None]] = None):
@@ -73,9 +80,29 @@ class Worker:
         self.warn = warn or log
         self.host = host or socket.gethostname()
         self.provider_factory, self.fathom_factory = provider, fathom
+        # The fallback's maker, (cfg, log) -> provider; model.fallback_provider
+        # unless a test puts a fake there. Used only when the config names a
+        # fallback for proposals (model.fallback_for).
+        self.fallback_factory = fallback
         self.renderer = renderer
         self.offer = offer if offer is not None else offer_mod.load()
         self._people: Optional[dict[str, str]] = None
+        self._failover: Optional[model_mod.Failover] = None
+        # When no model can be made at all: the sentence for the closers waiting.
+        self._model_wait: Optional[str] = None
+
+    def route(self) -> model_mod.Failover:
+        """This run's model: one Failover for every draft in it, so the choice is made once."""
+        if self._failover is None:
+            cfg, log = self.cfg, self.log
+            fallback = None
+            if model_mod.fallback_for(cfg, KIND):
+                make = self.fallback_factory or (lambda c, l, m=cfg.model: model_mod.fallback_provider(
+                    c, l, primary_model=m))
+                fallback = lambda: make(cfg, log)  # noqa: E731
+            self._failover = model_mod.Failover(lambda: self.provider_factory(cfg, log), fallback, log=log,
+                                                job=KIND, primary_label=f"{cfg.provider} ({cfg.model})")
+        return self._failover
 
     # ---- the drain -----------------------------------------------------
     def run(self, limit: Optional[int] = None) -> dict[str, Any]:
@@ -94,6 +121,7 @@ class Worker:
                 self.log(f"client form not synced: {http.scrub(str(e))[:160]}")
         out: dict[str, Any] = {"seen": 0, "done": 0, "failed": 0, "retry": 0, "waiting": 0, "skipped": 0,
                                "reaped": self.reap(), "statuses": {}}
+        self._model_wait = None
         rows = self.sb.queued(KIND, max_attempts=MAX_ATTEMPTS, limit=limit or self.cfg.requests_per_run)
         out["seen"] = len(rows)
         checked: dict[bool, Optional[str]] = {}
@@ -109,6 +137,9 @@ class Worker:
                 # stays queued, untouched, with the reason on it for the cockpit.
                 blocked = checked[rebuild]
                 self.sb.patch(REQUESTS, f"id=eq.{http.quote(rid)}&status=eq.queued", {"error": blocked[:600]})
+                if not rebuild and self._model_wait:
+                    # No model at all: the closer waiting on it is told why, and that it drafts by itself.
+                    self._proposal_note(str(params.get("proposal_id") or ""), rid, self._model_wait)
                 out["waiting"] += 1
                 continue
             claimed = self.sb.claim(req, self.host)
@@ -130,7 +161,9 @@ class Worker:
                 self.warn(f"request {rid}: refused: {e}")
             except NotNow as e:
                 self.sb.request_released(rid, str(e), attempts - 1)
-                self._proposal_note(proposal_id, rid, str(e))
+                # The closer's sentence on the proposal they are waiting on, when
+                # the outage has one; the whole of it, with the fix, on the request.
+                self._proposal_note(proposal_id, rid, getattr(e, "closer", "") or str(e))
                 out["waiting"] += 1
                 out["blocked"] = str(e)
                 self.warn(f"request {rid}: waiting: {e}")
@@ -163,9 +196,12 @@ class Worker:
                         "supabase/migrations/20260924b_sales_proposal_files.sql; the requests wait until then.")
         if draft:
             try:
-                self.provider_factory(self.cfg, self.log)
+                # The primary, or the fallback when the primary cannot even be
+                # made (a key not set); waiting only when neither can.
+                self.route().ready()
                 self.fathom_factory(self.cfg, self.log)
             except NotNow as e:
+                self._model_wait = getattr(e, "closer", "") or None
                 return str(e)
         return None
 
@@ -256,7 +292,7 @@ class Worker:
         self.log(f"proposal {pid}: drafting from recording {call.recording_id} "
                  f"({len(picked.text):,} characters, {lang}, {resolved['payment']}, "
                  f"guarantee {'on' if resolved['guarantee'] else 'off'})")
-        p = self.provider_factory(self.cfg, self.log)
+        p = self.route().begin()
         outcome = engine_mod.run(
             call, lang=lang, resolved=resolved, offer=self.offer, p=p, cfg=self.cfg, log=self.log,
             workdir=self.cfg.out_dir / pid, renderer=self.renderer, beat=lambda: self.sb.touch(rid, self.host))
@@ -269,6 +305,7 @@ class Worker:
                           "matched_by": rec.get("matched_by")},
             "seconds": outcome.seconds,
             "rebuild": False,
+            "model_route": outcome.route,
         }
         return self._finish(proposal, outcome.deal, outcome.result, outcome.html_path, resolved=resolved,
                             variant=outcome.variant, model=outcome.model, notes=outcome.notes, extra=extra,
@@ -290,10 +327,17 @@ class Worker:
         result, _dom = engine_mod.rebuild(deal, resolved=resolved, offer=self.offer,
                                           html_path=workdir / f"v{n}.html", renderer=self.renderer)
         variant = str(deal.get("variant") or proposal.get("variant") or "specific")
-        extra = {"rebuild": True, "triage": (proposal.get("validation") or {}).get("triage"),
-                 "reference": (proposal.get("validation") or {}).get("reference")}
+        before = proposal.get("validation") if isinstance(proposal.get("validation"), dict) else {}
+        extra = {"rebuild": True, "triage": before.get("triage"), "reference": before.get("reference")}
+        notes = [engine_mod.RECHECKED]
+        route = before.get("model_route")
+        if isinstance(route, dict):
+            # Still the draft's words: still the draft's provider, and its sentence when that was the fallback.
+            extra["model_route"] = route
+            if route.get("note"):
+                notes.insert(0, str(route["note"]))
         return self._finish(proposal, deal, result, workdir / f"v{n}.html", resolved=resolved, variant=variant,
-                            model=proposal.get("model") or "", notes=[engine_mod.RECHECKED], extra=extra,
+                            model=proposal.get("model") or "", notes=notes, extra=extra,
                             lang=lang, recording_id=proposal.get("recording_id"), version=n)
 
     def _offer_for(self, proposal: dict[str, Any], deal: dict[str, Any]) -> dict[str, Any]:

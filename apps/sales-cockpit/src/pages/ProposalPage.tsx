@@ -318,10 +318,17 @@ export default function ProposalPage({ me }: { me: Me }) {
       </header>
 
       {p.status === "drafting" ? (
-        <p className="callout-good rounded-[var(--radius-md)] border px-3 py-2 text-sm">
-          The proposal is being written. It takes about ten minutes; this page
-          updates by itself.
-        </p>
+        <div
+          className={`${p.error ? "callout-warn" : "callout-good"} space-y-1 rounded-[var(--radius-md)] border px-3 py-2 text-sm`}
+        >
+          <p>
+            The proposal is being written. It takes about ten minutes; this page
+            updates by itself.
+          </p>
+          {/* Why it is still waiting, when it is: no model answering, or a try
+              that failed and will be made again. */}
+          {p.error ? <p>{p.error}</p> : null}
+        </div>
       ) : null}
       {p.status === "failed" ? (
         <div className="callout-bad space-y-2 rounded-[var(--radius-md)] border px-3 py-2 text-sm">

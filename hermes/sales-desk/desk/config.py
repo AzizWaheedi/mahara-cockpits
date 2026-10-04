@@ -39,6 +39,13 @@ DEFAULT_MODELS = {
 }
 PROVIDERS = tuple(DEFAULT_MODELS)
 
+# The jobs that may draft through the fallback when the primary provider cannot
+# answer (SALES_FALLBACK_JOBS). Proposals only by default: the CEO asked for a
+# fallback "just in case anything breaks" (2026-10-04), and a closer waiting on
+# a proposal is the one waiting that costs a deal. The others keep today's
+# behaviour (they wait for the primary) unless the setting names them.
+FALLBACK_JOBS = ("proposal", "notes", "digest", "reviews", "followups")
+
 # A request is tried four times, then parked as failed with its reason.
 MAX_ATTEMPTS = 4
 
@@ -127,6 +134,12 @@ class Config:
 
     provider: str = "vps"
     model: str = DEFAULT_MODELS["vps"]
+    # The provider a job drafts through when the primary cannot answer at all
+    # (model.Failover): "none", or one of PROVIDERS. Its model is
+    # SALES_FALLBACK_MODEL, else the primary's model as that provider names it.
+    fallback: str = "none"
+    fallback_model: str = ""
+    fallback_jobs: tuple[str, ...] = ("proposal",)
     # Per attempt, and the longest the answer may stay silent, not a budget
     # for the whole answer: a draft legitimately takes six to eleven minutes.
     model_timeout: float = 900.0
@@ -149,6 +162,13 @@ class Config:
         home = Path(key("SALES_DESK_HOME", str(Path.home() / ".sales-desk"))).expanduser()
         provider = key("SALES_MODEL_PROVIDER", "vps").strip().lower() or "vps"
         max_tokens = key("SALES_MAX_TOKENS", "").strip()
+        # OpenRouter by default when its key is on the box; "none" (or off)
+        # turns the fallback off.
+        fallback = key("SALES_MODEL_FALLBACK", "").strip().lower() or (
+            "openrouter" if key("OPENROUTER_API_KEY") else "none")
+        if fallback in ("off", "no", "false", "0", "disabled"):
+            fallback = "none"
+        jobs = key("SALES_FALLBACK_JOBS", "proposal").strip().lower()
         return Config(
             home=home,
             out_dir=Path(key("SALES_DESK_OUT", str(home / "out"))).expanduser(),
@@ -158,6 +178,9 @@ class Config:
             bucket=key("SALES_BUCKET", "sales-proposals"),
             provider=provider,
             model=key("SALES_PROPOSAL_MODEL", "").strip() or DEFAULT_MODELS.get(provider, ""),
+            fallback=fallback,
+            fallback_model=key("SALES_FALLBACK_MODEL", "").strip(),
+            fallback_jobs=() if jobs in ("", "none") else tuple(j.strip() for j in jobs.split(",") if j.strip()),
             model_timeout=_float("SALES_MODEL_TIMEOUT", 900.0),
             model_attempts=max(1, _int("SALES_MODEL_ATTEMPTS", 3)),
             max_tokens=int(max_tokens) if max_tokens.isdigit() else None,

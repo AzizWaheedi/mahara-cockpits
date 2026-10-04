@@ -60,7 +60,7 @@ from desk import followups as followups_mod  # noqa: E402
 from desk import research as research_mod  # noqa: E402
 from desk import reviews as reviews_mod  # noqa: E402
 from desk import validate as validate_mod  # noqa: E402
-from desk.config import DEFAULT_MODELS, WORKER, Config, key  # noqa: E402
+from desk.config import DEFAULT_MODELS, FALLBACK_JOBS, WORKER, Config, key  # noqa: E402
 from desk.errors import NotNow, Refused  # noqa: E402
 from desk.log import Logger  # noqa: E402
 from desk.supabase import TABLES, Supabase, SupabaseError  # noqa: E402
@@ -112,10 +112,177 @@ def _meter(cfg: Config, job: str, log: Logger) -> None:
         out = sb.rest("POST", "rpc/cockpit_sales_ai_tokens_since", json_body={"p_since": midnight})
         return int(out or 0)
 
-    def record(row: dict[str, Any]) -> None:
+    model_mod.meter(model_mod.Meter(job=job, cap=cap, used_today=used_today, record=usage_recorder(sb, log.warn),
+                                    warn=log.warn))
+
+
+USAGE_PROVIDER_MIGRATION = "supabase/migrations/20261004a_sales_ai_usage_provider.sql"
+
+
+def usage_recorder(sb: Supabase, warn: Callable[[str], None]) -> Callable[[dict[str, Any]], None]:
+    """One cockpit_sales_ai_usage row per model call, naming the provider that
+    answered. Until the provider column exists (USAGE_PROVIDER_MIGRATION), the
+    row is written without it and the provider goes into the model instead
+    ("openrouter:anthropic/claude-opus-4.8"), so no call goes uncounted."""
+    state = {"column": True}
+
+    def write(row: dict[str, Any]) -> None:
         sb.rest("POST", "cockpit_sales_ai_usage", json_body=[row], prefer="return=minimal", retries=0)
 
-    model_mod.meter(model_mod.Meter(job=job, cap=cap, used_today=used_today, record=record, warn=log.warn))
+    def record(row: dict[str, Any]) -> None:
+        if state["column"] or "provider" not in row:
+            try:
+                write(row)
+                return
+            except http.HttpError as e:
+                body = e.body.decode("utf-8", "replace") if isinstance(e.body, (bytes, bytearray)) else str(e.body)
+                if "provider" not in row or "provider" not in body or e.status not in (400, 404):
+                    raise
+                state["column"] = False
+                warn("the AI usage table has no provider column yet, so each row names its provider inside the "
+                     f"model (openrouter:anthropic/claude-opus-4.8) until {USAGE_PROVIDER_MIGRATION} is applied")
+        row = dict(row)
+        name = row.pop("provider", None)
+        if name and row.get("model") and not str(row["model"]).startswith(f"{name}:"):
+            row["model"] = f"{name}:{row['model']}"
+        write(row)
+
+    return record
+
+
+def model_rows(cfg: Config, log: Logger, *, online: bool, primary: Callable[..., Any] = model_mod.provider,
+               fallback: Callable[..., Any] = model_mod.fallback_provider) -> list[dict[str, Any]]:
+    """The doctor's lines for the model: the primary, the fallback, and whether
+    anything can draft. With a fallback for proposals, a primary that cannot
+    answer is a warning and the doctor is blocked only when neither can."""
+    rows: list[dict[str, Any]] = []
+
+    def add(name: str, ok: Optional[bool], detail: str, required: bool = False) -> None:
+        rows.append({"check": name, "ok": ok, "detail": detail, "required": required})
+
+    fb_on = model_mod.fallback_for(cfg, "proposal")
+    fname = (cfg.fallback or "none").strip().lower()
+    fb_any = fname not in ("", "none") and fname != cfg.provider and bool(cfg.fallback_jobs)
+    plabel = f"{cfg.provider} ({cfg.model})"
+    add("model", True, f"SALES_MODEL_PROVIDER={cfg.provider}, SALES_PROPOSAL_MODEL={cfg.model}"
+                       + ("" if cfg.model != DEFAULT_MODELS.get(cfg.provider) else " (the default)"))
+    p, p_err = None, None
+    try:
+        p = primary(cfg, log.info)
+        add("model key", True, "none needed: the Claude proxy on the VPS" if cfg.provider == "vps"
+            else f"{model_mod.KEY_NAMES[cfg.provider]} set for {cfg.provider}", not fb_on)
+    except NotNow as e:
+        p_err = e if isinstance(e, model_mod.ModelUnreachable) else model_mod.ModelUnreachable(str(e))
+        add("model key", False, str(e), not fb_on)
+
+    f, f_err, fmodel = None, None, ""
+    if not fb_any:
+        why = ("the same as SALES_MODEL_PROVIDER, so it is no fallback" if fname == cfg.provider
+               else "no job named in SALES_FALLBACK_JOBS" if fname not in ("", "none") else "off")
+        add("fallback", None, f"SALES_MODEL_FALLBACK={fname}: {why}. When {cfg.provider} cannot answer, nothing is "
+                              "drafted until it can; SALES_MODEL_FALLBACK=openrouter (or openai) gives a second way")
+    else:
+        fmodel = model_mod.fallback_model(cfg)
+        unknown = [j for j in cfg.fallback_jobs if j not in FALLBACK_JOBS]
+        add("fallback", True if not unknown else None,
+            f"SALES_MODEL_FALLBACK={fname}, model {fmodel} ("
+            + ("SALES_FALLBACK_MODEL" if cfg.fallback_model else f"the closest to {cfg.model}")
+            + f"), for {', '.join(cfg.fallback_jobs)} when {cfg.provider} cannot answer"
+            + (f"; not jobs: {', '.join(unknown)} (the jobs are {', '.join(FALLBACK_JOBS)})" if unknown else ""))
+        try:
+            f = fallback(cfg, log.info)
+            add("fallback key", True, "none needed: the Claude proxy on the VPS" if fname == "vps"
+                else f"{model_mod.KEY_NAMES.get(fname, fname)} set for {fname}")
+        except NotNow as e:
+            f_err = e if isinstance(e, model_mod.ModelUnreachable) else model_mod.ModelUnreachable(str(e))
+            add("fallback key", False, str(e))
+    flabel = f"{fname} ({fmodel})"
+    primary_ok, fallback_ok = p is not None, f is not None
+
+    if online and p is not None:
+        try:
+            add("model answers", True, p.ping(), not fb_on)
+        except NotNow as e:
+            primary_ok = False
+            p_err = e if isinstance(e, model_mod.ModelUnreachable) else model_mod.ModelUnreachable(str(e))
+            add("model answers", False, str(e), not fb_on)
+        except model_mod.ModelError as e:
+            primary_ok = False
+            p_err = model_mod.ModelUnreachable(f"{cfg.provider} did not answer a one-token call: {e}",
+                                               cause=f"{cfg.provider} did not answer a one-token call")
+            add("model answers", False, str(p_err), not fb_on)
+        try:
+            ids = p.models()
+            if cfg.model in ids:
+                add("model listed", True, f"{cfg.model} is one of the {len(ids)} models this key can use")
+            else:
+                usable = [i for i in ids if model_mod.model_allowed(i)]
+                add("model listed", False, f"{cfg.model} is not among the models this key can use. Set "
+                                           "SALES_PROPOSAL_MODEL to one of: " + ", ".join(usable[:20] or ids[:20]),
+                    not fb_on)
+        except (NotNow, model_mod.ModelError) as e:
+            add("model listed", None, f"the model list could not be read: {e}")
+        if getattr(p, "name", "") == "openai":
+            streams = p.stream_check()
+            if streams is False:
+                add("model streams", None, "OpenAI will not stream this model to this organisation; drafts ask "
+                                           "without streaming and wait for the whole answer instead")
+            elif streams:
+                add("model streams", True, "streaming works, so a long draft is timed by its silences")
+
+    if online and f is not None:
+        try:
+            add("fallback answers", True, f.ping())
+        except NotNow as e:
+            fallback_ok = False
+            f_err = e if isinstance(e, model_mod.ModelUnreachable) else model_mod.ModelUnreachable(str(e))
+            add("fallback answers", False, str(e))
+        except model_mod.ModelError as e:
+            fallback_ok = False
+            f_err = model_mod.ModelUnreachable(f"{fname} did not answer a one-token call: {e}",
+                                               cause=f"{fname} did not answer a one-token call")
+            add("fallback answers", False, str(f_err))
+        try:
+            ids = f.models()
+            if fmodel in ids:
+                add("fallback listed", True, f"{fmodel} is one of the {len(ids)} models {fname} lists")
+            else:
+                usable = [i for i in ids if model_mod.model_allowed(i) and "claude-" in i] or \
+                         [i for i in ids if model_mod.model_allowed(i)]
+                add("fallback listed", False, f"{fmodel} is not among the models {fname} lists. Set "
+                                              "SALES_FALLBACK_MODEL to one of: " + ", ".join(usable[:12]))
+        except (NotNow, model_mod.ModelError) as e:
+            add("fallback listed", None, f"the model list could not be read: {e}")
+        credit = f.credit() if fname == "openrouter" and callable(getattr(f, "credit", None)) else None
+        if credit is not None:
+            if credit > 0:
+                add("fallback credit", True, f"${credit:,.2f} left on the OpenRouter account")
+            else:
+                fallback_ok = False
+                f_err = model_mod.ModelUnreachable(
+                    f"The OpenRouter account has ${credit:,.2f} left (credit bought less used), and OpenRouter refuses "
+                    "paid calls once it is spent, whatever the key's own limit says. Top it up at "
+                    "openrouter.ai/settings/credits; the fallback works again at once.",
+                    cause="the openrouter account is out of credit")
+                add("fallback credit", False, str(f_err))
+
+    if fb_on:
+        jobs = [j for j in cfg.fallback_jobs if j in FALLBACK_JOBS]
+        if primary_ok:
+            add("drafting", True, f"{plabel} {'answers' if online else 'is set up (not asked: --offline)'}; {flabel} "
+                                  f"takes over for {', '.join(jobs)} if it cannot", True)
+        elif fallback_ok:
+            others = [j for j in FALLBACK_JOBS if j not in jobs]
+            add("drafting", None, f"proposals draft through {flabel} while {plabel} cannot answer ("
+                                  f"{p_err.cause if p_err else 'it did not answer'})"
+                                  + (f"; so do {', '.join(j for j in jobs if j != 'proposal')}" if len(jobs) > 1 else "")
+                                  + (f". {', '.join(others)} wait for {cfg.provider}" if others else ""), True)
+        else:
+            pc = p_err.cause if p_err else f"{cfg.provider} did not answer"
+            fc = f_err.cause if f_err else f"{fname} did not answer"
+            add("drafting", False, f"Neither {plabel} nor {flabel} can answer, so nothing can be drafted: {pc}, and "
+                                   f"{fc}. Fixing either is enough. {p_err or ''} {f_err or ''}".strip(), True)
+    return rows
 
 
 def cmd_doctor(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
@@ -156,16 +323,8 @@ def cmd_doctor(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     # Only calls-b2b-fathom needs it, once; its absence blocks nothing else.
     add("SALES_B2B_MGMT_TOKEN", True if key("SALES_B2B_MGMT_TOKEN") else None,
         "set" if key("SALES_B2B_MGMT_TOKEN") else "not set: only the one-off calls-b2b-fathom needs it")
-    add("model", True, f"SALES_MODEL_PROVIDER={cfg.provider}, SALES_PROPOSAL_MODEL={cfg.model}"
-                       + ("" if cfg.model != DEFAULT_MODELS.get(cfg.provider) else " (the default)"))
-
-    p = None
-    try:
-        p = model_mod.provider(cfg, log.info)
-        add("model key", True, "none needed: the Claude proxy on the VPS" if cfg.provider == "vps"
-            else f"{model_mod.KEY_NAMES[cfg.provider]} set for {cfg.provider}", True)
-    except NotNow as e:
-        add("model key", False, str(e), True)
+    # The primary, the fallback, and whether anything can draft (model_rows).
+    rows.extend(model_rows(cfg, log, online=not args.offline))
 
     refs = sorted(cfg.reference_dir.glob("*.json")) if cfg.reference_dir.is_dir() else []
     if refs:
@@ -230,31 +389,6 @@ def cmd_doctor(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
         else:
             add("supabase", False, "DESK_SUPABASE_URL and DESK_SUPABASE_KEY are not set, so nothing can be read "
                                    "or written; source ~/.editor-desk/env", True)
-
-        if p is not None:
-            try:
-                add("model answers", True, p.ping(), True)
-            except NotNow as e:
-                add("model answers", False, str(e), True)
-            except model_mod.ModelError as e:
-                add("model answers", False, f"{cfg.provider} did not answer a one-token call: {e}", True)
-            try:
-                ids = p.models()
-                if cfg.model in ids:
-                    add("model listed", True, f"{cfg.model} is one of the {len(ids)} models this key can use")
-                else:
-                    usable = [i for i in ids if model_mod.model_allowed(i)]
-                    add("model listed", False, f"{cfg.model} is not among the models this key can use. Set "
-                                               "SALES_PROPOSAL_MODEL to one of: " + ", ".join(usable[:20] or ids[:20]), True)
-            except (NotNow, model_mod.ModelError) as e:
-                add("model listed", None, f"the model list could not be read: {e}")
-            if getattr(p, "name", "") == "openai":
-                streams = p.stream_check()
-                if streams is False:
-                    add("model streams", None, "OpenAI will not stream this model to this organisation; drafts ask "
-                                               "without streaming and wait for the whole answer instead")
-                elif streams:
-                    add("model streams", True, "streaming works, so a long draft is timed by its silences")
 
         if cfg.fathom_key:
             try:
@@ -522,14 +656,20 @@ def review_provider(cfg: Config, log: Logger) -> Any:
     metered like every other job's."""
     model = key("SALES_REVIEW_MODEL", "").strip() or cfg.model
     model_mod.check_model(model, setting="SALES_REVIEW_MODEL")
-    if (cfg.provider or "vps") == "openai":
-        if not cfg.openai_key:
-            raise model_mod.ModelUnreachable("OPENAI_API_KEY is not set, so Vince cannot review calls.")
-        return model_mod.metered(model_mod.OpenAIShaped("openai", model_mod.OPENAI_URL, cfg.openai_key, model,
-                                                        max_tokens=cfg.max_tokens, reasoning_effort=cfg.reasoning_effort,
-                                                        json_mode=False, log=log.info))
+
+    def primary() -> Any:
+        if (cfg.provider or "vps") == "openai":
+            if not cfg.openai_key:
+                raise model_mod.ModelUnreachable("OPENAI_API_KEY is not set, so Vince cannot review calls.")
+            return model_mod.metered(model_mod.OpenAIShaped("openai", model_mod.OPENAI_URL, cfg.openai_key, model,
+                                                            max_tokens=cfg.max_tokens,
+                                                            reasoning_effort=cfg.reasoning_effort,
+                                                            json_mode=False, log=log.info))
+        return model_mod.provider(cfg, log.info)
+
     cfg.model = model
-    return model_mod.provider(cfg, log.info)
+    # Through the fallback only when SALES_FALLBACK_JOBS names reviews.
+    return model_mod.for_job(cfg, "reviews", log.info, primary=primary, plain_text=True)
 
 
 def cmd_reviews(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
@@ -624,7 +764,7 @@ def cmd_followups(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
         if model:
             model_mod.check_model(model, setting="SALES_FOLLOWUP_MODEL")
             cfg.model = model
-        p = model_mod.provider(cfg, log.info)
+        p = model_mod.for_job(cfg, "followups", log.info)
     except model_mod.ModelUnreachable as e:
         _status(cfg, log, "followups", False, str(e))
         log.error(str(e))
@@ -676,14 +816,15 @@ def cmd_followups(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     return 0
 
 
-def notes_provider(cfg: Config, log: Logger) -> Any:
+def notes_provider(cfg: Config, log: Logger, job: str = "notes") -> Any:
     """The model the call notes and digests are written with: the desk's own
-    provider on the VPS key, SALES_NOTES_MODEL when set; never DeepSeek."""
+    provider on the VPS key, SALES_NOTES_MODEL when set; never DeepSeek. The
+    fallback only when SALES_FALLBACK_JOBS names the job (notes, digest)."""
     model = key("SALES_NOTES_MODEL", "").strip()
     if model:
         model_mod.check_model(model, setting="SALES_NOTES_MODEL")
         cfg.model = model
-    return model_mod.provider(cfg, log.info)
+    return model_mod.for_job(cfg, job, log.info)
 
 
 def cmd_notes(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
@@ -719,7 +860,7 @@ def cmd_digest(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     """What prospects keep saying over the last 7 and 30 days, from the call notes."""
     sb = _sb(cfg)
     try:
-        p = notes_provider(cfg, log)
+        p = notes_provider(cfg, log, job="digest")
         outs = [notes_mod.run_digest(sb, p, log.info, days=d, timeout=cfg.model_timeout,
                                      min_chars=cfg.min_transcript_chars)
                 for d in ([args.days] if args.days else [7, 30])]
@@ -849,8 +990,9 @@ def cmd_draft(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
                            client_name=args.name, client_company=args.company, client_country=args.country)
     out_dir = Path(args.out or (cfg.out_dir / "by-hand"))
     render_mod.set_timeout(cfg.render_timeout)
-    outcome = engine_mod.run(call, lang=args.lang, resolved=resolved, offer=offer, p=model_mod.provider(cfg, log.info),
-                             cfg=cfg, log=log.info, workdir=out_dir, variant=args.variant)
+    outcome = engine_mod.run(call, lang=args.lang, resolved=resolved, offer=offer,
+                             p=model_mod.for_job(cfg, "proposal", log.info), cfg=cfg, log=log.info, workdir=out_dir,
+                             variant=args.variant)
     final = out_dir / "proposal.html"
     build_mod.build(outcome.deal, final)
     print(f"variant {outcome.variant} ({outcome.why}); {outcome.model}; {outcome.seconds:.0f}s; "

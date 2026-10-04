@@ -250,7 +250,7 @@ def research(lead: dict[str, Any], *, openai_key: str, apify_key: str, model: st
                              data=json.dumps(body).encode(), timeout=timeout, retries=1)
     resp = json.loads(raw.decode("utf-8"))
     if meter is not None:
-        meter.add(str(resp.get("model") or model), resp.get("usage") or {})
+        meter.add(str(resp.get("model") or model), resp.get("usage") or {}, provider="openai")
     text, urls = _text_and_sources(resp)
     brief = first_json(text)
     if brief is None:

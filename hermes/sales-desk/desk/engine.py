@@ -90,6 +90,8 @@ class Outcome:
     reference: Optional[dict[str, Any]] = None
     notes: list[str] = field(default_factory=list)
     seconds: float = 0.0
+    # The provider and model that wrote it, and why when that was the fallback.
+    route: dict[str, Any] = field(default_factory=dict)
 
 
 def choose_variant(found: Optional[dict[str, Any]], transcript_text: str) -> tuple[str, str]:
@@ -214,6 +216,11 @@ def run(call: Call, *, lang: str, resolved: dict[str, Any], offer: dict[str, Any
                                       timeout=cfg.model_timeout, expect=prompt_mod.is_deal, log=log, what="draft",
                                       beat=beat)
     used = f"{p.name}:{reply.model or p.model}"
+    # Settled now: the triage and the draft went through one provider, and the
+    # tightening and repair rounds stay on it (model.Failover).
+    route = model_mod.route_of(p, reply.model or p.model)
+    if route.get("note"):
+        notes.insert(0, route["note"])
     stamp(deal, variant=variant, resolved=resolved, lang=lang)
     (workdir / "deal.json").write_text(json.dumps(deal, ensure_ascii=False, indent=2), encoding="utf-8")
     beat()
@@ -302,7 +309,7 @@ def run(call: Call, *, lang: str, resolved: dict[str, Any], offer: dict[str, Any
     return Outcome(
         deal=best, variant=variant, why=why, found=found, result=result, html_path=best_html, dom=best_dom,
         model=used, rounds=rounds, overflow_first=first, overflow_last=list(best_over),
-        reference=info, notes=notes, seconds=round(time.time() - started, 1),
+        reference=info, notes=notes, seconds=round(time.time() - started, 1), route=route,
     )
 
 
