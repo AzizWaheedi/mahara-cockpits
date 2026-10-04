@@ -376,6 +376,7 @@ export default function Sidebar({
                     </div>
                   )}
                 </a>
+              </li>
             );
           })}
         </ul>
