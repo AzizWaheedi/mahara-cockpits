@@ -34,6 +34,7 @@ import {
   type CrmSettings,
   redact,
   refuseMark,
+  timingSafeEqual,
   trimMessages,
   type Channel,
   dndFor,
@@ -5612,7 +5613,9 @@ const DESK_ACTIONS: Record<string, (who: Who, b: Row) => Promise<Row>> = {
 /**
  * What a caller with the cron secret may ask for: the sales mirror's
  * contract sync, and what sales-live/cron passes on (room.event's replays,
- * settles and ticks, thread.tick), plus live.press and reply.seen.
+ * settles and ticks, thread.tick). live.press and reply.seen are taken on
+ * the service key only (final review: the secret is shared by the vault,
+ * sales-mirror, sales-api and sales-live).
  */
 const CRON_ACTIONS = new Set(["contract.sync", ...rooms.cron]);
 
@@ -5665,7 +5668,7 @@ Deno.serve(async (req: Request) => {
   const cronSecret = env("CRON_SECRET");
   const byCron =
     Boolean(cronSecret) &&
-    (req.headers.get("x-cron-secret") ?? "").trim() === cronSecret &&
+    timingSafeEqual((req.headers.get("x-cron-secret") ?? "").trim(), cronSecret) &&
     CRON_ACTIONS.has(String(body?.action ?? ""));
   if (jwtRole(jwt) === "service_role" || byCron) {
     const deskHandler = DESK_ACTIONS[String(body?.action ?? "")];

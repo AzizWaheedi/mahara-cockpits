@@ -18,7 +18,7 @@ import type { Who } from "./lib.ts";
 import { GhlError } from "./liveio.ts";
 import { DEFAULT_ROOMS_JSON } from "./roomlogic.ts";
 import { makeRooms, type RoomDeps } from "./rooms.ts";
-import { fakeUuid, fakeWorld } from "./testfakes.ts";
+import { fakeUuid, fakeWorld, seedLeadZoomJoin } from "./testfakes.ts";
 
 type Row = Record<string, unknown>;
 
@@ -144,8 +144,11 @@ function setup() {
         version: Number(room(id).version) + 1,
       },
     });
-    if (o.leadOpened !== false)
+    if (o.leadOpened !== false) {
       await w.io.db(`cockpit_sales_rooms?id=eq.${id}`, { method: "PATCH", body: { link_sent_at: w.db.iso(), first_open_at: w.db.iso(), last_open_at: w.db.iso() } });
+      // Zoom saw the lead join the room's own meeting: the only evidence that upgrades a hand press (final review).
+      seedLeadZoomJoin(w.db, id);
+    }
     return id;
   }
   async function mark(who: Who, id: string, what: "lead_in" | "not_lead" | "host_in") {

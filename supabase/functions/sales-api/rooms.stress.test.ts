@@ -93,8 +93,17 @@ function world(seed = 1, failText = 0) {
     });
     return id;
   }
+  /** The same room on Zoom, on meeting "1": Zoom's events drive only a Zoom room on its own meeting (final review). */
+  async function openZoomRoom(): Promise<string> {
+    const id = await openRoom();
+    await w.io.db(`cockpit_sales_rooms?id=eq.${id}`, {
+      method: "PATCH",
+      body: { provider: "zoom", provider_meeting_id: "1", join_url: "https://us06web.zoom.us/j/1?pwd=stress" },
+    });
+    return id;
+  }
   const room = (id: string) => w.db.t("cockpit_sales_rooms").find(r => r.id === id) as Row;
-  return { ...w, rand, rooms, sent, bookings, openRoom, room, attempts: () => attempts };
+  return { ...w, rand, rooms, sent, bookings, openRoom, openZoomRoom, room, attempts: () => attempts };
 }
 
 describe("fifty at once", () => {
@@ -129,7 +138,7 @@ describe("fifty at once", () => {
 
   test("fifty copies of the lead's join (Zoom's retries, the replay) count the join once and book once", async () => {
     const w = world();
-    const id = await w.openRoom();
+    const id = await w.openZoomRoom();
     const ids: string[] = [];
     for (let i = 0; i < 50; i++) {
       const eid = fakeUuid();
@@ -216,7 +225,7 @@ describe("crashes and failures", () => {
 
   test("a late Zoom end for an earlier session, after the lead joined again, changes nothing", async () => {
     const w = world();
-    const id = await w.openRoom();
+    const id = await w.openZoomRoom();
     const t = w.clock.now;
     const store = (event: string, at: number, participant?: Row) => {
       const eid = fakeUuid();

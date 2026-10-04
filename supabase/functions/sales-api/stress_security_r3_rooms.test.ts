@@ -11,7 +11,7 @@
 import { describe, expect, test } from "bun:test";
 import type { Who } from "./lib.ts";
 import { DEFAULT_ROOMS_JSON, offerLine } from "./roomlogic.ts";
-import { makeRooms, type RoomDeps } from "./rooms.ts";
+import { makeRooms, ROOMS_COPY, type RoomDeps } from "./rooms.ts";
 import { fakeUuid, fakeWorld } from "./testfakes.ts";
 
 type Row = Record<string, unknown>;
@@ -171,7 +171,7 @@ describe("security r3: a forged room.event of one kind on a stored event of anot
     return id;
   }
 
-  test.failing("zoom-kind-handles-non-zoom-event: room.event {kind: zoom.*} with the id of a worker.ready, a live.claimed or a slack.reply closes that event", async () => {
+  test("zoom-kind-handles-non-zoom-event: room.event {kind: zoom.*} with the id of a worker.ready, a live.claimed or a slack.reply closes that event", async () => {
     // room.event's Zoom path takes `event_id` and treats whatever row it
     // names as Zoom's: it never checks the stored row's source or kind. The
     // sweep's replay dispatches by the stored kind, but a direct post (the
@@ -209,7 +209,7 @@ describe("security r3: a forged room.event of one kind on a stored event of anot
 });
 
 describe("security r3: what the shared cron secret opens at sales-api", () => {
-  test.failing("cron-secret-presses-as-any-slack-user: live.press (whose body names the Slack user who pressed) is not taken on the cron secret every scheduled job shares", () => {
+  test("cron-secret-presses-as-any-slack-user: live.press (whose body names the Slack user who pressed) is not taken on the cron secret every scheduled job shares", () => {
     // index.ts lets any caller holding CRON_SECRET (vault cockpit_sync_secret,
     // also held by sales-mirror and pg_cron) with the public project key run
     // every action in rooms.cron. The door narrows what IT passes on, but
@@ -225,7 +225,7 @@ describe("security r3: what the shared cron secret opens at sales-api", () => {
 });
 
 describe("security r3: what one seat's presses send one lead", () => {
-  test.failing("room-link-loop-floods-lead: making a room, ending it and making another sends the same lead a new link every time", async () => {
+  test("room-link-loop-floods-lead: making a room, ending it and making another sends the same lead a new link every time", async () => {
     // Every room's link is keyed on its own room id (mahara-room/link/{room}/
     // {channel}), and nothing counts the links one lead has had: one room per
     // lead at a time, but a new room the moment the last one ends. A stuck
@@ -247,5 +247,32 @@ describe("security r3: what one seat's presses send one lead", () => {
     expect(w.db.t("cockpit_sales_rooms").length).toBe(12);
     // At most a few links a lead an hour, however the rooms are made.
     expect(toLead.length).toBeLessThanOrEqual(3);
+  });
+});
+
+describe("final review: the fourth link in an hour", () => {
+  test("goes nowhere, says why on the room once, and an hour later links go again", async () => {
+    const w = setup();
+    const ids: string[] = [];
+    for (let i = 0; i < 4; i++) {
+      const out = await w.rooms.actions["room.create"]!(host, { request_id: crypto.randomUUID(), contact_id: LEAD, provider: "meet", call_kind: "intro", purpose: "manual" });
+      const id = String((out.room as Row).id);
+      ids.push(id);
+      await w.workerOpens(id);
+      if (i < 3) await w.rooms.actions["room.end"]!(host, { room_id: id, version: Number(w.room(id).version), reason: "cancel" });
+      await w.flush();
+      w.clock.now += 60_000;
+    }
+    expect(w.sends).toHaveLength(3);
+    const fourth = w.room(ids[3]!);
+    expect(fourth.link_sent_at ?? null).toBeNull();
+    expect(fourth.refusal).toBe(ROOMS_COPY.link_flood);
+    expect(w.audits.filter(a => a.action === "room.link.not_sent" && a.entityId === ids[3])).toHaveLength(1);
+    // An hour after the first link, the same lead can be sent a link again.
+    await w.rooms.actions["room.end"]!(host, { room_id: ids[3]!, version: Number(w.room(ids[3]!).version), reason: "cancel" });
+    w.clock.now += 60 * 60_000;
+    const out = await w.rooms.actions["room.create"]!(host, { request_id: crypto.randomUUID(), contact_id: LEAD, provider: "meet", call_kind: "intro", purpose: "manual" });
+    await w.workerOpens(String((out.room as Row).id));
+    expect(w.sends).toHaveLength(4);
   });
 });

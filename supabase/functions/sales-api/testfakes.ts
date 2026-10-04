@@ -657,3 +657,40 @@ export function fakeWorld(start = Date.parse("2026-10-04T07:00:00Z")) {
   }
   return { clock, db, io, ghlCalls, routes, logs, flush };
 }
+
+let zoomMeetings = 0;
+
+/**
+ * The lead's own evidence for a live count (rooms.ts leadEvidence, final
+ * review): the room as a Zoom room on its own meeting, and Zoom's join of
+ * someone outside the team on that meeting. A short-link open or a knock
+ * never upgrades a hand-pressed "The lead is in" (the host can open their
+ * own link after it went), so a test of the count's mechanics seeds this
+ * where it once seeded the door's open.
+ */
+export function seedLeadZoomJoin(db: FakeDb, roomId: string, o: { at?: string; name?: string } = {}): string {
+  const room = db.t("cockpit_sales_rooms").find(r => r.id === roomId);
+  if (!room) throw new Error(`seedLeadZoomJoin: no room ${roomId}`);
+  const meeting = /^\d{6,20}$/.test(String(room.provider_meeting_id ?? ""))
+    ? String(room.provider_meeting_id)
+    : String(85_000_000_000 + ++zoomMeetings);
+  Object.assign(room, { provider: "zoom", provider_meeting_id: meeting, join_url: `https://us06web.zoom.us/j/${meeting}?pwd=stress` });
+  const at = o.at ?? db.iso();
+  db.seed("cockpit_sales_room_events", [
+    {
+      room_id: roomId,
+      kind: "zoom.meeting.participant_joined",
+      source: "zoom",
+      dedupe_key: `zoom:meeting.participant_joined:${meeting}:lead:${at}:${roomId}`,
+      at,
+      handled_at: at,
+      text: "Zoom: the lead joined.",
+      detail: {
+        event: "meeting.participant_joined",
+        role: "lead",
+        payload: { object: { id: meeting, participant: { user_name: o.name ?? "Huda Ali", join_time: at } } },
+      },
+    },
+  ]);
+  return meeting;
+}

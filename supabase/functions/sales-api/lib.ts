@@ -265,6 +265,21 @@ export function trimMessages(list: unknown): Record<string, unknown>[] {
   });
 }
 
+/**
+ * A shared secret compared in constant time (the door's sign.ts
+ * timingSafeEqual): every byte of the longer string is walked, so the time
+ * says nothing about where the first difference is.
+ */
+export function timingSafeEqual(given: string, expected: string): boolean {
+  const enc = new TextEncoder();
+  const x = enc.encode(given);
+  const y = enc.encode(expected);
+  const n = Math.max(x.length, y.length);
+  let diff = x.length ^ y.length;
+  for (let i = 0; i < n; i++) diff |= (x[i] ?? 0) ^ (y[i] ?? 0);
+  return diff === 0;
+}
+
 export function redact(s: string): string {
   return String(s)
     .replace(/sbp_[A-Za-z0-9]+/g, "[key]")

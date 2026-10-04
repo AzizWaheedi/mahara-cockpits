@@ -20,7 +20,7 @@ import type { Who } from "./lib.ts";
 import { ApiRefusal } from "./liveio.ts";
 import { DEFAULT_ROOMS_JSON } from "./roomlogic.ts";
 import { makeRooms, type RoomDeps } from "./rooms.ts";
-import { fakeUuid, fakeWorld } from "./testfakes.ts";
+import { fakeUuid, fakeWorld, seedLeadZoomJoin } from "./testfakes.ts";
 
 type Row = Record<string, unknown>;
 
@@ -142,9 +142,10 @@ function setup() {
   const room = (id: string) => w.db.t("cockpit_sales_rooms").find(r => r.id === id) as Row;
 
   /**
-   * A room of the lead's with the lead in it: the short link opened (the
-   * lead's own evidence), joined `joinedAgo` ago, and never counted (the
-   * count could not read the lead while HighLevel was down, so no claim).
+   * A room of the lead's with the lead in it: the short link opened, Zoom
+   * saw the lead join the room's own meeting (the lead's own evidence, final
+   * review), joined `joinedAgo` ago, and never counted (the count could not
+   * read the lead while HighLevel was down, so no claim).
    */
   function joinedRoom(o: { joinedAgo: number; state: "lead_in" | "ended"; host?: string }): string {
     const id = fakeUuid();
@@ -179,6 +180,7 @@ function setup() {
         version: 6,
       },
     ]);
+    seedLeadZoomJoin(w.db, id, { at: new Date(joined).toISOString() });
     return id;
   }
   const posts = () => w.ghlCalls.filter(c => c.method === "POST" && c.path === "/calendars/events/appointments");

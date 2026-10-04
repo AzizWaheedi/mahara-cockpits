@@ -1035,7 +1035,8 @@ describe("not built yet, switched off", () => {
     expect((await refused(w.rooms.desk["live.press"]!(desk, {}))).message).toBe(LIVE_OFF);
     expect(await w.rooms.desk["thread.tick"]!(desk, {})).toMatchObject({ handled: false });
     expect(await w.rooms.desk["reply.seen"]!(desk, {})).toMatchObject({ handled: false });
-    expect(w.rooms.cron).toEqual(["room.event", "live.press", "thread.tick", "reply.seen"]);
+    // The shared cron secret runs only what the cron door passes on (final review).
+    expect(w.rooms.cron).toEqual(["room.event", "thread.tick"]);
   });
 });
 

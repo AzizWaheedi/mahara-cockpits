@@ -140,6 +140,11 @@ const S = 1000;
 const enc = encodeURIComponent;
 const ROOMS = "cockpit_sales_rooms";
 const EVENTS = "cockpit_sales_room_events";
+/** At most this many rooms' links go to one lead in LINK_FLOOD_WINDOW_MS (final review). */
+const LINK_FLOOD_MAX = 3;
+const LINK_FLOOD_WINDOW_MS = 60 * 60_000;
+/** The sources room.event's replay takes (the SQL sweep's own list less slack, whose presses are not built). */
+const REPLAY_SOURCES = new Set(["zoom", "worker", "claim"]);
 const LIVE_STATES = "requested,creating,open,host_in,lead_in";
 /** The sales sub-account in HighLevel (index.ts LOCATION). */
 const LOCATION = "7NI8yyJtwsh2OOWA5Icr";
@@ -166,6 +171,8 @@ export const ROOMS_COPY = {
   status_unread: "The room worker's status could not be read. Try again in a minute.",
   contact_unread_send: "HighLevel did not answer, so the link has not gone yet. It is tried again in a minute.",
   all_failed: "the link did not go on any channel ({why})",
+  /** One lead is never flooded with call links (final review, room-link-loop-floods-lead). */
+  link_flood: "This lead has had three call links this hour, so no new one went. Read the code out on the phone.",
   handover_only_claimed: "Take the live lead first. A handover room is made for the closer who took it.",
   ask_not_yet: "Asking for a live handover is not built yet. Book the call for now.",
   /** A send whose answer was lost: it may have reached the lead, so nothing else goes until a person checks. */
@@ -1540,6 +1547,27 @@ export function makeRooms(deps: RoomDeps): Rooms {
       } else if (again.unclear) await maybeSent(room, open.channel, again, setting);
       return;
     }
+    // One lead is never flooded with call links (final review,
+    // room-link-loop-floods-lead): a stuck page, a rep pressing Make a room
+    // and End in turn, or automatic mode after each missed call would send a
+    // new link a room. Three rooms' links to this lead in the last hour, and
+    // the fourth room's link does not go; the rep reads the code out. Not
+    // readable: the send goes on (the message service's own ceiling of 30 in
+    // 10 minutes still holds), because a lead waiting on a link matters more.
+    const recentLinks = await io
+      .db(
+        `${ROOMS}?contact_id=eq.${enc(room.contact_id)}&id=neq.${enc(room.id)}&link_sent_at=gte.${enc(isoAt(io.now() - LINK_FLOOD_WINDOW_MS))}&select=id&limit=${LINK_FLOOD_MAX}`,
+      )
+      .then(rows => rows.length)
+      .catch(e => {
+        io.log(`rooms: the lead's recent links could not be read, the link goes: ${redact(String((e as Error)?.message ?? e))}`);
+        return 0;
+      });
+    if (recentLinks >= LINK_FLOOD_MAX) {
+      // recordNotSent writes the room's refusal, its audit row and its timeline line, once.
+      await recordNotSent(room, ROOMS_COPY.link_flood);
+      return;
+    }
     const lang = leadLanguage(contact);
     const [inbox, route, roomWa, waiting] = await Promise.all([
       io
@@ -1674,36 +1702,27 @@ export function makeRooms(deps: RoomDeps): Rooms {
   }
 
   /**
-   * Something from the lead says they came: the short link opened, a knock,
-   * or Zoom's join of someone outside the team. The short link is not the
-   * lead's alone (the host's panel shows the code and copies the link), so
-   * an open is the lead's only after the link went to the lead, and not
-   * from a network the host opened it from before it went (fix round 4). A
-   * Zoom guest whose display name is a team member's is the host on another
-   * device. Anything else is a hand press only: a manager confirms it.
+   * Something from the lead says they came, for the live count: Zoom's join
+   * of someone outside the team, on the room's own meeting. A Zoom guest
+   * whose display name is a team member's is the host on another device.
+   *
+   * The short link's opens and a knock (lead_waiting_at) are not the lead's
+   * alone: the host's panel shows the code and copies the link, so the host
+   * can open it on their own phone after it went and then press "The lead
+   * is in" (final review, host-open-after-send), and anyone with the code
+   * can make a browser open it. They stay evidence against a no-show (the
+   * settle reads them), never evidence that upgrades a hand press. So on
+   * Meet, where no join is ever seen, every hand-pressed count waits for a
+   * manager's confirm (room.count_confirm): a manager decides.
    */
   async function leadEvidence(room: RoomRow): Promise<boolean> {
-    const sent = ms(room.link_sent_at);
-    if (sent !== null) {
-      const opens = await io
-        .db(`${EVENTS}?room_id=eq.${enc(room.id)}&kind=eq.door.open&select=at,detail&limit=100`)
-        .catch(() => null);
-      if (opens && opens.length) {
-        const netOf = (e: Row) => String(obj(e.detail).ip_hash ?? "");
-        const hostNets = new Set(opens.filter(e => (ms(e.at) ?? 0) < sent).map(netOf).filter(Boolean));
-        if (opens.some(e => (ms(e.at) ?? 0) >= sent && obj(e.detail).after_end !== true && !hostNets.has(netOf(e)))) return true;
-      } else {
-        // The door's own events could not be read (or were lost): the room's open times.
-        const opened = ms(room.last_open_at) ?? ms(room.first_open_at);
-        if (opened !== null && opened >= sent) return true;
-      }
-      if (room.lead_waiting_at) return true;
-    }
-    if (room.provider !== "zoom") return false;
+    if (room.provider !== "zoom" || !room.provider_meeting_id) return false;
+    const meeting = String(room.provider_meeting_id);
     const evs = await io.db(
       `${EVENTS}?room_id=eq.${enc(room.id)}&source=eq.zoom&kind=eq.zoom.meeting.participant_joined&select=detail&limit=50`,
     );
-    const leads = evs.filter(e => obj(e.detail).role === "lead");
+    // Only joins of the room's own meeting (final review, zoom-topic-code-beats-meeting-id).
+    const leads = evs.filter(e => obj(e.detail).role === "lead" && zoomMeetingId(obj(e.detail) as ZoomEvent) === meeting);
     if (!leads.length) return false;
     const team = await io.db(`cockpit_sales_people?select=name&limit=500`).catch(() => [] as Row[]);
     const names = new Set(team.map(p => lower(p.name)).filter(Boolean));
@@ -2852,49 +2871,93 @@ export function makeRooms(deps: RoomDeps): Rooms {
     };
   }
 
+  /**
+   * Zoom's event is about this room only when it comes from the room's own
+   * meeting (final review, zoom-topic-code-beats-meeting-id): anyone with a
+   * user on Mahara's Zoom account can title a meeting "Mahara call K7Q2MX",
+   * and the worker's own stray meetings carry the same title. A room whose
+   * meeting id is not written yet (still being made) takes the code's word.
+   */
+  function onRoomMeeting(room: RoomRow, detail: ZoomEvent): boolean {
+    if (room.provider !== "zoom") return false;
+    const mine = room.provider_meeting_id ? String(room.provider_meeting_id) : null;
+    return mine === null || mine === zoomMeetingId(detail);
+  }
+
   async function zoomEvent(eventId: string, leased: boolean): Promise<Outcome> {
     const by = { id: eventId };
-    if (!leased && !(await lease(by, 30))) return { ok: true, handled: false };
+    if (!leased) {
+      // Only Zoom's own events (final review, zoom-kind-handles-non-zoom-event):
+      // a room.event of a zoom.* kind that names a worker's, a claim's or the
+      // door's event is left exactly as it stands, never leased, so its
+      // tries are not spent and it is never marked handled.
+      const head = (await io.db(`${EVENTS}?id=eq.${enc(eventId)}&select=id,source,kind`))[0];
+      if (!head) return { ok: true, handled: false };
+      if (String(head.source) !== "zoom" || !String(head.kind ?? "").startsWith("zoom."))
+        return { ok: true, handled: false, skipped: "not a Zoom event" };
+      if (!(await lease(by, 30))) return { ok: true, handled: false };
+    }
     const ev = (await io.db(`${EVENTS}?id=eq.${enc(eventId)}&select=*`))[0];
     if (!ev) return { ok: true, handled: false };
+    if (String(ev.source) !== "zoom" || !String(ev.kind ?? "").startsWith("zoom.")) {
+      await releaseEvent(by);
+      return { ok: true, handled: false, skipped: "not a Zoom event" };
+    }
     const detail = obj(ev.detail) as ZoomEvent;
     let room: RoomRow | null = ev.room_id ? await readRoom(String(ev.room_id)) : null;
     if (!room) {
       const meeting = zoomMeetingId(detail);
       const code = zoomCode(detail);
       const found = meeting
-        ? ((await io.db(`${ROOMS}?provider_meeting_id=eq.${enc(meeting)}&select=*&order=requested_at.desc&limit=1`))[0] as unknown as RoomRow | undefined)
+        ? ((await io.db(`${ROOMS}?provider_meeting_id=eq.${enc(meeting)}&provider=eq.zoom&select=*&order=requested_at.desc&limit=1`))[0] as unknown as RoomRow | undefined)
         : undefined;
+      // By the topic's code only for a Zoom room whose meeting id is not written yet.
       room =
         found ??
-        (code ? ((await io.db(`${ROOMS}?code=eq.${enc(code)}&select=*`))[0] as unknown as RoomRow | undefined) : undefined) ??
+        (code
+          ? ((await io.db(`${ROOMS}?code=eq.${enc(code)}&provider=eq.zoom&provider_meeting_id=is.null&select=*`))[0] as unknown as RoomRow | undefined)
+          : undefined) ??
         null;
       if (room)
         await io.db(`${EVENTS}?id=eq.${enc(eventId)}`, { method: "PATCH", body: { room_id: room.id }, prefer: "return=minimal" });
     }
-    if (!room) {
+    const foreign = room !== null && !onRoomMeeting(room, detail);
+    if (!room || foreign) {
       // A meeting that is no cockpit room (the webinar, a client call, an
       // interview on the same Zoom account), kept by the door only because its
-      // room lookup failed: nothing of the people in it stays in a table every
-      // seat can read. The event, its meeting id and time stay for the record.
+      // room lookup failed, or another meeting that only names a room's code
+      // in its title: nothing of the people in it stays in a table every seat
+      // can read, it is taken off the room's timeline, and nothing is applied.
+      // The event, its meeting id and time stay for the record.
       const kept = obj(obj(detail.payload).object);
       await io.db(`${EVENTS}?id=eq.${enc(eventId)}`, {
         method: "PATCH",
         body: {
           handled_at: isoAt(io.now()),
           lease_until: null,
-          text: "Zoom: an event for a meeting that is no cockpit room.",
+          ...(foreign ? { room_id: null } : {}),
+          text: foreign
+            ? "Zoom: an event for another meeting that names a room's code. Nothing was applied."
+            : "Zoom: an event for a meeting that is no cockpit room.",
           detail: {
             event: detail.event ?? null,
             event_ts: detail.event_ts ?? null,
             // No participant and no topic: a topic can name a client or a candidate.
             payload: { object: { id: kept.id ?? null, uuid: kept.uuid ?? null } },
-            refused: { code: "no_room", message: "No cockpit room has this meeting." },
+            ...(foreign
+              ? { ignored: "another meeting", refused: { code: "another_meeting", message: "This event is from another meeting than the room's own." } }
+              : { refused: { code: "no_room", message: "No cockpit room has this meeting." } }),
           },
         },
         prefer: "return=minimal",
       });
-      return { ok: true, handled: true, skipped: "no room" };
+      if (foreign)
+        await deps.audit(DESK, "room.event.ignored", ROOMS, (room as RoomRow).id, null, null, {
+          event_id: eventId,
+          reason: "another meeting",
+          meeting_id: zoomMeetingId(detail),
+        });
+      return { ok: true, handled: true, skipped: foreign ? "another meeting" : "no room" };
     }
     const effect = zoomEffect(detail, await staffCtx(room));
     if ("ignore" in effect) {
@@ -3000,6 +3063,15 @@ export function makeRooms(deps: RoomDeps): Rooms {
         continue;
       }
       const kind = String(ev.kind);
+      const source = String(ev.source);
+      // Only the sources the SQL sweep replays (final review,
+      // replay-closes-non-replayable-events): a door's Slack reply, the
+      // sweep's own settle and anything else are left exactly as they stand,
+      // so a forged replay can never close them.
+      if (!REPLAY_SOURCES.has(source)) {
+        results.push({ id, handled: false, skipped: "not an event a replay takes" });
+        continue;
+      }
       const seconds = kind === "live.claimed" ? 60 : 30;
       if (!(await lease({ id }, seconds))) {
         results.push({ id, handled: false, skipped: "held" });
@@ -3007,10 +3079,10 @@ export function makeRooms(deps: RoomDeps): Rooms {
       }
       try {
         let out: Outcome;
-        if (String(ev.source) === "zoom" && kind.startsWith("zoom.")) out = await zoomEvent(id, true);
-        else if ((kind === "worker.ready" || kind === "worker.failed") && ev.room_id)
+        if (source === "zoom" && kind.startsWith("zoom.")) out = await zoomEvent(id, true);
+        else if (source === "worker" && (kind === "worker.ready" || kind === "worker.failed") && ev.room_id)
           out = await workerEvent(kind, String(ev.room_id), true, obj(ev.detail));
-        else if (kind === "live.claimed") out = await claimedEvent(id);
+        else if (source === "claim" && kind === "live.claimed") out = await claimedEvent(id);
         else {
           await finishEvent({ id }, { skipped: "not a kind room.event replays" });
           out = { ok: true, handled: true, skipped: "kind" };
@@ -3421,7 +3493,11 @@ export function makeRooms(deps: RoomDeps): Rooms {
       "thread.tick": threadTick,
       "reply.seen": replySeen,
     },
-    cron: ["room.event", "live.press", "thread.tick", "reply.seen"],
+    // What the shared cron secret may run (final review): only what the cron
+    // door passes on. live.press names its Slack user in its body, so it is
+    // taken on the service key alone until the door signs presses with a key
+    // only it holds; reply.seen is the desk's, on the service key.
+    cron: ["room.event", "thread.tick"],
     held,
   };
 }

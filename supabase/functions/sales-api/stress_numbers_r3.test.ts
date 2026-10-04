@@ -18,7 +18,7 @@ import { FOLLOWUP_SEGMENTS, type Who } from "./lib.ts";
 import { DEFAULT_ROOMS_JSON } from "./roomlogic.ts";
 import { makeRooms, type RoomDeps } from "./rooms.ts";
 import { followupSettingsValue } from "./sendrules.ts";
-import { fakeUuid, fakeWorld } from "./testfakes.ts";
+import { fakeUuid, fakeWorld, seedLeadZoomJoin } from "./testfakes.ts";
 
 type Row = Record<string, unknown>;
 
@@ -136,6 +136,7 @@ function setup(start?: number) {
       },
     });
     await w.io.db(`cockpit_sales_rooms?id=eq.${id}`, { method: "PATCH", body: { link_sent_at: w.db.iso(), first_open_at: w.db.iso(), last_open_at: w.db.iso() } });
+    seedLeadZoomJoin(w.db, id); // the only evidence that upgrades a hand press (final review)
     return id;
   }
   async function mark(who: Who, id: string, what: "lead_in" | "not_lead" | "host_in") {

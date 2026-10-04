@@ -297,6 +297,95 @@ describe("security r4: the lead's evidence for a live count, made by the host", 
   });
 });
 
+describe("final review: only Zoom's join on the room's own meeting is the lead's evidence", () => {
+  async function sentRoom(w: ReturnType<typeof setup>, provider: "meet" | "zoom"): Promise<string> {
+    const out = await w.rooms.actions["room.create"]!(host, { request_id: crypto.randomUUID(), contact_id: LEAD, provider, call_kind: "intro", purpose: "manual" });
+    const id = String((out.room as Row).id);
+    const v = Number(w.room(id).version);
+    await w.io.db(`cockpit_sales_rooms?id=eq.${id}&state=eq.requested`, { method: "PATCH", body: { state: "creating", claimed_at: w.db.iso(), worker_run: "run-1", version: v + 1 } });
+    await w.io.db(`cockpit_sales_rooms?id=eq.${id}&state=eq.creating`, {
+      method: "PATCH",
+      body: {
+        state: "open",
+        join_url: provider === "zoom" ? ZOOM_URL : MEET_URL,
+        provider_meeting_id: provider === "zoom" ? "81234567890" : "evt-final",
+        opened_at: w.db.iso(),
+        host_by: new Date(w.clock.now + 15 * MIN).toISOString(),
+        ends_at: new Date(w.clock.now + 30 * MIN).toISOString(),
+        version: v + 2,
+        // The link went to the lead a minute ago.
+        link_sent_at: w.db.iso(),
+        link_channels: ["whatsapp_text"],
+      },
+    });
+    return id;
+  }
+
+  test("host-open-after-send: the host taps the sent link on their own phone and presses The lead is in: self_reported, nothing booked, a manager decides", async () => {
+    const w = setup({ rooms: { count_on_join: true, test_calendar_id: "TESTCAL", live_calendar_id: "LIVECAL" } });
+    const id = await sentRoom(w, "meet");
+    w.clock.now += 60_000;
+    await w.io.db(`cockpit_sales_rooms?id=eq.${id}`, { method: "PATCH", body: { first_open_at: w.db.iso(), last_open_at: w.db.iso(), lead_waiting_at: w.db.iso() } });
+    w.db.seed("cockpit_sales_room_events", [
+      { room_id: id, kind: "door.open", source: "door", dedupe_key: `open:${id}:after-send`, handled_at: w.db.iso(), text: "The lead opened the link on a phone.", detail: { device: "phone", os: "ios", ip_hash: "the-hosts-phone" } },
+    ]);
+    await w.rooms.actions["room.mark"]!(host, { room_id: id, version: Number(w.room(id).version), what: "lead_in" });
+    await w.flush();
+    expect(w.posts()).toHaveLength(0);
+    expect(w.room(id).count_result ?? null).toBe("self_reported");
+  });
+
+  test("a Zoom join from another meeting on the room's timeline is never the lead's evidence", async () => {
+    const w = setup({ rooms: { count_on_join: true, test_calendar_id: "TESTCAL", live_calendar_id: "LIVECAL" } });
+    const id = await sentRoom(w, "zoom");
+    w.db.seed("cockpit_sales_room_events", [
+      {
+        room_id: id, kind: "zoom.meeting.participant_joined", source: "zoom", dedupe_key: `zoom:join:other:${id}`, handled_at: w.db.iso(),
+        detail: { event: "meeting.participant_joined", role: "lead", payload: { object: { id: "11122233344", participant: { user_name: "A Friend" } } } },
+      },
+    ]);
+    await w.rooms.actions["room.mark"]!(host, { room_id: id, version: Number(w.room(id).version), what: "lead_in" });
+    await w.flush();
+    expect(w.posts()).toHaveLength(0);
+    expect(w.room(id).count_result ?? null).toBe("self_reported");
+  });
+
+  test("Zoom's join of the lead on the room's own meeting counts: booked, no manager needed", async () => {
+    const w = setup({ rooms: { count_on_join: true, test_calendar_id: "TESTCAL", live_calendar_id: "LIVECAL" } });
+    const id = await sentRoom(w, "zoom");
+    w.db.seed("cockpit_sales_room_events", [
+      {
+        room_id: id, kind: "zoom.meeting.participant_joined", source: "zoom", dedupe_key: `zoom:join:own:${id}`, handled_at: w.db.iso(),
+        detail: { event: "meeting.participant_joined", role: "lead", payload: { object: { id: "81234567890", participant: { user_name: "Huda Ali" } } } },
+      },
+    ]);
+    await w.rooms.actions["room.mark"]!(host, { room_id: id, version: Number(w.room(id).version), what: "lead_in" });
+    await w.flush();
+    expect(w.posts()).toHaveLength(1);
+    expect(w.room(id).count_result).toBe("booked");
+  });
+
+  test("a Zoom event pinned to a Meet room is applied to nothing, and leaves the room's timeline", async () => {
+    const w = setup();
+    const id = await sentRoom(w, "meet");
+    const eid = fakeUuid();
+    w.db.seed("cockpit_sales_room_events", [
+      {
+        id: eid, room_id: id, kind: "zoom.meeting.participant_joined", source: "zoom", dedupe_key: `zoom:join:meet:${id}`,
+        detail: { event: "meeting.participant_joined", event_ts: w.clock.now, payload: { object: { id: "11122233344", topic: `Mahara call ${String(w.room(id).code)}`, participant: { user_name: "A Friend", email: "friend@stress.invalid" } } } },
+      },
+    ]);
+    const out = await w.rooms.desk["room.event"]!({ signed_in: true, seat: true, manager: false, email: "sales-desk" }, { kind: "zoom.meeting.participant_joined", event_id: eid });
+    await w.flush();
+    expect(out.skipped).toBe("another meeting");
+    expect(w.room(id).state).toBe("open");
+    const ev = w.db.t("cockpit_sales_room_events").find(e => e.id === eid) as Row;
+    expect(ev.room_id ?? null).toBeNull();
+    expect(ev.handled_at).toBeTruthy();
+    expect(JSON.stringify(ev)).not.toContain("friend@stress.invalid");
+  });
+});
+
 describe("security r4: the gate's shared secret", () => {
   // index.ts has no harness (it calls Deno.serve when imported), so the gate
   // is read from its source, as stress_numbers_ceilings reads the budget.
@@ -307,7 +396,7 @@ describe("security r4: the gate's shared secret", () => {
     expect(src).toMatch(/CRON_ACTIONS\.has\(String\(body\?\.action \?\? ""\)\)/);
   });
 
-  test.failing("cron-secret-compare-not-constant-time: sales-api compares x-cron-secret with ===, which stops at the first differing character; the door (sales-live/sign.ts timingSafeEqual) compares the same secret in constant time", () => {
+  test("cron-secret-compare-not-constant-time: sales-api compares x-cron-secret with ===, which stops at the first differing character; the door (sales-live/sign.ts timingSafeEqual) compares the same secret in constant time", () => {
     // The same CRON_SECRET opens room.event of every kind (a forged Zoom
     // join included), live.press and contract.sync at sales-api with only
     // the public anon key beside it. The door and the cron door compare it

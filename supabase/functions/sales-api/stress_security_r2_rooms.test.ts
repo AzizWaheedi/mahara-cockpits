@@ -229,7 +229,7 @@ describe("security r2: request ids the server derives from what any seat can rea
 });
 
 describe("security r2: what a forged sweep.replay can close (the cron secret, or the cron door)", () => {
-  test.failing("replay-closes-non-replayable-events: event ids of a pending Slack reply and a pending no-show settle are marked handled, so neither ever happens", async () => {
+  test("replay-closes-non-replayable-events: event ids of a pending Slack reply and a pending no-show settle are marked handled, so neither ever happens", async () => {
     // The cron door passes on any 1 to 50 UUIDs as sweep.replay, and the
     // contract says a forged post "can only ask for a re-check of rows as
     // they stand". But replay() finishes (handled_at = now) every event whose
@@ -305,7 +305,7 @@ describe("security r2: Zoom events for a meeting that is no room", () => {
 });
 
 describe("security r2: a Zoom event pinned to a room by its topic only", () => {
-  test.failing("zoom-topic-code-beats-meeting-id: meeting.ended from another meeting on the account, titled with the room's code, ends a room the lead is in", async () => {
+  test("zoom-topic-code-beats-meeting-id: meeting.ended from another meeting on the account, titled with the room's code, ends a room the lead is in", async () => {
     // The door pins an event to a room by the topic's code first (zoom.ts
     // pickZoomRoom); sales-api's zoomEvent applies it to that room without
     // checking that the event's meeting id is the room's provider_meeting_id.

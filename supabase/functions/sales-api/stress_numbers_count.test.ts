@@ -16,7 +16,7 @@ import type { Who } from "./lib.ts";
 import { GhlError } from "./liveio.ts";
 import { DEFAULT_ROOMS_JSON } from "./roomlogic.ts";
 import { makeRooms, type RoomDeps } from "./rooms.ts";
-import { fakeUuid, fakeWorld } from "./testfakes.ts";
+import { fakeUuid, fakeWorld, seedLeadZoomJoin } from "./testfakes.ts";
 
 type Row = Record<string, unknown>;
 
@@ -146,9 +146,11 @@ function setup(o: Opts = {}) {
         version: Number(room(id).version) + 1,
       },
     });
-    // The lead opened the short link (the door's write): evidence from the lead, so a hand-pressed
-    // "The lead is in" counts (without it, it is self_reported: stress_security_rooms).
+    // The lead opened the short link (the door's write), and Zoom saw them join the room's own
+    // meeting: only that is evidence from the lead, so a hand-pressed "The lead is in" counts
+    // (without it, it is self_reported: stress_security_rooms, final review).
     await w.io.db(`cockpit_sales_rooms?id=eq.${id}`, { method: "PATCH", body: { link_sent_at: w.db.iso(), first_open_at: w.db.iso(), last_open_at: w.db.iso() } });
+    seedLeadZoomJoin(w.db, id);
     return id;
   }
   async function mark(id: string, what: "lead_in" | "not_lead" | "host_in") {
