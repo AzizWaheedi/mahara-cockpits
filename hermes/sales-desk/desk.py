@@ -116,7 +116,7 @@ def _meter(cfg: Config, job: str, log: Logger) -> None:
                                     warn=log.warn))
 
 
-USAGE_PROVIDER_MIGRATION = "supabase/migrations/20261004a_sales_ai_usage_provider.sql"
+USAGE_PROVIDER_MIGRATION = "supabase/migrations/20261004p_sales_ai_usage_provider.sql"
 
 
 def usage_recorder(sb: Supabase, warn: Callable[[str], None]) -> Callable[[dict[str, Any]], None]:

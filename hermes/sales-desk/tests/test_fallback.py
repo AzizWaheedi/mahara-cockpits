@@ -325,7 +325,7 @@ class Usage(unittest.TestCase):
         self.assertEqual(sent[2], {"job": "requests", "model": f"openrouter:{CLAUDE}", "total_tokens": 6})
         self.assertEqual(len(sent), 3)  # the column is asked for once, not on every row
         self.assertEqual(len(warned), 1)
-        self.assertIn("20261004a_sales_ai_usage_provider.sql", warned[0])
+        self.assertIn("20261004p_sales_ai_usage_provider.sql", warned[0])
 
 
 # ---------------------------------------------------------------------------

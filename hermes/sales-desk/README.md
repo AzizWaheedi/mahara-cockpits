@@ -238,7 +238,7 @@ provider.
   notes, digest, reviews, followups`). Notes, reviews, the digest and
   follow-ups wait for the primary as they always have.
 - **What it costs is counted**: each `cockpit_sales_ai_usage` row names the
-  provider that answered (`20261004a_sales_ai_usage_provider.sql`; until it
+  provider that answered (`20261004p_sales_ai_usage_provider.sql`; until it
   is applied the provider goes inside `model`, `openrouter:anthropic/...`). A
   reply that reports no usage is counted at three characters a token, never
   as nothing.
