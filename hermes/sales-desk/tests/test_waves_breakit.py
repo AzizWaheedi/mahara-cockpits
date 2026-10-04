@@ -473,7 +473,7 @@ class Finding11GreenRowWhileNothingGoes(unittest.TestCase):
         out, _, _, _ = run(pg, now=NOW + timedelta(days=1))
         ok, line = waves.words(out)
         self.assertFalse(ok)
-        self.assertIn("Approve, hold or skip them on the Follow-ups page", line)
+        self.assertIn("Approve or hold them under Today's batch on the Follow-ups page", line)
 
     def test_time_up_or_the_ceiling_reserve_is_no_fault(self):
         for kind in ("time", "ceiling"):

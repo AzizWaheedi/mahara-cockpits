@@ -106,7 +106,14 @@ export function guardOpen(raw: unknown): boolean | null {
     typeof g.single_copy_ok_at === "string"
       ? Date.parse(g.single_copy_ok_at)
       : Number.NaN;
-  return g.connector_off === true && Number.isFinite(at);
+  if (g.connector_off !== true || !Number.isFinite(at)) return false;
+  // A test from before the connector last went off proves nothing (sales-api
+  // sendrules.ts gateOpen, the desk's wa_gate): the page reads it the same way.
+  const off =
+    typeof g.connector_off_at === "string"
+      ? Date.parse(g.connector_off_at)
+      : Number.NaN;
+  return !Number.isFinite(off) || at >= off;
 }
 
 /** A WhatsApp template row as the cockpit reads it. */

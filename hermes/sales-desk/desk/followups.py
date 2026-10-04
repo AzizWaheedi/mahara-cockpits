@@ -357,6 +357,31 @@ def in_hours(now: datetime, country: Any, hours: Any = FIRST_HOURS, *, first: bo
     return all(a <= (now + o).hour < b for o in offsets)
 
 
+# The zones whose weekend includes Friday: quiet_days are read there as
+# written (sales-api sendrules.ts FRIDAY_WEEKEND_ZONES, the same list).
+FRIDAY_WEEKEND_ZONES = frozenset({
+    "Asia/Kuwait", "Asia/Riyadh", "Asia/Qatar", "Asia/Bahrain", "Asia/Dubai", "Asia/Muscat", "Asia/Baghdad", "Asia/Amman",
+    "Asia/Damascus", "Asia/Aden", "Asia/Gaza", "Asia/Jerusalem", "Asia/Tehran", "Asia/Kabul", "Asia/Dhaka",
+    "Africa/Cairo", "Africa/Tripoli", "Africa/Algiers", "Africa/Khartoum",
+})
+
+
+def lead_days_off(now: datetime, country: Any, days_off: Any) -> set[str]:
+    """The lead's days off it is now, on their own clock, one per zone (fix
+    round 4): quiet_days as written where the weekend includes Friday;
+    elsewhere Friday is a working day and their Saturday and Sunday are off."""
+    off = {str(d).lower() for d in (days_off or [])}
+    zones = lead_zones(country) or LEAD_ZONES["kw"]
+    out = set()
+    for z in zones:
+        o = _zone_offset(z, now)
+        day = (now + (o if o is not None else KUWAIT)).strftime("%A").lower()
+        mine = off if (z in FRIDAY_WEEKEND_ZONES or "friday" not in off) else (off - {"friday"}) | {"saturday", "sunday"}
+        if day in mine:
+            out.add(day)
+    return out
+
+
 def lead_days(now: datetime, country: Any) -> set[str]:
     """The weekday names (lower case) on the lead's clock now, one per zone."""
     zones = lead_zones(country) or LEAD_ZONES["kw"]

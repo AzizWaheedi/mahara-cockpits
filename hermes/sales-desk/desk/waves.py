@@ -141,6 +141,8 @@ FAULTS = ("refusals", "hold_all", "outage", "error", "no_answer", "budget")
 # the age past which it is a send that stopped half way (SENDING_STALE_MS):
 # such an opener is asked for again, never stranded.
 SENDING = "sales-desk:sending"
+# finish()'s done_reason: a wave that ran out of leads, never one a manager stopped.
+FINISHED = "Every lead in the wave has had its opener or left the wave."
 # An opener sales-api failed on (a 500) waits this long, behind the rest of the batch.
 ERROR_WAIT = timedelta(minutes=30)
 # HighLevel's 400, 404 or 422 about one lead's contact (passed on in a 500): that lead's refusal, not every send's.
@@ -751,6 +753,13 @@ def wind_down(sb: Any, done: list[dict[str, Any]], now: datetime) -> dict[str, i
         elif state == "drafted" and status.get(str(m.get("followup_id") or ""), "") in ("expired", ""):
             reason = f"{stopped.rstrip('.')} before their opener went; it was taken back."
         elif state == "held_out" and not m.get("due_at"):
+            if why_of.get(wid) == FINISHED:
+                # finish() stopped between the wave's done and this stamp (fix
+                # round 4): the wave did finish, so their 14 days start now, as
+                # finish() would have started them. They stay in the comparison.
+                if _move(sb, wid, c, state, {"due_at": now.isoformat()}):
+                    out["started"] = out.get("started", 0) + 1
+                continue
             reason = "The wave ended before their turn, so they are not measured."
         else:
             continue  # sending: the next run's sync sees how it ended
@@ -779,8 +788,7 @@ def finish(sb: Any, running: list[dict[str, Any]], now: datetime, log: Callable[
                for chunk in fu._chunks(mine)):
             continue
         done = sb.rest("PATCH", f"{WAVES}?id=eq.{_q(wid)}&state=eq.running", prefer="return=representation",
-                       json_body={"state": "done",
-                                  "done_reason": "Every lead in the wave has had its opener or left the wave."})
+                       json_body={"state": "done", "done_reason": FINISHED})
         if isinstance(done, list) and done:
             sb.rest("PATCH", f"{MEMBERS}?wave_id=eq.{_q(wid)}&arm=eq.holdout&state=eq.held_out&due_at=is.null",
                     json_body={"due_at": now.isoformat()}, prefer="return=minimal")
@@ -1019,7 +1027,7 @@ def draft_day(sb: Any, now: datetime, *, settings: dict[str, Any], w: dict[str, 
         if not running:
             return {**out, "blocked": True,
                     "waiting": (f"{sum(undecided.values())} of an earlier day's openers still wait for approval, so no "
-                                "new batch is written. Approve, hold or skip them on the Follow-ups page.")}
+                                "new batch is written. Approve or hold them under Today's batch on the Follow-ups page.")}
     routes = _routes(sb)
     if not routes:
         return {**out, "setup": True,
@@ -1160,6 +1168,14 @@ def _draft_wave(sb: Any, wave: dict[str, Any], wave_room: int, now: datetime, ct
 
             lead = leads.get(c)
             if not lead or not pool_of(lead, calls.get(c, []), c in dealt, now, cals):
+                # An opener an earlier run wrote for them and died before
+                # moving the member (fix round 4) is taken back with them, so
+                # no open opener is left for a lead the wave let go of.
+                p = prior.get(c)
+                if p and str(p.get("status") or "") == "draft":
+                    sb.rest("PATCH", f"{FOLLOWUPS}?id=eq.{_q(str(p['id']))}&status=eq.draft", prefer="return=minimal",
+                            json_body={"status": "expired", "decided_at": now.isoformat(),
+                                       "error": "The lead left the backlog pool, so this opener was taken back."})
                 exclude("No longer in a backlog pool (booked, signed, a client, or out of the lead copy).")
                 continue
             p = prior.get(c)
@@ -1189,6 +1205,9 @@ def _draft_wave(sb: Any, wave: dict[str, Any], wave_room: int, now: datetime, ct
             lang = fu.language_for(lead, [])
             if lang not in routes:
                 later(f"The {OPENERS[lang]} template is not set up yet.", now + LATER["route"])
+                # Missing is never zero: the row names the template they wait for.
+                no_route = out.setdefault("no_route", {})
+                no_route[OPENERS[lang]] = no_route.get(OPENERS[lang], 0) + 1
                 continue
             if ctx["levels"].get(f"reactivate.{lang}.whatsapp_template") == "off":
                 later("This kind of opener is switched off (Follow-ups, levels).", now + LATER["route"])
@@ -1485,7 +1504,7 @@ def send_due(sb: Any, api: Callable[[str, dict[str, Any]], tuple[int, dict[str, 
         # 21:00, as sendFollowup does; never on the lead's day off.
         first = int(f.get("touch") or 1) == 1 and f.get("segment") not in ("reply", "confirm")
         hours = first_hours if first else later_hours
-        if not fu.in_hours(now, country, hours, first=first) or fu.lead_days(now, country) & set(days_off):
+        if not fu.in_hours(now, country, hours, first=first) or fu.lead_days_off(now, country, days_off):
             out["outside_hours"] += 1
             continue
         if channel == "whatsapp_template":
@@ -1725,8 +1744,20 @@ def run(sb: Any, api: Callable[[str, dict[str, Any]], tuple[int, dict[str, Any]]
     w = settings_of(settings)
     waves = _waves(sb)
     out: dict[str, Any] = {"waves": [{"id": x["id"], "pool": x.get("pool"), "state": x.get("state")} for x in waves]}
-    if settings.get("enabled") is False:
+    if not settings.get("enabled", True):
+        # Read as the drafter reads it (followups.run): anything but on, set by
+        # hand (null, 0), is off. Stop still works while it is off (contract-v2
+        # 0b.12): a wave a manager stopped lets go of its leads and takes its
+        # openers back, so none stays open until the agent is on again.
         out["skipped"] = "The follow-up agent is switched off (followups.enabled), so no wave drafts or sends"
+        winding = _winding(sb)
+        if winding:
+            try:
+                ids = [str(x["id"]) for x in winding]
+                sync(sb, ids, started)
+                out["wound_down"] = wind_down(sb, winding, started)
+            except Exception as e:  # noqa: BLE001 - said, and the next run tries again
+                warn(f"waves: a stopped wave could not be wound down while the agent is off ({http.scrub(str(e))[:120]})")
         return out
     winding = _winding(sb)
     if waves or winding:
@@ -1822,6 +1853,11 @@ def words(out: dict[str, Any]) -> tuple[bool, str]:
         parts.append(f"{d['excluded']} left out")
     if d.get("later"):
         parts.append(f"{d['later']} wait for another day")
+    for tpl, n in sorted((d.get("no_route") or {}).items()):
+        lang = "English" if tpl.endswith("_en") else "Arabic" if tpl.endswith("_ar") else tpl
+        parts.append(f"{n} {lang} lead{'s' if n != 1 else ''} wait for the {tpl} template, which is not set up yet: "
+                     "a manager sets it up and makes it live")
+        ok = False
     if d.get("unreadable"):
         parts.append(f"{d['unreadable']} waiting because HighLevel could not be read")
     wd = out.get("wound_down") or {}
@@ -1843,6 +1879,9 @@ def words(out: dict[str, Any]) -> tuple[bool, str]:
         parts.append(f"{sent['outside_hours']} wait for 09:00 to 18:00 on the lead's clock")
     if sent.get("held"):
         parts.append(f"{sent['held']} held by a person")
+    if sent.get("paused"):
+        n = sent["paused"]
+        parts.append(f"{n} wait{'s' if n == 1 else ''}: the agent is paused for {'that lead' if n == 1 else 'their leads'}")
     if sent.get("stalled"):
         n = sent["stalled"]
         parts.append(f"{n} opener{'s' if n != 1 else ''} whose send had stopped half way "
@@ -1865,7 +1904,7 @@ def words(out: dict[str, Any]) -> tuple[bool, str]:
         if sent.get("stop_kind") in FAULTS:
             ok = False
     explained = any(sent.get(k) for k in ("sent", "gate", "outside_hours", "held", "gone", "refused", "failed",
-                                          "wave_not_running", "kind_off", "stale", "raced", "left_pool")) \
+                                          "wave_not_running", "kind_off", "stale", "raced", "left_pool", "paused")) \
         or sent.get("stop_kind") in ("time", "ceiling", "busy")
     if sent.get("due") and not explained:
         parts.append(f"{sent['due']} approved openers are due and none went")

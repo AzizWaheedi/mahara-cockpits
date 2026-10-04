@@ -542,3 +542,13 @@ export function sourcePause(
     reason: failed.map(r => r.error).find(Boolean) ?? null,
   };
 }
+
+/**
+ * The follow-up agent's switch, read as sales-api and the desk read it
+ * (sendrules.ts agentOff): set to anything but on (false, null, 0) is off;
+ * no value at all is on.
+ */
+export function agentOff(settings: object | null | undefined): boolean {
+  if (!settings) return false;
+  return "enabled" in settings && !(settings as { enabled?: unknown }).enabled;
+}

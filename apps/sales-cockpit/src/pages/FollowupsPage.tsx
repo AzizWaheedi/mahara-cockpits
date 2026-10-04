@@ -32,7 +32,7 @@ import { supabase } from "../lib/supabase";
 import { toast } from "../lib/toast";
 import type { Me } from "../lib/types";
 import { guardOpen } from "../lib/videoLink";
-import { sourcePause } from "../lib/waves";
+import { agentOff, sourcePause } from "../lib/waves";
 import { firstWord, renderTemplate } from "../lib/whatsapp";
 
 /**
@@ -317,7 +317,7 @@ export default function FollowupsPage({ me }: { me: Me }) {
       {tab === "waiting" && (me.manager || openers.length) ? (
         <WavesCard
           manager={Boolean(me.manager)}
-          enabled={settings.data ? settings.data.enabled !== false : null}
+          enabled={settings.data ? !agentOff(settings.data) : null}
           settings={settings.data}
           openers={openers}
           nameOf={nameOf}
@@ -353,7 +353,7 @@ export default function FollowupsPage({ me }: { me: Me }) {
               icon={Sparkles}
               title="Nothing waiting"
               text={
-                settings.data?.enabled === false
+                settings.data && agentOff(settings.data)
                   ? "The follow-up agent is switched off, so it writes nothing. A manager switches it on under How it works."
                   : `The agent looks every half hour${
                       settings.data?.quiet

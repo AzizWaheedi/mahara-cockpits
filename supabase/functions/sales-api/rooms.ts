@@ -186,6 +186,7 @@ export const ROOMS_COPY = {
   count_confirm_off: "Live calls are not counted at the join yet, so there is nothing to confirm.",
   count_confirm_nothing: "This join is not waiting to be confirmed. Reload the room.",
   count_confirm_taken: "This join was counted a moment ago. Reload the room.",
+  standby_too_late: "Live calls end in under {minutes} minutes, so no standby room was made. You can still take a live lead until then.",
   count_confirm_alert:
     "Room {code}: {name} joined, but only a press of The lead is in says so. A manager counts it from the room panel, or leaves it uncounted.",
   undo_stuck_alert: "Room {code}: That was not the lead was pressed, and the live booking could not be taken back in HighLevel. Remove it by hand.",
@@ -1116,12 +1117,21 @@ export function makeRooms(deps: RoomDeps): Rooms {
     if (type !== "demo" && type !== "intro") throw no("bad_input");
     const contact = contactId ? await readContact(contactId) : null;
     const now = io.now();
+    // HighLevel writes the sub-account's wall time with no zone in some
+    // answers ("2026-10-08 15:00:00", Kuwait): read through ghlTime, as every
+    // other HighLevel time in this file is, never as UTC.
+    const asInstant = (v: unknown): string | null => {
+      if (v === null || v === undefined || v === "") return null;
+      if (typeof v === "number") return Number.isFinite(v) ? isoAt(v) : null;
+      const t = ghlTime(v);
+      return Number.isFinite(t) ? isoAt(t) : String(v);
+    };
     const plan = wrapPlan({
       setting,
       contact_id: contactId,
       contact,
-      start: ap.startTime ?? mirror?.start_at,
-      end: ap.endTime ?? null,
+      start: asInstant(ap.startTime) ?? mirror?.start_at,
+      end: asInstant(ap.endTime),
       address: ap.address,
       call_kind: kind,
       now,
@@ -2485,6 +2495,18 @@ export function makeRooms(deps: RoomDeps): Rooms {
           await carryOut(out.room, out.applied.effects);
         }
       }
+    } else if (
+      setting.enabled &&
+      liveOn(live) &&
+      live.standby !== false &&
+      !mine.some(r => r.purpose === "standby") &&
+      until !== null &&
+      (ms(until) as number) - now < setting.waits_s.standby_host * S
+    ) {
+      // Available for less than a host needs to come into a room (the live
+      // window ends soon): no standby room, the same rule as the sweep's
+      // fresh room (R5). A meeting nobody comes into is never made.
+      standbyError = fill(ROOMS_COPY.standby_too_late, { minutes: Math.round(setting.waits_s.standby_host / 60) });
     } else if (setting.enabled && liveOn(live) && live.standby !== false && !mine.some(r => r.purpose === "standby")) {
       const [{ row: hostRow }, person] = await Promise.all([hostFacts(email, now), personOf(email).catch(() => null)]);
       const role = String(person?.role ?? who.role ?? "");

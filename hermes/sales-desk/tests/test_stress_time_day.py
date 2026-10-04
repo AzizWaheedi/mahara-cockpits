@@ -55,7 +55,7 @@ def desk_may_send(now: datetime, country: str, touch: int, days_off: list[str]) 
     first = touch == 1
     q = SETTINGS["quiet"]
     hours = SETTINGS["first_hours"] if first else (int(q.get("to", 9)), int(q.get("from", 21)))
-    return fu.in_hours(now, country, hours, first=first) and not (fu.lead_days(now, country) & set(days_off))
+    return fu.in_hours(now, country, hours, first=first) and not fu.lead_days_off(now, country, days_off)
 
 
 @unittest.skipUnless(shutil.which("bun"), "bun is not installed")

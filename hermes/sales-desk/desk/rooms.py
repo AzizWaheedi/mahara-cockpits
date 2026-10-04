@@ -1933,8 +1933,13 @@ class Worker:
             return None
 
     def _meet_until(self, room: dict[str, Any]) -> float:
-        claimed = parse_ts(room.get("claimed_at")) or self.clock()
-        return claimed + self.waits("meet_pending", 30)
+        """When the Meet link's wait runs out, on this machine's clock: the
+        database stamps claimed_at with its own now(), so a VPS clock off the
+        database's (within what the worker allows) is taken out first, never
+        read as Google's wait already over."""
+        claimed = parse_ts(room.get("claimed_at"))
+        local = (claimed - self.clock_skew()) if claimed is not None else self.clock()
+        return local + self.waits("meet_pending", 30)
 
     def start_meet(self, room: dict[str, Any]) -> None:
         if not self.google:

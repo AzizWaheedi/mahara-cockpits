@@ -10,7 +10,7 @@
 
 import { cleanText, redact, type Who } from "./lib.ts";
 import { ApiRefusal, DbError, isUnique, type LiveIO } from "./liveio.ts";
-import { budgetCap, budgetCheck, GATE_SHUT, gateOpen, hoursRefusal, kuwaitMonthStart } from "./sendrules.ts";
+import { agentOff, budgetCap, budgetCheck, GATE_SHUT, gateOpen, hoursRefusal, kuwaitMonthStart } from "./sendrules.ts";
 
 type Row = Record<string, unknown>;
 type Action = (who: Who, b: Row) => Promise<Row>;
@@ -241,7 +241,7 @@ export function makeFollowupAgent(deps: AgentDeps): { actions: Record<string, Ac
       const pool = String(b.pool ?? "");
       if (!(POOLS as readonly string[]).includes(pool)) throw refusal(AGENT_COPY.bad_pool, 400);
       // The agent's switch holds every wave (the screen disables the press too).
-      if (obj(s.followups).enabled === false) throw refusal(AGENT_COPY.agent_off_screen, 409);
+      if (agentOff(s.followups)) throw refusal(AGENT_COPY.agent_off_screen, 409);
       if (!gateOpen(s.whatsapp_guard)) throw refusal(GATE_SHUT, 409, { hold_all: true });
       const w = obj(obj(s.followups).waves);
       const perDay = b.per_day === undefined ? Number(w.per_day ?? 40) : Number(b.per_day);
@@ -293,7 +293,7 @@ export function makeFollowupAgent(deps: AgentDeps): { actions: Record<string, Ac
       if (!m.from.includes(String(before.state)))
         throw refusal(AGENT_COPY.wave_state.replace("{state}", String(before.state)).replace("{op}", op === "stop" ? "stopped" : `${op}d`));
       // Pause and stop always work; a resume waits for the switch and the gate.
-      if (op === "resume" && obj(s.followups).enabled === false) throw refusal(AGENT_COPY.agent_off_screen, 409);
+      if (op === "resume" && agentOff(s.followups)) throw refusal(AGENT_COPY.agent_off_screen, 409);
       if (op === "resume" && !gateOpen(s.whatsapp_guard)) throw refusal(GATE_SHUT, 409, { hold_all: true });
       const rows = await io.db(`cockpit_sales_followup_waves?id=eq.${enc(id)}&state=eq.${enc(String(before.state))}`, {
         method: "PATCH",
@@ -354,7 +354,7 @@ export function makeFollowupAgent(deps: AgentDeps): { actions: Record<string, Ac
 
   async function batch(who: Who, b: Row): Promise<Row> {
     const s = await settings(["followups", "whatsapp_guard"]);
-    if (obj(s.followups).enabled === false) throw refusal(AGENT_COPY.agent_off_screen, 409);
+    if (agentOff(s.followups)) throw refusal(AGENT_COPY.agent_off_screen, 409);
     if (!gateOpen(s.whatsapp_guard)) throw refusal(GATE_SHUT, 409, { hold_all: true });
     let ids: string[];
     let held: string[] = [];
@@ -538,7 +538,7 @@ export function makeFollowupAgent(deps: AgentDeps): { actions: Record<string, Ac
     const meta = await metaOf(String(f.id));
     const s = await settings(["followups", "whatsapp_guard", "messaging"]);
     const followups = obj(s.followups);
-    if (followups.enabled === false) throw holdAll(AGENT_COPY.agent_off);
+    if (agentOff(followups)) throw holdAll(AGENT_COPY.agent_off);
     if (f.status !== "draft") throw refusal(AGENT_COPY.not_draft.replace("{status}", String(f.status)));
     // A sending mark left by a send that stopped half way (the draft is still
     // a draft) is no hold: this send takes it again.

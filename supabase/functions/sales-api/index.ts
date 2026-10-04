@@ -122,6 +122,7 @@ import {
   healthCfg,
   hoursRefusal,
   kuwaitMonthStart,
+  agentOff,
   matchSent,
   type SendSource,
   sourceHealth,
@@ -2498,7 +2499,7 @@ async function followupAutosend(who: Who, b: Row) {
   const f = await followupRow(cleanText(b.id, 40));
   const settings = (await setting<Row>("followups")) ?? {};
   // The agent's kill switch holds the desk's every send (P3 phase 1).
-  if (settings.enabled === false)
+  if (agentOff(settings))
     throw new Refusal("The follow-up agent is switched off (followups.enabled), so nothing is sent.", 409, { hold_all: true });
   // Openers go only in an approved, paced batch (followup.batch, followup.send_due).
   const auto = f.segment !== "reactivate" && ((settings.autosend ?? {}) as Row)[String(f.segment)] === true;

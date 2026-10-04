@@ -102,6 +102,42 @@ export const HOURS_COPY = {
 const DAY_NAMES = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"] as const;
 
 /** followups.quiet_days: the days on the lead's clock the agent does not send (Friday when not set). */
+/**
+ * The zones whose weekend includes Friday or keeps Friday off (the Gulf, most
+ * of the Arab world, Iran, Afghanistan, Bangladesh): followups.quiet_days is read
+ * there as written. The desk keeps the same list (followups.py
+ * FRIDAY_WEEKEND_ZONES).
+ */
+export const FRIDAY_WEEKEND_ZONES: ReadonlySet<string> = new Set([
+  "Asia/Kuwait", "Asia/Riyadh", "Asia/Qatar", "Asia/Bahrain", "Asia/Dubai", "Asia/Muscat", "Asia/Baghdad", "Asia/Amman",
+  "Asia/Damascus", "Asia/Aden", "Asia/Gaza", "Asia/Jerusalem", "Asia/Tehran", "Asia/Kabul", "Asia/Dhaka",
+  "Africa/Cairo", "Africa/Tripoli", "Africa/Algiers", "Africa/Khartoum",
+]);
+
+/**
+ * The lead's days off in one zone (fix round 4): quiet_days as written where
+ * the weekend includes Friday; elsewhere (a lead in the United States, in
+ * Europe) Friday is a working day, and their own Saturday and Sunday are off.
+ */
+export function zoneDaysOff(zone: string, off: Set<number>): Set<number> {
+  if (FRIDAY_WEEKEND_ZONES.has(zone) || !off.has(5)) return off;
+  const out = new Set([...off].filter(d => d !== 5));
+  out.add(6);
+  out.add(0);
+  return out;
+}
+
+/**
+ * The follow-up agent's switch (followups.enabled), read as the desk reads it
+ * (followups.run and waves.run: `not settings.get("enabled", True)`): a value
+ * set to anything but on (false, null, 0, an empty word) is off; no value at
+ * all is on. One reading on every door (fix round 4).
+ */
+export function agentOff(followups: unknown): boolean {
+  const f = (followups && typeof followups === "object" ? followups : {}) as Row;
+  return Object.prototype.hasOwnProperty.call(f, "enabled") && !f.enabled;
+}
+
 export function quietDays(followups: unknown): Set<number> {
   const v = (followups as Row | null)?.quiet_days;
   const list = Array.isArray(v) ? v.map(d => String(d).toLowerCase()) : ["friday"];
@@ -168,7 +204,7 @@ export function hoursRefusal(o: {
   const clocks = zones.map(z => zoneClock(z, o.now));
   if (o.dayOff) {
     const off = quietDays(o.followups);
-    const day = clocks.find(c => off.has(c.day))?.day;
+    const day = clocks.find((c, i) => zoneDaysOff(zones[i] as string, off).has(c.day))?.day;
     if (day !== undefined)
       return day === 5 ? HOURS_COPY.friday : HOURS_COPY.day_off.replace("{day}", (DAY_NAMES[day] as string).replace(/^./, ch => ch.toUpperCase()));
   }
