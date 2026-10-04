@@ -302,6 +302,21 @@ const plural = (n: number, one: string, many: string) =>
  * 44 held back to measure the effect. Next batch tomorrow at 09:00." Before
  * the desk has enrolled the pool it gives no number at all.
  */
+/** The waves job reports every 5 minutes; three missed runs and it is not running. */
+export const WAVES_STALE_MS = 15 * 60_000;
+
+/**
+ * What the card knows of the waves job's status row: the row (with when it
+ * was written), no row at all, or a read that failed. Null: not asked.
+ */
+export type DeskReport =
+  | { ok: boolean; detail: string | null; at?: string | null }
+  | { missing: true }
+  | { unread: true }
+  | null;
+
+const DOWN_NEXT = "A manager checks the Team page.";
+
 export function waveLine(
   w: Wave,
   c: WaveCounts,
@@ -310,9 +325,10 @@ export function waveLine(
    * The waves job's own status row (sales-desk/waves): when it is not ok,
    * the line says what holds the batch (a shut gate, a spent budget, a
    * template not set up, an earlier batch nobody decided on) instead of
-   * "being written now".
+   * "being written now". A row that is missing, older than 15 minutes, or
+   * could not be read means the job is not running: no batch is written.
    */
-  desk: { ok: boolean; detail: string | null } | null = null,
+  desk: DeskReport = null,
 ): string {
   const noun = POOL_WORDS[w.pool].noun;
   if (w.state === "done" || w.state === "cancelled") {
@@ -325,9 +341,20 @@ export function waveLine(
   const head = `${plural(c.total, "lead", "leads")} in ${noun}, ${w.per_day} a day, newest first; ${c.holdout.toLocaleString("en-US")} held back to measure the effect.`;
   if (w.state === "paused") return `${head} Paused: no batch is written.`;
   if (!next) return head;
-  if (desk && !desk.ok) {
-    const why = (desk.detail ?? "").trim().replace(/[.\s]+$/, "");
-    return `${head} The wave run is held: ${why || "it reported a problem and gave no reason"}. Nothing is written or sent until that is fixed.`;
+  if (desk && "missing" in desk)
+    return `${head} The wave run has not reported yet, so no batch is being written. ${DOWN_NEXT}`;
+  if (desk && "unread" in desk)
+    return `${head} The wave run's report could not be read, so the cockpit cannot say a batch is being written. ${DOWN_NEXT}`;
+  if (desk && "ok" in desk) {
+    const at = desk.at ? Date.parse(desk.at) : Number.NaN;
+    if (desk.at !== undefined && !Number.isFinite(at))
+      return `${head} The wave run reported at a time that cannot be read, so no batch is said to be written. ${DOWN_NEXT}`;
+    if (Number.isFinite(at) && next.now - at > WAVES_STALE_MS)
+      return `${head} The wave run has not reported since ${clock(desk.at)}, so no batch is being written. ${DOWN_NEXT}`;
+    if (!desk.ok) {
+      const why = (desk.detail ?? "").trim().replace(/[.\s]+$/, "");
+      return `${head} The wave run is held: ${why || "it reported a problem and gave no reason"}. Nothing is written or sent until that is fixed.`;
+    }
   }
   if (next.at <= next.now) return `${head} Today's batch is being written now.`;
   return `${head} Next batch ${batchWhen(next.at, next.now)}.`;

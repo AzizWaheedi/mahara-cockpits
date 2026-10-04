@@ -66,7 +66,7 @@ const down: Health = {
   last_run_at: iso(NOW - 20 * MIN),
   rooms_today: 6,
   failed_today: 1,
-  line: "Rooms are down. The room worker last ran at 13:52. Call the lead on the phone, or send your own Zoom or Meet link.",
+  line: "Video rooms are not being made (last check 13:52). Call the lead on the phone, or send your own Zoom or Meet link.",
 };
 const strip = (over: Partial<Parameters<typeof R.stripLine>[0]> = {}) =>
   R.stripLine({
@@ -162,9 +162,17 @@ describe("small helpers", () => {
     expect(R.sentenceText(s, true)).toBe(
       "Link sent on WhatsApp at 14:11. Waiting for Faisal.",
     );
-    const offer = R.offerSentence(F.offerFixture(NOW), NOW);
-    expect(R.sentenceText(offer, true)).toBe(
-      "Live lead: demo, Saudi Arabia, on the line with the setter. Note: Runs 3 fit-out crews and wants more villa projects.",
+    // With the room line on screen, the line holds the countdown alone.
+    expect(
+      R.sentenceText(R.roomSentence(sentRoom(), { now: NOW, lineShown: true })),
+    ).toBe("Link sent on WhatsApp at 14:11. Waiting for Faisal.");
+    // The offer's countdown and note are drawn apart from its sentence.
+    const o = F.offerFixture(NOW);
+    expect(R.sentenceText(R.offerSentence(o, NOW), true)).toBe(
+      "Live demo lead, Saudi Arabia, on the line with the setter.",
+    );
+    expect(R.offerNote(o)).toBe(
+      "Note: Runs 3 fit-out crews and wants more villa projects.",
     );
   });
 
@@ -231,9 +239,10 @@ describe("which moment a room is in", () => {
       ],
       ["expired", { state: "expired" }, "expired"],
       [
+        // Ended by the rep (or Zoom), not the sweep's expiry: it says it ended.
         "ended with nobody joining",
         { state: "ended", result: "no_join" },
-        "expired",
+        "ended_empty",
       ],
       ["ended", { state: "ended", result: "joined" }, "closed"],
       ["cancelled", { state: "cancelled" }, "closed"],
@@ -441,12 +450,34 @@ describe("the room panel's words, as the specs write them", () => {
       lead_in_at: iso(NOW - 6 * MIN),
       ended_at: iso(NOW),
     });
-    expect(say(r)).toBe(
-      "Video room on Meet: sent 14:03, opened 14:05, joined 14:06.",
-    );
+    // The line above carries every time: the sentence says how it ended, once.
+    expect(say(r)).toBe("Finished at 14:12.");
     expect(say(room({ state: "cancelled", ended_at: iso(NOW) }))).toBe(
-      "Video room on Meet: closed at 14:12.",
+      "Room closed at 14:12.",
     );
+    expect(
+      say(
+        room({
+          state: "cancelled",
+          result: "moved_to_phone",
+          link_sent_at: iso(NOW - 9 * MIN),
+          ended_at: iso(NOW),
+        }),
+      ),
+    ).toBe("Moved to the phone at 14:12. Room closed.");
+    // Ended with nobody in it: said as ended, never "did not join in 10 minutes".
+    const empty = room({
+      state: "ended",
+      result: "no_join",
+      link_sent_at: iso(NOW - MIN),
+      ended_at: iso(NOW),
+    });
+    expect(say(empty)).toBe(
+      "Room ended at 14:12. Nobody joined. Call again or send a message.",
+    );
+    expect(
+      R.sentenceText(R.roomSentence(empty, { now: NOW, canMarkIntro: true })),
+    ).toBe("Room ended at 14:12. Nobody joined. Mark the intro:");
   });
 
   test("Zoom's quiet hint appears 30 s after the link, never on Meet", () => {
@@ -455,7 +486,7 @@ describe("the room panel's words, as the specs write them", () => {
       R.roomHint({ ...z, link_sent_at: iso(NOW - 10 * S) }, NOW),
     ).toBeNull();
     expect(R.sentenceText(R.roomHint(z, NOW) ?? [])).toBe(
-      "Zoom has not told us yet. Press when it happens.",
+      "Zoom has not said you are in. Press I'm in once you are.",
     );
     expect(R.roomHint(sentRoom(), NOW)).toBeNull();
     expect(R.roomHint({ ...z, state: "host_in" }, NOW)).toBeNull();
@@ -626,7 +657,7 @@ describe("the one right button", () => {
     expect(acts(sentRoom())).toEqual({
       primary: "Open my room",
       quiet: [
-        "I'm in the room",
+        "I'm in",
         "Copy link",
         "Also send by email",
         "We are on the phone",
@@ -770,7 +801,7 @@ describe("the availability strip", () => {
 
   test("Away", () => {
     const l = strip();
-    expect(text(l)).toBe("Away");
+    expect(text(l)).toBe("Away. Live leads skip you.");
     expect(l.primary?.label).toBe("I'm available");
     expect(l.urgent).toBe(false);
   });
@@ -806,8 +837,10 @@ describe("the availability strip", () => {
     });
     expect(l.moment).toBe("down");
     expect(text(l)).toBe(
-      "Rooms are down. The room worker last ran at 13:52. Call the lead on the phone, or send your own Zoom or Meet link.",
+      "Video rooms are not being made (last check 13:52). Call the lead on the phone, or send your own Zoom or Meet link.",
     );
+    // Said in red, never with the teal ring of Available.
+    expect(l.tone).toBe("bad");
   });
 
   test("Ready", () => {
@@ -819,7 +852,7 @@ describe("the availability strip", () => {
       "In your room until 16:30. The next live lead comes to you.",
     );
     expect(l.primary).toBeNull();
-    expect(l.quiet.map(a => a.label)).toEqual(["Go away"]);
+    expect(l.quiet.map(a => a.label)).toEqual(["Set me away"]);
   });
 
   test("an offer, with its countdown", () => {
@@ -829,9 +862,12 @@ describe("the availability strip", () => {
     });
     expect(l.moment).toBe("offer");
     expect(l.urgent).toBe(true);
+    // The countdown is drawn beside the buttons; the note goes on its own line.
     expect(text(l)).toBe(
-      "Live lead: demo, Saudi Arabia, on the line with the setter. Note: Wants a demo today. 1:47 left.",
+      "Live demo lead, Saudi Arabia, on the line with the setter.",
     );
+    expect(l.detail).toBe("Note: Wants a demo today.");
+    expect(R.offerLeft(l.offer as Offer, NOW)).toBe(107 * S);
     expect(l.primary?.label).toBe("Take it");
     expect(l.quiet.map(a => a.label)).toEqual(["Not now"]);
   });
@@ -842,15 +878,17 @@ describe("the availability strip", () => {
         F.offerFixture(NOW, { country: null, reason: "manual", note: "  " }),
       ],
     });
-    expect(text(l)).toBe("Live lead: demo. 1:47 left.");
+    expect(text(l)).toBe("Live demo lead.");
+    expect(l.detail).toBeNull();
     const q = strip({
       offers: [
         F.offerFixture(NOW, { reason: "replied", note: "Is today ok?" }),
       ],
     });
     expect(text(q)).toBe(
-      "Live lead: demo, Saudi Arabia, just replied on WhatsApp. Note: Is today ok? 1:47 left.",
+      "Live demo lead, Saudi Arabia, just replied on WhatsApp.",
     );
+    expect(q.detail).toBe("Note: Is today ok?");
   });
 
   test("the offer ending first shows first; a declined one is hidden", () => {
@@ -1077,7 +1115,7 @@ describe("the banner", () => {
     });
     expect(R.bannerRoomAction({ ...r, state: "host_in" })).toEqual({
       key: "open_lead",
-      label: "Open",
+      label: "Open the lead",
     });
   });
 
@@ -1130,10 +1168,10 @@ describe("the health line", () => {
       "Rooms: working. Last run 14:11:58. 6 rooms today, 0 failed.",
     );
     expect(R.healthSentence({ ...down, line: "" })).toBe(
-      "Rooms are down. The room worker last ran at 13:52. Call the lead on the phone, or send your own Zoom or Meet link.",
+      "Video rooms are not being made (last check 13:52). Call the lead on the phone, or send your own Zoom or Meet link.",
     );
     expect(R.healthSentence({ ...down, line: "", last_run_at: null })).toBe(
-      "Rooms are down. The room worker has not run yet. Call the lead on the phone, or send your own Zoom or Meet link.",
+      "Video rooms are not being made: the room worker has not run yet. Call the lead on the phone, or send your own Zoom or Meet link.",
     );
   });
 });

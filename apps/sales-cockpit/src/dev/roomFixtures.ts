@@ -152,7 +152,7 @@ export function healthFixture(now: number, down = false): Health {
       last_run_at: iso(now - 11 * MIN),
       rooms_today: 6,
       failed_today: 1,
-      line: `Rooms are down. The room worker last ran at ${clock(iso(now - 11 * MIN))}. Call the lead on the phone, or send your own Zoom or Meet link.`,
+      line: `Video rooms are not being made (last check ${clock(iso(now - 11 * MIN))}). Call the lead on the phone, or send your own Zoom or Meet link.`,
     };
   return {
     worker_ok: true,
@@ -360,7 +360,7 @@ export function roomFixture(
         version: 3,
         short_url: null,
         join_url: null,
-        error: "the host's Zoom user was not found",
+        error: "your Zoom account was not found",
         result: "failed",
       });
       break;
@@ -521,7 +521,7 @@ export function liveFixture(
       break;
     case "standby_failed":
       me = presence({ state: "available", until });
-      standbyError = "the host's Zoom user was not found";
+      standbyError = "your Zoom account was not found";
       break;
     case "live_off":
       liveOff = true;

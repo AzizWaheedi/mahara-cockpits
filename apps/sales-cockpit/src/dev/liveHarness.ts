@@ -13,6 +13,14 @@
  *   auto    1                      automatic mode after a missed call
  *   create  ok | refused | failed  what room.create does
  *   waves   running | paused | none | off   the Follow-ups page's waves
+ *   reply   1                      P3's reply alert in the banner
+ *   handover 1                     a stand-in for P2's handover strip
+ *
+ * And the failures every screen must survive (src/dev/harness.tsx):
+ *   net     down | drop            sales-api unreachable (drop: after 6 s)
+ *   answer  garbage                sales-api answers 200 with nonsense
+ *   auth    expired | 401          no session, or sales-api says sign in
+ *   reads   fail | hang            every table read fails, or never answers
  *
  * Nothing here is a real lead or a real room.
  */
@@ -43,6 +51,12 @@ export interface LiveKnobs {
   auto: boolean;
   create: "ok" | "refused" | "failed";
   waves: "running" | "paused" | "none" | "off";
+  reply: boolean;
+  handover: boolean;
+  net: "ok" | "down" | "drop";
+  answer: "ok" | "garbage";
+  auth: "ok" | "expired" | "401";
+  reads: "ok" | "fail" | "hang";
 }
 
 /** The knobs from the address, with the harness's defaults. */
@@ -65,6 +79,12 @@ export function liveKnobs(params: URLSearchParams): LiveKnobs {
       ["running", "paused", "none", "off"] as const,
       "running",
     ),
+    reply: params.get("reply") === "1",
+    handover: params.get("handover") === "1",
+    net: pick("net", ["ok", "down", "drop"] as const, "ok"),
+    answer: pick("answer", ["ok", "garbage"] as const, "ok"),
+    auth: pick("auth", ["ok", "expired", "401"] as const, "ok"),
+    reads: pick("reads", ["ok", "fail", "hang"] as const, "ok"),
   };
 }
 
@@ -144,6 +164,8 @@ export class RoomStage {
   /** When each room asked for here is made. */
   private readyAt = new Map<string, number>();
   private seq = 0;
+  /** The seat's presence after a press, kept over the knob's (as sales-api would). */
+  private pressed: ReturnType<typeof presence> | null = null;
 
   constructor(
     private k: LiveKnobs,
@@ -172,7 +194,7 @@ export class RoomStage {
           version: r.version + 1,
           error:
             r.provider === "zoom"
-              ? "the host's Zoom user was not found"
+              ? "your Zoom account was not found"
               : "Google did not make the Meet link. Try Zoom.",
           result: "failed",
           ended_at: iso(now),
@@ -286,6 +308,9 @@ export class RoomStage {
             lead_in_at: null,
             count_result: "undone",
           });
+        else if (what === "still_on")
+          // "Still on it": the room's end moves ten minutes on.
+          Object.assign(r, { ends_at: iso(now + 10 * MIN) });
         else throw new Refused("That mark is not known.", 400, "bad_input");
         r.version += 1;
         return { room: { ...r } };
@@ -347,11 +372,15 @@ export class RoomStage {
             r.id === this.seeded ||
             !["ended", "expired", "failed", "cancelled"].includes(r.state),
         );
+        const me = this.pressed ?? base.me;
         return {
           ...base,
+          // room=down is the worker down: live.status says so too.
+          health:
+            this.k.room === "down" ? healthFixture(now, true) : base.health,
           // The harness's seat is a setter's: Meet first, unless the offer
           // knob shows a closer's strip (standby rooms on Zoom).
-          me: this.k.offer ? base.me : { ...base.me, default_provider: "meet" },
+          me: this.k.offer ? me : { ...me, default_provider: "meet" },
           rooms: [...mine.map(r => ({ ...r })), ...base.rooms],
           live_enabled: this.k.live === "on",
           now: iso(now),
@@ -359,12 +388,11 @@ export class RoomStage {
       }
       case "live.availability": {
         const state = b.state === "available" ? "available" : "away";
-        return {
-          me: presence({
-            state,
-            until: state === "available" ? iso(now + 2 * 3600 * S) : null,
-          }),
-        };
+        this.pressed = presence({
+          state,
+          until: state === "available" ? iso(now + 2 * 3600 * S) : null,
+        });
+        return { me: this.pressed };
       }
       case "live.take":
       case "live.decline":

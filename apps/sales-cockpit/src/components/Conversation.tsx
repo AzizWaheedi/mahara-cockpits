@@ -93,6 +93,73 @@ export interface ConvoData {
   read_at: string;
 }
 
+type Raw = Record<string, unknown>;
+const isObj = (v: unknown): v is Raw =>
+  typeof v === "object" && v !== null && !Array.isArray(v);
+
+const NO_CHANNEL: ChannelState = { on: false, dnd: false, reachable: false };
+
+/**
+ * convo.read's answer as the screens can draw it, or a thrown error. An
+ * answer without a thread or channels is no answer (a garbled 200 once took
+ * the whole dialer down with it); fields that are missing are filled with
+ * their empty values, never guessed.
+ */
+export function readConvo(v: unknown): ConvoData {
+  if (!isObj(v) || !Array.isArray(v.thread) || !isObj(v.channels))
+    throw new Error(
+      "The conversation could not be read: the answer was not one. It tries again by itself.",
+    );
+  const ch = v.channels;
+  const channel = (c: unknown): ChannelState =>
+    isObj(c) ? ({ ...NO_CHANNEL, ...c } as ChannelState) : NO_CHANNEL;
+  const contact = isObj(v.contact) ? v.contact : {};
+  const cursors: Record<string, string> = {};
+  if (isObj(v.cursors))
+    for (const [k, c] of Object.entries(v.cursors))
+      if (typeof c === "string") cursors[k] = c;
+  return {
+    contact: {
+      name: typeof contact.name === "string" ? contact.name : null,
+      email: typeof contact.email === "string" ? contact.email : null,
+      phone: typeof contact.phone === "string" ? contact.phone : null,
+      tags: Array.isArray(contact.tags)
+        ? contact.tags.filter((t): t is string => typeof t === "string")
+        : [],
+      dnd: typeof contact.dnd === "boolean" ? contact.dnd : null,
+      assigned_to:
+        typeof contact.assigned_to === "string" ? contact.assigned_to : null,
+    },
+    channels: {
+      whatsapp: channel(ch.whatsapp),
+      sms: channel(ch.sms),
+      email: channel(ch.email),
+    },
+    thread: v.thread.filter(
+      (m): m is ThreadMessage => isObj(m) && typeof m.id === "string",
+    ),
+    cursors,
+    sends: Array.isArray(v.sends)
+      ? v.sends.filter((x): x is SendRow => isObj(x))
+      : [],
+    read_at:
+      typeof v.read_at === "string" ? v.read_at : new Date().toISOString(),
+  };
+}
+
+/** What shows when the conversation cannot be drawn: the rest of the page carries on. */
+export function ConversationFailed() {
+  return (
+    <p
+      role="alert"
+      className="callout-bad rounded-[var(--radius-md)] border px-3 py-2 text-sm"
+    >
+      The conversation could not be shown. It tries again in 30 seconds, or
+      reload the page. Open the lead in HighLevel to message them meanwhile.
+    </p>
+  );
+}
+
 /** The conversation, read again every 30 seconds while the tab is open. */
 export function useConversation(contactId: string) {
   const [data, setData] = useState<ConvoData | null>(null);
@@ -104,9 +171,11 @@ export function useConversation(contactId: string) {
   const load = useCallback(async () => {
     if (!contactId) return;
     try {
-      const out = await api<ConvoData>("convo.read", {
-        contact_id: contactId,
-      });
+      const out = readConvo(
+        await api<unknown>("convo.read", {
+          contact_id: contactId,
+        }),
+      );
       setData(out);
       setError(null);
       setCursors(c => (Object.keys(c).length ? c : out.cursors));
@@ -130,11 +199,13 @@ export function useConversation(contactId: string) {
     if (!Object.keys(cursors).length) return;
     setLoadingOlder(true);
     try {
-      const out = await api<ConvoData>("convo.read", {
-        contact_id: contactId,
-        older: true,
-        cursors,
-      });
+      const out = readConvo(
+        await api<unknown>("convo.read", {
+          contact_id: contactId,
+          older: true,
+          cursors,
+        }),
+      );
       setOlder(o => [...o, ...out.thread]);
       setCursors(out.cursors);
     } catch (e) {

@@ -16,6 +16,8 @@ import {
   type Provider,
   providerName,
   type RoomView,
+  type Sentence,
+  sentenceText,
   type ZoomStatus,
   zoomNote,
 } from "./rooms";
@@ -248,14 +250,14 @@ export function providerChoice(i: {
   return { first, other, note };
 }
 
-/** "Meet" and "Zoom instead" (P1's picker). */
+/** "Send a Meet link" and "Use Zoom instead" (P1's picker): each says what it does. */
 export function choiceLabels(c: ProviderChoice): {
   first: string;
   other: string | null;
 } {
   return {
-    first: providerName(c.first),
-    other: c.other ? `${providerName(c.other)} instead` : null,
+    first: `Send a ${providerName(c.first)} link`,
+    other: c.other ? `Use ${providerName(c.other)} instead` : null,
   };
 }
 
@@ -267,10 +269,11 @@ export interface Reach {
   window?: { open: boolean } | null;
 }
 
+/** How the link travels, as the picker line says it ("on WhatsApp", "by email"). */
 const CHANNEL_WORDS = {
-  whatsapp_text: "WhatsApp",
-  whatsapp_template: "a WhatsApp template",
-  email: "email",
+  whatsapp_text: "on WhatsApp",
+  whatsapp_template: "on a WhatsApp template",
+  email: "by email",
 } as const;
 type Channel = keyof typeof CHANNEL_WORDS;
 
@@ -321,7 +324,7 @@ export function linkPlanLine(i: {
     : ["whatsapp_text", "whatsapp_template", "email"];
   for (const ch of order) {
     if (can[ch] === null) return null;
-    if (can[ch]) return `The lead gets the link on ${CHANNEL_WORDS[ch]}.`;
+    if (can[ch]) return `The lead gets the link ${CHANNEL_WORDS[ch]}.`;
   }
   return PICKER_NONE;
 }
@@ -367,10 +370,18 @@ export function autoLeft(startedAt: number, now: number): number {
   return Math.max(0, Math.ceil((startedAt + AUTO_SEND_S * 1000 - now) / 1000));
 }
 
+/** "Sending a video link to Faisal in 10 s.", the seconds set in Geist Mono. */
+export function autoParts(
+  name: string | null | undefined,
+  left: number,
+): Sentence {
+  const who = String(name ?? "").trim() || "the lead";
+  return [`Sending a video link to ${who} in `, { mono: `${left} s` }, "."];
+}
+
 /** "Sending a video link to Faisal in 10 s." */
 export function autoSentence(name: string | null | undefined, left: number) {
-  const who = String(name ?? "").trim() || "the lead";
-  return `Sending a video link to ${who} in ${left} s.`;
+  return sentenceText(autoParts(name, left));
 }
 
 // ---------------------------------------------------------------------------

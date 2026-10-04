@@ -1,9 +1,17 @@
-import { useNow, useQuery, useSetting, useWorkerStatus } from "../lib/data";
-import { useLiveStatus } from "../lib/rooms";
+import { useEffect, useRef } from "react";
+import {
+  SMALL_READ_MS,
+  useNow,
+  useQuery,
+  useSetting,
+  useWorkerStatus,
+} from "../lib/data";
+import { healthTone, monoTimes, useLiveStatus } from "../lib/rooms";
 import {
   type HostRow,
   type LineTone,
   roomJobLines,
+  roomsSummary,
   seatRoomLines,
   switchesLine,
 } from "../lib/roomsHealth";
@@ -11,7 +19,17 @@ import { supabase } from "../lib/supabase";
 import type { Person } from "../lib/types";
 import { readRoomsSetting } from "../lib/videoLink";
 import { Failed, SectionCard } from "./kit";
+import { Say } from "./RoomLine";
 import { HealthLine } from "./RoomPanel";
+
+/** A read's failure in words a manager can act on, without a trailing full stop. */
+function readError(e: string): string {
+  if (
+    /failed to fetch|load failed|networkerror|network request failed/i.test(e)
+  )
+    return "the connection dropped. It tries again by itself";
+  return e.trim().replace(/[.\s]+$/, "");
+}
 
 /**
  * Video rooms on the Team page: whether they are switched on, the health
@@ -35,10 +53,22 @@ export function RoomsHealthCard({ people }: { people: readonly Person[] }) {
         ),
     [],
     60_000,
+    { timeoutMs: SMALL_READ_MS },
   );
   const on = Boolean(rooms?.enabled);
   const health = live.data?.health ?? null;
   const lines = workers.data ? roomJobLines(workers.data, now, on) : [];
+  // The health line is read every 4 s and the job rows every 2 minutes:
+  // when the health turns, the rows are read again, so the two agree.
+  const tone = health ? healthTone(health) : null;
+  const lastTone = useRef(tone);
+  const { reload: reloadWorkers } = workers;
+  useEffect(() => {
+    if (lastTone.current !== null && tone !== null && tone !== lastTone.current)
+      reloadWorkers();
+    lastTone.current = tone;
+  }, [tone, reloadWorkers]);
+  const summary = health ? roomsSummary(health, lines) : null;
   const byEmail = new Map(
     (hosts.data ?? []).map(h => [h.email.toLowerCase(), h] as const),
   );
@@ -46,16 +76,27 @@ export function RoomsHealthCard({ people }: { people: readonly Person[] }) {
 
   return (
     <SectionCard title="Video rooms">
-      <p className="text-sm">
-        {setting.error
-          ? `The video rooms setting could not be read: ${setting.error}.`
-          : setting.loading && !setting.data
+      {setting.error && !setting.data ? (
+        <Failed
+          what="The video rooms setting"
+          error={readError(setting.error)}
+          retry={setting.reload}
+        />
+      ) : (
+        <p className="text-sm">
+          {setting.loading && !setting.data
             ? "Reading the video rooms setting…"
             : switchesLine(rooms)}
-      </p>
+        </p>
+      )}
 
-      {health ? (
-        <HealthLine health={health} className="mt-2" />
+      {health && summary ? (
+        <HealthLine
+          health={health}
+          tone={summary.tone}
+          sentence={summary.sentence ?? undefined}
+          className="mt-2"
+        />
       ) : on && live.error && !live.off ? (
         <p className="muted mt-2 text-xs">
           The room health could not be read: {live.error}
@@ -66,7 +107,7 @@ export function RoomsHealthCard({ people }: { people: readonly Person[] }) {
       {workers.error ? (
         <Failed
           what="The job reports"
-          error={workers.error}
+          error={readError(workers.error)}
           retry={workers.reload}
         />
       ) : !workers.data ? (
@@ -77,7 +118,7 @@ export function RoomsHealthCard({ people }: { people: readonly Person[] }) {
             <li key={l.key} className="flex items-start gap-2 text-xs">
               <Dot tone={l.tone} />
               <span className={`min-w-0 ${l.tone === "quiet" ? "muted" : ""}`}>
-                {l.text}
+                <Say s={l.say} />
               </span>
             </li>
           ))}
@@ -88,7 +129,7 @@ export function RoomsHealthCard({ people }: { people: readonly Person[] }) {
       {hosts.error ? (
         <Failed
           what="The host check"
-          error={hosts.error}
+          error={readError(hosts.error)}
           retry={hosts.reload}
         />
       ) : !hosts.data ? (
@@ -113,7 +154,9 @@ export function RoomsHealthCard({ people }: { people: readonly Person[] }) {
                     {s.zoom.text}. {s.meet}.
                   </span>
                 </p>
-                <p className="muted mt-0.5">{s.note}</p>
+                <p className="muted mt-0.5">
+                  <Say s={monoTimes(s.note)} />
+                </p>
               </li>
             );
           })}

@@ -1,6 +1,7 @@
 import { Loader2 } from "lucide-react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router";
+import { useLocation, useNavigate } from "react-router";
+import { type ApiFailure, uncertain } from "../lib/apiErrors";
 import { useNow } from "../lib/data";
 import {
   activeFlash,
@@ -20,11 +21,13 @@ import {
   openHostRoom,
   primeAlerts,
   type ReplyAlert,
+  type RoomView,
   readIsOld,
   readLive,
   replySentence,
   roomMoment,
   roomsApi,
+  roomTone,
   type Sentence,
   type StripActionKey,
   type StripFlash,
@@ -36,11 +39,13 @@ import {
   takeFailure,
   useFocusRescue,
   useLiveStatus,
+  useRoomShown,
   withRoom,
 } from "../lib/rooms";
 import { AvailabilityStrip, PresenceDot, StaleNote } from "./AvailabilityStrip";
 import { button, buttonPrimary } from "./kit";
-import { LiveBoundary, Spoken } from "./RoomLine";
+import { LiveBoundary, Spoken, toneColor } from "./RoomLine";
+import { type Notice, NoticeLine } from "./RoomPanel";
 
 /**
  * The one banner above every page (the slot in App.tsx). It shows one
@@ -64,7 +69,8 @@ export type BannerAction =
   | "open_lead"
   | "reply_open"
   | "reply_offer"
-  | "reload";
+  | "reload"
+  | "signin";
 
 export interface SalesBannerViewProps {
   data: LiveStatus | null;
@@ -73,6 +79,18 @@ export interface SalesBannerViewProps {
   busy?: BannerAction | null;
   /** When the last good read landed, if the reads since have failed. */
   staleSince?: number | null;
+  /** How the reads failed, so the stale note names the next step. */
+  staleKind?: ApiFailure | null;
+  /** The sign-in ran out: a row with Sign in, the last copy kept under it. */
+  signedOut?: boolean;
+  /**
+   * The seat's room is on a panel on this page: its banner button is the
+   * quiet one (the panel holds the primary), and "Open the lead" goes.
+   */
+  roomOnScreen?: boolean;
+  /** What the room row's last press said (a failure, or a link to open). */
+  roomNote?: Notice | null;
+  onRoomNoteOpened?: () => void;
   /** No read has landed and the reads are failing (not refused). */
   readFailed?: boolean;
   hidden?: readonly string[];
@@ -114,7 +132,11 @@ function spokenOf(
   if ((slot === "offer" || slot === "presence") && strip) {
     if (slot === "presence" && IDLE.has(strip.moment))
       return { text: "", assertive: false };
-    const text = [sentenceText(strip.sentence, true), strip.note ?? ""]
+    const text = [
+      sentenceText(strip.sentence, true),
+      strip.detail ?? "",
+      strip.note ?? "",
+    ]
       .filter(Boolean)
       .join(" ");
     return { text, assertive: strip.moment === "offer" };
@@ -132,6 +154,11 @@ export function SalesBannerView({
   flash = null,
   busy = null,
   staleSince = null,
+  staleKind = null,
+  signedOut = false,
+  roomOnScreen = false,
+  roomNote = null,
+  onRoomNoteOpened = () => undefined,
   readFailed = false,
   hidden = [],
   kept = [],
@@ -166,7 +193,10 @@ export function SalesBannerView({
     reply: Boolean(replyAlert),
   });
   const presence = liveOn ? (data?.me.state ?? null) : null;
-  const roomSentence = room ? bannerRoomSentence(room, now) : null;
+  const workerDown = data?.health?.worker_ok === false;
+  const roomSentence = room
+    ? bannerRoomSentence(room, now, { workerDown })
+    : null;
   const replyWords = replyAlert ? replySentence(replyAlert, now) : null;
   const urgent =
     slot === "offer" ||
@@ -200,31 +230,65 @@ export function SalesBannerView({
     );
   else if (slot === "room" && room && roomSentence) {
     const go = bannerRoomAction(room);
+    // The lead's page, or a panel showing this room, is already the place
+    // to go; and that panel holds the primary button.
+    const showGo = !(go.key === "open_lead" && roomOnScreen);
+    const moment = roomMoment(room, now);
     body = (
       <Row
         staleSince={staleSince}
-        dot={<PresenceDot state={presence} stale={staleSince !== null} />}
+        staleKind={staleKind}
+        dot={
+          presence && presence !== "away" ? (
+            <PresenceDot state={presence} stale={staleSince !== null} />
+          ) : (
+            // No presence to show (live calls off, or Away): the dot says
+            // the room's own moment, never a grey "away" beside urgent news.
+            <RoomDot
+              color={toneColor(
+                roomTone(
+                  workerDown && moment.startsWith("making")
+                    ? "making_down"
+                    : moment,
+                  room,
+                ),
+              )}
+              stale={staleSince !== null}
+            />
+          )
+        }
         sentence={
-          <Spoken
-            s={roomSentence}
-            live={false}
-            className="text-[13px] leading-5"
-          />
+          <>
+            <Spoken
+              s={roomSentence}
+              live={false}
+              className="text-[13px] leading-5"
+            />
+            {roomNote ? (
+              <NoticeLine
+                notice={roomNote}
+                onOpened={onRoomNoteOpened}
+                className="mt-1 mb-0.5"
+              />
+            ) : null}
+          </>
         }
       >
-        <button
-          type="button"
-          onClick={() => onAction(go.key)}
-          disabled={busy !== null}
-          aria-busy={busy === go.key}
-          data-key={go.key}
-          className={`${go.key === "open_room" ? buttonPrimary : button} ${TOUCH}`}
-        >
-          {busy === go.key ? (
-            <Loader2 className="size-3.5 animate-spin" aria-hidden />
-          ) : null}
-          {go.label}
-        </button>
+        {showGo ? (
+          <button
+            type="button"
+            onClick={() => onAction(go.key)}
+            disabled={busy !== null}
+            aria-busy={busy === go.key}
+            data-key={go.key}
+            className={`${go.key === "open_room" && !roomOnScreen ? buttonPrimary : button} ${TOUCH}`}
+          >
+            {busy === go.key ? (
+              <Loader2 className="size-3.5 animate-spin" aria-hidden />
+            ) : null}
+            {go.label}
+          </button>
+        ) : null}
       </Row>
     );
   } else if (slot === "handover") body = handover;
@@ -257,7 +321,7 @@ export function SalesBannerView({
           data-key="reply_open"
           className={`${buttonPrimary} ${TOUCH}`}
         >
-          Open
+          Open the lead
         </button>
       </Row>
     );
@@ -266,7 +330,13 @@ export function SalesBannerView({
     body = (
       <Row
         dot={<PresenceDot state={null} stale />}
-        sentence={<StaleNote since={null} className="text-[13px] leading-5" />}
+        sentence={
+          <StaleNote
+            since={null}
+            kind={staleKind}
+            className="text-[13px] leading-5"
+          />
+        }
       >
         <button
           type="button"
@@ -279,6 +349,42 @@ export function SalesBannerView({
       </Row>
     );
 
+  // The sign-in ran out: said first, with the way back in. An open room's
+  // last copy stays on screen under it (marked as not up to date).
+  const signin = signedOut ? (
+    <Row
+      dot={<PresenceDot state={null} tone="owed" />}
+      sentence={
+        <p className="text-[13px] leading-5" role="status">
+          Your sign-in ran out. Sign in again to see your room and live leads.
+        </p>
+      }
+    >
+      <button
+        type="button"
+        onClick={() => onAction("signin")}
+        disabled={busy !== null}
+        aria-busy={busy === "signin"}
+        data-key="signin"
+        className={`${buttonPrimary} ${TOUCH}`}
+      >
+        {busy === "signin" ? (
+          <Loader2 className="size-3.5 animate-spin" aria-hidden />
+        ) : null}
+        Sign in
+      </button>
+    </Row>
+  ) : null;
+  const shownBody =
+    signin && body ? (
+      <>
+        {signin}
+        <div className="border-t hairline">{body}</div>
+      </>
+    ) : (
+      (signin ?? body)
+    );
+
   return (
     <div ref={zone} className="contents">
       {/* Always mounted, so a new offer is announced when its words arrive. */}
@@ -288,18 +394,18 @@ export function SalesBannerView({
       <p className="sr-only" aria-live="polite" aria-atomic>
         {spoken.assertive ? "" : spoken.text}
       </p>
-      {body ? (
+      {shownBody ? (
         <div
           role="region"
           aria-label="Live calls"
           className={`border-b hairline bg-[color:var(--card)] pt-[env(safe-area-inset-top,0px)] lg:pt-0 ${
-            urgent ? "sticky top-0 z-20" : ""
+            urgent || signin ? "sticky top-0 z-20" : ""
           }`}
         >
           <div
             className={`mx-auto w-full max-w-[1440px] px-4 md:px-6 ${slot === "offer" && strip?.moment === "offer" ? "py-2.5" : "py-0.5"}`}
           >
-            {body}
+            {shownBody}
           </div>
         </div>
       ) : null}
@@ -313,11 +419,13 @@ function Row({
   dot,
   sentence,
   staleSince = null,
+  staleKind = null,
   children,
 }: {
   dot: ReactNode;
   sentence: ReactNode;
   staleSince?: number | null;
+  staleKind?: ApiFailure | null;
   children: ReactNode;
 }) {
   return (
@@ -325,10 +433,27 @@ function Row({
       {dot}
       <div className="min-w-0 flex-1 py-1">
         {sentence}
-        {staleSince !== null ? <StaleNote since={staleSince} /> : null}
+        {staleSince !== null ? (
+          <StaleNote since={staleSince} kind={staleKind} />
+        ) : null}
       </div>
       <div className="flex shrink-0 items-center gap-2">{children}</div>
     </div>
+  );
+}
+
+/** The room's own moment as a dot, for a room row with no presence to show. */
+function RoomDot({ color, stale }: { color: string; stale: boolean }) {
+  return (
+    <span
+      aria-hidden
+      className="inline-flex size-2.5 shrink-0 rounded-full"
+      style={{
+        background: color,
+        outline: stale ? "2px solid var(--owed)" : undefined,
+        outlineOffset: stale ? "2px" : undefined,
+      }}
+    />
   );
 }
 
@@ -358,7 +483,20 @@ export interface SalesBannerProps {
  */
 export function SalesBanner(props: SalesBannerProps) {
   return (
-    <LiveBoundary fallback={props.portal}>
+    <LiveBoundary
+      fallback={
+        <>
+          <p
+            role="alert"
+            className="callout-warn border-b px-4 py-2 text-[13px] leading-5 md:px-6"
+          >
+            Live calls stopped showing here. Reload the page; your rooms keep
+            running.
+          </p>
+          {props.portal}
+        </>
+      }
+    >
       <LiveBanner {...props} />
     </LiveBoundary>
   );
@@ -379,10 +517,14 @@ function LiveBanner({
   // The server's clock, for every countdown and gate.
   const now = localNow + live.offset;
   const navigate = useNavigate();
+  const location = useLocation();
   const [flash, setFlash] = useState<StripFlash | null>(null);
   const [busy, setBusy] = useState<BannerAction | null>(null);
   const [hidden, setHidden] = useState<string[]>([]);
   const [kept, setKept] = useState<string[]>([]);
+  // What the room row's last press said, and the timer that clears its link.
+  const [roomNote, setRoomNote] = useState<Notice | null>(null);
+  const noteTimer = useRef<number | null>(null);
   const busyRef = useRef(false);
   const answered = useRef(new Set<string>());
   const seen = useRef<LiveStatus | null>(null);
@@ -413,15 +555,58 @@ function LiveBanner({
       data.me,
       answered.current,
       at,
+      data.rooms,
     );
     if (gone) setFlash({ ...gone, at: Date.now() });
   }, [data, live.offset]);
 
   const shown = activeFlash(flash, data, localNow);
   const old = data ? readIsOld(live, localNow) : null;
-  const staleSince = old?.since ?? null;
+  // Signed out, the reading stopped: the last copy is old from its last read.
+  const staleSince =
+    live.signedOut && data ? (live.okAt ?? null) : (old?.since ?? null);
   const readFailed =
-    enabled && !live.off && !data && live.failures >= 2 && live.error !== null;
+    enabled &&
+    !live.off &&
+    !live.signedOut &&
+    !data &&
+    live.failures >= 2 &&
+    live.error !== null;
+  const room = data ? myRoom(data.rooms, now) : null;
+  const panelHasIt = useRoomShown(room?.id ?? null);
+  const roomOnScreen =
+    panelHasIt ||
+    Boolean(
+      room?.contact_id && location.pathname === `/lead/${room.contact_id}`,
+    );
+
+  // A note about one room is not carried to another.
+  const noteRoom = useRef<string | null>(null);
+  useEffect(() => {
+    if (noteRoom.current && noteRoom.current !== (room?.id ?? null)) {
+      setRoomNote(null);
+      noteRoom.current = null;
+    }
+  }, [room?.id]);
+  useEffect(
+    () => () => {
+      if (noteTimer.current) window.clearTimeout(noteTimer.current);
+    },
+    [],
+  );
+
+  /** Say something under the room row; a link to open goes after a minute. */
+  function sayOnRoom(roomId: string, note: Notice | null) {
+    noteRoom.current = roomId;
+    setRoomNote(note);
+    if (noteTimer.current) window.clearTimeout(noteTimer.current);
+    noteTimer.current = null;
+    if (note?.open)
+      noteTimer.current = window.setTimeout(() => {
+        noteTimer.current = null;
+        setRoomNote(n => (n?.open ? null : n));
+      }, 60_000);
+  }
 
   async function run(key: BannerAction, work: () => Promise<void>) {
     if (busyRef.current) return;
@@ -449,6 +634,72 @@ function LiveBanner({
       );
   }
 
+  /**
+   * The seat's own room from the banner. Whatever happens is said under
+   * the room's row (with live calls off there is no strip to say it on):
+   * a blocked tab offers the host link to tap, and a host link that could
+   * not be had offers the room's own link.
+   */
+  async function openMyRoom(r: RoomView) {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setBusy("open_room");
+    sayOnRoom(r.id, null);
+    try {
+      const out = await openHostRoom(r.id);
+      if (out.kind === "blocked")
+        sayOnRoom(r.id, {
+          tone: "owed",
+          text: "Your browser blocked the new tab.",
+          open: { url: out.url, label: "Open my room" },
+        });
+    } catch (e) {
+      if (uncertain(e) && r.join_url)
+        sayOnRoom(r.id, {
+          tone: "owed",
+          text: "The cockpit could not get your host link. Open the room with its own link.",
+          open: { url: r.join_url, label: "Open the room" },
+        });
+      else sayOnRoom(r.id, { tone: "bad", text: errorText(e) });
+    } finally {
+      busyRef.current = false;
+      setBusy(null);
+      reload();
+    }
+  }
+
+  /**
+   * Back in after the sign-in ran out: a refreshed token first (a laptop
+   * that slept), and when there is none, the portal's sign-in, which
+   * brings the rep back to this page.
+   */
+  async function signIn() {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setBusy("signin");
+    try {
+      const { supabase } = await import("../lib/supabase");
+      const { data: d } = await supabase.auth.refreshSession();
+      if (d.session) {
+        reload();
+        return;
+      }
+    } catch {
+      // No refresh: the portal signs the rep in.
+    } finally {
+      busyRef.current = false;
+      setBusy(null);
+    }
+    try {
+      const { portalDoor } = await import("../lib/portal");
+      const here = location.pathname + location.search;
+      window.location.assign(portalDoor(here === "/" ? "/" : here));
+    } catch {
+      // The page cannot load the sign-in: a reload starts it.
+      window.location.reload();
+    }
+  }
+
   function hide(id: string) {
     setHidden(h => (h.includes(id) ? h : [...h, id]));
   }
@@ -456,6 +707,10 @@ function LiveBanner({
   function onAction(key: BannerAction) {
     if (key === "reload") {
       reload();
+      return;
+    }
+    if (key === "signin") {
+      void signIn();
       return;
     }
     if (!data && key !== "reply_open" && key !== "reply_offer") return;
@@ -487,7 +742,7 @@ function LiveBanner({
         if (replyAlert) onOfferCall?.(replyAlert);
         return;
       case "open_room":
-        if (room) void run(key, () => openRoom(room.id));
+        if (room) void openMyRoom(room);
         return;
       case "join": {
         const sb = data ? standbyRoom(data.rooms) : null;
@@ -570,6 +825,15 @@ function LiveBanner({
       flash={shown}
       busy={busy}
       staleSince={staleSince}
+      staleKind={old?.kind ?? null}
+      signedOut={enabled && live.signedOut}
+      roomOnScreen={roomOnScreen}
+      roomNote={roomNote}
+      onRoomNoteOpened={() => {
+        if (noteTimer.current) window.clearTimeout(noteTimer.current);
+        noteTimer.current = null;
+        setRoomNote(null);
+      }}
       readFailed={readFailed}
       hidden={hidden}
       kept={kept}

@@ -20,7 +20,11 @@ import {
   canContract,
   useContracts,
 } from "../components/ContractPanel";
-import { Conversation, useConversation } from "../components/Conversation";
+import {
+  Conversation,
+  ConversationFailed,
+  useConversation,
+} from "../components/Conversation";
 import { HotControl } from "../components/HotList";
 import {
   button,
@@ -42,9 +46,11 @@ import { NotesPanel } from "../components/NotesPanel";
 import { ProposalPanel } from "../components/ProposalPanel";
 import { AskReference } from "../components/References";
 import { ResearchPanel } from "../components/ResearchPanel";
+import { LiveBoundary } from "../components/RoomLine";
 import { RoomPanel } from "../components/RoomPanel";
 import {
   LiveAskForm,
+  ROOMS_UNREAD,
   useLeadRoom,
   useRoomsSetup,
   VideoCallMenu,
@@ -292,7 +298,8 @@ export default function LeadPage({ me }: { me: Me }) {
           {isClient(l) ? null : (
             <Link
               to={`/call/${l.contact_id}?script=${callScript(me, appointments)}`}
-              className={buttonPrimary}
+              // While a video room is open its panel holds the teal button.
+              className={video.open ? button : buttonPrimary}
             >
               <ScrollText className="size-3.5" aria-hidden />
               {callScript(me, appointments) === "demo"
@@ -312,6 +319,9 @@ export default function LeadPage({ me }: { me: Me }) {
               setVideoOpen(key);
             }}
           />
+          {roomsSetup.error && !isClient(l) ? (
+            <span className="muted self-center text-xs">{ROOMS_UNREAD}</span>
+          ) : null}
           {canContract(me) ? (
             <button
               type="button"
@@ -430,14 +440,16 @@ export default function LeadPage({ me }: { me: Me }) {
         <div className="min-w-0 space-y-4 xl:col-span-5 xl:space-y-6">
           <div ref={convoRef}>
             <SectionCard title="Conversation">
-              <Conversation
-                contactId={l.contact_id}
-                convo={convo}
-                rep={me.name}
-                callAt={nextAppt?.start_at ?? null}
-                country={l.country}
-                prefill={convoPrefill}
-              />
+              <LiveBoundary fallback={<ConversationFailed />}>
+                <Conversation
+                  contactId={l.contact_id}
+                  convo={convo}
+                  rep={me.name}
+                  callAt={nextAppt?.start_at ?? null}
+                  country={l.country}
+                  prefill={convoPrefill}
+                />
+              </LiveBoundary>
             </SectionCard>
           </div>
           <SectionCard title="Everything so far">

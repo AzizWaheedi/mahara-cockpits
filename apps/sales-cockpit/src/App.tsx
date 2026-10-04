@@ -246,7 +246,10 @@ export function Seated({
         </div>
       ) : null}
 
-      <div className="flex min-w-0 flex-1 flex-col overflow-y-auto pb-[calc(4rem+env(safe-area-inset-bottom,0px))] lg:pb-0">
+      {/* relative: the screen-reader-only words inside (absolutely placed)
+          stay in this scroll area instead of stretching the window, which
+          would scroll twice on a phone and carry a sticky banner away. */}
+      <div className="relative flex min-w-0 flex-1 flex-col overflow-y-auto pb-[calc(4rem+env(safe-area-inset-bottom,0px))] lg:pb-0">
         {banner}
         <header className="pt-safe sticky top-0 z-10 flex items-center gap-3 border-b hairline bg-[color:var(--background)]/90 px-4 py-2.5 backdrop-blur lg:hidden">
           <Wordmark size="sm" />

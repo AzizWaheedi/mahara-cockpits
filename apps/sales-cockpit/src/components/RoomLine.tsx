@@ -17,25 +17,38 @@ import {
  * Opened, You're in, Lead in), each with its time in Geist Mono under the
  * word, and the countdown at the right. Done steps are solid ink; the step
  * the room is waiting on carries the teal dot with its one soft pulse, the
- * only animation in the live-call screens, and still under reduced motion.
+ * only animation in the live-call screens, and still under reduced motion,
+ * where the word "waiting" under it says which step is next.
  * Where the card is narrow (a phone, or the dialer's call column on a
- * laptop) the line wraps to two rows of two steps: it reads the card's own
- * width (a container query), not the window's, so a word is never cut.
+ * laptop) the line wraps to two rows of two steps with the countdown on a
+ * row of its own above them: it reads the card's own width (a container
+ * query), not the window's, and no word is ever cut.
+ *
+ * `frozen` draws no current step and no countdown (what shows may be old,
+ * or the room is not moving); `dim` sets the line back so the sentence
+ * under it leads (a closed room, a stale read).
  */
 export function RoomLine({
   room,
   now,
+  frozen = false,
+  dim = false,
   className = "",
 }: {
   room: RoomView;
   now: number;
+  frozen?: boolean;
+  dim?: boolean;
   className?: string;
 }) {
-  const steps = roomSteps(room);
-  const left = roomLeft(room, now);
+  const steps = roomSteps(room, { frozen });
+  const left = frozen ? null : roomLeft(room, now);
   return (
-    <div className={`@container min-w-0 ${className}`}>
-      <div className="flex min-w-0 items-start gap-3">
+    <div
+      className={`@container min-w-0 ${dim ? "opacity-60" : ""} ${className}`}
+    >
+      {/* Below 28rem the countdown takes its own row above the steps. */}
+      <div className="flex min-w-0 max-w-3xl flex-col-reverse items-stretch gap-2 @md:flex-row @md:items-start @md:gap-3">
         <ol
           aria-label="Room steps"
           className="grid min-w-0 flex-1 grid-cols-2 gap-x-2 gap-y-3 @md:grid-cols-4"
@@ -53,7 +66,9 @@ export function RoomLine({
             />
           ))}
         </ol>
-        {left !== null ? <Countdown ms={left} /> : null}
+        {left !== null ? (
+          <Countdown ms={left} className="self-end @md:self-auto" />
+        ) : null}
       </div>
     </div>
   );
@@ -75,7 +90,7 @@ function StepItem({
       <div className="flex min-w-0 items-center">
         <StepDot state={state} />
         <span
-          className={`ml-2 truncate text-[13px] leading-5 ${
+          className={`ml-2 whitespace-nowrap text-[13px] leading-5 ${
             state === "todo" ? "muted" : "font-medium"
           }`}
         >
@@ -101,6 +116,10 @@ function StepItem({
           </span>
         ) : step.note ? (
           <span className="muted">{step.note}</span>
+        ) : state === "current" ? (
+          // The pulse is off under reduced motion, and a dot's colour alone
+          // is easy to miss: the word says which step the room waits on.
+          <span className={COUNTDOWN_INK.now}>waiting</span>
         ) : step.done ? (
           <span aria-hidden>&nbsp;</span>
         ) : (
@@ -115,19 +134,26 @@ function StepItem({
   );
 }
 
+/**
+ * The current step's dot: pure teal on the dark card; on white, teal mixed
+ * with the ink (as the countdown is), because pure teal there is under the
+ * 3:1 a status mark needs.
+ */
+const NOW_FILL =
+  "bg-[color:color-mix(in_oklch,var(--now)_55%,var(--foreground))] dark:bg-[color:var(--now)]";
+
 function StepDot({ state }: { state: "done" | "current" | "todo" }) {
   if (state === "current")
     return (
       <span className="relative inline-flex size-2.5 shrink-0">
         <span
           aria-hidden
-          className="absolute inset-0 rounded-full opacity-40 motion-safe:animate-ping"
-          style={{ background: "var(--now)", animationDuration: "2.4s" }}
+          className={`absolute inset-0 rounded-full opacity-40 motion-safe:animate-ping ${NOW_FILL}`}
+          style={{ animationDuration: "2.4s" }}
         />
         <span
           aria-hidden
-          className="relative inline-flex size-2.5 rounded-full"
-          style={{ background: "var(--now)" }}
+          className={`relative inline-flex size-2.5 rounded-full ${NOW_FILL}`}
         />
       </span>
     );

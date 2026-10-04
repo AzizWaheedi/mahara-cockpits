@@ -373,8 +373,9 @@ describe("24. reading a link out", () => {
       refusal: "No message can reach this lead.",
     });
     expect(R.readOut(r)).toBeNull();
+    // A Zoom link nobody can say: copy it, or move to Meet, whose link can be.
     expect(say(r)).toBe(
-      "Not sent: no message can reach this lead. Copy the link and send it another way.",
+      "Not sent: no message can reach this lead. Copy the link and send it another way, or end this room and use Meet, whose link can be read out.",
     );
     expect(say(r)).not.toContain("zoom.us");
     expect(R.roomSteps(r)[0].note).toBe("not sent");

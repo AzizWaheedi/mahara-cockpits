@@ -1,9 +1,12 @@
+import { isAuthRetryableFetchError } from "@supabase/supabase-js";
 import {
   type ApiBody,
   ApiError,
   answerFailure,
   readFailure,
+  SIGNED_OUT,
   sendFailure,
+  UNREACHED,
 } from "./apiErrors";
 import { SUPABASE_URL, supabase } from "./supabase";
 
@@ -35,8 +38,17 @@ export function setApiTimeout(ms: number): void {
 export async function api<T = Record<string, unknown>>(
   action: string,
   body: Record<string, unknown> = {},
+  /**
+   * A shorter wait for a read that is safe to ask again (live.status,
+   * room.status): a hung read then fails in seconds and the screen says it
+   * is old, instead of showing a stale truth for most of a minute.
+   */
+  opts: { timeoutMs?: number } = {},
 ): Promise<T> {
-  const wait = waitMs;
+  const wait =
+    opts.timeoutMs && opts.timeoutMs > 0
+      ? Math.min(opts.timeoutMs, waitMs)
+      : waitMs;
   const stop = new AbortController();
   const timer = window.setTimeout(() => stop.abort(), wait);
   const gaveUp = new Promise<never>((_, reject) =>
@@ -49,9 +61,17 @@ export async function api<T = Record<string, unknown>>(
   try {
     // The session is read inside the wait too: a token refresh that hangs
     // must not hold a button on busy.
-    const { data } = await Promise.race([supabase.auth.getSession(), gaveUp]);
+    const { data, error } = await Promise.race([
+      supabase.auth.getSession(),
+      gaveUp,
+    ]);
     const token = data.session?.access_token;
-    if (!token) throw new ApiError("Sign in again.", "signin");
+    // A laptop that woke with its token expired and the network still down
+    // gets no session and a retryable error, while the session stays
+    // stored: that is the connection, not a sign-in that ran out.
+    if (!token && error && isAuthRetryableFetchError(error))
+      throw new ApiError(UNREACHED, "network");
+    if (!token) throw new ApiError(SIGNED_OUT, "signin");
     let res: Response;
     try {
       res = await fetch(`${SUPABASE_URL}/functions/v1/sales-api`, {

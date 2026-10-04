@@ -49,6 +49,17 @@
  *   auto     1                 automatic mode after a missed call
  *   create   ok | refused | failed
  *   waves    running | paused | none | off   (the Follow-ups page)
+ *   reply    1                 P3's reply alert in the banner
+ *   handover 1                 a stand-in for P2's handover strip
+ *
+ * And the failures every live-call screen must survive:
+ *
+ *   net      down | drop       sales-api unreachable (drop: after 6 s,
+ *                              so "Not updated since" shows)
+ *   answer   garbage           sales-api answers 200 with nonsense
+ *   auth     expired | 401     no session at all, or sales-api says "Sign
+ *                              in again." with a 401
+ *   reads    fail | hang       every table read fails, or never answers
  *
  * e.g. /sales/harness.html?path=/dialer&room=sent,
  * /sales/harness.html?path=/dialer&call=noanswer&auto=1,
@@ -966,6 +977,16 @@ async function main() {
     const path = url.pathname;
     if (path.endsWith("/rpc/cockpit_sales_whoami")) return json(F.ME);
     if (path.startsWith("/functions/v1/sales-api")) {
+      // The failure knobs: the server gone, a garbled yes, a lapsed sign-in.
+      if (
+        live.net === "down" ||
+        (live.net === "drop" && Date.now() - START > 6000)
+      )
+        throw new TypeError("Failed to fetch");
+      if (live.auth === "401")
+        return json({ ok: false, error: "Sign in again." }, 401);
+      if (live.answer === "garbage")
+        return json({ ok: true, garbage: [1, { x: null }], error: { no: 1 } });
       const body = JSON.parse(String(init?.body ?? "{}"));
       try {
         return json({ ok: true, ...(await salesApi(body, init?.signal)) });
@@ -989,6 +1010,16 @@ async function main() {
     }
     const m = path.match(/\/rest\/v1\/([a-z_]+)$/);
     if (!m) return json([]);
+    // Every table read fails, or never answers (until the page gives up).
+    if (live.reads === "fail")
+      return json(
+        { code: "XX000", message: "The harness refused this read." },
+        500,
+      );
+    if (live.reads === "hang") {
+      await sleep(10 * 60_000, init?.signal);
+      return json([]);
+    }
     let rows = [...(tables[m[1]] ?? [])];
     for (const [k, v] of url.searchParams) {
       if (k === "or") {
@@ -1068,15 +1099,32 @@ async function main() {
   const { supabase } = await import("../lib/supabase");
   // api() asks for a session before calling the function; the harness has one.
   supabase.auth.getSession = (async () => ({
-    data: { session: { access_token: "harness" } },
+    data: {
+      session: live.auth === "expired" ? null : { access_token: "harness" },
+    },
     error: null,
   })) as unknown as typeof supabase.auth.getSession;
+  // No real sign-in here: a refresh finds nothing, as an expired one would.
+  supabase.auth.refreshSession = (async () => ({
+    data: { session: null, user: null },
+    error: null,
+  })) as unknown as typeof supabase.auth.refreshSession;
   const { setApiTimeout } = await import("../lib/api");
   setApiTimeout(knobs.timeout);
 
   const { Seated } = await import("../App");
   const { SalesBanner } = await import("../components/SalesBanner");
+  const { replyFixture } = await import("./roomFixtures");
   const { useState } = await import("react");
+  // P2's handover strip and P3's reply alert are not built yet: stand-ins,
+  // so their banner slots can be seen.
+  const reply = live.reply ? replyFixture() : null;
+  const handover = live.handover ? (
+    <div className="flex min-h-11 items-center gap-3 text-[13px]">
+      <span className="inline-flex size-2.5 shrink-0 rounded-full bg-[color:var(--now)]" />
+      Finding a closer for Mona. The strip says when one takes it.
+    </div>
+  ) : null;
   function Harness() {
     const [drawer, setDrawer] = useState(false);
     return (
@@ -1086,7 +1134,14 @@ async function main() {
         isAdmin
         drawer={drawer}
         setDrawer={setDrawer}
-        banner={<SalesBanner portal={null} />}
+        banner={
+          <SalesBanner
+            portal={null}
+            replyAlert={reply}
+            handover={handover}
+            handoverActive={Boolean(handover)}
+          />
+        }
       />
     );
   }

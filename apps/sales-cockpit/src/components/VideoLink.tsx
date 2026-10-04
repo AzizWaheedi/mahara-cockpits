@@ -1,5 +1,6 @@
 import { ChevronDown, Loader2, Video } from "lucide-react";
 import { type CSSProperties, useEffect, useId, useRef, useState } from "react";
+import { Link } from "react-router";
 import { api } from "../lib/api";
 import { useNow, useSetting, useTemplates } from "../lib/data";
 import {
@@ -13,13 +14,14 @@ import {
   type Provider,
   providerName,
   type RoomView,
+  refusalCode,
   roomsApi,
   useLiveStatus,
 } from "../lib/rooms";
 import {
   AUTO_SEND_S,
   autoLeft,
-  autoSentence,
+  autoParts,
   callLinkLive,
   choiceLabels,
   guardOpen,
@@ -34,6 +36,7 @@ import {
   videoMenu,
 } from "../lib/videoLink";
 import { button, buttonPrimary } from "./kit";
+import { Say } from "./RoomLine";
 
 /**
  * "Send a video link" (P1), where a page offers it: the dialer after a call
@@ -49,10 +52,17 @@ import { button, buttonPrimary } from "./kit";
  * - `VideoCallMenu` is C42's one menu in the lead page's header.
  */
 
-const TOUCH = "pointer-coarse:min-h-11";
+/** 44 px on touch, over the touch rule in index.css (outside the layers). */
+const TOUCH = "pointer-coarse:min-h-11!";
+
+/** Said where "Send a video link" would be when the setting could not be read. */
+export const ROOMS_UNREAD =
+  "Video links could not be checked. Reload the page, or call the lead.";
 
 export interface RoomsSetup {
   rooms: RoomsSwitches | null;
+  /** The `rooms` setting could not be read (it is tried again by itself). */
+  error: string | null;
   /** live.enabled: live handover is switched on. */
   liveOn: boolean;
   /** The WhatsApp gate; null while it is read. */
@@ -70,6 +80,7 @@ export function useRoomsSetup(): RoomsSetup {
   const parsed = readRoomsSetting(rooms.data);
   return {
     rooms: parsed,
+    error: rooms.error && !rooms.data ? rooms.error : null,
     liveOn: liveSwitchOn(live.data),
     guard: guard.error ? null : guardOpen(guard.data),
     templateLive: templates.error
@@ -170,10 +181,26 @@ export function createAsk(
 export function VideoPicker(props: VideoPickerProps) {
   const { choice, planLine, onRoom, onCancel, className = "" } = props;
   const [busy, setBusy] = useState<Provider | null>(null);
-  const [error, setError] = useState<string | null>(props.initialError ?? null);
+  const [error, setError] = useState<{
+    text: string;
+    code: string | null;
+  } | null>(
+    props.initialError ? { text: props.initialError, code: null } : null,
+  );
   const labels = choiceLabels(choice);
   const busyRef = useRef(false);
   const id = useId();
+  // The seat's other open room, for "You already have a room open".
+  const live = useLiveStatus(true);
+  const elsewhere =
+    error?.code === "host_has_room"
+      ? ((live.data?.rooms ?? []).find(
+          r =>
+            !isFinal(r.state) &&
+            r.contact_id &&
+            r.contact_id !== props.contactId,
+        ) ?? null)
+      : null;
 
   async function make(provider: Provider) {
     if (busyRef.current) return;
@@ -185,7 +212,7 @@ export function VideoPicker(props: VideoPickerProps) {
       const out = await roomsApi.create(ask);
       onRoom(out.room, ask);
     } catch (e) {
-      setError(errorText(e));
+      setError({ text: errorText(e), code: refusalCode(e) });
     } finally {
       busyRef.current = false;
       setBusy(null);
@@ -255,7 +282,22 @@ export function VideoPicker(props: VideoPickerProps) {
           role="alert"
           className="callout-bad mt-2.5 rounded-[var(--radius-md)] border px-3 py-2 text-sm [overflow-wrap:anywhere]"
         >
-          {error}
+          {error.text}
+          {error.code === "host_has_room" ? (
+            elsewhere?.contact_id ? (
+              <>
+                {" "}
+                <Link
+                  to={`/lead/${elsewhere.contact_id}`}
+                  className={`inline-flex items-center font-medium underline underline-offset-2 ${TOUCH}`}
+                >
+                  Open that lead
+                </Link>
+              </>
+            ) : (
+              " Your other room is on the lead you sent it to."
+            )
+          ) : null}
         </p>
       ) : null}
     </section>
@@ -276,7 +318,7 @@ export function VideoLinkButton({
     <button
       type="button"
       onClick={onPress}
-      className={`${primary ? buttonPrimary : button} ${className}`}
+      className={`${primary ? buttonPrimary : button} ${TOUCH} ${className}`}
     >
       <Video className="size-3.5" aria-hidden />
       Send a video link
@@ -332,7 +374,7 @@ export function AutoVideoStrip({
         }
       />
       <span className="min-w-0 flex-1" role="status">
-        {autoSentence(name, left)}
+        <Say s={autoParts(name, left)} />
       </span>
       <button
         type="button"
@@ -398,7 +440,7 @@ export function VideoCallMenu({
           setToLeft(r.left + 288 > window.innerWidth - 16);
           setOpen(o => !o);
         }}
-        className={button}
+        className={`${button} ${TOUCH}`}
       >
         <Video className="size-3.5" aria-hidden />
         Video call

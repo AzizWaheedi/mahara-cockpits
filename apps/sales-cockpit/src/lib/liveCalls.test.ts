@@ -419,11 +419,11 @@ describe("the picker: Meet for the setter, Zoom for the closer", () => {
     ).toBeNull();
   });
 
-  test("labels: [Meet] [Zoom instead]", () => {
+  test("labels say what they do: [Send a Meet link] [Use Zoom instead]", () => {
     const c = V.providerChoice({ setting: setting(), role: "setter" });
     expect(c && V.choiceLabels(c)).toEqual({
-      first: "Meet",
-      other: "Zoom instead",
+      first: "Send a Meet link",
+      other: "Use Zoom instead",
     });
   });
 });
@@ -460,15 +460,15 @@ describe("linkPlanLine says where the link will go, or nothing", () => {
     );
     expect(line()).toBe("The lead gets the link on a WhatsApp template.");
     expect(line({ templateLive: false })).toBe(
-      "The lead gets the link on email.",
+      "The lead gets the link by email.",
     );
-    expect(line({ emailFirst: true })).toBe("The lead gets the link on email.");
+    expect(line({ emailFirst: true })).toBe("The lead gets the link by email.");
   });
 
   test("the gate, the switches and do-not-disturb close WhatsApp", () => {
-    expect(line({ guardOpen: false })).toBe("The lead gets the link on email.");
+    expect(line({ guardOpen: false })).toBe("The lead gets the link by email.");
     expect(line({ whatsapp: wa({ dnd: true }) })).toBe(
-      "The lead gets the link on email.",
+      "The lead gets the link by email.",
     );
     expect(
       line({
@@ -476,10 +476,10 @@ describe("linkPlanLine says where the link will go, or nothing", () => {
           send: { whatsapp_text: true, whatsapp_template: false, email: true },
         }),
       }),
-    ).toBe("The lead gets the link on email.");
+    ).toBe("The lead gets the link by email.");
     // The template needs the short link (its button opens it).
     expect(line({ setting: setting({ short_link: false }) })).toBe(
-      "The lead gets the link on email.",
+      "The lead gets the link by email.",
     );
   });
 
@@ -955,7 +955,10 @@ describe("the rooms card's lines", () => {
       "bad",
       "bad",
     ]);
-    expect(lines[0].text).toBe("The room worker has not run yet.");
+    // A red line ends with the runbook's next step.
+    expect(lines[0].text).toBe(
+      `The room worker has not run yet. ${H.ROOM_JOBS[0].fix}`,
+    );
     expect(lines[2].text).toBe("Zoom's meeting events: no report yet.");
     // Rooms off: a worker that has not run is no fault.
     expect(H.roomJobLines([], NOW, false)[0].tone).toBe("quiet");
@@ -980,15 +983,17 @@ describe("the rooms card's lines", () => {
     );
     expect(lines[0]).toMatchObject({
       tone: "bad",
-      text: "The room worker last ran at 14:10, later than it should.",
+      text: `The room worker last ran at 14:10, later than it should. ${H.ROOM_JOBS[0].fix}`,
     });
+    // Times are set in Geist Mono.
+    expect(lines[0].say).toContainEqual({ mono: "14:10" });
     expect(lines[1]).toMatchObject({
       tone: "good",
       text: "The Zoom and Google check: working, last at 14:07. Checked 3 hosts.",
     });
     expect(lines[2]).toMatchObject({
       tone: "bad",
-      text: "Zoom's meeting events failed at 14:03: The secret is not set.",
+      text: `Zoom's meeting events failed at 14:03: The secret is not set. ${H.ROOM_JOBS[2].fix}`,
     });
     // A route that reports only on use is never late.
     expect(lines[3]).toMatchObject({ tone: "good" });
@@ -1075,6 +1080,12 @@ describe("the harness's rooms", () => {
       auto: false,
       create: "ok",
       waves: "running",
+      reply: false,
+      handover: false,
+      net: "ok",
+      answer: "ok",
+      auth: "ok",
+      reads: "ok",
     });
     expect(knobs("room=sent&offer=incoming&live=on&auto=1")).toMatchObject({
       room: "sent",

@@ -7,7 +7,14 @@
  * nobody has checked yet is "not checked", never "not set up".
  */
 import { clock } from "./format";
-import type { Provider, ZoomStatus } from "./rooms";
+import {
+  type Health,
+  healthTone,
+  monoTimes,
+  type Provider,
+  type Sentence,
+  type ZoomStatus,
+} from "./rooms";
 
 export interface JobRow {
   worker: string;
@@ -24,6 +31,8 @@ export interface RoomJob {
   what: string;
   /** Late after this many seconds without a report; null: reports only on failure. */
   staleS: number | null;
+  /** The runbook's next step when the line is red: who checks what. */
+  fix: string;
 }
 
 /**
@@ -33,36 +42,70 @@ export interface RoomJob {
  * database's own sweep (every minute) and watchdog (every five).
  */
 export const ROOM_JOBS: readonly RoomJob[] = [
-  { worker: "sales-desk", job: "rooms", what: "The room worker", staleS: 90 },
+  {
+    worker: "sales-desk",
+    job: "rooms",
+    what: "The room worker",
+    staleS: 90,
+    fix: "Hermes checks the rooms cron line and the log on the VPS (runbook: Video rooms are not being made).",
+  },
   {
     worker: "sales-desk",
     job: "room-hosts",
     what: "The Zoom and Google check",
     staleS: 20 * 60,
+    fix: "Hermes checks the room-hosts cron line on the VPS.",
   },
   {
     worker: "sales-live",
     job: "zoom",
     what: "Zoom's meeting events",
     staleS: null,
+    fix: "Set ZOOM_WEBHOOK_SECRET and CRON_SECRET in sales-live's secrets.",
   },
-  { worker: "sales-live", job: "go", what: "The short link", staleS: null },
-  { worker: "sales-live", job: "open", what: "Link opens", staleS: null },
-  { worker: "sales-live", job: "slack", what: "Slack presses", staleS: null },
+  {
+    worker: "sales-live",
+    job: "go",
+    what: "The short link",
+    staleS: null,
+    fix: "Hermes checks sales-live is deployed and reaches the database.",
+  },
+  {
+    worker: "sales-live",
+    job: "open",
+    what: "Link opens",
+    staleS: null,
+    fix: "Hermes checks sales-live is deployed and reaches the database.",
+  },
+  {
+    worker: "sales-live",
+    job: "slack",
+    what: "Slack presses",
+    staleS: null,
+    fix: "Set SLACK_SIGNING_SECRET in sales-live's secrets.",
+  },
   {
     worker: "sales-live",
     job: "cron",
     what: "The minute sweep's posts",
     staleS: null,
+    fix: "Hermes checks sales-live's CRON_SECRET and that sales-api takes the hooks.",
   },
   // Fix round 4: the sweep and the watchdog themselves, so a pg_net that
   // stopped answering (or a sweep that stopped) shows here without Slack.
-  { worker: "sales-api", job: "sweep", what: "The room sweep", staleS: 5 * 60 },
+  {
+    worker: "sales-api",
+    job: "sweep",
+    what: "The room sweep",
+    staleS: 5 * 60,
+    fix: "Hermes checks the mahara-sales-rooms-sweep job and sales-live's CRON_SECRET (runbook: sweep_door).",
+  },
   {
     worker: "sales-api",
     job: "watchdog",
     what: "The alert watchdog",
     staleS: 15 * 60,
+    fix: "Hermes checks the mahara-sales-watchdog job in the database.",
   },
 ];
 
@@ -72,6 +115,15 @@ export interface JobLine {
   key: string;
   tone: LineTone;
   text: string;
+  /** The same words, with times set in Geist Mono. */
+  say: Sentence;
+}
+
+/** A red line's sentence already says what to do (the job wrote its own next step). */
+function saysNextStep(detail: string): boolean {
+  return /(^|[.!?]\s+)(Add|Set|Check|Run|Deploy|Connect|Apply|Accept|Reconnect|Make|Ask|Press|Call|Create)\b/.test(
+    detail,
+  );
 }
 
 const sentence = (s: string | null | undefined) => {
@@ -92,36 +144,67 @@ export function roomJobLines(
 ): JobLine[] {
   return ROOM_JOBS.map(j => {
     const key = `${j.worker}:${j.job}`;
+    const line = (tone: LineTone, text: string): JobLine => {
+      // A red line ends with what to do, unless the job said it already.
+      const full =
+        tone === "bad" && !saysNextStep(text) ? `${text} ${j.fix}` : text;
+      return { key, tone, text: full, say: monoTimes(full) };
+    };
     const r = rows.find(x => x.worker === j.worker && x.job === j.job);
     if (!r) {
-      if (j.staleS === null)
-        return { key, tone: "quiet", text: `${j.what}: no report yet.` };
-      return {
-        key,
-        tone: roomsOn ? "bad" : "quiet",
-        text: `${j.what} has not run yet.`,
-      };
+      if (j.staleS === null) return line("quiet", `${j.what}: no report yet.`);
+      return line(roomsOn ? "bad" : "quiet", `${j.what} has not run yet.`);
     }
     const at = Date.parse(r.at);
+    // A time nobody can read is never "working": it is said, in the owed colour.
+    if (!Number.isFinite(at))
+      return line(
+        r.ok ? "owed" : "bad",
+        `${j.what} reported at a time that cannot be read.`,
+      );
     const when = clock(r.at);
     if (!r.ok)
-      return {
-        key,
-        tone: "bad",
-        text: `${j.what} failed at ${when}${r.detail ? `: ${sentence(r.detail)}` : "."}`,
-      };
-    if (j.staleS !== null && Number.isFinite(at) && now - at > j.staleS * 1000)
-      return {
-        key,
-        tone: roomsOn ? "bad" : "owed",
-        text: `${j.what} last ran at ${when}, later than it should.`,
-      };
-    return {
-      key,
-      tone: "good",
-      text: `${j.what}: working, last at ${when}.${r.detail && j.staleS !== null ? ` ${sentence(r.detail)}` : ""}`,
-    };
+      return line(
+        "bad",
+        `${j.what} failed at ${when}${r.detail ? `: ${sentence(r.detail)}` : "."}`,
+      );
+    if (j.staleS !== null && now - at > j.staleS * 1000)
+      return line(
+        roomsOn ? "bad" : "owed",
+        `${j.what} last ran at ${when}, later than it should.`,
+      );
+    return line(
+      "good",
+      `${j.what}: working, last at ${when}.${r.detail && j.staleS !== null ? ` ${sentence(r.detail)}` : ""}`,
+    );
   });
+}
+
+/**
+ * The card's head line: the health sentence, unless the jobs behind it
+ * disagree. "Rooms: working" never sits above red jobs: the worst tone of
+ * the two leads, and the sentence says how many jobs need attention.
+ */
+export function roomsSummary(
+  health: Health,
+  lines: readonly JobLine[],
+): { tone: "good" | "owed" | "bad"; sentence: string | null } {
+  const own = healthTone(health);
+  const bad = lines.filter(l => l.tone === "bad").length;
+  const owed = lines.filter(l => l.tone === "owed").length;
+  if (own === "bad") return { tone: "bad", sentence: null };
+  if (bad)
+    return {
+      tone: "bad",
+      sentence: `Rooms make links, but ${bad} ${bad === 1 ? "job needs" : "jobs need"} attention.`,
+    };
+  if (own === "owed") return { tone: "owed", sentence: null };
+  if (owed)
+    return {
+      tone: "owed",
+      sentence: `Rooms make links; ${owed} ${owed === 1 ? "job is" : "jobs are"} late or unclear.`,
+    };
+  return { tone: "good", sentence: null };
 }
 
 /** A seat's row in cockpit_sales_room_hosts. */
@@ -136,8 +219,9 @@ export interface HostRow {
 
 const ZOOM_WORDS: Record<ZoomStatus, { tone: LineTone; text: string }> = {
   licensed: { tone: "good", text: "Zoom: ready" },
+  // Works, with a limit someone has to keep in mind: owed, not green.
   basic: {
-    tone: "good",
+    tone: "owed",
     text: "Zoom: ready on Basic, so meetings end at 40 minutes",
   },
   pending: {

@@ -14,7 +14,13 @@
  * Pure functions take `now`, so the tests pin the clock. Times read in
  * Kuwait, as everywhere else in the cockpit (format.ts).
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { api } from "./api";
 import { ApiError, type ApiFailure, uncertain } from "./apiErrors";
 import { clock, KUWAIT } from "./format";
@@ -438,8 +444,14 @@ export function normalizePresence(v: unknown): Presence | null {
   return me;
 }
 
+/**
+ * The health line as the screens can trust it, or null. Without a yes or a
+ * no in `worker_ok` the answer says nothing about the worker: null, so a
+ * garbled answer never reads as "Video rooms are not being made" (a false alarm) or as
+ * working.
+ */
 export function normalizeHealth(v: unknown): Health | null {
-  if (!isObj(v)) return null;
+  if (!isObj(v) || typeof v.worker_ok !== "boolean") return null;
   return {
     worker_ok: v.worker_ok === true,
     last_run_at: when(v.last_run_at),
@@ -758,6 +770,20 @@ export function leftText(p: { left: number; form: "paren" | "sentence" }) {
     : `${mmss(p.left)} left.`;
 }
 
+/** Words with every clock time ("14:03", "14:03:58") set in Geist Mono. */
+export function monoTimes(text: string): Sentence {
+  const out: Sentence = [];
+  const re = /\b\d{1,2}:\d{2}(?::\d{2})?\b/g;
+  let last = 0;
+  for (let m = re.exec(text); m; m = re.exec(text)) {
+    if (m.index > last) out.push(text.slice(last, m.index));
+    out.push({ mono: m[0] });
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) out.push(text.slice(last));
+  return out;
+}
+
 /** The sentence as text; `speak` drops the countdowns. */
 export function sentenceText(s: Sentence, speak = false): string {
   const out = s
@@ -782,6 +808,10 @@ export function sentenceText(s: Sentence, speak = false): string {
 /** What the room panel is saying right now. */
 export type RoomMoment =
   | "making"
+  /** Still being made while the room worker is down: it will not be made. */
+  | "making_down"
+  /** Still being made well past the time a room takes (150 s). */
+  | "making_late"
   | "failed"
   | "ready"
   | "standby_open"
@@ -795,7 +825,11 @@ export type RoomMoment =
   | "host_in"
   | "joined"
   | "still_on_call"
+  /** Its deadline passed two minutes ago and the sweep has not closed it. */
+  | "overdue"
   | "expired"
+  /** Ended (by the rep, or by Zoom) with nobody in it. */
+  | "ended_empty"
   | "closed";
 
 function isStandby(room: RoomView): boolean {
@@ -804,19 +838,30 @@ function isStandby(room: RoomView): boolean {
 
 export function roomMoment(room: RoomView, now: number): RoomMoment {
   const s = room.state;
-  if (isMaking(s)) return "making";
+  if (isMaking(s)) {
+    const asked = t(room.created_at);
+    return asked !== null && now - asked >= MAKING_LATE_MS
+      ? "making_late"
+      : "making";
+  }
   if (s === "failed") return "failed";
   if (isStandby(room)) {
     if (isFinal(s)) return "closed";
     return s === "open" ? "standby_open" : "standby_in";
   }
+  // Only the sweep's own expiry says "did not join in 10 minutes": a room
+  // the rep (or Zoom) ended with nobody in it says it ended.
   if (s === "expired") return "expired";
-  if (s === "ended" || s === "cancelled")
-    return room.result === "no_join" ? "expired" : "closed";
+  if (s === "ended" && room.result === "no_join") return "ended_empty";
+  if (s === "ended" || s === "cancelled") return "closed";
   if (s === "lead_in") {
     const end = t(room.ends_at);
     return end !== null && now >= end ? "still_on_call" : "joined";
   }
+  // Two minutes past its deadline and still open: the sweep is late, and a
+  // countdown stuck at 0:00 tells the rep nothing.
+  const deadline = roomDeadline(room);
+  if (deadline !== null && now >= deadline + OVERDUE_MS) return "overdue";
   // open or host_in. A lead waiting in the room is the news even when no
   // message could go (the rep read the link out), so it comes first.
   if (room.lead_waiting_at) return "waiting_room";
@@ -849,10 +894,24 @@ export function roomMoment(room: RoomView, now: number): RoomMoment {
  */
 export const LINK_LATE_MS = 90_000;
 
+/**
+ * How long "Making your room..." may say so: the sweep fails a room the
+ * worker never picked up at a minute (R1) and one whose create never
+ * answered at two (R2); past that the room is not coming (ours).
+ */
+export const MAKING_LATE_MS = 150_000;
+
+/** How long past its deadline a room may sit before the panel says the sweep is late. */
+export const OVERDUE_MS = 120_000;
+
 /** The moment, with "Still on the call?" answered "Still on it" for now. */
 export function momentFor(room: RoomView, ctx: RoomCtx): RoomMoment {
   const m = roomMoment(room, ctx.now);
-  return m === "still_on_call" && ctx.stillOn ? "joined" : m;
+  if (m === "still_on_call" && ctx.stillOn) return "joined";
+  // No worker is making rooms: this one will not be made, late or not.
+  if ((m === "making" || m === "making_late") && ctx.workerDown)
+    return "making_down";
+  return m;
 }
 
 /**
@@ -924,7 +983,11 @@ const WHOLE_SENTENCES = new Set([
 export function failedSentence(room: RoomView): Sentence {
   const P = providerName(room.provider);
   const O = providerName(otherProvider(room.provider));
-  const err = String(room.error ?? "").trim();
+  // The database's own failures start "Not made: " (the sweep's R1 and R2);
+  // the sentence already says the room was not made, so that goes.
+  const err = String(room.error ?? "")
+    .trim()
+    .replace(/^not made:\s*/i, "");
   // Ours: the provider gave no reason at all.
   if (!err) return [`${P} did not make the room. Try ${O}, or call again.`];
   if (WHOLE_SENTENCES.has(err) || /[.!?]\s+\S/.test(err)) return [err];
@@ -986,27 +1049,25 @@ function joinedSentence(room: RoomView, v: Voice): Sentence {
   }
 }
 
-/** P1's lead page line: "Video room on Meet: sent 14:03, opened 14:05, joined 14:06." */
+/**
+ * What a closed room's sentence says: how it ended, once. The room line
+ * above it already carries every time (sent, opened, joined), so the
+ * sentence does not repeat them, nor the title's "Video room on Meet".
+ */
 export function summarySentence(room: RoomView): Sentence {
-  const parts: Sentence = [];
-  const add = (word: string, iso: string | null) => {
-    if (!iso) return;
-    if (parts.length) parts.push(", ");
-    parts.push(`${word} `, { mono: clock(iso) });
-  };
-  add("sent", room.link_sent_at);
-  add("opened", room.first_open_at);
-  add("joined", room.lead_in_at);
-  const head = `Video room on ${providerName(room.provider)}: `;
-  // Ours: a room that closed before anything happened.
-  if (!parts.length)
+  const at = { mono: clock(room.ended_at ?? room.created_at) };
+  if (room.result === "moved_to_phone")
+    return ["Moved to the phone at ", at, ". Room closed."];
+  if (room.result === "joined" || (room.result === null && room.lead_in_at))
+    return ["Finished at ", at, "."];
+  if (room.result === "admit_blocked")
     return [
-      head,
-      "closed at ",
-      { mono: clock(room.ended_at ?? room.created_at) },
-      ".",
+      "Closed at ",
+      at,
+      ` so the lead can move to ${providerName(otherProvider(room.provider))}.`,
     ];
-  return [head, ...parts, "."];
+  // Ours: cancelled while it was being made, or closed before anything happened.
+  return ["Room closed at ", at, "."];
 }
 
 export interface RoomCtx {
@@ -1021,7 +1082,16 @@ export interface RoomCtx {
   manager?: boolean;
   /** The room worker is down (the health line is red): no room can be made, so a failed room offers no retry. */
   workerDown?: boolean;
+  /**
+   * The room line is on screen with its countdown: the sentence under it
+   * leaves the countdown out, so it is not said twice.
+   */
+  lineShown?: boolean;
 }
+
+/** The sentence's next step when a Zoom link cannot be read out (no short link yet). */
+const ZOOM_NOT_SAYABLE =
+  "Copy the link and send it another way, or end this room and use Meet, whose link can be read out.";
 
 /** The status sentence under the room line. */
 export function roomSentence(room: RoomView, ctx: RoomCtx): Sentence {
@@ -1030,9 +1100,29 @@ export function roomSentence(room: RoomView, ctx: RoomCtx): Sentence {
   const name = first(room) ?? "";
   const P = providerName(room.provider);
   const left = roomLeft(room, ctx.now);
+  // The countdown in words only where no room line shows it.
+  const paren = (lead: string): Sentence =>
+    left !== null && !ctx.lineShown
+      ? [lead, { left, form: "paren" }, "."]
+      : [`${lead.trimEnd()}.`];
+  const O = providerName(otherProvider(room.provider));
+  // A Zoom link with its passcode in it, before the short link: nobody can say it.
+  const unsayable = room.provider === "zoom" && !readOut(room);
   switch (m) {
     case "making":
       return [`Making your ${P} room...`];
+    case "making_down":
+      return [
+        "This room will not be made: video rooms are down. Call the lead on the phone, or send your own Zoom or Meet link.",
+      ];
+    case "making_late":
+      return room.purpose === "booked"
+        ? ["This room is taking too long to make. Call the lead on the phone."]
+        : [
+            `This room is taking too long to make. Call the lead on the phone, or end it and try ${O}.`,
+          ];
+    case "overdue":
+      return ["This room should have closed. Call the lead, or end the room."];
     case "failed":
       return failedSentence(room);
     case "ready":
@@ -1055,13 +1145,7 @@ export function roomSentence(room: RoomView, ctx: RoomCtx): Sentence {
       // Ours: a link went but the server did not say where ("on" is left out).
       const head = ch ? `Link sent on ${ch} at ` : "Link sent at ";
       if (v === "p1" && left !== null)
-        return [
-          head,
-          at,
-          `. Waiting for ${name} `,
-          { left, form: "paren" },
-          ".",
-        ];
+        return [head, at, ".", ...paren(` Waiting for ${name} `)];
       return [head, at, "."];
     }
     case "not_confirmed": {
@@ -1073,7 +1157,9 @@ export function roomSentence(room: RoomView, ctx: RoomCtx): Sentence {
           "WhatsApp did not confirm the template and the email did not go.";
         return said
           ? [`${head} Read the link out: `, { mono: said }]
-          : [`${head} Copy the link and send it another way.`];
+          : [
+              `${head} ${unsayable ? ZOOM_NOT_SAYABLE : "Copy the link and send it another way."}`,
+            ];
       }
       return v === "p1"
         ? [
@@ -1084,7 +1170,11 @@ export function roomSentence(room: RoomView, ctx: RoomCtx): Sentence {
     case "link_late": {
       const said = readOut(room);
       if (!said)
-        return ["The link has not gone yet. Copy it and send it another way."];
+        return unsayable
+          ? [
+              "The link has not gone yet. Copy it and send it another way, or end this room and use Meet, whose link can be read out.",
+            ]
+          : ["The link has not gone yet. Copy it and send it another way."];
       return ["The link has not gone yet. Read it out: ", { mono: said }];
     }
     case "not_sent": {
@@ -1092,7 +1182,7 @@ export function roomSentence(room: RoomView, ctx: RoomCtx): Sentence {
       // Ours: a link nobody could say (a Zoom link before the short link).
       if (!said)
         return [
-          `Not sent: ${reasonWords(room.refusal)}. Copy the link and send it another way.`,
+          `Not sent: ${reasonWords(room.refusal)}. ${unsayable ? ZOOM_NOT_SAYABLE : "Copy the link and send it another way."}`,
         ];
       return [
         `Not sent: ${reasonWords(room.refusal)}. Read it out: `,
@@ -1113,9 +1203,7 @@ export function roomSentence(room: RoomView, ctx: RoomCtx): Sentence {
       return ["The lead is in the waiting room. Admit them in Zoom."];
     case "host_in": {
       const who = v === "p1" ? name : "the lead";
-      return left !== null
-        ? ["You are in. Waiting for ", who, " ", { left, form: "paren" }, "."]
-        : [`You are in. Waiting for ${who}.`];
+      return paren(`You are in. Waiting for ${who} `);
     }
     case "joined":
       return joinedSentence(room, v);
@@ -1127,6 +1215,16 @@ export function roomSentence(room: RoomView, ctx: RoomCtx): Sentence {
         : [
             "The lead did not join in 10 minutes. Room closed. Call again or send a message.",
           ];
+    case "ended_empty": {
+      const at = { mono: clock(room.ended_at ?? room.created_at) };
+      return ctx.canMarkIntro
+        ? ["Room ended at ", at, ". Nobody joined. Mark the intro:"]
+        : [
+            "Room ended at ",
+            at,
+            ". Nobody joined. Call again or send a message.",
+          ];
+    }
     case "closed":
       return summarySentence(room);
   }
@@ -1142,27 +1240,43 @@ export function roomHint(room: RoomView, now: number): Sentence | null {
     return null;
   if (room.lead_waiting_at || room.host_in_at) return null;
   if (!manualButtons(room, now)) return null;
-  return ["Zoom has not told us yet. Press when it happens."];
+  return ["Zoom has not said you are in. Press I'm in once you are."];
 }
 
 export type Tone = "now" | "good" | "owed" | "bad" | "quiet";
 
+/**
+ * A room that failed only because the host's Zoom seat is waiting on its
+ * invite (the server's sentence, or the room worker's): something the rep
+ * does, not a fault, so it is owed, not red.
+ */
+function waitsOnZoomSeat(room: RoomView | null | undefined): boolean {
+  return /seat is not active yet|invite is not accepted yet/i.test(
+    room?.error ?? "",
+  );
+}
+
 /** The colour of the dot beside the sentence (the words stay in ink). */
-export function roomTone(m: RoomMoment): Tone {
+export function roomTone(m: RoomMoment, room?: RoomView | null): Tone {
   switch (m) {
     case "joined":
-    case "still_on_call":
       return "good";
     case "not_sent":
     case "link_late":
     case "not_confirmed":
     case "expired":
+    case "ended_empty":
+    case "making_late":
+    case "overdue":
       return "owed";
     case "failed":
+      return waitsOnZoomSeat(room) ? "owed" : "bad";
+    case "making_down":
       return "bad";
     case "closed":
       return "quiet";
     default:
+      // "Still on the call?" asks for an answer now; it is not news of a join.
       return "now";
   }
 }
@@ -1180,8 +1294,14 @@ export interface Step {
   note: string | null;
 }
 
-/** The room line: Link sent, Opened, You're in, Lead in. */
-export function roomSteps(room: RoomView): Step[] {
+/**
+ * The room line: Link sent, Opened, You're in, Lead in. `frozen` draws no
+ * step as current: what shows may be old, or the room is not moving.
+ */
+export function roomSteps(
+  room: RoomView,
+  opts: { frozen?: boolean } = {},
+): Step[] {
   const s = room.state;
   const final = isFinal(s);
   const readOutOnly = !room.link_sent_at && Boolean(room.refusal);
@@ -1227,7 +1347,7 @@ export function roomSteps(room: RoomView): Step[] {
       note: null,
     },
   ];
-  if (!final && !isStandby(room)) {
+  if (!final && !isStandby(room) && !opts.frozen) {
     const next = steps.find(
       st => !st.done && !(st.key === "sent" && readOutOnly),
     );
@@ -1286,11 +1406,29 @@ function momentActions(
   const m = momentFor(room, ctx);
   const hasLead = Boolean(room.contact_id);
   const booked = room.purpose === "booked";
+  const other = providerName(otherProvider(room.provider));
   switch (m) {
     case "making":
+    case "making_down":
       return { primary: null, quiet: booked ? [] : [act("end", "End room")] };
+    case "making_late":
+      // Ours: ending it and asking the other provider is one press.
+      return {
+        primary: null,
+        quiet: booked
+          ? []
+          : [
+              ...(hasLead ? [act("retry", `Try ${other}`)] : []),
+              act("end", "End room"),
+            ],
+      };
+    case "overdue":
+      // The sweep is late: ending the room is the one thing left to do.
+      return {
+        primary: booked ? null : act("end", "End room"),
+        quiet: shortLink(room) ? [act("copy", "Copy link")] : [],
+      };
     case "failed": {
-      const other = providerName(otherProvider(room.provider));
       return {
         primary:
           hasLead && !booked && !ctx.workerDown
@@ -1304,6 +1442,7 @@ function momentActions(
       };
     }
     case "expired":
+    case "ended_empty":
       return {
         primary: null,
         quiet: ctx.canMarkIntro
@@ -1365,11 +1504,33 @@ function momentActions(
       hostIn ? act("lead_in", "The lead is in") : act("open", "Open my room"),
     );
   if (hostIn) quiet.push(act("open", "Open my room"));
-  else if (meet) quiet.push(act("host_in", "I'm in the room"));
-  else if (manualButtons(room, ctx.now)) quiet.push(act("host_in", "I'm in"));
+  // One label for the one step ("You're in" on the line), on Meet and Zoom.
+  else if (meet || manualButtons(room, ctx.now))
+    quiet.push(act("host_in", "I'm in"));
   if (shortLink(room) && !late) quiet.push(act("copy", "Copy link"));
-  if (hasLead && !booked && !room.link_channels.includes("email"))
-    quiet.push(act("email", "Also send by email"));
+  if (
+    hasLead &&
+    !booked &&
+    !room.link_channels.includes("email") &&
+    !emailBlocked(room)
+  )
+    quiet.push(
+      act(
+        "email",
+        // "Also" only when the link already went another way.
+        room.link_channels.length ? "Also send by email" : "Send by email",
+      ),
+    );
+  // A Zoom link nobody can say, and nothing sent it: Meet's link can be read out.
+  if (
+    !meet &&
+    hasLead &&
+    !booked &&
+    !ctx.workerDown &&
+    !readOut(room) &&
+    (m === "not_sent" || m === "link_late" || m === "not_confirmed")
+  )
+    quiet.push(act("retry", "Use Meet"));
   if (room.purpose === "fallback" || room.purpose === "manual")
     quiet.push(act("on_phone", "We are on the phone"));
   // P1 edge case 9: a Meet knock the setter cannot admit moves the lead to Zoom.
@@ -1377,6 +1538,17 @@ function momentActions(
     quiet.push(act("admit_blocked", "I can't let them in"));
   if (!booked) quiet.push(act("end", "End room"));
   return { primary, quiet };
+}
+
+/**
+ * The link could not go for a reason email cannot get round either: the
+ * lead has no email (or email is off, or do-not-disturb), or no message can
+ * reach them at all. "Send by email" would only be refused.
+ */
+export function emailBlocked(room: RoomView): boolean {
+  return /email|no link can go|active client|no message can reach/i.test(
+    room.refusal ?? "",
+  );
 }
 
 /** The label the undo strip shows while a press waits to be sent (ours). */
@@ -1475,15 +1647,32 @@ function stirred(room: RoomView): boolean {
   );
 }
 
-/** "Video room: Faisal, 7:40 left.", then "Faisal opened the link." */
-export function bannerRoomSentence(room: RoomView, now: number): Sentence {
-  const m = roomMoment(room, now);
+/** Moments whose panel sentence is also the banner's: each says what to do now. */
+const BANNER_SAYS_PANEL: ReadonlySet<RoomMoment> = new Set([
+  "waiting_room",
+  "not_sent",
+  "link_late",
+  "making_down",
+  "making_late",
+  "overdue",
+]);
+
+/**
+ * "Video room: Faisal, 7:40 left.", then "Faisal opened the link." With the
+ * worker down, a room still being made says it will not be made.
+ */
+export function bannerRoomSentence(
+  room: RoomView,
+  now: number,
+  ctx: { workerDown?: boolean } = {},
+): Sentence {
+  const m = momentFor(room, { now, workerDown: ctx.workerDown });
   const name = first(room);
   const Name = name ?? "The lead";
   if (m === "making")
     return [`Making your ${providerName(room.provider)} room...`];
-  if (m === "waiting_room" || m === "not_sent" || m === "link_late")
-    return roomSentence(room, { now });
+  if (BANNER_SAYS_PANEL.has(m))
+    return roomSentence(room, { now, workerDown: ctx.workerDown });
   if (m === "joined" || m === "still_on_call") return [`${Name} joined.`];
   if (room.first_open_at) return [`${Name} opened the link.`];
   const start = bookedStart(room);
@@ -1510,7 +1699,7 @@ export function bannerRoomAction(room: RoomView): {
 } {
   return room.state === "open" && room.contact_id
     ? { key: "open_room", label: "Open my room" }
-    : { key: "open_lead", label: "Open" };
+    : { key: "open_lead", label: "Open the lead" };
 }
 
 const ROOM_URGENCY: Partial<Record<RoomMoment, number>> = {
@@ -1605,6 +1794,8 @@ export interface StripLine {
   tone: Tone;
   /** A press on the offer that failed, said under it (the offer stays). */
   note: string | null;
+  /** The offer's own note from the setter, on a second line. */
+  detail: string | null;
 }
 
 const OFFER_REASON: Record<string, string> = {
@@ -1621,16 +1812,27 @@ export function offerFraction(o: Offer, now: number): number {
   return Math.min(1, Math.max(0, offerLeft(o, now) / (WAITS_S.offer * 1000)));
 }
 
-/** "Live lead: demo, Saudi Arabia, on the line with the setter. Note: {note}. 1:47 left." */
-export function offerSentence(o: Offer, now: number): Sentence {
-  const bits = [o.kind, o.country, OFFER_REASON[o.reason]]
+/**
+ * "Live demo lead, Saudi Arabia, on the line with the setter." The offer's
+ * countdown is drawn on its own beside the buttons, and the setter's note
+ * on a second line (`offerNote`), so the sentence reads at a glance.
+ */
+export function offerSentence(o: Offer, _now?: number): Sentence {
+  const kind = String(o.kind ?? "").trim();
+  const head = /^(demo|intro)$/i.test(kind)
+    ? `Live ${kind.toLowerCase()} lead`
+    : "Live lead";
+  const bits = [o.country, OFFER_REASON[o.reason]]
     .map(x => String(x ?? "").trim())
     .filter(Boolean);
-  const out: Sentence = [`Live lead: ${bits.join(", ")}.`];
+  return [`${[head, ...bits].join(", ")}.`];
+}
+
+/** The setter's one line for whoever takes the offer: "Note: Runs 3 crews." */
+export function offerNote(o: Offer): string | null {
   const note = String(o.note ?? "").trim();
-  if (note) out.push(` Note: ${note}${/[.!?]$/.test(note) ? "" : "."}`);
-  out.push(" ", { left: offerLeft(o, now), form: "sentence" });
-  return out;
+  if (!note) return null;
+  return `Note: ${note}${/[.!?]$/.test(note) ? "" : "."}`;
 }
 
 /** The offers the strip can still put in front of the seat, soonest to close first. */
@@ -1666,9 +1868,13 @@ export function offerGone(
   me: Presence,
   answered: ReadonlySet<string>,
   now: number,
+  /** The seat's rooms in the same read: a room made for the offer means it was taken here. */
+  nextRooms: readonly RoomView[] = [],
 ): StripFlash | null {
   for (const o of prev) {
     if (answered.has(o.id) || next.some(n => n.id === o.id)) continue;
+    // Taken in another tab of this seat: its room is the news, not "closed".
+    if (nextRooms.some(r => r.handover_id === o.id)) continue;
     if (awayForMiss(me)) {
       const until = t(o.offer_until);
       return {
@@ -1767,6 +1973,7 @@ export function stripLine(i: StripInput): StripLine {
       moment === "error",
     tone,
     note: null,
+    detail: null,
   });
   const f = i.flash;
 
@@ -1783,6 +1990,7 @@ export function stripLine(i: StripInput): StripLine {
       offer,
     );
     if (f?.kind === "error") l.note = f.text;
+    l.detail = offerNote(offer);
     return l;
   }
 
@@ -1878,7 +2086,7 @@ export function stripLine(i: StripInput): StripLine {
           : ["In your room. The next live lead comes to you."],
         // Waiting is the job here; leaving is the quiet choice.
         null,
-        [A("away", "Go away")],
+        [A("away", "Set me away")],
       );
     case "available": {
       const open =
@@ -1889,7 +2097,7 @@ export function stripLine(i: StripInput): StripLine {
           "down",
           [healthSentence(i.health)],
           null,
-          [A("away", "Go away")],
+          [A("away", "Set me away")],
           "bad",
         );
       if (open)
@@ -1916,9 +2124,9 @@ export function stripLine(i: StripInput): StripLine {
       if (i.standbyError)
         return line(
           "standby_failed",
-          [`Your room could not be made: ${reasonWords(i.standbyError)}.`],
-          A("available", "I'm available"),
-          [A("away", "Go away")],
+          [standbyFailedSentence(i.standbyError)],
+          A("available", "Try again"),
+          [A("away", "Set me away")],
           "owed",
         );
       // No room and no reason given (rooms for standby may be switched off).
@@ -1926,19 +2134,37 @@ export function stripLine(i: StripInput): StripLine {
         "available",
         until ? ["Available until ", until, "."] : ["Available."],
         null,
-        [A("away", "Go away")],
+        [A("away", "Set me away")],
       );
     }
     default: {
       return line(
         "away",
-        ["Away"],
+        ["Away. Live leads skip you."],
         A("available", "I'm available"),
         [],
         "quiet",
       );
     }
   }
+}
+
+/**
+ * Why the standby room was not made, and what to do. The room worker's own
+ * sentences are whole ("Your email has no Zoom user on Mahara's account.
+ * Use Meet, ..."), so they are said as they are; a bare reason is set after
+ * a colon. A reason that only repeats "could not be made" adds nothing.
+ */
+export function standbyFailedSentence(error: string): string {
+  const err = String(error ?? "")
+    .trim()
+    .replace(/^not made:\s*/i, "");
+  const next = "Try again, or set yourself away.";
+  if (!err || /^(the )?room (could not be|was not) made\.?$/i.test(err))
+    return `Your room was not made. ${next}`;
+  if (/[.!?]\s+\S/.test(err) || /^[A-Z].*[.!?]$/.test(err))
+    return `Your room was not made. ${/[.!?]$/.test(err) ? err : `${err}.`} ${next}`;
+  return `Your room was not made: ${reasonWords(err)}. ${next}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -2006,7 +2232,9 @@ export function liveNews(
   if (offer)
     return {
       key: `offer:${offer.id}`,
-      text: sentenceText(offerSentence(offer, now), true),
+      text: [sentenceText(offerSentence(offer), true), offerNote(offer)]
+        .filter(Boolean)
+        .join(" "),
     };
   const before = new Map((prev?.rooms ?? []).map(r => [r.id, r]));
   for (const r of next.rooms) {
@@ -2016,7 +2244,12 @@ export function liveNews(
     if (was && roomMoment(was, now) === m) continue;
     return {
       key: `room:${r.id}:${m}`,
-      text: sentenceText(bannerRoomSentence(r, now), true),
+      text: sentenceText(
+        bannerRoomSentence(r, now, {
+          workerDown: next.health?.worker_ok === false,
+        }),
+        true,
+      ),
     };
   }
   return null;
@@ -2044,8 +2277,8 @@ export function healthSentence(h: Health): string {
   }
   if (!h.last_run_at)
     // Ours: the worker has never written its row.
-    return "Rooms are down. The room worker has not run yet. Call the lead on the phone, or send your own Zoom or Meet link.";
-  return `Rooms are down. The room worker last ran at ${clock(h.last_run_at)}. Call the lead on the phone, or send your own Zoom or Meet link.`;
+    return "Video rooms are not being made: the room worker has not run yet. Call the lead on the phone, or send your own Zoom or Meet link.";
+  return `Video rooms are not being made (last check ${clock(h.last_run_at)}). Call the lead on the phone, or send your own Zoom or Meet link.`;
 }
 
 // ---------------------------------------------------------------------------
@@ -2269,6 +2502,12 @@ export function afterAdmitBlocked(
   return { kind: "make" };
 }
 
+/**
+ * How long a live read waits. live.status and room.status are reads, safe
+ * to ask again, so a hung one fails in 10 s and the screen says it is old.
+ */
+export const READ_TIMEOUT_MS = 10_000;
+
 export const roomsApi = {
   create: (input: CreateRoom) =>
     nudge(
@@ -2281,7 +2520,11 @@ export const roomsApi = {
       ),
     ),
   status: (roomId: string) =>
-    api<unknown>("room.status", { room_id: roomId }).then(v => {
+    api<unknown>(
+      "room.status",
+      { room_id: roomId },
+      { timeoutMs: READ_TIMEOUT_MS },
+    ).then(v => {
       const feed = normalizeRoomFeed(v);
       // Another room's answer is never drawn as this one.
       if (feed.room.id !== roomId) throw unreadable();
@@ -2332,7 +2575,10 @@ export const roomsApi = {
       if (!me) throw unreadable(true);
       return { me };
     }),
-  liveStatus: () => api<unknown>("live.status", {}).then(normalizeLive),
+  liveStatus: () =>
+    api<unknown>("live.status", {}, { timeoutMs: READ_TIMEOUT_MS }).then(
+      normalizeLive,
+    ),
   /**
    * The claim carries no version: cockpit_sales_live_claim checks the
    * offer's own state, time and seat, so another write to the row (a Slack
@@ -2592,18 +2838,123 @@ export interface PollEnv {
     removeEventListener(type: string, fn: () => void): void;
   };
   now(): number;
+  /** Hear of a new sign-in or a refreshed token; returns the way out. */
+  onAuth?: (fn: () => void) => () => void;
 }
+
+const authListeners = new Set<() => void>();
+let authWatch = false;
+
+/**
+ * One listener on the session for every poll: a token refreshed or a new
+ * sign-in restarts a poll that stopped because the sign-in ran out.
+ */
+function onAuth(fn: () => void): () => void {
+  authListeners.add(fn);
+  if (!authWatch) {
+    authWatch = true;
+    // Loaded when first needed, so this file stays free of the client (the
+    // tests run it without one): polls then restart on focus and online.
+    import("./supabase")
+      .then(({ supabase }) =>
+        supabase.auth.onAuthStateChange(event => {
+          if (event !== "TOKEN_REFRESHED" && event !== "SIGNED_IN") return;
+          for (const f of [...authListeners]) f();
+        }),
+      )
+      .catch(() => undefined);
+  }
+  return () => {
+    authListeners.delete(fn);
+  };
+}
+
+/**
+ * Timers that still run in a hidden tab. After five minutes hidden, Chrome
+ * runs a page's chained timers at most once a minute, so a closer sitting
+ * in Zoom would hear an offer up to a minute late. A worker's timers are not
+ * held back that way: each wait runs there and, as a backstop, on the page
+ * too; whichever ends first fires, so a worker that fails changes nothing.
+ */
+const hiddenTimer = (() => {
+  let worker: Worker | null | undefined;
+  const pending = new Map<number, { fn: () => void; backup: number }>();
+  let seq = 0;
+  const fire = (id: number) => {
+    const p = pending.get(id);
+    if (!p) return;
+    pending.delete(id);
+    window.clearTimeout(p.backup);
+    p.fn();
+  };
+  const start = (): Worker | null => {
+    if (worker !== undefined) return worker;
+    worker = null;
+    try {
+      if (typeof Worker === "undefined" || typeof Blob === "undefined")
+        return null;
+      const src =
+        "const t=new Map();onmessage=e=>{const d=e.data||{};if(d.ms<0){clearTimeout(t.get(d.id));t.delete(d.id);return}t.set(d.id,setTimeout(()=>{t.delete(d.id);postMessage(d.id)},d.ms))}";
+      const url = URL.createObjectURL(
+        new Blob([src], { type: "text/javascript" }),
+      );
+      const w = new Worker(url);
+      w.onmessage = e => fire(Number(e.data));
+      w.onerror = () => {
+        worker = null;
+      };
+      worker = w;
+    } catch {
+      worker = null;
+    }
+    return worker;
+  };
+  return {
+    set(fn: () => void, ms: number): number {
+      const w =
+        typeof document !== "undefined" && document.visibilityState === "hidden"
+          ? start()
+          : null;
+      if (!w) return window.setTimeout(fn, ms);
+      seq += 1;
+      const id = -seq;
+      const backup = window.setTimeout(() => fire(id), ms);
+      pending.set(id, { fn, backup });
+      try {
+        w.postMessage({ id, ms });
+      } catch {
+        // The backstop fires on its own.
+      }
+      return id;
+    },
+    clear(id: number): void {
+      const p = pending.get(id);
+      if (!p) {
+        window.clearTimeout(id);
+        return;
+      }
+      pending.delete(id);
+      window.clearTimeout(p.backup);
+      try {
+        worker?.postMessage({ id, ms: -1 });
+      } catch {
+        // Gone already.
+      }
+    },
+  };
+})();
 
 function browserPollEnv(): PollEnv {
   return {
     doc: document,
     win: {
-      setTimeout: (fn, ms) => window.setTimeout(fn, ms),
-      clearTimeout: id => window.clearTimeout(id),
+      setTimeout: (fn, ms) => hiddenTimer.set(fn, ms),
+      clearTimeout: id => hiddenTimer.clear(id),
       addEventListener: (type, fn) => window.addEventListener(type, fn),
       removeEventListener: (type, fn) => window.removeEventListener(type, fn),
     },
     now: () => Date.now(),
+    onAuth,
   };
 }
 
@@ -2617,7 +2968,12 @@ export interface PollSnapshot<T> {
   stopped: boolean;
   /** Server clock minus browser clock, from the last read that said. */
   offset: number;
+  /** When the read on its way left (browser ms), or null between reads. */
+  busySince?: number | null;
 }
+
+/** A read slower than this round trip says too little about the server's clock. */
+export const CLOCK_MAX_RTT_MS = 2000;
 
 export interface PollOptions<T> {
   fetcher: () => Promise<T>;
@@ -2632,6 +2988,8 @@ export interface PollOptions<T> {
   whileHidden?: boolean;
   /** The server's clock in an answer, for the offset. */
   serverNow?: (data: T) => string | null | undefined;
+  /** The offset to start from (the page's live read already knows it). */
+  seedOffset?: number;
   onChange: (s: PollSnapshot<T>) => void;
   env?: PollEnv;
 }
@@ -2658,13 +3016,20 @@ export function startPoll<T>(o: PollOptions<T>): Poller<T> {
   let busy = false;
   let again = false;
   let sets = 0;
+  // Why reading stopped: a sign-in that ran out is read again as soon as
+  // the session comes back (focus, the network, a refreshed token).
+  let stoppedFor: ApiFailure | null = null;
   let snap: PollSnapshot<T> = {
     data: o.seed ?? null,
     error: null,
     okAt: null,
     failures: 0,
     stopped: false,
-    offset: 0,
+    offset:
+      typeof o.seedOffset === "number" && Number.isFinite(o.seedOffset)
+        ? o.seedOffset
+        : 0,
+    busySince: null,
   };
   const emit = (next: Partial<PollSnapshot<T>>) => {
     snap = { ...snap, ...next };
@@ -2687,24 +3052,30 @@ export function startPoll<T>(o: PollOptions<T>): Poller<T> {
     busy = true;
     const setsAtStart = sets;
     const sentAt = env.now();
+    emit({ busySince: sentAt });
     let err: unknown = null;
     try {
       const next = await o.fetcher();
       if (!alive) return;
       const gotAt = env.now();
       const merged = o.merge(snap.data, next, sets !== setsAtStart);
-      const off = clockOffset(o.serverNow?.(next), sentAt, gotAt);
+      // A slow trip says little about the server's clock: only a quick one moves it.
+      const off =
+        gotAt - sentAt <= CLOCK_MAX_RTT_MS
+          ? clockOffset(o.serverNow?.(next), sentAt, gotAt)
+          : null;
       emit({
         data: merged,
         error: null,
         okAt: gotAt,
         failures: 0,
         offset: off ?? snap.offset,
+        busySince: null,
       });
     } catch (e) {
       if (!alive) return;
       err = e;
-      emit({ error: e, failures: snap.failures + 1 });
+      emit({ error: e, failures: snap.failures + 1, busySince: null });
     } finally {
       busy = false;
     }
@@ -2715,18 +3086,25 @@ export function startPoll<T>(o: PollOptions<T>): Poller<T> {
       return;
     }
     schedule(o.delay(snap.data, snap.failures, err));
+    stoppedFor = snap.stopped ? failureOf(err).kind : null;
     if (snap.stopped) emit({});
   }
 
+  /** Read again: always while reading, and after a stop only for a lapsed sign-in. */
+  const wake = () => {
+    if (!alive || busy) return;
+    if (!snap.stopped || stoppedFor === "signin") schedule(1);
+  };
   const onVisible = () => {
-    if (env.doc.visibilityState === "visible" && !snap.stopped) schedule(1);
+    if (env.doc.visibilityState === "visible") wake();
   };
   // Back online after a drop: read now rather than wait out the backoff.
-  const onOnline = () => {
-    if (!snap.stopped) schedule(1);
-  };
+  const onOnline = () => wake();
   env.doc.addEventListener("visibilitychange", onVisible);
   env.win.addEventListener("online", onOnline);
+  const offAuth = env.onAuth?.(() => {
+    if (snap.stopped && stoppedFor === "signin") schedule(1);
+  });
   void run();
 
   return {
@@ -2744,6 +3122,7 @@ export function startPoll<T>(o: PollOptions<T>): Poller<T> {
       env.win.clearTimeout(timer);
       env.doc.removeEventListener("visibilitychange", onVisible);
       env.win.removeEventListener("online", onOnline);
+      offAuth?.();
     },
     snapshot: () => snap,
   };
@@ -2761,6 +3140,8 @@ export interface Poll<T> {
   stopped: boolean;
   /** Server clock minus browser clock (ms); add it to Date.now() for countdowns. */
   offset: number;
+  /** When the read on its way left, or null between reads. */
+  busySince: number | null;
   reload: () => void;
   /** Put a press's answer on screen now, through the same merge as a read. */
   set: (fn: (prev: T | null) => T | null) => void;
@@ -2777,7 +3158,7 @@ function usePoll<T>(
   delay: (data: T | null, failures: number, error: unknown) => number,
   merge: (prev: T | null, next: T, afterSet: boolean) => T,
   seed: T | null = null,
-  extra: Pick<PollOptions<T>, "whileHidden" | "serverNow"> = {},
+  extra: Pick<PollOptions<T>, "whileHidden" | "serverNow" | "seedOffset"> = {},
 ): Poll<T> {
   const [st, setSt] = useState<PollState<T>>({
     key,
@@ -2809,6 +3190,7 @@ function usePoll<T>(
       seed: seedRef.current,
       whileHidden: extraRef.current.whileHidden,
       serverNow: extraRef.current.serverNow,
+      seedOffset: extraRef.current.seedOffset,
       onChange: s => setSt({ ...s, key }),
     });
     pollRef.current = poller;
@@ -2835,7 +3217,8 @@ function usePoll<T>(
     okAt: mine ? st.okAt : null,
     failures: mine ? st.failures : 0,
     stopped: mine ? st.stopped : false,
-    offset: mine ? st.offset : 0,
+    offset: mine ? st.offset : (extra.seedOffset ?? 0),
+    busySince: mine ? (st.busySince ?? null) : null,
     reload,
     set,
   };
@@ -2850,18 +3233,35 @@ export const STALE_MS = 20_000;
  * read has landed at all.
  */
 export function readIsOld(
-  poll: Pick<Poll<unknown>, "error" | "failures" | "okAt" | "stopped">,
+  poll: Pick<Poll<unknown>, "error" | "failures" | "okAt" | "stopped"> & {
+    busySince?: number | null;
+    errorKind?: ApiFailure | null;
+  },
   now: number,
-): { since: number | null } | null {
-  if (!poll.error || poll.stopped) return null;
+): { since: number | null; kind: ApiFailure | null } | null {
+  if (poll.stopped) return null;
+  // A read still on its way after 20 s is as good as a failed one: what
+  // shows may be old although nothing has said so yet.
+  const hung =
+    typeof poll.busySince === "number" && now - poll.busySince > STALE_MS;
+  if (!poll.error && !hung) return null;
   const old =
-    poll.failures >= 2 || (poll.okAt !== null && now - poll.okAt > STALE_MS);
-  return old ? { since: poll.okAt } : null;
+    hung ||
+    poll.failures >= 2 ||
+    (poll.okAt !== null && now - poll.okAt > STALE_MS);
+  return old
+    ? { since: poll.okAt, kind: poll.error ? (poll.errorKind ?? null) : null }
+    : null;
 }
 
 export interface LiveFeed extends Poll<LiveStatus> {
   /** live.status refused this seat (switched off, or no seat): show nothing. */
   off: boolean;
+  /**
+   * The sign-in ran out: the banner says so with a way back in, and keeps
+   * the last copy (an open room) on screen under it.
+   */
+  signedOut: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -2996,9 +3396,11 @@ export function useLiveStatus(enabled: boolean): LiveFeed {
     failures: s?.failures ?? 0,
     stopped: s?.stopped ?? false,
     offset: s?.offset ?? 0,
+    busySince: s?.busySince ?? null,
     reload,
     set,
-    off: kind === "refused" || kind === "signin",
+    off: kind === "refused",
+    signedOut: kind === "signin",
   };
 }
 
@@ -3016,7 +3418,14 @@ export function useRoomStatus(
     seed && seed.id === roomId
       ? { room: seed, events: [], health: null }
       : null,
-    { whileHidden: true, serverNow: d => d.now },
+    {
+      whileHidden: true,
+      serverNow: d => d.now,
+      // The page's live read already knows the server's clock: the panel's
+      // countdown starts on it, not on the browser's own, so the banner and
+      // the panel never show two different times left.
+      seedOffset: pageLive?.snapshot()?.offset ?? 0,
+    },
   );
 }
 
@@ -3233,6 +3642,7 @@ export function useFocusRescue(
  */
 export function useUndo<K>(send: (k: K) => void, ms: number = UNDO_MS) {
   const [pending, setPending] = useState<K | null>(null);
+  const [startedAt, setStartedAt] = useState<number | null>(null);
   const timer = useRef<number | null>(null);
   const held = useRef<{ k: K } | null>(null);
   const sendRef = useRef(send);
@@ -3243,11 +3653,13 @@ export function useUndo<K>(send: (k: K) => void, ms: number = UNDO_MS) {
       if (timer.current) window.clearTimeout(timer.current);
       held.current = { k };
       setPending(k);
+      setStartedAt(Date.now());
       timer.current = window.setTimeout(() => {
         timer.current = null;
         const h = held.current;
         held.current = null;
         setPending(null);
+        setStartedAt(null);
         if (h) sendRef.current(h.k);
       }, ms);
     },
@@ -3259,6 +3671,7 @@ export function useUndo<K>(send: (k: K) => void, ms: number = UNDO_MS) {
     timer.current = null;
     held.current = null;
     setPending(null);
+    setStartedAt(null);
   }, []);
 
   useEffect(
@@ -3271,5 +3684,67 @@ export function useUndo<K>(send: (k: K) => void, ms: number = UNDO_MS) {
     [],
   );
 
-  return { pending, start, undo };
+  return { pending, start, undo, startedAt, ms };
+}
+
+/** Whole seconds left on a wait that started at `startedAt` and lasts `ms`; never below 0. */
+export function secondsLeft(
+  startedAt: number,
+  ms: number,
+  now: number,
+): number {
+  return Math.max(0, Math.ceil((startedAt + ms - now) / 1000));
+}
+
+// ---------------------------------------------------------------------------
+// Which rooms a panel shows: the banner gives way to a panel on screen
+// ---------------------------------------------------------------------------
+
+const onScreen = new Map<string, number>();
+const screenListeners = new Set<() => void>();
+let screenVersion = 0;
+
+function screenChanged() {
+  screenVersion += 1;
+  for (const f of [...screenListeners]) f();
+}
+
+/**
+ * A room panel says its room is on screen while it is mounted, so the
+ * banner above draws that room's button quietly (the panel holds the
+ * primary) and drops "Open the lead" (the lead is right there).
+ */
+export function useRoomOnScreen(roomId: string | null): void {
+  useEffect(() => {
+    if (!roomId) return;
+    onScreen.set(roomId, (onScreen.get(roomId) ?? 0) + 1);
+    screenChanged();
+    return () => {
+      const n = (onScreen.get(roomId) ?? 1) - 1;
+      if (n > 0) onScreen.set(roomId, n);
+      else onScreen.delete(roomId);
+      screenChanged();
+    };
+  }, [roomId]);
+}
+
+/** Whether a panel on this page shows the room. */
+export function useRoomShown(roomId: string | null): boolean {
+  useSyncExternalStore(subscribeScreen, screenSnapshot, serverSnapshot);
+  return roomId !== null && onScreen.has(roomId);
+}
+
+function subscribeScreen(fn: () => void): () => void {
+  screenListeners.add(fn);
+  return () => {
+    screenListeners.delete(fn);
+  };
+}
+
+function screenSnapshot(): number {
+  return screenVersion;
+}
+
+function serverSnapshot(): number {
+  return 0;
 }

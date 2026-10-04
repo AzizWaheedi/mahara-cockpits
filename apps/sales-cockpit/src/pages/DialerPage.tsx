@@ -28,7 +28,11 @@ import { Link } from "react-router";
 import { AdOrigin } from "../components/AdOrigin";
 import { ProofToSend } from "../components/AssetPicker";
 import { CallNotesList, useCallNotes } from "../components/CallNotes";
-import { Conversation, useConversation } from "../components/Conversation";
+import {
+  Conversation,
+  ConversationFailed,
+  useConversation,
+} from "../components/Conversation";
 import { SavedWorkLine } from "../components/DialSavedWork";
 import { HotControl } from "../components/HotList";
 import {
@@ -45,6 +49,7 @@ import {
 import { Answers } from "../components/LeadAnswers";
 import { LeadTimeline, type LiveMessage } from "../components/LeadTimeline";
 import { ResearchPanel } from "../components/ResearchPanel";
+import { LiveBoundary } from "../components/RoomLine";
 import { RoomPanel } from "../components/RoomPanel";
 import {
   Blocks,
@@ -61,6 +66,7 @@ import {
 import {
   AutoVideoStrip,
   createAsk,
+  ROOMS_UNREAD,
   type RoomsSetup,
   useLeadRoom,
   useRoomsSetup,
@@ -136,6 +142,7 @@ import {
   linkPlanLine,
   missTrigger,
   NOBODY_SPOKE_VIDEO,
+  PICKER_NONE,
   providerChoice,
   type Trigger,
   videoLinkGate,
@@ -1678,9 +1685,27 @@ function CallPane({
     appointmentId: introCall ? (appt?.id ?? null) : null,
   };
   // "Send a video link" shows on every outcome but Answered, never for a
-  // client, while no room is open for the lead (P1).
+  // client, while no room is open for the lead (P1). A room that failed
+  // on screen offers its own next step (Try Zoom, or the phone), so the
+  // button waits until the rep puts it away.
+  const failedOnScreen = video.room?.state === "failed";
   const offerVideo =
-    gate.show && missed !== null && choice !== null && !video.open;
+    gate.show &&
+    missed !== null &&
+    choice !== null &&
+    !video.open &&
+    !failedOnScreen;
+  // Where the link would go, said in the picker; when nothing can reach the
+  // lead, automatic mode does not send blind: the picker says so instead.
+  const planLine = roomsSetup.rooms
+    ? linkPlanLine({
+        setting: roomsSetup.rooms,
+        whatsapp: convo.data?.channels.whatsapp,
+        email: convo.data?.channels.email,
+        guardOpen: roomsSetup.guard,
+        templateLive: roomsSetup.templateLive,
+      })
+    : null;
   const autoKey = missed ? `${contactId}:${missed.attemptId ?? "save"}` : "";
   useEffect(() => {
     if (
@@ -1690,11 +1715,18 @@ function CallPane({
     )
       return;
     autoRan.current.add(autoKey);
-    setAutoAt(Date.now());
-  }, [offerVideo, autoKey, roomsSetup.rooms?.fallback.auto_on_miss]);
+    if (planLine === PICKER_NONE) setPicking(true);
+    else setAutoAt(Date.now());
+  }, [offerVideo, autoKey, roomsSetup.rooms?.fallback.auto_on_miss, planLine]);
   async function autoSend() {
     setAutoAt(null);
     if (!choice || video.open) return;
+    // Nothing can reach the lead now (the conversation was read during the
+    // ten seconds): the rep decides in the picker.
+    if (planLine === PICKER_NONE) {
+      setPicking(true);
+      return;
+    }
     const ask = createAsk({ ...videoAsk, trigger: "auto" }, choice.first);
     try {
       const out = await roomsApi.create(ask);
@@ -1942,6 +1974,32 @@ function CallPane({
     };
   }, [showsNext, nextRef, onFinished, contactId]);
 
+  // The picker, said where the rep pressed for it: inside the after-miss
+  // step in place of its button, or here under the call line otherwise.
+  const picker =
+    picking && offerVideo && choice && missed ? (
+      <VideoPicker
+        {...videoAsk}
+        trigger={missed.trigger}
+        choice={choice}
+        planLine={planLine}
+        initialError={autoError}
+        onRoom={(room, ask) => {
+          video.setRoom(room, ask);
+          setPicking(false);
+          setAutoError(null);
+        }}
+        onCancel={() => {
+          setPicking(false);
+          setAutoError(null);
+        }}
+      />
+    ) : null;
+  const pickerInStep = mode === "unanswered";
+  // One teal button at a time: while a room is open, or a link is being
+  // picked or about to go, Call steps back.
+  const callQuiet = video.open || picking || autoAt !== null;
+
   async function copyNumber() {
     if (!l?.phone) return;
     try {
@@ -1977,7 +2035,7 @@ function CallPane({
             type="button"
             onClick={() => void call()}
             disabled={Boolean(busy) || Boolean(open) || dnd || !l}
-            className={`${buttonPrimary} h-10 px-4 text-[15px]`}
+            className={`${callQuiet ? button : buttonPrimary} h-10 px-4 text-[15px]`}
             title="Alt+D"
           >
             <PhoneCall className="size-4" aria-hidden />
@@ -2037,29 +2095,8 @@ function CallPane({
             onStop={() => setAutoAt(null)}
             onSend={() => void autoSend()}
           />
-        ) : picking && offerVideo && choice && missed ? (
-          <VideoPicker
-            {...videoAsk}
-            trigger={missed.trigger}
-            choice={choice}
-            planLine={linkPlanLine({
-              setting: roomsSetup.rooms as NonNullable<typeof roomsSetup.rooms>,
-              whatsapp: convo.data?.channels.whatsapp,
-              email: convo.data?.channels.email,
-              guardOpen: roomsSetup.guard,
-              templateLive: roomsSetup.templateLive,
-            })}
-            initialError={autoError}
-            onRoom={(room, ask) => {
-              video.setRoom(room, ask);
-              setPicking(false);
-              setAutoError(null);
-            }}
-            onCancel={() => {
-              setPicking(false);
-              setAutoError(null);
-            }}
-          />
+        ) : picker && !pickerInStep ? (
+          picker
         ) : null}
 
         {mode === "held" ? (
@@ -2093,12 +2130,18 @@ function CallPane({
           <AfterMissStep
             step={miss}
             moment={missMoment}
-            focusNext={missBy === "auto"}
+            focusNext={missBy === "auto" && !picking}
             onTalk={onTalk}
             onNext={toNext}
             onVideo={
               offerVideo && !picking && autoAt === null
                 ? () => setPicking(true)
+                : null
+            }
+            picker={pickerInStep ? picker : null}
+            videoUnread={
+              roomsSetup.error && missed !== null && !video.room
+                ? ROOMS_UNREAD
                 : null
             }
           />
@@ -2329,16 +2372,20 @@ function NextStep({
   title,
   text,
   children,
+  after = null,
 }: {
   title: string;
   text: string;
   children: ReactNode;
+  /** Under the buttons: what one of them opened (the video picker). */
+  after?: ReactNode;
 }) {
   return (
     <div className="space-y-2 border-t hairline pt-4">
       <p className="text-sm font-medium">{title}</p>
       <p className="muted text-xs">{text}</p>
       <div className="flex flex-wrap gap-2">{children}</div>
+      {after}
     </div>
   );
 }
@@ -2355,6 +2402,8 @@ function AfterMissStep({
   onTalk,
   onNext,
   onVideo = null,
+  picker = null,
+  videoUnread = null,
 }: {
   step: AfterMiss;
   moment: MissMoment;
@@ -2364,10 +2413,22 @@ function AfterMissStep({
   onNext: () => void;
   /** "Send a video link" (P1), while one can be sent for this lead. */
   onVideo?: (() => void) | null;
+  /** The video picker, opened from this step: it shows here, under the buttons. */
+  picker?: ReactNode;
+  /** The video setting could not be read: said where its button would be. */
+  videoUnread?: string | null;
 }) {
   return (
-    <NextStep title={step.title} text={step.text}>
-      <NextLeadButton onNext={onNext} primary focus={focusNext} />
+    <NextStep
+      title={step.title}
+      text={step.text}
+      after={
+        picker ??
+        (videoUnread ? <p className="muted text-xs">{videoUnread}</p> : null)
+      }
+    >
+      {/* While the picker is open its button is the teal one. */}
+      <NextLeadButton onNext={onNext} primary={!picker} focus={focusNext} />
       {step.send ? (
         <button
           type="button"
@@ -3073,21 +3134,25 @@ function LeadPane({
       <div className="p-4" role="tabpanel">
         {tab === "talk" ? (
           <div className="space-y-5">
-            <Conversation
-              contactId={contactId}
-              convo={convo}
-              compact
-              rep={me.name}
-              // The lead's booked call, for {day} and {time}: the next intro
-              // or demo on any item, else a closer's own demo.
-              callAt={
-                item?.appointment?.start_at ??
-                (as === "closer" ? item?.demo_at : null) ??
-                null
-              }
-              country={l?.country ?? null}
-              prefill={prefill}
-            />
+            {/* Its own boundary: a conversation that cannot be drawn never
+                takes the call column (and an open video room) with it. */}
+            <LiveBoundary fallback={<ConversationFailed />}>
+              <Conversation
+                contactId={contactId}
+                convo={convo}
+                compact
+                rep={me.name}
+                // The lead's booked call, for {day} and {time}: the next intro
+                // or demo on any item, else a closer's own demo.
+                callAt={
+                  item?.appointment?.start_at ??
+                  (as === "closer" ? item?.demo_at : null) ??
+                  null
+                }
+                country={l?.country ?? null}
+                prefill={prefill}
+              />
+            </LiveBoundary>
             <div className="border-t hairline pt-4">
               <p className="mb-2 text-sm font-semibold">Proof to send</p>
               <ProofToSend

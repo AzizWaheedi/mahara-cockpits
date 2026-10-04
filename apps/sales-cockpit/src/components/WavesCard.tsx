@@ -12,6 +12,7 @@ import {
   batchState,
   countMembers,
   countsFor,
+  type DeskReport,
   effectLine,
   isOpenWave,
   type MemberRow,
@@ -175,9 +176,18 @@ export function WavesCard({
   const wavesRow = status.data?.find(
     x => x.worker === "sales-desk" && x.job === "waves",
   );
-  const desk = wavesRow
-    ? { ok: wavesRow.ok !== false, detail: wavesRow.detail ?? null }
-    : null;
+  // Missing is never "fine": no row, or a read that failed, is said.
+  const desk: DeskReport = wavesRow
+    ? {
+        ok: wavesRow.ok !== false,
+        detail: wavesRow.detail ?? null,
+        at: wavesRow.at ?? null,
+      }
+    : status.error
+      ? { unread: true }
+      : status.data
+        ? { missing: true }
+        : null;
 
   const [busy, setBusy] = useState<string | null>(null);
   // What the last press did, said beside the part of the card it was in.
@@ -367,7 +377,7 @@ export function WavesCard({
 
       {openers.length || meta.error ? (
         <div className="mt-5 border-t hairline pt-4">
-          <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <div className="flex flex-col items-start gap-1">
             <h3 className="text-sm font-semibold">Today's batch</h3>
             <span className="muted text-xs">
               The CEO's opener, no AI text. One goes every {Math.round(ws.gapS)}{" "}
@@ -434,7 +444,9 @@ export function WavesCard({
                     >
                       <Link
                         to={`/lead/${d.contact_id}`}
-                        className="min-w-0 flex-1 truncate font-medium hover:underline"
+                        // An Arabic name keeps its own direction but lines up
+                        // with the Latin ones, on the left.
+                        className="min-w-0 flex-1 truncate text-left font-medium hover:underline"
                         dir="auto"
                       >
                         {nameOf.get(d.contact_id) ?? "A lead"}

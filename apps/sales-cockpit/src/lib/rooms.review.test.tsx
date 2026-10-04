@@ -470,7 +470,7 @@ describe("3, 6, 14, 26. the poller", () => {
         { error: "x", failures: 2, okAt: NOW, stopped: false },
         NOW + 12_000,
       ),
-    ).toEqual({ since: NOW });
+    ).toEqual({ since: NOW, kind: null });
     // The backoff is now 16 s; the connection coming back reads at once.
     fail = false;
     page.online();
@@ -578,7 +578,7 @@ describe("3. calling a rep back to a hidden tab", () => {
     const offered = F.liveFixture("incoming", NOW).live;
     expect(R.liveNews(before, offered, NOW)).toEqual({
       key: "offer:live-1",
-      text: "Live lead: demo, Saudi Arabia, on the line with the setter. Note: Runs 3 fit-out crews and wants more villa projects.",
+      text: "Live demo lead, Saudi Arabia, on the line with the setter. Note: Runs 3 fit-out crews and wants more villa projects.",
     });
     expect(R.liveNews(offered, offered, NOW)).toBeNull();
     // An offer whose time is up, or one answered here, is not news.
@@ -737,7 +737,7 @@ describe("7. flashes and offers", () => {
       },
     });
     const text = decode(html);
-    expect(text).toContain("Live lead: demo");
+    expect(text).toContain("Live demo lead");
     expect(text).toContain("Not now did not reach the server. Press it again.");
     expect(text).toContain("Take it");
   });
@@ -842,7 +842,7 @@ describe("12. focus and what a screen reader hears", () => {
     const offer = banner({ data: F.liveFixture("incoming", NOW).live });
     expect(offer.match(/aria-live=/g)?.length).toBe(2);
     expect(offer).toMatch(
-      /aria-live="assertive"[^>]*>Live lead: demo, Saudi Arabia, on the line with the setter\./,
+      /aria-live="assertive"[^>]*>Live demo lead, Saudi Arabia, on the line with the setter\. Note: Runs 3 fit-out crews/,
     );
     const idle = banner({ data: F.liveFixture("away", NOW).live });
     expect(idle.match(/aria-live=/g)?.length).toBe(2);
@@ -853,15 +853,31 @@ describe("12. focus and what a screen reader hears", () => {
 });
 
 describe("15. the standby room", () => {
-  test("a room that could not be made says why, and I'm available tries again", () => {
+  test("a room that could not be made says why, and Try again tries again", () => {
     const l = strip({
       me: me({ state: "available", until: iso(NOW + 2 * 3600 * S) }),
       standbyError: "The host's Zoom user was not found.",
     });
+    // A whole sentence from the worker is said as it is, with the next step.
     expect(R.sentenceText(l.sentence)).toBe(
-      "Your room could not be made: the host's Zoom user was not found.",
+      "Your room was not made. The host's Zoom user was not found. Try again, or set yourself away.",
     );
-    expect(l.primary).toEqual({ key: "available", label: "I'm available" });
+    expect(l.primary).toEqual({ key: "available", label: "Try again" });
+    expect(l.quiet).toEqual([{ key: "away", label: "Set me away" }]);
+    // A bare reason is set after a colon; one that only repeats itself goes.
+    expect(R.standbyFailedSentence("your Zoom account was not found")).toBe(
+      "Your room was not made: your Zoom account was not found. Try again, or set yourself away.",
+    );
+    expect(R.standbyFailedSentence("the room could not be made")).toBe(
+      "Your room was not made. Try again, or set yourself away.",
+    );
+    expect(
+      R.standbyFailedSentence(
+        "Not made: the room worker did not pick this room up in time.",
+      ),
+    ).toBe(
+      "Your room was not made: the room worker did not pick this room up in time. Try again, or set yourself away.",
+    );
   });
 
   test("a room on its way says so; no room and no reason claims nothing", () => {
@@ -1117,8 +1133,18 @@ describe("14. every fixture draws", () => {
       const html = renderToStaticMarkup(
         <RoomPanelView feed={feed} now={NOW} canMarkIntro={canMarkIntro} />,
       );
+      // The panel's own context: the room line on screen carries the
+      // countdown, and a room still being made with the worker down says so.
+      const showLine =
+        feed.room.state !== "failed" &&
+        (feed.room.purpose !== "standby" || Boolean(feed.room.contact_id));
       const said = R.sentenceText(
-        R.roomSentence(feed.room, { now: NOW, canMarkIntro }),
+        R.roomSentence(feed.room, {
+          now: NOW,
+          canMarkIntro,
+          lineShown: showLine,
+          workerDown: feed.health?.worker_ok === false,
+        }),
       );
       expect(decode(html)).toContain(said);
       expect(html).not.toMatch(/undefined|NaN|\[object/);

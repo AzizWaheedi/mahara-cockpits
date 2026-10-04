@@ -1,5 +1,6 @@
-import { Check, Loader2, RotateCcw } from "lucide-react";
+import { Check, ChevronDown, Loader2, RotateCcw } from "lucide-react";
 import { type CSSProperties, useEffect, useId, useRef, useState } from "react";
+import { type ApiFailure, uncertain } from "../lib/apiErrors";
 import { useMe, useNow } from "../lib/data";
 import {
   afterAdmitBlocked,
@@ -13,10 +14,12 @@ import {
   healthSentence,
   healthTone,
   heldTarget,
+  isFinal,
   isMaking,
   isStale,
   mergeRoomFeed,
   momentFor,
+  monoTimes,
   needsEndConfirm,
   needsUndo,
   normalizeRoom,
@@ -38,17 +41,19 @@ import {
   roomsChanged,
   roomTone,
   STILL_ON_ASK_AGAIN_MS,
+  secondsLeft,
   sentenceText,
   shortLink,
   UNDO_MS,
   undoLabel,
   useFocusRescue,
+  useRoomOnScreen,
   useRoomStatus,
   useUndo,
 } from "../lib/rooms";
 import { StaleNote } from "./AvailabilityStrip";
 import { button, buttonPrimary } from "./kit";
-import { LiveBoundary, RoomLine, Spoken, toneColor } from "./RoomLine";
+import { LiveBoundary, RoomLine, Say, Spoken, toneColor } from "./RoomLine";
 
 /**
  * The video room card on the dialer and the lead page: what the room is,
@@ -63,13 +68,19 @@ export interface Notice {
   text: string;
   /**
    * A link to open with a press (the host's room when the browser blocked
-   * the new tab). It is opened from a button, never written into the page,
-   * and the panel clears it after a minute.
+   * the new tab, or the room's own link when the host link could not be
+   * had). It is opened from a button, never written into the page, and the
+   * panel clears it after a minute.
    */
   open?: { url: string; label: string };
 }
 
-const TOUCH = "pointer-coarse:min-h-11";
+/**
+ * Every button in the room's screens is 44 px on a touch screen. Marked
+ * important: the touch rule in index.css sits outside Tailwind's layers
+ * (min-height 2.5rem on every button in <main>) and would win otherwise.
+ */
+export const TOUCH = "pointer-coarse:min-h-11!";
 
 export interface RoomPanelViewProps {
   feed: RoomFeed;
@@ -80,10 +91,12 @@ export interface RoomPanelViewProps {
   notice?: Notice | null;
   /** A press held behind its Undo. */
   undo?: RoomActionKey | null;
+  /** When the held press started, for the seconds left on its Undo. */
+  undoAt?: number | null;
   confirmEnd?: boolean;
   copied?: boolean;
   /** What shows may be old: since the last good read, or never read. */
-  stale?: { since: number | null } | null;
+  stale?: { since: number | null; kind?: ApiFailure | null } | null;
   /**
    * The server stopped answering for this room (not yours, gone, signed
    * out): its sentence, said at once, and no buttons that would fail too.
@@ -102,6 +115,8 @@ export interface RoomPanelViewProps {
   onConfirmEnd?: (yes: boolean) => void;
   /** The notice's link was opened: the panel lets it go. */
   onNoticeOpened?: () => void;
+  /** Read the room again now (the stale note's button). */
+  onReload?: () => void;
   className?: string;
 }
 
@@ -112,6 +127,7 @@ export function RoomPanelView({
   busy = null,
   notice = null,
   undo = null,
+  undoAt = null,
   confirmEnd = false,
   copied = false,
   stale = null,
@@ -124,9 +140,15 @@ export function RoomPanelView({
   onUndo = () => undefined,
   onConfirmEnd = () => undefined,
   onNoticeOpened = () => undefined,
+  onReload,
   className = "",
 }: RoomPanelViewProps) {
   const { room, events, health } = feed;
+  // A failed room never got as far as a step, and a standby room has no
+  // lead to wait for: neither draws the line.
+  const showLine =
+    room.state !== "failed" &&
+    (room.purpose !== "standby" || Boolean(room.contact_id));
   // The room worker down: a failed room offers no "Try {other}" (no worker
   // makes that room either); its sentence says to phone the lead.
   const ctx = {
@@ -135,10 +157,11 @@ export function RoomPanelView({
     stillOn,
     manager,
     workerDown: health?.worker_ok === false,
+    lineShown: showLine,
   };
   const moment = momentFor(room, ctx);
   const sentence = roomSentence(room, ctx);
-  const hint = roomHint(room, now);
+  const hint = stale ? null : roomHint(room, now);
   const actions = roomActions(room, ctx);
   const primary =
     blocked || (actions.primary?.key === "retry" && !canRetry)
@@ -146,16 +169,22 @@ export function RoomPanelView({
       : actions.primary;
   const quiet = blocked
     ? []
-    : introMarked
-      ? actions.quiet.filter(a => a.key !== "noshow" && a.key !== "showed")
-      : actions.quiet;
-  const tone = roomTone(moment);
-  // A failed room never got as far as a step, and a standby room has no
-  // lead to wait for: neither draws the line.
-  const showLine =
-    room.state !== "failed" &&
-    (room.purpose !== "standby" || Boolean(room.contact_id));
-  const red = health && healthTone(health) !== "good";
+    : actions.quiet.filter(
+        a =>
+          !(introMarked && (a.key === "noshow" || a.key === "showed")) &&
+          !(a.key === "retry" && !canRetry),
+      );
+  const tone = roomTone(moment, room);
+  // Nothing on the line is moving: a stale read, a room that will not be
+  // made or is late, and a room the sweep should have closed.
+  const frozen =
+    Boolean(stale) ||
+    moment === "making_down" ||
+    moment === "making_late" ||
+    moment === "overdue";
+  // Said in the sentence itself when it is about this room.
+  const red =
+    health && healthTone(health) !== "good" && moment !== "making_down";
   const zone = useRef<HTMLElement>(null);
   useFocusRescue(
     zone,
@@ -172,7 +201,7 @@ export function RoomPanelView({
     <section
       ref={zone}
       aria-label={`Video room ${room.code}`}
-      className={`panel min-w-0 p-4 sm:p-5 ${className}`}
+      className={`panel @container min-w-0 p-4 sm:p-5 ${className}`}
     >
       <header className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
         <h2 className="text-[15px] font-semibold tracking-tight">
@@ -184,12 +213,22 @@ export function RoomPanelView({
         {stale && !blocked ? (
           <StaleNote
             since={stale.since}
+            kind={stale.kind ?? null}
             never="This room could not be read. Check the connection."
+            onRetry={onReload}
           />
         ) : null}
       </header>
 
-      {showLine ? <RoomLine room={room} now={now} className="mt-4" /> : null}
+      {showLine ? (
+        <RoomLine
+          room={room}
+          now={now}
+          frozen={frozen}
+          dim={Boolean(stale) || isFinal(room.state)}
+          className="mt-4"
+        />
+      ) : null}
 
       <div className="mt-4 flex min-w-0 items-start gap-2.5">
         <span
@@ -221,14 +260,14 @@ export function RoomPanelView({
 
       {notice ? <NoticeLine notice={notice} onOpened={onNoticeOpened} /> : null}
 
-      {/* Said right under the sentence: a room still "making" while the
-          worker is down will not be made. */}
+      {/* Said right under the sentence when the worker is in trouble; a
+          room still being made says it in its own sentence instead. */}
       {red && health ? <HealthLine health={health} className="mt-3" /> : null}
 
       {confirmEnd ? (
         <ConfirmEnd busy={busy !== null} onAnswer={onConfirmEnd} />
       ) : undo ? (
-        <UndoStrip label={undoLabel(undo)} onUndo={onUndo} />
+        <UndoStrip label={undoLabel(undo)} startedAt={undoAt} onUndo={onUndo} />
       ) : primary || quiet.length ? (
         <Actions
           primary={primary}
@@ -244,6 +283,45 @@ export function RoomPanelView({
   );
 }
 
+/**
+ * The quiet buttons a rep reaches for most: at most two sit beside the main
+ * one. The rest wait behind More, and End room goes last on its own.
+ */
+const FRONT_ORDER: readonly RoomActionKey[] = [
+  "count_confirm",
+  "lead_in",
+  "host_in",
+  "open",
+  "copy",
+  "still_on",
+  "finished",
+  "not_lead",
+  "noshow",
+  "showed",
+  "retry",
+];
+const FRONT_MAX = 2;
+
+/** Split the quiet buttons: up to two up front, the rest behind More, End room apart. */
+export function splitQuiet(quiet: readonly RoomAction[]): {
+  front: RoomAction[];
+  more: RoomAction[];
+  end: RoomAction | null;
+} {
+  const end = quiet.find(a => a.key === "end") ?? null;
+  const rest = quiet.filter(a => a.key !== "end");
+  const ranked = rest
+    .filter(a => FRONT_ORDER.includes(a.key))
+    .sort((a, b) => FRONT_ORDER.indexOf(a.key) - FRONT_ORDER.indexOf(b.key))
+    .slice(0, FRONT_MAX);
+  const keep = new Set(ranked.map(a => a.key));
+  const front = rest.filter(a => keep.has(a.key));
+  const more = rest.filter(a => !keep.has(a.key));
+  // One button behind More is no saving: it shows with the others.
+  if (more.length === 1) return { front: [...front, ...more], more: [], end };
+  return { front, more, end };
+}
+
 function Actions({
   primary,
   quiet,
@@ -257,6 +335,9 @@ function Actions({
   copied: boolean;
   onAction: (key: RoomActionKey) => void;
 }) {
+  const [moreOpen, setMoreOpen] = useState(false);
+  const moreId = useId();
+  const { front, more, end } = splitQuiet(quiet);
   const label = (a: RoomAction) =>
     a.key === "copy" && copied ? "Copied" : a.label;
   const icon = (a: RoomAction) =>
@@ -265,46 +346,99 @@ function Actions({
     ) : a.key === "copy" && copied ? (
       <Check className="size-3.5" aria-hidden />
     ) : null;
+  const quietButton = (a: RoomAction) => (
+    <button
+      key={a.key}
+      type="button"
+      onClick={() => onAction(a.key)}
+      disabled={busy !== null}
+      aria-busy={busy === a.key}
+      data-key={a.key}
+      className={`${button} h-9 flex-[1_1_auto] whitespace-nowrap @md:flex-none ${TOUCH}`}
+    >
+      {icon(a)}
+      {label(a)}
+    </button>
+  );
+  // A press from behind More keeps its row open while the panel changes.
+  const openMore =
+    moreOpen || (busy !== null && more.some(a => a.key === busy));
   return (
-    // On a phone the main button takes the row and the quiet ones sit two
-    // to a row under it; from a tablet up they run in one line.
-    <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
-      {primary ? (
-        <button
-          type="button"
-          onClick={() => onAction(primary.key)}
-          disabled={busy !== null}
-          aria-busy={busy === primary.key}
-          data-key={primary.key}
-          className={`${buttonPrimary} h-9 w-full sm:w-auto ${TOUCH}`}
-        >
-          {icon(primary)}
-          {label(primary)}
-        </button>
-      ) : null}
-      {quiet.length ? (
-        <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
-          {quiet.map(a => (
-            <button
-              key={a.key}
-              type="button"
-              onClick={() => onAction(a.key)}
-              disabled={busy !== null}
-              aria-busy={busy === a.key}
-              data-key={a.key}
-              className={`${button} h-9 min-w-0 whitespace-normal text-center leading-tight ${TOUCH}`}
-            >
-              {icon(a)}
-              {label(a)}
-            </button>
-          ))}
+    <div className="mt-4">
+      {/* The panel's own width decides: on a narrow card the main button
+          takes the row and the quiet ones fill the rows under it; on a
+          wide one they run in one line, with End room at the far end. */}
+      <div className="flex flex-col gap-2 @md:flex-row @md:flex-wrap @md:items-center">
+        {primary ? (
+          <button
+            type="button"
+            onClick={() => onAction(primary.key)}
+            disabled={busy !== null}
+            aria-busy={busy === primary.key}
+            data-key={primary.key}
+            className={`${buttonPrimary} h-9 w-full @md:w-auto ${TOUCH}`}
+          >
+            {icon(primary)}
+            {label(primary)}
+          </button>
+        ) : null}
+        {front.length ? (
+          <div className="flex flex-wrap gap-2">{front.map(quietButton)}</div>
+        ) : null}
+        {more.length || end ? (
+          <div className="flex items-center gap-3 @md:contents">
+            {more.length ? (
+              <button
+                type="button"
+                aria-expanded={openMore}
+                aria-controls={moreId}
+                onClick={() => setMoreOpen(o => !o)}
+                className={`muted inline-flex h-9 items-center gap-1 px-1 text-sm font-medium underline-offset-2 hover:underline ${TOUCH}`}
+              >
+                More
+                <ChevronDown
+                  className={`size-3.5 transition-transform ${openMore ? "rotate-180" : ""}`}
+                  aria-hidden
+                />
+              </button>
+            ) : null}
+            {end ? (
+              <button
+                type="button"
+                onClick={() => onAction(end.key)}
+                disabled={busy !== null}
+                aria-busy={busy === end.key}
+                data-key={end.key}
+                className={`muted ms-auto inline-flex h-9 items-center gap-1 px-1 text-sm font-medium underline-offset-2 hover:text-[color:var(--destructive)] hover:underline disabled:opacity-50 ${TOUCH}`}
+              >
+                {icon(end)}
+                {end.label}
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+      {more.length && openMore ? (
+        <div id={moreId} className="mt-2 flex flex-wrap gap-2">
+          {more.map(quietButton)}
         </div>
       ) : null}
     </div>
   );
 }
 
-function UndoStrip({ label, onUndo }: { label: string; onUndo: () => void }) {
+function UndoStrip({
+  label,
+  startedAt,
+  onUndo,
+}: {
+  label: string;
+  startedAt: number | null;
+  onUndo: () => void;
+}) {
+  // The seconds in words too: under reduced motion the bar does not drain.
+  const now = useNow(250);
+  const left = secondsLeft(startedAt ?? now, UNDO_MS, now);
   return (
     <div className="relative mt-4 flex min-w-0 items-center gap-2 overflow-hidden rounded-[var(--radius-md)] border hairline px-3 py-2 text-sm">
       <span
@@ -326,10 +460,13 @@ function UndoStrip({ label, onUndo }: { label: string; onUndo: () => void }) {
         type="button"
         onClick={onUndo}
         data-autofocus
-        className={`inline-flex shrink-0 items-center gap-1 px-1 text-sm font-medium underline-offset-2 hover:underline ${TOUCH}`}
+        className={`inline-flex min-h-8 shrink-0 items-center gap-1 px-1 text-sm font-medium underline-offset-2 hover:underline ${TOUCH}`}
       >
         <RotateCcw className="size-3.5" aria-hidden />
         Undo
+        <span aria-hidden className="muted font-mono text-[12px]">
+          · {left} s
+        </span>
       </button>
     </div>
   );
@@ -373,12 +510,14 @@ function ConfirmEnd({
   );
 }
 
-function NoticeLine({
+export function NoticeLine({
   notice,
   onOpened,
+  className = "mt-3",
 }: {
   notice: Notice;
   onOpened: () => void;
+  className?: string;
 }) {
   const cls =
     notice.tone === "good"
@@ -390,7 +529,7 @@ function NoticeLine({
   return (
     <p
       role={notice.tone === "bad" ? "alert" : "status"}
-      className={`${cls} mt-3 rounded-[var(--radius-md)] border px-3 py-2 text-sm [overflow-wrap:anywhere]`}
+      className={`${cls} ${className} rounded-[var(--radius-md)] border px-3 py-2 text-sm [overflow-wrap:anywhere]`}
     >
       {notice.text}
       {open ? (
@@ -426,7 +565,7 @@ function Timeline({ events }: { events: RoomEvent[] }) {
         onClick={() => setOpen(o => !o)}
         className={`muted inline-flex min-h-8 items-center text-xs underline-offset-2 hover:underline ${TOUCH}`}
       >
-        {open ? "Hide the timeline" : "Timeline"}
+        {open ? "Hide the timeline" : "Show the timeline"}
       </button>
       {open ? (
         <ol id={id} className="muted mt-1 space-y-1 text-xs leading-relaxed">
@@ -442,15 +581,20 @@ function Timeline({ events }: { events: RoomEvent[] }) {
   );
 }
 
-/** "Rooms: working. Last run 14:03:58. 6 rooms today, 0 failed." with its dot. */
+/** "Rooms: working. Last run 14:03:58. 6 rooms today, 0 failed." with its dot, times in mono. */
 export function HealthLine({
   health,
   className = "",
+  sentence,
+  tone: toneOver,
 }: {
   health: Health;
   className?: string;
+  /** Said instead of the health sentence (the Team page's summary). */
+  sentence?: string;
+  tone?: "good" | "owed" | "bad";
 }) {
-  const tone = healthTone(health);
+  const tone = toneOver ?? healthTone(health);
   return (
     <p
       className={`flex min-w-0 items-start gap-2 text-[13px] leading-5 ${className}`}
@@ -467,7 +611,9 @@ export function HealthLine({
                 : "var(--won)",
         }}
       />
-      <span className="min-w-0">{healthSentence(health)}</span>
+      <span className="min-w-0">
+        <Say s={monoTimes(sentence ?? healthSentence(health))} />
+      </span>
     </p>
   );
 }
@@ -508,14 +654,28 @@ export interface RoomPanelProps {
  * and the dialer around it keeps working.
  */
 export function RoomPanel(props: RoomPanelProps) {
+  const link = shortLink(props.room);
   return (
     <LiveBoundary
       fallback={
         <p
           role="alert"
-          className={`callout-bad rounded-[var(--radius-md)] border px-3 py-2 text-sm ${props.className ?? ""}`}
+          className={`callout-bad rounded-[var(--radius-md)] border px-3 py-2 text-sm [overflow-wrap:anywhere] ${props.className ?? ""}`}
         >
           The video room could not be shown. Reload the page to see it again.
+          {props.room.code ? (
+            <>
+              {" "}
+              Your room's code is{" "}
+              <span className="font-mono">{props.room.code}</span>
+              {link ? (
+                <>
+                  , link <span className="font-mono">{link}</span>
+                </>
+              ) : null}
+              .
+            </>
+          ) : null}
         </p>
       }
     >
@@ -544,6 +704,8 @@ function LiveRoomPanel({
   // biome-ignore lint/correctness/useExhaustiveDependencies: a new room from the page replaces the one on show
   useEffect(() => setShown(start), [start.id]);
   const feed = useRoomStatus(shown.id, shown);
+  // The banner above draws this room's button quietly while it is here.
+  useRoomOnScreen(shown.id);
   const localNow = useNow(1000);
   // The server's clock, for every countdown and gate.
   const now = localNow + feed.offset;
@@ -665,6 +827,20 @@ function LiveRoomPanel({
     }, 60_000);
   }
 
+  /** The room's own link, when the host link could not be had: a button, for a minute. */
+  function offerRoomLink(url: string) {
+    setNotice({
+      tone: "owed",
+      text: "The cockpit could not get your host link. Open the room with its own link.",
+      open: { url, label: "Open the room" },
+    });
+    if (linkTimer.current) window.clearTimeout(linkTimer.current);
+    linkTimer.current = window.setTimeout(() => {
+      linkTimer.current = null;
+      setNotice(n => (n?.open ? null : n));
+    }, 60_000);
+  }
+
   async function retry(r: RoomView, provider: Provider) {
     if (r.purpose === "handover") {
       const make = swap.current;
@@ -673,6 +849,9 @@ function LiveRoomPanel({
       if (next) setShown(next);
       return;
     }
+    // A room still open (a Zoom link nobody can say, one still being made
+    // long past its time) is cancelled first: one room per lead.
+    if (!isFinal(r.state)) apply((await roomsApi.end(r, "cancel")).room);
     const out = await roomsApi.create(retryRequest(r, asked.current, provider));
     setShown(out.room);
   }
@@ -766,8 +945,16 @@ function LiveRoomPanel({
     await run(key, async () => {
       switch (key) {
         case "open": {
-          const out = await openHostRoom(r.id);
-          if (out.kind === "blocked") offerHostLink(out.url);
+          try {
+            const out = await openHostRoom(r.id);
+            if (out.kind === "blocked") offerHostLink(out.url);
+          } catch (e) {
+            // No host link (the server unreachable, slow, or garbled): the
+            // room's own link still gets the rep in. Meet always uses it;
+            // Zoom lets a signed-in host in through it too (contract 0b.4).
+            if (!uncertain(e) || !r.join_url) throw e;
+            offerRoomLink(r.join_url);
+          }
           return;
         }
         case "host_in":
@@ -842,10 +1029,12 @@ function LiveRoomPanel({
       busy={busy}
       notice={notice}
       undo={held.pending?.key ?? null}
+      undoAt={held.startedAt}
       confirmEnd={confirmEnd}
       copied={copied}
       stale={readIsOld(feed, localNow)}
       blocked={blocked}
+      onReload={reload}
       introMarked={introMarked}
       canRetry={shown.purpose !== "handover" || Boolean(onRetry)}
       stillOn={stillOn}
