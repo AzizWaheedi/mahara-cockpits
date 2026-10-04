@@ -335,8 +335,10 @@ The room worker (`desk.py rooms`, every minute) makes the video rooms the cockpi
 | "Google refused the room worker's sign-in" | The Calendar sign-in lapsed or was revoked: connect Google Calendar again | The CEO |
 | "Google would not make the Sales rooms calendar" | Create a calendar named "Sales rooms" in the CEO's Google Calendar, or set `SALES_ROOMS_CALENDAR_ID` in ~/.sales-desk/env | The CEO |
 | "Google did not make the Meet link. Try Zoom." more than now and then | Google left the Meet link pending for 30 s. Use Zoom meanwhile; check Google Workspace status | The rep, then Hermes |
-| "Your Zoom invite is not accepted yet" or "Your email has no Zoom user" | The rep accepts Zoom's invite, or the CEO adds them in Zoom, or a manager links their Zoom user on the Team page | The rep, the CEO or a manager |
-| The host check says a seat's default room "will fail" | Set the other room as the seat's default on the Team page until the seat's Zoom or Google works | A manager |
+| "Your Zoom invite is not accepted yet" or "Your email has no Zoom user on Mahara's account" | The rep accepts Zoom's invite, or the CEO adds them in Zoom (no Team page control links a Zoom user yet) | The rep or the CEO |
+| "Zoom (or Meet) is not checked for your seat yet" | The host check runs every 10 minutes (`desk.py rooms --check-hosts`); a new seat is checked on its next run. If it lasts, read the `room-hosts` status row | Hermes |
+| "Meet rooms are down until the CEO reconnects Google on the room worker" | The one Google sign-in the room worker uses has lapsed: the CEO signs in again on the VPS (GOOGLE_* in `/opt/data/bibi/api-keys.env`), then `python3 desk.py doctor` | The CEO |
+| The host check says a seat's default room "will fail" | The rep uses the other room until the seat's Zoom or Google works. A default chosen by hand is `cockpit_sales_room_hosts.default_provider` (no Team page control yet) | The rep, or the CEO |
 | "The closer's Zoom is Basic and ends at 40 minutes" | The closer's seat lost its licence: set it to Licensed in Zoom, or run the demo on Meet | The CEO |
 | "Your Zoom is in another meeting" | The host ends the other meeting, or picks Meet | The rep |
 | Alert "Room ... has ended, but ... is still in its Zoom meeting" | The lead may be in a room the cockpit thinks is over (a lost join). The host checks the meeting in Zoom; the worker closes it once nobody outside the team is left, and stops checking after three hours | The rep, then a manager |

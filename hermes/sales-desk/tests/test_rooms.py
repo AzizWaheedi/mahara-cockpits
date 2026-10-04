@@ -1211,8 +1211,11 @@ class Hosts(RoomsCase):
         row = self.env.pg.one(rooms.HOSTS, email=CLOSER)
         self.assertEqual(row["default_provider"], "zoom")
         self.assertIn(f"{CLOSER} (closer): Zoom invite not accepted yet, so rooms go on Meet until it is. Default "
-                      "room: Zoom, set on the Team page. Zoom rooms will fail for this seat: set Meet on the Team page.",
+                      "room: Zoom, chosen by hand. Zoom rooms will fail for this seat until its Zoom works: the rep "
+                      "uses Meet.",
                       "\n".join(out["lines"]))
+        # No Team page control sets these, so the line never points at one (final review).
+        self.assertNotIn("Team page", "\n".join(out["lines"]))
 
     def test_without_zoom_keys_nothing_is_written_as_missing(self):
         self.seats()
@@ -1224,7 +1227,8 @@ class Hosts(RoomsCase):
         self.assertIn(f"{CLOSER} (closer): Zoom not checked, because the Zoom keys are not set on the VPS.", lines)
         # Finding 19: without Zoom keys a closer's Zoom default cannot work.
         self.assertIn(f"{CLOSER} (closer): Zoom not checked, because the Zoom keys are not set on the VPS. "
-                      "Default room: Zoom. Zoom rooms will fail for this seat: set Meet on the Team page.", lines)
+                      "Default room: Zoom. Zoom rooms will fail for this seat until its Zoom works: the rep uses "
+                      "Meet.", lines)
         self.assertIs(out["ok"], False)
 
     def test_without_google_the_check_says_meet_cannot_be_made(self):

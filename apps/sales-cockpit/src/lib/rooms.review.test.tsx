@@ -593,6 +593,31 @@ describe("3. calling a rep back to a hidden tab", () => {
     expect(R.liveNews(waiting, waiting, NOW)).toBeNull();
   });
 
+  test("on Meet, the lead's open while the rep is already in the room calls the rep back (final review)", () => {
+    const sent = F.liveFixture("ready", NOW, "sent").live;
+    const meetRoom = (over: Partial<RoomView>) => ({
+      ...sent,
+      rooms: sent.rooms.map(r => ({
+        ...r,
+        provider: "meet" as const,
+        state: "host_in" as const,
+        host_in_at: iso(NOW - 60 * S),
+        ...over,
+      })),
+    });
+    const inRoom = meetRoom({});
+    const knock = meetRoom({ first_open_at: iso(NOW - 5 * S) });
+    const news = R.liveNews(inRoom, knock, NOW);
+    expect(news?.key).toBe(`room:${sent.rooms[0]!.id}:host_in_opened`);
+    expect(news?.text).toMatch(
+      /opened the link at \d{2}:\d{2}\. Let them in, then press The lead is in\.$/,
+    );
+    expect(R.liveNews(knock, knock, NOW)).toBeNull();
+    expect(R.roomActions(knock.rooms[0]!, { now: NOW }).primary?.key).toBe(
+      "lead_in",
+    );
+  });
+
   test("hidden: the title says it, a sound plays and a notification goes, once", () => {
     const doc = fakeDoc();
     const said: string[] = [];

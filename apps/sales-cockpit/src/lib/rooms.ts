@@ -823,6 +823,12 @@ export type RoomMoment =
   | "opened"
   | "waiting_room"
   | "host_in"
+  /**
+   * Meet, the rep in the room, and the lead opened the link: on Meet the
+   * lead then knocks, and only the rep's press says they are in (final
+   * review: the rep in the Meet tab must be called back).
+   */
+  | "host_in_opened"
   | "joined"
   | "still_on_call"
   /** Its deadline passed two minutes ago and the sweep has not closed it. */
@@ -866,7 +872,10 @@ export function roomMoment(room: RoomView, now: number): RoomMoment {
   // message could go (the rep read the link out), so it comes first.
   if (room.lead_waiting_at) return "waiting_room";
   if (!room.link_sent_at && room.refusal) return "not_sent";
-  if (s === "host_in") return "host_in";
+  if (s === "host_in")
+    return room.provider === "meet" && room.first_open_at
+      ? "host_in_opened"
+      : "host_in";
   if (room.first_open_at) return "opened";
   if (room.link_unconfirmed_at) return "not_confirmed";
   if (room.link_sent_at) return "sent";
@@ -975,7 +984,14 @@ export function canSayNotLead(room: RoomView, now: number): boolean {
 const WHOLE_SENTENCES = new Set([
   "Your Zoom is in another meeting. End it or use Meet.",
   "The closer's Zoom is Basic and ends at 40 minutes. Use Meet for this demo.",
-  "Connect your Google calendar on the Team page first.",
+  "Meet rooms are down until the CEO reconnects Google on the room worker. Use Zoom, or call the lead.",
+  "Meet rooms are down until the CEO reconnects Google on the room worker. Call the lead for now.",
+  "Meet is not checked for your seat yet. Try again in 10 minutes, or use Zoom.",
+  "Meet is not checked for your seat yet. Try again in 10 minutes, or call the lead.",
+  "Zoom is not checked for your seat yet. Try again in 10 minutes, or use Meet.",
+  "Zoom is not checked for your seat yet. Try again in 10 minutes, or call the lead.",
+  "Your email has no Zoom user on Mahara's account. Ask the CEO to add you in Zoom. Meet works now.",
+  "Your email has no Zoom user on Mahara's account. Ask the CEO to add you in Zoom.",
   "Google did not make the Meet link. Try Zoom.",
   "Your Zoom seat is not active yet. Accept Zoom's email invite. Meet works now.",
 ]);
@@ -1204,6 +1220,15 @@ export function roomSentence(room: RoomView, ctx: RoomCtx): Sentence {
     case "host_in": {
       const who = v === "p1" ? name : "the lead";
       return paren(`You are in. Waiting for ${who} `);
+    }
+    case "host_in_opened": {
+      const at = { mono: clock(room.first_open_at) };
+      const who = v === "f" ? "The lead" : name;
+      return [
+        `${who} opened the link at `,
+        at,
+        ". Let them in, then press The lead is in.",
+      ];
     }
     case "joined":
       return joinedSentence(room, v);
@@ -1650,6 +1675,7 @@ function stirred(room: RoomView): boolean {
 /** Moments whose panel sentence is also the banner's: each says what to do now. */
 const BANNER_SAYS_PANEL: ReadonlySet<RoomMoment> = new Set([
   "waiting_room",
+  "host_in_opened",
   "not_sent",
   "link_late",
   "making_down",
@@ -1704,6 +1730,7 @@ export function bannerRoomAction(room: RoomView): {
 
 const ROOM_URGENCY: Partial<Record<RoomMoment, number>> = {
   waiting_room: 0,
+  host_in_opened: 0,
   joined: 1,
   still_on_call: 1,
   opened: 2,
@@ -2214,7 +2241,11 @@ export function bannerSlot(i: {
 }
 
 /** Room moments worth calling a rep back to the cockpit's tab for. */
-const CALL_BACK: ReadonlySet<RoomMoment> = new Set(["opened", "waiting_room"]);
+export const CALL_BACK: ReadonlySet<RoomMoment> = new Set([
+  "opened",
+  "waiting_room",
+  "host_in_opened",
+]);
 
 /**
  * What a hidden tab should call the rep back for, comparing two reads: a

@@ -222,8 +222,28 @@ describe("which moment a room is in", () => {
         "waiting_room",
       ],
       [
-        "host in beats opened",
-        { state: "host_in", link_sent_at: iso(NOW), first_open_at: iso(NOW) },
+        "host in beats opened (Zoom: Zoom's own events say who is in)",
+        {
+          provider: "zoom",
+          state: "host_in",
+          link_sent_at: iso(NOW),
+          first_open_at: iso(NOW),
+        },
+        "host_in",
+      ],
+      [
+        "on Meet, the rep in and the lead's open is the knock to answer (final review)",
+        {
+          provider: "meet",
+          state: "host_in",
+          link_sent_at: iso(NOW),
+          first_open_at: iso(NOW),
+        },
+        "host_in_opened",
+      ],
+      [
+        "on Meet, the rep in and no open yet still waits",
+        { provider: "meet", state: "host_in", link_sent_at: iso(NOW) },
         "host_in",
       ],
       [

@@ -495,7 +495,10 @@ export const ROOM_COPY = {
     zoom_busy: "Your Zoom is in another meeting. End it or use Meet.", // F edge, P1 panel
     zoom_basic_demo: "The closer's Zoom is Basic and ends at 40 minutes. Use Meet for this demo.", // F edge
     zoom_pending: "Your Zoom seat is not active yet. Accept Zoom's email invite. Meet works now.", // P1 panel
-    no_google: "Connect your Google calendar on the Team page first.", // F edge
+    // Meet rooms are made on the CEO's one Google sign-in on the room worker
+    // (rooms.py writes the same google_ok to every seat), so a seat has
+    // nothing of its own to connect (final review).
+    no_google: "Meet rooms are down until the CEO reconnects Google on the room worker. Use Zoom, or call the lead.", // F edge
     meet_pending: "Google did not make the Meet link. Try Zoom.", // F edge
     client: "This contact is an active client. Client success looks after them.", // P1 refused
     dnd: "Do not disturb is on in HighLevel. No link can go.", // P1 refused
@@ -704,9 +707,16 @@ export const LANE_COPY = {
   wrap_too_early: "This call's room opens at {time}, 30 minutes before it starts. Try again then.",
   host_link:
     "This call's link in HighLevel is the host's start link, which must never reach the lead. Put the meeting's join link in HighLevel, then try again.",
-  zoom_missing: "Your Zoom user is not set up on Mahara's account yet. Ask the manager to add it on the Team page. Meet works now.",
+  zoom_missing: "Your email has no Zoom user on Mahara's account. Ask the CEO to add you in Zoom. Meet works now.",
+  /** The seat's Zoom or Meet was not checked yet (no host row, or no value yet): the host check runs every 10 minutes. */
+  zoom_unchecked: "Zoom is not checked for your seat yet. Try again in 10 minutes, or use Meet.",
+  meet_unchecked: "Meet is not checked for your seat yet. Try again in 10 minutes, or use Zoom.",
   // The Zoom refusals when Meet cannot be used either (off, or no Google token): no "use Meet" advice.
-  zoom_missing_no_meet: "Your Zoom user is not set up on Mahara's account yet. Ask the manager to add it on the Team page.",
+  zoom_missing_no_meet: "Your email has no Zoom user on Mahara's account. Ask the CEO to add you in Zoom.",
+  zoom_unchecked_no_meet: "Zoom is not checked for your seat yet. Try again in 10 minutes, or call the lead.",
+  // The Meet refusals when Zoom cannot be used either: no "use Zoom" advice.
+  meet_unchecked_no_zoom: "Meet is not checked for your seat yet. Try again in 10 minutes, or call the lead.",
+  no_google_no_zoom: "Meet rooms are down until the CEO reconnects Google on the room worker. Call the lead for now.",
   zoom_pending_no_meet: "Your Zoom seat is not active yet. Accept Zoom's email invite.",
   zoom_busy_no_meet: "Your Zoom is in another meeting. End it first.",
   zoom_basic_demo_no_meet:
@@ -1404,6 +1414,8 @@ export type RefusalCode =
   | "zoom_basic_demo"
   | "zoom_pending"
   | "zoom_missing"
+  | "zoom_unchecked"
+  | "meet_unchecked"
   | "no_google"
   | "meet_pending"
   | "phone_call"
@@ -1459,6 +1471,8 @@ const REFUSALS: Record<RefusalCode, { text: string; status: number; retry?: bool
   zoom_basic_demo: { text: R.zoom_basic_demo, status: 409 },
   zoom_pending: { text: R.zoom_pending, status: 409 },
   zoom_missing: { text: LANE_COPY.zoom_missing, status: 409 },
+  zoom_unchecked: { text: LANE_COPY.zoom_unchecked, status: 409 },
+  meet_unchecked: { text: LANE_COPY.meet_unchecked, status: 409 },
   no_google: { text: R.no_google, status: 409 },
   meet_pending: { text: R.meet_pending, status: 502 },
   phone_call: { text: R.phone_call, status: 409 },
@@ -1474,6 +1488,7 @@ const REFUSALS: Record<RefusalCode, { text: string; status: number; retry?: bool
 /** The Zoom refusals without their "use Meet" advice, for a host who cannot use Meet either. */
 const NO_MEET: Partial<Record<RefusalCode, string>> = {
   zoom_missing: LANE_COPY.zoom_missing_no_meet,
+  zoom_unchecked: LANE_COPY.zoom_unchecked_no_meet,
   zoom_pending: LANE_COPY.zoom_pending_no_meet,
   zoom_busy: LANE_COPY.zoom_busy_no_meet,
   zoom_basic_demo: LANE_COPY.zoom_basic_demo_no_meet,
@@ -3586,6 +3601,12 @@ export interface HostFacts {
   zoom_live: boolean;
   /** The rep's Google calendar token works. */
   google_ok: boolean;
+  /**
+   * The host check has written a Google value for this seat (true or
+   * false). False: not checked yet, so a Meet refusal says to try again
+   * rather than that Google is down. Left out: checked.
+   */
+  google_checked?: boolean;
 }
 
 export interface CreateInput {
@@ -3627,6 +3648,19 @@ function zoomRefusal(code: RefusalCode, meetUsable: boolean): Refused {
   return meetUsable || !plain ? r : { ...r, message: plain };
 }
 
+/** The Meet refusals without their "use Zoom" advice, for a host who cannot use Zoom either. */
+const NO_ZOOM: Partial<Record<RefusalCode, string>> = {
+  meet_unchecked: LANE_COPY.meet_unchecked_no_zoom,
+  no_google: LANE_COPY.no_google_no_zoom,
+};
+
+/** A Meet refusal, with its "use Zoom" advice only when the host can use Zoom for this call. */
+function meetRefusal(code: RefusalCode, zoomUsable: boolean): Refused {
+  const r = refuse(code);
+  const plain = NO_ZOOM[code];
+  return zoomUsable || !plain ? r : { ...r, message: plain };
+}
+
 /**
  * room.create's checks, before anything is written: the switches; the
  * request's shape; both providers off; the lead (contact read, test list,
@@ -3664,11 +3698,22 @@ export function createRefusal(i: CreateInput): Refused | null {
   if (provider === "zoom") {
     const meetUsable = s.providers.meet && h?.google_ok === true;
     const st = h?.zoom_status ?? null;
-    if (!st || st === "missing") return zoomRefusal("zoom_missing", meetUsable);
+    // Split by cause (final review): not checked yet is not "missing".
+    if (!st) return zoomRefusal("zoom_unchecked", meetUsable);
+    if (st === "missing") return zoomRefusal("zoom_missing", meetUsable);
     if (st === "pending") return zoomRefusal("zoom_pending", meetUsable);
     if (st === "basic" && i.call_kind === "demo") return zoomRefusal("zoom_basic_demo", meetUsable);
     if (h?.zoom_live) return zoomRefusal("zoom_busy", meetUsable);
-  } else if (!h?.google_ok) return refuse("no_google");
+  } else if (!h?.google_ok) {
+    const st = h?.zoom_status ?? null;
+    const zoomUsable =
+      s.providers.zoom && !h?.zoom_live && (st === "licensed" || (st === "basic" && i.call_kind !== "demo"));
+    // No host row yet (before the first 10-minute check), or no Google value
+    // written yet: not checked. A checked false: the worker's one Google
+    // sign-in is down, which no seat can fix on its own.
+    const unchecked = !h || h.google_checked === false;
+    return meetRefusal(unchecked ? "meet_unchecked" : "no_google", zoomUsable);
+  }
   return null;
 }
 
@@ -3905,6 +3950,12 @@ const WHOLE_SENTENCE_ERRORS = new Set<string>([
   R.zoom_basic_demo,
   R.no_google,
   LANE_COPY.zoom_missing,
+  LANE_COPY.zoom_unchecked,
+  LANE_COPY.meet_unchecked,
+  LANE_COPY.zoom_missing_no_meet,
+  LANE_COPY.zoom_unchecked_no_meet,
+  LANE_COPY.meet_unchecked_no_zoom,
+  LANE_COPY.no_google_no_zoom,
 ]);
 
 /** "The room worker stopped." → "the room worker stopped", for use inside a sentence. */

@@ -523,6 +523,7 @@ export function makeRooms(deps: RoomDeps): Rooms {
           : null) as HostFacts["zoom_status"],
         zoom_live: until !== null && until > now,
         google_ok: row.google_ok === true,
+        google_checked: typeof row.google_ok === "boolean",
       },
     };
   }

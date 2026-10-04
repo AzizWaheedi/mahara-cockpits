@@ -9,6 +9,7 @@ import {
   bannerRoomAction,
   bannerRoomSentence,
   bannerSlot,
+  CALL_BACK,
   DECLINE_AGAIN,
   declineFailure,
   errorText,
@@ -200,9 +201,7 @@ export function SalesBannerView({
   const replyWords = replyAlert ? replySentence(replyAlert, now) : null;
   const urgent =
     slot === "offer" ||
-    (slot === "room" &&
-      room !== null &&
-      ["waiting_room", "opened"].includes(roomMoment(room, now)));
+    (slot === "room" && room !== null && CALL_BACK.has(roomMoment(room, now)));
   const spoken = spokenOf(slot, strip, roomSentence, replyWords);
   const zone = useRef<HTMLDivElement>(null);
   useFocusRescue(

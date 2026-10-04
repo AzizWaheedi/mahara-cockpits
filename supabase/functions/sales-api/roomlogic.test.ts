@@ -1373,12 +1373,37 @@ describe("room.create's checks", () => {
     expect(input({ lead_room_open: true })?.message).toBe("A video room is already open for this lead. Use that one.");
     expect(input({ lead_room_open: true, purpose: "manual" })?.message).toBe("This lead already has a room open. Open it.");
     expect(input({ host_room_open: true })?.message).toBe("You already have a room open. End it first.");
-    expect(input({ host: { ...okHost, google_ok: false } })?.message).toBe("Connect your Google calendar on the Team page first.");
+    expect(input({ host: { ...okHost, google_ok: false } })?.message).toBe("Meet rooms are down until the CEO reconnects Google on the room worker. Use Zoom, or call the lead.");
     expect(input({ provider: "zoom", host: { ...okHost, zoom_status: "pending" } })?.message).toBe("Your Zoom seat is not active yet. Accept Zoom's email invite. Meet works now.");
     expect(input({ provider: "zoom", host: { ...okHost, zoom_status: "missing" } })?.code).toBe("zoom_missing");
     expect(input({ provider: "zoom", call_kind: "demo", host: { ...okHost, zoom_status: "basic" } })?.message).toBe("The closer's Zoom is Basic and ends at 40 minutes. Use Meet for this demo.");
     expect(input({ provider: "zoom", call_kind: "intro", host: { ...okHost, zoom_status: "basic" } })).toBe(null);
     expect(input({ provider: "zoom", host: { ...okHost, zoom_live: true } })?.message).toBe("Your Zoom is in another meeting. End it or use Meet.");
+  });
+
+  test("a refusal says its cause and never points at a control nobody has (final review)", () => {
+    // Not checked yet: no host row before the first 10-minute check, or no Google value written yet.
+    expect(input({ host: null })?.code).toBe("meet_unchecked");
+    expect(input({ host: null })?.message).toBe("Meet is not checked for your seat yet. Try again in 10 minutes, or call the lead.");
+    expect(input({ host: { ...okHost, google_ok: false, google_checked: false } })?.message).toBe(
+      "Meet is not checked for your seat yet. Try again in 10 minutes, or use Zoom.",
+    );
+    // The worker's one Google sign-in is down: Zoom when it works, else the phone.
+    expect(input({ host: { ...okHost, google_ok: false, zoom_status: "missing" } })?.message).toBe(
+      "Meet rooms are down until the CEO reconnects Google on the room worker. Call the lead for now.",
+    );
+    expect(input({ call_kind: "demo", host: { ...okHost, google_ok: false, zoom_status: "basic" } })?.message).toBe(
+      "Meet rooms are down until the CEO reconnects Google on the room worker. Call the lead for now.",
+    );
+    // Zoom not checked yet is not "missing".
+    expect(input({ provider: "zoom", host: { ...okHost, zoom_status: null } })?.code).toBe("zoom_unchecked");
+    expect(input({ provider: "zoom", host: { ...okHost, zoom_status: null } })?.message).toBe("Zoom is not checked for your seat yet. Try again in 10 minutes, or use Meet.");
+    expect(input({ provider: "zoom", host: null })?.message).toBe("Zoom is not checked for your seat yet. Try again in 10 minutes, or call the lead.");
+    expect(input({ provider: "zoom", host: { ...okHost, zoom_status: "missing" } })?.message).toBe(
+      "Your email has no Zoom user on Mahara's account. Ask the CEO to add you in Zoom. Meet works now.",
+    );
+    for (const host of [null, { ...okHost, google_ok: false }, { ...okHost, google_ok: false, google_checked: false }, { ...okHost, zoom_status: null }, { ...okHost, zoom_status: "missing" as const }])
+      for (const provider of ["zoom", "meet"] as const) expect(String(input({ provider, host })?.message ?? "")).not.toContain("Team page");
   });
 
   test("bad shapes: no lead, a standby with a lead, a booked room, unknown names", () => {

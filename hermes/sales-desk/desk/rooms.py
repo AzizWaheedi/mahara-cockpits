@@ -2994,7 +2994,7 @@ class Worker:
             "missing": f"{who}: no Zoom user that can host on Mahara's account, so rooms go on Meet.",
         }[status]
         if linked and user:
-            line += " Zoom user set on the Team page."
+            line += " Zoom user linked by hand."
         if live_until:
             line += " In a Zoom meeting now."
         if live_unread:
@@ -3049,9 +3049,12 @@ class Worker:
                     row["zoom_user_id"] = str(seat["user_id"])
             rows.append(row)
             label = {"zoom": "Zoom", "meet": "Meet"}
-            line = seat["line"] + f" Default room: {label[shown]}" + (", set on the Team page." if chosen else ".")
+            line = seat["line"] + f" Default room: {label[shown]}" + (", chosen by hand." if chosen else ".")
             if works != shown:
-                line += f" {label[shown]} rooms will fail for this seat: set {label[works]} on the Team page."
+                # No Team page control sets a seat's Zoom user or default room
+                # (final review): the line says what the rep does meanwhile.
+                line += (f" {label[shown]} rooms will fail for this seat until its {label[shown]} works:"
+                         f" the rep uses {label[works]}.")
             lines.append(line)
         if rows:
             self.sb.upsert(HOSTS, rows, "email")

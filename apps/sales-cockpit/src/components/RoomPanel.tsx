@@ -6,6 +6,7 @@ import {
   afterAdmitBlocked,
   alertWhileHidden,
   bannerRoomSentence,
+  CALL_BACK,
   type CreateRoom,
   clockSec,
   copyText,
@@ -755,7 +756,7 @@ function LiveRoomPanel({
   // same key, so the two never say it twice).
   // biome-ignore lint/correctness/useExhaustiveDependencies: only the moment matters
   useEffect(() => {
-    if (!room || (moment !== "opened" && moment !== "waiting_room")) return;
+    if (!room || !moment || !CALL_BACK.has(moment)) return;
     alertWhileHidden(
       `room:${room.id}:${moment}`,
       sentenceText(bannerRoomSentence(room, Date.now()), true),
