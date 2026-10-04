@@ -343,6 +343,7 @@ export const field =
 /** A choice in a page header or toolbar ("Whose calls"); form selects use `field`. */
 export const select =
   "h-9 min-w-0 max-w-[16rem] rounded-[14px] border border-white/10 bg-[color:var(--card)] px-3 text-sm focus:border-[color:var(--ring)] focus:outline-none focus:ring-1 focus:ring-[color:var(--ring)] transition-all";
+export { AnimatedSelect } from "./ui/animated-select";
 /**
  * The page frame: one width and one rhythm for every page. The shell does
  * not pad, so the frame does (16px on a phone, 24px from a tablet up).

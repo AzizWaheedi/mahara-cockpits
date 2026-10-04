@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useReps } from "../lib/data";
 import type { Me } from "../lib/types";
-import { select } from "./kit";
+import { AnimatedSelect, select } from "./kit";
 
 /**
  * Whose calls a page shows. Everyone opens on their own (Aziz, 2026-09-24:
@@ -82,7 +82,7 @@ export function useScope(
   const ScopeSwitch = me.manager ? (
     <label className="inline-flex items-center gap-2 text-sm">
       <span className="muted">{opts.label ?? "Whose calls"}</span>
-      <select
+      <AnimatedSelect
         value={current}
         onChange={e => pick(e.target.value)}
         className={select}
@@ -98,7 +98,7 @@ export function useScope(
             ))}
           </optgroup>
         ) : null}
-      </select>
+      </AnimatedSelect>
     </label>
   ) : null;
 

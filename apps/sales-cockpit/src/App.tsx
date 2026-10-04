@@ -1,5 +1,5 @@
 import { CalendarDays, Menu, PhoneCall, Sun, UserSearch } from "lucide-react";
-import { lazy, type ReactNode, Suspense, useEffect, useState } from "react";
+import { lazy, type ReactNode, Suspense, useCallback, useEffect, useState } from "react";
 import {
   Navigate,
   NavLink,
@@ -8,6 +8,8 @@ import {
   useLocation,
   useParams,
 } from "react-router";
+import { MacOSDock } from "./components/MacOSDock";
+import { MacOSMenuBar } from "./components/MacOSMenuBar";
 import { PageBoundary } from "./components/PageBoundary";
 import {
   PortalAutoSignIn,
@@ -210,6 +212,35 @@ export function Seated({
   };
   const role = ROLE_WORDS[String(me.role)] ?? "Sales";
   const { pathname } = useLocation();
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem("sales_sidebar_collapsed") === "1";
+    } catch {
+      return false;
+    }
+  });
+
+  const toggleSidebar = useCallback(() => {
+    setSidebarCollapsed(prev => {
+      const next = !prev;
+      try {
+        localStorage.setItem("sales_sidebar_collapsed", next ? "1" : "0");
+      } catch {}
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "b") {
+        e.preventDefault();
+        toggleSidebar();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [toggleSidebar]);
+
   const sidebar = (onNavigate?: () => void) => (
     <Sidebar
       name={name}
@@ -218,14 +249,18 @@ export function Seated({
       isManager={Boolean(me.manager)}
       counts={counts}
       onNavigate={onNavigate}
+      collapsed={sidebarCollapsed}
+      onToggleCollapse={toggleSidebar}
     />
   );
 
   return (
-    // From md up there is no bar at the top, so the installed app keeps its
-    // own content below the clock (the status bar is see-through there).
     <div className="flex h-full lg:pt-[env(safe-area-inset-top,0px)]">
-      <aside className="hidden w-60 shrink-0 border-r hairline bg-[color:var(--card)]/90 backdrop-blur-md lg:block">
+      <aside
+        className={`hidden shrink-0 border-r hairline bg-[color:var(--card)]/90 backdrop-blur-md transition-all duration-200 ease-out lg:block ${
+          sidebarCollapsed ? "w-16" : "w-60"
+        }`}
+      >
         {sidebar()}
       </aside>
 
@@ -245,11 +280,35 @@ export function Seated({
 
       <div className="flex min-w-0 flex-1 flex-col overflow-y-auto pb-[calc(5.5rem+env(safe-area-inset-bottom,0px))] lg:pb-0">
         {banner}
+
+        {/* Desktop authentic macOS Menu Bar */}
+        <div className="hidden lg:block">
+          <MacOSMenuBar
+            name={name}
+            role={role}
+            owedCount={counts.owed}
+            sidebarCollapsed={sidebarCollapsed}
+            onToggleSidebar={toggleSidebar}
+          />
+        </div>
+
+        {/* Mobile header */}
         <header className="pt-safe sticky top-0 z-10 flex items-center justify-between border-b hairline bg-[color:var(--background)]/85 px-4 py-2.5 backdrop-blur-md lg:hidden">
           <div className="flex items-center gap-3">
             <Wordmark size="sm" />
             <span className="muted text-sm">Sales</span>
           </div>
+          {counts.owed > 0 ? (
+            <span
+              className="rounded-full px-2 py-0.5 text-xs font-semibold tabular-nums"
+              style={{
+                background: "var(--owed)",
+                color: "var(--warning-foreground)",
+              }}
+            >
+              {counts.owed} owed
+            </span>
+          ) : null}
         </header>
 
         {/* Keyed by the address, so moving to another page clears an error. */}
@@ -309,57 +368,26 @@ export function Seated({
   );
 }
 
-/** Below lg the rail becomes a floating island dock (SF-01): high-ergonomics thumb navigation. */
+/** Below lg the rail becomes the authentic MacOS Floating Dock (SF-01): cosine magnification & click bounce. */
 function TabBar({ owed, onMore }: { owed: number; onMore: () => void }) {
-  const tabs = [
-    { to: "/", label: "Today", icon: Sun },
-    { to: "/dialer", label: "Dialer", icon: PhoneCall },
-    { to: "/calendar", label: "Calendar", icon: CalendarDays, n: owed },
-    { to: "/leads", label: "Leads", icon: UserSearch },
-  ];
   return (
-    <div className="pointer-events-none fixed inset-x-0 bottom-3 z-30 flex justify-center px-4 lg:hidden">
-      <nav
-        className="floating-dock pointer-events-auto flex w-full max-w-sm items-center justify-around gap-1 p-1.5 shadow-2xl transition-transform active:scale-[0.99]"
-        aria-label="Sections"
-      >
-        {tabs.map(({ to, label, icon: Icon, n }) => (
-          <NavLink
-            key={to}
-            to={to}
-            end={to === "/"}
-            className={({ isActive }) =>
-              `no-touch relative flex flex-1 flex-col items-center justify-center rounded-full py-1.5 text-[11px] transition-all ${
-                isActive
-                  ? "bg-white/[0.08] font-semibold text-[color:var(--primary)]"
-                  : "muted hover:text-[color:var(--foreground)]"
-              }`
-            }
-          >
-            <Icon className="size-4.5" strokeWidth={1.8} aria-hidden />
-            <span className="mt-0.5 tracking-tight">{label}</span>
-            {n ? (
-              <span
-                className="absolute -top-0.5 right-2 rounded-full px-1 text-[10px] font-bold leading-3.5 tabular-nums shadow-sm"
-                style={{
-                  background: "var(--owed)",
-                  color: "var(--warning-foreground)",
-                }}
-              >
-                {n}
-              </span>
-            ) : null}
-          </NavLink>
-        ))}
+    <div className="pointer-events-none fixed inset-x-0 bottom-3 z-30 flex justify-center px-2 lg:hidden">
+      <div className="pointer-events-auto flex items-center gap-1.5">
+        <MacOSDock
+          owedCount={owed}
+          baseSize={36}
+          maxScale={1.35}
+          className="shadow-2xl"
+        />
         <button
           type="button"
           onClick={onMore}
-          className="no-touch muted flex flex-1 flex-col items-center justify-center rounded-full py-1.5 text-[11px] transition-colors hover:text-[color:var(--foreground)]"
+          title="More sections"
+          className="floating-dock pointer-events-auto flex size-10 shrink-0 items-center justify-center text-white/70 hover:text-white transition-colors"
         >
           <Menu className="size-4.5" strokeWidth={1.8} aria-hidden />
-          <span className="mt-0.5 tracking-tight">More</span>
         </button>
-      </nav>
+      </div>
     </div>
   );
 }

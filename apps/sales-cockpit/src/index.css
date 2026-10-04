@@ -4,7 +4,7 @@
    browser takes each Arabic letter from Plex and every Latin one from Geist. */
 @import url("https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&family=IBM+Plex+Sans+Arabic:wght@400;500;600&display=swap");
 @import "tailwindcss";
-
+@import "./components/ui/animated-select.css";
 @custom-variant dark (&:is(.dark *));
 
 /*

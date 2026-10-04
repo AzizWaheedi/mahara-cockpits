@@ -1,0 +1,370 @@
+[data-cockpit-select].cockpit-animated-select-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.65rem;
+  min-width: 5rem;
+  min-height: 2.25rem;
+  max-width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 0.65rem;
+  padding: 0.4rem 0.75rem;
+  background: var(--card);
+  color: var(--foreground);
+  font: inherit;
+  text-align: start;
+  box-shadow: 0 1px 2px rgb(9 19 51 / 4%);
+  transition: border-color 180ms ease, box-shadow 180ms ease, background-color 180ms ease;
+}
+
+[data-cockpit-select].cockpit-animated-select-trigger:hover {
+  border-color: var(--mahara-teal);
+}
+
+[data-cockpit-select].cockpit-animated-select-trigger:focus-visible,
+[data-cockpit-select].cockpit-animated-select-trigger[data-state="open"] {
+  outline: none;
+  border-color: var(--mahara-teal);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--mahara-teal) 22%, transparent);
+}
+
+[data-cockpit-select].cockpit-animated-select-trigger:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.cockpit-animated-select-trigger [data-radix-select-value] {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cockpit-animated-select-chevron {
+  display: inline-flex;
+  flex: none;
+  color: var(--muted-foreground);
+  transition: transform 180ms ease;
+}
+
+[data-cockpit-select][data-state="open"] .cockpit-animated-select-chevron {
+  transform: rotate(180deg);
+}
+
+.cockpit-animated-select-content {
+  z-index: 100;
+  min-width: var(--radix-select-trigger-width);
+  max-width: min(24rem, calc(100vw - 1.5rem));
+  max-height: min(var(--radix-select-content-available-height), 20rem);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  background: var(--card);
+  color: var(--foreground);
+  box-shadow: 0 18px 48px rgb(9 19 51 / 18%), 0 2px 8px rgb(9 19 51 / 8%);
+  transform-origin: var(--radix-select-content-transform-origin);
+  animation: cockpit-select-in 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.cockpit-animated-select-content[data-state="closed"] {
+  animation: cockpit-select-out 120ms ease-in;
+}
+
+.cockpit-animated-select-viewport {
+  padding: 0.3rem;
+}
+
+.cockpit-animated-select-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-height: 2.4rem;
+  border-radius: 0.5rem;
+  padding: 0.45rem 2rem 0.45rem 0.75rem;
+  font-size: 0.875rem;
+  line-height: 1.3;
+  cursor: default;
+  outline: none;
+  user-select: none;
+}
+
+.cockpit-animated-select-item[data-highlighted] {
+  background: color-mix(in srgb, var(--mahara-teal) 13%, var(--card));
+}
+
+.cockpit-animated-select-item[data-state="checked"] {
+  color: var(--foreground);
+  font-weight: 600;
+}
+
+.cockpit-animated-select-item[data-state="checked"]::before {
+  content: "";
+  position: absolute;
+  inset-inline-start: 0;
+  width: 2px;
+  height: 1.15rem;
+  border-radius: 2px;
+  background: var(--mahara-teal);
+}
+
+.cockpit-animated-select-item[data-disabled] {
+  opacity: 0.45;
+}
+
+.cockpit-animated-select-check {
+  position: absolute;
+  inset-inline-end: 0.65rem;
+  color: var(--mahara-teal);
+}
+
+.cockpit-animated-select-label {
+  padding: 0.5rem 0.75rem 0.25rem;
+  color: var(--muted-foreground);
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+select.cockpit-native-select {
+  border: 1px solid var(--border);
+  border-radius: 0.65rem;
+  background: var(--card);
+  color: var(--foreground);
+}
+
+@keyframes cockpit-select-in {
+  from { opacity: 0; transform: translateY(-6px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes cockpit-select-out {
+  from { opacity: 1; transform: translateY(0) scale(1); }
+  to { opacity: 0; transform: translateY(-4px) scale(0.99); }
+}
+
+@media (max-width: 640px) {
+  .cockpit-animated-select-item { min-height: 2.75rem; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cockpit-animated-select-content,
+  .cockpit-animated-select-content[data-state="closed"] { animation: none; }
+  .cockpit-animated-select-chevron,
+  [data-cockpit-select].cockpit-animated-select-trigger { transition: none; }
+}
+
+/* Existing Radix selects and action menus share the same surface and motion. */
+[data-slot="select-trigger"] {
+  background: var(--card);
+  border-radius: 0.65rem;
+  transition: border-color 180ms ease, box-shadow 180ms ease, background-color 180ms ease;
+}
+
+[data-slot="select-trigger"]:hover,
+[data-slot="select-trigger"][data-state="open"] {
+  border-color: var(--mahara-teal);
+}
+
+[data-slot="select-trigger"] > svg:last-child {
+  transition: transform 180ms ease;
+}
+
+[data-slot="select-trigger"][data-state="open"] > svg:last-child {
+  transform: rotate(180deg);
+}
+
+[data-slot="select-content"],
+[data-slot="dropdown-menu-content"],
+[data-slot="dropdown-menu-sub-content"] {
+  border-color: var(--border);
+  border-radius: 0.75rem;
+  background: var(--card);
+  box-shadow: 0 18px 48px rgb(9 19 51 / 18%), 0 2px 8px rgb(9 19 51 / 8%);
+}
+
+[data-slot="select-item"][data-state="checked"],
+[data-slot="dropdown-menu-radio-item"][data-state="checked"],
+[data-slot="dropdown-menu-checkbox-item"][data-state="checked"] {
+  background: color-mix(in srgb, var(--mahara-teal) 13%, var(--card));
+}
+
+[data-slot="select-item"][data-state="checked"] svg,
+[data-slot="dropdown-menu-radio-item"][data-state="checked"] svg,
+[data-slot="dropdown-menu-checkbox-item"][data-state="checked"] svg {
+  color: var(--mahara-teal);
+}
+
+[data-cockpit-date].cockpit-date-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  min-height: 2.25rem;
+  min-width: 8rem;
+  max-width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 0.65rem;
+  padding: 0.4rem 0.75rem;
+  background: var(--card);
+  color: var(--foreground);
+  font: inherit;
+  text-align: start;
+  box-shadow: 0 1px 2px rgb(9 19 51 / 4%);
+  transition: border-color 180ms ease, box-shadow 180ms ease;
+}
+
+[data-cockpit-date].cockpit-date-trigger:hover,
+[data-cockpit-date].cockpit-date-trigger[data-state="open"] {
+  border-color: var(--mahara-teal);
+}
+
+[data-cockpit-date].cockpit-date-trigger:focus-visible {
+  outline: none;
+  border-color: var(--mahara-teal);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--mahara-teal) 22%, transparent);
+}
+
+[data-cockpit-date].cockpit-date-trigger:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.cockpit-date-placeholder,
+.cockpit-date-trigger > svg { color: var(--muted-foreground); }
+
+.cockpit-date-popover {
+  width: max-content;
+  max-width: calc(100vw - 1.5rem);
+  border-radius: 0.75rem;
+  overflow: auto;
+  box-shadow: 0 18px 48px rgb(9 19 51 / 18%), 0 2px 8px rgb(9 19 51 / 8%);
+}
+
+.cockpit-date-footer {
+  display: flex;
+  justify-content: flex-end;
+  border-top: 1px solid var(--border);
+  padding: 0.5rem;
+}
+
+.cockpit-date-footer button {
+  border-radius: 0.4rem;
+  padding: 0.3rem 0.55rem;
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+}
+
+.cockpit-date-footer button:hover {
+  background: var(--muted);
+  color: var(--foreground);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-slot="select-trigger"],
+  [data-slot="select-trigger"] > svg:last-child,
+  [data-cockpit-date].cockpit-date-trigger { transition: none; }
+}
+
+.cockpit-range-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 2.25rem;
+  border: 1px solid var(--border);
+  border-radius: 0.65rem;
+  padding: 0.4rem 0.75rem;
+  background: var(--card);
+  color: var(--foreground);
+  font-size: 0.8rem;
+  font-weight: 600;
+  white-space: nowrap;
+  box-shadow: 0 1px 2px rgb(9 19 51 / 4%);
+  transition: border-color 180ms ease, box-shadow 180ms ease;
+}
+
+.cockpit-range-trigger:hover,
+.cockpit-range-trigger[data-state="open"] {
+  border-color: var(--mahara-teal);
+}
+
+.cockpit-range-trigger:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--mahara-teal) 22%, transparent);
+}
+
+.cockpit-range-trigger > svg:first-child { color: var(--mahara-teal); }
+.cockpit-range-chevron { color: var(--muted-foreground); transition: transform 180ms ease; }
+.cockpit-range-trigger[data-state="open"] .cockpit-range-chevron { transform: rotate(180deg); }
+
+.cockpit-range-popover {
+  width: max-content;
+  max-width: calc(100vw - 1.5rem);
+  overflow: auto;
+  border-radius: 0.75rem;
+  padding: 0;
+  box-shadow: 0 18px 48px rgb(9 19 51 / 18%), 0 2px 8px rgb(9 19 51 / 8%);
+}
+
+.cockpit-range-layout { display: flex; }
+.cockpit-range-presets {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 9rem;
+  border-inline-end: 1px solid var(--border);
+  padding: 0.55rem;
+}
+
+.cockpit-range-presets button {
+  min-height: 2rem;
+  border-radius: 0.45rem;
+  padding: 0.35rem 0.6rem;
+  color: var(--muted-foreground);
+  font-size: 0.78rem;
+  text-align: start;
+}
+
+.cockpit-range-presets button:hover,
+.cockpit-range-presets button:focus-visible {
+  background: var(--muted);
+  color: var(--foreground);
+  outline: none;
+}
+
+.cockpit-range-presets button[data-active="true"] {
+  background: color-mix(in srgb, var(--mahara-teal) 15%, var(--card));
+  color: var(--foreground);
+  font-weight: 600;
+  box-shadow: inset 2px 0 var(--mahara-teal);
+}
+
+.cockpit-range-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.65rem;
+  border-top: 1px solid var(--border);
+  padding: 0.55rem 0.8rem;
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+}
+
+@media (max-width: 640px) {
+  .cockpit-range-layout { flex-direction: column; }
+  .cockpit-range-presets {
+    flex-direction: row;
+    min-width: 0;
+    max-width: min(22rem, calc(100vw - 1.5rem));
+    overflow-x: auto;
+    border-inline-end: 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .cockpit-range-presets button { flex: none; min-height: 2.75rem; }
+  .cockpit-range-calendar { overflow-x: auto; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cockpit-range-trigger,
+  .cockpit-range-chevron { transition: none; }
+}

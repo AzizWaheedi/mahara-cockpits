@@ -10,7 +10,7 @@ import {
   stepWords,
   wholeFunnel,
 } from "../lib/funnel";
-import { SectionCard, SourceNote } from "./kit";
+import { AnimatedSelect, SectionCard, SourceNote } from "./kit";
 
 /**
  * The prospect's funnel on the call, top to bottom the way the closer asks
@@ -163,17 +163,17 @@ export function FunnelLadder({
   const currencyPicker = (
     <label className="muted flex items-center gap-1.5 text-xs">
       <span>Their money in</span>
-      <select
+      <AnimatedSelect
         value={f.currency}
         onChange={e => onCurrency(e.target.value as Currency)}
-        className="h-7 rounded-[var(--radius-md)] border hairline bg-[color:var(--card)] px-1.5 text-xs"
+        className="h-7 rounded-[12px] border border-white/10 bg-[color:var(--card)] px-2 text-xs"
       >
         {CURRENCIES.map(c => (
           <option key={c} value={c}>
             {c}
           </option>
         ))}
-      </select>
+      </AnimatedSelect>
     </label>
   );
 

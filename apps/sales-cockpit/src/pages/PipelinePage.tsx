@@ -9,6 +9,7 @@ import {
 import { useNavigate, useSearchParams } from "react-router";
 import { HotSheet } from "../components/HotSheet";
 import {
+  AnimatedSelect,
   EmptyState,
   Failed,
   Parts,
@@ -259,18 +260,18 @@ export default function PipelinePage({ me }: { me: Me }) {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {view === "board" && board && board.pipelines.length > 1 ? (
-            <select
+            <AnimatedSelect
               aria-label="Pipeline"
               value={pipelineId}
               onChange={e => setPipelineId(e.target.value)}
-              className="h-8 rounded-[var(--radius-md)] border hairline bg-[color:var(--background)] px-2 text-sm"
+              className="h-8 rounded-[12px] border border-white/10 bg-[color:var(--background)] px-2.5 text-sm"
             >
               {board.pipelines.map(p => (
                 <option key={p.id} value={p.id}>
                   {plainStage(p.name)}
                 </option>
               ))}
-            </select>
+            </AnimatedSelect>
           ) : null}
           <Segmented
             label="Whose"

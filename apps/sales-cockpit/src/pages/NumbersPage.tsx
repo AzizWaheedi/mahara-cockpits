@@ -2,6 +2,7 @@ import { ChartNoAxesColumn, Link2Off } from "lucide-react";
 import { useMemo } from "react";
 import { useSearchParams } from "react-router";
 import {
+  AnimatedSelect,
   EmptyState,
   Failed,
   page,
@@ -228,7 +229,7 @@ export default function NumbersPage({ me }: { me: Me }) {
         {manager ? (
           <label className="flex min-w-0 items-center gap-2 text-sm">
             <span className="muted shrink-0">Whose numbers</span>
-            <select
+            <AnimatedSelect
               value={team ? TEAM : (key ?? TEAM)}
               onChange={e => setParam("who", e.target.value)}
               className={select}
@@ -239,7 +240,7 @@ export default function NumbersPage({ me }: { me: Me }) {
                   {o.name}
                 </option>
               ))}
-            </select>
+            </AnimatedSelect>
           </label>
         ) : null}
       </header>
