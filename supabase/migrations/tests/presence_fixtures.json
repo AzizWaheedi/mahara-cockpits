@@ -129,6 +129,12 @@
      "providers": {"zoom": false, "meet": false}, "expect": "zoom"},
     {"name": "a manager is read as a setter", "role": "manager",
      "host": {"zoom_status": "licensed", "google_ok": true, "default_provider": null},
-     "providers": {"zoom": true, "meet": true}, "expect": "meet"}
+     "providers": {"zoom": true, "meet": true}, "expect": "meet"},
+    {"name": "closer, Zoom basic, Google connected: Meet (Basic ends at 40 minutes, a demo is 60)", "role": "closer",
+     "host": {"zoom_status": "basic", "google_ok": true, "default_provider": null},
+     "providers": {"zoom": true, "meet": true}, "expect": "meet"},
+    {"name": "setter, Zoom basic, no Google: Zoom (an intro fits in 40 minutes)", "role": "setter",
+     "host": {"zoom_status": "basic", "google_ok": false, "default_provider": null},
+     "providers": {"zoom": true, "meet": true}, "expect": "zoom"}
   ]
 }

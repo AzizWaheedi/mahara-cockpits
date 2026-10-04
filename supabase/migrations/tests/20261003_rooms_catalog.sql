@@ -65,7 +65,7 @@ begin
     and not has_table_privilege('authenticated', 'public.cockpit_sales_presence', 'select')
     and not has_table_privilege('anon', 'public.cockpit_sales_presence', 'select')
     and has_table_privilege('service_role', 'public.cockpit_sales_presence', 'select'));
-  foreach f in array array['public.cockpit_sales_live_claim(uuid, text, integer)', 'public.cockpit_sales_rooms_sweep()',
+  foreach f in array array['public.cockpit_sales_live_claim(uuid, text, integer, timestamptz)', 'public.cockpit_sales_rooms_sweep()',
                            'public.cockpit_sales_rooms_tick()', 'public.cockpit_sales_watchdog()',
                            'public.cockpit_sales_room_code()',
                            'public.cockpit_sales_room_event_lease(uuid, text, integer)',
@@ -76,7 +76,8 @@ begin
                            'public.cockpit_sales_alert_hours(timestamptz)',
                            'public.cockpit_sales_alert_words(text, integer)',
                            'public.cockpit_sales_settings_add_missing(text, jsonb, text, text)',
-                           'public.cockpit_sales_jsonb_add_missing(jsonb, jsonb)'] loop
+                           'public.cockpit_sales_jsonb_add_missing(jsonb, jsonb)',
+                           'public.cockpit_sales_norm_words(text)'] loop
     perform pg_temp.ck('A function ' || f || ': service role only',
       has_function_privilege('service_role', f, 'execute')
       and not has_function_privilege('authenticated', f, 'execute')
@@ -84,13 +85,13 @@ begin
   end loop;
   perform pg_temp.ck('A claim, lease, sweep, tick and watchdog are security definer with an empty search_path',
     (select count(*) = 5 and bool_and(p.prosecdef and 'search_path=""' = any (p.proconfig)) from pg_proc as p
-      where p.oid in ('public.cockpit_sales_live_claim(uuid, text, integer)'::regprocedure,
+      where p.oid in ('public.cockpit_sales_live_claim(uuid, text, integer, timestamptz)'::regprocedure,
                       'public.cockpit_sales_room_event_lease(uuid, text, integer)'::regprocedure,
                       'public.cockpit_sales_rooms_sweep()'::regprocedure, 'public.cockpit_sales_rooms_tick()'::regprocedure,
                       'public.cockpit_sales_watchdog()'::regprocedure)));
   perform pg_temp.ck('A the claim waits at most 3 s for a lock (lock_timeout)',
     (select 'lock_timeout=3s' = any (p.proconfig) from pg_proc as p
-      where p.oid = 'public.cockpit_sales_live_claim(uuid, text, integer)'::regprocedure));
+      where p.oid = 'public.cockpit_sales_live_claim(uuid, text, integer, timestamptz)'::regprocedure));
   for r in select j.jobname, j.schedule, j.active, j.username, j.command from cron.job as j
             where j.jobname in ('mahara-sales-rooms-sweep', 'mahara-sales-watchdog') loop
     perform pg_temp.ck('A cron ' || r.jobname || ' scheduled as postgres, runs its one function',
@@ -134,6 +135,11 @@ begin
       where table_schema = 'public' and table_name = 'cockpit_sales_followup_wave_members' and column_name = 'excluded_reason')
     and exists (select 1 from information_schema.columns
       where table_schema = 'public' and table_name = 'cockpit_sales_wa_templates' and column_name = 'button_variable'));
+  perform pg_temp.ck('A 20261004a: the availability row keeps the last press''s standby sentence (standby_error text, standby_error_at)',
+    (select data_type = 'text' from information_schema.columns
+      where table_schema = 'public' and table_name = 'cockpit_sales_availability' and column_name = 'standby_error')
+    and (select data_type = 'timestamp with time zone' from information_schema.columns
+      where table_schema = 'public' and table_name = 'cockpit_sales_availability' and column_name = 'standby_error_at'));
   perform pg_temp.ck('A triggers: room guard, the replaced_by link, handover guard, levels gate, wave guard, member, meta and stops touch',
     (select count(*) = 8 from pg_trigger as g
       where not g.tgisinternal and g.tgname in ('cockpit_sales_rooms_guard', 'cockpit_sales_rooms_link_replaced',

@@ -6,7 +6,7 @@
     python3 supabase/migrations/tests/run_checks.py --applied  # the migrations are live: catalog checks only, rolled back
 
 What it does
-  1. Reads 20261003a/b/c, takes off each file's own `begin;` and `commit;`,
+  1. Reads 20261003a/b/c/d and 20261004a, takes off each file's own `begin;` and `commit;`,
      and joins them with tests/20261003_rooms_catalog.sql and
      tests/20261003_rooms_checks.sql into ONE transaction that ends in
      `rollback;`. It refuses to run if any other top-level transaction
@@ -45,7 +45,7 @@ REF = "bldgtotkfmhoxmlzowdx"
 HERE = os.path.dirname(os.path.abspath(__file__))
 MIGRATIONS = os.path.dirname(HERE)
 FILES = ["20261003a_sales_rooms.sql", "20261003b_sales_hooks.sql", "20261003c_sales_followup_agent.sql",
-         "20261003d_live_calls_hardening.sql"]
+         "20261003d_live_calls_hardening.sql", "20261004a_live_calls_hardening_2.sql"]
 CATALOG = os.path.join(HERE, "20261003_rooms_catalog.sql")
 CHECKS = os.path.join(HERE, "20261003_rooms_checks.sql")
 PRESENCE_FIXTURES = os.path.join(HERE, "presence_fixtures.json")
@@ -161,13 +161,16 @@ def strip_transaction(name: str, sql: str) -> str:
 
 
 HARDENING = "20261003d_live_calls_hardening.sql"
+# The second series' fix rounds (4 October 2026): applied over d, idempotent too.
+HARDENING_2 = "20261004a_live_calls_hardening_2.sql"
 
 
 def hardening_sql() -> str:
-    """Migration d's statements without its own begin and commit, for a stress
-    run's rolled-back transaction: the run then tests the repo's sweep, view
-    and functions whether or not d is applied yet (d is idempotent)."""
-    return strip_transaction(HARDENING, open(os.path.join(MIGRATIONS, HARDENING)).read())
+    """Migrations d and 20261004a's statements without their own begin and
+    commit, for a stress run's rolled-back transaction: the run then tests the
+    repo's sweep, view and functions whether or not they are applied yet
+    (both are idempotent)."""
+    return "\n".join(strip_transaction(f, open(os.path.join(MIGRATIONS, f)).read()) for f in (HARDENING, HARDENING_2))
 
 
 def presence_fixtures_sql() -> str:
@@ -236,7 +239,8 @@ select 'function ' || p.proname from pg_proc as p
    'cockpit_sales_followup_levels_guard', 'cockpit_sales_followup_waves_guard',
    'cockpit_sales_followup_waves_close_members', 'cockpit_sales_followup_wave_members_touch',
    'cockpit_sales_followup_meta_touch', 'cockpit_sales_followup_stops_touch',
-   'cockpit_sales_message_slot', 'cockpit_sales_live_hours_open', 'cockpit_sales_worker_status_clock')
+   'cockpit_sales_message_slot', 'cockpit_sales_live_hours_open', 'cockpit_sales_worker_status_clock',
+   'cockpit_sales_norm_words')
 union all
 select 'column cockpit_sales_wa_templates.button_variable' from information_schema.columns
  where table_schema = 'public' and table_name = 'cockpit_sales_wa_templates' and column_name = 'button_variable'

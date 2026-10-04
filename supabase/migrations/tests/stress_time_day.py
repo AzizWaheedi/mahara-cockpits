@@ -49,7 +49,9 @@ KW = timezone(timedelta(hours=3))
 TABLES = ["cockpit_sales_rooms", "cockpit_sales_room_events", "cockpit_sales_live", "cockpit_sales_availability",
           "cockpit_sales_appointments", "cockpit_sales_people", "cockpit_sales_room_hosts", "cockpit_sales_attempts",
           "cockpit_sales_settings", "cockpit_sales_worker_status", "cockpit_sales_alerts", "cockpit_sales_messages",
-          "cockpit_audit_log", "cockpit_sales_room_secrets"]
+          "cockpit_audit_log", "cockpit_sales_room_secrets",
+          # 20261004a's S1 reads the cockpit's own marks (stress2, fix round 1).
+          "cockpit_sales_dispositions"]
 # The deployed functions the sweep, the triggers and the watchdog call (20261003a, b, c);
 # migration d's text then replaces the ones it changes.
 FUNCTIONS = ["cockpit_sales_setting_int", "cockpit_sales_room_code", "cockpit_sales_rooms_guard",
@@ -57,7 +59,9 @@ FUNCTIONS = ["cockpit_sales_setting_int", "cockpit_sales_room_code", "cockpit_sa
              "cockpit_sales_touch_updated", "cockpit_sales_rooms_close", "cockpit_sales_live_move",
              "cockpit_sales_room_pending", "cockpit_sales_room_event_lease", "cockpit_sales_live_claim",
              "cockpit_sales_alert_hours", "cockpit_sales_alert_words", "cockpit_sales_alert_set",
-             "cockpit_sales_rooms_sweep", "cockpit_sales_watchdog"]
+             "cockpit_sales_rooms_sweep", "cockpit_sales_watchdog",
+             # Migration d (applied): the worker-status trigger and the live-hours check call these.
+             "cockpit_sales_worker_status_clock", "cockpit_sales_live_hours_open"]
 
 
 def lit(v: str) -> str:
@@ -96,8 +100,12 @@ def rewrite(src: str) -> str:
     return out
 
 
+MIGRATION_2 = os.path.join(os.path.dirname(HERE), "20261004a_live_calls_hardening_2.sql")
+
+
 def migration_d() -> str:
-    text = run_checks.strip_transaction(os.path.basename(MIGRATION_D), open(MIGRATION_D).read())
+    """Migration d and the second series' 20261004a (fix round 1), both the repo's."""
+    text = "\n".join(run_checks.strip_transaction(os.path.basename(f), open(f).read()) for f in (MIGRATION_D, MIGRATION_2))
     out = rewrite(text)
     # Grants to API roles mean nothing on temp objects; keep the text plain.
     out = re.sub(r"(?im)^\s*(revoke|grant)\s[^;]*;", "", out)

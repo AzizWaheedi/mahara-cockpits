@@ -633,10 +633,18 @@ begin
     ('lc-test-p-avail@example.invalid', 'available', now() + interval '1 hour'),
     ('lc-test-p-expired@example.invalid', 'available', now() - interval '1 minute'),
     ('lc-test-p-zoom@example.invalid', 'available', now() + interval '1 hour'),
-    ('lc-test-p-chain@example.invalid', 'available', now() + interval '1 hour');
+    ('lc-test-p-chain@example.invalid', 'available', now() + interval '1 hour'),
+    ('lc-test-p-zoom-over@example.invalid', 'available', now() + interval '1 hour'),
+    ('lc-test-p-zoom-old@example.invalid', 'available', now() + interval '1 hour');
   perform pg_temp.room(null, 'lc-test-p-ready@example.invalid', 'standby', 'host_in', 'demo');
   insert into public.cockpit_sales_room_hosts (email, zoom_live_until, default_provider)
     values ('lc-test-p-zoom@example.invalid', now() + interval '10 minutes', null);
+  -- 20261004a: the desk stores the meeting's own end. A meeting the last
+  -- check saw live, now past its scheduled end (a demo that overruns), holds
+  -- the host on a call for the check's 15 minutes; an old sighting does not.
+  insert into public.cockpit_sales_room_hosts (email, zoom_live_until, checked_at, default_provider) values
+    ('lc-test-p-zoom-over@example.invalid', now() - interval '2 minutes', now() - interval '5 minutes', null),
+    ('lc-test-p-zoom-old@example.invalid', now() - interval '30 minutes', now() - interval '20 minutes', null);
   insert into public.cockpit_sales_attempts (contact_id, rep_email, state)
     values ('lc-test-e-att', 'lc-test-p-attempt@example.invalid', 'dialing');
   insert into public.cockpit_sales_attempts (contact_id, rep_email, state, started_at)
@@ -660,6 +668,8 @@ begin
         when 'lc-test-p-avail@example.invalid' then p.state = 'available' and p.until is not null
         when 'lc-test-p-expired@example.invalid' then p.state = 'away' and p.until is null
         when 'lc-test-p-zoom@example.invalid' then p.state = 'on_call' and p.why = 'zoom' and p.until is null
+        when 'lc-test-p-zoom-over@example.invalid' then p.state = 'on_call' and p.why = 'zoom'
+        when 'lc-test-p-zoom-old@example.invalid' then p.state = 'available'
         when 'lc-test-p-chain@example.invalid' then p.state = 'available'
         when 'lc-test-p-attempt@example.invalid' then p.state = 'on_call' and p.why = 'dialing'
         when 'lc-test-p-attempt-old@example.invalid' then p.state = 'away'
@@ -670,7 +680,7 @@ begin
       p.state || ' ' || p.why);
   end loop;
   perform pg_temp.ck('E presence lists every test person once',
-    (select count(*) = 10 and count(distinct email) = 10 from public.cockpit_sales_presence where email like 'lc-test-p-%'));
+    (select count(*) = 12 and count(distinct email) = 12 from public.cockpit_sales_presence where email like 'lc-test-p-%'));
   perform pg_temp.ck('E default provider: setter meet, closer zoom',
     (select default_provider = 'meet' from public.cockpit_sales_presence where email = 'lc-test-p-attempt@example.invalid')
     and (select default_provider = 'zoom' from public.cockpit_sales_presence where email = 'lc-test-p-demo@example.invalid'));

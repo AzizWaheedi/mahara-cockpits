@@ -81,6 +81,8 @@ HARDENING_COLUMN = "appointment_start_at"
 # Every room column 20261003d adds: the intro's start, and (fix round 3)
 # when the room first showed the lead in. A d from before round 3 lacks the second.
 HARDENING_COLUMNS = (HARDENING_COLUMN, "lead_in_seen_at")
+# The column 20261004a (the second stress series, fix round 1) adds.
+HARDENING_2_COLUMN = "standby_error"
 
 SETTINGS = ("rooms", "live", "followups", "whatsapp_guard", "threads", "calendars")
 
@@ -267,6 +269,16 @@ def check_database(report: Report, sb: Any) -> dict[str, Any]:
                f"there (cockpit_sales_rooms.{' and '.join(HARDENING_COLUMNS)})" if status == 200 else
                (f"not applied ({reason}): apply 20261003d_live_calls_hardening.sql before this sales-api is deployed, "
                 "or a room for a booked intro is refused" if status in (400, 404) else
+                f"could not be read ({reason or 'no answer'})"))
+    # The second series' fix round 1 (20261004a): the presence view that
+    # holds a host the last check saw in Zoom (this desk now stores the
+    # meeting's own end), the same-words slot, the take judged at the press,
+    # and the availability row's standby sentence. Its marker column:
+    status, _rows, reason = _get(sb, f"cockpit_sales_availability?select={HARDENING_2_COLUMN}&limit=1")
+    report.add(sec, "20261004a hardening", status == 200 if status in (200, 400, 404) else None,
+               f"there (cockpit_sales_availability.{HARDENING_2_COLUMN})" if status == 200 else
+               (f"not applied ({reason}): apply 20261004a_live_calls_hardening_2.sql before this desk and sales-api "
+                "are deployed, or a closer in an overrunning Zoom meeting reads as free" if status in (400, 404) else
                 f"could not be read ({reason or 'no answer'})"))
     status, rows, reason = _get(sb, "cockpit_sales_settings?select=key,value&key=in.("
                                     + ",".join(SETTINGS) + ")")

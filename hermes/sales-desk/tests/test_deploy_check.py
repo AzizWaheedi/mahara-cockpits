@@ -63,6 +63,7 @@ class Catalog:
         for table, (cols, _meaning) in deploycheck.DELTA.items():
             self.schema[table] |= set(cols)
         self.schema["cockpit_sales_rooms"].update(deploycheck.HARDENING_COLUMNS)  # 20261003d applied
+        self.schema["cockpit_sales_availability"].add(deploycheck.HARDENING_2_COLUMN)  # 20261004a applied
         for table in self.schema:
             self.pg.tables.setdefault(table, {})
             fakes.PK.setdefault(table, ("id",))
@@ -273,6 +274,13 @@ class DeployCheck(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("not there", line(out, "cockpit_sales_followup_waves "))
         self.assertIn("apply 20261003c_sales_followup_agent.sql", line(out, "cockpit_sales_followup_waves "))
+
+    def test_migration_20261004a_not_applied_blocks_and_names_itself(self):
+        db = Catalog()
+        db.schema["cockpit_sales_availability"].discard(deploycheck.HARDENING_2_COLUMN)
+        code, out, _ = run(["deploy-check"], db)
+        self.assertEqual(code, 1)
+        self.assertIn("apply 20261004a_live_calls_hardening_2.sql", line(out, "20261004a hardening"))
 
     def test_missing_columns_are_named_one_by_one(self):
         db = Catalog()
