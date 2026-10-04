@@ -2164,11 +2164,13 @@ begin
     is_stale := watched and rec.at is not null and rec.stale_min is not null
                 and rec.at < t - make_interval(mins => rec.stale_min);
     is_failing := watched and rec.at is not null and not is_stale and rec.ok is false;
+    -- The day is said whenever the alert may be read another day: outside
+    -- working hours it is posted the next working morning (fix round 4).
     since := case
       when rec.at is null then null
-      when (rec.at at time zone 'Asia/Kuwait')::date = (t at time zone 'Asia/Kuwait')::date
+      when (rec.at at time zone 'Asia/Kuwait')::date = (t at time zone 'Asia/Kuwait')::date and in_hours
         then to_char(rec.at at time zone 'Asia/Kuwait', 'HH24:MI')
-      else to_char(rec.at at time zone 'Asia/Kuwait', 'FMDD Mon HH24:MI') end;
+      else to_char(rec.at at time zone 'Asia/Kuwait', 'Dy FMDD Mon HH24:MI') end;
     words := rtrim(public.cockpit_sales_alert_words(rec.detail, 160), '.!? ');
 
     raised := raised + public.cockpit_sales_alert_set('missing:' || subj, is_missing, 'missing', subj,
