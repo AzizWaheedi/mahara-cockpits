@@ -55,6 +55,7 @@ from desk import offer as offer_mod  # noqa: E402
 from desk import prompt as prompt_mod  # noqa: E402
 from desk import queue as queue_mod  # noqa: E402
 from desk import recordings as recordings_mod  # noqa: E402
+from desk import references as references_mod  # noqa: E402
 from desk import render as render_mod  # noqa: E402
 from desk import followups as followups_mod  # noqa: E402
 from desk import research as research_mod  # noqa: E402
@@ -366,19 +367,16 @@ def cmd_doctor(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     # The primary, the fallback, and whether anything can draft (model_rows).
     rows.extend(model_rows(cfg, log, online=not args.offline))
 
-    refs = sorted(cfg.reference_dir.glob("*.json")) if cfg.reference_dir.is_dir() else []
-    if refs:
-        kinds = []
-        for f in refs:
-            try:
-                kinds.append(f"{f.name} ({prompt_mod.variant_of(json.loads(f.read_text(encoding='utf-8')))})")
-            except (OSError, ValueError):
-                kinds.append(f"{f.name} (unreadable)")
-        add("reference deals", True, ", ".join(kinds))
+    # Each one through the validator against today's offer.json, because the
+    # drafter copies its faults as faithfully as its shape (references.py).
+    if offer is None:
+        add("reference deals", None, "not checked: offer.json does not read, and the references are checked "
+                                     "against it. Fix offer.json first")
     else:
-        add("reference deals", None, f"none in {cfg.reference_dir}: the drafter works from the rules and the "
-                                     "template's outline, and every proposal's notes say so. extract_reference.py "
-                                     "makes one from a finished proposal")
+        try:
+            add("reference deals", *references_mod.doctor_row(cfg.reference_dir, offer))
+        except Refused as e:
+            add("reference deals", None, f"not checked, because offer.json gives no default offer: {e}")
 
     engine = render_mod.engine()
     add(*_browser_row(engine, render_mod.find_chrome()))

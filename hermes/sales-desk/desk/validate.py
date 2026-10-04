@@ -504,6 +504,8 @@ SPLIT = re.compile(
     r"(?<![\d,.])\b(?:[1-9]|1[0-2])\s*[x×]\s*(?:[A-Z]{3}\s*)?\d[\d,]{2,}"
     r"|\b(?:two|three|four|2|3|4)\s+(?:equal\s+)?(?:payments|instal+ments|parts)\b"
     r"|\bsecond\s+(?:payment|instal+ment|half)\b"
+    # "The second USD 3,000 falls due when ...": the reference's own terms[3].
+    r"|\bsecond\s+(?:[A-Z]{3}\s*)?\d[\d,]{2,}"
     r"|\bhalf\s+(?:at|up)\s*(?:the\s+)?(?:start|front|signing)\b"
     r"|\b(?:monthly|quarterly)\s+(?:payments|instal+ments)\b"
     r"|دفعتين|على دفعات|(?:ثلاث|أربع|اربع)\s+دفعات|الدفعة الثانية|القسط الثاني|أقساط شهرية|اقساط شهرية|نصف المبلغ",
@@ -652,15 +654,30 @@ MENTION = re.compile(r"\bguarantee[ds]?\b|free of charge|\bat no (?:extra|furthe
 FREE_WORK = re.compile(
     r"\bwork(?:ing)?\s+for\s+free\b|\bfor\s+free\s+until\b"
     r"|\bkeep\s+working\b[^.]{0,60}\b(?:free|no\s+(?:further|extra|additional))"
-    r"|(?:نعمل|نشتغل|نستمر|نكمل)[^.]{0,40}(?:مجانا|ببلاش|بلاش|بدون مقابل|دون مقابل)",
+    # "or we continue at no further fee until you have them" (the reference's
+    # terms[2]). Only PROMISE caught it, so a closer who chose the 7-day
+    # guarantee would have had it passed as that guarantee.
+    r"|\bwe(?:'ll|\s+will)?\s+(?:continue|carry\s+on|keep\s+going)\b[^.]{0,60}?"
+    r"\bno\s+(?:further|extra|additional)\s+(?:fees?|costs?|charges?)\b"
+    r"|(?:نعمل|نشتغل|نستمر|نكمل)[^.]{0,40}(?:مجانا|ببلاش|بلاش|بدون مقابل|دون مقابل)"
+    # The same line in an Arabic draft: "أو نستمر دون رسوم إضافية حتى تكتمل".
+    r"|(?:نستمر|نكمل|نواصل)[^.]{0,40}(?:دون|بدون|بلا)\s+(?:أي\s+)?رسوم",
     re.I)
-_RESULT = r"(?:results?|appointments?|meetings?|leads?|projects?|revenue|sales|roi|clients?|bookings?)"
+_RESULT = r"(?:results?|appointments?|meetings?|visits?|leads?|projects?|revenue|sales|roi|clients?|bookings?)"
 RESULT_GUARANTEED = re.compile(
     rf"\bguarantee[ds]?\b(?:\s+\w+){{0,4}}?\s+(?:\d[\d,]*\s+)?(?:qualified\s+)?{_RESULT}\b"
     rf"|\bguaranteed\s+{_RESULT}\b"
     r"|(?:نضمن|يضمن|تضمن)(?:\s+\S+){0,3}?\s+(?:[٠-٩0-9]+\s+)?(?:موعد|مواعيد|نتائج|نتيجة|مشاريع|مشروع|عملاء|ليدز)"
     r"|ضمان\s+(?:على\s+)?(?:ال)?(?:نتائج|مواعيد)",
     re.I)
+# The guarantee after the result, closing the clause: "Qualified meetings
+# across the three months, guaranteed" (the reference's solution_targets[0]),
+# which read as a mere mention and only warned.
+RESULT_THEN_GUARANTEED = re.compile(
+    rf"\b{_RESULT}\b[^.;:]{{0,80}}?,\s*guaranteed\s*(?:[.;:)]|$)"
+    r"|(?:اجتماع|اجتماعات|موعد|مواعيد|زيارة|زيارات|نتائج|مشاريع|مشروع|عملاء)[^.؛:]{0,80}?،\s*مضمون[ةه]?\s*(?:[.؛:)]|$)",
+    re.I)
+_NOT = re.compile(r"\b(?:not|never|no|cannot)\b|n't", re.I)
 # "We do not guarantee results" says the opposite, so a guarantee of results
 # right after a negation is let through.
 _NEGATED = re.compile(r"(?:\b(?:not|never|no|cannot)\b|n't|(?:^|\s)(?:ما|مو|لا|ماحد|محد)\s)\s*(?:\S+\s+){0,2}$",
@@ -675,6 +692,9 @@ def _plain(text: str) -> str:
 def promises_results(text: str) -> bool:
     """Free work, or results guaranteed, in a line of the document."""
     if FREE_WORK.search(text):
+        return True
+    if any(not _NEGATED.search(text[:m.start()]) and not _NOT.search(m.group(0))
+           for m in RESULT_THEN_GUARANTEED.finditer(text)):
         return True
     return any(not _NEGATED.search(text[:m.start()]) for m in RESULT_GUARANTEED.finditer(text))
 

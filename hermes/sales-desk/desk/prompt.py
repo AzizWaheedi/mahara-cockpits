@@ -13,6 +13,7 @@ from __future__ import annotations
 import copy
 import json
 import re
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -147,7 +148,12 @@ def _no_embedded_files(value: Any) -> Any:
     return value
 
 
-def shape_of(deal: dict[str, Any]) -> dict[str, Any]:
+def day_words(day: date) -> str:
+    """A date the way the template prints one: 4 October 2026."""
+    return f"{day.day} {day:%B %Y}"
+
+
+def shape_of(deal: dict[str, Any], today: Optional[date] = None) -> dict[str, Any]:
     """The reference, with its identity fields turned into instructions.
 
     The drafter copies the shape it is shown, and it copies it exactly. On
@@ -156,12 +162,22 @@ def shape_of(deal: dict[str, Any]) -> dict[str, Any]:
     the field would teach an empty string just as faithfully, so each identity
     field is replaced by a sentence saying what belongs there (run_proposal.py).
 
+    The dates go the same way, with today's in them. The drafter is told the
+    date nowhere else, so it kept the reference's: the proposal drafted on
+    24 September was valid until the reference's 30 September, and from
+    1 October every draft would have failed the send gate on a date it could
+    not have known was wrong. So a reference is judged as of the day it was
+    written (references.py), and does not go bad on a calendar.
+
     Three more things come out here. `quotes`, because the block no longer
     renders and the validator fails a deal that carries it. Embedded images,
     because a logo or photo as base64 is kilobytes the drafter would copy out
     character by character. And our own `offer` stamp, which is code's to write.
     """
+    today = today or date.today()
     d = _no_embedded_files(copy.deepcopy(deal))
+    d["date"] = f"<today, {day_words(today)}, in the document's language>"
+    d["valid_until"] = f"<two weeks later, {day_words(today + timedelta(days=14))}, in the same format>"
     d.pop("quotes", None)
     d.pop("offer", None)
     if "logo" in d:
@@ -181,8 +197,9 @@ def shape_of(deal: dict[str, Any]) -> dict[str, Any]:
     return d
 
 
-def outline(resolved: dict[str, Any]) -> str:
+def outline(resolved: dict[str, Any], today: Optional[date] = None) -> str:
     """Every key the template reads, for a drafter with no reference to copy."""
+    today = today or date.today()
     shape = {
         "lang": "en, or ar for an Arabic proposal",
         "reference": "a reference code such as MM-2026-0924-ABC",
@@ -194,8 +211,8 @@ def outline(resolved: dict[str, Any]) -> str:
         "city": "City, country",
         "prepared_by": "the closer",
         "prepared_by_role": "their role",
-        "date": "the day it is written, e.g. 24 September 2026",
-        "valid_until": "two weeks later, same format",
+        "date": f"today, {day_words(today)}, in the document's language",
+        "valid_until": f"two weeks later, {day_words(today + timedelta(days=14))}, in the same format",
         "confidentiality": "one line",
         "kicker": "a few words", "headline": "the claim", "subhead": "two sentences",
         "cover_image": None,

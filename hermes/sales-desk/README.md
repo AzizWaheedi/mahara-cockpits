@@ -17,7 +17,7 @@ sent. It writes the draft, checks it and says what is left for the closer.
 
 | Command | What happens |
 |---|---|
-| `doctor` | every key by name (never its value), the tables, the bucket, a one-token call to the model and one to the fallback, both model lists, Fathom, the browser (and, online, a real page and PDF printed with it), the reference deals; each blocker named in one sentence |
+| `doctor` | every key by name (never its value), the tables, the bucket, a one-token call to the model and one to the fallback, both model lists, Fathom, the browser (and, online, a real page and PDF printed with it), the reference deals, each put through the validator against today's offer.json; each blocker named in one sentence |
 | `requests` | drafts, or rebuilds, the proposals the cockpit asked for; quiet when nothing is queued |
 | `recordings` | indexes Fathom's sales calls for every rep and matches each to a lead |
 | `calls-vault` | copies every sales call in the Obsidian vault in, summary and transcript too; `--fathom-days N` asks Fathom about the calls whose note cannot say whether the lead joined |
@@ -354,6 +354,23 @@ To make one from a finished proposal's HTML:
 ```bash
 python3 extract_reference.py 2026-09-05-client.html ~/.sales-desk/reference/general.json
 ```
+
+The drafter copies a reference's faults as faithfully as its shape. On
+4 October 2026 the VPS's `general.json`, written on 5 September, promised
+results and free work, printed a split under paid in full and called its
+meetings target guaranteed: the offer had moved on 2 and 3 October and the
+reference had not. So `desk/references.py` puts every reference through the
+validator the way a draft goes through it, against offer.json as it stands
+and the closer's default choice, under the send gate, and the offer and
+guarantee warnings count as failures too. doctor's `reference deals` line
+names each file, its variant and its verdict (file and check names only),
+and `tests/test_references.py` fails on the VPS when one breaks a rule.
+`python3 desk.py validate FILE --send` names each field to correct.
+
+Its dates are not held against it. The drafter is told today's date and the
+date two weeks on in place of the reference's own (`prompt.shape_of`), since
+it is told the date nowhere else and the 24 September draft kept the
+reference's expiry. A reference is judged as of the day it was written.
 
 ## The New Client Form
 
