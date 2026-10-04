@@ -238,8 +238,14 @@ describe("chaos r3: a link that may have gone is checked against the conversatio
     // six seconds before counts as "the template went": link_sent_at is set,
     // the lead's ten minutes start, and the panel says the link went.
     const r = w.room(id);
-    expect(r.link_sent_at ?? null).toBeNull();
-    expect((r.link_channels as string[]) ?? []).not.toContain("whatsapp_template");
+    // Since fix round 2 (unclear-template-enrolment-never-backed-up-by-email)
+    // an unclear template is backed up by email at once, the same link on the
+    // email's own key: the room may say the link went, by email only, never
+    // on WhatsApp.
+    const ch = (r.link_channels as string[]) ?? [];
+    expect(ch).not.toContain("whatsapp_template");
+    expect(ch).not.toContain("whatsapp_text");
+    if (r.link_sent_at) expect(ch).toEqual(["email"]);
   });
 
   test("the template's enrolment answer is lost and nothing went; a minute later the setter writes 'Are you free now?' on WhatsApp: the re-ask must not record that as the link", async () => {
@@ -250,8 +256,9 @@ describe("chaos r3: a link that may have gone is checked against the conversatio
     w.modes.template.push("lost_not_sent");
     await w.readyEvent(id);
     await w.drain();
-    expect(w.room(id).link_sent_at ?? null).toBeNull();
-    expect(String(w.room(id).refusal ?? "")).toMatch(/may have gone/i);
+    // Since fix round 2 the email backs the unclear template up at once (the
+    // same link); the template itself is never recorded as sent.
+    expect((w.room(id).link_channels as string[]) ?? []).not.toContain("whatsapp_template");
     // The panel tells the setter to check the conversation: they see nothing
     // there and write to the lead by hand.
     w.clock.now += 30 * S;
@@ -260,7 +267,7 @@ describe("chaos r3: a link that may have gone is checked against the conversatio
     await w.tick(id);
     await w.drain();
     // The template never went: the room must still say so, never "Link sent on WhatsApp".
-    expect(w.room(id).link_sent_at ?? null).toBeNull();
+    expect((w.room(id).link_channels as string[]) ?? []).not.toContain("whatsapp_template");
     expect(w.audits.filter(a => a.action === "room.link" && (a.after as Row)?.confirmed_from_conversation === true)).toEqual([]);
   });
 
@@ -284,7 +291,10 @@ describe("chaos r3: a link that may have gone is checked against the conversatio
     await w.tick(id);
     await w.drain();
     expect(w.room(id).link_sent_at).toBeTruthy();
-    expect(w.delivered.filter(d => d.lane === "email")).toEqual([]);
+    // Since fix round 2 the unclear template's email backup went at once (the
+    // same link on the email's own key): one email at most, nothing else.
+    expect(w.delivered.filter(d => d.lane === "email").length).toBeLessThanOrEqual(1);
+    expect(w.whatsappDelivered().filter(d => (d as Row).lane === "text")).toEqual([]);
   });
 });
 

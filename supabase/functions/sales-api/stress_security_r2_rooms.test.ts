@@ -135,7 +135,8 @@ async function fallbackThenSettle(w: ReturnType<typeof setup>, who: Who, apptId:
 describe("security r2: marking another rep's booked call through a room", () => {
   function withIntro(assignedTo: string) {
     const w = setup();
-    const start = new Date(w.clock.now + 10 * MIN).toISOString();
+    // Inside the intro's own window (five minutes before its start since stress2 round 2).
+    const start = new Date(w.clock.now + 3 * MIN).toISOString();
     w.db.seed("cockpit_sales_appointments", [
       { appointment_id: "stress-appt-1", contact_id: LEAD, call_type: "intro", status: "confirmed", start_at: start, assigned_user_id: assignedTo, calendar_id: "cal-intro" },
     ]);

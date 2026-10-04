@@ -1106,6 +1106,12 @@ export interface RoomRow {
   count_undo_at?: string | null;
   /** A WhatsApp template was not seen within rooms.waits_s.unconfirmed, so email went too (new column). */
   link_unconfirmed_at?: string | null;
+  /**
+   * When Zoom said the meeting ended while the room went back to open (the
+   * host left before the lead came, F9). A lead join Zoom delivers late from
+   * before it then ends the room joined (stress2, round 2; 20261004a).
+   */
+  meeting_ended_at?: string | null;
   /** Why the link could not go, one sentence (the message service). */
   refusal?: string | null;
   /** The lead's first name when the room was made, for the panel. */
@@ -1328,6 +1334,8 @@ export type RoomEvent =
   | { kind: "end"; reason: EndReason; actor?: Actor; version?: number; confirm?: boolean }
   /** Zoom's meeting.ended. */
   | ({ kind: "meeting_ended" } & At)
+  /** Zoom's meeting.deleted: the host deleted the room's meeting in Zoom (stress2, round 2). */
+  | ({ kind: "meeting_deleted" } & At)
   /** Take on a standby room: the lead is set and the room becomes a handover. Run adoptRefusal first. */
   | { kind: "adopt"; contact_id: string; call_kind: CallKind; handover_id?: string | null; actor?: Actor }
   /**
@@ -1367,6 +1375,7 @@ export const ROOM_EVENT_KINDS = [
   "still_on",
   "end",
   "meeting_ended",
+  "meeting_deleted",
   "adopt",
   "tick",
 ] as const;
@@ -1888,6 +1897,16 @@ export function applyRoomEvent(room: RoomRow, event: RoomEvent, now: number, ctx
       // The join "That was not the lead" took back, delivered again (Zoom sends two join events): not a new join.
       if (takenBack(room, t)) return same(room);
       const patch: Partial<RoomRow> = { lead_in_at: iso(t), lead_in_seen_at: iso(now) };
+      // Zoom's join from before the meeting ended, delivered after the end
+      // (stress2, round 2): the lead did join and the meeting is over, so the
+      // room ends joined at the meeting's end (the count stands), never left
+      // lead_in on a meeting that is over.
+      const meetingEnded = ms(room.meeting_ended_at);
+      if (event.source === "zoom" && meetingEnded !== null && t <= meetingEnded)
+        return change(room, "ended", { ...patch, result: "joined", ended_at: iso(meetingEnded) }, [
+          { kind: "count_live" },
+          { kind: "delete_secret" },
+        ]);
       if (room.purpose !== "booked") {
         const ends = laterIso(room.ends_at, t + lengthMs(room.call_kind, ctx));
         if (ends !== room.ends_at) patch.ends_at = ends;
@@ -1906,6 +1925,11 @@ export function applyRoomEvent(room: RoomRow, event: RoomEvent, now: number, ctx
     case "end": {
       const reason = event.reason;
       if (!oneOf(END_REASONS, reason)) return refuse("bad_input");
+      // "I can't let them in" exists only where P1 defines it (stress2, round
+      // 2): a Meet room with a lead, made as a fallback or a handover. Never
+      // on an empty standby room or a Zoom room, whose replacement would be
+      // another meeting made with no cap and no live-hours check.
+      if (reason === "admit_blocked" && !admitBlockedAllowed(room)) return refuse("bad_input");
       if (room.state === "lead_in") {
         if (reason === "admit_blocked") return refuse("stale");
         if (reason !== "finished" && event.confirm !== true) return refuse("confirm_end");
@@ -1935,11 +1959,28 @@ export function applyRoomEvent(room: RoomRow, event: RoomEvent, now: number, ctx
       const leadAhead = (ms(room.lead_by) ?? Number.NEGATIVE_INFINITY) > now;
       if ((room.state === "open" || room.state === "host_in") && room.contact_id && !leadJoined(room) && leadAhead) {
         const host_by = laterIso(room.host_by, now + w.handover_host * S);
-        if (room.state === "open" && host_by === room.host_by) return same(room);
-        return change(room, "open", { host_by }, []);
+        // The meeting's end is kept (stress2, round 2): Zoom does not order its
+        // webhooks, and a lead's join from before it, delivered after it, ends
+        // the room joined instead of leaving it lead_in on a meeting that is over.
+        const ended = laterIso(room.meeting_ended_at, t);
+        if (room.state === "open" && host_by === room.host_by && ended === room.meeting_ended_at) return same(room);
+        return change(room, "open", { host_by, meeting_ended_at: ended }, []);
       }
       const result: RoomResult | null = room.state === "lead_in" && leadJoined(room) ? "joined" : room.contact_id ? "no_join" : null;
       return change(room, "ended", { result, ended_at: iso(t) }, [{ kind: "delete_secret" }]);
+    }
+
+    case "meeting_deleted": {
+      // The host deleted the room's Zoom meeting in Zoom (stress2, round 2):
+      // its link is dead (Zoom answers 3,001). A room with the lead in it
+      // ends joined; any other room fails with the sentence that says what to
+      // do next. A failed room is never settled as a no-show.
+      const t = when(event);
+      if (room.state === "lead_in")
+        return change(room, "ended", { result: leadJoined(room) ? "joined" : "no_join", ended_at: iso(t) }, [{ kind: "delete_secret" }]);
+      // Cancelled with result failed (the worker did not fail: its health
+      // counts stay true), never ended no_join (a no-show for the settle).
+      return change(room, "cancelled", { result: "failed", end_reason: "meeting_deleted", error: ZOOM_DELETED, ended_at: iso(t) }, finalEffects(room));
     }
 
     case "adopt": {
@@ -2226,6 +2267,54 @@ export interface SettleFacts {
    * open times landed (fix round 4: a slow database).
    */
   opened?: boolean;
+  /**
+   * The lead on the phone since the room was asked for (stress2, round 2):
+   * "open", a dial to them still placed or dialing (the settle waits for it
+   * to be saved); "reached", a call they answered or made that was answered
+   * (the intro may be held by phone, so a person marks it, never the timer).
+   */
+  phone?: "open" | "reached" | null;
+  /**
+   * The link's WhatsApp failed after it was sent (stress2, round 2): the
+   * tick's late read stored link.failed_late, or every message the link went
+   * on is failed now. The lead's ten minutes ran without the link.
+   */
+  link_failed?: boolean;
+}
+
+/** Maqsam's states for a call that connected (dialer.ts callSummary), and the dialer's own "answered". */
+const PHONE_ANSWERED = new Set(["answered", "completed", "serviced"]);
+/** A saved dial whose outcome says the rep and the lead spoke. */
+const PHONE_TALKED = new Set(["callback", "booked", "not_interested", "disqualified", "handled", "confirmed", "rescheduled", "cancelled", "showed"]);
+
+/**
+ * The lead's phone since a room was asked for (SettleFacts.phone): the
+ * dialer's attempts to them and Maqsam's calls with them (cockpit_sales_dials,
+ * by contact or phone), read from `since`. An attempt still dialing or placed
+ * is "open"; an answered call, or a saved attempt that spoke, is "reached".
+ */
+export function phoneSince(attempts: Row[], dials: Row[], since: number, now: number = Number.POSITIVE_INFINITY): "open" | "reached" | null {
+  const after = (v: unknown) => {
+    const t = ms(v);
+    return t !== null && t >= since;
+  };
+  const mine = attempts.filter(a => after(a.started_at) || after(a.saved_at));
+  // An attempt left open for two hours holds nothing (the sweep's S1 the same).
+  const fresh = (a: Row) => after(a.started_at) && (ms(a.started_at) ?? 0) >= now - 2 * HOUR;
+  if (mine.some(a => (a.state === "dialing" || a.state === "placed") && fresh(a))) return "open";
+  const answered = (state: unknown, seconds: unknown) =>
+    PHONE_ANSWERED.has(String(state ?? "").toLowerCase()) && (seconds === null || seconds === undefined || Number(seconds) > 0);
+  if (mine.some(a => a.state === "saved" && (answered(a.call_state, a.call_duration_s) || PHONE_TALKED.has(String(a.outcome ?? "")))))
+    return "reached";
+  if (
+    dials.some(
+      d =>
+        after(d.occurred_at) &&
+        ((d.direction === "outbound" && answered(d.state, d.duration_s)) || (d.direction === "inbound" && String(d.state ?? "") === "serviced")),
+    )
+  )
+    return "reached";
+  return null;
 }
 
 /**
@@ -2247,7 +2336,11 @@ export function noShowDoubt(room: RoomRow, facts: SettleFacts = {}): string | nu
   // Its only channel a WhatsApp template nobody saw (no text, no email that
   // went): the link may never have reached the lead either (fix round 4).
   if (room.purpose !== "booked" && unconfirmedOnly(room)) return "the link was not confirmed to have reached the lead";
+  if (room.purpose !== "booked" && facts.link_failed) return "the link's WhatsApp failed after it was sent";
   if (facts.sibling_joined) return "the lead joined another room for this call";
+  // The setter rang again after the room and the lead answered (or the lead
+  // rang back): the intro may be held on the phone (stress2, round 2).
+  if (facts.phone === "reached" || facts.phone === "open") return "the lead was reached by phone";
   if (facts.test_off_calendar) return "a test contact's call is not on the test calendar";
   if (facts.late_join) return "someone joined the meeting after the room closed";
   if (room.provider === "meet" && (room.purpose === "booked" || facts.short_link !== true))
@@ -2257,6 +2350,18 @@ export function noShowDoubt(room: RoomRow, facts: SettleFacts = {}): string | nu
   return null;
 }
 
+/** A room whose Zoom meeting the host deleted in Zoom (room.error, as the panel says it). */
+export const ZOOM_DELETED = "The Zoom meeting was deleted in Zoom, so its link no longer works. Make a new room.";
+
+/**
+ * Where "I can't let them in" (room.end admit_blocked) may be pressed: a Meet
+ * room with a lead in a fallback or handover room (P1 edge case 9), the
+ * panel's own condition. Its replacement is a room on the other provider.
+ */
+export function admitBlockedAllowed(room: Pick<RoomRow, "provider" | "contact_id" | "purpose">): boolean {
+  return room.provider === "meet" && Boolean(room.contact_id) && (room.purpose === "fallback" || room.purpose === "handover");
+}
+
 /** The link went only as a WhatsApp template nobody saw: no free text and no email went with it. */
 export function unconfirmedOnly(room: RoomRow): boolean {
   if (!room.link_unconfirmed_at) return false;
@@ -2264,14 +2369,18 @@ export function unconfirmedOnly(room: RoomRow): boolean {
   return !ch.includes("whatsapp_text") && !ch.includes("email");
 }
 
+/** The dialer's intro item opens this long before the intro's start (dialer.ts introWindow). */
+export const INTRO_EARLY_MS = 5 * MIN;
+
 /**
- * A moment inside a booked intro's own window: from an hour before its start
- * to its start + waits_s.settle. A room asked for, or a lead's join, outside
- * it is about another call (yesterday evening's confirmation call, a call
- * the same morning), never about the intro itself.
+ * A moment inside a booked intro's own window: from five minutes before its
+ * start (the dialer's own intro item, dialer.ts introWindow) to its start +
+ * waits_s.settle. A room asked for, or a lead's join, outside it is about
+ * another call (yesterday evening's confirmation call, the confirmation
+ * call in the hour before, stress2 round 2), never about the intro itself.
  */
 export function inIntroWindow(t: number | null, start: number, w: Waits): boolean {
-  return t !== null && t >= start - HOUR && t <= start + w.settle * S;
+  return t !== null && t >= start - INTRO_EARLY_MS && t <= start + w.settle * S;
 }
 
 /**
@@ -2634,10 +2743,11 @@ export interface ZoomStaffCtx {
   waited?: readonly string[];
 }
 
-/** The seven events subscribed (C19). */
+/** The events subscribed (C19), and meeting.deleted (stress2, round 2). */
 export const ZOOM_EVENTS = [
   "meeting.started",
   "meeting.ended",
+  "meeting.deleted",
   "meeting.participant_joined",
   "meeting.participant_left",
   "meeting.participant_joined_waiting_room",
@@ -2700,6 +2810,8 @@ export function zoomEffect(evt: ZoomEvent | null | undefined, ctx: ZoomStaffCtx)
       return { room_event: { kind: "host_in", source: "zoom", ...when("event") }, role: null };
     case "meeting.ended":
       return { room_event: { kind: "meeting_ended", ...when("event") }, role: null };
+    case "meeting.deleted":
+      return { room_event: { kind: "meeting_deleted", ...when("event") }, role: null };
     case "meeting.participant_joined":
     case "meeting.participant_jbh_joined":
       if (role === "host") return { room_event: { kind: "host_in", source: "zoom", ...when("join") }, role };
@@ -2940,6 +3052,13 @@ export interface CountInput {
   current_call?: { id: string; start: number; status?: string | null; mine: boolean } | null;
   /** The upcoming call is the host's own (or a manager's room): only then is it moved to now. */
   upcoming_mine?: boolean;
+  /**
+   * The call that was ahead at the join has started since, or was held
+   * (showed or invalid), by the time the count runs (a manager's late
+   * confirm, stress2, round 2): it is never moved back to the join, and
+   * nothing is booked beside it. The join counts nothing.
+   */
+  upcoming_passed?: boolean;
   /** A manager confirmed a join only a hand press reported (room.count_confirm): it counts as evidence. */
   confirmed?: boolean;
 }
@@ -3067,7 +3186,11 @@ export function countLive(i: CountInput): CountPlan {
   const cur = i.current_call;
   if (!test && cur && cur.id) {
     // Held already by B2B's rule (showed, or invalid: a disqualified call is held): nothing to add.
-    if (["showed", "invalid"].includes(String(cur.status ?? "")) || !cur.mine) return none("already_counted", true, "already_counted");
+    if (["showed", "invalid"].includes(String(cur.status ?? ""))) return none("already_counted", true, "already_counted");
+    // Another rep's call running now: never marked with this host's rights,
+    // and never counted nowhere without a word (stress2, round 2): that rep
+    // or a manager is told to mark it, as for another rep's call ahead.
+    if (!cur.mine) return none("booked_other_rep", true, "failed");
     return { action: "mark", claim: true, appointment_id: cur.id };
   }
   if (!test && !isTaggedLead(c.tags)) return none("not_a_lead", true, "not_a_lead");
@@ -3085,6 +3208,8 @@ export function countLive(i: CountInput): CountPlan {
     overrideLocationConfig: true,
   };
   const up = i.upcoming;
+  if (!test && up && up.id && (!up.kind || up.kind === room.call_kind) && i.upcoming_passed)
+    return none("already_counted", true, "already_counted");
   const upEnd = finiteOrNull(up?.end ?? null);
   const upRep = str(up?.assigned_user_id, 80);
   // Another rep's call ahead is never moved to this host (the mark path's

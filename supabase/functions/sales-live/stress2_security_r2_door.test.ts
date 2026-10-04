@@ -1,29 +1,29 @@
-// bun test supabase/functions/sales-live/stress2_security_door.test.ts
+// bun test supabase/functions/sales-live/stress2_security_r2_door.test.ts
 //
-// Second series, round 1 (4 October 2026): security and abuse of the public
-// door (sales-live) as it stands after the first series' fixes. Each `test`
-// held when written; each test that was `test.failing` pinned a reproduced
-// finding (its key is in its name) and is a plain regression test since the
-// fix landed (fix round 1). No network: an in-memory PostgREST and a fake
-// sales-api.
+// Second series, round 2 (4 October 2026): security and abuse of the public
+// door (sales-live) as it stands after fix round 1. Each `test` held when
+// written; each `test.failing` pins a reproduced finding (its key is in its
+// name) and goes red when the fix lands. No network: an in-memory PostgREST
+// and a fake sales-api.
 
 import { describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
-import { limitNet, RateLimiter } from "./door.ts";
-import { FLOOD_LINE, makeHandler, MISS_CEILING } from "./handler.ts";
+import { RateLimiter } from "./door.ts";
+import { makeHandler, MISS_CEILING } from "./handler.ts";
 
 const BASE = "https://proj.supabase.co";
 const SECRETS: Record<string, string> = {
   SUPABASE_URL: BASE,
-  SUPABASE_SERVICE_ROLE_KEY: "svc-key-stress2-never-printed",
-  ZOOM_WEBHOOK_SECRET: "zoom-secret-stress2-never-printed",
-  SLACK_SIGNING_SECRET: "slack-secret-stress2-never-printed",
-  IP_SALT: "salt-stress2-never-printed",
-  CRON_SECRET: "cron-secret-stress2-never-printed",
+  SUPABASE_SERVICE_ROLE_KEY: "svc-key-stress2r2-never-printed",
+  ZOOM_WEBHOOK_SECRET: "zoom-secret-stress2r2-never-printed",
+  SLACK_SIGNING_SECRET: "slack-secret-stress2r2-never-printed",
+  IP_SALT: "salt-stress2r2-never-printed",
+  CRON_SECRET: "cron-secret-stress2r2-never-printed",
 };
 const NOW = Date.UTC(2026, 9, 4, 11, 0, 0);
 const IPHONE =
   "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1";
+const PAGE = "https://call.maharamedia.com";
 
 type Row = Record<string, any>;
 
@@ -38,12 +38,14 @@ function room(over: Row = {}): Row {
     host_email: "stress2-host@stress.invalid",
     replaced_by: null,
     ends_at: new Date(NOW + 30 * 60_000).toISOString(),
+    // Every real room has its request time (the column's default).
+    requested_at: new Date(NOW).toISOString(),
     first_open_at: null,
     ...over,
   };
 }
 
-function world(rooms: Row[] = [room()]) {
+function world(rooms: Row[] = []) {
   const w = {
     now: NOW,
     rooms,
@@ -61,6 +63,7 @@ function world(rooms: Row[] = [room()]) {
     if (c === "is.null") return r[col] == null;
     if (c.startsWith("eq.")) return String(r[col]) === c.slice(3);
     if (c.startsWith("lt.")) return r[col] != null && String(r[col]) < c.slice(3);
+    if (c.startsWith("gte.")) return r[col] != null && String(r[col]) >= c.slice(4);
     throw new Error(`fake PostgREST: ${col}=${c}`);
   };
   const pick = (rows: Row[], p: URLSearchParams) =>
@@ -122,85 +125,76 @@ function openReq(code: string, ip: string, device: string, origin?: string): Req
     headers: { "user-agent": IPHONE, "cf-connecting-ip": ip, ...(origin ? { origin } : {}) },
   });
 }
+function goReq(code: string, ip: string): Request {
+  return new Request(`${BASE}/functions/v1/sales-live/go/${code}`, {
+    headers: { "user-agent": IPHONE, "cf-connecting-ip": ip, "sec-fetch-mode": "navigate" },
+  });
+}
 
-/** Six letters of the code alphabet, one per guess, none of them the room's. */
+/** Six letters of the code alphabet, one per guess, never the rooms' own. */
 function guess(i: number): string {
   const A = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   let s = "";
-  let n = i + 1_000_000;
+  let n = i + 2_000_000;
   for (let k = 0; k < 6; k++) {
     s += A[n % 32];
     n = Math.floor(n / 32);
   }
-  return s === "K7Q2MX" ? "ZZZZZZ" : s;
+  return s === "K7Q2MX" || s === "N3WR00" ? "ZZZZZZ" : s;
+}
+
+/** One minute of guessing from many /64s: the instance's miss ceiling is spent. */
+async function flood(handler: (r: Request) => Promise<Response>, from: number, n = MISS_CEILING + 50): Promise<number> {
+  let refused = 0;
+  for (let i = 0; i < n; i++) {
+    const ip = `2001:db8:${(i + from).toString(16)}:1::1`;
+    if ((await handler(openReq(guess(i + from), ip, `g-${i}-device`))).status === 429) refused++;
+  }
+  return refused;
 }
 
 // ---------------------------------------------------------------------------
 
-describe("stress2 security: guessing codes from one IPv6 network", () => {
-  test("one IPv4 address is held to 120 a minute (the fixture works)", async () => {
-    const { w, handler } = world();
-    let refused = 0;
-    for (let i = 0; i < 300; i++) if ((await handler(openReq(guess(i), "203.0.113.50", `g-${i}-device`))).status === 429) refused++;
+describe("stress2 security r2: a flood of unknown codes against a lead who never opened yet", () => {
+  test("before any flood, a brand-new room's first open and its /go both work (the fixture works)", async () => {
+    const { w, handler } = world([room({ code: "N3WRPQ" })]);
+    const open = await handler(openReq("N3WRPQ", "198.51.100.20", "lead-device-1", PAGE));
+    expect(open.status).toBe(200);
+    expect(((await open.json()) as Row).state).toBe("open");
+    const go = await handler(goReq("N3WRPQ", "198.51.100.21"));
+    expect(go.status).toBe(302);
     await w.settle();
-    expect(refused).toBe(180);
   });
 
   test(
-    "door-limit-per-full-ipv6-address: one host on one /64 rotates its address every request and is never limited, so guessing codes and flooding /open cost one database read each without end",
+    "door-flood-ceiling-locks-out-new-leads: while someone sends unknown codes past the instance's 600-a-minute ceiling, a lead whose room was made during the flood is refused 'Too many tries from this network' on the page AND on its Join the call fallback (/go), for as long as the flood lasts",
     async () => {
-      // clientIp keys the limits on the whole address. Every IPv6 home line
-      // and every cloud machine holds at least a /64 (2^64 addresses), so a
-      // guesser takes a new address per request: the 30-a-device and
-      // 120-an-address limits never trip, each guess is a read of
-      // cockpit_sales_rooms inside /open's 4.5 s, and a hit hands over a
-      // live room's join link (and, with the page's Origin, counts as the
-      // lead's open). Nothing caps the door as a whole.
-      const { w, handler } = world();
-      let refused = 0;
-      for (let i = 0; i < 1000; i++) {
-        const ip = `2001:db8:1:2::${(i + 1).toString(16)}`;
-        if ((await handler(openReq(guess(i), ip, `g-${i}-device`))).status === 429) refused++;
-      }
+      const { w, handler } = world([]);
+      // Minute one: the flood starts (an IPv6 /48 holds 65,536 /64s, so no
+      // per-network limit ever trips).
+      expect(await flood(handler, 10)).toBeGreaterThan(0);
+      // A setter makes a room for a lead now; the lead taps the link as soon
+      // as it reaches them (the worker makes the meeting and the link goes:
+      // some seconds, fix round 2 reads the day's codes every 5 s at most).
+      // This instance has never looked this code up, so it is not "known".
+      w.rooms.push(room({ code: "N3WRPQ" }));
+      w.now += 6_000;
+      const open = await handler(openReq("N3WRPQ", "198.51.100.20", "lead-device-1", PAGE));
+      const body = (await open.json()) as Row;
+      // The page's busy state offers "Join the call", which is ?go=1, a 302 to /go/{code}.
+      const go = await handler(goReq("N3WRPQ", "198.51.100.20"));
+      // Minute two: the flood goes on, the lead taps Try again.
+      w.now += 61_000;
+      await flood(handler, 5_000);
+      const again = await handler(openReq("N3WRPQ", "198.51.100.20", "lead-device-1", PAGE));
       await w.settle();
-      // One network, one minute: held to about what one address may do.
-      expect(refused).toBeGreaterThanOrEqual(1000 - 120);
+      // The lead's live room opens, whatever strangers send.
+      expect({ open: open.status, state: body.state, go: go.status, again: again.status }).toEqual({
+        open: 200,
+        state: "open",
+        go: 302,
+        again: 200,
+      });
     },
   );
-});
-
-describe("stress2 security fix round 1: the network key and the door's own ceiling", () => {
-  test("an IPv6 address is limited as its /64, an IPv4 address as itself", () => {
-    expect(limitNet("2001:db8:1:2::1")).toBe(limitNet("2001:0db8:0001:0002:ffff:eeee:dddd:cccc"));
-    expect(limitNet("2001:db8:1:2::1")).not.toBe(limitNet("2001:db8:1:3::1"));
-    expect(limitNet("203.0.113.50")).toBe("203.0.113.50");
-    expect(limitNet("::ffff:203.0.113.50")).toBe("203.0.113.50");
-    expect(limitNet("unknown")).toBe("unknown");
-  });
-
-  test("guesses spread over many networks: past the ceiling unknown codes are refused unread, a code with a live room still opens, and the status row says so", async () => {
-    const { w, handler } = world();
-    // The lead opened their link a moment ago: this instance has seen the room.
-    expect((await handler(openReq("K7Q2MX", "198.51.100.7", "lead-device-1", "https://call.maharamedia.com"))).status).toBe(200);
-    await w.settle();
-    let refused = 0;
-    for (let i = 0; i < MISS_CEILING + 200; i++) {
-      // A new /64 every guess: no per-network limit trips.
-      const ip = `2001:db8:${(i + 10).toString(16)}:1::1`;
-      if ((await handler(openReq(guess(i), ip, `g-${i}-device`))).status === 429) refused++;
-    }
-    await w.settle();
-    expect(refused).toBe(200);
-    // The 200 past the ceiling cost no read of a room by its code: only one
-    // read of the last day's room codes (fix round 2, at most one each
-    // LIVE_CODES_TTL_MS), so a room made during a flood still opens.
-    expect(w.reads).toBeLessThanOrEqual(MISS_CEILING + 2);
-    // The lead's own code still reads and opens.
-    expect((await handler(openReq("K7Q2MX", "198.51.100.7", "lead-device-1"))).status).toBe(200);
-    // The flood is red on the door's status row, never silent.
-    expect(w.statuses.some(r => r.job === "open" && r.ok === false && r.detail === FLOOD_LINE)).toBe(true);
-    // A minute on, unknown codes are read again.
-    w.now += 61_000;
-    expect((await handler(openReq(guess(5_000), "2001:db8:ffff:1::1", "g-late"))).status).toBe(404);
-  });
 });

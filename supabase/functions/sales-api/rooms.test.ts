@@ -438,8 +438,8 @@ describe("the message service", () => {
 });
 
 describe("presses: room.mark, room.end, room.open, room.status", () => {
-  async function openRoom(w: ReturnType<typeof setup>, who: Who = setter, contact = LEAD) {
-    const id = String((await w.make(who, { contact_id: contact })).id);
+  async function openRoom(w: ReturnType<typeof setup>, who: Who = setter, contact = LEAD, purpose = "manual") {
+    const id = String((await w.make(who, { contact_id: contact, purpose })).id);
     await w.workerOpens(id);
     await w.rooms.desk["room.event"]!(desk, { kind: "worker.ready", room_id: id, payload: {} });
     await w.flush();
@@ -509,7 +509,8 @@ describe("presses: room.mark, room.end, room.open, room.status", () => {
 
   test("I can't let them in: the room closes admit_blocked and the replacement is made on the other provider in the same request", async () => {
     const w = setup();
-    const id = await openRoom(w, closer);
+    // P1's own room for it: a Meet fallback room with a lead (stress2, round 2).
+    const id = await openRoom(w, closer, LEAD, "fallback");
     const v = Number(w.room(id).version);
     const out = await w.rooms.actions["room.end"]!(closer, { room_id: id, version: v, reason: "admit_blocked" });
     expect((out.room as Row).result).toBe("admit_blocked");
@@ -518,7 +519,7 @@ describe("presses: room.mark, room.end, room.open, room.status", () => {
     // A setter whose Zoom seat is pending: the press is refused before
     // anything moves, and the lead's Meet room stays open (stress2 fix round 1).
     const w2 = setup();
-    const id2 = await openRoom(w2);
+    const id2 = await openRoom(w2, setter, LEAD, "fallback");
     const r2 = await refused(w2.rooms.actions["room.end"]!(setter, { room_id: id2, version: Number(w2.room(id2).version), reason: "admit_blocked" }));
     expect([r2.status, r2.extra.code, r2.message]).toEqual([
       409,

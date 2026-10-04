@@ -207,7 +207,23 @@ function needManager(who: Who): void {
 }
 
 /** Words the desk reads as a hold on every send (desk/waves.py HOLD_ALL_WORDS), as a refusal's extra. */
-const HOLD_WORDS = ["today's", "switched off", "are paused", "paused:", "wallet", "funds", "insufficient", "budget", "30 messages in ten minutes", "single-copy"];
+const HOLD_WORDS = [
+  "today's",
+  "switched off",
+  "are paused",
+  "paused:",
+  "wallet",
+  "funds",
+  "insufficient",
+  "budget",
+  "30 messages in ten minutes",
+  "single-copy",
+  // Meta's own account: an empty prepaid balance or a refused card (131042,
+  // "Business eligibility payment issue"), never one lead's (stress2, round 2).
+  "131042",
+  "payment",
+  "eligibility",
+];
 export function holdsEverything(message: string, status: number): boolean {
   const m = message.toLowerCase();
   return status === 429 || HOLD_WORDS.some(w => m.includes(w));
@@ -774,8 +790,10 @@ export function makeFollowupAgent(deps: AgentDeps): { actions: Record<string, Ac
       await release();
       const m = obj(out.message);
       const err = String(m.error ?? "");
-      // A 200 whose message failed for the wallet or funds holds every send.
-      if (m.state === "failed" && /wallet|funds|insufficient|balance/i.test(err)) return { ...out, hold_all: true, error: err };
+      // A 200 whose message failed for the wallet, the funds or Meta's own
+      // account (131042: the prepaid balance or the card) holds every send.
+      if (m.state === "failed" && /wallet|funds|insufficient|balance|131042|payment|eligibility/i.test(err))
+        return { ...out, hold_all: true, error: err };
       return out;
     } catch (e) {
       if (e instanceof ApiRefusal) {

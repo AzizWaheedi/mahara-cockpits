@@ -566,3 +566,33 @@ export function healthSince(guard: unknown, now: number): number {
   const cleared = Date.parse(String(((guard ?? {}) as Row).health_cleared_at ?? ""));
   return Math.max(now - 86_400_000, Number.isFinite(cleared) ? cleared : 0);
 }
+
+/** How long a template's own send may still be running (rooms.ts SEND_BUDGET_MS): a "sending" row older than this was orphaned. */
+export const TEMPLATE_SEND_BUDGET_MS = 90_000;
+/** How long an earlier template to a lead may still sit in HighLevel's workflow queue. */
+export const TEMPLATE_WAIT_MS = 6 * 3_600_000;
+
+/**
+ * The filter for the workflow templates to one lead that may still be in
+ * HighLevel's delayed workflow queue (stress2, round 2): taken and not seen
+ * (sent / enrolled), an enrolment whose answer was lost (unclear), or a send
+ * orphaned between its row and HighLevel's answer (sending, older than the
+ * send's own budget). Read with templateMayBeQueued over the rows it gives.
+ */
+export function queuedTemplatesQuery(contactId: string, now: number): string {
+  return `cockpit_sales_messages?contact_id=eq.${encodeURIComponent(contactId)}&via=eq.workflow&state=in.(sent,unclear,sending)&created_at=gte.${encodeURIComponent(new Date(now - TEMPLATE_WAIT_MS).toISOString())}&select=id,state,provider_status,created_at&order=created_at.desc&limit=20`;
+}
+
+/** Whether any of these message rows is a template that may still be in HighLevel's queue (queuedTemplatesQuery). */
+export function templateMayBeQueued(rows: Row[], now: number): boolean {
+  return rows.some(r => {
+    const state = String(r.state ?? "");
+    if (state === "sent") return String(r.provider_status ?? "") === "enrolled";
+    if (state === "unclear") return true;
+    if (state === "sending") {
+      const at = Date.parse(String(r.created_at ?? ""));
+      return !Number.isFinite(at) || now - at >= TEMPLATE_SEND_BUDGET_MS;
+    }
+    return false;
+  });
+}

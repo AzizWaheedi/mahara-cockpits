@@ -189,8 +189,9 @@ describe("topics, kinds and the subscribed set", () => {
     expect(zoomKind("meeting.participant_joined")).toBe("zoom.meeting.participant_joined");
   });
 
-  test("exactly the seven subscribed events", () => {
+  test("exactly the seven subscribed events, and meeting.deleted (stress2, round 2)", () => {
     expect([...ZOOM_EVENTS].sort()).toEqual([
+      "meeting.deleted",
       "meeting.ended",
       "meeting.participant_jbh_joined",
       "meeting.participant_jbh_waiting",

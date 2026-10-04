@@ -84,6 +84,7 @@ import {
   parseSlots,
   rankForCloser,
   rankForSetter,
+  roomJoinedFor,
   routePhone,
   slotOffered,
 } from "./dialer.ts";
@@ -126,8 +127,10 @@ import {
   kuwaitMonthStart,
   agentOff,
   matchSent,
+  queuedTemplatesQuery,
   type SendSource,
   sourceHealth,
+  templateMayBeQueued,
   whatsappGuardValue,
 } from "./sendrules.ts";
 
@@ -443,29 +446,20 @@ async function markAppointment(
       });
     return { ...current, note: opts.note ?? current.note, repeated: true };
   }
-  if (current)
-    await svc(`cockpit_sales_dispositions?id=eq.${current.id}`, {
-      method: "PATCH",
-      body: { superseded_at: new Date(now).toISOString() },
-      prefer: "return=minimal",
-    });
+  const fresh = {
+    appointment_id: id,
+    contact_id: appt.contact_id,
+    call_type: appt.call_type,
+    start_at: appt.start_at,
+    status,
+    reason: opts.reason ?? null,
+    note: opts.note ?? null,
+    marked_by: who.email,
+    crm: decision === "write" || decision === "quiet" ? "pending" : decision,
+  };
   let row: Row;
   try {
-    row = (await svc("cockpit_sales_dispositions", {
-      method: "POST",
-      body: {
-        appointment_id: id,
-        contact_id: appt.contact_id,
-        call_type: appt.call_type,
-        start_at: appt.start_at,
-        status,
-        reason: opts.reason ?? null,
-        note: opts.note ?? null,
-        marked_by: who.email,
-        crm: decision === "write" || decision === "quiet" ? "pending" : decision,
-      },
-      prefer: "return=representation",
-    }))[0];
+    row = await replaceMark(current ? Number(current.id) : null, fresh, now);
   } catch (e) {
     // A person's mark landed between the read and this insert: the one
     // current mark per call (cockpit_sales_dispositions_current) refuses the
@@ -485,6 +479,34 @@ async function markAppointment(
     ...(opts.quiet ? { quiet: true } : {}),
   });
   return result;
+}
+
+/**
+ * The call's current mark superseded and the new one inserted in ONE step
+ * (cockpit_sales_disposition_replace, 20261004a; stress2, round 2): a write
+ * cut off between the two never leaves the call with no current mark. While
+ * the function is missing (sales-api deployed before the migration), the two
+ * writes as before, the insert first refused by the one-current index only
+ * when another mark landed.
+ */
+async function replaceMark(currentId: number | null, fresh: Row, now: number): Promise<Row> {
+  try {
+    const out = await svc("rpc/cockpit_sales_disposition_replace", {
+      method: "POST",
+      body: { p_current_id: currentId, p_row: fresh },
+    });
+    if (out[0]) return out[0];
+    throw new Error("database: the mark was not written");
+  } catch (e) {
+    if (!/database 404|PGRST202/.test(String((e as Error)?.message ?? e))) throw e;
+  }
+  if (currentId !== null)
+    await svc(`cockpit_sales_dispositions?id=eq.${currentId}`, {
+      method: "PATCH",
+      body: { superseded_at: new Date(now).toISOString() },
+      prefer: "return=minimal",
+    });
+  return (await svc("cockpit_sales_dispositions", { method: "POST", body: fresh, prefer: "return=representation" }))[0] as Row;
 }
 
 /**
@@ -1583,9 +1605,10 @@ async function sendTemplate(
   // enrolling again sends these words twice (and the duplicate detector
   // pauses WhatsApp for every rep). Refused before anything is written, so
   // certainly not sent: a room's link moves on to email.
-  const waiting = (await svc(
-    `cockpit_sales_messages?contact_id=eq.${enc(o.contactId)}&via=eq.workflow&state=eq.sent&provider_status=eq.enrolled&created_at=gte.${enc(new Date(Date.now() - TEMPLATE_WAIT_MS).toISOString())}&select=id&limit=1`,
-  ))[0];
+  // An enrolment whose answer was lost (unclear) or a send orphaned between
+  // its row and HighLevel's answer (sending, past its budget) may be queued
+  // just the same (stress2, round 2).
+  const waiting = templateMayBeQueued(await svc(queuedTemplatesQuery(o.contactId, Date.now())), Date.now());
   if (waiting)
     throw new Refusal(
       "An earlier WhatsApp template to this lead has not arrived yet. Wait for it, or send by email.",
@@ -1741,9 +1764,6 @@ async function sendTemplate(
   if (read.length) background(duplicateWatch(o.contactId, "", read));
   return { message: saved };
 }
-
-/** An earlier template HighLevel took and nobody saw this recently may still be in its workflow queue (rooms.ts TEMPLATE_WAIT_MS). */
-const TEMPLATE_WAIT_MS = 6 * 3_600_000;
 
 /**
  * A seat's message request id, hashed with its email (rooms.ts
@@ -2945,21 +2965,20 @@ async function candidates(now: number): Promise<{ list: QueueCandidate[] }> {
     // standing (not taken back by "That was not the lead"): the intro was
     // had, so it never comes back as "Intro call now" (stress2, round 1).
     svc(
-      `cockpit_sales_rooms?appointment_id=not.is.null&lead_in_at=gte.${enc(new Date(now - 3 * 3_600_000).toISOString())}&select=appointment_id,lead_in_at,count_undo_at&limit=1000`,
+      `cockpit_sales_rooms?appointment_id=not.is.null&lead_in_at=gte.${enc(new Date(now - 3 * 3_600_000).toISOString())}&select=appointment_id,appointment_start_at,lead_in_at,count_undo_at&limit=1000`,
     ).catch(e => {
       console.error("room joins unread", redact(String((e as Error)?.message ?? e)));
       return [] as Row[];
     }),
   ]);
-  const joinedAppts = new Set(
-    roomJoins
-      .filter(r => {
-        const joined = ms(r.lead_in_at);
-        const undo = ms(r.count_undo_at);
-        return joined !== null && !(undo !== null && joined <= undo);
-      })
-      .map(r => String(r.appointment_id)),
-  );
+  // Only a join for the call as it starts now, inside its own window
+  // (dialer.ts roomJoinedFor, stress2, round 2): an intro moved later, or a
+  // confirmation call's room the hour before, still comes up.
+  const joinsByAppt = new Map<string, Row[]>();
+  for (const r of roomJoins) {
+    const k = String(r.appointment_id);
+    joinsByAppt.set(k, [...(joinsByAppt.get(k) ?? []), r]);
+  }
   // A closed or lost hot lead stays on the list for the record, and is no
   // longer hot here (Aziz, 2026-09-27).
   const hotRows = hotList.filter(stillHot);
@@ -3153,7 +3172,10 @@ async function candidates(now: number): Promise<{ list: QueueCandidate[] }> {
             assigned: (current.assigned_user_id as string) ?? null,
             confirmed: confirmedAppt.has(String(current.appointment_id)),
             last_try: lastTry.get(String(current.appointment_id)) ?? null,
-            room_joined: joinedAppts.has(String(current.appointment_id)),
+            room_joined: roomJoinedFor(joinsByAppt.get(String(current.appointment_id)) ?? [], {
+              id: String(current.appointment_id),
+              start: ms(current.start_at) ?? 0,
+            }),
           }
         : null,
     };

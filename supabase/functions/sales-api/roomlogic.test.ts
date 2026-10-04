@@ -1737,7 +1737,8 @@ describe("10,000 random event sequences", () => {
           : roll < 0.58 ? { kind: "not_lead", actor, version }
           : roll < 0.64 ? { kind: "end", reason: pick(["end", "on_phone", "finished", "cancel", "admit_blocked"] as const), actor, version, confirm: rnd() < 0.5 }
           : roll < 0.67 ? { kind: "meeting_ended", ...when }
-          : roll < 0.70 ? { kind: "adopt", contact_id: "c7", call_kind: "demo", actor }
+          : roll < 0.68 ? { kind: "meeting_deleted", ...when }
+          : roll < 0.71 ? { kind: "adopt", contact_id: "c7", call_kind: "demo", actor }
           : {
               kind: "tick",
               next_booked_start: rnd() < 0.3 ? t + Math.floor(rnd() * 25 - 5) * MIN : null,
@@ -1777,7 +1778,13 @@ describe("10,000 random event sequences", () => {
           expect(canMove(before.state, after.state)).toBe(true);
           seenMoves.add(`${before.state}>${after.state}`);
           expect(after.version).toBe(before.version + 1);
-          const stamped = e.kind === "meeting_ended" ? eventTime((e as { at?: unknown }).at, t) : t;
+          // A Zoom join from before a kept meeting end ends the room at that end (stress2, round 2).
+          const stamped =
+            e.kind === "meeting_ended" || e.kind === "meeting_deleted"
+              ? eventTime((e as { at?: unknown }).at, t)
+              : e.kind === "lead_in" && before.meeting_ended_at && after.state === "ended"
+                ? Date.parse(before.meeting_ended_at)
+                : t;
           if (isFinal(after.state)) expect(after.ended_at).toBe(at(stamped));
         } else {
           expect(after.version === before.version || (e.kind === "adopt" && after.version === before.version + 1)).toBe(true);
@@ -1836,7 +1843,12 @@ describe("10,000 random event sequences", () => {
             expect(cx.count_on_join).toBe(true);
             expect(leadJoined(before)).toBe(true);
             expect(countClaimable(before)).toBe(true);
-          } else expect(before.state !== "lead_in" && after.state === "lead_in").toBe(true);
+          } else
+            expect(
+              (before.state !== "lead_in" && after.state === "lead_in") ||
+                // A Zoom join from before a kept meeting end: ended joined, and counted (stress2, round 2).
+                (e.kind === "lead_in" && Boolean(before.meeting_ended_at) && after.state === "ended" && after.result === "joined"),
+            ).toBe(true);
         }
         if (a.reason) reasons.set(a.reason, (reasons.get(a.reason) ?? 0) + 1);
         // 9. Everything not final has a timer that will fire, and a lead held out of the queue is held for a bounded time.

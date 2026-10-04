@@ -406,6 +406,34 @@ function introWindow(a: Appt, now: number): boolean {
   return now >= a.start - 5 * MIN && now <= a.start + 20 * MIN;
 }
 
+/**
+ * The lead joined a video room for this call as it starts now, the join
+ * standing (Appt.room_joined, index.ts candidates): the room carries the
+ * call's id, it stored this start (within a second) when it was made, and
+ * the join fell inside the call's own window (five minutes before its start
+ * to twenty after). A join on a room made for the intro before it was moved,
+ * or before its window (a confirmation call's room), never hides the intro
+ * as it is booked now (stress2, round 2).
+ */
+export function roomJoinedFor(
+  rooms: readonly Record<string, unknown>[],
+  appt: { id: string; start: number },
+): boolean {
+  const t = (v: unknown) => {
+    const n = v ? Date.parse(String(v)) : Number.NaN;
+    return Number.isFinite(n) ? n : null;
+  };
+  return rooms.some(r => {
+    if (String(r.appointment_id ?? "") !== appt.id) return false;
+    const joined = t(r.lead_in_at);
+    const undo = t(r.count_undo_at);
+    if (joined === null || (undo !== null && joined <= undo)) return false;
+    const stored = t(r.appointment_start_at);
+    if (stored !== null && Math.abs(stored - appt.start) >= 1000) return false;
+    return joined >= appt.start - 5 * MIN && joined <= appt.start + 20 * MIN;
+  });
+}
+
 /** How long an intro that rang out waits before it comes back, inside its window. */
 export const INTRO_RETRY = 5 * MIN;
 

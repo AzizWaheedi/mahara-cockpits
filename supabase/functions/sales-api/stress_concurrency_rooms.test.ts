@@ -508,7 +508,8 @@ describe("room.event delivered many times at once", () => {
 describe("late and doubled presses on a closing room", () => {
   test("I can't let them in, pressed in two tabs at once (or retried after a lost answer): both answers carry the replacement room", async () => {
     const w = setup();
-    const id = await w.openRoom(closer);
+    // P1's own room for it: a Meet fallback room with a lead (stress2, round 2).
+    const id = await w.openRoom(closer, { purpose: "fallback" });
     await w.rooms.desk["room.event"]!(desk, { kind: "worker.ready", room_id: id, payload: {} });
     await w.flush();
     const v = Number(w.room(id).version);

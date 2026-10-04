@@ -99,6 +99,8 @@ type Row = Record<string, unknown>;
 
 /** Lookups that find no room, a minute, before the door stops reading unknown codes (per instance). */
 export const MISS_CEILING = 600;
+/** How often, at most, the door reads the codes of the last day's rooms while a flood holds the ceiling. */
+export const LIVE_CODES_TTL_MS = 5_000;
 export const FLOOD_LINE =
   "The door is turning away a flood of unknown call codes (over 600 lookups a minute found no room). Leads whose link opened lately still get through; the rest are asked to wait a minute.";
 
@@ -271,6 +273,13 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
   // lead with a live link gets through.
   const misses = deps.missLimiter ?? new RateLimiter(MISS_CEILING, 60_000, 4);
   const knownCodes = new Map<string, number>();
+  // The codes of every room asked for in the last day (live ones and those
+  // that ended lately), read at most every LIVE_CODES_TTL_MS whatever the
+  // traffic (stress2, round 2): past the miss ceiling a room made during a
+  // flood still opens, on /open and /go, though this instance never looked
+  // its code up. Any other code gets the flood's 429 with no room read.
+  let liveCodes: { at: number; codes: Set<string> } | null = null;
+  let liveCodesRead: Promise<void> | null = null;
   const statusMemo = new Map<string, { ok: boolean; at: number }>();
   const alertMemo = new Map<string, { on: boolean; at: number }>();
   let ignoredZoom = 0;
@@ -857,17 +866,45 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
 
   /**
    * A code lookup the door may make now: a code it found a room for in the
-   * last hour always; any other only while the instance's misses this
-   * minute are under the ceiling. Answers false (and the status row says
-   * why) when a flood of unknown codes has used the ceiling.
+   * last hour always; any other while the instance's misses this minute are
+   * under the ceiling; past it, a code of a room asked for in the last day
+   * (liveCodeSet, one read every LIVE_CODES_TTL_MS at most). Answers false
+   * (and the status row says why) for any other code during a flood.
    */
-  function mayLookUp(job: "open" | "go", code: string): boolean {
+  async function mayLookUp(job: "open" | "go", code: string): Promise<boolean> {
     const now = deps.now();
     const seen = knownCodes.get(code);
     if (seen !== undefined && now - seen < 60 * 60_000) return true;
     if (!misses.full("door", now)) return true;
+    const live = await liveCodeSet();
+    if (live?.has(code)) return true;
     noteStatus(job, false, FLOOD_LINE);
     return false;
+  }
+
+  /** The codes of the rooms asked for in the last day, refreshed at most every LIVE_CODES_TTL_MS; null when never read. */
+  async function liveCodeSet(): Promise<Set<string> | null> {
+    const now = deps.now();
+    if (liveCodes && now - liveCodes.at < LIVE_CODES_TTL_MS) return liveCodes.codes;
+    if (!liveCodesRead)
+      liveCodesRead = (async () => {
+        try {
+          const since = new Date(now - 24 * 3_600_000).toISOString();
+          const rows = (await rest(`cockpit_sales_rooms?requested_at=gte.${encodeURIComponent(since)}&select=code&limit=5000`, {
+            ms: B.roomRead,
+          })) as { code?: unknown }[] | null;
+          const codes = new Set<string>();
+          for (const r of Array.isArray(rows) ? rows : []) if (typeof r.code === "string") codes.add(r.code);
+          liveCodes = { at: now, codes };
+        } catch {
+          // Not read: the set as it was, tried again after the same wait (never a read a request).
+          liveCodes = { at: now, codes: liveCodes?.codes ?? new Set() };
+        } finally {
+          liveCodesRead = null;
+        }
+      })();
+    await liveCodesRead;
+    return liveCodes?.codes ?? null;
   }
   function found(code: string | null, room: unknown): void {
     const now = deps.now();
@@ -920,7 +957,7 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
     // host can change for every request (stress2, round 1).
     const net = await ipHash(salt, limitNet(ip));
     const codeOk = (now: number) => perCode.hit(code, now) || perCodeAddress.hit(`${code}:${net}`, now);
-    if (!withinLimits(net, deviceId) || !codeOk(deps.now()) || !mayLookUp("open", code))
+    if (!withinLimits(net, deviceId) || !codeOk(deps.now()) || !(await mayLookUp("open", code)))
       return json(
         { ok: false, state: "busy", error: "Too many tries from this network. Wait a minute, then try again." },
         429,
@@ -971,7 +1008,7 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
     const ua = req.headers.get("user-agent") ?? "";
     // The limit can key on any salt; only a hash made with IP_SALT is ever stored.
     const hash = await ipHash(env("IP_SALT") || "sales-live", limitNet(clientIp(req.headers)));
-    if (!withinLimits(hash, null) || !mayLookUp("go", code))
+    if (!withinLimits(hash, null) || !(await mayLookUp("go", code)))
       return text(both(GO_COPY.busy), 429, {
         "retry-after": "60",
       });

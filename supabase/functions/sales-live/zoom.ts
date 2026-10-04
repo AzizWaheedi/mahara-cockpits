@@ -8,10 +8,16 @@
 
 import { stripControl } from "./util.ts";
 
-/** The seven events the foundation subscribes to (glossary C19). */
+/**
+ * The seven events the foundation subscribes to (glossary C19), and
+ * meeting.deleted (stress2, round 2: the host deleting the room's meeting in
+ * Zoom fails the room, so the rep is told to make a new one). The Zoom app's
+ * Event Subscriptions must list it too (RUNBOOK).
+ */
 export const ZOOM_EVENTS = new Set([
   "meeting.started",
   "meeting.ended",
+  "meeting.deleted",
   "meeting.participant_joined",
   "meeting.participant_left",
   "meeting.participant_joined_waiting_room",
@@ -261,6 +267,8 @@ export function zoomText(d: ZoomDetail): string {
       return "Zoom: the meeting started.";
     case "meeting.ended":
       return "Zoom: the meeting ended.";
+    case "meeting.deleted":
+      return "Zoom: the meeting was deleted.";
     case "meeting.participant_joined":
       return `Zoom: ${who} joined.`;
     case "meeting.participant_left":

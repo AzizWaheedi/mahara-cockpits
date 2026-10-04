@@ -325,10 +325,13 @@ describe("a lead who joins the intro's room early", () => {
     const start = w.clock.now + 40 * MIN;
     // The intro is unconfirmed (status new): not a show for B2B even once past.
     w.intro("new", start);
-    // The dialer's confirm item carries the intro into the fallback room:
-    // asked for inside the intro's window (an hour before its start).
+    // Since stress2 round 2 a room asked for 40 minutes before the intro is
+    // not the intro's room (its window opens five minutes before the start,
+    // as the dialer's intro item does): the join is any join of the lead.
     const id = await w.fallbackRoom();
-    expect(w.room(id).appointment_id).toBe("intro-1");
+    expect(w.room(id).appointment_id ?? null).toBeNull();
+    // The intro is the lead's call ahead in HighLevel (index.ts upcoming()).
+    w.knobs.calls.push({ id: "intro-1", start, booked_at: start - 3 * 24 * HOUR, assigned_user_id: "G-setter" });
     await w.press(id, "lead_in");
     await w.tick([id]);
     // countLive plans "mark" (the join is inside the intro's window, from an

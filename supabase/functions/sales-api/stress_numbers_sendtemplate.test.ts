@@ -30,7 +30,7 @@ const clock = {
 };
 const db = new FakeDb(clock as { now: number });
 const ghlCalls: { method: string; path: string }[] = [];
-let handler: (req: Request) => Promise<Response>;
+let handler: ((req: Request) => Promise<Response>) | undefined;
 
 function reply(body: unknown, status = 200): Response {
   return new Response(body === null ? "" : JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -86,10 +86,14 @@ beforeAll(async () => {
     env: { get: (k: string) => env[k] },
     serve: (h: (req: Request) => Promise<Response>) => {
       handler = h;
+      // index.ts registers its handler once per process: a second test file
+      // that imports it (cached) takes the same handler from here.
+      (globalThis as unknown as { __salesApiHandler?: unknown }).__salesApiHandler = h;
     },
   };
   globalThis.fetch = fakeFetch as typeof fetch;
   await import("./index.ts");
+  handler ??= (globalThis as unknown as { __salesApiHandler?: typeof handler }).__salesApiHandler as typeof handler;
 });
 
 function reset(): void {
@@ -131,7 +135,7 @@ function seedMessages(n: number, at: (i: number) => string, over: Row = {}): voi
 }
 
 async function send(contactId: string): Promise<{ status: number; body: Row }> {
-  const res = await handler(
+  const res = await (handler as (req: Request) => Promise<Response>)(
     new Request("https://fn.stress.invalid/sales-api", {
       method: "POST",
       headers: { authorization: "Bearer a-seat-session", "content-type": "application/json" },
