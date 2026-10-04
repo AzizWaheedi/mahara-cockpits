@@ -83,6 +83,8 @@ HARDENING_COLUMN = "appointment_start_at"
 HARDENING_COLUMNS = (HARDENING_COLUMN, "lead_in_seen_at")
 # The column 20261004a (the second stress series, fix round 1) adds.
 HARDENING_2_COLUMN = "standby_error"
+# The host column its fix round 2 adds (Zoom's daily cap, which the room worker writes).
+HARDENING_2B = ("cockpit_sales_room_hosts", "zoom_capped_until")
 
 SETTINGS = ("rooms", "live", "followups", "whatsapp_guard", "threads", "calendars")
 
@@ -280,6 +282,13 @@ def check_database(report: Report, sb: Any) -> dict[str, Any]:
                (f"not applied ({reason}): apply 20261004a_live_calls_hardening_2.sql before this desk and sales-api "
                 "are deployed, or a closer in an overrunning Zoom meeting reads as free" if status in (400, 404) else
                 f"could not be read ({reason or 'no answer'})"))
+    # Its fix round 2: the room worker stores Zoom's daily cap on the host row.
+    status, _rows, reason = _get(sb, f"{HARDENING_2B[0]}?select={HARDENING_2B[1]}&limit=1")
+    report.add(sec, "20261004a hardening, round 2", status == 200 if status in (200, 400, 404) else None,
+               f"there ({HARDENING_2B[0]}.{HARDENING_2B[1]})" if status == 200 else
+               (f"not applied ({reason}): apply the current 20261004a_live_calls_hardening_2.sql before this desk "
+                "is deployed, or a Zoom room past the day's cap is said as Zoom not answering" if status in (400, 404)
+                else f"could not be read ({reason or 'no answer'})"))
     status, rows, reason = _get(sb, "cockpit_sales_settings?select=key,value&key=in.("
                                     + ",".join(SETTINGS) + ")")
     if status != 200 or not isinstance(rows, list):

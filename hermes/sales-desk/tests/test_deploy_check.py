@@ -64,6 +64,7 @@ class Catalog:
             self.schema[table] |= set(cols)
         self.schema["cockpit_sales_rooms"].update(deploycheck.HARDENING_COLUMNS)  # 20261003d applied
         self.schema["cockpit_sales_availability"].add(deploycheck.HARDENING_2_COLUMN)  # 20261004a applied
+        self.schema[deploycheck.HARDENING_2B[0]].add(deploycheck.HARDENING_2B[1])  # with its fix round 2
         for table in self.schema:
             self.pg.tables.setdefault(table, {})
             fakes.PK.setdefault(table, ("id",))
@@ -281,6 +282,13 @@ class DeployCheck(unittest.TestCase):
         code, out, _ = run(["deploy-check"], db)
         self.assertEqual(code, 1)
         self.assertIn("apply 20261004a_live_calls_hardening_2.sql", line(out, "20261004a hardening"))
+
+    def test_a_20261004a_from_before_its_round_2_blocks_and_says_so(self):
+        db = Catalog()
+        db.schema[deploycheck.HARDENING_2B[0]].discard(deploycheck.HARDENING_2B[1])
+        code, out, _ = run(["deploy-check"], db)
+        self.assertEqual(code, 1)
+        self.assertIn("apply the current 20261004a_live_calls_hardening_2.sql", line(out, "20261004a hardening, round 2"))
 
     def test_missing_columns_are_named_one_by_one(self):
         db = Catalog()

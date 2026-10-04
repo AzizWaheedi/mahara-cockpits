@@ -886,6 +886,11 @@ export function makeRooms(deps: RoomDeps): Rooms {
         lower(a.who.email) === a.host ? (a.who.ghl_user_id ?? null) : (((await personOf(a.host).catch(() => null))?.ghl_user_id as string | null) ?? null);
       ownIntro = a.who.manager === true || (Boolean(assigned) && Boolean(hostGhl) && assigned === hostGhl);
     }
+    // Zoom's daily cap on this host's meeting creates (the room worker stores
+    // it, stress2 round 2): refused before a room is asked for.
+    const capped = ms((await io.db(`cockpit_sales_room_hosts?email=eq.${enc(a.host)}&select=zoom_capped_until`).catch(() => []))[0]?.zoom_capped_until);
+    if (a.provider === "zoom" && capped !== null && capped > now)
+      return { refused: refuse("zoom_capped") };
     const no = createRefusal({
       setting: a.setting,
       purpose: a.purpose,

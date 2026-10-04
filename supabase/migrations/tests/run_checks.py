@@ -248,6 +248,11 @@ union all
 select 'column cockpit_sales_rooms.appointment_start_at' from information_schema.columns
  where table_schema = 'public' and table_name = 'cockpit_sales_rooms' and column_name = 'appointment_start_at'
 union all
+select 'column ' || table_name || '.' || column_name from information_schema.columns
+ where table_schema = 'public'
+   and ((table_name = 'cockpit_sales_rooms' and column_name = 'meeting_ended_at')
+        or (table_name = 'cockpit_sales_room_hosts' and column_name = 'zoom_capped_until'))
+union all
 select 'trigger ' || tgname from pg_trigger where tgname = 'cockpit_sales_worker_status_clock'
 union all
 select 'template ' || key from public.cockpit_sales_wa_templates

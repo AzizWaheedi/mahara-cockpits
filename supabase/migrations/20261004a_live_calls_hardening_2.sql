@@ -396,6 +396,15 @@ grant execute on function public.cockpit_sales_live_claim(uuid, text, integer, t
 
 -- 3. Presence: the floor for presence, Basic Zoom never a closer's default ---
 
+-- Zoom's daily cap on one user's meeting creates (100 a day, reset at 00:00
+-- UTC): the room worker stores when it passes (stress2, round 2), so later
+-- rooms skip the create and the view below reads Meet as the seat's default
+-- until then.
+alter table public.cockpit_sales_room_hosts
+  add column if not exists zoom_capped_until timestamptz;
+comment on column public.cockpit_sales_room_hosts.zoom_capped_until is
+  'Zoom refused this host''s meeting creates for the day (its daily cap) until this time; the worker writes it.';
+
 drop view if exists public.cockpit_sales_presence;
 create view public.cockpit_sales_presence
 with (security_invoker = true) as
@@ -523,7 +532,9 @@ cross join lateral (
          end as pref,
          coalesce((cfg.rooms #> '{providers,zoom}') = 'true'::jsonb, false)
            -- Basic Zoom ends at 40 minutes: never a closer's (a demo's) default (stress2, round 1).
-           and coalesce(h.zoom_status = 'licensed' or (h.zoom_status = 'basic' and p.role is distinct from 'closer'), false) as zoom_ok,
+           and coalesce(h.zoom_status = 'licensed' or (h.zoom_status = 'basic' and p.role is distinct from 'closer'), false)
+           -- Zoom's daily create cap spent for today (stress2, round 2).
+           and coalesce(h.zoom_capped_until is null or h.zoom_capped_until <= now(), true) as zoom_ok,
          coalesce((cfg.rooms #> '{providers,meet}') = 'true'::jsonb, false)
            and coalesce(h.google_ok, false) as meet_ok
 ) as pv

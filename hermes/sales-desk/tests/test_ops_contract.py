@@ -625,7 +625,9 @@ class Poster(OpsCase):
 
     def test_a_slack_outage_is_tried_three_times_ten_seconds_apart_then_dropped(self):
         e = reply(self.env, 1)
-        self.slack.script = [{"status": 503}] * 3
+        # A gateway's 503 with no answer from Slack itself (since stress2
+        # round 2, Slack's own 5xx error may have posted, and is not repeated).
+        self.slack.script = [{"status": 503, "body": "<html>503 Service Unavailable</html>"}] * 3
         self.worker().run(seconds=40)
         self.assertEqual(len(self.slack.calls), 3)
         self.assertEqual(e["tries"], 3)

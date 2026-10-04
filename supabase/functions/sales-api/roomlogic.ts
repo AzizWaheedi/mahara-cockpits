@@ -718,6 +718,8 @@ export const ROOM_COPY = {
 
 /** Sentences the specs did not set, in the same voice. Each one is for review. */
 export const LANE_COPY = {
+  /** Zoom's daily cap on the host's meeting creates (desk rooms.py SAY zoom_daily_cap, stress2 round 2). */
+  zoom_daily_cap: "Your Zoom user has made its rooms for today (Zoom allows 100 a day); Zoom allows more from 03:00 Kuwait. Use Meet.",
   /** The lead's open room is another seat's (stress2, round 2): never "Open it", which only its host can. */
   lead_has_others_room: "The {role}'s video room for this lead is open until {until}. Call the lead, or send a link after that.",
   disabled: "Video rooms are off for now. Call or message the lead instead.",
@@ -1457,6 +1459,7 @@ export type RefusalCode =
   | "zoom_busy"
   | "zoom_basic_demo"
   | "zoom_pending"
+  | "zoom_capped"
   | "zoom_missing"
   | "zoom_unchecked"
   | "meet_unchecked"
@@ -1504,6 +1507,7 @@ const REFUSALS: Record<RefusalCode, { text: string; status: number; retry?: bool
   contact_gone: { text: LANE_COPY.contact_gone, status: 409 },
   disabled: { text: LANE_COPY.disabled, status: 409 },
   provider_off: { text: LANE_COPY.provider_off, status: 409 },
+  zoom_capped: { text: LANE_COPY.zoom_daily_cap, status: 409 },
   test_only: { text: LANE_COPY.test_only, status: 409 },
   client: { text: R.client, status: 409 },
   dnd: { text: R.dnd, status: 409 },

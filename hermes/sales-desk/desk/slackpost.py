@@ -17,9 +17,11 @@ event, so this poster is its only reader. For each one it:
   name, never printed or logged);
 - sets `handled_at` with what Slack said: the message's `ts`, or Slack's
   refusal (`detail.refused`), so it is never sent twice;
-- on a failure that may pass (Slack down or busy) releases the lease and
-  tries again, at most three times and ten seconds apart; a Slack call that
-  timed out is not repeated (Slack may have posted it), and is said;
+- on a failure that may pass (Slack's breaker open, a 429, a gateway's 5xx
+  with no answer from Slack itself) releases the lease and tries again, at
+  most three times and ten seconds apart; a Slack call that timed out,
+  dropped its connection or got Slack's own 5xx error is not repeated (Slack
+  may have posted it), and is said;
 - closes a reply older than ten minutes unsent (`detail.dropped`): the
   person who pressed has moved on. `gave_up` is never used, because the
   watchdog counts that key as a room signal nobody acted on.
@@ -238,6 +240,16 @@ class SlackPoster:
             if err.timed_out:
                 # Slack may have posted it: never sent a second time.
                 return self._finish(e, {"unclear": "Slack did not answer in time"}, "unclear")
+            # Slack's own error answer to the post (internal_error,
+            # fatal_error: "it's possible some aspect of the operation
+            # succeeded"), or a connection dropped mid-answer: Slack may have
+            # posted the DM (stress2, round 2: the rep got it two or three
+            # times). Never sent again, and said. A gateway's 5xx with no
+            # answer from Slack itself is an outage, tried again.
+            slack_said = bool(re.fullmatch(r"[a-z0-9_]{2,60}", str(err.message or "").strip()))
+            if err.status == 0 or (err.status >= 500 and slack_said):
+                why = "Slack answered with an error after the post" if err.status else "the connection dropped"
+                return self._finish(e, {"unclear": why}, "unclear")
             self.counts["failed"] += 1
             self._warn_once(f"post:{err.status}", f"slack: a reply could not be sent ({err.why}); it is tried again")
             self._release(e, bump=True)

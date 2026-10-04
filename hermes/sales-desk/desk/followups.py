@@ -928,12 +928,36 @@ def _message_page(h: dict[str, str], conversation: str, limit: int,
     return items, more, (str(last) if last else None)
 
 
+# A lead's message with no words of its own (a voice note, a picture, a
+# document) is still the lead writing (stress2, round 2): kept in the thread
+# with a placeholder, so "they wrote to us lately" sees it.
+_CHAT_TYPES = ("TYPE_WHATSAPP", "TYPE_SMS", "TYPE_FACEBOOK", "TYPE_INSTAGRAM", "TYPE_LIVE_CHAT", "TYPE_WEBCHAT")
+
+
+def _placeholder(m: dict[str, Any]) -> str:
+    kind = str(m.get("contentType") or "").lower()
+    files = m.get("attachments") if isinstance(m.get("attachments"), list) else []
+    if kind.startswith("audio") or any(str(a).lower().split("?")[0].endswith((".ogg", ".opus", ".mp3", ".m4a", ".aac"))
+                                       for a in files):
+        return "[a voice note]"
+    if kind.startswith("image"):
+        return "[a picture]"
+    if kind.startswith("video"):
+        return "[a video]"
+    return "[an attachment]" if files else "[a message with no text]"
+
+
 def _as_message(m: dict[str, Any]) -> Optional[dict[str, Any]]:
     body = str(m.get("body") or "").strip()
+    inbound = m.get("direction") == "inbound"
+    if not body and inbound:
+        files = m.get("attachments") if isinstance(m.get("attachments"), list) else []
+        if files or str(m.get("messageType") or "") in _CHAT_TYPES:
+            body = _placeholder(m)
     if not (body or m.get("direction") == "outbound"):
         return None
     return {"id": m.get("id"), "at": m.get("dateAdded"),
-            "from": "lead" if m.get("direction") == "inbound" else "us",
+            "from": "lead" if inbound else "us",
             "channel": str(m.get("messageType") or "").replace("TYPE_", "").lower(),
             "source": m.get("source"), "status": m.get("status"), "text": body[:600]}
 
@@ -1047,35 +1071,55 @@ LIVE_CALENDAR = "live"
 
 
 def live_calls(sb: Any, contacts: Optional[list[str]] = None, *, since: Optional[datetime] = None,
-               until: Optional[datetime] = None) -> list[dict[str, Any]]:
+               until: Optional[datetime] = None, reached: bool = True) -> list[dict[str, Any]]:
     """The live calls the count booked or moved when a lead joined a video
     room (rooms.ts runCount, D2), as calendar rows: held ("showed") calls of
     the room's kind at the minute the lead joined. They are on
     rooms.live_calendar_id, which D25 keeps out of B2B's map, so the
     cockpit's calendar copy never has them; the room is their only record.
     A count taken back (count_undo_at) is no call. `since` and `until`
-    bound the join time."""
-    base = (f"select=id,contact_id,call_kind,lead_in_at,count_result,count_appointment_id,count_undo_at"
-            f"&lead_in_at=not.is.null&count_result=in.(booked,moved)&count_appointment_id=not.is.null"
-            f"&count_undo_at=is.null")
+    bound the join time.
+
+    `reached` (the default, for what to write to a lead): also the joins that
+    stand and are not booked (stress2, round 2): a join only a hand press
+    reported, waiting for a manager's confirm (count_result self_reported),
+    and the count's mark of the lead's own call (count_result null with the
+    call's id). The lead talked to a rep on video, so no "we missed you" and
+    no never-booked opener goes to them. Booking counts (a wave's outcomes)
+    pass reached=False: an unconfirmed join is no booking yet."""
+    cols = "select=id,contact_id,call_kind,lead_in_at,count_result,count_appointment_id,count_undo_at"
+    bound = ""
     if since:
-        base += f"&lead_in_at=gte.{_q(since.isoformat())}"
+        bound += f"&lead_in_at=gte.{_q(since.isoformat())}"
     if until:
-        base += f"&lead_in_at=lte.{_q(until.isoformat())}"
-    rows: list[dict[str, Any]] = []
-    if contacts is None:
-        rows = sb.select_all(ROOMS, base, order="id")
-    else:
-        for chunk in _chunks(sorted({str(c) for c in contacts if c})):
-            rows += sb.select_all(ROOMS, f"{base}&contact_id={_in(chunk)}", order="id")
+        bound += f"&lead_in_at=lte.{_q(until.isoformat())}"
+    queries = [(f"{cols}&lead_in_at=not.is.null&count_result=in.(booked,moved)&count_appointment_id=not.is.null"
+                f"&count_undo_at=is.null{bound}", False)]
+    if reached:
+        queries += [(f"{cols}&lead_in_at=not.is.null&count_result=eq.self_reported{bound}", True),
+                    (f"{cols}&lead_in_at=not.is.null&count_result=is.null&count_appointment_id=not.is.null{bound}", True)]
+    rows: list[tuple[dict[str, Any], bool]] = []
+    for q, uncounted in queries:
+        if contacts is None:
+            rows += [(r, uncounted) for r in sb.select_all(ROOMS, q, order="id")]
+        else:
+            for chunk in _chunks(sorted({str(c) for c in contacts if c})):
+                rows += [(r, uncounted) for r in sb.select_all(ROOMS, f"{q}&contact_id={_in(chunk)}", order="id")]
     out = []
-    for r in rows:
+    for r, uncounted in rows:
         kind = str(r.get("call_kind") or "")
         if kind not in ("intro", "demo") or not r.get("contact_id"):
             continue
-        out.append({"appointment_id": str(r.get("count_appointment_id")), "contact_id": str(r["contact_id"]),
+        if uncounted:
+            # The join stands only when "That was not the lead" did not take it back.
+            joined, undo = _ts(r.get("lead_in_at")), _ts(r.get("count_undo_at"))
+            if joined is None or (undo is not None and joined <= undo):
+                continue
+        appt = str(r.get("count_appointment_id") or "") or f"room:{r.get('id')}"
+        out.append({"appointment_id": appt, "contact_id": str(r["contact_id"]),
                     "calendar_id": LIVE_CALENDAR, "call_type": kind, "start_at": r.get("lead_in_at"),
-                    "booked_at": r.get("lead_in_at"), "status": "showed", "live": True})
+                    "booked_at": r.get("lead_in_at"), "status": "showed", "live": True,
+                    **({"uncounted": True} if uncounted else {})})
     return out
 
 
@@ -1889,9 +1933,13 @@ def reconcile_templates(sb: Any, token: str, now: datetime, settle: Optional[Cal
     which fails a follow-up that never went. Only a message with the
     template's own words is it (C29, as sales-api's matchSent): another
     workflow's WhatsApp (one of HighLevel's old automations) never settles
-    it (stress2, round 1)."""
+    it (stress2, round 1). An enrolment whose answer was lost (state
+    unclear) is settled the same way (stress2, round 2): until then sales-api
+    holds every other template to the lead for six hours, since it may still
+    be in HighLevel's queue."""
     rows = sb.select("cockpit_sales_messages", "select=id,contact_id,created_at,followup_id,body&via=eq.workflow"
-                                               f"&provider_status=eq.enrolled&created_at=gte.{_q((now - timedelta(hours=6)).isoformat())}"
+                                               "&or=(provider_status.eq.enrolled,state.eq.unclear)"
+                                               f"&created_at=gte.{_q((now - timedelta(hours=6)).isoformat())}"
                                                "&limit=50")
     found = gone = 0
     for r in rows:

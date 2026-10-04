@@ -237,6 +237,8 @@ SAY = {
     "zoom_keys": "Zoom is not connected on the room worker. Use Meet, and ask the CEO to set the Zoom keys on the VPS.",
     "zoom_refused": "Zoom refused to make the room: {why}. Use Meet.",
     "zoom_down": "Zoom did not answer. Try again in a minute, or use Meet.",
+    "zoom_daily_cap": ("Your Zoom user has made its rooms for today (Zoom allows 100 a day); Zoom allows more from "
+                       "03:00 Kuwait. Use Meet."),
     "zoom_off": "Zoom rooms are switched off. Use Meet, or ask a manager to switch Zoom on in Settings.",
     "google_keys": "Google is not connected on the room worker. Use Zoom, and ask the CEO to connect Google Calendar on the VPS.",
     "google_signin": ("Google refused the room worker's sign-in. Use Zoom, and ask the CEO to connect Google "
@@ -572,6 +574,13 @@ class ProviderError(Exception):
     @property
     def gone(self) -> bool:
         return self.status == 404 or str(self.code) in ("3001", "1001")
+
+    @property
+    def daily_cap(self) -> bool:
+        """Zoom's daily limit on one user's meeting creates and updates (100 a
+        day, reset at 00:00 UTC): a 429 whose words say daily (stress2, round
+        2). It does not pass in a second; it passes at 03:00 Kuwait."""
+        return self.status == 429 and "daily" in self.message.lower()
 
     @property
     def rate_limited(self) -> bool:
@@ -1217,6 +1226,7 @@ class Worker:
         self._busy: set[str] = set()                 # rooms this run is working on right now
         self._done: set[str] = set()                 # rooms this run opened or failed: never picked up again
         self._sent: set[str] = set()                 # Zoom rooms a create was sent for
+        self._capped: dict[str, float] = {}          # hosts whose Zoom creates are capped, until (epoch s)
         self._swept: set[str] = set()                # finished rooms already looked for in Zoom
         self._retry_at: dict[str, float] = {}        # lost rooms: when to look again
         self._tries: dict[str, int] = {}
@@ -1727,6 +1737,11 @@ class Worker:
         if live:
             self.fail(room, SAY["busy"], refusal=True)
             return
+        if self._zoom_capped(host):
+            # Zoom's day's creates for this user are spent: no create spent
+            # into the same cap (stress2, round 2).
+            self.fail(room, SAY["zoom_daily_cap"], refusal=True)
+            return
         meeting = self.zoom_create(room, target)
         if meeting is None:
             return
@@ -1789,6 +1804,13 @@ class Worker:
                 if e.timeup:
                     self._hand_over(room, unclear=sent_unclear)
                     return None
+                if e.daily_cap:
+                    # Zoom's day's creates for this user are spent (stress2,
+                    # round 2): said as itself, remembered until 00:00 UTC so
+                    # later rooms skip the create, never "Zoom did not answer".
+                    self._remember_zoom_cap(str(room.get("host_email") or ""))
+                    self.fail(room, SAY["zoom_daily_cap"], refusal=True)
+                    return None
                 if e.down:
                     break
                 if not (e.unclear or e.status == 429):
@@ -1816,6 +1838,43 @@ class Worker:
         else:
             self.fail(room, SAY["zoom_down"], fault=True)
         return None
+
+    def _remember_zoom_cap(self, email: str) -> None:
+        """The host's Zoom creates are capped until the next 00:00 UTC
+        (cockpit_sales_room_hosts.zoom_capped_until, 20261004a): the next
+        rooms fail at once with the cap's sentence, and the presence view
+        reads Meet as the seat's default until then."""
+        host = email.strip().lower()
+        if not host:
+            return
+        now = self.clock()
+        reset = (int(now // 86400) + 1) * 86400
+        self._capped[host] = float(reset)
+        try:
+            self.sb.upsert(HOSTS, [{"email": host, "zoom_capped_until": iso(reset)}], "email")
+        except TimeUp:
+            raise
+        except (SupabaseError, http.HttpError) as e:
+            self._warn_once("cap-write", f"rooms: Zoom's daily cap for a host was not stored: {db_reason(e)}")
+
+    def _zoom_capped(self, email: str) -> bool:
+        """Whether the host's Zoom creates are capped for today (this run's
+        memory, or the host row's zoom_capped_until)."""
+        host = email.strip().lower()
+        now = self.clock()
+        if self._capped.get(host, 0.0) > now:
+            return True
+        try:
+            rows = self.sb.select(HOSTS, f"select=zoom_capped_until&email=eq.{_q(host)}&limit=1")
+        except TimeUp:
+            raise
+        except (SupabaseError, http.HttpError):
+            return False  # not read: the create goes, and Zoom says it again
+        until = parse_ts((rows[0] if rows else {}).get("zoom_capped_until"))
+        if until and until > now:
+            self._capped[host] = until
+            return True
+        return False
 
     def _note_create(self, room: dict[str, Any]) -> None:
         """Written down before the first create goes out, so no run ever sends
@@ -3076,9 +3135,14 @@ class Worker:
             if google_ok is not None:
                 row["google_ok"] = google_ok
             if seat["status"] is not None:
-                row.update({"zoom_status": seat["status"], "checked_at": iso(now)})
+                row["zoom_status"] = seat["status"]
+                # checked_at is the floor the presence view reads for a meeting
+                # this check SAW live (zoom_live_until): it moves only when the
+                # live list was read, so a list that keeps failing never renews
+                # the floor of a meeting that ended hours ago (stress2, round 2).
                 if not seat.get("live_unread"):
                     row["zoom_live_until"] = seat["live_until"]
+                    row["checked_at"] = iso(now)
                 if seat.get("user_id") and not linked:
                     row["zoom_user_id"] = str(seat["user_id"])
             rows.append(row)

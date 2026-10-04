@@ -521,3 +521,34 @@ describe("providers2 r2: meeting.ended delivered before an earlier join", () => 
     ).toEqual({ state: "ended" });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Fix round 2: Zoom's daily create cap, stored by the room worker on the
+// host's row (cockpit_sales_room_hosts.zoom_capped_until), refuses a Zoom
+// room before it is asked for; Meet still works.
+// ---------------------------------------------------------------------------
+
+describe("providers2 r2: a host whose Zoom creates are capped for today", () => {
+  test("a Zoom room is refused with the cap's sentence before it is asked for; a Meet room is made", async () => {
+    const w = world("zoom");
+    w.addLead({ id: "stress-p2r2-capped", inboundAgoMs: 2 * HOUR });
+    const host = w.db.t("cockpit_sales_room_hosts").find(h => h.email === SETTER) as Row;
+    host.zoom_capped_until = new Date(w.clock.now + 3 * HOUR).toISOString();
+    let refusal: ApiRefusal | null = null;
+    try {
+      await w.make("stress-p2r2-capped");
+    } catch (e) {
+      refusal = e as ApiRefusal;
+    }
+    expect(refusal?.extra.code).toBe("zoom_capped");
+    expect(w.db.t("cockpit_sales_rooms").filter(r => r.contact_id === "stress-p2r2-capped")).toHaveLength(0);
+    const meet = await w.rooms.actions["room.create"]!(setter, {
+      request_id: crypto.randomUUID(),
+      contact_id: "stress-p2r2-capped",
+      provider: "meet",
+      call_kind: "intro",
+      purpose: "fallback",
+    });
+    expect((meet.room as Row).provider).toBe("meet");
+  });
+});
