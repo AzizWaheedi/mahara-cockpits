@@ -1,19 +1,14 @@
 import {
   Clock,
-  LogOut,
   Moon,
   PanelLeftClose,
   PanelLeftOpen,
   Sun,
-  User,
 } from "lucide-react";
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useLocation } from "react-router";
-import { useWho } from "../lib/auth";
-import { kuwaitMinutes } from "../lib/format";
 import { Avatar } from "./kit";
 import { Wordmark } from "./Wordmark";
-
 const ROUTE_NAMES: Record<string, string> = {
   "/": "Today's Agenda",
   "/dialer": "Power Dialer",
@@ -47,8 +42,6 @@ export function MacOSMenuBar({
   onToggleSidebar: () => void;
 }) {
   const location = useLocation();
-  const { signOut } = useWho();
-  const [timeStr, setTimeStr] = useState("");
   const [dateStr, setDateStr] = useState("");
 
   const [dark, setDark] = useState(() => {
@@ -153,8 +146,7 @@ export function MacOSMenuBar({
 
         <button
           type="button"
-          onClick={() => setDark(d => !d)}
-          title={dark ? "Switch to light mode" : "Switch to dark mode"}
+          onClick={() => setDark((d: boolean) => !d)}
           className="flex size-7 items-center justify-center rounded-[8px] text-white/60 hover:bg-white/[0.08] hover:text-white transition-colors"
         >
           {dark ? <Sun className="size-3.5" /> : <Moon className="size-3.5" />}
@@ -162,10 +154,9 @@ export function MacOSMenuBar({
 
         <div className="flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.03] py-0.5 pr-2 pl-1 text-[11px]">
           <Avatar name={name} size={22} />
-          <span className="max-w-24 truncate font-medium text-white/90">
-            {name.split(" ")[0]}
+          <span className="max-w-32 truncate font-medium text-white/90">
+            {name.split(" ")[0]} <span className="muted font-normal">({role})</span>
           </span>
-          <span className="size-1.5 rounded-full bg-teal-400 shadow-[0_0_5px_#00cfc8]" />
         </div>
       </div>
     </header>

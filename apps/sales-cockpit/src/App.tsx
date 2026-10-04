@@ -1,8 +1,7 @@
-import { CalendarDays, Menu, PhoneCall, Sun, UserSearch } from "lucide-react";
+import { Menu } from "lucide-react";
 import { lazy, type ReactNode, Suspense, useCallback, useEffect, useState } from "react";
 import {
   Navigate,
-  NavLink,
   Route,
   Routes,
   useLocation,

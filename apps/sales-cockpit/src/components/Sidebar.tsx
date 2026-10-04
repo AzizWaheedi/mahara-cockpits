@@ -20,6 +20,7 @@ import {
   UserCog,
   UserSearch,
 } from "lucide-react";
+import { useEffect, useState } from "react";
 import { NavLink } from "react-router";
 import { useWho } from "../lib/auth";
 import { COCKPIT_ICON } from "../lib/cockpits";
@@ -126,7 +127,7 @@ function ThemeToggle({
     return (
       <button
         type="button"
-        onClick={() => setDark(d => !d)}
+        onClick={() => setDark((d: boolean) => !d)}
         title={dark ? "Switch to light mode" : "Switch to dark mode"}
         className="flex size-7 items-center justify-center rounded-[8px] text-white/60 hover:bg-white/[0.08] hover:text-white transition-colors"
       >
@@ -138,7 +139,7 @@ function ThemeToggle({
     return (
       <button
         type="button"
-        onClick={() => setDark(d => !d)}
+        onClick={() => setDark((d: boolean) => !d)}
         className="flex items-center gap-1.5 rounded-[10px] px-2 py-1 text-xs text-white/70 hover:bg-white/[0.08] hover:text-white transition-colors"
       >
         <Icon className="size-3.5" strokeWidth={1.75} aria-hidden />
@@ -149,7 +150,7 @@ function ThemeToggle({
   return (
     <button
       type="button"
-      onClick={() => setDark(d => !d)}
+      onClick={() => setDark((d: boolean) => !d)}
       className={`${ROW} w-full ${ROW_IDLE}`}
     >
       <Icon className="size-4 shrink-0" strokeWidth={1.75} aria-hidden />
