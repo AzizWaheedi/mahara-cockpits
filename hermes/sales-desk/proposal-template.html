@@ -83,7 +83,10 @@
        fallback is per character, so Latin and every digit still render in
        Geist and only Arabic letters reach the next name on the list. */
     --sans: "Geist", "Plex Arabic", "SF Arabic", "Dubai", "Segoe UI", "Tahoma", ui-sans-serif, system-ui, -apple-system, sans-serif;
-    --mono: "Geist Mono", ui-monospace, "Cascadia Mono", "SF Mono", monospace;
+    /* Geist Mono has no Arabic either: the small labels of an Arabic
+       document (the sheet names, the "prepared for" lines) fell through to
+       the VPS's DejaVu Sans on every page (measured 2026-10-04). */
+    --mono: "Geist Mono", "Plex Arabic", ui-monospace, "Cascadia Mono", "SF Mono", monospace;
     /* figures are set in the text face with tabular spacing, not in the mono
        face: mono numerals read as code, which is not what a proposal wants */
     --num: var(--sans);
