@@ -42,8 +42,8 @@ export function MacOSMenuBar({
   onToggleSidebar: () => void;
 }) {
   const location = useLocation();
+  const [timeStr, setTimeStr] = useState("");
   const [dateStr, setDateStr] = useState("");
-
   const [dark, setDark] = useState(() => {
     try {
       const stored = localStorage.getItem("theme");
