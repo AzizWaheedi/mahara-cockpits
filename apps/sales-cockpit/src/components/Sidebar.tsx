@@ -23,6 +23,7 @@ import { NavLink } from "react-router";
 import { useWho } from "../lib/auth";
 import { COCKPIT_ICON } from "../lib/cockpits";
 import { otherCockpits, portalUrl } from "../lib/portal";
+import { Avatar } from "./kit";
 import { Wordmark } from "./Wordmark";
 
 /**
@@ -88,13 +89,13 @@ export const GROUPS: { label: string; items: Item[] }[] = [
 
 /** One row of the rail: 40px to a thumb in the menu sheet, 32px on the rail. */
 const ROW =
-  "flex items-center gap-2.5 rounded-[var(--radius-md)] py-2.5 pr-2 pl-3 text-sm transition-colors lg:py-1.5";
+  "flex items-center gap-2.5 rounded-[12px] py-2 pr-2.5 pl-3 text-sm transition-all lg:py-1.5";
 const ROW_IDLE =
-  "muted hover:bg-[color:var(--secondary)] hover:text-[color:var(--foreground)]";
+  "muted hover:bg-white/[0.05] hover:text-[color:var(--foreground)]";
 const GROUP_LABEL =
   "muted mb-1 px-3 font-mono text-[11px] tracking-[0.08em] uppercase";
 
-function ThemeToggle() {
+function ThemeToggle({ compact }: { compact?: boolean } = {}) {
   const [dark, setDark] = useState(() => {
     try {
       const stored = localStorage.getItem("theme");
@@ -117,6 +118,18 @@ function ThemeToggle() {
   }, [dark]);
 
   const Icon = dark ? Sun : Moon;
+  if (compact) {
+    return (
+      <button
+        type="button"
+        onClick={() => setDark(d => !d)}
+        className="flex items-center gap-1.5 rounded-[10px] px-2 py-1 text-xs text-white/70 hover:bg-white/[0.08] hover:text-white transition-colors"
+      >
+        <Icon className="size-3.5" strokeWidth={1.75} aria-hidden />
+        <span>{dark ? "Light" : "Dark"}</span>
+      </button>
+    );
+  }
   return (
     <button
       type="button"
@@ -250,24 +263,34 @@ export default function Sidebar({
           })}
         </ul>
 
-        <div className="border-t hairline pt-3">
-          <div className="px-3">
-            <p className="truncate text-sm font-medium">{name}</p>
-            <p className="muted truncate text-xs">{role}</p>
+        <div className="rounded-[20px] border border-white/10 bg-white/[0.03] p-2.5 shadow-sm">
+          <div className="flex items-center gap-2.5 px-1 py-0.5">
+            <Avatar name={name} size={32} />
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-xs font-semibold tracking-tight text-white/95">
+                {name}
+              </p>
+              <div className="mt-0.5 flex items-center gap-1.5">
+                <span className="size-1.5 rounded-full bg-[color:var(--primary)] shadow-[0_0_6px_var(--primary)]" />
+                <p className="muted truncate text-[11px] leading-none">{role}</p>
+              </div>
+            </div>
           </div>
-          <div className="mt-2 space-y-0.5">
-            <ThemeToggle />
+          <div className="mt-2 flex items-center justify-between gap-1 border-t border-white/5 pt-2">
+            <div className="flex-1">
+              <ThemeToggle compact />
+            </div>
             <button
               type="button"
               onClick={signOut}
-              className={`${ROW} w-full ${ROW_IDLE}`}
+              title="Sign out"
+              className="flex size-7 items-center justify-center rounded-[10px] text-white/50 hover:bg-white/[0.08] hover:text-white transition-colors"
             >
               <LogOut
-                className="size-4 shrink-0"
+                className="size-3.5"
                 strokeWidth={1.75}
                 aria-hidden
               />
-              Sign out
             </button>
           </div>
         </div>

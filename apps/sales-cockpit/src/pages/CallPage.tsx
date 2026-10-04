@@ -380,10 +380,10 @@ export default function CallPage({ me }: { me: Me }) {
             onChange={v => setPref({ mode: v as Mode })}
           />
           <span
-            className="inline-flex h-8 items-center gap-1.5 rounded-[var(--radius-md)] border hairline px-2.5 font-mono text-sm tabular-nums"
+            className="inline-flex h-9 items-center gap-1.5 rounded-full border border-teal-500/30 bg-teal-500/10 px-3 font-mono text-xs font-semibold tabular-nums text-teal-300 shadow-sm"
             title={`About ${totalMinutes} minutes in all`}
           >
-            <Timer className="size-3.5" aria-hidden /> {mmss(now - startedAt)}
+            <Timer className="size-3.5 text-teal-400 animate-pulse" aria-hidden /> {mmss(now - startedAt)}
             <span className="muted">/ {totalMinutes}:00</span>
           </span>
           {key === "demo" ? (
@@ -401,7 +401,7 @@ export default function CallPage({ me }: { me: Me }) {
             type="button"
             disabled={saving}
             onClick={save}
-            className={buttonPrimary}
+            className={`${buttonPrimary} shadow-md shadow-teal-500/20`}
           >
             {saving ? "Saving…" : "Save notes"}
           </button>

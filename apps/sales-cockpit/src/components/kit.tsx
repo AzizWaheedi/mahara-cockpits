@@ -8,8 +8,7 @@ import {
   OctagonAlert,
   TriangleAlert,
 } from "lucide-react";
-import { type ReactNode, useId, useState } from "react";
-
+import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 /**
  * The CEO kit's pieces with the same names and the same rules, for an app
  * with no shadcn layer: a section is a card with a header, a number is a
@@ -88,11 +87,13 @@ export function SectionCard({
   return (
     <section
       id={id}
-      className={`panel min-w-0 overflow-hidden ${flush ? "" : "p-4 sm:p-6"} ${className}`}
+      className={`panel min-w-0 overflow-hidden shadow-lg transition-all ${
+        flush ? "" : "p-4 sm:p-6"
+      } ${className}`}
     >
       <header
-        className={`flex flex-wrap items-center justify-between gap-x-3 gap-y-1 ${
-          flush ? "border-b hairline px-4 py-3" : ""
+        className={`flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5 ${
+          flush ? "border-b hairline px-4 py-3 sm:px-6" : ""
         }`}
       >
         <h2 className="text-[15px] font-semibold tracking-tight">{title}</h2>
@@ -100,7 +101,6 @@ export function SectionCard({
       </header>
       <div className={flush ? "" : "mt-4"}>{children}</div>
     </section>
-  );
 }
 
 /** "n/a" with the reason on hover, never a zero standing in for "unknown". */
@@ -334,15 +334,14 @@ export function Avatar({
 }
 
 export const button =
-  "inline-flex h-8 items-center justify-center gap-1.5 rounded-[var(--radius-md)] border hairline px-3 text-sm font-medium hover:bg-[color:var(--secondary)] disabled:opacity-50";
+  "inline-flex h-9 items-center justify-center gap-1.5 rounded-[14px] border border-white/10 bg-white/[0.04] px-3.5 text-sm font-medium shadow-sm hover:bg-white/[0.08] hover:border-white/20 active:scale-[0.98] transition-all disabled:opacity-50";
 export const buttonPrimary =
-  "inline-flex h-8 items-center justify-center gap-1.5 rounded-[var(--radius-md)] bg-[color:var(--primary)] px-3 text-sm font-semibold text-[color:var(--primary-foreground)] hover:opacity-90 disabled:opacity-50";
+  "inline-flex h-9 items-center justify-center gap-1.5 rounded-[14px] bg-gradient-to-r from-[#00cfc8] to-[#00b5af] px-4 text-sm font-semibold text-[#091333] shadow-md shadow-teal-500/20 hover:brightness-105 active:scale-[0.98] transition-all disabled:opacity-50";
 export const field =
-  "h-9 w-full rounded-[var(--radius-md)] border hairline bg-[color:var(--background)] px-3 text-sm placeholder:text-[color:var(--muted-foreground)]";
+  "h-9.5 w-full rounded-[14px] border border-white/10 bg-[color:var(--background)] px-3.5 text-sm placeholder:text-[color:var(--muted-foreground)] focus:border-[color:var(--ring)] focus:outline-none focus:ring-1 focus:ring-[color:var(--ring)] transition-all";
 /** A choice in a page header or toolbar ("Whose calls"); form selects use `field`. */
 export const select =
-  "h-8 min-w-0 max-w-[16rem] rounded-[var(--radius-md)] border hairline bg-[color:var(--card)] px-2.5 text-sm";
-
+  "h-9 min-w-0 max-w-[16rem] rounded-[14px] border border-white/10 bg-[color:var(--card)] px-3 text-sm focus:border-[color:var(--ring)] focus:outline-none focus:ring-1 focus:ring-[color:var(--ring)] transition-all";
 /**
  * The page frame: one width and one rhythm for every page. The shell does
  * not pad, so the frame does (16px on a phone, 24px from a tablet up).
@@ -364,6 +363,9 @@ const PILL_OFF =
  * One choice of a few (a view, a window, a role): pills in a quiet track,
  * the chosen one teal. A row too long for a phone scrolls sideways.
  */
+/**
+ * One choice of a few: pills in a quiet track with a sliding indicator capsule (SF-05).
+ */
 export function Segmented({
   label,
   value,
@@ -377,23 +379,50 @@ export function Segmented({
   onChange: (v: string) => void;
   className?: string;
 }) {
+  const trackRef = useRef<HTMLDivElement>(null);
+  const [pill, setPill] = useState<{ left: number; width: number } | null>(null);
+
+  useEffect(() => {
+    const el = trackRef.current;
+    if (!el) return;
+    const active = el.querySelector<HTMLButtonElement>('[data-active="true"]');
+    if (active) {
+      setPill({ left: active.offsetLeft, width: active.offsetWidth });
+    }
+  }, [value, options]);
+
   return (
     <div
+      ref={trackRef}
       role="group"
       aria-label={label}
-      className={`no-scrollbar inline-flex max-w-full items-center gap-0.5 overflow-x-auto rounded-full bg-[color:var(--muted)] p-0.5 ${className}`}
+      className={`relative no-scrollbar inline-flex max-w-full items-center gap-1 overflow-x-auto rounded-full border border-white/10 bg-white/[0.04] p-1 ${className}`}
     >
-      {options.map(([v, text]) => (
-        <button
-          key={v}
-          type="button"
-          aria-pressed={value === v}
-          onClick={() => onChange(v)}
-          className={`${PILL} h-7 ${value === v ? PILL_ON : PILL_OFF}`}
-        >
-          {text}
-        </button>
-      ))}
+      {pill ? (
+        <span
+          className="pointer-events-none absolute top-1 bottom-1 rounded-full bg-[color:color-mix(in_oklch,var(--primary)_16%,transparent)] ring-1 ring-[color:color-mix(in_oklch,var(--primary)_45%,transparent)] transition-all duration-200 ease-out"
+          style={{ left: `${pill.left}px`, width: `${pill.width}px` }}
+        />
+      ) : null}
+      {options.map(([v, text]) => {
+        const active = value === v;
+        return (
+          <button
+            key={v}
+            type="button"
+            data-active={active}
+            aria-pressed={active}
+            onClick={() => onChange(v)}
+            className={`relative z-10 inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-full px-3.5 py-1 text-xs font-medium transition-colors ${
+              active
+                ? "font-semibold text-[color:var(--foreground)]"
+                : "muted hover:text-[color:var(--foreground)]"
+            }`}
+          >
+            {text}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -422,6 +451,60 @@ export function FilterChip({
         <span className="tabular-nums opacity-70">{count}</span>
       )}
     </button>
+  );
+}
+
+/**
+ * Motion Accordion (SF-02): softly rounded container with smooth plus/minus indicator.
+ */
+export function SoftAccordion({
+  title,
+  children,
+  defaultOpen = false,
+  badge,
+  className = "",
+}: {
+  title: ReactNode;
+  children: ReactNode;
+  defaultOpen?: boolean;
+  badge?: ReactNode;
+  className?: string;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div
+      className={`overflow-hidden rounded-[20px] border transition-all duration-200 ${
+        open
+          ? "border-[color:color-mix(in_oklch,var(--primary)_35%,transparent)] bg-[color:var(--card)]/90 shadow-md"
+          : "border-white/10 bg-white/[0.02] hover:border-white/20"
+      } ${className}`}
+    >
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen(o => !o)}
+        className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left text-sm font-medium transition-colors hover:bg-white/[0.03]"
+      >
+        <div className="min-w-0 flex-1">{title}</div>
+        <div className="flex items-center gap-2">
+          {badge}
+          <span
+            className={`flex size-6 items-center justify-center rounded-full border transition-all duration-200 ${
+              open
+                ? "border-[color:var(--primary)] bg-[color:color-mix(in_oklch,var(--primary)_15%,transparent)] text-[color:var(--primary)]"
+                : "border-white/15 text-white/50"
+            }`}
+          >
+            <span className="text-sm font-bold leading-none">{open ? "−" : "+"}</span>
+          </span>
+        </div>
+      </button>
+      {open ? (
+        <div className="border-t border-white/5 px-4 pt-2 pb-4">
+          {children}
+        </div>
+      ) : null}
+    </div>
   );
 }
 

@@ -225,7 +225,7 @@ export function Seated({
     // From md up there is no bar at the top, so the installed app keeps its
     // own content below the clock (the status bar is see-through there).
     <div className="flex h-full lg:pt-[env(safe-area-inset-top,0px)]">
-      <aside className="hidden w-56 shrink-0 border-r hairline bg-[color:var(--card)] lg:block">
+      <aside className="hidden w-60 shrink-0 border-r hairline bg-[color:var(--card)]/90 backdrop-blur-md lg:block">
         {sidebar()}
       </aside>
 
@@ -243,11 +243,13 @@ export function Seated({
         </div>
       ) : null}
 
-      <div className="flex min-w-0 flex-1 flex-col overflow-y-auto pb-[calc(4rem+env(safe-area-inset-bottom,0px))] lg:pb-0">
+      <div className="flex min-w-0 flex-1 flex-col overflow-y-auto pb-[calc(5.5rem+env(safe-area-inset-bottom,0px))] lg:pb-0">
         {banner}
-        <header className="pt-safe sticky top-0 z-10 flex items-center gap-3 border-b hairline bg-[color:var(--background)]/90 px-4 py-2.5 backdrop-blur lg:hidden">
-          <Wordmark size="sm" />
-          <span className="muted text-sm">Sales</span>
+        <header className="pt-safe sticky top-0 z-10 flex items-center justify-between border-b hairline bg-[color:var(--background)]/85 px-4 py-2.5 backdrop-blur-md lg:hidden">
+          <div className="flex items-center gap-3">
+            <Wordmark size="sm" />
+            <span className="muted text-sm">Sales</span>
+          </div>
         </header>
 
         {/* Keyed by the address, so moving to another page clears an error. */}
@@ -307,7 +309,7 @@ export function Seated({
   );
 }
 
-/** Below md the rail becomes a tab bar: the four places a rep goes all day; Numbers and the rest are under More. */
+/** Below lg the rail becomes a floating island dock (SF-01): high-ergonomics thumb navigation. */
 function TabBar({ owed, onMore }: { owed: number; onMore: () => void }) {
   const tabs = [
     { to: "/", label: "Today", icon: Sun },
@@ -316,45 +318,49 @@ function TabBar({ owed, onMore }: { owed: number; onMore: () => void }) {
     { to: "/leads", label: "Leads", icon: UserSearch },
   ];
   return (
-    <nav
-      className="pb-safe fixed inset-x-0 bottom-0 z-30 grid grid-cols-5 border-t hairline bg-[color:var(--card)]/95 backdrop-blur lg:hidden"
-      aria-label="Sections"
-    >
-      {tabs.map(({ to, label, icon: Icon, n }) => (
-        <NavLink
-          key={to}
-          to={to}
-          end={to === "/"}
-          className={({ isActive }) =>
-            `no-touch relative flex min-h-14 flex-col items-center justify-center gap-0.5 py-2 text-xs ${
-              isActive ? "font-medium text-[color:var(--primary)]" : "muted"
-            }`
-          }
-        >
-          <Icon className="size-5" strokeWidth={1.75} aria-hidden />
-          {label}
-          {n ? (
-            <span
-              className="absolute top-1 left-1/2 ml-2 rounded-full px-1.5 text-xs leading-4 font-semibold tabular-nums"
-              style={{
-                background: "var(--owed)",
-                color: "var(--warning-foreground)",
-              }}
-            >
-              {n}
-            </span>
-          ) : null}
-        </NavLink>
-      ))}
-      <button
-        type="button"
-        onClick={onMore}
-        className="no-touch muted flex min-h-14 flex-col items-center justify-center gap-0.5 py-2 text-xs"
+    <div className="pointer-events-none fixed inset-x-0 bottom-3 z-30 flex justify-center px-4 lg:hidden">
+      <nav
+        className="floating-dock pointer-events-auto flex w-full max-w-sm items-center justify-around gap-1 p-1.5 shadow-2xl transition-transform active:scale-[0.99]"
+        aria-label="Sections"
       >
-        <Menu className="size-5" strokeWidth={1.75} aria-hidden />
-        More
-      </button>
-    </nav>
+        {tabs.map(({ to, label, icon: Icon, n }) => (
+          <NavLink
+            key={to}
+            to={to}
+            end={to === "/"}
+            className={({ isActive }) =>
+              `no-touch relative flex flex-1 flex-col items-center justify-center rounded-full py-1.5 text-[11px] transition-all ${
+                isActive
+                  ? "bg-white/[0.08] font-semibold text-[color:var(--primary)]"
+                  : "muted hover:text-[color:var(--foreground)]"
+              }`
+            }
+          >
+            <Icon className="size-4.5" strokeWidth={1.8} aria-hidden />
+            <span className="mt-0.5 tracking-tight">{label}</span>
+            {n ? (
+              <span
+                className="absolute -top-0.5 right-2 rounded-full px-1 text-[10px] font-bold leading-3.5 tabular-nums shadow-sm"
+                style={{
+                  background: "var(--owed)",
+                  color: "var(--warning-foreground)",
+                }}
+              >
+                {n}
+              </span>
+            ) : null}
+          </NavLink>
+        ))}
+        <button
+          type="button"
+          onClick={onMore}
+          className="no-touch muted flex flex-1 flex-col items-center justify-center rounded-full py-1.5 text-[11px] transition-colors hover:text-[color:var(--foreground)]"
+        >
+          <Menu className="size-4.5" strokeWidth={1.8} aria-hidden />
+          <span className="mt-0.5 tracking-tight">More</span>
+        </button>
+      </nav>
+    </div>
   );
 }
 

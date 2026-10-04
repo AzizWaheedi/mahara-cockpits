@@ -25,11 +25,40 @@ import type { CalendarRow, MarkStatus } from "../lib/types";
 
 const UNDO_MS = 5000;
 
-const OPTIONS: { status: MarkStatus; label: string; icon: typeof Check }[] = [
-  { status: "showed", label: "Showed", icon: Check },
-  { status: "noshow", label: "No-show", icon: X },
-  { status: "cancelled", label: "Cancelled", icon: CircleSlash },
-  { status: "invalid", label: "Disqualified", icon: Ban },
+const OPTIONS: {
+  status: MarkStatus;
+  label: string;
+  icon: typeof Check;
+  toneStyle: string;
+}[] = [
+  {
+    status: "showed",
+    label: "Showed",
+    icon: Check,
+    toneStyle:
+      "border-emerald-500/30 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 active:scale-[0.97]",
+  },
+  {
+    status: "noshow",
+    label: "No-show",
+    icon: X,
+    toneStyle:
+      "border-amber-500/30 bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 active:scale-[0.97]",
+  },
+  {
+    status: "cancelled",
+    label: "Cancelled",
+    icon: CircleSlash,
+    toneStyle:
+      "border-rose-500/30 bg-rose-500/10 text-rose-400 hover:bg-rose-500/20 active:scale-[0.97]",
+  },
+  {
+    status: "invalid",
+    label: "Disqualified",
+    icon: Ban,
+    toneStyle:
+      "border-white/15 bg-white/[0.04] text-white/70 hover:bg-white/[0.08] active:scale-[0.97]",
+  },
 ];
 
 const REASONS = [
@@ -152,7 +181,7 @@ export function MarkControls({
 
   if (pending)
     return (
-      <div className="relative flex min-w-0 items-center gap-2 overflow-hidden rounded-[var(--radius-md)] border hairline px-2.5 py-1.5 text-sm">
+      <div className="relative flex min-w-0 items-center gap-2 overflow-hidden rounded-full border border-teal-500/30 bg-teal-500/10 px-3 py-1 text-sm shadow-sm">
         {!sending ? (
           <span
             aria-hidden
@@ -165,7 +194,7 @@ export function MarkControls({
             }
           />
         ) : null}
-        <span className="min-w-0 flex-1 truncate">
+        <span className="min-w-0 flex-1 truncate text-xs font-medium">
           {sending
             ? "Sending…"
             : `Marking ${statusLabel(pending.status).toLowerCase()}`}
@@ -177,9 +206,9 @@ export function MarkControls({
           <button
             type="button"
             onClick={undo}
-            className="inline-flex shrink-0 items-center gap-1 text-sm font-medium underline-offset-2 hover:underline"
+            className="inline-flex shrink-0 items-center gap-1 text-xs font-semibold text-teal-300 underline-offset-2 hover:underline"
           >
-            <RotateCcw className="size-3.5" aria-hidden />
+            <RotateCcw className="size-3" aria-hidden />
             Undo
           </button>
         ) : null}
@@ -195,7 +224,7 @@ export function MarkControls({
       : row.marked_status === sent.status);
   if (sent && !landed)
     return (
-      <div className="flex min-w-0 items-center gap-2 rounded-[var(--radius-md)] border hairline px-2.5 py-1.5 text-sm">
+      <div className="flex min-w-0 items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-xs">
         <span className="min-w-0 flex-1 truncate">
           Marked {statusLabel(sent.status).toLowerCase()}
           {sent.reason ? <span className="muted"> · {sent.reason}</span> : null}
@@ -203,16 +232,17 @@ export function MarkControls({
       </div>
     );
 
+
   if (asking)
     return (
       <div className="flex flex-wrap items-center gap-1.5">
-        <span className="muted text-xs">Why disqualified?</span>
+        <span className="muted text-xs font-medium">Why:</span>
         {REASONS.map(r => (
           <button
             key={r}
             type="button"
             onClick={() => choose("invalid", r)}
-            className="rounded-full border hairline px-2 py-0.5 text-xs hover:bg-[color:var(--secondary)]"
+            className="rounded-full border border-white/15 bg-white/[0.05] px-2.5 py-1 text-xs font-medium text-white/80 transition-colors hover:bg-white/[0.1] hover:text-white"
           >
             {r}
           </button>
@@ -220,7 +250,7 @@ export function MarkControls({
         <button
           type="button"
           onClick={() => setAsking(false)}
-          className="muted text-xs underline"
+          className="muted text-xs underline underline-offset-2 hover:text-white"
         >
           Back
         </button>
@@ -229,15 +259,15 @@ export function MarkControls({
 
   return (
     <div className="flex flex-wrap items-center gap-1.5">
-      {OPTIONS.map(({ status, label, icon: Icon }) => (
+      {OPTIONS.map(({ status, label, icon: Icon, toneStyle }) => (
         <button
           key={status}
           type="button"
           onClick={() =>
             status === "invalid" ? setAsking(true) : choose(status)
           }
-          className={`inline-flex items-center gap-1 rounded-[var(--radius-md)] border hairline font-medium hover:bg-[color:var(--secondary)] ${
-            compact ? "h-7 px-2 text-xs" : "h-8 px-2.5 text-[13px]"
+          className={`inline-flex items-center gap-1.5 rounded-full border font-medium shadow-sm transition-all ${toneStyle} ${
+            compact ? "h-7 px-2.5 text-xs" : "h-8 px-3 text-xs"
           }`}
         >
           <Icon className="size-3.5" aria-hidden />
