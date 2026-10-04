@@ -13,6 +13,10 @@
 //   rates; an unknown currency keeps usd null.
 // - Test charges (live_mode false) are never cash and are skipped.
 // - Refunds are a separate endpoint and are not read yet.
+// - Tap answers an empty window with error 1249 "Charges not found"; that is
+//   an empty page, not a failure (see lib.ts).
+
+import { isNoChargesAnswer } from "./lib.ts";
 
 const TAP_URL = "https://api.tap.company/v2/charges/list";
 const LOOKBACK_DAYS = 45;
@@ -81,6 +85,7 @@ async function listPage(
     body: JSON.stringify(body),
   });
   const text = await res.text();
+  if (!res.ok && isNoChargesAnswer(res.status, text)) return { charges: [], hasMore: false };
   if (!res.ok) throw new Error(`Tap returned HTTP ${res.status}: ${redact(text)}`);
   const json = JSON.parse(text);
   const charges: Row[] = Array.isArray(json?.charges) ? json.charges : [];
