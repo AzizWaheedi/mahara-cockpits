@@ -23,6 +23,12 @@ export interface ContractTemplate {
   id: string;
   name: string;
   fields: ContractField[];
+  /**
+   * The payment structures this template may print, when it prints one
+   * (Aziz, 2026-10-03: the 60 Day and Month To Month contracts get plans that
+   * fit their own fees). Absent: the setting's whole list.
+   */
+  payments?: string[];
 }
 
 export interface ContractSetting {
@@ -66,7 +72,7 @@ export function contractTerms(
   if (company.length < 2) return { ok: false, error: "Write the client's company name as it should appear on the contract." };
   const terms: ContractTerms = { company_name: company };
   if (template.fields.includes("payment_structure")) {
-    const options = setting.fields?.payment_structure?.options ?? [];
+    const options = paymentOptions(template, setting);
     const pick = text(b.payment_structure, 100);
     if (!options.includes(pick))
       return { ok: false, error: `Pick how the client pays: ${options.join(", ")}.` };
@@ -82,6 +88,11 @@ export function contractTerms(
     return { ok: false, error: "Write the daily ad spend in dollars, for example 40." };
   terms.daily_ad_spend = Math.round(n * 100) / 100;
   return { ok: true, terms };
+}
+
+/** The payment structures a template may print: its own list, or else the setting's whole list. */
+export function paymentOptions(template: ContractTemplate, setting: ContractSetting): string[] {
+  return template.payments?.length ? template.payments : (setting.fields?.payment_structure?.options ?? []);
 }
 
 /**
@@ -309,6 +320,15 @@ export function contactFieldsFor(rows: FieldRow[]): { status: string | null; url
   return { status: contactStatusFor(latest), url: linked?.client_link ?? "", document_id: latest.document_id };
 }
 
+/**
+ * A manager's new list keeps each template's payment structures from before:
+ * the Contracts page sends only the templates and the fields they print.
+ */
+export function keepPayments(next: ContractTemplate[], before: ContractTemplate[] | undefined): ContractTemplate[] {
+  const had = new Map((before ?? []).map(t => [t.id, t.payments] as const));
+  return next.map(t => (t.payments?.length || !had.get(t.id)?.length ? t : { ...t, payments: had.get(t.id) }));
+}
+
 /** The templates a manager may offer, cleaned: known fields only, no duplicates, at most 20. */
 export function cleanTemplates(list: unknown): ContractTemplate[] {
   if (!Array.isArray(list)) return [];
@@ -322,7 +342,10 @@ export function cleanTemplates(list: unknown): ContractTemplate[] {
       ? CONTRACT_FIELDS.filter(f => (t.fields as unknown[]).includes(f))
       : ["company_name" as const];
     if (!fields.includes("company_name")) fields.unshift("company_name");
-    out.push({ id, name: text(t.name, 120) || "Contract", fields });
+    const payments = Array.isArray(t.payments)
+      ? [...new Set((t.payments as unknown[]).map(p => text(p, 100)).filter(Boolean))].slice(0, 10)
+      : [];
+    out.push({ id, name: text(t.name, 120) || "Contract", fields, ...(payments.length ? { payments } : {}) });
     if (out.length >= 20) break;
   }
   return out;

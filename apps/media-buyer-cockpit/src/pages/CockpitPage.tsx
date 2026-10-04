@@ -12,6 +12,7 @@ import { AccountView } from "@/components/AccountView";
 import { BuildPanel } from "@/components/BuildPanel";
 import { CampaignRange } from "@/components/CampaignRange";
 import { CityPicker } from "@/components/CityPicker";
+import { ClientLogo } from "@/components/ClientLogo";
 import {
   type ClientUpdate,
   ClientUpdateList,
@@ -456,6 +457,12 @@ const isOffOnBoard = (c: Campaign) =>
 const clientOf = (c: Campaign | undefined) =>
   String(c?.clientName ?? c?.accountName ?? "Unassigned");
 
+const logoKey = (c: Campaign) =>
+  String(c.clientTag || c.clientName || c.accountName || c.tag || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]/gu, "");
+
 /** Digested comments for the client whose links these are (matched on the card id). */
 function updatesFor(all: ClientUpdate[] | undefined, links?: Campaign) {
   const taskId = String(links?.url ?? "")
@@ -473,11 +480,13 @@ function updatesFor(all: ClientUpdate[] | undefined, links?: Campaign) {
 /** The client's name row: their links, and their do's and don'ts and latest card comments one click away. */
 function ClientHeader({
   name,
+  logoSrc,
   links,
   updates,
   onOpen,
 }: {
   name: string;
+  logoSrc?: string;
   links?: Campaign;
   updates: ClientUpdate[];
   /** Shows this one client in full, in place of the table. */
@@ -487,18 +496,23 @@ function ClientHeader({
   const hasRules = parseDosDonts(links?.dosDonts).length > 0;
   return (
     <>
-      {onOpen ? (
-        <button
-          type="button"
-          className="campaign-client-name text-left hover:underline"
-          onClick={onOpen}
-          title={`Show ${name} in full`}
-        >
-          {name}
-        </button>
-      ) : (
-        <span className="campaign-client-name">{name}</span>
-      )}
+      <span className="inline-flex max-w-full items-center gap-2 align-middle">
+        <ClientLogo name={name} src={logoSrc} />
+        {onOpen ? (
+          <button
+            type="button"
+            className="campaign-client-name min-w-0 break-words text-left hover:underline"
+            onClick={onOpen}
+            title={`Show ${name} in full`}
+          >
+            {name}
+          </button>
+        ) : (
+          <span className="campaign-client-name min-w-0 break-words">
+            {name}
+          </span>
+        )}
+      </span>
       <ClientLinks
         links={links}
         dosOpen={open}
@@ -722,9 +736,11 @@ function RenameCardButton({ campaignName }: { campaignName: string }) {
 function BoardView({
   cards,
   campaigns,
+  clientLogos,
 }: {
   cards: Campaign[];
   campaigns: Campaign[];
+  clientLogos: Record<string, string>;
 }) {
   const [tab, setTab] = useState<"notLive" | "live" | "all">("notLive");
   const [q, setQ] = useState("");
@@ -799,12 +815,26 @@ function BoardView({
                 key={c.taskId}
                 className="flex flex-wrap items-center gap-x-3 gap-y-1.5 py-2.5"
               >
-                <span className="min-w-0 font-medium">{c.name}</span>
-                {c.tag && (
-                  <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-                    {c.tag}
-                  </span>
-                )}
+                <span className="min-w-0 break-words font-medium">
+                  {c.name}
+                </span>
+                <span className="inline-flex min-w-0 max-w-full items-center gap-2">
+                  <ClientLogo
+                    name={String(
+                      c.clientTag ||
+                        c.clientName ||
+                        c.accountName ||
+                        c.tag ||
+                        "Unassigned",
+                    )}
+                    src={clientLogos[logoKey(c)]}
+                  />
+                  {c.tag && (
+                    <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+                      {c.tag}
+                    </span>
+                  )}
+                </span>
                 {spending.has(c.taskId) && (
                   <span className="text-xs txt-good">spending now</span>
                 )}
@@ -976,6 +1006,29 @@ const TITLES: Record<View, string> = {
 function Cockpit({ view }: { view: View }) {
   const adsTransition = useContentTransition();
   const snap = useQuery(api.cockpit.snapshot, {});
+  const loadClientLogos = useAction(api.clientLogos.list);
+  const [clientLogos, setClientLogos] = useState<Record<string, string>>({});
+  const [clientLogosError, setClientLogosError] = useState(false);
+  const hasSnapshot = Boolean(snap);
+  useEffect(() => {
+    if (!hasSnapshot || view !== "ads") return;
+    let cancelled = false;
+    setClientLogosError(false);
+    void loadClientLogos({}).then(
+      logos => {
+        if (!cancelled)
+          setClientLogos(
+            Object.fromEntries(logos.map(logo => [logo.clientKey, logo.url])),
+          );
+      },
+      () => {
+        if (!cancelled) setClientLogosError(true);
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [hasSnapshot, view, loadClientLogos]);
   const toggleCheck = useMutation(api.cockpit.toggleCheck);
   const decide = useMutation(api.cockpit.decide);
   const run = useAction(api.execute.runAction);
@@ -3129,6 +3182,11 @@ function Cockpit({ view }: { view: View }) {
           USD, currency-corrected
         </span>
       </div>
+      {clientLogosError && (
+        <p className="mt-3 text-sm text-muted-foreground" role="status">
+          Client logos could not load. Refresh the page to try again.
+        </p>
+      )}
       {/* The window every campaign opens on. Each campaign can still be
           switched on its own once it is open. [aziz, 2026-09-07] */}
       <div className="mt-4 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 rounded-xl bg-muted/40 px-3 py-2">
@@ -3258,6 +3316,7 @@ function Cockpit({ view }: { view: View }) {
                         <td colSpan={8} className="campaign-client-header">
                           <ClientHeader
                             name={clientOf(c)}
+                            logoSrc={clientLogos[logoKey(c)]}
                             links={links}
                             updates={updates}
                             onOpen={
@@ -3461,6 +3520,7 @@ function Cockpit({ view }: { view: View }) {
         <BoardView
           cards={(snap.boardCards ?? []) as Campaign[]}
           campaigns={(snap.campaigns ?? []) as Campaign[]}
+          clientLogos={clientLogos}
         />
       )}
     </section>

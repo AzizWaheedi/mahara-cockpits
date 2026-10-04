@@ -15,6 +15,13 @@ last error and this fix next to it.
   user. A screen that throws sends a Slack DM and files a fix job for Hermes.
 - A screen that crashes in someone's browser shows "Try again / Reload" and
   files the same fix job on its own.
+- The cockpit guardian (hermes/cockpit-guardian) scans everything every 5
+  minutes from the VPS and posts one "[guardian]" message per new incident
+  and one when it clears, in #health, Saturday to Thursday 09:00 to 21:00
+  Kuwait time (Convex or Supabase down at any hour), plus a 09:00 summary.
+  Each message says what broke, since when, what the guardian tried, and
+  what a person must do. Its own rows are in its README; `python3
+  guardian.py report` on the VPS lists everything open.
 
 ## What to do, by system
 

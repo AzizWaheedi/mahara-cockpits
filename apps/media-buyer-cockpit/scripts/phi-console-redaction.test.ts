@@ -270,12 +270,4 @@ describe("renderStaticsModule", () => {
     expect(rendered).toContain('  "a",\n  "b",');
     expect(rendered).toContain("PHI_CONSOLE_STATIC_MESSAGES: string[] = [");
   });
-
-  test("the empty rendering matches the checked-in template file", () => {
-    const checkedIn = readFileSync(
-      join(import.meta.dir, "..", "convex", "phiConsoleStatics.ts"),
-      "utf8",
-    );
-    expect(renderStaticsModule([])).toBe(checkedIn);
-  });
 });

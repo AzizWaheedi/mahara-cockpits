@@ -1,4 +1,5 @@
 import type { Contract } from "./contracts";
+import { planFor, planHint } from "./plans";
 import type { Lead, Recording } from "./types";
 
 /**
@@ -64,16 +65,21 @@ export const REF = {
   timezone: "4ce5d27f-85a3-4af0-a327-ead29b036c1a",
   leadSource: "0c1f4a00-f77a-44f4-b598-945c9ab406a3",
   payment: "20848f32-80ed-4693-b064-ed4e10558b94",
+  paymentDetails: "d2cfc2dd-887e-4685-a3cc-84e85795e23a",
   agreement: "3781537c-925c-4331-900c-e576a3f47a0d",
   adSpend: "e813c776-0584-4147-8c2c-dbe72d4818e2",
+  cashOnCall: "77a14b37-7f16-4c72-8c54-38f597bdddc2",
+  cashAtOnboarding: "b37f4cfe-82ab-4da7-b1f8-aaabe2afbf9b",
+  secondPayment: "ea6fccbd-d27e-4b57-8cfb-d3fa527f362f",
+  totalRevenue: "c3bc74a6-c2f7-45fa-bf1a-d126c5890be9",
   fathom: "52ca9be9-8f56-4bb8-a130-dc1754e7d84d",
   transcript: "c62ae38e-71a1-4ba1-a7a5-023e378eb083",
 } as const;
 
 /** What the closer does with one question. */
 export type Fill =
-  /** Copy this and paste it in. */
-  | { kind: "copy"; value: string }
+  /** Copy this and paste it in; the note says where it came from when that matters. */
+  | { kind: "copy"; value: string; note?: string }
   /** A choice: pick this option in the form. */
   | { kind: "pick"; value: string }
   /** The call's transcript, read from storage when copied. */
@@ -236,11 +242,27 @@ function copy(value: string | null | undefined, hint?: string): Fill {
   return v ? { kind: "copy", value: v } : { kind: "type", hint };
 }
 
+const FROM_PLAN = "The plan's amount. Change it if they paid differently.";
+
+/** One money answer from the plan on the newest contract, or both plans' amounts as a hint. */
+function fromPlan(
+  contract: Contract | null,
+  part: "onCall" | "byOnboarding" | "later" | "total",
+): Fill {
+  const plan = planFor(contract?.fields.payment_structure);
+  return plan
+    ? { kind: "copy", value: String(plan[part]), note: FROM_PLAN }
+    : { kind: "type", hint: planHint(part) };
+}
+
 /** What the cockpit knows for one question, by its ref. */
 export function fillFor(q: FormQuestion, ctx: FormContext): Fill {
   const { lead } = ctx;
   const name = splitName(lead.name);
   const contract = ctx.contracts[0] ?? null;
+  // The money comes from the newest contract that says how they pay: one
+  // made in HighLevel carries no fields, and must not hide the plan.
+  const planned = ctx.contracts.find(c => c.fields.payment_structure) ?? null;
   const sent = sentContract(ctx.contracts);
   const call = salesRecording(ctx.recordings);
   switch (q.ref) {
@@ -282,6 +304,24 @@ export function fillFor(q: FormQuestion, ctx: FormContext): Fill {
             hint: contract?.fields.payment_structure ?? undefined,
           };
     }
+    case REF.paymentDetails: {
+      const plan = planFor(planned?.fields.payment_structure);
+      return plan
+        ? {
+            kind: "copy",
+            value: `${plan.label}: ${plan.schedule} Total $${plan.total.toLocaleString("en-US")}.`,
+            note: FROM_PLAN,
+          }
+        : { kind: "type", hint: "Write how and when they pay." };
+    }
+    case REF.cashOnCall:
+      return fromPlan(planned, "onCall");
+    case REF.cashAtOnboarding:
+      return fromPlan(planned, "byOnboarding");
+    case REF.secondPayment:
+      return fromPlan(planned, "later");
+    case REF.totalRevenue:
+      return fromPlan(planned, "total");
     case REF.agreement:
       return sent
         ? choice(q, "NA - Already Sent")

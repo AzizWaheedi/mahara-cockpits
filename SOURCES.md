@@ -18,6 +18,7 @@ Service account for every sheet, Drive folder and calendar:
 | Ad spend, leads, clicks for an account the sheet does not carry | Straight from Meta (ad-level daily insights, last 30 days) for every visible account with spend that has no `data_fb` row, in the same row shape. The sheet's connector no longer has to be set up before a new account shows in the cockpits. | `sync.ts` `metaRowsForMissingAccounts` |
 | Live campaign structure, previews, ad ids | Meta Marketing API, business `767701513092162`, system-user token | `sync.ts`, `fanout.ts`, `marketCollect.ts` |
 | Campaign card, KPI columns the team reads in ClickUp | ClickUp **Ads Managment** list `901817774521`, card name = Meta campaign name, tag = client | `sync.ts`, `writeback.ts` |
+| Client logos beside names on Ads Management | Creative Triage `cockpit_client_logos`, with raster files in the public `cockpit-client-logos` Storage bucket; official website or Instagram source recorded per verified client | `clientLogos.ts` (authenticated, media-buyer role and client scope); `ClientLogo.tsx` |
 | Bookings, shows, lost-lead reasons | GoHighLevel sub-account (location id + `pit-` token from Client Data) | `sync.ts`, `csmProfiles.ts` |
 | Appointments, shows, quotes, closes per month | The client's own stat sheet (`Sheet Link` on the card, else Client Data). Since 2026-09-18 the show rate divides shows by the appointments that came due (date passed, Show column filled), never by every booking | `csmProfiles.ts`, `fanout.ts` |
 | Outlier posts, trends, scraped pages and long-running ads for ideation | Supabase `ideation_posts`, `ideation_watchlist`, `ideation_requests`, `ideation_scans` in the Creative Triage project `bldgtotkfmhoxmlzowdx`, written by the ideation radar on the VPS (Apify for the Saturday scan, ScrapeCreators on demand) and by the boards' own actions | `hermes/ideation-radar`, `ideation.ts` (creative, media buyer) |
@@ -34,6 +35,32 @@ If the card and Client Data disagree, the card wins for relationship fields
 and Client Data wins for ids and links. A value missing on the card is filled
 from Client Data; a value missing on both becomes a row on the client success
 **Data backlog** page.
+
+## Client logos
+
+Apply `supabase/migrations/20261003a_client_logos.sql` to Creative Triage.
+Metadata is service-role only; public access is limited to the already-public
+brand image files. Registry inserts, updates and deletes leave a
+`cockpit_audit_log` row.
+
+Use the client's exact Ads Management tag, trimmed and lowercased, as
+`client_key`; keep its Clients - Mahara task id in `clickup_task_id`.
+The API normalizes display keys the same way as the campaign sync. It returns
+an array of `{clientKey, url}` entries because Convex object keys are ASCII-only;
+Arabic client names remain string values. The screen builds its local lookup.
+The API does not guess client identity from campaign titles.
+
+To add or replace a verified logo, upload a PNG, JPEG or WebP (at most 2 MiB)
+through the service credential to a new content-versioned path in
+`cockpit-client-logos`, then update its registry row with `storage_path`,
+`source_url`, `verified_at` and `updated_by`. Do not store expiring Instagram
+image URLs as `storage_path`. Refresh Ads Management to load the change.
+
+Missing or failed images show initials without removing the client name.
+If the registry cannot load, the screen says to refresh. Check the Supabase
+health ledger, table grants, service credential and stored object path;
+do not treat unverified logos as available. Ten client logos were verified
+and stored on 2026-10-03; other clients intentionally retain initials.
 
 ## Client Data columns
 

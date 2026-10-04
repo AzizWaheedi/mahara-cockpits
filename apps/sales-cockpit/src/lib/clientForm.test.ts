@@ -186,6 +186,108 @@ describe("the answers the cockpit already has", () => {
     expect(draft.kind === "type" && draft.hint).toContain("Send the contract");
   });
 
+  test("the money answers come from the contract's plan", () => {
+    const split = contract({
+      fields: {
+        company_name: "Sabah Build Co.",
+        payment_structure: "Split pay ($3,000 + $3,000 after 30 days)",
+      },
+    });
+    const c = ctx({ contracts: [split] });
+    const value = (ref: string) => {
+      const f = fillFor(q(ref), c);
+      return f.kind === "copy" ? f.value : null;
+    };
+    expect(value(REF.cashOnCall)).toBe("500");
+    expect(value(REF.cashAtOnboarding)).toBe("2500");
+    expect(value(REF.secondPayment)).toBe("3000");
+    expect(value(REF.totalRevenue)).toBe("6000");
+    expect(value(REF.paymentDetails)).toBe(
+      "Split pay ($3,000 + $3,000 after 30 days): $500 on the call, $2,500 on or before the onboarding call, then $3,000 30 days later. Total $6,000.",
+    );
+    const f = fillFor(q(REF.cashOnCall), c);
+    expect(f.kind === "copy" && f.note).toContain("Change it");
+
+    const pif = contract({
+      fields: { payment_structure: "Paid in full ($6,000)" },
+    });
+    const p = ctx({ contracts: [pif] });
+    expect(fillFor(q(REF.cashAtOnboarding), p)).toMatchObject({
+      kind: "copy",
+      value: "5500",
+    });
+    expect(fillFor(q(REF.secondPayment), p)).toMatchObject({
+      kind: "copy",
+      value: "0",
+    });
+  });
+
+  test("without a plan the money questions show every contract's amounts", () => {
+    const old = contract({
+      fields: { payment_structure: "Split Pay (2x payments)" },
+    });
+    expect(fillFor(q(REF.cashAtOnboarding), ctx({ contracts: [old] }))).toEqual(
+      {
+        kind: "type",
+        hint: "3 months: 5500 paid in full, 2500 split. 60 days: 3500 paid in full, 1500 split. Monthly: 1500.",
+      },
+    );
+    expect(fillFor(q(REF.totalRevenue), ctx({ contracts: [] }))).toEqual({
+      kind: "type",
+      hint: "3 months: 6000. 60 days: 4000. Monthly: 2000.",
+    });
+  });
+
+  test("the 60-day and monthly contracts' own plans", () => {
+    const value = (ref: string, label: string) => {
+      const f = fillFor(
+        q(ref),
+        ctx({
+          contracts: [contract({ fields: { payment_structure: label } })],
+        }),
+      );
+      return f.kind === "copy" ? f.value : null;
+    };
+    const sixty = "Split pay ($2,000 + $2,000 after 30 days)";
+    expect(
+      [
+        REF.cashOnCall,
+        REF.cashAtOnboarding,
+        REF.secondPayment,
+        REF.totalRevenue,
+      ].map(r => value(r, sixty)),
+    ).toEqual(["500", "1500", "2000", "4000"]);
+    const monthly = "Monthly ($2,000 a month)";
+    expect(
+      [
+        REF.cashOnCall,
+        REF.cashAtOnboarding,
+        REF.secondPayment,
+        REF.totalRevenue,
+      ].map(r => value(r, monthly)),
+    ).toEqual(["500", "1500", "2000", "2000"]);
+    expect(value(REF.paymentDetails, monthly)).toBe(
+      "Monthly ($2,000 a month): $500 on the call, $1,500 on or before the onboarding call, then $2,000 every month it continues. Total $2,000.",
+    );
+  });
+
+  test("a contract made in HighLevel, with no fields, does not hide the plan", () => {
+    const madeThere = contract({
+      document_id: "d2",
+      template_id: null,
+      source: "highlevel",
+      fields: {},
+    } as Partial<Contract>);
+    const split = contract({
+      fields: {
+        payment_structure: "Split pay ($3,000 + $3,000 after 30 days)",
+      },
+    });
+    expect(
+      fillFor(q(REF.secondPayment), ctx({ contracts: [madeThere, split] })),
+    ).toMatchObject({ kind: "copy", value: "3000" });
+  });
+
   test("the Fathom link and transcript are the newest sales call's", () => {
     const old = recording({
       recording_id: "r0",

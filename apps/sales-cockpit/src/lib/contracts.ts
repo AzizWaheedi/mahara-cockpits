@@ -14,6 +14,8 @@ export interface ContractTemplate {
   id: string;
   name: string;
   fields: ContractField[];
+  /** The payment structures this template may print; the setting's whole list when absent. */
+  payments?: string[];
 }
 
 export interface ContractSetting {
@@ -26,6 +28,8 @@ export interface ContractSetting {
   editor_url?: string;
   /** How a staff contract is told apart, so it never shows here. */
   staff?: { names?: string[]; words?: string[] };
+  /** The templates HighLevel's WhatsApp workflow sends the client a link for, once sent. */
+  whatsapp?: { template_ids?: string[]; template?: string; workflow?: string };
 }
 
 export interface Contract {

@@ -1272,11 +1272,34 @@ export const SETTINGS: Row[] = [
           id: "6abe230d6bbbd5d9235bb774",
           name: "90 Day Agreement (7 Day Satisfaction Guarantee)",
           fields: ["company_name", "payment_structure"],
+          payments: [
+            "Paid in full ($6,000)",
+            "Split pay ($3,000 + $3,000 after 30 days)",
+          ],
         },
         {
           id: "69d25fce5d2b0f67fa21caab",
           name: "90 Day Agreement No G",
           fields: ["company_name", "payment_structure"],
+          payments: [
+            "Paid in full ($6,000)",
+            "Split pay ($3,000 + $3,000 after 30 days)",
+          ],
+        },
+        {
+          id: "6995853c5831c3bd20e03db7",
+          name: "60 Day Agreement",
+          fields: ["company_name", "payment_structure"],
+          payments: [
+            "Paid in full ($4,000)",
+            "Split pay ($2,000 + $2,000 after 30 days)",
+          ],
+        },
+        {
+          id: "6905c5456709f1453919ac3c",
+          name: "Month To Month Agreement",
+          fields: ["company_name", "payment_structure"],
+          payments: ["Monthly ($2,000 a month)"],
         },
         {
           id: "6a4cf9b8da68ef6b3d32c92c",
@@ -1291,11 +1314,23 @@ export const SETTINGS: Row[] = [
           options: [
             "Paid in full ($6,000)",
             "Split pay ($3,000 + $3,000 after 30 days)",
+            "Paid in full ($4,000)",
+            "Split pay ($2,000 + $2,000 after 30 days)",
+            "Monthly ($2,000 a month)",
           ],
         },
       },
       link_base: "https://link.maharamedia.com/documents/v1/",
       editor_url: "https://app.gohighlevel.com/",
+      whatsapp: {
+        template_ids: [
+          "6abe230d6bbbd5d9235bb774",
+          "69d25fce5d2b0f67fa21caab",
+          "6a4cf9b8da68ef6b3d32c92c",
+        ],
+        template: "contract_link_ar",
+        workflow: "3. WhatsApp the Contract Link (Arabic)",
+      },
     },
   },
 ];
@@ -1316,7 +1351,7 @@ export const CONTRACTS: Row[] = [
     status: "viewed",
     fields: {
       company_name: "Ardon Studio",
-      payment_structure: "Split Pay (2x payments)",
+      payment_structure: "Split pay ($3,000 + $3,000 after 30 days)",
       daily_ad_spend: 40,
     },
     created_by: "sara@example.com",

@@ -1,50 +1,10 @@
-import { type ChildProcess, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { preview } from "vite";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(__dirname, "..");
-
-const PREVIEW_PORT = 4173;
-const PREVIEW_URL = `http://localhost:${PREVIEW_PORT}`;
-const MAX_WAIT_MS = 30000;
-const POLL_INTERVAL_MS = 500;
-
-async function waitForServer(url: string, maxWait: number): Promise<boolean> {
-  const start = Date.now();
-  while (Date.now() - start < maxWait) {
-    try {
-      const response = await fetch(url);
-      if (response.ok || response.status === 304) {
-        return true;
-      }
-    } catch {
-      // Server not ready yet
-    }
-    await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
-  }
-  return false;
-}
-
-function startPreviewServer(): ChildProcess {
-  const server = spawn("bun", ["run", "preview"], {
-    cwd: projectRoot,
-    stdio: ["ignore", "pipe", "pipe"],
-    detached: false,
-  });
-
-  server.stdout?.on("data", (data: Buffer) => {
-    const text = data.toString().trim();
-    if (text) console.log(`[preview] ${text}`);
-  });
-
-  server.stderr?.on("data", (data: Buffer) => {
-    const text = data.toString().trim();
-    if (text) console.error(`[preview] ${text}`);
-  });
-
-  return server;
-}
 
 interface TestResult {
   file: string;
@@ -56,7 +16,7 @@ function getTestLabel(testFile: string): string {
   return name.length > 20 ? `${name.slice(0, 17)}...` : name.padEnd(20);
 }
 
-async function runTest(testFile: string): Promise<TestResult> {
+async function runTest(testFile: string, appUrl: string): Promise<TestResult> {
   return new Promise(resolve => {
     const testPath = testFile.startsWith("/")
       ? testFile
@@ -70,7 +30,7 @@ async function runTest(testFile: string): Promise<TestResult> {
       stdio: ["ignore", "pipe", "pipe"],
       env: {
         ...process.env,
-        APP_URL: PREVIEW_URL,
+        APP_URL: appUrl,
       },
     });
 
@@ -119,22 +79,28 @@ async function main() {
   }
 
   console.log("🚀 Starting preview server...");
-  const server = startPreviewServer();
+  const server = await preview({
+    root: projectRoot,
+    preview: { host: "127.0.0.1", port: 0, strictPort: true },
+  });
 
   let exitCode = 0;
 
   try {
-    console.log(`⏳ Waiting for server at ${PREVIEW_URL}...`);
-    const ready = await waitForServer(PREVIEW_URL, MAX_WAIT_MS);
-
-    if (!ready) {
-      console.error("❌ Server failed to start within timeout");
-      process.exit(1);
+    const address = server.httpServer.address();
+    if (!address || typeof address === "string") {
+      throw new Error("Preview server did not bind a TCP port");
     }
+    const appUrl = `http://127.0.0.1:${address.port}`;
+    const response = await fetch(appUrl);
+    if (!response.ok) {
+      throw new Error(`Preview server returned HTTP ${response.status}`);
+    }
+    console.log(`✅ Server is ready at ${appUrl}\n`);
 
-    console.log("✅ Server is ready!\n");
-
-    const results = await Promise.all(args.map(testFile => runTest(testFile)));
+    const results = await Promise.all(
+      args.map(testFile => runTest(testFile, appUrl)),
+    );
 
     for (const result of results) {
       if (result.exitCode !== 0) {
@@ -146,8 +112,9 @@ async function main() {
     }
   } finally {
     console.log("\n🛑 Stopping preview server...");
-    server.kill("SIGTERM");
-    await new Promise(r => setTimeout(r, 500));
+    await new Promise<void>((resolve, reject) => {
+      server.httpServer.close(error => (error ? reject(error) : resolve()));
+    });
   }
 
   if (exitCode === 0) {
