@@ -136,6 +136,29 @@ export function clientIp(headers: Headers): string {
   return hops.at(-1) || headers.get("x-real-ip")?.trim() || "unknown";
 }
 
+/**
+ * The network an address is limited as (stress2, round 1): an IPv6 address's
+ * /64 (every home line and cloud machine holds at least one, so a host can
+ * take a new address for every request), an IPv4 address (or one mapped
+ * into IPv6) as itself. Anything else is kept as it came.
+ */
+export function limitNet(ip: string): string {
+  const a = ip.trim().toLowerCase().replace(/^\[|\]$/g, "").split("%")[0] as string;
+  if (!a.includes(":")) return a;
+  const mapped = /^::(?:ffff:)?(\d{1,3}(?:\.\d{1,3}){3})$/.exec(a);
+  if (mapped) return mapped[1] as string;
+  const [head = "", tail = ""] = a.split("::", 2) as [string, string?];
+  const left = head ? head.split(":") : [];
+  const right = a.includes("::") ? (tail ? tail.split(":") : []) : [];
+  if (!a.includes("::") && left.length !== 8) return a;
+  const groups = a.includes("::") ? [...left, ...Array(Math.max(0, 8 - left.length - right.length)).fill("0"), ...right] : left;
+  if (groups.length !== 8 || groups.some(g => !/^[0-9a-f]{1,4}$/.test(g))) return a;
+  return `${groups
+    .slice(0, 4)
+    .map(g => g.replace(/^0+(?=.)/, ""))
+    .join(":")}::/64`;
+}
+
 /** The only form an address is ever kept in: salted, hashed, cut to 32 hex. */
 export async function ipHash(salt: string, ip: string): Promise<string> {
   return (await sha256Hex(`${salt}:${ip}`)).slice(0, 32);
@@ -168,6 +191,12 @@ export class RateLimiter {
     }
     s.n += 1;
     return s.n <= this.limit;
+  }
+
+  /** Whether this key has used its window's hits, without counting one. */
+  full(key: string, now: number): boolean {
+    const s = this.hits.get(key);
+    return Boolean(s && now - s.start < this.windowMs && s.n >= this.limit);
   }
 
   /** Gives back one hit that turned out not to need counting (a duplicate). */

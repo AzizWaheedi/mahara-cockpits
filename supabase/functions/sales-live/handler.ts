@@ -26,6 +26,7 @@ import { cronForwardable, CRON_MAX_BYTES } from "./cron.ts";
 import {
   allowedOrigin,
   clientIp,
+  limitNet,
   deviceIdOk,
   deviceOf,
   doorView,
@@ -85,6 +86,8 @@ export interface Deps {
   wideLimiter?: RateLimiter;
   /** Opens of one room code a minute, from every address (150). */
   codeLimiter?: RateLimiter;
+  /** Lookups that found no room, a minute, on this instance (600): past it, unknown codes answer 429 unread. */
+  missLimiter?: RateLimiter;
   log: (line: string) => void;
   /** Shorter waits for tests; production uses BUDGET as it stands. */
   budget?: Partial<Record<keyof typeof BUDGET, number>>;
@@ -93,6 +96,11 @@ export interface Deps {
 }
 
 type Row = Record<string, unknown>;
+
+/** Lookups that find no room, a minute, before the door stops reading unknown codes (per instance). */
+export const MISS_CEILING = 600;
+export const FLOOD_LINE =
+  "The door is turning away a flood of unknown call codes (over 600 lookups a minute found no room). Leads whose link opened lately still get through; the rest are asked to wait a minute.";
 
 export const MISSING = {
   zoom: "Zoom events cannot be checked yet: ZOOM_WEBHOOK_SECRET is missing on sales-live. Add it to the function's secrets.",
@@ -256,6 +264,13 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
   // minutes per running instance. The room's open times are still written,
   // so the sweep's open grace and the "Opened" step never miss an open.
   const openRows = new RateLimiter(12, 10 * 60_000, 10_000);
+  // Guessing codes (stress2, round 1): lookups that find no room are capped
+  // for the instance as a whole. Past the ceiling a code this instance has
+  // not seen a room for answers 429 without a database read, and the
+  // door's status row says so; a code it found lately is still read, so a
+  // lead with a live link gets through.
+  const misses = deps.missLimiter ?? new RateLimiter(MISS_CEILING, 60_000, 4);
+  const knownCodes = new Map<string, number>();
   const statusMemo = new Map<string, { ok: boolean; at: number }>();
   const alertMemo = new Map<string, { on: boolean; at: number }>();
   let ignoredZoom = 0;
@@ -840,7 +855,34 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
       : { vary: "Origin" };
   }
 
-  /** Both limits: 30 a minute per address and device, 120 a minute per address. */
+  /**
+   * A code lookup the door may make now: a code it found a room for in the
+   * last hour always; any other only while the instance's misses this
+   * minute are under the ceiling. Answers false (and the status row says
+   * why) when a flood of unknown codes has used the ceiling.
+   */
+  function mayLookUp(job: "open" | "go", code: string): boolean {
+    const now = deps.now();
+    const seen = knownCodes.get(code);
+    if (seen !== undefined && now - seen < 60 * 60_000) return true;
+    if (!misses.full("door", now)) return true;
+    noteStatus(job, false, FLOOD_LINE);
+    return false;
+  }
+  function found(code: string | null, room: unknown): void {
+    const now = deps.now();
+    if (!code) return;
+    if (!room) {
+      misses.hit("door", now);
+      return;
+    }
+    if (knownCodes.size >= 5_000) {
+      for (const [k, at] of knownCodes) if (now - at >= 60 * 60_000 || knownCodes.size >= 5_000) knownCodes.delete(k);
+    }
+    knownCodes.set(code, now);
+  }
+
+  /** Both limits: 30 a minute per network and device, 120 a minute per network (an IPv6 /64, an IPv4 address). */
   function withinLimits(hash: string, deviceId: string | null): boolean {
     const now = deps.now();
     const perDevice = deps.limiter.hit(`${hash}:${deviceIdOk(deviceId) ? deviceId : "-"}`, now);
@@ -872,9 +914,13 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
 
     const ua = req.headers.get("user-agent") ?? "";
     const deviceId = url.searchParams.get("d");
-    const hash = await ipHash(salt, clientIp(req.headers));
-    const codeOk = (now: number) => perCode.hit(code, now) || perCodeAddress.hit(`${code}:${hash}`, now);
-    if (!withinLimits(hash, deviceId) || !codeOk(deps.now()))
+    const ip = clientIp(req.headers);
+    const hash = await ipHash(salt, ip);
+    // The limits key on the network (an IPv6 /64), never the bare address a
+    // host can change for every request (stress2, round 1).
+    const net = await ipHash(salt, limitNet(ip));
+    const codeOk = (now: number) => perCode.hit(code, now) || perCodeAddress.hit(`${code}:${net}`, now);
+    if (!withinLimits(net, deviceId) || !codeOk(deps.now()) || !mayLookUp("open", code))
       return json(
         { ok: false, state: "busy", error: "Too many tries from this network. Wait a minute, then try again." },
         429,
@@ -884,6 +930,7 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
     let room: RoomRow | null;
     try {
       room = await resolveRoom(code, left);
+      found(code, room);
     } catch (e) {
       noteStatus("open", false, `Call links cannot be read: ${redact((e as Error).message)}`);
       return json(
@@ -923,8 +970,8 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
     }
     const ua = req.headers.get("user-agent") ?? "";
     // The limit can key on any salt; only a hash made with IP_SALT is ever stored.
-    const hash = await ipHash(env("IP_SALT") || "sales-live", clientIp(req.headers));
-    if (!withinLimits(hash, null))
+    const hash = await ipHash(env("IP_SALT") || "sales-live", limitNet(clientIp(req.headers)));
+    if (!withinLimits(hash, null) || !mayLookUp("go", code))
       return text(both(GO_COPY.busy), 429, {
         "retry-after": "60",
       });
@@ -933,6 +980,7 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
     let room: RoomRow | null;
     try {
       room = await resolveRoom(code, leftOf(until));
+      found(code, room);
     } catch (e) {
       noteStatus("go", false, `Call links cannot be read: ${redact((e as Error).message)}`);
       return text(both(GO_COPY.unread), 503);
