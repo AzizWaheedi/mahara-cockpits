@@ -39,6 +39,7 @@
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 8px);
   --radius-2xl: calc(var(--radius) + 16px);
+}
 
 :root {
   --mahara-teal: #00cfc8;
