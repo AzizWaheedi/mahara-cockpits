@@ -164,6 +164,31 @@ def is_reasoning_model(model: str) -> bool:
     return bool(re.match(r"^(o\d|gpt-5)", name))
 
 
+# The reasoning efforts OpenAI's families take. gpt-5 itself (and its mini and
+# nano) takes minimal to high and refuses none and xhigh, which later gpt-5.x
+# models take; o3 and o4 take low to high. SALES_REASONING_EFFORT is one
+# setting for the primary and the fallback alike, so a value the model refuses
+# is left out rather than sent; any other model gets it as set, and a refusal
+# drops it (OpenAIShaped.complete).
+_EFFORTS = (
+    (re.compile(r"^gpt-5(-mini|-nano)?(-\d{4}-\d{2}-\d{2})?$"), ("minimal", "low", "medium", "high")),
+    (re.compile(r"^o[34]"), ("low", "medium", "high")),
+)
+
+
+def effort_for(model: str, effort: str) -> str:
+    """The reasoning effort to send this model: empty when it is not a reasoning
+    model, or when it is one that refuses this value."""
+    effort = str(effort or "").strip().lower()
+    if not effort or not is_reasoning_model(model):
+        return ""
+    name = model.split("/", 1)[-1].lower()
+    for pattern, allowed in _EFFORTS:
+        if pattern.match(name):
+            return effort if effort in allowed else ""
+    return effort
+
+
 def no_sampling(model: str) -> bool:
     """Claude models that refuse a sampling temperature: Opus 4.7 and later,
     Sonnet 5 and later, Fable and Mythos. Older Claude models take it."""
@@ -493,15 +518,18 @@ class OpenAIShaped:
             body["response_format"] = {"type": "json_object"}
         if self.max_tokens:
             body["max_completion_tokens" if self.name == "openai" else "max_tokens"] = self.max_tokens
-        if self.reasoning_effort and is_reasoning_model(self.model):
-            body["reasoning_effort"] = self.reasoning_effort
+        effort = effort_for(self.model, self.reasoning_effort)
+        if effort:
+            body["reasoning_effort"] = effort
         if stream and self.name == "openai":
             body["stream_options"] = {"include_usage": True}
         return body
 
     def complete(self, system: str, user: str, *, temperature: Optional[float] = None, timeout: float = 900) -> Reply:
         url = f"{self.base}/chat/completions"
-        for _ in range(3):
+        # One try, and one more for each part of the shape a model may refuse:
+        # streaming, temperature, response_format, reasoning_effort.
+        for _ in range(5):
             stream = self.stream_ok
             body = self._body(system, user, temperature=temperature, stream=stream)
             try:
@@ -531,6 +559,10 @@ class OpenAIShaped:
                     continue
                 if e.status == 400 and "response_format" in text and self.json_mode:
                     self.json_mode = False
+                    continue
+                if e.status == 400 and "reasoning_effort" in text and effort_for(self.model, self.reasoning_effort):
+                    self.log(f"{self.model} refused reasoning_effort={self.reasoning_effort}; asking without it")
+                    self.reasoning_effort = ""
                     continue
                 raise _classify(e, self.name, self.model, self.model_setting)
             except (socket.timeout, TimeoutError) as e:

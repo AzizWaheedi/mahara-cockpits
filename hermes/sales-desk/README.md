@@ -17,7 +17,7 @@ sent. It writes the draft, checks it and says what is left for the closer.
 
 | Command | What happens |
 |---|---|
-| `doctor` | every key by name (never its value), the tables, the bucket, a one-token call to the model, the model list, Fathom, the browser (and, online, a real page and PDF printed with it), the reference deals; each blocker named in one sentence |
+| `doctor` | every key by name (never its value), the tables, the bucket, a one-token call to the model and one to the fallback, both model lists, Fathom, the browser (and, online, a real page and PDF printed with it), the reference deals; each blocker named in one sentence |
 | `requests` | drafts, or rebuilds, the proposals the cockpit asked for; quiet when nothing is queued |
 | `recordings` | indexes Fathom's sales calls for every rep and matches each to a lead |
 | `calls-vault` | copies every sales call in the Obsidian vault in, summary and transcript too; `--fathom-days N` asks Fathom about the calls whose note cannot say whether the lead joined |
@@ -86,16 +86,15 @@ the primary (`SALES_MODEL_PROVIDER`, the VPS's Claude) cannot answer at all
 (the sign-in lapsed, the proxy is down, a refused key, no credit) before the
 draft's first answer, the run hands over to the fallback
 (`SALES_MODEL_FALLBACK`, below) for that draft and every one after it in the
-run, and the proposal's first note says so: *Drafted through openrouter
-(anthropic/claude-opus-4.8) because the Claude sign-in on the VPS has
-lapsed.* A primary that stops partway is never finished by another model:
-the request waits, its try not counted, and starts again from the beginning
-on the next run. When neither answers, the request waits the same way, with
-the fix on the request row and this on the proposal, for the closer: *No
-model can answer right now: the Claude sign-in on the VPS has lapsed, and the
-openrouter account is out of credit. This proposal waits and drafts by itself
-once either is fixed, so there is no need to ask again; if it is still
-waiting in an hour, tell the CEO.*
+run, and the proposal's first note says so: *Drafted through openai
+(gpt-5) because the Claude sign-in on the VPS has lapsed.* A primary that
+stops partway is never finished by another model: the request waits, its try
+not counted, and starts again from the beginning on the next run. When
+neither answers, the request waits the same way, with the fix on the request
+row and this on the proposal, for the closer: *No model can answer right now:
+the Claude sign-in on the VPS has lapsed, and openai refused its key. This
+proposal waits and drafts by itself once either is fixed, so there is no need
+to ask again; if it is still waiting in an hour, tell the CEO.*
 
 ### The rebuild
 
@@ -209,6 +208,15 @@ answer at all. A failed try (a timeout, a garbled answer) is not an outage
 and never switches; nor does the day's AI ceiling, which counts every
 provider.
 
+On the VPS the fallback is OpenAI's `gpt-5` (2026-10-04): the OpenRouter
+account is out of credit, while OpenAI's key works and `gpt-5` drafted the
+proposal of 24 Sep. `OPENROUTER_API_KEY` is still in `/opt/data/.env`, so
+without `SALES_MODEL_FALLBACK=openai` in `~/.sales-desk/env` the default would
+pick OpenRouter and every handover would meet an empty account. gpt-5 is a
+reasoning model: it is sent no sampling temperature, its limit goes out as
+`max_completion_tokens`, and `SALES_REASONING_EFFORT` reaches it only as a
+value it takes (`minimal` to `high`; `none` and `xhigh` are left out).
+
 - **The model** is `SALES_FALLBACK_MODEL`, else the primary's own as the
   fallback names it: Claude Code's `opus` (the VPS proxy lists it beside
   `claude-opus-4-8`) is `anthropic/claude-opus-4.8` through OpenRouter and
@@ -239,14 +247,16 @@ provider.
   follow-ups wait for the primary as they always have.
 - **What it costs is counted**: each `cockpit_sales_ai_usage` row names the
   provider that answered (`20261004p_sales_ai_usage_provider.sql`; until it
-  is applied the provider goes inside `model`, `openrouter:anthropic/...`). A
+  is applied the provider goes inside `model`, `openai:gpt-5`). A
   reply that reports no usage is counted at three characters a token, never
   as nothing.
 - **`doctor`** shows both: the primary's key, answer and model list, the
   fallback's key, answer, model list and, for OpenRouter, the credit left on
-  the account (a key's own limit can have room while the account is spent).
-  It is blocked only when neither can answer; a primary that cannot while
-  the fallback can is a warning that says where proposals are going.
+  the account (a key's own limit can have room while the account is spent)
+  or, for OpenAI, whether it streams the model. It is blocked only when
+  neither can answer; a primary that cannot while the fallback can is a
+  warning that says where proposals are going. The browser and render lines
+  read the same way: the path found, then whether it printed a real page.
 
 ## Fathom and the recordings
 
@@ -369,7 +379,9 @@ response id.
 As `hermes`, from the repo clone at `~/mahara-cockpits`. The Supabase pair is
 the editor desk's (`~/.editor-desk/env`, Creative Triage); `OPENAI_API_KEY` and
 `FATHOM_API_KEY` are in `/opt/data/bibi/api-keys.env`. The desk's own env file
-holds settings only, never a key:
+holds settings only, never a key. The fallback is OpenAI's `gpt-5` while the
+OpenRouter account is out of credit (The fallback, above), and `CHROME_PATH`
+is the browser that prints the PDF (below):
 
 ```bash
 cd ~/mahara-cockpits && git pull -q --ff-only
@@ -377,9 +389,10 @@ mkdir -p ~/.sales-desk/reference && chmod 700 ~/.sales-desk
 cat > ~/.sales-desk/env <<'EOF'
 SALES_MODEL_PROVIDER=vps
 SALES_PROPOSAL_MODEL=opus
-SALES_MODEL_FALLBACK=openrouter
-SALES_FALLBACK_MODEL=anthropic/claude-opus-4.8
+SALES_MODEL_FALLBACK=openai
+SALES_FALLBACK_MODEL=gpt-5
 SALES_FALLBACK_JOBS=proposal
+CHROME_PATH=/home/hermes/.cache/ms-playwright/chromium_headless_shell-1193/chrome-linux/headless_shell
 EOF
 chmod 600 ~/.sales-desk/env
 cd hermes/sales-desk
@@ -388,6 +401,11 @@ python3 desk.py doctor
 python3 desk.py offer-sync
 python3 desk.py recordings --days 60   # once, to fill the index
 ```
+
+On the VPS today `~/.sales-desk/env` already holds the two `SALES_` lines at
+the top and `CHROME_PATH`; the three fallback lines are the ones to add to it
+(append them, rather than writing the file again). `doctor` then shows
+`fallback` as `SALES_MODEL_FALLBACK=openai, model gpt-5`.
 
 The PDF and the overflow measurement need a Chrome the `hermes` user can
 run. On the VPS that is Playwright's headless shell, already in the cache:
@@ -429,8 +447,8 @@ editor desk's README says. Never pipe a stale copy.
 |---|---|
 | `SALES_MODEL_PROVIDER` | `vps` |
 | `SALES_PROPOSAL_MODEL` | per provider, above |
-| `SALES_MODEL_FALLBACK` | `openrouter` when `OPENROUTER_API_KEY` is set, else `none` |
-| `SALES_FALLBACK_MODEL` | the primary's model as the fallback names it (`anthropic/claude-opus-4.8` for `opus`) |
+| `SALES_MODEL_FALLBACK` | `openrouter` when `OPENROUTER_API_KEY` is set, else `none`; the VPS sets `openai` |
+| `SALES_FALLBACK_MODEL` | the primary's model as the fallback names it (`anthropic/claude-opus-4.8` for `opus` through OpenRouter, `gpt-5` at OpenAI); the VPS sets `gpt-5` |
 | `SALES_FALLBACK_JOBS` | `proposal` (add `notes`, `digest`, `reviews`, `followups` to let them fall back too) |
 | `SALES_MODEL_TIMEOUT` | `900` seconds of silence per try |
 | `SALES_MODEL_ATTEMPTS` | `3` tries per model call |

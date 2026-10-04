@@ -125,7 +125,7 @@ class DoctorSentenceTests(unittest.TestCase):
 
     def test_the_render_line_is_the_measurement(self):
         good = self.cli._render_row({"engine": "chrome one-shot", "dom": True, "pdf": True, "seconds": 0.6})
-        self.assertEqual(good, ("render", True, "chrome one-shot rendered a page and printed a PDF in 0.6s"))
+        self.assertEqual(good, ("render", True, "Chrome's one-shot flags rendered a page and printed a PDF in 0.6s"))
         half = self.cli._render_row({"engine": "chrome one-shot", "dom": True, "pdf": False, "seconds": 30})
         self.assertIsNone(half[1])
         self.assertIn("PDF is skipped", half[2])

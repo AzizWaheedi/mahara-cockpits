@@ -321,13 +321,23 @@ export default function ProposalPage({ me }: { me: Me }) {
         <div
           className={`${p.error ? "callout-warn" : "callout-good"} space-y-1 rounded-[var(--radius-md)] border px-3 py-2 text-sm`}
         >
-          <p>
-            The proposal is being written. It takes about ten minutes; this page
-            updates by itself.
-          </p>
           {/* Why it is still waiting, when it is: no model answering, or a try
-              that failed and will be made again. */}
-          {p.error ? <p>{p.error}</p> : null}
+              that failed and will be made again. The desk's sentence says
+              what happens next and when to tell the CEO. */}
+          {p.error ? (
+            <>
+              <p>
+                The proposal is not written yet. This page updates by itself
+                once it is.
+              </p>
+              <p>{p.error}</p>
+            </>
+          ) : (
+            <p>
+              The proposal is being written. It takes about ten minutes; this
+              page updates by itself.
+            </p>
+          )}
         </div>
       ) : null}
       {p.status === "failed" ? (

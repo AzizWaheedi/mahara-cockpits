@@ -845,5 +845,115 @@ class QueueBesideAnOutage(unittest.TestCase):
         self.assertNotIn("fallback", out)
 
 
+# ---------------------------------------------------------------------------
+class OpenAIGpt5Fallback(unittest.TestCase):
+    """The VPS's fallback since 2026-10-04: SALES_MODEL_FALLBACK=openai,
+    SALES_FALLBACK_MODEL=gpt-5, SALES_FALLBACK_JOBS=proposal (the OpenRouter
+    account is out of credit). gpt-5 is a reasoning model, so the request
+    carries nothing it refuses."""
+
+    ENV = {"SALES_MODEL_PROVIDER": "vps", "SALES_PROPOSAL_MODEL": "opus", "SALES_MODEL_FALLBACK": "openai",
+           "SALES_FALLBACK_MODEL": "gpt-5", "SALES_FALLBACK_JOBS": "proposal", "OPENAI_API_KEY": "sk-test-000000",
+           "OPENROUTER_API_KEY": "or-test"}
+
+    def gpt5(self, **env: str) -> model.OpenAIShaped:
+        with mock.patch.dict(os.environ, {**self.ENV, **env}):
+            cfg = Config.from_env()
+            self.assertTrue(model.fallback_for(cfg, "proposal"))
+            p = model.fallback_provider(cfg, primary_model=cfg.model)
+        return getattr(p, "inner", p)
+
+    def test_the_vps_settings_reach_openai_with_gpt5_even_with_an_openrouter_key_on_the_box(self):
+        p = self.gpt5()
+        self.assertEqual((p.name, p.base, p.model, p.json_mode), ("openai", model.OPENAI_URL, "gpt-5", True))
+        self.assertEqual(p._headers()["Authorization"], "Bearer sk-test-000000")
+        self.assertEqual(p.model_setting, "SALES_FALLBACK_MODEL")
+
+    def test_a_draft_request_carries_nothing_gpt5_refuses(self):
+        body = self.gpt5(SALES_MAX_TOKENS="32000")._body("s", "u", temperature=0.3, stream=True)
+        for refused in ("temperature", "max_tokens", "top_p", "presence_penalty", "frequency_penalty", "logprobs",
+                        "stop", "reasoning_effort"):
+            self.assertNotIn(refused, body, refused)
+        self.assertEqual(body["max_completion_tokens"], 32000)
+        self.assertEqual(body["response_format"], {"type": "json_object"})
+        self.assertEqual(body["stream_options"], {"include_usage": True})
+
+    def test_a_reasoning_effort_gpt5_takes_is_sent_and_one_it_refuses_is_left_out(self):
+        for effort, sent in (("minimal", "minimal"), ("high", "high"), ("none", None), ("xhigh", None)):
+            body = self.gpt5(SALES_REASONING_EFFORT=effort)._body("s", "u", temperature=None, stream=False)
+            self.assertEqual(body.get("reasoning_effort"), sent, effort)
+        self.assertEqual(model.effort_for("gpt-5.2", "xhigh"), "xhigh")
+        self.assertEqual(model.effort_for("o3", "minimal"), "")
+        self.assertEqual(model.effort_for("gpt-4.1", "high"), "")
+
+    def test_a_reasoning_effort_refused_anyway_is_asked_again_without_it(self):
+        p = self.gpt5(SALES_REASONING_EFFORT="high")
+        refused = http.HttpError(400, "bad request", b'{"error":{"message":"Unsupported value: \'reasoning_effort\' '
+                                                     b'does not support \'high\' with this model.","param":'
+                                                     b'"reasoning_effort"}}')
+        with mock.patch.object(http, "open_stream", side_effect=[refused, streamed_answer("{}", "gpt-5")]) as opened:
+            self.assertEqual(p.complete("s", "u").text, "{}")
+        self.assertEqual(opened.call_args_list[0].kwargs["json_body"]["reasoning_effort"], "high")
+        self.assertNotIn("reasoning_effort", opened.call_args_list[1].kwargs["json_body"])
+
+    def test_an_unverified_organisation_still_gets_its_draft_without_streaming(self):
+        p = self.gpt5()
+        unverified = http.HttpError(400, "bad request", b'{"error":{"message":"Your organization must be verified '
+                                                        b'to stream this model.","param":"stream"}}')
+        body = b'{"model":"gpt-5","choices":[{"message":{"content":"{}"},"finish_reason":"stop"}]}'
+        with mock.patch.object(http, "open_stream", side_effect=unverified), \
+                mock.patch.object(http, "request", return_value=(200, {}, body)) as asked:
+            self.assertEqual(p.complete("s", "u").text, "{}")
+        sent = asked.call_args.kwargs["json_body"]
+        self.assertFalse(sent["stream"])
+        self.assertNotIn("stream_options", sent)
+        self.assertNotIn("temperature", sent)
+
+    def test_the_ping_asks_for_one_token_the_way_gpt5_takes_it(self):
+        p = self.gpt5()
+        with mock.patch.object(http, "request", return_value=(200, {}, b'{"model":"gpt-5-2025-08-07","choices":[]}')) \
+                as asked:
+            self.assertEqual(p.ping(), "gpt-5-2025-08-07 answered")
+        sent = asked.call_args.kwargs["json_body"]
+        self.assertEqual(sent["max_completion_tokens"], 1)
+        self.assertNotIn("max_tokens", sent)
+        self.assertNotIn("temperature", sent)
+
+
+class Streams(Probe):
+    def __init__(self, *a: Any, streams: Optional[bool] = True, **kw: Any):
+        super().__init__(*a, **kw)
+        self._streams = streams
+
+    def stream_check(self, timeout: float = 60) -> Optional[bool]:
+        return self._streams
+
+
+class DoctorOnOpenAI(unittest.TestCase):
+    cfg = Doctor.cfg
+    rows = Doctor.rows
+
+    def test_the_openai_fallback_reads_as_one_story(self):
+        rows, blockers = self.rows(self.cfg("openai"), Probe("vps", "opus", ping=signed_out()),
+                                   Streams("openai", "gpt-5", models=["gpt-4.1", "gpt-5"], streams=False))
+        self.assertEqual(blockers, [])
+        self.assertIn("SALES_MODEL_FALLBACK=openai, model gpt-5", rows["fallback"]["detail"])
+        self.assertTrue(rows["fallback listed"]["ok"])
+        self.assertIsNone(rows["fallback streams"]["ok"])
+        self.assertIn("without streaming", rows["fallback streams"]["detail"])
+        self.assertNotIn("fallback credit", rows)
+        self.assertIn("proposals draft through openai (gpt-5)", rows["drafting"]["detail"])
+
+    def test_no_fallback_points_at_openai_and_where_to_set_it(self):
+        rows, _ = self.rows(self.cfg("none"), Probe("vps", "opus"), None)
+        self.assertIn("SALES_MODEL_FALLBACK=openai in ~/.sales-desk/env", rows["fallback"]["detail"])
+
+    def test_an_openrouter_account_out_of_credit_says_both_ways_out(self):
+        rows, _ = self.rows(self.cfg(), Probe("vps", "opus", ping=signed_out()),
+                            Probe("openrouter", CLAUDE, credit=-0.13))
+        self.assertIn("SALES_MODEL_FALLBACK=openai", rows["fallback credit"]["detail"])
+        self.assertIn("openrouter.ai/settings/credits", rows["fallback credit"]["detail"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -180,7 +180,8 @@ def model_rows(cfg: Config, log: Logger, *, online: bool, primary: Callable[...,
         why = ("the same as SALES_MODEL_PROVIDER, so it is no fallback" if fname == cfg.provider
                else "no job named in SALES_FALLBACK_JOBS" if fname not in ("", "none") else "off")
         add("fallback", None, f"SALES_MODEL_FALLBACK={fname}: {why}. When {cfg.provider} cannot answer, nothing is "
-                              "drafted until it can; SALES_MODEL_FALLBACK=openrouter (or openai) gives a second way")
+                              "drafted until it can; set SALES_MODEL_FALLBACK=openai in ~/.sales-desk/env (its key "
+                              "is already on the VPS) for a second way")
     else:
         fmodel = model_mod.fallback_model(cfg)
         unknown = [j for j in cfg.fallback_jobs if j not in FALLBACK_JOBS]
@@ -253,6 +254,13 @@ def model_rows(cfg: Config, log: Logger, *, online: bool, primary: Callable[...,
                                               "SALES_FALLBACK_MODEL to one of: " + ", ".join(usable[:12]))
         except (NotNow, model_mod.ModelError) as e:
             add("fallback listed", None, f"the model list could not be read: {e}")
+        if fname == "openai" and callable(getattr(f, "stream_check", None)):
+            streams = f.stream_check()
+            if streams is False:
+                add("fallback streams", None, f"OpenAI will not stream {fmodel} to this organisation; fallback "
+                                              "drafts ask without streaming and wait for the whole answer instead")
+            elif streams:
+                add("fallback streams", True, "streaming works, so a long draft is timed by its silences")
         credit = f.credit() if fname == "openrouter" and callable(getattr(f, "credit", None)) else None
         if credit is not None:
             if credit > 0:
@@ -262,7 +270,8 @@ def model_rows(cfg: Config, log: Logger, *, online: bool, primary: Callable[...,
                 f_err = model_mod.ModelUnreachable(
                     f"The OpenRouter account has ${credit:,.2f} left (credit bought less used), and OpenRouter refuses "
                     "paid calls once it is spent, whatever the key's own limit says. Top it up at "
-                    "openrouter.ai/settings/credits; the fallback works again at once.",
+                    "openrouter.ai/settings/credits, or set SALES_MODEL_FALLBACK=openai in ~/.sales-desk/env; "
+                    "either works at once.",
                     cause="the openrouter account is out of credit")
                 add("fallback credit", False, str(f_err))
 
@@ -287,6 +296,8 @@ def model_rows(cfg: Config, log: Logger, *, online: bool, primary: Callable[...,
 
 HEADLESS_SHELL_HINT = ("set CHROME_PATH in ~/.sales-desk/env to Playwright's headless shell "
                        "(~/.cache/ms-playwright/chromium_headless_shell-*/chrome-linux/headless_shell)")
+# The browser paths as the doctor names them (render.engine()'s words are for the log).
+ENGINE_NAMES = {"playwright": "Playwright", "chrome one-shot": "Chrome's one-shot flags"}
 
 
 def _browser_row(engine: str, chrome: Optional[str]) -> tuple[str, Optional[bool], str]:
@@ -303,14 +314,15 @@ def _browser_row(engine: str, chrome: Optional[str]) -> tuple[str, Optional[bool
 
 def _render_row(found: dict[str, Any]) -> tuple[str, Optional[bool], str]:
     """render.probe()'s answer as one sentence."""
-    how, took = found.get("engine") or "the browser", found.get("seconds") or 0
+    engine = found.get("engine") or ""
+    how, took = ENGINE_NAMES.get(engine, engine or "the browser"), found.get("seconds") or 0
     if found.get("dom") and found.get("pdf"):
         return "render", True, f"{how} rendered a page and printed a PDF in {took:g}s"
     if found.get("dom"):
-        return "render", None, (f"{how} renders a page but printed no PDF, so drafts are measured and the PDF is "
-                                "skipped: " + HEADLESS_SHELL_HINT)
+        return "render", None, (f"{how} rendered a page but printed no PDF, so drafts are measured and the PDF is "
+                                "skipped; " + HEADLESS_SHELL_HINT)
     return "render", None, (f"{how} could not render a page, so overflow is not measured, nothing is tightened and "
-                            "the PDF is skipped: " + HEADLESS_SHELL_HINT)
+                            "the PDF is skipped; " + HEADLESS_SHELL_HINT)
 
 
 def cmd_doctor(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
@@ -370,6 +382,9 @@ def cmd_doctor(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
 
     engine = render_mod.engine()
     add(*_browser_row(engine, render_mod.find_chrome()))
+    if engine != "none" and not args.offline:
+        # Measured, never assumed: the browser line only says what was found.
+        add(*_render_row(render_mod.probe()))
 
     try:
         cfg.ensure_dirs()
@@ -454,11 +469,7 @@ def cmd_doctor(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
             add("highlevel", False, "GHL_B2B_API_KEY is not set, so the follow-up agent cannot read a conversation "
                                     "and writes nothing", True)
 
-        if engine != "none":
-            # Measured, never assumed: the browser line only says what was found.
-            add(*_render_row(render_mod.probe()))
-
-    blockers = [r for r in rows if r["required"] and r["ok"] is False]
+    blockers =[r for r in rows if r["required"] and r["ok"] is False]
     if args.json:
         _print({"checks": rows, "blockers": [b["detail"] for b in blockers]}, True)
     else:
