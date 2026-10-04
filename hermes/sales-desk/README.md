@@ -96,6 +96,32 @@ the Claude sign-in on the VPS has lapsed, and openai refused its key. This
 proposal waits and drafts by itself once either is fixed, so there is no need
 to ask again; if it is still waiting in an hour, tell the CEO.*
 
+**Before anything is claimed.** The VPS proxy needs no key, so a lapsed
+sign-in used to show only at the draft's first call, after the request was
+claimed and the call read from Fathom. Now a run with a draft to claim pings
+the VPS primary with one token first (`model.Failover.check`): a lapse found
+there hands over to the fallback, or, with none, holds every draft unclaimed.
+A ping that merely times out holds nothing; the draft asks anyway. A keyed
+provider is never pinged: a missing key already shows when it is made.
+
+**The closer always has a sentence.** Whatever holds a request (no model, the
+bucket missing, Fathom's key, a stop partway), the proposal it is for says so
+in one line, whether the outage was found before the request was claimed or
+while it ran: *The proposal writer cannot work right now: the Claude sign-in
+on the VPS has lapsed. This proposal waits and drafts by itself once that is
+fixed, so there is no need to ask again; if it is still waiting in an hour,
+tell the CEO.* The fix (a key's name, a command on the VPS) stays on the
+request row. The note lands only while the proposal is drafting. The cockpit
+shows it on the proposal's page and the lead's Proposal card, with the try
+count and "Taking longer than usual" after 20 minutes, and a Stop drafting
+button while the request has not started (sales-api `request.set`).
+
+**Archived means stopped.** Archiving a proposal (sales-api `proposal.set`)
+cancels its queued requests, and is refused while one is running: *It is
+being written right now. Archive it when it finishes.* A request that reaches
+the worker for an archived proposal anyway is closed as `cancelled`; the
+proposal is never drafted, rebuilt, marked failed or brought back.
+
 ### The rebuild
 
 When the closer fills the gaps in the cockpit (sales-api `proposal.fill`),
@@ -106,6 +132,12 @@ version. The call's figures were checked when the proposal was drafted, and
 what the closer filled in is the closer's own, so the evidence rows say that
 rather than warn. The offer comes from the stamp in the deal (or
 `validation.offer`, or the first request's choice).
+
+Rebuilds are read ahead of drafts, whatever their age, so a run's limit
+(`SALES_REQUESTS_PER_RUN`, 3) can never leave one behind drafts that wait on a
+model. An outage holds only the requests of its own kind for the rest of the
+run: a draft that cannot be written never holds up a rebuild, and the other
+way round.
 
 ## The offer
 
@@ -230,8 +262,8 @@ value it takes (`minimal` to `high`; `none` and `xhigh` are left out).
   primary first again. A draft that has had one answer from a provider
   stays on it, tightening and repair included.
 - **A draft that waits holds up no rebuild.** The run's other drafts wait
-  unclaimed with the reason on them (the closer's sentence too when nothing
-  can answer); a rebuild asks no model, so it still goes ahead.
+  unclaimed with the reason on them and the closer's sentence on their
+  proposals; a rebuild asks no model, is read first, and still goes ahead.
 - **Never silent.** The handover is a WARN line in `~/.sales-desk.log` (the
   cron runs `--quiet`, which keeps only warnings), and the `requests` health
   line starts with how many drafts went through the fallback and why.

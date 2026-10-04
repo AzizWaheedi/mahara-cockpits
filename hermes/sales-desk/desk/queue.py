@@ -20,6 +20,15 @@ run that died; it goes back in the queue, or is parked after four tries. A
 live draft touches its row between stages, so a long one is never mistaken
 for a dead one.
 
+Rebuilds are read ahead of drafts, whatever their age: a rebuild asks no
+model, so a closer who filled the gaps never waits behind drafts that are
+waiting on one. An outage holds the requests of its own kind for the rest of
+the run, never the other kind. While a request waits, the proposal it is for
+carries one sentence for the closer (closer_wait): what is wrong in a few
+words, that it carries on by itself, and when to tell the CEO; the fix stays
+on the request. A request for a proposal the closer archived is closed as
+cancelled and never drafted.
+
 The model is the run's one model.Failover: the primary provider, and the
 fallback (SALES_MODEL_FALLBACK) once the primary cannot answer at all, decided
 once a run and never mid-draft. When neither answers, the request waits with
@@ -43,10 +52,33 @@ from . import offer as offer_mod
 from . import recordings as recordings_mod
 from . import render as render_mod
 from .config import MAX_ATTEMPTS, WORKER, Config
-from .errors import NotNow, Refused
+from .errors import Archived, NotNow, Refused
 from .supabase import REQUESTS, Supabase, iso, now_iso
 
 KIND = "proposal"
+# The rows a run reads before the rest: rebuilds, which ask no model.
+REBUILDS_FIRST = "params->>rebuild=eq.true"
+
+
+def closer_wait(e: BaseException, *, rebuild: bool = False) -> str:
+    """What the closer waiting on a proposal is told while an outage holds it:
+    what is wrong, in a few words, that it carries on by itself, and when to
+    tell the CEO. The fix itself (a key's name, a command on the VPS) stays on
+    the request, for whoever fixes it. An outage that brings its own sentence
+    for the closer (model.Failover's) is told in that one."""
+    said = str(getattr(e, "closer", "") or "")
+    if said:
+        return said
+    cause = str(getattr(e, "cause", "") or "")
+    if not cause:
+        text = str(e).strip()
+        cause = model_mod.cause_of(text)
+        # cause_of lowers "The ..." to "the ..."; a name (Fathom) keeps its capital.
+        if text.split(" ", 1)[0] not in ("The", "A", "An", "No", "This", "That", "It", "Nothing"):
+            cause = text[:1] + cause[1:]
+    then = "is rebuilt with your figures" if rebuild else "drafts"
+    return (f"The proposal writer cannot work right now: {cause}. This proposal waits and {then} by itself once "
+            "that is fixed, so there is no need to ask again; if it is still waiting in an hour, tell the CEO.")
 
 
 def sync_offer(sb: Supabase, offer: dict[str, Any], log: Callable[[str], None]) -> bool:
@@ -88,8 +120,6 @@ class Worker:
         self.offer = offer if offer is not None else offer_mod.load()
         self._people: Optional[dict[str, str]] = None
         self._failover: Optional[model_mod.Failover] = None
-        # When no model can be made at all: the sentence for the closers waiting.
-        self._model_wait: Optional[str] = None
         # The drafts this run wrote through the fallback, and its sentence.
         self._fallback_drafts = 0
         self._fallback_note: Optional[str] = None
@@ -124,27 +154,34 @@ class Worker:
             except Exception as e:  # noqa: BLE001
                 self.log(f"client form not synced: {http.scrub(str(e))[:160]}")
         out: dict[str, Any] = {"seen": 0, "done": 0, "failed": 0, "retry": 0, "waiting": 0, "skipped": 0,
-                               "reaped": self.reap(), "statuses": {}}
-        self._model_wait = None
+                               "cancelled": 0, "reaped": self.reap(), "statuses": {}}
         self._fallback_drafts, self._fallback_note = 0, None
-        rows = self.sb.queued(KIND, max_attempts=MAX_ATTEMPTS, limit=limit or self.cfg.requests_per_run)
+        rows = self.sb.queued(KIND, max_attempts=MAX_ATTEMPTS, limit=limit or self.cfg.requests_per_run,
+                              first=REBUILDS_FIRST)
         out["seen"] = len(rows)
-        checked: dict[bool, Optional[str]] = {}
+        # Per kind (a rebuild, or a draft): why none of that kind can be done
+        # this run, as the reason for the request and the sentence for the
+        # closer (None when the reason is about another proposal).
+        held: dict[bool, Optional[tuple[str, Optional[str]]]] = {}
         blocked: Optional[str] = None
         for req in rows:
             rid = str(req.get("id") or "")
             params = req.get("params") if isinstance(req.get("params"), dict) else {}
             rebuild = bool(params.get("rebuild"))
-            if rebuild not in checked:
-                checked[rebuild] = self.preflight(draft=not rebuild)
-            if checked[rebuild]:
+            proposal_id = str(params.get("proposal_id") or "")
+            if rebuild not in held:
+                e = self.preflight(draft=not rebuild)
+                held[rebuild] = (str(e), closer_wait(e, rebuild=rebuild)) if e is not None else None
+            hold = held[rebuild]
+            if hold:
                 # Nothing of this kind can be done until it is fixed. The row
-                # stays queued, untouched, with the reason on it for the cockpit.
-                blocked = checked[rebuild]
-                self.sb.patch(REQUESTS, f"id=eq.{http.quote(rid)}&status=eq.queued", {"error": blocked[:600]})
-                if not rebuild and self._model_wait:
-                    # No model at all: the closer waiting on it is told why, and that it drafts by itself.
-                    self._proposal_note(str(params.get("proposal_id") or ""), rid, self._model_wait)
+                # stays queued, untouched, with the reason on it, and the
+                # closer waiting on the proposal is told, though nothing was claimed.
+                reason, closer = hold
+                blocked = blocked or reason
+                self.sb.patch(REQUESTS, f"id=eq.{http.quote(rid)}&status=eq.queued", {"error": reason[:600]})
+                if closer:
+                    self._proposal_note(proposal_id, rid, closer)
                 out["waiting"] += 1
                 continue
             claimed = self.sb.claim(req, self.host)
@@ -152,13 +189,17 @@ class Worker:
                 out["skipped"] += 1
                 continue
             attempts = int(claimed.get("attempts") or 1)
-            proposal_id = str(params.get("proposal_id") or "")
             try:
                 result = self.rebuild(claimed) if rebuild else self.draft(claimed)
                 self.sb.request_done(rid, result)
                 out["done"] += 1
                 out["statuses"][result["status"]] = out["statuses"].get(result["status"], 0) + 1
                 self.log(f"proposal {result['proposal_id']}: {result['status']}")
+            except Archived as e:
+                # The closer archived it first: nothing to draft, and nothing to mark failed.
+                self.sb.request_cancelled(rid, str(e))
+                out["cancelled"] += 1
+                self.log(f"request {rid}: {e}")
             except Refused as e:
                 self.sb.request_failed(rid, str(e), final=True)
                 self._proposal_failed(proposal_id, rid, str(e))
@@ -166,20 +207,20 @@ class Worker:
                 self.warn(f"request {rid}: refused: {e}")
             except NotNow as e:
                 self.sb.request_released(rid, str(e), attempts - 1)
-                # The closer's sentence on the proposal they are waiting on, when
-                # the outage has one; the whole of it, with the fix, on the request.
-                self._proposal_note(proposal_id, rid, getattr(e, "closer", "") or str(e))
+                # The closer's sentence on the proposal they are waiting on; the
+                # whole of it, with the fix, on the request.
+                self._proposal_note(proposal_id, rid, closer_wait(e, rebuild=rebuild))
                 out["waiting"] += 1
-                out["blocked"] = str(e)
+                blocked = blocked or str(e)
                 self.warn(f"request {rid}: waiting: {e}")
-                if rebuild:
-                    break
-                # The run's other drafts would meet the same outage: they wait
-                # unclaimed with the reason on them, as when preflight finds it.
-                # A rebuild asks no model, so a closer who filled the gaps is not
-                # kept waiting behind it.
-                checked[False] = getattr(e, "others", "") or str(e)
-                self._model_wait = (e.closer or None) if getattr(e, "every", False) else None
+                # The run's other requests of this kind would meet the same
+                # outage: they wait unclaimed with the reason on them, as when
+                # preflight finds it, and their closers are told too. When the
+                # sentence is about this proposal alone (a draft cut off
+                # partway), the others carry their own and no closer's note.
+                # The other kind goes on: no break.
+                others = str(getattr(e, "others", "") or "")
+                held[rebuild] = (others, None) if others else (str(e), closer_wait(e, rebuild=rebuild))
                 continue
             except Exception as e:  # noqa: BLE001 - one request is never worth the run
                 msg = http.scrub(f"{type(e).__name__}: {e}" if not str(e) else str(e))[:500]
@@ -201,25 +242,27 @@ class Worker:
             out["fallback"] = {"drafts": self._fallback_drafts, "note": self._fallback_note}
         return out
 
-    def preflight(self, *, draft: bool) -> Optional[str]:
-        """What a request needs before any row is claimed: the bucket the files
-        go into, and for a draft the model's key and Fathom's. Checked once a
-        run, so a missing bucket cannot cost four paid drafts per request."""
+    def preflight(self, *, draft: bool) -> Optional[NotNow]:
+        """What a request needs before any row is claimed, as the outage when
+        it is missing: the bucket the files go into, and for a draft a model
+        that answers and Fathom's key. Checked once a run per kind, so a
+        missing bucket cannot cost four paid drafts per request, and a lapsed
+        VPS sign-in is found by a one-token ping (model.Failover.check) before
+        a request is claimed and its call read from Fathom."""
         try:
             self.sb.bucket_info()
         except http.HttpError as e:
             if e.status in (400, 404):
-                return (f"The {self.sb.bucket} bucket is missing, so no proposal can be stored. Apply "
-                        "supabase/migrations/20260924b_sales_proposal_files.sql; the requests wait until then.")
+                return NotNow(f"The {self.sb.bucket} bucket is missing, so no proposal can be stored. Apply "
+                              "supabase/migrations/20260924b_sales_proposal_files.sql; the requests wait until then.")
         if draft:
             try:
-                # The primary, or the fallback when the primary cannot even be
-                # made (a key not set); waiting only when neither can.
-                self.route().ready()
+                # The primary, or the fallback when the primary cannot be made
+                # or does not answer the ping; waiting only when neither can.
+                self.route().check()
                 self.fathom_factory(self.cfg, self.log)
             except NotNow as e:
-                self._model_wait = (getattr(e, "closer", "") or None) if getattr(e, "every", False) else None
-                return str(e)
+                return e
         return None
 
     def reap(self) -> int:
@@ -251,6 +294,8 @@ class Worker:
         row = row or self.sb.proposal_for_request(request_id)
         if not row:
             raise Refused("The proposal this request is for does not exist. Start the draft again from the cockpit.")
+        if str(row.get("status") or "") == "archived":
+            raise Archived("The proposal was archived before this request ran, so it was not drafted.")
         return row
 
     def _lang(self, params: dict[str, Any], proposal: dict[str, Any]) -> str:
@@ -278,7 +323,7 @@ class Worker:
         pid = str(proposal["id"])
         lang = self._lang(params, proposal)
         resolved = offer_mod.resolve(self.offer, params.get("offer"))
-        self.sb.update_proposal(pid, status="drafting", error=None, lang=lang)
+        self.sb.update_proposal(pid, status_is="neq.archived", status="drafting", error=None, lang=lang)
 
         contact = str(req.get("contact_id") or proposal.get("contact_id") or "")
         lead = self.sb.lead(contact) if contact else None
@@ -404,7 +449,8 @@ class Worker:
         validation = validation_json(result, variant=variant, resolved=resolved, notes=notes, extra=extra,
                                      model=model, version=n, render=engine_mod.engine_name(self.renderer))
         self.sb.update_proposal(
-            pid, status=status, deal=deal, validation=validation, fill_count=result.fills, variant=variant,
+            pid, status_is="neq.archived",
+            status=status, deal=deal, validation=validation, fill_count=result.fills, variant=variant,
             model=model or None, html_path=html_key, pdf_path=pdf_key, lang=lang,
             recording_id=str(recording_id) if recording_id else proposal.get("recording_id"),
             error=failure_sentence(result, n) if status == "failed" else None)
@@ -415,16 +461,17 @@ class Worker:
         try:
             pid = proposal_id or str((self.sb.proposal_for_request(request_id) or {}).get("id") or "")
             if pid:
-                self.sb.update_proposal(pid, status="failed", error=message[:600])
+                self.sb.update_proposal(pid, status_is="neq.archived", status="failed", error=message[:600])
         except Exception as e:  # noqa: BLE001
             self.log(f"proposal {proposal_id or request_id}: not marked failed: {http.scrub(str(e))[:160]}")
 
     def _proposal_note(self, proposal_id: str, request_id: str, message: str) -> None:
-        """Why a proposal is still drafting, while its request waits or retries."""
+        """Why a proposal is still drafting, while its request waits or retries:
+        on the row only while it is drafting, so it never lands on one archived."""
         try:
             pid = proposal_id or str((self.sb.proposal_for_request(request_id) or {}).get("id") or "")
             if pid:
-                self.sb.update_proposal(pid, error=message[:600])
+                self.sb.update_proposal(pid, status_is="eq.drafting", error=message[:600])
         except Exception:  # noqa: BLE001
             pass
 

@@ -530,6 +530,7 @@ def cmd_requests(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
         detail = "nothing queued"
     else:
         detail = (f"{out['done']} done ({done or 'none'}), {out['retry']} to try again, {out['failed']} failed"
+                  + (f", {out['cancelled']} cancelled (archived first)" if out.get("cancelled") else "")
                   + (f", {out['reaped']} reaped" if out["reaped"] else ""))
     fell = out.get("fallback") or {}
     if fell.get("drafts"):

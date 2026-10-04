@@ -991,6 +991,8 @@ class Failover:
         self.primary = primary_label
         self.down: Optional[ModelUnreachable] = None
         self.pinned = False
+        # The one-token check (check()) is made once a run.
+        self.checked = False
 
     def begin(self) -> "Failover":
         """A new piece of work (one proposal): it stays on whichever provider answers its first call."""
@@ -1005,6 +1007,31 @@ class Failover:
                 self.primary = label(self.p)
             except ModelUnreachable as e:
                 self._switch(e)
+        return self
+
+    def check(self, timeout: float = 60) -> "Failover":
+        """ready(), and for the VPS proxy a one-token ping before any work is
+        claimed. The proxy needs no key, so making it proves nothing: a lapsed
+        sign-in shows only when a draft asks it, after the request was claimed
+        and its call read from Fathom. A primary the ping finds unreachable
+        hands over here, as one that cannot be made does, or waits with its
+        sentence when there is no fallback. A ping that merely fails (a
+        timeout, an odd answer) proves nothing either way and leaves the
+        question to the draft. Once a run; never on the fallback."""
+        self.ready()
+        if self.checked or self.on_fallback:
+            return self
+        self.checked = True
+        ping = getattr(self.p, "ping", None)
+        if getattr(self.p, "name", "") != "vps" or not callable(ping):
+            return self
+        try:
+            ping(timeout=timeout)
+        except ModelUnreachable as e:
+            self._switch(e)
+        except Exception as e:  # noqa: BLE001 - not an outage: the draft finds out
+            self.log(f"{self.primary}: the one-token check did not answer cleanly "
+                     f"({http.scrub(str(e))[:160]}); the draft asks it anyway")
         return self
 
     def _switch(self, e: ModelUnreachable) -> None:
