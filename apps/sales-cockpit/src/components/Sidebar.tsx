@@ -100,7 +100,10 @@ const GROUP_LABEL =
 function ThemeToggle({
   compact,
   iconOnly,
-}: { compact?: boolean; iconOnly?: boolean } = {}) {
+}: {
+  compact?: boolean;
+  iconOnly?: boolean;
+} = {}) {
   const [dark, setDark] = useState(() => {
     try {
       const stored = localStorage.getItem("theme");
@@ -129,7 +132,7 @@ function ThemeToggle({
         type="button"
         onClick={() => setDark((d: boolean) => !d)}
         title={dark ? "Switch to light mode" : "Switch to dark mode"}
-        className="flex size-7 items-center justify-center rounded-[8px] text-white/60 hover:bg-white/[0.08] hover:text-white transition-colors"
+        className="flex size-7 items-center justify-center rounded-[8px] text-muted-foreground hover:bg-foreground/[0.08] hover:text-foreground transition-colors"
       >
         <Icon className="size-3.5" strokeWidth={1.75} aria-hidden />
       </button>
@@ -140,7 +143,7 @@ function ThemeToggle({
       <button
         type="button"
         onClick={() => setDark((d: boolean) => !d)}
-        className="flex items-center gap-1.5 rounded-[10px] px-2 py-1 text-xs text-white/70 hover:bg-white/[0.08] hover:text-white transition-colors"
+        className="flex items-center gap-1.5 rounded-[10px] px-2 py-1 text-xs text-muted-foreground hover:bg-foreground/[0.08] hover:text-foreground transition-colors"
       >
         <Icon className="size-3.5" strokeWidth={1.75} aria-hidden />
         <span>{dark ? "Light" : "Dark"}</span>
@@ -219,7 +222,7 @@ export default function Sidebar({
               type="button"
               onClick={onToggleCollapse}
               title="Expand sidebar (Ctrl+B)"
-              className="flex size-8 items-center justify-center rounded-[8px] text-white/60 hover:bg-white/[0.08] hover:text-white transition-colors"
+              className="flex size-8 items-center justify-center rounded-[8px] text-muted-foreground hover:bg-foreground/[0.08] hover:text-foreground transition-colors"
             >
               <PanelLeftOpen className="size-4" />
             </button>
@@ -242,7 +245,7 @@ export default function Sidebar({
               type="button"
               onClick={onToggleCollapse}
               title="Collapse sidebar (Ctrl+B)"
-              className="flex size-7 items-center justify-center rounded-[8px] text-white/50 hover:bg-white/[0.08] hover:text-white transition-colors"
+              className="flex size-7 items-center justify-center rounded-[8px] text-muted-foreground hover:bg-foreground/[0.08] hover:text-foreground transition-colors"
             >
               <PanelLeftClose className="size-4" />
             </button>
@@ -272,8 +275,8 @@ export default function Sidebar({
                           collapsed
                             ? `group relative flex items-center justify-center rounded-[12px] p-2.5 transition-all ${
                                 isActive
-                                  ? "border border-teal-500/40 bg-teal-500/15 text-teal-300 shadow-[0_0_12px_rgba(0,207,200,0.3)]"
-                                  : "text-white/70 hover:bg-white/[0.08] hover:text-white"
+                                  ? "border border-border bg-primary/15 text-foreground shadow-[0_0_12px_rgba(0,207,200,0.3)]"
+                                  : "text-muted-foreground hover:bg-foreground/[0.08] hover:text-foreground"
                               }`
                             : `group cockpit-nav-link ${ROW} ${
                                 isActive ? "font-medium" : ROW_IDLE
@@ -355,7 +358,7 @@ export default function Sidebar({
                   href={d.href}
                   className={
                     collapsed
-                      ? "group relative flex items-center justify-center rounded-[12px] p-2 text-white/60 hover:bg-white/[0.08] hover:text-white transition-all"
+                      ? "group relative flex items-center justify-center rounded-[12px] p-2 text-muted-foreground hover:bg-foreground/[0.08] hover:text-foreground transition-all"
                       : `group ${ROW} ${ROW_IDLE}`
                   }
                 >
@@ -382,7 +385,7 @@ export default function Sidebar({
         </ul>
 
         {collapsed ? (
-          <div className="flex flex-col items-center gap-2 border-t border-white/5 pt-2">
+          <div className="flex flex-col items-center gap-2 border-t border-border pt-2">
             <div title={`${name} · ${role}`}>
               <Avatar name={name} size={30} />
             </div>
@@ -391,17 +394,17 @@ export default function Sidebar({
               type="button"
               onClick={signOut}
               title="Sign out"
-              className="flex size-7 items-center justify-center rounded-[8px] text-white/50 hover:bg-white/[0.08] hover:text-white transition-colors"
+              className="flex size-7 items-center justify-center rounded-[8px] text-muted-foreground hover:bg-foreground/[0.08] hover:text-foreground transition-colors"
             >
               <LogOut className="size-3.5" strokeWidth={1.75} aria-hidden />
             </button>
           </div>
         ) : (
-          <div className="rounded-[20px] border border-white/10 bg-white/[0.03] p-2.5 shadow-sm">
+          <div className="rounded-[20px] border border-border bg-foreground/[0.03] p-2.5 shadow-sm">
             <div className="flex items-center gap-2.5 px-1 py-0.5">
               <Avatar name={name} size={32} />
               <div className="min-w-0 flex-1">
-                <p className="truncate text-xs font-semibold tracking-tight text-white/95">
+                <p className="truncate text-xs font-semibold tracking-tight text-foreground">
                   {name}
                 </p>
                 <div className="mt-0.5 flex items-center gap-1.5">
@@ -412,7 +415,7 @@ export default function Sidebar({
                 </div>
               </div>
             </div>
-            <div className="mt-2 flex items-center justify-between gap-1 border-t border-white/5 pt-2">
+            <div className="mt-2 flex items-center justify-between gap-1 border-t border-border pt-2">
               <div className="flex-1">
                 <ThemeToggle compact />
               </div>
@@ -420,7 +423,7 @@ export default function Sidebar({
                 type="button"
                 onClick={signOut}
                 title="Sign out"
-                className="flex size-7 items-center justify-center rounded-[10px] text-white/50 hover:bg-white/[0.08] hover:text-white transition-colors"
+                className="flex size-7 items-center justify-center rounded-[10px] text-muted-foreground hover:bg-foreground/[0.08] hover:text-foreground transition-colors"
               >
                 <LogOut className="size-3.5" strokeWidth={1.75} aria-hidden />
               </button>

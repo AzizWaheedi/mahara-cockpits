@@ -1,3 +1,4 @@
+import { useId } from "react";
 import {
   CURRENCIES,
   type Currency,
@@ -101,7 +102,9 @@ function Rail({
           {theirs == null ? null : impossible ? (
             <span style={{ color: "var(--destructive)" }}>over 100% </span>
           ) : (
-            <span className="font-semibold text-white">{sayPct(theirs, "en")} </span>
+            <span className="font-semibold text-foreground">
+              {sayPct(theirs, "en")}{" "}
+            </span>
           )}
           <span className="muted">
             {theirs == null ? "" : "/ "}ours {sayPct(step.ours, "en")}
@@ -110,7 +113,9 @@ function Rail({
       </div>
       <div
         className="relative mt-1.5 h-2 rounded-full overflow-hidden border border-white/5"
-        style={{ background: "color-mix(in oklch, var(--secondary) 80%, black)" }}
+        style={{
+          background: "color-mix(in oklch, var(--secondary) 80%, black)",
+        }}
         role="img"
         aria-label={
           theirs == null
@@ -154,6 +159,7 @@ export function FunnelLadder({
   onCurrency: (c: Currency) => void;
   script: "intro" | "demo";
 }) {
+  const currencyId = useId();
   const g = f.given;
   const step = (k: Step["key"]) => f.steps.find(s => s.key === k) as Step;
   const ads = step("ads");
@@ -161,9 +167,13 @@ export function FunnelLadder({
   const whole = script === "demo" ? wholeFunnel(f) : null;
   const perYear = f.closed == null ? null : f.closed * 12;
   const currencyPicker = (
-    <label className="muted flex items-center gap-1.5 text-xs">
+    <label
+      htmlFor={currencyId}
+      className="muted flex items-center gap-1.5 text-xs"
+    >
       <span>Their money in</span>
       <AnimatedSelect
+        id={currencyId}
         value={f.currency}
         onChange={e => onCurrency(e.target.value as Currency)}
         className="h-7 rounded-[12px] border border-white/10 bg-[color:var(--card)] px-2 text-xs"

@@ -382,7 +382,9 @@ export function Segmented({
   className?: string;
 }) {
   const trackRef = useRef<HTMLDivElement>(null);
-  const [pill, setPill] = useState<{ left: number; width: number } | null>(null);
+  const [pill, setPill] = useState<{ left: number; width: number } | null>(
+    null,
+  );
 
   useEffect(() => {
     const el = trackRef.current;
@@ -494,17 +496,17 @@ export function SoftAccordion({
             className={`flex size-6 items-center justify-center rounded-full border transition-all duration-200 ${
               open
                 ? "border-[color:var(--primary)] bg-[color:color-mix(in_oklch,var(--primary)_15%,transparent)] text-[color:var(--primary)]"
-                : "border-white/15 text-white/50"
+                : "border-border text-muted-foreground"
             }`}
           >
-            <span className="text-sm font-bold leading-none">{open ? "−" : "+"}</span>
+            <span className="text-sm font-bold leading-none">
+              {open ? "−" : "+"}
+            </span>
           </span>
         </div>
       </button>
       {open ? (
-        <div className="border-t border-white/5 px-4 pt-2 pb-4">
-          {children}
-        </div>
+        <div className="border-t border-white/5 px-4 pt-2 pb-4">{children}</div>
       ) : null}
     </div>
   );

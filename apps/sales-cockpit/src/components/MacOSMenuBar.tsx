@@ -1,14 +1,9 @@
-import {
-  Clock,
-  Moon,
-  PanelLeftClose,
-  PanelLeftOpen,
-  Sun,
-} from "lucide-react";
+import { Clock, Moon, PanelLeftClose, PanelLeftOpen, Sun } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link, useLocation } from "react-router";
 import { Avatar } from "./kit";
 import { Wordmark } from "./Wordmark";
+
 const ROUTE_NAMES: Record<string, string> = {
   "/": "Today's Agenda",
   "/dialer": "Power Dialer",
@@ -104,8 +99,12 @@ export function MacOSMenuBar({
         <button
           type="button"
           onClick={onToggleSidebar}
-          title={sidebarCollapsed ? "Expand sidebar (Ctrl+B)" : "Collapse sidebar (Ctrl+B)"}
-          className="flex size-7 items-center justify-center rounded-[8px] text-white/60 hover:bg-white/[0.08] hover:text-white transition-colors"
+          title={
+            sidebarCollapsed
+              ? "Expand sidebar (Ctrl+B)"
+              : "Collapse sidebar (Ctrl+B)"
+          }
+          className="flex size-7 items-center justify-center rounded-[8px] text-muted-foreground hover:bg-foreground/[0.08] hover:text-foreground transition-colors"
         >
           {sidebarCollapsed ? (
             <PanelLeftOpen className="size-4" />
@@ -114,22 +113,22 @@ export function MacOSMenuBar({
           )}
         </button>
 
-        <div className="flex items-center gap-1.5 font-medium text-white/90">
+        <div className="flex items-center gap-1.5 font-medium text-foreground">
           <Wordmark size="sm" />
           <span className="muted font-normal">/</span>
-          <span className="font-semibold tracking-tight text-white/95">
+          <span className="font-semibold tracking-tight text-foreground">
             {routeTitle}
           </span>
         </div>
       </div>
 
       {/* Center: Kuwait Time & Date (Authentic macOS center clock) */}
-      <div className="hidden sm:flex items-center gap-2 rounded-full border border-white/8 bg-white/[0.03] px-3 py-1 text-[11px] font-mono text-white/80 tabular-nums">
-        <Clock className="size-3 text-teal-400" />
+      <div className="hidden sm:flex items-center gap-2 rounded-full border border-border bg-foreground/[0.03] px-3 py-1 text-[11px] font-mono text-foreground tabular-nums">
+        <Clock className="size-3 text-muted-foreground" />
         <span>Kuwait:</span>
-        <span className="font-semibold text-white">{timeStr}</span>
+        <span className="font-semibold text-foreground">{timeStr}</span>
         <span className="muted font-sans">·</span>
-        <span className="font-sans text-white/70">{dateStr}</span>
+        <span className="font-sans text-muted-foreground">{dateStr}</span>
       </div>
 
       {/* Right: Status chips, Theme toggle & user account */}
@@ -137,7 +136,7 @@ export function MacOSMenuBar({
         {owedCount > 0 ? (
           <Link
             to="/calendar?view=owed"
-            className="flex items-center gap-1.5 rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-0.5 text-[11px] font-medium text-amber-300 transition-colors hover:bg-amber-500/20"
+            className="flex items-center gap-1.5 rounded-full border tone-warn px-2.5 py-0.5 text-[11px] font-medium transition-colors hover:bg-warning/20"
           >
             <span className="size-1.5 rounded-full bg-amber-400 animate-pulse" />
             <span>{owedCount} owed</span>
@@ -146,16 +145,18 @@ export function MacOSMenuBar({
 
         <button
           type="button"
+          title={dark ? "Switch to light mode" : "Switch to dark mode"}
           onClick={() => setDark((d: boolean) => !d)}
-          className="flex size-7 items-center justify-center rounded-[8px] text-white/60 hover:bg-white/[0.08] hover:text-white transition-colors"
+          className="flex size-7 items-center justify-center rounded-[8px] text-muted-foreground hover:bg-foreground/[0.08] hover:text-foreground transition-colors"
         >
           {dark ? <Sun className="size-3.5" /> : <Moon className="size-3.5" />}
         </button>
 
-        <div className="flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.03] py-0.5 pr-2 pl-1 text-[11px]">
+        <div className="flex items-center gap-1.5 rounded-full border border-border bg-foreground/[0.03] py-0.5 pr-2 pl-1 text-[11px]">
           <Avatar name={name} size={22} />
-          <span className="max-w-32 truncate font-medium text-white/90">
-            {name.split(" ")[0]} <span className="muted font-normal">({role})</span>
+          <span className="max-w-32 truncate font-medium text-foreground">
+            {name.split(" ")[0]}{" "}
+            <span className="muted font-normal">({role})</span>
           </span>
         </div>
       </div>

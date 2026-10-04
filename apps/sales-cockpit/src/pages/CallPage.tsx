@@ -383,7 +383,11 @@ export default function CallPage({ me }: { me: Me }) {
             className="inline-flex h-9 items-center gap-1.5 rounded-full border border-teal-500/30 bg-teal-500/10 px-3 font-mono text-xs font-semibold tabular-nums text-teal-300 shadow-sm"
             title={`About ${totalMinutes} minutes in all`}
           >
-            <Timer className="size-3.5 text-teal-400 animate-pulse" aria-hidden /> {mmss(now - startedAt)}
+            <Timer
+              className="size-3.5 text-teal-400 animate-pulse"
+              aria-hidden
+            />{" "}
+            {mmss(now - startedAt)}
             <span className="muted">/ {totalMinutes}:00</span>
           </span>
           {key === "demo" ? (

@@ -1,5 +1,5 @@
 import { FileText, Sparkles } from "lucide-react";
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useId, useState } from "react";
 import { Link } from "react-router";
 import { api } from "../lib/api";
 import { useSetting } from "../lib/data";
@@ -103,6 +103,7 @@ export function ProposalPanel({
   error?: string | null;
   retry?: () => void;
 }) {
+  const formId = useId();
   const offer = useSetting<OfferSetting>("offer");
   const payments = offer.data?.payments?.length
     ? offer.data.payments
@@ -188,9 +189,10 @@ export function ProposalPanel({
       ) : (
         <form onSubmit={draft} className="@container space-y-3">
           <div className="grid grid-cols-1 gap-3 @[26rem]:grid-cols-2">
-            <label className="space-y-1 text-sm">
+            <label htmlFor={`${formId}-language`} className="space-y-1 text-sm">
               <span className="muted block text-xs">Language</span>
               <AnimatedSelect
+                id={`${formId}-language`}
                 value={lang}
                 onChange={e => setLang(e.target.value as "ar" | "en")}
                 className={field}
@@ -199,9 +201,10 @@ export function ProposalPanel({
                 <option value="en">English</option>
               </AnimatedSelect>
             </label>
-            <label className="space-y-1 text-sm">
+            <label htmlFor={`${formId}-payment`} className="space-y-1 text-sm">
               <span className="muted block text-xs">How the client pays</span>
               <AnimatedSelect
+                id={`${formId}-payment`}
                 value={payment}
                 onChange={e => setPayment(e.target.value)}
                 className={field}
@@ -213,9 +216,13 @@ export function ProposalPanel({
                 ))}
               </AnimatedSelect>
             </label>
-            <label className="space-y-1 text-sm">
+            <label
+              htmlFor={`${formId}-guarantee`}
+              className="space-y-1 text-sm"
+            >
               <span className="muted block text-xs">Guarantee</span>
               <AnimatedSelect
+                id={`${formId}-guarantee`}
                 value={guarantee ? "yes" : "no"}
                 onChange={e => setGuarantee(e.target.value === "yes")}
                 className={field}
@@ -226,9 +233,13 @@ export function ProposalPanel({
                 </option>
               </AnimatedSelect>
             </label>
-            <label className="space-y-1 text-sm">
+            <label
+              htmlFor={`${formId}-recording`}
+              className="space-y-1 text-sm"
+            >
               <span className="muted block text-xs">Call to draft from</span>
               <AnimatedSelect
+                id={`${formId}-recording`}
                 value={recording}
                 onChange={e => setRecording(e.target.value)}
                 className={field}

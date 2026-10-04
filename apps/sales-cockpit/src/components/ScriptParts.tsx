@@ -256,10 +256,12 @@ export function BranchGroup({
             className={`flex size-5 items-center justify-center rounded-full border transition-all ${
               open
                 ? "border-[color:var(--primary)] bg-[color:color-mix(in_oklch,var(--primary)_15%,transparent)] text-[color:var(--primary)]"
-                : "border-white/15 text-white/50"
+                : "border-border text-muted-foreground"
             }`}
           >
-            <span className="text-xs font-bold leading-none">{open ? "−" : "+"}</span>
+            <span className="text-xs font-bold leading-none">
+              {open ? "−" : "+"}
+            </span>
           </span>
         </div>
       </button>
@@ -318,13 +320,18 @@ export function Playbook({
                   const id = `${title}:${e.title}`;
                   const isOpen = open === id;
                   return (
-                    <li key={id} className="border-t border-white/5 first:border-t-0">
+                    <li
+                      key={id}
+                      className="border-t border-white/5 first:border-t-0"
+                    >
                       <button
                         type="button"
                         aria-expanded={isOpen}
                         onClick={() => setOpen(isOpen ? null : id)}
                         className={`flex w-full items-center justify-between gap-3 px-4 py-2.5 text-left text-sm font-medium transition-colors ${
-                          isOpen ? "bg-white/[0.04] text-[color:var(--primary)] font-semibold" : "hover:bg-white/[0.03] text-white/85"
+                          isOpen
+                            ? "bg-foreground/[0.04] text-foreground font-semibold"
+                            : "hover:bg-foreground/[0.03] text-foreground"
                         }`}
                         dir="auto"
                       >
@@ -333,10 +340,12 @@ export function Playbook({
                           className={`flex size-5 shrink-0 items-center justify-center rounded-full border transition-all ${
                             isOpen
                               ? "border-[color:var(--primary)] bg-[color:color-mix(in_oklch,var(--primary)_15%,transparent)] text-[color:var(--primary)]"
-                              : "border-white/15 text-white/50"
+                              : "border-border text-muted-foreground"
                           }`}
                         >
-                          <span className="text-xs font-bold leading-none">{isOpen ? "−" : "+"}</span>
+                          <span className="text-xs font-bold leading-none">
+                            {isOpen ? "−" : "+"}
+                          </span>
                         </span>
                       </button>
                       {isOpen ? (

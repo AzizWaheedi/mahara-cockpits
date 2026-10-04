@@ -1,12 +1,13 @@
 import { Menu } from "lucide-react";
-import { lazy, type ReactNode, Suspense, useCallback, useEffect, useState } from "react";
 import {
-  Navigate,
-  Route,
-  Routes,
-  useLocation,
-  useParams,
-} from "react-router";
+  lazy,
+  type ReactNode,
+  Suspense,
+  useCallback,
+  useEffect,
+  useState,
+} from "react";
+import { Navigate, Route, Routes, useLocation, useParams } from "react-router";
 import { MacOSDock } from "./components/MacOSDock";
 import { MacOSMenuBar } from "./components/MacOSMenuBar";
 import { PageBoundary } from "./components/PageBoundary";
@@ -258,7 +259,7 @@ export function Seated({
       {/* Floating Detached Sidebar Island (Mahara Soft Floating) */}
       <div className="hidden lg:flex lg:flex-col lg:justify-center my-2.5 ml-3 shrink-0">
         <aside
-          className={`h-[calc(100dvh-1.25rem)] rounded-[26px] border border-white/10 bg-[#091333]/90 backdrop-blur-2xl shadow-2xl transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] overflow-hidden flex flex-col ${
+          className={`h-[calc(100dvh-1.25rem)] rounded-[26px] border border-border bg-background/90 backdrop-blur-2xl shadow-2xl transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] overflow-hidden flex flex-col ${
             sidebarCollapsed ? "w-16" : "w-60"
           }`}
         >
@@ -274,7 +275,7 @@ export function Seated({
             onClick={() => setDrawer(false)}
             className="absolute inset-0 bg-black/60 backdrop-blur-sm"
           />
-          <aside className="pt-safe absolute inset-y-2.5 left-2.5 w-64 rounded-[24px] border border-white/12 bg-[#091333]/95 shadow-2xl backdrop-blur-2xl overflow-hidden flex flex-col">
+          <aside className="pt-safe absolute inset-y-2.5 left-2.5 w-64 rounded-[24px] border border-border bg-background/95 shadow-2xl backdrop-blur-2xl overflow-hidden flex flex-col">
             {sidebar(() => setDrawer(false))}
           </aside>
         </div>

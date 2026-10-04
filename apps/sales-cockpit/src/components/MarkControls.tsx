@@ -57,7 +57,7 @@ const OPTIONS: {
     label: "Disqualified",
     icon: Ban,
     toneStyle:
-      "border-white/15 bg-white/[0.04] text-white/70 hover:bg-white/[0.08] active:scale-[0.97]",
+      "border-border bg-foreground/[0.04] text-foreground hover:bg-foreground/[0.08] active:scale-[0.97]",
   },
 ];
 
@@ -232,7 +232,6 @@ export function MarkControls({
       </div>
     );
 
-
   if (asking)
     return (
       <div className="flex flex-wrap items-center gap-1.5">
@@ -242,7 +241,7 @@ export function MarkControls({
             key={r}
             type="button"
             onClick={() => choose("invalid", r)}
-            className="rounded-full border border-white/15 bg-white/[0.05] px-2.5 py-1 text-xs font-medium text-white/80 transition-colors hover:bg-white/[0.1] hover:text-white"
+            className="rounded-full border border-border bg-foreground/[0.05] px-2.5 py-1 text-xs font-medium text-foreground transition-colors hover:bg-foreground/[0.1] hover:text-foreground"
           >
             {r}
           </button>
@@ -250,7 +249,7 @@ export function MarkControls({
         <button
           type="button"
           onClick={() => setAsking(false)}
-          className="muted text-xs underline underline-offset-2 hover:text-white"
+          className="muted text-xs underline underline-offset-2 hover:text-foreground"
         >
           Back
         </button>

@@ -10,7 +10,8 @@ import {
   Sun,
   UserSearch,
 } from "lucide-react";
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import type React from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router";
 
 export interface DockItem {
@@ -24,14 +25,62 @@ export interface DockItem {
 
 export const SALES_DOCK_ITEMS: DockItem[] = [
   { id: "today", name: "Today", to: "/", icon: Sun, color: "#00cfc8" },
-  { id: "dialer", name: "Dialer", to: "/dialer", icon: PhoneCall, color: "#38bdf8" },
-  { id: "calendar", name: "Calendar", to: "/calendar", icon: CalendarDays, color: "#818cf8" },
-  { id: "leads", name: "Leads", to: "/leads", icon: UserSearch, color: "#a78bfa" },
-  { id: "pipeline", name: "Pipeline", to: "/pipeline", icon: KanbanSquare, color: "#f472b6" },
-  { id: "proposals", name: "Proposals", to: "/proposals", icon: FileText, color: "#fb923c" },
-  { id: "numbers", name: "Numbers", to: "/numbers", icon: ChartNoAxesColumn, color: "#4ade80" },
-  { id: "deck", name: "Pitch Deck", to: "/deck", icon: Lightbulb, color: "#facc15" },
-  { id: "eod", name: "End of Day", to: "/eod", icon: ClipboardCheck, color: "#2dd4bf" },
+  {
+    id: "dialer",
+    name: "Dialer",
+    to: "/dialer",
+    icon: PhoneCall,
+    color: "#38bdf8",
+  },
+  {
+    id: "calendar",
+    name: "Calendar",
+    to: "/calendar",
+    icon: CalendarDays,
+    color: "#818cf8",
+  },
+  {
+    id: "leads",
+    name: "Leads",
+    to: "/leads",
+    icon: UserSearch,
+    color: "#a78bfa",
+  },
+  {
+    id: "pipeline",
+    name: "Pipeline",
+    to: "/pipeline",
+    icon: KanbanSquare,
+    color: "#f472b6",
+  },
+  {
+    id: "proposals",
+    name: "Proposals",
+    to: "/proposals",
+    icon: FileText,
+    color: "#fb923c",
+  },
+  {
+    id: "numbers",
+    name: "Numbers",
+    to: "/numbers",
+    icon: ChartNoAxesColumn,
+    color: "#4ade80",
+  },
+  {
+    id: "deck",
+    name: "Pitch Deck",
+    to: "/deck",
+    icon: Lightbulb,
+    color: "#facc15",
+  },
+  {
+    id: "eod",
+    name: "End of Day",
+    to: "/eod",
+    icon: ClipboardCheck,
+    color: "#2dd4bf",
+  },
 ];
 
 interface MacOSDockProps {
@@ -57,7 +106,9 @@ export function MacOSDock({
   const navigate = useNavigate();
   const location = useLocation();
   const [mouseX, setMouseX] = useState<number | null>(null);
-  const [currentScales, setCurrentScales] = useState<number[]>(items.map(() => 1));
+  const [currentScales, setCurrentScales] = useState<number[]>(
+    items.map(() => 1),
+  );
   const [currentPositions, setCurrentPositions] = useState<number[]>([]);
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
 
@@ -144,7 +195,13 @@ export function MacOSDock({
     if (needsAnimation) {
       animationFrameRef.current = requestAnimationFrame(animateToTarget);
     }
-  }, [mouseX, calculateTargetMagnification, calculatePositions, currentScales, currentPositions]);
+  }, [
+    mouseX,
+    calculateTargetMagnification,
+    calculatePositions,
+    currentScales,
+    currentPositions,
+  ]);
 
   useEffect(() => {
     if (animationFrameRef.current) {
@@ -204,6 +261,8 @@ export function MacOSDock({
 
   return (
     <div
+      role="navigation"
+      aria-label="Quick navigation"
       ref={dockRef}
       onMouseMove={handleMouseMove}
       onMouseLeave={handleMouseLeave}
@@ -233,7 +292,7 @@ export function MacOSDock({
           const badgeVal =
             item.id === "calendar" || item.id === "today"
               ? owedCount
-              : item.badge ?? 0;
+              : (item.badge ?? 0);
 
           return (
             <button

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import { useReps } from "../lib/data";
 import type { Me } from "../lib/types";
 import { AnimatedSelect, select } from "./kit";
@@ -26,6 +26,7 @@ export function useScope(
   me: Me,
   opts: { people?: boolean; label?: string } = {},
 ) {
+  const selectId = useId();
   const reps = useReps();
   const [choice, setChoice] = useState<string>(() => {
     if (!me.manager) return "mine";
@@ -80,9 +81,13 @@ export function useScope(
 
   const current = view.kind === "person" ? `rep:${view.repId}` : view.kind;
   const ScopeSwitch = me.manager ? (
-    <label className="inline-flex items-center gap-2 text-sm">
+    <label
+      htmlFor={selectId}
+      className="inline-flex items-center gap-2 text-sm"
+    >
       <span className="muted">{opts.label ?? "Whose calls"}</span>
       <AnimatedSelect
+        id={selectId}
         value={current}
         onChange={e => pick(e.target.value)}
         className={select}

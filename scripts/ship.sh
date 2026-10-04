@@ -99,6 +99,10 @@ ship() {
   (cd "$dir" && bunx biome check --line-ending=auto $lint_dirs >/dev/null) || { echo "lint failed in $dir (run: cd $dir && bunx biome check --line-ending=auto --write $lint_dirs)"; exit 1; }
   echo "== $app: typecheck"
   (cd "$dir" && bun run typecheck)
+  if [ "$app" = "sales" ]; then
+    echo "== sales: tests"
+    (cd "$dir" && bun test src)
+  fi
   if [ -n "$url" ]; then
     echo "== $app: backend"
     (cd "$dir" && bunx convex deploy --yes --typecheck enable)
@@ -199,7 +203,12 @@ case "${1:-all}" in
 esac
 
 echo "== smoke check"
-if [ "${SHIP_SMOKE_READ_ONLY:-}" = 1 ]; then
+if [ "${1:-all}" = "sales" ]; then
+  # Sales has no Convex backend; check its origin and portal route directly.
+  curl -fsS -m 30 -o /dev/null https://mahara-sales.vercel.app/sales/
+  curl -fsS -m 30 -o /dev/null https://cockpit.maharamedia.com/sales/
+  echo "sales origin and portal route respond."
+elif [ "${SHIP_SMOKE_READ_ONLY:-}" = 1 ]; then
   # A migration release must not send the failure alert to Slack without a
   # separately approved outward action. The local query checks the live page.
   (cd apps/media-buyer-cockpit && bunx convex run --prod smoke:local | grep -E '"ok"|failures' | head -5)

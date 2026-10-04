@@ -1980,12 +1980,15 @@ function CallPane({
                           : "col-span-2 sm:col-span-3 xl:col-span-2 border-teal-500/40 bg-gradient-to-r from-[#2e5bd6]/85 to-[#00cfc8]/85 text-white font-semibold hover:brightness-110 shadow-md shadow-teal-500/15"
                         : isSelected
                           ? "border-[color:var(--primary)] bg-[color:color-mix(in_oklch,var(--primary)_15%,transparent)] text-[color:var(--foreground)] font-semibold shadow-sm"
-                          : "border-white/10 bg-white/[0.03] hover:bg-white/[0.07] hover:border-white/20 text-white/85"
+                          : "border-border bg-foreground/[0.03] hover:bg-foreground/[0.07] hover:border-foreground/20 text-foreground"
                     }`}
                   >
                     {isBooked ? (
                       <span className="inline-flex items-center justify-center gap-1.5 py-0.5">
-                        <CalendarPlus className="size-4 text-white" aria-hidden />
+                        <CalendarPlus
+                          className="size-4 text-white"
+                          aria-hidden
+                        />
                         {o.label}
                       </span>
                     ) : (
@@ -2339,19 +2342,28 @@ function CallBand({
               <span className="relative inline-flex size-2.5 rounded-full bg-teal-500 shadow-[0_0_8px_#00cfc8]" />
             </span>
           ) : null}
-          <p className="text-sm font-semibold tracking-tight" aria-live="polite" aria-atomic>
+          <p
+            className="text-sm font-semibold tracking-tight"
+            aria-live="polite"
+            aria-atomic
+          >
             {title}
           </p>
         </div>
         {detail ? (
-          <p className="muted text-xs mt-0.5" aria-live={open ? "polite" : undefined}>
+          <p
+            className="muted text-xs mt-0.5"
+            aria-live={open ? "polite" : undefined}
+          >
             {detail}
           </p>
         ) : null}
       </div>
       {big ? (
         <div className="flex shrink-0 items-center gap-1.5 rounded-full border border-teal-500/30 bg-teal-500/15 px-3 py-1 font-mono text-lg font-bold tracking-tight text-teal-300 tabular-nums shadow-sm">
-          {open ? <span className="size-2 rounded-full bg-teal-400 animate-pulse" /> : null}
+          {open ? (
+            <span className="size-2 rounded-full bg-teal-400 animate-pulse" />
+          ) : null}
           {big}
         </div>
       ) : null}
