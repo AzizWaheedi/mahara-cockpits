@@ -276,8 +276,13 @@ def expected_sheets(data: dict[str, Any]) -> int:
     if (data.get("cost") or {}).get("layers"):
         n += 1
     arith = data.get("arithmetic") or {}
-    has_arith = (bool(arith.get("project_values")) or bool(arith.get("project_value"))
-                 or bool(arith.get("project_value_low")))
+    # renderDoc's own test: a single value draws the page only in its mode,
+    # and only as a number (JavaScript's Number(), so a FILL draws nothing).
+    mode = arith.get("mode")
+    has_arith = (bool(arith.get("project_values"))
+                 or (mode == "threshold" and bool(arith.get("margins")))
+                 or (mode == "margin" and bool(figure(arith.get("project_value"))))
+                 or (mode == "volume" and bool(figure(arith.get("project_value_low")))))
     if has_arith and not arith.get("inline"):
         n += 1
     if data.get("problems"):
@@ -352,6 +357,19 @@ def content_strings(data: dict[str, Any]) -> Iterable[tuple[str, str]]:
         yield path, text
 
 
+def figure(value: Any) -> Optional[float]:
+    """A figure the arithmetic page computes with, read the way the template
+    reads it (Number()): a number, or a string of plain digits. A FILL, or
+    "1,000,000" typed as text, is None: a gap, never a crash. (The cockpit's
+    fill already turns a typed figure into a number.)"""
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = str(value).strip()
+    return float(text) if re.fullmatch(r"-?\d+(?:\.\d+)?", text) else None
+
+
 def our_numbers(data: dict[str, Any], resolved: dict[str, Any], offer: Optional[dict[str, Any]] = None) -> set[int]:
     """Figures that are ours, not the client's, so evidence does not apply:
     the chosen offer in dollars and in the local currency, the engagement,
@@ -373,14 +391,12 @@ def our_numbers(data: dict[str, Any], resolved: dict[str, Any], offer: Optional[
         int(ads * months), int(fee * rate), int(ads * rate),
     }
     total = (fee + ads * months) * rate
-    for m in (arith.get("margins") or []):
+    for m in map(figure, arith.get("margins") or []):
         if m:
             ours.add(int(round(total / (m / 100.0))))
-    for v in (arith.get("project_values") or []):
+    for v in map(figure, [*(arith.get("project_values") or []), arith.get("project_value")]):
         if v:
             ours.add(int(v))
-    if arith.get("project_value"):
-        ours.add(int(arith["project_value"]))
     return {n for n in ours if n}
 
 
@@ -938,6 +954,28 @@ def check_arithmetic(data: dict[str, Any], rep: Report) -> None:
     has had its cheapest row quietly removed."""
     a = data.get("arithmetic") or {}
     roi = data.get("roi") or {}
+
+    # The drafter writes FILL where the call gave no figure. Divided by, it
+    # crashed the whole check, and the queue then drafted the call again from
+    # the start, four times. A FILL is a gap for the closer like any other;
+    # anything else that is not a number is the draft's fault.
+    given = [(k, a.get(k)) for k in ("project_value", "project_value_low", "project_value_high",
+                                     "target_additional_low", "target_additional_high", "engagement_total")]
+    given += [(f"project_values[{i}]", v) for i, v in enumerate(a.get("project_values") or [])]
+    given += [(f"margins[{i}]", v) for i, v in enumerate(a.get("margins") or [])]
+    gaps = [(k, v) for k, v in given if v not in (None, "") and figure(v) is None]
+    if gaps:
+        names = ", ".join("arithmetic." + k for k, _v in gaps)
+        if all(FILL_RE.search(str(v)) for _k, v in gaps):
+            rep.add(WARN, "arithmetic", f"the break-even page waits on {names}, still FILL. Fill it with the "
+                                        "figure from the call and the page is built", send=FAIL)
+        else:
+            rep.add(FAIL, "arithmetic", f"{names} is not a number the page can compute with. Write the "
+                                        "figure as digits only, or FILL where the call never gave it")
+        return
+    a = {**a, **{k: figure(v) for k, v in given[:6] if v not in (None, "")},
+         "project_values": [figure(v) for v in (a.get("project_values") or [])],
+         "margins": [figure(v) for v in a["margins"]] if a.get("margins") else None}
     threshold = a.get("mode") == "threshold"
     margin_mode = a.get("mode") == "margin"
     volume_mode = a.get("mode") == "volume"

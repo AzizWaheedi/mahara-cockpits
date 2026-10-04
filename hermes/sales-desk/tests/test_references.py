@@ -192,6 +192,58 @@ class MissedFormTests(unittest.TestCase):
         self.assertFalse(failed(deal, "offer"))
 
 
+class ArithmeticGapTests(unittest.TestCase):
+    """A margin-mode reference (B2B's 175209069) shows the drafter one project
+    value. For a call that never gave one, the drafter writes FILL there, and
+    the check used to divide by it and crash."""
+
+    def margin(self, value) -> dict:
+        deal = general_deal()
+        deal["arithmetic"] = {k: v for k, v in deal["arithmetic"].items() if k != "project_values"}
+        deal["arithmetic"].update(mode="margin", project_value=value)
+        return deal
+
+    def run_check(self, deal: dict) -> validate.Result:
+        return validate.validate(deal, None, resolved=offer.resolve(TEST_OFFER), offer=TEST_OFFER,
+                                 today=date(2099, 1, 1))
+
+    def test_a_fill_waits_for_the_closer_instead_of_crashing(self):
+        res = self.run_check(self.margin("FILL"))
+        row = next(r for r in res.rows if r["check"] == "arithmetic")
+        self.assertEqual((row["status"], row["send"]), (validate.WARN, validate.FAIL))
+        self.assertIn("arithmetic.project_value, still FILL", row["detail"])
+        self.assertEqual(res.status(), "needs_input")
+        self.assertIn("arithmetic.project_value", res.fill_fields)
+        # The template draws no page for Number("FILL"), so none is expected.
+        self.assertEqual(validate.expected_sheets(self.margin("FILL")), 6)
+
+    def test_the_filled_figure_computes(self):
+        res = self.run_check(self.margin(1000000))
+        self.assertEqual(next(r for r in res.rows if r["check"] == "arithmetic")["status"], validate.PASS)
+        self.assertEqual(validate.expected_sheets(self.margin(1000000)), 7)
+
+    def test_words_where_a_figure_belongs_fail_the_draft(self):
+        for value in ("1,000,000", "about a million"):
+            res = self.run_check(self.margin(value))
+            row = next(r for r in res.rows if r["check"] == "arithmetic")
+            self.assertEqual(row["status"], validate.FAIL, value)
+            self.assertIn("digits only", row["detail"])
+
+    def test_a_fill_in_the_grid_is_a_gap_too(self):
+        deal = general_deal()
+        deal["arithmetic"]["project_values"] = [200000, "FILL", 1000000]
+        row = next(r for r in self.run_check(deal).rows if r["check"] == "arithmetic")
+        self.assertEqual(row["status"], validate.WARN)
+        self.assertIn("arithmetic.project_values[1]", row["detail"])
+
+    def test_the_sheet_count_follows_the_template_mode_by_mode(self):
+        deal = general_deal()
+        deal["arithmetic"] = {"mode": "threshold", "margins": [10, 20], "currency": "SAR"}
+        self.assertEqual(validate.expected_sheets(deal), 7)
+        deal["arithmetic"] = {"project_value": 450000, "currency": "SAR"}   # no mode: renderDoc draws nothing
+        self.assertEqual(validate.expected_sheets(deal), 6)
+
+
 class ShapeDateTests(unittest.TestCase):
     def test_the_drafter_is_given_todays_date_not_the_references(self):
         ref = general_deal(date="5 September 2026", valid_until="30 September 2026")
