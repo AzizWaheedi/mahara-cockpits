@@ -27,7 +27,7 @@ from desk import build, offer, render, validate  # noqa: E402
 from desk.config import ROOT  # noqa: E402
 from tests import fakes  # noqa: E402
 from tests.fakes import TEST_OFFER, general_deal, specific_deal  # noqa: E402
-from tests.test_desk import check, failing, resolved  # noqa: E402
+from tests.test_desk import PROP, check, failing, resolved, with_offer  # noqa: E402
 
 TEMPLATE = (ROOT / "proposal-template.html").read_text(encoding="utf-8")
 
@@ -686,6 +686,87 @@ class CosmeticTests(unittest.TestCase):
         for key in ("gross_margin", "project_label", "pool"):
             self.assertIn(f'"{key}"', shape)
         self.assertNotIn('"2 to 4"', shape)
+
+
+# ------------------------------------------------------- the code review ---
+class FiguresKeptTests(unittest.TestCase):
+    """A rebuild that finally failed said "The draft failed four times", and
+    Draft again started a fresh draft that dropped the closer's figures."""
+
+    from tests.test_desk import QueueTests as _Q
+    setUp = _Q.setUp
+    queue = _Q.queue
+    worker = _Q.worker
+    filled = _Q.filled
+
+    def rebuild_request(self, **row: Any) -> None:
+        self.queue("req-5", "p-9", params={"proposal_id": "p-9", "rebuild": True, "lang": "en"}, **row)
+
+    def test_a_rebuild_that_fails_for_good_says_the_figures_are_kept(self):
+        self.filled(deal=with_closer_figures(specific_deal()))
+        self.rebuild_request(attempts=3)
+        with mock.patch.object(self.sb, "upload", side_effect=RuntimeError("storage said no")):
+            self.worker(provider=fakes.never, fathom_client=fakes.never).run()
+        p = self.pg.one(PROP, id="p-9")
+        self.assertEqual(p["status"], "failed")
+        self.assertNotIn("The draft failed four times", p["error"])
+        self.assertIn("your figures", p["error"])
+        self.assertIn("Draft again", p["error"])
+        self.assertIn("storage said no", p["error"])
+
+    def test_a_rebuild_the_worker_dropped_four_times_says_so_too(self):
+        from datetime import datetime, timedelta, timezone
+        old = (datetime.now(timezone.utc) - timedelta(minutes=45)).replace(microsecond=0).isoformat()
+        self.filled(deal=with_closer_figures(specific_deal()))
+        self.rebuild_request(status="running", claimed_at=old.replace("+00:00", "Z"), claimed_by="dead-box",
+                             attempts=4, error="timed out")
+        self.worker().reap()
+        p = self.pg.one(PROP, id="p-9")
+        self.assertEqual(p["status"], "failed")
+        self.assertIn("your figures", p["error"])
+
+    def test_a_rebuild_the_checker_fails_keeps_the_figures_and_says_how(self):
+        deal = with_closer_figures(specific_deal())
+        deal["terms"].append("If we do not deliver 30 qualified appointments in 90 days, we work for free.")
+        self.filled(deal=deal)
+        self.rebuild_request()
+        self.worker(provider=fakes.never, fathom_client=fakes.never).run()
+        p = self.pg.one(PROP, id="p-9")
+        self.assertEqual(p["status"], "failed")
+        self.assertIn("your figures", p["error"])
+        self.assertIn("draft again", p["error"].lower())
+
+    def test_a_fresh_draft_takes_the_closer_s_figures_back(self):
+        from tests.fakes import FakeProvider
+        drafted = specific_deal()
+        drafted["cost"]["close"] = "FILL"
+        drafted["gap_points"][0]["v"] = "FILL"
+        figures = {"cost.close": "You pay it every month already.", "gap_points.0.v": "7,700",
+                   "funnel.stages.9.note": "a blank the new draft does not have"}
+        self.queue(params={"lang": "en", "proposal_id": "p-1", "offer": {"payment": "pif", "guarantee": False},
+                           "fills": figures})
+        prov = FakeProvider([fakes.triage_answer(), drafted])
+        self.worker(provider=lambda c, l: prov).run()
+        p = self.pg.one(PROP, id="p-1")
+        self.assertEqual(p["deal"]["cost"]["close"], "You pay it every month already.")
+        self.assertEqual(p["deal"]["gap_points"][0]["v"], 7700)  # a whole FILL takes a number, as proposal.fill does
+        self.assertEqual(p["deal"]["closer_figures"], figures)
+        self.assertEqual(p["status"], "ready", p["validation"]["report"])
+        notes = " ".join(p["validation"]["notes"])
+        self.assertIn("2 of the figures you typed", notes)
+        self.assertIn("funnel.stages.9.note", notes)
+
+    def test_the_closer_s_figures_are_not_read_as_copy(self):
+        deal = with_closer_figures(specific_deal(lang="ar"))
+        deal["closer_figures"]["headline"] = "FILL is what it said before"
+        self.assertFalse([p for p, _t in validate.content_strings(deal) if p.startswith("closer_figures")])
+        self.assertNotIn("closer_figures", " ".join(check(deal).fill_fields))
+
+
+def with_closer_figures(deal: dict[str, Any]) -> dict[str, Any]:
+    deal = with_offer(deal, {"payment": "pif"})
+    deal["closer_figures"] = {"cost.close": "Typed by the closer in English."}
+    return deal
 
 
 # ------------------------------------------------------------- the template ---

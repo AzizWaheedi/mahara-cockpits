@@ -133,6 +133,17 @@ what the closer filled in is the closer's own, so the evidence rows say that
 rather than warn. The offer comes from the stamp in the deal (or
 `validation.offer`, or the first request's choice).
 
+What the closer typed is never lost to Draft again (5 October 2026).
+`proposal.fill` keeps it, as typed, in the deal's `closer_figures` (which the
+validator does not read as copy). A rebuild that fails for good tells the
+closer the figures are saved and that Draft again rebuilds with them, and
+then it does: `proposal.retry` after a failed rebuild queues a rebuild. Any
+other Draft again is a fresh draft carrying `fills`, and the worker puts each
+figure back into the new draft's blank at the same place, says in the notes
+how many went back and which had no blank to go into, and checks the new draft
+with the closer's figures counted as the closer's own. Try again on a failed
+request (`request.set`) is refused for a proposal that was archived or sent.
+
 Rebuilds are read ahead of drafts, whatever their age, so a run's limit
 (`SALES_REQUESTS_PER_RUN`, 3) can never leave one behind drafts that wait on a
 model. An outage holds only the requests of its own kind for the rest of the

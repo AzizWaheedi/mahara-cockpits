@@ -201,6 +201,21 @@ export function sentence(text: string): string {
   return /[.!?]$/.test(t) ? t : `${t}.`;
 }
 
+/**
+ * What Draft again says once it is asked (sales-api proposal.retry): a
+ * rebuild that failed is rebuilt with the closer's figures, and a fresh
+ * draft takes the figures the closer typed back into its blanks.
+ */
+export function retryToast(
+  out: { rebuild?: boolean; figures_kept?: boolean } | null | undefined,
+): string {
+  if (out?.rebuild)
+    return "Rebuilding the document with your figures. It usually takes a minute or two.";
+  if (out?.figures_kept)
+    return "Drafting again with the same choices, and your figures go back in. It usually takes about ten minutes.";
+  return "Drafting again with the same choices. It usually takes about ten minutes.";
+}
+
 /** A failed draft on the lead's card: the writer's sentence, with the next step when it has none. */
 export function failedLine(error: string | null): string {
   const said = sentence(error?.trim() || "The writer gave no reason");

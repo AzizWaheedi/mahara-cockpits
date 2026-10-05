@@ -246,6 +246,7 @@ def shape_of(deal: dict[str, Any], today: Optional[date] = None) -> dict[str, An
     d["valid_until"] = f"<two weeks later, {day_words(today + timedelta(days=14))}, in the same format>"
     d.pop("quotes", None)
     d.pop("offer", None)
+    d.pop("closer_figures", None)
     if "logo" in d:
         d["logo"] = LOGO
     # A general or blind proposal never carries a margin, and a blind one no

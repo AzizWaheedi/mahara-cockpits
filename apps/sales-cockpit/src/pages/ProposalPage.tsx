@@ -28,6 +28,7 @@ import {
   noDocument,
   notesOf,
   REQUEST_GONE,
+  retryToast,
   sentence,
 } from "../lib/proposals";
 import { supabase } from "../lib/supabase";
@@ -250,12 +251,12 @@ export default function ProposalPage({ me }: { me: Me }) {
   async function act(
     action: string,
     body: Record<string, unknown>,
-    done: string,
+    done: string | ((out: Record<string, unknown>) => string),
   ) {
     setBusy(true);
     try {
-      await api(action, body);
-      toast.success(done);
+      const out = await api<Record<string, unknown>>(action, body);
+      toast.success(typeof done === "string" ? done : done(out ?? {}));
       proposal.reload();
     } catch (e) {
       toast.error(String((e as Error).message ?? e));
@@ -389,10 +390,10 @@ export default function ProposalPage({ me }: { me: Me }) {
               disabled={busy}
               className="underline underline-offset-2"
               onClick={() =>
-                act(
-                  "proposal.retry",
-                  { id: p.id },
-                  "Drafting again with the same choices. It usually takes about ten minutes.",
+                act("proposal.retry", { id: p.id }, out =>
+                  retryToast(
+                    out as { rebuild?: boolean; figures_kept?: boolean },
+                  ),
                 )
               }
             >

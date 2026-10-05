@@ -169,6 +169,20 @@ describe("filling the blanks a draft left", () => {
   test("a fill that still says FILL is refused", () => {
     expect(applyFills(deal, { headline: "Your next FILL" }).ok).toBe(false);
   });
+  test("the figures the closer typed are kept with the draft, so drafting again can take them back", () => {
+    const first = applyFills(deal, { "investment.rows.0.amount": "6,000" });
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+    expect((first.deal as Record<string, unknown>).closer_figures).toEqual({ "investment.rows.0.amount": "6,000" });
+    const second = applyFills(first.deal, { headline: "Your next 12 projects" });
+    expect(second.ok).toBe(true);
+    if (!second.ok) return;
+    expect((second.deal as Record<string, unknown>).closer_figures).toEqual({
+      "investment.rows.0.amount": "6,000",
+      headline: "Your next 12 projects",
+    });
+    expect(fillPaths(second.deal)).toEqual([]);
+  });
 });
 
 describe("Aziz's call reviews", () => {

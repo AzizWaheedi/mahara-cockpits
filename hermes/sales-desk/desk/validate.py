@@ -272,7 +272,9 @@ def rate_off(currency: str, rate: Any) -> bool:
 
 # Keys that are machine data rather than anything a reader reads: images, and
 # the offer stamp the desk writes so a deal can be checked again later.
-NOT_CONTENT = ("logo", "cover_image", "offer")
+# And the figures the closer typed into the blanks, kept so a fresh draft
+# can take them back (sales-api proposal.fill).
+NOT_CONTENT = ("logo", "cover_image", "offer", "closer_figures")
 
 FILL_RE = re.compile(r"\bFILL\b")
 

@@ -83,6 +83,14 @@ def closer_wait(e: BaseException, *, rebuild: bool = False) -> str:
             "that is fixed, so there is no need to ask again; if it is still waiting in an hour, tell the CEO.")
 
 
+def rebuild_failed(last_error: str) -> str:
+    """A rebuild that failed for good, in words the closer can act on: the
+    figures are kept, and Draft again rebuilds with them."""
+    return (f"Your figures are saved, but the document could not be rebuilt with them after {MAX_ATTEMPTS} tries. "
+            "Press Draft again to rebuild it with your figures; if it fails again, tell the CEO. "
+            f"The last error: {last_error}")[:600]
+
+
 def fathom_down(e: Any) -> bool:
     """Fathom unreachable, overloaded or rate limiting after its own retries:
     an outage. A 404, a 500 for one recording or an answer that is not JSON is
@@ -255,7 +263,8 @@ class Worker:
                 final = attempts >= MAX_ATTEMPTS
                 self.sb.request_failed(rid, msg, final=final)
                 if final:
-                    self._proposal_failed(proposal_id, rid, f"The draft failed four times. The last error: {msg}")
+                    self._proposal_failed(proposal_id, rid, rebuild_failed(msg) if rebuild else
+                                          f"The draft failed four times. The last error: {msg}")
                     out["failed"] += 1
                 else:
                     self._proposal_note(proposal_id, rid, f"Try {attempts} of {MAX_ATTEMPTS} failed ({msg}); "
@@ -299,7 +308,10 @@ class Worker:
         for req in self.sb.stuck(KIND, cutoff):
             attempts = int(req.get("attempts") or 0)
             final = attempts >= MAX_ATTEMPTS
-            if final:
+            params = req.get("params") if isinstance(req.get("params"), dict) else {}
+            if final and params.get("rebuild"):
+                message = rebuild_failed(str(req.get("error") or "the worker stopped before finishing"))
+            elif final:
                 message = "The worker stopped before finishing this proposal four times. Draft it again."
                 if req.get("error"):
                     message += f" The last error: {req['error']}"
@@ -308,7 +320,6 @@ class Worker:
                            "it will be tried again.")
             if self.sb.reaped(req, message, final=final):
                 n += 1
-                params = req.get("params") if isinstance(req.get("params"), dict) else {}
                 if final:
                     self._proposal_failed(str(params.get("proposal_id") or ""), str(req.get("id") or ""), message)
                 self.log(f"request {req.get('id')}: {'parked' if final else 'back in the queue'} after "
@@ -389,9 +400,13 @@ class Worker:
                  f"({len(picked.text):,} characters, {lang}, {resolved['payment']}, "
                  f"guarantee {'on' if resolved['guarantee'] else 'off'})")
         p = self.route().begin()
+        # Drafted again after the closer typed figures into a version's
+        # blanks: sales-api proposal.retry passes them, and they go back in.
+        fills = params.get("fills") if isinstance(params.get("fills"), dict) else None
         outcome = engine_mod.run(
             call, lang=lang, resolved=resolved, offer=self.offer, p=p, cfg=self.cfg, log=self.log,
-            workdir=self.cfg.out_dir / pid, renderer=self.renderer, beat=lambda: self.sb.touch(rid, self.host))
+            workdir=self.cfg.out_dir / pid, renderer=self.renderer, beat=lambda: self.sb.touch(rid, self.host),
+            fills=fills)
         extra = {
             "triage": {"variant": outcome.variant, "why": outcome.why, "found": outcome.found},
             "reference": outcome.reference,
@@ -437,7 +452,7 @@ class Worker:
                 notes.insert(0, str(route["note"]))
         return self._finish(proposal, deal, result, workdir / f"v{n}.html", resolved=resolved, variant=variant,
                             model=proposal.get("model") or "", notes=notes, extra=extra,
-                            lang=lang, recording_id=proposal.get("recording_id"), version=n)
+                            lang=lang, recording_id=proposal.get("recording_id"), version=n, rebuild=True)
 
     def _offer_for(self, proposal: dict[str, Any], deal: dict[str, Any]) -> dict[str, Any]:
         """The offer a proposal was written for: the stamp in its deal, else the
@@ -455,7 +470,7 @@ class Worker:
 
     def _finish(self, proposal: dict[str, Any], deal: dict[str, Any], result: Any, html_path: Path, *,
                 resolved: dict[str, Any], variant: str, model: str, notes: list[str], extra: dict[str, Any],
-                lang: str, recording_id: Any, version: Optional[int] = None) -> dict[str, Any]:
+                lang: str, recording_id: Any, version: Optional[int] = None, rebuild: bool = False) -> dict[str, Any]:
         """Files into the bucket, the verdict onto the proposal row."""
         pid = str(proposal["id"])
         status = result.status()
@@ -487,7 +502,7 @@ class Worker:
             status=status, deal=deal, validation=validation, fill_count=result.fills, variant=variant,
             model=model or None, html_path=html_key, pdf_path=pdf_key, lang=lang,
             recording_id=str(recording_id) if recording_id else proposal.get("recording_id"),
-            error=failure_sentence(result, n) if status == "failed" else None)
+            error=failure_sentence(result, n, rebuild=rebuild) if status == "failed" else None)
         return {"proposal_id": pid, "status": status, "variant": variant, "fill_count": result.fills,
                 "html_path": html_key, "pdf_path": pdf_key, "model": model or None, "version": n}
 
@@ -515,9 +530,15 @@ def next_version(html_path: Any) -> int:
     return int(m.group(1)) + 1 if m else 1
 
 
-def failure_sentence(result: Any, version: int) -> str:
-    errors = result.errors()
+def failure_sentence(result: Any, version: int, rebuild: bool = False) -> str:
+    errors = [e.rstrip(". ") for e in result.errors()]
     head = "; ".join(errors[:3]) + (f"; and {len(errors) - 3} more" if len(errors) > 3 else "")
+    if rebuild:
+        # Said first, because it is what the closer needs to know: what they
+        # typed is not lost, and drafting again takes it back.
+        return (f"Your figures are saved, and the document rebuilt with them did not pass the checks: {head}. "
+                f"It is saved as version {version}: open it to see, then draft again, and the new draft takes "
+                "your figures back.")[:600]
     return (f"The draft did not pass the checks: {head}. It is saved as version {version}: open it to see, "
             "then draft again.")[:600]
 

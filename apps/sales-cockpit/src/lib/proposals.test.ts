@@ -9,6 +9,7 @@ import {
   proposalTitle,
   REQUEST_GONE,
   requestRead,
+  retryToast,
   sentence,
   tryWords,
   waitingFor,
@@ -321,5 +322,24 @@ describe("requestRead", () => {
       data: null,
       error: { message: "offline" },
     });
+  });
+});
+
+describe("retryToast", () => {
+  test("a rebuild that failed is rebuilt with the closer's figures, in minutes", () => {
+    expect(retryToast({ rebuild: true })).toBe(
+      "Rebuilding the document with your figures. It usually takes a minute or two.",
+    );
+  });
+  test("a fresh draft says the figures go back in when there are some", () => {
+    expect(retryToast({ rebuild: false, figures_kept: true })).toBe(
+      "Drafting again with the same choices, and your figures go back in. It usually takes about ten minutes.",
+    );
+    expect(retryToast({})).toBe(
+      "Drafting again with the same choices. It usually takes about ten minutes.",
+    );
+    expect(retryToast(null)).toBe(
+      "Drafting again with the same choices. It usually takes about ten minutes.",
+    );
   });
 });

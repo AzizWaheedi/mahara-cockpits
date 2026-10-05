@@ -145,8 +145,52 @@ def triage(call: Call, p: Any, cfg: Config, log: Callable[[str], None],
         return None, ""
 
 
+def apply_fills(deal: dict[str, Any], fills: Optional[dict[str, Any]]) -> tuple[list[str], list[str]]:
+    """The figures the closer typed into an earlier version's blanks, put into
+    this one's blanks at the same place (a dotted path, as sales-api
+    proposal.fill addresses them): (put back, no blank to go into). A whole
+    FILL given a figure becomes a number, as proposal.fill makes it."""
+    applied: list[str] = []
+    missing: list[str] = []
+    for path, raw in (fills or {}).items():
+        value = str(raw if raw is not None else "").strip()
+        if not value or validate_mod.FILL_RE.search(value):
+            continue
+        keys: list[Any] = [int(k) if k.isdigit() else k for k in str(path).split(".")]
+        node: Any = deal
+        for k in keys[:-1]:
+            if isinstance(node, list) and isinstance(k, int) and k < len(node):
+                node = node[k]
+            elif isinstance(node, dict) and not isinstance(k, int) and k in node:
+                node = node[k]
+            else:
+                node = None
+                break
+        last = keys[-1]
+        here = None
+        if isinstance(node, list) and isinstance(last, int) and last < len(node):
+            here = node[last]
+        elif isinstance(node, dict) and not isinstance(last, int):
+            here = node.get(last)
+        if not isinstance(here, str) or not validate_mod.FILL_RE.search(here):
+            missing.append(str(path))
+            continue
+        plain = value.replace(",", "")
+        node[last] = float(plain) if (here.strip() == "FILL" and re.fullmatch(r"-?\d+\.\d+", plain)) else (
+            int(plain) if here.strip() == "FILL" and re.fullmatch(r"-?\d+", plain) else value)
+        applied.append(str(path))
+    return applied, missing
+
+
+def closer_evidence(transcript_text: str, fills: Optional[dict[str, Any]]) -> str:
+    """The call, and the figures the closer typed, which are the closer's own
+    to vouch for: the evidence a draft that took them back is checked against."""
+    typed = [str(v) for v in (fills or {}).values() if str(v or "").strip()]
+    return transcript_text + ("\n\nFigures the closer typed: " + "; ".join(typed) if typed else "")
+
+
 def stamp(deal: dict[str, Any], *, variant: str, resolved: dict[str, Any], lang: str,
-          currency_unstated: bool = False) -> dict[str, Any]:
+          currency_unstated: bool = False, closer_figures: Optional[dict[str, Any]] = None) -> dict[str, Any]:
     """What the file must say whatever the model wrote. The variant is on the
     file because the file is what the validator reads; the offer stamp so the
     document can be checked against the offer it was written for; the logo and
@@ -154,6 +198,11 @@ def stamp(deal: dict[str, Any], *, variant: str, resolved: dict[str, Any], lang:
     the client never named is a blank for the closer, never a guess."""
     if currency_unstated and isinstance(deal.get("arithmetic"), dict):
         deal["arithmetic"]["currency"] = "FILL"
+    if closer_figures:
+        # Kept through every round, so a figure a later round turned back
+        # into a blank is put back, and a draft after this one has them too.
+        apply_fills(deal, closer_figures)
+        deal["closer_figures"] = dict(closer_figures)
     if variant != "specific":
         deal["variant"] = variant
     else:
@@ -216,7 +265,7 @@ def lost_items(before: dict[str, Any], after: dict[str, Any]) -> list[str]:
 def run(call: Call, *, lang: str, resolved: dict[str, Any], offer: dict[str, Any], p: Any, cfg: Config,
         log: Callable[[str], None], workdir: Path, renderer: Any = render_mod,
         beat: Optional[Callable[[], None]] = None, variant: Optional[str] = None,
-        reference_dir: Optional[Path] = None) -> Outcome:
+        reference_dir: Optional[Path] = None, fills: Optional[dict[str, Any]] = None) -> Outcome:
     started = time.time()
     beat = beat or (lambda: None)
     workdir = Path(workdir)
@@ -262,7 +311,17 @@ def run(call: Call, *, lang: str, resolved: dict[str, Any], offer: dict[str, Any
     route = model_mod.route_of(p, reply.model or p.model)
     if route.get("note"):
         notes.insert(0, route["note"])
-    stamp(deal, variant=variant, resolved=resolved, lang=lang, currency_unstated=unstated)
+    if fills:
+        # Drafted again after the closer had typed figures into the last
+        # version's blanks: they go back into this one's (5 October 2026).
+        put, nowhere = apply_fills(deal, fills)
+        line = f"{len(put)} of the figures you typed went back into this draft"
+        if nowhere:
+            line += (f"; {', '.join(nowhere[:6])} had no blank here to go into, so check them against the "
+                     "document")
+        notes.append(line + ".")
+    evidence = closer_evidence(call.transcript_text, fills)
+    stamp(deal, variant=variant, resolved=resolved, lang=lang, currency_unstated=unstated, closer_figures=fills)
     (workdir / "deal.json").write_text(json.dumps(deal, ensure_ascii=False, indent=2), encoding="utf-8")
     beat()
 
@@ -292,7 +351,8 @@ def run(call: Call, *, lang: str, resolved: dict[str, Any], offer: dict[str, Any
                 p, system, prompt_mod.tighten_user(best, best_over, round_no, px=px_over(best_dom)),
                 temperature=0.2, attempts=1, timeout=cfg.model_timeout, expect=prompt_mod.is_deal, log=log,
                 what="tighten", beat=beat)
-            stamp(tighter, variant=variant, resolved=resolved, lang=lang, currency_unstated=unstated)
+            stamp(tighter, variant=variant, resolved=resolved, lang=lang, currency_unstated=unstated,
+                  closer_figures=fills)
             lost = lost_items(best, tighter)
             if lost:
                 log("    the shorter draft dropped items from %s; not taken" % ", ".join(lost))
@@ -315,7 +375,7 @@ def run(call: Call, *, lang: str, resolved: dict[str, Any], offer: dict[str, Any
         log("    better: now only sheet(s) %s overflow" % ", ".join(str(n) for n in still) if still else "    fits now")
 
     (workdir / "deal.json").write_text(json.dumps(best, ensure_ascii=False, indent=2), encoding="utf-8")
-    result = validate_mod.validate(best, call.transcript_text, resolved=resolved, offer=offer, dom=best_dom,
+    result = validate_mod.validate(best, evidence, resolved=resolved, offer=offer, dom=best_dom,
                                    engine=engine_name(renderer))
     log("    gate: %s, %d placeholder(s)" % (result.status(), result.fills))
 
@@ -332,10 +392,11 @@ def run(call: Call, *, lang: str, resolved: dict[str, Any], offer: dict[str, Any
             fixed, _r = model_mod.call_json(
                 p, system, prompt_mod.repair_user(best, fixable), temperature=0.2, attempts=1,
                 timeout=cfg.model_timeout, expect=prompt_mod.is_deal, log=log, what="repair", beat=beat)
-            stamp(fixed, variant=variant, resolved=resolved, lang=lang, currency_unstated=unstated)
+            stamp(fixed, variant=variant, resolved=resolved, lang=lang, currency_unstated=unstated,
+                  closer_figures=fills)
             fixed_html = workdir / "draft-repaired.html"
             fixed_over, fixed_dom = overflowing(fixed, fixed_html, renderer)
-            fixed_result = validate_mod.validate(fixed, call.transcript_text, resolved=resolved, offer=offer,
+            fixed_result = validate_mod.validate(fixed, evidence, resolved=resolved, offer=offer,
                                                  dom=fixed_dom if fixed_dom is not None else best_dom,
                                                  engine=engine_name(renderer))
             better = len(fixed_result.errors()) < len(result.errors()) and len(fixed_over) <= len(best_over)
