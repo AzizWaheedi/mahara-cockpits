@@ -2031,6 +2031,41 @@ AROUND_MARGIN = re.compile(
     r"|قبل\s+(?:احتساب|حساب)\s+(?:أي\s+)?(?:هامش|الهامش|ربح|الربح)|بغض\s+النظر\s+عن\s+(?:الهامش|هامش)",
     re.I)
 GROSS_WORDS = re.compile(r"\bgross\b|هامش\s+إجمالي|الهامش\s+الإجمالي|ربح\s+إجمالي|الربح\s+الإجمالي", re.I)
+# A margin is a figure given in percent. 180273419's intro (live check, 5
+# October 2026) said gross beside the project count, 4, and that count was
+# read as a gross margin the page left out.
+PERCENT_FIGURE = re.compile(r"(?<![\d.])(\d+(?:\.\d+)?)\s*(?:%|٪|percent\b|per\s+cent\b|بالمئة|بالمائة|بالمية|"
+                            r"في\s+المئة|في\s+المائة)", re.I)
+# A sentence saying no margin was given, gross or net, or no gross one: the
+# same intro said so, and its words are no margin. "No net margin" alone is
+# not one: a sentence giving a gross margin says that too.
+NO_MARGIN = re.compile(
+    r"\b(?:no|not\s+(?:a|any)|never\s+(?:a|any)|without\s+(?:a\s+|any\s+)?)\s*(?:[a-z]+\s+){0,3}?margins?\b"
+    r"|\bneither\s+(?:a\s+)?gross\s+nor\s+(?:a\s+)?net\b"
+    r"|\bmargins?\s+(?:was|were|is|has\s+been)\s+(?:not|never)\s+(?:given|stated|said|named|shared)\b"
+    r"|\b(?:did\s+not|didn't|never)\s+(?:give|say|name|share|state|mention)\b[^.;]{0,60}?\bmargins?\b"
+    r"|لم\s+(?:\S+\s+){0,3}?(?:أي\s+|اي\s+)?(?:هامش|الهامش)"
+    r"|ما\s+(?:ذكرت|ذكرتوا|حددت|حددتوا|عطيت|عطيتوا|اعطيت|أعطيت|أخذنا|اخذنا)\s+(?:\S+\s+){0,2}?(?:أي\s+|اي\s+)?"
+    r"(?:هامش|الهامش)|(?:بدون|دون|بلا|لا)\s+(?:أي\s+|اي\s+)?(?:هامش|الهامش)",
+    re.I)
+
+
+def says_no_margin(sentence: str) -> bool:
+    """A sentence saying no margin was given; a net margin alone is not one."""
+    for m in NO_MARGIN.finditer(sentence):
+        words = m.group(0)
+        if re.search(r"\bnet\b|صافي|الصافي", words, re.I) and not GROSS_WORDS.search(words) \
+                and not re.search(r"\bneither\b", words, re.I):
+            continue
+        return True
+    return False
+
+
+def gives_gross_margin(text: str) -> bool:
+    """Words saying the call gave a gross margin: gross, and a figure in
+    percent, in what is left once sentences saying no margin was given are out."""
+    kept = " ".join(s for s in _sentences(spoken_figures(_TAGS.sub("", text))) if not says_no_margin(s))
+    return bool(GROSS_WORDS.search(kept)) and any(0 < float(m.group(1)) < 100 for m in PERCENT_FIGURE.finditer(kept))
 
 
 def check_margin_words(data: dict[str, Any], rep: Report) -> None:
@@ -2049,8 +2084,7 @@ def check_margin_words(data: dict[str, Any], rep: Report) -> None:
     roi = data.get("roi") or {}
     said_gross = [p for p, text in (("roi.margin_note", roi.get("margin_note")), ("arithmetic.note", a.get("note")),
                                     ("arithmetic.intro", a.get("intro")))
-                  if isinstance(text, str) and GROSS_WORDS.search(text)
-                  and any(0 < n < 100 for n in figures_in(text))]
+                  if isinstance(text, str) and gives_gross_margin(text)]
     if said_gross and figure(a.get("gross_margin")) is None and not FILL_RE.search(str(a.get("gross_margin") or "")):
         rep.add(WARN, "arithmetic", f"{said_gross[0]} says the call gave a gross margin, and the arithmetic page "
                                     "does not use it. Set arithmetic.gross_margin to the bottom of it, so the "

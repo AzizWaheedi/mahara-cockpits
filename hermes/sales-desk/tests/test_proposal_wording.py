@@ -160,5 +160,50 @@ class AbsoluteOutcomeTests(unittest.TestCase):
     def test_the_drafter_is_told_to_write_fewer(self):
         self.assertTrue('write "fewer" or "filtered out", never "never"' in SKILL)
 
+
+# --------------------------------------------------------------- finding 3 ---
+def gross_warned(deal: dict[str, Any]) -> list[str]:
+    rep = validate.Report()
+    validate.check_margin_words(deal, rep)
+    return [r["detail"] for r in rep.rows if r["status"] == validate.WARN and "gross margin" in r["detail"]]
+
+
+def margin_line(**words: str) -> dict[str, Any]:
+    """A volume page with no gross_margin set, and the words given."""
+    deal = volume_deal()
+    for path, text in words.items():
+        block, key = path.split("__")
+        deal[block][key] = text
+    return deal
+
+
+class MarginWordsTests(unittest.TestCase):
+    """180273419: the intro said no margin was given, gross or net, and the
+    check read its project count, 4, as a gross margin."""
+
+    def test_a_count_beside_gross_is_not_a_margin(self):
+        deal = margin_line(arithmetic__intro="You gave a minimum ticket and a goal of 4 projects, and no margin, "
+                                             "gross or net.")
+        self.assertEqual(gross_warned(deal), [])
+        deal = margin_line(roi__margin_note="Your gross takings run to 4 projects a quarter.")
+        self.assertEqual(gross_warned(deal), [])
+
+    def test_a_line_saying_no_margin_was_given_is_skipped(self):
+        for line in ("You gave no margin, gross or net; the table uses 10 and 20 percent.",
+                     "No gross margin was given. The grid shows 10 and 20 percent.",
+                     "You did not give a margin, so 20 percent gross is only an example."):
+            self.assertEqual(gross_warned(margin_line(arithmetic__intro=line)), [], line)
+
+    def test_a_gross_margin_in_percent_still_warns(self):
+        for line in ("You gave 20 to 30 percent, before admin and general expenses, so it is gross.",
+                     "A gross margin of 25% on every job.",
+                     "You gave a gross margin of 20 to 30 percent and no net margin.",
+                     "هامش إجمالي ٢٠ بالمئة على كل مشروع.",
+                     "الهامش الإجمالي ٢٥٪."):
+            self.assertTrue(gross_warned(margin_line(roi__margin_note=line)), line)
+        deal = margin_line(roi__margin_note="A gross margin of 25% on every job.")
+        deal["arithmetic"]["gross_margin"] = 25
+        self.assertEqual(gross_warned(deal), [])
+
 if __name__ == "__main__":
     unittest.main()
