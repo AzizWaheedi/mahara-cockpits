@@ -23,6 +23,8 @@ from tests.test_rooms import CLOSER, T0, RoomsCase, rid
 class WorkerOpenAfterTakeAdopted(RoomsCase):
     def _standby_adopted_while_made(self, *, kind: str) -> dict:
         env = self.env
+        # Standby and handover rooms are made only while live.enabled is on (Milestone 1 fence).
+        env.pg.put("cockpit_sales_settings", {"key": "live", "value": {"enabled": True}})
         env.add_room(1, purpose="standby", contact_id=None, host_email=CLOSER, provider="zoom", call_kind="demo",
                      send_on="open")
         claimed_at = {}

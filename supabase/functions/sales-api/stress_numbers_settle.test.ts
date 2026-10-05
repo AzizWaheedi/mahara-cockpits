@@ -30,7 +30,7 @@ function setup(rooms: Row = {}) {
   const marks: Row[] = [];
   const audits: Row[] = [];
   w.db.seed("cockpit_sales_settings", [
-    { key: "rooms", value: { ...DEFAULT_ROOMS_JSON, enabled: true, test_only: false, providers: { zoom: true, meet: true }, fallback: { ...DEFAULT_ROOMS_JSON.fallback, scope: "any" }, ...rooms } },
+    { key: "rooms", value: { ...DEFAULT_ROOMS_JSON, settle: true, wrap: true, enabled: true, test_only: false, providers: { zoom: true, meet: true }, fallback: { ...DEFAULT_ROOMS_JSON.fallback, scope: "any" }, ...rooms } },
     { key: "live", value: { enabled: false } },
     { key: "whatsapp_guard", value: {} },
     { key: "messaging", value: { whatsapp: true, email: true } },

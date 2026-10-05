@@ -372,6 +372,12 @@ export const ROOMS_COPY = {
     "Room {code}: That was not the lead was pressed, but the count's record of how the call was before is missing, so nothing was put back. Put the call back by hand in HighLevel.",
   count_confirm_manager: "Only a manager can count a join that was marked by hand.",
   count_confirm_off: "Live calls are not counted at the join yet, so there is nothing to confirm.",
+  /** room.create with trigger auto while rooms.fallback.auto_on_miss is off (Milestone 1 fence). */
+  auto_off: "Automatic video links are switched off. Press Send a video link instead.",
+  /** room.wrap while rooms.wrap is off (Milestone 1 fence). */
+  wrap_off: "Rooms for booked calls are not switched on yet. Open the call's own link.",
+  /** room.event sweep.settle while rooms.settle is off (Milestone 1 fence): nothing is settled, the rep marks the call. */
+  settle_off: "Settling no-shows is switched off, so nothing was marked. The rep marks the call.",
   count_confirm_nothing: "This join is not waiting to be confirmed. Reload the room.",
   count_confirm_taken: "This join was counted a moment ago. Reload the room.",
   /** A confirm's count still running, or taken up again after a blip (stress2 round 4). */
@@ -1396,11 +1402,13 @@ export function makeRooms(deps: RoomDeps): Rooms {
   async function roomCreate(who: Who, b: Row): Promise<Row> {
     const requestId = await seatRequestId(who, b.request_id);
     const host = lower(who.email);
-    const { rooms: setting } = await roomsAndLive();
+    const { rooms: setting, live } = await roomsAndLive();
     const purpose = String(b.purpose ?? "");
     const contactId = cleanText(b.contact_id, 80) || null;
     let handoverId: string | null = null;
     if (purpose === "handover") {
+      // Live handover switched off (Milestone 1 fence): no handover room, whatever the seat holds.
+      if (!liveOn(live)) throw plain(LIVE_OFF, 409, "disabled");
       // A seat makes a handover room only for a lead it holds live (Try Zoom after a failed room).
       const held = contactId
         ? (await io.db(
@@ -1435,6 +1443,9 @@ export function makeRooms(deps: RoomDeps): Rooms {
       }
     }
     const trigger = (TRIGGERS as readonly string[]).includes(String(b.trigger)) ? String(b.trigger) : null;
+    // Automatic mode (the dialer's ten-second strip) only while
+    // rooms.fallback.auto_on_miss is on (Milestone 1: the rep presses).
+    if (trigger === "auto" && !setting.fallback.auto_on_miss) throw plain(ROOMS_COPY.auto_off, 409, "disabled");
     const ask = {
       who,
       host,
@@ -1963,6 +1974,9 @@ export function makeRooms(deps: RoomDeps): Rooms {
     if (!apptId) throw no("bad_input");
     const host = lower(who.email);
     const { rooms: setting, raw } = await roomsAndLive();
+    // Rooms for booked calls are outside Milestone 1: refused while
+    // rooms.wrap is off (and with rooms off, the plan below refuses too).
+    if (!setting.wrap) throw plain(ROOMS_COPY.wrap_off, 409, "disabled");
     const repeat = (await io.db(`${ROOMS}?request_id=eq.${enc(requestId)}&select=*`))[0] as unknown as RoomRow | undefined;
     if (repeat && lower(repeat.host_email) === host) {
       // The insert landed and its answer was lost: its audit row and line are written now, once.
@@ -4611,6 +4625,10 @@ export function makeRooms(deps: RoomDeps): Rooms {
     const email = lower(who.email);
     const { rooms: setting, live } = await roomsAndLive();
     if (!setting.enabled && !liveOn(live)) throw no("disabled");
+    // Available is for live handovers (Milestone 1 fence): refused while
+    // live.enabled is off, so no seat is offered a lead and no standby room
+    // is asked for. Away always works: it only ends things.
+    if (state === "available" && !liveOn(live)) throw plain(LIVE_OFF, 409, "disabled");
     const now = io.now();
     const before = (await io.db(`cockpit_sales_availability?email=eq.${enc(email)}&select=*`))[0] ?? null;
     // Live calls run in live.hours only (Saturday to Thursday, 10:00 to
@@ -5479,7 +5497,13 @@ export function makeRooms(deps: RoomDeps): Rooms {
       await finishEvent(held, { skipped: "the handover is no longer held" });
       return { ok: true, handled: true, skipped: "handover over" };
     }
-    const { rooms: setting } = await roomsAndLive();
+    const { rooms: setting, live } = await roomsAndLive();
+    // Live handover switched off (Milestone 1 fence): a stored claim is
+    // closed as it stands, with no room made and no link sent.
+    if (!liveOn(live)) {
+      await finishEvent(held, { skipped: "live handover is switched off" });
+      return { ok: true, handled: true, skipped: "live_off" };
+    }
     let out: Row;
     try {
       out = await finishClaim(await hostWho(String(l.claimed_by)), l, setting);
@@ -5662,6 +5686,11 @@ export function makeRooms(deps: RoomDeps): Rooms {
   async function settle(roomIds: string[]): Promise<Row> {
     const results: Row[] = [];
     const { rooms: setting } = await roomsAndLive();
+    // Settling no-shows is outside Milestone 1: while rooms.settle is off
+    // nothing is leased, read or marked, whoever asks (the cron door, the
+    // desk); the answer says so for every room.
+    if (!setting.settle)
+      return { handled: 0, off: "settle", note: ROOMS_COPY.settle_off, results: roomIds.map(id => ({ room_id: id, handled: false, skipped: "settle_off" })) };
     for (const roomId of roomIds) {
       const by: EventKey = { dedupe_key: `sweep.settle:${roomId}` };
       if (!(await lease(by, 30))) {

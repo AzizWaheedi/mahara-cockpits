@@ -465,7 +465,7 @@ describe("chaos2: a manager's wave press whose answer was lost", () => {
     const w = fakeWorld(Date.parse("2026-10-04T08:00:00Z"));
     const audits: Row[] = [];
     w.db.seed("cockpit_sales_settings", [
-      { key: "followups", value: { enabled: true, waves: { per_day: 40, holdout_share: 0.1 } } },
+      { key: "followups", value: { enabled: true, agent: true, waves: { per_day: 40, holdout_share: 0.1 } } },
       { key: "whatsapp_guard", value: { connector_off: true, single_copy_ok_at: "2026-10-01T00:00:00Z" } },
     ]);
     let loseNext: ((path: string, init: Row) => boolean) | null = null;

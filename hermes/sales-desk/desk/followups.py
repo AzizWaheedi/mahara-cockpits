@@ -2119,6 +2119,25 @@ def mark_template_seen(sb: Any, row: dict[str, Any], hit: dict[str, Any], now: d
     return state
 
 
+def agent_work_on(settings: Any) -> bool:
+    """The follow-up agent's own sends (Milestone 1 fence, followups.agent):
+    backlog waves, openers, the paced send, confirmation drafts and autosend.
+    On only when followups.agent is true and followups.enabled is not off;
+    missing is off. The drafts reps approve keep followups.enabled alone."""
+    return isinstance(settings, dict) and bool(settings.get("enabled", True)) and settings.get("agent") is True
+
+
+def agent_work_still_on(sb: Any) -> bool:
+    """followups.agent read again mid-run: False once the setting says the
+    agent's own sends are off. Not readable: the run goes on, on the reading
+    it started with (which had them on, or it would not have started)."""
+    try:
+        value = sb.setting("followups")
+    except Exception:  # noqa: BLE001 - one unread switch never ends a run
+        return True
+    return not isinstance(value, dict) or agent_work_on(value)
+
+
 def agent_still_on(sb: Any) -> bool:
     """followups.enabled read again (stress2 round 4): False once a manager
     switched the agent off. Not readable: the run goes on, on the reading it
@@ -2415,6 +2434,11 @@ def run(sb: Any, provider: Any, log: Callable[[str], None], *, settings: dict[st
             failures[str(f["contact_id"])] = failures.get(str(f["contact_id"]), 0) + 1
     aside = {c for c, n in failures.items() if n >= FAILED_TWICE}
 
+    # Confirmation drafts are the agent's own work (Milestone 1 fence): none
+    # is written while followups.agent is off; the call is confirmed by phone.
+    confirm_on = agent_work_on(settings)
+    if test and force_segment == "confirm" and not confirm_on:
+        return {"skipped": "Confirmation drafts are switched off (followups.agent), so none is written."}
     if test and force_segment:
         due, why_not = forced_due(str(only_contact), force_segment, calendar, test_lead or {}, now, cadence)
         if not due:
@@ -2430,6 +2454,11 @@ def run(sb: Any, provider: Any, log: Callable[[str], None], *, settings: dict[st
                       open_drafts=open_drafts, deals=deals, reached=reached, confirmations=confirmations, hot=hot,
                       cadence=cadence, nurture_every_days=int(settings.get("nurture_every_days", 7)),
                       nurture_room=nurture_room)
+        if not confirm_on:
+            picked = [d for d in picked if d["segment"] != "confirm"]
+            for d in picked:
+                if (d.get("then") or {}).get("segment") == "confirm":
+                    d.pop("then", None)
         if test:
             picked = [d for d in picked if d["contact_id"] == str(only_contact)]
             if not picked:
@@ -2688,7 +2717,8 @@ def run(sb: Any, provider: Any, log: Callable[[str], None], *, settings: dict[st
             # and it goes through the cockpit's own send with all its checks. A
             # test draft never does.
             new_id = str((made[0] if isinstance(made, list) and made else {}).get("id") or "")
-            if test or not (autosend and new_id and (settings.get("autosend") or {}).get(segment) is True):
+            # Sending by itself is the agent's own send (followups.agent, Milestone 1 fence).
+            if test or not (autosend and new_id and confirm_on and (settings.get("autosend") or {}).get(segment) is True):
                 continue
             if channel.startswith("whatsapp"):
                 if not gate_read:

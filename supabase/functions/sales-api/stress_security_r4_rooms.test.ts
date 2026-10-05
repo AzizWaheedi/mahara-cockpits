@@ -32,6 +32,9 @@ const other: Who = { signed_in: true, seat: true, manager: false, email: OTHER, 
 
 const ROOMS_ON = {
   ...DEFAULT_ROOMS_JSON,
+  // Settle and booked-call rooms on: these tests are about what they do (both ship off, Milestone 1).
+  settle: true,
+  wrap: true,
   enabled: true,
   test_only: false,
   providers: { zoom: true, meet: true },

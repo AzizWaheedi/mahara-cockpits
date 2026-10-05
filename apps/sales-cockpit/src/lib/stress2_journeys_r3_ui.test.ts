@@ -118,7 +118,12 @@ const ROOMS_ON = {
   test_contacts: [LEAD],
   providers: { zoom: true, meet: true },
   send: { whatsapp_text: true, whatsapp_template: true, email: true },
-  fallback: { ...DEFAULT_ROOMS_JSON.fallback, scope: "any" },
+  // Automatic mode on: these journeys run it (it ships off, Milestone 1).
+  fallback: {
+    ...DEFAULT_ROOMS_JSON.fallback,
+    scope: "any",
+    auto_on_miss: true,
+  },
 };
 const GUARD_OPEN = {
   connector_off: true,

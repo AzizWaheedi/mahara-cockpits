@@ -175,7 +175,7 @@ function seed(): string {
   hl.status = "confirmed";
   hl.start = new Date(start).toISOString();
   db.seed("cockpit_sales_settings", [
-    { key: "rooms", value: { ...DEFAULT_ROOMS_JSON, enabled: true, test_only: false, short_link: true, providers: { zoom: true, meet: true } } },
+    { key: "rooms", value: { ...DEFAULT_ROOMS_JSON, settle: true, wrap: true, enabled: true, test_only: false, short_link: true, providers: { zoom: true, meet: true } } },
     { key: "live", value: { enabled: false } },
     { key: "crm_writes", value: { dispositions: true, backlog_days: 7 } },
   ]);

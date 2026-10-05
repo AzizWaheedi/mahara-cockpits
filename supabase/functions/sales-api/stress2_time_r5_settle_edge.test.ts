@@ -55,7 +55,9 @@ function setup() {
         providers: { zoom: true, meet: true },
         send: { whatsapp_text: true, whatsapp_template: false, email: false },
         // As it ships: a video link for a lead with a booked intro.
-        fallback: { ...DEFAULT_ROOMS_JSON.fallback, scope: "intro" },
+        // Settling and automatic mode on: this file is about them (both ship off, Milestone 1).
+        settle: true,
+        fallback: { ...DEFAULT_ROOMS_JSON.fallback, scope: "intro", auto_on_miss: true },
       },
     },
     { key: "live", value: { enabled: false } },

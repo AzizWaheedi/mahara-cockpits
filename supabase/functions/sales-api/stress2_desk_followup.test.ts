@@ -53,7 +53,7 @@ describe("followup.batch at the shipped budget, past 1,000 templates this month"
     };
     w.db.seed("cockpit_sales_settings", [
       { key: "whatsapp_guard", value: { ...GATE, template_budget_usd_month: 100 } },
-      { key: "followups", value: { enabled: true, waves: { per_day: 40, batch_gap_s: 45 }, first_hours: [9, 18] } },
+      { key: "followups", value: { enabled: true, agent: true, waves: { per_day: 40, batch_gap_s: 45 }, first_hours: [9, 18] } },
     ]);
     const cap = budgetCap({ template_budget_usd_month: 100 });
     expect(cap).toBeGreaterThan(MAX_ROWS);

@@ -168,6 +168,19 @@ export function agentOff(followups: unknown): boolean {
   return Object.prototype.hasOwnProperty.call(f, "enabled") && !f.enabled;
 }
 
+/**
+ * The follow-up agent's own sends (Milestone 1 fence, 20261004a): backlog
+ * waves, the approved batch, the desk's paced send (followup.send_due),
+ * levels that send by themselves, autosend and confirmation drafts. Off
+ * unless followups.agent is true (missing is off), and always off while
+ * followups.enabled is off. The drafts reps approve one by one keep
+ * followups.enabled alone (agentOff).
+ */
+export function agentWorkOff(followups: unknown): boolean {
+  const f = (followups && typeof followups === "object" ? followups : {}) as Row;
+  return agentOff(f) || f.agent !== true;
+}
+
 export function quietDays(followups: unknown): Set<number> {
   const v = (followups as Row | null)?.quiet_days;
   const list = Array.isArray(v) ? v.map(d => String(d).toLowerCase()) : ["friday"];
@@ -484,6 +497,8 @@ export function followupSettingsValue(before: Row, v: Row, segments: readonly st
   const value: Row = {
     ...before,
     enabled: given("enabled") !== false,
+    // The agent's own sends (Milestone 1 fence): on only when a manager sends true.
+    agent: given("agent") === true,
     autosend: Object.fromEntries(segments.map(s => [s, s !== "reactivate" && auto[s] === true])),
     takeover: Object.fromEntries(Object.keys(replaces).map(s => [s, takeover[s] === true])),
     replaces,

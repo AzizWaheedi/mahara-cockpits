@@ -182,7 +182,7 @@ function reset(): void {
   db.seed("cockpit_sales_settings", [
     { key: "messaging", value: { whatsapp: true, email: true } },
     { key: "whatsapp_guard", value: { templates_per_day: 250, template_budget_usd_month: 100 } },
-    { key: "followups", value: { enabled: true } },
+    { key: "followups", value: { enabled: true, agent: true } },
   ]);
   db.seed("cockpit_sales_people", [{ email: REP, name: "Rafi Rep", ghl_user_id: "G-rep", role: "setter", active: true }]);
   db.seed("cockpit_sales_leads", [{ contact_id: LEAD, name: "Huda Ali", country: "KW", tags: ["roas-qualified"] }]);

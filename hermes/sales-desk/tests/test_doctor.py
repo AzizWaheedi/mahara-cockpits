@@ -352,6 +352,13 @@ class HonestFollowupsRow(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             code, _, _ = run_cli(["--quiet", "waves"], world, tmp)
         self.assertEqual(code, 0)
+        # No followups row: the agent's own sends are off (followups.agent, Milestone 1 fence), and the row says so.
+        self.assertEqual((row(pg, "waves")["ok"], row(pg, "waves")["detail"]),
+                         (True, "The follow-up agent's own sends are switched off (followups.agent), so no wave drafts or sends"))
+        pg.put("cockpit_sales_settings", {"key": "followups", "value": {"enabled": True, "agent": True}})
+        with tempfile.TemporaryDirectory() as tmp:
+            code, _, _ = run_cli(["--quiet", "waves"], world, tmp)
+        self.assertEqual(code, 0)
         self.assertEqual((row(pg, "waves")["ok"], row(pg, "waves")["detail"]), (True, "No wave is running"))
         pg.tables["cockpit_sales_worker_status"].clear()
         pg.calls.clear()

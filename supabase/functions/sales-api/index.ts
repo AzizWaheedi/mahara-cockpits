@@ -127,6 +127,7 @@ import {
   hoursRefusal,
   kuwaitMonthStart,
   agentOff,
+  agentWorkOff,
   matchSent,
   queuedTemplatesQuery,
   relativeDay,
@@ -3028,6 +3029,10 @@ async function followupApprove(who: Who, b: Row) {
   // switch and the WhatsApp gate are checked on every send.
   if (f.segment === "reactivate")
     throw new Refusal("Backlog openers go out in an approved batch. Approve it under Today's batch.", 409);
+  // Confirmation drafts are the agent's own work (Milestone 1 fence): refused
+  // while followups.agent is off, so a confirmation goes on the phone.
+  if (f.segment === "confirm" && agentWorkOff((await setting<Row>("followups")) ?? {}))
+    throw new Refusal("Confirmation messages are switched off for now (followups.agent). Call the lead to confirm instead.", 409);
   return await sendFollowup(who, f, b, false);
 }
 
@@ -3035,9 +3040,13 @@ async function followupApprove(who: Who, b: Row) {
 async function followupAutosend(who: Who, b: Row) {
   const f = await followupRow(cleanText(b.id, 40));
   const settings = (await setting<Row>("followups")) ?? {};
-  // The agent's kill switch holds the desk's every send (P3 phase 1).
+  // The agent's kill switch holds the desk's every send (P3 phase 1), and a
+  // draft that goes by itself is the agent's own send (followups.agent,
+  // Milestone 1 fence).
   if (agentOff(settings))
     throw new Refusal("The follow-up agent is switched off (followups.enabled), so nothing is sent.", 409, { hold_all: true });
+  if (agentWorkOff(settings))
+    throw new Refusal("The follow-up agent's own sends are switched off (followups.agent), so nothing is sent by itself.", 409, { hold_all: true });
   // Openers go only in an approved, paced batch (followup.batch, followup.send_due).
   const auto = f.segment !== "reactivate" && ((settings.autosend ?? {}) as Row)[String(f.segment)] === true;
   if (!auto) throw new Refusal(`${String(f.segment)} drafts wait for a person; a manager has not switched them to send by themselves.`, 403);

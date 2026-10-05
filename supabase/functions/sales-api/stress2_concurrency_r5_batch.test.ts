@@ -38,7 +38,7 @@ function setup() {
   const audits: Row[] = [];
   w.db.seed("cockpit_sales_settings", [
     { key: "whatsapp_guard", value: GATE },
-    { key: "followups", value: { enabled: true, waves: { per_day: 40, batch_gap_s: 45 }, first_hours: [9, 18], stop_pause_days: 30 } },
+    { key: "followups", value: { enabled: true, agent: true, waves: { per_day: 40, batch_gap_s: 45 }, first_hours: [9, 18], stop_pause_days: 30 } },
     { key: "messaging", value: { whatsapp: true } },
   ]);
   const agent = makeFollowupAgent({

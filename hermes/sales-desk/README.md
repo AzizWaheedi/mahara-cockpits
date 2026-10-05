@@ -801,8 +801,9 @@ checks, and says what each missing piece means:
   and the settings `rooms`, `live`, `followups` and `whatsapp_guard`;
 - every switch off as it ships: `rooms.enabled`, `rooms.test_only` (on),
   both providers, the three `rooms.send` channels, `count_on_join`,
-  `fallback.auto_on_miss`, `short_link`, `live.enabled`, `live.slack`, both
-  `live.kinds`, `threads.enabled`, `followups.autosend.reactivate`, and no
+  `settle`, `wrap`, `fallback.auto_on_miss`, `short_link`, `live.enabled`,
+  `live.slack`, both `live.kinds`, `threads.enabled`,
+  `followups.autosend.reactivate`, `followups.agent`, and no
   backlog wave running; the WhatsApp gate is reported;
 - the status rows (each against its own threshold) and the crontab lines.
 

@@ -103,18 +103,24 @@ begin
 end;
 $$;
 
+-- A sales manager for this run (20261004a's settings guard turns a switch
+-- on only for a write that names one); rolled back with the rest.
+insert into public.cockpit_sales_people (email, name, role, active, updated_by)
+values ('lc-test-manager@example.invalid', 'Test Manager', 'manager', true, 'lc-test')
+on conflict (email) do nothing;
+
 -- A2. Settings: the new rows are the glossary values; existing rows gained
 --     only the keys they lacked and kept every value they had.
 do $$
 declare
   g jsonb; f jsonb; wf jsonb; au record;
 begin
-  perform pg_temp.ck('A2 setting rooms is the glossary value, every switch off',
+  perform pg_temp.ck('A2 setting rooms is the glossary value, every switch off (settle and wrap too, 20261004a)',
     (select s.value from public.cockpit_sales_settings as s where s.key = 'rooms') =
     '{"enabled": false, "test_only": true, "test_contacts": ["VjPfR4Cc1Y0OFvaqeor5"], "test_calendar_id": null,
       "providers": {"zoom": false, "meet": false}, "default_provider": {"setter": "meet", "closer": "zoom"},
       "send": {"whatsapp_text": false, "whatsapp_template": false, "email": false},
-      "template_route": "call_link", "count_on_join": false, "short_link": false,
+      "template_route": "call_link", "count_on_join": false, "settle": false, "wrap": false, "short_link": false,
       "waits_s": {"ready": 15, "fail": 60, "meet_pending": 30, "manual_buttons": 30, "handover_host": 120,
         "standby_host": 300, "fallback_host": 900, "lead": 600, "open_grace": 180, "not_lead_undo": 300,
         "event_replay": 20, "settle": 1200, "no_end_signal": 1800, "standby_max": 2100, "booked_guard": 600,
@@ -440,6 +446,13 @@ exception when others then
   perform pg_temp.ck('C rooms section crashed', false, sqlstate || ': ' || sqlerrm);
 end;
 $$;
+
+-- Live handover on for D to L (20261004a's Milestone 1 fence holds the
+-- claim, the re-offer and the fresh standby room while it is off; M checks
+-- it off). A manager turns it on.
+update public.cockpit_sales_settings
+   set updated_by = 'lc-test-manager@example.invalid', updated_at = clock_timestamp(), value = jsonb_set(value, '{enabled}', 'true')
+ where key = 'live';
 
 -- D. The claim: one Take wins, and the room it lands in.
 do $$
@@ -798,13 +811,13 @@ begin
       values (v_email, fx.f #>> '{host,zoom_status}', coalesce((fx.f #>> '{host,google_ok}')::boolean, false),
               fx.f #>> '{host,default_provider}');
     end if;
-    update public.cockpit_sales_settings set value = jsonb_set(value, '{providers}', fx.f -> 'providers') where key = 'rooms';
+    update public.cockpit_sales_settings set updated_by = 'lc-test-manager@example.invalid', updated_at = clock_timestamp(), value = jsonb_set(value, '{providers}', fx.f -> 'providers') where key = 'rooms';
     select pr.default_provider into got_p from public.cockpit_sales_presence as pr where pr.email = v_email;
     perform pg_temp.ck('E2 default provider: ' || (fx.f ->> 'name'), got_p = fx.f ->> 'expect',
       format('got %s, want %s', got_p, fx.f ->> 'expect'));
     n := n + 1;
   end loop;
-  update public.cockpit_sales_settings set value = jsonb_set(value, '{providers}', prov) where key = 'rooms';
+  update public.cockpit_sales_settings set updated_by = 'lc-test-manager@example.invalid', updated_at = clock_timestamp(), value = jsonb_set(value, '{providers}', prov) where key = 'rooms';
   perform pg_temp.ck('E2 every default provider fixture was checked',
     n >= 10 and n = (select jsonb_array_length(doc -> 'default_provider') from pg_temp.lc_presence_fixtures), n::text);
 
@@ -860,12 +873,21 @@ begin
   select value -> 'waits_s' into waits from public.cockpit_sales_settings where key = 'rooms';
   -- Rooms on with Zoom, so an expired standby room of an available host is
   -- made again (R5); every other rule ignores these switches.
+  -- Settle and the count on too (20261004a's Milestone 1 switches, off as
+  -- shipped): F to R4 check what they do once a manager turns them on; M
+  -- checks them off.
   update public.cockpit_sales_settings
-     set value = jsonb_set(jsonb_set(value, '{enabled}', 'true'), '{providers,zoom}', 'true') where key = 'rooms';
+     set updated_by = 'lc-test-manager@example.invalid', updated_at = clock_timestamp(),
+         value = jsonb_set(jsonb_set(value, '{enabled}', 'true'), '{providers,zoom}', 'true') || '{"settle": true, "count_on_join": true}'::jsonb
+   where key = 'rooms';
+  -- Live handover on: R5's fresh standby room and L3's re-offer run only then (20261004a).
+  update public.cockpit_sales_settings
+     set updated_by = 'lc-test-manager@example.invalid', updated_at = clock_timestamp(), value = jsonb_set(value, '{enabled}', 'true')
+   where key = 'live';
   -- Live calls run at any hour for this run (R5 makes a fresh standby room
   -- only inside live.hours; 20261003d).
   update public.cockpit_sales_settings
-     set value = jsonb_set(value, '{hours}', '{"days": [0, 1, 2, 3, 4, 5, 6], "from": "00:00", "to": "24:00", "tz": "Asia/Kuwait"}')
+     set updated_by = 'lc-test-manager@example.invalid', updated_at = clock_timestamp(), value = jsonb_set(value, '{hours}', '{"days": [0, 1, 2, 3, 4, 5, 6], "from": "00:00", "to": "24:00", "tz": "Asia/Kuwait"}')
    where key = 'live';
 
   -- Rooms f[1]..f[32]. Hosts and leads are all different.
@@ -1338,12 +1360,12 @@ begin
     and jsonb_array_length(s2 -> 'replay') = 0 and jsonb_array_length(s2 -> 'settle') = 0 and (s2 ->> 'standby_fresh')::integer = 0,
     s2::text);
   -- A bad setting cannot stop the sweep: waits fall back to their defaults.
-  update public.cockpit_sales_settings set value = jsonb_set(value, '{waits_s}', '{"fail": "soon", "lead": -5}') where key = 'rooms';
+  update public.cockpit_sales_settings set updated_by = 'lc-test-manager@example.invalid', updated_at = clock_timestamp(), value = jsonb_set(value, '{waits_s}', '{"fail": "soon", "lead": -5}') where key = 'rooms';
   s2 := public.cockpit_sales_rooms_sweep();
   perform pg_temp.ck('F a broken waits_s setting falls back to the defaults (no error, nothing moved)',
     jsonb_array_length(s2 -> 'errors') = 0 and (s2 ->> 'rooms_moved')::integer = 0, s2::text);
   update public.cockpit_sales_settings
-     set value = jsonb_set(jsonb_set(jsonb_set(value, '{waits_s}', waits), '{enabled}', 'false'), '{providers,zoom}', 'false')
+     set updated_by = 'lc-test-manager@example.invalid', updated_at = clock_timestamp(), value = jsonb_set(jsonb_set(jsonb_set(value, '{waits_s}', waits), '{enabled}', 'false'), '{providers,zoom}', 'false')
    where key = 'rooms';
 exception when others then
   perform pg_temp.ck('F sweep section crashed', false, sqlstate || ': ' || sqlerrm);
@@ -1367,7 +1389,7 @@ begin
   -- Known inputs: rooms on with no worker row, doctor stale, follow-ups failing,
   -- sweep fresh, no webhook in the vault, no other alerts, nothing given up.
   delete from public.cockpit_sales_alerts;
-  update public.cockpit_sales_settings set value = jsonb_set(value, '{enabled}', 'true') where key = 'rooms';
+  update public.cockpit_sales_settings set updated_by = 'lc-test-manager@example.invalid', updated_at = clock_timestamp(), value = jsonb_set(value, '{enabled}', 'true') where key = 'rooms';
   delete from public.cockpit_sales_worker_status where worker = 'sales-desk' and job in ('rooms', 'slack', 'watch', 'waves', 'model');
   delete from public.cockpit_sales_worker_status where worker = 'sales-live';
   insert into public.cockpit_sales_worker_status (worker, job, ok, detail, at) values
@@ -1420,7 +1442,7 @@ begin
   perform pg_temp.ck('G follow-ups failing again: a new incident, a new row',
     (w ->> 'raised')::integer = 1
     and (select count(*) = 2 from public.cockpit_sales_alerts where subject = 'sales-desk/followups' and kind = 'failing'), w::text);
-  update public.cockpit_sales_settings set value = jsonb_set(value, '{enabled}', 'false') where key = 'rooms';
+  update public.cockpit_sales_settings set updated_by = 'lc-test-manager@example.invalid', updated_at = clock_timestamp(), value = jsonb_set(value, '{enabled}', 'false') where key = 'rooms';
   w := public.cockpit_sales_watchdog();
   perform pg_temp.ck('G rooms switched off: the missing room worker alert resolves',
     not exists (select 1 from public.cockpit_sales_alerts where dedupe_key = 'missing:sales-desk/rooms'));
@@ -1577,8 +1599,8 @@ begin
   select value into live_v from public.cockpit_sales_settings where key = 'live';
   delete from public.cockpit_sales_alerts;
   delete from public.cockpit_sales_worker_status where (worker = 'sales-desk' and job = 'room-hosts') or worker = 'sales-live';
-  update public.cockpit_sales_settings set value = jsonb_set(value, '{enabled}', 'true') where key = 'rooms';
-  update public.cockpit_sales_settings set value = jsonb_set(jsonb_set(value, '{enabled}', 'true'), '{slack}', 'false') where key = 'live';
+  update public.cockpit_sales_settings set updated_by = 'lc-test-manager@example.invalid', updated_at = clock_timestamp(), value = jsonb_set(value, '{enabled}', 'true') where key = 'rooms';
+  update public.cockpit_sales_settings set updated_by = 'lc-test-manager@example.invalid', updated_at = clock_timestamp(), value = jsonb_set(jsonb_set(value, '{enabled}', 'true'), '{slack}', 'false') where key = 'live';
   w := public.cockpit_sales_watchdog();
   perform pg_temp.ck('G4 rooms on and the room host check never reported: missing alert (missing is never zero)',
     exists (select 1 from public.cockpit_sales_alerts where dedupe_key = 'missing:sales-desk/room-hosts' and resolved_at is null
@@ -1611,7 +1633,7 @@ begin
                  where subject in ('sales-live/open', 'sales-live/go') or dedupe_key like 'stale:sales-live/%' or dedupe_key like 'missing:sales-live/%'));
   perform pg_temp.ck('G4 the Slack route is watched only with live.slack on',
     not exists (select 1 from public.cockpit_sales_alerts where subject = 'sales-live/slack'));
-  update public.cockpit_sales_settings set value = jsonb_set(value, '{slack}', 'true') where key = 'live';
+  update public.cockpit_sales_settings set updated_by = 'lc-test-manager@example.invalid', updated_at = clock_timestamp(), value = jsonb_set(value, '{slack}', 'true') where key = 'live';
   w := public.cockpit_sales_watchdog();
   perform pg_temp.ck('G4 with live.slack on, the failing Slack route raises its alert',
     exists (select 1 from public.cockpit_sales_alerts where dedupe_key = 'failing:sales-live/slack' and resolved_at is null));
@@ -1619,7 +1641,7 @@ begin
   w := public.cockpit_sales_watchdog();
   perform pg_temp.ck('G4 the Zoom route works again: its alert resolves',
     not exists (select 1 from public.cockpit_sales_alerts where dedupe_key = 'failing:sales-live/zoom'));
-  update public.cockpit_sales_settings set value = jsonb_set(value, '{enabled}', 'false') where key = 'rooms';
+  update public.cockpit_sales_settings set updated_by = 'lc-test-manager@example.invalid', updated_at = clock_timestamp(), value = jsonb_set(value, '{enabled}', 'false') where key = 'rooms';
   w := public.cockpit_sales_watchdog();
   perform pg_temp.ck('G4 rooms switched off: the sales-live and room host alerts resolve',
     not exists (select 1 from public.cockpit_sales_alerts
@@ -1643,8 +1665,8 @@ begin
   perform pg_temp.ck('G4 a watchdog alert keeps source watchdog',
     (select bool_and(source = 'watchdog') from public.cockpit_sales_alerts where kind in ('missing', 'stale', 'failing')));
 
-  update public.cockpit_sales_settings set value = rooms_v where key = 'rooms';
-  update public.cockpit_sales_settings set value = live_v where key = 'live';
+  update public.cockpit_sales_settings set updated_by = 'lc-test-manager@example.invalid', updated_at = clock_timestamp(), value = rooms_v where key = 'rooms';
+  update public.cockpit_sales_settings set updated_by = 'lc-test-manager@example.invalid', updated_at = clock_timestamp(), value = live_v where key = 'live';
   delete from public.cockpit_sales_alerts;
 exception when others then
   perform pg_temp.ck('G4 section crashed', false, sqlstate || ': ' || sqlerrm);
@@ -1858,7 +1880,7 @@ do $$
 declare
   w1 uuid; w2 uuid; s text; f1 uuid; n integer;
 begin
-  update public.cockpit_sales_settings set value = value - 'connector_off' - 'single_copy_ok_at' where key = 'whatsapp_guard';
+  update public.cockpit_sales_settings set updated_by = 'lc-test-manager@example.invalid', updated_at = clock_timestamp(), value = value - 'connector_off' - 'single_copy_ok_at' where key = 'whatsapp_guard';
   s := pg_temp.errm($q$insert into public.cockpit_sales_followup_levels (kind_key, level, set_by) values ('no_show.ar.whatsapp_template', 'sends_by_itself', 'lc-test')$q$);
   perform pg_temp.ck('J a WhatsApp kind cannot send by itself before the connector is off and the single-copy test passed (P0001)',
     s like 'P0001: WhatsApp follow-ups stay on Approve%', s);
@@ -1877,7 +1899,7 @@ begin
   s := pg_temp.err($q$update public.cockpit_sales_followup_levels set level = 'send_unless_stopped' where kind_key = 'no_show.en.whatsapp_template'$q$);
   perform pg_temp.ck('J a WhatsApp kind cannot move to Sends unless stopped either (P0001)', s = 'P0001', s);
   update public.cockpit_sales_settings
-     set value = value || '{"connector_off": true, "single_copy_ok_at": "2026-10-03T10:00:00Z"}'::jsonb where key = 'whatsapp_guard';
+     set updated_by = 'lc-test-manager@example.invalid', updated_at = clock_timestamp(), value = value || '{"connector_off": true, "single_copy_ok_at": "2026-10-03T10:00:00Z"}'::jsonb where key = 'whatsapp_guard';
   s := pg_temp.err($q$update public.cockpit_sales_followup_levels set level = 'send_unless_stopped' where kind_key = 'no_show.en.whatsapp_template'$q$);
   perform pg_temp.ck('J once the connector is off and the test passed, it can', s = 'none', s);
   perform pg_temp.ck('J levels keep a version',
@@ -2419,6 +2441,162 @@ begin
     and not has_function_privilege('anon', 'public.cockpit_sales_disposition_replace(bigint, jsonb)', 'execute'));
 exception when others then
   perform pg_temp.ck('R5 section crashed', false, sqlstate || ': ' || sqlerrm);
+end;
+$$;
+
+-- M. Milestone 1 fences (20261004a, 5 October 2026). Settling no-shows
+--    (rooms.settle), counting a join (rooms.count_on_join) and live handover
+--    (live.enabled) stay off in the database while their switches are off,
+--    and a switch is turned on only by a write that names a sales manager,
+--    with an audit row for every switch change, whoever made it.
+do $$
+declare
+  mgr constant text := 'lc-test-manager@example.invalid';
+  f jsonb; s jsonb; e text; n0 integer; n1 integer;
+  stale uuid; host_room uuid; lead_room uuid; zoom_sb uuid; offer uuid; cc uuid; got jsonb;
+begin
+  select s2.value into f from public.cockpit_sales_settings as s2 where s2.key = 'followups';
+  perform pg_temp.ck('M followups.agent ships off and followups.enabled (the drafts reps approve) keeps its value',
+    f -> 'agent' = 'false'::jsonb and exists (select 1 from public.cockpit_audit_log
+       where action = 'settings.update' and entity_id = 'followups' and metadata ->> 'by' = 'migration 20261004a'
+         and (before -> 'enabled') is not distinct from (after -> 'enabled')),
+    left(f::text, 200));
+
+  -- Kill switches need no manager: the desk's name turns them off, with an audit row.
+  n0 := (select count(*) from public.cockpit_audit_log where action = 'settings.switch');
+  e := pg_temp.errm($q$update public.cockpit_sales_settings
+       set value = value || '{"settle": false, "count_on_join": false}'::jsonb, updated_by = 'sales-desk', updated_at = clock_timestamp()
+     where key = 'rooms'$q$);
+  perform pg_temp.ck('M a switch is turned off by anyone who may write the settings (no manager needed)', e = 'none', e);
+  e := pg_temp.errm($q$update public.cockpit_sales_settings
+       set value = jsonb_set(value, '{enabled}', 'false'), updated_by = 'sales-desk', updated_at = clock_timestamp()
+     where key = 'live'$q$);
+  perform pg_temp.ck('M live handover is turned off the same way', e = 'none', e);
+  perform pg_temp.ck('M each switch change left one settings.switch audit row naming what changed',
+    (select count(*) from public.cockpit_audit_log where action = 'settings.switch') = n0 + 2
+    and exists (select 1 from public.cockpit_audit_log where action = 'settings.switch' and entity_id = 'rooms'
+                  and metadata -> 'changed' @> '["rooms.settle", "rooms.count_on_join"]'::jsonb
+                  and metadata -> 'turned_on' = '[]'::jsonb and after -> 'rooms.settle' = 'false'::jsonb)
+    and exists (select 1 from public.cockpit_audit_log where action = 'settings.switch' and entity_id = 'live'
+                  and metadata -> 'changed' = '["live.enabled"]'::jsonb));
+
+  -- Turning one on: refused unless the write names an active sales manager.
+  e := pg_temp.err($q$update public.cockpit_sales_settings
+       set value = value || '{"settle": true}'::jsonb, updated_by = 'sales-desk', updated_at = clock_timestamp() where key = 'rooms'$q$);
+  perform pg_temp.ck('M rooms.settle is not turned on by the desk (42501)', e = '42501', e);
+  e := pg_temp.err($q$update public.cockpit_sales_settings
+       set value = value || '{"count_on_join": true}'::jsonb, updated_by = 'lc-test-x@example.invalid', updated_at = clock_timestamp() where key = 'rooms'$q$);
+  perform pg_temp.ck('M rooms.count_on_join is not turned on by a name that is not a manager (42501)', e = '42501', e);
+  e := pg_temp.err($q$update public.cockpit_sales_settings
+       set value = jsonb_set(value, '{enabled}', 'true'), updated_by = 'sales-api', updated_at = clock_timestamp() where key = 'live'$q$);
+  perform pg_temp.ck('M live.enabled is not turned on by sales-api''s own name (42501)', e = '42501', e);
+  e := pg_temp.err($q$update public.cockpit_sales_settings
+       set value = value || '{"agent": true}'::jsonb, updated_by = 'sales-desk', updated_at = clock_timestamp() where key = 'followups'$q$);
+  perform pg_temp.ck('M followups.agent is not turned on by the desk (42501)', e = '42501', e);
+  e := pg_temp.err($q$update public.cockpit_sales_settings
+       set value = jsonb_set(value, '{test_contacts}', (value -> 'test_contacts') || '["lc-test-real-lead"]'::jsonb),
+           updated_by = 'sales-desk', updated_at = clock_timestamp() where key = 'rooms'$q$);
+  perform pg_temp.ck('M the test list is not widened by the desk (42501)', e = '42501', e);
+  e := pg_temp.err($q$update public.cockpit_sales_settings
+       set value = jsonb_set(value, '{test_only}', 'false'), updated_by = 'sales-desk', updated_at = clock_timestamp() where key = 'rooms'$q$);
+  perform pg_temp.ck('M rooms are not opened to every lead (test_only false) by the desk (42501)', e = '42501', e);
+  e := pg_temp.err(format($q$update public.cockpit_sales_settings
+       set value = value || '{"enabled": true}'::jsonb, updated_by = %L, updated_at = clock_timestamp() where key = 'threads'$q$, 'sales-desk'));
+  perform pg_temp.ck('M a write that names nobody turns nothing on: still refused when the key exists, none when it does not',
+    e in ('42501', 'none'), e);
+  e := pg_temp.err($q$insert into public.cockpit_sales_settings (key, value, updated_by)
+       values ('threads', '{"enabled": true}'::jsonb, 'sales-desk')
+       on conflict (key) do update set value = excluded.value, updated_by = excluded.updated_by, updated_at = clock_timestamp()$q$);
+  perform pg_temp.ck('M threads.enabled is not turned on by an upsert from the desk (42501)', e = '42501', e);
+
+  -- A manager's write turns it on, with the audit row naming the manager.
+  n0 := (select count(*) from public.cockpit_audit_log where action = 'settings.switch' and actor_email = mgr);
+  e := pg_temp.errm(format($q$update public.cockpit_sales_settings
+       set value = value || '{"settle": true}'::jsonb, updated_by = %L, updated_at = clock_timestamp() where key = 'rooms'$q$, mgr));
+  perform pg_temp.ck('M a sales manager turns rooms.settle on, and the audit row names them and what went on',
+    e = 'none' and (select count(*) from public.cockpit_audit_log where action = 'settings.switch' and actor_email = mgr) = n0 + 1
+    and exists (select 1 from public.cockpit_audit_log where action = 'settings.switch' and actor_email = mgr
+                  and metadata -> 'turned_on' = '["rooms.settle"]'::jsonb and before -> 'rooms.settle' = 'false'::jsonb
+                  and after -> 'rooms.settle' = 'true'::jsonb),
+    e);
+  -- A later write that leaves the manager's name on the row cannot borrow it.
+  e := pg_temp.err($q$update public.cockpit_sales_settings
+       set value = value || '{"count_on_join": true}'::jsonb where key = 'rooms'$q$);
+  perform pg_temp.ck('M a write that does not stamp itself cannot borrow the last manager''s name (42501)', e = '42501', e);
+  e := pg_temp.errm(format($q$update public.cockpit_sales_settings
+       set value = value || '{"settle": false}'::jsonb, updated_by = %L, updated_at = clock_timestamp() where key = 'rooms'$q$, 'sales-desk'));
+  perform pg_temp.ck('M rooms.settle off again (by the desk)', e = 'none', e);
+  perform pg_temp.ck('M settings that are not switches are not guarded (a non-switch key, a wait)',
+    pg_temp.err($q$update public.cockpit_sales_settings set value = jsonb_set(value, '{waits_s,lead}', '600'),
+                   updated_by = 'sales-desk', updated_at = clock_timestamp() where key = 'rooms'$q$) = 'none'
+    and pg_temp.err($q$update public.cockpit_sales_settings set value = value, updated_by = 'sales-desk' where key = 'messaging'$q$) = 'none');
+
+  -- rooms.settle off: an unhandled settle event from before is not posted.
+  stale := pg_temp.room('lc-test-m-st', 'lc-test-m-st@example.invalid', 'fallback', 'open');
+  update public.cockpit_sales_rooms set state = 'expired' where id = stale;
+  insert into public.cockpit_sales_room_events (room_id, kind, source, dedupe_key, at, text)
+  values (stale, 'sweep.settle', 'settle', 'sweep.settle:' || stale::text, now() - interval '2 minutes', 'Due to be settled.');
+
+  -- live.enabled off: an open offer, an empty standby room, a Zoom standby
+  -- room past its time with its host Available, and a lead's room.
+  insert into public.cockpit_sales_availability (email, state, until) values
+    ('lc-test-m-sb@example.invalid', 'available', now() + interval '1 hour'),
+    ('lc-test-m-zs@example.invalid', 'available', now() + interval '1 hour')
+  on conflict (email) do update set state = excluded.state, until = excluded.until;
+  host_room := pg_temp.room(null, 'lc-test-m-sb@example.invalid', 'standby', 'host_in', 'demo');
+  zoom_sb := pg_temp.room(null, 'lc-test-m-zs@example.invalid', 'standby', 'open', 'demo');
+  update public.cockpit_sales_rooms set requested_at = now() - interval '3 hours', opened_at = now() - interval '3 hours'
+   where id = zoom_sb;
+  lead_room := pg_temp.room('lc-test-m-lead', 'lc-test-m-lr@example.invalid', 'fallback', 'open');
+  offer := pg_temp.live('lc-test-m-offer', array['lc-test-m-sb@example.invalid']);
+
+  -- rooms.count_on_join off: a joined room's count is never claimed.
+  insert into public.cockpit_sales_rooms
+    (request_id, contact_id, purpose, call_kind, provider, host_email, made_by, state, join_url, result, lead_in_at, ended_at)
+  values (gen_random_uuid(), 'lc-test-m-cc', 'manual', 'intro', 'meet', 'lc-test-m-cc@example.invalid', 'x', 'ended',
+          'https://meet.google.com/lct-mmmm-cc', 'joined', now() - interval '5 minutes', now() - interval '1 minute')
+  returning id into cc;
+  got := public.cockpit_sales_room_count_claim(cc, now(), null, '{"count_claimed_at": null, "count_result": null}'::jsonb, true);
+  perform pg_temp.ck('M count_on_join off: the count''s claim answers missed and claims nothing',
+    got ->> 'code' = 'missed' and got ->> 'off' = 'count_on_join'
+    and (select count_claimed_at is null and count_result is null from public.cockpit_sales_rooms where id = cc),
+    got::text);
+
+  n1 := (select count(*) from public.cockpit_sales_rooms where purpose = 'standby' and host_email = 'lc-test-m-zs@example.invalid');
+  s := public.cockpit_sales_rooms_sweep();
+  perform pg_temp.ck('M settle off: the sweep posts no settle and says so',
+    s -> 'settle' = '[]'::jsonb and s -> 'settle_off' = 'true'::jsonb
+    and (select handled_at is null and last_try_at is null from public.cockpit_sales_room_events where dedupe_key = 'sweep.settle:' || stale::text),
+    left(s::text, 300));
+  perform pg_temp.ck('M live off: an open offer ends (live_off), and nobody is made Away for it',
+    (select state = 'expired' and end_reason = 'live_off' from public.cockpit_sales_live where id = offer)
+    and (select state = 'available' from public.cockpit_sales_availability where email = 'lc-test-m-sb@example.invalid'),
+    (select state || ' ' || coalesce(end_reason, '-') from public.cockpit_sales_live where id = offer));
+  perform pg_temp.ck('M live off: an empty standby room ends (live_off)',
+    (select state = 'ended' and end_reason = 'live_off' from public.cockpit_sales_rooms where id = host_room),
+    (select state || ' ' || coalesce(end_reason, '-') from public.cockpit_sales_rooms where id = host_room));
+  perform pg_temp.ck('M live off: a Zoom standby room past its time is closed and no fresh one is made',
+    (select state in ('ended', 'expired') from public.cockpit_sales_rooms where id = zoom_sb)
+    and (select count(*) from public.cockpit_sales_rooms where purpose = 'standby' and host_email = 'lc-test-m-zs@example.invalid') = n1
+    and coalesce((s ->> 'standby_fresh')::integer, 0) = 0,
+    (select state || ' ' || coalesce(end_reason, '-') from public.cockpit_sales_rooms where id = zoom_sb));
+  perform pg_temp.ck('M live off: a lead''s room is never touched by it',
+    (select state = 'open' from public.cockpit_sales_rooms where id = lead_room));
+  perform pg_temp.ck('M live off: the handover claim claims nothing, whoever asks',
+    not exists (select 1 from public.cockpit_sales_live_claim(pg_temp.live('lc-test-m-claim', array['lc-test-m-sb@example.invalid']),
+                                                              'lc-test-m-sb@example.invalid'))
+    and not exists (select 1 from public.cockpit_sales_live where contact_id = 'lc-test-m-claim' and state <> 'offered'));
+
+  -- The same settle event goes out once a manager turns settle on.
+  update public.cockpit_sales_settings
+     set value = value || '{"settle": true}'::jsonb, updated_by = mgr, updated_at = clock_timestamp() where key = 'rooms';
+  s := public.cockpit_sales_rooms_sweep();
+  perform pg_temp.ck('M settle on (a manager): the waiting settle event is posted',
+    s -> 'settle' @> to_jsonb(array[stale::text]) and not (s ? 'settle_off'), left(s::text, 300));
+  update public.cockpit_sales_settings
+     set value = value || '{"settle": false}'::jsonb, updated_by = 'sales-desk', updated_at = clock_timestamp() where key = 'rooms';
+exception when others then
+  perform pg_temp.ck('M section crashed', false, sqlstate || ': ' || sqlerrm);
 end;
 $$;
 

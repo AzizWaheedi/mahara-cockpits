@@ -5,9 +5,10 @@ How a room is made
   has already checked the seat, the switches, the client and do-not-disturb
   rules and the host; this worker never decides who may have a room. It does
   check the switches again: a room is made only while `rooms.enabled` is true
-  and that provider's `rooms.providers` switch is true. A missing or
-  unreadable setting is off, and a run that has not read the setting claims
-  nothing.
+  and that provider's `rooms.providers` switch is true, and a standby or
+  handover room only while `live.enabled` is true too (Milestone 1 fence). A
+  missing or unreadable setting is off, and a run that has not read the
+  setting claims nothing.
 - The worker claims it with a conditional PATCH (`state=eq.requested`), so two
   runs, or fifty, can never make the same room twice: only the update that
   still sees `requested` gets the row back.
@@ -143,6 +144,7 @@ ALERTS = "cockpit_sales_alerts"
 PEOPLE = "cockpit_sales_people"
 SETTINGS = "cockpit_sales_settings"
 SETTING = "rooms"
+LIVE_SETTING = "live"   # read beside it: standby and handover rooms only while live.enabled is true
 JOB = "rooms"
 HOSTS_JOB = "room-hosts"
 
@@ -261,6 +263,7 @@ SAY = {
     "too_late": "The room worker did not pick this room up in time. Make a new room.",
     "lost": "This room was not finished in time. Make a new one.",
     "booked": "A booked call keeps its own meeting, so no new room is made. Open the booked call instead.",
+    "live_off": "Live handover is switched off, so no standby or handover room is made. Send the lead a video link instead.",
     "provider": "This room asks for a video service the worker does not know. Make a new room with Zoom or Meet.",
     "no_host": "This room has no host. Make a new room.",
     "error": "The room could not be made because of an error on our side. Try again, or use the other video service.",
@@ -1251,6 +1254,9 @@ class Worker:
         self.settings: dict[str, Any] = merged(DEFAULTS, None)
         self._settings_at: Optional[float] = None
         self._settings_reads = 0  # successful reads of the rooms setting (a re-read is told by it)
+        # live.enabled as last read (Milestone 1 fence): standby and handover
+        # rooms are made only while it is true; unread is off.
+        self.live_on = False
         self.claim_until = float("inf")
         self.zoom_claim_until = float("inf")
         self.pending: dict[str, Pending] = {}
@@ -1533,6 +1539,11 @@ class Worker:
         self.settings = merged(DEFAULTS, raw)
         self._settings_at = self.clock()
         self._settings_reads += 1
+        try:
+            live = self.sb.setting(LIVE_SETTING)
+            self.live_on = isinstance(live, dict) and live.get("enabled") is True
+        except Exception:  # noqa: BLE001 - unread is off: no standby or handover room on a guess
+            self.live_on = False
 
     def _settings_fresh(self) -> bool:
         """Only a run that has read the switches lately claims a room: a
@@ -1646,6 +1657,8 @@ class Worker:
             self.fail(room, SAY["switched_off"], refusal=True)
         elif room.get("purpose") == "booked":
             self.fail(room, SAY["booked"], refusal=True)
+        elif room.get("purpose") in ("standby", "handover") and not self.live_on:
+            self.fail(room, SAY["live_off"], refusal=True)
         elif not room.get("host_email"):
             self.fail(room, SAY["no_host"], refusal=True)
         elif room.get("provider") not in ("zoom", "meet"):

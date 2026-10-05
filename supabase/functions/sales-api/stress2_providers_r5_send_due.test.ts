@@ -108,7 +108,7 @@ function reset(): string {
   db.seed("cockpit_sales_settings", [
     { key: "messaging", value: { whatsapp: true, email: true } },
     { key: "whatsapp_guard", value: { connector_off: true, single_copy_ok_at: "2026-10-01T00:00:00Z", templates_per_day: 250, template_budget_usd_month: 100 } },
-    { key: "followups", value: { enabled: true, waves: { per_day: 40, batch_gap_s: 45 }, first_hours: [9, 18], stop_pause_days: 30 } },
+    { key: "followups", value: { enabled: true, agent: true, waves: { per_day: 40, batch_gap_s: 45 }, first_hours: [9, 18], stop_pause_days: 30 } },
     { key: "wa_fields", value: { rep: { id: "f-rep" }, line: { id: "f-line" } } },
   ]);
   db.seed("cockpit_sales_wa_templates", [

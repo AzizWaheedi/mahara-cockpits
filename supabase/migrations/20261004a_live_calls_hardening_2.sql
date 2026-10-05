@@ -27,6 +27,15 @@
 --             another room").
 --   standby   cockpit_sales_availability keeps the last press's sentence
 --             (standby_error, standby_error_at) for live.status.
+--   fence     Milestone 1 (the video link when a call fails, 5 October):
+--             rooms.settle, rooms.wrap and followups.agent added switched
+--             off; the sweep settles nothing while rooms.settle is off and
+--             makes no standby room, re-offer or open offer while
+--             live.enabled is off (it closes empty standby rooms and ends
+--             open offers instead); the count's claim answers "missed"
+--             while rooms.count_on_join is off; and a switch is turned on
+--             only by a write that names a sales manager, with an audit row
+--             for every switch change (cockpit_sales_settings_guard).
 --
 -- Checks: supabase/migrations/tests/run_checks.py applies a, b, c, d and
 -- this file in one rolled-back run; the stress runs apply d and this file
@@ -201,6 +210,11 @@ declare
   cname text;
 begin
   if p_live_id is null or me = '' then
+    return;
+  end if;
+  -- Live handover switched off (Milestone 1 fence): nothing is claimed,
+  -- whoever asks (sales-api's live.take refuses before it gets here).
+  if not coalesce((select s.value -> 'enabled' from public.cockpit_sales_settings as s where s.key = 'live') = 'true'::jsonb, false) then
     return;
   end if;
   w := coalesce(cfg -> 'waits_s', '{}'::jsonb);
@@ -845,6 +859,26 @@ begin
     errs := errs || jsonb_build_object('rule', 'available_ended', 'error', sqlerrm);
   end;
 
+  -- L0. Live handover switched off (live.enabled not true; Milestone 1
+  -- fence): an offer still open ends now, so nobody is offered a lead and
+  -- no Take can land on it. Nobody is made Away for it.
+  begin
+    n := 0;
+    if not coalesce((lcfg -> 'enabled') = 'true'::jsonb, false) then
+      for rec in
+        select x.id from public.cockpit_sales_live as x
+         where x.state = 'offered'
+         for update skip locked
+      loop
+        n := n + public.cockpit_sales_live_move(rec.id, array['offered'], 'expired', 'live_off',
+               'Live handover is switched off, so the offer ended.');
+      end loop;
+    end if;
+    summary := summary || jsonb_build_object('offer_live_off', n); moved_live := moved_live + n;
+  exception when others then
+    errs := errs || jsonb_build_object('rule', 'offer_live_off', 'error', sqlerrm);
+  end;
+
   -- L1. offered: nobody took it in time. Everyone it went to who did not
   -- press Not now, is still Available, and is not holding another live call
   -- they took meanwhile, becomes Away (one miss). Ended only 30 s after
@@ -939,7 +973,9 @@ begin
        for update of x skip locked
     loop
       eligible := null;
+      -- Offered again only while live handover is on (Milestone 1 fence).
       if rec.state = 'room_ready' and rec.room_state <> 'failed' and rec.room_reason = 'host_not_in' and rec.reoffers = 0
+         and coalesce((lcfg -> 'enabled') = 'true'::jsonb, false)
          and (rec.room_lead_by is null or rec.room_lead_by > t + interval '60 seconds') then
         select coalesce(array_agg(pr.email order by pr.email), '{}') into eligible
           from public.cockpit_sales_presence as pr
@@ -1011,7 +1047,10 @@ begin
       -- roomlogic.ts refreshWanted: no fresh room when a booked call of the
       -- host's starts before the fresh room's life and its guard are over,
       -- or is running now, and none outside live.hours.
+      -- Never while live handover is switched off (Milestone 1 fence): a
+      -- standby room exists only for live handovers.
       fresh := coalesce((cfg -> 'enabled') = 'true'::jsonb, false)
+               and coalesce((lcfg -> 'enabled') = 'true'::jsonb, false)
                and (lcfg -> 'standby') is distinct from 'false'::jsonb
                and coalesce((cfg -> 'providers' -> rec.provider) = 'true'::jsonb, false)
                and public.cockpit_sales_live_hours_open(lcfg -> 'hours', t)
@@ -1107,6 +1146,30 @@ begin
     summary := summary || jsonb_build_object('host_away', n); moved_rooms := moved_rooms + n;
   exception when others then
     errs := errs || jsonb_build_object('rule', 'host_away', 'error', sqlerrm);
+  end;
+
+  -- R10. Live handover switched off (live.enabled not true; Milestone 1
+  -- fence): an empty standby room has nothing to wait for, so it ends, and
+  -- one not made yet is cancelled (the worker closes any meeting it made).
+  -- A room with a lead in it is never touched.
+  begin
+    if coalesce((lcfg -> 'enabled') = 'true'::jsonb, false) then
+      summary := summary || jsonb_build_object('standby_live_off', 0);
+    else
+      select coalesce(array_agg(q.id), '{}') into ids from (
+        select x.id from public.cockpit_sales_rooms as x
+         where x.purpose = 'standby' and x.contact_id is null
+           and x.state in ('requested', 'creating', 'open', 'host_in')
+           and (x.requested_at + w_hold < t or not public.cockpit_sales_room_pending(x.id, t))
+         for update of x skip locked) as q;
+      n := public.cockpit_sales_rooms_close(ids, array['open', 'host_in'], 'ended', 'live_off',
+        'Closed: live handover is switched off.', null, null);
+      n := n + public.cockpit_sales_rooms_close(ids, array['requested', 'creating'], 'cancelled', 'live_off',
+        'Cancelled: live handover is switched off.', null, null);
+      summary := summary || jsonb_build_object('standby_live_off', n); moved_rooms := moved_rooms + n;
+    end if;
+  exception when others then
+    errs := errs || jsonb_build_object('rule', 'standby_live_off', 'error', sqlerrm);
   end;
 
   -- R7. lead_in: no end signal by ends_at + no_end_signal. The only rule that
@@ -1318,7 +1381,13 @@ begin
   -- as sweep.settle until room.event settles them (settled_mark) and marks
   -- the event handled, event_replay apart; E0 gives one up after max_tries
   -- real tries (leases) or a day, and then a person marks the intro.
+  -- Only while rooms.settle is true (Milestone 1 fence: off, missing is
+  -- off): with it off no settle event is made or posted, no room is marked
+  -- settled and nobody is asked to mark from here; the rep marks the call.
   begin
+    if not coalesce((cfg -> 'settle') = 'true'::jsonb, false) then
+      summary := summary || jsonb_build_object('settle_off', true, 'settle_due', 0);
+    else
     -- The rooms due (closed with nobody joining, the intro still new or
     -- confirmed, start + settle passed), and whether each is evidence that
     -- nobody came (roomlogic.ts noShowDoubt, roomForThisStart): a no-show is
@@ -1562,6 +1631,7 @@ begin
     )
     select coalesce(jsonb_agg(b.room_id::text order by b.room_id), '[]'::jsonb) into settle from bumped as b;
     summary := summary || jsonb_build_object('settle_due', settle_due);
+    end if;
   exception when others then
     errs := errs || jsonb_build_object('rule', 'settle', 'error', sqlerrm);
   end;
@@ -2412,6 +2482,261 @@ begin
 end;
 $$;
 revoke all on function public.cockpit_sales_rooms_link_replaced() from public, anon, authenticated;
+
+-- 6f. Milestone 1: the switches that fence it, held in the database ---------
+--
+-- Milestone 1 is the video link when a call fails. What lies outside it
+-- stays off on the server while its switch is off, and a switch is turned on
+-- only by a manager, with an audit row (Milestone 1 scope, 5 October 2026):
+--   rooms.settle     the sweep's no-show settle (S1 above, sales-api's
+--                    sweep.settle). New, false; missing is off.
+--   rooms.wrap       room.wrap, a room for a booked call. New, false.
+--   followups.agent  the follow-up agent's own sends: waves, the approved
+--                    batch, the desk's paced send, levels that send by
+--                    themselves, autosend and confirmation drafts. New,
+--                    false; missing is off. followups.enabled (the drafts
+--                    reps approve, live since 26 September) is unchanged.
+--   rooms.count_on_join  also held in the count's claim below.
+--   live.enabled     also held by the sweep (R5, R10, L0, L3 above) and the
+--                    handover claim (section 2: nothing is claimed).
+
+select public.cockpit_sales_settings_add_missing('rooms', '{"settle": false, "wrap": false}'::jsonb,
+  'migration 20261004a',
+  'Milestone 1 fence: settling no-shows automatically (settle) and rooms for booked calls (wrap) ship switched off.');
+select public.cockpit_sales_settings_add_missing('followups', '{"agent": false}'::jsonb,
+  'migration 20261004a',
+  'Milestone 1 fence: the follow-up agent''s own sends (waves, openers, the paced send, confirmations, autosend) ship switched off; the drafts reps approve keep followups.enabled.');
+
+-- The count's claim answers "missed" while rooms.count_on_join is not true:
+-- a join is never counted as a booking from the database's side either,
+-- whoever calls it (sales-api checks the switch before it gets here).
+create or replace function public.cockpit_sales_room_count_claim(
+  p_room_id uuid, p_claimed_at timestamptz, p_result text, p_expect jsonb, p_siblings boolean)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+set lock_timeout = '5s'
+as $$
+declare
+  r public.cockpit_sales_rooms;
+  e jsonb := coalesce(p_expect, '{}'::jsonb);
+  joined timestamptz;
+  stands boolean := false;
+  flying boolean := false;
+begin
+  if not coalesce((select s.value -> 'count_on_join' from public.cockpit_sales_settings as s where s.key = 'rooms')
+                  = 'true'::jsonb, false) then
+    return jsonb_build_object('code', 'missed', 'off', 'count_on_join');
+  end if;
+  select * into r from public.cockpit_sales_rooms as x where x.id = p_room_id;
+  if not found or r.contact_id is null then
+    return jsonb_build_object('code', 'missed');
+  end if;
+  perform pg_advisory_xact_lock(hashtext('cockpit_sales_rooms:count:' || r.contact_id));
+  select * into r from public.cockpit_sales_rooms as x where x.id = p_room_id for update;
+  if not found then
+    return jsonb_build_object('code', 'missed');
+  end if;
+  if (e ? 'count_claimed_at' and r.count_claimed_at is distinct from (e ->> 'count_claimed_at')::timestamptz)
+     or (e ? 'count_result' and r.count_result is distinct from (e ->> 'count_result'))
+     or (e ? 'count_appointment_id' and r.count_appointment_id is distinct from (e ->> 'count_appointment_id'))
+     or (e ? 'count_undo_at' and r.count_undo_at is distinct from (e ->> 'count_undo_at')::timestamptz)
+     or (e ? 'lead_in_at' and r.lead_in_at is distinct from (e ->> 'lead_in_at')::timestamptz) then
+    return jsonb_build_object('code', 'missed');
+  end if;
+  if coalesce(p_siblings, true) then
+    joined := coalesce(r.lead_in_at, now());
+    select coalesce(bool_or(x.count_result = 'unclear'
+                            or (x.count_result in ('booked', 'moved') and x.count_appointment_id is not null)
+                            or (x.count_result is null and x.count_appointment_id is not null and x.count_undo_at is null)), false),
+           coalesce(bool_or(x.count_result is null and x.count_appointment_id is null), false)
+      into stands, flying
+      from public.cockpit_sales_rooms as x
+     where x.contact_id = r.contact_id
+       and x.id <> r.id
+       and x.lead_in_at >= joined - interval '3 hours'
+       and x.lead_in_at <= joined + interval '3 hours'
+       and x.count_claimed_at is not null
+       and (x.call_kind is null or r.call_kind is null or x.call_kind = r.call_kind);
+    if stands then
+      update public.cockpit_sales_rooms as x
+         set count_claimed_at = coalesce(p_claimed_at, now()), count_result = 'already_counted',
+             count_appointment_id = null, count_undo_at = null
+       where x.id = r.id
+      returning * into r;
+      return jsonb_build_object('code', 'already_counted', 'row', to_jsonb(r));
+    end if;
+    if flying then
+      return jsonb_build_object('code', 'in_flight');
+    end if;
+  end if;
+  update public.cockpit_sales_rooms as x
+     set count_claimed_at = coalesce(p_claimed_at, now()), count_result = p_result,
+         count_appointment_id = null, count_undo_at = null
+   where x.id = r.id
+  returning * into r;
+  return jsonb_build_object('code', 'claimed', 'row', to_jsonb(r));
+end;
+$$;
+revoke all on function public.cockpit_sales_room_count_claim(uuid, timestamptz, text, jsonb, boolean) from public, anon, authenticated;
+grant execute on function public.cockpit_sales_room_count_claim(uuid, timestamptz, text, jsonb, boolean) to service_role;
+
+-- The switches of one setting, each as on (true) or off, read the way the
+-- code reads it: rooms.*, live.*, threads.* and followups.agent are on only
+-- when true; followups.enabled and live.standby are on unless false.
+create or replace function public.cockpit_sales_switches(p_key text, p_value jsonb)
+returns jsonb
+language plpgsql
+immutable
+set search_path = ''
+as $$
+declare
+  v jsonb := case when jsonb_typeof(p_value) = 'object' then p_value else '{}'::jsonb end;
+  out jsonb := '{}'::jsonb;
+  k text;
+  is_true constant jsonb := 'true'::jsonb;
+begin
+  if p_key = 'rooms' then
+    out := jsonb_build_object(
+      'rooms.enabled', coalesce(v -> 'enabled' = is_true, false),
+      'rooms.providers.zoom', coalesce(v #> '{providers,zoom}' = is_true, false),
+      'rooms.providers.meet', coalesce(v #> '{providers,meet}' = is_true, false),
+      'rooms.send.whatsapp_text', coalesce(v #> '{send,whatsapp_text}' = is_true, false),
+      'rooms.send.whatsapp_template', coalesce(v #> '{send,whatsapp_template}' = is_true, false),
+      'rooms.send.email', coalesce(v #> '{send,email}' = is_true, false),
+      'rooms.count_on_join', coalesce(v -> 'count_on_join' = is_true, false),
+      'rooms.settle', coalesce(v -> 'settle' = is_true, false),
+      'rooms.wrap', coalesce(v -> 'wrap' = is_true, false),
+      'rooms.short_link', coalesce(v -> 'short_link' = is_true, false),
+      'rooms.fallback.auto_on_miss', coalesce(v #> '{fallback,auto_on_miss}' = is_true, false),
+      -- Off the test list: test_only false is the wider setting.
+      'rooms.everyone', coalesce(v -> 'test_only' = 'false'::jsonb, false),
+      'rooms.fallback.any_lead', coalesce(v #>> '{fallback,scope}' = 'any', false));
+  elsif p_key = 'live' then
+    out := jsonb_build_object(
+      'live.enabled', coalesce(v -> 'enabled' = is_true, false),
+      'live.slack', coalesce(v -> 'slack' = is_true, false),
+      'live.standby', coalesce(v -> 'standby' <> 'false'::jsonb, true));
+  elsif p_key = 'threads' then
+    out := jsonb_build_object('threads.enabled', coalesce(v -> 'enabled' = is_true, false));
+  elsif p_key = 'followups' then
+    out := jsonb_build_object(
+      'followups.enabled', coalesce(v -> 'enabled' <> 'false'::jsonb, true),
+      'followups.agent', coalesce(v -> 'agent' = is_true, false));
+    for k in select e.key from jsonb_each(case when jsonb_typeof(v -> 'autosend') = 'object' then v -> 'autosend' else '{}'::jsonb end) as e loop
+      out := out || jsonb_build_object('followups.autosend.' || k, coalesce(v #> array['autosend', k] = is_true, false));
+    end loop;
+    for k in select e.key from jsonb_each(case when jsonb_typeof(v -> 'takeover') = 'object' then v -> 'takeover' else '{}'::jsonb end) as e loop
+      out := out || jsonb_build_object('followups.takeover.' || k, coalesce(v #> array['takeover', k] = is_true, false));
+    end loop;
+  end if;
+  return out;
+end;
+$$;
+revoke all on function public.cockpit_sales_switches(text, jsonb) from public, anon, authenticated;
+grant execute on function public.cockpit_sales_switches(text, jsonb) to service_role;
+
+-- Who a guarded change may come from: a write whose updated_by names an
+-- active sales manager (cockpit_sales_people), stamped by this write (its
+-- updated_by or updated_at differs from the row's, or a new row), so a later
+-- write that leaves the last manager's name on the row cannot borrow it.
+-- Guarded: any switch above turned on, and any change to who the rooms may
+-- reach (test_contacts, test_calendar_id, live_calendar_id,
+-- fallback.pilot_emails). Turning a switch off needs no one: a kill switch
+-- works for whoever holds it. Every change to a switch or to who the rooms
+-- reach leaves one audit row (settings.switch), whoever made it.
+create or replace function public.cockpit_sales_settings_guard()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  old_v jsonb := '{}'::jsonb;
+  old_sw jsonb;
+  new_sw jsonb;
+  k text;
+  widened text[] := '{}';
+  changed text[] := '{}';
+  scope_paths constant text[][] := array[['rooms', 'test_contacts'], ['rooms', 'test_calendar_id'],
+                                         ['rooms', 'live_calendar_id'], ['rooms', 'fallback,pilot_emails']];
+  i integer;
+  sp text[];
+  sname text;
+  before_j jsonb := '{}'::jsonb;
+  after_j jsonb := '{}'::jsonb;
+  manager boolean;
+  stamped boolean;
+begin
+  if new.key not in ('rooms', 'live', 'threads', 'followups') then
+    return new;
+  end if;
+  -- An insert on a key that is already there is skipped (on conflict do
+  -- nothing), fails, or becomes an update, which comes through here as one.
+  if tg_op = 'INSERT' and exists (select 1 from public.cockpit_sales_settings as s where s.key = new.key) then
+    return new;
+  end if;
+  if tg_op = 'UPDATE' then
+    old_v := old.value;
+  end if;
+  old_sw := public.cockpit_sales_switches(new.key, old_v);
+  new_sw := public.cockpit_sales_switches(new.key, new.value);
+  for k in select e.key from jsonb_each(old_sw || new_sw) as e loop
+    if (new_sw -> k) is distinct from (old_sw -> k) then
+      changed := changed || k;
+      before_j := before_j || jsonb_build_object(k, old_sw -> k);
+      after_j := after_j || jsonb_build_object(k, new_sw -> k);
+      if coalesce(new_sw -> k = 'true'::jsonb, false) then
+        widened := widened || k;
+      end if;
+    end if;
+  end loop;
+  -- A new rooms row (a fresh database) starts from its own test list.
+  if new.key = 'rooms' and tg_op = 'UPDATE' then
+    for i in 1 .. array_length(scope_paths, 1) loop
+      sp := string_to_array(scope_paths[i][2], ',');
+      sname := 'rooms.' || array_to_string(sp, '.');
+      if (new.value #> sp) is distinct from (old_v #> sp) then
+        changed := changed || sname;
+        widened := widened || sname;
+        before_j := before_j || jsonb_build_object(sname, old_v #> sp);
+        after_j := after_j || jsonb_build_object(sname, new.value #> sp);
+      end if;
+    end loop;
+  end if;
+  if cardinality(changed) = 0 then
+    return new;
+  end if;
+  if cardinality(widened) > 0 then
+    manager := exists (select 1 from public.cockpit_sales_people as p
+                        where lower(p.email) = lower(btrim(coalesce(new.updated_by, '')))
+                          and p.role = 'manager' and p.active);
+    stamped := true;
+    if tg_op = 'UPDATE' then
+      stamped := new.updated_by is distinct from old.updated_by or new.updated_at is distinct from old.updated_at;
+    end if;
+    if not manager or not stamped then
+      raise exception using errcode = '42501',
+        message = format('Only a sales manager turns on or widens %s: write it with updated_by set to the manager''s email and updated_at to now().',
+                         array_to_string(widened, ', ')),
+        hint = 'Turning a switch off needs no manager.';
+    end if;
+  end if;
+  insert into public.cockpit_audit_log (action, entity_type, entity_id, actor_email, source_app, source_system, before, after, metadata)
+  values ('settings.switch', 'cockpit_sales_settings', new.key,
+          case when coalesce(new.updated_by, '') ~ '^[^@\s]+@[^@\s]+$' then lower(new.updated_by) end,
+          'sales', 'database', before_j, after_j,
+          jsonb_build_object('by', new.updated_by, 'changed', to_jsonb(changed), 'turned_on', to_jsonb(widened)));
+  return new;
+end;
+$$;
+revoke all on function public.cockpit_sales_settings_guard() from public, anon, authenticated;
+
+drop trigger if exists cockpit_sales_settings_guard on public.cockpit_sales_settings;
+create trigger cockpit_sales_settings_guard
+  before insert or update on public.cockpit_sales_settings
+  for each row execute function public.cockpit_sales_settings_guard();
 
 -- 7. Grants (the view was made again) ---------------------------------------------
 

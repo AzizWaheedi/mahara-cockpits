@@ -32,7 +32,7 @@ const SAID = new Date(SUN_11 - 20 * 60_000).toISOString();
 function setup() {
   const w = fakeWorld(SUN_11);
   const audits: Row[] = [];
-  w.db.seed("cockpit_sales_settings", [{ key: "followups", value: { enabled: true, stop_pause_days: 30 } }]);
+  w.db.seed("cockpit_sales_settings", [{ key: "followups", value: { enabled: true, agent: true, stop_pause_days: 30 } }]);
   w.db.seed("cockpit_sales_leads", [{ contact_id: LEAD, country: "KW", assigned_to: "G-setter" }]);
   w.db.seed("cockpit_sales_people", [{ email: SETTER.email, ghl_user_id: "G-setter", active: true, role: "setter" }]);
   w.db.seed("cockpit_sales_followup_stops", [

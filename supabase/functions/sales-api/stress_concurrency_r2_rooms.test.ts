@@ -37,6 +37,9 @@ const desk: Who = { signed_in: true, seat: true, manager: false, email: "sales-d
 
 const ROOMS_ON = {
   ...DEFAULT_ROOMS_JSON,
+  // Settle and booked-call rooms on: these tests are about what they do (both ship off, Milestone 1).
+  settle: true,
+  wrap: true,
   enabled: true,
   test_only: false,
   providers: { zoom: true, meet: true },
@@ -477,7 +480,7 @@ describe("Hold pressed while the desk's paced send is under way", () => {
     const sends: Row[] = [];
     w.db.seed("cockpit_sales_settings", [
       { key: "whatsapp_guard", value: GUARD_OPEN },
-      { key: "followups", value: { enabled: true, waves: { per_day: 40, batch_gap_s: 45 }, first_hours: [9, 18], stop_pause_days: 30 } },
+      { key: "followups", value: { enabled: true, agent: true, waves: { per_day: 40, batch_gap_s: 45 }, first_hours: [9, 18], stop_pause_days: 30 } },
       { key: "messaging", value: { whatsapp: true } },
     ]);
     w.db.seed("cockpit_sales_leads", [{ contact_id: LEAD, country: "KW", assigned_to: "G-setter" }]);

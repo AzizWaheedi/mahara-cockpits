@@ -272,10 +272,11 @@ export function WavesCard({
     <SectionCard title="Backlog waves">
       {off ? (
         <p className="callout-warn mb-3 rounded-[var(--radius-md)] border px-3 py-2 text-sm">
-          The follow-up agent is switched off, so no wave drafts or sends.
+          The follow-up agent's own sends are switched off, so no wave drafts or
+          sends.
           {manager
-            ? " Switch it on under How it works first."
-            : " A manager switches it on under How it works."}
+            ? " Switch them on under How it works first."
+            : " A manager switches them on under How it works."}
         </p>
       ) : null}
 

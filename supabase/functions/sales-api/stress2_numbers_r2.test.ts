@@ -31,6 +31,9 @@ const manager: Who = { signed_in: true, seat: true, manager: true, email: "manag
 
 const ROOMS_ON = {
   ...DEFAULT_ROOMS_JSON,
+  // Settle and booked-call rooms on: these tests are about what they do (both ship off, Milestone 1).
+  settle: true,
+  wrap: true,
   enabled: true,
   test_only: false,
   count_on_join: true,
@@ -315,7 +318,7 @@ describe("a settle that only waits uses up its tries", () => {
     };
     const marks: Row[] = [];
     w.db.seed("cockpit_sales_settings", [
-      { key: "rooms", value: { ...DEFAULT_ROOMS_JSON, enabled: true, test_only: false, providers: { zoom: true, meet: true }, fallback: { ...DEFAULT_ROOMS_JSON.fallback, scope: "any" } } },
+      { key: "rooms", value: { ...DEFAULT_ROOMS_JSON, settle: true, wrap: true, enabled: true, test_only: false, providers: { zoom: true, meet: true }, fallback: { ...DEFAULT_ROOMS_JSON.fallback, scope: "any" } } },
       { key: "live", value: { enabled: false } },
       { key: "whatsapp_guard", value: {} },
       { key: "messaging", value: { whatsapp: true, email: true } },

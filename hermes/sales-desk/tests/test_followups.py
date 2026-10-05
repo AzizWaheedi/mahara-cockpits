@@ -415,7 +415,7 @@ class Run(unittest.TestCase):
         for trusted, expect in ((True, 1), (False, 0)):
             pg.tables["cockpit_sales_followups"].clear()
             asked.clear()
-            settings = {"enabled": True, "per_run": 5, "per_day": 60, "autosend": {"reply": trusted}}
+            settings = {"enabled": True, "agent": True, "per_run": 5, "per_day": 60, "autosend": {"reply": trusted}}
             with mock.patch.object(http, "request", pg):
                 out = fu.run(Supabase("https://example.supabase.co", "k"), FakeProvider([draft]), lambda _m: None,
                              settings=settings, ghl_token="", now=NOW, guard=GATE_OPEN,
@@ -558,7 +558,9 @@ class Channels(unittest.TestCase):
 
 
 def settings_on(**over):
-    return {"enabled": True, "per_run": 5, "per_day": 60, **over}
+    # The agent's own sends on too (followups.agent, Milestone 1 fence), as
+    # these tests were written before it: test_m1_fence.py checks it off.
+    return {"enabled": True, "agent": True, "per_run": 5, "per_day": 60, **over}
 
 
 def run_it(pg, transport=None, provider=None, **kw):

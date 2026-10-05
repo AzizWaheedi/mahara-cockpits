@@ -33,7 +33,7 @@ import { supabase } from "../lib/supabase";
 import { toast } from "../lib/toast";
 import type { Me } from "../lib/types";
 import { guardOpen } from "../lib/videoLink";
-import { agentOff, sourcePause } from "../lib/waves";
+import { agentOff, agentWorkOff, sourcePause } from "../lib/waves";
 import { firstWord, renderTemplate } from "../lib/whatsapp";
 
 /**
@@ -109,6 +109,8 @@ interface Followup {
 
 interface Settings {
   enabled: boolean;
+  /** followups.agent: the agent's own sends (waves, openers, sends that need no approval, confirmations). */
+  agent?: boolean;
   autosend: Partial<Record<Segment, boolean>>;
   takeover?: Partial<Record<Segment, boolean>>;
   replaces?: Partial<Record<Segment, string[]>>;
@@ -318,7 +320,7 @@ export default function FollowupsPage({ me }: { me: Me }) {
       {tab === "waiting" && (me.manager || openers.length) ? (
         <WavesCard
           manager={Boolean(me.manager)}
-          enabled={settings.data ? !agentOff(settings.data) : null}
+          enabled={settings.data ? !agentWorkOff(settings.data) : null}
           settings={settings.data}
           openers={openers}
           written={all.filter(f => f.segment === "reactivate")}
@@ -1360,6 +1362,7 @@ function SettingsForm({
           // themselves, and a stale copy of them here must not undo them.
           onSave({
             enabled: v.enabled,
+            agent: v.agent === true,
             per_run: v.per_run,
             per_day: v.per_day,
             nurture_every_days: v.nurture_every_days,
@@ -1378,6 +1381,15 @@ function SettingsForm({
             onChange={e => setV({ ...v, enabled: e.target.checked })}
           />
           The agent writes drafts
+        </label>
+        <label className="flex items-center gap-2 text-sm sm:col-span-2">
+          <input
+            type="checkbox"
+            checked={v.agent === true}
+            onChange={e => setV({ ...v, agent: e.target.checked })}
+          />
+          The agent sends by itself: backlog waves, confirmations and the kinds
+          you trust
         </label>
         {(
           [

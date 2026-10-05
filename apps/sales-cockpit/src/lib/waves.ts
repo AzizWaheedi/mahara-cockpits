@@ -836,3 +836,14 @@ export function agentOff(settings: object | null | undefined): boolean {
   if (!settings) return false;
   return "enabled" in settings && !(settings as { enabled?: unknown }).enabled;
 }
+
+/**
+ * The agent's own sends (sendrules.ts agentWorkOff, followups.agent; the
+ * Milestone 1 fence): backlog waves, openers, sends that need no approval
+ * and confirmation drafts. Off unless followups.agent is true (no value is
+ * off), and off whenever agentOff is. Unknown settings read as off.
+ */
+export function agentWorkOff(settings: object | null | undefined): boolean {
+  if (!settings) return true;
+  return agentOff(settings) || (settings as { agent?: unknown }).agent !== true;
+}

@@ -10,7 +10,7 @@
 
 import { cleanText, redact, type Who } from "./lib.ts";
 import { ApiRefusal, DbError, isUnique, type LiveIO } from "./liveio.ts";
-import { agentOff, budgetCap, budgetCheck, GATE_SHUT, gateOpen, hoursRefusal, kuwaitMonthStart, leadZones } from "./sendrules.ts";
+import { agentWorkOff, budgetCap, budgetCheck, GATE_SHUT, gateOpen, hoursRefusal, kuwaitMonthStart, leadZones } from "./sendrules.ts";
 
 type Row = Record<string, unknown>;
 type Action = (who: Who, b: Row) => Promise<Row>;
@@ -159,8 +159,10 @@ export const AGENT_COPY = {
   batch_taken_back: "These {n} openers were the stopped wave's, so none was approved. The desk takes them back within 5 minutes.",
   not_yours: "That is another rep's lead.",
   draft_missing: "That draft is not here any more.",
-  agent_off: "The follow-up agent is switched off (followups.enabled), so nothing is sent.",
-  agent_off_screen: "The follow-up agent is switched off, so no wave starts and no opener is approved. A manager switches it on under Follow-ups, How it works.",
+  agent_off: "The follow-up agent's own sends are switched off (followups.agent), so nothing is sent.",
+  agent_off_screen: "The follow-up agent's own sends are switched off, so no wave starts and no opener is approved. A manager switches them on under Follow-ups, How it works.",
+  /** followup.level above Approve while the agent's own sends are off (Milestone 1 fence). */
+  level_agent_off: "The follow-up agent's own sends are switched off, so every kind stays at Approve or Off. A manager switches them on under Follow-ups, How it works.",
   wa_off: "Sending by WhatsApp is switched off in the cockpit.",
   held: "This draft is held, so it was not sent. Release the hold or approve it again.",
   not_due: "This draft is not approved to go yet.",
@@ -325,7 +327,7 @@ export function makeFollowupAgent(deps: AgentDeps): { actions: Record<string, Ac
       const pool = String(b.pool ?? "");
       if (!(POOLS as readonly string[]).includes(pool)) throw refusal(AGENT_COPY.bad_pool, 400);
       // The agent's switch holds every wave (the screen disables the press too).
-      if (agentOff(s.followups)) throw refusal(AGENT_COPY.agent_off_screen, 409);
+      if (agentWorkOff(s.followups)) throw refusal(AGENT_COPY.agent_off_screen, 409);
       if (!gateOpen(s.whatsapp_guard)) throw refusal(GATE_SHUT, 409, { hold_all: true });
       const w = obj(obj(s.followups).waves);
       const perDay = b.per_day === undefined ? Number(w.per_day ?? 40) : Number(b.per_day);
@@ -384,7 +386,7 @@ export function makeFollowupAgent(deps: AgentDeps): { actions: Record<string, Ac
       if (!m.from.includes(String(before.state)))
         throw refusal(AGENT_COPY.wave_state.replace("{state}", String(before.state)).replace("{op}", op === "stop" ? "stopped" : `${op}d`));
       // Pause and stop always work; a resume waits for the switch and the gate.
-      if (op === "resume" && agentOff(s.followups)) throw refusal(AGENT_COPY.agent_off_screen, 409);
+      if (op === "resume" && agentWorkOff(s.followups)) throw refusal(AGENT_COPY.agent_off_screen, 409);
       if (op === "resume" && !gateOpen(s.whatsapp_guard)) throw refusal(GATE_SHUT, 409, { hold_all: true });
       const rows = await io.db(`cockpit_sales_followup_waves?id=eq.${enc(id)}&state=eq.${enc(String(before.state))}`, {
         method: "PATCH",
@@ -453,7 +455,7 @@ export function makeFollowupAgent(deps: AgentDeps): { actions: Record<string, Ac
 
   async function batch(who: Who, b: Row): Promise<Row> {
     const s = await settings(["followups", "whatsapp_guard"]);
-    if (agentOff(s.followups)) throw refusal(AGENT_COPY.agent_off_screen, 409);
+    if (agentWorkOff(s.followups)) throw refusal(AGENT_COPY.agent_off_screen, 409);
     if (!gateOpen(s.whatsapp_guard)) throw refusal(GATE_SHUT, 409, { hold_all: true });
     // Approve all pressed again after its answer was lost (the page keeps the
     // press's request id for two minutes): the batch the first press made is
@@ -788,7 +790,7 @@ export function makeFollowupAgent(deps: AgentDeps): { actions: Record<string, Ac
       waveId ? io.db(`cockpit_sales_followup_waves?id=eq.${enc(String(waveId))}&select=state`) : Promise.resolve([] as Row[]),
       io.db(`cockpit_sales_followup_stops?contact_id=eq.${enc(String(f.contact_id))}&select=state,kind,said_at,paused_until,decided_at&limit=200`),
     ]);
-    if (agentOff(obj(s.followups))) return holdAll(AGENT_COPY.agent_off);
+    if (agentWorkOff(obj(s.followups))) return holdAll(AGENT_COPY.agent_off);
     if (waveId && w[0]?.state !== "running") return refusal(AGENT_COPY.wave_not_running);
     const stopped = stopHoldOf(stops, io.now());
     return stopped ? refusal(AGENT_COPY.stop_paused.replace("{why}", stopped), 409, { code: "paused" }) : null;
@@ -799,7 +801,7 @@ export function makeFollowupAgent(deps: AgentDeps): { actions: Record<string, Ac
     const meta = await metaOf(String(f.id));
     const s = await settings(["followups", "whatsapp_guard", "messaging"]);
     const followups = obj(s.followups);
-    if (agentOff(followups)) throw holdAll(AGENT_COPY.agent_off);
+    if (agentWorkOff(followups)) throw holdAll(AGENT_COPY.agent_off);
     if (f.status !== "draft") throw refusal(AGENT_COPY.not_draft.replace("{status}", String(f.status)));
     // A sending mark left by a send that stopped half way (the draft is still
     // a draft) is no hold: this send takes it again.
@@ -1138,6 +1140,9 @@ export function makeFollowupAgent(deps: AgentDeps): { actions: Record<string, Ac
     if (!(LEVELS as readonly string[]).includes(lv)) throw refusal(AGENT_COPY.level_bad, 400);
     if (key.startsWith("reactivate.") && lv !== "approve" && lv !== "off")
       throw refusal("Backlog openers go only in an approved batch, so their level stays at Approve or Off.", 409);
+    // A level that sends by itself is the agent's own send (Milestone 1 fence).
+    if (lv !== "approve" && lv !== "off" && agentWorkOff((await settings(["followups"])).followups))
+      throw refusal(AGENT_COPY.level_agent_off, 409);
     const before = (await io.db(`cockpit_sales_followup_levels?kind_key=eq.${enc(key)}&select=*`))[0] ?? null;
     let rows: Row[];
     try {

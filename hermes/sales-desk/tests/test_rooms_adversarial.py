@@ -176,6 +176,8 @@ class StandbyRefresh(RoomsCase):
     while the closer still sits in the old meeting."""
 
     def test_the_host_s_own_old_room_does_not_make_the_new_one_busy(self):
+        # Standby rooms are live handover's: made only while live.enabled is on (Milestone 1 fence).
+        self.env.pg.put("cockpit_sales_settings", {"key": "live", "value": {"enabled": True}})
         old = self.env.zoom._make("zu-closer", {"topic": "Mahara call STBY01"})
         self.env.zoom.meetings[str(old["id"])]["status"] = "started"
         self.env.zoom.live["zu-closer"] = [{"id": old["id"], "topic": old["topic"]}]

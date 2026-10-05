@@ -284,6 +284,14 @@ export interface RoomsSetting {
   send: { whatsapp_text: boolean; whatsapp_template: boolean; email: boolean };
   template_route: string;
   count_on_join: boolean;
+  /**
+   * rooms.settle (Milestone 1 fence, off): only then does sweep.settle mark
+   * a booked intro a no-show when its room closed with nobody joining. Off,
+   * the rep marks the call. Missing is off.
+   */
+  settle: boolean;
+  /** rooms.wrap (Milestone 1 fence, off): only then does room.wrap make a room for a booked call. Missing is off. */
+  wrap: boolean;
   short_link: boolean;
   waits_s: Waits;
   lengths_min: Record<CallKind, number>;
@@ -304,6 +312,8 @@ export const DEFAULT_ROOMS_JSON = Object.freeze({
   send: { whatsapp_text: false, whatsapp_template: false, email: false },
   template_route: "call_link",
   count_on_join: false,
+  settle: false,
+  wrap: false,
   short_link: false,
   waits_s: { ...DEFAULT_WAITS },
   lengths_min: { intro: 30, demo: 60 },
@@ -335,6 +345,8 @@ export function roomsSetting(raw: unknown): RoomsSetting {
     send: { whatsapp_text: on(send.whatsapp_text), whatsapp_template: on(send.whatsapp_template), email: on(send.email) },
     template_route: str(r.template_route, 60) ?? "call_link",
     count_on_join: on(r.count_on_join),
+    settle: on(r.settle),
+    wrap: on(r.wrap),
     short_link: on(r.short_link),
     waits_s: waitsFrom(r.waits_s),
     lengths_min: { intro: bounded(len.intro, 30, 600), demo: bounded(len.demo, 60, 600) },

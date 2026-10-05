@@ -39,7 +39,7 @@ function setup(hlStartMs: number) {
   w.db.seed("cockpit_sales_settings", [
     {
       key: "rooms",
-      value: { ...DEFAULT_ROOMS_JSON, enabled: true, test_only: false, providers: { zoom: true, meet: true }, fallback: { ...DEFAULT_ROOMS_JSON.fallback, scope: "any" } },
+      value: { ...DEFAULT_ROOMS_JSON, settle: true, wrap: true, enabled: true, test_only: false, providers: { zoom: true, meet: true }, fallback: { ...DEFAULT_ROOMS_JSON.fallback, scope: "any" } },
     },
     { key: "live", value: { enabled: false } },
     { key: "whatsapp_guard", value: {} },

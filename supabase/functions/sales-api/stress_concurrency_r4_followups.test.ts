@@ -38,7 +38,7 @@ function setup() {
   const w = fakeWorld(SUN_11);
   const audits: Row[] = [];
   w.db.seed("cockpit_sales_settings", [
-    { key: "followups", value: { enabled: true, stop_pause_days: 30 } },
+    { key: "followups", value: { enabled: true, agent: true, stop_pause_days: 30 } },
     { key: "whatsapp_guard", value: { connector_off: true, single_copy_ok_at: "2026-10-01T00:00:00Z" } },
   ]);
   w.db.seed("cockpit_sales_leads", [{ contact_id: LEAD, country: "KW", assigned_to: "G-setter" }]);

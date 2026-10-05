@@ -108,6 +108,8 @@ SWITCHES: tuple[tuple[str, tuple[str, ...], Any, str], ...] = (
     ("rooms", ("send", "whatsapp_template"), False, "room links go to leads by WhatsApp template"),
     ("rooms", ("send", "email"), False, "room links go to leads by email"),
     ("rooms", ("count_on_join",), False, "a lead joining is booked and marked shown"),
+    ("rooms", ("settle",), False, "a booked intro whose room closed with nobody in it is marked a no-show by itself"),
+    ("rooms", ("wrap",), False, "a booked call gets a cockpit room (outside Milestone 1)"),
     ("rooms", ("fallback", "auto_on_miss"), False, "a missed dial makes a room by itself"),
     ("rooms", ("short_link",), False, "messages carry the short link, whose page copy is still a draft"),
     ("live", ("enabled",), False, "live handovers are on"),
@@ -116,6 +118,7 @@ SWITCHES: tuple[tuple[str, tuple[str, ...], Any, str], ...] = (
     ("live", ("kinds", "demo"), False, "demo handovers are on"),
     ("threads", ("enabled",), False, "demo chats are on"),
     ("followups", ("autosend", "reactivate"), False, "backlog openers send by themselves, not by an approved batch"),
+    ("followups", ("agent",), False, "the follow-up agent's own sends are on: waves, openers, confirmations, autosend"),
 )
 
 CRON_LINES: tuple[tuple[str, tuple[str, ...], str], ...] = (

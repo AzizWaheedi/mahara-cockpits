@@ -41,7 +41,8 @@ How a wave runs. sales-api holds the buttons; this is the desk's half.
 
 Wave openers never take the follow-up agent's own room (followups.per_day),
 and nothing here runs while the follow-up agent is switched off
-(followups.enabled).
+(followups.enabled) or its own sends are (followups.agent, which ships off:
+Milestone 1); only a stopped wave is still wound down.
 """
 from __future__ import annotations
 
@@ -1430,7 +1431,7 @@ def _draft_wave(sb: Any, wave: dict[str, Any], wave_room: int, now: datetime, ct
             break
         # The agent's switch again on every page (stress2 round 4): openers
         # stop being written once a manager switched the agent off.
-        if not fu.agent_still_on(sb):
+        if not fu.agent_work_still_on(sb):
             out["switched_off"] = True
             log("waves: the follow-up agent was switched off during this run; no more openers are written")
             break
@@ -2494,12 +2495,16 @@ def run(sb: Any, api: Callable[[str, dict[str, Any]], tuple[int, dict[str, Any]]
     w = settings_of(settings)
     waves = _waves(sb)
     out: dict[str, Any] = {"waves": [{"id": x["id"], "pool": x.get("pool"), "state": x.get("state")} for x in waves]}
-    if not settings.get("enabled", True):
+    if not fu.agent_work_on(settings):
         # Read as the drafter reads it (followups.run): anything but on, set by
-        # hand (null, 0), is off. Stop still works while it is off (contract-v2
-        # 0b.12): a wave a manager stopped lets go of its leads and takes its
-        # openers back, so none stays open until the agent is on again.
-        out["skipped"] = "The follow-up agent is switched off (followups.enabled), so no wave drafts or sends"
+        # hand (null, 0), is off, and the agent's own sends need
+        # followups.agent too (Milestone 1 fence; missing is off). Stop still
+        # works while it is off (contract-v2 0b.12): a wave a manager stopped
+        # lets go of its leads and takes its openers back, so none stays open
+        # until the agent is on again.
+        out["skipped"] = ("The follow-up agent is switched off (followups.enabled), so no wave drafts or sends"
+                          if not settings.get("enabled", True) else
+                          "The follow-up agent's own sends are switched off (followups.agent), so no wave drafts or sends")
         winding = _winding(sb)
         if winding:
             try:

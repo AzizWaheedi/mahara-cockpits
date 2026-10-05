@@ -61,6 +61,9 @@ function world(o: { inboundAgoMs?: number } = {}) {
       key: "rooms",
       value: {
         ...DEFAULT_ROOMS_JSON,
+        // Settle and booked-call rooms on: these tests are about what they do (both ship off, Milestone 1).
+        settle: true,
+        wrap: true,
         enabled: true,
         test_only: false,
         providers: { zoom: true, meet: true },
@@ -498,7 +501,7 @@ function settleWorld(o: { linkNeverWent?: string } = {}) {
   /** How index.ts markAppointment's HighLevel half ends: written, or failed (crm failed). */
   const crm = { mode: "written" as "written" | "failed" };
   w.db.seed("cockpit_sales_settings", [
-    { key: "rooms", value: { ...DEFAULT_ROOMS_JSON, enabled: true, test_only: false, short_link: true, providers: { zoom: true, meet: true } } },
+    { key: "rooms", value: { ...DEFAULT_ROOMS_JSON, settle: true, wrap: true, enabled: true, test_only: false, short_link: true, providers: { zoom: true, meet: true } } },
     { key: "live", value: { enabled: false } },
   ]);
   w.db.seed("cockpit_sales_people", [{ email: SETTER, name: "Tara Setter", role: "setter", ghl_user_id: "G-setter", active: true }]);

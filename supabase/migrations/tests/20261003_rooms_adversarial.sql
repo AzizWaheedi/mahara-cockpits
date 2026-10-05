@@ -24,6 +24,25 @@ returns void language sql as $$
   insert into pg_temp.lc_checks (name, ok, detail) values (p_name, coalesce(p_ok, false), p_detail)
 $$;
 
+-- A sales manager for this run (20261004a's settings guard turns a switch
+-- on only for a write that names one); rolled back with the rest.
+insert into public.cockpit_sales_people (email, name, role, active, updated_by)
+values ('lc-test-manager@example.invalid', 'Test Manager', 'manager', true, 'lc-test')
+on conflict (email) do nothing;
+
+-- These checks are about what the sweep does once its switches are on: live
+-- handover (L3's re-offer, R5's fresh standby room) and settling no-shows
+-- (S1), which 20261004a ships off (Milestone 1) and run_checks.py's M
+-- section checks off. A manager turns them on for this run.
+update public.cockpit_sales_settings
+   set updated_by = 'lc-test-manager@example.invalid', updated_at = clock_timestamp(),
+       value = value || '{"settle": true}'::jsonb
+ where key = 'rooms';
+update public.cockpit_sales_settings
+   set updated_by = 'lc-test-manager@example.invalid', updated_at = clock_timestamp(),
+       value = jsonb_set(value, '{enabled}', 'true')
+ where key = 'live';
+
 create function pg_temp.errm(p_sql text)
 returns text language plpgsql as $$
 begin
@@ -323,7 +342,7 @@ do $$
 declare
   got text;
 begin
-  update public.cockpit_sales_settings set value = value - 'connector_off' - 'single_copy_ok_at' where key = 'whatsapp_guard';
+  update public.cockpit_sales_settings set updated_by = 'lc-test-manager@example.invalid', updated_at = clock_timestamp(), value = value - 'connector_off' - 'single_copy_ok_at' where key = 'whatsapp_guard';
   got := pg_temp.errm($q$insert into public.cockpit_sales_followup_levels (kind_key, level, set_by) values ('no_show', 'sends_by_itself', 'lc-test')$q$);
   perform pg_temp.ck('X10 a kind key with no channel cannot send by itself while the WhatsApp gate is shut',
     got like 'P0001%' or got like '23514%', got);
@@ -643,10 +662,10 @@ begin
   perform pg_temp.ck('X21c a host whose room waits for its lead is on_call',
     (select state = 'on_call' from public.cockpit_sales_presence where email = 'lc-test-x21c@example.invalid'));
   select value into rooms_v from public.cockpit_sales_settings where key = 'rooms';
-  update public.cockpit_sales_settings set value = jsonb_set(value, '{providers}', '{"zoom": true, "meet": true}') where key = 'rooms';
+  update public.cockpit_sales_settings set updated_by = 'lc-test-manager@example.invalid', updated_at = clock_timestamp(), value = jsonb_set(value, '{providers}', '{"zoom": true, "meet": true}') where key = 'rooms';
   perform pg_temp.ck('X21d a closer with a pending Zoom seat is offered Meet by default',
     (select default_provider = 'meet' from public.cockpit_sales_presence where email = 'lc-test-x21d@example.invalid'));
-  update public.cockpit_sales_settings set value = rooms_v where key = 'rooms';
+  update public.cockpit_sales_settings set updated_by = 'lc-test-manager@example.invalid', updated_at = clock_timestamp(), value = rooms_v where key = 'rooms';
 exception when others then
   perform pg_temp.ck('X21 section crashed', false, sqlstate || ': ' || sqlerrm);
 end;

@@ -117,6 +117,9 @@ const desk = {
 const ROOMS_ON = {
   ...DEFAULT_ROOMS_JSON,
   enabled: true,
+  // Rooms for booked calls (room.wrap) on: these journeys open one
+  // (rooms.wrap ships off, outside Milestone 1).
+  wrap: true,
   test_contacts: [LEAD],
   providers: { zoom: true, meet: true },
   send: { whatsapp_text: true, whatsapp_template: true, email: true },

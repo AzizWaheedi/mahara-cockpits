@@ -410,7 +410,7 @@ describe("providers2 r2: Meta's payment failure on an opener", () => {
     const w = fakeWorld(SUN_11);
     w.db.seed("cockpit_sales_settings", [
       { key: "whatsapp_guard", value: { connector_off: true, single_copy_ok_at: "2026-10-01T00:00:00Z" } },
-      { key: "followups", value: { enabled: true, waves: { per_day: 40, batch_gap_s: 45 }, first_hours: [9, 18], stop_pause_days: 30 } },
+      { key: "followups", value: { enabled: true, agent: true, waves: { per_day: 40, batch_gap_s: 45 }, first_hours: [9, 18], stop_pause_days: 30 } },
       { key: "messaging", value: { whatsapp: true } },
     ]);
     w.db.seed("cockpit_sales_leads", [{ contact_id: "stress-p2r2-c1", country: "KW", assigned_to: "G-setter" }]);

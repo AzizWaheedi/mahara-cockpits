@@ -29,7 +29,7 @@ const LIVE = ["requested", "creating", "open", "host_in", "lead_in"];
 function world(startIso: string) {
   const w = fakeWorld(Date.parse(startIso));
   w.db.seed("cockpit_sales_settings", [
-    { key: "rooms", value: { ...DEFAULT_ROOMS_JSON, enabled: true, test_only: false, providers: { zoom: true, meet: true } } },
+    { key: "rooms", value: { ...DEFAULT_ROOMS_JSON, settle: true, wrap: true, enabled: true, test_only: false, providers: { zoom: true, meet: true } } },
     { key: "live", value: { enabled: true, standby: true, closer_wait_s: 120, hours: LIVE_HOURS } },
     { key: "whatsapp_guard", value: { connector_off: true, single_copy_ok_at: "2026-10-01T00:00:00Z" } },
   ]);

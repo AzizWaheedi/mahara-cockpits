@@ -28,6 +28,9 @@ const desk: Who = { signed_in: true, seat: true, manager: false, email: "sales-d
 
 const ROOMS_ON = {
   ...DEFAULT_ROOMS_JSON,
+  // Settle and booked-call rooms on: these tests are about what they do (both ship off, Milestone 1).
+  settle: true,
+  wrap: true,
   enabled: true,
   // test_only stays on: the two contacts are listed (a tag alone lets no room through, final review).
   test_contacts: ["VjPfR4Cc1Y0OFvaqeor5", "otherLead0000000001"],

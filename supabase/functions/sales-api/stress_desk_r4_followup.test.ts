@@ -28,7 +28,7 @@ function setup(guard: Row = GATE) {
   let sent = 0;
   w.db.seed("cockpit_sales_settings", [
     { key: "whatsapp_guard", value: guard },
-    { key: "followups", value: { enabled: true, waves: { per_day: 40, batch_gap_s: 45 }, first_hours: [9, 18] } },
+    { key: "followups", value: { enabled: true, agent: true, waves: { per_day: 40, batch_gap_s: 45 }, first_hours: [9, 18] } },
     { key: "messaging", value: { whatsapp: true } },
   ]);
   w.db.seed("cockpit_sales_leads", [{ contact_id: "stress-c1", country: "KW", assigned_to: "G-setter" }]);
@@ -154,7 +154,7 @@ describe("followup.send_due: HighLevel no longer has this lead's contact", () =>
     const w = fakeWorld(SUN_11);
     w.db.seed("cockpit_sales_settings", [
       { key: "whatsapp_guard", value: GATE },
-      { key: "followups", value: { enabled: true, waves: { per_day: 40, batch_gap_s: 45 }, first_hours: [9, 18] } },
+      { key: "followups", value: { enabled: true, agent: true, waves: { per_day: 40, batch_gap_s: 45 }, first_hours: [9, 18] } },
       { key: "messaging", value: { whatsapp: true } },
     ]);
     w.db.seed("cockpit_sales_leads", [{ contact_id: "stress-c1", country: "KW" }]);

@@ -24,7 +24,7 @@ from tests.fakes import FakePostgrest  # noqa: E402
 
 NOW = datetime(2026, 10, 4, 7, 0, tzinfo=timezone.utc)  # 10:00 Kuwait, a Sunday
 GATE_OPEN = {"templates_per_day": 250, "connector_off": True, "single_copy_ok_at": "2026-10-03T09:00:00+00:00"}
-SETTINGS = {"enabled": True, "quiet": {"from": 21, "to": 9}, "quiet_days": ["friday"], "first_hours": [9, 18],
+SETTINGS = {"enabled": True, "agent": True, "quiet": {"from": 21, "to": 9}, "quiet_days": ["friday"], "first_hours": [9, 18],
             "waves": {"per_day": 40, "holdout_share": 0.1, "batch_gap_s": 45, "salt": "waves"}}
 OPENER_AR = {"key": "opener_ar", "name": "cockpit_opener_ar", "language": "ar", "purpose": "Backlog opener in Arabic.",
              "preview": "السلام عليكم {{1}}، معاك {{2}}. كيف حالك؟", "variables": ["first_name", "rep_name"],

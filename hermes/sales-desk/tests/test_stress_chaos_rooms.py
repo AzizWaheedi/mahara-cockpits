@@ -25,6 +25,8 @@ SLACK_S = 5.0
 class ClockSkew(RoomsCase):
     def _check(self, behind: float) -> None:
         env = self.env
+        # A handover room is made only while live.enabled is on (Milestone 1 fence).
+        env.pg.put("cockpit_sales_settings", {"key": "live", "value": {"enabled": True}})
         db_now = env.clock() + behind  # the database's clock, ahead of this VPS
         env.add_room(1, provider="zoom", purpose="handover", call_kind="demo", host_email=CLOSER,
                      contact_id="contact-test-skew", requested_at=rooms.iso(db_now - 1))

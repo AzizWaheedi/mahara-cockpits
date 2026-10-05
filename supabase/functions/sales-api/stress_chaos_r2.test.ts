@@ -144,7 +144,7 @@ describe("chaos: Approve all", () => {
     const audits: Row[] = [];
     w.db.seed("cockpit_sales_settings", [
       { key: "whatsapp_guard", value: GATE },
-      { key: "followups", value: { enabled: true, waves: { per_day: 40, batch_gap_s: 45 }, first_hours: [9, 18] } },
+      { key: "followups", value: { enabled: true, agent: true, waves: { per_day: 40, batch_gap_s: 45 }, first_hours: [9, 18] } },
       { key: "messaging", value: { whatsapp: true } },
     ]);
     const agent = makeFollowupAgent({

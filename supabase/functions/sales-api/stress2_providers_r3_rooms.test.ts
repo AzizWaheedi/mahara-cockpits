@@ -354,7 +354,7 @@ describe("providers2 r3: HighLevel's 429 on an opener", () => {
     const w = fakeWorld(Date.parse("2026-10-04T08:00:00Z"));
     w.db.seed("cockpit_sales_settings", [
       { key: "whatsapp_guard", value: { connector_off: true, single_copy_ok_at: "2026-10-01T00:00:00Z" } },
-      { key: "followups", value: { enabled: true, waves: { per_day: 40, batch_gap_s: 45 }, first_hours: [9, 18], stop_pause_days: 30 } },
+      { key: "followups", value: { enabled: true, agent: true, waves: { per_day: 40, batch_gap_s: 45 }, first_hours: [9, 18], stop_pause_days: 30 } },
       { key: "messaging", value: { whatsapp: true } },
     ]);
     w.db.seed("cockpit_sales_leads", [{ contact_id: "stress-p2r3-429", country: "KW" }]);
@@ -411,7 +411,7 @@ describe("providers2 r3: a 400 that is not about the contact, on an approved ope
       const w = fakeWorld(Date.parse("2026-10-04T08:00:00Z"));
       w.db.seed("cockpit_sales_settings", [
         { key: "whatsapp_guard", value: { connector_off: true, single_copy_ok_at: "2026-10-01T00:00:00Z" } },
-        { key: "followups", value: { enabled: true, waves: { per_day: 40, batch_gap_s: 45 }, first_hours: [9, 18], stop_pause_days: 30 } },
+        { key: "followups", value: { enabled: true, agent: true, waves: { per_day: 40, batch_gap_s: 45 }, first_hours: [9, 18], stop_pause_days: 30 } },
         { key: "messaging", value: { whatsapp: true } },
       ]);
       w.db.seed("cockpit_sales_leads", [{ contact_id: "stress-p2r3-400", country: "KW" }]);
