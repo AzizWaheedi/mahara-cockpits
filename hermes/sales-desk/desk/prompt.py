@@ -296,7 +296,10 @@ def draft_user(known: dict[str, Any], transcript_text: str, lang: str, variant: 
         + json.dumps(known, ensure_ascii=False, indent=1)
         + "\n\nWrite the proposal in "
         + ("Arabic, with lang set to ar" if lang == "ar" else "English")
-        + ".\n\nThe call:\n\n" + transcript_text
+        + ".\n\nA figure the client said only in passing, or in a stretch of the call that is garbled or "
+        "unclear, is FILL or left out, never a headline: the headline, the gap and the tree carry only figures "
+        "said plainly. Write each count the same way wherever it appears."
+        + "\n\nThe call:\n\n" + transcript_text
         + "\n\nReturn only the deal JSON object."
     )
 

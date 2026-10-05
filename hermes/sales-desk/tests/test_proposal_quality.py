@@ -25,6 +25,7 @@ os.environ["SALES_NO_KEY_FILES"] = "1"
 
 from desk import build, offer, render, validate  # noqa: E402
 from desk.config import ROOT  # noqa: E402
+from tests import fakes  # noqa: E402
 from tests.fakes import TEST_OFFER, general_deal, specific_deal  # noqa: E402
 from tests.test_desk import check, failing, resolved  # noqa: E402
 
@@ -204,6 +205,99 @@ class ProofRecordTests(unittest.TestCase):
             self.patch.start()
         self.assertIsNotNone(record)
         self.assertTrue({147000, 35, 104, 28, 500}.issubset(record), record)
+
+
+# --------------------------------------------------------------- defect 4 ---
+def warned(result: validate.Result, name: str) -> list[str]:
+    return [r["detail"] for r in result.rows if r["check"] == name and r["status"] == "WARN"]
+
+
+class NumberWordTests(unittest.TestCase):
+    """Wrong figures about the client passed: a number written in words was
+    never read, and six signed on one page and two on another went through."""
+
+    def test_words_and_scales_become_figures(self):
+        cases = {
+            "thirty-five meetings": [35],
+            "two hundred and fifty projects": [250],
+            "four hundred and fifty thousand riyals": [450000],
+            "USD 149K and USD 2M": [149000, 2000000],
+            "1.5 million": [1500000],
+            "خمسة وثلاثين اجتماع": [35],
+            "ثلاث مئة ألف ريال": [300000],
+            "٤٥٠ ألف": [450000],
+            "ألفين وخمسمائة": [2500],
+            "someone said six, two": [6, 2],
+        }
+        for text, want in cases.items():
+            self.assertEqual(validate.figures_in(text), want, text)
+
+    def test_a_count_in_words_is_checked_against_the_call(self):
+        deal = specific_deal()
+        deal["gap_points"][2] = {"v": "Seven", "k": "Projects signed a month"}
+        self.assertTrue(any("gap_points[2].v=7" in w for w in warned(check(deal), "evidence counts")))
+
+    def test_a_large_figure_in_words_is_checked_in_the_copy(self):
+        deal = specific_deal(headline="Nine hundred thousand riyals a year walks out of the door")
+        self.assertTrue(any("900,000" in x or "900000" in x for x in failing(check(deal), "prose")))
+
+    def test_a_figure_said_in_words_on_the_call_counts_as_said(self):
+        words = fakes.transcript().replace("around 450,000 riyals", "around four hundred and fifty thousand riyals")
+        deal = specific_deal()
+        r = check(deal, text=words)
+        self.assertFalse(failing(r, "evidence"), r.text())
+
+
+class SameCountTests(unittest.TestCase):
+    """The same count told two ways across the gap, the tree and the funnel."""
+
+    def deal(self) -> dict[str, Any]:
+        deal = general_deal()
+        deal["gap_points"] = [{"v": "6", "k": "Projects signed in eight months, every one through someone you knew"},
+                              {"v": "0", "k": "Channels you control"}]
+        deal["funnel"] = {"title": "The year so far", "note": "Referrals only.", "stages": [
+            {"label": "Meetings held", "value": 14, "display": "14", "note": "four reached a signature"},
+            {"label": "Related to a real project", "value": 10, "display": "8 to 10", "note": "the rest were not"}]}
+        return deal
+
+    def test_six_signed_on_the_gap_and_two_in_the_tree_warns_naming_both(self):
+        deal = self.deal()
+        deal["tree"]["goal_note"] = "Two signed in eight months, a tenth of the year you set."
+        got = warned(check(deal), "figures")
+        self.assertTrue(got, check(deal).text())
+        self.assertIn("gap_points[0]", got[0])
+        self.assertIn("tree.goal_note", got[0])
+        self.assertIn("signed", got[0])
+
+    def test_the_same_count_twice_is_fine(self):
+        deal = self.deal()
+        deal["tree"]["goal_note"] = "Six signed in eight months, every one from a referral."
+        self.assertFalse(warned(check(deal), "figures"))
+
+    def test_an_extra_project_and_a_project_in_passing_are_not_counts(self):
+        deal = self.deal()
+        deal["tree"]["goal_note"] = "One more project a month would rebuild the team."
+        deal["tree"]["branches"][0]["note"] = "Eight to ten relate to a project; none close."
+        self.assertFalse(warned(check(deal), "figures"))
+
+    def test_the_funnel_against_the_gap(self):
+        deal = self.deal()
+        deal["funnel"]["stages"].append({"label": "Projects signed", "value": 3, "display": "3", "note": "this year"})
+        got = warned(check(deal), "figures")
+        self.assertTrue(any("gap_points[0]" in g and "funnel.stages[2]" in g for g in got), got)
+
+    def test_arabic_counts(self):
+        deal = self.deal()
+        deal["lang"] = "ar"
+        deal["gap_points"] = [{"v": "٦", "k": "مشاريع موقعة خلال ثمانية أشهر"}]
+        deal["tree"]["goal_note"] = "ثلاثة مشاريع موقعة خلال ثمانية أشهر."
+        self.assertTrue(warned(check(deal), "figures"))
+
+    def test_the_drafter_is_told_a_passing_figure_is_never_a_headline(self):
+        from desk import prompt
+        text = prompt.draft_user({}, "the call", "en", "general", has_reference=False)
+        self.assertIn("said only in passing", text)
+        self.assertIn("never a headline", text)
 
 
 # ------------------------------------------------------------- the template ---

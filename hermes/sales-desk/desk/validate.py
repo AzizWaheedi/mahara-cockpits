@@ -595,8 +595,8 @@ def check_prose(data: dict[str, Any], said: Optional[set[int]], rep: Report, res
 
     bad = []
     for path, text in client_strings(data):
-        for raw in re.findall(r"\d[\d,]*", text.translate(ARABIC_DIGITS)):
-            n = int(raw.replace(",", "") or 0)
+        for n in figures_in(text):
+            raw = f"{n:,}"
             if n < HARD_EVIDENCE_FLOOR:
                 continue
             if n in said or n in ours or n in derived:
@@ -1061,6 +1061,9 @@ def transcript_numbers(text: str) -> set[int]:
             found.add(n)
             for scale in (1_000, 100_000, 1_000_000):
                 found.add(n * scale)
+    # And whole numbers said in words or with a scale: "four hundred and fifty
+    # thousand", "خمسة وثلاثين", "149K", each as the one figure it is.
+    found.update(figures_in(text))
     return found
 
 
@@ -1070,12 +1073,7 @@ def numbers_in(value: Any) -> list[int]:
         return []
     if isinstance(value, (int, float)):
         return [int(value)] if float(value).is_integer() else []
-    out = []
-    for raw in re.findall(r"\d[\d,]*", str(value).translate(ARABIC_DIGITS)):
-        cleaned = raw.replace(",", "")
-        if cleaned.isdigit():
-            out.append(int(cleaned))
-    return out
+    return figures_in(value)
 
 
 def check_evidence(data: dict[str, Any], said: Optional[set[int]], rep: Report, checked_note: str = "") -> None:
@@ -1130,6 +1128,113 @@ def check_evidence(data: dict[str, Any], said: Optional[set[int]], rep: Report, 
         rep.add(WARN, "evidence counts",
                 "not found as digits or words, and small enough that the check cannot be sure: "
                 "read them back against the call: " + "; ".join(soft))
+
+
+# ------------------------------------------------- the same count, twice ----
+# The things a client counts, by the words a proposal names them in. A count
+# of one of them told with two different figures on the gap page, in the
+# driver tree and in the funnel is one of the two wrong (5 October 2026: six
+# projects signed on the gap tile, "two signed" in the tree).
+COUNTED = {
+    "signed": r"signed|موقع|موقعة|الموقعة|موقعين|وقعت|وقعنا|وقعناها",
+    "projects": r"projects?|مشروع|مشاريع|المشاريع|مشروعات",
+    "meetings": r"meetings?|appointments?|اجتماع|اجتماعات|الاجتماعات|موعد|مواعيد|المواعيد",
+    "leads": r"leads?|enquiry|enquiries|inquiry|inquiries|ليد|ليدز|استفسار|استفسارات",
+}
+_COUNTED = {k: re.compile(rf"^(?:{v})$", re.I) for k, v in COUNTED.items()}
+# A noun after these is not the thing counted: "related to a project",
+# "signed from those leads".
+_NOT_COUNTED_AFTER = re.compile(r"^(?:a|an|per|each|every|from|of|to|those|these|the|with|for|من|إلى|الى|لكل|كل|في)$",
+                                re.I)
+# Nor is an increment: "one more project a month" is a target, not a count.
+_INCREMENT = re.compile(r"^(?:more|extra|additional|another|new|further|أكثر|اكثر|إضافي|إضافية|اضافي|اضافية|جديد|جديدة)$",
+                        re.I)
+_WORDS = re.compile(r"\d[\d,]*|[A-Za-z]+|[ء-ي]+|[.,;:!?؟،؛]")
+
+
+def _nouns_named(text: str) -> set[str]:
+    """The counted things a label names, leaving out any after a preposition or an article."""
+    words = [w for w in _WORDS.findall(spoken_figures(text)) if not re.fullmatch(r"\d[\d,]*", w)]
+    out = set()
+    for i, w in enumerate(words):
+        if re.fullmatch(r"[.,;:!?؟،؛]", w):
+            continue
+        before = words[max(0, i - 2):i]
+        if any(_NOT_COUNTED_AFTER.match(b) for b in before):
+            continue
+        out.update(k for k, rx in _COUNTED.items() if rx.match(w))
+    return out
+
+
+def _counts_in_prose(text: str) -> list[tuple[str, int]]:
+    """(noun, figure) for each figure followed within three words by a counted thing."""
+    words = _WORDS.findall(spoken_figures(text))
+    out = []
+    for i, w in enumerate(words):
+        if not re.fullmatch(r"\d[\d,]*", w):
+            continue
+        n = int(w.replace(",", ""))
+        for nxt in words[i + 1:i + 4]:
+            if re.fullmatch(r"\d[\d,]*|[.,;:!?؟،؛]", nxt) or _INCREMENT.match(nxt):
+                break
+            out.extend((k, n) for k, rx in _COUNTED.items() if rx.match(nxt))
+    return out
+
+
+def stated_counts(data: dict[str, Any]) -> dict[str, list[tuple[str, str, int]]]:
+    """Every count of a counted thing on the gap page, in the tree and in the
+    funnel: block -> [(field, noun, figure)]."""
+    out: dict[str, list[tuple[str, str, int]]] = {"gap_points": [], "tree": [], "funnel": []}
+    for i, g in enumerate(data.get("gap_points") or []):
+        if isinstance(g, dict):
+            for n in figures_in(g.get("v")):
+                out["gap_points"].extend((f"gap_points[{i}]", k, n) for k in _nouns_named(str(g.get("k") or "")))
+    funnel = data.get("funnel") if isinstance(data.get("funnel"), dict) else {}
+    for i, st in enumerate(funnel.get("stages") or []):
+        if not isinstance(st, dict):
+            continue
+        shown = st.get("display")
+        nums = figures_in(shown) if isinstance(shown, str) else ([int(st["value"])] if isinstance(
+            st.get("value"), (int, float)) and not isinstance(st.get("value"), bool) else [])
+        for n in nums:
+            out["funnel"].extend((f"funnel.stages[{i}]", k, n) for k in _nouns_named(str(st.get("label") or "")))
+    for f in ("title", "note"):
+        if isinstance(funnel.get(f), str):
+            out["funnel"].extend((f"funnel.{f}", k, n) for k, n in _counts_in_prose(funnel[f]))
+    tree = data.get("tree") if isinstance(data.get("tree"), dict) else {}
+    prose = [(f"tree.{f}", tree.get(f)) for f in ("goal", "goal_note", "note")]
+    for i, br in enumerate(tree.get("branches") or []):
+        if isinstance(br, dict):
+            prose += [(f"tree.branches[{i}].{f}", br.get(f)) for f in ("title", "note")]
+            for j, sb in enumerate(br.get("subs") or []):
+                if isinstance(sb, dict):
+                    prose += [(f"tree.branches[{i}].subs[{j}].{f}", sb.get(f)) for f in ("title", "note")]
+    for path, text in prose:
+        if isinstance(text, str):
+            out["tree"].extend((path, k, n) for k, n in _counts_in_prose(text))
+    return out
+
+
+def check_counts(data: dict[str, Any], rep: Report) -> None:
+    """The same thing counted with different figures on two of the three pages
+    that describe the client. A warning naming both fields: one of them is
+    wrong, and only the call says which."""
+    counts = stated_counts(data)
+    blocks = list(counts)
+    clashes = []
+    for noun in COUNTED:
+        for a in range(len(blocks)):
+            for b in range(a + 1, len(blocks)):
+                left = [(p, n) for p, k, n in counts[blocks[a]] if k == noun]
+                right = [(p, n) for p, k, n in counts[blocks[b]] if k == noun]
+                if left and right and not ({n for _p, n in left} & {n for _p, n in right}):
+                    clashes.append(f"{left[0][0]} says {left[0][1]:,} {noun} and {right[0][0]} says "
+                                   f"{right[0][1]:,} {noun}")
+    if clashes:
+        rep.add(WARN, "figures", "the same count is told two ways: " + "; ".join(clashes[:4])
+                + ". Check both against the call and make them agree")
+    elif any(counts.values()):
+        rep.add(PASS, "figures", "each count is told the same way wherever it appears")
 
 
 # ----------------------------------------------------------- the quotes ----
@@ -1411,6 +1516,7 @@ def validate(data: dict[str, Any], transcript: Optional[str] = None, *, resolved
     sheets = check_schema(data, rep, general, blind)
     if not blind:
         check_evidence(data, said, rep, checked_note)
+        check_counts(data, rep)
     check_quotes(data, rep)
     pct = None
     if general or blind:
