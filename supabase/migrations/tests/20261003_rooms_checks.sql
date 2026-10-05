@@ -2600,6 +2600,30 @@ exception when others then
 end;
 $$;
 
+-- N. Milestone 1 round 1 (20261004a, 5 October 2026): the press's own
+--    decisions kept on the room: the booked intro it named, and whether it
+--    cleared the night rule (intro or replacing, nothing else).
+do $$
+declare
+  rid uuid;
+  refused boolean := false;
+begin
+  rid := pg_temp.room('lc-test-n1', 'lc-test-n1@example.invalid', 'fallback');
+  update public.cockpit_sales_rooms set asked_appointment_id = 'lc-test-n-appt', night_cleared = 'intro' where id = rid;
+  perform pg_temp.ck('N a room keeps the intro the press named and its night decision',
+    exists (select 1 from public.cockpit_sales_rooms where id = rid
+             and asked_appointment_id = 'lc-test-n-appt' and night_cleared = 'intro'));
+  begin
+    update public.cockpit_sales_rooms set night_cleared = 'always' where id = rid;
+  exception when check_violation then
+    refused := true;
+  end;
+  perform pg_temp.ck('N a night decision other than intro or replacing is refused', refused);
+exception when others then
+  perform pg_temp.ck('N section crashed', false, sqlstate || ': ' || sqlerrm);
+end;
+$$;
+
 -- Z. A code the guard picks never collides: it tries again. Last, because it
 --    swaps cockpit_sales_room_code for a fixed sequence (rolled back).
 create temp sequence lc_codes;

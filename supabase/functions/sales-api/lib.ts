@@ -285,7 +285,8 @@ export function redact(s: string): string {
     .replace(/sbp_[A-Za-z0-9]+/g, "[key]")
     .replace(/pit-[A-Za-z0-9-]+/g, "[key]")
     .replace(/eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g, "[jwt]")
-    .replace(/((?:api_?key|access_token|token|secret|zak|pwd)=)[^&\s"']+/gi, "$1[key]")
+    // zak written with an escaped letter (%7Aak=) is the same host token to Zoom (m1 round 1).
+    .replace(/((?:api_?key|access_token|token|secret|(?:z|%7a)(?:a|%61)(?:k|%6b)|pwd)=)[^&\s"']+/gi, "$1[key]")
     .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/g, "Bearer [key]")
     .slice(0, 300);
 }
@@ -736,6 +737,28 @@ export function slackSafe(v: unknown): string {
 export function greetingName(first: unknown, full: unknown): string {
   const f = cleanText(first, 60) || cleanText(full, 120);
   return f.split(/\s+/)[0] ?? "";
+}
+
+/** Bidi overrides, embeddings, isolates and invisible joiners: never carried from a lead's own name into a message. */
+const INVISIBLE = /[\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/g;
+
+/**
+ * The lead's first name as Mahara's own message may carry it (m1 round 1,
+ * lead-name-link-in-link-message, lead-name-placeholder-blocks-link): a
+ * public lead form takes any name, so a name that is a link or a domain
+ * (a scheme, www., a dotted host, a path), an address (@), markup (< >) or
+ * an unfilled merge tag ({name}, {{name}}) is no name, and bidi or invisible
+ * controls are taken out. Empty when nothing is left: the caller says "there".
+ */
+export function leadFirstName(first: unknown, full: unknown): string {
+  const clean = (v: unknown) => String(v ?? "").replace(INVISIBLE, "");
+  const word = greetingName(clean(first), clean(full));
+  if (!word) return "";
+  if (/:\/\/|^www\.|[@<>{}\[\]\\/|`]|%[0-9a-f]{2}/i.test(word)) return "";
+  // A dotted host (example.com, mahara-refunds.example): WhatsApp and mail
+  // clients make it a link. Initials (J.R.) stay.
+  if (/[\p{L}\p{N}-]{2,}\.[\p{L}]{2,}/u.test(word)) return "";
+  return word;
 }
 
 /** A ready-made message with what the cockpit knows put in; anything unknown stays marked for the rep. */

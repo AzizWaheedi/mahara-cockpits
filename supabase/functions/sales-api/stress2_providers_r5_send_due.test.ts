@@ -36,6 +36,9 @@ function reply(body: unknown, status = 200): Response {
 async function fakeFetch(input: string | URL | Request, init: RequestInit = {}): Promise<Response> {
   const url = String(input instanceof Request ? input.url : input);
   const method = (init.method ?? "GET").toUpperCase();
+  // PostgREST checks the desk token's signature (m1 round 1): a good one, the
+  // service role, has no seat.
+  if (url.startsWith(`${DB}/rest/v1/rpc/cockpit_sales_whoami`)) return reply({ signed_in: false });
   if (url.startsWith(`${DB}/rest/v1/rpc/`)) {
     const fn = url.slice(`${DB}/rest/v1/rpc/`.length).split("?")[0] as string;
     try {

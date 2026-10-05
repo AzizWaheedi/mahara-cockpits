@@ -45,6 +45,9 @@ async function fakeFetch(input: string | URL | Request, init: RequestInit = {}):
   const headers = new Headers(init.headers as HeadersInit);
   if (url.startsWith(`${DB}/rest/v1/rpc/cockpit_sales_whoami`)) {
     const token = (headers.get("authorization") ?? "").replace(/^Bearer /, "");
+    // A token signed with the project's key (this fake's ".sig") is good, and
+    // the service role has no seat; an unsigned or forged one is refused.
+    if (/^[^.]+\.[^.]+\.sig$/.test(token) && !SEATS[token]) return reply({ signed_in: false });
     return SEATS[token] ? reply(SEATS[token]) : reply({ message: "JWT invalid" }, 401);
   }
   if (url.startsWith(`${DB}/rest/v1/rpc/`)) {

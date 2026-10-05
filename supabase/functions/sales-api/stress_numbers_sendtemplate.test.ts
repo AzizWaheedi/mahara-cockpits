@@ -181,7 +181,13 @@ describe("the send ceilings hold under a burst (index.ts sendTemplate)", () => {
 
   test("templates_per_day: 249 went today, then 10 at once, the day ends at 250", async () => {
     reset();
-    seedMessages(249, i => new Date(Date.now() - 30 * 60_000 + i * 1000).toISOString());
+    // Inside today's Kuwait day, whatever the hour: run between 00:00 and
+    // 00:30 Kuwait, "half an hour ago" was yesterday and the day's count
+    // started empty (a test that failed only just after midnight).
+    const k = new Date(Date.now() + 3 * 3_600_000);
+    const midnight = Date.UTC(k.getUTCFullYear(), k.getUTCMonth(), k.getUTCDate()) - 3 * 3_600_000;
+    const from = Math.max(Date.now() - 30 * 60_000, midnight + 1000);
+    seedMessages(249, i => new Date(from + Math.min(i * 1000, Math.max(0, Date.now() - from - 1000))).toISOString());
     await Promise.all(Array.from({ length: 10 }, (_, i) => send(lead(300 + i))));
     const today = db.t("cockpit_sales_messages").filter(m => m.via === "workflow" && m.state !== "failed").length;
     expect(today).toBeLessThanOrEqual(250);

@@ -115,7 +115,14 @@ function world(o: { inboundAgoMs?: number } = {}) {
   }
   const at = () => new Date(w.clock.now).toISOString();
 
-  async function send(lane: Lane, requestId: string, channel: "whatsapp" | "email", body: string, extra: Row): Promise<{ message: Row; repeated?: boolean }> {
+  async function send(
+    lane: Lane,
+    requestId: string,
+    channel: "whatsapp" | "email",
+    body: string,
+    extra: Row,
+    beforeSend?: () => Promise<boolean>,
+  ): Promise<{ message: Row; repeated?: boolean }> {
     const again = rows.get(requestId);
     if (again) return { message: { ...again }, repeated: true };
     if (gate[lane]) await gate[lane];
@@ -124,6 +131,15 @@ function world(o: { inboundAgoMs?: number } = {}) {
     const row: Row = { id: fakeUuid(), request_id: requestId, channel, body, state: "sending", created_at: at(), ...extra };
     rows.set(requestId, row);
     w.db.t("cockpit_sales_messages").push(row);
+    // index.ts (m1 round 1): the caller's last check after the setup reads
+    // and the slot, right before the stamp and HighLevel. A run whose link
+    // step another run took over stops here; its row is given up.
+    if (beforeSend && !(await beforeSend())) {
+      rows.delete(requestId);
+      const t = w.db.t("cockpit_sales_messages");
+      t.splice(t.indexOf(row), 1);
+      throw new ApiRefusal("Not sent: the room closed before the link went.", 409, { code: "stopped", certain: true });
+    }
     const mode = modes[lane].shift() ?? "ok";
     if (mode === "refused_429") {
       row.state = "failed";
@@ -143,13 +159,17 @@ function world(o: { inboundAgoMs?: number } = {}) {
       audits.push({ who: who.email, action, entityType, entityId, before, after, metadata });
     },
     markAppointment: async () => ({}),
-    sendText: (_who, b) => send(b.channel === "email" ? "email" : "text", b.request_id, b.channel, b.body, { contact_id: b.contact_id }),
+    sendText: (_who, b, opts) =>
+      send(b.channel === "email" ? "email" : "text", b.request_id, b.channel, b.body, { contact_id: b.contact_id }, opts?.beforeSend),
     sendTemplate: async (_who, t) =>
-      await send("template", t.requestId, "whatsapp", `Your Mahara call is ready. Join here: https://call.maharamedia.com/${t.buttonVariable?.join_code ?? ""}`, {
-        template_key: t.key,
-        via: "workflow",
-        contact_id: t.contactId,
-      }),
+      await send(
+        "template",
+        t.requestId,
+        "whatsapp",
+        `Your Mahara call is ready. Join here: https://call.maharamedia.com/${t.buttonVariable?.join_code ?? ""}`,
+        { template_key: t.key, via: "workflow", contact_id: t.contactId },
+        t.beforeSend,
+      ),
     upcoming: async () => null,
     sentSince: async (_contactId, since, text) => Boolean(matchSent(convo, since, text)),
   };
@@ -237,11 +257,14 @@ describe("link-lease-runs-out-mid-cascade: the minute's re-ask after the link's 
     void w.readyEvent(id);
     await w.drain();
     expect(w.rows.size).toBe(1);
-    // The first minute's re-ask: the lease is held (control above).
+    // The first minute's re-ask: the template's step began 61 s ago and asked
+    // HighLevel nothing, so the re-ask takes it over and sends the link (m1
+    // round 1, killed-step-holds-link-3min); the stalled template stops at
+    // its last check. One link either way.
     w.clock.now += 61 * S;
     await w.tick(id);
     await w.drain();
-    expect(w.delivered).toHaveLength(0);
+    expect(w.delivered.length).toBeLessThanOrEqual(1);
     // The next minute's re-ask, 121 s after the claim: the first run (still
     // in the template's setup) took its lease for SEND_BUDGET_MS, 90 s.
     w.clock.now += 60 * S;

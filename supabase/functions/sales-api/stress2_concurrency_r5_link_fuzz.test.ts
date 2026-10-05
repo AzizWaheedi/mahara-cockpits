@@ -141,7 +141,9 @@ function world(seed: number) {
       throw new ApiRefusal("HighLevel did not send it: HighLevel said 429: Too many requests", 502, { certain: true });
     }
     delivered.push({ lane, requestId, at: w.clock.now, started });
-    if (channel === "whatsapp") convo.push({ id: fakeUuid(), direction: "outbound", channel: "whatsapp", body, at: at(), status: "delivered" });
+    // The lead's conversation shows every send HighLevel took, emails too
+    // (index.ts sentSince reads the email lane since m1 round 1).
+    convo.push({ id: fakeUuid(), direction: "outbound", channel, body, at: at(), status: "delivered" });
     if (r < 0.2) {
       // HighLevel sent it; its answer was lost (a 504): the row stays unclear.
       row.state = "unclear";
@@ -165,7 +167,7 @@ function world(seed: number) {
         contact_id: t.contactId,
       }),
     upcoming: async () => null,
-    sentSince: async (_contactId, since, text) => Boolean(matchSent(convo, since, text)),
+    sentSince: async (_contactId, since, text, channel) => Boolean(matchSent(convo, since, text, { channel: channel ?? "whatsapp" })),
   };
   const rooms = makeRooms(deps);
   const room = (id: string) => w.db.t("cockpit_sales_rooms").find(r => r.id === id) as Row;

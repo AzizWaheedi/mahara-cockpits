@@ -1245,6 +1245,27 @@ interface SendOpts {
   source?: SendSource;
   /** How long the send is read back from HighLevel (rooms 20 s, everyone else the default). */
   readBackMs?: number;
+  /**
+   * The caller's last check, run after the message service's own reads and
+   * its slot, right before the row is stamped and HighLevel is asked (m1
+   * round 1, link-sent-after-end-inside-message-service): a room's link asks
+   * whether the room is still open. False: the unstamped row is given up and
+   * the send stops with code "stopped" (certainly not sent).
+   */
+  beforeSend?: () => Promise<boolean>;
+}
+
+/** The caller's last check said no (a room closed while its link was on its way): nothing went. */
+const STOPPED = "Not sent: the room closed before the link went.";
+async function lastCheck(beforeSend: (() => Promise<boolean>) | undefined): Promise<void> {
+  if (!beforeSend) return;
+  let go = false;
+  try {
+    go = await beforeSend();
+  } catch {
+    go = false;
+  }
+  if (!go) throw new Refusal(STOPPED, 409, { code: "stopped", certain: true });
 }
 
 /**
@@ -1361,13 +1382,54 @@ async function markAsked(row: Row): Promise<Row> {
     if (/ghl_asked_at/.test(String((e as Error)?.message ?? e))) return row;
     const back = (await svc(`cockpit_sales_messages?id=eq.${id}&select=*`).catch(() => [] as Row[]))[0];
     if (back && Date.parse(String(back.ghl_asked_at ?? "")) === Date.parse(at)) return back;
-    await svc(`cockpit_sales_messages?id=eq.${id}&state=eq.sending&or=(ghl_asked_at.is.null,ghl_asked_at.eq.${enc(at)})`, {
-      method: "DELETE",
-      prefer: "return=minimal",
-    }).catch(() => null);
+    // This run stops before HighLevel is asked, so its stamp must not stay
+    // (m1 round 1, stamped-orphan-strands-link): a stamp that landed with
+    // its answer lost is taken back, only where it is this run's own, and
+    // asked again across a blip. Unstamped, the row is an earlier try that
+    // never went: the next try adopts it, never "already sent".
+    await unstamp(String(row.id ?? ""), at);
     throw e;
   }
   throw new Error("the message row was given up before it went");
+}
+
+/**
+ * Takes back this run's own stamp (ghl_asked_at equal to `at`) on a row
+ * still "sending": HighLevel was never asked. Tried three times across a
+ * blip; a stamp that was never written matches nothing, which is the same
+ * answer. Never fatal.
+ */
+async function unstamp(rowId: string, at: string): Promise<boolean> {
+  for (let n = 0; n < 3; n++) {
+    try {
+      await svc(`cockpit_sales_messages?id=eq.${enc(rowId)}&state=eq.sending&ghl_asked_at=eq.${enc(at)}`, {
+        method: "PATCH",
+        body: { ghl_asked_at: null },
+        prefer: "return=minimal",
+      });
+      return true;
+    } catch (e) {
+      if (n === 2) console.error("a stamp HighLevel was never asked about was not taken back", redact(String((e as Error)?.message ?? e)));
+      else await sleep(400 * (n + 1));
+    }
+  }
+  return false;
+}
+
+/**
+ * A stamped row whose send stopped before the one HighLevel call that sends
+ * (the room closed while a template's contact fields were written): given
+ * up, so it holds nothing. Only the row this run stamped.
+ */
+async function giveUpAsked(row: Row): Promise<void> {
+  const at = String(row.ghl_asked_at ?? "");
+  const id = String(row.id ?? "");
+  if (!id) return;
+  const filter = at ? `ghl_asked_at=eq.${enc(at)}` : "ghl_asked_at=is.null";
+  await svc(`cockpit_sales_messages?id=eq.${enc(id)}&state=eq.sending&${filter}`, { method: "DELETE", prefer: "return=minimal" }).catch(async e => {
+    console.error("a stopped template's row was not given up", redact(String((e as Error)?.message ?? e)));
+    if (at) await unstamp(id, at);
+  });
 }
 
 function convoSend(who: Who, b: Row, opts: SendOpts = {}) {
@@ -1459,6 +1521,9 @@ async function convoSendOnce(who: Who, b: Row, opts: SendOpts, taken: () => void
       throw e;
     }
   }
+  // The caller's last word, after every read above (a room closed meanwhile
+  // stops its link here; beforeRowCertain gives the unstamped row up).
+  await lastCheck(opts.beforeSend);
   row = await markAsked(row);
   taken();
 
@@ -1754,20 +1819,30 @@ async function whatsappSentSince(
   contactId: string,
   since: number,
   text?: string | null,
-  o: { went?: boolean } = {},
-): Promise<{ hit: ThreadMessage | null; seen: ThreadMessage[] }> {
+  o: { went?: boolean; channel?: "whatsapp" | "email" } = {},
+): Promise<{ hit: ThreadMessage | null; seen: ThreadMessage[]; failed?: ThreadMessage | null; others?: boolean }> {
   const convs = (((await ghl("GET", `/conversations/search?locationId=${LOCATION}&contactId=${enc(contactId)}&limit=5`)) as Row)
     .conversations ?? []) as Row[];
   const seen: ThreadMessage[] = [];
+  // With `went`, a copy Meta failed (or a bounced email) is kept apart from
+  // "not there" (m1 round 1, unclear-text-failed-in-conversation): the
+  // caller marks the send failed and moves on, never "may have gone".
+  let failed: ThreadMessage | null = null;
+  // Any outbound message on the lane since, whatever its words: an email
+  // whose body HighLevel keeps in a shape the words cannot be found in is
+  // never read as "not there" (the caller then says it may have gone).
+  let others = false;
   for (const cv of convs.slice(0, 3)) {
     const m = await ghl("GET", `/conversations/${enc(String(cv.id))}/messages?limit=10`);
     const inner = ((m as Row).messages ?? {}) as Row;
     const list = toThread(Array.isArray(inner.messages) ? inner.messages : (m as Row).messages, String(cv.id));
     seen.push(...list);
     const hit = matchSent(list, since, text, o);
-    if (hit) return { hit, seen };
+    if (hit) return { hit, seen, failed: null, others: true };
+    if (o.went && !failed) failed = matchSent(list, since, text, { channel: o.channel });
+    if (!others) others = Boolean(matchSent(list, since, null, { channel: o.channel }));
   }
-  return { hit: null, seen };
+  return { hit: null, seen, failed, others };
 }
 
 /**
@@ -1914,6 +1989,8 @@ async function sendTemplateOnce(
     readBackMs?: number;
     /** call_time for demo_host: the call's day and time on the lead's clock. */
     values?: { call_time?: string | null };
+    /** The caller's last check before the row is stamped and again before the enrolment (SendOpts.beforeSend). */
+    beforeSend?: () => Promise<boolean>;
   },
   taken: () => void,
 ) {
@@ -2027,6 +2104,7 @@ async function sendTemplateOnce(
       throw e;
     }
   }
+  await lastCheck(o.beforeSend);
   row = await markAsked(row);
   taken();
 
@@ -2058,6 +2136,15 @@ async function sendTemplateOnce(
     if (customFields.length) await ghl("PUT", `/contacts/${enc(o.contactId)}`, { customFields }, "2021-07-28");
   } catch (e) {
     return await fail(e, false);
+  }
+  // The contact field write may take HighLevel's whole timeout: the caller
+  // is asked once more right before the enrolment, the one call that sends.
+  // Stopped here, nothing was enrolled: the stamped row is given up.
+  try {
+    await lastCheck(o.beforeSend);
+  } catch (e) {
+    await giveUpAsked(row);
+    throw e;
   }
   const startedAt = Date.now();
   try {
@@ -6139,11 +6226,26 @@ const rooms = makeRooms({
   // any other WhatsApp to the lead), and with no words known nothing counts.
   // Found, its HighLevel id and status come back, so a link confirmed this
   // way can be read again for a late failure at Meta (stress2 round 3).
-  sentSince: async (contactId, since, text) => {
+  // A copy that is there and failed (Meta's 131026, a bounced email) comes
+  // back as failed with its error, apart from "not there" (false).
+  sentSince: async (contactId, since, text, channel) => {
     if (!text) return null;
     try {
-      const hit = (await whatsappSentSince(contactId, since, text, { went: true })).hit;
-      return hit ? { id: hit.id ? String(hit.id) : null, status: hit.status ? String(hit.status) : null } : false;
+      const back = await whatsappSentSince(contactId, since, text, { went: true, channel: channel ?? "whatsapp" });
+      const hit = back.hit;
+      if (hit) return { id: hit.id ? String(hit.id) : null, status: hit.status ? String(hit.status) : null };
+      const bad = back.failed;
+      if (bad)
+        return {
+          id: bad.id ? String(bad.id) : null,
+          status: bad.status ? String(bad.status) : "failed",
+          failed: true,
+          error: bad.error ? String(bad.error) : null,
+        };
+      // An email is "not there" only when no email at all went to the lead
+      // since: words HighLevel keeps as HTML are never the only proof.
+      if (channel === "email" && back.others) return null;
+      return false;
     } catch {
       return null;
     }
@@ -6246,7 +6348,45 @@ const DESK_ACTIONS: Record<string, (who: Who, b: Row) => Promise<Row>> = {
  */
 const CRON_ACTIONS = new Set(["contract.sync", ...rooms.cron]);
 
-/** The role claim of a token the gateway has already verified. */
+/**
+ * Whether a service-role token's signature is good: PostgREST checks it (the
+ * project's own key, whatever its kind), so a token nobody signed is answered
+ * 401 there whatever the gateway did. A good one is kept for ten minutes by
+ * its hash (never the token itself), so the desk's minute does not ask twice.
+ * Throws when the database cannot say.
+ */
+const signedDesk = new Map<string, number>();
+async function deskTokenSigned(jwt: string): Promise<boolean> {
+  const parts = jwt.split(".");
+  if (parts.length !== 3 || !parts[2]) return false;
+  // An unsigned token says so in its header: refused without asking. Any
+  // other header is PostgREST's to judge.
+  let header: Row = {};
+  try {
+    const b64 = (parts[0] ?? "").replace(/-/g, "+").replace(/_/g, "/");
+    header = JSON.parse(atob(b64 + "=".repeat((4 - (b64.length % 4)) % 4))) as Row;
+  } catch {
+    header = {};
+  }
+  if (String(header.alg ?? "").toLowerCase() === "none") return false;
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(jwt));
+  const key = Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, "0")).join("");
+  const until = signedDesk.get(key);
+  if (until !== undefined && until > Date.now()) return true;
+  const res = await fetchWithin(`${env("SUPABASE_URL")}/rest/v1/rpc/cockpit_sales_whoami`, {
+    method: "POST",
+    headers: { apikey: env("SUPABASE_ANON_KEY"), Authorization: `Bearer ${jwt}`, "Content-Type": "application/json" },
+    body: "{}",
+  }, SVC_MS, "The desk's key check");
+  if (res.status === 401 || res.status === 403) return false;
+  if (!res.ok) throw new Error(`the key check answered ${res.status}`);
+  await res.body?.cancel().catch(() => null);
+  if (signedDesk.size > 50) signedDesk.clear();
+  signedDesk.set(key, Date.now() + 10 * 60_000);
+  return true;
+}
+
+/** The role claim of a token (its signature checked by deskTokenSigned before the desk is taken). */
 function jwtRole(jwt: string): string | null {
   const part = jwt.split(".")[1];
   if (!part) return null;
@@ -6284,10 +6424,11 @@ Deno.serve(async (req: Request) => {
 
   // The sales desk on the VPS calls with the service key, for the one thing
   // it may do by itself: send a follow-up a manager trusts to go alone. The
-  // gateway has already checked the token's signature (this function is
-  // deployed with verify_jwt), so its role claim can be read as it stands;
-  // comparing the key's text failed because the desk and the function hold
-  // two different, equally valid service keys (2026-09-24).
+  // gateway checks the token's signature (this function is deployed with
+  // verify_jwt), and sales-api has PostgREST check it again before the role
+  // claim is read (deskTokenSigned, m1 round 1); comparing the key's text
+  // failed because the desk and the function hold two different, equally
+  // valid service keys (2026-09-24).
   // The sales mirror's scheduled run comes with the shared cron secret from
   // the vault, the door sales-mirror itself is opened with: the service key
   // the gateway hands that function is not a token whose role can be read
@@ -6300,6 +6441,18 @@ Deno.serve(async (req: Request) => {
   if (jwtRole(jwt) === "service_role" || byCron) {
     const deskHandler = DESK_ACTIONS[String(body?.action ?? "")];
     if (!deskHandler) return reply({ ok: false, error: "Not an action the desk may take." }, 403);
+    // The role claim is read only from a token whose signature is good (m1
+    // round 1, forged-service-role-desk): the gateway's verify_jwt is one
+    // deploy flag away from off, so sales-api has the database check it too.
+    if (!byCron) {
+      let signed: boolean;
+      try {
+        signed = await deskTokenSigned(jwt);
+      } catch (e) {
+        return reply({ ok: false, error: `The desk's key could not be checked. Try again in a minute. (${redact(String((e as Error)?.message ?? e))})` }, 503);
+      }
+      if (!signed) return reply({ ok: false, error: "Sign in again." }, 401);
+    }
     const desk: Who = { signed_in: true, seat: true, manager: false, email: "sales-desk", name: "Sales desk" };
     try {
       return reply({ ok: true, ...(await deskHandler(desk, body)) });

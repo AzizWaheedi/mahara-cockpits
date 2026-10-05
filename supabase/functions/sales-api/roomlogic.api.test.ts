@@ -139,12 +139,19 @@ describe("cancel while the worker has only claimed the room (lc-worker finding 2
     const c = room({ state: "creating", version: 2, claimed_at: at(T0) });
     const actor = { email: "setter@maharamedia.com" };
     expect(ok(apply(c, { kind: "end", reason: "cancel", actor, version: 1 }, T0 + S)).to).toBe("cancelled");
+    // m1 round 1 (cancel-refused-when-worker-opens-between, end-refused-after-
+    // host-join): End and Cancel depend on nothing the worker's claim and open
+    // or the host coming in change, so a press behind those moves still ends
+    // the room; the link on its way stops at the send's last check.
     const two = apply({ ...c, version: 3 }, { kind: "end", reason: "cancel", actor, version: 1 }, T0 + S);
-    expect(two.ok ? null : two.code).toBe("stale");
+    expect(two.ok ? two.to : two.code).toBe("cancelled");
     const open = apply(workerOpened(), { kind: "end", reason: "cancel", actor, version: 2 }, T0 + S);
-    expect(open.ok ? null : open.code).toBe("stale");
+    expect(open.ok ? open.to : open.code).toBe("cancelled");
+    // Another press behind is stale; so is End across the lead coming in.
     const mark = apply(c, { kind: "host_in", source: "mark", actor, version: 1 }, T0 + S);
     expect(mark.ok ? null : mark.code).toBe("stale");
+    const blocked = apply(workerOpened(), { kind: "end", reason: "admit_blocked", actor, version: 2 }, T0 + S);
+    expect(blocked.ok ? null : blocked.code).toBe("stale");
   });
 });
 

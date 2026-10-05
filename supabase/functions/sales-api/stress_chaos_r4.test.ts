@@ -131,12 +131,27 @@ function world(o: { inboundAgoMs?: number; introStartIn?: number } = {}) {
   }
   const at = () => new Date(w.clock.now).toISOString();
 
-  async function send(lane: Lane, requestId: string, channel: "whatsapp" | "email", body: string, extra: Row): Promise<{ message: Row; repeated?: boolean }> {
+  async function send(
+    lane: Lane,
+    requestId: string,
+    channel: "whatsapp" | "email",
+    body: string,
+    extra: Row,
+    beforeSend?: () => Promise<boolean>,
+  ): Promise<{ message: Row; repeated?: boolean }> {
     const again = rows.get(requestId);
     if (again) return { message: { ...again }, repeated: true };
     const row: Row = { id: fakeUuid(), request_id: requestId, channel, body, state: "sending", created_at: at(), ...extra };
     rows.set(requestId, row);
     w.db.t("cockpit_sales_messages").push(row);
+    // index.ts: the caller's last check after the slot, right before the
+    // stamp and HighLevel (m1 round 1); stopped, the row is given up.
+    if (beforeSend && !(await beforeSend())) {
+      rows.delete(requestId);
+      const t = w.db.t("cockpit_sales_messages");
+      t.splice(t.indexOf(row), 1);
+      throw new ApiRefusal("Not sent: the room closed before the link went.", 409, { code: "stopped", certain: true });
+    }
     const mode = modes[lane].shift() ?? "ok";
     if (mode === "lost_not_sent") {
       row.state = "unclear";
@@ -185,15 +200,19 @@ function world(o: { inboundAgoMs?: number; introStartIn?: number } = {}) {
       return { ...row };
     },
     // The rows carry the lead, as index.ts stores them.
-    sendText: (_who, b) => send(b.channel === "email" ? "email" : "text", b.request_id, b.channel, b.body, { contact_id: b.contact_id }),
+    sendText: (_who, b, opts) =>
+      send(b.channel === "email" ? "email" : "text", b.request_id, b.channel, b.body, { contact_id: b.contact_id }, opts?.beforeSend),
     sendTemplate: async (_who, t) => {
       if (gate.template) await gate.template;
       if (!rows.has(t.requestId)) hl.join = t.buttonVariable?.join_code ?? "";
-      return await send("template", t.requestId, "whatsapp", `Your Mahara call is ready. Join here: https://call.maharamedia.com/${t.buttonVariable?.join_code ?? ""}`, {
-        template_key: t.key,
-        via: "workflow",
-        contact_id: t.contactId,
-      });
+      return await send(
+        "template",
+        t.requestId,
+        "whatsapp",
+        `Your Mahara call is ready. Join here: https://call.maharamedia.com/${t.buttonVariable?.join_code ?? ""}`,
+        { template_key: t.key, via: "workflow", contact_id: t.contactId },
+        t.beforeSend,
+      );
     },
     upcoming: async () => null,
     sentSince: async (_contactId, since, text) => Boolean(matchSent(convo, since, text)),

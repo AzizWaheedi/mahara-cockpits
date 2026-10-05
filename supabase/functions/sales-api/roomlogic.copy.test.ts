@@ -184,7 +184,8 @@ const SPEC_SENTENCES = {
   lead_en: {
     manual_whatsapp: "Hi {first_name}, your call with {rep} from Mahara Media is ready now. Join here: {link}",
     manual_email_subject: "Your Mahara Media call is ready",
-    manual_email_body: "Hi {first_name}, your call with {rep} is ready now. Join here: {link}. If it does not open, reply to this email and we will call you.",
+    // m1 round 1: the link on its own line, never a full stop after a Zoom passcode.
+    manual_email_body: "Hi {first_name}, your call with {rep} is ready now. Join here:\n{link}\n\nIf it does not open, reply to this email and we will call you.",
     call_link_template: "Hi {{1}}, your call with {{2}} from Mahara Media is ready now. Tap the button below to join.",
     call_link_button: "Join the call",
     call_link_fallback: "Hi {{1}}, your call with {{2}} from Mahara Media is ready. Join here: {{3}} See you there.",

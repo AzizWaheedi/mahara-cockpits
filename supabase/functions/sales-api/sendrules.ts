@@ -295,6 +295,29 @@ export function sameText(a: unknown, b: unknown): boolean {
   return n >= 20 && (x.startsWith(y.slice(0, n)) || y.startsWith(x.slice(0, n)));
 }
 
+/**
+ * An email in the conversation carries these words: HighLevel keeps the
+ * email's HTML as its body, so the tags and entities are taken out and the
+ * words compared as sameText does, or found inside the email (a signature
+ * or a footer around them).
+ */
+export function sameEmailText(body: unknown, text: unknown): boolean {
+  const plain = String(body ?? "")
+    .replace(/<(br|\/p|\/div|\/li)[^>]*>/gi, " ")
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'");
+  if (sameText(plain, text)) return true;
+  const x = normText(plain);
+  const y = normText(text);
+  const n = Math.min(60, y.length);
+  return n >= 20 && x.includes(y.slice(0, n));
+}
+
 export interface SeenMessage {
   id?: string | null;
   direction?: unknown;
@@ -313,11 +336,17 @@ export interface SeenMessage {
  * answer was lost. The read-back right after a send leaves it off, so it
  * sees a Meta failure and records it.
  */
-export function matchSent<T extends SeenMessage>(list: T[], since: number, text?: string | null, o: { went?: boolean } = {}): T | null {
+export function matchSent<T extends SeenMessage>(
+  list: T[],
+  since: number,
+  text?: string | null,
+  o: { went?: boolean; channel?: "whatsapp" | "email" } = {},
+): T | null {
+  const channel = o.channel ?? "whatsapp";
   for (const m of list) {
     const t = Date.parse(String(m.at ?? ""));
-    if (m.direction !== "outbound" || m.channel !== "whatsapp" || !Number.isFinite(t) || t < since - 15_000) continue;
-    if (text && !sameText(m.body, text)) continue;
+    if (m.direction !== "outbound" || m.channel !== channel || !Number.isFinite(t) || t < since - 15_000) continue;
+    if (text && !(channel === "email" ? sameEmailText(m.body, text) : sameText(m.body, text))) continue;
     if (o.went && ["failed", "undelivered"].includes(String(m.status ?? "").toLowerCase())) continue;
     return m;
   }

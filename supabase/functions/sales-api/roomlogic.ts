@@ -707,8 +707,11 @@ export const ROOM_COPY = {
   lead_en: {
     manual_whatsapp: "Hi {first_name}, your call with {rep} from Mahara Media is ready now. Join here: {link}", // F (manual rooms, C43)
     manual_email_subject: "Your Mahara Media call is ready", // F, C43
+    // The link on its own line with nothing after it (m1 round 1): a Zoom link
+    // ends with its passcode, and a mail client that takes a full stop into it
+    // sends Zoom a passcode that is not the meeting's.
     manual_email_body:
-      "Hi {first_name}, your call with {rep} is ready now. Join here: {link}. If it does not open, reply to this email and we will call you.", // F
+      "Hi {first_name}, your call with {rep} is ready now. Join here:\n{link}\n\nIf it does not open, reply to this email and we will call you.", // F
     call_link_template: "Hi {{1}}, your call with {{2}} from Mahara Media is ready now. Tap the button below to join.", // C24
     call_link_button: "Join the call", // C24
     call_link_fallback: "Hi {{1}}, your call with {{2}} from Mahara Media is ready. Join here: {{3}} See you there.", // C24
@@ -978,7 +981,8 @@ const ZOOM_HOST = /(^|\.)zoom(gov)?\.(us|com)$/i;
 export function isHostLink(v: unknown): boolean {
   const s = typeof v === "string" ? v.trim() : "";
   if (!s) return false;
-  if (/[?&;#]zak=/i.test(s)) return true;
+  // Zoom reads an escaped letter in a parameter's name (%7Aak=) as zak= (m1 round 1).
+  if (/[?&;#](?:z|%7a)(?:a|%61)(?:k|%6b)=/i.test(s)) return true;
   try {
     const u = new URL(s);
     return ZOOM_HOST.test(u.hostname) && (/^\/s\//i.test(u.pathname) || /\/start(\/|$)/i.test(u.pathname));
@@ -1010,7 +1014,7 @@ export function redactRoom(v: unknown): string | null {
   if (!s) return null;
   const cleaned = s
     .replace(/https?:\/\/[^\s"'<>]*zoom(?:gov)?\.(?:us|com)\/(?:s\/|wc\/[^\s"'<>]*\/start)[^\s"'<>]*/gi, "[host link]")
-    .replace(/([?&;#]zak=)[^&\s"'<>]+/gi, "$1[key]");
+    .replace(/([?&;#](?:z|%7a)(?:a|%61)(?:k|%6b)=)[^&\s"'<>]+/gi, "$1[key]");
   return redact(cleaned).trim() || null;
 }
 
@@ -1096,6 +1100,19 @@ export interface RoomRow {
   appointment_start_at?: string | null;
   /** When the call this intro room followed was placed (20261004a, stress2 round 6): the settle judges the room by it. */
   appointment_call_at?: string | null;
+  /**
+   * The booked intro the press named, whether or not the room carries it
+   * (20261004a, m1 round 1): a retry or a replacement of this room asks with
+   * it, so fallback.scope's check passes as it did for the press.
+   */
+  asked_appointment_id?: string | null;
+  /**
+   * The press cleared the night rule for this room's link (20261004a, m1
+   * round 1): "intro" (the lead's own booked intro inside its window, the
+   * hour the lead chose) or "replacing" (the lead at the door of the room it
+   * replaces). Every send of this room's link follows it.
+   */
+  night_cleared?: string | null;
   handover_id?: string | null;
   replaced_by?: string | null;
   attempt_id?: string | null;
@@ -1796,6 +1813,18 @@ const LATE_JOIN_EARLY_S = 60;
  * and the count runs as for any join. Null when the rule does not apply.
  */
 function lateLeadIn(room: RoomRow, event: Extract<RoomEvent, { kind: "lead_in" }>, now: number, ctx: RoomCtx): Changed | null {
+  // A Zoom join from before the meeting's end, read after the end closed
+  // the room (m1 round 1, zoom-lead-join-after-meeting-end-lost: the join's
+  // forward failed and its replay came after meeting.ended): the lead was in
+  // the call, so the room keeps the join and reads joined.
+  if (room.state === "ended" && event.source === "zoom" && room.contact_id && room.result === "no_join" && !leadJoined(room)) {
+    const meetingEnd = ms(room.meeting_ended_at);
+    if (meetingEnd === null) return null;
+    const t = eventTime(event.at, now);
+    const opened = ms(room.opened_at) ?? ms(room.requested_at);
+    if (t > meetingEnd || (opened !== null && t < opened - LATE_JOIN_EARLY_S * S) || takenBack(room, t)) return null;
+    return change(room, room.state, { lead_in_at: iso(t), lead_in_seen_at: iso(now), result: "joined" }, [{ kind: "count_live" }]);
+  }
   if (room.state !== "expired" || !room.contact_id || leadJoined(room) || room.result === "joined") return null;
   if (room.end_reason && !(TIMER_END_REASONS as readonly string[]).includes(room.end_reason)) return null;
   const ended = ms(room.ended_at);
@@ -1861,7 +1890,22 @@ export function applyRoomEvent(room: RoomRow, event: RoomEvent, now: number, ctx
   // (requested to creating is the one move into creating) still cancels it
   // (contract v2 section 4, lc-worker finding 23).
   const claimedSince = event.kind === "end" && room.state === "creating" && Number(seen) === ver(room) - 1;
-  if (given && Number(seen) !== ver(room) && !claimedSince) return refuse("stale");
+  // End, We are on the phone, Finished and Cancel depend on nothing the
+  // worker's claim and open or the host coming in change (m1 round 1,
+  // cancel-refused-when-worker-opens-between, end-refused-after-host-join):
+  // a press from a view behind those moves still ends the room, and the
+  // link still on its way is stopped by the send's last check. Only a room
+  // the lead has come into since (confirm_end) is a real change.
+  // "I can't let them in" stays strict: it makes a room in this one's place.
+  const endBehind =
+    event.kind === "end" &&
+    event.reason !== "admit_blocked" &&
+    given &&
+    Number.isInteger(Number(seen)) &&
+    Number(seen) >= 1 &&
+    Number(seen) < ver(room) &&
+    (room.state === "requested" || room.state === "creating" || room.state === "open" || room.state === "host_in");
+  if (given && Number(seen) !== ver(room) && !claimedSince && !endBehind) return refuse("stale");
   const early = room.state === "requested" || room.state === "creating";
   // A Zoom, door or message-service time; a person's press is now.
   const when = (e: At & { source?: string }) => (e.source === "mark" ? now : eventTime(e.at, now));
@@ -2063,7 +2107,9 @@ export function applyRoomEvent(room: RoomRow, event: RoomEvent, now: number, ctx
         return change(room, "open", { host_by, meeting_ended_at: ended }, []);
       }
       const result: RoomResult | null = room.state === "lead_in" && leadJoined(room) ? "joined" : room.contact_id ? "no_join" : null;
-      return change(room, "ended", { result, ended_at: iso(t) }, [{ kind: "delete_secret" }]);
+      // The meeting's end is kept on the closed room too (m1 round 1): a
+      // lead's join from before it, read after it, still stands (lateLeadIn).
+      return change(room, "ended", { result, ended_at: iso(t), meeting_ended_at: laterIso(room.meeting_ended_at, t) }, [{ kind: "delete_secret" }]);
     }
 
     case "meeting_deleted": {
@@ -2471,11 +2517,18 @@ export const ZOOM_DELETED = "The Zoom meeting was deleted in Zoom, so its link n
 
 /**
  * Where "I can't let them in" (room.end admit_blocked) may be pressed: a Meet
- * room with a lead in a fallback or handover room (P1 edge case 9), the
- * panel's own condition. Its replacement is a room on the other provider.
+ * room with a lead in a fallback, handover or manual room (P1 edge case 9),
+ * the panel's own condition. Its replacement is a room on the other provider.
  */
 export function admitBlockedAllowed(room: Pick<RoomRow, "provider" | "contact_id" | "purpose">): boolean {
-  return room.provider === "meet" && Boolean(room.contact_id) && (room.purpose === "fallback" || room.purpose === "handover");
+  // The lead page's room too (m1 round 1, meet-knock-no-next-step): the
+  // pilot's path for the test contact, where a knock nobody can answer
+  // otherwise waits out the ten minutes.
+  return (
+    room.provider === "meet" &&
+    Boolean(room.contact_id) &&
+    (room.purpose === "fallback" || room.purpose === "handover" || room.purpose === "manual")
+  );
 }
 
 /** The link went only as a WhatsApp template nobody saw: no free text and no email went with it. */
@@ -3884,6 +3937,8 @@ export interface RoomView {
   attempt_id: string | null;
   /** The booked call a booked or fallback room is for. */
   appointment_id: string | null;
+  /** The booked intro the press named (a retry asks with it): null when it named none. */
+  asked_appointment_id: string | null;
   handover_id: string | null;
   /** A booked room's appointment start, or the start of the booked intro a fallback room is for (not a column). */
   starts_at: string | null;
@@ -3939,6 +3994,7 @@ export const ROOM_VIEW_KEYS = [
   "trigger",
   "attempt_id",
   "appointment_id",
+  "asked_appointment_id",
   "handover_id",
   "starts_at",
   "end_reason",
@@ -4004,6 +4060,7 @@ export function toRoomView(
     trigger: oneOf(TRIGGERS, row.trigger) ? row.trigger : null,
     attempt_id: str(row.attempt_id, 80),
     appointment_id: str(row.appointment_id, 80),
+    asked_appointment_id: str(row.asked_appointment_id, 80),
     handover_id: str(row.handover_id, 80),
     starts_at: isoOrNull(opts.starts_at),
     end_reason: /^[a-z_]{1,40}$/.test(String(row.end_reason ?? "")) ? String(row.end_reason) : null,
@@ -4048,6 +4105,12 @@ export interface CreateInput {
   booked_demo: boolean;
   /** The lead has a booked intro (the dialer's call was for it): fallback.scope "intro" needs one. */
   booked_intro: boolean;
+  /**
+   * The replacement for a room "I can't let them in" closed (m1 round 1,
+   * admit-blocked-replacement-refused-by-scope): the same room's
+   * continuation, which already passed fallback.scope and the pilot list.
+   */
+  replacing?: boolean;
 }
 
 /**
@@ -4109,7 +4172,7 @@ export function createRefusal(i: CreateInput): Refused | null {
   if (i.booked_demo && (purpose === "fallback" || purpose === "manual")) return refuse("booked_demo");
   if (!s.providers[provider])
     return refuse("provider_off", { provider: providerName(provider), other: providerName(otherProvider(provider)) });
-  if (purpose === "fallback") {
+  if (purpose === "fallback" && !i.replacing) {
     if (s.fallback.scope !== "any" && !i.booked_intro) return refuse("fallback_scope");
     if (s.fallback.pilot_emails.length && !s.fallback.pilot_emails.includes(lower(i.host_email)))
       return refuse("fallback_pilot");
@@ -4237,7 +4300,7 @@ export function newRoomRow(n: NewRoomInput): RoomRow {
 /** Text (an appointment's address) holding a Zoom start link or a zak token anywhere in it. */
 export function holdsHostLink(text: unknown): boolean {
   const s = typeof text === "string" ? text : "";
-  return /[?&;#]zak=/i.test(s) || /zoom(gov)?\.(us|com)\/(s\/|wc\/\S*\/start)/i.test(s);
+  return /[?&;#](?:z|%7a)(?:a|%61)(?:k|%6b)=/i.test(s) || /zoom(gov)?\.(us|com)\/(s\/|wc\/\S*\/start)/i.test(s);
 }
 
 /**

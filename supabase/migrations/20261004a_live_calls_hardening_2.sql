@@ -2279,6 +2279,25 @@ alter table public.cockpit_sales_rooms
 comment on column public.cockpit_sales_rooms.appointment_call_at is
   'When the call this intro room followed was placed (createRoom). The settle judges the room by it, else requested_at.';
 
+-- The press's own decisions, kept on the room (m1 round 1): the booked intro
+-- the press named, whether or not the room carries it (a confirmation call's
+-- room; another rep's intro), so a retry or the "I can't let them in"
+-- replacement asks with it and passes fallback.scope as the press did; and
+-- whether the press cleared the night rule for this room's link (the lead's
+-- own booked intro inside its window, or the replacement for a room the lead
+-- is knocking on), so every send of the link follows that one decision.
+alter table public.cockpit_sales_rooms
+  add column if not exists asked_appointment_id text;
+comment on column public.cockpit_sales_rooms.asked_appointment_id is
+  'The booked intro the press named (createRoom), whether or not the room carries it. A retry and a replacement ask with it.';
+alter table public.cockpit_sales_rooms
+  add column if not exists night_cleared text;
+alter table public.cockpit_sales_rooms drop constraint if exists cockpit_sales_rooms_night_cleared_check;
+alter table public.cockpit_sales_rooms add constraint cockpit_sales_rooms_night_cleared_check
+  check (night_cleared is null or night_cleared in ('intro', 'replacing'));
+comment on column public.cockpit_sales_rooms.night_cleared is
+  'The press cleared the night rule for this room''s link: intro (the lead''s own booked intro in its window) or replacing (the lead at the door of the room it replaces).';
+
 create or replace function public.cockpit_sales_room_join_stands(p_lead_in_at timestamptz, p_undo_at timestamptz, p_taken_at timestamptz)
 returns boolean
 language sql
