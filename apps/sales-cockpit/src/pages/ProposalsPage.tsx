@@ -79,7 +79,7 @@ export default function ProposalsPage({ me }: { me: Me }) {
           <EmptyState
             icon={FileText}
             title="No proposals yet"
-            text="Open a lead after the demo and choose Draft proposal. It takes about ten minutes."
+            text="Open a lead after the demo and choose Draft proposal. It usually takes about ten minutes."
           />
         </section>
       ) : (

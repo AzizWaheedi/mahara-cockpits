@@ -3,6 +3,7 @@ import {
   downloadLabel,
   draftWait,
   failedLine,
+  noDocument,
   notesOf,
   proposalTitle,
   sentence,
@@ -47,6 +48,8 @@ describe("draftWait", () => {
     expect(w.tone).toBe("good");
     expect(w.head).toBe("The proposal is being written");
     expect(w.body).toContain("about ten minutes");
+    // An expectation, never a promise: a draft can wait on an outage for hours.
+    expect(w.body).toContain("usually");
     expect(w.meta).toBe("Asked 3 min ago · waiting for the writer");
     expect(w.stoppable).toBe(true);
   });
@@ -126,6 +129,8 @@ describe("draftWait", () => {
     );
     expect(w.head).toBe("Your figures are going into the document");
     expect(w.body).not.toContain("ten minutes");
+    // It can wait behind a draft the writer is already on.
+    expect(w.body).toContain("longer while another proposal is being written");
   });
 
   test("without the request it goes by the proposal", () => {
@@ -265,5 +270,19 @@ describe("whatIsWrong", () => {
     expect(whatIsWrong("Fathom refused the key (401)")).toBe(
       "Fathom refused the key (401)",
     );
+  });
+});
+
+describe("noDocument", () => {
+  test("every state says what happens or what to do next", () => {
+    expect(noDocument("drafting")).toBe(
+      "The document appears here when the draft is done.",
+    );
+    expect(noDocument("archived")).toContain(
+      "Draft proposal on the lead's page starts a new one",
+    );
+    expect(noDocument("failed")).toContain("Draft it again");
+    for (const s of ["needs_input", "ready", "sent"] as const)
+      expect(noDocument(s)).toContain("Draft it again from the lead's page");
   });
 });

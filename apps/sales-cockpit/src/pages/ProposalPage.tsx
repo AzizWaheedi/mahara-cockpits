@@ -22,7 +22,7 @@ import { DraftWaitNotice, ProposalChip } from "../components/ProposalPanel";
 import { api } from "../lib/api";
 import { useLead, useProposal, useProposalHtml, useRequest } from "../lib/data";
 import { ago } from "../lib/format";
-import { downloadLabel, notesOf, sentence } from "../lib/proposals";
+import { downloadLabel, noDocument, notesOf, sentence } from "../lib/proposals";
 import { supabase } from "../lib/supabase";
 import { toast } from "../lib/toast";
 import type { Me, Proposal } from "../lib/types";
@@ -381,7 +381,7 @@ export default function ProposalPage({ me }: { me: Me }) {
                 act(
                   "proposal.retry",
                   { id: p.id },
-                  "Drafting again with the same choices. About ten minutes.",
+                  "Drafting again with the same choices. It usually takes about ten minutes.",
                 )
               }
             >
@@ -456,11 +456,7 @@ export default function ProposalPage({ me }: { me: Me }) {
             <Document html={html.data} full={full} onClose={closeFull} />
           </>
         ) : (
-          <p className="muted p-4 text-sm">
-            {p.status === "drafting"
-              ? "The document appears here when the draft is done."
-              : "No document was built."}
-          </p>
+          <p className="muted p-4 text-sm">{noDocument(p.status)}</p>
         )}
       </SectionCard>
     </Shell>

@@ -92,7 +92,8 @@ export function draftWait(
     return {
       tone: "good",
       head: "Your figures are going into the document",
-      body: "It takes a minute or two; this page updates by itself.",
+      // Rebuilds go before drafts, but not before one already being written.
+      body: "It usually takes a minute or two, longer while another proposal is being written; this page updates by itself.",
       meta,
       slow,
       stoppable,
@@ -100,7 +101,7 @@ export function draftWait(
   return {
     tone: "good",
     head: "The proposal is being written",
-    body: "It takes about ten minutes; this page updates by itself.",
+    body: "It usually takes about ten minutes; this page updates by itself.",
     meta,
     slow,
     stoppable,
@@ -147,6 +148,17 @@ const TITLES: Record<ProposalStatus, string> = {
 export function proposalTitle(p: Pick<Proposal, "status" | "sent_at">): string {
   if (p.sent_at) return TITLES.sent;
   return TITLES[p.status] ?? "Proposal";
+}
+
+/** The document card when there is no document, with what to do next. */
+export function noDocument(status: ProposalStatus): string {
+  if (status === "drafting")
+    return "The document appears here when the draft is done.";
+  if (status === "archived")
+    return "No document was built before it was archived. Draft proposal on the lead's page starts a new one.";
+  if (status === "failed")
+    return "No document was built. Draft it again from the box above.";
+  return "No document was built. Draft it again from the lead's page.";
 }
 
 /** The proposals a closer has to act on: fill, send, or draft again. */

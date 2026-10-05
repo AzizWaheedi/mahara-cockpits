@@ -262,7 +262,7 @@ export function ProposalPanel({
         offer: { guarantee, payment },
       });
       toast.success(
-        "Drafting the proposal. It takes about ten minutes; you can leave this page.",
+        "Drafting the proposal. It usually takes about ten minutes; you can leave this page.",
       );
       onChange();
     } catch (err) {
