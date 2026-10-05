@@ -52,16 +52,26 @@ export const ARCHIVED_NO_RETRY =
 export const SENT_NO_RETRY =
   "This proposal was marked sent, so it is not drafted again. Draft proposal on the lead's page starts a new one.";
 
+export const REPLACED_NO_RETRY =
+  "A newer draft of this proposal was asked for after this one, so this one is not tried again. Use Draft again on the proposal.";
+
 /**
  * Try again on a failed request (request.set to queued) puts the proposal
  * back to drafting: never one the closer archived or marked sent, which the
  * worker would then leave drafting for ever (an archived one is cancelled
- * unwritten). Null when it may go ahead.
+ * unwritten). Nor a request the proposal has moved on from: a fresh draft
+ * from an old request would write over the version the closer has filled
+ * since, and its figures with it, or run beside the draft now in hand.
+ * Null when it may go ahead.
  */
-export function retryRefusal(p: { status?: unknown } | null | undefined): string | null {
+export function retryRefusal(
+  p: { status?: unknown; request_id?: unknown } | null | undefined,
+  requestId?: string,
+): string | null {
   const status = String(p?.status ?? "");
   if (status === "archived") return ARCHIVED_NO_RETRY;
   if (status === "sent") return SENT_NO_RETRY;
+  if (requestId && p?.request_id && String(p.request_id) !== requestId) return REPLACED_NO_RETRY;
   return null;
 }
 

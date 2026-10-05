@@ -4,6 +4,7 @@ import {
   ALREADY_DRAFTING,
   archivePlan,
   BEING_WRITTEN,
+  REPLACED_NO_RETRY,
   retryPlan,
   retryRefusal,
   STOPPED,
@@ -77,6 +78,16 @@ describe("trying a failed request again", () => {
     for (const status of ["failed", "drafting", "needs_input", "ready"])
       expect(retryRefusal({ status })).toBeNull();
     expect(retryRefusal(null)).toBeNull();
+  });
+
+  test("never a request the proposal has moved on from", () => {
+    // A failed fresh draft tried again after Draft again and the closer's
+    // figures would write over the filled version.
+    expect(retryRefusal({ status: "ready", request_id: "req-new" }, "req-old")).toMatch(/newer draft/);
+    expect(retryRefusal({ status: "drafting", request_id: "req-new" }, "req-old")).toMatch(/Draft again/);
+    expect(retryRefusal({ status: "failed", request_id: "req-old" }, "req-old")).toBeNull();
+    expect(retryRefusal({ status: "failed", request_id: null }, "req-old")).toBeNull();
+    expect(REPLACED_NO_RETRY).not.toContain("\u2014");
   });
 });
 

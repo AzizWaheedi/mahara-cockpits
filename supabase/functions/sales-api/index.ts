@@ -704,11 +704,12 @@ async function requestSet(who: Who, b: Row) {
     patch = { status: "cancelled", finished_at: new Date().toISOString() };
   } else if (to === "queued") {
     if (r.status !== "failed") throw new Refusal("Only a failed request can be tried again.");
-    // Never back to drafting for a proposal the closer archived or sent.
+    // Never back to drafting for a proposal the closer archived or sent, nor
+    // for a request the proposal has since moved on from.
     const forId = (r.params as Row | null)?.proposal_id;
     if (r.kind === "proposal" && forId) {
-      const p = (await svc(`cockpit_sales_proposals?id=eq.${enc(String(forId))}&select=id,status`))[0];
-      const refused = retryRefusal(p);
+      const p = (await svc(`cockpit_sales_proposals?id=eq.${enc(String(forId))}&select=id,status,request_id`))[0];
+      const refused = retryRefusal(p, String(r.id));
       if (refused) throw new Refusal(refused, 409);
     }
     patch = { status: "queued", attempts: 0, error: null, claimed_at: null, finished_at: null };
