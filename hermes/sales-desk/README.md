@@ -139,10 +139,16 @@ validator does not read as copy). A rebuild that fails for good tells the
 closer the figures are saved and that Draft again rebuilds with them, and
 then it does: `proposal.retry` after a failed rebuild queues a rebuild. Any
 other Draft again is a fresh draft carrying `fills`, and the worker puts each
-figure back into the new draft's blank at the same place, says in the notes
-how many went back and which had no blank to go into, and checks the new draft
-with the closer's figures counted as the closer's own. Try again on a failed
-request (`request.set`) is refused for a proposal that was archived or sent.
+figure back into the new draft's blank at the same place, but only on the same
+line: a path through a list (a tile, a stage, a price row) is followed only when
+that item has the same label as in the version the closer filled, so a fresh
+draft that ordered its tiles differently never prints a figure on the wrong
+one. The notes say how many went back and which did not, and the new draft is
+checked with the closer's figures counted as the closer's own. Try again on a
+failed request (`request.set`) is refused for a proposal that was archived or
+sent, and for a request the proposal has moved on from (not its
+`request_id`), which would write a draft from the call over a version the
+closer has filled since.
 
 Rebuilds are read ahead of drafts, whatever their age, so a run's limit
 (`SALES_REQUESTS_PER_RUN`, 3) can never leave one behind drafts that wait on a
