@@ -1219,6 +1219,7 @@ class Worker:
         self._calendar_fixed = bool(calendar_id)
         self.settings: dict[str, Any] = merged(DEFAULTS, None)
         self._settings_at: Optional[float] = None
+        self._settings_reads = 0  # successful reads of the rooms setting (a re-read is told by it)
         self.claim_until = float("inf")
         self.zoom_claim_until = float("inf")
         self.pending: dict[str, Pending] = {}
@@ -1406,6 +1407,7 @@ class Worker:
 
     def _claims(self, rows: list[dict[str, Any]], max_claims: int) -> None:
         claimed = 0
+        reread: Optional[bool] = None  # None: not read again this pass; then whether that read worked
         now = self.clock()
         for r in rows:
             asked = parse_ts(r.get("requested_at"))
@@ -1436,6 +1438,20 @@ class Worker:
                 self._guard(r, lambda room: self._fail_unclaimed(room, SAY["too_late"]))
                 continue
             off = self._switched_on(r.get("provider"))
+            if off and reread is False:
+                continue  # the setting could not be read again this pass: the next tick decides
+            if off and reread is None:
+                # The setting this run holds may be up to SETTINGS_EVERY old,
+                # while sales-api read it at the press (stress2 round 3,
+                # worker-stale-switch-fails-first-room-after-go-live): read it
+                # again, once a pass, before failing a room as switched off. A
+                # read that fails leaves the room for the next tick.
+                before = self._settings_reads
+                self._read_settings(self.clock())
+                reread = self._settings_reads != before
+                if not reread:
+                    continue
+                off = self._switched_on(r.get("provider"))
             if off:
                 # Claimed only while rooms and that provider are switched on
                 # (contract-v2 section 7, step 2): a room asked for while one
@@ -1485,6 +1501,7 @@ class Worker:
         # A missing `rooms` setting is the defaults: switched off.
         self.settings = merged(DEFAULTS, raw)
         self._settings_at = self.clock()
+        self._settings_reads += 1
 
     def _settings_fresh(self) -> bool:
         """Only a run that has read the switches lately claims a room: a
@@ -1679,6 +1696,21 @@ class Worker:
         self._users[cache] = (self.clock(), user, status)
         return user, status
 
+    def _host_room_meetings(self, host: str) -> set[str]:
+        """Every meeting of this host's own cockpit Zoom rooms of the last
+        twelve hours, open or closed, and the ones this run closed. Not read:
+        the closed ones this run knows (never a guess that hides a meeting)."""
+        out = set(self.closed_ids)
+        try:
+            rows = self.sb.select(ROOMS, f"select=provider_meeting_id&host_email=eq.{_q(host.strip().lower())}"
+                                         f"&provider=eq.zoom&provider_meeting_id=not.is.null"
+                                         f"&requested_at=gte.{_q(iso(self.clock() - 12 * 3600))}&limit=100")
+        except TimeUp:
+            raise
+        except (SupabaseError, http.HttpError):
+            return out
+        return out | {str(r["provider_meeting_id"]) for r in rows if r.get("provider_meeting_id")}
+
     def _own_meetings(self, host: str) -> set[str]:
         """The meetings of this host's own finished cockpit rooms: a standby
         room replaced at 35 minutes still has the closer in it, and that is
@@ -1852,6 +1884,8 @@ class Worker:
         self._capped[host] = float(reset)
         try:
             self.sb.upsert(HOSTS, [{"email": host, "zoom_capped_until": iso(reset)}], "email")
+            audit(self.sb, "room.hosts", HOSTS, host, after={"zoom_capped_until": iso(reset)},
+                  metadata={"by": "the room worker", "why": "Zoom's daily cap on meeting creates", "worker_run": self.run_id})
         except TimeUp:
             raise
         except (SupabaseError, http.HttpError) as e:
@@ -3070,7 +3104,14 @@ class Worker:
                 # runs past its slot still reads as on a call there, and the
                 # worker reads Zoom's live list itself at a create.
                 seen = self.clock()
+                # The host's own cockpit rooms' meetings (stress2 round 3,
+                # host-check-counts-own-room-as-another-meeting): a rep sitting
+                # in their own room's meeting is not "in another meeting", and
+                # that meeting ends with its room.
+                own = self._host_room_meetings(email)
                 for m in self.zoom.live(str(user["id"])):
+                    if str(m.get("id") or "") in own:
+                        continue
                     start = parse_ts(m.get("start_time"))
                     minutes = float(m.get("duration") or 0)
                     ends.append((start + minutes * 60) if start and minutes else seen)
@@ -3112,7 +3153,7 @@ class Worker:
                                                     "&via_portal=eq.true&active=eq.true&limit=500")
                   if p.get("email") and p.get("role") in SEAT_ROLES]
         existing: dict[str, dict[str, Any]] = {}
-        for h in self.sb.select(HOSTS, "select=email,zoom_user_id,default_provider&limit=500"):
+        for h in self.sb.select(HOSTS, "select=email,zoom_user_id,default_provider,zoom_status,google_ok&limit=500"):
             if h.get("email"):
                 existing[str(h["email"]).strip().lower()] = h
         if not people:
@@ -3156,6 +3197,18 @@ class Worker:
             lines.append(line)
         if rows:
             self.sb.upsert(HOSTS, rows, "email")
+            # Every change the check made to a seat's host row has its audit
+            # row (stress2 round 3, host-check-writes-unaudited): the Zoom user
+            # that hosts the rep's rooms, the licence that picks their default
+            # room, and whether Google works. Once per change, never every run.
+            for row in rows:
+                before = existing.get(row["email"]) or {}
+                changed = {k: row[k] for k in ("zoom_user_id", "zoom_status", "google_ok")
+                           if k in row and before.get(k) != row[k]}
+                if changed:
+                    audit(self.sb, "room.hosts", HOSTS, row["email"],
+                          before={k: before.get(k) for k in changed}, after=changed,
+                          metadata={"by": "the host check", "worker_run": self.run_id})
         report_ok, report_lines = self.report_check(now, seat_ids)
         lines += report_lines
         ok = bool(self.zoom) and google_ok is True and report_ok

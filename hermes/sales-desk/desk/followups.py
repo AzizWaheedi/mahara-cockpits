@@ -69,6 +69,7 @@ from __future__ import annotations
 import copy
 import json
 import re
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Optional
 
@@ -1120,6 +1121,9 @@ def live_calls(sb: Any, contacts: Optional[list[str]] = None, *, since: Optional
         out.append({"appointment_id": appt, "contact_id": str(r["contact_id"]),
                     "calendar_id": LIVE_CALENDAR, "call_type": kind, "start_at": r.get("lead_in_at"),
                     "booked_at": r.get("lead_in_at"), "status": "showed", "live": True,
+                    # A call the count moved to the join was booked at its own
+                    # time: its own calendar row says when (stress2 round 3).
+                    **({"moved": True} if r.get("count_result") == "moved" else {}),
                     **({"uncounted": True} if uncounted else {})})
     return out
 
@@ -1772,6 +1776,27 @@ def gone_reason(d: dict[str, Any], calls: list[dict[str, Any]], inbox: list[dict
 
 
 OPENER_REPLIED = "The lead wrote in after this opener was written; a person answers them."
+
+
+def conversation_moved(sb: Any, contact: str, since: datetime, channel: Optional[str]) -> bool:
+    """Whether the lead's conversation has a message newer than `since` in
+    the inbox copy, as sales-api's sendFollowup reads it (an outbound email
+    moves nothing on for a WhatsApp draft). Not readable: False, and the
+    send's own check still holds."""
+    try:
+        rows = sb.select("cockpit_sales_inbox", "select=last_message_at,last_direction,last_type,inbound_whatsapp_at"
+                                                f"&contact_id=eq.{_q(contact)}&limit=5")
+    except Exception:  # noqa: BLE001 - the send's own check is the second net
+        return False
+    for r in rows:
+        last = _ts(r.get("last_message_at"))
+        email = "email" in str(r.get("last_type") or "").lower()
+        if last and last > since and (r.get("last_direction") == "inbound" or not (channel != "email" and email)):
+            return True
+        wa_in = _ts(r.get("inbound_whatsapp_at"))
+        if wa_in and wa_in > since:
+            return True
+    return False
 OPENER_BOOKED = "The lead has a call booked now, so the backlog opener was taken back."
 
 
@@ -2089,6 +2114,13 @@ def run(sb: Any, provider: Any, log: Callable[[str], None], *, settings: dict[st
     sign-in lapsed): the run keeps the books and counts who is due, and asks
     no model."""
     now = now or datetime.now(timezone.utc)
+    # The run's clock as it moves (stress2 round 3): `now` plus the time this
+    # run has taken, so a draft carries the moment its thread was read.
+    began = time.monotonic()
+
+    def moment() -> datetime:
+        return now + timedelta(seconds=time.monotonic() - began)
+
     warn = warn or log
     test = bool(only_contact)
     if force_segment and force_segment not in SEGMENTS:
@@ -2272,7 +2304,7 @@ def run(sb: Any, provider: Any, log: Callable[[str], None], *, settings: dict[st
     dealt = {str(d["contact_id"]) for d in sb.select_all("cockpit_sales_deals", f"select=contact_id{only}", order="response_id")
              if d.get("contact_id")}
     written = no_channel = failed = sent_auto = not_leads = held = talking = unread = stopped = paused = 0
-    set_aside = answered = raced = kept = 0
+    set_aside = answered = raced = kept = moved_on = 0
     by_channel: dict[str, int] = {}
     for due in picked:
         if written >= room:
@@ -2304,6 +2336,13 @@ def run(sb: Any, provider: Any, log: Callable[[str], None], *, settings: dict[st
         channel: Optional[str] = None
         asking = False
         try:
+            # The moment just before the lead's conversation is read: the
+            # draft's created_at (stress2 round 3,
+            # drafter-model-minute-hides-newest-message). The model's minute
+            # comes after it, so whatever anyone wrote meanwhile is newer than
+            # the draft, and sales-api's "the conversation moved on" and
+            # close_gone both see it.
+            read_at = moment()
             ctx = context_for(sb, lead, ghl_token, now, rep_name_of.get(owner), due, arabic_name_of.get(owner))
             thread = ctx.pop("_thread")
             if not ctx.pop("_thread_ok", True):
@@ -2421,10 +2460,19 @@ def run(sb: Any, provider: Any, log: Callable[[str], None], *, settings: dict[st
                 expires = min(now + timedelta(hours=48), _ts(due["start_at"]) - timedelta(hours=1))
             else:
                 expires = now + timedelta(hours=48)
+            # The conversation again, as the inbox copy has it now: a message
+            # newer than the thread the model saw (the lead's, or a person's
+            # answer) means this draft answers an older conversation. Nothing
+            # is written; the next run drafts from the conversation as it is.
+            if conversation_moved(sb, contact, read_at, channel):
+                moved_on += 1
+                log(f"followups: {contact}'s conversation moved on while the draft was written; the next run drafts again")
+                continue
             # A plain insert: the one-open-draft-per-lead index refuses a
             # second one if a rep's own run raced this one.
             try:
                 made = sb.rest("POST", "cockpit_sales_followups", json_body=[{
+                    "created_at": read_at.isoformat(),
                     "contact_id": contact, "owner_ghl": owner_ghl, "owner_email": seat_of.get(owner_ghl or ""),
                     "segment": segment, "channel": channel,
                     "template_key": (route or {}).get("key") if channel == "whatsapp_template" else None,
@@ -2500,6 +2548,7 @@ def run(sb: Any, provider: Any, log: Callable[[str], None], *, settings: dict[st
             "already_answered": answered, "asked_to_stop": stopped, "paused": paused,
             "stops_unread": stop_rows is None, "conversation_unreadable": unread, "no_open_channel": no_channel,
             "not_sales_leads": not_leads, "set_aside": set_aside, "raced": raced, "failed": failed, "room": room,
+            "moved_on_while_written": moved_on,
             **({"test": True} if test else {}),
             **{k: books.get(k, 0) for k in ("replies_marked", "went_stale", "reason_gone", "clients_closed", "stuck_freed")},
             "templates": books.get("templates", {"found": 0, "never_sent": 0}),
