@@ -7,7 +7,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { createHmac, randomUUID } from "node:crypto";
 import { GO_COPY, OPEN_COLUMNS, OPEN_DEVICES, RateLimiter } from "./door.ts";
-import { BUDGET, makeHandler, MISSING, NOT_HOOKED } from "./handler.ts";
+import { BUDGET, makeHandler, MISSING, NOT_HOOKED, SLACK_OFF } from "./handler.ts";
 
 const BASE = "https://proj.supabase.co";
 const SERVICE_KEY = "service-key-value-never-printed";
@@ -968,12 +968,24 @@ describe("POST /slack", () => {
   });
 
   test("without SLACK_SIGNING_SECRET the route answers 503 with a plain sentence", async () => {
+    // Slack switched on (live.enabled and live.slack): the missing secret is
+    // a part that needs setting up, and it says which.
+    const h = fresh(w => {
+      delete w.env.SLACK_SIGNING_SECRET;
+      w.settings.push({ key: "live", value: { enabled: true, slack: true } });
+    });
+    const res = await h(slackRequest(slashCommand("/available")));
+    expect(res.status).toBe(503);
+    expect((await res.json()).error).toBe(MISSING.slack);
+  });
+
+  test("without SLACK_SIGNING_SECRET while Slack is switched off: 503, and nobody is asked to set it up (m1 round 1)", async () => {
     const h = fresh(w => {
       delete w.env.SLACK_SIGNING_SECRET;
     });
     const res = await h(slackRequest(slashCommand("/available")));
     expect(res.status).toBe(503);
-    expect((await res.json()).error).toBe(MISSING.slack);
+    expect((await res.json()).error).toBe(SLACK_OFF);
   });
 });
 
