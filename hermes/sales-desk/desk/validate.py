@@ -1200,54 +1200,111 @@ def built_to_deliver(text: str) -> bool:
 # never arrive, because that is the client's own state. And only an outcome:
 # "we never share your data", "never a promise" and "every enquiry called in
 # minutes" (what we do, not what the client is sure to get) pass.
-_ARRIVE = (r"(?:arrives?|reach(?:es)?\s+(?:you|your|the\s+(?:team|calendar|diary|desk|showroom|office|sales))"
+_ARRIVE = (r"(?:arrives?|arriving"
+           r"|reach(?:es|ing)?\s+(?:you|your|the\s+(?:team|calendar|diary|desk|showroom|office|sales))"
            r"|gets?\s+through|comes?\s+through|lands?\s+(?:on|in)\s+your|makes?\s+it\s+(?:to|through|into)"
-           r"|slips?\s+(?:through|away)|goes?\s+(?:cold|unanswered|to\s+waste|missing)|falls?\s+through"
-           r"|wastes?\s+your|turns?\s+up|shows?\s+up|misse[sd]|miss|let\s+through"
+           r"|slips?\s+(?:through|away)|goes?\s+(?:cold|unanswered|to\s+waste|missing)|go\s+(?:cold|unanswered|missing)"
+           r"|falls?\s+through|wastes?\s+your|turns?\s+up|shows?\s+up|misses|miss|let\s+through"
            # "Small jobs are never booked" is an outcome; "never booked
-           # without a budget check" is what we do.
-           r"|booked(?!\s+(?:without|before|until|unless)\b))")
+           # without a budget check" (or "if", "below") is what we do.
+           r"|booked)"
+           # A condition after it is a rule we apply, not an outcome: "never
+           # reaches you without a budget check", "never arrives late".
+           r"(?!\s+(?:without|before|until|unless|if|when|below|under|outside|unchecked|unfiltered|unqualified|"
+           r"unannounced|late|early|on\s+time|by|via)\b)")
 _LEAD_NOUN = (r"(?:leads?|enquir(?:y|ies)|inquir(?:y|ies)|meetings?|appointments?|bookings?|visits?|calls?|"
-              r"prospects?|buyers?|clients?|contacts?|opportunit(?:y|ies))")
-_SURE_QUALITY = (r"(?:real|serious|qualified|pre-?qualified|genuine|ready|warm|hot|high[- ]intent|on\s+budget|"
-                 r"within\s+budget|worth|buyers?|a\s+buyer|a\s+fit|interested)")
-_AR_ARRIVE = (r"(?:يصل|تصل|يصلك|تصلك|يصلكم|تصلكم|يوصل|توصل|يوصلك|توصلك|يجي|تجي|يجيك|تجيك|يأتي|تأتي|يأتيك|"
+              r"prospects?|buyers?|clients?|contacts?|opportunit(?:y|ies)|jobs?|projects?)")
+# "Ready" alone is a lead sitting in the CRM; "worth a reply" is no promise.
+_SURE_QUALITY = (r"(?:real|serious|qualified|pre-?qualified|genuine|ready\s+to\s+(?:buy|sign|commit|proceed|start)|"
+                 r"warm|hot|high[- ]intent|on\s+budget|within\s+budget|worth\s+(?:your|the)\s+(?:time|trip|drive|visit)|"
+                 r"buyers?|a\s+buyer|a\s+fit|interested|decision[- ]makers?|the\s+decision[- ]maker)(?![-\w])")
+_AR_ARRIVE = (r"(?:يصل|تصل|يصلك|تصلك|يصلكم|تصلكم|يصلونك|يوصل|توصل|يوصلك|توصلك|يجي|تجي|يجيك|تجيك|يأتي|تأتي|يأتيك|"
               r"تأتيك|يضيع|تضيع|يفوت|تفوت|يفوتك|تفوتك)")
-_AR_FULL = r"(?:ممتلئ|ممتلئة|مليء|مليئة|محجوز|محجوزة|مشغول|مشغولة|مؤهل|مؤهلة|جاهز|جاهزة|جاد|جادة)"
-_AR_ALWAYS = r"(?:دائما|دائماً|على\s+الدوام)"
+_AR_FULL = (r"(?:ممتلئ|ممتلئة|مليء|مليئة|مليان|مليانة|محجوز|محجوزة|مشغول|مشغولة|مؤهل|مؤهلة|جاهز|جاهزة|جاد|جادة)")
+_AR_ALWAYS = r"(?:دائما|دائماً|دايما|دايماً|دايم|على\s+الدوام)"
+_AR_SURE = r"(?:ال)?(?:جاد|جدي|مؤهل|جاهز|حقيقي)(?:ة|ون|ين|ه)?"
+_AR_LEADS = (r"(?:ال)?(?:عملاء|استفسارات|طلبات|اجتماعات|مواعيد|زيارات|مشترين|مشترون)(?:\s+(?:ال)?محتملين)?")
 ABSOLUTE_OUTCOME = re.compile(
-    rf"\b(?:never|will\s+not|won['’]t|no\s+longer)\s+(?:again\s+|ever\s+)?{_ARRIVE}\b"
+    rf"\b(?:never|will\s+not|won['’]t|no\s+longer|do\s+not|don['’]t|does\s+not|doesn['’]t|cannot|can['’]t)\s+"
+    rf"(?:again\s+|ever\s+)?(?:be\s+)?{_ARRIVE}\b"
+    rf"|\b(?:nothing|none|no\s+one|nobody)(?:\s+of\s+(?:them|these|those|it))?\s+(?:ever\s+)?{_ARRIVE}\b"
     rf"|\b(?:nothing|none|no\s+one|nobody|no\s+(?:lead|enquiry|inquiry|job|project|meeting|call))\b[^.,;]{{0,40}}?"
     rf"\bever\s+{_ARRIVE}\b"
+    rf"|\b(?:not\s+(?:one|a\s+single)|no)\s+(?:[a-z-]+\s+){{0,2}}?{_LEAD_NOUN}\s+(?:(?:is|are|will|gets?)\s+)?"
+    rf"(?:ever\s+)?{_ARRIVE}\b"
     r"|\b(?:every|each|all(?:\s+the)?|100\s*(?:%|percent)\s+of(?:\s+the)?)\s+"
-    rf"(?:single\s+)?(?:[a-z-]+\s+)?{_LEAD_NOUN}\s+"
-    rf"(?:you\s+(?:get|meet|see|receive)\s+|we\s+(?:book|send|bring)\s+)?"
-    rf"(?:is|are|will\s+be|becomes?|turns?\s+into|arrives?(?:\s+as)?)\s+(?:a\s+|an\s+)?{_SURE_QUALITY}\b"
-    r"|\bno\s+more\s+(?!than\b|to\b|of\s+(?:your|the)\b|for\b|and\b|or\b|is\b|are\b|will\b|can\b)[a-z]"
-    r"|\balways\s+(?:[a-z]+\s+){0,2}?(?:full|booked|busy|qualified|serious|ready\s+to\s+buy|on\s+budget|"
-    r"buying|converting|flowing|arriving|coming\s+in)\b"
-    rf"|(?<![ء-ي])[فو]?لن\s+(?:\S+\s+)?{_AR_ARRIVE}(?![ء-ي])"
+    rf"(?:single\s+)?(?:[a-z-]+\s+)?{_LEAD_NOUN}(?:\s+(?!is\b|are\b)[^\s.,;:!?]+){{0,4}}?\s+"
+    rf"(?:is|are|will\s+be|becomes?|turns?\s+into|arrives?(?:\s+as)?)\s+(?:with\s+)?(?:a\s+|an\s+)?{_SURE_QUALITY}"
+    rf"|\b100\s*(?:%|percent|per\s+cent)\s+(?:[a-z-]+\s+)?{_SURE_QUALITY}"
+    rf"|\bonly\s+(?:[a-z-]+\s+)?{_SURE_QUALITY}\s+(?:[a-z-]+\s+)?{_LEAD_NOUN}\s+(?:will\s+|ever\s+)?"
+    # "Only qualified meetings are booked" is a rule we apply, so not "booked".
+    rf"(?:reach|arrive|get\s+through|make\s+it|come\s+through|land|turn\s+up|show\s+up)"
+    rf"|\byou(?:['’]ll|\s+will)?\s+only\s+(?:ever\s+)?(?:meet|see|speak\s+(?:to|with)|talk\s+(?:to|with)|get|receive)"
+    rf"\s+(?:with\s+)?(?:[a-z-]+\s+)?{_SURE_QUALITY}"
+    # "No more wasted meetings"; not a comparison ("no more than", "no more
+    # per month than a hire") nor what we charge ("no more fees").
+    r"|\bno\s+more\s+(?!(?:than|to|of\s+(?:your|the)|for|and|or|is|are|will|can|if|when|per|expensive|costly|"
+    r"complicated|difficult|work|effort|admin|paperwork|fees?|charges?|costs?|money|payments?|spend|budget|ads?)\b)"
+    r"[a-z](?![^.;:!?]{0,60}\bthan\b)"
+    r"|\bzero\s+(?:wasted|bad|cold|dead|unqualified|lost|missed|empty|small|junk|fake|tyre|tire|time[- ]?wasters?|"
+    r"no[- ]shows?)"
+    r"|\bnever\s+(?:again\s+)?(?:waste|spend)\s+(?:(?:your|another|an?|any\s+more)\s+)?(?:time|hours?|afternoons?|"
+    r"days?|evenings?|trips?)\b"
+    r"|\bnever\s+again\s+(?:meet|deal\s+with|chase|see|sit|speak|talk|drive)\b"
+    r"|\balways\s+(?:(?:be|stay|stays|remain|remains|is|are|kept|fully|completely|totally)\s+){0,2}"
+    r"(?:full|booked|busy|qualified|serious|ready\s+to\s+buy|buying|converting|flowing|arriving|coming\s+in)(?![-\w])"
+    r"|\b(?:full|booked|busy)\s*,?\s+always\b"
+    rf"|(?<![ء-ي])[فو]?(?:لن|(?:ما|مب|مو)\s+(?:راح|رح))\s+(?:\S+\s+)?{_AR_ARRIVE}(?![ء-ي])"
     rf"|(?<![ء-ي])[فو]?(?:لا|ما)\s+(?:\S+\s+)?{_AR_ARRIVE}(?![ء-ي])(?:\s+\S+){{0,4}}?\s+(?:أبدا|أبداً|ابدا|ابداً|أبد|ابد)"
     r"(?![ء-ي])"
     rf"|(?<![ء-ي])كل\s+(?:عميل\s+محتمل|عميل|ليد|استفسار|طلب|اجتماع|موعد|زيارة|مشتر[يٍ]?)\s+(?:\S+\s+){{0,3}}?"
     r"(?:هو\s+|هي\s+|يكون\s+|تكون\s+|سيكون\s+|ستكون\s+)?ل?(?:جاد|جادة|جدي|جدية|مؤهل|مؤهلة|جاهز|جاهزة|حقيقي|حقيقية|"
     r"مشتر|مشتري)(?![ء-ي])"
-    r"|(?<![ء-ي])لا\s+مزيد(?![ء-ي])|(?<![ء-ي])وداعا\s+ل"
+    rf"|(?<![ء-ي])(?:كل|جميع|كافة)\s+{_AR_LEADS}\s+(?:\S+\s+){{0,3}}?(?:مع\s+)?(?:(?:ال)?مشترين\s+)?{_AR_SURE}(?![ء-ي])"
+    rf"|(?<![ء-ي])(?:فقط|إلا|الا)\s+{_AR_LEADS}\s+{_AR_SURE}(?![ء-ي])"
+    rf"|{_AR_SURE}\s+(?:\S+\s+)?(?:بنسبة\s+)?100\s*[%٪]|(?<![\d.])100\s*[%٪]\s+(?:\S+\s+)?{_AR_SURE}(?![ء-ي])"
+    # "لا مزيد من الرسوم" is what we charge, not an outcome.
+    r"|(?<![ء-ي])لا\s+مزيد(?![ء-ي])(?!\s+من\s+(?:ال)?(?:رسوم|تكاليف|مصاريف|دفعات|مبالغ))|(?<![ء-ي])وداعا\s+ل"
     rf"|{_AR_ALWAYS}\s+(?:\S+\s+){{0,2}}?{_AR_FULL}(?![ء-ي])|(?<![ء-ي]){_AR_FULL}\s+(?:\S+\s+){{0,2}}?{_AR_ALWAYS}",
     re.I)
 # A sentence that says the outcome is not promised is the honest form.
 _NOT_PROMISED = re.compile(r"\b(?:not|never|no|cannot|can't)\s+(?:a\s+)?(?:promise|guarantee)"
                            r"|ليس\s+وعدا|لا\s+نضمن", re.I)
+# What we do, said of ourselves: "we never miss a follow-up", "our team will
+# not let a small job through", "فريقنا لن يفوت".
+_OUR_SUBJECT = re.compile(r"(?:\bwe(?:['’]ll|\s+will)?|\bour\s+(?:\w+\s+){0,2}?(?:team|setters?|callers?|agents?|"
+                          r"centre|center|desk|people|staff))\s*$|(?:نحن|فريقنا|فريق\s+الاتصال)\s*$", re.I)
+# A relative clause naming today's leak, followed by what we do with it:
+# "enquiries that never reach the showroom today get a call in minutes".
+_THAT_BEFORE = re.compile(r"\b(?:that|which|who)\s*$", re.I)
+# A condition is no outcome either: "if they do not arrive, we keep working"
+# (the old offer's line, which the guarantee check judges on its own).
+_IF_BEFORE = re.compile(r"(?:\b(?:if|unless|whether|in\s+case|should)|(?<![ء-ي])(?:إذا|اذا|لو))"
+                        r"\s+(?:\S+\s+){0,3}$", re.I)
+_MAIN_VERB_AFTER = re.compile(r"^[^.;:!?]*?\b(?:get|gets|receive|receives|are|is)\b", re.I)
+
+
+def _ordinary(text: str, m: "re.Match[str]") -> bool:
+    """A match that is what we do, or a clause describing today's leak."""
+    before = text[max(0, m.start() - 60):m.start()]
+    if _OUR_SUBJECT.search(before) or _IF_BEFORE.search(before):
+        return True
+    return bool(_THAT_BEFORE.search(before) and _MAIN_VERB_AFTER.search(text[m.end():]))
 
 
 def outcome_strings(data: dict[str, Any]) -> list[tuple[str, str]]:
-    """The strings where the document says what the client gets: the solution
-    page's fixes, close and targets, the program, the investment's close and
-    the start steps (and a blind document's call to action)."""
+    """The strings where the document says what the client gets: the cover's
+    headline (the outcome they want), the solution page's fixes, close and
+    targets, the program, the investment's rows and close and the start steps
+    (and a blind document's call to action)."""
     out: list[tuple[str, str]] = []
-    for key in ("solution_title", "solution_close", "investment_close", "start_note"):
+    for key in ("headline", "solution_title", "solution_close", "investment_close", "start_note"):
         if isinstance(data.get(key), str):
             out.append((key, data[key]))
+    investment = data.get("investment") if isinstance(data.get("investment"), dict) else {}
+    for i, row in enumerate(investment.get("rows") or []):
+        if isinstance(row, dict):
+            out += [(f"investment.rows[{i}].{f}", row[f]) for f in ("item", "detail") if isinstance(row.get(f), str)]
     for block, fields in (("solution", ("fix",)), ("program", ("title", "note")), ("solution_targets", ("v", "k")),
                           ("start_steps", ("title", "body"))):
         for i, row in enumerate(data.get(block) or []):
@@ -1263,9 +1320,9 @@ def absolute_outcomes(data: dict[str, Any]) -> list[tuple[str, str]]:
     """(field, the words) for each outcome stated as certain on the outcome pages."""
     found = []
     for path, raw in outcome_strings(data):
-        text = _TAGS.sub("", _plain(raw))
+        text = _TAGS.sub("", _plain(raw)).translate(ARABIC_DIGITS)
         for m in ABSOLUTE_OUTCOME.finditer(text):
-            if _NOT_PROMISED.search(sentence_at(text, m.start(), m.end())):
+            if _NOT_PROMISED.search(sentence_at(text, m.start(), m.end())) or _ordinary(text, m):
                 continue
             found.append((path, m.group(0).strip()))
             break
@@ -1887,6 +1944,15 @@ def check_quotes(data: dict[str, Any], rep: Report) -> None:
 
 
 # --------------------------------------------------------- the arithmetic ----
+# The share of one project the engagement may cost (SKILL.md: above a fifth
+# the check warns, above a third it fails). One pair for margin mode and the
+# volume page's note, so the note never says margin mode would carry a share
+# it warns on (over a fifth) or fails (it failed above a bare 33, under a
+# third, while the note called 33.2 percent inside one third).
+SHARE_WARN = 20
+SHARE_FAIL = 100 / 3
+
+
 def check_arithmetic(data: dict[str, Any], rep: Report) -> None:
     """The general variant's fee band: the table divides the real engagement,
     and it is not rigged. A table whose every row says "less than one project"
@@ -1994,9 +2060,11 @@ def check_arithmetic(data: dict[str, Any], rep: Report) -> None:
         # October 2026: 35 percent of one project, and no line said why the
         # page counts projects instead of stating that share).
         share = total / values[0] * 100
-        rule = ("; %s%% of one project at the bottom value, %s" % (
-            dec(share), "over one third, so the page counts projects" if share > 100 / 3 else
-            "inside one third, so a share of one project (margin mode) would also carry it"))
+        rule = "; %s%% of one project at the bottom value, %s" % (dec(share), (
+            "over one third, so the page counts projects" if share > SHARE_FAIL else
+            "over a fifth, so margin mode would warn and counting projects is the stronger page"
+            if share > SHARE_WARN else
+            "inside a fifth, so a share of one project (margin mode) would also carry it"))
         if need <= add_low:
             rep.add(PASS, "arithmetic", detail + rule)
         elif need <= add_high:
@@ -2012,9 +2080,10 @@ def check_arithmetic(data: dict[str, Any], rep: Report) -> None:
         if a.get("gross_margin"):
             detail += ("; at the client's %s%% gross margin that is %s projects"
                        % (f"{a['gross_margin']:g}", dec(total / (values[0] * a["gross_margin"] / 100))))
-        if need > 33:
-            rep.add(FAIL, "arithmetic", detail + ": more than a third of one project, which no contractor will accept")
-        elif need > 20:
+        if need > SHARE_FAIL:
+            rep.add(FAIL, "arithmetic", detail + ": more than a third of one project, which no contractor will accept"
+                    "; where the call gave a signing rate, mode volume counts projects instead")
+        elif need > SHARE_WARN:
             rep.add(WARN, "arithmetic", detail + ": high; check the project value is the average")
         else:
             rep.add(PASS, "arithmetic", detail)
@@ -2058,12 +2127,32 @@ AROUND_MARGIN = re.compile(
     r"|\bnot\s+counting\s+(?:the\s+|your\s+|any\s+)?margin|\bmargin\s+(?:aside|untouched)\b"
     r"|قبل\s+(?:احتساب|حساب)\s+(?:أي\s+)?(?:هامش|الهامش|ربح|الربح)|بغض\s+النظر\s+عن\s+(?:الهامش|هامش)",
     re.I)
-GROSS_WORDS = re.compile(r"\bgross\b|هامش\s+إجمالي|الهامش\s+الإجمالي|ربح\s+إجمالي|الربح\s+الإجمالي", re.I)
+# Gross said of a margin: not gross revenue, sales or takings, which are no
+# margin at all. "هامشك الإجمالي" and the hamza-less spelling count.
+GROSS_WORDS = re.compile(
+    r"\bgross\b(?!\s+(?:revenue|sales|takings|turnover|income|billings?|receipts|value|contract|orders?|bookings?|"
+    r"area|floor)\b)"
+    r"|(?:هامش|الهامش|ربح|الربح)\S*\s+(?:(?:ال)?ربح\s+)?(?:ال)?(?:إجمالي|اجمالي)", re.I)
 # A margin is a figure given in percent. 180273419's intro (live check, 5
 # October 2026) said gross beside the project count, 4, and that count was
-# read as a gross margin the page left out.
+# read as a gross margin the page left out. The sign may come first ("٪٢٥",
+# typed left to right), and "a margin of 25" with no sign is a margin too.
 PERCENT_FIGURE = re.compile(r"(?<![\d.])(\d+(?:\.\d+)?)\s*(?:%|٪|percent\b|per\s+cent\b|بالمئة|بالمائة|بالمية|"
-                            r"في\s+المئة|في\s+المائة)", re.I)
+                            r"في\s+المئة|في\s+المائة)|[%٪](\d+(?:\.\d+)?)(?![\d.])", re.I)
+_NOT_A_SHARE_AFTER = (r"(?![\d,.]*\s*(?:k\b|m\b|usd|sar|aed|kwd|qar|bhd|omr|\$|dollars?|riyals?|dirhams?|dinars?|"
+                      r"thousand|million|projects?|jobs?|months?|years?|days?|weeks?|deals?|clients?|"
+                      r"ألف|الف|آلاف|مليون|دينار|ريال|درهم|دولار|مشروع|مشاريع|شهر|أشهر|اشهر|سنة|يوم))")
+MARGIN_FIGURE = re.compile(
+    r"\bmargins?\s+(?:of|at|is|was|:)?\s*(?:about|around|roughly|nearly|some|approximately|close\s+to)?\s*"
+    r"(\d+(?:\.\d+)?)" + _NOT_A_SHARE_AFTER
+    + r"|(?:هامش|الهامش)\S*\s+(?:(?:ال)?ربح\s+)?(?:(?:ال)?(?:إجمالي|اجمالي)\s+)?(?:\S+\s+){0,2}?(\d+(?:\.\d+)?)"
+    + _NOT_A_SHARE_AFTER, re.I)
+# Net said of a margin, in the clause that says it was not given: "no figure
+# for the margin after overheads", "ولم تذكر الهامش الصافي".
+_NET_WORDS = re.compile(r"\bnet\b|\bafter\s+(?:all\s+)?(?:the\s+)?(?:overheads?|costs?|expenses|everything|admin)\b"
+                        r"|\bbottom[- ]line\b|\btake[- ]home\b|صافي|الصافي|بعد\s+(?:كل\s+)?(?:المصاريف|التكاليف|المصروفات)",
+                        re.I)
+_CLAUSE_TAIL = re.compile(r"[^,;:.،؛!?؟]*")
 # A sentence saying no margin was given, gross or net, or no gross one: the
 # same intro said so, and its words are no margin. "No net margin" alone is
 # not one: a sentence giving a gross margin says that too.
@@ -2081,8 +2170,8 @@ NO_MARGIN = re.compile(
 def says_no_margin(sentence: str) -> bool:
     """A sentence saying no margin was given; a net margin alone is not one."""
     for m in NO_MARGIN.finditer(sentence):
-        words = m.group(0)
-        if re.search(r"\bnet\b|صافي|الصافي", words, re.I) and not GROSS_WORDS.search(words) \
+        words = m.group(0) + _CLAUSE_TAIL.match(sentence, m.end()).group(0)
+        if _NET_WORDS.search(words) and not GROSS_WORDS.search(words) \
                 and not re.search(r"\bneither\b", words, re.I):
             continue
         return True
@@ -2093,7 +2182,8 @@ def gives_gross_margin(text: str) -> bool:
     """Words saying the call gave a gross margin: gross, and a figure in
     percent, in what is left once sentences saying no margin was given are out."""
     kept = " ".join(s for s in _sentences(spoken_figures(_TAGS.sub("", text))) if not says_no_margin(s))
-    return bool(GROSS_WORDS.search(kept)) and any(0 < float(m.group(1)) < 100 for m in PERCENT_FIGURE.finditer(kept))
+    shares = [float(m.group(1) or m.group(2)) for rx in (PERCENT_FIGURE, MARGIN_FIGURE) for m in rx.finditer(kept)]
+    return bool(GROSS_WORDS.search(kept)) and any(0 < n < 100 for n in shares)
 
 
 def check_margin_words(data: dict[str, Any], rep: Report) -> None:
@@ -2144,9 +2234,38 @@ def per_period(text: str) -> Optional[str]:
     return "other"
 
 
+# A stretch already lived (the client's own record: "since January", "over
+# the last three months") or the term we propose ("over the term", "across the
+# three months"). Today's signing rate is never told over the term.
+_HISTORY = re.compile(
+    r"\b(?:since|so\s+far|to\s+date|year\s+to\s+date|ytd|this\s+year|until\s+now|today|currently|at\s+the\s+moment"
+    r"|(?:last|past|previous)\s+(?:year|quarter|month|\w+\s+(?:months|quarters|years)))\b|\bin\s+20\d\d\b"
+    r"|منذ|حتى\s+(?:الآن|الان)|هذه\s+السنة|هذا\s+العام|(?:السنة|العام)\s+(?:الماضية|الماضي)"
+    r"|(?:الأشهر|الاشهر|الشهور)\s+(?:\S+\s+)?(?:الماضية|الأخيرة|الاخيرة)|حاليا", re.I)
+_TERM = re.compile(
+    r"\b(?:over|across|within|during|in)\s+(?:the\s+)?(?:term|engagement|program(?:me)?|(?:first|next)\s+\w+\s+months?"
+    r"|\w+\s+months?)\b|\bthe\s+term\b"
+    r"|خلال\s+(?:المدة|الفترة|البرنامج|الأشهر|الاشهر|الشهور)|على\s+مدى", re.I)
+
+
+def stretch_of(text: str) -> Optional[str]:
+    """"history" for a figure told over a stretch already lived, "term" for
+    one told over the term we propose, None for neither."""
+    plain = _plain(text)
+    if _HISTORY.search(plain):
+        return "history"
+    if _TERM.search(plain):
+        return "term"
+    return None
+
+
 def check_rate(data: dict[str, Any], rep: Report) -> None:
     """The volume page's "You sign" row is the client's own signing rate, never
-    the target: it fails when it carries the same figures as target_display."""
+    the target. It fails when it carries the target's figures over the term
+    (176954619's "2 to 4 over the term") or over no period at all. The same
+    figures per the same period ("2 a month" twice) can be true, since the
+    target's row is labelled additional projects, so that only warns: failing
+    it sent a true rate to the repair round, which could only write FILL."""
     a = data.get("arithmetic") if isinstance(data.get("arithmetic"), dict) else {}
     if str(a.get("mode") or "").strip().lower() != "volume":
         return
@@ -2154,16 +2273,26 @@ def check_rate(data: dict[str, Any], rep: Report) -> None:
     if not rate or not target or FILL_RE.search(rate) or FILL_RE.search(target):
         return
     said, aimed = sorted(set(count_figures(rate))), sorted(set(count_figures(target)))
-    # The same figures over another period ("2 to 4 a month" against "2 to 4
-    # over three months") are another count, not the target repeated.
-    if said and said == aimed and per_period(rate) == per_period(target) \
-            and not (INCREMENT.search(_plain(target)) and not INCREMENT.search(_plain(rate))):
-        rep.add(FAIL, "rate", "arithmetic.rate_display carries the same figures as arithmetic.target_display ("
-                + " and ".join(str(n) for n in said) + "), so \"You sign\" repeats the target. It is the rate the "
-                "client signs at today, as the call gave it (a gap tile, the funnel or the tree may say it), "
-                "or FILL for the closer; never the target")
-    else:
+    figures = " and ".join(str(n) for n in said)
+    per_rate, per_target = per_period(rate), per_period(target)
+    told_rate, told_target = stretch_of(rate), stretch_of(target)
+    # A target said as more than today ("2 more a month") is the honest way to
+    # state one that equals today's rate, unless the rate is told over the term.
+    more = INCREMENT.search(_plain(target)) and not INCREMENT.search(_plain(rate)) and told_rate != "term"
+    if not said or said != aimed or more or per_rate != per_target:
         rep.add(PASS, "rate", "the signing rate is not the target")
+    elif per_rate is not None:
+        rep.add(WARN, "rate", f"arithmetic.rate_display and arithmetic.target_display both say {figures} per "
+                f"{per_rate}. That stands only if the client signs {figures} a {per_rate} today and the plan adds "
+                f"as many again; if the rate was copied from the target, write the client's own rate or FILL, "
+                f"and a true one reads better as the target \"{figures} more a {per_rate}\"")
+    elif told_rate is not None and told_target is not None and told_rate != told_target and told_rate != "term":
+        rep.add(PASS, "rate", "the signing rate is not the target")
+    else:
+        rep.add(FAIL, "rate", "arithmetic.rate_display carries the same figures as arithmetic.target_display ("
+                + figures + ")" + (" over the term" if told_rate == "term" else "")
+                + ", so \"You sign\" repeats the target. It is the rate the client signs at today, as the call "
+                "gave it (a gap tile, the funnel or the tree may say it), or FILL for the closer; never the target")
 
 
 # ------------------------------------------------- the arithmetic's words ----

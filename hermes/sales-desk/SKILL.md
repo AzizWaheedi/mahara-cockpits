@@ -224,9 +224,11 @@ these figures exactly, with the words in the document's language.
   promise none or all. Where the document says what we install and what it
   changes, write "fewer" or "filtered out", never "never": "so fewer small
   jobs arrive", not "so small jobs never arrive". "Every lead is qualified",
-  "no more wasted meetings" and "a calendar that is always full" are the same
-  promise, in either language, and `validate.py` fails them. Saying what we do
-  ("every enquiry called in minutes") is not an outcome and is fine.
+  "only serious buyers reach you", "no more wasted meetings" and "a calendar
+  that is always full" are the same promise, in either language, on the cover
+  as anywhere else, and `validate.py` fails them. Saying what we do ("every
+  enquiry called in minutes", "we never book without a budget check") is not
+  an outcome and is fine.
 - **No payment ever waits on a result.** Whatever the closer chose, no
   instalment falls due on a first contract, project, deal, client or sale. A
   call recorded before 3 October 2026 may still quote that split; it is
@@ -333,7 +335,8 @@ nothing the call did not give. `rate_display` is the rate the client signs at
 today, as he said it ("3 since January"), never the target: it prints as "You
 sign" directly above the target, so the target written there reads as the same
 line twice, and `validate.py` fails it. When the call gave no signing rate,
-write FILL. The verdict and the close call the target what the table calls
+write FILL. When the plan really aims to add as many as the client signs
+today, say so in the target: "2 more a month" under "You sign 2 a month". The verdict and the close call the target what the table calls
 it, additional projects: never "qualified projects", since qualified is a word
 for meetings. Do not reach for it to make a bad number look
 better: if even the whole target does not cover the engagement, the validator

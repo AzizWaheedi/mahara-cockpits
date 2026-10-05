@@ -72,8 +72,28 @@ class SigningRateTests(unittest.TestCase):
     def test_the_same_figures_over_another_period_are_no_repeat(self):
         deal = volume_page("2 to 4 a month", "2 to 4 over three months")
         self.assertFalse(failing(check(deal, text=None), "rate"))
-        deal = volume_page("2 a month", "2 a month")
-        self.assertTrue(failing(check(deal, text=None), "rate"))
+        for rate, target in (("3 since January", "3 over three months"),
+                             ("3 over the last three months", "3 over three months"),
+                             ("٣ منذ بداية السنة", "٣ خلال الأشهر الثلاثة")):
+            result = check(volume_page(rate, target), text=None)
+            self.assertFalse(failing(result, "rate"), (rate, target))
+            self.assertTrue(rows(result, "rate", "PASS"), (rate, target))
+
+    def test_the_same_figures_per_the_same_period_only_warn(self):
+        """The target's row is labelled additional projects, so "2 a month"
+        twice can be true: a fail sent a true rate to the repair round, which
+        could only write FILL over it."""
+        result = check(volume_page("2 a month", "2 a month"), text=None)
+        self.assertFalse(failing(result, "rate"))
+        found = rows(result, "rate", "WARN")
+        self.assertTrue(any('"2 more a month"' in f for f in found), found)
+        self.assertFalse([e for e in result.errors() if e.startswith("rate")])
+
+    def test_a_rate_told_over_the_term_or_over_nothing_fails(self):
+        for rate, target in (("2 to 4 over the term", "2 to 4 more over three months"),
+                             ("2 to 4", "2 to 4"),
+                             ("2 to 4 projects", "2 to 4 over three months")):
+            self.assertTrue(failing(check(volume_page(rate, target), text=None), "rate"), (rate, target))
 
     def test_a_rate_left_for_the_closer_or_left_out_is_no_repeat(self):
         for rate in ("FILL", ""):
@@ -155,6 +175,64 @@ class AbsoluteOutcomeTests(unittest.TestCase):
         for line in ("لا نشارك بياناتك مع أحد أبدا.", "كل استفسار يتصل به فريقنا خلال 5 إلى 30 دقيقة."):
             self.assertEqual(absolute(with_fix(line, lang="ar")), [], line)
 
+    def test_forms_that_slipped_through_fail(self):
+        for line in ("Every lead we send you is qualified.",
+                     "Every lead that reaches you is qualified.",
+                     "Only qualified buyers reach your calendar.",
+                     "You only meet serious buyers.",
+                     "100% qualified leads, every month.",
+                     "Zero wasted meetings.",
+                     "You will never waste time on small jobs again.",
+                     "So small jobs don't reach you.",
+                     "A calendar that stays full, always.",
+                     "Every meeting you take is with a serious buyer.",
+                     "You will never again meet a client who cannot afford you.",
+                     "Small jobs are filtered out completely, so none reach you.",
+                     "No small job ever reaches your diary."):
+            self.assertTrue(absolute(with_fix(line)), line)
+        for line in ("ما راح توصلك الأعمال الصغيرة.",
+                     "جميع العملاء مؤهلون.",
+                     "فقط العملاء الجادون يصلونك.",
+                     "عملاء مؤهلون ١٠٠٪.",
+                     "جدولك مليان دايما.",
+                     "كل العملاء المحتملين مؤهلين."):
+            self.assertTrue(absolute(with_fix(line, lang="ar")), line)
+
+    def test_what_we_do_a_condition_or_a_comparison_passes(self):
+        for line in ("We never miss a follow-up: every enquiry gets three calls.",
+                     "Our team will not let a small job through to your diary.",
+                     "A weekly report that never arrives late.",
+                     "Meetings are never booked if the budget is under your ticket.",
+                     "Nothing ever reaches you without a budget check.",
+                     "Enquiries that never reach the showroom today get a call in minutes.",
+                     "Leads that don't show up get a second call within the hour.",
+                     "If they do not arrive, we keep working until they do.",
+                     "It costs no more per month than one junior hire.",
+                     "Your team takes no more calls than today, only better ones.",
+                     "No more fees after the first payment.",
+                     "Every call is hot-transferred to your sales line.",
+                     "Every lead is ready in your CRM within the hour.",
+                     "Every enquiry is worth a reply, so we answer all of them.",
+                     "We always confirm meetings booked for the next day by WhatsApp.",
+                     "We always run full-funnel campaigns on two platforms.",
+                     "Spend is capped and always on budget.",
+                     "No-shows are never missed: each one gets a call the same day.",
+                     "Only qualified meetings are booked by our setters.",
+                     "100% of your ad budget goes to the platforms."):
+            self.assertEqual(absolute(with_fix(line)), [], line)
+        for line in ("لا مزيد من الرسوم بعد الدفعة الأولى.", "فريقنا لن يفوت أي مكالمة."):
+            self.assertEqual(absolute(with_fix(line, lang="ar")), [], line)
+
+    def test_the_cover_and_the_investment_rows_are_read(self):
+        """The headline is the outcome the client wants, and the investment
+        rows say what we sell; both left the check blind to a promise."""
+        found = absolute(with_fix("A diary that is always full of serious buyers", key="headline"))
+        self.assertTrue(any("headline" in f for f in found), found)
+        deal = general_deal()
+        deal["investment"]["rows"][0]["detail"] = "Setters who make sure only serious buyers reach you."
+        found = absolute(deal)
+        self.assertTrue(any("investment.rows[0].detail" in f for f in found), found)
+
     def test_the_diagnosis_pages_may_say_never(self):
         deal = general_deal(subhead="Referrals keep you busy, and the large villas never arrive.")
         deal["tree"]["branches"][0]["note"] = "The big developers never reach you."
@@ -164,6 +242,11 @@ class AbsoluteOutcomeTests(unittest.TestCase):
         self.assertIn("guarantee", engine.REPAIRABLE)
         text = prompt.repair_user(general_deal(), ["guarantee: solution[1].fix states an outcome as certain"])
         self.assertIn("fewer", text)
+        # Not told to remove the same line it is told to reword.
+        self.assertNotIn("Remove a promise rather than rewording it.", text)
+        self.assertIn("the one exception", text)
+        plain = prompt.repair_user(general_deal(), ["guarantee: the document promises results in terms[0]"])
+        self.assertIn("Remove a promise rather than rewording it.", plain)
 
     def test_the_drafter_is_told_to_write_fewer(self):
         self.assertTrue('write "fewer" or "filtered out", never "never"' in SKILL)
@@ -213,6 +296,22 @@ class MarginWordsTests(unittest.TestCase):
         deal["arithmetic"]["gross_margin"] = 25
         self.assertEqual(gross_warned(deal), [])
 
+    def test_a_gross_margin_beside_a_missing_net_one_still_warns(self):
+        """A clause saying the net margin was not given is not a line saying
+        no margin was given, however the net is named."""
+        for line in ("You gave a gross margin of 25 percent, and no figure for the margin after overheads.",
+                     "A gross margin of twenty-five percent, and you did not give the margin after costs.",
+                     "هامش إجمالي خمسة وعشرين في المئة، ولم تذكر الهامش الصافي.",
+                     "هامش ربح إجمالي ٪٢٥ على كل مشروع.",
+                     "A gross margin of about 25 on every job."):
+            self.assertTrue(gross_warned(margin_line(roi__margin_note=line)), line)
+
+    def test_gross_revenue_is_no_margin(self):
+        for line in ("Gross revenue grew 30 percent last year.",
+                     "You did not give a margin; gross sales grew 30 percent.",
+                     "A margin of 4 projects a quarter, gross."):
+            self.assertEqual(gross_warned(margin_line(roi__margin_note=line)), [], line)
+
 
 # --------------------------------------------------------------- finding 4 ---
 def arithmetic_rows(deal: dict[str, Any]) -> list[str]:
@@ -233,10 +332,32 @@ class OneThirdRuleTests(unittest.TestCase):
         deal["arithmetic"].pop("gross_margin")
         self.assertTrue(any("35.0% of one project" in d for d in arithmetic_rows(deal)))
 
-    def test_a_share_inside_one_third_says_so(self):
+    def test_a_share_inside_a_fifth_says_margin_mode_would_carry_it(self):
         # SAR 39,375 against SAR 450,000 is 8.75 percent.
         found = arithmetic_rows(volume_deal())
-        self.assertTrue(any("8.75% of one project at the bottom value, inside one third" in d for d in found), found)
+        self.assertTrue(any("8.75% of one project at the bottom value, inside a fifth" in d for d in found), found)
+
+    def test_a_share_margin_mode_warns_on_is_not_said_to_carry(self):
+        """USD 10,500 against USD 40,000 is 26.25 percent: inside one third,
+        and margin mode warns on it, so the note may not say it would carry."""
+        found = arithmetic_rows(volume_page("3 since January", "2 to 4 over three months", project_value_low=40000))
+        self.assertTrue(any("26.2% of one project" in d and "margin mode would warn" in d for d in found), found)
+        self.assertFalse(any("would also carry it" in d for d in found), found)
+
+    def test_margin_mode_fails_above_one_third_not_above_33(self):
+        """Margin mode's line says "more than a third"; at 33.12 percent it
+        is not, and the volume note calls that share inside one third."""
+        from tests.test_proposal_quality import margin_mode_deal
+        deal = margin_mode_deal()
+        deal["arithmetic"]["project_value"] = 31700
+        rep = validate.Report()
+        validate.check_arithmetic(deal, rep)
+        self.assertEqual([r["status"] for r in rep.rows], ["WARN"], rep.rows)
+        deal["arithmetic"]["project_value"] = 30000
+        rep = validate.Report()
+        validate.check_arithmetic(deal, rep)
+        self.assertEqual([r["status"] for r in rep.rows], ["FAIL"], rep.rows)
+        self.assertIn("mode volume counts projects", rep.rows[0]["detail"])
 
 
 # --------------------------------------------------------------- finding 5 ---

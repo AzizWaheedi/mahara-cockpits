@@ -550,11 +550,15 @@ def repair_user(deal: dict[str, Any], problems: list[str]) -> str:
     certain = ("An outcome stated as certain is reworded, not removed: \"fewer small jobs arrive\", \"filtered out "
                "before they reach you\", keeping the rest of the line. "
                if any(p.startswith("guarantee") and "as certain" in p for p in problems) else "")
+    # The general rule removes a promise; said beside the rewording rule
+    # unqualified, the two read as opposite orders for the same line.
+    remove = ("Remove a promised result or guarantee rather than rewording it; an outcome stated as certain is "
+              "the one exception, below. " if certain else "Remove a promise rather than rewording it. ")
     return (
         "The checker found these problems in this draft:\n\n"
         + listed
         + "\n\nReturn the same JSON object with each problem fixed and nothing else changed. "
-        "Remove a promise rather than rewording it. Where a figure was never said on the "
+        + remove + "Where a figure was never said on the "
         "call, write FILL in its place. " + proof + verdict + rate + certain
         + "Keep every other field exactly as it is, and add nothing new.\n\nReturn only the JSON object.\n\n"
         + json.dumps(deal, ensure_ascii=False, indent=1)
