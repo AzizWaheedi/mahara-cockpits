@@ -12,6 +12,8 @@ import {
   MessageSquareText,
   Mic,
   Moon,
+  PanelLeftClose,
+  PanelLeftOpen,
   PhoneCall,
   Sun,
   Target,
@@ -23,6 +25,7 @@ import { NavLink } from "react-router";
 import { useWho } from "../lib/auth";
 import { COCKPIT_ICON } from "../lib/cockpits";
 import { otherCockpits, portalUrl } from "../lib/portal";
+import { Avatar } from "./kit";
 import { Wordmark } from "./Wordmark";
 
 /**
@@ -88,13 +91,19 @@ export const GROUPS: { label: string; items: Item[] }[] = [
 
 /** One row of the rail: 40px to a thumb in the menu sheet, 32px on the rail. */
 const ROW =
-  "flex items-center gap-2.5 rounded-[var(--radius-md)] py-2.5 pr-2 pl-3 text-sm transition-colors lg:py-1.5";
+  "flex items-center gap-2.5 rounded-[12px] py-2 pr-2.5 pl-3 text-sm transition-all lg:py-1.5";
 const ROW_IDLE =
-  "muted hover:bg-[color:var(--secondary)] hover:text-[color:var(--foreground)]";
+  "muted hover:bg-white/[0.05] hover:text-[color:var(--foreground)]";
 const GROUP_LABEL =
   "muted mb-1 px-3 font-mono text-[11px] tracking-[0.08em] uppercase";
 
-function ThemeToggle() {
+function ThemeToggle({
+  compact,
+  iconOnly,
+}: {
+  compact?: boolean;
+  iconOnly?: boolean;
+} = {}) {
   const [dark, setDark] = useState(() => {
     try {
       const stored = localStorage.getItem("theme");
@@ -117,10 +126,34 @@ function ThemeToggle() {
   }, [dark]);
 
   const Icon = dark ? Sun : Moon;
+  if (iconOnly) {
+    return (
+      <button
+        type="button"
+        onClick={() => setDark((d: boolean) => !d)}
+        title={dark ? "Switch to light mode" : "Switch to dark mode"}
+        className="flex size-7 items-center justify-center rounded-[8px] text-muted-foreground hover:bg-foreground/[0.08] hover:text-foreground transition-colors"
+      >
+        <Icon className="size-3.5" strokeWidth={1.75} aria-hidden />
+      </button>
+    );
+  }
+  if (compact) {
+    return (
+      <button
+        type="button"
+        onClick={() => setDark((d: boolean) => !d)}
+        className="flex items-center gap-1.5 rounded-[10px] px-2 py-1 text-xs text-muted-foreground hover:bg-foreground/[0.08] hover:text-foreground transition-colors"
+      >
+        <Icon className="size-3.5" strokeWidth={1.75} aria-hidden />
+        <span>{dark ? "Light" : "Dark"}</span>
+      </button>
+    );
+  }
   return (
     <button
       type="button"
-      onClick={() => setDark(d => !d)}
+      onClick={() => setDark((d: boolean) => !d)}
       className={`${ROW} w-full ${ROW_IDLE}`}
     >
       <Icon className="size-4 shrink-0" strokeWidth={1.75} aria-hidden />
@@ -156,6 +189,8 @@ export default function Sidebar({
   isManager,
   counts,
   onNavigate,
+  collapsed = false,
+  onToggleCollapse,
 }: {
   name: string;
   role: string;
@@ -163,6 +198,8 @@ export default function Sidebar({
   isManager: boolean;
   counts: Record<string, number>;
   onNavigate?: () => void;
+  collapsed?: boolean;
+  onToggleCollapse?: () => void;
 }) {
   const { cockpits, signOut } = useWho();
   // Team meetings are everybody's, so they sit with the doors at the foot.
@@ -172,20 +209,59 @@ export default function Sidebar({
   ];
 
   return (
-    <div className="flex h-full flex-col gap-6 overflow-y-auto px-3 py-4">
-      <a href={`${portalUrl()}/`} className="px-3">
-        <Wordmark size="md" />
-      </a>
+    <div
+      className={`flex h-full flex-col gap-5 overflow-y-auto transition-all ${
+        collapsed ? "items-center px-2 py-3" : "px-3 py-4"
+      }`}
+    >
+      {/* Header section with brand and collapse toggle */}
+      {collapsed ? (
+        <div className="flex flex-col items-center gap-2">
+          {onToggleCollapse ? (
+            <button
+              type="button"
+              onClick={onToggleCollapse}
+              title="Expand sidebar (Ctrl+B)"
+              className="flex size-8 items-center justify-center rounded-[8px] text-muted-foreground hover:bg-foreground/[0.08] hover:text-foreground transition-colors"
+            >
+              <PanelLeftOpen className="size-4" />
+            </button>
+          ) : null}
+          <a
+            href={`${portalUrl()}/`}
+            title="Mahara Home"
+            className="flex size-8 items-center justify-center rounded-[10px] bg-teal-500/10 font-bold text-xs text-teal-400 border border-teal-500/25"
+          >
+            M
+          </a>
+        </div>
+      ) : (
+        <div className="flex items-center justify-between px-2">
+          <a href={`${portalUrl()}/`} className="px-1">
+            <Wordmark size="md" />
+          </a>
+          {onToggleCollapse ? (
+            <button
+              type="button"
+              onClick={onToggleCollapse}
+              title="Collapse sidebar (Ctrl+B)"
+              className="flex size-7 items-center justify-center rounded-[8px] text-muted-foreground hover:bg-foreground/[0.08] hover:text-foreground transition-colors"
+            >
+              <PanelLeftClose className="size-4" />
+            </button>
+          ) : null}
+        </div>
+      )}
 
-      <nav className="flex flex-col gap-6" aria-label="Sales cockpit">
+      <nav className="flex w-full flex-col gap-5" aria-label="Sales cockpit">
         {GROUPS.map(g => ({
           ...g,
           items: g.items.filter(i => !i.managerOnly || isManager),
         }))
           .filter(g => g.items.length)
           .map(g => (
-            <div key={g.label}>
-              <p className={GROUP_LABEL}>{g.label}</p>
+            <div key={g.label} className="w-full">
+              {!collapsed ? <p className={GROUP_LABEL}>{g.label}</p> : null}
               <ul className="space-y-0.5">
                 {g.items.map(({ to, label, icon: Icon, badge }) => {
                   const n = badge ? (counts[badge] ?? 0) : 0;
@@ -196,27 +272,70 @@ export default function Sidebar({
                         end={to === "/"}
                         onClick={onNavigate}
                         className={({ isActive }) =>
-                          `cockpit-nav-link ${ROW} ${
-                            isActive ? "font-medium" : ROW_IDLE
-                          }`
+                          collapsed
+                            ? `group relative flex items-center justify-center rounded-[12px] p-2.5 transition-all ${
+                                isActive
+                                  ? "border border-border bg-primary/15 text-foreground shadow-[0_0_12px_rgba(0,207,200,0.3)]"
+                                  : "text-muted-foreground hover:bg-foreground/[0.08] hover:text-foreground"
+                              }`
+                            : `group cockpit-nav-link ${ROW} ${
+                                isActive ? "font-medium" : ROW_IDLE
+                              }`
                         }
                       >
                         {({ isActive }) => (
                           <>
-                            {isActive ? (
+                            {!collapsed && isActive ? (
                               <span aria-hidden className="cockpit-nav-lamp" />
                             ) : null}
-                            <Icon
-                              className="size-4 shrink-0"
-                              strokeWidth={1.75}
-                              aria-hidden
-                            />
-                            <span className="truncate">{label}</span>
-                            {n > 0 ? (
-                              <Badge
-                                n={n}
-                                tone={badge === "owed" ? "urgent" : undefined}
+                            <div className="flex items-center justify-center transition-transform duration-200 ease-[cubic-bezier(0.34,1.56,0.64,1)] group-hover:scale-125 group-active:scale-95">
+                              <Icon
+                                className="size-4 shrink-0"
+                                strokeWidth={1.8}
+                                aria-hidden
                               />
+                            </div>
+                            {!collapsed ? (
+                              <>
+                                <span className="truncate">{label}</span>
+                                {n > 0 ? (
+                                  <Badge
+                                    n={n}
+                                    tone={
+                                      badge === "owed" ? "urgent" : undefined
+                                    }
+                                  />
+                                ) : null}
+                              </>
+                            ) : n > 0 ? (
+                              <span
+                                className="absolute top-1.5 right-1.5 size-2 rounded-full shadow-[0_0_6px_var(--primary)]"
+                                style={{
+                                  background:
+                                    badge === "owed"
+                                      ? "var(--owed)"
+                                      : "var(--primary)",
+                                }}
+                              />
+                            ) : null}
+                            {/* macOS Floating Tooltip on Hover in Collapsed Mode */}
+                            {collapsed ? (
+                              <div className="pointer-events-none absolute left-full ml-3 z-50 hidden group-hover:flex items-center whitespace-nowrap rounded-lg border border-white/15 bg-[#091333]/95 px-2.5 py-1 text-xs font-semibold text-white shadow-2xl backdrop-blur-xl">
+                                <span>{label}</span>
+                                {n > 0 ? (
+                                  <span
+                                    className="ml-1.5 rounded-full px-1.5 py-0.2 text-[10px] font-bold text-black"
+                                    style={{
+                                      background:
+                                        badge === "owed"
+                                          ? "var(--owed)"
+                                          : "var(--primary)",
+                                    }}
+                                  >
+                                    {n}
+                                  </span>
+                                ) : null}
+                              </div>
                             ) : null}
                           </>
                         )}
@@ -229,48 +348,88 @@ export default function Sidebar({
           ))}
       </nav>
 
-      <div className="mt-auto space-y-4">
+      <div className="mt-auto w-full space-y-3">
         <ul className="space-y-0.5 border-t hairline pt-3" aria-label="Portal">
           {doors.map(d => {
             const Icon = COCKPIT_ICON[d.key];
             return (
               <li key={d.key}>
-                <a href={d.href} className={`${ROW} ${ROW_IDLE}`}>
+                <a
+                  href={d.href}
+                  className={
+                    collapsed
+                      ? "group relative flex items-center justify-center rounded-[12px] p-2 text-muted-foreground hover:bg-foreground/[0.08] hover:text-foreground transition-all"
+                      : `group ${ROW} ${ROW_IDLE}`
+                  }
+                >
                   {Icon ? (
-                    <Icon
-                      className="size-4 shrink-0"
-                      strokeWidth={1.75}
-                      aria-hidden
-                    />
+                    <div className="flex items-center justify-center transition-transform duration-200 ease-[cubic-bezier(0.34,1.56,0.64,1)] group-hover:scale-125 group-active:scale-95">
+                      <Icon
+                        className="size-4 shrink-0"
+                        strokeWidth={1.8}
+                        aria-hidden
+                      />
+                    </div>
                   ) : null}
-                  <span className="truncate">{d.label}</span>
+                  {!collapsed ? (
+                    <span className="truncate">{d.label}</span>
+                  ) : (
+                    <div className="pointer-events-none absolute left-full ml-3 z-50 hidden group-hover:flex items-center whitespace-nowrap rounded-lg border border-white/15 bg-[#091333]/95 px-2.5 py-1 text-xs font-semibold text-white shadow-2xl backdrop-blur-xl">
+                      <span>{d.label}</span>
+                    </div>
+                  )}
                 </a>
               </li>
             );
           })}
         </ul>
 
-        <div className="border-t hairline pt-3">
-          <div className="px-3">
-            <p className="truncate text-sm font-medium">{name}</p>
-            <p className="muted truncate text-xs">{role}</p>
-          </div>
-          <div className="mt-2 space-y-0.5">
-            <ThemeToggle />
+        {collapsed ? (
+          <div className="flex flex-col items-center gap-2 border-t border-border pt-2">
+            <div title={`${name} · ${role}`}>
+              <Avatar name={name} size={30} />
+            </div>
+            <ThemeToggle iconOnly />
             <button
               type="button"
               onClick={signOut}
-              className={`${ROW} w-full ${ROW_IDLE}`}
+              title="Sign out"
+              className="flex size-7 items-center justify-center rounded-[8px] text-muted-foreground hover:bg-foreground/[0.08] hover:text-foreground transition-colors"
             >
-              <LogOut
-                className="size-4 shrink-0"
-                strokeWidth={1.75}
-                aria-hidden
-              />
-              Sign out
+              <LogOut className="size-3.5" strokeWidth={1.75} aria-hidden />
             </button>
           </div>
-        </div>
+        ) : (
+          <div className="rounded-[20px] border border-border bg-foreground/[0.03] p-2.5 shadow-sm">
+            <div className="flex items-center gap-2.5 px-1 py-0.5">
+              <Avatar name={name} size={32} />
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-xs font-semibold tracking-tight text-foreground">
+                  {name}
+                </p>
+                <div className="mt-0.5 flex items-center gap-1.5">
+                  <span className="size-1.5 rounded-full bg-[color:var(--primary)] shadow-[0_0_6px_var(--primary)]" />
+                  <p className="muted truncate text-[11px] leading-none">
+                    {role}
+                  </p>
+                </div>
+              </div>
+            </div>
+            <div className="mt-2 flex items-center justify-between gap-1 border-t border-border pt-2">
+              <div className="flex-1">
+                <ThemeToggle compact />
+              </div>
+              <button
+                type="button"
+                onClick={signOut}
+                title="Sign out"
+                className="flex size-7 items-center justify-center rounded-[10px] text-muted-foreground hover:bg-foreground/[0.08] hover:text-foreground transition-colors"
+              >
+                <LogOut className="size-3.5" strokeWidth={1.75} aria-hidden />
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

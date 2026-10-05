@@ -18,27 +18,75 @@ let queryResult: unknown;
 /** Per-query results, so a screen with two queries gets the right payload in each. */
 let queryByName: Record<string, unknown> = {};
 
+/**
+ * Actions answer by name too. The onboarding links answer with one row, for an
+ * onboarding client in the fixture, so its row shows the forms' line.
+ */
+const KITS = {
+  rows: [
+    {
+      clickup_task_id: "86exnk0v4",
+      client_name: "Greystone Contracting",
+      in_onboarding: true,
+      links: {},
+      handover: {},
+      sales_transcript: null,
+      forms: {
+        onboarding: {
+          form_id: "KFRCXPFx",
+          response_id: "r1",
+          submitted_at: "2026-10-02T13:24:34Z",
+          answers: [],
+        },
+      },
+    },
+  ],
+  last: null,
+  lastOk: null,
+  now: "2026-10-05T08:00:00.000Z",
+};
+const actionResults: Record<string, unknown> = {
+  "onboarding.kits": KITS,
+  "onboarding.refresh": KITS,
+  "review.clients": [],
+  "review.sent": [],
+};
+
 mock.module("convex/react", () => ({
   useQuery: (name: string) =>
     name in queryByName ? queryByName[name] : queryResult,
   useMutation: () => async () => null,
+  useAction: (name: string) => async () => actionResults[name] ?? null,
 }));
-mock.module("../convex/_generated/api", () => ({
-  api: {
-    csm: {
-      snapshot: "csm.snapshot",
-      toggleCheck: "toggleCheck",
-      act: "act",
-      addPlanItems: "addPlanItems",
-      submitEod: "submitEod",
-      reportIssue: "reportIssue",
-      setClientLanguage: "setClientLanguage",
-      saveHotRow: "saveHotRow",
-      saveMoneyGoals: "saveMoneyGoals",
-      performanceOverview: "performanceOverview",
-      clientProfile: "clientProfile",
-    },
+/**
+ * Function references by name. The csm ones keep the names the tests look up;
+ * any other module answers "<module>.<function>", so a new action on these
+ * screens does not break the render before it is added here.
+ */
+const NAMED: Record<string, Record<string, string>> = {
+  csm: {
+    snapshot: "csm.snapshot",
+    toggleCheck: "toggleCheck",
+    act: "act",
+    addPlanItems: "addPlanItems",
+    submitEod: "submitEod",
+    reportIssue: "reportIssue",
+    setClientLanguage: "setClientLanguage",
+    saveHotRow: "saveHotRow",
+    saveMoneyGoals: "saveMoneyGoals",
+    performanceOverview: "performanceOverview",
+    clientProfile: "clientProfile",
   },
+};
+const byModule = (mod: string) =>
+  NAMED[mod] ??
+  new Proxy({} as Record<string, string>, {
+    get: (_t, fn) => `${mod}.${String(fn)}`,
+  });
+mock.module("../convex/_generated/api", () => ({
+  api: new Proxy({} as Record<string, Record<string, string>>, {
+    get: (_t, mod) => byModule(String(mod)),
+  }),
 }));
 mock.module("sonner", () => ({
   toast: { success: () => {}, error: () => {} },
@@ -58,8 +106,18 @@ g.window = win;
 g.document = win.document;
 g.navigator = win.navigator;
 g.HTMLElement = win.HTMLElement;
+g.HTMLFormElement = win.HTMLFormElement;
+g.MutationObserver = win.MutationObserver;
 g.Element = win.Element;
 g.Node = win.Node;
+// Every element class and the events React and the components check with instanceof.
+for (const key of Object.getOwnPropertyNames(win)) {
+  if (
+    /^(HTML\w*Element|SVG\w*Element|\w*Event|DocumentFragment|Text)$/.test(key)
+  )
+    g[key] ??= (win as unknown as Record<string, unknown>)[key];
+}
+g.getComputedStyle ??= win.getComputedStyle.bind(win);
 g.IS_REACT_ACT_ENVIRONMENT = true;
 
 /** Every section, because the tabs differ per section and each one renders its own rows. */
@@ -209,6 +267,27 @@ test("client performance renders the overview then a single client", async () =>
     });
     const html = host.innerHTML;
     expect(html).toContain("Print report");
+    expect(html).toContain("Book next check-in");
+    expect(html).toContain("Client ID · ClickUp client board");
+    expect(html).toContain(perfFixture.profile.taskId);
+    let copiedId = "";
+    const originalWrite = win.navigator.clipboard.writeText;
+    win.navigator.clipboard.writeText = async value => {
+      copiedId = value;
+    };
+    try {
+      const copyButton = host.querySelector<HTMLButtonElement>(
+        '[aria-label="Copy client ID"]',
+      );
+      expect(copyButton).not.toBeNull();
+      await reactAct(async () => {
+        copyButton!.click();
+      });
+      expect(copiedId).toBe(perfFixture.profile.taskId);
+      expect(copyButton!.textContent).toContain("Copied");
+    } finally {
+      win.navigator.clipboard.writeText = originalWrite;
+    }
     expect(html).toContain("What is holding this client back");
     expect(html).toContain("Fix this first");
     expect(html).toContain("Write the Google Doc");
@@ -340,4 +419,68 @@ test("the day blocks read in order and the quiet screens stay quiet", async () =
   const eod = await renderSection("eod");
   expect(eod).not.toContain("Onboarding, get them live");
   expect(eod).toContain("End of day");
+});
+
+/**
+ * The onboarding links (2026-10-05): an onboarding client's row says which forms
+ * are in, and opening it lands on the three steps around the onboarding call,
+ * with the kickoff form as the one teal action once their onboarding form is in.
+ */
+test("an onboarding client opens on its onboarding steps", async () => {
+  const host = win.document.createElement("div");
+  win.document.body.appendChild(host);
+  // biome-ignore lint/suspicious/noExplicitAny: happy-dom element into React DOM
+  const root = createRoot(host as any);
+  queryResult = snapshot;
+  const settle = () =>
+    reactAct(async () => {
+      await new Promise(r => setTimeout(r, 0));
+    });
+  try {
+    await reactAct(async () => {
+      root.render(
+        createElement(
+          MemoryRouter,
+          null,
+          createElement(CsmPage, { section: "clients" }),
+        ),
+      );
+    });
+    await settle();
+    const buttons = () =>
+      [...host.querySelectorAll("button")] as unknown as HTMLButtonElement[];
+    const tab = buttons().find(b =>
+      (b.textContent ?? "").startsWith("Client onboarding"),
+    );
+    expect(tab).toBeDefined();
+    await reactAct(async () => tab?.click());
+    await settle();
+    const row = buttons().find(
+      b =>
+        b.getAttribute("aria-expanded") !== null &&
+        (b.textContent ?? "").includes("Greystone Contracting"),
+    );
+    expect(row).toBeDefined();
+    // The forms' line on the closed row.
+    expect(row?.textContent).toContain("Onboarding form");
+    expect(row?.textContent).toContain("Kickoff");
+    await reactAct(async () => row?.click());
+    await settle();
+    const text = (host.textContent ?? "").replace(/\s+/g, " ");
+    expect(text).toContain("Before the call");
+    expect(text).toContain("On the call");
+    expect(text).toContain("After the call");
+    expect(text).toContain("Filled 2 Oct");
+    expect(text).toContain("Open the kickoff form");
+    expect(text).toContain("You are here");
+    // With no card links, the kickoff form still opens, with the card id.
+    const kickoff = [...host.querySelectorAll("a")].find(a =>
+      (a.textContent ?? "").includes("Open the kickoff form"),
+    );
+    expect(kickoff?.getAttribute("href")).toBe(
+      "https://maharamedia.typeform.com/to/tG7dnxBn#onboarding_client_id=86exnk0v4",
+    );
+  } finally {
+    await reactAct(async () => root.unmount());
+  }
 });

@@ -6,6 +6,7 @@ import { ProposalChip } from "../components/ProposalPanel";
 import { useScope } from "../components/Scope";
 import { useLeadsById, useProposals } from "../lib/data";
 import { ago } from "../lib/format";
+import { waitsOnCloser } from "../lib/proposals";
 import type { Me } from "../lib/types";
 
 /** Every proposal in flight: the closer's own, or the team's for a manager. */
@@ -21,12 +22,9 @@ export default function ProposalsPage({ me }: { me: Me }) {
     [leads.data],
   );
   const list = proposals.data ?? [];
-  const waiting = list.filter(
-    p => p.status === "needs_input" || p.status === "ready",
-  );
-  const rest = list.filter(
-    p => !(p.status === "needs_input" || p.status === "ready"),
-  );
+  // Figures to fill, a proposal to send, or a draft to ask for again.
+  const waiting = list.filter(waitsOnCloser);
+  const rest = list.filter(p => !waitsOnCloser(p));
 
   const rows = (items: typeof list) => (
     <ul className="divide-y hairline">
@@ -43,7 +41,12 @@ export default function ProposalsPage({ me }: { me: Me }) {
               </p>
               <p className="muted text-xs">
                 {p.lang === "ar" ? "Arabic" : "English"} ·{" "}
-                {p.created_by.split("@")[0]} · {ago(p.updated_at)}
+                {p.created_by.split("@")[0]} ·{" "}
+                {/* A draft's row is touched every run while it waits, so
+                    its time is when it was asked for. */}
+                {p.status === "drafting"
+                  ? `asked ${ago(p.created_at)}`
+                  : ago(p.updated_at)}
               </p>
             </div>
             <ProposalChip p={p} />
@@ -76,7 +79,7 @@ export default function ProposalsPage({ me }: { me: Me }) {
           <EmptyState
             icon={FileText}
             title="No proposals yet"
-            text="Open a lead after the demo and choose Draft proposal. It takes about ten minutes."
+            text="Open a lead after the demo and choose Draft proposal. It usually takes about ten minutes."
           />
         </section>
       ) : (

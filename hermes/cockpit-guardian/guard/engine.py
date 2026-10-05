@@ -162,6 +162,25 @@ def _resolved_by(inc: dict[str, Any]) -> str:
     return "it cleared without the guardian (the job recovered or a person fixed it)"
 
 
+# A check that opened twice in a day flaps (the Sheets source in Convex's ledger
+# went ok and failing every 15 to 30 minutes on 2026-10-04): it clears only after
+# an hour of good readings, so #health hears one incident, not an open and a
+# resolve every half hour.
+FLAP_WINDOW = timedelta(hours=24)
+FLAP_OPENS = 2
+FLAP_CLEAR = timedelta(minutes=60)
+
+
+def _flapping(st: dict[str, Any], now: datetime) -> bool:
+    opens = [t for t in (parse_time(x) for x in st.get("opens") or []) if t and now - t <= FLAP_WINDOW]
+    return len(opens) >= FLAP_OPENS
+
+
+def _note_open(st: dict[str, Any], now: datetime) -> None:
+    keep = [x for x in st.get("opens") or [] if (parse_time(x) or now) > now - FLAP_WINDOW]
+    st["opens"] = (keep + [iso(now)])[-10:]
+
+
 def _confirmed(check: Check, st: dict[str, Any], now: datetime) -> bool:
     if st["bad"] < check.confirm:
         return False
@@ -191,14 +210,17 @@ def apply_findings(store: Store, findings: list[Finding], now: datetime, mode: s
                     out.resolved.append(store.resolve(check.id, now, f"now tracked under the {parent} incident, which "
                                                                      "has the same cause", folded_into=parent))
                 continue
+            st["ok_since"] = None
             if inc:
                 store.touch(inc, check, res, now)
             elif _confirmed(check, st, now):
                 out.opened.append(store.open_incident(check, res, now, mode))
+                _note_open(st, now)
         elif res.status == UNKNOWN:
             st["unknown"] += 1
             st["bad"] = 0
             st["ok"] = 0
+            st["ok_since"] = None
             st["bad_since"] = None
             if res.coverage_gap or _parent_covers(res, results):
                 continue
@@ -207,15 +229,21 @@ def apply_findings(store: Store, findings: list[Finding], now: datetime, mode: s
                 inc["last_seen_at"] = iso(now)
             elif st["unknown"] >= UNKNOWN_CONFIRM:
                 out.opened.append(store.open_incident(check, res, now, mode))
+                _note_open(st, now)
         else:
             st["bad"] = 0
             st["unknown"] = 0
             st["bad_since"] = None
             st["ok"] += 1
+            st["ok_since"] = st.get("ok_since") or iso(now)
             if inc:
                 if res.status == OK and st["ok"] < check.clear:
                     inc["last_seen_at"] = iso(now)
                     continue          # one good reading is not a recovery for a check that flaps
+                good_for = now - (parse_time(st.get("ok_since")) or now)
+                if res.status == OK and _flapping(st, now) and good_for < FLAP_CLEAR:
+                    inc["last_seen_at"] = iso(now)
+                    continue          # it opened twice today: an hour of good readings first
                 if res.status == OK:
                     by = _resolved_by(inc)
                 elif res.status == PAUSED:

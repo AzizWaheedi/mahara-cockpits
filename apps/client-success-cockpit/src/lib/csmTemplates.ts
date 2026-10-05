@@ -35,7 +35,9 @@ export const LINKS = {
   checkInCall:
     "https://api.leadconnectorhq.com/widget/booking/SHjlq0UjeR11maltYNyh",
   callSummaryForm: "https://maharamedia.typeform.com/to/fRokTITH",
-  kickoffForm: "https://maharamedia.typeform.com/to/BbJy6xg4",
+  // The client's onboarding form is per client (onboardingFormLink, with the
+  // card id). The kickoff form is the CSM's, filled on the onboarding call:
+  // never send it to a client (BbJy6xg4 was retired on 2026-08-31).
   calculator: "http://calculator.maharamedia.com",
   review: "https://g.page/r/CeRMcUwFPpe7EAI/review",
   referralDoc:
@@ -58,6 +60,7 @@ export const LINKS = {
 
 export type Lang = "en" | "ar";
 
+import { onboardingFormLink } from "../../convex/onboardingCore";
 import { SPINE, spineFor, spineMessage } from "./csmOnboardingSpine";
 
 /** How often this client is owed a message, and how often a call. */
@@ -215,11 +218,11 @@ const TEMPLATES: Template[] = [
     short: "chased the onboarding call booking",
     when: c => c.bucket === "onboarding" && !c.launchDate,
     why: c =>
-      `In onboarding (${c.stage}), message every working day until the call is booked and the kickoff form is in`,
+      `In onboarding (${c.stage}), message every working day until the call is booked and their onboarding form is in`,
     en: c =>
-      `Hey ${first(c.name)}, following up so we can get you launched quickly. Two things left on our side:\n\n1. Your onboarding call in the calendar: ${LINKS.onboardingCall}\n2. The kickoff form filled in: ${LINKS.kickoffForm}\n\nWant me to walk you through either one right now?`,
+      `Hey ${first(c.name)}, following up so we can get you launched quickly. Two things left on our side:\n\n1. Your onboarding call in the calendar: ${LINKS.onboardingCall}\n2. Your onboarding form filled in: ${onboardingFormLink(String(c.taskId ?? ""))}\n\nWant me to walk you through either one right now?`,
     ar: c =>
-      `هلا ${first(c.name)}، متابعة بسيطة حتى نطلق حملتك بأسرع وقت. باقي علينا شيئين:\n\n١. موعد مكالمة الانضمام: ${LINKS.onboardingCall}\n٢. تعبئة نموذج البداية: ${LINKS.kickoffForm}\n\nتحب أساعدك بأي واحد منهم الآن؟`,
+      `هلا ${first(c.name)}، متابعة بسيطة حتى نطلق حملتك بأسرع وقت. باقي علينا شيئين:\n\n١. موعد مكالمة الانضمام: ${LINKS.onboardingCall}\n٢. تعبئة نموذج التعريف بالنشاط: ${onboardingFormLink(String(c.taskId ?? ""))}\n\nتحب أساعدك بأي واحد منهم الآن؟`,
   },
   {
     id: "onboarding_access",

@@ -2507,29 +2507,40 @@ function CallPane({
               role="group"
               aria-label="Outcome"
             >
-              {outcomes.map(o => (
-                <button
-                  key={o.key}
-                  type="button"
-                  aria-pressed={draft.outcome === o.key}
-                  title={o.hint}
-                  onClick={() => pickOutcome(o)}
-                  className={`rounded-[var(--radius-md)] border px-2.5 py-1.5 text-sm ${
-                    draft.outcome === o.key
-                      ? "border-[color:var(--primary)] bg-[color:color-mix(in_oklch,var(--primary)_10%,transparent)] font-semibold"
-                      : "hairline hover:bg-[color:var(--secondary)]"
-                  }`}
-                >
-                  {o.key === "booked" ? (
-                    <span className="inline-flex items-center gap-1">
-                      <CalendarPlus className="size-3.5" aria-hidden />
-                      {o.label}
-                    </span>
-                  ) : (
-                    o.label
-                  )}
-                </button>
-              ))}
+              {outcomes.map(o => {
+                const isBooked = o.key === "booked";
+                const isSelected = draft.outcome === o.key;
+                return (
+                  <button
+                    key={o.key}
+                    type="button"
+                    aria-pressed={isSelected}
+                    title={o.hint}
+                    onClick={() => pickOutcome(o)}
+                    className={`rounded-[14px] border px-3 py-2 text-sm font-medium transition-all active:scale-[0.98] ${
+                      isBooked
+                        ? isSelected
+                          ? "col-span-2 sm:col-span-3 xl:col-span-2 border-teal-400 bg-gradient-to-r from-[#2e5bd6] to-[#00cfc8] text-white font-bold shadow-lg shadow-teal-500/25 ring-2 ring-teal-400/40"
+                          : "col-span-2 sm:col-span-3 xl:col-span-2 border-teal-500/40 bg-gradient-to-r from-[#2e5bd6]/85 to-[#00cfc8]/85 text-white font-semibold hover:brightness-110 shadow-md shadow-teal-500/15"
+                        : isSelected
+                          ? "border-[color:var(--primary)] bg-[color:color-mix(in_oklch,var(--primary)_15%,transparent)] text-[color:var(--foreground)] font-semibold shadow-sm"
+                          : "border-border bg-foreground/[0.03] hover:bg-foreground/[0.07] hover:border-foreground/20 text-foreground"
+                    }`}
+                  >
+                    {isBooked ? (
+                      <span className="inline-flex items-center justify-center gap-1.5 py-0.5">
+                        <CalendarPlus
+                          className="size-4 text-white"
+                          aria-hidden
+                        />
+                        {o.label}
+                      </span>
+                    ) : (
+                      o.label
+                    )}
+                  </button>
+                );
+              })}
             </div>
             {chosen ? <p className="muted text-xs">{chosen.hint}</p> : null}
 
@@ -2921,29 +2932,48 @@ function CallBand({
     // The clock goes under the words when both do not fit (a phone, the
     // narrow column from 1280px), so the title and its line always show.
     <div
-      className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b hairline px-4 py-3"
+      className={`flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b hairline px-4 py-3 transition-colors ${
+        open ? "border-teal-500/30 bg-teal-500/10" : ""
+      }`}
       style={{
         borderInlineStart: `4px solid ${color}`,
-        background: `color-mix(in oklch, ${color === "var(--border)" ? "var(--secondary)" : color} 9%, transparent)`,
+        background: open
+          ? undefined
+          : `color-mix(in oklch, ${color === "var(--border)" ? "var(--secondary)" : color} 9%, transparent)`,
       }}
     >
       <div className="min-w-0 flex-[1_1_10rem]">
-        {/* Only a change of state is spoken; the running clock is not. */}
-        <p className="text-sm font-semibold" aria-live="polite" aria-atomic>
-          {title}
-        </p>
+        <div className="flex items-center gap-2">
+          {open ? (
+            <span className="relative flex size-2.5">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-teal-400 opacity-75" />
+              <span className="relative inline-flex size-2.5 rounded-full bg-teal-500 shadow-[0_0_8px_#00cfc8]" />
+            </span>
+          ) : null}
+          <p
+            className="text-sm font-semibold tracking-tight"
+            aria-live="polite"
+            aria-atomic
+          >
+            {title}
+          </p>
+        </div>
         {detail ? (
-          // On a call the line says what Maqsam reports; otherwise it carries
-          // times that move every minute, so it is read, not announced.
-          <p className="muted text-xs" aria-live={open ? "polite" : undefined}>
+          <p
+            className="muted text-xs mt-0.5"
+            aria-live={open ? "polite" : undefined}
+          >
             {detail}
           </p>
         ) : null}
       </div>
       {big ? (
-        <p className="shrink-0 font-mono text-xl font-semibold tabular-nums tracking-tight">
+        <div className="flex shrink-0 items-center gap-1.5 rounded-full border border-teal-500/30 bg-teal-500/15 px-3 py-1 font-mono text-lg font-bold tracking-tight text-teal-300 tabular-nums shadow-sm">
+          {open ? (
+            <span className="size-2 rounded-full bg-teal-400 animate-pulse" />
+          ) : null}
           {big}
-        </p>
+        </div>
       ) : null}
       {video && onVideo ? (
         <VideoLinkButton onPress={onVideo} className="shrink-0" />

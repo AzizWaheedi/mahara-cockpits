@@ -1,6 +1,7 @@
 import { CircleAlert } from "lucide-react";
 import { useWorkerStatus } from "../lib/data";
 import { ago } from "../lib/format";
+import { waitingFor, whatIsWrong } from "../lib/proposals";
 
 /**
  * When the sales desk last did a job, in one line on the page that depends
@@ -11,8 +12,13 @@ import { ago } from "../lib/format";
 export function DeskStatus({
   jobs,
 }: {
-  /** job: the desk's job name; what: what it does, as a person says it; staleMin: when it counts as late. */
-  jobs: { job: string; what: string; staleMin: number }[];
+  /**
+   * job: the desk's job name; what: what it does, as a person says it;
+   * staleMin: when it counts as late; waiting: what the reader can expect
+   * while the job waits out an outage. With it, the line says what is wrong
+   * and that, never the fix meant for whoever fixes it.
+   */
+  jobs: { job: string; what: string; staleMin: number; waiting?: string }[];
 }) {
   const status = useWorkerStatus();
   if (status.error)
@@ -47,9 +53,14 @@ export function DeskStatus({
                 ? `${j.what} has not run yet. The CEO is alerted if it stays that way.`
                 : late
                   ? `${j.what} last ran ${ago(r.at)}, later than it should. The sales desk may be down; the CEO is alerted if it stays that way.`
-                  : !r.ok
-                    ? `${j.what} failed ${ago(r.at)}: ${r.detail ?? "no reason given"}.`
-                    : `${j.what} last ran ${ago(r.at)}: ${r.detail ?? "done"}.`}
+                  : !r.ok && waitingFor(r.detail)
+                    ? // An outage it waits out, not a failure: it says why.
+                      j.waiting
+                      ? `${j.what} is waiting (checked ${ago(r.at)}): ${whatIsWrong(waitingFor(r.detail) ?? "")}. ${j.waiting}`
+                      : `${j.what} is waiting (checked ${ago(r.at)}): ${waitingFor(r.detail)}.`
+                    : !r.ok
+                      ? `${j.what} failed ${ago(r.at)}: ${r.detail ?? "no reason given"}.`
+                      : `${j.what} last ran ${ago(r.at)}: ${r.detail ?? "done"}.`}
             </span>
           </p>
         );

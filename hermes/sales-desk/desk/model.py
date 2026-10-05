@@ -50,6 +50,7 @@ ANTHROPIC_MAX_TOKENS = 64000
 VPS_URL = "http://127.0.0.1:3456/v1"
 VPS_SIGN_IN = ("The Claude sign-in on the VPS has lapsed, so nothing can be drafted. Sign Claude Code in "
                "again on the VPS as aziz (run claude, then /login); drafting resumes by itself.")
+VPS_SIGNED_OUT = "the Claude sign-in on the VPS has lapsed"
 
 KEY_NAMES = {"openai": "OPENAI_API_KEY", "anthropic": "ANTHROPIC_API_KEY", "openrouter": "OPENROUTER_API_KEY",
              "vps": "the Claude sign-in on the VPS"}
@@ -71,7 +72,16 @@ NO_LEAD_DATA_ONLY = ("deepseek-", "deepseek/deepseek-")
 
 
 def model_allowed(model: str, *, lead_data: bool = True) -> bool:
+    """By prefix, and never a variant. OpenRouter takes a suffix after the
+    model's name that changes where the words go: openai/gpt-5:online sends
+    them to a web search as well, :free to the providers that serve it free
+    (some keep what they are sent), :nitro and :floor to whichever is fastest
+    or cheapest. The prefix alone let every one of them through. None of the
+    desk's own names has a colon (opus, gpt-5, claude-opus-4-8,
+    anthropic/claude-opus-4.8), and a fine-tune's (ft:gpt-4.1:...) never matched."""
     m = str(model or "").strip().lower()
+    if ":" in m:
+        return False
     return m.startswith(FRONTIER) or (not lead_data and m.startswith(NO_LEAD_DATA_ONLY))
 
 
@@ -81,6 +91,11 @@ def check_model(model: str, *, lead_data: bool = True, setting: str = "the job's
         return
     if "deepseek" in str(model or "").lower():
         raise ModelUnreachable(f"Lead data never goes to DeepSeek. Set {setting} to a model that is not DeepSeek's.")
+    name = str(model or "").strip()
+    if ":" in name and model_allowed(name.split(":", 1)[0], lead_data=lead_data):
+        raise ModelUnreachable(f"{name} is a router variant, which can send a lead's words to a web search or to "
+                               f"a provider that keeps them. Set {setting} to {name.split(':', 1)[0]}, the model's "
+                               "own name.")
     raise ModelUnreachable(f"{model or 'No model'} is not a model the desk may send a lead's words to. Set {setting} "
                            "to gpt-5, gpt-4.1, o3, o4 or a claude- model (openai/ or anthropic/ ones through OpenRouter).")
 
@@ -91,7 +106,37 @@ class ModelUnreachable(NotNow):
     Its own type for the reason run_proposal.py gave: "the call could not be
     read" is a fair verdict when a model read a transcript and came back with
     nothing usable. It is a lie when nothing was ever asked.
+
+    `cause` is the same outage in a few words ("the Claude sign-in on the VPS
+    has lapsed"), for the sentences that put two of them side by side: a
+    proposal drafted through the fallback, and nothing able to answer.
+    `closer`, when set, is the sentence for the proposal the closer is
+    waiting on: what is happening and what to do, without the fix itself.
     """
+
+    def __init__(self, message: str = "", *, cause: str = "", closer: str = "", every: bool = False,
+                 others: str = ""):
+        super().__init__(message)
+        self.cause = cause or cause_of(message)
+        self.closer = closer
+        # The closer's sentence fits every proposal waiting, not only the one
+        # that met it (nothing can answer), so the run's other drafts carry it too.
+        self.every = every
+        # For the run's other requests, when this one's sentence is about it alone.
+        self.others = others
+
+
+def cause_of(message: str) -> str:
+    """A sentence's first clause, as the reason inside another sentence."""
+    text = str(message or "").strip()
+    for stop in (". ", ", so ", "; ", " ("):
+        i = text.find(stop)
+        if i > 0:
+            text = text[:i]
+    text = text.rstrip(".").strip()
+    if len(text) > 1 and text[0].isupper() and text[1].islower():
+        text = text[0].lower() + text[1:]
+    return text or "it did not answer"
 
 
 class ModelError(RuntimeError):
@@ -100,6 +145,21 @@ class ModelError(RuntimeError):
 
 class NoJSON(ModelError):
     pass
+
+
+class StreamRefused(ModelError):
+    """An error the provider sent inside a stream it had already opened with a
+    200, carrying an HTTP status of its own. OpenRouter reports an error that
+    comes after it has started a stream (its keep-alive comments are a start)
+    as `data: {"error": {"code": ..., "message": ...}}`; when that code is a
+    status (402, 400) the provider turns it back into what the same status
+    means as a response, so an account out of credit is an outage (the request
+    waits) and not a failed try (four of which fail the request). A code that
+    is not a status ("server_error") stays a failed try."""
+
+    def __init__(self, status: int, message: str):
+        super().__init__(f"the provider stopped mid-answer: {status}: {http.scrub(message)[:300]}")
+        self.status, self.said = status, message
 
 
 @dataclass
@@ -116,6 +176,48 @@ def is_reasoning_model(model: str) -> bool:
     """OpenAI's reasoning families refuse `temperature`; so do the same models behind OpenRouter."""
     name = model.split("/", 1)[-1].lower()
     return bool(re.match(r"^(o\d|gpt-5)", name))
+
+
+# The reasoning efforts OpenAI's families take. gpt-5 itself (and its mini and
+# nano) takes minimal to high and refuses none and xhigh, which later gpt-5.x
+# models take; o3 and o4 take low to high. SALES_REASONING_EFFORT is one
+# setting for the primary and the fallback alike, so a value the model refuses
+# is left out rather than sent; any other model gets it as set, and a refusal
+# drops it (OpenAIShaped.complete).
+_EFFORTS = (
+    (re.compile(r"^gpt-5(-mini|-nano)?(-\d{4}-\d{2}-\d{2})?$"), ("minimal", "low", "medium", "high")),
+    (re.compile(r"^o[34]"), ("low", "medium", "high")),
+)
+
+
+def effort_for(model: str, effort: str) -> str:
+    """The reasoning effort to send this model: empty when it is not a reasoning
+    model, or when it is one that refuses this value."""
+    effort = str(effort or "").strip().lower()
+    if not effort or not is_reasoning_model(model):
+        return ""
+    name = model.split("/", 1)[-1].lower()
+    for pattern, allowed in _EFFORTS:
+        if pattern.match(name):
+            return effort if effort in allowed else ""
+    return effort
+
+
+def no_sampling(model: str) -> bool:
+    """Claude models that refuse a sampling temperature: Opus 4.7 and later,
+    Sonnet 5 and later, Fable and Mythos. Older Claude models take it."""
+    m = str(model or "").strip().lower().split("/", 1)[-1].replace(".", "-")
+    found = re.match(r"^claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?:-\d{8})?$", m)
+    if not found:
+        return False
+    family, major, minor = found.group(1), int(found.group(2)), int(found.group(3) or 0)
+    if family in ("fable", "mythos"):
+        return True
+    if family == "opus":
+        return (major, minor) >= (4, 7)
+    if family == "sonnet":
+        return major >= 5
+    return False
 
 
 # ---- server-sent events -----------------------------------------------------
@@ -163,6 +265,10 @@ def read_openai_stream(lines: Iterable[Any]) -> Reply:
         if chunk.get("error"):
             err = chunk["error"]
             message = err.get("message") if isinstance(err, dict) else err
+            code = str(err.get("code") if isinstance(err, dict) else "").strip()
+            if code.isdigit() and 400 <= int(code) < 600:
+                meta = err.get("metadata") if isinstance(err.get("metadata"), dict) else {}
+                raise StreamRefused(int(code), f"{message} {meta.get('raw') or ''}".strip())
             raise ModelError(f"the provider stopped mid-answer: {http.scrub(str(message))[:300]}")
         out.model = chunk.get("model") or out.model
         if chunk.get("usage"):
@@ -343,39 +449,45 @@ def vps_reply(reply: Reply, asked: str) -> Reply:
         said = m.group(1).strip()
         low = said.lower()
         if "oauth" in low or "authenticate" in low or "401" in low or "subscription access" in low:
-            raise ModelUnreachable(VPS_SIGN_IN)
+            raise ModelUnreachable(VPS_SIGN_IN, cause=VPS_SIGNED_OUT)
         if any(w in low for w in ("usage limit", "hit your limit", "limit reached", "rate limit")):
             raise ModelUnreachable(f"The Claude plan on the VPS is at its usage limit ({http.scrub(said)[:160]}); "
-                                   "drafting waits until it resets.")
+                                   "drafting waits until it resets.",
+                                   cause="the Claude plan on the VPS is at its usage limit")
         raise ModelError(f"the Claude proxy on the VPS failed: {http.scrub(said)[:300]}")
     if not reply.usage:
-        i, o = -(-len(asked) // 3), -(-len(reply.text + reply.reasoning) // 3)
-        reply.usage = {"prompt_tokens": i, "completion_tokens": o, "total_tokens": i + o}
+        reply.usage = estimate(asked, reply.text + reply.reasoning)
     return reply
 
 
-def _classify(e: http.HttpError, provider: str, model: str) -> Exception:
-    """An HTTP failure as either an outage (the request waits) or a failed try."""
+def _classify(e: http.HttpError, provider: str, model: str, setting: str = "SALES_PROPOSAL_MODEL") -> Exception:
+    """An HTTP failure as either an outage (the request waits) or a failed try.
+    `setting` is the one that names this provider's model, so the fix names
+    SALES_FALLBACK_MODEL for the fallback rather than the primary's setting."""
     body = e.body.decode("utf-8", "replace") if isinstance(e.body, (bytes, bytearray)) else str(e)
     if provider == "vps":
         low = body.lower()
         if e.status in (401, 403) or "oauth" in low or "authenticate" in low or "subscription access" in low:
-            return ModelUnreachable(VPS_SIGN_IN)
+            return ModelUnreachable(VPS_SIGN_IN, cause=VPS_SIGNED_OUT)
         if e.status == 0 and not e.timed_out:
             return ModelUnreachable("The Claude proxy on the VPS (127.0.0.1:3456) is not answering. Start it "
-                                    "again; drafting waits until then.")
+                                    "again; drafting waits until then.",
+                                    cause="the Claude proxy on the VPS is not answering")
     if e.status in (401, 403):
         return ModelUnreachable(
             f"{provider} refused the key ({e.status}). Set {KEY_NAMES[provider]} again on the VPS; "
-            "drafting waits until then.")
+            "drafting waits until then.", cause=f"{provider} refused its key")
     if e.status == 404 or "model_not_found" in body or "does not exist" in body:
         return ModelUnreachable(
             f"The model {model} is not available to this {provider} key ({e.status}). Set "
-            "SALES_PROPOSAL_MODEL to one `desk.py doctor` lists; drafting waits until then.")
+            f"{setting} to one `desk.py doctor` lists; drafting waits until then.",
+            cause=f"{model} is not available to the {provider} key")
     if e.status == 402 or "insufficient_quota" in body or "credit balance" in body:
-        return ModelUnreachable(f"The {provider} account is out of credit ({e.status}). Top it up; drafting waits until then.")
+        return ModelUnreachable(f"The {provider} account is out of credit ({e.status}). Top it up; drafting waits "
+                                "until then.", cause=f"the {provider} account is out of credit")
     if e.status == 0 and not e.timed_out:
-        return ModelUnreachable(f"{provider} could not be reached: {http.scrub(str(e))[:200]}")
+        return ModelUnreachable(f"{provider} could not be reached: {http.scrub(str(e))[:200]}",
+                                cause=f"{provider} could not be reached")
     return ModelError(f"{provider} answered {e.status or 'nothing'}: {http.scrub(body or str(e))[:300]}")
 
 
@@ -396,7 +508,14 @@ class OpenAIShaped:
         self.extra_headers = extra_headers or {}
         self.log = log or (lambda _m: None)
         self.stream_ok = True
-        self.temperature_ok = not is_reasoning_model(model)
+        # Claude Opus 4.7 and later refuse a sampling temperature, as the
+        # AnthropicProvider says; through OpenRouter it is not sent to them
+        # either, rather than learnt from a refusal (which can arrive inside
+        # an opened stream, where it would cost the try).
+        self.temperature_ok = not is_reasoning_model(model) and not (name != "vps" and no_sampling(model))
+        # The setting that names this model, for the sentence when a provider
+        # says it does not have it (SALES_FALLBACK_MODEL for the fallback).
+        self.model_setting = "SALES_PROPOSAL_MODEL"
 
     def _headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self.key}", **self.extra_headers}
@@ -413,22 +532,30 @@ class OpenAIShaped:
             body["response_format"] = {"type": "json_object"}
         if self.max_tokens:
             body["max_completion_tokens" if self.name == "openai" else "max_tokens"] = self.max_tokens
-        if self.reasoning_effort and is_reasoning_model(self.model):
-            body["reasoning_effort"] = self.reasoning_effort
+        effort = effort_for(self.model, self.reasoning_effort)
+        if effort:
+            body["reasoning_effort"] = effort
         if stream and self.name == "openai":
             body["stream_options"] = {"include_usage": True}
         return body
 
     def complete(self, system: str, user: str, *, temperature: Optional[float] = None, timeout: float = 900) -> Reply:
         url = f"{self.base}/chat/completions"
-        for _ in range(3):
+        # One try, and one more for each part of the shape a model may refuse:
+        # streaming, temperature, response_format, reasoning_effort.
+        for _ in range(5):
             stream = self.stream_ok
             body = self._body(system, user, temperature=temperature, stream=stream)
             try:
                 if stream:
                     resp = http.open_stream(url, headers=self._headers(), json_body=body, timeout=timeout)
                     with resp:
-                        reply = read_openai_stream(resp)
+                        try:
+                            reply = read_openai_stream(resp)
+                        except StreamRefused as refused:
+                            # The status it would have answered with, handled as one.
+                            raise http.HttpError(refused.status, refused.said, refused.said.encode("utf-8"),
+                                                 url) from None
                 else:
                     _, _, raw = http.request("POST", url, headers=self._headers(), json_body=body,
                                              timeout=timeout, retries=0)
@@ -447,7 +574,11 @@ class OpenAIShaped:
                 if e.status == 400 and "response_format" in text and self.json_mode:
                     self.json_mode = False
                     continue
-                raise _classify(e, self.name, self.model)
+                if e.status == 400 and "reasoning_effort" in text and effort_for(self.model, self.reasoning_effort):
+                    self.log(f"{self.model} refused reasoning_effort={self.reasoning_effort}; asking without it")
+                    self.reasoning_effort = ""
+                    continue
+                raise _classify(e, self.name, self.model, self.model_setting)
             except (socket.timeout, TimeoutError) as e:
                 raise ModelError(f"no answer from {self.name} for {int(timeout)} seconds ({type(e).__name__})")
             except (OSError, HTTPException) as e:
@@ -465,7 +596,7 @@ class OpenAIShaped:
             text = (e.body or b"").decode("utf-8", "replace").lower()
             if e.status == 400 and ("max_tokens" in text or "max_completion_tokens" in text or "output limit" in text):
                 return f"{self.model} answered (one token is too few for a full reply, which is expected)"
-            raise _classify(e, self.name, self.model)
+            raise _classify(e, self.name, self.model, self.model_setting)
         reply = read_openai_body(raw)
         if self.name == "vps":
             vps_reply(reply, "")
@@ -493,8 +624,21 @@ class OpenAIShaped:
         try:
             data = http.get_json(f"{self.base}/models", headers=headers, timeout=timeout, retries=1)
         except http.HttpError as e:
-            raise _classify(e, self.name, self.model)
+            raise _classify(e, self.name, self.model, self.model_setting)
         return sorted(str(m.get("id")) for m in (data or {}).get("data") or [] if isinstance(m, dict) and m.get("id"))
+
+    def credit(self, timeout: float = 60) -> Optional[float]:
+        """Dollars left on an OpenRouter account (bought less used), or None when it
+        cannot be told. Not a model call. A key's own limit can have room while
+        the account itself is spent, and then every paid call is refused (402)."""
+        if self.name != "openrouter":
+            return None
+        try:
+            data = http.get_json(f"{self.base}/credits", headers=self._headers(), timeout=timeout, retries=1)
+            d = (data or {}).get("data") or {}
+            return round(float(d["total_credits"]) - float(d["total_usage"]), 2)
+        except (http.HttpError, OSError, KeyError, TypeError, ValueError):
+            return None
 
 
 class AnthropicProvider:
@@ -510,6 +654,7 @@ class AnthropicProvider:
         self.model = model
         self.max_tokens = max_tokens or ANTHROPIC_MAX_TOKENS
         self.log = log or (lambda _m: None)
+        self.model_setting = "SALES_PROPOSAL_MODEL"
         self.fallbacks_ok = model.startswith(("claude-opus-5", "claude-fable-5"))
 
     def _headers(self, beta: bool) -> dict[str, str]:
@@ -541,7 +686,7 @@ class AnthropicProvider:
                     self.log("anthropic refused the fallbacks option on this account; asking without it")
                     self.fallbacks_ok = False
                     continue
-                raise _classify(e, self.name, self.model)
+                raise _classify(e, self.name, self.model, self.model_setting)
             except (socket.timeout, TimeoutError) as e:
                 raise ModelError(f"no answer from anthropic for {int(timeout)} seconds ({type(e).__name__})")
             except (OSError, HTTPException) as e:
@@ -554,7 +699,7 @@ class AnthropicProvider:
             _, _, raw = http.request("POST", f"{ANTHROPIC_URL}/messages", headers=self._headers(False),
                                      json_body=body, timeout=timeout, retries=1)
         except http.HttpError as e:
-            raise _classify(e, self.name, self.model)
+            raise _classify(e, self.name, self.model, self.model_setting)
         d = json.loads(raw.decode("utf-8") or "{}")
         return f"{d.get('model') or self.model} answered"
 
@@ -565,7 +710,7 @@ class AnthropicProvider:
         try:
             data = http.get_json(f"{ANTHROPIC_URL}/models?limit=100", headers=self._headers(False), timeout=timeout, retries=1)
         except http.HttpError as e:
-            raise _classify(e, self.name, self.model)
+            raise _classify(e, self.name, self.model, self.model_setting)
         return sorted(str(m.get("id")) for m in (data or {}).get("data") or [] if isinstance(m, dict) and m.get("id"))
 
 
@@ -608,13 +753,17 @@ class Meter:
                               "the desk's model calls start again after midnight Kuwait. If today is expected to need "
                               "more, raise SALES_AI_DAILY_TOKENS in ~/.sales-desk/env")
 
-    def add(self, model: Optional[str], usage: dict[str, Any]) -> None:
-        """After a call: its tokens counted, and its row written."""
+    def add(self, model: Optional[str], usage: dict[str, Any], *, provider: Optional[str] = None) -> None:
+        """After a call: its tokens counted, and its row written, naming the
+        provider and the model that answered (a fallback's are not the primary's)."""
         i, o, r, t = usage_tokens(usage or {})
         self.spent += t
+        row: dict[str, Any] = {"job": self.job, "model": model, "input_tokens": i, "output_tokens": o,
+                               "reasoning_tokens": r, "total_tokens": t}
+        if provider:
+            row["provider"] = provider
         try:
-            self.record({"job": self.job, "model": model, "input_tokens": i, "output_tokens": o,
-                         "reasoning_tokens": r, "total_tokens": t})
+            self.record(row)
         except Exception as e:  # noqa: BLE001 - a missing usage row never costs the answer
             if self.warn:
                 self.warn(f"{self.job}: the usage of a model call ({t:,} tokens) was not written, so the cockpit's "
@@ -661,8 +810,18 @@ class Metered:
     def complete(self, system: str, user: str, *, temperature: Optional[float] = None, timeout: float = 900) -> Reply:
         self.m.check()
         reply = self.inner.complete(system, user, temperature=temperature, timeout=timeout)
-        self.m.add(reply.model or getattr(self.inner, "model", None), reply.usage or {})
+        if not reply.usage:
+            # A provider that sent no usage still spent tokens: three
+            # characters a token, on the high side, as for the VPS proxy.
+            reply.usage = estimate(system + user, reply.text + reply.reasoning)
+        self.m.add(reply.model or getattr(self.inner, "model", None), reply.usage,
+                   provider=getattr(self.inner, "name", None))
         return reply
+
+
+def estimate(asked: str, answered: str) -> dict[str, int]:
+    i, o = -(-len(asked) // 3), -(-len(answered) // 3)
+    return {"prompt_tokens": i, "completion_tokens": o, "total_tokens": i + o}
 
 
 def provider(cfg: Config, log: Optional[Callable[[str], None]] = None) -> Any:
@@ -680,24 +839,325 @@ def _provider(cfg: Config, log: Optional[Callable[[str], None]] = None) -> Any:
     check_model(model, setting="SALES_PROPOSAL_MODEL (or the job's own model setting)")
     if name not in PROVIDERS:
         raise ModelUnreachable(f"SALES_MODEL_PROVIDER is {name!r}; it has to be vps, openai, anthropic or openrouter.")
+    return _build(name, model, cfg, log, setting_name="SALES_MODEL_PROVIDER")
+
+
+def _build(name: str, model: str, cfg: Config, log: Optional[Callable[[str], None]], *, setting_name: str,
+           max_tokens: Optional[int] = None, json_mode: Optional[bool] = None) -> Any:
+    """One provider by name, with its key from the box."""
+    max_tokens = max_tokens or cfg.max_tokens
     if name == "vps":
         # No key: the proxy speaks for the Claude plan Claude Code is signed in with.
         return OpenAIShaped("vps", setting("SALES_VPS_URL", "").strip() or VPS_URL, "vps", model,
-                            max_tokens=cfg.max_tokens, json_mode=False, log=log)
+                            max_tokens=max_tokens, json_mode=False, log=log)
     key = {"openai": cfg.openai_key, "anthropic": cfg.anthropic_key, "openrouter": cfg.openrouter_key}[name]
     if not key:
-        hint = "" if name == "openai" else ", or set SALES_MODEL_PROVIDER back to openai"
+        hint = "" if name == "openai" else f", or set {setting_name} back to openai"
         raise ModelUnreachable(f"{KEY_NAMES[name]} is not set, so the {name} provider cannot draft. "
-                               f"Set it in /opt/data/bibi/api-keys.env or ~/.sales-desk/env{hint}.")
+                               f"Set it in /opt/data/bibi/api-keys.env or ~/.sales-desk/env{hint}.",
+                               cause=f"{KEY_NAMES[name]} is not set")
     if name == "anthropic":
-        return AnthropicProvider(key, model, max_tokens=cfg.max_tokens, log=log)
+        return AnthropicProvider(key, model, max_tokens=max_tokens, log=log)
     if name == "openrouter":
-        return OpenAIShaped("openrouter", OPENROUTER_URL, key, model, max_tokens=cfg.max_tokens,
+        return OpenAIShaped("openrouter", OPENROUTER_URL, key, model, max_tokens=max_tokens,
                             reasoning_effort=cfg.reasoning_effort, json_mode=False,
                             extra_headers={"HTTP-Referer": "https://cockpit.maharamedia.com", "X-Title": "Mahara sales desk"},
                             log=log)
-    return OpenAIShaped("openai", OPENAI_URL, key, model, max_tokens=cfg.max_tokens,
-                        reasoning_effort=cfg.reasoning_effort, json_mode=True, log=log)
+    return OpenAIShaped("openai", OPENAI_URL, key, model, max_tokens=max_tokens,
+                        reasoning_effort=cfg.reasoning_effort, json_mode=True if json_mode is None else json_mode,
+                        log=log)
+
+
+# ---- the fallback ---------------------------------------------------------------
+
+# Claude Code's own names for Anthropic's models, as the VPS proxy lists them
+# (GET 127.0.0.1:3456/v1/models on 2026-10-04 puts "opus" beside
+# claude-opus-4-8 and opus-4.8, "sonnet" beside claude-sonnet-4-6). When the
+# proxy's "opus" moves to a newer model, move it here too, or name the
+# fallback's model outright with SALES_FALLBACK_MODEL.
+CLAUDE_CODE_NAMES = {"opus": "claude-opus-4-8", "sonnet": "claude-sonnet-4-6", "haiku": "claude-haiku-4-5",
+                     "fable": "claude-fable-5"}
+# Each provider's model when the primary's has no counterpart there. OpenRouter
+# lists anthropic/claude-opus-4.8 (GET openrouter.ai/api/v1/models, 2026-10-04).
+FALLBACK_MODELS = {"openrouter": "anthropic/claude-opus-4.8", "anthropic": "claude-opus-4-8", "openai": "gpt-5",
+                   "vps": "opus"}
+_SHORT_CLAUDE = re.compile(r"^(opus|sonnet|haiku|fable)-(\d+)(?:[.-](\d{1,2}))?$")
+_CLAUDE_VERSION = re.compile(r"^(claude-[a-z]+)-(\d+)(?:[.-](\d{1,2}))?(?:-\d{8})?$")
+
+
+def closest_model(model: str, provider: str) -> str:
+    """The primary's model as the fallback provider names it: Claude Code's
+    "opus" is anthropic/claude-opus-4.8 through OpenRouter and claude-opus-4-8
+    at Anthropic; gpt-5 is openai/gpt-5 through OpenRouter. A model the
+    provider has no counterpart for gets the provider's own (FALLBACK_MODELS)."""
+    m = str(model or "").strip().lower()
+    m = m.split("/", 1)[1] if m.startswith(("anthropic/", "openai/")) else m
+    m = CLAUDE_CODE_NAMES.get(m, m)
+    short = _SHORT_CLAUDE.match(m)
+    if short:
+        m = f"claude-{short.group(1)}-{short.group(2)}" + (f"-{short.group(3)}" if short.group(3) else "")
+    claude = _CLAUDE_VERSION.match(m)
+    if claude:
+        family, major, minor = claude.group(1), claude.group(2), claude.group(3)
+        if provider == "openrouter":
+            return f"anthropic/{family}-{major}" + (f".{minor}" if minor else "")
+        if provider in ("anthropic", "vps"):
+            return f"{family}-{major}" + (f"-{minor}" if minor else "")
+    elif m.startswith(("gpt-", "o3", "o4")):
+        if provider == "openrouter":
+            return f"openai/{m}"
+        if provider == "openai":
+            return m
+    return FALLBACK_MODELS.get(provider, "")
+
+
+def fallback_model(cfg: Config, primary_model: Optional[str] = None) -> str:
+    """SALES_FALLBACK_MODEL, else the primary's model as the fallback names it."""
+    return (cfg.fallback_model or "").strip() or closest_model(primary_model or cfg.model, cfg.fallback)
+
+
+def fallback_for(cfg: Config, job: str) -> bool:
+    """Whether this job drafts through the fallback when the primary cannot answer."""
+    name = (cfg.fallback or "none").strip().lower()
+    return name not in ("", "none") and name != (cfg.provider or "vps").strip().lower() and job in cfg.fallback_jobs
+
+
+def fallback_provider(cfg: Config, log: Optional[Callable[[str], None]] = None, *,
+                      primary_model: Optional[str] = None, plain_text: bool = False) -> Any:
+    """The fallback provider, metered like the primary, or ModelUnreachable in
+    one sentence. A Claude model gets room for a whole deal (64,000 tokens, as
+    from Anthropic directly): OpenRouter holds credit against the most a reply
+    may be, so an unset limit is the model's whole output."""
+    name = (cfg.fallback or "").strip().lower()
+    if name not in PROVIDERS:
+        raise ModelUnreachable(f"SALES_MODEL_FALLBACK is {name!r}; it has to be none, openrouter, openai, anthropic "
+                               "or vps.")
+    model = fallback_model(cfg, primary_model)
+    check_model(model, setting="SALES_FALLBACK_MODEL")
+    if not serves(name, model):
+        # Caught here, in one sentence, rather than as a 404 an hour later
+        # (SALES_MODEL_FALLBACK changed to openai with an OpenRouter model left
+        # in SALES_FALLBACK_MODEL, say).
+        mine = closest_model(primary_model or cfg.model, name)
+        raise ModelUnreachable(f"SALES_FALLBACK_MODEL is {model}, which is not a model {name} serves under that name. "
+                               f"Leave SALES_FALLBACK_MODEL empty to use {mine}, or set it to one of {name}'s.",
+                               cause=f"SALES_FALLBACK_MODEL ({model}) is not a {name} model")
+    room = ANTHROPIC_MAX_TOKENS if "claude-" in model.lower() else None
+    p = _build(name, model, cfg, log, setting_name="SALES_MODEL_FALLBACK", max_tokens=room,
+               json_mode=False if plain_text else None)
+    p.model_setting = "SALES_FALLBACK_MODEL"
+    return metered(p)
+
+
+def serves(provider: str, model: str) -> bool:
+    """Whether a provider takes this model under this name: OpenRouter's are
+    vendor/model, OpenAI's and Anthropic's are bare, and the VPS proxy takes
+    Claude's (claude-..., or Claude Code's opus and sonnet)."""
+    m = str(model or "").strip().lower()
+    claude = m.startswith(("claude-", "opus", "sonnet"))
+    if provider == "openrouter":
+        return "/" in m
+    if provider == "openai":
+        return "/" not in m and not claude
+    if provider == "anthropic":
+        return m.startswith("claude-")
+    if provider == "vps":
+        return "/" not in m and claude
+    return False
+
+
+def label(p: Any) -> str:
+    return f"{getattr(p, 'name', '?')} ({getattr(p, 'model', '?')})"
+
+
+class Failover:
+    """A job's provider with the fallback behind it, for one run.
+
+    The primary is asked first. When it cannot answer at all (ModelUnreachable:
+    the sign-in lapsed, the proxy is down, the key is refused, no credit) before
+    any of the current piece of work has gone through it, the run hands over to
+    the fallback: once, for every call left in the run, and never back. Once a
+    call of a piece of work has gone through a provider, that work stays on it:
+    a draft is never finished by a model other than the one that started it,
+    so a primary that stops partway sends the work back to wait, to start
+    again from the beginning on the next run. When the fallback cannot answer
+    either, the work waits with one sentence that names both. Without a
+    fallback the primary's own sentence goes out unchanged, as before.
+
+    A failed try (a timeout, a garbled answer) belongs to the provider that
+    was asked, like an answer. The day's ceiling (BudgetSpent, SpendUnknown)
+    is never a reason to switch: it counts every provider.
+    """
+
+    def __init__(self, primary: Callable[[], Any], fallback: Optional[Callable[[], Any]], *,
+                 log: Optional[Callable[[str], None]] = None, job: str = "proposal", primary_label: str = "",
+                 warn: Optional[Callable[[str], None]] = None):
+        self._make_primary, self._make_fallback = primary, fallback
+        self.log = log or (lambda _m: None)
+        # The handover is a warning: the cron runs --quiet, which keeps only
+        # warnings, and a paid fallback drafting in place of the VPS's plan is
+        # the line someone reading the log needs to find.
+        self.warn = warn or self.log
+        self.job = job
+        self.p: Any = None
+        self.on_fallback = False
+        # "vps (opus)": the primary as the sentences name it, said even when it could not be made.
+        self.primary = primary_label
+        self.down: Optional[ModelUnreachable] = None
+        self.pinned = False
+        # The one-token check (check()) is made once a run.
+        self.checked = False
+
+    def begin(self) -> "Failover":
+        """A new piece of work (one proposal): it stays on whichever provider answers its first call."""
+        self.pinned = False
+        return self
+
+    def ready(self) -> "Failover":
+        """The provider in use, made; a primary that cannot even be made hands over at once."""
+        if self.p is None:
+            try:
+                self.p = self._make_primary()
+                self.primary = label(self.p)
+            except ModelUnreachable as e:
+                self._switch(e)
+        return self
+
+    def check(self, timeout: float = 60) -> "Failover":
+        """ready(), and for the VPS proxy a one-token ping before any work is
+        claimed. The proxy needs no key, so making it proves nothing: a lapsed
+        sign-in shows only when a draft asks it, after the request was claimed
+        and its call read from Fathom. A primary the ping finds unreachable
+        hands over here, as one that cannot be made does, or waits with its
+        sentence when there is no fallback. A ping that merely fails (a
+        timeout, an odd answer) proves nothing either way and leaves the
+        question to the draft. Once a run; never on the fallback."""
+        self.ready()
+        if self.checked or self.on_fallback:
+            return self
+        self.checked = True
+        ping = getattr(self.p, "ping", None)
+        if getattr(self.p, "name", "") != "vps" or not callable(ping):
+            return self
+        try:
+            ping(timeout=timeout)
+        except ModelUnreachable as e:
+            self._switch(e)
+        except Exception as e:  # noqa: BLE001 - not an outage: the draft finds out
+            self.log(f"{self.primary}: the one-token check did not answer cleanly "
+                     f"({http.scrub(str(e))[:160]}); the draft asks it anyway")
+        return self
+
+    def hand_over(self, e: NotNow) -> "Failover":
+        """The primary found unreachable by a probe outside any call (the
+        follow-ups job's one token, which keeps the primary's own status row):
+        hand over now, as check() does. Raises the outage when there is no
+        fallback, or one naming both when neither can answer."""
+        self.ready()
+        if not self.on_fallback:
+            self.checked = True
+            self._switch(e if isinstance(e, ModelUnreachable) else ModelUnreachable(str(e)))
+        return self
+
+    def _switch(self, e: ModelUnreachable) -> None:
+        if self._make_fallback is None:
+            raise e
+        try:
+            fb = self._make_fallback()
+        except ModelUnreachable as f:
+            raise self._neither(e, f) from None
+        self.down, self.p, self.on_fallback = e, fb, True
+        self.primary = self.primary or "the primary model"
+        self.warn(f"{self.primary} cannot answer ({e.cause}); this run uses {label(fb)} instead")
+
+    def _neither(self, e: ModelUnreachable, f: ModelUnreachable) -> ModelUnreachable:
+        if self.job == "proposal":
+            closer = (f"No model can answer right now: {e.cause}, and {f.cause}. This proposal waits and drafts by "
+                      "itself once either is fixed, so there is no need to ask again; if it is still waiting in an "
+                      "hour, tell the CEO.")
+        else:
+            closer = (f"No model can answer right now: {e.cause}, and {f.cause}. The {self.job} job waits and carries "
+                      "on by itself once either is fixed.")
+        return ModelUnreachable(f"{closer} To fix it: {e} {f}"[:600], cause=f"{e.cause}, and {f.cause}",
+                                closer=closer, every=True)
+
+    @property
+    def name(self) -> str:
+        return self.ready().p.name
+
+    @property
+    def model(self) -> str:
+        return self.ready().p.model
+
+    def __getattr__(self, attr: str) -> Any:
+        if attr.startswith("_") or attr in ("p", "down"):
+            raise AttributeError(attr)
+        return getattr(self.ready().p, attr)
+
+    def complete(self, system: str, user: str, *, temperature: Optional[float] = None, timeout: float = 900) -> Reply:
+        self.ready()
+        try:
+            reply = self.p.complete(system, user, temperature=temperature, timeout=timeout)
+        except ModelUnreachable as e:
+            if self.on_fallback:
+                raise self._neither(self.down, e) if self.down is not None else e
+            if self._make_fallback is None:
+                raise
+            if self.pinned:
+                closer = (f"The model stopped answering partway through this draft ({e.cause}), so it starts again "
+                          "from the beginning on the next run; there is no need to ask again.")
+                raise ModelUnreachable(
+                    f"{self.primary} stopped answering partway through ({e.cause}). Nothing it wrote is kept: this "
+                    "waits and starts again from the beginning on the next run, through the fallback if "
+                    f"{self.primary} is still down; there is no need to ask again. {e}"[:600],
+                    cause=e.cause, closer=closer,
+                    others=(f"Not started this run: {self.primary} stopped answering partway through another "
+                            f"proposal ({e.cause}). It is tried on the next run, through the fallback if "
+                            f"{self.primary} is still down.")) from None
+            self._switch(e)
+            return self.complete(system, user, temperature=temperature, timeout=timeout)
+        except NotNow:
+            raise
+        except Exception:
+            self.pinned = True
+            raise
+        self.pinned = True
+        return reply
+
+    def route(self) -> dict[str, Any]:
+        """Which provider the work went through, and why when it was not the primary."""
+        self.ready()
+        out: dict[str, Any] = {"fallback": self.on_fallback}
+        if self.on_fallback and self.down is not None:
+            out.update(primary=self.primary, reason=self.down.cause, detail=str(self.down))
+        return out
+
+
+def route_of(p: Any, answered: str = "") -> dict[str, Any]:
+    """What a proposal's validation keeps about the model: the provider and
+    model that wrote it, and, when that was the fallback, the sentence."""
+    out: dict[str, Any] = {"provider": getattr(p, "name", ""), "model": answered or getattr(p, "model", ""),
+                           "fallback": False}
+    info = p.route() if isinstance(p, Failover) else {}
+    if info.get("fallback"):
+        out.update(info)
+        out["note"] = f"Drafted through {out['provider']} ({out['model']}) because {info['reason']}."
+    return out
+
+
+def for_job(cfg: Config, job: str, log: Optional[Callable[[str], None]] = None, *,
+            primary: Optional[Callable[[], Any]] = None, plain_text: bool = False,
+            warn: Optional[Callable[[str], None]] = None) -> Any:
+    """A job's provider: the primary as it always was, or, for a job
+    SALES_FALLBACK_JOBS names, a Failover with the fallback behind it. Made
+    at once either way, so a provider neither of which can be made is refused
+    where it always was."""
+    make = primary or (lambda: provider(cfg, log))
+    if not fallback_for(cfg, job):
+        return make()
+    model = cfg.model
+    return Failover(make, lambda: fallback_provider(cfg, log, primary_model=model, plain_text=plain_text),
+                    log=log, job=job, primary_label=f"{cfg.provider} ({model})", warn=warn).ready()
 
 
 def call_json(p: Any, system: str, user: str, *, temperature: Optional[float], attempts: int, timeout: float,

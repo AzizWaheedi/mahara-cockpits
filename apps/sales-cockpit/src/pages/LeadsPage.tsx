@@ -16,6 +16,7 @@ import {
 } from "react";
 import { Link, useSearchParams } from "react-router";
 import {
+  AnimatedSelect,
   button,
   EmptyState,
   Failed,
@@ -319,7 +320,7 @@ export default function LeadsPage() {
             />
           </label>
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:flex lg:shrink-0">
-            <select
+            <AnimatedSelect
               aria-label="Stage"
               value={f.stage}
               onChange={e => update({ stage: e.target.value || null })}
@@ -353,8 +354,8 @@ export default function LeadsPage() {
                       {o.label}
                     </option>
                   ))}
-            </select>
-            <select
+            </AnimatedSelect>
+            <AnimatedSelect
               aria-label="Created"
               value={String(f.days)}
               onChange={e => {
@@ -370,7 +371,7 @@ export default function LeadsPage() {
                   {w.label}
                 </option>
               ))}
-            </select>
+            </AnimatedSelect>
           </div>
         </div>
         <div

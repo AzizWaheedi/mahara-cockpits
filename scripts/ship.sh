@@ -12,6 +12,10 @@ cd "$(dirname "$0")/.."
 
 # Nothing ships if the copies of a shared page have drifted apart.
 scripts/check-shared.sh || exit 1
+# The guard that keeps a backend deploy from removing someone else's
+# functions (convex-removals.ts, below) is itself tested first.
+bun test scripts/convex-removals.test.ts >/dev/null 2>&1 \
+  || { echo "the deploy guard's tests fail (bun test scripts/convex-removals.test.ts)"; exit 1; }
 
 # The Frame.io webhook is a public URL that writes to our notes, so its
 # signature check is tested on every ship rather than when somebody
@@ -47,6 +51,10 @@ fi
 if [ -f apps/client-success-cockpit/scripts/projections.test.ts ]; then
   (cd apps/client-success-cockpit && bun test scripts/projections.test.ts >/dev/null 2>&1) \
     || { echo "the projections rules tests fail"; exit 1; }
+fi
+if [ -f apps/client-success-cockpit/scripts/check-in.test.ts ]; then
+  (cd apps/client-success-cockpit && bun test scripts/check-in.test.ts >/dev/null 2>&1) \
+    || { echo "the client check-in booking tests fail"; exit 1; }
 fi
 if [ -f hermes/team-sync/test_sync.py ]; then
   (cd hermes/team-sync && python3 -m unittest test_sync >/dev/null 2>&1) \
@@ -99,8 +107,18 @@ ship() {
   (cd "$dir" && bunx biome check --line-ending=auto $lint_dirs >/dev/null) || { echo "lint failed in $dir (run: cd $dir && bunx biome check --line-ending=auto --write $lint_dirs)"; exit 1; }
   echo "== $app: typecheck"
   (cd "$dir" && bun run typecheck)
+  if [ "$app" = "sales" ]; then
+    echo "== sales: tests"
+    (cd "$dir" && bun test src)
+  fi
   if [ -n "$url" ]; then
     echo "== $app: backend"
+    # A deploy replaces every function in the deployment with this clone's,
+    # so work another agent shipped from a branch would vanish with it
+    # (2026-10-05: the check-in booking's functions and index). Stop and
+    # name it instead; merge that work first, or SHIP_ALLOW_REMOVE=... when
+    # the removal is meant.
+    bun scripts/convex-removals.ts "$dir" || exit 1
     (cd "$dir" && bunx convex deploy --yes --typecheck enable)
   fi
   # What the site serves right now, so the check after the deploy compares
@@ -134,6 +152,11 @@ ship() {
   local -a vercel_cli=(bunx vercel)
   command -v vercel >/dev/null 2>&1 && vercel_cli=(vercel)
   if (cd "$dir" && "${vercel_cli[@]}" whoami ${tok[@]+"${tok[@]}"} >/dev/null 2>&1); then
+    # Without the app's link the CLI makes a new project named after the
+    # folder and deploys there; the site keeps the old bundle (2026-10-05, a
+    # fresh worktree made client-success-cockpit beside mahara-client-success).
+    # The Composio path refuses the same way.
+    [ -f "$dir/.vercel/project.json" ] || { echo "$dir is not linked to a Vercel project (.vercel/project.json missing): copy it from a linked checkout"; exit 1; }
     out=$(cd "$dir" && "${vercel_cli[@]}" deploy --prod --yes --force ${tok[@]+"${tok[@]}"} 2>&1) || { echo "$out" | tail -20; echo "vercel deploy failed for $app"; exit 1; }
   else
     # No Vercel login on this Mac (2026-09-20): the same source goes up
@@ -199,7 +222,12 @@ case "${1:-all}" in
 esac
 
 echo "== smoke check"
-if [ "${SHIP_SMOKE_READ_ONLY:-}" = 1 ]; then
+if [ "${1:-all}" = "sales" ]; then
+  # Sales has no Convex backend; check its origin and portal route directly.
+  curl -fsS -m 30 -o /dev/null https://mahara-sales.vercel.app/sales/
+  curl -fsS -m 30 -o /dev/null https://cockpit.maharamedia.com/sales/
+  echo "sales origin and portal route respond."
+elif [ "${SHIP_SMOKE_READ_ONLY:-}" = 1 ]; then
   # A migration release must not send the failure alert to Slack without a
   # separately approved outward action. The local query checks the live page.
   (cd apps/media-buyer-cockpit && bunx convex run --prod smoke:local | grep -E '"ok"|failures' | head -5)

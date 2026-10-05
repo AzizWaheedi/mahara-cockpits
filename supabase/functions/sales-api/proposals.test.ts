@@ -1,0 +1,121 @@
+// bun test supabase/functions/sales-api
+import { describe, expect, test } from "bun:test";
+import {
+  ALREADY_DRAFTING,
+  archivePlan,
+  BEING_WRITTEN,
+  REPLACED_NO_RETRY,
+  retryPlan,
+  retryRefusal,
+  STOPPED,
+  stoppedProposal,
+} from "./proposals.ts";
+
+describe("archiving a proposal stops its draft", () => {
+  test("a queued draft is cancelled with it", () => {
+    expect(archivePlan([{ id: "r1", status: "queued" }])).toEqual({ ok: true, cancel: ["r1"] });
+  });
+
+  test("nothing open is nothing to cancel", () => {
+    expect(archivePlan([])).toEqual({ ok: true, cancel: [] });
+  });
+
+  test("one the worker is running refuses, and cancels nothing", () => {
+    expect(
+      archivePlan([
+        { id: "r1", status: "queued" },
+        { id: "r2", status: "running" },
+      ]),
+    ).toEqual({ ok: false, error: BEING_WRITTEN });
+    expect(BEING_WRITTEN).toBe("It is being written right now. Archive it when it finishes.");
+  });
+});
+
+describe("stopping a draft", () => {
+  test("a first draft, with nothing to show, is archived as before", () => {
+    expect(stoppedProposal({ html_path: null, validation: null })).toEqual({ status: "archived" });
+  });
+
+  test("a retry of a draft that needed figures goes back to needing them", () => {
+    expect(
+      stoppedProposal({ html_path: "proposals/p/v1.html", validation: { status: "needs_input" } }),
+    ).toEqual({ status: "needs_input", error: null });
+  });
+
+  test("a rebuild of a ready proposal goes back to ready", () => {
+    expect(stoppedProposal({ html_path: "proposals/p/v2.html", validation: { status: "ready" } })).toEqual({
+      status: "ready",
+      error: null,
+    });
+  });
+
+  test("a retry of a failed draft is failed again, saying it was stopped", () => {
+    expect(stoppedProposal({ html_path: "proposals/p/v1.html", validation: { status: "failed" } })).toEqual({
+      status: "failed",
+      error: STOPPED,
+    });
+  });
+
+  test("a version with no status it can go back to is archived", () => {
+    expect(stoppedProposal({ html_path: "proposals/p/v1.html", validation: {} })).toEqual({ status: "archived" });
+  });
+});
+
+describe("a second draft for the same lead", () => {
+  test("is refused without promising a time, and says what to do", () => {
+    // A draft waiting on an outage can take hours: "about ten minutes" was a promise.
+    expect(ALREADY_DRAFTING).not.toMatch(/minute|hour|soon/i);
+    expect(ALREADY_DRAFTING).toMatch(/Refresh the lead's page/);
+    expect(ALREADY_DRAFTING).not.toContain("\u2014");
+  });
+});
+
+describe("trying a failed request again", () => {
+  test("never brings an archived or a sent proposal back to drafting", () => {
+    expect(retryRefusal({ status: "archived" })).toMatch(/archived/);
+    expect(retryRefusal({ status: "archived" })).toMatch(/Draft proposal on the lead's page/);
+    expect(retryRefusal({ status: "sent" })).toMatch(/sent/);
+    for (const status of ["failed", "drafting", "needs_input", "ready"])
+      expect(retryRefusal({ status })).toBeNull();
+    expect(retryRefusal(null)).toBeNull();
+  });
+
+  test("never a request the proposal has moved on from", () => {
+    // A failed fresh draft tried again after Draft again and the closer's
+    // figures would write over the filled version.
+    expect(retryRefusal({ status: "ready", request_id: "req-new" }, "req-old")).toMatch(/newer draft/);
+    expect(retryRefusal({ status: "drafting", request_id: "req-new" }, "req-old")).toMatch(/Draft again/);
+    expect(retryRefusal({ status: "failed", request_id: "req-old" }, "req-old")).toBeNull();
+    expect(retryRefusal({ status: "failed", request_id: null }, "req-old")).toBeNull();
+    expect(REPLACED_NO_RETRY).not.toContain("\u2014");
+  });
+});
+
+describe("drafting a proposal again", () => {
+  const deal = { headline: "x", closer_figures: { "cost.close": "Typed by the closer.", "gap_points.0.v": "12" } };
+
+  test("after a rebuild that failed for good, it rebuilds with the closer's figures", () => {
+    expect(retryPlan({ deal }, { params: { rebuild: true, proposal_id: "p" }, status: "failed" })).toEqual({
+      rebuild: true,
+    });
+  });
+
+  test("a fresh draft carries the figures the closer typed", () => {
+    expect(retryPlan({ deal }, { params: { rebuild: true }, status: "done" })).toEqual({
+      rebuild: false,
+      fills: deal.closer_figures,
+    });
+    expect(retryPlan({ deal }, { params: { lang: "en" }, status: "failed" })).toEqual({
+      rebuild: false,
+      fills: deal.closer_figures,
+    });
+  });
+
+  test("with no figures typed, it is the draft it always was", () => {
+    expect(retryPlan({ deal: { headline: "x" } }, null)).toEqual({ rebuild: false, fills: null });
+    expect(retryPlan({ deal: null }, { params: { rebuild: true }, status: "failed" })).toEqual({
+      rebuild: false,
+      fills: null,
+    });
+  });
+});

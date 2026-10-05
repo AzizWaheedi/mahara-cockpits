@@ -1,13 +1,15 @@
-import { CalendarDays, Menu, PhoneCall, Sun, UserSearch } from "lucide-react";
-import { lazy, type ReactNode, Suspense, useEffect, useState } from "react";
+import { Menu } from "lucide-react";
 import {
-  Navigate,
-  NavLink,
-  Route,
-  Routes,
-  useLocation,
-  useParams,
-} from "react-router";
+  lazy,
+  type ReactNode,
+  Suspense,
+  useCallback,
+  useEffect,
+  useState,
+} from "react";
+import { Navigate, Route, Routes, useLocation, useParams } from "react-router";
+import { MacOSDock } from "./components/MacOSDock";
+import { MacOSMenuBar } from "./components/MacOSMenuBar";
 import { PageBoundary } from "./components/PageBoundary";
 import {
   PortalAutoSignIn,
@@ -213,6 +215,35 @@ export function Seated({
   };
   const role = ROLE_WORDS[String(me.role)] ?? "Sales";
   const { pathname } = useLocation();
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem("sales_sidebar_collapsed") === "1";
+    } catch {
+      return false;
+    }
+  });
+
+  const toggleSidebar = useCallback(() => {
+    setSidebarCollapsed(prev => {
+      const next = !prev;
+      try {
+        localStorage.setItem("sales_sidebar_collapsed", next ? "1" : "0");
+      } catch {}
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "b") {
+        e.preventDefault();
+        toggleSidebar();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [toggleSidebar]);
+
   const sidebar = (onNavigate?: () => void) => (
     <Sidebar
       name={name}
@@ -221,16 +252,23 @@ export function Seated({
       isManager={Boolean(me.manager)}
       counts={counts}
       onNavigate={onNavigate}
+      collapsed={sidebarCollapsed}
+      onToggleCollapse={toggleSidebar}
     />
   );
 
   return (
-    // From md up there is no bar at the top, so the installed app keeps its
-    // own content below the clock (the status bar is see-through there).
     <div className="flex h-full lg:pt-[env(safe-area-inset-top,0px)]">
-      <aside className="hidden w-56 shrink-0 border-r hairline bg-[color:var(--card)] lg:block">
-        {sidebar()}
-      </aside>
+      {/* Floating Detached Sidebar Island (Mahara Soft Floating) */}
+      <div className="hidden lg:flex lg:flex-col lg:justify-center my-2.5 ml-3 shrink-0">
+        <aside
+          className={`h-[calc(100dvh-1.25rem)] rounded-[26px] border border-border bg-background/90 backdrop-blur-2xl shadow-2xl transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] overflow-hidden flex flex-col ${
+            sidebarCollapsed ? "w-16" : "w-60"
+          }`}
+        >
+          {sidebar()}
+        </aside>
+      </div>
 
       {drawer ? (
         <div className="fixed inset-0 z-40 lg:hidden">
@@ -238,9 +276,9 @@ export function Seated({
             type="button"
             aria-label="Close the menu"
             onClick={() => setDrawer(false)}
-            className="absolute inset-0 bg-black/50"
+            className="absolute inset-0 bg-black/60 backdrop-blur-sm"
           />
-          <aside className="pt-safe absolute inset-y-0 left-0 w-64 border-r hairline bg-[color:var(--card)]">
+          <aside className="pt-safe absolute inset-y-2.5 left-2.5 w-64 rounded-[24px] border border-border bg-background/95 shadow-2xl backdrop-blur-2xl overflow-hidden flex flex-col">
             {sidebar(() => setDrawer(false))}
           </aside>
         </div>
@@ -248,12 +286,39 @@ export function Seated({
 
       {/* relative: the screen-reader-only words inside (absolutely placed)
           stay in this scroll area instead of stretching the window, which
-          would scroll twice on a phone and carry a sticky banner away. */}
-      <div className="relative flex min-w-0 flex-1 flex-col overflow-y-auto pb-[calc(4rem+env(safe-area-inset-bottom,0px))] lg:pb-0">
+          would scroll twice on a phone and carry a sticky banner away.
+          5.5rem clears the floating dock on a phone. */}
+      <div className="relative flex min-w-0 flex-1 flex-col overflow-y-auto pb-[calc(5.5rem+env(safe-area-inset-bottom,0px))] lg:pb-0">
         {banner}
-        <header className="pt-safe sticky top-0 z-10 flex items-center gap-3 border-b hairline bg-[color:var(--background)]/90 px-4 py-2.5 backdrop-blur lg:hidden">
-          <Wordmark size="sm" />
-          <span className="muted text-sm">Sales</span>
+
+        {/* Desktop authentic macOS Menu Bar */}
+        <div className="hidden lg:block">
+          <MacOSMenuBar
+            name={name}
+            role={role}
+            owedCount={counts.owed}
+            sidebarCollapsed={sidebarCollapsed}
+            onToggleSidebar={toggleSidebar}
+          />
+        </div>
+
+        {/* Mobile header */}
+        <header className="pt-safe sticky top-0 z-10 flex items-center justify-between border-b hairline bg-[color:var(--background)]/85 px-4 py-2.5 backdrop-blur-md lg:hidden">
+          <div className="flex items-center gap-3">
+            <Wordmark size="sm" />
+            <span className="muted text-sm">Sales</span>
+          </div>
+          {counts.owed > 0 ? (
+            <span
+              className="rounded-full px-2 py-0.5 text-xs font-semibold tabular-nums"
+              style={{
+                background: "var(--owed)",
+                color: "var(--warning-foreground)",
+              }}
+            >
+              {counts.owed} owed
+            </span>
+          ) : null}
         </header>
 
         {/* Keyed by the address, so moving to another page clears an error. */}
@@ -313,54 +378,27 @@ export function Seated({
   );
 }
 
-/** Below md the rail becomes a tab bar: the four places a rep goes all day; Numbers and the rest are under More. */
+/** Below lg the rail becomes the authentic MacOS Floating Dock (SF-01): cosine magnification & click bounce. */
 function TabBar({ owed, onMore }: { owed: number; onMore: () => void }) {
-  const tabs = [
-    { to: "/", label: "Today", icon: Sun },
-    { to: "/dialer", label: "Dialer", icon: PhoneCall },
-    { to: "/calendar", label: "Calendar", icon: CalendarDays, n: owed },
-    { to: "/leads", label: "Leads", icon: UserSearch },
-  ];
   return (
-    <nav
-      className="pb-safe fixed inset-x-0 bottom-0 z-30 grid grid-cols-5 border-t hairline bg-[color:var(--card)]/95 backdrop-blur lg:hidden"
-      aria-label="Sections"
-    >
-      {tabs.map(({ to, label, icon: Icon, n }) => (
-        <NavLink
-          key={to}
-          to={to}
-          end={to === "/"}
-          className={({ isActive }) =>
-            `no-touch relative flex min-h-14 flex-col items-center justify-center gap-0.5 py-2 text-xs ${
-              isActive ? "font-medium text-[color:var(--primary)]" : "muted"
-            }`
-          }
+    <div className="pointer-events-none fixed inset-x-0 bottom-3 z-30 flex justify-center px-2 lg:hidden">
+      <div className="pointer-events-auto flex items-center gap-1.5">
+        <MacOSDock
+          owedCount={owed}
+          baseSize={36}
+          maxScale={1.35}
+          className="shadow-2xl"
+        />
+        <button
+          type="button"
+          onClick={onMore}
+          title="More sections"
+          className="floating-dock pointer-events-auto flex size-10 shrink-0 items-center justify-center text-white/70 hover:text-white transition-colors"
         >
-          <Icon className="size-5" strokeWidth={1.75} aria-hidden />
-          {label}
-          {n ? (
-            <span
-              className="absolute top-1 left-1/2 ml-2 rounded-full px-1.5 text-xs leading-4 font-semibold tabular-nums"
-              style={{
-                background: "var(--owed)",
-                color: "var(--warning-foreground)",
-              }}
-            >
-              {n}
-            </span>
-          ) : null}
-        </NavLink>
-      ))}
-      <button
-        type="button"
-        onClick={onMore}
-        className="no-touch muted flex min-h-14 flex-col items-center justify-center gap-0.5 py-2 text-xs"
-      >
-        <Menu className="size-5" strokeWidth={1.75} aria-hidden />
-        More
-      </button>
-    </nav>
+          <Menu className="size-4.5" strokeWidth={1.8} aria-hidden />
+        </button>
+      </div>
+    </div>
   );
 }
 

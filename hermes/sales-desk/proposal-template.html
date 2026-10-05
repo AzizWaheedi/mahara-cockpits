@@ -83,7 +83,10 @@
        fallback is per character, so Latin and every digit still render in
        Geist and only Arabic letters reach the next name on the list. */
     --sans: "Geist", "Plex Arabic", "SF Arabic", "Dubai", "Segoe UI", "Tahoma", ui-sans-serif, system-ui, -apple-system, sans-serif;
-    --mono: "Geist Mono", ui-monospace, "Cascadia Mono", "SF Mono", monospace;
+    /* Geist Mono has no Arabic either: the small labels of an Arabic
+       document (the sheet names, the "prepared for" lines) fell through to
+       the VPS's DejaVu Sans on every page (measured 2026-10-04). */
+    --mono: "Geist Mono", "Plex Arabic", ui-monospace, "Cascadia Mono", "SF Mono", monospace;
     /* figures are set in the text face with tabular spacing, not in the mono
        face: mono numerals read as code, which is not what a proposal wants */
     --num: var(--sans);
@@ -354,6 +357,9 @@
   .fstage .bar { position: absolute; inset-block: 0; inset-inline: 0 auto; background: var(--navy); border-radius: var(--r); }
   .fstage .bar.acc { background: var(--teal-ink); }
   .fstage .val { font-family: var(--num); font-size: 11pt; font-weight: 600; font-variant-numeric: tabular-nums; text-align: end; }
+  /* Words where a figure would be ("a handful, all referrals") are read as a
+     note, not shouted as a number four bold lines tall. */
+  .fstage .val.words { font-family: var(--sans); font-size: 8pt; font-weight: 400; line-height: 1.3; color: var(--ink-2); }
 
   /* ============================ Tables ============================= */
   table { width: 100%; border-collapse: collapse; }
@@ -370,11 +376,11 @@
   td.num, th.num { width: 22%; text-align: end; font-family: var(--num); font-variant-numeric: tabular-nums; color: var(--ink); padding-inline-end: 0; }
   tbody td.num { font-weight: 600; }
   .total {
-    display: flex; justify-content: space-between; align-items: baseline;
+    display: flex; justify-content: space-between; align-items: baseline; gap: 6mm;
     background: var(--navy); color: #fff; padding: 4mm 5mm; margin-top: 4mm; border-radius: var(--r-lg);
   }
   .total .k { font-family: var(--mono); font-size: 8pt; letter-spacing: 0.12em; text-transform: uppercase; color: rgba(255,255,255,0.65); }
-  .total .v { font-family: var(--num); font-size: 15pt; font-weight: 600; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; color: var(--teal); }
+  .total .v { font-family: var(--num); font-size: 15pt; font-weight: 600; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; color: var(--teal); white-space: nowrap; }
 
   /* ============================ Options ============================ */
   .opts { display: grid; grid-template-columns: 1fr 1fr; gap: 7mm; }
@@ -539,6 +545,8 @@
      the elbows meet the vertical centre of each node number. */
   .tree {
     display: block;
+    /* Clear of the exhibit's rule underneath: the last sub-drivers sat on it. */
+    padding-bottom: 5mm;
     --link: #9aa6c0;
     --tree-gap: 10mm;   /* between driver columns */
     --drop: 11mm;       /* vertical run between levels */
@@ -1172,6 +1180,15 @@ const P = PROPOSAL;
    appears, and validate.py fails a draft that carries one. */
 
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+/* A share or a count of projects: two decimals under 10, one from there, a
+   trailing zero dropped. One decimal printed 0.35 as "0.3" and 1.05% as
+   "1.1%" (5 October 2026). validate.py's dec() is the same rule. */
+const dec = (v) => {
+  const n = Number(v);
+  if (!isFinite(n)) return "0";
+  const s = Math.abs(n) < 10 ? n.toFixed(2) : n.toFixed(1);
+  return /\.\d0$/.test(s) ? s.slice(0, -1) : s;
+};
 let sheets = [];
 let exhibitNo = 0;
 
@@ -1247,7 +1264,7 @@ const STR = {
     tStart: "How to start", tTree: "How the goal breaks down", theGoal: "The goal",
     beExtra: "Extra projects across the ", beMonths: " months to break even",
     bePerMonth: "Which is this many a month",
-    beTarget: "What the plan is built to produce a month",
+    beTarget: "The plan's target",
     youPay: "Everything you pay us,", monthsWord: "months", gapYear: "The gap, one year",
     secArith: "The arithmetic", tArith: "What it takes to pay for itself",
     theShape: "The shape", tShape: "What we find in firms like yours",
@@ -1256,13 +1273,17 @@ const STR = {
     beProject: "Your average project", beAtNet: "At ", beNet: " percent net",
     beTable: "Projects needed to cover the whole engagement",
     beIfMargin: "If your net margin is", beOneJob: "One project covers it all at",
-    beYourProject: "Your average project", beWholeThing: "The whole engagement",
+    beYourProject: "Your project value", beWholeThing: "The whole engagement",
     beVolProject: "One project is worth", beVolRate: "You sign",
     beVolTarget: "Additional projects targeted", beVolCovers: "Covered by",
+    beOfOne: "of one project", beProjectsWord: "projects", lostHere: "lost here, ", rangeTo: " to ",
     beVolTable: "The engagement against what the term is meant to add",
     beCoversIf: "One project covers it if you keep more than",
     beMarginTable: "What one project has to leave you",
     beThreshold: "What one project has to be worth",
+    beGross: "Your gross margin", beGrossLeft: "Gross profit on one project",
+    beVolCoversGross: "Covered by, at your gross margin", beGrossCovers: "Projects to cover it, at your gross margin",
+    beAtGross: "At ", beGrossPct: " percent gross", beIfGross: "If your gross margin is",
     overflow: "This page overflows A4. Trim the content before sending."
   },
   ar: {
@@ -1310,7 +1331,7 @@ const STR = {
     beExtra: "\u0645\u0634\u0627\u0631\u064a\u0639 \u0625\u0636\u0627\u0641\u064a\u0629 \u062e\u0644\u0627\u0644 \u0627\u0644\u0640 ",
     beMonths: " \u0623\u0634\u0647\u0631 \u0644\u0628\u0644\u0648\u063a \u0627\u0644\u062a\u0639\u0627\u062f\u0644",
     bePerMonth: "\u0623\u064a \u0647\u0630\u0627 \u0627\u0644\u0639\u062f\u062f \u0634\u0647\u0631\u064a\u064b\u0627",
-    beTarget: "\u0645\u0627 \u0628\u064f\u0646\u064a \u0647\u0630\u0627 \u0627\u0644\u0628\u0631\u0646\u0627\u0645\u062c \u0644\u064a\u062d\u0642\u0642\u0647 \u0634\u0647\u0631\u064a\u064b\u0627",
+    beTarget: "\u0647\u062f\u0641 \u0627\u0644\u062e\u0637\u0629",
     overflow: "\u0647\u0630\u0647 \u0627\u0644\u0635\u0641\u062d\u0629 \u062a\u062a\u062c\u0627\u0648\u0632 \u0645\u0642\u0627\u0633 A4. \u0627\u062e\u062a\u0635\u0631 \u0627\u0644\u0645\u062d\u062a\u0648\u0649 \u0642\u0628\u0644 \u0627\u0644\u0625\u0631\u0633\u0627\u0644.",
     secArith: "\u0627\u0644\u062d\u0633\u0627\u0628",
     theShape: "\u0627\u0644\u0646\u0645\u0637 \u0627\u0644\u0645\u062a\u0643\u0631\u0631",
@@ -1324,17 +1345,24 @@ const STR = {
     beAtNet: "\u0639\u0646\u062f \u0635\u0627\u0641\u064a ", beNet: "\u066a",
     beTable: "\u0639\u062f\u062f \u0627\u0644\u0645\u0634\u0627\u0631\u064a\u0639 \u0627\u0644\u0644\u0627\u0632\u0645 \u0644\u062a\u063a\u0637\u064a\u0629 \u0627\u0644\u0627\u0633\u062a\u062b\u0645\u0627\u0631 \u0643\u0627\u0645\u0644\u064b\u0627",
     beIfMargin: "\u0625\u0630\u0627 \u0643\u0627\u0646 \u0635\u0627\u0641\u064a \u0631\u0628\u062d\u0643",
-    beYourProject: "\u0645\u062a\u0648\u0633\u0637 \u0642\u064a\u0645\u0629 \u0645\u0634\u0631\u0648\u0639\u0643",
+    beYourProject: "\u0642\u064a\u0645\u0629 \u0645\u0634\u0631\u0648\u0639\u0643",
     beVolProject: "\u0642\u064a\u0645\u0629 \u0627\u0644\u0645\u0634\u0631\u0648\u0639 \u0627\u0644\u0648\u0627\u062d\u062f",
     beVolRate: "\u0645\u0639\u062f\u0644 \u0627\u0644\u062a\u0648\u0642\u064a\u0639 \u0644\u062f\u064a\u0643",
     beVolTarget: "\u0627\u0644\u0645\u0634\u0627\u0631\u064a\u0639 \u0627\u0644\u0625\u0636\u0627\u0641\u064a\u0629 \u0627\u0644\u0645\u0633\u062a\u0647\u062f\u0641\u0629",
     beVolCovers: "\u064a\u063a\u0637\u064a\u0647",
+    /* An Arabic page printed "0.85 of one project" and "lost here" in
+       English. The loss is said as the gap page's title says it (يتسرّب). */
+    lostHere: "\u062a\u0633\u0631\u0651\u0628 \u0647\u0646\u0627\u060c ", rangeTo: " \u0625\u0644\u0649 ",
+    beOfOne: "\u0645\u0646 \u0645\u0634\u0631\u0648\u0639 \u0648\u0627\u062d\u062f", beProjectsWord: "\u0645\u0634\u0627\u0631\u064a\u0639",
     beVolTable: "\u0627\u0644\u0627\u0633\u062a\u062b\u0645\u0627\u0631 \u0645\u0642\u0627\u0628\u0644 \u0645\u0627 \u062a\u0636\u064a\u0641\u0647 \u0627\u0644\u0645\u062f\u0629",
     beWholeThing: "\u0625\u062c\u0645\u0627\u0644\u064a \u0627\u0644\u0627\u0633\u062a\u062b\u0645\u0627\u0631",
     beCoversIf: "\u0645\u0634\u0631\u0648\u0639 \u0648\u0627\u062d\u062f \u064a\u063a\u0637\u064a\u0647 \u0625\u0630\u0627 \u0628\u0642\u064a \u0644\u0643 \u0623\u0643\u062b\u0631 \u0645\u0646",
     beMarginTable: "\u0643\u0645 \u064a\u062c\u0628 \u0623\u0646 \u064a\u062a\u0631\u0643 \u0644\u0643 \u0645\u0634\u0631\u0648\u0639 \u0648\u0627\u062d\u062f",
     beOneJob: "\u0645\u0634\u0631\u0648\u0639 \u0648\u0627\u062d\u062f \u064a\u063a\u0637\u064a \u0627\u0644\u0643\u0644\u0641\u0629 \u0639\u0646\u062f",
     beThreshold: "\u0643\u0645 \u064a\u062c\u0628 \u0623\u0646 \u062a\u0633\u0627\u0648\u064a \u0642\u064a\u0645\u0629 \u0645\u0634\u0631\u0648\u0639 \u0648\u0627\u062d\u062f",
+    beGross: "\u0647\u0627\u0645\u0634 \u0631\u0628\u062d\u0643 \u0627\u0644\u0625\u062c\u0645\u0627\u0644\u064a", beGrossLeft: "\u0627\u0644\u0631\u0628\u062d \u0627\u0644\u0625\u062c\u0645\u0627\u0644\u064a \u0645\u0646 \u0645\u0634\u0631\u0648\u0639 \u0648\u0627\u062d\u062f",
+    beVolCoversGross: "\u064a\u063a\u0637\u064a\u0647\u060c \u0639\u0646\u062f \u0647\u0627\u0645\u0634\u0643 \u0627\u0644\u0625\u062c\u0645\u0627\u0644\u064a", beGrossCovers: "\u0639\u062f\u062f \u0627\u0644\u0645\u0634\u0627\u0631\u064a\u0639 \u0644\u062a\u063a\u0637\u064a\u062a\u0647\u060c \u0639\u0646\u062f \u0647\u0627\u0645\u0634\u0643 \u0627\u0644\u0625\u062c\u0645\u0627\u0644\u064a",
+    beAtGross: "\u0639\u0646\u062f \u0647\u0627\u0645\u0634 \u0625\u062c\u0645\u0627\u0644\u064a ", beGrossPct: "\u066a", beIfGross: "\u0625\u0630\u0627 \u0643\u0627\u0646 \u0647\u0627\u0645\u0634\u0643 \u0627\u0644\u0625\u062c\u0645\u0627\u0644\u064a",
   }
 };
 let L = STR.en;
@@ -1399,22 +1427,42 @@ if (P.funnel || (P.gap_points && P.gap_points.length)
        handles this by omitting the track; the funnel now does the same and
        falls back to a labelled list. */
     const anyValue = P.funnel.stages.some(x => (Number(x.value) || 0) > 0);
+    /* A stage's count when it is printed as a figure: a number in value and a
+       display that is that same figure, or none. A range ("8 to 10") or words
+       are never subtracted from anything (validate.py stage_figure). */
+    const figureOf = (x) => {
+      const v = typeof x.value === "number" ? x.value
+        : (/^\s*-?\d+(\.\d+)?\s*$/.test(String(x.value ?? "")) ? Number(x.value) : NaN);
+      if (!isFinite(v)) return null;
+      if (x.display == null || String(x.display).trim() === "") return v;
+      const shown = String(x.display).replace(/[\u0660-\u0669]/g, d => d.charCodeAt(0) - 0x0660).replace(/[,\u066c]/g, "").trim();
+      return /^\d+(\.\d+)?$/.test(shown) && Number(shown) === v ? v : null;
+    };
+    /* Two stages count the same people unless one says otherwise ("pool"). */
+    const poolOf = (x) => (x.pool !== undefined ? x.pool : P.funnel.pool) || "";
     const bars = P.funnel.stages.map((x, i) => {
       /* A stage with nothing in it draws no bar at all. A minimum-width bar
          would read as a small number rather than as an absence. */
       const v = Number(x.value) || 0;
       const w = v === 0 ? 0 : Math.max(6, (v / max) * 100);
       const last = i === P.funnel.stages.length - 1;
+      /* A stage whose display is words has no figure: it draws no track, which
+         would read as an empty box, and its words are set as words. */
+      const shown = x.display != null ? x.display : x.value;
+      const words = !/\d/.test(String(shown ?? "")) && !/[\u0660-\u0669]/.test(String(shown ?? ""));
       /* the drop from the stage above, drawn so the reader never has to
-         subtract two numbers to see where the money goes */
-      const prev = i > 0 ? Number(P.funnel.stages[i - 1].value) || 0 : 0;
-      const drop = i > 0 ? prev - (Number(x.value) || 0) : 0;
+         subtract two numbers to see where the money goes: only between two
+         stages printed as figures, from the same pool */
+      const prev = i > 0 ? figureOf(P.funnel.stages[i - 1]) : null;
+      const cur = figureOf(x);
+      const same = i > 0 && poolOf(x) === poolOf(P.funnel.stages[i - 1]);
+      const drop = prev !== null && cur !== null && same ? prev - cur : 0;
       const pct = prev > 0 ? Math.round(drop / prev * 100) : 0;
       return `<div class="fstage${anyValue ? "" : " nofig"}">
         <div class="lab">${esc(x.label)}<small>${esc(x.note)}</small></div>
-        ${anyValue ? `<div class="track"><div class="bar${last ? " acc" : ""}" style="width:${w.toFixed(1)}%"></div></div>` : ""}
-        <div class="val">${esc(x.display != null ? x.display : x.value)}</div>
-        <div class="lk">${drop > 0 ? `&minus;${drop}<small>lost here, ${pct}%</small>` : ""}</div>
+        ${anyValue ? (words ? `<div></div>` : `<div class="track"><div class="bar${last ? " acc" : ""}" style="width:${w.toFixed(1)}%"></div></div>`) : ""}
+        <div class="val${words ? " words" : ""}">${esc(shown)}</div>
+        <div class="lk">${drop > 0 ? `&minus;${drop}<small>${L.lostHere}${pct}%</small>` : ""}</div>
       </div>`;
     }).join("");
     fig = exhibit(P.funnel.title, bars, P.funnel.note);
@@ -1576,7 +1624,11 @@ if (P.arithmetic && ((P.arithmetic.project_values || []).length
   const total = Number(a.engagement_total) || (P.roi && P.roi.fee_usd
     ? (Number(P.roi.fee_usd) + (Number(P.roi.ad_monthly_usd) || 0) * months) * (Number(P.roi.usd_rate) || 1)
     : 0);
-  const margins = (a.margins && a.margins.length ? a.margins : [10, 20]).map(Number);
+  /* A gross margin the client gave is counted, and labelled gross. Typed in
+     Arabic digits it is still a number (validate.py reads it as one). */
+  const gmRaw = Number(String(a.gross_margin ?? "").replace(/[\u0660-\u0669]/g, d => d.charCodeAt(0) - 0x0660));
+  const gm = gmRaw > 0 ? gmRaw : 0;
+  const margins = (a.margins && a.margins.length ? a.margins : gm ? [gm] : [10, 20]).map(Number);
   const num = (v) => Math.round(v).toLocaleString("en-US");
 
   const threshold = a.mode === "threshold";
@@ -1592,14 +1644,16 @@ if (P.arithmetic && ((P.arithmetic.project_values || []).length
        makes the answer the least flattering one their figures allow. */
     const lo = Number(a.project_value_low);
     const hi = Number(a.project_value_high) || lo;
-    const need = lo > 0 ? total / lo : 0;
+    const per = gm ? lo * gm / 100 : lo;
+    const need = per > 0 ? total / per : 0;
     head = "";
     rows = [
       [L.beWholeThing, esc(cur) + " " + num(total)],
-      [L.beVolProject, esc(cur) + " " + num(lo) + (hi > lo ? " to " + num(hi) : "")],
+      [L.beVolProject, esc(cur) + " " + num(lo) + (hi > lo ? L.rangeTo + num(hi) : "")],
+      ...(gm ? [[L.beGross, gm + "%"], [L.beGrossLeft, esc(cur) + " " + num(per)]] : []),
       [L.beVolRate, esc(a.rate_display || "")],
       [L.beVolTarget, esc(a.target_display || "")],
-      [L.beVolCovers, need.toFixed(1) + " " + (need <= 1 ? "of one project" : "projects")],
+      [gm ? L.beVolCoversGross : L.beVolCovers, dec(need) + " " + (need <= 1 ? L.beOfOne : L.beProjectsWord)],
     ].filter(([, v]) => v !== "").map(([k, v], i, arr) =>
       `<tr class="${i === arr.length - 1 ? "under" : ""}"><td>${k}</td><td>${v}</td></tr>`).join("");
   } else if (marginMode) {
@@ -1611,19 +1665,24 @@ if (P.arithmetic && ((P.arithmetic.project_values || []).length
     const pct = value > 0 ? (total / value) * 100 : 0;
     head = "";
     rows = [
-      [L.beYourProject, esc(cur) + " " + num(value)],
+      /* The deal names the figure when it is not an average (a minimum
+         ticket, a typical job); the label otherwise claims nothing. */
+      [a.project_label ? esc(a.project_label) : L.beYourProject, esc(cur) + " " + num(value)],
       [L.beWholeThing, esc(cur) + " " + num(total)],
-      [L.beCoversIf, pct.toFixed(1) + "%"],
+      [L.beCoversIf, dec(pct) + "%"],
+      ...(gm && value > 0 ? [[L.beGross, gm + "%"], [L.beGrossCovers, dec(total / (value * gm / 100))]] : []),
     ].map(([k, v], i) => `<tr class="${i === 2 ? "under" : ""}"><td>${k}</td><td>${v}</td></tr>`).join("");
   } else if (threshold) {
     /* One question, one answer, in money. The reader finds his margin and
        reads across once. Nothing here is a count of his projects and nothing
        is a share of them, which is what the two-column shape kept implying. */
-    head = `<tr><th>${L.beIfMargin}</th><th>${L.beOneJob}</th></tr>`;
+    head = `<tr><th>${gm && margins.every(m => m === gm) ? L.beIfGross : L.beIfMargin}</th><th>${L.beOneJob}</th></tr>`;
     rows = margins.map(m => `<tr><td>${m}%</td><td>${esc(cur)} ${num(total / (m / 100))}</td></tr>`).join("");
   } else {
     head = `<tr><th>${L.beProject}</th>${margins.map(m =>
-      `<th>${L.beAtNet}${m}${L.beNet}</th>`).join("")}</tr>`;
+      /* Only the client's own gross margin is labelled gross; any other
+         column is the illustrative net margin it always was. */
+      gm && m === gm ? `<th>${L.beAtGross}${m}${L.beGrossPct}</th>` : `<th>${L.beAtNet}${m}${L.beNet}</th>`).join("")}</tr>`;
     rows = a.project_values.map(v => {
       const cells = margins.map(m => {
         const profit = Number(v) * m / 100;
@@ -1635,7 +1694,7 @@ if (P.arithmetic && ((P.arithmetic.project_values || []).length
          where every answer flatters us is not evidence. */
       const under = cells.every(c => c > 0 && c < 1);
       return `<tr class="${under ? "under" : ""}"><td>${esc(cur)} ${num(v)}</td>${
-        cells.map(c => `<td>${c.toFixed(1)}</td>`).join("")}</tr>`;
+        cells.map(c => `<td>${dec(c)}</td>`).join("")}</tr>`;
     }).join("");
   }
 
@@ -1737,7 +1796,11 @@ if (P.solution && P.solution.length) {
    deal's file. Anything the data file states wins over the calculation. */
 let breakevenRows = (P.roi_breakeven && P.roi_breakeven.length) ? P.roi_breakeven : null;
 
-if (P.roi && P.roi.fee_usd && Number(P.roi.avg_project_value) > 0) {
+/* Only with a project value and a margin: without the margin the profit is
+   0 and the page printed "0.0 extra projects to break even" (5 October 2026,
+   on every general proposal that had a project value). The arithmetic page
+   already makes that case in the general variant. */
+if (P.roi && P.roi.fee_usd && Number(P.roi.avg_project_value) > 0 && Number(P.roi.margin_pct) > 0) {
   const r = P.roi;
   const rate = Number(r.usd_rate) || 1;
   const months = Number(r.months) || 3;
@@ -1747,10 +1810,14 @@ if (P.roi && P.roi.fee_usd && Number(P.roi.avg_project_value) > 0) {
   const perMonth = breakeven / months;
 
   if (!breakevenRows) {
+    /* The third tile is the plan's target as the deal states it, with the
+       period in its own words ("2 to 4 a month", "1 to 3 over three
+       months"), so the label names no period of its own; none is invented
+       when the deal gives none. */
     breakevenRows = [
-      { v: breakeven.toFixed(1), k: L.beExtra + months + L.beMonths },
-      { v: perMonth.toFixed(1), k: L.bePerMonth },
-      { v: r.target_projects_month || "2 to 4", k: L.beTarget }
+      { v: dec(breakeven), k: L.beExtra + months + L.beMonths },
+      { v: dec(perMonth), k: L.bePerMonth },
+      ...(r.target_projects_month ? [{ v: r.target_projects_month, k: L.beTarget }] : [])
     ];
   }
 }
@@ -1855,8 +1922,14 @@ document.documentElement.style.setProperty("--sheets", '"' + document.querySelec
    overflowing pages out of three. */
 function overflowGuard() {
   const A4 = 297 / 25.4 * 96; /* mm to css px */
+  /* By how much, too: the sales desk tells the drafter, so a sheet two lines
+     over is asked for two lines and not for half its words. */
   document.querySelectorAll(".sheet").forEach(s => {
-    s.classList.toggle("over", s.getBoundingClientRect().height > A4 + 2);
+    const h = s.getBoundingClientRect().height;
+    const over = h > A4 + 2;
+    s.classList.toggle("over", over);
+    if (over) s.dataset.overPx = String(Math.ceil(h - A4));
+    else delete s.dataset.overPx;
   });
 }
 overflowGuard();
@@ -2112,7 +2185,7 @@ renderDoc();
     usd_rate: "USD rate", fee_usd: "Our fee, USD", ad_monthly_usd: "Ad spend a month, USD",
     avg_project_value: "Their average project", margin_pct: "Net margin, percent",
     project_note: "Note on the project value", margin_note: "Note on the margin",
-    target_projects_month: "Projects a month we aim for"
+    target_projects_month: "The plan's target, with its period (2 to 4 a month)"
   };
   const nested = (k) => NESTED[k] || human(k);
 

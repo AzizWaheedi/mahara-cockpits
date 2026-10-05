@@ -305,7 +305,9 @@ export function fillPaths(v: unknown, path: (string | number)[] = [], out: strin
 /**
  * Put the closer's figures into a draft. Only a string that still carries a
  * FILL can be replaced, so this cannot rewrite anything the model or the
- * validator already settled. A bare number becomes a number.
+ * validator already settled. A bare number becomes a number. What the closer
+ * typed is also kept, as typed, in the deal's closer_figures, so drafting the
+ * proposal again can put it back (proposals.ts retryPlan).
  */
 export function applyFills(
   deal: unknown,
@@ -315,6 +317,9 @@ export function applyFills(
   if (!copy || typeof copy !== "object") return { ok: false, error: "This proposal has no draft to fill in." };
   const allowed = new Set(fillPaths(copy));
   const changed: string[] = [];
+  const before = copy.closer_figures;
+  const kept: Record<string, string> =
+    before && typeof before === "object" && !Array.isArray(before) ? { ...(before as Record<string, string>) } : {};
   for (const [path, raw] of Object.entries(fills ?? {})) {
     if (!allowed.has(path)) return { ok: false, error: `"${path}" is not a blank in this draft.` };
     const value = cleanText(raw, 1000);
@@ -330,7 +335,9 @@ export function applyFills(
       ? Number(value.replace(/,/g, ""))
       : value;
     changed.push(path);
+    kept[path] = value;
   }
+  if (changed.length) copy.closer_figures = kept;
   return { ok: true, deal: copy, changed };
 }
 

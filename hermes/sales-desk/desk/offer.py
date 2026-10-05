@@ -221,12 +221,17 @@ def prompt_block(resolved: dict[str, Any]) -> str:
     if resolved.get("ads_daily_min") and resolved.get("ads_daily_max"):
         daily = f" (we recommend starting at {cur} {resolved['ads_daily_min']:,} to {resolved['ads_daily_max']:,} a day)"
     deposit = money(resolved["deposit"], cur)
+    # Paid in full there is no first payment, only the one at the start
+    # (5 October 2026: three drafts paid in full said "comes off the first
+    # payment", the line this block used to give every proposal).
+    comes_off = "the payment at the start" if len(resolved["instalments"]) == 1 else "the first payment"
     lines = [
         f"- **{resolved['program']}, {term}, {price}.**",
         f"- **Advertising {ads} a month**{daily}, paid by the client directly to the platforms, "
         "always its own line.",
-        f"- **{deposit} deposit** reserves the start date and comes off the first payment.",
-        f"- **{resolved['meetings']} qualified meetings across the term** is what the program is built to deliver.",
+        f"- **{deposit} deposit** reserves the start date and comes off {comes_off}.",
+        f"- **{resolved['meetings']} qualified meetings across the term** is the target the program works to. "
+        "Write it as a target, never as an output the program is made to produce.",
     ]
     parts = resolved["instalments"]
     if len(parts) == 1:

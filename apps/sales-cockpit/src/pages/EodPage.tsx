@@ -2,6 +2,7 @@ import { CheckCircle2, ClipboardCheck } from "lucide-react";
 import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "react-router";
 import {
+  AnimatedSelect,
   button,
   buttonPrimary,
   EmptyState,
@@ -159,7 +160,7 @@ export default function EodPage({ me }: { me: Me }) {
             />
           ) : null}
           {data ? (
-            <select
+            <AnimatedSelect
               aria-label="Which day"
               value={data.day}
               onChange={e =>
@@ -175,7 +176,7 @@ export default function EodPage({ me }: { me: Me }) {
                   {d === data.today ? "Today" : dayWords(d)}
                 </option>
               ))}
-            </select>
+            </AnimatedSelect>
           ) : null}
         </div>
       </header>

@@ -66,6 +66,7 @@ from desk import offer as offer_mod  # noqa: E402
 from desk import prompt as prompt_mod  # noqa: E402
 from desk import queue as queue_mod  # noqa: E402
 from desk import recordings as recordings_mod  # noqa: E402
+from desk import references as references_mod  # noqa: E402
 from desk import render as render_mod  # noqa: E402
 from desk import followups as followups_mod  # noqa: E402
 from desk import research as research_mod  # noqa: E402
@@ -73,7 +74,7 @@ from desk import waves as waves_mod  # noqa: E402
 from desk import reviews as reviews_mod  # noqa: E402
 from desk import rooms as rooms_mod  # noqa: E402
 from desk import validate as validate_mod  # noqa: E402
-from desk.config import DEFAULT_MODELS, WORKER, Config, key  # noqa: E402
+from desk.config import DEFAULT_MODELS, FALLBACK_JOBS, WORKER, Config, key  # noqa: E402
 from desk.errors import NotNow, Refused  # noqa: E402
 from desk.log import Logger  # noqa: E402
 from desk.supabase import TABLES, Supabase, SupabaseError  # noqa: E402
@@ -125,10 +126,250 @@ def _meter(cfg: Config, job: str, log: Logger) -> None:
         out = sb.rest("POST", "rpc/cockpit_sales_ai_tokens_since", json_body={"p_since": midnight})
         return int(out or 0)
 
-    def record(row: dict[str, Any]) -> None:
+    model_mod.meter(model_mod.Meter(job=job, cap=cap, used_today=used_today, record=usage_recorder(sb, log.warn),
+                                    warn=log.warn))
+
+
+USAGE_PROVIDER_MIGRATION = "supabase/migrations/20261004p_sales_ai_usage_provider.sql"
+
+
+def usage_recorder(sb: Supabase, warn: Callable[[str], None]) -> Callable[[dict[str, Any]], None]:
+    """One cockpit_sales_ai_usage row per model call, naming the provider that
+    answered. Until the provider column exists (USAGE_PROVIDER_MIGRATION), the
+    row is written without it and the provider goes into the model instead
+    ("openrouter:anthropic/claude-opus-4.8"), so no call goes uncounted."""
+    state = {"column": True}
+
+    def write(row: dict[str, Any]) -> None:
         sb.rest("POST", "cockpit_sales_ai_usage", json_body=[row], prefer="return=minimal", retries=0)
 
-    model_mod.meter(model_mod.Meter(job=job, cap=cap, used_today=used_today, record=record, warn=log.warn))
+    def record(row: dict[str, Any]) -> None:
+        if state["column"] or "provider" not in row:
+            try:
+                write(row)
+                return
+            except http.HttpError as e:
+                body = e.body.decode("utf-8", "replace") if isinstance(e.body, (bytes, bytearray)) else str(e.body)
+                if "provider" not in row or "provider" not in body or e.status not in (400, 404):
+                    raise
+                state["column"] = False
+                warn("the AI usage table has no provider column yet, so each row names its provider inside the "
+                     f"model (openrouter:anthropic/claude-opus-4.8) until {USAGE_PROVIDER_MIGRATION} is applied")
+        row = dict(row)
+        name = row.pop("provider", None)
+        if name and row.get("model") and not str(row["model"]).startswith(f"{name}:"):
+            row["model"] = f"{name}:{row['model']}"
+        write(row)
+
+    return record
+
+
+def model_rows(cfg: Config, log: Logger, *, online: bool, primary: Callable[..., Any] = model_mod.provider,
+               fallback: Callable[..., Any] = model_mod.fallback_provider, cron: bool = False,
+               seen: Optional[dict[str, Any]] = None) -> list[dict[str, Any]]:
+    """The doctor's lines for the model: the primary, the fallback, and whether
+    anything can draft. With a fallback for proposals, a primary that cannot
+    answer is a warning and the doctor is blocked only when neither can.
+
+    cron (the hourly doctor): each model is asked one token and nothing more,
+    no model list and no stream test. A primary that only missed (a timeout,
+    an answer that is not JSON) is not known rather than down: one miss is no
+    outage. `seen["probe"]` is left as (answers, sentence, outage) for the
+    model's own status row (_model_status), when the primary was asked."""
+    rows: list[dict[str, Any]] = []
+    timeout = 30 if cron else 60
+
+    def probed(ok: bool, detail: str, outage: bool) -> None:
+        if seen is not None:
+            seen["probe"] = (ok, detail, outage)
+
+    def add(name: str, ok: Optional[bool], detail: str, required: bool = False) -> None:
+        rows.append({"check": name, "ok": ok, "detail": detail, "required": required})
+
+    fb_on = model_mod.fallback_for(cfg, "proposal")
+    fname = (cfg.fallback or "none").strip().lower()
+    fb_any = fname not in ("", "none") and fname != cfg.provider and bool(cfg.fallback_jobs)
+    plabel = f"{cfg.provider} ({cfg.model})"
+    add("model", True, f"SALES_MODEL_PROVIDER={cfg.provider}, SALES_PROPOSAL_MODEL={cfg.model}"
+                       + ("" if cfg.model != DEFAULT_MODELS.get(cfg.provider) else " (the default)"))
+    p, p_err = None, None
+    try:
+        p = primary(cfg, log.info)
+        add("model key", True, "none needed: the Claude proxy on the VPS" if cfg.provider == "vps"
+            else f"{model_mod.KEY_NAMES[cfg.provider]} set for {cfg.provider}", not fb_on)
+    except NotNow as e:
+        p_err = e if isinstance(e, model_mod.ModelUnreachable) else model_mod.ModelUnreachable(str(e))
+        add("model key", False, str(e), not fb_on)
+        # No model can be asked at all: the model's row says so, never an
+        # old "opus answered" left green.
+        probed(False, str(e), True)
+
+    f, f_err, fmodel = None, None, ""
+    if not fb_any:
+        why = ("the same as SALES_MODEL_PROVIDER, so it is no fallback" if fname == cfg.provider
+               else "no job named in SALES_FALLBACK_JOBS" if fname not in ("", "none") else "off")
+        add("fallback", None, f"SALES_MODEL_FALLBACK={fname}: {why}. When {cfg.provider} cannot answer, nothing is "
+                              "drafted until it can; set SALES_MODEL_FALLBACK=openai in ~/.sales-desk/env (its key "
+                              "is already on the VPS) for a second way")
+    else:
+        fmodel = model_mod.fallback_model(cfg)
+        unknown = [j for j in cfg.fallback_jobs if j not in FALLBACK_JOBS]
+        add("fallback", True if not unknown else None,
+            f"SALES_MODEL_FALLBACK={fname}, model {fmodel} ("
+            + ("SALES_FALLBACK_MODEL" if cfg.fallback_model else f"the closest to {cfg.model}")
+            + f"), for {', '.join(cfg.fallback_jobs)} when {cfg.provider} cannot answer"
+            + (f"; not jobs: {', '.join(unknown)} (the jobs are {', '.join(FALLBACK_JOBS)})" if unknown else ""))
+        try:
+            f = fallback(cfg, log.info)
+            add("fallback key", True, "none needed: the Claude proxy on the VPS" if fname == "vps"
+                else f"{model_mod.KEY_NAMES.get(fname, fname)} set for {fname}")
+        except NotNow as e:
+            f_err = e if isinstance(e, model_mod.ModelUnreachable) else model_mod.ModelUnreachable(str(e))
+            add("fallback key", False, str(e))
+    flabel = f"{fname} ({fmodel})"
+    primary_ok, fallback_ok = p is not None, f is not None
+
+    if online and p is not None:
+        try:
+            answered = p.ping(timeout=timeout)
+            add("model answers", True, answered, not fb_on)
+            probed(True, answered, False)
+        except NotNow as e:
+            # An outage: the sign-in lapsed, the proxy is gone, the plan's limit.
+            primary_ok = False
+            p_err = e if isinstance(e, model_mod.ModelUnreachable) else model_mod.ModelUnreachable(str(e))
+            add("model answers", False, str(e), not fb_on)
+            probed(False, str(e), True)
+        except Exception as e:  # noqa: BLE001 - a 200 with an HTML body, a timeout: one miss, said
+            # One miss is not known, not a blocker; only an outage blocks. A
+            # fallback still takes over for the drafting line.
+            primary_ok = False
+            why = http.scrub(str(e))[:200]
+            p_err = model_mod.ModelUnreachable(f"{cfg.provider} did not answer a one-token call: {why}",
+                                               cause=f"{cfg.provider} did not answer a one-token call")
+            add("model answers", None, str(p_err), not fb_on)
+            probed(False, f"The model did not answer a one-token call: {why}", False)
+    if online and p is not None and not cron:
+        try:
+            ids = p.models()
+            if cfg.model in ids:
+                add("model listed", True, f"{cfg.model} is one of the {len(ids)} models this key can use")
+            else:
+                usable = [i for i in ids if model_mod.model_allowed(i)]
+                add("model listed", False, f"{cfg.model} is not among the models this key can use. Set "
+                                           "SALES_PROPOSAL_MODEL to one of: " + ", ".join(usable[:20] or ids[:20]),
+                    not fb_on)
+        except (NotNow, model_mod.ModelError) as e:
+            add("model listed", None, f"the model list could not be read: {e}")
+        if getattr(p, "name", "") == "openai":
+            streams = p.stream_check()
+            if streams is False:
+                add("model streams", None, "OpenAI will not stream this model to this organisation; drafts ask "
+                                           "without streaming and wait for the whole answer instead")
+            elif streams:
+                add("model streams", True, "streaming works, so a long draft is timed by its silences")
+
+    if online and f is not None:
+        try:
+            add("fallback answers", True, f.ping(timeout=timeout))
+        except NotNow as e:
+            fallback_ok = False
+            f_err = e if isinstance(e, model_mod.ModelUnreachable) else model_mod.ModelUnreachable(str(e))
+            add("fallback answers", False, str(e))
+        except Exception as e:  # noqa: BLE001 - a timeout or a malformed answer: it did not answer
+            fallback_ok = False
+            f_err = model_mod.ModelUnreachable(f"{fname} did not answer a one-token call: {http.scrub(str(e))[:200]}",
+                                               cause=f"{fname} did not answer a one-token call")
+            add("fallback answers", False, str(f_err))
+    if online and f is not None and not cron:
+        try:
+            ids = f.models()
+            if fmodel in ids:
+                add("fallback listed", True, f"{fmodel} is one of the {len(ids)} models {fname} lists")
+            else:
+                usable = [i for i in ids if model_mod.model_allowed(i) and "claude-" in i] or \
+                         [i for i in ids if model_mod.model_allowed(i)]
+                add("fallback listed", False, f"{fmodel} is not among the models {fname} lists. Set "
+                                              "SALES_FALLBACK_MODEL to one of: " + ", ".join(usable[:12]))
+        except (NotNow, model_mod.ModelError) as e:
+            add("fallback listed", None, f"the model list could not be read: {e}")
+        if fname == "openai" and callable(getattr(f, "stream_check", None)):
+            streams = f.stream_check()
+            if streams is False:
+                add("fallback streams", None, f"OpenAI will not stream {fmodel} to this organisation; fallback "
+                                              "drafts ask without streaming and wait for the whole answer instead")
+            elif streams:
+                add("fallback streams", True, "streaming works, so a long draft is timed by its silences")
+    if online and f is not None:
+        # Asked on the hourly run too: an account out of credit is an outage.
+        credit = f.credit() if fname == "openrouter" and callable(getattr(f, "credit", None)) else None
+        if credit is not None:
+            if credit > 0:
+                add("fallback credit", True, f"${credit:,.2f} left on the OpenRouter account")
+            else:
+                fallback_ok = False
+                f_err = model_mod.ModelUnreachable(
+                    f"The OpenRouter account has ${credit:,.2f} left (credit bought less used), and OpenRouter refuses "
+                    "paid calls once it is spent, whatever the key's own limit says. Top it up at "
+                    "openrouter.ai/settings/credits, or set SALES_MODEL_FALLBACK=openai in ~/.sales-desk/env; "
+                    "either works at once.",
+                    cause="the openrouter account is out of credit")
+                add("fallback credit", False, str(f_err))
+
+    if fb_on:
+        jobs = [j for j in cfg.fallback_jobs if j in FALLBACK_JOBS]
+        if primary_ok:
+            add("drafting", True, f"{plabel} {'answers' if online else 'is set up (not asked: --offline)'}; {flabel} "
+                                  f"takes over for {', '.join(jobs)} if it cannot", True)
+        elif fallback_ok:
+            others = [j for j in FALLBACK_JOBS if j not in jobs]
+            add("drafting", None, f"proposals draft through {flabel} while {plabel} cannot answer ("
+                                  f"{p_err.cause if p_err else 'it did not answer'})"
+                                  + (f"; so do {', '.join(j for j in jobs if j != 'proposal')}" if len(jobs) > 1 else "")
+                                  + (f". {', '.join(others)} wait for {cfg.provider}" if others else ""), True)
+        else:
+            pc = p_err.cause if p_err else f"{cfg.provider} did not answer"
+            fc = f_err.cause if f_err else f"{fname} did not answer"
+            add("drafting", False, f"Neither {plabel} nor {flabel} can answer, so nothing can be drafted: {pc}, and "
+                                   f"{fc}. Fixing either is enough. {p_err or ''} {f_err or ''}".strip(), True)
+    return rows
+
+
+HEADLESS_SHELL_HINT = ("set CHROME_PATH in ~/.sales-desk/env to Playwright's headless shell "
+                       "(~/.cache/ms-playwright/chromium_headless_shell-*/chrome-linux/headless_shell)")
+# The browser paths as the doctor names them (render.engine()'s words are for the log).
+ENGINE_NAMES = {"playwright": "Playwright", "chrome one-shot": "Chrome's one-shot flags"}
+
+
+def _browser_row(engine: str, chrome: Optional[str]) -> tuple[str, Optional[bool], str]:
+    """Which browser path this machine takes. Whether it works is the render
+    line's to say, from a real page (online doctor only)."""
+    if engine == "playwright":
+        return "browser", True, "Playwright, driving " + (chrome or "its own Chromium")
+    if engine == "chrome one-shot":
+        return "browser", True, (f"Chrome's one-shot flags on {chrome}; Playwright is not installed and is not "
+                                 "needed while the render line passes")
+    return "browser", None, ("no browser at all: the HTML is still made, but the PDF is skipped and overflow is not "
+                             "measured, so nothing is tightened; " + HEADLESS_SHELL_HINT)
+
+
+def _render_row(found: dict[str, Any]) -> tuple[str, Optional[bool], str]:
+    """render.probe()'s answer as one sentence."""
+    engine = found.get("engine") or ""
+    how, took = ENGINE_NAMES.get(engine, engine or "the browser"), found.get("seconds") or 0
+    if found.get("dom") and found.get("pdf"):
+        return "render", True, f"{how} rendered a page and printed a PDF in {took:g}s"
+    if found.get("dom"):
+        return "render", None, (f"{how} rendered a page but printed no PDF, so drafts are measured and the PDF is "
+                                "skipped; " + HEADLESS_SHELL_HINT)
+    return "render", None, (f"{how} could not render a page, so overflow is not measured, nothing is tightened and "
+                            "the PDF is skipped; " + HEADLESS_SHELL_HINT)
+
+
+def _reference_dom(deal: dict[str, Any]) -> Optional[str]:
+    """A reference deal built and rendered the way validate --send renders a draft."""
+    with tempfile.TemporaryDirectory(prefix="reference-") as tmp:
+        return render_mod.dom(build_mod.build(deal, Path(tmp) / "reference.html"))
 
 
 # How long the desk's model has not answered, kept on its status row: the
@@ -150,6 +391,36 @@ def model_probe(p: Any, timeout: float) -> tuple[bool, str, bool]:
         return False, str(e), True
     except Exception as e:  # noqa: BLE001 - a 200 with an HTML body, a timeout: one miss, said
         return False, f"The model did not answer a one-token call: {http.scrub(str(e))[:200]}", False
+
+
+def job_probe(p: Any, timeout: float) -> tuple[bool, str, bool, Optional[str]]:
+    """The follow-ups job's one token, with a fallback behind it or not:
+    (answers, sentence, outage) for the model's own status row, which is
+    always the primary's, so a lapsed sign-in stays said while the fallback
+    drafts; and the sentence that stops the drafting (an outage with nothing
+    to hand over to), else None. A primary that is down hands over here, as
+    a draft's own call would, rather than stopping a job SALES_FALLBACK_JOBS
+    lets fall back. Like model_probe it never raises."""
+    if not isinstance(p, model_mod.Failover):
+        ok, said, outage = model_probe(p, timeout)
+        return ok, said, outage, (said if outage else None)
+    try:
+        p.ready()
+    except NotNow as e:  # neither could be made
+        return False, str(e), True, str(e)
+    if p.on_fallback:
+        # The primary could not even be made: said as down, never pinged.
+        return False, str(p.down or "The primary model cannot be made."), True, None
+    try:
+        return True, p.p.ping(timeout=timeout), False, None
+    except NotNow as e:
+        try:
+            p.hand_over(e)
+        except NotNow as both:
+            return False, str(e), True, str(both)
+        return False, str(e), True, None
+    except Exception as e:  # noqa: BLE001 - a 200 with an HTML body, a timeout: one miss, said
+        return False, f"The model did not answer a one-token call: {http.scrub(str(e))[:200]}", False, None
 
 
 # Said on the model's row after one call that did not answer, and read
@@ -183,10 +454,10 @@ def _model_status(cfg: Config, log: Logger, ok: bool, detail: str, now: Optional
 
 def cmd_doctor(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     """Every key by name, each service, each blocker in a sentence. With
-    --cron (hourly): the model is asked one token and nothing more, nothing
-    is rendered, every check that breaks is a row rather than a crash, the
-    status rows are written whatever happens, and a ready run prints nothing
-    with --quiet."""
+    --cron (hourly): the model (and a fallback, when one is set) is asked one
+    token and nothing more, nothing is rendered, every check that breaks is a
+    row rather than a crash, the status rows are written whatever happens,
+    and a ready run prints nothing with --quiet."""
     cron = bool(getattr(args, "cron", False))
     rows: list[dict[str, Any]] = []
 
@@ -206,13 +477,18 @@ def cmd_doctor(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     if build_mod.TEMPLATE.is_file() and not build_mod.DATA_BLOCK.search(build_mod.TEMPLATE.read_text(encoding="utf-8")):
         add("template", False, "the @data-start / @data-end markers are gone, so no deal can be put into it", True)
 
+    # Kept for the reference deals below, which are checked against it.
+    offer: Optional[dict[str, Any]] = None
+
     def offer_check() -> None:
+        nonlocal offer
         try:
-            offer = offer_mod.load()
-            options = list((offer.get("payment") or {}).get("options") or {})
+            loaded = offer_mod.load()
+            options = list((loaded.get("payment") or {}).get("options") or {})
             for option in options:
-                offer_mod.resolve(offer, {"payment": option})
-            r = offer_mod.resolve(offer, {})
+                offer_mod.resolve(loaded, {"payment": option})
+            r = offer_mod.resolve(loaded, {})
+            offer = loaded
             add("offer.json", True, f"{offer_mod.money(r['price'])} over {offer_mod.months_words(r['months'])}, "
                                     f"payment options {', '.join(options)}, guarantee "
                                     f"{'on' if r['guarantee'] else 'off'} unless the closer says otherwise", True)
@@ -247,44 +523,43 @@ def cmd_doctor(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
         for name, ok, detail in rooms_mod.doctor_lines(offline=args.offline):
             add(name, ok, detail)
     guarded("rooms", False, room_keys)
-    add("model", True, f"SALES_MODEL_PROVIDER={cfg.provider}, SALES_PROPOSAL_MODEL={cfg.model}"
-                       + ("" if cfg.model != DEFAULT_MODELS.get(cfg.provider) else " (the default)"))
 
-    probed: Optional[tuple[bool, str, bool]] = None
-    p = None
-    try:
-        p = model_mod.provider(cfg, log.info)
-        add("model key", True, "none needed: the Claude proxy on the VPS" if cfg.provider == "vps"
-            else f"{model_mod.KEY_NAMES[cfg.provider]} set for {cfg.provider}", True)
-    except NotNow as e:
-        add("model key", False, str(e), True)
-        # No model can be asked at all: the model's row says so, never an
-        # old "opus answered" left green.
-        probed = (False, str(e), True)
+    # The primary, the fallback, and whether anything can draft (model_rows).
+    # Under --cron each is asked one token and nothing more; the primary's
+    # answer also goes on the model's own status row (_model_status below).
+    seen: dict[str, Any] = {}
 
-    refs = sorted(cfg.reference_dir.glob("*.json")) if cfg.reference_dir.is_dir() else []
-    if refs:
-        kinds = []
-        for f in refs:
-            try:
-                kinds.append(f"{f.name} ({prompt_mod.variant_of(json.loads(f.read_text(encoding='utf-8')))})")
-            except (OSError, ValueError):
-                kinds.append(f"{f.name} (unreadable)")
-        add("reference deals", True, ", ".join(kinds))
-    else:
-        add("reference deals", None, f"none in {cfg.reference_dir}: the drafter works from the rules and the "
-                                     "template's outline, and every proposal's notes say so. extract_reference.py "
-                                     "makes one from a finished proposal")
+    def models() -> None:
+        rows.extend(model_rows(cfg, log, online=not args.offline, cron=cron, seen=seen))
+    guarded("model", True, models)
 
     engine = render_mod.engine()
-    if engine == "playwright":
-        add("playwright", True, "installed: PDFs are printed and every draft is measured for overflow")
-    elif engine == "chrome one-shot":
-        add("playwright", None, "not installed, so Chrome's one-shot flags are used: they work on a laptop and hang "
-                                "on the VPS (render.py). On the VPS: pip install --user playwright")
-    else:
-        add("playwright", None, "no browser at all: the HTML is still made, but the PDF is skipped and overflow is "
-                                "not measured, so nothing is tightened. Install Playwright and Chrome")
+    add(*_browser_row(engine, render_mod.find_chrome()))
+    renders = False
+    if engine != "none" and not args.offline and not cron:
+        # Measured, never assumed: the browser line only says what was found.
+        # The hourly run renders nothing.
+        def render_check() -> None:
+            nonlocal renders
+            found = render_mod.probe()
+            add(*_render_row(found))
+            renders = bool(found.get("dom"))
+        guarded("render", False, render_check)
+
+    # Each one through the validator against today's offer.json, because the
+    # drafter copies its faults as faithfully as its shape (references.py);
+    # rendered too when the browser just did, as validate --send would.
+    def reference_check() -> None:
+        if offer is None:
+            add("reference deals", None, "not checked: offer.json does not read, and the references are checked "
+                                         "against it. Fix offer.json first")
+            return
+        try:
+            add("reference deals", *references_mod.doctor_row(cfg.reference_dir, offer,
+                                                              _reference_dom if renders else None))
+        except Refused as e:
+            add("reference deals", None, f"not checked, because offer.json gives no default offer: {e}")
+    guarded("reference deals", False, reference_check)
 
     try:
         cfg.ensure_dirs()
@@ -356,31 +631,6 @@ def cmd_doctor(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
             add("supabase", False, "DESK_SUPABASE_URL and DESK_SUPABASE_KEY are not set, so nothing can be read "
                                    "or written; source ~/.editor-desk/env", True)
 
-        if p is not None:
-            probed = model_probe(p, 30 if cron else 60)
-            # One miss is not known, not a blocker: an outage blocks.
-            add("model answers", True if probed[0] else (False if probed[2] else None), probed[1], True)
-            if not cron:
-                def listed() -> None:
-                    try:
-                        ids = p.models()
-                        if cfg.model in ids:
-                            add("model listed", True, f"{cfg.model} is one of the {len(ids)} models this key can use")
-                        else:
-                            usable = [i for i in ids if model_mod.model_allowed(i)]
-                            add("model listed", False, f"{cfg.model} is not among the models this key can use. Set "
-                                                       "SALES_PROPOSAL_MODEL to one of: " + ", ".join(usable[:20] or ids[:20]), True)
-                    except (NotNow, model_mod.ModelError) as e:
-                        add("model listed", None, f"the model list could not be read: {e}")
-                guarded("model listed", False, listed)
-                if getattr(p, "name", "") == "openai":
-                    streams = p.stream_check()
-                    if streams is False:
-                        add("model streams", None, "OpenAI will not stream this model to this organisation; drafts ask "
-                                                   "without streaming and wait for the whole answer instead")
-                    elif streams:
-                        add("model streams", True, "streaming works, so a long draft is timed by its silences")
-
         def fathom_check() -> None:
             if cfg.fathom_key:
                 try:
@@ -426,17 +676,6 @@ def cmd_doctor(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
                                         "and writes nothing", True)
         guarded("highlevel", True, highlevel_check)
 
-        if engine == "playwright" and not cron:
-            def render_check() -> None:
-                with tempfile.TemporaryDirectory() as tmp:
-                    page = Path(tmp) / "probe.html"
-                    page.write_text("<!doctype html><title>probe</title><p>ok</p>", encoding="utf-8")
-                    ok = bool(render_mod.dom(page))
-                    add("render", ok or None, "Chrome renders a page through Playwright" if ok else
-                        "Playwright is installed but could not render a page: run python3 -m playwright install "
-                        "chromium, or set CHROME_PATH to a Chrome this user can run")
-            guarded("render", False, render_check)
-
     blockers = [r for r in rows if r["required"] and r["ok"] is False]
     unknown = [r for r in rows if r["required"] and r["ok"] is None]
     if args.json:
@@ -458,6 +697,7 @@ def cmd_doctor(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
         detail = ("ready" if not blockers else "blocked: " + " | ".join(b["detail"] for b in blockers)) + \
             ("; not known: " + " | ".join(f"{u['check']} ({u['detail']})" for u in unknown) if unknown else "")
         _status(cfg, log, "doctor", not blockers, detail)
+        probed = seen.get("probe")
         if probed is not None:
             _model_status(cfg, log, probed[0], probed[1], outage=probed[2])
     return 1 if blockers else 0
@@ -532,14 +772,24 @@ def cmd_requests(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
         log.error(str(e))
         return 1
     busy = out["seen"] or out["reaped"]
+    done = ", ".join(f"{n} {s.replace('_', ' ')}" for s, n in sorted(out["statuses"].items()))
     if out.get("blocked"):
         detail = f"waiting: {out['blocked']}"
+        if out["done"]:
+            # A rebuild asks no model, so it goes ahead while drafts wait.
+            detail += f"; meanwhile {out['done']} done ({done})"
     elif not busy:
         detail = "nothing queued"
     else:
-        done = ", ".join(f"{n} {s.replace('_', ' ')}" for s, n in sorted(out["statuses"].items()))
         detail = (f"{out['done']} done ({done or 'none'}), {out['retry']} to try again, {out['failed']} failed"
+                  + (f", {out['cancelled']} cancelled (archived first)" if out.get("cancelled") else "")
                   + (f", {out['reaped']} reaped" if out["reaped"] else ""))
+    fell = out.get("fallback") or {}
+    if fell.get("drafts"):
+        # Never silent: a paid fallback drafting while the primary is down.
+        said = f"{fell['drafts']} drafted through the fallback: {fell.get('note') or 'the primary could not answer'}"
+        detail = f"{said.rstrip('.')}; {detail}"
+        log.warn(f"requests: {said}")
     resent = _resync_stuck(cfg, log)
     if resent:
         detail += f"; {resent}"
@@ -693,14 +943,20 @@ def review_provider(cfg: Config, log: Logger) -> Any:
     metered like every other job's."""
     model = key("SALES_REVIEW_MODEL", "").strip() or cfg.model
     model_mod.check_model(model, setting="SALES_REVIEW_MODEL")
-    if (cfg.provider or "vps") == "openai":
-        if not cfg.openai_key:
-            raise model_mod.ModelUnreachable("OPENAI_API_KEY is not set, so Vince cannot review calls.")
-        return model_mod.metered(model_mod.OpenAIShaped("openai", model_mod.OPENAI_URL, cfg.openai_key, model,
-                                                        max_tokens=cfg.max_tokens, reasoning_effort=cfg.reasoning_effort,
-                                                        json_mode=False, log=log.info))
+
+    def primary() -> Any:
+        if (cfg.provider or "vps") == "openai":
+            if not cfg.openai_key:
+                raise model_mod.ModelUnreachable("OPENAI_API_KEY is not set, so Vince cannot review calls.")
+            return model_mod.metered(model_mod.OpenAIShaped("openai", model_mod.OPENAI_URL, cfg.openai_key, model,
+                                                            max_tokens=cfg.max_tokens,
+                                                            reasoning_effort=cfg.reasoning_effort,
+                                                            json_mode=False, log=log.info))
+        return model_mod.provider(cfg, log.info)
+
     cfg.model = model
-    return model_mod.provider(cfg, log.info)
+    # Through the fallback only when SALES_FALLBACK_JOBS names reviews.
+    return model_mod.for_job(cfg, "reviews", log.info, primary=primary, plain_text=True, warn=log.warn)
 
 
 def cmd_reviews(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
@@ -863,7 +1119,7 @@ def cmd_followups(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
         if model:
             model_mod.check_model(model, setting="SALES_FOLLOWUP_MODEL")
             cfg.model = model
-        p = model_mod.provider(cfg, log.info)
+        p = model_mod.for_job(cfg, "followups", log.info, warn=log.warn)
     except model_mod.ModelUnreachable as e:
         if not test:
             _status(cfg, log, "followups", False, str(e))
@@ -876,12 +1132,13 @@ def cmd_followups(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     # Only an outage (the sign-in, the proxy gone, the plan's limit) stops
     # the drafting; a probe that merely timed out is said, and drafting is
     # still tried, each draft with its own retries.
+    # With followups in SALES_FALLBACK_JOBS, a primary that is down hands
+    # over to the fallback here (job_probe) and drafting goes on; the model's
+    # row still says the primary is down.
     model_down = None
     if getattr(args, "segment", None) != "reactivate":
-        ok, said, outage = model_probe(p, 30)
-        if outage:
-            model_down = said
-        elif not ok:
+        ok, said, outage, model_down = job_probe(p, 30)
+        if not ok and not outage:
             log.warn(f"followups: {said}; drafting is tried all the same")
         if not test:
             _model_status(cfg, log, ok, said, outage=outage)
@@ -983,14 +1240,15 @@ def cmd_deploy_check(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     return 1 if report.blockers else 0
 
 
-def notes_provider(cfg: Config, log: Logger) -> Any:
+def notes_provider(cfg: Config, log: Logger, job: str = "notes") -> Any:
     """The model the call notes and digests are written with: the desk's own
-    provider on the VPS key, SALES_NOTES_MODEL when set; never DeepSeek."""
+    provider on the VPS key, SALES_NOTES_MODEL when set; never DeepSeek. The
+    fallback only when SALES_FALLBACK_JOBS names the job (notes, digest)."""
     model = key("SALES_NOTES_MODEL", "").strip()
     if model:
         model_mod.check_model(model, setting="SALES_NOTES_MODEL")
         cfg.model = model
-    return model_mod.provider(cfg, log.info)
+    return model_mod.for_job(cfg, job, log.info, warn=log.warn)
 
 
 def cmd_notes(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
@@ -1026,7 +1284,7 @@ def cmd_digest(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     """What prospects keep saying over the last 7 and 30 days, from the call notes."""
     sb = _sb(cfg)
     try:
-        p = notes_provider(cfg, log)
+        p = notes_provider(cfg, log, job="digest")
         outs = [notes_mod.run_digest(sb, p, log.info, days=d, timeout=cfg.model_timeout,
                                      min_chars=cfg.min_transcript_chars)
                 for d in ([args.days] if args.days else [7, 30])]
@@ -1137,7 +1395,7 @@ def cmd_build(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
             print("wrote", pdf_path)
         else:
             print(f"The PDF was skipped: no browser here could print it ({render_mod.engine()}). "
-                  "Open the HTML and print it, or install Playwright.")
+                  "Open the HTML and print it, or set CHROME_PATH (doctor's browser line).")
             return 1
     return 0
 
@@ -1156,8 +1414,9 @@ def cmd_draft(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
                            client_name=args.name, client_company=args.company, client_country=args.country)
     out_dir = Path(args.out or (cfg.out_dir / "by-hand"))
     render_mod.set_timeout(cfg.render_timeout)
-    outcome = engine_mod.run(call, lang=args.lang, resolved=resolved, offer=offer, p=model_mod.provider(cfg, log.info),
-                             cfg=cfg, log=log.info, workdir=out_dir, variant=args.variant)
+    outcome = engine_mod.run(call, lang=args.lang, resolved=resolved, offer=offer,
+                             p=model_mod.for_job(cfg, "proposal", log.info, warn=log.warn), cfg=cfg, log=log.info,
+                             workdir=out_dir, variant=args.variant)
     final = out_dir / "proposal.html"
     build_mod.build(outcome.deal, final)
     print(f"variant {outcome.variant} ({outcome.why}); {outcome.model}; {outcome.seconds:.0f}s; "

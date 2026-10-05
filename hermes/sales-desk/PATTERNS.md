@@ -7,10 +7,10 @@ Read from four recorded calls: an interior design and fit-out firm (Saudi Arabia
 The figures a proposal prints come from `offer.json` and the closer's choice, and they are in the offer block of the skill above. What the four calls had in common:
 
 - **The program, its term and its price were quoted identically in all four calls.**
-- **The payment structure moves, the price does not.** In those calls the fee was split, half to begin and half after the client's first contract signed through the system. The fit-out contractor's reaction to that structure was the strongest moment in his call: it is proof we carry risk, and it beats a discount. Never discount. Whether a proposal carries a split is the closer's choice, made per proposal.
-- **The deposit** reserves the start date and comes off the first payment.
+- **The payment structure moves, the price does not.** Since 3 October 2026 there are two structures and only two: USD 6,000 paid in full at the start, or USD 3,000 at the start and USD 3,000 thirty days later. Which one a proposal carries is the closer's choice, made per proposal. No payment ever waits on the client's first contract, project, deal or sale: the four calls quoted that split, it is retired, and a call that still quotes it does not bring it back. Never discount.
+- **The deposit** reserves the start date and comes off the payment at the start: the one payment when paid in full, the first of the two when split.
 - **Advertising** is paid by the client directly to the platforms, always its own line.
-- **Timeline:** onboarding call, 7 to 10 days of build, meetings landing within 10 to 15 days.
+- **Timeline:** an onboarding call, then the build (the calls gave 7 to 10 days of it): launch aimed for day 7, first meetings aimed for between days 10 and 15 from signature. Always quoted as the aim, never as a date the meetings arrive by.
 
 ## The funnel arithmetic never changes
 
@@ -37,11 +37,11 @@ Four different companies, one shape:
 ## The objections are the same objections
 
 - *We already get clients from referrals.* Answer with consistency, not volume: referrals cannot be forecast or scaled.
-- *An agency wasted my time and money before.* Answer with the fixed term and the payment tied to a signed contract.
+- *An agency wasted my time and money before.* Answer with the fixed three-month term, a report on every stage of the funnel, and the ad account and CRM staying in their name.
 - *You have no office in my country.* One owner pressed hardest on this. Answer with market research per country, existing clients in that market, and results that came from a fully remote team.
 - *How do you find people who actually have projects?* Answer with targeting plus the qualification funnel, and the worked example: our own ad is how they found us.
 - *What if the volume is more than I can handle?* Answer with pace control, and with the filter that means meetings only happen with qualified buyers.
-- *Can you lower the price?* No. Offer a payment plan instead, where the closer has agreed one.
+- *Can you lower the price?* No. Only how it is paid moves: in full, or in two payments thirty days apart, as the closer chooses.
 
 ## What actually changes per client
 
@@ -51,7 +51,7 @@ Six things, and only these:
 2. Where their work comes from today, and what that costs them in consistency.
 3. Their funnel numbers: enquiries, meetings, quotations, signed.
 4. Their average project value.
-5. Their net margin today, at the bottom of whatever range they quote.
+5. Their net margin today, at the bottom of whatever range they quote. A gross margin is not a net one, but it is still their figure: it is used, and called gross.
 6. Their goal, in their own words and their own currency.
 
 Numbers 4 and 5 drive the return page by themselves. Enter them in the `roi` block of the deal's data file and the break-even maths writes itself.
@@ -72,7 +72,7 @@ The year figure is the monthly total times twelve. Our fee should land between 1
 
 ## Numbers quoted as proof, across the calls
 
-Use these as given; they recur consistently.
+This list is the written record, and the CEO's rule is that the written record is official. A proof figure is copied from here exactly, never from the way a rep said it on a call: reps round when they speak, and a client who hears one figure on the call and reads another in the proposal has been given two. A case is not rounded, two cases are not combined, and a figure the record does not have is not added. `validate.py` fails a figure in `proof` that is not in this list.
 
 - A design and fit-out company went from one project every two months to two a month, roughly 4x revenue, inside the first three months.
 - A contracting company signed four projects worth about USD 2 million in its first two months.

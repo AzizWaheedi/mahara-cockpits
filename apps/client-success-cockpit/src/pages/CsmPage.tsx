@@ -20,6 +20,7 @@ import {
   StatTile,
   type Tone,
 } from "@/components/kit";
+import { KitSummary, OnboardingKit } from "@/components/OnboardingKit";
 import { ReportIssue } from "@/components/ReportIssue";
 import { SendForReview } from "@/components/SendForReview";
 import { AnimatedSelect } from "@/components/ui/animated-select";
@@ -62,6 +63,7 @@ import { cn } from "@/lib/utils";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import type { MonthRow } from "../../convex/churnCore";
+import type { KitsPage } from "../../convex/onboardingCore";
 
 /** Tickets the CSM raises. Picking the request picks the board — she never picks a team. */
 const TICKETS: { label: string; dept: string; deptLabel: string }[] = [
@@ -1021,6 +1023,19 @@ function HotSheet({
   );
 }
 
+/** A Convex error as the sentence the backend wrote. */
+function kitErrorText(e: unknown): string {
+  const data = (e as { data?: { message?: string } })?.data;
+  if (data?.message) return data.message;
+  return (
+    String((e as Error)?.message ?? e)
+      .replace(/^[\s\S]*?Uncaught (?:ConvexError|Error): /, "")
+      .split("\n")[0]
+      .trim() ||
+    "The onboarding links could not be read. Try again in a minute."
+  );
+}
+
 export function CsmPage({ section }: { section: Section }) {
   const snap = useQuery(api.csm.snapshot, {});
   const toggleCheck = useMutation(api.csm.toggleCheck);
@@ -1047,7 +1062,13 @@ export function CsmPage({ section }: { section: Section }) {
     return () => publishOpenClient(null);
   }, [open]);
   const [panel, setPanel] = useState<
-    "message" | "actions" | "book" | "ticket" | "leave" | "update"
+    | "onboarding"
+    | "message"
+    | "actions"
+    | "book"
+    | "ticket"
+    | "leave"
+    | "update"
   >("message");
   const [ticket, setTicket] = useState(TICKETS[0].label);
   const [ticketNote, setTicketNote] = useState("");
@@ -1112,6 +1133,67 @@ export function CsmPage({ section }: { section: Section }) {
       ),
     [snap],
   );
+
+  // Each onboarding client's links and forms (cockpit_client_onboarding), plus
+  // the open client's, so any client's Links panel has them. Read on opening
+  // the Clients screen and every three minutes; Refresh reads one card now.
+  const loadKits = useAction(api.onboarding.kits);
+  const refreshKits = useAction(api.onboarding.refresh);
+  const [kitPage, setKitPage] = useState<KitsPage | null>(null);
+  const [kitLoadedFor, setKitLoadedFor] = useState("");
+  const [kitError, setKitError] = useState<string | null>(null);
+  const [kitRefreshing, setKitRefreshing] = useState<string | null>(null);
+  const kitKey = useMemo(() => {
+    const list: Client[] = snap?.clients ?? [];
+    const ids = new Set(
+      list.filter(c => c.bucket === "onboarding").map(c => String(c.taskId)),
+    );
+    const openRow = list.find(c => c.name === open);
+    if (openRow) ids.add(String(openRow.taskId));
+    return [...ids].sort().join(",");
+  }, [snap, open]);
+  useEffect(() => {
+    if (section !== "clients" || !kitKey) return;
+    let live = true;
+    const load = () =>
+      loadKits({ taskIds: kitKey.split(",") })
+        .then(p => {
+          if (!live) return;
+          setKitPage(p as KitsPage);
+          setKitLoadedFor(kitKey);
+          setKitError(null);
+        })
+        .catch(e => live && setKitError(kitErrorText(e)));
+    void load();
+    const timer = setInterval(load, 180_000);
+    return () => {
+      live = false;
+      clearInterval(timer);
+    };
+  }, [section, kitKey, loadKits]);
+  const kitOf = (c: Client) => {
+    const id = String(c.taskId);
+    if (!kitLoadedFor.split(",").includes(id)) return undefined;
+    return kitPage?.rows.find(r => r.clickup_task_id === id) ?? null;
+  };
+  const refreshKit = async (taskId: string) => {
+    setKitRefreshing(taskId);
+    try {
+      const ids = kitKey ? kitKey.split(",") : [];
+      if (!ids.includes(taskId)) ids.push(taskId);
+      const p = (await refreshKits({ taskId, taskIds: ids })) as KitsPage;
+      setKitPage(p);
+      setKitLoadedFor(ids.sort().join(","));
+      setKitError(null);
+      if (p.problem) toast.error(p.problem);
+      else toast.success("Read again from ClickUp and Typeform");
+    } catch (e) {
+      setKitError(kitErrorText(e));
+      toast.error(kitErrorText(e));
+    } finally {
+      setKitRefreshing(null);
+    }
+  };
 
   if (snap === undefined) {
     return (
@@ -1225,7 +1307,7 @@ export function CsmPage({ section }: { section: Section }) {
           className="flex w-full items-start justify-between gap-3 px-4 py-3 text-left sm:px-6 sm:py-4"
           onClick={() => {
             setOpen(isOpen ? null : c.name);
-            setPanel("message");
+            setPanel(c.bucket === "onboarding" ? "onboarding" : "message");
           }}
         >
           <div className="min-w-0 flex-1">
@@ -1259,6 +1341,11 @@ export function CsmPage({ section }: { section: Section }) {
             <div className="mt-1 text-sm" dir="auto">
               {plainText(c.todo)}
             </div>
+            {c.bucket === "onboarding" && kitOf(c) ? (
+              <KitSummary
+                kit={kitOf(c) as NonNullable<ReturnType<typeof kitOf>>}
+              />
+            ) : null}
             <div className="mt-1 text-xs text-muted-foreground">
               {c.lastPoc
                 ? `Last contact ${shortDay(c.lastPoc)}`
@@ -1288,6 +1375,7 @@ export function CsmPage({ section }: { section: Section }) {
             <PillRow>
               {(
                 [
+                  "onboarding",
                   "message",
                   "actions",
                   "book",
@@ -1297,20 +1385,35 @@ export function CsmPage({ section }: { section: Section }) {
                 ] as const
               ).map(p => (
                 <Pill key={p} active={panel === p} onClick={() => setPanel(p)}>
-                  {p === "message"
-                    ? "Message (SOP template)"
-                    : p === "actions"
-                      ? "Log a touchpoint"
-                      : p === "book"
-                        ? "Book the next call"
-                        : p === "update"
-                          ? "Update the board"
-                          : p === "ticket"
-                            ? "Raise a ticket"
-                            : "Leave it"}
+                  {p === "onboarding"
+                    ? c.bucket === "onboarding"
+                      ? "Onboarding"
+                      : "Links"
+                    : p === "message"
+                      ? "Message (SOP template)"
+                      : p === "actions"
+                        ? "Log a touchpoint"
+                        : p === "book"
+                          ? "Book the next call"
+                          : p === "update"
+                            ? "Update the board"
+                            : p === "ticket"
+                              ? "Raise a ticket"
+                              : "Leave it"}
                 </Pill>
               ))}
             </PillRow>
+
+            {panel === "onboarding" && (
+              <OnboardingKit
+                client={c}
+                kit={kitOf(c)}
+                page={kitPage}
+                error={kitError}
+                refreshing={kitRefreshing === String(c.taskId)}
+                onRefresh={() => void refreshKit(String(c.taskId))}
+              />
+            )}
 
             {panel === "message" && (
               <TemplatePicker

@@ -358,6 +358,34 @@ class C15NoFlapping(unittest.TestCase):
         h.scan(fakes.NOW + timedelta(minutes=10))
         self.assertNotIn("demo-check", h.store.open)
 
+    def test_a_check_that_opened_twice_in_a_day_needs_an_hour_of_good_readings(self):
+        # 2026-10-04: Convex's Sheets source went failing and ok every 15 to 30 minutes.
+        b = Box(fixable=False)
+        h = Harness([b.check])
+        t = fakes.NOW
+        b.result = fail("sheets 404")
+        h.scan(t)
+        b.result = ok("fine")
+        h.scan(t + timedelta(minutes=15))
+        self.assertNotIn("demo-check", h.store.open)          # the first time, one good reading clears it
+        b.result = fail("sheets 404")
+        h.scan(t + timedelta(minutes=30))                       # opened a second time today: it flaps
+        self.assertIn("demo-check", h.store.open)
+        first = h.store.open["demo-check"]["id"]
+        b.result = ok("fine")
+        for m in (45, 60, 75):
+            h.scan(t + timedelta(minutes=m))
+            self.assertIn("demo-check", h.store.open)
+        b.result = fail("sheets 404")
+        h.scan(t + timedelta(minutes=90))                       # still the same incident, no new one
+        self.assertEqual(h.store.open["demo-check"]["id"], first)
+        b.result = ok("fine")
+        h.scan(t + timedelta(minutes=105))
+        h.scan(t + timedelta(minutes=150))
+        self.assertIn("demo-check", h.store.open)               # good for 45 minutes only
+        h.scan(t + timedelta(minutes=165))
+        self.assertNotIn("demo-check", h.store.open)            # good for an hour: resolved
+
     def test_memory_clears_only_above_1536_mb(self):
         state = {}
 

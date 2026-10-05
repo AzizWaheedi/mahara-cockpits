@@ -146,6 +146,158 @@ class HourlyDoctor(unittest.TestCase):
         self.assertIn("opener templates   not set up: opener_ar, opener_en", out)
 
 
+class Asked:
+    """A provider as the doctor sees it, keeping every call and its timeout."""
+
+    def __init__(self, name: str, model_name: str, ping: object = None):
+        self.name, self.model, self._ping, self.calls = name, model_name, ping, []
+
+    def ping(self, timeout: float = 60) -> str:
+        self.calls.append(("ping", timeout))
+        if isinstance(self._ping, BaseException):
+            raise self._ping
+        return f"{self.model} answered"
+
+    def models(self, timeout: float = 60) -> list:
+        self.calls.append(("models", timeout))
+        return [self.model]
+
+    def credit(self, timeout: float = 60) -> float:
+        self.calls.append(("credit", timeout))
+        return 9.5
+
+
+class HourlyModelRows(unittest.TestCase):
+    """model_rows (the fallback's doctor lines) under the hourly doctor: one
+    token each, the primary's answer kept for the model's own status row, and
+    one miss said as not known rather than a block."""
+
+    def rows(self, primary, fallback, *, cron, fb="openrouter", primary_fn=None):
+        from tests.test_desk import cfg_in, fakes_logger
+        cli = load_cli()
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = cfg_in(tmp)
+            cfg.provider, cfg.model, cfg.fallback = "vps", "opus", fb
+            seen: dict = {}
+            out = cli.model_rows(cfg, fakes_logger(), online=True, cron=cron, seen=seen,
+                                 primary=primary_fn or (lambda c, l: primary), fallback=lambda c, l, **kw: fallback)
+        return {r["check"]: r for r in out}, [r["detail"] for r in out if r["required"] and r["ok"] is False], seen
+
+    def test_the_hourly_run_asks_each_model_one_token_and_no_list(self):
+        p, f = Asked("vps", "opus"), Asked("openrouter", "anthropic/claude-opus-4.8")
+        rows, blockers, seen = self.rows(p, f, cron=True)
+        self.assertEqual(p.calls, [("ping", 30)])
+        self.assertEqual([c for c in f.calls if c[0] != "credit"], [("ping", 30)])  # the credit is still read
+        self.assertNotIn("model listed", rows)
+        self.assertNotIn("fallback listed", rows)
+        self.assertTrue(rows["fallback credit"]["ok"])
+        self.assertEqual(blockers, [])
+        self.assertEqual(seen["probe"], (True, "opus answered", False))
+
+    def test_the_full_doctor_still_lists_both(self):
+        p, f = Asked("vps", "opus"), Asked("openrouter", "anthropic/claude-opus-4.8")
+        rows, _, _ = self.rows(p, f, cron=False)
+        self.assertEqual(p.calls, [("ping", 60), ("models", 60)])
+        self.assertTrue(rows["model listed"]["ok"])
+        self.assertTrue(rows["fallback listed"]["ok"])
+
+    def test_one_miss_without_a_fallback_is_not_known_and_no_block(self):
+        miss = http.HttpError(0, "TimeoutError: timed out", b"", "http://127.0.0.1:3456")
+        rows, blockers, seen = self.rows(Asked("vps", "opus", ping=miss), None, cron=True, fb="none")
+        self.assertEqual(blockers, [])
+        self.assertIsNone(rows["model answers"]["ok"])
+        self.assertTrue(rows["model answers"]["required"])  # said under "not known" on the doctor's row
+        self.assertEqual(seen["probe"][0::2], (False, False))  # one miss, no outage
+
+    def test_an_outage_without_a_fallback_blocks_and_is_an_outage(self):
+        from desk import model
+        lapsed = model._classify(http.HttpError(500, "proxy_error", LAPSED), "vps", "opus")
+        rows, blockers, seen = self.rows(Asked("vps", "opus", ping=lapsed), None, cron=True, fb="none")
+        self.assertEqual(blockers, [VPS_SIGN_IN])
+        self.assertEqual(seen["probe"], (False, VPS_SIGN_IN, True))
+
+    def test_no_key_at_all_is_an_outage_on_the_model_row(self):
+        from desk.errors import NotNow
+
+        def gone(c, l):
+            raise NotNow("OPENAI_API_KEY is not set.")
+        rows, _, seen = self.rows(None, None, cron=True, fb="none", primary_fn=gone)
+        self.assertFalse(rows["model key"]["ok"])
+        self.assertEqual(seen["probe"], (False, "OPENAI_API_KEY is not set.", True))
+
+    def test_a_fallback_that_times_out_is_down_and_the_lapsed_primary_then_blocks(self):
+        from desk import model
+        lapsed = model._classify(http.HttpError(500, "proxy_error", LAPSED), "vps", "opus")
+        miss = http.HttpError(0, "TimeoutError: timed out", b"", "https://openrouter.ai")
+        rows, blockers, _ = self.rows(Asked("vps", "opus", ping=lapsed),
+                                      Asked("openrouter", "anthropic/claude-opus-4.8", ping=miss), cron=True)
+        self.assertFalse(rows["fallback answers"]["ok"])
+        self.assertFalse(rows["drafting"]["ok"])
+        self.assertEqual(len(blockers), 1)
+
+
+class FollowupsProbeWithAFallback(unittest.TestCase):
+    """The follow-ups job's one token when SALES_FALLBACK_JOBS names it (the
+    merge of the fallback and the honest model row): a primary that is down
+    hands over and drafting goes on, while the model's row still says the
+    primary is down; nothing to hand over to stops the drafting."""
+
+    def lapsed(self):
+        from desk import model
+        return model._classify(http.HttpError(500, "proxy_error", LAPSED), "vps", "opus")
+
+    def failover(self, primary, fallback):
+        from desk import model
+        return model.Failover(lambda: primary, fallback, job="followups", primary_label="vps (opus)").ready()
+
+    def test_a_lapsed_primary_hands_over_and_does_not_stop_the_drafting(self):
+        cli = load_cli()
+        gpt = Asked("openai", "gpt-5")
+        p = self.failover(Asked("vps", "opus", ping=self.lapsed()), lambda: gpt)
+        ok, said, outage, down = cli.job_probe(p, 30)
+        self.assertEqual((ok, said, outage, down), (False, VPS_SIGN_IN, True, None))
+        self.assertTrue(p.on_fallback)
+        self.assertEqual(p.name, "openai")
+        self.assertEqual(gpt.calls, [])  # the fallback is not pinged: the drafts ask it
+
+    def test_with_nothing_to_hand_over_to_the_drafting_stops_naming_both(self):
+        from desk import model
+        cli = load_cli()
+
+        def no_fallback():
+            raise model.ModelUnreachable("OPENAI_API_KEY is not set.", cause="no OpenAI key")
+        p = self.failover(Asked("vps", "opus", ping=self.lapsed()), no_fallback)
+        ok, said, outage, down = cli.job_probe(p, 30)
+        self.assertEqual((ok, said, outage), (False, VPS_SIGN_IN, True))
+        self.assertIn("No model can answer right now", down)
+
+    def test_a_primary_that_could_not_be_made_is_said_down_and_never_pinged(self):
+        from desk import model
+        cli = load_cli()
+        gpt = Asked("openai", "gpt-5")
+
+        def gone():
+            raise model.ModelUnreachable("ANTHROPIC_API_KEY is not set.", cause="no Anthropic key")
+        p = model.Failover(gone, lambda: gpt, job="followups").ready()
+        ok, said, outage, down = cli.job_probe(p, 30)
+        self.assertEqual((ok, said, outage, down), (False, "ANTHROPIC_API_KEY is not set.", True, None))
+        self.assertEqual(gpt.calls, [])  # a green "gpt-5 answered" would hide the primary's outage
+
+    def test_one_miss_is_said_and_stays_on_the_primary(self):
+        cli = load_cli()
+        miss = http.HttpError(0, "TimeoutError: timed out", b"", "http://127.0.0.1:3456")
+        p = self.failover(Asked("vps", "opus", ping=miss), lambda: Asked("openai", "gpt-5"))
+        ok, _, outage, down = cli.job_probe(p, 30)
+        self.assertEqual((ok, outage, down), (False, False, None))
+        self.assertFalse(p.on_fallback)
+
+    def test_a_plain_provider_keeps_todays_rule(self):
+        cli = load_cli()
+        self.assertEqual(cli.job_probe(Asked("vps", "opus", ping=self.lapsed()), 30),
+                         (False, VPS_SIGN_IN, True, VPS_SIGN_IN))
+        self.assertEqual(cli.job_probe(Asked("vps", "opus"), 30), (True, "opus answered", False, None))
+
+
 class HonestFollowupsRow(unittest.TestCase):
     def test_with_the_sign_in_lapsed_the_row_is_false_even_with_nothing_to_draft(self):
         pg = FakePostgrest()

@@ -1,5 +1,13 @@
-import { ArrowLeft, Download, Send } from "lucide-react";
-import { type FormEvent, type ReactNode, useMemo, useState } from "react";
+import { ArrowLeft, Download, Maximize2, Send, X } from "lucide-react";
+import {
+  type FormEvent,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Link, useParams } from "react-router";
 import {
   button,
@@ -10,10 +18,19 @@ import {
   page,
   SectionCard,
 } from "../components/kit";
-import { ProposalChip } from "../components/ProposalPanel";
+import { DraftWaitNotice, ProposalChip } from "../components/ProposalPanel";
 import { api } from "../lib/api";
-import { useLead, useProposal, useProposalHtml } from "../lib/data";
+import { useLead, useProposal, useProposalHtml, useRequest } from "../lib/data";
 import { ago } from "../lib/format";
+import {
+  DOCUMENT_SANDBOX,
+  downloadLabel,
+  noDocument,
+  notesOf,
+  REQUEST_GONE,
+  retryToast,
+  sentence,
+} from "../lib/proposals";
 import { supabase } from "../lib/supabase";
 import { toast } from "../lib/toast";
 import type { Me, Proposal } from "../lib/types";
@@ -154,7 +171,7 @@ function list(v: unknown): string[] {
     : [];
 }
 
-async function download(path: string, name: string) {
+async function save(path: string, name: string) {
   const { data, error } = await supabase.storage
     .from("sales-proposals")
     .download(path);
@@ -180,7 +197,15 @@ export default function ProposalPage({ me }: { me: Me }) {
   const p = proposal.data;
   const lead = useLead(p?.contact_id ?? "");
   const html = useProposalHtml(p?.html_path ?? null);
+  // Where the draft is, while it is being drafted: its tries and the
+  // writer's reason when it waits.
+  const request = useRequest(
+    p?.status === "drafting" ? (p.request_id ?? null) : null,
+  );
   const [busy, setBusy] = useState(false);
+  const [full, setFull] = useState(false);
+  // Stable, so the page's polling never moves focus inside full screen.
+  const closeFull = useCallback(() => setFull(false), []);
 
   if (proposal.error)
     return (
@@ -212,16 +237,26 @@ export default function ProposalPage({ me }: { me: Me }) {
   const v = (p.validation ?? {}) as Record<string, unknown>;
   const errors = list(v.errors);
   const warnings = list(v.warnings);
+  const notes = notesOf(p.validation);
+  // Whether Fill in the blanks shows below: blanks left, on a finished draft.
+  const fillable =
+    mine &&
+    ["needs_input", "ready", "failed"].includes(p.status) &&
+    fillPaths(p.deal).length > 0;
+  // The request this draft is on now; a retry's new one replaces the last.
+  const draftRequest =
+    request.data && request.data.id === p.request_id ? request.data : null;
+  const download = downloadLabel(p);
 
   async function act(
     action: string,
     body: Record<string, unknown>,
-    done: string,
+    done: string | ((out: Record<string, unknown>) => string),
   ) {
     setBusy(true);
     try {
-      await api(action, body);
-      toast.success(done);
+      const out = await api<Record<string, unknown>>(action, body);
+      toast.success(typeof done === "string" ? done : done(out ?? {}));
       proposal.reload();
     } catch (e) {
       toast.error(String((e as Error).message ?? e));
@@ -261,24 +296,19 @@ export default function ProposalPage({ me }: { me: Me }) {
         </div>
         {mine ? (
           <div className="flex flex-wrap gap-2">
-            {/* One download: the PDF, or the page itself when no PDF was built. */}
-            {p.pdf_path ? (
-              <button
-                type="button"
-                className={button}
-                onClick={() => download(String(p.pdf_path), `${fileBase}.pdf`)}
-              >
-                <Download className="size-3.5" aria-hidden /> Download PDF
-              </button>
-            ) : p.html_path ? (
+            {/* One download: the PDF, or the page itself when no PDF was
+                built, named for what it is. */}
+            {download ? (
               <button
                 type="button"
                 className={button}
                 onClick={() =>
-                  download(String(p.html_path), `${fileBase}.html`)
+                  p.pdf_path
+                    ? save(String(p.pdf_path), `${fileBase}.pdf`)
+                    : save(String(p.html_path), `${fileBase}.html`)
                 }
               >
-                <Download className="size-3.5" aria-hidden /> Download
+                <Download className="size-3.5" aria-hidden /> {download}
               </button>
             ) : null}
             {p.status === "ready" ? (
@@ -316,28 +346,54 @@ export default function ProposalPage({ me }: { me: Me }) {
           </div>
         ) : null}
       </header>
+      {/* The writer's notes on this version: which model wrote it, why
+          there is no PDF, what was checked. */}
+      {notes.length ? (
+        <ul className="muted -mt-3 list-disc space-y-0.5 pl-4 text-xs leading-relaxed">
+          {notes.map(n => (
+            <li key={n}>{n}</li>
+          ))}
+        </ul>
+      ) : null}
 
       {p.status === "drafting" ? (
-        <p className="callout-good rounded-[var(--radius-md)] border px-3 py-2 text-sm">
-          The proposal is being written. It takes about ten minutes; this page
-          updates by itself.
-        </p>
+        // Why it is still waiting, when it is: no model answering, or a try
+        // that failed and will be made again. The writer's sentence says
+        // what happens next and when to tell the CEO. Said once this
+        // draft's request is read, so a retry never flashes the old one's
+        // age as "Taking longer than usual".
+        request.error === REQUEST_GONE ? (
+          <p className="callout-bad rounded-[var(--radius-md)] border px-3 py-2 text-sm">
+            {REQUEST_GONE}
+          </p>
+        ) : draftRequest || request.error || !p.request_id ? (
+          <DraftWaitNotice
+            me={me}
+            proposal={p}
+            request={draftRequest}
+            onChange={() => {
+              proposal.reload();
+              request.reload();
+            }}
+          />
+        ) : (
+          <p className="muted text-sm">Reading where the draft is…</p>
+        )
       ) : null}
       {p.status === "failed" ? (
         <div className="callout-bad space-y-2 rounded-[var(--radius-md)] border px-3 py-2 text-sm">
-          <p>
-            The draft did not finish: {p.error ?? "the writer gave no reason"}.
-          </p>
+          <p className="font-medium">The draft did not finish.</p>
+          <p>{sentence(p.error ?? "The writer gave no reason")}</p>
           {mine ? (
             <button
               type="button"
               disabled={busy}
               className="underline underline-offset-2"
               onClick={() =>
-                act(
-                  "proposal.retry",
-                  { id: p.id },
-                  "Drafting again with the same choices. About ten minutes.",
+                act("proposal.retry", { id: p.id }, out =>
+                  retryToast(
+                    out as { rebuild?: boolean; figures_kept?: boolean },
+                  ),
                 )
               }
             >
@@ -374,7 +430,24 @@ export default function ProposalPage({ me }: { me: Me }) {
         <Fills p={p} onDone={proposal.reload} />
       ) : null}
 
-      <SectionCard title="The document" flush>
+      <SectionCard
+        title="The document"
+        flush
+        // A blurred card is the containing block of anything fixed inside
+        // it; full screen lifts the blur so the document can cover the screen.
+        className={full ? "backdrop-filter-none!" : ""}
+        side={
+          html.data ? (
+            <button
+              type="button"
+              className={button}
+              onClick={() => setFull(true)}
+            >
+              <Maximize2 className="size-3.5" aria-hidden /> Full screen
+            </button>
+          ) : null
+        }
+      >
         {html.error ? (
           <div className="p-4">
             <Failed
@@ -384,21 +457,94 @@ export default function ProposalPage({ me }: { me: Me }) {
             />
           </div>
         ) : html.data ? (
-          <iframe
-            title="The proposal"
-            srcDoc={html.data}
-            sandbox="allow-scripts"
-            className="block h-[80vh] w-full bg-white"
-          />
+          <>
+            <p className="muted border-b hairline px-4 py-2 text-xs sm:px-6">
+              Edits made inside the document change this copy only, for printing
+              or saving.{" "}
+              {fillable
+                ? "The stored proposal changes through Fill in the blanks."
+                : "The stored proposal stays as it was drafted."}
+            </p>
+            <Document html={html.data} full={full} onClose={closeFull} />
+          </>
         ) : (
-          <p className="muted p-4 text-sm">
-            {p.status === "drafting"
-              ? "The document appears here when the draft is done."
-              : "No document was built."}
-          </p>
+          <p className="muted p-4 text-sm">{noDocument(p.status)}</p>
         )}
       </SectionCard>
     </Shell>
+  );
+}
+
+/**
+ * The stored page, sandboxed. Its own editor runs inside: scripts for the
+ * editor, modals for its print window, downloads for Save, and the clipboard
+ * for Copy. Never allow-same-origin: the page cannot reach the cockpit's
+ * session or storage, so edits stay in this copy.
+ *
+ * Full screen, for a phone, is the same iframe with its frame fixed over the
+ * screen, never a second one: the page is not loaded again, so edits made
+ * in it survive going in and out. Escape or Close returns.
+ */
+/** What full screen is to a screen reader: a dialog over the page. */
+const FULL_SCREEN_DIALOG = {
+  role: "dialog",
+  "aria-modal": true,
+  "aria-label": "The proposal, full screen",
+} as const;
+
+function Document({
+  html,
+  full,
+  onClose,
+}: {
+  html: string;
+  full: boolean;
+  onClose: () => void;
+}) {
+  const closeRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!full) return;
+    const opener = document.activeElement;
+    closeRef.current?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      if (opener instanceof HTMLElement) opener.focus();
+    };
+  }, [full, onClose]);
+  return (
+    <div
+      className={
+        full
+          ? "pt-safe pb-safe fixed inset-0 z-[60] flex flex-col bg-[color:var(--background)]"
+          : ""
+      }
+      {...(full ? FULL_SCREEN_DIALOG : {})}
+    >
+      {full ? (
+        <header className="flex items-center justify-between gap-3 border-b hairline px-4 py-2">
+          <p className="text-sm font-medium">The proposal</p>
+          <button
+            ref={closeRef}
+            type="button"
+            className={button}
+            onClick={onClose}
+          >
+            <X className="size-3.5" aria-hidden /> Close full screen
+          </button>
+        </header>
+      ) : null}
+      <iframe
+        title="The proposal"
+        srcDoc={html}
+        sandbox={DOCUMENT_SANDBOX}
+        allow="clipboard-write"
+        className={`block w-full bg-white ${full ? "min-h-0 flex-1" : "h-[80vh]"}`}
+      />
+    </div>
   );
 }
 

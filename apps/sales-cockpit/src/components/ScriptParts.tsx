@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronRight, Search } from "lucide-react";
+import { Search } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
 import { useQuery } from "../lib/data";
 import { isArabic } from "../lib/format";
@@ -235,26 +235,38 @@ export function BranchGroup({
   }, [openNow]);
   return (
     <div
-      className="rounded-[var(--radius-md)] border hairline"
+      className={`rounded-[18px] border transition-all ${
+        open
+          ? "border-[color:color-mix(in_oklch,var(--primary)_35%,transparent)] bg-[color:var(--card)]/90 shadow-sm"
+          : "border-white/10 bg-white/[0.02] hover:border-white/20"
+      }`}
       style={badge ? { borderColor: "var(--primary)" } : undefined}
     >
       <button
         type="button"
         aria-expanded={open}
         onClick={() => setOpen(o => !o)}
-        className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm font-medium hover:bg-[color:var(--secondary)]"
+        className="flex w-full items-center justify-between gap-2 px-3.5 py-2.5 text-left text-sm font-medium transition-colors hover:bg-white/[0.04]"
         dir="auto"
       >
-        {open ? (
-          <ChevronDown className="size-4 shrink-0" aria-hidden />
-        ) : (
-          <ChevronRight className="size-4 shrink-0" aria-hidden />
-        )}
         <span className="min-w-0 flex-1">{label}</span>
-        {badge}
+        <div className="flex items-center gap-2">
+          {badge}
+          <span
+            className={`flex size-5 items-center justify-center rounded-full border transition-all ${
+              open
+                ? "border-[color:var(--primary)] bg-[color:color-mix(in_oklch,var(--primary)_15%,transparent)] text-[color:var(--primary)]"
+                : "border-border text-muted-foreground"
+            }`}
+          >
+            <span className="text-xs font-bold leading-none">
+              {open ? "−" : "+"}
+            </span>
+          </span>
+        </div>
       </button>
       {open ? (
-        <div className="border-t hairline px-3 py-3">{children}</div>
+        <div className="border-t border-white/5 px-3.5 py-3">{children}</div>
       ) : null}
     </div>
   );
@@ -308,29 +320,36 @@ export function Playbook({
                   const id = `${title}:${e.title}`;
                   const isOpen = open === id;
                   return (
-                    <li key={id} className="border-t hairline first:border-t-0">
+                    <li
+                      key={id}
+                      className="border-t border-white/5 first:border-t-0"
+                    >
                       <button
                         type="button"
                         aria-expanded={isOpen}
                         onClick={() => setOpen(isOpen ? null : id)}
-                        className="flex w-full items-start gap-2 px-4 py-2 text-left text-sm hover:bg-[color:var(--secondary)]"
+                        className={`flex w-full items-center justify-between gap-3 px-4 py-2.5 text-left text-sm font-medium transition-colors ${
+                          isOpen
+                            ? "bg-foreground/[0.04] text-foreground font-semibold"
+                            : "hover:bg-foreground/[0.03] text-foreground"
+                        }`}
                         dir="auto"
                       >
-                        {isOpen ? (
-                          <ChevronDown
-                            className="mt-0.5 size-3.5 shrink-0"
-                            aria-hidden
-                          />
-                        ) : (
-                          <ChevronRight
-                            className="mt-0.5 size-3.5 shrink-0"
-                            aria-hidden
-                          />
-                        )}
-                        {e.title}
+                        <span className="min-w-0 flex-1">{e.title}</span>
+                        <span
+                          className={`flex size-5 shrink-0 items-center justify-center rounded-full border transition-all ${
+                            isOpen
+                              ? "border-[color:var(--primary)] bg-[color:color-mix(in_oklch,var(--primary)_15%,transparent)] text-[color:var(--primary)]"
+                              : "border-border text-muted-foreground"
+                          }`}
+                        >
+                          <span className="text-xs font-bold leading-none">
+                            {isOpen ? "−" : "+"}
+                          </span>
+                        </span>
                       </button>
                       {isOpen ? (
-                        <div className="px-4 pb-3">
+                        <div className="border-t border-white/5 bg-black/10 px-4 py-3">
                           <Blocks blocks={e.blocks} fill={fill} mode="words" />
                         </div>
                       ) : null}

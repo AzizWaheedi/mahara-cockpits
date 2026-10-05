@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { callType, duration, money, statusLabel, when } from "../lib/format";
+import { proposalTitle } from "../lib/proposals";
 import type { CalendarRow, Deal, Dial, Proposal } from "../lib/types";
 import { Failed, FilterChip, Parts, Reading } from "./kit";
 
@@ -180,7 +181,7 @@ export function LeadTimeline({
         at: p.sent_at ?? p.created_at,
         kind: "proposal",
         icon: FileText,
-        title: p.sent_at ? "Proposal sent" : "Proposal drafted",
+        title: proposalTitle(p),
         meta: [
           p.lang === "ar" ? "Arabic" : "English",
           p.created_by.split("@")[0],

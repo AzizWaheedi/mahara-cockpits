@@ -4,7 +4,7 @@
    browser takes each Arabic letter from Plex and every Latin one from Geist. */
 @import url("https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&family=IBM+Plex+Sans+Arabic:wght@400;500;600&display=swap");
 @import "tailwindcss";
-
+@import "./components/ui/animated-select.css";
 @custom-variant dark (&:is(.dark *));
 
 /*
@@ -34,10 +34,11 @@
   --color-owed: var(--owed);
   --color-won: var(--won);
 
-  --radius-sm: calc(var(--radius) - 4px);
+  --radius-sm: calc(var(--radius) - 6px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 4px);
+  --radius-xl: calc(var(--radius) + 8px);
+  --radius-2xl: calc(var(--radius) + 16px);
 }
 
 :root {
@@ -59,8 +60,8 @@
   --won: var(--success);
   --now: var(--mahara-teal);
 
-  /* Corner radius md = 12px (brand §4). */
-  --radius: 0.75rem;
+  /* Mahara Soft Floating radius baseline (16px lg, 14px md, 24px xl, 32px 2xl). */
+  --radius: 1rem;
   --background: oklch(0.985 0.003 250);
   --foreground: oklch(0.2 0.045 270);
   --card: oklch(1 0 0);
@@ -152,9 +153,39 @@ h3 {
 
 /* One place for the surfaces, so a panel is a panel everywhere. */
 @utility panel {
-  background: var(--card);
+  background: color-mix(in oklch, var(--card) 92%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   border: 1px solid var(--border);
-  border-radius: calc(var(--radius) + 0.25rem);
+  border-radius: var(--radius-xl);
+  box-shadow: 0 10px 28px -10px oklch(0 0 0 / 25%);
+}
+
+@utility floating-dock {
+  background: color-mix(in oklch, var(--deep-space) 85%, transparent);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid oklch(1 0 0 / 14%);
+  border-radius: 9999px;
+  box-shadow: 
+    0 20px 40px -12px oklch(0 0 0 / 60%),
+    inset 0 1px 0 0 oklch(1 0 0 / 12%);
+}
+
+@utility floating-card {
+  background: color-mix(in oklch, var(--card) 85%, transparent);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid oklch(1 0 0 / 12%);
+  border-radius: var(--radius-xl);
+  box-shadow: 
+    0 12px 32px -10px oklch(0 0 0 / 40%),
+    inset 0 1px 0 0 oklch(1 0 0 / 8%);
+}
+
+@utility floating-pill {
+  border-radius: 9999px;
+  transition: all 180ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 @utility raised {
@@ -303,6 +334,7 @@ h3 {
   position: relative;
   height: 4.5rem;
   border-radius: var(--radius-lg);
+  border: 1px solid oklch(1 0 0 / 10%);
   background:
     repeating-linear-gradient(
       to right,
@@ -311,8 +343,9 @@ h3 {
       color-mix(in oklch, var(--foreground) 7%, transparent) calc(100% / var(--hours) - 1px),
       color-mix(in oklch, var(--foreground) 7%, transparent) calc(100% / var(--hours))
     ),
-    var(--secondary);
+    color-mix(in oklch, var(--secondary) 60%, transparent);
   overflow: hidden;
+  box-shadow: inset 0 2px 4px oklch(0 0 0 / 25%);
 }
 .dayline-past {
   position: absolute;
@@ -326,15 +359,28 @@ h3 {
   inset-block: 0;
   width: 2px;
   background: var(--now);
-  box-shadow: 0 0 0 3px color-mix(in oklch, var(--now) 18%, transparent);
+  box-shadow: 0 0 12px 2px rgb(0 207 200 / 80%);
   pointer-events: none;
+  z-index: 10;
+}
+.dayline-now::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  background: #00cfc8;
+  box-shadow: 0 0 8px #00cfc8;
 }
 .dayline-call {
   position: absolute;
   top: 0.75rem;
   bottom: 0.75rem;
   min-width: 0.6rem;
-  border-radius: calc(var(--radius) - 6px);
+  border-radius: var(--radius-sm);
   border: 1px solid transparent;
   overflow: hidden;
   white-space: nowrap;
@@ -347,6 +393,12 @@ h3 {
   justify-content: center;
   text-align: left;
   color: var(--foreground);
+  box-shadow: 0 2px 6px -1px oklch(0 0 0 / 25%);
+  transition: transform 120ms ease, box-shadow 120ms ease;
+}
+.dayline-call:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 10px -2px oklch(0 0 0 / 35%);
 }
 .dayline-call[data-state="coming"] {
   background: color-mix(in oklch, var(--now) 20%, var(--card));

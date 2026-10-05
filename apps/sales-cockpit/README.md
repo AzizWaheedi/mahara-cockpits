@@ -39,6 +39,10 @@ system and add nothing to its palette.
   (`#0f1b45`), Royal Blue `#2e5bd6` for links, and the success, warning and
   destructive colours. Three of those get names for what they mean on a
   rep's day (`--owed`, `--won`, `--now` in `src/index.css`); no new hue.
+- **Themes.** The sidebar, phone menu, desktop header and neutral controls use
+  `background`, `foreground`, `muted-foreground` and `border` tokens in both
+  modes. Keep fixed white text only on fixed dark surfaces, such as dock
+  tooltips and the dialer's blue/teal Booked button.
 - **Type.** Geist for the interface, Geist Mono for times, counts and money.
   Geist has no Arabic and half of what a lead writes is Arabic, so IBM Plex
   Sans Arabic (the brand's Arabic face) sits behind it in the stack, and any
@@ -71,3 +75,10 @@ bun run dev                  # http://localhost:5190/sales/
 
 Checks: `bun run typecheck`, `bunx biome check src`, `bun test src`.
 Ship: `scripts/ship.sh sales` from a commit that is on GitHub main.
+The sales path checks the GitHub source, lint, TypeScript and sales tests,
+then builds with the sales project's production environment and deploys to
+the linked `mahara-sales` Vercel project. It checks both the sales origin and
+the portal's `/sales/` route; it does not deploy a Convex backend.
+
+Select labels use explicit `htmlFor`/`id` pairs because `AnimatedSelect`
+renders a button trigger rather than a native select inside the label.

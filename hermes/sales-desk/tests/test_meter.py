@@ -42,8 +42,8 @@ class Meter(unittest.TestCase):
         p.complete("s", "u")
         p.complete("s", "u")
         self.assertEqual(m.spent, 2000)
-        self.assertEqual(rows[0], {"job": "notes", "model": "fake-model-1", "input_tokens": 900, "output_tokens": 100,
-                                   "reasoning_tokens": 40, "total_tokens": 1000})
+        self.assertEqual(rows[0], {"job": "notes", "provider": "fake", "model": "fake-model-1", "input_tokens": 900,
+                                   "output_tokens": 100, "reasoning_tokens": 40, "total_tokens": 1000})
         self.assertEqual(p.model, "fake-model")  # the provider's own attributes still read through
 
     def test_past_the_ceiling_the_call_is_refused_before_it_is_made(self):
@@ -92,8 +92,8 @@ class Meter(unittest.TestCase):
         try:
             with mock.patch.object(http, "request", return_value=(200, {}, json.dumps(answer).encode())):
                 research.research({"name": "Omar Haddad", "company": "Haddad Interiors"}, openai_key="k", apify_key="")
-            self.assertEqual(rows, [{"job": "research", "model": "gpt-5", "input_tokens": 9000, "output_tokens": 700,
-                                     "reasoning_tokens": 300, "total_tokens": 9700}])
+            self.assertEqual(rows, [{"job": "research", "provider": "openai", "model": "gpt-5", "input_tokens": 9000,
+                                     "output_tokens": 700, "reasoning_tokens": 300, "total_tokens": 9700}])
             model_mod.current_meter().base = 10_000
             with mock.patch.object(http, "request", side_effect=AssertionError("asked past the ceiling")), \
                     self.assertRaises(model_mod.BudgetSpent):

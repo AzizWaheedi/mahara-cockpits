@@ -10,6 +10,7 @@ import { type FormEvent, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import { DeskStatus } from "../components/DeskStatus";
 import {
+  AnimatedSelect,
   button,
   buttonPrimary,
   EmptyState,
@@ -275,7 +276,7 @@ export default function FollowupsPage({ me }: { me: Me }) {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {me.manager ? (
-            <select
+            <AnimatedSelect
               aria-label="Whose follow-ups"
               value={everyone ? "team" : "mine"}
               onChange={e =>
@@ -285,7 +286,7 @@ export default function FollowupsPage({ me }: { me: Me }) {
             >
               <option value="team">The whole team</option>
               <option value="mine">Mine</option>
-            </select>
+            </AnimatedSelect>
           ) : null}
           <Segmented
             label="Show"

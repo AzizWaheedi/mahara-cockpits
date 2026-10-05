@@ -1,9 +1,10 @@
 import { FileText, Sparkles } from "lucide-react";
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useEffect, useId, useRef, useState } from "react";
 import { Link } from "react-router";
 import { api } from "../lib/api";
-import { useSetting } from "../lib/data";
+import { useNow, useProposal, useRequest, useSetting } from "../lib/data";
 import { ago, duration, when } from "../lib/format";
+import { draftWait, failedLine, waitLabel } from "../lib/proposals";
 import { toast } from "../lib/toast";
 import type {
   Me,
@@ -12,7 +13,9 @@ import type {
   Recording,
   WorkRequest,
 } from "../lib/types";
+import { DeskStatus } from "./DeskStatus";
 import {
+  AnimatedSelect,
   buttonPrimary,
   Failed,
   field,
@@ -57,11 +60,133 @@ export function ProposalChip({ p }: { p: Proposal }) {
     tone: "neutral" as Tone,
     label: p.status,
   };
+  // A draft the writer holds says so, rather than "Drafting" for hours.
+  const waiting = waitLabel(p);
+  if (waiting)
+    return <StatusChip tone="warning" label={waiting} title={p.error ?? ""} />;
   const label =
     p.status === "needs_input" && p.fill_count
       ? `${s.label} (${p.fill_count})`
       : s.label;
   return <StatusChip tone={s.tone} label={label} />;
+}
+
+/**
+ * Where a draft is, the same on the lead's card and on the proposal's page:
+ * about ten minutes while all is well; the writer's own sentence when it
+ * waits (no model answering, a try that failed); "Taking longer than usual"
+ * after 20 minutes, with the try count; and Stop drafting while the request
+ * has not started (sales-api request.set). A first draft that is stopped is
+ * archived; a retry or a rebuild goes back to the version it had.
+ */
+export function DraftWaitNotice({
+  me,
+  proposal,
+  request,
+  onChange,
+}: {
+  me: Me;
+  proposal: Pick<Proposal, "error" | "created_at">;
+  request: WorkRequest | null;
+  onChange: () => void;
+}) {
+  const now = useNow(30_000);
+  const [busy, setBusy] = useState(false);
+  const w = draftWait(proposal, request, now);
+  const canStop =
+    w.stoppable &&
+    request !== null &&
+    (me.manager || request.requested_by === me.email);
+
+  async function stop() {
+    if (!request) return;
+    setBusy(true);
+    try {
+      const out = await api<{ proposal?: { status?: string } | null }>(
+        "request.set",
+        { id: request.id, to: "cancelled" },
+      );
+      toast.success(
+        out.proposal?.status === "archived"
+          ? "Drafting stopped and the proposal archived. Draft proposal on the lead's page starts a new one when you are ready."
+          : "Drafting stopped. The last version is back.",
+      );
+      onChange();
+    } catch (err) {
+      toast.error(String((err as Error).message ?? err));
+      onChange();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div
+      className={`${w.tone === "warn" ? "callout-warn" : "callout-good"} space-y-1 rounded-[var(--radius-md)] border px-3 py-2 text-sm`}
+      role="status"
+    >
+      <p className="font-medium">{w.head}.</p>
+      <p>{w.body}</p>
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 pt-0.5">
+        <p className="text-xs opacity-80">{w.meta}</p>
+        {canStop ? (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={stop}
+            className="-my-1 py-1 text-xs underline underline-offset-2 disabled:opacity-50"
+          >
+            {busy ? "Stopping…" : "Stop drafting"}
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The lead's open draft, looked at again every 20 seconds while the lead's
+ * page is open: the request (where it is, its tries) and the proposal (the
+ * writer's sentence for the closer). The lead's own read is not polled, so
+ * once the request finishes the page reads the lead's proposals again and
+ * the finished draft shows without a reload.
+ */
+function DraftWatch({
+  me,
+  request,
+  proposal,
+  onChange,
+}: {
+  me: Me;
+  request: WorkRequest;
+  proposal: Proposal | undefined;
+  onChange: () => void;
+}) {
+  const live = useRequest(request.id);
+  const liveProposal = useProposal(String(request.params?.proposal_id ?? ""));
+  const r = live.data ?? request;
+  const finished = r.status !== "queued" && r.status !== "running";
+  const told = useRef(false);
+  useEffect(() => {
+    if (!finished || told.current) return;
+    told.current = true;
+    onChange();
+  }, [finished, onChange]);
+  return (
+    <DraftWaitNotice
+      me={me}
+      proposal={
+        liveProposal.data ??
+        proposal ?? { error: null, created_at: request.requested_at }
+      }
+      request={r}
+      onChange={() => {
+        live.reload();
+        liveProposal.reload();
+        onChange();
+      }}
+    />
+  );
 }
 
 /**
@@ -102,6 +227,7 @@ export function ProposalPanel({
   error?: string | null;
   retry?: () => void;
 }) {
+  const formId = useId();
   const offer = useSetting<OfferSetting>("offer");
   const payments = offer.data?.payments?.length
     ? offer.data.payments
@@ -118,6 +244,9 @@ export function ProposalPanel({
       r.kind === "proposal" &&
       (r.status === "queued" || r.status === "running"),
   );
+  const openFor = open
+    ? proposals.find(p => p.id === String(open.params?.proposal_id ?? ""))
+    : undefined;
   const visible = proposals.filter(p => p.status !== "archived");
   const videos = recordings.filter(r => !isPhoneCall(r));
 
@@ -133,7 +262,7 @@ export function ProposalPanel({
         offer: { guarantee, payment },
       });
       toast.success(
-        "Drafting the proposal. It takes about ten minutes; you can leave this page.",
+        "Drafting the proposal. It usually takes about ten minutes; you can leave this page.",
       );
       onChange();
     } catch (err) {
@@ -155,19 +284,29 @@ export function ProposalPanel({
             <li key={p.id}>
               <Link
                 to={`/proposal/${p.id}`}
-                className="flex items-center gap-3 px-3 py-2.5 hover:bg-[color:var(--secondary)]"
+                className="block px-3 py-2.5 hover:bg-[color:var(--secondary)]"
               >
-                <FileText className="muted size-4 shrink-0" aria-hidden />
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium">
-                    {p.lang === "ar" ? "Arabic" : "English"} proposal
-                  </p>
-                  <p className="muted text-xs">
-                    {p.created_by.split("@")[0]} · {ago(p.created_at)}
-                    {p.error && p.status === "failed" ? ` · ${p.error}` : ""}
-                  </p>
-                </div>
-                <ProposalChip p={p} />
+                {/* The chip drops under the words when the card is narrow,
+                    rather than squeezing them a word to a line. */}
+                <span className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                  <FileText className="muted size-4 shrink-0" aria-hidden />
+                  <span className="min-w-[9rem] flex-1">
+                    <span className="block text-sm font-medium">
+                      {p.lang === "ar" ? "Arabic" : "English"} proposal
+                    </span>
+                    <span className="muted block text-xs">
+                      {p.created_by.split("@")[0]} · asked {ago(p.created_at)}
+                    </span>
+                  </span>
+                  <ProposalChip p={p} />
+                </span>
+                {/* Why it failed, on its own line: the writer's sentence
+                    says what to do next. */}
+                {p.status === "failed" ? (
+                  <span className="callout-bad mt-2 block rounded-[var(--radius-md)] border px-2.5 py-1.5 text-xs">
+                    {failedLine(p.error)}
+                  </span>
+                ) : null}
               </Link>
             </li>
           ))}
@@ -179,28 +318,32 @@ export function ProposalPanel({
           The closer drafts the proposal after the demo. It will show here.
         </p>
       ) : open ? (
-        <p className="callout-good rounded-[var(--radius-md)] border px-3 py-2 text-sm">
-          A proposal is being drafted (
-          {open.status === "running" ? "writing now" : "waiting for the writer"}
-          , asked {ago(open.requested_at)}). It takes about ten minutes.
-        </p>
+        <DraftWatch
+          key={open.id}
+          me={me}
+          request={open}
+          proposal={openFor}
+          onChange={onChange}
+        />
       ) : (
         <form onSubmit={draft} className="@container space-y-3">
           <div className="grid grid-cols-1 gap-3 @[26rem]:grid-cols-2">
-            <label className="space-y-1 text-sm">
+            <label htmlFor={`${formId}-language`} className="space-y-1 text-sm">
               <span className="muted block text-xs">Language</span>
-              <select
+              <AnimatedSelect
+                id={`${formId}-language`}
                 value={lang}
                 onChange={e => setLang(e.target.value as "ar" | "en")}
                 className={field}
               >
                 <option value="ar">Arabic</option>
                 <option value="en">English</option>
-              </select>
+              </AnimatedSelect>
             </label>
-            <label className="space-y-1 text-sm">
+            <label htmlFor={`${formId}-payment`} className="space-y-1 text-sm">
               <span className="muted block text-xs">How the client pays</span>
-              <select
+              <AnimatedSelect
+                id={`${formId}-payment`}
                 value={payment}
                 onChange={e => setPayment(e.target.value)}
                 className={field}
@@ -210,11 +353,15 @@ export function ProposalPanel({
                     {p.label}
                   </option>
                 ))}
-              </select>
+              </AnimatedSelect>
             </label>
-            <label className="space-y-1 text-sm">
+            <label
+              htmlFor={`${formId}-guarantee`}
+              className="space-y-1 text-sm"
+            >
               <span className="muted block text-xs">Guarantee</span>
-              <select
+              <AnimatedSelect
+                id={`${formId}-guarantee`}
                 value={guarantee ? "yes" : "no"}
                 onChange={e => setGuarantee(e.target.value === "yes")}
                 className={field}
@@ -223,11 +370,15 @@ export function ProposalPanel({
                 <option value="yes">
                   {offer.data?.guarantee?.label ?? "Include the guarantee"}
                 </option>
-              </select>
+              </AnimatedSelect>
             </label>
-            <label className="space-y-1 text-sm">
+            <label
+              htmlFor={`${formId}-recording`}
+              className="space-y-1 text-sm"
+            >
               <span className="muted block text-xs">Call to draft from</span>
-              <select
+              <AnimatedSelect
+                id={`${formId}-recording`}
                 value={recording}
                 onChange={e => setRecording(e.target.value)}
                 className={field}
@@ -242,17 +393,29 @@ export function ProposalPanel({
                     ])}
                   </option>
                 ))}
-              </select>
+              </AnimatedSelect>
             </label>
           </div>
           {!videos.length ? (
             <p className="muted text-xs">
-              No video recording of the demo is linked to this lead yet. The
-              writer looks in Fathom again for the newest demo shared with the
-              team, and says so if there is none; it never drafts from a phone
-              call.
+              No video recording of the demo is linked to this lead yet. Share
+              the demo's recording with the team in Fathom first; the writer
+              looks in Fathom again when you draft, and never drafts from a
+              phone call.
             </p>
           ) : null}
+          {/* Whether the writer is running, before anyone waits on it. */}
+          <DeskStatus
+            jobs={[
+              {
+                job: "requests",
+                what: "The proposal writer",
+                staleMin: 10,
+                waiting:
+                  "A draft asked for now waits and goes ahead by itself once that is fixed; if it is still waiting in an hour, tell the CEO.",
+              },
+            ]}
+          />
           <button type="submit" disabled={busy} className={buttonPrimary}>
             <Sparkles className="size-3.5" aria-hidden />
             {busy ? "Asking…" : "Draft proposal"}

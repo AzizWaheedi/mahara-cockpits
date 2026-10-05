@@ -29,6 +29,7 @@ const { RoomPanelView, splitQuiet, TOUCH } = await import(
 );
 const { RoomLine, Countdown } = await import("../components/RoomLine");
 const { SalesBannerView } = await import("../components/SalesBanner");
+const { buttonPrimary } = await import("../components/kit");
 const { AvailabilityStrip, PresenceDot, StaleNote } = await import(
   "../components/AvailabilityStrip"
 );
@@ -194,8 +195,13 @@ describe("D5. one teal button at a time", () => {
     const off = renderToStaticMarkup(
       <SalesBannerView now={NOW} data={live(room)} />,
     );
-    expect(off).toMatch(/bg-\[color:var\(--primary\)\][^>]*>Open my room/);
-    expect(on).not.toMatch(/bg-\[color:var\(--primary\)\][^>]*>Open my room/);
+    // The kit's own primary class, whatever it looks like this season: the
+    // test asks which button is primary, not what teal is drawn with.
+    const primary = new RegExp(
+      `class="${buttonPrimary.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}[^"]*"[^>]*>Open my room`,
+    );
+    expect(off).toMatch(primary);
+    expect(on).not.toMatch(primary);
     expect(decode(on)).toContain("Open my room");
   });
 });
