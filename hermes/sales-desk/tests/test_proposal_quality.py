@@ -666,6 +666,28 @@ class FunnelTests(unittest.TestCase):
         self.assertFalse(warned(check(deal), "funnel"))
 
 
+# -------------------------------------------------------------- defect 12 ---
+class CosmeticTests(unittest.TestCase):
+    """"Your average project" over a minimum ticket, and the driver tree's
+    last items sitting on the exhibit's bottom rule."""
+
+    def test_the_margin_page_says_project_value_and_takes_the_deal_s_own_label(self):
+        self.assertTrue('beYourProject: "Your project value"' in TEMPLATE, "the English label")
+        self.assertTrue("a.project_label ? esc(a.project_label) : L.beYourProject" in TEMPLATE,
+                        "the deal's own label wins")
+
+    def test_the_tree_keeps_clear_of_the_rule_under_it(self):
+        rule = re.search(r"\n  \.tree \{(.*?)\}", TEMPLATE, re.S).group(1)
+        self.assertIn("padding-bottom", rule)
+
+    def test_a_drafter_with_no_reference_is_shown_the_new_keys(self):
+        from desk import prompt
+        shape = prompt.outline(resolved())
+        for key in ("gross_margin", "project_label", "pool"):
+            self.assertIn(f'"{key}"', shape)
+        self.assertNotIn('"2 to 4"', shape)
+
+
 # ------------------------------------------------------------- the template ---
 @unittest.skipUnless(os.environ.get("SALES_RENDER_LIVE") == "1", "SALES_RENDER_LIVE=1 runs the real browser")
 class LiveTemplateTests(unittest.TestCase):
@@ -722,6 +744,14 @@ class LiveTemplateTests(unittest.TestCase):
         self.assertEqual(live.count("lost here"), 0, "neither the range nor the drop after it is computed")
         live = self.dom(general_deal())  # 40, 12, 2 from one month
         self.assertEqual(live.count("lost here"), 2, "one month's funnel still shows its losses")
+
+    def test_a_minimum_ticket_is_called_what_it_is(self):
+        deal = margin_mode_deal()
+        deal["arithmetic"]["project_label"] = "Your minimum ticket"
+        live = self.dom(deal)
+        self.assertTrue("Your minimum ticket" in live, "the deal's label")
+        live = self.dom(margin_mode_deal())
+        self.assertTrue("Your project value" in live and "Your average project" not in live, "the neutral label")
 
     def test_the_tiles_still_come_with_a_value_and_a_margin(self):
         deal = specific_deal()

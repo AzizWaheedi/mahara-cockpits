@@ -285,7 +285,9 @@ def outline(resolved: dict[str, Any], today: Optional[date] = None) -> str:
         "gap_title": "...", "gap_close": "...",
         "gap_points": [{"v": "a figure from the call", "k": "what it is"}],
         "funnel": {"title": "...", "stages": [{"label": "Enquiries", "note": "...", "value": 0, "display": "0"}],
-                   "note": "..."},
+                   "note": "...",
+                   "pool": "only on a stage that counts other people than the stage above it (another period "
+                           "or source), so no loss is drawn into it; leave the key out otherwise"},
         "pattern": [{"title": "...", "body": "..."}], "pattern_note": "...",
         "tree_title": "...", "tree_intro": "...", "tree_close": "...",
         "tree": {"goal_label": "...", "goal": "...", "goal_note": "...",
@@ -296,6 +298,10 @@ def outline(resolved: dict[str, Any], today: Optional[date] = None) -> str:
                  "total_label": "...", "note": "...", "verdict_label": "...", "verdict": "...", "close": "..."},
         "arithmetic": {"currency": "SAR", "months": resolved["months"], "project_values": [], "margins": [10, 20],
                        "mode": "margin, volume or threshold, or leave the key out for the grid",
+                       "gross_margin": "the client's gross margin in percent, the bottom of their range, only when "
+                                       "the call gave one; the projects are counted at it and labelled gross",
+                       "project_label": "what the project value is when it is not an average, such as Your "
+                                        "minimum ticket; leave the key out otherwise",
                        "title": "...", "intro": "...", "table_title": "...", "note": "...",
                        "total_label": "...", "verdict_label": "...", "verdict": "...", "close": "..."},
         "solution_title": "...", "solution_close": "...",
@@ -311,7 +317,8 @@ def outline(resolved: dict[str, Any], today: Optional[date] = None) -> str:
         "roi": {"local_currency": "SAR", "usd_rate": 3.75, "months": resolved["months"],
                 "fee_usd": resolved["price"], "ad_monthly_usd": resolved["ads_max"],
                 "avg_project_value": 0, "margin_pct": 0, "project_note": "...", "margin_note": "...",
-                "target_projects_month": "2 to 4"},
+                "target_projects_month": "the plan's target across the whole term, in the plan's words; a "
+                                         "target, never a promise"},
         "start_title": "...", "deposit_label": "...", "deposit_amount": offer_mod.money(resolved["deposit"]),
         "start_steps": [{"when": "...", "title": "...", "body": "..."}],
         "start_note": "...",
