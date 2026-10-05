@@ -123,7 +123,43 @@ def burst(sqls, lead_s: float = 2.5):
     with ThreadPoolExecutor(len(wrapped)) as ex:
         out = list(ex.map(one, wrapped))
     time.sleep(REST_S)
+    return no_throttle(out)
+
+
+class Throttled(Exception):
+    """The management API turned some of a burst's requests away (429: other
+    runs share the token). That burst never ran as one, so its check is run
+    again from a clean slate (run_all), never judged on it."""
+
+
+def no_throttle(out):
+    for o in out:
+        if o[0] == "err" and (o[1].status == 429 or "throttled" in o[1].text):
+            raise Throttled(o[1].text[:80])
     return out
+
+
+def run_all(checks, names, results, clean, tries: int = 4, rest_s: int = 20):
+    """Each named check in turn. A check a throttled burst broke off is run
+    again after clean() (its synthetic rows gone) and a rest, its results so
+    far set aside; after `tries` busy runs it is a failure of the run itself,
+    never of the database."""
+    for n in names:
+        for _ in range(tries):
+            mark = len(results)
+            try:
+                checks[n]()
+            except Throttled as e:
+                del results[mark:]
+                print(f"      {n}: the management API was busy ({e}); any line above for it is set aside, "
+                      f"run again in {rest_s} s")
+                clean()
+                time.sleep(rest_s)
+                continue
+            break
+        else:
+            results.append((f"{n}: the check itself", False, "the management API was busy every time"))
+            print(f"FAIL  {n}: the check itself (the management API was busy {tries} times running; run it again later)")
 
 
 def hundred(sqls):
@@ -417,8 +453,7 @@ CHECKS = {
 def main():
     names = sys.argv[1:] or list(CHECKS)
     try:
-        for n in names:
-            CHECKS[n]()
+        run_all(CHECKS, names, RESULTS, cleanup)
     finally:
         cleanup()
     left = leftovers()

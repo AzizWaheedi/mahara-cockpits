@@ -154,7 +154,18 @@ def burst(sqls, lead_s: float = 2.5, width: int = PARALLEL):
         out = list(ex.map(one, wrapped))
     # The management API throttles bursts: a short rest keeps the next one parallel.
     time.sleep(PACE_S)
+    # A press it still turned away after q's own tries never ran with the
+    # others: the burst was not one, so its check is run again (main).
+    for o in out:
+        if o[0] == "err" and (o[1].status == 429 or "throttled" in o[1].text):
+            raise Throttled(o[1].text[:80])
     return out
+
+
+class Throttled(Exception):
+    """The management API turned some of a burst's presses away (429: other
+    runs share the token). The check is run again from a clean slate, never
+    judged on that burst."""
 
 
 def press(sql: str) -> str:
@@ -248,7 +259,9 @@ def check(name, ok, detail=""):
 
 def t_lease():
     """room.event delivered 20 times at once, five rounds (100 presses): the
-    lease (cockpit_sales_room_event_lease) gives each event to exactly one."""
+    lease (cockpit_sales_room_event_lease) gives each event to exactly one.
+    Its longest lease (600 s): a press q sent again after a throttle lands up
+    to ~70 s late, when a 30 s lease would rightly be free again."""
     in_window()
     keys = [f"{RUN}:lease:{n}" for n in range(5)]
     rows = q("insert into public.cockpit_sales_room_events (kind, source, dedupe_key, text) values "
@@ -257,20 +270,20 @@ def t_lease():
     try:
         for n, r in enumerate(rows):
             by = f"p_event_id => {lit(r['id'])}::uuid" if n % 2 == 0 else f"p_dedupe_key => {lit(r['dedupe_key'])}"
-            out = burst([f"select public.cockpit_sales_room_event_lease({by}, p_seconds => 30) as got" for _ in range(PARALLEL)])
+            out = burst([f"select public.cockpit_sales_room_event_lease({by}, p_seconds => 600) as got" for _ in range(PARALLEL)])
             errs = [o[1] for o in out if o[0] == "err"]
             got = [o[1][0]["got"] for o in out if o[0] == "ok" and o[1] and o[1][0].get("got")]
             check(f"lease round {n + 1}: {PARALLEL} room.event runs at once, one holds the event",
                   len(got) == 1 and not errs, f"holders={len(got)} errors={[e.code for e in errs]}")
         # A released event (lease_until null) is taken again by exactly one of the next burst.
         q(f"update public.cockpit_sales_room_events set lease_until = null where dedupe_key = {lit(keys[0])}")
-        out = burst([f"select public.cockpit_sales_room_event_lease(p_dedupe_key => {lit(keys[0])}, p_seconds => 30) as got"
+        out = burst([f"select public.cockpit_sales_room_event_lease(p_dedupe_key => {lit(keys[0])}, p_seconds => 600) as got"
                      for _ in range(PARALLEL)])
         got = [o for o in out if o[0] == "ok" and o[1] and o[1][0].get("got")]
         check("a released event is taken again by exactly one of twenty", len(got) == 1, f"holders={len(got)}")
         # A handled event is never leased, whatever arrives at once.
         q(f"update public.cockpit_sales_room_events set handled_at = now(), lease_until = null where dedupe_key = {lit(keys[1])}")
-        out = burst([f"select public.cockpit_sales_room_event_lease(p_dedupe_key => {lit(keys[1])}, p_seconds => 30) as got"
+        out = burst([f"select public.cockpit_sales_room_event_lease(p_dedupe_key => {lit(keys[1])}, p_seconds => 600) as got"
                      for _ in range(PARALLEL)])
         got = [o for o in out if o[0] == "ok" and o[1] and o[1][0].get("got")]
         check("a handled event is leased by none of twenty", len(got) == 0, f"holders={len(got)}")
@@ -497,6 +510,9 @@ def staggered(sqls_with_delay):
     with ThreadPoolExecutor(len(sqls_with_delay)) as ex:
         out = list(ex.map(one, sqls_with_delay))
     time.sleep(PACE_S)
+    for o in out:
+        if o[0] == "err" and (o[1].status == 429 or "throttled" in o[1].text):
+            raise Throttled(o[1].text[:80])
     return out
 
 
@@ -706,10 +722,21 @@ def main():
     print(f"run {RUN}: {', '.join(names)}")
     try:
         for n in names:
-            try:
-                CHECKS[n]()
-            except SqlError as e:
-                check(f"{n}: the check itself", False, f"SQL error {e.status}: {e.text[:300]}")
+            for attempt in range(4):
+                mark = len(RESULTS)
+                try:
+                    CHECKS[n]()
+                except Throttled as e:
+                    del RESULTS[mark:]
+                    print(f"      {n}: the management API was busy ({e}); any line above for it is set aside, run again in 20 s")
+                    cleanup()
+                    time.sleep(20)
+                    continue
+                except SqlError as e:
+                    check(f"{n}: the check itself", False, f"SQL error {e.status}: {e.text[:300]}")
+                break
+            else:
+                check(f"{n}: the check itself", False, "the management API was busy four times running; run it again later")
     finally:
         cleanup()
         left = leftovers()

@@ -221,7 +221,10 @@ def part_b() -> list:
     try:
         claim = (f"update public.cockpit_sales_rooms set count_claimed_at = clock_timestamp() "
                  f"where id = '{room}' and count_claimed_at is null returning id::text as id")
-        lease = f"select public.cockpit_sales_room_event_lease(p_event_id => '{ev}'::uuid, p_seconds => 30)::text as id"
+        # The longest lease the function grants (600 s): a press the management
+        # API throttled is sent again up to ~80 s later, and a 30 s lease that
+        # ran out by then is rightly taken again, which is not a race.
+        lease = f"select public.cockpit_sales_room_event_lease(p_event_id => '{ev}'::uuid, p_seconds => 600)::text as id"
         with concurrent.futures.ThreadPoolExecutor(max_workers=25) as pool:
             claims = list(pool.map(lambda _: q(claim, True), range(25)))
             leases = list(pool.map(lambda _: q(lease, True), range(25)))

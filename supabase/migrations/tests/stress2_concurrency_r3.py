@@ -187,8 +187,7 @@ CHECKS = {
 def main():
     names = sys.argv[1:] or list(CHECKS)
     try:
-        for n in names:
-            CHECKS[n]()
+        s2.run_all(CHECKS, names, RESULTS, cleanup)
     finally:
         cleanup()
     left = leftovers()
