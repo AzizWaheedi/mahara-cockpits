@@ -326,6 +326,12 @@ def _render_row(found: dict[str, Any]) -> tuple[str, Optional[bool], str]:
                             "the PDF is skipped; " + HEADLESS_SHELL_HINT)
 
 
+def _reference_dom(deal: dict[str, Any]) -> Optional[str]:
+    """A reference deal built and rendered the way validate --send renders a draft."""
+    with tempfile.TemporaryDirectory(prefix="reference-") as tmp:
+        return render_mod.dom(build_mod.build(deal, Path(tmp) / "reference.html"))
+
+
 def cmd_doctor(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     rows: list[dict[str, Any]] = []
 
@@ -367,22 +373,27 @@ def cmd_doctor(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     # The primary, the fallback, and whether anything can draft (model_rows).
     rows.extend(model_rows(cfg, log, online=not args.offline))
 
+    engine = render_mod.engine()
+    add(*_browser_row(engine, render_mod.find_chrome()))
+    renders = False
+    if engine != "none" and not args.offline:
+        # Measured, never assumed: the browser line only says what was found.
+        found = render_mod.probe()
+        add(*_render_row(found))
+        renders = bool(found.get("dom"))
+
     # Each one through the validator against today's offer.json, because the
-    # drafter copies its faults as faithfully as its shape (references.py).
+    # drafter copies its faults as faithfully as its shape (references.py);
+    # rendered too when the browser just did, as validate --send would.
     if offer is None:
         add("reference deals", None, "not checked: offer.json does not read, and the references are checked "
                                      "against it. Fix offer.json first")
     else:
         try:
-            add("reference deals", *references_mod.doctor_row(cfg.reference_dir, offer))
+            add("reference deals", *references_mod.doctor_row(cfg.reference_dir, offer,
+                                                              _reference_dom if renders else None))
         except Refused as e:
             add("reference deals", None, f"not checked, because offer.json gives no default offer: {e}")
-
-    engine = render_mod.engine()
-    add(*_browser_row(engine, render_mod.find_chrome()))
-    if engine != "none" and not args.offline:
-        # Measured, never assumed: the browser line only says what was found.
-        add(*_render_row(render_mod.probe()))
 
     try:
         cfg.ensure_dirs()

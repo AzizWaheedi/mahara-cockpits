@@ -244,6 +244,84 @@ class ArithmeticGapTests(unittest.TestCase):
         self.assertEqual(validate.expected_sheets(deal), 6)
 
 
+def page(sheets: int, over: int = 0) -> str:
+    """A rendered page the way check_render reads one: sheets, some overflowing."""
+    return ('<section class="sheet over"></section>' * over
+            + '<section class="sheet"></section>' * (sheets - over))
+
+
+class RenderedReferenceTests(unittest.TestCase):
+    """Online, doctor renders each reference as validate --send does. On
+    5 October 2026 B2B's 180273419, its offer lines corrected, passed every
+    rule and still overflowed a sheet under today's template."""
+
+    def test_a_reference_that_overflows_a_sheet_breaks_the_rules(self):
+        deal = general_deal()
+        n = validate.expected_sheets(deal)
+        self.assertEqual(references.problems_in(deal, TEST_OFFER, page(n)), [])
+        problems = references.problems_in(deal, TEST_OFFER, page(n, over=1))
+        self.assertEqual([p.split(":", 1)[0] for p in problems], ["render"])
+        self.assertIn("overflow A4", problems[0])
+        self.assertIn("render", references.problems_in(deal, TEST_OFFER, page(n - 1))[0])
+
+    def test_each_file_is_rendered_and_says_so(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            write(Path(tmp), "general.json", general_deal())
+            write(Path(tmp), "specific.json", specific_deal())
+            seen = []
+
+            def fits(deal):
+                seen.append(references.variant_of(deal))
+                return page(validate.expected_sheets(deal))
+
+            got = references.check(Path(tmp), TEST_OFFER, fits)
+            self.assertEqual(seen, ["general", "specific"])
+            self.assertTrue(all(v.ok and v.rendered for v in got))
+            ok, line = references.doctor_row(Path(tmp), TEST_OFFER, fits)
+            self.assertIs(ok, True)
+            self.assertIn("general.json (general), specific.json (specific) pass today's rules, and fit A4 when "
+                          "rendered", line)
+
+            ok, line = references.doctor_row(Path(tmp), TEST_OFFER,
+                                              lambda deal: page(validate.expected_sheets(deal), over=1))
+            self.assertIs(ok, False)
+            self.assertIn("general.json (general) breaks today's rules: render", line)
+            self.assertIn("specific.json (specific) breaks today's rules: render", line)
+
+    def test_unrendered_pages_are_said_to_be_unchecked(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            write(Path(tmp), "general.json", general_deal())
+            ok, line = references.doctor_row(Path(tmp), TEST_OFFER)
+            self.assertIs(ok, True)
+            self.assertIn("pages not rendered here: doctor without --offline renders them", line)
+
+            def broken(_deal):
+                raise RuntimeError("the browser died")
+
+            got = references.check(Path(tmp), TEST_OFFER, broken)
+            self.assertTrue(got[0].ok)
+            self.assertFalse(got[0].rendered)
+            ok, line = references.doctor_row(Path(tmp), TEST_OFFER, lambda _deal: None)
+            self.assertIs(ok, True)
+            self.assertIn("the browser could not render general.json, so overflow there is unchecked", line)
+            self.assertNotIn("—", line)
+
+    def test_doctor_renders_a_reference_through_the_template(self):
+        spec = importlib.util.spec_from_file_location("desk_cli_refs_dom", ROOT / "desk.py")
+        cli = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cli)
+        built = {}
+
+        def dom(html_path):
+            built["html"] = Path(html_path).read_text(encoding="utf-8")
+            return page(7)
+
+        with mock.patch.object(cli.render_mod, "dom", dom):
+            self.assertEqual(cli._reference_dom(general_deal()), page(7))
+        self.assertIn("const PROPOSAL = ", built["html"])
+        self.assertIn('"variant": "general"', built["html"])
+
+
 class ShapeDateTests(unittest.TestCase):
     def test_the_drafter_is_given_todays_date_not_the_references(self):
         ref = general_deal(date="5 September 2026", valid_until="30 September 2026")

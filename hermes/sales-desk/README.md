@@ -399,6 +399,22 @@ names each file, its variant and its verdict (file and check names only),
 and `tests/test_references.py` fails on the VPS when one breaks a rule.
 `python3 desk.py validate FILE --send` names each field to correct.
 
+Online, doctor also builds and renders each reference, as `validate --send`
+does, so a reference whose copy no longer fits today's template fails too
+(`render`): on 5 October 2026 B2B's margin-mode draft 180273419, its offer
+lines corrected, passed every rule and still overflowed a sheet. Offline, and
+in the tests, nothing is rendered, and the line says so.
+
+Which references to keep, from the gate (5 October 2026): `general.json` in
+margin mode (B2B's 175209069), because a general draft is most often a call
+that gave a project value and no margin, and that is the case SKILL.md puts in
+margin mode; `specific.json` (B2B's 173625821), because a specific draft
+copying a general reference has no `cost` block to copy; and the grid
+general (the old 180279552) as `general-grid.json`. The desk reads
+`general.json` first for a general draft, so the grid file is only read as the
+stand-in for a blind draft (the first file by name), which suits one: no
+project value and a grid. B2B holds no blind draft to make one from.
+
 Its dates are not held against it. The drafter is told today's date and the
 date two weeks on in place of the reference's own (`prompt.shape_of`), since
 it is told the date nowhere else and the 24 September draft kept the

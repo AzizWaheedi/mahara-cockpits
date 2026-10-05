@@ -18,6 +18,13 @@ date instead, so a reference is judged as of the day it was written.
 
 doctor shows the verdict on its "reference deals" line, and
 tests/test_references.py fails when a reference on the machine breaks a rule.
+
+Online, doctor renders each reference too, the way `validate --send` does. On
+5 October 2026 B2B's margin-mode draft 180273419, its offer lines corrected,
+passed every rule and still overflowed a sheet under today's template: a
+reference whose copy no longer fits teaches every draft lengths that spend the
+tightening rounds. Offline, and in the tests, nothing is rendered, and the
+line says so.
 """
 from __future__ import annotations
 
@@ -25,11 +32,14 @@ import json
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from . import offer as offer_mod
 from . import validate as validate_mod
 from .prompt import VARIANTS, variant_of
+
+# Builds a deal and returns the rendered page, or None when no browser could.
+DomOf = Callable[[dict[str, Any]], Optional[str]]
 
 # Warnings that still fail a reference: the rules that move when offer.json
 # does. A draft may carry a warning for a closer to judge; a reference teaches
@@ -42,6 +52,8 @@ class Verdict:
     file: str
     variant: str
     problems: list[str] = field(default_factory=list)
+    # Whether its pages were rendered and measured, or only its data checked.
+    rendered: bool = False
 
     @property
     def ok(self) -> bool:
@@ -69,16 +81,18 @@ def written_on(deal: dict[str, Any]) -> Optional[date]:
     return None
 
 
-def problems_in(deal: dict[str, Any], offer: dict[str, Any]) -> list[str]:
-    """What breaks today's rules, as the validator words it. Empty when nothing does."""
-    result = validate_mod.validate(deal, None, resolved=offer_mod.resolve(offer, {}), offer=offer, dom=None,
-                                   engine="not rendered", today=written_on(deal))
+def problems_in(deal: dict[str, Any], offer: dict[str, Any], dom: Optional[str] = None) -> list[str]:
+    """What breaks today's rules, as the validator words it. Empty when nothing
+    does. With the rendered page, the sheet count and overflow count too."""
+    result = validate_mod.validate(deal, None, resolved=offer_mod.resolve(offer, {}), offer=offer, dom=dom,
+                                   engine="rendered" if dom else "not rendered", today=written_on(deal))
     return [f"{r['check']}: {r['detail']}" for r in result.rows
             if r["send"] == validate_mod.FAIL or (r["check"] in STRICT and r["status"] == validate_mod.WARN)]
 
 
-def check(ref_dir: Path, offer: Optional[dict[str, Any]] = None) -> list[Verdict]:
-    """One verdict per *.json in the folder, the files load_reference reads."""
+def check(ref_dir: Path, offer: Optional[dict[str, Any]] = None, dom_of: Optional[DomOf] = None) -> list[Verdict]:
+    """One verdict per *.json in the folder, the files load_reference reads.
+    dom_of renders one; a page it cannot render is checked on its data alone."""
     ref_dir = Path(ref_dir)
     paths = sorted(ref_dir.glob("*.json")) if ref_dir.is_dir() else []
     if not paths:
@@ -94,15 +108,22 @@ def check(ref_dir: Path, offer: Optional[dict[str, Any]] = None) -> list[Verdict
         if not isinstance(deal, dict):
             out.append(Verdict(path.name, "unreadable", ["read: it holds no deal object"]))
             continue
-        out.append(Verdict(path.name, variant_of(deal), problems_in(deal, offer)))
+        dom = None
+        if dom_of is not None:
+            try:
+                dom = dom_of(deal)
+            except Exception:  # noqa: BLE001 - a browser that fails says nothing about the reference
+                dom = None
+        out.append(Verdict(path.name, variant_of(deal), problems_in(deal, offer, dom), rendered=bool(dom)))
     return out
 
 
-def doctor_row(ref_dir: Path, offer: Optional[dict[str, Any]] = None) -> tuple[Optional[bool], str]:
+def doctor_row(ref_dir: Path, offer: Optional[dict[str, Any]] = None,
+               dom_of: Optional[DomOf] = None) -> tuple[Optional[bool], str]:
     """doctor's "reference deals" line: each file, its variant and its verdict,
     and which variants have none of their own. File and check names only: a
     reference is a real client's proposal, and doctor writes to the cron log."""
-    verdicts = check(ref_dir, offer)
+    verdicts = check(ref_dir, offer, dom_of)
     if not verdicts:
         return None, (f"none in {ref_dir}: the drafter works from the rules and the template's outline, and "
                       "every proposal's notes say so. extract_reference.py makes one from a finished proposal")
@@ -114,7 +135,14 @@ def doctor_row(ref_dir: Path, offer: Optional[dict[str, Any]] = None) -> tuple[O
                      + ". Every draft copies its reference's shape, faults included: replace it with a corrected "
                        "copy (python3 desk.py validate FILE --send names each field)")
     if good:
-        parts.append(", ".join(f"{v.file} ({v.variant})" for v in good) + " pass today's rules")
+        unmeasured = [v.file for v in good if not v.rendered]
+        if not unmeasured:
+            how = ", and fit A4 when rendered"
+        elif dom_of is None:
+            how = " (pages not rendered here: doctor without --offline renders them)"
+        else:
+            how = f" (the browser could not render {', '.join(unmeasured)}, so overflow there is unchecked)"
+        parts.append(", ".join(f"{v.file} ({v.variant})" for v in good) + " pass today's rules" + how)
     have = {v.variant for v in verdicts}
     missing = [x for x in VARIANTS if x not in have]
     stand_in = next((v.file for v in verdicts if v.variant != "unreadable"), None)
