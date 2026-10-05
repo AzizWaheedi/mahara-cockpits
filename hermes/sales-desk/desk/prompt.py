@@ -80,10 +80,55 @@ SHEET_BLOCKS = {
     2: ("quotes", "gap_points", "funnel", "gap_title", "gap_close"),
     3: ("tree", "tree_intro", "tree_close", "tree_title"),
     4: ("arithmetic", "cost"),
-    5: ("solution", "program", "solution_close", "solution_targets", "proof"),
-    6: ("investment", "roi", "guarantee"),
+    5: ("solution", "program", "solution_close", "solution_targets"),
+    # The proof is printed above the price unless proof_on says "solution".
+    6: ("investment", "roi", "guarantee", "proof"),
     7: ("start_steps", "terms", "acceptance"),
 }
+
+
+def sheet_plan(deal: dict[str, Any]) -> list[tuple[str, ...]]:
+    """The blocks on each sheet this deal draws, in renderDoc's order and on
+    its conditions (validate.expected_sheets counts the same sheets)."""
+    from . import validate as validate_mod
+    proof_on = "solution" if deal.get("proof_on") == "solution" else "investment"
+    proof = ("proof",) if deal.get("proof") else ()
+    arith = deal.get("arithmetic") if isinstance(deal.get("arithmetic"), dict) else {}
+    arith_page = validate_mod.expected_sheets({"arithmetic": {**arith, "inline": False}}) > 1
+    plan: list[tuple[str, ...]] = [SHEET_BLOCKS[1]]
+    if (deal.get("funnel") or deal.get("gap_points") or deal.get("quotes")
+            or deal.get("pattern") or deal.get("pattern_groups")):
+        plan.append(("gap_points", "funnel", "gap_title", "gap_intro", "gap_close", "pattern", "pattern_groups",
+                     "pattern_note"))
+    if (deal.get("tree") or {}).get("branches"):
+        plan.append(SHEET_BLOCKS[3])
+    if (deal.get("cost") or {}).get("layers"):
+        plan.append(("cost",))
+    if arith_page and not arith.get("inline"):
+        plan.append(("arithmetic",))
+    if deal.get("problems"):
+        plan.append(("problems", "problems_title", "problems_intro", "problems_close"))
+    if deal.get("solution"):
+        plan.append(SHEET_BLOCKS[5] + ("solution_title",) + (proof if proof_on == "solution" else ()))
+    if deal.get("investment"):
+        plan.append(("investment", "investment_title", "investment_close", "roi")
+                    + (proof if proof_on == "investment" else ())
+                    + (("arithmetic",) if arith_page and arith.get("inline") else ())
+                    + (("cta",) if deal.get("cta") else ()))
+    if deal.get("start_steps"):
+        plan.append(("start_steps", "start_title", "start_note", "terms", "deposit_label", "deposit_amount"))
+    return plan
+
+
+def blocks_on(deal: dict[str, Any], n: int) -> tuple[str, ...]:
+    """The blocks on sheet n of this deal; SHEET_BLOCKS, with the proof where
+    proof_on puts it, for a sheet the deal's own plan does not reach."""
+    plan = sheet_plan(deal)
+    if 1 <= n <= len(plan):
+        return plan[n - 1]
+    blocks = tuple(b for b in SHEET_BLOCKS.get(n, ()) if b != "proof")
+    proof_sheet = 5 if deal.get("proof_on") == "solution" else 6
+    return blocks + (("proof",) if n == proof_sheet else ())
 
 # What each variant has to carry and may not, for when the reference on the
 # machine is of another variant or there is none (SKILL.md, Output).
@@ -354,19 +399,37 @@ _CUT = {
 }
 
 
-def tighten_user(deal: dict[str, Any], over: list[int], round_no: int = 1) -> str:
+# Under this many pixels a sheet is two or three lines long (5 October 2026: a
+# sheet 8 px over lost two of its five solution steps and a target tile to the
+# rounds that cut a third, then half).
+SMALL_OVERFLOW_PX = 40
+
+_SMALL = ("That is two or three lines. Cut two or three lines from the copy on {it} and nothing more: keep "
+          "every list item (every step, target, proof, row and branch) and shorten a sentence inside one "
+          "instead of removing it. ")
+
+
+def tighten_user(deal: dict[str, Any], over: list[int], round_no: int = 1,
+                 px: Optional[dict[int, int]] = None) -> str:
     """Ask for a shorter version of the pages that did not fit, named by sheet
-    and by block rather than by character count, because the count was never
-    the thing that decided it. Later rounds ask for a larger cut."""
-    blocks = sorted({b for n in over for b in SHEET_BLOCKS.get(n, ())})
+    and by block, and by how many pixels each one is over when the browser
+    measured it. A sheet a few lines over is asked for a few lines, whatever
+    the round; only a long overflow is asked, round by round, for more."""
+    blocks = sorted({b for n in over for b in blocks_on(deal, n)})
     one = len(over) == 1
-    harder = _CUT.get(max(1, min(3, round_no)), "")
+    px = {int(k): int(v) for k, v in (px or {}).items() if int(k) in over}
+    small = bool(over) and len(px) == len(over) and max(px.values()) < SMALL_OVERFLOW_PX
+    harder = (_SMALL.format(it="that sheet" if one else "each of them") if small
+              else _CUT.get(max(1, min(3, round_no)), ""))
+    by = ""
+    if px:
+        by = " (" + ", ".join(f"sheet {n} by {px[n]} px" for n in over if n in px) + ")"
     return (
         "This draft is correct and one thing is wrong with it: "
         + ("sheet " if one else "sheets ")
         + ", ".join(str(n) for n in over)
         + (" overflows" if one else " overflow")
-        + " the page when rendered at A4.\n\n"
+        + " the page when rendered at A4" + by + ".\n\n"
         "Return the same JSON object, unchanged except that the copy on "
         + ("that sheet" if one else "those sheets")
         + " is shorter. The blocks on "

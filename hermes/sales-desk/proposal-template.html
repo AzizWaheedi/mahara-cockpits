@@ -1884,8 +1884,14 @@ document.documentElement.style.setProperty("--sheets", '"' + document.querySelec
    overflowing pages out of three. */
 function overflowGuard() {
   const A4 = 297 / 25.4 * 96; /* mm to css px */
+  /* By how much, too: the sales desk tells the drafter, so a sheet two lines
+     over is asked for two lines and not for half its words. */
   document.querySelectorAll(".sheet").forEach(s => {
-    s.classList.toggle("over", s.getBoundingClientRect().height > A4 + 2);
+    const h = s.getBoundingClientRect().height;
+    const over = h > A4 + 2;
+    s.classList.toggle("over", over);
+    if (over) s.dataset.overPx = String(Math.ceil(h - A4));
+    else delete s.dataset.overPx;
   });
 }
 overflowGuard();

@@ -186,6 +186,33 @@ def overflowing(deal: dict[str, Any], html_path: Path, renderer: Any) -> tuple[l
     return over, out
 
 
+def px_over(dom: Optional[str]) -> dict[int, int]:
+    """By how many pixels each overflowing sheet is over, as the template
+    measured it (data-over-px), by sheet number."""
+    if not dom:
+        return {}
+    parts = re.split(r'(<section[^>]*class="sheet)', validate_mod.live_dom(dom))
+    out = {}
+    for i in range(1, len(parts), 2):
+        chunk = parts[i] + (parts[i + 1] if i + 1 < len(parts) else "")
+        head = chunk.split(">", 1)[0]
+        m = re.search(r'data-over-px="(\d+)"', head)
+        if m and re.search(r'class="sheet[^"]*\bover\b', head):
+            out[(i + 1) // 2] = int(m.group(1))
+    return out
+
+
+# Lists a shorter version may not lose: a tightening round that drops a step
+# or a target is not shorter copy, it is a thinner proposal.
+KEPT_LISTS = ("solution", "solution_targets")
+
+
+def lost_items(before: dict[str, Any], after: dict[str, Any]) -> list[str]:
+    """The lists that came back shorter than they went."""
+    return [k for k in KEPT_LISTS
+            if isinstance(before.get(k), list) and len(after.get(k) or []) < len(before[k])]
+
+
 def run(call: Call, *, lang: str, resolved: dict[str, Any], offer: dict[str, Any], p: Any, cfg: Config,
         log: Callable[[str], None], workdir: Path, renderer: Any = render_mod,
         beat: Optional[Callable[[], None]] = None, variant: Optional[str] = None,
@@ -262,11 +289,16 @@ def run(call: Call, *, lang: str, resolved: dict[str, Any], offer: dict[str, Any
         still: Optional[list[int]] = None
         try:
             tighter, _r = model_mod.call_json(
-                p, system, prompt_mod.tighten_user(best, best_over, round_no), temperature=0.2, attempts=1,
-                timeout=cfg.model_timeout, expect=prompt_mod.is_deal, log=log, what="tighten", beat=beat)
+                p, system, prompt_mod.tighten_user(best, best_over, round_no, px=px_over(best_dom)),
+                temperature=0.2, attempts=1, timeout=cfg.model_timeout, expect=prompt_mod.is_deal, log=log,
+                what="tighten", beat=beat)
             stamp(tighter, variant=variant, resolved=resolved, lang=lang, currency_unstated=unstated)
-            html_path = workdir / f"draft-{round_no + 1}.html"
-            still, dom = overflowing(tighter, html_path, renderer)
+            lost = lost_items(best, tighter)
+            if lost:
+                log("    the shorter draft dropped items from %s; not taken" % ", ".join(lost))
+            else:
+                html_path = workdir / f"draft-{round_no + 1}.html"
+                still, dom = overflowing(tighter, html_path, renderer)
         except NotNow:
             raise
         except Exception as e:  # noqa: BLE001

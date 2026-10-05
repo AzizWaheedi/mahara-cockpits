@@ -536,6 +536,91 @@ class ArithmeticTests(unittest.TestCase):
         self.assertTrue(any("arithmetic.gross_margin=27" in w for w in warned(check(deal), "evidence counts")))
 
 
+# --------------------------------------------------------------- defect 9 ---
+class MeasuredRenderer:
+    """The fake browser, saying by how many pixels each overflowing sheet is over."""
+
+    def __init__(self, over: list[list[int]], px: int):
+        from tests.fakes import FakeRenderer
+        self.inner = FakeRenderer(over=over)
+        self.px = px
+
+    def dom(self, html_path: Path):
+        out = self.inner.dom(html_path)
+        return out.replace('class="sheet over"', f'class="sheet over" data-over-px="{self.px}"') if out else out
+
+    def pdf(self, html_path: Path, out_path: Path) -> bool:
+        return self.inner.pdf(html_path, out_path)
+
+    def engine(self) -> str:
+        return "fake browser"
+
+
+class TighteningTests(unittest.TestCase):
+    """A sheet 8 px over lost two of its five solution steps and a target
+    tile: the drafter was never told by how much, and the rounds cut half."""
+
+    def test_a_few_pixels_over_asks_for_two_or_three_lines_and_every_item_kept(self):
+        from desk import prompt
+        for round_no in (1, 2, 3):
+            text = prompt.tighten_user(general_deal(), [5], round_no, px={5: 8})
+            self.assertIn("8 px", text)
+            self.assertIn("two or three lines", text)
+            self.assertIn("keep every list item", text)
+            self.assertNotIn("about a third", text)
+            self.assertNotIn("about half", text)
+
+    def test_a_long_overflow_still_asks_for_more(self):
+        from desk import prompt
+        text = prompt.tighten_user(general_deal(), [5], 2, px={5: 160})
+        self.assertIn("160 px", text)
+        self.assertIn("about a third", text)
+
+    def test_the_proof_is_named_on_the_page_it_is_printed_on(self):
+        from desk import prompt
+        deal = general_deal()  # proof_on is "investment" unless it says otherwise
+        self.assertIn("proof", prompt.blocks_on(deal, 6))
+        self.assertNotIn("proof", prompt.blocks_on(deal, 5))
+        deal["proof_on"] = "solution"
+        self.assertIn("proof", prompt.blocks_on(deal, 5))
+        self.assertNotIn("proof", prompt.blocks_on(deal, 6))
+        self.assertIn("proof", prompt.SHEET_BLOCKS[6])
+        self.assertNotIn("proof", prompt.SHEET_BLOCKS[5])
+
+    def test_the_sheets_follow_the_pages_the_deal_has(self):
+        from desk import prompt
+        deal = general_deal()
+        deal["arithmetic"]["inline"] = True  # no arithmetic sheet: the solution is sheet 4
+        self.assertIn("solution", prompt.blocks_on(deal, 4))
+        self.assertIn("arithmetic", prompt.blocks_on(deal, 5))
+
+    def test_the_engine_passes_the_pixels(self):
+        tmp = tempfile.mkdtemp()
+        from desk import engine
+        from tests.fakes import FakeProvider
+        from tests.test_desk import cfg_in
+        cfg = cfg_in(tmp)
+        p = FakeProvider([fakes.triage_answer(), specific_deal(), specific_deal(subhead="Shorter.")])
+        call = engine.Call(transcript_text=fakes.transcript(), client_company="Mirage Test Contracting")
+        out = engine.run(call, lang="en", resolved=resolved(), offer=TEST_OFFER, p=p, cfg=cfg, log=lambda _m: None,
+                         workdir=Path(tmp) / "work", renderer=MeasuredRenderer([[5], []], 8))
+        self.assertTrue("8 px" in p.calls[2]["user"], "8 px in the tighten message")
+        self.assertEqual(out.overflow_last, [])
+
+    def test_a_shorter_version_that_drops_a_step_or_a_target_is_not_taken(self):
+        short_steps = specific_deal(subhead="Shorter.")
+        short_steps["solution"] = short_steps["solution"][:3]
+        short_targets = specific_deal(subhead="Shorter.")
+        short_targets["solution_targets"] = short_targets["solution_targets"][:2]
+        good = specific_deal(subhead="Short and whole.")
+        out, _p = run_engine([fakes.triage_answer(), specific_deal(), short_steps, short_targets, good],
+                             over=[[5], []])
+        self.assertEqual(out.deal["subhead"], "Short and whole.")
+        self.assertEqual(len(out.deal["solution"]), 5)
+        self.assertEqual(len(out.deal["solution_targets"]), 3)
+        self.assertEqual(out.overflow_last, [])
+
+
 # ------------------------------------------------------------- the template ---
 @unittest.skipUnless(os.environ.get("SALES_RENDER_LIVE") == "1", "SALES_RENDER_LIVE=1 runs the real browser")
 class LiveTemplateTests(unittest.TestCase):
@@ -562,6 +647,14 @@ class LiveTemplateTests(unittest.TestCase):
         live = self.dom(volume_deal(gross_margin=20))
         self.assertTrue("0.44 of one project" in live, "0.44 of one project")
         self.assertTrue("gross" in live, "gross")
+
+    def test_an_overflowing_sheet_says_by_how_much(self):
+        deal = specific_deal()
+        deal["solution"] = deal["solution"] * 3
+        live = self.dom(deal)
+        m = re.search(r'class="sheet[^"]*\bover\b[^"]*"[^>]*data-over-px="(\d+)"', live)
+        self.assertTrue(m, "an over sheet with data-over-px")
+        self.assertGreater(int(m.group(1)), 0)
 
     def test_the_tiles_still_come_with_a_value_and_a_margin(self):
         deal = specific_deal()
