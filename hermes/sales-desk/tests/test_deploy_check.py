@@ -73,6 +73,8 @@ class Catalog:
             fakes.PK.setdefault(table, ("id",))
         self.functions = {deploycheck.LEASE_FN}
         self.asked: list[tuple[str, str]] = []
+        # How sales-api answers a forged desk token (m1 round 1): 401 with verify_jwt on.
+        self.api = 401
         self.refuse_key = False
         # sales-live/health: its status (401 when deployed with verify_jwt on) and its cron route.
         self.door = 200
@@ -97,6 +99,12 @@ class Catalog:
         if "supabase.co" not in url:
             raise AssertionError(f"the deploy check reached outside the database: {url}")
         parts = urllib.parse.urlsplit(url)
+        if parts.path == deploycheck.API_PATH:
+            # sales-api with a forged desk token: its gateway (verify_jwt on) answers 401.
+            body = json.dumps({"msg": "Invalid JWT"}) if self.api == 401 else json.dumps({"ok": False, "error": "Send a POST."})
+            if self.api in (401, 405):
+                return self.api, {}, body.encode()
+            raise HttpError(self.api, body, body.encode(), url)
         if parts.path == deploycheck.DOOR_HEALTH:
             # The door, as a sales-live deployed with verify_jwt off answers it (no key sent).
             if self.door != 200:
@@ -175,6 +183,16 @@ class TheDoor(unittest.TestCase):
 
 
 class DeployCheck(unittest.TestCase):
+    def test_sales_api_with_verify_jwt_off_is_a_blocker(self):
+        # m1 round 1, forged-service-role-desk: a deploy without verify_jwt
+        # lets anyone act as the desk; the read-only probe says so.
+        db = Catalog()
+        db.api = 405
+        code, out, _ = run(["deploy-check"], db)
+        self.assertEqual(code, 1, out)
+        self.assertIn("verify_jwt off", line(out, "sales-api refuses an unsigned desk token"))
+        self.assertTrue(all(m == "GET" for m, _u in db.asked))
+
     def test_a_ready_box_with_every_switch_off_passes_and_changes_nothing(self):
         db = Catalog()
         code, out, made = run(["deploy-check"], db)

@@ -256,6 +256,7 @@ SAY = {
     "meet_pending": "Google did not make the Meet link. Try Zoom.",
     "google_refused": "Google refused to make the Meet room: {why}. Try Zoom.",
     "google_down": "Google did not answer. Try again in a minute, or use Zoom.",
+    "google_daily_cap": "Google's limit on new Meet rooms is reached for now. Use Zoom, or call the lead.",
     "calendar": ("Google would not make the Sales rooms calendar. Use Zoom, and ask the CEO to create a calendar "
                  "named Sales rooms in Google Calendar."),
     "meet_off": "Meet rooms are switched off. Use Zoom, or ask a manager to switch Meet on in Settings.",
@@ -295,6 +296,21 @@ def parse_ts(value: Any) -> Optional[float]:
         return datetime.fromisoformat(f"{day}T{clock}.{frac}{zone}").timestamp()
     except ValueError:
         return None
+
+
+def join_stands(room: dict[str, Any]) -> bool:
+    """A room's lead join stands (cockpit_sales_room_join_stands, 20261004a):
+    lead_in_at is set and nothing took it back, or it is later than what the
+    take-back covered (min of taken_back_join_at and count_undo_at)."""
+    lead_in = parse_ts(room.get("lead_in_at"))
+    if lead_in is None:
+        return False
+    undo = parse_ts(room.get("count_undo_at"))
+    if undo is None:
+        return True
+    taken = parse_ts(room.get("taken_back_join_at"))
+    bound = min(x for x in (taken, undo) if x is not None)
+    return lead_in > bound
 
 
 def iso(t: float) -> str:
@@ -555,6 +571,12 @@ def db_reason(e: Exception) -> str:
 # seconds, so a call is tried again for them as for a 429.
 GOOGLE_LIMITS = ("rateLimitExceeded", "userRateLimitExceeded", "quotaExceeded")
 GOOGLE_RETRY = ("rateLimitExceeded", "userRateLimitExceeded")
+# Google Calendar's limits on the account's new events: they pass after
+# hours, never in a minute (m1 round 1, google-daily-limit).
+GOOGLE_DAY_LIMITS = ("quotaExceeded", "dailyLimitExceeded")
+# How long this run keeps failing Meet rooms at once after Google said its
+# day's limit is reached (the next run asks Google once more).
+GOOGLE_CAP_S = 3 * 3600
 
 
 class ProviderError(Exception):
@@ -594,6 +616,12 @@ class ProviderError(Exception):
         day, reset at 00:00 UTC): a 429 whose words say daily (stress2, round
         2). It does not pass in a second; it passes at 03:00 Kuwait."""
         return self.status == 429 and "daily" in self.message.lower()
+
+    @property
+    def day_limit(self) -> bool:
+        """Google Calendar's limit on the account's new events: it passes after
+        hours, not seconds, so it is never "try again in a minute"."""
+        return self.status in (403, 429) and self.reason in GOOGLE_DAY_LIMITS
 
     @property
     def rate_limited(self) -> bool:
@@ -1216,6 +1244,10 @@ class Pending:
     next_at: float
 
 
+# _linked_user's answer when the room hosts could not be read.
+UNREAD = "\x00unread"
+
+
 class TablesMissing(Exception):
     pass
 
@@ -1389,6 +1421,8 @@ class Worker:
             self._write_status(False, NOT_MAKING + str(e))
             self.log.error(str(e))
             return {**self.summary(), "blocked": str(e)}
+        except Exception as e:  # noqa: BLE001 - the first tick reads the switches again
+            self._tick_fault(e)
         while True:
             t0 = self.clock()
             try:
@@ -1397,7 +1431,12 @@ class Worker:
                 self._write_status(False, NOT_MAKING + str(e))
                 self.log.error(str(e))
                 return {**self.summary(), "blocked": str(e)}
-            self._maybe_status()
+            except Exception as e:  # noqa: BLE001 - one tick's fault never ends the minute
+                self._tick_fault(e)
+            try:
+                self._maybe_status()
+            except Exception as e:  # noqa: BLE001
+                self.log.warn(f"rooms: the status row was not written: {http.scrub(repr(e))[:200]}")
             now = self.clock()
             if seconds <= 0 or now >= self.deadline:
                 break
@@ -1412,6 +1451,21 @@ class Worker:
         if self.slack is not None:
             self.slack.status()
         return self.summary()
+
+    def _tick_fault(self, e: Exception) -> None:
+        """A fault no step caught (an answer cut off half way that the HTTP
+        layer let through, m1 round 1): counted and said on the status row,
+        and the run goes on to its next tick."""
+        if isinstance(e, http.HttpError):
+            self._db_trouble(e)
+        else:
+            self._fault(SAY["error"])
+        self.log.error(f"rooms: a tick stopped on an error and the run goes on: {http.scrub(repr(e))[:300]}")
+        # The status row says it now (its faults), never left unwritten.
+        try:
+            self.status()
+        except Exception:  # noqa: BLE001 - the next status write says how the run went
+            pass
 
     def _window_empty(self) -> bool:
         w = self.window
@@ -1526,10 +1580,10 @@ class Worker:
         except TimeUp:
             return
         except http.HttpError as e:
-            if e.status == 404:
+            if e.status == 404 and self._tables_gone():
                 raise TablesMissing("The settings table does not answer, so the room worker cannot start. "
                                     "Apply the sales cockpit migrations.")
-            self._db_trouble(e)
+            self._db_trouble(e) if e.status != 404 else self._count("db_errors")
             return
         except SupabaseError as e:
             self._db_trouble(e)
@@ -1561,7 +1615,7 @@ class Worker:
     def _db_trouble(self, e: Exception) -> None:
         if isinstance(e, TimeUp):
             return
-        if isinstance(e, http.HttpError) and e.status == 404:
+        if isinstance(e, http.HttpError) and e.status == 404 and self._tables_gone():
             raise TablesMissing("The video room tables are not in the database yet (migration "
                                 "20261003a_sales_rooms.sql), so no room can be made.")
         self._count("db_errors")
@@ -1572,6 +1626,21 @@ class Worker:
             self.window["db_refused"] = self.total["db_refused"] = reason
         if self.window["db_errors"] == 1:
             self.log.warn(f"rooms: the database did not answer as expected: {reason}")
+
+    def _tables_gone(self) -> bool:
+        """One 404 is a stray (a gateway's page, PGRST205 while the schema
+        cache reloads under a migration): the rooms table is read again half
+        a second later, and only a second 404 means the tables are missing
+        (m1 round 1, stray-404-stops-worker-minute). A read that fails
+        another way, or answers, is a database error, never "missing"."""
+        try:
+            self.sleep(0.5)
+            self.sb.select(ROOMS, "select=id&limit=1")
+            return False
+        except http.HttpError as e2:
+            return e2.status == 404
+        except Exception:  # noqa: BLE001 - not known is not missing
+            return False
 
     def _read(self, room_id: str) -> Optional[dict[str, Any]]:
         rows = self.sb.select(ROOMS, f"select=*&id=eq.{_q(room_id)}&limit=1")
@@ -1645,9 +1714,22 @@ class Worker:
 
     def _step_error(self, room: dict[str, Any], e: Exception) -> None:
         self.log.error(f"rooms: room {room.get('code')} stopped on an error: {http.scrub(repr(e))[:300]}")
+        # Read first (m1 round 1, cut-answer-escapes-http-layer): a room that
+        # already opened (sales-api's answer to worker.ready was cut off) is
+        # left open with its link on its way; its timeline never says it was
+        # not made, and the health line does not blame an error for it. Not
+        # read: nothing is decided, and the sweep's timers cover it.
+        try:
+            current = self._read(str(room["id"]))
+        except Exception as e2:  # noqa: BLE001
+            self.log.warn(f"rooms: room {room.get('code')} could not be read after its error: {http.scrub(str(e2))[:200]}")
+            return
+        if current is None or current.get("state") not in ("requested", "creating"):
+            self.log.info(f"rooms: room {room.get('code')} is {(current or {}).get('state')}; the error changed nothing")
+            return
         self._fault(SAY["error"])
         try:
-            self.fail(room, SAY["error"], fault=False)
+            self.fail(current, SAY["error"], fault=False)
         except Exception as e2:  # noqa: BLE001
             self.log.error(f"rooms: room {room.get('code')} could not be marked failed: {http.scrub(str(e2))[:200]}")
 
@@ -1688,15 +1770,20 @@ class Worker:
 
     # ---- Zoom ------------------------------------------------------------------
     def _linked_user(self, email: str) -> Optional[str]:
-        """The Zoom user the Team page linked to this seat, if any."""
+        """The Zoom user the Team page linked to this seat, if any; UNREAD
+        when the room hosts could not be read (m1 round 1,
+        hosts-read-blip-says-no-zoom-user): the email is never looked up in
+        its place, since a seat whose Zoom login is another address would be
+        told it has no Zoom user."""
         try:
             rows = self.sb.select(HOSTS, f"select=zoom_user_id&email=eq.{_q(email)}&limit=1")
         except TimeUp:
             raise
         except (SupabaseError, http.HttpError) as e:
-            self._warn_once("hosts-read", f"rooms: the room hosts could not be read, so Zoom users are looked up "
-                                          f"by email: {db_reason(e)}")
-            return None
+            self._db_trouble(e)
+            self._warn_once("hosts-read", f"rooms: the room hosts could not be read; the Zoom room waits for the "
+                                          f"next read: {db_reason(e)}")
+            return UNREAD
         value = str((rows[0] if rows else {}).get("zoom_user_id") or "").strip()
         return value or None
 
@@ -1781,6 +1868,11 @@ class Worker:
             return
         host = str(room["host_email"]).strip().lower()
         linked = self._linked_user(host)
+        if linked is UNREAD:
+            # Left in creating for a moment: the next tick (or the next run)
+            # reads the hosts again; the sweep's two minutes cover it.
+            self._retry_at[str(room["id"])] = self.clock() + 2.0
+            return
         try:
             user, status = self.zoom_user(host, linked)
         except ProviderError as e:
@@ -2008,6 +2100,8 @@ class Worker:
                         raise
             if not meeting:
                 linked = self._linked_user(host)
+                if linked is UNREAD:
+                    return  # the next tick reads the hosts again
                 user, _status = self.zoom_user(host, linked)
                 target = str((user or {}).get("id") or linked or host)
                 found = self.zoom.find(target, topic_of(room.get("code")))
@@ -2067,6 +2161,11 @@ class Worker:
     def _google_sentence(self, e: ProviderError) -> str:
         if isinstance(e, CalendarNotMade):
             return SAY["calendar"]
+        if e.day_limit:
+            # Remembered for this run, so its later Meet rooms fail at once
+            # with the same words instead of asking Google again.
+            self._google_capped_until = self.clock() + GOOGLE_CAP_S
+            return SAY["google_daily_cap"]
         if e.down or e.unclear or e.rate_limited:
             return SAY["google_down"]
         if e.status == 401 or (e.where == "oauth2.googleapis.com" and 400 <= e.status < 500):
@@ -2103,6 +2202,9 @@ class Worker:
     def start_meet(self, room: dict[str, Any]) -> None:
         if not self.google:
             self.fail(room, SAY["google_keys"], fault=True)
+            return
+        if getattr(self, "_google_capped_until", 0.0) > self.clock():
+            self.fail(room, SAY["google_daily_cap"], refusal=True)
             return
         if self._google_down():
             self.fail(room, SAY["google_down"], fault=True)
@@ -2409,6 +2511,9 @@ class Worker:
             if (current and current.get("state") in LIVE_STATES and current.get("worker_run") == self.run_id
                     and str(current.get("provider_meeting_id")) == str(meeting_id)):
                 opened = current  # it opened; only the answer was lost
+                # Its audit row too (m1 round 1, worker-open-lost-answer-no-audit-row).
+                self._audit("room.worker.open", opened, {"state": "creating"},
+                            {"state": "open", "provider_meeting_id": str(meeting_id), "answer_lost": True})
             elif current and current.get("state") in FINAL:
                 # Final meanwhile (a cancel, the sweep): no link is due, so
                 # the stored worker.ready is closed here, not replayed.
@@ -2484,6 +2589,8 @@ class Worker:
             current = self._read(rid)
             if current and current.get("state") == "failed" and current.get("error") == sentence:
                 row = current  # it failed; only the answer was lost
+                self._audit("room.worker.fail", row, {"state": room.get("state")},
+                            {"state": "failed", "error": sentence, "answer_lost": True})
             else:
                 self._fail_missed(rid, current)
                 if made.get("id") and current and current.get("state") in FINAL:
@@ -3281,9 +3388,10 @@ class Worker:
                     audit(self.sb, "room.hosts", HOSTS, row["email"],
                           before={k: before.get(k) for k in changed}, after=changed,
                           metadata={"by": "the host check", "worker_run": self.run_id})
+        self._report_only_mismatch = False
         report_ok, report_lines = self.report_check(now, seat_ids)
         lines += report_lines
-        ok = bool(self.zoom) and google_ok is True and report_ok
+        ok = bool(self.zoom) and google_ok is True and (report_ok or self._report_only_mismatch)
         self._write_status(ok, " ".join(lines), job=HOSTS_JOB)
         return {"ok": ok, "lines": lines, "rows": rows}
 
@@ -3295,10 +3403,18 @@ class Worker:
         if not self.zoom:
             return True, []
         try:
-            rows = self.sb.select(ROOMS, "select=id,code,host_email,provider_meeting_id,lead_in_at,ended_at"
-                                         "&provider=eq.zoom&state=in.(ended,expired,failed,cancelled)"
-                                         f"&provider_meeting_id=not.is.null&ended_at=gte.{_q(iso(now - REPORT_WINDOW_S))}"
-                                         "&order=ended_at.desc&limit=50")
+            where = ("&provider=eq.zoom&state=in.(ended,expired,failed,cancelled)"
+                     f"&provider_meeting_id=not.is.null&ended_at=gte.{_q(iso(now - REPORT_WINDOW_S))}"
+                     "&order=ended_at.desc&limit=50")
+            try:
+                rows = self.sb.select(ROOMS, "select=id,code,host_email,provider_meeting_id,lead_in_at,ended_at,"
+                                             "count_undo_at,taken_back_join_at" + where)
+            except http.HttpError as e:
+                # A database without 20261004a: count_undo_at alone bounds a take-back.
+                if e.status != 400 or "taken_back_join_at" not in str(e):
+                    raise
+                rows = self.sb.select(ROOMS, "select=id,code,host_email,provider_meeting_id,lead_in_at,ended_at,"
+                                             "count_undo_at" + where)
             events: list[dict[str, Any]] = []
             if rows:
                 events = self.sb.select(EVENTS, f"select=room_id,kind,detail&room_id=in.{_in([str(r['id']) for r in rows])}"
@@ -3344,7 +3460,10 @@ class Worker:
                     continue
             host = {str(r.get("host_email") or "").strip().lower()} - {""}
             outside = [p for p in people if not self._is_staff(p, ids, emails | host)]
-            joined, seen = bool(outside), bool(r.get("lead_in_at"))
+            # The cockpit's word is the join that stands (m1 round 1,
+            # zoom-report-ignores-that-was-not-the-lead): a join "That was not
+            # the lead" took back is nobody, as cockpit_sales_room_join_stands reads it.
+            joined, seen = bool(outside), join_stands(r)
             said = ("someone outside the team joined, but the cockpit never saw the lead come in" if joined else
                     "the cockpit marked the lead in, but Zoom's report shows nobody outside the team")
             self.store_event(rid, "report.checked", {"outside_joined": joined, "cockpit_lead_in": seen,
@@ -3369,6 +3488,10 @@ class Worker:
         if unread:
             line += (f" {_s(unread, 'report')} could not be read ({why}); "
                      f"{'it is' if unread == 1 else 'they are'} tried again in ten minutes.")
+        # Rooms that disagree each carry their own alert: the host check's row
+        # still says the check ran (m1 round 1), so its watchdog sentence
+        # ("not being checked") is never said about a check that ran.
+        self._report_only_mismatch = bool(bad) and not unread
         return not bad and not unread, [line]
 
 

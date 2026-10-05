@@ -292,7 +292,9 @@ class ParticipantReport(RoomsCase):
         # a report not built yet, read again later, never "nobody joined".
         self.assertEqual(line, "Zoom participant reports: 2 rooms checked, 1 not matching the cockpit (MISS01). "
                                "1 report not built by Zoom yet, checked again in ten minutes.")
-        self.assertIs(out["ok"], False)
+        # m1 round 1: a room that disagrees carries its own alert; the host
+        # check's row still says the check ran (never "not being checked").
+        self.assertIs(out["ok"], True)
         self.assertIsNotNone(self.env.pg.one(rooms.ALERTS, dedupe_key=f"room_report:{rid(1)}"))
         self.assertEqual(self.env.pg.one(rooms.EVENTS, dedupe_key=f"report.checked:{rid(1)}")["detail"]["match"], False)
         self.assertEqual(self.env.pg.one(rooms.EVENTS, dedupe_key=f"report.checked:{rid(2)}")["detail"]["match"], True)

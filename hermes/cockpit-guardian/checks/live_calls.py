@@ -42,13 +42,43 @@ PIECES = ("live-function", "live-dns", "live-rooms-worker", "live-status-rows")
 URGENT_WHEN_ON = ("live-function", "live-rooms-worker")
 
 
-def switched_on(ctx: Context) -> Optional[list[str]]:
-    """Which live switches are on ([] when all off), or None when they cannot be read."""
+def _switches(ctx: Context) -> Optional[dict[str, dict]]:
+    """The rooms and live settings as stored, or None when they cannot be read."""
     try:
         rows = ctx.rows("cockpit_sales_settings", "key,value", where=[("key", "in", ["rooms", "live"])])
     except SourceError:
         return None
-    return sorted(r["key"] for r in rows if isinstance(r.get("value"), dict) and r["value"].get("enabled"))
+    return {r["key"]: r["value"] for r in rows if isinstance(r.get("value"), dict)}
+
+
+def switched_on(ctx: Context) -> Optional[list[str]]:
+    """Which live switches are on ([] when all off), or None when they cannot be read."""
+    sw = _switches(ctx)
+    if sw is None:
+        return None
+    return sorted(k for k, v in sw.items() if v.get("enabled"))
+
+
+def short_link_on(sw: Optional[dict[str, dict]]) -> bool:
+    """The messages carry call.maharamedia.com only with rooms on and rooms.short_link on (m1 round 1)."""
+    rooms = (sw or {}).get("rooms") or {}
+    return rooms.get("enabled") is True and rooms.get("short_link") is True
+
+
+def slack_on(sw: Optional[dict[str, dict]]) -> bool:
+    """Slack presses and posts run only with live.enabled and live.slack both on."""
+    live = (sw or {}).get("live") or {}
+    return live.get("enabled") is True and live.get("slack") is True
+
+
+def needed(check_id: str, sw: Optional[dict[str, dict]]) -> bool:
+    """Whether a lead's call needs this piece with the switches as they are:
+    the call site only while the short link is on (m1 round 1,
+    guardian-urgent-dns-fail-with-short-link-off: with it off the messages
+    carry the room's own Meet or Zoom link, and nothing lands on the site)."""
+    if check_id == "live-dns":
+        return short_link_on(sw)
+    return True
 
 
 def deployable(check_id: str, label: str, run: Callable[[Context], Result]) -> Callable[[Context], Result]:
@@ -59,6 +89,8 @@ def deployable(check_id: str, label: str, run: Callable[[Context], Result]) -> C
             seen.setdefault(check_id, ctx.now.isoformat())
             return res
         on = switched_on(ctx) if check_id in PIECES else None
+        if on and not needed(check_id, _switches(ctx)):
+            on = []
         if res.status == NOT_DEPLOYED:
             if on:
                 return fail(f"{res.summary.rstrip('.')}, although live calls are switched on ({', '.join(on)}): a lead's "
@@ -177,7 +209,7 @@ def run_worker(ctx: Context) -> Result:
     if rows[0].get("ok") is False:
         return fail(f"The rooms worker reports a failure: {clean(rows[0].get('detail'), 160)}", evidence=ev)
     if age is None or age > ROOMS_ALERT_MIN:
-        return fail(f"The rooms worker has not reported for {ago(age)}; live calls are not being handed over.", evidence=ev)
+        return fail(f"The rooms worker has not reported for {ago(age)}; new video rooms cannot be made.", evidence=ev)
     if age * 60 > ROOMS_RED_S:
         return warn(f"The rooms worker last reported {int(age * 60)} s ago (red after {ROOMS_RED_S} s).", evidence=ev)
     return ok(f"The rooms worker reported {int(age * 60)} s ago.", evidence=ev)
@@ -189,12 +221,23 @@ def run_status_rows(ctx: Context) -> Result:
                             "waves, model; sales-live zoom, slack, open, go, cron).")
     rows = ctx.rows("cockpit_sales_worker_status", "worker,job,ok,detail,at", where=[("worker", "in", list(STATUS_ROWS))])
     have = {(r["worker"], r["job"]): r for r in rows}
-    missing = [f"{w}/{j}" for w, jobs in STATUS_ROWS.items() for j in jobs if (w, j) not in have]
-    bad = [f"{w}/{j} ({clean(have[(w, j)].get('detail'), 80)})" for w, jobs in STATUS_ROWS.items() for j in jobs
+    # Only the parts the switches use (m1 round 1): the short link's routes
+    # while rooms.short_link is on, Slack's while live and live.slack are on.
+    # A part switched off gets no traffic, so no row, and a stray request's
+    # row is no failure of anything the pilot runs.
+    sw = _switches(ctx)
+    skip = set()
+    if not short_link_on(sw):
+        skip |= {("sales-live", "open"), ("sales-live", "go")}
+    if not slack_on(sw):
+        skip |= {("sales-live", "slack"), ("sales-desk", "slack")}
+    watched = {w: tuple(j for j in jobs if (w, j) not in skip) for w, jobs in STATUS_ROWS.items()}
+    missing = [f"{w}/{j}" for w, jobs in watched.items() for j in jobs if (w, j) not in have]
+    bad = [f"{w}/{j} ({clean(have[(w, j)].get('detail'), 80)})" for w, jobs in watched.items() for j in jobs
            if (w, j) in have and have[(w, j)].get("ok") is False]
     if bad:
         return fail(f"Live-calls parts report failures: {', '.join(bad)}.", evidence={"failing": bad, "missing": missing})
-    if len(missing) == sum(len(v) for v in STATUS_ROWS.values()):
+    if len(missing) == sum(len(v) for v in watched.values()):
         return not_deployed("The live-calls tables exist but no part has reported yet (not deployed yet).")
     if missing:
         return warn(f"Live-calls parts that have not reported yet: {', '.join(missing)}.", evidence={"missing": missing})
@@ -209,7 +252,7 @@ def run_settings(ctx: Context) -> Result:
     on = [k for k, v in have.items() if isinstance(v, dict) and v.get("enabled")]
     if not on:
         return paused(f"Live calls are built and switched off ({', '.join(sorted(have))} enabled false).")
-    missing = [cid for cid in PIECES if ctx.results.get(cid) is not None and
+    missing = [cid for cid in PIECES if needed(cid, have) and ctx.results.get(cid) is not None and
                (ctx.results[cid].status == NOT_DEPLOYED or (ctx.results[cid].data or {}).get("missing"))]
     if missing:
         return fail(f"Live calls are switched on ({', '.join(sorted(on))}) but {', '.join(missing)} are not deployed: a "
@@ -301,7 +344,7 @@ CHECKS = [
           run=deployable("live-cron", "The live-calls database jobs", run_cron), action="Re-run the cron.schedule lines from the rooms migration."),
     Check(id="live-dns", area="live-calls", name="Live calls: call.maharamedia.com",
           means="The short call page answers.", severity="medium", reads="DNS for call.maharamedia.com, then GET /",
-          threshold="No DNS: not deployed yet; resolves but no answer: fail.", run=deployable("live-dns", "call.maharamedia.com", run_dns), confirm=2,
+          threshold="No DNS: not deployed yet (urgent only while rooms.short_link is on); resolves but no answer: fail.", run=deployable("live-dns", "call.maharamedia.com", run_dns), confirm=2,
           action="Check the Vercel project for call.maharamedia.com."),
     Check(id="live-rooms-worker", area="live-calls", name="Live calls: rooms worker",
           means="The rooms worker on the VPS reports every few seconds.", severity="critical",

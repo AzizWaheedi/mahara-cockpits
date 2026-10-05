@@ -93,7 +93,9 @@ HARDENING_2C = ("cockpit_sales_room_events", "lease_token")
 HARDENING_2D = (("cockpit_sales_rooms", "taken_back_join_at"), ("cockpit_sales_rooms", "last_link_at"),
                 ("cockpit_sales_messages", "ghl_asked_at"), ("cockpit_sales_followup_meta", "approved_request"),
                 # Fix round 6: the moment of the call an intro room followed (the settle reads it).
-                ("cockpit_sales_rooms", "appointment_call_at"))
+                ("cockpit_sales_rooms", "appointment_call_at"),
+                # m1 round 1: the press's own decisions (the intro it named, the night rule).
+                ("cockpit_sales_rooms", "asked_appointment_id"), ("cockpit_sales_rooms", "night_cleared"))
 
 SETTINGS = ("rooms", "live", "followups", "whatsapp_guard", "threads", "calendars")
 
@@ -535,9 +537,67 @@ def check_door(report: Report, door: tuple[Optional[int], Any, str]) -> None:
                f"{cron}: the sweep's replays, settles and re-checks are refused until it is set")
 
 
+API_PATH = "/functions/v1/sales-api"
+
+
+def _forged_desk_token() -> str:
+    """A token nobody signed that claims the service role: anyone can write
+    it. sales-api must answer it 401 (m1 round 1, forged-service-role-desk)."""
+    import base64
+    import json
+
+    def part(o: dict[str, Any]) -> str:
+        return base64.urlsafe_b64encode(json.dumps(o).encode()).decode().rstrip("=")
+
+    return f"{part({'alg': 'none', 'typ': 'JWT'})}.{part({'role': 'service_role', 'iss': 'deploy-check'})}."
+
+
+def read_api_guard(sb: Any) -> tuple[Optional[int], str]:
+    """GET sales-api with a forged, unsigned service-role token, read only:
+    the gateway answers 401 itself when sales-api runs with verify_jwt on;
+    with it off the function is reached and answers 405 (it takes POSTs
+    only), so nothing it does is ever run. The status (None when nothing
+    answered), and why. sales-api's own signature check behind it is proved
+    by its tests (m1_security_r1_router.test.ts)."""
+    base = str(getattr(sb, "url", "") or "").rstrip("/")
+    if not base:
+        return None, "the database URL is not known on this box"
+    try:
+        status, _headers, _body = http.request(
+            "GET", base + API_PATH,
+            headers={"Authorization": f"Bearer {_forged_desk_token()}"},
+            timeout=15, retries=0, ok_statuses=(200, 401, 405))
+        return status, ""
+    except http.HttpError as e:
+        return (e.status or None), http.scrub(str(e))[:160]
+    except Exception as e:  # noqa: BLE001 - no answer is said, never counted as one
+        return None, http.scrub(str(e))[:160]
+
+
+def check_api_guard(report: Report, probe: tuple[Optional[int], str]) -> None:
+    """sales-api runs with verify_jwt on, and checks a desk token's signature
+    itself: a forged service-role token is answered 401 (the gateway's, or
+    sales-api's own). Anything else means anyone can act as the desk: the
+    room worker's handshake, Zoom's events, the sweep's replays."""
+    sec = "sales-api's desk door (verify_jwt), read only"
+    status, why = probe
+    if status == 401:
+        report.add(sec, "sales-api refuses an unsigned desk token", True,
+                   "it answers 401 to a forged service-role token (verify_jwt on, and sales-api checks the signature)")
+    elif status is None:
+        report.add(sec, "sales-api refuses an unsigned desk token", None, f"not known: {why or 'no answer'}")
+    elif status == 404:
+        report.add(sec, "sales-api refuses an unsigned desk token", None, "sales-api is not deployed yet (404)")
+    else:
+        report.add(sec, "sales-api refuses an unsigned desk token", False,
+                   f"it answers {status} to a forged service-role token, so it runs with verify_jwt off: deploy "
+                   "sales-api with verify_jwt on (deploy_fn.py's default)")
+
+
 def run(sb: Optional[Any], *, now: Optional[datetime] = None,
         crontab: Optional[Callable[[], tuple[Optional[str], str]]] = None,
-        door: Optional[Callable[[Any], tuple[Optional[int], Any, str]]] = None) -> Report:
+        door: Optional[Callable[[Any], tuple[Optional[int], Any, str]]] = None,
+        api: Optional[Callable[[Any], tuple[Optional[int], str]]] = None) -> Report:
     report = Report()
     now = now or datetime.now(timezone.utc)
     report.add("This box", "python", sys.version_info >= (3, 9), sys.version.split()[0] + (
@@ -551,6 +611,10 @@ def run(sb: Optional[Any], *, now: Optional[datetime] = None,
         check_lead_language(report, settings)
         check_status_rows(report, sb, now)
         check_door(report, (door or read_door)(sb))
+        # The live probe runs on a real check (no door given); a test passes its own.
+        probe = api or (read_api_guard if door is None else None)
+        if probe is not None:
+            check_api_guard(report, probe(sb))
     else:
         report.add("Database (read only)", "database", False,
                    "not asked: DESK_SUPABASE_URL and DESK_SUPABASE_KEY are not set")

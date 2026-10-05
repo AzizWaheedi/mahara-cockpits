@@ -567,7 +567,10 @@ class S10StopTheRightProcess(unittest.TestCase):
 
 class S11NotDeployedStopsBeingAnExcuse(unittest.TestCase):
     def ctx(self, *, enabled=False, resolve=True, state=None):
-        settings = [{"key": "rooms", "value": {"enabled": enabled}}, {"key": "live", "value": {"enabled": False}}]
+        # The call site is a needed piece only while the short link is on (m1
+        # round 1, guardian-urgent-dns-fail-with-short-link-off).
+        settings = [{"key": "rooms", "value": {"enabled": enabled, "short_link": enabled}},
+                    {"key": "live", "value": {"enabled": False}}]
         return fakes.ctx(Path(tempfile.mkdtemp()), db=fakes.FakeDb({"cockpit_sales_settings": settings}),
                          resolve=lambda h: resolve, state=state if state is not None else {},
                          web=fakes.FakeWeb({"https://call.maharamedia.com/": fakes.resp(200)}))

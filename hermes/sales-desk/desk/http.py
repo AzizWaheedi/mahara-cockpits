@@ -6,6 +6,7 @@ other by a shared edit.
 """
 from __future__ import annotations
 
+import http.client
 import json
 import re
 import time
@@ -29,7 +30,8 @@ _KEEP_PREFIX = (
     re.compile(r"(?i)((?:x-api-key|apikey|api[_-]key|access_token|refresh_token|client_secret|token|key)\s*[=:]\s*[\"']?)[^\s\"'&,)}\]]+"),
     # A Zoom host link carries the host's token as zak=, and a join link its
     # passcode as pwd=: a database or provider error can echo either back.
-    re.compile(r"(?i)(?<![a-z0-9_])((?:zak|pwd)=[\"']?)[^&\s\"'<>,)]+"),
+    # Zoom reads an escaped letter in a parameter's name (%7Aak=) as zak= too.
+    re.compile(r"(?i)(?<![a-z0-9_])((?:(?:z|%7a)(?:a|%61)(?:k|%6b)|pwd)=[\"']?)[^&\s\"'<>,)]+"),
 )
 _WHOLE = (
     re.compile(r"\b(?:sk|pk|rk)-[A-Za-z0-9_\-*.]{6,}"),
@@ -103,8 +105,13 @@ def request(
                 raise last
             wait = _retry_after(e.headers) or (2**attempt)
             time.sleep(min(wait, 30))
-        except (urllib.error.URLError, TimeoutError, OSError) as e:
-            last = HttpError(0, f"{type(e).__name__}: {e}", b"", url)
+        except (urllib.error.URLError, TimeoutError, OSError, http.client.HTTPException, ValueError) as e:
+            # An answer cut off half way (IncompleteRead: the far end closed
+            # mid-body, a function killed by a deploy while it answered), a
+            # status line that is not HTTP (BadStatusLine, a middlebox's
+            # garbage), a dropped connection or a malformed answer: no answer,
+            # the same as a timeout (m1 round 1, cut-answer-escapes-http-layer).
+            last = HttpError(0, f"{type(e).__name__}: {scrub(str(e))[:200]}", b"", url)
             if attempt == retries:
                 raise last
             time.sleep(2**attempt)
@@ -129,8 +136,8 @@ def open_stream(url: str, *, headers: dict[str, str], json_body: Any, timeout: f
     except urllib.error.HTTPError as e:
         body = e.read() if hasattr(e, "read") else b""
         raise HttpError(e.code, body[:600].decode("utf-8", "replace"), body, url)
-    except (urllib.error.URLError, TimeoutError, OSError) as e:
-        raise HttpError(0, f"{type(e).__name__}: {e}", b"", url)
+    except (urllib.error.URLError, TimeoutError, OSError, http.client.HTTPException, ValueError) as e:
+        raise HttpError(0, f"{type(e).__name__}: {scrub(str(e))[:200]}", b"", url)
 
 
 def get_json(url: str, **kw: Any) -> Any:
