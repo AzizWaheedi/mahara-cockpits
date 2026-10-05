@@ -220,6 +220,16 @@ class ProviderTests(unittest.TestCase):
             self.assertTrue(model.model_allowed(name), name)
         for name in ("openrouter/auto", "meta-llama/llama-3-70b", "deepseek-chat", "deepseek/deepseek-r1", "qwen-max", ""):
             self.assertFalse(model.model_allowed(name), name)
+        # OpenRouter's variants change where the words go (a web search, a free
+        # provider that keeps them), whatever model they are a variant of.
+        for name in ("openai/gpt-5:online", "anthropic/claude-opus-4.8:free", "openai/gpt-5:nitro",
+                     "anthropic/claude-opus-4.8:floor", "gpt-5:online", "deepseek/deepseek-chat:free"):
+            self.assertFalse(model.model_allowed(name), name)
+            self.assertFalse(model.model_allowed(name, lead_data=False), name)
+        with mock.patch.dict(os.environ, {"OPENROUTER_API_KEY": "or-test"}), self.assertRaises(model.ModelUnreachable) as e:
+            model.provider(self.cfg("openrouter", "openai/gpt-5:online"))
+        self.assertIn("router variant", str(e.exception))
+        self.assertIn("Set SALES_PROPOSAL_MODEL", str(e.exception))
         with mock.patch.dict(os.environ, {"OPENROUTER_API_KEY": "or-test"}), self.assertRaises(model.ModelUnreachable) as e:
             model.provider(self.cfg("openrouter", "openrouter/auto"))
         self.assertIn("is not a model the desk may send", str(e.exception))

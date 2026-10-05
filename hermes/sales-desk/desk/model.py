@@ -72,7 +72,16 @@ NO_LEAD_DATA_ONLY = ("deepseek-", "deepseek/deepseek-")
 
 
 def model_allowed(model: str, *, lead_data: bool = True) -> bool:
+    """By prefix, and never a variant. OpenRouter takes a suffix after the
+    model's name that changes where the words go: openai/gpt-5:online sends
+    them to a web search as well, :free to the providers that serve it free
+    (some keep what they are sent), :nitro and :floor to whichever is fastest
+    or cheapest. The prefix alone let every one of them through. None of the
+    desk's own names has a colon (opus, gpt-5, claude-opus-4-8,
+    anthropic/claude-opus-4.8), and a fine-tune's (ft:gpt-4.1:...) never matched."""
     m = str(model or "").strip().lower()
+    if ":" in m:
+        return False
     return m.startswith(FRONTIER) or (not lead_data and m.startswith(NO_LEAD_DATA_ONLY))
 
 
@@ -82,6 +91,11 @@ def check_model(model: str, *, lead_data: bool = True, setting: str = "the job's
         return
     if "deepseek" in str(model or "").lower():
         raise ModelUnreachable(f"Lead data never goes to DeepSeek. Set {setting} to a model that is not DeepSeek's.")
+    name = str(model or "").strip()
+    if ":" in name and model_allowed(name.split(":", 1)[0], lead_data=lead_data):
+        raise ModelUnreachable(f"{name} is a router variant, which can send a lead's words to a web search or to "
+                               f"a provider that keeps them. Set {setting} to {name.split(':', 1)[0]}, the model's "
+                               "own name.")
     raise ModelUnreachable(f"{model or 'No model'} is not a model the desk may send a lead's words to. Set {setting} "
                            "to gpt-5, gpt-4.1, o3, o4 or a claude- model (openai/ or anthropic/ ones through OpenRouter).")
 

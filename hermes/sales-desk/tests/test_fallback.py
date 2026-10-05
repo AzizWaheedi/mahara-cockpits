@@ -152,7 +152,12 @@ class FallbackProvider(unittest.TestCase):
             self.assertEqual(p.model, "anthropic/claude-opus-5.5")
             with self.assertRaises(model.ModelUnreachable) as e:
                 model.fallback_provider(self.cfg(fallback_model="deepseek/deepseek-r1"))
-        self.assertIn("DeepSeek", str(e.exception))
+            self.assertIn("DeepSeek", str(e.exception))
+            # A variant of an allowed model sends the words elsewhere too (a web search for :online).
+            with self.assertRaises(model.ModelUnreachable) as e:
+                model.fallback_provider(self.cfg(fallback_model="openai/gpt-5:online"))
+        self.assertIn("router variant", str(e.exception))
+        self.assertIn("Set SALES_FALLBACK_MODEL to openai/gpt-5", str(e.exception))
 
     def test_a_missing_key_is_one_sentence_naming_it(self):
         with self.assertRaises(model.ModelUnreachable) as e:
