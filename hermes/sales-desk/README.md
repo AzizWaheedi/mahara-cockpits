@@ -105,7 +105,7 @@ A ping that merely times out holds nothing; the draft asks anyway. A keyed
 provider is never pinged: a missing key already shows when it is made.
 
 **The closer always has a sentence.** Whatever holds a request (no model, the
-bucket missing, Fathom's key, a stop partway), the proposal it is for says so
+bucket missing, Fathom's key or Fathom down, a stop partway), the proposal it is for says so
 in one line, whether the outage was found before the request was claimed or
 while it ran: *The proposal writer cannot work right now: the Claude sign-in
 on the VPS has lapsed. This proposal waits and drafts by itself once that is
@@ -137,7 +137,12 @@ Rebuilds are read ahead of drafts, whatever their age, so a run's limit
 (`SALES_REQUESTS_PER_RUN`, 3) can never leave one behind drafts that wait on a
 model. An outage holds only the requests of its own kind for the rest of the
 run: a draft that cannot be written never holds up a rebuild, and the other
-way round.
+way round. A rebuild asked while a run is drafting goes before that run's next
+draft: the run looks for new rebuilds after each draft.
+
+Fathom down (unreachable, 429, 502, 503 or 504 after the client's own retries)
+is an outage like a model's: the draft waits untried and its closer is told.
+A 404, a 500 or an answer that is not JSON stays a try.
 
 ## The offer
 
@@ -254,7 +259,9 @@ value it takes (`minimal` to `high`; `none` and `xhigh` are left out).
   `claude-opus-4-8`) is `anthropic/claude-opus-4.8` through OpenRouter and
   `claude-opus-4-8` at Anthropic; `gpt-5` is `openai/gpt-5` through
   OpenRouter; OpenAI has no Claude, so there it is `gpt-5`. The allowlist
-  applies to it as to any model. A Claude model gets 64,000 tokens of room,
+  applies to it as to any model, and refuses every router variant
+  (`openai/gpt-5:online` adds a web search, `:free` goes to providers that may
+  keep what they are sent). A Claude model gets 64,000 tokens of room,
   as from Anthropic directly: OpenRouter holds credit against the most a
   reply may be.
 - **Once a run, never mid-draft.** The run decides at the first outage and
