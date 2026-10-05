@@ -119,6 +119,10 @@ HOLD_ALL_WORDS = ("today's", "switched off", "are paused", "paused:", "wallet", 
                   # sendTemplate, code "setup"): every opener of the template waits in the queue.
                   "template is not set up", "template is not in the cockpit", "contact fields are not set",
                   "contact fields for the room code", "setting wa_fields")
+# sales-api's followup.send_due words (followupAgent.ts AGENT_COPY.spoke_lately
+# and calls_unread) for an opener that waits on a phone call with the lead.
+SPOKE_WORDS = re.compile(r"spoke to this lead on the phone", re.I)
+CALLS_UNREAD_WORDS = re.compile(r"phone calls could not be read", re.I)
 # A refusal about the lead's hours: the draft waits an hour, it is not set aside.
 HOURS_WORDS = ("between 9", "their time", "their clock", "day off", "friday", "quiet hours", "first message goes",
                "does not send", "time zone")
@@ -352,6 +356,8 @@ def judge(status: int, res: dict[str, Any]) -> tuple[str, str]:
     - hours: outside the lead's hours on sales-api's clock; it waits an hour;
     - failed: HighLevel took it and Meta failed it (an HTTP 200 whose
       follow-up or message failed);
+    - wait: sales-api says it waits (code paused, kind_off or not_approved):
+      left in the queue, or put off past a phone call with the lead;
     - lead: a refusal for this lead only (do-not-disturb, the conversation
       moved on, someone else dealt with it)."""
     f = res.get("followup") if isinstance(res.get("followup"), dict) else {}
@@ -359,8 +365,15 @@ def judge(status: int, res: dict[str, Any]) -> tuple[str, str]:
     err = str(res.get("error") or msg.get("error") or f.get("error") or "").strip()
     e = err.lower()
     if res.get("hold_all") is True or res.get("code") == "setup" or status in (429, 503) \
-            or any(w in e for w in HOLD_ALL_WORDS):
+            or any(w in e for w in HOLD_ALL_WORDS) or TEMPLATE_FAILED.search(e):
         return "hold_all", err or f"sales-api answered {status}"
+    # sales-api's own "it waits" (stress2 round 6, spoke-lately-refusal-sets-
+    # approved-opener-aside): a rep spoke to the lead on the phone lately,
+    # the calls or the stops could not be read, a rep paused the lead, the
+    # opener's kind is off, or it has no approval behind it. Never a refusal
+    # about the lead, never set aside, never one of three in a row.
+    if status == 409 and str(res.get("code") or "") in ("paused", "kind_off", "not_approved"):
+        return "wait", err or f"sales-api answered {status}"
     if status in (502, 504) or "highlevel did not send" in e:
         return "outage", err or f"sales-api answered {status}"
     if status in (400, 401, 403, 404, 405) or status >= 500:
@@ -754,7 +767,14 @@ META_FAILED = re.compile(r"\b13\d{4}\b|\bmeta\b|marked it (failed|undelivered)",
 
 # Meta's account, not the lead: the prepaid balance or the card (131042), or
 # HighLevel's wallet. Such a failure holds every send and counts against no lead.
-ACCOUNT_FAILED = re.compile(r"131042|payment|eligibility|wallet|insufficient|\bfunds\b|\bbalance\b", re.I)
+# The template or the sending number fails every opener the same way (stress2
+# round 6, meta-template-or-number-failure-counted-against-each-lead): the
+# template paused, disabled or its parameters refused (1320xx), the account
+# locked (131031), the number's spam rate limit (131048) or throughput
+# (130429). sales-api's followupAgent.ts ACCOUNT_FAILED reads the same codes.
+TEMPLATE_FAILED = re.compile(r"\b(131031|131048|130429|1320\d\d)\b|template is (paused|disabled)|spam rate limit", re.I)
+ACCOUNT_FAILED = re.compile(r"131042|payment|eligibility|wallet|insufficient|\bfunds\b|\bbalance\b"
+                            r"|\b(131031|131048|130429|1320\d\d)\b|template is (paused|disabled)|spam rate limit", re.I)
 # HighLevel answered the send itself with a refusal: certainly not sent.
 HIGHLEVEL_REFUSED = re.compile(r"highlevel did not send|highlevel said 4\d\d", re.I)
 # HighLevel's own state, not the lead's (stress2 round 3): its burst limit
@@ -770,6 +790,8 @@ def _no_send_for_certain(msgs: list[dict[str, Any]]) -> bool:
     HighLevel at all, Meta (or HighLevel's status) failed every message, or
     HighLevel refused every send outright. A workflow that did not send within
     half an hour, or a send whose answer was lost, is not certain."""
+    # A row HighLevel was never asked about never went (stress2 round 6).
+    msgs = [m for m in msgs if not fu.never_asked(m)]
     if not msgs:
         return True
     if _failed_for_certain(msgs):
@@ -1006,11 +1028,12 @@ def wind_down(sb: Any, done: list[dict[str, Any]], now: datetime) -> dict[str, i
         else:
             continue  # sending: the next run's sync sees how it ended
         count(wid, "excluded", int(_move(sb, wid, c, state, {"state": "excluded", "excluded_reason": reason[:300]})))
-    # A row only for a wave that took back or let go of someone, with its own
-    # counts (stress2 round 3: never the run's across every wave).
+    # A row only for a wave that took back, let go of, or started the 14 days
+    # of someone (stress2 round 6: every write to the comparison leaves one),
+    # with its own counts (stress2 round 3: never the run's across every wave).
     for x in done:
         mine = per.get(str(x["id"]), {})
-        if mine.get("taken_back") or mine.get("excluded"):
+        if mine.get("taken_back") or mine.get("excluded") or mine.get("started"):
             audit(sb, "waves.wind_down", WAVES, str(x["id"]), after=mine, metadata={"reason": why_of.get(str(x["id"]))})
     return out
 
@@ -1151,8 +1174,12 @@ def _owners(sb: Any) -> dict[str, dict[str, Any]]:
 
 
 def _draft_row(lead: dict[str, Any], o: dict[str, Any], owner: Optional[dict[str, Any]], now: datetime, *,
-               why: str, context: dict[str, Any]) -> dict[str, Any]:
+               why: str, context: dict[str, Any], stamp: Optional[datetime] = None) -> dict[str, Any]:
+    """The opener's draft row. `stamp` is the run's time on the database's
+    clock (followups.db_clock): created_at and expires_at are compared with
+    times the database and HighLevel wrote (stress2 round 6)."""
     score, reasons = fu.heat(lead, now)
+    at = stamp or now
     return {
         "contact_id": str(lead["contact_id"]), "owner_ghl": lead.get("assigned_to") or None,
         "owner_email": (owner or {}).get("email"), "segment": "reactivate", "channel": "whatsapp_template",
@@ -1160,8 +1187,8 @@ def _draft_row(lead: dict[str, Any], o: dict[str, Any], owner: Optional[dict[str
         "body": o["text"], "why": why[:300],
         "context": {**context, "heat": reasons, "language": o["language"],
                     "lead": {k: lead.get(k) for k in ("name", "company", "country", "lead_class")}},
-        "model": None, "status": "draft", "created_at": now.isoformat(),
-        "expires_at": (now + timedelta(hours=48)).isoformat(),
+        "model": None, "status": "draft", "created_at": at.isoformat(),
+        "expires_at": (at + timedelta(hours=48)).isoformat(),
     }
 
 
@@ -1595,7 +1622,8 @@ def _draft_wave(sb: Any, wave: dict[str, Any], wave_room: int, now: datetime, ct
             fid = str(uuid.uuid4())
             row = _draft_row(lead, o, owner, now, why=(f"Backlog wave, {POOL_WORDS.get(pool, pool)}: the CEO's opener, "
                                                       "no AI text. Their answer opens the window for a written reply."),
-                             context={"wave_id": wid, "pool": pool, "event_at": m.get("event_at"), "arm": "wave"})
+                             context={"wave_id": wid, "pool": pool, "event_at": m.get("event_at"), "arm": "wave"},
+                             stamp=fu.db_clock(sb, now))
             try:
                 sb.rest("POST", FOLLOWUPS, json_body=[{"id": fid, **row}], prefer="return=minimal")
             except http.HttpError as e:
@@ -1607,8 +1635,8 @@ def _draft_wave(sb: Any, wave: dict[str, Any], wave_room: int, now: datetime, ct
                 later("Another draft for this lead was written meanwhile.", now + LATER["open_draft"])
                 continue
             _ensure_meta(sb, fid, wid, o["language"], warn)
-            if not _move(sb, wid, c, "waiting", {"state": "drafted", "followup_id": fid, "drafted_at": now.isoformat(),
-                                                 **turn}):
+            if not _move(sb, wid, c, "waiting", {"state": "drafted", "followup_id": fid,
+                                                 "drafted_at": fu.db_clock(sb, now).isoformat(), **turn}):
                 sb.rest("PATCH", f"{FOLLOWUPS}?id=eq.{_q(fid)}&status=eq.draft", prefer="return=minimal",
                         json_body={"status": "expired", "decided_at": now.isoformat(),
                                    "error": "Another run moved this lead in the wave meanwhile, so this opener was taken back."})
@@ -1619,8 +1647,12 @@ def _draft_wave(sb: Any, wave: dict[str, Any], wave_room: int, now: datetime, ct
             log(f"waves: opener ({o['language']}) drafted for {c}")
         if len(page) < size:
             break
-    if written or excluded:
-        audit(sb, "waves.draft", WAVES, wid, after={"drafted": len(written), "excluded": len(excluded)},
+    # Turns put off today start their 14 days too (due_at), as do their
+    # held-back twins below: a run that only put leads off still writes the
+    # row (stress2 round 6, every write to the comparison leaves one).
+    if written or excluded or events:
+        audit(sb, "waves.draft", WAVES, wid, after={"drafted": len(written), "excluded": len(excluded),
+                                                     "turns": len(events)},
               metadata={"followup_ids": written[:200], "excluded": excluded[:200]})
     if events:
         # The held-back leads level with today's turns (newest first) start
@@ -1704,7 +1736,8 @@ def draft_test_opener(sb: Any, lead: dict[str, Any], *, settings: dict[str, Any]
     note = ("Test contact: do-not-disturb is on, so the cockpit should refuse to send this (the refusal test). "
             if dnd else "Test contact. ")
     made = sb.rest("POST", FOLLOWUPS, prefer="return=representation", json_body=[_draft_row(
-        lead, o, owner, now, why=note + "The CEO's opener, no AI text.", context={"test": True})])
+        lead, o, owner, now, why=note + "The CEO's opener, no AI text.", context={"test": True},
+        stamp=fu.db_clock(sb, now))])
     log(f"followups: reactivate opener ({o['language']}) drafted for test contact {c}")
     return {"picked": 1, "written": 1, "by_channel": {"whatsapp_template": 1}, "test": True,
             "id": (made[0] if isinstance(made, list) and made else {}).get("id"),
@@ -1965,12 +1998,49 @@ def send_due(sb: Any, api: Callable[[str, dict[str, Any]], tuple[int, dict[str, 
     def stop(kind: str, words: str) -> None:
         out["stopped"], out["stop_kind"] = words[:300], kind
 
+    read_after = {str(m["followup_id"]): m.get("send_after") for m in meta}
+
+    def put_off(fid: str, until: datetime) -> bool:
+        """The opener's send moved to `until`, only on the row as this run read
+        it: not held, and its send time still the one read (stress2 round 6,
+        desk-put-off-rearms-released-opener). A rep's Hold and Release (which
+        clears the approval) or a new approval meanwhile is never undone."""
+        was = read_after.get(fid)
+        guard = f"&send_after=eq.{_q(str(was))}" if was else "&send_after=not.is.null"
+        try:
+            moved = sb.rest("PATCH", f"{META}?followup_id=eq.{_q(fid)}&held_by=is.null{guard}",
+                            prefer="return=representation", json_body={"send_after": until.isoformat()})
+            if isinstance(moved, list) and moved:
+                read_after[fid] = until.isoformat()
+                return True
+        except http.HttpError as e:
+            warn(f"waves: {fid}'s send was not put off ({http.scrub(str(e))[:120]})")
+        return False
+
     def unread(what: str) -> None:
         """An opener that waits because a check could not be read (stress2 round 3): counted, with why."""
         out["unread"] = out.get("unread", 0) + 1
         whys = out.setdefault("unread_why", [])
         if what not in whys:
             whys.append(what)
+
+    def spoke_lately(fid: str, c: str, now: datetime) -> bool:
+        """A rep and the lead spoke on the phone since (a completed dial,
+        either way; stress2 round 5): the opener waits out the gap in the
+        queue, as for a message by hand. Unread: it waits."""
+        try:
+            spoke = last_spoke(sb, c)
+        except Exception as e:  # noqa: BLE001 - unreadable: it waits, never goes on a guess
+            warn(f"waves: {fid} waits: the lead's calls could not be read ({http.scrub(str(e))[:120]})")
+            unread("the lead's calls could not be read")
+            return True
+        if spoke and now - spoke < fu.GAP:
+            until = spoke + fu.GAP
+            put_off(fid, until)
+            out["put_off"] = out.get("put_off", 0) + 1
+            log(f"waves: {fid} waits until {until.isoformat()}: a rep spoke to the lead on the phone lately")
+            return True
+        return False
 
     def kept_back(fid: str, f: dict[str, Any], m: dict[str, Any], now: datetime) -> bool:
         """Whether this opener is kept back without a send (counted in `out`)."""
@@ -2017,26 +2087,8 @@ def send_due(sb: Any, api: Callable[[str, dict[str, Any]], tuple[int, dict[str, 
         if not sb.select(FOLLOWUPS, f"select=id&id=eq.{_q(fid)}&status=eq.draft&limit=1"):
             out["gone"] += 1  # sent, skipped or expired meanwhile (another run, a rep)
             return True
-        if f.get("segment") == "reactivate":
-            # A rep and the lead spoke on the phone since (a completed dial,
-            # either way; stress2 round 5): the opener waits out the gap in
-            # the queue, as for a message by hand. Unread: it waits.
-            try:
-                spoke = last_spoke(sb, c)
-            except Exception as e:  # noqa: BLE001 - unreadable: it waits, never goes on a guess
-                warn(f"waves: {fid} waits: the lead's calls could not be read ({http.scrub(str(e))[:120]})")
-                unread("the lead's calls could not be read")
-                return True
-            if spoke and now - spoke < fu.GAP:
-                until = spoke + fu.GAP
-                try:
-                    sb.rest("PATCH", f"{META}?followup_id=eq.{_q(fid)}&held_by=is.null", prefer="return=minimal",
-                            json_body={"send_after": until.isoformat()})
-                except http.HttpError as e:
-                    warn(f"waves: {fid}'s send was not put off ({http.scrub(str(e))[:120]})")
-                out["put_off"] = out.get("put_off", 0) + 1
-                log(f"waves: {fid} waits until {until.isoformat()}: a rep spoke to the lead on the phone lately")
-                return True
+        if f.get("segment") == "reactivate" and spoke_lately(fid, c, now):
+            return True
         if f.get("segment") == "reactivate" and ghl_token is not None:
             # run() always passes the key as read ("" when it is not set);
             # None is only a caller that wires no HighLevel reads (the send's
@@ -2097,11 +2149,7 @@ def send_due(sb: Any, api: Callable[[str, dict[str, Any]], tuple[int, dict[str, 
         if by_hand and now - by_hand < fu.GAP:
             until = max(until or now, by_hand + fu.GAP)
         if until:
-            try:
-                sb.rest("PATCH", f"{META}?followup_id=eq.{_q(fid)}&held_by=is.null", prefer="return=minimal",
-                        json_body={"send_after": until.isoformat()})
-            except http.HttpError as e:
-                warn(f"waves: {fid}'s send was not put off ({http.scrub(str(e))[:120]})")
+            put_off(fid, until)
             out["put_off"] = out.get("put_off", 0) + 1
             log(f"waves: {fid} waits until {until.isoformat()}: we messaged the lead lately")
             return True
@@ -2228,8 +2276,11 @@ def send_due(sb: Any, api: Callable[[str, dict[str, Any]], tuple[int, dict[str, 
         # The lead may have written while this run waited out the gap (stress2
         # round 4, reply-during-gap-wait-gets-opener): their conversation is
         # read again before the send, never only before the wait.
-        if still_kept_back(fid) or (slept and f.get("segment") == "reactivate" and ghl_token
-                                    and live_conversation(fid, f, str(f["contact_id"]), clock())):
+        # A call with the lead that ended during the wait is read again too
+        # (stress2 round 6): sales-api's own check would otherwise meet it first.
+        if still_kept_back(fid) or (slept and f.get("segment") == "reactivate"
+                                    and (spoke_lately(fid, str(f["contact_id"]), clock())
+                                         or (ghl_token and live_conversation(fid, f, str(f["contact_id"]), clock())))):
             if lease_taken_at is not None:
                 _let_go(sb, SEND_LEASE, lease_taken_at)
             continue
@@ -2266,14 +2317,7 @@ def send_due(sb: Any, api: Callable[[str, dict[str, Any]], tuple[int, dict[str, 
         if blip and not out.get("moved_behind"):
             if res.get("message"):
                 last_at = db_now()
-            try:
-                moved = sb.rest("PATCH", f"{META}?followup_id=eq.{_q(fid)}&held_by=is.null",
-                                prefer="return=representation",
-                                json_body={"send_after": (clock() + ERROR_WAIT).isoformat()})
-            except http.HttpError as e:
-                warn(f"waves: {fid} could not be moved behind the batch ({http.scrub(str(e))[:120]})")
-                moved = None
-            if isinstance(moved, list) and moved:
+            if put_off(fid, clock() + ERROR_WAIT):
                 out["moved_behind"] = 1
                 out["moved_why"] = err[:200]
                 warn(f"waves: {fid} waits {int(ERROR_WAIT.total_seconds() // 60)} minutes behind the batch: {err[:160]}")
@@ -2284,18 +2328,25 @@ def send_due(sb: Any, api: Callable[[str, dict[str, Any]], tuple[int, dict[str, 
             if verdict == "error":
                 # sales-api failed on this opener: it waits behind the batch, so
                 # the next run does not stop at the same opener again (fix round 4).
-                try:
-                    sb.rest("PATCH", f"{META}?followup_id=eq.{_q(fid)}&held_by=is.null", prefer="return=minimal",
-                            json_body={"send_after": (clock() + ERROR_WAIT).isoformat()})
+                if put_off(fid, clock() + ERROR_WAIT):
                     err = f"{err} (that opener waits {int(ERROR_WAIT.total_seconds() // 60)} minutes; the rest go first)"
-                except http.HttpError as e:
-                    warn(f"waves: {fid} could not be moved behind the batch ({http.scrub(str(e))[:120]})")
             stop(verdict, err)
             break
+        if verdict == "wait":
+            # sales-api says the opener waits (code paused, kind_off or
+            # not_approved): left in the queue with its approval, put off past
+            # a phone call with the lead when that is why, never set aside.
+            if SPOKE_WORDS.search(err):
+                spoke_lately(fid, str(f["contact_id"]), clock())
+            elif CALLS_UNREAD_WORDS.search(err):
+                unread("the lead's calls could not be read")
+            else:
+                out["paused"] = out.get("paused", 0) + 1
+            log(f"waves: {fid} waits: {err[:160]}")
+            continue
         if verdict == "hours":
             # sales-api reads the lead's clock otherwise: it waits an hour, in the queue.
-            sb.rest("PATCH", f"{META}?followup_id=eq.{_q(fid)}", prefer="return=minimal",
-                    json_body={"send_after": (clock() + timedelta(hours=1)).isoformat()})
+            put_off(fid, clock() + timedelta(hours=1))
             out["outside_hours"] += 1
             continue
         if verdict == "lead" and STATE_RACE.search(err):

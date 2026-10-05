@@ -42,7 +42,7 @@ from typing import Any, Callable, Optional
 
 from . import http
 from .config import key
-from .rooms import EVENTS, LEASE_FN, Breaker, ProviderError, Sender, TimeUp, db_reason, iso, parse_ts
+from .rooms import EVENTS, LEASE_FN, PROVIDER_RESERVE, Breaker, ProviderError, Sender, TimeUp, db_reason, iso, parse_ts
 from .supabase import SupabaseError
 
 TOKEN_KEY = "SLACK_SALES_BOT_TOKEN"
@@ -229,19 +229,36 @@ class SlackPoster:
         # a second time (stress2 round 5, a DM Slack took posted again).
         if detail.get("slack_asked_at"):
             return self._close(e, {"unclear": "an earlier run asked Slack and its answer was not recorded"}, "unclear")
+        # A post is started only with the time to hear Slack's answer (stress2
+        # round 6, slack-post-started-with-squeezed-timeout-reply-lost): the
+        # Sender would squeeze it into the run's last fraction of a second,
+        # and a post that times out is never sent again. The next step or
+        # run, with its full time, posts it.
+        left = getattr(self.send, "left", None)
+        spare = left() if callable(left) else None
+        if spare is not None and spare < POST_TIMEOUT + PROVIDER_RESERVE + 0.5:
+            return False
         if not self._lease(e):
             return False
         # Stamped before Slack is asked: a run that cannot record the answer
         # leaves this behind, so the next run never asks again. Not stamped:
         # nothing is asked, and the lease runs out.
+        stamp = iso(self.clock())
         try:
             self.sb.rest("PATCH", self._where(e), prefer="return=minimal",
-                         json_body={"detail": {**detail, "slack_asked_at": iso(self.clock())}})
-            e["detail"] = {**detail, "slack_asked_at": iso(self.clock())}
+                         json_body={"detail": {**detail, "slack_asked_at": stamp}})
         except (SupabaseError, http.HttpError) as err:
-            self.read_error = db_reason(err)
-            self._warn_once("stamp", f"slack: a reply could not be stamped before its post, so it waits: {self.read_error}")
-            return False
+            # The stamp may have landed with its answer lost: read back, and
+            # this run's own stamp there is a stamp (Slack not asked yet, this
+            # run holding the lease), so the post goes on. Otherwise it
+            # waits, and a stamp this run never confirmed is cleared when the
+            # lease is given back.
+            if self._stamp_of(e) != stamp:
+                self.read_error = db_reason(err)
+                self._warn_once("stamp", f"slack: a reply could not be stamped before its post, so it waits: {self.read_error}")
+                self._release({**e, "detail": {**detail, "slack_asked_at": stamp}}, bump=False)
+                return False
+        e["detail"] = {**detail, "slack_asked_at": stamp}
         try:
             _s_, data = self.send("POST", POST_URL, headers={"Authorization": f"Bearer {self.token}"},
                                   body={"channel": user, "text": text, "unfurl_links": False, "unfurl_media": False},
@@ -300,6 +317,17 @@ class SlackPoster:
             self._warn_once("lease", f"slack: a reply could not be taken with the lease: {self.read_error}")
             return False
         return bool(got)
+
+    def _stamp_of(self, e: dict[str, Any]) -> Optional[str]:
+        """The reply's slack_asked_at as the database holds it now; None when not read."""
+        try:
+            rows = self.sb.rest("GET", f"{self._where(e)}&select=detail&limit=1")
+        except (TimeUp, SupabaseError, http.HttpError):
+            return None
+        row = rows[0] if isinstance(rows, list) and rows else {}
+        detail = row.get("detail") if isinstance(row, dict) and isinstance(row.get("detail"), dict) else {}
+        got = detail.get("slack_asked_at")
+        return str(got) if got else None
 
     def _where(self, e: dict[str, Any]) -> str:
         return f"{EVENTS}?dedupe_key=eq.{http.quote(e['dedupe_key'])}&handled_at=is.null"

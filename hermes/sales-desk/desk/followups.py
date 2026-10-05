@@ -480,15 +480,22 @@ def heat(lead: dict[str, Any], now: datetime, *, hot: bool = False,
     return score, reasons[:3]
 
 
-def confirm_from(start: datetime, country: Any = None) -> datetime:
+def confirm_from(start: datetime, country: Any = None) -> Optional[datetime]:
     """When a call booked more than a day ahead is confirmed: 18:00 the evening
     before a call that starts before noon (Kuwait), otherwise 09:00 that day
     (the dialer's rule, the call centre's too).
 
     A lead outside the Gulf is confirmed on their own clock: the same rule
-    there, and when no moment between it and the call is 09:00 to 21:00 in
-    every zone of their country (a 09:00 call in New York is 06:00 in Los
-    Angeles), from the start of the last stretch of the day before that is."""
+    there, read at that evening's own offset (a clock change in between moves
+    nothing). The moment must be one the desk can write the draft in (outside
+    its quiet hours on Kuwait's clock) and a person can send it in (09:00 to
+    21:00 in every zone of the lead's country), with half an hour to spare
+    for the next run, before the draft expires an hour before the call
+    (stress2 round 6, confirm-draft-unsendable-multi-zone-leads). When the
+    rule's moment is not, the first one after it that is, else the start of
+    the last such stretch before it, back through the day before. None when
+    there is no such moment: no confirmation is written, and the dialer or a
+    person confirms the call."""
     k = start + KUWAIT
     if k.hour < 12:
         at = (k - timedelta(days=1)).replace(hour=18, minute=0, second=0, microsecond=0)
@@ -503,25 +510,50 @@ def confirm_from(start: datetime, country: Any = None) -> datetime:
         return kuwait_rule
     local = start + off
     if local.hour < 12:
-        at = (local - timedelta(days=1)).replace(hour=18, minute=0, second=0, microsecond=0) - off
+        wall = (local - timedelta(days=1)).replace(hour=18, minute=0, second=0, microsecond=0)
     else:
-        at = local.replace(hour=9, minute=0, second=0, microsecond=0) - off
-    step = timedelta(minutes=15)
-    t = at
-    while t < start - timedelta(minutes=30):
-        if in_hours(t, country, CONFIRM_HOURS, first=False):
-            return at
-        t += step
-    # The last moment before the call that is daytime in every zone, then back
-    # to where that stretch began.
-    t = start - timedelta(minutes=30)
-    while t > start - timedelta(hours=48) and not in_hours(t, country, CONFIRM_HOURS, first=False):
-        t -= step
-    if not in_hours(t, country, CONFIRM_HOURS, first=False):
+        wall = local.replace(hour=9, minute=0, second=0, microsecond=0)
+    # The wall clock's own offset (Europe leaves summer time on a Sunday:
+    # 18:00 the evening before is still summer time).
+    then = _zone_offset(zones[0], wall - off) or off
+    at = wall - then
+    expires = start - timedelta(hours=1)
+    run_gap = timedelta(minutes=30)
+
+    def ok(t: datetime) -> bool:
+        return (t + run_gap <= expires and not quiet(t, {}) and not quiet(t + run_gap, {})
+                and in_hours(t, country, CONFIRM_HOURS, first=False)
+                and in_hours(t + run_gap, country, CONFIRM_HOURS, first=False))
+
+    if ok(at):
         return at
-    while in_hours(t - step, country, CONFIRM_HOURS, first=False) and t - step > start - timedelta(hours=48):
+    step = timedelta(minutes=15)
+    t = at + step
+    while t + run_gap <= expires:
+        if ok(t):
+            return t
+        t += step
+    t = at - step
+    while t > start - timedelta(hours=48):
+        if ok(t):
+            while ok(t - step) and t - step > start - timedelta(hours=48):
+                t -= step
+            return t
         t -= step
-    return t
+    return None
+
+
+def lead_midnight_after(t: datetime, country: Any) -> datetime:
+    """The next midnight after `t` on the lead's own clock (their first zone;
+    Kuwait's when it cannot be read): a draft that names the call's day
+    ("tomorrow") says it only until then (stress2 round 6,
+    confirm-draft-tomorrow-sent-on-call-day)."""
+    zones = lead_zones(country) or LEAD_ZONES["kw"]
+    off = _zone_offset(zones[0], t)
+    off = off if off is not None else KUWAIT
+    local = (t + off).replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+    after = _zone_offset(zones[0], local - off) or off
+    return local - after
 
 
 # ---------------------------------------------------------------------------
@@ -557,6 +589,38 @@ def answers(channel: Any, their_channel: Any) -> bool:
     return not _email(channel) or _email(their_channel)
 
 
+def db_clock(sb: Any, t: datetime) -> datetime:
+    """`t` on the database's clock: the VPS's plus sb.clock_offset (the Date
+    header's reading) when it is known and under an hour, as waves.send_due's
+    db_now reads it. A draft's created_at is compared with times the database
+    and HighLevel wrote, so it is stamped on their clock (stress2 round 6,
+    clock-skew-draft-stamped-on-vps-clock)."""
+    off = getattr(sb, "clock_offset", None)
+    if isinstance(off, (int, float)) and not isinstance(off, bool) and abs(float(off)) < 3600:
+        return t + timedelta(seconds=float(off))
+    return t
+
+
+# A "sending" row is stamped (ghl_asked_at) this long after its slot at most
+# (sales-api's UNASKED_MS).
+UNASKED_S = 30
+
+
+def never_asked(m: dict[str, Any], now: Optional[datetime] = None) -> bool:
+    """A message row HighLevel was never asked about: still "sending", its
+    ghl_asked_at column there and empty (20261004a), and (when `now` is
+    given) older than UNASKED_S. It never went: sales-api's slot, its
+    moved-on check and waves._maybe_went read it so (stress2 round 6,
+    unasked-orphan-row-read-as-answered). A read without the column, or a
+    stamped row, is a send that may have gone, as before."""
+    if str(m.get("state") or "") != "sending" or "ghl_asked_at" not in m or m.get("ghl_asked_at"):
+        return False
+    if now is None:
+        return True
+    at = _ts(m.get("created_at"))
+    return at is not None and (now - at).total_seconds() >= UNASKED_S
+
+
 def reply_answered(thread: list[dict[str, Any]], inbox: list[dict[str, Any]], sends: list[dict[str, Any]],
                    ours: set[str]) -> bool:
     """Whether a person answered the lead after they last wrote: a message of
@@ -580,8 +644,8 @@ def reply_answered(thread: list[dict[str, Any]], inbox: list[dict[str, Any]], se
             continue  # an automation's message, not an answer
         if answers(m.get("channel"), their_ch):
             return True
-    return any(s.get("state") != "failed" and _ts(s.get("created_at")) and _ts(s["created_at"]) > last_t
-               and answers(s.get("channel"), their_ch) for s in sends)
+    return any(s.get("state") != "failed" and not never_asked(s) and _ts(s.get("created_at"))
+               and _ts(s["created_at"]) > last_t and answers(s.get("channel"), their_ch) for s in sends)
 
 
 def blocked_channels(contact: dict[str, Any]) -> set[str]:
@@ -794,8 +858,8 @@ def pick(now: datetime, *, inbox: list[dict[str, Any]], calendar: list[dict[str,
     for c, (t, ch) in sorted(((c, w) for c, w in wrote.items() if w[0]), key=lambda x: x[1][0], reverse=True):
         if now - t >= timedelta(hours=48):
             continue
-        if any(str(s.get("contact_id") or "") == c and s.get("state") != "failed" and _ts(s.get("created_at"))
-               and _ts(s["created_at"]) > t and answers(s.get("channel"), ch) for s in sends):
+        if any(str(s.get("contact_id") or "") == c and s.get("state") != "failed" and not never_asked(s, now)
+               and _ts(s.get("created_at")) and _ts(s["created_at"]) > t and answers(s.get("channel"), ch) for s in sends):
             continue
         add(c, "reply", 1, 0)
 
@@ -813,7 +877,10 @@ def pick(now: datetime, *, inbox: list[dict[str, Any]], calendar: list[dict[str,
         aid = str(a.get("appointment_id") or "")
         if a.get("status") in live or not booked or not aid or start <= now or start - now > timedelta(hours=36):
             continue
-        if start - booked < timedelta(hours=24) or now < confirm_from(start, (by_lead.get(c) or {}).get("country")):
+        if start - booked < timedelta(hours=24):
+            continue
+        due_from = confirm_from(start, (by_lead.get(c) or {}).get("country"))
+        if due_from is None or now < due_from:
             continue
         if aid in confirmed or aid in drafted_appts or (inbound.get(c) and inbound[c] > booked):
             continue
@@ -908,11 +975,29 @@ def _ghl_headers(token: str, version: str = "2021-04-15") -> dict[str, str]:
     return {"Authorization": f"Bearer {token}", "Version": version, "Accept": "application/json", "User-Agent": UA}
 
 
+def _answer(raw: bytes, what: str) -> dict[str, Any]:
+    """HighLevel's answer as a JSON object, or HttpError status 0: an empty
+    body, a page that is not JSON, or anything but an object is an answer
+    nobody could read, never "nothing there" (stress2 round 6,
+    garbage-search-hides-stop-word-writes-opener)."""
+    try:
+        d = json.loads(raw.decode("utf-8")) if raw else None
+    except ValueError:
+        d = None
+    if not isinstance(d, dict):
+        raise http.HttpError(0, f"HighLevel's {what} answer could not be read")
+    return d
+
+
 def _conversations(token: str, contact_id: str) -> tuple[dict[str, str], list[dict[str, Any]]]:
     h = _ghl_headers(token)
     _, _, raw = http.request("GET", f"{GHL}/conversations/search?locationId={LOCATION}&contactId={_q(contact_id)}&limit=10",
                              headers=h, timeout=30, retries=1)
-    return h, (json.loads(raw.decode("utf-8") or "{}").get("conversations") or [])[:4]
+    convs = _answer(raw, "conversation search").get("conversations")
+    # A real empty list is no conversation; a missing key is an unread answer.
+    if not isinstance(convs, list):
+        raise http.HttpError(0, "HighLevel's conversation search answered without a list of conversations")
+    return h, convs[:4]
 
 
 def _message_page(h: dict[str, str], conversation: str, limit: int,
@@ -922,9 +1007,11 @@ def _message_page(h: dict[str, str], conversation: str, limit: int,
     q = f"limit={limit}" + (f"&lastMessageId={_q(cursor)}" if cursor else "")
     _, _, raw = http.request("GET", f"{GHL}/conversations/{_q(conversation)}/messages?{q}",
                              headers=h, timeout=30, retries=1)
-    d = json.loads(raw.decode("utf-8") or "{}")
-    inner = d.get("messages") or {}
-    items = list((inner.get("messages") if isinstance(inner, dict) else inner) or [])
+    inner = _answer(raw, "message page").get("messages")
+    page = inner.get("messages") if isinstance(inner, dict) else inner
+    if not isinstance(page, list):
+        raise http.HttpError(0, "HighLevel's message page answered without a list of messages")
+    items = list(page)
     more = bool(inner.get("nextPage")) if isinstance(inner, dict) else False
     last = (inner.get("lastMessageId") if isinstance(inner, dict) else None) or None
     return items, more, (str(last) if last else None)
@@ -1034,7 +1121,12 @@ def ghl_contact(token: str, contact_id: str) -> dict[str, Any]:
         return {}
     _, _, raw = http.request("GET", f"{GHL}/contacts/{_q(contact_id)}", headers=_ghl_headers(token, "2021-07-28"),
                              timeout=30, retries=1)
-    return json.loads(raw.decode("utf-8") or "{}").get("contact") or {}
+    contact = _answer(raw, "contact").get("contact")
+    # An empty or keyless answer is unread, never a contact with no phone
+    # (stress2 round 6, garbage-contact-drops-wave-lead).
+    if not isinstance(contact, dict) or not contact:
+        raise http.HttpError(0, "HighLevel's contact answer had no contact in it")
+    return contact
 
 
 def ghl_message(token: str, message_id: str) -> dict[str, Any]:
@@ -1726,14 +1818,26 @@ def free_stuck(sb: Any, now: datetime, settle: Optional[Callable[[str], dict[str
                                                 f"&decided_at=lt.{_q((now - STUCK).isoformat())}&order=decided_at.asc&limit=100")
     if not rows:
         return 0
-    msgs = sb.select("cockpit_sales_messages", "select=id,followup_id,state,ghl_message_id,error"
+    msgs = sb.select("cockpit_sales_messages", "select=id,followup_id,state,ghl_message_id,error,created_at,ghl_asked_at"
                                                f"&followup_id={_in([str(r['id']) for r in rows])}")
     of: dict[str, list[dict[str, Any]]] = {}
     for m in msgs:
         of.setdefault(str(m.get("followup_id") or ""), []).append(m)
     freed = 0
     for r in rows:
-        ms = of.get(str(r["id"]), [])
+        # A row HighLevel was never asked about is no message at all (stress2
+        # round 6, free-stuck-unasked-row-read-as-may-have-gone): the send
+        # was killed between its slot and its stamp, so nothing went. It is
+        # given up (as sales-api's voidUnsent does) and the follow-up goes
+        # back to a draft, never "may not have gone".
+        unasked = [m for m in of.get(str(r["id"]), []) if never_asked(m, now)]
+        for m in unasked:
+            try:
+                sb.rest("DELETE", f"cockpit_sales_messages?id=eq.{_q(str(m['id']))}&state=eq.sending&ghl_asked_at=is.null",
+                        prefer="return=minimal")
+            except Exception as e:  # noqa: BLE001 - the slot reads it as unasked anyway
+                warn(f"An unsent message row was not given up: {e}")
+        ms = [m for m in of.get(str(r["id"]), []) if not never_asked(m, now)]
         went = next((m for m in ms if m.get("state") != "failed" and (m.get("ghl_message_id") or m.get("state") in GONE)),
                     None)
         bad = next((m for m in ms if m.get("state") == "failed"), None)
@@ -1759,8 +1863,13 @@ def free_stuck(sb: Any, now: datetime, settle: Optional[Callable[[str], dict[str
 
 
 def gone_reason(d: dict[str, Any], calls: list[dict[str, Any]], inbox: list[dict[str, Any]],
-                sends: list[dict[str, Any]], now: datetime) -> Optional[str]:
-    """Why an open draft is no longer needed, or None while it still is."""
+                sends: list[dict[str, Any]], now: datetime, *,
+                confirmations: Optional[list[dict[str, Any]]] = None) -> Optional[str]:
+    """Why an open draft is no longer needed, or None while it still is.
+    `confirmations` are the call's rows (cockpit_sales_confirmations): one
+    made after a confirm draft (the lead confirmed or answered on the phone,
+    or another confirmation went) closes it, as sales-api's sendFollowup
+    refuses it (stress2 round 6, confirm-draft-sent-after-phone-confirmation)."""
     made = _ts(d.get("created_at"))
     if d.get("segment") == "reply":
         # An email after it answers only an email draft (an automation's
@@ -1768,7 +1877,8 @@ def gone_reason(d: dict[str, Any], calls: list[dict[str, Any]], inbox: list[dict
         ch = d.get("channel") or "whatsapp"
         after = [_ts(r.get("last_message_at")) for r in inbox
                  if r.get("last_direction") == "outbound" and answers(r.get("last_type"), ch)]
-        after += [_ts(m.get("created_at")) for m in sends if m.get("state") != "failed" and answers(m.get("channel"), ch)]
+        after += [_ts(m.get("created_at")) for m in sends
+                  if m.get("state") != "failed" and not never_asked(m, now) and answers(m.get("channel"), ch)]
         if made and any(t and t > made for t in after):
             return "A message went to the lead after this draft was made, so it answers an older conversation."
         return None
@@ -1789,6 +1899,14 @@ def gone_reason(d: dict[str, Any], calls: list[dict[str, Any]], inbox: list[dict
         return "The call this confirms has already started."
     if start and was and start != was:
         return "The call this confirms was moved; a confirmation for the new time is written when it is due."
+    after = [x for x in (confirmations or []) if made and _ts(x.get("at")) and _ts(x.get("at")) > made]
+    results = {str(x.get("result") or "") for x in after}
+    if "confirmed" in results:
+        return "The lead confirmed on the phone, so this message is not needed."
+    if results & {"reschedule", "cancelled"}:
+        return "The lead already answered about this call on the phone, so this message is not needed."
+    if "message_sent" in results:
+        return "A confirmation already went to the lead for this call, so this message is not needed."
     return None
 
 
@@ -1865,17 +1983,26 @@ def close_gone(sb: Any, now: datetime) -> int:
             for r in sb.select_all("cockpit_sales_inbox", f"select=contact_id,last_message_at,last_direction,last_type,"
                                                           f"inbound_whatsapp_at&contact_id={_in(chunk)}", order="conversation_id"):
                 inbox.setdefault(str(r.get("contact_id") or ""), []).append(r)
-            for m in sb.select_all("cockpit_sales_messages", f"select=contact_id,created_at,state,channel"
+            for m in sb.select_all("cockpit_sales_messages", f"select=contact_id,created_at,state,channel,ghl_asked_at"
                                                              f"&contact_id={_in(chunk)}"
                                                              f"&created_at=gte.{_q(oldest.isoformat())}", order="id"):
                 sends.setdefault(str(m.get("contact_id") or ""), []).append(m)
+    # The confirmations of the calls the confirm drafts are about: a lead who
+    # confirmed on the phone since needs no message (stress2 round 6).
+    confirms: dict[str, list[dict[str, Any]]] = {}
+    appts = sorted({str(d.get("appointment_id")) for d in drafts if d.get("segment") == "confirm" and d.get("appointment_id")})
+    for chunk in _chunks(appts):
+        for x in sb.select_all("cockpit_sales_confirmations", f"select=appointment_id,result,at&appointment_id={_in(chunk)}",
+                               order="id"):
+            confirms.setdefault(str(x.get("appointment_id") or ""), []).append(x)
     closed = 0
     for d in drafts:
         c = str(d["contact_id"])
         if d.get("segment") == "reactivate":
             why = opener_gone(d, calls.get(c, []), inbox.get(c, []), now)
         else:
-            why = gone_reason(d, calls.get(c, []), inbox.get(c, []), sends.get(c, []), now)
+            why = gone_reason(d, calls.get(c, []), inbox.get(c, []), sends.get(c, []), now,
+                              confirmations=confirms.get(str(d.get("appointment_id") or ""), []))
         if not why:
             continue
         out = sb.rest("PATCH", f"cockpit_sales_followups?id=eq.{_q(str(d['id']))}&status=eq.draft",
@@ -2230,7 +2357,7 @@ def run(sb: Any, provider: Any, log: Callable[[str], None], *, settings: dict[st
     else:
         leads = sb.select_all("cockpit_sales_leads", "select=*&or=" + _q(f'(lead_created_at.gte."{new_since}",stage_name.ilike.*nurture*)'),
                               order="contact_id")
-    sends = sb.select_all("cockpit_sales_messages", "select=contact_id,created_at,state,via,channel,ghl_message_id"
+    sends = sb.select_all("cockpit_sales_messages", "select=contact_id,created_at,state,via,channel,ghl_message_id,ghl_asked_at"
                                                     f"&created_at=gte.{_q((now - timedelta(days=14)).isoformat())}{only}",
                           order="id")
     followups = sb.select_all("cockpit_sales_followups", "select=contact_id,segment,status,created_at,decided_at,appointment_id"
@@ -2511,14 +2638,17 @@ def run(sb: Any, provider: Any, log: Callable[[str], None], *, settings: dict[st
             if channel == "whatsapp" and last_wa_in:
                 expires = last_wa_in + timedelta(hours=24)
             elif segment == "confirm" and due.get("start_at"):
-                expires = min(now + timedelta(hours=48), _ts(due["start_at"]) - timedelta(hours=1))
+                # Never past the lead's own midnight: the draft names the
+                # call's day ("tomorrow"), which is wrong from then on.
+                expires = min(db_clock(sb, now) + timedelta(hours=48), _ts(due["start_at"]) - timedelta(hours=1),
+                              lead_midnight_after(db_clock(sb, read_at), lead.get("country")))
             else:
-                expires = now + timedelta(hours=48)
+                expires = db_clock(sb, now) + timedelta(hours=48)
             # The conversation again, as the inbox copy has it now: a message
             # newer than the thread the model saw (the lead's, or a person's
             # answer) means this draft answers an older conversation. Nothing
             # is written; the next run drafts from the conversation as it is.
-            if conversation_moved(sb, contact, read_at, channel):
+            if conversation_moved(sb, contact, db_clock(sb, read_at), channel):
                 moved_on += 1
                 log(f"followups: {contact}'s conversation moved on while the draft was written; the next run drafts again")
                 continue
@@ -2532,7 +2662,7 @@ def run(sb: Any, provider: Any, log: Callable[[str], None], *, settings: dict[st
             # second one if a rep's own run raced this one.
             try:
                 made = sb.rest("POST", "cockpit_sales_followups", json_body=[{
-                    "created_at": read_at.isoformat(),
+                    "created_at": db_clock(sb, read_at).isoformat(),
                     "contact_id": contact, "owner_ghl": owner_ghl, "owner_email": seat_of.get(owner_ghl or ""),
                     "segment": segment, "channel": channel,
                     "template_key": (route or {}).get("key") if channel == "whatsapp_template" else None,

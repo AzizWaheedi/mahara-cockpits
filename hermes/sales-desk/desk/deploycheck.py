@@ -91,7 +91,9 @@ HARDENING_2C = ("cockpit_sales_room_events", "lease_token")
 # time and the link's last send (rooms), HighLevel asked (messages), and the
 # Approve all request (openers' meta). sales-api, the door and this desk read them.
 HARDENING_2D = (("cockpit_sales_rooms", "taken_back_join_at"), ("cockpit_sales_rooms", "last_link_at"),
-                ("cockpit_sales_messages", "ghl_asked_at"), ("cockpit_sales_followup_meta", "approved_request"))
+                ("cockpit_sales_messages", "ghl_asked_at"), ("cockpit_sales_followup_meta", "approved_request"),
+                # Fix round 6: the moment of the call an intro room followed (the settle reads it).
+                ("cockpit_sales_rooms", "appointment_call_at"))
 
 SETTINGS = ("rooms", "live", "followups", "whatsapp_guard", "threads", "calendars")
 
