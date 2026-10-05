@@ -147,6 +147,9 @@ export const MISSING = {
   db: "sales-live cannot reach the database: SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is missing.",
 } as const;
 
+/** A Slack request while Slack presses are switched off (live.enabled and live.slack). */
+export const SLACK_OFF = "Slack presses are switched off.";
+
 /** The sentence for an alert when sales-api's gateway refuses what the door passes on. */
 export const NOT_HOOKED = (action: string) =>
   `sales-api does not take ${action} from sales-live yet. Deploy the hooks commit: room.event, live.press and thread.tick in CRON_ACTIONS and DESK_ACTIONS.`;
@@ -760,6 +763,12 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
     if (req.method !== "POST") return json({ ok: false, error: "Send a POST." }, 405);
     const secret = env("SLACK_SIGNING_SECRET");
     if (!secret) {
+      // Slack switched off (live.enabled and live.slack not both on, as
+      // Milestone 1 ships): a request nobody signed (a scanner, a leftover
+      // Slack app setting) is turned away and is no failing part, and nobody
+      // is asked to set Slack up (m1 round 1, slack-fenced-stray-post).
+      // Not readable: the same, since a stray request never pages anyone.
+      if (!(await slackSwitchedOn())) return json({ ok: false, error: SLACK_OFF }, 503);
       noteStatus("slack", false, MISSING.slack);
       configAlert("slack", true, MISSING.slack);
       return json({ ok: false, error: MISSING.slack }, 503);
@@ -888,6 +897,17 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
     )) as { name: string | null; name_ar: string | null }[] | null;
     const p = Array.isArray(rows) ? rows[0] : undefined;
     return { en: firstName(p?.name), ar: firstName(p?.name_ar) };
+  }
+
+  /** Whether Slack presses are switched on: live.enabled and live.slack both true. Unread: off. */
+  async function slackSwitchedOn(): Promise<boolean> {
+    try {
+      const rows = (await rest("cockpit_sales_settings?key=eq.live&select=value&limit=1", { ms: 800 })) as { value: Row | null }[] | null;
+      const v = Array.isArray(rows) ? rows[0]?.value : null;
+      return v?.enabled === true && v?.slack === true;
+    } catch {
+      return false;
+    }
   }
 
   /** The official WhatsApp number for the ended page (rooms.fallback.ended_page_whatsapp). */

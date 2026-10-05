@@ -161,7 +161,7 @@ can name a Vercel project `call-link-something`.
 
 ```bash
 bun test supabase/functions/sales-live sites/call-link   # no network
-python3 deploy_fn.py sales-live supabase/functions/sales-live   # verify_jwt off; NOT run yet
+python3 deploy_fn.py sales-live supabase/functions/sales-live --no-verify-jwt   # verify_jwt off (the door only; every other function keeps it on); NOT run yet
 curl -s https://bldgtotkfmhoxmlzowdx.supabase.co/functions/v1/sales-live/health
 ```
 
