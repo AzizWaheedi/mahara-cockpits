@@ -478,7 +478,7 @@ def cmd_doctor(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
             add("highlevel", False, "GHL_B2B_API_KEY is not set, so the follow-up agent cannot read a conversation "
                                     "and writes nothing", True)
 
-    blockers =[r for r in rows if r["required"] and r["ok"] is False]
+    blockers = [r for r in rows if r["required"] and r["ok"] is False]
     if args.json:
         _print({"checks": rows, "blockers": [b["detail"] for b in blockers]}, True)
     else:

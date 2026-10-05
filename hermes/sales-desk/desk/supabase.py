@@ -195,15 +195,18 @@ class Supabase:
         return json.loads(body.decode("utf-8")) if body else {}
 
     # ---- the request queue ----------------------------------------------
-    def queued(self, kind: str, *, max_attempts: int, limit: int, first: str = "") -> list[dict[str, Any]]:
+    def queued(self, kind: str, *, max_attempts: int, limit: int, first: str = "",
+               only_first: bool = False) -> list[dict[str, Any]]:
         """The oldest queued requests of a kind, at most `limit`. `first` is a
         filter whose rows come before the rest whatever their age (a proposal
         rebuild, which asks no model, ahead of drafts that may be waiting on
-        one), so a run's limit can never leave them behind older rows."""
+        one), so a run's limit can never leave them behind older rows.
+        `only_first` reads those rows alone (the rebuilds asked while a run
+        was drafting)."""
         where = (f"select=*&kind=eq.{http.quote(kind)}&status=eq.queued&attempts=lt.{int(max_attempts)}"
                  "&order=requested_at.asc")
         ahead = self.select(REQUESTS, f"{where}&{first}&limit={int(limit)}") if first else []
-        if len(ahead) >= limit:
+        if len(ahead) >= limit or (first and only_first):
             return ahead[:limit]
         ids = {str(r.get("id")) for r in ahead}
         rest = self.select(REQUESTS, f"{where}&limit={int(limit) + len(ahead)}")

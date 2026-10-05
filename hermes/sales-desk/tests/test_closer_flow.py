@@ -275,6 +275,40 @@ class RebuildsGoFirst(Base):
             self.assertTrue(self.prop(pid)["error"].startswith(
                 "The proposal writer cannot work right now: the browser on the VPS cannot start"), pid)
 
+    def test_a_rebuild_asked_while_the_run_drafts_goes_before_its_next_draft(self):
+        self.draft("req-1", "p-1", "2099-01-01T11:01:00Z")
+        self.draft("req-2", "p-2", "2099-01-01T11:02:00Z")
+        test = self
+
+        class AsksMeanwhile(Named):
+            def complete(self, system, user, *, temperature=None, timeout=900):
+                if not self.calls:  # the closer fills the gaps while the first draft is written
+                    test.rebuild("req-9", "p-9", "2099-01-01T12:00:00Z")
+                return super().complete(system, user, temperature=temperature, timeout=timeout)
+
+        vps = AsksMeanwhile("vps", "opus", [triage_answer(), specific_deal(), triage_answer(), specific_deal()])
+        w = self.worker(lambda c, l: vps)
+        order: list[str] = []
+        claim = self.sb.claim
+
+        def claimed(req: dict[str, Any], host: str) -> Optional[dict[str, Any]]:
+            order.append(str(req["id"]))
+            return claim(req, host)
+
+        w.sb.claim = claimed  # type: ignore[method-assign]
+        out = w.run()
+        self.assertEqual(order, ["req-1", "req-9", "req-2"])
+        self.assertEqual((out["seen"], out["done"]), (3, 3))
+        self.assertEqual(self.prop("p-9")["status"], "ready")
+
+    def test_no_rebuild_is_looked_for_after_the_runs_last_draft(self):
+        self.draft("req-1", "p-1")
+        w = self.worker(lambda c, l: Named("vps", "opus", [triage_answer(), specific_deal()]))
+        self.pg.calls.clear()
+        w.run()
+        reads = [c for c in self.pg.calls if c[0] == "GET" and REQ in c[1] and "rebuild" in c[1]]
+        self.assertEqual(len(reads), 1)  # the run's first read only
+
     def test_a_draft_stuck_on_an_outage_never_holds_up_a_rebuild(self):
         self.draft("req-1", "p-1", "2099-01-01T11:01:00Z")
         self.draft("req-2", "p-2", "2099-01-01T11:02:00Z")

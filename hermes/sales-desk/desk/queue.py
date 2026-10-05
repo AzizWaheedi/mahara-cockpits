@@ -22,7 +22,9 @@ for a dead one.
 
 Rebuilds are read ahead of drafts, whatever their age: a rebuild asks no
 model, so a closer who filled the gaps never waits behind drafts that are
-waiting on one. An outage holds the requests of its own kind for the rest of
+waiting on one. A rebuild asked while a run is drafting (ten minutes a
+draft, three drafts a run) goes before that run's next draft, rather than
+wait out the run behind the flock. An outage holds the requests of its own kind for the rest of
 the run, never the other kind. While a request waits, the proposal it is for
 carries one sentence for the closer (closer_wait): what is wrong in a few
 words, that it carries on by itself, and when to tell the CEO; the fix stays
@@ -164,7 +166,23 @@ class Worker:
         # closer (None when the reason is about another proposal).
         held: dict[bool, Optional[tuple[str, Optional[str]]]] = {}
         blocked: Optional[str] = None
-        for req in rows:
+        # None in the list: look for rebuilds asked since the run began.
+        pending: list[Optional[dict[str, Any]]] = list(rows)
+        read = {str(r.get("id") or "") for r in rows}
+        while pending:
+            req = pending.pop(0)
+            if req is None:
+                # A draft just ran, for minutes: a rebuild asked meanwhile goes
+                # before the run's next draft, rather than wait out the run.
+                if held.get(True) is None:
+                    fresh = [r for r in self.sb.queued(KIND, max_attempts=MAX_ATTEMPTS,
+                                                       limit=self.cfg.requests_per_run, first=REBUILDS_FIRST,
+                                                       only_first=True)
+                             if str(r.get("id") or "") not in read]
+                    read.update(str(r.get("id") or "") for r in fresh)
+                    out["seen"] += len(fresh)
+                    pending[:0] = fresh
+                continue
             rid = str(req.get("id") or "")
             params = req.get("params") if isinstance(req.get("params"), dict) else {}
             rebuild = bool(params.get("rebuild"))
@@ -189,6 +207,8 @@ class Worker:
                 out["skipped"] += 1
                 continue
             attempts = int(claimed.get("attempts") or 1)
+            if not rebuild and any(r is not None for r in pending):
+                pending.insert(0, None)  # look for new rebuilds before the next request
             try:
                 result = self.rebuild(claimed) if rebuild else self.draft(claimed)
                 self.sb.request_done(rid, result)
