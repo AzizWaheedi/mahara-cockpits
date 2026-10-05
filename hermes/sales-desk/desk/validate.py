@@ -36,6 +36,12 @@ from datetime import date, datetime
 from typing import Any, Iterable, Optional
 
 from . import offer as offer_mod
+from .config import ROOT
+
+# Our record of the case studies a proposal quotes as proof: PATTERNS.md's
+# "Numbers quoted as proof". The CEO, 5 October 2026: the written record is
+# official, not the figures as a rep says them on a call.
+PATTERNS_FILE = ROOT / "PATTERNS.md"
 
 REQUIRED = [
     "reference", "client_company", "client_contact", "date", "headline", "subhead",
@@ -104,6 +110,121 @@ NUMBER_WORDS = {
     90: ["تسعين", "ninety"],
     100: ["مئة", "مائة", "مية", "ميه", "hundred"],
 }
+
+# ---- number words, read as figures ----------------------------------------
+# A draft that writes "six projects signed" on one page and "two signed" on
+# another got through, because only digits were ever read (5 October 2026).
+# So a number written in words, English or Arabic (Gulf and Levantine forms
+# too), is turned into digits before the evidence, prose and proof checks.
+# Whole words only: "someone" is not "one".
+_EN_UNITS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven",
+             "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen"]
+_EN_TENS = {"twenty": 20, "thirty": 30, "forty": 40, "fifty": 50, "sixty": 60, "seventy": 70, "eighty": 80,
+            "ninety": 90}
+# kind: n adds, h multiplies what came before by a hundred, s closes a group
+# of thousands or millions, S does too but only after a number (the plural).
+WORD_VALUES: dict[str, tuple[str, int]] = {w: ("n", i) for i, w in enumerate(_EN_UNITS)}
+WORD_VALUES.update({w: ("n", v) for w, v in _EN_TENS.items()})
+WORD_VALUES.update({"hundred": ("h", 100), "thousand": ("s", 1_000), "million": ("s", 1_000_000),
+                    "billion": ("s", 1_000_000_000)})
+for _v, _words in {
+    1: "واحد واحدة وحدة", 2: "اثنين اثنان إثنين اتنين ثنين اثنتين", 3: "ثلاثة ثلاث تلاتة تلات ثلاثه",
+    4: "أربعة اربعة أربع اربع اربعه", 5: "خمسة خمس خمسه", 6: "ستة ست سته", 7: "سبعة سبع سبعه",
+    8: "ثمانية ثمان تمانية تمان ثمانيه ثماني", 9: "تسعة تسع تسعه", 10: "عشرة عشر عشره",
+    11: "احدعش إحدعش", 12: "اثنعش", 13: "ثلطعش", 14: "اربعطعش", 15: "خمستعش خمسطعش", 16: "سطعش",
+    17: "سبعطعش", 18: "ثمنطعش", 19: "تسعطعش",
+    20: "عشرين عشرون", 30: "ثلاثين ثلاثون تلاتين", 40: "أربعين اربعين أربعون اربعون", 50: "خمسين خمسون",
+    60: "ستين ستون", 70: "سبعين سبعون", 80: "ثمانين ثمانون تمانين", 90: "تسعين تسعون",
+    200: "مئتين مئتان مائتين مائتان ميتين", 300: "ثلاثمائة ثلاثمئة ثلثمية ثلاثمية",
+    400: "أربعمائة اربعمائة أربعمئة اربعمئة اربعمية", 500: "خمسمائة خمسمئة خمسمية",
+    600: "ستمائة ستمئة ستمية", 700: "سبعمائة سبعمئة سبعمية", 800: "ثمانمائة ثمانمئة ثمنمية",
+    900: "تسعمائة تسعمئة تسعمية", 2000: "ألفين الفين", 2_000_000: "مليونين",
+}.items():
+    WORD_VALUES.update({w: ("n", _v) for w in _words.split()})
+WORD_VALUES.update({w: ("h", 100) for w in "مئة مائة مية ميه".split()})
+WORD_VALUES.update({w: ("s", 1_000) for w in "ألف الف ألفا الفا".split()})
+WORD_VALUES.update({w: ("S", 1_000) for w in "آلاف الاف ألاف".split()})
+WORD_VALUES.update({"مليون": ("s", 1_000_000), "ملايين": ("S", 1_000_000)})
+
+_TOKEN = re.compile(r"[A-Za-z]+|[ء-ي٠-٩ٱ-ۓ]+")
+# A figure with its scale: 149K, USD 2M, 2 million, 450 ألف. A lower-case m is
+# left alone: it is as likely to be metres.
+_SCALED = re.compile(r"(\d[\d,]*(?:\.\d+)?)\s*(k|K|M|mn|bn|thousand|million|billion|ألف|الف|آلاف|الاف|ألفا|مليون|ملايين)"
+                     r"(?![A-Za-z0-9ء-ي])")
+_SCALE_OF = {"k": 1_000, "thousand": 1_000, "ألف": 1_000, "الف": 1_000, "آلاف": 1_000, "الاف": 1_000,
+             "ألفا": 1_000, "m": 1_000_000, "mn": 1_000_000, "million": 1_000_000, "مليون": 1_000_000,
+             "ملايين": 1_000_000, "bn": 1_000_000_000, "billion": 1_000_000_000}
+
+
+def _word(token: str) -> Optional[tuple[str, int]]:
+    """A token's value as a number word, with Arabic's joined "and" (وثلاثين) taken off."""
+    low = token.lower()
+    if low in WORD_VALUES:
+        return WORD_VALUES[low]
+    if low.startswith("و") and low[1:] in WORD_VALUES:
+        return WORD_VALUES[low[1:]]
+    return None
+
+
+def _scaled(m: "re.Match[str]") -> str:
+    n = float(m.group(1).replace(",", ""))
+    return str(int(round(n * _SCALE_OF[m.group(2).lower() if m.group(2) != "M" else "m"])))
+
+
+def spoken_figures(text: str) -> str:
+    """The text with every figure as plain digits: Arabic digits, figures with
+    a scale (149K, 2 million, ٤٥٠ ألف) and numbers written in words
+    (thirty-five, خمسة وثلاثين, two hundred and fifty)."""
+    text = _plain(str(text)).translate(ARABIC_DIGITS)
+    text = _SCALED.sub(_scaled, text)
+    tokens = list(_TOKEN.finditer(text))
+    spans: list[tuple[int, int, int]] = []
+    i = 0
+    while i < len(tokens):
+        first = _word(tokens[i].group(0))
+        if first is None or first[0] == "S":
+            i += 1
+            continue
+        group = [first]
+        start, end, last = tokens[i].start(), tokens[i].end(), first[0]
+        j = i + 1
+        while j < len(tokens):
+            gap = text[end:tokens[j].start()]
+            word = tokens[j].group(0).lower()
+            if word in ("and", "و") and j + 1 < len(tokens) and re.fullmatch(r"\s*", gap) \
+                    and (word == "و" or last in ("h", "s")) and _word(tokens[j + 1].group(0)):
+                end, j = tokens[j].end(), j + 1
+                continue
+            nxt = _word(tokens[j].group(0))
+            if nxt is None or not re.fullmatch(r"[\s-]*", gap):
+                break
+            group.append(nxt)
+            end, last, j = tokens[j].end(), nxt[0], j + 1
+        total = current = 0
+        for kind, v in group:
+            if kind == "n":
+                current += v
+            elif kind == "h":
+                current = (current or 1) * v
+            else:
+                total += (current or 1) * v
+                current = 0
+        spans.append((start, end, total + current))
+        i = j
+    for start, end, value in reversed(spans):
+        text = text[:start] + str(value) + text[end:]
+    return text
+
+
+def figures_in(text: Any) -> list[int]:
+    """Every whole figure in a piece of copy, however it is written."""
+    out = []
+    for raw in re.findall(r"\d[\d,]*", spoken_figures(str(text or ""))):
+        cleaned = raw.replace(",", "")
+        if cleaned.isdigit():
+            out.append(int(cleaned))
+    return out
+
 
 # Below this, a figure is a count (one project, five meetings) and is as
 # likely to be spoken as a word as a digit, in any of a dozen dialect spellings.
@@ -400,12 +521,60 @@ def our_numbers(data: dict[str, Any], resolved: dict[str, Any], offer: Optional[
     return {n for n in ours if n}
 
 
+# --------------------------------------------------------------- the proof ---
+PROOF_SECTION = re.compile(r"^##\s+Numbers quoted as proof.*?$(.*?)(?=^##\s|\Z)", re.M | re.S | re.I)
+# Below this a figure is a count of years, months or times ("4x"), which the
+# record words in many ways; at or above it, it is the case study's own figure.
+PROOF_FLOOR = 10
+
+
+def proof_record(path: Optional[Any] = None) -> Optional[set[int]]:
+    """Every figure in PATTERNS.md's "Numbers quoted as proof", or None when
+    the file or the section cannot be read."""
+    try:
+        text = (path or PATTERNS_FILE).read_text(encoding="utf-8")
+    except OSError:
+        return None
+    m = PROOF_SECTION.search(text)
+    if not m:
+        return None
+    return set(figures_in(m.group(1)))
+
+
+def check_proof(data: dict[str, Any], rep: Report) -> None:
+    """Our case studies are quoted from the record, exactly: never the way a
+    rep said them on the call. Every figure of 10 or more in `proof` has to be
+    in PATTERNS.md's proof list."""
+    items = [x for x in (data.get("proof") or []) if isinstance(x, dict)]
+    if not items:
+        return
+    record = proof_record()
+    if record is None:
+        rep.add(WARN, "proof", "PATTERNS.md's \"Numbers quoted as proof\" could not be read, so the proof "
+                               "figures are unchecked; read them against it by hand")
+        return
+    bad = []
+    for i, item in enumerate(items):
+        for key in ("v", "k"):
+            for n in figures_in(item.get(key)):
+                if n >= PROOF_FLOOR and n not in record:
+                    bad.append(f"proof[{i}].{key}: {n:,}")
+    if bad:
+        rep.add(FAIL, "proof", "%d figure(s) in the proof are not in our record: %s. Copy proof figures exactly "
+                               "from PATTERNS.md's \"Numbers quoted as proof\", never from the call"
+                % (len(bad), "; ".join(bad[:6]) + (" ..." if len(bad) > 6 else "")))
+    else:
+        rep.add(PASS, "proof", "every proof figure is from our record")
+
+
 # ----------------------------------------------------------- prose figures ---
 def check_prose(data: dict[str, Any], said: Optional[set[int]], rep: Report, resolved: dict[str, Any],
                 offer: Optional[dict[str, Any]], checked_note: str = "") -> None:
     """Every figure in client-facing text, not only the five in the schema. A
     number in the headline, the subhead or the verdict block reached the client
-    unexamined, and those are the lines a reader believes first."""
+    unexamined, and those are the lines a reader believes first. The proof is
+    ours, and is checked against our record whether or not there is a call."""
+    check_proof(data, rep)
     if said is None:
         if checked_note:
             rep.add(PASS, "prose", checked_note)

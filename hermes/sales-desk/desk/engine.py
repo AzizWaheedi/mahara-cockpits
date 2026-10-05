@@ -71,7 +71,8 @@ class Call:
 # Checks whose failures are a matter of words the drafter can change. Not
 # here: schema (the shape is wrong), render (the tightening rounds), the
 # arithmetic and the fee band (they follow from figures the client gave).
-REPAIRABLE = {"guarantee", "brand", "language", "echoes", "currency", "dates", "evidence", "prose", "offer"}
+REPAIRABLE = {"guarantee", "brand", "language", "echoes", "currency", "dates", "evidence", "prose", "offer",
+              "proof"}
 
 
 @dataclass
