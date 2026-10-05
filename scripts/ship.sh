@@ -12,6 +12,10 @@ cd "$(dirname "$0")/.."
 
 # Nothing ships if the copies of a shared page have drifted apart.
 scripts/check-shared.sh || exit 1
+# The guard that keeps a backend deploy from removing someone else's
+# functions (convex-removals.ts, below) is itself tested first.
+bun test scripts/convex-removals.test.ts >/dev/null 2>&1 \
+  || { echo "the deploy guard's tests fail (bun test scripts/convex-removals.test.ts)"; exit 1; }
 
 # The Frame.io webhook is a public URL that writes to our notes, so its
 # signature check is tested on every ship rather than when somebody
@@ -109,6 +113,12 @@ ship() {
   fi
   if [ -n "$url" ]; then
     echo "== $app: backend"
+    # A deploy replaces every function in the deployment with this clone's,
+    # so work another agent shipped from a branch would vanish with it
+    # (2026-10-05: the check-in booking's functions and index). Stop and
+    # name it instead; merge that work first, or SHIP_ALLOW_REMOVE=... when
+    # the removal is meant.
+    bun scripts/convex-removals.ts "$dir" || exit 1
     (cd "$dir" && bunx convex deploy --yes --typecheck enable)
   fi
   # What the site serves right now, so the check after the deploy compares
