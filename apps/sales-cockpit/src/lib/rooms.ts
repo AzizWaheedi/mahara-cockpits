@@ -122,6 +122,7 @@ export const ROOM_VIEW_KEYS = [
   "trigger",
   "attempt_id",
   "appointment_id",
+  "asked_appointment_id",
   "handover_id",
   "end_reason",
   "last_open_at",
@@ -174,6 +175,8 @@ export interface RoomView {
   attempt_id?: string | null;
   /** The booked call a fallback or booked room is for. */
   appointment_id?: string | null;
+  /** The booked intro the press named, whether or not the room carries it: a retry asks with it (m1 round 1). */
+  asked_appointment_id?: string | null;
   handover_id?: string | null;
   /** A booked call's start; without it, host_by minus 15 minutes. */
   starts_at?: string | null;
@@ -272,6 +275,11 @@ export interface LiveStatus {
   standby_error?: string | null;
   /** Whether Available makes a standby room at all (rooms and live standby on). */
   standby_on?: boolean;
+  /**
+   * False while video rooms are switched off: `rooms` are the seat's rooms
+   * still in flight (a link already went), kept until they close (m1 round 1).
+   */
+  rooms_enabled?: boolean;
   /** The server's clock when it answered, so countdowns do not drift. */
   now?: string | null;
   /** The browser's own: rooms a press ended, by the version it saw. */
@@ -405,6 +413,7 @@ const OPTIONAL_TEXT = [
   "trigger",
   "attempt_id",
   "appointment_id",
+  "asked_appointment_id",
   "handover_id",
   "end_reason",
 ] as const;
@@ -580,6 +589,7 @@ export function normalizeLive(v: unknown): LiveStatus {
   if (typeof v.live_enabled === "boolean") out.live_enabled = v.live_enabled;
   if ("standby_error" in v) out.standby_error = str(v.standby_error);
   if (typeof v.standby_on === "boolean") out.standby_on = v.standby_on;
+  if (typeof v.rooms_enabled === "boolean") out.rooms_enabled = v.rooms_enabled;
   if ("now" in v) out.now = when(v.now);
   return out;
 }
@@ -780,6 +790,13 @@ export function channelWords(channels: readonly string[]): string | null {
   return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
 }
 
+/** "on WhatsApp", "by email", "on WhatsApp and by email" for channelWords' words. */
+export function channelPhrase(words: string): string {
+  if (words === "email") return "by email";
+  if (words === "WhatsApp and email") return "on WhatsApp and by email";
+  return `on ${words}`;
+}
+
 /** "phone", "tablet" or "computer" from what the short page saw. */
 export function deviceWords(d: string | null | undefined): string | null {
   const s = String(d ?? "").toLowerCase();
@@ -918,6 +935,11 @@ export type RoomMoment =
   | "standby_in"
   | "sent"
   | "not_sent"
+  /**
+   * The link may have gone (HighLevel took the send and its answer was
+   * lost): never "Not sent", which asks for a second copy (m1 round 1).
+   */
+  | "unclear"
   | "link_late"
   | "not_confirmed"
   | "opened"
@@ -976,6 +998,11 @@ function meetUnseen(room: RoomView): boolean {
   );
 }
 
+/** sales-api's "may have gone" (ROOMS_COPY.may_have_gone_*): the link may be with the lead already. */
+export function mayHaveGone(refusal: string | null | undefined): boolean {
+  return /^the link may have gone/i.test(String(refusal ?? "").trim());
+}
+
 export function roomMoment(room: RoomView, now: number): RoomMoment {
   const s = room.state;
   if (isMaking(s)) {
@@ -999,6 +1026,14 @@ export function roomMoment(room: RoomView, now: number): RoomMoment {
   // the rep (or Zoom) ended with nobody in it says it ended. A knock that was
   // never let in, an open of the link, and events never read are each said
   // as themselves, never "nobody joined" (stress2, round 1).
+  // A closed room whose lead's join stands (a press a few seconds after the
+  // timer's close, or Zoom's join read after the meeting's end): the lead
+  // joined, never "nobody joined" with a No-show press (m1 round 1).
+  if (
+    (s === "expired" || s === "ended") &&
+    (room.result === "joined" || (room.result !== "no_join" && room.lead_in_at))
+  )
+    return "closed";
   if (s === "expired") {
     if (room.result === "admit_blocked" || room.lead_waiting_at)
       return "expired_knocked";
@@ -1039,7 +1074,8 @@ export function roomMoment(room: RoomView, now: number): RoomMoment {
   // open or host_in. A lead waiting in the room is the news even when no
   // message could go (the rep read the link out), so it comes first.
   if (room.lead_waiting_at) return "waiting_room";
-  if (!room.link_sent_at && room.refusal) return "not_sent";
+  if (!room.link_sent_at && room.refusal)
+    return mayHaveGone(room.refusal) ? "unclear" : "not_sent";
   if (s === "host_in")
     return room.provider === "meet" && room.first_open_at
       ? "host_in_opened"
@@ -1087,12 +1123,27 @@ export const MAKING_LATE_MS = 150_000;
 /** How long past its deadline a room may sit before the panel says the sweep is late. */
 export const OVERDUE_MS = 120_000;
 
+/** The sweep fails a room no worker claimed after a minute (R1); this one is past it. */
+export const CLAIM_MINUTE_MS = 60_000;
+function pastClaimMinute(room: RoomView, now: number): boolean {
+  const asked = t(room.created_at);
+  return asked === null || now - asked >= CLAIM_MINUTE_MS;
+}
+
 /** The moment, with "Still on the call?" answered "Still on it" for now. */
 export function momentFor(room: RoomView, ctx: RoomCtx): RoomMoment {
   const m = roomMoment(room, ctx.now);
   if (m === "still_on_call" && ctx.stillOn) return "joined";
-  // No worker is making rooms: this one will not be made, late or not.
-  if ((m === "making" || m === "making_late") && ctx.workerDown)
+  // No worker is making rooms: this one will not be made. Said only once the
+  // sweep's own minute for a claim has passed (m1 round 1,
+  // worker-red-but-create-accepted): sales-api took the room, and a worker
+  // a little late still makes it, so "will not be made" before then would
+  // send the rep to give the lead a second link.
+  if (
+    (m === "making" || m === "making_late") &&
+    ctx.workerDown &&
+    pastClaimMinute(room, ctx.now)
+  )
     return "making_down";
   return m;
 }
@@ -1318,6 +1369,13 @@ export function summarySentence(room: RoomView): Sentence {
   const at = { mono: clock(room.ended_at ?? room.created_at) };
   if (room.result === "moved_to_phone")
     return ["Moved to the phone at ", at, ". Room closed."];
+  // A join kept after the timer's close (or after Zoom's end): who joined, and when.
+  if (room.state === "expired" && room.result === "joined" && room.lead_in_at)
+    return [
+      `${first(room) ?? "The lead"} joined at `,
+      { mono: clock(room.lead_in_at) },
+      ".",
+    ];
   if (room.result === "joined" || (room.result === null && room.lead_in_at))
     return ["Finished at ", at, "."];
   if (room.result === "admit_blocked")
@@ -1416,7 +1474,8 @@ export function roomSentence(room: RoomView, ctx: RoomCtx): Sentence {
       const ch = channelWords(room.link_channels);
       const at = { mono: clock(room.link_sent_at) };
       // Ours: a link went but the server did not say where ("on" is left out).
-      const head = ch ? `Link sent on ${ch} at ` : "Link sent at ";
+      // "by email", "on WhatsApp" (m1 round 1: never "on email").
+      const head = ch ? `Link sent ${channelPhrase(ch)} at ` : "Link sent at ";
       if (v === "p1" && left !== null)
         return [head, at, ".", ...paren(` Waiting for ${name} `)];
       return [head, at, "."];
@@ -1450,6 +1509,16 @@ export function roomSentence(room: RoomView, ctx: RoomCtx): Sentence {
           : ["The link has not gone yet. Copy it and send it another way."];
       return ["The link has not gone yet. Read it out: ", { mono: said }];
     }
+    case "unclear": {
+      // Never "Not sent" and never "send it another way": the lead may
+      // already have it (m1 round 1, may-have-gone-shown-as-not-sent).
+      const how = /whatsapp/i.test(room.refusal ?? "")
+        ? "on WhatsApp"
+        : "by email";
+      return [
+        `The link may have gone ${how}. Check the lead's conversation in HighLevel before sending anything else.`,
+      ];
+    }
     case "not_sent": {
       const said = readOut(room);
       // Ours: a link nobody could say (a Zoom link before the short link).
@@ -1476,6 +1545,14 @@ export function roomSentence(room: RoomView, ctx: RoomCtx): Sentence {
       return ["The lead is in the waiting room. Admit them in Zoom."];
     case "host_in": {
       const who = v === "p1" ? name : "the lead";
+      // Meet never says a lead is knocking, and with the other provider out
+      // of reach "I can't let them in" has nowhere to go: the next step for
+      // a knock nobody can answer is said (m1 round 1, meet-knock-no-next-step).
+      if (room.provider === "meet" && room.contact_id && ctx.otherOk === false)
+        return [
+          ...paren(`You are in. Waiting for ${who} `),
+          " If Meet will not let them in, call them on the phone.",
+        ];
       return paren(`You are in. Waiting for ${who} `);
     }
     case "host_in_opened": {
@@ -1631,6 +1708,7 @@ export function roomTone(m: RoomMoment, room?: RoomView | null): Tone {
     case "joined":
       return "good";
     case "not_sent":
+    case "unclear":
     case "link_late":
     case "not_confirmed":
     case "expired":
@@ -1927,7 +2005,13 @@ function momentActions(
     quiet.push(act("on_phone", "We are on the phone"));
   // P1 edge case 9: a Meet knock the setter cannot admit moves the lead to
   // Zoom, only when the seat can use Zoom for this call (stress2, round 1).
-  if (meet && room.purpose === "fallback" && hasLead && ctx.otherOk !== false)
+  // The lead page's room too (m1 round 1, meet-knock-no-next-step).
+  if (
+    meet &&
+    (room.purpose === "fallback" || room.purpose === "manual") &&
+    hasLead &&
+    ctx.otherOk !== false
+  )
     quiet.push(act("admit_blocked", "I can't let them in"));
   if (!booked) quiet.push(act("end", "End room"));
   return { primary, quiet };
@@ -2013,10 +2097,19 @@ export function retryRequest(
   };
   const trigger = firstAsk?.trigger ?? room.trigger;
   const attempt = firstAsk?.attempt_id ?? room.attempt_id;
-  const appointment = firstAsk?.appointment_id ?? room.appointment_id;
+  // The booked intro the first press named (m1 round 1): a room that does
+  // not carry it (a confirmation call's) still passed fallback.scope on it,
+  // so its retry asks with it, as a confirmation call's room again.
+  const appointment =
+    firstAsk?.appointment_id ??
+    room.appointment_id ??
+    room.asked_appointment_id;
   if (trigger) out.trigger = trigger;
   if (attempt) out.attempt_id = attempt;
   if (appointment) out.appointment_id = appointment;
+  if (firstAsk?.item_kind) out.item_kind = firstAsk.item_kind;
+  else if (!room.appointment_id && room.asked_appointment_id)
+    out.item_kind = "confirm";
   return out;
 }
 
@@ -2060,6 +2153,7 @@ const BANNER_SAYS_PANEL: ReadonlySet<RoomMoment> = new Set([
   "waiting_room",
   "host_in_opened",
   "not_sent",
+  "unclear",
   "link_late",
   "making_down",
   "making_late",

@@ -59,7 +59,17 @@ export function RoomsHealthCard({ people }: { people: readonly Person[] }) {
   );
   const on = Boolean(rooms?.enabled);
   const health = live.data?.health ?? null;
-  const lines = workers.data ? roomJobLines(workers.data, now, on) : [];
+  const liveSetting = useSetting<{ enabled?: unknown; slack?: unknown }>(
+    "live",
+  );
+  const slackOn =
+    liveSetting.data?.enabled === true && liveSetting.data?.slack === true;
+  const lines = workers.data
+    ? roomJobLines(workers.data, now, on, {
+        slack: slackOn,
+        shortLink: rooms?.short_link === true,
+      })
+    : [];
   // The health line is read every 4 s and the job rows every 2 minutes:
   // when the health turns, the rows are read again, so the two agree.
   const tone = health ? healthTone(health) : null;

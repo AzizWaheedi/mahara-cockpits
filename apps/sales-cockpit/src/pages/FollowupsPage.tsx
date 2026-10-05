@@ -1010,6 +1010,10 @@ function WhatsappHealth({ manager }: { manager: boolean }) {
     [],
   );
   const guard = useSetting<Guard>("whatsapp_guard");
+  const roomsSetting = useSetting<{
+    send?: { whatsapp_template?: unknown };
+    short_link?: unknown;
+  }>("rooms");
   const [clearing, setClearing] = useState(false);
   const sends = useQuery<
     {
@@ -1060,11 +1064,23 @@ function WhatsappHealth({ manager }: { manager: boolean }) {
   );
   // The follow-ups' own pause, the rule that holds the desk's openers.
   const desk = g ? sourcePause(rows, g, "followup", Date.now()) : null;
+  // The video links' own pause (m1 round 1, room-wa-health-never-recovers):
+  // free-text links wait and go by email meanwhile; with the call_link
+  // template off, only the last hour counts, as sales-api reads it.
+  const templateLaneOff =
+    roomsSetting.data?.send?.whatsapp_template !== true ||
+    roomsSetting.data?.short_link !== true;
+  const roomPause = g
+    ? sourcePause(rows, g, "room", Date.now(), {
+        leadFree: true,
+        ...(templateLaneOff ? { sinceMs: 3_600_000 } : {}),
+      })
+    : null;
   async function clearPause() {
     setClearing(true);
     try {
       await api("whatsapp.guard", { value: { health_cleared_at: true } });
-      toast.success("Cleared. Openers and follow-ups go again.");
+      toast.success("Cleared. Openers, follow-ups and video links go again.");
       guard.reload();
     } catch (err) {
       toast.error(String((err as Error).message ?? err));
@@ -1095,7 +1111,38 @@ function WhatsappHealth({ manager }: { manager: boolean }) {
       ) : null}
     </div>
   ) : null;
-  if (!settled.length && !templatesToday) return deskLine;
+  const roomLine = roomPause?.paused ? (
+    <div
+      role="alert"
+      className="callout-bad flex flex-wrap items-center gap-2 rounded-[var(--radius-md)] border px-3 py-2 text-xs"
+    >
+      <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">
+        Video links on WhatsApp are paused: {roomPause.failed} of the last{" "}
+        {roomPause.sent} video-link WhatsApp messages failed
+        {roomPause.reason ? ` (${roomPause.reason})` : ""}. Links go by email
+        meanwhile, and on WhatsApp again once fewer fail
+        {templateLaneOff ? " in the last hour" : ""}
+        {manager ? ", or clear the pause once the cause is fixed" : ""}.
+      </span>
+      {manager ? (
+        <button
+          type="button"
+          disabled={clearing}
+          onClick={() => void clearPause()}
+          className={button}
+        >
+          {clearing ? "Clearing…" : "Clear the pause"}
+        </button>
+      ) : null}
+    </div>
+  ) : null;
+  if (!settled.length && !templatesToday)
+    return deskLine || roomLine ? (
+      <>
+        {deskLine}
+        {roomLine}
+      </>
+    ) : null;
   const reasons = [...new Set(failed.map(r => r.error).filter(Boolean))].slice(
     0,
     2,
@@ -1103,6 +1150,7 @@ function WhatsappHealth({ manager }: { manager: boolean }) {
   return (
     <>
       {deskLine}
+      {roomLine}
       <p
         className={`flex items-start gap-1.5 text-xs ${paused ? "" : "muted"}`}
       >

@@ -141,6 +141,14 @@ export function roomJobLines(
   rows: readonly JobRow[],
   now: number,
   roomsOn: boolean,
+  /**
+   * The parts a switch keeps off (m1 round 1, slack-fenced-stray-post): Slack
+   * presses while live.enabled and live.slack are not both on, and the short
+   * link's routes while rooms.short_link is off. Not given: off, as
+   * Milestone 1 ships. A part switched off is quiet, whatever a stray
+   * request made its row say.
+   */
+  parts: { slack?: boolean; shortLink?: boolean } = {},
 ): JobLine[] {
   return ROOM_JOBS.map(j => {
     const key = `${j.worker}:${j.job}`;
@@ -150,6 +158,13 @@ export function roomJobLines(
         tone === "bad" && !saysNextStep(text) ? `${text} ${j.fix}` : text;
       return { key, tone, text: full, say: monoTimes(full) };
     };
+    if (key === "sales-live:slack" && parts.slack !== true)
+      return line("quiet", `${j.what}: switched off.`);
+    if (
+      (key === "sales-live:go" || key === "sales-live:open") &&
+      parts.shortLink !== true
+    )
+      return line("quiet", `${j.what}: switched off (the short link is off).`);
     const r = rows.find(x => x.worker === j.worker && x.job === j.job);
     if (!r) {
       if (j.staleS === null) return line("quiet", `${j.what}: no report yet.`);

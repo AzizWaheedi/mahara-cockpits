@@ -997,6 +997,8 @@ describe("the rooms card's lines", () => {
       ],
       NOW,
       true,
+      // The short link's and Slack's routes are read only while switched on (m1 round 1).
+      { shortLink: true, slack: true },
     );
     expect(lines[0]).toMatchObject({
       tone: "bad",

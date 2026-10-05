@@ -1591,6 +1591,9 @@ const fine = () =>
   typeof window !== "undefined" &&
   window.matchMedia?.("(pointer: fine)").matches;
 
+/** How long after a missed call its video link is offered (sales-api says "just now" only inside it). */
+const MISS_FRESH_MS = 15 * 60_000;
+
 function CallPane({
   className,
   me,
@@ -1696,7 +1699,14 @@ function CallPane({
   const [missed, setMissed] = useState<{
     trigger: Trigger;
     attemptId: string | null;
+    /** When the miss was seen: a video link is offered for MISS_FRESH_MS after it (m1 round 1). */
+    at: number;
   } | null>(null);
+  // The after-miss step left open (the laptop asleep over lunch) no longer
+  // offers a video link that would tell the lead "I tried to call you just
+  // now" about a call hours old (m1 round 1, stale-miss-just-now).
+  const missNow = useNow(30_000);
+  const missFresh = missed !== null && missNow - missed.at <= MISS_FRESH_MS;
   const [picking, setPicking] = useState(false);
   const [autoAt, setAutoAt] = useState<number | null>(null);
   const [autoError, setAutoError] = useState<string | null>(null);
@@ -1712,7 +1722,14 @@ function CallPane({
     // way decides what shows (only one of the two can land); otherwise the
     // lead stays with Next lead ready for Enter.
     if (busyRef.current) return;
-    setMissed(m => m ?? { trigger: "no_answer", attemptId: open?.id ?? null });
+    setMissed(
+      m =>
+        m ?? {
+          trigger: "no_answer",
+          attemptId: open?.id ?? null,
+          at: Date.now(),
+        },
+    );
     onStay(contactId);
     setSaved("Saved from Maqsam's record: No answer");
     setMissBy("auto");
@@ -1725,7 +1742,8 @@ function CallPane({
   });
   const openId = open?.id ?? null;
   useEffect(() => {
-    if (liveMiss) setMissed({ trigger: liveMiss, attemptId: openId });
+    if (liveMiss)
+      setMissed({ trigger: liveMiss, attemptId: openId, at: Date.now() });
   }, [liveMiss, openId]);
   const bookedIntro =
     (kind === "intro" || kind === "confirm") && appt?.type === "intro";
@@ -1799,6 +1817,7 @@ function CallPane({
   const offerVideo =
     gate.show &&
     missed !== null &&
+    missFresh &&
     choice !== null &&
     !video.open &&
     !failedOnScreen &&
@@ -2071,7 +2090,12 @@ function CallPane({
       // A no-answer to message: the box opens with the ready message.
       if (outcome === "no_answer")
         setMissed(
-          m => m ?? { trigger: "no_answer", attemptId: attempt?.id ?? null },
+          m =>
+            m ?? {
+              trigger: "no_answer",
+              attemptId: attempt?.id ?? null,
+              at: Date.now(),
+            },
         );
       setSaved(words);
       setMissBy("message");

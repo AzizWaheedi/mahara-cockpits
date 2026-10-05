@@ -766,6 +766,13 @@ export interface WaSendRow {
   created_at: string;
 }
 
+/** A WhatsApp failure that speaks for one lead, not the number (sales-api rooms.ts leadSpecificFailure). */
+export function leadSpecific(error: unknown): boolean {
+  return /\b(131026|131049|131050|130472|131047)\b|\b429\b|too many requests/i.test(
+    String(error ?? ""),
+  );
+}
+
 /**
  * One source's own WhatsApp pause (follow-ups, rooms), the rule sales-api
  * holds the desk's sends with (index.ts whatsappHealth({source}),
@@ -779,6 +786,13 @@ export function sourcePause(
   guard: unknown,
   source: string,
   now: number,
+  /**
+   * The rooms' own reading (sales-api rooms.ts linkPlan, m1 round 1): a
+   * failure one lead caused (not on WhatsApp, Meta's per-person limits,
+   * HighLevel's 429) never counts, and with the call_link template off only
+   * the last hour counts, so the pause lifts by itself.
+   */
+  o: { leadFree?: boolean; sinceMs?: number } = {},
 ): { paused: boolean; sent: number; failed: number; reason: string | null } {
   const g = (
     typeof guard === "object" && guard !== null ? guard : {}
@@ -808,13 +822,15 @@ export function sourcePause(
   const floor = Math.max(
     now - 86_400_000,
     Number.isFinite(cleared) ? cleared : 0,
+    o.sinceMs !== undefined ? now - o.sinceMs : 0,
   );
   const last = rows
     .filter(
       r =>
         r.source === source &&
         ["sent", "delivered", "read", "failed"].includes(r.state) &&
-        Date.parse(r.created_at) >= floor,
+        Date.parse(r.created_at) >= floor &&
+        !(o.leadFree && r.state === "failed" && leadSpecific(r.error)),
     )
     .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))
     .slice(0, window);

@@ -123,6 +123,7 @@ export function baseRoom(now: number, over: Partial<RoomView> = {}): RoomView {
     trigger: null,
     attempt_id: null,
     appointment_id: null,
+    asked_appointment_id: null,
     handover_id: null,
     // stress2 fix round 1: why the sweep closed it, and the lead's latest open.
     end_reason: null,
@@ -249,6 +250,8 @@ export function roomFixture(
       break;
     case "down":
       down = true;
+      // Past the sweep's minute for a claim: only then does the panel say a
+      // room will not be made (m1 round 1, worker-red-but-create-accepted).
       room = baseRoom(now, {
         state: "requested",
         version: 1,
@@ -256,7 +259,7 @@ export function roomFixture(
         join_url: null,
         host_by: null,
         ends_at: null,
-        created_at: iso(now - 40 * S),
+        created_at: iso(now - 70 * S),
       });
       break;
     case "ready":

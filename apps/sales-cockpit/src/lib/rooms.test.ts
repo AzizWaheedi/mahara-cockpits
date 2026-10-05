@@ -311,7 +311,8 @@ describe("the room panel's words, as the specs write them", () => {
       "Link sent on WhatsApp at 14:11.",
     );
     expect(say(sentRoom({ link_channels: ["email"] }))).toBe(
-      "Link sent on email at 14:11. Waiting for Faisal (9:12 left).",
+      // m1 round 1: "by email", never "on email".
+      "Link sent by email at 14:11. Waiting for Faisal (9:12 left).",
     );
   });
 

@@ -1173,6 +1173,8 @@ describe("14. every fixture draws", () => {
     "trigger",
     "attempt_id",
     "appointment_id",
+    // m1 round 1: the booked intro the press named.
+    "asked_appointment_id",
     "handover_id",
     "starts_at",
     // stress2 fix round 1.
