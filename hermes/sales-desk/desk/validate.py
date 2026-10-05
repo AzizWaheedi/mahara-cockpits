@@ -785,7 +785,10 @@ def check_offer(data: dict[str, Any], resolved: dict[str, Any], offer: Optional[
 
     rows_all = list((data.get("investment") or {}).get("rows") or [])
     rows = [r for r in rows_all if isinstance(r, dict)]
-    ad_rows = [r for r in rows if AD_WORDS.search(f"{r.get('item') or ''} {r.get('detail') or ''}")]
+    # By the item first: "Ads" in the program row's description is not the
+    # advertising line (5 October 2026). The detail only when no item says it.
+    ad_rows = ([r for r in rows if AD_WORDS.search(str(r.get("item") or ""))]
+               or [r for r in rows if AD_WORDS.search(str(r.get("detail") or ""))])
     if rows and not ad_rows:
         rep.add(FAIL, "offer", "the advertising budget is not its own line on the price page; it is always "
                                "separate from the fee")

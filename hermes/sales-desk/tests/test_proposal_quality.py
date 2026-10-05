@@ -368,6 +368,25 @@ class PricePageTotalTests(unittest.TestCase):
         self.assertIn("gap: 6mm", rule)
 
 
+# -------------------------------------------------------------- defect 11 ---
+class AdvertisingLineTests(unittest.TestCase):
+    """"Ads" in the program row's description made it read as the advertising
+    line, and the check warned "advertising line says USD 6,000"."""
+
+    def test_the_program_row_mentioning_ads_is_not_the_advertising_line(self):
+        deal = specific_deal()
+        deal["investment"]["rows"][0]["detail"] = "Ads, funnel, call centre, sales training and reporting, three months."
+        r = check(deal)
+        self.assertFalse([w for w in r.warnings() if "advertising line says" in w], r.text())
+        self.assertEqual(failing(r, "offer"), [])
+
+    def test_a_line_named_otherwise_is_still_found_by_its_detail(self):
+        deal = specific_deal()
+        deal["investment"]["rows"][2]["item"] = "Media"
+        deal["investment"]["rows"][2]["detail"] = "Advertising, paid by you directly to the platforms."
+        self.assertEqual(failing(check(deal), "offer"), [])
+
+
 # ------------------------------------------------------------- the template ---
 @unittest.skipUnless(os.environ.get("SALES_RENDER_LIVE") == "1", "SALES_RENDER_LIVE=1 runs the real browser")
 class LiveTemplateTests(unittest.TestCase):
