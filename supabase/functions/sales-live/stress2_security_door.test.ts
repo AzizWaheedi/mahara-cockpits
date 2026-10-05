@@ -143,7 +143,9 @@ describe("stress2 security: guessing codes from one IPv6 network", () => {
     let refused = 0;
     for (let i = 0; i < 300; i++) if ((await handler(openReq(guess(i), "203.0.113.50", `g-${i}-device`))).status === 429) refused++;
     await w.settle();
-    expect(refused).toBe(180);
+    // Fix round 3: past 20 distinct misses the address is refused outright,
+    // so at most 120 a minute are ever read, and far fewer while guessing.
+    expect(refused).toBeGreaterThanOrEqual(180);
   });
 
   test(

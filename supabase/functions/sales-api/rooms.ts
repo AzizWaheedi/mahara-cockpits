@@ -162,6 +162,19 @@ const LINK_STEP_S = 180;
  */
 const ROOM_COLUMNS_004A = ["meeting_ended_at"];
 
+/** A room's timeline lines room.status always returns, whatever came after them. */
+const KEY_LINES = [
+  "link.sent",
+  "link.not_sent",
+  "link.unconfirmed",
+  "link.failed_late",
+  "door.open",
+  "room.mark.host_in",
+  "room.mark.lead_in",
+  "room.mark.not_lead",
+  "room.end",
+];
+
 /**
  * HighLevel's appointment in an answer: under `appointment`, under `event`,
  * or the answer itself; null when nothing in it is an appointment (a
@@ -1348,11 +1361,26 @@ export function makeRooms(deps: RoomDeps): Rooms {
   async function roomStatus(_who: Who, b: Row): Promise<Row> {
     const id = roomIdOf(b.room_id);
     const now = io.now();
-    const [room, events, { rooms: setting }] = await Promise.all([
+    const [room, latest, key, { rooms: setting }] = await Promise.all([
       mustRoom(id),
-      io.db(`${EVENTS}?room_id=eq.${enc(id)}&select=at,kind,source,text&order=at.desc&limit=20`),
+      io.db(`${EVENTS}?room_id=eq.${enc(id)}&select=id,at,kind,source,text&order=at.desc&limit=20`),
+      // The room's key lines beside the last 20 (stress2 round 3,
+      // zoom-rejoin-flood-unbounded): a flood of Zoom lines never pushes the
+      // link, the opens or the hand marks off the panel. Not read: the last 20.
+      io
+        .db(`${EVENTS}?room_id=eq.${enc(id)}&kind=in.(${KEY_LINES.join(",")})&select=id,at,kind,source,text&order=at.desc&limit=20`)
+        .catch(() => [] as Row[]),
       roomsAndLive(),
     ]);
+    const seen = new Set<string>();
+    const events = [...latest, ...key]
+      .filter(e => {
+        const k = String(e.id ?? `${String(e.at)}:${String(e.kind)}`);
+        if (seen.has(k)) return false;
+        seen.add(k);
+        return true;
+      })
+      .sort((a, b) => (ms(b.at) ?? 0) - (ms(a.at) ?? 0));
     return {
       room: await view(room, setting),
       events: events.map(e => ({ at: e.at, kind: e.kind, source: e.source, text: eventText(e) })),

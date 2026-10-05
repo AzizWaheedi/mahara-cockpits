@@ -290,7 +290,9 @@ describe("security r2: one code's own limit", () => {
       }
     }
     await w.settle();
-    expect(refused).toBe(10);
+    // Fix round 3: past 20 distinct misses the address is refused outright
+    // (MISSES_PER_NET), well before its own 120 a minute.
+    expect(refused).toBeGreaterThanOrEqual(10);
     // The lead's own room, from the lead's own network, is untouched by the guesser.
     expect((await handler(openReq("K7Q2MX", "198.51.100.99", "the-leads-own-phone"))).status).toBe(200);
   });

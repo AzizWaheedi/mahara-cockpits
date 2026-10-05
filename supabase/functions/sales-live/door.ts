@@ -159,6 +159,21 @@ export function limitNet(ip: string): string {
     .join(":")}::/64`;
 }
 
+/**
+ * The wider allocation an address belongs to (stress2 round 3,
+ * code-guess-oracle-per-64): an IPv6 address's /48 (a tunnel broker hands
+ * one out free, 65,536 /64s), an IPv4 address's /24 (carrier NAT puts many
+ * leads behind one, so its bound is higher). Anything else as it came.
+ */
+export function widePrefix(ip: string): string {
+  const net = limitNet(ip);
+  const v6 = /^([0-9a-f]{1,4}):([0-9a-f]{1,4}):([0-9a-f]{1,4}):[0-9a-f]{1,4}::\/64$/.exec(net);
+  if (v6) return `${v6[1]}:${v6[2]}:${v6[3]}::/48`;
+  const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.\d{1,3}$/.exec(net);
+  if (v4) return `${v4[1]}.${v4[2]}.${v4[3]}.0/24`;
+  return net;
+}
+
 /** The only form an address is ever kept in: salted, hashed, cut to 32 hex. */
 export async function ipHash(salt: string, ip: string): Promise<string> {
   return (await sha256Hex(`${salt}:${ip}`)).slice(0, 32);
@@ -289,11 +304,13 @@ export interface RoomRow {
   replaced_by: string | null;
   ends_at: string | null;
   first_open_at: string | null;
+  /** booked: the closer's own meeting, whose link works until ends_at (C14). */
+  purpose?: string | null;
 }
 
 /** The columns the door reads from cockpit_sales_rooms, in one place. */
 export const ROOM_COLUMNS =
-  "id,code,state,provider,join_url,host_email,replaced_by,ends_at,first_open_at";
+  "id,code,state,provider,join_url,host_email,replaced_by,ends_at,first_open_at,purpose";
 
 export type Rep = { en: string | null; ar: string | null };
 
@@ -311,10 +328,27 @@ const provider = (p: string | null): "zoom" | "meet" | null =>
  * Is this room over, as far as the lead's link goes? Only a final state says
  * so. The time rules (lead, no_end_signal, standby_max) belong to the sweep,
  * which writes the final state; the door never adds one of its own, so a long
- * demo past ends_at still opens for a lead who reopens the link.
+ * demo past ends_at still opens for a lead who reopens the link. A booked
+ * room wraps the closer's own meeting, which we never end (C14,
+ * roomlogic.ts shortLinkTarget): its link works until ends_at even after the
+ * room closed, unless it was cancelled (stress2 round 3).
  */
-export function roomIsOver(room: Pick<RoomRow, "state">, _nowMs?: number): boolean {
-  return FINAL_STATES.has(room.state);
+export function roomIsOver(
+  room: Pick<RoomRow, "state"> & Partial<Pick<RoomRow, "purpose" | "join_url" | "ends_at">>,
+  nowMs?: number,
+): boolean {
+  if (!FINAL_STATES.has(room.state)) return false;
+  const ends = Date.parse(String(room.ends_at ?? ""));
+  if (
+    room.purpose === "booked" &&
+    room.state !== "cancelled" &&
+    safeJoinUrl(room.join_url) &&
+    Number.isFinite(ends) &&
+    nowMs !== undefined &&
+    nowMs < ends
+  )
+    return false;
+  return true;
 }
 
 /**

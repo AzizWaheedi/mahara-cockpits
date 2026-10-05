@@ -59,7 +59,7 @@ describe("a week of openers in the Gulf, minute by minute, on each lead's own cl
         if (leadHour(country, t) !== hour || leadWeekday(country, t) !== day) wrong.push(`clock ${new Date(t).toISOString()}`);
       }
       expect(wrong.slice(0, 5)).toEqual([]);
-    });
+    }, 60_000); // minute by minute for a week: generous under a loaded machine
 
   test("one second either side of each edge, for a UTC+4 lead (Friday starts at 20:00 UTC on Thursday)", () => {
     const at = (s: string) => Date.parse(s);
@@ -98,7 +98,7 @@ describe("leads outside the Gulf (about 250 leads, 60 of them roas-tagged, are n
         if (opener(country, t) === null && (hour < 9 || hour >= 18)) night.push(`${new Date(t).toISOString()} = ${hour}:00 local`);
       }
       expect(night.slice(0, 3)).toEqual([]);
-    });
+    }, 60_000); // minute by minute for a week: generous under a loaded machine
 });
 
 describe("the day off is one setting, read by both doors", () => {

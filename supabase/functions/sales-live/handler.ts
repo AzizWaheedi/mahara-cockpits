@@ -27,6 +27,7 @@ import {
   allowedOrigin,
   clientIp,
   limitNet,
+  widePrefix,
   deviceIdOk,
   deviceOf,
   doorView,
@@ -99,6 +100,20 @@ type Row = Record<string, unknown>;
 
 /** Lookups that find no room, a minute, before the door stops reading unknown codes (per instance). */
 export const MISS_CEILING = 600;
+/**
+ * Distinct codes that found no room, per network (an IPv6 /64, an IPv4
+ * address) and per wider allocation (an IPv6 /48, an IPv4 /24), in MISS_WINDOW_MS, before
+ * every code from there is refused unread (stress2 round 3,
+ * code-guess-oracle-per-64). A lead mistypes once or twice; a guesser misses
+ * thousands.
+ */
+export const MISSES_PER_NET = 20;
+export const MISSES_PER_WIDE = 100;
+export const MISS_WINDOW_MS = 10 * 60_000;
+/** Lookups a minute from one wider allocation (an IPv6 /48, an IPv4 /24), beside each network's own 120. */
+export const LOOKUPS_PER_WIDE = 600;
+/** One participant's repeated knocks on one room: one stored and passed on per this long (stress2 round 3). */
+export const KNOCK_EVERY_MS = 60_000;
 /** How often, at most, the door reads the codes of the last day's rooms while a flood holds the ceiling. */
 export const LIVE_CODES_TTL_MS = 5_000;
 export const FLOOD_LINE =
@@ -272,6 +287,18 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
   // door's status row says so; a code it found lately is still read, so a
   // lead with a live link gets through.
   const misses = deps.missLimiter ?? new RateLimiter(MISS_CEILING, 60_000, 4);
+  // Misses per network and per wider allocation (stress2 round 3): past
+  // either bound every code from there is answered the same 429 with no
+  // database read, live codes and known ones included, so a guesser's hit
+  // looks exactly like its misses, and no open is ever recorded for it.
+  const netMisses = new RateLimiter(MISSES_PER_NET, MISS_WINDOW_MS, 20_000);
+  const wideMisses = new RateLimiter(MISSES_PER_WIDE, MISS_WINDOW_MS, 20_000);
+  const wideLookups = new RateLimiter(LOOKUPS_PER_WIDE, 60_000, 10_000);
+  // Each network's missed codes, counted once each: a lead who reloads a
+  // mistyped link misses one code, never twenty.
+  const missedCodes = new Map<string, number>();
+  // A participant's last stored knock per room (zoomRoute), bounded.
+  const knocks = new Map<string, { at: number; extra: number }>();
   const knownCodes = new Map<string, number>();
   // The codes of every room asked for in the last day (live ones and those
   // that ended lately), read at most every LIVE_CODES_TTL_MS whatever the
@@ -489,6 +516,14 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
     );
   }
 
+  /** A waiting-room or join-before-host knock's key: the room, the kind and the participant. Null for any other event. */
+  function knockKey(roomId: string, d: ZoomDetail): string | null {
+    if (d.event !== "meeting.participant_joined_waiting_room" && d.event !== "meeting.participant_jbh_waiting") return null;
+    const p = ((d.payload as Row | undefined)?.object as Row | undefined)?.participant as Row | undefined;
+    const who = String(p?.participant_uuid || p?.user_name || p?.id || p?.user_id || "-");
+    return `${roomId}:${d.event}:${who}`;
+  }
+
   async function zoomRoute(req: Request): Promise<Response> {
     if (req.method !== "POST") return json({ ok: false, error: "Send a POST." }, 405);
     const secret = env("ZOOM_WEBHOOK_SECRET");
@@ -571,6 +606,25 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
 
     const key = zoomDedupeKey(detail);
     const kind = zoomKind(detail.event);
+    // One participant knocking on one room's waiting room over and over
+    // (stress2 round 3, zoom-rejoin-flood-unbounded): the first knock, then
+    // at most one every KNOCK_EVERY_MS, is stored and passed on; the extras
+    // are counted on the next stored one (detail.repeats). Joins, leaves,
+    // host events and the meeting's end are never held back.
+    const knock = roomId ? knockKey(roomId, detail) : null;
+    let repeats = 0;
+    if (knock) {
+      const now = deps.now();
+      const last = knocks.get(knock);
+      if (last && now - last.at < KNOCK_EVERY_MS) {
+        last.extra += 1;
+        return json({ ok: true, stored: "repeat" });
+      }
+      repeats = last?.extra ?? 0;
+      if (knocks.size >= 5_000) for (const [k, v] of knocks) if (now - v.at >= KNOCK_EVERY_MS || knocks.size >= 5_000) knocks.delete(k);
+      knocks.set(knock, { at: now, extra: 0 });
+    }
+    if (repeats) kept = { ...kept, repeats } as ZoomDetail;
     let stored: { id: string | null } | null;
     try {
       stored = await insertEvent(
@@ -906,11 +960,22 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
     await liveCodesRead;
     return liveCodes?.codes ?? null;
   }
-  function found(code: string | null, room: unknown): void {
+  function found(code: string | null, room: unknown, nets?: { net: string; wide: string }): void {
     const now = deps.now();
     if (!code) return;
     if (!room) {
       misses.hit("door", now);
+      if (nets) {
+        const k = `${nets.net}:${code}`;
+        const at = missedCodes.get(k);
+        if (at === undefined || now - at >= MISS_WINDOW_MS) {
+          if (missedCodes.size >= 20_000)
+            for (const [x, t] of missedCodes) if (now - t >= MISS_WINDOW_MS || missedCodes.size >= 20_000) missedCodes.delete(x);
+          missedCodes.set(k, now);
+          netMisses.hit(nets.net, now);
+          wideMisses.hit(nets.wide, now);
+        }
+      }
       return;
     }
     if (knownCodes.size >= 5_000) {
@@ -919,12 +984,19 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
     knownCodes.set(code, now);
   }
 
-  /** Both limits: 30 a minute per network and device, 120 a minute per network (an IPv6 /64, an IPv4 address). */
-  function withinLimits(hash: string, deviceId: string | null): boolean {
+  /**
+   * Every limit: 30 a minute per network and device, 120 a minute per
+   * network (an IPv6 /64, an IPv4 address), 600 a minute per wider
+   * allocation (an IPv6 /48, an IPv4 /24), and none at all for a network or
+   * allocation that has missed too many codes lately (guessing).
+   */
+  function withinLimits(nets: { net: string; wide: string }, deviceId: string | null): boolean {
     const now = deps.now();
-    const perDevice = deps.limiter.hit(`${hash}:${deviceIdOk(deviceId) ? deviceId : "-"}`, now);
-    const perAddress = wide.hit(hash, now);
-    return perDevice && perAddress;
+    if (netMisses.full(nets.net, now) || wideMisses.full(nets.wide, now)) return false;
+    const perDevice = deps.limiter.hit(`${nets.net}:${deviceIdOk(deviceId) ? deviceId : "-"}`, now);
+    const perAddress = wide.hit(nets.net, now);
+    const perWide = wideLookups.hit(nets.wide, now);
+    return perDevice && perAddress && perWide;
   }
 
   async function openRoute(req: Request, rawCode: string | undefined, url: URL): Promise<Response> {
@@ -956,8 +1028,9 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
     // The limits key on the network (an IPv6 /64), never the bare address a
     // host can change for every request (stress2, round 1).
     const net = await ipHash(salt, limitNet(ip));
+    const nets = { net, wide: await ipHash(salt, `wide:${widePrefix(ip)}`) };
     const codeOk = (now: number) => perCode.hit(code, now) || perCodeAddress.hit(`${code}:${net}`, now);
-    if (!withinLimits(net, deviceId) || !codeOk(deps.now()) || !(await mayLookUp("open", code)))
+    if (!withinLimits(nets, deviceId) || !codeOk(deps.now()) || !(await mayLookUp("open", code)))
       return json(
         { ok: false, state: "busy", error: "Too many tries from this network. Wait a minute, then try again." },
         429,
@@ -967,7 +1040,7 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
     let room: RoomRow | null;
     try {
       room = await resolveRoom(code, left);
-      found(code, room);
+      found(code, room, nets);
     } catch (e) {
       noteStatus("open", false, `Call links cannot be read: ${redact((e as Error).message)}`);
       return json(
@@ -1007,8 +1080,10 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
     }
     const ua = req.headers.get("user-agent") ?? "";
     // The limit can key on any salt; only a hash made with IP_SALT is ever stored.
-    const hash = await ipHash(env("IP_SALT") || "sales-live", limitNet(clientIp(req.headers)));
-    if (!withinLimits(hash, null) || !(await mayLookUp("go", code)))
+    const limitSalt = env("IP_SALT") || "sales-live";
+    const hash = await ipHash(limitSalt, limitNet(clientIp(req.headers)));
+    const nets = { net: hash, wide: await ipHash(limitSalt, `wide:${widePrefix(clientIp(req.headers))}`) };
+    if (!withinLimits(nets, null) || !(await mayLookUp("go", code)))
       return text(both(GO_COPY.busy), 429, {
         "retry-after": "60",
       });
@@ -1017,7 +1092,7 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
     let room: RoomRow | null;
     try {
       room = await resolveRoom(code, leftOf(until));
-      found(code, room);
+      found(code, room, nets);
     } catch (e) {
       noteStatus("go", false, `Call links cannot be read: ${redact((e as Error).message)}`);
       return text(both(GO_COPY.unread), 503);
