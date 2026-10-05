@@ -321,11 +321,15 @@ export interface RoomRow {
   end_reason?: string | null;
   lead_in_at?: string | null;
   count_undo_at?: string | null;
+  /** The taken-back join's own time (20261004a): a join stands after it. */
+  taken_back_join_at?: string | null;
 }
 
-/** The columns the door reads from cockpit_sales_rooms, in one place. */
-export const ROOM_COLUMNS =
+/** The columns the door reads from cockpit_sales_rooms, before 20261004a's round 5. */
+export const ROOM_COLUMNS_BEFORE_R5 =
   "id,code,state,provider,join_url,host_email,replaced_by,ends_at,first_open_at,purpose,contact_id,requested_at,ended_at,end_reason,lead_in_at,count_undo_at";
+/** The columns the door reads from cockpit_sales_rooms, in one place. */
+export const ROOM_COLUMNS = `${ROOM_COLUMNS_BEFORE_R5},taken_back_join_at`;
 
 /**
  * How long a call the sweep closed only in the books (R7's no_end_signal,
@@ -335,11 +339,19 @@ export const ROOM_COLUMNS =
 export const BOOKS_CLOSE_OPEN_MS = 3 * 3600_000;
 
 /** The lead was in the room, and "That was not the lead" did not take it back. */
-export function leadReached(room: Partial<Pick<RoomRow, "lead_in_at" | "count_undo_at">>): boolean {
+export function leadReached(room: Partial<Pick<RoomRow, "lead_in_at" | "count_undo_at" | "taken_back_join_at">>): boolean {
   const joined = Date.parse(String(room.lead_in_at ?? ""));
   if (!Number.isFinite(joined)) return false;
   const undo = Date.parse(String(room.count_undo_at ?? ""));
-  return !Number.isFinite(undo) || joined > undo;
+  if (!Number.isFinite(undo)) return true;
+  // After the taken-back join's own time, not the press (stress2 round 5).
+  const taken = Date.parse(String(room.taken_back_join_at ?? ""));
+  return joined > (Number.isFinite(taken) ? Math.min(taken, undo) : undo);
+}
+
+/** A join was in the room and "That was not the lead" took it back: the link is in someone else's hands. */
+export function joinTakenBack(room: Partial<Pick<RoomRow, "lead_in_at" | "count_undo_at" | "taken_back_join_at">>): boolean {
+  return Boolean(room.lead_in_at) && Boolean(room.count_undo_at) && !leadReached(room);
 }
 
 export type Rep = { en: string | null; ar: string | null };

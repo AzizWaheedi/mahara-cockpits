@@ -189,10 +189,34 @@ async function svc(
     },
     body: init.body === undefined ? undefined : JSON.stringify(init.body),
   }, SVC_MS, "The database");
-  const text = await res.text();
-  if (!res.ok) throw new Error(`database ${res.status}: ${redact(text)}`);
-  const out = text ? JSON.parse(text) : [];
-  return Array.isArray(out) ? out : [out];
+  let text: string;
+  try {
+    text = await res.text();
+  } catch (e) {
+    throw Object.assign(new Error(`The database's answer was cut off (${redact(String((e as Error)?.message ?? e))}), so it may or may not have landed`), { status: 0 });
+  }
+  if (!res.ok) throw Object.assign(new Error(`database ${res.status}: ${redact(text)}`), { status: res.status });
+  // A read, or a write that asked for its rows back, always answers a JSON
+  // list (at least "[]"), as liveio.ts db reads it (stress2 round 5,
+  // svc-empty-200-read-as-no-rows): an empty body, a page that is not JSON,
+  // or an object is an answer nobody can read, never "no rows".
+  const method = (init.method ?? "GET").toUpperCase();
+  const wantsRows = method === "GET" || /return=representation/.test(init.prefer ?? "");
+  if (!text) {
+    if (wantsRows) throw Object.assign(new Error("The database's answer was empty, so nothing was read"), { status: 0 });
+    return [];
+  }
+  let out: unknown;
+  try {
+    out = JSON.parse(text);
+  } catch {
+    throw Object.assign(new Error("The database's answer was not JSON, so it may or may not have landed"), { status: 0 });
+  }
+  if (!Array.isArray(out)) {
+    if (wantsRows) throw Object.assign(new Error("The database's answer was not a list of rows, so nothing was read"), { status: 0 });
+    return [out as Row];
+  }
+  return out as Row[];
 }
 
 /**
@@ -289,7 +313,25 @@ async function ghl(
     }
     throw Object.assign(new Error(`HighLevel said ${res.status}: ${redact(msg)}`), { status: res.status });
   }
-  return text ? (JSON.parse(text) as Row) : {};
+  // An empty or unreadable 200 is no answer (stress2 round 5, as liveio.ts
+  // ghl reads it): a read that says nothing is never "nothing there", and a
+  // page that is not JSON may or may not have done what was asked. A write
+  // HighLevel answers with no body (a delete) is done.
+  if (!text) {
+    if (method.toUpperCase() === "GET") throw Object.assign(new Error("HighLevel's answer was empty, so nothing was read"), { status: 0 });
+    return {};
+  }
+  let out: unknown;
+  try {
+    out = JSON.parse(text);
+  } catch {
+    throw Object.assign(new Error("HighLevel's answer was not JSON, so it may or may not have landed"), { status: 0 });
+  }
+  if (!out || typeof out !== "object" || Array.isArray(out)) {
+    if (method.toUpperCase() === "GET") throw Object.assign(new Error("HighLevel's answer was not readable, so nothing was read"), { status: 0 });
+    return {};
+  }
+  return out as Row;
 }
 
 async function setting<T>(key: string): Promise<T | null> {
@@ -1097,27 +1139,95 @@ interface SendOpts {
  */
 function notSentYet(e: unknown): unknown {
   if (e instanceof ApiRefusal) return e;
+  const cause = redact(String((e as Error)?.message ?? e)).slice(0, 300);
+  const status = (e as { status?: unknown })?.status;
   return new Refusal(
-    `Not sent: HighLevel or the database did not answer before anything went (${redact(String((e as Error)?.message ?? e)).slice(0, 160)}). Try again in a minute.`,
+    `Not sent: HighLevel or the database did not answer before anything went (${cause.slice(0, 160)}). Try again in a minute.`,
     503,
-    { certain: true, retry: true, code: "not_sent_yet" },
+    // What stopped it, for a caller that tells a lead's own refusal (a merged
+    // contact) from an outage (stress2 round 5, not-sent-yet-sets-opener-aside).
+    { certain: true, retry: true, code: "not_sent_yet", cause, ...(typeof status === "number" ? { cause_status: status } : {}) },
   );
 }
 
-/** Runs a send; a failure before its message row is written is a certain "not sent yet". */
-async function beforeRowCertain<T>(run: (taken: () => void) => Promise<T>): Promise<T> {
+/**
+ * Runs a send; a failure before HighLevel is asked is a certain "not sent
+ * yet". The message slot's row may have landed with its answer lost (stress2
+ * round 5, slot-lost-answer-orphan-row-read-as-sent): that row never went, so
+ * it is given up here (voidUnsent), and the retry the answer asks for gets a
+ * fresh slot on the same request id, never "already sent".
+ */
+async function beforeRowCertain<T>(requestId: string, run: (taken: () => void) => Promise<T>): Promise<T> {
   let taken = false;
   try {
     return await run(() => {
       taken = true;
     });
   } catch (e) {
-    throw taken ? e : notSentYet(e);
+    if (taken) throw e;
+    await voidUnsent(requestId);
+    throw notSentYet(e);
   }
 }
 
+/** A "sending" row is stamped this long after its slot at most; older and unstamped, HighLevel was never asked. */
+const UNASKED_MS = 30_000;
+
+/**
+ * The request id's "sending" row that HighLevel was never asked about (no
+ * ghl_asked_at): deleted, so it holds nothing (the same words, the queue of
+ * templates, a repeat). Only such a row, so a send under way is never touched.
+ * Not done (the database down): the row is read as unasked once UNASKED_MS
+ * has passed (unaskedOrphan).
+ */
+async function voidUnsent(requestId: string): Promise<void> {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(requestId)) return;
+  await svc(`cockpit_sales_messages?request_id=eq.${enc(requestId)}&state=eq.sending&ghl_asked_at=is.null`, {
+    method: "DELETE",
+    prefer: "return=minimal",
+  }).catch(e => console.error("an unsent message row was not given up", redact(String((e as Error)?.message ?? e))));
+}
+
+/** A "sending" row whose slot is past UNASKED_MS and HighLevel was never asked (the column exists and is empty). */
+function unaskedOrphan(m: Row | null | undefined, now = Date.now()): boolean {
+  if (!m || m.state !== "sending" || !Object.hasOwn(m, "ghl_asked_at") || m.ghl_asked_at) return false;
+  const t = Date.parse(String(m.created_at ?? ""));
+  return Number.isFinite(t) && now - t >= UNASKED_MS;
+}
+
+/**
+ * The row's stamp that HighLevel is about to be asked, right before the
+ * send: from here on the send may have gone. Lands only on the row still
+ * "sending" and unstamped, so a row given up meanwhile is never sent. Its
+ * answer lost: read back; not stamped, or not read, the row is given up and
+ * the send stops before anything went.
+ */
+async function markAsked(row: Row): Promise<Row> {
+  const at = new Date().toISOString();
+  const id = enc(String(row.id ?? ""));
+  try {
+    const out = await svc(`cockpit_sales_messages?id=eq.${id}&state=eq.sending&ghl_asked_at=is.null`, {
+      method: "PATCH",
+      body: { ghl_asked_at: at },
+      prefer: "return=representation",
+    });
+    if (out[0]) return out[0];
+  } catch (e) {
+    // A database without the column (20261004a not applied): as before.
+    if (/ghl_asked_at/.test(String((e as Error)?.message ?? e))) return row;
+    const back = (await svc(`cockpit_sales_messages?id=eq.${id}&select=*`).catch(() => [] as Row[]))[0];
+    if (back && Date.parse(String(back.ghl_asked_at ?? "")) === Date.parse(at)) return back;
+    await svc(`cockpit_sales_messages?id=eq.${id}&state=eq.sending&or=(ghl_asked_at.is.null,ghl_asked_at.eq.${enc(at)})`, {
+      method: "DELETE",
+      prefer: "return=minimal",
+    }).catch(() => null);
+    throw e;
+  }
+  throw new Error("the message row was given up before it went");
+}
+
 function convoSend(who: Who, b: Row, opts: SendOpts = {}) {
-  return beforeRowCertain(taken => convoSendOnce(who, b, opts, taken));
+  return beforeRowCertain(String(b.request_id ?? ""), taken => convoSendOnce(who, b, opts, taken));
 }
 
 async function convoSendOnce(who: Who, b: Row, opts: SendOpts, taken: () => void) {
@@ -1139,7 +1249,13 @@ async function convoSendOnce(who: Who, b: Row, opts: SendOpts, taken: () => void
   const followupId = b.followup_id ? cleanText(b.followup_id, 40) : null;
   const assetId = await assetFor(b.asset_id);
 
-  const already = (await svc(`cockpit_sales_messages?request_id=eq.${enc(requestId)}&select=*`))[0];
+  let already: Row | undefined = (await svc(`cockpit_sales_messages?request_id=eq.${enc(requestId)}&select=*`))[0];
+  // An earlier try's row HighLevel was never asked about: it never went, so
+  // this try sends (stress2 round 5).
+  if (unaskedOrphan(already)) {
+    await voidUnsent(requestId);
+    already = undefined;
+  }
   if (already) {
     if (already.contact_id === contactId && already.body === text && already.channel === channel)
       return { message: already, repeated: true };
@@ -1201,6 +1317,7 @@ async function convoSendOnce(who: Who, b: Row, opts: SendOpts, taken: () => void
       throw e;
     }
   }
+  row = await markAsked(row);
   taken();
 
   let out: Row;
@@ -1222,7 +1339,20 @@ async function convoSendOnce(who: Who, b: Row, opts: SendOpts, taken: () => void
     // sent, so a caller may try again later on a fresh request id.
     throw new Refusal(`HighLevel did not send it: ${err}`, 502, { certain: true });
   }
-  const messageId = String(out.messageId ?? "");
+  const messageId = String(out.messageId ?? out.emailMessageId ?? "");
+  if (!messageId) {
+    // A 200 that names no message (an empty body, a proxy's page) is no
+    // proof it went (stress2 round 5, send-200-without-message-id): unclear,
+    // so the conversation check decides, and nothing is taken over on it.
+    const err = "HighLevel answered without a message id, so whether it went is not known";
+    await svc(`cockpit_sales_messages?id=eq.${row.id}`, {
+      method: "PATCH",
+      body: { state: "unclear", error: err, updated_at: new Date().toISOString() },
+      prefer: "return=minimal",
+    }).catch(x => console.error("message state", redact(String(x))));
+    await audit(who, "convo.send", "cockpit_sales_messages", String(row.id), null, { channel, state: "unclear", error: err });
+    throw new Refusal(`${MAY_HAVE_GONE} (${err})`, 502, { unclear: true });
+  }
   let status = String(out.status ?? "pending");
   let error: string | null = null;
   // Read it back: HighLevel answers "pending" and Meta decides afterwards.
@@ -1620,7 +1750,7 @@ async function signatureFor(contactId: string, who: Who, language: "ar" | "en"):
  * template HighLevel accepts can still fail at Meta.
  */
 function sendTemplate(who: Who, o: Parameters<typeof sendTemplateOnce>[1]) {
-  return beforeRowCertain(taken => sendTemplateOnce(who, o, taken));
+  return beforeRowCertain(String(o.requestId ?? ""), taken => sendTemplateOnce(who, o, taken));
 }
 
 async function sendTemplateOnce(
@@ -1654,7 +1784,11 @@ async function sendTemplateOnce(
   const blank = /\{(name|rep|day|time)\}/.exec(line);
   if (blank) throw new Refusal(`Fill in ${blank[0]} before sending: the cockpit did not know it.`);
 
-  const already = (await svc(`cockpit_sales_messages?request_id=eq.${enc(o.requestId)}&select=*`))[0];
+  let already: Row | undefined = (await svc(`cockpit_sales_messages?request_id=eq.${enc(o.requestId)}&select=*`))[0];
+  if (unaskedOrphan(already)) {
+    await voidUnsent(o.requestId);
+    already = undefined;
+  }
   if (already) {
     if (already.contact_id === o.contactId && already.template_key === o.key) return { message: already, repeated: true };
     throw new Refusal("That send was already used for other words. Press Send again.", 409);
@@ -1671,7 +1805,12 @@ async function sendTemplateOnce(
   // An enrolment whose answer was lost (unclear) or a send orphaned between
   // its row and HighLevel's answer (sending, past its budget) may be queued
   // just the same (stress2, round 2).
-  const waiting = templateMayBeQueued(await svc(queuedTemplatesQuery(o.contactId, Date.now())), Date.now());
+  // Not read (an empty or unreadable answer): counted as waiting, never as
+  // "nothing queued" (stress2 round 5, svc-empty-200-read-as-no-rows), as
+  // rooms.ts reads it, so the new words never overwrite a queued template's.
+  const waiting = await svc(queuedTemplatesQuery(o.contactId, Date.now()))
+    .then(rows => templateMayBeQueued(rows, Date.now()))
+    .catch(() => true);
   if (waiting)
     throw new Refusal(
       "An earlier WhatsApp template to this lead has not arrived yet. Wait for it, or send by email.",
@@ -1747,6 +1886,7 @@ async function sendTemplateOnce(
       throw e;
     }
   }
+  row = await markAsked(row);
   taken();
 
   // `enrolling`: the failure came from the workflow enrolment itself. Only
@@ -2448,15 +2588,19 @@ async function sendFollowup(who: Who, f: Row, b: Row, auto: boolean, opts: { dec
     // latest WhatsApp apart (inbound_whatsapp_at): a reply followed by an
     // automation's email still moved the conversation on.
     svc(`cockpit_sales_inbox?contact_id=eq.${enc(String(f.contact_id))}&or=${enc(`(last_message_at.gt."${madeAt}",inbound_whatsapp_at.gt."${madeAt}")`)}&select=last_message_at,last_direction,last_type,inbound_whatsapp_at&limit=5`),
-    svc(`cockpit_sales_messages?contact_id=eq.${enc(String(f.contact_id))}&created_at=gt.${enc(madeAt)}&state=neq.failed&select=created_at,channel&limit=5`),
+    svc(`cockpit_sales_messages?contact_id=eq.${enc(String(f.contact_id))}&created_at=gt.${enc(madeAt)}&state=neq.failed&select=*&order=created_at.desc&limit=10`),
   ]);
+  // This draft's own earlier try is not the conversation moving on, nor is a
+  // row HighLevel was never asked about (its slot's answer lost; stress2
+  // round 5, slot-lost-answer-orphan-row-read-as-sent).
+  const theirs = ours.filter(m => String(m.request_id ?? "") !== String(f.id) && !(m.state === "sending" && Object.hasOwn(m, "ghl_asked_at") && !m.ghl_asked_at));
   const emailType = (t: unknown) => /email/i.test(String(t ?? ""));
   const after = (t: unknown) => typeof t === "string" && Date.parse(t) > Date.parse(madeAt);
   const inboxMoved = inbox.find(
     i => after(i.last_message_at) && (i.last_direction === "inbound" || !(forWhatsapp && emailType(i.last_type))),
   );
   const repliedOnWhatsapp = inbox.find(i => after(i.inbound_whatsapp_at));
-  const oursMoved = ours.find(m => !(forWhatsapp && m.channel === "email"));
+  const oursMoved = theirs.find(m => !(forWhatsapp && m.channel === "email"));
   const since = inboxMoved?.last_message_at ?? repliedOnWhatsapp?.inbound_whatsapp_at ?? oursMoved?.created_at;
   if (since) {
     await svc(`cockpit_sales_followups?id=eq.${enc(String(f.id))}&status=eq.draft`, {
@@ -2507,21 +2651,33 @@ async function sendFollowup(who: Who, f: Row, b: Row, auto: boolean, opts: { dec
           followup_id: f.id,
         });
     const m = out.message as Row;
-    const saved = (await svc(`cockpit_sales_followups?id=eq.${enc(String(f.id))}`, {
-      method: "PATCH",
-      body: {
-        status: m.state === "failed" ? "failed" : "sent",
-        final_body: body,
-        final_subject: subject,
-        edited,
-        message_id: m.id ?? null,
-        error: m.state === "failed" ? (m.error ?? "HighLevel marked it failed") : null,
-        auto,
-        // The channel it went on: a draft written for email may go on WhatsApp.
-        ...(switched ? { channel } : {}),
-      },
-      prefer: "return=representation",
-    }))[0];
+    const done: Row = {
+      status: m.state === "failed" ? "failed" : "sent",
+      final_body: body,
+      final_subject: subject,
+      edited,
+      message_id: m.id ?? null,
+      error: m.state === "failed" ? (m.error ?? "HighLevel marked it failed") : null,
+      auto,
+      // The channel it went on: a draft written for email may go on WhatsApp.
+      ...(switched ? { channel } : {}),
+    };
+    const write = async () =>
+      (await svc(`cockpit_sales_followups?id=eq.${enc(String(f.id))}`, { method: "PATCH", body: done, prefer: "return=representation" }))[0];
+    let saved: Row;
+    try {
+      saved = await write();
+    } catch (e) {
+      // The send went and only the follow-up's write lost its answer
+      // (stress2 round 5, followup-sent-write-lost-skips-takeover): read
+      // back; written, the success path finishes (the audit, the
+      // confirmation, the take-over); not written, written once more.
+      // Unread or still failing, the doubt below stands.
+      const back = (await svc(`cockpit_sales_followups?id=eq.${enc(String(f.id))}&select=*`).catch(() => [] as Row[]))[0];
+      if (back && back.status === done.status && String(back.message_id ?? "") === String(done.message_id ?? "")) saved = back;
+      else if (back) saved = await write();
+      else throw e;
+    }
     await audit(who, auto ? "followup.autosend" : "followup.approve", "cockpit_sales_followups", String(f.id), f,
       { status: saved.status, edited, segment: f.segment, channel, ...(switched ? { written_for: f.channel } : {}) });
     if (saved.status === "sent") {
@@ -2965,7 +3121,7 @@ const ms = (v: unknown) => {
 let heavy: { at: number; leads: Row[]; appts: Row[]; dials: Row[]; deals: Row[]; missed: Row[] } | null = null;
 const HEAVY_FOR = 20_000;
 const LEAD_COLS =
-  "contact_id,name,phone,phone8,lead_created_at,stage_id,stage_name,pipeline_id,lead_class,dnd,contact_type,revenue,readiness,assigned_to,tags";
+  "contact_id,name,phone,phone8,lead_created_at,stage_id,stage_name,pipeline_id,lead_class,dnd,contact_type,revenue,readiness,assigned_to,tags,country";
 
 type DialFacts = { last: number; reached: boolean; tries: number[] };
 
@@ -3046,7 +3202,7 @@ async function candidates(now: number): Promise<{ list: QueueCandidate[] }> {
     // standing (not taken back by "That was not the lead"): the intro was
     // had, so it never comes back as "Intro call now" (stress2, round 1).
     svc(
-      `cockpit_sales_rooms?appointment_id=not.is.null&lead_in_at=gte.${enc(new Date(now - 3 * 3_600_000).toISOString())}&select=appointment_id,appointment_start_at,lead_in_at,count_undo_at&limit=1000`,
+      `cockpit_sales_rooms?appointment_id=not.is.null&lead_in_at=gte.${enc(new Date(now - 3 * 3_600_000).toISOString())}&select=appointment_id,appointment_start_at,lead_in_at,count_undo_at,taken_back_join_at&limit=1000`,
     ).catch(e => {
       console.error("room joins unread", redact(String((e as Error)?.message ?? e)));
       return [] as Row[];
@@ -3268,6 +3424,8 @@ async function candidates(now: number): Promise<{ list: QueueCandidate[] }> {
               id: String(current.appointment_id),
               start: ms(current.start_at) ?? 0,
             }),
+            // The confirmation call keeps to the lead's own clock (stress2 round 5).
+            country: (l.country as string | null) ?? null,
           }
         : null,
     };
@@ -4174,7 +4332,14 @@ async function upcoming(
     ghl("GET", `/contacts/${enc(contactId)}/appointments`, undefined, "2021-07-28"),
     setting<Record<string, { type: string }>>("calendars"),
   ]);
-  const events = ((d.events ?? d.appointments ?? []) as Row[])
+  // An answer with no list of calls in it, or no calendars to tell an intro
+  // from a demo, is unread, never "nothing booked" (stress2 round 5,
+  // upcoming-garbage-read-as-nothing-booked): the count waits for the
+  // minute's re-ask instead of booking a live call beside the lead's intro.
+  const list = Array.isArray(d.events) ? d.events : Array.isArray(d.appointments) ? d.appointments : null;
+  if (!list) throw Object.assign(new Error("HighLevel's answer for the lead's calls had no list of calls in it"), { status: 0 });
+  if (!types || typeof types !== "object") throw Object.assign(new Error("The calendars setting could not be read"), { status: 0 });
+  const events = (list as Row[])
     .filter(e => !e.deleted && !["cancelled", "invalid", "noshow"].includes(String(e.appointmentStatus ?? e.appoinmentStatus ?? "")))
     .filter(e => types?.[String(e.calendarId ?? "")]?.type === kind)
     .map(e => {

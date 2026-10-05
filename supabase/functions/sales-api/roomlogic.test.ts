@@ -1769,7 +1769,7 @@ describe("10,000 random event sequences", () => {
           if (a.changed) {
             expect(["not_lead", "lead_in"]).toContain(e.kind);
             expect([after.state, after.version]).toEqual([before.state, before.version]);
-            const keys = e.kind === "lead_in" ? ["lead_in_at", "lead_in_seen_at", "result"] : ["count_undo_at", "count_result", "result"];
+            const keys = e.kind === "lead_in" ? ["lead_in_at", "lead_in_seen_at", "result"] : ["count_undo_at", "taken_back_join_at", "count_result", "result"];
             expect(Object.keys(a.patch).every(k => keys.includes(k))).toBe(true);
             if (e.kind === "not_lead") finalUndos++;
           } else expect(after).toBe(before);

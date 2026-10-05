@@ -3,6 +3,8 @@
 // sub-account: phone routing and caller IDs, the retry ladder, and the order
 // the queue is worked in. Pure functions; bun test supabase/functions/sales-api.
 
+import { hoursRefusal, leadZones } from "./sendrules.ts";
+
 /** Where a number rings and which of our lines calls it (the dialer's routes plus Bahrain). */
 export const ROUTES: Record<string, { country: string; flag: string; caller: string; pattern: RegExp }> = {
   "966": { country: "Saudi Arabia", flag: "SA", caller: "966115203895", pattern: /^966(?:1[1-467]\d{7}|5\d{8})$/ },
@@ -287,6 +289,12 @@ export interface Appt {
    * "Intro call now" while its mark catches up (stress2, round 1).
    */
   room_joined?: boolean;
+  /**
+   * The lead's country (cockpit_sales_leads.country): the confirmation call
+   * comes up only while it is 09:00 to 21:00 on every clock of theirs, as
+   * the desk's confirmation message does (stress2 round 5). Unknown: Kuwait's.
+   */
+  country?: string | null;
 }
 
 /** One lead as the queue sees it. */
@@ -427,7 +435,10 @@ export function roomJoinedFor(
     if (String(r.appointment_id ?? "") !== appt.id) return false;
     const joined = t(r.lead_in_at);
     const undo = t(r.count_undo_at);
-    if (joined === null || (undo !== null && joined <= undo)) return false;
+    // A join stands after the taken-back join's own time (stress2 round 5).
+    const taken = t(r.taken_back_join_at);
+    const bound = undo === null ? null : taken === null ? undo : Math.min(taken, undo);
+    if (joined === null || (bound !== null && joined <= bound)) return false;
     const stored = t(r.appointment_start_at);
     if (stored !== null && Math.abs(stored - appt.start) >= 1000) return false;
     return joined >= appt.start - 5 * MIN && joined <= appt.start + 20 * MIN;
@@ -476,12 +487,36 @@ export function appointmentWork(
   if (!whose) return null;
   const soon = a.start - now <= 3 * HOUR;
   if (a.last_try !== null && now - a.last_try < (soon ? 30 * MIN : 2 * HOUR)) return null;
+  // Never a confirmation call (nor the video link after it) at night where
+  // the lead is: 09:00 to 21:00 on each of their clocks (sendrules.ts
+  // hoursRefusal, a later message), as followups.py confirm_from keeps the
+  // desk's confirmation message.
+  // A lead whose country is not known keeps the call centre's Kuwait rule.
+  if (a.country && hoursRefusal({ segment: "confirm", touch: 2, country: a.country, now, followups: {} }) !== null) return null;
   return {
     tier: soon ? 0 : 1,
     kind: "confirm",
-    why: `Confirm the ${a.type} ${whenWords(a.start, now)}`,
+    why: `Confirm the ${a.type} ${whenWords(a.start, now)}${theirClock(a.country, now)}`,
     sort: a.start,
   };
+}
+
+/**
+ * " (it is 10:05 there)" for a lead whose clock is not Kuwait's, so the
+ * setter sees the hour where the lead is before calling (stress2 round 5).
+ * Empty for a lead in Kuwait's hour or whose zone is not known.
+ */
+export function theirClock(country: string | null | undefined, now: number): string {
+  if (!country) return "";
+  const zone = leadZones(country)?.[0];
+  if (!zone) return "";
+  const at = (z: string) => new Intl.DateTimeFormat("en-GB", { timeZone: z, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(now);
+  try {
+    const there = at(zone);
+    return there === at("Asia/Kuwait") ? "" : ` (it is ${there} there)`;
+  } catch {
+    return "";
+  }
 }
 
 function place(out: Ranked[], c: Candidate, h: { score: number; reasons: string[] }, item: Omit<Ranked, keyof Candidate | "heat" | "hot_reasons">) {

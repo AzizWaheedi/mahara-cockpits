@@ -591,7 +591,7 @@ export const TEMPLATE_WAIT_MS = 6 * 3_600_000;
  * send's own budget). Read with templateMayBeQueued over the rows it gives.
  */
 export function queuedTemplatesQuery(contactId: string, now: number): string {
-  return `cockpit_sales_messages?contact_id=eq.${encodeURIComponent(contactId)}&via=eq.workflow&state=in.(sent,unclear,sending)&created_at=gte.${encodeURIComponent(new Date(now - TEMPLATE_WAIT_MS).toISOString())}&select=id,state,provider_status,created_at&order=created_at.desc&limit=20`;
+  return `cockpit_sales_messages?contact_id=eq.${encodeURIComponent(contactId)}&via=eq.workflow&state=in.(sent,unclear,sending)&created_at=gte.${encodeURIComponent(new Date(now - TEMPLATE_WAIT_MS).toISOString())}&select=*&order=created_at.desc&limit=20`;
 }
 
 /** Whether any of these message rows is a template that may still be in HighLevel's queue (queuedTemplatesQuery). */
@@ -601,6 +601,10 @@ export function templateMayBeQueued(rows: Row[], now: number): boolean {
     if (state === "sent") return String(r.provider_status ?? "") === "enrolled";
     if (state === "unclear") return true;
     if (state === "sending") {
+      // A row HighLevel was never asked about (no ghl_asked_at, 20261004a):
+      // its slot's answer was lost and nothing was enrolled, so it holds no
+      // template back (stress2 round 5).
+      if (Object.hasOwn(r, "ghl_asked_at") && !r.ghl_asked_at) return false;
       const at = Date.parse(String(r.created_at ?? ""));
       return !Number.isFinite(at) || now - at >= TEMPLATE_SEND_BUDGET_MS;
     }

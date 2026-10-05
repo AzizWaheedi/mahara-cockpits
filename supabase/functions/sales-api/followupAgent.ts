@@ -135,6 +135,9 @@ export function highlevelBlip(e: unknown): boolean {
 export const SETUP_FAULT =
   /template is not set up|whatsapp template is not in the cockpit|contact fields? (?:for the room code and the call's time )?are not set|setting wa_fields/i;
 
+/** A phone call with the lead keeps an opener back this long (the desk's fu.GAP). */
+export const SPOKE_GAP_MS = 20 * 3_600_000;
+
 /** held_by while followup.send_due sends an opener: a Hold that lands now is told it is already going out. */
 export const SENDING = "sales-desk:sending";
 /** A sending mark older than this is a send that stopped half way: the next send_due may take it again. */
@@ -175,6 +178,9 @@ export const AGENT_COPY = {
   opener_disqualified: "The lead's latest call was marked invalid (disqualified), so the backlog opener was taken back.",
   opener_stage_out: "The lead's deal is in a disqualified or lost stage in the CRM, so the backlog opener was taken back.",
   stop_paused: "The agent is paused for this lead ({why}), so the opener waits. A rep resumes the lead, or holds the opener.",
+  /** A completed phone call with the lead in the last 20 hours (stress2 round 5). */
+  spoke_lately: "A rep spoke to this lead on the phone in the last 20 hours, so the opener waits until a day after the call.",
+  calls_unread: "The lead's phone calls could not be read, so the opener waits for the next run.",
   stop_answered: "This stop was already answered ({state}). Reload to see it.",
   stop_dnd_kept: "This lead asked to stop for good, so the agent stays off. Take do-not-disturb off in HighLevel first if they asked to hear from us again.",
   contact_refused: "HighLevel would not take this lead's contact ({why}), so the opener was set aside for a person. Check the lead in HighLevel.",
@@ -435,6 +441,33 @@ export function makeFollowupAgent(deps: AgentDeps): { actions: Record<string, Ac
     const s = await settings(["followups", "whatsapp_guard"]);
     if (agentOff(s.followups)) throw refusal(AGENT_COPY.agent_off_screen, 409);
     if (!gateOpen(s.whatsapp_guard)) throw refusal(GATE_SHUT, 409, { hold_all: true });
+    // Approve all pressed again after its answer was lost (the page keeps the
+    // press's request id for two minutes): the batch the first press made is
+    // handed back, its schedule kept, with no second audit row, and never
+    // "already sent" once the desk has sent its first opener (stress2 round 5).
+    const requestId = typeof b.request_id === "string" && UUID.test(b.request_id) ? b.request_id.toLowerCase() : null;
+    let stampRequest = requestId !== null;
+    if (requestId) {
+      try {
+        const made = await io.db(
+          `cockpit_sales_followup_meta?approved_request=eq.${enc(requestId)}&select=followup_id,send_after,approved_at&order=send_after.asc&limit=${BATCH_MAX}`,
+        );
+        if (made.length) {
+          const gap0 = Math.max(30, Math.min(3600, Number(obj(obj(s.followups).waves).batch_gap_s ?? 45) || 45));
+          return {
+            count: made.length,
+            first_at: String(made[0]?.send_after ?? made[0]?.approved_at ?? ""),
+            last_at: String(made[made.length - 1]?.send_after ?? ""),
+            gap_s: gap0,
+            repeated: true,
+          };
+        }
+      } catch (e) {
+        // 20261004a not applied (no approved_request column): no repeat check, as before.
+        if (!/approved_request/.test(String((e as Error)?.message ?? e))) throw e;
+        stampRequest = false;
+      }
+    }
     let ids: string[];
     let held: string[] = [];
     if (b.wave_id !== undefined && b.wave_id !== null) {
@@ -511,7 +544,12 @@ export function makeFollowupAgent(deps: AgentDeps): { actions: Record<string, Ac
         const sendAfter = start + i * gap * 1000;
         const ok = await approveOne(
           String(d.id),
-          { send_after: iso(sendAfter), approved_by: lower(who.email), approved_at: iso(start) },
+          {
+            send_after: iso(sendAfter),
+            approved_by: lower(who.email),
+            approved_at: iso(start),
+            ...(stampRequest ? { approved_request: requestId } : {}),
+          },
           openerMeta(d),
         );
         if (!ok) {
@@ -792,6 +830,20 @@ export function makeFollowupAgent(deps: AgentDeps): { actions: Record<string, Ac
     const stopped = stops === null ? "it could not be read" : stopHoldOf(stops, io.now());
     if (stopped) throw refusal(AGENT_COPY.stop_paused.replace("{why}", stopped), 409, { code: "paused" });
     if (f.segment === "reactivate") {
+      // A rep and the lead spoke on the phone in the last 20 hours (a
+      // completed dial, either way; phone calls never reach HighLevel's
+      // conversations): the opener waits in the queue, as the desk's waves
+      // put it off (stress2 round 5, completed-dial-ignored-opener). Not
+      // readable: it waits too.
+      const spoke = await io
+        .db(
+          `cockpit_sales_dials?contact_id=eq.${enc(String(f.contact_id))}&state=eq.completed&occurred_at=gte.${enc(iso(io.now() - SPOKE_GAP_MS))}&select=occurred_at&limit=1`,
+        )
+        .catch(() => null);
+      if (spoke === null || spoke.length)
+        throw refusal(spoke === null ? AGENT_COPY.calls_unread : AGENT_COPY.spoke_lately, 409, { code: "paused" });
+    }
+    if (f.segment === "reactivate") {
       // A backlog opener never goes to a lead who has left the backlog since
       // the batch was approved, by the pools' own rules: a call booked ahead
       // or since the opener was written, a call held in the last day, a
@@ -866,6 +918,25 @@ export function makeFollowupAgent(deps: AgentDeps): { actions: Record<string, Ac
         return { ...out, hold_all: true, error: err };
       return out;
     } catch (e) {
+      if (e instanceof ApiRefusal && e.extra.code === "not_sent_yet") {
+        // Nothing went: HighLevel or the database did not answer before the
+        // message row (stress2 round 5, not-sent-yet-sets-opener-aside). The
+        // cause decides: HighLevel saying the lead's contact is gone is about
+        // this lead (set aside, in its own words); anything else is an outage
+        // for this run, and the opener waits in the queue with its approval.
+        const cause = Object.assign(new Error(String(e.extra.cause ?? e.message)), { status: e.extra.cause_status });
+        if (contactRefused(cause)) {
+          const why = AGENT_COPY.contact_refused.replace("{why}", redact(String(e.extra.cause ?? e.message)).slice(0, 160));
+          await setAside(who, id, why);
+          throw refusal(why, 409, { code: "lead" });
+        }
+        await release();
+        throw refusal(
+          AGENT_COPY.highlevel_blip.replace("{why}", redact(String(e.extra.cause ?? e.message)).slice(0, 160)),
+          503,
+          { hold_all: true, code: "outage" },
+        );
+      }
       if (e instanceof ApiRefusal) {
         // The template is not set up, or HighLevel's contact fields are not
         // set: every opener of the template waits, the batch stays in the queue.
@@ -909,6 +980,11 @@ export function makeFollowupAgent(deps: AgentDeps): { actions: Record<string, Ac
 
   // ------------------------------------------------------------- followup.stop_task
 
+  /** HighLevel's do-not-disturb on WhatsApp for a lead who asked to stop (the same write each time). */
+  async function writeDnd(contactId: string): Promise<void> {
+    await io.ghl("PUT", `/contacts/${enc(contactId)}`, { dndSettings: { WhatsApp: { status: "active", message: "Asked to stop (cockpit)" } } }, "2021-07-28");
+  }
+
   async function stopTask(who: Who, b: Row): Promise<Row> {
     const contactId = cleanText(b.contact_id, 80);
     const answer = String(b.answer ?? "");
@@ -946,12 +1022,36 @@ export function makeFollowupAgent(deps: AgentDeps): { actions: Record<string, Ac
           409,
           { code: "answered", state: String(state ?? "") },
         );
+      // Stop for good pressed on a task that already says it (a second tab, or
+      // a press whose answer was lost): HighLevel's do-not-disturb is written
+      // again (the write is the same each time), so the lead is never left
+      // reachable by HighLevel's own senders while the task says stop
+      // (stress2 round 5, dnd-claim-lost-answer-highlevel-never-told).
+      if (answer === "dnd" && String(before.state) === "dnd") {
+        await writeDnd(contactId);
+        await deps.audit(who, "followup.stop_task.dnd.repeat", "cockpit_sales_followup_stops", contactId, before, before);
+        return { stop: before, repeated: true };
+      }
       if (String(before.state) !== from) throw answered(before.state);
       if (from === "dnd" && answer !== "dnd") throw refusal(AGENT_COPY.stop_dnd_kept, 409, { code: "dnd" });
       const patch = answer === "dnd" ? { state: "dnd" } : answer === "pause" ? { state: "paused", paused_until: until } : { state: "resumed" };
       // The answer is claimed first, guarded on the state read; HighLevel's
       // do-not-disturb is written only by the press that claimed it.
-      const rows = await io.db(`${filter}&state=eq.${enc(from)}`, { method: "PATCH", body: { ...patch, ...decided }, prefer: "return=representation" });
+      const claim = () => io.db(`${filter}&state=eq.${enc(from)}`, { method: "PATCH", body: { ...patch, ...decided }, prefer: "return=representation" });
+      let rows: Row[];
+      try {
+        rows = await claim();
+      } catch (e) {
+        // The claim's answer was lost (stress2 round 5): read back. It holds
+        // this press's answer: go on to HighLevel and the audit row. It is
+        // still as the press found it: claimed once more. Anything else (or
+        // unread): the error stands.
+        if (!(e instanceof DbError) || (e.status !== 0 && e.status < 500)) throw e;
+        const back = (await io.db(`${filter}&select=*`))[0];
+        if (back && String(back.state) === patch.state && Date.parse(String(back.decided_at ?? "")) === Date.parse(decided.decided_at)) rows = [back];
+        else if (back && String(back.state) === from) rows = await claim();
+        else throw e;
+      }
       if (!rows.length) {
         const now2 = (await io.db(`${filter}&select=state`).catch(() => []))[0];
         throw answered(now2?.state ?? "answered");
@@ -959,7 +1059,7 @@ export function makeFollowupAgent(deps: AgentDeps): { actions: Record<string, Ac
       if (answer === "dnd" && from !== "dnd") {
         // Do-not-disturb on WhatsApp only, in HighLevel (D21: a rep confirms every stop).
         try {
-          await io.ghl("PUT", `/contacts/${enc(contactId)}`, { dndSettings: { WhatsApp: { status: "active", message: "Asked to stop (cockpit)" } } }, "2021-07-28");
+          await writeDnd(contactId);
         } catch (e) {
           // HighLevel refused: the task goes back to how the press found it, so the row never says dnd without it.
           await io

@@ -724,6 +724,10 @@ export const LANE_COPY = {
   moved_email_subject: "Our call moved to {provider}.",
   /** Zoom's daily cap on the host's meeting creates (desk rooms.py SAY zoom_daily_cap, stress2 round 2). */
   zoom_daily_cap: "Your Zoom user has made its rooms for today (Zoom allows 100 a day); Zoom allows more from 03:00 Kuwait. Use Meet.",
+  /** A video link would reach the lead at night on their own clock (stress2 round 5). */
+  lead_night: "It is night where the lead is, so no video link goes now. Call them after 9 in the morning, their time.",
+  /** A room's link at night: made, never messaged; the host reads it out if they are speaking (stress2 round 5). */
+  lead_night_read_out: "It is night where the lead is, so no message went. Read the link out if you are speaking with them.",
   /** The lead's open room is another seat's (stress2, round 2): never "Open it", which only its host can. */
   lead_has_others_room: "The {role}'s video room for this lead is open until {until}. Call the lead, or send a link after that.",
   /** The lead is in that other seat's room now (stress2 round 3): no time, and never "Call the lead". */
@@ -1116,8 +1120,21 @@ export interface RoomRow {
   count_result?: CountResult | null;
   /** "That was not the lead": when it was pressed. A count that finishes after it undoes itself (new column). */
   count_undo_at?: string | null;
+  /**
+   * The own time of the join "That was not the lead" took back (20261004a,
+   * stress2 round 5): a join stands when it is after this, not after the
+   * press, so the real lead's join a few seconds before the press (the press
+   * was about someone else) stands. Null on rooms pressed before the column:
+   * the press's own time bounds them, as before.
+   */
+  taken_back_join_at?: string | null;
   /** A WhatsApp template was not seen within rooms.waits_s.unconfirmed, so email went too (new column). */
   link_unconfirmed_at?: string | null;
+  /**
+   * When a later channel sent the link again (20261004a, stress2 round 5):
+   * the lead's ten minutes and the open grace's cap count from it.
+   */
+  last_link_at?: string | null;
   /**
    * When Zoom said the meeting ended while the room went back to open (the
    * host left before the lead came, F9). A lead join Zoom delivers late from
@@ -1152,8 +1169,23 @@ export function standbyEmpty(room: RoomRow): boolean {
 export function leadJoined(room: RoomRow): boolean {
   const joined = ms(room.lead_in_at);
   if (joined === null) return false;
+  const bound = takenBackBound(room);
+  return bound === null || joined > bound;
+}
+
+/**
+ * The time a join must come after to stand once "That was not the lead" was
+ * pressed: the taken-back join's own time (taken_back_join_at), falling back
+ * to the press (count_undo_at) on a room pressed before that column. Null
+ * when nothing was taken back. Every "did the lead join" rule reads this one
+ * bound: roomlogic, rooms.ts, the dialer, the door, the desk and the SQL
+ * sweep (cockpit_sales_room_join_stands, stress2 round 5).
+ */
+export function takenBackBound(room: Pick<RoomRow, "count_undo_at" | "taken_back_join_at">): number | null {
   const undo = ms(room.count_undo_at);
-  return undo === null || joined > undo;
+  if (undo === null) return null;
+  const taken = ms(room.taken_back_join_at);
+  return taken === null ? undo : Math.min(taken, undo);
 }
 
 /**
@@ -1166,11 +1198,11 @@ export function leadJoined(room: RoomRow): boolean {
  * the host already saw.
  */
 export function takenBack(room: RoomRow, t: number): boolean {
-  const undo = ms(room.count_undo_at);
-  if (undo === null) return false;
+  const bound = takenBackBound(room);
+  if (bound === null) return false;
   const joined = ms(room.lead_in_at);
-  if (joined !== null && joined > undo) return false;
-  return t <= (joined ?? undo);
+  if (joined !== null && joined > bound) return false;
+  return t <= (joined ?? bound);
 }
 
 /** A count was claimed and has not written its result yet (a mark writes count_appointment_id). */
@@ -1482,7 +1514,8 @@ export type RefusalCode =
   | "take_host_busy"
   | "booked_other_rep"
   | "wrap_too_early"
-  | "worker_down";
+  | "worker_down"
+  | "lead_night";
 
 export interface Refused {
   ok: false;
@@ -1542,6 +1575,7 @@ const REFUSALS: Record<RefusalCode, { text: string; status: number; retry?: bool
   booked_other_rep: { text: LANE_COPY.booked_other_rep, status: 403 },
   wrap_too_early: { text: LANE_COPY.wrap_too_early, status: 409, retry: true },
   worker_down: { text: LANE_COPY.worker_down, status: 503 },
+  lead_night: { text: LANE_COPY.lead_night, status: 409 },
 };
 
 /** The Zoom refusals without their "use Meet" advice, for a host who cannot use Meet either. */
@@ -1631,10 +1665,18 @@ function same(room: RoomRow, effects: Effect[] = [], reason: SweepReason | null 
   return { ok: true, changed: false, from: room.state, to: room.state, room, patch: {}, expect: {}, effects, reason };
 }
 
+/** The latest time the link went to the lead, on any channel (link_sent_at, or a later channel's last_link_at). */
+export function lastLinkAt(room: Pick<RoomRow, "link_sent_at" | "last_link_at">): number | null {
+  const first = ms(room.link_sent_at);
+  const last = ms(room.last_link_at);
+  if (first === null) return last;
+  return last === null ? first : Math.max(first, last);
+}
+
 /** The latest time the open grace may move lead_by to: the lead's 10 minutes plus one grace (F18), or a booked call's end. */
 function graceCap(room: RoomRow, w: Waits): number | null {
   if (room.purpose === "booked") return ms(room.ends_at);
-  const base = ms(room.link_sent_at) ?? ms(room.opened_at);
+  const base = lastLinkAt(room) ?? ms(room.opened_at);
   return base === null ? null : base + (w.lead + w.open_grace) * S;
 }
 
@@ -1711,7 +1753,9 @@ function notLead(room: RoomRow, now: number, ctx: RoomCtx): Applied {
   const shown = joined === null ? null : Math.max(joined, ms(room.lead_in_seen_at) ?? joined);
   if (shown === null || now - shown > w.not_lead_undo * S)
     return refuse("not_lead_late", { minutes: Math.round(w.not_lead_undo / 60) });
-  const patch: Partial<RoomRow> = { count_undo_at: iso(now) };
+  // The taken-back join keeps its own time: a later join (even one before
+  // this press, the press being about someone else) stands (stress2 round 5).
+  const patch: Partial<RoomRow> = { count_undo_at: iso(now), taken_back_join_at: room.lead_in_at ?? null };
   if (countInFlight(room)) patch.count_result = "undone";
   const effects: Effect[] = room.count_claimed_at ? [{ kind: "undo_count" }] : [];
   if (final) {
@@ -1841,7 +1885,22 @@ export function applyRoomEvent(room: RoomRow, event: RoomEvent, now: number, ctx
     case "link_sent": {
       if (!room.contact_id) return refuse("no_lead");
       if (early) return refuse("too_early");
-      if (room.link_sent_at) return same(room);
+      if (room.link_sent_at) {
+        // A later channel sent the link again (the rep's Also send by email,
+        // or the backup email after WhatsApp failed late): its words promise
+        // the lead's ten minutes from now, so the room waits that long and an
+        // open is held from this send (stress2 round 5, late-link-email).
+        const t = when(event);
+        const first = ms(room.link_sent_at) ?? t;
+        const channels = linkChannelsOf(room);
+        const fresh = event.channel !== undefined && !channels.includes(String(event.channel));
+        if (!fresh || t - first < 60 * S || (room.state !== "open" && room.state !== "host_in")) return same(room);
+        const patch: Partial<RoomRow> = {};
+        if (!room.last_link_at || (ms(room.last_link_at) ?? 0) < t) patch.last_link_at = iso(t);
+        const lead = laterIso(room.lead_by, t + w.lead * S);
+        if (lead !== room.lead_by) patch.lead_by = lead;
+        return Object.keys(patch).length ? change(room, room.state, patch, []) : same(room);
+      }
       const t = when(event);
       const patch: Partial<RoomRow> = { link_sent_at: iso(t) };
       if (event.unconfirmed === true && !room.link_unconfirmed_at) patch.link_unconfirmed_at = iso(t);
@@ -2284,6 +2343,12 @@ export interface SettleFacts {
    */
   opened?: boolean;
   /**
+   * The lead opened the link after the room closed, inside the intro's own
+   * time (a door.open with after_end before start + settle): like a late
+   * Zoom join, they came, so a person marks the intro (stress2 round 5).
+   */
+  late_open?: boolean;
+  /**
    * The lead on the phone since the room was asked for (stress2, round 2):
    * "open", a dial to them still placed or dialing (the settle waits for it
    * to be saved); "reached", a call they answered or made that was answered
@@ -2334,8 +2399,17 @@ export function phoneSince(attempts: Row[], dials: Row[], since: number, now: nu
     )
   )
     return "reached";
+  // A call to the lead saved unanswered in the last two minutes: the
+  // setter's next step (Send a video link) may be seconds away, so the
+  // settle waits for it as for a call still going (stress2 round 5,
+  // settle-noshow-in-gap-between-missed-call-save-and-link; S1 the same).
+  if (Number.isFinite(now) && mine.some(a => a.state === "saved" && after(a.started_at) && (ms(a.saved_at) ?? 0) > now - PHONE_SAVED_WAIT_MS))
+    return "open";
   return null;
 }
+
+/** How long the settle waits after a call to the lead was saved unanswered (the video link may follow). */
+export const PHONE_SAVED_WAIT_MS = 2 * MIN;
 
 /**
  * Why a room that closed with nobody in it is still not evidence that the
@@ -2349,6 +2423,7 @@ export function phoneSince(attempts: Row[], dials: Row[], since: number, now: nu
  */
 export function noShowDoubt(room: RoomRow, facts: SettleFacts = {}): string | null {
   if (facts.opened || room.first_open_at || room.last_open_at) return "the lead opened the link";
+  if (facts.late_open) return "the lead opened the link after the room closed";
   if (room.lead_waiting_at) return "the lead knocked";
   // A link that never reached the lead (refused on every channel, or "it may
   // have gone" and never confirmed): their staying away says nothing.
@@ -2641,6 +2716,9 @@ function joinWords(parts: string[]): string {
   return `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
 }
 
+/** The free-text link is not sent in the WhatsApp window's last 15 minutes. */
+export const LINK_WINDOW_MARGIN_MS = 15 * MIN;
+
 /**
  * Picks the channels for a room link: WhatsApp free text inside the window,
  * then the call_link template, then email, then nothing (read it out).
@@ -2677,7 +2755,10 @@ export function channelPlan(i: ChannelInput): ChannelPlan {
           : i.wa_paused
             ? L.why_wa_paused
             : null;
-  const window = whatsappWindow(i.last_inbound_at, i.now);
+  // An automated link keeps a margin (stress2 round 5): the free text is
+  // never sent in the window's last minutes, where Meta may refuse it
+  // (131047) by the time it is delivered; the template goes instead.
+  const window = whatsappWindow(i.last_inbound_at, i.now + LINK_WINDOW_MARGIN_MS);
   // The room source's health gates the free text only (final_spec_foundation,
   // message service 1): a template still goes, so its sends can show the
   // number is fine again and the share recovers (stress2, round 1).
@@ -2862,6 +2943,37 @@ export function zoomEffect(evt: ZoomEvent | null | undefined, ctx: ZoomStaffCtx)
     default:
       return { ignore: "not a room event", role };
   }
+}
+
+/**
+ * Who a Zoom participant event is about, across their rejoins: Zoom keeps
+ * participant_uuid for one person's device through a dropped line, so it
+ * comes first, then user_id, id and the display name. Null when the event
+ * names nobody (stress2 round 5, not-lead-rejoin-restores-lead-in).
+ */
+export function zoomPerson(evt: ZoomEvent | null | undefined): string | null {
+  const p = evt?.payload?.object?.participant;
+  if (!p) return null;
+  for (const [k, v] of [["u", p.participant_uuid], ["i", p.user_id], ["z", p.id], ["n", p.user_name]] as const) {
+    const t = typeof v === "number" ? String(v) : typeof v === "string" ? v.trim().toLowerCase() : "";
+    if (t) return `${k}:${t.slice(0, 120)}`;
+  }
+  return null;
+}
+
+/**
+ * One Zoom session of a participant (a join and its leave): Zoom gives a new
+ * user_id each time someone joins, and a second device its own
+ * participant_uuid, so both together name the session (stress2 round 5,
+ * zoom-host-second-session-leave-reopens-room). Null when neither is given.
+ */
+export function zoomSession(evt: ZoomEvent | null | undefined): string | null {
+  const p = evt?.payload?.object?.participant;
+  if (!p) return null;
+  const part = (v: unknown) => (typeof v === "number" ? String(v) : typeof v === "string" ? v.trim().slice(0, 120) : "");
+  const uuid = part(p.participant_uuid);
+  const uid = part(p.user_id);
+  return uuid || uid ? `${uuid}|${uid}` : null;
 }
 
 /** The meeting id (the room's provider_meeting_id) a Zoom event is about. */
@@ -3457,9 +3569,13 @@ export interface GuardedWrite {
  */
 export function countClaim(room: RoomRow, now: number, plan: CountPlan, confirmed = false): GuardedWrite | null {
   if (!plan.claim || !countClaimable(room, confirmed) || !leadJoined(room)) return null;
+  // Every claim has its own time, later than the one it takes over (stress2
+  // round 5): a stale run of the earlier claim, answering in the same
+  // millisecond, can never read the new claim as its own.
+  const prev = ms(room.count_claimed_at);
   return {
     patch: {
-      count_claimed_at: iso(now),
+      count_claimed_at: iso(prev !== null && prev >= now ? prev + 1 : now),
       count_result: plan.action === "none" ? plan.count_result : null,
       count_appointment_id: null,
       count_undo_at: null,
@@ -3751,6 +3867,14 @@ export interface RoomView {
   end_reason: string | null;
   /** The lead's latest open of the link: the sweep holds the room open_grace past it (R4), and so does the panel's countdown. */
   last_open_at: string | null;
+  /** When a later channel sent the link again: the lead's ten minutes and the open grace count from it (stress2 round 5). */
+  last_link_at: string | null;
+  /**
+   * The lead opened the link after the room had closed (the door's
+   * door.open with after_end), inside the call's own time: the panel says
+   * they are at the link now, never "nobody joined" (stress2 round 5).
+   */
+  late_open_at: string | null;
 }
 
 export const ROOM_VIEW_KEYS = [
@@ -3791,6 +3915,8 @@ export const ROOM_VIEW_KEYS = [
   "starts_at",
   "end_reason",
   "last_open_at",
+  "last_link_at",
+  "late_open_at",
 ] as const;
 
 /** The channels the link went on, from link_channels or the keys of link_message_ids. */
@@ -3809,7 +3935,7 @@ export function linkChannelsOf(row: { link_channels?: unknown; link_message_ids?
 
 export function toRoomView(
   row: RoomRow,
-  opts: { short_link: boolean; contact_first_name?: unknown; refusal?: string | null; starts_at?: unknown },
+  opts: { short_link: boolean; contact_first_name?: unknown; refusal?: string | null; starts_at?: unknown; late_open_at?: unknown },
 ): RoomView {
   const first = greetingName(opts.contact_first_name ?? row.contact_first_name, null);
   return {
@@ -3854,6 +3980,8 @@ export function toRoomView(
     starts_at: isoOrNull(opts.starts_at),
     end_reason: /^[a-z_]{1,40}$/.test(String(row.end_reason ?? "")) ? String(row.end_reason) : null,
     last_open_at: isoOrNull(row.last_open_at),
+    last_link_at: isoOrNull(row.last_link_at),
+    late_open_at: isFinal(row.state) && !leadJoined(row) ? isoOrNull(opts.late_open_at) : null,
   };
 }
 

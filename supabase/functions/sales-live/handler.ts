@@ -36,6 +36,7 @@ import {
   GO_COPY,
   ipHash,
   isPreviewBot,
+  joinTakenBack,
   leadReached,
   LIVE_SITE,
   LIVE_STATES,
@@ -46,6 +47,7 @@ import {
   RateLimiter,
   type Rep,
   ROOM_COLUMNS,
+  ROOM_COLUMNS_BEFORE_R5,
   type RoomRow,
   roomIsOver,
   routeOf,
@@ -119,9 +121,12 @@ export const KNOCK_EVERY_MS = 60_000;
 /** How often, at most, the door reads the codes of the last day's rooms while a flood holds the ceiling. */
 export const LIVE_CODES_TTL_MS = 5_000;
 /**
- * Answers of a known room's code a ten minutes per allocation that is past
- * its guess bound, to networks of it with no misses of their own (a lead
- * behind the same carrier NAT, stress2 round 4).
+ * Requests a ten minutes per allocation that is past its guess bound
+ * (misses and hits alike since stress2 round 5, so a guesser's fresh
+ * networks spend them on misses): a known room's code is read for a network
+ * of it with no misses of its own while one is left (a lead behind the same
+ * carrier NAT, stress2 round 4). A network already answered for that code
+ * spends none.
  */
 export const WIDE_ANSWERS = 10;
 /** A network's miss of a code is answered from memory this long, with no lookup. */
@@ -313,6 +318,10 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
   // A participant's last stored knock per room (zoomRoute), bounded.
   const knocks = new Map<string, { at: number; extra: number }>();
   const knownCodes = new Map<string, number>();
+  // A network that this instance answered a code's room for (network:code):
+  // proved before, so an allocation past its guess bound never costs it one
+  // of the allocation's answers (stress2 round 5, code-guess-oracle).
+  const provedNets = new Map<string, number>();
   // The codes of every room asked for in the last day (live ones and those
   // that ended lately), read at most every LIVE_CODES_TTL_MS whatever the
   // traffic (stress2, round 2): past the miss ceiling a room made during a
@@ -790,20 +799,31 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
   /** ms left before `until` on the monotonic clock, at most `cap`. */
   const leftOf = (until: number) => (cap: number) => Math.max(0, Math.min(cap, Math.floor(until - clock())));
 
+  // The room columns this database has: 20261004a's taken_back_join_at once
+  // it is applied; a door deployed first reads the rooms without it (the
+  // press's own time then bounds a taken-back join, as before).
+  let roomColumns = ROOM_COLUMNS;
+  async function roomRows(filter: string, tail: string, ms: number): Promise<RoomRow[] | null> {
+    const read = () => rest(`cockpit_sales_rooms?${filter}&select=${roomColumns}${tail}`, { ms }) as Promise<RoomRow[] | null>;
+    try {
+      return await read();
+    } catch (e) {
+      if (!(e instanceof DbError) || e.status !== 400 || !/taken_back_join_at/.test(e.message) || roomColumns !== ROOM_COLUMNS) throw e;
+      roomColumns = ROOM_COLUMNS_BEFORE_R5;
+      deps.log("door: the rooms have no taken_back_join_at yet (apply 20261004a); read without it");
+      return await read();
+    }
+  }
+
   async function resolveRoom(code: string, left: (cap: number) => number): Promise<RoomRow | null> {
-    const rows = (await rest(`cockpit_sales_rooms?code=eq.${code}&select=${ROOM_COLUMNS}&limit=1`, {
-      ms: left(B.roomRead),
-    })) as RoomRow[] | null;
+    const rows = await roomRows(`code=eq.${code}`, "&limit=1", left(B.roomRead));
     const first = Array.isArray(rows) ? rows[0] : undefined;
     if (!first) return null;
     let room: RoomRow = first;
     const seen = new Set([room.id]);
     // The link follows a replaced room (a handover re-routed after it went out).
     for (let hop = 0; hop < MAX_HOPS && FINAL_STATES.has(room.state) && room.replaced_by; hop++) {
-      const found = (await rest(
-        `cockpit_sales_rooms?id=eq.${encodeURIComponent(room.replaced_by)}&select=${ROOM_COLUMNS}&limit=1`,
-        { ms: left(B.roomRead) },
-      )) as RoomRow[] | null;
+      const found = await roomRows(`id=eq.${encodeURIComponent(room.replaced_by)}`, "&limit=1", left(B.roomRead));
       const next: RoomRow | undefined = Array.isArray(found) ? found[0] : undefined;
       if (!next || seen.has(next.id)) break;
       seen.add(next.id);
@@ -815,11 +835,22 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
     // (stress2 round 4, old-room-link-ended-while-lead-has-open-room). Only a
     // room the lead never reached, and only to the lead's own newest room
     // that is still open; a standby room has no lead.
-    if (FINAL_STATES.has(room.state) && !leadReached(room) && room.contact_id && room.requested_at && !roomIsNotOverFor(room)) {
-      const newer = (await rest(
-        `cockpit_sales_rooms?contact_id=eq.${encodeURIComponent(room.contact_id)}&requested_at=gt.${encodeURIComponent(room.requested_at)}&select=${ROOM_COLUMNS}&order=requested_at.desc&limit=5`,
-        { ms: left(B.roomRead) },
-      )) as RoomRow[];
+    // A room whose join "That was not the lead" took back has its link in
+    // someone else's hands: it never leads to the lead's newer room, nor
+    // records an open there (stress2 round 5, not-lead-link-follows-to-leads-new-room).
+    if (
+      FINAL_STATES.has(room.state) &&
+      !leadReached(room) &&
+      !joinTakenBack(room) &&
+      room.contact_id &&
+      room.requested_at &&
+      !roomIsNotOverFor(room)
+    ) {
+      const newer = ((await roomRows(
+        `contact_id=eq.${encodeURIComponent(room.contact_id)}&requested_at=gt.${encodeURIComponent(room.requested_at)}`,
+        "&order=requested_at.desc&limit=5",
+        left(B.roomRead),
+      )) ?? []) as RoomRow[];
       const waiting = newer
         .filter(r => r && !seen.has(r.id) && LIVE_STATES.has(r.state) && r.purpose !== "standby")
         .sort((a, b) => String(b.requested_at ?? "").localeCompare(String(a.requested_at ?? "")))[0];
@@ -1004,13 +1035,25 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
     const wideGuessed = wideMisses.full(nets.wide, now);
     const flood = misses.full("door", now);
     if (!wideGuessed && !flood) return "lookup";
+    // A network this instance already answered this code for (the lead who
+    // opened it before the allocation was guessed from) is read as before.
+    const proved = provedNets.get(`${nets.net}:${code}`);
+    const provedLately = proved !== undefined && now - proved < 60 * 60_000;
+    // Every other request from an allocation past its guess bound spends one
+    // of its WIDE_ANSWERS, a miss as much as a hit (stress2 round 5,
+    // code-guess-oracle-reopened-by-wide-answers): a guesser walking fresh
+    // networks of the allocation spends them on its misses, so its hit is
+    // turned away exactly like them; a lead behind the same carrier still
+    // gets in while the guessing is quiet.
+    const slot = wideGuessed && !provedLately ? wideAnswers.hit(nets.wide, now) : true;
+    // Known or not, the same reads before the answer, so its cost says nothing either.
     const known = knownLately || Boolean((await liveCodeSet())?.has(code));
     if (!known) {
       charge(code, nets, now);
       noteStatus(job, false, flood ? FLOOD_LINE : WIDE_LINE);
       return "refused";
     }
-    if (wideGuessed && (netMisses.used(nets.net, now) > 0 || !wideAnswers.hit(nets.wide, now))) return "refused";
+    if (wideGuessed && (netMisses.used(nets.net, now) > 0 || !slot)) return "refused";
     return "lookup";
   }
 
@@ -1068,6 +1111,12 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
       for (const [k, at] of knownCodes) if (now - at >= 60 * 60_000 || knownCodes.size >= 5_000) knownCodes.delete(k);
     }
     knownCodes.set(code, now);
+    if (nets) {
+      if (provedNets.size >= 20_000) {
+        for (const [k, at] of provedNets) if (now - at >= 60 * 60_000 || provedNets.size >= 20_000) provedNets.delete(k);
+      }
+      provedNets.set(`${nets.net}:${code}`, now);
+    }
   }
 
   async function openRoute(req: Request, rawCode: string | undefined, url: URL): Promise<Response> {

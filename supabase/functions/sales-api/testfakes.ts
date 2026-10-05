@@ -214,9 +214,12 @@ export class FakeDb {
     const row = (a.p_row ?? {}) as Row;
     const lim = (a.p_limits ?? {}) as Row;
     const list = this.t("cockpit_sales_messages");
-    const twin = list.find(m => m.request_id === row.request_id);
-    if (twin) return { code: "repeat", row: structuredClone(twin) };
     const now = this.clock.now;
+    // 20261004a round 5: a "sending" row HighLevel was never asked about, past 30 s, never went.
+    const unasked = (m: Row) => m.state === "sending" && !m.ghl_asked_at && Date.parse(String(m.created_at)) < now - 30_000;
+    const twin = list.find(m => m.request_id === row.request_id);
+    if (twin && !unasked(twin)) return { code: "repeat", row: structuredClone(twin) };
+    if (twin) list.splice(list.indexOf(twin), 1);
     // 20261004a: a free WhatsApp message whose words went to this lead
     // within the duplicate window (one rep's two tabs, two seats' snippet).
     const via = String(row.via ?? "conversation");
@@ -237,6 +240,7 @@ export class FakeDb {
               m.channel === "whatsapp" &&
               String(m.via ?? "conversation") === "conversation" &&
               m.state !== "failed" &&
+              !unasked(m) &&
               Date.parse(String(m.created_at)) >= now - dupS * 1000 &&
               norm(m.body) === words,
           )
@@ -251,14 +255,14 @@ export class FakeDb {
     }
     if (row.via === "workflow") {
       const live = list.filter(m => m.via === "workflow" && m.state !== "failed");
-      if (live.some(m => m.contact_id === row.contact_id && Date.parse(String(m.created_at)) >= now - Number(lim.lead_gap_s ?? 120) * 1000))
+      if (live.some(m => m.contact_id === row.contact_id && !unasked(m) && Date.parse(String(m.created_at)) >= now - Number(lim.lead_gap_s ?? 120) * 1000))
         return { code: "lead_gap" };
       const day = live.filter(since(lim.day_start)).length;
       if (day >= Number(lim.per_day ?? 250)) return { code: "per_day", count: day };
       const month = live.filter(since(lim.month_start)).length;
       if (month >= Number(lim.month_cap ?? 1_000_000)) return { code: "budget", count: month };
     }
-    const made = this.insertOne("cockpit_sales_messages", { ...row, state: "sending" }, "error") as Row;
+    const made = this.insertOne("cockpit_sales_messages", { ...row, state: "sending", ghl_asked_at: null }, "error") as Row;
     return { code: "ok", row: structuredClone(made) };
   }
 
@@ -375,6 +379,10 @@ export class FakeDb {
   private guard(table: string, old: Row, next: Row): void {
     if (table === "cockpit_sales_rooms") {
       if (next.state !== old.state || next.version !== old.version) next.version = Number(old.version) + 1;
+      // 20261004a: a new "That was not the lead" press keeps the taken-back
+      // join's own time when the writer did not (stress2 round 5).
+      if (next.count_undo_at && next.count_undo_at !== old.count_undo_at && !next.taken_back_join_at)
+        next.taken_back_join_at = old.lead_in_at ?? null;
       if (next.state !== old.state) {
         if (FINAL.includes(String(old.state)))
           throw new DbError(`database 400: Room ${old.code} has already ${old.state}.`, 400, "P0001");
@@ -391,9 +399,11 @@ export class FakeDb {
         }
         if (next.state === "lead_in") {
           // A move into lead_in that left a taken-back lead_in_at as it was: stamped now.
-          const undo = Date.parse(String(next.count_undo_at ?? ""));
+          const undo = Date.parse(String(old.count_undo_at ?? ""));
+          const taken = Date.parse(String(old.taken_back_join_at ?? ""));
+          const bound = Number.isFinite(taken) && Number.isFinite(undo) ? Math.min(taken, undo) : undo;
           const joined = Date.parse(String(next.lead_in_at ?? ""));
-          if (!next.lead_in_at || (next.lead_in_at === old.lead_in_at && Number.isFinite(undo) && joined <= undo)) next.lead_in_at = this.iso();
+          if (!next.lead_in_at || (next.lead_in_at === old.lead_in_at && Number.isFinite(bound) && joined <= bound)) next.lead_in_at = this.iso();
           next.lead_in_seen_at = this.iso();
         }
       }
