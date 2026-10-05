@@ -297,10 +297,14 @@ export class RoomStage {
         if (what === "host_in")
           Object.assign(r, { state: "host_in", host_in_at: iso(now) });
         else if (what === "lead_in")
+          // rooms.count_on_join is off here, as shipped and as this stage's
+          // own settings say (liveSettings): a join books nothing, so the
+          // panel never shows a booking the real system does not make
+          // (stress2 round 6).
           Object.assign(r, {
             state: "lead_in",
             lead_in_at: iso(now),
-            count_result: "booked",
+            count_result: null,
           });
         else if (what === "not_lead")
           Object.assign(r, {

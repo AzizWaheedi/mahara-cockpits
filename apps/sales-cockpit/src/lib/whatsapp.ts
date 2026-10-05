@@ -88,22 +88,38 @@ const EN_DAYS = [
   "Saturday",
 ];
 
+const wallFormats = new Map<string, Intl.DateTimeFormat>();
 /**
- * The lead's clock: the UAE and Oman keep UTC+4; Kuwait, Saudi Arabia, Qatar
- * and Bahrain UTC+3 (and so does anyone whose country is unknown).
+ * The wall clock for an instant: at a fixed offset from UTC (hours), or on
+ * a time zone's own clock (its summer time too), as the lead reads it.
  */
-export function leadOffsetHours(country: string | null | undefined): number {
-  // The lead copy holds ISO codes (AE, OM); names are matched too.
-  return /^\s*(ae|om)\s*$|emirates|\buae\b|u\.a\.e|dubai|abu dhabi|sharjah|ajman|\boman\b|muscat|الإمارات|الامارات|دبي|أبوظبي|ابوظبي|الشارقة|مسقط/i.test(
-    String(country ?? ""),
-  )
-    ? 4
-    : 3;
-}
-
-/** The wall clock at an offset from UTC, for an instant (the Gulf keeps no daylight saving). */
-function kuwait(ms: number, offsetHours = 3) {
-  const d = new Date(ms + offsetHours * 3_600_000);
+function kuwait(ms: number, clock: number | string = 3) {
+  if (typeof clock === "string") {
+    let f = wallFormats.get(clock);
+    if (!f) {
+      f = new Intl.DateTimeFormat("en-GB", {
+        timeZone: clock,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        hourCycle: "h23",
+      });
+      wallFormats.set(clock, f);
+    }
+    const parts = f.formatToParts(ms);
+    const get = (t: string) => Number(parts.find(p => p.type === t)?.value);
+    const local = Date.UTC(
+      get("year"),
+      get("month") - 1,
+      get("day"),
+      get("hour"),
+      get("minute"),
+    );
+    return kuwait(local, 0);
+  }
+  const d = new Date(ms + clock * 3_600_000);
   return {
     y: d.getUTCFullYear(),
     m: d.getUTCMonth(),
@@ -122,10 +138,11 @@ export function callWords(
   startIso: string,
   lang: "ar" | "en",
   now = Date.now(),
-  offsetHours = 3,
+  /** The lead's clock: their time zone (leadClock.ts leadClock), or hours from UTC. */
+  clock: number | string = 3,
 ): { day: string; time: string } {
-  const at = kuwait(Date.parse(startIso), offsetHours);
-  const today = kuwait(now, offsetHours);
+  const at = kuwait(Date.parse(startIso), clock);
+  const today = kuwait(now, clock);
   const dayNo = (k: ReturnType<typeof kuwait>) =>
     Date.UTC(k.y, k.m, k.date) / 86_400_000;
   const diff = dayNo(at) - dayNo(today);

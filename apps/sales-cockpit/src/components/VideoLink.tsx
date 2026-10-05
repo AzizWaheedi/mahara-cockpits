@@ -28,6 +28,7 @@ import {
   liveSwitchOn,
   type MenuKey,
   type ProviderChoice,
+  pickerSends,
   type Reach,
   type RoomsSwitches,
   readRoomsSetting,
@@ -146,6 +147,8 @@ export interface VideoPickerProps {
   onCancel?: () => void;
   /** A failure to say at once (automatic mode's press that did not work). */
   initialError?: string | null;
+  /** The refusal code that came with initialError (lead_night: no send buttons). */
+  initialErrorCode?: string | null;
   className?: string;
 }
 
@@ -189,7 +192,9 @@ export function VideoPicker(props: VideoPickerProps) {
     text: string;
     code: string | null;
   } | null>(
-    props.initialError ? { text: props.initialError, code: null } : null,
+    props.initialError
+      ? { text: props.initialError, code: props.initialErrorCode ?? null }
+      : null,
   );
   const labels = choiceLabels(choice);
   const busyRef = useRef(false);
@@ -238,23 +243,27 @@ export function VideoPicker(props: VideoPickerProps) {
         <p className="muted mt-0.5 text-[13px] leading-5">{choice.note}</p>
       ) : null}
       <div className="mt-2.5 flex flex-wrap gap-2">
-        <button
-          type="button"
-          onClick={() => void make(choice.first)}
-          disabled={busy !== null}
-          aria-busy={busy === choice.first}
-          className={`${buttonPrimary} h-9 ${TOUCH}`}
-        >
-          {busy === choice.first ? (
-            <Loader2 className="size-3.5 animate-spin" aria-hidden />
-          ) : (
-            <Video className="size-3.5" aria-hidden />
-          )}
-          {busy === choice.first
-            ? `Making your ${providerName(choice.first)} room...`
-            : labels.first}
-        </button>
-        {choice.other && labels.other ? (
+        {/* After the night refusal the same press would be refused again
+            (stress2 round 6): no send button, only the sentence. */}
+        {pickerSends(error?.code) ? (
+          <button
+            type="button"
+            onClick={() => void make(choice.first)}
+            disabled={busy !== null}
+            aria-busy={busy === choice.first}
+            className={`${buttonPrimary} h-9 ${TOUCH}`}
+          >
+            {busy === choice.first ? (
+              <Loader2 className="size-3.5 animate-spin" aria-hidden />
+            ) : (
+              <Video className="size-3.5" aria-hidden />
+            )}
+            {busy === choice.first
+              ? `Making your ${providerName(choice.first)} room...`
+              : labels.first}
+          </button>
+        ) : null}
+        {choice.other && labels.other && pickerSends(error?.code) ? (
           <button
             type="button"
             onClick={() => void make(choice.other as Provider)}

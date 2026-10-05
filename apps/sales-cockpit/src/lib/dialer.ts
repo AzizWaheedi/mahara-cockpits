@@ -184,6 +184,16 @@ export function callbackPicks(now: number): Pick[] {
   return picks;
 }
 
+/**
+ * When a lead the rep spoke with on video or on the phone, with no outcome
+ * saved, comes back: the next working morning at 10:00 Kuwait, as the
+ * "Tomorrow 10:00" call-back pick (stress2 round 6,
+ * joined-step-next-lead-keeps-auto-no-answer).
+ */
+export function spokeCallbackAt(now: number): number {
+  return workday(kuwaitAt(now, 10, 0, 1));
+}
+
 /** A moment as the value of a datetime-local input, in the browser's zone. */
 export function localInput(ms: number): string {
   const d = new Date(ms);

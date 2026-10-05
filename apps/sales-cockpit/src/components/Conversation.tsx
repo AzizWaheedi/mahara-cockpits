@@ -11,13 +11,13 @@ import {
 import { api } from "../lib/api";
 import { useSnippets, useTemplates } from "../lib/data";
 import { ago, clock, day } from "../lib/format";
+import { leadClock } from "../lib/leadClock";
 import { toast } from "../lib/toast";
 import {
   callWords,
   fillSnippet,
   firstWord,
   leadLanguage,
-  leadOffsetHours,
   type Moment,
   snippetLine,
 } from "../lib/whatsapp";
@@ -339,9 +339,12 @@ export function Conversation({
   const language = leadLanguage(
     thread.filter(m => m.direction === "inbound").map(m => m.body),
   );
-  const call = callAt
-    ? callWords(callAt, language, Date.now(), leadOffsetHours(country))
-    : null;
+  // The call's day and time on the lead's own clock (their first zone); a
+  // lead whose clock is not known gets them unfilled, for the rep to write
+  // (stress2 round 6, confirm-prefill-time-on-kuwait-clock).
+  const leadTz = leadClock(country);
+  const call =
+    callAt && leadTz ? callWords(callAt, language, Date.now(), leadTz) : null;
   const values = {
     name: firstWord(data?.contact.name) || null,
     rep: firstWord(rep) || null,

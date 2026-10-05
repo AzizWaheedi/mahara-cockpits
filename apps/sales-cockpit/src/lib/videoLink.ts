@@ -9,6 +9,7 @@
  * most likely do with the link. A guess the browser cannot make is left
  * unsaid (null), never filled in.
  */
+import { nightForLead } from "./leadClock";
 import {
   type CallKind,
   isFinal,
@@ -158,7 +159,8 @@ export type GateWhy =
   | "booked_demo"
   | "test_only"
   | "scope"
-  | "pilot";
+  | "pilot"
+  | "lead_night";
 
 export interface GateInput {
   setting: RoomsSwitches | null;
@@ -177,6 +179,25 @@ export interface GateInput {
    * room is made for it (P1, C2).
    */
   bookedDemo?: boolean;
+  /**
+   * The lead's country and the moment (stress2 round 6,
+   * night-video-link-auto-countdown-and-picker-loop): a missed call's link
+   * is refused at night where the lead is (sales-api rooms.ts leadAtNight),
+   * so it is never offered then. Left out, the clock is not read.
+   */
+  country?: unknown;
+  now?: number;
+  /** The call is the lead's own booked intro, in its time: they chose the hour, so the night rule never holds it. */
+  introNow?: boolean;
+}
+
+/** Said where the link's button would be, at night on the lead's clock. */
+export const NIGHT_LINE =
+  "It is night where they are, so no video link goes now. Call after 9 in the morning, their time.";
+
+/** Whether the picker offers its send buttons after this refusal: never again after the night refusal. */
+export function pickerSends(code: string | null | undefined): boolean {
+  return code !== "lead_night";
 }
 
 /**
@@ -224,6 +245,12 @@ export function videoLinkGate(i: GateInput): { show: boolean; why: GateWhy } {
       !s.fallback.pilot_emails.includes(seat)
     )
       return no("pilot");
+    if (
+      i.country !== undefined &&
+      !i.introNow &&
+      nightForLead(i.country, i.now ?? Date.now())
+    )
+      return no("lead_night");
   }
   return { show: true, why: "ok" };
 }

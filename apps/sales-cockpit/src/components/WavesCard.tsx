@@ -51,6 +51,22 @@ import {
  * to them; they are how the effect is measured.
  */
 
+/**
+ * The line after Pause or Stop, with sales-api's own word when an opener
+ * was already on its way to HighLevel (going_now): it may still go, and the
+ * manager is told so (stress2 round 6, waves-pause-stop-going-now-note-dropped).
+ */
+type GoingNow = { going_now?: unknown; note?: unknown };
+
+function withGoingNow(line: string, goingNow: unknown, note: unknown): string {
+  if (!(Number(goingNow ?? 0) > 0)) return line;
+  const said =
+    typeof note === "string" && note.trim()
+      ? note.trim()
+      : "One opener may still go: it was already on its way.";
+  return `${line} ${said}`;
+}
+
 export interface OpenerDraft {
   id: string;
   contact_id: string;
@@ -329,9 +345,17 @@ export function WavesCard({
                           disabled={busy !== null}
                           onClick={() =>
                             void run(`stop:${w.id}`, async () => {
-                              await wave("stop", { wave_id: w.id }, w.id);
+                              const out = (await wave(
+                                "stop",
+                                { wave_id: w.id },
+                                w.id,
+                              )) as GoingNow;
                               setStopping(null);
-                              return "Stopped. The desk takes back its openers within 5 minutes.";
+                              return withGoingNow(
+                                "Stopped. The desk takes back its openers within 5 minutes.",
+                                out.going_now,
+                                out.note,
+                              );
                             })
                           }
                           className={`${button} h-9 ${TOUCH}`}
@@ -362,8 +386,16 @@ export function WavesCard({
                           disabled={busy !== null}
                           onClick={() =>
                             void run(`pause:${w.id}`, async () => {
-                              await wave("pause", { wave_id: w.id }, w.id);
-                              return "Paused. No new batch is written until you resume it.";
+                              const out = (await wave(
+                                "pause",
+                                { wave_id: w.id },
+                                w.id,
+                              )) as GoingNow;
+                              return withGoingNow(
+                                "Paused. No new batch is written until you resume it.",
+                                out.going_now,
+                                out.note,
+                              );
                             })
                           }
                           className={`${button} ${TOUCH}`}
@@ -536,9 +568,14 @@ export function WavesCard({
                         >
                           Release
                         </button>
-                      ) : st === "undecided" || st === "approved" ? (
+                      ) : st === "undecided" ||
+                        st === "approved" ||
+                        st === "waits_resume" ||
+                        st === "stalled" ? (
                         // An approved opener waiting for the lead's hours can be
                         // held too (fix round 4): the hold takes its approval back.
+                        // So can one waiting for a paused wave's resume, or one
+                        // whose send stopped half way (stress2 round 6).
                         <button
                           type="button"
                           disabled={busy !== null}
@@ -548,9 +585,9 @@ export function WavesCard({
                                 id: d.id,
                                 on: true,
                               });
-                              return st === "approved"
-                                ? "Held. It will not go; release it and approve it again to send."
-                                : "Held. It stays out of the batch until you release it.";
+                              return st === "undecided"
+                                ? "Held. It stays out of the batch until you release it."
+                                : "Held. It will not go; release it and approve it again to send.";
                             })
                           }
                           className={`${button} h-7 ${TOUCH}`}

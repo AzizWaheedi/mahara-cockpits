@@ -97,6 +97,7 @@ import {
   primeSound,
   readDraft,
   setAlertsWanted,
+  spokeCallbackAt,
   type UrgentEvent,
   writeDraft,
 } from "../lib/dialer";
@@ -139,6 +140,7 @@ import {
   errorText,
   leaveToast,
   type RoomView,
+  refusalCode,
   roomsApi,
   spokeAt,
   videoJoinedAt,
@@ -149,6 +151,7 @@ import type { Lead, Me } from "../lib/types";
 import {
   linkPlanLine,
   missTrigger,
+  NIGHT_LINE,
   NOBODY_SPOKE_VIDEO,
   PICKER_NONE,
   providerChoice,
@@ -1697,6 +1700,7 @@ function CallPane({
   const [picking, setPicking] = useState(false);
   const [autoAt, setAutoAt] = useState<number | null>(null);
   const [autoError, setAutoError] = useState<string | null>(null);
+  const [autoErrorCode, setAutoErrorCode] = useState<string | null>(null);
   // Automatic mode runs once for each call that missed, Stop or not.
   const autoRan = useRef(new Set<string>());
   const video = useLeadRoom(contactId);
@@ -1738,6 +1742,11 @@ function CallPane({
     bookedDemo: appt?.type === "demo",
     client: isClient(l),
     dnd: Boolean(l?.dnd),
+    // The lead's clock (stress2 round 6): no link, and no countdown, at
+    // night where they are, unless it is their own booked intro's time.
+    country: l?.country ?? null,
+    now: Date.now(),
+    introNow: introCall,
   });
   // A closer's video call is a demo (stress2 round 4): its length, its Zoom
   // rule, and never booked as an intro in a setter's place.
@@ -1833,8 +1842,10 @@ function CallPane({
       const out = await roomsApi.create(ask);
       video.setRoom(out.room, ask);
     } catch (e) {
-      // Said in the picker, which stays for a press of the rep's own.
+      // Said in the picker, which stays for a press of the rep's own (and
+      // offers none after the night refusal, stress2 round 6).
       setAutoError(errorText(e));
+      setAutoErrorCode(refusalCode(e));
       setPicking(true);
     }
   }
@@ -1947,6 +1958,7 @@ function CallPane({
       setPicking(false);
       setAutoAt(null);
       setAutoError(null);
+      setAutoErrorCode(null);
       // Calling again after a saved call: back to saying how this one went.
       setSaved(null);
       setSaveNote(null);
@@ -2109,22 +2121,67 @@ function CallPane({
 
   // Next lead, and Alt+→ while it shows. The lead was saved already; a
   // video link counting down goes first.
+  // After a conversation the step itself asks about (the lead joined the
+  // video call, or the call moved to the phone), Next lead never leaves
+  // Maqsam's automatic No answer standing, which would close the lead as
+  // unreachable or bring them back as "not reached yet" (stress2 round 6,
+  // joined-step-next-lead-keeps-auto-no-answer): the talk is saved first,
+  // as a call-back the next working morning, then the next lead opens.
+  const spokeUnsaved = mode === "unanswered" && Boolean(joinedAt || spoke);
+  const spokeNote = joinedAt
+    ? "Spoke on video. No outcome was saved, so they come back as a call-back."
+    : "Spoke on the phone after the video link. No outcome was saved, so they come back as a call-back.";
+  const spokeSaveId = useRef<string | null>(null);
+  async function saveSpoke() {
+    if (busyRef.current) return;
+    setBusy("save");
+    spokeSaveId.current ??= crypto.randomUUID();
+    try {
+      await api("dial.save", {
+        contact_id: contactId,
+        request_id: spokeSaveId.current,
+        outcome: "callback",
+        note: draft.note.trim() || spokeNote,
+        as,
+        item_kind: "lead",
+        appointment_id: null,
+        callback_at: new Date(spokeCallbackAt(Date.now())).toISOString(),
+      });
+      spokeSaveId.current = null;
+      clearDraft(contactId);
+      onFinished(
+        contactId,
+        "saved",
+        "Saved as a call-back tomorrow morning. Next lead is up.",
+      );
+    } catch (err) {
+      toast.error(`${msg(err)} Press Next lead again, or Save how it went.`);
+    } finally {
+      setBusy(null);
+    }
+  }
   const toNext = () => {
     leaveRef.current();
+    if (spokeUnsaved) {
+      void saveSpoke();
+      return;
+    }
     onFinished(contactId, "saved");
   };
+  const toNextRef = useRef(toNext);
+  toNextRef.current = toNext;
   const showsNext = mode === "held" || mode === "unanswered";
   useEffect(() => {
     if (!showsNext) return;
     const go = () => {
       leaveRef.current();
-      onFinished(contactId, "saved");
+      toNextRef.current();
     };
     nextRef.current = go;
     return () => {
       if (nextRef.current === go) nextRef.current = null;
     };
-  }, [showsNext, nextRef, onFinished, contactId]);
+  }, [showsNext, nextRef]);
 
   // The picker, said where the rep pressed for it: inside the after-miss
   // step in place of its button, or here under the call line otherwise.
@@ -2136,14 +2193,17 @@ function CallPane({
         choice={choice}
         planLine={planLine}
         initialError={autoError}
+        initialErrorCode={autoErrorCode}
         onRoom={(room, ask) => {
           video.setRoom(room, ask);
           setPicking(false);
           setAutoError(null);
+          setAutoErrorCode(null);
         }}
         onCancel={() => {
           setPicking(false);
           setAutoError(null);
+          setAutoErrorCode(null);
         }}
       />
     ) : null;
@@ -2405,7 +2465,9 @@ function CallPane({
             videoUnread={
               roomsSetup.error && missed !== null && !video.room
                 ? ROOMS_UNREAD
-                : null
+                : gate.why === "lead_night" && missed !== null && !video.room
+                  ? NIGHT_LINE
+                  : null
             }
           />
         ) : mode === "book" || mode === "move" ? (

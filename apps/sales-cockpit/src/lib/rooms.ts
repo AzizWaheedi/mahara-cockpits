@@ -460,7 +460,29 @@ export function normalizeRoom(v: unknown): RoomView | null {
   };
   for (const k of OPTIONAL_TIMES) if (k in v) room[k] = when(v[k]);
   for (const k of OPTIONAL_TEXT) if (k in v) room[k] = str(v[k]);
+  dropOpensBeforeLink(room);
   return room;
+}
+
+/**
+ * A handover room's opens from before its link went are not the lead's: a
+ * standby room adopted by a Take had no lead, and its code may have been
+ * opened by the closer or a guesser (stress2 round 6,
+ * standby-open-carried-into-handover). The database clears them on the
+ * adoption; this is the panel's backstop for a row written before that.
+ */
+function dropOpensBeforeLink(room: RoomView): void {
+  if (room.purpose !== "handover" || !room.first_open_at) return;
+  const sent = room.link_sent_at ? Date.parse(room.link_sent_at) : Number.NaN;
+  const last = room.last_open_at ? Date.parse(room.last_open_at) : Number.NaN;
+  if (Number.isFinite(sent) && Date.parse(room.first_open_at) >= sent) return;
+  if (Number.isFinite(sent) && Number.isFinite(last) && last >= sent) {
+    room.first_open_at = room.last_open_at ?? null;
+    return;
+  }
+  room.first_open_at = null;
+  if ("last_open_at" in room) room.last_open_at = null;
+  room.open_device = null;
 }
 
 export function normalizePresence(v: unknown): Presence | null {

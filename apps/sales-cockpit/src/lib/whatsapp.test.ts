@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
+import { leadClock } from "./leadClock";
 import {
   arabicDigits,
   callWords,
   fillSnippet,
   leadLanguage,
-  leadOffsetHours,
   renderTemplate,
   snippetLine,
 } from "./whatsapp";
@@ -35,13 +35,19 @@ describe("a booked call in a rep's words", () => {
     });
   });
   test("on the lead's own clock: an hour later in the UAE and Oman", () => {
-    expect(leadOffsetHours("United Arab Emirates")).toBe(4);
-    expect(leadOffsetHours("Oman")).toBe(4);
-    expect(leadOffsetHours("Saudi Arabia")).toBe(3);
-    expect(leadOffsetHours(null)).toBe(3);
-    expect(leadOffsetHours("AE")).toBe(4);
-    expect(leadOffsetHours("OM")).toBe(4);
-    expect(leadOffsetHours("SA")).toBe(3);
+    // The lead's own zone (leadClock.ts, round 6): the Gulf by name or code.
+    expect(leadClock("United Arab Emirates")).toBe("Asia/Dubai");
+    expect(leadClock("Oman")).toBe("Asia/Muscat");
+    expect(leadClock("Saudi Arabia")).toBe("Asia/Kuwait");
+    expect(leadClock(null)).toBe("Asia/Kuwait");
+    expect(leadClock("AE")).toBe("Asia/Dubai");
+    expect(leadClock("OM")).toBe("Asia/Muscat");
+    expect(leadClock("SA")).toBe("Asia/Riyadh");
+    expect(leadClock("ZZ")).toBeNull();
+    expect(callWords("2026-09-25T12:00:00Z", "en", NOW, "Asia/Dubai")).toEqual({
+      day: "tomorrow",
+      time: "4 pm",
+    });
     expect(callWords("2026-09-25T12:00:00Z", "en", NOW, 4)).toEqual({
       day: "tomorrow",
       time: "4 pm",
