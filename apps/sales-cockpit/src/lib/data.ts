@@ -3,6 +3,7 @@ import type { Asset } from "./assets";
 import type { CallRow, LeadRow } from "./calls";
 import type { ClientFormSent } from "./clientForm";
 import type { GoalRow } from "./goals";
+import { requestRead } from "./proposals";
 import { supabase } from "./supabase";
 import type {
   BoardRow,
@@ -903,14 +904,16 @@ export function useProposal(id: string): Loaded<Proposal> {
  */
 export function useRequest(id: string | null): Loaded<WorkRequest> {
   return useQuery<WorkRequest>(
-    () =>
-      id
-        ? supabase
-            .from("cockpit_sales_requests")
-            .select("*")
-            .eq("id", id)
-            .maybeSingle()
-        : none<WorkRequest>(),
+    async () => {
+      if (!id) return { data: null, error: null };
+      const { data, error } = await supabase
+        .from("cockpit_sales_requests")
+        .select("*")
+        .eq("id", id)
+        .maybeSingle();
+      // A request that is not there says so (REQUEST_GONE), never blank.
+      return requestRead<WorkRequest>(data as WorkRequest | null, error);
+    },
     [id],
     id ? 20_000 : 0,
   );

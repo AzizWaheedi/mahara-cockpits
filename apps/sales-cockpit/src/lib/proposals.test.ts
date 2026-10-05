@@ -7,6 +7,8 @@ import {
   noDocument,
   notesOf,
   proposalTitle,
+  REQUEST_GONE,
+  requestRead,
   sentence,
   tryWords,
   waitingFor,
@@ -298,5 +300,26 @@ describe("the document frame", () => {
     ]);
     for (const t of tokens)
       expect(t).not.toMatch(/same-origin|top-navigation|popups/);
+  });
+});
+
+describe("requestRead", () => {
+  test("a request that is not there is said, so the page never waits blank", () => {
+    expect(requestRead(null, null)).toEqual({
+      data: null,
+      error: { message: REQUEST_GONE },
+    });
+    expect(REQUEST_GONE).toContain("draft a new one from the lead's page");
+  });
+
+  test("a row comes through, and a read error stays the read error", () => {
+    expect(requestRead({ id: "r1" }, null)).toEqual({
+      data: { id: "r1" },
+      error: null,
+    });
+    expect(requestRead(null, { message: "offline" })).toEqual({
+      data: null,
+      error: { message: "offline" },
+    });
   });
 });

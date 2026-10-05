@@ -158,6 +158,25 @@ export function proposalTitle(p: Pick<Proposal, "status" | "sent_at">): string {
  */
 export const DOCUMENT_SANDBOX = "allow-scripts allow-modals allow-downloads";
 
+/**
+ * A drafting proposal whose request is not there (deleted, or never made):
+ * the writer will never pick it up, so the page says so and what to do,
+ * rather than "Reading where the draft is" for ever.
+ */
+export const REQUEST_GONE =
+  "The writer has no request for this draft, so it will not be written. Archive it, then draft a new one from the lead's page.";
+
+/** A request read by id: a row that is not there is said, never left blank. */
+export function requestRead<T>(
+  data: T | null,
+  error: { message: string } | null,
+): { data: T | null; error: { message: string } | null } {
+  if (error) return { data: null, error };
+  return data
+    ? { data, error: null }
+    : { data: null, error: { message: REQUEST_GONE } };
+}
+
 /** The document card when there is no document, with what to do next. */
 export function noDocument(status: ProposalStatus): string {
   if (status === "drafting")

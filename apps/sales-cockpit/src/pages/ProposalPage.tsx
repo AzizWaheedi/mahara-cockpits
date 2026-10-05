@@ -27,6 +27,7 @@ import {
   downloadLabel,
   noDocument,
   notesOf,
+  REQUEST_GONE,
   sentence,
 } from "../lib/proposals";
 import { supabase } from "../lib/supabase";
@@ -360,7 +361,11 @@ export default function ProposalPage({ me }: { me: Me }) {
         // what happens next and when to tell the CEO. Said once this
         // draft's request is read, so a retry never flashes the old one's
         // age as "Taking longer than usual".
-        draftRequest || request.error || !p.request_id ? (
+        request.error === REQUEST_GONE ? (
+          <p className="callout-bad rounded-[var(--radius-md)] border px-3 py-2 text-sm">
+            {REQUEST_GONE}
+          </p>
+        ) : draftRequest || request.error || !p.request_id ? (
           <DraftWaitNotice
             me={me}
             proposal={p}
