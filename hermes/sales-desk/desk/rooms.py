@@ -2070,13 +2070,23 @@ class Worker:
         except ProviderError as e:
             if e.timeup:
                 return  # left in creating: the next run reads it by its event id
-            if e.status != 409:
+            if e.status != 409 and not (e.unclear and not e.down):
                 self.fail(room, self._google_sentence(e), fault=True)
                 return
+            # 409: made already. Unclear (a timeout or a 5xx whose answer was
+            # lost): Google may have made it (stress2 round 4,
+            # meet-insert-lost-answer-fails-made-room). Either way the event
+            # is read by its fixed id, never failed on a guess.
             try:
                 ev = self.google.event(cal, eid)
             except ProviderError as e2:
                 if e2.timeup:
+                    return
+                if e.status != 409 and (e2.unclear or e2.status in (404, 410)) and not e2.down \
+                        and self.clock() < self._meet_until(room):
+                    # Not readable yet, or not made: left in creating, and
+                    # resume_meet reads (or inserts) it within the Meet wait.
+                    self._retry_at[str(room["id"])] = self.clock() + 2.0
                     return
                 self.fail(room, self._google_sentence(e2), fault=True)
                 return
@@ -2336,7 +2346,20 @@ class Worker:
             self._audit("room.worker.open", opened, {"state": "creating"},
                         {"state": "open", "provider_meeting_id": str(meeting_id)})
         if opened is None:
-            current = self._read(rid)
+            try:
+                current = self._read(rid)
+            except TimeUp:
+                raise
+            except (SupabaseError, http.HttpError) as e:
+                # Not read: nothing is decided on a room nobody read (stress2
+                # round 4). The meeting is watched like a stray: kept when the
+                # room opened with it (only the answer was lost), closed only
+                # once a read shows the room final or on another meeting.
+                self._db_trouble(e)
+                made = self._made.pop(rid, None) or {}
+                if provider == "zoom" and meeting_id:
+                    self._stray(room, str(meeting_id), str(made.get("start_url") or start_url or ""))
+                return False
             if (current and current.get("state") in LIVE_STATES and current.get("worker_run") == self.run_id
                     and str(current.get("provider_meeting_id")) == str(meeting_id)):
                 opened = current  # it opened; only the answer was lost
@@ -2878,6 +2901,9 @@ class Worker:
         s = self._strays[key]
         s["next_at"] = now + STRAY_EVERY
         try:
+            # A read that fails raises (supabase.py never reads an unreadable
+            # answer as "no rows"), so the meeting waits for the next look:
+            # it is closed only after a read that answered (stress2 round 4).
             room = self._read(s["room_id"])
             state = (room or {}).get("state")
             if room:

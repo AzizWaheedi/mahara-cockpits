@@ -267,7 +267,9 @@ class Finding5PartialEnrolment(unittest.TestCase):
         self.assertEqual(len(members(pg, "w1")), 200)
         self.assertIsNone(pg.one(WAVES, id="w1").get("enrolled_at"))
         out, _, _, _ = run(pg, guard={})
-        self.assertEqual(out["enrolled"]["w1"]["enrolled"], 250)
+        # What the wave holds, by its members (stress2 round 4): 450, 250 of them added by this run.
+        self.assertEqual(out["enrolled"]["w1"]["enrolled"], 450)
+        self.assertEqual(out["enrolled"]["w1"]["added_now"], 250)
         self.assertEqual(len(members(pg, "w1")), 450)
         self.assertEqual(pg.one(WAVES, id="w1")["enrolled_at"], NOW.isoformat())
         out, _, _, _ = run(pg, guard={})

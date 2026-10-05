@@ -572,20 +572,31 @@ def enroll(sb: Any, wave: dict[str, Any], now: datetime, w: dict[str, Any],
                         raise
                     taken += 1
     held = sum(1 for r in rows if r["arm"] == "holdout")
+    # What the wave holds, by arm, read back: a run that finishes an
+    # enrolment an earlier run stopped half way adds nothing itself (every
+    # insert is ignore-duplicates), and still says what the wave holds
+    # (stress2 round 4, enrolment-finished-next-run-says-zero-enrolled).
+    arms = [str(m.get("arm") or "") for m in sb.select_all(MEMBERS, f"select=arm,contact_id&wave_id=eq.{_q(wid)}",
+                                                            order="contact_id")]
+    held_now = sum(1 for a in arms if a == "holdout")
     body: dict[str, Any] = {"enrolled_at": now.isoformat()}
-    out: dict[str, Any] = {"enrolled": added, "held_back": held, "skipped_busy": taken}
-    if not sb.select(MEMBERS, f"select=contact_id&wave_id=eq.{_q(wid)}&limit=1"):
+    out: dict[str, Any] = {"enrolled": len(arms), "held_back": held_now, "skipped_busy": taken}
+    if added != len(arms):
+        out["added_now"] = added
+    if not arms:
         why = ("nobody is in this pool now" if not in_pool else
                "every lead in this pool is already in another wave or had an opener in the last 30 days")
         body.update({"state": "done", "done_reason": f"Nobody to message: {why}."})
         out["done"] = f"Nobody to message: {why}"
         log(f"waves: {POOL_WORDS[pool]}: {why}; the wave is done")
     else:
-        log(f"waves: {POOL_WORDS[pool]}: {added} leads enrolled, {held} held back to measure the effect")
+        log(f"waves: {POOL_WORDS[pool]}: {out['enrolled']} leads enrolled, {held_now} held back to measure the effect"
+            + (f" ({added} added by this run)" if added != len(arms) else ""))
     sb.rest("PATCH", f"{WAVES}?id=eq.{_q(wid)}&enrolled_at=is.null", json_body=body, prefer="return=minimal")
     audit(sb, "waves.enroll", WAVES, wid, after=out,
           metadata={"pool": pool, "holdout_share": share, "salt": salt,
-                    "arms": {"wave": len(rows) - held, "holdout": held}})
+                    "arms": {"wave": len(arms) - held_now, "holdout": held_now},
+                    "this_run": {"wave": len(rows) - held, "holdout": held}})
     return out
 
 
@@ -1344,6 +1355,12 @@ def _draft_wave(sb: Any, wave: dict[str, Any], wave_room: int, now: datetime, ct
     for _ in range(PAGES):
         if made >= wave_room or (deadline and deadline()):
             break
+        # The agent's switch again on every page (stress2 round 4): openers
+        # stop being written once a manager switched the agent off.
+        if not fu.agent_still_on(sb):
+            out["switched_off"] = True
+            log("waves: the follow-up agent was switched off during this run; no more openers are written")
+            break
         size = min(200, max(20, (wave_room - made) * 4))
         page = sb.select(MEMBERS, f"select=*&wave_id=eq.{_q(wid)}&arm=eq.wave&state=eq.waiting&or="
                          + fu._q(f'(next_try_at.is.null,next_try_at.lte."{now.isoformat()}")')
@@ -1561,6 +1578,46 @@ def _draft_wave(sb: Any, wave: dict[str, Any], wave_room: int, now: datetime, ct
     return made, None
 
 
+def stamp_twins(sb: Any, wid: str) -> int:
+    """The held-back twins whose turn has come and whose 14 days never
+    started (stress2 round 4, holdout-stamp-lost-on-blip): the one write at
+    the end of a day's drafting failed, and every later run that day stopped
+    at "today's openers are written". Each twin takes the moment of the turn
+    it is level with: the due_at of the wave member just older than it in the
+    turn order (newest first), so both arms start from the same moment,
+    whichever run catches up. Answers how many were stamped."""
+    turned = sb.select_all(MEMBERS, f"select=contact_id,event_at,due_at&wave_id=eq.{_q(wid)}&arm=eq.wave"
+                                    "&due_at=not.is.null", order="contact_id")
+    if not turned:
+        return 0
+    twins = sb.select_all(MEMBERS, f"select=contact_id,event_at&wave_id=eq.{_q(wid)}&arm=eq.holdout"
+                                   "&state=eq.held_out&due_at=is.null", order="contact_id")
+    if not twins:
+        return 0
+    dated = sorted(((fu._ts(m.get("event_at")), str(m["due_at"])) for m in turned if fu._ts(m.get("event_at"))),
+                   key=lambda x: x[0])
+    undated = sorted(str(m["due_at"]) for m in turned if not fu._ts(m.get("event_at")))
+    stamp: dict[str, list[str]] = {}
+    for t in twins:
+        at = fu._ts(t.get("event_at"))
+        if at is None:
+            # The turn order puts undated leads last: level once an undated member's turn came.
+            due = undated[0] if undated else None
+        else:
+            older = [d for e, d in dated if e <= at]
+            # The member just older than the twin had its turn: the twin was level then.
+            due = older[-1] if older else (undated[0] if undated else None)
+        if due:
+            stamp.setdefault(due, []).append(str(t["contact_id"]))
+    n = 0
+    for due, contacts in stamp.items():
+        for chunk in fu._chunks(sorted(contacts)):
+            sb.rest("PATCH", f"{MEMBERS}?wave_id=eq.{_q(wid)}&arm=eq.holdout&state=eq.held_out&due_at=is.null"
+                             f"&contact_id={fu._in(chunk)}", json_body={"due_at": due}, prefer="return=minimal")
+            n += len(chunk)
+    return n
+
+
 def draft_test_opener(sb: Any, lead: dict[str, Any], *, settings: dict[str, Any], ghl_token: str, now: datetime,
                       log: Callable[[str], None], warn: Callable[[str], None]) -> dict[str, Any]:
     """The opener for one test contact (followups --contact X --segment
@@ -1607,20 +1664,47 @@ def draft_test_opener(sb: Any, lead: dict[str, Any], *, settings: dict[str, Any]
 # the batch go on by itself, and a broken one costs one lead each time.
 SILENT_RUN = 3
 SILENT_PROBE_AFTER = timedelta(hours=2)
+# An opener stored "enrolled" (HighLevel took it, its message not seen within
+# sales-api's read-back) is looked for in the lead's conversation before it
+# counts as unseen, and only once this long has passed since it went: a
+# workflow slower than the read-back is no silent one (stress2 round 4,
+# slow-workflow-read-as-silent-holds-batch).
+SILENT_GRACE = timedelta(seconds=60)
 NEVER_SENT = re.compile(r"did not send it within half an hour", re.I)
 SILENT_WORKFLOW = ("The opener's HighLevel workflow took the last {n} openers and sent nothing, so the batch holds. "
                    "In HighLevel, check the workflow is published and allows re-entry; one opener is tried again "
                    "at {at}.")
 
 
-def _silent_workflow(sb: Any, now: datetime) -> Optional[str]:
-    """Why the template openers hold for a workflow that sends nothing, or None."""
-    rows = sb.select(MESSAGES, f"select=state,provider_status,error,created_at&sent_by=eq.{DESK}&via=eq.workflow"
-                               f"&followup_id=not.is.null&order=created_at.desc&limit={SILENT_RUN}")
+def _silent_workflow(sb: Any, now: datetime, token: Optional[str] = None) -> Optional[str]:
+    """Why the template openers hold for a workflow that sends nothing, or
+    None. With HighLevel's key, the last openers HighLevel has not shown yet
+    are looked for in their leads' conversations first (as the follow-ups
+    job's reconcile does at :07 and :37, which the batch never waits for),
+    and only those older than SILENT_GRACE count; a conversation that cannot
+    be read leaves its opener unseen (missing is never zero)."""
+    rows = sb.select(MESSAGES, f"select=id,contact_id,body,state,provider_status,error,created_at&sent_by=eq.{DESK}"
+                               f"&via=eq.workflow&followup_id=not.is.null&order=created_at.desc&limit={SILENT_RUN + 3}")
+
+    def enrolled(r: dict[str, Any]) -> bool:
+        return str(r.get("state") or "") == "sent" and str(r.get("provider_status") or "").lower() == "enrolled"
+
+    if token:
+        for r in rows:
+            if not enrolled(r) or not r.get("contact_id"):
+                continue
+            try:
+                hit = fu.template_hit(fu.ghl_thread(token, str(r["contact_id"])), r)
+                if hit:
+                    r["state"] = fu.mark_template_seen(sb, r, hit, now)
+                    r["provider_status"] = str(hit.get("status") or "sent").lower()
+            except Exception:  # noqa: BLE001 - not read: it stays unseen
+                continue
+        rows = [r for r in rows if (made := fu._ts(r.get("created_at"))) is not None and now - made >= SILENT_GRACE]
+    rows = rows[:SILENT_RUN]
     if len(rows) < SILENT_RUN:
         return None
-    unseen = all((str(r.get("state") or "") == "sent" and str(r.get("provider_status") or "").lower() == "enrolled")
-                 or (str(r.get("state") or "") == "failed" and NEVER_SENT.search(str(r.get("error") or "")))
+    unseen = all(enrolled(r) or (str(r.get("state") or "") == "failed" and NEVER_SENT.search(str(r.get("error") or "")))
                  for r in rows)
     newest = fu._ts(rows[0].get("created_at"))
     if not unseen or newest is None or now - newest >= SILENT_PROBE_AFTER:
@@ -1851,8 +1935,17 @@ def send_due(sb: Any, api: Callable[[str, dict[str, Any]], tuple[int, dict[str, 
         if not sb.select(FOLLOWUPS, f"select=id&id=eq.{_q(fid)}&status=eq.draft&limit=1"):
             out["gone"] += 1  # sent, skipped or expired meanwhile (another run, a rep)
             return True
-        if ghl_token and f.get("segment") == "reactivate" and live_conversation(fid, f, c, now):
-            return True
+        if f.get("segment") == "reactivate" and ghl_token is not None:
+            # run() always passes the key as read ("" when it is not set);
+            # None is only a caller that wires no HighLevel reads (the send's
+            # unit tests). No key is no read (stress2 round 4, no-ghl-key-
+            # skips-send-time-conversation-read): the opener waits, and the
+            # row says why.
+            if not ghl_token:
+                unread("the lead's conversation (GHL_B2B_API_KEY is not set)")
+                return True
+            if live_conversation(fid, f, c, now):
+                return True
         expires = fu._ts(f.get("expires_at"))
         if expires and expires <= db_now():
             # Past its 72 hours while nothing could go (the agent switched off
@@ -1958,7 +2051,7 @@ def send_due(sb: Any, api: Callable[[str, dict[str, Any]], tuple[int, dict[str, 
                 break
         if channel == "whatsapp_template":
             try:
-                silent = _silent_workflow(sb, db_now())
+                silent = _silent_workflow(sb, db_now(), ghl_token)
             except http.HttpError as e:
                 silent = f"Whether the opener's workflow sends could not be read ({http.scrub(str(e))[:120]}); the batch waits."
             if silent:
@@ -1978,6 +2071,7 @@ def send_due(sb: Any, api: Callable[[str, dict[str, Any]], tuple[int, dict[str, 
             continue
         out_of_time = False
         leased = False
+        slept = False
         lease_taken_at: Optional[datetime] = None
         for _ in range(6):
             now = clock()
@@ -2011,6 +2105,7 @@ def send_due(sb: Any, api: Callable[[str, dict[str, Any]], tuple[int, dict[str, 
                     break  # no lease row to be had: the gap read above stands
                 continue  # another run took it between the read and now: read again
             sleep(wait)
+            slept = True
         if out_of_time:
             stop("time", "This run's time is up; the next run carries on.")
             break
@@ -2021,7 +2116,11 @@ def send_due(sb: Any, api: Callable[[str, dict[str, Any]], tuple[int, dict[str, 
             break
         # The state may have moved while this run waited for the gap: the
         # cheap checks again, and a send that is not made gives the lease back.
-        if still_kept_back(fid):
+        # The lead may have written while this run waited out the gap (stress2
+        # round 4, reply-during-gap-wait-gets-opener): their conversation is
+        # read again before the send, never only before the wait.
+        if still_kept_back(fid) or (slept and f.get("segment") == "reactivate" and ghl_token
+                                    and live_conversation(fid, f, str(f["contact_id"]), clock())):
             if lease_taken_at is not None:
                 _let_go(sb, SEND_LEASE, lease_taken_at)
             continue
@@ -2047,6 +2146,29 @@ def send_due(sb: Any, api: Callable[[str, dict[str, Any]], tuple[int, dict[str, 
             in_a_row = 0
             log(f"waves: sent {fid}")
             continue
+        # HighLevel refused this one opener "for a moment" (sales-api's
+        # highlevelBlip: a 400 or 422 it cannot tell from a gateway's, the
+        # opener left in the queue untouched): it may be about this contact
+        # alone. It waits behind the batch, and the next opener is tried once;
+        # a second refusal of the same kind is an outage and stops the run
+        # (stress2 round 4, one-refused-opener-holds-batch-at-head). A 502
+        # "HighLevel did not send it" fails its opener, so it is never probed.
+        blip = verdict == "hold_all" and str(res.get("code") or "") == "outage"
+        if blip and not out.get("moved_behind"):
+            if res.get("message"):
+                last_at = db_now()
+            try:
+                moved = sb.rest("PATCH", f"{META}?followup_id=eq.{_q(fid)}&held_by=is.null",
+                                prefer="return=representation",
+                                json_body={"send_after": (clock() + ERROR_WAIT).isoformat()})
+            except http.HttpError as e:
+                warn(f"waves: {fid} could not be moved behind the batch ({http.scrub(str(e))[:120]})")
+                moved = None
+            if isinstance(moved, list) and moved:
+                out["moved_behind"] = 1
+                out["moved_why"] = err[:200]
+                warn(f"waves: {fid} waits {int(ERROR_WAIT.total_seconds() // 60)} minutes behind the batch: {err[:160]}")
+                continue
         if verdict in ("hold_all", "outage", "error"):
             if res.get("message"):
                 last_at = db_now()
@@ -2128,12 +2250,16 @@ def sequence_windows(settings: dict[str, Any]) -> dict[str, int]:
 def in_sequence(sb: Any, contact: str, now: datetime, windows: dict[str, int],
                 since: Optional[datetime] = None) -> Optional[tuple[str, datetime]]:
     """The agent's sequence that still runs for this lead, and when it is
-    over: a follow-up of a sequence kind sent, open or being sent, written
-    inside that kind's window (`since`: written after it). Raises when the
-    follow-ups cannot be read."""
+    over: a follow-up of a sequence kind written inside that kind's window
+    (`since`: written after it), whatever became of it. A step a rep
+    skipped, one that expired unapproved, or one that failed is a step the
+    agent's pick() counts and moves on from (or drafts again), so the
+    sequence still runs (stress2 round 4, skipped-sequence-step-lets-
+    backlog-opener-in). Raises when the follow-ups cannot be read."""
     back = now - timedelta(days=max(windows.values() or [8]))
     rows = sb.select(FOLLOWUPS, f"select=segment,created_at,status&contact_id=eq.{_q(contact)}"
-                                f"&segment=in.({','.join(SEQUENCES)})&status=in.(sent,draft,sending)"
+                                f"&segment=in.({','.join(SEQUENCES)})"
+                                f"&status=in.(sent,draft,sending,skipped,expired,failed)"
                                 f"&created_at=gte.{_q(back.isoformat())}&order=created_at.desc&limit=20")
     best: Optional[tuple[str, datetime]] = None
     for r in rows:
@@ -2247,6 +2373,17 @@ def run(sb: Any, api: Callable[[str, dict[str, Any]], tuple[int, dict[str, Any]]
         out["enrolled"] = enrolled
         if enrolled:
             waves, winding = _waves(sb), _winding(sb)
+        # Twins whose turn came and whose stamp a failed run never wrote,
+        # caught up whatever today's drafting does (stress2 round 4).
+        for x in waves:
+            if x.get("state") == "running" and x.get("enrolled_at"):
+                try:
+                    caught = stamp_twins(sb, str(x["id"]))
+                    if caught:
+                        log(f"waves: {caught} held-back leads' 14 days started with the turns they are level with")
+                except http.HttpError as e:
+                    warn(f"waves: the held-back leads' start could not be caught up ({http.scrub(str(e))[:120]}); "
+                         "the next run tries again")
         more = sync(sb, [str(x["id"]) for x in waves], started)
         out["synced"] = {k: synced[k] + more[k] for k in synced}
         ids = [str(x["id"]) for x in waves] + [str(x["id"]) for x in winding]
@@ -2313,6 +2450,8 @@ def words(out: dict[str, Any]) -> tuple[bool, str]:
         parts.append(f"{n} of an earlier day's openers wait for approval, so their wave writes no new batch")
     if d.get("drafted"):
         parts.append(f"{d['drafted']} openers written for approval")
+    if d.get("switched_off"):
+        parts.append("the follow-up agent was switched off during this run, so no more openers were written")
     if d.get("excluded"):
         parts.append(f"{d['excluded']} left out")
     if d.get("later"):
@@ -2381,6 +2520,10 @@ def words(out: dict[str, Any]) -> tuple[bool, str]:
         parts.append(f"{n} left in the queue because {'their' if n != 1 else 'its'} state moved")
     if sent.get("kind_off"):
         parts.append(f"{sent['kind_off']} approved but their kind of opener is switched off, so not sent")
+    if sent.get("moved_behind"):
+        why = str(sent.get("moved_why") or "").rstrip(".")
+        parts.append(f"1 opener HighLevel refused waits {int(ERROR_WAIT.total_seconds() // 60)} minutes behind the batch"
+                     + (f" ({why})" if why else ""))
     if sent.get("failed"):
         parts.append(f"{sent['failed']} failed at HighLevel or Meta")
     if sent.get("refused"):
@@ -2392,7 +2535,7 @@ def words(out: dict[str, Any]) -> tuple[bool, str]:
             ok = False
     explained = any(sent.get(k) for k in ("sent", "gate", "outside_hours", "held", "gone", "refused", "failed",
                                           "wave_not_running", "kind_off", "stale", "raced", "left_pool", "paused",
-                                          "unread", "put_off")) \
+                                          "unread", "put_off", "moved_behind")) \
         or sent.get("stop_kind") in ("time", "ceiling", "busy")
     if sent.get("due") and not explained:
         parts.append(f"{sent['due']} approved openers are due and none went")

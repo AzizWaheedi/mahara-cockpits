@@ -832,7 +832,8 @@ def followups_words(out: dict[str, Any]) -> str:
             + (f", {settled.get('gone', 0) + settled.get('failed', 0)} sends settled"
                + (f" ({settled['failed']} failed at HighLevel)" if settled.get("failed") else "")
                if settled.get("gone") or settled.get("failed") else "")
-            + (f", {out['failed']} failed" if out.get("failed") else ""))
+            + (f", {out['failed']} failed" if out.get("failed") else "")
+            + ("; the agent was switched off during the run, so it stopped there" if out.get("switched_off") else ""))
 
 
 def cmd_followups(cfg: Config, args: argparse.Namespace, log: Logger) -> int:

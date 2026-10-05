@@ -1088,7 +1088,10 @@ def live_calls(sb: Any, contacts: Optional[list[str]] = None, *, since: Optional
     and the count's mark of the lead's own call (count_result null with the
     call's id). The lead talked to a rep on video, so no "we missed you" and
     no never-booked opener goes to them. Booking counts (a wave's outcomes)
-    pass reached=False: an unconfirmed join is no booking yet."""
+    pass reached=False: an unconfirmed join is no booking yet. And a join
+    that stands with nothing counted at all (stress2 round 4, count-off-
+    video-join-invisible-to-desk): rooms.count_on_join off, as it ships, or
+    a count still running; the room is the call's only record then."""
     cols = "select=id,contact_id,call_kind,lead_in_at,count_result,count_appointment_id,count_undo_at"
     bound = ""
     if since:
@@ -1099,7 +1102,8 @@ def live_calls(sb: Any, contacts: Optional[list[str]] = None, *, since: Optional
                 f"&count_undo_at=is.null{bound}", False)]
     if reached:
         queries += [(f"{cols}&lead_in_at=not.is.null&count_result=eq.self_reported{bound}", True),
-                    (f"{cols}&lead_in_at=not.is.null&count_result=is.null&count_appointment_id=not.is.null{bound}", True)]
+                    (f"{cols}&lead_in_at=not.is.null&count_result=is.null&count_appointment_id=not.is.null{bound}", True),
+                    (f"{cols}&lead_in_at=not.is.null&count_result=is.null&count_appointment_id=is.null{bound}", True)]
     rows: list[tuple[dict[str, Any], bool]] = []
     for q, uncounted in queries:
         if contacts is None:
@@ -1951,6 +1955,41 @@ def same_text(a: Any, b: Any) -> bool:
     return n >= 20 and (x.startswith(y[:n]) or y.startswith(x[:n]))
 
 
+def template_hit(thread: list[dict[str, Any]], row: dict[str, Any]) -> Optional[dict[str, Any]]:
+    """The template message a workflow send posted, in the lead's conversation:
+    ours, on WhatsApp, from a workflow, at most 15 s before the send's row,
+    with the template's own words (C29, as sales-api's matchSent)."""
+    at = _ts(row.get("created_at"))
+    if at is None:
+        return None
+    words = str(row.get("body") or "").strip()
+    return next((m for m in reversed(thread) if m.get("from") == "us" and m.get("channel") == "whatsapp"
+                 and m.get("source") == "workflow" and _ts(m.get("at")) and _ts(m["at"]) >= at - timedelta(seconds=15)
+                 and (not words or same_text(m.get("text"), words))), None)
+
+
+def mark_template_seen(sb: Any, row: dict[str, Any], hit: dict[str, Any], now: datetime) -> str:
+    """A workflow send found in the conversation: its row says what HighLevel shows. Answers the state."""
+    status = str(hit.get("status") or "sent").lower()
+    state = "failed" if status in ("failed", "undelivered") else "read" if status == "read" \
+        else "delivered" if status == "delivered" else "sent"
+    sb.rest("PATCH", f"cockpit_sales_messages?id=eq.{_q(str(row['id']))}", prefer="return=minimal", json_body={
+        "state": state, "provider_status": status, "ghl_message_id": hit.get("id"),
+        "error": "HighLevel marked it failed" if state == "failed" else None, "updated_at": now.isoformat()})
+    return state
+
+
+def agent_still_on(sb: Any) -> bool:
+    """followups.enabled read again (stress2 round 4): False once a manager
+    switched the agent off. Not readable: the run goes on, on the reading it
+    started with."""
+    try:
+        value = sb.setting("followups")
+    except Exception:  # noqa: BLE001 - one unread switch never ends a run
+        return True
+    return not (isinstance(value, dict) and value.get("enabled") is False)
+
+
 def reconcile_templates(sb: Any, token: str, now: datetime, settle: Optional[Callable[[str], dict[str, Any]]] = None,
                         warn: Callable[[str], None] = lambda _m: None) -> dict[str, int]:
     """Template sends HighLevel took but had not shown yet: find the message
@@ -1970,21 +2009,15 @@ def reconcile_templates(sb: Any, token: str, now: datetime, settle: Optional[Cal
     found = gone = 0
     for r in rows:
         at = _ts(r.get("created_at"))
-        words = str(r.get("body") or "").strip()
+        if at is None:
+            continue
         try:
             thread = ghl_thread(token, str(r["contact_id"]))
         except Exception:  # noqa: BLE001 - try again next run
             continue
-        hit = next((m for m in reversed(thread) if m.get("from") == "us" and m.get("channel") == "whatsapp"
-                    and m.get("source") == "workflow" and _ts(m.get("at")) and _ts(m["at"]) >= at - timedelta(seconds=15)
-                    and (not words or same_text(m.get("text"), words))), None)
+        hit = template_hit(thread, r)
         if hit:
-            status = str(hit.get("status") or "sent").lower()
-            state = "failed" if status in ("failed", "undelivered") else "read" if status == "read" \
-                else "delivered" if status == "delivered" else "sent"
-            sb.rest("PATCH", f"cockpit_sales_messages?id=eq.{_q(str(r['id']))}", prefer="return=minimal", json_body={
-                "state": state, "provider_status": status, "ghl_message_id": hit.get("id"),
-                "error": "HighLevel marked it failed" if state == "failed" else None, "updated_at": now.isoformat()})
+            mark_template_seen(sb, r, hit, now)
             found += 1
         elif now - at > timedelta(minutes=30):
             sb.rest("PATCH", f"cockpit_sales_messages?id=eq.{_q(str(r['id']))}", prefer="return=minimal", json_body={
@@ -2306,8 +2339,16 @@ def run(sb: Any, provider: Any, log: Callable[[str], None], *, settings: dict[st
     written = no_channel = failed = sent_auto = not_leads = held = talking = unread = stopped = paused = 0
     set_aside = answered = raced = kept = moved_on = 0
     by_channel: dict[str, int] = {}
+    switched_off = False
     for due in picked:
         if written >= room:
+            break
+        # The switch again before each lead (stress2 round 4, agent-kill-
+        # switch-read-once-per-run): a manager who switches the agent off
+        # mid-run stops it there, never minutes of drafts later.
+        if not test and not agent_still_on(sb):
+            switched_off = True
+            log("followups: the agent was switched off during this run; nothing more is written")
             break
         contact, segment = due["contact_id"], due["segment"]
         if contact in aside:
@@ -2468,6 +2509,12 @@ def run(sb: Any, provider: Any, log: Callable[[str], None], *, settings: dict[st
                 moved_on += 1
                 log(f"followups: {contact}'s conversation moved on while the draft was written; the next run drafts again")
                 continue
+            # Switched off while the model wrote (up to two tries of 300 s):
+            # nothing is put in front of the reps after the switch.
+            if not test and not agent_still_on(sb):
+                switched_off = True
+                log("followups: the agent was switched off while a draft was written; it was not kept")
+                break
             # A plain insert: the one-open-draft-per-lead index refuses a
             # second one if a rep's own run raced this one.
             try:
@@ -2544,6 +2591,7 @@ def run(sb: Any, provider: Any, log: Callable[[str], None], *, settings: dict[st
                 except Exception as e2:  # noqa: BLE001 - the warning above is the record then
                     warn(f"followups: {contact}'s failure could not be kept: {http.scrub(str(e2))[:160]}")
     return {"picked": len(picked), "written": written, "by_channel": by_channel, "sent_by_itself": sent_auto,
+            **({"switched_off": "the follow-up agent was switched off during this run"} if switched_off else {}),
             "kept_for_a_person": kept, "held_for_automation": held, "in_a_conversation": talking,
             "already_answered": answered, "asked_to_stop": stopped, "paused": paused,
             "stops_unread": stop_rows is None, "conversation_unreadable": unread, "no_open_channel": no_channel,

@@ -149,16 +149,30 @@ class Supabase:
         off = clock_offset_of(answered, time.time())
         if off is not None:
             self.clock_offset = off
+        # A read, or a write that asked for its rows back, always answers JSON
+        # (a table's at least "[]"). An empty body or a page that is not JSON
+        # is an answer nobody can read: "not answered" (status 0), never "no
+        # rows", so no caller decides on a room it did not read (stress2
+        # round 4, garbage-answer-deletes-open-rooms-zoom-meeting).
+        wants_rows = method.upper() == "GET" or "return=representation" in (prefer or "")
         if not body:
+            if wants_rows:
+                raise http.HttpError(0, f"the database answered nothing to {method} {path.split('?')[0]}", b"",
+                                     path.split("?")[0])
             return None
         try:
             return json.loads(body.decode("utf-8"))
         except (ValueError, UnicodeDecodeError):
+            if wants_rows:
+                raise http.HttpError(0, f"the database answered something that is not JSON to {method} "
+                                        f"{path.split('?')[0]}", b"", path.split("?")[0])
             return body.decode("utf-8", "replace")
 
     def select(self, table: str, params: str) -> list[dict[str, Any]]:
         rows = self.rest("GET", f"{table}?{params}")
-        return rows if isinstance(rows, list) else []
+        if not isinstance(rows, list):
+            raise http.HttpError(0, f"the database answered no list of rows for {table}", b"", table)
+        return rows
 
     def select_all(self, table: str, params: str, *, order: str, page: int = MAX_ROWS) -> list[dict[str, Any]]:
         """Every row a read matches. The API answers at most 1,000 rows a
@@ -197,7 +211,9 @@ class Supabase:
 
     def patch_returning(self, table: str, where: str, body: dict[str, Any], *, retries: int = 1) -> list[dict[str, Any]]:
         out = self.rest("PATCH", f"{table}?{where}", json_body=body, prefer="return=representation", retries=retries)
-        return out if isinstance(out, list) else []
+        if not isinstance(out, list):
+            raise http.HttpError(0, f"the database answered no list of rows for {table}", b"", table)
+        return out
 
     # ---- storage ---------------------------------------------------------
     def upload(self, path: str, blob: bytes, content_type: str) -> str:

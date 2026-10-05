@@ -298,10 +298,15 @@ def check_database(report: Report, sb: Any) -> dict[str, Any]:
                (f"not applied ({reason}): apply the current 20261004a_live_calls_hardening_2.sql before this "
                 "sales-api is deployed, or a run whose event lease ran out can give back another run's lease"
                 if status in (400, 404) else f"could not be read ({reason or 'no answer'})"))
-    status, rows, reason = _get(sb, "cockpit_sales_settings?select=key,value&key=in.("
-                                    + ",".join(SETTINGS) + ")")
+    path = "cockpit_sales_settings?select=key,value&key=in.(" + ",".join(SETTINGS) + ")"
+    status, rows, reason = _get(sb, path)
     if status != 200 or not isinstance(rows, list):
-        report.add(sec, "settings", None, f"could not be read ({reason or 'no answer'})")
+        status, rows, reason = _get(sb, path)  # one more try: this is the read every switch line rests on
+    if status != 200 or not isinstance(rows, list):
+        # Missing is never zero (stress2 round 4): switches nobody read are not
+        # switches off, so this is a blocker, never a Ready.
+        report.add(sec, "settings", False, f"could not be read ({reason or 'no answer'}), so no switch is known to "
+                                           "be off. Run the check again")
         return {}
     settings = {str(r.get("key")): r.get("value") for r in rows}
     for name, what in (("rooms", "apply 20261003a_sales_rooms.sql: it inserts the rooms setting switched off"),
@@ -340,7 +345,7 @@ def check_lead_language(report: Report, settings: dict[str, Any]) -> None:
 def check_switches(report: Report, sb: Any, settings: dict[str, Any]) -> None:
     sec = "Switches (every one ships off)"
     if not settings:
-        report.add(sec, "switches", None, "not checked: the settings could not be read")
+        report.add(sec, "switches", False, "not checked: the settings could not be read, so none is known to be off")
         return
     for setting, path, want, meaning in SWITCHES:
         name = f"{setting}.{'.'.join(path)}"
