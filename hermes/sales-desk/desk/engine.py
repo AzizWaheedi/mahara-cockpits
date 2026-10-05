@@ -71,9 +71,10 @@ class Call:
 # Checks whose failures are a matter of words the drafter can change. Not
 # here: schema (the shape is wrong), render (the tightening rounds), the
 # arithmetic and the fee band (they follow from figures the client gave). The
-# verdict is here: it is the arithmetic page's words against its own table.
+# verdict is here: it is the arithmetic page's words against its own table,
+# and so is rate, the "You sign" row the drafter filled with the target.
 REPAIRABLE = {"guarantee", "brand", "language", "echoes", "currency", "dates", "evidence", "prose", "offer",
-              "proof", "verdict"}
+              "proof", "verdict", "rate"}
 
 
 @dataclass

@@ -314,7 +314,11 @@ us, he is deciding whether the rate we add pays for us.
 `target_additional_low` and `target_additional_high` for the projects the term
 is meant to add, and two strings copied from what they said: `rate_display`
 ("1 to 2 a month") and `target_display` ("2 to 4 over three months"). It asserts
-nothing the call did not give. Do not reach for it to make a bad number look
+nothing the call did not give. `rate_display` is the rate the client signs at
+today, as he said it ("3 since January"), never the target: it prints as "You
+sign" directly above the target, so the target written there reads as the same
+line twice, and `validate.py` fails it. When the call gave no signing rate,
+write FILL. Do not reach for it to make a bad number look
 better: if even the whole target does not cover the engagement, the validator
 says so and the deal needs a human.
 

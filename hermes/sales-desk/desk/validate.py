@@ -1971,6 +1971,36 @@ def check_margin_words(data: dict[str, Any], rep: Report) -> None:
                                     "projects are counted at it and labelled gross")
 
 
+# ------------------------------------------------------ the signing rate ----
+# The volume page sets the rate the client signs at today ("You sign") above
+# the projects the term targets. On 5 October 2026 176954619's "You sign" read
+# "2 to 4 over the term", the target, directly above the target row saying the
+# same, where the call gave three projects since the start of the year. A
+# target said as more than today ("2 more a month") is the honest way to state
+# a target that equals today's rate, so it is not a repeat.
+INCREMENT = re.compile(r"\b(?:more|additional|extra|another|on\s+top)\b|إضافي|إضافية|اضافي|اضافية|زيادة|أخرى|اخرى",
+                       re.I)
+
+
+def check_rate(data: dict[str, Any], rep: Report) -> None:
+    """The volume page's "You sign" row is the client's own signing rate, never
+    the target: it fails when it carries the same figures as target_display."""
+    a = data.get("arithmetic") if isinstance(data.get("arithmetic"), dict) else {}
+    if str(a.get("mode") or "").strip().lower() != "volume":
+        return
+    rate, target = str(a.get("rate_display") or "").strip(), str(a.get("target_display") or "").strip()
+    if not rate or not target or FILL_RE.search(rate) or FILL_RE.search(target):
+        return
+    said, aimed = sorted(set(count_figures(rate))), sorted(set(count_figures(target)))
+    if said and said == aimed and not (INCREMENT.search(_plain(target)) and not INCREMENT.search(_plain(rate))):
+        rep.add(FAIL, "rate", "arithmetic.rate_display carries the same figures as arithmetic.target_display ("
+                + " and ".join(str(n) for n in said) + "), so \"You sign\" repeats the target. It is the rate the "
+                "client signs at today, as the call gave it (a gap tile, the funnel or the tree may say it), "
+                "or FILL for the closer; never the target")
+    else:
+        rep.add(PASS, "rate", "the signing rate is not the target")
+
+
 # ------------------------------------------------- the arithmetic's words ----
 # The verdict and the close divide into what the table divides into (SKILL.md,
 # "One denominator per page"). On 5 October 2026 two drafts on the reviewed
@@ -2266,6 +2296,7 @@ def validate(data: dict[str, Any], transcript: Optional[str] = None, *, resolved
     if general or blind:
         check_arithmetic(data, rep)
         check_margin_words(data, rep)
+        check_rate(data, rep)
         check_verdict(data, rep)
     else:
         pct = check_fee_band(data, rep)

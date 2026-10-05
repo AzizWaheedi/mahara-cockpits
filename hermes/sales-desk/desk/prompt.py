@@ -521,12 +521,18 @@ def repair_user(deal: dict[str, Any], problems: list[str]) -> str:
     verdict = ("The arithmetic page's words use the figures its table prints (the whole engagement, the share "
                "of one project, the count at the gross margin), never FILL. "
                if any(p.startswith("verdict") for p in problems) else "")
+    # The repair has the draft and not the call: the rate the client signs at
+    # today is in the draft's own gap tiles, funnel or tree, or it is the
+    # closer's to give (176954619, 5 October 2026).
+    rate = ("arithmetic.rate_display is the rate the client signs at today, never the target: take it from what "
+            "this draft already says the client signs (a gap tile, the funnel, the tree), or write FILL. "
+            if any(p.startswith("rate") for p in problems) else "")
     return (
         "The checker found these problems in this draft:\n\n"
         + listed
         + "\n\nReturn the same JSON object with each problem fixed and nothing else changed. "
         "Remove a promise rather than rewording it. Where a figure was never said on the "
-        "call, write FILL in its place. " + proof + verdict + "Keep every other field exactly as it is, and add "
+        "call, write FILL in its place. " + proof + verdict + rate + "Keep every other field exactly as it is, and add "
         "nothing new.\n\nReturn only the JSON object.\n\n"
         + json.dumps(deal, ensure_ascii=False, indent=1)
     )
