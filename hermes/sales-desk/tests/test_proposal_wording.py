@@ -90,5 +90,75 @@ class SigningRateTests(unittest.TestCase):
         self.assertTrue("never the target" in SKILL)
 
 
+
+# --------------------------------------------------------------- finding 2 ---
+def with_fix(line: str, key: str = "fix", lang: str = "en") -> dict[str, Any]:
+    """A deal whose second solution row's fix (or another outcome field) says `line`."""
+    deal = general_deal(lang=lang)
+    if key == "fix":
+        deal["solution"][1]["fix"] = line
+    else:
+        deal[key] = line
+    return deal
+
+
+def absolute(deal: dict[str, Any]) -> list[str]:
+    return [f for f in failing(check(deal, text=None), "guarantee") if "as certain" in f]
+
+
+class AbsoluteOutcomeTests(unittest.TestCase):
+    """180273419 page 5: "so small jobs never arrive" in the solution rows, a
+    promise the program cannot keep, passed the guarantee check."""
+
+    def test_the_live_line_fails_naming_the_field(self):
+        found = absolute(with_fix("Targeting and filtering set to your minimum ticket, so small jobs never arrive."))
+        self.assertTrue(any("solution[1].fix" in f and "never arrive" in f for f in found), found)
+
+    def test_other_absolute_outcomes_fail(self):
+        for line in ("Small jobs will never reach you.",
+                     "Every lead is qualified before it reaches your team.",
+                     "A filtration funnel, so every showroom visit is a real buyer.",
+                     "No more wasted meetings with people who cannot afford you.",
+                     "A calendar that is always full.",
+                     "Nothing below your ticket ever reaches you."):
+            self.assertTrue(absolute(with_fix(line)), line)
+        self.assertTrue(absolute(with_fix("Every lead is qualified.", key="solution_close")))
+
+    def test_the_arabic_forms_fail(self):
+        for line in ("استهداف وتصفية على حد مشروعك الأدنى، فلن تصلك الأعمال الصغيرة.",
+                     "الأعمال الصغيرة لا تصل إليك أبدا.",
+                     "كل عميل محتمل مؤهل قبل أن يصل إلى فريقك.",
+                     "لا مزيد من الاجتماعات الضائعة.",
+                     "جدولك ممتلئ دائما."):
+            self.assertTrue(absolute(with_fix(line, lang="ar")), line)
+
+    def test_ordinary_uses_pass(self):
+        for line in ("We never share your data with anyone.",
+                     "Thirty meetings is the target we work to, never a promise.",
+                     "Every enquiry called in 5 to 30 minutes.",
+                     "Our team answers every enquiry and books only the meetings worth your time.",
+                     "No more than 30 minutes to the first call.",
+                     "Always-on campaigns on two platforms.",
+                     "A line that never bids against it.",
+                     "Direct enquiries that never go to open tender.",
+                     "Targeting and filtering set to your minimum ticket, so fewer small jobs arrive.",
+                     "Small jobs are filtered out before they reach you."):
+            self.assertEqual(absolute(with_fix(line)), [], line)
+        for line in ("لا نشارك بياناتك مع أحد أبدا.", "كل استفسار يتصل به فريقنا خلال 5 إلى 30 دقيقة."):
+            self.assertEqual(absolute(with_fix(line, lang="ar")), [], line)
+
+    def test_the_diagnosis_pages_may_say_never(self):
+        deal = general_deal(subhead="Referrals keep you busy, and the large villas never arrive.")
+        deal["tree"]["branches"][0]["note"] = "The big developers never reach you."
+        self.assertEqual(absolute(deal), [])
+
+    def test_it_is_repaired_by_rewording(self):
+        self.assertIn("guarantee", engine.REPAIRABLE)
+        text = prompt.repair_user(general_deal(), ["guarantee: solution[1].fix states an outcome as certain"])
+        self.assertIn("fewer", text)
+
+    def test_the_drafter_is_told_to_write_fewer(self):
+        self.assertTrue('write "fewer" or "filtered out", never "never"' in SKILL)
+
 if __name__ == "__main__":
     unittest.main()

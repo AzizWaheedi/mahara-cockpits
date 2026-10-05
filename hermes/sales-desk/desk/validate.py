@@ -1192,6 +1192,83 @@ def built_to_deliver(text: str) -> bool:
     return any(not honest(m) for rx in (WHAT_IT_DELIVERS, WHAT_IT_IS_BUILT_TO) for m in rx.finditer(text))
 
 
+# An outcome stated as certain where we describe what we sell: "so small jobs
+# never arrive" (180273419's solution row, live check of 5 October 2026),
+# "every lead is qualified", "no more wasted meetings", "a calendar that is
+# always full". The program filters and lowers; it cannot promise none or all.
+# Only the outcome pages are read: the diagnosis may say the large villas
+# never arrive, because that is the client's own state. And only an outcome:
+# "we never share your data", "never a promise" and "every enquiry called in
+# minutes" (what we do, not what the client is sure to get) pass.
+_ARRIVE = (r"(?:arrives?|reach(?:es)?\s+(?:you|your|the\s+(?:team|calendar|diary|desk|showroom|office|sales))"
+           r"|gets?\s+through|comes?\s+through|lands?\s+(?:on|in)\s+your|makes?\s+it\s+(?:to|through|into)"
+           r"|slips?\s+(?:through|away)|goes?\s+(?:cold|unanswered|to\s+waste|missing)|falls?\s+through"
+           r"|wastes?\s+your|turns?\s+up|shows?\s+up|misse[sd]|miss|booked|let\s+through)")
+_LEAD_NOUN = (r"(?:leads?|enquir(?:y|ies)|inquir(?:y|ies)|meetings?|appointments?|bookings?|visits?|calls?|"
+              r"prospects?|buyers?|clients?|contacts?|opportunit(?:y|ies))")
+_SURE_QUALITY = (r"(?:real|serious|qualified|pre-?qualified|genuine|ready|warm|hot|high[- ]intent|on\s+budget|"
+                 r"within\s+budget|worth|buyers?|a\s+buyer|a\s+fit|interested)")
+_AR_ARRIVE = (r"(?:يصل|تصل|يصلك|تصلك|يصلكم|تصلكم|يوصل|توصل|يوصلك|توصلك|يجي|تجي|يجيك|تجيك|يأتي|تأتي|يأتيك|"
+              r"تأتيك|يضيع|تضيع|يفوت|تفوت|يفوتك|تفوتك)")
+_AR_FULL = r"(?:ممتلئ|ممتلئة|مليء|مليئة|محجوز|محجوزة|مشغول|مشغولة|مؤهل|مؤهلة|جاهز|جاهزة|جاد|جادة)"
+_AR_ALWAYS = r"(?:دائما|دائماً|على\s+الدوام)"
+ABSOLUTE_OUTCOME = re.compile(
+    rf"\b(?:never|will\s+not|won't|no\s+longer)\s+(?:again\s+|ever\s+)?{_ARRIVE}\b"
+    rf"|\b(?:nothing|none|no\s+one|nobody|no\s+(?:lead|enquiry|inquiry|job|project|meeting|call))\b[^.,;]{{0,40}}?"
+    rf"\bever\s+{_ARRIVE}\b"
+    r"|\b(?:every|each|all(?:\s+the)?|100\s*(?:%|percent)\s+of(?:\s+the)?)\s+"
+    rf"(?:single\s+)?(?:[a-z-]+\s+)?{_LEAD_NOUN}\s+"
+    rf"(?:you\s+(?:get|meet|see|receive)\s+|we\s+(?:book|send|bring)\s+)?"
+    rf"(?:is|are|will\s+be|becomes?|turns?\s+into|arrives?(?:\s+as)?)\s+(?:a\s+|an\s+)?{_SURE_QUALITY}\b"
+    r"|\bno\s+more\s+(?!than\b|to\b|of\s+(?:your|the)\b|for\b|and\b|or\b|is\b|are\b|will\b|can\b)[a-z]"
+    r"|\balways\s+(?:[a-z]+\s+){0,2}?(?:full|booked|busy|qualified|serious|ready\s+to\s+buy|on\s+budget|"
+    r"buying|converting|flowing|arriving|coming\s+in)\b"
+    rf"|(?<![ء-ي])[فو]?لن\s+(?:\S+\s+)?{_AR_ARRIVE}(?![ء-ي])"
+    rf"|(?<![ء-ي])[فو]?(?:لا|ما)\s+(?:\S+\s+)?{_AR_ARRIVE}(?![ء-ي])(?:\s+\S+){{0,4}}?\s+(?:أبدا|أبداً|ابدا|ابداً|أبد|ابد)"
+    r"(?![ء-ي])"
+    rf"|(?<![ء-ي])كل\s+(?:عميل\s+محتمل|عميل|ليد|استفسار|طلب|اجتماع|موعد|زيارة|مشتر[يٍ]?)\s+(?:\S+\s+){{0,3}}?"
+    r"(?:هو\s+|هي\s+|يكون\s+|تكون\s+|سيكون\s+|ستكون\s+)?ل?(?:جاد|جادة|جدي|جدية|مؤهل|مؤهلة|جاهز|جاهزة|حقيقي|حقيقية|"
+    r"مشتر|مشتري)(?![ء-ي])"
+    r"|(?<![ء-ي])لا\s+مزيد(?![ء-ي])|(?<![ء-ي])وداعا\s+ل"
+    rf"|{_AR_ALWAYS}\s+(?:\S+\s+){{0,2}}?{_AR_FULL}(?![ء-ي])|(?<![ء-ي]){_AR_FULL}\s+(?:\S+\s+){{0,2}}?{_AR_ALWAYS}",
+    re.I)
+# A sentence that says the outcome is not promised is the honest form.
+_NOT_PROMISED = re.compile(r"\b(?:not|never|no|cannot|can't)\s+(?:a\s+)?(?:promise|guarantee)"
+                           r"|ليس\s+وعدا|لا\s+نضمن", re.I)
+
+
+def outcome_strings(data: dict[str, Any]) -> list[tuple[str, str]]:
+    """The strings where the document says what the client gets: the solution
+    page's fixes, close and targets, the program, the investment's close and
+    the start steps (and a blind document's call to action)."""
+    out: list[tuple[str, str]] = []
+    for key in ("solution_title", "solution_close", "investment_close", "start_note"):
+        if isinstance(data.get(key), str):
+            out.append((key, data[key]))
+    for block, fields in (("solution", ("fix",)), ("program", ("title", "note")), ("solution_targets", ("v", "k")),
+                          ("start_steps", ("title", "body"))):
+        for i, row in enumerate(data.get(block) or []):
+            if isinstance(row, dict):
+                out += [(f"{block}[{i}].{f}", row[f]) for f in fields if isinstance(row.get(f), str)]
+    cta = data.get("cta")
+    if isinstance(cta, dict):
+        out += [(f"cta.{k}", v) for k, v in cta.items() if isinstance(v, str)]
+    return out
+
+
+def absolute_outcomes(data: dict[str, Any]) -> list[tuple[str, str]]:
+    """(field, the words) for each outcome stated as certain on the outcome pages."""
+    found = []
+    for path, raw in outcome_strings(data):
+        text = _TAGS.sub("", _plain(raw))
+        for m in ABSOLUTE_OUTCOME.finditer(text):
+            if _NOT_PROMISED.search(sentence_at(text, m.start(), m.end())):
+                continue
+            found.append((path, m.group(0).strip()))
+            break
+    return found
+
+
 def promises_results(text: str) -> bool:
     """Free work, or results guaranteed, in a line of the document."""
     if FREE_WORK.search(text):
@@ -1205,6 +1282,15 @@ def promises_results(text: str) -> bool:
 
 
 def check_guarantee(data: dict[str, Any], resolved: dict[str, Any], rep: Report) -> None:
+    # A fail, not a warning: it is a result promised in other words, which the
+    # rule forbids whatever the closer chose, and only a fail reaches the
+    # repair round, which rewords it before anyone has to read the page.
+    certain = absolute_outcomes(data)
+    if certain:
+        rep.add(FAIL, "guarantee", "the document states an outcome as certain in "
+                + ", ".join(f"{p} (\"{w}\")" for p, w in certain[:4])
+                + ". The program filters and lowers; it cannot promise none or all. Write \"fewer\" or "
+                "\"filtered out\", never \"never\", \"every lead is\", \"no more\" or \"always\"")
     results = [p for p, t in content_strings(data) if promises_results(_plain(t))]
     if results:
         rep.add(FAIL, "guarantee", "the document promises results in " + ", ".join(results[:4])
@@ -1214,9 +1300,9 @@ def check_guarantee(data: dict[str, Any], resolved: dict[str, Any], rep: Report)
     promised = [p for p, t in content_strings(data) if PROMISE.search(_plain(t))]
     mentioned = [p for p, t in content_strings(data) if MENTION.search(_plain(t))]
     if resolved["guarantee"]:
-        if promised or mentioned:
+        if (promised or mentioned) and not certain:
             rep.add(PASS, "guarantee", "the guarantee the closer chose is stated (" + ", ".join((promised or mentioned)[:2]) + ")")
-        else:
+        elif not (promised or mentioned):
             rep.add(WARN, "guarantee", "the closer chose the guarantee and the document does not state it; "
                                        "add it as one line in the terms")
         return
@@ -1226,7 +1312,7 @@ def check_guarantee(data: dict[str, Any], resolved: dict[str, Any], rep: Report)
     elif mentioned:
         rep.add(WARN, "guarantee", "no guarantee was chosen, and " + ", ".join(mentioned[:4])
                                    + " reads like one. Check it promises nothing.")
-    else:
+    elif not certain:
         rep.add(PASS, "guarantee", "no guarantee was chosen and none is promised")
 
 

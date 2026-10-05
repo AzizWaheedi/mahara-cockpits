@@ -527,13 +527,18 @@ def repair_user(deal: dict[str, Any], problems: list[str]) -> str:
     rate = ("arithmetic.rate_display is the rate the client signs at today, never the target: take it from what "
             "this draft already says the client signs (a gap tile, the funnel, the tree), or write FILL. "
             if any(p.startswith("rate") for p in problems) else "")
+    # An absolute outcome ("so small jobs never arrive") keeps its line and
+    # loses its certainty (180273419, 5 October 2026).
+    certain = ("An outcome stated as certain is reworded, not removed: \"fewer small jobs arrive\", \"filtered out "
+               "before they reach you\", keeping the rest of the line. "
+               if any(p.startswith("guarantee") and "as certain" in p for p in problems) else "")
     return (
         "The checker found these problems in this draft:\n\n"
         + listed
         + "\n\nReturn the same JSON object with each problem fixed and nothing else changed. "
         "Remove a promise rather than rewording it. Where a figure was never said on the "
-        "call, write FILL in its place. " + proof + verdict + rate + "Keep every other field exactly as it is, and add "
-        "nothing new.\n\nReturn only the JSON object.\n\n"
+        "call, write FILL in its place. " + proof + verdict + rate + certain
+        + "Keep every other field exactly as it is, and add nothing new.\n\nReturn only the JSON object.\n\n"
         + json.dumps(deal, ensure_ascii=False, indent=1)
     )
 

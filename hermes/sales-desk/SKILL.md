@@ -215,6 +215,13 @@ these figures exactly, with the words in the document's language.
   `roi.target_projects_month` prints under "The plan's target", in large
   type: a short range in the plan's words, always with its period ("2 to 4 a
   month", "1 to 3 over three months"), since the label names none.
+- **No outcome is certain.** The program filters and lowers; it cannot
+  promise none or all. Where the document says what we install and what it
+  changes, write "fewer" or "filtered out", never "never": "so fewer small
+  jobs arrive", not "so small jobs never arrive". "Every lead is qualified",
+  "no more wasted meetings" and "a calendar that is always full" are the same
+  promise, in either language, and `validate.py` fails them. Saying what we do
+  ("every enquiry called in minutes") is not an outcome and is fine.
 - **No payment ever waits on a result.** Whatever the closer chose, no
   instalment falls due on a first contract, project, deal, client or sale. A
   call recorded before 3 October 2026 may still quote that split; it is
