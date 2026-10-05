@@ -89,7 +89,11 @@ function chaosWorld(o: { rooms?: Row; live?: Row } = {}) {
   };
   async function drain(): Promise<void> {
     for (let i = 0; i < 5; i++) {
+      {
+      // A macrotask first, so a press's background job is registered before it is waited for.
+      await realSleep(1);
       await Promise.race([Promise.allSettled(jobs.slice()), realSleep(40)]);
+    }
     }
   }
 

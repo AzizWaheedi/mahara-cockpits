@@ -203,6 +203,8 @@ const SPEC_SENTENCES = {
 const LANE_SENTENCES = {
   zoom_daily_cap: "Your Zoom user has made its rooms for today (Zoom allows 100 a day); Zoom allows more from 03:00 Kuwait. Use Meet.",
   lead_has_others_room: "The {role}'s video room for this lead is open until {until}. Call the lead, or send a link after that.",
+  lead_in_others_room: "The lead is on a video call with the {role} now. Send a link after it ends.",
+  lead_has_others_room_closing: "The {role}'s video room for this lead is closing now. Send a link in a minute.",
   disabled: "Video rooms are off for now. Call or message the lead instead.",
   provider_off: "{provider} rooms are off for now. Use {other}.",
   test_only: "Video rooms are in testing, so they work only for the test contact for now.",

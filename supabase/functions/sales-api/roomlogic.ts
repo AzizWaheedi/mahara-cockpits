@@ -722,6 +722,10 @@ export const LANE_COPY = {
   zoom_daily_cap: "Your Zoom user has made its rooms for today (Zoom allows 100 a day); Zoom allows more from 03:00 Kuwait. Use Meet.",
   /** The lead's open room is another seat's (stress2, round 2): never "Open it", which only its host can. */
   lead_has_others_room: "The {role}'s video room for this lead is open until {until}. Call the lead, or send a link after that.",
+  /** The lead is in that other seat's room now (stress2 round 3): no time, and never "Call the lead". */
+  lead_in_others_room: "The lead is on a video call with the {role} now. Send a link after it ends.",
+  /** That other seat's room is past its time and the sweep closes it within the minute (stress2 round 3). */
+  lead_has_others_room_closing: "The {role}'s video room for this lead is closing now. Send a link in a minute.",
   disabled: "Video rooms are off for now. Call or message the lead instead.",
   provider_off: "{provider} rooms are off for now. Use {other}.",
   test_only: "Video rooms are in testing, so they work only for the test contact for now.",
@@ -2310,7 +2314,11 @@ export function phoneSince(attempts: Row[], dials: Row[], since: number, now: nu
   if (mine.some(a => (a.state === "dialing" || a.state === "placed") && fresh(a))) return "open";
   const answered = (state: unknown, seconds: unknown) =>
     PHONE_ANSWERED.has(String(state ?? "").toLowerCase()) && (seconds === null || seconds === undefined || Number(seconds) > 0);
-  if (mine.some(a => a.state === "saved" && (answered(a.call_state, a.call_duration_s) || PHONE_TALKED.has(String(a.outcome ?? "")))))
+  // An outcome that speaks (Call back, Booked...) counts only on an attempt
+  // with no call record (stress2 round 3): a busy or unanswered call saved as
+  // Call back reached nobody. The sweep's S1 reads the same.
+  const noCall = (a: Row) => String(a.call_state ?? "").trim() === "";
+  if (mine.some(a => a.state === "saved" && (answered(a.call_state, a.call_duration_s) || (PHONE_TALKED.has(String(a.outcome ?? "")) && noCall(a)))))
     return "reached";
   if (
     dials.some(

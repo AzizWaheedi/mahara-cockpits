@@ -358,9 +358,10 @@ def in_hours(now: datetime, country: Any, hours: Any = FIRST_HOURS, *, first: bo
 
 
 # The zones whose weekend includes Friday: quiet_days are read there as
-# written (sales-api sendrules.ts FRIDAY_WEEKEND_ZONES, the same list).
+# written (sales-api sendrules.ts FRIDAY_WEEKEND_ZONES, the same list). Not
+# the UAE (Asia/Dubai): Saturday and Sunday since 2022 (stress2 round 3).
 FRIDAY_WEEKEND_ZONES = frozenset({
-    "Asia/Kuwait", "Asia/Riyadh", "Asia/Qatar", "Asia/Bahrain", "Asia/Dubai", "Asia/Muscat", "Asia/Baghdad", "Asia/Amman",
+    "Asia/Kuwait", "Asia/Riyadh", "Asia/Qatar", "Asia/Bahrain", "Asia/Muscat", "Asia/Baghdad", "Asia/Amman",
     "Asia/Damascus", "Asia/Aden", "Asia/Gaza", "Asia/Jerusalem", "Asia/Tehran", "Asia/Kabul", "Asia/Dhaka",
     "Africa/Cairo", "Africa/Tripoli", "Africa/Algiers", "Africa/Khartoum",
 })

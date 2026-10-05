@@ -2494,8 +2494,25 @@ async function sendFollowup(who: Who, f: Row, b: Row, auto: boolean, opts: { dec
         unread = true;
       }
     }
-    const notSent = !fixable && !unread && !row;
-    const mayHaveGone = !fixable && (unread || (row !== null && row.state !== "failed"));
+    // HighLevel's own 429, 401 or 403 is the account's state, not the lead's
+    // (stress2 round 3): the failed row keeps the attempt under a key of its
+    // own, so the follow-up's request id is free again and the draft waits
+    // for the next run with its approval, never closed as failed.
+    let freed = false;
+    if (!fixable && !unread && row !== null && row.state === "failed" && /HighLevel said (429|401|403)\b|too many requests/i.test(err)) {
+      try {
+        const moved = await svc(`cockpit_sales_messages?id=eq.${enc(String(row.id))}&state=eq.failed`, {
+          method: "PATCH",
+          body: { request_id: crypto.randomUUID() },
+          prefer: "return=representation",
+        });
+        freed = moved.length > 0;
+      } catch (e2) {
+        console.error("followup: a refused send's key was not freed", redact(String((e2 as Error)?.message ?? e2)));
+      }
+    }
+    const notSent = (!fixable && !unread && !row) || freed;
+    const mayHaveGone = !fixable && !freed && (unread || (row !== null && row.state !== "failed"));
     const doubt = `${MAY_HAVE_GONE} (${err.slice(0, 200)})`;
     await svc(`cockpit_sales_followups?id=eq.${enc(String(f.id))}`, {
       method: "PATCH",
@@ -5624,10 +5641,13 @@ const rooms = makeRooms({
   // "Did this link go?" after its answer was lost: only a message with the
   // send's own words that reached the lead counts (never a failed one, never
   // any other WhatsApp to the lead), and with no words known nothing counts.
+  // Found, its HighLevel id and status come back, so a link confirmed this
+  // way can be read again for a late failure at Meta (stress2 round 3).
   sentSince: async (contactId, since, text) => {
     if (!text) return null;
     try {
-      return Boolean((await whatsappSentSince(contactId, since, text, { went: true })).hit);
+      const hit = (await whatsappSentSince(contactId, since, text, { went: true })).hit;
+      return hit ? { id: hit.id ? String(hit.id) : null, status: hit.status ? String(hit.status) : null } : false;
     } catch {
       return null;
     }

@@ -109,7 +109,21 @@ export function stageOut(stage: unknown): boolean {
  */
 export function contactRefused(e: unknown): boolean {
   if (e instanceof ApiRefusal) return false;
-  return /HighLevel said (400|404|422)\b/.test(String((e as Error)?.message ?? e));
+  const message = String((e as Error)?.message ?? e);
+  const code = /HighLevel said (400|404|422)\b/.exec(message)?.[1];
+  // As rooms.ts contactGoneAnswer reads it (stress2 round 3): a 404, or a 400
+  // or 422 whose words say the contact is not there. Any other 400 (a
+  // gateway's "Bad Request", a Version header refused during a deploy) is
+  // HighLevel's blip, never this lead's.
+  if (!code) return false;
+  if (code === "404") return true;
+  return /not\s*found|does\s*not\s*exist|doesn'?t\s*exist|no\s+such\s+contact|deleted|merged|invalid\s+contact\s*id/i.test(message);
+}
+
+/** A HighLevel 4xx that is not about the lead (contactRefused false): an outage of HighLevel's, for this run. */
+export function highlevelBlip(e: unknown): boolean {
+  if (e instanceof ApiRefusal) return false;
+  return /HighLevel said (400|422)\b/.test(String((e as Error)?.message ?? e)) && !contactRefused(e);
 }
 
 /**
@@ -163,6 +177,8 @@ export const AGENT_COPY = {
   stop_answered: "This stop was already answered ({state}). Reload to see it.",
   stop_dnd_kept: "This lead asked to stop for good, so the agent stays off. Take do-not-disturb off in HighLevel first if they asked to hear from us again.",
   contact_refused: "HighLevel would not take this lead's contact ({why}), so the opener was set aside for a person. Check the lead in HighLevel.",
+  /** A HighLevel 400 or 422 not about the lead (stress2 round 3): nothing is set aside, the batch waits. */
+  highlevel_blip: "HighLevel refused the send for a moment ({why}), so the openers wait in the queue. The next run tries again.",
   sending: "This opener is already going out, so it cannot be held now.",
   raced: "Someone else has just dealt with this draft.",
   kind_off: "This kind of opener is off ({kind}), so it waits in the queue. A manager switches it back on under Follow-ups, or pauses the wave.",
@@ -226,7 +242,10 @@ const HOLD_WORDS = [
 ];
 export function holdsEverything(message: string, status: number): boolean {
   const m = message.toLowerCase();
-  return status === 429 || HOLD_WORDS.some(w => m.includes(w));
+  // HighLevel's own 429 (its burst limit, shared with the dialer and the
+  // mirror), 401 or 403 (the token): the account's state, never one lead's,
+  // even inside sales-api's 502 (stress2 round 3).
+  return status === 429 || HOLD_WORDS.some(w => m.includes(w)) || /highlevel said (429|401|403)\b|too many requests/.test(m);
 }
 
 export function makeFollowupAgent(deps: AgentDeps): { actions: Record<string, Action>; desk: Record<string, Action> } {
@@ -815,6 +834,16 @@ export function makeFollowupAgent(deps: AgentDeps): { actions: Record<string, Ac
         } else await release();
         if (all && (e.extra.hold_all !== true || (setup && e.extra.code !== "setup")))
           throw new ApiRefusal(e.message, e.status, { ...e.extra, hold_all: true, ...(setup ? { code: "setup" } : {}) });
+      } else if (highlevelBlip(e)) {
+        // HighLevel answered a 400 or 422 that is not about this lead: the
+        // opener stays in the queue untouched, and the batch stops for this
+        // run (hold_all), as for an outage (stress2 round 3).
+        await release();
+        throw refusal(
+          AGENT_COPY.highlevel_blip.replace("{why}", redact(String((e as Error)?.message ?? e)).slice(0, 160)),
+          503,
+          { hold_all: true, code: "outage" },
+        );
       } else if (contactRefused(e)) {
         // HighLevel will not take this lead's contact (merged or deleted
         // since the opener was written): a refusal about this lead, set aside

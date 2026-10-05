@@ -101,23 +101,29 @@ class AWeekOfSends(unittest.TestCase):
             clock.t = max(clock(), start + timedelta(minutes=5))
         return api, runs
 
-    def test_every_send_lands_in_hours_on_the_leads_own_clock_and_never_on_their_friday(self):
+    # Each lead's own weekend: Kuwait keeps Friday off; the UAE's weekend has
+    # been Saturday and Sunday since 2022 (stress2 round 3, uae-weekend-read-as-friday).
+    DAYS_OFF = {"Kuwait": {"Friday"}, "UAE": {"Saturday", "Sunday"}}
+
+    def test_every_send_lands_in_hours_on_the_leads_own_clock_and_never_on_their_day_off(self):
         api, _ = self.run_week()
         sent = [(t, fid) for t, action, fid in api.calls if action == "followup.send_due"]
         bad = []
         for t, fid in sent:
             lt = local(self.country[fid], t)
-            if not (9 <= lt.hour < 18) or lt.strftime("%A") == "Friday":
+            if not (9 <= lt.hour < 18) or lt.strftime("%A") in self.DAYS_OFF[self.country[fid]]:
                 bad.append((fid, lt.isoformat()))
         self.assertEqual(bad, [])
         self.assertEqual(len({fid for _, fid in sent}), 40)  # all of them went, by the next working day
         times = sorted(t for t, _ in sent)
         self.assertTrue(all((b - a).total_seconds() >= 45 for a, b in zip(times, times[1:])))
-        # Thursday's sends stop at 18:00 on each lead's clock; the rest wait for Saturday 09:00.
+        # Thursday's sends stop at 18:00 on each lead's clock; the rest wait for
+        # the lead's next working morning: Saturday 09:00 in Kuwait, Friday 09:00 in the UAE.
         later = [(t, fid) for t, fid in sent if t > APPROVED + timedelta(hours=12)]
         self.assertTrue(later)
         for t, fid in later:
-            self.assertGreaterEqual(local(self.country[fid], t).replace(tzinfo=None), datetime(2026, 10, 10, 9, 0))
+            first = datetime(2026, 10, 10, 9, 0) if self.country[fid] == "Kuwait" else datetime(2026, 10, 9, 9, 0)
+            self.assertGreaterEqual(local(self.country[fid], t).replace(tzinfo=None), first)
 
     def test_an_opener_approved_on_thursday_still_goes_on_saturday_morning(self):
         """Openers are drafted at 09:00 Kuwait and expire 48 h later (waves._draft_row); sales-api's
@@ -155,9 +161,13 @@ class AWeekOfSends(unittest.TestCase):
 
     def test_quiet_days_set_to_friday_and_saturday_hold_saturday_too(self):
         api, _ = self.run_week({**SETTINGS, "quiet_days": ["friday", "saturday"]})
-        days = {local(self.country[fid], t).strftime("%A") for t, _, fid in api.calls}
-        self.assertNotIn("Friday", days)
-        self.assertNotIn("Saturday", days)
+        kuwait = {local(self.country[fid], t).strftime("%A") for t, _, fid in api.calls if self.country[fid] == "Kuwait"}
+        self.assertNotIn("Friday", kuwait)
+        self.assertNotIn("Saturday", kuwait)
+        # A UAE lead's weekend is their own Saturday and Sunday (zoneDaysOff).
+        uae = {local(self.country[fid], t).strftime("%A") for t, _, fid in api.calls if self.country[fid] == "UAE"}
+        self.assertNotIn("Saturday", uae)
+        self.assertNotIn("Sunday", uae)
 
 
 if __name__ == "__main__":

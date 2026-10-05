@@ -68,7 +68,7 @@ begin
   foreach f in array array['public.cockpit_sales_live_claim(uuid, text, integer, timestamptz)', 'public.cockpit_sales_rooms_sweep()',
                            'public.cockpit_sales_rooms_tick()', 'public.cockpit_sales_watchdog()',
                            'public.cockpit_sales_room_code()',
-                           'public.cockpit_sales_room_event_lease(uuid, text, integer)',
+                           'public.cockpit_sales_room_event_lease(uuid, text, integer, uuid)',
                            'public.cockpit_sales_room_pending(uuid, timestamptz)',
                            'public.cockpit_sales_rooms_close(uuid[], text[], text, text, text, text, text)',
                            'public.cockpit_sales_live_move(uuid, text[], text, text, text)',
@@ -87,7 +87,7 @@ begin
   perform pg_temp.ck('A claim, lease, sweep, tick and watchdog are security definer with an empty search_path',
     (select count(*) = 5 and bool_and(p.prosecdef and 'search_path=""' = any (p.proconfig)) from pg_proc as p
       where p.oid in ('public.cockpit_sales_live_claim(uuid, text, integer, timestamptz)'::regprocedure,
-                      'public.cockpit_sales_room_event_lease(uuid, text, integer)'::regprocedure,
+                      'public.cockpit_sales_room_event_lease(uuid, text, integer, uuid)'::regprocedure,
                       'public.cockpit_sales_rooms_sweep()'::regprocedure, 'public.cockpit_sales_rooms_tick()'::regprocedure,
                       'public.cockpit_sales_watchdog()'::regprocedure)));
   perform pg_temp.ck('A the claim waits at most 3 s for a lock (lock_timeout)',

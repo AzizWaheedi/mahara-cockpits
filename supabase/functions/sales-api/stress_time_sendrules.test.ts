@@ -46,12 +46,15 @@ describe("a week of openers in the Gulf, minute by minute, on each lead's own cl
     ["United Arab Emirates", "Asia/Dubai"],
     ["مسقط", "Asia/Muscat"],
   ];
+  // The UAE's weekend has been Saturday and Sunday since 2022 (stress2 round
+  // 3, uae-weekend-read-as-friday); the rest of the Gulf keeps Friday off.
+  const daysOff = (zone: string) => (zone === "Asia/Dubai" ? [6, 0] : [5]);
   for (const [country, zone] of gulf)
-    test(`${country}: an opener goes only 09:00 to 18:00 their time and never on their Friday`, () => {
+    test(`${country}: an opener goes only 09:00 to 18:00 their time and never on their day off`, () => {
       const wrong: string[] = [];
       for (const t of minutes) {
         const { hour, day } = local(zone, t);
-        const want = hour >= 9 && hour < 18 && day !== 5;
+        const want = hour >= 9 && hour < 18 && !daysOff(zone).includes(day);
         if ((opener(country, t) === null) !== want) wrong.push(new Date(t).toISOString());
         if (leadHour(country, t) !== hour || leadWeekday(country, t) !== day) wrong.push(`clock ${new Date(t).toISOString()}`);
       }
@@ -66,10 +69,13 @@ describe("a week of openers in the Gulf, minute by minute, on each lead's own cl
     expect(opener("AE", at("2026-10-08T14:00:00Z"))).not.toBeNull(); // 18:00 Dubai
     expect(later("AE", at("2026-10-08T16:59:59Z"))).toBeNull(); // 20:59:59 Dubai, a later step
     expect(later("AE", at("2026-10-08T17:00:00Z"))).not.toBeNull(); // 21:00 Dubai
-    // Friday 09:00 Dubai is Friday 08:00 Kuwait: the day off on the lead's clock.
-    expect(opener("AE", at("2026-10-09T05:00:00Z"))).toMatch(/Friday/);
-    // Saturday 00:00 Dubai is Friday 23:00 Kuwait; Saturday 09:00 Dubai goes.
-    expect(opener("AE", at("2026-10-10T05:00:00Z"))).toBeNull();
+    // Oman (UTC+4, Friday off): Friday 09:00 Muscat is Friday 08:00 Kuwait,
+    // the day off on the lead's clock; Saturday 09:00 Muscat goes.
+    expect(opener("OM", at("2026-10-09T05:00:00Z"))).toMatch(/Friday/);
+    expect(opener("OM", at("2026-10-10T05:00:00Z"))).toBeNull();
+    // The UAE (UTC+4, Saturday and Sunday off): Friday 09:00 Dubai goes, Saturday 09:00 waits.
+    expect(opener("AE", at("2026-10-09T05:00:00Z"))).toBeNull();
+    expect(opener("AE", at("2026-10-10T05:00:00Z"))).toMatch(/Saturday/);
     // A reply to a lead who wrote goes any time, Friday midnight included.
     expect(hoursRefusal({ segment: "reply", touch: 1, country: "AE", now: at("2026-10-08T20:00:00Z"), followups: FOLLOWUPS, dayOff: true })).toBeNull();
   });

@@ -1351,15 +1351,19 @@ begin
                 -- The lead on the phone after the room was asked for (stress2,
                 -- round 2, roomlogic.ts phoneSince): a dial they answered, a
                 -- saved attempt that spoke, or Maqsam's answered call either
-                -- way. The intro may be held by phone: a person marks it.
+                -- way. The intro may be held by phone: a person marks it. An
+                -- outcome that speaks counts only on an attempt with no call
+                -- record (stress2 round 3): a busy or unanswered call saved as
+                -- Call back reached nobody.
                 when exists (select 1 from public.cockpit_sales_attempts as pa
                               where pa.contact_id = x.contact_id
                                 and (pa.started_at >= x.requested_at or pa.saved_at >= x.requested_at)
                                 and pa.state = 'saved'
                                 and ((lower(coalesce(pa.call_state, '')) in ('answered', 'completed', 'serviced')
                                       and coalesce(pa.call_duration_s, 1) > 0)
-                                     or pa.outcome in ('callback', 'booked', 'not_interested', 'disqualified', 'handled',
-                                                       'confirmed', 'rescheduled', 'cancelled', 'showed')))
+                                     or (pa.outcome in ('callback', 'booked', 'not_interested', 'disqualified', 'handled',
+                                                        'confirmed', 'rescheduled', 'cancelled', 'showed')
+                                         and coalesce(btrim(pa.call_state), '') = '')))
                      or exists (select 1 from public.cockpit_sales_dials as dl
                                  where (dl.contact_id = x.contact_id
                                         or (dl.lead_phone8 is not null
@@ -1619,6 +1623,51 @@ end;
 $$;
 revoke all on function public.cockpit_sales_disposition_replace(bigint, jsonb) from public, anon, authenticated;
 grant execute on function public.cockpit_sales_disposition_replace(bigint, jsonb) to service_role;
+
+-- 6b. An event's lease carries its holder's token (stress2, round 3) --------
+
+-- releaseEvent cleared lease_until by dedupe key alone: a run whose lease ran
+-- out (its link cascade outlasted it) gave back the lease the run that took
+-- over held, and a third run took the event beside the second. The lease now
+-- stores the token its taker passes; sales-api finishes and releases an
+-- event only under its own token (lease_token = its token), and a lease the
+-- database took as it stored the event (live.claimed) has none. Taken
+-- without a token (an older sales-api), lease_token is null, as before.
+alter table public.cockpit_sales_room_events add column if not exists lease_token uuid;
+comment on column public.cockpit_sales_room_events.lease_token is
+  'The token of the run that holds lease_until (cockpit_sales_room_event_lease p_token); a finish or release is guarded on it, so a run whose lease ran out leaves the current holder alone. Null: taken with no token.';
+
+drop function if exists public.cockpit_sales_room_event_lease(uuid, text, integer);
+create or replace function public.cockpit_sales_room_event_lease(
+  p_event_id uuid default null, p_dedupe_key text default null, p_seconds integer default 60, p_token uuid default null)
+returns uuid
+language plpgsql
+security definer
+set search_path = ''
+set lock_timeout = '3s'
+as $$
+declare
+  got uuid;
+begin
+  if p_event_id is null and p_dedupe_key is null then
+    return null;
+  end if;
+  -- A try is counted here, when room.event really takes the event, never
+  -- when the sweep only picks it for a replay nobody may answer (an outage).
+  update public.cockpit_sales_room_events as e
+     set lease_until = now() + make_interval(secs => least(greatest(coalesce(p_seconds, 60), 1), 600)),
+         lease_token = p_token,
+         tries = e.tries + case when e.source in ('zoom', 'slack', 'worker', 'claim', 'settle') then 1 else 0 end
+   where (p_event_id is null or e.id = p_event_id)
+     and (p_dedupe_key is null or e.dedupe_key = p_dedupe_key)
+     and e.handled_at is null
+     and (e.lease_until is null or e.lease_until <= now())
+  returning e.id into got;
+  return got;
+end;
+$$;
+revoke all on function public.cockpit_sales_room_event_lease(uuid, text, integer, uuid) from public, anon, authenticated;
+grant execute on function public.cockpit_sales_room_event_lease(uuid, text, integer, uuid) to service_role;
 
 -- 7. Grants (the view was made again) ---------------------------------------------
 

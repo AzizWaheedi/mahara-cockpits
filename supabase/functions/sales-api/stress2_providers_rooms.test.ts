@@ -154,7 +154,11 @@ function world() {
   const rooms = makeRooms(deps);
   const room = (id: string) => w.db.t("cockpit_sales_rooms").find(r => r.id === id) as Row;
   async function drain(): Promise<void> {
-    for (let i = 0; i < 10; i++) await Promise.race([Promise.allSettled(jobs.slice()), realSleep(40)]);
+    for (let i = 0; i < 10; i++) {
+      // A macrotask first, so a press's background job is registered before it is waited for.
+      await realSleep(1);
+      await Promise.race([Promise.allSettled(jobs.slice()), realSleep(40)]);
+    }
   }
   async function workerOpens(id: string) {
     const r = room(id);

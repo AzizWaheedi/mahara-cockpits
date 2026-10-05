@@ -307,6 +307,7 @@ describe("a settle that only waits uses up its tries", () => {
         );
       if (!e) return null;
       e.lease_until = new Date(w.clock.now + Number(a.p_seconds ?? 60) * 1000).toISOString();
+      e.lease_token = a.p_token ?? null; // 20261004a: the holder's token
       if (["zoom", "slack", "worker", "claim", "settle"].includes(String(e.source))) e.tries = Number(e.tries ?? 0) + 1;
       return String(e.id);
     };

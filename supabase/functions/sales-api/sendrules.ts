@@ -95,6 +95,8 @@ export const HOURS_COPY = {
   first: "A first message goes between {from} and {to}, their time.",
   night: "It is night where the lead is. Send it after 9 in the morning, their time.",
   friday: "It is Friday where the lead is, their day off. It goes on Saturday.",
+  /** Friday off and Saturday a quiet day too (stress2 round 3): the next day the agent sends is named. */
+  friday_next: "It is Friday where the lead is, their day off. It goes on {next}.",
   day_off: "It is {day} where the lead is, a day the agent does not send. It goes on their next working day.",
   zone_unknown: "The cockpit does not know the lead's time zone ({country}), so a person sends this first message.",
 } as const;
@@ -106,10 +108,12 @@ const DAY_NAMES = ["sunday", "monday", "tuesday", "wednesday", "thursday", "frid
  * The zones whose weekend includes Friday or keeps Friday off (the Gulf, most
  * of the Arab world, Iran, Afghanistan, Bangladesh): followups.quiet_days is read
  * there as written. The desk keeps the same list (followups.py
- * FRIDAY_WEEKEND_ZONES).
+ * FRIDAY_WEEKEND_ZONES). Not the UAE (Asia/Dubai): its weekend has been
+ * Saturday and Sunday since 1 January 2022, Friday a working day (stress2
+ * round 3, uae-weekend-read-as-friday).
  */
 export const FRIDAY_WEEKEND_ZONES: ReadonlySet<string> = new Set([
-  "Asia/Kuwait", "Asia/Riyadh", "Asia/Qatar", "Asia/Bahrain", "Asia/Dubai", "Asia/Muscat", "Asia/Baghdad", "Asia/Amman",
+  "Asia/Kuwait", "Asia/Riyadh", "Asia/Qatar", "Asia/Bahrain", "Asia/Muscat", "Asia/Baghdad", "Asia/Amman",
   "Asia/Damascus", "Asia/Aden", "Asia/Gaza", "Asia/Jerusalem", "Asia/Tehran", "Asia/Kabul", "Asia/Dhaka",
   "Africa/Cairo", "Africa/Tripoli", "Africa/Algiers", "Africa/Khartoum",
 ]);
@@ -204,9 +208,16 @@ export function hoursRefusal(o: {
   const clocks = zones.map(z => zoneClock(z, o.now));
   if (o.dayOff) {
     const off = quietDays(o.followups);
-    const day = clocks.find((c, i) => zoneDaysOff(zones[i] as string, off).has(c.day))?.day;
-    if (day !== undefined)
-      return day === 5 ? HOURS_COPY.friday : HOURS_COPY.day_off.replace("{day}", (DAY_NAMES[day] as string).replace(/^./, ch => ch.toUpperCase()));
+    const at = clocks.findIndex((c, i) => zoneDaysOff(zones[i] as string, off).has(c.day));
+    const day = at < 0 ? undefined : clocks[at]?.day;
+    if (day !== undefined) {
+      if (day !== 5) return HOURS_COPY.day_off.replace("{day}", (DAY_NAMES[day] as string).replace(/^./, ch => ch.toUpperCase()));
+      // The next day the agent sends on that lead's calendar: never a promise of a day that is off too.
+      const mine = zoneDaysOff(zones[at] as string, off);
+      let next = 6;
+      while (mine.has(next % 7) && next < 12) next++;
+      return next % 7 === 6 ? HOURS_COPY.friday : HOURS_COPY.friday_next.replace("{next}", (DAY_NAMES[next % 7] as string).replace(/^./, ch => ch.toUpperCase()));
+    }
   }
   if (first) {
     const [from, to] = firstHours(o.followups);

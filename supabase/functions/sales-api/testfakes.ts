@@ -513,6 +513,8 @@ export class FakeDb {
     );
     if (!e) return null;
     e.lease_until = new Date(this.clock.now + Math.min(600, Math.max(1, Number(a.p_seconds ?? 60))) * 1000).toISOString();
+    // 20261004a: the holder's own token (null when it gave none).
+    e.lease_token = a.p_token ?? null;
     return String(e.id);
   }
 
