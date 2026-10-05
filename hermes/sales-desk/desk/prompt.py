@@ -480,12 +480,16 @@ def repair_user(deal: dict[str, Any], problems: list[str]) -> str:
     """Hand the checker's findings back, word for word, and ask for exactly
     those to be fixed. The checker names the field; the drafter fixes it."""
     listed = "\n".join(f"- {p}" for p in problems)
+    # A proof figure is ours, from the record: FILL would hand the closer a
+    # blank to type the case from memory, which is how it went wrong.
+    proof = ("A proof figure is copied exactly from PATTERNS.md's \"Numbers quoted as proof\", never FILL; "
+             "drop the case if the record does not have it. " if any(p.startswith("proof") for p in problems) else "")
     return (
         "The checker found these problems in this draft:\n\n"
         + listed
         + "\n\nReturn the same JSON object with each problem fixed and nothing else changed. "
         "Remove a promise rather than rewording it. Where a figure was never said on the "
-        "call, write FILL in its place. Keep every other field exactly as it is, and add "
+        "call, write FILL in its place. " + proof + "Keep every other field exactly as it is, and add "
         "nothing new.\n\nReturn only the JSON object.\n\n"
         + json.dumps(deal, ensure_ascii=False, indent=1)
     )

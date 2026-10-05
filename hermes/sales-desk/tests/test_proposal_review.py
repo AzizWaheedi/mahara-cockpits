@@ -234,7 +234,9 @@ class PaymentTiedTests(unittest.TestCase):
                      "USD 3,000 after the start, and your first project begins in week two.",
                      "Paid in full at the start. The program pays for itself with the first project.",
                      "يُدفع المبلغ كاملاً عند البدء، ونبدأ مع أول مشروع لديك.",
-                     "No payment ever waits on a first contract; both fall due on dates."):
+                     "No payment ever waits on a first contract; both fall due on dates.",
+                     # A date from the kickoff, not a result.
+                     "USD 3,000 at the start and USD 3,000 thirty days after your first meeting with us."):
             self.assertFalse(tied(line), line)
 
     def test_the_ways_round_it_are_caught(self):
@@ -242,6 +244,7 @@ class PaymentTiedTests(unittest.TestCase):
                      "The other USD 3,000 is payable after your first win.",
                      "The remaining USD 3,000 waits until a contract is signed.",
                      "USD 3,000 now and USD 3,000 once the first meetings are booked.",
+                     "USD 3,000 now and USD 3,000 after we deliver the first ten meetings.",
                      "الدفعة الثانية عند توقيع العقد الأول.",
                      "الباقي مع أول عقد."):
             self.assertTrue(tied(line), line)
@@ -344,6 +347,18 @@ class TypedCurrencyTests(unittest.TestCase):
             engine.follow_currency(deal)
             self.assertEqual(deal["arithmetic"]["currency"], "FILL", typed)
             self.assertEqual(deal["roi"]["usd_rate"], 1, typed)
+
+
+# -------------------------------------------------------------- the repair ---
+class ProofRepairTests(unittest.TestCase):
+    """The repair round tells the drafter to write FILL for a figure the call
+    never gave; a proof figure is ours and comes from the record."""
+
+    def test_a_proof_repair_copies_from_the_record(self):
+        text = prompt.repair_user(general_deal(), ["proof: 1 figure(s) in the proof are not in our record"])
+        self.assertIn("never FILL", text)
+        self.assertIn("PATTERNS.md", text)
+        self.assertNotIn("never FILL", prompt.repair_user(general_deal(), ["guarantee: a promise"]))
 
 
 # ------------------------------------------------------------- tightening ---

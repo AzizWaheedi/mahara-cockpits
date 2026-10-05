@@ -813,12 +813,18 @@ SPLIT = re.compile(
 # full, or USD 3,000 and USD 3,000 thirty days later, both on dates. Read
 # sentence by sentence: "Paid in full at the start. We begin with your first
 # project's campaign" is two sentences, and only one of them is about paying.
-_RESULT_EVENT = (r"(?:contracts?|projects?|deals?|clients?|sales?|wins?|jobs?|orders?|meetings?|appointments?|"
-                 r"bookings?|results?|leads?|signatures?|signings?)")
+# Not a meeting on its own: "thirty days after your first meeting with us" is
+# a date from the kickoff. The first meetings booked, or the first ten, are a
+# result (_FIRST_MEETINGS).
+_RESULT_EVENT = (r"(?:contracts?|projects?|deals?|clients?|sales?|wins?|jobs?|orders?|results?|signatures?|"
+                 r"signings?)")
+_FIRST_MEETINGS = (r"first\s+(?:\d+\s+)?(?:qualified\s+)?(?:meetings|appointments|leads|bookings)\b"
+                   r"|first\s+\d+\s+(?:qualified\s+)?(?:meetings?|appointments?|leads?)\b"
+                   r"|first\s+(?:qualified\s+)?(?:meeting|appointment|lead)\s+(?:is\s+)?(?:booked|delivered|held)\b")
 # Strong words: a payment that waits "until", "once", "after" a result.
 TIED_STRONG = re.compile(
     rf"\b(?:when|once|after|upon|until|till|tied\s+to|linked\s+to|conditional\s+on|subject\s+to|depends\s+on|"
-    rf"dependent\s+on)\s+(?:[^\s,،;]+\s+){{0,4}}?first\s+(?:[^\s,،;]+\s+){{0,2}}?{_RESULT_EVENT}\b"
+    rf"dependent\s+on)\s+(?:[^\s,،;]+\s+){{0,4}}?(?:first\s+(?:[^\s,،;]+\s+){{0,2}}?{_RESULT_EVENT}\b|{_FIRST_MEETINGS})"
     rf"|\b(?:when|once|after|upon|until|till)\s+(?:[^\s,،;]+\s+){{0,3}}?(?:a|the|your|any)\s+(?:new\s+)?"
     r"(?:contract|project|deal|sale|job|order)\s+(?:is\s+|has\s+been\s+|gets\s+)?(?:signed|closed|won|awarded|booked)\b"
     rf"|\bfirst\s+(?:contract|project|deal|client|sale|job|order)\s+(?:signs|is\s+signed|closes|is\s+closed|is\s+won|lands)\b"
@@ -850,7 +856,7 @@ def tied_to_a_result(text: str) -> bool:
     contract, project, deal, client, sale or meeting, or a contract signed.
     A sentence that says it is not tied ("never waits on a first contract")
     is the honest form."""
-    for sentence in re.split(r"(?<=[.!?؟;؛])\s+|\n+", _plain(text)):
+    for sentence in re.split(r"(?<=[.!?؟;؛])\s+|\n+", spoken_figures(text)):
         if not PAYMENT_WORDS.search(sentence):
             continue
         for rx in (TIED_STRONG, TIED_WEAK):
