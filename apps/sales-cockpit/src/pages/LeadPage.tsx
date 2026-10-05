@@ -4,6 +4,7 @@ import {
   ClipboardList,
   Copy,
   Phone,
+  PhoneCall,
   ScrollText,
 } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
@@ -212,12 +213,16 @@ export default function LeadPage({ me }: { me: Me }) {
     dnd: Boolean(live?.contact.dnd || l.dnd),
     bookedDemo: nextAppt?.call_type === "demo",
   });
+  // A closer's video call is a demo (60 minutes, the demo's Zoom rule),
+  // never an intro that the count would book in a setter's place (stress2
+  // round 4); sales-api holds the same rule for every closer's room.
+  const roomKind: "intro" | "demo" = me.role === "closer" ? "demo" : "intro";
   const choice = roomsSetup.rooms
     ? providerChoice({
         setting: roomsSetup.rooms,
         role: me.role === "closer" ? "closer" : "setter",
         me: video.presence,
-        kind: "intro",
+        kind: roomKind,
       })
     : null;
   const linkShown = gate.show && choice !== null && !video.open;
@@ -333,6 +338,17 @@ export default function LeadPage({ me }: { me: Me }) {
               New client form
             </button>
           ) : null}
+          {isClient(l) ? null : (
+            // The dialer's pane for this lead: book the next call, or save
+            // how a call went (stress2 round 4: the lead page has neither).
+            <Link
+              to={`/dialer?lead=${encodeURIComponent(l.contact_id)}`}
+              className={button}
+            >
+              <PhoneCall className="size-3.5" aria-hidden />
+              Open in the dialer
+            </Link>
+          )}
           <a
             href={ghlContactUrl(l.contact_id)}
             target="_blank"
@@ -356,7 +372,7 @@ export default function LeadPage({ me }: { me: Me }) {
         <VideoPicker
           contactId={l.contact_id}
           purpose="manual"
-          callKind="intro"
+          callKind={roomKind}
           trigger="manual"
           choice={choice}
           planLine={

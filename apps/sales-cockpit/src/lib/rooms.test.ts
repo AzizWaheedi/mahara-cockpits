@@ -391,8 +391,9 @@ describe("the room panel's words, as the specs write them", () => {
     expect(say({ ...r, purpose: "manual", count_result: "not_a_lead" })).toBe(
       "The lead joined at 14:11. Not counted: this contact is not a tagged lead.",
     );
+    // Never "book" (stress2 round 4): the lead may have a call booked that the count could not move.
     expect(say({ ...r, purpose: "manual", count_result: "failed" })).toBe(
-      "The lead joined at 14:11. Not in HighLevel: book and mark it by hand.",
+      "The lead joined at 14:11. Not counted in HighLevel: mark the lead's call there shown, or add this one if they have none.",
     );
     // Counting is off: nothing is claimed about HighLevel.
     expect(say({ ...r, purpose: "manual", count_result: null })).toBe(

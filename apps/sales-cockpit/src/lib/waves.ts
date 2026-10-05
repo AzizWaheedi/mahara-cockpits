@@ -316,18 +316,61 @@ export function batchWrittenToday(
   });
 }
 
-/** "today at 09:00", "tomorrow at 09:00", "on Sunday at 09:00". */
-export function batchWhen(at: number, now: number): string {
-  const day = (t: number) => Math.floor((t + KUWAIT_MS) / DAY_MS);
+/** A time zone the browser can read, else Kuwait's. */
+function zoneOr(zone: unknown): string {
+  if (typeof zone !== "string" || !zone) return KUWAIT;
+  try {
+    new Intl.DateTimeFormat("en-GB", { timeZone: zone });
+    return zone;
+  } catch {
+    return KUWAIT;
+  }
+}
+
+/**
+ * "today at 09:00", "tomorrow at 09:00", "on Sunday at 09:00", on the clock
+ * of `zone` (Kuwait's unless a lead's own is given, stress2 round 4).
+ */
+export function batchWhen(
+  at: number,
+  now: number,
+  zone: string = KUWAIT,
+): string {
+  const tz = zoneOr(zone);
+  const ymd = (t: number) =>
+    new Date(t).toLocaleDateString("en-CA", { timeZone: tz });
+  const day = (t: number) =>
+    Math.round(Date.parse(`${ymd(t)}T00:00:00Z`) / DAY_MS);
   const diff = day(at) - day(now);
-  const hhmm = clock(new Date(at).toISOString());
+  const hhmm = new Date(at).toLocaleTimeString("en-GB", {
+    timeZone: tz,
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  });
   if (diff <= 0) return `today at ${hhmm}`;
   if (diff === 1) return `tomorrow at ${hhmm}`;
   const name = new Date(at).toLocaleDateString("en-GB", {
-    timeZone: KUWAIT,
+    timeZone: tz,
     weekday: "long",
   });
   return `on ${name} at ${hhmm}`;
+}
+
+/** When a wave ended, Kuwait time: "14:03" today, else with its day ("Mon 5 Oct at 14:03"). */
+function endedWhen(at: string, now: number): string {
+  const t = Date.parse(at);
+  if (!Number.isFinite(t)) return clock(at);
+  const ymd = (x: number) =>
+    new Date(x).toLocaleDateString("en-CA", { timeZone: KUWAIT });
+  if (ymd(t) === ymd(now)) return clock(at);
+  const day = new Date(t).toLocaleDateString("en-GB", {
+    timeZone: KUWAIT,
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+  });
+  return `${day.replace(/,/g, "")} at ${clock(at)}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -402,7 +445,7 @@ export function waveLine(
   const noun = POOL_WORDS[w.pool].noun;
   if (w.state === "done" || w.state === "cancelled") {
     const why = w.done_reason ? ` ${w.done_reason.replace(/\s+$/, "")}` : "";
-    const ended = `${noun.charAt(0).toUpperCase()}${noun.slice(1)}: ended${w.ended_at ? ` ${clock(w.ended_at)}` : ""}.`;
+    const ended = `${noun.charAt(0).toUpperCase()}${noun.slice(1)}: ended${w.ended_at ? ` ${endedWhen(w.ended_at, next?.now ?? Date.now())}` : ""}.`;
     return `${ended}${why}`.trim();
   }
   // Paused before the desk added its leads: the desk enrols running waves
@@ -599,6 +642,8 @@ export function approvedLine(
     last_at?: unknown;
     opens_at?: unknown;
     in_hours?: unknown;
+    /** The time zone opens_at is said on: the lead's own (sales-api, stress2 round 4). */
+    opens_zone?: unknown;
     taken_back?: unknown;
     waiting_resume?: unknown;
   },
@@ -642,22 +687,32 @@ export function approvedLine(
   const opensMs =
     typeof out.opens_at === "string" ? Date.parse(out.opens_at) : Number.NaN;
   let starts: number | null = null;
+  // "their time" only on the lead's own clock (stress2 round 4): sales-api
+  // names the zone of the opener that opens first; without it (an older
+  // sales-api, or the shipped hours read here) the line says Kuwait time.
+  let zone: string | null = null;
   if (Number.isFinite(opensMs)) {
     if (
       out.in_hours === false ||
       (Number.isFinite(firstMs) && opensMs > firstMs + 60_000)
     )
       starts = opensMs;
+    zone =
+      typeof out.opens_zone === "string" && out.opens_zone
+        ? out.opens_zone
+        : null;
   } else if (Number.isFinite(firstMs)) {
     const end = Number.isFinite(lastMs) ? lastMs : firstMs;
     if (!inFirstHours(firstMs, hours) || !inFirstHours(end, hours))
       starts = nextFirstHour(firstMs, hours);
   }
   if (starts !== null) {
-    const when = batchWhen(starts, Number.isFinite(firstMs) ? firstMs : now);
+    const base = Number.isFinite(firstMs) ? firstMs : now;
+    const when = batchWhen(starts, base, zone ?? KUWAIT);
+    const whose = zone ? "their time" : "Kuwait time";
     return n === 1
-      ? `Approved. It goes ${when}, their time.${back}${paused}`
-      : `Approved. They go from ${when.replace(/^on /, "")}, their time, one every ${gap} seconds.${back}${paused}`;
+      ? `Approved. It goes ${when}, ${whose}.${back}${paused}`
+      : `Approved. They go from ${when.replace(/^on /, "")}, ${whose}, one every ${gap} seconds.${back}${paused}`;
   }
   if (n === 1)
     return `Approved. It goes in the next few minutes.${back}${paused}`;

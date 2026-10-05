@@ -25,7 +25,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { Link } from "react-router";
+import { Link, useSearchParams } from "react-router";
 import { AdOrigin } from "../components/AdOrigin";
 import { ProofToSend } from "../components/AssetPicker";
 import { CallNotesList, useCallNotes } from "../components/CallNotes";
@@ -573,6 +573,22 @@ export default function DialerPage({ me }: { me: Me }) {
   const [spent, setSpent] = useState<ReadonlySet<string>>(() => new Set());
   const [savedAt, setSavedAt] = useState<Record<string, number>>({});
   const [picked, setPicked] = useState<string | null>(null);
+  // The lead page's "Open in the dialer", and its room panel's next step
+  // after a join (stress2 round 4): that lead on screen, as a search pick.
+  const [params, setParams] = useSearchParams();
+  const askedLead = params.get("lead");
+  useEffect(() => {
+    if (!askedLead || !/^[A-Za-z0-9_-]{1,80}$/.test(askedLead)) return;
+    setPicked(askedLead);
+    setParams(
+      p => {
+        const next = new URLSearchParams(p);
+        next.delete("lead");
+        return next;
+      },
+      { replace: true },
+    );
+  }, [askedLead, setParams]);
   const [tier, setTier] = useState<TierFilter>("all");
   const [term, setTerm] = useState("");
   const [alertsOn, setAlertsOn] = useState(alertsWanted);
@@ -1723,18 +1739,21 @@ function CallPane({
     client: isClient(l),
     dnd: Boolean(l?.dnd),
   });
+  // A closer's video call is a demo (stress2 round 4): its length, its Zoom
+  // rule, and never booked as an intro in a setter's place.
+  const roomKind: "intro" | "demo" = as === "closer" ? "demo" : "intro";
   const choice = roomsSetup.rooms
     ? providerChoice({
         setting: roomsSetup.rooms,
         role: as,
         me: video.presence,
-        kind: "intro",
+        kind: roomKind,
       })
     : null;
   const videoAsk = {
     contactId,
     purpose: "fallback" as const,
-    callKind: "intro" as const,
+    callKind: roomKind,
     attemptId: missed?.attemptId ?? null,
     // The intro on its confirmation call too: sales-api keeps a room made
     // outside the intro's window off it (stress2, round 1), and a

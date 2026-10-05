@@ -516,10 +516,34 @@ export function afterMiss(o: {
     provider?: string | null;
     first_open_at?: string | null;
     last_open_at?: string | null;
+    short_url?: string | null;
+    join_url?: string | null;
+    lead_in_at?: string | null;
+    result?: string | null;
   } | null;
 }): AfterMiss {
   const { moment } = o;
   const v = o.video;
+  // The room closed with nothing seen and nothing pressed, and the lead's
+  // link was Meet's own (rooms.short_link off, as shipped): Meet never says
+  // who came in, so the rep may have talked on video for minutes. Asked,
+  // never "No answer" (stress2 round 4).
+  const shortLink = Boolean(v?.short_url) && v?.short_url !== v?.join_url;
+  if (
+    v &&
+    v.provider === "meet" &&
+    ["ended", "expired"].includes(v.state) &&
+    !v.lead_in_at &&
+    !shortLink &&
+    (v.result === "no_join" || v.result === null || v.result === undefined) &&
+    !(v.first_open_at || v.last_open_at)
+  )
+    return {
+      title: "Did you speak on video?",
+      text: "Meet cannot say whether they came in. If you spoke, save how it went. If not, send them a WhatsApp.",
+      send: "whatsapp",
+      talk: true,
+    };
   // The room closed after the lead opened its Meet link: they may have
   // talked on video, which Meet never reports. The step asks, with Save how
   // it went beside the WhatsApp, never "No answer" first (stress2 round 3).

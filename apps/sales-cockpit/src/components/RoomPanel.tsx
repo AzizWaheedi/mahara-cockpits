@@ -1,5 +1,6 @@
 import { Check, ChevronDown, Loader2, RotateCcw } from "lucide-react";
 import { type CSSProperties, useEffect, useId, useRef, useState } from "react";
+import { useNavigate } from "react-router";
 import { type ApiFailure, uncertain } from "../lib/apiErrors";
 import { useMe, useNow } from "../lib/data";
 import {
@@ -728,6 +729,7 @@ function LiveRoomPanel({
   const [confirmEnd, setConfirmEnd] = useState(false);
   const [copied, setCopied] = useState(false);
   const [introMarked, setIntroMarked] = useState(false);
+  const navigate = useNavigate();
   const [stillAt, setStillAt] = useState<{ id: string; at: number } | null>(
     null,
   );
@@ -961,6 +963,13 @@ function LiveRoomPanel({
     }
     if (key === "end" && r.state === "lead_in") {
       setConfirmEnd(true);
+      return;
+    }
+    // The dialer's pane for this lead, where the next call is booked and how
+    // the call went is saved (stress2 round 4).
+    if (key === "to_dialer") {
+      if (r.contact_id)
+        navigate(`/dialer?lead=${encodeURIComponent(r.contact_id)}`);
       return;
     }
     await run(key, async () => {

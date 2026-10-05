@@ -709,7 +709,8 @@ describe("waves: rows, counts and lines", () => {
           done_reason: "Stopped by a manager.",
         }),
         c,
-        null,
+        // Read the same day (stress2 round 4: another day's end names its day).
+        { at: NOW, now: NOW },
       ),
     ).toBe("No-shows and cancellations: ended 14:12. Stopped by a manager.");
   });
