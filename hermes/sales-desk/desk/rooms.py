@@ -176,6 +176,7 @@ SIGNIN_HANDOVER_S = 15.0
 STATUS_EVERY = 25.0       # the status row, at least every 30 s
 SETTINGS_EVERY = 25.0     # the rooms setting is read again this often
 SETTINGS_STALE_S = 60.0   # with no good read of it for this long, nothing new is claimed
+SWITCH_REREAD_S = 5.0     # before a room opens, the kill switch is read again when this run's copy is older (m1 round 2)
 CLOSE_SCAN_EVERY = 10.0   # finished rooms are looked for this often
 # The VPS clock against the database's (the sweep compares every deadline
 # with the database's now()): within 5 s is the same; past 10 s the status row
@@ -914,9 +915,11 @@ class Zoom:
         out: list[dict[str, Any]] = []
         token = None
         for _ in range(3):
+            # A 200 with no meeting list in it is no list (m1 round 2): never
+            # "no meeting has this code", which would make a room's meeting twice.
             page = _page(self.call("GET", f"/users/{_qe(user)}/meetings",
                                    query={"type": kind, "page_size": 300, "next_page_token": token}),
-                         "api.zoom.us", "Zoom's meeting list")
+                         "api.zoom.us", "Zoom's meeting list", need="meetings")
             out.extend(m for m in (page or {}).get("meetings") or [] if isinstance(m, dict))
             token = (page or {}).get("next_page_token")
             if not token:
@@ -1604,6 +1607,15 @@ class Worker:
         setting it could not read is never taken as on."""
         return self._settings_at is not None and self.clock() - self._settings_at <= SETTINGS_STALE_S
 
+    def _still_switched_on(self) -> bool:
+        """Rooms still switched on right before a room opens (m1 round 2): the
+        setting read again when this run's copy is over SWITCH_REREAD_S old. A
+        read that fails keeps the copy this run has (sales-api's own fence
+        still holds the link)."""
+        if self._settings_at is None or self.clock() - self._settings_at > SWITCH_REREAD_S:
+            self._read_settings(self.clock())
+        return self.settings.get("enabled") is True
+
     def _switched_on(self, provider: Any) -> Optional[str]:
         """None when rooms on this provider may be made, else the sentence."""
         if self.settings.get("enabled") is not True:
@@ -1933,6 +1945,11 @@ class Worker:
                          self.settings.get("lengths_min") or {})
         last: Optional[ProviderError] = None
         sent_unclear = False
+        # A create whose answer was lost is followed by a new one only once
+        # the code lookup has read the host's list and found nothing (m1
+        # round 2, chaos: a lookup that fails or answers no list says
+        # nothing, so the meeting is only looked for, never made again).
+        looked_clean = False
         signin_only = True  # every try so far stopped at Zoom's sign-in: no create left this VPS
         for attempt in range(3):
             if attempt:
@@ -1946,6 +1963,18 @@ class Worker:
             if self.left() - PROVIDER_RESERVE <= 1.0:
                 self._hand_over(room, unclear=sent_unclear)
                 return None
+            if sent_unclear and not looked_clean:
+                try:
+                    found = self.zoom.find(user, topic)
+                    if found:
+                        return self.zoom.meeting(found["id"])
+                    looked_clean = True
+                except ProviderError as e:
+                    if e.timeup:
+                        self._hand_over(room, unclear=True)
+                        return None
+                    self.log.warn(f"rooms: Zoom's meeting list did not answer for room {room.get('code')}: {e.why}")
+                    continue
             # Zoom's sign-in first (fix round 4): a token Zoom would not give
             # means no create left this VPS, so it is never written down as
             # sent (the next run makes the room, never only looks for it).
@@ -1986,15 +2015,23 @@ class Worker:
                 if not (e.unclear or e.status == 429):
                     break
                 sent_unclear = True
+            looked_clean = False
             try:
                 found = self.zoom.find(user, topic)
                 if found:
                     return self.zoom.meeting(found["id"])
+                looked_clean = True
             except ProviderError as e:
                 if e.timeup:
                     self._hand_over(room, unclear=True)
                     return None
                 self.log.warn(f"rooms: Zoom's meeting list did not answer for room {room.get('code')}: {e.why}")
+        if sent_unclear and not looked_clean:
+            # A create went out, its answer was lost, and Zoom's list could
+            # not be read: the next run only looks for the meeting by its code
+            # (recover_zoom), and the sweep fails the room if it is not found.
+            self._hand_over(room, unclear=True)
+            return None
         if (signin_only and last is not None and not last.down and (last.unclear or last.status == 429)
                 and self.left() - PROVIDER_RESERVE < SIGNIN_HANDOVER_S):
             # Every try stopped at Zoom's sign-in, nothing was sent, and this
@@ -2468,6 +2505,12 @@ class Worker:
         self.pending.pop(rid, None)
         if not join_url:
             self.fail(room, SAY["zoom_down"] if provider == "zoom" else SAY["meet_pending"], fault=True)
+            return False
+        # Rooms switched off since the claim (the kill switch, m1 round 2):
+        # the room never opens, its meeting is closed like a failed room's,
+        # and sales-api sends no link either way.
+        if not self._still_switched_on():
+            self.fail(room, SAY["switched_off"], refusal=True)
             return False
         # 1. The host link, where only the service role reads it.
         self.sb.upsert(SECRETS, [{"room_id": rid, "start_url": start_url or join_url,

@@ -30,8 +30,16 @@ FOLLOWUP_TABLES = ("cockpit_sales_followup_waves", "cockpit_sales_followup_wave_
                    "cockpit_sales_followup_meta", "cockpit_sales_followup_stops")
 CRON_JOBS = ("mahara-sales-rooms-sweep", "mahara-sales-watchdog")
 STATUS_ROWS = {
-    "sales-desk": ("rooms", "room-hosts", "slack", "watch", "waves", "model"),
+    "sales-desk": ("rooms", "room-hosts", "slack", "waves", "model"),
     "sales-live": ("zoom", "slack", "open", "go", "cron"),
+}
+# Parts not built yet in Milestone 1 (the reply watcher of a later project):
+# watched only once their row exists, as the SQL watchdog does (switch_on
+# null), so a part nothing writes is never "not reported yet" (m1 round 2,
+# guardian-waits-for-unbuilt-reply-watcher). A row that says it fails still
+# counts.
+LATER_ROWS = {
+    "sales-desk": ("watch",),
 }
 CALL_HOST = "call.maharamedia.com"
 ROOMS_RED_S = 90
@@ -217,9 +225,10 @@ def run_worker(ctx: Context) -> Result:
 
 def run_status_rows(ctx: Context) -> Result:
     if not rooms_deployed(ctx):
-        return not_deployed("The live-calls status rows are not deployed yet (sales-desk rooms, room-hosts, slack, watch, "
+        return not_deployed("The live-calls status rows are not deployed yet (sales-desk rooms, room-hosts, slack, "
                             "waves, model; sales-live zoom, slack, open, go, cron).")
     rows = ctx.rows("cockpit_sales_worker_status", "worker,job,ok,detail,at", where=[("worker", "in", list(STATUS_ROWS))])
+    # LATER_ROWS' workers are all in STATUS_ROWS, so the one read covers them.
     have = {(r["worker"], r["job"]): r for r in rows}
     # Only the parts the switches use (m1 round 1): the short link's routes
     # while rooms.short_link is on, Slack's while live and live.slack are on.
@@ -235,6 +244,8 @@ def run_status_rows(ctx: Context) -> Result:
     missing = [f"{w}/{j}" for w, jobs in watched.items() for j in jobs if (w, j) not in have]
     bad = [f"{w}/{j} ({clean(have[(w, j)].get('detail'), 80)})" for w, jobs in watched.items() for j in jobs
            if (w, j) in have and have[(w, j)].get("ok") is False]
+    bad += [f"{w}/{j} ({clean(have[(w, j)].get('detail'), 80)})" for w, jobs in LATER_ROWS.items() for j in jobs
+            if (w, j) in have and have[(w, j)].get("ok") is False]
     if bad:
         return fail(f"Live-calls parts report failures: {', '.join(bad)}.", evidence={"failing": bad, "missing": missing})
     if len(missing) == sum(len(v) for v in watched.values()):

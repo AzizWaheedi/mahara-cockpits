@@ -56,7 +56,6 @@ def pilot(*, dns: bool = False, extra_rows=(), rooms=None):
         {"worker": "sales-desk", "job": "rooms", "ok": True, "detail": "Working.", "at": fakes.ago(0.2)},
         {"worker": "sales-desk", "job": "room-hosts", "ok": True, "detail": "2 seats checked.", "at": fakes.ago(4)},
         {"worker": "sales-desk", "job": "slack", "ok": True, "detail": "Slack is switched off.", "at": fakes.ago(0.5)},
-        {"worker": "sales-desk", "job": "watch", "ok": True, "detail": "", "at": fakes.ago(2)},
         {"worker": "sales-desk", "job": "waves", "ok": True, "detail": "", "at": fakes.ago(2)},
         {"worker": "sales-desk", "job": "model", "ok": True, "detail": "", "at": fakes.ago(20)},
         {"worker": "sales-live", "job": "zoom", "ok": True, "detail": "", "at": fakes.ago(30)},
