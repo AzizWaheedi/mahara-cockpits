@@ -2,6 +2,7 @@ import { useMutation, useQuery } from "convex/react";
 import { ArrowLeft, ArrowUpRight, ChevronDown } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
+import { ClientCheckIn } from "@/components/ClientCheckIn";
 import { ClientUpdates } from "@/components/ClientUpdates";
 import {
   CreativePreview,
@@ -1588,6 +1589,13 @@ function Profile({ name, onBack }: { name: string; onBack: () => void }) {
             Print report
           </Button>
         </div>
+        {p.taskId ? (
+          <ClientCheckIn
+            taskId={String(p.taskId)}
+            clientName={String(p.clientName)}
+            nextCallAt={p.nextCallAt}
+          />
+        ) : null}
         {p.taskId ? (
           <AddTask
             taskId={String(p.taskId)}
