@@ -1,6 +1,14 @@
 // bun test supabase/functions/sales-api
 import { describe, expect, test } from "bun:test";
-import { ALREADY_DRAFTING, archivePlan, BEING_WRITTEN, STOPPED, stoppedProposal } from "./proposals.ts";
+import {
+  ALREADY_DRAFTING,
+  archivePlan,
+  BEING_WRITTEN,
+  retryPlan,
+  retryRefusal,
+  STOPPED,
+  stoppedProposal,
+} from "./proposals.ts";
 
 describe("archiving a proposal stops its draft", () => {
   test("a queued draft is cancelled with it", () => {
@@ -58,5 +66,45 @@ describe("a second draft for the same lead", () => {
     expect(ALREADY_DRAFTING).not.toMatch(/minute|hour|soon/i);
     expect(ALREADY_DRAFTING).toMatch(/Refresh the lead's page/);
     expect(ALREADY_DRAFTING).not.toContain("\u2014");
+  });
+});
+
+describe("trying a failed request again", () => {
+  test("never brings an archived or a sent proposal back to drafting", () => {
+    expect(retryRefusal({ status: "archived" })).toMatch(/archived/);
+    expect(retryRefusal({ status: "archived" })).toMatch(/Draft proposal on the lead's page/);
+    expect(retryRefusal({ status: "sent" })).toMatch(/sent/);
+    for (const status of ["failed", "drafting", "needs_input", "ready"])
+      expect(retryRefusal({ status })).toBeNull();
+    expect(retryRefusal(null)).toBeNull();
+  });
+});
+
+describe("drafting a proposal again", () => {
+  const deal = { headline: "x", closer_figures: { "cost.close": "Typed by the closer.", "gap_points.0.v": "12" } };
+
+  test("after a rebuild that failed for good, it rebuilds with the closer's figures", () => {
+    expect(retryPlan({ deal }, { params: { rebuild: true, proposal_id: "p" }, status: "failed" })).toEqual({
+      rebuild: true,
+    });
+  });
+
+  test("a fresh draft carries the figures the closer typed", () => {
+    expect(retryPlan({ deal }, { params: { rebuild: true }, status: "done" })).toEqual({
+      rebuild: false,
+      fills: deal.closer_figures,
+    });
+    expect(retryPlan({ deal }, { params: { lang: "en" }, status: "failed" })).toEqual({
+      rebuild: false,
+      fills: deal.closer_figures,
+    });
+  });
+
+  test("with no figures typed, it is the draft it always was", () => {
+    expect(retryPlan({ deal: { headline: "x" } }, null)).toEqual({ rebuild: false, fills: null });
+    expect(retryPlan({ deal: null }, { params: { rebuild: true }, status: "failed" })).toEqual({
+      rebuild: false,
+      fills: null,
+    });
   });
 });

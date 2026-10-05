@@ -46,3 +46,48 @@ export function stoppedProposal(p: { html_path?: unknown; validation?: unknown }
     return { status: before, error: before === "failed" ? STOPPED : null };
   return { status: "archived" };
 }
+
+export const ARCHIVED_NO_RETRY =
+  "This proposal was archived, so it is not drafted again. Draft proposal on the lead's page starts a new one.";
+export const SENT_NO_RETRY =
+  "This proposal was marked sent, so it is not drafted again. Draft proposal on the lead's page starts a new one.";
+
+/**
+ * Try again on a failed request (request.set to queued) puts the proposal
+ * back to drafting: never one the closer archived or marked sent, which the
+ * worker would then leave drafting for ever (an archived one is cancelled
+ * unwritten). Null when it may go ahead.
+ */
+export function retryRefusal(p: { status?: unknown } | null | undefined): string | null {
+  const status = String(p?.status ?? "");
+  if (status === "archived") return ARCHIVED_NO_RETRY;
+  if (status === "sent") return SENT_NO_RETRY;
+  return null;
+}
+
+/**
+ * What Draft again (proposal.retry) queues. After a rebuild that failed for
+ * good (the request itself failed: storage, the browser), a rebuild again,
+ * which keeps the closer's figures and asks no model. Otherwise a fresh draft
+ * from the call, carrying the figures the closer typed into the last
+ * version's blanks (deal.closer_figures, kept by applyFills), which the
+ * worker puts back into the new draft's blanks.
+ */
+export function retryPlan(
+  p: { deal?: unknown },
+  last: { params?: unknown; status?: unknown } | null | undefined,
+): { rebuild: true } | { rebuild: false; fills: Record<string, string> | null } {
+  const deal = (p.deal && typeof p.deal === "object" ? p.deal : null) as Row | null;
+  const params = (last?.params ?? {}) as Row;
+  if (deal && params.rebuild === true && last?.status === "failed") return { rebuild: true };
+  const kept = deal?.closer_figures;
+  const fills =
+    kept && typeof kept === "object" && !Array.isArray(kept)
+      ? Object.fromEntries(
+          Object.entries(kept as Row)
+            .filter(([, v]) => typeof v === "string" || typeof v === "number")
+            .map(([k, v]) => [k, String(v)]),
+        )
+      : {};
+  return { rebuild: false, fills: Object.keys(fills).length ? fills : null };
+}

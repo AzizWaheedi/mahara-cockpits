@@ -108,7 +108,14 @@ import {
   signingLink,
 } from "./contracts.ts";
 import { clientFormRow, CLIENT_FORM_ID } from "./clientforms.ts";
-import { ALREADY_DRAFTING, archivePlan, BEING_WRITTEN, stoppedProposal } from "./proposals.ts";
+import {
+  ALREADY_DRAFTING,
+  archivePlan,
+  BEING_WRITTEN,
+  retryPlan,
+  retryRefusal,
+  stoppedProposal,
+} from "./proposals.ts";
 
 type Row = Record<string, unknown>;
 
@@ -645,6 +652,13 @@ async function proposalRetry(who: Who, b: Row) {
     `cockpit_sales_requests?kind=eq.proposal&params->>proposal_id=eq.${enc(id)}&select=params&order=requested_at.asc&limit=1`,
   ))[0];
   const was = (first?.params ?? {}) as Row;
+  // The figures the closer typed are never lost to Draft again: a rebuild
+  // that failed for good is rebuilt, and a fresh draft carries them
+  // (proposals.ts retryPlan).
+  const last = p.request_id
+    ? (await svc(`cockpit_sales_requests?id=eq.${enc(String(p.request_id))}&select=params,status`))[0]
+    : null;
+  const plan = retryPlan(p, last ?? null);
   const requestId = crypto.randomUUID();
   await svc("cockpit_sales_requests", {
     method: "POST",
@@ -653,20 +667,26 @@ async function proposalRetry(who: Who, b: Row) {
       kind: "proposal",
       contact_id: p.contact_id,
       appointment_id: p.appointment_id,
-      params: {
-        lang: p.lang,
-        recording_id: p.recording_id ?? was.recording_id ?? null,
-        proposal_id: id,
-        offer: was.offer ?? { guarantee: false, payment: "pif" },
-      },
+      params: plan.rebuild
+        ? { proposal_id: id, rebuild: true, lang: p.lang }
+        : {
+            lang: p.lang,
+            recording_id: p.recording_id ?? was.recording_id ?? null,
+            proposal_id: id,
+            offer: was.offer ?? { guarantee: false, payment: "pif" },
+            ...(plan.fills ? { fills: plan.fills } : {}),
+          },
       requested_by: who.email,
     },
     prefer: "return=minimal",
   });
   const patch = { status: "drafting", request_id: requestId, error: null, updated_at: new Date().toISOString() };
   await svc(`cockpit_sales_proposals?id=eq.${enc(id)}`, { method: "PATCH", body: patch, prefer: "return=minimal" });
-  await audit(who, "proposal.retry", "cockpit_sales_proposals", id, { status: p.status }, patch);
-  return { proposal: { ...p, ...patch } };
+  await audit(who, "proposal.retry", "cockpit_sales_proposals", id, { status: p.status }, patch, {
+    rebuild: plan.rebuild,
+    ...(!plan.rebuild && plan.fills ? { fills_carried: Object.keys(plan.fills) } : {}),
+  });
+  return { proposal: { ...p, ...patch }, rebuild: plan.rebuild, figures_kept: plan.rebuild || !!plan.fills };
 }
 
 async function requestSet(who: Who, b: Row) {
@@ -684,6 +704,13 @@ async function requestSet(who: Who, b: Row) {
     patch = { status: "cancelled", finished_at: new Date().toISOString() };
   } else if (to === "queued") {
     if (r.status !== "failed") throw new Refusal("Only a failed request can be tried again.");
+    // Never back to drafting for a proposal the closer archived or sent.
+    const forId = (r.params as Row | null)?.proposal_id;
+    if (r.kind === "proposal" && forId) {
+      const p = (await svc(`cockpit_sales_proposals?id=eq.${enc(String(forId))}&select=id,status`))[0];
+      const refused = retryRefusal(p);
+      if (refused) throw new Refusal(refused, 409);
+    }
     patch = { status: "queued", attempts: 0, error: null, claimed_at: null, finished_at: null };
   } else throw new Refusal("Cancel it or try it again.");
   // Conditional on the status read above, so a worker that claimed it in
