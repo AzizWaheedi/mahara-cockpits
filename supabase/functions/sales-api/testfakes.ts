@@ -123,6 +123,12 @@ function match(row: Row, col: string, expr: string): boolean {
     case "cs":
       ok = Array.isArray(v) && parseList(val).every(x => (v as unknown[]).map(String).includes(x));
       break;
+    case "like": {
+      // PostgREST's like: `*` is any run of characters.
+      const re = new RegExp(`^${val.split("*").map(x => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join(".*")}$`);
+      ok = v !== null && v !== undefined && re.test(String(v));
+      break;
+    }
     default:
       throw new Error(`fake db: unknown operator ${op}`);
   }

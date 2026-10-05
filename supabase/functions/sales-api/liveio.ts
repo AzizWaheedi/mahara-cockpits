@@ -55,6 +55,13 @@ export class GhlError extends Error {
   constructor(
     message: string,
     public status: number,
+    /**
+     * Whether the refusal's body was JSON (HighLevel's own words), false for
+     * a page in front of it (a gateway's HTML 404, an empty body), undefined
+     * when not known. A page is never an answer about a contact (m1 round 2,
+     * gateway-404-page-read-as-lead-gone).
+     */
+    public json?: boolean,
   ) {
     super(message);
   }
@@ -237,14 +244,16 @@ export function makeLiveIO(o: {
       const text = await bodyOf(res, "HighLevel", m => new GhlError(m, 0));
       if (!res.ok) {
         let msg = text;
+        let json = false;
         try {
           const j = JSON.parse(text);
+          json = Boolean(j) && typeof j === "object";
           const m = j.message ?? j.msg ?? j.error ?? text;
           msg = typeof m === "string" ? m : String((m as Row)?.error ?? (m as Row)?.message ?? JSON.stringify(m));
         } catch {
           // not JSON
         }
-        throw new GhlError(`HighLevel said ${res.status}: ${redact(msg)}`, res.status);
+        throw new GhlError(`HighLevel said ${res.status}: ${redact(msg)}`, res.status, json);
       }
       if (!text) return {};
       const out = parsed(text, m => new GhlError(`HighLevel: ${m}`, 0));

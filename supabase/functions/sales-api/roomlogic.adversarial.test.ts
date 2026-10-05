@@ -474,7 +474,7 @@ describe("checked: holds that stand", () => {
     }
   });
 
-  test("a final room ignores every system event and refuses every press", () => {
+  test("a final room ignores every system event and refuses every press (a link that went is still recorded: m1 round 2)", () => {
     const ended = step(opened(), { kind: "end", reason: "end" }, T0 + MIN);
     const events: RoomEvent[] = [
       { kind: "claim" },
@@ -491,7 +491,13 @@ describe("checked: holds that stand", () => {
     ];
     for (const e of events) {
       const a = apply(ended, e, T0 + 2 * MIN);
-      if (a.ok) expect(a.changed).toBe(false);
+      // The one write a closed room takes from the system: the time its link
+      // went (the send was read back while a press closed it), with no state,
+      // version or deadline moved (m1 round 2, link-went-room-closed-in-readback-unrecorded).
+      if (a.ok && a.changed && e.kind === "link_sent" && !ended.link_sent_at) {
+        expect([a.room.state, a.room.version]).toEqual([ended.state, ended.version]);
+        expect(Object.keys(a.patch).every(k => ["link_sent_at", "link_claimed_at", "link_unconfirmed_at"].includes(k))).toBe(true);
+      } else if (a.ok) expect(a.changed).toBe(false);
     }
   });
 });

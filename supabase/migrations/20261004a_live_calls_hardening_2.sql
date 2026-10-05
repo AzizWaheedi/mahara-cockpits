@@ -2011,12 +2011,15 @@ begin
         ('sales-live', 'slack', null::integer, 'The Slack buttons',
            'Presses on live offers in Slack may not work. Take offers from the cockpit.',
            coalesce((live -> 'enabled') = 'true'::jsonb, false) and coalesce((live -> 'slack') = 'true'::jsonb, false)),
+        -- The short link's routes only while messages carry it (m1 round 2,
+        -- watchdog-alerts-short-link-routes-while-off): rooms on and
+        -- rooms.short_link on, as the guardian and the Team page read it.
         ('sales-live', 'open',  null::integer, 'The short link page',
            'Leads may not be able to open their room links. Send them the room''s full link.',
-           coalesce((rooms -> 'enabled') = 'true'::jsonb, false)),
+           coalesce((rooms -> 'enabled') = 'true'::jsonb, false) and coalesce((rooms -> 'short_link') = 'true'::jsonb, false)),
         ('sales-live', 'go',    null::integer, 'The short link',
            'Leads may not reach their room from the short link. Send them the room''s full link.',
-           coalesce((rooms -> 'enabled') = 'true'::jsonb, false)),
+           coalesce((rooms -> 'enabled') = 'true'::jsonb, false) and coalesce((rooms -> 'short_link') = 'true'::jsonb, false)),
         ('sales-live', 'cron',  null::integer, 'The sweep''s call to sales-api',
            'Replays, settles and re-checks from the room sweep may not reach sales-api.',
            coalesce((rooms -> 'enabled') = 'true'::jsonb, false))
@@ -2125,6 +2128,19 @@ begin
         jsonb_build_object('event_id', rec.id, 'room_id', rec.room_id, 'kind', rec.kind));
     end if;
   end loop;
+
+  -- 2d0. A room's "booked call is near" alert is over once the room has
+  -- closed (m1 round 2, booked-guard-alert-p2-words-never-resolved): nobody
+  -- is in it or waiting any more. Resolved at once, never three days on.
+  update public.cockpit_sales_alerts as a
+     set resolved_at = t,
+         dedupe_key = a.dedupe_key || ':resolved:' || a.id::text
+    from public.cockpit_sales_rooms as r
+   where a.resolved_at is null
+     and a.dedupe_key like 'room:%:booked_guard:%'
+     and a.dedupe_key not like '%:resolved:%'
+     and r.id::text = split_part(a.dedupe_key, ':', 2)
+     and r.state in ('ended', 'expired', 'failed', 'cancelled');
 
   -- 2d. Per-room alerts nobody resolved (final review): a room's mark-intro,
   -- count, undo, showed, lost-event and held alerts are a person's to act

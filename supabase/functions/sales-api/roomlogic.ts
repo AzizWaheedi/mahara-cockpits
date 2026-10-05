@@ -535,7 +535,7 @@ export const ROOM_COPY = {
     meet_pending: "Google did not make the Meet link. Try Zoom.", // F edge
     client: "This contact is an active client. Client success looks after them.", // P1 refused
     dnd: "Do not disturb is on in HighLevel. No link can go.", // P1 refused
-    booked_demo: "This lead has a booked demo. Its Zoom link comes from HighLevel, so no new room is made.", // P1 refused
+    booked_demo: "This lead has a booked demo. Its Zoom link comes from HighLevel, so no new room is made. Call them, or send the demo's own Zoom link from HighLevel.", // P1 refused
     phone_call: "This call is on the phone. There is no link to send.", // F flow, booked call
     handover_open: "A live call for this lead is already open, started by {setter} at {time}.", // P2 edge
     offer_taken: "{rep} took this lead at {time}.", // P2 edge
@@ -1862,6 +1862,18 @@ export function applyRoomEvent(room: RoomRow, event: RoomEvent, now: number, ctx
   if (isFinal(room.state)) {
     if (event.kind === "end") return same(room);
     if (event.kind === "tick") return same(room, reasks(room, now, ctx));
+    // The link went while the room was open, and a press closed the room
+    // while the message service read the send back (m1 round 2,
+    // link-went-room-closed-in-readback-unrecorded): the lead has it, so the
+    // room says so (the lead's three links an hour count it). Only the
+    // send's own time moves: no state, no version, no deadline.
+    if (event.kind === "link_sent" && room.contact_id && !room.link_sent_at && room.opened_at) {
+      const t = eventTime(event.at, now);
+      const patch: Partial<RoomRow> = { link_sent_at: iso(t) };
+      if (!room.link_claimed_at) patch.link_claimed_at = iso(t);
+      if (event.unconfirmed === true && !room.link_unconfirmed_at) patch.link_unconfirmed_at = iso(t);
+      return change(room, room.state, patch, []);
+    }
     // The room's end is the one move that may have landed since the rep saw it.
     if (event.kind === "not_lead" && actor) {
       if (given && Number(seen) !== ver(room) && Number(seen) !== ver(room) - 1) return refuse("stale");
@@ -2042,8 +2054,10 @@ export function applyRoomEvent(room: RoomRow, event: RoomEvent, now: number, ctx
       // room ends joined at the meeting's end (the count stands), never left
       // lead_in on a meeting that is over.
       const meetingEnded = ms(room.meeting_ended_at);
+      // Stamped meeting_ended: a close that is no person's End (m1 round 2),
+      // so a stale End press later is never recorded as the room's end.
       if (event.source === "zoom" && meetingEnded !== null && t <= meetingEnded)
-        return change(room, "ended", { ...patch, result: "joined", ended_at: iso(meetingEnded) }, [
+        return change(room, "ended", { ...patch, result: "joined", end_reason: "meeting_ended", ended_at: iso(meetingEnded) }, [
           { kind: "count_live" },
           { kind: "delete_secret" },
         ]);
@@ -2109,7 +2123,14 @@ export function applyRoomEvent(room: RoomRow, event: RoomEvent, now: number, ctx
       const result: RoomResult | null = room.state === "lead_in" && leadJoined(room) ? "joined" : room.contact_id ? "no_join" : null;
       // The meeting's end is kept on the closed room too (m1 round 1): a
       // lead's join from before it, read after it, still stands (lateLeadIn).
-      return change(room, "ended", { result, ended_at: iso(t), meeting_ended_at: laterIso(room.meeting_ended_at, t) }, [{ kind: "delete_secret" }]);
+      // end_reason meeting_ended: Zoom closed it, no person's End (m1 round
+      // 2, zoom-ended-stale-end-press-writes-second-end).
+      return change(
+        room,
+        "ended",
+        { result, end_reason: "meeting_ended", ended_at: iso(t), meeting_ended_at: laterIso(room.meeting_ended_at, t) },
+        [{ kind: "delete_secret" }],
+      );
     }
 
     case "meeting_deleted": {
@@ -2119,7 +2140,9 @@ export function applyRoomEvent(room: RoomRow, event: RoomEvent, now: number, ctx
       // do next. A failed room is never settled as a no-show.
       const t = when(event);
       if (room.state === "lead_in")
-        return change(room, "ended", { result: leadJoined(room) ? "joined" : "no_join", ended_at: iso(t) }, [{ kind: "delete_secret" }]);
+        return change(room, "ended", { result: leadJoined(room) ? "joined" : "no_join", end_reason: "meeting_deleted", ended_at: iso(t) }, [
+          { kind: "delete_secret" },
+        ]);
       // Cancelled with result failed (the worker did not fail: its health
       // counts stay true), never ended no_join (a no-show for the settle).
       return change(room, "cancelled", { result: "failed", end_reason: "meeting_deleted", error: ZOOM_DELETED, ended_at: iso(t) }, finalEffects(room));
@@ -2271,7 +2294,11 @@ function tick(room: RoomRow, e: Extract<RoomEvent, { kind: "tick" }>, now: numbe
     const guardAt = nextBooked - w.booked_guard * S;
     if (now >= guardAt) {
       if (standbyEmpty(room) && live) list.push({ reason: "booked_guard", at: guardAt });
-      else if (live || room.state === "lead_in")
+      // Only a closer's live handover asks the team for cover (P2). A
+      // setter's or a closer's own video link (fallback, manual) near their
+      // own booked call is theirs to end, and P1 posts nothing to Slack (m1
+      // round 2, booked-guard-alert-p2-words-never-resolved).
+      else if ((live || room.state === "lead_in") && room.purpose === "handover")
         alerts.push({ kind: "alert", what: "booked_guard", dedupe_key: `room:${room.id}:booked_guard:${iso(nextBooked)}` });
     }
   }
@@ -3958,6 +3985,12 @@ export interface RoomView {
    * they are at the link now, never "nobody joined" (stress2 round 5).
    */
   late_open_at: string | null;
+  /**
+   * The provider of the room this one replaces after "I can't let them in"
+   * (m1 round 2): the lead is still at that room's door, so the panel tells
+   * the rep to say where the new link is. Null for any other room.
+   */
+  moved_from: Provider | null;
 }
 
 export const ROOM_VIEW_KEYS = [
@@ -4001,6 +4034,7 @@ export const ROOM_VIEW_KEYS = [
   "last_open_at",
   "last_link_at",
   "late_open_at",
+  "moved_from",
 ] as const;
 
 /** The channels the link went on, from link_channels or the keys of link_message_ids. */
@@ -4067,6 +4101,7 @@ export function toRoomView(
     last_open_at: isoOrNull(row.last_open_at),
     last_link_at: isoOrNull(row.last_link_at),
     late_open_at: isFinal(row.state) && !leadJoined(row) ? isoOrNull(opts.late_open_at) : null,
+    moved_from: row.night_cleared === "replacing" && isProvider(row.provider) ? otherProvider(row.provider) : null,
   };
 }
 

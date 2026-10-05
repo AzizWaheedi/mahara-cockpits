@@ -52,11 +52,13 @@ import {
   eodMessage,
   eodValue,
   type Who,
+  greetingName,
 } from "./lib.ts";
 import {
   afterOutcome,
   afterTalk,
   ANY_OUTCOME_WORDS,
+  appointmentWork,
   type AnyOutcome,
   APPOINTMENT_OUTCOMES,
   appointmentEffect,
@@ -113,6 +115,7 @@ import {
 import { clientFormRow, CLIENT_FORM_ID } from "./clientforms.ts";
 import { ApiRefusal, makeLiveIO, uuidFrom } from "./liveio.ts";
 import { makeRooms } from "./rooms.ts";
+import { kuwaitClock } from "./roomlogic.ts";
 import { makeFollowupAgent } from "./followupAgent.ts";
 import {
   budgetCap,
@@ -523,6 +526,14 @@ async function markAppointment(
   const now = Date.now();
   const no = refuseMark(opts.anyRep ? { ...who, manager: true } : who, appt, status, now);
   if (no) throw new Refusal(no, 403);
+  // A person's no-show while the lead's video link is out (m1 round 2,
+  // noshow-mark-while-video-link-out): HighLevel's no-show automation would
+  // write to a lead who may be opening the link now. A timer's mark (the
+  // settle, onlyIfUnmarked) judges its own room.
+  if (status === "noshow" && !opts.onlyIfUnmarked) {
+    const held = await videoLinkHoldsNoShow(String(appt.contact_id ?? ""), now);
+    if (held) throw new Refusal(held, 409, { code: "room_open" });
+  }
 
   const decision = crmDecision(await setting<CrmSettings>("crm_writes"), appt, now);
   const current = (await svc(
@@ -581,6 +592,46 @@ async function markAppointment(
     ...(opts.quiet ? { quiet: true } : {}),
   });
   return result;
+}
+
+/** How long after a room closed on an open or a knock a no-show still waits (m1 round 2). */
+const NOSHOW_AFTER_KNOCK_MS = 5 * 60_000;
+
+/**
+ * Why a no-show must wait for the lead's video room, or null (m1 round 2):
+ * a room that is not a booked call's own, open or still being made, or
+ * closed in the last few minutes after the lead opened its link or knocked.
+ * Not readable: nothing holds the mark (a blip never blocks a rep's mark).
+ */
+async function videoLinkHoldsNoShow(contactId: string, now: number): Promise<string | null> {
+  if (!contactId) return null;
+  let rows: Row[];
+  try {
+    rows = await svc(
+      `cockpit_sales_rooms?contact_id=eq.${enc(contactId)}&purpose=neq.booked&requested_at=gte.${enc(new Date(now - 3 * 3_600_000).toISOString())}&select=state,lead_by,host_by,first_open_at,last_open_at,lead_waiting_at,lead_in_at,result,ended_at,contact_first_name&order=requested_at.desc&limit=20`,
+    );
+  } catch (e) {
+    console.error("no-show room check unread", redact(String((e as Error)?.message ?? e)));
+    return null;
+  }
+  const name = greetingName(rows[0]?.contact_first_name, null) || "This lead";
+  const whose = name === "This lead" ? "This lead's" : `${name}'s`;
+  const live = rows.find(r => ["requested", "creating", "open", "host_in", "lead_in"].includes(String(r.state)));
+  if (live) {
+    const until = ms(live.lead_by) ?? ms(live.host_by);
+    return until !== null && until > now
+      ? `${whose} video room is open until ${kuwaitClock(until)}, so the no-show was not marked. Wait for it, or end the room first.`
+      : `${whose} video room is still open, so the no-show was not marked. Wait for it, or end the room first.`;
+  }
+  const knocked = rows.find(
+    r =>
+      (ms(r.ended_at) ?? 0) >= now - NOSHOW_AFTER_KNOCK_MS &&
+      !r.lead_in_at &&
+      (r.first_open_at || r.last_open_at || r.lead_waiting_at || r.result === "admit_blocked"),
+  );
+  if (knocked)
+    return `${name === "This lead" ? "This lead" : name} opened the video link a few minutes ago, so the no-show was not marked. Call them, or mark it in a few minutes.`;
+  return null;
 }
 
 /**
@@ -1478,8 +1529,9 @@ async function convoSendOnce(who: Who, b: Row, opts: SendOpts, taken: () => void
   if (channel === "email" && !contact.email) throw new Refusal("This lead has no email address in HighLevel.", 409);
   if (channel !== "email" && !contact.phone) throw new Refusal("This lead has no phone number in HighLevel.", 409);
   if (channel === "whatsapp") {
-    const convs = (((await ghl("GET", `/conversations/search?locationId=${LOCATION}&contactId=${enc(contactId)}&limit=20`)) as Row)
-      .conversations ?? []) as Row[];
+    // An answer with no list is not read (m1 round 2): never "the window is
+    // shut" on a gateway's garbage; the send stops before anything went.
+    const convs = conversationList(await ghl("GET", `/conversations/search?locationId=${LOCATION}&contactId=${enc(contactId)}&limit=20`));
     const w = whatsappWindow(lastWhatsappIn(convs, []), Date.now());
     if (!w.open)
       throw new Refusal(
@@ -1821,8 +1873,11 @@ async function whatsappSentSince(
   text?: string | null,
   o: { went?: boolean; channel?: "whatsapp" | "email" } = {},
 ): Promise<{ hit: ThreadMessage | null; seen: ThreadMessage[]; failed?: ThreadMessage | null; others?: boolean }> {
-  const convs = (((await ghl("GET", `/conversations/search?locationId=${LOCATION}&contactId=${enc(contactId)}&limit=5`)) as Row)
-    .conversations ?? []) as Row[];
+  // A read that says nothing is never nothing there (m1 round 2,
+  // conversation-garbage-read-as-not-there-second-link): an answer with no
+  // list in it (a gateway's JSON, a search index rebuilding) throws, so the
+  // caller reads it as "not read", never as "not sent".
+  const convs = conversationList(await ghl("GET", `/conversations/search?locationId=${LOCATION}&contactId=${enc(contactId)}&limit=5`));
   const seen: ThreadMessage[] = [];
   // With `went`, a copy Meta failed (or a bounced email) is kept apart from
   // "not there" (m1 round 1, unclear-text-failed-in-conversation): the
@@ -1832,17 +1887,48 @@ async function whatsappSentSince(
   // whose body HighLevel keeps in a shape the words cannot be found in is
   // never read as "not there" (the caller then says it may have gone).
   let others = false;
+  // Whether every conversation was read back past the send (m1 round 2,
+  // lead-chatter-pushes-link-out-of-read-window-second-link): a lead who
+  // wrote ten lines since must never push the link out of the page read.
+  let covered = true;
   for (const cv of convs.slice(0, 3)) {
-    const m = await ghl("GET", `/conversations/${enc(String(cv.id))}/messages?limit=10`);
-    const inner = ((m as Row).messages ?? {}) as Row;
-    const list = toThread(Array.isArray(inner.messages) ? inner.messages : (m as Row).messages, String(cv.id));
-    seen.push(...list);
-    const hit = matchSent(list, since, text, o);
-    if (hit) return { hit, seen, failed: null, others: true };
-    if (o.went && !failed) failed = matchSent(list, since, text, { channel: o.channel });
-    if (!others) others = Boolean(matchSent(list, since, null, { channel: o.channel }));
+    const cid = String(cv.id);
+    let cursor: string | null = null;
+    let reached = false;
+    for (let page = 0; page < SENT_SINCE_PAGES && !reached; page++) {
+      const m = await ghl("GET", `/conversations/${enc(cid)}/messages?limit=${SENT_SINCE_PAGE}${cursor ? `&lastMessageId=${enc(cursor)}` : ""}`);
+      const inner = (m as Row).messages;
+      const arr = Array.isArray((inner as Row | undefined)?.messages) ? ((inner as Row).messages as unknown[]) : Array.isArray(inner) ? inner : null;
+      if (!arr) throw new Error("HighLevel answered a conversation's page with no messages in it");
+      const list = toThread(arr, cid);
+      seen.push(...list);
+      const hit = matchSent(list, since, text, o);
+      if (hit) return { hit, seen, failed: null, others: true };
+      if (o.went && !failed) failed = matchSent(list, since, text, { channel: o.channel });
+      if (!others) others = Boolean(matchSent(list, since, null, { channel: o.channel }));
+      const times = list.map(x => Date.parse(String(x.at ?? ""))).filter(Number.isFinite);
+      const oldest = times.length ? Math.min(...times) : null;
+      const more = Array.isArray(inner) ? false : Boolean((inner as Row | undefined)?.nextPage);
+      if (!more || (oldest !== null && oldest < since - 15_000)) reached = true;
+      else cursor = String((inner as Row).lastMessageId ?? list.at(-1)?.id ?? "") || null;
+      if (!reached && !cursor) break;
+    }
+    if (!reached) covered = false;
   }
+  // Not found, and the read did not reach back past the send: not known.
+  if (!failed && !covered) throw new Error("the lead's conversation could not be read back to the send");
   return { hit: null, seen, failed, others };
+}
+
+/** How many messages one conversation page asks for, and how many pages whatsappSentSince reads back at most. */
+const SENT_SINCE_PAGE = 20;
+const SENT_SINCE_PAGES = 3;
+
+/** HighLevel's conversation search, as a list; an answer with no list in it throws (m1 round 2). */
+function conversationList(out: unknown): Row[] {
+  const list = (out as Row | null)?.conversations;
+  if (!Array.isArray(list)) throw new Error("HighLevel answered the conversation search with no list in it");
+  return list as Row[];
 }
 
 /**
@@ -3635,13 +3721,45 @@ async function candidates(now: number): Promise<{ list: QueueCandidate[] }> {
   // A room's hold keeps the rep's own calls off a lead who has a link; a
   // lead who rang back or wrote since the link went is the rep's to answer
   // now, so the hold ends for them (stress2 round 4).
+  // The lead's own booked intro, due for its try now (the item
+  // appointmentWork ranks tier 0 "Intro call now"): the hold never hides the
+  // call the lead booked for this minute (m1 round 2,
+  // room-hold-hides-intro-at-booked-minute).
+  const introDue = (l: Row): boolean => {
+    const id = String(l.contact_id);
+    const intro = (apptBy.get(id) ?? [])
+      .filter(
+        a =>
+          a.call_type === "intro" &&
+          (ms(a.start_at) ?? 0) >= now - 20 * 60_000 &&
+          !["cancelled", "noshow", "invalid", "showed"].includes(String(a.status ?? "")),
+      )
+      .sort((a, b) => (ms(a.start_at) ?? 0) - (ms(b.start_at) ?? 0))[0];
+    if (!intro) return false;
+    const appt: Appt = {
+      id: String(intro.appointment_id),
+      type: "intro",
+      start: ms(intro.start_at) ?? 0,
+      booked: ms(intro.booked_at),
+      status: (intro.status as string) ?? null,
+      assigned: (intro.assigned_user_id as string) ?? null,
+      confirmed: confirmedAppt.has(String(intro.appointment_id)),
+      last_try: lastTry.get(String(intro.appointment_id)) ?? null,
+      room_joined: roomJoinedFor(joinsByAppt.get(String(intro.appointment_id)) ?? [], {
+        id: String(intro.appointment_id),
+        start: ms(intro.start_at) ?? 0,
+      }),
+      country: (l.country as string | null) ?? null,
+    };
+    return appointmentWork(appt, now, "setter", null)?.kind === "intro";
+  };
   const roomHolds = (l: Row): boolean => {
     const id = String(l.contact_id);
     const since = roomHeld.get(id);
     if (since === undefined) return false;
     const missed = Math.max(missedBy.get(`c:${id}`) ?? 0, l.phone8 ? (missedBy.get(`p:${l.phone8}`) ?? 0) : 0);
     const wrote = inboxBy.get(id) ?? 0;
-    return !(missed > since || wrote > since);
+    return !(missed > since || wrote > since || introDue(l));
   };
   const list = leads.filter(l => !isClient(l) && !roomHolds(l)).map(l => {
     const id = String(l.contact_id);

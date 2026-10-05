@@ -127,10 +127,14 @@ describe("S1: owner sql", () => {
   test("the re-asks and alerts still come back: an unsent claimed link, a lead in as a booked call nears", () => {
     const claimed = workerOpened({ link_claimed_at: at(T0 + 5 * S), lead_by: at(T0 + 5 * S + W.lead * S) });
     expect(ok(sweepRoom(claimed, T0 + 70 * S, ctx, null, { owner: "sql" })).effects).toEqual([{ kind: "send_link", retry: true }]);
-    const leadIn = workerOpened({ state: "lead_in", lead_in_at: at(T0 + MIN) });
+    // The booked-call alert asks the team for cover on a live handover only
+    // (m1 round 2: a seat's own room near its own call raises none).
+    const leadIn = workerOpened({ state: "lead_in", lead_in_at: at(T0 + MIN), purpose: "handover" });
     const near = T0 + 10 * MIN;
     const fx = ok(sweepRoom(leadIn, near, ctx, near + 5 * MIN, { owner: "sql" })).effects;
     expect(fx.map(e => e.kind)).toEqual(["alert"]);
+    const own = workerOpened({ state: "lead_in", lead_in_at: at(T0 + MIN), purpose: "fallback" });
+    expect(ok(sweepRoom(own, near, ctx, near + 5 * MIN, { owner: "sql" })).effects.map(e => e.kind)).toEqual([]);
   });
 });
 

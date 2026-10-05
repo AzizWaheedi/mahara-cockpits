@@ -460,10 +460,10 @@ describe("Thursday 8 October: the video link goes on WhatsApp at 20:58:20 (day);
 
 describe("Tuesday 6 October: the lead's demo is booked at 15:00 (45 minutes, its own Zoom link in HighLevel); a room from the lead page's video menu", () => {
   const demo = kw("2026-10-06T15:00:00");
-  test("at 14:59:59 it is refused: 'This lead has a booked demo. Its Zoom link comes from HighLevel, so no new room is made.'", async () => {
+  test("at 14:59:59 it is refused: 'This lead has a booked demo. Its Zoom link comes from HighLevel, so no new room is made. Call them, or send the demo's own Zoom link from HighLevel.'", async () => {
     const w = world(demo - S, { country: "KW", demo, gate: true });
     const out = await w.manualRoom(demo - S);
-    expect(out.refused).toBe("This lead has a booked demo. Its Zoom link comes from HighLevel, so no new room is made.");
+    expect(out.refused).toBe("This lead has a booked demo. Its Zoom link comes from HighLevel, so no new room is made. Call them, or send the demo's own Zoom link from HighLevel.");
   });
   test("at 15:00:01, inside the demo's own 45 minutes, it is refused the same way: no second link goes to a lead whose demo is on now", async () => {
     const w = world(demo + S, { country: "KW", demo, gate: true });
@@ -476,7 +476,7 @@ describe("Tuesday 6 October: the lead's demo is booked at 15:00 (45 minutes, its
     // link in their calendar invite, in the very minutes they may be
     // waiting in that one.
     expect({ refused: out.refused, sent: w.sent.map(s => s.channel) }).toEqual({
-      refused: "This lead has a booked demo. Its Zoom link comes from HighLevel, so no new room is made.",
+      refused: "This lead has a booked demo. Its Zoom link comes from HighLevel, so no new room is made. Call them, or send the demo's own Zoom link from HighLevel.",
       sent: [],
     });
   });

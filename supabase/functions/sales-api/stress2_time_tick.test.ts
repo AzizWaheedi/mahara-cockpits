@@ -129,9 +129,13 @@ describe("a fallback room for the 11:00 intro, made at 10:58 (the dialer's intro
     expect(w.guardAlerts()).toHaveLength(0);
   });
 
-  test("control: the setter's next intro at 11:15 is near at 11:06 while the lead is still awaited: one alert (the rule itself)", async () => {
+  test("control: the setter's next intro at 11:15 is near at 11:06 while the lead is still awaited: no alert for a setter's own room (m1 round 2: P1 posts nothing), one for a live handover's (the rule itself)", async () => {
     const w = setup({ next: START + 15 * MIN });
     await w.tick(START + 6 * MIN);
-    expect(w.guardAlerts()).toHaveLength(1);
+    expect(w.guardAlerts()).toHaveLength(0);
+    const h = setup({ next: START + 15 * MIN });
+    (h.db.t("cockpit_sales_rooms")[0] as Row).purpose = "handover";
+    await h.tick(START + 6 * MIN);
+    expect(h.guardAlerts()).toHaveLength(1);
   });
 });

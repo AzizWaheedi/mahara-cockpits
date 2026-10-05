@@ -1377,7 +1377,7 @@ describe("room.create's checks", () => {
     expect(input({ setting: { ...ON, test_only: true, test_contacts: ["c1"] }, contact: LEAD })).toBe(null);
     expect(input({ contact: { ...LEAD, tags: ["client"] } })?.message).toBe("This contact is an active client. Client success looks after them.");
     expect(input({ contact: { ...LEAD, dnd: true } })?.message).toBe("Do not disturb is on in HighLevel. No link can go.");
-    expect(input({ booked_demo: true })?.message).toBe("This lead has a booked demo. Its Zoom link comes from HighLevel, so no new room is made.");
+    expect(input({ booked_demo: true })?.message).toBe("This lead has a booked demo. Its Zoom link comes from HighLevel, so no new room is made. Call them, or send the demo's own Zoom link from HighLevel.");
     expect(input({ lead_room_open: true })?.message).toBe("A video room is already open for this lead. Use that one.");
     expect(input({ lead_room_open: true, purpose: "manual" })?.message).toBe("This lead already has a room open. Open it.");
     expect(input({ host_room_open: true })?.message).toBe("You already have a room open. End it first.");
@@ -1766,11 +1766,19 @@ describe("10,000 random event sequences", () => {
 
         // 1. A final room never changes state; the two writes it takes are "That was not the lead", which only
         // takes the count back, and a lead join the timer's close raced, kept as evidence only (lead_in_at, result).
+        // And the time a link that went is recorded on a room a press closed
+        // while the send was read back (m1 round 2): link_sent_at only.
         if (isFinal(before.state)) {
           if (a.changed) {
-            expect(["not_lead", "lead_in"]).toContain(e.kind);
+            expect(["not_lead", "lead_in", "link_sent"]).toContain(e.kind);
             expect([after.state, after.version]).toEqual([before.state, before.version]);
-            const keys = e.kind === "lead_in" ? ["lead_in_at", "lead_in_seen_at", "result"] : ["count_undo_at", "taken_back_join_at", "count_result", "result"];
+            const keys =
+              e.kind === "lead_in"
+                ? ["lead_in_at", "lead_in_seen_at", "result"]
+                : e.kind === "link_sent"
+                  ? ["link_sent_at", "link_claimed_at", "link_unconfirmed_at"]
+                  : ["count_undo_at", "taken_back_join_at", "count_result", "result"];
+            if (e.kind === "link_sent") expect(before.link_sent_at ?? null).toBeNull();
             expect(Object.keys(a.patch).every(k => keys.includes(k))).toBe(true);
             if (e.kind === "not_lead") finalUndos++;
           } else expect(after).toBe(before);

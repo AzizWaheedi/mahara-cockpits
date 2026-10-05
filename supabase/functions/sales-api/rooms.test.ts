@@ -698,11 +698,11 @@ describe("tick (S1: the SQL sweep owns every timer)", () => {
     expect(out.handled).toBe(1);
   });
 
-  test("a lead in a room as the host's booked call nears raises one alert", async () => {
+  test("a lead in a live handover room as the host's booked call nears raises one alert (a seat's own room raises none: m1 round 2)", async () => {
     const w = setup();
     const id = String((await w.make()).id);
     await w.workerOpens(id);
-    await w.io.db(`cockpit_sales_rooms?id=eq.${id}`, { method: "PATCH", body: { state: "lead_in", lead_in_at: w.db.iso(), version: 4 } });
+    await w.io.db(`cockpit_sales_rooms?id=eq.${id}`, { method: "PATCH", body: { state: "lead_in", lead_in_at: w.db.iso(), version: 4, purpose: "handover" } });
     w.db.seed("cockpit_sales_appointments", [{ appointment_id: "x", assigned_user_id: "G-setter", start_at: new Date(w.clock.now + 5 * MIN).toISOString(), status: "confirmed", call_type: "intro" }]);
     await w.rooms.desk["room.event"]!(desk, { kind: "tick", payload: { room_ids: [id] } });
     await w.rooms.desk["room.event"]!(desk, { kind: "tick", payload: { room_ids: [id] } });

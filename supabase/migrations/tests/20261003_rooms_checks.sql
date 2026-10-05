@@ -1673,6 +1673,36 @@ exception when others then
 end;
 $$;
 
+-- G5b. A room's "booked call is near" alert is over once the room has closed
+--      (m1 round 2, booked-guard-alert-p2-words-never-resolved): resolved by
+--      the next watchdog run, never three days on; an open room's stays.
+do $$
+declare
+  closed uuid;
+  live uuid;
+  w jsonb;
+begin
+  delete from public.cockpit_sales_alerts;
+  closed := pg_temp.room('lc-test-g5b-a', 'lc-test-g5b@example.invalid', 'fallback', 'expired');
+  live := pg_temp.room('lc-test-g5b-b', 'lc-test-g5b@example.invalid', 'manual', 'open');
+  insert into public.cockpit_sales_alerts (dedupe_key, kind, message, raised_at) values
+    ('room:' || closed::text || ':booked_guard:2026-10-12T12:30:00.000Z', 'room_booked_guard', 'Near, closed.', now() - interval '5 minutes'),
+    ('room:' || live::text || ':booked_guard:2026-10-12T12:30:00.000Z', 'room_booked_guard', 'Near, open.', now() - interval '5 minutes');
+  w := public.cockpit_sales_watchdog();
+  perform pg_temp.ck('G5b a closed room''s booked-call alert is resolved at once; an open room''s stays',
+    exists (select 1 from public.cockpit_sales_alerts
+             where dedupe_key like 'room:' || closed::text || ':booked_guard:%:resolved:%' and resolved_at is not null)
+    and not exists (select 1 from public.cockpit_sales_alerts
+                     where dedupe_key = 'room:' || closed::text || ':booked_guard:2026-10-12T12:30:00.000Z')
+    and exists (select 1 from public.cockpit_sales_alerts
+                 where dedupe_key = 'room:' || live::text || ':booked_guard:2026-10-12T12:30:00.000Z' and resolved_at is null),
+    w::text);
+  delete from public.cockpit_sales_alerts;
+exception when others then
+  perform pg_temp.ck('G5b section crashed', false, sqlstate || ': ' || sqlerrm);
+end;
+$$;
+
 -- G5. Per-room alerts nobody resolved (final review): resolved three days
 --     after they were raised once posted, a week when never posted; a fresh
 --     one, and any alert that is not a room's, stays open.

@@ -31,7 +31,7 @@ const SPEC_SENTENCES = {
     meet_pending: "Google did not make the Meet link. Try Zoom.",
     client: "This contact is an active client. Client success looks after them.",
     dnd: "Do not disturb is on in HighLevel. No link can go.",
-    booked_demo: "This lead has a booked demo. Its Zoom link comes from HighLevel, so no new room is made.",
+    booked_demo: "This lead has a booked demo. Its Zoom link comes from HighLevel, so no new room is made. Call them, or send the demo's own Zoom link from HighLevel.",
     phone_call: "This call is on the phone. There is no link to send.",
     handover_open: "A live call for this lead is already open, started by {setter} at {time}.",
     offer_taken: "{rep} took this lead at {time}.",
