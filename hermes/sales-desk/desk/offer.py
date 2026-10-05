@@ -226,7 +226,8 @@ def prompt_block(resolved: dict[str, Any]) -> str:
         f"- **Advertising {ads} a month**{daily}, paid by the client directly to the platforms, "
         "always its own line.",
         f"- **{deposit} deposit** reserves the start date and comes off the first payment.",
-        f"- **{resolved['meetings']} qualified meetings across the term** is what the program is built to deliver.",
+        f"- **{resolved['meetings']} qualified meetings across the term** is the target the program works to. "
+        "Write it as a target, never as an output the program is made to produce.",
     ]
     parts = resolved["instalments"]
     if len(parts) == 1:

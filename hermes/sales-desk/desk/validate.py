@@ -693,6 +693,19 @@ RESULT_THEN_GUARANTEED = re.compile(
     rf"\b{_RESULT}\b[^.;:]{{0,80}}?,\s*guaranteed\s*(?:[.;:)]|$)"
     r"|(?:اجتماع|اجتماعات|موعد|مواعيد|زيارة|زيارات|نتائج|مشاريع|مشروع|عملاء)[^.؛:]{0,80}?،\s*مضمون[ةه]?\s*(?:[.؛:)]|$)",
     re.I)
+# What the program is "built to deliver": a number of meetings, projects or
+# signed work stated as the program's output is a promise of results in all
+# but the word (Aziz, 2026-10-05: the meetings figure is "the target we work
+# to, not a promise"). The same sentence calling it a target is the honest form.
+BUILT_TO = re.compile(
+    rf"\bbuilt\s+to\s+(?:deliver|produce|add|bring|generate)\b[^.!?]{{0,40}}?"
+    rf"\b(?:{_RESULT}|signed|deals?|contracts?)\b"
+    r"|(?:بني|مبني|مبنية|مصمم|مصممة|صمم)\s+(?:\S+\s+){0,2}?(?:ل|لكي\s+)?"
+    r"(?:يحقق|تحقق|يضيف|تضيف|يجلب|تجلب|يولد|تولد|يقدم|تقدم|يوفر|توفر|تحقيق|إضافة|اضافة|جلب|توليد)"
+    r"[^.!?؟]{0,40}?(?:موعد|مواعيد|اجتماع|اجتماعات|زيارة|زيارات|مشروع|مشاريع|عملاء|عميل|نتائج|صفقات|عقود)",
+    re.I)
+TARGET_WORD = re.compile(r"\btargets?\b|\btargeted\b|هدف|الهدف|مستهدف|المستهدف", re.I)
+SENTENCE_END = re.compile(r"[.!?؟]")
 _NOT = re.compile(r"\b(?:not|never|no|cannot)\b|n't", re.I)
 # "We do not guarantee results" says the opposite, so a guarantee of results
 # right after a negation is let through.
@@ -705,9 +718,26 @@ def _plain(text: str) -> str:
     return _TASHKEEL.sub("", unicodedata.normalize("NFC", text))
 
 
+def sentence_at(text: str, start: int, end: int) -> str:
+    """The sentence a match sits in."""
+    before = [m.end() for m in SENTENCE_END.finditer(text, 0, start)]
+    after = SENTENCE_END.search(text, end)
+    return text[(before[-1] if before else 0):(after.end() if after else len(text))]
+
+
+def built_to_deliver(text: str) -> bool:
+    """A result stated as what the program is built to produce, in a sentence
+    that does not call it a target."""
+    return any(not TARGET_WORD.search(sentence_at(text, m.start(), m.end()))
+               and not _NEGATED.search(text[:m.start()])
+               for m in BUILT_TO.finditer(text))
+
+
 def promises_results(text: str) -> bool:
     """Free work, or results guaranteed, in a line of the document."""
     if FREE_WORK.search(text):
+        return True
+    if built_to_deliver(text):
         return True
     if any(not _NEGATED.search(text[:m.start()]) and not _NOT.search(m.group(0))
            for m in RESULT_THEN_GUARANTEED.finditer(text)):
@@ -1166,7 +1196,30 @@ def check_render(dom: Optional[str], expected: int, rep: Report, engine: str = "
         rep.add(FAIL, "render", f"{over} page(s) overflow A4: trim before sending")
     else:
         rep.add(PASS, "render", "no page overflows A4")
+    zero = zero_break_even(live)
+    if zero:
+        rep.add(FAIL, "render", "a break-even tile reads %s on the price page, which says the program pays for "
+                                "itself with no projects at all. It is drawn from roi.avg_project_value and "
+                                "roi.margin_pct; without a margin there are no tiles to draw: check roi" % zero)
     return sheets
+
+
+# The break-even row as the template draws it: its side label, in either
+# language, then the tiles' figures.
+BREAK_EVEN_ROW = re.compile(
+    r'<div class="side">\s*(?:Break-even|نقطة التعادل)\s*</div>\s*<div class="main">\s*'
+    r'<div class="big accent">(.*?)</div>\s*</div>\s*</div>', re.S)
+TILE_VALUE = re.compile(r'<span class="v">\s*([^<]*?)\s*</span>')
+
+
+def zero_break_even(live: str) -> Optional[str]:
+    """The first break-even tile that reads zero, as printed, or None."""
+    for row in BREAK_EVEN_ROW.finditer(live):
+        for raw in TILE_VALUE.findall(row.group(1)):
+            text = raw.translate(ARABIC_DIGITS).replace(",", "")
+            if re.fullmatch(r"0+(?:\.0+)?", text):
+                return raw
+    return None
 
 
 def validate(data: dict[str, Any], transcript: Optional[str] = None, *, resolved: Optional[dict[str, Any]] = None,

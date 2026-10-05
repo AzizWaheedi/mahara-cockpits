@@ -1250,7 +1250,7 @@ const STR = {
     tStart: "How to start", tTree: "How the goal breaks down", theGoal: "The goal",
     beExtra: "Extra projects across the ", beMonths: " months to break even",
     bePerMonth: "Which is this many a month",
-    beTarget: "What the plan is built to produce a month",
+    beTarget: "The plan's target across the term",
     youPay: "Everything you pay us,", monthsWord: "months", gapYear: "The gap, one year",
     secArith: "The arithmetic", tArith: "What it takes to pay for itself",
     theShape: "The shape", tShape: "What we find in firms like yours",
@@ -1313,7 +1313,7 @@ const STR = {
     beExtra: "\u0645\u0634\u0627\u0631\u064a\u0639 \u0625\u0636\u0627\u0641\u064a\u0629 \u062e\u0644\u0627\u0644 \u0627\u0644\u0640 ",
     beMonths: " \u0623\u0634\u0647\u0631 \u0644\u0628\u0644\u0648\u063a \u0627\u0644\u062a\u0639\u0627\u062f\u0644",
     bePerMonth: "\u0623\u064a \u0647\u0630\u0627 \u0627\u0644\u0639\u062f\u062f \u0634\u0647\u0631\u064a\u064b\u0627",
-    beTarget: "\u0645\u0627 \u0628\u064f\u0646\u064a \u0647\u0630\u0627 \u0627\u0644\u0628\u0631\u0646\u0627\u0645\u062c \u0644\u064a\u062d\u0642\u0642\u0647 \u0634\u0647\u0631\u064a\u064b\u0627",
+    beTarget: "\u0647\u062f\u0641 \u0627\u0644\u062e\u0637\u0629 \u062e\u0644\u0627\u0644 \u0627\u0644\u0645\u062f\u0629",
     overflow: "\u0647\u0630\u0647 \u0627\u0644\u0635\u0641\u062d\u0629 \u062a\u062a\u062c\u0627\u0648\u0632 \u0645\u0642\u0627\u0633 A4. \u0627\u062e\u062a\u0635\u0631 \u0627\u0644\u0645\u062d\u062a\u0648\u0649 \u0642\u0628\u0644 \u0627\u0644\u0625\u0631\u0633\u0627\u0644.",
     secArith: "\u0627\u0644\u062d\u0633\u0627\u0628",
     theShape: "\u0627\u0644\u0646\u0645\u0637 \u0627\u0644\u0645\u062a\u0643\u0631\u0631",
@@ -1740,7 +1740,11 @@ if (P.solution && P.solution.length) {
    deal's file. Anything the data file states wins over the calculation. */
 let breakevenRows = (P.roi_breakeven && P.roi_breakeven.length) ? P.roi_breakeven : null;
 
-if (P.roi && P.roi.fee_usd && Number(P.roi.avg_project_value) > 0) {
+/* Only with a project value and a margin: without the margin the profit is
+   0 and the page printed "0.0 extra projects to break even" (5 October 2026,
+   on every general proposal that had a project value). The arithmetic page
+   already makes that case in the general variant. */
+if (P.roi && P.roi.fee_usd && Number(P.roi.avg_project_value) > 0 && Number(P.roi.margin_pct) > 0) {
   const r = P.roi;
   const rate = Number(r.usd_rate) || 1;
   const months = Number(r.months) || 3;
@@ -1750,10 +1754,12 @@ if (P.roi && P.roi.fee_usd && Number(P.roi.avg_project_value) > 0) {
   const perMonth = breakeven / months;
 
   if (!breakevenRows) {
+    /* The third tile is the plan's target as the deal states it, across the
+       term; none is invented when the deal gives none. */
     breakevenRows = [
       { v: breakeven.toFixed(1), k: L.beExtra + months + L.beMonths },
       { v: perMonth.toFixed(1), k: L.bePerMonth },
-      { v: r.target_projects_month || "2 to 4", k: L.beTarget }
+      ...(r.target_projects_month ? [{ v: r.target_projects_month, k: L.beTarget }] : [])
     ];
   }
 }
