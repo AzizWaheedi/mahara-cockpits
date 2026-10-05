@@ -221,14 +221,92 @@ def closer_evidence(transcript_text: str, fills: Optional[dict[str, Any]]) -> st
     return transcript_text + ("\n\nFigures the closer typed: " + "; ".join(typed) if typed else "")
 
 
+# ---- the contact's name ------------------------------------------------------
+# A name copied from a Fathom speaker label keeps the label's typing: the proof
+# run of 176954619 printed the surname in lower case on the cover (5 October
+# 2026), where the live draft had it capitalised. Code puts such a name in
+# title case. Particles and Arabic script stay as written, a word with a
+# capital inside it (McLean, AlSaud) is left alone, the CRM's own spelling of
+# the same name wins when it has capitals, and a name the closer typed is
+# never touched.
+NAME_PARTICLES = {"al", "el", "bin", "bint", "ibn", "bn", "de", "da", "di", "del", "della", "der", "den", "van",
+                  "von", "la", "le", "du", "dos", "das", "ter"}
+HONORIFICS = {"mr", "mrs", "ms", "dr", "eng", "engr", "sheikh", "shaikh", "prof"}
+# "Name: words" as fathom.flatten writes a turn, or the vault's "**Name** (00:01:02): words".
+_LABEL = re.compile(r"^\s*(?:\*\*(?P<vault>[^*]+)\*\*\s*\([^)]*\)|(?P<plain>[^:\n]{1,80}?))\s*:\s")
+
+
+def speaker_labels(transcript_text: str) -> list[str]:
+    """The names the call's turns are spoken under, each once."""
+    seen: list[str] = []
+    for line in str(transcript_text or "").splitlines():
+        m = _LABEL.match(line)
+        who = (m.group("vault") or m.group("plain") or "").strip() if m else ""
+        if who and re.search(r"[^\W\d_]", who) and who not in seen:
+            seen.append(who)
+    return seen
+
+
+def _latin_words(text: str) -> list[str]:
+    return [w.lower() for w in re.findall(r"[A-Za-z][A-Za-z'’-]*", text)]
+
+
+def from_a_label(name: str, labels: Any) -> bool:
+    """Every Latin word of the name (a title such as Eng. aside) is in one of
+    the call's speaker labels: the drafter took it from there."""
+    words = [w for w in _latin_words(name) if w.strip("'’-") not in HONORIFICS]
+    return bool(words) and any(set(words) <= set(_latin_words(label)) for label in labels or ())
+
+
+def name_in_title_case(name: str) -> str:
+    """Each word of a name in lower case (or the whole name in capitals) with
+    its first letter capitalised, and the parts of "al-harbi" or "o'neil"
+    after a hyphen or apostrophe too. Particles, Arabic script and a word with
+    a capital inside it are left as they are."""
+    latin = re.findall(r"[A-Za-z]+", name)
+    shouted = bool(latin) and all(w.isupper() for w in latin) and any(len(w) > 2 for w in latin)
+
+    def part(p: str) -> str:
+        if p.lower() in NAME_PARTICLES:
+            return p
+        return p[:1].upper() + p[1:].lower()
+
+    def word(tok: str) -> str:
+        letters = re.sub(r"[^A-Za-z]", "", tok)
+        if not letters or tok.lower() in NAME_PARTICLES:
+            return tok
+        if not (letters.islower() or (shouted and letters.isupper() and len(letters) > 2)):
+            return tok
+        return "".join(p if re.fullmatch(r"[-'’]", p) else part(p) for p in re.split(r"([-'’])", tok))
+
+    return "".join(tok if tok.isspace() else word(tok) for tok in re.split(r"(\s+)", name))
+
+
+def tidy_contact(deal: dict[str, Any], speakers: Any, crm_name: Optional[str] = None,
+                 typed: bool = False) -> None:
+    """client_contact in title case when the drafter copied it from a speaker label."""
+    name = deal.get("client_contact")
+    if typed or not isinstance(name, str) or validate_mod.FILL_RE.search(name) or not from_a_label(name, speakers):
+        return
+    crm = " ".join(str(crm_name or "").split())
+    if crm and crm.casefold() == " ".join(name.split()).casefold() and crm not in (crm.lower(), crm.upper()):
+        deal["client_contact"] = crm
+        return
+    deal["client_contact"] = name_in_title_case(name)
+
+
 def stamp(deal: dict[str, Any], *, variant: str, resolved: dict[str, Any], lang: str,
           currency_unstated: bool = False, closer_figures: Optional[dict[str, Any]] = None,
-          prior: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+          prior: Optional[dict[str, Any]] = None, speakers: Any = (),
+          crm_name: Optional[str] = None) -> dict[str, Any]:
     """What the file must say whatever the model wrote. The variant is on the
     file because the file is what the validator reads; the offer stamp so the
     document can be checked against the offer it was written for; the logo and
     language because they are ours to set, not the drafter's. And a currency
-    the client never named is a blank for the closer, never a guess."""
+    the client never named is a blank for the closer, never a guess. A name
+    copied from a speaker label is put in title case (`speakers`, the call's
+    labels; `crm_name`, the lead's name in the CRM), unless the closer typed it."""
+    tidy_contact(deal, speakers, crm_name, typed="client_contact" in (closer_figures or {}))
     if currency_unstated and isinstance(deal.get("arithmetic"), dict):
         deal["arithmetic"]["currency"] = "FILL"
     # A reference's instruction copied as it stands ("<the client's gross
@@ -383,8 +461,11 @@ def run(call: Call, *, lang: str, resolved: dict[str, Any], offer: dict[str, Any
                      "again where they belong")
         notes.append(line + ".")
     evidence = closer_evidence(call.transcript_text, fills)
+    # The call's speaker labels and the CRM's name, for a name the drafter
+    # copied from a label (stamp puts it in title case on every round).
+    named = {"speakers": speaker_labels(call.transcript_text), "crm_name": call.client_name}
     stamp(deal, variant=variant, resolved=resolved, lang=lang, currency_unstated=unstated, closer_figures=fills,
-          prior=prior)
+          prior=prior, **named)
     (workdir / "deal.json").write_text(json.dumps(deal, ensure_ascii=False, indent=2), encoding="utf-8")
     beat()
 
@@ -415,7 +496,7 @@ def run(call: Call, *, lang: str, resolved: dict[str, Any], offer: dict[str, Any
                 temperature=0.2, attempts=1, timeout=cfg.model_timeout, expect=prompt_mod.is_deal, log=log,
                 what="tighten", beat=beat)
             stamp(tighter, variant=variant, resolved=resolved, lang=lang, currency_unstated=unstated,
-                  closer_figures=fills, prior=prior)
+                  closer_figures=fills, prior=prior, **named)
             lost = lost_items(best, tighter, small=prompt_mod.small_overflow(best_over, px_over(best_dom)))
             if lost:
                 log("    the shorter draft dropped items from %s; not taken" % ", ".join(lost))
@@ -456,7 +537,7 @@ def run(call: Call, *, lang: str, resolved: dict[str, Any], offer: dict[str, Any
                 p, system, prompt_mod.repair_user(best, fixable), temperature=0.2, attempts=1,
                 timeout=cfg.model_timeout, expect=prompt_mod.is_deal, log=log, what="repair", beat=beat)
             stamp(fixed, variant=variant, resolved=resolved, lang=lang, currency_unstated=unstated,
-                  closer_figures=fills, prior=prior)
+                  closer_figures=fills, prior=prior, **named)
             fixed_html = workdir / "draft-repaired.html"
             fixed_over, fixed_dom = overflowing(fixed, fixed_html, renderer)
             fixed_result = validate_mod.validate(fixed, evidence, resolved=resolved, offer=offer,
