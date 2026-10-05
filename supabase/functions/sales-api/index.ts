@@ -55,6 +55,7 @@ import {
 } from "./lib.ts";
 import {
   afterOutcome,
+  afterTalk,
   ANY_OUTCOME_WORDS,
   type AnyOutcome,
   APPOINTMENT_OUTCOMES,
@@ -128,6 +129,7 @@ import {
   agentOff,
   matchSent,
   queuedTemplatesQuery,
+  relativeDay,
   type SendSource,
   sourceHealth,
   templateMayBeQueued,
@@ -393,25 +395,70 @@ function needManager(who: Who) {
 // Marking calls
 // ---------------------------------------------------------------------------
 
+const SUPERSEDED_CRM = "A later mark replaced this one, so HighLevel was given the later mark.";
+
 async function writeMarkToCrm(id: number, appointmentId: string, status: string, notify = true) {
   // Quiet: the status changes in HighLevel and none of its automations run.
   let crm = notify ? "written" : "quiet";
   let crmError: string | null = null;
-  try {
-    await ghl("PUT", `/calendars/events/appointments/${enc(appointmentId)}`, {
-      appointmentStatus: status,
-      toNotify: notify,
-    });
-  } catch (e) {
-    crm = "failed";
-    crmError = redact(String((e as Error).message ?? e));
+  // A mark replaced before its PUT goes (stress2 round 6,
+  // settle-noshow-crm-write-lands-after-rep-mark): HighLevel is never given
+  // a mark the cockpit no longer holds.
+  let superseded = await markSuperseded(id);
+  if (!superseded) {
+    try {
+      await ghl("PUT", `/calendars/events/appointments/${enc(appointmentId)}`, {
+        appointmentStatus: status,
+        toNotify: notify,
+      });
+    } catch (e) {
+      crm = "failed";
+      crmError = redact(String((e as Error).message ?? e));
+    }
+    // Replaced while the PUT ran (a rep's mark landed and its own PUT went
+    // first): the current mark is put back on top, so a superseded mark
+    // never lands last in HighLevel, which B2B's show rate reads.
+    if (crm !== "failed" && (await markSuperseded(id))) {
+      superseded = true;
+      await putCurrentMark(appointmentId);
+    }
+  }
+  if (superseded) {
+    crm = "skipped";
+    crmError = SUPERSEDED_CRM;
   }
   await svc(`cockpit_sales_dispositions?id=eq.${id}`, {
     method: "PATCH",
     body: { crm, crm_error: crmError, crm_at: new Date().toISOString() },
     prefer: "return=minimal",
   });
-  return { crm, crm_error: crmError };
+  return { crm, crm_error: crmError, ...(superseded ? { superseded: true } : {}) };
+}
+
+/** This mark is no longer the call's current one; false when it could not be read (the write goes on as before). */
+async function markSuperseded(id: number): Promise<boolean> {
+  try {
+    const rows = await svc(`cockpit_sales_dispositions?id=eq.${id}&select=superseded_at`);
+    return Boolean(rows[0]?.superseded_at);
+  } catch {
+    return false;
+  }
+}
+
+/** The call's current mark written to HighLevel again, quietly (its own write may have landed before a superseded one). */
+async function putCurrentMark(appointmentId: string): Promise<void> {
+  try {
+    const cur = (await svc(
+      `cockpit_sales_dispositions?appointment_id=eq.${enc(appointmentId)}&superseded_at=is.null&select=id,status,crm`,
+    ))[0];
+    if (!cur || !["written", "quiet", "pending"].includes(String(cur.crm ?? ""))) return;
+    await ghl("PUT", `/calendars/events/appointments/${enc(appointmentId)}`, {
+      appointmentStatus: String(cur.status),
+      toNotify: false,
+    });
+  } catch (e) {
+    console.error("mark put back", redact(String((e as Error)?.message ?? e)));
+  }
 }
 
 async function mark(who: Who, b: Row) {
@@ -1177,8 +1224,8 @@ const UNASKED_MS = 30_000;
  * The request id's "sending" row that HighLevel was never asked about (no
  * ghl_asked_at): deleted, so it holds nothing (the same words, the queue of
  * templates, a repeat). Only such a row, so a send under way is never touched.
- * Not done (the database down): the row is read as unasked once UNASKED_MS
- * has passed (unaskedOrphan).
+ * Not done (the database down): the next try gives it up first (priorTry),
+ * and the message slot reads it as unasked once UNASKED_MS has passed.
  */
 async function voidUnsent(requestId: string): Promise<void> {
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(requestId)) return;
@@ -1188,11 +1235,31 @@ async function voidUnsent(requestId: string): Promise<void> {
   }).catch(e => console.error("an unsent message row was not given up", redact(String((e as Error)?.message ?? e))));
 }
 
-/** A "sending" row whose slot is past UNASKED_MS and HighLevel was never asked (the column exists and is empty). */
-function unaskedOrphan(m: Row | null | undefined, now = Date.now()): boolean {
-  if (!m || m.state !== "sending" || !Object.hasOwn(m, "ghl_asked_at") || m.ghl_asked_at) return false;
-  const t = Date.parse(String(m.created_at ?? ""));
-  return Number.isFinite(t) && now - t >= UNASKED_MS;
+/** A "sending" row HighLevel was never asked about (the column exists and is empty), at any age. */
+function unasked(m: Row | null | undefined): boolean {
+  return Boolean(m && m.state === "sending" && Object.hasOwn(m, "ghl_asked_at") && !m.ghl_asked_at);
+}
+
+/**
+ * This request id's earlier row. One HighLevel was never asked about never
+ * went, however young (stress2 round 6, give-up-lost-retry-says-already-sent:
+ * the earlier try answered "Not sent, try again" and its own give-up was
+ * lost, so the retry inside 30 s was told "already sent" with nothing sent).
+ * With the same words it is this try's slot (`adopt`): stamped by markAsked
+ * only while unstamped, so of two tries at once exactly one sends and the
+ * other stops before HighLevel is asked. With other words it is given up;
+ * not given up (the database down), thrown, so the caller answers "Not sent
+ * yet". A stamped row, a send under way or done, is the repeat (`already`).
+ */
+async function priorTry(requestId: string, same: (m: Row) => boolean): Promise<{ already?: Row; adopt?: Row }> {
+  const read = async () => (await svc(`cockpit_sales_messages?request_id=eq.${enc(requestId)}&select=*`))[0] as Row | undefined;
+  const first = await read();
+  if (!unasked(first)) return { already: first };
+  if (same(first as Row)) return { adopt: first };
+  await voidUnsent(requestId);
+  const again = await read();
+  if (unasked(again)) throw new Error("an earlier try's unsent message row could not be given up");
+  return { already: again };
 }
 
 /**
@@ -1249,13 +1316,10 @@ async function convoSendOnce(who: Who, b: Row, opts: SendOpts, taken: () => void
   const followupId = b.followup_id ? cleanText(b.followup_id, 40) : null;
   const assetId = await assetFor(b.asset_id);
 
-  let already: Row | undefined = (await svc(`cockpit_sales_messages?request_id=eq.${enc(requestId)}&select=*`))[0];
   // An earlier try's row HighLevel was never asked about: it never went, so
-  // this try sends (stress2 round 5).
-  if (unaskedOrphan(already)) {
-    await voidUnsent(requestId);
-    already = undefined;
-  }
+  // this try sends (stress2 rounds 5 and 6).
+  const prior = await priorTry(requestId, m => m.contact_id === contactId && m.body === text && m.channel === channel);
+  const already = prior.already;
   if (already) {
     if (already.contact_id === contactId && already.body === text && already.channel === channel)
       return { message: already, repeated: true };
@@ -1297,8 +1361,9 @@ async function convoSendOnce(who: Who, b: Row, opts: SendOpts, taken: () => void
     state: "sending",
   };
   // The sender's ceiling is checked where the row is written, in one step,
-  // so fifteen sends at once cannot pass it.
-  const slot = await takeSlot(fresh, { template: false, guard: waGuard });
+  // so fifteen sends at once cannot pass it. An earlier try's unsent row of
+  // these words passed it when it was written: it is this try's slot.
+  const slot = prior.adopt ? { message: prior.adopt } : await takeSlot(fresh, { template: false, guard: waGuard });
   let row: Row;
   if (slot) {
     if (slot.repeated) {
@@ -1784,11 +1849,8 @@ async function sendTemplateOnce(
   const blank = /\{(name|rep|day|time)\}/.exec(line);
   if (blank) throw new Refusal(`Fill in ${blank[0]} before sending: the cockpit did not know it.`);
 
-  let already: Row | undefined = (await svc(`cockpit_sales_messages?request_id=eq.${enc(o.requestId)}&select=*`))[0];
-  if (unaskedOrphan(already)) {
-    await voidUnsent(o.requestId);
-    already = undefined;
-  }
+  const prior = await priorTry(o.requestId, m => m.contact_id === o.contactId && m.template_key === o.key);
+  const already = prior.already;
   if (already) {
     if (already.contact_id === o.contactId && already.template_key === o.key) return { message: already, repeated: true };
     throw new Refusal("That send was already used for other words. Press Send again.", 409);
@@ -1865,7 +1927,9 @@ async function sendTemplateOnce(
     sent_by: who.email,
     state: "sending",
   };
-  const slot = await takeSlot(fresh, { template: true, perDay: guard.templates_per_day, monthCap: budgetCap(guardRaw), guard: guardRaw });
+  const slot = prior.adopt
+    ? { message: prior.adopt }
+    : await takeSlot(fresh, { template: true, perDay: guard.templates_per_day, monthCap: budgetCap(guardRaw), guard: guardRaw });
   let row: Row;
   if (slot) {
     if (slot.repeated) {
@@ -2574,6 +2638,22 @@ async function sendFollowup(who: Who, f: Row, b: Row, auto: boolean, opts: { dec
       409,
     );
   }
+  // The call the draft is about, as it is now (stress2 round 6,
+  // confirm-draft-sent-after-call-moved, confirm-draft-tomorrow-sent-on-call-day,
+  // confirm-draft-sent-after-phone-confirmation): moved, cancelled, held,
+  // started, confirmed by phone since, or the day it names no longer the
+  // day it is: never sent, and closed with the reason before anything is
+  // recorded against the call.
+  const gone = await callGone(f, lead?.country, Date.now());
+  if (gone) {
+    await svc(`cockpit_sales_followups?id=eq.${enc(String(f.id))}&status=eq.draft`, {
+      method: "PATCH",
+      body: { status: "expired", decided_at: new Date().toISOString(), error: gone },
+      prefer: "return=minimal",
+    });
+    await audit(who, auto ? "followup.autosend" : "followup.approve", "cockpit_sales_followups", String(f.id), f, { status: "expired", error: gone });
+    throw new Refusal(gone, 409, { code: "call_changed" });
+  }
   // The conversation may have moved on since the draft was made: a rep wrote
   // in HighLevel or from the cockpit, or the lead wrote again. Either way the
   // draft answers an older conversation; the agent writes a fresh one.
@@ -2747,6 +2827,65 @@ async function sendFollowup(who: Who, f: Row, b: Row, auto: boolean, opts: { dec
       { status: fixable || notSent ? "draft" : mayHaveGone ? "sent" : "failed", error: err, ...(mayHaveGone ? { unclear: true } : {}) });
     throw e;
   }
+}
+
+/** The kinds of draft written about one booked call. */
+const CALL_SEGMENTS = new Set(["confirm", "no_show", "cancelled"]);
+
+/**
+ * Why a draft about a booked call is no longer to be sent, or null while it
+ * is (the desk's gone_reason, read again at the send). The cockpit's copy of
+ * the call first, else HighLevel's own; unread, the send waits (thrown before
+ * the claim), never "the call is gone" on a blip.
+ */
+async function callGone(f: Row, country: unknown, now: number): Promise<string | null> {
+  const aid = String(f.appointment_id ?? "");
+  if (!aid || !CALL_SEGMENTS.has(String(f.segment ?? ""))) return null;
+  const ctx = (f.context && typeof f.context === "object" ? f.context : {}) as Row;
+  let a = (await svc(`cockpit_sales_appointments?appointment_id=eq.${enc(aid)}&select=status,start_at`))[0] as Row | undefined;
+  if (!a) {
+    let one: Row | null = null;
+    try {
+      const g = (await ghl("GET", `/calendars/events/appointments/${enc(aid)}`)) as Row;
+      one = ((g.appointment ?? g) as Row) ?? null;
+    } catch (e) {
+      const st = (e as { status?: unknown })?.status;
+      if (st !== 404 && st !== 410)
+        throw new Refusal("The call this draft is about could not be read just now, so it was not sent. Try again in a minute.", 503, { retry: true });
+    }
+    if (one && (one.id || one.startTime))
+      a = { status: String(one.appointmentStatus ?? one.appoinmentStatus ?? "").toLowerCase(), start_at: one.startTime ?? null };
+  }
+  const status = String(a?.status ?? "").toLowerCase();
+  const start = Date.parse(String(a?.start_at ?? ""));
+  const was = Date.parse(String(ctx.start_at ?? ""));
+  const moved = Number.isFinite(start) && Number.isFinite(was) && Math.abs(start - was) >= 60_000;
+  if (f.segment !== "confirm") {
+    // A no-show or cancelled call's message: the call held after all, or booked at another time since.
+    if (status === "showed" || status === "invalid") return "The call was held after all, so this message is not needed.";
+    if (moved) return "The call was booked at another time since, so this message is not needed.";
+    return null;
+  }
+  if (!a) return "The call this confirms is no longer on the calendar, so this message is not needed.";
+  if (status === "cancelled" || status === "invalid") return "The call this confirms was cancelled, so this message is not needed.";
+  if (status === "showed" || status === "noshow" || (Number.isFinite(start) && start <= now))
+    return "The call this confirms has already started, so this message is not needed.";
+  if (moved)
+    return "The call this confirms was moved, so this message names the wrong time. A confirmation for the new time is written when it is due.";
+  const rel = String(((ctx.the_call ?? {}) as Row).relative ?? "");
+  if (rel && Number.isFinite(was) && relativeDay(was, now, country) !== rel)
+    return `This message says "${rel}", which is no longer the call's day where the lead is, so it was not sent. The agent writes a fresh one if it is still due.`;
+  const made = String(f.created_at ?? "");
+  if (Number.isFinite(Date.parse(made))) {
+    const since = await svc(
+      `cockpit_sales_confirmations?appointment_id=eq.${enc(aid)}&at=gt.${enc(made)}&result=in.(confirmed,reschedule,cancelled,message_sent)&select=result&order=at.desc&limit=1`,
+    );
+    const r = String(since[0]?.result ?? "");
+    if (r === "confirmed") return "The lead confirmed on the phone, so this message is not needed.";
+    if (r === "reschedule" || r === "cancelled") return "The lead already answered about this call on the phone, so this message is not needed.";
+    if (r === "message_sent") return "A confirmation already went to the lead for this call, so this message is not needed.";
+  }
+  return null;
 }
 
 /** A follow-up whose send may have reached the lead: kept as sent, so nothing is written to the lead again for it. */
@@ -3176,7 +3315,7 @@ type QueueCandidate = Candidate &
 /** Everything the queue needs, read in a handful of queries, no huge id lists. */
 async function candidates(now: number): Promise<{ list: QueueCandidate[] }> {
   const soon = enc(new Date(now - 3_600_000).toISOString());
-  const [states, inbox, attempts, h, confirmations, hotList, roles, seats, introTries, roomHeld, roomJoins] = await Promise.all([
+  const [states, inbox, attempts, h, confirmations, hotList, roles, seats, introTries, roomHeld, roomJoins, roomTalks] = await Promise.all([
     svcAll("cockpit_sales_queue_state?select=*&order=contact_id"),
     svc(`cockpit_sales_inbox?select=contact_id,last_message_at,last_direction&last_direction=eq.inbound&last_message_at=gte.${enc(new Date(now - 86_400_000).toISOString())}`),
     svc("cockpit_sales_attempts?select=contact_id,rep_email,started_at,call_checked_at&state=in.(dialing,placed)"),
@@ -3207,7 +3346,27 @@ async function candidates(now: number): Promise<{ list: QueueCandidate[] }> {
       console.error("room joins unread", redact(String((e as Error)?.message ?? e)));
       return [] as Row[];
     }),
+    // Leads the rep talked to in a video room in the last two days (a join
+    // that stands, or the call moved to the phone), whatever the room was
+    // for: the dialer's automatic No answer just before such a talk does not
+    // stand (stress2 round 6, joined-step-next-lead-keeps-auto-no-answer).
+    svc(
+      `cockpit_sales_rooms?contact_id=not.is.null&or=${enc(`(lead_in_at.gte."${new Date(now - 2 * 86_400_000).toISOString()}",and(result.eq.moved_to_phone,ended_at.gte."${new Date(now - 2 * 86_400_000).toISOString()}"))`)}&select=contact_id,lead_in_at,count_undo_at,taken_back_join_at,result,ended_at&limit=2000`,
+    ).catch(e => {
+      console.error("room talks unread", redact(String((e as Error)?.message ?? e)));
+      return [] as Row[];
+    }),
   ]);
+  const talkedBy = new Map<string, number>();
+  for (const r of roomTalks) {
+    const k = String(r.contact_id ?? "");
+    const joined = ms(r.lead_in_at);
+    const undo = ms(r.count_undo_at);
+    const taken = ms(r.taken_back_join_at);
+    const stands = joined !== null && (undo === null || joined > Math.min(taken ?? undo, undo));
+    const t = stands ? joined : r.result === "moved_to_phone" ? ms(r.ended_at) : null;
+    if (k && t !== null && (talkedBy.get(k) ?? 0) < t) talkedBy.set(k, t);
+  }
   // Only a join for the call as it starts now, inside its own window
   // (dialer.ts roomJoinedFor, stress2, round 2): an intro moved later, or a
   // confirmation call's room the hour before, still comes up.
@@ -3371,7 +3530,19 @@ async function candidates(now: number): Promise<{ list: QueueCandidate[] }> {
       Boolean(missedAt && closedAt && missedAt > closedAt) ||
       Boolean(bookedBack && closedAt && bookedBack > closedAt);
     const bookedPast = st.closed === "booked" && !future;
-    const closed = st.closed && !reopened && !bookedPast ? String(st.closed) : null;
+    // A talk in a video room after the dialer's last outcome, when that was
+    // Maqsam's No answer (stress2 round 6): the lead was reached, so the
+    // ladder's retry and its "unreachable" close from before the talk do not
+    // stand; they come back the next working morning, unless a later save
+    // says otherwise (the joined step's own save).
+    const talk = afterTalk({
+      lastOutcome: (st.last_outcome as string | null) ?? null,
+      lastOutcomeAt,
+      closed: st.closed ? String(st.closed) : null,
+      due: ms(st.due_at),
+      talkedAt: talkedBy.get(id) ?? null,
+    });
+    const closed = talk.closed && !reopened && !bookedPast ? talk.closed : null;
     const lastDial = Math.max(dial?.last ?? 0, lastOutcomeAt ?? 0) || null;
     return {
       contact_id: id,
@@ -3383,13 +3554,13 @@ async function candidates(now: number): Promise<{ list: QueueCandidate[] }> {
       lead_class: (l.lead_class as string) ?? null,
       dnd: Boolean(l.dnd),
       last_dial_at: lastDial,
-      reached: Boolean(dial?.reached),
+      reached: Boolean(dial?.reached) || talk.talked,
       inbound_at: inboundAt,
       booked_at: future ? ms(future.start_at) : null,
       last_call_status: past ? String(past.status ?? "") : null,
       last_call_type: past ? String(past.call_type ?? "") : null,
       last_call_at: past ? ms(past.start_at) : null,
-      due_at: ms(st.due_at),
+      due_at: talk.due,
       callback_at: callbackAt,
       closed,
       claimed_by: claimBy.get(id) ?? null,

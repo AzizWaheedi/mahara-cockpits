@@ -1165,7 +1165,8 @@ describe("countLive", () => {
     expect([p.from_end, p.from_assigned_user_id, p.from_status]).toEqual(["2026-10-08T07:30:00.000Z", "GHLCLOSER", "confirmed"]);
     // A call ahead whose end or rep is not known is neither moved nor booked beside.
     expect(count({ upcoming: { id: "UP1", start: up.start, kind: "intro" } })).toMatchObject({ action: "none", reason: "upcoming_unknown", claim: false });
-    expect(p.body).toMatchObject({ startTime: "2026-10-04T08:04:00.000Z", endTime: "2026-10-04T08:19:00.000Z", toNotify: false, assignedUserId: "GHLSETTER", meetingLocationType: "custom" });
+    // The call stays its own rep's: a manager host moves only its time (stress2 round 6).
+    expect(p.body).toMatchObject({ startTime: "2026-10-04T08:04:00.000Z", endTime: "2026-10-04T08:19:00.000Z", toNotify: false, assignedUserId: "GHLCLOSER", meetingLocationType: "custom" });
     expect(count({ upcoming: { ...up, kind: "demo" } }).action).toBe("create");
   });
 

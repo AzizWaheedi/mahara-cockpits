@@ -282,7 +282,7 @@ describe("providers2 r5: Meta's 131047 on the free-text link", () => {
     ).toEqual({ templateTried: true });
   });
 
-  test("HELD (control): a lead with an email still gets the backup by email", async () => {
+  test("HELD (control, round 6): a lead with an email gets the template, seen, and no second link by email", async () => {
     const w = world("zoom");
     const LEAD = "stress-p5-window-edge-email";
     w.addLead({ id: LEAD, inboundAgoMs: 24 * HOUR - 20 * 60 * S, text: "pending" });
@@ -294,7 +294,12 @@ describe("providers2 r5: Meta's 131047 on the free-text link", () => {
     });
     w.clock.now += 70 * S;
     await w.tick(id);
-    expect(w.asked.filter(d => d.lead === LEAD).map(d => d.lane)).toContain("email");
+    // Round 6 (late-131047-fallback-sends-template-and-email): the template
+    // went and was seen, so it is the link's one replacement; the email
+    // backs up only a template nobody saw.
+    const lanes = w.asked.filter(d => d.lead === LEAD).map(d => d.lane);
+    expect(lanes).toContain("template");
+    expect(lanes).not.toContain("email");
   });
 });
 

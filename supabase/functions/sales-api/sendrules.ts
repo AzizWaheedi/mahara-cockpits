@@ -86,6 +86,32 @@ export function leadOffsetHours(country: unknown): 3 | 4 {
 export function leadHour(country: unknown, now: number): number {
   return zoneClock((leadZones(country) ?? (LEAD_ZONES.kw as readonly string[]))[0] as string, now).hour;
 }
+const dateFormats = new Map<string, Intl.DateTimeFormat>();
+/** The calendar date (YYYY-MM-DD) and weekday name of `at` on this zone's clock. */
+function zoneDate(zone: string, at: number): { date: string; weekday: string } {
+  let f = dateFormats.get(zone);
+  if (!f) {
+    f = new Intl.DateTimeFormat("en-GB", { timeZone: zone, year: "numeric", month: "2-digit", day: "2-digit", weekday: "long" });
+    dateFormats.set(zone, f);
+  }
+  const parts = f.formatToParts(at);
+  const get = (t: string) => String(parts.find(p => p.type === t)?.value ?? "");
+  return { date: `${get("year")}-${get("month")}-${get("day")}`, weekday: get("weekday") };
+}
+
+/**
+ * The call's day as a message may name it on the lead's clock (their first
+ * zone; Kuwait's when unknown): "today", "tomorrow", or the weekday's name.
+ * The desk's call_words (followups.py) writes the same words.
+ */
+export function relativeDay(start: number, now: number, country: unknown): string {
+  const zone = (leadZones(country) ?? (LEAD_ZONES.kw as readonly string[]))[0] as string;
+  const call = zoneDate(zone, start);
+  if (call.date === zoneDate(zone, now).date) return "today";
+  if (call.date === zoneDate(zone, now + 86_400_000).date) return "tomorrow";
+  return call.weekday;
+}
+
 /** 0 Sunday to 6 Saturday, on the lead's clock. */
 export function leadWeekday(country: unknown, now: number): number {
   return zoneClock((leadZones(country) ?? (LEAD_ZONES.kw as readonly string[]))[0] as string, now).day;

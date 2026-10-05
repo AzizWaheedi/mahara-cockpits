@@ -72,8 +72,14 @@ const WHATSAPP_PREVIEW = /^whatsapp\//i;
 const BOT =
   /facebookexternalhit|facebot|meta-external(?:agent|fetcher)|telegrambot|twitterbot|slackbot|slack-imgproxy|discordbot|linkedinbot|skypeuripreview|applebot|googlebot|google-pagerenderer|google-inspectiontool|adsbot|mediapartners-google|bingbot|bingpreview|yandex(?:bot|images)|baiduspider|duckduckbot|petalbot|embedly|iframely|pinterestbot|redditbot|vkshare|line-poker|kakaotalk-scrap|headlesschrome|phantomjs|lighthouse|pingdom|uptimerobot|statuscake|curl\/|wget\/|python-requests|python-urllib|aiohttp|go-http-client|okhttp|node-fetch|undici|axios\/|java\/|libwww-perl|crawler|spider|slurp|[a-z]bot\/|(?:^|[\s(;])bot(?:[\s);/]|$)/i;
 
-/** True for a link preview or crawler (or no user agent at all). */
-export function isPreviewBot(ua: string | null | undefined): boolean {
+/**
+ * True for a link preview or crawler (or no user agent at all). A HEAD
+ * request is a link checker, a mail scanner or another machine, never a
+ * person, as roomlogic.ts isPreviewBot says (stress2 round 6,
+ * go-head-request-counted-as-lead-open).
+ */
+export function isPreviewBot(ua: string | null | undefined, method?: string | null): boolean {
+  if (typeof method === "string" && method.toUpperCase() === "HEAD") return true;
   const s = (ua ?? "").trim();
   if (!s) return true;
   return WHATSAPP_PREVIEW.test(s) || BOT.test(s);
@@ -338,6 +344,11 @@ export const ROOM_COLUMNS = `${ROOM_COLUMNS_BEFORE_R5},taken_back_join_at`;
  */
 export const BOOKS_CLOSE_OPEN_MS = 3 * 3600_000;
 
+/** A closer's standby room: no lead yet, and its link was sent to nobody. */
+export function isStandby(room: Partial<Pick<RoomRow, "purpose">>): boolean {
+  return room.purpose === "standby";
+}
+
 /** The lead was in the room, and "That was not the lead" did not take it back. */
 export function leadReached(room: Partial<Pick<RoomRow, "lead_in_at" | "count_undo_at" | "taken_back_join_at">>): boolean {
   const joined = Date.parse(String(room.lead_in_at ?? ""));
@@ -422,7 +433,11 @@ export function doorView(
   whatsapp: string | null = null,
 ): DoorView {
   if (roomIsOver(room, nowMs)) return { ok: true, state: "ended", code, rep, whatsapp };
-  if (!room.join_url)
+  // A standby room has no lead and its link went to nobody: its code is never
+  // answered with the closer's join link (stress2 round 6,
+  // standby-open-carried-into-handover). Once a Take adopts it for a lead,
+  // the same code opens as that lead's room.
+  if (!room.join_url || isStandby(room))
     return { ok: true, state: "preparing", code, provider: provider(room.provider), rep, retry_ms: 2000 };
   const url = safeJoinUrl(room.join_url);
   if (!url)

@@ -75,6 +75,30 @@ export function nextTry(step: number, now: number): { step: number; due: number 
   return { step: next, due, unreachable: false };
 }
 
+/**
+ * A talk in a video room (a join that stands, or the call moved to the
+ * phone) after the dialer's last outcome, when that outcome was Maqsam's
+ * No answer (stress2 round 6, joined-step-next-lead-keeps-auto-no-answer):
+ * the lead was reached, so the ladder's "unreachable" close from before the
+ * talk is lifted and its retry moves to the next working morning after the
+ * talk. Any later save (the joined step's own) stands as it is.
+ */
+export function afterTalk(o: {
+  lastOutcome: string | null;
+  lastOutcomeAt: number | null;
+  closed: string | null;
+  due: number | null;
+  talkedAt: number | null;
+}): { talked: boolean; closed: string | null; due: number | null } {
+  const talked = o.talkedAt !== null && o.lastOutcome === "no_answer" && (o.lastOutcomeAt ?? 0) <= o.talkedAt;
+  if (!talked || o.talkedAt === null) return { talked: false, closed: o.closed, due: o.due };
+  return {
+    talked: true,
+    closed: o.closed === "unreachable" ? null : o.closed,
+    due: Math.max(o.due ?? 0, nextWorkingNine(o.talkedAt)),
+  };
+}
+
 export const OUTCOMES = [
   "no_answer",
   "callback",

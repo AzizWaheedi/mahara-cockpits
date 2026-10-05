@@ -1082,6 +1082,8 @@ export interface RoomRow {
   appointment_id?: string | null;
   /** The booked intro's start when the room was made, so a later move of that intro is never settled by this room. */
   appointment_start_at?: string | null;
+  /** When the call this intro room followed was placed (20261004a, stress2 round 6): the settle judges the room by it. */
+  appointment_call_at?: string | null;
   handover_id?: string | null;
   replaced_by?: string | null;
   attempt_id?: string | null;
@@ -1948,6 +1950,13 @@ export function applyRoomEvent(room: RoomRow, event: RoomEvent, now: number, ctx
           return change(room, room.state, { host_in_at: iso(t) }, []);
         return same(room);
       }
+      // Zoom does not order its webhooks (stress2 round 6,
+      // zoom-late-host-start-after-meeting-end-says-host-in): a start or a
+      // host join from before the meeting ended, delivered after the end,
+      // is the instance that is over. Only a later instance's start moves
+      // the room back to host_in.
+      const endedAt = ms(room.meeting_ended_at);
+      if (event.source === "zoom" && endedAt !== null && when(event) <= endedAt) return same(room);
       const patch: Partial<RoomRow> = { host_in_at: iso(when(event)) };
       const effects: Effect[] = [];
       claimLink({ ...room, ...patch, state: "host_in" }, patch, effects, at);
@@ -2490,7 +2499,9 @@ export function roomForThisStart(room: RoomRow, start: number, w: Waits): boolea
   // A booked room is the appointment's own room (room.wrap): the start it
   // stored is enough, whenever it was wrapped.
   if (room.purpose === "booked" && stored !== null) return Math.abs(stored - start) < S;
-  const asked = ms(room.requested_at) ?? ms(room.created_at);
+  // Judged by the call the room followed, as createRoom judged it (stress2
+  // round 6, late-try-room-carries-intro-never-settled), else the press.
+  const asked = ms(room.appointment_call_at) ?? ms(room.requested_at) ?? ms(room.created_at);
   if (!inIntroWindow(asked, start, w)) return false;
   return stored === null || Math.abs(stored - start) < S;
 }
@@ -3196,7 +3207,7 @@ export interface CountInput {
    * theirs, counted already when it is another rep's; never a Live booking
    * beside it.
    */
-  current_call?: { id: string; start: number; status?: string | null; mine: boolean } | null;
+  current_call?: { id: string; start: number; status?: string | null; mine: boolean; held?: boolean } | null;
   /** The upcoming call is the host's own (or a manager's room): only then is it moved to now. */
   upcoming_mine?: boolean;
   /**
@@ -3332,8 +3343,10 @@ export function countLive(i: CountInput): CountPlan {
   // intro running now, a room made from the lead page): the join is that call.
   const cur = i.current_call;
   if (!test && cur && cur.id) {
-    // Held already by B2B's rule (showed, or invalid: a disqualified call is held): nothing to add.
-    if (["showed", "invalid"].includes(String(cur.status ?? ""))) return none("already_counted", true, "already_counted");
+    // Held already by B2B's rule (showed, or invalid: a disqualified call is
+    // held), or an earlier call of the lead's that was held the same morning
+    // (stress2 round 6): nothing to add.
+    if (cur.held || ["showed", "invalid"].includes(String(cur.status ?? ""))) return none("already_counted", true, "already_counted");
     // Another rep's call running now: never marked with this host's rights,
     // and never counted nowhere without a word (stress2, round 2): that rep
     // or a manager is told to mark it, as for another rep's call ahead.
@@ -3387,7 +3400,10 @@ export function countLive(i: CountInput): CountPlan {
       body: {
         startTime: iso(start),
         endTime: iso(end),
-        assignedUserId: host,
+        // The call stays its own rep's (stress2 round 6,
+        // manager-room-move-reassigns-setters-intro): a manager host moves
+        // only its time, as the mark path never reassigns a call.
+        assignedUserId: upRep,
         ignoreFreeSlotValidation: true,
         ignoreDateRange: true,
         toNotify: false,

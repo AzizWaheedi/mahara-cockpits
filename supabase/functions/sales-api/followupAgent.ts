@@ -246,7 +246,21 @@ const HOLD_WORDS = [
   "131042",
   "payment",
   "eligibility",
+  // The template or the number, never the lead (stress2 round 6).
+  "template is paused",
+  "template is disabled",
+  "spam rate limit",
 ];
+/**
+ * A message Meta failed for the template or the sending number, never for
+ * one lead (stress2 round 6, meta-template-or-number-failure-counted-against-
+ * each-lead): the account (131042 wallet, 131031 locked), the template
+ * paused, disabled or its parameters refused (1320xx), the number's spam
+ * rate limit (131048) or throughput (130429). The desk's waves.py
+ * ACCOUNT_FAILED reads the same codes.
+ */
+export const ACCOUNT_FAILED =
+  /\b(131042|131031|131048|130429|1320\d\d)\b|wallet|funds|insufficient|balance|payment|eligibility|template (?:is )?(?:paused|disabled)|spam rate limit/i;
 export function holdsEverything(message: string, status: number): boolean {
   const m = message.toLowerCase();
   // HighLevel's own 429 (its burst limit, shared with the dialer and the
@@ -795,6 +809,20 @@ export function makeFollowupAgent(deps: AgentDeps): { actions: Record<string, Ac
     if (!meta || (meta.held_by && !staleMark)) throw refusal(AGENT_COPY.held);
     const due = Date.parse(String(meta.send_after ?? ""));
     if (!Number.isFinite(due) || due > io.now()) throw refusal(AGENT_COPY.not_due);
+    // A backlog opener goes only on a manager's approval (stress2 round 6,
+    // desk-put-off-rearms-released-opener): a send time with no approval
+    // behind it (a released hold, then a stale reschedule) is taken off the
+    // queue, and the opener waits for the next Approve all.
+    if (f.segment === "reactivate" && !meta.approved_by) {
+      await io
+        .db(`cockpit_sales_followup_meta?followup_id=eq.${enc(String(f.id))}&approved_by=is.null&held_by=is.null`, {
+          method: "PATCH",
+          body: { send_after: null },
+          prefer: "return=minimal",
+        })
+        .catch(e => io.log(`followups: an unapproved opener's send time was not cleared: ${redact(String((e as Error)?.message ?? e))}`));
+      throw refusal(AGENT_COPY.not_due, 409, { code: "not_approved" });
+    }
     // The opener's wave: its meta's, else the draft's own (a meta row made
     // without it), so a paused or stopped wave always holds it.
     const own = openerMeta(f);
@@ -872,7 +900,9 @@ export function makeFollowupAgent(deps: AgentDeps): { actions: Record<string, Ac
     // and one that lands from now on is told the opener is already going out.
     const id = String(f.id);
     const mark = { held_by: SENDING, held_at: iso(io.now()) };
-    let claimed = await io.db(`cockpit_sales_followup_meta?followup_id=eq.${enc(id)}&held_by=is.null`, {
+    // Only while it still has its send time (a release or a re-approval in
+    // the meantime clears or moves it, and neither is this send's to take).
+    let claimed = await io.db(`cockpit_sales_followup_meta?followup_id=eq.${enc(id)}&held_by=is.null&send_after=not.is.null`, {
       method: "PATCH",
       body: mark,
       prefer: "return=representation",
@@ -914,8 +944,7 @@ export function makeFollowupAgent(deps: AgentDeps): { actions: Record<string, Ac
       const err = String(m.error ?? "");
       // A 200 whose message failed for the wallet, the funds or Meta's own
       // account (131042: the prepaid balance or the card) holds every send.
-      if (m.state === "failed" && /wallet|funds|insufficient|balance|131042|payment|eligibility/i.test(err))
-        return { ...out, hold_all: true, error: err };
+      if (m.state === "failed" && ACCOUNT_FAILED.test(err)) return { ...out, hold_all: true, error: err };
       return out;
     } catch (e) {
       if (e instanceof ApiRefusal && e.extra.code === "not_sent_yet") {

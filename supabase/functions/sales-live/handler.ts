@@ -36,6 +36,7 @@ import {
   GO_COPY,
   ipHash,
   isPreviewBot,
+  isStandby,
   joinTakenBack,
   leadReached,
   LIVE_SITE,
@@ -183,6 +184,10 @@ const SLACK_MAX_BYTES = 64_000;
 const STATUS_EVERY_MS = 60_000;
 const ALERT_REFRESH_MS = 600_000;
 const LAST_OPEN_EVERY_MS = 30_000;
+/** A late open (after the room closed) is kept once per device in this long, so the newest is always on record. */
+const LATE_OPEN_BUCKET_MS = 5 * 60_000;
+/** How recent an old room must be for its link to lead to the lead's newer room (asked for or closed in this long). */
+const FOLLOW_MS = 24 * 3_600_000;
 
 /** Answers that are the sales-api gateway's own, not a sentence for a person. */
 const GATEWAY_ERRORS = new Set([
@@ -838,12 +843,17 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
     // A room whose join "That was not the lead" took back has its link in
     // someone else's hands: it never leads to the lead's newer room, nor
     // records an open there (stress2 round 5, not-lead-link-follows-to-leads-new-room).
+    // Only a recent room's link (asked for or closed within FOLLOW_MS): an
+    // old message may have reached another number (a typo, a recycled
+    // number), and whoever holds it must never be handed the lead's room
+    // today (stress2 round 6, old-link-follows-to-todays-room-unbounded).
     if (
       FINAL_STATES.has(room.state) &&
       !leadReached(room) &&
       !joinTakenBack(room) &&
       room.contact_id &&
       room.requested_at &&
+      followsRecent(room) &&
       !roomIsNotOverFor(room)
     ) {
       const newer = ((await roomRows(
@@ -857,6 +867,12 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
       if (waiting) room = waiting;
     }
     return room;
+  }
+
+  /** The old room was asked for, or closed, within the last FOLLOW_MS. */
+  function followsRecent(room: RoomRow): boolean {
+    const latest = Math.max(Date.parse(String(room.requested_at ?? "")) || 0, Date.parse(String(room.ended_at ?? "")) || 0);
+    return latest > 0 && deps.now() - latest <= FOLLOW_MS;
   }
 
   /** A final room whose link still opens (a booked room's own meeting, a call closed only in the books). */
@@ -901,6 +917,8 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
     via: "open" | "go" = "open",
   ) {
     const now = deps.now();
+    // A standby room has no lead: nothing done with its code is the lead's open.
+    if (isStandby(room)) return;
     const at = new Date(now).toISOString();
     const device = deviceOf(ua);
     const over = roomIsOver(room, now);
@@ -915,7 +933,14 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
       : deviceIdOk(deviceId)
         ? `d:${deviceId}`
         : `c:${code}:${device ?? "-"}`;
-    const dedupe = `open:${room.id}:${(await sha256Hex(deviceKey)).slice(0, 32)}`;
+    // An open after the close is a fact of its own (the lead is at the link
+    // now): keyed apart from the in-room open, one per device and
+    // LATE_OPEN_BUCKET_MS, so the newest late open is always kept (stress2
+    // round 6, late-open-after-in-room-open-deduped-away).
+    const deviceHash = (await sha256Hex(deviceKey)).slice(0, 32);
+    const dedupe = over
+      ? `open-late:${room.id}:${deviceHash}:${Math.floor(now / LATE_OPEN_BUCKET_MS)}`
+      : `open:${room.id}:${deviceHash}`;
     try {
       // A slot is taken before the insert, so fifty opens at once still
       // make at most twelve rows; a duplicate gives its slot back.
@@ -983,6 +1008,12 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
   function isNavigation(h: Headers): boolean {
     const mode = (h.get("sec-fetch-mode") ?? "").trim().toLowerCase();
     return !mode || mode === "navigate" || mode === "nested-navigate";
+  }
+
+  /** Sec-Fetch-Dest "document" (or "iframe"), or none at all (an older browser). */
+  function isDocument(h: Headers): boolean {
+    const dest = (h.get("sec-fetch-dest") ?? "").trim().toLowerCase();
+    return !dest || dest === "document" || dest === "iframe";
   }
 
   function corsFor(origin: string | null): Record<string, string> {
@@ -1238,7 +1269,11 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
       // lead opening their link.
       const salt = env("IP_SALT");
       const stored = salt ? await ipHash(salt, clientIp(req.headers)) : null;
-      if (isNavigation(req.headers)) deps.background(recordOpen(room, code, ua, stored, null, "go"));
+      // A HEAD is a link checker or a mail scanner, never the lead (stress2
+      // round 6, go-head-request-counted-as-lead-open), and a fetch whose
+      // Sec-Fetch-Dest names something other than a document is not a page load.
+      if (isNavigation(req.headers) && isDocument(req.headers) && !isPreviewBot(ua, req.method))
+        deps.background(recordOpen(room, code, ua, stored, null, "go"));
       return redirect(view.join_url);
     }
     if (view.state === "preparing") return text(both(GO_COPY.preparing), 200, { refresh: "3" });

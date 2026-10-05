@@ -219,9 +219,11 @@ describe("one conversation, two hand-pressed joins, a manager confirms both", ()
   test("confirm-order-marks-intro-beside-live-booking: the manager confirms the later room first (it books a Live call, the intro's room is only self_reported), then the intro's room: the intro is marked shown beside the Live booking", async () => {
     const { w, a, b } = await twoMeetRooms();
     await w.confirm(b);
-    // The later room found no count standing (the intro's room is only
-    // self_reported) and booked a Live call for the conversation.
-    expect(w.posts()).toHaveLength(1);
+    // Since round 6 (held-intro-then-video-books-second-intro) the later room
+    // finds the intro held earlier the same morning (confirmed and started,
+    // a show by B2B's rule) and books no Live call beside it.
+    expect(w.posts()).toHaveLength(0);
+    expect(w.room(b).count_result).toBe("already_counted");
     await w.confirm(a);
     // The intro's room plans a mark (countLive returns before it reads the
     // lead's other rooms, and the claim reads siblings only for a move or a
