@@ -240,6 +240,9 @@ def stamp(deal: dict[str, Any], *, variant: str, resolved: dict[str, Any], lang:
         # into a blank is put back, and a draft after this one has them too.
         apply_fills(deal, closer_figures, prior)
         deal["closer_figures"] = dict(closer_figures)
+        # A currency the closer typed is priced in as on a rebuild.
+        if "arithmetic.currency" in closer_figures:
+            follow_currency(deal)
     if variant != "specific":
         deal["variant"] = variant
     else:

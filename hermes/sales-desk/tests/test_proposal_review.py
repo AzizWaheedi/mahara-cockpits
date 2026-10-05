@@ -352,13 +352,24 @@ class TypedCurrencyTests(unittest.TestCase):
             self.assertEqual(deal["roi"]["local_currency"], code, typed)
             self.assertEqual(deal["roi"]["usd_rate"], validate.USD_PEGS[code], typed)
 
-    def test_one_the_page_cannot_price_in_is_a_blank_again(self):
+    def test_one_the_page_cannot_price_in_is_a_blank_again_and_says_why(self):
         from desk import engine
         for typed in ("pounds", "dinar"):
             deal = self.deal(typed)
+            deal["closer_figures"] = {"arithmetic.currency": typed}
             engine.follow_currency(deal)
             self.assertEqual(deal["arithmetic"]["currency"], "FILL", typed)
             self.assertEqual(deal["roi"]["usd_rate"], 1, typed)
+            got = [w for w in check(deal, text=None).warnings() if "cannot" in w or "not one the page" in w]
+            self.assertTrue(got and "KWD" in got[0], (typed, got))
+
+    def test_a_fresh_draft_takes_the_typed_currency_back_priced_in(self):
+        from desk import engine
+        deal = self.deal("FILL")
+        engine.stamp(deal, variant="general", resolved=resolved(), lang="en",
+                     closer_figures={"arithmetic.currency": "dirhams"})
+        self.assertEqual(deal["arithmetic"]["currency"], "AED")
+        self.assertEqual(deal["roi"]["local_currency"], "AED")
 
 
 # -------------------------------------------------------------- the repair ---

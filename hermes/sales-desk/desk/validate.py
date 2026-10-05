@@ -1297,6 +1297,15 @@ def check_echoes(data: dict[str, Any], rep: Report) -> None:
 
 # --------------------------------------------------------------- currency ---
 def check_currency(data: dict[str, Any], rep: Report) -> None:
+    # A currency the closer typed that the page cannot price in is put back to
+    # a blank on the rebuild (engine.follow_currency); say why, or the closer
+    # types it again into the same blank.
+    typed = (data.get("closer_figures") or {}).get("arithmetic.currency") if isinstance(
+        data.get("closer_figures"), dict) else None
+    arith = data.get("arithmetic") if isinstance(data.get("arithmetic"), dict) else {}
+    if typed and FILL_RE.search(str(arith.get("currency") or "")) and currency_code(typed) is None:
+        rep.add(WARN, "currency", f"the currency typed for the arithmetic page, {str(typed)[:40]!r}, is not one the "
+                                  "page can price in. Type one of " + ", ".join(USD_PEGS) + " in that blank")
     used = set()
     for block in ("cost", "arithmetic", "roi"):
         b = data.get(block) or {}
