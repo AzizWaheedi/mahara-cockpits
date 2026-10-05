@@ -253,7 +253,8 @@ class ShapeDateTests(unittest.TestCase):
         text = json.dumps(shape)
         self.assertNotIn("September", text)
         self.assertNotIn("FILL", shape["date"] + shape["valid_until"])
-        self.assertIn("4 October 2026", prompt.system_for(
+        # system_for reads the clock: today's date, whatever day the tests run.
+        self.assertIn(prompt.day_words(date.today()), prompt.system_for(
             "general", offer.resolve(TEST_OFFER), TEST_OFFER, ref,
             {"file": "general.json", "variant": "general", "matched": True}))
 
