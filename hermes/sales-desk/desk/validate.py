@@ -178,6 +178,34 @@ _SCALED_RANGE = re.compile(
     r"(k|K|M|mn|bn|thousand|million|billion|ألف|الف|آلاف|الاف|ألفا|مليون|ملايين)(?![A-Za-z0-9ء-ي]))")
 
 
+# Halves and quarters of a scale, as money is said: "half a million", "a
+# million and a half", "مليون ونص", "ربع مليون". Read as the scale alone they
+# were a million, and a draft saying "half a million" against the client's
+# 500,000 failed the prose check.
+_FRACTION_SCALES = {"thousand": 1_000, "million": 1_000_000, "billion": 1_000_000_000, "ألف": 1_000, "الف": 1_000,
+                    "مليون": 1_000_000}
+_FRACTIONS = [
+    (re.compile(r"\bhalf\s+(?:a\s+)?(thousand|million|billion)\b", re.I), 0.5, None),
+    (re.compile(r"\b(?:a\s+)?quarter\s+(?:of\s+)?(?:a\s+)?(thousand|million|billion)\b", re.I), 0.25, None),
+    (re.compile(r"\b(?:a|one|(\d+))\s+(thousand|million|billion)\s+and\s+a\s+half\b", re.I), 1.5, "n"),
+    (re.compile(r"(?<![ء-ي])(?:نص|نصف)\s+(مليون|ألف|الف)(?![ء-ي])"), 0.5, None),
+    (re.compile(r"(?<![ء-ي])ربع\s+(مليون|ألف|الف)(?![ء-ي])"), 0.25, None),
+    (re.compile(r"(?<![ء-ي\d])(?:(\d+)\s+)?(مليون|ألف|الف)\s+و\s?(?:نص|نصف)(?![ء-ي])"), 1.5, "n"),
+]
+
+
+def _fractions(text: str) -> str:
+    for rx, share, counted in _FRACTIONS:
+        def put(m: "re.Match[str]") -> str:
+            if counted:
+                n = int(m.group(1)) if m.group(1) else 1
+                scale = _FRACTION_SCALES[m.group(2).lower()]
+                return str(int(n * scale + scale * (share - 1)))
+            return str(int(_FRACTION_SCALES[m.group(1).lower()] * share))
+        text = rx.sub(put, text)
+    return text
+
+
 def _range_scale(m: "re.Match[str]") -> str:
     low, high = float(m.group(1).replace(",", "")), float(m.group(3).replace(",", ""))
     if low > high:
@@ -208,6 +236,7 @@ def spoken_figures(text: str) -> str:
     text = _plain(str(text)).translate(ARABIC_DIGITS)
     for rx, digits in _AR_TEENS:
         text = rx.sub(digits, text)
+    text = _fractions(text)
     text = _SCALED_RANGE.sub(_range_scale, text)
     text = _SCALED.sub(_scaled, text)
     tokens = list(_TOKEN.finditer(text))

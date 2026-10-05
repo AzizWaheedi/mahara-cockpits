@@ -63,6 +63,17 @@ class NumberWordsThatAreNoCountTests(unittest.TestCase):
         # A smaller second end is its own figure: USD 500 to 1M is not 500 million.
         self.assertEqual(validate.figures_in("USD 500 to 1M"), [500, 1000000])
 
+    def test_halves_and_quarters_of_a_scale(self):
+        for text, want in (("half a million riyals", [500000]), ("a million and a half", [1500000]),
+                           ("a quarter of a million", [250000]), ("مليون ونص", [1500000]), ("نص مليون", [500000]),
+                           ("ربع مليون", [250000]), ("half the fee", [])):
+            self.assertEqual(validate.figures_in(text), want, text)
+
+    def test_half_a_million_in_the_copy_is_the_client_s_500_000(self):
+        deal = specific_deal(headline="Half a million riyals a year walks out of the door")
+        words = fakes.transcript() + "\nClient: We lose about 500,000 riyals a year that way."
+        self.assertFalse(failing(check(deal, text=words), "prose"), check(deal, text=words).text())
+
     def test_the_record_s_range_written_with_one_scale_passes_the_proof_check(self):
         deal = general_deal()
         deal["proof"] = [{"v": "USD 225 to 252 thousand", "k": "Signed from USD 3,000 a month of advertising."}]
