@@ -1969,12 +1969,19 @@ def check_arithmetic(data: dict[str, Any], rep: Report) -> None:
                       "additional projects targeted"
                       % (cur, f"{total:,.0f}", months, dec(need), cur, f"{values[0]:,.0f}", f"{add_low:g}",
                          f"{add_high:g}"))
+        # The rule that sent the page here, named (176954619, live check of 5
+        # October 2026: 35 percent of one project, and no line said why the
+        # page counts projects instead of stating that share).
+        share = total / values[0] * 100
+        rule = ("; %s%% of one project at the bottom value, %s" % (
+            dec(share), "over one third, so the page counts projects" if share > 100 / 3 else
+            "inside one third, so a share of one project (margin mode) would also carry it"))
         if need <= add_low:
-            rep.add(PASS, "arithmetic", detail)
+            rep.add(PASS, "arithmetic", detail + rule)
         elif need <= add_high:
-            rep.add(WARN, "arithmetic", detail + ": only the upper end of the target covers it")
+            rep.add(WARN, "arithmetic", detail + ": only the upper end of the target covers it" + rule)
         else:
-            rep.add(FAIL, "arithmetic", detail + ": even the whole target does not cover the engagement")
+            rep.add(FAIL, "arithmetic", detail + ": even the whole target does not cover the engagement" + rule)
         return
 
     if margin_mode:

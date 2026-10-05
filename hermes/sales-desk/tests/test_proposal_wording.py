@@ -205,5 +205,30 @@ class MarginWordsTests(unittest.TestCase):
         deal["arithmetic"]["gross_margin"] = 25
         self.assertEqual(gross_warned(deal), [])
 
+
+# --------------------------------------------------------------- finding 4 ---
+def arithmetic_rows(deal: dict[str, Any]) -> list[str]:
+    rep = validate.Report()
+    validate.check_arithmetic(deal, rep)
+    return [r["detail"] for r in rep.rows]
+
+
+class OneThirdRuleTests(unittest.TestCase):
+    """176954619: the engagement is 35 percent of one project, over a third,
+    so the drafter counted projects, and no line said why."""
+
+    def test_the_share_and_the_rule_are_on_the_detail_line(self):
+        found = arithmetic_rows(volume_page("3 since the start of the year", "2 to 4 over three months"))
+        self.assertTrue(any("35.0% of one project at the bottom value, over one third, so the page counts projects"
+                            in d for d in found), found)
+        deal = volume_page("3 since the start of the year", "2 to 4 over three months")
+        deal["arithmetic"].pop("gross_margin")
+        self.assertTrue(any("35.0% of one project" in d for d in arithmetic_rows(deal)))
+
+    def test_a_share_inside_one_third_says_so(self):
+        # SAR 39,375 against SAR 450,000 is 8.75 percent.
+        found = arithmetic_rows(volume_deal())
+        self.assertTrue(any("8.75% of one project at the bottom value, inside one third" in d for d in found), found)
+
 if __name__ == "__main__":
     unittest.main()
