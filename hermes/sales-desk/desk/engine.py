@@ -145,11 +145,15 @@ def triage(call: Call, p: Any, cfg: Config, log: Callable[[str], None],
         return None, ""
 
 
-def stamp(deal: dict[str, Any], *, variant: str, resolved: dict[str, Any], lang: str) -> dict[str, Any]:
+def stamp(deal: dict[str, Any], *, variant: str, resolved: dict[str, Any], lang: str,
+          currency_unstated: bool = False) -> dict[str, Any]:
     """What the file must say whatever the model wrote. The variant is on the
     file because the file is what the validator reads; the offer stamp so the
     document can be checked against the offer it was written for; the logo and
-    language because they are ours to set, not the drafter's."""
+    language because they are ours to set, not the drafter's. And a currency
+    the client never named is a blank for the closer, never a guess."""
+    if currency_unstated and isinstance(deal.get("arithmetic"), dict):
+        deal["arithmetic"]["currency"] = "FILL"
     if variant != "specific":
         deal["variant"] = variant
     else:
@@ -203,6 +207,11 @@ def run(call: Call, *, lang: str, resolved: dict[str, Any], offer: dict[str, Any
     log(f"    variant: {variant} ({why})")
     beat()
 
+    unstated = prompt_mod.currency_unstated(found)
+    facts = [prompt_mod.UNSTATED_CURRENCY] if unstated else []
+    if unstated:
+        notes.append("The client never named a currency for their figures, so the arithmetic page's currency is "
+                     "left for the closer to fill.")
     reference, info = prompt_mod.load_reference(reference_dir or cfg.reference_dir, variant, log)
     if reference is None:
         notes.append(f"No reference deal on this machine ({reference_dir or cfg.reference_dir}); the draft was "
@@ -211,7 +220,8 @@ def run(call: Call, *, lang: str, resolved: dict[str, Any], offer: dict[str, Any
         notes.append(f"No {variant} reference on this machine; the drafter copied the shape of {info['file']}, "
                      f"a {info['variant']} proposal.")
     system = prompt_mod.system_for(variant, resolved, offer, reference, info)
-    user = prompt_mod.draft_user(call.known(), call.transcript_text, lang, variant, has_reference=reference is not None)
+    user = prompt_mod.draft_user(call.known(), call.transcript_text, lang, variant, has_reference=reference is not None,
+                                 facts=facts)
 
     deal, reply = model_mod.call_json(p, system, user, temperature=0.3, attempts=cfg.model_attempts,
                                       timeout=cfg.model_timeout, expect=prompt_mod.is_deal, log=log, what="draft",
@@ -222,7 +232,7 @@ def run(call: Call, *, lang: str, resolved: dict[str, Any], offer: dict[str, Any
     route = model_mod.route_of(p, reply.model or p.model)
     if route.get("note"):
         notes.insert(0, route["note"])
-    stamp(deal, variant=variant, resolved=resolved, lang=lang)
+    stamp(deal, variant=variant, resolved=resolved, lang=lang, currency_unstated=unstated)
     (workdir / "deal.json").write_text(json.dumps(deal, ensure_ascii=False, indent=2), encoding="utf-8")
     beat()
 
@@ -251,7 +261,7 @@ def run(call: Call, *, lang: str, resolved: dict[str, Any], offer: dict[str, Any
             tighter, _r = model_mod.call_json(
                 p, system, prompt_mod.tighten_user(best, best_over, round_no), temperature=0.2, attempts=1,
                 timeout=cfg.model_timeout, expect=prompt_mod.is_deal, log=log, what="tighten", beat=beat)
-            stamp(tighter, variant=variant, resolved=resolved, lang=lang)
+            stamp(tighter, variant=variant, resolved=resolved, lang=lang, currency_unstated=unstated)
             html_path = workdir / f"draft-{round_no + 1}.html"
             still, dom = overflowing(tighter, html_path, renderer)
         except NotNow:
@@ -287,7 +297,7 @@ def run(call: Call, *, lang: str, resolved: dict[str, Any], offer: dict[str, Any
             fixed, _r = model_mod.call_json(
                 p, system, prompt_mod.repair_user(best, fixable), temperature=0.2, attempts=1,
                 timeout=cfg.model_timeout, expect=prompt_mod.is_deal, log=log, what="repair", beat=beat)
-            stamp(fixed, variant=variant, resolved=resolved, lang=lang)
+            stamp(fixed, variant=variant, resolved=resolved, lang=lang, currency_unstated=unstated)
             fixed_html = workdir / "draft-repaired.html"
             fixed_over, fixed_dom = overflowing(fixed, fixed_html, renderer)
             fixed_result = validate_mod.validate(fixed, call.transcript_text, resolved=resolved, offer=offer,
@@ -314,12 +324,34 @@ def run(call: Call, *, lang: str, resolved: dict[str, Any], offer: dict[str, Any
     )
 
 
+def follow_currency(deal: dict[str, Any]) -> bool:
+    """When the arithmetic page's currency is one the roi block is not in (the
+    closer filled a currency the call never named), the roi block follows it,
+    at that currency's dollar peg, so the engagement is printed in it. True
+    when it changed anything."""
+    arith = deal.get("arithmetic") if isinstance(deal.get("arithmetic"), dict) else {}
+    roi = deal.get("roi") if isinstance(deal.get("roi"), dict) else None
+    cur = str(arith.get("currency") or "").strip().upper()
+    if roi is None or cur not in validate_mod.USD_PEGS:
+        return False
+    if str(roi.get("local_currency") or "").upper() == cur and roi.get("usd_rate") == validate_mod.USD_PEGS[cur]:
+        return False
+    if str(roi.get("local_currency") or "").upper() == cur and isinstance(roi.get("usd_rate"), (int, float)) \
+            and not validate_mod.rate_off(cur, roi["usd_rate"]):
+        return False
+    arith["currency"] = cur
+    roi["local_currency"] = cur
+    roi["usd_rate"] = validate_mod.USD_PEGS[cur]
+    return True
+
+
 def rebuild(deal: dict[str, Any], *, resolved: dict[str, Any], offer: dict[str, Any], html_path: Path,
             renderer: Any = render_mod) -> tuple[validate_mod.Result, Optional[str]]:
     """The same document again after the closer filled its gaps: no model, no
     Fathom. The build, the render and the gate, exactly as for a draft."""
     if "offer" not in deal:
         deal["offer"] = offer_mod.stamp(resolved)
+    follow_currency(deal)
     _over, dom = overflowing(deal, Path(html_path), renderer)
     result = validate_mod.validate(deal, None, resolved=resolved, offer=offer, dom=dom,
                                    engine=engine_name(renderer), checked_note=RECHECKED)

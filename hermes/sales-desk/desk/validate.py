@@ -257,6 +257,18 @@ EMOJI = re.compile(
 ARABIC = re.compile("[؀-ۿݐ-ݿ]")
 
 CURRENCIES = ("USD", "SAR", "AED", "QAR", "KWD", "BHD", "OMR")
+# Local currency to one dollar. All but the dinar are fixed pegs; Kuwait's is a
+# basket that has stayed near 0.307 since 2015, close enough for a page that
+# rounds to whole dinars.
+USD_PEGS = {"USD": 1, "SAR": 3.75, "AED": 3.6725, "QAR": 3.64, "BHD": 0.376, "OMR": 0.3845, "KWD": 0.307}
+
+
+def rate_off(currency: str, rate: Any) -> bool:
+    """A dollar rate more than 5% away from the currency's peg."""
+    peg = USD_PEGS.get(str(currency).upper())
+    if not peg or not isinstance(rate, (int, float)) or isinstance(rate, bool) or rate <= 0:
+        return bool(peg)
+    return abs(rate - peg) / peg > 0.05
 
 # Keys that are machine data rather than anything a reader reads: images, and
 # the offer stamp the desk writes so a deal can be checked again later.
@@ -1060,7 +1072,8 @@ def check_currency(data: dict[str, Any], rep: Report) -> None:
     for block in ("cost", "arithmetic", "roi"):
         b = data.get(block) or {}
         for key in ("local_currency", "currency"):
-            if b.get(key):
+            # A currency left for the closer is a blank, not a second currency.
+            if b.get(key) and not FILL_RE.search(str(b[key])):
                 used.add(str(b[key]).upper())
     for _path, text in client_strings(data):
         for c in CURRENCIES:
@@ -1339,6 +1352,16 @@ def check_arithmetic(data: dict[str, Any], rep: Report) -> None:
         rep.add(FAIL, "arithmetic",
                 "the break-even table has no rows: no project_values, and mode "
                 "%r has no single value either" % (a.get("mode") or "grid"))
+        return
+
+    # The engagement is our fee, converted at roi.usd_rate: a page in one
+    # currency and a rate for another prints the engagement in the wrong money.
+    cur_named = str(a.get("currency") or "").strip().upper()
+    if cur_named in USD_PEGS and not a.get("engagement_total") and rate_off(cur_named, roi.get("usd_rate") or 1):
+        rep.add(FAIL, "arithmetic",
+                f"the arithmetic page is in {cur_named}, and roi is in {roi.get('local_currency') or 'USD'} at a "
+                f"usd_rate of {roi.get('usd_rate') or 1}, so the engagement would print in the wrong money. Set "
+                f"roi.local_currency to {cur_named} and roi.usd_rate to {USD_PEGS[cur_named]}")
         return
 
     months = a.get("months") or roi.get("months") or 3

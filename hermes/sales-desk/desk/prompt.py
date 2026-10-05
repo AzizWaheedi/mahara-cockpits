@@ -35,7 +35,7 @@ object and nothing else: no commentary, no markdown fence.
       "avg_project_value": {
         "stated": true|false,
         "value": <number, in the currency below>,
-        "currency": "SAR"|"USD"|"AED"|"KWD"|"QAR"|"BHD",
+        "currency": "SAR"|"USD"|"AED"|"KWD"|"QAR"|"BHD"|"OMR"|"unstated",
         "quote": "<the words they said it in, verbatim from the transcript>"
       },
       "net_margin": {
@@ -52,6 +52,11 @@ object and nothing else: no commentary, no markdown fence.
 **avg_project_value** is what one of their projects is typically worth to them
 in revenue. A range counts: report the bottom of it. A single unusual project
 they mention in passing does not count.
+
+**currency** is the one the client named for that figure: riyals, dirhams,
+dollars, a currency sign. If they never named one, answer "unstated", even
+when the country suggests one: never assume dollars because a figure is round
+or large. The closer is asked instead.
 
 **net_margin** is the one that gets misread, so read it carefully. Many
 contractors quote an overhead or a markup: "we price at cost plus 20 percent",
@@ -285,7 +290,22 @@ def triage_user(transcript_text: str) -> str:
     return "The call:\n\n" + transcript_text
 
 
-def draft_user(known: dict[str, Any], transcript_text: str, lang: str, variant: str, *, has_reference: bool) -> str:
+# The triage found a project value and no currency for it (5 October 2026: a
+# floor of "1M" was printed as dollars; B2B's own triage read it as dirhams).
+UNSTATED_CURRENCY = ("The client never named a currency for their figures. Write FILL in arithmetic.currency so "
+                     "the closer is asked, and write the client's own figures without a currency anywhere else.")
+
+
+def currency_unstated(found: Optional[dict[str, Any]]) -> bool:
+    """A project value was given, in no currency the client named."""
+    value = (found or {}).get("avg_project_value") or {}
+    if not (value.get("stated") and value.get("value")):
+        return False
+    return str(value.get("currency") or "").strip().lower() in ("", "unstated", "unknown", "none", "fill")
+
+
+def draft_user(known: dict[str, Any], transcript_text: str, lang: str, variant: str, *, has_reference: bool,
+               facts: Optional[list[str]] = None) -> str:
     where = ("The exact shape to return is the reference at the end of your instructions."
              if has_reference else
              "There is no reference on this machine: the keys to use are outlined at the end of your instructions.")
@@ -299,6 +319,7 @@ def draft_user(known: dict[str, Any], transcript_text: str, lang: str, variant: 
         + ".\n\nA figure the client said only in passing, or in a stretch of the call that is garbled or "
         "unclear, is FILL or left out, never a headline: the headline, the gap and the tree carry only figures "
         "said plainly. Write each count the same way wherever it appears."
+        + "".join("\n\n" + f for f in (facts or []))
         + "\n\nThe call:\n\n" + transcript_text
         + "\n\nReturn only the deal JSON object."
     )

@@ -387,6 +387,70 @@ class AdvertisingLineTests(unittest.TestCase):
         self.assertEqual(failing(check(deal), "offer"), [])
 
 
+# --------------------------------------------------------------- defect 7 ---
+def run_engine(replies: list[Any], over: list[list[int]], **kw: Any):
+    from desk import engine
+    from tests.fakes import FakeProvider, FakeRenderer
+    from tests.test_desk import cfg_in
+    tmp = tempfile.mkdtemp()
+    cfg = cfg_in(tmp)
+    p = FakeProvider(replies)
+    call = engine.Call(transcript_text=fakes.transcript(), client_company="Mirage Test Contracting")
+    out = engine.run(call, lang="en", resolved=resolved(), offer=TEST_OFFER, p=p, cfg=cfg, log=lambda _m: None,
+                     workdir=Path(tmp) / "work", renderer=FakeRenderer(over=over), **kw)
+    return out, p
+
+
+def margin_mode_deal(currency: str = "USD") -> dict[str, Any]:
+    deal = general_deal()
+    deal["roi"].update({"local_currency": "USD", "usd_rate": 1, "avg_project_value": 450000})
+    deal["arithmetic"] = {"mode": "margin", "currency": currency, "project_value": 450000, "months": 3,
+                          "title": "What it takes to pay for itself", "verdict": "One project covers it."}
+    return deal
+
+
+class UnstatedCurrencyTests(unittest.TestCase):
+    """The call's floor of 1M was taken for dollars; the client never named a
+    currency, and in dirhams the share of a project is off by 3.7 times."""
+
+    def triage(self, currency: str) -> dict[str, Any]:
+        found = fakes.triage_answer(margin=None)
+        found["avg_project_value"]["currency"] = currency
+        return found
+
+    def test_triage_may_answer_unstated(self):
+        from desk import prompt
+        self.assertIn('"unstated"', prompt.TRIAGE_SYSTEM)
+        self.assertIn("never assume", prompt.TRIAGE_SYSTEM)
+
+    def test_an_unstated_currency_is_a_blank_for_the_closer(self):
+        out, p = run_engine([self.triage("unstated"), margin_mode_deal()], over=[[]])
+        self.assertEqual(out.deal["arithmetic"]["currency"], "FILL")
+        self.assertIn("arithmetic.currency", out.result.fill_fields)
+        self.assertEqual(out.result.status(), "needs_input")
+        self.assertIn("never named a currency", p.calls[1]["user"])
+        self.assertFalse([w for w in out.result.warnings() if w.startswith("currency")])
+
+    def test_a_named_currency_is_left_alone(self):
+        out, p = run_engine([self.triage("USD"), margin_mode_deal()], over=[[]])
+        self.assertEqual(out.deal["arithmetic"]["currency"], "USD")
+        self.assertNotIn("never named a currency", p.calls[1]["user"])
+
+    def test_the_closer_s_currency_brings_its_rate_on_the_rebuild(self):
+        from desk import engine
+        from tests.fakes import FakeRenderer
+        deal = margin_mode_deal("AED")
+        with tempfile.TemporaryDirectory() as tmp:
+            result, _dom = engine.rebuild(deal, resolved=resolved(), offer=TEST_OFFER,
+                                          html_path=Path(tmp) / "v2.html", renderer=FakeRenderer())
+        self.assertEqual((deal["roi"]["local_currency"], deal["roi"]["usd_rate"]), ("AED", 3.6725))
+        self.assertFalse(failing(result, "arithmetic"), result.text())
+
+    def test_a_page_in_one_currency_and_a_rate_for_another_fails(self):
+        r = check(margin_mode_deal("AED"))
+        self.assertTrue(any("AED" in x and "usd_rate" in x for x in failing(r, "arithmetic")), r.text())
+
+
 # ------------------------------------------------------------- the template ---
 @unittest.skipUnless(os.environ.get("SALES_RENDER_LIVE") == "1", "SALES_RENDER_LIVE=1 runs the real browser")
 class LiveTemplateTests(unittest.TestCase):
