@@ -108,7 +108,7 @@ import {
   signingLink,
 } from "./contracts.ts";
 import { clientFormRow, CLIENT_FORM_ID } from "./clientforms.ts";
-import { archivePlan, BEING_WRITTEN, stoppedProposal } from "./proposals.ts";
+import { ALREADY_DRAFTING, archivePlan, BEING_WRITTEN, stoppedProposal } from "./proposals.ts";
 
 type Row = Record<string, unknown>;
 
@@ -463,7 +463,7 @@ async function proposalDraft(who: Who, b: Row) {
     `cockpit_sales_requests?kind=eq.proposal&contact_id=eq.${enc(contact)}&status=in.(queued,running)&select=id`,
   );
   if (open.length)
-    throw new Refusal("A proposal for this lead is already being drafted. It takes about ten minutes.");
+    throw new Refusal(ALREADY_DRAFTING);
   const offer = checkOffer(b.offer);
   if (!offer.ok) throw new Refusal(offer.error);
   const lang = b.lang === "en" ? "en" : "ar";

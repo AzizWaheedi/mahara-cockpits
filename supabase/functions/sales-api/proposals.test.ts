@@ -1,6 +1,6 @@
 // bun test supabase/functions/sales-api
 import { describe, expect, test } from "bun:test";
-import { archivePlan, BEING_WRITTEN, STOPPED, stoppedProposal } from "./proposals.ts";
+import { ALREADY_DRAFTING, archivePlan, BEING_WRITTEN, STOPPED, stoppedProposal } from "./proposals.ts";
 
 describe("archiving a proposal stops its draft", () => {
   test("a queued draft is cancelled with it", () => {
@@ -49,5 +49,14 @@ describe("stopping a draft", () => {
 
   test("a version with no status it can go back to is archived", () => {
     expect(stoppedProposal({ html_path: "proposals/p/v1.html", validation: {} })).toEqual({ status: "archived" });
+  });
+});
+
+describe("a second draft for the same lead", () => {
+  test("is refused without promising a time, and says what to do", () => {
+    // A draft waiting on an outage can take hours: "about ten minutes" was a promise.
+    expect(ALREADY_DRAFTING).not.toMatch(/minute|hour|soon/i);
+    expect(ALREADY_DRAFTING).toMatch(/Refresh the lead's page/);
+    expect(ALREADY_DRAFTING).not.toContain("\u2014");
   });
 });
