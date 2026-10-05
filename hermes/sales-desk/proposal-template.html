@@ -357,6 +357,9 @@
   .fstage .bar { position: absolute; inset-block: 0; inset-inline: 0 auto; background: var(--navy); border-radius: var(--r); }
   .fstage .bar.acc { background: var(--teal-ink); }
   .fstage .val { font-family: var(--num); font-size: 11pt; font-weight: 600; font-variant-numeric: tabular-nums; text-align: end; }
+  /* Words where a figure would be ("a handful, all referrals") are read as a
+     note, not shouted as a number four bold lines tall. */
+  .fstage .val.words { font-family: var(--sans); font-size: 8pt; font-weight: 400; line-height: 1.3; color: var(--ink-2); }
 
   /* ============================ Tables ============================= */
   table { width: 100%; border-collapse: collapse; }
@@ -1417,21 +1420,41 @@ if (P.funnel || (P.gap_points && P.gap_points.length)
        handles this by omitting the track; the funnel now does the same and
        falls back to a labelled list. */
     const anyValue = P.funnel.stages.some(x => (Number(x.value) || 0) > 0);
+    /* A stage's count when it is printed as a figure: a number in value and a
+       display that is that same figure, or none. A range ("8 to 10") or words
+       are never subtracted from anything (validate.py stage_figure). */
+    const figureOf = (x) => {
+      const v = typeof x.value === "number" ? x.value
+        : (/^\s*-?\d+(\.\d+)?\s*$/.test(String(x.value ?? "")) ? Number(x.value) : NaN);
+      if (!isFinite(v)) return null;
+      if (x.display == null || String(x.display).trim() === "") return v;
+      const shown = String(x.display).replace(/[\u0660-\u0669]/g, d => d.charCodeAt(0) - 0x0660).replace(/[,\u066c]/g, "").trim();
+      return /^\d+(\.\d+)?$/.test(shown) && Number(shown) === v ? v : null;
+    };
+    /* Two stages count the same people unless one says otherwise ("pool"). */
+    const poolOf = (x) => (x.pool !== undefined ? x.pool : P.funnel.pool) || "";
     const bars = P.funnel.stages.map((x, i) => {
       /* A stage with nothing in it draws no bar at all. A minimum-width bar
          would read as a small number rather than as an absence. */
       const v = Number(x.value) || 0;
       const w = v === 0 ? 0 : Math.max(6, (v / max) * 100);
       const last = i === P.funnel.stages.length - 1;
+      /* A stage whose display is words has no figure: it draws no track, which
+         would read as an empty box, and its words are set as words. */
+      const shown = x.display != null ? x.display : x.value;
+      const words = !/\d/.test(String(shown ?? "")) && !/[\u0660-\u0669]/.test(String(shown ?? ""));
       /* the drop from the stage above, drawn so the reader never has to
-         subtract two numbers to see where the money goes */
-      const prev = i > 0 ? Number(P.funnel.stages[i - 1].value) || 0 : 0;
-      const drop = i > 0 ? prev - (Number(x.value) || 0) : 0;
+         subtract two numbers to see where the money goes: only between two
+         stages printed as figures, from the same pool */
+      const prev = i > 0 ? figureOf(P.funnel.stages[i - 1]) : null;
+      const cur = figureOf(x);
+      const same = i > 0 && poolOf(x) === poolOf(P.funnel.stages[i - 1]);
+      const drop = prev !== null && cur !== null && same ? prev - cur : 0;
       const pct = prev > 0 ? Math.round(drop / prev * 100) : 0;
       return `<div class="fstage${anyValue ? "" : " nofig"}">
         <div class="lab">${esc(x.label)}<small>${esc(x.note)}</small></div>
-        ${anyValue ? `<div class="track"><div class="bar${last ? " acc" : ""}" style="width:${w.toFixed(1)}%"></div></div>` : ""}
-        <div class="val">${esc(x.display != null ? x.display : x.value)}</div>
+        ${anyValue ? (words ? `<div></div>` : `<div class="track"><div class="bar${last ? " acc" : ""}" style="width:${w.toFixed(1)}%"></div></div>`) : ""}
+        <div class="val${words ? " words" : ""}">${esc(shown)}</div>
         <div class="lk">${drop > 0 ? `&minus;${drop}<small>lost here, ${pct}%</small>` : ""}</div>
       </div>`;
     }).join("");

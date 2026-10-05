@@ -388,6 +388,19 @@ def check_schema(data: dict[str, Any], rep: Report, general: bool = False, blind
                                "discussed yet, so the reader is being asked to countersign a "
                                "guess; set sign: false and end on the cta instead.")
 
+    # A funnel stage's value is the count its bar is drawn from, as a number
+    # (0 when there is none); words go in display. "a handful" in value drew
+    # an empty box beside four bold lines of text (5 October 2026).
+    stages = ((data.get("funnel") or {}).get("stages") or []) if isinstance(data.get("funnel"), dict) else []
+    for i, st in enumerate(stages):
+        if not isinstance(st, dict):
+            continue
+        v = st.get("value")
+        if isinstance(v, str) and FILL_RE.search(v):
+            continue
+        if isinstance(v, bool) or figure(v) is None:
+            rep.add(FAIL, "schema funnel", f"funnel.stages[{i}].value is {v!r}; it has to be the stage's count as "
+                                           "a number, 0 when there is none, with any words in display")
     sheets = expected_sheets(data)
     if len(data.get("solution") or []) != 5:
         rep.add(WARN, "schema solution",
@@ -1306,6 +1319,54 @@ def check_counts(data: dict[str, Any], rep: Report) -> None:
         rep.add(PASS, "figures", "each count is told the same way wherever it appears")
 
 
+# ------------------------------------------------------------ the funnel ----
+def stage_figure(st: dict[str, Any]) -> Optional[float]:
+    """A stage's count when the page prints it as a figure: a number in value,
+    and a display that is that same figure or absent. A range ("8 to 10") or
+    words are not subtracted from anything. The template's own test."""
+    v = st.get("value")
+    if isinstance(v, bool) or figure(v) is None:
+        return None
+    shown = st.get("display")
+    if shown is None or str(shown).strip() == "":
+        return figure(v)
+    text = str(shown).translate(ARABIC_DIGITS).replace(",", "").strip()
+    if re.fullmatch(r"\d+(?:\.\d+)?", text) and float(text) == figure(v):
+        return figure(v)
+    return None
+
+
+def funnel_losses(funnel: dict[str, Any]) -> list[tuple[int, float]]:
+    """(stage, lost) for each "lost here" the template draws: between two
+    stages printed as figures, from the same pool, where the count falls."""
+    stages = [s for s in (funnel.get("stages") or []) if isinstance(s, dict)]
+    out = []
+    for i in range(1, len(stages)):
+        prev, cur = stage_figure(stages[i - 1]), stage_figure(stages[i])
+        same_pool = (stages[i].get("pool", funnel.get("pool")) or "") == \
+                    (stages[i - 1].get("pool", funnel.get("pool")) or "")
+        if prev is not None and cur is not None and same_pool and prev - cur > 0:
+            out.append((i, prev - cur))
+    return out
+
+
+def check_funnel(data: dict[str, Any], rep: Report) -> None:
+    """A "lost here" the stage above contradicts: 14 meetings then 6 signed
+    printed 8 lost, under a note saying four signed and ten did not. The
+    second stage counted another pool (a year, not those meetings)."""
+    funnel = data.get("funnel") if isinstance(data.get("funnel"), dict) else {}
+    stages = funnel.get("stages") or []
+    clashes = []
+    for i, lost in funnel_losses(funnel):
+        own = [n for n in figures_in(stages[i - 1].get("note")) if n]
+        if own and int(lost) not in own:
+            clashes.append(f"funnel.stages[{i}] prints {lost:g} lost after funnel.stages[{i - 1}], whose note gives "
+                           f"its own figures ({', '.join(str(n) for n in own[:4])})")
+    if clashes:
+        rep.add(WARN, "funnel", "; ".join(clashes[:3]) + ". If the two stages do not count the same people, give "
+                                "the later one its own pool (\"pool\": \"...\") and no loss is drawn")
+
+
 # ----------------------------------------------------------- the quotes ----
 def check_quotes(data: dict[str, Any], rep: Report) -> None:
     """There is no quotes block, so carrying one is the failure. It was the
@@ -1647,6 +1708,7 @@ def validate(data: dict[str, Any], transcript: Optional[str] = None, *, resolved
     if not blind:
         check_evidence(data, said, rep, checked_note)
         check_counts(data, rep)
+        check_funnel(data, rep)
     check_quotes(data, rep)
     pct = None
     if general or blind:

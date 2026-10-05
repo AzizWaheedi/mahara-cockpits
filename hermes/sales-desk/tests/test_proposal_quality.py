@@ -621,6 +621,51 @@ class TighteningTests(unittest.TestCase):
         self.assertEqual(out.overflow_last, [])
 
 
+# -------------------------------------------------------------- defect 10 ---
+def funnel_deal(*stages: dict[str, Any]) -> dict[str, Any]:
+    deal = general_deal()
+    deal["funnel"] = {"title": "The year so far", "note": "Every figure is yours.", "stages": list(stages)}
+    return deal
+
+
+class FunnelTests(unittest.TestCase):
+    """A text value wrapped into four bold lines, a stage drew an empty box,
+    and "lost here" contradicted the stage's own note."""
+
+    def test_words_in_value_fail_the_schema(self):
+        for bad in ("a handful", "8 to 10", None, True):
+            deal = funnel_deal({"label": "Enquiries", "value": bad, "display": "a handful", "note": "referrals"},
+                               {"label": "Meetings", "value": 14, "display": "14", "note": "held"})
+            got = failing(check(deal), "schema funnel")
+            self.assertTrue(any("funnel.stages[0].value" in x for x in got), (bad, got))
+
+    def test_a_number_in_value_and_words_in_display_pass(self):
+        deal = funnel_deal({"label": "Enquiries", "value": 0, "display": "a handful, all referrals", "note": "x"},
+                           {"label": "Meetings", "value": "14", "display": "14", "note": "held"})
+        self.assertFalse(failing(check(deal), "schema funnel"))
+
+    def test_a_value_left_to_fill_is_a_gap(self):
+        deal = funnel_deal({"label": "Enquiries", "value": "FILL", "display": "FILL", "note": "a month"},
+                           {"label": "Meetings", "value": 14, "display": "14", "note": "held"})
+        r = check(deal)
+        self.assertFalse(failing(r, "schema funnel"))
+        self.assertEqual(r.status(), "needs_input")
+
+    def test_a_loss_the_note_contradicts_warns(self):
+        deal = funnel_deal({"label": "Meetings held", "value": 14, "display": "14",
+                            "note": "four reached a signature, ten did not"},
+                           {"label": "Projects signed", "value": 6, "display": "6", "note": "in eight months"})
+        got = warned(check(deal), "funnel")
+        self.assertTrue(got and "funnel.stages[1]" in got[0] and "pool" in got[0], got)
+
+    def test_a_stage_from_another_pool_is_not_a_loss(self):
+        deal = funnel_deal({"label": "Meetings held", "value": 14, "display": "14",
+                            "note": "four reached a signature, ten did not"},
+                           {"label": "Projects signed", "value": 6, "display": "6", "note": "in eight months",
+                            "pool": "the year"})
+        self.assertFalse(warned(check(deal), "funnel"))
+
+
 # ------------------------------------------------------------- the template ---
 @unittest.skipUnless(os.environ.get("SALES_RENDER_LIVE") == "1", "SALES_RENDER_LIVE=1 runs the real browser")
 class LiveTemplateTests(unittest.TestCase):
@@ -655,6 +700,28 @@ class LiveTemplateTests(unittest.TestCase):
         m = re.search(r'class="sheet[^"]*\bover\b[^"]*"[^>]*data-over-px="(\d+)"', live)
         self.assertTrue(m, "an over sheet with data-over-px")
         self.assertGreater(int(m.group(1)), 0)
+
+    def stage_html(self, live: str) -> list[str]:
+        return re.findall(r'<div class="fstage.*?</div>\s*</div>', live, re.S)
+
+    def test_the_funnel_draws_losses_only_within_one_pool_of_figures(self):
+        live = self.dom(funnel_deal(
+            {"label": "Enquiries", "value": 0, "display": "a handful, all referrals", "note": "January to June"},
+            {"label": "Meetings held", "value": 14, "display": "14", "note": "four reached a signature"},
+            {"label": "Projects signed", "value": 6, "display": "6", "note": "in eight months", "pool": "year"}))
+        self.assertFalse("lost here" in live, "no loss across pools")
+        self.assertTrue('class="val words"' in live, "words drawn as words")
+        first = live[live.index("Enquiries"):live.index("Meetings held")]
+        self.assertFalse('class="track"' in first, "no empty box for a stage with no figure")
+
+    def test_a_range_is_not_subtracted_and_figures_still_are(self):
+        live = self.dom(funnel_deal(
+            {"label": "Leads last month", "value": 67, "display": "67", "note": "from Google Ads"},
+            {"label": "Related to a real project", "value": 10, "display": "8 to 10", "note": "the rest were not"},
+            {"label": "Signed", "value": 0, "display": "0", "note": "none in two months"}))
+        self.assertEqual(live.count("lost here"), 0, "neither the range nor the drop after it is computed")
+        live = self.dom(general_deal())  # 40, 12, 2 from one month
+        self.assertEqual(live.count("lost here"), 2, "one month's funnel still shows its losses")
 
     def test_the_tiles_still_come_with_a_value_and_a_margin(self):
         deal = specific_deal()
