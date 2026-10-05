@@ -1742,6 +1742,16 @@ function CallPane({
   // A closer's video call is a demo (stress2 round 4): its length, its Zoom
   // rule, and never booked as an intro in a setter's place.
   const roomKind: "intro" | "demo" = as === "closer" ? "demo" : "intro";
+  // What the steps after a video join (or a move to the phone) ask about:
+  // the call this seat's item is for. A closer's call is a demo, so it never
+  // asks how "the intro" went nor leads with Book the demo (stress2 round 5).
+  const callAsk =
+    kind === "confirm"
+      ? `Are they coming to the ${roomKind}?`
+      : `How did the ${kind === "intro" ? "intro" : roomKind} go?`;
+  // A closer's demo call: Save how it went is the step's teal button.
+  const demoSaves =
+    roomKind === "demo" && kind !== "confirm" && kind !== "intro";
   const choice = roomsSetup.rooms
     ? providerChoice({
         setting: roomsSetup.rooms,
@@ -2280,13 +2290,15 @@ function CallPane({
           </NextStep>
         ) : mode === "unanswered" && joinedAt ? (
           <NextStep
-            title={`${firstWord(l?.name ?? null) ?? "The lead"} joined the video call. ${kind === "confirm" ? "Are they coming to the intro?" : "How did the intro go?"}`}
+            title={`${firstWord(l?.name ?? null) ?? "The lead"} joined the video call. ${callAsk}`}
             text={
               kind === "intro"
                 ? "Mark the intro held, then book the demo while they are warm, or save how it went."
                 : kind === "confirm"
                   ? "Save that they are coming, or save how it went."
-                  : "Book the demo while they are warm, or save how it went."
+                  : roomKind === "demo"
+                    ? "Save how it went: the follow-up, or the contract if they are ready."
+                    : "Book the demo while they are warm, or save how it went."
             }
           >
             {kind === "confirm" ? (
@@ -2319,7 +2331,7 @@ function CallPane({
               >
                 <Check className="size-3.5" aria-hidden /> Held the intro
               </button>
-            ) : (
+            ) : roomKind === "demo" ? null : (
               <button
                 type="button"
                 onClick={() => {
@@ -2334,7 +2346,7 @@ function CallPane({
             <button
               type="button"
               onClick={() => setMode("outcomes")}
-              className={button}
+              className={demoSaves && !panelLeads ? buttonPrimary : button}
             >
               Save how it went
             </button>
@@ -2346,7 +2358,7 @@ function CallPane({
           // call's own question, never the missed-call WhatsApp or another
           // video link (stress2, round 2).
           <NextStep
-            title={`You moved to the phone with ${firstWord(l?.name ?? null) ?? "the lead"}. ${kind === "confirm" ? "Are they coming to the intro?" : kind === "intro" ? "How did the intro go?" : "How did it go?"}`}
+            title={`You moved to the phone with ${firstWord(l?.name ?? null) ?? "the lead"}. ${kind === "confirm" || kind === "intro" ? callAsk : "How did it go?"}`}
             text={
               kind === "intro"
                 ? "Mark the intro held, then book the demo while they are warm, or save how it went."
@@ -2382,6 +2394,7 @@ function CallPane({
             onTalk={onTalk}
             onSave={() => setMode("outcomes")}
             onNext={toNext}
+            onCall={!busy && !open && !dnd && l ? () => void call() : null}
             onVideo={
               offerVideo && !picking && autoAt === null
                 ? () => setPicking(true)
@@ -2652,6 +2665,7 @@ function AfterMissStep({
   onTalk,
   onSave,
   onNext,
+  onCall = null,
   onVideo = null,
   picker = null,
   videoUnread = null,
@@ -2659,6 +2673,8 @@ function AfterMissStep({
 }: {
   step: AfterMiss;
   moment: MissMoment;
+  /** Call the lead again: the teal button when the lead was at the door a moment ago (step.callNow). */
+  onCall?: (() => void) | null;
   /** Maqsam's record saved it: Next lead takes the focus, so Enter moves on. */
   focusNext: boolean;
   onTalk: (moment?: Moment) => void;
@@ -2683,11 +2699,21 @@ function AfterMissStep({
         (videoUnread ? <p className="muted text-xs">{videoUnread}</p> : null)
       }
     >
+      {/* The lead was at the door a moment ago: Call first (stress2 round 5). */}
+      {step.callNow && onCall ? (
+        <button
+          type="button"
+          onClick={onCall}
+          className={!picker && !quietNext ? buttonPrimary : button}
+        >
+          <PhoneCall className="size-3.5" aria-hidden /> Call them now
+        </button>
+      ) : null}
       {/* While the picker is open its button is the teal one. */}
       <NextLeadButton
         onNext={onNext}
-        primary={!picker && !quietNext}
-        focus={focusNext}
+        primary={!picker && !quietNext && !(step.callNow && onCall)}
+        focus={focusNext && !(step.callNow && onCall)}
       />
       {step.talk ? (
         <button type="button" onClick={onSave} className={button}>
@@ -2698,7 +2724,12 @@ function AfterMissStep({
         <button
           type="button"
           // Email opens the box as it is; WhatsApp brings the ready message.
-          onClick={() => onTalk(step.send === "whatsapp" ? moment : undefined)}
+          // A lead who was at the door gets no missed-call message (stress2 round 5).
+          onClick={() =>
+            onTalk(
+              step.send === "whatsapp" && !step.callNow ? moment : undefined,
+            )
+          }
           className={button}
         >
           {step.send === "whatsapp" ? "WhatsApp them" : "Email them"}

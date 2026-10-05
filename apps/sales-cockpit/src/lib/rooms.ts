@@ -125,6 +125,8 @@ export const ROOM_VIEW_KEYS = [
   "handover_id",
   "end_reason",
   "last_open_at",
+  "last_link_at",
+  "late_open_at",
 ] as const;
 
 /** A room as the browser sees it. `start_url` is never part of it. */
@@ -183,6 +185,14 @@ export interface RoomView {
   end_reason?: string | null;
   /** The lead's latest open of the link: the sweep holds the room open_grace past it. */
   last_open_at?: string | null;
+  /** When a later channel sent the link again: the lead's ten minutes count from it (stress2 round 5). */
+  last_link_at?: string | null;
+  /**
+   * The lead opened the link after the room closed (the door showed them
+   * "This call has ended"): the panel and the banner say to call them now,
+   * never "nobody joined" (stress2 round 5).
+   */
+  late_open_at?: string | null;
 }
 
 export interface RoomEvent {
@@ -388,6 +398,8 @@ const OPTIONAL_TIMES = [
   "starts_at",
   "lead_in_seen_at",
   "last_open_at",
+  "last_link_at",
+  "late_open_at",
 ] as const;
 const OPTIONAL_TEXT = [
   "trigger",
@@ -920,6 +932,9 @@ function isStandby(room: RoomView): boolean {
  * Meet's own link, and no open can be.
  */
 export function shortLinkOn(room: RoomView): boolean {
+  // A booked call's link went with the booking (the calendar invite), never
+  // the short link, so no open of it can be seen (stress2 round 5).
+  if (room.purpose === "booked") return false;
   return Boolean(room.short_url) && room.short_url !== room.join_url;
 }
 
@@ -966,7 +981,12 @@ export function roomMoment(room: RoomView, now: number): RoomMoment {
     if (room.result === "admit_blocked" || room.lead_waiting_at)
       return "expired_knocked";
     if (room.end_reason === "events_lost") return "expired_unknown";
-    if (room.first_open_at || room.last_open_at || meetUnseen(room))
+    if (
+      room.first_open_at ||
+      room.last_open_at ||
+      room.late_open_at ||
+      meetUnseen(room)
+    )
       return "expired_opened";
     return "expired";
   }
@@ -976,7 +996,12 @@ export function roomMoment(room: RoomView, now: number): RoomMoment {
   // sends no join signal).
   if (s === "ended" && room.result === "no_join") {
     if (room.lead_waiting_at) return "expired_knocked";
-    if (room.first_open_at || room.last_open_at || meetUnseen(room))
+    if (
+      room.first_open_at ||
+      room.last_open_at ||
+      room.late_open_at ||
+      meetUnseen(room)
+    )
       return "expired_opened";
     return "ended_empty";
   }
@@ -1075,10 +1100,17 @@ export function leadDeadline(room: RoomView): number | null {
   const lead = t(room.lead_by);
   if (lead === null || !room.contact_id) return lead;
   const grace = WAITS_S.open_grace * 1000;
+  // From the latest send of the link (a later channel's email promises its
+  // own ten minutes, stress2 round 5), as the sweep's R4 reads it.
+  const sent = [t(room.link_sent_at), t(room.last_link_at ?? null)].filter(
+    (x): x is number => x !== null,
+  );
   const base =
     room.purpose === "booked"
       ? t(room.ends_at)
-      : (t(room.link_sent_at) ?? t(room.created_at));
+      : sent.length
+        ? Math.max(...sent)
+        : t(room.created_at);
   const cap =
     base === null
       ? Number.POSITIVE_INFINITY
@@ -1438,6 +1470,7 @@ export function roomSentence(room: RoomView, ctx: RoomCtx): Sentence {
     case "still_on_call":
       return ["Still on the call?"];
     case "expired":
+      if (room.end_reason === "host_not_in") return hostNotInSentence(room);
       return ctx.canMarkIntro
         ? ["Nobody joined in 10 minutes. The room is closed. Mark the intro:"]
         : [
@@ -1455,6 +1488,23 @@ export function roomSentence(room: RoomView, ctx: RoomCtx): Sentence {
     }
     case "expired_opened": {
       const who = name || "The lead";
+      // Closed because nobody pressed I'm in: the host may be on the call
+      // (a booked Meet call joined from the invite), so the line says the
+      // close was the host's press, never the lead's (stress2 round 5).
+      if (
+        room.end_reason === "host_not_in" &&
+        room.provider === "meet" &&
+        !room.late_open_at
+      )
+        return hostNotInSentence(room);
+      // The lead opened the link after the room closed: the door showed them
+      // "This call has ended", so they are at the link now (stress2 round 5).
+      if (room.late_open_at && !room.first_open_at && !room.last_open_at)
+        return [
+          `${who} opened the link at `,
+          { mono: clock(room.late_open_at) },
+          ", after the room closed. Call them now.",
+        ];
       // Meet's own link, nothing seen and nothing pressed (stress2 round 4).
       if (
         room.provider === "meet" &&
@@ -1509,6 +1559,22 @@ export function roomSentence(room: RoomView, ctx: RoomCtx): Sentence {
     case "closed":
       return summarySentence(room);
   }
+}
+
+/**
+ * A room the sweep closed because the host was not seen in it in time
+ * (end_reason host_not_in). On Meet only the host's I'm in says so, so the
+ * host may well be on the call; on Zoom the host did not join. Never "the
+ * lead did not join in 10 minutes" (stress2 round 5).
+ */
+function hostNotInSentence(room: RoomView): Sentence {
+  if (room.provider === "meet")
+    return [
+      `Closed because nobody pressed I'm in. If you are on the call, carry on; mark the ${room.call_kind} after it.`,
+    ];
+  return [
+    "Closed because you did not join the room in time. Call them again or send a message.",
+  ];
 }
 
 /**
@@ -2041,6 +2107,18 @@ export function bannerRoomSentence(
   if (
     m === "expired_opened" &&
     isFinal(room.state) &&
+    room.late_open_at &&
+    !room.first_open_at &&
+    !room.last_open_at
+  )
+    return [
+      `${Name} opened the link at `,
+      { mono: clock(room.late_open_at) },
+      ", after the room closed. Call them now.",
+    ];
+  if (
+    m === "expired_opened" &&
+    isFinal(room.state) &&
     (room.first_open_at || room.last_open_at)
   )
     return [
@@ -2146,13 +2224,15 @@ export function myRoom(
     if (isFinal(r.state)) {
       // Kept a while when it failed or closed on a knock, until the rep sees it on the lead's panel.
       if (!r.contact_id || seenFinal.has(r.id)) return false;
-      const ended = t(r.ended_at) ?? t(r.created_at);
+      // A late open is news from its own time (stress2 round 5).
+      const ended =
+        t(r.late_open_at ?? null) ?? t(r.ended_at) ?? t(r.created_at);
       const m = roomMoment(r, now);
       return (
         BANNER_KEEPS.has(m) &&
         // Only an open the door saw: a closed Meet room with nothing seen says nothing to the banner.
         (m !== "expired_opened" ||
-          Boolean(r.first_open_at || r.last_open_at)) &&
+          Boolean(r.first_open_at || r.last_open_at || r.late_open_at)) &&
         ended !== null &&
         now - ended < BANNER_FINAL_MS
       );

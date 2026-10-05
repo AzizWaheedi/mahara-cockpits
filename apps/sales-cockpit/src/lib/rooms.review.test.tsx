@@ -1178,6 +1178,9 @@ describe("14. every fixture draws", () => {
     // stress2 fix round 1.
     "end_reason",
     "last_open_at",
+    // stress2 fix round 5: the link's later send, and an open after the close.
+    "last_link_at",
+    "late_open_at",
   ];
 
   test("the browser's key list is contract v2's, in full", () => {

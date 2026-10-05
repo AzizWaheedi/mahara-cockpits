@@ -57,11 +57,14 @@ describe("after a video intro, the dialer asks how it went", () => {
   test("the step says joined, offers Book the demo, Save how it went and Next lead, and the band says when", () => {
     // Since stress2 round 2 a confirmation call's join asks "Are they coming
     // to the intro?" instead; the intro's own call still asks how it went.
+    // Since stress2 round 5 the question names the seat's call (a closer's
+    // is a demo): callAsk, built from the item's kind and roomKind.
+    expect(dialer).toMatch(/joined the video call\. \$\{callAsk\}/);
     expect(dialer).toMatch(
-      /joined the video call\. \$\{kind === "confirm" \? "Are they coming to the intro\?" : "How did the intro go\?"\}/,
+      /`Are they coming to the \$\{roomKind\}\?`[\s\S]{0,120}`How did the \$\{kind === "intro" \? "intro" : roomKind\} go\?`/,
     );
     expect(dialer).toMatch(
-      /Book the demo[\s\S]{0,400}Save how it went[\s\S]{0,200}<NextLeadButton/,
+      /Book the demo[\s\S]{0,400}Save how it went[\s\S]{0,400}<NextLeadButton/,
     );
     expect(dialer).toMatch(/`Joined on video at \$\{clock\(joinedAt\)\}`/);
     // No missed-call WhatsApp and no second link once they joined.

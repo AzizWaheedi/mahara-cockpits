@@ -52,9 +52,12 @@ describe("the lead joins the confirmation call's video room the evening before t
     const step = joinedStep();
     // The title, as written: one sentence for every kind.
     const title = /title=\{`[^`]*`\}/.exec(step)?.[0] ?? "";
-    expect(title).toContain("How did the intro go?");
-    // Found: nothing in the step tells a confirmation call from the intro;
-    // a confirm item gets the intro's question and "Book the demo" first.
+    // Since stress2 round 5 the title asks callAsk, which reads the item's
+    // kind (a confirm item asks whether they are coming to the call).
+    expect(title).toContain("$" + "{callAsk}");
+    expect(page).toMatch(
+      /kind === "confirm"\s*\?\s*`Are they coming to the \$\{roomKind\}\?`/,
+    );
     expect(step).toMatch(/kind === "confirm"/);
   });
 });

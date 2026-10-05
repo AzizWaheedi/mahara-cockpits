@@ -448,6 +448,13 @@ export interface AfterMiss {
    * offers Save how it went (stress2 round 3).
    */
   talk?: true;
+  /**
+   * The lead was at the room's door a moment ago (they knocked and nobody
+   * let them in, or they opened the link) and the room has closed: the
+   * step's teal button is Call, never Next lead, and the WhatsApp opens
+   * with no missed-call message (stress2 round 5).
+   */
+  callNow?: true;
 }
 
 const LEAD_IN: Record<MissMoment, string> = {
@@ -520,10 +527,37 @@ export function afterMiss(o: {
     join_url?: string | null;
     lead_in_at?: string | null;
     result?: string | null;
+    lead_waiting_at?: string | null;
+    late_open_at?: string | null;
   } | null;
 }): AfterMiss {
   const { moment } = o;
   const v = o.video;
+  // The lead knocked in the waiting room and nobody let them in, and the
+  // room has closed: they were there a moment ago, so the step says to call
+  // them now, never "No answer" with Next lead first (stress2 round 5).
+  const closedEmpty =
+    v && ["ended", "expired", "cancelled"].includes(v.state) && !v.lead_in_at;
+  if (closedEmpty && (v.lead_waiting_at || v.result === "admit_blocked"))
+    return {
+      title: "They knocked and were not let in. Call them now.",
+      text: "They waited at the room's door and nobody let them in, so the room closed. Call them now; if they do not answer, send them a WhatsApp with a new link.",
+      send: "whatsapp",
+      callNow: true,
+    };
+  // They opened a Zoom link and never came in (Zoom reports joins), or
+  // opened any link after its room closed: call them now.
+  if (
+    closedEmpty &&
+    (v.late_open_at ||
+      (v.provider !== "meet" && (v.first_open_at || v.last_open_at)))
+  )
+    return {
+      title: "They opened the video link. Call them now.",
+      text: "They opened the link but did not get in, and the room has closed. Call them now; if they do not answer, send them a WhatsApp with a new link.",
+      send: "whatsapp",
+      callNow: true,
+    };
   // The room closed with nothing seen and nothing pressed, and the lead's
   // link was Meet's own (rooms.short_link off, as shipped): Meet never says
   // who came in, so the rep may have talked on video for minutes. Asked,

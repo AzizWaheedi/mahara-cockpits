@@ -127,6 +127,8 @@ export function baseRoom(now: number, over: Partial<RoomView> = {}): RoomView {
     // stress2 fix round 1: why the sweep closed it, and the lead's latest open.
     end_reason: null,
     last_open_at: null,
+    last_link_at: null,
+    late_open_at: null,
     ...over,
   };
 }
