@@ -454,6 +454,13 @@ payment, so for that choice the label becomes an instruction to say it comes
 off the payment at the start (`prompt.DEPOSIT_IN_FULL_SHAPE`). The validator
 warns on a first payment under paid in full in a check of its own
 (`deposit`), not the offer's, so the references are not failed for it.
+`general.json` and `specific.json` open their `tree.note` with "No third
+branch.", filler under a tree that has two branches by design, and thirteen
+of B2B's fourteen drafts printed it (176954619's page 3 on the live check of
+5 October 2026). The drafter is shown the rest of the note, or none
+(`prompt.without_third_branch`), and the validator warns on a note that
+mentions a third branch in a check of its own (`tree`), so the references
+are not failed for it.
 
 Its dates are not held against it. The drafter is told today's date and the
 date two weeks on in place of the reference's own (`prompt.shape_of`), since

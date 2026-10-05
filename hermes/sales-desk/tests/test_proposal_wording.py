@@ -16,9 +16,9 @@ from typing import Any
 
 os.environ["SALES_NO_KEY_FILES"] = "1"
 
-from desk import engine, prompt, validate  # noqa: E402
+from desk import engine, prompt, references, validate  # noqa: E402
 from tests import fakes  # noqa: E402
-from tests.fakes import general_deal  # noqa: E402
+from tests.fakes import TEST_OFFER, general_deal, specific_deal  # noqa: E402
 from tests.test_desk import check, failing  # noqa: E402
 from tests.test_proposal_quality import run_engine, volume_deal  # noqa: E402
 
@@ -229,6 +229,53 @@ class OneThirdRuleTests(unittest.TestCase):
         # SAR 39,375 against SAR 450,000 is 8.75 percent.
         found = arithmetic_rows(volume_deal())
         self.assertTrue(any("8.75% of one project at the bottom value, inside one third" in d for d in found), found)
+
+
+# --------------------------------------------------------------- finding 5 ---
+def tree_warned(deal: dict[str, Any]) -> list[str]:
+    return rows(check(deal, text=None), "tree", "WARN")
+
+
+class RangeAndTreeWordingTests(unittest.TestCase):
+    """176954619: the intro said "a 20 percent margin" for a 20 to 30 range,
+    the verdict called the target "qualified projects", and page 3 printed
+    "No third branch." Thirteen of B2B's fourteen drafts carry that line, from
+    the references' tree.note."""
+
+    def test_a_tree_note_saying_there_is_no_third_branch_warns(self):
+        for note in ("No third branch. Capacity is not what limits you.", "There is no third branch.",
+                     "لا فرع ثالث. الطاقة الإنتاجية ليست الحد."):
+            deal = general_deal()
+            deal["tree"]["note"] = note
+            found = tree_warned(deal)
+            self.assertTrue(any("tree.note" in f for f in found), (note, found))
+        deal = specific_deal()
+        deal["tree"]["note"] = "No third branch."
+        self.assertTrue(tree_warned(deal))
+
+    def test_a_tree_note_with_a_finding_passes_and_a_reference_is_not_failed(self):
+        deal = general_deal()
+        deal["tree"]["note"] = "Capacity is not what limits you."
+        self.assertEqual(tree_warned(deal), [])
+        deal["tree"]["note"] = "No third branch. Capacity is not what limits you."
+        self.assertFalse([p for p in references.problems_in(deal, TEST_OFFER) if p.startswith("tree")])
+
+    def test_the_drafter_is_not_shown_the_line(self):
+        ref = general_deal()
+        ref["tree"]["note"] = "No third branch. Capacity is not the constraint."
+        self.assertEqual(prompt.shape_of(ref)["tree"]["note"], "Capacity is not the constraint.")
+        ref["tree"]["note"] = "No third branch."
+        self.assertNotIn("note", prompt.shape_of(ref)["tree"])
+        ref["tree"]["note"] = "لا فرع ثالث. الطاقة الإنتاجية ليست الحد."
+        self.assertEqual(prompt.shape_of(ref)["tree"]["note"], "الطاقة الإنتاجية ليست الحد.")
+        ref["tree"]["note"] = "Capacity is not the constraint."
+        self.assertEqual(prompt.shape_of(ref)["tree"]["note"], "Capacity is not the constraint.")
+
+    def test_the_drafter_is_told(self):
+        self.assertTrue("Quote a range as the client gave it" in SKILL)
+        self.assertTrue("say which end the page counts" in SKILL)
+        self.assertTrue('never "qualified projects"' in SKILL)
+        self.assertTrue("leave `tree.note` empty" in SKILL)
 
 if __name__ == "__main__":
     unittest.main()

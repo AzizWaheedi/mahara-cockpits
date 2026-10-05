@@ -170,6 +170,11 @@ trusting the page, and `validate.py` warns. If the count at his gross margin
 needs more projects than the term targets, the verdict says so plainly; that
 is a finding for the closer.
 
+Quote a range as the client gave it, and say which end the page counts: "a
+gross margin of 20 to 30 percent, counted at 20", never "a 20 percent margin"
+for a client who said 20 to 30. A project value given as a range is quoted
+the same way.
+
 When the project value is not an average (a minimum ticket, a typical job),
 name it in `arithmetic.project_label` ("Your minimum ticket") so the page does
 not call it your average.
@@ -243,7 +248,10 @@ these figures exactly, with the words in the document's language.
 The branches must not overlap and together must account for the whole goal. Where
 enquiries already arrive: *get more of them into a meeting* and *sign more of the
 meetings you already hold*. Where there is no channel: *create enquiries where
-there are none* and *turn them into contracts*.
+there are none* and *turn them into contracts*. Two branches is the design, so
+leave `tree.note` empty when there is no third branch to explain: a line saying
+there is no third branch is filler under the exhibit, and `validate.py` warns on
+it. Use the note only for a finding the branches do not show.
 
 **The cost of the gap**, three layers, in their currency, per month:
 
@@ -325,7 +333,9 @@ nothing the call did not give. `rate_display` is the rate the client signs at
 today, as he said it ("3 since January"), never the target: it prints as "You
 sign" directly above the target, so the target written there reads as the same
 line twice, and `validate.py` fails it. When the call gave no signing rate,
-write FILL. Do not reach for it to make a bad number look
+write FILL. The verdict and the close call the target what the table calls
+it, additional projects: never "qualified projects", since qualified is a word
+for meetings. Do not reach for it to make a bad number look
 better: if even the whole target does not cover the engagement, the validator
 says so and the deal needs a human.
 

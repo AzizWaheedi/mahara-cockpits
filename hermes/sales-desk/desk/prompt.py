@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from . import offer as offer_mod
+from . import validate as validate_mod
 from .config import ROOT
 
 SKILL_FILE = ROOT / "SKILL.md"
@@ -286,6 +287,17 @@ def shape_of(deal: dict[str, Any], today: Optional[date] = None) -> dict[str, An
             arith["gross_margin"] = GROSS_MARGIN_SHAPE
         if "project_label" in arith:
             arith["project_label"] = PROJECT_LABEL_SHAPE
+    # The references' tree.note opens "No third branch.", filler under a tree
+    # that has two branches by design, and thirteen of B2B's fourteen drafts
+    # copied it (live check, 5 October 2026). The drafter sees the rest of
+    # the note, or none.
+    tree = d.get("tree")
+    if isinstance(tree, dict) and isinstance(tree.get("note"), str):
+        kept = without_third_branch(tree["note"])
+        if kept:
+            tree["note"] = kept
+        else:
+            tree.pop("note")
     if variant_of(d) == "general" and "gap_points" not in d:
         d = _with_after(d, "gap_title", "gap_points", copy.deepcopy(GAP_POINTS_SHAPE))
     d["client_company"] = "<the company name as said on the call, never FILL>"
@@ -293,6 +305,12 @@ def shape_of(deal: dict[str, Any], today: Optional[date] = None) -> dict[str, An
     if "client_role" in d:
         d["client_role"] = "<their role, or leave the key out if unsaid>"
     return d
+
+
+def without_third_branch(note: str) -> str:
+    """A tree note without its sentences about a third branch."""
+    sentences = re.split(r"(?<=[.!?؟;؛])\s+", note.strip())
+    return " ".join(x for x in sentences if x and not validate_mod.NO_THIRD_BRANCH.search(validate_mod._plain(x)))
 
 
 def _with_after(d: dict[str, Any], after: str, key: str, value: Any) -> dict[str, Any]:

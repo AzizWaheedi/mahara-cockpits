@@ -1395,6 +1395,24 @@ def check_echoes(data: dict[str, Any], rep: Report) -> None:
         rep.add(PASS, "echoes", "nothing printed twice")
 
 
+# --------------------------------------------------------- the tree's note ---
+# The tree has two branches by design, so a note saying there is no third is
+# filler printed under the exhibit: "No third branch." on 176954619's page 3
+# (live check, 5 October 2026), and in thirteen of B2B's fourteen drafts,
+# copied from the references' tree.note (prompt.shape_of now leaves it out).
+NO_THIRD_BRANCH = re.compile(r"\bthird\s+branch(?:es)?\b|(?<![ء-ي])(?:ال)?فرع(?:ا)?\s+(?:ال)?ثالث(?:ا)?(?![ء-ي])",
+                             re.I)
+
+
+def check_tree_note(data: dict[str, Any], rep: Report) -> None:
+    tree = data.get("tree") if isinstance(data.get("tree"), dict) else {}
+    note = tree.get("note")
+    if isinstance(note, str) and NO_THIRD_BRANCH.search(_plain(note)):
+        rep.add(WARN, "tree", "tree.note says there is no third branch. The tree has two by design, so the line "
+                              "is filler under the exhibit: leave tree.note empty, or keep only a finding the "
+                              "branches do not show")
+
+
 # --------------------------------------------------------------- currency ---
 # Words saying no currency was named. A currency left for the closer is
 # settled before the page goes out, and then the page states it in its figures
@@ -2435,6 +2453,7 @@ def validate(data: dict[str, Any], transcript: Optional[str] = None, *, resolved
     check_identity(data, rep)
     check_dates(data, rep, today)
     check_echoes(data, rep)
+    check_tree_note(data, rep)
     check_currency(data, rep)
     rendered = check_render(dom, sheets, rep, engine)
 
