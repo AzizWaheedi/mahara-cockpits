@@ -69,6 +69,12 @@ class SigningRateTests(unittest.TestCase):
         deal = volume_page("2 a month", "2 more a month")
         self.assertFalse(failing(check(deal, text=None), "rate"))
 
+    def test_the_same_figures_over_another_period_are_no_repeat(self):
+        deal = volume_page("2 to 4 a month", "2 to 4 over three months")
+        self.assertFalse(failing(check(deal, text=None), "rate"))
+        deal = volume_page("2 a month", "2 a month")
+        self.assertTrue(failing(check(deal, text=None), "rate"))
+
     def test_a_rate_left_for_the_closer_or_left_out_is_no_repeat(self):
         for rate in ("FILL", ""):
             self.assertFalse(failing(check(volume_page(rate, "2 to 4 over three months"), text=None), "rate"))
@@ -120,7 +126,8 @@ class AbsoluteOutcomeTests(unittest.TestCase):
                      "A filtration funnel, so every showroom visit is a real buyer.",
                      "No more wasted meetings with people who cannot afford you.",
                      "A calendar that is always full.",
-                     "Nothing below your ticket ever reaches you."):
+                     "Nothing below your ticket ever reaches you.",
+                     "You won’t miss an enquiry again."):
             self.assertTrue(absolute(with_fix(line)), line)
         self.assertTrue(absolute(with_fix("Every lead is qualified.", key="solution_close")))
 
@@ -142,7 +149,8 @@ class AbsoluteOutcomeTests(unittest.TestCase):
                      "A line that never bids against it.",
                      "Direct enquiries that never go to open tender.",
                      "Targeting and filtering set to your minimum ticket, so fewer small jobs arrive.",
-                     "Small jobs are filtered out before they reach you."):
+                     "Small jobs are filtered out before they reach you.",
+                     "Meetings are never booked without a budget check."):
             self.assertEqual(absolute(with_fix(line)), [], line)
         for line in ("لا نشارك بياناتك مع أحد أبدا.", "كل استفسار يتصل به فريقنا خلال 5 إلى 30 دقيقة."):
             self.assertEqual(absolute(with_fix(line, lang="ar")), [], line)

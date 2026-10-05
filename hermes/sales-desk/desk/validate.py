@@ -1203,7 +1203,10 @@ def built_to_deliver(text: str) -> bool:
 _ARRIVE = (r"(?:arrives?|reach(?:es)?\s+(?:you|your|the\s+(?:team|calendar|diary|desk|showroom|office|sales))"
            r"|gets?\s+through|comes?\s+through|lands?\s+(?:on|in)\s+your|makes?\s+it\s+(?:to|through|into)"
            r"|slips?\s+(?:through|away)|goes?\s+(?:cold|unanswered|to\s+waste|missing)|falls?\s+through"
-           r"|wastes?\s+your|turns?\s+up|shows?\s+up|misse[sd]|miss|booked|let\s+through)")
+           r"|wastes?\s+your|turns?\s+up|shows?\s+up|misse[sd]|miss|let\s+through"
+           # "Small jobs are never booked" is an outcome; "never booked
+           # without a budget check" is what we do.
+           r"|booked(?!\s+(?:without|before|until|unless)\b))")
 _LEAD_NOUN = (r"(?:leads?|enquir(?:y|ies)|inquir(?:y|ies)|meetings?|appointments?|bookings?|visits?|calls?|"
               r"prospects?|buyers?|clients?|contacts?|opportunit(?:y|ies))")
 _SURE_QUALITY = (r"(?:real|serious|qualified|pre-?qualified|genuine|ready|warm|hot|high[- ]intent|on\s+budget|"
@@ -1213,7 +1216,7 @@ _AR_ARRIVE = (r"(?:يصل|تصل|يصلك|تصلك|يصلكم|تصلكم|يوص�
 _AR_FULL = r"(?:ممتلئ|ممتلئة|مليء|مليئة|محجوز|محجوزة|مشغول|مشغولة|مؤهل|مؤهلة|جاهز|جاهزة|جاد|جادة)"
 _AR_ALWAYS = r"(?:دائما|دائماً|على\s+الدوام)"
 ABSOLUTE_OUTCOME = re.compile(
-    rf"\b(?:never|will\s+not|won't|no\s+longer)\s+(?:again\s+|ever\s+)?{_ARRIVE}\b"
+    rf"\b(?:never|will\s+not|won['’]t|no\s+longer)\s+(?:again\s+|ever\s+)?{_ARRIVE}\b"
     rf"|\b(?:nothing|none|no\s+one|nobody|no\s+(?:lead|enquiry|inquiry|job|project|meeting|call))\b[^.,;]{{0,40}}?"
     rf"\bever\s+{_ARRIVE}\b"
     r"|\b(?:every|each|all(?:\s+the)?|100\s*(?:%|percent)\s+of(?:\s+the)?)\s+"
@@ -2127,6 +2130,20 @@ INCREMENT = re.compile(r"\b(?:more|additional|extra|another|on\s+top)\b|إضاف
                        re.I)
 
 
+def per_period(text: str) -> Optional[str]:
+    """The period a figure is told per ("a month", "weekly", "في الشهر"), or
+    None when it is told over a stretch (the term, since January)."""
+    m = RATE.search(_plain(text))
+    if not m:
+        return None
+    words = m.group(0).lower()
+    for unit, rx in (("day", r"day|daily|يوم"), ("week", r"week|أسبوع|اسبوع"), ("month", r"month|شهر"),
+                     ("quarter", r"quarter"), ("year", r"year|annual|سنة|سنوي|عام")):
+        if re.search(rx, words):
+            return unit
+    return "other"
+
+
 def check_rate(data: dict[str, Any], rep: Report) -> None:
     """The volume page's "You sign" row is the client's own signing rate, never
     the target: it fails when it carries the same figures as target_display."""
@@ -2137,7 +2154,10 @@ def check_rate(data: dict[str, Any], rep: Report) -> None:
     if not rate or not target or FILL_RE.search(rate) or FILL_RE.search(target):
         return
     said, aimed = sorted(set(count_figures(rate))), sorted(set(count_figures(target)))
-    if said and said == aimed and not (INCREMENT.search(_plain(target)) and not INCREMENT.search(_plain(rate))):
+    # The same figures over another period ("2 to 4 a month" against "2 to 4
+    # over three months") are another count, not the target repeated.
+    if said and said == aimed and per_period(rate) == per_period(target) \
+            and not (INCREMENT.search(_plain(target)) and not INCREMENT.search(_plain(rate))):
         rep.add(FAIL, "rate", "arithmetic.rate_display carries the same figures as arithmetic.target_display ("
                 + " and ".join(str(n) for n in said) + "), so \"You sign\" repeats the target. It is the rate the "
                 "client signs at today, as the call gave it (a gap tile, the funnel or the tree may say it), "
