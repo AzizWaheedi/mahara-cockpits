@@ -85,7 +85,7 @@ class VariantGateTests(unittest.TestCase):
     def test_value_without_margin_is_the_ordinary_general_one(self):
         v, why = engine.choose_variant(triage_answer(margin=None), "a call")
         self.assertEqual(v, "general")
-        self.assertIn("margin not", why)
+        self.assertIn("no net margin", why)
 
     def test_a_gross_margin_is_no_margin(self):
         self.assertEqual(engine.choose_variant(triage_answer(is_net=False), "a call")[0], "general")

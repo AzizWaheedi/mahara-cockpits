@@ -277,5 +277,22 @@ class RangeAndTreeWordingTests(unittest.TestCase):
         self.assertTrue('never "qualified projects"' in SKILL)
         self.assertTrue("leave `tree.note` empty" in SKILL)
 
+
+# --------------------------------------------------------------- finding 6 ---
+class VariantReasonTests(unittest.TestCase):
+    """176954619's draft notes said the margin was not given, then that it was
+    gross, on a page that counted that gross margin."""
+
+    def test_a_gross_margin_given_is_no_net_margin_not_no_margin(self):
+        found = fakes.triage_answer(is_net=False)
+        found["net_margin"]["note"] = "gross, 20 to 30 percent"
+        variant, why = engine.choose_variant(found, "a call")
+        self.assertEqual(variant, "general")
+        self.assertEqual(why, "project value given, no net margin: gross, 20 to 30 percent")
+
+    def test_no_margin_at_all_says_never_stated(self):
+        _v, why = engine.choose_variant(fakes.triage_answer(margin=None), "a call")
+        self.assertEqual(why, "project value given, no net margin: never stated")
+
 if __name__ == "__main__":
     unittest.main()

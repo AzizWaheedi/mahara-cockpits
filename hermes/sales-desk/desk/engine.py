@@ -124,8 +124,10 @@ def choose_variant(found: Optional[dict[str, Any]], transcript_text: str) -> tup
         return "specific", "average project value and net margin both given"
     if has_value:
         # The common case: of sixty-seven calls read, forty gave a project
-        # value and three a net margin.
-        return "general", "project value given, margin not: " + (margin.get("note") or "never stated")
+        # value and three a net margin. Said as no net margin, because a gross
+        # one may have been given and counted (176954619's notes said "margin
+        # not" and then "gross", live check of 5 October 2026).
+        return "general", "project value given, no net margin: " + (margin.get("note") or "never stated")
     return "general", "no average project value either"
 
 
