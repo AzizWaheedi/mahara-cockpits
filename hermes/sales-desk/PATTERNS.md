@@ -10,7 +10,7 @@ The figures a proposal prints come from `offer.json` and the closer's choice, an
 - **The payment structure moves, the price does not.** Since 3 October 2026 there are two structures and only two: USD 6,000 paid in full at the start, or USD 3,000 at the start and USD 3,000 thirty days later. Which one a proposal carries is the closer's choice, made per proposal. No payment ever waits on the client's first contract, project, deal or sale: the four calls quoted that split, it is retired, and a call that still quotes it does not bring it back. Never discount.
 - **The deposit** reserves the start date and comes off the payment at the start: the one payment when paid in full, the first of the two when split.
 - **Advertising** is paid by the client directly to the platforms, always its own line.
-- **Timeline:** onboarding call, 7 to 10 days of build, meetings landing within 10 to 15 days.
+- **Timeline:** an onboarding call, then the build (the calls gave 7 to 10 days of it): launch aimed for day 7, first meetings aimed for between days 10 and 15 from signature. Always quoted as the aim, never as a date the meetings arrive by.
 
 ## The funnel arithmetic never changes
 

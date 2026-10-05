@@ -72,9 +72,10 @@ class Call:
 # here: schema (the shape is wrong), render (the tightening rounds), the
 # arithmetic and the fee band (they follow from figures the client gave). The
 # verdict is here: it is the arithmetic page's words against its own table,
-# and so is rate, the "You sign" row the drafter filled with the target.
+# and so is rate, the "You sign" row the drafter filled with the target, and
+# the timeline, the days to the first meeting told two ways.
 REPAIRABLE = {"guarantee", "brand", "language", "echoes", "currency", "dates", "evidence", "prose", "offer",
-              "proof", "verdict", "rate"}
+              "proof", "verdict", "rate", "timeline"}
 
 
 @dataclass

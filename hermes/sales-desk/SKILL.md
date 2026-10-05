@@ -229,6 +229,15 @@ these figures exactly, with the words in the document's language.
   as anywhere else, and `validate.py` fails them. Saying what we do ("every
   enquiry called in minutes", "we never book without a budget check") is not
   an outcome and is fine.
+- **The timeline comes from PATTERNS.md, worded as the aim:** launch on day 7,
+  first meetings aimed for between days 10 and 15 from signature. A day said
+  on the call does not move it. A date for a result is a promise in other
+  words: never "land within ten days", "you will have meetings by day 10" or
+  "تصل أول الاجتماعات خلال عشرة أيام". `validate.py` fails one unless the same
+  sentence calls it the aim or the target. The days to the first meeting are
+  one figure: the target tile in `solution_targets` and the steps to start in
+  `start_steps` (the step's window and its words) give the same last day, and
+  `validate.py` fails a draft where any two places differ.
 - **No payment ever waits on a result.** Whatever the closer chose, no
   instalment falls due on a first contract, project, deal, client or sale. A
   call recorded before 3 October 2026 may still quote that split; it is
@@ -476,6 +485,9 @@ Beyond the schema, the evidence and the page count, both gates check:
   the first payment, the advertising on its own line, and the guarantee only
   when it was chosen. A figure on the price page that is not in the chosen
   offer is flagged.
+- **the timeline**: the days to the first meeting are the same wherever the
+  document gives them, and no result is given a date as though it were
+  certain.
 - **echoes**, because the same sentence printed twice on one page reads as a
   mistake, and is one.
 - **one currency**, so a document cannot quote in two, and no words saying none

@@ -1306,7 +1306,7 @@ def outcome_strings(data: dict[str, Any]) -> list[tuple[str, str]]:
         if isinstance(row, dict):
             out += [(f"investment.rows[{i}].{f}", row[f]) for f in ("item", "detail") if isinstance(row.get(f), str)]
     for block, fields in (("solution", ("fix",)), ("program", ("title", "note")), ("solution_targets", ("v", "k")),
-                          ("start_steps", ("title", "body"))):
+                          ("start_steps", ("when", "title", "body"))):
         for i, row in enumerate(data.get(block) or []):
             if isinstance(row, dict):
                 out += [(f"{block}[{i}].{f}", row[f]) for f in fields if isinstance(row.get(f), str)]
@@ -1326,6 +1326,187 @@ def absolute_outcomes(data: dict[str, Any]) -> list[tuple[str, str]]:
                 continue
             found.append((path, m.group(0).strip()))
             break
+    return found
+
+
+# ------------------------------------------------------- a date for a result ---
+# A result given a date as though it were certain: "first meetings land within
+# ten days" (180273419's page 7, proof run of 5 October 2026), "you will have
+# meetings by day 10", "تصل أول الاجتماعات خلال عشرة أيام". The program aims
+# for its timeline (PATTERNS.md: launch on day 7, first meetings between days
+# 10 and 15); it cannot promise a day, so the same sentence calls it the aim
+# or the target, or it is a promise in other words.
+_DAY_ORDINALS = {"seventh": 7, "eighth": 8, "ninth": 9, "tenth": 10, "eleventh": 11, "twelfth": 12,
+                 "thirteenth": 13, "fourteenth": 14, "fifteenth": 15, "twentieth": 20, "thirtieth": 30,
+                 "الحادي عشر": 11, "الثاني عشر": 12, "الثالث عشر": 13, "الرابع عشر": 14, "الخامس عشر": 15,
+                 "السابع": 7, "الثامن": 8, "التاسع": 9, "العاشر": 10, "العشرين": 20, "الثلاثين": 30}
+_EN_ORDINAL_DAY = re.compile(r"\b(?:the\s+)?(" + "|".join(k for k in _DAY_ORDINALS if k.isascii()) + r")\s+day\b",
+                             re.I)
+_AR_ORDINAL_DAY = re.compile(r"(?<![ء-ي])(ال)?يوم\s+("
+                             + "|".join(sorted((k for k in _DAY_ORDINALS if not k.isascii()), key=len, reverse=True))
+                             + r")(?![ء-ي])")
+_SPAN = r"\d+(?:\.\d+)?(?:\s*(?:to|-|–|and|or|إلى|الى|حتى|و|أو|او)\s*\d+(?:\.\d+)?)?"
+_EN_UNIT = r"(?:working\s+|business\s+|calendar\s+)?(?:days?|weeks?|months?|fortnight)"
+_AR_UNIT = (r"(?:يوم(?:ا|ًا|اً)?|أيام|ايام|أسبوع(?:ا|ين)?|اسبوع(?:ا|ين)?|أسابيع|اسابيع|شهر(?:ا|ين)?|أشهر|اشهر)"
+            r"(?![ء-ي])")
+TIMING = re.compile(
+    rf"\b(?:within|in|inside|after|by|before|over|under|in\s+under|in\s+less\s+than|less\s+than)\s+(?:the\s+)?"
+    rf"(?:first\s+|next\s+|opening\s+)?(?:{_SPAN}|an?|one|a\s+couple\s+of)\s+{_EN_UNIT}\b"
+    r"|\b(?:within|in|inside|over|during|by\s+the\s+end\s+of)\s+the\s+(?:first|opening)\s+(?:days?|week|fortnight|month)\b"
+    rf"|\b(?:by|from|on|before|around|between|within|in|during)\s+(?:the\s+end\s+of\s+)?(?:days?|weeks?)\s+{_SPAN}"
+    rf"|\b{_SPAN}\s+{_EN_UNIT}\s+(?:after|from|of|into|since|following)\b"
+    # "بحلول اليوم 10" before "بحلول اليوم", so the day is read with it.
+    rf"|(?<![ء-ي])(?:بحلول|من|قبل|في|بين|حتى)\s+(?:ال)?يوم\s+{_SPAN}"
+    rf"|(?<![ء-ي])(?:خلال|غضون|بعد|قبل|بحلول|في\s+أول|في\s+اول|في\s+أقل\s+من)\s+(?:ال)?(?:{_SPAN}\s*)?{_AR_UNIT}"
+    rf"|(?<![ء-ي\d]){_SPAN}\s*{_AR_UNIT}\s+(?:من|بعد)(?![ء-ي])"
+    # The days before the first meeting: "15 days to your first meeting".
+    rf"|\b(?:{_SPAN}|an?|one)\s+{_EN_UNIT}(?=\s+(?:from\s+\S+\s+)?(?:to|until|before)\s+(?:your|the)\s+first\b)"
+    rf"|(?<![ء-ي\d]){_SPAN}\s*{_AR_UNIT}(?=\s+(?:من\s+\S+\s+)?(?:إلى|الى|حتى|قبل)\s+(?:أول|اول)\s)",
+    re.I)
+# What lies between a date and the first meeting it counts to.
+_TO_THE_FIRST = re.compile(r"\s*(?:from\s+\S+\s+)?(?:to|until|before)\s+(?:your|the)\s+"
+                           r"|\s*(?:من\s+\S+\s+)?(?:إلى|الى|حتى|قبل)\s+", re.I)
+# A result, stated as arriving: the noun and its verb, the client told he will
+# have them, us saying we book them, or the first of them with a date beside.
+_T_NOUN = (r"(?:meetings?|appointments?|bookings?|leads?|enquir(?:y|ies)|inquir(?:y|ies)|visits?|results?|"
+           r"projects?|contracts?|deals?|clients?|buyers?|prospects?|opportunit(?:y|ies))")
+_T_VERB = (r"(?:land(?:s|ing)?|arriv(?:e|es|ing)|com(?:e|es|ing)\s+(?:in|through)|flow(?:s|ing)?|"
+           r"reach(?:es|ing)?\s+(?:you|your)|show(?:s|ing)?\s+up|turn(?:s|ing)?\s+up|hit(?:s|ting)?\s+your|"
+           r"(?:are|is|get|gets|will\s+be|being)\s+(?:booked|signed|closed|won|delivered)|booked|signed|"
+           r"(?:in|on)\s+your\s+(?:calendar|diary|inbox|crm|showroom)|start(?:s|ing)?|begin(?:s|ning)?)")
+_AR_T_NOUN = r"(?:ال)?(?:اجتماعات|اجتماع|مواعيد|موعد|زيارات|زيارة|عملاء|عميل|استفسارات|استفسار|طلبات|ليدز|نتائج|مشاريع|مشروع|صفقات|عقود)"
+_AR_T_VERB = (r"(?:[سب]?(?:تصل|يصل|توصل|يوصل|تبدأ|يبدأ|تبدا|يبدا|تجي|يجي|تأتي|يأتي|تدخل|يدخل)(?:ك|كم)?|"
+              r"تنحجز|ينحجز|تحجز|تُحجز)")
+TIMED_RESULT = re.compile(
+    rf"\b{_T_NOUN}\b(?:\s+[^\s.;:!?]+){{0,4}}?\s+(?:will\s+|then\s+)?{_T_VERB}\b"
+    rf"|\byou(?:['’]ll|\s+will)?\s+(?:start\s+(?:to\s+)?|begin\s+(?:to\s+)?)?"
+    rf"(?:have|see|get|receive|meet|be\s+meeting|getting|seeing|receiving|meeting)\b(?:\s+[^\s.;:!?]+){{0,4}}?\s+{_T_NOUN}\b"
+    rf"|\bwe(?:['’]ll|\s+will)?\s+(?:book|deliver|bring|send|get\s+you|land|put)\b(?:\s+[^\s.;:!?]+){{0,4}}?\s+{_T_NOUN}\b"
+    rf"|\bfirst\s+(?:[a-z-]+\s+)?{_T_NOUN}\b(?=\s*[:–-]?\s*(?:{TIMING.pattern}))"
+    rf"|\b(?:{_SPAN}|an?|one)\s+{_EN_UNIT}\s+(?:from\s+\S+\s+)?(?:to|until|before)\s+your\s+first\s+"
+    rf"(?:[a-z-]+\s+)?{_T_NOUN}\b(?!\s+with\s+(?:us|our|the\s+team|mahara)\b)"
+    rf"|(?<![ء-ي\d]){_SPAN}\s*{_AR_UNIT}\s+(?:من\s+\S+\s+)?(?:إلى|الى|حتى|قبل)\s+(?:أول|اول)\s+{_AR_T_NOUN}(?![ء-ي])"
+    rf"|(?<![ء-ي]){_AR_T_NOUN}(?![ء-ي])(?:\s+\S+){{0,3}}?\s+(?:راح\s+|رح\s+)?{_AR_T_VERB}(?![ء-ي])"
+    rf"|(?<![ء-ي])[وف]?(?:راح\s+|رح\s+)?{_AR_T_VERB}(?![ء-ي])(?:\s+\S+){{0,3}}?\s+{_AR_T_NOUN}(?![ء-ي])"
+    rf"|(?<![ء-ي])(?:[سب]?(?:يكون|تكون)|راح\s+(?:يكون|تكون))\s+(?:لديكم|لديك|عندكم|عندك|لكم|لك)\s+(?:\S+\s+){{0,2}}?"
+    rf"{_AR_T_NOUN}(?![ء-ي])"
+    rf"|(?<![ء-ي])(?:[سب]?(?:تحصل|تحصلون|تشوف|تشوفون|ترى|ترون)|راح\s+(?:تحصل|تشوف))\s+(?:على\s+)?(?:\S+\s+){{0,2}}?"
+    rf"{_AR_T_NOUN}(?![ء-ي])"
+    rf"|{_AR_T_NOUN}\s+(?:\S+\s+)?(?:في|على)\s+(?:تقويمكم|تقويمك|جدولكم|جدولك|التقويم)(?![ء-ي])",
+    re.I)
+# Worded as the aim or the target: honest. "Aimed for between days 10 and 15".
+_AIM = re.compile(rf"(?:{TARGET_WORD.pattern})|\baim(?:s|ed|ing)?\b|\bgoals?\b|نسعى|نطمح", re.I)
+# Not stated as certain: "may land", "clients typically see"; nor said in the
+# past, which is a record ("had his first meetings within nine days").
+_HEDGED = re.compile(r"\b(?:may|might|could|should|can|usually|typically|often|likely|had|got|saw|was|were|did)\b"
+                     r"|(?<![ء-ي])(?:قد|ممكن|يمكن|عادة|غالبا)(?![ء-ي])", re.I)
+_SUBJECT_OF = re.compile(r"\s+(?:are|is|get|gets|will\s+be|go|goes)\s+(?!(?:booked|signed|closed|won|in|on)\b)\w",
+                         re.I)
+# Nor a negation of it, inside the words themselves.
+_NEGATION = re.compile(r"\b(?:not|never|no)\b|n['’]t|(?<![ء-ي])(?:لا|لن|ما|لم)(?![ء-ي])", re.I)
+_CONDITION = re.compile(r"\b(?:if|unless|in\s+case|whether)\b|(?<![ء-ي])(?:إذا|اذا|لو)(?![ء-ي])", re.I)
+_SEGMENT_END = re.compile(r"[.!?؟;؛]")
+# Between a result and its date, a new clause means the date is another's:
+# "launch on day 7, and first meetings land" dates the launch.
+_NEW_CLAUSE = re.compile(r"[;:]|\b(?:and|then|while|but|once)\b|(?<![ء-ي])(?:ثم|لكن|بعدها)(?![ء-ي])", re.I)
+
+
+def timing_text(raw: str) -> str:
+    """The copy as the timing rules read it: no markup, digits for number
+    words, and "the tenth day" or "اليوم العاشر" as day 10."""
+    text = spoken_figures(_TAGS.sub("", _plain(str(raw or ""))))
+    text = _EN_ORDINAL_DAY.sub(lambda m: f"day {_DAY_ORDINALS[m.group(1).lower()]}", text)
+    return _AR_ORDINAL_DAY.sub(lambda m: f"{m.group(1) or ''}يوم {_DAY_ORDINALS[m.group(2)]}", text)
+
+
+def _segments(text: str) -> Iterable[tuple[int, str]]:
+    start = 0
+    for m in _SEGMENT_END.finditer(text + "."):
+        # A decimal point is no sentence end.
+        if m.group(0) == "." and m.start() < len(text) and m.start() > 0 and text[m.start() - 1].isdigit() \
+                and m.start() + 1 < len(text) and text[m.start() + 1].isdigit():
+            continue
+        yield start, text[start:m.start()]
+        start = m.end()
+
+
+def dated_results(text: str, said: "re.Pattern[str]" = TIMED_RESULT) -> list[tuple[str, "re.Match[str]"]]:
+    """(the words, the timing) for each result (or each match of `said`)
+    given a date in a piece of copy that has already been through
+    timing_text, whether or not it is worded as the aim."""
+    out = []
+    for _at, seg in _segments(text):
+        timings = list(TIMING.finditer(seg))
+        if not timings:
+            continue
+        for m in said.finditer(seg):
+            for t in timings:
+                if t.start() >= m.start() and t.end() <= m.end():
+                    near = True
+                elif t.end() <= m.start() and _TO_THE_FIRST.fullmatch(seg[t.end():m.start()]):
+                    near = True
+                elif t.start() >= m.end():
+                    gap = seg[m.end():t.start()]
+                    near = (len(gap) <= 60 and not _NEW_CLAUSE.search(gap)) or gap.strip() in (":", "-", "–")
+                else:
+                    # The date comes first: it opens its clause ("Within ten
+                    # days, the first meetings land") and the result follows.
+                    gap = seg[t.end():m.start()]
+                    opening = re.split(r"[,،:]", seg[:t.start()])[-1]
+                    near = (t.end() <= m.start() and len(gap) <= 40
+                            and not re.sub(r"(?i)\b(?:and|then|so)\b|(?<![ء-ي])(?:و|ثم)(?![ء-ي])", "", opening).strip())
+                if near:
+                    out.append((seg[min(m.start(), t.start()):max(m.end(), t.end())].strip(), t))
+                    break
+    return out
+
+
+def timed_outcomes_in(raw: str) -> list[str]:
+    """The words of each result a piece of copy dates as though certain: not
+    worded as the aim or the target, not hedged, not a condition."""
+    text = timing_text(raw)
+    found = []
+    for _at, seg in _segments(text):
+        if _AIM.search(seg) or _NOT_PROMISED.search(seg):
+            continue
+        for words, t in dated_results(seg):
+            claim_at = max(0, seg.find(words))
+            own = words.replace(t.group(0), " ")
+            # A hedge or the past belongs to the result's own clause; a
+            # condition anywhere ahead of it makes the whole of it one.
+            clause = re.split(r"[,،:]|\b(?:and|but|then)\b", seg[:claim_at])[-1][-40:]
+            if (_HEDGED.search(clause + own) or _NEGATION.search(own)
+                    or _CONDITION.search(seg[:claim_at] + own)):
+                continue
+            # The dated words as the subject of what we do with them: "leads
+            # arriving in the first month are called within minutes".
+            if _SUBJECT_OF.match(seg[claim_at + len(words):]):
+                continue
+            found.append(words)
+            break
+    return found
+
+
+def timed_strings(data: dict[str, Any]) -> list[tuple[str, str]]:
+    """Where a date for a result can be stated as ours: the outcome pages, the
+    cover's subhead and the terms. Not the target tiles, which print under
+    the page's "Target" label, and not the diagnosis, which is the client's."""
+    out = [(p, t) for p, t in outcome_strings(data) if not p.startswith("solution_targets")]
+    if isinstance(data.get("subhead"), str):
+        out.append(("subhead", data["subhead"]))
+    for i, t in enumerate(data.get("terms") or []):
+        if isinstance(t, str):
+            out.append((f"terms[{i}]", t))
+    return out
+
+
+def timed_outcomes(data: dict[str, Any]) -> list[tuple[str, str]]:
+    """(field, the words) for each result given a date as though certain."""
+    found = []
+    for path, raw in timed_strings(data):
+        words = timed_outcomes_in(raw)
+        if words:
+            found.append((path, words[0]))
     return found
 
 
@@ -1351,7 +1532,16 @@ def check_guarantee(data: dict[str, Any], resolved: dict[str, Any], rep: Report)
                 + ", ".join(f"{p} (\"{w}\")" for p, w in certain[:4])
                 + ". The program filters and lowers; it cannot promise none or all. Write \"fewer\" or "
                 "\"filtered out\", never \"never\", \"every lead is\", \"no more\" or \"always\"")
-    results = [p for p, t in content_strings(data) if promises_results(_plain(t))]
+    # A date for a result is the same promise: a fail, for the same reasons.
+    dated = timed_outcomes(data)
+    if dated:
+        rep.add(FAIL, "guarantee", "the document states a timing for a result as certain in "
+                + ", ".join(f"{p} (\"{w}\")" for p, w in dated[:4])
+                + ". The program aims for its timeline and cannot promise a day: word it as the aim, as PATTERNS.md "
+                "gives it (\"launch on day 7, first meetings aimed for between days 10 and 15\"), or call it the "
+                "target")
+    certain = certain + dated
+    results =[p for p, t in content_strings(data) if promises_results(_plain(t))]
     if results:
         rep.add(FAIL, "guarantee", "the document promises results in " + ", ".join(results[:4])
                 + ". We never guarantee results, free work or a number of meetings; take it out. "
@@ -1453,6 +1643,109 @@ def check_echoes(data: dict[str, Any], rep: Report) -> None:
         rep.add(WARN, "echoes", "; ".join(dupes))
     else:
         rep.add(PASS, "echoes", "nothing printed twice")
+
+
+# --------------------------------------------------------------- timeline ---
+# The days to the first meeting, told once. 180273419's proof run printed 15
+# days from signature on page 5's target tile and "Days 7 to 10", with the
+# first meetings "within ten days", on page 7's third step (5 October 2026);
+# PATTERNS.md gives 10 to 15. Days counted from another clock (from launch)
+# are another figure and are only held against their own kind.
+_FIRST_MEETING = re.compile(
+    r"\bfirst\s+(?:[a-z-]+\s+){0,2}?(?:meetings?|appointments?|visits?|bookings?)\b"
+    r"|\b(?:meetings?|appointments?|visits?|bookings?)\s+(?:will\s+)?(?:start|begin)\b"
+    r"|(?<![ء-ي])(?:أول|اول)\s+(?:ال)?(?:اجتماعات|اجتماع|مواعيد|موعد|زيارات|زيارة)(?![ء-ي])", re.I)
+_DAYS_WORD = re.compile(r"\bdays?\b|\bweeks?\b|(?<![ء-ي])(?:ال)?(?:يوم|أيام|ايام|أسبوع|اسبوع|أسابيع|اسابيع)", re.I)
+_FROM_LAUNCH = re.compile(r"\b(?:launch(?:es|ed|ing)?|go(?:es|ing)?[- ]live|live)\b|(?<![ء-ي])(?:ال)?(?:إطلاق|اطلاق)", re.I)
+_WEEKS = re.compile(r"\bweeks?\b|\bfortnight\b|أسبوع|اسبوع|أسابيع|اسابيع", re.I)
+_MONTHS = re.compile(r"\bmonths?\b|شهر|أشهر|اشهر", re.I)
+
+
+def last_day(words: str) -> Optional[tuple[int, bool]]:
+    """The last day a timing names (the end of a range), and whether it was
+    counted in weeks. None for months, or for no figure at all."""
+    if _MONTHS.search(words):
+        return None
+    nums = [float(x) for x in re.findall(r"\d+(?:\.\d+)?", words)]
+    weekly = bool(_WEEKS.search(words))
+    if re.search(r"\bfortnight\b|أسبوعين|اسبوعين", words, re.I):
+        nums = nums or [2]
+    elif not nums and weekly:
+        nums = [1]
+    if not nums:
+        return None
+    return int(round(max(nums) * (7 if weekly else 1))), weekly
+
+
+def first_meeting_days(data: dict[str, Any]) -> list[tuple[str, int, bool, str]]:
+    """(field, last day, counted in weeks, clock) for each place the document
+    says how many days to the first meeting: a target tile counting them, a
+    step to start that says the first meetings land (by its own words, or by
+    its window when they give no day), and any other line of ours that dates
+    them. The clock is "launch" when counted from the launch, else "start"."""
+    out: list[tuple[str, int, bool, str]] = []
+
+    def clock(words: str) -> str:
+        return "launch" if _FROM_LAUNCH.search(words) else "start"
+
+    def stated(path: str, raw: str) -> bool:
+        text = timing_text(raw)
+        for _words, t in dated_results(text, _FIRST_MEETING):
+            day = last_day(t.group(0))
+            if day:
+                out.append((path, day[0], day[1], clock(text[t.start():t.end() + 30])))
+                return True
+        return False
+
+    for i, tile in enumerate(data.get("solution_targets") or []):
+        if not isinstance(tile, dict):
+            continue
+        k = timing_text(tile.get("k") or "")
+        if _FIRST_MEETING.search(k) and _DAYS_WORD.search(k) or _FIRST_MEETING.search(timing_text(tile.get("v") or "")):
+            day = last_day(f"{timing_text(tile.get('v') or '')} {'weeks' if _WEEKS.search(k) else ''}")
+            if day:
+                out.append((f"solution_targets[{i}]", day[0], day[1], clock(k)))
+    for i, step in enumerate(data.get("start_steps") or []):
+        if not isinstance(step, dict):
+            continue
+        said = ". ".join(str(step.get(f) or "") for f in ("title", "body"))
+        if not _FIRST_MEETING.search(timing_text(said)) or stated(f"start_steps[{i}]", said):
+            continue
+        when = timing_text(step.get("when") or "")
+        day = last_day(when) if _DAYS_WORD.search(when) else None
+        if day:
+            out.append((f"start_steps[{i}]", day[0], day[1], clock(when)))
+    for path, raw in timed_strings(data):
+        if not path.startswith("start_steps"):
+            stated(path, raw)
+    return out
+
+
+def check_timeline(data: dict[str, Any], rep: Report) -> None:
+    # A fail, not a warning, unlike two counts of the client's that disagree:
+    # this is one quantity of ours, the client reads both pages, and it is a
+    # date he will hold us to. Only a fail reaches the repair round, which
+    # aligns the pages before anyone reads them; the proof run that printed
+    # 15 and 10 passed every other row.
+    told = first_meeting_days(data)
+    clashes, agreed = [], []
+    for kind in ("start", "launch"):
+        group = [(p, d, w) for p, d, w, c in told if c == kind]
+        if len(group) < 2:
+            continue
+        same = all(a[1] == b[1] or ((a[2] or b[2]) and abs(a[1] - b[1]) <= 1) for a in group for b in group)
+        if same:
+            agreed.append(group[0][1])
+        else:
+            clashes.append(", ".join(f"{p} says {d}" for p, d, _w in group[:4]))
+    if clashes:
+        rep.add(FAIL, "timeline", "the days to the first meeting are told more than one way: " + "; ".join(clashes)
+                + ". It is one figure of ours: say it the same way on every page, from PATTERNS.md's timeline "
+                "(launch on day 7, first meetings aimed for between days 10 and 15 from signature), and change "
+                "the field that differs")
+    elif agreed:
+        rep.add(PASS, "timeline", "the days to the first meeting are the same wherever they are told ("
+                + ", ".join(str(d) for d in agreed) + ")")
 
 
 # --------------------------------------------------------- the tree's note ---
@@ -2602,6 +2895,7 @@ def validate(data: dict[str, Any], transcript: Optional[str] = None, *, resolved
     check_identity(data, rep)
     check_dates(data, rep, today)
     check_echoes(data, rep)
+    check_timeline(data, rep)
     check_tree_note(data, rep)
     check_currency(data, rep)
     rendered = check_render(dom, sheets, rep, engine)

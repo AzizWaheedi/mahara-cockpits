@@ -549,17 +549,28 @@ def repair_user(deal: dict[str, Any], problems: list[str]) -> str:
     # loses its certainty (180273419, 5 October 2026).
     certain = ("An outcome stated as certain is reworded, not removed: \"fewer small jobs arrive\", \"filtered out "
                "before they reach you\", keeping the rest of the line. "
-               if any(p.startswith("guarantee") and "as certain" in p for p in problems) else "")
+               if any(p.startswith("guarantee") and "as certain" in p and "timing" not in p for p in problems)
+               else "")
+    # A date for a result keeps its line and becomes the aim, in PATTERNS.md's
+    # figures (180273419's proof run, 5 October 2026: "land within ten days").
+    timed = ("A timing for a result stated as certain is reworded as the aim, not removed: \"launch on day 7, "
+             "first meetings aimed for between days 10 and 15\", with the same days as the target tile. "
+             if any(p.startswith("guarantee") and "timing" in p for p in problems) else "")
+    timeline = ("The days to the first meeting are one figure on every page: make each field that states them say "
+                "PATTERNS.md's timeline (first meetings aimed for between days 10 and 15 from signature), the "
+                "target tile in solution_targets and the steps to start alike. "
+                if any(p.startswith("timeline") for p in problems) else "")
     # The general rule removes a promise; said beside the rewording rule
     # unqualified, the two read as opposite orders for the same line.
-    remove = ("Remove a promised result or guarantee rather than rewording it; an outcome stated as certain is "
-              "the one exception, below. " if certain else "Remove a promise rather than rewording it. ")
+    remove = ("Remove a promised result or guarantee rather than rewording it; an outcome or a timing stated as "
+              "certain is the one exception, below. " if certain or timed
+              else "Remove a promise rather than rewording it. ")
     return (
         "The checker found these problems in this draft:\n\n"
         + listed
         + "\n\nReturn the same JSON object with each problem fixed and nothing else changed. "
         + remove + "Where a figure was never said on the "
-        "call, write FILL in its place. " + proof + verdict + rate + certain
+        "call, write FILL in its place. " + proof + verdict + rate + certain + timed + timeline
         + "Keep every other field exactly as it is, and add nothing new.\n\nReturn only the JSON object.\n\n"
         + json.dumps(deal, ensure_ascii=False, indent=1)
     )
