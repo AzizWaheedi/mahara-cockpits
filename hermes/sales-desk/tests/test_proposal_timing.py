@@ -217,6 +217,150 @@ class TimelineConsistencyTests(unittest.TestCase):
                          prompt.repair_user(general_deal(), ["echoes: headline repeats subhead"]))
 
 
+# ------------------------------------------------ an adversarial pass ---
+class OrdinaryTimingWordingTests(unittest.TestCase):
+    """Timings of ours that are no result, found by the adversarial pass of
+    5 October 2026: the date of another clause, our own meetings with the
+    client's team, our own paperwork, and the result as the subject or the
+    object of what we do."""
+
+    def test_they_pass_the_outcome_check(self):
+        for line in ("Campaigns go live on day 7.",
+                     "We aim for first meetings between days 10 and 15.",
+                     "Within ten days of launch we review the numbers.",
+                     "Within ten days of launch we review the numbers and first meetings land in your calendar.",
+                     "Within 7 days of signing we launch, and first meetings land in your calendar.",
+                     "Results are reviewed weekly, starting on day 14.",
+                     "Reporting on results starts in week 1.",
+                     "We review the first leads within ten days of launch.",
+                     "You will receive the contract within one working day.",
+                     "The contract is signed within a day.",
+                     "Contract signed by the end of the week.",
+                     "The project starts within two days of the deposit.",
+                     "Weekly review meetings start in week 3.",
+                     "The first onboarding meeting is within two days.",
+                     "Our first meeting with your team is on day 2.",
+                     "No meetings land before launch on day 7.",
+                     "First meetings land in your calendar, each confirmed within 2 days.",
+                     "Your onboarding appointment is booked within two days.",
+                     "Expect weekly reports on leads within 7 days.",
+                     "Results from day 30 onwards are reviewed with you.",
+                     "Our target: first meetings by day 15."):
+            self.assertEqual(timed(with_line(line)), [], line)
+        for line in ("أول اجتماع مع فريقكم خلال يومين.",
+                     "اجتماع الانبوردينج خلال يومين من التوقيع.",
+                     "خلال عشرة أيام من الإطلاق نراجع الأرقام معكم.",
+                     "خلال 7 أيام نطلق الحملات، وتصل أول الاجتماعات إلى تقويمكم.",
+                     "نحجز لكم موعدا للانبوردينج خلال يومين.",
+                     "والاستفسارات من اليوم 7 نتصل بها خلال دقائق.",
+                     "الانبوردينج خلال يوم إلى يومين."):
+            self.assertEqual(timed(with_line(line, lang="ar")), [], line)
+        # "No more than" is still the promise.
+        self.assertTrue(timed(with_line("No more than 15 days to your first meeting.", "solution_close")))
+
+
+class PromisesThatSlippedTests(unittest.TestCase):
+    """Dates for a result the first version let through."""
+
+    def test_the_english_forms_fail(self):
+        for line in ("First meetings guaranteed within 10 days.",
+                     "Expect meetings within 10 days of launch.",
+                     "Expect leads within a week.",
+                     "You can expect meetings within 10 days.",
+                     "Your calendar fills within 10 days.",
+                     "15 meetings within 30 days.",
+                     "Fifteen booked meetings in your first month.",
+                     "Launch on day 7, meetings on day 10.",
+                     "Meetings from day 10.",
+                     "Meetings start in the second week.",
+                     # 174685535's page 7 dates its visits by the calendar.
+                     "First qualified visits land in the showrooms ahead of National Day.",
+                     "First meetings land before the end of the month.",
+                     # Targeting an audience is no aim.
+                     "Targeted campaigns bring your first meetings within 10 days.",
+                     "We target villa owners and first meetings land within 10 days."):
+            self.assertTrue(timed(with_line(line)), line)
+
+    def test_the_arabic_forms_fail(self):
+        for line in ("أول الاجتماعات خلال عشرة أيام.",
+                     "أول الاجتماعات خلال 10 أيام من الإطلاق.",
+                     "أول اجتماع بحلول اليوم 15.",
+                     "أول الاجتماعات خلال يومين.",
+                     "اجتماعات مضمونة خلال 10 أيام.",
+                     "نحجز لكم أول الاجتماعات خلال 10 أيام.",
+                     "بنحجز لكم مواعيد خلال أسبوع.",
+                     "سنحجز لكم 15 اجتماعا خلال 30 يوما.",
+                     "توقعوا أول الاجتماعات خلال أسبوعين.",
+                     "الاجتماعات من اليوم 10.",
+                     "الإطلاق في اليوم 7، والاجتماعات من اليوم 10.",
+                     "تبدأ الاجتماعات في الأسبوع الثاني.",
+                     "أول الزيارات تصل قبل اليوم الوطني.",
+                     "حملات مستهدفة، وتصل أول الاجتماعات خلال عشرة أيام."):
+            self.assertTrue(timed(with_line(line, lang="ar")), line)
+
+
+class TimelineOtherThingsTests(unittest.TestCase):
+    """The timeline check held two figures against each other that count
+    different things: our meeting with the client's team, a launch day, the
+    window's opening day, a remedy's trigger, another client's record."""
+
+    def test_our_own_meetings_are_not_the_first_meeting(self):
+        for body in ("Formal agreement, then our first meeting with your team within two days.",
+                     "The first onboarding meeting is within two days.",
+                     "Your first kick-off meeting is on day 2."):
+            deal = timeline_deal()
+            deal["start_steps"][1]["body"] = body
+            self.assertEqual(timeline(deal), [], body)
+        deal = timeline_deal()
+        deal["terms"].append("The first review meeting is held on day 30.")
+        deal["program"][3]["note"] = "Weekly meetings start in week 3"
+        self.assertEqual(timeline(deal), [])
+        self.assertEqual(timed(deal), [])
+        self.assertEqual(timeline(timeline_deal(tile={"v": "2", "k": "Days to the first onboarding meeting"})), [])
+        deal = timeline_deal(tile=DAYS_TILE_AR, when="من اليوم 7 إلى 15",
+                             body="بناء الحملات وتدريب الفريق. أول الاجتماعات تصل في تقويمكم.", lang="ar")
+        deal["start_steps"][1]["body"] = "أول اجتماع مع فريقكم خلال يومين."
+        self.assertEqual(timeline(deal), [])
+
+    def test_a_launch_step_the_meetings_follow_is_not_their_window(self):
+        for title, body in (("Launch", "Campaigns go live; first meetings follow."),
+                            ("Campaigns live", "The first meetings follow from there.")):
+            self.assertEqual(timeline(timeline_deal(when="Day 7", body=body)), [], body)
+        # Their own date is still read.
+        self.assertTrue(timeline(timeline_deal(when="Day 7",
+                                               body="Campaigns go live. First meetings follow within ten days.")))
+
+    def test_the_window_s_opening_day_is_no_last_day(self):
+        self.assertEqual(timeline(timeline_deal(body="Launch on day 7; first meetings aimed for from day 10.")), [])
+
+    def test_the_clock_is_read_in_the_timing_s_own_sentence(self):
+        deal = timeline_deal(when="", body="Campaigns, funnel and filtering built. First meetings aimed for within "
+                                           "8 days of the ads and the funnel going live.")
+        self.assertEqual(timeline(deal), [])
+
+    def test_a_condition_a_negation_and_a_record_are_not_read(self):
+        for key, line in (("terms", "If the first meetings have not landed by day 21, we rebuild the funnel with you."),
+                          ("terms", "No first meetings are booked before launch on day 7."),
+                          ("solution_close", "A contractor in the same trade had his first meetings within nine days.")):
+            deal = timeline_deal()
+            if key == "terms":
+                deal["terms"].append(line)
+            else:
+                deal[key] = line
+            self.assertEqual(timeline(deal), [], line)
+
+    def test_another_clause_s_date_is_not_read(self):
+        deal = timeline_deal(body="First meetings land in your calendar, each confirmed within 2 days.")
+        self.assertEqual(timeline(deal), [])
+
+    def test_a_week_by_number_is_the_whole_week(self):
+        """Week 3 is days 15 to 21, so it says what 15 days says; week 1 does not."""
+        self.assertEqual(timeline(timeline_deal(when="Weeks 2 to 3")), [])
+        self.assertEqual(timeline(timeline_deal(when="Week 2")), [])
+        self.assertTrue(timeline(timeline_deal(when="Week 1")))
+        self.assertTrue(timeline(timeline_deal(when="", body="First meetings aimed for in the first week.")))
+
+
 # ------------------------------------------------------- (c) the drafter ---
 class TimelineInstructionTests(unittest.TestCase):
 

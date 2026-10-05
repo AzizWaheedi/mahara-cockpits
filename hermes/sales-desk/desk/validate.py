@@ -1345,18 +1345,58 @@ _EN_ORDINAL_DAY = re.compile(r"\b(?:the\s+)?(" + "|".join(k for k in _DAY_ORDINA
 _AR_ORDINAL_DAY = re.compile(r"(?<![ء-ي])(ال)?يوم\s+("
                              + "|".join(sorted((k for k in _DAY_ORDINALS if not k.isascii()), key=len, reverse=True))
                              + r")(?![ء-ي])")
+# "The second week", "الأسبوع الثاني": week 2, which the rules below read like
+# "week 2" ("the first week" keeps its own form, which they already read).
+_WEEK_ORDINALS = {"second": 2, "third": 3, "fourth": 4, "fifth": 5, "sixth": 6,
+                  "الأول": 1, "الاول": 1, "الثاني": 2, "الثالث": 3, "الرابع": 4, "الخامس": 5, "السادس": 6}
+_EN_ORDINAL_WEEK = re.compile(r"\b(?:the\s+)?(second|third|fourth|fifth|sixth)\s+week\b", re.I)
+_AR_ORDINAL_WEEK = re.compile(r"(?<![ء-ي])(ال)?(أسبوع|اسبوع)\s+(الأول|الاول|الثاني|الثالث|الرابع|الخامس|السادس)(?![ء-ي])")
+# Our own meetings with the client's team, and our own paperwork, are no
+# result: "the first onboarding meeting is within two days", "our first
+# meeting with your team", "weekly review meetings start in week 3", "you
+# receive the contract within one working day", "the project starts on day 1".
+# Read as sessions, an agreement and the engagement.
+_OUR_MEETING = re.compile(
+    r"\b(?P<q>(?:weekly|monthly|daily|fortnightly|bi-?weekly|review|onboarding|on-boarding|kick-?off|training|"
+    r"reporting|report|strategy|planning|check-?in|progress|alignment|internal|team|setup|set-up)\s+)"
+    r"(?:meeting|appointment)(?P<s>s?)\b"
+    r"|\b(?P<our>our\s+(?:first\s+)?)meeting\b"
+    r"|\bmeeting(?P<s2>s?)(?P<with>\s+with\s+(?:us\b|our\b|the\s+(?:mahara\s+)?team\b|mahara\b))"
+    r"|\bmeeting(?P<with2>\s+with\s+your\s+team\b)",
+    re.I)
+_AR_OUR_MEETING = re.compile(
+    r"(?<![ء-ي])(?P<n>(?:ال)?(?:اجتماع(?:ات)?|موعدا?))(?=\s+(?:ال|لل|ل)?(?:انبوردينج|أونبوردينج|اونبوردينج|تعريفي|تعريفية|تعريف|"
+    r"انطلاق|متابعة|مراجعة|أسبوعي|أسبوعية|اسبوعي|اسبوعية|شهري|شهرية|تدريب|تأسيس|إعداد|اعداد)(?![ء-ي]))"
+    r"|(?<![ء-ي])(?P<n2>(?:ال)?اجتماع(?:ات)?)(?=\s+(?:معنا|مع\s+فريقنا|مع\s+مهارة|مع\s+فريق\s+مهارة)(?![ء-ي]))"
+    r"|(?<![ء-ي])(?P<n3>(?:ال)?اجتماع)(?=\s+مع\s+(?:فريقكم|فريقك)(?![ء-ي]))"
+    r"|(?<![ء-ي])(?P<n4>اجتماعنا)(?![ء-ي])")
+_OUR_PAPER = re.compile(
+    r"\b(?P<a>(?:the|our|this|your)\s+(?:(?:formal|written|signed|service|mahara|program(?:me)?|engagement)\s+)?)"
+    r"contract\b"
+    r"|\A(?P<lead>\s*)contract\b"
+    r"|\b(?P<b>(?:the|our|this)\s+)project(?=\s+(?:starts?|begins?|kicks?\s+off)\b)",
+    re.I)
 _SPAN = r"\d+(?:\.\d+)?(?:\s*(?:to|-|–|and|or|إلى|الى|حتى|و|أو|او)\s*\d+(?:\.\d+)?)?"
 _EN_UNIT = r"(?:working\s+|business\s+|calendar\s+)?(?:days?|weeks?|months?|fortnight)"
-_AR_UNIT = (r"(?:يوم(?:ا|ًا|اً)?|أيام|ايام|أسبوع(?:ا|ين)?|اسبوع(?:ا|ين)?|أسابيع|اسابيع|شهر(?:ا|ين)?|أشهر|اشهر)"
+_AR_UNIT = (r"(?:يوم(?:ا|ًا|اً|ين|ان)?|أيام|ايام|أسبوع(?:ا|ين)?|اسبوع(?:ا|ين)?|أسابيع|اسابيع|شهر(?:ا|ين)?|أشهر|اشهر)"
             r"(?![ء-ي])")
 TIMING = re.compile(
     rf"\b(?:within|in|inside|after|by|before|over|under|in\s+under|in\s+less\s+than|less\s+than)\s+(?:the\s+)?"
     rf"(?:first\s+|next\s+|opening\s+)?(?:{_SPAN}|an?|one|a\s+couple\s+of)\s+{_EN_UNIT}\b"
-    r"|\b(?:within|in|inside|over|during|by\s+the\s+end\s+of)\s+the\s+(?:first|opening)\s+(?:days?|week|fortnight|month)\b"
+    r"|\b(?:within|in|inside|over|during|by\s+the\s+end\s+of)\s+(?:the|your)\s+(?:first|opening)\s+"
+    r"(?:days?|week|fortnight|month)\b"
     rf"|\b(?:by|from|on|before|around|between|within|in|during)\s+(?:the\s+end\s+of\s+)?(?:days?|weeks?)\s+{_SPAN}"
     rf"|\b{_SPAN}\s+{_EN_UNIT}\s+(?:after|from|of|into|since|following)\b"
+    # A date on the calendar: "ahead of National Day" (174685535's page 7),
+    # "before the end of the month", "قبل اليوم الوطني".
+    r"|\b(?:by|before|ahead\s+of|in\s+time\s+for)\s+(?:(?:the\s+)?end\s+of\s+(?:the\s+|this\s+|next\s+)?"
+    r"(?:week|month|quarter|year)|(?:mid-?\s*)?(?:january|february|march|april|may|june|july|august|september|"
+    r"october|november|december)|ramadan|eid|national\s+day|the\s+(?:season|summer|winter|holidays?)|"
+    r"next\s+(?:week|month|quarter))\b"
+    r"|(?<![ء-ي])(?:قبل|بحلول)\s+(?:نهاية\s+(?:ال)?(?:شهر|أسبوع|اسبوع|سنة|ربع|موسم)|(?:ال)?يوم\s+الوطني|رمضان|"
+    r"(?:ال)?عيد|(?:ال)?موسم)(?![ء-ي])"
     # "بحلول اليوم 10" before "بحلول اليوم", so the day is read with it.
-    rf"|(?<![ء-ي])(?:بحلول|من|قبل|في|بين|حتى)\s+(?:ال)?يوم\s+{_SPAN}"
+    rf"|(?<![ء-ي])(?:بحلول|من|قبل|في|بين|حتى)\s+(?:ال)?(?:يوم|أسبوع|اسبوع)\s+{_SPAN}"
     rf"|(?<![ء-ي])(?:خلال|غضون|بعد|قبل|بحلول|في\s+أول|في\s+اول|في\s+أقل\s+من)\s+(?:ال)?(?:{_SPAN}\s*)?{_AR_UNIT}"
     rf"|(?<![ء-ي\d]){_SPAN}\s*{_AR_UNIT}\s+(?:من|بعد)(?![ء-ي])"
     # The days before the first meeting: "15 days to your first meeting".
@@ -1373,8 +1413,10 @@ _T_NOUN = (r"(?:meetings?|appointments?|bookings?|leads?|enquir(?:y|ies)|inquir(
 _T_VERB = (r"(?:land(?:s|ing)?|arriv(?:e|es|ing)|com(?:e|es|ing)\s+(?:in|through)|flow(?:s|ing)?|"
            r"reach(?:es|ing)?\s+(?:you|your)|show(?:s|ing)?\s+up|turn(?:s|ing)?\s+up|hit(?:s|ting)?\s+your|"
            r"(?:are|is|get|gets|will\s+be|being)\s+(?:booked|signed|closed|won|delivered)|booked|signed|"
-           r"(?:in|on)\s+your\s+(?:calendar|diary|inbox|crm|showroom)|start(?:s|ing)?|begin(?:s|ning)?)")
-_AR_T_NOUN = r"(?:ال)?(?:اجتماعات|اجتماع|مواعيد|موعد|زيارات|زيارة|عملاء|عميل|استفسارات|استفسار|طلبات|ليدز|نتائج|مشاريع|مشروع|صفقات|عقود)"
+           r"(?:in|on)\s+your\s+(?:calendar|diary|inbox|crm|showroom)|start(?:s|ing)?|begin(?:s|ning)?|"
+           r"(?:are\s+|is\s+)?guaranteed)")
+_AR_T_NOUN = (r"(?:ال)?(?:اجتماعات|اجتماعا|اجتماع|مواعيد|موعدا|موعد|زيارات|زيارة|عملاء|عميلا|عميل|استفسارات|"
+              r"استفسارا|استفسار|طلبات|ليدز|نتائج|مشاريع|مشروعا|مشروع|صفقات|عقود)")
 _AR_T_VERB = (r"(?:[سب]?(?:تصل|يصل|توصل|يوصل|تبدأ|يبدأ|تبدا|يبدا|تجي|يجي|تأتي|يأتي|تدخل|يدخل)(?:ك|كم)?|"
               r"تنحجز|ينحجز|تحجز|تُحجز)")
 TIMED_RESULT = re.compile(
@@ -1392,18 +1434,67 @@ TIMED_RESULT = re.compile(
     rf"{_AR_T_NOUN}(?![ء-ي])"
     rf"|(?<![ء-ي])(?:[سب]?(?:تحصل|تحصلون|تشوف|تشوفون|ترى|ترون)|راح\s+(?:تحصل|تشوف))\s+(?:على\s+)?(?:\S+\s+){{0,2}}?"
     rf"{_AR_T_NOUN}(?![ء-ي])"
-    rf"|{_AR_T_NOUN}\s+(?:\S+\s+)?(?:في|على)\s+(?:تقويمكم|تقويمك|جدولكم|جدولك|التقويم)(?![ء-ي])",
+    rf"|{_AR_T_NOUN}\s+(?:\S+\s+)?(?:في|على)\s+(?:تقويمكم|تقويمك|جدولكم|جدولك|التقويم)(?![ء-ي])"
+    # Told to expect them: "expect meetings within ten days of launch".
+    rf"|\bexpect\b(?:\s+(?:your|the|first|qualified|booked|new|sales|more|\d+(?:\s*(?:to|-|–)\s*\d+)?))*\s+{_T_NOUN}\b"
+    r"|\b(?:your\s+)?(?:calendar|diary|pipeline)\s+(?:will\s+)?(?:starts?\s+(?:to\s+)?)?"
+    r"(?:fill(?:s|ing)?|is\s+full|be\s+full)\b"
+    # The bare result at the head of its clause with a day of the program:
+    # "launch on day 7, meetings on day 10", "Meetings from day 10".
+    rf"|(?:^|[,;:–—]|\band\b|\bthen\b)\s*(?:(?:your|the)\s+)?(?:(?:qualified|booked|new|sales|first)\s+)?{_T_NOUN}\b"
+    r"(?=\s*[:–-]?\s*(?:from|by|on|before|in)\s+(?:the\s+end\s+of\s+)?(?:days?|weeks?)\s+\d)"
+    # A count of them with a date: "15 meetings within 30 days".
+    rf"|\b\d+(?:\s*(?:to|-|–)\s*\d+)?\s+(?:(?:qualified|booked|new|sales|signed|more)\s+)?{_T_NOUN}\b"
+    r"(?=\s*(?:within|inside|in\s+under|in\s+less\s+than|(?:by|from|before)\s+(?:the\s+end\s+of\s+)?(?:days?|weeks?)\s+\d"
+    r"|in\s+(?:the|your)\s+(?:first|opening))\b)"
+    # The Arabic of the same: the first of them with a date beside ("أول
+    # الاجتماعات خلال عشرة أيام"), us booking or bringing them ("نحجز لكم"),
+    # them guaranteed ("مضمونة"), the client told to expect them, and the bare
+    # result at the head of its clause with a day ("والاجتماعات من اليوم 10").
+    rf"|(?<![ء-ي])(?:أول|اول)\s+{_AR_T_NOUN}(?![ء-ي])(?=\s*[:–-]?\s*(?:{TIMING.pattern}))"
+    rf"|(?<![ء-ي])[وف]?(?:سن|بن|ن)(?:حجز|جيب|جلب|وفر|حقق|وصل)(?:لكم|لك|كم|ك)?(?![ء-ي])(?:\s+\S+){{0,3}}?\s+"
+    rf"{_AR_T_NOUN}(?![ء-ي])"
+    rf"|(?<![ء-ي]){_AR_T_NOUN}(?![ء-ي])\s+(?:\S+\s+)?مضمون(?:ة|ه)?(?![ء-ي])"
+    rf"|(?<![ء-ي])[وف]?(?:توقع|توقعوا|توقعو|تتوقع|تتوقعون|تتوقعوا)(?![ء-ي])(?:\s+\S+){{0,3}}?\s+{_AR_T_NOUN}(?![ء-ي])"
+    rf"|(?:^|[,،;:؛]|(?<![ء-ي])و)\s*{_AR_T_NOUN}(?![ء-ي])"
+    r"(?=\s*(?:من|بحلول|قبل|في|حتى)\s+(?:ال)?(?:يوم|أسبوع|اسبوع)\s+\d)",
     re.I)
 # Worded as the aim or the target: honest. "Aimed for between days 10 and 15".
-_AIM = re.compile(rf"(?:{TARGET_WORD.pattern})|\baim(?:s|ed|ing)?\b|\bgoals?\b|نسعى|نطمح", re.I)
+# The target as a figure, not the targeting of an audience: "targeted
+# campaigns", "we target villa owners" and "حملات مستهدفة" aim at nothing.
+_AIM = re.compile(
+    r"\b(?:the|our|a|your|this|that|its)\s+targets?\b|\btargets?\s*(?::|is\b|are\b|of\b|for\b)"
+    r"|\btarget(?:s|ed|ing)?\s+(?:for|between|within|by|at\s+day)\b"
+    r"|\bwe\s+target\s+(?:your\s+|the\s+)?(?:first|meetings?|appointments?|days?|between|within|\d)"
+    r"|\baim(?:s|ed|ing)?\b|\bgoals?\b"
+    r"|(?<![ء-ي])(?:ال|و|ف)?(?:هدف|هدفنا|نهدف|يهدف|تهدف|المستهدف|المستهدفة)(?![ء-ي])|نسعى|نطمح", re.I)
+# "You can expect" is the expectation set, not a hedge.
+_CAN_EXPECT = re.compile(r"\b(?:can|should)\s+(?=expect\b)", re.I)
 # Not stated as certain: "may land", "clients typically see"; nor said in the
 # past, which is a record ("had his first meetings within nine days").
 _HEDGED = re.compile(r"\b(?:may|might|could|should|can|usually|typically|often|likely|had|got|saw|was|were|did)\b"
                      r"|(?<![ء-ي])(?:قد|ممكن|يمكن|عادة|غالبا)(?![ء-ي])", re.I)
-_SUBJECT_OF = re.compile(r"\s+(?:are|is|get|gets|will\s+be|go|goes)\s+(?!(?:booked|signed|closed|won|in|on)\b)\w",
-                         re.I)
+_SUBJECT_OF = re.compile(r"\s+(?:onwards?\s+)?(?:are|is|get|gets|will\s+be|go|goes)\s+(?!(?:booked|signed|closed|won|in|on)\b)\w"
+                         r"|\s+(?:نتصل|نراجع|نتابع|نؤهل|نفلتر|نرد|يتم|تتم)(?![ء-ي])", re.I)
 # Nor a negation of it, inside the words themselves.
 _NEGATION = re.compile(r"\b(?:not|never|no)\b|n['’]t|(?<![ء-ي])(?:لا|لن|ما|لم)(?![ء-ي])", re.I)
+# Or just ahead of them ("No meetings land before launch"), where "no more
+# than 15 days" is still the promise.
+_NEG_BEFORE = re.compile(r"\b(?:not|never|no|none)\b|n['’]t\b|(?<![ء-ي])(?:لا|لن|لم)(?![ء-ي])", re.I)
+_UPPER_BOUND = re.compile(r"\b(?:no|not)\s+(?:more|later|longer)\s+than\b|(?<![ء-ي])لا\s+(?:تتجاوز|يتجاوز|تزيد|يزيد)",
+                          re.I)
+# The result as the object of what we do with it: "we review the first leads",
+# "reporting on results starts in week 1".
+_HANDLED_BEFORE = re.compile(
+    r"(?:\b(?:on|for|about|to|into)\s+"
+    r"|\b(?:we|our\s+(?:\w+\s+)?(?:team|setters?|callers?|agents?|cent(?:re|er)))\s+(?:will\s+|['’]ll\s+)?"
+    r"(?:review|check|call|qualify|score|track|answer|contact|filter|analy[sz]e|confirm|read|study|follow\s+up\s+on|"
+    r"report\s+on)\s+)(?:(?:the|your|all|every|each|new|incoming|any)\s+)?$", re.I)
+_RESULT_NOUN = re.compile(rf"\b{_T_NOUN}\b|(?<![ء-ي]){_AR_T_NOUN}(?![ء-ي])", re.I)
+# After a comma, a clause of its own that the date belongs to: "first meetings
+# land in your calendar, each confirmed within 2 days".
+_OWN_CLAUSE = re.compile(r"\b(?:each|every|which|who|all|both)\b"
+                         r"|\b(?!(?:booked|signed|closed|won|delivered|guaranteed|landed)\b)[a-z]+ed\b", re.I)
 _CONDITION = re.compile(r"\b(?:if|unless|in\s+case|whether)\b|(?<![ء-ي])(?:إذا|اذا|لو)(?![ء-ي])", re.I)
 _SEGMENT_END = re.compile(r"[.!?؟;؛]")
 # Between a result and its date, a new clause means the date is another's:
@@ -1416,7 +1507,39 @@ def timing_text(raw: str) -> str:
     words, and "the tenth day" or "اليوم العاشر" as day 10."""
     text = spoken_figures(_TAGS.sub("", _plain(str(raw or ""))))
     text = _EN_ORDINAL_DAY.sub(lambda m: f"day {_DAY_ORDINALS[m.group(1).lower()]}", text)
-    return _AR_ORDINAL_DAY.sub(lambda m: f"{m.group(1) or ''}يوم {_DAY_ORDINALS[m.group(2)]}", text)
+    text = _AR_ORDINAL_DAY.sub(lambda m: f"{m.group(1) or ''}يوم {_DAY_ORDINALS[m.group(2)]}", text)
+    text = _EN_ORDINAL_WEEK.sub(lambda m: f"week {_WEEK_ORDINALS[m.group(1).lower()]}", text)
+    text = _AR_ORDINAL_WEEK.sub(lambda m: f"{m.group(1) or ''}{m.group(2)} {_WEEK_ORDINALS[m.group(3)]}", text)
+    return ours(text)
+
+
+def ours(text: str) -> str:
+    """Our own meetings and paperwork read as sessions, an agreement and the
+    engagement, so neither rule below takes them for the client's result."""
+    def meeting(m: "re.Match[str]") -> str:
+        if m.group("q") is not None:
+            return f"{m.group('q')}session{m.group('s')}"
+        if m.group("our") is not None:
+            return f"{m.group('our')}session"
+        if m.group("with") is not None:
+            return f"session{m.group('s2')}{m.group('with')}"
+        return f"session{m.group('with2')}"
+
+    def ar_meeting(m: "re.Match[str]") -> str:
+        word = next(g for g in m.groups() if g)
+        return (word.replace("اجتماعنا", "لقاؤنا").replace("اجتماعات", "لقاءات").replace("اجتماع", "لقاء")
+                .replace("موعدا", "لقاء").replace("موعد", "لقاء"))
+
+    def paper(m: "re.Match[str]") -> str:
+        if m.group("a") is not None:
+            return f"{m.group('a')}agreement"
+        if m.group("lead") is not None:
+            return f"{m.group('lead')}Agreement"
+        return f"{m.group('b')}engagement"
+
+    text = _OUR_MEETING.sub(meeting, text)
+    text = _AR_OUR_MEETING.sub(ar_meeting, text)
+    return _OUR_PAPER.sub(paper, text)
 
 
 def _segments(text: str) -> Iterable[tuple[int, str]]:
@@ -1447,13 +1570,22 @@ def dated_results(text: str, said: "re.Pattern[str]" = TIMED_RESULT) -> list[tup
                     near = True
                 elif t.start() >= m.end():
                     gap = seg[m.end():t.start()]
-                    near = (len(gap) <= 60 and not _NEW_CLAUSE.search(gap)) or gap.strip() in (":", "-", "–")
+                    # The last stretch after a comma may be a clause of its
+                    # own whose date it is ("..., each confirmed within 2 days").
+                    after_comma = re.split(r"[,،]", gap)[-1] if re.search(r"[,،]", gap) else ""
+                    near = ((len(gap) <= 60 and not _NEW_CLAUSE.search(gap) and not _OWN_CLAUSE.search(after_comma))
+                            or gap.strip() in (":", "-", "–"))
                 else:
                     # The date comes first: it opens its clause ("Within ten
-                    # days, the first meetings land") and the result follows.
+                    # days, the first meetings land") and the result follows,
+                    # not after another clause the date belongs to ("Within 7
+                    # days of signing we launch, and first meetings land").
                     gap = seg[t.end():m.start()]
                     opening = re.split(r"[,،:]", seg[:t.start()])[-1]
-                    near = (t.end() <= m.start() and len(gap) <= 40
+                    joined = bool(re.search(r"[,،]", gap)) and bool(re.match(r"[وف][ء-ي]", seg[m.start():m.start() + 2]))
+                    near = (t.end() <= m.start() and len(gap) <= 40 and not joined
+                            and not re.search(r";|\b(?:and|then|while|but|once)\b|(?<![ء-ي])(?:ثم|لكن|بعدها)(?![ء-ي])",
+                                              gap, re.I)
                             and not re.sub(r"(?i)\b(?:and|then|so)\b|(?<![ء-ي])(?:و|ثم)(?![ء-ي])", "", opening).strip())
                 if near:
                     out.append((seg[min(m.start(), t.start()):max(m.end(), t.end())].strip(), t))
@@ -1472,16 +1604,25 @@ def timed_outcomes_in(raw: str) -> list[str]:
         for words, t in dated_results(seg):
             claim_at = max(0, seg.find(words))
             own = words.replace(t.group(0), " ")
-            # A hedge or the past belongs to the result's own clause; a
-            # condition anywhere ahead of it makes the whole of it one.
-            clause = re.split(r"[,،:]|\b(?:and|but|then)\b", seg[:claim_at])[-1][-40:]
-            if (_HEDGED.search(clause + own) or _NEGATION.search(own)
+            # A hedge, the past or a negation belongs to the result's own
+            # clause; a condition anywhere ahead of it makes the whole of it one.
+            clause = re.split(r"[,،:–—]|\s-\s|\b(?:and|but|then)\b", seg[:claim_at])[-1][-40:]
+            if (_HEDGED.search(_CAN_EXPECT.sub("", clause + own)) or _NEGATION.search(_UPPER_BOUND.sub("", own))
+                    or _NEG_BEFORE.search(_UPPER_BOUND.sub("", clause))
                     or _CONDITION.search(seg[:claim_at] + own)):
                 continue
             # The dated words as the subject of what we do with them: "leads
             # arriving in the first month are called within minutes".
             if _SUBJECT_OF.match(seg[claim_at + len(words):]):
                 continue
+            # Or, when the words open on the result itself, the result as
+            # the subject or the object of something else: "results are
+            # reviewed weekly, starting on day 14", "we review the first
+            # leads within ten days of launch".
+            noun = _RESULT_NOUN.search(words)
+            if noun and re.sub(r"(?i)^(?:(?:the|your)\s+)?first\s*$", "", words[:noun.start()].strip()) == "":
+                if _SUBJECT_OF.match(words[noun.end():]) or _HANDLED_BEFORE.search(seg[:claim_at]):
+                    continue
             found.append(words)
             break
     return found
@@ -1661,40 +1802,73 @@ _WEEKS = re.compile(r"\bweeks?\b|\bfortnight\b|أسبوع|اسبوع|أسابي�
 _MONTHS = re.compile(r"\bmonths?\b|شهر|أشهر|اشهر", re.I)
 
 
-def last_day(words: str) -> Optional[tuple[int, bool]]:
-    """The last day a timing names (the end of a range), and whether it was
-    counted in weeks. None for months, or for no figure at all."""
+# "From day 10" or "after ten days" opens the window and names no last day.
+_LOWER_BOUND = re.compile(r"^\s*(?:from|after|starting|beginning|من|بعد)(?![ء-ي])\b", re.I)
+# "Week 3" or "weeks 2 to 3" count weeks by number: week 3 is days 15 to 21.
+_WEEK_NUMBER = re.compile(r"\bweeks?\s+\d|(?<![ء-ي])(?:ال)?(?:أسبوع|اسبوع)\s+\d|\bfirst\s+week\b", re.I)
+# The first meetings said to follow a step rather than to fall inside it.
+_FOLLOW = re.compile(r"\b(?:follow(?:s|ed|ing)?|come\s+after|afterwards|from\s+there|soon\s+after|shortly\s+after|later)\b"
+                     r"|(?<![ء-ي])(?:تليها|يليها|تتبعها|تتبعه|بعدها|بعده|لاحقا|لاحقًا)(?![ء-ي])|بعد\s+ذلك", re.I)
+_PAST = re.compile(r"\b(?:had|got|saw|was|were|did|took)\b", re.I)
+
+
+def last_day(words: str) -> Optional[tuple[int, int, int]]:
+    """The last day a timing names (the end of a range), with the days it
+    can stand for: one day for a count of days, a day either side for a count
+    of weeks ("two weeks" is 13 to 15), the whole week and a day for a week
+    by number ("week 3" is 15 to 22). None for months, for a window's opening day
+    alone ("from day 10"), or for no figure at all."""
     if _MONTHS.search(words):
         return None
     nums = [float(x) for x in re.findall(r"\d+(?:\.\d+)?", words)]
+    if _LOWER_BOUND.search(words) and len(nums) < 2:
+        return None
     weekly = bool(_WEEKS.search(words))
-    if re.search(r"\bfortnight\b|أسبوعين|اسبوعين", words, re.I):
+    if re.search(r"\bfortnight\b|أسبوعين|اسبوعين|يومين|يومان", words, re.I):
         nums = nums or [2]
     elif not nums and weekly:
         nums = [1]
     if not nums:
         return None
-    return int(round(max(nums) * (7 if weekly else 1))), weekly
+    if weekly and _WEEK_NUMBER.search(words):
+        week = int(round(max(nums)))
+        return 7 * week, 7 * week - 6, 7 * week + 1
+    day = int(round(max(nums) * (7 if weekly else 1)))
+    return (day, day - 1, day + 1) if weekly else (day, day, day)
 
 
-def first_meeting_days(data: dict[str, Any]) -> list[tuple[str, int, bool, str]]:
-    """(field, last day, counted in weeks, clock) for each place the document
-    says how many days to the first meeting: a target tile counting them, a
-    step to start that says the first meetings land (by its own words, or by
-    its window when they give no day), and any other line of ours that dates
-    them. The clock is "launch" when counted from the launch, else "start"."""
-    out: list[tuple[str, int, bool, str]] = []
+def first_meeting_days(data: dict[str, Any]) -> list[tuple[str, int, tuple[int, int], str]]:
+    """(field, last day, the days it can stand for, clock) for each place the
+    document says how many days to the first meeting: a target tile counting
+    them, a step to start that says the first meetings land (by its own words,
+    or by its window when they give no day and do not say the meetings follow
+    it), and any other line of ours that dates them. Not a condition ("if no
+    meeting has landed by day 21"), a negation or a record in the past. The
+    clock is "launch" when counted from the launch, else "start"."""
+    out: list[tuple[str, int, tuple[int, int], str]] = []
 
     def clock(words: str) -> str:
         return "launch" if _FROM_LAUNCH.search(words) else "start"
 
+    def add(path: str, span: Optional[tuple[int, int, int]], words: str) -> bool:
+        if span:
+            out.append((path, span[0], (span[1], span[2]), clock(words)))
+        return bool(span)
+
     def stated(path: str, raw: str) -> bool:
         text = timing_text(raw)
-        for _words, t in dated_results(text, _FIRST_MEETING):
-            day = last_day(t.group(0))
-            if day:
-                out.append((path, day[0], day[1], clock(text[t.start():t.end() + 30])))
-                return True
+        for _at, seg in _segments(text):
+            for words, t in dated_results(seg, _FIRST_MEETING):
+                claim_at = max(0, seg.find(words))
+                clause = re.split(r"[,،:–—]|\s-\s|\b(?:and|but|then)\b", seg[:claim_at])[-1][-40:]
+                own = words.replace(t.group(0), " ")
+                if (_CONDITION.search(seg[:claim_at] + own) or _PAST.search(clause + own)
+                        or _NEG_BEFORE.search(_UPPER_BOUND.sub("", clause + own))):
+                    continue
+                # The clock is read where the timing stands, to the end of its
+                # clause: "within 8 days of the ads and the funnel going live".
+                if add(path, last_day(t.group(0)), t.group(0) + re.split(r"[,،;]", seg[t.end():])[0][:60]):
+                    return True
         return False
 
     for i, tile in enumerate(data.get("solution_targets") or []):
@@ -1702,19 +1876,21 @@ def first_meeting_days(data: dict[str, Any]) -> list[tuple[str, int, bool, str]]
             continue
         k = timing_text(tile.get("k") or "")
         if _FIRST_MEETING.search(k) and _DAYS_WORD.search(k) or _FIRST_MEETING.search(timing_text(tile.get("v") or "")):
-            day = last_day(f"{timing_text(tile.get('v') or '')} {'weeks' if _WEEKS.search(k) else ''}")
-            if day:
-                out.append((f"solution_targets[{i}]", day[0], day[1], clock(k)))
+            add(f"solution_targets[{i}]", last_day(f"{timing_text(tile.get('v') or '')} "
+                                                   f"{'weeks' if _WEEKS.search(k) else ''}"), k)
     for i, step in enumerate(data.get("start_steps") or []):
         if not isinstance(step, dict):
             continue
-        said = ". ".join(str(step.get(f) or "") for f in ("title", "body"))
-        if not _FIRST_MEETING.search(timing_text(said)) or stated(f"start_steps[{i}]", said):
+        said = timing_text(". ".join(str(step.get(f) or "") for f in ("title", "body")))
+        if not _FIRST_MEETING.search(said) or stated(f"start_steps[{i}]", said):
+            continue
+        # "Day 7: launch. The first meetings follow." The window is the
+        # launch's, not the meetings'.
+        if any(_FIRST_MEETING.search(seg) and _FOLLOW.search(seg) for _at, seg in _segments(said)):
             continue
         when = timing_text(step.get("when") or "")
-        day = last_day(when) if _DAYS_WORD.search(when) else None
-        if day:
-            out.append((f"start_steps[{i}]", day[0], day[1], clock(when)))
+        if _DAYS_WORD.search(when):
+            add(f"start_steps[{i}]", last_day(when), when)
     for path, raw in timed_strings(data):
         if not path.startswith("start_steps"):
             stated(path, raw)
@@ -1730,14 +1906,15 @@ def check_timeline(data: dict[str, Any], rep: Report) -> None:
     told = first_meeting_days(data)
     clashes, agreed = [], []
     for kind in ("start", "launch"):
-        group = [(p, d, w) for p, d, w, c in told if c == kind]
+        group = [(p, d, span) for p, d, span, c in told if c == kind]
         if len(group) < 2:
             continue
-        same = all(a[1] == b[1] or ((a[2] or b[2]) and abs(a[1] - b[1]) <= 1) for a in group for b in group)
+        # Two places agree when the days they can stand for meet.
+        same = all(a[2][0] <= b[2][1] and b[2][0] <= a[2][1] for a in group for b in group)
         if same:
             agreed.append(group[0][1])
         else:
-            clashes.append(", ".join(f"{p} says {d}" for p, d, _w in group[:4]))
+            clashes.append(", ".join(f"{p} says {d}" for p, d, _span in group[:4]))
     if clashes:
         rep.add(FAIL, "timeline", "the days to the first meeting are told more than one way: " + "; ".join(clashes)
                 + ". It is one figure of ours: say it the same way on every page, from PATTERNS.md's timeline "
