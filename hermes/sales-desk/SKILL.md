@@ -48,8 +48,27 @@ is worse than a FILL the closer fills in ten seconds.
 Figures you take from the call are checked against the transcript as exact
 substrings, so copy them out of it rather than rounding or retyping them. The
 same rule that governed quotes still governs every number: what the document
-asserts, the transcript has to support. Write the proposal in English
-unless you are asked for `lang: "ar"`.
+asserts, the transcript has to support. A figure written as words is checked
+like one in digits: "six projects" and "ستة مشاريع" are both the figure 6.
+Write the proposal in English unless you are asked for `lang: "ar"`.
+
+**A figure said only in passing is never a headline.** A number the client
+mentioned as an aside, one inside a stretch of the transcript too garbled to
+read with confidence, or one you worked out from what was said around it, is
+`FILL` or left out. It never becomes the headline, a gap tile or the goal. The
+figures a page is built on are the ones the client stated plainly, about the
+thing the page says they are about. Do not add a detail the figure did not
+have: ten days from the start is not ten days from launch.
+
+**One count per thing.** When two pages count the same thing (projects signed,
+meetings, enquiries, leads), they carry the same number. A gap tile saying six
+signed and a tree saying two signed means one of them is wrong, and
+`validate.py` warns, naming both fields. A count over a different period is a
+different count: name the period ("in eight months", "last year") each time.
+
+**Our own figures are the one exception**, and they come from two places only:
+the offer below, and the proof, which is copied from PATTERNS.md and never from
+the call (see "The proof is the record").
 
 ## Which of the three templates
 
@@ -131,8 +150,32 @@ Numbers 4 and 5 drive the entire return page. Put them in `roi` and the
 break-even maths writes itself.
 
 **The margin is the one that gets missed.** It was absent from two of the first
-three calls drafted. If it was not stated, set `roi.margin_pct` to what it would
-have to be, mark it in `margin_note`, and say so. Do not quietly assume 20%.
+three calls drafted. If no net margin was stated, `roi.margin_pct` stays 0 and
+`margin_note` says plainly that it was not given. Do not quietly assume 20%.
+
+**A gross margin is still a figure they gave.** Many contractors give a gross
+margin, a markup or an overhead instead of what is left after everything. That
+is not a net margin: it never goes in `roi.margin_pct` and it never makes a
+proposal specific. But the page must use it, not talk around it. When the call
+gives one, put it in `arithmetic.gross_margin` (percent, the bottom of their
+range) and the page counts the projects at it and labels the count gross: as
+an extra line in `margin` and `volume` mode, and in the grid as its one column
+when `margins` is left out. The verdict and the close use that same count,
+beside the word gross ("counted at the 25 percent gross margin you gave, the
+engagement is 0.35 of one project"). It is still one project the page divides
+by, so the page keeps one denominator. Leave the key out when the call gave no gross
+margin. Never write as if the margin were not there ("before you count a cent
+of margin"): a reader who told you his margin and sees it ignored stops
+trusting the page, and `validate.py` warns. If the count at his gross margin
+needs more projects than the term targets, the verdict says so plainly; that
+is a finding for the closer.
+
+When the project value is not an average (a minimum ticket, a typical job),
+name it in `arithmetic.project_label` ("Your minimum ticket") so the page does
+not call it your average.
+
+Counts and shares under ten take two decimals (0.35, never 0.3; 1.05 percent,
+never 1.1), and from ten up one decimal, as the page prints them.
 
 ## The offer
 
@@ -162,6 +205,27 @@ these figures exactly, with the words in the document's language.
   only thing that moves, and only by the closer's choice.
 - Targets are stated as meetings booked and attended. **Never** revenue, never a
   close rate we do not control.
+- **A target is called a target.** "Thirty qualified meetings across the three
+  months is the target the program works to." Never "built to deliver",
+  "built to produce", "built to add", "will bring" or "will generate" in front
+  of meetings, projects or leads: that is a promise in other words, and
+  `validate.py` fails it unless the same sentence calls the figure a target.
+  `roi.target_projects_month` prints under "The plan's target across the
+  term", in large type: a short range in the plan's words, with its period
+  when that is not the whole term ("2 to 4 a month").
+- **No payment ever waits on a result.** Whatever the closer chose, no
+  instalment falls due on a first contract, project, deal, client or sale. A
+  call recorded before 3 October 2026 may still quote that split; it is
+  retired, and the call does not bring it back. `validate.py` fails a price-page
+  line, in either language, that ties a payment to one.
+- **The total is what is paid to us at the start.** `investment.total_amount`
+  is the first payment and `total_label` says so: "Paid to us at the start".
+  Advertising is never added into it; it is paid to the platforms, on its own
+  line. The payment-structure row says how the price is paid, not the price
+  again: its amount reads "In full at the start" when paid in full, or "Two
+  payments" with each instalment and its due date in the detail. Printing the
+  price twice above a total invites the reader to add them up. `validate.py`
+  fails a total that is not the first payment.
 
 ## The two pages built from the call
 
@@ -259,10 +323,20 @@ instead:
 }
 ```
 
+`currency` is the one the client named, in a word or a symbol. When the call
+never named one, write `FILL` there and let the closer settle it in one
+question: never assume dollars, or the currency of his country. A project value
+read in the wrong currency puts every figure on the page out by a factor of two
+or more.
+
 Every cell is computed: the whole engagement divided by the net profit on one
 project at the margin in that column. The page asserts nothing about the client,
 and the reader finds his own row, which persuades better than being told which
 row is his.
+
+A grid page carries its own `total_label` ("The whole engagement, three
+months") and a `close` sentence that says what the table shows, like any other
+arithmetic page; copying a margin-mode page's words onto a grid loses both.
 
 Choose `project_values` to straddle the reader's likely size, and **include one
 row that needs more than a single project.** A table where every answer flatters
@@ -293,6 +367,19 @@ everywhere the figures are absent.
 - Say plainly what is missing. "We did not take your margin on the call" beats
   "subject to confirmation of commercial details" every time.
 
+## The proof is the record
+
+`proof` carries our own results, and they come from one place: the "Numbers
+quoted as proof" list in PATTERNS.md. Copy every figure exactly as it is
+written there, never as the rep said it on the call. Reps round when they
+speak, so the call's version of a case drifts from the record, and the written
+record is the official one: a client who heard one figure on the call and reads
+another in the proposal has been given two. Do not round a case, do not combine
+two cases into one, and do not add a figure the record does not have (a spend,
+a number of months, a cost per meeting). Pick the cases nearest the reader's
+discipline. `validate.py` fails any figure of 10 or more in `proof` that is not
+in that list.
+
 ## Writing
 
 - **No em dash, ever.** Not in English, not in Arabic, not inside a quote.
@@ -300,6 +387,7 @@ everywhere the figures are absent.
   brackets to fence an aside. `validate.py` fails the whole document on one,
   so a single dash costs the draft. The same goes for emoji.
 - Address the reader as **you**. One person to another.
+- Spell it **program** in English, never programme, on every page.
 - Short, active sentences. State each thing once.
 - A fix is two lines. A sub-driver is a phrase. A term is one line.
 - Delete any word that survives its own removal.
@@ -313,6 +401,7 @@ everywhere the figures are absent.
   | block | keep under | measured |
   |---|---|---|
   | `tree`, branches and subs included | 850 | 830 |
+  | `tree_intro`, beside a tree that size | 130 | 126 |
   | `solution`, all five rows | 700 | 691 |
   | any one `solution` row, `problem` + `detail` + `fix` | 150 | 150 |
   | `program`, all five rows | 240 | 231 |
@@ -345,15 +434,17 @@ Beyond the schema, the evidence and the page count, both gates check:
 - **every figure in client-facing copy**, not only the five fields in the
   schema. A number in the headline, the subhead or a verdict block used to
   reach a client unexamined, and those are the lines a reader believes first.
-  Our own figures are exempt, and the block knows which are ours.
+  Our own figures are exempt from the call, and the block knows which are
+  ours; the proof is checked against PATTERNS.md instead.
 - **the brand**: no em dashes, no emoji. Absolute, and it caught three in a
   proposal that had already been through review.
 - **one language throughout**, so an Arabic string cannot survive in an English
   document. A verbatim quote is exempt, because it belongs in its own language.
 - **the offer**, as the closer chose it: the price, the term, the deposit, the
-  payment structure with instalments that add up to the price, the advertising
-  on its own line, and the guarantee only when it was chosen. A figure on the
-  price page that is not in the chosen offer is flagged.
+  payment structure with instalments that add up to the price, a total that is
+  the first payment, the advertising on its own line, and the guarantee only
+  when it was chosen. A figure on the price page that is not in the chosen
+  offer is flagged.
 - **echoes**, because the same sentence printed twice on one page reads as a
   mistake, and is one.
 - **one currency**, so a document cannot quote in two.
