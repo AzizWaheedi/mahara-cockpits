@@ -366,6 +366,9 @@ class PricePageTotalTests(unittest.TestCase):
     def test_the_total_label_and_amount_have_room_between_them(self):
         rule = re.search(r"\n  \.total \{(.*?)\}", TEMPLATE, re.S).group(1)
         self.assertIn("gap: 6mm", rule)
+        # A long label never pushes the amount onto two lines ("USD" over "10,500").
+        amount = re.search(r"\n  \.total \.v \{(.*?)\}", TEMPLATE, re.S).group(1)
+        self.assertIn("white-space: nowrap", amount)
 
 
 # -------------------------------------------------------------- defect 11 ---
