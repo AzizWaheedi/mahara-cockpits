@@ -1100,7 +1100,8 @@ BUILT_TO = re.compile(
 # meetings", "expect thirty meetings". Past tense is our record, not a promise.
 DELIVERS = re.compile(
     r"\b(?:we|the\s+program(?:me)?|this\s+program(?:me)?|our\s+program(?:me)?|the\s+engagement|the\s+system|"
-    r"the\s+campaigns?)\s+(?:will\s+|'ll\s+|can\s+)?(?:deliver|delivers|produce|produces|add|adds|bring|brings|"
+    r"(?:the|our)\s+(?:campaigns?|ads|funnel|call\s+cent(?:re|er)|team))\s+(?:will\s+|'ll\s+|can\s+)?"
+    r"(?:deliver|delivers|produce|produces|add|adds|bring|brings|"
     r"generate|generates|book|books|get\s+you|gets\s+you|secure|secures)\b"
     r"|\bwe(?:'ll|\s+will)\s+(?:deliver|produce|add|bring|generate|book|get\s+you|secure)\b"
     r"|\byou(?:'ll|\s+will)\s+(?:get|receive|have|see)\b|\b(?:you\s+can\s+|you\s+should\s+)?expect\b"

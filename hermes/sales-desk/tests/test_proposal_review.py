@@ -198,7 +198,8 @@ class PromisesTests(unittest.TestCase):
                      # The old offer's own sentence, turned round.
                      "Thirty qualified meetings across the three months is what the program is built to deliver.",
                      "The floor of what this program is built to add is several times the engagement.",
-                     "It is built to bring you new projects every month."):
+                     "It is built to bring you new projects every month.",
+                     "Our call centre books 30 to 40 qualified meetings across the term."):
             self.assertTrue(promises(line), line)
 
     def test_the_arabic_ways_round_it(self):
