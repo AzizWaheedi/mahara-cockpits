@@ -45,9 +45,10 @@ how those people are addressed, and Faisal and Khalid are their children. A
 cover page is the first thing the client reads, so a name that has been tidied
 is worse than a FILL the closer fills in ten seconds. Capitals are the one
 exception, and they are not yours to change: a name copied from a speaker label
-is put in title case by code after you write it ("fahad sample" becomes Fahad
-Sample; al, bin and de and Arabic script stay as written), so copy the label's
-spelling as it stands.
+is put in title case by code after you write it, and so is one copied from the
+CRM, which keeps names in lower case ("fahad al-harbi" becomes Fahad Al-Harbi;
+bin, ibn and de stay lower case, Arabic script as written, and a name the
+closer typed keeps the closer's spelling), so copy the spelling as it stands.
 
 Figures you take from the call are checked against the transcript as exact
 substrings, so copy them out of it rather than rounding or retyping them. The

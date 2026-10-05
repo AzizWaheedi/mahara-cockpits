@@ -224,13 +224,19 @@ def closer_evidence(transcript_text: str, fills: Optional[dict[str, Any]]) -> st
 # ---- the contact's name ------------------------------------------------------
 # A name copied from a Fathom speaker label keeps the label's typing: the proof
 # run of 176954619 printed the surname in lower case on the cover (5 October
-# 2026), where the live draft had it capitalised. Code puts such a name in
-# title case. Particles and Arabic script stay as written, a word with a
-# capital inside it (McLean, AlSaud) is left alone, the CRM's own spelling of
-# the same name wins when it has capitals, and a name the closer typed is
-# never touched.
+# 2026), where the live draft had it capitalised. The CRM mirror stores every
+# Latin name in lower case (2,018 of 2,018 on 5 October 2026), and the drafter
+# reads it too. Code puts a name taken from either in title case. A word with
+# a capital inside it (McLean, AlSaud) is left alone, the CRM's own capitals
+# win where it has any, and a name the closer typed is the closer's spelling.
+# A name typed in one case throughout chose none of its capitals, so the
+# Arabic article takes the capital the Gulf gives it (Al-Harbi, Al Saud: the
+# speaker labels that capitalise anything write it so 18 times in 21) and
+# the other particles go lower case (bin, ibn, van der) unless they open the
+# name; in a name with capitals of its own, a particle stays as written.
 NAME_PARTICLES = {"al", "el", "bin", "bint", "ibn", "bn", "de", "da", "di", "del", "della", "der", "den", "van",
                   "von", "la", "le", "du", "dos", "das", "ter"}
+ARTICLES = {"al", "el"}
 HONORIFICS = {"mr", "mrs", "ms", "dr", "eng", "engr", "sheikh", "shaikh", "prof"}
 # "Name: words" as fathom.flatten writes a turn, or the vault's "**Name** (00:01:02): words".
 _LABEL = re.compile(r"^\s*(?:\*\*(?P<vault>[^*]+)\*\*\s*\([^)]*\)|(?P<plain>[^:\n]{1,80}?))\s*:\s")
@@ -253,46 +259,83 @@ def _latin_words(text: str) -> list[str]:
 
 def from_a_label(name: str, labels: Any) -> bool:
     """Every Latin word of the name (a title such as Eng. aside) is in one of
-    the call's speaker labels: the drafter took it from there."""
+    the call's speaker labels (or the CRM's name): the drafter took it from there."""
     words = [w for w in _latin_words(name) if w.strip("'’-") not in HONORIFICS]
-    return bool(words) and any(set(words) <= set(_latin_words(label)) for label in labels or ())
+    return bool(words) and any(set(words) <= set(_latin_words(label)) for label in labels or () if label)
+
+
+def _capitalised(piece: str) -> str:
+    """The first letter upper case, after any mark, quote or bracket before
+    it, and the rest lower; Mc keeps the capital after it (McDonald)."""
+    at = re.search(r"[A-Za-z]", piece)
+    if not at:
+        return piece
+    low = piece[at.start():].lower()
+    if low.startswith("mc") and len(low) > 3 and low[2].isalpha():
+        body = "Mc" + low[2].upper() + low[3:]
+    else:
+        body = low[:1].upper() + low[1:]
+    return piece[:at.start()] + body
 
 
 def name_in_title_case(name: str) -> str:
     """Each word of a name in lower case (or the whole name in capitals) with
     its first letter capitalised, and the parts of "al-harbi" or "o'neil"
-    after a hyphen or apostrophe too. Particles, Arabic script and a word with
-    a capital inside it are left as they are."""
+    after a hyphen or apostrophe too. Arabic script and a word with a capital
+    inside it are left as they are; particles as the note above says."""
     latin = re.findall(r"[A-Za-z]+", name)
     shouted = bool(latin) and all(w.isupper() for w in latin) and any(len(w) > 2 for w in latin)
+    one_case = shouted or (bool(latin) and all(w.islower() for w in latin))
+    first_word = [True]
 
-    def part(p: str) -> str:
-        if p.lower() in NAME_PARTICLES:
-            return p
-        return p[:1].upper() + p[1:].lower()
+    def part(p: str, opening: bool) -> str:
+        bare = re.sub(r"[^A-Za-z]", "", p).lower()
+        if bare in NAME_PARTICLES:
+            if not one_case:
+                return p
+            return _capitalised(p) if opening or bare in ARTICLES else p.lower()
+        return _capitalised(p)
 
     def word(tok: str) -> str:
         letters = re.sub(r"[^A-Za-z]", "", tok)
-        if not letters or tok.lower() in NAME_PARTICLES:
+        if not letters:
             return tok
-        if not (letters.islower() or (shouted and letters.isupper() and len(letters) > 2)):
+        opening, first_word[0] = first_word[0], False
+        if not (letters.islower() or (shouted and letters.isupper())):
             return tok
-        return "".join(p if re.fullmatch(r"[-'’]", p) else part(p) for p in re.split(r"([-'’])", tok))
+        if shouted and len(letters) <= 2 and letters.lower() not in NAME_PARTICLES:
+            return tok
+        pieces = re.split(r"([-'’])", tok)
+        return "".join(p if re.fullmatch(r"[-'’]", p) else part(p, opening and j == 0) for j, p in enumerate(pieces))
 
     return "".join(tok if tok.isspace() else word(tok) for tok in re.split(r"(\s+)", name))
 
 
 def tidy_contact(deal: dict[str, Any], speakers: Any, crm_name: Optional[str] = None,
-                 typed: bool = False) -> None:
-    """client_contact in title case when the drafter copied it from a speaker label."""
+                 typed: Any = None) -> None:
+    """client_contact in title case when the drafter copied it from a speaker
+    label or the CRM. `typed` is the closer's own spelling (a string), or True
+    when the closer typed the name without it being known here: the closer's
+    spelling of the same name is used, and a name the closer typed is never
+    otherwise touched."""
     name = deal.get("client_contact")
-    if typed or not isinstance(name, str) or validate_mod.FILL_RE.search(name) or not from_a_label(name, speakers):
+    if not isinstance(name, str) or validate_mod.FILL_RE.search(name):
+        return
+    if typed:
+        spelled = " ".join(str(typed).split()) if isinstance(typed, str) else ""
+        if spelled and spelled.casefold() == " ".join(name.split()).casefold() \
+                and not validate_mod.FILL_RE.search(spelled):
+            deal["client_contact"] = spelled
         return
     crm = " ".join(str(crm_name or "").split())
-    if crm and crm.casefold() == " ".join(name.split()).casefold() and crm not in (crm.lower(), crm.upper()):
-        deal["client_contact"] = crm
+    if not from_a_label(name, list(speakers or ()) + ([crm] if crm else [])):
         return
-    deal["client_contact"] = name_in_title_case(name)
+    # The CRM's own capitals, word by word, where it has any: "McSample",
+    # "al-Harbi". A word it has in lower case (or all in capitals) is not a spelling.
+    spelled_by_crm = {w.casefold(): w for w in crm.split()
+                      if re.search(r"[A-Z]", w) and not (re.sub(r"[^A-Za-z]", "", w).isupper() and len(w) > 2)}
+    titled = name_in_title_case(name)
+    deal["client_contact"] = re.sub(r"\S+", lambda m: spelled_by_crm.get(m.group(0).casefold(), m.group(0)), titled)
 
 
 def stamp(deal: dict[str, Any], *, variant: str, resolved: dict[str, Any], lang: str,
@@ -304,9 +347,11 @@ def stamp(deal: dict[str, Any], *, variant: str, resolved: dict[str, Any], lang:
     document can be checked against the offer it was written for; the logo and
     language because they are ours to set, not the drafter's. And a currency
     the client never named is a blank for the closer, never a guess. A name
-    copied from a speaker label is put in title case (`speakers`, the call's
-    labels; `crm_name`, the lead's name in the CRM), unless the closer typed it."""
-    tidy_contact(deal, speakers, crm_name, typed="client_contact" in (closer_figures or {}))
+    copied from a speaker label or the CRM is put in title case (`speakers`,
+    the call's labels; `crm_name`, the lead's name in the CRM), and a name the
+    closer typed keeps the closer's spelling."""
+    figures = closer_figures or {}
+    tidy_contact(deal, speakers, crm_name, typed=figures.get("client_contact") or "client_contact" in figures)
     if currency_unstated and isinstance(deal.get("arithmetic"), dict):
         deal["arithmetic"]["currency"] = "FILL"
     # A reference's instruction copied as it stands ("<the client's gross

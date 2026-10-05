@@ -49,13 +49,43 @@ class TitleCaseTests(unittest.TestCase):
         self.assertEqual(engine.name_in_title_case("Fahad sample"), "Fahad Sample")
         self.assertEqual(engine.name_in_title_case("FAHAD SAMPLE"), "Fahad Sample")
 
-    def test_particles_stay_as_they_are(self):
+    def test_particles_stay_lower_case(self):
         self.assertEqual(engine.name_in_title_case("mohammed bin salman"), "Mohammed bin Salman")
-        self.assertEqual(engine.name_in_title_case("ahmed al-harbi"), "Ahmed al-Harbi")
-        self.assertEqual(engine.name_in_title_case("Ahmed Al Harbi"), "Ahmed Al Harbi")
-        self.assertEqual(engine.name_in_title_case("ahmed al harbi"), "Ahmed al Harbi")
         self.assertEqual(engine.name_in_title_case("maria de la cruz"), "Maria de la Cruz")
         self.assertEqual(engine.name_in_title_case("abdul rahman ibn khalid"), "Abdul Rahman ibn Khalid")
+        self.assertEqual(engine.name_in_title_case("jan van der berg"), "Jan van der Berg")
+
+    def test_the_arabic_article_takes_the_gulf_capital(self):
+        """A name typed all in lower case chose none of its capitals; the
+        labels that capitalise anything write Al 18 times in 21."""
+        self.assertEqual(engine.name_in_title_case("ahmed al-harbi"), "Ahmed Al-Harbi")
+        self.assertEqual(engine.name_in_title_case("ahmed al harbi"), "Ahmed Al Harbi")
+        self.assertEqual(engine.name_in_title_case("mohammed bin salman al saud"), "Mohammed bin Salman Al Saud")
+        self.assertEqual(engine.name_in_title_case("Ahmed Al Harbi"), "Ahmed Al Harbi")
+
+    def test_a_particle_written_beside_capitals_stays_as_written(self):
+        self.assertEqual(engine.name_in_title_case("Ahmed al Harbi"), "Ahmed al Harbi")
+        self.assertEqual(engine.name_in_title_case("Ahmed al-harbi"), "Ahmed al-Harbi")
+
+    def test_particles_in_a_name_in_capitals_are_not_left_in_capitals(self):
+        self.assertEqual(engine.name_in_title_case("MOHAMMED BIN SALMAN"), "Mohammed bin Salman")
+        self.assertEqual(engine.name_in_title_case("AHMED AL-HARBI"), "Ahmed Al-Harbi")
+        self.assertEqual(engine.name_in_title_case("MARIA DE LA CRUZ"), "Maria de la Cruz")
+
+    def test_a_particle_that_opens_the_name_is_capitalised(self):
+        self.assertEqual(engine.name_in_title_case("van der berg"), "Van der Berg")
+        self.assertEqual(engine.name_in_title_case("al harbi"), "Al Harbi")
+
+    def test_mc_and_o_keep_their_second_capital(self):
+        self.assertEqual(engine.name_in_title_case("mcdonald"), "McDonald")
+        self.assertEqual(engine.name_in_title_case("MCDONALD"), "McDonald")
+        self.assertEqual(engine.name_in_title_case("o'brien"), "O'Brien")
+        self.assertEqual(engine.name_in_title_case("O'BRIEN"), "O'Brien")
+
+    def test_a_mark_before_the_name_does_not_keep_it_lower_case(self):
+        """A right-to-left mark, as some phones put before a label, or a bracket."""
+        self.assertEqual(engine.name_in_title_case("\u200ffahad sample"), "\u200fFahad Sample")
+        self.assertEqual(engine.name_in_title_case("(fahad) sample"), "(Fahad) Sample")
 
     def test_a_kunya_is_a_name(self):
         self.assertEqual(engine.name_in_title_case("abu khalid"), "Abu Khalid")
@@ -85,6 +115,16 @@ class NameFromALabelTests(unittest.TestCase):
         deal = drafted("fahad mcsample", "fahad mcsample", crm="Fahad McSample")
         self.assertEqual(deal["client_contact"], "Fahad McSample")
 
+    def test_a_lower_case_word_in_the_crm_is_no_spelling(self):
+        """The CRM's "Fahad sample" does not put the label's lower case back."""
+        self.assertEqual(drafted("Fahad sample", "Fahad sample", crm="Fahad sample")["client_contact"], "Fahad Sample")
+
+    def test_a_name_copied_from_the_crm_is_capitalised(self):
+        """The CRM mirror keeps every Latin name in lower case, and the
+        drafter reads it: a name from there, in no speaker label, is tidied too."""
+        self.assertEqual(drafted("fahad sample", "Client", crm="fahad sample")["client_contact"], "Fahad Sample")
+        self.assertEqual(drafted("fahad", "Client", crm="fahad sample")["client_contact"], "Fahad")
+
     def test_a_name_from_no_label_is_left_as_written(self):
         self.assertEqual(drafted("fahad other", "Fahad Sample")["client_contact"], "fahad other")
         self.assertEqual(drafted("FILL", "fahad sample")["client_contact"], "FILL")
@@ -99,6 +139,17 @@ class NameFromALabelTests(unittest.TestCase):
         # Even when the drafter wrote the label where the closer had typed.
         deal = drafted("fahad sample", "fahad sample", fills={"client_contact": "fahad sample"}, prior=prior)
         self.assertEqual(deal["client_contact"], "fahad sample")
+
+    def test_the_closer_s_spelling_wins_over_the_label_s(self):
+        """The closer typed "Fahad Sample" into the blank; the next draft wrote
+        the label's "fahad sample" where the blank was, so the closer's
+        figure had no blank to go into."""
+        prior = general_deal(client_contact="FILL")
+        deal = drafted("fahad sample", "fahad sample", fills={"client_contact": "Fahad Sample"}, prior=prior)
+        self.assertEqual(deal["client_contact"], "Fahad Sample")
+        # Another name than the closer's is left alone.
+        deal = drafted("karim example", "fahad sample", fills={"client_contact": "Fahad Sample"}, prior=prior)
+        self.assertEqual(deal["client_contact"], "karim example")
 
     def test_every_round_keeps_it(self):
         """stamp runs on the tightening and repair rounds too."""
