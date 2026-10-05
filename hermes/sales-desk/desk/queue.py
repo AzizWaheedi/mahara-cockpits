@@ -83,6 +83,14 @@ def closer_wait(e: BaseException, *, rebuild: bool = False) -> str:
             "that is fixed, so there is no need to ask again; if it is still waiting in an hour, tell the CEO.")
 
 
+def fathom_down(e: Any) -> bool:
+    """Fathom unreachable, overloaded or rate limiting after its own retries:
+    an outage. A 404, a 500 for one recording or an answer that is not JSON is
+    about the request, and stays a try that can fail."""
+    status = int(getattr(e, "status", 0) or 0)
+    return status in (429, 502, 503, 504) or (status == 0 and "not JSON" not in str(e))
+
+
 def sync_offer(sb: Supabase, offer: dict[str, Any], log: Callable[[str], None]) -> bool:
     """offer.json into the cockpit's `offer` setting, when they differ. True when written."""
     want = offer_mod.cockpit_setting(offer)
@@ -357,6 +365,12 @@ class Worker:
         except fathom_mod.FathomError as e:
             if e.status in (401, 403):
                 raise NotNow(f"Fathom refused the key ({e.status}). Set FATHOM_API_KEY again; drafting waits until then.")
+            if fathom_down(e):
+                # After the client's own retries: Fathom is down or turning us
+                # away, which is an outage to wait out like a model's, not four
+                # tries of this proposal to fail in eight minutes.
+                raise NotNow(f"Fathom is not answering ({e.status or 'no answer'}), so the call cannot be read. "
+                             f"Drafting waits until it answers. {e}"[:600])
             raise
         self.sb.touch(rid, self.host)
         rec = picked.recording

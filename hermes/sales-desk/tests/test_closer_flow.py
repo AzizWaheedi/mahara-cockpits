@@ -28,7 +28,7 @@ for _name in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "OPENROUTER_API_KEY", "FATH
               "SALES_PROPOSAL_MODEL", "SALES_MODEL_FALLBACK", "SALES_FALLBACK_MODEL", "SALES_FALLBACK_JOBS"):
     os.environ.pop(_name, None)
 
-from desk import http, model, queue  # noqa: E402
+from desk import fathom as fathom_mod, http, model, queue  # noqa: E402
 from desk.errors import NotNow  # noqa: E402
 from desk.supabase import Supabase  # noqa: E402
 from tests import fakes  # noqa: E402
@@ -165,6 +165,15 @@ class ThePing(Base):
         self.assertEqual(self.worker(lambda c, l: idle).run()["done"], 1)
         self.assertEqual(idle.pinged, 0)
 
+    def test_an_empty_queue_makes_no_provider_and_spends_no_call(self):
+        # The cron runs every two minutes: with nothing queued, nothing is asked.
+        def never_made(cfg: Any, log: Any) -> Any:
+            raise AssertionError("a provider was made with nothing queued")
+
+        out = self.worker(never_made, fallback=never_made).run()
+        self.assertEqual((out["seen"], out["done"], out["waiting"]), (0, 0, 0))
+        self.assertNotIn("blocked", out)
+
     def test_a_keyed_provider_is_never_pinged(self):
         self.cfg.provider, self.cfg.model = "openai", "gpt-5"
         self.draft("req-1", "p-1")
@@ -225,6 +234,48 @@ class TheCloserIsTold(Base):
         plain = NotNow("Fathom refused the key (401). Set FATHOM_API_KEY again; drafting waits until then.")
         self.assertTrue(queue.closer_wait(plain).startswith(
             "The proposal writer cannot work right now: Fathom refused the key. "))
+
+
+# ---------------------------------------------------------------------------
+class FathomDown(Base):
+    """Fathom down is an outage to wait out, not four tries to fail."""
+
+    def fathom_failing(self, status: int, message: str) -> FakeFathom:
+        class Down(FakeFathom):
+            def transcript(self, recording_id: Any) -> list[dict[str, Any]]:
+                self.read.append(str(recording_id))
+                raise fathom_mod.FathomError(status, message)
+
+        return Down()
+
+    def test_fathom_unavailable_waits_untried_and_the_closer_is_told(self):
+        self.draft("req-1", "p-1", "2099-01-01T11:01:00Z")
+        self.draft("req-2", "p-2", "2099-01-01T11:02:00Z")
+        down = self.fathom_failing(503, "Fathom answered 503 on /recordings/100/transcript: unavailable")
+        vps = Pinged("vps", "opus", [])
+        out = self.worker(lambda c, l: vps, fathom=lambda c, l: down).run()
+        self.assertEqual((out["waiting"], out["failed"], out["retry"], vps.calls), (2, 0, 0, []))
+        self.assertEqual(down.read, ["100"])  # the second draft was not tried against a Fathom that is down
+        for rid, pid in (("req-1", "p-1"), ("req-2", "p-2")):
+            self.assertEqual((self.req(rid)["status"], self.req(rid)["attempts"]), ("queued", 0))
+            self.assertIn("Fathom is not answering (503)", self.req(rid)["error"])
+            self.assertEqual(self.prop(pid)["status"], "drafting")
+            self.assertTrue(self.prop(pid)["error"].startswith(
+                "The proposal writer cannot work right now: Fathom is not answering. "), self.prop(pid)["error"])
+            self.assertIn(TELL, self.prop(pid)["error"])
+
+    def test_unreachable_and_rate_limited_wait_too_but_a_404_is_a_try(self):
+        for status, message in ((0, "Fathom did not answer on /recordings/100/transcript"),
+                                (429, "Fathom answered 429 on /recordings/100/transcript: slow down")):
+            self.assertTrue(queue.fathom_down(fathom_mod.FathomError(status, message)), status)
+        for status, message in ((404, "Fathom answered 404 on /recordings/100/transcript: not found"),
+                                (500, "Fathom answered 500 on /recordings/100/transcript"),
+                                (0, "Fathom sent something that is not JSON on /recordings/100/transcript")):
+            self.assertFalse(queue.fathom_down(fathom_mod.FathomError(status, message)), status)
+        self.draft("req-1", "p-1")
+        gone = self.fathom_failing(404, "Fathom answered 404 on /recordings/100/transcript: not found")
+        out = self.worker(lambda c, l: Pinged("vps", "opus", []), fathom=lambda c, l: gone).run()
+        self.assertEqual((out["retry"], self.req("req-1")["attempts"]), (1, 1))
 
 
 # ---------------------------------------------------------------------------
