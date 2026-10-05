@@ -341,6 +341,10 @@ begin
                version = x.version + 1
          where x.id = r.id
         returning x.* into r;
+        -- Its opens from before it had a lead are nobody's (the guard clears
+        -- the open columns on this adoption): the lead's timeline never says
+        -- they opened a link they were not yet sent (stress2 round 6).
+        delete from public.cockpit_sales_room_events as e where e.room_id = r.id and e.kind = 'door.open';
         via := 'standby'; room := r.id;
         next_state := case when r.state = 'host_in' then 'room_ready' else 'claimed' end;
       exception when unique_violation then
@@ -1326,7 +1330,7 @@ begin
      -- (roomlogic.ts roomForThisStart, INTRO_EARLY_MS). A confirmation call's
      -- room the evening before, or in the hour before, says nothing about it.
      cross join lateral (
-       select x.requested_at between ap.start_at - interval '5 minutes' and ap.start_at + w_settle
+       select coalesce(x.appointment_call_at, x.requested_at) between ap.start_at - interval '5 minutes' and ap.start_at + w_settle
               and (x.appointment_start_at is null or x.appointment_start_at = ap.start_at) as same_call) as m
      cross join lateral (
        select coalesce(x.contact_id = any (array(select jsonb_array_elements_text(coalesce(cfg -> 'test_contacts', '[]'::jsonb)))), false)
@@ -1555,7 +1559,9 @@ begin
 
   -- T. The rooms room.event re-checks (contract-v2 S1 and S4): every room
   -- with a lead that is not final, oldest first, then every final room whose
-  -- lead_in_at or count_undo_at falls in the last hour, newest first; 100 a
+  -- lead_in_at or count_undo_at falls in the last hour, newest first, then
+  -- (every ten minutes) a final room whose count could not book while its
+  -- alert is open, for three days; 100 a
   -- run at most (the tick posts them as kind tick, 50 a post). room.event
   -- moves no timer for them (the sweep owns those): it re-asks a link claimed
   -- and never sent, a count never claimed or stuck, an undo that never
@@ -1571,6 +1577,22 @@ begin
           from public.cockpit_sales_rooms as x
          where x.state = any (finals) and x.contact_id is not null
            and (x.lead_in_at > t - interval '1 hour' or x.count_undo_at > t - interval '1 hour')
+        union all
+        -- A count that could not book (failed or unclear) whose alert still
+        -- asks a person to add the live call by hand: posted every ten
+        -- minutes for the alert's three days, so a call added after the
+        -- first hour is still found and counted (stress2 round 6,
+        -- hand-booked-live-call-after-the-hour-never-copied).
+        select x.id, 2, -extract(epoch from x.lead_in_at)
+          from public.cockpit_sales_rooms as x
+         where x.state = any (finals) and x.contact_id is not null
+           and x.count_result in ('failed', 'unclear')
+           and x.lead_in_at <= t - interval '1 hour' and x.lead_in_at > t - interval '3 days'
+           and (x.count_undo_at is null or x.count_undo_at <= t - interval '1 hour')
+           and extract(minute from t)::integer % 10 = 0
+           and exists (select 1 from public.cockpit_sales_alerts as al
+                        where al.dedupe_key in ('room:' || x.id::text || ':count_failed', 'room:' || x.id::text || ':count_unclear')
+                          and al.resolved_at is null)
       ) as y
       order by y.ord, y.k
       limit 100) as q;
@@ -2168,6 +2190,16 @@ alter table public.cockpit_sales_rooms
 comment on column public.cockpit_sales_rooms.last_link_at is
   'When a later channel sent the link again. R4''s cap and the lead''s ten minutes count from it.';
 
+-- The moment of the call a room followed, when that call carried the
+-- lead's booked intro (stress2 round 6, late-try-room-carries-intro-never-
+-- settled): createRoom judges an intro's room by the missed call it follows,
+-- and the settle (S1's same_call, roomlogic.ts roomForThisStart) now judges
+-- it the same way, never by the press a few seconds later.
+alter table public.cockpit_sales_rooms
+  add column if not exists appointment_call_at timestamptz;
+comment on column public.cockpit_sales_rooms.appointment_call_at is
+  'When the call this intro room followed was placed (createRoom). The settle judges the room by it, else requested_at.';
+
 create or replace function public.cockpit_sales_room_join_stands(p_lead_in_at timestamptz, p_undo_at timestamptz, p_taken_at timestamptz)
 returns boolean
 language sql
@@ -2251,14 +2283,23 @@ begin
     -- and the first device read is kept. A late or repeated open, or 50 at
     -- once, can never undo one; none of them moves the version, so the lead
     -- tapping the link never makes a rep's next press "changed a moment ago".
-    if old.first_open_at is not null then
-      new.first_open_at := least(old.first_open_at, coalesce(new.first_open_at, old.first_open_at));
-    end if;
-    if old.last_open_at is not null then
-      new.last_open_at := greatest(old.last_open_at, coalesce(new.last_open_at, old.last_open_at));
-    end if;
-    if old.open_device is not null then
-      new.open_device := old.open_device;
+    -- A standby room adopted for a lead (a Take) carries no open from before
+    -- it had a lead: nobody was sent its link, so nothing done with its code
+    -- was the lead's (stress2 round 6, standby-open-carried-into-handover).
+    if old.purpose = 'standby' and old.contact_id is null and new.contact_id is not null then
+      new.first_open_at := null;
+      new.last_open_at := null;
+      new.open_device := null;
+    else
+      if old.first_open_at is not null then
+        new.first_open_at := least(old.first_open_at, coalesce(new.first_open_at, old.first_open_at));
+      end if;
+      if old.last_open_at is not null then
+        new.last_open_at := greatest(old.last_open_at, coalesce(new.last_open_at, old.last_open_at));
+      end if;
+      if old.open_device is not null then
+        new.open_device := old.open_device;
+      end if;
     end if;
     if new.state is distinct from old.state then
       if old.state = any (finals) then

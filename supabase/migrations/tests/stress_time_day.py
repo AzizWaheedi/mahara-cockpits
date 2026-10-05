@@ -377,8 +377,11 @@ class Day:
             f"coalesce(({ok}), false), coalesce(({detail})::text, 'nothing'));")
 
     # -- what reps and sales-api do ---------------------------------------------
-    def fallback_room(self, t: datetime, host: str, lead: str, appt: str | None = None) -> None:
-        """rooms.ts room.create after a missed dial (sales-api inserts it requested; the worker makes it)."""
+    def fallback_room(self, t: datetime, host: str, lead: str, appt: str | None = None,
+                      call_at: datetime | None = None) -> None:
+        """rooms.ts room.create after a missed dial (sales-api inserts it requested; the worker makes it).
+        `call_at`: the missed call the room followed, which createRoom stores as appointment_call_at
+        when that call put the room inside the intro's window (20261004a, stress2 round 6)."""
         cols = {"request_id": "gen_random_uuid()", "contact_id": lit(contact(lead)), "purpose": "'fallback'",
                 "trigger": "'no_answer'", "call_kind": "'intro'", "provider": "'zoom'", "host_email": lit(email(host)),
                 "made_by": lit(email(host)), "send_on": "'open'"}
@@ -386,6 +389,8 @@ class Day:
             cols["appointment_id"] = lit(contact(appt))
             cols["appointment_start_at"] = (f"(select a.start_at from pg_temp.cockpit_sales_appointments as a "
                                             f"where a.appointment_id = {lit(contact(appt))})")
+        if call_at is not None:
+            cols["appointment_call_at"] = f"{lit(call_at.isoformat())}::timestamptz"
         self.at(t, f"insert into pg_temp.cockpit_sales_rooms ({', '.join(cols)}) values ({', '.join(cols.values())})")
 
     def host_in(self, t: datetime, host: str) -> None:
