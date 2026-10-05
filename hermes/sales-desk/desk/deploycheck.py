@@ -87,6 +87,11 @@ HARDENING_2_COLUMN = "standby_error"
 HARDENING_2B = ("cockpit_sales_room_hosts", "zoom_capped_until")
 # The event column its fix round 3 adds (an event lease's holder token, which sales-api guards on).
 HARDENING_2C = ("cockpit_sales_room_events", "lease_token")
+# The columns the second series' fix round 5 adds: the taken-back join's own
+# time and the link's last send (rooms), HighLevel asked (messages), and the
+# Approve all request (openers' meta). sales-api, the door and this desk read them.
+HARDENING_2D = (("cockpit_sales_rooms", "taken_back_join_at"), ("cockpit_sales_rooms", "last_link_at"),
+                ("cockpit_sales_messages", "ghl_asked_at"), ("cockpit_sales_followup_meta", "approved_request"))
 
 SETTINGS = ("rooms", "live", "followups", "whatsapp_guard", "threads", "calendars")
 
@@ -298,6 +303,20 @@ def check_database(report: Report, sb: Any) -> dict[str, Any]:
                (f"not applied ({reason}): apply the current 20261004a_live_calls_hardening_2.sql before this "
                 "sales-api is deployed, or a run whose event lease ran out can give back another run's lease"
                 if status in (400, 404) else f"could not be read ({reason or 'no answer'})"))
+    # Its fix round 5: a join before the press stands, the link's later sends, a send HighLevel was never asked.
+    missing, unread = [], ""
+    for table, col in HARDENING_2D:
+        status, _rows, reason = _get(sb, f"{table}?select={col}&limit=1")
+        if status in (400, 404):
+            missing.append(f"{table}.{col}")
+        elif status != 200:
+            unread = reason or "no answer"
+    report.add(sec, "20261004a hardening, round 5", None if unread and not missing else not missing,
+               ("there (" + ", ".join(f"{t}.{c}" for t, c in HARDENING_2D) + ")") if not missing and not unread else
+               (f"not applied ({', '.join(missing)} missing): apply the current 20261004a_live_calls_hardening_2.sql "
+                "before this sales-api, the door and this desk are deployed, or a lead's own join a few seconds "
+                "before That was not the lead is settled as a no-show" if missing else
+                f"could not be read ({unread})"))
     path = "cockpit_sales_settings?select=key,value&key=in.(" + ",".join(SETTINGS) + ")"
     status, rows, reason = _get(sb, path)
     if status != 200 or not isinstance(rows, list):

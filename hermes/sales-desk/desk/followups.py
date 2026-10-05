@@ -1092,7 +1092,7 @@ def live_calls(sb: Any, contacts: Optional[list[str]] = None, *, since: Optional
     that stands with nothing counted at all (stress2 round 4, count-off-
     video-join-invisible-to-desk): rooms.count_on_join off, as it ships, or
     a count still running; the room is the call's only record then."""
-    cols = "select=id,contact_id,call_kind,lead_in_at,count_result,count_appointment_id,count_undo_at"
+    cols = "select=id,contact_id,call_kind,lead_in_at,count_result,count_appointment_id,count_undo_at,taken_back_join_at"
     bound = ""
     if since:
         bound += f"&lead_in_at=gte.{_q(since.isoformat())}"
@@ -1101,7 +1101,12 @@ def live_calls(sb: Any, contacts: Optional[list[str]] = None, *, since: Optional
     queries = [(f"{cols}&lead_in_at=not.is.null&count_result=in.(booked,moved)&count_appointment_id=not.is.null"
                 f"&count_undo_at=is.null{bound}", False)]
     if reached:
-        queries += [(f"{cols}&lead_in_at=not.is.null&count_result=eq.self_reported{bound}", True),
+        # A join whose count could not book (failed: HighLevel refused it, the
+        # seat has no HighLevel user, another rep's call; unclear: its answer
+        # was lost) is still a call the lead had (stress2 round 5,
+        # failed-count-join-invisible-to-desk). It is no booking, so outcomes
+        # (reached=False) never counts it.
+        queries += [(f"{cols}&lead_in_at=not.is.null&count_result=in.(self_reported,failed,unclear){bound}", True),
                     (f"{cols}&lead_in_at=not.is.null&count_result=is.null&count_appointment_id=not.is.null{bound}", True),
                     (f"{cols}&lead_in_at=not.is.null&count_result=is.null&count_appointment_id=is.null{bound}", True)]
     rows: list[tuple[dict[str, Any], bool]] = []
@@ -1117,9 +1122,12 @@ def live_calls(sb: Any, contacts: Optional[list[str]] = None, *, since: Optional
         if kind not in ("intro", "demo") or not r.get("contact_id"):
             continue
         if uncounted:
-            # The join stands only when "That was not the lead" did not take it back.
+            # The join stands only when "That was not the lead" did not take it
+            # back: after the taken-back join's own time (20261004a), else the press.
             joined, undo = _ts(r.get("lead_in_at")), _ts(r.get("count_undo_at"))
-            if joined is None or (undo is not None and joined <= undo):
+            taken = _ts(r.get("taken_back_join_at"))
+            bound = None if undo is None else (min(taken, undo) if taken is not None else undo)
+            if joined is None or (bound is not None and joined <= bound):
                 continue
         appt = str(r.get("count_appointment_id") or "") or f"room:{r.get('id')}"
         out.append({"appointment_id": appt, "contact_id": str(r["contact_id"]),
@@ -1134,9 +1142,14 @@ def live_calls(sb: Any, contacts: Optional[list[str]] = None, *, since: Optional
 
 def with_live(calendar: list[dict[str, Any]], live: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """The calendar copy and the live calls together; a moved call the copy
-    already holds (the same appointment id) is kept once, as the copy has it."""
+    already holds (the same appointment id) is kept once, as the copy has it.
+    A live booking's own copy (rooms.ts copyLiveBooking, on the live calendar)
+    keeps the live mark, so it reads as the live call it is (stress2 round 5)."""
     seen = {str(a.get("appointment_id")) for a in calendar}
-    return calendar + [a for a in live if str(a.get("appointment_id")) not in seen]
+    booked_live = {str(a.get("appointment_id")) for a in live if not a.get("moved")}
+    marked = [({**a, "live": True} if str(a.get("appointment_id")) in booked_live and not a.get("live") else a)
+              for a in calendar]
+    return marked + [a for a in live if str(a.get("appointment_id")) not in seen]
 
 
 # The lead's time zone by the ISO country code the lead copy keeps (about 250
@@ -2565,6 +2578,11 @@ def run(sb: Any, provider: Any, log: Callable[[str], None], *, settings: dict[st
                 continue
             try:
                 out = autosend(new_id)
+                if not out.get("ok") and str(out.get("code") or "") == "not_sent_yet":
+                    # Nothing went (HighLevel or the database did not answer
+                    # before the message row; stress2 round 5): asked once
+                    # more, so a blip never leaves the draft to a person.
+                    out = autosend(new_id)
                 if out.get("ok"):
                     sent_auto += 1
                 else:

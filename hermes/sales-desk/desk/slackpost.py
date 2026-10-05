@@ -223,7 +223,24 @@ class SlackPoster:
             return self._close(e, {"refused": "no_slack_user"}, "refused")
         if not text:
             return self._close(e, {"refused": "no_text"}, "refused")
+        # An earlier run asked Slack and could not record the answer (its
+        # handled mark lost to the database for the rest of its minute):
+        # Slack may have posted it, so it is closed as unclear, never posted
+        # a second time (stress2 round 5, a DM Slack took posted again).
+        if detail.get("slack_asked_at"):
+            return self._close(e, {"unclear": "an earlier run asked Slack and its answer was not recorded"}, "unclear")
         if not self._lease(e):
+            return False
+        # Stamped before Slack is asked: a run that cannot record the answer
+        # leaves this behind, so the next run never asks again. Not stamped:
+        # nothing is asked, and the lease runs out.
+        try:
+            self.sb.rest("PATCH", self._where(e), prefer="return=minimal",
+                         json_body={"detail": {**detail, "slack_asked_at": iso(self.clock())}})
+            e["detail"] = {**detail, "slack_asked_at": iso(self.clock())}
+        except (SupabaseError, http.HttpError) as err:
+            self.read_error = db_reason(err)
+            self._warn_once("stamp", f"slack: a reply could not be stamped before its post, so it waits: {self.read_error}")
             return False
         try:
             _s_, data = self.send("POST", POST_URL, headers={"Authorization": f"Bearer {self.token}"},
@@ -288,7 +305,13 @@ class SlackPoster:
         return f"{EVENTS}?dedupe_key=eq.{http.quote(e['dedupe_key'])}&handled_at=is.null"
 
     def _release(self, e: dict[str, Any], *, bump: bool) -> None:
+        """The lease back, after a send that certainly did not post (a 429,
+        a gateway's outage, a bad token, the run's time): its stamp goes too,
+        so the next run asks Slack again."""
         body: dict[str, Any] = {"lease_until": None}
+        detail = e.get("detail") if isinstance(e.get("detail"), dict) else {}
+        if "slack_asked_at" in detail:
+            body["detail"] = {k: v for k, v in detail.items() if k != "slack_asked_at"}
         if bump:
             body.update({"tries": int(e.get("tries") or 0) + 1, "last_try_at": iso(self.clock())})
         try:

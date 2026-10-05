@@ -289,7 +289,11 @@ def pool_of(lead: dict[str, Any], calls: list[dict[str, Any]], dealt: bool, now:
         return None
     if last.get("call_type") == "demo":
         cals = DEMO_CALENDARS if demo_cals is None else demo_cals
-        if str(last.get("calendar_id") or "") not in cals:
+        # A demo held live (a closer's video call the count booked on the live
+        # calendar, never one of B2B's) is a demo too (stress2 round 5,
+        # live-demo-not-closed-in-no-pool).
+        live = bool(last.get("live")) or str(last.get("calendar_id") or "") == fu.LIVE_CALENDAR
+        if str(last.get("calendar_id") or "") not in cals and not live:
             return None
         return "unclosed_demo", fu._ts(last["start_at"])
     if any(a.get("call_type") == "demo" and fu._ts(a["start_at"]) > fu._ts(last["start_at"]) for a in mine):
@@ -621,7 +625,12 @@ def _maybe_went(f: dict[str, Any], msgs: list[dict[str, Any]]) -> Optional[str]:
            and (m.get("ghl_message_id") or str(m.get("state") or "") in ("sent", "delivered", "read")
                 or str(m.get("provider_status") or "").lower() == "enrolled") for m in msgs):
         return "sent"
-    if any(str(m.get("state") or "") in ("sending", "unclear") for m in msgs):
+    # A row still "sending" that HighLevel was never asked about (no
+    # ghl_asked_at, 20261004a: its slot's answer was lost) never went
+    # (stress2 round 5).
+    if any(str(m.get("state") or "") == "unclear"
+           or (str(m.get("state") or "") == "sending" and not ("ghl_asked_at" in m and not m.get("ghl_asked_at")))
+           for m in msgs):
         return "unclear"
     if MAY_HAVE_GONE.search(str(f.get("error") or "")):
         return "unclear"
@@ -660,7 +669,7 @@ def sync(sb: Any, wave_ids: list[str], now: datetime) -> dict[str, int]:
                 held_by_person[str(x["followup_id"])] = x
     msgs: dict[str, list[dict[str, Any]]] = {}
     for chunk in fu._chunks(failed_ids):
-        for m in sb.select(MESSAGES, "select=followup_id,state,provider_status,ghl_message_id,created_at,error"
+        for m in sb.select(MESSAGES, "select=*"
                                      f"&followup_id={fu._in(chunk)}&limit=1000"):
             msgs.setdefault(str(m.get("followup_id") or ""), []).append(m)
     moved: dict[str, list[str]] = {}
@@ -803,7 +812,7 @@ def _sent_then_failed(sb: Any, wave_ids: list[str], now: datetime, out: dict[str
         return
     msgs: dict[str, list[dict[str, Any]]] = {}
     for chunk in fu._chunks(sorted(failed)):
-        for m in sb.select(MESSAGES, "select=followup_id,state,provider_status,ghl_message_id,error,created_at"
+        for m in sb.select(MESSAGES, "select=*"
                                      f"&followup_id={fu._in(chunk)}&limit=1000"):
             msgs.setdefault(str(m.get("followup_id") or ""), []).append(m)
     for fid, f in failed.items():
@@ -1057,11 +1066,23 @@ def settle(sb: Any, done: list[dict[str, Any]], now: datetime) -> list[str]:
 # One opener
 # ---------------------------------------------------------------------------
 
+def last_spoke(sb: Any, contact: str) -> Optional[datetime]:
+    """When a rep and the lead last spoke on the phone: their newest completed
+    dial (cockpit_sales_dials, either direction). Phone calls never appear in
+    HighLevel's conversations, so the waves read them here (stress2 round 5,
+    completed-dial-ignored-opener-lands-on-top-of-a-call). A read that fails
+    raises: the caller waits, never sends on a guess."""
+    rows = sb.select("cockpit_sales_dials", f"select=occurred_at&contact_id=eq.{_q(contact)}&state=eq.completed"
+                                            "&order=occurred_at.desc&limit=1")
+    return fu._ts((rows[0] if rows else {}).get("occurred_at"))
+
+
 def opener_for(lead: dict[str, Any], person: dict[str, Any], thread: list[dict[str, Any]],
                routes: dict[str, dict[str, Any]], owner: Optional[dict[str, Any]], now: datetime, *,
                stop_rows: Optional[dict[str, Any]] = None, pause_days: int = fu.STOP_PAUSE_DAYS,
                gap_hours: float = 20, added_at: Optional[datetime] = None, test: bool = False,
-               inbox_rows: Optional[list[dict[str, Any]]] = None) -> dict[str, Any]:
+               inbox_rows: Optional[list[dict[str, Any]]] = None,
+               spoke_at: Optional[datetime] = None) -> dict[str, Any]:
     """Whether this lead gets the opener now, and its words: {"ok": True,
     route, text, language}, or {"exclude": why} (out of the wave for good),
     or {"later": why, "until": when} (looked at again then). `test` drafts
@@ -1102,6 +1123,10 @@ def opener_for(lead: dict[str, Any], person: dict[str, Any], thread: list[dict[s
                    and fu._ts(m.get("at"))), default=None)
     if by_hand and now - by_hand < fu.GAP:
         return {"later": "Someone wrote to them from HighLevel lately.", "until": by_hand + fu.GAP}
+    # A rep spoke to them on the phone lately (a completed dial): no opener
+    # lands on top of the call, as the drafter keeps them out (spec P3 3.2).
+    if spoke_at and now - spoke_at < fu.GAP:
+        return {"later": "A rep spoke to them on the phone lately.", "until": spoke_at + fu.GAP}
     language = fu.language_for(lead, thread)
     route = routes.get(language)
     if not route:
@@ -1290,10 +1315,27 @@ def draft_day(sb: Any, now: datetime, *, settings: dict[str, Any], w: dict[str, 
     room = int(w["per_day"]) - len(today)
     if room <= 0:
         return {**out, "waiting": f"Today's {w['per_day']} openers are written. The next batch is tomorrow."}
+    # No more openers than the month's budget has templates left for, less
+    # the openers already written and not sent (stress2 round 5): one that
+    # could not go this month would hold its lead's one open draft until it
+    # went stale.
+    left = templates_left(sb, guard, now)
+    try:
+        waiting_openers = len(sb.select(FOLLOWUPS, "select=id&segment=eq.reactivate&status=eq.draft"
+                                                   "&channel=eq.whatsapp_template&limit=1000"))
+    except http.HttpError as e:
+        return {**out, "waiting": f"The openers waiting to go could not be read ({http.scrub(str(e))[:120]}); the next "
+                                  "run writes the batch."}
+    budget_room = None if left is None else left - waiting_openers
+    if budget_room is not None:
+        room = min(room, budget_room)
+        if room <= 0:
+            return {**out, "waiting": "This month's WhatsApp template budget has room only for the openers already "
+                                      "written, so no new one is written until they go or next month."}
     ctx = {"owners": _owners(sb), "routes": routes, "ghl_token": ghl_token, "levels": levels,
            "pause_days": int(settings.get("stop_pause_days", fu.STOP_PAUSE_DAYS) or fu.STOP_PAUSE_DAYS),
            "gap_hours": float(settings.get("automation_gap_hours", 20)),
-           "windows": sequence_windows(settings)}
+           "windows": sequence_windows(settings), "budget_room": budget_room}
     try:
         leased = _take_lease(sb, DRAFT_LEASE, now, DRAFT_LEASE_S)
     except http.HttpError as e:
@@ -1322,6 +1364,10 @@ def _draft_waves(sb: Any, running: list[dict[str, Any]], room: int, by_wave: dic
     room = int(w["per_day"]) - len(today)
     if room <= 0:
         return {**out, "waiting": f"Today's {w['per_day']} openers are written. The next batch is tomorrow."}
+    if ctx.get("budget_room") is not None:
+        room = min(room, int(ctx["budget_room"]))
+        if room <= 0:
+            return out
     for wave in running:
         wid = str(wave["id"])
         # A wave started at 0 openers a day writes none (0 is a number, not "unset").
@@ -1522,8 +1568,17 @@ def _draft_wave(sb: Any, wave: dict[str, Any], wave_room: int, now: datetime, ct
                                                          f"last_type&contact_id=eq.{_q(c)}&limit=20")
             except Exception:  # noqa: BLE001 - the thread itself is the first source
                 inbox = []
+            try:
+                spoke = last_spoke(sb, c)
+            except Exception as e:  # noqa: BLE001 - unread is never "nobody called": tried again within the hour
+                out["unreadable"] += 1
+                _move(sb, wid, c, "waiting", {"next_try_at": (now + LATER["unreadable"]).isoformat(),
+                                              "later_reason": "The lead's calls could not be read."})
+                warn(f"waves: {c} waits: the lead's calls could not be read ({http.scrub(str(e))[:120]})")
+                continue
             o = opener_for(lead, person, thread, routes, owner, now, stop_rows=stop_rows, pause_days=ctx["pause_days"],
-                           gap_hours=ctx["gap_hours"], added_at=fu._ts(m.get("added_at")), inbox_rows=inbox)
+                           gap_hours=ctx["gap_hours"], added_at=fu._ts(m.get("added_at")), inbox_rows=inbox,
+                           spoke_at=spoke)
             if o.get("exclude"):
                 exclude(o["exclude"])
                 continue
@@ -1615,6 +1670,10 @@ def stamp_twins(sb: Any, wid: str) -> int:
             sb.rest("PATCH", f"{MEMBERS}?wave_id=eq.{_q(wid)}&arm=eq.holdout&state=eq.held_out&due_at=is.null"
                              f"&contact_id={fu._in(chunk)}", json_body={"due_at": due}, prefer="return=minimal")
             n += len(chunk)
+            # Every write leaves an audit row: this one moves the held-back
+            # arm's comparison (stress2 round 5).
+            audit(sb, "followup.wave.holdout_stamped", "cockpit_sales_followup_waves", wid,
+                  after={"due_at": due, "members": len(chunk)}, metadata={"contacts": chunk[:50]})
     return n
 
 
@@ -1683,8 +1742,13 @@ def _silent_workflow(sb: Any, now: datetime, token: Optional[str] = None) -> Opt
     job's reconcile does at :07 and :37, which the batch never waits for),
     and only those older than SILENT_GRACE count; a conversation that cannot
     be read leaves its opener unseen (missing is never zero)."""
-    rows = sb.select(MESSAGES, f"select=id,contact_id,body,state,provider_status,error,created_at&sent_by=eq.{DESK}"
-                               f"&via=eq.workflow&followup_id=not.is.null&order=created_at.desc&limit={SILENT_RUN + 3}")
+    # The opener templates' own sends only (stress2 round 5): the agent's other
+    # templates (no-show, new lead) go through workflows of their own, and a
+    # broken one of those never holds the openers in the openers' name.
+    rows = sb.select(MESSAGES, f"select=id,contact_id,body,state,provider_status,error,created_at,template_key"
+                               f"&sent_by=eq.{DESK}&via=eq.workflow&followup_id=not.is.null"
+                               f"&order=created_at.desc&limit=50")
+    rows = [r for r in rows if not r.get("template_key") or r.get("template_key") in OPENERS.values()][:SILENT_RUN + 3]
 
     def enrolled(r: dict[str, Any]) -> bool:
         return str(r.get("state") or "") == "sent" and str(r.get("provider_status") or "").lower() == "enrolled"
@@ -1725,6 +1789,20 @@ def template_budget(sb: Any, guard: Optional[dict[str, Any]], now: datetime) -> 
     through a workflow and not failed, as sales-api counts its daily
     ceiling) at the rate given, Meta's marketing rate in Kuwait when none
     is. Unreadable is not zero: the templates wait."""
+    return _template_spend(sb, guard, now)[0]
+
+
+def templates_left(sb: Any, guard: Optional[dict[str, Any]], now: datetime) -> Optional[int]:
+    """How many more WhatsApp templates this month's budget pays for (0 when
+    spent), or None when the spend could not be read."""
+    why, left = _template_spend(sb, guard, now)
+    if left is None:
+        return None if why else 0
+    return left
+
+
+def _template_spend(sb: Any, guard: Optional[dict[str, Any]], now: datetime) -> tuple[Optional[str], Optional[int]]:
+    """(why no template may go, or None; templates left, or None unread)."""
     g = guard if isinstance(guard, dict) else {}
 
     def num(k: str, default: float) -> float:
@@ -1748,12 +1826,13 @@ def template_budget(sb: Any, guard: Optional[dict[str, Any]], now: datetime) -> 
                 break
             offset += 1000
     except Exception as e:  # noqa: BLE001 - said, and the templates wait
-        return f"This month's WhatsApp template spend could not be read ({http.scrub(str(e))[:120]}), so templates wait."
+        return (f"This month's WhatsApp template spend could not be read ({http.scrub(str(e))[:120]}), so templates wait.",
+                None)
     if n >= cap:
-        return (f"This month's WhatsApp template budget is spent: about ${n * rate:.0f} of ${budget:.0f} "
-                f"({n} templates at about ${rate:g} each, an estimate). A manager raises "
-                "whatsapp_guard.template_budget_usd_month, or templates wait for next month.")
-    return None
+        return ((f"This month's WhatsApp template budget is spent: about ${n * rate:.0f} of ${budget:.0f} "
+                 f"({n} templates at about ${rate:g} each, an estimate). A manager raises "
+                 "whatsapp_guard.template_budget_usd_month, or templates wait for next month."), 0)
+    return None, cap - n
 
 
 def send_due(sb: Any, api: Callable[[str, dict[str, Any]], tuple[int, dict[str, Any]]], *, settings: dict[str, Any],
@@ -1860,6 +1939,9 @@ def send_due(sb: Any, api: Callable[[str, dict[str, Any]], tuple[int, dict[str, 
             try:
                 sb.rest("PATCH", f"{FOLLOWUPS}?id=eq.{_q(fid)}&status=eq.draft", prefer="return=minimal",
                         json_body={"expires_at": keep.isoformat()})
+                # The expiry this run just moved is the one its stale check
+                # reads (stress2 round 5): never closed as stale on the old one.
+                fups[fid]["expires_at"] = keep.isoformat()
             except http.HttpError as e:
                 warn(f"waves: {fid}'s expiry was not moved ({http.scrub(str(e))[:120]})")
     countries: dict[str, Any] = {}
@@ -1935,6 +2017,26 @@ def send_due(sb: Any, api: Callable[[str, dict[str, Any]], tuple[int, dict[str, 
         if not sb.select(FOLLOWUPS, f"select=id&id=eq.{_q(fid)}&status=eq.draft&limit=1"):
             out["gone"] += 1  # sent, skipped or expired meanwhile (another run, a rep)
             return True
+        if f.get("segment") == "reactivate":
+            # A rep and the lead spoke on the phone since (a completed dial,
+            # either way; stress2 round 5): the opener waits out the gap in
+            # the queue, as for a message by hand. Unread: it waits.
+            try:
+                spoke = last_spoke(sb, c)
+            except Exception as e:  # noqa: BLE001 - unreadable: it waits, never goes on a guess
+                warn(f"waves: {fid} waits: the lead's calls could not be read ({http.scrub(str(e))[:120]})")
+                unread("the lead's calls could not be read")
+                return True
+            if spoke and now - spoke < fu.GAP:
+                until = spoke + fu.GAP
+                try:
+                    sb.rest("PATCH", f"{META}?followup_id=eq.{_q(fid)}&held_by=is.null", prefer="return=minimal",
+                            json_body={"send_after": until.isoformat()})
+                except http.HttpError as e:
+                    warn(f"waves: {fid}'s send was not put off ({http.scrub(str(e))[:120]})")
+                out["put_off"] = out.get("put_off", 0) + 1
+                log(f"waves: {fid} waits until {until.isoformat()}: a rep spoke to the lead on the phone lately")
+                return True
         if f.get("segment") == "reactivate" and ghl_token is not None:
             # run() always passes the key as read ("" when it is not set);
             # None is only a caller that wires no HighLevel reads (the send's
@@ -2029,6 +2131,13 @@ def send_due(sb: Any, api: Callable[[str, dict[str, Any]], tuple[int, dict[str, 
         fid = str(m["followup_id"])
         f = fups[fid]
         now = clock()
+        # The run's time budget before each opener's checks (stress2 round 5,
+        # send-run-ignores-budget-while-highlevel-times-out): a HighLevel read
+        # that runs to its timeout costs a minute, so the run stops while it
+        # still has its 20 s for the row, and the next run carries on.
+        if (now - started).total_seconds() + 20 > budget_s:
+            stop("time", "This run's time is up; the next run carries on.")
+            break
         channel = str(f.get("channel") or "")
         if channel.startswith("whatsapp") and gate:
             out["gate"] += 1

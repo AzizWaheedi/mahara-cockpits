@@ -201,6 +201,12 @@ HOLD_RECHECK_S = 60.0
 START_URL_TTL = 7200.0    # Zoom's start_url lasts two hours for a regular user
 HOSTS_EVERY = 600.0
 HOSTS_BUDGET = 240.0      # the host check's own time limit
+# A participant report Zoom says does not exist is "never held, nobody
+# joined" only this long after the room ended (stress2 round 5): Zoom builds
+# it some minutes after a meeting ends, and a held meeting may still run.
+REPORT_GONE_AFTER_S = 2 * 3600
+# ...or this long once the worker closed the meeting itself (worker.closing).
+REPORT_DELAY_S = 30 * 60
 REPORT_WINDOW_S = 24 * 3600.0
 REPORT_PER_RUN = 10
 
@@ -412,8 +418,12 @@ def conference_state(event: dict[str, Any]) -> tuple[str, str, str]:
     return status, link, str(conf.get("conferenceId") or "")
 
 
-def zoom_seat_status(user: dict[str, Any]) -> str:
-    """licensed, basic, pending or missing, from Zoom's user record."""
+def zoom_seat_status(user: dict[str, Any]) -> Optional[str]:
+    """licensed, basic, pending or missing, from Zoom's user record; None for
+    a record that says neither its status nor its type (no answer about the
+    seat, stress2 round 5)."""
+    if not isinstance(user, dict) or (user.get("status") in (None, "") and user.get("type") in (None, "")):
+        return None
     status = str(user.get("status") or "").lower()
     if status == "pending":
         return "pending"
@@ -649,6 +659,15 @@ class Breaker:
         self.fails = []
 
 
+def _page(page: Any, where: str, what: str, need: str = "") -> dict[str, Any]:
+    """A list page a provider answered: a JSON object (with `need` in it when
+    given), else ProviderError(0), unclear, so the last known value stays
+    (stress2 round 5: a text page or an empty 200 is no list)."""
+    if not isinstance(page, dict) or (need and not isinstance(page.get(need), list)):
+        raise ProviderError(0, f"{what} could not be read", where=where)
+    return page
+
+
 def _parse(raw: bytes) -> Any:
     if not raw:
         return None
@@ -833,9 +852,15 @@ class Zoom:
         raise ProviderError(401, "Zoom refused the app's token twice", where="api.zoom.us")
 
     def user(self, who: str) -> dict[str, Any]:
-        """A user by email or by Zoom user id."""
+        """A user by email or by Zoom user id. An answer that is not a user
+        record (an empty 200, a proxy's page, a record with no id, status or
+        type) is no answer about the seat (stress2 round 5,
+        zoom-user-garbage-read-as-missing): unclear, so the last known status
+        stays and a create reads it as Zoom not answering, never "no user"."""
         out = self.call("GET", f"/users/{_qe(who)}")
-        return out if isinstance(out, dict) else {}
+        if not isinstance(out, dict) or not any(out.get(k) not in (None, "") for k in ("id", "status", "type")):
+            raise ProviderError(0, "Zoom's answer about the user could not be read", where="api.zoom.us")
+        return out
 
     def pending_emails(self) -> set[str]:
         """Who has a Zoom invite not yet accepted. A pending user may not be
@@ -844,7 +869,8 @@ class Zoom:
         out: set[str] = set()
         token = None
         for _ in range(5):
-            page = self.call("GET", "/users", query={"status": "pending", "page_size": 300, "next_page_token": token})
+            page = _page(self.call("GET", "/users", query={"status": "pending", "page_size": 300, "next_page_token": token}),
+                         "api.zoom.us", "Zoom's list of pending users")
             for u in (page or {}).get("users") or []:
                 if isinstance(u, dict) and u.get("email"):
                     out.add(str(u["email"]).strip().lower())
@@ -857,8 +883,9 @@ class Zoom:
         out: list[dict[str, Any]] = []
         token = None
         for _ in range(3):
-            page = self.call("GET", f"/users/{_qe(user)}/meetings",
-                             query={"type": kind, "page_size": 300, "next_page_token": token})
+            page = _page(self.call("GET", f"/users/{_qe(user)}/meetings",
+                                   query={"type": kind, "page_size": 300, "next_page_token": token}),
+                         "api.zoom.us", "Zoom's meeting list")
             out.extend(m for m in (page or {}).get("meetings") or [] if isinstance(m, dict))
             token = (page or {}).get("next_page_token")
             if not token:
@@ -1001,9 +1028,13 @@ class Google:
         out: list[dict[str, Any]] = []
         token = None
         for _ in range(5):
-            page = self.call("GET", "users/me/calendarList",
-                             query={"minAccessRole": "owner", "maxResults": 250, "showHidden": "true",
-                                    "pageToken": token})
+            # An empty 200 or a page with no list in it is no answer: never
+            # "no Sales rooms calendar", which would make a second one on the
+            # CEO's account (stress2 round 5).
+            page = _page(self.call("GET", "users/me/calendarList",
+                                   query={"minAccessRole": "owner", "maxResults": 250, "showHidden": "true",
+                                          "pageToken": token}),
+                         "www.googleapis.com", "Google's calendar list", need="items")
             out.extend(c for c in (page or {}).get("items") or [] if isinstance(c, dict))
             token = (page or {}).get("nextPageToken")
             if not token:
@@ -1669,7 +1700,8 @@ class Worker:
             try:
                 user = self.zoom.user(linked)
                 status = zoom_seat_status(user)
-                self._users[cache] = (self.clock(), user, status)
+                if status is not None:
+                    self._users[cache] = (self.clock(), user, status)
                 return user, status
             except ProviderError as err:
                 if err.unclear or err.status == 429:
@@ -1693,7 +1725,8 @@ class Worker:
                 return None, None
             else:
                 raise
-        self._users[cache] = (self.clock(), user, status)
+        if status is not None:
+            self._users[cache] = (self.clock(), user, status)
         return user, status
 
     def _host_room_meetings(self, host: str) -> set[str]:
@@ -3256,7 +3289,7 @@ class Worker:
             events: list[dict[str, Any]] = []
             if rows:
                 events = self.sb.select(EVENTS, f"select=room_id,kind,detail&room_id=in.{_in([str(r['id']) for r in rows])}"
-                                                "&kind=in.(worker.closing,report.checked)&limit=200")
+                                                "&kind=in.(worker.closing,worker.held,report.checked)&limit=200")
         except TimeUp:
             return False, ["Zoom participant reports: not checked, the check ran out of time."]
         except (SupabaseError, http.HttpError) as e:
@@ -3266,9 +3299,11 @@ class Worker:
         done = {str(e.get("room_id")) for e in events if e.get("kind") == "report.checked"}
         uuids = {str(e.get("room_id")): (e.get("detail") or {}).get("meeting_uuid")
                  for e in events if e.get("kind") == "worker.closing"}
+        held = {str(e.get("room_id")) for e in events if e.get("kind") == "worker.held"}
+        closing = {str(e.get("room_id")) for e in events if e.get("kind") == "worker.closing"}
         ids, emails = self._staff()
         ids = ids | set(seat_ids or ())
-        checked, unread, bad = 0, 0, []
+        checked, unread, waiting, bad = 0, 0, 0, []
         why = ""
         for r in [r for r in rows if str(r["id"]) not in done][:REPORT_PER_RUN]:
             rid = str(r["id"])
@@ -3277,6 +3312,18 @@ class Worker:
                 people = self.zoom.past_participants(ref)
             except ProviderError as e:
                 if e.gone:
+                    # Zoom has a report only once the meeting is over, and
+                    # builds it some minutes after (stress2 round 5,
+                    # zoom-report-not-ready-read-as-nobody-joined): a meeting
+                    # still running (the worker holds it open) or ended
+                    # lately is left unchecked and read again later. Only a
+                    # meeting known closed, past the report's delay, was never
+                    # held, so nobody joined.
+                    ended = parse_ts(r.get("ended_at"))
+                    wait = REPORT_DELAY_S if rid in closing else REPORT_GONE_AFTER_S
+                    if ended is None or now - ended < wait or (rid in held and rid not in closing):
+                        waiting += 1
+                        continue
                     people = []  # never held, so nobody joined
                 else:
                     unread += 1
@@ -3297,10 +3344,15 @@ class Worker:
                 bad.append(code)
                 self._alert(f"room_report:{rid}", "room_report", f"Room {code}",
                             f"Room {code}: {said}. Check the room's joins.", {"room_id": rid, "code": code})
-        if not checked and not unread:
+        if not checked and not unread and not waiting:
             return True, ["Zoom participant reports: every Zoom room that ended in the last day is checked."]
+        if not checked and not unread:
+            return True, [f"Zoom participant reports: {_s(waiting, 'report')} not built by Zoom yet; "
+                          "checked again in ten minutes."]
         line = f"Zoom participant reports: {_s(checked, 'room')} checked"
         line += (f", {len(bad)} not matching the cockpit ({', '.join(bad)})." if bad else ", all matching the cockpit.")
+        if waiting:
+            line += f" {_s(waiting, 'report')} not built by Zoom yet, checked again in ten minutes."
         if unread:
             line += (f" {_s(unread, 'report')} could not be read ({why}); "
                      f"{'it is' if unread == 1 else 'they are'} tried again in ten minutes.")

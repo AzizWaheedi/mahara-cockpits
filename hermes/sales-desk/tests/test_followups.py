@@ -691,6 +691,22 @@ class RunGuards(unittest.TestCase):
         self.assertEqual((out["written"], out["sent_by_itself"]), (1, 0))
         self.assertEqual(warned, ["followups: a kept for a person: It is night where the lead is."])
 
+    def test_a_send_that_stopped_before_anything_went_is_asked_once_more(self):
+        """Fix round 5 (not-sent-yet-sets-opener-aside): sales-api's 503
+        not_sent_yet (HighLevel or the database did not answer before the
+        message row) is asked again at once, never left to a person."""
+        pg = FakePostgrest()
+        self.seed_new_lead(pg)
+        pg.put("cockpit_sales_inbox", {"conversation_id": "cv1", "contact_id": "a", "last_direction": "inbound",
+                                       "last_message_at": ago(hours=1), "inbound_whatsapp_at": ago(hours=1)})
+        draft = json.dumps({"body": "Hi Omar, here is the link.", "subject": None, "why": "He asked."})
+        answers = [{"ok": False, "code": "not_sent_yet", "error": "Not sent: try again in a minute."}, {"ok": True}]
+        asked: list[str] = []
+        out, warned = run_it(pg, provider=FakeProvider([draft]), settings=settings_on(autosend={"reply": True}),
+                             guard=GATE_OPEN, autosend=lambda i: (asked.append(i) or answers.pop(0)))
+        self.assertEqual((out["written"], out["sent_by_itself"], len(asked)), (1, 1, 2))
+        self.assertEqual(warned, [])
+
 
 class Closing(unittest.TestCase):
     """Drafts whose reason has gone, sends that stopped halfway, and sends that settle later."""

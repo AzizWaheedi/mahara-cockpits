@@ -288,11 +288,19 @@ class ParticipantReport(RoomsCase):
         self.room(3, lead_in=False, code="NONE03", people=None)  # never started: no report at all
         out = self.env.worker().check_hosts()
         line = out["lines"][-1]
-        self.assertEqual(line, "Zoom participant reports: 3 rooms checked, 1 not matching the cockpit (MISS01).")
+        # Fix round 5: Zoom's "no such meeting" ten minutes after the close is
+        # a report not built yet, read again later, never "nobody joined".
+        self.assertEqual(line, "Zoom participant reports: 2 rooms checked, 1 not matching the cockpit (MISS01). "
+                               "1 report not built by Zoom yet, checked again in ten minutes.")
         self.assertIs(out["ok"], False)
         self.assertIsNotNone(self.env.pg.one(rooms.ALERTS, dedupe_key=f"room_report:{rid(1)}"))
         self.assertEqual(self.env.pg.one(rooms.EVENTS, dedupe_key=f"report.checked:{rid(1)}")["detail"]["match"], False)
         self.assertEqual(self.env.pg.one(rooms.EVENTS, dedupe_key=f"report.checked:{rid(2)}")["detail"]["match"], True)
+        self.assertIsNone(self.env.pg.one(rooms.EVENTS, dedupe_key=f"report.checked:{rid(3)}"))
+        # Half an hour after the worker closed it, still no report: never held, nobody joined.
+        self.env.clock.advance(rooms.REPORT_DELAY_S)
+        later = self.env.worker("run-c").check_hosts()
+        self.assertEqual(later["lines"][-1], "Zoom participant reports: 1 room checked, all matching the cockpit.")
         # Each room once.
         again = self.env.worker("run-b").check_hosts()
         self.assertEqual(again["lines"][-1],
