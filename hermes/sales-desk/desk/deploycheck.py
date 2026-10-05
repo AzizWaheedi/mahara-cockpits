@@ -85,6 +85,8 @@ HARDENING_COLUMNS = (HARDENING_COLUMN, "lead_in_seen_at")
 HARDENING_2_COLUMN = "standby_error"
 # The host column its fix round 2 adds (Zoom's daily cap, which the room worker writes).
 HARDENING_2B = ("cockpit_sales_room_hosts", "zoom_capped_until")
+# The event column its fix round 3 adds (an event lease's holder token, which sales-api guards on).
+HARDENING_2C = ("cockpit_sales_room_events", "lease_token")
 
 SETTINGS = ("rooms", "live", "followups", "whatsapp_guard", "threads", "calendars")
 
@@ -289,6 +291,13 @@ def check_database(report: Report, sb: Any) -> dict[str, Any]:
                (f"not applied ({reason}): apply the current 20261004a_live_calls_hardening_2.sql before this desk "
                 "is deployed, or a Zoom room past the day's cap is said as Zoom not answering" if status in (400, 404)
                 else f"could not be read ({reason or 'no answer'})"))
+    # Its fix round 3: an event lease carries its holder's token.
+    status, _rows, reason = _get(sb, f"{HARDENING_2C[0]}?select={HARDENING_2C[1]}&limit=1")
+    report.add(sec, "20261004a hardening, round 3", status == 200 if status in (200, 400, 404) else None,
+               f"there ({HARDENING_2C[0]}.{HARDENING_2C[1]})" if status == 200 else
+               (f"not applied ({reason}): apply the current 20261004a_live_calls_hardening_2.sql before this "
+                "sales-api is deployed, or a run whose event lease ran out can give back another run's lease"
+                if status in (400, 404) else f"could not be read ({reason or 'no answer'})"))
     status, rows, reason = _get(sb, "cockpit_sales_settings?select=key,value&key=in.("
                                     + ",".join(SETTINGS) + ")")
     if status != 200 or not isinstance(rows, list):
