@@ -138,6 +138,11 @@ ship() {
   local -a vercel_cli=(bunx vercel)
   command -v vercel >/dev/null 2>&1 && vercel_cli=(vercel)
   if (cd "$dir" && "${vercel_cli[@]}" whoami ${tok[@]+"${tok[@]}"} >/dev/null 2>&1); then
+    # Without the app's link the CLI makes a new project named after the
+    # folder and deploys there; the site keeps the old bundle (2026-10-05, a
+    # fresh worktree made client-success-cockpit beside mahara-client-success).
+    # The Composio path refuses the same way.
+    [ -f "$dir/.vercel/project.json" ] || { echo "$dir is not linked to a Vercel project (.vercel/project.json missing): copy it from a linked checkout"; exit 1; }
     out=$(cd "$dir" && "${vercel_cli[@]}" deploy --prod --yes --force ${tok[@]+"${tok[@]}"} 2>&1) || { echo "$out" | tail -20; echo "vercel deploy failed for $app"; exit 1; }
   else
     # No Vercel login on this Mac (2026-09-20): the same source goes up
