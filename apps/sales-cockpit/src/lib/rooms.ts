@@ -23,7 +23,15 @@ import {
 } from "react";
 import { api } from "./api";
 import { ApiError, type ApiFailure, uncertain } from "./apiErrors";
+import {
+  CLAIM_MINUTE_STEP_MS,
+  MAKING_LATE_STEP_MS,
+  mayHaveGone,
+  movedByEmailOnly,
+} from "./dialerUi";
 import { clock, KUWAIT } from "./format";
+
+export { mayHaveGone, movedByEmailOnly };
 
 // ---------------------------------------------------------------------------
 // The contract: what sales-api sends the browser
@@ -128,6 +136,7 @@ export const ROOM_VIEW_KEYS = [
   "last_open_at",
   "last_link_at",
   "late_open_at",
+  "moved_from",
 ] as const;
 
 /** A room as the browser sees it. `start_url` is never part of it. */
@@ -196,6 +205,12 @@ export interface RoomView {
    * never "nobody joined" (stress2 round 5).
    */
   late_open_at?: string | null;
+  /**
+   * The provider of the room this one replaces after "I can't let them in"
+   * (m1 round 2): the lead is still at that room's door, so the panel says
+   * to tell them where the new link is.
+   */
+  moved_from?: Provider | null;
 }
 
 export interface RoomEvent {
@@ -469,6 +484,8 @@ export function normalizeRoom(v: unknown): RoomView | null {
   };
   for (const k of OPTIONAL_TIMES) if (k in v) room[k] = when(v[k]);
   for (const k of OPTIONAL_TEXT) if (k in v) room[k] = str(v[k]);
+  if ("moved_from" in v)
+    room.moved_from = oneOf(PROVIDERS, v.moved_from) ? v.moved_from : null;
   dropOpensBeforeLink(room);
   return room;
 }
@@ -998,11 +1015,6 @@ function meetUnseen(room: RoomView): boolean {
   );
 }
 
-/** sales-api's "may have gone" (ROOMS_COPY.may_have_gone_*): the link may be with the lead already. */
-export function mayHaveGone(refusal: string | null | undefined): boolean {
-  return /^the link may have gone/i.test(String(refusal ?? "").trim());
-}
-
 export function roomMoment(room: RoomView, now: number): RoomMoment {
   const s = room.state;
   if (isMaking(s)) {
@@ -1118,13 +1130,13 @@ export const LINK_LATE_MS = 90_000;
  * worker never picked up at a minute (R1) and one whose create never
  * answered at two (R2); past that the room is not coming (ours).
  */
-export const MAKING_LATE_MS = 150_000;
+export const MAKING_LATE_MS = MAKING_LATE_STEP_MS;
 
 /** How long past its deadline a room may sit before the panel says the sweep is late. */
 export const OVERDUE_MS = 120_000;
 
 /** The sweep fails a room no worker claimed after a minute (R1); this one is past it. */
-export const CLAIM_MINUTE_MS = 60_000;
+export const CLAIM_MINUTE_MS = CLAIM_MINUTE_STEP_MS;
 function pastClaimMinute(room: RoomView, now: number): boolean {
   const asked = t(room.created_at);
   return asked === null || now - asked >= CLAIM_MINUTE_MS;
@@ -1476,6 +1488,11 @@ export function roomSentence(room: RoomView, ctx: RoomCtx): Sentence {
       // Ours: a link went but the server did not say where ("on" is left out).
       // "by email", "on WhatsApp" (m1 round 1: never "on email").
       const head = ch ? `Link sent ${channelPhrase(ch)} at ` : "Link sent at ";
+      // The room in place of one the lead could not get into, its link by
+      // email only: the lead still waits at the old room's door, so the rep
+      // calls them to say where the new link is (m1 round 2).
+      const moved = movedByEmailOnly(room);
+      if (moved) return [head, at, `. ${moved}`];
       if (v === "p1" && left !== null)
         return [head, at, ".", ...paren(` Waiting for ${name} `)];
       return [head, at, "."];
@@ -3193,21 +3210,22 @@ export function endAnswer(v: unknown): EndAnswer {
   return out;
 }
 
+/** Said when "I can't let them in" was answered with neither a room nor a reason. */
+export const ADMIT_NO_ANSWER =
+  "This room has closed, so no new room was made. Send a new video link if the lead still needs one.";
+
 /**
- * What the panel does after "I can't let them in" closed the Meet room:
- * show the room sales-api made, say why it could not, or (from a sales-api
- * that answers with neither) make the Zoom room itself.
+ * What the panel does after "I can't let them in": show the room sales-api
+ * made, or say why it made none. Never a plain room of the panel's own
+ * (m1 round 2, admit-blocked-on-closed-room-answers-neither): a room made
+ * that way is no replacement (no "moved" words, the night rule, a second
+ * link to a lead who may be on the phone).
  */
 export function afterAdmitBlocked(
   out: EndAnswer,
-):
-  | { kind: "show"; room: RoomView }
-  | { kind: "refused"; text: string }
-  | { kind: "make" } {
+): { kind: "show"; room: RoomView } | { kind: "refused"; text: string } {
   if (out.replacement) return { kind: "show", room: out.replacement };
-  if (out.replacement_refusal)
-    return { kind: "refused", text: out.replacement_refusal };
-  return { kind: "make" };
+  return { kind: "refused", text: out.replacement_refusal ?? ADMIT_NO_ANSWER };
 }
 
 /**
@@ -3216,17 +3234,58 @@ export function afterAdmitBlocked(
  */
 export const READ_TIMEOUT_MS = 10_000;
 
+/** A Send a video link whose answer never came: it may have gone, so the rep checks before pressing again (m1 round 2). */
+export const CREATE_LOST =
+  "The answer did not come back, so the video link may have gone. Check the lead's room before you try again.";
+
+const createKey = (input: CreateRoom) =>
+  `room.create:${input.contact_id ?? "standby"}:${input.purpose}:${input.provider}`;
+
+/**
+ * Forget the request ids held for a lead's Send a video link once a room of
+ * theirs is seen closed (m1 round 2, create-retry-id-returns-ended-room): a
+ * press after that is a new request, never answered with the closed room.
+ */
+export function forgetCreates(contactId: string | null | undefined): void {
+  if (!contactId) return;
+  for (const k of [...intents.keys()])
+    if (k.startsWith(`room.create:${contactId}:`)) intents.delete(k);
+}
+
+/** A room that is closed: the lead's held Send a video link ids are forgotten. */
+function seenClosed<T extends { room?: RoomView | null }>(out: T): T {
+  if (out.room && isFinal(out.room.state)) forgetCreates(out.room.contact_id);
+  return out;
+}
+
+async function createRoom(input: CreateRoom): Promise<{ room: RoomView }> {
+  const key = createKey(input);
+  const send = () =>
+    once(key, request_id =>
+      api<unknown>("room.create", { ...input, request_id }).then(roomAnswer),
+    );
+  // A press carrying a held id (its first answer was lost) answered with a
+  // room that has closed since: that was the last press's room, so this
+  // press is asked once more as a new request (m1 round 2).
+  // (A second press while the first is still on its way shares its answer.)
+  const retry = heldRequestId(key) !== null && !inflight.has(key);
+  let out: { room: RoomView };
+  try {
+    out = await send();
+  } catch (e) {
+    if (
+      e instanceof ApiError &&
+      (e.kind === "network" || e.kind === "timeout" || e.kind === "cut")
+    )
+      throw new ApiError(CREATE_LOST, e.kind, e.status, e.code);
+    throw e;
+  }
+  if (retry && isFinal(out.room.state)) out = await send();
+  return out;
+}
+
 export const roomsApi = {
-  create: (input: CreateRoom) =>
-    nudge(
-      once(
-        `room.create:${input.contact_id ?? "standby"}:${input.purpose}:${input.provider}`,
-        request_id =>
-          api<unknown>("room.create", { ...input, request_id }).then(
-            roomAnswer,
-          ),
-      ),
-    ),
+  create: (input: CreateRoom) => nudge(createRoom(input)),
   status: (roomId: string) =>
     api<unknown>(
       "room.status",
@@ -3236,7 +3295,7 @@ export const roomsApi = {
       const feed = normalizeRoomFeed(v);
       // Another room's answer is never drawn as this one.
       if (feed.room.id !== roomId) throw unreadable();
-      return feed;
+      return seenClosed(feed);
     }),
   open: (roomId: string) =>
     api<unknown>("room.open", { room_id: roomId }).then(v => {
@@ -3260,7 +3319,9 @@ export const roomsApi = {
       version: room.version,
       reason,
       ...(confirm ? { confirm: true } : {}),
-    }).then(endAnswer),
+    })
+      .then(endAnswer)
+      .then(seenClosed),
   sendEmail: (roomId: string) =>
     once(`room.send:${roomId}:email`, request_id =>
       api<unknown>("room.send", {
@@ -3286,9 +3347,13 @@ export const roomsApi = {
       return { me, standby_error: isObj(v) ? str(v.standby_error) : null };
     }),
   liveStatus: () =>
-    api<unknown>("live.status", {}, { timeoutMs: READ_TIMEOUT_MS }).then(
-      normalizeLive,
-    ),
+    api<unknown>("live.status", {}, { timeoutMs: READ_TIMEOUT_MS })
+      .then(normalizeLive)
+      .then(live => {
+        for (const r of live.rooms)
+          if (isFinal(r.state)) forgetCreates(r.contact_id);
+        return live;
+      }),
   /**
    * The claim carries no version: cockpit_sales_live_claim checks the
    * offer's own state, time and seat, so another write to the row (a Slack

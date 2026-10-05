@@ -89,16 +89,16 @@ describe("I can't let them in: the replacement room (contract v2 section 4)", ()
     });
   });
 
-  test("an answer with neither: the panel makes the Zoom room itself", () => {
+  test("an answer with neither: said as a closed room, never a room the panel makes itself (m1 round 2)", () => {
     expect(R.afterAdmitBlocked(R.endAnswer({ ok: true, room: ended }))).toEqual(
-      { kind: "make" },
+      { kind: "refused", text: R.ADMIT_NO_ANSWER },
     );
-    // An empty refusal is no refusal.
+    // An empty refusal is no refusal: the closed room's own sentence.
     expect(
       R.afterAdmitBlocked(
         R.endAnswer({ ok: true, room: ended, replacement_refusal: "  " }),
-      ).kind,
-    ).toBe("make");
+      ),
+    ).toEqual({ kind: "refused", text: R.ADMIT_NO_ANSWER });
   });
 });
 

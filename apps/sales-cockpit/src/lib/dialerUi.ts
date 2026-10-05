@@ -437,6 +437,46 @@ export interface Reach {
 
 export type MissMoment = "missed_call" | "confirm";
 
+/**
+ * The panel's clocks for a room in the making (lib/rooms.ts MAKING_LATE_MS
+ * and CLAIM_MINUTE_MS read these): the sweep fails a room no worker claimed
+ * at a minute (R1) and one whose create never answered at two (R2).
+ */
+export const MAKING_LATE_STEP_MS = 150_000;
+export const CLAIM_MINUTE_STEP_MS = 60_000;
+
+/** sales-api's "may have gone" (ROOMS_COPY.may_have_gone_*): the link may be with the lead already. */
+export function mayHaveGone(refusal: string | null | undefined): boolean {
+  return /^the link may have gone/i.test(String(refusal ?? "").trim());
+}
+
+/**
+ * A room made in place of one the lead could not get into ("I can't let
+ * them in"), whose link went by email only: the sentence that tells the rep
+ * to call the lead, who is still at the old room's door; else null (m1
+ * round 2, admit-blocked-email-replacement-lead-left-knocking).
+ */
+export function movedByEmailOnly(room: {
+  moved_from?: string | null;
+  provider?: string | null;
+  link_channels?: readonly string[] | null;
+  contact_first_name?: string | null;
+  state?: string;
+}): string | null {
+  if (!room.moved_from || room.state === "lead_in") return null;
+  const ch = room.link_channels ?? [];
+  if (
+    !ch.includes("email") ||
+    ch.includes("whatsapp_text") ||
+    ch.includes("whatsapp_template")
+  )
+    return null;
+  const from = room.moved_from === "zoom" ? "Zoom" : "Meet";
+  const to = room.provider === "zoom" ? "Zoom" : "Meet";
+  const name = room.contact_first_name?.trim() || "The lead";
+  return `${name} is still at the ${from} door. Call them and tell them the ${to} link is in their email.`;
+}
+
 export interface AfterMiss {
   title: string;
   text: string;
@@ -529,7 +569,14 @@ export function afterMiss(o: {
     result?: string | null;
     lead_waiting_at?: string | null;
     late_open_at?: string | null;
+    created_at?: string | null;
+    moved_from?: string | null;
+    contact_first_name?: string | null;
   } | null;
+  /** Now, for how long a room has been in the making (the panel's clock). */
+  now?: number;
+  /** The room worker's health line is red (live.status health.worker_ok false). */
+  workerDown?: boolean;
 }): AfterMiss {
   const { moment } = o;
   const v = o.video;
@@ -597,6 +644,17 @@ export function afterMiss(o: {
     v &&
     ["requested", "creating", "open", "host_in", "lead_in"].includes(v.state);
   if (v && live && v.link_sent_at) {
+    // The room in place of one the lead could not get into, its link by
+    // email only: they wait at the old door, so the step is a call to tell
+    // them, never the next lead (m1 round 2).
+    const moved = movedByEmailOnly(v);
+    if (moved)
+      return {
+        title: "Tell them the new link is in their email",
+        text: moved,
+        send: null,
+        callNow: true,
+      };
     const ch = v.link_channels ?? [];
     const how =
       ch.includes("whatsapp_text") || ch.includes("whatsapp_template")
@@ -610,6 +668,38 @@ export function afterMiss(o: {
       send: null,
     };
   }
+  // The link may have gone (HighLevel's answer was lost): the panel says to
+  // check the conversation first, and so does the step, never a second
+  // "I tried to call you" beside it (m1 round 2,
+  // unclear-link-step-offers-missed-call-message).
+  if (v && live && mayHaveGone(v.refusal)) {
+    const how = /whatsapp/i.test(v.refusal ?? "") ? "on WhatsApp" : "by email";
+    return {
+      title: "The video link may have gone",
+      text: `The video link may have gone ${how}. Check the conversation in HighLevel before writing to them.`,
+      send: null,
+    };
+  }
+  // A room still being made past the sweep's minute with the worker down, or
+  // past the panel's own "taking too long": no link is on its way, so the
+  // step says to call, as the panel does (m1 round 2).
+  const making = v && (v.state === "requested" || v.state === "creating");
+  const asked = v?.created_at ? Date.parse(v.created_at) : Number.NaN;
+  const now = o.now ?? Date.now();
+  if (
+    v &&
+    making &&
+    !v.refusal &&
+    Number.isFinite(asked) &&
+    (now - asked >= MAKING_LATE_STEP_MS ||
+      (o.workerDown === true && now - asked >= CLAIM_MINUTE_STEP_MS))
+  )
+    return {
+      title: "The video room is late",
+      text: "The video room has not been made, so no link has gone. Call them on the phone.",
+      send: null,
+      callNow: true,
+    };
   if (v && live && !v.refusal)
     return {
       title: "The video link is on its way",

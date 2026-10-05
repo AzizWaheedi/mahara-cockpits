@@ -902,16 +902,14 @@ function LiveRoomPanel({
           return;
         case "admit_blocked": {
           // P1 edge case 9: this Meet room closes and the lead moves to
-          // Zoom. sales-api makes the Zoom room in the same request; the
-          // panel makes it only when the answer carries neither the room
-          // nor why it could not be made (contract v2 section 4).
+          // Zoom. sales-api makes the Zoom room in the same request, or
+          // says why it made none; the panel never makes a plain room of
+          // its own (m1 round 2: no "moved" words, no night rule cleared).
           const out = await roomsApi.end(r, "admit_blocked");
           apply(out.room);
           const next = afterAdmitBlocked(out);
           if (next.kind === "show") setShown(next.room);
-          else if (next.kind === "refused")
-            setNotice({ tone: "bad", text: next.text });
-          else await retry(r, "zoom");
+          else setNotice({ tone: "bad", text: next.text });
           return;
         }
         case "noshow":
@@ -1010,16 +1008,14 @@ function LiveRoomPanel({
           apply((await roomsApi.end(r, "on_phone")).room);
           return;
         case "retry":
-          if (r.state === "cancelled" && r.result === "admit_blocked") {
+          if (isFinal(r.state) && r.result === "admit_blocked") {
             // The Meet room is closed and its Zoom replacement was not made:
             // ask again for that same replacement (sales-api makes it once).
             const out = await roomsApi.end(r, "admit_blocked");
             apply(out.room);
             const next = afterAdmitBlocked(out);
             if (next.kind === "show") setShown(next.room);
-            else if (next.kind === "refused")
-              setNotice({ tone: "bad", text: next.text });
-            else await retry(r, otherProvider(r.provider));
+            else setNotice({ tone: "bad", text: next.text });
             return;
           }
           await retry(r, otherProvider(r.provider));

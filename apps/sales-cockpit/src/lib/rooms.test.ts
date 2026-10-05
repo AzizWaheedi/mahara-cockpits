@@ -1463,7 +1463,8 @@ describe("the calls sales-api gets", () => {
       purpose: "fallback" as const,
       trigger: "no_answer",
     };
-    await expect(R.roomsApi.create(input)).rejects.toThrow("did not answer");
+    // A lost answer is said as "may have gone" (m1 round 2), with its kind kept.
+    await expect(R.roomsApi.create(input)).rejects.toThrow(R.CREATE_LOST);
     const out = await R.roomsApi.create(input);
     expect(out.room.code).toBe("K7Q2MX");
     expect(calls).toHaveLength(2);

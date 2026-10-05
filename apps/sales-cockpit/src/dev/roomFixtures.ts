@@ -130,6 +130,7 @@ export function baseRoom(now: number, over: Partial<RoomView> = {}): RoomView {
     last_open_at: null,
     last_link_at: null,
     late_open_at: null,
+    moved_from: null,
     ...over,
   };
 }

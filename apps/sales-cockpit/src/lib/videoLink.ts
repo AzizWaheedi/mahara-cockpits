@@ -195,9 +195,41 @@ export interface GateInput {
 export const NIGHT_LINE =
   "It is night where they are, so no video link goes now. Call after 9 in the morning, their time.";
 
-/** Whether the picker offers its send buttons after this refusal: never again after the night refusal. */
+/**
+ * Whether the picker offers its send buttons after this refusal: never again
+ * after one sales-api gives every press alike for a while (m1 round 2): the
+ * lead's night, a booked demo still on, video rooms down.
+ */
 export function pickerSends(code: string | null | undefined): boolean {
-  return code !== "lead_night";
+  return (
+    code !== "lead_night" && code !== "booked_demo" && code !== "worker_down"
+  );
+}
+
+/** A booked demo's length when its end is not known on the page (sales-api reads the stored end). */
+export const DEMO_MINUTES = 60;
+
+/**
+ * The lead has a booked demo that has not ended (m1 round 2,
+ * lead-page-offers-link-during-booked-demo): from now on, or started and
+ * still within its length, as room.create counts it. Its link is the demo's
+ * own Zoom, so the page offers no video link of its own.
+ */
+export function demoStillOn(
+  rows: readonly {
+    call_type?: string | null;
+    start_at?: string | null;
+    status?: string | null;
+  }[],
+  now: number,
+): boolean {
+  return rows.some(r => {
+    if (r.call_type !== "demo" || !r.start_at) return false;
+    if (["cancelled", "invalid", "noshow"].includes(String(r.status ?? "")))
+      return false;
+    const start = Date.parse(r.start_at);
+    return Number.isFinite(start) && start + DEMO_MINUTES * 60_000 > now;
+  });
 }
 
 /**

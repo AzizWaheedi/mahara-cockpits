@@ -84,6 +84,7 @@ import { ghlContactUrl } from "../lib/highlevel";
 import { toast } from "../lib/toast";
 import type { CalendarRow, Deal, Lead, Me } from "../lib/types";
 import {
+  demoStillOn,
   linkPlanLine,
   type MenuKey,
   providerChoice,
@@ -211,7 +212,9 @@ export default function LeadPage({ me }: { me: Me }) {
     purpose: "manual",
     client: isClient(l),
     dnd: Boolean(live?.contact.dnd || l.dnd),
-    bookedDemo: nextAppt?.call_type === "demo",
+    // A demo still on counts until it ends, as room.create counts it (m1
+    // round 2): a closer whose demo started gets no press refused every time.
+    bookedDemo: demoStillOn(appointments, Date.now()),
   });
   // A closer's video call is a demo (60 minutes, the demo's Zoom rule),
   // never an intro that the count would book in a setter's place (stress2
@@ -429,7 +432,11 @@ export default function LeadPage({ me }: { me: Me }) {
                     </span>
                   ) : null}
                 </p>
-                <MarkControls row={r} onDone={() => activity.reload()} />
+                <MarkControls
+                  row={r}
+                  onDone={() => activity.reload()}
+                  noShowHeld={video.open && r.call_type === "intro"}
+                />
               </li>
             ))}
           </ul>

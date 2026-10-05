@@ -1571,6 +1571,7 @@ function missStep(
   convo: ReturnType<typeof useConversation>,
   wa: WaKit,
   video: RoomView | null = null,
+  workerDown = false,
 ): AfterMiss {
   const channels = convo.data?.channels;
   return afterMiss({
@@ -1580,6 +1581,10 @@ function missStep(
     templatesLive: wa.templatesLive,
     messageReady: wa.moments ? wa.moments.has(moment) : null,
     video,
+    // The panel's clock and health line, so the step never says "on its
+    // way" under a panel that says the room will not be made (m1 round 2).
+    now: Date.now(),
+    workerDown,
   });
 }
 
@@ -1716,7 +1721,13 @@ function CallPane({
   const video = useLeadRoom(contactId);
   // While the lead's room has its link out (or on its way), the step after
   // the miss says so and offers no missed-call message (stress2, round 2).
-  const miss = missStep(missMoment, convo, wa, video.room ?? null);
+  const miss = missStep(
+    missMoment,
+    convo,
+    wa,
+    video.room ?? null,
+    video.live?.health?.worker_ok === false,
+  );
   const status = useCallStatus(open, () => {
     // Maqsam's record saved it as No answer. A save of the rep's own on its
     // way decides what shows (only one of the two can land); otherwise the
@@ -1914,7 +1925,12 @@ function CallPane({
       setMode("held");
     }
   }
-  const outcomes = OUTCOMES[kind];
+  // No-show is not offered while the lead's video room is open: HighLevel's
+  // no-show automation writes to a lead who may be opening the link now
+  // (m1 round 2; sales-api refuses it too).
+  const outcomes = OUTCOMES[kind].filter(
+    o => !(o.key === "noshow" && video.open),
+  );
   const chosen = outcomes.find(o => o.key === draft.outcome) ?? null;
   const dnd = Boolean(l?.dnd);
 

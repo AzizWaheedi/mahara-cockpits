@@ -94,10 +94,17 @@ export function MarkControls({
   row,
   onDone,
   compact = false,
+  noShowHeld = false,
 }: {
   row: CalendarRow;
   onDone: (r: MarkResult) => void;
   compact?: boolean;
+  /**
+   * The lead's video room is open: No-show is not offered, because
+   * HighLevel's no-show automation writes to a lead who may be opening the
+   * link now (m1 round 2; sales-api refuses it too).
+   */
+  noShowHeld?: boolean;
 }) {
   const [asking, setAsking] = useState(false);
   const [pending, setPending] = useState<{
@@ -258,21 +265,23 @@ export function MarkControls({
 
   return (
     <div className="flex flex-wrap items-center gap-1.5">
-      {OPTIONS.map(({ status, label, icon: Icon, toneStyle }) => (
-        <button
-          key={status}
-          type="button"
-          onClick={() =>
-            status === "invalid" ? setAsking(true) : choose(status)
-          }
-          className={`inline-flex items-center gap-1.5 rounded-full border font-medium shadow-sm transition-all ${toneStyle} ${
-            compact ? "h-7 px-2.5 text-xs" : "h-8 px-3 text-xs"
-          }`}
-        >
-          <Icon className="size-3.5" aria-hidden />
-          {label}
-        </button>
-      ))}
+      {OPTIONS.filter(o => !(noShowHeld && o.status === "noshow")).map(
+        ({ status, label, icon: Icon, toneStyle }) => (
+          <button
+            key={status}
+            type="button"
+            onClick={() =>
+              status === "invalid" ? setAsking(true) : choose(status)
+            }
+            className={`inline-flex items-center gap-1.5 rounded-full border font-medium shadow-sm transition-all ${toneStyle} ${
+              compact ? "h-7 px-2.5 text-xs" : "h-8 px-3 text-xs"
+            }`}
+          >
+            <Icon className="size-3.5" aria-hidden />
+            {label}
+          </button>
+        ),
+      )}
     </div>
   );
 }
