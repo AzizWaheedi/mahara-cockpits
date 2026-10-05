@@ -1025,6 +1025,8 @@ export async function buildClientProfile(
       .first();
     return {
       ...p,
+      taskId: row?.taskId ?? p.taskId,
+      nextCallAt: row?.nextCallAt,
       stage: p.stage ?? row?.stage,
       happiness: p.happiness ?? row?.happiness,
       liveDays: p.liveDays ?? row?.liveDays,

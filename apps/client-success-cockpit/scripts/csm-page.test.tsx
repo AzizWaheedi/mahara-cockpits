@@ -49,6 +49,7 @@ const actionResults: Record<string, unknown> = {
   "onboarding.kits": KITS,
   "onboarding.refresh": KITS,
   "review.clients": [],
+  "review.sent": [],
 };
 
 mock.module("convex/react", () => ({
@@ -105,6 +106,8 @@ g.window = win;
 g.document = win.document;
 g.navigator = win.navigator;
 g.HTMLElement = win.HTMLElement;
+g.HTMLFormElement = win.HTMLFormElement;
+g.MutationObserver = win.MutationObserver;
 g.Element = win.Element;
 g.Node = win.Node;
 // Every element class and the events React and the components check with instanceof.
@@ -264,6 +267,27 @@ test("client performance renders the overview then a single client", async () =>
     });
     const html = host.innerHTML;
     expect(html).toContain("Print report");
+    expect(html).toContain("Book next check-in");
+    expect(html).toContain("Client ID · ClickUp client board");
+    expect(html).toContain(perfFixture.profile.taskId);
+    let copiedId = "";
+    const originalWrite = win.navigator.clipboard.writeText;
+    win.navigator.clipboard.writeText = async value => {
+      copiedId = value;
+    };
+    try {
+      const copyButton = host.querySelector<HTMLButtonElement>(
+        '[aria-label="Copy client ID"]',
+      );
+      expect(copyButton).not.toBeNull();
+      await reactAct(async () => {
+        copyButton!.click();
+      });
+      expect(copiedId).toBe(perfFixture.profile.taskId);
+      expect(copyButton!.textContent).toContain("Copied");
+    } finally {
+      win.navigator.clipboard.writeText = originalWrite;
+    }
     expect(html).toContain("What is holding this client back");
     expect(html).toContain("Fix this first");
     expect(html).toContain("Write the Google Doc");

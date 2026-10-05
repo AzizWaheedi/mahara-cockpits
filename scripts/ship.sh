@@ -48,6 +48,10 @@ if [ -f apps/client-success-cockpit/scripts/projections.test.ts ]; then
   (cd apps/client-success-cockpit && bun test scripts/projections.test.ts >/dev/null 2>&1) \
     || { echo "the projections rules tests fail"; exit 1; }
 fi
+if [ -f apps/client-success-cockpit/scripts/check-in.test.ts ]; then
+  (cd apps/client-success-cockpit && bun test scripts/check-in.test.ts >/dev/null 2>&1) \
+    || { echo "the client check-in booking tests fail"; exit 1; }
+fi
 if [ -f hermes/team-sync/test_sync.py ]; then
   (cd hermes/team-sync && python3 -m unittest test_sync >/dev/null 2>&1) \
     || { echo "the team calendar sync tests fail"; exit 1; }
