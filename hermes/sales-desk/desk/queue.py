@@ -406,7 +406,7 @@ class Worker:
         outcome = engine_mod.run(
             call, lang=lang, resolved=resolved, offer=self.offer, p=p, cfg=self.cfg, log=self.log,
             workdir=self.cfg.out_dir / pid, renderer=self.renderer, beat=lambda: self.sb.touch(rid, self.host),
-            fills=fills)
+            fills=fills, prior=proposal.get("deal") if fills and isinstance(proposal.get("deal"), dict) else None)
         extra = {
             "triage": {"variant": outcome.variant, "why": outcome.why, "found": outcome.found},
             "reference": outcome.reference,

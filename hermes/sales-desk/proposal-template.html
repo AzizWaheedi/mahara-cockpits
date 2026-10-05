@@ -1264,7 +1264,7 @@ const STR = {
     tStart: "How to start", tTree: "How the goal breaks down", theGoal: "The goal",
     beExtra: "Extra projects across the ", beMonths: " months to break even",
     bePerMonth: "Which is this many a month",
-    beTarget: "The plan's target across the term",
+    beTarget: "The plan's target",
     youPay: "Everything you pay us,", monthsWord: "months", gapYear: "The gap, one year",
     secArith: "The arithmetic", tArith: "What it takes to pay for itself",
     theShape: "The shape", tShape: "What we find in firms like yours",
@@ -1276,6 +1276,7 @@ const STR = {
     beYourProject: "Your project value", beWholeThing: "The whole engagement",
     beVolProject: "One project is worth", beVolRate: "You sign",
     beVolTarget: "Additional projects targeted", beVolCovers: "Covered by",
+    beOfOne: "of one project", beProjectsWord: "projects",
     beVolTable: "The engagement against what the term is meant to add",
     beCoversIf: "One project covers it if you keep more than",
     beMarginTable: "What one project has to leave you",
@@ -1330,7 +1331,7 @@ const STR = {
     beExtra: "\u0645\u0634\u0627\u0631\u064a\u0639 \u0625\u0636\u0627\u0641\u064a\u0629 \u062e\u0644\u0627\u0644 \u0627\u0644\u0640 ",
     beMonths: " \u0623\u0634\u0647\u0631 \u0644\u0628\u0644\u0648\u063a \u0627\u0644\u062a\u0639\u0627\u062f\u0644",
     bePerMonth: "\u0623\u064a \u0647\u0630\u0627 \u0627\u0644\u0639\u062f\u062f \u0634\u0647\u0631\u064a\u064b\u0627",
-    beTarget: "\u0647\u062f\u0641 \u0627\u0644\u062e\u0637\u0629 \u062e\u0644\u0627\u0644 \u0627\u0644\u0645\u062f\u0629",
+    beTarget: "\u0647\u062f\u0641 \u0627\u0644\u062e\u0637\u0629",
     overflow: "\u0647\u0630\u0647 \u0627\u0644\u0635\u0641\u062d\u0629 \u062a\u062a\u062c\u0627\u0648\u0632 \u0645\u0642\u0627\u0633 A4. \u0627\u062e\u062a\u0635\u0631 \u0627\u0644\u0645\u062d\u062a\u0648\u0649 \u0642\u0628\u0644 \u0627\u0644\u0625\u0631\u0633\u0627\u0644.",
     secArith: "\u0627\u0644\u062d\u0633\u0627\u0628",
     theShape: "\u0627\u0644\u0646\u0645\u0637 \u0627\u0644\u0645\u062a\u0643\u0631\u0631",
@@ -1349,6 +1350,8 @@ const STR = {
     beVolRate: "\u0645\u0639\u062f\u0644 \u0627\u0644\u062a\u0648\u0642\u064a\u0639 \u0644\u062f\u064a\u0643",
     beVolTarget: "\u0627\u0644\u0645\u0634\u0627\u0631\u064a\u0639 \u0627\u0644\u0625\u0636\u0627\u0641\u064a\u0629 \u0627\u0644\u0645\u0633\u062a\u0647\u062f\u0641\u0629",
     beVolCovers: "\u064a\u063a\u0637\u064a\u0647",
+    /* An Arabic page printed "0.85 of one project" in English. */
+    beOfOne: "\u0645\u0646 \u0645\u0634\u0631\u0648\u0639 \u0648\u0627\u062d\u062f", beProjectsWord: "\u0645\u0634\u0627\u0631\u064a\u0639",
     beVolTable: "\u0627\u0644\u0627\u0633\u062a\u062b\u0645\u0627\u0631 \u0645\u0642\u0627\u0628\u0644 \u0645\u0627 \u062a\u0636\u064a\u0641\u0647 \u0627\u0644\u0645\u062f\u0629",
     beWholeThing: "\u0625\u062c\u0645\u0627\u0644\u064a \u0627\u0644\u0627\u0633\u062a\u062b\u0645\u0627\u0631",
     beCoversIf: "\u0645\u0634\u0631\u0648\u0639 \u0648\u0627\u062d\u062f \u064a\u063a\u0637\u064a\u0647 \u0625\u0630\u0627 \u0628\u0642\u064a \u0644\u0643 \u0623\u0643\u062b\u0631 \u0645\u0646",
@@ -1619,8 +1622,10 @@ if (P.arithmetic && ((P.arithmetic.project_values || []).length
   const total = Number(a.engagement_total) || (P.roi && P.roi.fee_usd
     ? (Number(P.roi.fee_usd) + (Number(P.roi.ad_monthly_usd) || 0) * months) * (Number(P.roi.usd_rate) || 1)
     : 0);
-  /* A gross margin the client gave is counted, and labelled gross. */
-  const gm = Number(a.gross_margin) > 0 ? Number(a.gross_margin) : 0;
+  /* A gross margin the client gave is counted, and labelled gross. Typed in
+     Arabic digits it is still a number (validate.py reads it as one). */
+  const gmRaw = Number(String(a.gross_margin ?? "").replace(/[\u0660-\u0669]/g, d => d.charCodeAt(0) - 0x0660));
+  const gm = gmRaw > 0 ? gmRaw : 0;
   const margins = (a.margins && a.margins.length ? a.margins : gm ? [gm] : [10, 20]).map(Number);
   const num = (v) => Math.round(v).toLocaleString("en-US");
 
@@ -1646,7 +1651,7 @@ if (P.arithmetic && ((P.arithmetic.project_values || []).length
       ...(gm ? [[L.beGross, gm + "%"], [L.beGrossLeft, esc(cur) + " " + num(per)]] : []),
       [L.beVolRate, esc(a.rate_display || "")],
       [L.beVolTarget, esc(a.target_display || "")],
-      [gm ? L.beVolCoversGross : L.beVolCovers, dec(need) + " " + (need <= 1 ? "of one project" : "projects")],
+      [gm ? L.beVolCoversGross : L.beVolCovers, dec(need) + " " + (need <= 1 ? L.beOfOne : L.beProjectsWord)],
     ].filter(([, v]) => v !== "").map(([k, v], i, arr) =>
       `<tr class="${i === arr.length - 1 ? "under" : ""}"><td>${k}</td><td>${v}</td></tr>`).join("");
   } else if (marginMode) {
@@ -1669,11 +1674,13 @@ if (P.arithmetic && ((P.arithmetic.project_values || []).length
     /* One question, one answer, in money. The reader finds his margin and
        reads across once. Nothing here is a count of his projects and nothing
        is a share of them, which is what the two-column shape kept implying. */
-    head = `<tr><th>${gm ? L.beIfGross : L.beIfMargin}</th><th>${L.beOneJob}</th></tr>`;
+    head = `<tr><th>${gm && margins.every(m => m === gm) ? L.beIfGross : L.beIfMargin}</th><th>${L.beOneJob}</th></tr>`;
     rows = margins.map(m => `<tr><td>${m}%</td><td>${esc(cur)} ${num(total / (m / 100))}</td></tr>`).join("");
   } else {
     head = `<tr><th>${L.beProject}</th>${margins.map(m =>
-      gm ? `<th>${L.beAtGross}${m}${L.beGrossPct}</th>` : `<th>${L.beAtNet}${m}${L.beNet}</th>`).join("")}</tr>`;
+      /* Only the client's own gross margin is labelled gross; any other
+         column is the illustrative net margin it always was. */
+      gm && m === gm ? `<th>${L.beAtGross}${m}${L.beGrossPct}</th>` : `<th>${L.beAtNet}${m}${L.beNet}</th>`).join("")}</tr>`;
     rows = a.project_values.map(v => {
       const cells = margins.map(m => {
         const profit = Number(v) * m / 100;
@@ -1801,8 +1808,10 @@ if (P.roi && P.roi.fee_usd && Number(P.roi.avg_project_value) > 0 && Number(P.ro
   const perMonth = breakeven / months;
 
   if (!breakevenRows) {
-    /* The third tile is the plan's target as the deal states it, across the
-       term; none is invented when the deal gives none. */
+    /* The third tile is the plan's target as the deal states it, with the
+       period in its own words ("2 to 4 a month", "1 to 3 over three
+       months"), so the label names no period of its own; none is invented
+       when the deal gives none. */
     breakevenRows = [
       { v: dec(breakeven), k: L.beExtra + months + L.beMonths },
       { v: dec(perMonth), k: L.bePerMonth },
@@ -2174,7 +2183,7 @@ renderDoc();
     usd_rate: "USD rate", fee_usd: "Our fee, USD", ad_monthly_usd: "Ad spend a month, USD",
     avg_project_value: "Their average project", margin_pct: "Net margin, percent",
     project_note: "Note on the project value", margin_note: "Note on the margin",
-    target_projects_month: "Projects a month we aim for"
+    target_projects_month: "The plan's target, with its period (2 to 4 a month)"
   };
   const nested = (k) => NESTED[k] || human(k);
 

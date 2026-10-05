@@ -103,8 +103,9 @@ class TargetWordingTests(unittest.TestCase):
         self.assertTrue(self.claims("البرنامج مبني ليحقق ٣٠ اجتماعاً مؤهلاً خلال ثلاثة أشهر.", "ar"))
         self.assertFalse(self.claims("هدف البرنامج ٣٠ اجتماعاً مؤهلاً خلال ثلاثة أشهر، وهو مبني ليحقق هذا الهدف.", "ar"))
 
-    def test_the_tile_label_is_a_target_across_the_term(self):
-        self.assertTrue('beTarget: "The plan\'s target across the term"' in TEMPLATE, "the English label")
+    def test_the_tile_label_is_a_target(self):
+        # No period of its own: the value carries it ("2 to 4 a month").
+        self.assertTrue('beTarget: "The plan\'s target",' in TEMPLATE, "the English label")
         self.assertFalse("built to produce" in TEMPLATE, "the old label")
         arabic = re.search(r'ar: \{.*?beTarget: "([^"]*)"', TEMPLATE, re.S).group(1)
         text = arabic.encode().decode("unicode_escape") if "\\u" in arabic else arabic
@@ -852,7 +853,7 @@ class LiveTemplateTests(unittest.TestCase):
         deal["roi"]["target_projects_month"] = "6 to 12 signed"
         live = self.dom(deal)
         self.assertTrue(">Break-even<" in live, ">Break-even<")
-        self.assertTrue("The plan's target across the term" in live, "The plan's target across the term")
+        self.assertTrue("The plan's target" in live, "The plan's target")
 
 
 if __name__ == "__main__":

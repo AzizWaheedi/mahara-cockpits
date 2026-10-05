@@ -219,6 +219,12 @@ def day_words(day: date) -> str:
     return f"{day.day} {day:%B %Y}"
 
 
+GROSS_MARGIN_SHAPE = ("<the client's gross margin in percent, as a number, the bottom of their range, only when "
+                      "this call gave one; otherwise leave the key out>")
+PROJECT_LABEL_SHAPE = ("<what the project value is when it is not an average, such as Your minimum ticket; otherwise "
+                       "leave the key out>")
+
+
 def shape_of(deal: dict[str, Any], today: Optional[date] = None) -> dict[str, Any]:
     """The reference, with its identity fields turned into instructions.
 
@@ -257,6 +263,16 @@ def shape_of(deal: dict[str, Any], today: Optional[date] = None) -> dict[str, An
         roi["margin_pct"] = 0
         if variant_of(d) == "blind":
             roi["avg_project_value"] = 0
+    # The reference client's own gross margin, and what its project value was,
+    # are that client's: copied as they stand they would count another
+    # client's projects at a margin nobody on this call gave (5 October 2026
+    # review, general.json's 20).
+    arith = d.get("arithmetic")
+    if isinstance(arith, dict):
+        if "gross_margin" in arith:
+            arith["gross_margin"] = GROSS_MARGIN_SHAPE
+        if "project_label" in arith:
+            arith["project_label"] = PROJECT_LABEL_SHAPE
     d["client_company"] = "<the company name as said on the call, never FILL>"
     d["client_contact"] = "<the person on the call>"
     if "client_role" in d:
@@ -318,8 +334,8 @@ def outline(resolved: dict[str, Any], today: Optional[date] = None) -> str:
         "roi": {"local_currency": "SAR", "usd_rate": 3.75, "months": resolved["months"],
                 "fee_usd": resolved["price"], "ad_monthly_usd": resolved["ads_max"],
                 "avg_project_value": 0, "margin_pct": 0, "project_note": "...", "margin_note": "...",
-                "target_projects_month": "the plan's target across the whole term, in the plan's words; a "
-                                         "target, never a promise"},
+                "target_projects_month": "the plan's target in the plan's words, with its period (2 to 4 a "
+                                         "month, or 1 to 3 over three months); a target, never a promise"},
         "start_title": "...", "deposit_label": "...", "deposit_amount": offer_mod.money(resolved["deposit"]),
         "start_steps": [{"when": "...", "title": "...", "body": "..."}],
         "start_note": "...",
@@ -417,6 +433,12 @@ _SMALL = ("That is two or three lines. Cut two or three lines from the copy on {
           "instead of removing it. ")
 
 
+def small_overflow(over: list[int], px: Optional[dict[int, int]]) -> bool:
+    """Every overflowing sheet measured, and each a few lines over."""
+    px = {int(k): int(v) for k, v in (px or {}).items() if int(k) in over}
+    return bool(over) and len(px) == len(over) and max(px.values()) < SMALL_OVERFLOW_PX
+
+
 def tighten_user(deal: dict[str, Any], over: list[int], round_no: int = 1,
                  px: Optional[dict[int, int]] = None) -> str:
     """Ask for a shorter version of the pages that did not fit, named by sheet
@@ -426,7 +448,7 @@ def tighten_user(deal: dict[str, Any], over: list[int], round_no: int = 1,
     blocks = sorted({b for n in over for b in blocks_on(deal, n)})
     one = len(over) == 1
     px = {int(k): int(v) for k, v in (px or {}).items() if int(k) in over}
-    small = bool(over) and len(px) == len(over) and max(px.values()) < SMALL_OVERFLOW_PX
+    small = small_overflow(over, px)
     harder = (_SMALL.format(it="that sheet" if one else "each of them") if small
               else _CUT.get(max(1, min(3, round_no)), ""))
     by = ""

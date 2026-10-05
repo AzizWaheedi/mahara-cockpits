@@ -207,12 +207,14 @@ these figures exactly, with the words in the document's language.
   close rate we do not control.
 - **A target is called a target.** "Thirty qualified meetings across the three
   months is the target the program works to." Never "built to deliver",
-  "built to produce", "built to add", "will bring" or "will generate" in front
-  of meetings, projects or leads: that is a promise in other words, and
+  "designed to deliver", "built to add", "the program delivers", "we will
+  bring", "you will get" or "expect" in front of a number of meetings,
+  projects or leads, and never "is what the program is built to deliver"
+  after one: that is a promise in other words, in either language, and
   `validate.py` fails it unless the same sentence calls the figure a target.
-  `roi.target_projects_month` prints under "The plan's target across the
-  term", in large type: a short range in the plan's words, with its period
-  when that is not the whole term ("2 to 4 a month").
+  `roi.target_projects_month` prints under "The plan's target", in large
+  type: a short range in the plan's words, always with its period ("2 to 4 a
+  month", "1 to 3 over three months"), since the label names none.
 - **No payment ever waits on a result.** Whatever the closer chose, no
   instalment falls due on a first contract, project, deal, client or sale. A
   call recorded before 3 October 2026 may still quote that split; it is

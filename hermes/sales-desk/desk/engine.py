@@ -145,11 +145,33 @@ def triage(call: Call, p: Any, cfg: Config, log: Callable[[str], None],
         return None, ""
 
 
-def apply_fills(deal: dict[str, Any], fills: Optional[dict[str, Any]]) -> tuple[list[str], list[str]]:
+# What names a list item: the tile's label, the stage's, the row's item.
+_ITEM_NAMES = ("k", "label", "item", "title", "problem", "name", "when")
+
+
+def _same_item(was: Any, now: Any, leaf: Any) -> bool:
+    """Whether a list item in a fresh draft is the one the closer filled in the
+    last version: the same names, read loosely. An item with no name to go by
+    is taken as the same."""
+    if not (isinstance(was, dict) and isinstance(now, dict)):
+        return True
+    norm = (lambda v: re.sub(r"\s+", " ", str(v or "")).strip().lower())
+    names = [k for k in _ITEM_NAMES if k != leaf and isinstance(was.get(k), str) and was.get(k).strip()
+             and not validate_mod.FILL_RE.search(was[k])]
+    return all(norm(was[k]) == norm(now.get(k)) for k in names)
+
+
+def apply_fills(deal: dict[str, Any], fills: Optional[dict[str, Any]],
+                prior: Optional[dict[str, Any]] = None) -> tuple[list[str], list[str]]:
     """The figures the closer typed into an earlier version's blanks, put into
     this one's blanks at the same place (a dotted path, as sales-api
     proposal.fill addresses them): (put back, no blank to go into). A whole
-    FILL given a figure becomes a number, as proposal.fill makes it."""
+    FILL given a figure becomes a number, as proposal.fill makes it.
+
+    A fresh draft may order its tiles, stages or rows differently, so a path
+    through a list is only followed when the item there has the same label as
+    in the version the closer filled (`prior`): "6" typed for projects signed
+    never lands on the tile that now says meetings a month."""
     applied: list[str] = []
     missing: list[str] = []
     for path, raw in (fills or {}).items():
@@ -158,11 +180,16 @@ def apply_fills(deal: dict[str, Any], fills: Optional[dict[str, Any]]) -> tuple[
             continue
         keys: list[Any] = [int(k) if k.isdigit() else k for k in str(path).split(".")]
         node: Any = deal
-        for k in keys[:-1]:
+        was: Any = prior if isinstance(prior, dict) else None
+        for n, k in enumerate(keys[:-1]):
             if isinstance(node, list) and isinstance(k, int) and k < len(node):
-                node = node[k]
+                then = was[k] if isinstance(was, list) and k < len(was) else None
+                if prior is not None and not _same_item(then, node[k], keys[n + 1]):
+                    node = None
+                    break
+                node, was = node[k], then
             elif isinstance(node, dict) and not isinstance(k, int) and k in node:
-                node = node[k]
+                node, was = node[k], (was.get(k) if isinstance(was, dict) else None)
             else:
                 node = None
                 break
@@ -190,7 +217,8 @@ def closer_evidence(transcript_text: str, fills: Optional[dict[str, Any]]) -> st
 
 
 def stamp(deal: dict[str, Any], *, variant: str, resolved: dict[str, Any], lang: str,
-          currency_unstated: bool = False, closer_figures: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+          currency_unstated: bool = False, closer_figures: Optional[dict[str, Any]] = None,
+          prior: Optional[dict[str, Any]] = None) -> dict[str, Any]:
     """What the file must say whatever the model wrote. The variant is on the
     file because the file is what the validator reads; the offer stamp so the
     document can be checked against the offer it was written for; the logo and
@@ -198,13 +226,19 @@ def stamp(deal: dict[str, Any], *, variant: str, resolved: dict[str, Any], lang:
     the client never named is a blank for the closer, never a guess."""
     if currency_unstated and isinstance(deal.get("arithmetic"), dict):
         deal["arithmetic"]["currency"] = "FILL"
+    # A reference's instruction copied as it stands ("<the client's gross
+    # margin ...>") is no figure and no label: the key goes.
+    if isinstance(deal.get("arithmetic"), dict):
+        for key in ("gross_margin", "project_label"):
+            if str(deal["arithmetic"].get(key) or "").lstrip().startswith("<"):
+                deal["arithmetic"].pop(key)
     # A funnel stage counting other people than the one above (another period
     # or source) draws no "lost here" its own note contradicts.
     validate_mod.separate_pools(deal)
     if closer_figures:
         # Kept through every round, so a figure a later round turned back
         # into a blank is put back, and a draft after this one has them too.
-        apply_fills(deal, closer_figures)
+        apply_fills(deal, closer_figures, prior)
         deal["closer_figures"] = dict(closer_figures)
     if variant != "specific":
         deal["variant"] = variant
@@ -255,20 +289,37 @@ def px_over(dom: Optional[str]) -> dict[int, int]:
 
 
 # Lists a shorter version may not lose: a tightening round that drops a step
-# or a target is not shorter copy, it is a thinner proposal.
-KEPT_LISTS = ("solution", "solution_targets")
+# or a target is not shorter copy, it is a thinner proposal. Nor a line of the
+# price, a term or a step to start: those are what the client signs (5 October
+# 2026 review: only the steps and the targets were held).
+KEPT_LISTS = ("solution", "solution_targets", "investment.rows", "terms", "start_steps")
+# And when the sheet is only a few lines over, the drafter is told to keep
+# every list item, so none may go.
+KEPT_WHEN_SMALL = ("proof", "gap_points", "funnel.stages", "tree.branches", "problems", "pattern", "program")
 
 
-def lost_items(before: dict[str, Any], after: dict[str, Any]) -> list[str]:
+def _list_at(deal: dict[str, Any], path: str) -> Optional[list[Any]]:
+    node: Any = deal
+    for part in path.split("."):
+        node = node.get(part) if isinstance(node, dict) else None
+    return node if isinstance(node, list) else None
+
+
+def lost_items(before: dict[str, Any], after: dict[str, Any], small: bool = False) -> list[str]:
     """The lists that came back shorter than they went."""
-    return [k for k in KEPT_LISTS
-            if isinstance(before.get(k), list) and len(after.get(k) or []) < len(before[k])]
+    out = []
+    for k in KEPT_LISTS + (KEPT_WHEN_SMALL if small else ()):
+        was, now = _list_at(before, k), _list_at(after, k)
+        if was is not None and len(now or []) < len(was):
+            out.append(k)
+    return out
 
 
 def run(call: Call, *, lang: str, resolved: dict[str, Any], offer: dict[str, Any], p: Any, cfg: Config,
         log: Callable[[str], None], workdir: Path, renderer: Any = render_mod,
         beat: Optional[Callable[[], None]] = None, variant: Optional[str] = None,
-        reference_dir: Optional[Path] = None, fills: Optional[dict[str, Any]] = None) -> Outcome:
+        reference_dir: Optional[Path] = None, fills: Optional[dict[str, Any]] = None,
+        prior: Optional[dict[str, Any]] = None) -> Outcome:
     started = time.time()
     beat = beat or (lambda: None)
     workdir = Path(workdir)
@@ -317,14 +368,15 @@ def run(call: Call, *, lang: str, resolved: dict[str, Any], offer: dict[str, Any
     if fills:
         # Drafted again after the closer had typed figures into the last
         # version's blanks: they go back into this one's (5 October 2026).
-        put, nowhere = apply_fills(deal, fills)
+        put, nowhere = apply_fills(deal, fills, prior)
         line = f"{len(put)} of the figures you typed went back into this draft"
         if nowhere:
-            line += (f"; {', '.join(nowhere[:6])} had no blank here to go into, so check them against the "
-                     "document")
+            line += (f"; {', '.join(nowhere[:6])} had no blank on the same line here to go into, so type them "
+                     "again where they belong")
         notes.append(line + ".")
     evidence = closer_evidence(call.transcript_text, fills)
-    stamp(deal, variant=variant, resolved=resolved, lang=lang, currency_unstated=unstated, closer_figures=fills)
+    stamp(deal, variant=variant, resolved=resolved, lang=lang, currency_unstated=unstated, closer_figures=fills,
+          prior=prior)
     (workdir / "deal.json").write_text(json.dumps(deal, ensure_ascii=False, indent=2), encoding="utf-8")
     beat()
 
@@ -355,8 +407,8 @@ def run(call: Call, *, lang: str, resolved: dict[str, Any], offer: dict[str, Any
                 temperature=0.2, attempts=1, timeout=cfg.model_timeout, expect=prompt_mod.is_deal, log=log,
                 what="tighten", beat=beat)
             stamp(tighter, variant=variant, resolved=resolved, lang=lang, currency_unstated=unstated,
-                  closer_figures=fills)
-            lost = lost_items(best, tighter)
+                  closer_figures=fills, prior=prior)
+            lost = lost_items(best, tighter, small=prompt_mod.small_overflow(best_over, px_over(best_dom)))
             if lost:
                 log("    the shorter draft dropped items from %s; not taken" % ", ".join(lost))
             else:
@@ -396,7 +448,7 @@ def run(call: Call, *, lang: str, resolved: dict[str, Any], offer: dict[str, Any
                 p, system, prompt_mod.repair_user(best, fixable), temperature=0.2, attempts=1,
                 timeout=cfg.model_timeout, expect=prompt_mod.is_deal, log=log, what="repair", beat=beat)
             stamp(fixed, variant=variant, resolved=resolved, lang=lang, currency_unstated=unstated,
-                  closer_figures=fills)
+                  closer_figures=fills, prior=prior)
             fixed_html = workdir / "draft-repaired.html"
             fixed_over, fixed_dom = overflowing(fixed, fixed_html, renderer)
             fixed_result = validate_mod.validate(fixed, evidence, resolved=resolved, offer=offer,
@@ -430,9 +482,21 @@ def follow_currency(deal: dict[str, Any]) -> bool:
     when it changed anything."""
     arith = deal.get("arithmetic") if isinstance(deal.get("arithmetic"), dict) else {}
     roi = deal.get("roi") if isinstance(deal.get("roi"), dict) else None
-    cur = str(arith.get("currency") or "").strip().upper()
-    if roi is None or cur not in validate_mod.USD_PEGS:
+    typed = arith.get("currency")
+    if typed in (None, "") or validate_mod.FILL_RE.search(str(typed)):
         return False
+    # Typed as the closer says it ("dirhams", "sar", "ريال"): the code. A
+    # currency the page cannot price in goes back to a blank to type again,
+    # since a filled field can no longer be filled and the engagement would
+    # print in dollars under that name.
+    cur = validate_mod.currency_code(typed)
+    if cur is None:
+        arith["currency"] = "FILL"
+        return True
+    if cur != typed:
+        arith["currency"] = cur
+    if roi is None:
+        return cur != typed
     if str(roi.get("local_currency") or "").upper() == cur and roi.get("usd_rate") == validate_mod.USD_PEGS[cur]:
         return False
     if str(roi.get("local_currency") or "").upper() == cur and isinstance(roi.get("usd_rate"), (int, float)) \

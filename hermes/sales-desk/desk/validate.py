@@ -128,7 +128,9 @@ WORD_VALUES.update({w: ("n", v) for w, v in _EN_TENS.items()})
 WORD_VALUES.update({"hundred": ("h", 100), "thousand": ("s", 1_000), "million": ("s", 1_000_000),
                     "billion": ("s", 1_000_000_000)})
 for _v, _words in {
-    1: "واحد واحدة وحدة", 2: "اثنين اثنان إثنين اتنين ثنين اثنتين", 3: "ثلاثة ثلاث تلاتة تلات ثلاثه",
+    # Not وحدة: in a proposal it is "a unit" (وحدة سكنية) far more often
+    # than the Gulf "one" (5 October 2026 review).
+    1: "واحد واحدة", 2: "اثنين اثنان إثنين اتنين ثنين اثنتين", 3: "ثلاثة ثلاث تلاتة تلات ثلاثه",
     4: "أربعة اربعة أربع اربع اربعه", 5: "خمسة خمس خمسه", 6: "ستة ست سته", 7: "سبعة سبع سبعه",
     8: "ثمانية ثمان تمانية تمان ثمانيه ثماني", 9: "تسعة تسع تسعه", 10: "عشرة عشر عشره",
     11: "احدعش إحدعش", 12: "اثنعش", 13: "ثلطعش", 14: "اربعطعش", 15: "خمستعش خمسطعش", 16: "سطعش",
@@ -156,6 +158,34 @@ _SCALE_OF = {"k": 1_000, "thousand": 1_000, "ألف": 1_000, "الف": 1_000, "�
              "ملايين": 1_000_000, "bn": 1_000_000_000, "billion": 1_000_000_000}
 
 
+# Modern Standard Arabic's eleven and twelve are two words, the first of
+# which is no number on its own: أحد عشر read as 10, اثنا عشر as 10.
+_AR_TEENS = [(re.compile(r"(?<![ء-ي])(?:أحد|احد|إحدى|احدى)\s+عشر[ةه]?(?![ء-ي])"), "11"),
+             (re.compile(r"(?<![ء-ي])(?:اثنا|اثني|إثنا|إثني|اثنتا|اثنتي)\s+عشر[ةه]?(?![ء-ي])"), "12")]
+# "Each one", "no one", "the one channel", "one by one", "كل واحد": the word
+# one with no count in it. On 5 October 2026 a note saying what "each one"
+# of a stage's quotes cost read as the figure 1, and the funnel check called
+# the stage's correct loss a contradiction.
+_ONE_WORDS = ("one", "واحد", "واحدة")
+_NOT_A_COUNT_BEFORE = {"each", "every", "no", "any", "the", "this", "that", "which", "a", "an", "another",
+                       "كل", "أي", "اي", "لا", "ولا"}
+_NOT_A_COUNT_AFTER = {"another", "by"}
+# A range with one scale for both ends: "225 to 252 thousand", "2 to 3
+# million", "٢٢٥ إلى ٢٥٢ ألف". The first end is in the same thousands; read
+# alone it was 225 and failed the proof check against the record's 225,000.
+_SCALED_RANGE = re.compile(
+    r"(\d[\d,]*(?:\.\d+)?)(\s*(?:to|-|–|—|and|or|إلى|الى|حتى|او|أو|و)\s*)(?=(\d[\d,]*(?:\.\d+)?)\s*"
+    r"(k|K|M|mn|bn|thousand|million|billion|ألف|الف|آلاف|الاف|ألفا|مليون|ملايين)(?![A-Za-z0-9ء-ي]))")
+
+
+def _range_scale(m: "re.Match[str]") -> str:
+    low, high = float(m.group(1).replace(",", "")), float(m.group(3).replace(",", ""))
+    if low > high:
+        return m.group(0)
+    scale = _SCALE_OF[m.group(4).lower() if m.group(4) != "M" else "m"]
+    return str(int(round(low * scale))) + m.group(2)
+
+
 def _word(token: str) -> Optional[tuple[str, int]]:
     """A token's value as a number word, with Arabic's joined "and" (وثلاثين) taken off."""
     low = token.lower()
@@ -176,6 +206,9 @@ def spoken_figures(text: str) -> str:
     a scale (149K, 2 million, ٤٥٠ ألف) and numbers written in words
     (thirty-five, خمسة وثلاثين, two hundred and fifty)."""
     text = _plain(str(text)).translate(ARABIC_DIGITS)
+    for rx, digits in _AR_TEENS:
+        text = rx.sub(digits, text)
+    text = _SCALED_RANGE.sub(_range_scale, text)
     text = _SCALED.sub(_scaled, text)
     tokens = list(_TOKEN.finditer(text))
     spans: list[tuple[int, int, int]] = []
@@ -200,6 +233,13 @@ def spoken_figures(text: str) -> str:
                 break
             group.append(nxt)
             end, last, j = tokens[j].end(), nxt[0], j + 1
+        if len(group) == 1 and tokens[i].group(0).lower() in _ONE_WORDS:
+            before = tokens[i - 1].group(0).lower() if i > 0 else ""
+            after = tokens[j].group(0).lower() if j < len(tokens) else ""
+            if (before in _NOT_A_COUNT_BEFORE and re.fullmatch(r"\s*", text[tokens[i - 1].end():start])) or (
+                    after in _NOT_A_COUNT_AFTER and re.fullmatch(r"\s*", text[end:tokens[j].start()])):
+                i = j
+                continue
         total = current = 0
         for kind, v in group:
             if kind == "n":
@@ -261,6 +301,38 @@ CURRENCIES = ("USD", "SAR", "AED", "QAR", "KWD", "BHD", "OMR")
 # basket that has stayed near 0.307 since 2015, close enough for a page that
 # rounds to whole dinars.
 USD_PEGS = {"USD": 1, "SAR": 3.75, "AED": 3.6725, "QAR": 3.64, "BHD": 0.376, "OMR": 0.3845, "KWD": 0.307}
+
+
+# What a closer types for a currency, to its code: "dirhams", "SR", "ريال".
+# A dinar alone is Kuwait's or Bahrain's, so it is not guessed.
+CURRENCY_NAMES = {
+    "USD": r"usd|us\s*\$|\$|dollars?|us\s+dollars?|دولار|دولارات|دولار\s+أمريكي",
+    "SAR": r"sar|sr|saudi\s+ri[y]?als?|ri[y]?als?|ريال|ريالات|ريال\s+سعودي|ر\.?\s?س\.?",
+    "AED": r"aed|dhs?|dirhams?|uae\s+dirhams?|درهم|دراهم|درهم\s+إماراتي|د\.?\s?إ\.?",
+    "QAR": r"qar|qr|qatari\s+ri[y]?als?|ريال\s+قطري|ر\.?\s?ق\.?",
+    "KWD": r"kwd|kd|kuwaiti\s+dinars?|دينار\s+كويتي|د\.?\s?ك\.?",
+    "BHD": r"bhd|bd|bahraini\s+dinars?|دينار\s+بحريني|د\.?\s?ب\.?",
+    "OMR": r"omr|ro|omani\s+ri[y]?als?|ريال\s+عماني|ر\.?\s?ع\.?",
+}
+_CURRENCY_NAMES = [(code, re.compile(rf"^(?:{rx})$", re.I)) for code, rx in CURRENCY_NAMES.items()]
+
+
+def currency_code(text: Any) -> Optional[str]:
+    """The three-letter code for a currency as a closer might type it, or
+    None when it is not one the page can price in. Longer names first, so a
+    Qatari riyal is not taken for a Saudi one."""
+    raw = re.sub(r"\s+", " ", _plain(str(text or ""))).strip()
+    if not raw:
+        return None
+    if raw.upper() in USD_PEGS:
+        return raw.upper()
+    codes = {c.upper() for c in re.findall(r"\b(usd|sar|aed|qar|kwd|bhd|omr)\b", raw, re.I)}
+    if len(codes) == 1:
+        return codes.pop()
+    for code, rx in sorted(_CURRENCY_NAMES, key=lambda c: c[0] == "SAR" or c[0] == "USD"):
+        if rx.match(raw):
+            return code
+    return None
 
 
 def rate_off(currency: str, rate: Any) -> bool:
@@ -738,21 +810,56 @@ SPLIT = re.compile(
     re.I)
 # A payment tied to a result: the retired split paid its second half "after
 # the first contract signs". Since 3 October 2026 the offer is USD 6,000 in
-# full, or USD 3,000 and USD 3,000 thirty days later, both on dates.
-TIED_TO_A_RESULT = re.compile(
-    r"\b(?:when|once|after|upon|on|with|against|tied\s+to|linked\s+to|until)\s+"
-    r"(?:the\s+|your\s+|you\s+sign\s+(?:the\s+|your\s+)?|signing\s+(?:the\s+|your\s+)?)?"
-    r"first\s+(?:signed\s+|new\s+)?(?:contract|project|deal|client|sale)s?\b"
-    r"|\bfirst\s+(?:contract|project|deal|client|sale)\s+(?:signs|is\s+signed|closes|is\s+closed|is\s+won)\b"
-    r"|(?:بعد|عند|مع|حين|لما|لين|حتى|مرتبط\s+ب|مرتبطة\s+ب)\s*(?:توقيع\s+|إغلاق\s+|اغلاق\s+)?"
-    r"(?:أول|اول)\s+(?:عقد|مشروع|صفقة|عميل|بيعة|بيع)",
+# full, or USD 3,000 and USD 3,000 thirty days later, both on dates. Read
+# sentence by sentence: "Paid in full at the start. We begin with your first
+# project's campaign" is two sentences, and only one of them is about paying.
+_RESULT_EVENT = (r"(?:contracts?|projects?|deals?|clients?|sales?|wins?|jobs?|orders?|meetings?|appointments?|"
+                 r"bookings?|results?|leads?|signatures?|signings?)")
+# Strong words: a payment that waits "until", "once", "after" a result.
+TIED_STRONG = re.compile(
+    rf"\b(?:when|once|after|upon|until|till|tied\s+to|linked\s+to|conditional\s+on|subject\s+to|depends\s+on|"
+    rf"dependent\s+on)\s+(?:[^\s,،;]+\s+){{0,4}}?first\s+(?:[^\s,،;]+\s+){{0,2}}?{_RESULT_EVENT}\b"
+    rf"|\b(?:when|once|after|upon|until|till)\s+(?:[^\s,،;]+\s+){{0,3}}?(?:a|the|your|any)\s+(?:new\s+)?"
+    r"(?:contract|project|deal|sale|job|order)\s+(?:is\s+|has\s+been\s+|gets\s+)?(?:signed|closed|won|awarded|booked)\b"
+    rf"|\bfirst\s+(?:contract|project|deal|client|sale|job|order)\s+(?:signs|is\s+signed|closes|is\s+closed|is\s+won|lands)\b"
+    r"|(?:بعد|عند|حين|لما|لين|حتى|مرتبط\s+ب|مرتبطة\s+ب|مشروط\s+ب|مشروطة\s+ب)\s*(?:[^\s,،;]+\s+){0,3}?"
+    r"(?:(?:أول|اول)\s+(?:عقد|مشروع|صفقة|عميل|بيعة|بيع|اجتماع|موعد)"
+    r"|(?:العقد|المشروع|الصفقة|العميل|البيع)\s+(?:الأول|الاول|الأولى|الاولى))",
+    re.I)
+# Weak words ("on", "with", "against", "مع") tie a payment only when the
+# payment is right before them: "the rest on your first deal", not "the work
+# on your first project brief".
+TIED_WEAK = re.compile(
+    rf"\b(?:due|payable|paid|pay|payment|balance|rest|remainder|remaining|half|instal+ment|second)\s+"
+    rf"(?:[^\s,،;]+\s+){{0,2}}?(?:on|with|against|at)\s+(?:[^\s,،;]+\s+){{0,3}}?first\s+(?:[^\s,،;]+\s+){{0,2}}?{_RESULT_EVENT}\b"
+    r"|(?:الدفعة|القسط|المتبقي|الباقي|النصف|المبلغ|تستحق|يستحق|تدفع|يدفع)\s+(?:[^\s,،;]+\s+){0,2}?(?:مع|على)\s+"
+    r"(?:[^\s,،;]+\s+){0,2}?(?:أول|اول)\s+(?:عقد|مشروع|صفقة|عميل|بيعة|بيع)",
     re.I)
 # A line that is about paying, so a first project mentioned for any other
-# reason is left alone.
-PAYMENT_WORDS = re.compile(r"\bpa(?:y|id|ys|ying|yment|yments)\b|\binstal+ments?\b|\bdue\b|\bbalance\b|\bhalf\b"
-                           r"|\bsecond\b|\bremaining\b|\brest\b|\bfee\b|\d[\d,]{2,}"
+# reason is left alone. "Pays for itself" is the arithmetic, not a payment.
+PAYMENT_WORDS = re.compile(r"\bpa(?:y|id|ys|ying|yment|yments|yable)\b(?!\s+for\s+(?:itself|themselves))"
+                           r"|\binstal+ments?\b|\bdue\b|\bbalance\b|\bhalf\b"
+                           r"|\bsecond\b|\bremaining\b|\bremainder\b|\brest\b|\bfee\b|\d[\d,]{2,}"
                            r"|دفع|دفعة|الدفعة|القسط|قسط|يستحق|تستحق|المتبقي|الباقي|النصف|نصف|المبلغ|رسوم",
                            re.I)
+_PAY_NEGATED = re.compile(r"\b(?:no|not|never|nothing|none)\b|n't|(?:^|\s)(?:لا|ليس|ليست|لن|غير)\s", re.I)
+
+
+def tied_to_a_result(text: str) -> bool:
+    """A sentence about paying that ties the payment to a result: a first
+    contract, project, deal, client, sale or meeting, or a contract signed.
+    A sentence that says it is not tied ("never waits on a first contract")
+    is the honest form."""
+    for sentence in re.split(r"(?<=[.!?؟;؛])\s+|\n+", _plain(text)):
+        if not PAYMENT_WORDS.search(sentence):
+            continue
+        for rx in (TIED_STRONG, TIED_WEAK):
+            for m in rx.finditer(sentence):
+                if not _PAY_NEGATED.search(sentence[:m.start()]):
+                    return True
+    return False
+
+
 N_TIMES = re.compile(r"(?<![\d,.])\b([1-9]|1[0-2])\s*[x×]\s*(?:([A-Z]{3})\s*)?(\d[\d,]{2,})")
 
 
@@ -847,7 +954,7 @@ def check_offer(data: dict[str, Any], resolved: dict[str, Any], offer: Optional[
     # the platforms, and saying so is not a payment plan.
     ad_paths = {f"investment.rows[{i}]." for i, r in enumerate(rows_all) if r in ad_rows}
     fee_page = [(p, t) for p, t in page if not any(p.startswith(a) for a in ad_paths)]
-    tied = [p for p, t in fee_page if PAYMENT_WORDS.search(t) and TIED_TO_A_RESULT.search(_plain(t))]
+    tied = [p for p, t in fee_page if tied_to_a_result(t)]
     if tied:
         rep.add(FAIL, "offer", "a payment is tied to the client's first contract, project, deal or sale in "
                 + ", ".join(tied[:4]) + ". Payments fall due on dates only: "
@@ -928,7 +1035,8 @@ _RESULT = r"(?:results?|appointments?|meetings?|visits?|leads?|projects?|revenue
 RESULT_GUARANTEED = re.compile(
     rf"\bguarantee[ds]?\b(?:\s+\w+){{0,4}}?\s+(?:\d[\d,]*\s+)?(?:qualified\s+)?{_RESULT}\b"
     rf"|\bguaranteed\s+{_RESULT}\b"
-    r"|(?:نضمن|يضمن|تضمن)(?:\s+\S+){0,3}?\s+(?:[٠-٩0-9]+\s+)?(?:موعد|مواعيد|نتائج|نتيجة|مشاريع|مشروع|عملاء|ليدز)"
+    r"|(?:نضمن|يضمن|تضمن|سنضمن)(?:\s+\S+){0,3}?\s+(?:[٠-٩0-9]+\s+)?"
+    r"(?:موعد|مواعيد|موعدا|اجتماع|اجتماعات|اجتماعا|زيارة|زيارات|نتائج|نتيجة|مشاريع|مشروع|مشروعا|عملاء|عميل|ليدز|صفقات|عقود)"
     r"|ضمان\s+(?:على\s+)?(?:ال)?(?:نتائج|مواعيد)",
     re.I)
 # The guarantee after the result, closing the clause: "Qualified meetings
@@ -942,13 +1050,47 @@ RESULT_THEN_GUARANTEED = re.compile(
 # signed work stated as the program's output is a promise of results in all
 # but the word (Aziz, 2026-10-05: the meetings figure is "the target we work
 # to, not a promise"). The same sentence calling it a target is the honest form.
+# Read on the copy with its number words as digits (spoken_figures).
+_OUTPUT_NOUN = (rf"(?:{_RESULT}|signed|deals?|contracts?"
+                r"|موعد|مواعيد|موعدا|اجتماع|اجتماعات|اجتماعا|زيارة|زيارات|مشروع|مشاريع|مشروعا|عملاء|عميل|"
+                r"نتائج|صفقات|صفقة|عقود|عقدا|ليدز)")
 BUILT_TO = re.compile(
-    rf"\bbuilt\s+to\s+(?:deliver|produce|add|bring|generate)\b[^.!?]{{0,40}}?"
-    rf"\b(?:{_RESULT}|signed|deals?|contracts?)\b"
-    r"|(?:بني|مبني|مبنية|مصمم|مصممة|صمم)\s+(?:\S+\s+){0,2}?(?:ل|لكي\s+)?"
-    r"(?:يحقق|تحقق|يضيف|تضيف|يجلب|تجلب|يولد|تولد|يقدم|تقدم|يوفر|توفر|تحقيق|إضافة|اضافة|جلب|توليد)"
-    r"[^.!?؟]{0,40}?(?:موعد|مواعيد|اجتماع|اجتماعات|زيارة|زيارات|مشروع|مشاريع|عملاء|عميل|نتائج|صفقات|عقود)",
+    # The program, made to produce them: built, designed, set up, engineered.
+    r"\b(?:built|designed|made|set\s+up|engineered|structured)\s+to\s+(?:deliver|produce|add|bring|generate|book|get)\b"
+    r"|(?:بني|مبني|مبنية|مصمم|مصممة|صمم|صممت)\s+(?:\S+\s+){0,2}?(?:ل|لكي\s+)?"
+    r"(?:يحقق|تحقق|يضيف|تضيف|يجلب|تجلب|يولد|تولد|يقدم|تقدم|يوفر|توفر|تحقيق|إضافة|اضافة|جلب|توليد)",
     re.I)
+# We, or the program, as the one that delivers them: "the program delivers
+# thirty qualified meetings", "we will book 30 meetings", "you will get 30
+# meetings", "expect thirty meetings". Past tense is our record, not a promise.
+DELIVERS = re.compile(
+    r"\b(?:we|the\s+program(?:me)?|this\s+program(?:me)?|our\s+program(?:me)?|the\s+engagement|the\s+system|"
+    r"the\s+campaigns?)\s+(?:will\s+|'ll\s+|can\s+)?(?:deliver|delivers|produce|produces|add|adds|bring|brings|"
+    r"generate|generates|book|books|get\s+you|gets\s+you|secure|secures)\b"
+    r"|\bwe(?:'ll|\s+will)\s+(?:deliver|produce|add|bring|generate|book|get\s+you|secure)\b"
+    r"|\byou(?:'ll|\s+will)\s+(?:get|receive|have|see)\b|\b(?:you\s+can\s+|you\s+should\s+)?expect\b"
+    r"|(?:سن|ن)(?:وفر|قدم|حقق|جلب|ضيف|ولد|حجز)(?:\s+لك|\s+لكم)?\s"
+    r"|(?:البرنامج|برنامجنا)\s+(?:سي|ي)(?:وفر|قدم|حقق|جلب|ضيف|ولد)|(?:سي|ي)(?:وفر|قدم|حقق|جلب|ضيف|ولد)\s+"
+    r"(?:لك\s+|لكم\s+)?(?:البرنامج|برنامجنا)|ستحصل(?:ون)?\s+على",
+    re.I)
+# The old offer's own sentence, the other way round: "Thirty qualified
+# meetings across the term is what the program is built to deliver."
+WHAT_IT_DELIVERS = re.compile(
+    rf"\d[\d,]*\s+(?:\S+\s+){{0,2}}?{_OUTPUT_NOUN}\b[^.!?]{{0,80}}?\b(?:is|are)\s+what\s+"
+    r"(?:the\s+program(?:me)?|this\s+program(?:me)?|we|the\s+engagement)\s+(?:is\s+|was\s+|are\s+)?"
+    r"(?:(?:built|designed|made|set\s+up)\s+to\s+)?(?:deliver|produce|add|bring|generate|book)s?\b"
+    r"|(?:هو|هي)\s+ما\s+(?:بني|صمم|يقدمه|يحققه|يوفره|يجلبه|سيقدمه|سيحققه|سيوفره|نقدمه|نحققه|نوفره)",
+    re.I)
+# The client's own firm is built to deliver its projects: "Your team is built
+# to deliver projects on time" says nothing of ours. The words just before
+# the verb, so "You get a program built to add ..." is still ours.
+_CLIENT_SUBJECT = re.compile(
+    r"\b(?:your|their)\s+\w+(?:\s+\w+)?\s+(?:is\s+|are\s+|was\s+|were\s+)?$"
+    r"|\b(?:you|they)(?:'re|\s+are|\s+were)?\s+$|(?:ك|كم)\s+(?:\S+\s+)?$", re.I)
+# "What the program is built to add", with the result left unsaid.
+WHAT_IT_IS_BUILT_TO = re.compile(
+    r"\bwhat\s+(?:the|this|our)\s+program(?:me)?\s+(?:is|was)\s+(?:built|designed|made|set\s+up)\s+to\s+"
+    r"(?:deliver|produce|add|bring|generate)\b", re.I)
 TARGET_WORD = re.compile(r"\btargets?\b|\btargeted\b|هدف|الهدف|مستهدف|المستهدف", re.I)
 SENTENCE_END = re.compile(r"[.!?؟]")
 _NOT = re.compile(r"\b(?:not|never|no|cannot)\b|n't", re.I)
@@ -971,11 +1113,33 @@ def sentence_at(text: str, start: int, end: int) -> str:
 
 
 def built_to_deliver(text: str) -> bool:
-    """A result stated as what the program is built to produce, in a sentence
-    that does not call it a target."""
-    return any(not TARGET_WORD.search(sentence_at(text, m.start(), m.end()))
-               and not _NEGATED.search(text[:m.start()])
-               for m in BUILT_TO.finditer(text))
+    """Meetings, projects or signed work stated as what we or the program
+    will produce, in a sentence that does not call it a target. Built (or
+    designed) to deliver them, unless it is the client's firm that is built
+    so, or their own clients who are delivered to; we, the program or "you
+    will get" with a figure for them; and the old offer's sentence turned
+    round ("thirty meetings is what the program is built to deliver")."""
+    text = spoken_figures(text)
+
+    def honest(m: "re.Match[str]") -> bool:
+        return bool(TARGET_WORD.search(sentence_at(text, m.start(), m.end())) or _NEGATED.search(text[:m.start()]))
+
+    for rx in (BUILT_TO, DELIVERS):
+        for m in rx.finditer(text):
+            if honest(m):
+                continue
+            if rx is BUILT_TO and _CLIENT_SUBJECT.search(text[:m.start()][-60:]):
+                continue
+            after = re.split(r"[.!?؟;؛]", text[m.end():], maxsplit=1)[0][:70]
+            for noun in re.finditer(rf"(?:\b|(?<=\s)){_OUTPUT_NOUN}(?![A-Za-z])", after, re.I):
+                figure_first = bool(re.search(r"\d", after[:noun.start()]))
+                if rx is DELIVERS and not figure_first:
+                    continue
+                # Delivering to "your clients" is the client's business, not a result of ours.
+                if not figure_first and re.search(r"\b(?:your|their|to)\s+$", after[:noun.start()], re.I):
+                    continue
+                return True
+    return any(not honest(m) for rx in (WHAT_IT_DELIVERS, WHAT_IT_IS_BUILT_TO) for m in rx.finditer(text))
 
 
 def promises_results(text: str) -> bool:
@@ -1220,73 +1384,142 @@ def check_evidence(data: dict[str, Any], said: Optional[set[int]], rep: Report, 
 # driver tree and in the funnel is one of the two wrong (5 October 2026: six
 # projects signed on the gap tile, "two signed" in the tree).
 COUNTED = {
+    # Signed work, by any of the words a page says it in. A bare "projects" is
+    # not counted: on one page it is the quotes sent this year, on another
+    # every job since the firm began, and on a third the goal (5 October 2026
+    # review: four drafts warned on counts that were never the same thing).
     "signed": r"signed|موقع|موقعة|الموقعة|موقعين|وقعت|وقعنا|وقعناها",
-    "projects": r"projects?|مشروع|مشاريع|المشاريع|مشروعات",
     "meetings": r"meetings?|appointments?|اجتماع|اجتماعات|الاجتماعات|موعد|مواعيد|المواعيد",
     "leads": r"leads?|enquiry|enquiries|inquiry|inquiries|ليد|ليدز|استفسار|استفسارات",
 }
 _COUNTED = {k: re.compile(rf"^(?:{v})$", re.I) for k, v in COUNTED.items()}
 # A noun after these is not the thing counted: "related to a project",
-# "signed from those leads".
-_NOT_COUNTED_AFTER = re.compile(r"^(?:a|an|per|each|every|from|of|to|those|these|the|with|for|من|إلى|الى|لكل|كل|في)$",
+# "signed from those leads", "channels bringing you projects".
+_NOT_COUNTED_AFTER = re.compile(r"^(?:a|an|per|each|every|from|of|to|those|these|the|with|for|you|من|إلى|الى|لكل|كل|في|لك|لكم)$",
                                 re.I)
 # Nor is an increment: "one more project a month" is a target, not a count.
 _INCREMENT = re.compile(r"^(?:more|extra|additional|another|new|further|أكثر|اكثر|إضافي|إضافية|اضافي|اضافية|جديد|جديدة)$",
                         re.I)
 _WORDS = re.compile(r"\d[\d,]*|[A-Za-z]+|[ء-ي]+|[.,;:!?؟،؛]")
+_CLAUSE_END = re.compile(r"[.,;:!?؟،؛]")
+# A rate is not a count: "two a month" against "six in eight months" is the
+# same client, told per period.
+RATE = re.compile(
+    r"\b(?:a|per|each|every|an)\s+(?:day|week|month|quarter|year)\b|\b(?:daily|weekly|monthly|quarterly|yearly|annually)\b"
+    r"|يوميا|أسبوعيا|اسبوعيا|شهريا|سنويا|في\s+(?:اليوم|الأسبوع|الاسبوع|الشهر|السنة|العام)"
+    r"|كل\s+(?:يوم|أسبوع|اسبوع|شهر|سنة|عام)|(?:باليوم|بالأسبوع|بالاسبوع|بالشهر|بالسنة)", re.I)
+# A goal, a plan or what is needed is not a count of what happened.
+AIMED = re.compile(
+    r"\b(?:targets?|goals?|aim|aims|want|wants|plan|plans|would|could|next|need|needs|needed|enough|should)\b"
+    r"|هدف|الهدف|نريد|تريد|يريد|نحتاج|تحتاج|يحتاج|القادمة|القادم|نطمح|تطمح", re.I)
+# What a figure counts when it is followed by one of these: a period, a share
+# or money, not people or work.
+_UNIT_AFTER = re.compile(
+    r"^\s*(?:%|٪|percent|per\s+cent|days?|weeks?|months?|quarters?|years?|hours?|minutes?|sqm|m2|"
+    r"usd|sar|aed|kwd|qar|bhd|omr|dollars?|riyals?|dirhams?|dinars?|"
+    r"يوم|يوما|أيام|ايام|أسبوع|اسبوع|أسابيع|اسابيع|شهر|شهرا|أشهر|اشهر|شهور|سنة|سنوات|عام|أعوام|ساعة|ساعات|"
+    r"دولار|ريال|درهم|دينار)\b", re.I)
+_UNIT_BEFORE = re.compile(r"(?:usd|sar|aed|kwd|qar|bhd|omr|\$|دولار|ريال|درهم|دينار)\s*$", re.I)
+
+
+# No client of ours counts ten thousand of anything they sign, meet or are
+# asked about in a term; a figure that size beside "signed" is the money.
+COUNT_CEILING = 10_000
+
+
+def count_figures(text: Any) -> list[int]:
+    """The figures in a piece of copy that count people or work: not a
+    period ("two days", "in eight months"), a share, money or a year."""
+    plain = spoken_figures(str(text or ""))
+    out = []
+    for m in re.finditer(r"\d[\d,]*(?:\.\d+)?", plain):
+        raw = m.group(0).replace(",", "")
+        if "." in raw or not raw.isdigit():
+            continue
+        n = int(raw)
+        if n >= COUNT_CEILING or 1900 <= n <= 2100 or _UNIT_AFTER.match(plain[m.end():]) \
+                or _UNIT_BEFORE.search(plain[:m.start()]):
+            continue
+        out.append(n)
+    return out
 
 
 def _nouns_named(text: str) -> set[str]:
-    """The counted things a label names, leaving out any after a preposition or an article."""
-    words = [w for w in _WORDS.findall(spoken_figures(text)) if not re.fullmatch(r"\d[\d,]*", w)]
+    """The counted things a gap tile's label names: in its first clause, never
+    after a preposition, an article or "you", never a thing the label counts
+    with a figure of its own ("Kitchens quoted since March. Three signed"),
+    and never in a label that is a rate or a goal."""
+    first = _CLAUSE_END.split(spoken_figures(text), 1)[0]
+    if RATE.search(first) or AIMED.search(first):
+        return set()
+    words = _WORDS.findall(first)
     out = set()
     for i, w in enumerate(words):
-        if re.fullmatch(r"[.,;:!?؟،؛]", w):
+        if re.fullmatch(r"\d[\d,]*", w):
             continue
         before = words[max(0, i - 2):i]
-        if any(_NOT_COUNTED_AFTER.match(b) for b in before):
+        if any(_NOT_COUNTED_AFTER.match(b) or re.fullmatch(r"\d[\d,]*", b) for b in before):
             continue
         out.update(k for k, rx in _COUNTED.items() if rx.match(w))
     return out
 
 
 def _counts_in_prose(text: str) -> list[tuple[str, int]]:
-    """(noun, figure) for each figure followed within three words by a counted thing."""
-    words = _WORDS.findall(spoken_figures(text))
+    """(noun, figure) for each figure followed within three words by a
+    counted thing, leaving out a rate, a period and a sentence about a goal."""
     out = []
-    for i, w in enumerate(words):
-        if not re.fullmatch(r"\d[\d,]*", w):
+    for sentence in re.split(r"(?<=[.!?؟;؛])\s+", spoken_figures(text)):
+        if AIMED.search(sentence):
             continue
-        n = int(w.replace(",", ""))
-        for nxt in words[i + 1:i + 4]:
-            if re.fullmatch(r"\d[\d,]*|[.,;:!?؟،؛]", nxt) or _INCREMENT.match(nxt):
-                break
-            out.extend((k, n) for k, rx in _COUNTED.items() if rx.match(nxt))
+        words = _WORDS.findall(sentence)
+        for i, w in enumerate(words):
+            if not re.fullmatch(r"\d[\d,]*", w):
+                continue
+            n = int(w.replace(",", ""))
+            # "Six hundred thousand signed this year" is money, not signatures.
+            if n >= COUNT_CEILING or 1900 <= n <= 2100 or (i and _UNIT_BEFORE.search(words[i - 1])):
+                continue
+            if i + 1 < len(words) and _UNIT_AFTER.match(words[i + 1]):
+                continue
+            clause = []
+            for nxt in words[i + 1:]:
+                if re.fullmatch(r"[.,;:!?؟،؛]", nxt):
+                    break
+                clause.append(nxt)
+            if RATE.search(" ".join(clause[:6])):
+                continue
+            for nxt in clause[:3]:
+                if re.fullmatch(r"\d[\d,]*", nxt) or _INCREMENT.match(nxt):
+                    break
+                out.extend((k, n) for k, rx in _COUNTED.items() if rx.match(nxt))
     return out
 
 
 def stated_counts(data: dict[str, Any]) -> dict[str, list[tuple[str, str, int]]]:
     """Every count of a counted thing on the gap page, in the tree and in the
-    funnel: block -> [(field, noun, figure)]."""
+    funnel: block -> [(field, noun, figure)]. The tree's goal is a goal, so
+    it is left out."""
     out: dict[str, list[tuple[str, str, int]]] = {"gap_points": [], "tree": [], "funnel": []}
     for i, g in enumerate(data.get("gap_points") or []):
         if isinstance(g, dict):
-            for n in figures_in(g.get("v")):
+            for n in count_figures(g.get("v")):
                 out["gap_points"].extend((f"gap_points[{i}]", k, n) for k in _nouns_named(str(g.get("k") or "")))
     funnel = data.get("funnel") if isinstance(data.get("funnel"), dict) else {}
     for i, st in enumerate(funnel.get("stages") or []):
         if not isinstance(st, dict):
             continue
         shown = st.get("display")
-        nums = figures_in(shown) if isinstance(shown, str) else ([int(st["value"])] if isinstance(
+        nums = count_figures(shown)[:1] if isinstance(shown, str) else ([int(st["value"])] if isinstance(
             st.get("value"), (int, float)) and not isinstance(st.get("value"), bool) else [])
+        if isinstance(shown, str) and RATE.search(shown):
+            nums = []
         for n in nums:
             out["funnel"].extend((f"funnel.stages[{i}]", k, n) for k in _nouns_named(str(st.get("label") or "")))
     for f in ("title", "note"):
         if isinstance(funnel.get(f), str):
             out["funnel"].extend((f"funnel.{f}", k, n) for k, n in _counts_in_prose(funnel[f]))
     tree = data.get("tree") if isinstance(data.get("tree"), dict) else {}
-    prose = [(f"tree.{f}", tree.get(f)) for f in ("goal", "goal_note", "note")]
+    prose = [(f"tree.{f}", tree.get(f)) for f in ("goal_note", "note")]
     for i, br in enumerate(tree.get("branches") or []):
         if isinstance(br, dict):
             prose += [(f"tree.branches[{i}].{f}", br.get(f)) for f in ("title", "note")]
@@ -1299,11 +1532,43 @@ def stated_counts(data: dict[str, Any]) -> dict[str, list[tuple[str, str, int]]]
     return out
 
 
+# A count told about an earlier period ("last year", "in 2024") is not the
+# same count as one told about this one, however both are worded: a funnel of
+# last year's quotes against this year's figure on the gap tile. Anything else
+# is taken as now, since "this year" and "in eight months" are one stretch.
+_EARLIER = re.compile(
+    r"\b(?:last|previous|prior)\s+(?:year|month|quarter|season)\b|\b(?:a\s+year|years)\s+ago\b|\bin\s+(?:19|20)\d\d\b"
+    r"|(?:العام|السنة|الشهر|الربع)\s+(?:الماضي|الماضية|السابق|السابقة)|(?:عام|سنة)\s+(?:19|20)\d\d", re.I)
+
+
+def period_of(text: Any) -> str:
+    """"earlier" when a field's count is about an earlier period, else "now"."""
+    plain = _plain(str(text or ""))
+    years = [int(y) for y in re.findall(r"\b((?:19|20)\d\d)\b", plain)]
+    if _EARLIER.search(plain) and not (years and max(years) >= date.today().year):
+        return "earlier"
+    return "now"
+
+
+def _field_text(data: dict[str, Any], path: str) -> str:
+    """A counted field's own words, with the label or note that says over what."""
+    m = re.fullmatch(r"(gap_points|funnel\.stages)\[(\d+)\]", path)
+    if m:
+        items = data.get("gap_points") if m.group(1) == "gap_points" else (data.get("funnel") or {}).get("stages")
+        item = (items or [])[int(m.group(2))]
+        return " ".join(str(item.get(k) or "") for k in ("k", "v", "label", "display", "note"))
+    node: Any = data
+    for part in re.findall(r"[a-z_]+|\d+", path):
+        node = node[int(part)] if part.isdigit() else (node or {}).get(part)
+    return str(node or "")
+
+
 def check_counts(data: dict[str, Any], rep: Report) -> None:
     """The same thing counted with different figures on two of the three pages
-    that describe the client. A warning naming both fields: one of them is
-    wrong, and only the call says which."""
+    that describe the client, over the same period or none said. A warning
+    naming both fields: one of them is wrong, and only the call says which."""
     counts = stated_counts(data)
+    period = {p: period_of(_field_text(data, p)) for block in counts.values() for p, _k, _n in block}
     blocks = list(counts)
     clashes = []
     for noun in COUNTED:
@@ -1311,7 +1576,13 @@ def check_counts(data: dict[str, Any], rep: Report) -> None:
             for b in range(a + 1, len(blocks)):
                 left = [(p, n) for p, k, n in counts[blocks[a]] if k == noun]
                 right = [(p, n) for p, k, n in counts[blocks[b]] if k == noun]
-                if left and right and not ({n for _p, n in left} & {n for _p, n in right}):
+                # A count of an earlier period is another count.
+                pairs = [(lp, ln, rp, rn) for lp, ln in left for rp, rn in right if period[lp] == period[rp]]
+                if not pairs:
+                    continue
+                left = [(lp, ln) for lp, ln, _rp, _rn in pairs]
+                right = [(rp, rn) for _lp, _ln, rp, rn in pairs]
+                if left and right and not any(ln == rn for _lp, ln, _rp, rn in pairs):
                     clashes.append(f"{left[0][0]} says {left[0][1]:,} {noun} and {right[0][0]} says "
                                    f"{right[0][1]:,} {noun}")
     if clashes:
@@ -1340,26 +1611,47 @@ def stage_figure(st: dict[str, Any]) -> Optional[float]:
 
 def funnel_losses(funnel: dict[str, Any]) -> list[tuple[int, float]]:
     """(stage, lost) for each "lost here" the template draws: between two
-    stages printed as figures, from the same pool, where the count falls."""
-    stages = [s for s in (funnel.get("stages") or []) if isinstance(s, dict)]
+    stages printed as figures, from the same pool, where the count falls.
+    Stages are numbered as they stand in the deal."""
+    stages = funnel.get("stages") or []
     out = []
     for i in range(1, len(stages)):
-        prev, cur = stage_figure(stages[i - 1]), stage_figure(stages[i])
-        same_pool = (stages[i].get("pool", funnel.get("pool")) or "") == \
-                    (stages[i - 1].get("pool", funnel.get("pool")) or "")
+        above, here = stages[i - 1], stages[i]
+        if not (isinstance(above, dict) and isinstance(here, dict)):
+            continue
+        prev, cur = stage_figure(above), stage_figure(here)
+        same_pool = (here.get("pool", funnel.get("pool")) or "") == (above.get("pool", funnel.get("pool")) or "")
         if prev is not None and cur is not None and same_pool and prev - cur > 0:
             out.append((i, prev - cur))
     return out
 
 
+# A note that says what became of the stage's people: "five signed, nine did
+# not". Only such a note can contradict the loss drawn under it. One that
+# says where they came from ("12 from Google, 28 from Instagram") or how long
+# it took ("across three days") does not, and code used to give the next
+# stage a pool of its own on either, which dropped a correct "lost here"
+# (5 October 2026 review).
+OUTCOME = re.compile(
+    r"\b(?:signed|signs?|signature|reached|closed|won|booked|became|converted|went\s+on|walked|lost|dropped|"
+    r"declined|did\s+not|didn't|never\s+(?:signed|came|showed)|no[- ]shows?|showed|turned\s+down)\b"
+    r"|وقع|وقعوا|توقيع|تم\s+التوقيع|انسحب|انسحبوا|خسر|خسرنا|رفض|رفضوا|لم\s+(?:يوقع|يوقعوا|يكمل|يكملوا|يحضر|يحضروا)",
+    re.I)
+
+
 def pool_clashes(funnel: dict[str, Any]) -> list[tuple[int, float, list[int]]]:
-    """(stage, lost, the figures in the note above) for each drawn loss that
-    the note on the stage above contradicts with figures of its own."""
+    """(stage, lost, the counts in the note above) for each drawn loss that
+    the note on the stage above contradicts: a note that says what became of
+    that stage's people, in counts of its own (no period, share or money),
+    none of which is the loss drawn."""
     stages = funnel.get("stages") or []
     out = []
     for i, lost in funnel_losses(funnel):
-        own = [n for n in figures_in(stages[i - 1].get("note")) if n]
-        if own and int(lost) not in own:
+        above = stages[i - 1]
+        note = str(above.get("note") or "")
+        prev = stage_figure(above) or 0
+        own = [n for n in count_figures(note) if 0 < n <= prev]
+        if own and OUTCOME.search(_plain(note)) and int(lost) not in own:
             out.append((i, lost, own))
     return out
 
@@ -1438,7 +1730,9 @@ def check_arithmetic(data: dict[str, Any], rep: Report) -> None:
     margin_mode = a.get("mode") == "margin"
     volume_mode = a.get("mode") == "volume"
     values = [v for v in (a.get("project_values") or []) if v]
-    margins = [m for m in (a.get("margins") or [10, 20]) if m]
+    # The margins the page divides by, as the template picks them: the
+    # deal's, else the client's gross margin alone, else 10 and 20.
+    margins = [m for m in (a.get("margins") or ([a["gross_margin"]] if a.get("gross_margin") else [10, 20])) if m]
     grid = list(values)
     if margin_mode:
         values = [a.get("project_value")] if a.get("project_value") else []
