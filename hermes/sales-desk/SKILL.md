@@ -221,7 +221,8 @@ these figures exactly, with the words in the document's language.
   retired, and the call does not bring it back. `validate.py` fails a price-page
   line, in either language, that ties a payment to one.
 - **The total is what is paid to us at the start.** `investment.total_amount`
-  is the first payment and `total_label` says so: "Paid to us at the start".
+  is the payment at the start (the first of the two when split) and
+  `total_label` says so: "Paid to us at the start".
   Advertising is never added into it; it is paid to the platforms, on its own
   line. The payment-structure row says how the price is paid, not the price
   again: its amount reads "In full at the start" when paid in full, or "Two
@@ -289,6 +290,10 @@ sets one project against the whole engagement, the verdict does not then set it
 against the fee alone because that number reads better. Saying it both ways
 does not make the case twice, it tells the reader the page will pick whichever
 comparison flatters us, and he then rereads the first one looking for the trick.
+`validate.py` fails the page's words when they set our fee alone where the
+table has the whole engagement (5 October 2026: "the USD 6,000 engagement"
+beside a table of 10,500, and "if you keep a fifth" beside a table needing 35.0
+percent).
 
 Say it as a share or a ratio, never as a product. "Nine tenths of one project",
 "less than one project", "half the engagement" are all safe, because every
@@ -449,7 +454,13 @@ Beyond the schema, the evidence and the page count, both gates check:
   offer is flagged.
 - **echoes**, because the same sentence printed twice on one page reads as a
   mistake, and is one.
-- **one currency**, so a document cannot quote in two.
+- **one currency**, so a document cannot quote in two, and no words saying none
+  was named: the closer names it before the page is sent.
+- **the arithmetic page's words** (`verdict`): they divide into the whole
+  engagement the table prints, never our fee alone; a share kept is no smaller
+  than the table's; "many times over" needs a margin the page counts at, and
+  that count has to bear it out; and one project is never said to pay for the
+  term outright when the page assumes no margin.
 
 ## Output
 

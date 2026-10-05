@@ -406,7 +406,8 @@ def margin_mode_deal(currency: str = "USD") -> dict[str, Any]:
     deal = general_deal()
     deal["roi"].update({"local_currency": "USD", "usd_rate": 1, "avg_project_value": 450000})
     deal["arithmetic"] = {"mode": "margin", "currency": currency, "project_value": 450000, "months": 3,
-                          "title": "What it takes to pay for itself", "verdict": "One project covers it."}
+                          "title": "What it takes to pay for itself",
+                          "verdict": "One project covers it if you keep that share of it."}
     return deal
 
 

@@ -444,6 +444,17 @@ lost the grid page's summary sentence and its total label. The grid file is
 also the stand-in for a blind draft (the first file by name), which suits one:
 no project value and a grid. B2B holds no blind draft to make one from.
 
+Two things the references carry are put right as the drafter is shown them.
+`general-grid.json` has no `gap_points`, and a draft that copied it drew the
+gap page as the funnel alone (175832813, about 430 px blank), so a general
+reference without them shows the drafter the two or three tiles to write from
+the call (`prompt.GAP_POINTS_SHAPE`). And every reference's `deposit_label`
+says the deposit "comes off the first payment"; paid in full there is one
+payment, so for that choice the label becomes an instruction to say it comes
+off the payment at the start (`prompt.DEPOSIT_IN_FULL_SHAPE`). The validator
+warns on a first payment under paid in full in a check of its own
+(`deposit`), not the offer's, so the references are not failed for it.
+
 Its dates are not held against it. The drafter is told today's date and the
 date two weeks on in place of the reference's own (`prompt.shape_of`), since
 it is told the date nowhere else and the 24 September draft kept the

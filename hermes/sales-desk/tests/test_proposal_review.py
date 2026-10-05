@@ -339,7 +339,8 @@ class TypedCurrencyTests(unittest.TestCase):
         deal = general_deal()
         deal["roi"].update({"local_currency": "USD", "usd_rate": 1, "avg_project_value": 1000000})
         deal["arithmetic"] = {"mode": "margin", "currency": typed, "project_value": 1000000, "months": 3,
-                              "title": "What it takes to pay for itself", "verdict": "One project covers it."}
+                              "title": "What it takes to pay for itself",
+                              "verdict": "One project covers it if you keep that share of it."}
         return deal
 
     def test_a_currency_typed_as_a_name_is_priced_in(self):

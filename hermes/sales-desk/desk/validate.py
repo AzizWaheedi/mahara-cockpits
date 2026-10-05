@@ -896,6 +896,11 @@ def tied_to_a_result(text: str) -> bool:
 
 
 N_TIMES = re.compile(r"(?<![\d,.])\b([1-9]|1[0-2])\s*[x×]\s*(?:([A-Z]{3})\s*)?(\d[\d,]{2,})")
+# A first payment implies a second. Paid in full, the deposit comes off the one
+# payment at the start (the references' deposit_label said "the first payment"
+# on every draft, 5 October 2026).
+FIRST_OF_SEVERAL = re.compile(r"\bfirst\s+(?:payment|instal+ment)\b|الدفعة\s+(?:الأولى|الاولى)|(?:أول|اول)\s+دفعة"
+                              r"|القسط\s+(?:الأول|الاول)", re.I)
 
 
 def price_page(data: dict[str, Any]) -> list[tuple[str, str]]:
@@ -1009,6 +1014,15 @@ def check_offer(data: dict[str, Any], resolved: dict[str, Any], offer: Optional[
         if hits:
             rep.add(FAIL, "offer", "the closer chose payment in full, and the price page prints a split in "
                                    + ", ".join(hits[:4]) + ". Print no schedule nobody chose.")
+        # A warning of its own, not the offer's: the corrected references
+        # still say "the first payment", and an offer warning fails a
+        # reference (references.STRICT). The drafter is told the right words
+        # (offer.prompt_block, prompt.system_for).
+        firsts = [p for p, t in fee_page if p not in hits and FIRST_OF_SEVERAL.search(t)]
+        if firsts:
+            rep.add(WARN, "deposit", "the closer chose payment in full, and " + ", ".join(firsts[:4])
+                                     + " speaks of a first payment. There is one payment, at the start: the "
+                                       "deposit comes off that")
     else:
         missing = [a for a in sorted(set(instalments)) if not shown(a)]
         if missing:
@@ -1296,6 +1310,25 @@ def check_echoes(data: dict[str, Any], rep: Report) -> None:
 
 
 # --------------------------------------------------------------- currency ---
+# Words saying no currency was named. A currency left for the closer is
+# settled before the page goes out, and then the page states it in its figures
+# while its words still say there is none (180273419 on 5 October 2026: AED
+# filled, "You named no net margin and no currency, so this page assumes
+# neither" left as it was, and the gate said ready).
+_TAGS = re.compile(r"<[^>]+>")
+NO_CURRENCY = re.compile(
+    r"\bno\s+currency\b|\bnamed\s+no\s+(?:[a-z]+\s+){0,4}?currency\b"
+    r"|\bwithout\s+(?:a\s+|any\s+|naming\s+(?:a\s+|the\s+)?)?currency\b"
+    r"|\bcurrency\s+(?:was|is|has)\s+(?:not|never)\s+(?:been\s+)?(?:named|given|stated|said|set|settled|confirmed)"
+    r"|\b(?:did\s+not|didn't|never)\s+(?:name|give|state|say|set|mention)\s+(?:a\s+|the\s+|any\s+|which\s+)?currency\b"
+    r"|\bcurrency\s+(?:is\s+)?(?:still\s+)?(?:unstated|unknown|unnamed|open|to\s+be\s+(?:confirmed|settled))\b"
+    r"|\bonce\s+the\s+currency\s+is\s+(?:settled|confirmed|known|named|agreed)\b"
+    r"|(?:بدون|دون|بلا)\s+(?:ذكر\s+|تحديد\s+)?(?:أي\s+|اي\s+)?(?:عملة|العملة)"
+    r"|لم\s+(?:\S+\s+){0,2}?(?:أي\s+|اي\s+)?(?:عملة|العملة)"
+    r"|ما\s+(?:ذكرت|حددت|سميت|ذكرتو|حددتو|ذكرتوا|حددتوا)\s+(?:أي\s+|اي\s+)?(?:عملة|العملة)",
+    re.I)
+
+
 def check_currency(data: dict[str, Any], rep: Report) -> None:
     # A currency the closer typed that the page cannot price in is put back to
     # a blank on the rebuild (engine.follow_currency); say why, or the closer
@@ -1306,6 +1339,11 @@ def check_currency(data: dict[str, Any], rep: Report) -> None:
     if typed and FILL_RE.search(str(arith.get("currency") or "")) and currency_code(typed) is None:
         rep.add(WARN, "currency", f"the currency typed for the arithmetic page, {str(typed)[:40]!r}, is not one the "
                                   "page can price in. Type one of " + ", ".join(USD_PEGS) + " in that blank")
+    unnamed = [p for p, text in client_strings(data) if NO_CURRENCY.search(_TAGS.sub("", _plain(text)))]
+    if unnamed:
+        rep.add(FAIL, "currency", f"{', '.join(unnamed[:3])} says no currency was named. The closer names one "
+                                  "before the page is sent and the page then prints it, so the words must not say "
+                                  "it: rewrite them without it (on a filled proposal, Draft again)")
     used = set()
     for block in ("cost", "arithmetic", "roi"):
         b = data.get(block) or {}
@@ -1319,7 +1357,7 @@ def check_currency(data: dict[str, Any], rep: Report) -> None:
                 used.add(c)
     if len(used) > 1:
         rep.add(WARN, "currency", "the money is quoted in more than one currency: %s" % ", ".join(sorted(used)))
-    elif used:
+    elif used and not unnamed:
         rep.add(PASS, "currency", "priced throughout in %s" % used.pop())
 
 
@@ -1933,6 +1971,158 @@ def check_margin_words(data: dict[str, Any], rep: Report) -> None:
                                     "projects are counted at it and labelled gross")
 
 
+# ------------------------------------------------- the arithmetic's words ----
+# The verdict and the close divide into what the table divides into (SKILL.md,
+# "One denominator per page"). On 5 October 2026 two drafts on the reviewed
+# code passed every check with words that left the table: 180273419 set "the
+# USD 6,000 engagement" (the fee alone; the table's whole engagement was
+# 10,500) beside one project and said it paid for the three months "many times
+# over" on a page that assumes no margin, and 176954619 said one project covers
+# the term "if you keep a fifth of its value" (the fee alone again) where the
+# table needs 35.0 percent. The words are the drafter's to change, so this is
+# its own check, which the repair round reads.
+_SHARE_UNIT = {"half": 2, "halves": 2, "third": 3, "thirds": 3, "quarter": 4, "quarters": 4, "fifth": 5,
+               "fifths": 5, "sixth": 6, "sixths": 6, "eighth": 8, "eighths": 8, "tenth": 10, "tenths": 10,
+               "twentieth": 20, "twentieths": 20}
+# "if you keep a fifth of its value", "keep a little over 1 percent of it",
+# "as long as it leaves you 35 percent". Read on spoken_figures' text, where
+# "one percent" is already "1 percent" and "two thirds" is "2 thirds".
+KEPT_SHARE = re.compile(
+    r"\b(?:keep|keeps|kept|keeping|clear|clears|retain|retains|leaves?\s+you|leaving\s+you)\s+"
+    r"(?:only\s+|just\s+|about\s+|around\s+|roughly\s+|some\s+)?"
+    r"(?P<over>(?:a\s+little\s+|just\s+|slightly\s+)?(?:over|above|more\s+than)\s+)?"
+    r"(?:(?P<count>a|an|\d+)\s+(?P<unit>" + "|".join(_SHARE_UNIT) + r")\b|(?P<half>half)\b"
+    r"|(?P<n>\d+(?:\.\d+)?)\s*(?:%|percent\b|per\s+cent\b))",
+    re.I)
+# One project paying for the term several times: a ratio the page can only
+# state with a margin to count at.
+MULTIPLE = re.compile(
+    r"\b(?P<word>many|several|multiple|numerous|countless|a\s+few|\d+(?:\.\d+)?)\s+times\s+over\b"
+    r"|\b(?P<twice>twice)\s+over\b"
+    r"|\b(?P<loose>many|several|numerous|countless)\s+times\b"
+    r"|\bover\s+and\s+over\b"
+    r"|أضعاف|عدة\s+مرات|مرات\s+عديدة|مرات\s+كثيرة",
+    re.I)
+ONE_PROJECT = re.compile(r"\b(?:1|a\s+single|a)\s+(?:signed\s+|new\s+|won\s+|single\s+)?"
+                         r"(?:projects?|jobs?|contracts?|deals?|villas?|fit-?outs?)\b", re.I)
+COVERS = re.compile(r"\b(?:covers?|covered|pays?\s+for|paid\s+for|pays?\s+back|recovers?|recoups?)\b", re.I)
+# The words that make "one project covers it" a condition, not a claim.
+CONDITION = re.compile(r"\b(?:if|keep|keeps|kept|unless|provided|as\s+long\s+as|share|percent|per\s+cent|"
+                       r"margin|leaves?|below|under|whether)\b|%", re.I)
+
+
+def _sentences(text: str) -> list[str]:
+    return [s for s in re.split(r"(?<=[.!?؟;؛])\s+|\n+", text) if s.strip()]
+
+
+def check_verdict(data: dict[str, Any], rep: Report) -> None:
+    """The arithmetic page's words against its table: the verdict, the close,
+    the intro and the note divide into the whole engagement, state the share
+    of one project the table states, and claim a multiple only when a margin
+    the page counts at supports it."""
+    a = data.get("arithmetic") if isinstance(data.get("arithmetic"), dict) else {}
+    roi = data.get("roi") if isinstance(data.get("roi"), dict) else {}
+    if not a:
+        return
+    fields = [(f"arithmetic.{k}", a[k]) for k in ("verdict", "close", "intro", "note")
+              if isinstance(a.get(k), str) and a[k].strip()]
+    if not fields:
+        return
+    rate = figure(roi.get("usd_rate")) or 1
+    months = figure(a.get("months")) or figure(roi.get("months")) or 3
+    fee = figure(roi.get("fee_usd")) or 0
+    ads = figure(roi.get("ad_monthly_usd")) or 0
+    total = figure(a.get("engagement_total")) or (fee + ads * months) * rate
+    mode = str(a.get("mode") or "").strip().lower()
+    grid = bool(a.get("project_values")) and mode in ("", "grid")
+    value = figure(a.get("project_value")) if mode == "margin" else (
+        figure(a.get("project_value_low")) if mode == "volume" else None)
+    gross = figure(a.get("gross_margin"))
+    gross = gross if gross and 0 < gross < 100 else None
+    # The page's own quantities: the share of one project the engagement is
+    # (margin mode), and how many of the client's projects it takes at the
+    # gross margin he gave (margin and volume mode).
+    share = total / value * 100 if (mode == "margin" and value and total) else None
+    count = total / (value * gross / 100) if (value and gross and total) else None
+    # A grid's best cell: the most any row of it lets one project cover.
+    if grid and total:
+        values = [v for v in (figure(x) for x in a.get("project_values") or []) if v]
+        margins = [m for m in (figure(x) for x in (a.get("margins") or ([gross] if gross else [10, 20]))) if m]
+        cells = [total / (v * m / 100) for v in values for m in margins if v * m > 0]
+        best = min(cells) if cells else None
+    else:
+        best = count
+    problems: list[str] = []
+
+    for path, raw in fields:
+        text = spoken_figures(_TAGS.sub("", raw))
+        conclusion = path in ("arithmetic.verdict", "arithmetic.close")
+        for sentence in _sentences(text):
+            # The fee alone, set where the whole engagement belongs.
+            if fee and ads and total and abs(total - fee * rate) > 1 and not AD_WORDS.search(sentence):
+                quoted = [n for n in figures_in(sentence) if n >= 100 and (n == round(fee) or abs(n - fee * rate) <= 1)]
+                if quoted and (conclusion or not re.search(r"\bfees?\b|رسوم|الرسوم", sentence, re.I)):
+                    problems.append(f"{path} sets {quoted[0]:,}, our fee alone, where the table divides the whole "
+                                    f"engagement, {total:,.0f} with the advertising. Use the table's figure, or "
+                                    "say both parts")
+            # A share kept that covers the term: no less than the table's.
+            if share is not None:
+                for m in KEPT_SHARE.finditer(sentence):
+                    if m.group("n"):
+                        said = float(m.group("n"))
+                    elif m.group("half"):
+                        said = 50.0
+                    else:
+                        n = 1 if m.group("count").lower() in ("a", "an") else int(m.group("count"))
+                        said = n * 100 / _SHARE_UNIT[m.group("unit").lower()]
+                    if m.group("over"):
+                        wrong = said > share + 0.05 or share > said * 2
+                    else:
+                        wrong = said < share * 0.95
+                    if wrong:
+                        problems.append(f"{path} says one project covers the term if the client keeps "
+                                        f"{m.group(0).split(None, 1)[1]}; the table needs {dec(share)}% of one "
+                                        "project. Say the table's share")
+        # A multiple claimed: it needs a margin the page counts at, and that
+        # count has to bear it out.
+        for m in MULTIPLE.finditer(text):
+            times = 1 / best if best else None
+            if m.group("word") and re.fullmatch(r"\d+(?:\.\d+)?", m.group("word")):
+                need = float(m.group("word"))
+            elif m.group("twice"):
+                need = 2.0
+            else:
+                need = 3.0
+            if times is None:
+                problems.append(f"{path} claims a multiple ({m.group(0)}), and the page counts at no margin the "
+                                "client gave, so it cannot say how many times the engagement is covered. State the "
+                                "share or the count the table states")
+            elif times < need:
+                problems.append(f"{path} says {m.group(0)}; the most the table counts is one project covering "
+                                f"the term {dec(times)} times. Say the table's count")
+        # One project said to cover the term outright, when the page has no
+        # margin to say it with, or counts more than one at the gross margin.
+        if conclusion and not grid and mode in ("margin", "volume"):
+            for sentence in _sentences(text):
+                if not (ONE_PROJECT.search(sentence) and COVERS.search(sentence)) or _NOT.search(sentence):
+                    continue
+                if count is not None and count > 1 and dec(count) not in text:
+                    problems.append(f"{path} says one project covers the term; at the {gross:g}% gross margin the "
+                                    f"table counts {dec(count)} projects. Say that count")
+                elif count is None and mode == "margin" and not CONDITION.search(sentence):
+                    problems.append(f"{path} says one project pays for the term outright, and the page assumes no "
+                                    "margin. Say it with the share the table states (if you keep "
+                                    f"{dec(share) if share else 'that share'}% of it)")
+    if problems:
+        seen: list[str] = []
+        for p in problems:
+            if p not in seen:
+                seen.append(p)
+        rep.add(FAIL, "verdict", "; ".join(seen[:3]))
+    else:
+        rep.add(PASS, "verdict", "the page's words divide into the table's engagement")
+
+
 # --------------------------------------------------------------- fee band ----
 def check_fee_band(data: dict[str, Any], rep: Report) -> Optional[float]:
     roi = data.get("roi") or {}
@@ -2076,6 +2266,7 @@ def validate(data: dict[str, Any], transcript: Optional[str] = None, *, resolved
     if general or blind:
         check_arithmetic(data, rep)
         check_margin_words(data, rep)
+        check_verdict(data, rep)
     else:
         pct = check_fee_band(data, rep)
     check_prose(data, said, rep, resolved, offer, checked_note)

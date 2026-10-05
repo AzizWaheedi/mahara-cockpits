@@ -221,6 +221,19 @@ def day_words(day: date) -> str:
 
 GROSS_MARGIN_SHAPE = ("<the client's gross margin in percent, as a number, the bottom of their range, only when "
                       "this call gave one; otherwise leave the key out>")
+# general-grid.json (the old 180279552) has no gap_points, and a draft that
+# copied it drew the gap page as the funnel alone, about 430 px blank
+# (175832813 on 5 October 2026). The tiles are the call's own figures.
+GAP_POINTS_SHAPE = [
+    {"v": "<a figure the client said plainly on this call>", "k": "<what it is, in a few words>"},
+    {"v": "<another; two or three tiles in all, or leave gap_points out when the call gave no figures>",
+     "k": "<what it is>"},
+]
+
+# Paid in full there is no first payment; the references' deposit_label says
+# "comes off the first payment", and the drafter copies it (5 October 2026).
+DEPOSIT_IN_FULL_SHAPE = ("<the deposit reserves the start date and comes off the payment at the start, in the "
+                         "document's language>")
 PROJECT_LABEL_SHAPE = ("<what the project value is when it is not an average, such as Your minimum ticket; otherwise "
                        "leave the key out>")
 
@@ -273,11 +286,25 @@ def shape_of(deal: dict[str, Any], today: Optional[date] = None) -> dict[str, An
             arith["gross_margin"] = GROSS_MARGIN_SHAPE
         if "project_label" in arith:
             arith["project_label"] = PROJECT_LABEL_SHAPE
+    if variant_of(d) == "general" and "gap_points" not in d:
+        d = _with_after(d, "gap_title", "gap_points", copy.deepcopy(GAP_POINTS_SHAPE))
     d["client_company"] = "<the company name as said on the call, never FILL>"
     d["client_contact"] = "<the person on the call>"
     if "client_role" in d:
         d["client_role"] = "<their role, or leave the key out if unsaid>"
     return d
+
+
+def _with_after(d: dict[str, Any], after: str, key: str, value: Any) -> dict[str, Any]:
+    """The dict with key put right after another, or at the end when that one is missing."""
+    if after not in d:
+        return {**d, key: value}
+    out: dict[str, Any] = {}
+    for k, v in d.items():
+        out[k] = v
+        if k == after:
+            out[key] = value
+    return out
 
 
 def outline(resolved: dict[str, Any], today: Optional[date] = None) -> str:
@@ -350,16 +377,19 @@ def system_for(variant: str, resolved: dict[str, Any], offer: dict[str, Any],
                reference: Optional[dict[str, Any]], info: Optional[dict[str, Any]]) -> str:
     """The drafter sees one reference, the one it is about to be judged against."""
     parts = [skill(resolved), "# The patterns behind the template\n\n" + patterns(offer)]
+    shape = shape_of(reference) if reference is not None else None
+    if shape is not None and "deposit_label" in shape and len(resolved.get("instalments") or []) == 1:
+        shape["deposit_label"] = DEPOSIT_IN_FULL_SHAPE
     if reference is not None and info and info.get("matched"):
         parts.append("# The exact shape to return, for the " + variant + " variant\n\n```json\n"
-                     + json.dumps(shape_of(reference), ensure_ascii=False, indent=2) + "\n```")
+                     + json.dumps(shape, ensure_ascii=False, indent=2) + "\n```")
     elif reference is not None and info:
         parts.append(
             f"# The shape to copy, from a {info['variant']} proposal\n\n"
             f"There is no {variant} reference on this machine, so the one below is a {info['variant']} "
             f"proposal. Copy its shape for every block the two share. Where they differ, follow the skill: "
             f"the {variant} variant {DIFFERS[variant]}.\n\n```json\n"
-            + json.dumps(shape_of(reference), ensure_ascii=False, indent=2) + "\n```")
+            + json.dumps(shape, ensure_ascii=False, indent=2) + "\n```")
     else:
         parts.append(
             f"# There is no reference deal on this machine\n\nWrite the {variant} variant from the rules above: "
@@ -378,7 +408,9 @@ def triage_user(transcript_text: str) -> str:
 # The triage found a project value and no currency for it (5 October 2026: a
 # floor of "1M" was printed as dollars; B2B's own triage read it as dirhams).
 UNSTATED_CURRENCY = ("The client never named a currency for their figures. Write FILL in arithmetic.currency so "
-                     "the closer is asked, and write the client's own figures without a currency anywhere else.")
+                     "the closer is asked, and write the client's own figures without a currency anywhere else. "
+                     "Do not write that no currency was named: the closer settles it before the page is sent, "
+                     "and the page then prints it.")
 
 
 def currency_unstated(found: Optional[dict[str, Any]]) -> bool:
@@ -484,12 +516,17 @@ def repair_user(deal: dict[str, Any], problems: list[str]) -> str:
     # blank to type the case from memory, which is how it went wrong.
     proof = ("A proof figure is copied exactly from PATTERNS.md's \"Numbers quoted as proof\", never FILL; "
              "drop the case if the record does not have it. " if any(p.startswith("proof") for p in problems) else "")
+    # The arithmetic page's words state the table's own figures, which are
+    # never a gap for the closer (5 October 2026 judge).
+    verdict = ("The arithmetic page's words use the figures its table prints (the whole engagement, the share "
+               "of one project, the count at the gross margin), never FILL. "
+               if any(p.startswith("verdict") for p in problems) else "")
     return (
         "The checker found these problems in this draft:\n\n"
         + listed
         + "\n\nReturn the same JSON object with each problem fixed and nothing else changed. "
         "Remove a promise rather than rewording it. Where a figure was never said on the "
-        "call, write FILL in its place. " + proof + "Keep every other field exactly as it is, and add "
+        "call, write FILL in its place. " + proof + verdict + "Keep every other field exactly as it is, and add "
         "nothing new.\n\nReturn only the JSON object.\n\n"
         + json.dumps(deal, ensure_ascii=False, indent=1)
     )
