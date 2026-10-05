@@ -198,6 +198,9 @@ def stamp(deal: dict[str, Any], *, variant: str, resolved: dict[str, Any], lang:
     the client never named is a blank for the closer, never a guess."""
     if currency_unstated and isinstance(deal.get("arithmetic"), dict):
         deal["arithmetic"]["currency"] = "FILL"
+    # A funnel stage counting other people than the one above (another period
+    # or source) draws no "lost here" its own note contradicts.
+    validate_mod.separate_pools(deal)
     if closer_figures:
         # Kept through every round, so a figure a later round turned back
         # into a blank is put back, and a draft after this one has them too.

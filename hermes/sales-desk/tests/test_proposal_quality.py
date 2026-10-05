@@ -658,6 +658,19 @@ class FunnelTests(unittest.TestCase):
         got = warned(check(deal), "funnel")
         self.assertTrue(got and "funnel.stages[1]" in got[0] and "pool" in got[0], got)
 
+    def test_code_gives_the_contradicted_stage_its_own_pool(self):
+        from desk import engine
+        deal = funnel_deal({"label": "Meetings held", "value": 14, "display": "14",
+                            "note": "four reached a signature, ten did not"},
+                           {"label": "Projects signed", "value": 6, "display": "6", "note": "in eight months"})
+        engine.stamp(deal, variant="general", resolved=resolved(), lang="en")
+        self.assertTrue(deal["funnel"]["stages"][1].get("pool"))
+        self.assertFalse(validate.funnel_losses(deal["funnel"]))
+        self.assertFalse(warned(check(deal), "funnel"))
+        whole = general_deal()  # 40, 12, 2 in one month: nothing to separate
+        engine.stamp(whole, variant="general", resolved=resolved(), lang="en")
+        self.assertFalse(any("pool" in s for s in whole["funnel"]["stages"]))
+
     def test_a_stage_from_another_pool_is_not_a_loss(self):
         deal = funnel_deal({"label": "Meetings held", "value": 14, "display": "14",
                             "note": "four reached a signature, ten did not"},

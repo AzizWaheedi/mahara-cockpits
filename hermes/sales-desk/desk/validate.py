@@ -1352,18 +1352,39 @@ def funnel_losses(funnel: dict[str, Any]) -> list[tuple[int, float]]:
     return out
 
 
-def check_funnel(data: dict[str, Any], rep: Report) -> None:
-    """A "lost here" the stage above contradicts: 14 meetings then 6 signed
-    printed 8 lost, under a note saying four signed and ten did not. The
-    second stage counted another pool (a year, not those meetings)."""
-    funnel = data.get("funnel") if isinstance(data.get("funnel"), dict) else {}
+def pool_clashes(funnel: dict[str, Any]) -> list[tuple[int, float, list[int]]]:
+    """(stage, lost, the figures in the note above) for each drawn loss that
+    the note on the stage above contradicts with figures of its own."""
     stages = funnel.get("stages") or []
-    clashes = []
+    out = []
     for i, lost in funnel_losses(funnel):
         own = [n for n in figures_in(stages[i - 1].get("note")) if n]
         if own and int(lost) not in own:
-            clashes.append(f"funnel.stages[{i}] prints {lost:g} lost after funnel.stages[{i - 1}], whose note gives "
-                           f"its own figures ({', '.join(str(n) for n in own[:4])})")
+            out.append((i, lost, own))
+    return out
+
+
+def separate_pools(deal: dict[str, Any]) -> list[int]:
+    """Give each stage whose drawn loss its note above contradicts a pool of
+    its own, so no loss is drawn into it: the notes say what happened, and a
+    computed figure that disagrees with them is the one to drop. The stages
+    changed."""
+    funnel = deal.get("funnel") if isinstance(deal.get("funnel"), dict) else {}
+    changed = []
+    for i, _lost, _own in pool_clashes(funnel):
+        funnel["stages"][i]["pool"] = f"stage {i + 1}"
+        changed.append(i)
+    return changed
+
+
+def check_funnel(data: dict[str, Any], rep: Report) -> None:
+    """A "lost here" the stage above contradicts: 14 meetings then 6 signed
+    printed 8 lost, under a note saying four signed and ten did not. The
+    second stage counted another pool (a year, not those meetings). A draft
+    gets the pool from code (engine.stamp); a deal edited since is warned."""
+    funnel = data.get("funnel") if isinstance(data.get("funnel"), dict) else {}
+    clashes = [f"funnel.stages[{i}] prints {lost:g} lost after funnel.stages[{i - 1}], whose note gives its own "
+               f"figures ({', '.join(str(n) for n in own[:4])})" for i, lost, own in pool_clashes(funnel)]
     if clashes:
         rep.add(WARN, "funnel", "; ".join(clashes[:3]) + ". If the two stages do not count the same people, give "
                                 "the later one its own pool (\"pool\": \"...\") and no loss is drawn")
