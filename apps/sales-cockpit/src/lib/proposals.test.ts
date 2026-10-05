@@ -331,9 +331,9 @@ describe("retryToast", () => {
       "Rebuilding the document with your figures. It usually takes a minute or two.",
     );
   });
-  test("a fresh draft says the figures go back in when there are some", () => {
+  test("a fresh draft says the figures go back in when there are some, and where", () => {
     expect(retryToast({ rebuild: false, figures_kept: true })).toBe(
-      "Drafting again with the same choices, and your figures go back in. It usually takes about ten minutes.",
+      "Drafting again with the same choices. Your figures go back into the blanks on the same lines, and the notes say any that did not. It usually takes about ten minutes.",
     );
     expect(retryToast({})).toBe(
       "Drafting again with the same choices. It usually takes about ten minutes.",

@@ -204,7 +204,8 @@ export function sentence(text: string): string {
 /**
  * What Draft again says once it is asked (sales-api proposal.retry): a
  * rebuild that failed is rebuilt with the closer's figures, and a fresh
- * draft takes the figures the closer typed back into its blanks.
+ * draft takes the figures the closer typed back into the blanks on the same
+ * lines (the worker leaves any whose line moved, and its notes name them).
  */
 export function retryToast(
   out: { rebuild?: boolean; figures_kept?: boolean } | null | undefined,
@@ -212,7 +213,7 @@ export function retryToast(
   if (out?.rebuild)
     return "Rebuilding the document with your figures. It usually takes a minute or two.";
   if (out?.figures_kept)
-    return "Drafting again with the same choices, and your figures go back in. It usually takes about ten minutes.";
+    return "Drafting again with the same choices. Your figures go back into the blanks on the same lines, and the notes say any that did not. It usually takes about ten minutes.";
   return "Drafting again with the same choices. It usually takes about ten minutes.";
 }
 
