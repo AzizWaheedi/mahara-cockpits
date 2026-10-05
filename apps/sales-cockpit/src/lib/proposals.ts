@@ -150,6 +150,14 @@ export function proposalTitle(p: Pick<Proposal, "status" | "sent_at">): string {
   return TITLES[p.status] ?? "Proposal";
 }
 
+/**
+ * The proposal document's frame: scripts for its own editor, modals for its
+ * print window, downloads for Save. Never allow-same-origin (the page would
+ * share the cockpit's origin, its session and storage), never top navigation
+ * or popups (it could take the closer's tab, or open the cockpit unsandboxed).
+ */
+export const DOCUMENT_SANDBOX = "allow-scripts allow-modals allow-downloads";
+
 /** The document card when there is no document, with what to do next. */
 export function noDocument(status: ProposalStatus): string {
   if (status === "drafting")

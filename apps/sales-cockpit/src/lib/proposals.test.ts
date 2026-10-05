@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  DOCUMENT_SANDBOX,
   downloadLabel,
   draftWait,
   failedLine,
@@ -284,5 +285,18 @@ describe("noDocument", () => {
     expect(noDocument("failed")).toContain("Draft it again");
     for (const s of ["needs_input", "ready", "sent"] as const)
       expect(noDocument(s)).toContain("Draft it again from the lead's page");
+  });
+});
+
+describe("the document frame", () => {
+  test("runs the document's editor and nothing that reaches the cockpit", () => {
+    const tokens = DOCUMENT_SANDBOX.split(/\s+/);
+    expect(tokens).toEqual([
+      "allow-scripts",
+      "allow-modals",
+      "allow-downloads",
+    ]);
+    for (const t of tokens)
+      expect(t).not.toMatch(/same-origin|top-navigation|popups/);
   });
 });

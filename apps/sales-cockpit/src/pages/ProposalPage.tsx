@@ -22,7 +22,13 @@ import { DraftWaitNotice, ProposalChip } from "../components/ProposalPanel";
 import { api } from "../lib/api";
 import { useLead, useProposal, useProposalHtml, useRequest } from "../lib/data";
 import { ago } from "../lib/format";
-import { downloadLabel, noDocument, notesOf, sentence } from "../lib/proposals";
+import {
+  DOCUMENT_SANDBOX,
+  downloadLabel,
+  noDocument,
+  notesOf,
+  sentence,
+} from "../lib/proposals";
 import { supabase } from "../lib/supabase";
 import { toast } from "../lib/toast";
 import type { Me, Proposal } from "../lib/types";
@@ -528,7 +534,7 @@ function Document({
       <iframe
         title="The proposal"
         srcDoc={html}
-        sandbox="allow-scripts allow-modals allow-downloads"
+        sandbox={DOCUMENT_SANDBOX}
         allow="clipboard-write"
         className={`block w-full bg-white ${full ? "min-h-0 flex-1" : "h-[80vh]"}`}
       />
