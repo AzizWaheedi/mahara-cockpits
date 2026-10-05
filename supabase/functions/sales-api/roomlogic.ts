@@ -1259,7 +1259,9 @@ export function timers(room: RoomRow, ctx: RoomCtx): { reason: SweepReason; at: 
       ];
       if (room.contact_id)
         out.push({ reason: "lead_by", at: ms(room.lead_by) ?? (ms(room.link_sent_at) ?? opened) + w.lead * S });
-      if (standbyEmpty(room)) out.push({ reason: "standby_max", at: opened + w.standby_max * S });
+      // Zoom's 40-minute rule only (stress2 round 3): Meet has none, so a
+      // Meet standby room is never closed for standby_max (the sweep's R5 the same).
+      if (standbyEmpty(room) && room.provider === "zoom") out.push({ reason: "standby_max", at: opened + w.standby_max * S });
       return out;
     }
     case "host_in":
@@ -1270,7 +1272,7 @@ export function timers(room: RoomRow, ctx: RoomCtx): { reason: SweepReason; at: 
             at: ms(room.lead_by) ?? (ms(room.link_sent_at) ?? ms(room.host_in_at) ?? opened) + w.lead * S,
           },
         ];
-      return [{ reason: "standby_max", at: opened + w.standby_max * S }];
+      return room.provider === "zoom" ? [{ reason: "standby_max", at: opened + w.standby_max * S }] : [];
     case "lead_in": {
       const ends = ms(room.ends_at) ?? (ms(room.lead_in_at) ?? opened) + lengthMs(room.call_kind, ctx);
       return [{ reason: "no_end_signal", at: ends + w.no_end_signal * S }];

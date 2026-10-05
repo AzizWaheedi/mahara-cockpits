@@ -962,10 +962,12 @@ begin
     errs := errs || jsonb_build_object('rule', 'room_closed_no_lead', 'error', sqlerrm);
   end;
 
-  -- R5. A standby room ends after standby_max (Zoom ends a meeting 40
+  -- R5. A Zoom standby room ends after standby_max (Zoom ends a meeting 40
   -- minutes after only one person is left); while its host is still
   -- Available, rooms are on, the provider is on and no booked call is near,
-  -- a fresh standby room is asked for in the same run (glossary 1.9). R6. An
+  -- a fresh standby room is asked for in the same run (glossary 1.9). Meet
+  -- has no such rule, so a Meet standby room is never refreshed (stress2
+  -- round 3): it ends with Available (R8) or before a booked call (R6). R6. An
   -- empty standby room ends booked_guard before the host's next booked call.
   -- R8. An empty standby room ends when its host is no longer available.
   -- None of these ever touches a room with a lead in it.
@@ -974,7 +976,7 @@ begin
     for rec in
       select x.id, x.host_email, x.provider, x.call_kind
         from public.cockpit_sales_rooms as x
-       where x.purpose = 'standby' and x.contact_id is null and x.state in ('open', 'host_in')
+       where x.purpose = 'standby' and x.provider = 'zoom' and x.contact_id is null and x.state in ('open', 'host_in')
          and coalesce(x.host_in_at, x.opened_at, x.requested_at) + w_standby_max < t
          and (coalesce(x.host_in_at, x.opened_at, x.requested_at) + w_standby_max + w_hold < t
               or not public.cockpit_sales_room_pending(x.id, t))

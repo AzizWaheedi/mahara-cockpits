@@ -708,12 +708,16 @@ describe("the sweep and its timers", () => {
   test("every room that is not final has a timer, so nothing waits forever", () => {
     const broken = { ...opened(), host_by: null, lead_by: null, ends_at: null, opened_at: null };
     for (const s of ["requested", "creating", "open", "host_in", "lead_in"] as RoomState[]) {
-      for (const r of [{ ...broken, state: s }, { ...broken, state: s, contact_id: null, purpose: "standby" as const }]) {
+      // A Zoom standby room: standby_max (Zoom's 40-minute rule).
+      for (const r of [{ ...broken, state: s }, { ...broken, state: s, contact_id: null, purpose: "standby" as const, provider: "zoom" as const }]) {
         const t = timers(r, ctx);
         expect(t.length).toBeGreaterThan(0);
         for (const x of t) expect(Number.isFinite(x.at)).toBe(true);
       }
     }
+    // A Meet standby room with its host in has no time limit (stress2 round
+    // 3): it ends with the host's Available (the sweep's R8, R6).
+    expect(timers({ ...broken, state: "host_in", contact_id: null, purpose: "standby" as const, provider: "meet" as const }, ctx)).toEqual([]);
     for (const f of FINAL_STATES) expect(timers({ ...broken, state: f }, ctx)).toEqual([]);
   });
 });
@@ -1852,7 +1856,11 @@ describe("10,000 random event sequences", () => {
         }
         if (a.reason) reasons.set(a.reason, (reasons.get(a.reason) ?? 0) + 1);
         // 9. Everything not final has a timer that will fire, and a lead held out of the queue is held for a bounded time.
-        if (!isFinal(after.state)) {
+        // An empty Meet standby room with its host in has no timer of its own
+        // (stress2 round 3: Zoom's 40-minute rule is Zoom's): it ends with the
+        // host's Available (the sweep's R8), which the row does not carry.
+        const meetStandby = after.purpose === "standby" && after.provider !== "zoom" && after.state === "host_in" && !after.contact_id;
+        if (!isFinal(after.state) && !meetStandby) {
           const ts = timers(after, cx);
           expect(ts.length).toBeGreaterThan(0);
           for (const x of ts) expect(Number.isFinite(x.at)).toBe(true);
@@ -1873,7 +1881,10 @@ describe("10,000 random event sequences", () => {
     const allowed = ROOM_STATES.flatMap(f => TRANSITIONS[f].map(to => `${f}>${to}`));
     for (const m of allowed) expect([m, seenMoves.has(m)]).toEqual([m, true]);
     expect([...seenMoves].every(m => allowed.includes(m))).toBe(true);
-    for (const reason of ["fail", "recover", "host_by", "lead_by", "standby_max", "booked_guard", "availability", "no_end_signal"])
+    // standby_max is Zoom's alone since stress2 round 3 and rarely reached at
+    // random (a Zoom standby room with its host in for 35 minutes); its own
+    // tests above and in roomlogic.fixes.test.ts cover it.
+    for (const reason of ["fail", "recover", "host_by", "lead_by", "booked_guard", "availability", "no_end_signal"])
       expect([reason, (reasons.get(reason) ?? 0) > 0]).toEqual([reason, true]);
     expect(leadInTicks).toBeGreaterThan(1_000);
     expect(heldTicks).toBeGreaterThan(500);

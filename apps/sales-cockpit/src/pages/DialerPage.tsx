@@ -137,6 +137,7 @@ import {
 } from "../lib/format";
 import {
   errorText,
+  leaveToast,
   type RoomView,
   roomsApi,
   spokeAt,
@@ -1827,7 +1828,11 @@ function CallPane({
     roomsApi.create(ask).then(
       out => {
         if (mounted.current) video.setRoom(out.room, ask);
-        toast.success(`Video link on its way to ${name}.`);
+        // A room that failed while room.create waited is said as such, never
+        // "on its way" (stress2 round 3); the banner keeps it too.
+        const said = leaveToast(out.room, name);
+        if (said.ok) toast.success(said.text);
+        else toast.error(said.text);
       },
       e => toast.error(`The video link to ${name} did not go. ${errorText(e)}`),
     );
@@ -2211,6 +2216,7 @@ function CallPane({
             room={video.room}
             request={video.request}
             onRoomChange={r => video.setRoom(r)}
+            talkBelow
             onMarkIntro={
               introCall && appt && !introMarked ? markIntro : undefined
             }
@@ -2355,6 +2361,7 @@ function CallPane({
             moment={missMoment}
             focusNext={missBy === "auto" && !picking}
             onTalk={onTalk}
+            onSave={() => setMode("outcomes")}
             onNext={toNext}
             onVideo={
               offerVideo && !picking && autoAt === null
@@ -2624,6 +2631,7 @@ function AfterMissStep({
   moment,
   focusNext,
   onTalk,
+  onSave,
   onNext,
   onVideo = null,
   picker = null,
@@ -2635,6 +2643,8 @@ function AfterMissStep({
   /** Maqsam's record saved it: Next lead takes the focus, so Enter moves on. */
   focusNext: boolean;
   onTalk: (moment?: Moment) => void;
+  /** Save how it went: offered when the rep may have spoken with the lead on video (step.talk). */
+  onSave: () => void;
   onNext: () => void;
   /** "Send a video link" (P1), while one can be sent for this lead. */
   onVideo?: (() => void) | null;
@@ -2660,6 +2670,11 @@ function AfterMissStep({
         primary={!picker && !quietNext}
         focus={focusNext}
       />
+      {step.talk ? (
+        <button type="button" onClick={onSave} className={button}>
+          Save how it went
+        </button>
+      ) : null}
       {step.send ? (
         <button
           type="button"

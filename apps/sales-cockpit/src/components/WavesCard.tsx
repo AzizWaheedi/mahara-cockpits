@@ -22,6 +22,7 @@ import {
   POOLS,
   type Pool,
   readWave,
+  startedLine,
   toApprove,
   type Wave,
   type WaveCounts,
@@ -600,7 +601,7 @@ export function WavesCard({
           onStart={(pool, perDay) =>
             void run(`start:${pool}`, async () => {
               await wave("start", { pool, per_day: perDay }, pool);
-              return `Started. The desk adds the ${POOL_WORDS[pool].noun} within 5 minutes.`;
+              return startedLine(POOL_WORDS[pool].noun, desk, Date.now());
             })
           }
         />

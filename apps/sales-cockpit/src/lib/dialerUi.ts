@@ -442,6 +442,12 @@ export interface AfterMiss {
   text: string;
   /** What the main button opens: WhatsApp with the ready message, the email box, or nothing. */
   send: "whatsapp" | "email" | null;
+  /**
+   * The rep may have spoken with the lead on video (a closed Meet room whose
+   * link the lead opened: Meet sends no join signal), so the step also
+   * offers Save how it went (stress2 round 3).
+   */
+  talk?: true;
 }
 
 const LEAD_IN: Record<MissMoment, string> = {
@@ -507,10 +513,28 @@ export function afterMiss(o: {
     link_sent_at: string | null;
     link_channels?: readonly string[] | null;
     refusal?: string | null;
+    provider?: string | null;
+    first_open_at?: string | null;
+    last_open_at?: string | null;
   } | null;
 }): AfterMiss {
   const { moment } = o;
   const v = o.video;
+  // The room closed after the lead opened its Meet link: they may have
+  // talked on video, which Meet never reports. The step asks, with Save how
+  // it went beside the WhatsApp, never "No answer" first (stress2 round 3).
+  if (
+    v &&
+    v.provider === "meet" &&
+    ["ended", "expired", "cancelled"].includes(v.state) &&
+    (v.first_open_at || v.last_open_at)
+  )
+    return {
+      title: "They opened the video link. Did you speak?",
+      text: "Meet cannot say whether they came in. If you spoke, save how it went. If not, send them a WhatsApp.",
+      send: "whatsapp",
+      talk: true,
+    };
   const live =
     v &&
     ["requested", "creating", "open", "host_in", "lead_in"].includes(v.state);

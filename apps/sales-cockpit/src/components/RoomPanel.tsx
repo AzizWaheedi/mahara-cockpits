@@ -18,6 +18,7 @@ import {
   isFinal,
   isMaking,
   isStale,
+  markFinalSeen,
   mergeRoomFeed,
   momentFor,
   monoTimes,
@@ -87,6 +88,8 @@ export interface RoomPanelViewProps {
   feed: RoomFeed;
   now: number;
   canMarkIntro?: boolean;
+  /** The page draws the call's own step below (the dialer): the sentence points there. */
+  talkBelow?: boolean;
   /** The press on its way; every button waits while one is. */
   busy?: RoomActionKey | null;
   notice?: Notice | null;
@@ -125,6 +128,7 @@ export function RoomPanelView({
   feed,
   now,
   canMarkIntro = false,
+  talkBelow = false,
   busy = null,
   notice = null,
   undo = null,
@@ -155,6 +159,7 @@ export function RoomPanelView({
   const ctx = {
     now,
     canMarkIntro,
+    talkBelow,
     stillOn,
     manager,
     workerDown: health?.worker_ok === false,
@@ -642,6 +647,8 @@ export interface RoomPanelProps {
    */
   onRetry?: (provider: Provider) => Promise<RoomView>;
   onMarkIntro?: (status: "noshow" | "showed") => Promise<void>;
+  /** The page draws the call's own step below the panel (the dialer, stress2 round 3). */
+  talkBelow?: boolean;
   onRoomChange?: (room: RoomView) => void;
   className?: string;
 }
@@ -701,6 +708,7 @@ function LiveRoomPanel({
   request = null,
   onRetry,
   onMarkIntro,
+  talkBelow = false,
   onRoomChange,
   className = "",
 }: RoomPanelProps) {
@@ -747,6 +755,12 @@ function LiveRoomPanel({
   );
   const moment = room ? momentFor(room, { now, stillOn }) : null;
 
+  // A closed room shown here is seen: the banner lets it go (stress2 round 3).
+  const finalId = room && isFinal(room.state) ? room.id : null;
+  useEffect(() => {
+    if (finalId) markFinalSeen(finalId);
+  }, [finalId]);
+
   // The page above hears of every change (the dialer hides its own button
   // while a room is open).
   // biome-ignore lint/correctness/useExhaustiveDependencies: keyed on the row's identity and version
@@ -762,7 +776,8 @@ function LiveRoomPanel({
     if (!room || !moment || !CALL_BACK.has(moment)) return;
     alertWhileHidden(
       `room:${room.id}:${moment}`,
-      sentenceText(bannerRoomSentence(room, Date.now()), true),
+      // On the server's clock, as the panel itself says it (stress2 round 3).
+      sentenceText(bannerRoomSentence(room, Date.now() + feed.offset), true),
     );
   }, [moment, room?.id]);
 
@@ -1032,6 +1047,7 @@ function LiveRoomPanel({
       feed={feed.data}
       now={now}
       canMarkIntro={Boolean(onMarkIntro)}
+      talkBelow={talkBelow}
       busy={busy}
       notice={notice}
       undo={held.pending?.key ?? null}

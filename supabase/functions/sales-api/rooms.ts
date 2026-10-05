@@ -245,6 +245,9 @@ const ROOMS_PER_SEAT_10M = 8;
 const ROOMS_PER_SEAT_HOUR = 30;
 /** One standby room per seat in each STANDBY_BUCKET_MS, and at most STANDBY_PER_HOUR an hour (final review). */
 const STANDBY_BUCKET_MS = 10 * 60_000;
+
+/** How long live.status still lists a lead's room that failed or closed on a knock (the banner's call to act). */
+const RECENT_FINAL_MS = 15 * 60_000;
 const STANDBY_PER_HOUR = 4;
 /** The sources room.event's replay takes (the SQL sweep's own list less slack, whose presses are not built). */
 const REPLAY_SOURCES = new Set(["zoom", "worker", "claim"]);
@@ -331,6 +334,8 @@ export const ROOMS_COPY = {
   standby_host_not_in_zoom:
     "Your last standby room closed at {at} because Zoom did not see you join and nobody pressed I'm in. Press Try again, join the room, then press I'm in if the strip still asks you to join.",
   standby_flood: "Your last standby room closed under 10 minutes ago, so no new one was made yet. Try again in a few minutes. You can still take a live lead now.",
+  /** The timeline line of a standby room Away closed (stress2 round 3). */
+  standby_away: "Your standby room was closed because you set yourself away.",
   /** I'm available inside booked_guard of the seat's own booked call (stress2, round 2). */
   standby_booked_soon: "Your booked call at {at} starts soon, so no standby room was made. Press I'm available again after it.",
   count_confirm_alert:
@@ -3848,6 +3853,9 @@ export function makeRooms(deps: RoomDeps): Rooms {
         const out = await applyLoop(r.id, cur => (standbyEmpty(cur) ? { kind: "end", reason: "end" } : null), setting, r);
         if ("applied" in out && out.applied.changed) {
           await deps.audit(who, "room.end", ROOMS, r.id, { state: out.applied.from }, { state: out.applied.to }, { reason: "away" });
+          // Away's own close, told apart from the cockpit's or Zoom's (the
+          // ten minutes' fresh try reads it: stress2 round 3).
+          await note(r.id, "room.end", ROOMS_COPY.standby_away, { reason: "away" }, `room.end:${r.id}`);
           await carryOut(out.room, out.applied.effects);
         }
       }
@@ -3911,7 +3919,13 @@ export function makeRooms(deps: RoomDeps): Rooms {
         // time): that is not a room Away closed, so one fresh try goes on its
         // own request id (still counted in the hour), and when it fails too
         // the strip says the worker's own sentence (stress2, round 1).
-        if (made && !("refused" in made) && (made.room.state === "failed" || sweptForNoHost(made.room))) {
+        // A room the cockpit closed for a lead's link, or Zoom ended, is not
+        // one Away closed either (stress2 round 3): it gets the fresh try too.
+        if (
+          made &&
+          !("refused" in made) &&
+          (made.room.state === "failed" || sweptForNoHost(made.room) || (isFinal(made.room.state) && !(await closedByAway(made.room.id))))
+        ) {
           const first = made.room;
           if (lastHour + 1 < STANDBY_PER_HOUR) made = await ask(await uuidFrom(`mahara-room/standby/${email}/${bucket}/after/${first.id}`));
           if (!("refused" in made) && made.room.state === "failed")
@@ -3968,6 +3982,22 @@ export function makeRooms(deps: RoomDeps): Rooms {
   }
 
   /** A standby room the sweep closed because nobody pressed I'm in (R3): no room Away closed. */
+  /** A standby room Away closed (its room.end line says so); not readable: read as Away's, so no room is made on a guess. */
+  async function closedByAway(roomId: string): Promise<boolean> {
+    try {
+      const row = (await io.db(`${EVENTS}?dedupe_key=eq.${enc(`room.end:${roomId}`)}&select=detail`))[0];
+      return obj(row?.detail).reason === "away";
+    } catch {
+      return true;
+    }
+  }
+
+  /** A closed room the banner keeps for a while: it failed, or the lead knocked and was not let in. */
+  function bannerKeeps(room: RoomRow): boolean {
+    if (room.state === "failed" || (room.state === "cancelled" && room.result === "failed" && room.error)) return true;
+    return (room.state === "expired" || room.state === "ended") && Boolean(room.lead_waiting_at || room.result === "admit_blocked");
+  }
+
   function sweptForNoHost(room: RoomRow): boolean {
     return room.state === "expired" && room.end_reason === "host_not_in";
   }
@@ -4004,12 +4034,23 @@ export function makeRooms(deps: RoomDeps): Rooms {
     const liveEnabled = liveOn(live);
     if (!setting.enabled && !liveEnabled) throw no("disabled");
     const now = io.now();
-    const [me, mine, offers, h, avail] = await Promise.all([
+    const [me, mine, offers, h, avail, lately] = await Promise.all([
       presenceOfSeat(email, now),
       io.db(`${ROOMS}?host_email=eq.${enc(email)}&state=in.(${LIVE_STATES})&select=*&order=requested_at.desc&limit=10`),
       liveEnabled ? offersFor(email, now) : Promise.resolve([]),
       health(now),
       io.db(`cockpit_sales_availability?email=eq.${enc(email)}&select=*`).catch(() => []),
+      // A lead's room of this seat that failed, or closed on a knock nobody
+      // let in, in the last 15 minutes (stress2 round 3): the banner keeps it
+      // until the rep opens the lead, so a rep who moved on is told the lead
+      // got no link, or knocked. Not read: only the live rooms.
+      io
+        .db(
+          `${ROOMS}?host_email=eq.${enc(email)}&contact_id=not.is.null&purpose=neq.standby&state=in.(failed,expired,ended,cancelled)` +
+            `&ended_at=gte.${enc(isoAt(now - RECENT_FINAL_MS))}&select=*&order=ended_at.desc&limit=5`,
+        )
+        .then(rows => rows.filter(r => bannerKeeps(r as unknown as RoomRow)))
+        .catch(() => [] as Row[]),
     ]);
     let standbyError: string | null = null;
     const a = avail[0];
@@ -4017,7 +4058,12 @@ export function makeRooms(deps: RoomDeps): Rooms {
     // is Available, and for ten minutes after an Away press was refused.
     const kept = typeof a?.standby_error === "string" && a.standby_error ? String(a.standby_error) : null;
     const keptAt = ms(a?.standby_error_at);
-    if (kept && (a?.state === "available" || (keptAt !== null && now - keptAt < 10 * 60_000))) standbyError = kept;
+    // "Closed under 10 minutes ago" holds only while its ten minutes last
+    // (stress2 round 3): after them Get my room makes a room, so the strip
+    // never says it for the rest of the two hours.
+    const floodOver =
+      kept === ROOMS_COPY.standby_flood && keptAt !== null && Math.floor(keptAt / STANDBY_BUCKET_MS) !== Math.floor(now / STANDBY_BUCKET_MS);
+    if (kept && !floodOver && (a?.state === "available" || (keptAt !== null && now - keptAt < 10 * 60_000))) standbyError = kept;
     if (!standbyError && a?.state === "available" && !(mine as Row[]).some(r => r.purpose === "standby")) {
       const last = (await io
         .db(
@@ -4036,7 +4082,7 @@ export function makeRooms(deps: RoomDeps): Rooms {
       // The seat's own last press beside the view's state (stress2, round 2):
       // an Away seat with a booked call never had a room to close.
       me: { ...me, availability: a?.state === "available" ? "available" : "away" },
-      rooms: await views(mine as unknown as RoomRow[], setting),
+      rooms: await views([...(mine as unknown as RoomRow[]), ...(lately as unknown as RoomRow[])], setting),
       offers,
       health: h,
       live_enabled: liveEnabled,

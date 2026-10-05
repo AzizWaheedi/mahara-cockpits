@@ -1240,6 +1240,11 @@ export interface RoomCtx {
   now: number;
   /** The rep can mark the booked intro this room was for (P1's expiry). */
   canMarkIntro?: boolean;
+  /**
+   * The page draws the call's own step below the panel (the dialer), where a
+   * rep who spoke with the lead saves how it went (stress2 round 3).
+   */
+  talkBelow?: boolean;
   /** The seat's Available-until, for a standby room. */
   until?: string | null;
   /** "Still on the call?" was answered "Still on it" a moment ago. */
@@ -1416,7 +1421,13 @@ export function roomSentence(room: RoomView, ctx: RoomCtx): Sentence {
         return [
           `${who} opened the link at `,
           { mono: clock(room.last_open_at ?? room.first_open_at) },
-          ". The room is closed, and Meet cannot say whether they came in. If you spoke, say so below; if not, call them now.",
+          // Only where something below takes the answer (stress2 round 3):
+          // the intro's own marks, or the dialer's Save how it went.
+          ctx.canMarkIntro
+            ? ". The room is closed, and Meet cannot say whether they came in. If you spoke, say so below; if not, call them now."
+            : ctx.talkBelow
+              ? ". The room is closed, and Meet cannot say whether they came in. If you spoke, save how it went below; if not, call them now."
+              : ". The room is closed, and Meet cannot say whether they came in. If you did not speak, call them now.",
         ];
       return [
         `${who} opened the link at `,
@@ -1894,7 +1905,42 @@ const BANNER_SAYS_PANEL: ReadonlySet<RoomMoment> = new Set([
   "making_down",
   "making_late",
   "overdue",
+  // A knock nobody let in: call them now (stress2 round 3).
+  "expired_knocked",
 ]);
+
+/**
+ * A lead's room that failed, or closed on a knock nobody let in, stays in the
+ * banner this long after it ended, until the rep opens the lead (stress2
+ * round 3): the one rep who should act is told, though they moved on.
+ */
+export const BANNER_FINAL_MS = 15 * 60_000;
+const BANNER_KEEPS: ReadonlySet<RoomMoment> = new Set([
+  "failed",
+  "expired_knocked",
+]);
+const seenFinal = new Set<string>();
+
+/** A closed room the rep has seen on its lead's panel: the banner lets it go. */
+export function markFinalSeen(roomId: string): void {
+  seenFinal.add(roomId);
+}
+
+/**
+ * What a press of Next lead says once its room was asked for (DialerPage
+ * sendOnLeave): "on its way" only for a room that was not refused or failed.
+ */
+export function leaveToast(
+  room: RoomView,
+  name: string,
+): { ok: boolean; text: string } {
+  if (roomMoment(room, Date.now()) === "failed" || room.state === "failed")
+    return {
+      ok: false,
+      text: `The video link to ${name} was not sent. ${sentenceText(failedSentence(room))}`,
+    };
+  return { ok: true, text: `Video link on its way to ${name}.` };
+}
 
 /**
  * "Video room: Faisal, 7:40 left.", then "Faisal opened the link." With the
@@ -1910,7 +1956,17 @@ export function bannerRoomSentence(
   const Name = name ?? "The lead";
   if (m === "making")
     return [`Making your ${providerName(room.provider)} room...`];
-  if (BANNER_SAYS_PANEL.has(m))
+  // A room that failed after the rep moved on (stress2 round 3).
+  if (m === "failed" && isFinal(room.state))
+    return [
+      `The link to ${name ?? "the lead"} was not sent. ${sentenceText(failedSentence(room))} Open the lead.`,
+    ];
+  // A template nobody saw with no email behind it is no send: the panel's
+  // own sentence (read the link out), never a countdown (stress2 round 3).
+  if (
+    BANNER_SAYS_PANEL.has(m) ||
+    (m === "not_confirmed" && !(room.link_channels ?? []).includes("email"))
+  )
     return roomSentence(room, { now, workerDown: ctx.workerDown });
   if (m === "joined" || m === "still_on_call") return [`${Name} joined.`];
   // The host opened their Meet room: Meet will not say when the lead is in,
@@ -1969,6 +2025,8 @@ export function bannerRoomAction(room: RoomView): {
 const ROOM_URGENCY: Partial<Record<RoomMoment, number>> = {
   waiting_room: 0,
   host_in_opened: 0,
+  expired_knocked: 1,
+  failed: 2,
   joined: 1,
   still_on_call: 1,
   opened: 2,
@@ -1985,7 +2043,17 @@ export function myRoom(
   now: number,
 ): RoomView | null {
   const live = rooms.filter(r => {
-    if (isFinal(r.state) || isStandby(r)) return false;
+    if (isStandby(r)) return false;
+    if (isFinal(r.state)) {
+      // Kept a while when it failed or closed on a knock, until the rep sees it on the lead's panel.
+      if (!r.contact_id || seenFinal.has(r.id)) return false;
+      const ended = t(r.ended_at) ?? t(r.created_at);
+      return (
+        BANNER_KEEPS.has(roomMoment(r, now)) &&
+        ended !== null &&
+        now - ended < BANNER_FINAL_MS
+      );
+    }
     const start = bookedStart(r);
     return start === null || now >= start || stirred(r);
   });
@@ -2189,6 +2257,8 @@ export function needsRefresh(
   kept: readonly string[] = [],
 ): boolean {
   if (room?.state !== "host_in" || kept.includes(room.id)) return false;
+  // Zoom's 40-minute rule only: a Meet standby room is never refreshed (stress2 round 3).
+  if (room.provider !== "zoom") return false;
   const since = t(room.host_in_at) ?? t(room.created_at);
   if (since === null) return false;
   return now - since >= (WAITS_S.standby_max - REFRESH_AHEAD_S) * 1000;
@@ -2673,6 +2743,14 @@ export function withRoom(live: LiveStatus, room: RoomView): LiveStatus {
   const next = newer(have, room);
   const rest = live.rooms.filter(r => r.id !== room.id);
   if (!isFinal(next.state)) return { ...live, rooms: [next, ...rest] };
+  // A lead's room that failed (or closed on a knock) stays for the banner
+  // to say so, until the rep opens the lead (stress2 round 3).
+  if (
+    next.contact_id &&
+    !seenFinal.has(next.id) &&
+    BANNER_KEEPS.has(roomMoment(next, Date.now()))
+  )
+    return { ...live, rooms: [next, ...rest] };
   return {
     ...live,
     rooms: rest,

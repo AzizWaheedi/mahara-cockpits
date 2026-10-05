@@ -200,8 +200,10 @@ export function countMembers(
           c.bookedHoldout += 1;
           c.settledHoldout += 1;
         } else {
-          // A member taken out at their turn (sent_at null) had no opener.
+          // A member taken out at their turn (sent_at null) had no opener:
+          // on the bar it left the wave (stress2 round 3), each lead once.
           if (m.sent_at !== null) c.messaged += 1;
+          else c.excluded += 1;
           c.bookedWave += 1;
           c.settledWave += 1;
         }
@@ -211,12 +213,15 @@ export function countMembers(
         if (hold) c.settledHoldout += 1;
         else {
           if (m.sent_at !== null) c.messaged += 1;
+          else c.excluded += 1;
           c.settledWave += 1;
         }
         break;
       case "excluded":
       case "failed":
-        c.excluded += 1;
+        // The held-back arm is counted whole in `holdout` already: "left the
+        // wave" is the wave arm's own (stress2 round 3, never twice).
+        if (!hold) c.excluded += 1;
         break;
     }
   }
@@ -352,6 +357,35 @@ export type DeskReport =
 
 const DOWN_NEXT = "A manager checks the Team page.";
 
+/**
+ * Why the waves job is not running, as a clause ("has not reported yet"),
+ * or null while it reports: no row, a row that could not be read, a time
+ * that does not read, or a row older than WAVES_STALE_MS.
+ */
+export function deskDown(desk: DeskReport, now: number): string | null {
+  if (!desk) return null;
+  if ("missing" in desk) return "The wave run has not reported yet";
+  if ("unread" in desk) return "The wave run's report could not be read";
+  const at = desk.at ? Date.parse(desk.at) : Number.NaN;
+  if (desk.at !== undefined && desk.at !== null && !Number.isFinite(at))
+    return "The wave run reported at a time that cannot be read";
+  if (Number.isFinite(at) && now - at > WAVES_STALE_MS)
+    return `The wave run has not reported since ${clock(desk.at as string)}`;
+  return null;
+}
+
+/** What a Start press says: the desk adds the pool's leads within 5 minutes, unless its job is not running. */
+export function startedLine(
+  noun: string,
+  desk: DeskReport,
+  now: number,
+): string {
+  const down = deskDown(desk, now);
+  if (down)
+    return `Started. ${down}, so the ${noun} are not being added yet. ${DOWN_NEXT}`;
+  return `Started. The desk adds the ${noun} within 5 minutes.`;
+}
+
 export function waveLine(
   w: Wave,
   c: WaveCounts,
@@ -376,8 +410,15 @@ export function waveLine(
   // round 2).
   if (!c.total && !w.enrolled_at && w.state === "paused")
     return `${noun.charAt(0).toUpperCase()}${noun.slice(1)}: paused before its leads were added. Resume it, and the desk adds them at its next run.`;
-  if (!c.total && !w.enrolled_at)
-    return `${noun.charAt(0).toUpperCase()}${noun.slice(1)}, ${w.per_day} a day, newest first. The desk adds the pool's leads within 5 minutes; nothing is counted before then.`;
+  if (!c.total && !w.enrolled_at) {
+    const head = `${noun.charAt(0).toUpperCase()}${noun.slice(1)}, ${w.per_day} a day, newest first.`;
+    // Nothing enrols the pool while the waves job is not running (stress2
+    // round 3): never the promise of "within 5 minutes" then.
+    const down = deskDown(desk, next?.now ?? Date.now());
+    if (down)
+      return `${head} ${down}, so the pool's leads are not being added. ${DOWN_NEXT}`;
+    return `${head} The desk adds the pool's leads within 5 minutes; nothing is counted before then.`;
+  }
   const head = `${plural(c.total, "lead", "leads")} in ${noun}, ${w.per_day} a day, newest first; ${c.holdout.toLocaleString("en-US")} held back to measure the effect.`;
   if (w.state === "paused") return `${head} Paused: no batch is written.`;
   if (!next) return head;
@@ -427,7 +468,10 @@ export function effectLine(c: WaveCounts): string {
   const pts = (x: number) => `${(x * 100).toFixed(1)}`;
   const pct = (n: number, d: number) =>
     `${n.toLocaleString("en-US")} of ${d.toLocaleString("en-US")} (${pts(n / d)}%)`;
-  const open = c.settledWave < c.wave || c.settledHoldout < c.holdout;
+  // Against the members measured: a stopped wave's leads whose turn never
+  // came are never settled, and never move the number (stress2 round 3).
+  const open =
+    c.settledWave < c.measuredWave || c.settledHoldout < c.measuredHoldout;
   return `Booked: ${pct(c.bookedWave, nWave)} in the wave, ${pct(c.bookedHoldout, nHold)} held back. Difference ${pts(diff)} points, range ${pts(diff - 1.96 * se)} to ${pts(diff + 1.96 * se)}.${open ? " Leads still inside their 14 days can still book, so this moves." : ""}`;
 }
 

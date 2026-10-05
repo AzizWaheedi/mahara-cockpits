@@ -39,10 +39,12 @@ function readError(e: string): string {
  * does not exist yet, so they are read here, not edited.
  */
 export function RoomsHealthCard({ people }: { people: readonly Person[] }) {
-  const now = useNow(15_000);
   const setting = useSetting<unknown>("rooms");
   const rooms = readRoomsSetting(setting.data);
   const live = useLiveStatus(true);
+  // The jobs' report times are the database's: read on the server's clock
+  // (live.status's offset), never the laptop's (stress2 round 3).
+  const now = useNow(15_000) + live.offset;
   const workers = useWorkerStatus();
   const hosts = useQuery<HostRow[]>(
     () =>
