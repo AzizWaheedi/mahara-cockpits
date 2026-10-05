@@ -3876,6 +3876,16 @@ export function makeRooms(deps: RoomDeps): Rooms {
         const a = unclearSend(e) ? await ghlAppointment(plan.appointment_id) : null;
         if (!a || Math.abs((ghlTime(a.startTime) || 0) - startMs) >= 60 * S) throw e;
       }
+      // A showed status the count sent before this undo, landing after it
+      // (its answer slow, its lease run out): the call goes back with the
+      // status it had, never "showed" for a call that has not happened
+      // (stress2 round 4). Read back once; best effort.
+      const back = await ghlAppointment(plan.appointment_id);
+      const now = lower(back?.appointmentStatus ?? back?.appoinmentStatus);
+      if (back && now && plan.status && now !== lower(plan.status))
+        await io
+          .ghl("PUT", `/calendars/events/appointments/${enc(plan.appointment_id)}`, { appointmentStatus: plan.status, toNotify: false })
+          .catch(e => io.log(`rooms: the moved-back call's status was not put back: ${redact(String((e as Error)?.message ?? e))}`));
       await supersedeAfterClaim(room, plan.appointment_id, afterClaim);
       return true;
     }

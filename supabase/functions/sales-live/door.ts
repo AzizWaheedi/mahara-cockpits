@@ -296,8 +296,8 @@ export function whatsappDigits(x: unknown): string | null {
 }
 
 export const FINAL_STATES = new Set(["ended", "expired", "failed", "cancelled"]);
-/** A room a lead can still be let into. */
-export const LIVE_STATES = new Set(["open", "host_in", "lead_in"]);
+/** A room a lead can still be let into, or one being made for them (its page says preparing). */
+export const LIVE_STATES = new Set(["requested", "creating", "open", "host_in", "lead_in"]);
 
 /** How many replaced rooms the link follows before it gives up (each is one read inside /open's deadline). */
 export const MAX_HOPS = 2;

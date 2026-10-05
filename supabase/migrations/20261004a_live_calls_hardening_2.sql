@@ -1596,8 +1596,14 @@ comment on column public.cockpit_sales_rooms.meeting_ended_at is
 -- gone from every screen, and nothing for an undo to put back). Both now
 -- happen in one transaction under the one-current-mark index
 -- (cockpit_sales_dispositions_current): a failure leaves the previous mark
--- current. p_current_id is the mark read as current (null: none); a mark
--- that changed meanwhile makes the insert hit the index, and nothing moves.
+-- current. p_current_id is the mark read as current (null: none).
+-- Marks of one call queue on the call's lock (stress2 round 4,
+-- concurrent-marks-raw-unique-violation: 25 presses at once gave 24 raw
+-- unique violations), and each decides on the mark current when its turn
+-- comes: when that is no longer p_current_id (another mark landed first),
+-- nothing moves and no row is answered, so the caller reads the call again
+-- (index.ts markAppointment: a timer's mark stands down, a person's press
+-- is read again once, then told the call was marked a moment ago).
 create or replace function public.cockpit_sales_disposition_replace(p_current_id bigint, p_row jsonb)
 returns setof public.cockpit_sales_dispositions
 language plpgsql
@@ -1605,9 +1611,20 @@ security definer
 set search_path = ''
 set lock_timeout = '3s'
 as $$
+declare
+  cur bigint;
 begin
   if p_row is null or coalesce(p_row ->> 'appointment_id', '') = '' then
     raise exception 'disposition_replace: which call?' using errcode = '22023';
+  end if;
+  perform pg_advisory_xact_lock(hashtextextended('cockpit_sales_dispositions:' || (p_row ->> 'appointment_id'), 0));
+  select d.id into cur
+    from public.cockpit_sales_dispositions as d
+   where d.appointment_id = p_row ->> 'appointment_id' and d.superseded_at is null
+   order by d.id desc
+   limit 1;
+  if cur is distinct from p_current_id then
+    return;
   end if;
   if p_current_id is not null then
     update public.cockpit_sales_dispositions as d
@@ -1670,6 +1687,424 @@ end;
 $$;
 revoke all on function public.cockpit_sales_room_event_lease(uuid, text, integer, uuid) from public, anon, authenticated;
 grant execute on function public.cockpit_sales_room_event_lease(uuid, text, integer, uuid) to service_role;
+
+-- 6c. A setter's deal credit never comes from a live call (stress2, round 4) ---
+
+-- cockpit_sales_setter_deals (20260927a) credits a deal whose form leaves
+-- the setter blank to the rep assigned the lead's latest intro before the
+-- deal, on any calendar. The live count copies its bookings into the
+-- calendar copy (rooms.ts copyLiveBooking) on rooms.live_calendar_id (and
+-- a test booking on rooms.test_calendar_id): a closer's video call after the
+-- demo read as the lead's latest intro and took the deal off the setter's
+-- pay. The fallback reads every intro but those two calendars' and any the
+-- live count booked (a room's count_appointment_id); a closer's room is a
+-- demo besides (sales-api roomCreate).
+create or replace function public.cockpit_sales_setter_deals(
+  p_rep_id text,
+  p_from timestamptz,
+  p_to timestamptz
+)
+returns table (
+  response_id text,
+  submitted_at timestamptz,
+  closer text,
+  client_name text,
+  business_name text,
+  payment_structure text,
+  cash_collected numeric,
+  contracted_revenue numeric,
+  credited_by text,
+  fully_closed boolean,
+  fully_closed_by text
+)
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  with allowed as (
+    select public.cockpit_sales_manager()
+        or exists (
+             select 1
+               from public.cockpit_sales_people as p
+              where p.email = public.cockpit_sales_email()
+                and p.active
+                and p.b2b_rep_id::text = p_rep_id
+           ) as ok
+  ),
+  rep as (
+    select r.ghl_user_id,
+           array(
+             select pg_catalog.lower(pg_catalog.btrim(x))
+               from pg_catalog.unnest(coalesce(r.closer_aliases, '{}') || array[r.display_name]) as x
+           ) as names
+      from public.cockpit_sales_reps as r
+     where r.id::text = p_rep_id
+  ),
+  live_cals as (
+    select array_remove(array[
+             nullif(pg_catalog.btrim(s.value ->> 'live_calendar_id'), ''),
+             nullif(pg_catalog.btrim(s.value ->> 'test_calendar_id'), '')
+           ], null) as ids
+      from public.cockpit_sales_settings as s
+     where s.key = 'rooms'
+  ),
+  credited as (
+    select d.*,
+           case
+             when pg_catalog.lower(pg_catalog.btrim(coalesce(d.setter, ''))) = any ((select names from rep)::text[])
+               then 'form'
+             when nullif(pg_catalog.btrim(coalesce(d.setter, '')), '') is null
+              and (select ghl_user_id from rep) is not null
+              and (
+                select a.assigned_user_id
+                  from public.cockpit_sales_appointments as a
+                 where a.contact_id = d.contact_id
+                   and a.call_type = 'intro'
+                   and a.start_at <= d.submitted_at
+                   and not (a.calendar_id = any (coalesce((select ids from live_cals), '{}'::text[])))
+                   and not exists (select 1 from public.cockpit_sales_rooms as r
+                                    where r.count_appointment_id = a.appointment_id and r.count_result = 'booked')
+                 order by a.start_at desc
+                 limit 1
+              ) = (select ghl_user_id from rep)
+               then 'intro'
+           end as credit
+      from public.cockpit_sales_deals as d
+     where d.submitted_at >= p_from
+       and d.submitted_at < p_to
+       and not d.voided
+  )
+  select c.response_id, c.submitted_at, c.closer, c.client_name, c.business_name,
+         c.payment_structure, c.cash_collected, c.contracted_revenue,
+         c.credit as credited_by,
+         coalesce(s.fully_closed, coalesce(c.contracted_revenue > 0 and c.cash_collected >= c.contracted_revenue, false))
+           as fully_closed,
+         case
+           when s.response_id is not null then 'confirmed'
+           when c.contracted_revenue > 0 and c.cash_collected >= c.contracted_revenue then 'paid in full'
+         end as fully_closed_by
+    from credited as c
+    left join public.cockpit_sales_deal_status as s on s.response_id = c.response_id
+   where c.credit is not null
+     and (select ok from allowed)
+   order by c.submitted_at desc;
+$$;
+revoke all on function public.cockpit_sales_setter_deals(text, timestamptz, timestamptz) from public, anon;
+grant execute on function public.cockpit_sales_setter_deals(text, timestamptz, timestamptz) to authenticated, service_role;
+
+-- 6d. The watchdog says when Slack refuses its posts (stress2, round 4) -----
+
+-- As 20261003d made it, with three changes (slack-webhook-refused-reads-as-
+-- posted): Slack refusing the #sales-alerts webhook for good (the installer
+-- left: 403/404; the channel archived: 410; the hook removed) turns the
+-- watchdog's own row red with what to do, until a later post succeeds; a
+-- 429 (Slack's one-a-second limit) is posted again without using up one of
+-- the three tries; and at most 3 posts go a run (10 before), so a burst
+-- of alerts is not spent on the limit.
+create or replace function public.cockpit_sales_watchdog()
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+set lock_timeout = '10s'
+as $$
+declare
+  t constant timestamptz := now();
+  in_hours constant boolean := public.cockpit_sales_alert_hours(now());
+  day_key constant text := 'room_events_gave_up:' || to_char(now() at time zone 'Asia/Kuwait', 'YYYY-MM-DD');
+  rooms jsonb := coalesce((select s.value from public.cockpit_sales_settings as s where s.key = 'rooms'), '{}'::jsonb);
+  live jsonb := coalesce((select s.value from public.cockpit_sales_settings as s where s.key = 'live'), '{}'::jsonb);
+  threads jsonb := coalesce((select s.value from public.cockpit_sales_settings as s where s.key = 'threads'), '{}'::jsonb);
+  rec record;
+  subj text;
+  since text;
+  words text;
+  watched boolean;
+  is_missing boolean;
+  is_stale boolean;
+  is_failing boolean;
+  raised integer := 0;
+  open_n integer;
+  posted integer := 0;
+  hook text;
+  req bigint;
+  stuck integer;
+  gave_up integer;
+  gave_up_words text;
+  prev record;
+  note text;
+  unanswered integer := 0;
+  refused integer := 0;
+  refused_status integer;
+begin
+  if not pg_try_advisory_xact_lock(hashtext('cockpit_sales_watchdog')) then
+    return jsonb_build_object('skipped', 'Another watchdog run is going.');
+  end if;
+
+  -- 1. The status rows (glossary 1.7, plus the desk's waves and model rows,
+  -- the room host check and the five sales-live routes).
+  -- switch_on null: watched once the row exists; true or false: watched only
+  -- while the feature is switched on, and then a missing row is an alert too
+  -- (missing is never zero). stale_min null: a failing-only row (the door
+  -- writes its routes' rows only when traffic comes), so neither a missing
+  -- nor a quiet row is an alert, only a row that says it is failing.
+  for rec in
+    select w.worker, w.job, w.stale_min, w.label, w.effect, w.switch_on, s.ok, s.detail, s.at
+      from (values
+        ('sales-desk', 'rooms',     10, 'The room worker',       'New video rooms cannot be made.',
+           coalesce((rooms -> 'enabled') = 'true'::jsonb, false)),
+        ('sales-desk', 'room-hosts', 20, 'The room host check',
+           'Zoom seats and Google sign-ins are not being checked, so a room may fail without warning.',
+           coalesce((rooms -> 'enabled') = 'true'::jsonb, false)),
+        ('sales-desk', 'slack',     10, 'The Slack poster',      'Live offers cannot reach Slack.',
+           coalesce((live -> 'enabled') = 'true'::jsonb, false) and coalesce((live -> 'slack') = 'true'::jsonb, false)),
+        ('sales-desk', 'watch',     10, 'The reply watcher',     'New replies are not being flagged.', null),
+        ('sales-desk', 'followups', 75, 'The follow-up drafter', 'No new follow-ups are being drafted.', null),
+        ('sales-desk', 'waves',     15, 'The backlog wave run',  'Backlog openers are not being written or sent.', null),
+        ('sales-desk', 'model',     75, 'The drafting model',    'Nothing that needs the model can be drafted.', null),
+        ('sales-desk', 'doctor',    75, 'The sales desk doctor', 'Nobody is checking the desk. Check the VPS and the Claude sign-in.', null),
+        ('sales-api',  'threads',   10, 'The demo chat tick',    'Demo chat steps are not going out.',
+           coalesce((threads -> 'enabled') = 'true'::jsonb, false)),
+        ('sales-api',  'sweep',      5, 'The room sweep',        'Rooms past their time are not being closed.', null),
+        ('sales-live', 'zoom',  null::integer, 'The Zoom webhook',
+           'Zoom joins and leaves may not reach the rooms, so reps press I''m in and The lead is in themselves.',
+           coalesce((rooms -> 'enabled') = 'true'::jsonb, false)),
+        ('sales-live', 'slack', null::integer, 'The Slack buttons',
+           'Presses on live offers in Slack may not work. Take offers from the cockpit.',
+           coalesce((live -> 'enabled') = 'true'::jsonb, false) and coalesce((live -> 'slack') = 'true'::jsonb, false)),
+        ('sales-live', 'open',  null::integer, 'The short link page',
+           'Leads may not be able to open their room links. Send them the room''s full link.',
+           coalesce((rooms -> 'enabled') = 'true'::jsonb, false)),
+        ('sales-live', 'go',    null::integer, 'The short link',
+           'Leads may not reach their room from the short link. Send them the room''s full link.',
+           coalesce((rooms -> 'enabled') = 'true'::jsonb, false)),
+        ('sales-live', 'cron',  null::integer, 'The sweep''s call to sales-api',
+           'Replays, settles and re-checks from the room sweep may not reach sales-api.',
+           coalesce((rooms -> 'enabled') = 'true'::jsonb, false))
+      ) as w(worker, job, stale_min, label, effect, switch_on)
+      left join public.cockpit_sales_worker_status as s on s.worker = w.worker and s.job = w.job
+  loop
+    subj := rec.worker || '/' || rec.job;
+    watched := coalesce(rec.switch_on, rec.at is not null);
+    is_missing := watched and rec.at is null and rec.stale_min is not null;
+    is_stale := watched and rec.at is not null and rec.stale_min is not null
+                and rec.at < t - make_interval(mins => rec.stale_min);
+    is_failing := watched and rec.at is not null and not is_stale and rec.ok is false;
+    -- The day is said whenever the alert may be read another day: outside
+    -- working hours it is posted the next working morning (fix round 4).
+    since := case
+      when rec.at is null then null
+      when (rec.at at time zone 'Asia/Kuwait')::date = (t at time zone 'Asia/Kuwait')::date and in_hours
+        then to_char(rec.at at time zone 'Asia/Kuwait', 'HH24:MI')
+      else to_char(rec.at at time zone 'Asia/Kuwait', 'Dy FMDD Mon HH24:MI') end;
+    words := rtrim(public.cockpit_sales_alert_words(rec.detail, 160), '.!? ');
+
+    raised := raised + public.cockpit_sales_alert_set('missing:' || subj, is_missing, 'missing', subj,
+      format('%s has never reported. %s', rec.label, rec.effect),
+      jsonb_build_object('worker', rec.worker, 'job', rec.job));
+    raised := raised + public.cockpit_sales_alert_set('stale:' || subj, is_stale, 'stale', subj,
+      format('%s has not run since %s. %s', rec.label, since, rec.effect),
+      jsonb_build_object('worker', rec.worker, 'job', rec.job, 'last_at', rec.at, 'stale_min', rec.stale_min));
+    raised := raised + public.cockpit_sales_alert_set('failing:' || subj, is_failing, 'failing', subj,
+      format('%s reported a problem at %s: %s. %s', rec.label, since, coalesce(nullif(words, ''), 'no detail'), rec.effect),
+      jsonb_build_object('worker', rec.worker, 'job', rec.job, 'last_at', rec.at));
+  end loop;
+
+  -- 2. Room events that have waited more than 10 minutes (in the last day)
+  -- and are still not handled: the sweep or room.event is not keeping up.
+  select count(*) into stuck
+    from public.cockpit_sales_room_events as e
+   where e.handled_at is null and e.source in ('zoom', 'slack', 'worker', 'claim', 'settle')
+     and e.at < t - interval '10 minutes' and e.at > t - interval '1 day';
+  raised := raised + public.cockpit_sales_alert_set('room_events_unhandled', stuck > 0, 'room_events', 'room_events',
+    format('%s Zoom, Slack, worker, claim or settle events have waited more than 10 minutes. Rooms may show the wrong state. Check the room sweep and sales-live.', stuck),
+    jsonb_build_object('count', stuck));
+
+  -- 2b. Events given up today (Kuwait day): one alert a day, its count kept
+  -- up to date. When the count rises after the alert was posted, it is
+  -- posted again. An earlier day's alert is resolved only once it was posted
+  -- (or three days on): one raised on a Friday, or after 21:00, is posted in
+  -- the next working hours, never lost at midnight.
+  select count(*) into gave_up
+    from public.cockpit_sales_room_events as e
+   where e.detail ? 'gave_up'
+     and e.handled_at >= ((t at time zone 'Asia/Kuwait')::date)::timestamp at time zone 'Asia/Kuwait';
+  select a.id, coalesce((a.detail ->> 'count')::integer, 0) as n, a.posted_at
+    into prev
+    from public.cockpit_sales_alerts as a
+   where a.dedupe_key = day_key and a.resolved_at is null;
+  update public.cockpit_sales_alerts as a
+     set resolved_at = t,
+         dedupe_key = a.dedupe_key || ':resolved:' || a.id::text
+   where a.dedupe_key like 'room_events_gave_up:%' and a.dedupe_key <> day_key and a.resolved_at is null
+     and (a.posted_at is not null or a.raised_at < t - interval '3 days');
+  gave_up_words := format('%s room events were given up today (10 tries by room.event, or a day old). Each one is a Zoom, Slack, worker, claim or settle signal no room acted on. Check sales-live and the room events list.', gave_up);
+  raised := raised + public.cockpit_sales_alert_set(day_key, gave_up > 0, 'room_events_gave_up', 'room_events',
+    gave_up_words, jsonb_build_object('count', gave_up));
+  if prev.id is not null and gave_up > prev.n then
+    update public.cockpit_sales_alerts as a
+       set message = public.cockpit_sales_alert_words(gave_up_words, 1000),
+           posted_at = null,
+           post_tries = 0,
+           post_status = null,
+           post_error = null,
+           post_request_id = null
+     where a.id = prev.id and a.resolved_at is null;
+  end if;
+
+  -- 2c. A Zoom join, a worker event, a settle or a claim given up (never
+  -- read by room.event): one alert per event, at once, because the room it
+  -- was for may be closed as if nobody came, its booked intro left
+  -- "confirmed" (a show for B2B), or a taken lead left with no room. A
+  -- settle's is the room's "mark this intro" alert (the sweep raises it when
+  -- it gives the settle up; this raises it again if that did not land).
+  -- Resolved by a person, and never raised again once resolved.
+  for rec in
+    select e.id, e.kind, e.source, e.room_id, r.code,
+           case when e.source = 'settle' and e.room_id is not null then 'room:' || e.room_id::text || ':mark_intro'
+                else 'room_event_lost:' || e.id::text end as key
+      from public.cockpit_sales_room_events as e
+      left join public.cockpit_sales_rooms as r on r.id = e.room_id
+     where e.detail ? 'gave_up' and e.handled_at > t - interval '1 day'
+       and (e.kind like 'zoom.meeting.participant_%' or e.kind like 'worker.%' or e.source in ('settle', 'claim'))
+  loop
+    continue when exists (select 1 from public.cockpit_sales_alerts as a where a.dedupe_key like rec.key || ':resolved:%');
+    if rec.source = 'settle' and rec.room_id is not null then
+      raised := raised + public.cockpit_sales_alert_set(rec.key, true, 'room_mark_intro', 'Room ' || coalesce(rec.code, 'event'),
+        format('Room %s: the no-show could not be written (sales-api or HighLevel did not answer), so the booked intro is still open. Mark it shown or a no-show.',
+               coalesce(rec.code, '(none)')),
+        jsonb_build_object('room_id', rec.room_id, 'code', rec.code));
+    else
+      raised := raised + public.cockpit_sales_alert_set(rec.key, true, 'room_event_lost',
+        'Room ' || coalesce(rec.code, 'event'),
+        format('Room %s: %s was never read, so the room may show the wrong state. Check the call and mark it by hand.',
+               coalesce(rec.code, '(none)'),
+               case when rec.kind like 'zoom.meeting.participant_joined%' then 'Zoom''s word that someone joined'
+                    when rec.kind like 'zoom.%' then 'a Zoom event'
+                    when rec.source = 'claim' then 'a closer''s take of a live lead'
+                    else 'the room worker''s word' end),
+        jsonb_build_object('event_id', rec.id, 'room_id', rec.room_id, 'kind', rec.kind));
+    end if;
+  end loop;
+
+  -- 2d. Per-room alerts nobody resolved (final review): a room's mark-intro,
+  -- count, undo, showed, lost-event and held alerts are a person's to act
+  -- on, and sales-api answers some itself (a rep's mark, a count that
+  -- settled). The rest are resolved here three days after they were raised
+  -- once posted (a week when they never could be), so the open count on the
+  -- Team page stops only growing. Resolved keys are never raised again (2c).
+  update public.cockpit_sales_alerts as a
+     set resolved_at = t,
+         dedupe_key = a.dedupe_key || ':resolved:' || a.id::text
+   where a.resolved_at is null
+     and (a.dedupe_key like 'room:%' or a.dedupe_key like 'room_event_lost:%' or a.dedupe_key like 'room_held:%')
+     and a.dedupe_key not like '%:resolved:%'
+     and a.raised_at < t - interval '3 days'
+     and (a.posted_at is not null or a.raised_at < t - interval '7 days');
+
+  -- 3. Answers to earlier posts: a failed post is tried again, 3 tries at
+  -- most. Slack's 429 (about one post a second) is posted again without
+  -- using up a try (stress2, round 4).
+  update public.cockpit_sales_alerts as a
+     set post_status = coalesce(r.status_code, 0),
+         post_error = case when r.status_code between 200 and 299 then null
+                           else left(coalesce(r.error_msg, case when r.timed_out then 'Timed out' end,
+                                              'Slack answered ' || coalesce(r.status_code::text, 'nothing')), 500) end,
+         post_tries = case when r.status_code = 429 then greatest(a.post_tries - 1, 0) else a.post_tries end,
+         posted_at = case when r.status_code between 200 and 299
+                            or (a.post_tries >= 3 and r.status_code is distinct from 429) then a.posted_at end
+    from net._http_response as r
+   where r.id = a.post_request_id and a.post_status is null;
+
+  -- 3b. A post pg_net never answered (fix round 4): its background worker
+  -- stops after a database restart and pg_net then only queues posts, so no
+  -- answer row ever comes. After 3 minutes the post counts as failed: posted
+  -- again (3 tries at most), then kept visible with its error, and the
+  -- watchdog's own row turns red with what to do.
+  update public.cockpit_sales_alerts as a
+     set post_status = 0,
+         post_error = 'No answer from pg_net',
+         posted_at = case when a.post_tries >= 3 then a.posted_at end
+   where a.post_request_id is not null and a.post_status is null
+     and a.posted_at < t - interval '3 minutes'
+     and not exists (select 1 from net._http_response as r where r.id = a.post_request_id);
+  get diagnostics unanswered = row_count;
+
+  -- 4. Post open alerts that were not posted yet, in working hours only.
+  select ds.decrypted_secret into hook
+    from vault.decrypted_secrets as ds
+   where ds.name = 'sales_alerts_slack_webhook'
+   limit 1;
+  if hook is not null and hook !~ '^https://' then
+    hook := null;
+  end if;
+
+  if not in_hours then
+    note := 'Waiting for working hours: Saturday to Thursday, 09:00 to 21:00 Kuwait time.';
+  elsif hook is null then
+    note := 'Recorded only: the vault has no sales_alerts_slack_webhook.';
+  end if;
+
+  if note is not null then
+    update public.cockpit_sales_alerts as a
+       set post_error = note
+     where a.resolved_at is null and a.posted_at is null and a.post_tries = 0 and a.post_error is distinct from note;
+  else
+    for rec in
+      select a.id, a.message
+        from public.cockpit_sales_alerts as a
+       where a.resolved_at is null and a.posted_at is null and a.post_tries < 3
+       order by a.raised_at
+       limit 3
+       for update skip locked
+    loop
+      -- Escaped as Slack asks (& < >): stored words are shown as written,
+      -- never read as markup.
+      req := net.http_post(
+        url := hook,
+        body := jsonb_build_object('text', replace(replace(replace(rec.message, '&', '&amp;'), '<', '&lt;'), '>', '&gt;')),
+        headers := jsonb_build_object('Content-Type', 'application/json'),
+        timeout_milliseconds := 5000);
+      update public.cockpit_sales_alerts as a
+         set posted_at = t, post_request_id = req, post_tries = a.post_tries + 1, post_status = null, post_error = null
+       where a.id = rec.id;
+      posted := posted + 1;
+    end loop;
+  end if;
+
+  select count(*) into open_n from public.cockpit_sales_alerts as a where a.resolved_at is null;
+
+  -- Slack refused the webhook since the last post it took (stress2, round 4):
+  -- a refusal that will not pass (403, 404, 410, a 4xx; never pg_net's own
+  -- silence, said above, nor a 429, posted again), on an open alert. Missing
+  -- is never zero: recorded alerts that reach nobody are said on this row.
+  select count(*), max(a.post_status) into refused, refused_status
+    from public.cockpit_sales_alerts as a
+   where a.resolved_at is null
+     and a.post_status is not null and a.post_status not between 200 and 299 and a.post_status not in (0, 429)
+     and coalesce(a.posted_at, a.last_seen_at, a.raised_at) >= coalesce(
+           (select max(b.posted_at) from public.cockpit_sales_alerts as b where b.post_status between 200 and 299),
+           '-infinity'::timestamptz);
+
+  insert into public.cockpit_sales_worker_status (worker, job, ok, detail, at)
+  values ('sales-api', 'watchdog', unanswered = 0 and refused = 0,
+          case when unanswered > 0
+               then format('pg_net did not answer %s Slack %s in 3 minutes, so alerts may not reach #sales-alerts. Run select %s.worker_restart(); in the SQL editor. %s open alerts.',
+                           unanswered, case when unanswered = 1 then 'post' else 'posts' end, 'net', open_n)
+               when refused > 0
+               then format('Slack refused the #sales-alerts webhook (it answered %s to %s %s), so alerts are not reaching the channel. Put a working incoming webhook for #sales-alerts in the vault as sales_alerts_slack_webhook. %s open alerts.',
+                           refused_status, refused, case when refused = 1 then 'alert' else 'alerts' end, open_n)
+               else format('%s open alerts, %s new, %s posted.%s', open_n, raised, posted, coalesce(' ' || note, '')) end, t)
+  on conflict (worker, job) do update
+     set ok = excluded.ok, detail = excluded.detail, at = excluded.at;
+
+  return jsonb_build_object('at', t, 'in_hours', in_hours, 'open', open_n, 'raised', raised,
+                            'posted', posted, 'webhook', hook is not null, 'note', note);
+end;
+$$;
+revoke all on function public.cockpit_sales_watchdog() from public, anon, authenticated;
+grant execute on function public.cockpit_sales_watchdog() to service_role;
 
 -- 7. Grants (the view was made again) ---------------------------------------------
 

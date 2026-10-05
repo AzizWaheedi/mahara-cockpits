@@ -30,6 +30,8 @@ const clock = {
 };
 const db = new FakeDb(clock as { now: number });
 const ghlCalls: { method: string; path: string }[] = [];
+/** HighLevel's answer to the contact read, when a test makes it fail (stress2 round 4). */
+let contactRead: number | null = null;
 let handler: ((req: Request) => Promise<Response>) | undefined;
 
 function reply(body: unknown, status = 200): Response {
@@ -65,6 +67,8 @@ async function fakeFetch(input: string | URL | Request, init: RequestInit = {}):
   if (url.startsWith(GHL)) {
     const path = url.slice(GHL.length);
     ghlCalls.push({ method, path });
+    if (method === "GET" && path.startsWith("/contacts/") && contactRead !== null)
+      return reply({ message: "Bad Gateway" }, contactRead);
     if (method === "GET" && path.startsWith("/contacts/")) {
       const id = decodeURIComponent(path.split("/")[2]?.split("?")[0] ?? "");
       return reply({ contact: { id, firstName: "Huda", phone: "+96550000000", tags: ["roas-qualified"], dnd: false, dndSettings: {} } });
@@ -99,6 +103,8 @@ beforeAll(async () => {
 function reset(): void {
   db.tables = {};
   ghlCalls.length = 0;
+  contactRead = null;
+  delete db.rpcs.cockpit_sales_disposition_replace;
   db.seed("cockpit_sales_settings", [
     { key: "messaging", value: { whatsapp: true, email: true } },
     { key: "whatsapp_guard", value: { templates_per_day: 250, template_budget_usd_month: 100 } },
@@ -193,5 +199,100 @@ describe("the send ceilings hold under a burst (index.ts sendTemplate)", () => {
     seedMessages(1263, i => new Date(monthStart + 30_000 + Math.floor((i * span) / 1263)).toISOString());
     const out = await send(lead(400));
     expect([out.status, enrolled()]).toEqual([409, 0]);
+  }, 60_000);
+});
+
+// ---------------------------------------------------------------------------
+// Stress2 round 4: failures before anything went, and two marks of one call
+// ---------------------------------------------------------------------------
+
+async function call(body: Row): Promise<{ status: number; body: Row }> {
+  const res = await (handler as (req: Request) => Promise<Response>)(
+    new Request("https://fn.stress.invalid/sales-api", {
+      method: "POST",
+      headers: { authorization: "Bearer a-seat-session", "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  );
+  return { status: res.status, body: (await res.json()) as Row };
+}
+
+describe("stress2 r4: index.ts answers a failure before the message row as certain and not sent yet", () => {
+  test("pre-send-highlevel-5xx-read-as-may-have-gone: HighLevel's 502 on the contact read is 503 not_sent_yet, with no message row", async () => {
+    reset();
+    contactRead = 502;
+    const c = lead(500);
+    const out = await send(c);
+    expect({ status: out.status, code: out.body.code, rows: db.t("cockpit_sales_messages").filter(m => m.contact_id === c).length }).toEqual({
+      status: 503,
+      code: "not_sent_yet",
+      rows: 0,
+    });
+    expect(String(out.body.error)).not.toMatch(/may have gone/i);
+    // HighLevel answers again: the same request goes.
+    contactRead = null;
+    expect((await send(c)).status).toBe(200);
+  }, 60_000);
+});
+
+describe("stress2 r4: two marks of one call at once (concurrent-marks-raw-unique-violation)", () => {
+  function seedCall(id: string): void {
+    db.seed("cockpit_sales_appointments", [
+      {
+        appointment_id: id,
+        contact_id: "stress-mark-lead",
+        call_type: "intro",
+        calendar_id: "dsqmJ393Dwl9fDSbIVOI",
+        status: "confirmed",
+        start_at: new Date(Date.now() - 10 * 60_000).toISOString(),
+        assigned_user_id: "G-rep",
+      },
+    ]);
+  }
+  /** cockpit_sales_disposition_replace as 20261004a makes it, with another seat's mark landing just before this one. */
+  function otherMarkLandsFirst(status: string): void {
+    let raced = false;
+    db.rpcs.cockpit_sales_disposition_replace = (a: Row) => {
+      const row = a.p_row as Row;
+      const cur = db.t("cockpit_sales_dispositions").find(d => d.appointment_id === row.appointment_id && !d.superseded_at);
+      if (!raced) {
+        raced = true;
+        db.t("cockpit_sales_dispositions").push({
+          id: 9001,
+          ...row,
+          status,
+          marked_by: "closer@stress.invalid",
+          crm: "off",
+          superseded_at: null,
+          marked_at: new Date().toISOString(),
+        });
+        return [];
+      }
+      if ((cur ? Number(cur.id) : null) !== (a.p_current_id ?? null)) return [];
+      if (cur) cur.superseded_at = new Date().toISOString();
+      const made = { id: 9002, ...row, superseded_at: null, marked_at: new Date().toISOString() };
+      db.t("cockpit_sales_dispositions").push(made);
+      return [made];
+    };
+  }
+
+  test("the same mark landed a moment before: the press is its twin, answered with that mark", async () => {
+    reset();
+    seedCall("stress-mark-1");
+    otherMarkLandsFirst("showed");
+    const out = await call({ action: "mark", appointment_id: "stress-mark-1", status: "showed" });
+    expect(out.status).toBe(200);
+    expect(db.t("cockpit_sales_dispositions").filter(d => d.appointment_id === "stress-mark-1" && !d.superseded_at)).toHaveLength(1);
+  }, 60_000);
+
+  test("another mark landed a moment before: the press is read again and lands, never a raw database error", async () => {
+    reset();
+    seedCall("stress-mark-2");
+    otherMarkLandsFirst("noshow");
+    const out = await call({ action: "mark", appointment_id: "stress-mark-2", status: "showed" });
+    expect(String(out.body.error ?? "")).not.toMatch(/database|duplicate key/i);
+    expect(out.status).toBe(200);
+    const current = db.t("cockpit_sales_dispositions").filter(d => d.appointment_id === "stress-mark-2" && !d.superseded_at);
+    expect(current.map(d => d.status)).toEqual(["showed"]);
   }, 60_000);
 });

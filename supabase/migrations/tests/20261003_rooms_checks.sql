@@ -2402,16 +2402,15 @@ begin
   end;
   perform pg_temp.ck('R5 a replace whose insert fails leaves the previous mark current',
     ok and (select superseded_at is null and status = 'showed' from public.cockpit_sales_dispositions where id = b));
-  ok := false;
-  begin
-    -- Read as current before another mark landed: the insert meets the one-current index, nothing moves.
-    perform 1 from public.cockpit_sales_disposition_replace(a, jsonb_build_object(
-      'appointment_id', 'lc-test-r5-appt', 'contact_id', 'lc-test-r5', 'status', 'noshow', 'marked_by', 'x@example.invalid'));
-  exception when unique_violation then
-    ok := true;
-  end;
-  perform pg_temp.ck('R5 a replace built on a mark that changed meanwhile is refused by the one-current index',
-    ok and (select count(*) = 1 from public.cockpit_sales_dispositions where appointment_id = 'lc-test-r5-appt' and superseded_at is null));
+  -- Read as current before another mark landed (stress2 round 4): under the
+  -- call's lock the replace finds the mark it was given is no longer current,
+  -- answers no row and moves nothing (never a raw unique violation), so the
+  -- caller reads the call again.
+  select count(*) = 0 into ok from public.cockpit_sales_disposition_replace(a, jsonb_build_object(
+    'appointment_id', 'lc-test-r5-appt', 'contact_id', 'lc-test-r5', 'status', 'noshow', 'marked_by', 'x@example.invalid'));
+  perform pg_temp.ck('R5 a replace built on a mark that changed meanwhile answers no row and moves nothing',
+    ok and (select count(*) = 1 from public.cockpit_sales_dispositions where appointment_id = 'lc-test-r5-appt' and superseded_at is null)
+    and (select superseded_at is null and status = 'showed' from public.cockpit_sales_dispositions where id = b));
   perform pg_temp.ck('R5 the replace is security definer, empty search_path, service role only',
     (select p.prosecdef and 'search_path=""' = any (p.proconfig) from pg_proc as p
       where p.oid = 'public.cockpit_sales_disposition_replace(bigint, jsonb)'::regprocedure)
