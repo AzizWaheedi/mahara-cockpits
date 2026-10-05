@@ -214,6 +214,12 @@ export class RateLimiter {
     return Boolean(s && now - s.start < this.windowMs && s.n >= this.limit);
   }
 
+  /** The hits this key has in its current window, without counting one. */
+  used(key: string, now: number): number {
+    const s = this.hits.get(key);
+    return s && now - s.start < this.windowMs ? s.n : 0;
+  }
+
   /** Gives back one hit that turned out not to need counting (a duplicate). */
   giveBack(key: string): void {
     const s = this.hits.get(key);
@@ -290,6 +296,8 @@ export function whatsappDigits(x: unknown): string | null {
 }
 
 export const FINAL_STATES = new Set(["ended", "expired", "failed", "cancelled"]);
+/** A room a lead can still be let into. */
+export const LIVE_STATES = new Set(["open", "host_in", "lead_in"]);
 
 /** How many replaced rooms the link follows before it gives up (each is one read inside /open's deadline). */
 export const MAX_HOPS = 2;
@@ -306,11 +314,33 @@ export interface RoomRow {
   first_open_at: string | null;
   /** booked: the closer's own meeting, whose link works until ends_at (C14). */
   purpose?: string | null;
+  /** The lead's own rooms (a newer one the old link leads to) and the call's end in the books (stress2 round 4). */
+  contact_id?: string | null;
+  requested_at?: string | null;
+  ended_at?: string | null;
+  end_reason?: string | null;
+  lead_in_at?: string | null;
+  count_undo_at?: string | null;
 }
 
 /** The columns the door reads from cockpit_sales_rooms, in one place. */
 export const ROOM_COLUMNS =
-  "id,code,state,provider,join_url,host_email,replaced_by,ends_at,first_open_at,purpose";
+  "id,code,state,provider,join_url,host_email,replaced_by,ends_at,first_open_at,purpose,contact_id,requested_at,ended_at,end_reason,lead_in_at,count_undo_at";
+
+/**
+ * How long a call the sweep closed only in the books (R7's no_end_signal,
+ * the lead in it) still opens: the room worker keeps such a meeting open and
+ * checks it this long (desk rooms.py HOLD_GIVE_UP_S).
+ */
+export const BOOKS_CLOSE_OPEN_MS = 3 * 3600_000;
+
+/** The lead was in the room, and "That was not the lead" did not take it back. */
+export function leadReached(room: Partial<Pick<RoomRow, "lead_in_at" | "count_undo_at">>): boolean {
+  const joined = Date.parse(String(room.lead_in_at ?? ""));
+  if (!Number.isFinite(joined)) return false;
+  const undo = Date.parse(String(room.count_undo_at ?? ""));
+  return !Number.isFinite(undo) || joined > undo;
+}
 
 export type Rep = { en: string | null; ar: string | null };
 
@@ -334,10 +364,26 @@ const provider = (p: string | null): "zoom" | "meet" | null =>
  * room closed, unless it was cancelled (stress2 round 3).
  */
 export function roomIsOver(
-  room: Pick<RoomRow, "state"> & Partial<Pick<RoomRow, "purpose" | "join_url" | "ends_at">>,
+  room: Pick<RoomRow, "state"> &
+    Partial<Pick<RoomRow, "purpose" | "join_url" | "ends_at" | "ended_at" | "end_reason" | "lead_in_at" | "count_undo_at">>,
   nowMs?: number,
 ): boolean {
   if (!FINAL_STATES.has(room.state)) return false;
+  // Closed only in the books (stress2 round 4, overrun-call-rejoin-link-says-ended):
+  // the sweep's R7 wrote "no end signal" on a call the lead is in, Zoom said
+  // nothing, and the worker keeps that meeting open. A lead whose phone
+  // dropped gets back in, for the worker's own hold window.
+  const closed = Date.parse(String(room.ended_at ?? ""));
+  if (
+    room.state === "ended" &&
+    room.end_reason === "no_end_signal" &&
+    leadReached(room) &&
+    safeJoinUrl(room.join_url) &&
+    Number.isFinite(closed) &&
+    nowMs !== undefined &&
+    nowMs < closed + BOOKS_CLOSE_OPEN_MS
+  )
+    return false;
   const ends = Date.parse(String(room.ends_at ?? ""));
   if (
     room.purpose === "booked" &&

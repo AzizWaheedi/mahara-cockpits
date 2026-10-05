@@ -36,7 +36,9 @@ import {
   GO_COPY,
   ipHash,
   isPreviewBot,
+  leadReached,
   LIVE_SITE,
+  LIVE_STATES,
   MAX_HOPS,
   normalizeCode,
   openText,
@@ -116,6 +118,16 @@ export const LOOKUPS_PER_WIDE = 600;
 export const KNOCK_EVERY_MS = 60_000;
 /** How often, at most, the door reads the codes of the last day's rooms while a flood holds the ceiling. */
 export const LIVE_CODES_TTL_MS = 5_000;
+/**
+ * Answers of a known room's code a ten minutes per allocation that is past
+ * its guess bound, to networks of it with no misses of their own (a lead
+ * behind the same carrier NAT, stress2 round 4).
+ */
+export const WIDE_ANSWERS = 10;
+/** A network's miss of a code is answered from memory this long, with no lookup. */
+export const REPEAT_MISS_MS = 60_000;
+export const WIDE_LINE =
+  "The door is turning away unknown call codes from a network range that guessed many codes lately. Leads there whose link is live still get through.";
 export const FLOOD_LINE =
   "The door is turning away a flood of unknown call codes (over 600 lookups a minute found no room). Leads whose link opened lately still get through; the rest are asked to wait a minute.";
 
@@ -294,6 +306,7 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
   const netMisses = new RateLimiter(MISSES_PER_NET, MISS_WINDOW_MS, 20_000);
   const wideMisses = new RateLimiter(MISSES_PER_WIDE, MISS_WINDOW_MS, 20_000);
   const wideLookups = new RateLimiter(LOOKUPS_PER_WIDE, 60_000, 10_000);
+  const wideAnswers = new RateLimiter(WIDE_ANSWERS, MISS_WINDOW_MS, 20_000);
   // Each network's missed codes, counted once each: a lead who reloads a
   // mistyped link misses one code, never twenty.
   const missedCodes = new Map<string, number>();
@@ -358,12 +371,25 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
     }
     const body = res.text;
     if (!res.ok) throw new DbError(`database ${res.status} on ${where}: ${redact(body)}`, res.status);
-    if (!body) return null;
-    try {
-      return JSON.parse(body);
-    } catch {
+    // A read, or a write that asked for its rows back, always answers JSON
+    // (a table's at least "[]"). An empty body, a page that is not JSON, or
+    // an object where rows were asked for is an answer nobody can read:
+    // never "no rows" (stress2 round 4, door-garbage-read-as-unknown-link).
+    const method = (init.method ?? "GET").toUpperCase();
+    const wantsRows = method === "GET" || /return=representation/.test(init.prefer ?? "");
+    const table = !where.startsWith("rpc/");
+    if (!body) {
+      if (wantsRows) throw new DbError(`database answered nothing on ${where}`, 0);
       return null;
     }
+    let out: unknown;
+    try {
+      out = JSON.parse(body);
+    } catch {
+      throw new DbError(`database answered something that is not JSON on ${where}`, 0);
+    }
+    if (wantsRows && table && !Array.isArray(out)) throw new DbError(`database answered no list of rows on ${where}`, 0);
+    return out;
   }
 
   /**
@@ -783,7 +809,28 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
       seen.add(next.id);
       room = next;
     }
+    // An older link of the lead's (a missed call's room the sweep closed, the
+    // confirmation call's the evening before) while a newer room of theirs
+    // waits for them: the link leads there, never to "This call has ended"
+    // (stress2 round 4, old-room-link-ended-while-lead-has-open-room). Only a
+    // room the lead never reached, and only to the lead's own newest room
+    // that is still open; a standby room has no lead.
+    if (FINAL_STATES.has(room.state) && !leadReached(room) && room.contact_id && room.requested_at && !roomIsNotOverFor(room)) {
+      const newer = (await rest(
+        `cockpit_sales_rooms?contact_id=eq.${encodeURIComponent(room.contact_id)}&requested_at=gt.${encodeURIComponent(room.requested_at)}&select=${ROOM_COLUMNS}&order=requested_at.desc&limit=5`,
+        { ms: left(B.roomRead) },
+      )) as RoomRow[];
+      const waiting = newer
+        .filter(r => r && !seen.has(r.id) && LIVE_STATES.has(r.state) && r.purpose !== "standby")
+        .sort((a, b) => String(b.requested_at ?? "").localeCompare(String(a.requested_at ?? "")))[0];
+      if (waiting) room = waiting;
+    }
     return room;
+  }
+
+  /** A final room whose link still opens (a booked room's own meeting, a call closed only in the books). */
+  function roomIsNotOverFor(room: RoomRow): boolean {
+    return !roomIsOver(room, deps.now());
   }
 
   async function repFor(email: string | null, ms: number): Promise<Rep> {
@@ -919,21 +966,52 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
   }
 
   /**
-   * A code lookup the door may make now: a code it found a room for in the
-   * last hour always; any other while the instance's misses this minute are
-   * under the ceiling; past it, a code of a room asked for in the last day
-   * (liveCodeSet, one read every LIVE_CODES_TTL_MS at most). Answers false
-   * (and the status row says why) for any other code during a flood.
+   * Whether this code is looked up for this network now (stress2 rounds 3
+   * and 4): "lookup", "refused" (429, unread) or "missed" (this network
+   * missed this code a moment ago: 404 from memory, no lookup).
+   *
+   * - A network that missed MISSES_PER_NET distinct codes: nothing, live
+   *   codes included, so a guesser's hit looks like its misses.
+   * - The rates: per device, per network, per allocation (and per code on /open).
+   * - Past the allocation's guess bound, or the instance's flood ceiling:
+   *   only a code the door knows is a room (found in the last hour, or a
+   *   room asked for in the last day, liveCodeSet) is read. Any other is
+   *   turned away unread and still counted against the asking network and
+   *   allocation, so their bounds hold during a flood (flood-ceiling-guesses-uncounted).
+   * - A known code from an allocation past its guess bound is read only for
+   *   a network with no misses of its own, WIDE_ANSWERS a ten minutes per
+   *   allocation: a lead behind the same carrier NAT as a guesser still gets
+   *   in, on /open and /go alike (allocation-miss-bound-locks-out-leads).
    */
-  async function mayLookUp(job: "open" | "go", code: string): Promise<boolean> {
+  async function admit(
+    job: "open" | "go",
+    code: string,
+    nets: { net: string; wide: string },
+    deviceId: string | null,
+    codeOk?: (now: number) => boolean,
+  ): Promise<"lookup" | "refused" | "missed"> {
     const now = deps.now();
+    if (netMisses.full(nets.net, now)) return "refused";
+    const perDevice = deps.limiter.hit(`${nets.net}:${deviceIdOk(deviceId) ? deviceId : "-"}`, now);
+    const perAddress = wide.hit(nets.net, now);
+    const perWide = wideLookups.hit(nets.wide, now);
+    if (!(perDevice && perAddress && perWide)) return "refused";
+    if (codeOk && !codeOk(now)) return "refused";
     const seen = knownCodes.get(code);
-    if (seen !== undefined && now - seen < 60 * 60_000) return true;
-    if (!misses.full("door", now)) return true;
-    const live = await liveCodeSet();
-    if (live?.has(code)) return true;
-    noteStatus(job, false, FLOOD_LINE);
-    return false;
+    const knownLately = seen !== undefined && now - seen < 60 * 60_000;
+    const missedAt = missedCodes.get(`${nets.net}:${code}`);
+    if (!knownLately && missedAt !== undefined && now - missedAt < REPEAT_MISS_MS) return "missed";
+    const wideGuessed = wideMisses.full(nets.wide, now);
+    const flood = misses.full("door", now);
+    if (!wideGuessed && !flood) return "lookup";
+    const known = knownLately || Boolean((await liveCodeSet())?.has(code));
+    if (!known) {
+      charge(code, nets, now);
+      noteStatus(job, false, flood ? FLOOD_LINE : WIDE_LINE);
+      return "refused";
+    }
+    if (wideGuessed && (netMisses.used(nets.net, now) > 0 || !wideAnswers.hit(nets.wide, now))) return "refused";
+    return "lookup";
   }
 
   /** The codes of the rooms asked for in the last day, refreshed at most every LIVE_CODES_TTL_MS; null when never read. */
@@ -960,43 +1038,36 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
     await liveCodesRead;
     return liveCodes?.codes ?? null;
   }
+  /**
+   * One distinct miss of this code by this network (and its allocation), at
+   * most once a MISS_WINDOW_MS: true when it is new. A lead who reloads a
+   * mistyped link misses one code, never twenty.
+   */
+  function charge(code: string, nets: { net: string; wide: string }, now: number): boolean {
+    const k = `${nets.net}:${code}`;
+    const at = missedCodes.get(k);
+    if (at !== undefined && now - at < MISS_WINDOW_MS) return false;
+    if (missedCodes.size >= 20_000)
+      for (const [x, t] of missedCodes) if (now - t >= MISS_WINDOW_MS || missedCodes.size >= 20_000) missedCodes.delete(x);
+    missedCodes.set(k, now);
+    netMisses.hit(nets.net, now);
+    wideMisses.hit(nets.wide, now);
+    return true;
+  }
+
   function found(code: string | null, room: unknown, nets?: { net: string; wide: string }): void {
     const now = deps.now();
     if (!code) return;
     if (!room) {
-      misses.hit("door", now);
-      if (nets) {
-        const k = `${nets.net}:${code}`;
-        const at = missedCodes.get(k);
-        if (at === undefined || now - at >= MISS_WINDOW_MS) {
-          if (missedCodes.size >= 20_000)
-            for (const [x, t] of missedCodes) if (now - t >= MISS_WINDOW_MS || missedCodes.size >= 20_000) missedCodes.delete(x);
-          missedCodes.set(k, now);
-          netMisses.hit(nets.net, now);
-          wideMisses.hit(nets.wide, now);
-        }
-      }
+      // The instance's ceiling counts distinct misses per network (stress2
+      // round 4): a few addresses repeating a few codes never hold it open.
+      if (!nets || charge(code, nets, now)) misses.hit("door", now);
       return;
     }
     if (knownCodes.size >= 5_000) {
       for (const [k, at] of knownCodes) if (now - at >= 60 * 60_000 || knownCodes.size >= 5_000) knownCodes.delete(k);
     }
     knownCodes.set(code, now);
-  }
-
-  /**
-   * Every limit: 30 a minute per network and device, 120 a minute per
-   * network (an IPv6 /64, an IPv4 address), 600 a minute per wider
-   * allocation (an IPv6 /48, an IPv4 /24), and none at all for a network or
-   * allocation that has missed too many codes lately (guessing).
-   */
-  function withinLimits(nets: { net: string; wide: string }, deviceId: string | null): boolean {
-    const now = deps.now();
-    if (netMisses.full(nets.net, now) || wideMisses.full(nets.wide, now)) return false;
-    const perDevice = deps.limiter.hit(`${nets.net}:${deviceIdOk(deviceId) ? deviceId : "-"}`, now);
-    const perAddress = wide.hit(nets.net, now);
-    const perWide = wideLookups.hit(nets.wide, now);
-    return perDevice && perAddress && perWide;
   }
 
   async function openRoute(req: Request, rawCode: string | undefined, url: URL): Promise<Response> {
@@ -1030,12 +1101,14 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
     const net = await ipHash(salt, limitNet(ip));
     const nets = { net, wide: await ipHash(salt, `wide:${widePrefix(ip)}`) };
     const codeOk = (now: number) => perCode.hit(code, now) || perCodeAddress.hit(`${code}:${net}`, now);
-    if (!withinLimits(nets, deviceId) || !codeOk(deps.now()) || !(await mayLookUp("open", code)))
+    const may = await admit("open", code, nets, deviceId, codeOk);
+    if (may === "refused")
       return json(
         { ok: false, state: "busy", error: "Too many tries from this network. Wait a minute, then try again." },
         429,
         { ...cors, "retry-after": "60" },
       );
+    if (may === "missed") return json({ ok: false, state: "unknown", code }, 404, cors);
 
     let room: RoomRow | null;
     try {
@@ -1083,10 +1156,12 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
     const limitSalt = env("IP_SALT") || "sales-live";
     const hash = await ipHash(limitSalt, limitNet(clientIp(req.headers)));
     const nets = { net: hash, wide: await ipHash(limitSalt, `wide:${widePrefix(clientIp(req.headers))}`) };
-    if (!withinLimits(nets, null) || !(await mayLookUp("go", code)))
+    const may = await admit("go", code, nets, null);
+    if (may === "refused")
       return text(both(GO_COPY.busy), 429, {
         "retry-after": "60",
       });
+    if (may === "missed") return redirect(`${home}/`);
     if (isPreviewBot(ua)) return text(both(GO_COPY.preview));
 
     let room: RoomRow | null;

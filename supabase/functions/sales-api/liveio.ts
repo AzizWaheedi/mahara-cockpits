@@ -173,10 +173,23 @@ export function makeLiveIO(o: {
       } catch (e) {
         throw new DbError(`database: ${redact(String((e as Error)?.message ?? e))}`, 0);
       }
-      const text = await res.text();
+      const text = await bodyOf(res, "database", m => new DbError(m, 0));
       if (!res.ok) throw dbErrorOf(res.status, text);
-      const out = text ? JSON.parse(text) : [];
-      return Array.isArray(out) ? out : [out];
+      // A read, or a write that asked for its rows back, always answers a
+      // JSON list (at least "[]"). An empty body, a page that is not JSON,
+      // or an object is an answer nobody can read: never "no rows".
+      const method = (init.method ?? "GET").toUpperCase();
+      const wantsRows = method === "GET" || /return=representation/.test(init.prefer ?? "");
+      if (!text) {
+        if (wantsRows) throw new DbError("database: the answer was empty, so nothing was read", 0);
+        return [];
+      }
+      const out = parsed(text, m => new DbError(`database: ${m}`, 0));
+      if (!Array.isArray(out)) {
+        if (wantsRows) throw new DbError("database: the answer was not a list of rows, so nothing was read", 0);
+        return [out as Row];
+      }
+      return out as Row[];
     },
     async rpc(fn, args) {
       let res: Response;
@@ -193,9 +206,10 @@ export function makeLiveIO(o: {
       } catch (e) {
         throw new DbError(`database: ${redact(String((e as Error)?.message ?? e))}`, 0);
       }
-      const text = await res.text();
+      const text = await bodyOf(res, "database", m => new DbError(m, 0));
       if (!res.ok) throw dbErrorOf(res.status, text);
-      return text ? JSON.parse(text) : null;
+      // A function with no result answers nothing (204); anything else is JSON.
+      return text ? parsed(text, m => new DbError(`database: ${m}`, 0)) : null;
     },
     async ghl(method, path, body, version = "2021-04-15") {
       const token = o.env("SALES_GHL_TOKEN");
@@ -220,7 +234,7 @@ export function makeLiveIO(o: {
       } catch (e) {
         throw new GhlError(`HighLevel did not answer: ${redact(String((e as Error)?.message ?? e))}`, 0);
       }
-      const text = await res.text();
+      const text = await bodyOf(res, "HighLevel", m => new GhlError(m, 0));
       if (!res.ok) {
         let msg = text;
         try {
@@ -232,7 +246,33 @@ export function makeLiveIO(o: {
         }
         throw new GhlError(`HighLevel said ${res.status}: ${redact(msg)}`, res.status);
       }
-      return text ? (JSON.parse(text) as Row) : {};
+      if (!text) return {};
+      const out = parsed(text, m => new GhlError(`HighLevel: ${m}`, 0));
+      // A bare string or number where HighLevel answers an object: the answer is lost, never {}.
+      if (!out || typeof out !== "object") throw new GhlError("HighLevel: the answer was not readable, so it may or may not have taken the request", 0);
+      return out as Row;
     },
   };
+}
+
+/**
+ * The body of an answer whose headers came. A body cut half way (a reset,
+ * or the timeout firing after the headers) is a lost answer: status 0, so
+ * every "the answer was lost, read the row back" path applies.
+ */
+async function bodyOf(res: Response, who: string, lost: (m: string) => Error): Promise<string> {
+  try {
+    return await res.text();
+  } catch (e) {
+    throw lost(`${who}: the answer was cut off (${redact(String((e as Error)?.message ?? e))}), so it may or may not have landed`);
+  }
+}
+
+/** JSON, or a lost answer (status 0) when the body is not JSON (a proxy's page). */
+function parsed(text: string, lost: (m: string) => Error): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw lost("the answer was not JSON, so it may or may not have landed");
+  }
 }

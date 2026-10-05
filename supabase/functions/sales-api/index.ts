@@ -412,7 +412,7 @@ async function markAppointment(
   who: Who,
   id: string,
   status: string,
-  opts: { reason?: string | null; note?: string | null; anyRep?: boolean; quiet?: boolean; onlyIfUnmarked?: boolean } = {},
+  opts: { reason?: string | null; note?: string | null; anyRep?: boolean; quiet?: boolean; onlyIfUnmarked?: boolean; raced?: boolean } = {},
 ): Promise<Row> {
   const appt = (await svc(
     `cockpit_sales_appointments?appointment_id=eq.${enc(id)}&select=*`,
@@ -461,12 +461,16 @@ async function markAppointment(
   try {
     row = await replaceMark(current ? Number(current.id) : null, fresh, now);
   } catch (e) {
-    // A person's mark landed between the read and this insert: the one
-    // current mark per call (cockpit_sales_dispositions_current) refuses the
-    // timer's, and the person's stands.
-    if (opts.onlyIfUnmarked && /cockpit_sales_dispositions_current|23505/.test(String((e as Error)?.message ?? e)))
-      throw new Refusal("This call was already marked, so the timer left it as it is.", 409, { code: "marked" });
-    throw e;
+    if (!(e instanceof MarkChanged)) throw e;
+    // Another mark of this call landed between the read and this write (two
+    // tabs, the setter and the closer, the live count's quiet showed): the
+    // one current mark per call holds, and nothing moved. A timer's mark
+    // leaves the person's standing; a person's press reads the call again
+    // once (the same mark already there is its twin), and is told otherwise
+    // (stress2 round 4, concurrent-marks-raw-unique-violation).
+    if (opts.onlyIfUnmarked) throw new Refusal("This call was already marked, so the timer left it as it is.", 409, { code: "marked" });
+    if (opts.raced) throw new Refusal("This call was marked a moment ago. Reload it and mark again.", 409, { code: "changed" });
+    return await markAppointment(who, id, status, { ...opts, raced: true });
   }
   let result: Row = { ...row };
   // quiet: the status changes in HighLevel and none of its automations run
@@ -496,17 +500,37 @@ async function replaceMark(currentId: number | null, fresh: Row, now: number): P
       body: { p_current_id: currentId, p_row: fresh },
     });
     if (out[0]) return out[0];
-    throw new Error("database: the mark was not written");
+    // 20261004a answers no row when the mark it was given is no longer the
+    // call's current one (another landed first, under the call's lock).
+    throw new MarkChanged();
   } catch (e) {
+    if (e instanceof MarkChanged) throw e;
+    if (oneCurrentRefused(e)) throw new MarkChanged();
     if (!/database 404|PGRST202/.test(String((e as Error)?.message ?? e))) throw e;
   }
-  if (currentId !== null)
-    await svc(`cockpit_sales_dispositions?id=eq.${currentId}`, {
-      method: "PATCH",
-      body: { superseded_at: new Date(now).toISOString() },
-      prefer: "return=minimal",
-    });
-  return (await svc("cockpit_sales_dispositions", { method: "POST", body: fresh, prefer: "return=representation" }))[0] as Row;
+  try {
+    if (currentId !== null)
+      await svc(`cockpit_sales_dispositions?id=eq.${currentId}`, {
+        method: "PATCH",
+        body: { superseded_at: new Date(now).toISOString() },
+        prefer: "return=minimal",
+      });
+    return (await svc("cockpit_sales_dispositions", { method: "POST", body: fresh, prefer: "return=representation" }))[0] as Row;
+  } catch (e) {
+    if (oneCurrentRefused(e)) throw new MarkChanged();
+    throw e;
+  }
+}
+
+/** Another mark of the call landed first: the mark this write read is not current any more. */
+class MarkChanged extends Error {
+  constructor() {
+    super("This call was marked a moment ago.");
+  }
+}
+/** The one-current-mark index refused a write (Postgres 23505 on cockpit_sales_dispositions_current). */
+function oneCurrentRefused(e: unknown): boolean {
+  return /cockpit_sales_dispositions_current|23505/.test(String((e as Error)?.message ?? e));
 }
 
 /**
@@ -1063,7 +1087,40 @@ interface SendOpts {
  * back from HighLevel for up to ten seconds (opts.readBackMs), because a
  * WhatsApp send HighLevel accepts can still fail at Meta.
  */
-async function convoSend(who: Who, b: Row, opts: SendOpts = {}) {
+/**
+ * A send that stopped before its message row was written (stress2 round 4,
+ * pre-send-highlevel-5xx-read-as-may-have-gone): HighLevel's contact read,
+ * the conversation search, a setting read or the slot did not answer, so
+ * nothing went. Certain and to be tried again, never "may have gone": a
+ * room's link waits for the minute's re-ask on the same channel. A refusal
+ * (the lead's do not disturb, a switch, a ceiling) passes through as it is.
+ */
+function notSentYet(e: unknown): unknown {
+  if (e instanceof ApiRefusal) return e;
+  return new Refusal(
+    `Not sent: HighLevel or the database did not answer before anything went (${redact(String((e as Error)?.message ?? e)).slice(0, 160)}). Try again in a minute.`,
+    503,
+    { certain: true, retry: true, code: "not_sent_yet" },
+  );
+}
+
+/** Runs a send; a failure before its message row is written is a certain "not sent yet". */
+async function beforeRowCertain<T>(run: (taken: () => void) => Promise<T>): Promise<T> {
+  let taken = false;
+  try {
+    return await run(() => {
+      taken = true;
+    });
+  } catch (e) {
+    throw taken ? e : notSentYet(e);
+  }
+}
+
+function convoSend(who: Who, b: Row, opts: SendOpts = {}) {
+  return beforeRowCertain(taken => convoSendOnce(who, b, opts, taken));
+}
+
+async function convoSendOnce(who: Who, b: Row, opts: SendOpts, taken: () => void) {
   const contactId = cleanText(b.contact_id, 80);
   const channel = String(b.channel ?? "") as Channel;
   const requestId = String(b.request_id ?? "");
@@ -1144,6 +1201,7 @@ async function convoSend(who: Who, b: Row, opts: SendOpts = {}) {
       throw e;
     }
   }
+  taken();
 
   let out: Row;
   try {
@@ -1561,7 +1619,11 @@ async function signatureFor(contactId: string, who: Who, language: "ar" | "en"):
  * retry never sends twice), then read back from the conversation, because a
  * template HighLevel accepts can still fail at Meta.
  */
-async function sendTemplate(
+function sendTemplate(who: Who, o: Parameters<typeof sendTemplateOnce>[1]) {
+  return beforeRowCertain(taken => sendTemplateOnce(who, o, taken));
+}
+
+async function sendTemplateOnce(
   who: Who,
   o: {
     contactId: string;
@@ -1581,6 +1643,7 @@ async function sendTemplate(
     /** call_time for demo_host: the call's day and time on the lead's clock. */
     values?: { call_time?: string | null };
   },
+  taken: () => void,
 ) {
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(o.requestId))
     throw new Refusal("Reload the page and send again.");
@@ -1684,6 +1747,7 @@ async function sendTemplate(
       throw e;
     }
   }
+  taken();
 
   // `enrolling`: the failure came from the workflow enrolment itself. Only
   // that call can send the template, so only its timeout, 5xx or lost answer
@@ -2974,9 +3038,9 @@ async function candidates(now: number): Promise<{ list: QueueCandidate[] }> {
     // A lead whose video room is open, or still being made, stays out of the
     // queue until its deadline (glossary C6, roomlogic roomHolds). A booked
     // room holds nobody. Unread rooms hold nobody, and say so in the log.
-    rooms.held(now).catch(e => {
+    rooms.heldSince(now).catch(e => {
       console.error("room holds unread", redact(String((e as Error)?.message ?? e)));
-      return new Set<string>();
+      return new Map<string, number>();
     }),
     // Booked calls the lead joined by video in the last three hours, the join
     // standing (not taken back by "That was not the lead"): the intro was
@@ -3081,7 +3145,18 @@ async function candidates(now: number): Promise<{ list: QueueCandidate[] }> {
   const hotBy = new Map(hotRows.map(r => [String(r.contact_id), r]));
   // An active client (tagged client in HighLevel) is never in the queue
   // (clients.ts): client success looks after them.
-  const list = leads.filter(l => !isClient(l) && !roomHeld.has(String(l.contact_id))).map(l => {
+  // A room's hold keeps the rep's own calls off a lead who has a link; a
+  // lead who rang back or wrote since the link went is the rep's to answer
+  // now, so the hold ends for them (stress2 round 4).
+  const roomHolds = (l: Row): boolean => {
+    const id = String(l.contact_id);
+    const since = roomHeld.get(id);
+    if (since === undefined) return false;
+    const missed = Math.max(missedBy.get(`c:${id}`) ?? 0, l.phone8 ? (missedBy.get(`p:${l.phone8}`) ?? 0) : 0);
+    const wrote = inboxBy.get(id) ?? 0;
+    return !(missed > since || wrote > since);
+  };
+  const list = leads.filter(l => !isClient(l) && !roomHolds(l)).map(l => {
     const id = String(l.contact_id);
     const st = stateBy.get(id) ?? {};
     const mine = apptBy.get(id) ?? [];

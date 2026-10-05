@@ -718,6 +718,10 @@ export const ROOM_COPY = {
 
 /** Sentences the specs did not set, in the same voice. Each one is for review. */
 export const LANE_COPY = {
+  /** The second link after "I can't let them in" (P1 edge case 9; stress2 round 4): the call moved, never the missed-call words again. */
+  moved_provider:
+    "Hi {first_name}, {old} would not let you in, sorry about that. Let's use {provider} instead: {link} I'm waiting for you there now.",
+  moved_email_subject: "Our call moved to {provider}.",
   /** Zoom's daily cap on the host's meeting creates (desk rooms.py SAY zoom_daily_cap, stress2 round 2). */
   zoom_daily_cap: "Your Zoom user has made its rooms for today (Zoom allows 100 a day); Zoom allows more from 03:00 Kuwait. Use Meet.",
   /** The lead's open room is another seat's (stress2, round 2): never "Open it", which only its host can. */
@@ -2512,8 +2516,23 @@ export function roomHolds(room: RoomRow, now: number, ctx: RoomCtx): boolean {
 
 /** The contacts to leave out of candidates() now. */
 export function heldContacts(rooms: readonly RoomRow[], now: number, ctx: RoomCtx): Set<string> {
-  const out = new Set<string>();
-  for (const r of rooms) if (r.contact_id && roomHolds(r, now, ctx)) out.add(r.contact_id);
+  return new Set(heldSince(rooms, now, ctx).keys());
+}
+
+/**
+ * The contacts held now, each with when its hold began: the latest held
+ * room's link (or its ask, before the link went). The dialer lets a lead who
+ * rang or wrote back after that back into the queue (stress2 round 4,
+ * room-hold-hides-lead-call-back-and-reply): the hold is for the rep's own
+ * calls, never for the lead's.
+ */
+export function heldSince(rooms: readonly RoomRow[], now: number, ctx: RoomCtx): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const r of rooms) {
+    if (!r.contact_id || !roomHolds(r, now, ctx)) continue;
+    const since = ms(r.link_sent_at) ?? ms(r.requested_at) ?? ms(r.created_at) ?? now;
+    out.set(r.contact_id, Math.max(out.get(r.contact_id) ?? 0, since));
+  }
   return out;
 }
 

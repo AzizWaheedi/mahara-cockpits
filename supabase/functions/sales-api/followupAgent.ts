@@ -10,7 +10,7 @@
 
 import { cleanText, redact, type Who } from "./lib.ts";
 import { ApiRefusal, DbError, isUnique, type LiveIO } from "./liveio.ts";
-import { agentOff, budgetCap, budgetCheck, GATE_SHUT, gateOpen, hoursRefusal, kuwaitMonthStart } from "./sendrules.ts";
+import { agentOff, budgetCap, budgetCheck, GATE_SHUT, gateOpen, hoursRefusal, kuwaitMonthStart, leadZones } from "./sendrules.ts";
 
 type Row = Record<string, unknown>;
 type Action = (who: Who, b: Row) => Promise<Row>;
@@ -162,6 +162,7 @@ export const AGENT_COPY = {
   held: "This draft is held, so it was not sent. Release the hold or approve it again.",
   not_due: "This draft is not approved to go yet.",
   wave_not_running: "This opener was approved for a wave that is paused or stopped, so it was not sent.",
+  wave_going_now: "One opener was already on its way to HighLevel when this landed, so it may still go. Nothing else goes.",
   not_draft: "This draft was already {status}.",
   stop_missing: "That stop is not here any more. Reload the page.",
   stop_answer: "Answer stop, pause or resume.",
@@ -372,6 +373,14 @@ export function makeFollowupAgent(deps: AgentDeps): { actions: Record<string, Ac
       });
       if (rows.length) {
         await deps.audit(who, `followup.wave.${op}`, "cockpit_sales_followup_waves", id, before, rows[0]);
+        // An opener the desk claimed a moment before this press may already
+        // be on its way to HighLevel (stress2 round 4): said, never hidden.
+        if (op === "pause" || op === "stop") {
+          const going = await io
+            .db(`cockpit_sales_followup_meta?wave_id=eq.${enc(id)}&held_by=eq.${enc(SENDING)}&held_at=gt.${enc(iso(io.now() - SENDING_STALE_MS))}&select=followup_id&limit=5`)
+            .catch(() => [] as Row[]);
+          if (going.length) return { wave: rows[0], going_now: going.length, note: AGENT_COPY.wave_going_now };
+        }
         return { wave: rows[0] };
       }
     }
@@ -568,7 +577,7 @@ export function makeFollowupAgent(deps: AgentDeps): { actions: Record<string, Ac
       first_at: iso(start),
       last_at: iso(start + (approved.length - 1) * gap * 1000),
       gap_s: gap,
-      ...(timing ? { opens_at: iso(timing.opens_at), in_hours: timing.in_hours } : {}),
+      ...(timing ? { opens_at: iso(timing.opens_at), in_hours: timing.in_hours, opens_zone: timing.opens_zone } : {}),
       ...(held.length ? { held: held.length } : {}),
       ...(takenBack.length ? { taken_back: takenBack.length } : {}),
       ...(waiting ? { waiting_resume: waiting } : {}),
@@ -606,7 +615,7 @@ export function makeFollowupAgent(deps: AgentDeps): { actions: Record<string, Ac
     drafts: Row[],
     turns: number[],
     followups: unknown,
-  ): Promise<{ opens_at: number; in_hours: boolean } | null> {
+  ): Promise<{ opens_at: number; in_hours: boolean; opens_zone: string } | null> {
     const contacts = [...new Set(drafts.map(d => String(d.contact_id ?? "")).filter(Boolean))];
     let leads: Row[];
     try {
@@ -619,14 +628,23 @@ export function makeFollowupAgent(deps: AgentDeps): { actions: Record<string, Ac
     const country = new Map(leads.map(l => [String(l.contact_id), l.country]));
     const STEP = 15 * 60_000;
     let opens = Number.POSITIVE_INFINITY;
+    // The clock "their time" is read on: the zone of the lead whose opener
+    // opens first (stress2 round 4, approved-line-kuwait-clock-said-as-their-time).
+    let zone = "Asia/Kuwait";
     let inHours = true;
     const memo = new Map<string, number>();
+    const take = (t: number, c: unknown) => {
+      if (t < opens) {
+        opens = t;
+        zone = (leadZones(c) ?? ["Asia/Kuwait"])[0] ?? "Asia/Kuwait";
+      }
+    };
     drafts.forEach((d, i) => {
       const turn = turns[i] ?? turns[0] ?? io.now();
       const c = country.get(String(d.contact_id ?? "")) ?? null;
       const ok = (t: number) => !hoursRefusal({ segment: "reactivate", touch: 1, country: c, now: t, followups, dayOff: true });
       if (ok(turn)) {
-        opens = Math.min(opens, turn);
+        take(turn, c);
         return;
       }
       inHours = false;
@@ -642,9 +660,9 @@ export function makeFollowupAgent(deps: AgentDeps): { actions: Record<string, Ac
           }
         memo.set(key, at);
       }
-      opens = Math.min(opens, at);
+      take(at, c);
     });
-    return Number.isFinite(opens) ? { opens_at: opens, in_hours: inHours } : null;
+    return Number.isFinite(opens) ? { opens_at: opens, in_hours: inHours, opens_zone: zone } : null;
   }
 
   // ------------------------------------------------------------- followup.hold
@@ -705,6 +723,23 @@ export function makeFollowupAgent(deps: AgentDeps): { actions: Record<string, Ac
     } catch (e) {
       io.log(`followups: a refused draft was not set aside: ${redact(String((e as Error)?.message ?? e))}`);
     }
+  }
+
+  /**
+   * What holds a claimed opener now, read again after the claim: the agent
+   * switched off, its wave not running, a pause or stop of the lead. Null:
+   * it may go.
+   */
+  async function stillSendable(f: Row, waveId: string | null): Promise<ApiRefusal | null> {
+    const [s, w, stops] = await Promise.all([
+      settings(["followups"]),
+      waveId ? io.db(`cockpit_sales_followup_waves?id=eq.${enc(String(waveId))}&select=state`) : Promise.resolve([] as Row[]),
+      io.db(`cockpit_sales_followup_stops?contact_id=eq.${enc(String(f.contact_id))}&select=state,kind,said_at,paused_until,decided_at&limit=200`),
+    ]);
+    if (agentOff(obj(s.followups))) return holdAll(AGENT_COPY.agent_off);
+    if (waveId && w[0]?.state !== "running") return refusal(AGENT_COPY.wave_not_running);
+    const stopped = stopHoldOf(stops, io.now());
+    return stopped ? refusal(AGENT_COPY.stop_paused.replace("{why}", stopped), 409, { code: "paused" }) : null;
   }
 
   async function sendDue(who: Who, b: Row): Promise<Row> {
@@ -804,6 +839,22 @@ export function makeFollowupAgent(deps: AgentDeps): { actions: Record<string, Ac
           prefer: "return=minimal",
         })
         .catch(e => io.log(`followups: an opener's sending mark was not cleared: ${redact(String((e as Error)?.message ?? e))}`));
+    // Pause, stop and hold always work (contract 0b.12; stress2 round 4,
+    // pause-or-stop-during-send-due-still-sends): a Pause or Stop of the
+    // wave, a pause of this lead or the agent switched off, landed while the
+    // checks above ran, is read again now the opener is claimed. One that
+    // lands from here on finds the opener marked sending, and its answer
+    // says the opener may already be going.
+    let again: ApiRefusal | null;
+    try {
+      again = await stillSendable(f, waveId);
+    } catch (e) {
+      again = refusal(AGENT_COPY.stop_paused.replace("{why}", `it could not be read again: ${redact(String((e as Error)?.message ?? e)).slice(0, 120)}`), 409, { code: "paused" });
+    }
+    if (again) {
+      await release();
+      throw again;
+    }
     try {
       const out = await deps.sendFollowup(who, f, {}, false, { decidedBy: (meta.approved_by as string | null) ?? null });
       await release();
