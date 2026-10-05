@@ -12,7 +12,6 @@ renders real pages with this machine's browser, and only when asked:
 """
 from __future__ import annotations
 
-import copy
 import os
 import re
 import tempfile
@@ -30,8 +29,6 @@ from tests.fakes import TEST_OFFER, general_deal, specific_deal  # noqa: E402
 from tests.test_desk import PROP, check, failing, resolved, with_offer  # noqa: E402
 
 TEMPLATE = (ROOT / "proposal-template.html").read_text(encoding="utf-8")
-
-SHEETS = "".join(f'<section class="sheet"><p>page {i}</p></section>' for i in range(1, 8))
 
 
 def dom_with(extra: str, deal: dict[str, Any]) -> str:
