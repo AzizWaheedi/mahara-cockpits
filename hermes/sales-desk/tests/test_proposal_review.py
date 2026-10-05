@@ -466,6 +466,14 @@ class LiveTemplateReviewTests(unittest.TestCase):
         live = self.dom(deal)
         self.assertNotIn("of one project", live)
         self.assertIn("من مشروع واحد", live)
+        self.assertIn("450,000 إلى 600,000", live)
+        self.assertNotIn("450,000 to 600,000", live)
+
+    def test_the_funnel_s_loss_is_arabic_on_an_arabic_page(self):
+        live = self.dom(general_deal(lang="ar"))  # 40, 12, 2: two losses drawn
+        self.assertNotIn("lost here", live)
+        self.assertEqual(live.count("تسرّب هنا"), 2)
+        self.assertEqual(self.dom(general_deal()).count("lost here"), 2)
 
     def test_the_target_tile_takes_its_period_from_the_value(self):
         deal = specific_deal()

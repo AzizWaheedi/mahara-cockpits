@@ -1276,7 +1276,7 @@ const STR = {
     beYourProject: "Your project value", beWholeThing: "The whole engagement",
     beVolProject: "One project is worth", beVolRate: "You sign",
     beVolTarget: "Additional projects targeted", beVolCovers: "Covered by",
-    beOfOne: "of one project", beProjectsWord: "projects",
+    beOfOne: "of one project", beProjectsWord: "projects", lostHere: "lost here, ", rangeTo: " to ",
     beVolTable: "The engagement against what the term is meant to add",
     beCoversIf: "One project covers it if you keep more than",
     beMarginTable: "What one project has to leave you",
@@ -1350,7 +1350,9 @@ const STR = {
     beVolRate: "\u0645\u0639\u062f\u0644 \u0627\u0644\u062a\u0648\u0642\u064a\u0639 \u0644\u062f\u064a\u0643",
     beVolTarget: "\u0627\u0644\u0645\u0634\u0627\u0631\u064a\u0639 \u0627\u0644\u0625\u0636\u0627\u0641\u064a\u0629 \u0627\u0644\u0645\u0633\u062a\u0647\u062f\u0641\u0629",
     beVolCovers: "\u064a\u063a\u0637\u064a\u0647",
-    /* An Arabic page printed "0.85 of one project" in English. */
+    /* An Arabic page printed "0.85 of one project" and "lost here" in
+       English. The loss is said as the gap page's title says it (يتسرّب). */
+    lostHere: "\u062a\u0633\u0631\u0651\u0628 \u0647\u0646\u0627\u060c ", rangeTo: " \u0625\u0644\u0649 ",
     beOfOne: "\u0645\u0646 \u0645\u0634\u0631\u0648\u0639 \u0648\u0627\u062d\u062f", beProjectsWord: "\u0645\u0634\u0627\u0631\u064a\u0639",
     beVolTable: "\u0627\u0644\u0627\u0633\u062a\u062b\u0645\u0627\u0631 \u0645\u0642\u0627\u0628\u0644 \u0645\u0627 \u062a\u0636\u064a\u0641\u0647 \u0627\u0644\u0645\u062f\u0629",
     beWholeThing: "\u0625\u062c\u0645\u0627\u0644\u064a \u0627\u0644\u0627\u0633\u062a\u062b\u0645\u0627\u0631",
@@ -1460,7 +1462,7 @@ if (P.funnel || (P.gap_points && P.gap_points.length)
         <div class="lab">${esc(x.label)}<small>${esc(x.note)}</small></div>
         ${anyValue ? (words ? `<div></div>` : `<div class="track"><div class="bar${last ? " acc" : ""}" style="width:${w.toFixed(1)}%"></div></div>`) : ""}
         <div class="val${words ? " words" : ""}">${esc(shown)}</div>
-        <div class="lk">${drop > 0 ? `&minus;${drop}<small>lost here, ${pct}%</small>` : ""}</div>
+        <div class="lk">${drop > 0 ? `&minus;${drop}<small>${L.lostHere}${pct}%</small>` : ""}</div>
       </div>`;
     }).join("");
     fig = exhibit(P.funnel.title, bars, P.funnel.note);
@@ -1647,7 +1649,7 @@ if (P.arithmetic && ((P.arithmetic.project_values || []).length
     head = "";
     rows = [
       [L.beWholeThing, esc(cur) + " " + num(total)],
-      [L.beVolProject, esc(cur) + " " + num(lo) + (hi > lo ? " to " + num(hi) : "")],
+      [L.beVolProject, esc(cur) + " " + num(lo) + (hi > lo ? L.rangeTo + num(hi) : "")],
       ...(gm ? [[L.beGross, gm + "%"], [L.beGrossLeft, esc(cur) + " " + num(per)]] : []),
       [L.beVolRate, esc(a.rate_display || "")],
       [L.beVolTarget, esc(a.target_display || "")],
