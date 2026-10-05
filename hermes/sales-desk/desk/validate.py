@@ -503,6 +503,14 @@ def figure(value: Any) -> Optional[float]:
     return float(text) if re.fullmatch(r"-?\d+(?:\.\d+)?", text) else None
 
 
+def dec(value: float) -> str:
+    """A share or a count of projects the way the template prints one: two
+    decimals under 10 (0.35, 1.05), one from there, and a trailing zero
+    dropped (0.3, 2.5). One decimal printed 0.35 as 0.3 and 1.05% as 1.1%."""
+    text = f"{value:.2f}" if abs(value) < 10 else f"{value:.1f}"
+    return text[:-1] if re.search(r"\.\d0$", text) else text
+
+
 def our_numbers(data: dict[str, Any], resolved: dict[str, Any], offer: Optional[dict[str, Any]] = None) -> set[int]:
     """Figures that are ours, not the client's, so evidence does not apply:
     the chosen offer in dollars and in the local currency, the engagement,
@@ -530,6 +538,12 @@ def our_numbers(data: dict[str, Any], resolved: dict[str, Any], offer: Optional[
     for v in map(figure, [*(arith.get("project_values") or []), arith.get("project_value")]):
         if v:
             ours.add(int(v))
+    gross = figure(arith.get("gross_margin"))
+    if gross:
+        for v in map(figure, [arith.get("project_value"), arith.get("project_value_low"),
+                              arith.get("project_value_high")]):
+            if v:
+                ours.add(int(round(v * gross / 100)))
     return {n for n in ours if n}
 
 
@@ -1155,6 +1169,13 @@ def check_evidence(data: dict[str, Any], said: Optional[set[int]], rep: Report, 
         claims.append((f"cost.layers[{i}].monthly", layer.get("monthly")))
     for key in ("avg_project_value", "margin_pct"):
         claims.append((f"roi.{key}", roi.get(key)))
+    # The arithmetic page's own client figures: the project value in margin or
+    # volume mode (the grid's values are illustrative), and a gross margin.
+    arith = data.get("arithmetic") if isinstance(data.get("arithmetic"), dict) else {}
+    if str(arith.get("mode") or "") in ("margin", "volume"):
+        for key in ("project_value", "project_value_low", "project_value_high"):
+            claims.append((f"arithmetic.{key}", arith.get(key)))
+    claims.append(("arithmetic.gross_margin", arith.get("gross_margin")))
 
     unverified, soft, ok, drv = [], [], 0, 0
     for path, value in claims:
@@ -1311,8 +1332,9 @@ def check_arithmetic(data: dict[str, Any], rep: Report) -> None:
     # crashed the whole check, and the queue then drafted the call again from
     # the start, four times. A FILL is a gap for the closer like any other;
     # anything else that is not a number is the draft's fault.
-    given = [(k, a.get(k)) for k in ("project_value", "project_value_low", "project_value_high",
-                                     "target_additional_low", "target_additional_high", "engagement_total")]
+    scalars = ("project_value", "project_value_low", "project_value_high", "target_additional_low",
+               "target_additional_high", "engagement_total", "gross_margin")
+    given = [(k, a.get(k)) for k in scalars]
     given += [(f"project_values[{i}]", v) for i, v in enumerate(a.get("project_values") or [])]
     given += [(f"margins[{i}]", v) for i, v in enumerate(a.get("margins") or [])]
     gaps = [(k, v) for k, v in given if v not in (None, "") and figure(v) is None]
@@ -1325,7 +1347,7 @@ def check_arithmetic(data: dict[str, Any], rep: Report) -> None:
             rep.add(FAIL, "arithmetic", f"{names} is not a number the page can compute with. Write the "
                                         "figure as digits only, or FILL where the call never gave it")
         return
-    a = {**a, **{k: figure(v) for k, v in given[:6] if v not in (None, "")},
+    a = {**a, **{k: figure(v) for k, v in given[:len(scalars)] if v not in (None, "")},
          "project_values": [figure(v) for v in (a.get("project_values") or [])],
          "margins": [figure(v) for v in a["margins"]] if a.get("margins") else None}
     threshold = a.get("mode") == "threshold"
@@ -1386,10 +1408,20 @@ def check_arithmetic(data: dict[str, Any], rep: Report) -> None:
                     "volume mode needs target_additional_low: the whole page is the "
                     "engagement against the projects the term is meant to add")
             return
-        need = total / values[0]
-        detail = ("%s %s over %s months needs %.1f of a %s %s project, against %s to %s "
-                  "additional projects targeted"
-                  % (cur, f"{total:,.0f}", months, need, cur, f"{values[0]:,.0f}", add_low, add_high))
+        gross = a.get("gross_margin")
+        if gross:
+            # Counted at the client's own gross margin, and said to be gross.
+            need = total / (values[0] * gross / 100)
+            detail = ("%s %s over %s months needs %s projects of %s %s at a %s%% gross margin, against %s to %s "
+                      "additional projects targeted"
+                      % (cur, f"{total:,.0f}", months, dec(need), cur, f"{values[0]:,.0f}", f"{gross:g}",
+                         f"{add_low:g}", f"{add_high:g}"))
+        else:
+            need = total / values[0]
+            detail = ("%s %s over %s months needs %s of a %s %s project, against %s to %s "
+                      "additional projects targeted"
+                      % (cur, f"{total:,.0f}", months, dec(need), cur, f"{values[0]:,.0f}", f"{add_low:g}",
+                         f"{add_high:g}"))
         if need <= add_low:
             rep.add(PASS, "arithmetic", detail)
         elif need <= add_high:
@@ -1400,8 +1432,11 @@ def check_arithmetic(data: dict[str, Any], rep: Report) -> None:
 
     if margin_mode:
         need = total / values[0] * 100
-        detail = ("one project of %s %s covers %s %s at %.1f%% kept"
-                  % (cur, f"{values[0]:,.0f}", cur, f"{total:,.0f}", need))
+        detail = ("one project of %s %s covers %s %s at %s%% kept"
+                  % (cur, f"{values[0]:,.0f}", cur, f"{total:,.0f}", dec(need)))
+        if a.get("gross_margin"):
+            detail += ("; at the client's %s%% gross margin that is %s projects"
+                       % (f"{a['gross_margin']:g}", dec(total / (values[0] * a["gross_margin"] / 100))))
         if need > 33:
             rep.add(FAIL, "arithmetic", detail + ": more than a third of one project, which no contractor will accept")
         elif need > 20:
@@ -1426,7 +1461,7 @@ def check_arithmetic(data: dict[str, Any], rep: Report) -> None:
     over = sum(1 for row in counts if any(c >= 1 for c in row))
     best, worst = min(min(r) for r in counts), max(max(r) for r in counts)
     detail = (f"{len(values)} rows x {len(margins)} margins against "
-              f"{cur} {total:,.0f}, {best:.1f} to {worst:.1f} projects")
+              f"{cur} {total:,.0f}, {dec(best)} to {dec(worst)} projects")
     if not under:
         rep.add(FAIL, "arithmetic", detail + ": not one row breaks even inside a single "
                                              "project, so the table argues against the fee")
@@ -1436,6 +1471,43 @@ def check_arithmetic(data: dict[str, Any], rep: Report) -> None:
         rep.add(WARN, "arithmetic",
                 "every row breaks even inside one project. Add a lower project value so "
                 "the reader can see the table was not built to flatter us.")
+
+
+# Saying the return comes "before you count a cent of margin" talks around the
+# one figure the reader needs (176954619 on 5 October 2026, where the client
+# had given a gross margin of 20 to 30 percent).
+AROUND_MARGIN = re.compile(
+    r"\bbefore\s+(?:you\s+)?(?:count|counting|any|a\s+cent\s+of|a\s+single|the)\b[^.]{0,30}?\bmargins?\b"
+    r"|\bwithout\s+(?:counting\s+|touching\s+)?(?:any\s+|your\s+|the\s+|a\s+)?margins?\b"
+    r"|\bwhatever\s+(?:your|the)\s+margin|\bregardless\s+of\s+(?:your\s+|the\s+)?margin"
+    r"|\bnot\s+counting\s+(?:the\s+|your\s+|any\s+)?margin|\bmargin\s+(?:aside|untouched)\b"
+    r"|قبل\s+(?:احتساب|حساب)\s+(?:أي\s+)?(?:هامش|الهامش|ربح|الربح)|بغض\s+النظر\s+عن\s+(?:الهامش|هامش)",
+    re.I)
+GROSS_WORDS = re.compile(r"\bgross\b|هامش\s+إجمالي|الهامش\s+الإجمالي|ربح\s+إجمالي|الربح\s+الإجمالي", re.I)
+
+
+def check_margin_words(data: dict[str, Any], rep: Report) -> None:
+    """The arithmetic page and the client's margin: a gross margin the call
+    gave is counted, labelled gross (arithmetic.gross_margin), and the page
+    never talks around it."""
+    a = data.get("arithmetic") if isinstance(data.get("arithmetic"), dict) else {}
+    if not a:
+        return
+    around = [f"arithmetic.{k}" for k in ("verdict", "close", "note", "intro")
+              if isinstance(a.get(k), str) and AROUND_MARGIN.search(_plain(a[k]))]
+    if around:
+        rep.add(WARN, "arithmetic", f"{', '.join(around)} talks around the margin. Count the projects at the "
+                                    "client's own margin when the call gave one (arithmetic.gross_margin, labelled "
+                                    "gross), or say plainly that none was given")
+    roi = data.get("roi") or {}
+    said_gross = [p for p, text in (("roi.margin_note", roi.get("margin_note")), ("arithmetic.note", a.get("note")),
+                                    ("arithmetic.intro", a.get("intro")))
+                  if isinstance(text, str) and GROSS_WORDS.search(text)
+                  and any(0 < n < 100 for n in figures_in(text))]
+    if said_gross and figure(a.get("gross_margin")) is None and not FILL_RE.search(str(a.get("gross_margin") or "")):
+        rep.add(WARN, "arithmetic", f"{said_gross[0]} says the call gave a gross margin, and the arithmetic page "
+                                    "does not use it. Set arithmetic.gross_margin to the bottom of it, so the "
+                                    "projects are counted at it and labelled gross")
 
 
 # --------------------------------------------------------------- fee band ----
@@ -1579,6 +1651,7 @@ def validate(data: dict[str, Any], transcript: Optional[str] = None, *, resolved
     pct = None
     if general or blind:
         check_arithmetic(data, rep)
+        check_margin_words(data, rep)
     else:
         pct = check_fee_band(data, rep)
     check_prose(data, said, rep, resolved, offer, checked_note)

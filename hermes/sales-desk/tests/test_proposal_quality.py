@@ -451,6 +451,91 @@ class UnstatedCurrencyTests(unittest.TestCase):
         self.assertTrue(any("AED" in x and "usd_rate" in x for x in failing(r, "arithmetic")), r.text())
 
 
+# --------------------------------------------------------------- defect 8 ---
+def volume_deal(**arith: Any) -> dict[str, Any]:
+    deal = general_deal()
+    deal["roi"].update({"local_currency": "SAR", "usd_rate": 3.75})
+    deal["arithmetic"] = {"mode": "volume", "currency": "SAR", "months": 3, "project_value_low": 450000,
+                          "project_value_high": 600000, "target_additional_low": 2, "target_additional_high": 4,
+                          "rate_display": "two a month", "target_display": "2 to 4 over three months",
+                          "title": "What it takes to pay for itself", "verdict": "The engagement is covered.",
+                          **arith}
+    return deal
+
+
+class ArithmeticTests(unittest.TestCase):
+    """The arithmetic page ignored a gross margin the client gave, a grid
+    call copied the margin-mode reference, and 0.35 printed as 0.3."""
+
+    def write_refs(self, folder: Path, grid: bool = True) -> None:
+        import json
+        margin = general_deal()
+        margin["arithmetic"] = {"mode": "margin", "project_value": 1000000, "currency": "USD"}
+        (folder / "general.json").write_text(json.dumps(margin), encoding="utf-8")
+        (folder / "specific.json").write_text(json.dumps(specific_deal()), encoding="utf-8")
+        if grid:
+            (folder / "general-grid.json").write_text(json.dumps(general_deal()), encoding="utf-8")
+
+    def test_a_call_with_no_project_value_copies_the_grid_reference(self):
+        from desk import prompt
+        with tempfile.TemporaryDirectory() as tmp:
+            self.write_refs(Path(tmp))
+            _d, info = prompt.load_reference(Path(tmp), "general", lambda _m: None, project_value=False)
+            self.assertEqual(info["file"], "general-grid.json")
+            _d, info = prompt.load_reference(Path(tmp), "general", lambda _m: None, project_value=True)
+            self.assertEqual(info["file"], "general.json")
+            _d, info = prompt.load_reference(Path(tmp), "general", lambda _m: None)
+            self.assertEqual(info["file"], "general.json")
+
+    def test_without_the_grid_file_a_grid_shaped_general_reference_is_preferred(self):
+        import json
+        from desk import prompt
+        with tempfile.TemporaryDirectory() as tmp:
+            self.write_refs(Path(tmp), grid=False)
+            (Path(tmp) / "old-general.json").write_text(json.dumps(general_deal()), encoding="utf-8")
+            _d, info = prompt.load_reference(Path(tmp), "general", lambda _m: None, project_value=False)
+            self.assertEqual(info["file"], "old-general.json")
+
+    def test_the_engine_says_whether_the_call_gave_a_value(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.write_refs(Path(tmp))
+            out, _p = run_engine([fakes.triage_answer(value=None, margin=None), general_deal()], over=[[]],
+                                 reference_dir=Path(tmp))
+            self.assertEqual(out.reference["file"], "general-grid.json")
+
+    def test_values_under_ten_keep_two_decimals(self):
+        self.assertEqual([validate.dec(v) for v in (0.35, 0.3, 1.05, 1.75, 2.5, 12.34, 0)],
+                         ["0.35", "0.3", "1.05", "1.75", "2.5", "12.3", "0.0"])
+        self.assertTrue("const dec = " in TEMPLATE, "the template's dec")
+        deal = margin_mode_deal()
+        deal["arithmetic"]["project_value"] = 1000000
+        deal["roi"]["avg_project_value"] = 1000000
+        detail = [x["detail"] for x in check(deal, text=None).rows if x["check"] == "arithmetic"]
+        self.assertTrue(any("1.05%" in d for d in detail), detail)
+
+    def test_a_gross_margin_counts_the_projects_at_it(self):
+        deal = volume_deal(gross_margin=20)
+        rows = [x for x in check(deal, text=None).rows if x["check"] == "arithmetic"]
+        self.assertTrue(any("20% gross" in x["detail"] for x in rows), rows)
+        # 39,375 / (450,000 x 20%) = 0.44 of a project
+        self.assertTrue(any("0.44" in x["detail"] for x in rows), rows)
+
+    def test_a_verdict_that_talks_around_the_margin_warns(self):
+        deal = volume_deal(verdict="The floor is several times the engagement before you count a cent of margin.")
+        self.assertTrue(any("margin" in w for w in warned(check(deal, text=None), "arithmetic")))
+
+    def test_a_gross_margin_the_page_leaves_out_warns(self):
+        deal = volume_deal()
+        deal["roi"]["margin_note"] = "You gave 20 to 30 percent, before admin and general expenses, so it is gross."
+        self.assertTrue(any("gross" in w for w in warned(check(deal, text=None), "arithmetic")))
+        deal["arithmetic"]["gross_margin"] = 20
+        self.assertFalse(any("gross" in w for w in warned(check(deal, text=None), "arithmetic")))
+
+    def test_the_gross_margin_is_the_client_s_figure_and_checked(self):
+        deal = volume_deal(gross_margin=27)
+        self.assertTrue(any("arithmetic.gross_margin=27" in w for w in warned(check(deal), "evidence counts")))
+
+
 # ------------------------------------------------------------- the template ---
 @unittest.skipUnless(os.environ.get("SALES_RENDER_LIVE") == "1", "SALES_RENDER_LIVE=1 runs the real browser")
 class LiveTemplateTests(unittest.TestCase):
@@ -466,15 +551,24 @@ class LiveTemplateTests(unittest.TestCase):
         deal = general_deal()
         deal["roi"]["avg_project_value"] = 1000000
         live = self.dom(deal)
-        self.assertNotIn(">Break-even<", live)
-        self.assertNotIn('<span class="v">0.0</span>', live)
+        self.assertFalse(">Break-even<" in live, ">Break-even<")
+        self.assertFalse('<span class="v">0.0</span>' in live, '<span class="v">0.0</span>')
+
+    def test_small_shares_keep_two_decimals_and_gross_is_labelled(self):
+        deal = margin_mode_deal()
+        deal["arithmetic"]["project_value"] = 1000000
+        deal["roi"]["avg_project_value"] = 1000000
+        self.assertTrue("1.05%" in self.dom(deal), "1.05%")
+        live = self.dom(volume_deal(gross_margin=20))
+        self.assertTrue("0.44 of one project" in live, "0.44 of one project")
+        self.assertTrue("gross" in live, "gross")
 
     def test_the_tiles_still_come_with_a_value_and_a_margin(self):
         deal = specific_deal()
         deal["roi"]["target_projects_month"] = "6 to 12 signed"
         live = self.dom(deal)
-        self.assertIn(">Break-even<", live)
-        self.assertIn("The plan's target across the term", live)
+        self.assertTrue(">Break-even<" in live, ">Break-even<")
+        self.assertTrue("The plan's target across the term" in live, "The plan's target across the term")
 
 
 if __name__ == "__main__":

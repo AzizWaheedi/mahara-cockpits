@@ -418,9 +418,12 @@ that gave a project value and no margin, and that is the case SKILL.md puts in
 margin mode; `specific.json` (B2B's 173625821), because a specific draft
 copying a general reference has no `cost` block to copy; and the grid
 general (the old 180279552) as `general-grid.json`. The desk reads
-`general.json` first for a general draft, so the grid file is only read as the
-stand-in for a blind draft (the first file by name), which suits one: no
-project value and a grid. B2B holds no blind draft to make one from.
+`general.json` first for a general draft whose call gave a project value, and
+`general-grid.json` (else any general reference with a grid page) for one whose
+call gave none: on 5 October 2026 such a draft copied the margin-mode file and
+lost the grid page's summary sentence and its total label. The grid file is
+also the stand-in for a blind draft (the first file by name), which suits one:
+no project value and a grid. B2B holds no blind draft to make one from.
 
 Its dates are not held against it. The drafter is told today's date and the
 date two weeks on in place of the reference's own (`prompt.shape_of`), since

@@ -212,7 +212,10 @@ def run(call: Call, *, lang: str, resolved: dict[str, Any], offer: dict[str, Any
     if unstated:
         notes.append("The client never named a currency for their figures, so the arithmetic page's currency is "
                      "left for the closer to fill.")
-    reference, info = prompt_mod.load_reference(reference_dir or cfg.reference_dir, variant, log)
+    value = (found or {}).get("avg_project_value") or {}
+    has_value = None if found is None else bool(value.get("stated") and value.get("value"))
+    reference, info = prompt_mod.load_reference(reference_dir or cfg.reference_dir, variant, log,
+                                                project_value=has_value)
     if reference is None:
         notes.append(f"No reference deal on this machine ({reference_dir or cfg.reference_dir}); the draft was "
                      "written from the rules and the template's outline alone.")

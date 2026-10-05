@@ -1175,6 +1175,15 @@ const P = PROPOSAL;
    appears, and validate.py fails a draft that carries one. */
 
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+/* A share or a count of projects: two decimals under 10, one from there, a
+   trailing zero dropped. One decimal printed 0.35 as "0.3" and 1.05% as
+   "1.1%" (5 October 2026). validate.py's dec() is the same rule. */
+const dec = (v) => {
+  const n = Number(v);
+  if (!isFinite(n)) return "0";
+  const s = Math.abs(n) < 10 ? n.toFixed(2) : n.toFixed(1);
+  return /\.\d0$/.test(s) ? s.slice(0, -1) : s;
+};
 let sheets = [];
 let exhibitNo = 0;
 
@@ -1266,6 +1275,9 @@ const STR = {
     beCoversIf: "One project covers it if you keep more than",
     beMarginTable: "What one project has to leave you",
     beThreshold: "What one project has to be worth",
+    beGross: "Your gross margin", beGrossLeft: "Gross profit on one project",
+    beVolCoversGross: "Covered by, at your gross margin", beGrossCovers: "Projects to cover it, at your gross margin",
+    beAtGross: "At ", beGrossPct: " percent gross", beIfGross: "If your gross margin is",
     overflow: "This page overflows A4. Trim the content before sending."
   },
   ar: {
@@ -1338,6 +1350,9 @@ const STR = {
     beMarginTable: "\u0643\u0645 \u064a\u062c\u0628 \u0623\u0646 \u064a\u062a\u0631\u0643 \u0644\u0643 \u0645\u0634\u0631\u0648\u0639 \u0648\u0627\u062d\u062f",
     beOneJob: "\u0645\u0634\u0631\u0648\u0639 \u0648\u0627\u062d\u062f \u064a\u063a\u0637\u064a \u0627\u0644\u0643\u0644\u0641\u0629 \u0639\u0646\u062f",
     beThreshold: "\u0643\u0645 \u064a\u062c\u0628 \u0623\u0646 \u062a\u0633\u0627\u0648\u064a \u0642\u064a\u0645\u0629 \u0645\u0634\u0631\u0648\u0639 \u0648\u0627\u062d\u062f",
+    beGross: "\u0647\u0627\u0645\u0634 \u0631\u0628\u062d\u0643 \u0627\u0644\u0625\u062c\u0645\u0627\u0644\u064a", beGrossLeft: "\u0627\u0644\u0631\u0628\u062d \u0627\u0644\u0625\u062c\u0645\u0627\u0644\u064a \u0645\u0646 \u0645\u0634\u0631\u0648\u0639 \u0648\u0627\u062d\u062f",
+    beVolCoversGross: "\u064a\u063a\u0637\u064a\u0647\u060c \u0639\u0646\u062f \u0647\u0627\u0645\u0634\u0643 \u0627\u0644\u0625\u062c\u0645\u0627\u0644\u064a", beGrossCovers: "\u0639\u062f\u062f \u0627\u0644\u0645\u0634\u0627\u0631\u064a\u0639 \u0644\u062a\u063a\u0637\u064a\u062a\u0647\u060c \u0639\u0646\u062f \u0647\u0627\u0645\u0634\u0643 \u0627\u0644\u0625\u062c\u0645\u0627\u0644\u064a",
+    beAtGross: "\u0639\u0646\u062f \u0647\u0627\u0645\u0634 \u0625\u062c\u0645\u0627\u0644\u064a ", beGrossPct: "\u066a", beIfGross: "\u0625\u0630\u0627 \u0643\u0627\u0646 \u0647\u0627\u0645\u0634\u0643 \u0627\u0644\u0625\u062c\u0645\u0627\u0644\u064a",
   }
 };
 let L = STR.en;
@@ -1579,7 +1594,9 @@ if (P.arithmetic && ((P.arithmetic.project_values || []).length
   const total = Number(a.engagement_total) || (P.roi && P.roi.fee_usd
     ? (Number(P.roi.fee_usd) + (Number(P.roi.ad_monthly_usd) || 0) * months) * (Number(P.roi.usd_rate) || 1)
     : 0);
-  const margins = (a.margins && a.margins.length ? a.margins : [10, 20]).map(Number);
+  /* A gross margin the client gave is counted, and labelled gross. */
+  const gm = Number(a.gross_margin) > 0 ? Number(a.gross_margin) : 0;
+  const margins = (a.margins && a.margins.length ? a.margins : gm ? [gm] : [10, 20]).map(Number);
   const num = (v) => Math.round(v).toLocaleString("en-US");
 
   const threshold = a.mode === "threshold";
@@ -1595,14 +1612,16 @@ if (P.arithmetic && ((P.arithmetic.project_values || []).length
        makes the answer the least flattering one their figures allow. */
     const lo = Number(a.project_value_low);
     const hi = Number(a.project_value_high) || lo;
-    const need = lo > 0 ? total / lo : 0;
+    const per = gm ? lo * gm / 100 : lo;
+    const need = per > 0 ? total / per : 0;
     head = "";
     rows = [
       [L.beWholeThing, esc(cur) + " " + num(total)],
       [L.beVolProject, esc(cur) + " " + num(lo) + (hi > lo ? " to " + num(hi) : "")],
+      ...(gm ? [[L.beGross, gm + "%"], [L.beGrossLeft, esc(cur) + " " + num(per)]] : []),
       [L.beVolRate, esc(a.rate_display || "")],
       [L.beVolTarget, esc(a.target_display || "")],
-      [L.beVolCovers, need.toFixed(1) + " " + (need <= 1 ? "of one project" : "projects")],
+      [gm ? L.beVolCoversGross : L.beVolCovers, dec(need) + " " + (need <= 1 ? "of one project" : "projects")],
     ].filter(([, v]) => v !== "").map(([k, v], i, arr) =>
       `<tr class="${i === arr.length - 1 ? "under" : ""}"><td>${k}</td><td>${v}</td></tr>`).join("");
   } else if (marginMode) {
@@ -1616,17 +1635,18 @@ if (P.arithmetic && ((P.arithmetic.project_values || []).length
     rows = [
       [L.beYourProject, esc(cur) + " " + num(value)],
       [L.beWholeThing, esc(cur) + " " + num(total)],
-      [L.beCoversIf, pct.toFixed(1) + "%"],
+      [L.beCoversIf, dec(pct) + "%"],
+      ...(gm && value > 0 ? [[L.beGross, gm + "%"], [L.beGrossCovers, dec(total / (value * gm / 100))]] : []),
     ].map(([k, v], i) => `<tr class="${i === 2 ? "under" : ""}"><td>${k}</td><td>${v}</td></tr>`).join("");
   } else if (threshold) {
     /* One question, one answer, in money. The reader finds his margin and
        reads across once. Nothing here is a count of his projects and nothing
        is a share of them, which is what the two-column shape kept implying. */
-    head = `<tr><th>${L.beIfMargin}</th><th>${L.beOneJob}</th></tr>`;
+    head = `<tr><th>${gm ? L.beIfGross : L.beIfMargin}</th><th>${L.beOneJob}</th></tr>`;
     rows = margins.map(m => `<tr><td>${m}%</td><td>${esc(cur)} ${num(total / (m / 100))}</td></tr>`).join("");
   } else {
     head = `<tr><th>${L.beProject}</th>${margins.map(m =>
-      `<th>${L.beAtNet}${m}${L.beNet}</th>`).join("")}</tr>`;
+      gm ? `<th>${L.beAtGross}${m}${L.beGrossPct}</th>` : `<th>${L.beAtNet}${m}${L.beNet}</th>`).join("")}</tr>`;
     rows = a.project_values.map(v => {
       const cells = margins.map(m => {
         const profit = Number(v) * m / 100;
@@ -1638,7 +1658,7 @@ if (P.arithmetic && ((P.arithmetic.project_values || []).length
          where every answer flatters us is not evidence. */
       const under = cells.every(c => c > 0 && c < 1);
       return `<tr class="${under ? "under" : ""}"><td>${esc(cur)} ${num(v)}</td>${
-        cells.map(c => `<td>${c.toFixed(1)}</td>`).join("")}</tr>`;
+        cells.map(c => `<td>${dec(c)}</td>`).join("")}</tr>`;
     }).join("");
   }
 
@@ -1757,8 +1777,8 @@ if (P.roi && P.roi.fee_usd && Number(P.roi.avg_project_value) > 0 && Number(P.ro
     /* The third tile is the plan's target as the deal states it, across the
        term; none is invented when the deal gives none. */
     breakevenRows = [
-      { v: breakeven.toFixed(1), k: L.beExtra + months + L.beMonths },
-      { v: perMonth.toFixed(1), k: L.bePerMonth },
+      { v: dec(breakeven), k: L.beExtra + months + L.beMonths },
+      { v: dec(perMonth), k: L.bePerMonth },
       ...(r.target_projects_month ? [{ v: r.target_projects_month, k: L.beTarget }] : [])
     ];
   }

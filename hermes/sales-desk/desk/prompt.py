@@ -121,9 +121,21 @@ def variant_of(deal: dict[str, Any]) -> str:
     return v if v in VARIANTS else "specific"
 
 
-def load_reference(ref_dir: Path, variant: str, log: Callable[[str], None]) -> tuple[Optional[dict[str, Any]], Optional[dict[str, Any]]]:
+def is_grid(deal: dict[str, Any]) -> bool:
+    """A general deal whose arithmetic page is the grid of illustrative project values."""
+    arith = deal.get("arithmetic") if isinstance(deal.get("arithmetic"), dict) else {}
+    return bool(arith.get("project_values")) and str(arith.get("mode") or "grid").lower() == "grid"
+
+
+def load_reference(ref_dir: Path, variant: str, log: Callable[[str], None], *,
+                   project_value: Optional[bool] = None) -> tuple[Optional[dict[str, Any]], Optional[dict[str, Any]]]:
     """(deal, where it came from). A file named for the variant wins, then any
-    file of that variant, then whatever reference there is."""
+    file of that variant, then whatever reference there is.
+
+    A general draft for a call that gave no project value copies the grid:
+    general-grid.json, else any general reference with a grid page. On
+    5 October 2026 such a draft copied the margin-mode general.json and lost
+    the grid page's summary sentence and its total label."""
     ref_dir = Path(ref_dir)
     if not ref_dir.is_dir():
         return None, None
@@ -139,6 +151,10 @@ def load_reference(ref_dir: Path, variant: str, log: Callable[[str], None]) -> t
     if not found:
         return None, None
     exact = [f for f in found if f[0].stem.lower() == variant] or [f for f in found if variant_of(f[1]) == variant]
+    if variant == "general" and project_value is False:
+        grid = ([f for f in found if f[0].stem.lower() == "general-grid"]
+                or [f for f in found if variant_of(f[1]) == "general" and is_grid(f[1])])
+        exact = grid or exact
     path, deal = (exact or found)[0]
     return deal, {"file": path.name, "variant": variant_of(deal), "matched": bool(exact)}
 
