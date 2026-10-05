@@ -111,6 +111,10 @@ def migration_d() -> str:
     out = re.sub(r"(?im)^\s*(revoke|grant)\s[^;]*;", "", out)
     # Nor do seat policies (they call the seat check, which is not copied).
     out = re.sub(r"(?ims)^\s*(drop|create) policy\s[^;]*;", "", out)
+    # The follow-up agent's tables are not copied: 20261004a's round 5 column
+    # on the openers' meta (Approve all's request) is left out of the day.
+    out = re.sub(r"(?ims)^\s*(alter table|comment on column|create index if not exists [a-z_]+\s+on)\s+"
+                 r"pg_temp\.cockpit_sales_followup_meta\b[^;]*;", "", out)
     if "public.cockpit_" in out or re.search(r"\bnow\(\)", out):
         raise SystemExit("Migration d still names a real table or the real clock after the rewrite.")
     return out

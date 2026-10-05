@@ -66,7 +66,13 @@ SLOT_V2 = (_function_text("cockpit_sales_norm_words").replace("public.cockpit_sa
            + "\n" + _function_text("cockpit_sales_message_slot")
            .replace("public.cockpit_sales_message_slot", "pg_temp.cockpit_sales_message_slot")
            .replace("public.cockpit_sales_norm_words", "pg_temp.cockpit_sales_norm_words")
-           .replace("security definer\n", ""))
+           .replace("security definer\n", "")
+           # 20261004a adds ghl_asked_at in the same file (fix round 5); the
+           # copy runs on a database without it, where no row is ever read as
+           # unasked (a row with no such column is as before: in flight).
+           .replace("m.ghl_asked_at is null", "(to_jsonb(m) ? 'ghl_asked_at' and to_jsonb(m) ->> 'ghl_asked_at' is null)")
+           .replace("twin.ghl_asked_at is null",
+                    "(to_jsonb(twin) ? 'ghl_asked_at' and to_jsonb(twin) ->> 'ghl_asked_at' is null)"))
 
 
 def q(sql: str, write: bool = True):

@@ -55,6 +55,16 @@ $$;
 revoke all on function public.cockpit_sales_norm_words(text) from public, anon, authenticated;
 grant execute on function public.cockpit_sales_norm_words(text) to service_role;
 
+-- When HighLevel was asked to send a message (stress2 round 5,
+-- slot-lost-answer-orphan-row-read-as-sent): index.ts stamps the row right
+-- before its HighLevel POST or enrolment. A "sending" row with no stamp past
+-- 30 seconds is a slot whose answer was lost before anything went: it holds
+-- no request id, no same words and no template queue.
+alter table public.cockpit_sales_messages
+  add column if not exists ghl_asked_at timestamptz;
+comment on column public.cockpit_sales_messages.ghl_asked_at is
+  'When HighLevel was asked to send it. A sending row without it past 30 s never went.';
+
 create or replace function public.cockpit_sales_message_slot(p_row jsonb, p_limits jsonb)
 returns jsonb
 language plpgsql
@@ -84,7 +94,14 @@ begin
 
   select * into twin from public.cockpit_sales_messages as m where m.request_id = rid;
   if found then
-    return jsonb_build_object('code', 'repeat', 'row', to_jsonb(twin));
+    -- An earlier try's row HighLevel was never asked about (its slot's answer
+    -- lost, stress2 round 5): it never went, so this try takes the slot.
+    if twin.state = 'sending' and twin.ghl_asked_at is null and twin.created_at < now() - interval '30 seconds' then
+      delete from public.cockpit_sales_messages as m
+       where m.id = twin.id and m.state = 'sending' and m.ghl_asked_at is null;
+    else
+      return jsonb_build_object('code', 'repeat', 'row', to_jsonb(twin));
+    end if;
   end if;
   -- The same WhatsApp words to the same lead a moment ago (stress2, round
   -- 1): one rep's Send in two tabs, or two seats answering with the same
@@ -98,6 +115,7 @@ begin
     if words <> '' then
       select * into twin from public.cockpit_sales_messages as m
        where m.contact_id = contact and m.channel = 'whatsapp' and m.via = 'conversation' and m.state <> 'failed'
+         and not (m.state = 'sending' and m.ghl_asked_at is null and m.created_at < now() - interval '30 seconds')
          and m.created_at >= now() - make_interval(secs => dup_s)
          and public.cockpit_sales_norm_words(m.body) = words
        order by m.created_at desc
@@ -118,6 +136,7 @@ begin
   if is_template then
     if exists (select 1 from public.cockpit_sales_messages as m
                 where m.contact_id = contact and m.via = 'workflow' and m.state <> 'failed'
+                  and not (m.state = 'sending' and m.ghl_asked_at is null and m.created_at < now() - interval '30 seconds')
                   and m.created_at >= now() - make_interval(secs => coalesce((p_limits ->> 'lead_gap_s')::integer, 120))) then
       return jsonb_build_object('code', 'lead_gap');
     end if;
@@ -749,7 +768,9 @@ begin
         from public.cockpit_sales_rooms as x
        cross join lateral (
          select coalesce(case when x.purpose = 'booked' then x.ends_at
-                              else coalesce(x.link_sent_at, x.opened_at) + w_lead + w_grace end,
+                              -- From the latest send of the link (stress2 round 5: a later
+                              -- channel's email promises its own ten minutes).
+                              else coalesce(greatest(x.link_sent_at, x.last_link_at), x.opened_at) + w_lead + w_grace end,
                          'infinity'::timestamptz) as cap) as c
        cross join lateral (
          select greatest(coalesce(x.lead_by, x.link_sent_at + w_lead, x.host_in_at + w_lead,
@@ -873,7 +894,7 @@ begin
        where x.state = 'claimed'
          and (r.state = 'failed'
               or (r.state = any (finals)
-                  and (r.lead_in_at is null or (r.count_undo_at is not null and r.lead_in_at <= r.count_undo_at)))
+                  and not public.cockpit_sales_room_join_stands(r.lead_in_at, r.count_undo_at, r.taken_back_join_at))
               or (x.claimed_at + w_handover < t and (r.id is null or r.state not in ('host_in', 'lead_in'))))
        for update of x skip locked
     loop
@@ -908,8 +929,9 @@ begin
         join public.cockpit_sales_rooms as r on r.id = x.room_id
        where x.state in ('room_ready', 'lead_joined') and r.state = any (finals)
          -- No join that stands: none, or one "That was not the lead" took back
-         -- (the guard keeps its time in lead_in_at; count_undo_at is after it).
-         and (r.lead_in_at is null or (r.count_undo_at is not null and r.lead_in_at <= r.count_undo_at))
+         -- (the guard keeps its time in lead_in_at; a join stands only after
+         -- the taken-back join's own time, cockpit_sales_room_join_stands).
+         and not public.cockpit_sales_room_join_stands(r.lead_in_at, r.count_undo_at, r.taken_back_join_at)
        for update of x skip locked
     loop
       eligible := null;
@@ -1107,8 +1129,7 @@ begin
         from public.cockpit_sales_live as x
         join public.cockpit_sales_rooms as r on r.id = x.room_id
        where x.state in ('claimed', 'room_ready', 'lead_joined')
-         and r.state = any (finals) and r.lead_in_at is not null
-         and (r.count_undo_at is null or r.lead_in_at > r.count_undo_at)
+         and r.state = any (finals) and public.cockpit_sales_room_join_stands(r.lead_in_at, r.count_undo_at, r.taken_back_join_at)
        for update of x skip locked
     loop
       n := n + public.cockpit_sales_live_move(rec.id, array['claimed', 'room_ready', 'lead_joined'], 'done', 'room_ended',
@@ -1158,7 +1179,7 @@ begin
                        or (y.contact_id = x.contact_id and y.requested_at >= ap.start_at - interval '1 hour'))
                 where x.id = e.room_id
                   and y.state in ('requested', 'creating', 'open', 'host_in', 'lead_in')
-                  and not (y.lead_in_at is not null and (y.count_undo_at is null or y.lead_in_at > y.count_undo_at))))
+                  and not public.cockpit_sales_room_join_stands(y.lead_in_at, y.count_undo_at, y.taken_back_join_at)))
       returning e.id, e.room_id, e.source, e.kind
     )
     insert into pg_temp.lc_gave_up (id, room_id, source, kind)
@@ -1320,6 +1341,14 @@ begin
                               where e.room_id = x.id and e.kind = 'door.open'
                                 and coalesce(e.detail ->> 'after_end', 'false') <> 'true')
                   then 'the lead opened the link'
+                -- The lead opened the link after the room closed, inside the
+                -- intro's own time (stress2 round 5): like a late Zoom join,
+                -- they came, so a person marks the intro, never the timer.
+                when exists (select 1 from public.cockpit_sales_room_events as e
+                              where e.room_id = x.id and e.kind = 'door.open'
+                                and coalesce(e.detail ->> 'after_end', 'false') = 'true'
+                                and e.at <= ap.start_at + w_settle)
+                  then 'the lead opened the link after the room closed'
                 when x.lead_waiting_at is not null then 'the lead knocked'
                 -- The link never reached the lead (refused on every channel,
                 -- or "it may have gone" and never confirmed): their staying
@@ -1348,7 +1377,7 @@ begin
                               where y.id <> x.id
                                 and (y.appointment_id = x.appointment_id
                                      or (y.contact_id = x.contact_id and y.requested_at >= ap.start_at - interval '1 hour'))
-                                and y.lead_in_at is not null and (y.count_undo_at is null or y.lead_in_at > y.count_undo_at))
+                                and public.cockpit_sales_room_join_stands(y.lead_in_at, y.count_undo_at, y.taken_back_join_at))
                   then 'the lead joined another room for this call'
                 -- The lead on the phone after the room was asked for (stress2,
                 -- round 2, roomlogic.ts phoneSince): a dial they answered, a
@@ -1408,7 +1437,7 @@ begin
      where x.purpose <> 'booked' and x.call_kind = 'intro' and x.appointment_id is not null
        and ((x.state = 'expired' and (x.result is null or x.result = 'no_join'))
             or (x.state = 'ended' and x.result = 'no_join'))
-       and (x.lead_in_at is null or (x.count_undo_at is not null and x.lead_in_at <= x.count_undo_at))
+       and not public.cockpit_sales_room_join_stands(x.lead_in_at, x.count_undo_at, x.taken_back_join_at)
        and x.settled_mark is null
        and ap.status in ('new', 'confirmed')
        and ap.start_at + w_settle < t
@@ -1431,6 +1460,14 @@ begin
                           and pa.started_at >= x.requested_at
                           and pa.started_at >= t - interval '2 hours'
                           and pa.state in ('dialing', 'placed'))
+       -- A call to the lead saved unanswered in the last two minutes: the
+       -- setter's video link may be seconds away, and its room holds this
+       -- settle once made (stress2 round 5; roomlogic.ts phoneSince).
+       and not exists (select 1 from public.cockpit_sales_attempts as pa
+                        where pa.contact_id = x.contact_id
+                          and pa.started_at >= x.requested_at
+                          and pa.state = 'saved'
+                          and pa.saved_at > t - interval '2 minutes')
        -- Another room for this call is still live with no join that stands
        -- (the setter's second try): this room waits for it, and is settled
        -- (or told to a person) once that one closes, never read as "the lead
@@ -1440,7 +1477,7 @@ begin
                           and (y.appointment_id = x.appointment_id
                                or (y.contact_id = x.contact_id and y.requested_at >= ap.start_at - interval '1 hour'))
                           and y.state in ('requested', 'creating', 'open', 'host_in', 'lead_in')
-                          and not (y.lead_in_at is not null and (y.count_undo_at is null or y.lead_in_at > y.count_undo_at)));
+                          and not public.cockpit_sales_room_join_stands(y.lead_in_at, y.count_undo_at, y.taken_back_join_at));
 
     insert into public.cockpit_sales_room_events (room_id, kind, source, dedupe_key, at, text, detail)
     select q.id, 'sweep.settle', 'settle', 'sweep.settle:' || q.id::text, t,
@@ -2105,6 +2142,226 @@ end;
 $$;
 revoke all on function public.cockpit_sales_watchdog() from public, anon, authenticated;
 grant execute on function public.cockpit_sales_watchdog() to service_role;
+
+-- 6e. A join before the press, and the link sent again (stress2, round 5) ---
+
+-- "That was not the lead" kept only the press's own time (count_undo_at),
+-- and every rule read a standing join as lead_in_at > count_undo_at. The
+-- real lead's join a few seconds BEFORE the press (the press was about her
+-- assistant, who joined first) read as taken back: the settle marked her
+-- attended intro a no-show and the count never ran. The taken-back join's
+-- own time is kept now (taken_back_join_at, written by roomlogic.ts notLead,
+-- or by the guard below when a writer did not say it), and a join stands
+-- when it is after that time; a room pressed before this column falls back
+-- to the press, as before. Every rule reads cockpit_sales_room_join_stands.
+alter table public.cockpit_sales_rooms
+  add column if not exists taken_back_join_at timestamptz;
+comment on column public.cockpit_sales_rooms.taken_back_join_at is
+  'The own time of the join "That was not the lead" took back. A later join stands (roomlogic.ts takenBackBound).';
+
+-- A later channel sent the link again (the rep's Also send by email, the
+-- backup email after WhatsApp failed late): its words promise the lead's ten
+-- minutes from that send, so lead_by moves on (roomlogic.ts link_sent) and
+-- R4's open-grace cap counts from it.
+alter table public.cockpit_sales_rooms
+  add column if not exists last_link_at timestamptz;
+comment on column public.cockpit_sales_rooms.last_link_at is
+  'When a later channel sent the link again. R4''s cap and the lead''s ten minutes count from it.';
+
+create or replace function public.cockpit_sales_room_join_stands(p_lead_in_at timestamptz, p_undo_at timestamptz, p_taken_at timestamptz)
+returns boolean
+language sql
+immutable
+set search_path = ''
+as $$
+  select p_lead_in_at is not null
+         and (p_undo_at is null or p_lead_in_at > least(coalesce(p_taken_at, p_undo_at), p_undo_at));
+$$;
+revoke all on function public.cockpit_sales_room_join_stands(timestamptz, timestamptz, timestamptz) from public, anon, authenticated;
+grant execute on function public.cockpit_sales_room_join_stands(timestamptz, timestamptz, timestamptz) to service_role;
+
+-- Approve all pressed again after its answer was lost: the request id the
+-- batch was approved under, so the repeat hands that batch back (its
+-- schedule kept, one audit row) instead of approving it again.
+alter table public.cockpit_sales_followup_meta
+  add column if not exists approved_request uuid;
+comment on column public.cockpit_sales_followup_meta.approved_request is
+  'The request id of the Approve all that approved this opener. A repeat of it answers the batch made.';
+create index if not exists cockpit_sales_followup_meta_approved_request
+  on public.cockpit_sales_followup_meta (approved_request) where approved_request is not null;
+
+-- The rooms guard as 20261003d made it, with the taken-back join's time.
+create or replace function public.cockpit_sales_rooms_guard()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+declare
+  finals constant text[] := array['ended', 'expired', 'failed', 'cancelled'];
+  rank_old integer;
+  rank_new integer;
+  w jsonb;
+  i integer;
+begin
+  if tg_op = 'INSERT' then
+    -- A code no room has. Ten tries at 1 in a billion each; a code the
+    -- writer chose is kept, and a clash is a 23505 on cockpit_sales_rooms_code_key.
+    if new.code is null then
+      for i in 1 .. 10 loop
+        new.code := public.cockpit_sales_room_code();
+        exit when not exists (select 1 from public.cockpit_sales_rooms as x where x.code = new.code);
+      end loop;
+    end if;
+    -- A booked call wrapped late (room.wrap after its start + 15 minutes, a
+    -- late lead): the call's own deadlines have passed, so the host gets the
+    -- handover wait and the lead their wait from now, never past the call's
+    -- end (roomlogic.ts wrapPlan). A room born past its deadlines would be
+    -- closed by the next sweep as a no-join before anyone could come in.
+    if new.purpose = 'booked' and new.state = 'open' and new.ends_at is not null then
+      w := coalesce((select s.value -> 'waits_s' from public.cockpit_sales_settings as s where s.key = 'rooms'), '{}'::jsonb);
+      if new.host_by is not null
+         and new.host_by < now() + make_interval(secs => public.cockpit_sales_setting_int(w, 'handover_host', 120)) then
+        new.host_by := least(now() + make_interval(secs => public.cockpit_sales_setting_int(w, 'handover_host', 120)), new.ends_at);
+      end if;
+      if new.lead_by is not null
+         and new.lead_by < now() + make_interval(secs => public.cockpit_sales_setting_int(w, 'lead', 600)) then
+        new.lead_by := greatest(coalesce(new.host_by, now()),
+          least(now() + make_interval(secs => public.cockpit_sales_setting_int(w, 'lead', 600)), greatest(new.ends_at, new.lead_by)));
+      end if;
+    end if;
+  end if;
+  if tg_op = 'UPDATE' then
+    -- Version: up by exactly one on a state change or when the writer asks
+    -- for it (writes any new version); unchanged on every other write.
+    if new.state is distinct from old.state or new.version is distinct from old.version then
+      new.version := old.version + 1;
+    end if;
+    new.updated_at := now();
+    -- "That was not the lead" from a writer that does not know the column
+    -- (a sales-api from before it): the taken-back join keeps its own time
+    -- (stress2 round 5), so a later join (even one before the press) stands.
+    -- Only when none is kept yet: a count's claim given back restores
+    -- count_undo_at and must never move it onto the real lead's join.
+    if new.count_undo_at is not null and new.count_undo_at is distinct from old.count_undo_at
+       and new.taken_back_join_at is null then
+      new.taken_back_join_at := old.lead_in_at;
+    end if;
+    -- The open columns, the door's only writes (door.ts OPEN_COLUMNS): the
+    -- first open only ever moves earlier, the last open never moves back,
+    -- and the first device read is kept. A late or repeated open, or 50 at
+    -- once, can never undo one; none of them moves the version, so the lead
+    -- tapping the link never makes a rep's next press "changed a moment ago".
+    if old.first_open_at is not null then
+      new.first_open_at := least(old.first_open_at, coalesce(new.first_open_at, old.first_open_at));
+    end if;
+    if old.last_open_at is not null then
+      new.last_open_at := greatest(old.last_open_at, coalesce(new.last_open_at, old.last_open_at));
+    end if;
+    if old.open_device is not null then
+      new.open_device := old.open_device;
+    end if;
+    if new.state is distinct from old.state then
+      if old.state = any (finals) then
+        raise exception 'Room % has already %. A finished room never changes state.', old.code, old.state
+          using errcode = 'P0001', hint = 'Make a new room instead.';
+      end if;
+      if old.state = 'lead_in' and new.state in ('expired', 'failed') then
+        raise exception 'Room % has the lead in it. It can only end (ended), be cancelled by a person, or go back to host_in.', old.code
+          using errcode = 'P0001';
+      end if;
+      rank_old := array_position(array['requested', 'creating', 'open', 'host_in', 'lead_in'], old.state);
+      rank_new := array_position(array['requested', 'creating', 'open', 'host_in', 'lead_in'], new.state);
+      if rank_new is not null and rank_new <= rank_old
+         and (old.state, new.state) not in (('creating', 'requested'), ('host_in', 'open'), ('lead_in', 'host_in')) then
+        raise exception 'Room % cannot move from % back to %.', old.code, old.state, new.state
+          using errcode = 'P0001';
+      end if;
+      w := coalesce((select s.value -> 'waits_s' from public.cockpit_sales_settings as s where s.key = 'rooms'), '{}'::jsonb);
+      -- The database's clock owns every timer (the sweep compares with
+      -- now()): the steps the room worker reaches are stamped here, never
+      -- from the VPS's clock, and a room the worker opens gets at least its
+      -- host wait and its length from now (deadlines never move earlier).
+      if new.state = 'creating' then
+        new.claimed_at := now();
+      end if;
+      if new.state = 'open' and old.state in ('requested', 'creating') then
+        new.opened_at := now();
+        if new.purpose <> 'booked' then
+          new.host_by := greatest(coalesce(new.host_by, now()), now() + make_interval(secs => case new.purpose
+            when 'handover' then public.cockpit_sales_setting_int(w, 'handover_host', 120)
+            when 'standby' then public.cockpit_sales_setting_int(w, 'standby_host', 300)
+            else public.cockpit_sales_setting_int(w, 'fallback_host', 900) end));
+          new.ends_at := greatest(coalesce(new.ends_at, now()), now() + make_interval(mins => public.cockpit_sales_setting_int(
+            coalesce((select s.value -> 'lengths_min' from public.cockpit_sales_settings as s where s.key = 'rooms'), '{}'::jsonb),
+            new.call_kind, case when new.call_kind = 'demo' then 60 else 30 end)));
+        end if;
+      end if;
+      -- The host left before the lead came (P2): at least the host wait from
+      -- now, never less than the host already had (a booked call keeps
+      -- start + 15, a fallback room keeps its 15 minutes).
+      if old.state = 'host_in' and new.state = 'open' then
+        new.host_by := greatest(coalesce(new.host_by, old.host_by, now()), coalesce(old.host_by, now()),
+          now() + make_interval(secs => case when new.purpose = 'standby'
+            then public.cockpit_sales_setting_int(w, 'standby_host', 300)
+            else public.cockpit_sales_setting_int(w, 'handover_host', 120) end));
+      end if;
+      -- "That was not the lead": the room waits for the real lead a little
+      -- longer. lead_in_at stays: it is the time of the join that was taken
+      -- back (taken_back_join_at keeps it too, so roomlogic.ts leadJoined
+      -- reads no join), and roomlogic tells Zoom's second event for that same
+      -- join from a new one by it.
+      if old.state = 'lead_in' and new.state = 'host_in' then
+        new.lead_by := greatest(coalesce(new.lead_by, old.lead_by, now()), coalesce(old.lead_by, now()),
+          now() + make_interval(secs => public.cockpit_sales_setting_int(w, 'open_grace', 180)));
+      end if;
+      -- Into lead_in: when the room first showed it; and a writer that left a
+      -- taken-back join's time as it was gets this join's time.
+      if new.state = 'lead_in' then
+        new.lead_in_seen_at := now();
+        if new.lead_in_at is not distinct from old.lead_in_at and old.count_undo_at is not null
+           and not public.cockpit_sales_room_join_stands(old.lead_in_at, old.count_undo_at, old.taken_back_join_at) then
+          new.lead_in_at := now();
+        end if;
+      end if;
+    end if;
+  end if;
+  -- Stamp the time of each step if the writer did not.
+  if new.state = 'creating' and new.claimed_at is null then new.claimed_at := now(); end if;
+  if new.state in ('open', 'host_in', 'lead_in') and new.opened_at is null then new.opened_at := now(); end if;
+  if new.state in ('host_in', 'lead_in') and new.host_in_at is null then new.host_in_at := now(); end if;
+  if new.state = 'lead_in' and new.lead_in_at is null then new.lead_in_at := now(); end if;
+  if new.state = 'lead_in' and new.lead_in_seen_at is null then new.lead_in_seen_at := now(); end if;
+  if new.state = any (finals) and new.ended_at is null then new.ended_at := now(); end if;
+  return new;
+end;
+$$;
+revoke all on function public.cockpit_sales_rooms_guard() from public, anon, authenticated;
+
+drop trigger if exists cockpit_sales_rooms_guard on public.cockpit_sales_rooms;
+create trigger cockpit_sales_rooms_guard
+  before insert or update on public.cockpit_sales_rooms
+  for each row execute function public.cockpit_sales_rooms_guard();
+
+-- The short link follows the handover, as 20261003d made it, reading "no
+-- join that stands" with the taken-back join's own time.
+create or replace function public.cockpit_sales_rooms_link_replaced()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  update public.cockpit_sales_rooms as x
+     set replaced_by = new.id
+   where x.handover_id = new.handover_id
+     and x.id <> new.id
+     and x.state in ('ended', 'expired', 'failed', 'cancelled')
+     and not public.cockpit_sales_room_join_stands(x.lead_in_at, x.count_undo_at, x.taken_back_join_at)
+     and x.replaced_by is null;
+  return null;
+end;
+$$;
+revoke all on function public.cockpit_sales_rooms_link_replaced() from public, anon, authenticated;
 
 -- 7. Grants (the view was made again) ---------------------------------------------
 
