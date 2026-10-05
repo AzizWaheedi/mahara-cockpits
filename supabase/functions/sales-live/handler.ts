@@ -910,6 +910,29 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
     }
   }
 
+  /**
+   * Whether the messages carry the short link: rooms.enabled and
+   * rooms.short_link both true (m1 round 2). With it off no lead opens a
+   * link through this door, so a setup problem of its own is no alert to the
+   * team. Read at most once a minute (a flood of requests never floods the
+   * database); unread: off.
+   */
+  let shortLinkMemo: { at: number; on: boolean } | null = null;
+  async function shortLinkSwitchedOn(): Promise<boolean> {
+    const now = deps.now();
+    if (shortLinkMemo && now - shortLinkMemo.at < 60_000) return shortLinkMemo.on;
+    let on = false;
+    try {
+      const rows = (await rest("cockpit_sales_settings?key=eq.rooms&select=value&limit=1", { ms: 800 })) as { value: Row | null }[] | null;
+      const v = Array.isArray(rows) ? rows[0]?.value : null;
+      on = v?.enabled === true && v?.short_link === true;
+    } catch {
+      on = false;
+    }
+    shortLinkMemo = { at: now, on };
+    return on;
+  }
+
   /** The official WhatsApp number for the ended page (rooms.fallback.ended_page_whatsapp). */
   async function endedWhatsapp(ms: number): Promise<string | null> {
     if (ms < 50) return null;
@@ -1186,7 +1209,10 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
     const salt = env("IP_SALT");
     if (!salt) {
       noteStatus("open", false, MISSING.salt);
-      configAlert("open", true, MISSING.salt);
+      // Quiet while the short link is off (m1 round 2,
+      // watchdog-alerts-short-link-routes-while-off): IP_SALT is the short
+      // link's own secret, and no lead's message carries this page.
+      if (await shortLinkSwitchedOn()) configAlert("open", true, MISSING.salt);
       return json({ ok: false, state: "error", error: MISSING.salt }, 503, cors);
     }
     const code = normalizeCode(rawCode);

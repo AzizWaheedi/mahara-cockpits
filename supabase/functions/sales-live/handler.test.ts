@@ -1299,6 +1299,18 @@ describe("GET /open/{code}", () => {
     expect(BUDGET.openTotal + 1000).toBeLessThanOrEqual(core.REQUEST_MS);
   });
 
+  test("m1 round 2: a missing IP_SALT while the short link is off answers 503 and raises no alert (no message carries this page)", async () => {
+    const h = fresh(w => {
+      w.rooms.push(liveRoom());
+      delete w.env.IP_SALT;
+      w.settings[0] = { key: "rooms", value: { ...(w.settings[0]?.value as Row), enabled: true, short_link: false } };
+    });
+    const res = await h(openRequest("K7Q2MX"));
+    expect(res.status).toBe(503);
+    await world.settle();
+    expect(world.alerts.get("config:sales-live/open")?.on ?? false).toBe(false);
+  });
+
   test("another site's page may not read call links; the preflight is answered", async () => {
     const h = fresh(w => w.rooms.push(liveRoom()));
     const res = await h(openRequest("K7Q2MX", { origin: "https://evil.example" }));
@@ -1313,6 +1325,8 @@ describe("GET /open/{code}", () => {
     let h = fresh(w => {
       w.rooms.push(liveRoom());
       delete w.env.IP_SALT;
+      // The short link in use (rooms on, short_link on): its missing secret is the team's to hear (m1 round 2).
+      w.settings[0] = { key: "rooms", value: { ...(w.settings[0]?.value as Row), enabled: true, short_link: true } };
     });
     let res = await h(openRequest("K7Q2MX"));
     expect(res.status).toBe(503);
