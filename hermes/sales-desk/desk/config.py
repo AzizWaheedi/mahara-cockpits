@@ -162,10 +162,10 @@ class Config:
         home = Path(key("SALES_DESK_HOME", str(Path.home() / ".sales-desk"))).expanduser()
         provider = key("SALES_MODEL_PROVIDER", "vps").strip().lower() or "vps"
         max_tokens = key("SALES_MAX_TOKENS", "").strip()
-        # OpenRouter by default when its key is on the box; "none" (or off)
-        # turns the fallback off.
-        fallback = key("SALES_MODEL_FALLBACK", "").strip().lower() or (
-            "openrouter" if key("OPENROUTER_API_KEY") else "none")
+        # Only the fallback SALES_MODEL_FALLBACK names (2026-10-05): a key on
+        # the box is not a choice to send lead data to that provider. "none"
+        # (or off, or unset) means no fallback; the VPS sets openai.
+        fallback = key("SALES_MODEL_FALLBACK", "").strip().lower() or "none"
         if fallback in ("off", "no", "false", "0", "disabled"):
             fallback = "none"
         jobs = key("SALES_FALLBACK_JOBS", "proposal").strip().lower()

@@ -81,26 +81,34 @@ class Settings(unittest.TestCase):
         with mock.patch.dict(os.environ, env):
             return Config.from_env()
 
-    def test_openrouter_is_the_fallback_when_its_key_is_set_and_none_turns_it_off(self):
-        self.assertEqual(self.from_env(OPENROUTER_API_KEY="or-test").fallback, "openrouter")
+    def test_the_fallback_is_only_ever_the_one_named_and_none_turns_it_off(self):
+        # Opt-in since 2026-10-05: a key on the box is not a choice. The VPS
+        # reads OPENROUTER_API_KEY from /opt/data/.env, and lead data would have
+        # gone to OpenRouter once its credit was topped up, without anyone
+        # choosing it. The VPS names openai in ~/.sales-desk/env.
+        self.assertEqual(self.from_env(OPENROUTER_API_KEY="or-test").fallback, "none")
         self.assertEqual(self.from_env().fallback, "none")
+        self.assertEqual(self.from_env(OPENROUTER_API_KEY="or-test", SALES_MODEL_FALLBACK="openrouter").fallback,
+                         "openrouter")
         self.assertEqual(self.from_env(OPENROUTER_API_KEY="or-test", SALES_MODEL_FALLBACK="none").fallback, "none")
         self.assertEqual(self.from_env(OPENROUTER_API_KEY="or-test", SALES_MODEL_FALLBACK="off").fallback, "none")
         self.assertEqual(self.from_env(SALES_MODEL_FALLBACK="OpenAI").fallback, "openai")
 
     def test_only_proposals_fall_back_unless_the_jobs_list_says_otherwise(self):
-        c = self.from_env(OPENROUTER_API_KEY="or-test")
+        c = self.from_env(OPENROUTER_API_KEY="or-test", SALES_MODEL_FALLBACK="openrouter")
         self.assertEqual(c.fallback_jobs, ("proposal",))
         self.assertTrue(model.fallback_for(c, "proposal"))
         for job in ("notes", "digest", "reviews", "followups"):
             self.assertFalse(model.fallback_for(c, job), job)
-        c = self.from_env(OPENROUTER_API_KEY="or-test", SALES_FALLBACK_JOBS="proposal, notes ,reviews")
+        c = self.from_env(OPENROUTER_API_KEY="or-test", SALES_MODEL_FALLBACK="openrouter",
+                          SALES_FALLBACK_JOBS="proposal, notes ,reviews")
         self.assertEqual(c.fallback_jobs, ("proposal", "notes", "reviews"))
         self.assertTrue(model.fallback_for(c, "notes"))
         self.assertFalse(model.fallback_for(c, "followups"))
 
     def test_a_fallback_that_is_the_primary_itself_is_no_fallback(self):
-        c = self.from_env(OPENROUTER_API_KEY="or-test", SALES_MODEL_PROVIDER="openrouter")
+        c = self.from_env(OPENROUTER_API_KEY="or-test", SALES_MODEL_PROVIDER="openrouter",
+                          SALES_MODEL_FALLBACK="openrouter")
         self.assertFalse(model.fallback_for(c, "proposal"))
         c = self.from_env(SALES_MODEL_FALLBACK="none")
         self.assertFalse(model.fallback_for(c, "proposal"))

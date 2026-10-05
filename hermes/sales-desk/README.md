@@ -238,18 +238,20 @@ and `doctor` names the fix.
 
 The CEO, 2026-10-04: "fallbacks just in case anything breaks". One lapsed
 Claude sign-in on the VPS used to stop every proposal. Now
-`SALES_MODEL_FALLBACK` names a second provider (`openrouter` by default when
-`OPENROUTER_API_KEY` is on the box, `openai`, `anthropic` or `vps`; `none`
-turns it off), and proposals draft through it whenever the primary cannot
+`SALES_MODEL_FALLBACK` names a second provider (`openrouter`, `openai`,
+`anthropic` or `vps`; unset or `none` means no fallback), and proposals draft
+through it whenever the primary cannot
 answer at all. A failed try (a timeout, a garbled answer) is not an outage
 and never switches; nor does the day's AI ceiling, which counts every
 provider.
 
 On the VPS the fallback is OpenAI's `gpt-5` (2026-10-04): the OpenRouter
 account is out of credit, while OpenAI's key works and `gpt-5` drafted the
-proposal of 24 Sep. `OPENROUTER_API_KEY` is still in `/opt/data/.env`, so
-without `SALES_MODEL_FALLBACK=openai` in `~/.sales-desk/env` the default would
-pick OpenRouter and every handover would meet an empty account. gpt-5 is a
+proposal of 24 Sep. The fallback is opt-in since 2026-10-05: until then a
+key on the box chose it, and `OPENROUTER_API_KEY` in `/opt/data/.env` would
+have sent lead data to OpenRouter once its credit was topped up, without
+anyone choosing it. Without `SALES_MODEL_FALLBACK=openai` in
+`~/.sales-desk/env` there is no fallback at all. gpt-5 is a
 reasoning model: it is sent no sampling temperature, its limit goes out as
 `max_completion_tokens`, and `SALES_REASONING_EFFORT` reaches it only as a
 value it takes (`minimal` to `high`; `none` and `xhigh` are left out).
@@ -522,7 +524,7 @@ editor desk's README says. Never pipe a stale copy.
 |---|---|
 | `SALES_MODEL_PROVIDER` | `vps` |
 | `SALES_PROPOSAL_MODEL` | per provider, above |
-| `SALES_MODEL_FALLBACK` | `openrouter` when `OPENROUTER_API_KEY` is set, else `none`; the VPS sets `openai` |
+| `SALES_MODEL_FALLBACK` | `none`: only the provider named here is ever a fallback; the VPS sets `openai` |
 | `SALES_FALLBACK_MODEL` | the primary's model as the fallback names it (`anthropic/claude-opus-4.8` for `opus` through OpenRouter, `gpt-5` at OpenAI); the VPS sets `gpt-5` |
 | `SALES_FALLBACK_JOBS` | `proposal` (add `notes`, `digest`, `reviews`, `followups` to let them fall back too) |
 | `SALES_MODEL_TIMEOUT` | `900` seconds of silence per try |
