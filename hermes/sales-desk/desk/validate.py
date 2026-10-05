@@ -695,6 +695,23 @@ SPLIT = re.compile(
     r"|\b(?:monthly|quarterly)\s+(?:payments|instal+ments)\b"
     r"|دفعتين|على دفعات|(?:ثلاث|أربع|اربع)\s+دفعات|الدفعة الثانية|القسط الثاني|أقساط شهرية|اقساط شهرية|نصف المبلغ",
     re.I)
+# A payment tied to a result: the retired split paid its second half "after
+# the first contract signs". Since 3 October 2026 the offer is USD 6,000 in
+# full, or USD 3,000 and USD 3,000 thirty days later, both on dates.
+TIED_TO_A_RESULT = re.compile(
+    r"\b(?:when|once|after|upon|on|with|against|tied\s+to|linked\s+to|until)\s+"
+    r"(?:the\s+|your\s+|you\s+sign\s+(?:the\s+|your\s+)?|signing\s+(?:the\s+|your\s+)?)?"
+    r"first\s+(?:signed\s+|new\s+)?(?:contract|project|deal|client|sale)s?\b"
+    r"|\bfirst\s+(?:contract|project|deal|client|sale)\s+(?:signs|is\s+signed|closes|is\s+closed|is\s+won)\b"
+    r"|(?:بعد|عند|مع|حين|لما|لين|حتى|مرتبط\s+ب|مرتبطة\s+ب)\s*(?:توقيع\s+|إغلاق\s+|اغلاق\s+)?"
+    r"(?:أول|اول)\s+(?:عقد|مشروع|صفقة|عميل|بيعة|بيع)",
+    re.I)
+# A line that is about paying, so a first project mentioned for any other
+# reason is left alone.
+PAYMENT_WORDS = re.compile(r"\bpa(?:y|id|ys|ying|yment|yments)\b|\binstal+ments?\b|\bdue\b|\bbalance\b|\bhalf\b"
+                           r"|\bsecond\b|\bremaining\b|\brest\b|\bfee\b|\d[\d,]{2,}"
+                           r"|دفع|دفعة|الدفعة|القسط|قسط|يستحق|تستحق|المتبقي|الباقي|النصف|نصف|المبلغ|رسوم",
+                           re.I)
 N_TIMES = re.compile(r"(?<![\d,.])\b([1-9]|1[0-2])\s*[x×]\s*(?:([A-Z]{3})\s*)?(\d[\d,]{2,})")
 
 
@@ -786,6 +803,21 @@ def check_offer(data: dict[str, Any], resolved: dict[str, Any], offer: Optional[
     # the platforms, and saying so is not a payment plan.
     ad_paths = {f"investment.rows[{i}]." for i, r in enumerate(rows_all) if r in ad_rows}
     fee_page = [(p, t) for p, t in page if not any(p.startswith(a) for a in ad_paths)]
+    tied = [p for p, t in fee_page if PAYMENT_WORDS.search(t) and TIED_TO_A_RESULT.search(_plain(t))]
+    if tied:
+        rep.add(FAIL, "offer", "a payment is tied to the client's first contract, project, deal or sale in "
+                + ", ".join(tied[:4]) + ". Payments fall due on dates only: "
+                + " and ".join(f"{offer_mod.money(p['amount'], cur)} {p['due']}" for p in resolved["instalments"])
+                + ". Take the link to a result out")
+    # The total is what is paid to us at the start: the first instalment, in
+    # dollars or the local currency. Not the program plus advertising, which
+    # reads as one bill (two drafts on 5 October 2026 printed USD 10,500).
+    total_text = str((data.get("investment") or {}).get("total_amount") or "").translate(ARABIC_DIGITS)
+    total_figs = [n for n in _figures(total_text) if n >= 100]
+    if total_figs and not FILL_RE.search(total_text) and not any(same(n, instalments[0]) for n in total_figs):
+        rep.add(FAIL, "offer", f"investment.total_amount says {(data.get('investment') or {}).get('total_amount')}; "
+                               f"the total is what is paid to us at the start, {offer_mod.money(instalments[0], cur)}. "
+                               "Advertising stays on its own line, outside the total")
     if len(instalments) == 1:
         hits = [p for p, t in fee_page if SPLIT.search(t)]
         if hits:

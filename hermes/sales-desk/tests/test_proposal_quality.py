@@ -300,6 +300,74 @@ class SameCountTests(unittest.TestCase):
         self.assertIn("never a headline", text)
 
 
+# ------------------------------------------------------------ defects 5, 6 ---
+def offer_fails(deal: dict[str, Any]) -> list[str]:
+    return failing(check(deal), "offer")
+
+
+def two_payments(detail: str, total: str = "USD 3,000") -> dict[str, Any]:
+    deal = specific_deal()
+    deal["offer"] = offer.stamp(resolved({"payment": "two_payments"}))
+    deal["investment"]["rows"][1] = {"item": "Payment structure", "detail": detail, "amount": "2 x USD 3,000"}
+    deal["investment"]["total_amount"] = total
+    return deal
+
+
+class PaymentTiedToAResultTests(unittest.TestCase):
+    """The retired split paid its second half "after the first contract
+    signs". Since 3 October 2026 the two payments fall due on dates."""
+
+    def test_a_payment_tied_to_a_first_contract_fails(self):
+        for line in ("USD 3,000 at the start and USD 3,000 when your first contract signs.",
+                     "Half at the start, half after the first project is signed.",
+                     "The second USD 3,000 is due once your first client signs.",
+                     "USD 3,000 at the start; the rest on your first deal."):
+            self.assertTrue(any("first" in x for x in offer_fails(two_payments(line))), line)
+
+    def test_the_arabic_form_fails_too(self):
+        deal = two_payments("٣٬٠٠٠ دولار عند البدء و٣٬٠٠٠ دولار بعد توقيع أول عقد.")
+        deal["lang"] = "ar"
+        self.assertTrue(any("first" in x for x in offer_fails(deal)))
+
+    def test_payments_on_dates_pass(self):
+        self.assertEqual(offer_fails(two_payments("USD 3,000 at the start and USD 3,000 45 days after the start.")),
+                         [])
+
+    def test_a_first_project_that_is_not_about_paying_is_fine(self):
+        deal = specific_deal()
+        deal["terms"].append("We review the numbers with you after your first project.")
+        self.assertEqual(offer_fails(deal), [])
+
+
+class PricePageTotalTests(unittest.TestCase):
+    """The total printed USD 10,500 ("programme plus three months of
+    advertising"); it is what is paid to us at the start."""
+
+    def test_the_whole_engagement_as_the_total_fails(self):
+        deal = specific_deal()
+        deal["investment"]["total_label"] = "Program plus three months of advertising"
+        deal["investment"]["total_amount"] = "USD 10,500"
+        self.assertTrue(any("investment.total_amount" in x for x in offer_fails(deal)))
+
+    def test_under_two_payments_the_total_is_the_first(self):
+        self.assertTrue(any("investment.total_amount" in x for x in offer_fails(two_payments(
+            "USD 3,000 at the start and USD 3,000 45 days after the start.", total="USD 6,000"))))
+
+    def test_the_first_payment_in_the_local_currency_passes(self):
+        deal = specific_deal()
+        deal["investment"]["total_amount"] = "SAR 22,500"
+        self.assertEqual(offer_fails(deal), [])
+
+    def test_a_total_left_to_fill_is_a_gap_not_a_fault(self):
+        deal = specific_deal()
+        deal["investment"]["total_amount"] = "FILL"
+        self.assertEqual(offer_fails(deal), [])
+
+    def test_the_total_label_and_amount_have_room_between_them(self):
+        rule = re.search(r"\n  \.total \{(.*?)\}", TEMPLATE, re.S).group(1)
+        self.assertIn("gap: 6mm", rule)
+
+
 # ------------------------------------------------------------- the template ---
 @unittest.skipUnless(os.environ.get("SALES_RENDER_LIVE") == "1", "SALES_RENDER_LIVE=1 runs the real browser")
 class LiveTemplateTests(unittest.TestCase):

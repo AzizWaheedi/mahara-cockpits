@@ -95,7 +95,8 @@ class ReferenceCheckTests(unittest.TestCase):
         deal = general_deal()
         deal["investment"]["rows"][0]["amount"] = "USD 5,000"
         deal["investment"]["rows"][1]["amount"] = "USD 5,000"
-        deal["investment"]["total_amount"] = "USD 5,000"
+        # The total is left at what is paid at the start: a total that is not
+        # the first payment fails the validator outright (5 October 2026).
         self.assertFalse(failed(deal, "offer"))
         self.assertIn("offer", references.Verdict("x", "general", references.problems_in(deal, TEST_OFFER)).checks)
 
@@ -157,7 +158,9 @@ class MissedFormTests(unittest.TestCase):
         deal = general_deal()
         deal["terms"] = deal["terms"] + ["The second USD 3,000 falls due when your first contract signs."]
         self.assertTrue(failed(deal, "offer"))
-        self.assertFalse(failed(deal, "offer", {"payment": "two_payments"}))
+        # Under two payments it fails too since 5 October 2026, for tying the
+        # second payment to the first contract: payments fall due on dates.
+        self.assertTrue(any("first contract" in r["detail"] for r in rows(deal, {"payment": "two_payments"})["offer"]))
 
     def test_continuing_at_no_further_fee_is_free_work_even_with_the_guarantee(self):
         deal = general_deal()
