@@ -87,9 +87,11 @@ def early_end() -> Day:
     60 minutes; the presence view holds them on a call that long). It ends at
     14:46 and the closer presses I'm available at 14:47 (rooms.ts
     live.availability makes a standby room on press). The sweep's booked
-    guard (R6) reads a booked call as running for rooms.booking_min (45, the
-    live booking's slot), so from 14:45 it no longer closes the standby room
-    though the presence view still holds the closer on the 14:00 demo."""
+    guard (R6) read a booked call as running for rooms.booking_min (45, the
+    live booking's slot), so from 14:45 it no longer closed the standby room
+    though the presence view still held the closer on the 14:00 demo. Since
+    the closing sweep, R6 and R5's fresh room read the call's whole length
+    (rooms.lengths_min), the presence view's own window (20261004a)."""
     d = Day("Early end", kw("2026-10-08 13:45:00"), kw("2026-10-08 15:10:00"))
     d.person("closer-e", "closer", auto_join=False)
     d.booked("appt-e", "lead-e", "closer-e", kw("2026-10-08 14:00:00"), kind="demo")

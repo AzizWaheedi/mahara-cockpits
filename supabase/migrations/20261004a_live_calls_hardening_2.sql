@@ -1024,8 +1024,11 @@ begin
                   where p.email = rec.host_email and p.ghl_user_id is not null
                     and ap.status in ('new', 'confirmed', 'showed')
                     and ap.start_at <= t + w_standby_max + w_booked_guard
+                    -- Running: the call's whole length (rooms.lengths_min), as the
+                    -- presence view holds the host on it (stress2 closing sweep).
                     and ap.start_at + make_interval(mins => public.cockpit_sales_setting_int(
-                          coalesce(cfg -> 'booking_min', '{}'::jsonb), coalesce(ap.call_type, ''), 30)) > t);
+                          len, coalesce(ap.call_type, ''),
+                          case when ap.call_type = 'demo' then 60 else 30 end)) > t);
       n := n + public.cockpit_sales_rooms_close(array[rec.id], array['open', 'host_in'], 'ended', 'standby_refresh',
         case when fresh
           then format('Closed after %s minutes, before Zoom closes it. A fresh room is being made: join it from the strip.', standby_min)
@@ -1060,6 +1063,11 @@ begin
        cross join lateral (
          -- A booked call near, or one already running (booked late, or
          -- mirrored after its start): Zoom allows one meeting per host.
+         -- Running means the call's whole length (rooms.lengths_min: 30 an
+         -- intro, 60 a demo), the window the presence view holds the host
+         -- on it, never the live booking's shorter slot (booking_min): a
+         -- standby room never stays open under a host the view still has
+         -- on their booked call (stress2 closing sweep, a demo that ends early).
          select min(ap.start_at) - w_booked_guard as due
            from public.cockpit_sales_people as p
            join public.cockpit_sales_appointments as ap on ap.assigned_user_id = p.ghl_user_id
@@ -1067,7 +1075,8 @@ begin
             and ap.status in ('new', 'confirmed', 'showed')
             and ap.start_at <= t + w_booked_guard
             and ap.start_at + make_interval(mins => public.cockpit_sales_setting_int(
-                  coalesce(cfg -> 'booking_min', '{}'::jsonb), coalesce(ap.call_type, ''), 30)) > t) as b
+                  len, coalesce(ap.call_type, ''),
+                  case when ap.call_type = 'demo' then 60 else 30 end)) > t) as b
        where x.purpose = 'standby' and x.contact_id is null and x.state in ('open', 'host_in')
          and b.due is not null
          and (b.due + w_hold < t or not public.cockpit_sales_room_pending(x.id, t))

@@ -292,25 +292,27 @@ CHECKS.append((
     f"(select p.state || '/' || coalesce(p.reason, '-') || '/' || coalesce(p.why, '-') from public.cockpit_sales_presence as p where p.email = {lit(host('r6-600'))})",
     None))
 
-# L1 the offer's end: offer_until <= now; one miss sets Away, Not now does not.
+# L1 the offer's end: offer_until + 30 s <= now (20261004a, stress2 round 2: the
+# claim's own p_at window, so a Take pressed in time still finds the row
+# offered); one miss sets Away, Not now does not.
 available("l1-miss", ahead(3600))
 available("l1-declined", ahead(3600))
 available("l1-early", ahead(3600))
 EXTRA.append(
     "insert into public.cockpit_sales_live (request_id, contact_id, asked_by, kind, reason, offered_to, declined_by, offer_until) values "
     f"(gen_random_uuid(), {lit(cid('l1'))}, {lit(host('l1-setter'))}, 'demo', 'on_call', "
-    f"array[{lit(host('l1-miss'))}, {lit(host('l1-declined'))}], array[{lit(host('l1-declined'))}], now()), "
+    f"array[{lit(host('l1-miss'))}, {lit(host('l1-declined'))}], array[{lit(host('l1-declined'))}], now() - interval '30 seconds'), "
     f"(gen_random_uuid(), {lit(cid('l1-early'))}, {lit(host('l1-setter'))}, 'demo', 'on_call', "
-    f"array[{lit(host('l1-early'))}], '{{}}', now() + interval '1 second');")
-for label, h, want in (("L1 the offer's last second has passed: the closer who missed it is Away (missed_offer)", "l1-miss",
+    f"array[{lit(host('l1-early'))}], '{{}}', now() - interval '29 seconds');")
+for label, h, want in (("L1 the offer ended 30 s ago (its claim window is over): the closer who missed it is Away (missed_offer)", "l1-miss",
                         "a.state = 'away' and a.reason = 'missed_offer'"),
                        ("L1 the closer who pressed Not now stays available", "l1-declined", "a.state = 'available'"),
-                       ("L1 an offer one second from its end is still up; its closer stays available", "l1-early",
+                       ("L1 an offer that ended 29 s ago is still held for a Take pressed in time; its closer stays available", "l1-early",
                         "a.state = 'available'")):
     CHECKS.append((label, f"(select {want} from public.cockpit_sales_availability as a where a.email = {lit(host(h))})",
                    f"(select a.state || '/' || coalesce(a.reason, '-') from public.cockpit_sales_availability as a where a.email = {lit(host(h))})",
                    None))
-CHECKS.append(("L1 the handover whose offer_until is now is expired, the one a second ahead is still offered",
+CHECKS.append(("L1 the handover whose offer ended 30 s ago is expired, the one 29 s past its end is still offered",
                f"(select bool_and(case l.contact_id when {lit(cid('l1'))} then l.state = 'expired' else l.state = 'offered' end) "
                f"from public.cockpit_sales_live as l where l.contact_id in ({lit(cid('l1'))}, {lit(cid('l1-early'))}))",
                f"(select string_agg(l.contact_id || '=' || l.state, ', ') from public.cockpit_sales_live as l "

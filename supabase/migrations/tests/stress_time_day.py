@@ -51,7 +51,10 @@ TABLES = ["cockpit_sales_rooms", "cockpit_sales_room_events", "cockpit_sales_liv
           "cockpit_sales_settings", "cockpit_sales_worker_status", "cockpit_sales_alerts", "cockpit_sales_messages",
           "cockpit_audit_log", "cockpit_sales_room_secrets",
           # 20261004a's S1 reads the cockpit's own marks (stress2, fix round 1).
-          "cockpit_sales_dispositions"]
+          "cockpit_sales_dispositions",
+          # and, since fix round 2, the dials and the leads (the lead reached
+          # by phone): without their copies S1 fails on every sweep of a day.
+          "cockpit_sales_dials", "cockpit_sales_leads"]
 # The deployed functions the sweep, the triggers and the watchdog call (20261003a, b, c);
 # migration d's text then replaces the ones it changes.
 FUNCTIONS = ["cockpit_sales_setting_int", "cockpit_sales_room_code", "cockpit_sales_rooms_guard",
