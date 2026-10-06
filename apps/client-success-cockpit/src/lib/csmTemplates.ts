@@ -243,9 +243,9 @@ const TEMPLATES: Template[] = [
     when: c => (c.liveDays ?? 99) <= 1,
     why: () => "Live today, the launch message from the SOP",
     en: c =>
-      `Hey ${first(c.name)}! Our team has finalised the buildout and your ads are going live shortly. Before they do, a few quick things.\n\n**Our check-in calls:** you and I will have a call every two weeks covering the numbers, the leads, and what's actually closing. 20 to 30 minutes on Zoom, be somewhere quiet with a laptop, not in the car.\n\n**Tracking your return:** keep the tracking sheet updated day to day. If it isn't filled in we're optimising blind, and that directly limits what we can get out of the money you're spending.\n\n**Keep sending us content:** your Drive folder is pinned at the top of the group. The clients whose ads keep performing month after month are the ones who keep the folder full.\n\n**Addressing the elephant:** at any point, if you have concerns, doubts or confusion, tell me. After working with 70+ firms, the most successful ones overcommunicate the highs and the lows.\n\n**Month one is always the slowest:** we're gathering data and finding what your market responds to. If you don't see a flood in week one, that's normal, not a problem.\n\nNow let's get you some projects.`,
+      `Hey ${first(c.name)}! Our team has finalised the buildout and your ads are going live shortly. Before they do, a few quick things.\n\n**Our check-in calls:** you and I will have a call every week for your first month, then every two weeks, covering the numbers, the leads, and what's actually closing. 20 to 30 minutes on Zoom, be somewhere quiet with a laptop, not in the car.\n\n**Tracking your return:** keep the tracking sheet updated day to day. If it isn't filled in we're optimising blind, and that directly limits what we can get out of the money you're spending.\n\n**Keep sending us content:** your Drive folder is pinned at the top of the group. The clients whose ads keep performing month after month are the ones who keep the folder full.\n\n**Addressing the elephant:** at any point, if you have concerns, doubts or confusion, tell me. After working with 70+ firms, the most successful ones overcommunicate the highs and the lows.\n\n**Month one is always the slowest:** we're gathering data and finding what your market responds to. If you don't see a flood in week one, that's normal, not a problem.\n\nNow let's get you some projects.`,
     ar: c =>
-      `هلا ${first(c.name)}! الفريق خلص البناء وإعلاناتك بتنزل قريب. قبل ما تشتغل، كم نقطة سريعة.\n\n**مكالماتنا:** أنا وأنت بيكون بينا مكالمة كل أسبوعين نراجع فيها الأرقام والليدز وشنو اللي يتقفل فعلاً. من ٢٠ إلى ٣٠ دقيقة على زوم، وكون بمكان هادي وعندك لابتوب مو وأنت بالسيارة.\n\n**متابعة العائد:** مهم جداً تحدث شيت المتابعة يوم بيوم. إذا ما تعبى، إحنا نحسّن وإحنا عميان، وهذا يحد مباشرة من قد إيش نقدر نطلع من الفلوس اللي تصرفها.\n\n**استمر ترسل لنا محتوى:** فولدر الدرايف مثبت فوق بالقروب. العملاء اللي إعلاناتهم تستمر تشتغل شهر ورا شهر هم اللي يخلون الفولدر مليان.\n\n**نتكلم بصراحة:** بأي وقت إذا عندك ملاحظة أو شك أو شي مو واضح، قل لي. بعد ما اشتغلنا مع أكثر من ٧٠ شركة، أنجح الناس هم اللي يتواصلون بكثرة بالزين وبالشين.\n\n**الشهر الأول دايم هو الأبطأ:** نجمع بيانات ونشوف السوق يتفاعل مع شنو، وبعدها يتحسن. إذا ما شفت انهيال بالأسبوع الأول، هذا طبيعي مو مشكلة.\n\nيلا نجيب لك مشاريع.`,
+      `هلا ${first(c.name)}! الفريق خلص البناء وإعلاناتك بتنزل قريب. قبل ما تشتغل، كم نقطة سريعة.\n\n**مكالماتنا:** أنا وأنت بيكون بينا مكالمة كل أسبوع بأول شهر، وبعدها كل أسبوعين، نراجع فيها الأرقام والليدز وشنو اللي يتقفل فعلاً. من ٢٠ إلى ٣٠ دقيقة على زوم، وكون بمكان هادي وعندك لابتوب مو وأنت بالسيارة.\n\n**متابعة العائد:** مهم جداً تحدث شيت المتابعة يوم بيوم. إذا ما تعبى، إحنا نحسّن وإحنا عميان، وهذا يحد مباشرة من قد إيش نقدر نطلع من الفلوس اللي تصرفها.\n\n**استمر ترسل لنا محتوى:** فولدر الدرايف مثبت فوق بالقروب. العملاء اللي إعلاناتهم تستمر تشتغل شهر ورا شهر هم اللي يخلون الفولدر مليان.\n\n**نتكلم بصراحة:** بأي وقت إذا عندك ملاحظة أو شك أو شي مو واضح، قل لي. بعد ما اشتغلنا مع أكثر من ٧٠ شركة، أنجح الناس هم اللي يتواصلون بكثرة بالزين وبالشين.\n\n**الشهر الأول دايم هو الأبطأ:** نجمع بيانات ونشوف السوق يتفاعل مع شنو، وبعدها يتحسن. إذا ما شفت انهيال بالأسبوع الأول، هذا طبيعي مو مشكلة.\n\nيلا نجيب لك مشاريع.`,
   },
   {
     id: "launch_week",
@@ -378,12 +378,12 @@ const TEMPLATES: Template[] = [
 export const TEMPLATE_TITLES: string[] = TEMPLATES.map(t => t.title);
 
 /**
- * The blanks a draft can carry for the CSM to fill: the report link it does
- * not have yet, the onboarding spine's list, date and time. A message still
- * holding one never reaches a client (the simplification audit, 2026-10-06).
+ * The blanks a draft can carry for the CSM to fill: anything in square
+ * brackets ([report link], [numbers], [القائمة]) and the spine's DATE and
+ * TIME. A message still holding one never reaches a client (the
+ * simplification audit, 2026-10-06).
  */
-export const PLACEHOLDER =
-  /\[(report link|رابط التقرير|list|القائمة)\]|\b(DATE|TIME)\b/;
+export const PLACEHOLDER = /\[[^\]\n]{1,40}\]|\b(DATE|TIME)\b/;
 
 /** Every blank left in a message, once each, to say what to fill in. */
 export function blanksIn(text: string): string[] {

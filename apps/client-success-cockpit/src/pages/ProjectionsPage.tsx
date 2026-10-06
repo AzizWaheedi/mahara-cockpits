@@ -3,6 +3,7 @@ import { Loader2, RefreshCw } from "lucide-react";
 import { useState } from "react";
 import { useSearchParams } from "react-router";
 import { toast } from "sonner";
+import { BookCallButton } from "@/components/ClientCheckIn";
 import { PageHeader, Pill, PillRow } from "@/components/kit";
 import {
   type Book,
@@ -162,6 +163,18 @@ export function ProjectionsPage({ embedded = false }: { embedded?: boolean }) {
             onClose={() => open(null)}
             onEdit={onEdit}
             onBook={onBook}
+            // The same booking as a client's page: HighLevel's free times
+            // only, then the time goes on the plan.
+            bookWith={(row, done) => (
+              <BookCallButton
+                taskId={row.taskId}
+                clientName={row.clientName}
+                kind="checkin"
+                onBooked={receipt => void done(receipt.startTime)}
+              >
+                Book it at a free time
+              </BookCallButton>
+            )}
           />
         </>
       )}

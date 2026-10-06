@@ -583,6 +583,7 @@ export function BookCallButton({
   kind,
   children,
   variant,
+  onBooked,
 }: {
   taskId: string;
   clientName: string;
@@ -590,6 +591,8 @@ export function BookCallButton({
   kind?: CallKind;
   children: ReactNode;
   variant?: "default" | "outline" | "ghost";
+  /** After HighLevel confirms, with its receipt (Projections records the time). */
+  onBooked?: (receipt: Receipt, kind: CallKind) => void;
 }) {
   const prepare = useAction(api.checkIns.prepare);
   const book = useAction(api.checkIns.book);
@@ -601,6 +604,7 @@ export function BookCallButton({
       kind={kind}
       prepare={prepare}
       book={book}
+      onBooked={onBooked}
       trigger={
         <Button size="sm" variant={variant}>
           <CalendarPlus aria-hidden />

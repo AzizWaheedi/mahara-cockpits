@@ -103,6 +103,11 @@ describe("the monthly report message", () => {
       blanksIn("Done so far: [list]. On track for DATE at TIME, [list]."),
     ).toEqual(["[list]", "DATE", "TIME"]);
     expect(blanksIn("ما تم: [القائمة]")).toEqual(["[القائمة]"]);
+    // The day-14 review's own blanks.
+    expect(blanksIn("Here's the picture: [numbers]. Working: [x].")).toEqual([
+      "[numbers]",
+      "[x]",
+    ]);
     // Ordinary words are not blanks.
     expect(blanksIn("Your update date is set, time to launch.")).toEqual([]);
   });

@@ -986,16 +986,29 @@ const SLOTS = Array.from({ length: 16 }, (_, i) => {
   return `${String(h).padStart(2, "0")}:${i % 2 ? "30" : "00"}`;
 });
 
+/**
+ * The app's own booking control, when it has one: the client success
+ * cockpit books at HighLevel's free times, the same "Book a call" as a
+ * client's page (the simplification audit, 2026-10-06), and records the
+ * booked time on the plan through `done`.
+ */
+export type BookWith = (
+  row: WindowRow,
+  done: (when: string) => Promise<void>,
+) => ReactNode;
+
 function BookCall({
   row,
   onBook,
   onEdit,
   today,
+  bookWith,
 }: {
   row: WindowRow;
   onBook: Book | null;
   onEdit: Edit;
   today: string;
+  bookWith?: BookWith;
 }) {
   const id = useId();
   const [day, setDay] = useState("");
@@ -1043,7 +1056,24 @@ function BookCall({
           </button>
         </div>
       ) : null}
-      {onBook ? (
+      {bookWith ? (
+        <div className="rounded-xl bg-muted/40 p-3">
+          <p className="text-xs text-muted-foreground">
+            Books a results and strategy review on the client check-in calendar
+            in GoHighLevel, at a time that is free. The invite never mentions a
+            renewal.
+          </p>
+          <div className="mt-2">
+            {bookWith(row, async when => {
+              await onEdit({
+                kind: "plan",
+                taskId: row.taskId,
+                patch: { callBookedFor: when },
+              });
+            })}
+          </div>
+        </div>
+      ) : onBook ? (
         <div className="rounded-xl bg-muted/40 p-3">
           <p className="text-xs text-muted-foreground">
             Books a results and strategy review on the client check-in calendar
@@ -1314,12 +1344,15 @@ export function PlanDrawer({
   onClose,
   onEdit,
   onBook,
+  bookWith,
 }: {
   page: ProjectionsPage;
   taskId: string | null;
   onClose: () => void;
   onEdit: Edit;
   onBook: Book | null;
+  /** The app's own booking control; the built-in day and time when absent. */
+  bookWith?: BookWith;
 }) {
   const row = page.window.rows.find(r => r.taskId === taskId) ?? null;
   const r = useRun();
@@ -1392,6 +1425,7 @@ export function PlanDrawer({
                   onBook={onBook}
                   onEdit={onEdit}
                   today={page.today}
+                  bookWith={bookWith}
                 />
               </Section>
               <Section title="Status">
