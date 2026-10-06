@@ -12,6 +12,7 @@ import {
   statSheetUrl,
 } from "./clientData";
 import { cleanDosDonts } from "./dosDonts";
+import { hasGhlCredential, sourceGhlLink } from "./ghlCredential";
 import { flush } from "./health";
 import { loadSheetCache, type SheetCache, saveSheetCache } from "./sheetCache";
 import { CLIENTS_LIST } from "./sync";
@@ -609,12 +610,11 @@ type GhlAccount = {
 /** `{normalised client name | id:<clickupId>: account}` off Client Data columns A-E. */
 async function ghlAccounts(): Promise<Map<string, GhlAccount>> {
   const out = new Map<string, GhlAccount>();
-  // Agency-level tokens cannot read a sub-account's pipelines or calendars
-  // (tested 2026-09-10: 401 on every location endpoint and on locationToken),
-  // so each row needs its own sub-account private integration token.
+  // Each row needs a location credential. The onboarding worker now writes
+  // scoped OAuth tokens as well as the older private integration tokens.
   for (const r of await readClientData()) {
     const token = r.ghlToken;
-    if (!token.startsWith("pit-") || !r.ghlLocationId) continue;
+    if (!hasGhlCredential(token) || !r.ghlLocationId) continue;
     const entry = {
       name: r.name,
       clickupId: r.clickupId,
@@ -874,11 +874,11 @@ function gapsFor(x: {
         "GHL ID empty on Client Data",
         "Database sheet → Client Data → GHL ID: the sub-account location id.",
       );
-    if (!row.ghlToken.startsWith("pit-"))
+    if (!hasGhlCredential(row.ghlToken))
       add(
         "ghl_token",
-        "GHL API token empty on Client Data",
-        "In GHL switch into this sub-account → Settings → Private Integrations → New, scopes: contacts, opportunities, calendars, calendar events, locations (read). Paste the pit-… token into Client Data → GHL API.",
+        "GHL credential missing or invalid on Client Data",
+        "Check automatic credential setup for this exact Client Data row. New accounts receive a managed location token. Do not replace it with an agency token.",
       );
     if (!/@g\.us$/.test(row.waGroupId))
       add(
@@ -917,7 +917,7 @@ function gapsFor(x: {
       "Stat sheet cannot be read",
       `Share the stat sheet with claude@studied-handler-508106-m5.iam.gserviceaccount.com as viewer. Last error: ${String(x.perf.error).slice(0, 100)}`,
     );
-  if (row?.ghlToken.startsWith("pit-") && !x.acct)
+  if (hasGhlCredential(row?.ghlToken) && !x.acct)
     add(
       "ghl_match",
       "GHL row exists but did not match the card",
@@ -1226,9 +1226,11 @@ export const push = internalAction({
         clickup: c.taskUrl,
         sheet: c.sheetLink,
         drive: c.driveLink,
-        ghl: acct
-          ? `https://app.maharamedia.com/v2/location/${acct.locationId}/dashboard`
-          : undefined,
+        ghl:
+          sourceGhlLink(c.data, c.taskId) ||
+          (acct
+            ? `https://app.maharamedia.com/v2/location/${acct.locationId}/dashboard`
+            : undefined),
         adAccount: meta ? `${META_ADS_MANAGER}${meta.id}` : undefined,
         contract: c.contractLink,
       })) {

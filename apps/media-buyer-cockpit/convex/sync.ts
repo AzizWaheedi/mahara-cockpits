@@ -8,6 +8,7 @@ import {
 } from "./_generated/server";
 import { CPB_GATE, CPL_GATE, NEW_CAMPAIGN_FORM_URL } from "./constants";
 import { authenticatedAction } from "./functions";
+import { hasGhlCredential } from "./ghlCredential";
 import { flush } from "./health";
 import {
   hasPicture,
@@ -1298,7 +1299,7 @@ async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
     // Each row needs its own sub-account token: agency-level tokens cannot
     // read location endpoints (tested 2026-09-10).
     const token = String(r[col("GHL API")] ?? "").trim();
-    if (name && loc && token.startsWith("pit-")) {
+    if (name && loc && hasGhlCredential(token)) {
       ghlByClient.set(normalize(name), {
         loc: String(loc),
         token,

@@ -17,6 +17,11 @@ scripts/check-shared.sh || exit 1
 bun test scripts/convex-removals.test.ts >/dev/null 2>&1 \
   || { echo "the deploy guard's tests fail (bun test scripts/convex-removals.test.ts)"; exit 1; }
 
+# New-client onboarding stores location OAuth credentials alongside legacy
+# private integration tokens. Both must stay visible to the cockpit feeds.
+(cd apps/media-buyer-cockpit && bun test scripts/ghl-credential.test.ts >/dev/null 2>&1) \
+  || { echo "the GHL credential compatibility tests fail"; exit 1; }
+
 # The Frame.io webhook is a public URL that writes to our notes, so its
 # signature check is tested on every ship rather than when somebody
 # remembers.
