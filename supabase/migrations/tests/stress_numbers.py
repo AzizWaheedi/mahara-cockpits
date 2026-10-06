@@ -35,6 +35,7 @@ import uuid
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import run_checks  # noqa: E402  (token handling, the management API call, the transaction guard)
+from fence_switches import SETTLE_ON, switches_on  # noqa: E402  (Milestone 1 ships the settle off; S1's checks turn it on, rolled back)
 
 PREFIX = "stress-numbers-"
 INTRO_CAL = "dsqmJ393Dwl9fDSbIVOI"
@@ -152,7 +153,7 @@ insert into pg_temp.sn_checks (name, ok, detail) values
 
 select name, ok, detail from pg_temp.sn_checks order by n;
 rollback;
-""" % {"cal": INTRO_CAL, "hardening": run_checks.hardening_sql()}
+""" % {"cal": INTRO_CAL, "hardening": run_checks.hardening_sql() + switches_on(SETTLE_ON)}
 
 LEFTOVERS = r"""
 select 'room ' || id::text as what from public.cockpit_sales_rooms

@@ -115,7 +115,7 @@ def t_join_before_press():
     The sweep must not post the settle that marks her intro a no-show. The
     control (her join 5 s after the press) is left alone today too."""
     in_window()
-    sql = ("begin;\n" + s2._MIG2 + "\n"
+    sql = ("begin;\n" + s2._MIG2 + "\n" + s2._SETTLE_ON + "\n"
            "create temp table s5_rooms (tag text, id uuid) on commit drop;\n"
            + ended_intro_room("before", -10)
            + ended_intro_room("after", 5) +

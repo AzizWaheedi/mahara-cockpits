@@ -45,6 +45,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import run_checks  # noqa: E402
 from stress_numbers import q  # noqa: E402  (the management API call with its 429 wait)
+from fence_switches import SETTLE_ON, switches_on  # noqa: E402
 
 SQL = r"""
 begin;
@@ -132,6 +133,9 @@ set local lock_timeout = '5s';
 set local statement_timeout = '90s';
 -- ===== 20261004a (the repo's fix round 1, rolled back with the rest) =====
 {MIG2}
+-- Milestone 1 ships the settle off (S1 settles and asks nothing): this check of
+-- S1 turns it on as a manager, rolled back with the rest.
+{SETTLE_ON}
 create temp table s2_checks (n serial primary key, name text not null, ok boolean not null, detail text) on commit drop;
 
 -- Two booked intros that started 25 minutes ago; the mirror still says
@@ -224,7 +228,7 @@ def rolled_back(sql: str) -> list:
 SETTLE_SQL = SETTLE_SQL.replace(
     "{MIG2}",
     run_checks.strip_transaction(run_checks.HARDENING_2, open(os.path.join(run_checks.MIGRATIONS, run_checks.HARDENING_2)).read()),
-)
+).replace("{SETTLE_ON}", switches_on(SETTLE_ON))
 
 
 def main():

@@ -39,6 +39,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import run_checks  # noqa: E402
 from stress_numbers import b2b_read, q  # noqa: E402  (the management API call with its 429 wait)
+from fence_switches import SETTLE_ON, switches_on  # noqa: E402  (Milestone 1 ships the settle off; S1's checks turn it on, rolled back)
 
 INTRO_CAL = "dsqmJ393Dwl9fDSbIVOI"
 # sales-api dialer.ts BOOKING_CALENDARS (the count's own official list).
@@ -236,7 +237,7 @@ def main():
     if before:
         sys.exit(f"Synthetic rows from an earlier run are still there: {[r['what'] for r in before]}. Remove them first.")
     hard = run_checks.hardening_sql()
-    rows = (rolled_back(SETTLE_SQL % {"cal": INTRO_CAL, "hardening": hard})
+    rows = (rolled_back(SETTLE_SQL % {"cal": INTRO_CAL, "hardening": hard + switches_on(SETTLE_ON)})
             + rolled_back(SLOT_SQL % {"hardening": hard})
             + part_c())
     failed = [r for r in rows if not r.get("ok")]

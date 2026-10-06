@@ -523,12 +523,16 @@ def compose() -> str:
     # policy on room events (only events that belong to a room).
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     import run_checks  # noqa: E402  (migration d's text without its own begin and commit)
+    from fence_switches import LIVE_ON, switches_on  # noqa: E402
     return "\n".join([
         "begin;",
         "set local lock_timeout = '5s';",
         "set local statement_timeout = '60s';",
         "-- ===== 20261003d (the repo's hardening, rolled back with the rest) =====",
         run_checks.hardening_sql(),
+        # Milestone 1 holds the handover claim shut while live.enabled is off
+        # (20261004a): C1's refusals are the claim's own only with live on.
+        switches_on(LIVE_ON),
         body,
         FINAL,
         "rollback;",

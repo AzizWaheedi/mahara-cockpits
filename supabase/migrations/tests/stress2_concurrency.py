@@ -52,6 +52,14 @@ import run_checks  # noqa: E402
 HARDENING_2 = run_checks.HARDENING_2
 _MIG2 = run_checks.strip_transaction(HARDENING_2, open(os.path.join(run_checks.MIGRATIONS, HARDENING_2)).read())
 
+# Milestone 1 holds the handover claim shut while live.enabled is off (20261004a):
+# a check of the claim turns live on as a manager first, in its own rolled-back run.
+from fence_switches import LIVE_ON, SETTLE_ON, switches_on  # noqa: E402
+
+_LIVE_ON = switches_on(LIVE_ON)
+# The same for the sweep's S1 (the no-show settle), which Milestone 1 ships off.
+_SETTLE_ON = switches_on(SETTLE_ON)
+
 
 def _function_text(name: str) -> str:
     m = re.search(r"create or replace function public\." + name + r"\(.*?\n\$\$;", _MIG2, re.S)
@@ -383,6 +391,7 @@ def t_late_take_made_away():
     rows = q(f"""
       begin;
       {_MIG2}
+      {_LIVE_ON}
       insert into public.cockpit_sales_availability (email, state, until, via)
       values ({lit(me)}, 'available', now() + interval '1 hour', 'cockpit')
       on conflict (email) do update set state = 'available', until = excluded.until, reason = null;
@@ -417,6 +426,7 @@ def t_take_in_time():
     rows = q(f"""
       begin;
       {_MIG2}
+      {_LIVE_ON}
       insert into public.cockpit_sales_live (id, request_id, contact_id, asked_by, kind, reason, offered_to, offer_until)
       values ({lit(lid)}, {lit(str(uuid.uuid4()))}, {lit(RUN + '-intime-lead')}, {lit(RUN + '-setter' + HOST)}, 'demo', 'on_call',
               array[{lit(me)}]::text[], now() - interval '5 seconds'),

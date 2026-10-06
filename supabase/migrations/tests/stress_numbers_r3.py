@@ -36,6 +36,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import run_checks  # noqa: E402
 from stress_numbers import q  # noqa: E402  (the management API call with its 429 wait)
+from fence_switches import SETTLE_ON, switches_on  # noqa: E402  (Milestone 1 ships the settle off; S1's checks turn it on, rolled back)
 
 INTRO_CAL = "dsqmJ393Dwl9fDSbIVOI"
 
@@ -132,7 +133,7 @@ def main():
     before = q(LEFTOVERS, write=False)
     if before:
         sys.exit(f"Synthetic rows from an earlier run are still there: {[r['what'] for r in before]}. Remove them first.")
-    rows = rolled_back(SETTLE_SQL % {"cal": INTRO_CAL, "hardening": run_checks.hardening_sql()})
+    rows = rolled_back(SETTLE_SQL % {"cal": INTRO_CAL, "hardening": run_checks.hardening_sql() + switches_on(SETTLE_ON)})
     failed = [r for r in rows if not r.get("ok")]
     for r in rows:
         print(f"{'PASS' if r.get('ok') else 'FAIL'}  {r.get('name')}" + (f"  ({r.get('detail')})" if r.get("detail") else ""))

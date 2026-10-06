@@ -31,6 +31,9 @@ import stress2_security as s2  # noqa: E402  (query, token)
 
 MIG2 = run_checks.strip_transaction(run_checks.HARDENING_2,
                                     open(os.path.join(run_checks.MIGRATIONS, run_checks.HARDENING_2)).read())
+# Milestone 1 holds the handover claim shut while live.enabled is off
+# (20261004a): the Take this run plays needs live on, as a manager turns it on.
+from fence_switches import LIVE_ON, switches_on  # noqa: E402
 
 CHECKS = r"""
 create temp table s2r6 (n serial primary key, name text not null, ok boolean not null, detail text) on commit drop;
@@ -117,7 +120,7 @@ def compose() -> str:
         if word in CHECKS.lower():
             raise SystemExit(f"Refusing to run: the checks contain a transaction statement ({word.strip()}).")
     return "\n".join(["begin;", "set local lock_timeout = '5s';", "set local statement_timeout = '90s';",
-                      MIG2, CHECKS, FINAL, "rollback;"])
+                      MIG2, switches_on(LIVE_ON), CHECKS, FINAL, "rollback;"])
 
 
 def main():

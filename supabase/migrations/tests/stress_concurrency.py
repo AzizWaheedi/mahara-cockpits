@@ -89,6 +89,14 @@ def hardening() -> str:
     return run_checks.hardening_sql()
 
 
+def live_on() -> str:
+    """live.enabled on as a manager, for a rolled-back claim check only: since
+    20261004a the claim claims nothing while it is off (Milestone 1)."""
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from fence_switches import LIVE_ON, switches_on  # noqa: E402
+    return switches_on(LIVE_ON)
+
+
 def q(sql: str, write: bool = True):
     """One request on its own connection. A throttled or refused-for-connections
     request never ran, so it is sent again; any other error is the answer."""
@@ -472,6 +480,7 @@ def t_claim_function_same_closer():
     other = f"{RUN}-closer-b{HOST}"
     rows = q(f"""
       begin;
+      {live_on()}
       create temp table sc_out (step text, n int) on commit drop;
       insert into public.cockpit_sales_live (id, request_id, contact_id, asked_by, kind, reason, offered_to, offer_until)
       values ('00000000-0000-4000-8000-0000000c0de1', {lit(str(uuid.uuid4()))}, {lit(RUN + '-lead-fn')}, {lit(RUN + '-setter' + HOST)},
@@ -571,6 +580,7 @@ def t_r2_claim_other_room():
     rows = q(f"""
       begin;
       {hardening()}
+      {live_on()}
       insert into public.cockpit_sales_live (id, request_id, contact_id, asked_by, kind, reason, offered_to, offer_until)
       values ('00000000-0000-4000-8000-0000000c0de2', {lit(str(uuid.uuid4()))}, {lit(RUN + '-lead-take')}, {lit(setter_)},
               'demo', 'on_call', array[{lit(me)}]::text[], now() + interval '10 minutes');

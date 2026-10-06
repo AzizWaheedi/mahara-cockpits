@@ -164,18 +164,30 @@ room("r2-121", state="'creating'", requested_at=ago(125), claimed_at=ago(121))
 check("R2 a room claimed 119 s ago is still being made", "r2-119", "r.state = 'creating'")
 check("R2 a room claimed 121 s ago fails (create_timeout)", "r2-121", "r.state = 'failed' and r.end_reason = 'create_timeout'")
 
-# R3 open: the host is not in by host_by.
+# R3 open: the host is not in by host_by. These rooms have no lead wait
+# started (lead_by null): since m1 round 3 a video-link room whose lead's ten
+# minutes are running waits for the host until lead_by + open_grace (below).
 for n, hb in (("r3-minus1", -1), ("r3-plus1", 1)):
-    room(n, **S_OPEN, requested_at=ago(300), opened_at=ago(290), link_sent_at=ago(289),
-         host_by=ahead(hb), lead_by=ahead(600))
+    room(n, **S_OPEN, requested_at=ago(300), opened_at=ago(290), host_by=ahead(hb), lead_by="null")
 check("R3 host_by one second ahead: the room stays open", "r3-plus1", "r.state = 'open'")
 check("R3 host_by one second past: closed host_not_in", "r3-minus1", "r.state = 'expired' and r.end_reason = 'host_not_in'")
+# m1 round 3 (later-link-promise-cut-by-host-wait): the link went and the
+# lead's ten minutes run, so host_by passing does not close the room; it
+# closes host_not_in once lead_by + open_grace (180 s) is over too.
+room("r3-lead-wait", **S_OPEN, requested_at=ago(300), opened_at=ago(290), link_sent_at=ago(289),
+     host_by=ago(1), lead_by=ahead(600))
+room("r3-lead-wait-over", **S_OPEN, requested_at=ago(900), opened_at=ago(890), link_sent_at=ago(800),
+     host_by=ago(400), lead_by=ago(181))
+check("R3 host_by past, the lead's ten minutes still running: the room waits for the host", "r3-lead-wait",
+      "r.state = 'open'")
+check("R3 host_by and lead_by + open_grace both past: closed host_not_in", "r3-lead-wait-over",
+      "r.state = 'expired' and r.end_reason = 'host_not_in'")
 # ... held by an unhandled Zoom event, at most 300 s past due.
-room("r3-held", **S_OPEN, requested_at=ago(300), opened_at=ago(290), host_by=ago(1), lead_by=ahead(600))
+room("r3-held", **S_OPEN, requested_at=ago(300), opened_at=ago(290), host_by=ago(1), lead_by="null")
 event("r3-held", at=ago(10))
-room("r3-held-301", **S_OPEN, requested_at=ago(900), opened_at=ago(890), host_by=ago(301), lead_by=ahead(600))
+room("r3-held-301", **S_OPEN, requested_at=ago(900), opened_at=ago(890), host_by=ago(301), lead_by="null")
 event("r3-held-301", at=ago(10))
-room("r3-held-299", **S_OPEN, requested_at=ago(900), opened_at=ago(890), host_by=ago(299), lead_by=ahead(600))
+room("r3-held-299", **S_OPEN, requested_at=ago(900), opened_at=ago(890), host_by=ago(299), lead_by="null")
 event("r3-held-299", at=ago(10))
 check("R3 a waiting Zoom event holds the timer just past due", "r3-held", "r.state = 'open'")
 check("R3 the hold still stands 299 s past due", "r3-held-299", "r.state = 'open'")
@@ -465,7 +477,8 @@ def compose() -> str:
              run_checks.hardening_sql(),
              "create temp table stress_settings (key text primary key, value jsonb not null) on commit drop;",
              "insert into pg_temp.stress_settings (key, value) select s.key, s.value || case s.key "
-             "when 'rooms' then '{\"enabled\": true, \"providers\": {\"zoom\": true, \"meet\": true}}'::jsonb "
+             # settle on in this copy only: Milestone 1 ships it off, and S1 below is played.
+             "when 'rooms' then '{\"enabled\": true, \"settle\": true, \"providers\": {\"zoom\": true, \"meet\": true}}'::jsonb "
              "else '{\"enabled\": true, \"standby\": true, \"hours\": {\"days\": [0, 1, 2, 3, 4, 5, 6], "
              "\"from\": \"00:00\", \"to\": \"24:00\", \"tz\": \"Asia/Kuwait\"}}'::jsonb end "
              "from public.cockpit_sales_settings as s where s.key in ('rooms', 'live');",

@@ -54,7 +54,8 @@ COPY = r"""
 create temp table r4_settings (key text primary key, value jsonb not null) on commit drop;
 insert into pg_temp.r4_settings (key, value)
 select s.key, s.value || case s.key
-         when 'rooms' then '{"enabled": true, "short_link": true, "providers": {"zoom": true, "meet": true}}'::jsonb
+         -- settle on: Milestone 1 ships it off, and this run plays S1 (only this copy reads it).
+         when 'rooms' then '{"enabled": true, "short_link": true, "settle": true, "providers": {"zoom": true, "meet": true}}'::jsonb
          else '{}'::jsonb end
   from public.cockpit_sales_settings as s where s.key in ('rooms', 'live');
 create temp table r4_status (worker text, job text, ok boolean, detail text, at timestamptz,

@@ -86,6 +86,7 @@ def t_take_sweep():
     rows = q(f"""
       begin;
       {s2._MIG2}
+      {s2._LIVE_ON}
       insert into public.cockpit_sales_availability (email, state, until, via)
       values ({lit(me)}, 'available', now() + interval '1 hour', 'cockpit')
       on conflict (email) do update set state = 'available', until = excluded.until, reason = null;

@@ -2287,11 +2287,15 @@ begin
   -- settled). The rest are resolved here three days after they were raised
   -- once posted (a week when they never could be), so the open count on the
   -- Team page stops only growing. Resolved keys are never raised again (2c).
+  -- The host check's Zoom report alert (room_report:{room}) is one of them
+  -- (m1 numbers round 1): nothing else resolves it, and the host check reads
+  -- each room's report once, within a day of its end, so it never comes back.
   update public.cockpit_sales_alerts as a
      set resolved_at = t,
          dedupe_key = a.dedupe_key || ':resolved:' || a.id::text
    where a.resolved_at is null
-     and (a.dedupe_key like 'room:%' or a.dedupe_key like 'room_event_lost:%' or a.dedupe_key like 'room_held:%')
+     and (a.dedupe_key like 'room:%' or a.dedupe_key like 'room_event_lost:%' or a.dedupe_key like 'room_held:%'
+          or a.dedupe_key like 'room_report:%')
      and a.dedupe_key not like '%:resolved:%'
      and a.raised_at < t - interval '3 days'
      and (a.posted_at is not null or a.raised_at < t - interval '7 days');

@@ -64,7 +64,9 @@ FUNCTIONS = ["cockpit_sales_setting_int", "cockpit_sales_room_code", "cockpit_sa
              "cockpit_sales_alert_hours", "cockpit_sales_alert_words", "cockpit_sales_alert_set",
              "cockpit_sales_rooms_sweep", "cockpit_sales_watchdog",
              # Migration d (applied): the worker-status trigger and the live-hours check call these.
-             "cockpit_sales_worker_status_clock", "cockpit_sales_live_hours_open"]
+             "cockpit_sales_worker_status_clock", "cockpit_sales_live_hours_open",
+             # 20261003b (applied): 20261004a adds the Milestone 1 switches with these.
+             "cockpit_sales_jsonb_add_missing", "cockpit_sales_settings_add_missing"]
 
 
 def lit(v: str) -> str:
@@ -216,17 +218,29 @@ $clone$;
 """
 
 SETTINGS = r"""
-insert into pg_temp.cockpit_sales_settings (key, value)
-select s.key, s.value from public.cockpit_sales_settings as s
+-- 20261004a's settings guard takes a switch turned on only from a sales
+-- manager named in the transaction and as updated_by (m1 round 6), so a
+-- manager writes this run's copy, and is gone again before the day starts.
+insert into pg_temp.cockpit_sales_people (email, name, role, active, updated_by)
+values ('stress-tday-manager@stress.invalid', 'Stress Manager', 'manager', true, 'stress-tday');
+select set_config('mahara.actor', 'stress-tday-manager@stress.invalid', true);
+insert into pg_temp.cockpit_sales_settings (key, value, updated_by)
+select s.key, s.value, 'stress-tday-manager@stress.invalid' from public.cockpit_sales_settings as s
  where s.key in ('rooms', 'live', 'followups', 'whatsapp_guard', 'threads');
--- Rooms and live calls on (only in this run's copy), both providers, live hours as shipped.
+-- Rooms and live calls on (only in this run's copy), both providers, live
+-- hours as shipped, and the no-show settle on: Milestone 1 ships it off, and
+-- the day plays S1 and sales-api's settle.
 update pg_temp.cockpit_sales_settings
-   set value = value || '{"enabled": true, "test_only": false, "providers": {"zoom": true, "meet": true}}'::jsonb
+   set value = value || '{"enabled": true, "test_only": false, "settle": true, "providers": {"zoom": true, "meet": true}}'::jsonb,
+       updated_by = 'stress-tday-manager@stress.invalid'
  where key = 'rooms';
 update pg_temp.cockpit_sales_settings
    set value = value || '{"enabled": true, "standby": true,
-     "hours": {"days": [6, 0, 1, 2, 3, 4], "from": "10:00", "to": "20:00", "tz": "Asia/Kuwait"}}'::jsonb
+     "hours": {"days": [6, 0, 1, 2, 3, 4], "from": "10:00", "to": "20:00", "tz": "Asia/Kuwait"}}'::jsonb,
+       updated_by = 'stress-tday-manager@stress.invalid'
  where key = 'live';
+select set_config('mahara.actor', '', true);
+delete from pg_temp.cockpit_sales_people where email = 'stress-tday-manager@stress.invalid';
 """
 
 # The room worker, sales-api's link on worker.ready, the hosts who come into

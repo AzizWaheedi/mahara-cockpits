@@ -34,6 +34,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import run_checks  # noqa: E402
 from stress_numbers import q  # noqa: E402  (the management API call with its 429 wait)
+from fence_switches import SETTLE_ON, switches_on  # noqa: E402
 
 INTRO_CAL = "dsqmJ393Dwl9fDSbIVOI"
 
@@ -143,7 +144,9 @@ rollback;
 
 SQL = SQL.replace(
     "{MIG2}",
-    run_checks.strip_transaction(run_checks.HARDENING_2, open(os.path.join(run_checks.MIGRATIONS, run_checks.HARDENING_2)).read()),
+    run_checks.strip_transaction(run_checks.HARDENING_2, open(os.path.join(run_checks.MIGRATIONS, run_checks.HARDENING_2)).read())
+    # Milestone 1 ships the settle off (S1 settles nothing): this run plays S1, so a manager turns it on.
+    + switches_on(SETTLE_ON),
 )
 
 LEFTOVERS = r"""

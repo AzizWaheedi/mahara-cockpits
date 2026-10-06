@@ -34,6 +34,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import run_checks  # noqa: E402  (token handling and the management API call; never prints the token)
+from fence_switches import SETTLE_ON, switches_on  # noqa: E402
 
 CHAOS = r"""
 create temp table chaos_checks (n serial primary key, name text not null, ok boolean not null, detail text) on commit drop;
@@ -147,7 +148,9 @@ select 'alert ' || id::text from public.cockpit_sales_alerts where subject like 
 def compose() -> str:
     sql = "\n".join(["begin;", "set local lock_timeout = '5s';", "set local statement_timeout = '90s';",
                      "-- ===== 20261003d (the repo's hardening, rolled back with the rest) =====",
-                     run_checks.hardening_sql(), CHAOS, "rollback;"])
+                     run_checks.hardening_sql(),
+                     # Milestone 1 ships the settle off; this run plays S1, so a manager turns it on (rolled back).
+                     switches_on(SETTLE_ON), CHAOS, "rollback;"])
     tx = [s.lower() for s in run_checks.top_level_statements(sql) if run_checks.TX.match(s)]
     if tx != ["begin", "rollback"]:
         raise SystemExit(f"Refusing to run: the composed SQL has transaction statements {tx}.")
