@@ -60,24 +60,70 @@ export function cardFor<T extends Campaign>(
     : undefined;
 }
 
-/** The comment on the card: who, on what, and what changed. */
-export function changeComment(m: {
-  by: string;
-  campaignName: string;
-  adName?: string;
-  what: string;
-}): string {
+/** The comment on the card: who, on what, when, and what changed. */
+export function changeComment(
+  m: {
+    by: string;
+    campaignName: string;
+    adName?: string;
+    what: string;
+    at: number;
+  },
+  now = Date.now(),
+): string {
   const who =
     !m.by || m.by === "cockpit" || m.by === "Built from the cockpit"
       ? "the media buyer"
       : m.by;
+  const day = new Date(m.at + 3 * 3_600_000).toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+  // A change posted late (ClickUp was down, or it was missed) says so by its
+  // date, and is not given a judging clock that has already run.
+  const fresh = now - m.at < 86_400_000;
   return [
     `🎯 Cockpit · CHANGE MADE — ${m.what}`,
     "",
     m.adName ? `${m.campaignName} · ${m.adName}` : m.campaignName,
     "",
-    `Made by ${who} in the Media Buyer Cockpit. Three days before this is judged.`,
+    `Made by ${who} in the Media Buyer Cockpit on ${day}.${fresh ? " Three days before this is judged." : ""}`,
   ].join("\n");
+}
+
+/** At most one letter apart: "acturus construction" is "arcturus construction". */
+function nearlySame(a: string, b: string): boolean {
+  if (a === b) return true;
+  if (Math.min(a.length, b.length) < 8 || Math.abs(a.length - b.length) > 1)
+    return false;
+  let i = 0;
+  while (i < a.length && i < b.length && a[i] === b[i]) i++;
+  // One substitution, one insertion or one deletion at the first difference.
+  return (
+    a.slice(i + 1) === b.slice(i + 1) ||
+    a.slice(i) === b.slice(i + 1) ||
+    a.slice(i + 1) === b.slice(i)
+  );
+}
+
+/**
+ * Whether a campaign's client (Client Data's name for it) is this card. By
+ * the card's name or any of its aliases (clientLinks), forgiving one letter,
+ * because the sheet calls Arcturus "Acturus Construction" and the exact
+ * match left its changes off the card.
+ */
+export function isClientOf(
+  clientName: string | undefined,
+  card: { name: string; aliases?: string[] },
+): boolean {
+  const mine = tight(clientName);
+  if (!mine) return false;
+  return [card.name, ...(card.aliases ?? [])]
+    .map(tight)
+    .filter(Boolean)
+    .some(n => nearlySame(mine, n));
 }
 
 /**

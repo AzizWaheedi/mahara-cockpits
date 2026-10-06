@@ -7,7 +7,12 @@ import {
   internalQuery,
 } from "./_generated/server";
 import { type BillingRow, billingRows, writeBilling } from "./ceo/billing";
-import { type CardChange, changesForCard, isChange } from "./changeLog";
+import {
+  type CardChange,
+  changesForCard,
+  isChange,
+  isClientOf,
+} from "./changeLog";
 import { kuwaitDay } from "./changeResultsCore";
 import { authenticatedAction } from "./functions";
 import { metaImageUsable } from "./metaMedia";
@@ -580,6 +585,13 @@ export const buildCsmSnapshot = internalAction({
       internal.csmSync.recentChanges,
       {},
     );
+    // Each card's other names (clientLinks), so a campaign filed under a
+    // variant of the client's name still lands on the right card.
+    const aliasRows: { name: string; aliases: string[] }[] = await ctx.runQuery(
+      internal.csmWork.clientAliases,
+      {},
+    );
+    const aliasesOf = new Map(aliasRows.map(a => [a.name, a.aliases]));
 
     // biome-ignore lint/suspicious/noExplicitAny: rows for storage
     const clients: any[] = [];
@@ -641,15 +653,9 @@ export const buildCsmSnapshot = internalAction({
             today,
           )
         : undefined;
-      const norm = String(t.name)
-        .toLowerCase()
-        .replace(/[^\p{L}\p{N}]/gu, "");
-      const clientCampaigns = campaigns.filter(
-        (c: { clientName?: string }) =>
-          c.clientName &&
-          String(c.clientName)
-            .toLowerCase()
-            .replace(/[^\p{L}\p{N}]/gu, "") === norm,
+      const card = { name: String(t.name), aliases: aliasesOf.get(t.name) };
+      const clientCampaigns = campaigns.filter((c: { clientName?: string }) =>
+        isClientOf(c.clientName, card),
       );
       // "Campaign changes since your last call": since the last call when
       // there was one, the last two weeks when not.
@@ -1002,7 +1008,8 @@ export const recentChanges = internalQuery({
         .filter(m => isChange(m.what))
         .map(m => ({
           subject: m.campaignName,
-          action: m.adName ? `${m.what} (${m.adName})` : m.what,
+          // The cockpit's own wording already names the ad or ad set.
+          action: m.what,
           kind: "change",
           evidence: "",
           day: kuwaitDay(m.at),

@@ -5,6 +5,7 @@ import {
   changeComment,
   changesForCard,
   isChange,
+  isClientOf,
 } from "../convex/changeLog";
 import {
   accountIndex,
@@ -20,6 +21,7 @@ import {
   isRefusal,
   LATE_MS,
   MAX_TRIES,
+  STALE_MS,
   settled,
 } from "../convex/outboxCore";
 
@@ -87,6 +89,9 @@ describe("the outbox never jams again", () => {
     expect(late.ok).toBe(false);
     expect(late.error).toContain("1 media buyer change is waiting");
     expect(late.error).toContain("HTTP 503 down");
+    // Rows past two days are closed unsent on the next pass, not waiting:
+    // they raised a false alarm while the old backlog closed (2026-10-06).
+    expect(backlogNote([{ at: NOW - STALE_MS - 60_000 }], NOW).ok).toBe(true);
   });
 });
 
@@ -225,17 +230,43 @@ describe("every change reaches the card", () => {
     ).toBe(true);
   });
 
-  test("the comment says who made the change", () => {
-    const text = changeComment({
-      by: "nada@maharamedia.com",
-      campaignName: "Ola|mahara|13\\9",
-      what: "Set the campaign's daily budget to $38",
-    });
+  test("the comment says who made the change, and when", () => {
+    const text = changeComment(
+      {
+        by: "nada@maharamedia.com",
+        campaignName: "Ola|mahara|13\\9",
+        what: "Set the campaign's daily budget to $38",
+        at: NOW - 60_000,
+      },
+      NOW,
+    );
     expect(text).toContain("CHANGE MADE");
     expect(text).toContain("nada@maharamedia.com");
-    expect(
-      changeComment({ by: "cockpit", campaignName: "x", what: "y" }),
-    ).toContain("the media buyer");
+    expect(text).toContain("on 6 Oct 2026");
+    expect(text).toContain("Three days before this is judged");
+    // Posted late: dated, and no clock that has already run.
+    const late = changeComment(
+      { by: "cockpit", campaignName: "x", what: "y", at: NOW - 2 * 86_400_000 },
+      NOW,
+    );
+    expect(late).toContain("the media buyer");
+    expect(late).toContain("on 4 Oct 2026");
+    expect(late).not.toContain("Three days");
+  });
+
+  test("a campaign finds its card by name, alias or a one-letter typo", () => {
+    const arcturus = {
+      name: "Arcturus Construction",
+      aliases: ["arcturus", "arcturus construction"],
+    };
+    expect(isClientOf("Acturus Construction", arcturus)).toBe(true);
+    expect(isClientOf("Arcturus Construction", arcturus)).toBe(true);
+    expect(isClientOf("arcturus", arcturus)).toBe(true);
+    expect(isClientOf("Atlantis Contracting", arcturus)).toBe(false);
+    expect(isClientOf(undefined, arcturus)).toBe(false);
+    // Short names must match exactly: one letter is a different client.
+    expect(isClientOf("Ola", { name: "Ula" })).toBe(false);
+    expect(isClientOf("شركة العلا", { name: "شركة العلا" })).toBe(true);
   });
 
   test("the card's Ad Status follows Meta, never over a dead campaign", () => {

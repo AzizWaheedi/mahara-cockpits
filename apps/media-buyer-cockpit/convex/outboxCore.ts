@@ -70,7 +70,8 @@ export function backlogNote(
   open: { at: number; lastError?: string }[],
   now: number,
 ): { ok: boolean; error?: string } {
-  const late = open.filter(r => now - r.at > LATE_MS);
+  // Older than two days is closed unsent on the next pass, not waiting.
+  const late = open.filter(r => now - r.at > LATE_MS && now - r.at <= STALE_MS);
   if (late.length === 0) return { ok: true };
   const oldest = Math.min(...late.map(r => r.at));
   const minutes = Math.round((now - oldest) / 60_000);
