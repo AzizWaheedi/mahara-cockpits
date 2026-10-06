@@ -233,7 +233,13 @@ def run_worker(ctx: Context) -> Result:
     if age is None or age > ROOMS_ALERT_MIN:
         return fail(f"The rooms worker has not reported for {ago(age)}; new video rooms cannot be made.", evidence=ev)
     if rows[0].get("ok") is False:
-        return fail(f"The rooms worker reports a failure: {clean(rows[0].get('detail'), 160)}", evidence=ev)
+        detail = str(rows[0].get("detail") or "")
+        if detail.startswith("Not making rooms:"):
+            return fail(f"The rooms worker reports a failure: {clean(detail, 160)}", evidence=ev)
+        # A run that rode out a problem and kept making rooms (m1 round 4,
+        # guardian-urgent-failure-for-worker-riding-out-blip): said as the
+        # watchdog and the Team page say it, never an urgent failure.
+        return warn(f"The rooms worker reported a problem while making rooms: {clean(detail, 160)}", evidence=ev)
     if age * 60 > ROOMS_RED_S:
         return warn(f"The rooms worker last reported {int(age * 60)} s ago (red after {ROOMS_RED_S} s).", evidence=ev)
     return ok(f"The rooms worker reported {int(age * 60)} s ago.", evidence=ev)

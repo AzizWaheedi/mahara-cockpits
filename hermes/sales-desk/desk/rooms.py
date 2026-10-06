@@ -121,6 +121,7 @@ DESK_SUPABASE_KEY.
 from __future__ import annotations
 
 import base64
+import html
 import json
 import os
 import re
@@ -176,6 +177,11 @@ SIGNIN_HANDOVER_S = 15.0
 STATUS_EVERY = 25.0       # the status row, at least every 30 s
 SETTINGS_EVERY = 25.0     # the rooms setting is read again this often
 SETTINGS_STALE_S = 60.0   # with no good read of it for this long, nothing new is claimed
+# A run whose reads of the rooms setting have all failed writes no status row
+# for its first seconds (the last run's row stands), so one blip at a run's
+# start never says "Not making rooms" while the next tick makes them (m1 round
+# 4, settings-blip-at-run-start-refuses-presses).
+SETTINGS_GRACE_S = 10.0
 SWITCH_REREAD_S = 5.0     # before a room opens, the kill switch is read again when this run's copy is older (m1 round 2)
 CLOSE_SCAN_EVERY = 10.0   # finished rooms are looked for this often
 # The VPS clock against the database's (the sweep compares every deadline
@@ -583,9 +589,14 @@ GOOGLE_CAP_S = 3 * 3600
 class ProviderError(Exception):
     def __init__(self, status: int, message: str, *, code: Any = None, reason: str = "", where: str = "",
                  down: bool = False, timeup: bool = False, timed_out: bool = False, retry: bool = False,
-                 cleanup: bool = False):
+                 cleanup: bool = False, page: bool = False):
         self.status = int(status or 0)
         self.code = code
+        # The answer was no provider's JSON (an edge's or a gateway's page, an
+        # empty body): the status is the edge's, never the provider's word
+        # about the user, the meeting or the event (m1 round 4,
+        # zoom-gateway-404-page-read-as-no-zoom-user).
+        self.page = page
         self.reason = reason
         self.where = where
         self.down = down            # not called: the provider's breaker is open
@@ -604,12 +615,17 @@ class ProviderError(Exception):
     @property
     def unclear(self) -> bool:
         """The call may or may not have done its work: a dropped connection,
-        a timeout or a server error."""
-        return self.status == 0 or self.status >= 500
+        a timeout or a server error; or a 404 that is an edge's page, with no
+        provider answer in it (not knowing is not gone)."""
+        return self.status == 0 or self.status >= 500 or (self.status == 404 and self.page)
 
     @property
     def gone(self) -> bool:
-        return self.status == 404 or str(self.code) in ("3001", "1001")
+        """The provider itself said the user, meeting or event does not exist:
+        Zoom's codes 1001 (no user) and 3001 (no meeting), or a 404 carrying
+        the provider's own JSON error. A 404 page with no provider answer in
+        it is unclear, never gone (m1 round 4)."""
+        return str(self.code) in ("3001", "1001") or (self.status == 404 and not self.page)
 
     @property
     def daily_cap(self) -> bool:
@@ -658,10 +674,28 @@ class ProviderError(Exception):
             else:  # Zoom, PostgREST, sales-api
                 code = data.get("code")
                 message = str(data.get("message") or data.get("reason") or err or "")
+        page = not isinstance(data, dict)
         if not message:
             message = str(e).split(": ", 1)[-1] if e.status else str(e)
+        if page:
+            # An HTML page's markup never reaches a rep's sentence (m1 round 4,
+            # zoom-edge-403-page-reaches-reps-sentence): its title, else its text.
+            message = page_words(message, e.status)
         return cls(e.status, message, code=code, reason=reason, where=where, timed_out=e.timed_out,
-                   retry=retry, cleanup=cleanup)
+                   retry=retry, cleanup=cleanup, page=page)
+
+
+def page_words(text: str, status: int) -> str:
+    """A provider answer that is a web page, in words: its title, else its
+    text without tags; "an error page (HTTP n)" when nothing is left."""
+    raw = str(text or "")
+    if "<" not in raw:
+        return raw
+    m = re.search(r"<title[^>]*>(.*?)</title>", raw, re.I | re.S)
+    words = m.group(1) if m else re.sub(r"<[^>]*>", " ", raw)
+    words = re.sub(r"[<>]", " ", html.unescape(words))
+    words = " ".join(words.split())[:120]
+    return f"an error page ({words})" if words else f"an error page (HTTP {status})"
 
 
 class Breaker:
@@ -1306,6 +1340,8 @@ class Worker:
         self._calendar_fixed = bool(calendar_id)
         self.settings: dict[str, Any] = merged(DEFAULTS, None)
         self._settings_at: Optional[float] = None
+        self._run_start: Optional[float] = None       # when this run began (run())
+        self._failed_stored: set[str] = set()         # rooms this run stored a worker.failed for
         self._settings_reads = 0  # successful reads of the rooms setting (a re-read is told by it)
         # live.enabled as last read (Milestone 1 fence): standby and handover
         # rooms are made only while it is true; unread is off.
@@ -1435,6 +1471,7 @@ class Worker:
         if self._auto_id:
             self.run_id = f"{socket.gethostname()[:40]}-{os.getpid()}-{int(start)}-e{int(self.hard_stop) + 1}"
         self._window_from = start
+        self._run_start = start
         self._status_due = start
         try:
             self._read_settings(start)
@@ -1444,6 +1481,10 @@ class Worker:
             return {**self.summary(), "blocked": str(e)}
         except Exception as e:  # noqa: BLE001 - the first tick reads the switches again
             self._tick_fault(e)
+        if self._settings_at is None:
+            # The run's first read failed: its first tick reads again at once,
+            # before any claim or status row is decided on it.
+            self._settings_due = start
         while True:
             t0 = self.clock()
             try:
@@ -1610,6 +1651,11 @@ class Worker:
             self._db_trouble(e)
             return
         self._settings_due = now + SETTINGS_EVERY
+        if not self._settings_fresh():
+            # Read again after reads that failed: the status row says so now,
+            # never 25 s later (sales-api refuses every press on a "Not
+            # making rooms" row).
+            self._status_due = min(self._status_due, self.clock())
         # A missing `rooms` setting is the defaults: switched off.
         self.settings = merged(DEFAULTS, raw)
         self._settings_at = self.clock()
@@ -2077,7 +2123,10 @@ class Worker:
         host = email.strip().lower()
         if not host:
             return
-        now = self.clock()
+        # Zoom's day ends at 00:00 UTC on Zoom's clock, which the database's
+        # is (m1 round 4, the VPS ahead across UTC midnight): never this
+        # VPS's own clock.
+        now = self.db_now()
         reset = (int(now // 86400) + 1) * 86400
         self._capped[host] = float(reset)
         try:
@@ -2093,7 +2142,7 @@ class Worker:
         """Whether the host's Zoom creates are capped for today (this run's
         memory, or the host row's zoom_capped_until)."""
         host = email.strip().lower()
-        now = self.clock()
+        now = self.db_now()
         if self._capped.get(host, 0.0) > now:
             return True
         try:
@@ -2494,6 +2543,7 @@ class Worker:
             self._after_fail(row, sentence, fault=not refusal, refusal=refusal)
 
     def _store_failed(self, rid: str, sentence: str) -> None:
+        self._failed_stored.add(rid)
         self.store_event(rid, "worker.failed", {"error": sentence, "worker_run": self.run_id},
                          text=TEXT["worker.failed"].format(sentence=sentence))
 
@@ -2616,6 +2666,12 @@ class Worker:
                     self._stray(room, str(meeting_id), str(made.get("start_url") or start_url or ""))
                 return False
         opened = self._fill_deadlines(opened, now)
+        if rid in self._failed_stored:
+            # This run stored "The room was not made" and its failed write
+            # never landed (m1 round 4, fail-write-lost-room-made): the room
+            # opened after all, so that line is closed as not true.
+            self._failed_stored.discard(rid)
+            self.close_event(f"worker.failed:{rid}", "the room opened after all")
         self._made.pop(rid, None)
         self._retry_at.pop(rid, None)
         self._tries.pop(rid, None)
@@ -3326,6 +3382,13 @@ class Worker:
         if final and self._window_empty() and self.clock() - self._window_from < STATUS_EVERY:
             # Nothing new since the last row, which is fresh: keep its
             # sentence rather than overwrite it with an empty few seconds.
+            return
+        if (not final and self._settings_at is None and self._run_start is not None
+                and self.clock() - self._run_start < SETTINGS_GRACE_S):
+            # Every read of the setting this run failed, but the run is a few
+            # seconds old: the last run's row stands until a read works or the
+            # grace is over (then "Not making rooms" is the truth).
+            self._status_due = self.clock() + 1.0
             return
         ok, detail = self.sentence()
         self._write_status(ok, detail)
