@@ -9,6 +9,7 @@ import {
   WinningAds,
 } from "@/components/WinningAds";
 import { api } from "../../convex/_generated/api";
+import { WhatToMakeMoreOf } from "./DashboardPage";
 
 /**
  * What works in the GCC.
@@ -91,6 +92,9 @@ export function PlaybookPage() {
       />
 
       <div className="space-y-6">
+        {/* The live accounts first: what to make more of, what is burning out. */}
+        <WhatToMakeMoreOf />
+
         {opportunity && (
           <div className="bg-mahara-gradient rounded-2xl p-px">
             <div className="rounded-[15px] bg-card p-4 sm:p-6">

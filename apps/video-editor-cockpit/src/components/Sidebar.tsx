@@ -10,7 +10,7 @@ import {
 import { useEffect, useState } from "react";
 import { NavLink, useLocation } from "react-router";
 import { useWho } from "../lib/auth";
-import { COCKPIT_ICON } from "../lib/cockpits";
+import { COCKPIT_ICON, COCKPIT_SOP } from "../lib/cockpits";
 import { otherCockpits, portalUrl } from "../lib/portal";
 import { openSearch } from "../lib/search";
 import { Wordmark } from "./Wordmark";
@@ -140,7 +140,17 @@ export default function Sidebar({
   const { pathname } = useLocation();
   // The other cockpits. The team's schedule opens from Meetings, so the
   // sidebar has one Meetings, not two.
-  const foot = otherCockpits(cockpits, isAdmin);
+  // The desk's SOP first (ClickUp, a new tab), then the other cockpits.
+  const foot: { key: string; label: string; href: string; newTab?: boolean }[] =
+    [
+      {
+        key: "sop",
+        label: "How to use this desk",
+        href: COCKPIT_SOP.editor,
+        newTab: true,
+      },
+      ...otherCockpits(cockpits, isAdmin),
+    ];
 
   return (
     <div className="flex h-full flex-col gap-6 overflow-y-auto px-3 py-4">
@@ -222,6 +232,7 @@ export default function Sidebar({
               <li key={d.key}>
                 <a
                   href={d.href}
+                  {...(d.newTab ? { target: "_blank", rel: "noreferrer" } : {})}
                   className={`${ROW} rounded-xl text-muted-foreground hover:bg-muted hover:text-foreground`}
                 >
                   {Icon ? (

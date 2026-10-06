@@ -1,6 +1,7 @@
 import { Search } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router";
+import { COCKPIT_SOP } from "../lib/cockpits";
 import { useLeadSearch } from "../lib/data";
 import { PAGES } from "../lib/pages";
 import { matchScore, onOpenSearch } from "../lib/search";
@@ -24,6 +25,18 @@ type Hit = {
   sub?: string;
   kind: Kind;
   href: string;
+  /** Opens in a new tab: the SOP lives in ClickUp. */
+  external?: boolean;
+};
+
+const SOP: Hit & { text: string } = {
+  key: "page:sop",
+  label: "How to use this cockpit",
+  sub: "The sales SOP, in ClickUp: the setter's and the closer's day",
+  kind: "Page",
+  href: COCKPIT_SOP.sales,
+  external: true,
+  text: "how to use this cockpit sop guide help setter closer day steps",
 };
 
 const OWED: Hit & { text: string } = {
@@ -99,6 +112,7 @@ function Results({
         text: `${p.label} ${p.words ?? ""}`,
       })),
       OWED,
+      SOP,
     ];
     if (!typed) return pages as Hit[];
     const leads: Hit[] =
@@ -132,7 +146,8 @@ function Results({
 
   const go = (h: Hit) => {
     onClose();
-    navigate(h.href);
+    if (h.external) window.open(h.href, "_blank", "noopener,noreferrer");
+    else navigate(h.href);
   };
 
   const waiting = typed && (term !== q.trim() || found.loading);

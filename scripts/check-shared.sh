@@ -79,6 +79,14 @@ same search.ts "apps/client-success-cockpit/src/lib/search.ts" "$ED/src/lib/sear
 same search.ts "apps/client-success-cockpit/src/lib/search.ts" "$CD/src/lib/search.ts"
 same search.ts "apps/client-success-cockpit/src/lib/search.ts" "$SA/src/lib/search.ts"
 
+# Each cockpit's mark, its SOP link and the Clarity tag are the same file in
+# all five apps.
+for f in cockpits.ts clarity.ts; do
+  for app in "$MB" "$CD" "$ED" "$SA"; do
+    same "$f" "apps/client-success-cockpit/src/lib/$f" "$app/src/lib/$f"
+  done
+done
+
 # The two Supabase cockpits' search box sits in the same dependency-free
 # dialog: Escape, a click outside, focus kept inside and handed back.
 same dialog.tsx "$ED/src/components/ui/dialog.tsx" "$SA/src/components/ui/dialog.tsx"

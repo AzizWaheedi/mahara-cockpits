@@ -19,7 +19,7 @@ import { STATUS_COLOR } from "@/components/ceo/StatusChip";
 import { useCeo } from "@/components/ceo/useCeo";
 import { Wordmark } from "@/components/Wordmark";
 import { useTheme } from "@/contexts/ThemeContext";
-import { COCKPIT_ICON } from "@/lib/cockpits";
+import { COCKPIT_ICON, COCKPIT_SOP } from "@/lib/cockpits";
 import { openSearch } from "@/lib/search";
 import { ceoBadges } from "@/pages/CeoPage";
 import { CEO_NAV } from "@/pages/ceo/nav";
@@ -78,6 +78,31 @@ const navItems = [
 
 /** Rows are 28px in the CEO rail on a laptop, so seventeen of them fit; the sheet below 1024px keeps the full 40px for thumbs. */
 const DENSE = "cockpit-nav-link lg:h-7";
+
+/** The cockpit's SOP: a row like the others, opening ClickUp in a new tab. */
+function SopLink({ href }: { href: string }) {
+  const { setOpenMobile } = useSidebar();
+  const Icon = COCKPIT_ICON.sop;
+  return (
+    <SidebarMenuItem>
+      <SidebarMenuButton
+        asChild
+        tooltip="How to use this cockpit"
+        className="cockpit-nav-link"
+      >
+        <a
+          href={href}
+          target="_blank"
+          rel="noreferrer"
+          onClick={() => setOpenMobile(false)}
+        >
+          <Icon />
+          <span>How to use this cockpit</span>
+        </a>
+      </SidebarMenuButton>
+    </SidebarMenuItem>
+  );
+}
 
 function NavLink({
   href,
@@ -297,6 +322,10 @@ function SidebarNav() {
                 icon={COCKPIT_ICON.team}
                 isActive={location.pathname.startsWith("/team")}
               />
+            ) : null}
+            {/* The media buyer's SOP, in ClickUp, in a new tab. */}
+            {allowed.includes("media_buyer") ? (
+              <SopLink href={COCKPIT_SOP.media_buyer} />
             ) : null}
           </SidebarMenu>
         </SidebarGroupContent>

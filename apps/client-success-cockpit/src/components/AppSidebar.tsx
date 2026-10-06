@@ -19,7 +19,7 @@ import { Link, useLocation } from "react-router";
 import { portalUrl } from "@/components/PortalAutoSignIn";
 import { Wordmark } from "@/components/Wordmark";
 import { useTheme } from "@/contexts/ThemeContext";
-import { COCKPIT_ICON } from "@/lib/cockpits";
+import { COCKPIT_ICON, COCKPIT_SOP } from "@/lib/cockpits";
 import { openSearch } from "@/lib/search";
 import { api } from "../../convex/_generated/api";
 import { Avatar, AvatarFallback } from "./ui/avatar";
@@ -148,11 +148,18 @@ function PortalGroup() {
       show: isAdmin || roles.includes("sales"),
     },
   ].filter(d => d.show);
-  // Team meetings are everybody's, so they sit with the doors at the foot.
-  const rows = [
-    { key: "team", label: "Team meetings", href: `${portal}/team` },
-    ...doors,
-  ];
+  // This cockpit's SOP, then team meetings (everybody's), then the doors.
+  const rows: { key: string; label: string; href: string; newTab?: boolean }[] =
+    [
+      {
+        key: "sop",
+        label: "How to use this cockpit",
+        href: COCKPIT_SOP.csm,
+        newTab: true,
+      },
+      { key: "team", label: "Team meetings", href: `${portal}/team` },
+      ...doors,
+    ];
   return (
     <SidebarGroup className="mt-auto border-t border-sidebar-border">
       <SidebarGroupContent>
@@ -160,7 +167,10 @@ function PortalGroup() {
           {rows.map(d => (
             <SidebarMenuItem key={d.key}>
               <SidebarMenuButton asChild>
-                <a href={d.href}>
+                <a
+                  href={d.href}
+                  {...(d.newTab ? { target: "_blank", rel: "noreferrer" } : {})}
+                >
                   {(() => {
                     const Icon = COCKPIT_ICON[d.key];
                     return Icon ? <Icon className="size-4" /> : null;

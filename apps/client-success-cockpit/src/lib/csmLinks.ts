@@ -9,10 +9,24 @@
  * (the simplification audit, approved 2026-10-06).
  */
 
+import { COCKPIT_SOP } from "./cockpits";
+
 export type LinkRow = { label: string; url: string; note?: string };
 export type LinkGroup = { title: string; blurb: string; rows: LinkRow[] };
 
 export const LINK_GROUPS: LinkGroup[] = [
+  {
+    title: "How this cockpit works",
+    blurb:
+      "Read this once: the five places, the search box and your day in ten steps.",
+    rows: [
+      {
+        label: "Client success cockpit, how to use it",
+        url: COCKPIT_SOP.csm,
+        note: "The SOP for this cockpit, in ClickUp",
+      },
+    ],
+  },
   {
     title: "Booking links",
     blurb: "Send these, never a manual time. The client picks the slot.",

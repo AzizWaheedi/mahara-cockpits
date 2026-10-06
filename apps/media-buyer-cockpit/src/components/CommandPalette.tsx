@@ -9,6 +9,7 @@ import {
   CommandItem,
   CommandList,
 } from "@/components/ui/command";
+import { COCKPIT_SOP } from "@/lib/cockpits";
 import { matchScore, onOpenSearch } from "@/lib/search";
 import { api } from "../../convex/_generated/api";
 
@@ -33,6 +34,8 @@ type Hit = {
   sub?: string;
   kind: Kind;
   href: string;
+  /** Opens in a new tab: a page outside the cockpit, such as the SOP. */
+  external?: boolean;
   keywords: string[];
 };
 
@@ -87,6 +90,13 @@ const PAGES: (Hit & { role?: "media_buyer" | "admin" | "ceo" })[] = [
     role: "media_buyer",
   },
   {
+    href: COCKPIT_SOP.media_buyer,
+    label: "How to use this cockpit",
+    sub: "The media buyer's SOP, in ClickUp",
+    old: "sop guide help how to use the day steps",
+    role: "media_buyer",
+  },
+  {
     href: "/team",
     label: "Team meetings",
     sub: "Agendas and notes",
@@ -118,6 +128,7 @@ const PAGES: (Hit & { role?: "media_buyer" | "admin" | "ceo" })[] = [
   sub: p.sub,
   kind: "Page" as const,
   href: p.href,
+  external: p.href.startsWith("http"),
   keywords: [p.label, p.sub ?? "", p.old],
   role: p.role as "media_buyer" | "admin" | "ceo" | undefined,
 }));
@@ -235,7 +246,8 @@ export function CommandPalette() {
 
   const go = (hit: Hit) => {
     show(false);
-    navigate(hit.href);
+    if (hit.external) window.open(hit.href, "_blank", "noopener,noreferrer");
+    else navigate(hit.href);
   };
 
   const row = (hit: Hit) => (

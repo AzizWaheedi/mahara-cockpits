@@ -8,7 +8,7 @@ import {
 } from "lucide-react";
 import { NavLink } from "react-router";
 import { useWho } from "../lib/auth";
-import { COCKPIT_ICON } from "../lib/cockpits";
+import { COCKPIT_ICON, COCKPIT_SOP } from "../lib/cockpits";
 import { GROUP_LABELS, PAGES, type Page } from "../lib/pages";
 import { otherCockpits, portalUrl } from "../lib/portal";
 import { openSearch } from "../lib/search";
@@ -170,8 +170,20 @@ export default function Sidebar({
   onToggleCollapse?: () => void;
 }) {
   const { cockpits, signOut } = useWho();
-  // Team meetings are everybody's, so they sit with the doors at the foot.
-  const doors = [
+  // The sales SOP (ClickUp, a new tab), then team meetings (everybody's),
+  // then the doors.
+  const doors: {
+    key: string;
+    label: string;
+    href: string;
+    newTab?: boolean;
+  }[] = [
+    {
+      key: "sop",
+      label: "How to use this cockpit",
+      href: COCKPIT_SOP.sales,
+      newTab: true,
+    },
     { key: "team", label: "Team meetings", href: `${portalUrl()}/team` },
     ...otherCockpits(cockpits, isAdmin),
   ];
@@ -326,6 +338,7 @@ export default function Sidebar({
               <li key={d.key}>
                 <a
                   href={d.href}
+                  {...(d.newTab ? { target: "_blank", rel: "noreferrer" } : {})}
                   className={
                     collapsed
                       ? "group relative flex items-center justify-center rounded-[12px] p-2 text-muted-foreground hover:bg-foreground/[0.08] hover:text-foreground transition-all"

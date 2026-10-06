@@ -141,15 +141,11 @@ function DotChip({
   );
 }
 
-type View = "sod" | "eod" | "works";
+type View = "sod" | "eod";
 
 const TITLES: Record<View, { title: string; sub?: string }> = {
   // Today's line under the title is the day's counts, set below.
   sod: { title: "Today" },
-  works: {
-    title: "What works",
-    sub: "What to make more of, and what is burning out",
-  },
   eod: {
     title: "End of day",
     sub: "Your EOD report, already written from today's work",
@@ -669,74 +665,83 @@ function Creative({ view }: { view: View }) {
         </>
       )}
       {view === "eod" && <EndOfDay snap={snap} />}
-
-      {/* 7. What the numbers say. */}
-      {view === "works" && (
-        <Section
-          icon={Trophy}
-          title="What to make more of"
-          sub="From the live ad accounts"
-        >
-          <div className="grid gap-6 md:grid-cols-2">
-            <div>
-              <h3 className={`mb-2 ${KICKER}`}>Winning creatives</h3>
-              {snap.winners.length === 0 ? (
-                <p className="text-sm text-muted-foreground">
-                  No ad has enough spend yet to call a winner.
-                </p>
-              ) : (
-                <ul className="divide-y rounded-xl bg-muted/40">
-                  {snap.winners.map((w: Any, i: Any) => (
-                    <li key={i} className="px-3 py-2.5 text-sm">
-                      <div className="font-medium">{w.client}</div>
-                      <div className="text-xs text-muted-foreground">
-                        {w.adName} · {money(w.cpl)} CPL · {w.leads} leads
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-
-            <div>
-              <h3 className={`mb-2 ${KICKER}`}>Frequency watch</h3>
-              {!snap.anyBurning && (
-                <p className="mb-2 text-sm text-muted-foreground">
-                  Nothing is fatiguing: the highest frequency in the accounts is{" "}
-                  {snap.fatiguing[0]?.frequency.toFixed(1) ?? "n/a"}, well under
-                  the {snap.fatigueGate} gate. No replacements needed today.
-                </p>
-              )}
-              {snap.fatiguing.length > 0 && (
-                <ul className="divide-y rounded-xl bg-muted/40">
-                  {snap.fatiguing.slice(0, 5).map((f: Any, i: Any) => (
-                    <li key={i} className="px-3 py-2.5 text-sm">
-                      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-                        <span className="inline-flex min-w-0 items-center gap-1.5 font-medium">
-                          {f.burning && (
-                            <AlertTriangle
-                              className="size-3.5 shrink-0 txt-bad"
-                              aria-label="Burning out"
-                            />
-                          )}
-                          <span className="truncate">{f.client}</span>
-                        </span>
-                        <span className="text-xs text-muted-foreground tabular-nums">
-                          freq {f.frequency.toFixed(2)}
-                        </span>
-                      </div>
-                      <div className="text-xs text-muted-foreground">
-                        {f.adName}
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          </div>
-        </Section>
-      )}
     </div>
+  );
+}
+
+/**
+ * What the live ad accounts say to make more of, and what is burning out.
+ * It was a view no address opened; it sits on What works now, where the
+ * midday sweep's "Replace the creatives that are burning out" points (Aziz
+ * left the call to Claude, 2026-10-06).
+ */
+export function WhatToMakeMoreOf() {
+  const snap = useQuery(api.creative.snapshot, {}) as Any;
+  if (snap === undefined) return null;
+  return (
+    <Section
+      icon={Trophy}
+      title="What to make more of"
+      sub="From the live ad accounts"
+    >
+      <div className="grid gap-6 md:grid-cols-2">
+        <div>
+          <h3 className={`mb-2 ${KICKER}`}>Winning creatives</h3>
+          {snap.winners.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              No ad has enough spend yet to call a winner.
+            </p>
+          ) : (
+            <ul className="divide-y rounded-xl bg-muted/40">
+              {snap.winners.map((w: Any, i: Any) => (
+                <li key={i} className="px-3 py-2.5 text-sm">
+                  <div className="font-medium">{w.client}</div>
+                  <div className="text-xs text-muted-foreground">
+                    {w.adName} · {money(w.cpl)} CPL · {w.leads} leads
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        <div>
+          <h3 className={`mb-2 ${KICKER}`}>Frequency watch</h3>
+          {!snap.anyBurning && (
+            <p className="mb-2 text-sm text-muted-foreground">
+              Nothing is fatiguing: the highest frequency in the accounts is{" "}
+              {snap.fatiguing[0]?.frequency.toFixed(1) ?? "n/a"}, well under the{" "}
+              {snap.fatigueGate} gate. No replacements needed today.
+            </p>
+          )}
+          {snap.fatiguing.length > 0 && (
+            <ul className="divide-y rounded-xl bg-muted/40">
+              {snap.fatiguing.slice(0, 5).map((f: Any, i: Any) => (
+                <li key={i} className="px-3 py-2.5 text-sm">
+                  <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+                    <span className="inline-flex min-w-0 items-center gap-1.5 font-medium">
+                      {f.burning && (
+                        <AlertTriangle
+                          className="size-3.5 shrink-0 txt-bad"
+                          aria-label="Burning out"
+                        />
+                      )}
+                      <span className="truncate">{f.client}</span>
+                    </span>
+                    <span className="text-xs text-muted-foreground tabular-nums">
+                      freq {f.frequency.toFixed(2)}
+                    </span>
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    {f.adName}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
+    </Section>
   );
 }
 

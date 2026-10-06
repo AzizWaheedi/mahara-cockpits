@@ -11,6 +11,8 @@
  * and the ClickUp client ticketing form.
  */
 
+import { COCKPIT_SOP } from "./cockpits";
+
 export type LinkRow = { label: string; url: string; note?: string };
 export type LinkGroup = { title: string; blurb: string; rows: LinkRow[] };
 
@@ -21,9 +23,11 @@ export const LINK_GROUPS: LinkGroup[] = [
       "Read this once. What every screen is for, how the day is meant to run, and what to do when something looks wrong.",
     rows: [
       {
-        label: "Creative Director Cockpit, how to use it",
-        url: "https://docs.google.com/document/d/1EnKh2hUdje2uL1Nv9h1_CYSkYasUf9SiAo1E2QaDHx0/edit",
-        note: "The SOP for this dashboard",
+        // The SOP written with the simplification (2026-10-06); the old
+        // Google Doc described the sixteen pages that came before it.
+        label: "Creative director cockpit, how to use it",
+        url: COCKPIT_SOP.creative,
+        note: "The SOP for this cockpit, in ClickUp",
       },
     ],
   },

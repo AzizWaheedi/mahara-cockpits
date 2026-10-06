@@ -174,21 +174,28 @@ function CalendarLink({ link, saEmail }: { link: Any; saEmail: string }) {
  * The page lives on in two halves (the simplification audit, 2026-10-06):
  * the calendar on Today and the WhatsApp lists folded into the Inbox.
  * `part` picks the half; `embedded` drops the page's own title.
+ *
+ * "history" is the Inbox's fold since Hala became the one drafting agent
+ * (Aziz left the choice to Claude, 2026-10-06): the quiet clients and every
+ * thread's history, without this page's second drafts and second Send, so a
+ * reply has one path out.
  */
 export function MeetingsPage({
   embedded = false,
   part = "all",
 }: {
   embedded?: boolean;
-  part?: "all" | "calendar" | "whatsapp";
+  part?: "all" | "calendar" | "whatsapp" | "history";
 } = {}) {
   const data = useQuery(api.comms.overview, {});
   const sendReply = useMutation(api.comms.sendReply);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [sending, setSending] = useState<Record<string, boolean>>({});
   const [openThread, setOpenThread] = useState<string | null>(null);
-  const calendar = part !== "whatsapp";
+  const calendar = part === "all" || part === "calendar";
   const whatsapp = part !== "calendar";
+  // The second drafts and their Send: not in the Inbox's fold.
+  const replies = part === "all" || part === "whatsapp";
   if (!data)
     return (
       <p
@@ -317,7 +324,7 @@ export function MeetingsPage({
         </section>
       ) : null}
 
-      {whatsapp && inFlight.length ? (
+      {replies && inFlight.length ? (
         <section className={CARD}>
           <h2 className={`mb-4 ${CARD_TITLE}`}>Sending</h2>
           <ul className="divide-y text-sm">
@@ -378,7 +385,7 @@ export function MeetingsPage({
         </section>
       ) : null}
 
-      {whatsapp ? (
+      {replies ? (
         <section className={CARD}>
           <h2 className={`mb-4 ${CARD_TITLE}`}>Waiting on you in WhatsApp</h2>
           {waiting.length === 0 ? (

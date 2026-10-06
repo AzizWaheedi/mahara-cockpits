@@ -1,6 +1,7 @@
 import { Search } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
+import { COCKPIT_SOP } from "../lib/cockpits";
 import { useAllAssets, useJobs } from "../lib/data";
 import { portalUrl } from "../lib/portal";
 import { matchScore, onOpenSearch } from "../lib/search";
@@ -24,6 +25,8 @@ type Hit = {
   kind: Kind;
   href: string;
   external?: boolean;
+  /** Opens beside the desk instead of leaving it. */
+  newTab?: boolean;
   text: string;
 };
 
@@ -152,8 +155,18 @@ function Results({ onClose }: { onClose: () => void }) {
       external: true,
       text: "team meetings schedule agenda portal",
     };
-    const all = [...jobHits, ...clipHits, ...PAGES, team];
-    if (!typed) return [...jobHits.slice(0, 6), ...PAGES, team];
+    const sop: Hit = {
+      key: "page:sop",
+      label: "How to use this desk",
+      sub: "The editors' SOP, in ClickUp",
+      kind: "Page",
+      href: COCKPIT_SOP.editor,
+      external: true,
+      newTab: true,
+      text: "how to use this desk sop guide help the day steps",
+    };
+    const all = [...jobHits, ...clipHits, ...PAGES, team, sop];
+    if (!typed) return [...jobHits.slice(0, 6), ...PAGES, team, sop];
     return all
       .map(h => ({ h, s: matchScore(h.text, q) }))
       .filter(x => x.s > 0)
@@ -173,7 +186,8 @@ function Results({ onClose }: { onClose: () => void }) {
 
   const go = (h: Hit) => {
     onClose();
-    if (h.external) window.location.href = h.href;
+    if (h.newTab) window.open(h.href, "_blank", "noopener,noreferrer");
+    else if (h.external) window.location.href = h.href;
     else navigate(h.href);
   };
 
