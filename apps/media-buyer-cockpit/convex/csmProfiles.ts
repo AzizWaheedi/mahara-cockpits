@@ -11,6 +11,18 @@ import {
   readClientData,
   statSheetUrl,
 } from "./clientData";
+import {
+  type Day,
+  iso,
+  kuwaitToday,
+  money,
+  no,
+  readClientSheetReport,
+  tabOf,
+  toDate,
+  yes,
+  ym,
+} from "./clientSheetReport";
 import { cleanDosDonts } from "./dosDonts";
 import { hasGhlCredential, sourceGhlLink } from "./ghlCredential";
 import { flush } from "./health";
@@ -64,38 +76,6 @@ const NOTE_NOISE =
 // biome-ignore lint/suspicious/noExplicitAny: external payloads
 type Any = any;
 
-// Column layout of every client performance sheet tab. Fixed by the template.
-const COL = {
-  name: 0,
-  added: 1,
-  appDate: 2,
-  phone: 3,
-  caller: 4,
-  confirmed: 5,
-  deposit: 6,
-  notes: 7,
-  type: 8,
-  show: 9,
-  quote: 10,
-  closed: 11,
-  csat: 12,
-  revenue: 13,
-};
-const MONTHS = [
-  "Jan",
-  "Feb",
-  "Mar",
-  "Apr",
-  "May",
-  "Jun",
-  "Jul",
-  "Aug",
-  "Sep",
-  "Oct",
-  "Nov",
-  "Dec",
-];
-
 // --- small helpers ------------------------------------------------------------
 
 async function clickup(path: string): Promise<Any> {
@@ -128,155 +108,7 @@ async function pool<T, R>(
   return out;
 }
 
-export type Day = { y: number; m: number; d: number };
-export function kuwaitToday(): Day {
-  const t = new Date(Date.now() + 3 * 3600_000);
-  return { y: t.getUTCFullYear(), m: t.getUTCMonth() + 1, d: t.getUTCDate() };
-}
-function toDate(x: Day): Date {
-  return new Date(Date.UTC(x.y, x.m - 1, x.d));
-}
-export function daysBetween(a: Day, b: Day): number {
-  return Math.round((toDate(a).getTime() - toDate(b).getTime()) / 86400_000);
-}
-function valid(y: number, m: number, d: number): Day | undefined {
-  if (m < 1 || m > 12 || d < 1 || d > 31) return undefined;
-  const t = new Date(Date.UTC(y, m - 1, d));
-  return t.getUTCMonth() + 1 === m && t.getUTCDate() === d
-    ? { y, m, d }
-    : undefined;
-}
-const iso = (x: Day) =>
-  `${x.y}-${String(x.m).padStart(2, "0")}-${String(x.d).padStart(2, "0")}`;
-const ym = (x: Day) => `${x.y}-${String(x.m).padStart(2, "0")}`;
-const tabOf = (x: Day) => `${MONTHS[x.m - 1]} ${String(x.y).slice(2)}`;
-const yes = (c: unknown) =>
-  String(c ?? "")
-    .trim()
-    .toUpperCase()
-    .startsWith("Y");
-const no = (c: unknown) =>
-  String(c ?? "")
-    .trim()
-    .toUpperCase()
-    .startsWith("N");
-const money = (c: unknown) =>
-  Number(String(c ?? "").replace(/[^0-9.-]/g, "")) || 0;
-
-/**
- * "Date Added", which the team fills two different ways: `8/19/2026`
- * (month/day/year) and hand-typed `28/06` (day/month, year implied).
- */
-export function parseAdded(cell: unknown, today: Day): Day | undefined {
-  const text = String(cell ?? "").trim();
-  if (!text) return undefined;
-  const nums = text
-    .split(/[/\-.]/)
-    .filter(p => p !== "")
-    .map(Number);
-  if (nums.some(Number.isNaN)) return undefined;
-  if (nums.length >= 3) {
-    const [a, b, c] = nums;
-    const year = c > 99 ? c : 2000 + c;
-    const [month, day] = a <= 12 ? [a, b] : [b, a];
-    return valid(year, month, day);
-  }
-  if (nums.length === 2) {
-    let [day, month] = nums;
-    if (month > 12 && day <= 12) [day, month] = [month, day];
-    const d = valid(today.y, month, day);
-    if (!d) return undefined;
-    return daysBetween(d, today) > 30 ? valid(today.y - 1, month, day) : d;
-  }
-  return undefined;
-}
-
-/** The appointment date column: `9/12/2026`, `12/9`, or `Wed 12 5:00 PM`. */
-export function parseAppt(
-  cell: unknown,
-  today: Day,
-  added?: Day,
-): Day | undefined {
-  const text = String(cell ?? "").trim();
-  if (!text) return undefined;
-  const nums = text
-    .split(/[/\-.]/)
-    .map(p => p.trim())
-    .filter(p => /^\d+$/.test(p))
-    .map(Number);
-  const dated = text.includes("/") || text.includes("-");
-  if (nums.length >= 3 && dated) {
-    const [a, b, c] = nums;
-    if (a > 99) return valid(a, b, c);
-    const year = c > 99 ? c : 2000 + c;
-    const [month, day] = a <= 12 ? [a, b] : [b, a];
-    return valid(year, month, day);
-  }
-  if (nums.length === 2 && dated) {
-    let [day, month] = nums;
-    if (month > 12 && day <= 12) [day, month] = [month, day];
-    const d = valid(today.y, month, day);
-    if (!d) return undefined;
-    return daysBetween(d, today) > 180 ? valid(today.y - 1, month, day) : d;
-  }
-  // Free text: the day of the month, anchored to when the lead came in.
-  if (added) {
-    const dayNums = [
-      ...text.replace(/\d{1,2}:\d{2}/g, " ").matchAll(/\b(\d{1,2})\b/g),
-    ].map(m => Number(m[1]));
-    for (const day of dayNums) {
-      if (day < 1 || day > 31) continue;
-      for (const shift of [0, 1]) {
-        let month = added.m + shift;
-        let year = added.y;
-        if (month > 12) {
-          month -= 12;
-          year += 1;
-        }
-        const d = valid(year, month, day);
-        if (d && daysBetween(d, added) >= 0) return d;
-      }
-      return undefined;
-    }
-  }
-  return undefined;
-}
-
 type Appt = Record<string, Any>;
-
-/** Normalise the Appointments log into one record per lead. */
-function appointmentRows(rows: string[][], today: Day): Appt[] {
-  const out: Appt[] = [];
-  for (const r of rows) {
-    const cell = (k: keyof typeof COL) => String(r[COL[k]] ?? "");
-    const name = cell("name").trim();
-    if (!name || name.toLowerCase() === "name") continue;
-    const added = parseAdded(cell("added"), today);
-    const appt = parseAppt(cell("appDate"), today, added);
-    out.push({
-      name,
-      added: added ? iso(added) : undefined,
-      month: added ? ym(added) : undefined,
-      ageDays: added ? daysBetween(today, added) : undefined,
-      appDate: cell("appDate").trim(),
-      appAt: appt ? iso(appt) : undefined,
-      // undefined means the date could not be read, which is not the same as upcoming.
-      appPast: appt ? daysBetween(appt, today) < 0 : undefined,
-      appDaysAgo: appt ? daysBetween(today, appt) : undefined,
-      caller: cell("caller").trim(),
-      confirmed: cell("confirmed").trim(),
-      deposit: cell("deposit").trim(),
-      type: cell("type").trim(),
-      show: cell("show").trim(),
-      quote: cell("quote").trim(),
-      closed: cell("closed").trim(),
-      csat: cell("csat").trim(),
-      ad: String(r[14] ?? "").trim(),
-      source: String(r[15] ?? "").trim(),
-    });
-  }
-  return out;
-}
 
 /** Counts for a set of rows. Blank is blank, never guessed as a no. */
 function summarise(rows: Appt[]) {
@@ -359,7 +191,7 @@ function byAd(rows: Appt[]) {
     seen.set(key, item);
   }
   const out = [...seen.values()].map(a => {
-    const decided = a.leads - a.unknown;
+    const decided = a.shows + a.noshows;
     return {
       ...a,
       bookRate: a.leads ? Math.round((100 * a.booked) / a.leads) : undefined,
@@ -379,8 +211,8 @@ function sheetId(url: unknown): string | undefined {
 }
 
 /**
- * Read one client's performance sheet. The `Appointments` tab is the master
- * log every caller fills; the month tabs are read as a fallback.
+ * Read one client's performance sheet. Verified month tabs carry the portal's
+ * outcomes; legacy Appointments rows cover only months without those tabs.
  */
 async function sheetPerformance(
   url: unknown,
@@ -397,51 +229,22 @@ async function sheetPerformance(
     m: prevDay.getUTCMonth() + 1,
     d: 1,
   };
-  const thisTab = tabOf(today);
-  const lastTab = tabOf(prev);
-  const wanted = ["Appointments", thisTab, lastTab];
-  const qs = wanted
-    .map(t => `ranges=${encodeURIComponent(`${t}!A1:P600`)}`)
-    .join("&");
-  let data: Any;
-  const cacheKey = `sheet:${sid}:${wanted.join("|")}`;
-  const hit = cache?.get(cacheKey);
-  if (hit) data = hit.data;
-  else {
-    try {
-      data = await sheetsGet(
-        `https://sheets.googleapis.com/v4/spreadsheets/${sid}/values:batchGet?${qs}`,
-      );
-      fresh?.set(cacheKey, { at: Date.now(), data });
-    } catch (e) {
-      return { sheetId: sid, error: String(e).slice(0, 200) };
-    }
+  const thisTab = tabOf(today),
+    lastTab = tabOf(prev);
+  let report: Awaited<ReturnType<typeof readClientSheetReport>>;
+  try {
+    report = await readClientSheetReport(sid, today, sheetsGet, cache, fresh);
+  } catch (e) {
+    return { sheetId: sid, error: String(e).slice(0, 200) };
   }
-  const grids: Any[] = data?.valueRanges ?? [];
-  if (grids.length === 0)
-    return {
-      sheetId: sid,
-      error: String(data?.error?.message ?? "sheet unreadable").slice(0, 300),
-    };
-  const raw: Record<string, string[][]> = {};
-  wanted.forEach((t, i) => {
-    raw[t] = grids[i]?.values ?? [];
-  });
-  let rows = appointmentRows(raw.Appointments ?? [], today);
-  let source = "Appointments tab";
-  if (rows.length === 0) {
-    rows = appointmentRows(
-      [...(raw[thisTab] ?? []), ...(raw[lastTab] ?? [])],
-      today,
-    );
-    source = "month tabs";
-  }
-  const thisMonth = ym(today);
-  const prevMonth = ym(prev);
+  const { rows, source, sourceReadAt } = report;
+  const thisMonth = ym(today),
+    prevMonth = ym(prev);
   const stale = staleRows(rows);
   return {
     sheetId: sid,
     source,
+    sourceReadAt,
     monthLabel: thisTab,
     lastMonthLabel: lastTab,
     month: summarise(rows.filter(r => r.month === thisMonth)),
@@ -1287,17 +1090,25 @@ export const push = internalAction({
     // Keep last good numbers where today's read failed.
     let kept = 0;
     for (const p of profiles) {
-      if (!(p.performance && p.performance.error)) continue;
+      if (!p.performance?.error) continue;
+      errors.push(`Client sheet ${p.taskId}: ${p.performance.error}`);
       try {
         const previous = await bridge("profileFor", {
           clientName: p.clientName,
         });
         const old = previous?.performance;
-        if (old && !old.error) {
+        if (
+          old &&
+          !old.error &&
+          previous?.taskId === p.taskId &&
+          old.sheetId === p.performance.sheetId
+        ) {
           p.performance = {
             ...old,
             staleReason: p.performance.error,
-            staleAt: iso(today),
+            staleAt: old.sourceReadAt
+              ? new Date(old.sourceReadAt).toISOString().slice(0, 10)
+              : old.staleAt,
           };
           kept++;
         }

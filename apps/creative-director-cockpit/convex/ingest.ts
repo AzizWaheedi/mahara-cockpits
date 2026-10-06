@@ -330,7 +330,13 @@ export const statCacheInternal = internalQuery({
   handler: async ctx => {
     const out: Record<string, unknown> = {};
     for (const c of await ctx.db.query("clients").collect()) {
-      out[c.name] = { stats: c.stats, statsScannedAt: c.statsScannedAt };
+      if (c.taskId)
+        out[c.taskId] = {
+          taskId: c.taskId,
+          sheetLink: c.sheetLink,
+          stats: c.stats,
+          statsScannedAt: c.statsScannedAt,
+        };
     }
     return out;
   },
