@@ -742,17 +742,33 @@ describe("the one right button", () => {
     expect(a.quiet[0]).toBe("Open my room");
   });
 
-  test("lead in: That was not the lead while a press still lands inside 300 s, then only Finished", () => {
+  test("lead in: That was not the lead while a press still lands inside 300 s, then only Finished (and the way back in, m1 round 6)", () => {
     // The last press: 300 s, less the 5 s Undo, less 15 s for the trip.
     const r = sentRoom({ state: "lead_in", lead_in_at: iso(NOW - 280 * S) });
     expect(acts(r)).toEqual({
       primary: null,
-      quiet: ["That was not the lead", "Finished"],
+      quiet: ["Open my room", "That was not the lead", "Finished"],
     });
     expect(acts({ ...r, lead_in_at: iso(NOW - 281 * S) })).toEqual({
       primary: null,
-      quiet: ["Finished"],
+      quiet: ["Open my room", "Finished"],
     });
+  });
+
+  test("lead in, Zoom said the host left: Open my room first, and the panel says so (m1 round 6)", () => {
+    const r = sentRoom({
+      state: "lead_in",
+      provider: "zoom",
+      host_in_at: iso(NOW - 7 * MIN),
+      lead_in_at: iso(NOW - 6 * MIN),
+      host_left_at: iso(NOW - 2 * MIN),
+    });
+    expect(acts(r)).toEqual({ primary: "Open my room", quiet: ["Finished"] });
+    expect(R.sentenceText(R.roomSentence(r, { now: NOW }))).toMatch(
+      /^You left the call; .* is still in it\. Open my room to go back\.$/,
+    );
+    // Back in (a later host join): the call's own presses again.
+    expect(acts({ ...r, host_in_at: iso(NOW - MIN) }).primary).toBeNull();
   });
 
   test("still on the call: Finished, or Still on it", () => {
@@ -763,12 +779,12 @@ describe("the one right button", () => {
     });
     expect(acts(r)).toEqual({
       primary: "Finished",
-      quiet: ["Still on it"],
+      quiet: ["Open my room", "Still on it"],
     });
     // Answered "Still on it": the question goes and Finished is quiet again.
     const a = R.roomActions(r, { now: NOW, stillOn: true });
     expect(a.primary).toBeNull();
-    expect(a.quiet.map(q => q.label)).toEqual(["Finished"]);
+    expect(a.quiet.map(q => q.label)).toEqual(["Open my room", "Finished"]);
     expect(
       R.sentenceText(R.roomSentence(r, { now: NOW, stillOn: true })),
     ).not.toBe("Still on the call?");

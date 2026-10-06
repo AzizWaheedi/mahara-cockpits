@@ -140,6 +140,7 @@ export function baseRoom(now: number, over: Partial<RoomView> = {}): RoomView {
     link_failed: [],
     link_held: [],
     link_no_whatsapp: false,
+    host_left_at: null,
     ...over,
   };
 }

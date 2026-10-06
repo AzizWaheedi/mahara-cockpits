@@ -252,8 +252,15 @@ export const DEMO_LINK_LINE =
 export function gateLine(why: GateWhy): string | null {
   if (why === "lead_night") return NIGHT_LINE;
   if (why === "booked_demo") return DEMO_LINK_LINE;
+  // The pilot's fallback scope (m1 round 6, journey r6-4): the dialer's
+  // links are for booked intros, and the lead page still makes one.
+  if (why === "scope") return SCOPE_LINE;
   return null;
 }
+
+/** Why the dialer offers no video link for a lead with no booked intro (fallback.scope "intro"). */
+export const SCOPE_LINE =
+  "Video links after a missed call are for booked intros for now. Send one from the lead page's Video call.";
 
 /**
  * A booked demo's length, as room.create counts it: its start plus
@@ -395,7 +402,25 @@ export interface Reach {
   on: boolean;
   dnd: boolean;
   reachable: boolean;
-  window?: { open: boolean } | null;
+  window?: { open: boolean; closes_at?: string | null } | null;
+}
+
+/**
+ * The free-text link is never sent in the WhatsApp window's last 15 minutes
+ * (sales-api roomlogic.ts LINK_WINDOW_MARGIN_MS, the same number): the
+ * picker names the next lane there, as the room's send does (m1 round 6,
+ * m1-time-r6-window-last-15-minutes-picker-promises-whatsapp).
+ */
+export const LINK_WINDOW_MARGIN_MS = 15 * 60_000;
+
+/** The window open for the free-text link at `now`: open, and closing more than the margin away (unknown close: open as read). */
+export function windowOpenForLink(
+  window: { open: boolean; closes_at?: string | null } | null | undefined,
+  now: number,
+): boolean {
+  if (window?.open !== true) return false;
+  const closes = window.closes_at ? Date.parse(window.closes_at) : Number.NaN;
+  return !Number.isFinite(closes) || closes - now > LINK_WINDOW_MARGIN_MS;
 }
 
 /** How the link travels, as the picker line says it ("on WhatsApp", "by email"). */
@@ -468,7 +493,7 @@ export function linkPlanLine(i: {
   const can: Record<Channel, boolean | null> = {
     whatsapp_text: and(
       s.send.whatsapp_text ? waOk : false,
-      wa ? wa.window?.open === true : null,
+      wa ? windowOpenForLink(wa.window, i.now ?? Date.now()) : null,
     ),
     whatsapp_template: and(
       s.send.whatsapp_template && s.short_link ? waOk : false,

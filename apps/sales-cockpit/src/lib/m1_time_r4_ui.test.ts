@@ -387,11 +387,12 @@ describe("Tuesday 6 October, by day, WhatsApp gate open: the lead wrote on Whats
     });
   });
 
-  // Outside video-link round 4's list (the picker one second from the
-  // window's 15-minute edge, where only the room's own open time decides):
-  // kept, skipped, for the round that takes it.
-  test.skip("the lead wrote one second before the edge: the picker names the channel the link goes on", async () => {
-    const s = setup(at, { gate: true, inboundAt: edge - S });
+  // Taken by video-link round 6 (m1-time-r6-window-last-15-minutes-picker-
+  // promises-whatsapp): the picker keeps the 15 minutes from the press. It
+  // cannot know the worker opens the room 6 s later, so the case sits one
+  // second inside the margin at the press as well as at the open.
+  test("the lead wrote one second before the edge: the picker names the channel the link goes on", async () => {
+    const s = setup(at, { gate: true, inboundAt: edge - 7 * S });
     const p = s.picker(at);
     await s.press(at);
     // Found when it fails: linkPlanLine reads convo.read's window as it is

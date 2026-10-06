@@ -1199,6 +1199,8 @@ describe("14. every fixture draws", () => {
     "link_failed",
     "link_held",
     "link_no_whatsapp",
+    // m1 round 6: the host out of a call the lead is still in.
+    "host_left_at",
   ];
 
   test("the browser's key list is contract v2's, in full", () => {

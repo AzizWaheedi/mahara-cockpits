@@ -112,6 +112,7 @@ import {
   lateSentence,
   liveSkips,
   type MissMoment,
+  messagedSinceMiss,
   missedCallLine,
   openAfterRead,
   plainError,
@@ -394,6 +395,12 @@ const OUTCOMES: Record<ItemKind, OutcomeDef[]> = {
       label: "Confirmed",
       needsNote: false,
       hint: "They will be there. Kept in the cockpit; the call stays as booked.",
+    },
+    {
+      key: "showed",
+      label: "Held the intro",
+      needsNote: true,
+      hint: "You had the intro with them now (on video): marks it showed (in HighLevel too).",
     },
     {
       key: "no_answer",
@@ -1885,7 +1892,13 @@ function CallPane({
     // second link for this call until the conversation says otherwise.
     !linkMayHaveGoneClosed(video.room) &&
     !spoke &&
-    !introMarked;
+    !introMarked &&
+    // The missed-call message went already (m1 round 6): one "I tried to
+    // call you" for one missed call.
+    !messagedSinceMiss(
+      convo.data?.sends,
+      missed?.startedAt ?? missed?.at ?? null,
+    );
   // Where the link would go, said in the picker; when nothing can reach the
   // lead, automatic mode does not send blind: the picker says so instead.
   const planLine = roomsSetup.rooms
@@ -2465,7 +2478,7 @@ function CallPane({
               kind === "intro"
                 ? "Mark the intro held, then book the demo while they are warm, or save how it went."
                 : kind === "confirm"
-                  ? "Save that they are coming, or save how it went."
+                  ? "Save that they are coming, or that you held the intro with them on video now."
                   : roomKind === "demo"
                     ? "Save how it went: the follow-up, or the contract if they are ready."
                     : "Book the demo while they are warm, or save how it went."
@@ -2475,17 +2488,32 @@ function CallPane({
               // A confirmation call (the evening before, or that morning):
               // the intro is still ahead, so the step saves the lead's
               // confirmation, never "Book the demo" before it (stress2,
-              // round 2).
-              <button
-                type="button"
-                disabled={Boolean(busy)}
-                onClick={() =>
-                  void save(undefined, "next", { outcome: "confirmed" })
-                }
-                className={panelLeads ? button : buttonPrimary}
-              >
-                <Check className="size-3.5" aria-hidden /> Confirmed the call
-              </button>
+              // round 2). Its link invites the call now, so the intro may
+              // have been had on video: Held the intro marks it showed
+              // (m1 round 6, m1-journeys-r6-confirm-call-link-invites-call-
+              // now-intro-never-held).
+              <>
+                <button
+                  type="button"
+                  disabled={Boolean(busy)}
+                  onClick={() =>
+                    void save(undefined, "next", { outcome: "confirmed" })
+                  }
+                  className={panelLeads ? button : buttonPrimary}
+                >
+                  <Check className="size-3.5" aria-hidden /> Confirmed the call
+                </button>
+                <button
+                  type="button"
+                  disabled={Boolean(busy)}
+                  onClick={() =>
+                    void save(undefined, "next", { outcome: "showed" })
+                  }
+                  className={button}
+                >
+                  <Check className="size-3.5" aria-hidden /> Held the intro
+                </button>
+              </>
             ) : kind === "intro" ? (
               // The intro itself was had on video: it is marked held first
               // (as the held path does), so it never comes back as "Intro

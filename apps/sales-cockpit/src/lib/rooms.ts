@@ -157,6 +157,8 @@ export const ROOM_VIEW_KEYS = [
   "link_failed",
   "link_held",
   "link_no_whatsapp",
+  // m1 round 6: the host out of a call the lead is still in.
+  "host_left_at",
 ] as const;
 
 /** A room as the browser sees it. `start_url` is never part of it. */
@@ -213,6 +215,8 @@ export interface RoomView {
   link_held?: string[];
   /** Meta said the lead's number is not on WhatsApp (131026). */
   link_no_whatsapp?: boolean;
+  /** When Zoom last said the host left (m1 round 6): later than host_in_at, the host is out of the call. */
+  host_left_at?: string | null;
   /** When the room first showed the join (fix round 4): That was not the lead counts from the later of this and lead_in_at. */
   lead_in_seen_at?: string | null;
   /** What made the room, so "Try Zoom" makes the same kind of room. */
@@ -548,6 +552,7 @@ export function normalizeRoom(v: unknown): RoomView | null {
   if ("link_held" in v) room.link_held = lanes(v.link_held);
   if ("link_no_whatsapp" in v)
     room.link_no_whatsapp = v.link_no_whatsapp === true;
+  if ("host_left_at" in v) room.host_left_at = when(v.host_left_at);
   dropOpensBeforeLink(room);
   return room;
 }
@@ -1828,9 +1833,13 @@ export function roomSentence(room: RoomView, ctx: RoomCtx): Sentence {
     }
     case "waiting_room":
       if (room.state === "lead_in")
-        return [
-          `${name || "The lead"} is back in the waiting room. Admit them in Zoom.`,
-        ];
+        return hostOutOfCall(room)
+          ? [
+              `You left the call; ${name || "the lead"} is back in the waiting room. Open my room to go back and admit them.`,
+            ]
+          : [
+              `${name || "The lead"} is back in the waiting room. Admit them in Zoom.`,
+            ];
       if (v === "p1")
         return [`${name} is in the waiting room. Admit them in Zoom.`];
       if (v === "p2")
@@ -1864,8 +1873,16 @@ export function roomSentence(room: RoomView, ctx: RoomCtx): Sentence {
       ];
     }
     case "joined":
+      if (room.state === "lead_in" && hostOutOfCall(room))
+        return [
+          `You left the call; ${name || "the lead"} is still in it. Open my room to go back.`,
+        ];
       return joinedSentence(room, v);
     case "still_on_call":
+      if (room.state === "lead_in" && hostOutOfCall(room))
+        return [
+          `You left the call; ${name || "the lead"} may still be in it. Open my room to go back.`,
+        ];
       return ["Still on the call?"];
     case "expired":
       if (room.end_reason === "host_not_in") return hostNotInSentence(room);
@@ -2295,23 +2312,48 @@ function momentActions(
       };
     case "waiting_room":
       // On a call already: the lead dropped and is back at Zoom's door, so
-      // the call's own presses stay (m1 round 4).
+      // the call's own presses stay (m1 round 4), and the way back into the
+      // meeting (m1 round 6): Open my room, first when the host is out.
       if (room.state !== "lead_in") break;
-      return { primary: null, quiet: [act("finished", "Finished")] };
+      return hostOutOfCall(room)
+        ? {
+            primary: act("open", "Open my room"),
+            quiet: [act("finished", "Finished")],
+          }
+        : {
+            primary: null,
+            quiet: [act("open", "Open my room"), act("finished", "Finished")],
+          };
     case "joined":
     case "still_on_call": {
       const quiet: RoomAction[] = [];
+      // The way back into the call the lead is in (m1 round 6,
+      // m1-journeys-r6-host-dropped-joined-room-no-way-back-in): room.open
+      // answers the host link for a lead_in room; first when Zoom said the
+      // host left.
+      const out = room.state === "lead_in" && hostOutOfCall(room);
+      if (room.state === "lead_in" && !out)
+        quiet.push(act("open", "Open my room"));
       if (canSayNotLead(room, ctx.now))
         quiet.push(act("not_lead", "That was not the lead"));
       // "Still on the call?" can be answered either way; Finished waits
       // behind its Undo, so a reflex tap does not end a call in progress.
       if (m === "still_on_call")
-        return {
-          primary: act("finished", "Finished"),
-          quiet: [...quiet, act("still_on", "Still on it")],
-        };
+        return out
+          ? {
+              primary: act("open", "Open my room"),
+              quiet: [
+                ...quiet,
+                act("finished", "Finished"),
+                act("still_on", "Still on it"),
+              ],
+            }
+          : {
+              primary: act("finished", "Finished"),
+              quiet: [...quiet, act("still_on", "Still on it")],
+            };
       quiet.push(act("finished", "Finished"));
-      return { primary: null, quiet };
+      return { primary: out ? act("open", "Open my room") : null, quiet };
     }
   }
   // open or host_in, with a lead. A Meet room this tab opened, whose link the
@@ -2435,7 +2477,28 @@ export function roomHoldsNoShow(
   if (!isFinal(room.state)) return true;
   if (room.lead_in_at) return false;
   if (room.result === "admit_blocked" || room.moved_from) return true;
-  return promisedWaitAhead(room, now) !== null;
+  if (promisedWaitAhead(room, now) !== null) return true;
+  return knockHoldAhead(room, now) !== null;
+}
+
+/** sales-api's NOSHOW_AFTER_KNOCK_MS (index.ts): a no-show waits this long after a room closed on an open or a knock. */
+export const NOSHOW_AFTER_KNOCK_MS = 5 * 60_000;
+
+/**
+ * The end of sales-api's own hold after a room closed with the lead at its
+ * door (m1 round 6, m1-time-r6-late-knock-after-timer-close-grid-offers-
+ * noshow-server-refuses): a closed room nobody joined, ended in the last
+ * five minutes, that the lead knocked on or opened (index.ts
+ * videoLinkHoldsNoShow, the same columns).
+ */
+export function knockHoldAhead(room: RoomView, now: number): number | null {
+  if (!room.contact_id || room.lead_in_at || !isFinal(room.state)) return null;
+  const ended = t(room.ended_at ?? null);
+  if (ended === null) return null;
+  if (!room.lead_waiting_at && !room.first_open_at && !room.last_open_at)
+    return null;
+  const until = ended + NOSHOW_AFTER_KNOCK_MS;
+  return until > now ? until : null;
 }
 
 /**
@@ -2455,7 +2518,14 @@ export function noShowHold(
   if (room.result === "admit_blocked" || room.moved_from)
     return `${name ?? "The lead"} knocked on the video room and could not be let in, so Didn't show is not offered. Call them, or save how the call went.`;
   const until = promisedWaitAhead(room, now);
-  return `The video link told ${name ?? "the lead"} the room would wait until ${clock(new Date(until ?? now).toISOString())}, so Didn't show waits until then. Call them now.`;
+  if (until !== null)
+    return `The video link told ${name ?? "the lead"} the room would wait until ${clock(new Date(until).toISOString())}, so Didn't show waits until then. Call them now.`;
+  const after = knockHoldAhead(room, now) ?? now;
+  const waits = clock(new Date(after).toISOString());
+  if (room.lead_waiting_at)
+    return `${name ?? "The lead"} knocked on the video room at ${clock(room.lead_waiting_at)}, so Didn't show waits until ${waits}. Call them now.`;
+  const opened = room.last_open_at ?? room.first_open_at ?? null;
+  return `${name ?? "The lead"} opened the video link${opened ? ` at ${clock(opened)}` : ""}, so Didn't show waits until ${waits}. Call them now.`;
 }
 
 /** sales-api's night refusals (lead_night_read_out, lead_night_unsayable): no message goes now. */
@@ -2471,10 +2541,14 @@ export function nightRefusal(refusal: string | null | undefined): boolean {
  */
 export function promisedWaitAhead(room: RoomView, now: number): number | null {
   if (!room.contact_id || room.lead_in_at) return null;
+  // Only a link that went promised anything (m1 round 6,
+  // m1-time-r6-noshow-grid-says-link-promised-wait-for-link-never-sent): a
+  // lead_by a final refusal started is the rep's own ten minutes, which
+  // sales-api does not hold a no-show for either.
   const sent = t(room.last_link_at ?? null) ?? t(room.link_sent_at);
-  const until =
-    t(room.lead_by) ?? (sent === null ? null : sent + WAITS_S.lead * 1000);
-  return until !== null && until > now ? until : null;
+  if (sent === null || !room.link_sent_at) return null;
+  const until = t(room.lead_by) ?? sent + WAITS_S.lead * 1000;
+  return until > now ? until : null;
 }
 
 /**
@@ -2760,6 +2834,14 @@ export function bannerRoomSentence(
     (m === "not_confirmed" && !(room.link_channels ?? []).includes("email"))
   )
     return roomSentence(room, { now, workerDown: ctx.workerDown });
+  if (
+    (m === "joined" || m === "still_on_call" || m === "waiting_room") &&
+    room.state === "lead_in" &&
+    hostOutOfCall(room)
+  )
+    return [
+      `You left the call; ${name ?? "the lead"} is still in it. Open my room to go back.`,
+    ];
   if (m === "joined") return [`${Name} joined.`];
   // Past the call's planned end, or the rep rang the lead again since the
   // join (m1 round 3b): asked, never "joined" for an hour.
@@ -2828,9 +2910,24 @@ export function bannerRoomAction(room: RoomView): {
   label: string;
 } {
   const meetOpened = room.provider === "meet" && openedHere.has(room.id);
+  // Out of a call the lead is still in (m1 round 6): back into the room.
+  if (room.state === "lead_in" && hostOutOfCall(room))
+    return { key: "open_room", label: "Open my room" };
   return room.state === "open" && room.contact_id && !meetOpened
     ? { key: "open_room", label: "Open my room" }
     : { key: "open_lead", label: "Open the lead" };
+}
+
+/**
+ * Zoom said the host left after they were last in (host_left_at later than
+ * host_in_at): on a lead_in room the lead may still be in the meeting, and
+ * the host is not (m1 round 6). Meet never says it.
+ */
+export function hostOutOfCall(room: RoomView): boolean {
+  const left = t(room.host_left_at ?? null);
+  if (left === null) return false;
+  const inAt = t(room.host_in_at);
+  return inAt === null || left > inAt;
 }
 
 const ROOM_URGENCY: Partial<Record<RoomMoment, number>> = {

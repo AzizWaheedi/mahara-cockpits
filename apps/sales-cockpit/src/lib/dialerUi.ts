@@ -174,6 +174,36 @@ export function afterSave(
   return "next";
 }
 
+/**
+ * A message to the lead went since the missed call (the missed-call
+ * message, from the step or the conversation box: the cockpit's own sends,
+ * never a room's link): the step no longer offers a video link, whose words
+ * open with "I tried to call you" again (m1 round 6,
+ * m1-journeys-r6-missed-call-message-then-video-link-two-tried-to-call).
+ * The lead page's Video call still makes one.
+ */
+export function messagedSinceMiss(
+  sends:
+    | readonly {
+        source?: string | null;
+        state?: string | null;
+        channel?: string | null;
+        created_at?: string | null;
+      }[]
+    | null
+    | undefined,
+  since: number | null,
+): boolean {
+  if (since === null || !sends?.length) return false;
+  return sends.some(s => {
+    if (s.source === "room" || String(s.state ?? "") === "failed") return false;
+    if (!["whatsapp", "email", "sms"].includes(String(s.channel ?? "")))
+      return false;
+    const at = Date.parse(String(s.created_at ?? ""));
+    return Number.isFinite(at) && at >= since;
+  });
+}
+
 /** Alt+→ opens the next lead, but not inside a text box, where it moves the cursor by a word. */
 export function isNextLeadKey(
   e: {
