@@ -327,6 +327,17 @@ class DeployCheck(unittest.TestCase):
         self.assertIn("apply the current 20261004a_live_calls_hardening_2.sql", said)
         self.assertIn("cockpit_sales_rooms.taken_back_join_at", said)
 
+    def test_an_appointments_column_room_create_reads_that_is_missing_blocks(self):
+        # m1 round 3b: room.create's booked-demo read named a column the
+        # mirror does not have, and every press failed. The check names it.
+        db = Catalog()
+        db.schema["cockpit_sales_appointments"].discard("start_at")
+        code, out, _ = run(["deploy-check"], db)
+        self.assertEqual(code, 1)
+        said = line(out, "cockpit_sales_appointments")
+        self.assertTrue(said.startswith("-- "))
+        self.assertIn("without start_at", said)
+
     def test_missing_columns_are_named_one_by_one(self):
         db = Catalog()
         db.schema["cockpit_sales_followup_wave_members"] -= {"next_try_at", "closed_at", "arm"}
