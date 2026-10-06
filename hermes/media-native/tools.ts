@@ -20,6 +20,8 @@ export function safeError(error: unknown): string {
   return error instanceof ProviderError ? error.message : error instanceof UncertainOutcome ? error.message : 'The operation failed. Inspect the worker configuration and provider health.';
 }
 export class ProviderError extends Error {}
+class FenceOrHealthError extends ProviderError {}
+class DraftRejectedError extends ProviderError {}
 export class UncertainOutcome extends Error {}
 const HEALTH_FIELDS: Record<string, true> = { status: true, count: true, durationMs: true, bytes: true, code: true };
 export function sanitizePayload(value: unknown): Row {
@@ -31,9 +33,14 @@ export function sanitizePayload(value: unknown): Row {
   return result;
 }
 export async function rpc(client: SupabaseClient, name: string, args: Row = {}): Promise<unknown> {
-  const { data, error } = await client.rpc(name, args);
-  if (error) throw new ProviderError(`Database operation ${name} was rejected. Check access, source readiness and the current worker fence.`);
-  return data;
+  let result;
+  try {
+    result = await client.rpc(name, args);
+  } catch {
+    throw new FenceOrHealthError(`Database operation ${name} was rejected. Check access, source readiness and the current worker fence.`);
+  }
+  if (result.error) throw new FenceOrHealthError(`Database operation ${name} was rejected. Check access, source readiness and the current worker fence.`);
+  return result.data;
 }
 export type Intent = { state: 'new' | 'pending' | 'confirmed'; response?: unknown };
 export async function recordDurableIntent(client: SupabaseClient, jobId: string, token: string, provider: string, intentHash: string, request: Row = {}): Promise<Intent> {
@@ -52,21 +59,34 @@ export async function health(client: SupabaseClient, jobId: string | null, token
   await rpc(client, 'cockpit_media_native_health', { p_job_id: jobId, p_token: token, p_provider: provider, p_operation: operation, p_ok: ok, p_detail: sanitizePayload(detail) });
 }
 export type Effect = (provider: string, key: string, action: () => Promise<unknown>) => Promise<unknown>;
+const PROVIDERS: Readonly<Record<string, string>> = {
+  'slack.com': 'slack',
+  'api.anthropic.com': 'anthropic',
+  'api.openai.com': 'openai',
+  'generativelanguage.googleapis.com': 'gemini',
+  'api.deepseek.com': 'deepseek',
+  'oauth2.googleapis.com': 'google_auth',
+  'www.googleapis.com': 'google',
+  'graph.facebook.com': 'meta',
+};
 export function providerTransport(client: SupabaseClient, jobId: string | null, token: string | null, guard: () => Promise<unknown>, fetchImpl: typeof fetch = fetch): typeof fetch {
   return async (input, init) => {
     const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input : input.url);
-    const providers: Record<string, string> = { 'slack.com': 'slack', 'api.anthropic.com': 'anthropic', 'oauth2.googleapis.com': 'google_auth', 'www.googleapis.com': 'google', 'graph.facebook.com': 'meta' };
-    const provider = providers[url.hostname];
+    const provider = PROVIDERS[url.hostname];
     if (!provider) throw new ProviderError('Unapproved provider host.');
     const operation = `${init?.method ?? 'GET'}:${url.pathname.split('/').filter(Boolean).slice(0, 2).join('/')}`;
     const started = Date.now();
+    let inTransport = false;
     try {
       await guard();
+      inTransport = true;
       const response = await fetchImpl(input, { ...init, signal: init?.signal ?? AbortSignal.timeout(30_000) });
       await health(client, jobId, token, provider, operation, response.ok, { status: response.status, durationMs: Date.now() - started });
       return response;
     } catch (error) {
-      await health(client, jobId, token, provider, operation, false, { code: error instanceof ProviderError ? 'fence_or_health_rejected' : 'transport_failure', durationMs: Date.now() - started });
+      const isFenceOrHealth = !inTransport || error instanceof FenceOrHealthError || error instanceof ProviderError;
+      await health(client, jobId, token, provider, operation, false, { code: isFenceOrHealth ? 'fence_or_health_rejected' : 'transport_failure', durationMs: Date.now() - started });
+      if (!inTransport) throw new FenceOrHealthError('The current worker fence was rejected. Reconcile the job before continuing.');
       throw error;
     }
   };
@@ -134,19 +154,23 @@ export function sourceRows(context: SourceContext, key: string): Row[] {
   if (!(key in context.sources)) throw new ProviderError(`The ${key} source is not verified. Run the media source producer.`);
   return list(context.sources[key]).map(row);
 }
-export function validateDraft(value: unknown): Draft {
-  const data = row(value); const variants = list(data.variants).map(value => {
-    const item = row(value);
-    const variant = { headline: str(item.headline).trim(), message: str(item.message).trim(), description: typeof item.description === 'string' ? item.description : '', angle: str(item.angle) };
-    if (variant.headline.length >= 40 || variant.message.length > 1200 || BANNED.test(`${variant.headline} ${variant.message} ${variant.description}`)) throw new ProviderError('The model draft broke the house rules. No copy was marked ready.');
-    return variant;
-  });
-  if (variants.length !== 5) throw new ProviderError('The model must return five distinct draft variants.');
-  return { variants, note: `${typeof data.note === 'string' ? data.note : 'Five draft options.'} Nothing has been published or sent to clients.` };
+function validateDraft(value: unknown): Draft {
+  try {
+    const data = row(value); const variants = list(data.variants).map(value => {
+      const item = row(value);
+      const variant = { headline: str(item.headline).trim(), message: str(item.message).trim(), description: typeof item.description === 'string' ? item.description : '', angle: str(item.angle) };
+      if (variant.headline.length >= 40 || variant.message.length > 1200 || BANNED.test(`${variant.headline} ${variant.message} ${variant.description}`)) throw new DraftRejectedError('The model draft broke the house rules. No copy was marked ready.');
+      return variant;
+    });
+    if (variants.length !== 5) throw new DraftRejectedError('The model must return five distinct draft variants.');
+    return { variants, note: `${typeof data.note === 'string' ? data.note : 'Five draft options.'} Nothing has been published or sent to clients.` };
+  } catch (error) {
+    if (error instanceof DraftRejectedError) throw error;
+    throw new DraftRejectedError('The model returned an invalid draft. No copy was marked ready.');
+  }
 }
 export async function generateAssistDraft(request: Row, context: SourceContext, options: { apiKey?: string; fetchImpl?: typeof fetch } = {}): Promise<Draft> {
-  const apiKey = options.apiKey ?? process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) throw new ProviderError('Set ANTHROPIC_API_KEY for native copy drafts.');
+  const fetcher = options.fetchImpl ?? fetch;
   const campaign = context.campaign?.raw_data ? row(context.campaign.raw_data) : context.campaign ?? {};
   const prefs = sourceRows(context, 'clientPrefs')[0];
   const onboarding = sourceRows(context, 'onboardings')[0];
@@ -184,12 +208,124 @@ Ads that have actually produced cheap leads for similar clients — steal the an
 ${picked.length ? JSON.stringify(picked) : 'No comparable winners on file yet.'}
 ${HOUSE_RULES}
 Give 5 distinct angles, not 5 rewrites of one sentence: outcome, objection, proof, question, direct offer. Write in ${language}. Name the angle in English.`;
-  const schema = { type: 'object', additionalProperties: false, properties: { variants: { type: 'array', items: { type: 'object', additionalProperties: false, properties: { headline: { type: 'string' }, message: { type: 'string' }, description: { type: 'string' }, angle: { type: 'string' } }, required: ['headline', 'message', 'description', 'angle'] } }, note: { type: 'string' } }, required: ['variants', 'note'] };
-  const response = await (options.fetchImpl ?? fetch)('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' }, body: JSON.stringify({ model: process.env.ANTHROPIC_MODEL || 'claude-opus-5', max_tokens: 16000, messages: [{ role: 'user', content: prompt }], output_config: { format: { type: 'json_schema', schema } } }), signal: AbortSignal.timeout(120_000) });
-  const body = row(await response.json());
-  if (!response.ok || body.stop_reason !== 'end_turn') throw new ProviderError('The model did not complete the requested draft.');
-  const text = list(body.content).map(row).filter(block => block.type === 'text').map(block => str(block.text)).join('');
-  return validateDraft(JSON.parse(text));
+
+  const order = (process.env.AI_JSON_PROVIDERS || 'anthropic,openai,gemini,deepseek')
+    .split(',')
+    .map(x => x.trim())
+    .filter(Boolean);
+
+  const tried: string[] = [];
+  for (const provider of order) {
+    try {
+      if (provider === 'anthropic' && (options.apiKey || process.env.ANTHROPIC_API_KEY)) {
+        const apiKey = options.apiKey ?? process.env.ANTHROPIC_API_KEY;
+        const schema = { type: 'object', additionalProperties: false, properties: { variants: { type: 'array', items: { type: 'object', additionalProperties: false, properties: { headline: { type: 'string' }, message: { type: 'string' }, description: { type: 'string' }, angle: { type: 'string' } }, required: ['headline', 'message', 'description', 'angle'] } }, note: { type: 'string' } }, required: ['variants', 'note'] };
+        const response = await fetcher('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey!, 'anthropic-version': '2023-06-01' },
+          body: JSON.stringify({
+            model: process.env.ANTHROPIC_MODEL || 'claude-opus-5',
+            max_tokens: 16000,
+            messages: [{ role: 'user', content: prompt }],
+            output_config: { format: { type: 'json_schema', schema } },
+          }),
+          signal: AbortSignal.timeout(120_000),
+        });
+        const body = row(await response.json());
+        if (!response.ok || body.stop_reason !== 'end_turn') throw new ProviderError('The model did not complete the requested draft.');
+        const text = list(body.content).map(row).filter(block => block.type === 'text').map(block => str(block.text)).join('');
+        return validateDraft(JSON.parse(text));
+      }
+      if (provider === 'openai' && process.env.OPENAI_API_KEY) {
+        const response = await fetcher('https://api.openai.com/v1/chat/completions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
+          body: JSON.stringify({
+            model: process.env.OPENAI_MODEL || 'gpt-4o',
+            messages: [
+              {
+                role: 'system',
+                content: 'Answer with one JSON object matching the fields the user asks for. No prose outside the JSON.',
+              },
+              { role: 'user', content: prompt },
+            ],
+            response_format: { type: 'json_object' },
+            temperature: 0.6,
+          }),
+          signal: AbortSignal.timeout(120_000),
+        });
+        const body = row(await response.json());
+        if (!response.ok) throw new ProviderError('The OpenAI model call failed.');
+        const choices = list(body.choices);
+        const content = row(choices[0]).message ? row(row(choices[0]).message).content : undefined;
+        return validateDraft(JSON.parse(str(content)));
+      }
+      if (provider === 'gemini' && process.env.GOOGLE_AI_API_KEY) {
+        const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+        const response = await fetcher(
+          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${process.env.GOOGLE_AI_API_KEY}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: [{ parts: [{ text: prompt }] }],
+              generationConfig: { responseMimeType: 'application/json' },
+            }),
+            signal: AbortSignal.timeout(120_000),
+          },
+        );
+        const body = row(await response.json());
+        if (!response.ok) throw new ProviderError('The Gemini model call failed.');
+        const candidates = list(body.candidates);
+        const parts = list(row(row(candidates[0]).content).parts);
+        const text = str(row(parts[0]).text);
+        return validateDraft(JSON.parse(text));
+      }
+      if (provider === 'deepseek' && process.env.DEEPSEEK_API_KEY) {
+        const response = await fetcher('https://api.deepseek.com/chat/completions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}` },
+          body: JSON.stringify({
+            model: process.env.DEEPSEEK_MODEL || 'deepseek-chat',
+            messages: [
+              {
+                role: 'user',
+                content: `${prompt}\n\nAnswer with one JSON object only.`,
+              },
+            ],
+            response_format: { type: 'json_object' },
+            temperature: 0.6,
+          }),
+          signal: AbortSignal.timeout(120_000),
+        });
+        const body = row(await response.json());
+        if (!response.ok) throw new ProviderError('The DeepSeek model call failed.');
+        const choices = list(body.choices);
+        const m = row(row(choices[0]).message);
+        const content = typeof m.content === 'string' && m.content ? m.content : str(m.reasoning_content);
+        return validateDraft(JSON.parse(content));
+      }
+    } catch (e) {
+      if (e instanceof FenceOrHealthError) {
+        throw e;
+      }
+      if (e instanceof DraftRejectedError) {
+        throw e;
+      }
+      const reason = e instanceof ProviderError
+        ? e.message
+        : e instanceof SyntaxError
+        ? 'invalid JSON payload'
+        : 'provider request failed';
+      tried.push(`${provider} (${reason})`);
+    }
+  }
+
+  throw new ProviderError(
+    tried.length
+      ? `No model could answer: ${tried.join('; ')}`
+      : 'No model key is set on this deployment. Set one of ANTHROPIC_API_KEY, OPENAI_API_KEY, GOOGLE_AI_API_KEY or DEEPSEEK_API_KEY.',
+  );
 }
 
 export async function fetchGoogleAccessToken(scope: 'calendar' | 'drive', expectedEmail: string, options: { fetchImpl?: typeof fetch; serviceAccountJson?: string } = {}): Promise<string> {

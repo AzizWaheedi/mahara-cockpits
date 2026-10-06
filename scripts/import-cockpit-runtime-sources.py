@@ -168,6 +168,7 @@ def queue_pending(app, table, row):
 
 
 def client_names(app, table, row, tables):
+    private_history = table in SOURCE_TABLES.get(app, ()) or table == "waThreads"
     if table in GLOBAL_SOURCES:
         return []
     canonical = {}
@@ -177,6 +178,8 @@ def client_names(app, table, row, tables):
             if name:
                 key = name.strip().lower()
                 if key in canonical and canonical[key] != name.strip():
+                    if private_history:
+                        return []
                     raise ValueError("Ambiguous client scope roster")
                 canonical[key] = name.strip()
     historical = {}
@@ -188,6 +191,8 @@ def client_names(app, table, row, tables):
         if key in canonical:
             continue
         if key in historical and historical[key] != name.strip():
+            if private_history:
+                return []
             raise ValueError("Ambiguous historical client scope")
         historical[key] = name.strip()
     canonical.update(historical)
@@ -210,6 +215,8 @@ def client_names(app, table, row, tables):
                 if str(client.get("taskId") or client.get("id") or client.get("key") or client.get("name") or "") == key
             ]
             if len(matches) > 1:
+                if private_history:
+                    return []
                 raise ValueError("Ambiguous exact roster identity for churn event")
             if len(matches) == 1:
                 requested.append(matches[0].get("name"))
@@ -222,22 +229,30 @@ def client_names(app, table, row, tables):
             matched = [r for r in tables.get("campaigns", []) if r.get("campaignName") == campaign]
             names = {r.get("clientName") or r.get("accountName") for r in matched}
             if len(names) != 1 or None in names:
+                if private_history:
+                    return []
                 raise ValueError(f"Unresolved exact campaign scope: {table}")
             requested.extend(names)
         elif row.get("taskId"):
             matched = [r for r in tables.get("campaigns", []) if r.get("taskId") == row["taskId"]]
             names = {r.get("clientName") or r.get("accountName") for r in matched}
             if len(names) > 1 or None in names:
+                if private_history:
+                    return []
                 raise ValueError(f"Ambiguous exact task scope: {table}")
             requested.extend(names)
     if not requested:
         # Retain unassigned work and role-shared legacy plans without inventing a scope.
         if table in ("creativeTasks", "videoJobs", "contentPosts", "csTasks", "inbox", "feedback", "planItems", "hotList", "waThreads", "replyDrafts"):
             return []
+        if private_history:
+            return []
         raise ValueError(f"Missing client scope: {app}/{table}")
     result = []
     for name in requested:
         if not isinstance(name, str) or name.strip().lower() not in canonical:
+            if private_history:
+                return []
             raise ValueError(f"Unresolved client scope: {app}/{table}")
         result.append(canonical[name.strip().lower()])
     return sorted(set(result))
@@ -256,8 +271,16 @@ def guard_existing(current, desired, previous):
 
 
 def rewrite_files(source, app, files):
-    def native_url(storage_id):
-        mapping = files.get(f"{app}/{storage_id}")
+    def native_url(storage_id, source_deployment=None):
+        if source_deployment is None:
+            mapping = files.get(f"{app}/{storage_id}")
+        else:
+            matches = [mapping for key, mapping in files.items()
+                       if (key.endswith(f"/{storage_id}") or mapping.get("source_internal_id") == storage_id)
+                       and mapping.get("source_deployment") == source_deployment]
+            if len(matches) != 1:
+                raise ValueError("Missing or ambiguous verified native file namespace")
+            mapping = matches[0]
         if not mapping or mapping.get("verified") is not True or not re.fullmatch(r"[a-f0-9]{64}", mapping.get("sha256", "")):
             raise ValueError("Missing verified native file mapping")
         expected = f"{PROJECT_URL}/storage/v1/object/public/cockpit-ad-stills/{mapping['sha256']}"
@@ -278,9 +301,11 @@ def rewrite_files(source, app, files):
             return [visit(item, parent, field) for item in value]
         if not isinstance(value, str) or not re.search(r"https://[^/]+\.convex\.(cloud|site)/.*(storage|file)", value):
             return value
-        storage_field = "tinyStorageId" if field in ("tinyUrl", "stillTinyUrl") else "storageId"
-        storage_id = (parent or {}).get(storage_field) or value.split("?", 1)[0].rstrip("/").split("/")[-1]
-        return native_url(storage_id)
+        match = re.match(r"https://([a-z0-9-]+)\.convex\.(?:cloud|site)/", value)
+        if not match:
+            raise ValueError("Legacy file deployment namespace is invalid")
+        storage_id = value.split("?", 1)[0].rstrip("/").split("/")[-1]
+        return native_url(storage_id, match.group(1))
     return visit(source)
 
 
@@ -819,7 +844,7 @@ def durable_guard_data(table, data):
         "replyDrafts": ("source_app", "chat_id", "status", "job_id", "draft", "at", "last_at", "creation_time", "source_deployment", "source_id", "source_record"),
     }
     result = {key: data.get(key) for key in fields[table]}
-    for key in ("set_at",) if table == "ceoTeamStatus" else ("created_at",) if table in ("planItems", "ceoAudit") else ("captured_at",) if table in ("ceoDaily", "ceoClientBilling") else ("cleared_at",) if table == "looseDismissed" else ("at",) if table == "callBriefs" else ("created_at", "updated_at") if table == "hotList" else ("updated_at",) if table in ("clientPrefs", "moneyGoals", "projections", "renewalPlans") else ("draft_at", "last_at", "waiting_since", "synced_at", "creation_time") if table == "waThreads" else ("at", "last_at", "creation_time") if table == "replyDrafts" else ():
+    for key in ("submitted_at",) if table == "eodReports" else ("source_created_at",) if table == "checks" else ("logged_at",) if table == "decisions" else ("set_at",) if table == "ceoTeamStatus" else ("created_at",) if table in ("planItems", "ceoAudit") else ("captured_at",) if table in ("ceoDaily", "ceoClientBilling") else ("cleared_at",) if table == "looseDismissed" else ("at",) if table == "callBriefs" else ("created_at", "updated_at") if table == "hotList" else ("updated_at",) if table in ("clientPrefs", "moneyGoals", "projections", "renewalPlans") else ("draft_at", "last_at", "waiting_since", "synced_at", "creation_time") if table == "waThreads" else ("at", "last_at", "creation_time") if table == "replyDrafts" else ():
         if result[key] is not None:
             value = datetime.fromisoformat(result[key].replace("Z", "+00:00"))
             if value.tzinfo is None:

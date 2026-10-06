@@ -188,8 +188,7 @@ class RuntimeImportTests(unittest.TestCase):
     def test_creative_multi_client_scope_never_drops_unknown_client(self):
         sets = {"clients": [{"_id": "c", "name": "Acme"}]}
         row = {"_id": "t", "clients": ["Acme", "Unresolved"]}
-        with self.assertRaisesRegex(ValueError, "scope"):
-            imp.client_names("creative-director", "creativeTasks", row, sets)
+        self.assertEqual(imp.client_names("creative-director", "creativeTasks", row, sets), [])
         row["clients"] = ["Acme"]
         self.assertEqual(imp.client_names("creative-director", "creativeTasks", row, sets), ["Acme"])
 
@@ -205,15 +204,13 @@ class RuntimeImportTests(unittest.TestCase):
     def test_campaign_scope_uses_exact_campaign_and_client_names(self):
         sets = {"clients": [{"name": "Acme"}], "campaigns": [{"campaignName": "Sales", "clientName": "Acme"}]}
         self.assertEqual(imp.client_names("media-buyer", "adChanges", {"_id": "a", "campaignName": "Sales"}, sets), ["Acme"])
-        with self.assertRaisesRegex(ValueError, "scope"):
-            imp.client_names("media-buyer", "adChanges", {"_id": "a", "campaignName": "Sale"}, sets)
+        self.assertEqual(imp.client_names("media-buyer", "adChanges", {"_id": "a", "campaignName": "Sale"}, sets), [])
     def test_churn_scope_resolves_only_by_exact_client_identity(self):
         clients = {"clients": [{"_id": "c1", "taskId": "cu1", "name": "Acme"}]}
         event = {"_id": "e1", "key": "cu1", "kind": "lost"}
         self.assertEqual(imp.client_names("client-success", "churnEvents", event, clients), ["Acme"])
         event["key"] = "not-a-client"
-        with self.assertRaisesRegex(ValueError, "scope"):
-            imp.client_names("client-success", "churnEvents", event, clients)
+        self.assertEqual(imp.client_names("client-success", "churnEvents", event, clients), [])
 
 
     def test_exact_compare_distinguishes_missing_null_and_numbers(self):
@@ -242,7 +239,7 @@ class RuntimeImportTests(unittest.TestCase):
         source = {"_id": "s", "storageId": "file1", "url": "https://legacy.convex.cloud/api/storage/file1"}
         with self.assertRaisesRegex(ValueError, "file"):
             imp.rewrite_files(source, "media-buyer", {})
-        mapped = {"media-buyer/file1": {"url": imp.PROJECT_URL + "/storage/v1/object/public/cockpit-ad-stills/" + "a" * 64, "sha256": "a" * 64, "verified": True}}
+        mapped = {"media-buyer/file1": {"url": imp.PROJECT_URL + "/storage/v1/object/public/cockpit-ad-stills/" + "a" * 64, "sha256": "a" * 64, "verified": True, "source_deployment": "legacy"}}
         rewritten = imp.rewrite_files(source, "media-buyer", mapped)
         self.assertEqual(rewritten["storageId"], "file1")
         self.assertEqual(rewritten["url"], mapped["media-buyer/file1"]["url"])
@@ -255,6 +252,28 @@ class RuntimeImportTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "hash"):
             imp.rewrite_files({"_id": "s", "storageId": "file1"}, "media-buyer", mapped)
 
+
+    def test_mirrored_file_url_keeps_its_original_deployment_namespace(self):
+        source = {"stillUrl": "https://original-media.convex.cloud/api/storage/shared-id"}
+        base = imp.PROJECT_URL + "/storage/v1/object/public/cockpit-ad-stills/"
+        files = {
+            "media-buyer/shared-id": {"url": base + "a" * 64, "sha256": "a" * 64, "verified": True, "source_deployment": "original-media", "source_internal_id": "media-url-id"},
+            "client-success/shared-id": {"url": base + "b" * 64, "sha256": "b" * 64, "verified": True, "source_deployment": "original-csm", "source_internal_id": "csm-url-id"},
+        }
+        self.assertEqual(imp.rewrite_files(source, "client-success", files)["stillUrl"], base + "a" * 64)
+        source["stillUrl"] = "https://original-media.convex.cloud/api/storage/media-url-id"
+        self.assertEqual(imp.rewrite_files(source, "client-success", files)["stillUrl"], base + "a" * 64)
+        source["stillUrl"] = "https://unknown-deployment.convex.cloud/api/storage/shared-id"
+        with self.assertRaises(ValueError):
+            imp.rewrite_files(source, "client-success", files)
+
+    def test_durable_guard_compares_original_timestamps_as_instants(self):
+        for table, field in (("eodReports", "submitted_at"), ("checks", "source_created_at"), ("decisions", "logged_at")):
+            expected = imp.durable_guard_data(table, {field: "2026-09-27T09:40:23.123456+00:00"})
+            actual = imp.durable_guard_data(table, {field: "2026-09-27T12:40:23.123456+03:00"})
+            self.assertEqual(actual, expected)
+            changed = imp.durable_guard_data(table, {field: "2026-09-27T12:40:24.123456+03:00"})
+            self.assertNotEqual(changed, expected)
 
     def test_plan_hash_binds_source_target_rows_scope_and_files(self):
         plan = {"source": "a", "target": "b", "scope": ["media-buyer/inbox"], "files": [], "operations": []}

@@ -1,6 +1,6 @@
 BEGIN;
 -- Worker-only contracts. The authoritative base queue/finish/reply RPCs remain intact.
-CREATE TABLE public.cockpit_media_native_receipts (
+CREATE TABLE IF NOT EXISTS public.cockpit_media_native_receipts (
  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
  job_id uuid NOT NULL REFERENCES public.cockpit_media_native_jobs(id) ON DELETE CASCADE,
  record_id uuid NOT NULL REFERENCES public.cockpit_media_native_records(id) ON DELETE CASCADE,
@@ -8,13 +8,13 @@ CREATE TABLE public.cockpit_media_native_receipts (
  intent_hash text NOT NULL, request_payload jsonb NOT NULL DEFAULT '{}', response_payload jsonb,
  error_message text, created_at timestamptz NOT NULL DEFAULT now()
 );
-CREATE UNIQUE INDEX cockpit_media_native_one_intent ON public.cockpit_media_native_receipts(job_id,provider,intent_hash,stage) WHERE stage IN('intent','receipt');
-CREATE TABLE public.cockpit_media_native_health (
+CREATE UNIQUE INDEX IF NOT EXISTS cockpit_media_native_one_intent ON public.cockpit_media_native_receipts(job_id,provider,intent_hash,stage) WHERE stage IN('intent','receipt');
+CREATE TABLE IF NOT EXISTS public.cockpit_media_native_health (
  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), job_id uuid REFERENCES public.cockpit_media_native_jobs(id) ON DELETE SET NULL,
  provider text NOT NULL, operation text NOT NULL, ok boolean NOT NULL, detail jsonb NOT NULL,
  created_at timestamptz NOT NULL DEFAULT now()
 );
-CREATE TABLE public.cockpit_media_native_threads (
+CREATE TABLE IF NOT EXISTS public.cockpit_media_native_threads (
  id uuid PRIMARY KEY REFERENCES public.cockpit_media_native_records(id) ON DELETE CASCADE,
  channel text NOT NULL, thread_ts text NOT NULL, cursor text NOT NULL DEFAULT '',
  claim_token uuid, claimed_at timestamptz, checked_at timestamptz NOT NULL DEFAULT '-infinity',
@@ -25,13 +25,13 @@ ALTER TABLE public.cockpit_media_native_health ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.cockpit_media_native_threads ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public.cockpit_media_native_receipts,public.cockpit_media_native_health,public.cockpit_media_native_threads FROM PUBLIC,anon,authenticated;
 GRANT SELECT,INSERT,UPDATE,DELETE ON public.cockpit_media_native_receipts,public.cockpit_media_native_health,public.cockpit_media_native_threads TO service_role;
-CREATE TRIGGER cockpit_media_native_receipts_audit AFTER INSERT OR UPDATE OR DELETE ON public.cockpit_media_native_receipts FOR EACH ROW EXECUTE FUNCTION public.cockpit_media_native_audit();
-CREATE TRIGGER cockpit_media_native_health_audit AFTER INSERT OR UPDATE OR DELETE ON public.cockpit_media_native_health FOR EACH ROW EXECUTE FUNCTION public.cockpit_media_native_audit();
-CREATE TRIGGER cockpit_media_native_threads_audit AFTER INSERT OR UPDATE OR DELETE ON public.cockpit_media_native_threads FOR EACH ROW EXECUTE FUNCTION public.cockpit_media_native_audit();
-ALTER TABLE public.cockpit_media_native_jobs ADD COLUMN context_fingerprint text;
-ALTER TABLE public.cockpit_media_native_jobs ADD COLUMN calendar_revision bigint;
+CREATE OR REPLACE TRIGGER cockpit_media_native_receipts_audit AFTER INSERT OR UPDATE OR DELETE ON public.cockpit_media_native_receipts FOR EACH ROW EXECUTE FUNCTION public.cockpit_media_native_audit();
+CREATE OR REPLACE TRIGGER cockpit_media_native_health_audit AFTER INSERT OR UPDATE OR DELETE ON public.cockpit_media_native_health FOR EACH ROW EXECUTE FUNCTION public.cockpit_media_native_audit();
+CREATE OR REPLACE TRIGGER cockpit_media_native_threads_audit AFTER INSERT OR UPDATE OR DELETE ON public.cockpit_media_native_threads FOR EACH ROW EXECUTE FUNCTION public.cockpit_media_native_audit();
+ALTER TABLE public.cockpit_media_native_jobs ADD COLUMN IF NOT EXISTS context_fingerprint text;
+ALTER TABLE public.cockpit_media_native_jobs ADD COLUMN IF NOT EXISTS calendar_revision bigint;
 
-CREATE FUNCTION public.cockpit_media_native_guard(p_job_id uuid,p_token uuid) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
+CREATE OR REPLACE FUNCTION public.cockpit_media_native_guard(p_job_id uuid,p_token uuid) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
 DECLARE j public.cockpit_media_native_jobs; r public.cockpit_media_native_records; ctx jsonb; source text; feed public.cockpit_media_source_state; creative public.cockpit_creative_source_state; items jsonb; fingerprint text;
 BEGIN
  SELECT * INTO j FROM public.cockpit_media_native_jobs WHERE id=p_job_id AND claim_token=p_token AND state='working' AND claimed_at>now()-interval '30 minutes' FOR UPDATE;
@@ -69,7 +69,7 @@ BEGIN
  RETURN ctx||jsonb_build_object('ownerEmail',(SELECT email FROM auth.users WHERE id=r.actor_id));
 END $$;
 
-CREATE FUNCTION public.cockpit_media_native_record_intent(p_job_id uuid,p_token uuid,p_provider text,p_intent_hash text,p_request jsonb DEFAULT '{}') RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
+CREATE OR REPLACE FUNCTION public.cockpit_media_native_record_intent(p_job_id uuid,p_token uuid,p_provider text,p_intent_hash text,p_request jsonb DEFAULT '{}') RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
 DECLARE j public.cockpit_media_native_jobs; receipt jsonb;
 BEGIN
  PERFORM public.cockpit_media_native_guard(p_job_id,p_token);
@@ -80,7 +80,7 @@ BEGIN
  INSERT INTO public.cockpit_media_native_receipts(job_id,record_id,operation,provider,stage,intent_hash,request_payload) VALUES(j.id,j.record_id,j.operation,p_provider,'intent',p_intent_hash,p_request);
  RETURN jsonb_build_object('state','new');
 END $$;
-CREATE FUNCTION public.cockpit_media_native_record_receipt(p_job_id uuid,p_token uuid,p_provider text,p_intent_hash text,p_response jsonb DEFAULT '{}') RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
+CREATE OR REPLACE FUNCTION public.cockpit_media_native_record_receipt(p_job_id uuid,p_token uuid,p_provider text,p_intent_hash text,p_response jsonb DEFAULT '{}') RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
 DECLARE j public.cockpit_media_native_jobs; kind text;
 BEGIN
  PERFORM public.cockpit_media_native_guard(p_job_id,p_token);
@@ -102,12 +102,12 @@ BEGIN
  RETURN jsonb_build_object('ok',true);
 END $$;
 -- Failure health is allowed after revocation/expiry: it cannot publish data or revive a job.
-CREATE FUNCTION public.cockpit_media_native_health(p_job_id uuid,p_token uuid,p_provider text,p_operation text,p_ok boolean,p_detail jsonb) RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
+CREATE OR REPLACE FUNCTION public.cockpit_media_native_health(p_job_id uuid,p_token uuid,p_provider text,p_operation text,p_ok boolean,p_detail jsonb) RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
 BEGIN
  IF p_job_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM public.cockpit_media_native_jobs WHERE id=p_job_id AND claim_token=p_token) THEN RAISE EXCEPTION 'Unknown worker fence'; END IF;
  INSERT INTO public.cockpit_media_native_health(job_id,provider,operation,ok,detail) VALUES(p_job_id,p_provider,p_operation,p_ok,p_detail);
 END $$;
-CREATE FUNCTION public.cockpit_media_native_record_failure(p_job_id uuid,p_token uuid,p_provider text,p_intent_hash text,p_error text,p_reconcile boolean DEFAULT false) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
+CREATE OR REPLACE FUNCTION public.cockpit_media_native_record_failure(p_job_id uuid,p_token uuid,p_provider text,p_intent_hash text,p_error text,p_reconcile boolean DEFAULT false) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
 DECLARE j public.cockpit_media_native_jobs;
 BEGIN
  SELECT * INTO j FROM public.cockpit_media_native_jobs WHERE id=p_job_id AND claim_token=p_token AND state='working' AND claimed_at>now()-interval '30 minutes' FOR UPDATE;
@@ -116,13 +116,13 @@ BEGIN
  PERFORM public.cockpit_media_native_finish(j.id,p_token,jsonb_build_object('error',left(p_error,300),'note',CASE WHEN p_reconcile THEN 'Provider outcome is unknown. Reconcile the receipt; no duplicate will be sent.' ELSE 'The provider failed. Check worker health before trying again.' END),CASE WHEN p_reconcile THEN 'reconcile' ELSE 'failed' END);
  RETURN jsonb_build_object('ok',true);
 END $$;
-CREATE FUNCTION public.cockpit_media_native_progress(p_job_id uuid,p_token uuid,p_result jsonb) RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
+CREATE OR REPLACE FUNCTION public.cockpit_media_native_progress(p_job_id uuid,p_token uuid,p_result jsonb) RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
 BEGIN
  PERFORM public.cockpit_media_native_guard(p_job_id,p_token);
  UPDATE public.cockpit_media_native_records SET data=data||p_result,updated_at=now() WHERE id=(SELECT record_id FROM public.cockpit_media_native_jobs WHERE id=p_job_id);
 END $$;
 -- Refuse success without an actual end-to-end receipt; intent is not delivery.
-CREATE FUNCTION public.cockpit_media_native_ready_guard() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
+CREATE OR REPLACE FUNCTION public.cockpit_media_native_ready_guard() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
 DECLARE receipt jsonb;
 BEGIN
  IF NEW.state='ready' AND OLD.state<>'ready' THEN
@@ -136,9 +136,9 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
-CREATE TRIGGER cockpit_media_native_ready_guard BEFORE UPDATE ON public.cockpit_media_native_jobs FOR EACH ROW EXECUTE FUNCTION public.cockpit_media_native_ready_guard();
+CREATE OR REPLACE TRIGGER cockpit_media_native_ready_guard BEFORE UPDATE ON public.cockpit_media_native_jobs FOR EACH ROW EXECUTE FUNCTION public.cockpit_media_native_ready_guard();
 
-CREATE FUNCTION public.cockpit_media_native_thread_claim() RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
+CREATE OR REPLACE FUNCTION public.cockpit_media_native_thread_claim() RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
 DECLARE t public.cockpit_media_native_threads;
 BEGIN
  SELECT s.* INTO t FROM public.cockpit_media_native_threads s JOIN public.cockpit_media_native_records r ON r.id=s.id WHERE s.checked_at<now()-interval '1 minute' AND (s.claimed_at IS NULL OR s.claimed_at<now()-interval '2 minutes') AND public.cockpit_ask_ai_owner_allowed(r.actor_id,'media-buyer',r.client_name) ORDER BY s.checked_at FOR UPDATE OF s SKIP LOCKED LIMIT 1;
@@ -146,7 +146,7 @@ BEGIN
  UPDATE public.cockpit_media_native_threads SET claim_token=gen_random_uuid(),claimed_at=now() WHERE id=t.id RETURNING * INTO t;
  RETURN to_jsonb(t);
 END $$;
-CREATE FUNCTION public.cockpit_media_native_thread_context(p_id uuid,p_token uuid) RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path='' AS $$
+CREATE OR REPLACE FUNCTION public.cockpit_media_native_thread_context(p_id uuid,p_token uuid) RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path='' AS $$
 DECLARE t public.cockpit_media_native_threads;r public.cockpit_media_native_records;
 BEGIN
  SELECT * INTO t FROM public.cockpit_media_native_threads WHERE id=p_id AND claim_token=p_token AND claimed_at>now()-interval '2 minutes';
@@ -155,13 +155,13 @@ BEGIN
  IF NOT public.cockpit_ask_ai_owner_allowed(r.actor_id,'media-buyer',r.client_name) OR NOT EXISTS(SELECT 1 FROM public.cockpit_campaigns c WHERE NOT c.source_deleted AND c.raw_data->>'campaignName'=r.campaign_name AND lower(btrim(coalesce(c.raw_data->>'clientName',c.raw_data->>'accountName',c.client_name)))=lower(btrim(r.client_name))) THEN RAISE EXCEPTION 'Reply owner or campaign mapping changed'; END IF;
  RETURN to_jsonb(t);
 END $$;
-CREATE FUNCTION public.cockpit_media_native_thread_reply(p_id uuid,p_token uuid,p_message_id uuid,p_text text,p_author text) RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
+CREATE OR REPLACE FUNCTION public.cockpit_media_native_thread_reply(p_id uuid,p_token uuid,p_message_id uuid,p_text text,p_author text) RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
 BEGIN
  PERFORM 1 FROM public.cockpit_media_native_threads WHERE id=p_id FOR UPDATE;
  PERFORM public.cockpit_media_native_thread_context(p_id,p_token);
  PERFORM public.cockpit_media_native_reply(p_id,p_message_id,p_text,p_author,true);
 END $$;
-CREATE FUNCTION public.cockpit_media_native_thread_finish(p_id uuid,p_token uuid,p_cursor text) RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
+CREATE OR REPLACE FUNCTION public.cockpit_media_native_thread_finish(p_id uuid,p_token uuid,p_cursor text) RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
 BEGIN
  PERFORM 1 FROM public.cockpit_media_native_threads WHERE id=p_id FOR UPDATE;
  PERFORM public.cockpit_media_native_thread_context(p_id,p_token);
@@ -174,7 +174,7 @@ DO $$ DECLARE f record; BEGIN
  END LOOP;
 END $$;
 -- Existing UI consumers use these catalog reads in addition to the base surface.
-CREATE FUNCTION public.cockpit_media_native_catalog_read(p_operation text,p_args jsonb DEFAULT '{}') RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path='' AS $$
+CREATE OR REPLACE FUNCTION public.cockpit_media_native_catalog_read(p_operation text,p_args jsonb DEFAULT '{}') RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path='' AS $$
 DECLARE source text; feed public.cockpit_creative_source_state; rows jsonb; same jsonb; rest jsonb;
 BEGIN
  PERFORM public.cockpit_media_scope('board.adStatusOptions',NULL);
@@ -233,13 +233,13 @@ REVOKE ALL ON FUNCTION public.cockpit_media_native_catalog_read(text,jsonb) FROM
 GRANT EXECUTE ON FUNCTION public.cockpit_media_native_catalog_read(text,jsonb) TO authenticated;
 -- Calendar request receipts survive replacement and unlink. Revisions fence late,
 -- never-arrived intents as well as repeats whose response was lost.
-CREATE TABLE public.cockpit_media_calendar_bindings(
+CREATE TABLE IF NOT EXISTS public.cockpit_media_calendar_bindings(
  actor_id uuid NOT NULL REFERENCES auth.users(id), app text NOT NULL CHECK(app IN('media-buyer','client-success','creative')),
  revision bigint NOT NULL DEFAULT 0 CHECK(revision>=0), PRIMARY KEY(actor_id,app),
  record_id uuid REFERENCES public.cockpit_media_native_records(id) ON DELETE SET NULL,
  updated_at timestamptz NOT NULL DEFAULT now()
 );
-CREATE TABLE public.cockpit_media_calendar_requests(
+CREATE TABLE IF NOT EXISTS public.cockpit_media_calendar_requests(
  id uuid PRIMARY KEY, actor_id uuid NOT NULL REFERENCES auth.users(id), app text NOT NULL CHECK(app IN('media-buyer','client-success','creative')),
  operation text NOT NULL CHECK(operation IN('personalCalendars.link','personalCalendars.unlink')),
  args jsonb NOT NULL, outcome jsonb NOT NULL, created_at timestamptz NOT NULL DEFAULT now()
@@ -248,12 +248,12 @@ ALTER TABLE public.cockpit_media_calendar_bindings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.cockpit_media_calendar_requests ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public.cockpit_media_calendar_bindings,public.cockpit_media_calendar_requests FROM PUBLIC,anon,authenticated;
 GRANT SELECT,INSERT,UPDATE,DELETE ON public.cockpit_media_calendar_bindings,public.cockpit_media_calendar_requests TO service_role;
-CREATE TRIGGER cockpit_media_calendar_bindings_audit AFTER INSERT OR UPDATE OR DELETE ON public.cockpit_media_calendar_bindings FOR EACH ROW EXECUTE FUNCTION public.cockpit_media_native_audit();
-CREATE TRIGGER cockpit_media_calendar_requests_audit AFTER INSERT OR UPDATE OR DELETE ON public.cockpit_media_calendar_requests FOR EACH ROW EXECUTE FUNCTION public.cockpit_media_native_audit();
-INSERT INTO public.cockpit_media_calendar_bindings(actor_id,app,revision,record_id) SELECT actor_id,calendar_app,1,id FROM public.cockpit_media_native_records WHERE kind='calendar';
+CREATE OR REPLACE TRIGGER cockpit_media_calendar_bindings_audit AFTER INSERT OR UPDATE OR DELETE ON public.cockpit_media_calendar_bindings FOR EACH ROW EXECUTE FUNCTION public.cockpit_media_native_audit();
+CREATE OR REPLACE TRIGGER cockpit_media_calendar_requests_audit AFTER INSERT OR UPDATE OR DELETE ON public.cockpit_media_calendar_requests FOR EACH ROW EXECUTE FUNCTION public.cockpit_media_native_audit();
+INSERT INTO public.cockpit_media_calendar_bindings(actor_id,app,revision,record_id) SELECT actor_id,calendar_app,1,id FROM public.cockpit_media_native_records WHERE kind='calendar' ON CONFLICT (actor_id,app) DO NOTHING;
 INSERT INTO public.cockpit_media_calendar_requests(id,actor_id,app,operation,args,outcome)
  SELECT id,actor_id,calendar_app,request->>'operation',request->'args',jsonb_build_object('ok',true,'id',id,'bindingRevision',1)
- FROM public.cockpit_media_native_records WHERE kind='calendar' AND request->>'operation'='personalCalendars.link';
+ FROM public.cockpit_media_native_records WHERE kind='calendar' AND request->>'operation'='personalCalendars.link' ON CONFLICT (id) DO NOTHING;
 
 CREATE OR REPLACE FUNCTION public.cockpit_media_native_write(p_operation text,p_args jsonb,p_request_id uuid,p_apply boolean DEFAULT false) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
 DECLARE r public.cockpit_media_native_records; scope jsonb; v_kind text; data jsonb; name text; calendar text; email text;
@@ -325,7 +325,7 @@ BEGIN
 END $$;
 REVOKE ALL ON FUNCTION public.cockpit_media_native_write(text,jsonb,uuid,boolean) FROM PUBLIC,anon;
 GRANT EXECUTE ON FUNCTION public.cockpit_media_native_write(text,jsonb,uuid,boolean) TO authenticated;
-CREATE FUNCTION public.cockpit_media_calendar_mine(p_app text) RETURNS jsonb LANGUAGE sql STABLE SECURITY DEFINER SET search_path='' AS $$
+CREATE OR REPLACE FUNCTION public.cockpit_media_calendar_mine(p_app text) RETURNS jsonb LANGUAGE sql STABLE SECURITY DEFINER SET search_path='' AS $$
  SELECT public.cockpit_media_native_read('personalCalendars.mine',jsonb_build_object('app',p_app)) || jsonb_build_object('bindingRevision',coalesce((SELECT revision FROM public.cockpit_media_calendar_bindings WHERE actor_id=auth.uid() AND app=p_app),0));
 $$;
 REVOKE ALL ON FUNCTION public.cockpit_media_calendar_mine(text) FROM PUBLIC,anon;

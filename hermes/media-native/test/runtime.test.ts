@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { generateKeyPairSync } from 'node:crypto';
 import { MediaNativeWorker } from '../worker';
+import { ProviderError } from '../tools';
 import { actor, BUYER, call, database, enqueue, owner, sdk, type Database } from './database';
 let db: Database;
 let opened = false;
 let environmentCaptured = false;
-const names = ['GOOGLE_SERVICE_ACCOUNT_JSON', 'META_SYSTEM_TOKEN', 'ANTHROPIC_API_KEY', 'SLACK_BOT_TOKEN'] as const;
+const names = ['GOOGLE_SERVICE_ACCOUNT_JSON', 'META_SYSTEM_TOKEN', 'ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'GOOGLE_AI_API_KEY', 'DEEPSEEK_API_KEY', 'AI_JSON_PROVIDERS', 'SLACK_BOT_TOKEN'] as const;
 const previous: Record<string, string | undefined> = {};
 beforeEach(async () => {
   opened = false;
@@ -14,6 +15,7 @@ beforeEach(async () => {
   opened = true;
   for (const name of names) previous[name] = process.env[name];
   environmentCaptured = true;
+  for (const name of ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'GOOGLE_AI_API_KEY', 'DEEPSEEK_API_KEY', 'AI_JSON_PROVIDERS']) delete process.env[name];
   const key = generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
   process.env.GOOGLE_SERVICE_ACCOUNT_JSON = JSON.stringify({ client_email: 'claude@studied-handler-508106-m5.iam.gserviceaccount.com', private_key: key });
   process.env.META_SYSTEM_TOKEN = 'offline-meta'; process.env.ANTHROPIC_API_KEY = 'offline-model'; process.env.SLACK_BOT_TOKEN = 'offline-slack';
@@ -78,6 +80,72 @@ describe('worker with canonical SQL and provider transport fixtures only', () =>
       return Response.json({ stop_reason: 'end_turn', content: [{ type: 'text', text: JSON.stringify({ variants, note: 'Draft options.' }) }] });
     } }).run();
     const saved = await result(id); expect(saved.state).toBe('ready'); expect(saved.data.variants).toEqual(variants);
+  });
+  test('copy fixture falls back to OpenAI when Anthropic is absent and parses JSON object format', async () => {
+    delete process.env.ANTHROPIC_API_KEY;
+    process.env.OPENAI_API_KEY = 'offline-openai';
+    await db.exec("UPDATE public.cockpit_creative_source_state SET ready=true,row_count=0,source_snapshot_at='2026-10-04T00:00:00Z' WHERE table_name='winnersArchive'");
+    const id = await enqueue(db, 'assist.enqueue', { kind: 'copy', campaignName: 'Alpha-Campaign', client: 'Alpha', language: 'English', brief: 'Showroom interior design' });
+    const variants = ['Outcome', 'Objection', 'Proof', 'Question', 'Offer'].map(angle => ({ headline: `${angle} showroom`, message: 'Elevate your showroom.\nBook a design call.', description: '', angle }));
+    await new MediaNativeWorker({ apply: true, once: true, supabaseClient: sdk(db), fetchImpl: async () => {
+      return Response.json({ choices: [{ message: { content: JSON.stringify({ variants, note: 'OpenAI copy options.' }) } }] });
+    } }).run();
+    const saved = await result(id); expect(saved.state).toBe('ready'); expect(saved.data.variants).toEqual(variants);
+  });
+  test('copy fixture falls back to Gemini when Anthropic and OpenAI are absent and parses candidates text', async () => {
+    delete process.env.ANTHROPIC_API_KEY;
+    delete process.env.OPENAI_API_KEY;
+    process.env.GOOGLE_AI_API_KEY = 'offline-gemini';
+    await db.exec("UPDATE public.cockpit_creative_source_state SET ready=true,row_count=0,source_snapshot_at='2026-10-04T00:00:00Z' WHERE table_name='winnersArchive'");
+    const id = await enqueue(db, 'assist.enqueue', { kind: 'copy', campaignName: 'Alpha-Campaign', client: 'Alpha', language: 'English', brief: 'Landscape architecture' });
+    const variants = ['Outcome', 'Objection', 'Proof', 'Question', 'Offer'].map(angle => ({ headline: `${angle} gardens`, message: 'Design luxury gardens.\nSchedule a survey.', description: '', angle }));
+    await new MediaNativeWorker({ apply: true, once: true, supabaseClient: sdk(db), fetchImpl: async () => {
+      return Response.json({ candidates: [{ content: { parts: [{ text: JSON.stringify({ variants, note: 'Gemini copy options.' }) }] } }] });
+    } }).run();
+    const saved = await result(id); expect(saved.state).toBe('ready'); expect(saved.data.variants).toEqual(variants);
+  });
+  test('copy fixture falls back to DeepSeek when other keys are absent and parses choices message', async () => {
+    delete process.env.ANTHROPIC_API_KEY;
+    delete process.env.OPENAI_API_KEY;
+    delete process.env.GOOGLE_AI_API_KEY;
+    process.env.DEEPSEEK_API_KEY = 'offline-deepseek';
+    await db.exec("UPDATE public.cockpit_creative_source_state SET ready=true,row_count=0,source_snapshot_at='2026-10-04T00:00:00Z' WHERE table_name='winnersArchive'");
+    const id = await enqueue(db, 'assist.enqueue', { kind: 'copy', campaignName: 'Alpha-Campaign', client: 'Alpha', language: 'English', brief: 'Commercial fit-outs' });
+    const variants = ['Outcome', 'Objection', 'Proof', 'Question', 'Offer'].map(angle => ({ headline: `${angle} fitouts`, message: 'High end commercial fitouts.\nContact our team.', description: '', angle }));
+    await new MediaNativeWorker({ apply: true, once: true, supabaseClient: sdk(db), fetchImpl: async () => {
+      return Response.json({ choices: [{ message: { content: JSON.stringify({ variants, note: 'DeepSeek copy options.' }) } }] });
+    } }).run();
+    const saved = await result(id); expect(saved.state).toBe('ready'); expect(saved.data.variants).toEqual(variants);
+  });
+  test('copy stops after a provider response if the health ledger becomes unavailable', async () => {
+    process.env.OPENAI_API_KEY = 'offline-openai';
+    await db.exec("UPDATE public.cockpit_creative_source_state SET ready=true,row_count=0,source_snapshot_at='2026-10-04T00:00:00Z' WHERE table_name='winnersArchive'");
+    const id = await enqueue(db, 'assist.enqueue', { kind: 'copy', campaignName: 'Alpha-Campaign', client: 'Alpha', language: 'English', brief: 'Roofing solutions' });
+    const variants = ['Outcome', 'Objection', 'Proof', 'Question', 'Offer'].map(angle => ({ headline: `${angle} roofing`, message: 'Plan your roof.\nBook a design call.', description: '', angle }));
+    let transportCalls = 0;
+    const worker = new MediaNativeWorker({ apply: true, once: true, supabaseClient: sdk(db), fetchImpl: async () => {
+      transportCalls++;
+      await owner(db);
+      await db.exec('REVOKE EXECUTE ON FUNCTION public.cockpit_media_native_health(uuid,uuid,text,text,boolean,jsonb) FROM service_role; SET ROLE service_role');
+      return Response.json({ stop_reason: 'end_turn', content: [{ type: 'text', text: JSON.stringify({ variants, note: 'Roofing options.' }) }] });
+    } });
+    await expect(worker.run()).rejects.toBeInstanceOf(ProviderError);
+    expect(transportCalls).toBe(1);
+    const saved = await result(id);
+    expect(saved.state).toBe('working');
+    expect(saved.data.variants).toBeUndefined();
+  });
+  test('copy failures retain reconciliation state without persisting arbitrary transport text', async () => {
+    delete process.env.ANTHROPIC_API_KEY;
+    process.env.DEEPSEEK_API_KEY = 'offline-deepseek';
+    await db.exec("UPDATE public.cockpit_creative_source_state SET ready=true,row_count=0,source_snapshot_at='2026-10-04T00:00:00Z' WHERE table_name='winnersArchive'");
+    const id = await enqueue(db, 'assist.enqueue', { kind: 'copy', campaignName: 'Alpha-Campaign', client: 'Alpha', language: 'English', brief: 'Commercial fit-outs' });
+    const privateText = 'private_prompt_and_key_not_for_logs';
+    await new MediaNativeWorker({ apply: true, once: true, supabaseClient: sdk(db), fetchImpl: async () => { throw new Error(privateText); } }).run();
+    const saved = await result(id);
+    expect(saved.state).toBe('reconcile');
+    expect(typeof saved.data.error).toBe('string');
+    expect(String(saved.data.error)).not.toContain(privateText);
   });
   test("complete Google window reaches SQL receipts and today's view preserves overnight and multi-day meetings", async () => {
     const id = await enqueue(db, 'personalCalendars.link', { calendarId: 'buyer@example.com', bindingRevision: 0 });
