@@ -1,30 +1,18 @@
 import {
-  CalendarDays,
-  ChartNoAxesColumn,
-  ClipboardCheck,
-  FileSignature,
-  FileText,
-  KanbanSquare,
-  Lightbulb,
-  Link2,
   LogOut,
-  type LucideIcon,
-  MessageSquareText,
-  Mic,
   Moon,
   PanelLeftClose,
   PanelLeftOpen,
-  PhoneCall,
+  Search,
   Sun,
-  Target,
-  UserCog,
-  UserSearch,
 } from "lucide-react";
-import { useEffect, useState } from "react";
 import { NavLink } from "react-router";
 import { useWho } from "../lib/auth";
 import { COCKPIT_ICON } from "../lib/cockpits";
+import { GROUP_LABELS, PAGES, type Page } from "../lib/pages";
 import { otherCockpits, portalUrl } from "../lib/portal";
+import { openSearch } from "../lib/search";
+import { useDark } from "../lib/theme";
 import { Avatar } from "./kit";
 import { Wordmark } from "./Wordmark";
 
@@ -32,62 +20,17 @@ import { Wordmark } from "./Wordmark";
  * The same shape as the other cockpits: an icon and a label per row, in
  * three groups down the left; team meetings and the portal's other doors at
  * the foot, each with its cockpit's own mark; the person at the bottom.
+ * Each page's name comes from lib/pages.ts, the one list the menu bar and
+ * the phone's dock read too.
  *
  * A count beside a row is only drawn when it is something to act on: calls
  * owed a mark, proposals waiting on figures. A badge that is always there
  * stops being read.
  */
-interface Item {
-  to: string;
-  label: string;
-  icon: LucideIcon;
-  /** The key in `counts` whose number, when above zero, is worth a badge. */
-  badge?: string;
-  managerOnly?: boolean;
-}
-
-export const GROUPS: { label: string; items: Item[] }[] = [
-  {
-    label: "Your day",
-    items: [
-      { to: "/", label: "Today", icon: Sun },
-      { to: "/dialer", label: "Dialer", icon: PhoneCall },
-      { to: "/calendar", label: "Calendar", icon: CalendarDays, badge: "owed" },
-      { to: "/pipeline", label: "Pipeline", icon: KanbanSquare },
-      { to: "/leads", label: "Leads", icon: UserSearch },
-      {
-        to: "/proposals",
-        label: "Proposals",
-        icon: FileText,
-        badge: "proposals",
-      },
-      { to: "/contracts", label: "Contracts", icon: FileSignature },
-      {
-        to: "/followups",
-        label: "Follow-ups",
-        icon: MessageSquareText,
-        badge: "followups",
-      },
-      { to: "/eod", label: "End of day", icon: ClipboardCheck },
-    ],
-  },
-  {
-    label: "How it is going",
-    items: [
-      { to: "/numbers", label: "Numbers", icon: ChartNoAxesColumn },
-      { to: "/goals", label: "Goals", icon: Target },
-      { to: "/recordings", label: "Recordings", icon: Mic },
-      { to: "/intelligence", label: "Intelligence", icon: Lightbulb },
-    ],
-  },
-  {
-    label: "More",
-    items: [
-      { to: "/links", label: "Links", icon: Link2 },
-      { to: "/team", label: "Team", icon: UserCog, managerOnly: true },
-    ],
-  },
-];
+const GROUPS = (["day", "going", "more"] as Page["group"][]).map(group => ({
+  label: GROUP_LABELS[group],
+  items: PAGES.filter(p => p.group === group),
+}));
 
 /** One row of the rail: 40px to a thumb in the menu sheet, 32px on the rail. */
 const ROW =
@@ -104,33 +47,13 @@ function ThemeToggle({
   compact?: boolean;
   iconOnly?: boolean;
 } = {}) {
-  const [dark, setDark] = useState(() => {
-    try {
-      const stored = localStorage.getItem("theme");
-      if (stored === "light" || stored === "dark") return stored === "dark";
-    } catch {
-      // A private window forbids this; fall through to the default.
-    }
-    // Dark unless someone chose light: the brand's web default.
-    return true;
-  });
-
-  useEffect(() => {
-    document.documentElement.classList.toggle("dark", dark);
-    document.documentElement.style.colorScheme = dark ? "dark" : "light";
-    try {
-      localStorage.setItem("theme", dark ? "dark" : "light");
-    } catch {
-      // The tool still works, it just forgets.
-    }
-  }, [dark]);
-
+  const [dark, toggle] = useDark();
   const Icon = dark ? Sun : Moon;
   if (iconOnly) {
     return (
       <button
         type="button"
-        onClick={() => setDark((d: boolean) => !d)}
+        onClick={toggle}
         title={dark ? "Switch to light mode" : "Switch to dark mode"}
         className="flex size-7 items-center justify-center rounded-[8px] text-muted-foreground hover:bg-foreground/[0.08] hover:text-foreground transition-colors"
       >
@@ -142,7 +65,7 @@ function ThemeToggle({
     return (
       <button
         type="button"
-        onClick={() => setDark((d: boolean) => !d)}
+        onClick={toggle}
         className="flex items-center gap-1.5 rounded-[10px] px-2 py-1 text-xs text-muted-foreground hover:bg-foreground/[0.08] hover:text-foreground transition-colors"
       >
         <Icon className="size-3.5" strokeWidth={1.75} aria-hidden />
@@ -153,11 +76,56 @@ function ThemeToggle({
   return (
     <button
       type="button"
-      onClick={() => setDark((d: boolean) => !d)}
+      onClick={toggle}
       className={`${ROW} w-full ${ROW_IDLE}`}
     >
       <Icon className="size-4 shrink-0" strokeWidth={1.75} aria-hidden />
       {dark ? "Light mode" : "Dark mode"}
+    </button>
+  );
+}
+
+/**
+ * The search field at the top of the rail: it opens the search box, which
+ * also opens with Ctrl/Cmd + K from any page. Folded, it is one icon.
+ */
+function SearchField({
+  collapsed,
+  onNavigate,
+}: {
+  collapsed: boolean;
+  onNavigate?: () => void;
+}) {
+  const mac =
+    typeof navigator !== "undefined" &&
+    /Mac|iPhone|iPad/.test(navigator.platform ?? "");
+  const click = () => {
+    onNavigate?.();
+    openSearch();
+  };
+  if (collapsed)
+    return (
+      <button
+        type="button"
+        onClick={click}
+        aria-label="Search"
+        title={`Search (${mac ? "⌘K" : "Ctrl K"})`}
+        className="flex size-9 items-center justify-center rounded-[12px] text-muted-foreground hover:bg-foreground/[0.08] hover:text-foreground transition-colors"
+      >
+        <Search className="size-4" strokeWidth={1.8} aria-hidden />
+      </button>
+    );
+  return (
+    <button
+      type="button"
+      onClick={click}
+      className="flex h-9 w-full items-center gap-2 rounded-[12px] border border-border bg-foreground/[0.03] px-3 text-left text-sm text-muted-foreground transition-colors hover:border-[color:var(--primary)]/40 hover:text-foreground"
+    >
+      <Search className="size-4 shrink-0" strokeWidth={1.8} aria-hidden />
+      <span className="min-w-0 flex-1 truncate">Search leads…</span>
+      <kbd className="hidden shrink-0 rounded border border-border px-1.5 py-0.5 font-mono text-[10px] tracking-[0.08em] lg:inline">
+        {mac ? "⌘K" : "Ctrl K"}
+      </kbd>
     </button>
   );
 }
@@ -252,6 +220,8 @@ export default function Sidebar({
           ) : null}
         </div>
       )}
+
+      <SearchField collapsed={collapsed} onNavigate={onNavigate} />
 
       <nav className="flex w-full flex-col gap-5" aria-label="Sales cockpit">
         {GROUPS.map(g => ({

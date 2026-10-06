@@ -17,6 +17,7 @@ cd "$(dirname "$0")/.."
 CD=apps/creative-director-cockpit
 MB=apps/media-buyer-cockpit
 ED=apps/video-editor-cockpit
+SA=apps/sales-cockpit
 
 fails=0
 
@@ -76,6 +77,11 @@ same reportPeriod "apps/client-success-cockpit/src/lib/reportPeriod.ts" "$MB/src
 same search.ts "apps/client-success-cockpit/src/lib/search.ts" "$MB/src/lib/search.ts"
 same search.ts "apps/client-success-cockpit/src/lib/search.ts" "$ED/src/lib/search.ts"
 same search.ts "apps/client-success-cockpit/src/lib/search.ts" "$CD/src/lib/search.ts"
+same search.ts "apps/client-success-cockpit/src/lib/search.ts" "$SA/src/lib/search.ts"
+
+# The two Supabase cockpits' search box sits in the same dependency-free
+# dialog: Escape, a click outside, focus kept inside and handed back.
+same dialog.tsx "$ED/src/components/ui/dialog.tsx" "$SA/src/components/ui/dialog.tsx"
 
 # The swipe file's backend is the same in the two Convex cockpits, bar the
 # role each one checks.

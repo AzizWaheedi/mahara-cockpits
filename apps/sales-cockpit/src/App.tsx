@@ -1,4 +1,4 @@
-import { Menu } from "lucide-react";
+import { Menu, Search } from "lucide-react";
 import {
   lazy,
   type ReactNode,
@@ -15,11 +15,13 @@ import {
   PortalAutoSignIn,
   portalSignInPending,
 } from "./components/PortalAutoSignIn";
+import { SearchBox } from "./components/SearchBox";
 import Sidebar from "./components/Sidebar";
 import { Wordmark } from "./components/Wordmark";
 import { SessionProvider, useWho } from "./lib/auth";
 import { useFollowupsWaiting, useMe, useOwed, useProposals } from "./lib/data";
 import { portalUrl } from "./lib/portal";
+import { openSearch } from "./lib/search";
 import { Toaster } from "./lib/toast";
 import type { Me } from "./lib/types";
 import SignInPage from "./pages/SignInPage";
@@ -301,17 +303,27 @@ export function Seated({
             <Wordmark size="sm" />
             <span className="muted text-sm">Sales</span>
           </div>
-          {counts.owed > 0 ? (
-            <span
-              className="rounded-full px-2 py-0.5 text-xs font-semibold tabular-nums"
-              style={{
-                background: "var(--owed)",
-                color: "var(--warning-foreground)",
-              }}
+          <div className="flex items-center gap-2">
+            {counts.owed > 0 ? (
+              <span
+                className="rounded-full px-2 py-0.5 text-xs font-semibold tabular-nums"
+                style={{
+                  background: "var(--owed)",
+                  color: "var(--warning-foreground)",
+                }}
+              >
+                {counts.owed} owed
+              </span>
+            ) : null}
+            <button
+              type="button"
+              onClick={openSearch}
+              aria-label="Search leads and pages"
+              className="-mr-2 flex size-10 items-center justify-center rounded-[12px] text-muted-foreground hover:bg-foreground/[0.08] hover:text-foreground"
             >
-              {counts.owed} owed
-            </span>
-          ) : null}
+              <Search className="size-5" strokeWidth={1.8} aria-hidden />
+            </button>
+          </div>
         </header>
 
         {/* Keyed by the address, so moving to another page clears an error. */}
@@ -367,6 +379,7 @@ export function Seated({
       </div>
 
       <TabBar owed={counts.owed} onMore={() => setDrawer(true)} />
+      <SearchBox isManager={Boolean(me.manager)} />
     </div>
   );
 }

@@ -1,18 +1,8 @@
-import {
-  CalendarDays,
-  ChartNoAxesColumn,
-  ClipboardCheck,
-  FileText,
-  KanbanSquare,
-  Lightbulb,
-  type LucideIcon,
-  PhoneCall,
-  Sun,
-  UserSearch,
-} from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import type React from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router";
+import { DOCK, PAGES } from "../lib/pages";
 
 export interface DockItem {
   id: string;
@@ -20,68 +10,25 @@ export interface DockItem {
   to: string;
   icon: LucideIcon;
   badge?: number;
-  color?: string;
 }
 
-export const SALES_DOCK_ITEMS: DockItem[] = [
-  { id: "today", name: "Today", to: "/", icon: Sun, color: "#00cfc8" },
-  {
-    id: "dialer",
-    name: "Dialer",
-    to: "/dialer",
-    icon: PhoneCall,
-    color: "#38bdf8",
-  },
-  {
-    id: "calendar",
-    name: "Calendar",
-    to: "/calendar",
-    icon: CalendarDays,
-    color: "#818cf8",
-  },
-  {
-    id: "leads",
-    name: "Leads",
-    to: "/leads",
-    icon: UserSearch,
-    color: "#a78bfa",
-  },
-  {
-    id: "pipeline",
-    name: "Pipeline",
-    to: "/pipeline",
-    icon: KanbanSquare,
-    color: "#f472b6",
-  },
-  {
-    id: "proposals",
-    name: "Proposals",
-    to: "/proposals",
-    icon: FileText,
-    color: "#fb923c",
-  },
-  {
-    id: "numbers",
-    name: "Numbers",
-    to: "/numbers",
-    icon: ChartNoAxesColumn,
-    color: "#4ade80",
-  },
-  {
-    id: "deck",
-    name: "Pitch Deck",
-    to: "/deck",
-    icon: Lightbulb,
-    color: "#facc15",
-  },
-  {
-    id: "eod",
-    name: "End of Day",
-    to: "/eod",
-    icon: ClipboardCheck,
-    color: "#2dd4bf",
-  },
-];
+/**
+ * The dock's pages, by their one name in lib/pages.ts. Six of them: nine
+ * ran off a 375px phone (2026-10-06); the rest are under More.
+ */
+export const SALES_DOCK_ITEMS: DockItem[] = DOCK.flatMap(to => {
+  const page = PAGES.find(p => p.to === to);
+  return page
+    ? [
+        {
+          id: to === "/" ? "today" : to.slice(1),
+          name: page.label,
+          to,
+          icon: page.icon,
+        },
+      ]
+    : [];
+});
 
 interface MacOSDockProps {
   items?: DockItem[];
