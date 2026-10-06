@@ -2,13 +2,13 @@
 
 ## 1. Executive Summary & Current Cutover Status
 
-- **Current Source Assembly**: The candidate merges `9034e051004ecf977a39e42b8998726373326f4b` into `cf7f21c5467660ec6340efbf565551c9e562d929` on `codex/supabase-completion-20261004`. Generated acceptance evidence must bind the final clean merge HEAD.
-- **Cutover Status**: **NOT READY FOR CUTOVER**
-- **Current Blockers**:
-  1. **Incomplete History/File Reconciliation**: Fresh protected exports and canonical history proofs exist. Full storage ownership, WhatsApp history and saved calendar-choice reconciliation remain unverified. Do not silently omit business history.
-  2. **Incomplete End-to-End Acceptance**: Five actual unauthenticated entries render with Convex blocked, zero Convex requests and zero transport failures. The editor returns HTTP 401 for anonymous native reads. Authenticated business journeys and durable saves remain unverified. Chrome relay access timed out; no saved session was found in the repository or configured auth location.
-  3. **Production Preparation**: No production deployment or worker cutover ran in this session. Earlier missing-access claims are superseded by the dated access observations in `docs/superpowers/plans/2026-10-04-supabase-completion.md:78-86`. Those observations do not certify installed native schema, provider configuration or worker readiness.
-  4. **Incomplete Release Evidence**: `evidence/cutover-acceptance.json` records exact-source local proof and unresolved release categories. It must not claim production acceptance from build results. The generated file stays outside the commit because it binds that commit and expires.
+- **Current Source Assembly**: The candidate includes merge `77fd149` and source commit `1bf991c`. Generated evidence binds the final clean release commit.
+- **Approved Release Contract**: Muhammed approved **ship-first** on 2026-10-06. It certifies the inherited authenticated native browser baseline across five cockpits with zero observed Convex HTTP requests, plus the unchanged local release gates.
+- **Full Cutover Status**: **NOT CERTIFIED**. Ship-first does not authorize Convex retirement.
+- **Offline Follow-up**: Historical rows, saved calendar choices, assist briefs, manual-payment reconciliation and final catchup remain offline work. Preserve original exports/files and human fields.
+- **Remaining Full-Cutover Acceptance**: Complete role/access and durable-save journeys, native worker/provider activation, server/worker independence, production exact-source/configuration proof and rollback acceptance remain separate requirements.
+- **Source Scope**: Browser proof was recorded against `77fd149`. The five cockpit `src` directories have not changed since that observation. Reusing it does not claim a new browser run or production acceptance.
+- **Evidence Lifecycle**: `evidence/cutover-acceptance.json` stays outside the commit because it binds that commit and expires. Historical full-cutover findings remain intact rather than being relabeled as passed.
 
 > [!CAUTION]
 > The verifier defaults to release mode. `scripts/ship.sh` invokes it **after** outward frontend deployments. Therefore, shipping is not a safe preflight: incomplete evidence can produce a failed command after production already changed. Review native backend readiness, deployment authorization and rollback before invoking it. Local mode does not authorize cutover.
@@ -24,6 +24,18 @@ The verification tool (`scripts/verify-cutover-readiness.py`) enforces strict se
 - **Dry-Run & Read-Only**: No database mutations, no deployments, and no reading of credential files (`.env.local`, service-role keys).
 - **Installed Per-App Tooling**: Runs installed tools (`apps/<app>/node_modules/typescript/bin/tsc` and `apps/<app>/node_modules/vite/bin/vite.js`) using `node` or `bun`. Fails immediately if local dependencies are missing, preventing global compiler mismatches or `bunx`/`npx` network auto-downloads.
 - **Robust Subprocess Logging**: All commands run strictly with `shell=False`, timeout limits, UTF-8 output encoding (`errors=replace`), and command logs captured on both success and failure.
+
+### 2.1.1 Approved Ship-First Contract
+
+- Evidence selects `release_contract: "ship-first"` explicitly. Missing selection keeps the strict `full-cutover` contract. Unknown selections fail closed.
+- The `ship_first` object requires `approved: true`, a named `approved_by`, and `historical_backfill.status: "deferred_offline"`.
+- `convex_retirement_authorized` must remain `false`.
+- `ship_first.categories.native_browser_baseline` must be passed. Its `authenticated_five_cockpit_navigation` check names all five distinct cockpit apps.
+- That check requires zero `convex_http_requests`, zero `unapproved_application_writes`, and existing hash-verified artifacts.
+- Clean exact HEAD, evidence freshness, known evaluator/source, all five local gates and all offline suites remain mandatory. No diagnostic skips are allowed.
+- A successful report uses `status: "RELEASE_READY"`, `release_contract: "ship-first"` and `full_cutover_ready: false`. It authorizes the frontend baseline, not complete migration acceptance.
+- The original six-category `categories` object retains full-cutover findings. Switching to `full-cutover` still requires every original category and subcheck to pass.
+
 
 ### 2.2 Git Source Integrity
 - **Exact 40-Hex HEAD Required**: Git HEAD must resolve to an exact 40-character hexadecimal SHA.
@@ -80,7 +92,7 @@ Evidence must be provided as a structured JSON file binding clean Git HEAD, fini
 - `categories`: Dictionary containing all six mandatory categories and exact subchecks.
 
 ### 4.2 Mandatory Categories and Subchecks
-All categories and subchecks must have `status: "passed"` and non-empty hashed artifact references:
+For `full-cutover`, all six categories and subchecks must have `status: "passed"` and non-empty hashed artifact references. Ship-first uses the explicit baseline in §2.1.1.
 
 1. **`auth_and_access_journeys`**
    - `allowed_roles`: Allowed role journeys verified.
@@ -115,7 +127,7 @@ All categories and subchecks must have `status: "passed"` and non-empty hashed a
 
 ## 5. Execution Gates to Cutover
 
-Cutover must not proceed until each sequential gate is satisfied:
+Full cutover must not proceed until each sequential gate is satisfied. The approved ship-first frontend release uses §2.1.1 instead.
 
 ```
 [Gate 1: Upstream Sync]

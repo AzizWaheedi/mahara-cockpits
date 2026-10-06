@@ -91,6 +91,36 @@ Earlier missing-access claims were path/credential selection problems and are su
 - WhatsApp history packet: `D:/MaharaMedia/worktrees/gemini-supabase-wa-history-20261006`. Manifest: matching `-report/manifest.json`. Initial result was partial despite success metadata. It omitted SQL tables/reader, insertion validation and canonical tests. One focused correction is running. Do not edit its owned files concurrently.
 - Both use `gemini-3.8-flash-medium` on bounded credential-free source capsules. No Astra or substitute model ran. Parent owns credential access, file planner, integration, verification and release.
 
-## Next action
+## Verified continuation checkpoint, 2026-10-06
 
-Commit the verified file planner/native helper changes. Integrate fetched main without losing newer Sales and CSM behavior. Review both corrected Gemini packets, then complete typed original-data mapping, live schema preparation, native provider configuration and full acceptance before release.
+- Muhammed authorized finishing the operational cutover. He explicitly selected protected backups for proven obsolete caches and execution logs. Human records, payments, notes and saved choices still require native preservation.
+- Applied the four final RPC migrations in one transaction after rollback preflight. Read-back matched 42 canonical function bodies. Confirmed-directory reads exercised personal EOD, CSM state and comms. Unimported CSM history failed closed.
+- Installed twelve canonical native runtime/source prerequisites and staffing tables. The real service-role PostgREST bootstrap inventory returned 37 complete tables. Temporary scoped-install audit triggers were replaced by canonical triggers.
+- Fresh exports completed for all three Convex deployments. Exact export timestamps, archive hashes and table counts are in `D:/secure/cockpit-final-source-manifest-20261006.json`. These snapshots are not a write freeze.
+- Transferred 222 original public image objects. Every object passed byte-count and SHA-256 read-back. All 1,095 original storage references have namespace-safe mappings in `D:/secure/cockpit-final-verified-files-20261006.json`.
+- Reproduced and repaired original-file lookup: public URLs use the export catalog's `internalId`, not its Convex `_id`. Mirrored URLs retain their original deployment namespace. All 692 original URL references now resolve to verified native bytes.
+- Importer regressions passed 39 cases after file/scope repairs. Unresolved source ownership retains the original row privately instead of guessing a client or dropping records. Durable timestamp comparison also needed UTC-instant normalization.
+- Gemini 3.8 restored legacy model-provider parity. One correction hit a confirmed 503 failure; Codex completed the scoped fallback. The seven-file canonical native worker suite passed 51 cases. The live read-only worker doctor passed using existing named keys. No paid model call or outward message ran.
+- Changed implementation paths so far: four canonical SQL installation files, `scripts/import-cockpit-runtime-sources.py`, its regression file, and native worker `tools.ts`, `doctor.ts`, and runtime regressions.
+- Preserve the unrelated modified `HANDOFF.md`. Release packaging must not discard that edit. Shared-context sync remains stopped on pre-existing local changes.
+
+### Remaining release work
+
+1. Complete native saved-calendar choices, assist briefs, manual-payment and historical-row reconciliation. Preserve existing native human fields and resolve original-import provenance rather than bypassing guards.
+2. Apply reviewed, complete source plans and verify counts, original values and audit receipts. Install the producer paused, then verify live providers and switch each writer exactly once.
+3. Exercise real authenticated role/save/refresh journeys. Bind evidence to the repaired clean source commit, not `77fd149`.
+4. Push and deploy the five existing cockpit projects. Verify production source/configuration and rollback before recording release readiness.
+5. Keep Convex recoverable through the documented observation window. Do not delete deployments or source backups prematurely.
+
+## Approved release sequencing: ship-first, 2026-10-06
+
+- Muhammed approved releasing the native frontend baseline before offline historical backfill. This supersedes the requirement to complete history before frontend shipping, not the preservation or Convex-retirement requirements.
+- Stage the verified handoff/plan plus release-contract implementation and documentation. Generated acceptance evidence remains ignored so it can bind the final clean commit.
+- Select `release_contract: "ship-first"` in `evidence/cutover-acceptance.json`. Preserve full-cutover findings and explicitly record offline historical follow-up.
+- The ship-first gate requires named approval, inherited authenticated navigation across all five cockpits, zero observed Convex traffic, zero unapproved writes and hashed browser proof.
+- All existing clean-source, timestamp, identity, typecheck, build and offline test gates remain mandatory. Unknown contracts and diagnostic skips fail closed.
+- The inherited browser proof binds `77fd149`. No cockpit `src` files changed since that observation. It is not full production or business-journey acceptance.
+- Verifier regressions passed 27 cases after a failing-before/passing-after ship-first acceptance test.
+- Final release execution writes `D:/MaharaMedia/worktrees/cockpit-ship-first-release-20261006.json`. Consult that report and the ignored evidence bundle for the exact final SHA and gate result.
+- History/final catchup, complete access/save journeys, server/worker independence, producer activation, production configuration and rollback remain full-cutover work.
+- Keep `full_cutover_ready: false` and `convex_retirement_authorized: false` for ship-first. Do not delete any legacy deployment or protected source backup.

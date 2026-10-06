@@ -690,9 +690,10 @@ def verify_release_evidence(
     - Git worktree is explicitly clean
     - Known source_identity and evaluator (cannot be missing or unknown)
     - Fresh timestamp with finite bounded age (>0 and <= max_age_hours <= 24.0)
-    - All 6 mandatory categories present with status: passed
-    - All exact mandatory subchecks present with status: passed
-    - Every check has associated nonempty hashed artifact refs that exist and match sha256
+    - Full cutover requires all six categories and exact mandatory subchecks passed
+    - Explicitly approved ship-first requires native five-app browser navigation proof
+    - Ship-first defers history offline and never authorizes Convex retirement
+    - Every selected check has nonempty hashed artifact refs that exist and match sha256
     """
     failures: List[str] = []
     details: Dict[str, Any] = {
@@ -770,15 +771,52 @@ def verify_release_evidence(
         except Exception as exc:
             failures.append(f"Invalid evidence timestamp format '{recorded_at_str}': {exc}")
 
-    # 4. Mandatory categories and exact mandatory subchecks
+    # 4. Select the approved acceptance contract without relabeling full-cutover evidence.
+    release_contract = data.get("release_contract", "full-cutover")
+    details["release_contract"] = release_contract
+    details["full_cutover_ready"] = False
+    required_subchecks = MANDATORY_EVIDENCE_SUBCHECKS
     categories = data.get("categories")
+    if release_contract == "ship-first":
+        ship_first = data.get("ship_first")
+        if not isinstance(ship_first, dict):
+            failures.append("Ship-first requires an explicit approval and baseline evidence")
+            return False, failures, details
+        approved_by = ship_first.get("approved_by")
+        if ship_first.get("approved") is not True or not isinstance(approved_by, str) or not approved_by.strip() or approved_by.strip().lower() == "unknown":
+            failures.append("Ship-first requires a named approver and approved: true")
+        backfill = ship_first.get("historical_backfill")
+        if not isinstance(backfill, dict) or backfill.get("status") != "deferred_offline":
+            failures.append("Ship-first must explicitly defer historical backfill offline")
+        if data.get("convex_retirement_authorized") is not False:
+            failures.append("Ship-first must keep Convex retirement unauthorized")
+        categories = ship_first.get("categories")
+        required_subchecks = {
+            "native_browser_baseline": ["authenticated_five_cockpit_navigation"],
+        }
+        if isinstance(categories, dict):
+            baseline = categories.get("native_browser_baseline")
+            checks = baseline.get("checks") if isinstance(baseline, dict) else None
+            navigation = checks.get("authenticated_five_cockpit_navigation") if isinstance(checks, dict) else None
+            if isinstance(navigation, dict):
+                apps = navigation.get("apps")
+                if not isinstance(apps, list) or not all(isinstance(app, str) for app in apps) or sorted(apps) != sorted(APP_NAMES):
+                    failures.append("Ship-first navigation must cover all five distinct cockpit apps")
+                for metric in ("convex_http_requests", "unapproved_application_writes"):
+                    if type(navigation.get(metric)) is not int or navigation[metric] != 0:
+                        failures.append(f"Ship-first navigation requires {metric}: 0")
+        details["historical_backfill"] = backfill
+        details["convex_retirement_authorized"] = False
+    elif release_contract != "full-cutover":
+        failures.append(f"Unknown release_contract: {release_contract!r}")
+        return False, failures, details
     if not isinstance(categories, dict):
         failures.append("Evidence missing 'categories' dictionary")
         return False, failures, details
 
     details["categories"] = {}
 
-    for cat_name, req_subchecks in MANDATORY_EVIDENCE_SUBCHECKS.items():
+    for cat_name, req_subchecks in required_subchecks.items():
         if cat_name not in categories:
             failures.append(f"Missing mandatory evidence category: '{cat_name}'")
             continue
@@ -876,6 +914,8 @@ def verify_release_evidence(
                 cat_details["artifacts_verified"].append(art_rel)
 
         details["categories"][cat_name] = cat_details
+
+    details["full_cutover_ready"] = not failures and release_contract == "full-cutover"
 
     return (len(failures) == 0), failures, details
 
@@ -1080,6 +1120,7 @@ def verify_cutover(
             "details": ev_details,
             "failures": ev_fails,
         }
+        report["release_contract"] = ev_details.get("release_contract")
         if ev_ok:
             print("  [PASS] Acceptance evidence verified (clean SHA, fresh timestamp, valid artifact hashes)")
         else:
@@ -1118,8 +1159,13 @@ def verify_cutover(
         if all_local_passed and all_release_passed and not has_diagnostic_skips:
             report["status"] = "RELEASE_READY"
             report["release_ready"] = True
-            report["summary"] = "RELEASE READY: All local verifications and independent acceptance evidence verified."
-            print("RESULT: RELEASE READY FOR CUTOVER.")
+            report["full_cutover_ready"] = ev_details.get("full_cutover_ready", False)
+            if report["release_contract"] == "ship-first":
+                report["summary"] = "SHIP-FIRST RELEASE READY: Local gates and approved native browser baseline verified. History remains offline; full cutover and Convex retirement are not certified."
+                print("RESULT: SHIP-FIRST RELEASE READY. Historical backfill remains offline; Convex retirement is not authorized.")
+            else:
+                report["summary"] = "RELEASE READY: All local verifications and independent acceptance evidence verified."
+                print("RESULT: RELEASE READY FOR CUTOVER.")
             exit_code = 0
         else:
             report["status"] = "FAILED"

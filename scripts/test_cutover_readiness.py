@@ -496,5 +496,110 @@ class TestIndependentReleaseReview(unittest.TestCase):
         self.assertFalse(vcr.check_app_structure(self.repo)[0])
 
 
+class TestShipFirstRelease(unittest.TestCase):
+    setUp = TestCutoverReadinessRevision.setUp
+    tearDown = TestCutoverReadinessRevision.tearDown
+
+    def make_evidence(self):
+        evidence, artifacts = create_valid_evidence_bundle(self.repo, self.sample_sha)
+        data = json.loads(evidence.read_text())
+        for category in data["categories"].values():
+            category["status"] = "not_verified"
+        data["release_contract"] = "ship-first"
+        data["convex_retirement_authorized"] = False
+        data["ship_first"] = {
+            "approved": True,
+            "approved_by": "Muhammed Burhan",
+            "historical_backfill": {"status": "deferred_offline"},
+            "categories": {
+                "native_browser_baseline": {
+                    "status": "passed",
+                    "checks": {
+                        "authenticated_five_cockpit_navigation": {
+                            "status": "passed",
+                            "apps": [
+                                "media-buyer-cockpit", "client-success-cockpit",
+                                "creative-director-cockpit", "video-editor-cockpit",
+                                "sales-cockpit",
+                            ],
+                            "convex_http_requests": 0,
+                            "unapproved_application_writes": 0,
+                            "artifacts": [{
+                                "path": artifacts[0].relative_to(self.repo).as_posix(),
+                                "sha256": hashlib.sha256(artifacts[0].read_bytes()).hexdigest(),
+                            }],
+                        }
+                    },
+                }
+            },
+        }
+        return evidence, data
+
+    def verify(self, evidence, data, dirty=False):
+        evidence.write_text(json.dumps(data), encoding="utf-8")
+        return vcr.verify_release_evidence(evidence, self.repo, self.sample_sha, dirty)
+
+    def test_approved_ship_first_releases_without_certifying_full_cutover(self):
+        evidence, data = self.make_evidence()
+        ok, failures, details = self.verify(evidence, data)
+        self.assertTrue(ok, failures)
+        self.assertEqual(details["release_contract"], "ship-first")
+        self.assertFalse(details["full_cutover_ready"])
+        data["release_contract"] = "full-cutover"
+        self.assertFalse(self.verify(evidence, data)[0])
+
+    def test_ship_first_requires_approval_offline_backfill_and_no_retirement(self):
+        import copy
+        evidence, original = self.make_evidence()
+        variants = []
+        for key, value in [("approved", False), ("approved_by", "unknown"),
+                           ("historical_backfill", {"status": "passed"})]:
+            data = copy.deepcopy(original)
+            data["ship_first"][key] = value
+            variants.append(data)
+        data = copy.deepcopy(original)
+        data["convex_retirement_authorized"] = True
+        variants.append(data)
+        data = copy.deepcopy(original)
+        data["release_contract"] = "ship-fisrt"
+        variants.append(data)
+        for data in variants:
+            with self.subTest(data=data):
+                self.assertFalse(self.verify(evidence, data)[0])
+
+    def test_ship_first_rejects_incomplete_or_convex_dependent_navigation(self):
+        import copy
+        evidence, original = self.make_evidence()
+        for key, value in [
+            ("apps", ["media-buyer-cockpit"]),
+            ("apps", ["media-buyer-cockpit"] * 5),
+            ("status", "partial"),
+            ("convex_http_requests", 1),
+            ("convex_http_requests", False),
+            ("unapproved_application_writes", 1),
+            ("artifacts", []),
+        ]:
+            data = copy.deepcopy(original)
+            data["ship_first"]["categories"]["native_browser_baseline"]["checks"]["authenticated_five_cockpit_navigation"][key] = value
+            with self.subTest(key=key, value=value):
+                self.assertFalse(self.verify(evidence, data)[0])
+
+    def test_ship_first_keeps_source_freshness_cleanliness_and_integrity_gates(self):
+        import copy
+        evidence, original = self.make_evidence()
+        self.assertFalse(self.verify(evidence, original, dirty=True)[0])
+        for key, value in [
+            ("source_sha", "f" * 40),
+            ("recorded_at", (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()),
+        ]:
+            data = copy.deepcopy(original)
+            data[key] = value
+            with self.subTest(key=key):
+                self.assertFalse(self.verify(evidence, data)[0])
+        refs = original["ship_first"]["categories"]["native_browser_baseline"]["checks"]["authenticated_five_cockpit_navigation"]["artifacts"]
+        (self.repo / refs[0]["path"]).write_text("tampered", encoding="utf-8")
+        self.assertFalse(self.verify(evidence, original)[0])
+
+
 if __name__ == "__main__":
     unittest.main()
