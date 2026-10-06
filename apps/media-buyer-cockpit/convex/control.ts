@@ -49,6 +49,8 @@ export const setStatus = authenticatedAction({
       name: args.name,
       clientTag: args.clientTag,
       campaignName: args.campaignName,
+      userId: ctx.userId,
+      syncAdStatus: args.level === "campaign",
     });
     return { ok: true };
   },
@@ -65,12 +67,17 @@ export const recordToggle = internalMutation({
     campaignName: v.optional(v.string()),
     /** Set by edit.ts, which describes its own change far better than on/off. */
     overrideNote: v.optional(v.string()),
+    /** Who made the change, so the card says who. */
+    userId: v.optional(v.id("users")),
+    /** A whole campaign was switched: the board card's Ad Status follows. */
+    syncAdStatus: v.optional(v.boolean()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
     const note =
       args.overrideNote ??
       `${args.status === "ACTIVE" ? "Turned on" : "Turned off"} ${args.level} "${args.name}" from the cockpit`;
+    const user = args.userId ? await ctx.db.get(args.userId) : null;
     // Reflect it immediately so the screen doesn't lie until the next sync.
     const rows = await ctx.db
       .query("metaTree")
@@ -87,12 +94,19 @@ export const recordToggle = internalMutation({
       (args.level === "campaign" ? args.name : undefined) ??
       args.clientTag ??
       args.name;
-    await ctx.db.insert("manualChanges", {
+    const changeId = await ctx.db.insert("manualChanges", {
       campaignName,
       adName: args.level === "campaign" ? undefined : args.name,
       what: note,
-      by: "cockpit",
+      by: user?.email ?? "cockpit",
       at: Date.now(),
+    });
+    // And onto the client's card on the ads management board, which is where
+    // the client success team reads what was done (Aziz, 2026-10-06: none of
+    // these reached ClickUp before).
+    await ctx.scheduler.runAfter(0, internal.writeback.logManualChange, {
+      id: changeId,
+      syncAdStatus: args.syncAdStatus,
     });
 
     // And write it into the campaign's own thread, so the history of what was

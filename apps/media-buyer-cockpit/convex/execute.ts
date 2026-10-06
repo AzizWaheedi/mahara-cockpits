@@ -1,8 +1,9 @@
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
+import { budgetToUsd, spendToUsd, usdToBudget } from "./currency";
 import { authenticatedAction } from "./functions";
 import { refusal } from "./gate";
-import { graph, graphPost } from "./tools";
+import { accountCurrency, graph, graphPost } from "./tools";
 
 /**
  * Carry out a recommendation, for real, against the live ad account.
@@ -32,15 +33,12 @@ function money(n: number): string {
   return `$${n.toFixed(2)}`;
 }
 
-/** Meta stores budgets in minor units (cents/fils) as strings. */
-function toMinor(major: number): number {
-  return Math.round(major * 100);
-}
-function toMajor(minor: string | number | undefined): number | undefined {
-  if (minor === undefined || minor === null) return undefined;
-  const n = Number(minor);
-  return Number.isFinite(n) ? n / 100 : undefined;
-}
+/**
+ * Meta stores budgets in minor units of the ad account's own currency, as
+ * strings. Everything here is worked out in dollars and converted at the
+ * edge (currency.ts), so the +25% cap and the $30 floor mean the same on a
+ * riyal account as on a dollar one.
+ */
 
 /**
  * Where the budget actually lives.
@@ -52,22 +50,31 @@ function toMajor(minor: string | number | undefined): number | undefined {
 async function budgetHolder(campaignMetaId: string): Promise<{
   level: "campaign" | "adset";
   id: string;
+  /** Dollars a day. */
   current?: number;
   name: string;
+  currency: string;
 }> {
   const campaign = await graph<{
     id: string;
     name: string;
+    account_id?: string;
     daily_budget?: string;
     lifetime_budget?: string;
-  }>(campaignMetaId, { fields: "name,daily_budget,lifetime_budget" });
+  }>(campaignMetaId, {
+    fields: "name,account_id,daily_budget,lifetime_budget",
+  });
+  const currency = await accountCurrency(String(campaign.account_id ?? ""));
+  // Says so in words for an account the cockpit cannot convert.
+  usdToBudget(1, currency);
 
   if (campaign.daily_budget) {
     return {
       level: "campaign",
       id: campaign.id,
-      current: toMajor(campaign.daily_budget),
+      current: budgetToUsd(campaign.daily_budget, currency),
       name: campaign.name,
+      currency,
     };
   }
   if (campaign.lifetime_budget) {
@@ -93,8 +100,9 @@ async function budgetHolder(campaignMetaId: string): Promise<{
   return {
     level: "adset",
     id: pool[0].id,
-    current: toMajor(pool[0].daily_budget),
+    current: budgetToUsd(pool[0].daily_budget, currency),
     name: pool[0].name,
+    currency,
   };
 }
 
@@ -164,7 +172,9 @@ export const runAction = authenticatedAction({
             error: `The budget is already ${money(holder.current)}/day, which is at or above that target.`,
           };
         }
-        await graphPost(holder.id, { daily_budget: toMinor(capped) });
+        await graphPost(holder.id, {
+          daily_budget: usdToBudget(capped, holder.currency),
+        });
         const capNote =
           args.targetBudget !== undefined && capped < args.targetBudget
             ? ` I capped the step at +25% (you asked for ${money(args.targetBudget)}) so it doesn't re-enter learning — run it again tomorrow to go higher.`
@@ -226,10 +236,16 @@ export const runAction = authenticatedAction({
         scored.sort((x, y) => y.cpl - x.cpl || y.spend - x.spend);
         const worst = scored[0];
         await graphPost(worst.a.id, { status: "PAUSED" });
-        did = `Paused "${worst.a.name}" — ${money(worst.spend)} spent for ${
+        // Meta reports spend in the account's currency; she reads dollars.
+        const meta = await graph<{ account_id?: string }>(args.campaignMetaId, {
+          fields: "account_id",
+        });
+        const currency = await accountCurrency(String(meta.account_id ?? ""));
+        const spent = spendToUsd(worst.spend, currency);
+        did = `Paused "${worst.a.name}" — ${money(spent)} spent for ${
           worst.leads
         } lead${worst.leads === 1 ? "" : "s"} in 7 days${
-          worst.leads > 0 ? ` (${money(worst.cpl)} each)` : ""
+          worst.leads > 0 ? ` (${money(spent / worst.leads)} each)` : ""
         }, the worst in the campaign.`;
       } else {
         return {
@@ -246,6 +262,9 @@ export const runAction = authenticatedAction({
         clientTag: args.clientTag,
         campaignName: args.campaignName,
         overrideNote: did,
+        userId: ctx.userId,
+        // The whole campaign was paused: the board card follows.
+        syncAdStatus: action === "Turn it off",
       });
       return { ok: true, did };
     } catch (e) {

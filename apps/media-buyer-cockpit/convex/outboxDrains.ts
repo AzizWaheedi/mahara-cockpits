@@ -4,6 +4,7 @@ import type { ActionCtx } from "./_generated/server";
 import { internalAction } from "./_generated/server";
 import { AZIZ_SLACK_ID } from "./constants";
 import { flush, note } from "./health";
+import { backlogNote, MAX_TRIES } from "./outboxCore";
 import { CLIENTS_LIST, CREATIVE_LIST, VIDEO_LIST } from "./sync";
 import { callTool, unwrap } from "./tools";
 
@@ -534,11 +535,29 @@ export const drainCsm = internalAction({
  */
 export const drainOwn = internalAction({
   args: {},
-  returns: v.object({ done: v.number(), failed: v.number() }),
-  handler: async ctx => {
+  returns: v.object({
+    done: v.number(),
+    failed: v.number(),
+    gaveUp: v.number(),
+    closed: v.object({ exhausted: v.number(), stale: v.number() }),
+  }),
+  handler: async (
+    ctx,
+  ): Promise<{
+    done: number;
+    failed: number;
+    gaveUp: number;
+    closed: { exhausted: number; stale: number };
+  }> => {
+    // Out of the way first, so nothing dead sits in front of a live write.
+    const closed: { exhausted: number; stale: number } = await ctx.runMutation(
+      internal.outbox.closeDead,
+      {},
+    );
     const rows: Any[] = await ctx.runQuery(internal.outbox.pending, {});
     let done = 0;
     let failed = 0;
+    const gaveUp: string[] = [];
     const dm = process.env.ALERT_SLACK_TO || AZIZ_SLACK_ID;
     for (const row of rows) {
       // A message nobody could deliver for two days is stale chatter by now;
@@ -564,14 +583,38 @@ export const drainOwn = internalAction({
       } catch (e) {
         error = String(e).slice(0, 300);
       }
-      await ctx.runMutation(internal.outbox.settle, {
-        id: row.id,
-        ok: !error,
-        error,
-      });
+      const s: { gaveUp: boolean } = await ctx.runMutation(
+        internal.outbox.settle,
+        {
+          id: row.id,
+          ok: !error,
+          error,
+        },
+      );
       error ? failed++ : done++;
+      if (s.gaveUp) gaveUp.push(`${row.role} ${args.url ?? ""}: ${error}`);
     }
-    return { done, failed };
+    // The queue's own line in the health ledger: three bad minutes in a row
+    // and Aziz hears about it, instead of "outbox drains: ok" for weeks.
+    const open: { at: number; lastError?: string }[] = await ctx.runQuery(
+      internal.outbox.open,
+      {},
+    );
+    const line = backlogNote(open, Date.now());
+    note("outbox", line.ok, line.error);
+    // This runs as its own action, so its notes are flushed here.
+    await flush(ctx);
+    // Set aside after five tries: said once, with what it was.
+    if (gaveUp.length)
+      await ctx.runMutation(internal.health.notify, {
+        texts: [
+          `${gaveUp.length} media buyer change${gaveUp.length === 1 ? "" : "s"} could not be written to ClickUp after ${MAX_TRIES} tries and ${gaveUp.length === 1 ? "was" : "were"} set aside (outbox table, gaveUpAt).\n${gaveUp
+            .slice(0, 3)
+            .map(g => g.slice(0, 300))
+            .join("\n")}`,
+        ],
+      });
+    return { done, failed, gaveUp: gaveUp.length, closed };
   },
 });
 
