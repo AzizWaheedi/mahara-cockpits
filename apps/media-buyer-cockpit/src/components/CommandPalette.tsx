@@ -1,6 +1,6 @@
 import { useQuery } from "convex/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router";
+import { useLocation, useNavigate } from "react-router";
 import {
   CommandDialog,
   CommandEmpty,
@@ -14,7 +14,8 @@ import { api } from "../../convex/_generated/api";
 
 /**
  * The search box: Ctrl/Cmd + K, or "/", from any page (Aziz, 2026-10-06; the
- * same box as the client success cockpit's).
+ * same box as the client success cockpit's). On Ideation "/" stays with its
+ * own search box, so only Ctrl/Cmd + K opens this one there.
  *
  * For a media buyer it finds a client (their page on Ads), a campaign (open
  * on its client's page), and every page; anyone else finds the pages their
@@ -139,6 +140,7 @@ export function CommandPalette() {
   const [search, setSearch] = useState("");
   const [reading, setReading] = useState(false);
   const navigate = useNavigate();
+  const { pathname } = useLocation();
   const me = useQuery(api.roles.me, {}) as Me | undefined;
   const roles = me?.roles ?? [];
   const buyer = roles.includes("media_buyer");
@@ -169,6 +171,7 @@ export function CommandPalette() {
       } else if (
         e.key === "/" &&
         !open &&
+        pathname !== "/ideation" &&
         !e.metaKey &&
         !e.ctrlKey &&
         !e.altKey &&
@@ -184,7 +187,7 @@ export function CommandPalette() {
       window.removeEventListener("keydown", onKey);
       off();
     };
-  }, [open, show]);
+  }, [open, show, pathname]);
 
   const campaigns: Campaign[] = useMemo(
     () => ((snap?.campaigns ?? []) as Campaign[]).filter(c => !c.internal),

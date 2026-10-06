@@ -1177,9 +1177,10 @@ function Cockpit({ view }: { view: View }) {
   const ready = snap !== undefined;
   useEffect(() => {
     if (view !== "sod" || !location.hash || !ready) return;
+    // A jump, not a glide: a glide never runs in a background tab.
     document
       .getElementById(location.hash.slice(1))
-      ?.scrollIntoView({ behavior: "smooth", block: "start" });
+      ?.scrollIntoView({ block: "start" });
   }, [view, location.hash, ready]);
   /** The EOD form's own human answers. Numbers are filled in for her. */
   const [eodForm, setEodForm] = useState<Record<string, string>>({
