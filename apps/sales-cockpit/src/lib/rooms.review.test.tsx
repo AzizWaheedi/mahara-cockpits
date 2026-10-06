@@ -1193,6 +1193,8 @@ describe("14. every fixture draws", () => {
     "link_claimed_at",
     // m1 round 3b: a call to the lead after their join ("Still on the call?").
     "rang_at",
+    // m1 round 4: room.status says whether a send is held for night.
+    "send_night",
   ];
 
   test("the browser's key list is contract v2's, in full", () => {

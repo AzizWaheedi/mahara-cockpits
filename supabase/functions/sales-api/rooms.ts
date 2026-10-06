@@ -3398,6 +3398,17 @@ export function makeRooms(deps: RoomDeps): Rooms {
   }
 
   /**
+   * The lane stopped before anything went at an earlier re-ask too: its
+   * "waiting" line (sendFailed's link.waiting) is older than half a minute.
+   * Not readable: false (the lane waits, as before).
+   */
+  async function waitedBefore(roomId: string, channel: LinkChannel): Promise<boolean> {
+    const row = (await io.db(`${EVENTS}?dedupe_key=eq.${enc(`link.waiting:${roomId}:${channel}`)}&select=handled_at,at`).catch(() => []))[0];
+    const at = ms(row?.handled_at) ?? ms(row?.at);
+    return at !== null && io.now() - at >= 30 * S;
+  }
+
+  /**
    * The lane's last send failed for good for this lead (Meta's per-lead
    * failures, by code or words): its why, else null. Such a lane is not
    * asked again for this room's link (m1 round 4).
@@ -4120,12 +4131,15 @@ export function makeRooms(deps: RoomDeps): Rooms {
         // silence as late and tells the rep to send it another way (m1
         // round 4); this lane is asked again by the minute's re-ask.
         if (sent.inflight && sent.not_yet) {
-          // A WhatsApp lane stopped at a read only WhatsApp makes (HighLevel's
-          // conversation search for the 24 hours; the contact itself was just
-          // read here): the next lane is asked now, never ten minutes of
-          // "tried again" with the email never tried (m1 round 4,
-          // whatsapp-presend-read-down-email-never-tried).
-          if (channel !== "email") {
+          // A WhatsApp lane that stopped the same way a minute ago too (its
+          // "waiting" line is from an earlier re-ask: HighLevel's
+          // conversation search, a read only WhatsApp makes, is still down,
+          // while the contact itself was just read here): the next lane is
+          // asked now, never ten minutes of "tried again" with the email
+          // never tried (m1 round 4, whatsapp-presend-read-down-email-never-
+          // tried). The first time, the lane waits for the minute's re-ask
+          // (stress2 round 4: a blip never passes it over).
+          if (channel !== "email" && (await waitedBefore(room.id, channel))) {
             fails.push({ why: "HighLevel did not answer", passing: true });
             continue;
           }

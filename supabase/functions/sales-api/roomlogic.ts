@@ -4418,6 +4418,13 @@ export interface RoomView {
    * and the banner ask "Still on the call?". Null unless the lead is in.
    */
   rang_at: string | null;
+  /**
+   * A send of the link now would be held for night on the lead's clock
+   * (nightHolds for a later send): room.status fills it, so the panel never
+   * offers Send by email that room.send would refuse (m1 round 4). False
+   * everywhere else.
+   */
+  send_night: boolean;
 }
 
 export const ROOM_VIEW_KEYS = [
@@ -4465,6 +4472,7 @@ export const ROOM_VIEW_KEYS = [
   "opened_at",
   "link_claimed_at",
   "rang_at",
+  "send_night",
 ] as const;
 
 /** The channels the link went on, from link_channels or the keys of link_message_ids. */
@@ -4483,7 +4491,15 @@ export function linkChannelsOf(row: { link_channels?: unknown; link_message_ids?
 
 export function toRoomView(
   row: RoomRow,
-  opts: { short_link: boolean; contact_first_name?: unknown; refusal?: string | null; starts_at?: unknown; late_open_at?: unknown; rang_at?: unknown },
+  opts: {
+    short_link: boolean;
+    contact_first_name?: unknown;
+    refusal?: string | null;
+    starts_at?: unknown;
+    late_open_at?: unknown;
+    rang_at?: unknown;
+    send_night?: boolean;
+  },
 ): RoomView {
   const first = greetingName(opts.contact_first_name ?? row.contact_first_name, null);
   return {
@@ -4538,6 +4554,7 @@ export function toRoomView(
     opened_at: isoOrNull(row.opened_at),
     link_claimed_at: isoOrNull(row.link_claimed_at),
     rang_at: row.state === "lead_in" && leadJoined(row) ? isoOrNull(opts.rang_at) : null,
+    send_night: opts.send_night === true,
   };
 }
 

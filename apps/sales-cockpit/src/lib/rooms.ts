@@ -152,6 +152,7 @@ export const ROOM_VIEW_KEYS = [
   "opened_at",
   "link_claimed_at",
   "rang_at",
+  "send_night",
 ] as const;
 
 /** A room as the browser sees it. `start_url` is never part of it. */
@@ -526,6 +527,7 @@ export function normalizeRoom(v: unknown): RoomView | null {
   for (const k of OPTIONAL_TEXT) if (k in v) room[k] = str(v[k]);
   if ("moved_from" in v)
     room.moved_from = oneOf(PROVIDERS, v.moved_from) ? v.moved_from : null;
+  if ("send_night" in v) room.send_night = v.send_night === true;
   dropOpensBeforeLink(room);
   return room;
 }

@@ -135,6 +135,7 @@ export function baseRoom(now: number, over: Partial<RoomView> = {}): RoomView {
     opened_at: null,
     link_claimed_at: null,
     rang_at: null,
+    send_night: false,
     ...over,
   };
 }

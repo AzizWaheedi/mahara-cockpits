@@ -233,7 +233,8 @@ describe("a no-show a minute after the lead knocked at the video room is held", 
     reset({ takenBack: false });
     const marked = await call("closer", { action: "mark", appointment_id: DEMO, status: "noshow" });
     expect(marked.status).toBe(409);
-    expect(String(marked.body.error ?? "")).toMatch(/opened the video link a few minutes ago, so the no-show was not marked/);
+    // Since m1 round 4 a room closed on the lead's knock (admit_blocked) holds it with the knock's own words.
+    expect(String(marked.body.error ?? "")).toMatch(/(knocked on the video room and could not be let in|opened the video link a few minutes ago), so the no-show was not marked/);
     expect(hlNoShows()).toBe(0);
   }, 30_000);
 
