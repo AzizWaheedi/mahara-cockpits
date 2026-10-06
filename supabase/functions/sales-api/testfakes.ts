@@ -394,7 +394,12 @@ export class FakeDb {
           throw new DbError(`database 400: Room ${old.code} has already ${old.state}.`, 400, "P0001");
         if (FINAL.includes(String(next.state)) && !next.ended_at) next.ended_at = this.iso();
         if (next.state === "open" && !next.opened_at) next.opened_at = this.iso();
-        if ((next.state === "host_in" || next.state === "lead_in") && !next.host_in_at) next.host_in_at = this.iso();
+        // 20261004a (m1 round 3b): a lead let in before the host's join is read: the host was in by the lead's own join time.
+        if (next.state === "lead_in" && !next.host_in_at) {
+          const joined = Date.parse(String(next.lead_in_at ?? ""));
+          next.host_in_at = Number.isFinite(joined) && joined < Date.parse(this.iso()) ? new Date(joined).toISOString() : this.iso();
+        }
+        if (next.state === "host_in" && !next.host_in_at) next.host_in_at = this.iso();
         // 20261003d: "That was not the lead" (lead_in to host_in) keeps
         // lead_in_at, the taken-back join's own time, so a re-delivered join
         // is told from a new one; the room waits at least open_grace more.

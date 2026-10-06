@@ -794,9 +794,15 @@ begin
   begin
     select coalesce(array_agg(q.id), '{}'), coalesce(array_agg(q.id) filter (where q.knocked), '{}'),
            coalesce(array_agg(q.id) filter (where q.lost and not q.knocked), '{}'),
-           coalesce(array_agg(q.id) filter (where q.retrying and not q.knocked and not q.lost), '{}')
+           coalesce(array_agg(q.id) filter (where (q.retrying or q.unstarted) and not q.knocked and not q.lost), '{}')
       into ids, knocked, lost, unsent from (
       select x.id, k.stands as knocked, rt.retrying,
+             -- The link was claimed and never went, and the lead's ten
+             -- minutes never started (no lead_by: night on the lead's clock
+             -- stopped it, m1 round 3b, retried-link-cut-by-night-after-
+             -- press-grace): no lead waited on a link, so never a no-show.
+             (x.link_sent_at is null and x.lead_by is null and x.link_claimed_at is not null
+              and x.purpose in ('manual', 'fallback')) as unstarted,
              exists (select 1 from public.cockpit_sales_room_events as e
                       where e.room_id = x.id and e.source in ('zoom', 'worker') and e.detail ? 'gave_up') as lost
         from public.cockpit_sales_rooms as x
@@ -1381,7 +1387,7 @@ begin
   -- posts them to sales-live/cron as sweep.replay.
   begin
     with due as (
-      select e.id from public.cockpit_sales_room_events as e
+      select e.id, e.at from public.cockpit_sales_room_events as e
        where e.handled_at is null and e.source = any (replayable)
          and e.at + w_replay < t and e.at >= t - interval '1 day' and e.tries < max_tries
          and (e.last_try_at is null or e.last_try_at + w_replay < t)
@@ -1397,9 +1403,14 @@ begin
          set last_try_at = t
         from due as d
        where e.id = d.id
-      returning e.id
+      returning e.id, e.at
     )
-    select coalesce(jsonb_agg(b.id::text order by b.id), '[]'::jsonb) into replay from bumped as b;
+    -- In the order the events were stored, never by their ids (m1 round 3b,
+    -- replay-order-lead-join-stamps-host-in-hides-meeting-end): a call's
+    -- Zoom events read lead join, end, host join stamped the host in after
+    -- the meeting had ended. sales-api's replay orders them again by Zoom's
+    -- own times.
+    select coalesce(jsonb_agg(b.id::text order by b.at, b.id), '[]'::jsonb) into replay from bumped as b;
     summary := summary || jsonb_build_object('replay_count', jsonb_array_length(replay));
   exception when others then
     errs := errs || jsonb_build_object('rule', 'event_replay', 'error', sqlerrm);
@@ -1692,6 +1703,18 @@ begin
           from public.cockpit_sales_rooms as x
          where x.state = any (finals) and x.contact_id is not null
            and (x.lead_in_at > t - interval '1 hour' or x.count_undo_at > t - interval '1 hour')
+        union all
+        -- A final room whose link may have gone (its link.unclear line) and
+        -- is not recorded as sent, for the link's 15 minutes of re-reads:
+        -- room.event reads the lead's conversation for it once more (m1
+        -- round 3b, unclear-link-never-settled-after-room-closes).
+        select x.id, 1, -extract(epoch from x.link_claimed_at)
+          from public.cockpit_sales_rooms as x
+         where x.state = any (finals) and x.contact_id is not null
+           and x.link_sent_at is null and x.link_claimed_at > t - interval '15 minutes'
+           and not coalesce(x.lead_in_at > t - interval '1 hour' or x.count_undo_at > t - interval '1 hour', false)
+           and exists (select 1 from public.cockpit_sales_room_events as v
+                        where v.room_id = x.id and v.kind = 'link.unclear')
         union all
         -- A count that could not book (failed or unclear) whose alert still
         -- asks a person to add the live call by hand: posted every ten
@@ -2537,7 +2560,12 @@ begin
   -- Stamp the time of each step if the writer did not.
   if new.state = 'creating' and new.claimed_at is null then new.claimed_at := now(); end if;
   if new.state in ('open', 'host_in', 'lead_in') and new.opened_at is null then new.opened_at := now(); end if;
-  if new.state in ('host_in', 'lead_in') and new.host_in_at is null then new.host_in_at := now(); end if;
+  -- A lead let in on a room whose host's join is not read yet: the host who
+  -- let them in was there by the lead's own join time, never the later
+  -- moment of this write, which a meeting end read after it would take for
+  -- an earlier instance (m1 round 3b, replay-order-lead-join-stamps-host-in).
+  if new.state = 'lead_in' and new.host_in_at is null then new.host_in_at := least(coalesce(new.lead_in_at, now()), now()); end if;
+  if new.state = 'host_in' and new.host_in_at is null then new.host_in_at := now(); end if;
   if new.state = 'lead_in' and new.lead_in_at is null then new.lead_in_at := now(); end if;
   if new.state = 'lead_in' and new.lead_in_seen_at is null then new.lead_in_seen_at := now(); end if;
   if new.state = any (finals) and new.ended_at is null then new.ended_at := now(); end if;

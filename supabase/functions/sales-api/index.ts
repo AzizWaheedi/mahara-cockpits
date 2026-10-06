@@ -1784,7 +1784,7 @@ async function senderCeiling(who: Who) {
   const recent = await svc(
     `cockpit_sales_messages?sent_by=eq.${enc(String(who.email ?? ""))}&created_at=gte.${enc(new Date(Date.now() - 600_000).toISOString())}&select=id&limit=31`,
   );
-  if (recent.length >= 30) throw new Refusal(SENDER_CEILING, 429);
+  if (recent.length >= 30) throw new Refusal(SENDER_CEILING, 429, { code: "sender_ceiling" });
 }
 
 /** A HighLevel or database error after which a send may or may not have gone: a timeout (status 0), a 5xx, or no answer at all. */
@@ -1847,7 +1847,9 @@ async function takeSlot(
   // The same words went to this lead a moment ago from another tab or seat
   // (20261004a): the lead gets them once (stress2, round 1).
   if (code === "same_words") throw new Refusal(SAME_WORDS, 409, { code: "same_words" });
-  if (code === "sender_ceiling") throw new Refusal(SENDER_CEILING, 429);
+  // Coded (m1 round 3b): a room's link sent as the rep reads it as passing,
+  // tried again once the ceiling clears, never a final "not sent".
+  if (code === "sender_ceiling") throw new Refusal(SENDER_CEILING, 429, { code: "sender_ceiling" });
   if (code === "lead_gap") throw new Refusal(LEAD_GAP, 409);
   if (code === "per_day") throw new Refusal(dayCeiling(o.perDay ?? 250), 409, { hold_all: true });
   if (code === "budget")

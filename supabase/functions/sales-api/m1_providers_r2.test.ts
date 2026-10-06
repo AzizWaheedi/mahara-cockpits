@@ -60,7 +60,14 @@ interface Lead {
   dndWhatsapp?: boolean;
 }
 
-function world(o: { waGate?: boolean; emailIdUnreadable?: boolean } = {}) {
+/**
+ * `indexLag`: how long HighLevel's conversation search takes to show what it
+ * filed. Since m1 round 3b a lost answer's first check reads from when
+ * HighLevel was asked, so a copy shown at once is found at once; the tests
+ * of a send that "may have gone" give the search 30 s of lag.
+ */
+function world(o: { waGate?: boolean; emailIdUnreadable?: boolean; indexLag?: number } = {}) {
+  const lag = o.indexLag ?? 0;
   const w = fakeWorld();
   const leads = new Map<string, Lead>();
   const jobs: Promise<unknown>[] = [];
@@ -198,13 +205,14 @@ function world(o: { waGate?: boolean; emailIdUnreadable?: boolean } = {}) {
     sentSince: async (contactId, since, text, channel) => {
       if (!text) return null;
       const ch = channel ?? "whatsapp";
-      const mine = conversation.filter(c => c.lead === contactId && c.channel === ch && c.at >= since - 15 * S && c.body.trim() === text.trim());
+      const shown = conversation.filter(c => w.clock.now - c.at >= lag);
+      const mine = shown.filter(c => c.lead === contactId && c.channel === ch && c.at >= since - 15 * S && c.body.trim() === text.trim());
       const hit = mine.find(c => !["failed", "undelivered"].includes(c.status));
       if (hit) return { id: hit.id, status: hit.status };
       const bad = mine.find(c => ["failed", "undelivered"].includes(c.status));
       if (bad) return { id: bad.id, status: bad.status, failed: true, error: "failed" };
       // index.ts: an email is "not there" only when no email at all went to the lead since.
-      if (ch === "email" && conversation.some(c => c.lead === contactId && c.channel === "email" && c.at >= since - 15 * S)) return null;
+      if (ch === "email" && shown.some(c => c.lead === contactId && c.channel === "email" && c.at >= since - 15 * S)) return null;
       return false;
     },
   };
@@ -464,7 +472,7 @@ describe("m1 providers r2: an email link HighLevel will not read by id", () => {
 
 describe("m1 providers r2: the lead's name changes in HighLevel after a send whose answer was lost", () => {
   test("HELD (control): with the name unchanged, the re-ask reads the conversation, finds the copy failed and emails the link", async () => {
-    const w = world();
+    const w = world({ indexLag: 30 * S });
     const LEAD = "stress-m1p2-unclear-same-name";
     w.addLead({ id: LEAD, inboundAgoMs: 2 * HOUR, text: ["timeout", { meta: "Message Undeliverable. (131026)" }], email_out: ["sent"] });
     const id = await w.opened(LEAD);
@@ -481,7 +489,7 @@ describe("m1 providers r2: the lead's name changes in HighLevel after a send who
   });
 
   test("renamed-lead-reask-refused-as-other-words: a re-ask after a merge renamed the lead never reads the conversation, so a failed copy is never backed up", async () => {
-    const w = world();
+    const w = world({ indexLag: 30 * S });
     const LEAD = "stress-m1p2-unclear-renamed";
     w.addLead({ id: LEAD, inboundAgoMs: 2 * HOUR, text: ["timeout", { meta: "Message Undeliverable. (131026)" }], email_out: ["sent"], firstName: "Huda" });
     const id = await w.opened(LEAD);
@@ -505,7 +513,7 @@ describe("m1 providers r2: the lead's name changes in HighLevel after a send who
   });
 
   test("renamed-lead-also-send-by-email-says-other-words: Also send by email after an unclear email answers 'already used for other words' on every press", async () => {
-    const w = world({ waGate: false });
+    const w = world({ waGate: false, indexLag: 30 * S });
     const LEAD = "stress-m1p2-email-renamed";
     w.addLead({ id: LEAD, inboundAgoMs: null, email_out: ["timeout", "sent"], firstName: "Huda" });
     const id = await w.opened(LEAD);

@@ -390,7 +390,10 @@ describe("m1 concurrency r4: I can't let them in, pressed as the sweep's timer c
     }).toEqual({
       answered_with: "replacement",
       rooms_for_the_knocking_lead: [String((out.replacement as Row | undefined)?.id ?? "none")],
-      next_press: again.ok ? String((out.replacement as Row | undefined)?.id ?? "none") : "link_already_sent",
+      // m1 round 3b (knocked-close-says-send-new-link-create-refuses): a room
+      // closed on the lead's knock no longer counts as this call's one link,
+      // so the second press meets the replacement itself: lead_has_room.
+      next_press: again.ok ? String((out.replacement as Row | undefined)?.id ?? "none") : "lead_has_room",
     });
   });
 });

@@ -612,7 +612,17 @@ describe("who may press, and stale buttons", () => {
   test("every write carries a compare-and-set guard: the state, the version on a move, and each old value", () => {
     const r = opened();
     const c = ok(apply(r, { kind: "lead_in", source: "zoom" }, T0 + MIN));
-    expect(c.expect).toEqual({ state: "open", version: r.version, lead_in_at: null, lead_in_seen_at: null, ends_at: r.ends_at });
+    // m1 round 3b: the host's join time comes with a lead let in before it
+    // was read (host_in_at), and the write reads Zoom's end of the meeting.
+    expect(c.expect).toEqual({
+      state: "open",
+      version: r.version,
+      lead_in_at: null,
+      lead_in_seen_at: null,
+      host_in_at: null,
+      ends_at: r.ends_at,
+      meeting_ended_at: null,
+    });
     expect(c.patch.version).toBe(r.version + 1);
   });
 });

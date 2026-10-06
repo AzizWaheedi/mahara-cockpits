@@ -1524,8 +1524,12 @@ export type RoomEvent =
   | { kind: "still_on"; actor?: Actor; version?: number }
   /** room.end, or the system ending a room. */
   | { kind: "end"; reason: EndReason; actor?: Actor; version?: number; confirm?: boolean }
-  /** Zoom's meeting.ended. */
-  | ({ kind: "meeting_ended" } & At)
+  /**
+   * Zoom's meeting.ended. `zoom_in_at`: the latest own time of any join or
+   * start Zoom sent for the meeting, read by rooms.ts from the stored events
+   * (null: none; left out: not read, so the room's own times stand in).
+   */
+  | ({ kind: "meeting_ended"; zoom_in_at?: string | number | null } & At)
   /** Zoom's meeting.deleted: the host deleted the room's meeting in Zoom (stress2, round 2). */
   | ({ kind: "meeting_deleted" } & At)
   /** Take on a standby room: the lead is set and the room becomes a handover. Run adoptRefusal first. */
@@ -1826,6 +1830,21 @@ function change(
 
 function same(room: RoomRow, effects: Effect[] = [], reason: SweepReason | null = null): Changed {
   return { ok: true, changed: false, from: room.state, to: room.state, room, patch: {}, expect: {}, effects, reason };
+}
+
+/**
+ * The write must also find the columns its decision read (m1 round 3b): a
+ * move that landed between this run's read of the room and its write (a
+ * host's rejoin moves host_in_at with no new version; Zoom's end on an open
+ * room writes meeting_ended_at with none) makes the write miss, so the room
+ * is read again and the event decided again on what is there now.
+ */
+function reads(c: Changed, room: RoomRow, keys: (keyof RoomRow)[]): Changed {
+  if (!c.changed) return c;
+  const want = c.expect as unknown as Row;
+  const have = room as unknown as Row;
+  for (const k of keys) if (!Object.hasOwn(want, k)) want[k] = have[k] ?? null;
+  return c;
 }
 
 /** The latest time the link went to the lead, on any channel (link_sent_at, or a later channel's last_link_at). */
@@ -2253,7 +2272,9 @@ export function applyRoomEvent(room: RoomRow, event: RoomEvent, now: number, ctx
       const patch: Partial<RoomRow> = { host_in_at: iso(when(event)) };
       const effects: Effect[] = [];
       claimLink({ ...room, ...patch, state: "host_in" }, patch, effects, at);
-      return change(room, "host_in", patch, effects);
+      // A leave or Zoom's end written on the open room before this write
+      // (neither moves the version) is read again first (m1 round 3b).
+      return reads(change(room, "host_in", patch, effects), room, ["host_left_at", "meeting_ended_at"]);
     }
 
     case "host_left": {
@@ -2272,7 +2293,10 @@ export function applyRoomEvent(room: RoomRow, event: RoomEvent, now: number, ctx
       // P2: the host left before the lead came; host_by gives them 120 s more, never less than it had.
       const patch: Partial<RoomRow> = { host_by: laterIso(room.host_by, t + w.handover_host * S) };
       patch.host_left_at = laterIso(room.host_left_at, t);
-      return change(room, "open", patch, []);
+      // Read host_in_at: a rejoin landing before this write (the phone in as
+      // the laptop leaves) moves it, so the leave is decided again (m1 round
+      // 3b, host-left-write-ignores-host-rejoin-landed-between).
+      return reads(change(room, "open", patch, []), room, ["host_in_at"]);
     }
 
     case "lead_in": {
@@ -2289,6 +2313,13 @@ export function applyRoomEvent(room: RoomRow, event: RoomEvent, now: number, ctx
       // The join "That was not the lead" took back, delivered again (Zoom sends two join events): not a new join.
       if (takenBack(room, t)) return same(room);
       const patch: Partial<RoomRow> = { lead_in_at: iso(t), lead_in_seen_at: iso(now) };
+      // The lead let in on a room whose host's join is not read yet (Zoom
+      // does not order its webhooks; a replay): the host who let them in was
+      // there by then, so host_in_at is the join's own time, never the
+      // moment of this write (the database's stamp would read every later
+      // Zoom time, the meeting's end included, as an earlier instance; m1
+      // round 3b, replay-order-lead-join-stamps-host-in-hides-meeting-end).
+      if (!room.host_in_at) patch.host_in_at = iso(t);
       // The knock this join answers is over (m1 round 4,
       // zoom-knock-of-taken-back-person-kept): if the one let in is not the
       // lead, nobody is left at the door.
@@ -2310,7 +2341,11 @@ export function applyRoomEvent(room: RoomRow, event: RoomEvent, now: number, ctx
         const ends = laterIso(room.ends_at, t + lengthMs(room.call_kind, ctx));
         if (ends !== room.ends_at) patch.ends_at = ends;
       }
-      return change(room, "lead_in", patch, [{ kind: "count_live" }]);
+      // Read meeting_ended_at: Zoom's end landing on the open room before
+      // this write (no new version) makes it miss, and the join, decided
+      // again, ends the room joined (m1 round 3b,
+      // lead-join-write-ignores-meeting-end-landed-between).
+      return reads(change(room, "lead_in", patch, [{ kind: "count_live" }]), room, ["meeting_ended_at"]);
     }
 
     case "not_lead":
@@ -2349,9 +2384,22 @@ export function applyRoomEvent(room: RoomRow, event: RoomEvent, now: number, ctx
     case "meeting_ended": {
       if (early) return refuse("too_early");
       const t = when(event);
-      // An earlier instance of the meeting ended, late; the one running now has people in it.
-      const lastIn = Math.max(ms(room.host_in_at) ?? Number.NEGATIVE_INFINITY, ms(room.lead_in_at) ?? Number.NEGATIVE_INFINITY);
+      // An earlier instance of the meeting ended, late; the one running now
+      // has people in it. Zoom's own times only (m1 round 3b): rooms.ts reads
+      // the latest join or start Zoom sent for the meeting (zoom_in_at), so
+      // a press's time or a write's moment never hides the end. Unread, the
+      // room's own times stand in.
+      const zoomIn = event.zoom_in_at;
+      const lastIn =
+        zoomIn === undefined
+          ? Math.max(ms(room.host_in_at) ?? Number.NEGATIVE_INFINITY, ms(room.lead_in_at) ?? Number.NEGATIVE_INFINITY)
+          : (ms(zoomIn) ?? Number.NEGATIVE_INFINITY);
       if (t < lastIn) return same(room);
+      // The write reads what the decision read: a restart or a join landing
+      // before it (host_in_at moves with no new version) makes it miss, and
+      // the end is decided again (m1 round 3b,
+      // meeting-ended-write-ignores-restart-landed-between).
+      const read: (keyof RoomRow)[] = ["host_in_at", "lead_in_at"];
       // Zoom ends a meeting the host left empty (F9, UNVERIFIED in phase 0). Before the lead came, while
       // their 10 minutes run, that is the host leaving (P2): back to open, 120 s for the host, secret kept;
       // room.open fetches a fresh start link.
@@ -2366,18 +2414,22 @@ export function applyRoomEvent(room: RoomRow, event: RoomEvent, now: number, ctx
         // the room joined instead of leaving it lead_in on a meeting that is over.
         const ended = laterIso(room.meeting_ended_at, t);
         if (room.state === "open" && host_by === room.host_by && ended === room.meeting_ended_at) return same(room);
-        return change(room, "open", { host_by, meeting_ended_at: ended }, []);
+        return reads(change(room, "open", { host_by, meeting_ended_at: ended }, []), room, read);
       }
       const result: RoomResult | null = room.state === "lead_in" && leadJoined(room) ? "joined" : room.contact_id ? "no_join" : null;
       // The meeting's end is kept on the closed room too (m1 round 1): a
       // lead's join from before it, read after it, still stands (lateLeadIn).
       // end_reason meeting_ended: Zoom closed it, no person's End (m1 round
       // 2, zoom-ended-stale-end-press-writes-second-end).
-      return change(
+      return reads(
+        change(
+          room,
+          "ended",
+          { result, end_reason: "meeting_ended", ended_at: iso(t), meeting_ended_at: laterIso(room.meeting_ended_at, t) },
+          [{ kind: "delete_secret" }],
+        ),
         room,
-        "ended",
-        { result, end_reason: "meeting_ended", ended_at: iso(t), meeting_ended_at: laterIso(room.meeting_ended_at, t) },
-        [{ kind: "delete_secret" }],
+        read,
       );
     }
 
@@ -3258,6 +3310,20 @@ function zoomAt(evt: ZoomEvent | null | undefined, which: "join" | "leave" | "wa
   const own = which === "join" ? p?.join_time : which === "leave" ? p?.leave_time : which === "wait" ? (p?.date_time ?? p?.join_time) : null;
   const pick = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim().slice(0, 60) : typeof v === "number" && Number.isFinite(v) ? v : null);
   return pick(own) ?? pick(evt?.event_ts);
+}
+
+/**
+ * When a Zoom event happened by Zoom's own clock: the participant's join,
+ * leave or knock time, else event_ts. The sweep's replay reads a room's
+ * events in this order (m1 round 3b), whatever order their ids sort in.
+ */
+export function zoomOwnTime(evt: ZoomEvent | null | undefined): number | null {
+  const p = evt?.payload?.object?.participant;
+  for (const v of [p?.join_time, p?.leave_time, p?.date_time, evt?.event_ts]) {
+    const t = ms(typeof v === "string" ? v.trim().slice(0, 60) : v);
+    if (t !== null) return t;
+  }
+  return null;
 }
 
 export type ZoomEffect = { room_event: RoomEvent; role: ZoomRole | null } | { ignore: string; role: ZoomRole | null };
@@ -4277,6 +4343,13 @@ export interface RoomView {
    */
   opened_at: string | null;
   link_claimed_at: string | null;
+  /**
+   * A call to the room's lead placed after their join (m1 round 3b,
+   * meet-joined-room-left-open-hijacks-callback-miss): the rep rang them
+   * again, so the video call may be over, which Meet never says. The panel
+   * and the banner ask "Still on the call?". Null unless the lead is in.
+   */
+  rang_at: string | null;
 }
 
 export const ROOM_VIEW_KEYS = [
@@ -4323,6 +4396,7 @@ export const ROOM_VIEW_KEYS = [
   "moved_from",
   "opened_at",
   "link_claimed_at",
+  "rang_at",
 ] as const;
 
 /** The channels the link went on, from link_channels or the keys of link_message_ids. */
@@ -4341,7 +4415,7 @@ export function linkChannelsOf(row: { link_channels?: unknown; link_message_ids?
 
 export function toRoomView(
   row: RoomRow,
-  opts: { short_link: boolean; contact_first_name?: unknown; refusal?: string | null; starts_at?: unknown; late_open_at?: unknown },
+  opts: { short_link: boolean; contact_first_name?: unknown; refusal?: string | null; starts_at?: unknown; late_open_at?: unknown; rang_at?: unknown },
 ): RoomView {
   const first = greetingName(opts.contact_first_name ?? row.contact_first_name, null);
   return {
@@ -4395,6 +4469,7 @@ export function toRoomView(
     moved_from: row.night_cleared === "replacing" && isProvider(row.provider) ? otherProvider(row.provider) : null,
     opened_at: isoOrNull(row.opened_at),
     link_claimed_at: isoOrNull(row.link_claimed_at),
+    rang_at: row.state === "lead_in" && leadJoined(row) ? isoOrNull(opts.rang_at) : null,
   };
 }
 
