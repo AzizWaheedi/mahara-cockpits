@@ -208,7 +208,7 @@ async function workerOpens(id: string): Promise<{ status: number; body: Row }> {
   const room = () => db.t("cockpit_sales_rooms").find(r => r.id === id) as Row;
   await db.db(`cockpit_sales_rooms?id=eq.${id}&state=eq.requested`, {
     method: "PATCH",
-    body: { state: "creating", claimed_at: new Date().toISOString(), worker_run: "run-1", version: Number(room().version) + 1 },
+    body: { state: "creating", claimed_at: new Date(Date.now()).toISOString(), worker_run: "run-1", version: Number(room().version) + 1 },
   });
   await db.db("cockpit_sales_room_events?on_conflict=dedupe_key", {
     method: "POST",
@@ -221,7 +221,7 @@ async function workerOpens(id: string): Promise<{ status: number; body: Row }> {
       state: "open",
       join_url: MEET_URL,
       provider_meeting_id: `evt-${id.slice(-4)}`,
-      opened_at: new Date().toISOString(),
+      opened_at: new Date(Date.now()).toISOString(),
       host_by: new Date(Date.now() + 15 * 60_000).toISOString(),
       ends_at: new Date(Date.now() + 30 * 60_000).toISOString(),
       version: Number(room().version) + 1,
@@ -293,12 +293,17 @@ function closerWithMissedDemo(start: number): void {
   ]);
 }
 
-/** The room worker opens the closer's Zoom room and tells sales-api. */
+/**
+ * The room worker opens the closer's Zoom room and tells sales-api. Its
+ * times are read from Date.now(), sales-api's own clock (m1 round 4: another
+ * file in the same run moves Date.now and leaves new Date() behind, and a
+ * room opened minutes "before" its claim read its link as late).
+ */
 async function workerOpensZoom(id: string): Promise<{ status: number; body: Row }> {
   const room = () => db.t("cockpit_sales_rooms").find(r => r.id === id) as Row;
   await db.db(`cockpit_sales_rooms?id=eq.${id}&state=eq.requested`, {
     method: "PATCH",
-    body: { state: "creating", claimed_at: new Date().toISOString(), worker_run: "run-1", version: Number(room().version) + 1 },
+    body: { state: "creating", claimed_at: new Date(Date.now()).toISOString(), worker_run: "run-1", version: Number(room().version) + 1 },
   });
   await db.db("cockpit_sales_room_events?on_conflict=dedupe_key", {
     method: "POST",
@@ -311,7 +316,7 @@ async function workerOpensZoom(id: string): Promise<{ status: number; body: Row 
       state: "open",
       join_url: ZOOM_URL,
       provider_meeting_id: "85550000004",
-      opened_at: new Date().toISOString(),
+      opened_at: new Date(Date.now()).toISOString(),
       host_by: new Date(Date.now() + 15 * 60_000).toISOString(),
       ends_at: new Date(Date.now() + 60 * 60_000).toISOString(),
       version: Number(room().version) + 1,
