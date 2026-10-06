@@ -19,13 +19,13 @@ export function stripControl(s: string): string {
 export function redact(s: unknown): string {
   return String(s)
     .replace(/https?:\/\/[^\s"'<>]*zoom(?:gov)?\.(?:us|com)\/(?:s\/|wc\/[^\s"'<>]*\/start)[^\s"'<>]*/gi, "[host link]")
-    .replace(/([?&;#](?:z|%7a)(?:a|%61)(?:k|%6b)=)[^&\s"'<>]+/gi, "$1[key]")
+    .replace(/([?&;#](?:z|%7a|%5a)(?:a|%61|%41)(?:k|%6b|%4b)=)[^&\s"'<>]+/gi, "$1[key]")
     .replace(/sb_(?:secret|publishable)_[A-Za-z0-9_-]+/g, "[key]")
     .replace(/sbp_[A-Za-z0-9]+/g, "[key]")
     .replace(/pit-[A-Za-z0-9-]+/g, "[key]")
     .replace(/xox[abposr]-[A-Za-z0-9-]+/g, "[key]")
     .replace(/eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g, "[jwt]")
-    .replace(/((?:api_?key|access_token|token|secret|(?:z|%7a)(?:a|%61)(?:k|%6b)|pwd)=)[^&\s"']+/gi, "$1[key]")
+    .replace(/((?:api_?key|access_token|token|secret|(?:z|%7a|%5a)(?:a|%61|%41)(?:k|%6b|%4b)|pwd)=)[^&\s"']+/gi, "$1[key]")
     .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/g, "Bearer [key]")
     .slice(0, 300);
 }

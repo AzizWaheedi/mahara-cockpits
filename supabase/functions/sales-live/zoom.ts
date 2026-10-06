@@ -243,7 +243,10 @@ export function zoomKind(event: string): string {
  * taken out: room_events.text never carries a link (contract-v2 section 15).
  */
 export function plainZoomName(x: unknown): string {
-  const s = typeof x === "string" ? stripControl(x) : "";
+  // Direction overrides and invisible characters go too (m1 round 4,
+  // zoom-name-bidi-spoofs-room-timeline): a lead's Zoom name must never turn
+  // the rest of the rep's line backwards, or be a name nobody can see.
+  const s = typeof x === "string" ? stripControl(x).replace(/[\u061c\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/g, "") : "";
   const cleaned = s
     .replace(/[a-z][a-z0-9+.-]*:\/\/\S*/gi, " ")
     .replace(/\bwww\.\S*/gi, " ")

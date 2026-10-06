@@ -255,7 +255,7 @@ export class RateLimiter {
  */
 export function isHostStartLink(u: URL): boolean {
   // Zoom reads an escaped letter in a parameter's name (%7Aak=) as zak= (m1 round 1).
-  if (/[?&;#](?:z|%7a)(?:a|%61)(?:k|%6b)=/i.test(`${u.search}${u.hash}`)) return true;
+  if (/[?&;#](?:z|%7a|%5a)(?:a|%61|%41)(?:k|%6b|%4b)=/i.test(`${u.search}${u.hash}`)) return true;
   return /^\/s\//i.test(u.pathname) || /^\/wc\/.*\/start(\/|$)/i.test(u.pathname);
 }
 

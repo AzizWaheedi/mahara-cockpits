@@ -899,15 +899,27 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
     return { en: firstName(p?.name), ar: firstName(p?.name_ar) };
   }
 
-  /** Whether Slack presses are switched on: live.enabled and live.slack both true. Unread: off. */
+  /**
+   * Whether Slack presses are switched on: live.enabled and live.slack both
+   * true. Read at most once a minute per instance, as shortLinkSwitchedOn is
+   * (m1 round 4, slack-fenced-flood-reads-database-per-request: this route
+   * reads it before any key is checked, so a flood of unsigned posts must
+   * never flood the shared database). Unread: off.
+   */
+  let slackMemo: { at: number; on: boolean } | null = null;
   async function slackSwitchedOn(): Promise<boolean> {
+    const now = deps.now();
+    if (slackMemo && now - slackMemo.at < 60_000) return slackMemo.on;
+    let on = false;
     try {
       const rows = (await rest("cockpit_sales_settings?key=eq.live&select=value&limit=1", { ms: 800 })) as { value: Row | null }[] | null;
       const v = Array.isArray(rows) ? rows[0]?.value : null;
-      return v?.enabled === true && v?.slack === true;
+      on = v?.enabled === true && v?.slack === true;
     } catch {
-      return false;
+      on = false;
     }
+    slackMemo = { at: now, on };
+    return on;
   }
 
   /**
