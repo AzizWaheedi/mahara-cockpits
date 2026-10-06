@@ -2432,6 +2432,14 @@ begin
   select id into d from public.cockpit_sales_rooms where host_email = 'lc-test-cd-2@example.invalid';
   rid := public.cockpit_sales_room_count_claim(d);
   perform pg_temp.ck('R4 and null for the lead''s other room while that count is in flight', rid is null, coalesce(rid::text, 'null'));
+  -- Closing sweep (stress_concurrency_r4 count_doubled): the room whose own
+  -- count is claimed and still in flight (count_result null) is not claimed
+  -- a second time.
+  select id into d from public.cockpit_sales_rooms where host_email = 'lc-test-cd-1@example.invalid';
+  rid := public.cockpit_sales_room_count_claim(d);
+  perform pg_temp.ck('R4 the one-argument claim never claims a room whose count is already claimed and in flight',
+    rid is null and (select count_claimed_at is not null and count_result is null from public.cockpit_sales_rooms where id = d),
+    coalesce(rid::text, 'null'));
   perform pg_temp.ck('R4 the count claim is security definer, empty search_path, service role only',
     (select bool_and(p.prosecdef and 'search_path=""' = any (p.proconfig)) from pg_proc as p
       where p.oid in ('public.cockpit_sales_room_count_claim(uuid, timestamptz, text, jsonb, boolean)'::regprocedure,

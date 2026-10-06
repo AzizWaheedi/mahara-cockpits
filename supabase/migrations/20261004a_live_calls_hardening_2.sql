@@ -2782,6 +2782,37 @@ $$;
 revoke all on function public.cockpit_sales_room_count_claim(uuid, timestamptz, text, jsonb, boolean) from public, anon, authenticated;
 grant execute on function public.cockpit_sales_room_count_claim(uuid, timestamptz, text, jsonb, boolean) to service_role;
 
+-- The one-argument claim (20261003d: the stress presses, and a person
+-- checking by hand) took a room whose count was claimed and still in flight
+-- (count_result null) as claimable: "count_result = 'undone'" is null there,
+-- so its "not (...)" was null and the room was claimed again, its claim time
+-- moved, by every later call (closing sweep, stress_concurrency_r4
+-- count_doubled: ten claims of one room). Claimable is what rooms.ts
+-- countClaimable says: never claimed, or undone.
+create or replace function public.cockpit_sales_room_count_claim(p_room_id uuid)
+returns uuid
+language plpgsql
+security definer
+set search_path = ''
+set lock_timeout = '5s'
+as $$
+declare
+  r public.cockpit_sales_rooms;
+  got jsonb;
+begin
+  select * into r from public.cockpit_sales_rooms as x where x.id = p_room_id;
+  if not found or not (r.count_claimed_at is null or coalesce(r.count_result = 'undone', false)) then
+    return null;
+  end if;
+  got := public.cockpit_sales_room_count_claim(
+    p_room_id, now(), null,
+    jsonb_build_object('count_claimed_at', r.count_claimed_at, 'count_result', r.count_result), true);
+  return case when got ->> 'code' = 'claimed' then p_room_id end;
+end;
+$$;
+revoke all on function public.cockpit_sales_room_count_claim(uuid) from public, anon, authenticated;
+grant execute on function public.cockpit_sales_room_count_claim(uuid) to service_role;
+
 -- The switches of one setting, each as on (true) or off, read the way the
 -- code reads it: rooms.*, live.*, threads.* and followups.agent are on only
 -- when true; followups.enabled and live.standby are on unless false.

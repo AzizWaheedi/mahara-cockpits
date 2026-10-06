@@ -26,6 +26,15 @@ public.cockpit_sales_room_count_claim(p_room_id uuid) returning the room id
 when this call holds the count, or null), the presses call it instead, so
 the check stays as the regression test.
 
+Closing sweep (7 October): the presses call the repo's claim, 20261004a's
+two functions as pg_temp copies made on each press's own connection, so the
+check tests the code that ships whatever production has applied. Its one
+switch, rooms.count_on_join (off in Milestone 1, when the claim answers
+missed), is read as on in the copy. The deployed one-argument claim
+(20261003d) claimed a room whose count was already claimed and in flight
+again, once per later press ("claims answered 2", one room claimed ten
+times); 20261004a's copy is the fix.
+
     count_twenty     twenty rooms of one lead, each counted once, at once:
                      at most one count is claimed for the conversation.
     count_doubled    two rooms of one lead, each pressed ten times at once
@@ -54,6 +63,33 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import stress_concurrency as sc  # noqa: E402  (q, lit, SqlError, in_window)
 
 q, lit, SqlError, in_window = sc.q, sc.lit, sc.SqlError, sc.in_window
+
+import re  # noqa: E402
+
+import run_checks  # noqa: E402
+
+
+def _count_claim_v2() -> str:
+    """20261004a's count claim (both functions) as pg_temp copies, the
+    count_on_join switch read as on, for the presses' own connections."""
+    mig = run_checks.strip_transaction(run_checks.HARDENING_2,
+                                       open(os.path.join(run_checks.MIGRATIONS, run_checks.HARDENING_2)).read())
+    five = re.findall(r"create or replace function public\.cockpit_sales_room_count_claim\(\n  p_room_id uuid, p_claimed_at.*?\n\$\$;",
+                      mig, re.S)
+    one = re.findall(r"create or replace function public\.cockpit_sales_room_count_claim\(p_room_id uuid\).*?\n\$\$;", mig, re.S)
+    if len(five) != 1 or len(one) != 1:
+        raise SystemExit(f"{run_checks.HARDENING_2} does not hold the two count claims this check copies.")
+    five_on, n = re.subn(r"\n  if not coalesce\(\(select s\.value -> 'count_on_join'.*?\n  end if;", "", five[0], flags=re.S)
+    if n != 1:
+        raise SystemExit("The count claim's count_on_join switch changed shape: update stress_concurrency_r4's copy.")
+    out = (five_on + "\n" + one[0]).replace("public.cockpit_sales_room_count_claim(", "pg_temp.r4_count_claim(")
+    out = out.replace("security definer\n", "")
+    if "count_on_join" in out or "public.cockpit_sales_room_count_claim" in out:
+        raise SystemExit("The count claim copy still reads the switch or the deployed claim.")
+    return out
+
+
+COUNT_V2 = _count_claim_v2()
 RUN = "stress-r4-" + secrets.token_hex(4)
 HOST = "@stress.invalid"
 REST_S = 6
@@ -119,7 +155,8 @@ def leftovers():
 
 
 def db_claim_function() -> bool:
-    return bool(q("select to_regprocedure('public.cockpit_sales_room_count_claim(uuid)') is not null as ok", write=False)[0]["ok"])
+    """The repo's claim is always there (COUNT_V2): the presses call it."""
+    return True
 
 
 def joined_rooms(lead: str, n: int, *, tag: str) -> list:
@@ -149,7 +186,7 @@ def count_press(room_id: str, use_db: bool) -> str:
     of this join) and, when there is none, countClaim (this room's claim,
     expect count_claimed_at null and count_result null). One statement."""
     if use_db:
-        return f"select public.cockpit_sales_room_count_claim({lit(room_id)}::uuid)::text as claimed"
+        return COUNT_V2 + "\n" + f"select pg_temp.r4_count_claim({lit(room_id)}::uuid)::text as claimed"
     return f"""
       with me as (select id, contact_id, lead_in_at from public.cockpit_sales_rooms where id = {lit(room_id)}::uuid),
       sib as (
