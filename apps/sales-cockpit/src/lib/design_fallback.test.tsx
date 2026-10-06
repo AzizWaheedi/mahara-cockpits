@@ -217,11 +217,22 @@ describe("D6. ending a room yourself never says the lead did not join in 10 minu
     expect(text(R.roomSentence(r, { now: NOW }))).toBe(
       "Room ended at 14:12. Nobody joined. Call again or send a message.",
     );
-    expect(text(R.roomSentence(r, { now: NOW, canMarkIntro: true }))).toBe(
-      "Room ended at 14:12. Nobody joined. Mark the intro:",
+    // m1 round 4: inside the ten minutes the link promised, no No-show yet.
+    expect(text(R.roomSentence(r, { now: NOW, canMarkIntro: true }))).toMatch(
+      /^Room ended at 14:12\. Nobody joined\. .+ was told the room would wait until /,
     );
     expect(
       R.roomActions(r, { now: NOW, canMarkIntro: true }).quiet.map(a => a.key),
+    ).toEqual(["showed"]);
+    // Once that wait is over, the intro's mark.
+    const after = (R.promisedWaitAhead(r, NOW) ?? NOW) + 1000;
+    expect(text(R.roomSentence(r, { now: after, canMarkIntro: true }))).toBe(
+      "Room ended at 14:12. Nobody joined. Mark the intro:",
+    );
+    expect(
+      R.roomActions(r, { now: after, canMarkIntro: true }).quiet.map(
+        a => a.key,
+      ),
     ).toEqual(["noshow", "showed"]);
     // The sweep's own expiry keeps its words.
     expect(

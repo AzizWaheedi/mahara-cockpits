@@ -208,7 +208,9 @@ export function pickerSends(code: string | null | undefined): boolean {
     code !== "booked_demo" &&
     code !== "worker_down" &&
     // One link per missed call (m1 round 3): a new link waits for a new call.
-    code !== "link_already_sent"
+    code !== "link_already_sent" &&
+    // ...and one that may have gone counts as that link (m1 round 4).
+    code !== "link_may_have_gone"
   );
 }
 
@@ -388,6 +390,12 @@ export const PICKER_NONE =
  */
 export const PICKER_NIGHT =
   "It is night where the lead is, so no message goes. You can make the room and read the link out.";
+/**
+ * The same with the short link off, where a Zoom link carries its passcode
+ * and cannot be read out (m1 round 4, zoom-night-read-out-unsayable).
+ */
+export const PICKER_NIGHT_MEET =
+  "It is night where the lead is, so no message goes. Make a Meet room and read its link out: a Zoom link cannot be read out.";
 
 /**
  * P1's picker line, "The lead gets the link on WhatsApp.", worked out as
@@ -419,7 +427,7 @@ export function linkPlanLine(i: {
     i.country !== undefined &&
     nightForLead(i.country, i.now ?? Date.now(), i.phone)
   )
-    return PICKER_NIGHT;
+    return s.short_link ? PICKER_NIGHT : PICKER_NIGHT_MEET;
   const wa = i.whatsapp;
   const em = i.email;
   // WhatsApp at all: the cockpit's switch, a number, no do-not-disturb, the gate.

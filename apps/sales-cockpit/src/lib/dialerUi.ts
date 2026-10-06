@@ -16,6 +16,7 @@ import {
   urgentEvents,
 } from "./dialer";
 import { ago, clock, dayLabel } from "./format";
+import { OVERDUE_MS, roomDeadline } from "./roomClock";
 
 /** A queue item as sales-api sends it, with the lead's last missed call to us. */
 export interface DialItem extends QueueItem {
@@ -587,14 +588,80 @@ export function afterMiss(o: {
     link_claimed_at?: string | null;
     moved_from?: string | null;
     contact_first_name?: string | null;
+    /** The room's deadlines (the panel's "should have closed", m1 round 4). */
+    purpose?: string | null;
+    contact_id?: string | null;
+    lead_by?: string | null;
+    host_by?: string | null;
+    last_link_at?: string | null;
+    ends_at?: string | null;
   } | null;
+  /**
+   * A Send a video link press whose room.create has not answered yet (the
+   * moment it was pressed): a room on its way, so the step never offers the
+   * missed-call message beside it (m1 round 4,
+   * missed-call-message-offered-while-video-link-press-on-its-way).
+   */
+  videoPending?: number | null;
   /** Now, for how long a room has been in the making (the panel's clock). */
   now?: number;
   /** The room worker's health line is red (live.status health.worker_ok false). */
   workerDown?: boolean;
+  /** The other provider is usable for this seat now (room.status other_ok); false hides Try {other}. */
+  otherOk?: boolean;
 }): AfterMiss {
   const { moment } = o;
-  const v = o.video;
+  const now = o.now ?? Date.now();
+  const v =
+    o.video ??
+    (o.videoPending != null
+      ? {
+          state: "requested",
+          link_sent_at: null,
+          created_at: new Date(o.videoPending).toISOString(),
+        }
+      : null);
+  // The room made in place of one the lead knocked on ("I can't let them
+  // in", moved_from) closed with nobody in it, or was not made: the lead
+  // came on time and was locked out by our own room, so the step is a call
+  // now, never "No answer" with the missed-call message (m1 round 4,
+  // admit-blocked-replacement-expiry-offers-noshow,
+  // failed-replacement-try-meet-sends-missed-call-words).
+  if (
+    v?.moved_from &&
+    !v.lead_in_at &&
+    ["ended", "expired", "cancelled", "failed"].includes(v.state)
+  ) {
+    const from = v.moved_from === "zoom" ? "Zoom" : "Meet";
+    const to = v.provider === "zoom" ? "Zoom" : "Meet";
+    return {
+      title: "They knocked and were not let in. Call them now.",
+      text:
+        v.state === "failed"
+          ? `They knocked on the ${from} room and could not be let in, and the ${to} room was not made. Call them now; if they do not answer, send them a WhatsApp.`
+          : `They knocked on the ${from} room and could not be let in, and nobody came into the ${to} room. Call them now; if they do not answer, send them a WhatsApp.`,
+      send: "whatsapp",
+      callNow: true,
+    };
+  }
+  // The room failed and the panel above offers Try {other} (the worker up,
+  // the other provider usable): that press sends its own message, so the
+  // step offers no missed-call message beside it (m1 round 4,
+  // failed-room-step-offers-missed-call-email-beside-try-zoom).
+  if (
+    v &&
+    (v.state === "failed" ||
+      (v.state === "cancelled" && v.result === "failed")) &&
+    o.workerDown !== true &&
+    o.otherOk !== false
+  ) {
+    const other = v.provider === "zoom" ? "Meet" : "Zoom";
+    return {
+      title: "The video room was not made",
+      text: `The video room was not made. Try ${other} above, or call them again.`,
+      send: null,
+    };
+  }
   // The lead knocked in the waiting room and nobody let them in, and the
   // room has closed: they were there a moment ago, so the step says to call
   // them now, never "No answer" with Next lead first (stress2 round 5).
@@ -675,6 +742,19 @@ export function afterMiss(o: {
       text: "They are waiting to be let in. Open your room and admit them.",
       send: null,
     };
+  // Past its close and still open (the sweep is late): the panel says the
+  // room should have closed, so the step says the same, never "Wait for
+  // them here" (m1 round 4, overdue-room-step-says-wait-for-them).
+  if (v && (v.state === "open" || v.state === "host_in")) {
+    const deadline = roomDeadline(v);
+    if (deadline !== null && now >= deadline + OVERDUE_MS)
+      return {
+        title: "This room should have closed",
+        text: "This room should have closed. Call them now, or end the room.",
+        send: null,
+        callNow: true,
+      };
+  }
   if (v && live && v.link_sent_at) {
     // The room in place of one the lead could not get into, its link by
     // email only: they wait at the old door, so the step is a call to tell
@@ -742,7 +822,6 @@ export function afterMiss(o: {
   // step says to call, as the panel does (m1 round 2).
   const making = v && (v.state === "requested" || v.state === "creating");
   const asked = v?.created_at ? Date.parse(v.created_at) : Number.NaN;
-  const now = o.now ?? Date.now();
   if (
     v &&
     making &&

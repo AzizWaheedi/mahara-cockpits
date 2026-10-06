@@ -197,6 +197,20 @@ export function roomJobLines(
         "owed",
         `${j.what} reported a problem at ${when}${r.detail ? `: ${sentence(r.detail)}` : "."} If a room fails, make it on the other provider.`,
       );
+    // The host check ran and found something not ready (a Zoom report it
+    // could not read, Google slow or refusing the sign-in): its own words,
+    // never the cron-line step for a check that is not running (m1 round 4,
+    // host-check-ran-said-as-not-being-checked). Red only when it says rooms
+    // cannot be made; a stale row still goes to the cron line (below).
+    if (
+      !r.ok &&
+      key === "sales-desk:room-hosts" &&
+      !(j.staleS !== null && now - at > j.staleS * 1000)
+    ) {
+      const text = `${j.what} ran at ${when} and found something to fix${r.detail ? `: ${sentence(r.detail)}` : "."}`;
+      const bad = /cannot be made/i.test(String(r.detail ?? ""));
+      return { key, tone: bad ? "bad" : "owed", text, say: monoTimes(text) };
+    }
     // A room worker whose last row is old has stopped, whatever that row
     // said (the guardian and the watchdog read its age first too).
     if (

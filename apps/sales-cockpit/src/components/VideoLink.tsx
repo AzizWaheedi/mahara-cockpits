@@ -149,6 +149,12 @@ export interface VideoPickerProps {
   initialError?: string | null;
   /** The refusal code that came with initialError (lead_night: no send buttons). */
   initialErrorCode?: string | null;
+  /**
+   * A press on its way (the moment it was pressed), then null when it is
+   * answered: the dialer's step reads it as a room on its way, so it never
+   * offers the missed-call message while room.create waits (m1 round 4).
+   */
+  onPending?: (pressedAt: number | null) => void;
   className?: string;
 }
 
@@ -216,6 +222,7 @@ export function VideoPicker(props: VideoPickerProps) {
     busyRef.current = true;
     setBusy(provider);
     setError(null);
+    props.onPending?.(Date.now());
     const ask = createAsk(props, provider);
     try {
       const out = await roomsApi.create(ask);
@@ -225,6 +232,7 @@ export function VideoPicker(props: VideoPickerProps) {
     } finally {
       busyRef.current = false;
       setBusy(null);
+      props.onPending?.(null);
     }
   }
 

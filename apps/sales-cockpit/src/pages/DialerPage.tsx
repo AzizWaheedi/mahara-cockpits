@@ -140,6 +140,7 @@ import {
   errorText,
   forThisMiss,
   leaveToast,
+  linkMayHaveGoneClosed,
   type RoomView,
   refusalCode,
   roomsApi,
@@ -1574,6 +1575,9 @@ function missStep(
   wa: WaKit,
   video: RoomView | null = null,
   workerDown = false,
+  videoPending: number | null = null,
+  otherOk?: boolean,
+  offset = 0,
 ): AfterMiss {
   const channels = convo.data?.channels;
   return afterMiss({
@@ -1583,10 +1587,16 @@ function missStep(
     templatesLive: wa.templatesLive,
     messageReady: wa.moments ? wa.moments.has(moment) : null,
     video,
-    // The panel's clock and health line, so the step never says "on its
-    // way" under a panel that says the room will not be made (m1 round 2).
-    now: Date.now(),
+    // A Send a video link press on its way (room.create waits up to the
+    // worker's 15 s): a room on its way, so no missed-call message beside
+    // it (m1 round 4).
+    videoPending,
+    // The panel's clock (the server's, m1 round 4) and health line, so the
+    // step never says "on its way" under a panel that says the room will
+    // not be made (m1 round 2).
+    now: Date.now() + offset,
     workerDown,
+    otherOk,
   });
 }
 
@@ -1721,6 +1731,14 @@ function CallPane({
   // Automatic mode runs once for each call that missed, Stop or not.
   const autoRan = useRef(new Set<string>());
   const video = useLeadRoom(contactId);
+  // A Send a video link press whose room.create has not answered yet.
+  const [videoPending, setVideoPending] = useState<number | null>(null);
+  // What the room panel reads beside the room: the other provider usable,
+  // and the server's clock (the step counts as the panel does).
+  const [panelFeed, setPanelFeed] = useState<{
+    otherOk: boolean | null;
+    offset: number;
+  }>({ otherOk: null, offset: 0 });
   // While the lead's room has its link out (or on its way), the step after
   // the miss says so and offers no missed-call message (stress2, round 2).
   const miss = missStep(
@@ -1729,6 +1747,9 @@ function CallPane({
     wa,
     video.room ?? null,
     workerDownOf(video.live?.health),
+    videoPending,
+    panelFeed.otherOk ?? undefined,
+    panelFeed.offset,
   );
   const status = useCallStatus(open, () => {
     // Maqsam's record saved it as No answer. A save of the rep's own on its
@@ -1839,6 +1860,9 @@ function CallPane({
     !video.open &&
     !failedOnScreen &&
     !joinedAt &&
+    // The closed room's link may have reached the lead (m1 round 4): no
+    // second link for this call until the conversation says otherwise.
+    !linkMayHaveGoneClosed(video.room) &&
     !spoke &&
     !introMarked;
   // Where the link would go, said in the picker; when nothing can reach the
@@ -1874,6 +1898,7 @@ function CallPane({
       return;
     }
     const ask = createAsk({ ...videoAsk, trigger: "auto" }, choice.first);
+    setVideoPending(Date.now());
     try {
       const out = await roomsApi.create(ask);
       video.setRoom(out.room, ask);
@@ -1883,6 +1908,8 @@ function CallPane({
       setAutoError(errorText(e));
       setAutoErrorCode(refusalCode(e));
       setPicking(true);
+    } finally {
+      setVideoPending(null);
     }
   }
   /**
@@ -2243,6 +2270,7 @@ function CallPane({
         planLine={planLine}
         initialError={autoError}
         initialErrorCode={autoErrorCode}
+        onPending={setVideoPending}
         onRoom={(room, ask) => {
           video.setRoom(room, ask);
           setPicking(false);
@@ -2354,6 +2382,7 @@ function CallPane({
             room={video.room}
             request={video.request}
             onRoomChange={r => video.setRoom(r)}
+            onFeed={setPanelFeed}
             talkBelow
             onMarkIntro={
               introCall && appt && !introMarked ? markIntro : undefined

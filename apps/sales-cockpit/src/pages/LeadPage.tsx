@@ -81,6 +81,7 @@ import {
   when,
 } from "../lib/format";
 import { ghlContactUrl } from "../lib/highlevel";
+import { roomHoldsNoShow } from "../lib/rooms";
 import { toast } from "../lib/toast";
 import type { CalendarRow, Deal, Lead, Me } from "../lib/types";
 import {
@@ -445,8 +446,9 @@ export default function LeadPage({ me }: { me: Me }) {
                   onDone={() => activity.reload()}
                   // Every call's No-show waits while the lead's video room
                   // is open, as sales-api holds it (index.ts
-                  // videoLinkHoldsNoShow; m1 round 4, journey r4-r).
-                  noShowHeld={video.open}
+                  // videoLinkHoldsNoShow; m1 round 4, journey r4-r), and
+                  // after a knock or inside the wait the link promised.
+                  noShowHeld={roomHoldsNoShow(video.room, Date.now())}
                 />
               </li>
             ))}

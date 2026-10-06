@@ -659,6 +659,12 @@ export interface RoomPanelProps {
   /** The page draws the call's own step below the panel (the dialer, stress2 round 3). */
   talkBelow?: boolean;
   onRoomChange?: (room: RoomView) => void;
+  /**
+   * What the panel reads beside the room (room.status): whether the other
+   * provider is usable now, and the server's clock offset, so the page's own
+   * step under the panel says what the panel says (m1 round 4).
+   */
+  onFeed?: (f: { otherOk: boolean | null; offset: number }) => void;
   className?: string;
 }
 
@@ -719,6 +725,7 @@ function LiveRoomPanel({
   onMarkIntro,
   talkBelow = false,
   onRoomChange,
+  onFeed,
   className = "",
 }: RoomPanelProps) {
   // The room on show, and what was known of it before its first read: the
@@ -754,6 +761,12 @@ function LiveRoomPanel({
   swap.current = onRetry;
   const linkTimer = useRef<number | null>(null);
   const { set: setFeed, reload } = feed;
+  const reportFeed = useRef(onFeed);
+  reportFeed.current = onFeed;
+  const otherOkNow = feed.data?.other_ok ?? null;
+  useEffect(() => {
+    reportFeed.current?.({ otherOk: otherOkNow, offset: feed.offset });
+  }, [otherOkNow, feed.offset]);
 
   const room = feed.data?.room ?? null;
   // Who is looking, read only when a join marked by hand waits to be counted.
@@ -881,8 +894,9 @@ function LiveRoomPanel({
       return;
     }
     // A room still open (a Zoom link nobody can say, one still being made
-    // long past its time) is cancelled first: one room per lead.
-    if (!isFinal(r.state)) apply((await roomsApi.end(r, "cancel")).room);
+    // long past its time) is replaced in one call: sales-api checks the new
+    // room first and cancels this one only when the new one will be made, so
+    // a refusal leaves the lead's link leading somewhere (m1 round 4).
     const out = await roomsApi.create(retryRequest(r, asked.current, provider));
     setShown(out.room);
   }

@@ -827,6 +827,10 @@ describe("11. Try Zoom asks for the same room", () => {
       trigger: "no_answer",
       attempt_id: "att-1",
       appointment_id: "appt-1",
+      // m1 round 4: the room it follows, so sales-api can keep a day
+      // press's night clearance (and replace an open room in one step).
+      replaces: failed.id,
+      replaces_version: failed.version,
     });
     // Without the first request, the room's own fields when served.
     expect(

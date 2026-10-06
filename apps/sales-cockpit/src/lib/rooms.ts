@@ -33,7 +33,17 @@ import {
 } from "./dialerUi";
 import { clock, KUWAIT } from "./format";
 
-export { linkRetrying, mayHaveGone, movedByEmailOnly };
+import { leadDeadline, OVERDUE_MS, roomDeadline, WAITS_S } from "./roomClock";
+
+export {
+  leadDeadline,
+  linkRetrying,
+  mayHaveGone,
+  movedByEmailOnly,
+  OVERDUE_MS,
+  roomDeadline,
+  WAITS_S,
+};
 
 // ---------------------------------------------------------------------------
 // The contract: what sales-api sends the browser
@@ -182,6 +192,12 @@ export interface RoomView {
   // an answer from a sales-api that does not send them yet still draws.
   /** The WhatsApp template was not seen within 20 s, so email went too. */
   link_unconfirmed_at?: string | null;
+  /**
+   * room.status only: a send of the link now would be held for night on the
+   * lead's clock (sales-api nightHolds), so Send by email is not offered
+   * (m1 round 4).
+   */
+  send_night?: boolean;
   /** When the room first showed the join (fix round 4): That was not the lead counts from the later of this and lead_in_at. */
   lead_in_seen_at?: string | null;
   /** What made the room, so "Try Zoom" makes the same kind of room. */
@@ -682,17 +698,6 @@ export function roomAnswer(v: unknown): { room: RoomView } {
 // Waits and small helpers
 // ---------------------------------------------------------------------------
 
-/** The waits the screens read (`rooms.waits_s`, `live.closer_wait_s`). */
-export const WAITS_S = {
-  manual_buttons: 30,
-  not_lead_undo: 300,
-  standby_max: 2100,
-  offer: 120,
-  /** The lead's 10 minutes, and the 3 minutes an open or a knock holds the room past them (the sweep's R4). */
-  lead: 600,
-  open_grace: 180,
-} as const;
-
 /** A press with an Undo waits this long before it is sent (MarkControls). */
 export const UNDO_MS = 5000;
 
@@ -1124,9 +1129,16 @@ export function roomMoment(room: RoomView, now: number): RoomMoment {
   }
   // A room whose Zoom meeting was deleted in Zoom closes cancelled with
   // result failed and its sentence in error (stress2, round 2).
+  // The same for a room a timer had closed whose Zoom meeting, on Zoom's
+  // own time, was deleted before the close (m1 round 4,
+  // zoom-deleted-late-after-timer-close-kept-as-no-show): its link was
+  // dead, so it is never the lead's no-show.
   if (
     s === "failed" ||
-    (s === "cancelled" && room.result === "failed" && room.error)
+    (s === "cancelled" && room.result === "failed" && room.error) ||
+    (s === "expired" &&
+      room.result === "failed" &&
+      room.end_reason === "meeting_deleted")
   )
     return "failed";
   if (isStandby(room)) {
@@ -1146,7 +1158,15 @@ export function roomMoment(room: RoomView, now: number): RoomMoment {
   )
     return "closed";
   if (s === "expired") {
-    if (room.result === "admit_blocked" || room.lead_waiting_at)
+    // The room made in place of one the lead knocked on (moved_from): she
+    // came on time and our room locked her out, so it is never "nobody
+    // joined" with a No-show (m1 round 4,
+    // admit-blocked-replacement-expiry-offers-noshow).
+    if (
+      room.result === "admit_blocked" ||
+      room.lead_waiting_at ||
+      room.moved_from
+    )
       return "expired_knocked";
     if (room.end_reason === "link_not_sent" && !room.link_sent_at)
       return "expired_unsent";
@@ -1166,7 +1186,7 @@ export function roomMoment(room: RoomView, now: number): RoomMoment {
   // joined" with a No-show press (the lead may have talked on Meet, which
   // sends no join signal).
   if (s === "ended" && room.result === "no_join") {
-    if (room.lead_waiting_at) return "expired_knocked";
+    if (room.lead_waiting_at || room.moved_from) return "expired_knocked";
     if (
       room.first_open_at ||
       room.last_open_at ||
@@ -1267,9 +1287,6 @@ export const LINK_LATE_MS = LINK_LATE_STEP_MS;
  */
 export const MAKING_LATE_MS = MAKING_LATE_STEP_MS;
 
-/** How long past its deadline a room may sit before the panel says the sweep is late. */
-export const OVERDUE_MS = 120_000;
-
 /** The sweep fails a room no worker claimed after a minute (R1); this one is past it. */
 export const CLAIM_MINUTE_MS = CLAIM_MINUTE_STEP_MS;
 function pastClaimMinute(room: RoomView, now: number): boolean {
@@ -1307,52 +1324,6 @@ export function voiceOf(room: RoomView): Voice {
   if (room.purpose === "fallback") return "p1";
   if (room.purpose === "handover") return "p2";
   return "f";
-}
-
-/**
- * When the lead's wait ends as the sweep's R4 reads it: lead_by, held
- * open_grace past the lead's latest open of the link or knock, never past
- * the cap (the link, or the room's start, plus the lead's 10 minutes and one
- * grace; a booked room's end). The panel's countdown and its "overdue" use
- * it, so a lead at the door is never "should have closed" (stress2, round 1).
- */
-export function leadDeadline(room: RoomView): number | null {
-  const lead = t(room.lead_by);
-  if (lead === null || !room.contact_id) return lead;
-  const grace = WAITS_S.open_grace * 1000;
-  // From the latest send of the link (a later channel's email promises its
-  // own ten minutes, stress2 round 5), as the sweep's R4 reads it.
-  const sent = [t(room.link_sent_at), t(room.last_link_at ?? null)].filter(
-    (x): x is number => x !== null,
-  );
-  const base =
-    room.purpose === "booked"
-      ? t(room.ends_at)
-      : sent.length
-        ? Math.max(...sent)
-        : t(room.created_at);
-  const cap =
-    base === null
-      ? Number.POSITIVE_INFINITY
-      : room.purpose === "booked"
-        ? base
-        : base + (WAITS_S.lead + WAITS_S.open_grace) * 1000;
-  const held = (x: number | null) =>
-    x === null ? Number.NEGATIVE_INFINITY : Math.min(x + grace, cap);
-  const open = t(room.last_open_at ?? null) ?? t(room.first_open_at);
-  return Math.max(lead, held(open), held(t(room.lead_waiting_at)));
-}
-
-/** When the room closes if nothing happens: the lead's or the host's deadline. */
-export function roomDeadline(room: RoomView): number | null {
-  if (room.state === "open") {
-    const lead = leadDeadline(room);
-    const host = t(room.host_by);
-    if (lead !== null && host !== null) return Math.min(lead, host);
-    return lead ?? host;
-  }
-  if (room.state === "host_in") return leadDeadline(room);
-  return null;
 }
 
 /** Milliseconds left on the room's countdown, or null when it has none. */
@@ -1584,6 +1555,20 @@ const ZOOM_NOT_SAYABLE =
 /** The status sentence under the room line. */
 export function roomSentence(room: RoomView, ctx: RoomCtx): Sentence {
   const m = momentFor(room, ctx);
+  // A closed room whose link may have gone (HighLevel's answer lost, never
+  // settled): the warning stays after the close, so nobody sends a second
+  // link on top of one that may have reached the lead (m1 round 4,
+  // unclear-link-room-closed-dialer-sends-second-link).
+  if (
+    linkMayHaveGoneClosed(room) &&
+    (m === "expired" ||
+      m === "expired_opened" ||
+      m === "expired_unsent" ||
+      m === "ended_empty")
+  )
+    return [
+      `The room is closed. Its link may have gone ${/whatsapp/i.test(room.refusal ?? "") ? "on WhatsApp" : "by email"}: check the lead's conversation in HighLevel before sending another, or call them now.`,
+    ];
   const v = voiceOf(room);
   const name = first(room) ?? "";
   const P = providerName(room.provider);
@@ -1594,8 +1579,15 @@ export function roomSentence(room: RoomView, ctx: RoomCtx): Sentence {
       ? [lead, { left, form: "paren" }, "."]
       : [`${lead.trimEnd()}.`];
   const O = providerName(otherProvider(room.provider));
-  // A Zoom link with its passcode in it, before the short link: nobody can say it.
-  const unsayable = room.provider === "zoom" && !readOut(room);
+  // A Zoom link with its passcode in it, before the short link: nobody can
+  // say it, so the sentence offers Meet, only while Meet is usable for this
+  // seat and the room worker is up (m1 round 4, use-meet-ignores-other-ok:
+  // Use Meet is hidden then, so the sentence never names it).
+  const unsayable =
+    room.provider === "zoom" &&
+    !readOut(room) &&
+    ctx.otherOk !== false &&
+    !ctx.workerDown;
   switch (m) {
     case "making":
       return [`Making your ${P} room...`];
@@ -1612,6 +1604,15 @@ export function roomSentence(room: RoomView, ctx: RoomCtx): Sentence {
     case "overdue":
       return ["This room should have closed. Call the lead, or end the room."];
     case "failed":
+      // The room in place of one the lead knocked on was not made (m1 round
+      // 4, failed-replacement-try-meet-sends-missed-call-words): never back
+      // to the door she was locked out of; a call now.
+      if (room.moved_from && room.contact_id) {
+        const from = providerName(room.moved_from === "zoom" ? "zoom" : "meet");
+        return [
+          `The ${P} room in place of the ${from} room was not made, and ${name || "the lead"} could not be let in. Call them on the phone now.`,
+        ];
+      }
       return ctx.otherOk === false ||
         ctx.workerDown === true ||
         workerNeverCame(room)
@@ -1659,6 +1660,16 @@ export function roomSentence(room: RoomView, ctx: RoomCtx): Sentence {
               `${head} ${unsayable ? ZOOM_NOT_SAYABLE : "Copy the link and send it another way."}`,
             ];
       }
+      // The link went by email only and HighLevel still holds it (sales-api's
+      // pendingEmail, m1 round 4, email-pending-said-as-template-unconfirmed):
+      // no WhatsApp went, so the rep reads the link out, never waits.
+      if (!(room.link_channels ?? []).some(c => c.startsWith("whatsapp"))) {
+        const said = readOut(room);
+        const head = "HighLevel has not sent the email yet.";
+        return said
+          ? [`${head} Read the link out: `, { mono: said }]
+          : [`${head} Copy the link and send it another way.`];
+      }
       return v === "p1"
         ? [
             "HighLevel did not confirm the WhatsApp template. The link went by email.",
@@ -1691,6 +1702,15 @@ export function roomSentence(room: RoomView, ctx: RoomCtx): Sentence {
       return [`${reasonSentence(room.refusal)}`];
     case "not_sent": {
       const said = readOut(room);
+      // Night, and a link nobody can say (m1 round 4,
+      // zoom-night-read-out-unsayable): never "read the link out", never
+      // "send it another way" (a message at night): Meet's link can be read out.
+      if (!said && nightRefusal(room.refusal))
+        return [
+          ctx.otherOk === false || ctx.workerDown
+            ? "Not sent: it is night where the lead is, so no message went, and this Zoom link cannot be read out. Carry on by phone."
+            : "Not sent: it is night where the lead is, so no message went, and this Zoom link cannot be read out. If you are speaking with them, end this room and use Meet, whose link can be read out.",
+        ];
       // Ours: a link nobody could say (a Zoom link before the short link).
       if (!said)
         return [
@@ -1761,6 +1781,12 @@ export function roomSentence(room: RoomView, ctx: RoomCtx): Sentence {
       ];
     case "expired_knocked": {
       const who = name || "The lead";
+      if (room.moved_from && !room.lead_waiting_at) {
+        const from = providerName(room.moved_from === "zoom" ? "zoom" : "meet");
+        return [
+          `${who} knocked on the ${from} room and could not be let in, and nobody came into this ${P} room. Call them now.`,
+        ];
+      }
       const at =
         room.lead_waiting_at ?? room.last_open_at ?? room.first_open_at;
       return [
@@ -1832,6 +1858,18 @@ export function roomSentence(room: RoomView, ctx: RoomCtx): Sentence {
       ];
     case "ended_empty": {
       const at = { mono: clock(room.ended_at ?? room.created_at) };
+      // Ended inside the ten minutes the lead's link promised (m1 round 4,
+      // end-early-offers-noshow-inside-promised-ten-minutes): the lead may
+      // be opening the link now, so no No-show until then.
+      const until = promisedWaitAhead(room, ctx.now);
+      if (until !== null && ctx.canMarkIntro)
+        return [
+          "Room ended at ",
+          at,
+          `. Nobody joined. ${name || "The lead"} was told the room would wait until `,
+          { mono: clock(new Date(until).toISOString()) },
+          ", so mark the intro after that, or call them now.",
+        ];
       return ctx.canMarkIntro
         ? ["Room ended at ", at, ". Nobody joined. Mark the intro:"]
         : [
@@ -2081,7 +2119,13 @@ function momentActions(
     case "failed": {
       return {
         primary:
-          hasLead && !booked && !ctx.workerDown && ctx.otherOk !== false
+          hasLead &&
+          !booked &&
+          !ctx.workerDown &&
+          ctx.otherOk !== false &&
+          // Never "Try {moved_from}" on a failed replacement: it sends the
+          // lead back to the room she could not get into (m1 round 4).
+          !room.moved_from
             ? // P2 says the handover's button as [Use Meet]; P1 says "Try Zoom".
               act(
                 "retry",
@@ -2096,7 +2140,9 @@ function momentActions(
       return {
         primary: null,
         quiet: ctx.canMarkIntro
-          ? [act("noshow", "No-show"), act("showed", "We spoke on the phone")]
+          ? promisedWaitAhead(room, ctx.now)
+            ? [act("showed", "We spoke on the phone")]
+            : [act("noshow", "No-show"), act("showed", "We spoke on the phone")]
           : [],
       };
     case "expired_unsent":
@@ -2204,7 +2250,10 @@ function momentActions(
     !booked &&
     m !== "retrying" &&
     !room.link_channels.includes("email") &&
-    !emailBlocked(room)
+    !emailBlocked(room) &&
+    // Night on the lead's clock: room.send would refuse it (m1 round 4).
+    room.send_night !== true &&
+    !nightRefusal(room.refusal)
   )
     quiet.push(
       act(
@@ -2213,13 +2262,21 @@ function momentActions(
         room.link_channels.length ? "Also send by email" : "Send by email",
       ),
     );
-  // A Zoom link nobody can say, and nothing sent it: Meet's link can be read out.
+  // A Zoom link nobody can say, and nothing sent it: Meet's link can be read
+  // out. Never on a room whose link went by email (m1 round 4,
+  // use-meet-offered-on-room-whose-link-went): the press cancels the room
+  // that email leads to. Never while Meet is not usable for this seat
+  // (otherOk false), whose room sales-api would refuse.
+  const linkWentByEmail =
+    Boolean(room.link_sent_at) && room.link_channels.includes("email");
   if (
     !meet &&
     hasLead &&
     !booked &&
     !ctx.workerDown &&
+    ctx.otherOk !== false &&
     !readOut(room) &&
+    !linkWentByEmail &&
     (m === "not_sent" || m === "link_late" || m === "not_confirmed")
   )
     quiet.push(act("retry", "Use Meet"));
@@ -2240,6 +2297,61 @@ function momentActions(
     quiet.push(act("admit_blocked", "I can't let them in"));
   if (!booked) quiet.push(act("end", "End room"));
   return { primary, quiet };
+}
+
+/**
+ * A closed room whose link may have reached the lead and was never settled
+ * (sales-api's "The link may have gone ..."): the dialer offers no second
+ * video link for the call while it stands, and sales-api refuses one
+ * (link_may_have_gone).
+ */
+export function linkMayHaveGoneClosed(
+  room: RoomView | null | undefined,
+): boolean {
+  return Boolean(
+    room &&
+      isFinal(room.state) &&
+      room.contact_id &&
+      !room.link_sent_at &&
+      !room.lead_in_at &&
+      mayHaveGone(room.refusal),
+  );
+}
+
+/**
+ * The lead's room holds a No-show for their calls, as sales-api does
+ * (index.ts videoLinkHoldsNoShow): open; closed on the lead's knock or made
+ * in place of a room they knocked on, with no join; or inside the wait the
+ * link promised (m1 round 4).
+ */
+export function roomHoldsNoShow(
+  room: RoomView | null | undefined,
+  now: number,
+): boolean {
+  if (!room?.contact_id) return false;
+  if (!isFinal(room.state)) return true;
+  if (room.lead_in_at) return false;
+  if (room.result === "admit_blocked" || room.moved_from) return true;
+  return promisedWaitAhead(room, now) !== null;
+}
+
+/** sales-api's night refusals (lead_night_read_out, lead_night_unsayable): no message goes now. */
+export function nightRefusal(refusal: string | null | undefined): boolean {
+  return /^it is night where the lead is/i.test(String(refusal ?? "").trim());
+}
+
+/**
+ * The end of the wait the lead's link promised ("I'll wait for you for the
+ * next 10 minutes"), when it is still ahead: lead_by, else the latest link
+ * plus the lead's ten minutes. sales-api holds a person's No-show until
+ * then (index.ts videoLinkHoldsNoShow), whatever the room's state.
+ */
+export function promisedWaitAhead(room: RoomView, now: number): number | null {
+  if (!room.contact_id || room.lead_in_at) return null;
+  const sent = t(room.last_link_at ?? null) ?? t(room.link_sent_at);
+  const until =
+    t(room.lead_by) ?? (sent === null ? null : sent + WAITS_S.lead * 1000);
+  return until !== null && until > now ? until : null;
 }
 
 /**
@@ -2346,6 +2458,13 @@ export function retryRequest(
   if (firstAsk?.item_kind) out.item_kind = firstAsk.item_kind;
   else if (!room.appointment_id && room.asked_appointment_id)
     out.item_kind = "confirm";
+  // The room this one follows (m1 round 4): one still open is replaced in
+  // one server step, never cancelled first
+  // (use-meet-cancel-then-create-refused-loses-room); a failed one is named
+  // so a retry inside a day press's grace keeps that press's day
+  // (failed-room-try-other-refused-at-night).
+  out.replaces = room.id;
+  out.replaces_version = room.version;
   return out;
 }
 
@@ -3457,6 +3576,14 @@ export interface CreateRoom {
   appointment_id?: string;
   /** The dialer item: a confirmation call's room never carries the intro (stress2, round 2). */
   item_kind?: "intro" | "confirm" | "lead";
+  /**
+   * "Use Meet" / "Try Zoom": the room this one follows and the version on
+   * show. On a room still open sales-api checks the new room first and
+   * cancels this one only when the new one will be made; on a failed one it
+   * is the retry's first press (m1 round 4).
+   */
+  replaces?: string;
+  replaces_version?: number;
 }
 
 type Versioned = Pick<RoomView, "id" | "version">;

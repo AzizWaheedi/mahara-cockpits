@@ -507,8 +507,10 @@ describe("the room panel's words, as the specs write them", () => {
     expect(say(empty)).toBe(
       "Room ended at 14:12. Nobody joined. Call again or send a message.",
     );
+    // m1 round 4: the intro's mark waits for the ten minutes the link promised.
+    const after = (R.promisedWaitAhead(empty, NOW) ?? NOW) + 1000;
     expect(
-      R.sentenceText(R.roomSentence(empty, { now: NOW, canMarkIntro: true })),
+      R.sentenceText(R.roomSentence(empty, { now: after, canMarkIntro: true })),
     ).toBe("Room ended at 14:12. Nobody joined. Mark the intro:");
   });
 
