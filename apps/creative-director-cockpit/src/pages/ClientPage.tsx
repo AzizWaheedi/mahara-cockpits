@@ -268,8 +268,8 @@ function ClientStats({ s }: { s: any }) {
   if (!s) {
     return (
       <p className="text-sm text-muted-foreground">
-        No appointments on their stat sheet this month, so booking, show,
-        quotation and close rates cannot be worked out yet.
+        Their stat sheet data is unavailable, so booking, show, quotation and
+        close rates cannot be worked out yet.
       </p>
     );
   }
@@ -326,7 +326,10 @@ function ClientStats({ s }: { s: any }) {
         ))}
       </div>
       <details className="mt-3 text-xs text-muted-foreground">
-        <summary className="w-fit">From their {s.month} stat sheet</summary>
+        <summary className="w-fit">
+          From their {s.month} stat sheet
+          {s.status === "stale" ? " · last verified data" : ""}
+        </summary>
         <ul className="mt-2 space-y-0.5">
           {cells.map(c => (
             <li key={c.label}>

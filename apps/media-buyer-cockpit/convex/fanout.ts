@@ -419,18 +419,37 @@ async function attachDaily(ctx: any, roster: Any[]) {
 }
 
 // biome-ignore lint/suspicious/noExplicitAny: action ctx
-async function attachStatSheets(ctx: any, roster: Any[]) {
+export async function attachStatSheets(
+  ctx: any,
+  roster: Any[],
+  sources = {
+    previous: () => bridge("creative", "statCache", {}),
+    read: readClientSheetReport,
+  },
+) {
   const tab = currentMonthTab(),
     today = kuwaitToday();
   const cache = await loadSheetCache(ctx),
     fresh: SheetCache = new Map();
-  const previous = await bridge("creative", "statCache", {});
   const errors: string[] = [];
+  let previous: Any = {};
+  try {
+    previous = await sources.previous();
+  } catch {
+    errors.push("Prior creative statistics unavailable");
+  }
   for (const row of roster) {
     const sid = sheetIdOf(row.sheetLink);
-    if (!sid) continue;
+    delete row.stats;
+    delete row.statsScannedAt;
+    row.statsStatus = "unavailable";
+    row.statsCheckedAt = Date.now();
+    if (!sid) {
+      errors.push(`Client sheet ${row.taskId}: missing sheet link`);
+      continue;
+    }
     try {
-      const report = await readClientSheetReport(
+      const report = await sources.read(
         sid,
         today,
         async url =>
@@ -438,22 +457,29 @@ async function attachStatSheets(ctx: any, roster: Any[]) {
         cache,
         fresh,
       );
+      // Old monthly tabs do not prove that this month's sheet is empty.
+      // A verified legacy Appointments tab covers months without their own tab.
+      if (
+        !report.tabTitles.includes(tab) &&
+        !report.tabTitles.includes("Appointments")
+      )
+        throw new Error("Current reporting month unavailable");
       row.stats = creativeMonthStats(report.rows, tab, today);
       row.statsScannedAt = report.sourceReadAt;
-    } catch (e) {
+      row.statsStatus = "ready";
+    } catch {
       const old = previous?.[row.taskId];
       // Restore only the same immutable client and sheet, never a name match.
       if (
-        old?.taskId !== row.taskId ||
-        sheetIdOf(old?.sheetLink) !== sid ||
-        !old?.stats
-      )
-        throw new Error(
-          `Client sheet ${row.taskId} unreadable; keeping prior roster`,
-        );
-      row.stats = old.stats;
-      row.statsScannedAt = old.statsScannedAt;
-      errors.push(`Client sheet ${row.taskId}: ${String(e).slice(0, 160)}`);
+        old?.taskId === row.taskId &&
+        sheetIdOf(old?.sheetLink) === sid &&
+        old?.stats
+      ) {
+        row.stats = old.stats;
+        row.statsScannedAt = old.statsScannedAt;
+        row.statsStatus = "stale";
+      }
+      errors.push(`Client sheet ${row.taskId}: statistics unavailable`);
     }
   }
   await saveSheetCache(ctx, fresh);

@@ -227,6 +227,7 @@ export async function readClientSheetReport(
   }
   return {
     rows: selectReportRows(tabs, today),
+    tabTitles: tabs.map(t => t.title),
     sourceReadAt,
     source: tabs.some(t => MONTH_TAB.test(t.title))
       ? "month tabs (legacy months where needed)"

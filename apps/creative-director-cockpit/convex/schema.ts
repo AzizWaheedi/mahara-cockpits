@@ -237,6 +237,10 @@ const schema = defineSchema({
       }),
     ),
     statsScannedAt: v.optional(v.number()),
+    statsStatus: v.optional(
+      v.union(v.literal("ready"), v.literal("stale"), v.literal("unavailable")),
+    ),
+    statsCheckedAt: v.optional(v.number()),
     sheetLink: v.optional(v.string()),
     clientHistoryDoc: v.optional(v.string()),
     marketResearchDoc: v.optional(v.string()),

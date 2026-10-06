@@ -22,8 +22,11 @@ bun test scripts/convex-removals.test.ts >/dev/null 2>&1 \
 (cd apps/media-buyer-cockpit && bun test scripts/ghl-credential.test.ts >/dev/null 2>&1) \
   || { echo "the GHL credential compatibility tests fail"; exit 1; }
 
-(cd apps/media-buyer-cockpit && bun test scripts/client-sheet-report.test.ts scripts/ceo-outcome-identity.test.ts >/dev/null 2>&1) \
+(cd apps/media-buyer-cockpit && bun test scripts/client-sheet-report.test.ts scripts/ceo-outcome-identity.test.ts scripts/creative-stat-isolation.test.ts >/dev/null 2>&1) \
   || { echo "the reporting identity and worksheet tests fail"; exit 1; }
+
+(cd apps/creative-director-cockpit && bun test scripts/client-stat-retention.test.ts >/dev/null 2>&1) \
+  || { echo "the creative statistics retention tests fail"; exit 1; }
 
 # The Frame.io webhook is a public URL that writes to our notes, so its
 # signature check is tested on every ship rather than when somebody

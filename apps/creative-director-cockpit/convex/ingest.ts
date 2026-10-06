@@ -336,6 +336,8 @@ export const statCacheInternal = internalQuery({
           sheetLink: c.sheetLink,
           stats: c.stats,
           statsScannedAt: c.statsScannedAt,
+          statsStatus: c.statsStatus,
+          statsCheckedAt: c.statsCheckedAt,
         };
     }
     return out;
