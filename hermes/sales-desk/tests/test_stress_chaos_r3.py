@@ -33,12 +33,15 @@ class HostCheckLiveListFails(RoomsCase):
     def test_held_the_closer_in_a_live_zoom_meeting_is_written(self):
         self.seats()
         self.env.worker().check_hosts()
-        self.assertEqual(self.env.pg.one(rooms.HOSTS, email=CLOSER)["zoom_live_until"], "2026-10-03T10:50:00.000Z")
+        row = self.env.pg.one(rooms.HOSTS, email=CLOSER)
+        # The moment the check saw it live (m1 round 5): the check's own time.
+        self.assertEqual(row["zoom_live_until"], row["checked_at"])
 
     def test_zoom_fails_the_live_list_ten_minutes_later_the_last_known_meeting_stays(self):
         self.seats()
         self.env.worker().check_hosts()
-        self.assertEqual(self.env.pg.one(rooms.HOSTS, email=CLOSER)["zoom_live_until"], "2026-10-03T10:50:00.000Z")
+        seen = self.env.pg.one(rooms.HOSTS, email=CLOSER)["zoom_live_until"]
+        self.assertIsNotNone(seen)
         # Ten minutes on, the closer is still in that meeting; Zoom answers the
         # user but fails the live-meetings list (a 503, or a timeout).
         self.env.clock.advance(600)
@@ -48,7 +51,7 @@ class HostCheckLiveListFails(RoomsCase):
         row = self.env.pg.one(rooms.HOSTS, email=CLOSER)
         # The check wrote zoom_live_until = null: "not in a meeting" from a
         # list it could not read.
-        self.assertEqual(row["zoom_live_until"], "2026-10-03T10:50:00.000Z")
+        self.assertEqual(row["zoom_live_until"], seen)
 
 
 if __name__ == "__main__":

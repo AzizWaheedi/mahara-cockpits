@@ -2939,6 +2939,14 @@ class Worker:
                 self._forget_close(rid)
                 self._count("closed")
                 continue
+            # A room a timer closed while the lead's ten minutes still run
+            # (m1 round 5, m1-time-r5-final-refusal-ten-minutes-cut-by-host-wait:
+            # the link left to the rep, who sent it by hand): its meeting is
+            # the link the lead holds, so it is kept until lead_by, then closed.
+            lead_by = parse_ts(r.get("lead_by"))
+            if r.get("state") == "expired" and lead_by is not None and lead_by > self.clock():
+                self._forget_close(rid)
+                continue
             self._to_close[rid] = {**r, "provider_meeting_id": str(mid)}
             self._close_at.setdefault(rid, self.clock())
 
@@ -3425,15 +3433,15 @@ class Worker:
         if status in ("licensed", "basic") and user and user.get("id"):
             try:
                 ends = []
-                # The meeting's own scheduled end (stress2, round 1), never a
-                # floor past it: sales-api's zoom_busy reads this column, and a
-                # meeting that ended a minute after the check must not refuse
-                # the closer's Zoom rooms for the next fifteen. A meeting with
-                # no duration is stamped with the check's own moment. The
-                # presence view (20261004a) holds a host seen live on a call
-                # for the check's 15 minutes from checked_at, so a demo that
-                # runs past its slot still reads as on a call there, and the
-                # worker reads Zoom's live list itself at a create.
+                # The moment this check saw the meeting live, never its
+                # scheduled end (m1 round 5, zoom-busy-held-to-scheduled-end):
+                # most meetings end before their slot, and sales-api's
+                # zoom_busy, which reads this column only for a couple of
+                # minutes after checked_at, must not refuse the closer's Zoom
+                # rooms for the rest of a slot nobody is in. The presence view
+                # (20261004a) holds a host seen live on a call for the check's
+                # 15 minutes from checked_at, and the worker reads Zoom's live
+                # list itself at a create.
                 seen = self.clock()
                 # The host's own cockpit rooms' meetings (stress2 round 3,
                 # host-check-counts-own-room-as-another-meeting): a rep sitting
@@ -3443,9 +3451,7 @@ class Worker:
                 for m in self.zoom.live(str(user["id"])):
                     if str(m.get("id") or "") in own:
                         continue
-                    start = parse_ts(m.get("start_time"))
-                    minutes = float(m.get("duration") or 0)
-                    ends.append((start + minutes * 60) if start and minutes else seen)
+                    ends.append(seen)
                 live_until = iso(max(ends)) if ends else None
             except ProviderError:
                 # The live list could not be read: the last known value stays

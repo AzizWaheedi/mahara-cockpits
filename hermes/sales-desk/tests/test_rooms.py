@@ -1187,7 +1187,9 @@ class Hosts(RoomsCase):
         self.assertTrue(all("default_provider" not in r for r in rows.values()))
         self.assertTrue(all(r["google_ok"] is True for r in rows.values()))
         self.assertEqual(rows[CLOSER]["zoom_user_id"], "zu-closer")
-        self.assertEqual(rows[CLOSER]["zoom_live_until"], "2026-10-03T10:50:00.000Z")
+        # The moment the check saw the meeting live, never its scheduled end
+        # (m1 round 5, zoom-busy-held-to-scheduled-end): the check's own time.
+        self.assertEqual(rows[CLOSER]["zoom_live_until"], rows[CLOSER]["checked_at"])
         self.assertIsNone(rows["manager@example.test"]["zoom_live_until"])
         lines = "\n".join(out["lines"])
         self.assertIn("Google: signed in with GOOGLE_CAL_*; the Sales rooms calendar is ready.", lines)
