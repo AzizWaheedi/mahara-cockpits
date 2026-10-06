@@ -737,8 +737,23 @@ export const LANE_COPY = {
   moved_provider:
     "Hi {first_name}, {old} would not let you in, sorry about that. Let's use {provider} instead: {link} I'm waiting for you there now.",
   moved_email_subject: "Our call moved to {provider}.",
+  /**
+   * The next link after the host deleted the room's Zoom meeting (m1 round
+   * 3, zoom-deleted-replacement-words): the first link is dead, said once,
+   * never the first message's opening again.
+   */
+  dead_link_provider:
+    "Hi {first_name}, the {old} link I sent no longer works, sorry about that. Let's use {provider} instead: {link} I'm waiting for you there now.",
+  dead_link_same: "Hi {first_name}, the {old} link I sent no longer works, sorry about that. Here is a new one: {link} I'm waiting for you there now.",
+  dead_link_email_subject: "A new link for our call.",
   /** Zoom's daily cap on the host's meeting creates (desk rooms.py SAY zoom_daily_cap, stress2 round 2). */
   zoom_daily_cap: "Your Zoom user has made its rooms for today (Zoom allows 100 a day); Zoom allows more from 03:00 Kuwait. Use Meet.",
+  /**
+   * A second press for a missed call whose room's link went and closed
+   * waiting (m1 round 3, send-again-after-close-answers-closed-room): one
+   * link per missed call, said, never the closed room back in silence.
+   */
+  link_already_sent: "This call's video link went at {time}. Call them again; a call they miss can carry a new link.",
   /** A video link would reach the lead at night on their own clock (stress2 round 5). */
   lead_night: "It is night where the lead is, so no video link goes now. Call them after 9 in the morning, their time.",
   /** A room's link at night: made, never messaged; the host reads it out if they are speaking (stress2 round 5). */
@@ -802,6 +817,8 @@ export const LANE_COPY = {
   health_never: "Video rooms are not being made: the room worker has not run yet. Call the lead on the phone, or send your own Zoom or Meet link.",
   worker_down: "Video rooms are down right now. Call the lead on the phone, or send your own Zoom or Meet link.",
   health_working_no_counts: "Rooms: working. Last run {time}.",
+  /** The worker runs and reports a problem (m1 round 3): its own words and what to do. */
+  health_trouble: "Rooms: {problem}. If a room fails, use the other provider or call the lead.",
   health_mismatch_many: "Zoom and the cockpit disagree on {rooms} today. Open their timelines.",
   watchdog_never: "The room worker has never run. New video rooms cannot be made.",
   why_wa_off: "WhatsApp is off for video links",
@@ -1172,6 +1189,13 @@ export interface RoomRow {
    * before it then ends the room joined (stress2, round 2; 20261004a).
    */
   meeting_ended_at?: string | null;
+  /**
+   * The host's last Zoom leave read while the room was open or lead_in
+   * (20261004a, m1 round 3): Zoom does not order its webhooks, so a host
+   * join from before it, read after it (the sweep's replay of a join whose
+   * forward failed), is the session that already ended.
+   */
+  host_left_at?: string | null;
   /** Why the link could not go, one sentence (the message service). */
   refusal?: string | null;
   /** The lead's first name when the room was made, for the panel. */
@@ -1321,8 +1345,19 @@ export function timers(room: RoomRow, ctx: RoomCtx): { reason: SweepReason; at: 
       ];
     }
     case "open": {
+      // A video-link room's host wait never ends before the lead's ten
+      // minutes and their open grace once the link went (the sweep's R3, m1
+      // round 3); a handover keeps its taker wait.
+      const hostDue = ms(room.host_by) ?? opened + hostWaitS(room.purpose, w) * S;
+      const leadDue = ms(room.lead_by);
       const out: { reason: SweepReason; at: number }[] = [
-        { reason: "host_by", at: ms(room.host_by) ?? opened + hostWaitS(room.purpose, w) * S },
+        {
+          reason: "host_by",
+          at:
+            (room.purpose === "manual" || room.purpose === "fallback") && room.contact_id && room.link_sent_at && leadDue !== null
+              ? Math.max(hostDue, leadDue + w.open_grace * S)
+              : hostDue,
+        },
       ];
       if (room.contact_id)
         out.push({ reason: "lead_by", at: ms(room.lead_by) ?? (ms(room.link_sent_at) ?? opened) + w.lead * S });
@@ -1395,7 +1430,7 @@ export type RoomEvent =
   | ({ kind: "lead_waiting" } & At)
   /** Zoom's host joined, or the rep's "I'm in". */
   | ({ kind: "host_in"; source: "zoom" | "mark"; actor?: Actor; version?: number } & At)
-  /** Zoom's host left before the lead came. */
+  /** Zoom's host left (only Zoom says it; its time is kept as host_left_at). */
   | ({ kind: "host_left" } & At)
   /** A Zoom join from outside the account, or the rep's "The lead is in". */
   | ({ kind: "lead_in"; source: "zoom" | "mark"; actor?: Actor; version?: number } & At)
@@ -1546,7 +1581,8 @@ export type RefusalCode =
   | "booked_other_rep"
   | "wrap_too_early"
   | "worker_down"
-  | "lead_night";
+  | "lead_night"
+  | "link_already_sent";
 
 export interface Refused {
   ok: false;
@@ -1607,6 +1643,7 @@ const REFUSALS: Record<RefusalCode, { text: string; status: number; retry?: bool
   wrap_too_early: { text: LANE_COPY.wrap_too_early, status: 409, retry: true },
   worker_down: { text: LANE_COPY.worker_down, status: 503 },
   lead_night: { text: LANE_COPY.lead_night, status: 409 },
+  link_already_sent: { text: LANE_COPY.link_already_sent, status: 409 },
 };
 
 /** The Zoom refusals without their "use Meet" advice, for a host who cannot use Meet either. */
@@ -1670,6 +1707,21 @@ function claimLink(next: RoomRow, patch: Partial<RoomRow>, effects: Effect[], at
   if (!linkDue(next)) return;
   patch.link_claimed_at = at;
   effects.push({ kind: "send_link" });
+}
+
+/**
+ * A link's words promise the lead ten minutes from that send: the host's
+ * wait (host_by, the sweep's R3) is moved so it never ends before the
+ * lead's ten minutes and their open grace (m1 round 3,
+ * later-link-promise-cut-by-host-wait). Never earlier; video-link rooms
+ * only (manual, fallback): a booked room and a handover keep their own.
+ */
+function keepHostWait(room: RoomRow, lead: string, patch: Partial<RoomRow>, w: Waits): void {
+  if ((room.state !== "open" && room.state !== "host_in") || (room.purpose !== "manual" && room.purpose !== "fallback") || !room.contact_id) return;
+  const opened = ms(room.opened_at) ?? ms(room.requested_at) ?? ms(room.created_at) ?? 0;
+  const due = ms(room.host_by) ?? opened + hostWaitS(room.purpose, w) * S;
+  const want = (ms(lead) ?? 0) + w.open_grace * S;
+  if (want > due) patch.host_by = iso(want);
 }
 
 function change(
@@ -1969,6 +2021,7 @@ export function applyRoomEvent(room: RoomRow, event: RoomEvent, now: number, ctx
         if (!room.last_link_at || (ms(room.last_link_at) ?? 0) < t) patch.last_link_at = iso(t);
         const lead = laterIso(room.lead_by, t + w.lead * S);
         if (lead !== room.lead_by) patch.lead_by = lead;
+        keepHostWait(room, lead, patch, w);
         return Object.keys(patch).length ? change(room, room.state, patch, []) : same(room);
       }
       const t = when(event);
@@ -1979,6 +2032,7 @@ export function applyRoomEvent(room: RoomRow, event: RoomEvent, now: number, ctx
       if (room.state !== "lead_in") {
         const lead = laterIso(room.lead_by, t + w.lead * S);
         if (lead !== room.lead_by) patch.lead_by = lead;
+        keepHostWait(room, lead, patch, w);
       }
       return change(room, room.state, patch, []);
     }
@@ -2025,6 +2079,12 @@ export function applyRoomEvent(room: RoomRow, event: RoomEvent, now: number, ctx
       // the room back to host_in.
       const endedAt = ms(room.meeting_ended_at);
       if (event.source === "zoom" && endedAt !== null && when(event) <= endedAt) return same(room);
+      // The same for the host's own leave (m1 round 3,
+      // zoom-host-join-replayed-after-leave-reads-host-in): a join or a
+      // meeting.started from before the host's last leave, read after it,
+      // is the session that already ended; the room keeps waiting.
+      const leftAt = ms(room.host_left_at);
+      if (event.source === "zoom" && leftAt !== null && when(event) <= leftAt) return same(room);
       const patch: Partial<RoomRow> = { host_in_at: iso(when(event)) };
       const effects: Effect[] = [];
       claimLink({ ...room, ...patch, state: "host_in" }, patch, effects, at);
@@ -2033,12 +2093,21 @@ export function applyRoomEvent(room: RoomRow, event: RoomEvent, now: number, ctx
 
     case "host_left": {
       if (early) return refuse("too_early");
-      if (room.state !== "host_in") return same(room);
       const t = when(event);
+      if (room.state === "open" || room.state === "lead_in") {
+        // A leave read while the room does not say the host is in (its join
+        // not read yet, or the lead already in): its time is kept, no new
+        // version, so the join it follows, read later, is known as over.
+        const left = laterIso(room.host_left_at, t);
+        return left === room.host_left_at ? same(room) : change(room, room.state, { host_left_at: left }, []);
+      }
+      if (room.state !== "host_in") return same(room);
       // Left before they last came in: an earlier session's event, late.
       if (t < (ms(room.host_in_at) ?? Number.NEGATIVE_INFINITY)) return same(room);
       // P2: the host left before the lead came; host_by gives them 120 s more, never less than it had.
-      return change(room, "open", { host_by: laterIso(room.host_by, t + w.handover_host * S) }, []);
+      const patch: Partial<RoomRow> = { host_by: laterIso(room.host_by, t + w.handover_host * S) };
+      patch.host_left_at = laterIso(room.host_left_at, t);
+      return change(room, "open", patch, []);
     }
 
     case "lead_in": {
@@ -3860,6 +3929,12 @@ export function defaultProvider(
 
 export interface Health {
   worker_ok: boolean;
+  /**
+   * The worker runs and makes rooms but reports a problem (m1 round 3): the
+   * line is red with the worker's own words, and the screens still offer the
+   * other provider (it is no "rooms are not being made").
+   */
+  worker_trouble?: boolean;
   last_run_at: string | null;
   /** null when it could not be read: missing is never 0 (F13). */
   rooms_today: number | null;
@@ -3873,6 +3948,20 @@ function countOf(v: unknown): number | null {
 }
 function rooms(n: number): string {
   return `${n} ${n === 1 ? "room" : "rooms"}`;
+}
+
+/**
+ * The problem in the room worker's own status sentence (desk/rooms.py
+ * sentence()): its opening "Working." and the window's counts left out, so
+ * the line names what is wrong. Nothing left: a plain stand-in.
+ */
+function workerProblem(detail: unknown): string {
+  const d = String(detail ?? "")
+    .replace(/^Working\.\s*/, "")
+    .replace(/^(?:In the last [^.]*\.|No rooms were asked for in [^.]*\.)\s*/, "")
+    .trim()
+    .slice(0, 300);
+  return clause(d || "the room worker reported a problem");
 }
 
 /**
@@ -3893,13 +3982,19 @@ export function roomsHealth(i: {
   const last = ms(i.last_run_at);
   const fresh = last !== null && i.now - last <= WORKER_RED_AFTER_S * S && last - i.now <= 5 * MIN;
   const notMaking = fresh && workerNotMaking(i.status);
-  const ok = fresh && !notMaking;
+  // A fresh row that reports a problem while still making rooms (Google or
+  // Zoom not answering, a refused room message): never "Rooms: working"
+  // (m1 round 3, health-line-working-while-worker-reports-failure). Its own
+  // sentence goes on the line, with the next step.
+  const troubled = fresh && !notMaking && i.status?.ok === false;
+  const ok = fresh && !notMaking && !troubled;
   const made = countOf(i.rooms_today);
   const failed = countOf(i.failed_today);
   const mismatched = countOf(i.mismatched_today);
   let line: string;
   if (notMaking)
     line = `The room worker is running but making no rooms: ${clause(String(i.status?.detail ?? "").slice(NOT_MAKING_PREFIX.length) || "no reason given")}. Call the lead or send your own link until it is fixed.`;
+  else if (troubled) line = fill(LANE_COPY.health_trouble, { problem: workerProblem(i.status?.detail) });
   else if (!ok)
     line = last === null ? LANE_COPY.health_never : fill(ROOM_COPY.health.down, { time: clockWithDay(last, i.now) });
   else if (mismatched !== null && mismatched > 0)
@@ -3909,6 +4004,7 @@ export function roomsHealth(i: {
   else line = fill(ROOM_COPY.health.working, { time: kuwaitClockSeconds(last as number), rooms: rooms(made), failed });
   return {
     worker_ok: ok,
+    ...(troubled ? { worker_trouble: true } : {}),
     last_run_at: last === null ? null : iso(last),
     rooms_today: made,
     failed_today: failed,
@@ -3991,6 +4087,13 @@ export interface RoomView {
    * the rep to say where the new link is. Null for any other room.
    */
   moved_from: Provider | null;
+  /**
+   * When the room opened, and when its link was asked for (m1 round 3,
+   * link-late-counts-from-press-not-open): the panel's "The link has not
+   * gone yet" counts from the later of the two, never from the press.
+   */
+  opened_at: string | null;
+  link_claimed_at: string | null;
 }
 
 export const ROOM_VIEW_KEYS = [
@@ -4035,6 +4138,8 @@ export const ROOM_VIEW_KEYS = [
   "last_link_at",
   "late_open_at",
   "moved_from",
+  "opened_at",
+  "link_claimed_at",
 ] as const;
 
 /** The channels the link went on, from link_channels or the keys of link_message_ids. */
@@ -4102,6 +4207,8 @@ export function toRoomView(
     last_link_at: isoOrNull(row.last_link_at),
     late_open_at: isFinal(row.state) && !leadJoined(row) ? isoOrNull(opts.late_open_at) : null,
     moved_from: row.night_cleared === "replacing" && isProvider(row.provider) ? otherProvider(row.provider) : null,
+    opened_at: isoOrNull(row.opened_at),
+    link_claimed_at: isoOrNull(row.link_claimed_at),
   };
 }
 

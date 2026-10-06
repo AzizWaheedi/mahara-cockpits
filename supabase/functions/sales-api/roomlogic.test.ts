@@ -450,7 +450,13 @@ describe("host and lead in the room", () => {
     // A fallback room's 15 minutes are not cut short by the reset.
     const f = step(opened(), { kind: "host_in", source: "zoom" }, T0 + 20 * S);
     expect(ok(apply(f, { kind: "host_left" }, T0 + 40 * S)).room.host_by).toBe(f.host_by);
-    expect(ok(apply(opened(), { kind: "host_left" }, T0 + 40 * S)).changed).toBe(false);
+    // A leave read on an open room moves nothing but its own time (m1 round
+    // 3): no state, no version, so a host join from before it, read late, is
+    // known as over.
+    const left = ok(apply(opened(), { kind: "host_left" }, T0 + 40 * S));
+    expect([left.to, left.patch.version ?? null, left.patch.host_left_at]).toEqual(["open", null, at(T0 + 40 * S)]);
+    expect(ok(apply(left.room, { kind: "host_in", source: "zoom" }, T0 + 30 * S)).changed).toBe(false);
+    expect(ok(apply(left.room, { kind: "host_in", source: "zoom" }, T0 + 50 * S)).to).toBe("host_in");
   });
 
   test("the lead in, from open (a Meet press) or host_in, asks for the count once", () => {

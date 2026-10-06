@@ -64,6 +64,35 @@ export function leadZones(country: unknown): readonly string[] | null {
   return LEAD_ZONES.kw as readonly string[];
 }
 
+/**
+ * The Gulf country a phone number dials into (the dialer only rings these:
+ * dialer.ts ROUTES), or null. The number the dialer rang names the lead's
+ * clock better than a stored country (m1 round 3: 209 leads with a +971
+ * phone are stored KW, 89 with a +966 phone are stored US).
+ */
+const GULF_CODES: readonly [string, string][] = [
+  ["965", "KW"],
+  ["966", "SA"],
+  ["971", "AE"],
+  ["968", "OM"],
+  ["973", "BH"],
+  ["974", "QA"],
+];
+export function phoneCountry(phone: unknown): string | null {
+  const raw = String(phone ?? "").trim();
+  if (!raw) return null;
+  const digits = raw.replace(/[^\d+]/g, "");
+  // International form only (+965..., or 00965...): a bare local number names no country.
+  const intl = digits.startsWith("+") ? digits.slice(1) : digits.startsWith("00") ? digits.slice(2) : null;
+  if (!intl) return null;
+  return GULF_CODES.find(([code]) => intl.startsWith(code))?.[1] ?? null;
+}
+
+/** The country whose clock a lead keeps: a Gulf number's own, else the stored country (m1 round 3). */
+export function clockCountry(country: unknown, phone: unknown): string {
+  return phoneCountry(phone) ?? String(country ?? "").trim();
+}
+
 const zoneFormats = new Map<string, Intl.DateTimeFormat>();
 function zoneClock(zone: string, now: number): { hour: number; day: number } {
   let f = zoneFormats.get(zone);

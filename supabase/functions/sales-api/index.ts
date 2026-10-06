@@ -118,6 +118,7 @@ import { makeRooms } from "./rooms.ts";
 import { kuwaitClock } from "./roomlogic.ts";
 import { makeFollowupAgent } from "./followupAgent.ts";
 import {
+  clockCountry,
   budgetCap,
   budgetCheck,
   DUPLICATE_PAUSED,
@@ -1412,6 +1413,27 @@ async function priorTry(requestId: string, same: (m: Row) => boolean): Promise<{
 }
 
 /**
+ * The stamp went to another try of the same request id (two callers on one
+ * key, the second adopting the first's unstamped row with the same words):
+ * that try sends, and its row is this one's answer, a repeat (m1 round 3,
+ * send-by-email-adopt-race-says-not-gone). Never "not sent yet": one of the
+ * two did ask HighLevel.
+ */
+class StampedByTwin extends Error {
+  constructor(readonly row: Row) {
+    super("another try of this send was stamped first");
+  }
+}
+
+/** A row another try stamped (or finished): HighLevel was asked by that try. */
+function twinStamped(back: Row | undefined, mine: string | null): boolean {
+  if (!back) return false;
+  const asked = String(back.ghl_asked_at ?? "");
+  if (back.state === "sending") return Boolean(asked) && (mine === null || Date.parse(asked) !== Date.parse(mine));
+  return ["sent", "delivered", "read", "unclear", "failed"].includes(String(back.state ?? ""));
+}
+
+/**
  * The row's stamp that HighLevel is about to be asked, right before the
  * send: from here on the send may have gone. Lands only on the row still
  * "sending" and unstamped, so a row given up meanwhile is never sent. Its
@@ -1433,6 +1455,7 @@ async function markAsked(row: Row): Promise<Row> {
     if (/ghl_asked_at/.test(String((e as Error)?.message ?? e))) return row;
     const back = (await svc(`cockpit_sales_messages?id=eq.${id}&select=*`).catch(() => [] as Row[]))[0];
     if (back && Date.parse(String(back.ghl_asked_at ?? "")) === Date.parse(at)) return back;
+    if (twinStamped(back, at)) throw new StampedByTwin(back as Row);
     // This run stops before HighLevel is asked, so its stamp must not stay
     // (m1 round 1, stamped-orphan-strands-link): a stamp that landed with
     // its answer lost is taken back, only where it is this run's own, and
@@ -1441,7 +1464,21 @@ async function markAsked(row: Row): Promise<Row> {
     await unstamp(String(row.id ?? ""), at);
     throw e;
   }
+  // Nothing stamped: another try of this request id stamped it first (its
+  // send is this one's answer), or the row was given up (nothing went).
+  const back = (await svc(`cockpit_sales_messages?id=eq.${id}&select=*`).catch(() => [] as Row[]))[0];
+  if (twinStamped(back, null)) throw new StampedByTwin(back as Row);
   throw new Error("the message row was given up before it went");
+}
+
+/** markAsked, with a stamp another try of the same request id won answered as that try's send (a repeat). */
+async function stampOrTwin(row: Row): Promise<{ row: Row } | { twin: Row }> {
+  try {
+    return { row: await markAsked(row) };
+  } catch (e) {
+    if (e instanceof StampedByTwin) return { twin: e.row };
+    throw e;
+  }
 }
 
 /**
@@ -1576,7 +1613,9 @@ async function convoSendOnce(who: Who, b: Row, opts: SendOpts, taken: () => void
   // The caller's last word, after every read above (a room closed meanwhile
   // stops its link here; beforeRowCertain gives the unstamped row up).
   await lastCheck(opts.beforeSend);
-  row = await markAsked(row);
+  const stamp = await stampOrTwin(row);
+  if ("twin" in stamp) return { message: stamp.twin, repeated: true };
+  row = stamp.row;
   taken();
 
   let out: Row;
@@ -1877,7 +1916,18 @@ async function whatsappSentSince(
   // conversation-garbage-read-as-not-there-second-link): an answer with no
   // list in it (a gateway's JSON, a search index rebuilding) throws, so the
   // caller reads it as "not read", never as "not sent".
-  const convs = conversationList(await ghl("GET", `/conversations/search?locationId=${LOCATION}&contactId=${enc(contactId)}&limit=5`));
+  // Only the lead's own conversations (a search that answers another
+  // contact's is no read of this lead's). An empty list is no proof either
+  // (m1 round 3, empty-conversation-read-as-not-there): HighLevel's search
+  // answers a proper empty list while its index rebuilds, and after a merge
+  // the conversation moves to the surviving contact. For a lead known to
+  // have a conversation (the inbox, or a message HighLevel filed in one) it
+  // throws, so the caller reads it as "not read", never "not there".
+  const convs = conversationList(await ghl("GET", `/conversations/search?locationId=${LOCATION}&contactId=${enc(contactId)}&limit=5`)).filter(
+    cv => cv.contactId === undefined || cv.contactId === null || cv.contactId === "" || String(cv.contactId) === contactId,
+  );
+  if (!convs.length && (await knownConversation(contactId)))
+    throw new Error("HighLevel's conversation search listed none of the lead's conversations, so nothing was read");
   const seen: ThreadMessage[] = [];
   // With `went`, a copy Meta failed (or a bounced email) is kept apart from
   // "not there" (m1 round 1, unclear-text-failed-in-conversation): the
@@ -1900,6 +1950,12 @@ async function whatsappSentSince(
       const inner = (m as Row).messages;
       const arr = Array.isArray((inner as Row | undefined)?.messages) ? ((inner as Row).messages as unknown[]) : Array.isArray(inner) ? inner : null;
       if (!arr) throw new Error("HighLevel answered a conversation's page with no messages in it");
+      // An empty page is no read either (m1 round 3): a conversation the
+      // search lists has messages, so nothing was read back to the send.
+      if (!arr.length) {
+        if (page === 0) throw new Error("HighLevel answered the lead's conversation with an empty page, so nothing was read");
+        break;
+      }
       const list = toThread(arr, cid);
       seen.push(...list);
       const hit = matchSent(list, since, text, o);
@@ -1918,6 +1974,20 @@ async function whatsappSentSince(
   // Not found, and the read did not reach back past the send: not known.
   if (!failed && !covered) throw new Error("the lead's conversation could not be read back to the send");
   return { hit: null, seen, failed, others };
+}
+
+/**
+ * Whether the lead is known to have a HighLevel conversation: the inbox's
+ * row, or a message HighLevel filed in one. Not readable: thrown (the caller
+ * reads the conversation check as not read).
+ */
+async function knownConversation(contactId: string): Promise<boolean> {
+  const c = enc(contactId);
+  const [inbox, sent] = await Promise.all([
+    svc(`cockpit_sales_inbox?contact_id=eq.${c}&select=conversation_id&limit=1`),
+    svc(`cockpit_sales_messages?contact_id=eq.${c}&ghl_conversation_id=not.is.null&select=id&limit=1`),
+  ]);
+  return inbox.length > 0 || sent.length > 0;
 }
 
 /** How many messages one conversation page asks for, and how many pages whatsappSentSince reads back at most. */
@@ -2191,7 +2261,9 @@ async function sendTemplateOnce(
     }
   }
   await lastCheck(o.beforeSend);
-  row = await markAsked(row);
+  const stamp = await stampOrTwin(row);
+  if ("twin" in stamp) return { message: stamp.twin, repeated: true };
+  row = stamp.row;
   taken();
 
   // `enrolling`: the failure came from the workflow enrolment itself. Only
@@ -3749,7 +3821,7 @@ async function candidates(now: number): Promise<{ list: QueueCandidate[] }> {
         id: String(intro.appointment_id),
         start: ms(intro.start_at) ?? 0,
       }),
-      country: (l.country as string | null) ?? null,
+      country: clockCountry(l.country, l.phone) || null,
     };
     return appointmentWork(appt, now, "setter", null)?.kind === "intro";
   };
@@ -3759,7 +3831,13 @@ async function candidates(now: number): Promise<{ list: QueueCandidate[] }> {
     if (since === undefined) return false;
     const missed = Math.max(missedBy.get(`c:${id}`) ?? 0, l.phone8 ? (missedBy.get(`p:${l.phone8}`) ?? 0) : 0);
     const wrote = inboxBy.get(id) ?? 0;
-    return !(missed > since || wrote > since || introDue(l));
+    // A rep's own outcome saved for the lead after the hold began (a
+    // call-back, a booking, held): they spoke, so the lead's queue is theirs
+    // again (m1 round 3, lead-in-room-holds-agreed-callback). A No answer
+    // never lifts it: that is the miss the room's link follows.
+    const st = stateBy.get(id) ?? {};
+    const saved = st.last_outcome && st.last_outcome !== "no_answer" ? (ms(st.last_outcome_at) ?? 0) : 0;
+    return !(missed > since || wrote > since || saved > since || introDue(l));
   };
   const list = leads.filter(l => !isClient(l) && !roomHolds(l)).map(l => {
     const id = String(l.contact_id);
@@ -3885,8 +3963,9 @@ async function candidates(now: number): Promise<{ list: QueueCandidate[] }> {
               id: String(current.appointment_id),
               start: ms(current.start_at) ?? 0,
             }),
-            // The confirmation call keeps to the lead's own clock (stress2 round 5).
-            country: (l.country as string | null) ?? null,
+            // The confirmation call keeps to the lead's own clock (stress2 round 5),
+            // a Gulf number's own first (m1 round 3: the stored country is often not where it rings).
+            country: clockCountry(l.country, l.phone) || null,
           }
         : null,
     };

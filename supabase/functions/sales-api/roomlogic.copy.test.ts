@@ -210,6 +210,13 @@ const LANE_SENTENCES = {
   lead_in_others_room: "The lead is on a video call with the {role} now. Send a link after it ends.",
   lead_night: "It is night where the lead is, so no video link goes now. Call them after 9 in the morning, their time.",
   lead_night_read_out: "It is night where the lead is, so no message went. Read the link out if you are speaking with them.",
+  // m1 round 3: one link per missed call, said; the next link after a deleted Zoom meeting; the worker's own problem.
+  link_already_sent: "This call's video link went at {time}. Call them again; a call they miss can carry a new link.",
+  dead_link_provider:
+    "Hi {first_name}, the {old} link I sent no longer works, sorry about that. Let's use {provider} instead: {link} I'm waiting for you there now.",
+  dead_link_same: "Hi {first_name}, the {old} link I sent no longer works, sorry about that. Here is a new one: {link} I'm waiting for you there now.",
+  dead_link_email_subject: "A new link for our call.",
+  health_trouble: "Rooms: {problem}. If a room fails, use the other provider or call the lead.",
   lead_has_others_room_closing: "The {role}'s video room for this lead is closing now. Send a link in a minute.",
   disabled: "Video rooms are off for now. Call or message the lead instead.",
   provider_off: "{provider} rooms are off for now. Use {other}.",

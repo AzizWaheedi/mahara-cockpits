@@ -742,7 +742,13 @@ begin
   end;
 
   -- R3. open: the host did not come in by host_by (by purpose when unset; a
-  -- booked room always has its own).
+  -- booked room always has its own). A video-link room (manual or fallback)
+  -- whose link went keeps waiting for the host at least until the lead's ten
+  -- minutes and their open grace are over (m1 round 3,
+  -- later-link-promise-cut-by-host-wait; a handover keeps its own taker
+  -- wait, which re-offers the lead): a later
+  -- channel's "I'll be there for the next 10 minutes" moves lead_by, and the
+  -- host, in a Meet that sends no join signal, is never closed out first.
   -- R3 to R8 and R7 wait while a Zoom, worker or claim event for the room
   -- is still unhandled (a knock or a join the door could not forward yet,
   -- roomlogic.ts F4 and F5), at most w_hold past the rule's due time; then
@@ -751,10 +757,12 @@ begin
     select coalesce(array_agg(q.id), '{}') into ids from (
       select x.id from public.cockpit_sales_rooms as x
        cross join lateral (
-         select coalesce(x.host_by, coalesce(x.opened_at, x.requested_at) + case x.purpose
+         select greatest(coalesce(x.host_by, coalesce(x.opened_at, x.requested_at) + case x.purpose
                   when 'handover' then w_handover
                   when 'standby' then w_standby_host
-                  else w_fallback_host end) as due) as d
+                  else w_fallback_host end),
+                case when x.purpose in ('manual', 'fallback') and x.contact_id is not null and x.link_sent_at is not null
+                     then x.lead_by + w_grace end) as due) as d
        where x.state = 'open'
          and (x.purpose <> 'booked' or x.host_by is not null)
          and d.due < t
@@ -2047,8 +2055,15 @@ begin
     raised := raised + public.cockpit_sales_alert_set('stale:' || subj, is_stale, 'stale', subj,
       format('%s has not run since %s. %s', rec.label, since, rec.effect),
       jsonb_build_object('worker', rec.worker, 'job', rec.job, 'last_at', rec.at, 'stale_min', rec.stale_min));
+    -- The room worker's row that says it is running and making rooms (a
+    -- fault it rode out, a refused room message) never says rooms cannot be
+    -- made (m1 round 3, watchdog-says-rooms-cannot-be-made-while-worker-
+    -- makes-them): only a stale row, or one that says "Not making rooms:".
     raised := raised + public.cockpit_sales_alert_set('failing:' || subj, is_failing, 'failing', subj,
-      format('%s reported a problem at %s: %s. %s', rec.label, since, coalesce(nullif(words, ''), 'no detail'), rec.effect),
+      format('%s reported a problem at %s: %s. %s', rec.label, since, coalesce(nullif(words, ''), 'no detail'),
+             case when subj = 'sales-desk/rooms' and coalesce(rec.detail, '') not like 'Not making rooms:%'
+                  then 'Some rooms or links may fail; read the detail.'
+                  else rec.effect end),
       jsonb_build_object('worker', rec.worker, 'job', rec.job, 'last_at', rec.at));
   end loop;
 
@@ -2284,6 +2299,17 @@ alter table public.cockpit_sales_rooms
   add column if not exists last_link_at timestamptz;
 comment on column public.cockpit_sales_rooms.last_link_at is
   'When a later channel sent the link again. R4''s cap and the lead''s ten minutes count from it.';
+
+-- The host's last Zoom leave (m1 round 3, zoom-host-join-replayed-after-
+-- leave-reads-host-in): Zoom does not order its webhooks, and the sweep
+-- replays a join whose forward failed after the leave that followed it was
+-- read. A host join or meeting.started from before this time is the session
+-- that already ended, so the room keeps waiting for the host (roomlogic.ts
+-- host_in) and R3 still applies.
+alter table public.cockpit_sales_rooms
+  add column if not exists host_left_at timestamptz;
+comment on column public.cockpit_sales_rooms.host_left_at is
+  'The host''s last Zoom leave; a Zoom host join from before it, read late, does not say the host is in.';
 
 -- The moment of the call a room followed, when that call carried the
 -- lead's booked intro (stress2 round 6, late-try-room-carries-intro-never-

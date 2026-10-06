@@ -15,7 +15,21 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import type { DbError } from "./liveio.ts";
 import { DEFAULT_ROOMS_JSON } from "./roomlogic.ts";
+import { hoursRefusal } from "./sendrules.ts";
 import { FakeDb } from "./testfakes.ts";
+
+/**
+ * A country whose every clock is in the day now: the router runs on the real
+ * clock, and a fixed "US" made this test pass only from 16:00 to 01:00 UTC
+ * (m1 round 3). Its number keeps that clock (a Gulf number's own comes first).
+ */
+const COUNTRY =
+  ["US", "KW", "GB", "BR", "JP", "AU", "NZ", "IN", "DE", "MX"].find(
+    c =>
+      hoursRefusal({ segment: "confirm", touch: 2, country: c, now: Date.now(), followups: {} }) === null &&
+      hoursRefusal({ segment: "confirm", touch: 2, country: c, now: Date.now() + 10 * 60_000, followups: {} }) === null,
+  ) ?? "US";
+const PHONE = COUNTRY === "KW" ? "+96550000000" : "+447700900123";
 
 type Row = Record<string, unknown>;
 
@@ -86,7 +100,7 @@ async function fakeFetch(input: string | URL | Request, init: RequestInit = {}):
     const path = url.slice(GHL.length);
     if (method === "GET" && path.startsWith(`/contacts/${LEAD}`))
       return reply({
-        contact: { id: LEAD, firstName: "Huda", name: "Huda Ali", phone: "+96550000000", email: "huda@example.com", country: "US", tags: ["roas-qualified"], dnd: false, dndSettings: {} },
+        contact: { id: LEAD, firstName: "Huda", name: "Huda Ali", phone: PHONE, email: "huda@example.com", country: COUNTRY, tags: ["roas-qualified"], dnd: false, dndSettings: {} },
       });
     if (method === "GET" && path.startsWith("/conversations/search")) return reply({ conversations: [] });
     if (method === "POST" && path === "/conversations/messages") {
@@ -156,7 +170,7 @@ function reset(): void {
   ]);
   db.seed("cockpit_sales_people", [{ email: SETTER, name: "Tara Setter", role: "setter", ghl_user_id: "G-setter", active: true }]);
   db.seed("cockpit_sales_room_hosts", [{ email: SETTER, zoom_user_id: "Z-setter", zoom_status: "basic", google_ok: true }]);
-  db.seed("cockpit_sales_leads", [{ contact_id: LEAD, name: "Huda Ali", country: "US", assigned_to: "G-setter" }]);
+  db.seed("cockpit_sales_leads", [{ contact_id: LEAD, name: "Huda Ali", country: COUNTRY, assigned_to: "G-setter" }]);
 }
 
 const tick = () => new Promise<void>(r => setTimeout(r, 5));
