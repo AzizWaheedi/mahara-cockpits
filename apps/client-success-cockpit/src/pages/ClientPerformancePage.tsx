@@ -1334,8 +1334,20 @@ function ProfileTrends({
       to,
     ).map(b => [b.key, b.rows.map(r => r.text)]),
   );
-  const marked = (points: { x: string; y: number | null }[]) =>
-    points.map(pt => ({ ...pt, note: notes.get(pt.x) }));
+  // A change on a day with nothing charted still gets its day on the axis,
+  // so its mark shows.
+  const marked = (points: { x: string; y: number | null }[]) => {
+    if (!points.length) return points;
+    const have = new Set(points.map(pt => pt.x));
+    return [
+      ...points,
+      ...[...notes.keys()]
+        .filter(k => !have.has(k))
+        .map(k => ({ x: k, y: null as number | null })),
+    ]
+      .sort((a, b) => (a.x < b.x ? -1 : a.x > b.x ? 1 : 0))
+      .map(pt => ({ ...pt, note: notes.get(pt.x) }));
+  };
   const spendByKey = new Map(
     adBuckets.map(b => [
       b.key,
@@ -1719,7 +1731,11 @@ function Profile({
   /** "12 in September 2026", "12 in the 7 days before"; nothing for all time. */
   const was = (key: string) =>
     l && per.prevLabel ? `${num(l[key])} in ${per.prevLabel}` : undefined;
-  const leadsFromAds = !fig.sheetMonth || perf.leadsSource === "meta";
+  // Where the leads figure came from: the sheet's own month figures say so
+  // in leadsSource; a summed period says so in leadsFrom.
+  const leadsFromAds = fig.sheetMonth
+    ? perf.leadsSource === "meta"
+    : m.leadsFrom !== "sheet";
   return (
     <div className="space-y-6">
       <div className="space-y-3">
@@ -1829,7 +1845,7 @@ function Profile({
             <>
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
                 <StatTile
-                  label="Leads (from ads)"
+                  label={leadsFromAds ? "Leads (from ads)" : "Leads"}
                   value={num(m.leads)}
                   sub={was("leads")}
                 />
