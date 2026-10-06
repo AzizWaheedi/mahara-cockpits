@@ -95,7 +95,9 @@ HARDENING_2D = (("cockpit_sales_rooms", "taken_back_join_at"), ("cockpit_sales_r
                 # Fix round 6: the moment of the call an intro room followed (the settle reads it).
                 ("cockpit_sales_rooms", "appointment_call_at"),
                 # m1 round 1: the press's own decisions (the intro it named, the night rule).
-                ("cockpit_sales_rooms", "asked_appointment_id"), ("cockpit_sales_rooms", "night_cleared"))
+                ("cockpit_sales_rooms", "asked_appointment_id"), ("cockpit_sales_rooms", "night_cleared"),
+                # m1 round 3: the host's last Zoom leave (a late join from before it is over).
+                ("cockpit_sales_rooms", "host_left_at"))
 
 SETTINGS = ("rooms", "live", "followups", "whatsapp_guard", "threads", "calendars")
 
