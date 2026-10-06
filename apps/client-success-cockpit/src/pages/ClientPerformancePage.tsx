@@ -30,6 +30,18 @@ import { type Constraint, diagnose } from "@/lib/csmDiagnosis";
 import { serviceModel } from "@/lib/csmTemplates";
 import { displayLabel, plural, shortDay } from "@/lib/format";
 import { publishOpenClient } from "@/lib/openClient";
+import {
+  byAdIn,
+  type CardChange,
+  changesIn,
+  dayLabel,
+  kuwaitDay,
+  type Period,
+  type PeriodKey,
+  periodNumbers,
+  periodOf,
+  shiftDay,
+} from "@/lib/reportPeriod";
 import { cn } from "@/lib/utils";
 import { api } from "../../convex/_generated/api";
 
@@ -158,11 +170,11 @@ function Links({ links }: { links: Record<string, string> }) {
   );
 }
 
-/** A printable one-pager. Opened in a new tab; Cmd/Ctrl+P saves it as a PDF. */
-function reportHtml(p: Any): string {
+/** A printable one-pager for the reporting period. Opened in a new tab; Cmd/Ctrl+P saves it as a PDF. */
+function reportHtml(p: Any, per: Period, fig: Figures): string {
   const perf = p.performance ?? {};
-  const m = perf.month ?? {};
-  const l = perf.lastMonth ?? {};
+  const m = fig.m ?? {};
+  const l = fig.l ?? {};
   const rows = (perf.stale ?? []) as Any[];
   // Done with you clients book their own appointments, so their report is leads and cost
   // per lead. Printing empty booking and close rows would just look like failure.
@@ -187,9 +199,9 @@ function reportHtml(p: Any): string {
     .note{font-size:12px;color:#6b7280;margin-top:8px}
   </style></head><body>
   <h1>${esc(p.clientName)}</h1>
-  <div class="sub">Performance report · ${esc(perf.monthLabel ?? "")} · generated ${new Date().toISOString().slice(0, 10)} · source: the client's own performance sheet</div>
+  <div class="sub">Performance report · ${esc(capital(per.label))} · ${esc(dayLabel(per.from))} to ${esc(dayLabel(upTo(per)))} · generated ${new Date().toISOString().slice(0, 10)} · source: the client's own performance sheet</div>
   <h2>${dwy ? "Lead volume" : "The funnel"}</h2>
-  <table><tr><th>Metric</th><th class="n">${esc(perf.monthLabel ?? "This month")}</th><th class="n">${esc(perf.lastMonthLabel ?? "Last month")}</th></tr>
+  <table><tr><th>Metric</th><th class="n">${esc(capital(per.label))}</th><th class="n">${esc(per.prevLabel ? capital(per.prevLabel) : "")}</th></tr>
   ${line("Leads", m.leads, l.leads)}
   ${
     dwy
@@ -235,10 +247,10 @@ function reportHtml(p: Any): string {
   </body></html>`;
 }
 
-function openReport(p: Any) {
+function openReport(p: Any, per: Period, fig: Figures) {
   const w = window.open("", "_blank");
   if (!w) return;
-  w.document.write(reportHtml(p));
+  w.document.write(reportHtml(p, per, fig));
   w.document.close();
 }
 
@@ -647,7 +659,7 @@ const REPORT_EXTRAS: { key: string; label: string }[] = [
   { key: "ads", label: "What is running right now" },
 ];
 
-function ReportSection({ p }: { p: Any }) {
+function ReportSection({ p, per, fig }: { p: Any; per: Period; fig: Figures }) {
   const request = useMutation(api.csm.requestReportDoc);
   const [note, setNote] = useState("");
   const [lang, setLang] = useState<"en" | "ar">("en");
@@ -659,10 +671,14 @@ function ReportSection({ p }: { p: Any }) {
   return (
     <section className="space-y-4 rounded-2xl border bg-card p-4 sm:p-6">
       <div>
-        <h3 className="text-[15px] font-semibold">Monthly report</h3>
+        <h3 className="text-[15px] font-semibold">
+          Client report, {per.label}
+        </h3>
         <p className="mt-1 text-sm text-muted-foreground">
-          Written as a Google Doc you can edit before it goes anywhere. Same
-          template every month, so the client learns to read it.
+          Written as a Google Doc you can edit before it goes anywhere, for the
+          reporting period at the top of the page
+          {per.prevLabel ? `, compared with ${per.prevLabel}` : ""}. Same
+          template every time, so the client learns to read it.
         </p>
       </div>
       <div className="rounded-xl bg-muted/40 p-4 text-sm">
@@ -712,6 +728,9 @@ function ReportSection({ p }: { p: Any }) {
             try {
               await request({
                 clientName: p.clientName,
+                from: per.from,
+                to: upTo(per),
+                label: capital(per.label),
                 language: lang,
                 note: note.trim() || undefined,
                 extras,
@@ -729,7 +748,11 @@ function ReportSection({ p }: { p: Any }) {
         >
           Write the Google Doc
         </Button>
-        <Button size="sm" variant="secondary" onClick={() => openReport(p)}>
+        <Button
+          size="sm"
+          variant="secondary"
+          onClick={() => openReport(p, per, fig)}
+        >
           Or print a one-pager now
         </Button>
       </div>
@@ -1209,40 +1232,21 @@ function LeadsByAd({ rows }: { rows: Any[] }) {
 }
 
 /** Quick keys, a month "YYYY-MM", "all", or "custom:YYYY-MM-DD:YYYY-MM-DD". */
-type RangeKey = "month" | "3d" | "7d" | "30d" | "lastMonth" | "all" | string;
+type RangeKey = PeriodKey;
 
-const kuwaitToday = () =>
-  new Date(Date.now() + 3 * 3600_000).toISOString().slice(0, 10);
-const shiftDays = (iso: string, n: number) =>
-  new Date(Date.parse(`${iso}T00:00:00Z`) + n * 86400_000)
-    .toISOString()
-    .slice(0, 10);
-
-/** [from, to] inclusive ISO dates for a range key; months are "YYYY-MM". */
-function rangeBounds(key: RangeKey, p?: Any): [string, string, string] {
+const kuwaitToday = () => kuwaitDay();
+const shiftDays = shiftDay;
+const capital = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);
+/** The last day the period has data for: never later than today. */
+const upTo = (per: Period) => {
   const today = kuwaitToday();
-  if (key === "all") return [firstDate(p) ?? "2000-01-01", today, "all time"];
-  if (key.startsWith("custom:")) {
-    const [, from, to] = key.split(":");
-    return [from, to, "custom range"];
-  }
-  if (key === "3d") return [shiftDays(today, -2), today, "last 3 days"];
-  if (key === "7d") return [shiftDays(today, -6), today, "last 7 days"];
-  if (key === "30d") return [shiftDays(today, -29), today, "last 30 days"];
-  const ym =
-    key === "month"
-      ? today.slice(0, 7)
-      : key === "lastMonth"
-        ? shiftDays(`${today.slice(0, 7)}-01`, -1).slice(0, 7)
-        : key;
-  const [y, mo] = ym.split("-").map(Number);
-  const last = new Date(Date.UTC(y, mo, 0)).toISOString().slice(0, 10);
-  const label = new Date(Date.UTC(y, mo - 1, 1)).toLocaleDateString("en-GB", {
-    month: "long",
-    year: "numeric",
-    timeZone: "UTC",
-  });
-  return [`${ym}-01`, last, label];
+  return per.to > today ? today : per.to;
+};
+
+/** [from, to, label] for a pick, by the shared period rules (lib/reportPeriod.ts). */
+function rangeBounds(key: RangeKey, p?: Any): [string, string, string] {
+  const per = periodOf(key, kuwaitToday(), firstDate(p));
+  return [per.from, per.to, per.label];
 }
 
 /** The earliest day with any data, ads or sheet, for "all time" and the custom picker. */
@@ -1257,42 +1261,31 @@ function firstDate(p: Any): string | undefined {
   return first;
 }
 
-/** Sum the profile's daily grain for one range: ad leads and spend, sheet outcomes. */
-function rangeMetrics(p: Any, key: RangeKey) {
-  const [from, to, label] = rangeBounds(key, p);
-  const daily: Any[] = p.adLeads?.daily ?? [];
-  let leads = 0;
-  let spend = 0;
-  for (const d of daily) {
-    if (d.date >= from && d.date <= to) {
-      leads += d.leads;
-      spend += d.spend;
-    }
-  }
-  const rows: Any[] = (p.performance?.appointments ?? []).filter(
-    (r: Any) =>
-      r.added && r.added.slice(0, 10) >= from && r.added.slice(0, 10) <= to,
-  );
-  const booked = rows.filter((r: Any) => r.booked).length;
-  const shows = rows.filter((r: Any) => r.show === "y").length;
-  const noshows = rows.filter((r: Any) => r.show === "n").length;
-  const quotes = rows.filter((r: Any) => r.quote === "y").length;
-  const closes = rows.filter((r: Any) => r.closed === "y").length;
-  const decided = shows + noshows;
+type Figures = { m: Any; l: Any | null; sheetMonth: boolean };
+
+/**
+ * The period's numbers and the ones it is compared with. "This month" keeps
+ * the sheet's own month figures, which carry fields the daily rows do not;
+ * every other period is summed from the daily rows, ads and sheet alike.
+ */
+function periodFigures(p: Any, per: Period): Figures {
+  const perf = p?.performance ?? {};
+  const appts = (perf.appointments ?? []) as Any[];
+  const daily = (p?.adLeads?.daily ?? []) as Any[];
+  const sum = (from?: string, to?: string) =>
+    from && to ? periodNumbers(appts, daily, from, to) : null;
+  if (per.key === "month" && perf.month)
+    return {
+      m: { ...sum(per.from, per.to), ...perf.month },
+      l: perf.lastMonth
+        ? { ...sum(per.prevFrom, per.prevTo), ...perf.lastMonth }
+        : sum(per.prevFrom, per.prevTo),
+      sheetMonth: true,
+    };
   return {
-    label,
-    from,
-    to,
-    leads,
-    spend: Math.round(spend * 100) / 100,
-    cpl: leads ? Math.round((spend / leads) * 100) / 100 : null,
-    booked,
-    shows,
-    noshows,
-    quotes,
-    closes,
-    showRate: decided ? Math.round((100 * shows) / decided) : null,
-    closeRate: shows ? Math.round((100 * closes) / shows) : null,
+    m: sum(per.from, per.to) ?? {},
+    l: sum(per.prevFrom, per.prevTo),
+    sheetMonth: false,
   };
 }
 
@@ -1310,7 +1303,21 @@ function monthsAvailable(p: Any): string[] {
  * and what came of it per day or per week (weekly once the span passes 45
  * days). Cost per booking divides ad spend by bookings made in the bucket.
  */
-function ProfileTrends({ p, from, to }: { p: Any; from: string; to: string }) {
+function ProfileTrends({
+  p,
+  from,
+  to,
+  changes,
+  adsOnly,
+}: {
+  p: Any;
+  from: string;
+  to: string;
+  /** The media buyer's changes in the period, marked on every chart. */
+  changes: CardChange[];
+  /** Done with you: the sheet's outcomes are not ours, so only the ad charts. */
+  adsOnly?: boolean;
+}) {
   const daily: Any[] = (p.adLeads?.daily ?? []).filter(
     (d: Any) => d.date >= from && d.date <= to,
   );
@@ -1319,6 +1326,16 @@ function ProfileTrends({ p, from, to }: { p: Any; from: string; to: string }) {
     .map((r: Any) => ({ ...r, date: String(r.added).slice(0, 10) }));
   const adBuckets = bucketDays(daily, from, to);
   const apptBuckets = bucketDays(appts, from, to);
+  // Changes go in the same day or week buckets as the numbers they explain.
+  const notes = new Map(
+    bucketDays(
+      changes.map(c => ({ date: c.day, text: c.action })),
+      from,
+      to,
+    ).map(b => [b.key, b.rows.map(r => r.text)]),
+  );
+  const marked = (points: { x: string; y: number | null }[]) =>
+    points.map(pt => ({ ...pt, note: notes.get(pt.x) }));
   const spendByKey = new Map(
     adBuckets.map(b => [
       b.key,
@@ -1354,31 +1371,149 @@ function ProfileTrends({ p, from, to }: { p: Any; from: string; to: string }) {
     const sp = spendByKey.get(b.key) ?? 0;
     return { x: b.key, y: bk && sp ? Math.round((sp / bk) * 100) / 100 : null };
   });
-  const weekly =
-    adBuckets.length > 0 &&
-    apptBuckets.length > 0 &&
-    (Date.parse(to) - Date.parse(from)) / 86400_000 > 45;
+  const weekly = (Date.parse(to) - Date.parse(from)) / 86400_000 > 45;
   const per = weekly ? "per week" : "per day";
   return (
     <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 lg:gap-4">
-      <TrendChart title={`Leads ${per}`} points={leads} kind="bar" />
-      <TrendChart title={`Spend ${per}`} points={spend} unit="$" />
+      <TrendChart title={`Leads ${per}`} points={marked(leads)} kind="bar" />
+      <TrendChart title={`Spend ${per}`} points={marked(spend)} unit="$" />
       <TrendChart
         title="Cost per lead"
-        points={cpl}
+        points={marked(cpl)}
         unit="$"
         mode="avg"
         goodWhen="down"
       />
-      <TrendChart title={`Booked ${per}`} points={booked} kind="bar" />
-      <TrendChart title="Show rate" points={showRate} unit="%" mode="avg" />
-      <TrendChart
-        title="Cost per booking"
-        points={cpb}
-        unit="$"
-        mode="avg"
-        goodWhen="down"
-        hint="Ad spend in the bucket divided by bookings made in it."
+      {adsOnly ? null : (
+        <>
+          <TrendChart
+            title={`Booked ${per}`}
+            points={marked(booked)}
+            kind="bar"
+          />
+          <TrendChart
+            title="Show rate"
+            points={marked(showRate)}
+            unit="%"
+            mode="avg"
+          />
+          <TrendChart
+            title="Cost per booking"
+            points={marked(cpb)}
+            unit="$"
+            mode="avg"
+            goodWhen="down"
+            hint="Ad spend in the bucket divided by bookings made in it."
+          />
+        </>
+      )}
+    </div>
+  );
+}
+
+/** What a decision was, in a word the CSM would use. A change needs no label. */
+const DECISION: Record<string, string> = {
+  touch: "Client told",
+  rerouted: "Sent to a team",
+  left: "Left as is",
+  approved: "Decision",
+  alternative: "Decision",
+};
+
+/**
+ * Everything the media buyer did on this client's campaigns in the period:
+ * the on/off switches, budgets, new ads and creatives, builds and decisions.
+ * Each sits on the charts above on its day.
+ */
+function ChangesList({ changes, per }: { changes: CardChange[]; per: Period }) {
+  // The client's card carries the last 90 days of changes (csmSync).
+  const kept = shiftDay(kuwaitToday(), -89);
+  return (
+    <section className="space-y-3">
+      <div>
+        <SectionTitle>
+          What the media buyer changed
+          <span className="ml-1.5 font-normal text-muted-foreground tabular-nums">
+            {changes.length}
+          </span>
+        </SectionTitle>
+        <p className="mt-1 text-xs text-muted-foreground">
+          {capital(per.label)}. The dotted lines on the charts are these days.
+        </p>
+      </div>
+      {changes.length === 0 ? (
+        <p className="text-sm text-muted-foreground">
+          Nothing was changed on their campaigns in {per.label}. Every switch,
+          budget and new ad made in the media buyer cockpit shows here.
+        </p>
+      ) : (
+        <ol className="divide-y rounded-2xl border bg-card">
+          {changes.map((c, i) => (
+            <li
+              key={`${c.day}-${c.at ?? i}-${c.action}`}
+              className="flex items-start gap-3 px-4 py-2.5 text-sm sm:px-6"
+            >
+              <span className="w-14 shrink-0 pt-px text-xs tabular-nums text-muted-foreground">
+                {dayLabel(c.day)}
+              </span>
+              <span className="min-w-0 flex-1">
+                <span dir="auto">{c.action}</span>
+                {c.evidence ? (
+                  <span
+                    className="mt-0.5 block text-xs text-muted-foreground"
+                    dir="auto"
+                  >
+                    {c.evidence}
+                  </span>
+                ) : null}
+              </span>
+              {DECISION[c.kind] ? (
+                <Chip dot={false}>{DECISION[c.kind]}</Chip>
+              ) : null}
+            </li>
+          ))}
+        </ol>
+      )}
+      {per.from < kept ? (
+        <p className="text-xs text-muted-foreground">
+          Changes are kept for 90 days, so nothing before {dayLabel(kept)} is
+          listed.
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
+/** The one control every number on a client's page follows. */
+function PeriodBar({
+  per,
+  value,
+  onChange,
+  months,
+  earliest,
+}: {
+  per: Period;
+  value: PeriodKey;
+  onChange: (k: PeriodKey) => void;
+  months: string[];
+  earliest?: string;
+}) {
+  return (
+    <div className="space-y-2 rounded-2xl border bg-card px-4 py-3 sm:px-6">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+        <Kicker>Reporting period</Kicker>
+        <span className="text-xs tabular-nums text-muted-foreground">
+          {per.key === "all" && !earliest
+            ? "Everything on record"
+            : `${dayLabel(per.from)} to ${dayLabel(upTo(per))}`}
+          {per.prevLabel ? `, compared with ${per.prevLabel}` : ""}
+        </span>
+      </div>
+      <RangePicker
+        value={value}
+        onChange={onChange}
+        months={months}
+        earliest={earliest}
       />
     </div>
   );
@@ -1530,14 +1665,38 @@ function RangePicker({
   );
 }
 
-function Profile({ name, onBack }: { name: string; onBack: () => void }) {
+function Profile({
+  name,
+  onBack,
+  period,
+  onPeriod,
+}: {
+  name: string;
+  onBack: () => void;
+  /** The reporting period, shared with the list so it carries across. */
+  period: PeriodKey;
+  onPeriod: (k: PeriodKey) => void;
+}) {
   const p = useQuery(api.csm.clientProfile, { clientName: name });
   // Hooks before any early return, so their order never changes.
-  const [range, setRange] = useState<RangeKey>("month");
   // The chase list can run past a hundred rows: first 20, the rest on a tap.
   const [staleAll, setStaleAll] = useState(false);
-  const rv = useMemo(() => rangeMetrics(p ?? {}, range), [p, range]);
+  const earliest = useMemo(() => firstDate(p ?? {}), [p]);
+  const per = useMemo(
+    () => periodOf(period, kuwaitToday(), earliest),
+    [period, earliest],
+  );
+  const fig = useMemo(() => periodFigures(p ?? {}, per), [p, per]);
   const months = useMemo(() => monthsAvailable(p ?? {}), [p]);
+  const changes = useMemo(
+    () => changesIn(p?.changes as CardChange[] | undefined, per.from, per.to),
+    [p, per],
+  );
+  const byAd = useMemo(
+    () =>
+      byAdIn((p?.performance?.appointments ?? []) as Any[], per.from, per.to),
+    [p, per],
+  );
   if (p === undefined)
     return <div className="text-sm text-muted-foreground">Loading {name}…</div>;
   if (p === null)
@@ -1553,13 +1712,14 @@ function Profile({ name, onBack }: { name: string; onBack: () => void }) {
       </div>
     );
   const perf = p.performance ?? {};
-  // "This month" keeps the profile's own month figures (they carry the sheet's
-  // extra fields); every other range is summed from the daily grain.
-  const custom = range !== "month";
-  const m: Any = custom ? rv : (perf.month ?? {});
-  const l: Any = custom ? {} : (perf.lastMonth ?? {});
+  const { m, l } = fig;
   const all = perf.allTime ?? {};
   const stale: Any[] = perf.stale ?? [];
+  const dwy = serviceModel(p.service).dwy;
+  /** "12 in September 2026", "12 in the 7 days before"; nothing for all time. */
+  const was = (key: string) =>
+    l && per.prevLabel ? `${num(l[key])} in ${per.prevLabel}` : undefined;
+  const leadsFromAds = !fig.sheetMonth || perf.leadsSource === "meta";
   return (
     <div className="space-y-6">
       <div className="space-y-3">
@@ -1586,10 +1746,21 @@ function Profile({ name, onBack }: { name: string; onBack: () => void }) {
                 .join(" · ")}
             </p>
           </div>
-          <Button variant="outline" size="sm" onClick={() => openReport(p)}>
-            Print report
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => openReport(p, per, fig)}
+          >
+            Print report, {per.label}
           </Button>
         </div>
+        <PeriodBar
+          per={per}
+          value={period}
+          onChange={onPeriod}
+          months={months}
+          earliest={earliest}
+        />
         {p.taskId ? (
           <ClientCheckIn
             taskId={String(p.taskId)}
@@ -1643,115 +1814,135 @@ function Profile({ name, onBack }: { name: string; onBack: () => void }) {
           </p>
         </div>
       ) : null}
-      {!p.links?.sheet ? (
+      {!p.links?.sheet && !dwy ? (
         <div className="rounded-2xl border border-dashed p-4 text-sm text-muted-foreground">
           No performance sheet is linked on their ClickUp record, so there are
-          no numbers to show. Add the Sheet Link field and this fills in on the
+          no outcomes to show. Add the Sheet Link field and this fills in on the
           next sync.
         </div>
       ) : (
-        <>
-          <section className="space-y-4">
-            <SectionTitle>
-              {perf.monthLabel ?? "This month"}, from their sheet
-            </SectionTitle>
-            {serviceModel(p.service).dwy ? (
-              <>
-                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-                  <StatTile
-                    label="Leads"
-                    value={num(m.leads)}
-                    sub={custom ? rv.label : `${num(l.leads)} last month`}
-                  />
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  Done with you: the client books their own appointments, so
-                  bookings, attendance and closes are not ours to report. Leads
-                  and cost per lead are the numbers we own, and they sit in the
-                  ad table below.
-                </p>
-              </>
-            ) : (
-              <div className="space-y-3">
-                <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
-                  <RangePicker
-                    value={range}
-                    onChange={setRange}
-                    months={months}
-                    earliest={firstDate(p)}
-                  />
-                  <span className="text-xs text-muted-foreground">
-                    {custom
-                      ? `${rv.label} · ${shortDay(rv.from)} to ${shortDay(rv.to)}`
-                      : (perf.monthLabel ?? "this month")}
-                    {custom && rv.cpl != null
-                      ? ` · $${rv.spend} spent, $${rv.cpl} per lead`
-                      : ""}
-                  </span>
-                </div>
-                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-                  <StatTile
-                    label={
-                      perf.leadsSource === "meta" ? "Leads (from ads)" : "Leads"
-                    }
-                    value={num(m.leads)}
-                    sub={
-                      perf.leadsSource === "meta"
-                        ? custom
-                          ? rv.label
-                          : `${num(l.leads)} last month · ${num(p.adLeads?.allTime)} since launch`
-                        : custom
-                          ? rv.label
-                          : `${num(l.leads)} last month`
-                    }
-                  />
-                  <StatTile
-                    label="Booked"
-                    value={num(m.booked)}
-                    sub={custom ? rv.label : `${num(l.booked)} last month`}
-                  />
-                  <StatTile
-                    label="Attended"
-                    value={num(m.shows)}
-                    sub={
-                      m.showRate != null
-                        ? `${m.showRate}% of decided`
-                        : "No outcome yet"
-                    }
-                  />
-                  <StatTile label="No show" value={num(m.noshows)} />
-                  <StatTile label="Quotes" value={num(m.quotes)} />
-                  <StatTile
-                    label="Closed"
-                    value={num(m.closes)}
-                    tone={num(m.closes) ? "txt-good" : undefined}
-                    sub={
-                      m.closeRate != null
-                        ? `${m.closeRate}% of attended`
-                        : undefined
-                    }
-                  />
-                </div>
-                <ProfileTrends p={p} from={rv.from} to={rv.to} />
+        <section className="space-y-4">
+          <SectionTitle>
+            {capital(per.label)}, {dwy ? "from their ads" : "from their sheet"}
+          </SectionTitle>
+          {dwy ? (
+            <>
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                <StatTile
+                  label="Leads (from ads)"
+                  value={num(m.leads)}
+                  sub={was("leads")}
+                />
+                <StatTile
+                  label="Spent"
+                  value={`$${Math.round(num(m.spend))}`}
+                  sub={
+                    l
+                      ? `$${Math.round(num(l.spend))} in ${per.prevLabel}`
+                      : undefined
+                  }
+                />
+                <StatTile
+                  label="Cost per lead"
+                  value={m.cpl != null ? `$${m.cpl}` : "-"}
+                  sub={
+                    l?.cpl != null ? `$${l.cpl} in ${per.prevLabel}` : undefined
+                  }
+                  className="col-span-2 sm:col-span-1"
+                />
               </div>
-            )}
-            {!serviceModel(p.service).dwy && (
+              <ProfileTrends
+                p={p}
+                from={per.from}
+                to={upTo(per)}
+                changes={changes}
+                adsOnly
+              />
               <p className="text-xs text-muted-foreground">
-                All time on this sheet: {num(all.leads)} leads ·{" "}
-                {num(all.booked)} booked · {num(all.shows)} attended ·{" "}
-                {num(all.closes)} closed
-                {perf.undated ? ` · ${perf.undated} rows have no date` : ""} ·
-                source: {perf.source}
+                Done with you: the client books their own appointments, so
+                bookings, attendance and closes are not ours to report. Leads
+                and cost per lead are the numbers we own.
               </p>
-            )}
-            {perf.staleReason ? (
-              <p className="callout-warn rounded-2xl border px-4 py-3 text-xs">
-                These numbers were last read on {shortDay(perf.staleAt)}.
-                Today's read failed, so you are looking at the last good copy
-                rather than a partial one. Reason: {perf.staleReason}
-              </p>
-            ) : null}
-          </section>
+            </>
+          ) : (
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+                <StatTile
+                  label={leadsFromAds ? "Leads (from ads)" : "Leads"}
+                  value={num(m.leads)}
+                  sub={was("leads")}
+                />
+                <StatTile
+                  label="Booked"
+                  value={num(m.booked)}
+                  sub={was("booked")}
+                />
+                <StatTile
+                  label="Attended"
+                  value={num(m.shows)}
+                  sub={
+                    m.showRate != null
+                      ? `${m.showRate}% of decided`
+                      : "No outcome yet"
+                  }
+                />
+                <StatTile
+                  label="No show"
+                  value={num(m.noshows)}
+                  sub={was("noshows")}
+                />
+                <StatTile
+                  label="Quotes"
+                  value={num(m.quotes)}
+                  sub={was("quotes")}
+                />
+                <StatTile
+                  label="Closed"
+                  value={num(m.closes)}
+                  tone={num(m.closes) ? "txt-good" : undefined}
+                  sub={
+                    m.closeRate != null
+                      ? `${m.closeRate}% of attended`
+                      : was("closes")
+                  }
+                />
+              </div>
+              {m.spend ? (
+                <p className="text-xs text-muted-foreground">
+                  ${Math.round(num(m.spend))} spent on their ads
+                  {m.cpl != null ? `, $${m.cpl} per lead` : ""}.
+                </p>
+              ) : null}
+              <ProfileTrends
+                p={p}
+                from={per.from}
+                to={upTo(per)}
+                changes={changes}
+              />
+            </div>
+          )}
+          {!dwy && (
+            <p className="text-xs text-muted-foreground">
+              All time on this sheet: {num(all.leads)} leads · {num(all.booked)}{" "}
+              booked · {num(all.shows)} attended · {num(all.closes)} closed
+              {perf.undated ? ` · ${perf.undated} rows have no date` : ""} ·
+              source: {perf.source}
+            </p>
+          )}
+          {perf.staleReason ? (
+            <p className="callout-warn rounded-2xl border px-4 py-3 text-xs">
+              These numbers were last read on {shortDay(perf.staleAt)}. Today's
+              read failed, so you are looking at the last good copy rather than
+              a partial one. Reason: {perf.staleReason}
+            </p>
+          ) : null}
+        </section>
+      )}
+
+      <ChangesList changes={changes} per={per} />
+
+      {p.links?.sheet ? (
+        <>
           <section
             className={`space-y-3 ${serviceModel(p.service).dwy ? "hidden" : ""}`}
           >
@@ -1815,17 +2006,17 @@ function Profile({ name, onBack }: { name: string; onBack: () => void }) {
               </>
             )}
           </section>
-          {(perf.byAd ?? []).length ? (
+          {byAd.length ? (
             <section className="space-y-3">
               <div>
                 <SectionTitle>
                   Which ad is producing the better leads
                 </SectionTitle>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  Last two months, per ad. Judge an ad on what its leads did,
-                  not on how many it produced. "No outcome" is the ad's rows
-                  nobody filled in, so a high number there means the comparison
-                  is not fair yet.
+                  {capital(per.label)}, per ad. Judge an ad on what its leads
+                  did, not on how many it produced. "No outcome" is the ad's
+                  rows nobody filled in, so a high number there means the
+                  comparison is not fair yet.
                 </p>
               </div>
               <div className="overflow-x-auto rounded-2xl border bg-card">
@@ -1846,7 +2037,7 @@ function Profile({ name, onBack }: { name: string; onBack: () => void }) {
                     </tr>
                   </thead>
                   <tbody className="divide-y">
-                    {(perf.byAd as Any[]).map(a => (
+                    {byAd.map(a => (
                       <tr key={a.ad}>
                         <Cell v={a.ad} />
                         <Cell v={a.leads} />
@@ -1880,7 +2071,7 @@ function Profile({ name, onBack }: { name: string; onBack: () => void }) {
             <LeadsByAd rows={perf.recent as Any[]} />
           ) : null}
         </>
-      )}
+      ) : null}
 
       {p.lost ? <LostLeads lost={p.lost as Any} /> : null}
       {p.provisional ? <Provisional pv={p.provisional as Any} /> : null}
@@ -1892,11 +2083,13 @@ function Profile({ name, onBack }: { name: string; onBack: () => void }) {
       ) : null}
 
       <section className="space-y-3">
-        <SectionTitle>Live campaigns, ad sets and ads</SectionTitle>
+        <SectionTitle>
+          Live campaigns, ad sets and ads, last 7 days
+        </SectionTitle>
         <AdTree ads={(p.ads ?? []) as Any[]} clientName={name} />
       </section>
 
-      <ReportSection p={p} />
+      <ReportSection p={p} per={per} fig={fig} />
 
       {p.profileText ? (
         <section className="space-y-3">
@@ -1944,8 +2137,27 @@ const GROUPS = [
 const isChurnedStage = (stage: string) =>
   /stop|cancel|churn|offboard|lost/i.test(stage ?? "");
 
+/** The last twelve months, newest first, for the list's month picker. */
+function lastMonths(today: string): string[] {
+  const out: string[] = [];
+  let d = `${today.slice(0, 7)}-01`;
+  for (let i = 0; i < 12; i++) {
+    out.push(d.slice(0, 7));
+    d = `${shiftDay(d, -1).slice(0, 7)}-01`;
+  }
+  return out;
+}
+
 export function ClientPerformancePage() {
   const data = useQuery(api.csm.performanceOverview, {});
+  // One reporting period for the list and every client opened from it.
+  const [period, setPeriod] = useState<PeriodKey>("month");
+  const per = useMemo(() => periodOf(period, kuwaitToday()), [period]);
+  // "This month" is the sheets' own month figures, already in the list.
+  const ranged = useQuery(
+    api.csm.performancePeriod,
+    period === "month" ? "skip" : { from: per.from, to: upTo(per) },
+  ) as Record<string, Any> | undefined;
   const [openClient, setOpenClient] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [group, setGroup] = useState<"active" | "onboarding" | "paused">(
@@ -1989,6 +2201,11 @@ export function ClientPerformancePage() {
     0,
   );
   const waiting = live.filter(c => (c.reportNudge as Any)?.url);
+  // The list's numbers for the period: the sheet's month figures for this
+  // month, the period query for anything else.
+  const periodLoading = period !== "month" && ranged === undefined;
+  const figuresOf = (c: Any): Any =>
+    period === "month" ? c.month : ranged?.[c.clientName];
 
   return (
     <div className="mx-auto w-full max-w-6xl space-y-6">
@@ -2030,7 +2247,12 @@ export function ClientPerformancePage() {
       ) : null}
 
       {openClient ? (
-        <Profile name={openClient} onBack={() => setOpenClient(null)} />
+        <Profile
+          name={openClient}
+          onBack={() => setOpenClient(null)}
+          period={period}
+          onPeriod={setPeriod}
+        />
       ) : (
         <>
           <div className="space-y-2">
@@ -2056,6 +2278,13 @@ export function ClientPerformancePage() {
             </p>
           </div>
 
+          <PeriodBar
+            per={per}
+            value={period}
+            onChange={setPeriod}
+            months={lastMonths(kuwaitToday())}
+          />
+
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4">
             <StatTile label="Clients" value={rows.length} />
             <StatTile
@@ -2065,8 +2294,12 @@ export function ClientPerformancePage() {
               sub="Across every sheet"
             />
             <StatTile
-              label="Closed this month"
-              value={rows.reduce((n, c) => n + num(c.month?.closes), 0)}
+              label={`Closed, ${per.label}`}
+              value={
+                periodLoading
+                  ? "…"
+                  : rows.reduce((n, c) => n + num(figuresOf(c)?.closes), 0)
+              }
               sub="What the client actually banked"
               className="col-span-2 sm:col-span-1"
             />
@@ -2087,6 +2320,9 @@ export function ClientPerformancePage() {
                   {chosen.label} clients
                 </h2>
                 <p className="mt-0.5 text-xs text-muted-foreground">
+                  {periodLoading
+                    ? `Loading ${per.label}…`
+                    : `Leads to closed are ${per.label}.`}{" "}
                   Biggest admin debt first: sorted by how many appointments are
                   missing an outcome.
                 </p>
@@ -2134,30 +2370,39 @@ export function ClientPerformancePage() {
                         ) : null}
                       </td>
                       <Cell v={displayLabel(c.stage)} muted />
-                      <Cell v={c.month?.leads ?? 0} />
                       <Cell
-                        v={
-                          serviceModel(c.service).dwy
-                            ? "-"
-                            : (c.month?.booked ?? 0)
-                        }
-                        muted={serviceModel(c.service).dwy}
+                        v={periodLoading ? "…" : (figuresOf(c)?.leads ?? 0)}
+                        muted={periodLoading}
                       />
                       <Cell
                         v={
                           serviceModel(c.service).dwy
                             ? "-"
-                            : (c.month?.shows ?? 0)
+                            : periodLoading
+                              ? "…"
+                              : (figuresOf(c)?.booked ?? 0)
                         }
-                        muted={serviceModel(c.service).dwy}
+                        muted={serviceModel(c.service).dwy || periodLoading}
                       />
                       <Cell
                         v={
                           serviceModel(c.service).dwy
                             ? "-"
-                            : (c.month?.closes ?? 0)
+                            : periodLoading
+                              ? "…"
+                              : (figuresOf(c)?.shows ?? 0)
                         }
-                        muted={serviceModel(c.service).dwy}
+                        muted={serviceModel(c.service).dwy || periodLoading}
+                      />
+                      <Cell
+                        v={
+                          serviceModel(c.service).dwy
+                            ? "-"
+                            : periodLoading
+                              ? "…"
+                              : (figuresOf(c)?.closes ?? 0)
+                        }
+                        muted={serviceModel(c.service).dwy || periodLoading}
                       />
                       <td className="px-3 py-2 text-sm tabular-nums">
                         {serviceModel(c.service).dwy ? (

@@ -1025,6 +1025,23 @@ function HotSheet({
 }
 
 /** A Convex error as the sentence the backend wrote. */
+/**
+ * The media buyer's changes since the last logged call, or the last two weeks
+ * when no call is logged: the newest eight. The card carries 90 days of them
+ * (the Client performance page shows any period).
+ */
+function sinceLastCall(c: Client): Client[] {
+  const since = c.lastCall
+    ? String(c.lastCall).slice(0, 10)
+    : new Date(Date.now() + 3 * 3_600_000 - 14 * 86_400_000)
+        .toISOString()
+        .slice(0, 10);
+  return ((c.changes ?? []) as Client[])
+    .filter(ch => String(ch.day) >= since)
+    .sort((a, b) => (b.at ?? 0) - (a.at ?? 0))
+    .slice(0, 8);
+}
+
 function kitErrorText(e: unknown): string {
   const data = (e as { data?: { message?: string } })?.data;
   if (data?.message) return data.message;
@@ -1500,12 +1517,12 @@ export function CsmPage({ section }: { section: Section }) {
                     ))}
                   </div>
                 )}
-                {c.changes.length > 0 && (
+                {sinceLastCall(c).length > 0 && (
                   <div className="rounded-xl bg-muted/40 p-4">
                     <div className="text-xs font-semibold">
                       Campaign changes since your last call
                     </div>
-                    {c.changes.map(
+                    {sinceLastCall(c).map(
                       (
                         ch: { action: string; day: string; evidence: string },
                         i: number,

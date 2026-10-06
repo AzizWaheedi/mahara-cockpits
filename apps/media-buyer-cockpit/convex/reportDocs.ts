@@ -1,4 +1,12 @@
 import { v } from "convex/values";
+import {
+  type AdDay,
+  type Appt,
+  byAdIn,
+  type Period,
+  periodNumbers,
+  periodOf,
+} from "../src/lib/reportPeriod";
 import { internal } from "./_generated/api";
 import { internalAction, internalQuery } from "./_generated/server";
 import { clientDataFor, normTight, readClientData } from "./clientData";
@@ -95,7 +103,9 @@ const LABELS: Record<Lang, Any> = {
       `${n} appointments on the sheet have no outcome filled in. Until they are marked attended or closed they count as nothing happened, both in this report and in how we optimise your budget.`,
     nothingUnfilled:
       "Every appointment on the sheet has an outcome. Thank you, this is what lets us optimise properly.",
-    vs: (a: number, b: number) => `${a} vs ${b} last month`,
+    vs: (a: number, b: number, prev?: string) =>
+      `${a} vs ${b} ${prev ? `in ${prev}` : "last month"}`,
+    before: (prev?: string) => (prev ? `in ${prev}` : "last month"),
   },
   ar: {
     s1: "ملخص الأداء",
@@ -134,11 +144,18 @@ const LABELS: Record<Lang, Any> = {
       `${n} موعد بالشيت ما فيهم نتيجة. طالما ما تحددون: حضر ولا لا، وتقفل ولا لا، تُحسب كأن ما صار فيها شي، بهذا التقرير وبطريقة تحسيننا لميزانيتك.`,
     nothingUnfilled:
       "كل المواعيد بالشيت فيها نتيجة. شكراً لك، هذا اللي يخلينا نحسّن بشكل صحيح.",
-    vs: (a: number, b: number) => `${a} مقابل ${b} الشهر الماضي`,
+    vs: (a: number, b: number, prev?: string, monthly?: boolean) =>
+      `${a} مقابل ${b} ${prev ? (monthly ? "الشهر اللي قبله" : "بالفترة اللي قبلها") : "الشهر الماضي"}`,
+    before: (prev?: string, monthly?: boolean) =>
+      prev
+        ? monthly
+          ? "الشهر اللي قبله"
+          : "الفترة اللي قبلها"
+        : "الشهر الماضي",
   },
 };
 
-const NARRATIVE_PROMPT = `You write monthly client reports for Mahara Media, a marketing agency for construction and design businesses in the Gulf. The reader is the client, a business owner, not a marketer.
+const NARRATIVE_PROMPT = `You write client reports, for a month or another period, for Mahara Media, a marketing agency for construction and design businesses in the Gulf. The reader is the client, a business owner, not a marketer.
 
 Rules:
 - Use only the numbers and constraints given. Invent nothing: no results, no dates, no promises, no benchmark claims.
@@ -203,6 +220,8 @@ function reportingPeriod(
   const m = nums(perf?.month);
   const l = nums(perf?.lastMonth);
   const a = nums(perf?.allTime);
+  // A period the CSM picked is reported as picked, empty or not.
+  if (perf?.period) return [m, l, String(perf.monthLabel ?? "")];
   if (!(m.leads ?? 0) && !(m.booked ?? 0) && (l.leads ?? 0) > 0)
     return [l, {}, String(perf?.lastMonthLabel ?? "")];
   if (!(m.leads ?? 0) && !(l.leads ?? 0) && (a.leads ?? 0) > 0)
@@ -258,11 +277,14 @@ function plainStory(
   const perf = profile?.performance ?? {};
   const [m, l, label] = reportingPeriod(perf);
   const cons = constraintsFor(profile);
+  const prev = perf.period ? perf.lastMonthLabel : undefined;
   if (language === "ar") {
-    const means = `هذا التقرير يغطي ${label}: ${m.leads ?? 0} استفسار، ${m.booked ?? 0} موعد محجوز، ${m.shows ?? 0} حضروا، ${m.closes ?? 0} تقفلت${(l.leads ?? 0) > 0 ? ` (الشهر الماضي: ${l.leads ?? 0} استفسار، ${l.booked ?? 0} موعد)` : ""}.`;
+    const before = LABELS.ar.before(prev, perf.periodMonthly);
+    const means = `هذا التقرير يغطي ${label}: ${m.leads ?? 0} استفسار، ${m.booked ?? 0} موعد محجوز، ${m.shows ?? 0} حضروا، ${m.closes ?? 0} تقفلت${(l.leads ?? 0) > 0 ? ` (${before}: ${l.leads ?? 0} استفسار، ${l.booked ?? 0} موعد)` : ""}.`;
     return { means, next: cons.map(c => c) };
   }
-  const means = `This report covers ${label}: ${m.leads ?? 0} enquiries, ${m.booked ?? 0} appointments booked, ${m.shows ?? 0} attended, ${m.closes ?? 0} closed${(l.leads ?? 0) > 0 ? ` (last month: ${l.leads ?? 0} enquiries, ${l.booked ?? 0} booked)` : ""}. The main constraint right now: ${cons[0]}.`;
+  const before = LABELS.en.before(prev);
+  const means = `This report covers ${label}: ${m.leads ?? 0} enquiries, ${m.booked ?? 0} appointments booked, ${m.shows ?? 0} attended, ${m.closes ?? 0} closed${(l.leads ?? 0) > 0 ? ` (${before}: ${l.leads ?? 0} enquiries, ${l.booked ?? 0} booked)` : ""}. The main constraint right now: ${cons[0]}.`;
   return { means, next: cons.map(c => c.charAt(0).toUpperCase() + c.slice(1)) };
 }
 
@@ -313,7 +335,12 @@ function blocksFor(
   const snap: string[][] = [L.snapcols];
   for (const [label, key] of L.rows as [string, string][]) {
     const noteCell = Object.keys(l).length
-      ? L.vs(m[key] ?? 0, l[key] ?? 0)
+      ? L.vs(
+          m[key] ?? 0,
+          l[key] ?? 0,
+          perf.period ? perf.lastMonthLabel : undefined,
+          perf.periodMonthly,
+        )
       : "";
     snap.push([label, String(m[key] ?? 0), noteCell]);
   }
@@ -826,9 +853,14 @@ function narrativePrompt(profile: Any, language: Lang, note?: string): string {
     NARRATIVE_PROMPT +
     JSON.stringify({
       client: profile?.clientName,
-      month: label,
-      thisMonth: period,
-      lastMonth: previous,
+      ...(perf.period
+        ? {
+            period: label,
+            thisPeriod: period,
+            previousPeriod: previous,
+            previousPeriodIs: perf.lastMonthLabel ?? "",
+          }
+        : { month: label, thisMonth: period, lastMonth: previous }),
       allTime: nums(perf.allTime),
       appointmentsWithNoOutcome: perf.staleCount,
       constraints: constraintsFor(profile),
@@ -847,6 +879,87 @@ function storyFromResult(
   return {
     means: data.means,
     next: Array.isArray(data.next) ? data.next.map(String) : [],
+  };
+}
+
+// --- A reporting period picked on the Client performance page ----------------------
+//
+// Aziz, 2026-10-06: "control the timeframe of the client reporting". The
+// request carries the period's first and last day and its name; the report
+// reads `month` and `lastMonth`, so the period and the one before it are put
+// in their place, from the same rows and rules as the page
+// (src/lib/reportPeriod.ts, shared with the client success cockpit).
+
+const AR_MONTHS = [
+  "يناير",
+  "فبراير",
+  "مارس",
+  "أبريل",
+  "مايو",
+  "يونيو",
+  "يوليو",
+  "أغسطس",
+  "سبتمبر",
+  "أكتوبر",
+  "نوفمبر",
+  "ديسمبر",
+];
+
+/** The period a request asked for, or none for a request made before periods. */
+export function requestedPeriod(r: Any): Period | undefined {
+  const iso = /^\d{4}-\d{2}-\d{2}$/;
+  const from = String(r?.from ?? "");
+  const to = String(r?.to ?? "");
+  if (!iso.test(from) || !iso.test(to) || from > to) return undefined;
+  const label = String(r?.month ?? "").trim();
+  if (/^all time$/i.test(label))
+    return { key: "all", from, to, label: "all time" };
+  if (from.endsWith("-01") && to.slice(0, 7) === from.slice(0, 7))
+    return { ...periodOf(from.slice(0, 7)), to };
+  const span = periodOf(`custom:${from}:${to}`);
+  return { ...span, label: label || span.label };
+}
+
+/** The period's name in the report's language. */
+function periodName(per: Period, language: Lang): string {
+  const cap = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);
+  if (language !== "ar") return cap(per.label);
+  if (per.month) {
+    const [y, m] = per.month.split("-").map(Number);
+    return `${AR_MONTHS[m - 1]} ${y}`;
+  }
+  return `من ${per.from} لين ${per.to}`;
+}
+
+/** The profile as of the period: its numbers where the report reads the month's. */
+export function profileForPeriod(
+  profile: Any,
+  per: Period,
+  language: Lang,
+): Any {
+  const perf = profile?.performance ?? {};
+  const appts = (perf.appointments ?? []) as Appt[];
+  const days = (profile?.adLeads?.daily ?? []) as AdDay[];
+  const inside = (d: unknown) => {
+    const day = String(d ?? "").slice(0, 10);
+    return day >= per.from && day <= per.to;
+  };
+  return {
+    ...profile,
+    performance: {
+      ...perf,
+      period: true,
+      periodMonthly: Boolean(per.month),
+      month: periodNumbers(appts, days, per.from, per.to),
+      lastMonth:
+        per.prevFrom && per.prevTo
+          ? periodNumbers(appts, days, per.prevFrom, per.prevTo)
+          : {},
+      monthLabel: periodName(per, language),
+      lastMonthLabel: per.prevLabel,
+      byAd: byAdIn(appts, per.from, per.to),
+      recent: ((perf.recent ?? []) as Any[]).filter(r => inside(r.added)),
+    },
   };
 }
 
@@ -870,11 +983,14 @@ export const drain = internalAction({
     const waiting: string[] = [];
     for (const r of pending) {
       try {
-        const profile = await bridge("csm", "profileFor", {
+        const stored = await bridge("csm", "profileFor", {
           clientName: r.clientName,
         });
-        if (!profile) throw new Error("no stored profile for this client yet");
+        if (!stored) throw new Error("no stored profile for this client yet");
         const language: Lang = r.language === "ar" ? "ar" : "en";
+        // The period picked on the page, when the request carries one.
+        const per = requestedPeriod(r);
+        const profile = per ? profileForPeriod(stored, per, language) : stored;
         const extras: string[] =
           Array.isArray(r.extras) && r.extras.length ? r.extras : EXTRAS;
         // The narrative: Hermes first, the plain diagnosis if he is late.
@@ -912,7 +1028,9 @@ export const drain = internalAction({
         let spend: Any;
         if (extras.includes("byAd")) {
           try {
-            const [since, until] = monthRange(perf, label);
+            const [since, until] = per
+              ? [per.from, per.to]
+              : monthRange(perf, label);
             spend = await ctx.runQuery(internal.reportDocs.monthSpend, {
               clientName: String(r.clientName),
               since,

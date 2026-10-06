@@ -66,6 +66,11 @@ same clientUpdate "$MB/src/lib/clientUpdate.ts" "apps/client-success-cockpit/src
 same projectionsView "apps/client-success-cockpit/src/lib/projectionsView.ts" "$MB/src/lib/projectionsView.ts"
 same ProjectionsKit "apps/client-success-cockpit/src/components/projections/ProjectionsKit.tsx" "$MB/src/components/projections/ProjectionsKit.tsx"
 
+# A client's reporting period (what a pick means, what it holds, what it is
+# compared with) is the same on the Client performance page and in the Google
+# Doc report the media buyer backend writes from it.
+same reportPeriod "apps/client-success-cockpit/src/lib/reportPeriod.ts" "$MB/src/lib/reportPeriod.ts"
+
 # The swipe file's backend is the same in the two Convex cockpits, bar the
 # role each one checks.
 same convex/foreplay.ts "$CD/convex/foreplay.ts" "$MB/convex/foreplay.ts"

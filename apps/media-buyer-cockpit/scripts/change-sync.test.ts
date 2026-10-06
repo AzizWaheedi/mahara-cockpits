@@ -278,7 +278,7 @@ describe("every change reaches the card", () => {
     expect(boardStatusAfter("ARCHIVED", "Live")).toBeUndefined();
   });
 
-  test("the CSM card lists the client's changes since the last call", () => {
+  test("the CSM card carries the client's last 90 days of changes", () => {
     const day = 86_400_000;
     const all = [
       {
@@ -306,6 +306,14 @@ describe("every change reaches the card", () => {
         at: NOW - day,
       },
       {
+        subject: "Ola|mahara|13\\9",
+        action: "Too old",
+        kind: "change",
+        evidence: "",
+        day: "2026-06-01",
+        at: NOW - 120 * day,
+      },
+      {
         subject: "Arcturus-Mahara-3\\9",
         action: "Budget to $38",
         kind: "change",
@@ -318,18 +326,13 @@ describe("every change reaches the card", () => {
       name: "Ola",
       campaigns: ["Ola|mahara|13\\9", "Ola relaunch"],
     };
-    // No call on record: the last two weeks, newest first.
+    // Newest first, the client's own only, nothing past 90 days.
     expect(changesForCard(all, ola, NOW).map(c => c.action)).toEqual([
       "Built a new campaign",
       "Budget to $38",
+      "Paused ad 2",
     ]);
-    // A call a month ago: everything since.
-    expect(
-      changesForCard(all, { ...ola, lastCallAt: NOW - 30 * day }, NOW),
-    ).toHaveLength(3);
-    // A call yesterday at noon: only what came after it.
-    expect(
-      changesForCard(all, { ...ola, lastCallAt: NOW - day / 2 }, NOW),
-    ).toHaveLength(0);
+    expect(changesForCard(all, ola, NOW, { days: 14 })).toHaveLength(2);
+    expect(changesForCard(all, ola, NOW, { max: 1 })).toHaveLength(1);
   });
 });

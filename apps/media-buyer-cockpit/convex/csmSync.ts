@@ -657,8 +657,9 @@ export const buildCsmSnapshot = internalAction({
       const clientCampaigns = campaigns.filter((c: { clientName?: string }) =>
         isClientOf(c.clientName, card),
       );
-      // "Campaign changes since your last call": since the last call when
-      // there was one, the last two weeks when not.
+      // The last 90 days of the media buyer's changes on this client. The
+      // touchpoint panel shows those since the last call; the client's page
+      // shows whatever reporting period the CSM picks.
       const changes = changesForCard(
         changeLog,
         {
@@ -666,9 +667,6 @@ export const buildCsmSnapshot = internalAction({
           campaigns: clientCampaigns.map(
             (c: { campaignName: string }) => c.campaignName,
           ),
-          lastCallAt: lastCall
-            ? Date.parse(`${lastCall}T00:00:00+03:00`)
-            : undefined,
         },
         Date.now(),
       );
@@ -981,9 +979,9 @@ export const recentChanges = internalQuery({
   args: {},
   returns: v.any(),
   handler: async (ctx): Promise<CardChange[]> => {
-    // The last 45 days, by index: this runs with every CSM sync, and a card
-    // shows at most eight.
-    const since = Date.now() - 45 * 86_400_000;
+    // The last 90 days, by index: this runs with every CSM sync, and a card
+    // carries at most forty.
+    const since = Date.now() - 90 * 86_400_000;
     const decisions = await ctx.db
       .query("decisions")
       .withIndex("by_day", q => q.gte("day", kuwaitDay(since)))

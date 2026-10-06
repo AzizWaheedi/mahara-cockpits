@@ -155,19 +155,20 @@ export type CardChange = {
 };
 
 /**
- * The changes one client's card shows: on any of the client's campaigns, or
- * filed under the client's own name (a build), since the last call when
- * there was one, or the last 14 days. Newest first.
+ * The changes one client's card carries: on any of the client's campaigns,
+ * or filed under the client's own name (a build), newest first. The card
+ * keeps 90 days; the client success cockpit shows the ones since the last
+ * call on the touchpoint panel and any period on the client's own page.
  */
 export function changesForCard(
   all: CardChange[],
-  client: { name: string; campaigns: string[]; lastCallAt?: number },
+  client: { name: string; campaigns: string[] },
   now: number,
-  max = 8,
+  { days = 90, max = 40 }: { days?: number; max?: number } = {},
 ): CardChange[] {
   const names = new Set(client.campaigns);
   const own = tight(client.name);
-  const since = client.lastCallAt ?? now - 14 * 86_400_000;
+  const since = now - days * 86_400_000;
   return all
     .filter(
       c => c.at >= since && (names.has(c.subject) || tight(c.subject) === own),
