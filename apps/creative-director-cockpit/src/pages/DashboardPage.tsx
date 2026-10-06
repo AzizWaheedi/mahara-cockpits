@@ -223,19 +223,43 @@ function Creative({ view }: { view: View }) {
   const { hash } = useLocation();
 
   // An old address (/work, /touchpoints) or a part's link lands on its part
-  // once everything above it has loaded: the scripting calendar arrives on
-  // its own and would push the part 3,000px down after the jump. The same
-  // subscription as the calendar's own, so it reads nothing extra. A jump,
-  // not a glide: a glide never runs in a tab opened in the background.
-  const calendar = useQuery(
-    api.creative.calendar,
-    view === "sod" ? {} : "skip",
-  );
+  // once everything above it has loaded: the scripting calendar and its
+  // "What to script next" arrive on their own and pushed the part 3,000px
+  // down after the jump. These are the same subscriptions the calendar
+  // holds, so nothing extra is read. A jump, not a glide: a glide never runs
+  // in a tab opened in the background.
+  const sod = view === "sod" ? {} : "skip";
+  const calendar = useQuery(api.creative.calendar, sod);
+  const queue = useQuery(api.creative.scriptQueue, sod);
   const ready =
-    snap !== undefined && (view !== "sod" || calendar !== undefined);
+    snap !== undefined &&
+    (view !== "sod" || (calendar !== undefined && queue !== undefined));
   useEffect(() => {
     if (view !== "sod" || !hash || !ready) return;
-    document.getElementById(hash.slice(1))?.scrollIntoView({ block: "start" });
+    const part = document.getElementById(hash.slice(1));
+    if (!part) return;
+    part.scrollIntoView({ block: "start" });
+    // Anything still arriving above it would push it down again: keep it
+    // in place for a few seconds, until the person scrolls themselves.
+    let theirs = false;
+    const mine = () => {
+      theirs = true;
+    };
+    window.addEventListener("wheel", mine, { passive: true });
+    window.addEventListener("touchstart", mine, { passive: true });
+    window.addEventListener("keydown", mine);
+    const follow = new ResizeObserver(() => {
+      if (!theirs) part.scrollIntoView({ block: "start" });
+    });
+    follow.observe(document.body);
+    const stop = setTimeout(() => follow.disconnect(), 4000);
+    return () => {
+      clearTimeout(stop);
+      follow.disconnect();
+      window.removeEventListener("wheel", mine);
+      window.removeEventListener("touchstart", mine);
+      window.removeEventListener("keydown", mine);
+    };
   }, [view, hash, ready]);
 
   if (snap === undefined) {
