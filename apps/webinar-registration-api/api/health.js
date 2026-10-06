@@ -3,6 +3,7 @@ import { CFG } from "../lib/ghl.js";
 import { schedule, scheduleIssues } from "../lib/schedule.js";
 export default function handler(req, res) {
   const issues = scheduleIssues();
+  res.setHeader("Cache-Control", "no-store");
   res.status(200).json({
     ok: true,
     ghlTokenSet: !!CFG.token,
@@ -18,5 +19,10 @@ export default function handler(req, res) {
     scheduleReady: issues.length === 0,
     scheduleIssues: issues,
     typeformSecretSet: !!process.env.TYPEFORM_SECRET,
+    durableIntakeConfigured: !!process.env.WEBINAR_SUPABASE_URL && !!process.env.WEBINAR_SUPABASE_SERVICE_KEY,
+    intakeEnabled: process.env.WEBINAR_INTAKE_ENABLED === "true",
+    dispatchEnabled: process.env.WEBINAR_DISPATCH_ENABLED === "true",
+    personalLinksConfigured: Buffer.byteLength(process.env.WEBINAR_LINK_SECRET || "") >= 32,
+    ghlHandoffConfigured: !!process.env.WEBINAR_GHL_HANDOFF_SECRET,
   });
 }

@@ -42,6 +42,10 @@ node scripts/webinar-schedule.mjs check
 node --test scripts/webinar-schedule.test.mjs
 ```
 
+## Prepare the service-only ledger
+
+`node apps/webinar-registration-api/scripts/prepare.mjs` prints a plan with no network calls. With the existing private database environment loaded, `--apply` saves the exact revision closed by default using saved CEO targets. It does not activate registrations, update providers or reschedule appointments. See [personal-link checkpoint](../../docs/WEBINAR-PERSONAL-LINKS-2026-09-27.md).
+
 ## Apply and verify the matching occurrence
 
 Generating files does **not** call providers. The implementing LLM must:
