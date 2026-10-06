@@ -840,21 +840,34 @@ export const performancePeriod = authenticatedQuery({
   handler: async (ctx, { from, to }) => {
     await assertRole(ctx, "csm");
     const iso = /^\d{4}-\d{2}-\d{2}$/;
-    if (!iso.test(from) || !iso.test(to)) return {};
+    if (!iso.test(from) || !iso.test(to)) return [];
     const scope = await allowedClients(ctx);
-    const out: Record<string, unknown> = {};
-    for (const r of await currentProfiles(ctx)) {
-      if (scope && !scope.has(r.clientName.toLowerCase())) continue;
-      out[r.clientName] = periodNumbers(
-        ((r.performance as Any)?.appointments ?? []) as Any[],
-        ((r.adLeads as Any)?.daily ?? []) as Any[],
-        from,
-        to,
-      );
-    }
-    return out;
+    return periodRows(
+      (await currentProfiles(ctx)).filter(
+        r => !scope || scope.has(r.clientName.toLowerCase()),
+      ),
+      from,
+      to,
+    );
   },
 });
+
+/**
+ * One row per client for the period. A list, not an object keyed by name:
+ * Convex field names must be ASCII, and many client names are Arabic (the
+ * first version failed on حول العمران للمقاولات, 2026-10-06).
+ */
+export function periodRows(rows: Any[], from: string, to: string): Any[] {
+  return rows.map(r => ({
+    clientName: r.clientName,
+    ...periodNumbers(
+      ((r.performance as Any)?.appointments ?? []) as Any[],
+      ((r.adLeads as Any)?.daily ?? []) as Any[],
+      from,
+      to,
+    ),
+  }));
+}
 
 /** The overview grid; `smoke` runs it without a user for the 15-minute check. */
 export async function buildPerformanceOverview(

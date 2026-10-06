@@ -2154,10 +2154,17 @@ export function ClientPerformancePage() {
   const [period, setPeriod] = useState<PeriodKey>("month");
   const per = useMemo(() => periodOf(period, kuwaitToday()), [period]);
   // "This month" is the sheets' own month figures, already in the list.
-  const ranged = useQuery(
+  const rangedRows = useQuery(
     api.csm.performancePeriod,
     period === "month" ? "skip" : { from: per.from, to: upTo(per) },
-  ) as Record<string, Any> | undefined;
+  ) as Any[] | undefined;
+  const ranged = useMemo(
+    () =>
+      rangedRows
+        ? new Map(rangedRows.map(r => [String(r.clientName), r]))
+        : undefined,
+    [rangedRows],
+  );
   const [openClient, setOpenClient] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [group, setGroup] = useState<"active" | "onboarding" | "paused">(
@@ -2205,7 +2212,7 @@ export function ClientPerformancePage() {
   // month, the period query for anything else.
   const periodLoading = period !== "month" && ranged === undefined;
   const figuresOf = (c: Any): Any =>
-    period === "month" ? c.month : ranged?.[c.clientName];
+    period === "month" ? c.month : ranged?.get(c.clientName);
 
   return (
     <div className="mx-auto w-full max-w-6xl space-y-6">
