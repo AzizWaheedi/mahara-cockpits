@@ -31,7 +31,7 @@ _KEEP_PREFIX = (
     # A Zoom host link carries the host's token as zak=, and a join link its
     # passcode as pwd=: a database or provider error can echo either back.
     # Zoom reads an escaped letter in a parameter's name (%7Aak=) as zak= too.
-    re.compile(r"(?i)(?<![a-z0-9_])((?:(?:z|%7a)(?:a|%61)(?:k|%6b)|pwd)=[\"']?)[^&\s\"'<>,)]+"),
+    re.compile(r"(?i)(?<![a-z0-9_])((?:(?:z|%7a|%5a)(?:a|%61|%41)(?:k|%6b|%4b)|pwd)=[\"']?)[^&\s\"'<>,)]+"),
 )
 _WHOLE = (
     re.compile(r"\b(?:sk|pk|rk)-[A-Za-z0-9_\-*.]{6,}"),

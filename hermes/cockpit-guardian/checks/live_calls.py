@@ -41,6 +41,18 @@ STATUS_ROWS = {
 LATER_ROWS = {
     "sales-desk": ("watch",),
 }
+# How old each status row may be before its part has stopped, in minutes:
+# the SQL watchdog's stale_min (20261004a cockpit_sales_watchdog, part 1).
+# The room worker's own row is run_worker's; the door's rows (sales-live) are
+# failure-only, written only when traffic comes, so they have no age limit
+# (m1 round 4, guardian-stale-host-check-reads-ok).
+STALE_MIN = {
+    ("sales-desk", "room-hosts"): 20,
+    ("sales-desk", "slack"): 10,
+    ("sales-desk", "waves"): 15,
+    ("sales-desk", "model"): 75,
+    ("sales-desk", "watch"): 10,
+}
 CALL_HOST = "call.maharamedia.com"
 ROOMS_RED_S = 90
 ROOMS_ALERT_MIN = 10
@@ -214,10 +226,14 @@ def run_worker(ctx: Context) -> Result:
         return not_deployed("The rooms worker's code is on the VPS but the rooms tables are not deployed yet.", evidence=ev)
     age = age_min(rows[0].get("at"), ctx.now)
     ev["age_s"] = None if age is None else int(age * 60)
-    if rows[0].get("ok") is False:
-        return fail(f"The rooms worker reports a failure: {clean(rows[0].get('detail'), 160)}", evidence=ev)
+    # The row's age first (m1 round 4, guardian-dead-worker-read-as-reporting-
+    # failure): an old row is a worker that stopped, whatever its last words
+    # said; only a fresh row that says ok false reports a failure now, as the
+    # SQL watchdog keeps is_failing to rows that are not stale.
     if age is None or age > ROOMS_ALERT_MIN:
         return fail(f"The rooms worker has not reported for {ago(age)}; new video rooms cannot be made.", evidence=ev)
+    if rows[0].get("ok") is False:
+        return fail(f"The rooms worker reports a failure: {clean(rows[0].get('detail'), 160)}", evidence=ev)
     if age * 60 > ROOMS_RED_S:
         return warn(f"The rooms worker last reported {int(age * 60)} s ago (red after {ROOMS_RED_S} s).", evidence=ev)
     return ok(f"The rooms worker reported {int(age * 60)} s ago.", evidence=ev)
@@ -246,8 +262,19 @@ def run_status_rows(ctx: Context) -> Result:
            if (w, j) in have and have[(w, j)].get("ok") is False]
     bad += [f"{w}/{j} ({clean(have[(w, j)].get('detail'), 80)})" for w, jobs in LATER_ROWS.items() for j in jobs
             if (w, j) in have and have[(w, j)].get("ok") is False]
-    if bad:
-        return fail(f"Live-calls parts report failures: {', '.join(bad)}.", evidence={"failing": bad, "missing": missing})
+    # A row older than its part's limit is a part that stopped (m1 round 4):
+    # the room host check's row three hours old is no "reports ok".
+    stale = []
+    for (w, j), limit in STALE_MIN.items():
+        if (w, j) not in have or (j not in watched.get(w, ()) and j not in LATER_ROWS.get(w, ())):
+            continue
+        age = age_min(have[(w, j)].get("at"), ctx.now)
+        if age is None or age > limit:
+            stale.append(f"{w}/{j} has not reported for {ago(age)} (limit {limit} min)")
+    if bad or stale:
+        parts = ([f"Live-calls parts report failures: {', '.join(bad)}."] if bad else []) + \
+                ([f"Live-calls parts have stopped reporting: {'; '.join(stale)}."] if stale else [])
+        return fail(" ".join(parts), evidence={"failing": bad, "stale": stale, "missing": missing})
     if len(missing) == sum(len(v) for v in watched.values()):
         return not_deployed("The live-calls tables exist but no part has reported yet (not deployed yet).")
     if missing:

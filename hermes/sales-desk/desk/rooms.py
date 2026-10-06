@@ -860,7 +860,11 @@ class Zoom:
             headers={"Authorization": f"Basic {basic}"}, form=b"", timeout=TOKEN_TIMEOUT, breaker=self.breaker)
         token = str((data or {}).get("access_token") or "") if isinstance(data, dict) else ""
         if not token:
-            raise ProviderError(401, "the Zoom app's keys were refused", where="zoom.us")
+            # A 200 with no token in it (an empty body, a gateway's page) is
+            # no answer about the keys (m1 round 4): unclear, so the last
+            # known state stays. A real refusal comes as Zoom's 400 or 401,
+            # which the sender raises with its own status.
+            raise ProviderError(0, "Zoom's token answer could not be read", where="zoom.us")
         self._token = token
         self._expires = self.send.clock() + float((data or {}).get("expires_in") or 3600)
         return token
@@ -1026,7 +1030,14 @@ class Google:
             breaker=self.breaker)
         token = str((data or {}).get("access_token") or "") if isinstance(data, dict) else ""
         if not token:
-            raise ProviderError(401, "Google refused the refresh token", where="oauth2.googleapis.com")
+            # A 200 with no token in it (an empty body, a gateway's HTML page)
+            # says nothing about the sign-in (m1 round 4,
+            # google-token-garbage-marks-meet-down-for-every-seat): unclear,
+            # as Zoom.user, Zoom.meetings and Google.calendars read garbage,
+            # so the host check keeps the last google_ok. A revoked sign-in
+            # comes as the token endpoint's 400 invalid_grant or 401, which
+            # the sender raises with its own status.
+            raise ProviderError(0, "Google's token answer could not be read", where="oauth2.googleapis.com")
         scope = (data or {}).get("scope")
         if isinstance(scope, str) and scope.strip():
             self.scopes = set(scope.split())
@@ -1092,7 +1103,14 @@ class Google:
         out = self.call("POST", f"calendars/{urllib.parse.quote(calendar, safe='')}/events",
                         query={"conferenceDataVersion": 1, "sendUpdates": "none"}, body=body, safe=True,
                         timeout=WRITE_TIMEOUT)
-        return out if isinstance(out, dict) else {}
+        if not isinstance(out, dict) or not out.get("id"):
+            # A 200 that is not the event (an empty body, a gateway's page):
+            # Google may or may not have made it (m1 round 4,
+            # meet-insert-garbage-polls-missing-event-fails-as-refused). Unclear,
+            # so start_meet reads it by its fixed id and inserts it again
+            # inside the Meet wait when it is not there.
+            raise ProviderError(0, "Google's answer to the room's event could not be read", where="www.googleapis.com")
+        return out
 
     def event(self, calendar: str, eid: str) -> dict[str, Any]:
         out = self.call("GET", f"calendars/{urllib.parse.quote(calendar, safe='')}/events/{urllib.parse.quote(eid, safe='')}")
@@ -1832,7 +1850,12 @@ class Worker:
                         self._pending_users = self.zoom.pending_emails()
                     status = "pending" if e in self._pending_users else "missing"
                 except ProviderError:
-                    status = "missing"
+                    # The pending list not read (a 503, a timeout, a page with
+                    # no list): whether the invite is pending is not known,
+                    # and not knowing is not missing (m1 round 4,
+                    # pending-list-blip-says-no-zoom-user). The last known
+                    # status stays; a room reads it as Zoom not answering.
+                    return None, None
             elif err.unclear or err.status == 429:
                 return None, None
             else:
@@ -2216,7 +2239,16 @@ class Worker:
     def _calendar_or_fail(self, room: dict[str, Any]) -> Optional[str]:
         assert self.google is not None
         try:
-            self.google.token()
+            try:
+                self.google.token()
+            except ProviderError as e:
+                # One answer that was no token (a blip in front of Google) is
+                # asked once more before the room fails, as Google.call does
+                # on a 401 (m1 round 4,
+                # google-token-garbage-fails-meet-room-as-sign-in-refused).
+                if e.timeup or e.down or not e.unclear:
+                    raise
+                self.google.token()
             if self.google.calendar_ok() is False:
                 self.fail(room, SAY["google_scope"], fault=True)
                 return None
@@ -2318,6 +2350,16 @@ class Worker:
                 except ProviderError as e:
                     if e.timeup:
                         self.pending.pop(rid, None)  # the next run reads it by its event id
+                    elif e.status in (404, 410) and not e.down and self.clock() < p.until:
+                        # The event is not there (an insert whose answer was
+                        # no event and never made it): inserted again inside
+                        # the Meet wait, as resume_meet does; its id is fixed,
+                        # so a second insert is safe (m1 round 4).
+                        self.pending.pop(rid, None)
+                        self.start_meet(p.room)
+                    elif e.status in (404, 410) and not e.down:
+                        self.pending.pop(rid, None)
+                        self.fail(p.room, SAY["meet_pending"], fault=True)
                     elif e.down or self.clock() >= p.until:
                         self.pending.pop(rid, None)
                         self.fail(p.room, SAY["google_down"] if e.down else SAY["meet_pending"] if e.unclear else
@@ -2829,7 +2871,11 @@ class Worker:
         for r in rows:
             rid = str(r["id"])
             mid = r.get("provider_meeting_id") or (self._made.get(rid) or {}).get("id")
-            if (r.get("provider") != "zoom" or not mid or r.get("lead_in_at") or r.get("purpose") == "booked"
+            # A room a lead reached is one whose join stands (m1 round 4,
+            # worker-leaves-taken-back-zoom-meeting-running): a join "That
+            # was not the lead" took back keeps its time in lead_in_at and is
+            # nobody, so that meeting is closed like any other empty one.
+            if (r.get("provider") != "zoom" or not mid or join_stands(r) or r.get("purpose") == "booked"
                     or not self.zoom):
                 # Never a room a lead reached, never a booked call's own
                 # meeting, and a Meet link cannot be stopped: the host link goes.
@@ -2847,7 +2893,7 @@ class Worker:
                                      "&provider_meeting_id=is.null"
                                      f"&ended_at=gte.{_q(iso(self.clock() - 3600))}&order=ended_at.desc&limit=20")
         rows = [r for r in rows if str(r["id"]) not in self._swept and str(r["id"]) not in self._to_close
-                and not r.get("lead_in_at") and r.get("purpose") != "booked"]
+                and not join_stands(r) and r.get("purpose") != "booked"]
         if not rows:
             return
         ids = [str(r["id"]) for r in rows]
