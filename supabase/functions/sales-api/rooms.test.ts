@@ -396,12 +396,15 @@ describe("the message service", () => {
     const w = setup({ rooms: { send: { whatsapp_text: true, whatsapp_template: false, email: false } } });
     let fail = true;
     // A refusal that is certain (HighLevel said no): the cascade goes on. A lost answer or a 5xx is not certain (stress_chaos_rooms).
-    w.knobs.text = () => (fail ? new ApiRefusal("HighLevel said 400: the number is not on WhatsApp", 400) : { id: "m-ok", state: "sent" });
+    // HighLevel's gateway page (its bare "Bad Request"), which passes; a 400 in
+    // HighLevel's words about the lead is final since m1 round 5
+    // (lead-specific-highlevel-400-said-as-retrying), so nothing is re-asked.
+    w.knobs.text = () => (fail ? new ApiRefusal("HighLevel said 400: Bad Request", 400) : { id: "m-ok", state: "sent" });
     const id = String((await w.make()).id);
     await w.workerOpens(id);
     await w.rooms.desk["room.event"]!(desk, { kind: "worker.ready", room_id: id, payload: {} });
     await w.flush();
-    expect(String(w.room(id).refusal)).toContain("the number is not on WhatsApp");
+    expect(String(w.room(id).refusal)).toContain("Bad Request");
     fail = false;
     w.clock.now += 61 * S;
     const t = await w.rooms.desk["room.event"]!(desk, { kind: "tick", payload: { room_ids: [id] } });

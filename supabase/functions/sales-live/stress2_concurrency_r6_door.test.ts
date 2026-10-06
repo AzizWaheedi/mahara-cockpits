@@ -50,7 +50,8 @@ function world(rooms: Row[], now: number) {
     now,
     rooms,
     people: [{ email: "setter@stress.invalid", name: "Sara Setter", name_ar: "سارة" }] as Row[],
-    settings: [] as Row[],
+    // The short link in use (rooms on, short_link on): with it off the door follows no code and records no open (m1 round 5).
+    settings: [{ key: "rooms", value: { enabled: true, short_link: true } }] as Row[],
     events: [] as Row[],
     pending: [] as Promise<unknown>[],
     async settle() {

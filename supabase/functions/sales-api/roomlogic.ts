@@ -800,6 +800,14 @@ export const LANE_COPY = {
     "Hi {first_name}, {old} would not let you in, sorry about that. Let's use {provider} instead: {link} I'm waiting for you there now.",
   moved_email_subject: "Our call moved to {provider}.",
   /**
+   * A new link after the lead waited at the last room's door and nobody let
+   * them in (m1 round 5, m1-journeys-r5-link-after-knock-says-tried-to-call):
+   * they came on time, so never "I just tried to call you".
+   */
+  knocked_new_link:
+    "Hi {first_name}, sorry nobody let you in to the {old} room just now. Here is a new link: {link} I'm waiting for you there now.",
+  knocked_email_subject: "A new link for our call.",
+  /**
    * The next link after the host deleted the room's Zoom meeting (m1 round
    * 3, zoom-deleted-replacement-words): the first link is dead, said once,
    * never the first message's opening again.
@@ -1453,15 +1461,18 @@ export function timers(room: RoomRow, ctx: RoomCtx): { reason: SweepReason; at: 
     }
     case "open": {
       // A video-link room's host wait never ends before the lead's ten
-      // minutes and their open grace once the link went (the sweep's R3, m1
-      // round 3); a handover keeps its taker wait.
+      // minutes and their open grace once they started (the sweep's R3, m1
+      // round 3): the link went, or it was left to the rep, who sends it
+      // or reads it out now (m1 round 5,
+      // m1-time-r5-final-refusal-ten-minutes-cut-by-host-wait). A handover
+      // keeps its taker wait.
       const hostDue = ms(room.host_by) ?? opened + hostWaitS(room.purpose, w) * S;
       const leadDue = ms(room.lead_by);
       const out: { reason: SweepReason; at: number }[] = [
         {
           reason: "host_by",
           at:
-            (room.purpose === "manual" || room.purpose === "fallback") && room.contact_id && room.link_sent_at && leadDue !== null
+            (room.purpose === "manual" || room.purpose === "fallback") && room.contact_id && leadDue !== null
               ? Math.max(hostDue, leadDue + w.open_grace * S)
               : hostDue,
         },
@@ -1894,6 +1905,25 @@ function graceCap(room: RoomRow, w: Waits): number | null {
   if (room.purpose === "booked") return ms(room.ends_at);
   const base = lastLinkAt(room) ?? ms(room.opened_at);
   return base === null ? null : base + (w.lead + w.open_grace) * S;
+}
+
+/**
+ * The sweep's R4 cap on an open's or a knock's grace (20261004a cross join
+ * c): graceCap, and never before the lead's ten minutes as they started
+ * plus one grace (m1 round 5,
+ * m1-time-r5-knock-grace-capped-at-open-for-link-left-to-rep: a link left
+ * to the rep starts them at the refusal, never at the open). Only for
+ * reading when the room closes: an open moves lead_by under graceCap
+ * alone, so lead_by never pushes its own cap on.
+ */
+export function sweepGraceCap(room: RoomRow, w: Waits): number | null {
+  const cap = graceCap(room, w);
+  // Only a link left to the rep (none went): a link that went keeps its own
+  // cap, so a lead_by moved by opens never pushes the cap on.
+  if ((room.purpose !== "manual" && room.purpose !== "fallback") || lastLinkAt(room) !== null) return cap;
+  const leadBy = ms(room.lead_by);
+  if (leadBy === null) return cap;
+  return cap === null ? leadBy + w.open_grace * S : Math.max(cap, leadBy + w.open_grace * S);
 }
 
 /** creating (or a row an older worker opened itself) → open: the deadlines, and the link asked for once. */
@@ -3044,17 +3074,24 @@ export function holdUntil(room: RoomRow, ctx: RoomCtx): number | null {
   if (room.state === "lead_in") return timers(room, ctx)[0]?.at ?? null;
   if (room.state === "requested" || room.state === "creating")
     return timers(room, ctx).find(t => t.reason === "fail")?.at ?? null;
+  // The room's close as the sweep reads it (m1 round 5,
+  // m1-time-r5-unsent-room-deadline-said-as-host-by): the earliest of R3
+  // (the host's wait) and R4 (the lead's ten minutes from lead_by, else
+  // from the link, the host's join or the open, raised to the link-retry
+  // hold), never host_by alone. R4 keeps the room past its time for an open
+  // or a knock in the last open_grace (capped by graceCap): the lead is
+  // held that long too.
+  const w = ctx.waits;
+  const cap = sweepGraceCap(room, w) ?? Number.POSITIVE_INFINITY;
+  const open = ms(room.last_open_at) ?? ms(room.first_open_at);
+  const knock = ms(room.lead_waiting_at);
+  const grace = (x: number | null) => (x === null ? Number.NEGATIVE_INFINITY : Math.min(x + w.open_grace * S, cap));
+  const due = timers(room, ctx)
+    .filter(x => x.reason === "host_by" || x.reason === "lead_by")
+    .map(x => (x.reason === "lead_by" ? Math.max(x.at, grace(open), grace(knock)) : x.at));
+  if (due.length) return Math.min(...due);
   const t = ms(room.lead_by) ?? ms(room.host_by);
-  if (t !== null) {
-    // The sweep keeps a room open past lead_by for an open or a knock in the
-    // last open_grace (R4, capped by graceCap): the lead is held that long too.
-    const w = ctx.waits;
-    const cap = graceCap(room, w) ?? Number.POSITIVE_INFINITY;
-    const open = ms(room.last_open_at) ?? ms(room.first_open_at);
-    const knock = ms(room.lead_waiting_at);
-    const grace = (x: number | null) => (x === null ? Number.NEGATIVE_INFINITY : Math.min(x + w.open_grace * S, cap));
-    return room.contact_id && ms(room.lead_by) !== null ? Math.max(t, grace(open), grace(knock)) : t;
-  }
+  if (t !== null) return t;
   const base = ms(room.requested_at) ?? ms(room.created_at);
   return base === null ? null : base + ctx.waits.fail * S;
 }
@@ -4425,6 +4462,17 @@ export interface RoomView {
    * everywhere else.
    */
   send_night: boolean;
+  /**
+   * The lanes the link failed on after it went (an email that bounced,
+   * Meta's late failure of a WhatsApp message), from the room's own
+   * late-failure lines (m1 round 5): the panel says what reached the lead by
+   * lane, never "sent by email" about an email that bounced.
+   */
+  link_failed: string[];
+  /** The lanes HighLevel still holds at pending (never handed on), from the room's pending line. */
+  link_held: string[];
+  /** Meta said the lead's number is not on WhatsApp (131026) for this room's link. */
+  link_no_whatsapp: boolean;
 }
 
 export const ROOM_VIEW_KEYS = [
@@ -4473,6 +4521,9 @@ export const ROOM_VIEW_KEYS = [
   "link_claimed_at",
   "rang_at",
   "send_night",
+  "link_failed",
+  "link_held",
+  "link_no_whatsapp",
 ] as const;
 
 /** The channels the link went on, from link_channels or the keys of link_message_ids. */
@@ -4499,6 +4550,7 @@ export function toRoomView(
     late_open_at?: unknown;
     rang_at?: unknown;
     send_night?: boolean;
+    lanes?: { failed: string[]; held: string[]; no_whatsapp: boolean } | null;
   },
 ): RoomView {
   const first = greetingName(opts.contact_first_name ?? row.contact_first_name, null);
@@ -4555,6 +4607,9 @@ export function toRoomView(
     link_claimed_at: isoOrNull(row.link_claimed_at),
     rang_at: row.state === "lead_in" && leadJoined(row) ? isoOrNull(opts.rang_at) : null,
     send_night: opts.send_night === true,
+    link_failed: (opts.lanes?.failed ?? []).filter(c => oneOf(LINK_CHANNELS, c)),
+    link_held: (opts.lanes?.held ?? []).filter(c => oneOf(LINK_CHANNELS, c)),
+    link_no_whatsapp: opts.lanes?.no_whatsapp === true,
   };
 }
 

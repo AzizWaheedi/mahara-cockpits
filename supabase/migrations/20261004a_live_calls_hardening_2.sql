@@ -18,8 +18,9 @@
 --             sweep's L1 never makes them Away for it.
 --   presence  a Zoom meeting the last host check saw live holds the host on
 --             a call for the check's 15 minutes from checked_at (the desk
---             now stores the meeting's own end in zoom_live_until, which
---             sales-api's zoom_busy reads); a closer's default room is never
+--             stores the moment it saw the meeting in zoom_live_until, and
+--             sales-api's zoom_busy reads it for two minutes after the
+--             check, m1 round 5); a closer's default room is never
 --             a Basic Zoom (it ends at 40 minutes, a demo is 60).
 --   sweep     S1 leaves out an intro the cockpit has marked (a rep's mark or
 --             the count's), and holds a room whose sibling for the same call
@@ -528,9 +529,9 @@ cross join lateral (
                      coalesce(cfg.rooms -> 'lengths_min', '{}'::jsonb), coalesce(ap.call_type, ''),
                      case when ap.call_type = 'demo' then 60 else 30 end))) as appt_now,
     -- A meeting the last host check saw live holds the host on a call until
-    -- the next check has looked again (its 10 minutes and 5 to spare), even
-    -- past the meeting's own end: zoom_live_until is that end now (stress2,
-    -- round 1), so a Zoom room is not refused for a meeting that ended.
+    -- the next check has looked again (its 10 minutes and 5 to spare):
+    -- zoom_live_until is the moment the check saw it (m1 round 5), and an
+    -- older check's scheduled end still counts while it is ahead.
     (coalesce(h.zoom_live_until > now(), false)
        or (h.zoom_live_until is not null and coalesce(h.checked_at > now() - interval '15 minutes', false)))
       and not mr.own_zoom as zoom_live,
@@ -768,7 +769,10 @@ begin
                   when 'handover' then w_handover
                   when 'standby' then w_standby_host
                   else w_fallback_host end),
-                case when x.purpose in ('manual', 'fallback') and x.contact_id is not null and x.link_sent_at is not null
+                -- The lead's ten minutes, once started: the link went, or it
+                -- was left to the rep (m1 round 5, final refusal: rooms.ts
+                -- startLeadWait sets lead_by with no link_sent_at).
+                case when x.purpose in ('manual', 'fallback') and x.contact_id is not null and x.lead_by is not null
                      then x.lead_by + w_grace end) as due) as d
        where x.state = 'open'
          and (x.purpose <> 'booked' or x.host_by is not null)
@@ -821,8 +825,15 @@ begin
        cross join lateral (
          select coalesce(case when x.purpose = 'booked' then x.ends_at
                               -- From the latest send of the link (stress2 round 5: a later
-                              -- channel's email promises its own ten minutes).
-                              else coalesce(greatest(x.link_sent_at, x.last_link_at), x.opened_at) + w_lead + w_grace end,
+                              -- channel's email promises its own ten minutes). A link
+                              -- left to the rep (none went) starts the lead's ten minutes
+                              -- at the refusal (m1 round 5, lead_by): never before them
+                              -- plus one grace. A link that went keeps its own cap, so
+                              -- lead_by moved by opens never pushes it on.
+                              else greatest(coalesce(greatest(x.link_sent_at, x.last_link_at), x.opened_at) + w_lead + w_grace,
+                                            case when x.purpose in ('manual', 'fallback') and x.link_sent_at is null
+                                                      and x.last_link_at is null
+                                                 then x.lead_by + w_grace end) end,
                          'infinity'::timestamptz) as cap) as c
        cross join lateral (
          select greatest(coalesce(x.lead_by, x.link_sent_at + w_lead, x.host_in_at + w_lead,
@@ -2323,14 +2334,20 @@ begin
            (select max(b.posted_at) from public.cockpit_sales_alerts as b where b.post_status between 200 and 299),
            '-infinity'::timestamptz);
 
+  -- Open alerts with no webhook reach nobody (m1 round 5,
+  -- m1-numbers-r5-team-page-watchdog-green-while-recorded-only): the row is
+  -- red and says what to add, never ok beside alerts nobody is told of.
   insert into public.cockpit_sales_worker_status (worker, job, ok, detail, at)
-  values ('sales-api', 'watchdog', unanswered = 0 and refused = 0,
+  values ('sales-api', 'watchdog', unanswered = 0 and refused = 0 and not (hook is null and open_n > 0),
           case when unanswered > 0
                then format('pg_net did not answer %s Slack %s in 3 minutes, so alerts may not reach #sales-alerts. Run select %s.worker_restart(); in the SQL editor. %s open alerts.',
                            unanswered, case when unanswered = 1 then 'post' else 'posts' end, 'net', open_n)
                when refused > 0
                then format('Slack refused the #sales-alerts webhook (it answered %s to %s %s), so alerts are not reaching the channel. Put a working incoming webhook for #sales-alerts in the vault as sales_alerts_slack_webhook. %s open alerts.',
                            refused_status, refused, case when refused = 1 then 'alert' else 'alerts' end, open_n)
+               when hook is null and open_n > 0
+               then format('%s open alerts, %s new, %s posted. Recorded only: the vault has no sales_alerts_slack_webhook, so they reach nobody. Put a working incoming webhook for #sales-alerts in the vault as sales_alerts_slack_webhook.',
+                           open_n, raised, posted)
                else format('%s open alerts, %s new, %s posted.%s', open_n, raised, posted, coalesce(' ' || note, '')) end, t)
   on conflict (worker, job) do update
      set ok = excluded.ok, detail = excluded.detail, at = excluded.at;
@@ -2841,14 +2858,18 @@ begin
   if cardinality(changed) = 0 then
     return new;
   end if;
+  -- A write is someone's only when it stamps itself (an insert, or a new
+  -- updated_by or updated_at): an unstamped write keeps the last writer's
+  -- name in updated_by, which is never its author (m1 round 5,
+  -- m1-numbers-r5-kill-switch-audit-names-earlier-manager).
+  stamped := true;
+  if tg_op = 'UPDATE' then
+    stamped := new.updated_by is distinct from old.updated_by or new.updated_at is distinct from old.updated_at;
+  end if;
   if cardinality(widened) > 0 then
     manager := exists (select 1 from public.cockpit_sales_people as p
                         where lower(p.email) = lower(btrim(coalesce(new.updated_by, '')))
                           and p.role = 'manager' and p.active);
-    stamped := true;
-    if tg_op = 'UPDATE' then
-      stamped := new.updated_by is distinct from old.updated_by or new.updated_at is distinct from old.updated_at;
-    end if;
     if not manager or not stamped then
       raise exception using errcode = '42501',
         message = format('Only a sales manager turns on or widens %s: write it with updated_by set to the manager''s email and updated_at to now().',
@@ -2858,9 +2879,12 @@ begin
   end if;
   insert into public.cockpit_audit_log (action, entity_type, entity_id, actor_email, source_app, source_system, before, after, metadata)
   values ('settings.switch', 'cockpit_sales_settings', new.key,
-          case when coalesce(new.updated_by, '') ~ '^[^@\s]+@[^@\s]+$' then lower(new.updated_by) end,
+          case when stamped and coalesce(new.updated_by, '') ~ '^[^@\s]+@[^@\s]+$' then lower(new.updated_by) end,
           'sales', 'database', before_j, after_j,
-          jsonb_build_object('by', new.updated_by, 'changed', to_jsonb(changed), 'turned_on', to_jsonb(widened)));
+          jsonb_build_object('by', case when stamped then new.updated_by end, 'stamped', stamped,
+                             'session_user', session_user,
+                             'role', nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'role',
+                             'changed', to_jsonb(changed), 'turned_on', to_jsonb(widened)));
   return new;
 end;
 $$;

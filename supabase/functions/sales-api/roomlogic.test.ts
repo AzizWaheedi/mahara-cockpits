@@ -812,8 +812,11 @@ describe("roomHolds", () => {
     expect(roomHolds(r, T0 + 60 * S, ctx)).toBe(false);
     const o = step(opened(), { kind: "link_sent" }, T0 + 10 * S);
     expect(holdUntil(o, ctx)).toBe(Date.parse(o.lead_by as string));
+    // With no lead_by, the room closes when the sweep's R4 says (the link + the
+    // lead's ten minutes), never at host_by (m1 round 5,
+    // m1-time-r5-unsent-room-deadline-said-as-host-by).
     const noLead = { ...o, lead_by: null };
-    expect(holdUntil(noLead, ctx)).toBe(Date.parse(o.host_by as string));
+    expect(holdUntil(noLead, ctx)).toBe(Date.parse(o.link_sent_at as string) + ctx.waits.lead * S);
   });
 
   test("a lead on the video call stays held until the no-end-signal time; finals and standby hold nobody", () => {

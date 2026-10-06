@@ -35,7 +35,8 @@ class AbortErr extends Error {
 class World {
   rooms: Row[] = [];
   people: Row[] = [{ email: "setter@maharamedia.com", name: "Sara Al Ali", name_ar: "سارة العلي" }];
-  settings: Row[] = [{ key: "rooms", value: { fallback: { ended_page_whatsapp: "+965 9005 4963" } } }];
+  // The short link in use (rooms on, short_link on): with it off the door follows no code and records no open (m1 round 5).
+  settings: Row[] = [{ key: "rooms", value: { enabled: true, short_link: true, fallback: { ended_page_whatsapp: "+965 9005 4963" } } }];
   events: Row[] = [];
   status = new Map<string, Row>();
   /** cockpit_sales_alerts as cockpit_sales_alert_set leaves them: key -> open or resolved. */

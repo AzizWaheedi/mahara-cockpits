@@ -23,6 +23,7 @@ import {
   adoptRefusal,
   type Applied,
   COUNT_STUCK_S,
+  LINK_CHANNELS,
   LINK_RETRY_S,
   linkMayHaveGone,
   linkRefusalFinal,
@@ -237,6 +238,15 @@ export function hungSend(error: string): boolean {
   return /did not answer within|said 5(?:04|22|24)\b|timed? ?out|error sending request|connection (?:reset|closed)|fetch failed|socket hang up/i.test(error);
 }
 
+/** A completed call this long (s) is a talk, never a voicemail greeting (closeForPhoneCall). */
+const ANSWERED_CALL_S = 60;
+
+/** Saved outcomes that only a call someone answered gives (the dialer's held, moved or ruled-out call). */
+const ANSWERED_OUTCOMES = ["showed", "rescheduled", "disqualified", "booked"];
+
+/** How long a Zoom meeting the host check saw live refuses the host's Zoom rooms here (m1 round 5). */
+const ZOOM_SEEN_FRESH_MS = 2 * 60_000;
+
 /** The room source's WhatsApp health reads this far back while the template lane is off (m1 round 1). */
 const ROOM_HEALTH_HOUR_MS = 60 * 60_000;
 
@@ -296,9 +306,18 @@ export function passingFailure(why: unknown): boolean {
   // (the room's link goes as the rep, beside the rep's own sends from
   // another tab): it passes within minutes (m1 round 3b,
   // sender-ceiling-from-other-tab-said-final).
-  return /HighLevel said (429|401|403|400|422)\b|too many requests|rate.?limit|insufficient (balance|funds|credit)|wallet|version header|messages in ten minutes from you/i.test(
-    String(why ?? ""),
-  );
+  const s = String(why ?? "");
+  if (/HighLevel said (429|401|403)\b|too many requests|rate.?limit|insufficient (balance|funds|credit)|wallet|version header|messages in ten minutes from you/i.test(s))
+    return true;
+  // Only the gateway's own 400 and 422 pages (no words, its "Bad Request",
+  // an HTML page): a 400 in HighLevel's words about this lead ("The email
+  // address of this contact is not valid", "Contact not found") never
+  // passes, so it is said as final with the read-out, never "tried again in
+  // a minute" for ten minutes (m1 round 5, lead-specific-highlevel-400-said-as-retrying).
+  const page = /HighLevel said (?:400|422)\b:?\s*([^).]*)/i.exec(s);
+  if (!page) return false;
+  const rest = (page[1] ?? "").trim();
+  return rest === "" || rest.startsWith("<") || /^(bad request|unprocessable (entity|content))$/i.test(rest);
 }
 
 /**
@@ -537,7 +556,9 @@ export const ROOMS_COPY = {
   /** room.create past the per-seat cap. */
   room_flood_seat: "You have asked for many video rooms in a short time, so no new one was made. Wait a few minutes, or call the lead on the phone.",
   /** One lead is never flooded with call links (final review, room-link-loop-floods-lead). */
-  link_flood: "This lead has had three call links this hour, so no new one went. Read the code out on the phone.",
+  link_flood: "This lead has had three call links this hour, so no new one went.",
+  /** The same with the short link on, whose code can be read out (m1 round 5: with it off there is no code to read). */
+  link_flood_code: "This lead has had three call links this hour, so no new one went. Read the code out on the phone.",
   /** room.create when the lead's booked demos cannot be read (m1 round 3b). */
   demos_unread: "The lead's booked calls could not be read, so no room was made. Try again in a minute, or call them.",
   /** room.create for a lead who has had three call links this hour (stress2, round 2). */
@@ -555,6 +576,9 @@ export const ROOMS_COPY = {
   email_on_its_way: "The email is still on its way. Check the conversation in a minute before sending it again.",
   /** Also send by email when HighLevel did not answer before anything went (stress2 round 4). */
   email_not_yet: "HighLevel did not answer, so the email has not gone. Press it again in a minute.",
+  email_unchecked: "Not sent yet: the cockpit could not check the room. Press it again in a minute.",
+  /** The room closed because the host rang the lead after the link and they talked (m1 round 5). */
+  on_phone_answered: "Closed: you spoke with the lead on the phone, so the room stopped waiting for them.",
   /** The timeline line when a seat's empty standby room is ended for a lead's room. */
   standby_for_lead: "Your standby room was closed so you could send a lead a video link. Press Get my room on the strip after the call.",
   /** I can't let them in, while the host cannot use the other provider: the room stays open (stress2, round 1). */
@@ -701,6 +725,9 @@ export const EVENT_TEXT = {
   /** The bounce, for a lead with do-not-disturb on WhatsApp in HighLevel. */
   link_bounced_dnd: "The email bounced, and the lead asked not to be contacted on WhatsApp. Read the link out.",
   link_bounced_whatsapp: "The email bounced, so the link went on WhatsApp.",
+  /** The bounce read while HighLevel did not answer for the lead's contact (m1 round 5): WhatsApp is tried the next minute. */
+  link_bounced_contact_unread:
+    "The email came back undelivered. HighLevel did not answer for the lead's contact, so WhatsApp is tried in a minute. Read the link out if you reach them.",
   /** The link that went in place of a failed one failed too (m1 round 2, link-on-both-lanes-never-read-again). */
   link_backup_email_failed: "The email bounced too, so neither way reached the lead. Read the link out.",
   link_backup_text_failed: "WhatsApp failed the link too, so neither way reached the lead. Read the link out.",
@@ -962,7 +989,7 @@ export function leadText(
    * round 1, stale-miss-just-now): never "I tried to call you just now", so
    * the room's own words go (the lead page's).
    */
-  o: { replaces?: string | null; stale?: boolean; deadLink?: string | null } = {},
+  o: { replaces?: string | null; stale?: boolean; deadLink?: string | null; knocked?: string | null } = {},
 ): { subject: string | null; body: string } {
   const L = ROOM_COPY.lead_en;
   const vars = { first_name: v.first_name || "there", rep: v.rep, link: v.link, provider: room.provider === "zoom" ? "Zoom" : "Meet" };
@@ -980,6 +1007,14 @@ export function leadText(
     const line = fill(LANE_COPY.moved_provider, { ...vars, old: o.replaces === "zoom" ? "Zoom" : "Meet" });
     if (channel === "whatsapp_text") return { subject: null, body: line };
     return { subject: fill(LANE_COPY.moved_email_subject, vars), body: `${line}\n\n${fill(L.fallback_email_sign, vars)}` };
+  }
+  if (o.knocked && room.purpose === "fallback") {
+    // The lead waited at the last room's door and nobody let them in, and
+    // nobody has called them since (m1 round 5): a new link with a sorry,
+    // never the missed-call words.
+    const line = fill(LANE_COPY.knocked_new_link, { ...vars, old: o.knocked === "zoom" ? "Zoom" : "Meet" });
+    if (channel === "whatsapp_text") return { subject: null, body: line };
+    return { subject: LANE_COPY.knocked_email_subject, body: `${line}\n\n${fill(L.fallback_email_sign, vars)}` };
   }
   if (room.purpose === "fallback" && !o.stale) {
     const line = fill(room.appointment_id ? L.fallback_booked : L.fallback_unbooked, vars);
@@ -1086,8 +1121,13 @@ export function makeRooms(deps: RoomDeps): Rooms {
     const row = (await io.db(`cockpit_sales_room_hosts?email=eq.${enc(email)}&select=*`))[0] ?? null;
     if (!row) return { facts: null, row: null };
     const until = ms(row.zoom_live_until);
-    let live = until !== null && until > now;
     const checked = ms(row.checked_at);
+    // A meeting the host check saw live, for ZOOM_SEEN_FRESH_MS after that
+    // check (m1 round 5, zoom-busy-held-to-scheduled-end): never until the
+    // meeting's scheduled end, which an older check stored and most
+    // meetings never reach. The room worker reads Zoom's live list itself
+    // at the create, so a meeting still running is refused there.
+    let live = until !== null && checked !== null && now - checked <= ZOOM_SEEN_FRESH_MS && until >= checked - ZOOM_SEEN_FRESH_MS;
     if (live && checked !== null) {
       // The host check read the live meeting while one of the host's own
       // cockpit Zoom rooms was open, and that room has closed since (stress2
@@ -1181,7 +1221,7 @@ export function makeRooms(deps: RoomDeps): Rooms {
     }
   }
   async function views(rows: RoomRow[], setting: RoomsSetting): Promise<Row[]> {
-    const [starts, late, rang] = await Promise.all([startsOf(rows), lateOpens(rows), rangSince(rows)]);
+    const [starts, late, rang, lanes] = await Promise.all([startsOf(rows), lateOpens(rows), rangSince(rows), laneFacts(rows)]);
     return rows.map(
       r =>
         toRoomView(r, {
@@ -1189,8 +1229,44 @@ export function makeRooms(deps: RoomDeps): Rooms {
           starts_at: r.appointment_id ? starts.get(r.appointment_id) : null,
           late_open_at: late.get(r.id) ?? null,
           rang_at: rang.get(r.id) ?? null,
+          lanes: lanes.get(r.id) ?? null,
         }) as unknown as Row,
     );
+  }
+
+  /**
+   * Which lanes the link failed on after it went, and which HighLevel still
+   * holds (m1 round 5), from the room's own lines: each lane's late failure
+   * (link.failed_late:{room}:{lane}; "neither" names the lane before it too)
+   * and the pending line (link.pending:{room}). Only rooms whose link was
+   * doubted (link_unconfirmed_at). Not readable: nothing known, as before.
+   */
+  async function laneFacts(rows: RoomRow[]): Promise<Map<string, { failed: string[]; held: string[]; no_whatsapp: boolean }>> {
+    const out = new Map<string, { failed: string[]; held: string[]; no_whatsapp: boolean }>();
+    const ids = rows.filter(r => r.link_unconfirmed_at && r.contact_id).map(r => r.id);
+    if (!ids.length) return out;
+    const lines = await io
+      .db(`${EVENTS}?room_id=in.(${ids.map(enc).join(",")})&kind=in.(link.failed_late,link.unconfirmed)&select=room_id,kind,dedupe_key,detail&limit=200`)
+      .catch(() => [] as Row[]);
+    for (const e of lines) {
+      const id = String(e.room_id ?? "");
+      const key = String(e.dedupe_key ?? "");
+      const d = obj(e.detail);
+      const f = out.get(id) ?? { failed: [] as string[], held: [] as string[], no_whatsapp: false };
+      const add = (list: string[], lane: unknown) => {
+        const l = String(lane ?? "");
+        if ((LINK_CHANNELS as readonly string[]).includes(l) && !list.includes(l)) list.push(l);
+      };
+      if (e.kind === "link.failed_late" && key.startsWith(`link.failed_late:${id}:`)) {
+        const lane = key.slice(`link.failed_late:${id}:`.length);
+        add(f.failed, lane);
+        if (d.neither === true) add(f.failed, d.after);
+        if (lane.startsWith("whatsapp") && /\b131026\b|not (?:a )?(?:valid )?whatsapp|undeliverable|incapable of receiving/i.test(String(d.why ?? "")))
+          f.no_whatsapp = true;
+      } else if (e.kind === "link.unconfirmed" && key === `link.pending:${id}`) add(f.held, d.channel ?? "whatsapp_text");
+      out.set(id, f);
+    }
+    return out;
   }
   async function view(r: RoomRow, setting: RoomsSetting): Promise<Row> {
     return (await views([r], setting))[0] as Row;
@@ -2006,7 +2082,7 @@ export function makeRooms(deps: RoomDeps): Rooms {
 
   async function roomCreate(who: Who, b: Row): Promise<Row> {
     const requestId = await seatRequestId(who, b.request_id);
-    const host = lower(who.email);
+    let host = lower(who.email);
     const { rooms: setting, live } = await roomsAndLive();
     const purpose = String(b.purpose ?? "");
     const contactId = cleanText(b.contact_id, 80) || null;
@@ -2051,6 +2127,13 @@ export function makeRooms(deps: RoomDeps): Rooms {
     // Automatic mode (the dialer's ten-second strip) only while
     // rooms.fallback.auto_on_miss is on (Milestone 1: the rep presses).
     if (trigger === "auto" && !setting.fallback.auto_on_miss) throw plain(ROOMS_COPY.auto_off, 409, "disabled");
+    // "Use Meet" / "Try Zoom" naming a room: read before the ask is built,
+    // because the new room is that room's continuation, on its host's seat
+    // (m1 round 5, m1-security-r5-manager-use-other-takes-setters-lead): a
+    // manager's press keeps the room the rep's, as replacementAsk does for
+    // "I can't let them in", never moves the lead to the manager's meeting.
+    const named = b.replaces == null ? null : await roomToReplace(who, b, contactId, purpose, b.provider);
+    if (named) host = lower(named.host_email);
     const ask = {
       who,
       host,
@@ -2072,15 +2155,27 @@ export function makeRooms(deps: RoomDeps): Rooms {
     // room left out of "the lead already has a room", as "I can't let them
     // in" does; the old room is cancelled only when the new one will be
     // made, so a refusal leaves the link the lead holds leading somewhere.
-    const named = b.replaces == null ? null : await roomToReplace(who, b, contactId, purpose, b.provider);
     // A room that is final already needs no closing: the press is a retry
     // of it (Try {other} on a failed room), which may keep its press's day.
+    // Only a room that failed is retried (m1 round 5,
+    // m1-conc-r5-use-meet-on-room-closed-by-other-tab-sends-new-link): a
+    // room closed since the panel read it (We are on the phone or End room
+    // in the other tab, the sweep) is answered with how it closed, and no
+    // room is made, so no link reaches a lead who is on the phone.
     const replaced = named && !isFinal(named.state) ? named : null;
     const retryOf = named && isFinal(named.state) ? named : null;
+    if (retryOf && !retryable(retryOf)) {
+      if (!(await replacedByPress(retryOf))) throw plain(closedSentence(retryOf, io.now()), 409, "stale");
+      const twin = await pressTwin(retryOf, ask);
+      if (twin) return { room: await view(twin, setting) };
+    }
     if (replaced) {
       const no = await createCheck({ ...ask, replaces: replaced.id });
       if (no) throw asRefusal(no);
-      await cancelReplaced(who, replaced, b.replaces_version, setting);
+      const closed = await cancelReplaced(who, replaced, b.replaces_version, setting);
+      if (closed && !(await replacedByPress(closed))) throw plain(closedSentence(closed, io.now()), 409, "stale");
+      const twin = closed ? await pressTwin(closed, ask) : null;
+      if (twin) return { room: await view(twin, setting) };
     }
     let made = await createRoom(replaced ? { ...ask, replaces: replaced.id } : retryOf ? { ...ask, retryOf } : ask);
     // The seat's only open room is its own empty standby room (an Available
@@ -2114,8 +2209,54 @@ export function makeRooms(deps: RoomDeps): Rooms {
     return old;
   }
 
-  /** The replaced room's cancel, with its line, audit row and effects (the worker closes its meeting). */
-  async function cancelReplaced(who: Who, old: RoomRow, seen: unknown, setting: RoomsSetting): Promise<void> {
+  /**
+   * A final room "Use {other}" may follow: one that failed (the worker or
+   * the provider could not make it, or Zoom deleted its meeting before
+   * anyone joined), or one "I can't let them in" closed whose replacement
+   * was not made (the panel's Try {other} on it).
+   */
+  function retryable(room: RoomRow): boolean {
+    if (room.state === "failed" || room.result === "failed") return true;
+    if (room.end_reason === "meeting_deleted" && !leadJoined(room) && room.result !== "joined") return true;
+    return room.state === "cancelled" && room.result === "admit_blocked";
+  }
+
+  /**
+   * A room another "Use {other}" press closed in its place (the same press
+   * from two tabs, or pressed twice): the create goes on, and the request
+   * id or the one-room-per-lead rule answers it with that press's room. A
+   * cancel whose line is not written yet is read as that press's too.
+   */
+  async function replacedByPress(room: RoomRow): Promise<boolean> {
+    if (room.state !== "cancelled" || room.result !== "cancelled") return false;
+    const line = (await io.db(`${EVENTS}?dedupe_key=eq.${enc(`room.end:${room.id}`)}&select=detail&limit=1`).catch(() => null))?.[0];
+    return !line || obj(line.detail).replaced === true;
+  }
+
+  /**
+   * The room another "Use {other}" press made in place of `closed` (the same
+   * press from another tab): this host's live room for the lead on the
+   * provider asked, made since. Not readable: none (the create goes on, and
+   * one room per lead holds).
+   */
+  async function pressTwin(closed: RoomRow, ask: CreateAsk): Promise<RoomRow | null> {
+    if (!ask.contact_id) return null;
+    const rows = await io
+      .db(
+        `${ROOMS}?contact_id=eq.${enc(ask.contact_id)}&host_email=eq.${enc(ask.host)}&provider=eq.${enc(String(ask.provider))}&state=in.(${LIVE_STATES})&requested_at=gte.${enc(String(closed.requested_at ?? isoAt(0)))}&select=*&order=requested_at.desc&limit=1`,
+      )
+      .catch(() => [] as Row[]);
+    const twin = rows[0] as unknown as RoomRow | undefined;
+    return twin && twin.id !== closed.id ? twin : null;
+  }
+
+  /**
+   * The replaced room's cancel, with its line, audit row and effects (the
+   * worker closes its meeting). Answers the room when it was already closed
+   * another way (the other tab's We are on the phone or End room landing in
+   * the same moment): the caller makes nothing in its place (m1 round 5).
+   */
+  async function cancelReplaced(who: Who, old: RoomRow, seen: unknown, setting: RoomsSetting): Promise<RoomRow | null> {
     const actor = { email: lower(who.email), manager: who.manager === true };
     const version = Number.isInteger(Number(seen)) && seen != null ? Number(seen) : Number(old.version);
     const out = await applyLoop(old.id, () => ({ kind: "end", reason: "cancel", actor, version }), setting, old);
@@ -2123,11 +2264,12 @@ export function makeRooms(deps: RoomDeps): Rooms {
     const { room, applied } = out;
     if (!applied.changed) {
       if (!isFinal(room.state)) throw asRefusal(refuse("stale"));
-      return;
+      return room;
     }
     if (await claimLine(room.id, "room.end", fill(EVENT_TEXT.ended, { reason: "cancel" }), { reason: "cancel", replaced: true }, `room.end:${room.id}`))
       await deps.audit(who, "room.end", ROOMS, room.id, { state: applied.from }, { state: applied.to, result: room.result }, { reason: "cancel", replaced: true });
     await carryOut(room, applied.effects);
+    return null;
   }
 
   /**
@@ -2506,6 +2648,20 @@ export function makeRooms(deps: RoomDeps): Rooms {
     ) {
       if (await claimLine(room.id, `room.mark.${what}`, text, { by: "person" }, key(Number(room.version))))
         await deps.audit(who, `room.mark.${what}`, ROOMS, room.id, null, { state: room.state }, { retry: true });
+    } else if (
+      // "That was not the lead" whose write landed and whose run stopped
+      // before its line (m1 round 5,
+      // m1-chaos-r5-not-lead-killed-after-write-retry-no-audit-row): the room
+      // is back to waiting with the press's undo on it, one version on, so
+      // the press again writes the line and the audit row once.
+      what === "not_lead" &&
+      room.state === "host_in" &&
+      room.count_undo_at &&
+      !leadJoined(room) &&
+      Number(room.version) === version + 1
+    ) {
+      if (await claimLine(room.id, "room.mark.not_lead", text, { by: "person" }, key(Number(room.version))))
+        await deps.audit(who, "room.mark.not_lead", ROOMS, room.id, { state: "lead_in" }, { state: room.state }, { retry: true });
     }
     return { room: await view(room, setting) };
   }
@@ -2808,8 +2964,9 @@ export function makeRooms(deps: RoomDeps): Rooms {
     // link-cap-passed-by-press-beside-own-link).
     const inFlight = Boolean(room.link_claimed_at && !room.link_sent_at && !room.refusal);
     if ((await leadLinksThisHour(room.contact_id, room.id)) + (inFlight ? 1 : 0) >= LINK_FLOOD_MAX) {
-      if (!room.link_sent_at && !inFlight) await recordNotSent(room, ROOMS_COPY.link_flood);
-      throw plain(ROOMS_COPY.link_flood, 409, "link_flood");
+      const flood = setting.short_link ? ROOMS_COPY.link_flood_code : ROOMS_COPY.link_flood;
+      if (!room.link_sent_at && !inFlight) await recordNotSent(room, flood);
+      throw plain(flood, 409, "link_flood");
     }
     // One email with the link per room, whatever the presses (two tabs, a
     // double tap, or the backup that already went): the message service's
@@ -2819,8 +2976,20 @@ export function makeRooms(deps: RoomDeps): Rooms {
     // room-send-after-close-emails-dead-link): the sweep's close or a second
     // tab's End may land while the contact and the host are read, and a
     // closed room's link only shows the lead "This call has ended".
+    // A read that fails is not a closed room (m1 round 5,
+    // m1-chaos-r5-send-email-open-check-blip-says-room-closed): the check
+    // says no (nothing goes) and the press is told to press again, never
+    // "This room has closed." about a room that is open.
+    let unchecked = false;
     const stillOpen = async () => {
-      const r = await readRoom(room.id).catch(() => null);
+      let r: RoomRow | null;
+      try {
+        r = await readRoom(room.id);
+      } catch {
+        unchecked = true;
+        return false;
+      }
+      unchecked = false;
       return Boolean(r && (r.state === "open" || r.state === "host_in" || r.state === "lead_in"));
     };
     // Every email key spent on refusals: the press is told to make a new
@@ -2868,11 +3037,14 @@ export function makeRooms(deps: RoomDeps): Rooms {
             confirmed_from_conversation: true,
             ...(sent.repeated ? { earlier_press: true } : {}),
           });
-        const after = await recordSent(room, "email", messageId, setting);
+        const after = await recordEmailSent(room, messageId, setting);
         return { room: await view(after, setting), note: mine ? ROOMS_COPY.email_went : ROOMS_COPY.email_already };
       }
     }
-    if (!sent.ok && sent.stopped) throw no("final");
+    if (!sent.ok && sent.stopped) {
+      if (unchecked) throw plain(ROOMS_COPY.email_unchecked, 503, "not_sent_yet", { retry: true });
+      throw no("final");
+    }
     if (!sent.ok && sent.fenced) throw plain(`${sent.why}.`, 409, "disabled");
     if (!sent.ok) {
       // It may have gone (HighLevel's answer was lost, or an earlier press's
@@ -2897,20 +3069,74 @@ export function makeRooms(deps: RoomDeps): Rooms {
       if (sent.passing) throw plain(`Not sent: ${sent.why}. Press it again in a minute.`, 503, "busy", { retry: true });
       throw plain(`Not sent: ${sent.why}.`, sent.status, "send_failed");
     }
-    const after = await recordSent(room, "email", sent.message_id, setting);
+    // The email went: its room.send row first, through the room's "sent by
+    // email" line (its claim, marked audited, so the link's own lane that
+    // finds the same email later writes no second row: m1 round 5,
+    // m1-numbers-r5-send-by-email-during-cascade-second-link-row), then the
+    // room's record of it (m1 round 5,
+    // m1-chaos-r5-also-send-email-went-answered-did-not-work-no-audit-row:
+    // a blip or a stop after HighLevel took it never loses the row).
     // A press the message service answered with the email that already went
-    // (another tab's press, or the link's own email): nothing new went, so no
-    // second room.send row, and the rep is told it went (m1 round 1,
+    // (another tab's press, or the link's own email) writes the row only
+    // when nothing recorded that email yet (an earlier press of it stopped
+    // after HighLevel took it); otherwise nothing new went, so no second
+    // room.send row, and the rep is told it went (m1 round 1,
     // room-send-repeat-writes-second-send-row).
-    if (sent.repeated) {
+    const mine = (!sent.repeated || !(await linkOwnEmail(room.id, key))) && (await claimEmailSend(room));
+    if (mine)
+      await deps.audit(who, "room.send", ROOMS, room.id, null, {
+        channel: "email",
+        message_id: sent.message_id,
+        ...(sent.repeated ? { earlier_press: true } : {}),
+      });
+    const after = await recordEmailSent(room, sent.message_id, setting);
+    if (sent.repeated && !mine) {
       const at = ms(sent.sent_at);
       return {
         room: await view(after, setting),
         note: at !== null ? fill(ROOMS_COPY.email_already_at, { time: clockWithDay(at, io.now()) }) : ROOMS_COPY.email_already,
       };
     }
-    await deps.audit(who, "room.send", ROOMS, room.id, null, { channel: "email", message_id: sent.message_id });
-    return { room: await view(after, setting) };
+    return { room: await view(after, setting), ...(sent.repeated ? { note: ROOMS_COPY.email_went } : {}) };
+  }
+
+  /**
+   * The email on this key was the link's own (its lanes' run was on an
+   * email step when the row was made, within a send's budget): its
+   * room.link row is that run's to write, never a press's room.send. Not
+   * readable: the link's own, so no second row is written on a guess.
+   */
+  async function linkOwnEmail(roomId: string, key: string): Promise<boolean> {
+    try {
+      const [lease, row] = await Promise.all([
+        io.db(`${EVENTS}?dedupe_key=eq.${enc(`link.send:${roomId}`)}&select=detail&limit=1`),
+        messageRow(key),
+      ]);
+      const d = obj(lease[0]?.detail);
+      if (stepLane(String(d.step ?? "")) !== "email") return false;
+      const step = ms(d.step_at);
+      const made = ms(row?.created_at);
+      return step === null || made === null || Math.abs(step - made) <= SEND_BUDGET_MS;
+    } catch {
+      return true;
+    }
+  }
+
+  /**
+   * An email that went, recorded on the room. A record that cannot land
+   * now (a blip, a lost answer) never turns the press into "That did not
+   * work" about an email the lead has: the room as read is answered, and
+   * the minute's tick adds the email to the room's channels from its sent
+   * message row (settleOpenEmail).
+   */
+  async function recordEmailSent(room: RoomRow, messageId: string | null, setting: RoomsSetting): Promise<RoomRow> {
+    try {
+      return await recordSent(room, "email", messageId, setting);
+    } catch (e) {
+      io.log(`rooms: the email went and the room did not record it yet, so the next minute does: ${redact(String((e as Error)?.message ?? e))}`);
+      const had = Array.isArray(room.link_channels) ? (room.link_channels as string[]) : [];
+      return { ...room, link_channels: [...new Set([...had, "email"])] } as RoomRow;
+    }
   }
 
   async function roomWrap(who: Who, b: Row): Promise<Row> {
@@ -3056,6 +3282,35 @@ export function makeRooms(deps: RoomDeps): Rooms {
   }
 
   /**
+   * The provider of this host's last room for the lead before this one when
+   * it closed on the lead's knock (nobody let them in: result admit_blocked,
+   * or not_admitted) less than STALE_MISS_MS before this room's press, and
+   * no call to the lead was placed since (m1 round 5,
+   * m1-journeys-r5-link-after-knock-says-tried-to-call); else null. Not
+   * readable: null (the words as before).
+   */
+  async function knockedBefore(room: RoomRow): Promise<string | null> {
+    if (room.purpose !== "fallback" || !room.contact_id) return null;
+    const asked = ms(room.requested_at) ?? ms(room.created_at) ?? io.now();
+    const host = lower(room.host_email);
+    const prev = (
+      await io
+        .db(
+          `${ROOMS}?contact_id=eq.${enc(room.contact_id)}&host_email=eq.${enc(host)}&id=neq.${enc(room.id)}&requested_at=lte.${enc(isoAt(asked))}&select=id,provider,result,end_reason,ended_at,lead_in_at&order=requested_at.desc&limit=1`,
+        )
+        .catch(() => [] as Row[])
+    )[0];
+    if (!prev || !closedOnKnock(prev) || leadJoined(prev as unknown as RoomRow)) return null;
+    const ended = ms(prev.ended_at);
+    if (ended === null || asked - ended > STALE_MISS_MS) return null;
+    const called = await io
+      .db(`cockpit_sales_attempts?contact_id=eq.${enc(room.contact_id)}&rep_email=eq.${enc(host)}&started_at=gt.${enc(isoAt(ended))}&select=id&limit=1`)
+      .catch(() => null);
+    if (!called || called.length) return null;
+    return String(prev.provider ?? "zoom");
+  }
+
+  /**
    * The provider of the lead's last room before this one whose link went
    * and whose meeting the host deleted in Zoom (end_reason meeting_deleted)
    * within DEAD_LINK_WINDOW_MS of this room's press, or null: the lead holds
@@ -3144,6 +3399,7 @@ export function makeRooms(deps: RoomDeps): Rooms {
             replaces: await replacedAdmitBlocked(room),
             stale: await staleMiss(room),
             deadLink: await replacedDeleted(room),
+            knocked: await knockedBefore(room),
           }));
     if (stillOpen && !(await stillOpen())) return { ok: false, stopped: true, why: LANE_COPY.final, status: 409 };
     let m: Row | null = null;
@@ -3278,8 +3534,19 @@ export function makeRooms(deps: RoomDeps): Rooms {
    * with HighLevel's id and status when the conversation gave them. Answers
    * the row's id (null when there is no row or it could not be written).
    */
+  /** Whether another message row holds this HighLevel message id (null: not readable). */
+  async function heldByAnother(ghlId: string, requestId: string | undefined): Promise<boolean | null> {
+    const rows = await io
+      .db(`cockpit_sales_messages?ghl_message_id=eq.${enc(ghlId)}&select=request_id&limit=5`)
+      .catch(() => null);
+    if (!rows) return null;
+    return rows.some(r => String(r.request_id ?? "") !== String(requestId ?? ""));
+  }
+
   async function confirmRow(requestId: string | undefined, hit: SeenSend | null): Promise<string | null> {
     if (!requestId) return null;
+    // Never an id another row holds (m1 round 5): the state only.
+    if (hit?.id && (await heldByAnother(hit.id, requestId)) !== false) hit = { ...hit, id: null };
     try {
       const rows = await io.db(`cockpit_sales_messages?request_id=eq.${enc(requestId)}&state=in.(unclear,sending)&select=id`, {
         method: "PATCH",
@@ -3493,9 +3760,13 @@ export function makeRooms(deps: RoomDeps): Rooms {
   async function leadLinksThisHour(contactId: string, except: string | null = null): Promise<number> {
     const since = isoAt(io.now() - LINK_FLOOD_WINDOW_MS);
     try {
-      const rows = await io.db(
-        `${ROOMS}?contact_id=eq.${enc(contactId)}&link_sent_at=gte.${enc(since)}&select=id,link_channels,link_unconfirmed_at&limit=50`,
-      );
+      // A room made in place of one the lead knocked on ("I can't let them
+      // in": night_cleared replacing) carries the same call's link, as the
+      // unseen template's email backup does, so it is not one of its own (m1
+      // round 5). Every column, so a database without 20261004a's still reads.
+      const rows = (
+        await io.db(`${ROOMS}?contact_id=eq.${enc(contactId)}&link_sent_at=gte.${enc(since)}&select=*&limit=50`)
+      ).filter(r => r.night_cleared !== "replacing");
       const inHour = rows.reduce((n, r) => {
         const ch = Array.isArray(r.link_channels) ? (r.link_channels as string[]) : [];
         // The backup email after an unseen template is that same link.
@@ -3525,7 +3796,11 @@ export function makeRooms(deps: RoomDeps): Rooms {
         // The backup email after an unseen template is that same link, as above.
         if (ch.includes("email") || (r.link_unconfirmed_at && ch.includes("whatsapp_template"))) continue;
         const link = await linkRows(String(r.id));
-        if (link.keys.email.some(k => String(link.rows.get(k)?.state ?? "") === "unclear")) emailDoubted += 1;
+        // Or one that went, or is going, that the room has not recorded yet
+        // (m1 round 5: a blip on the channels write, a stop after HighLevel
+        // took it): the lead has it, so it counts.
+        if (link.keys.email.some(k => ["unclear", "sending", "sent", "delivered", "read"].includes(String(link.rows.get(k)?.state ?? ""))))
+          emailDoubted += 1;
       }
       return inHour + later.length + mayHaveGone + emailDoubted;
     } catch (e) {
@@ -3592,16 +3867,23 @@ export function makeRooms(deps: RoomDeps): Rooms {
       // A link that may have gone is no "not sent" in the ledger either (m1
       // round 3, unclear-link-audited-as-not-sent): the caller's
       // room.link.unclear is that send's one row.
-      if (!unclear)
-        await deps.audit(DESK, "room.link.not_sent", ROOMS, room.id, { refusal: room.refusal ?? null }, { refusal: rows[0]?.refusal ?? null });
+      // Each reason is said once per room (m1 round 5, numbers: two passing
+      // reasons taking turns, HighLevel not answering then a 429, said
+      // every minute): its line is keyed by its words and is the claim on
+      // its audit row; the room's refusal still shows the latest.
+      if (!unclear) {
+        const line = fill(EVENT_TEXT.not_sent, { why: lowerOpener(sentence) });
+        if (await claimLine(room.id, "link.not_sent", line, {}, `link.not_sent:${room.id}:${await uuidFrom(`not_sent/${text}`)}`))
+          await deps.audit(DESK, "room.link.not_sent", ROOMS, room.id, { refusal: room.refusal ?? null }, { refusal: rows[0]?.refusal ?? null });
+      }
     } catch (e) {
       io.log(`rooms: the reason the link did not go was not saved: ${redact(String((e as Error)?.message ?? e))}`);
+      if (!unclear) await note(room.id, "link.not_sent", fill(EVENT_TEXT.not_sent, { why: lowerOpener(sentence) }), {});
     }
     // A link that may have gone is no refusal (m1 round 1,
     // may-have-gone-shown-as-not-sent): its own line, never "Not sent: ...",
     // which the rep reads as failed and sends the link a second way.
     if (unclear) await note(room.id, "link.unclear", text, { channel: unclear }, `link.unclear:${room.id}:${unclear === "email" ? "email" : "whatsapp"}`);
-    else await note(room.id, "link.not_sent", fill(EVENT_TEXT.not_sent, { why: lowerOpener(sentence) }), {});
     return true;
   }
 
@@ -4079,9 +4361,13 @@ export function makeRooms(deps: RoomDeps): Rooms {
     // the fourth room's link does not go; the rep reads the code out. Not
     // readable: the send goes on (the message service's own ceiling of 30 in
     // 10 minutes still holds), because a lead waiting on a link matters more.
-    if ((await leadLinksThisHour(room.contact_id, room.id)) >= LINK_FLOOD_MAX) {
+    // The room made in place of one the lead is knocking on ("I can't let
+    // them in") carries the same call's link: never stopped by the cap,
+    // which would close her door and keep the new one from her (m1 round 5,
+    // m1-journeys-r5-replacement-link-refused-by-link-cap).
+    if (room.night_cleared !== "replacing" && (await leadLinksThisHour(room.contact_id, room.id)) >= LINK_FLOOD_MAX) {
       // recordNotSent writes the room's refusal, its audit row and its timeline line, once.
-      await recordNotSent(room, ROOMS_COPY.link_flood);
+      await recordNotSent(room, setting.short_link ? ROOMS_COPY.link_flood_code : ROOMS_COPY.link_flood);
       return;
     }
     // Night on the lead's clock (a manual room, or night came while the link
@@ -4978,7 +5264,17 @@ export function makeRooms(deps: RoomDeps): Rooms {
         .db(`${ROOMS}?id=eq.${enc(room.id)}&link_unconfirmed_at=is.null`, { method: "PATCH", body: { link_unconfirmed_at: isoAt(io.now()) }, prefer: "return=minimal" })
         .catch(e => io.log(`rooms: the link was not marked unconfirmed: ${redact(String((e as Error)?.message ?? e))}`));
       const fresh = (await readRoom(room.id)) ?? room;
-      const contact = room.contact_id ? await readContact(room.contact_id) : null;
+      // A contact read HighLevel did not answer (a 429, an outage) is no
+      // lead without WhatsApp (m1 round 5, bounce-backup-lost-to-contact-read-429):
+      // the doubt is said on its own line and the bounce's line is left
+      // open, so the next minute tries the free text, as whatsappFailedLate
+      // and pendingBackup do. Merged or deleted: nothing can go, said now.
+      const read = room.contact_id ? await readContactOrGone(room.contact_id) : null;
+      if (read === null && room.contact_id) {
+        await doubtContactUnread(room, "email", EVENT_TEXT.link_bounced_contact_unread, { why: why.slice(0, 300), bounced: true });
+        return;
+      }
+      const contact = read === "gone" ? null : read;
       let texted = false;
       // What the line may offer: WhatsApp only where a free text could go now.
       let line: string = EVENT_TEXT.link_bounced_read_out;
@@ -5080,7 +5376,15 @@ export function makeRooms(deps: RoomDeps): Rooms {
   ): Promise<{ verdict: "sent"; seen: SeenSend | null } | { verdict: "not_sent"; why: string } | { verdict: "unclear" }> {
     if (!deps.sentSince || !room.contact_id || !sent.text) return { verdict: "unclear" };
     const since = sent.since ?? io.now();
-    const seen = await deps.sentSince(room.contact_id, since - 5 * S, sent.text, channel === "email" ? "email" : "whatsapp").catch(() => null);
+    let seen = await deps.sentSince(room.contact_id, since - 5 * S, sent.text, channel === "email" ? "email" : "whatsapp").catch(() => null);
+    // A message another send's row already holds is that send, never this
+    // one (m1 round 5, lost-send-matched-to-previous-room-link: the room
+    // before's link to the same lead). Not readable: not known.
+    if (seen && typeof seen === "object" && seen.id) {
+      const held = await heldByAnother(seen.id, sent.request_id);
+      if (held === null) return { verdict: "unclear" };
+      if (held) seen = false;
+    }
     if (seen === true) return { verdict: "sent", seen: null };
     if (seen && typeof seen === "object" && !seen.failed) return { verdict: "sent", seen };
     let why: string | null = null;
@@ -8245,6 +8549,17 @@ export function makeRooms(deps: RoomDeps): Rooms {
       const claimedAt = ms(room.link_claimed_at);
       if (isFinal(room.state) && room.contact_id && !room.link_sent_at && claimedAt !== null && now - claimedAt <= LINK_RECHECK_MS)
         io.background(settleClosedLink(room.id));
+      // The host rang the lead after the link and they talked on the phone
+      // (m1 round 5, m1-journeys-r5-recall-answered-room-keeps-waiting):
+      // the room stops waiting for them on video, closed as moved to the
+      // phone, never kept open to close as the lead's no-show.
+      if (
+        (room.state === "open" || room.state === "host_in") &&
+        (room.purpose === "fallback" || room.purpose === "manual") &&
+        room.contact_id &&
+        !leadJoined(room)
+      )
+        io.background(closeForPhoneCall(room, setting));
       // "Also send by email" left unclear on an open room whose link went
       // another way (m1 round 4): read in the conversation until settled.
       if (
@@ -8262,6 +8577,53 @@ export function makeRooms(deps: RoomDeps): Rooms {
   }
 
   /**
+   * An answered call from the room's host to its lead placed after the link
+   * went (or the room opened): Maqsam's record of a completed call with a
+   * length, or the host's save of an outcome only a talk gives. The room is
+   * closed as moved to the phone (room.end on_phone, by the desk), with its
+   * line and audit row, once. Not readable: nothing changes.
+   */
+  async function closeForPhoneCall(room: RoomRow, setting: RoomsSetting): Promise<void> {
+    try {
+      const from = ms(room.link_sent_at) ?? ms(room.opened_at);
+      if (from === null || !room.contact_id) return;
+      const rows = await io.db(
+        `cockpit_sales_attempts?contact_id=eq.${enc(room.contact_id)}&rep_email=eq.${enc(lower(room.host_email))}&started_at=gt.${enc(isoAt(from))}&select=call_state,call_duration_s,outcome&order=started_at.desc&limit=5`,
+      );
+      // A saved talk, or Maqsam's completed call of a talk's length that was
+      // not saved as unanswered (a voicemail greeting is "completed" too).
+      const talked = rows.some(
+        r =>
+          ANSWERED_OUTCOMES.includes(String(r.outcome ?? "")) ||
+          (String(r.call_state ?? "") === "completed" &&
+            Number(r.call_duration_s ?? 0) >= ANSWERED_CALL_S &&
+            !["no_answer", "noshow"].includes(String(r.outcome ?? ""))),
+      );
+      if (!talked) return;
+      const actor = { email: "sales-desk", manager: true };
+      const out = await applyLoop(
+        room.id,
+        cur =>
+          (cur.state === "open" || cur.state === "host_in") && !leadJoined(cur)
+            ? { kind: "end", reason: "on_phone", actor, version: Number(cur.version) }
+            : null,
+        setting,
+        room,
+      );
+      if (!("applied" in out) || !out.applied.changed) return;
+      if (await claimLine(room.id, "room.end", ROOMS_COPY.on_phone_answered, { reason: "on_phone", answered_call: true }, `room.end:${room.id}`))
+        await deps.audit(DESK, "room.end", ROOMS, room.id, { state: out.applied.from }, { state: out.applied.to, result: out.room.result }, {
+          reason: "on_phone",
+          answered_call: true,
+          host_email: lower(room.host_email),
+        });
+      await carryOut(out.room, out.applied.effects);
+    } catch (e) {
+      io.log(`rooms: an answered call to the lead was not read for the room: ${redact(String((e as Error)?.message ?? e))}`);
+    }
+  }
+
+  /**
    * A closed room's link that may have gone (its message row unclear and
    * link_sent_at empty), settled once: the lead's conversation is read from
    * when HighLevel was asked, with the words that went. Found, the room
@@ -8271,7 +8633,8 @@ export function makeRooms(deps: RoomDeps): Rooms {
    */
   /** The room's "sent by email" line, taken as the claim on the email's room.send row: true when this call took it. */
   async function claimEmailSend(room: RoomRow): Promise<boolean> {
-    return await claimLine(room.id, "link.sent", EVENT_TEXT.link_sent_email, { channel: "email" }, `link.sent:${room.id}:email`);
+    // Audited by its claimer (room.send): auditLink never takes it over (m1 round 5).
+    return await claimLine(room.id, "link.sent", EVENT_TEXT.link_sent_email, { channel: "email", audited: true, by: "room.send" }, `link.sent:${room.id}:email`);
   }
 
   /**
@@ -8290,10 +8653,50 @@ export function makeRooms(deps: RoomDeps): Rooms {
       const ch = Array.isArray(room.link_channels) ? (room.link_channels as string[]) : [];
       if (ch.includes("email")) return;
       const link = await linkRows(room.id);
+      const byTick = { by: "the minute's tick" };
+      const hostSeat: Who = { signed_in: true, seat: true, manager: false, email: lower(room.host_email) };
       for (const k of link.keys.email) {
         const row = link.rows.get(k);
-        if (!row || String(row.state ?? "") !== "unclear") continue;
-        const since = ms(row.ghl_asked_at) ?? ms(row.created_at);
+        if (!row) continue;
+        let state = String(row.state ?? "");
+        // A send's whole run fits in SEND_BUDGET_MS from its row: past that,
+        // the run that sent it has recorded it or stopped.
+        const made = ms(row.created_at);
+        // The email went and the room never recorded it (m1 round 5,
+        // m1-chaos-r5-also-send-email-channel-write-blip-room-says-not-emailed:
+        // the channels write met a blip after HighLevel took it): added to
+        // the room's channels, so the panel stops offering it and the lead's
+        // links this hour count it.
+        if (["sent", "delivered", "read"].includes(state)) {
+          if (made === null || io.now() - made < SEND_BUDGET_MS) continue;
+          const setting = (await roomsAndLive()).rooms;
+          if (await claimEmailSend(room))
+            await deps.audit(hostSeat, "room.send", ROOMS, room.id, null, { channel: "email", message_id: String(row.id ?? "") || null, recorded_late: true }, byTick);
+          await recordSent(room, "email", String(row.id ?? "") || null, setting);
+          return;
+        }
+        // A send stamped and never finished (m1 round 5,
+        // m1-chaos-r5-also-send-email-killed-after-highlevel-took-it-never-recorded:
+        // the function stopped after HighLevel took it, before its row was
+        // marked): past the send's budget it may have gone, and is read in
+        // the lead's conversation like any send whose answer was lost.
+        if (state === "sending") {
+          if (made === null || io.now() - made < SEND_BUDGET_MS) continue;
+          const marked = await io
+            .db(`cockpit_sales_messages?id=eq.${enc(String(row.id ?? ""))}&state=eq.sending`, {
+              method: "PATCH",
+              body: { state: "unclear", error: "The send started and never finished, so it may or may not have gone.", updated_at: isoAt(io.now()) },
+              prefer: "return=representation",
+            })
+            .catch(() => null);
+          if (!marked?.length) continue;
+          state = "unclear";
+        }
+        if (state !== "unclear") continue;
+        // From the earlier of its row and its stamp: the row is made before
+        // HighLevel is asked, so nothing the send left is before it.
+        const from = Math.min(ms(row.ghl_asked_at) ?? Number.POSITIVE_INFINITY, made ?? Number.POSITIVE_INFINITY);
+        const since = Number.isFinite(from) ? from : null;
         const text = typeof row.body === "string" && row.body.trim() ? row.body : null;
         if (since === null || !text) continue;
         const v = await conversationVerdict(room, "email", { since, text, why: String(row.error ?? "the send did not finish"), request_id: k });
@@ -8301,15 +8704,7 @@ export function makeRooms(deps: RoomDeps): Rooms {
         const setting = (await roomsAndLive()).rooms;
         const messageId = await confirmRow(k, v.seen);
         if (await claimEmailSend(room))
-          await deps.audit(
-            { signed_in: true, seat: true, manager: false, email: lower(room.host_email) },
-            "room.send",
-            ROOMS,
-            room.id,
-            null,
-            { channel: "email", message_id: messageId, confirmed_from_conversation: true },
-            { by: "the minute's tick" },
-          );
+          await deps.audit(hostSeat, "room.send", ROOMS, room.id, null, { channel: "email", message_id: messageId, confirmed_from_conversation: true }, byTick);
         await recordSent(room, "email", messageId, setting);
         return;
       }
@@ -8513,7 +8908,10 @@ export function unclearSend(e: unknown): boolean {
  * own rate limit (429). The room source's health leaves these out.
  */
 export function leadSpecificFailure(error: unknown): boolean {
-  return metaLeadFailure(error) || /\b429\b|too many requests/i.test(String(error ?? ""));
+  // Meta's pair rate limit (131056: too many messages to this one lead in a
+  // short time) is about one lead and one moment, never the number (m1
+  // round 5, pair-rate-limit-131056-counts-against-room-whatsapp-health).
+  return metaLeadFailure(error) || /\b429\b|too many requests|\b131056\b|pair rate limit/i.test(String(error ?? ""));
 }
 
 /** applyRoomEvent that never throws (a damaged row is a refusal, never a crash). */

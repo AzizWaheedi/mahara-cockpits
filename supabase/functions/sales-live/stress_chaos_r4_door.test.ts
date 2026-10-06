@@ -104,7 +104,7 @@ function world(rooms: Row[] = [meetRoom()]) {
     }
     if (table === "cockpit_sales_rooms" && method === "GET" && w.roomReadDown)
       return new Response('{"message":"canceling statement due to statement timeout"}', { status: 503 });
-    const source: Record<string, Row[]> = { cockpit_sales_rooms: w.rooms, cockpit_sales_people: w.people, cockpit_sales_settings: [] };
+    const source: Record<string, Row[]> = { cockpit_sales_rooms: w.rooms, cockpit_sales_people: w.people, cockpit_sales_settings: [{ key: "rooms", value: { enabled: true, short_link: true } }] }; // the short link in use (m1 round 5)
     if (method === "GET" && source[table]) return Response.json(pick(source[table], p).slice(0, Number(p.get("limit") ?? 1000)));
     return new Response(`unexpected ${method} ${table}`, { status: 400 });
   };

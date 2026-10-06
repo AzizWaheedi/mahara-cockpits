@@ -333,7 +333,17 @@ export function sameText(a: unknown, b: unknown): boolean {
  * or a footer around them).
  */
 export function sameEmailText(body: unknown, text: unknown): boolean {
-  const plain = String(body ?? "")
+  const plain = plainEmail(body);
+  if (sameText(plain, text)) return true;
+  const x = normText(plain);
+  const y = normText(text);
+  const n = Math.min(60, y.length);
+  return n >= 20 && x.includes(y.slice(0, n));
+}
+
+/** An email body as words: HighLevel keeps its HTML, so the tags and entities are taken out. */
+function plainEmail(body: unknown): string {
+  return String(body ?? "")
     .replace(/<(br|\/p|\/div|\/li)[^>]*>/gi, " ")
     .replace(/<[^>]*>/g, " ")
     .replace(/&nbsp;/gi, " ")
@@ -342,11 +352,23 @@ export function sameEmailText(body: unknown, text: unknown): boolean {
     .replace(/&gt;/gi, ">")
     .replace(/&quot;/gi, '"')
     .replace(/&#39;|&apos;/gi, "'");
-  if (sameText(plain, text)) return true;
-  const x = normText(plain);
-  const y = normText(text);
-  const n = Math.min(60, y.length);
-  return n >= 20 && x.includes(y.slice(0, n));
+}
+
+/** The links in a message's words (a room's join link or short link), each as written. */
+export function linksIn(text: unknown): string[] {
+  return [...String(text ?? "").matchAll(/https?:\/\/[^\s<>"']+/gi)].map(m => m[0].replace(/[.,;:!?)\]]+$/, "")).filter(Boolean);
+}
+
+/**
+ * A message carries every link in the words that were sent (m1 round 5,
+ * lost-send-matched-to-previous-room-link): two rooms' links to one lead
+ * share all their words but the link, so words alike are never this send
+ * unless its own link is in it.
+ */
+export function carriesLinks(body: unknown, links: string[], channel: "whatsapp" | "email"): boolean {
+  if (!links.length) return true;
+  const words = channel === "email" ? plainEmail(body) : String(body ?? "");
+  return links.every(l => words.includes(l));
 }
 
 export interface SeenMessage {
@@ -374,10 +396,12 @@ export function matchSent<T extends SeenMessage>(
   o: { went?: boolean; channel?: "whatsapp" | "email" } = {},
 ): T | null {
   const channel = o.channel ?? "whatsapp";
+  const links = text ? linksIn(text) : [];
   for (const m of list) {
     const t = Date.parse(String(m.at ?? ""));
     if (m.direction !== "outbound" || m.channel !== channel || !Number.isFinite(t) || t < since - 15_000) continue;
     if (text && !(channel === "email" ? sameEmailText(m.body, text) : sameText(m.body, text))) continue;
+    if (!carriesLinks(m.body, links, channel)) continue;
     if (o.went && failedStatus(m.status)) continue;
     return m;
   }

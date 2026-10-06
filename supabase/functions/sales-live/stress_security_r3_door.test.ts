@@ -95,7 +95,7 @@ function world(rooms: Row[] = [room()]) {
       for (const r of pick(w.rooms, p)) Object.assign(r, body);
       return new Response(null, { status: 204 });
     }
-    const source: Record<string, Row[]> = { cockpit_sales_rooms: w.rooms, cockpit_sales_people: w.people, cockpit_sales_settings: [] };
+    const source: Record<string, Row[]> = { cockpit_sales_rooms: w.rooms, cockpit_sales_people: w.people, cockpit_sales_settings: [{ key: "rooms", value: { enabled: true, short_link: true } }] }; // the short link in use (m1 round 5)
     if (method === "GET" && source[table]) return Response.json(pick(source[table], p).slice(0, Number(p.get("limit") ?? 1000)));
     return new Response(`unexpected ${method} ${table}`, { status: 400 });
   };

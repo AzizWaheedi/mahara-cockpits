@@ -829,11 +829,21 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
     }
   }
 
-  async function resolveRoom(code: string, left: (cap: number) => number): Promise<RoomRow | null> {
-    const rows = await roomRows(`code=eq.${code}`, "&limit=1", left(B.roomRead));
+  /**
+   * The room a code opens. `follow` (rooms.enabled and rooms.short_link
+   * both on) lets a closed room's code lead on to the room that replaced it
+   * or the lead's newer room. With the short link off no lead's message
+   * carries a code, so whoever has one read it off a room's own screen (its
+   * Zoom waiting room's topic): it answers only its own room (m1 round 5,
+   * m1-security-r5-closed-code-opens-leads-next-room-with-short-link-off).
+   */
+  async function resolveRoom(code: string, left: (cap: number) => number, follow: Promise<boolean>): Promise<RoomRow | null> {
+    // The switch is read beside the code's own room, never before it: the door's time is the lead's.
+    const [rows, follows] = await Promise.all([roomRows(`code=eq.${code}`, "&limit=1", left(B.roomRead)), follow]);
     const first = Array.isArray(rows) ? rows[0] : undefined;
     if (!first) return null;
     let room: RoomRow = first;
+    if (!follows) return room;
     const seen = new Set([room.id]);
     // The link follows a replaced room (a handover re-routed after it went out).
     for (let hop = 0; hop < MAX_HOPS && FINAL_STATES.has(room.state) && room.replaced_by; hop++) {
@@ -1248,9 +1258,12 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
       );
     if (may === "missed") return json({ ok: false, state: "unknown", code }, 404, cors);
 
+    // With the short link off no lead reaches this door (m1 round 5): a code
+    // answers only its own room, and nothing done with it is the lead's open.
+    const switched = shortLinkSwitchedOn();
     let room: RoomRow | null;
     try {
-      room = await resolveRoom(code, left);
+      room = await resolveRoom(code, left, switched);
       found(code, room, nets);
     } catch (e) {
       noteStatus("open", false, `Call links cannot be read: ${redact((e as Error).message)}`);
@@ -1261,6 +1274,7 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
       );
     }
     if (!room) return json({ ok: false, state: "unknown", code }, 404, cors);
+    const leadsHere = await switched;
 
     const now = deps.now();
     const [rep, whatsapp] = await Promise.all([
@@ -1272,7 +1286,7 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
     // open-counted-from-any-site): the page always sends its Origin, and an
     // <img> or a no-cors fetch on another site's page sends none, so it is
     // answered (unreadable there) and never recorded. /go records its own.
-    if (allowed && !isPreviewBot(ua)) deps.background(recordOpen(room, code, ua, hash, deviceId));
+    if (leadsHere && allowed && !isPreviewBot(ua)) deps.background(recordOpen(room, code, ua, hash, deviceId));
     if (view.state === "broken") noteStatus("open", false, `Room ${room.id} has a join link the door refuses to open.`);
     else noteStatus("open", true, "Last call link read and opened.");
     configAlert("open", false);
@@ -1302,15 +1316,17 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
     if (may === "missed") return redirect(`${home}/`);
     if (isPreviewBot(ua)) return text(both(GO_COPY.preview));
 
+    const switched = shortLinkSwitchedOn();
     let room: RoomRow | null;
     try {
-      room = await resolveRoom(code, leftOf(until));
+      room = await resolveRoom(code, leftOf(until), switched);
       found(code, room, nets);
     } catch (e) {
       noteStatus("go", false, `Call links cannot be read: ${redact((e as Error).message)}`);
       return text(both(GO_COPY.unread), 503);
     }
     if (!room) return redirect(`${home}/`);
+    const leadsHere = await switched;
     const now = deps.now();
     // The ended page asks /open for the room itself (and its WhatsApp
     // number); nothing it shows is taken from the address bar.
@@ -1330,7 +1346,7 @@ export function makeHandler(deps: Deps): (req: Request) => Promise<Response> {
       // A HEAD is a link checker or a mail scanner, never the lead (stress2
       // round 6, go-head-request-counted-as-lead-open), and a fetch whose
       // Sec-Fetch-Dest names something other than a document is not a page load.
-      if (isNavigation(req.headers) && isDocument(req.headers) && !isPreviewBot(ua, req.method))
+      if (leadsHere && isNavigation(req.headers) && isDocument(req.headers) && !isPreviewBot(ua, req.method))
         deps.background(recordOpen(room, code, ua, stored, null, "go"));
       return redirect(view.join_url);
     }

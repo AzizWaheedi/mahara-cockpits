@@ -207,6 +207,10 @@ const LANE_SENTENCES = {
   moved_provider:
     "Hi {first_name}, {old} would not let you in, sorry about that. Let's use {provider} instead: {link} I'm waiting for you there now.",
   moved_email_subject: "Our call moved to {provider}.",
+  // m1 round 5: a new link after the lead waited at the last room's door.
+  knocked_new_link:
+    "Hi {first_name}, sorry nobody let you in to the {old} room just now. Here is a new link: {link} I'm waiting for you there now.",
+  knocked_email_subject: "A new link for our call.",
   zoom_daily_cap: "Your Zoom user has made its rooms for today (Zoom allows 100 a day); Zoom allows more from 03:00 Kuwait. Use Meet.",
   lead_has_others_room: "The {role}'s video room for this lead is open until {until}. Call the lead, or send a link after that.",
   lead_in_others_room: "The lead is on a video call with the {role} now. Send a link after it ends.",

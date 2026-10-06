@@ -253,7 +253,17 @@ export function plainZoomName(x: unknown): string {
   // Direction overrides and invisible characters go too (m1 round 4,
   // zoom-name-bidi-spoofs-room-timeline): a lead's Zoom name must never turn
   // the rest of the rep's line backwards, or be a name nobody can see.
-  const s = typeof x === "string" ? stripControl(x).replace(/[\u061c\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/g, "") : "";
+  // Every code point Unicode says draws nothing (Default_Ignorable: soft
+  // hyphens, Hangul fillers, variation selectors, the grapheme joiner) and
+  // the braille blank go as well (m1 round 5,
+  // m1-security-r5-zoom-blank-name-on-timeline): a name made of them is
+  // no name, so the line says Someone.
+  const s =
+    typeof x === "string"
+      ? stripControl(x)
+          .replace(/[\u061c\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/g, "")
+          .replace(/[\p{Default_Ignorable_Code_Point}\u2800]/gu, "")
+      : "";
   const cleaned = s
     .replace(/[a-z][a-z0-9+.-]*:\/\/\S*/gi, " ")
     .replace(/\bwww\.\S*/gi, " ")

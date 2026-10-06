@@ -1420,8 +1420,11 @@ begin
   perform pg_temp.ck('G no webhook: each open alert says why it was not posted',
     (select bool_and(posted_at is null and post_error = note and post_tries = 0) from public.cockpit_sales_alerts where resolved_at is null),
     note);
+  -- Written now; red only for open alerts nobody is told of (no webhook in
+  -- the vault, m1 round 5), and then it says what to add.
   perform pg_temp.ck('G status row sales-api/watchdog written',
-    (select ok and at = now() from public.cockpit_sales_worker_status where worker = 'sales-api' and job = 'watchdog'));
+    (select at = now() and (ok or detail like '%Recorded only%reach nobody%sales_alerts_slack_webhook%')
+       from public.cockpit_sales_worker_status where worker = 'sales-api' and job = 'watchdog'));
   perform pg_temp.ck('G switched-off and never-seen workers raise nothing (slack, watch, waves, model, threads), nor sales-live routes with no traffic yet',
     not exists (select 1 from public.cockpit_sales_alerts
                  where subject in ('sales-desk/slack', 'sales-desk/watch', 'sales-desk/waves', 'sales-desk/model', 'sales-api/threads')

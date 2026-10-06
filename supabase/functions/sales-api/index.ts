@@ -116,7 +116,7 @@ import {
 import { clientFormRow, CLIENT_FORM_ID } from "./clientforms.ts";
 import { ApiRefusal, makeLiveIO, uuidFrom } from "./liveio.ts";
 import { makeRooms } from "./rooms.ts";
-import { kuwaitClock, leadJoined, type RoomRow } from "./roomlogic.ts";
+import { holdUntil, kuwaitClock, leadJoined, roomCtx, type RoomRow, roomsSetting } from "./roomlogic.ts";
 import { makeFollowupAgent } from "./followupAgent.ts";
 import {
   clockCountry,
@@ -533,7 +533,10 @@ async function markAppointment(
   // write to a lead who may be opening the link now. A timer's mark (the
   // settle, onlyIfUnmarked) judges its own room.
   if (status === "noshow" && !opts.onlyIfUnmarked) {
-    const held = await videoLinkHoldsNoShow(String(appt.contact_id ?? ""), now);
+    const held = await videoLinkHoldsNoShow(String(appt.contact_id ?? ""), now, {
+      appointment_id: String(appt.appointment_id ?? id),
+      start_at: (appt as unknown as Row).start_at ?? null,
+    });
     if (held) throw new Refusal(held, 409, { code: "room_open" });
   }
 
@@ -605,22 +608,48 @@ const NOSHOW_AFTER_KNOCK_MS = 5 * 60_000;
  * closed in the last few minutes after the lead opened its link or knocked.
  * Not readable: nothing holds the mark (a blip never blocks a rep's mark).
  */
-async function videoLinkHoldsNoShow(contactId: string, now: number): Promise<string | null> {
+async function videoLinkHoldsNoShow(
+  contactId: string,
+  now: number,
+  call: { appointment_id: string; start_at: unknown } | null = null,
+): Promise<string | null> {
   if (!contactId) return null;
-  let rows: Row[];
+  let all: Row[];
+  let rooms: Row | null = null;
   try {
-    rows = await svc(
-      `cockpit_sales_rooms?contact_id=eq.${enc(contactId)}&purpose=neq.booked&requested_at=gte.${enc(new Date(now - 3 * 3_600_000).toISOString())}&select=state,lead_by,host_by,first_open_at,last_open_at,lead_waiting_at,lead_in_at,count_undo_at,taken_back_join_at,result,ended_at,contact_first_name,night_cleared,link_sent_at&order=requested_at.desc&limit=20`,
-    );
+    [all, rooms] = await Promise.all([
+      svc(
+        `cockpit_sales_rooms?contact_id=eq.${enc(contactId)}&purpose=neq.booked&requested_at=gte.${enc(new Date(now - 3 * 3_600_000).toISOString())}&select=*&order=requested_at.desc&limit=20`,
+      ),
+      setting<Row>("rooms").catch(() => null),
+    ]);
   } catch (e) {
     console.error("no-show room check unread", redact(String((e as Error)?.message ?? e)));
     return null;
   }
-  const name = greetingName(rows[0]?.contact_first_name, null) || "This lead";
+  const ctx = roomCtx(roomsSetting(rooms));
+  const name = greetingName(all[0]?.contact_first_name, null) || "This lead";
   const whose = name === "This lead" ? "This lead's" : `${name}'s`;
-  const live = rows.find(r => ["requested", "creating", "open", "host_in", "lead_in"].includes(String(r.state)));
+  // A room open or being made right now holds every call's no-show: the
+  // lead may be opening its link this minute.
+  const live = all.find(r => ["requested", "creating", "open", "host_in", "lead_in"].includes(String(r.state)));
+  // Every other hold is the call being marked's own (m1 round 5,
+  // m1-numbers-r5-knock-on-intro-room-holds-other-calls-noshow): a room
+  // that carries this appointment, or was asked for inside its own window
+  // (an hour before its start to its start + settle). A knock on the
+  // morning's intro room never holds the afternoon demo's no-show.
+  const start = ms(call?.start_at);
+  const rows = call
+    ? all.filter(r => {
+        if (String(r.appointment_id ?? "") === call.appointment_id || String(r.asked_appointment_id ?? "") === call.appointment_id) return true;
+        const asked = ms(r.requested_at);
+        return start !== null && asked !== null && asked >= start - 3_600_000 && asked <= start + ctx.waits.settle * 1000;
+      })
+    : all;
   if (live) {
-    const until = ms(live.lead_by) ?? ms(live.host_by);
+    // When the sweep closes it (holdUntil: R3 and R4 as the sweep reads
+    // them), never host_by alone (m1 round 5, unsent-room-deadline-said-as-host-by).
+    const until = holdUntil(live as unknown as RoomRow, ctx) ?? ms(live.lead_by) ?? ms(live.host_by);
     return until !== null && until > now
       ? `${whose} video room is open until ${kuwaitClock(until)}, so the no-show was not marked. Wait for it, or end the room first.`
       : `${whose} video room is still open, so the no-show was not marked. Wait for it, or end the room first.`;

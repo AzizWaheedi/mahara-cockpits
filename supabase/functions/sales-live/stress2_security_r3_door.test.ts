@@ -62,7 +62,8 @@ function world(rooms: Row[]) {
     now: NOW,
     rooms,
     people: [{ email: "stress2r3-host@stress.invalid", name: "Stress Host", name_ar: "ستريس" }] as Row[],
-    settings: [] as Row[],
+    // The short link in use (rooms on, short_link on): with it off the door follows no code and records no open (m1 round 5).
+    settings: [{ key: "rooms", value: { enabled: true, short_link: true } }] as Row[],
     events: [] as Row[],
     statuses: [] as Row[],
     reads: 0,
