@@ -64,6 +64,18 @@ export function AuthenticatedRoutes() {
       <Route element={<ProtectedRoute />}>
         {/* The door into the cockpits on the other deployments. */}
         <Route path="/go/:cockpit" element={<GoPage />} />
+        {/* The old addresses land where their part lives now, so a bookmark
+            or a link in Slack still works. Outside the layout: a redirect
+            inside its page animation left an empty page (2026-10-06). */}
+        <Route path="/tasks" element={<Moved to="/dashboard#tasks" />} />
+        <Route
+          path="/touchpoints"
+          element={<Moved to="/dashboard#touchpoints" />}
+        />
+        {/* The starter template had made-up numbers; the old client success
+            page here was replaced by the client success cockpit. */}
+        <Route path="/template" element={<Moved to="/dashboard" />} />
+        <Route path="/csm" element={<Navigate to="/go/csm" replace />} />
         <Route element={<AppLayout />}>
           {/* biome-ignore lint/a11y/useValidAriaRole: RoleRoute's role prop is a seat name, not an ARIA role */}
           <Route element={<RoleRoute role="admin" />}>
@@ -103,17 +115,6 @@ export function AuthenticatedRoutes() {
               }
             />
           </Route>
-          {/* The old addresses land where their part lives now, so the
-              morning checklist's links and any bookmark still work. */}
-          <Route path="/tasks" element={<Moved to="/dashboard#tasks" />} />
-          <Route
-            path="/touchpoints"
-            element={<Moved to="/dashboard#touchpoints" />}
-          />
-          {/* The starter template had made-up numbers; the old client
-              success page here was replaced by the client success cockpit. */}
-          <Route path="/template" element={<Moved to="/dashboard" />} />
-          <Route path="/csm" element={<Navigate to="/go/csm" replace />} />
           {/* Team meetings: everybody with a seat in the portal. */}
           <Route path="/team" element={<TeamPage />} />
           <Route path="/team/:id" element={<MeetingPage />} />
