@@ -267,7 +267,7 @@ test("client performance renders the overview then a single client", async () =>
     });
     const html = host.innerHTML;
     expect(html).toContain("Print report");
-    expect(html).toContain("Book next check-in");
+    expect(html).toContain("Book a call");
     expect(html).toContain("Client ID · ClickUp client board");
     expect(html).toContain(perfFixture.profile.taskId);
     let copiedId = "";

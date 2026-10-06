@@ -10,6 +10,13 @@ import {
 const NOW = Date.parse("2026-10-03T08:00:00Z");
 const LOCATION = "wwG426bwruWWv9W3fazQ";
 const CALENDAR = "SHjlq0UjeR11maltYNyh";
+/** The four calls' calendars and lengths, as the client account has them. */
+const CALENDARS: Record<string, { name: string; minutes: number }> = {
+  z1Ne59rohCCj87KhcXoi: { name: "Onboarding Call", minutes: 60 },
+  x84ET6KnA8odlsjYiVLq: { name: "Brand Blueprint Call", minutes: 45 },
+  "5E1EVxLJbGiDM3iYl2kL": { name: "Launch Call", minutes: 30 },
+  SHjlq0UjeR11maltYNyh: { name: "Client check-in", minutes: 30 },
+};
 const FIELD = "Csj6vsVH3wSRseT3OkMU";
 const TASK = "client-task-1";
 const SLOT = "2026-10-04T13:00:00+03:00";
@@ -74,14 +81,15 @@ beforeEach(async () => {
       ]);
       return { contacts, total: contacts.length };
     }
-    if (url.pathname === `/calendars/${CALENDAR}`)
+    const cal = /^\/calendars\/([^/]+)$/.exec(url.pathname)?.[1];
+    if (cal && cal in CALENDARS)
       return {
         calendar: {
-          id: CALENDAR,
+          id: cal,
           locationId: LOCATION,
-          name: "Client check-in",
+          name: CALENDARS[cal].name,
           isActive: true,
-          slotDuration: 30,
+          slotDuration: CALENDARS[cal].minutes,
           slotDurationUnit: "mins",
         },
       };
@@ -93,7 +101,7 @@ beforeEach(async () => {
       if (outcome === "timeout") throw new Error("socket closed after send");
       if (outcome === "refused") return new Response("busy", { status: 409 });
       if (outcome === "incomplete") return { id: "appointment-1" };
-      return { ...body, id: "appointment-1" };
+      return { ...body, id: `appointment-${posts.length}` };
     }
     throw new Error(`Unexpected provider request: ${url.pathname}`);
   });
@@ -115,7 +123,13 @@ const book = () =>
 describe("check-in contact and availability", () => {
   test("finds the exact Client ID and works with no renewal date", async () => {
     const ready = await prepare();
-    expect(ready.contact).toEqual({ id: "contact-1", name: "Example Owner" });
+    expect(ready.contact).toEqual({
+      id: "contact-1",
+      name: "Example Owner",
+      phone: null,
+      email: null,
+      url: `https://app.maharamedia.com/v2/location/${LOCATION}/contacts/detail/contact-1`,
+    });
     expect(ready.slots).toEqual([SLOT]);
     expect(posts).toHaveLength(0);
   });
@@ -261,5 +275,136 @@ describe("confirmed booking, receipts and retry protection", () => {
     expect(
       await app.inlineRun("query", ctx => ctx.db.query("outbox").collect()),
     ).toHaveLength(0);
+  });
+});
+
+const bookKind = (kind: string, startTime = SLOT) =>
+  app.run(
+    "checkIns:book",
+    { taskId: TASK, contactId: "contact-1", startTime, kind },
+    { as: user },
+  );
+const setStage = (stage: string) =>
+  app.inlineRun("mutation", async ctx => {
+    const c = await ctx.db.query("clients").first();
+    await ctx.db.patch(c._id, { stage });
+  });
+
+describe("every call type (2026-10-06)", () => {
+  test("each call books on its own calendar, length and title", async () => {
+    const want = {
+      onboarding: [
+        "z1Ne59rohCCj87KhcXoi",
+        "2026-10-04T11:00:00.000Z",
+        "Onboarding call",
+      ],
+      blueprint: [
+        "x84ET6KnA8odlsjYiVLq",
+        "2026-10-04T10:45:00.000Z",
+        "Brand Blueprint call",
+      ],
+      launch: [
+        "5E1EVxLJbGiDM3iYl2kL",
+        "2026-10-04T10:30:00.000Z",
+        "Launch call",
+      ],
+    } as const;
+    for (const [kind, [calendarId, endTime, label]] of Object.entries(want)) {
+      await bookKind(kind);
+      expect(posts.at(-1)).toMatchObject({
+        calendarId,
+        endTime,
+        title: `Example Design | ${label}`,
+        contactId: "contact-1",
+        locationId: LOCATION,
+      });
+    }
+    const appointments = await app.inlineRun("query", ctx =>
+      ctx.db.query("appointments").collect(),
+    );
+    expect(appointments.map((a: { kind: string }) => a.kind).sort()).toEqual([
+      "blueprint",
+      "launch",
+      "onboarding",
+    ]);
+  });
+
+  test("a receipt belongs to its call: a Blueprint and a check-in at the same time do not collide", async () => {
+    await book();
+    await bookKind("blueprint");
+    expect(posts).toHaveLength(2);
+    const keys = (
+      await app.inlineRun("query", ctx =>
+        ctx.db.query("checkInBookings").collect(),
+      )
+    ).map((b: { key: string }) => b.key);
+    expect(keys).toContain(`${TASK}|2026-10-04T10:00:00.000Z`);
+    expect(keys).toContain(`${TASK}|blueprint|2026-10-04T10:00:00.000Z`);
+  });
+
+  test("a booking moves the board forward, never back", async () => {
+    await setStage("Needs Contacting");
+    const first = await bookKind("onboarding");
+    expect(first.stage).toBe("Onboarding Booked");
+    let state = await app.inlineRun("query", async ctx => ({
+      client: await ctx.db.query("clients").first(),
+      outbox: await ctx.db.query("outbox").collect(),
+    }));
+    expect(state.client.stage).toBe("Onboarding Booked");
+    expect(
+      state.outbox.find((o: { kind: string }) => o.kind === "stage")?.value,
+    ).toBe("Onboarding Booked");
+
+    // An onboarding call booked again later does not pull a Blueprint client back.
+    await setStage("Brand Blueprint Booked\u2660\ufe0f");
+    slots = ["2026-10-04T15:00:00+03:00"];
+    const again = await bookKind("onboarding", "2026-10-04T15:00:00+03:00");
+    expect(again.stage).toBeUndefined();
+    state = await app.inlineRun("query", async ctx => ({
+      client: await ctx.db.query("clients").first(),
+      outbox: await ctx.db.query("outbox").collect(),
+    }));
+    expect(state.client.stage).toBe("Brand Blueprint Booked\u2660\ufe0f");
+    expect(
+      state.outbox.filter((o: { kind: string }) => o.kind === "stage"),
+    ).toHaveLength(1);
+  });
+
+  test("a check-in never moves the board, and a live client stays live", async () => {
+    await book();
+    await setStage("Active");
+    slots = ["2026-10-04T16:00:00+03:00"];
+    const r = await bookKind("launch", "2026-10-04T16:00:00+03:00");
+    expect(r.stage).toBeUndefined();
+    const outbox = await app.inlineRun("query", ctx =>
+      ctx.db.query("outbox").collect(),
+    );
+    expect(
+      outbox.filter((o: { kind: string }) => o.kind === "stage"),
+    ).toHaveLength(0);
+  });
+
+  test("the main contact is read for the client, inside the CSM's scope only", async () => {
+    contacts[0].phone = "+96550000000";
+    contacts[0].email = "owner@example.test";
+    const c = await app.run("checkIns:contact", { taskId: TASK }, { as: user });
+    expect(c).toMatchObject({
+      id: "contact-1",
+      name: "Example Owner",
+      phone: "+96550000000",
+      email: "owner@example.test",
+    });
+    await app.inlineRun("mutation", async ctx => {
+      const member = await ctx.db.query("portalMembers").first();
+      await ctx.db.patch(member._id, { clients: ["Different Client"] });
+    });
+    await expect(
+      app.run("checkIns:contact", { taskId: TASK }, { as: user }),
+    ).rejects.toThrow(/not on your list/);
+  });
+
+  test("an unknown call cannot be booked", async () => {
+    await expect(bookKind("strategy")).rejects.toThrow();
+    expect(posts).toHaveLength(0);
   });
 });

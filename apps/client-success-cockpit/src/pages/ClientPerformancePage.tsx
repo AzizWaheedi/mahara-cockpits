@@ -19,6 +19,7 @@ import {
   PillRow,
   StatTile,
 } from "@/components/kit";
+import { PortalTasksButton } from "@/components/PortalTasks";
 import { ReportIssue } from "@/components/ReportIssue";
 import { bucketDays, TrendChart } from "@/components/TrendChart";
 import { AnimatedSelect } from "@/components/ui/animated-select";
@@ -1594,13 +1595,20 @@ function Profile({ name, onBack }: { name: string; onBack: () => void }) {
             taskId={String(p.taskId)}
             clientName={String(p.clientName)}
             nextCallAt={p.nextCallAt}
+            stage={p.stage ? String(p.stage) : undefined}
           />
         ) : null}
         {p.taskId ? (
-          <AddTask
-            taskId={String(p.taskId)}
-            clientName={String(p.clientName)}
-          />
+          <div className="flex flex-wrap items-start gap-2">
+            <AddTask
+              taskId={String(p.taskId)}
+              clientName={String(p.clientName)}
+            />
+            <PortalTasksButton
+              taskId={String(p.taskId)}
+              clientName={String(p.clientName)}
+            />
+          </div>
         ) : null}
       </div>
 

@@ -13,6 +13,8 @@ const schema = defineSchema({
     clientName: v.string(),
     contactId: v.string(),
     startTime: v.string(),
+    // onboarding | blueprint | launch | checkin; absent on check-ins booked before 2026-10-06.
+    kind: v.optional(v.string()),
     userId: v.id("users"),
     status: v.string(),
     appointmentId: v.optional(v.string()),

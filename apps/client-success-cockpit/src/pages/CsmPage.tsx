@@ -9,6 +9,7 @@ import {
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router";
 import { toast } from "sonner";
+import { BookCallButton, MainContact } from "@/components/ClientCheckIn";
 import {
   Chip,
   Dot,
@@ -1540,6 +1541,19 @@ export function CsmPage({ section }: { section: Section }) {
                         Next in the journey: <strong>{nc.label}</strong>
                       </div>
                       <div className="text-xs">{nc.doNow}</div>
+                      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl bg-muted/40 p-3">
+                        <BookCallButton
+                          taskId={String(c.taskId)}
+                          clientName={c.name}
+                          stage={c.stage}
+                        >
+                          Book it in HighLevel
+                        </BookCallButton>
+                        <MainContact taskId={String(c.taskId)} />
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        Or send them the booking link to pick a time themselves:
+                      </div>
                       <div className="flex flex-wrap items-center gap-2">
                         {nc.url ? (
                           <>

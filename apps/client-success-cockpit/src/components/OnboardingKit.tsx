@@ -7,7 +7,9 @@ import {
 } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { toast } from "sonner";
+import { BookCallButton, MainContact } from "@/components/ClientCheckIn";
 import { Chip, Dot, ExtLink, Kicker, type Tone } from "@/components/kit";
+import { PortalTasksButton } from "@/components/PortalTasks";
 import { Button } from "@/components/ui/button";
 import {
   Sheet,
@@ -44,9 +46,16 @@ type Client = {
   name: string;
   taskId: string;
   bucket?: string;
+  stage?: string;
+  nextCallAt?: string;
+  nextCallKind?: string;
   sheetLink?: string | null;
   taskUrl?: string | null;
 };
+
+/** Stages where the onboarding call is already on the calendar or behind them. */
+const PAST_ONBOARDING_BOOKING =
+  /onboarding booked|blueprint|launch booked|ready for launch|active/i;
 
 type Reading =
   | { kind: "form"; title: string; entry: FormEntry; link?: string }
@@ -222,6 +231,15 @@ export function OnboardingKit({
   const order: Step[] = ["before", "call", "after"];
   /** Past onboarding: the forms are history, nothing to chase or open. */
   const live = step === null;
+  /** Booked if the card has the day, the calendar has the call, or the board is past it. */
+  const onboardingBookedText = kit?.onboarding_call_on
+    ? `On ${shortDay(kit.onboarding_call_on)}`
+    : client.nextCallKind === "onboarding" && client.nextCallAt
+      ? `On ${shortDay(client.nextCallAt)}`
+      : PAST_ONBOARDING_BOOKING.test(client.stage ?? "")
+        ? "Booked, by the board's stage."
+        : null;
+  const onboardingBooked = onboardingBookedText !== null;
   const stateOf = (s: Step) =>
     step === null
       ? "plain"
@@ -299,6 +317,9 @@ export function OnboardingKit({
       <div className="@container">
         <div className="grid gap-3 @3xl:grid-cols-3">
           <StepPanel title="Before the call" state={stateOf("before")}>
+            <Item tone="neutral" label="Their contact in HighLevel">
+              <MainContact taskId={client.taskId} />
+            </Item>
             <Item
               tone={f.onboarding ? "good" : live ? "neutral" : "warn"}
               label="Their onboarding form"
@@ -439,13 +460,35 @@ export function OnboardingKit({
                 <ExtLink href={kickoffLink}>Open the kickoff form</ExtLink>
               )}
             </Item>
-            {kit?.onboarding_call_on ? (
+            {live ? null : (
               <Item
-                tone="neutral"
+                tone={
+                  onboardingBooked
+                    ? "good"
+                    : step === "before"
+                      ? "warn"
+                      : "neutral"
+                }
                 label="Onboarding call"
-                status={`On ${shortDay(kit.onboarding_call_on)}`}
-              />
-            ) : null}
+                status={onboardingBookedText ?? "Not booked yet."}
+              >
+                <BookCallButton
+                  taskId={client.taskId}
+                  clientName={client.name}
+                  stage={client.stage}
+                  kind="onboarding"
+                  variant={
+                    !onboardingBooked && step === "before"
+                      ? "default"
+                      : "outline"
+                  }
+                >
+                  {onboardingBooked
+                    ? "Book another time"
+                    : "Book the onboarding call"}
+                </BookCallButton>
+              </Item>
+            )}
             {links.onboarding_map ? (
               <Item
                 tone="neutral"
@@ -526,6 +569,28 @@ export function OnboardingKit({
                 </ExtLink>
               ) : null}
             </Item>
+            {live ? null : (
+              <Item tone="neutral" label="Blueprint and launch calls">
+                <BookCallButton
+                  taskId={client.taskId}
+                  clientName={client.name}
+                  stage={client.stage}
+                  kind="blueprint"
+                  variant="outline"
+                >
+                  Book the Blueprint call
+                </BookCallButton>
+                <BookCallButton
+                  taskId={client.taskId}
+                  clientName={client.name}
+                  stage={client.stage}
+                  kind="launch"
+                  variant="outline"
+                >
+                  Book the launch call
+                </BookCallButton>
+              </Item>
+            )}
             {links.brand_dna || links.offer_sheet ? (
               <Item tone="neutral" label="Brand DNA and offer">
                 {links.brand_dna ? (
@@ -538,6 +603,18 @@ export function OnboardingKit({
             ) : null}
           </StepPanel>
         </div>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <BookCallButton
+          taskId={client.taskId}
+          clientName={client.name}
+          stage={client.stage}
+          variant="outline"
+        >
+          Book a call
+        </BookCallButton>
+        <PortalTasksButton taskId={client.taskId} clientName={client.name} />
       </div>
 
       {shownFiles.length ? (
