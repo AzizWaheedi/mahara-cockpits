@@ -2109,7 +2109,7 @@ begin
             from regexp_split_to_table(coalesce(rec.detail, ''), '[.]\s+') with ordinality as p(x, n)
            where x ~* '(refused|cannot|could not|did not answer|not ready|failed)'
            order by n), ' '), ''), rec.detail)
-      else rec.detail end, 240), '.!? ');
+      else rec.detail end, case when subj = 'sales-desk/room-hosts' then 240 else 160 end), '.!? ');
 
     raised := raised + public.cockpit_sales_alert_set('missing:' || subj, is_missing, 'missing', subj,
       format('%s has never reported. %s', rec.label, rec.effect),
