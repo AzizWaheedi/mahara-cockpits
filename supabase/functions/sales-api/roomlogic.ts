@@ -262,6 +262,33 @@ export function linkRetrying(refusal: unknown): boolean {
  * (m1 round 4: the sentence and the re-ask agree). Neither a refusal the
  * re-ask tries again nor one that may have gone.
  */
+/**
+ * Meta's failures about one lead, never the number (m1 round 4,
+ * wordy-meta-lead-failure-counts-against-room-whatsapp-health): each code
+ * and the words HighLevel may carry in its place. One table for every
+ * reader (the room source's WhatsApp health, the 24-hour window, the
+ * cascade's lanes that are not asked again).
+ */
+export const META_LEAD_FAILURES: readonly { code: string; words: RegExp; window?: true }[] = [
+  { code: "131026", words: /undeliverable|incapable of receiving|not (?:a )?(?:valid )?whatsapp (?:user|number|account)/i },
+  { code: "131047", words: /re-?engagement|24 hours have passed/i, window: true },
+  { code: "131049", words: /healthy ecosystem engagement/i },
+  { code: "131050", words: /stopped (?:receiving )?marketing/i },
+  { code: "130472", words: /experiment/i },
+];
+/** A failure about this one lead (Meta's per-lead codes or their words). */
+export function metaLeadFailure(why: unknown): boolean {
+  const s = String(why ?? "");
+  return META_LEAD_FAILURES.some(f => new RegExp(`\\b${f.code}\\b`).test(s) || f.words.test(s));
+}
+/** The lead's 24-hour WhatsApp window had shut (131047, by code or words). */
+export function metaWindowFailure(why: unknown): boolean {
+  const s = String(why ?? "");
+  return META_LEAD_FAILURES.some(f => f.window && (new RegExp(`\\b${f.code}\\b`).test(s) || f.words.test(s)));
+}
+export function linkMayHaveGone(refusal: unknown): boolean {
+  return MAY_HAVE_GONE.test(String(refusal ?? "").trim());
+}
 export function linkRefusalFinal(refusal: unknown): boolean {
   const s = String(refusal ?? "").trim();
   return s !== "" && !RETRY_TAIL.test(s) && !MAY_HAVE_GONE.test(s);
@@ -789,10 +816,15 @@ export const LANE_COPY = {
    * link per missed call, said, never the closed room back in silence.
    */
   link_already_sent: "This call's video link went at {time}. Call them again; a call they miss can carry a new link.",
+  link_may_have_gone:
+    "This call's video link may have reached them already: HighLevel's answer was lost. Check their conversation in HighLevel before sending another, or call them.",
   /** A video link would reach the lead at night on their own clock (stress2 round 5). */
   lead_night: "It is night where the lead is, so no video link goes now. Call them after 9 in the morning, their time.",
   /** A room's link at night: made, never messaged; the host reads it out if they are speaking (stress2 round 5). */
   lead_night_read_out: "It is night where the lead is, so no message went. Read the link out if you are speaking with them.",
+  /** The same for a link nobody can say (a Zoom link with its passcode, the short link off: m1 round 4). */
+  lead_night_unsayable:
+    "It is night where the lead is, so no message went, and this Zoom link cannot be read out. If you are speaking with them, end this room and use Meet, whose link can be read out.",
   /** The lead's open room is another seat's (stress2, round 2): never "Open it", which only its host can. */
   lead_has_others_room: "The {role}'s video room for this lead is open until {until}. Call the lead, or send a link after that.",
   /** The lead is in that other seat's room now (stress2 round 3): no time, and never "Call the lead". */
@@ -1666,7 +1698,8 @@ export type RefusalCode =
   | "wrap_too_early"
   | "worker_down"
   | "lead_night"
-  | "link_already_sent";
+  | "link_already_sent"
+  | "link_may_have_gone";
 
 export interface Refused {
   ok: false;
@@ -1728,6 +1761,7 @@ const REFUSALS: Record<RefusalCode, { text: string; status: number; retry?: bool
   worker_down: { text: LANE_COPY.worker_down, status: 503 },
   lead_night: { text: LANE_COPY.lead_night, status: 409 },
   link_already_sent: { text: LANE_COPY.link_already_sent, status: 409 },
+  link_may_have_gone: { text: LANE_COPY.link_may_have_gone, status: 409 },
 };
 
 /** The Zoom refusals without their "use Meet" advice, for a host who cannot use Meet either. */
@@ -1955,8 +1989,14 @@ function notLead(room: RoomRow, now: number, ctx: RoomCtx): Applied {
   return change(room, "host_in", patch, effects);
 }
 
-/** The end reasons of a room a timer closed (the SQL sweep's R3, R4 and R9), not a person or the provider. */
-export const TIMER_END_REASONS = ["lead_no_show", "not_admitted", "host_not_in", "no_deadline"] as const;
+/**
+ * The end reasons of a room a timer closed (the SQL sweep's R3, R4 and R9),
+ * not a person or the provider. link_not_sent (R4's "unstarted": the link
+ * never went, for example a night read-out) is one too (m1 round 4,
+ * night-read-out-closed-link-not-sent-refuses-late-join): the rep may have
+ * read the link out, so a join or a knock that lands after it is kept.
+ */
+export const TIMER_END_REASONS = ["lead_no_show", "not_admitted", "host_not_in", "no_deadline", "link_not_sent"] as const;
 /** A late join's own time may sit this far before the room opened (clocks are never exact). */
 const LATE_JOIN_EARLY_S = 60;
 
@@ -2050,6 +2090,24 @@ function lateKnock(room: RoomRow, event: Extract<RoomEvent, { kind: "lead_waitin
 }
 
 /**
+ * Zoom's meeting.deleted delivered after a timer closed the room (Zoom's
+ * retry minutes late, m1 round 4, zoom-deleted-late-after-timer-close-kept-
+ * as-no-show): on Zoom's own time the link was dead before the close, so
+ * the room stays closed but is no lead's no-show: end_reason
+ * meeting_deleted, result failed, Zoom's sentence. Only a timer's close of
+ * a room nobody joined.
+ */
+function lateDeleted(room: RoomRow, event: Extract<RoomEvent, { kind: "meeting_deleted" }>, now: number): Changed | null {
+  if (room.state !== "expired" || !room.contact_id || leadJoined(room) || room.result === "joined") return null;
+  if (!(TIMER_END_REASONS as readonly string[]).includes(String(room.end_reason ?? ""))) return null;
+  const ended = ms(room.ended_at);
+  if (ended === null) return null;
+  const t = eventTime(event.at, now);
+  if (t >= ended) return null;
+  return change(room, room.state, { result: "failed", end_reason: "meeting_deleted", error: ZOOM_DELETED }, []);
+}
+
+/**
  * Applies one event to a room at time `now`. Pure: it returns the patch, the
  * conditional-write guard and the follow-up effects; the caller writes it
  * with guardFilter(expect) and runs the effects only if the write landed.
@@ -2099,6 +2157,10 @@ export function applyRoomEvent(room: RoomRow, event: RoomEvent, now: number, ctx
     if (event.kind === "lead_waiting") {
       const knock = lateKnock(room, event, now, ctx);
       if (knock) return knock;
+    }
+    if (event.kind === "meeting_deleted") {
+      const gone = lateDeleted(room, event, now);
+      if (gone) return gone;
     }
     if (actor) return refuse("stale");
     const r = refuse("final");
@@ -2438,6 +2500,10 @@ export function applyRoomEvent(room: RoomRow, event: RoomEvent, now: number, ctx
       // its link is dead (Zoom answers 3,001). A room with the lead in it
       // ends joined; any other room fails with the sentence that says what to
       // do next. A failed room is never settled as a no-show.
+      // Held while the room is being made, as every other Zoom effect is
+      // (m1 round 4, zoom-foreign-meeting-deletes-room-being-made): the
+      // sweep's replay judges it by meeting id once the worker has written one.
+      if (early) return refuse("too_early");
       const t = when(event);
       if (room.state === "lead_in")
         return change(room, "ended", { result: leadJoined(room) ? "joined" : "no_join", end_reason: "meeting_deleted", ended_at: iso(t) }, [
@@ -2947,7 +3013,9 @@ export function settleWanted(
   w: Waits,
   facts: SettleFacts = {},
 ): boolean {
-  if (room.result === "admit_blocked") return false;
+  // A room closed on the lead's knock, or the room made in its place (m1
+  // round 4): the lead came and was locked out, never a no-show.
+  if (room.result === "admit_blocked" || room.night_cleared === "replacing") return false;
   if (room.purpose !== "booked") return settleDue(room, appointmentStart, marked, now, w, facts);
   if (room.call_kind !== "intro" || room.state !== "expired" || room.lead_in_at) return false;
   if (!room.appointment_id || room.settled_mark || marked) return false;

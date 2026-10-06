@@ -221,8 +221,8 @@ describe("final review: which room a Zoom event drives", () => {
   test("the topic's code decides for a room on the same meeting", () => {
     expect(pickZoomRoom(rows, { meetingId: "85023456789", code: "K7Q2MX" })).toEqual({ room: true, room_id: "r-made" });
   });
-  test("the topic's code decides for a room whose meeting id is not written yet", () => {
-    expect(pickZoomRoom(rows, { meetingId: "99999999999", code: "M4N5PQ" })).toEqual({ room: true, room_id: "r-new" });
+  test("the topic's code alone never picks a room whose meeting id is not written yet: kept with no room, sales-api places it by its host (m1 round 4)", () => {
+    expect(pickZoomRoom(rows, { meetingId: "99999999999", code: "M4N5PQ" })).toEqual({ room: true, room_id: null });
   });
   test("a meeting that names a room's code but is another meeting is no room at all", () => {
     expect(pickZoomRoom([rows[0]!], { meetingId: "11122233344", code: "K7Q2MX" })).toEqual({ room: false });

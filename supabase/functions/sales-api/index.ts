@@ -610,7 +610,7 @@ async function videoLinkHoldsNoShow(contactId: string, now: number): Promise<str
   let rows: Row[];
   try {
     rows = await svc(
-      `cockpit_sales_rooms?contact_id=eq.${enc(contactId)}&purpose=neq.booked&requested_at=gte.${enc(new Date(now - 3 * 3_600_000).toISOString())}&select=state,lead_by,host_by,first_open_at,last_open_at,lead_waiting_at,lead_in_at,count_undo_at,taken_back_join_at,result,ended_at,contact_first_name&order=requested_at.desc&limit=20`,
+      `cockpit_sales_rooms?contact_id=eq.${enc(contactId)}&purpose=neq.booked&requested_at=gte.${enc(new Date(now - 3 * 3_600_000).toISOString())}&select=state,lead_by,host_by,first_open_at,last_open_at,lead_waiting_at,lead_in_at,count_undo_at,taken_back_join_at,result,ended_at,contact_first_name,night_cleared,link_sent_at&order=requested_at.desc&limit=20`,
     );
   } catch (e) {
     console.error("no-show room check unread", redact(String((e as Error)?.message ?? e)));
@@ -625,6 +625,21 @@ async function videoLinkHoldsNoShow(contactId: string, now: number): Promise<str
       ? `${whose} video room is open until ${kuwaitClock(until)}, so the no-show was not marked. Wait for it, or end the room first.`
       : `${whose} video room is still open, so the no-show was not marked. Wait for it, or end the room first.`;
   }
+  // The lead knocked on this call's room and could not be let in ("I can't
+  // let them in": a room closed admit_blocked, or the room made in its
+  // place), and no room of theirs has a join that stands since: she came on
+  // time and our room locked her out, so it is never a no-show (m1 round 4,
+  // admit-blocked-replacement-expiry-offers-noshow).
+  const joinedSince = rows.some(r => leadJoined(r as unknown as RoomRow));
+  if (!joinedSince && rows.some(r => r.result === "admit_blocked" || r.night_cleared === "replacing"))
+    return `${name === "This lead" ? "This lead" : name} knocked on the video room and could not be let in, so the no-show was not marked. Call them, or mark how the call went.`;
+  // The wait the lead's link promised ("I'll wait for you for the next 10
+  // minutes") is not over, even though a person ended the room early (m1
+  // round 4, end-early-offers-noshow-inside-promised-ten-minutes): the lead
+  // may be opening the link now.
+  const promised = rows.find(r => r.link_sent_at && !leadJoined(r as unknown as RoomRow) && (ms(r.lead_by) ?? 0) > now);
+  if (promised)
+    return `${whose} video link told them the room would wait until ${kuwaitClock(ms(promised.lead_by) as number)}, so the no-show was not marked. Mark it after that, or call them now.`;
   // Only a join that stands is a join (m1 round 4,
   // noshow-hold-skipped-after-taken-back-join): one "That was not the lead"
   // took back keeps its time in lead_in_at and is nobody.

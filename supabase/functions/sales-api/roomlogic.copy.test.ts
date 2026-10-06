@@ -212,8 +212,12 @@ const LANE_SENTENCES = {
   lead_in_others_room: "The lead is on a video call with the {role} now. Send a link after it ends.",
   lead_night: "It is night where the lead is, so no video link goes now. Call them after 9 in the morning, their time.",
   lead_night_read_out: "It is night where the lead is, so no message went. Read the link out if you are speaking with them.",
+  lead_night_unsayable:
+    "It is night where the lead is, so no message went, and this Zoom link cannot be read out. If you are speaking with them, end this room and use Meet, whose link can be read out.",
   // m1 round 3: one link per missed call, said; the next link after a deleted Zoom meeting; the worker's own problem.
   link_already_sent: "This call's video link went at {time}. Call them again; a call they miss can carry a new link.",
+  link_may_have_gone:
+    "This call's video link may have reached them already: HighLevel's answer was lost. Check their conversation in HighLevel before sending another, or call them.",
   dead_link_provider:
     "Hi {first_name}, the {old} link I sent no longer works, sorry about that. Let's use {provider} instead: {link} I'm waiting for you there now.",
   dead_link_same: "Hi {first_name}, the {old} link I sent no longer works, sorry about that. Here is a new one: {link} I'm waiting for you there now.",

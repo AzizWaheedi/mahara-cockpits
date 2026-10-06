@@ -273,10 +273,10 @@ describe("which room a Zoom event is about", () => {
     });
   });
 
-  test("a room found by its code whose meeting id is not saved yet", () => {
+  test("a room found by its code whose meeting id is not saved yet: kept with no room, for sales-api to place by its host (m1 round 4)", () => {
     expect(pickZoomRoom([row("r", "creating", "K7Q2MX", null)], { meetingId: "85023456789", code: "K7Q2MX" })).toEqual({
       room: true,
-      room_id: "r",
+      room_id: null,
     });
   });
 });

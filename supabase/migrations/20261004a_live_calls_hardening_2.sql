@@ -2098,7 +2098,18 @@ begin
       when (rec.at at time zone 'Asia/Kuwait')::date = (t at time zone 'Asia/Kuwait')::date and in_hours
         then to_char(rec.at at time zone 'Asia/Kuwait', 'HH24:MI')
       else to_char(rec.at at time zone 'Asia/Kuwait', 'Dy FMDD Mon HH24:MI') end;
-    words := rtrim(public.cockpit_sales_alert_words(rec.detail, 160), '.!? ');
+    -- The host check's row: the sentences that name what it found first (a
+    -- refused sign-in, a report it could not read), so the cut never keeps
+    -- only the lines that say all is well (m1 round 4,
+    -- host-check-ran-said-as-not-being-checked).
+    words := rtrim(public.cockpit_sales_alert_words(
+      case when subj = 'sales-desk/room-hosts' and rec.ok is false then
+        coalesce(nullif(array_to_string(array(
+          select btrim(x) || '.'
+            from regexp_split_to_table(coalesce(rec.detail, ''), '[.]\s+') with ordinality as p(x, n)
+           where x ~* '(refused|cannot|could not|did not answer|not ready|failed)'
+           order by n), ' '), ''), rec.detail)
+      else rec.detail end, 240), '.!? ');
 
     raised := raised + public.cockpit_sales_alert_set('missing:' || subj, is_missing, 'missing', subj,
       format('%s has never reported. %s', rec.label, rec.effect),
@@ -2114,6 +2125,11 @@ begin
       format('%s reported a problem at %s: %s. %s', rec.label, since, coalesce(nullif(words, ''), 'no detail'),
              case when subj = 'sales-desk/rooms' and coalesce(rec.detail, '') not like 'Not making rooms:%'
                   then 'Some rooms or links may fail; read the detail.'
+                  -- The host check ran (its row is fresh): seats and sign-ins
+                  -- were checked, and the detail says what needs attention;
+                  -- "not being checked" is for a missing or stale row only.
+                  when subj = 'sales-desk/room-hosts'
+                  then 'Read the detail: a seat''s Zoom or the Google sign-in needs attention.'
                   else rec.effect end),
       jsonb_build_object('worker', rec.worker, 'job', rec.job, 'last_at', rec.at));
   end loop;
@@ -2387,9 +2403,9 @@ alter table public.cockpit_sales_rooms
   add column if not exists night_cleared text;
 alter table public.cockpit_sales_rooms drop constraint if exists cockpit_sales_rooms_night_cleared_check;
 alter table public.cockpit_sales_rooms add constraint cockpit_sales_rooms_night_cleared_check
-  check (night_cleared is null or night_cleared in ('intro', 'replacing'));
+  check (night_cleared is null or night_cleared in ('intro', 'replacing', 'retry'));
 comment on column public.cockpit_sales_rooms.night_cleared is
-  'The press cleared the night rule for this room''s link: intro (the lead''s own booked intro in its window) or replacing (the lead at the door of the room it replaces).';
+  'The press cleared the night rule for this room''s link: intro (the lead''s own booked intro in its window), replacing (the lead at the door of the room it replaces) or retry (Try the other provider on a failed room pressed by day, within the press''s grace: its first link goes as that press''s would have).';
 
 create or replace function public.cockpit_sales_room_join_stands(p_lead_in_at timestamptz, p_undo_at timestamptz, p_taken_at timestamptz)
 returns boolean

@@ -196,9 +196,10 @@ const FINAL = new Set(["ended", "expired", "failed", "cancelled"]);
  *   "Mahara call K7Q2MX", and its joins and its end must never drive that
  *   room (final review, zoom-topic-code-beats-meeting-id).
  * - `{ room: true, room_id }`: the room. The topic's code decides only for a
- *   room on this very meeting, or one whose meeting id the worker has not
- *   written yet; else the one live room on that meeting; else the only room
- *   on it.
+ *   room on this very meeting; else the one live room on that meeting; else
+ *   the only room on it. A room whose meeting id the worker has not written
+ *   yet is never picked by the topic alone: the event is kept with no room
+ *   (room_id null) and sales-api places it by its host (m1 round 4).
  * - `{ room: true, room_id: null }`: a cockpit meeting, but two rooms wrap
  *   it and the topic does not say which; sales-api decides.
  */
@@ -210,8 +211,14 @@ export function pickZoomRoom(
   if (!all.length) return { room: false };
   const meetingOf = (r: ZoomRoomRow) => String(r.provider_meeting_id ?? "");
   if (look.code) {
-    const byCode = all.find(r => r.code === look.code && (!meetingOf(r) || meetingOf(r) === look.meetingId));
+    const byCode = all.find(r => r.code === look.code && meetingOf(r) === look.meetingId && Boolean(look.meetingId));
     if (byCode) return { room: true, room_id: byCode.id };
+    // A room still being made (no meeting id written yet) whose code the
+    // topic names: the event is kept with no room, and sales-api places it
+    // only when its host is the room host's own Zoom user (m1 round 4,
+    // zoom-foreign-meeting-deletes-room-being-made): another account user's
+    // meeting titled "Mahara call {code}" never lands on a room being made.
+    if (all.some(r => r.code === look.code && !meetingOf(r))) return { room: true, room_id: null };
   }
   const onMeeting = look.meetingId ? all.filter(r => meetingOf(r) === look.meetingId) : [];
   if (!onMeeting.length) return { room: false };

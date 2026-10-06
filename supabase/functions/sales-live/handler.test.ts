@@ -494,10 +494,10 @@ describe("POST /zoom", () => {
     expect(world.rooms[0].state).toBe("ended");
   });
 
-  test("the room is found by the code in the topic when the meeting id is not saved yet", async () => {
+  test("a room whose meeting id is not saved yet: the event is kept with no room, for sales-api to place by its host (m1 round 4)", async () => {
     const h = fresh(w => w.rooms.push(liveRoom({ provider_meeting_id: null })));
     await h(zoomRequest(zoomBody("meeting.started", {}, {})));
-    expect(world.events[0].room_id).toBe("room-1");
+    expect(world.events[0].room_id).toBeNull();
   });
 
   test("two open rooms on one meeting: the topic's code decides, else sales-api does", async () => {
