@@ -223,9 +223,16 @@ function Creative({ view }: { view: View }) {
   const { hash } = useLocation();
 
   // An old address (/work, /touchpoints) or a part's link lands on its part
-  // once the page has something to scroll to. A jump, not a glide: a glide
-  // never runs in a tab opened in the background.
-  const ready = snap !== undefined;
+  // once everything above it has loaded: the scripting calendar arrives on
+  // its own and would push the part 3,000px down after the jump. The same
+  // subscription as the calendar's own, so it reads nothing extra. A jump,
+  // not a glide: a glide never runs in a tab opened in the background.
+  const calendar = useQuery(
+    api.creative.calendar,
+    view === "sod" ? {} : "skip",
+  );
+  const ready =
+    snap !== undefined && (view !== "sod" || calendar !== undefined);
   useEffect(() => {
     if (view !== "sod" || !hash || !ready) return;
     document.getElementById(hash.slice(1))?.scrollIntoView({ block: "start" });
