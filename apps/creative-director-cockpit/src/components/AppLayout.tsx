@@ -1,9 +1,12 @@
 import { useMutation } from "convex/react";
 import { MotionConfig, motion, useReducedMotion } from "framer-motion";
+import { Search } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef } from "react";
 import { useLocation, useOutlet } from "react-router";
+import { openSearch } from "@/lib/search";
 import { api } from "../../convex/_generated/api";
 import { AppSidebar } from "./AppSidebar";
+import { CommandPalette } from "./CommandPalette";
 import { HermesChat } from "./HermesChat";
 import { RouteErrorBoundary } from "./RouteErrorBoundary";
 import {
@@ -70,6 +73,14 @@ function LayoutContent() {
             <span className="text-sm text-muted-foreground">
               Creative director
             </span>
+            <button
+              type="button"
+              onClick={openSearch}
+              aria-label="Search"
+              className="ml-auto inline-flex size-10 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground"
+            >
+              <Search aria-hidden className="size-5" />
+            </button>
           </div>
         </header>
         {/* A div, not a second <main>: SidebarInset is the page's <main>,
@@ -94,6 +105,7 @@ function LayoutContent() {
         </div>
         <HermesChat />
       </SidebarInset>
+      <CommandPalette />
     </>
   );
 }

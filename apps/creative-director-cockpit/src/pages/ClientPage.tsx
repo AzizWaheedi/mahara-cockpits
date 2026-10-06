@@ -11,7 +11,7 @@ import {
   Rocket,
 } from "lucide-react";
 import { useState } from "react";
-import { Link, useParams } from "react-router";
+import { Link, useParams, useSearchParams } from "react-router";
 import { toast } from "sonner";
 import { ClientUpdates } from "@/components/ClientUpdates";
 import {
@@ -70,6 +70,18 @@ const TAB_LABEL: Record<Tab, string> = {
   "Work in flight": "In flight",
   "Everything we made": "All work",
   "Talk to them": "Talk to them",
+};
+
+/**
+ * Each tab's word in the address (?tab=flight), so a refresh, the Back
+ * button, a shared link or the search box lands on the same tab.
+ */
+const TAB_KEY: Record<Tab, string> = {
+  "Script from here": "script",
+  "Their funnel": "funnel",
+  "Work in flight": "flight",
+  "Everything we made": "made",
+  "Talk to them": "talk",
 };
 
 /**
@@ -442,7 +454,14 @@ export function ClientPage() {
   const params = useParams();
   const name = decodeURIComponent(params.name ?? "");
   const d = useQuery(api.clients.detail, name ? { name } : "skip");
-  const [tab, setTab] = useState<Tab>("Script from here");
+  const [query, setQuery] = useSearchParams();
+  const tab: Tab =
+    TABS.find(t => TAB_KEY[t] === query.get("tab")) ?? "Script from here";
+  const setTab = (next: Tab) => {
+    const q = new URLSearchParams(query);
+    q.set("tab", TAB_KEY[next]);
+    setQuery(q, { replace: true });
+  };
   const ctx = useContextPack(d?.client?.name ?? name);
 
   if (d === undefined) {

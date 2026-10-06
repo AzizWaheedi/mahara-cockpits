@@ -75,6 +75,7 @@ same reportPeriod "apps/client-success-cockpit/src/lib/reportPeriod.ts" "$MB/src
 # way in every cockpit: Arabic letter forms folded, one typo allowed.
 same search.ts "apps/client-success-cockpit/src/lib/search.ts" "$MB/src/lib/search.ts"
 same search.ts "apps/client-success-cockpit/src/lib/search.ts" "$ED/src/lib/search.ts"
+same search.ts "apps/client-success-cockpit/src/lib/search.ts" "$CD/src/lib/search.ts"
 
 # The swipe file's backend is the same in the two Convex cockpits, bar the
 # role each one checks.

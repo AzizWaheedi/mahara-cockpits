@@ -1,12 +1,10 @@
-export { CalendarPage, ScriptingCalendar } from "./CalendarPage";
+export { ScriptingCalendar } from "./CalendarPage";
 export { ClientDatabasePage, ScriptDatabasePage } from "./ClientDatabasePage";
 export { ClientPage } from "./ClientPage";
 export {
-  ClientsPage,
+  ClientProfilesView,
   CreativeEodPage,
   DashboardPage,
-  TouchpointsPage,
-  WorkPage,
 } from "./DashboardPage";
 export { FunnelRow, FunnelsPage } from "./FunnelsPage";
 export { IdeationPage } from "./IdeationPage";
@@ -20,5 +18,4 @@ export { ScriptsPage } from "./ScriptsPage";
 export { SettingsPage } from "./SettingsPage";
 export { SignupPage } from "./SignupPage";
 export { SocialCalendarPage } from "./SocialCalendarPage";
-export { SocialPage } from "./SocialPage";
 export { SwipePage } from "./SwipePage";

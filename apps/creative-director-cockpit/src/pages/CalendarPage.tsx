@@ -293,8 +293,8 @@ export function ScriptingCalendar({ compact = false }: { compact?: boolean }) {
       }
     >
       {compact ? (
-        // Inside the middle of the day the page already has its title, so
-        // the calendar is a section of it, not a second page.
+        // Inside Today the page already has its title, so the calendar is a
+        // section of it, not a second page.
         <CardHead icon={CalendarDays} title="Scripting calendar" sub={counts} />
       ) : (
         <PageHeader title="Scripting calendar" sub={counts} />
@@ -538,9 +538,4 @@ export function ScriptingCalendar({ compact = false }: { compact?: boolean }) {
       </section>
     </div>
   );
-}
-
-/** Standalone route, kept so a bookmarked /calendar still works. */
-export function CalendarPage() {
-  return <ScriptingCalendar />;
 }

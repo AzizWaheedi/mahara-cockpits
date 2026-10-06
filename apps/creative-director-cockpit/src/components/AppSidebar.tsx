@@ -2,26 +2,19 @@ import { useAuthActions } from "@convex-dev/auth/react";
 import { useQuery } from "convex/react";
 import { motion } from "framer-motion";
 import {
-  Bookmark,
-  CalendarDays,
-  FileText,
   Filter,
   LayoutGrid,
-  Lightbulb,
+  Library,
   Link2,
   LogOut,
-  MessageSquare,
   Moon,
-  MoonStar,
   PanelLeft,
   PanelLeftClose,
-  Send,
+  Search,
   Settings,
   Share2,
-  Sparkles,
   Sun,
   Sunrise,
-  Trophy,
   Users,
   X,
 } from "lucide-react";
@@ -30,6 +23,7 @@ import { portalUrl } from "@/components/PortalAutoSignIn";
 import { Wordmark } from "@/components/Wordmark";
 import { useTheme } from "@/contexts/ThemeContext";
 import { COCKPIT_ICON } from "@/lib/cockpits";
+import { openSearch } from "@/lib/search";
 import { api } from "../../convex/_generated/api";
 import { Avatar, AvatarFallback } from "./ui/avatar";
 import {
@@ -45,7 +39,6 @@ import {
   SidebarFooter,
   SidebarGroup,
   SidebarGroupContent,
-  SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
   SidebarMenuButton,
@@ -59,43 +52,33 @@ type NavItem = {
   icon: React.ComponentType<{ className?: string }>;
 };
 
-/** The day in order, then the people, then what he writes from. */
-const navGroups: { label: string; items: NavItem[] }[] = [
-  {
-    label: "Your day",
-    items: [
-      { href: "/dashboard", label: "Start of day", icon: Sunrise },
-      { href: "/work", label: "Middle of the day", icon: Sun },
-      {
-        href: "/touchpoints",
-        label: "Client touchpoints",
-        icon: MessageSquare,
-      },
-      { href: "/review", label: "Send for review", icon: Send },
-      { href: "/eod", label: "End of day", icon: MoonStar },
-    ],
-  },
-  {
-    label: "Clients",
-    items: [
-      { href: "/clients", label: "Clients", icon: Users },
-      { href: "/meetings", label: "Meetings & messages", icon: CalendarDays },
-    ],
-  },
-  {
-    label: "Library",
-    items: [
-      { href: "/scripting", label: "Scripting database", icon: Sparkles },
-      { href: "/scripts", label: "Scripts we made", icon: FileText },
-      { href: "/social", label: "Social media", icon: Share2 },
-      { href: "/ideation", label: "Ideation", icon: Lightbulb },
-      { href: "/swipe", label: "Swipe file", icon: Bookmark },
-      { href: "/what-works", label: "What works", icon: Trophy },
-      { href: "/funnels", label: "Funnels and forms", icon: Filter },
-      { href: "/links", label: "Key links", icon: Link2 },
-    ],
-  },
+/**
+ * Six places (the simplification audit, approved by Aziz on 2026-10-06):
+ * the day, the people, what he writes from, then social, funnels and links.
+ * Each page that used to have its own row sits inside one of them.
+ */
+const navItems: NavItem[] = [
+  { href: "/dashboard", label: "Today", icon: Sunrise },
+  { href: "/clients", label: "Clients", icon: Users },
+  { href: "/what-works", label: "Library", icon: Library },
+  { href: "/social", label: "Social", icon: Share2 },
+  { href: "/funnels", label: "Funnels", icon: Filter },
+  { href: "/links", label: "Links", icon: Link2 },
 ];
+
+/** Pages that sit inside a place, so the place stays lit on them. */
+const INSIDE: Record<string, string[]> = {
+  "/dashboard": ["/eod", "/review", "/meetings"],
+  "/what-works": ["/scripting", "/scripts", "/ideation", "/swipe"],
+};
+
+/** A place stays lit on its own pages too: a client's page is under Clients. */
+function isActive(pathname: string, href: string): boolean {
+  if (pathname === href || pathname.startsWith(`${href}/`)) return true;
+  return (INSIDE[href] ?? []).some(
+    p => pathname === p || pathname.startsWith(`${p}/`),
+  );
+}
 
 function NavLink({
   href,
@@ -210,29 +193,66 @@ function SidebarNav() {
 
   return (
     <SidebarContent>
-      {navGroups.map(group => (
-        <SidebarGroup key={group.label}>
-          <SidebarGroupLabel>{group.label}</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {group.items.map(item => (
-                <NavLink
-                  key={item.href}
-                  href={item.href}
-                  label={item.label}
-                  icon={item.icon}
-                  isActive={
-                    location.pathname === item.href ||
-                    location.pathname.startsWith(`${item.href}/`)
-                  }
-                />
-              ))}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-      ))}
+      <SidebarGroup>
+        <SidebarGroupContent>
+          <SidebarMenu>
+            {navItems.map(item => (
+              <NavLink
+                key={item.href}
+                href={item.href}
+                label={item.label}
+                icon={item.icon}
+                isActive={isActive(location.pathname, item.href)}
+              />
+            ))}
+          </SidebarMenu>
+        </SidebarGroupContent>
+      </SidebarGroup>
       <PortalGroup />
     </SidebarContent>
+  );
+}
+
+/**
+ * The search field at the top of the rail: it opens the search box, which
+ * also opens with Ctrl/Cmd + K from any page. Folded, it is one icon.
+ */
+function SearchField() {
+  const { setOpenMobile, open, isMobile } = useSidebar();
+  const mac =
+    typeof navigator !== "undefined" &&
+    /Mac|iPhone|iPad/.test(navigator.platform ?? "");
+  const click = () => {
+    setOpenMobile(false);
+    openSearch();
+  };
+  if (!open && !isMobile)
+    return (
+      <div className="flex justify-center px-2 pt-2">
+        <button
+          type="button"
+          onClick={click}
+          aria-label="Search"
+          className="inline-flex size-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
+        >
+          <Search aria-hidden className="size-4" />
+        </button>
+      </div>
+    );
+  return (
+    <div className="px-2 pt-2">
+      <button
+        type="button"
+        onClick={click}
+        className="flex h-10 w-full items-center gap-2 rounded-lg border border-sidebar-border bg-background/60 px-3 text-left text-sm text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+      >
+        <Search aria-hidden className="size-4 shrink-0" />
+        <span className="min-w-0 flex-1 truncate">Search…</span>
+        <kbd className="hidden shrink-0 rounded border border-sidebar-border px-1.5 py-0.5 font-mono text-[10px] tracking-[0.08em] lg:inline">
+          {mac ? "⌘K" : "Ctrl K"}
+        </kbd>
+      </button>
+    </div>
   );
 }
 
@@ -352,6 +372,7 @@ export function AppSidebar() {
   return (
     <Sidebar collapsible="icon" variant="floating">
       <SidebarHeaderContent />
+      <SearchField />
       <SidebarNav />
       <SidebarUserMenu />
     </Sidebar>
