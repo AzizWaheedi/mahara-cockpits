@@ -13,7 +13,7 @@ async function fixture(){
   const sql=migration(name),end=sql.indexOf('CREATE OR REPLACE FUNCTION');
   if(end<0)throw new Error('Canonical source catalog prefix missing');await db.exec(sql.slice(0,end)+'COMMIT;');
  }
- const mediaRuns=migration('20260927x_cockpit_native_media_sync.sql').match(/CREATE TABLE public\.cockpit_native_media_runs \([\s\S]*?\n\);/)?.[0];
+ const mediaRuns=migration('20260927x_cockpit_native_media_sync.sql').match(/CREATE TABLE IF NOT EXISTS public\.cockpit_native_media_runs \([\s\S]*?\n\);/)?.[0];
  const salesRuns=migration('20260924a_sales_cockpit.sql').match(/create table if not exists public\.cockpit_sales_mirror_runs \([\s\S]*?\n\);/)?.[0];
  if(!mediaRuns||!salesRuns)throw new Error('Canonical producer ledger catalog missing');await db.exec(mediaRuns+salesRuns);
  await db.exec(migration('20261004z_native_monitor.sql'));await db.exec(migration('20261005e_cockpit_native_admin.sql'));

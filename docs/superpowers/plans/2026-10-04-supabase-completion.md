@@ -124,3 +124,5 @@ Earlier missing-access claims were path/credential selection problems and are su
 - Final release execution writes `D:/MaharaMedia/worktrees/cockpit-ship-first-release-20261006.json`. Consult that report and the ignored evidence bundle for the exact final SHA and gate result.
 - History/final catchup, complete access/save journeys, server/worker independence, producer activation, production configuration and rollback remain full-cutover work.
 - Keep `full_cutover_ready: false` and `convex_retirement_authorized: false` for ship-first. Do not delete any legacy deployment or protected source backup.
+- Initial full release run on clean `b651819` passed all five local gates and ship-first evidence. One admin suite failed because its fixture extractor did not recognize the canonical ledger's `CREATE TABLE IF NOT EXISTS`.
+- Updated the fixture extractor without changing production SQL or assertions. The six admin tests then passed with 26 assertions. Preserve the initial report at `D:/MaharaMedia/worktrees/cockpit-ship-first-release-initial-20261006.json`; the final report records the corrected clean-commit verification.

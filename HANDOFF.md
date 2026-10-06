@@ -76,5 +76,8 @@ Mahara Media operates five cockpit applications (`media-buyer`, `client-success`
 - Contract documentation: `docs/CUTOVER-ACCEPTANCE.md`. Plan checkpoint: `docs/superpowers/plans/2026-10-04-supabase-completion.md`.
 - Final release command: `python scripts/verify-cutover-readiness.py --mode release --report D:/MaharaMedia/worktrees/cockpit-ship-first-release-20261006.json`.
 - The generated report records the final run result and exact clean SHA. The ignored acceptance bundle is rebound after committing release packaging to avoid a self-referential committed SHA.
-- This checkpoint does not claim that the final gate, push, frontend deployment or Convex retirement already ran. Check the generated evidence/report for the current execution result.
+- Initial full release run against clean `b651819` passed all five local gates and ship-first evidence, but failed one suite: `scripts/native-admin.test.ts`. Preserved report: `D:/MaharaMedia/worktrees/cockpit-ship-first-release-initial-20261006.json`.
+- Root cause: its SQL fixture extractor expected `CREATE TABLE public.cockpit_native_media_runs`, but the canonical migration now uses `CREATE TABLE IF NOT EXISTS`. Updated only that extractor; no assertions, suite manifest or production gate were weakened.
+- The corrected admin suite passed all six tests with 26 assertions. Commit this correction and rerun the full release command against the rebound clean HEAD.
+- Push, frontend deployment and Convex retirement have not run. Check the final generated evidence/report for the current release-verification result.
 - Local fallback was recorded for dirty-state inputs excluded from isolated Gemini worktrees. No worker or browser relay was started.
