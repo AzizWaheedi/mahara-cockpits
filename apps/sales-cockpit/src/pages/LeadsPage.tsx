@@ -25,6 +25,7 @@ import {
   StatusChip,
   type Tone,
 } from "../components/kit";
+import { CLIENT_NOTE, isClient } from "../lib/clients";
 import {
   type LeadFilter,
   PAGE,
@@ -394,7 +395,10 @@ export default function LeadsPage() {
   );
 }
 
-function ClassChip({ c }: { c: Lead["lead_class"] }) {
+function ClassChip({ c, client }: { c: Lead["lead_class"]; client: boolean }) {
+  // An active client is labelled as one: they are out of the sales lists.
+  if (client)
+    return <StatusChip tone="good" label="Active client" title={CLIENT_NOTE} />;
   return (
     <StatusChip
       tone={c ? (CLASS_TONE[c] ?? "neutral") : "neutral"}
@@ -427,7 +431,7 @@ function LeadRow({ lead: l, now }: { lead: Lead; now: number }) {
           <span className="min-w-0 truncate text-sm font-medium" dir="auto">
             {name}
           </span>
-          <ClassChip c={l.lead_class} />
+          <ClassChip c={l.lead_class} client={isClient(l)} />
         </span>
         {company || revenue ? (
           // The first part is plain text so dir="auto" takes the line's
@@ -493,7 +497,7 @@ function LeadRow({ lead: l, now }: { lead: Lead; now: number }) {
           {created}
         </span>
         <span className="min-w-0">
-          <ClassChip c={l.lead_class} />
+          <ClassChip c={l.lead_class} client={isClient(l)} />
         </span>
         <span
           className={`truncate text-left text-sm ${named ? "" : "muted"}`}

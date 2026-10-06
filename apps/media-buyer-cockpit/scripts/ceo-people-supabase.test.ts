@@ -1,7 +1,7 @@
 import {expect,test} from "bun:test";
 import type {SupabaseClient} from "@supabase/supabase-js";
 import {actor,cockpitTestDb,member,migration,owner} from "./lib/cockpitTestDb";
-import {readPeople,readPeopleRoles,savePerson,setPersonActive,unavailablePeopleDirectory} from "../src/lib/ceoPeopleClient";
+import {readPeople,readPeopleRoles,savePerson,setPersonActive} from "../src/lib/ceoPeopleClient";
 import {defaultSchedule} from "../src/types/ceo/schedule";
 const F="00000000-0000-4000-8000-000000000001", F2="00000000-0000-4000-8000-000000000002", OTHER="00000000-0000-4000-8000-000000000003";
 async function fixture(){
@@ -111,10 +111,9 @@ test("bad values, unknown IDs, duplicate names and forged attribution roll back 
   await expect(db.exec("update cockpit_audit_log set action='changed'")).rejects.toThrow();
  }finally{await db.close();}
 });
-test("audit failure rolls back pay update; unavailable provider and malformed receipts never succeed",async()=>{
+test("audit failure rolls back pay update; malformed receipts never succeed",async()=>{
  const {db,client}=await fixture();try{
   const {id}=await savePerson(client,{name:"Pay",monthlyCost:100});
-  await expect(unavailablePeopleDirectory(client)).rejects.toThrow(/not connected/);
   await owner(db);await db.exec(`create function reject_audit() returns trigger language plpgsql as $$begin raise exception 'Audit unavailable';end$$;
    create trigger reject_audit before insert on cockpit_audit_log for each row execute function reject_audit();`);
   await actor(db,F);await expect(savePerson(client,{id,monthlyCost:900})).rejects.toThrow(/Audit unavailable/);

@@ -1653,9 +1653,11 @@ export async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
         );
       if (!tagged || c.resolved) continue;
       if (String(c.user?.id ?? "") === NADA) continue;
+      if (!c.id) throw new Error("ClickUp mention has no provider comment identity");
       inbox.push({
         kind: "mention",
         taskId: t.id,
+        commentId: String(c.id),
         title: t.name,
         url: t.url,
         body: text.slice(0, 300),

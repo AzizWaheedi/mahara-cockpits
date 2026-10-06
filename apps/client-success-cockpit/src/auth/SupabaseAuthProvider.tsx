@@ -11,8 +11,11 @@ import {
 } from "react";
 import {
   createCockpitSupabaseClient,
-  loadSupabaseAccess,
+  observeSupabaseAccess,
+  cockpitAccessError,
   type SupabaseAccess,
+  type SupabaseAccessState,
+  type SupabaseAccessObserver,
 } from "./supabaseAccess";
 
 export interface CockpitAuthState {
@@ -20,6 +23,7 @@ export interface CockpitAuthState {
   session: Session | null;
   access: SupabaseAccess | null;
   ready: boolean;
+  error: string | null;
   isAuthenticated: boolean;
   isAdmin: boolean;
   isCeo: boolean;
@@ -38,6 +42,7 @@ const defaultState: CockpitAuthState = {
   session: null,
   access: null,
   ready: false,
+  error: null,
   isAuthenticated: false,
   isAdmin: false,
   isCeo: false,
@@ -62,91 +67,42 @@ export function getCockpitSupabaseClient(): SupabaseClient {
 }
 
 export function SupabaseAuthProvider({ children }: { children: ReactNode }) {
-  const [session, setSession] = useState<Session | null>(null);
-  const [access, setAccess] = useState<SupabaseAccess | null>(null);
-  const [ready, setReady] = useState(false);
-  const generation = useRef(0);
+  const [state, setState] = useState<SupabaseAccessState>({
+    session: null, access: null, ready: false, error: null,
+  });
+  const { session, access, ready, error } = state;
+  const observer = useRef<SupabaseAccessObserver | null>(null);
 
   const client = useMemo(() => {
     try {
       return getCockpitSupabaseClient();
     } catch (err) {
-      console.error("Failed to initialize Supabase client:", err);
+      setState({ session: null, access: null, ready: true, error: cockpitAccessError(err) });
       return null;
     }
   }, []);
 
-  const reloadAccess = useCallback(
-    async (targetClient: SupabaseClient, targetSession: Session | null): Promise<SupabaseAccess | null> => {
-      if (!targetSession?.user || !targetSession.user.email_confirmed_at) {
-        return null;
-      }
-      try {
-        const loaded = await loadSupabaseAccess(targetClient);
-        return loaded;
-      } catch (err) {
-        console.error("Failed to load cockpit access:", err);
-        return null;
-      }
-    },
-    [],
-  );
 
   useEffect(() => {
-    if (!client) {
-      setReady(true);
-      return;
-    }
-
-    let active = true;
-    const receive = (nextSession: Session | null) => {
-      const current = ++generation.current;
-      setSession(nextSession);
-      setAccess(null);
-      setReady(false);
-      // Return from the auth callback before running auth/network methods.
-      setTimeout(() => {
-        if (!active || current !== generation.current) return;
-        void reloadAccess(client, nextSession).then(loaded => {
-          if (!active || current !== generation.current) return;
-          setAccess(loaded);
-          setReady(true);
-        });
-      }, 0);
-    };
-    const initial = generation.current;
-    client.auth.getSession().then(({ data }) => {
-      if (active && generation.current === initial) receive(data.session);
-    }).catch(() => {
-      if (active && generation.current === initial) receive(null);
-    });
-
-    const { data: sub } = client.auth.onAuthStateChange(
-      (_event, nextSession) => receive(nextSession),
-    );
-
+    if (!client) return;
+    const subscription = observeSupabaseAccess(client, setState);
+    observer.current = subscription;
     return () => {
-      active = false;
-      generation.current += 1;
-      sub.subscription.unsubscribe();
+      subscription.unsubscribe();
+      observer.current = null;
     };
-  }, [client, reloadAccess]);
+  }, [client]);
 
   const signOut = useCallback(async () => {
     if (client) {
-      await client.auth.signOut();
+      const { error: signOutError } = await client.auth.signOut();
+      if (signOutError) throw signOutError;
     }
-    setSession(null);
-    setAccess(null);
   }, [client]);
 
   const refreshAccess = useCallback(async () => {
-    if (client && session) {
-      const current = generation.current;
-      const loaded = await reloadAccess(client, session);
-      if (current === generation.current) setAccess(loaded);
-    }
-  }, [client, session, reloadAccess]);
+    await observer.current?.refresh();
+  }, []);
 
   const value = useMemo<CockpitAuthState>(() => {
     const email = access?.email ?? session?.user?.email ?? "";
@@ -164,6 +120,7 @@ export function SupabaseAuthProvider({ children }: { children: ReactNode }) {
       session,
       access,
       ready,
+      error,
       isAuthenticated,
       isAdmin,
       isCeo,
@@ -176,7 +133,7 @@ export function SupabaseAuthProvider({ children }: { children: ReactNode }) {
       signOut,
       refreshAccess,
     };
-  }, [client, session, access, ready, signOut, refreshAccess]);
+  }, [client, session, access, ready, error, signOut, refreshAccess]);
 
   return (
     <CockpitAuthContext.Provider value={value}>

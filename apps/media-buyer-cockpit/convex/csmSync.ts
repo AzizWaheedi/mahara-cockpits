@@ -548,6 +548,11 @@ export const buildCsmSnapshot = internalAction({
     // Aziz added "Last report sent" by hand; resolve it by name so this works the moment
     // it exists and degrades to "unknown" rather than "never sent" while it does not.
     const reportFieldId = await fieldIdByName(ctx, "Last report sent");
+    // The contract's end, for the renewal window on the client success
+    // Projections screen: a Date field named "Contract end date" on this list.
+    // Resolved by name the same way, so the window fills the day it exists
+    // and says "renewal date unknown" (never a guess) until then.
+    const renewalFieldId = await fieldIdByName(ctx, "Contract end date");
     const clientTasks = await allTasks(ctx, CLIENTS_LIST, true);
     const liveWatch: {
       client: string;
@@ -594,6 +599,9 @@ export const buildCsmSnapshot = internalAction({
       const stageName = stage ?? "Needs Contacting";
       const lastReport = reportFieldId
         ? toIso(raw(t, reportFieldId))
+        : undefined;
+      const renewalDate = renewalFieldId
+        ? toIso(raw(t, renewalFieldId))
         : undefined;
       const reportDays = daysSince(lastReport, today);
       const silentDays = daysSince(lastPoc, today);
@@ -735,6 +743,11 @@ export const buildCsmSnapshot = internalAction({
         lastReport,
         reportDays,
         reportTracked: !!reportFieldId,
+        renewalDate,
+        renewalTracked: !!renewalFieldId,
+        // The hot list's own first-win rule, sent so the client success
+        // cockpit caps re-sells by the same rule.
+        firstWin: won,
         reportDue:
           !!reportFieldId &&
           stageName === "Active" &&

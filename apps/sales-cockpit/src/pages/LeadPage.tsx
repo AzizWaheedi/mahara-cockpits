@@ -1,9 +1,25 @@
-import { ArrowLeft, ArrowUpRight, Copy, Phone, ScrollText } from "lucide-react";
+import {
+  ArrowLeft,
+  ArrowUpRight,
+  ClipboardList,
+  Copy,
+  Phone,
+  ScrollText,
+} from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router";
 import { AdOrigin } from "../components/AdOrigin";
 import { ProofToSend } from "../components/AssetPicker";
 import { CallNotesList, useCallNotes } from "../components/CallNotes";
+import {
+  ClientFormSheet,
+  ClientFormStatus,
+} from "../components/ClientFormSheet";
+import {
+  ContractPanel,
+  canContract,
+  useContracts,
+} from "../components/ContractPanel";
 import { Conversation, useConversation } from "../components/Conversation";
 import { HotControl } from "../components/HotList";
 import {
@@ -27,7 +43,19 @@ import { ProposalPanel } from "../components/ProposalPanel";
 import { AskReference } from "../components/References";
 import { ResearchPanel } from "../components/ResearchPanel";
 import { assetStage, objectionsFrom } from "../lib/assets";
-import { useLead, useLeadActivity, useSetting, useTeam } from "../lib/data";
+import {
+  type ClientFormSent,
+  type ClientFormSetting,
+  hiddenFields,
+} from "../lib/clientForm";
+import { CLIENT_NOTE, isClient } from "../lib/clients";
+import {
+  useClientForms,
+  useLead,
+  useLeadActivity,
+  useSetting,
+  useTeam,
+} from "../lib/data";
 import {
   ago,
   callType,
@@ -37,11 +65,10 @@ import {
   statusLabel,
   when,
 } from "../lib/format";
+import { ghlContactUrl } from "../lib/highlevel";
 import { toast } from "../lib/toast";
-import type { CalendarRow, Lead, Me } from "../lib/types";
+import type { CalendarRow, Deal, Lead, Me } from "../lib/types";
 import { leadLanguage } from "../lib/whatsapp";
-
-const GHL_LOCATION = "7NI8yyJtwsh2OOWA5Icr";
 
 const CLASS_TONE: Record<string, Tone> = {
   qualified: "good",
@@ -60,10 +87,16 @@ export default function LeadPage({ me }: { me: Me }) {
   const convo = useConversation(contactId);
   const callNotes = useCallNotes(contactId);
   const pipeline = useSetting<{ roles?: Record<string, string> }>("pipeline");
-  // A sales asset's message, put in the conversation box from "Proof to send".
+  // The New Client Form: its questions, this lead's contracts and the forms
+  // already sent, for the sheet and its card.
+  const formSetting = useSetting<ClientFormSetting>("client_form");
+  const leadContracts = useContracts(contactId);
+  const clientForms = useClientForms(contactId);
+  const [formOpen, setFormOpen] = useState(false);
+  // A sales asset's message from "Proof to send", or a contract's link.
   const [convoPrefill, setConvoPrefill] = useState<{
     text: string;
-    asset: { id: string; url: string | null };
+    asset?: { id: string; url: string | null } | null;
     nonce: number;
   } | null>(null);
   const convoRef = useRef<HTMLDivElement>(null);
@@ -142,6 +175,7 @@ export default function LeadPage({ me }: { me: Me }) {
       (x, y) => Date.parse(String(x.start_at)) - Date.parse(String(y.start_at)),
     )[0];
   const lastDemo = appointments.find(r => r.call_type === "demo");
+  const people = formPeople(l, appointments, me);
   const owed = appointments.filter(r => r.needs_mark);
 
   return (
@@ -173,6 +207,14 @@ export default function LeadPage({ me }: { me: Me }) {
               label={plainStage(l.stage_name)}
             />
           ) : null}
+          {isClient(l) ? (
+            <StatusChip
+              size="md"
+              tone="good"
+              label="Active client"
+              title={CLIENT_NOTE}
+            />
+          ) : null}
           {live?.contact.dnd || l.dnd ? (
             <StatusChip
               size="md"
@@ -197,34 +239,46 @@ export default function LeadPage({ me }: { me: Me }) {
             ]}
           />
         </p>
-        <HotControl me={me} contactId={l.contact_id} />
+        {isClient(l) ? (
+          <p className="muted text-sm">{CLIENT_NOTE}</p>
+        ) : (
+          <HotControl
+            me={me}
+            contactId={l.contact_id}
+            name={l.name}
+            phone8={l.phone8}
+          />
+        )}
         <div className="flex flex-wrap gap-2">
-          <Link
-            to={`/call/${l.contact_id}?script=${callScript(me, appointments)}`}
-            className={buttonPrimary}
-          >
-            <ScrollText className="size-3.5" aria-hidden />
-            {callScript(me, appointments) === "demo"
-              ? "Open the demo script"
-              : "Open the intro script"}
-          </Link>
+          {/* No sales call script for an active client. */}
+          {isClient(l) ? null : (
+            <Link
+              to={`/call/${l.contact_id}?script=${callScript(me, appointments)}`}
+              className={buttonPrimary}
+            >
+              <ScrollText className="size-3.5" aria-hidden />
+              {callScript(me, appointments) === "demo"
+                ? "Open the demo script"
+                : "Open the intro script"}
+            </Link>
+          )}
           {l.phone ? (
             <CopyChip icon={Phone} text={l.phone} label="Copy the number" />
           ) : null}
           {l.email ? <CopyChip text={l.email} label="Copy the email" /> : null}
-          {me.manager || me.role === "closer" || me.role === "both" ? (
-            <a
-              href={newClientFormUrl(l, appointments, me)}
-              target="_blank"
-              rel="noopener noreferrer"
+          {canContract(me) ? (
+            <button
+              type="button"
               className={button}
-              title="Opens the New Client Form with this lead, the closer and the setter already filled in, so the signed client links back to this call."
+              onClick={() => setFormOpen(true)}
+              title="The New Client Form, with this lead, the closer and the setter already set, and the answers the cockpit knows beside it."
             >
-              New client form <ArrowUpRight className="size-3.5" aria-hidden />
-            </a>
+              <ClipboardList className="size-3.5" aria-hidden />
+              New client form
+            </button>
           ) : null}
           <a
-            href={`https://app.gohighlevel.com/v2/location/${GHL_LOCATION}/contacts/detail/${l.contact_id}`}
+            href={ghlContactUrl(l.contact_id)}
             target="_blank"
             rel="noopener noreferrer"
             className={button}
@@ -397,8 +451,60 @@ export default function LeadPage({ me }: { me: Me }) {
               retry={activity.reload}
             />
           </SectionCard>
+          <SectionCard title="Contract">
+            <ContractPanel
+              me={me}
+              contactId={l.contact_id}
+              company={l.company}
+              hasEmail={Boolean(l.email?.trim())}
+              hasPhone={Boolean(l.phone?.trim())}
+              language={leadLanguage(
+                convo.thread
+                  .filter(m => m.direction === "inbound")
+                  .map(m => m.body),
+              )}
+              onShare={text => {
+                setConvoPrefill({ text, nonce: Date.now() });
+                convoRef.current?.scrollIntoView({
+                  block: "start",
+                  behavior: "smooth",
+                });
+              }}
+            />
+          </SectionCard>
+          <SectionCard title="New client form">
+            <ClientFormStatus
+              sent={clientForms.data}
+              deals={a?.deals ?? []}
+              signedAt={
+                (leadContracts.data ?? []).find(c => c.status === "completed")
+                  ?.signed_at ?? null
+              }
+              canFill={canContract(me)}
+              onFill={() => setFormOpen(true)}
+            />
+          </SectionCard>
         </div>
       </div>
+      {canContract(me) ? (
+        <ClientFormSheet
+          open={formOpen}
+          onClose={() => setFormOpen(false)}
+          setting={formSetting.data}
+          ctx={{
+            lead: l,
+            closer: people.closer,
+            contracts: leadContracts.data ?? [],
+            recordings: a?.recordings ?? [],
+          }}
+          hidden={hiddenFields(l, people.closer, people.setter)}
+          already={alreadySent(clientForms.data, a?.deals ?? [])}
+          onSent={() => {
+            clientForms.reload();
+            activity.reload();
+          }}
+        />
+      ) : null}
       <p className="muted text-xs">
         Copied from the CRM {ago(l.mirrored_at)}. Calls, bookings and deals come
         from B2B, which reads HighLevel every 15 minutes; messages are read from
@@ -409,25 +515,32 @@ export default function LeadPage({ me }: { me: Me }) {
 }
 
 /**
- * The New Client Form with its hidden fields filled (added 2026-09-24 at
- * Aziz's word): the contact, the closer and the setter, so a signed client
+ * Who the New Client Form names in its hidden fields (since 2026-09-24, at
+ * Aziz's word): the demo's closer and the intro's setter, so a signed client
  * links back to the lead and both reps get the credit without guessing.
  */
-function newClientFormUrl(
+function formPeople(
   l: Lead,
   appointments: CalendarRow[],
   me: Me,
-): string {
+): { closer: string; setter: string } {
   const demo = appointments.find(a => a.call_type === "demo");
   const intro = appointments.find(a => a.call_type === "intro");
-  const closer = demo?.assigned_user_name || me.name || "";
-  const setter = l.setter_name || intro?.assigned_user_name || "";
-  const hash = new URLSearchParams({
-    contact_id: l.contact_id,
-    closer,
-    setter,
-  });
-  return `https://maharamedia.typeform.com/to/BTzMwXiw#${hash.toString()}`;
+  return {
+    closer: demo?.assigned_user_name || me.name || "",
+    setter: l.setter_name || intro?.assigned_user_name || "",
+  };
+}
+
+/** A New Client Form already in for this lead: the cockpit's own note, or the deal B2B has. */
+function alreadySent(
+  sent: ClientFormSent[] | null,
+  deals: Deal[],
+): { at: string; by: string | null } | null {
+  const mine = sent?.[0];
+  if (mine) return { at: mine.sent_at, by: mine.sent_by_name };
+  const deal = deals.find(d => !d.voided && d.submitted_at);
+  return deal?.submitted_at ? { at: deal.submitted_at, by: deal.closer } : null;
 }
 
 /** Which script this lead's next call needs: the demo once one is booked or held. */

@@ -243,7 +243,9 @@ def prompt_block(resolved: dict[str, Any]) -> str:
         structure = each
     if resolved["guarantee"]:
         lines.append(f"- **Guarantee: yes.** \"{resolved['guarantee_text']}\" Print it once, as one line in "
-                     "`terms`, in the document's language.")
+                     "`terms`, in the document's language. It is on the process, not on results: promise "
+                     f"no results and no free work. {resolved['meetings']} qualified meetings is the "
+                     "target, not a promise.")
     else:
         lines.append(f"- **Guarantee: none on this proposal.** Promise no free work, no refund and no "
                      f"guarantee anywhere in the document. {resolved['meetings']} qualified meetings is "
@@ -265,13 +267,14 @@ SETTING_SOURCE = "hermes/sales-desk/offer.json"
 def cockpit_setting(offer: dict[str, Any]) -> dict[str, Any]:
     """What the cockpit's proposal form offers the closer, written from
     offer.json so the file stays the one place the offer is edited: the
-    payment options by key and label, and the guarantee in the words it
-    will be printed in."""
+    payment options by key and label, and the guarantee by the label
+    offer.json gives it, or else in the words it will be printed in."""
     options = (offer.get("payment") or {}).get("options") or {}
     text = resolve(offer, {"guarantee": True})["guarantee_text"] or ""
+    label = str((offer.get("guarantee") or {}).get("label") or "").strip()
     return {
         "payments": [{"key": k, "label": str(v.get("label") or k)} for k, v in options.items()],
-        "guarantee": {"label": f"Include the guarantee ({text.rstrip('.')})"},
+        "guarantee": {"label": label or f"Include the guarantee ({text.rstrip('.')})"},
         "source": SETTING_SOURCE,
     }
 

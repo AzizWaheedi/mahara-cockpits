@@ -6,7 +6,8 @@ import {
   useMemo,
   useState,
 } from "react";
-import { Link, useNavigate } from "react-router";
+import { useNavigate, useSearchParams } from "react-router";
+import { HotSheet } from "../components/HotSheet";
 import {
   EmptyState,
   Failed,
@@ -16,9 +17,8 @@ import {
 } from "../components/kit";
 import { Segmented } from "../components/ScriptParts";
 import { api } from "../lib/api";
-import { useLatest, useNow, useQuery } from "../lib/data";
+import { useLatest, useNow } from "../lib/data";
 import { ago, classLabel, isArabic, plainStage, when } from "../lib/format";
-import { supabase } from "../lib/supabase";
 import { toast } from "../lib/toast";
 import type { Me } from "../lib/types";
 
@@ -91,7 +91,22 @@ export default function PipelinePage({ me }: { me: Me }) {
   const [scope, setScope] = useState<"mine" | "team">(
     me.manager ? "team" : "mine",
   );
-  const [view, setView] = useState<"board" | "hot">("board");
+  // The view sits in the address (?view=hot), so the hot list can be linked
+  // to and stays open across a reload.
+  const [params, setParams] = useSearchParams();
+  const view: "board" | "hot" = params.get("view") === "hot" ? "hot" : "board";
+  const setView = (v: "board" | "hot") =>
+    setParams(
+      p => {
+        const next = new URLSearchParams(p);
+        if (v === "hot") next.set("view", "hot");
+        else next.delete("view");
+        return next;
+      },
+      { replace: true },
+    );
+  // Bumped by the refresh button while the hot list is open.
+  const [hotNonce, setHotNonce] = useState(0);
   const [all, setAll] = useState(false);
   const [board, setBoard] = useState<Board | null>(null);
   // Which choice (pipeline, whose, quiet or not) the board on screen was read for.
@@ -126,13 +141,15 @@ export default function PipelinePage({ me }: { me: Me }) {
     }
   }, [pipelineId, scope, all, chosen]);
 
+  // The board is read while it is the view; the hot list reads its own rows.
   useEffect(() => {
+    if (view !== "board") return;
     void load();
     const t = window.setInterval(() => {
       if (document.visibilityState === "visible") void load();
     }, 60_000);
     return () => window.clearInterval(t);
-  }, [load]);
+  }, [load, view]);
 
   async function move(contactId: string, stageId: string) {
     if (!board || stageId === NO_STAGE) return;
@@ -227,17 +244,21 @@ export default function PipelinePage({ me }: { me: Me }) {
         <div>
           <h1 className="text-xl font-semibold tracking-tight">Pipeline</h1>
           <p className="muted text-sm">
-            {board && fresh
-              ? `${board.cards.length} ${all ? "" : "active "}lead${board.cards.length === 1 ? "" : "s"}${
-                  !all && quietTotal ? ` · ${quietTotal} quiet for 60 days` : ""
-                }. Drag a card to move it in HighLevel.`
-              : error
-                ? null
-                : "Reading the pipeline…"}
+            {view === "hot"
+              ? "The leads closest to signing. Click a cell to change it; it saves when you press Enter or click away."
+              : board && fresh
+                ? `${board.cards.length} ${all ? "" : "active "}lead${board.cards.length === 1 ? "" : "s"}${
+                    !all && quietTotal
+                      ? ` · ${quietTotal} quiet for 60 days`
+                      : ""
+                  }. Drag a card to move it in HighLevel.`
+                : error
+                  ? null
+                  : "Reading the pipeline…"}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {board && board.pipelines.length > 1 ? (
+          {view === "board" && board && board.pipelines.length > 1 ? (
             <select
               aria-label="Pipeline"
               value={pipelineId}
@@ -269,35 +290,43 @@ export default function PipelinePage({ me }: { me: Me }) {
             ]}
             onChange={v => setView(v as "board" | "hot")}
           />
+          {view === "board" ? (
+            <button
+              type="button"
+              onClick={() => setAll(a => !a)}
+              aria-pressed={all}
+              className="inline-flex h-8 items-center gap-1.5 rounded-[var(--radius-md)] border hairline px-3 text-sm"
+            >
+              {all ? "Hide quiet leads" : "Show quiet leads"}
+            </button>
+          ) : null}
           <button
             type="button"
-            onClick={() => setAll(a => !a)}
-            aria-pressed={all}
-            className="inline-flex h-8 items-center gap-1.5 rounded-[var(--radius-md)] border hairline px-3 text-sm"
-          >
-            {all ? "Hide quiet leads" : "Show quiet leads"}
-          </button>
-          <button
-            type="button"
-            onClick={() => void load()}
-            disabled={busy}
+            onClick={() =>
+              view === "hot" ? setHotNonce(n => n + 1) : void load()
+            }
+            disabled={view === "board" && busy}
             className="muted inline-flex h-8 items-center gap-1 px-1 text-xs"
-            aria-label="Read the pipeline again"
+            aria-label={
+              view === "hot"
+                ? "Read the hot list again"
+                : "Read the pipeline again"
+            }
           >
             <RefreshCw
-              className={`size-3.5 ${busy ? "animate-spin" : ""}`}
+              className={`size-3.5 ${view === "board" && busy ? "animate-spin" : ""}`}
               aria-hidden
             />
           </button>
         </div>
       </header>
 
-      {error ? (
+      {view === "board" && error ? (
         <Failed what="The pipeline" error={error} retry={() => void load()} />
       ) : null}
 
       {view === "hot" ? (
-        <HotList me={me} scope={scope} />
+        <HotSheet me={me} scope={scope} nonce={hotNonce} />
       ) : hidden || !board ? null : empty ? (
         <div className="panel">
           <EmptyState
@@ -485,100 +514,5 @@ function CardItem({
         </select>
       </div>
     </li>
-  );
-}
-
-interface HotRow {
-  contact_id: string;
-  owner_email: string;
-  next_at: string | null;
-  next_how: string | null;
-  last_objection: string | null;
-  note: string | null;
-  updated_at: string;
-}
-
-/** Every hot lead, the soonest follow-up first. */
-function HotList({ me, scope }: { me: Me; scope: "mine" | "team" }) {
-  const hot = useQuery<HotRow[]>(() => {
-    let q = supabase
-      .from("cockpit_sales_hot")
-      .select("*")
-      .is("removed_at", null)
-      .order("next_at", { ascending: true, nullsFirst: false })
-      .limit(500);
-    if (scope === "mine") q = q.eq("owner_email", String(me.email ?? ""));
-    return q;
-  }, [scope, me.email]);
-  const ids = (hot.data ?? []).map(h => h.contact_id);
-  const names = useQuery<{ contact_id: string; name: string | null }[]>(
-    () =>
-      ids.length
-        ? supabase
-            .from("cockpit_sales_leads")
-            .select("contact_id,name")
-            .in("contact_id", ids.slice(0, 500))
-        : Promise.resolve({ data: [], error: null }),
-    [ids.join(",")],
-  );
-  const nameOf = new Map(
-    (names.data ?? []).map(n => [n.contact_id, n.name] as const),
-  );
-  const now = useNow(60_000);
-  if (hot.error)
-    return <Failed what="The hot list" error={hot.error} retry={hot.reload} />;
-  if (!hot.data) return <p className="muted text-sm">Reading the hot list…</p>;
-  if (!hot.data.length)
-    return (
-      <div className="panel">
-        <EmptyState
-          icon={Flame}
-          title="Nobody on the hot list"
-          text="Put a lead on it from their page or the dialer: when to follow up, how, and their last objection. They are called first."
-        />
-      </div>
-    );
-  return (
-    <ul className="panel divide-y hairline overflow-hidden">
-      {hot.data.map(h => {
-        const due = h.next_at && Date.parse(h.next_at) <= now;
-        return (
-          <li
-            key={h.contact_id}
-            className="flex flex-wrap items-start gap-x-4 gap-y-1 px-4 py-3"
-          >
-            <Link
-              to={`/lead/${h.contact_id}`}
-              className={`min-w-0 flex-1 truncate text-sm font-medium hover:underline ${isArabic(nameOf.get(h.contact_id)) ? "ar" : ""}`}
-              dir="auto"
-            >
-              {nameOf.get(h.contact_id) ?? "A lead"}
-            </Link>
-            <span
-              className="text-sm tabular-nums"
-              style={{ color: due ? "var(--destructive)" : undefined }}
-            >
-              {h.next_at
-                ? `${due ? "Due " : ""}${when(h.next_at)}`
-                : "No follow-up set"}
-              {h.next_how ? ` · ${h.next_how}` : ""}
-            </span>
-            <span className="muted w-full text-xs">
-              {h.last_objection || h.note?.trim() || scope === "team" ? (
-                <Parts
-                  items={[
-                    h.last_objection ? `Objection: ${h.last_objection}` : null,
-                    h.note,
-                    scope === "team" ? h.owner_email.split("@")[0] : null,
-                  ]}
-                />
-              ) : (
-                "No notes"
-              )}
-            </span>
-          </li>
-        );
-      })}
-    </ul>
   );
 }

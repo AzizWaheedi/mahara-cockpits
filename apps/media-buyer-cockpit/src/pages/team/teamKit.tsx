@@ -4,8 +4,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import type { Person } from "@/lib/team";
-import { DAY_NAMES } from "@/lib/teamCore";
-
+import { DAY_NAMES, utcToZoned } from "@/lib/teamCore";
+import { localToday, viewerZone } from "./teamTime";
 
 /** Native selects styled as the kit's Input, so a phone gets its own picker. */
 export const selectClass =
@@ -34,19 +34,19 @@ export function dayName(day: string | null | undefined): string {
   return `${WEEKDAYS[d.getUTCDay()]} ${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}`;
 }
 
-/** "10:42" today, "Tue 10:42" this week, "16 Sep" before that. */
-export function when(iso: string | null | undefined, today: string): string {
+/** "10:42" today, "Tue 10:42" this week, "16 Sep" before that: on the viewer's own clock. */
+export function when(iso: string | null | undefined): string {
   if (!iso) return "";
-  const at = new Date(iso);
-  const local = new Date(at.getTime() + 3 * 3_600_000); // Kuwait
-  const day = local.toISOString().slice(0, 10);
-  const hm = local.toISOString().slice(11, 16);
-  if (day === today) return hm;
+  const tz = viewerZone();
+  const at = utcToZoned(iso, tz);
+  const today = localToday(tz);
+  if (at.day === today) return at.time;
   const ago =
-    (Date.parse(`${today}T00:00:00Z`) - Date.parse(`${day}T00:00:00Z`)) /
+    (Date.parse(`${today}T00:00:00Z`) - Date.parse(`${at.day}T00:00:00Z`)) /
     86_400_000;
-  if (ago < 7) return `${WEEKDAYS[local.getUTCDay()]} ${hm}`;
-  return `${local.getUTCDate()} ${MONTHS[local.getUTCMonth()]}`;
+  if (ago < 7) return `${WEEKDAYS[at.weekday]} ${at.time}`;
+  const d = new Date(`${at.day}T00:00:00Z`);
+  return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}`;
 }
 
 /** The part of an address before the @, for "saved by". */
@@ -186,7 +186,6 @@ export function SharedText({
   version,
   savedBy,
   savedAt,
-  today,
   placeholder,
   minRows = 6,
   label,
@@ -196,7 +195,6 @@ export function SharedText({
   version: number;
   savedBy: string | null;
   savedAt: string | null;
-  today: string;
   placeholder: string;
   minRows?: number;
   label: string;
@@ -286,7 +284,7 @@ export function SharedText({
       : state === "dirty"
         ? "Not saved yet"
         : savedAt
-          ? `Saved ${when(savedAt, today)} by ${shortName(savedBy)}`
+          ? `Saved ${when(savedAt)} by ${shortName(savedBy)}`
           : "Nothing written yet";
 
   return (
@@ -330,8 +328,8 @@ export function SharedText({
         <div className="grid gap-2 rounded-md border bg-muted/40 p-3 text-sm">
           <p>
             {shortName(theirs.by) || "Someone"} saved a newer version
-            {theirs.at ? ` at ${when(theirs.at, today)}` : ""} while you were
-            writing. Yours is not saved yet.
+            {theirs.at ? ` at ${when(theirs.at)}` : ""} while you were writing.
+            Yours is not saved yet.
           </p>
           <details className="text-xs text-muted-foreground">
             <summary className="cursor-pointer">Read their version</summary>

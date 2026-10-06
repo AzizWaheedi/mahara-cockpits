@@ -10,6 +10,7 @@ import {
   applyGuestChanges,
   buildRrule,
   endOf,
+  endPlan,
   endRrule,
   eventSeries,
   type GuestChange,
@@ -23,6 +24,7 @@ import {
   type SeriesChange,
   sendUpdatesFor,
   seriesLine,
+  seriesUnchanged,
   utcToZoned,
   wallClock,
   weekdayOf,
@@ -44,7 +46,7 @@ import {
   type Who,
 } from "./teamDb";
 import { type MeetingPage, meetingLink, page } from "./teamPage";
-import { googleCalendarWriteToken } from "./tools";
+import { calendarWriteReady, googleCalendarWriteToken } from "./tools";
 
 /**
  * A meeting's Google Calendar series, changed from the cockpit.
@@ -477,6 +479,8 @@ async function changeSeries(
 ): Promise<void> {
   const master = await readEvent(p.cal_calendar, p.cal_event_id);
   const now = eventSeries(master, c.tz);
+  // Nothing to change on this series: no split, no update to anyone.
+  if (seriesUnchanged(now, change)) return;
   const plan = planSeriesChange(
     {
       startDay: now.firstDay ?? change.from,
@@ -557,32 +561,47 @@ async function changeSeries(
 }
 
 async function endSeries(c: Ctx, p: Part, lastDay: string): Promise<void> {
+  // A sitting that already happened stays: a series never ends before yesterday.
+  const floor = addDays(c.today, -1);
+  const last = lastDay < floor ? floor : lastDay;
   const master = await readEvent(p.cal_calendar, p.cal_event_id);
   const rrule = rruleOf(master.recurrence);
   const first = eventSeries(master, c.tz).firstDay;
-  if (!rrule) {
-    // A single event after the last day is cancelled, never deleted.
-    if (first && first > lastDay)
-      await writeEvent(
-        p.cal_calendar,
-        p.cal_event_id,
-        () => ({ status: "cancelled" }),
-        c.past ? "none" : "all",
-      );
-  } else {
+  const how = endPlan(rrule, first, last);
+  if (how === "cancel") {
+    // Nothing of it falls on or before the last day: cancelled, never
+    // deleted (Google keeps it and it can be restored), its stored sittings
+    // go with it, and it stops being one of the meeting's series now.
+    await writeEvent(
+      p.cal_calendar,
+      p.cal_event_id,
+      () => ({ status: "cancelled" }),
+      c.past ? "none" : "all",
+    );
+    await db(
+      `team_sittings?meeting_id=eq.${enc(String(c.m.id))}&on_date=gt.${last}&cal_instance_id=like.${enc(`${p.cal_event_id}\\_2`)}*`,
+      {
+        method: "PATCH",
+        body: { status: "cancelled", held: false },
+        prefer: "return=minimal",
+      },
+    );
+    await markEnded(p, floor);
+    return;
+  }
+  if (how === "until" && rrule)
     await writeEvent(
       p.cal_calendar,
       p.cal_event_id,
       f => ({
         recurrence: withRrule(
           f.recurrence,
-          endRrule(rruleOf(f.recurrence) ?? rrule, lastDay, c.tz),
+          endRrule(rruleOf(f.recurrence) ?? rrule, last, c.tz),
         ),
       }),
-      c.past || lastDay < c.today ? "none" : "all",
+      c.past || last < c.today ? "none" : "all",
     );
-  }
-  await markEnded(p, lastDay);
+  await markEnded(p, last);
 }
 
 async function opSeries(op: Op, c: Ctx): Promise<void> {
@@ -897,7 +916,9 @@ async function readBack(meetingId: string): Promise<void> {
     );
     if (!ev) continue;
     const s = eventSeries(ev, c.tz);
-    read.push({ p, ev, s });
+    // A series cancelled as it ended keeps the last day it was given.
+    const cancelled = ev.status === "cancelled";
+    if (!cancelled) read.push({ p, ev, s });
     await db(
       `team_meeting_series?cal_calendar=eq.${enc(p.cal_calendar)}&cal_event_id=eq.${enc(p.cal_event_id)}`,
       {
@@ -909,7 +930,7 @@ async function readBack(meetingId: string): Promise<void> {
           start_time: s.start_time,
           minutes: s.minutes,
           meet_link: s.meet_link,
-          ends_on: s.ends_on,
+          ends_on: cancelled ? (p.ends_on ?? c.today) : s.ends_on,
           weekday:
             s.weekdays?.length === 1
               ? s.weekdays[0]
@@ -926,7 +947,15 @@ async function readBack(meetingId: string): Promise<void> {
   if (!read.length) return;
   const main = read.find(x => x.p.cal_event_id === c.m.cal_event_id) ?? read[0];
   const days = new Set<number>();
-  for (const x of read) for (const d of x.s.weekdays ?? []) days.add(d);
+  for (const x of read) {
+    const own = x.s.weekdays ?? [];
+    // A series that ends before its next sitting is over as far as the page
+    // goes: its day is no longer one the meeting meets on (CSM Daily's
+    // Sunday once the Sunday meeting took its place).
+    if (x.s.ends_on && own.length && nextOn(own, c.today) > x.s.ends_on)
+      continue;
+    for (const d of own) days.add(d);
+  }
   const body: Any = {
     start_time: main.s.start_time,
     minutes: main.s.minutes,
@@ -950,6 +979,13 @@ async function readBack(meetingId: string): Promise<void> {
     updated_at: stamp,
   };
   if (read.length === 1) body.cal_title = main.ev.summary ?? null;
+  // The meeting's own link follows a live series when its series ended
+  // (CSM Daily's link was its Sunday series), as the five-minute sync does.
+  if (main.p.cal_event_id !== c.m.cal_event_id) {
+    body.cal_calendar = main.p.cal_calendar;
+    body.cal_event_id = main.p.cal_event_id;
+    body.calendar_id = String(main.p.cal_event_id).slice(0, 120);
+  }
   await db(`team_meetings?id=eq.${enc(meetingId)}`, {
     method: "PATCH",
     body,
@@ -1040,6 +1076,18 @@ async function enqueue(
 async function runWaiting(
   meetingId: string,
 ): Promise<{ done: number; failed: string | null }> {
+  // No calendar sign-in on the deployment yet: the changes wait, untouched,
+  // rather than using up their ten tries on an error nobody can fix here.
+  if (!calendarWriteReady()) {
+    const message =
+      "Waiting for Google Calendar: the cockpit's calendar sign-in is not set on the deployment yet. The change goes out once it is.";
+    await db(`team_meetings?id=eq.${enc(meetingId)}`, {
+      method: "PATCH",
+      body: { cal_error: message },
+      prefer: "return=minimal",
+    });
+    return { done: 0, failed: message };
+  }
   const ops = (await db(
     `team_calendar_ops?select=*&meeting_id=eq.${enc(meetingId)}&status=eq.pending&order=id.asc&limit=10`,
   )) as Op[];
@@ -1109,6 +1157,7 @@ export const drain = internalAction({
   args: {},
   returns: v.any(),
   handler: async ctx => {
+    if (!calendarWriteReady()) return { waiting: "calendar sign-in not set" };
     const since = new Date(Date.now() - 90_000).toISOString();
     const waiting = await db(
       `team_calendar_ops?select=meeting_id&status=eq.pending&or=(tried_at.is.null,tried_at.lt.${since})&order=id.asc&limit=25`,

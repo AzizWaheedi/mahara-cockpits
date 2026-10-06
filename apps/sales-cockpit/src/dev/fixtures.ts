@@ -104,12 +104,15 @@ export const LEADS: Row[] = Array.from({ length: 24 }, (_, i) => {
     company,
     country,
     source: "ROASForm",
-    tags:
+    // The last lead is an active client (tagged client in HighLevel).
+    tags: [
       i % 3 === 0
-        ? ["roas-qualified"]
+        ? "roas-qualified"
         : i % 3 === 1
-          ? ["roas-unqualified"]
-          : ["roas-unprepared"],
+          ? "roas-unqualified"
+          : "roas-unprepared",
+      ...(i === 23 ? ["client"] : []),
+    ],
     lead_class:
       i % 3 === 0 ? "qualified" : i % 3 === 1 ? "unqualified" : "unprepared",
     is_lead: true,
@@ -448,6 +451,68 @@ export const REPS: Row[] = TEAM.map(t => ({
   maqsam_email: null,
   fathom_email: null,
 }));
+
+/**
+ * Follow-up drafts: one for a lead who wrote on WhatsApp twelve minutes ago
+ * (INBOX c1), written for email, so it can go on WhatsApp as well; one for
+ * a lead who only emails.
+ */
+export const FOLLOWUPS: Row[] = [
+  {
+    id: "fu-1",
+    contact_id: "lead-2",
+    owner_email: null,
+    segment: "reply",
+    channel: "email",
+    template_key: null,
+    touch: 1,
+    heat: 80,
+    appointment_id: null,
+    subject: "Moving tomorrow's call",
+    body: "Hi, thanks for letting us know. Tomorrow afternoon works: would 4 pm suit you?",
+    why: "They asked to move tomorrow's call to the afternoon.",
+    context: { heat: ["wrote today"] },
+    model: "fixture",
+    status: "draft",
+    created_at: new Date(Date.now() - 5 * 60_000).toISOString(),
+    expires_at: new Date(Date.now() + 48 * H).toISOString(),
+    decided_by: null,
+    decided_at: null,
+    final_body: null,
+    edited: null,
+    skip_reason: null,
+    error: null,
+    auto: false,
+    replied_at: null,
+  },
+  {
+    id: "fu-2",
+    contact_id: "lead-7",
+    owner_email: null,
+    segment: "new",
+    channel: "email",
+    template_key: null,
+    touch: 1,
+    heat: 40,
+    appointment_id: null,
+    subject: "The deck before your call",
+    body: "Hi, here is the deck you asked for before the call.",
+    why: "They asked for the deck by email.",
+    context: null,
+    model: "fixture",
+    status: "draft",
+    created_at: new Date(Date.now() - 30 * 60_000).toISOString(),
+    expires_at: new Date(Date.now() + 48 * H).toISOString(),
+    decided_by: null,
+    decided_at: null,
+    final_body: null,
+    edited: null,
+    skip_reason: null,
+    error: null,
+    auto: false,
+    replied_at: null,
+  },
+];
 
 export const INBOX: Row[] = [
   {
@@ -896,18 +961,709 @@ export const WA_TEMPLATES: Row[] = [
   },
 ];
 
+/** The New Client Form's questions as the sales desk copies them from Typeform (read 2026-10-02). */
+export const CLIENT_FORM: Row = {
+  form_id: "BTzMwXiw",
+  title: "New Client Form",
+  url: "https://maharamedia.typeform.com/to/BTzMwXiw",
+  hidden: ["contact_id", "closer", "setter"],
+  screens: [
+    {
+      title: "General Information",
+      questions: [
+        {
+          ref: "a86cbf90-2154-44d9-84e3-b4a20f8e96a2",
+          title: "Who Closed The Deal?",
+          type: "dropdown",
+          required: true,
+          choices: [
+            "Aziz Waheedi",
+            "Maria",
+            "Ahmed Abushaiba",
+            "Ghanim Al Ghanim",
+          ],
+          description:
+            "Choose the MaharaMedia closer who secured this agreement.",
+        },
+        {
+          ref: "01247377-41fd-430d-bafd-c7223cfb911f",
+          title: "Client First Name",
+          type: "short_text",
+          required: true,
+          description: "Enter the client's preferred first name.",
+        },
+        {
+          ref: "a5171940-e34f-4c12-9bc5-2c984ded20a8",
+          title: "Client Last Name",
+          type: "short_text",
+          required: true,
+          description: "Enter the client's preferred last name.",
+        },
+        {
+          ref: "95a3901f-4130-454e-8e45-14c9a99dd096",
+          title: "Phone",
+          type: "phone_number",
+          required: true,
+          description: "Enter the client's phone number for direct contact.",
+        },
+        {
+          ref: "f322053a-3b86-4e8c-8596-93d31a096679",
+          title: "Raw Phone (No+ e.g. 96594470600)",
+          type: "short_text",
+          required: false,
+          description:
+            "Enter the phone number as numbers only (no +, spaces, or symbols). Example: 96594470600.",
+        },
+        {
+          ref: "a6ea04df-7b41-4a9f-b92b-8b5347a585be",
+          title: "Email",
+          type: "email",
+          required: true,
+          description:
+            "Enter the client's main email address. Double-check for accuracy.",
+        },
+        {
+          ref: "a1be4eee-8219-4228-8423-8cbf64919c5f",
+          title: "Business Name",
+          type: "short_text",
+          required: true,
+          description: "Enter the officially registered business name.",
+        },
+        {
+          ref: "f1eef314-1427-448e-8b77-9591c1e8a16c",
+          title: "Business Address",
+          type: "short_text",
+          required: false,
+          description:
+            "Please enter the complete business address, including suite, street, city, and region if applicable.",
+        },
+        {
+          ref: "021c505e-997f-4df0-b4b1-d1d693a3090f",
+          title: "City",
+          type: "short_text",
+          required: false,
+          description: "Which city is the business located in?",
+        },
+        {
+          ref: "0dbb7842-6aa1-4bb0-a94c-6e2778b19522",
+          title: "State",
+          type: "short_text",
+          required: false,
+          description: "Please specify the state, province, or region.",
+        },
+        {
+          ref: "528abff2-39be-4200-aa5f-a6f8521fc204",
+          title: "Country",
+          type: "dropdown",
+          required: false,
+          choices: ["KW", "SA", "AE", "BH", "QA", "OM"],
+          description: "Select the country where the business operates.",
+        },
+        {
+          ref: "e45f598c-214b-48eb-acaa-396ce49df499",
+          title: "Zip / Postal Code",
+          type: "short_text",
+          required: false,
+          description: "Business ZIP or postal code.",
+        },
+        {
+          ref: "bea8c519-b79f-4db3-8d43-0304410e6bfe",
+          title: "Company Website",
+          type: "website",
+          required: false,
+          description: "Share the business website URL.",
+        },
+        {
+          ref: "4ce5d27f-85a3-4af0-a327-ead29b036c1a",
+          title: "Current Timezone (Saudi is the same as Kuwait)",
+          type: "dropdown",
+          required: false,
+          choices: [
+            "Bahrain GMT+3",
+            "Kuwait GMT+3",
+            "Qatar GMT+3",
+            "UAE GMT+4",
+          ],
+          description: "Select the client's primary timezone.",
+        },
+      ],
+    },
+    {
+      title: "Lead and Payment Details",
+      questions: [
+        {
+          ref: "0c1f4a00-f77a-44f4-b598-945c9ab406a3",
+          title: "Lead Source",
+          type: "dropdown",
+          required: false,
+          choices: [
+            "Meta ads",
+            "TikTok ads",
+            "Email",
+            "Reactivation Campaign",
+            "Referral",
+            "Facebook DMs",
+            "Instagram DMs",
+          ],
+          description:
+            "Select the primary lead source or add a custom response.",
+        },
+        {
+          ref: "20848f32-80ed-4693-b064-ed4e10558b94",
+          title: "Payment Structure For Program",
+          type: "dropdown",
+          required: false,
+          choices: [
+            "Paid in full ($6,000)",
+            "Split pay ($3,000 + $3,000 after 30 days)",
+          ],
+          description: "Select the payment structure agreed for this program.",
+        },
+        {
+          ref: "d2cfc2dd-887e-4685-a3cc-84e85795e23a",
+          title: "Details of the payment and structure (For internal team)",
+          type: "long_text",
+          required: false,
+        },
+        {
+          ref: "3781537c-925c-4331-900c-e576a3f47a0d",
+          title: "Agreement To Send To Client",
+          type: "dropdown",
+          required: false,
+          choices: [
+            "3 Month Program / 7-Day Satisfaction Guarantee",
+            "3 Month Program / No Guarantee",
+            "60 Day Agreement",
+            "Month To Month",
+            "NA - Already Sent",
+          ],
+          description:
+            "Specify the agreement or contract version to provide to the client.",
+        },
+        {
+          ref: "e813c776-0584-4147-8c2c-dbe72d4818e2",
+          title: "Daily Ad Spend - DO NOT include the $ symbol (currency: USD)",
+          type: "number",
+          required: false,
+          description:
+            "Enter the client's DAILY ad spend in numerical format, without currency symbols. Currency: USD. DO NOT include the $ symbol.",
+        },
+        {
+          ref: "77a14b37-7f16-4c72-8c54-38f597bdddc2",
+          title:
+            "Cash Collected On The Sales Call - DO NOT include the $ symbol (currency: USD)",
+          type: "number",
+          required: false,
+          description:
+            "Total cash collected from the client for this deal (numbers only, currency: USD, no symbols). DO NOT include the $ symbol.",
+        },
+        {
+          ref: "b37f4cfe-82ab-4da7-b1f8-aaabe2afbf9b",
+          title:
+            "Cash To Be Collected On Onboarding - DO NOT include the $ symbol (currency: USD)",
+          type: "number",
+          required: false,
+          description:
+            "Total cash collected from the client for this deal (numbers only, currency: USD, no symbols). DO NOT include the $ symbol.",
+        },
+        {
+          ref: "ea6fccbd-d27e-4b57-8cfb-d3fa527f362f",
+          title:
+            "Second Payment Amount After Initial Payment (IGNORE IF PIF) - DO NOT include the $ symbol (currency: USD)",
+          type: "number",
+          required: false,
+          description:
+            "Total cash collected from the client for this deal (numbers only, currency: USD, no symbols). DO NOT include the $ symbol.",
+        },
+        {
+          ref: "c3bc74a6-c2f7-45fa-bf1a-d126c5890be9",
+          title:
+            "Total Contracted Revenue - DO NOT include the $ symbol (currency: USD)",
+          type: "number",
+          required: false,
+        },
+      ],
+    },
+    {
+      title: "Client Success Handoff",
+      questions: [
+        {
+          ref: "52ca9be9-8f56-4bb8-a130-dc1754e7d84d",
+          title: "Upload the Fathom Recording Link",
+          type: "website",
+          required: true,
+          description:
+            "Add a link to your Fathom sales call recording, or instructions on how to access the recording. If you don't have one, you may skip this.",
+        },
+        {
+          ref: "c62ae38e-71a1-4ba1-a7a5-023e378eb083",
+          title: "Fathom call TRANSCRIPT",
+          type: "long_text",
+          required: true,
+          description:
+            "Paste the full transcript of the sales call. Required for QA",
+        },
+        {
+          ref: "d68b9d65-90c2-4a29-984a-1d8b729453e3",
+          title: "Client Success Manager to manage client",
+          type: "dropdown",
+          required: false,
+          choices: ["عبد العزيز وحيدي", "عبدالإله الملحم"],
+          description:
+            "Name or select the MaharaMedia Client Success Manager responsible for ongoing client management.",
+        },
+        {
+          ref: "3cf4bfdf-f42a-447c-a109-a0d24468c5cd",
+          title:
+            "Is there any potential Client Success handoff problems that may occur?",
+          type: "long_text",
+          required: true,
+          description:
+            "Describe any possible issues you foresee with passing off the client to the Success team.",
+        },
+        {
+          ref: "e30bc458-1bf3-4840-a849-f2443843ed8a",
+          title:
+            "How soon do they want to go live? - and are there any delays stopping us from launching in 10 days from the onboarding call?",
+          type: "long_text",
+          required: true,
+          description:
+            "Share the client's target go-live date and mention any blockers that could prevent launching within 10 days of onboarding.",
+        },
+        {
+          ref: "23dd5b40-144e-462e-bfac-795058701f2b",
+          title:
+            "Client Expectations & What Was Sold? - Describe what this client believes they're getting — the specific outcomes, promises, guarantees, or timelines discussed on the call.",
+          type: "long_text",
+          required: true,
+        },
+      ],
+    },
+  ],
+  form_updated_at: "2026-09-24T08:45:18+00:00",
+  synced_at: new Date(Date.now() - 4 * 60_000).toISOString(),
+  source:
+    "hermes/sales-desk desk/clientform.py, from Typeform's form definition",
+};
+
 export const SETTINGS: Row[] = [
+  { key: "client_form", value: CLIENT_FORM },
   { key: "crm_writes", value: { dispositions: true, backlog_days: 7 } },
   {
     key: "offer",
     value: {
       payments: [
-        { key: "pif", label: "Paid in full" },
-        { key: "plan_3", label: "Deposit, then three payments" },
+        { key: "pif", label: "Paid in full at the start" },
+        {
+          key: "two_payments",
+          label: "Two payments: half at the start, half 30 days later",
+        },
       ],
       guarantee: {
-        label: "Include the guarantee (30 qualified appointments in 90 days)",
+        label: "Include the 7-day satisfaction guarantee",
       },
     },
+  },
+  {
+    key: "contracts",
+    value: {
+      templates: [
+        {
+          id: "6abe230d6bbbd5d9235bb774",
+          name: "90 Day Agreement (7 Day Satisfaction Guarantee)",
+          fields: ["company_name", "payment_structure"],
+          payments: [
+            "Paid in full ($6,000)",
+            "Split pay ($3,000 + $3,000 after 30 days)",
+          ],
+        },
+        {
+          id: "69d25fce5d2b0f67fa21caab",
+          name: "90 Day Agreement No G",
+          fields: ["company_name", "payment_structure"],
+          payments: [
+            "Paid in full ($6,000)",
+            "Split pay ($3,000 + $3,000 after 30 days)",
+          ],
+        },
+        {
+          id: "6995853c5831c3bd20e03db7",
+          name: "60 Day Agreement",
+          fields: ["company_name", "payment_structure"],
+          payments: [
+            "Paid in full ($4,000)",
+            "Split pay ($2,000 + $2,000 after 30 days)",
+          ],
+        },
+        {
+          id: "6905c5456709f1453919ac3c",
+          name: "Month To Month Agreement",
+          fields: ["company_name", "payment_structure"],
+          payments: ["Monthly ($2,000 a month)"],
+        },
+        {
+          id: "6a4cf9b8da68ef6b3d32c92c",
+          name: "Special Offer",
+          fields: ["company_name", "daily_ad_spend"],
+        },
+      ],
+      fields: {
+        daily_ad_spend: { id: "spend" },
+        payment_structure: {
+          id: "pay",
+          options: [
+            "Paid in full ($6,000)",
+            "Split pay ($3,000 + $3,000 after 30 days)",
+            "Paid in full ($4,000)",
+            "Split pay ($2,000 + $2,000 after 30 days)",
+            "Monthly ($2,000 a month)",
+          ],
+        },
+      },
+      link_base: "https://link.maharamedia.com/documents/v1/",
+      editor_url: "https://app.gohighlevel.com/",
+      whatsapp: {
+        template_ids: [
+          "6abe230d6bbbd5d9235bb774",
+          "69d25fce5d2b0f67fa21caab",
+          "6a4cf9b8da68ef6b3d32c92c",
+        ],
+        template: "contract_link_ar",
+        workflow: "3. WhatsApp the Contract Link (Arabic)",
+      },
+    },
+  },
+];
+
+/**
+ * Contracts: one waiting for a signature (opened yesterday) on lead-2, with
+ * an earlier one deleted in HighLevel, a draft on lead-3, one signed last
+ * week on lead-5, one made in HighLevel on lead-4 and one from February on
+ * lead-6 that was never signed.
+ */
+export const CONTRACTS: Row[] = [
+  {
+    document_id: "doc-opened",
+    contact_id: "lead-2",
+    template_id: "6905c43fc69d72f15bd69206",
+    template_name: "90 Day Agreement",
+    name: "Ardon Studio X Mahara Media",
+    status: "viewed",
+    fields: {
+      company_name: "Ardon Studio",
+      payment_structure: "Split pay ($3,000 + $3,000 after 30 days)",
+      daily_ad_spend: 40,
+    },
+    created_by: "sara@example.com",
+    sent_by: "sara@example.com",
+    sent_via: "link",
+    sent_at: new Date(Date.now() - 2 * 24 * H).toISOString(),
+    viewed_at: new Date(Date.now() - 22 * H).toISOString(),
+    signed_at: null,
+    revision: 1,
+    ghl_updated_at: new Date(Date.now() - 22 * H).toISOString(),
+    created_at: new Date(Date.now() - 2 * 24 * H - 3 * H).toISOString(),
+    updated_at: new Date(Date.now() - 22 * H).toISOString(),
+    checked_at: new Date(Date.now() - 10 * 60_000).toISOString(),
+    source: "cockpit",
+  },
+  {
+    document_id: "doc-deleted",
+    contact_id: "lead-2",
+    template_id: "69d25fce5d2b0f67fa21caab",
+    template_name: "90 Day Agreement No G",
+    name: "Ardon Studio X Mahara Media",
+    status: "deleted",
+    fields: {
+      company_name: "Ardon Studio",
+      payment_structure: "Monthly",
+    },
+    created_by: "sara@example.com",
+    sent_by: "sara@example.com",
+    sent_via: "email",
+    sent_at: new Date(Date.now() - 4 * 24 * H).toISOString(),
+    viewed_at: null,
+    signed_at: null,
+    revision: 1,
+    ghl_updated_at: new Date(Date.now() - 4 * 24 * H).toISOString(),
+    created_at: new Date(Date.now() - 4 * 24 * H - H).toISOString(),
+    updated_at: new Date(Date.now() - 2 * 24 * H).toISOString(),
+    checked_at: new Date(Date.now() - 2 * 24 * H).toISOString(),
+    source: "cockpit",
+  },
+  {
+    document_id: "doc-draft",
+    contact_id: "lead-3",
+    template_id: "6a4cf9b8da68ef6b3d32c92c",
+    template_name: "Special Offer",
+    name: "Special Offer",
+    status: "draft",
+    fields: { company_name: "شركة البلوك الذهبي", daily_ad_spend: 50 },
+    created_by: "omar@example.com",
+    sent_by: null,
+    sent_via: null,
+    sent_at: null,
+    viewed_at: null,
+    signed_at: null,
+    revision: 1,
+    ghl_updated_at: null,
+    created_at: new Date(Date.now() - 3 * H).toISOString(),
+    updated_at: new Date(Date.now() - 3 * H).toISOString(),
+    checked_at: null,
+    source: "cockpit",
+  },
+  {
+    document_id: "doc-signed",
+    contact_id: "lead-5",
+    template_id: "6905c43fc69d72f15bd69206",
+    template_name: "90 Day Agreement",
+    name: "Tafaseel X Mahara Media",
+    status: "completed",
+    fields: {
+      company_name: "Tafaseel",
+      payment_structure: "Paid in full (90 days)",
+      daily_ad_spend: 60,
+    },
+    created_by: "sara@example.com",
+    sent_by: "sara@example.com",
+    sent_via: "email",
+    sent_at: new Date(Date.now() - 8 * 24 * H).toISOString(),
+    viewed_at: new Date(Date.now() - 7 * 24 * H).toISOString(),
+    signed_at: new Date(Date.now() - 6 * 24 * H).toISOString(),
+    revision: 2,
+    ghl_updated_at: new Date(Date.now() - 6 * 24 * H).toISOString(),
+    created_at: new Date(Date.now() - 8 * 24 * H - 2 * H).toISOString(),
+    updated_at: new Date(Date.now() - 6 * 24 * H).toISOString(),
+    checked_at: new Date(Date.now() - 10 * 60_000).toISOString(),
+    source: "cockpit",
+  },
+  {
+    document_id: "doc-highlevel",
+    contact_id: "lead-4",
+    template_id: null,
+    template_name: null,
+    name: "Bayt Al Khaleej X Mahara Media",
+    status: "viewed",
+    fields: {},
+    created_by: "HighLevel",
+    sent_by: null,
+    sent_via: null,
+    sent_at: new Date(Date.now() - 5 * 24 * H).toISOString(),
+    viewed_at: new Date(Date.now() - 3 * 24 * H).toISOString(),
+    signed_at: null,
+    revision: 3,
+    ghl_updated_at: new Date(Date.now() - 3 * 24 * H).toISOString(),
+    created_at: new Date(Date.now() - 6 * 24 * H).toISOString(),
+    updated_at: new Date(Date.now() - 3 * 24 * H).toISOString(),
+    checked_at: new Date(Date.now() - 3 * 60_000).toISOString(),
+    source: "highlevel",
+  },
+  {
+    document_id: "doc-old",
+    contact_id: "lead-6",
+    template_id: null,
+    template_name: "Retainer Contract",
+    name: "Retainer Contract",
+    status: "viewed",
+    fields: {},
+    created_by: "HighLevel",
+    sent_by: null,
+    sent_via: null,
+    sent_at: new Date(Date.now() - 140 * 24 * H).toISOString(),
+    viewed_at: new Date(Date.now() - 139 * 24 * H).toISOString(),
+    signed_at: null,
+    revision: 1,
+    ghl_updated_at: new Date(Date.now() - 139 * 24 * H).toISOString(),
+    created_at: new Date(Date.now() - 141 * 24 * H).toISOString(),
+    updated_at: new Date(Date.now() - 139 * 24 * H).toISOString(),
+    checked_at: new Date(Date.now() - 3 * 60_000).toISOString(),
+    source: "highlevel",
+  },
+];
+
+// ---------------------------------------------------------------------------
+// The hot list: rows as cockpit_sales_hot keeps them (the harness changes
+// them as hot.save does), and what the sheet reads as a lead's last
+// follow-up besides a mark by hand: an outbound call, a WhatsApp from us.
+// One of each: overdue, due today, later, none set; closed and lost; a row
+// from before the sheet's columns; the owner's, the team's.
+// ---------------------------------------------------------------------------
+
+/** A lead put on the list: every field blank, as sales-api's hotFresh. */
+export function hotFresh(contactId: string, owner: string, at: string): Row {
+  return {
+    contact_id: contactId,
+    owner_email: owner,
+    next_at: null,
+    next_how: null,
+    last_objection: null,
+    note: null,
+    heat: "hot",
+    status: "nurturing",
+    amount: null,
+    amount_currency: "USD",
+    last_fu_at: null,
+    added_by: owner,
+    added_at: at,
+    updated_at: at,
+    removed_at: null,
+    removed_why: null,
+  };
+}
+
+function hotRow(i: number, owner: string, over: Row): Row {
+  return {
+    ...hotFresh(String(LEADS[i].contact_id), owner, iso(Date.now() - 6 * D)),
+    updated_at: iso(Date.now() - 2 * H),
+    ...over,
+  };
+}
+
+// A row from before the 2026-09-27 columns: no type, status, amount or mark.
+const before = hotRow(1, "aziz@maharamedia.com", {
+  next_how: "call",
+  last_objection: "Needs to check the budget with finance",
+});
+for (const k of ["heat", "status", "amount", "amount_currency", "last_fu_at"])
+  delete before[k];
+
+export const HOT: Row[] = [
+  hotRow(0, "aziz@maharamedia.com", {
+    heat: "red_hot",
+    amount: 6500,
+    next_at: iso(Date.now() - 26 * H),
+    last_fu_at: iso(Date.now() - 3 * D),
+    last_objection: "Talking to his partner first",
+    note: "Asked for the Riyadh villa case study.\nCall after 5, never mornings.",
+  }),
+  hotRow(2, "sara@example.com", {
+    amount: 8000,
+    next_at: iso(Date.now() + 90 * MIN),
+    last_objection: "Wants to see the contract first",
+  }),
+  hotRow(4, "omar@example.com", {
+    heat: "warm",
+    amount: "12000.00",
+    next_at: iso(Date.now() + 2 * D),
+    last_objection: "بعد الصيف",
+    note: "يبي يشوف شغلنا في الكويت",
+  }),
+  before,
+  hotRow(9, "aziz@maharamedia.com", {
+    amount: 1500,
+    amount_currency: "KWD",
+    next_at: iso(Date.now() + 6 * D),
+    last_objection: "Budget opens next quarter",
+  }),
+  hotRow(11, "noor@example.com", {
+    heat: "red_hot",
+    amount: 9000,
+    next_at: iso(Date.now() - 3 * H),
+    last_objection: "Asked for a smaller first month",
+  }),
+  hotRow(6, "sara@example.com", {
+    status: "closed",
+    amount: 6000,
+    next_at: iso(Date.now() - 5 * D),
+    note: "Signed on the split plan.",
+  }),
+  hotRow(8, "omar@example.com", {
+    heat: "warm",
+    status: "lost",
+    last_objection: "Went with another agency",
+  }),
+];
+
+function outboundCall(
+  id: string,
+  lead: Row,
+  ago: number,
+  answered: boolean,
+): Row {
+  return {
+    call_id: id,
+    occurred_at: iso(Date.now() - ago),
+    agent_email: "sara@example.com",
+    agent_name: "Sara Khalil",
+    sales_rep_id: "rep-sara",
+    direction: "outbound",
+    state: answered ? "completed" : "no_answer",
+    duration_s: answered ? 140 : 0,
+    ringing_s: answered ? 7 : 30,
+    handling_s: null,
+    lead_phone8: lead.phone8,
+    contact_id: lead.contact_id,
+    sentiment: null,
+    summary_en: null,
+    summary_ar: null,
+    has_transcript: false,
+    tags: [],
+  };
+}
+
+/** Calls the hot list reads as follow-ups: older than a mark, the latest, and one not linked to its lead yet. */
+export const HOT_DIALS: Row[] = [
+  outboundCall("d-hot-1", LEADS[0], 5 * D, true),
+  outboundCall("d-hot-2", LEADS[2], 2 * H, false),
+  { ...outboundCall("d-hot-3", LEADS[11], D, true), contact_id: null },
+];
+
+/** A conversation whose last message is our WhatsApp. */
+export const HOT_INBOX: Row[] = [
+  {
+    conversation_id: "c3",
+    contact_id: LEADS[9].contact_id,
+    contact_name: LEADS[9].name,
+    last_message_at: iso(Date.now() - 20 * H),
+    last_direction: "outbound",
+    last_type: "TYPE_WHATSAPP",
+    last_body: "Sent you the proposal. Tell me when you have read it.",
+    unread: 0,
+    inbound_whatsapp_at: iso(Date.now() - 3 * D),
+    assigned_to: "u-sara",
+    mirrored_at: new Date().toISOString(),
+  },
+];
+
+/** WhatsApp messages sent from the cockpit (cockpit_sales_messages). */
+export const MESSAGES: Row[] = [
+  {
+    id: "msg-hot-1",
+    request_id: "req-hot-1",
+    contact_id: LEADS[4].contact_id,
+    channel: "whatsapp",
+    subject: null,
+    body: "هلا، أرسلت لك أمثلة من شغلنا في الكويت.",
+    source: "rep",
+    followup_id: null,
+    sent_by: "omar@example.com",
+    state: "read",
+    ghl_message_id: null,
+    ghl_conversation_id: null,
+    provider_status: null,
+    error: null,
+    created_at: iso(Date.now() - 4 * H),
+    updated_at: iso(Date.now() - 4 * H),
+  },
+];
+
+/** lead-5's demo, recorded in Fathom, with its transcript. */
+export const RECORDINGS: Row[] = [
+  {
+    recording_id: "rec-demo-5",
+    title: "Demo call",
+    recorded_by: "sara@example.com",
+    started_at: new Date(Date.now() - 8 * 24 * H).toISOString(),
+    duration_s: 2710,
+    share_url: "https://fathom.video/share/harness-demo-5",
+    contact_id: "lead-5",
+    appointment_id: null,
+    matched_by: "attendee",
+    indexed_at: new Date(Date.now() - 8 * 24 * H).toISOString(),
+    source: "fathom",
+    kind: "sales",
+    transcript_path: "lead-5/rec-demo-5.txt",
+    transcript_chars: 41200,
+    hidden_reason: null,
   },
 ];

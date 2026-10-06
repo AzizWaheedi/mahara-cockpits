@@ -1,0 +1,14 @@
+{
+  "name": "mahara-ceo-refresh",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "doctor": "bun worker.ts doctor",
+    "refresh": "bash run.sh run",
+    "serve": "bash run.sh serve",
+    "smoke": "bun smoke.ts"
+  },
+  "dependencies": { "zod": "^3.25.76" },
+  "devDependencies": { "@electric-sql/pglite": "0.3.14" },
+  "engines": { "bun": ">=1.2.21" }
+}

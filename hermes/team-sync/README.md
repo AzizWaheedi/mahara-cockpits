@@ -59,6 +59,20 @@ shows the whole guest list, so only there is anyone taken off. A person put
 in on the page before the meeting was on the calendar was never on the
 invite, so the invite does not take them off.
 
+The organiser's own calendar is the truth for a series when this pass could
+read it: a guest's copy of an occurrence counts only when the organiser's
+calendar could not be read. A guest's copy can go stale (on 2026-09-30 a
+teammate's calendar still held weekly occurrences of four series the CEO had
+ended, and the cockpit kept listing them). A calendar meeting whose every
+series has ended on the calendar is marked inactive on the next pass; the
+quiet rule below still covers one that simply stopped meeting.
+
+A series organised on a teammate's calendar the sign-in does not list is
+still read through its own event when Google shows it to a guest; not
+finding it leaves the series unread, never deleted. A sitting whose day
+moved to another series (CSM Daily's days, 2026-09-30) is rewritten in
+place, not deleted as an occurrence Google dropped.
+
 The sync never touches a purpose, a doc, notes, agendas, the run of show,
 wheels or the creative pipeline, and it skips any meeting with a change
 still on its way to Google (`team_calendar_ops`, status `pending`), so it

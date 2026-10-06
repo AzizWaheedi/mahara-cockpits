@@ -15,6 +15,13 @@ last error and this fix next to it.
   user. A screen that throws sends a Slack DM and files a fix job for Hermes.
 - A screen that crashes in someone's browser shows "Try again / Reload" and
   files the same fix job on its own.
+- The cockpit guardian (hermes/cockpit-guardian) scans everything every 5
+  minutes from the VPS and posts one "[guardian]" message per new incident
+  and one when it clears, in #health, Saturday to Thursday 09:00 to 21:00
+  Kuwait time (Convex or Supabase down at any hour), plus a 09:00 summary.
+  Each message says what broke, since when, what the guardian tried, and
+  what a person must do. Its own rows are in its README; `python3
+  guardian.py report` on the VPS lists everything open.
 
 ## What to do, by system
 
@@ -37,6 +44,12 @@ last error and this fix next to it.
 | Claude on the VPS | "Failed to authenticate ... OAuth access token has expired" (as an error, or as the text of a streamed answer) | Since 2026-09-27 Salma (captions, words on pictures, read-backs) and the sales desk (drafts, follow-ups, call notes, Vince) write through Aziz's proxy to Claude Code, `openclaw-claude-proxy` on 127.0.0.1:3456, user aziz. SSH in as aziz, run `claude`, then `/login`; both resume by themselves and Salma's health line turns green within ten minutes. `curl -s 127.0.0.1:3456/health` says whether the proxy itself is up | Aziz |
 | OpenAI | `429` credit_balance_exhausted | Only the sales desk's researcher (web search) and anything switched back by `SALMA_TEXT=openai` or `SALES_MODEL_PROVIDER=openai` use it now. Top up at platform.openai.com (Settings, Billing) | Aziz |
 | Hermes / Ask AI (`hermes/cockpit-ask-ai`) | "jobs waiting" or worker error | Run `python3 scripts/askai.py doctor` on the host to check config without revealing secrets. Ask AI jobs live in `cockpit_ask_ai_jobs` (never creative requests); the worker defaults to DRY_RUN=true (use `--apply` to execute). Claims use atomic leases and bounded retries. | Aziz |
+| Team meeting projections (Supabase candidate; not released) | Projection read/save fails, or client performance facts are missing | The candidate uses `cockpit_csm_projection_read` / `cockpit_csm_projection_edit` with the meeting ID. Release the verified native schema and client together; confirm active membership, current meeting participation, and verified source counts. Performance facts come from `cockpit_client_profiles.kpi`; do not add a fake `performance` column. Booking remains a separate audited `cockpit-csm-api` action. | Hermes |
+| Native identity and personal EOD (Supabase candidate; not released) | Sign-in loses access, revoked Sales seat still opens, or an editor sees someone else's filing | Apply `20261004a_cockpit_staff_identity_adoption.sql` only in the coordinated release. Native admission requires the exact confirmed Auth UID/email linked to an active directory member; stale portal profiles and Auth role metadata cannot admit a seat. Preserve Sales manager subroles separately. Personal editor EOD is filtered by directory author and Kuwait UTC+3 day, independent of the browser's timezone. Same-actor token refresh keeps unsaved drafts mounted while directory access revalidates. | Hermes |
+| Native source bootstrap (Supabase candidate; not released) | Import rejects an export, a provider feed is missing, or history coverage is incomplete | Use the finite importer in default dry-run mode with exact archive checksums, catalog/table counts, complete target inventory and verified file mappings. `_tables` is a validated archive catalog, not business rows. Unsupported tables remain blocked even when empty; do not drop financial, chat, preference or worker history to produce a green readiness claim. A bootstrapped feed is not a successful native provider refresh. | Hermes |
+| Native CEO refresh (Supabase candidate; not released) | Finance sections are stale, a source is missing, or refresh refuses publication | Run `bun run doctor` in `hermes/ceo-refresh` to list missing named credentials and reconciliation prerequisites without external calls. `bun run refresh` remains dry-run by default. The `run.sh` launcher uses `flock`; live execution requires the coordinated release and explicit `--apply`. Stage `20261005b_cockpit_ceo_refresh_worker.sql` with the native worker. Local smoke proves atomic money/expenses publication, exact source amounts, repeat preservation and outage rollback against canonical SQL with synthetic external transport. Other sections and production schedules remain unverified. | Hermes |
+| Original business history (Supabase candidate; not released) | Staff choices, plan dates, metrics or recorded audits disappear during cutover | The finite importer preserves original authors and source records in canonical staffing, plan, metric and immutable audit tables. Resolve legacy `tomorrow` plan dates from the original plan day, never the import day. Original audits are append-only and never retired. Fresh archives and storage checksums are recorded privately in `D:/secure/cockpit-fresh-source-manifest-20261005.json`; they are not a write freeze or release proof. | Hermes |
+| Native admin monitoring (Supabase candidate; not released) | Monitoring is blank, access is denied, or counts are unavailable | Release `20261005e_cockpit_native_admin.sql` with the validated admin client and page. Access requires current confirmed active directory admin or founder identity, including after revocation. Missing ledgers and unknown live status are unavailable, never zero or healthy. Worker freshness does not verify installed cron schedules. Run `bun test scripts/native-admin.test.ts` for canonical SQL regression coverage. The temporary SDK/browser smoke was removed after its evidence was recorded. Keep native membership writes under their existing server gates and audits. | Hermes |
 | Resend | sign-up or reset emails not arriving | Set `RESEND_API_KEY` and `AUTH_EMAIL_FROM` on all three deployments; verify the domain in Resend | Aziz |
 
 Set a variable: `cd apps/<app> && bunx convex env set --prod NAME value`.
@@ -65,6 +78,18 @@ No digests appearing means Hermes is not polling (see the Hermes row above).
 
 Ad previews and pictures in all three cockpits (health row "Ad previews and
 saved pictures", owner Hermes or Aziz).
+Native candidate, not released: `previews.fresh` now uses `cockpit-media-api`
+with current confirmed directory identity and canonical client/ad ownership.
+All three cockpits use the same actor-bound client protocol. The protected
+Supabase cache lasts at most 20 hours. Every opening checks authorization.
+Apply `20261005c_cockpit_ad_previews.sql` only with the coordinated release.
+Run `bun test scripts/native-preview.test.ts supabase/functions/cockpit-media-api/preview.test.ts` for canonical preview regression coverage.
+The temporary gateway/browser smoke used synthetic external Auth and Meta transport. Its evidence remains outside Git.
+Cache audits record actor, ad identity and expiry, never bearer preview URLs.
+Local browser checks cover all three actual components and account switching.
+
+The production behavior below remains legacy until that release is verified.
+
 
 How they work. Meta's links do not last: a live preview link dies after a
 day and a Meta image link after a few days. So nothing keeps them:
@@ -190,12 +215,35 @@ minutes (cron as `hermes`, lock `~/.teamsync.lock`, log `~/.teamsync.log`;
 
 | Symptom | Fix | Who |
 | --- | --- | --- |
+| A meeting page says "Waiting for Google Calendar" | The calendar sign-in is not on the deployment yet. Nothing is lost: the changes wait untouched (no tries used) and go out within a minute of the sign-in being set (next row) | CEO |
 | A meeting page says "changes waiting to reach Google Calendar" and the calendar sign-in is not set | Set `GOOGLE_CAL_CLIENT_ID`, `GOOGLE_CAL_CLIENT_SECRET` and `GOOGLE_CAL_REFRESH_TOKEN` on the media buyer's Convex deployment (`bunx convex env set NAME` with the value, prod) and in `~/.team-sync/env` on the VPS. The CEO account's OAuth client with the calendar scope; never pasted in chat or committed | CEO |
 | "Google refused the cockpit's calendar sign-in" | The refresh token was revoked or expired (a Testing-mode OAuth app lasts seven days). Sign the CEO account in again and replace `GOOGLE_CAL_REFRESH_TOKEN` in both places, then press Retry on the meeting | CEO |
 | "Google Calendar refused the change (403)" on one meeting | The series is organised on a calendar the CEO account cannot edit. Take over from the meeting's page, or ask its organiser to share the calendar with edit rights | Host or CEO |
 | A change made in Google does not show within five minutes | `crontab -l` as `hermes` must show the `*/5` team-sync line (README). `tail ~/.teamsync.log`; a meeting with a change still waiting for Google is skipped on purpose until it lands | Hermes or CEO |
 | A meeting appeared twice | Two different Google series with the same title that no meeting owned. Link the right one from its page; the other is marked inactive after three quiet weeks | Host |
 | The editor cockpit's Meetings page is empty | Fathom recordings are in `team_recordings` since 2026-09-27; the editor desk's `meetings` job fills it hourly and each person sees the ones they were invited to | Hermes |
+
+## Projections (client success)
+
+The client success cockpit's Projections tab (`/client-success/projections`)
+and the Sunday "Renewals & Re-sell Projections" meeting page show the same
+data: `convex/projections.ts` in the client success app, read and changed
+from the media buyer through the bridge (`convex/teamProjections.ts`).
+Re-sells, reviews and referrals count wins logged in the cockpit (hot-list
+rows marked Closed, renewal plans marked re-sold); renewals count plans marked
+renewed; cash is back-end payments in `cockpit_client_payments`, read every
+half hour into `billingFeed` (cron `projections billing ledger`, freshness
+`okAt`, `failures`; the smoke check fails at six failures in a row). A source
+that cannot answer shows "Manual entry", never zero. A won renewal or re-sell
+queues one line for `#eods-csms` in `eod_outbox` (role `csm-win`).
+
+| Symptom | Fix | Who |
+| --- | --- | --- |
+| "Renewal date unknown" and an empty renewal window | Add a Date field named `Contract end date` to Clients - Mahara in ClickUp and fill it per client; the media buyer sync reads it by name and the window fills on the next feed (ten minutes) | CEO or CSM |
+| Cash says "Manual entry" | The billing ledger has not been refreshed in two days, or Supabase could not be read (the note says which). Refresh billing in the CEO cockpit, or press "Read billing again" on the Projections tab | CSM or CEO |
+| "Book call" says no GoHighLevel contact is linked | The client has no WhatsApp thread or past appointment in the client account. Book it in GoHighLevel and put the day in "Booked another way?" | CSM |
+| The gold-standard switch is missing for the CEO | The flag comes with the portal's pass: open the client success cockpit from the portal once | CEO |
+| Proving the rules on production | `cd apps/client-success-cockpit && bunx convex run --prod projections:selfTest` runs every rule on sentinel rows (week of 2000-01-02) in one transaction and deletes them before it returns | Anyone shipping |
 
 ## Sales cockpit
 

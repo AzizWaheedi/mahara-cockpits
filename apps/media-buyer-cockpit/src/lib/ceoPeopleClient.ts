@@ -30,7 +30,16 @@ export async function setPersonActive(client:SupabaseClient,args:Record<string,u
  if(!Object.hasOwn(args,"id") || typeof args.active!=="boolean") throw new Error("Choose a person and their active status.");
  return savePerson(client,args);
 }
-export async function unavailablePeopleDirectory(client:SupabaseClient):Promise<never>{
- await rows(client); // The unavailable provider path still verifies the founder on the server.
- throw new Error("Workspace directory import is not connected to Supabase yet. Add or update the person manually.");
+export async function setPersonPay(client:SupabaseClient,args:Record<string,unknown>){
+ const patch=Object.fromEntries(Object.entries(args).filter(([,v])=>v!==undefined));
+ if(!Number.isSafeInteger(patch.id) || Number(patch.id)<=0) throw new Error("Choose a person to change pay.");
+ for(const key of ["monthlyCost","commissionRate"]){
+  const value=patch[key];
+  if(value!==undefined && value!==null && (typeof value!=="number" || !Number.isFinite(value) || value<0))
+   throw new Error("Costs and commission rates must be finite, nonnegative numbers.");
+ }
+ const {data,error}=await client.rpc("cockpit_ceo_people_set_pay",{p_patch:patch});
+ if(error) throw new Error(error.message);
+ if(!data || data.ok!==true || data.id!==patch.id) throw new Error("The pay save was not confirmed.");
+ return {ok:true as const,id:Number(data.id)};
 }

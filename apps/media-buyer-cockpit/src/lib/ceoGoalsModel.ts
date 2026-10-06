@@ -1,5 +1,5 @@
-import { addDays } from "../../convex/ceo/time";
-import type { PlanRow, TargetRow } from "../types/ceo/goals";
+import { addDays } from "../types/ceo/time";
+import type { Board, PlanRow, TargetRow } from "../types/ceo/goals";
 import {
   GROUPS,
   METRIC_BY_KEY,
@@ -18,8 +18,36 @@ export type GoalContext = {
   scorecardsDone: number | null;
   fingerprint: string;
   today: string;
+  callClients?: Board["callClients"];
+  costs?: Board["costs"];
 };
 const WORKING = new Set([6, 0, 1, 2, 3, 4]);
+
+export type GoalTargetPatch = {
+  id: number;
+  target?: number | null;
+  stretch?: number | null;
+  actualManual?: number | null;
+};
+
+/** Send only edited cells. A blank clears that cell; untouched human data stays on the server. */
+export function goalTargetPatch(
+  id: number,
+  edits: Partial<Record<"target" | "stretch" | "actualManual", string>>,
+): GoalTargetPatch {
+  const patch: GoalTargetPatch = { id };
+  for (const key of ["target", "stretch", "actualManual"] as const) {
+    const text = edits[key];
+    if (text === undefined) continue;
+    if (text.trim() === "") patch[key] = null;
+    else {
+      const value = Number(text);
+      if (!Number.isFinite(value)) throw new Error("Goal numbers must be finite");
+      patch[key] = value;
+    }
+  }
+  return patch;
+}
 function workingDaysBetween(from: string, to: string): number {
   let n = 0;
   const end = Date.parse(`${to}T00:00:00Z`);
@@ -64,7 +92,7 @@ function isLevel(unit: Unit, metricKey: string): boolean {
 }
 
 // The existing goal pacing and scoring calculation, fed by the secured SQL context.
-export function buildGoalsBoard(context: GoalContext, today = context.today) {
+export function buildGoalsBoard(context: GoalContext, today = context.today): Board {
   const all = context.plans;
   const plans = all.map(r => ({
     id: Number(r.id),
@@ -86,6 +114,9 @@ export function buildGoalsBoard(context: GoalContext, today = context.today) {
       behind: [],
       catalogue: METRICS,
       bounds,
+      measured: {},
+      callClients: null,
+      costs: context.costs ?? null,
     };
 
   const plan = toPlan(row);
@@ -239,5 +270,8 @@ export function buildGoalsBoard(context: GoalContext, today = context.today) {
     behind,
     catalogue: METRICS,
     bounds,
+    measured,
+    callClients: context.callClients ?? null,
+    costs: context.costs ?? null,
   };
 }

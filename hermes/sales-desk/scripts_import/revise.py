@@ -17,12 +17,35 @@ light numbers (ad spend and the inquiries it brings) for the closer.
 Arabic lines are written in Aziz's Kuwaiti voice (mahara-context
 skills/aziz-kuwaiti-voice). The cockpit fills every [NUMBER] placeholder
 from the call's notes (apps/sales-cockpit/src/lib/funnel.ts).
+
+2026-10-02, the guarantee (Aziz): "we legally can't give them a result
+guarantee because everybody's different". Nothing promises results any
+more: not the 30 appointments in 90 days, not working for free. The offer
+carries a 7-day satisfaction guarantee instead: unhappy with the process in
+any way in the first 7 days, we refund them. It is said only to answer the
+guarantee objection, never in the pitch or the close. The handle opens on
+"Legally, we can't give you a guarantee on results" and then follows Cole
+Gordon's "Is there a guarantee?" (Sales Team Accelerator, uncertainty-based
+objections): ask why they ask, what serious thing was ever 100%
+guaranteed, what is on our side and what is on theirs, "are those two
+things you're willing to do?", "what other question do you have?". The 7
+days come last, as his risk mitigator for someone who wants in but is
+still skeptical ("the best thing for you isn't jumping in if this isn't
+right, and it isn't doing nothing either").
+
+2026-10-02, the contract's terms: the 7-day lines say what the contract says
+("90 Day Agreement (7 Day Satisfaction Guarantee)", section 3, read from the
+template that day): a full program-fee refund, asked for within 7 days of
+paying in full, once the onboarding is done (the call, the Academy lessons,
+the strategy review, access to the ad account, WhatsApp and calendar).
 """
 from __future__ import annotations
 
 import copy
 
 NUMBERS = "2026-09-27-numbers"
+GUARANTEE = "2026-10-02-guarantee"
+TERMS = "2026-10-02-guarantee-terms"
 
 
 class Drift(Exception):
@@ -73,7 +96,8 @@ def _replace(stage: dict, first: str, last: str | None, new: list, where: str) -
     blocks = stage["blocks"]
     i = _find(blocks, first, where)
     j = _find(blocks, last, where, after=i - 1) if last else i
-    stage["blocks"] = blocks[:i] + new + blocks[j + 1:]
+    # Copies, so a doc never shares a block with this module's word lists.
+    stage["blocks"] = blocks[:i] + copy.deepcopy(new) + blocks[j + 1:]
 
 
 def _edit(stage: dict, starts: str, old: str, new: str, where: str) -> None:
@@ -84,6 +108,13 @@ def _edit(stage: dict, starts: str, old: str, new: str, where: str) -> None:
     if old not in text:
         raise Drift(f"{where}: {old!r} is not in the line starting {starts!r}")
     blocks[i]["text"] = text.replace(old, new)
+
+
+def _after(stage: dict, starts: str, new: list, where: str) -> None:
+    """Put blocks right after the line starting `starts`."""
+    blocks = stage["blocks"]
+    i = _find(blocks, starts, where)
+    stage["blocks"] = blocks[: i + 1] + copy.deepcopy(new) + blocks[i + 1:]
 
 
 def _entry(doc: dict, part: str, title_starts: str) -> dict:
@@ -554,20 +585,365 @@ def _intro(doc: dict, lang: str) -> None:
     ], w)
 
 
+# ---------------------------------------------------------- the guarantee
+
+NO_RESULTS_NOTE = (
+    "We never guarantee results: legally we can't, because every business is different. Open "
+    "on that, then Cole Gordon's handle: find out why they ask, and move the question from what "
+    "we promise to what they'll do. The 7-day satisfaction guarantee comes last, and only if "
+    "they still need certainty."
+)
+ASK_WHY_NOTE = (
+    "Let them answer. If an agency burned them before, that's the real objection: go to "
+    "\"I've tried marketing before and it didn't work\"."
+)
+HONEST_NOTE = "Let them answer. Most say nothing was."
+SEVEN_DAYS = "If they want it but still need certainty"
+SEVEN_DAYS_NOTE = (
+    "Only for someone who wants this but is still skeptical, and only here: never in the pitch "
+    "or the close. It's a satisfaction guarantee on the process, not on results: never say \"if "
+    "you don't get results\". It's on the deck's investment slide too (press G)."
+)
+CLOSE_NOTE = (
+    "We never promise results, and the 7-day satisfaction guarantee is not part of the close. "
+    "Keep it for when they ask for certainty (\"How do I know this will work?\", \"Can you "
+    "guarantee results?\"); the handle is in the objections."
+)
+PAY_AFTER_NOTE = (
+    "If they come back with \"what if it doesn't work?\", that's the guarantee objection: "
+    "\"How do I know this will work?\" / \"Can you guarantee results?\"."
+)
+FAQ_NOTE = (
+    "Then ask why they ask and run the rest of the handle in the objection \"How do I know this "
+    "will work?\" / \"Can you guarantee results?\". Only if they want it but still need "
+    "certainty, the 7-day satisfaction guarantee:"
+)
+SETTER_NOTE = (
+    "Never promise results, numbers or a refund, and don't mention the 7-day satisfaction "
+    "guarantee: the closer uses it only when a prospect asks for certainty, as the answer to "
+    "that objection."
+)
+QUICK = '"Can you guarantee results?" | '
+QUICK_ANSWER = '"Fair question. Legally, we can\'t guarantee results. Just curious, are you asking for a reason?"'
+TRIED_STEP = "Step 4 — What's different now:"
+
+# The guarantee revision's words by language: lines found by their first
+# words, and (first words, old words, new words) for changes inside a line.
+# What the closer says keeps the doc's quotation marks, like the rest of the
+# objections.
+GUARANTEE_WORDS = {
+    "en": {
+        "handle_last": '"You\'ve made bigger bets',
+        "handle": [
+            step("Handle"),
+            note(NO_RESULTS_NOTE),
+            adapt("Step 1 — Be straight with them, then ask why:"),
+            say("\"Fair question, and I'll be straight with you: legally, we can't give you a "
+                "guarantee on results. Any agency that promises you results before they've even "
+                "started isn't being straight with you.\""),
+            say("\"Just curious though, are you asking for a reason?\""),
+            note(ASK_WHY_NOTE),
+            say("\"Got it. I hear you, and I appreciate you asking.\""),
+            adapt("Step 2 — Why nobody can promise it:"),
+            say("\"Can I ask you an honest question? What big things in your business, the ones "
+                "actually worth doing, came with a 100% guarantee?\""),
+            note(HONEST_NOTE),
+            say("\"Exactly. When you took on your first big project or hired your first engineer, "
+                "nobody could promise you how it would turn out. Every business is different: your "
+                "market, your prices, your offer, how your team follows up. So it wouldn't be "
+                "honest of me to sit here and predict your results.\""),
+            adapt("Step 3 — Our side and their side:"),
+            say("\"What I can tell you is what's on our side. We've worked with over 70 "
+                "construction and design companies across the Gulf, and from day one a whole team "
+                "works on your funnel every day: media buyers, the call center, creative and "
+                "consulting, with every number on your live dashboard.\""),
+            say("\"What nobody can promise you is your side of it: that you show up to every "
+                "meeting we book, follow up, and close.\""),
+            adapt("Step 4 — The real question:"),
+            say("\"So the real question is on your side. Will you show up to every meeting we book "
+                "and follow up? And when something isn't working, will you tell us straight away "
+                "instead of going quiet?\""),
+            say("\"Because the companies that get the most out of this are the ones that do "
+                "exactly those two things. Are those two things you're willing to do?\""),
+            say("\"Good. What other question do you have?\""),
+            step(SEVEN_DAYS),
+            note(SEVEN_DAYS_NOTE),
+            say("\"Look, the best thing for you definitely isn't jumping in if this isn't the "
+                "right thing. But the best thing for you also isn't doing nothing about "
+                "[WEAK STEP] and leaving [GAP YEAR] a year on the table.\""),
+            say("\"So here's what I'd do if I were you. Draw a line in the sand and decide: no "
+                "more losing [GAP MONTH] a month at [WEAK STEP]. Then step over that line and "
+                "start.\""),
+            say("\"And if in your first 7 days you're unhappy with the process in any way, you tell "
+                "us and we refund you. No hard feelings.\""),
+            say("\"So if that's something we're willing to do, is that something you're willing "
+                "to move forward with today?\""),
+        ],
+        "expensive": [
+            ('"And let me ask you something',
+             "you're investing in a system with a guarantee behind it.",
+             "you're investing in a system we've run for over 70 construction and design "
+             "companies across the Gulf."),
+            ('"Exactly. And the reason is simple',
+             "That's why we have the guarantee: 30 qualified appointments in 90 days or we keep "
+             "working for free until we deliver. You're not paying and hoping. You're paying and "
+             "we're guaranteeing the result.",
+             "That's why it's paid upfront, the same way you take a deposit before you start a "
+             "project. You're not paying and hoping: you're paying for a team that's on your "
+             "account every day, and you see every number on your live dashboard."),
+        ],
+        "pay_after": '"Exactly. And the reason is simple',
+        "agency": [
+            ('"So you\'re paying',
+             "In 90 days with us, the guarantee is 30 qualified appointments. If your current "
+             "agency was delivering that, would you even be looking?",
+             "With us, our call center calls every inquiry, qualifies it, and books the right ones "
+             "straight onto your calendar. If your current agency was doing that for you, would "
+             "you even be looking?"),
+            ('"I totally get that.',
+             " Do they guarantee 30 appointments or they work for free?",
+             " Do they hold themselves to a number at every step of your funnel?"),
+        ],
+        "small": [
+            ('"Here\'s what I\'d suggest instead',
+             "And on top of that, we guarantee 30 qualified appointments in 90 days, or we keep "
+             "working for free until we get there. So the risk is on us, not on you.",
+             "And you see every number on your live dashboard the whole way, so you never have to "
+             "take our word for it."),
+            ('"Does that feel fair', "hold us to the guarantee?", "hold us to the numbers?"),
+        ],
+        "tried": ('"And here\'s the difference: your last agency',
+                  "\"And here's what's different this time: you're not trusting a promise. You see "
+                  "every number on your live dashboard, and you hold us to the number at every step "
+                  "of your funnel. So the real risk isn't trying again. It's not doing it, and "
+                  "losing more projects to competitors who do.\""),
+        "outside": ('"Our specialty is', "at the level we guarantee.",
+                    "at the level we hold ourselves to."),
+        "faq_old": '"30 qualified appointments in 90 days.',
+        "faq": [
+            say("\"Legally, we can't guarantee results, and any agency that does isn't being "
+                "straight with you. Every business is different: your market, your prices, your "
+                "offer, how your team follows up.\""),
+            note(FAQ_NOTE),
+            say("\"If in your first 7 days you're unhappy with the process in any way, you tell us "
+                "and we refund you.\""),
+        ],
+    },
+    "ar": {
+        "handle_last": '"أخذت قرارات أكبر',
+        "handle": [
+            step("Handle"),
+            note(NO_RESULTS_NOTE),
+            adapt("Step 1 — Be straight with them, then ask why:"),
+            say("\"سؤال عدل، وخلني أكون واضح معاك: قانونياً ما نقدر نعطيك ضمان على النتائج. وأي "
+                "وكالة تضمن لك نتائج قبل لا تشتغل معاك.. مو صادقة معاك.\""),
+            say("\"بس من باب الفضول.. تسأل لسبب معين؟\""),
+            note(ASK_WHY_NOTE),
+            say("\"تمام، فاهم عليك. وأقدّر إنك سألت.\""),
+            adapt("Step 2 — Why nobody can promise it:"),
+            say("\"أقدر أسألك سؤال بصراحة؟ شنو الأشياء الكبيرة بشغلك، اللي فعلاً تستاهل، كانت "
+                "مضمونة امية بالمية؟\""),
+            note(HONEST_NOTE),
+            say("\"بالضبط. لمن أخذت أول مشروع كبير، أو وظفت أول مهندس.. ماحد قدر يضمن لك شلون "
+                "بتطلع. وكل بزنس غير: سوقك، أسعارك، عرضك، وشلون فريقك يتابع. فمو أمانة مني إني "
+                "أقعد جدامك وأتوقع لك النتائج.\""),
+            adapt("Step 3 — Our side and their side:"),
+            say("\"اللي أقدر أقوله لك هو اللي علينا. اشتغلنا مع أكثر من ٧٠ شركة بالخليج، ومن أول "
+                "يوم يشتغل على الفانل مالك فريق كامل كل يوم: ميديا بايرز، كول سنتر، تصميم "
+                "واستشارات.. وكل رقم تشوفه جدامك على الداشبورد.\""),
+            say("\"واللي ماحد يقدر يضمنه لك هو اللي عليك: إنك تحضر كل موعد نحجزه لك، وتتابع "
+                "وتبيع صح.\""),
+            adapt("Step 4 — The real question:"),
+            say("\"فالسؤال الصج عندك انت. بتحضر كل موعد نحجزه وتتابع؟ وإذا شي مو ماشي.. بتقولنا "
+                "سيده بدال ما تختفي؟\""),
+            say("\"لأن الشركات اللي تطلع بأكثر شي من هالبرنامج هي اللي تسوي هالشيئين بالضبط. "
+                "هالشيئين مستعد تسويهم؟\""),
+            say("\"حلو. وشنو الأسئلة الثانية اللي عندك؟\""),
+            step(SEVEN_DAYS),
+            note(SEVEN_DAYS_NOTE),
+            say("\"شوف.. أكيد أحسن شي لك مو إنك تدخل إذا هالشي مو مناسب لك. بس بعد أحسن شي لك مو "
+                "إنك تقعد ما تسوي شي عن [WEAK STEP]، وتترك [GAP YEAR] بالسنة على الطاولة.\""),
+            say("\"فلو أنا مكانك.. بقول خلاص: ما عاد أخسر [GAP MONTH] بالشهر عند [WEAK STEP]. "
+                "وأبدي.\""),
+            say("\"وإذا بأول ٧ أيام مو راضي عن طريقة الشغل بأي شكل، تقولنا ونرجع لك فلوسك. بدون "
+                "أي زعل.\""),
+            say("\"فإذا احنا مستعدين نسوي هالشي.. انت مستعد نبدي اليوم؟\""),
+        ],
+        "expensive": [
+            ('"وخلني أسألك', "إنت تستثمر بنظام وراه ضمان.",
+             "إنت تستثمر بنظام شغّلناه لأكثر من ٧٠ شركة بالخليج."),
+            ('"بالضبط. والسبب بسيط',
+             "عشان جذي عندنا الضمان: ٣٠ موعد مؤهل بـ ٩٠ يوم ولا نستمر نشتغل مجاناً لين نوصّل. "
+             "إنت مو تدفع وتتمنى. إنت تدفع وإحنا نضمنلك النتيجة.",
+             "عشان جذي الدفع من البداية، مثل ما إنت تاخذ عربون قبل لا تبدي أي مشروع. إنت مو "
+             "تدفع وتتمنى.. إنت تدفع لفريق شغال على حسابك كل يوم، وتشوف كل رقم على الداشبورد."),
+        ],
+        "pay_after": '"بالضبط. والسبب بسيط',
+        "agency": [
+            ('"يعني إنت تدفع',
+             "بـ ٩٠ يوم معنا، الضمان ٣٠ موعد مؤهل. لو وكالتك الحالية كانت توصّل هالنتائج، كنت "
+             "بتدور أصلاً؟",
+             "معنا، الكول سنتر مالنا يتصل بكل استفسار، يتأكد إنه جدّي، ويحجز الصح منهم على "
+             "جدولك سيده. لو وكالتك الحالية تسوي لك هالشي، كنت بتدور أصلاً؟"),
+            ('"أفهمك تمام.', " يضمنون ٣٠ موعد ولا يشتغلون مجاناً؟",
+             " يحاسبون نفسهم على رقم بكل خطوة بالفانل مالك؟"),
+        ],
+        "small": [
+            ('"اللي أقترحه بدال',
+             "وفوق هذا، نضمن لك ٣٠ موعد مؤهل بـ ٩٠ يوم، ولا نكمل نشتغل ببلاش لين نوصلها. يعني "
+             "المخاطرة علينا مو عليك.",
+             "وطول الوقت تشوف كل رقم على الداشبورد.. يعني ما تحتاج تاخذ كلامنا وبس."),
+            ('"تحس هالشي عدل', "وتحاسبنا على الضمان؟", "وتحاسبنا على الأرقام؟"),
+        ],
+        "tried": ('"وهذا الفرق: وكالتك السابقة',
+                  "\"وهذا الفرق هالمرة: انت مو معتمد على وعد. تشوف كل رقم على الداشبورد، وتحاسبنا "
+                  "على الرقم بكل خطوة بالفانل مالك. يعني المخاطرة الصج مو إنك تجرب مرة ثانية. "
+                  "المخاطرة إنك ما تسويها، وتستمر تخسر مشاريع لمنافسين يسوونها.\""),
+        "outside": ('"تخصصنا شركات', "بالمستوى اللي نضمنه.", "بالمستوى اللي نحاسب نفسنا عليه."),
+        "faq_old": '"٣٠ موعد مؤهل بـ ٩٠ يوم.',
+        "faq": [
+            say("\"قانونياً ما نقدر نضمن نتائج.. وأي وكالة تضمنها لك مو صادقة معاك. كل بزنس غير: "
+                "سوقك، أسعارك، عرضك، وشلون فريقك يتابع.\""),
+            note(FAQ_NOTE),
+            say("\"وإذا بأول ٧ أيام مو راضي عن طريقة الشغل بأي شكل، تقولنا ونرجع لك فلوسك.\""),
+        ],
+    },
+}
+
+SETTER_WORDS = {
+    "en": ("Yes, we do have guarantees",
+           "Legally, nobody can guarantee you results, because every business is different: your "
+           "market, your prices, how your team follows up. What [CLOSER NAME] will do on the call "
+           "is walk you through exactly how we work and what to expect, with your numbers in front "
+           "of you."),
+    "ar": ("إي، عندنا ضمانات",
+           "قانونياً ماحد يقدر يضمن لك نتائج، لأن كل بزنس غير: سوقك، أسعارك، وشلون فريقك يتابع. "
+           "اللي بيسويه [CLOSER NAME] بالمكالمة إنه يمشي معاك على شلون نشتغل بالضبط وشنو تتوقع، "
+           "وأرقامك جدامك."),
+}
+
+
+def _guarantee_demo(doc: dict, lang: str) -> None:
+    w = f"demo.{lang}"
+    g = GUARANTEE_WORDS[lang]
+    _replace(_stage(doc, 13), "The guarantee is not part of the close", None, [note(CLOSE_NOTE)], w)
+
+    handle = _entry(doc, "objections", '"How do I know this will work?"')
+    _replace(handle, "Handle", g["handle_last"], g["handle"], w)
+
+    pricey = _entry(doc, "objections", '"It\'s too expensive"')
+    for starts, old, new in g["expensive"]:
+        _edit(pricey, starts, old, new, w)
+    _after(pricey, g["pay_after"], [note(PAY_AFTER_NOTE)], w)
+
+    agency = _entry(doc, "objections", '"Already with another agency"')
+    for starts, old, new in g["agency"]:
+        _edit(agency, starts, old, new, w)
+
+    small = _entry(doc, "objections", '"I want to start small')
+    for starts, old, new in g["small"]:
+        _edit(small, starts, old, new, w)
+
+    tried = _entry(doc, "objections", '"I\'ve tried marketing before')
+    _replace(tried, "Step 4 — Risk reversal:", None, [adapt(TRIED_STEP)], w)
+    _replace(tried, g["tried"][0], None, [say(g["tried"][1])], w)
+
+    outside = _entry(doc, "faqs", '"Do you work with companies outside the Gulf?"')
+    _edit(outside, *g["outside"], w)
+
+    faq = _entry(doc, "faqs", '"What\'s the guarantee exactly?"')
+    _replace(faq, g["faq_old"], None, g["faq"], w)
+
+    quick = _entry(doc, "faqs", '"Do people actually fill in a form?')
+    _replace(quick, QUICK, None, [say(QUICK + QUICK_ANSWER)], w)
+
+
+def _guarantee_intro(doc: dict, lang: str) -> None:
+    w = f"intro.{lang}"
+    faq = _entry(doc, "faqs", '"Do you have guarantees?"')
+    old, new = SETTER_WORDS[lang]
+    _replace(faq, old, None, [say(new)], w)
+    _replace(faq, "Do NOT state the guarantee", None, [adapt(SETTER_NOTE)], w)
+
+
+# ------------------------------------------------- the contract's own terms
+
+SEVEN_DAYS_TERMS_NOTE = (
+    "Only for someone who wants this but is still skeptical, and only here: never in the pitch "
+    "or the close. It's a satisfaction guarantee on the process, not on results: never say \"if "
+    "you don't get results\". The contract is \"90 Day Agreement (7 Day Satisfaction "
+    "Guarantee)\", section 3: they ask by email or WhatsApp within 7 days of paying in full, "
+    "once they've done the onboarding (the call, the Academy lessons, the strategy review, "
+    "access to the ad account, WhatsApp and calendar). It ends early if they ask to launch the "
+    "ads before day 7, or with a chargeback, and ad spend paid to Meta is never refunded. It's "
+    "on the deck's investment slide too (press G)."
+)
+
+# (first words of the line the guarantee revision wrote, the line as the contract has it)
+TERMS_WORDS = {
+    "en": {
+        "handle": ('"And if in your first 7 days',
+                   "\"And if within 7 days of paying in full you're unhappy with the process for "
+                   "any reason, you tell us and we refund your program fee in full. No hard "
+                   "feelings. All we ask is that you do your part of the onboarding first: join the "
+                   "onboarding call, go through the Academy lessons, look over the strategy we "
+                   "present, and give us access to your ad account, WhatsApp and calendar.\""),
+        "faq": ('"If in your first 7 days',
+                "\"If within 7 days of paying in full you're unhappy with the process for any "
+                "reason, you tell us and we refund your program fee in full, once you've done the "
+                "onboarding.\""),
+    },
+    "ar": {
+        "handle": ('"وإذا بأول ٧ أيام مو راضي',
+                   "\"وإذا خلال ٧ أيام من يوم تدفع المبلغ كامل ما كنت راضي عن طريقة الشغل لأي سبب، "
+                   "تقولنا ونرجع لك رسوم البرنامج كاملة. بدون أي زعل. كل اللي نطلبه إنك تسوي اللي "
+                   "عليك بالأونبوردنق أول: تحضر مكالمة الأونبوردنق، تخلص دروس الأكاديمية، تشوف "
+                   "الاستراتيجية اللي نعرضها، وتعطينا الأكسس على حساب الإعلانات والواتساب والكالندر.\""),
+        "faq": ('"وإذا بأول ٧ أيام مو راضي',
+                "\"وإذا خلال ٧ أيام من يوم تدفع المبلغ كامل ما كنت راضي عن طريقة الشغل لأي سبب، "
+                "تقولنا ونرجع لك رسوم البرنامج كاملة.. بعد ما تخلص الأونبوردنق.\""),
+    },
+}
+
+
+def _terms_demo(doc: dict, lang: str) -> None:
+    w = f"demo.{lang}"
+    words = TERMS_WORDS[lang]
+    handle = _entry(doc, "objections", '"How do I know this will work?"')
+    _replace(handle, SEVEN_DAYS_NOTE[:60], None, [note(SEVEN_DAYS_TERMS_NOTE)], w)
+    _replace(handle, words["handle"][0], None, [say(words["handle"][1])], w)
+    faq = _entry(doc, "faqs", '"What\'s the guarantee exactly?"')
+    _replace(faq, words["faq"][0], None, [say(words["faq"][1])], w)
+
+
+SCRIPTS = (("demo", "en"), ("demo", "ar"), ("intro", "en"), ("intro", "ar"))
+
+
 def apply(doc: dict) -> dict:
-    """The doc with every revision applied once; the input is left as it is."""
+    """The doc with every revision applied once, in order; the input is left as it is.
+
+    A revision with nothing to change in a script is not recorded on it: the
+    setter's intro never says the 7 days, so the contract's terms touch the
+    demo only.
+    """
     out = copy.deepcopy(doc)
     done = out.setdefault("revisions", [])
-    if NUMBERS in done:
-        return out
     key, lang = out.get("key"), out.get("lang")
-    if key == "demo" and lang == "en":
-        _demo_en(out)
-    elif key == "demo" and lang == "ar":
-        _demo_ar(out)
-    elif key == "intro" and lang in ("en", "ar"):
-        _intro(out, lang)
-    else:
+    if (key, lang) not in SCRIPTS:
         raise Drift(f"no revision for {key}.{lang}")
-    done.append(NUMBERS)
+    if NUMBERS not in done:
+        if key == "demo":
+            (_demo_en if lang == "en" else _demo_ar)(out)
+        else:
+            _intro(out, lang)
+        done.append(NUMBERS)
+    if GUARANTEE not in done:
+        if key == "demo":
+            _guarantee_demo(out, lang)
+        else:
+            _guarantee_intro(out, lang)
+        done.append(GUARANTEE)
+    if key == "demo" and TERMS not in done:
+        _terms_demo(out, lang)
+        done.append(TERMS)
     return out

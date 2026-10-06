@@ -2,12 +2,13 @@
 
 ## 1. Executive Summary & Current Cutover Status
 
-- **Current Worktree HEAD**: `0a1bf7b`
+- **Current Source Assembly**: The candidate combines migration `2b262f6` and fetched main `5f08b5f` on `codex/supabase-completion-20261004`. Generated acceptance evidence binds the final clean merge HEAD.
 - **Cutover Status**: **NOT READY FOR CUTOVER**
 - **Current Blockers**:
-  1. **Source Divergence**: Branch is **31 commits behind `origin/main`**. An upstream merge or rebase is required before cutover.
-  2. **Unresolved Defects**: Confirmed open defects exist in Customer Success Management (CSM) and Ask AI.
-  3. **Absence of Acceptance Evidence**: Independently produced, human-reviewed acceptance evidence has not been submitted or verified.
+  1. **Incomplete History/File Reconciliation**: Fresh protected exports and canonical history proofs exist. Full storage ownership, WhatsApp history and saved calendar-choice reconciliation remain unverified. Do not silently omit business history.
+  2. **Incomplete End-to-End Acceptance**: Reported local suites and builds are green. Native SQL, installed-SDK and selected real UI journeys have local proof. Complete durable-save journeys and production workers/providers remain unverified.
+  3. **Production Access**: Available GitHub credentials lack push rights; Vercel authorization is absent; Hermes SSH is denied.
+  4. **Incomplete Release Evidence**: `evidence/cutover-acceptance.json` records exact-source local proof and unresolved release categories. It must not claim production acceptance from build results. The generated file stays outside the commit because it binds that commit and expires.
 
 > [!CAUTION]
 > The verification tool defaults to **Release Mode** (`--mode release`). Invoking the tool without arguments (as done in deployment scripts like `ship.sh`) requires valid acceptance evidence; if evidence is absent, the tool exits **nonzero** and reports **`NOT READY FOR CUTOVER`**.

@@ -1,4 +1,5 @@
-import type { Unit } from "./scoreboard";
+import type { MetricDef, Unit } from "./scoreboard";
+import type { CostsSummary } from "./costs";
 
 export type PlanRow = {
   id: number;
@@ -61,6 +62,9 @@ export type Board = {
     pacedTarget: number | null;
   }[];
   behindPace?: TargetRow[];
-  catalogue?: any[];
+  catalogue: MetricDef[];
+  measured: Record<string, number>;
+  callClients: { name: string; leads: number; bookings: number; rate: number | null }[] | null;
+  costs: CostsSummary | null;
   [key: string]: any;
 };

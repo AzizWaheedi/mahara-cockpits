@@ -6,11 +6,28 @@ the client spoke last. It never sends. A person reads the draft, edits it,
 and presses the button in their cockpit.
 
 ```bash
-python3 inbox.py
+python inbox.py --doctor
+python inbox.py
 ```
 
-Needs `GHL_MAHARA_PIT`, `GHL_MAHARA_LOCATION`, `DESK_SUPABASE_URL`,
-`DESK_SUPABASE_KEY`, `DEEPSEEK_API_KEY`.
+The default run is read-only. It reports planned writes and skips model calls.
+The target must be Creative Triage. The configured CSM location and switch-on watermark must match.
+Required names are `GHL_MAHARA_PIT`, `GHL_MAHARA_LOCATION`, `DESK_SUPABASE_URL` and `DESK_SUPABASE_KEY`.
+`DEEPSEEK_API_KEY` is required only for an explicitly approved `--apply` run.
+Do not schedule applied runs until the native schema and host locking are verified.
+
+Native publication uses service-only atomic thread and draft CAS functions.
+Human client assignments and archive choices survive provider updates.
+Pending or unknown outbound status never counts as delivery.
+Accepted messages use their recorded provider IDs for later delivery observations.
+Only real `delivered` or `read` status confirms delivery.
+External reads and model calls go through `tools.py` into the CSM health ledger.
+
+Offline regression command:
+```bash
+python -m unittest discover -s hermes/inbox -p test_inbox.py
+bun test scripts/native-whatsapp.test.ts
+```
 
 ## What this account actually looks like
 

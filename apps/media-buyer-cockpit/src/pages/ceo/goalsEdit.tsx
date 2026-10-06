@@ -6,6 +6,7 @@ import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
 import { DateInput } from "@/components/ui/date-input";
 import { api } from "@/lib/cockpitApi";
+import { goalTargetPatch, type GoalTargetPatch } from "@/lib/ceoGoalsModel";
 import type { Board, TargetRow } from "@/types/ceo/goals";
 import type { MetricDef } from "@/types/ceo/scoreboard";
 import { fmt } from "./goalsKit";
@@ -424,10 +425,8 @@ function TargetList({
   planId: number;
   busy: boolean;
   onSaved: () => void;
-  // biome-ignore lint/suspicious/noExplicitAny: convex action handles
-  onSave: any;
-  // biome-ignore lint/suspicious/noExplicitAny: convex action handles
-  onRemove: any;
+  onSave: (args: { planId: number; targets: GoalTargetPatch[] }) => Promise<unknown>;
+  onRemove: (args: { id: number }) => Promise<unknown>;
 }) {
   const [edits, setEdits] = useState<Record<number, Partial<Draft>>>({});
   const [saving, setSaving] = useState(false);
@@ -510,32 +509,7 @@ function TargetList({
                 planId,
                 targets: rows
                   .filter(t => edits[t.id])
-                  .map(t => {
-                    const e = edits[t.id];
-                    return {
-                      id: t.id,
-                      groupKey: t.groupKey,
-                      metricKey: t.metricKey,
-                      label: t.label,
-                      unit: t.unit,
-                      direction: t.direction,
-                      target:
-                        e.target !== undefined
-                          ? numOrUndef(e.target)
-                          : (t.target ?? undefined),
-                      stretch:
-                        e.stretch !== undefined
-                          ? numOrUndef(e.stretch)
-                          : (t.stretch ?? undefined),
-                      baseline: t.baseline ?? undefined,
-                      actualManual:
-                        e.actualManual !== undefined
-                          ? numOrUndef(e.actualManual)
-                          : undefined,
-                      note: t.note ?? "",
-                      sort: t.sort,
-                    };
-                  }),
+                  .map(t => goalTargetPatch(t.id, edits[t.id])),
               });
               setEdits({});
               onSaved();

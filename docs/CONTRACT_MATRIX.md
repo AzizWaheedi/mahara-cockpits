@@ -8,6 +8,13 @@
 - `impressive-dinosaur-375` (Client Success)
 - `colorful-wombat-644` (Creative Director)
 
+**Current native release status, 2026-10-05: NOT READY.** The table-row status
+labels below are historical migration claims, not accepted native production
+evidence. Latest-main integration and local verification are recorded in
+`docs/superpowers/plans/2026-10-04-supabase-completion.md`. History/file
+reconciliation, all-surface authenticated saves and production exact-SHA
+acceptance remain incomplete; no production cutover or Convex retirement ran.
+
 ---
 
 ## 1. System Architecture & Evidence Baseline

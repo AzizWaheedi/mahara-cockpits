@@ -693,6 +693,9 @@ export const mintToken = action({
       clients: a.clients,
       // So a child can draw the switcher without asking the portal again.
       cockpits: a.cockpits,
+      // The CEO flag, decided here by the gate (ceo/gate.ts) and signed into
+      // the pass, so a child cockpit never keeps its own list of who that is.
+      ceo: a.isCeo,
       cockpit,
     });
     await ctx.runMutation(internal.portal.touch, { email: a.email, cockpit });
@@ -722,6 +725,7 @@ export const mintFor = internalAction({
       name: a.name ?? undefined,
       roles: a.roles,
       clients: a.clients,
+      ceo: a.isCeo,
       cockpit,
     });
   },

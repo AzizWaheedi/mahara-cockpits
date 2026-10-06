@@ -331,11 +331,15 @@ class OfferTests(unittest.TestCase):
         with self.assertRaises(offer.OfferError):
             resolved({"price": "a lot"})
 
-    def test_the_guarantee_is_written_from_the_program_and_the_term(self):
-        self.assertEqual(resolved({"guarantee": True})["guarantee_text"],
-                         "30 qualified appointments in 90 days, or we work for free until we deliver.")
-        self.assertIn("180 days", resolved({"guarantee": True, "months": 6})["guarantee_text"])
+    def test_the_guarantee_is_printed_in_the_offers_words_whatever_the_term(self):
+        self.assertEqual(resolved({"guarantee": True})["guarantee_text"], fakes.GUARANTEE)
+        self.assertEqual(resolved({"guarantee": True, "months": 6})["guarantee_text"], fakes.GUARANTEE)
         self.assertIsNone(resolved({"guarantee": False})["guarantee_text"])
+        # A wording with the program's figures in it gets them filled in.
+        figures = copy.deepcopy(TEST_OFFER)
+        figures["guarantee"]["text"] = "{meetings} meetings over {days} days, {months} months"
+        self.assertEqual(offer.resolve(figures, {"guarantee": True, "months": 6})["guarantee_text"],
+                         "30 meetings over 180 days, six months")
 
     def test_the_prompt_block_carries_exactly_the_choice(self):
         pif = offer.prompt_block(resolved())
@@ -343,7 +347,8 @@ class OfferTests(unittest.TestCase):
         self.assertIn("Guarantee: none on this proposal", pif)
         plan = offer.prompt_block(resolved({"payment": "two_payments", "guarantee": True}))
         self.assertIn("USD 3,000 at the start; USD 3,000 45 days after the start", plan)
-        self.assertIn("or we work for free until we deliver.", plan)
+        self.assertIn("tell us and we refund you.", plan)
+        self.assertIn("promise no results and no free work", plan)
         self.assertNotIn("—", pif + plan)
 
     def test_a_stamp_reads_back_as_the_same_offer(self):
@@ -359,6 +364,8 @@ class OfferTests(unittest.TestCase):
             r = offer.resolve(real, {"payment": key})
             self.assertEqual(sum(i["amount"] for i in r["instalments"]), r["price"])
         self.assertNotIn("—", real["guarantee"]["text"])
+        self.assertFalse(validate.promises_results(real["guarantee"]["text"]))
+        self.assertIn("7 days", real["guarantee"]["text"])
 
 
 # ---------------------------------------------------------------------------
@@ -528,6 +535,28 @@ class OfferCheckTests(unittest.TestCase):
         deal["terms"].append("إذا ما وصلنا نستمر "
                              "بالشغل مجاناً")
         self.assertTrue(failing(check(deal), "guarantee"))
+
+    def test_results_are_never_promised_even_with_the_guarantee_chosen(self):
+        for line in ("30 qualified appointments in 90 days, or we work for free until we deliver.",
+                     "We guarantee 30 qualified appointments in your first 90 days.",
+                     "نضمن لك ٣٠ موعد مؤهل خلال ٩٠ يوم.",
+                     "If you are unhappy in your first 7 days we refund you, and we keep working for "
+                     "free until you have 30 meetings."):
+            deal = with_offer(specific_deal(), {"guarantee": True})
+            deal["terms"].append(line)
+            self.assertTrue(any("promises results" in x for x in failing(check(deal), "guarantee")), line)
+
+    def test_saying_results_cannot_be_guaranteed_is_not_a_promise(self):
+        for line in ("Legally, we can't guarantee results: every business is different.",
+                     "We do not guarantee revenue, only meetings booked and attended.",
+                     "قانونياً ما نقدر نعطيك ضمان على النتائج."):
+            self.assertFalse(validate.promises_results(line), line)
+        arabic = with_offer(specific_deal(), {"guarantee": True})
+        arabic["terms"].append("ضمان رضا لمدة ٧ أيام: إذا مو راضي عن طريقة الشغل بأول ٧ أيام، نرجع لك فلوسك.")
+        self.assertEqual([x["status"] for x in check(arabic).rows if x["check"] == "guarantee"], ["PASS"])
+        unchosen = specific_deal()
+        unchosen["terms"].append("إذا مو راضي بأول ٧ أيام، نرجع لك فلوسك.")
+        self.assertTrue(failing(check(unchosen), "guarantee"))
 
 
 # ---------------------------------------------------------------------------
@@ -997,8 +1026,7 @@ class QueueTests(unittest.TestCase):
         row = self.pg.one("cockpit_sales_settings", key="offer")
         self.assertEqual([p["key"] for p in row["value"]["payments"]], ["pif", "two_payments", "monthly", "fixed"])
         self.assertEqual(row["value"]["payments"][0]["label"], "Paid in full at the start")
-        self.assertEqual(row["value"]["guarantee"]["label"],
-                         "Include the guarantee (30 qualified appointments in 90 days, or we work for free until we deliver)")
+        self.assertEqual(row["value"]["guarantee"]["label"], "Include the 7-day satisfaction guarantee")
         self.assertEqual((row["value"]["source"], row["updated_by"]), ("hermes/sales-desk/offer.json", "sales-desk"))
         self.assertFalse(queue.sync_offer(self.sb, TEST_OFFER, lambda _m: None))
         changed = copy.deepcopy(TEST_OFFER)
@@ -1006,10 +1034,19 @@ class QueueTests(unittest.TestCase):
         self.assertTrue(queue.sync_offer(self.sb, changed, lambda _m: None))
         self.assertEqual(self.pg.one("cockpit_sales_settings", key="offer")["value"]["payments"][0]["label"], "Paid in full")
 
-    def test_the_real_offer_json_gives_the_three_keys_the_cockpit_was_seeded_with(self):
-        value = offer.cockpit_setting(offer.load())
-        self.assertEqual([p["key"] for p in value["payments"]], ["pif", "two_payments", "monthly"])
-        self.assertTrue(value["guarantee"]["label"].startswith("Include the guarantee (30 qualified appointments"))
+    def test_the_real_offer_json_gives_the_two_plans_new_clients_get(self):
+        # Aziz, 2026-10-03: $6,000 paid in full, or $3,000 and $3,000 30 days later.
+        real = offer.load()
+        value = offer.cockpit_setting(real)
+        self.assertEqual([p["key"] for p in value["payments"]], ["pif", "two_payments"])
+        split = offer.resolve(real, {"payment": "two_payments"})["instalments"]
+        self.assertEqual([(i["amount"], i["due_days"]) for i in split], [(3000, 0), (3000, 30)])
+        self.assertEqual(offer.resolve(real, {"payment": "pif"})["instalments"][0]["amount"], 6000)
+        self.assertEqual(value["guarantee"]["label"], "Include the 7-day satisfaction guarantee")
+        unlabelled = copy.deepcopy(TEST_OFFER)
+        del unlabelled["guarantee"]["label"]
+        self.assertEqual(offer.cockpit_setting(unlabelled)["guarantee"]["label"],
+                         "Include the guarantee (" + fakes.GUARANTEE.rstrip(".") + ")")
 
     # ---- the rebuild after the closer filled the gaps ----
     def filled(self, pid: str = "p-9", choice: Any = None, deal: Any = None, **prop: Any) -> dict[str, Any]:

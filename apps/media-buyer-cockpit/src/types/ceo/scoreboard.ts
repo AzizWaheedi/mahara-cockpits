@@ -1,3 +1,4 @@
+import type { CallCenterMetrics } from "./callCenterContract";
 import type {
   CallsPayload,
   ClientsPayload,
@@ -95,7 +96,7 @@ export const GROUPS: { key: GroupKey; label: string; blurb: string }[] = [
   {
     key: "calls",
     label: "Call centre",
-    blurb: "Dials, talk time and booking.",
+    blurb: "Client leads into bookings: lead to booking is the main number, then dials and talk time.",
   },
   {
     key: "content",
@@ -126,6 +127,8 @@ export type Payloads = {
   calls?: CallsPayload | null;
   organic?: OrganicPayload | null;
   expenses?: ExpensesPayload | null;
+  /** Distinct totals for exactly this window; never add daily reports together. */
+  callsWindow?: { from: string; to: string; overall: CallCenterMetrics } | null;
 };
 
 const r2 = (x: number) => Math.round(x * 100) / 100;
@@ -184,6 +187,11 @@ function out(p: Payloads, from: string, to: string): number | null {
 function monthOf(from: string, to: string): string | null {
   if (from.slice(0, 7) !== to.slice(0, 7)) return null;
   return from.endsWith("-01") ? from.slice(0, 7) : null;
+}
+
+function callTotals(p: Payloads, from: string, to: string) {
+  const w = p.callsWindow;
+  return w && w.from === from && w.to === to ? w.overall : null;
 }
 
 type Reader = (p: Payloads, from: string, to: string) => number | null;
@@ -342,6 +350,13 @@ const READERS: Record<string, Reader> = {
     div(READERS.clientSpend(p, f, t), READERS.clientLeads(p, f, t)),
   clientCpb: (p, f, t) =>
     div(READERS.clientSpend(p, f, t), READERS.clientBookings(p, f, t)),
+
+  callLeads: (p, f, t) => callTotals(p, f, t)?.leads ?? null,
+  callLeadToBooking: (p, f, t) => {
+    const c = callTotals(p, f, t);
+    return c ? div(c.confirmedBookings, c.leads) : null;
+  },
+  callBookings: (p, f, t) => callTotals(p, f, t)?.confirmedBookings ?? null,
 
   // --- content ---
   contentPosts: (p, f, t) => {
@@ -771,7 +786,7 @@ export const METRICS: MetricDef[] = [
     "delivery",
     "rate",
     "up",
-    "Bookings over leads on a client's own account. Typed until every client's calendar is read.",
+    "Typed. The call centre's lead to booking, measured from its own report, is the same number and is the one a new plan uses.",
     { manual: true },
   ),
   m(
@@ -812,6 +827,30 @@ export const METRICS: MetricDef[] = [
   ),
 
   // Call centre.
+  m(
+    "callLeads",
+    "New client leads",
+    "calls",
+    "count",
+    "up",
+    "New leads on the clients the call centre works, by the day they were created. From the shared call centre report the Calls tab and the dialler read.",
+  ),
+  m(
+    "callLeadToBooking",
+    "Lead to booking",
+    "calls",
+    "rate",
+    "up",
+    "Confirmed bookings over new client leads in the shared call centre report: bookings by the day they were made, leads by the day they were created. Provisional and unclassified bookings are left out. The call centre's main number.",
+  ),
+  m(
+    "callBookings",
+    "Bookings made",
+    "calls",
+    "count",
+    "up",
+    "Confirmed bookings on client calendars (main and online), by the day they were made. A reschedule is not a second booking.",
+  ),
   m(
     "dialsPerDay",
     "Dials per agent per day",

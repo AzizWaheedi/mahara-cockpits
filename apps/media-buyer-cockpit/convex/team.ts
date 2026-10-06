@@ -26,9 +26,19 @@ import {
   mustBeBoss,
   mustManage,
   noted,
+  signPictures,
   slug,
   type Who,
 } from "./teamDb";
+import {
+  cleanDoc,
+  cleanLinks,
+  DOC_MAX,
+  isHtml,
+  linksOf,
+  picturePaths,
+  withPictureUrls,
+} from "./teamDoc";
 import { type MeetingPage, type Overview, overviewOf, page } from "./teamPage";
 
 /**
@@ -128,7 +138,8 @@ type Saved =
 /**
  * The meeting's living doc. A save carries the version it started from; if
  * somebody saved in between, nothing is overwritten and their version comes
- * back to choose from.
+ * back to choose from. Since 2026-09-30 it is the editor's HTML (teamDoc.ts),
+ * cleaned on the way in; its pictures are in the team-docs bucket.
  */
 export const saveDoc = authenticatedAction({
   args: { meetingId: v.string(), text: v.string(), version: v.number() },
@@ -138,7 +149,11 @@ export const saveDoc = authenticatedAction({
       const w: Who = await ctx.runQuery(internal.team.who, {
         userId: ctx.userId,
       });
-      const text = String(a.text).slice(0, 60_000);
+      const text = cleanDoc(String(a.text));
+      if (text.length > DOC_MAX)
+        throw new Error(
+          "The doc is too long to save. Move the older part into a new doc or a Google Doc, link it under Links, and save again.",
+        );
       const done = await db(
         `team_meetings?id=eq.${enc(a.meetingId)}&doc_version=eq.${Math.trunc(a.version)}`,
         {
@@ -157,10 +172,16 @@ export const saveDoc = authenticatedAction({
           a.meetingId,
           "doc,doc_by,doc_at,doc_version",
         );
+        const theirs = String(now.doc ?? "");
         return {
           ok: false as const,
           conflict: {
-            text: String(now.doc ?? ""),
+            text: isHtml(theirs)
+              ? withPictureUrls(
+                  theirs,
+                  await signPictures(picturePaths(theirs)),
+                )
+              : theirs,
             by: now.doc_by ?? null,
             at: now.doc_at ?? null,
             version: Number(now.doc_version ?? 0),
@@ -170,8 +191,42 @@ export const saveDoc = authenticatedAction({
       await logChange(w.email, a.meetingId, "edited the doc", {
         version: Math.trunc(a.version) + 1,
         length: text.length,
+        pictures: picturePaths(text).length,
       });
       return { ok: true as const, page: await page(w, a.meetingId) };
+    }),
+});
+
+/**
+ * The links a meeting keeps open (boards, docs, the cockpit's screens). Like
+ * the doc, anyone on the team edits them; the change log keeps what they were.
+ */
+export const saveLinks = authenticatedAction({
+  args: {
+    meetingId: v.string(),
+    links: v.array(v.object({ label: v.string(), url: v.string() })),
+  },
+  returns: v.any(),
+  handler: (ctx, a): Promise<MeetingPage> =>
+    noted(ctx, async () => {
+      const w: Who = await ctx.runQuery(internal.team.who, {
+        userId: ctx.userId,
+      });
+      const links = cleanLinks(a.links);
+      const m = await meetingOrRefuse(a.meetingId, "id,links");
+      const before = linksOf(m.links);
+      if (JSON.stringify(before) !== JSON.stringify(links)) {
+        await db(`team_meetings?id=eq.${enc(a.meetingId)}`, {
+          method: "PATCH",
+          body: { links, updated_at: new Date().toISOString() },
+          prefer: "return=minimal",
+        });
+        await logChange(w.email, a.meetingId, "changed its links", {
+          before,
+          after: links,
+        });
+      }
+      return page(w, a.meetingId);
     }),
 });
 

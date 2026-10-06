@@ -242,6 +242,8 @@ export interface Recording {
   hidden_reason?: "duplicate" | "too short" | null;
   /** The recording kept for the same meeting. */
   duplicate_of?: string | null;
+  /** sales: a Fathom sales call; phone: a Maqsam call; training. */
+  kind?: string | null;
 }
 
 /** One of Vince's reviews: his archive, or one the desk wrote since. */

@@ -1,19 +1,23 @@
 import { ArrowDown, ArrowLeft, ArrowUp, Check, Loader2, Pencil, X } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { usePageVisible } from "@/lib/usePageVisible";
-import { addItem as addItemApi, closeItem as closeItemApi, editItem as editItemApi, fetchMeetingPage, moveItem as moveItemApi, saveDoc as saveDocApi, saveMeeting as saveMeetingApi, saveNotes as saveNotesApi, type Item, type MeetingPage as Page, type Person, type Sitting } from "@/lib/team";
-
-
+import { addItem as addItemApi, closeItem as closeItemApi, editItem as editItemApi, fetchMeetingPage, moveItem as moveItemApi, saveDoc as saveDocApi, saveLinks as saveLinksApi, saveMeeting as saveMeetingApi, saveNotes as saveNotesApi, type Item, type MeetingPage as Page, type Person, type Sitting } from "@/lib/team";
+import type { MeetingLink } from "@/lib/teamDoc";
+import { ClientSuccessPanel } from "./ClientSuccessPanel";
+import { MeetingLinks } from "./MeetingLinks";
 import { PipelineBoard, PipelineStrip } from "./Pipeline";
 import { RunOfShow } from "./RunOfShow";
 import { dayName, errorText, Field, peopleById, peopleOptions, type SaveResult, SharedText, selectClass, shortName, when } from "./teamKit";
 import { Wheels } from "./Wheels";
 import { WhenAndWho } from "./WhenAndWho";
+
+// The editor is the page's heaviest part: it loads with the doc, not before.
+const RichDoc = lazy(() => import("./RichDoc"));
 
 /**
  * One meeting: what it is for, when it meets and who is in it (on Google
@@ -121,6 +125,13 @@ export function MeetingPage() {
     [auth.client, userContext],
   );
 
+  const saveLinks = useCallback(
+    async (args: { meetingId: string; links: MeetingLink[] }) => {
+      if (!auth.client) throw new Error("Not signed in");
+      return saveLinksApi(auth.client, userContext, args);
+    },
+    [auth.client, userContext],
+  );
   const visible = usePageVisible();
   const [page, setPage] = useState<Page | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -217,7 +228,12 @@ export function MeetingPage() {
         page={page}
         onSave={fields => act(() => saveMeeting({ id: m.id, ...fields }))}
       />
+      <MeetingLinks
+        links={m.links}
+        onSave={links => act(() => saveLinks({ meetingId: m.id, links }))}
+      />
       <WhenAndWho page={page} act={act} />
+      {m.embed ? <ClientSuccessPanel meetingId={m.id} embed={m.embed} /> : null}
       {page.strip ? <PipelineStrip strip={page.strip} /> : null}
       {page.creative ? (
         <PipelineBoard page={page} act={act} onError={setError} />
@@ -353,7 +369,6 @@ export function MeetingPage() {
                 version={notesSitting.notesVersion}
                 savedBy={notesSitting.notesBy}
                 savedAt={notesSitting.notesAt}
-                today={derived.today}
                 minRows={5}
                 placeholder="What was said, what was decided, who does what by when."
                 onSave={async (text, version): Promise<SaveResult> => {
@@ -375,36 +390,6 @@ export function MeetingPage() {
               </p>
             )}
           </section>
-
-          <section className="rounded-2xl border bg-card p-4 sm:p-6">
-            <h2 className="text-[15px] font-semibold">The doc</h2>
-            <p className="mb-3 mt-0.5 text-sm text-muted-foreground">
-              This meeting's living document: the plan, the numbers, the
-              projections. Everyone on the team can edit it, and it carries from
-              one meeting to the next.
-            </p>
-            <SharedText
-              label="The meeting's doc"
-              value={m.doc}
-              version={m.docVersion}
-              savedBy={m.docBy}
-              savedAt={m.docAt}
-              today={derived.today}
-              minRows={10}
-              placeholder={
-                "Write it the way you would a Google Doc.\n\nFor an end-of-month meeting: last month's numbers against the plan, what worked, what did not, and next month's projections."
-              }
-              onSave={async (text, version): Promise<SaveResult> => {
-                const res = (await saveDoc({
-                  meetingId: m.id,
-                  text,
-                  version,
-                })) as { ok: boolean; page?: Page };
-                if (res.ok && res.page) setPage(res.page);
-                return res as unknown as SaveResult;
-              }}
-            />
-          </section>
         </div>
 
         <aside className="grid min-w-0 gap-6">
@@ -419,6 +404,34 @@ export function MeetingPage() {
           <Changes page={page} />
         </aside>
       </div>
+      <Suspense
+        fallback={
+          <section className="rounded-2xl border bg-card p-4 sm:p-6">
+            <h2 className="text-[15px] font-semibold">The doc</h2>
+            <p className="mt-3 flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="size-4 animate-spin" aria-hidden /> Opening
+              the doc
+            </p>
+          </section>
+        }
+      >
+        <RichDoc
+          meetingId={m.id}
+          value={m.doc}
+          version={m.docVersion}
+          savedBy={m.docBy}
+          savedAt={m.docAt}
+          onSave={async (text, version): Promise<SaveResult> => {
+            const res = (await saveDoc({
+              meetingId: m.id,
+              text,
+              version,
+            })) as { ok: boolean; page?: Page };
+            if (res.ok && res.page) setPage(res.page);
+            return res as unknown as SaveResult;
+          }}
+        />
+      </Suspense>
       {error ? (
         <p className="text-sm text-destructive" role="alert">
           {error}
@@ -946,9 +959,7 @@ function Changes({ page }: { page: Page }) {
         {page.changes.slice(0, 10).map((c, i) => (
           // biome-ignore lint/suspicious/noArrayIndexKey: a log, never reordered
           <li key={i} className="leading-relaxed">
-            <span className="text-muted-foreground">
-              {when(c.at, page.today)}:{" "}
-            </span>
+            <span className="text-muted-foreground">{when(c.at)}: </span>
             {shortName(c.by)} {c.what}
           </li>
         ))}

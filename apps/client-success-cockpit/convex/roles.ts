@@ -61,6 +61,40 @@ export async function allowedClients(ctx: any): Promise<Set<string> | null> {
   return new Set(row.clients.map((c: string) => c.toLowerCase()));
 }
 
+/**
+ * Whether the signed-in person is the CEO, by the flag the portal signed
+ * into their pass (portalAuth). Nothing typed into this app can set it.
+ */
+export async function isCeo(ctx: any): Promise<boolean> {
+  const user = await ctx.db.get(ctx.userId);
+  const row = await portalRow(ctx, user?.email);
+  return Boolean(row?.isCeo && !row.revokedAt);
+}
+
+/**
+ * Who is asking, in one read: their address, the portal's CEO flag, whether
+ * the portal made them an admin, and the clients they may see (null: all).
+ */
+export async function seatOf(ctx: any): Promise<{
+  email: string;
+  isCeo: boolean;
+  isAdmin: boolean;
+  scope: Set<string> | null;
+}> {
+  const user = await ctx.db.get(ctx.userId);
+  const email = String(user?.email ?? "unknown")
+    .trim()
+    .toLowerCase();
+  const row = await portalRow(ctx, email);
+  const live = Boolean(row && !row.revokedAt);
+  return {
+    email,
+    isCeo: live && Boolean(row?.isCeo),
+    isAdmin: live && Boolean(row?.roles.includes("admin")),
+    scope: await allowedClients(ctx),
+  };
+}
+
 /** The signed-in user's email, lowercased. Used to key their own income plan. */
 // biome-ignore lint/suspicious/noExplicitAny: convex ctx
 export async function userEmail(ctx: any): Promise<string> {
@@ -80,6 +114,7 @@ export const me = authenticatedQuery({
       name: user?.name ?? row?.name ?? null,
       roles: ok ? ["csm"] : [],
       isAdmin: Boolean(row?.roles.includes("admin")),
+      isCeo: Boolean(row?.isCeo && !row.revokedAt),
       /** Every seat the portal gave them, for the cockpit switcher. */
       portalRoles: row?.roles ?? [],
       clients: row?.clients ?? [],

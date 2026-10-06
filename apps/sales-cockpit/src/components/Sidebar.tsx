@@ -2,6 +2,7 @@ import {
   CalendarDays,
   ChartNoAxesColumn,
   ClipboardCheck,
+  FileSignature,
   FileText,
   KanbanSquare,
   Lightbulb,
@@ -57,6 +58,7 @@ export const GROUPS: { label: string; items: Item[] }[] = [
         icon: FileText,
         badge: "proposals",
       },
+      { to: "/contracts", label: "Contracts", icon: FileSignature },
       {
         to: "/followups",
         label: "Follow-ups",

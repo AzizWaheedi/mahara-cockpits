@@ -8,12 +8,12 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { DateInput } from "@/components/ui/date-input";
 import { Input } from "@/components/ui/input";
 import { usePageVisible } from "@/lib/usePageVisible";
-import { fetchTeamOverview, saveMeeting as saveMeetingApi, type MeetingSummary, type Overview } from "@/lib/team";
+import { fetchTeamOverview, saveMeeting as saveMeetingApi, type MeetingSummary, type Overview, type Prize, type WeekDay, type WeekItem } from "@/lib/team";
 import { api, useAction } from "@/lib/cockpitApi";
-import { DAY_NAMES, dayLabel, seriesLine } from "@/lib/teamCore";
-import type { Prize, WeekDay } from "@/lib/team";
+import { DAY_NAMES, dayLabel } from "@/lib/teamCore";
 import { CADENCES } from "./MeetingPage";
 import { chip, DayChips, dayName, errorText, Field, fieldClass, Initials, peopleById, selectClass, timeRange } from "./teamKit";
+import { inViewer, localToday, offsetLine, rangeIn, seriesIn, viewerZone } from "./teamTime";
 
 /**
  * Team meetings: every meeting the team holds, the week at its real times,
@@ -142,7 +142,7 @@ export function TeamPage() {
         />
       ) : null}
 
-      <WeekView weeks={data.weeks} today={data.today} />
+      <WeekView weeks={data.weeks} />
 
       {data.prizes?.length ? (
         <Prizes
@@ -234,17 +234,58 @@ export function TeamPage() {
 
 // --- the week ------------------------------------------------------------------------------------
 
+type Shown = WeekItem & { range: string };
+type ShownDay = { day: string; items: Shown[] };
+
+/**
+ * The server's two weeks on the viewer's own calendar: each sitting on the
+ * day and at the time it falls where the viewer is (a London evening can be
+ * the next day in Kuwait).
+ */
+function onViewerClock(weeks: WeekDay[][], tz: string): ShownDay[][] {
+  const all = weeks.flatMap(w => w.flatMap(d => d.items));
+  return weeks.map(w =>
+    w.map(d => ({
+      day: d.day,
+      items: all
+        .filter(x => (inViewer(x.startsAt, tz)?.day ?? x.day) === d.day)
+        .map(x => ({
+          ...x,
+          range:
+            rangeIn(x.startsAt, x.endsAt, tz) || timeRange(x.time, x.endTime),
+        }))
+        .sort(
+          (a, b) =>
+            String(a.startsAt ?? a.time ?? "99").localeCompare(
+              String(b.startsAt ?? b.time ?? "99"),
+            ) || a.title.localeCompare(b.title),
+        ),
+    })),
+  );
+}
+
 /** Seven days from Saturday, every meeting at its real time; a dashed one is not on Google Calendar. */
-function WeekView({ weeks, today }: { weeks: WeekDay[][]; today: string }) {
+function WeekView({ weeks }: { weeks: WeekDay[][] }) {
   const [which, setWhich] = useState(0);
-  const days = weeks[which] ?? [];
+  const tz = viewerZone();
+  const today = localToday(tz);
+  const local = useMemo(() => onViewerClock(weeks, tz), [weeks, tz]);
+  const days = local[which] ?? [];
   const empty = days.every(d => !d.items.length);
+  const offset = offsetLine("Asia/Kuwait", tz);
   return (
     <section className="rounded-2xl border bg-card" aria-labelledby="week">
       <div className="flex flex-wrap items-center justify-between gap-2 px-4 pt-4 sm:px-6 sm:pt-5">
-        <h2 id="week" className="text-[15px] font-semibold">
-          The week
-        </h2>
+        <div className="min-w-0">
+          <h2 id="week" className="text-[15px] font-semibold">
+            The week
+          </h2>
+          {offset ? (
+            <p className="text-xs text-muted-foreground">
+              Times are yours. {offset}.
+            </p>
+          ) : null}
+        </div>
         <div className="flex gap-1.5">
           {["This week", "Next week"].map((label, i) => (
             <button
@@ -296,7 +337,7 @@ function WeekView({ weeks, today }: { weeks: WeekDay[][]; today: string }) {
                         }
                       >
                         <span className="block font-mono text-[11px] text-muted-foreground">
-                          {timeRange(x.time, x.endTime ?? null) || "No time"}
+                          {x.range || "No time"}
                           {x.status === "moved" ? " moved" : ""}
                         </span>
                         <span
@@ -416,11 +457,16 @@ function MeetingRow({
       2 * 86_400_000;
   const series =
     m.startTime && m.minutes
-      ? seriesLine({
-          weekdays: m.weekdays ?? null,
-          startTime: m.startTime,
-          minutes: m.minutes,
-        }).replace(/, Kuwait time$/, "")
+      ? seriesIn(
+          {
+            weekdays: m.weekdays,
+            startTime: m.startTime,
+            minutes: m.minutes,
+            tz: m.tz,
+          },
+          today,
+          { zone: false },
+        ).line
       : null;
   return (
     <li className="border-b last:border-b-0">

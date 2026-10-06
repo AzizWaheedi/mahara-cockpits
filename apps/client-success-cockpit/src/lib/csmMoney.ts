@@ -24,9 +24,12 @@ export function basePay(clients: number): number {
 }
 
 /**
- * Retention bonus bands, on churn = clients lost this month ÷ active clients at the
- * start of the month (counting non-renewal, cancellation, refund, or a freeze over
- * 14 days). A penalty is a negative number, deliberately.
+ * Retention bonus bands, on churn = clients lost this month before day 90 ÷ active
+ * clients at the start of the month (cancellation, refund, chargeback, non-payment
+ * or a pause past 14 days). A client who finishes the term and does not renew is a
+ * renewal miss, not churn, so one client leaving is never counted twice
+ * (mahara-context churn-tracker-build.md; the churn tracker, convex/churnCore.ts).
+ * A penalty is a negative number, deliberately.
  */
 export const CHURN_BANDS: { max: number; bonus: number; label: string }[] = [
   { max: 0, bonus: 2000, label: "0% churn" },

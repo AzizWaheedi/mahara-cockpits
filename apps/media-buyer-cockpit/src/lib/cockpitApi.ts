@@ -11,21 +11,32 @@ import {
 } from "./ceoGoalsClient";
 import { supabase } from "./supabase";
 import {ManualPaymentError,manualPaymentList,manualPaymentInfo,manualPaymentClients,addManualPayment,changeManualPayment,manualPaymentHistory} from "./ceoManualPaymentsClient";
-import {readPeople,readPeopleRoles,savePerson,setPersonActive,unavailablePeopleDirectory} from "./ceoPeopleClient";
+import {readCostsSheet,saveCostLine,removeCostLine} from "./ceoCostsClient";
+import {readPeople,readPeopleRoles,savePerson,setPersonActive,setPersonPay} from "./ceoPeopleClient";
+import { readFrequencyForRange, readAdsWindow, readContentWindow, readWorkspaceDirectory, importWorkspace } from "./ceoProviderClient";
+import {teamPicturesAction,type TeamPictureOperation} from "./teamPicturesClient";
 import { callCenterRange, parseCallCenterReport } from "../types/ceo/callCenterContract";
 import { readMediaStats } from "./mediaStatsClient";
 import { mediaAction } from "./mediaActionsClient";
+import { handleMediaNativeCall, isMediaNativeRead, isMediaNativeWrite } from "./mediaNativeClient";
 import { ceoAction } from "./ceoActionsClient";
 import { listCreativeRequests, reviewCreativeRequest, creativeProviderAction } from "./creativeActionsClient";
 import { api as ideationApi } from "./ideation";
 import { api as swipeApi } from "./swipe";
+import {
+  readTeamProjections,
+  editTeamProjections,
+  bookTeamProjectionCall,
+} from "./teamProjectionsClient";
 import { campaignBuildAction } from "./campaignBuildsClient";
 import { runWinnerSave } from "./winnerSavesClient";
+import { readClientLogos } from "./clientLogosClient";
 import {
   type TeamUserContext,
   fetchTeamOverview,
   fetchMeetingPage,
   saveMeeting,
+  saveLinks,
   setPart,
   addSitting,
   saveDoc,
@@ -59,20 +70,9 @@ import {
 } from "./team";
 
 async function getTeamUserContext(client: any): Promise<TeamUserContext> {
-  const { data: auth } = await client.auth.getUser();
-  const email = auth?.user?.email?.toLowerCase().trim() ?? "";
-  const isCeo = ["aziz@maharamedia.com", "awaheedi2008@gmail.com"].includes(email);
-  let isAdmin = false;
-  if (auth?.user?.id) {
-    const { data: member } = await client
-      .from("cockpit_members")
-      .select("roles")
-      .eq("auth_user_id", auth.user.id)
-      .maybeSingle();
-    const roles: string[] = member?.roles ?? [];
-    isAdmin = roles.includes("admin");
-  }
-  return { email, isCeo, isAdmin };
+  const access = await loadSupabaseAccess(client);
+  if (!access) throw new Error("An active confirmed cockpit seat is required.");
+  return { email: access.email, isCeo: access.isCeo, isAdmin: access.isAdmin };
 }
 
 const MEDIA_READS = new Set(["board.adStatusOptions", "board.advertisingCityOptions", "ceo.b2bManage.inspect", "ceo.b2bLaunch.list"]);
@@ -87,14 +87,20 @@ const MEDIA_WRITES = new Set([
 ]);
 const DATA_CHANGED = "cockpit-data-changed";
 const refreshWrappers = new WeakMap<(...args: any[]) => any, (...args: any[]) => any>();
-const READ_VERBS = new Set(["get", "list", "detail", "counts", "preview", "inspect", "page", "templates", "history", "overview", "fileUrl", "formInfo", "clientOptions", "catalogue", "board", "read", "requestsList", "watchlistList"]);
+const READ_VERBS: Record<string, true> = {
+  get: true, list: true, detail: true, counts: true, preview: true,
+  inspect: true, page: true, templates: true, history: true, overview: true,
+  fileUrl: true, formInfo: true, clientOptions: true, catalogue: true,
+  board: true, read: true, requestsList: true, watchlistList: true,
+  projections: true,
+};
 function refreshAfter<T extends (...args: any[]) => any>(fn: T): T {
   const prior = refreshWrappers.get(fn);
   if (prior) return prior as T;
   const wrapped = async (...args: any[]) => {
     const result = await fn(...args);
     const endpoint = (fn as any).__endpoint as string | undefined;
-    if (!READ_VERBS.has(endpoint?.split(".").at(-1) ?? "") && typeof window !== "undefined") {
+    if (!isMediaNativeRead(endpoint ?? "") && !Object.hasOwn(READ_VERBS, endpoint?.split(".").at(-1) ?? "") && typeof window !== "undefined") {
       window.dispatchEvent(new Event(DATA_CHANGED));
     }
     return result;
@@ -111,14 +117,6 @@ export class ConvexError extends Error {
   }
 }
 
-export class ConvexReactClient {
-  constructor(_url?: string) {}
-}
-
-export function useConvexAuth() {
-  const { isAuthenticated, ready } = useCockpitAuth();
-  return { isAuthenticated, isLoading: !ready };
-}
 
 export type Id<_T extends string = string> = string;
 export type FunctionReturnType<F extends (...args: any) => any = any> =
@@ -200,11 +198,14 @@ async function handleApiCall(endpoint: string, args: any = {}): Promise<any> {
   if (domain === "roles" && sub === "me") {
     return loadSupabaseAccess(supabase);
   }
+  if (endpoint === "clientLogos.list") return readClientLogos(supabase);
   if (domain === "stats" && ["range", "campaignTrend", "portfolioTrend", "coverage"].includes(sub)) {
     return readMediaStats(supabase, sub, args);
   }
   if (MEDIA_READS.has(endpoint)) return mediaAction(endpoint, args);
   if (MEDIA_WRITES.has(endpoint)) return mediaAction(endpoint, args, { apply: true });
+  if (isMediaNativeRead(endpoint)) return handleMediaNativeCall(endpoint, args, {}, supabase);
+  if (isMediaNativeWrite(endpoint)) return handleMediaNativeCall(endpoint, args, { apply: true }, supabase);
   if (domain === "ideation" && Object.hasOwn(ideationApi.ideation, sub)) {
     return (ideationApi.ideation as Record<string, (args: any) => Promise<any>>)[sub](args);
   }
@@ -229,60 +230,25 @@ async function handleApiCall(endpoint: string, args: any = {}): Promise<any> {
   if (domain === "ceo" && ["settings", "feedback", "profiles", "teamStatus", "bankImport", "bankPdf", "payers", "ltv"].includes(sub)) {
     return ceoAction(supabase, `${sub}.${rest.join(".")}`, args);
   }
-
-  // 2. Control (status toggles)
-  if (domain === "control" && sub === "setStatus") {
-    // Updating a cached campaign is not a confirmed change in Meta.
-    return unavailable();
+  if (domain === "teamPictures" && ["upload", "ready", "fromUrl"].includes(sub)) {
+    return teamPicturesAction(supabase, endpoint as TeamPictureOperation, args);
   }
 
-  // 3. Board
-  if (domain === "board") {
-    if (sub === "adStatusOptions") {
-      return unavailable();
-    }
-    if (sub === "advertisingCityOptions") {
-      return unavailable();
-    }
-    if (sub === "setAdStatus") {
-      return unavailable();
-    }
-    return unavailable();
-  }
-
-  // 4. Cockpit queries & mutations
-  if (domain === "cockpit") {
-    if (sub === "onboardings") {
-      const { data, error } = await supabase
-        .from("cockpit_client_profiles")
-        .select("*")
-        .eq("stage", "onboarding");
-      if (error) throw error;
-      return (data || []).map(p => ({
-        id: String(p.id),
-        clientName: p.client_name,
-        stage: p.stage,
-        health: p.health,
-      }));
-    }
-    if (sub === "winners") {
-      const { data, error } = await supabase.from("winner_ads").select("*").limit(100);
-      if (error) throw error;
-      return data || [];
-    }
-    return unavailable();
-  }
-
-  // 5. Personal calendars
-  if (domain === "personalCalendars") {
-    if (sub === "mine") {
-      return unavailable();
-    }
-    return unavailable();
-  }
 
   // 6. CEO Features
   if (domain === "ceo") {
+    if (sub === "costs") {
+      switch (rest.join(".")) {
+        case "sheet":
+          return readCostsSheet(supabase, args);
+        case "save":
+          return saveCostLine(supabase, args);
+        case "remove":
+          return removeCostLine(supabase, args);
+        default:
+          throw new Error(`Unknown costs operation: ${rest.join(".")}`);
+      }
+    }
     if (sub === "goals") {
       switch (rest.join(".")) {
         case "board":
@@ -307,8 +273,9 @@ async function handleApiCall(endpoint: string, args: any = {}): Promise<any> {
         case "roles": return readPeopleRoles(supabase);
         case "save": return savePerson(supabase,args);
         case "setActive": return setPersonActive(supabase,args);
-        case "workspace":
-        case "importWorkspace": return unavailablePeopleDirectory(supabase);
+        case "setPay": return setPersonPay(supabase,args);
+        case "workspace": return readWorkspaceDirectory(supabase);
+        case "importWorkspace": return importWorkspace(supabase, args, { apply: true });
         case "remove": throw new Error("Preserve the person's history: mark them as gone instead of deleting them.");
         default: throw new Error("Unknown people operation.");
       }
@@ -341,10 +308,12 @@ async function handleApiCall(endpoint: string, args: any = {}): Promise<any> {
       return ceoAction(supabase, "queries.refreshNow", args);
     }
     if (sub === "frequency" && rest[0] === "forRange") {
-      return unavailable();
+      return readFrequencyForRange(supabase, args);
     }
     if (sub === "windows") {
-      return unavailable();
+      if (rest[0] === "ads") return readAdsWindow(supabase, args);
+      if (rest[0] === "content") return readContentWindow(supabase, args);
+      throw new Error(`Unknown CEO window: ${rest[0]}`);
     }
     return unavailable();
   }
@@ -357,6 +326,7 @@ async function handleApiCall(endpoint: string, args: any = {}): Promise<any> {
         case "overview": return fetchTeamOverview(supabase, u);
         case "page": return fetchMeetingPage(supabase, u, args.id);
         case "saveMeeting": return saveMeeting(supabase, u, args);
+        case "saveLinks": return saveLinks(supabase, u, args);
         case "setPart": return setPart(supabase, u, args);
         case "addSitting": return addSitting(supabase, u, args);
         case "saveDoc": return saveDoc(supabase, u, args);
@@ -396,6 +366,18 @@ async function handleApiCall(endpoint: string, args: any = {}): Promise<any> {
         case "retryCalendar": return retryCalendar(supabase, u, args);
         default: throw new Error(`Unknown team calendar operation: ${op}`);
       }
+    }
+  }
+  if (domain === "teamProjections") {
+    switch (sub) {
+      case "projections":
+        return readTeamProjections(supabase, args);
+      case "projectionsEdit":
+        return editTeamProjections(supabase, args);
+      case "projectionsBook":
+        return bookTeamProjectionCall(supabase, args);
+      default:
+        throw new Error(`Unknown team projections operation: ${sub}`);
     }
   }
 

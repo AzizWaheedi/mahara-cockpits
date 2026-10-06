@@ -386,6 +386,17 @@ export default function CallPage({ me }: { me: Me }) {
             <Timer className="size-3.5" aria-hidden /> {mmss(now - startedAt)}
             <span className="muted">/ {totalMinutes}:00</span>
           </span>
+          {key === "demo" ? (
+            <Link
+              to={`/deck?lead=${encodeURIComponent(contactId)}`}
+              target="_blank"
+              rel="noopener"
+              className={button}
+              title="The pitch deck with their name and the numbers from these notes. Save the notes first."
+            >
+              Present the deck
+            </Link>
+          ) : null}
           <button
             type="button"
             disabled={saving}

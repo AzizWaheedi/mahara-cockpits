@@ -1,4 +1,4 @@
-import { createClient } from "@supabase/supabase-js";
+import { createCockpitSupabaseClient } from "../auth/supabaseAccess";
 import { supabaseEnvProblem } from "./env";
 
 const url = import.meta.env.VITE_SUPABASE_URL as string | undefined;
@@ -17,13 +17,7 @@ if (problem || !url || !anon) {
  * the address on the signed-in session has to hold a seat. Nothing is ever
  * written from the browser; changes go through the sales-api function.
  */
-export const supabase = createClient(url, anon, {
-  auth: {
-    persistSession: true,
-    autoRefreshToken: true,
-    detectSessionInUrl: true,
-  },
-});
+export const supabase = createCockpitSupabaseClient();
 
 export const SUPABASE_URL = url;
 export const PROPOSALS_BUCKET = "sales-proposals";

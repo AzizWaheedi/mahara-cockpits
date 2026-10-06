@@ -1,39 +1,49 @@
-import { Flame, Pencil, X } from "lucide-react";
-import { type FormEvent, useState } from "react";
+import { Check, Flame, X } from "lucide-react";
+import { type ReactNode, useCallback, useState } from "react";
 import { api } from "../lib/api";
-import { useQuery } from "../lib/data";
-import { callbackPicks, localInput } from "../lib/dialer";
+import { useNow, useQuery } from "../lib/data";
 import { when } from "../lib/format";
+import {
+  dueOf,
+  followUpWords,
+  type HotRow,
+  heatOf,
+  isOpen,
+  lastFollowUp,
+  newerRow,
+  statusOf,
+} from "../lib/hot";
 import { supabase } from "../lib/supabase";
 import { toast } from "../lib/toast";
 import type { Me } from "../lib/types";
-import { button, buttonPrimary, Failed, field, Parts } from "./kit";
+import {
+  AmountEdit,
+  FailedSaves,
+  HeatPick,
+  type HotField,
+  LastShown,
+  NextAsk,
+  NextShown,
+  type Phase,
+  phaseClass,
+  SaveMark,
+  StatusPick,
+  TextEdit,
+  useHotEdits,
+  WhenEdit,
+} from "./HotCells";
+import { useHotTouches } from "./HotSheet";
+import { button, Failed } from "./kit";
 
 /**
- * The hot list on one lead: when to follow up next and how, the last
- * objection, a line of notes. A hot lead is ranked first in the dialer and
- * comes back at its follow-up time (sales-api hot.save / hot.remove).
+ * The hot list on one lead's page, with the sheet's fields (type, status,
+ * amount, last and next follow-up, last objection, notes) edited in place,
+ * each saved on its own (sales-api hot.save). A hot lead is ranked first in
+ * the dialer and comes back at its next follow-up; the whole list is the
+ * Pipeline page's Hot list (HotSheet.tsx).
  */
 
-export interface HotRow {
-  contact_id: string;
-  owner_email: string;
-  next_at: string | null;
-  next_how: "call" | "whatsapp" | "email" | "meeting" | null;
-  last_objection: string | null;
-  note: string | null;
-  added_by: string;
-  added_at: string;
-  updated_at: string;
-  removed_at: string | null;
-}
-
-const HOW: [string, string][] = [
-  ["call", "Call"],
-  ["whatsapp", "WhatsApp"],
-  ["email", "Email"],
-  ["meeting", "Meeting"],
-];
+const DAY = 86_400_000;
 
 export function useHot(contactId: string) {
   return useQuery<HotRow | null>(
@@ -50,23 +60,77 @@ export function useHot(contactId: string) {
 
 /**
  * "Put on the hot list" is offered only once the read has come back and
- * found no row: offered while the read is on its way or after it failed,
- * its blank form would overwrite a hot lead's objection and notes.
+ * found no row. It sends no fields, so even a row put there meanwhile by
+ * someone else keeps everything it says.
  */
-export function HotControl({ me, contactId }: { me: Me; contactId: string }) {
+export function HotControl({
+  me,
+  contactId,
+  name: givenName,
+  phone8: givenPhone8,
+}: {
+  me: Me;
+  contactId: string;
+  /** The lead's name and last eight digits; read here when not given. */
+  name?: string | null;
+  phone8?: string | null;
+}) {
   const hot = useHot(contactId);
-  // The server's answer to this control's last save or removal, which stands
-  // until a read made after it lands (`over` is the read it answered), so
-  // the old state never offers its buttons again in between.
-  const [answer, setAnswer] = useState<{
-    row: HotRow | null;
-    over: HotRow | null;
-  } | null>(null);
-  const fresh = answer && answer.over === hot.data ? answer : null;
-  const row = fresh ? fresh.row : (hot.data ?? null);
-  const [editing, setEditing] = useState(false);
+  const given = givenPhone8 !== undefined;
+  const lead = useQuery<{ name: string | null; phone8: string | null } | null>(
+    () =>
+      given
+        ? Promise.resolve({ data: null, error: null })
+        : supabase
+            .from("cockpit_sales_leads")
+            .select("name,phone8")
+            .eq("contact_id", contactId)
+            .maybeSingle(),
+    [contactId, given],
+  );
+  const name = given ? (givenName ?? null) : (lead.data?.name ?? null);
+  const phone8 = given ? givenPhone8 : (lead.data?.phone8 ?? null);
+  // The row as this page's last save answered it: it stands while it is
+  // newer than the read.
+  const [saved, setSaved] = useState<HotRow | null>(null);
+  // The read that was on screen when the lead was taken off here: until a
+  // newer read lands, the row stays gone.
+  const [gone, setGone] = useState<{ over: HotRow | null } | null>(null);
+  const onSaved = useCallback((r: HotRow) => {
+    setSaved(r);
+    setGone(null);
+  }, []);
+  const edits = useHotEdits(onSaved);
+  const now = useNow(60_000);
   const [busy, setBusy] = useState(false);
-  const mine = !row || me.manager || row.owner_email === me.email;
+  const [asking, setAsking] = useState(false);
+
+  const stored =
+    gone && gone.over === hot.data ? null : newerRow(hot.data, saved);
+  // The lead's own calls and WhatsApp, read only while they are on the list
+  // (and once their digits are known, so unlinked calls count too).
+  const touches = useHotTouches(
+    stored && (given || lead.data !== null || !lead.loading)
+      ? [{ contact_id: contactId, name, phone8 }]
+      : null,
+  );
+
+  async function add() {
+    setBusy(true);
+    try {
+      const out = await api<{ hot?: HotRow }>("hot.save", {
+        contact_id: contactId,
+      });
+      if (out.hot) onSaved(out.hot);
+      toast.success(
+        "On the hot list. Set the next follow-up so the dialer brings them up.",
+      );
+    } catch (e) {
+      toast.error(String((e as Error).message ?? e));
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function remove() {
     setBusy(true);
@@ -76,7 +140,9 @@ export function HotControl({ me, contactId }: { me: Me; contactId: string }) {
         why: "Taken off in the cockpit",
       });
       toast.success("Off the hot list.");
-      setAnswer({ row: null, over: hot.data });
+      setSaved(null);
+      setAsking(false);
+      setGone({ over: hot.data });
       hot.reload();
     } catch (e) {
       toast.error(String((e as Error).message ?? e));
@@ -85,205 +151,223 @@ export function HotControl({ me, contactId }: { me: Me; contactId: string }) {
     }
   }
 
-  if (editing)
-    return (
-      <HotForm
-        contactId={contactId}
-        row={row}
-        onDone={saved => {
-          setEditing(false);
-          if (saved) setAnswer({ row: saved, over: hot.data });
-          hot.reload();
-        }}
-        onCancel={() => setEditing(false)}
-      />
-    );
-  if (hot.error && !fresh)
+  if (hot.error && !stored)
     return <Failed what="The hot list" error={hot.error} retry={hot.reload} />;
-  if (hot.loading && !fresh)
+  if (hot.loading && !hot.data && !stored)
     return (
       <p className="muted inline-flex h-8 items-center text-xs">
         Reading the hot list…
       </p>
     );
-  if (!row)
+  if (!stored)
     return (
-      <button type="button" onClick={() => setEditing(true)} className={button}>
-        <Flame className="size-3.5" aria-hidden /> Put on the hot list
+      <button
+        type="button"
+        onClick={() => void add()}
+        disabled={busy}
+        className={button}
+      >
+        <Flame className="size-3.5" aria-hidden />
+        {busy ? "Putting on the hot list…" : "Put on the hot list"}
       </button>
     );
-  return (
-    <div
-      className="flex flex-wrap items-center gap-2 rounded-[var(--radius-md)] border px-2.5 py-1.5 text-xs"
-      style={{
-        borderColor: "color-mix(in oklch, var(--primary) 45%, transparent)",
-        background: "color-mix(in oklch, var(--primary) 8%, transparent)",
-      }}
-    >
-      <Flame
-        className="size-3.5"
-        style={{ color: "var(--primary)" }}
-        aria-hidden
-      />
-      <span className="font-medium">Hot</span>
-      <span className="muted">
-        <Parts
-          items={[
-            row.next_at ? `next ${when(row.next_at)}` : "no follow-up set",
-            row.next_how
-              ? `by ${HOW.find(([k]) => k === row.next_how)?.[1] ?? row.next_how}`
-              : null,
-            row.last_objection ? `last objection: ${row.last_objection}` : null,
-            row.owner_email !== me.email
-              ? `${row.owner_email.split("@")[0]}'s`
-              : null,
-          ]}
-        />
-      </span>
-      {mine ? (
-        <>
-          <button
-            type="button"
-            onClick={() => setEditing(true)}
-            className="muted inline-flex items-center gap-0.5 underline-offset-2 hover:underline"
-          >
-            <Pencil className="size-3" aria-hidden /> Change
-          </button>
-          <button
-            type="button"
-            onClick={remove}
-            disabled={busy}
-            className="muted inline-flex items-center gap-0.5 underline-offset-2 hover:underline"
-          >
-            <X className="size-3" aria-hidden /> Take off
-          </button>
-        </>
-      ) : null}
-    </div>
-  );
-}
 
-function HotForm({
-  contactId,
-  row,
-  onDone,
-  onCancel,
-}: {
-  contactId: string;
-  row: HotRow | null;
-  /** Called with the row as the server saved it. */
-  onDone: (saved: HotRow | null) => void;
-  onCancel: () => void;
-}) {
-  const [nextAt, setNextAt] = useState(
-    row?.next_at ? localInput(Date.parse(row.next_at)) : "",
-  );
-  const [how, setHow] = useState(row?.next_how ?? "call");
-  const [objection, setObjection] = useState(row?.last_objection ?? "");
-  const [note, setNote] = useState(row?.note ?? "");
-  const [busy, setBusy] = useState(false);
+  const r = edits.view(stored);
+  const mine = Boolean(me.manager) || r.owner_email === me.email;
+  const open = isOpen(r);
+  const due = open ? dueOf(r.next_at, now) : null;
+  const touch = touches.data?.get(contactId);
+  const phase = (f: HotField) => edits.phase(contactId, f);
+  const save = (f: HotField, body: Record<string, unknown>) =>
+    edits.commit(contactId, f, body);
+  const who = name?.trim() || "this lead";
 
-  async function save(e: FormEvent) {
-    e.preventDefault();
-    setBusy(true);
-    try {
-      const out = await api<{ hot?: HotRow }>("hot.save", {
-        contact_id: contactId,
-        next_at: nextAt ? new Date(nextAt).toISOString() : null,
-        next_how: how,
-        last_objection: objection,
-        note,
-      });
-      toast.success(
-        row
-          ? "Saved."
-          : "On the hot list. The dialer brings them up at the follow-up time.",
-      );
-      onDone(out.hot ?? null);
-    } catch (err) {
-      toast.error(String((err as Error).message ?? err));
-    } finally {
-      setBusy(false);
-    }
+  async function stamp() {
+    if (await save("last_fu_at", { last_fu_at: new Date().toISOString() }))
+      setAsking(true);
+  }
+
+  async function pickNext(at: number) {
+    const iso = new Date(at).toISOString();
+    if (!(await save("next_at", { next_at: iso }))) return;
+    setAsking(false);
+    toast.success(`Next follow-up with ${who}: ${when(iso)}.`);
   }
 
   return (
-    <form onSubmit={save} className="panel w-full space-y-3 p-3">
-      <p className="text-sm font-medium">
-        <Flame className="me-1 inline size-3.5 align-[-2px]" aria-hidden />
-        {row ? "The hot lead's next step" : "Put on the hot list"}
-      </p>
-      <div className="space-y-1">
-        <span className="muted block text-xs">Follow up next</span>
-        <div className="flex flex-wrap gap-1.5">
-          {callbackPicks(Date.now()).map(p => (
+    <section
+      aria-label="Hot list"
+      className="@container panel w-full max-w-4xl space-y-2.5 p-3"
+    >
+      <header className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <span className="inline-flex items-center gap-1.5 text-sm font-medium">
+          <Flame
+            className="size-3.5"
+            style={{ color: "var(--primary)" }}
+            aria-hidden
+          />
+          On the hot list
+          {r.owner_email !== me.email ? (
+            <span className="muted font-normal">
+              · {r.owner_email.split("@")[0]}'s
+            </span>
+          ) : null}
+        </span>
+        {mine ? (
+          <span className="ms-auto flex items-center gap-3 text-xs">
+            {open ? (
+              <button
+                type="button"
+                onClick={() => void stamp()}
+                disabled={phase("last_fu_at")?.phase === "saving"}
+                title="Mark the last follow-up as now, then pick the next one"
+                className="no-touch relative inline-flex items-center gap-1 font-medium after:absolute after:-inset-2 hover:text-[color:var(--primary)] disabled:opacity-60"
+              >
+                <Check className="size-3.5" aria-hidden /> Followed up
+              </button>
+            ) : null}
             <button
-              key={p.label}
               type="button"
-              aria-pressed={nextAt === localInput(p.at)}
-              onClick={() => setNextAt(localInput(p.at))}
-              className={`rounded-full border px-2.5 py-0.5 text-xs ${
-                nextAt === localInput(p.at)
-                  ? "border-[color:var(--primary)] font-semibold"
-                  : "hairline"
-              }`}
+              onClick={() => void remove()}
+              disabled={busy}
+              className="no-touch muted relative inline-flex items-center gap-1 after:absolute after:-inset-2 hover:text-[color:var(--foreground)]"
             >
-              {p.label}
+              <X className="size-3.5" aria-hidden /> Take off the list
             </button>
-          ))}
-        </div>
-        <input
-          type="datetime-local"
-          value={nextAt}
-          onChange={e => setNextAt(e.target.value)}
-          className={`${field} max-w-xs`}
-        />
-      </div>
-      <div className="flex flex-wrap gap-1.5" role="group" aria-label="How">
-        {HOW.map(([k, label]) => (
-          <button
-            key={k}
-            type="button"
-            aria-pressed={how === k}
-            onClick={() => setHow(k as typeof how)}
-            className={`rounded-full border px-2.5 py-0.5 text-xs ${
-              how === k
-                ? "border-[color:var(--primary)] font-semibold"
-                : "hairline"
-            }`}
+          </span>
+        ) : null}
+      </header>
+
+      <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-[13px] @md:grid-cols-3 @2xl:grid-cols-5">
+        <Field label="Type" phase={phase("heat")}>
+          <HeatPick
+            value={heatOf(r)}
+            readOnly={!mine}
+            onPick={v => void save("heat", { heat: v })}
+          />
+        </Field>
+        <Field label="Status" phase={phase("status")}>
+          <StatusPick
+            value={statusOf(r)}
+            readOnly={!mine}
+            onPick={v => void save("status", { status: v })}
+          />
+        </Field>
+        <Field label="Amount" phase={phase("amount")}>
+          <AmountEdit
+            amount={r.amount}
+            currency={r.amount_currency}
+            readOnly={!mine}
+            align="left"
+            onCommit={v => void save("amount", v)}
+          />
+        </Field>
+        <Field label="Last follow-up" phase={phase("last_fu_at")}>
+          <WhenEdit
+            label="Last follow-up"
+            value={r.last_fu_at}
+            min={now - 366 * DAY}
+            max={now}
+            readOnly={!mine}
+            onCommit={v => void save("last_fu_at", { last_fu_at: v })}
           >
-            {label}
-          </button>
-        ))}
+            <LastShown
+              last={lastFollowUp(r.last_fu_at, touch)}
+              words={followUpWords(
+                r.last_fu_at,
+                touch,
+                Boolean(touches.error),
+                now,
+              )}
+              now={now}
+            />
+          </WhenEdit>
+        </Field>
+        <Field label="Next follow-up" phase={phase("next_at")}>
+          <WhenEdit
+            label="Next follow-up"
+            value={r.next_at}
+            min={now - DAY}
+            max={now + 366 * DAY}
+            readOnly={!mine}
+            onCommit={v => void save("next_at", { next_at: v })}
+          >
+            <NextShown at={r.next_at} due={due} open={open} now={now} />
+          </WhenEdit>
+        </Field>
       </div>
-      <label className="block space-y-1">
-        <span className="muted block text-xs">Their last objection</span>
-        <input
-          value={objection}
-          onChange={e => setObjection(e.target.value)}
-          dir="auto"
-          placeholder="Wants to talk to his partner first"
-          className={field}
-        />
-      </label>
-      <label className="block space-y-1">
-        <span className="muted block text-xs">Notes</span>
-        <textarea
-          value={note}
-          onChange={e => setNote(e.target.value)}
-          rows={2}
-          dir="auto"
-          className={`${field} h-auto py-2`}
-        />
-      </label>
-      <div className="flex flex-wrap gap-2">
-        <button type="submit" disabled={busy} className={buttonPrimary}>
-          {busy ? "Saving…" : row ? "Save" : "Put on the hot list"}
-        </button>
-        <button type="button" onClick={onCancel} className={button}>
-          Cancel
-        </button>
+      <div className="grid gap-x-4 gap-y-2 text-[13px] @md:grid-cols-2">
+        <Field label="Last objection" phase={phase("last_objection")}>
+          <TextEdit
+            label="Last objection"
+            value={r.last_objection}
+            max={500}
+            empty="No objection noted yet."
+            readOnly={!mine}
+            onCommit={v => void save("last_objection", { last_objection: v })}
+          />
+        </Field>
+        <Field label="Notes" phase={phase("note")}>
+          <TextEdit
+            label="Notes"
+            value={r.note}
+            max={4000}
+            multiline
+            empty="No notes yet."
+            readOnly={!mine}
+            onCommit={v => void save("note", { note: v })}
+          />
+        </Field>
       </div>
-    </form>
+
+      {asking ? (
+        <div className="rounded-[var(--radius-md)] bg-[color:var(--secondary)] px-2.5 py-2">
+          <NextAsk
+            name={who}
+            busy={phase("next_at")?.phase === "saving"}
+            onPick={at => void pickNext(at)}
+            onClose={() => setAsking(false)}
+          />
+        </div>
+      ) : null}
+      {edits.failures(contactId).length ? (
+        <div className="callout-bad rounded-[var(--radius-md)] border px-2.5 py-1.5">
+          <FailedSaves
+            list={edits.failures(contactId)}
+            onRetry={f => edits.retry(contactId, f)}
+            onUndo={f => edits.undo(contactId, f)}
+          />
+        </div>
+      ) : null}
+      {touches.error ? (
+        <p className="muted text-xs">
+          Calls and WhatsApp could not be read ({touches.error}), so Last
+          follow-up shows only what was marked by hand.
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
+/** One field of the hot row: its name above, its value (or editor) below. */
+function Field({
+  label,
+  phase,
+  children,
+}: {
+  label: string;
+  phase?: Phase;
+  children: ReactNode;
+}) {
+  return (
+    <div
+      className={`relative min-w-0 rounded-[var(--radius-md)] ${phaseClass(phase)}`}
+    >
+      <span className="muted block px-1.5 text-[11px] font-medium">
+        {label}
+      </span>
+      {children}
+      <SaveMark phase={phase} className="absolute right-1.5 top-1" />
+    </div>
   );
 }

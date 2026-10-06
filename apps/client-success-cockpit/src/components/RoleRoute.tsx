@@ -1,5 +1,6 @@
-import { Navigate, Outlet, useLocation } from "react-router";
+import { Outlet } from "react-router";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
+import { portalUrl } from "@/lib/portal";
 
 /**
  * One cockpit per role, one link per cockpit. A media buyer who opens the client
@@ -8,7 +9,6 @@ import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
  */
 export function RoleRoute({ role }: { role: string }) {
   const { access, ready, session } = useCockpitAuth();
-  const location = useLocation();
 
   if (!ready) {
     return (
@@ -20,9 +20,6 @@ export function RoleRoute({ role }: { role: string }) {
   if (access?.isAdmin || access?.isCeo || access?.roles.includes(role)) {
     return <Outlet key={session?.user.id ?? "signed-out"} />;
   }
-  if (access?.home && access.home !== location.pathname) {
-    return <Navigate to={access.home} replace />;
-  }
 
   return (
     <div className="mx-auto max-w-md space-y-2 p-10 text-center">
@@ -31,6 +28,7 @@ export function RoleRoute({ role }: { role: string }) {
         Each role has its own link, and this one is for a different seat. Ask
         your manager for yours.
       </p>
+      {access?.home && <a className="text-sm underline" href={`${portalUrl()}${access.home}`}>Open your cockpit</a>}
     </div>
   );
 }

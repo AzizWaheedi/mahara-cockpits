@@ -229,8 +229,9 @@ export const LINK_GROUPS: LinkGroup[] = [
         url: "https://app.clickup.com/90182518398/v/li/901816723211",
       },
       {
-        label: "Churn tracker 2026",
-        url: "https://docs.google.com/spreadsheets/d/1p8CAd5pL9zKjc1mZ73Gc_hoj4NSWHfFPs4FoC_WuBUU/edit",
+        label: "Churn tracker",
+        url: "https://cockpit.maharamedia.com/client-success/churn",
+        note: "In this cockpit since 1 October 2026; the 2026 sheet's months are in it",
       },
       {
         label: "Master Dashboard - Mahara",

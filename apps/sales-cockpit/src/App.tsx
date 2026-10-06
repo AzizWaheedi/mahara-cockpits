@@ -9,10 +9,6 @@ import {
   useParams,
 } from "react-router";
 import { PageBoundary } from "./components/PageBoundary";
-import {
-  PortalAutoSignIn,
-  portalSignInPending,
-} from "./components/PortalAutoSignIn";
 import Sidebar from "./components/Sidebar";
 import { Wordmark } from "./components/Wordmark";
 import { SessionProvider, useWho } from "./lib/auth";
@@ -38,6 +34,7 @@ function KeyedLead({ me }: { me: Me }) {
 const CallPage = lazy(() => import("./pages/CallPage"));
 const DialerPage = lazy(() => import("./pages/DialerPage"));
 const ProposalsPage = lazy(() => import("./pages/ProposalsPage"));
+const ContractsPage = lazy(() => import("./pages/ContractsPage"));
 const ProposalPage = lazy(() => import("./pages/ProposalPage"));
 const NumbersPage = lazy(() => import("./pages/NumbersPage"));
 const GoalsPage = lazy(() => import("./pages/GoalsPage"));
@@ -52,6 +49,7 @@ const LinksPage = lazy(() => import("./pages/LinksPage"));
 const PipelinePage = lazy(() => import("./pages/PipelinePage"));
 const IntelligencePage = lazy(() => import("./pages/IntelligencePage"));
 const TeamPage = lazy(() => import("./pages/TeamPage"));
+const DeckPage = lazy(() => import("./pages/DeckPage"));
 
 const ROLE_WORDS: Record<string, string> = {
   setter: "Setter",
@@ -61,53 +59,22 @@ const ROLE_WORDS: Record<string, string> = {
 };
 
 function Shell() {
-  const { session, email, name, isAdmin, ready, signOut } = useWho();
-  const [bumped, setBumped] = useState(0);
+  const { session, email, name, isAdmin, isCeo, cockpits, ready, error: accessError, refreshAccess, signOut } = useWho();
   const [drawer, setDrawer] = useState(false);
   const location = useLocation();
-  const me = useMe(Boolean(session));
+  const allowed = ready && !accessError && (isCeo || isAdmin || cockpits.includes("sales"));
+  const me = useMe(Boolean(session) && allowed);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: a portal sign-in reloads the seat
-  useEffect(() => {
-    if (bumped) me.reload();
-  }, [bumped]);
-
-  // While the portal is signing this person in, the sign-in form stays out
-  // of sight; a swap that never finishes falls through after its window.
-  const portalWaiting = !session && portalSignInPending();
-  const [, wake] = useState(0);
-  useEffect(() => {
-    if (!portalWaiting) return;
-    const t = setTimeout(() => wake(n => n + 1), 46_000);
-    return () => clearTimeout(t);
-  }, [portalWaiting]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: closing follows the route
   useEffect(() => setDrawer(false), [location.pathname]);
 
-  const portalBanner = (
-    <PortalAutoSignIn
-      hasSession={Boolean(session)}
-      ready={ready}
-      onSignedIn={() => setBumped(b => b + 1)}
-    />
-  );
 
   if (!ready) return <Waiting text="Opening the sales cockpit…" />;
 
-  if (!session)
-    return (
-      <>
-        {portalBanner}
-        {portalWaiting ? (
-          <Waiting text="Opening the sales cockpit from the portal…" />
-        ) : (
-          <SignInPage />
-        )}
-      </>
-    );
+  if (!session && !accessError) return <SignInPage />;
 
-  if (me.error)
+  if (accessError || me.error)
     return (
       <div className="mx-auto max-w-md px-4 py-20 text-center">
         <h1 className="text-lg font-semibold">
@@ -118,12 +85,12 @@ function Shell() {
           fault, not a permission: nobody needs to add you to anything.
         </p>
         <p className="muted mt-3 rounded-[var(--radius-md)] bg-[color:var(--muted)] px-3 py-2 font-mono text-xs">
-          {me.error}
+          {accessError || me.error}
         </p>
         <div className="mt-6 flex justify-center gap-4">
           <button
             type="button"
-            onClick={() => me.reload()}
+            onClick={() => { void refreshAccess().catch(() => {}); me.reload(); }}
             className="muted text-sm underline underline-offset-4"
           >
             Try again
@@ -139,10 +106,10 @@ function Shell() {
       </div>
     );
 
-  if (me.loading && !me.data)
+  if (allowed && me.loading && !me.data)
     return <Waiting text="Opening the sales cockpit…" />;
 
-  if (!me.data?.seat)
+  if (!allowed || !me.data?.seat)
     return (
       <div className="mx-auto max-w-md px-4 py-20 text-center">
         <h1 className="text-lg font-semibold">Not on the sales team</h1>
@@ -174,7 +141,7 @@ function Shell() {
       isAdmin={isAdmin}
       drawer={drawer}
       setDrawer={setDrawer}
-      banner={portalBanner}
+      banner={null}
     />
   );
 }
@@ -263,6 +230,7 @@ export function Seated({
               <Route path="/pipeline" element={<PipelinePage me={me} />} />
               <Route path="/intelligence" element={<IntelligencePage />} />
               <Route path="/proposals" element={<ProposalsPage me={me} />} />
+              <Route path="/contracts" element={<ContractsPage me={me} />} />
               <Route path="/proposal/:id" element={<ProposalPage me={me} />} />
               <Route path="/numbers" element={<NumbersPage me={me} />} />
               <Route path="/goals" element={<GoalsPage me={me} />} />
@@ -275,6 +243,7 @@ export function Seated({
               />
               <Route path="/review/:id" element={<ReviewOnlyPage />} />
               <Route path="/links" element={<LinksPage me={me} />} />
+              <Route path="/deck" element={<DeckPage me={me} />} />
               <Route
                 path="/team"
                 element={

@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
-# Ship one cockpit (or all) the safe way: lint, typecheck, deploy the backend,
-# build and deploy the site, then run the smoke check. Stops at the first
-# failure so a broken build never replaces a working one.
+# Ship one native Supabase cockpit (or all): lint, typecheck, build and deploy
+# the site, then verify release evidence. Native SQL and workers are released
+# through the coordinated cutover procedure, never by deploying Convex.
 #
 #   scripts/ship.sh media-buyer | client-success | creative | video-editor | sales | all
 #
-# Order matters when a bridge payload gains a field: ship the receiving app
-# (client-success, creative) before the media buyer that sends it. "all" does.
+# The coordinated cutover must prepare native schema and workers first.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+
+# Prefer installed Python over Windows' optional python3 Store alias.
+py_bin="python"
+command -v python >/dev/null 2>&1 || py_bin="python3"
 
 # Nothing ships if the copies of a shared page have drifted apart.
 scripts/check-shared.sh || exit 1
@@ -42,42 +45,45 @@ if [ -f apps/media-buyer-cockpit/scripts/team.test.ts ]; then
   (cd apps/media-buyer-cockpit && bun test scripts/team.test.ts >/dev/null 2>&1) \
     || { echo "the team meetings rules tests fail"; exit 1; }
 fi
+# The Projections rules (renewal window, the re-sell cap, the booked call's
+# title, actuals that are never a stand-in zero).
+if [ -f apps/client-success-cockpit/scripts/projections.test.ts ]; then
+  (cd apps/client-success-cockpit && bun test scripts/projections.test.ts >/dev/null 2>&1) \
+    || { echo "the projections rules tests fail"; exit 1; }
+fi
 if [ -f hermes/team-sync/test_sync.py ]; then
-  (cd hermes/team-sync && python3 -m unittest test_sync >/dev/null 2>&1) \
+  (cd hermes/team-sync && "$py_bin" -m unittest test_sync >/dev/null 2>&1) \
     || { echo "the team calendar sync tests fail"; exit 1; }
 fi
 
+# Next month's plan: a cost per lead turns ad spend into leads and every
+# count follows from the rates. Wrong is a plan whose targets do not add up.
+if [ -f apps/media-buyer-cockpit/scripts/goals-model.test.ts ]; then
+  (cd apps/media-buyer-cockpit && bun test scripts/goals-model.test.ts scripts/costs-model.test.ts >/dev/null 2>&1) \
+    || { echo "the goals and costs model tests fail"; exit 1; }
+fi
 # The webinar room: attendance, the retention curve, the pitches. Wrong is a
 # pitch that looks like it lost the room, or a show rate that counts the team.
 if [ -f apps/media-buyer-cockpit/scripts/webinar.test.ts ]; then
-  (cd apps/media-buyer-cockpit && bun test scripts/webinar.test.ts scripts/webinar-targets.test.ts scripts/webinar-target-actions.test.ts scripts/webinar-ingestion.test.ts scripts/reporting-view-access.test.ts >/dev/null 2>&1) \
+  (cd apps/media-buyer-cockpit && bun test scripts/webinar.test.ts scripts/webinar-targets.test.ts scripts/webinar-supabase-targets.test.ts scripts/webinar-target-access.test.ts scripts/webinar-ingestion.test.ts scripts/reporting-view-access.test.ts >/dev/null 2>&1) \
     || { echo "the webinar room tests fail"; exit 1; }
 fi
-DEPLOYED_CONVEX=0
 
 node scripts/webinar-schedule.mjs check
 node --test scripts/webinar-schedule.test.mjs >/dev/null \
   || { echo "the webinar schedule tests fail"; exit 1; }
 ship() {
   local app="$1"
-  local SITE dir url
+  local SITE dir
   case "$app" in
-    media-buyer)     dir=apps/media-buyer-cockpit;       url=https://adorable-seahorse-418.convex.cloud; SITE=https://cockpit.maharamedia.com ;;
-    client-success)  dir=apps/client-success-cockpit;    url=https://impressive-dinosaur-375.convex.cloud; SITE=https://cockpit.maharamedia.com/client-success ;;
-    creative)        dir=apps/creative-director-cockpit; url=https://colorful-wombat-644.convex.cloud; SITE=https://cockpit.maharamedia.com/creative ;;
-    # The fourth cockpit has no Convex: it reads Supabase straight from the
-    # browser, so there is no backend to deploy, only a site.
-    video-editor)    dir=apps/video-editor-cockpit;      url=; SITE=https://cockpit.maharamedia.com/editor ;;
-    # The fifth is built the same way: Supabase from the browser, no Convex.
-    sales)           dir=apps/sales-cockpit;             url=; SITE=https://cockpit.maharamedia.com/sales ;;
+    media-buyer)     dir=apps/media-buyer-cockpit;       SITE=https://cockpit.maharamedia.com ;;
+    client-success)  dir=apps/client-success-cockpit;    SITE=https://cockpit.maharamedia.com/client-success ;;
+    creative)        dir=apps/creative-director-cockpit; SITE=https://cockpit.maharamedia.com/creative ;;
+    video-editor)    dir=apps/video-editor-cockpit;      SITE=https://cockpit.maharamedia.com/editor ;;
+    sales)           dir=apps/sales-cockpit;             SITE=https://cockpit.maharamedia.com/sales ;;
     *) echo "unknown app: $app"; exit 2 ;;
   esac
 
-  # Under Supabase cutover (USE_SUPABASE=1 or COCKPITS_BACKEND=supabase),
-  # cockpits operate directly on Supabase with no Convex backend.
-  if [ "${COCKPITS_BACKEND:-}" = "supabase" ] || [ "${USE_SUPABASE:-}" = "1" ]; then
-    url=""
-  fi
 
   # The CLI upload stamps local HEAD and does not check GitHub. Refuse a
   # commit main does not have, a dirty app directory, or a production SHA
@@ -91,18 +97,11 @@ ship() {
   # The path is tested here, not inside the subshell, where it would be
   # resolved against the app directory instead of the repository root.
   local lint_dirs="src"
-  [ -d "$dir/convex" ] && lint_dirs="convex src"
   # shellcheck disable=SC2086
   (cd "$dir" && bunx biome check --line-ending=auto $lint_dirs >/dev/null) || { echo "lint failed in $dir (run: cd $dir && bunx biome check --line-ending=auto --write $lint_dirs)"; exit 1; }
   echo "== $app: typecheck"
-  (cd "$dir" && bun run typecheck)
-  if [ -n "$url" ]; then
-    echo "== $app: backend"
-    (cd "$dir" && bunx convex deploy --yes --typecheck enable)
-    DEPLOYED_CONVEX=1
-  else
-    echo "== $app: backend (Supabase direct, skipping Convex deploy)"
-  fi
+  (cd "$dir" && bun run tsc --project tsconfig.app.json --noEmit && bun run tsc --project tsconfig.node.json --noEmit)
+  echo "== $app: backend (native Supabase; schema and workers must already be verified)"
   # What the site serves right now, so the check after the deploy compares
   # the page against itself rather than against a local build. Vercel builds
   # from the uploaded source with its own environment, so the entry chunk's
@@ -112,14 +111,10 @@ ship() {
   was=$(curl -fsS -m 20 -H 'Cache-Control: no-cache' "$SITE/?cb=$RANDOM" 2>/dev/null \
         | grep -oE 'index-[A-Za-z0-9_-]+\.js' | head -1)
   echo "== $app: site"
-  if [ -n "$url" ]; then
-    (cd "$dir" && VITE_CONVEX_URL="$url" bun run build)
-  else
-    local -a sup_env=()
-    [ -n "${VITE_SUPABASE_URL:-}" ] && sup_env+=(VITE_SUPABASE_URL="$VITE_SUPABASE_URL")
-    [ -n "${VITE_SUPABASE_ANON_KEY:-}" ] && sup_env+=(VITE_SUPABASE_ANON_KEY="$VITE_SUPABASE_ANON_KEY")
-    (cd "$dir" && env VITE_CONVEX_URL="" ${sup_env[@]+"${sup_env[@]}"} bun run build)
-  fi
+  local -a sup_env=()
+  [ -n "${VITE_SUPABASE_URL:-}" ] && sup_env+=(VITE_SUPABASE_URL="$VITE_SUPABASE_URL")
+  [ -n "${VITE_SUPABASE_ANON_KEY:-}" ] && sup_env+=(VITE_SUPABASE_ANON_KEY="$VITE_SUPABASE_ANON_KEY")
+  (cd "$dir" && env VITE_CONVEX_URL="" ${sup_env[@]+"${sup_env[@]}"} bun run build)
   # The Vercel CLI prints JSON when not on a terminal and can exit 0 without a
   # production deployment (seen 2026-09-18: the creative site kept the old
   # bundle while the log showed one "}"), so the confirmation is checked, not
@@ -206,15 +201,5 @@ case "${1:-all}" in
 esac
 
 echo "== smoke check"
-if [ "${COCKPITS_BACKEND:-}" = "supabase" ] || [ "${USE_SUPABASE:-}" = "1" ] || [ "${DEPLOYED_CONVEX:-0}" -eq 0 ]; then
-  py_bin="python3"
-  command -v python3 >/dev/null 2>&1 || py_bin="python"
-  "$py_bin" scripts/verify-cutover-readiness.py
-elif [ "${SHIP_SMOKE_READ_ONLY:-}" = 1 ]; then
-  # A migration release must not send the failure alert to Slack without a
-  # separately approved outward action. The local query checks the live page.
-  (cd apps/media-buyer-cockpit && bunx convex run --prod smoke:local | grep -E '"ok"|failures' | head -5)
-else
-  (cd apps/media-buyer-cockpit && bunx convex run --prod smoke:check | grep -E '"ok"|failures' | head -5)
-fi
+"$py_bin" scripts/verify-cutover-readiness.py
 echo "shipped."

@@ -24,6 +24,7 @@
  *   book     verified | unverified | slow | taken
  *   resync   ok | done | fail
  *   crm      pending | failed     (what a save's HighLevel half does)
+ *   hot      ok | fail       (hot.save refuses every change: a cell's failed state)
  *   wait     ms every sales-api answer takes (250)
  *   queueWait  ms dial.queue takes; it reads when asked and answers late,
  *            as a slow server does (0: the same as wait)
@@ -53,6 +54,7 @@ const knobs = {
   book: "verified",
   resync: "ok",
   crm: "pending",
+  hot: "ok",
   wait: 250,
   queueWait: 0,
   gap: 12_000,
@@ -290,6 +292,87 @@ function queue(as: "setter" | "closer") {
     },
     queue: items,
   };
+}
+
+// ---------------------------------------------------------------------------
+// The hot list, as sales-api hot.save keeps it: only the fields sent change,
+// each checked with the server's words (supabase/functions/sales-api/hot.ts).
+// ---------------------------------------------------------------------------
+
+const HOT_FIELDS = [
+  "heat",
+  "status",
+  "amount",
+  "amount_currency",
+  "last_objection",
+  "note",
+  "next_at",
+  "next_how",
+  "last_fu_at",
+  "owner_email",
+];
+
+function hotSave(b: Row, now: number): Row {
+  const id = String(b.contact_id ?? "");
+  if (!leadOf(id)) throw new Refusal("That lead is not in the cockpit.", 404);
+  if (knobs.hot === "fail")
+    throw new Refusal(
+      "The database did not answer (harness knob hot=fail). Try again.",
+      503,
+    );
+  const patch: Row = {};
+  for (const k of HOT_FIELDS)
+    if (k in b && b[k] !== undefined)
+      patch[k] = typeof b[k] === "string" && !String(b[k]).trim() ? null : b[k];
+  if (patch.heat && !["red_hot", "hot", "warm"].includes(String(patch.heat)))
+    throw new Refusal("The type is red hot, hot or warm.");
+  if (
+    "status" in patch &&
+    !["nurturing", "closed", "lost"].includes(String(patch.status))
+  )
+    throw new Refusal("The status is nurturing, closed or lost.");
+  if (patch.amount !== null && patch.amount !== undefined) {
+    const n = Number(String(patch.amount).replace(/[,\s]/g, ""));
+    if (!Number.isFinite(n) || n < 0 || n > 10_000_000)
+      throw new Refusal("The amount is a number from 0 to 10,000,000.");
+    patch.amount = Math.round(n * 100) / 100;
+  }
+  if (
+    "amount_currency" in patch &&
+    !["USD", "KWD", "SAR", "AED", "QAR", "BHD", "OMR"].includes(
+      String(patch.amount_currency ?? "").toUpperCase(),
+    )
+  )
+    throw new Refusal("Amounts are in USD, KWD, SAR, AED, QAR, BHD or OMR.");
+  if (patch.next_at) {
+    const t = Date.parse(String(patch.next_at));
+    if (
+      !Number.isFinite(t) ||
+      t < now - 86_400_000 ||
+      t > now + 366 * 86_400_000
+    )
+      throw new Refusal(
+        "Pick a next follow-up from yesterday up to a year ahead.",
+      );
+    patch.next_at = new Date(t).toISOString();
+  }
+  if (patch.last_fu_at) {
+    const t = Date.parse(String(patch.last_fu_at));
+    if (!Number.isFinite(t))
+      throw new Refusal("Pick when you last followed up.");
+    if (t > now + 5 * MIN)
+      throw new Refusal("The last follow-up cannot be in the future.");
+    patch.last_fu_at = new Date(t).toISOString();
+  }
+  const at = new Date(now).toISOString();
+  const i = F.HOT.findIndex(h => h.contact_id === id);
+  const live = i >= 0 && !F.HOT[i].removed_at ? F.HOT[i] : null;
+  const row = live
+    ? { ...live, ...patch, updated_at: at }
+    : { ...F.hotFresh(id, F.ME.email, at), ...patch };
+  if (i >= 0) F.HOT[i] = row;
+  else F.HOT.push(row);
+  return { hot: { ...row } };
 }
 
 async function salesApi(b: Row, signal?: AbortSignal | null): Promise<Row> {
@@ -642,6 +725,102 @@ async function salesApi(b: Row, signal?: AbortSignal | null): Promise<Row> {
           read_at: new Date(now).toISOString(),
         },
       };
+    case "contract.refresh":
+      return { checked: 0 };
+    case "contract.create": {
+      const setup = F.SETTINGS.find(x => x.key === "contracts")?.value as
+        | { templates: { id: string; name: string }[] }
+        | undefined;
+      const t = setup?.templates.find(
+        x => x.id === String(b.template_id ?? ""),
+      );
+      if (!t) throw new Refusal("Pick one of the main contract templates.");
+      const row = {
+        document_id: `doc-${now}`,
+        contact_id: String(b.contact_id ?? ""),
+        template_id: t.id,
+        template_name: t.name,
+        name: t.name,
+        status: "draft",
+        fields: {
+          company_name: String(b.company_name ?? ""),
+          ...(b.payment_structure
+            ? { payment_structure: String(b.payment_structure) }
+            : {}),
+          ...(b.daily_ad_spend
+            ? { daily_ad_spend: Number(b.daily_ad_spend) }
+            : {}),
+        },
+        created_by: "aziz@maharamedia.com",
+        sent_by: null,
+        sent_via: null,
+        sent_at: null,
+        viewed_at: null,
+        signed_at: null,
+        revision: 1,
+        ghl_updated_at: null,
+        created_at: new Date(now).toISOString(),
+        updated_at: new Date(now).toISOString(),
+        checked_at: new Date(now).toISOString(),
+      };
+      F.CONTRACTS.unshift(row);
+      return { contract: row };
+    }
+    case "contract.send": {
+      const i = F.CONTRACTS.findIndex(
+        c => c.document_id === String(b.document_id ?? ""),
+      );
+      if (i < 0) throw new Refusal("That contract is not here.", 404);
+      const company = String(
+        (F.CONTRACTS[i].fields as { company_name?: string }).company_name ?? "",
+      );
+      F.CONTRACTS[i] = {
+        ...F.CONTRACTS[i],
+        name: /[\u0600-\u06ff]/.test(company)
+          ? `${company} X مهارة ميديا`
+          : `${company} X Mahara Media`,
+        status: "sent",
+        sent_at: new Date(now).toISOString(),
+        sent_by: "aziz@maharamedia.com",
+        sent_via: b.via,
+      };
+      return {
+        contract: F.CONTRACTS[i],
+        link:
+          b.via === "link"
+            ? "https://link.maharamedia.com/documents/v1/demo-link"
+            : null,
+      };
+    }
+    case "contract.link":
+      return { link: "https://link.maharamedia.com/documents/v1/demo-link" };
+    case "contract.templates":
+      return {
+        templates: [
+          { id: "6905c43fc69d72f15bd69206", name: "90 Day Agreement" },
+          { id: "69d25fce5d2b0f67fa21caab", name: "90 Day Agreement No G" },
+          { id: "6995853c5831c3bd20e03db7", name: "60 Day Agreement" },
+          { id: "6905c5456709f1453919ac3c", name: "Month To Month Agreement" },
+          { id: "6a4cf9b8da68ef6b3d32c92c", name: "Special Offer" },
+          { id: "6a8fb2fd5a4408090a5cf2f6", name: "CSM Contract" },
+        ],
+      };
+    case "contract.templates.save":
+      return { templates: b.templates };
+    case "hot.save":
+      return hotSave(b, now);
+    case "hot.remove": {
+      const i = F.HOT.findIndex(
+        h => h.contact_id === String(b.contact_id ?? "") && !h.removed_at,
+      );
+      if (i < 0) throw new Refusal("This lead is not on the hot list.", 404);
+      F.HOT[i] = {
+        ...F.HOT[i],
+        removed_at: new Date(now).toISOString(),
+        removed_why: String(b.why ?? "") || null,
+      };
+      return {};
+    }
     case "ghl.users":
       return {
         users: [
@@ -668,12 +847,13 @@ async function main() {
   const tables: Record<string, Row[]> = {
     cockpit_sales_leads: F.LEADS,
     cockpit_sales_calendar: F.APPOINTMENTS,
-    cockpit_sales_dials: F.DIALS,
+    cockpit_sales_dials: [...F.DIALS, ...F.HOT_DIALS],
     cockpit_sales_deals: F.DEALS,
     cockpit_sales_notes: [],
     cockpit_sales_proposals: F.PROPOSALS,
     cockpit_sales_requests: [],
-    cockpit_sales_recordings: [],
+    cockpit_sales_recordings: F.RECORDINGS,
+    cockpit_sales_client_forms: [],
     cockpit_sales_scorecards: F.scorecards(),
     cockpit_sales_board: F.board(),
     cockpit_sales_people: F.PEOPLE,
@@ -683,7 +863,11 @@ async function main() {
     cockpit_sales_settings: F.SETTINGS,
     cockpit_sales_mirror_runs: [F.MIRROR_RUN],
     cockpit_sales_worker_status: [],
-    cockpit_sales_inbox: F.INBOX,
+    cockpit_sales_inbox: [...F.INBOX, ...F.HOT_INBOX],
+    cockpit_sales_followups: F.FOLLOWUPS,
+    cockpit_sales_contracts: F.CONTRACTS,
+    cockpit_sales_hot: F.HOT,
+    cockpit_sales_messages: F.MESSAGES,
     cockpit_sales_snippets: F.SNIPPETS,
     cockpit_sales_wa_templates: F.WA_TEMPLATES,
     cockpit_sales_scripts: Object.values(scripts).map((doc, i) => ({

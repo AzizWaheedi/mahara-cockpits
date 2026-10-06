@@ -632,19 +632,39 @@ def check_offer(data: dict[str, Any], resolved: dict[str, Any], offer: Optional[
                                f"deposit {offer_mod.money(resolved['deposit'], cur)}, advertising on its own line")
 
 
-# The guarantee. A promise of free work or money back is what the guarantee
-# is, so printing one nobody chose fails; the word alone, which Arabic also
-# uses for "to ensure", only warns.
+# The guarantee. Since 2026-10-02 it is a 7-day satisfaction guarantee (a
+# refund), so printing one nobody chose fails; the word alone, which Arabic
+# also uses for "to ensure", only warns. Results are never promised (Aziz:
+# "we legally can't give them a result guarantee because everybody's
+# different"): free work, or a number of meetings, leads or projects
+# guaranteed, fails whatever the closer chose.
 PROMISE = re.compile(
     r"\bno\s+(?:further|extra|additional)\s+fees?\b|money[- ]back|\brefund(?:s|ed)?\b"
     r"|\bkeep\s+working\b[^.]{0,60}\b(?:free|no\s+(?:further|extra|additional))"
     r"|\bwork(?:ing)?\s+for\s+free\b|\bfor\s+free\s+until\b"
     r"|(?:نعمل|نشتغل|نستمر)[^.]{0,40}(?:مجانا|ببلاش|بلاش)"
     r"|بدون رسوم إضافية|دون رسوم إضافية|بلا رسوم إضافية|بدون أي رسوم إضافية|استرداد|نسترد"
-    r"|نعيد (?:لك )?المبلغ|إعادة المبلغ|نستمر[^.]{0,60}(?:مجانا|بدون مقابل|دون مقابل|بدون رسوم|دون رسوم)",
+    r"|نعيد (?:لك )?المبلغ|إعادة المبلغ|نستمر[^.]{0,60}(?:مجانا|بدون مقابل|دون مقابل|بدون رسوم|دون رسوم)"
+    r"|(?:نرجع|نرجّع|نرد|نعيد) (?:لك |لكم )?(?:فلوسك|فلوسكم|أموالك|المبلغ)",
     re.I)
 MENTION = re.compile(r"\bguarantee[ds]?\b|free of charge|\bat no (?:extra|further|additional) cost\b"
                      r"|ضمان|نضمن|مضمون|مجانا|بدون مقابل|دون مقابل", re.I)
+FREE_WORK = re.compile(
+    r"\bwork(?:ing)?\s+for\s+free\b|\bfor\s+free\s+until\b"
+    r"|\bkeep\s+working\b[^.]{0,60}\b(?:free|no\s+(?:further|extra|additional))"
+    r"|(?:نعمل|نشتغل|نستمر|نكمل)[^.]{0,40}(?:مجانا|ببلاش|بلاش|بدون مقابل|دون مقابل)",
+    re.I)
+_RESULT = r"(?:results?|appointments?|meetings?|leads?|projects?|revenue|sales|roi|clients?|bookings?)"
+RESULT_GUARANTEED = re.compile(
+    rf"\bguarantee[ds]?\b(?:\s+\w+){{0,4}}?\s+(?:\d[\d,]*\s+)?(?:qualified\s+)?{_RESULT}\b"
+    rf"|\bguaranteed\s+{_RESULT}\b"
+    r"|(?:نضمن|يضمن|تضمن)(?:\s+\S+){0,3}?\s+(?:[٠-٩0-9]+\s+)?(?:موعد|مواعيد|نتائج|نتيجة|مشاريع|مشروع|عملاء|ليدز)"
+    r"|ضمان\s+(?:على\s+)?(?:ال)?(?:نتائج|مواعيد)",
+    re.I)
+# "We do not guarantee results" says the opposite, so a guarantee of results
+# right after a negation is let through.
+_NEGATED = re.compile(r"(?:\b(?:not|never|no|cannot)\b|n't|(?:^|\s)(?:ما|مو|لا|ماحد|محد)\s)\s*(?:\S+\s+){0,2}$",
+                      re.I)
 _TASHKEEL = re.compile("[ً-ْٰـ]")
 
 
@@ -652,7 +672,20 @@ def _plain(text: str) -> str:
     return _TASHKEEL.sub("", unicodedata.normalize("NFC", text))
 
 
+def promises_results(text: str) -> bool:
+    """Free work, or results guaranteed, in a line of the document."""
+    if FREE_WORK.search(text):
+        return True
+    return any(not _NEGATED.search(text[:m.start()]) for m in RESULT_GUARANTEED.finditer(text))
+
+
 def check_guarantee(data: dict[str, Any], resolved: dict[str, Any], rep: Report) -> None:
+    results = [p for p, t in content_strings(data) if promises_results(_plain(t))]
+    if results:
+        rep.add(FAIL, "guarantee", "the document promises results in " + ", ".join(results[:4])
+                + ". We never guarantee results, free work or a number of meetings; take it out. "
+                "The only guarantee is the 7-day satisfaction guarantee, and only when the closer chose it.")
+        return
     promised = [p for p, t in content_strings(data) if PROMISE.search(_plain(t))]
     mentioned = [p for p, t in content_strings(data) if MENTION.search(_plain(t))]
     if resolved["guarantee"]:

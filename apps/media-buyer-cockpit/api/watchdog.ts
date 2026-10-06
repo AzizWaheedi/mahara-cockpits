@@ -1,49 +1,22 @@
 /**
- * The outside watchdog. Convex runs the crons, the health ledger and the
- * Slack alerts, so nothing inside Convex notices when Convex itself stalls or
- * its crons stop. This Vercel function runs on a Vercel cron (vercel.json,
- * every 15 minutes), outside Convex, and DMs Aziz when:
- *
- * - the Convex route GET /watchdog (convex/http.ts) does not answer, refuses
- *   the token or answers with an error;
- * - the newest CEO section refresh (or the CEO refresh job) is older than
- *   45 minutes;
- * - the newest smoke check is older than 45 minutes, or it failed;
- * - a CEO section is failing;
- * - Convex's own Slack path is failing, so its alerts cannot reach Aziz.
- *
- * Repeats: the same problem is sent at most once every 6 hours, even when it
- * cleared in between (a section that fails every other run would otherwise
- * send an alert and an all clear every half hour). There is no database
- * here, so the watchdog remembers what it sent by reading its own recent
- * messages in the DM (every alert ends with "ref watchdog:<key>"). If Slack
- * will not let it read the DM (the im:history and im:write scopes are
- * missing), it alerts on every failing run, once per cron run, and says so in
- * the message. When everything is back to normal it sends one "all clear".
- *
- * Environment (Vercel, production): CRON_SECRET (Vercel sends it on every
- * cron call; required), WATCHDOG_TOKEN (same value as on the Convex
- * deployment), SLACK_BOT_TOKEN (same bot as Convex), optional ALERT_SLACK_TO
- * (overrides the recipient, as on Convex). VITE_CONVEX_URL, already set for
- * the site, names the deployment to check.
- *
- * Manual runs, with the cron secret as the bearer token:
- *   ?dry=1   check and return the problems as JSON, send nothing
- *   ?test=1  also send a test DM (no ref tag, so it does not affect repeats)
- *
- * See RUNBOOK.md, "Watchdog".
+ * Independent Vercel watchdog: checks Supabase's service-only native monitor
+ * and calls each cockpit Edge Function with a harmless GET (405 proves its
+ * method guard ran, not merely that the gateway is up). No provider action.
+ * CRON_SECRET guards every request. SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY
+ * are server-only; no browser or legacy backend credential is accepted.
+ * ?dry=1 sends no Slack messages and writes no receipts. ?test=1 sends a DM.
+ * Slack history retains the six-hour repeat limit and one recovery message.
  */
-import { AZIZ_SLACK_ID } from "../convex/constants.js";
+import { z } from "zod";
+import { monitoredFetch, serviceConfig } from "./tools.js";
 
 declare const process: { env: Record<string, string | undefined> };
 
-const STALE_MIN = 45;
 const REALERT_MS = 6 * 3600_000;
 const LOOKBACK_MS = 24 * 3600_000;
-const CONVEX_TIMEOUT_MS = 20_000;
+const NATIVE_TIMEOUT_MS = 20_000;
 const SLACK_TIMEOUT_MS = 10_000;
-/** The media buyer production deployment (HOSTING.md), if VITE_CONVEX_URL is absent. */
-const DEFAULT_SITE = "https://adorable-seahorse-418.convex.site";
+const AZIZ_SLACK_ID = "U09305KE2KS";
 /**
  * Keys are lower case letters, digits, "-" and ":" only. No dots: Slack turns
  * dotted words such as "feed.fresh" into links, which would break the tag.
@@ -51,25 +24,24 @@ const DEFAULT_SITE = "https://adorable-seahorse-418.convex.site";
 const REF = /watchdog:([a-z0-9:-]+)/g;
 const CLEAR = "watchdog:clear";
 
-type Item = { key: string; name: string; error: string };
-type Summary = {
-  ok: boolean;
-  staleAfterMin: number;
-  ceo: {
-    refreshAgeMin: number | null;
-    jobAgeMin: number | null;
-    sections: number;
-    failingCount: number;
-    failing: Item[];
-  };
-  smoke: {
-    ok: boolean | null;
-    ageMin: number | null;
-    failingCount: number;
-    failing: Item[];
-  };
-  sources: { failingCount: number; failing: Item[] };
-};
+const checkSchema = z.object({
+  key: z.string().min(1), name: z.string().min(1), ok: z.boolean(),
+  error: z.string().nullable(), at: z.string().nullable(),
+  max_age_min: z.number().positive().nullable(),
+});
+const summarySchema = z.object({
+  version: z.literal(1), checked_at: z.string(),
+  checks: z.array(checkSchema).min(1),
+});
+type Summary = z.infer<typeof summarySchema>;
+export const REQUIRED_CHECKS = [
+  ...["money", "expenses", "growth", "webinar", "b2bAds", "delivery", "calls",
+    "clients", "team", "hiring", "portal", "assets", "organic", "machine"].map(k => `section:${k}`),
+  "worker:ceo-refresh", "worker:media-core", "worker:team-calendar",
+  "queue:ask-ai", "queue:eod", "catalog:native",
+];
+const EDGE_FUNCTIONS = ["cockpit-media-api", "cockpit-creative-api",
+  "cockpit-csm-api", "cockpit-ceo-api", "cockpit-team-api"];
 type Problem = { key: string; text: string };
 type SlackReply = {
   ok?: boolean;
@@ -89,8 +61,8 @@ const forgetful = (why: string): Memory => ({
   unavailable: why,
 });
 
-const CONVEX_FIX =
-  "Open the Convex dashboard (project mahara-media-buyer, production): Health, Logs and Schedules. If the last deploy failed or nothing is running, run `scripts/ship.sh media-buyer` from the repo root.";
+const NATIVE_FIX =
+  "Read the native worker doctor and run logs, Supabase function logs and RUNBOOK.md. Missing migrations, credentials or cron entries must be repaired; do not mark old data fresh.";
 
 /** Constant-time check of `Authorization: Bearer <secret>`. */
 function sameBearer(header: string | null, secret: string | undefined) {
@@ -107,7 +79,7 @@ function short(e: unknown): string {
   const s =
     e instanceof Error ? `${e.name}: ${e.message}` : String(e ?? "unknown");
   const secrets = [
-    process.env.WATCHDOG_TOKEN,
+    process.env.SUPABASE_SERVICE_ROLE_KEY,
     process.env.SLACK_BOT_TOKEN,
     process.env.CRON_SECRET,
   ].filter((x): x is string => Boolean(x));
@@ -123,132 +95,68 @@ const slug = (s: string) =>
     .replace(/^-+|-+$/g, "")
     .slice(0, 60) || "unknown";
 
-/** Slack reads &, < and > as markup, so text from Convex is escaped. */
+/** Slack reads &, < and > as markup, so service error text is escaped. */
 const esc = (s: string) =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
-function convexSite(): string {
-  const cloud = (process.env.VITE_CONVEX_URL ?? "").trim().replace(/\/+$/, "");
-  return /^https:\/\/[a-z0-9-]+\.convex\.cloud$/.test(cloud)
-    ? cloud.replace(/\.convex\.cloud$/, ".convex.site")
-    : DEFAULT_SITE;
+export function parseSummary(value: unknown): Summary {
+  const summary = summarySchema.parse(value);
+  if (new Set(summary.checks.map(c => c.key)).size !== summary.checks.length)
+    throw new Error("Native health contains duplicate check keys");
+  return summary;
 }
 
-function isSummary(x: unknown): x is Summary {
-  const s = x as Summary | null;
-  return (
-    typeof s === "object" &&
-    s !== null &&
-    typeof s.ok === "boolean" &&
-    Array.isArray(s.ceo?.failing) &&
-    Array.isArray(s.smoke?.failing) &&
-    Array.isArray(s.sources?.failing)
-  );
-}
-
-/** What is wrong right now, as seen from outside Convex. */
-async function findProblems(): Promise<Problem[]> {
-  const token = process.env.WATCHDOG_TOKEN;
-  if (!token)
-    return [
-      {
-        key: "setup-token",
-        text: "WATCHDOG_TOKEN is not set on Vercel, so the watchdog cannot check Convex at all. Set it on Vercel and on Convex (`RUNBOOK.md`, Watchdog), then redeploy the site.",
-      },
-    ];
-  const site = convexSite();
-  const host = new URL(site).host;
-  let res: Response;
-  try {
-    res = await fetch(`${site}/watchdog`, {
-      headers: { Authorization: `Bearer ${token}` },
-      signal: AbortSignal.timeout(CONVEX_TIMEOUT_MS),
-    });
-  } catch (e) {
-    return [
-      {
-        key: "convex-down",
-        text: `Convex (${host}) did not answer within ${CONVEX_TIMEOUT_MS / 1000} seconds (${short(e)}). The portal, its crons, the smoke check for all three cockpits and their Slack alerts run there, so nothing else will tell you. Check status.convex.dev. ${CONVEX_FIX}`,
-      },
-    ];
-  }
-  if (res.status === 401)
-    return [
-      {
-        key: "convex-token",
-        text: `Convex (${host}) refused the watchdog's token. WATCHDOG_TOKEN is missing on the Convex production deployment, or differs from the value on Vercel (\`RUNBOOK.md\`, Watchdog). Convex itself is answering.`,
-      },
-    ];
-  if (res.status === 404)
-    return [
-      {
-        key: "convex-route",
-        text: `Convex (${host}) answers but has no /watchdog route, so the change in \`convex/http.ts\` is not deployed. Run \`scripts/ship.sh media-buyer\`.`,
-      },
-    ];
-  const body: unknown = await res.json().catch(() => null);
-  if (!res.ok || !isSummary(body)) {
-    const said =
-      typeof (body as { error?: unknown } | null)?.error === "string"
-        ? `: ${String((body as { error: string }).error).slice(0, 120)}`
-        : "";
-    return [
-      {
-        key: "convex-error",
-        text: `Convex (${host}) answered the watchdog with HTTP ${res.status}${res.ok ? " and an unreadable body" : ""}${said}. ${CONVEX_FIX}`,
-      },
-    ];
-  }
-  return judge(body);
-}
-
-function judge(s: Summary): Problem[] {
+export function judge(s: Summary, now = Date.now()): Problem[] {
   const out: Problem[] = [];
-  const late = (min: number | null) => min === null || min > STALE_MIN;
-
-  const { refreshAgeMin, jobAgeMin } = s.ceo;
-  if (late(refreshAgeMin) || (jobAgeMin !== null && jobAgeMin > STALE_MIN)) {
-    const age =
-      refreshAgeMin === null
-        ? "have never been refreshed"
-        : `are ${Math.max(refreshAgeMin, jobAgeMin ?? 0)} minutes old`;
-    out.push({
-      key: "ceo-stale",
-      text: `The CEO cockpit numbers ${age}; the refresh should run every 15 minutes. The Convex crons have probably stopped (look for \`ceo/refresh:refreshAll\`). ${CONVEX_FIX}`,
+  const snapshotAge = now - Date.parse(s.checked_at);
+  if (!Number.isFinite(snapshotAge) || snapshotAge < -60_000 || snapshotAge > 60_000)
+    out.push({key: "native-snapshot", text: "The native health response has an invalid or stale observation time."});
+  const seen = new Set(s.checks.map(c => c.key));
+  for (const key of REQUIRED_CHECKS)
+    if (!seen.has(key)) out.push({key: `native-missing:${slug(key)}`, text: `Native health omitted required check ${key}. ${NATIVE_FIX}`});
+  for (const c of s.checks) {
+    const age = c.at === null ? NaN : (now - Date.parse(c.at)) / 60_000;
+    const late = c.max_age_min !== null &&
+      (!Number.isFinite(age) || age < -1 || age > c.max_age_min);
+    if (!c.ok || late) out.push({
+      key: `native:${slug(c.key)}`,
+      text: `${c.name}: ${!c.ok ? c.error || "required native state is missing or failed" : "last successful state is missing, future-dated or too old"}${late ? ` (required within ${c.max_age_min} minutes)` : ""}. ${NATIVE_FIX}`,
     });
   }
-  for (const f of s.ceo.failing)
-    out.push({
-      key: `ceo-section:${slug(f.key)}`,
-      text: `CEO cockpit, ${f.name}, is failing: ${f.error}. The screen keeps its last good numbers and the section retries every 15 minutes; the Machine tab shows which source is slow or down.`,
-    });
+  return out;
+}
 
-  const smokeAge = s.smoke.ageMin;
-  if (late(smokeAge))
-    out.push({
-      key: "smoke-stale",
-      text: `The 15-minute smoke check ${smokeAge === null ? "has never run" : `last ran ${smokeAge} minutes ago`}. It is a Convex cron, so the crons have probably stopped, and with them the sync, the feeds and Convex's own alerts. ${CONVEX_FIX}`,
-    });
-  if (s.smoke.ok === false) {
-    if (!s.smoke.failing.length)
-      out.push({
-        key: "smoke-failed",
-        text: "The last smoke check failed without naming a screen. Open portal, Admin to see the cockpit checks.",
-      });
-    for (const f of s.smoke.failing)
-      out.push({
-        key: `smoke:${slug(f.key)}`,
-        text: `The smoke check failed: ${f.name} (${f.error}). Convex has sent its own alert and filed a fix job for Hermes; if the screen stays broken, see \`RUNBOOK.md\`.`,
-      });
+/** Fresh checks execute outside the backend they watch. */
+async function findProblems(dry: boolean): Promise<Problem[]> {
+  const config = serviceConfig();
+  if (!config) return [{key: "setup-native", text: "Set server-only SUPABASE_URL to Creative Triage and SUPABASE_SERVICE_ROLE_KEY on Vercel. Native monitoring cannot run without them."}];
+  const headers = {apikey: config.key, Authorization: `Bearer ${config.key}`};
+  const out: Problem[] = [];
+  try {
+    const res = await monitoredFetch(`${config.url}/rest/v1/rpc/cockpit_native_monitor`, {
+      method: "POST", headers: {...headers, "Content-Type": "application/json"}, body: "{}",
+      signal: AbortSignal.timeout(NATIVE_TIMEOUT_MS),
+    }, {dry, expected: [200]});
+    if (!res.ok) throw new Error(`native monitor RPC HTTP ${res.status}`);
+    out.push(...judge(parseSummary(await res.json())));
+  } catch (error) {
+    out.push({key: "native-unavailable", text: `The service-only native health RPC failed (${short(error)}). The monitor migration, grants or Supabase connection are missing or failing. ${NATIVE_FIX}`});
   }
-
-  // Convex alerts on every other source itself, but not when its Slack is down.
-  const slackSource = s.sources.failing.find(f => f.key === "slack");
-  if (slackSource)
-    out.push({
-      key: "convex-slack",
-      text: `Convex cannot send Slack messages (${slackSource.error}), so its own alerts are not reaching you. Fix: see the Slack row in \`RUNBOOK.md\`.`,
-    });
+  const probes = await Promise.all(EDGE_FUNCTIONS.map(async name => {
+    try {
+      const res = await monitoredFetch(`${config.url}/functions/v1/${name}`, {
+        headers, signal: AbortSignal.timeout(10_000),
+      }, {dry, expected: [405]});
+      const body: unknown = await res.json();
+      if (res.status !== 405 || typeof body !== "object" || body === null ||
+          !("error" in body) || body.error !== "POST required")
+        throw new Error(`HTTP ${res.status}; expected deployed method guard`);
+      return null;
+    } catch (error) {
+      return {key: `edge:${name}`, text: `${name} did not pass its read-only runtime probe (${short(error)}). Check its deployment and gateway configuration.`};
+    }
+  }));
+  for (const problem of probes) if (problem) out.push(problem);
   return out;
 }
 
@@ -261,7 +169,7 @@ async function slack(
   for (const [k, v] of Object.entries(opts.query ?? {}))
     url.searchParams.set(k, v);
   try {
-    const res = await fetch(url, {
+    const res = await monitoredFetch(url.href, {
       method: opts.body ? "POST" : "GET",
       headers: {
         Authorization: `Bearer ${token}`,
@@ -271,7 +179,7 @@ async function slack(
       },
       body: opts.body ? JSON.stringify(opts.body) : undefined,
       signal: AbortSignal.timeout(SLACK_TIMEOUT_MS),
-    });
+    }, {dry: false, expected: [200]});
     const json = (await res.json().catch(() => null)) as SlackReply | null;
     return json ?? { ok: false, error: `HTTP ${res.status}` };
   } catch (e) {
@@ -359,7 +267,7 @@ export async function GET(request: Request): Promise<Response> {
     return new Response("Unauthorized", { status: 401 });
   const params = new URL(request.url).searchParams;
   const now = Date.now();
-  const problems = await findProblems();
+  const problems = await findProblems(params.has("dry"));
   const keys = problems.map(p => p.key);
 
   if (params.has("dry"))
@@ -380,7 +288,7 @@ export async function GET(request: Request): Promise<Response> {
       await post(
         token,
         to,
-        `Watchdog test from Vercel: the Slack DM works. Convex check right now: ${problems.length ? `${problems.length} problem(s), ${keys.join(", ")}` : "all fine"}.`,
+        `Watchdog test from Vercel: the Slack DM works. Native backend check right now: ${problems.length ? `${problems.length} problem(s), ${keys.join(", ")}` : "all required checks passed"}.`,
       );
 
     const memory = await recall(token, to, now);
@@ -397,7 +305,7 @@ export async function GET(request: Request): Promise<Response> {
       await post(
         token,
         to,
-        `Watchdog: all clear. Convex answers, the CEO refresh and the smoke check are on time and passing, no CEO section is failing, and Convex can send Slack messages. If one of the problems comes back within 6 hours of its alert, it is not sent again until the 6 hours are up. (ref ${CLEAR})`,
+        `Watchdog: all clear. The native health RPC answers, required sections and producer state are current and passing, queues have no monitored blockage, and the five cockpit Edge Functions pass their read-only method probes. These probes do not exercise user/provider writes. If a problem returns within 6 hours, it is held until that window ends. (ref ${CLEAR})`,
       );
       sent = ["clear"];
     }

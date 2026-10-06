@@ -10,7 +10,7 @@ import {
   Trash2,
   Users,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { Link } from "react-router";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { Button } from "@/components/ui/button";
@@ -36,7 +36,9 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { useNow } from "@/lib/useNow";
+import { useNativeAdminData } from "@/lib/nativeAdminClient";
 import { COCKPIT_META } from "./PortalHome";
+const cockpitLabels: Readonly<Record<string, { label: string }>> = COCKPIT_META;
 
 // biome-ignore lint/suspicious/noExplicitAny: admin rows
 type Any = any;
@@ -168,54 +170,15 @@ export function AdminPage() {
   const me = { email: auth.email };
   const now = useNow();
   const ago = (ms?: number | null) => agoAt(now, ms);
-  const [editing, setEditing] = useState<Any | null | "new">(null);
+  const actorId = auth.session?.user.id ?? null;
+  const [editor, setEditor] = useState<{ actor: string | null; value: Any | null | "new" }>({ actor: null, value: null });
+  const editing = editor.actor === actorId ? editor.value : null;
+  const setEditing = (value: Any | null | "new") => setEditor({ actor: actorId, value });
   const [query, setQuery] = useState("");
 
-  const [supabaseMembers, setSupabaseMembers] = useState<Any[] | null>(null);
-  const loadMembers = useCallback(async () => {
-    if (!supabase) return;
-    try {
-      const { data, error } = await supabase
-        .from("cockpit_members")
-        .select("*")
-        .eq("active", true)
-        .order("name", { ascending: true });
-      if (!error && data) {
-        setSupabaseMembers(data);
-      }
-    } catch (err) {
-      console.error("Failed to load cockpit_members from Supabase:", err);
-    }
-  }, [supabase]);
-
-  useEffect(() => {
-    void loadMembers();
-  }, [loadMembers]);
-
-  const [supabaseClients, setSupabaseClients] = useState<string[]>([]);
-  useEffect(() => {
-    if (!supabase) return;
-    supabase
-      .from("clients")
-      .select("name")
-      .eq("is_active", true)
-      .order("name")
-      .then(({ data, error }) => {
-        if (!error && data) {
-          setSupabaseClients(data.map((c: { name: string }) => c.name).filter(Boolean));
-        }
-      });
-  }, [supabase]);
-
-  const members = supabaseMembers ?? [];
-  const cockpitHealth = null;
-  const sources = null;
-  const scheduled: Any[] = [];
-  const activity: Any[] = [];
-  const actions: Any[] = [];
-  const counts = null;
-  const hermes: any = null;
-  const clientNames = supabaseClients;
+  const { overview, overviewLoading, overviewError, members, membersLoading, membersError,
+    clients, clientsError, refetch: refreshAdmin } = useNativeAdminData(supabase, actorId);
+  const clientNames = clients ?? [];
 
   const handleRemove = async (email: string) => {
     if (!confirm(`Remove ${email} from every cockpit?`)) return;
@@ -228,7 +191,7 @@ export function AdminPage() {
           alert(`Could not remove member: ${rpcErr.message}`);
           return;
         }
-        await loadMembers();
+        await refreshAdmin();
         return;
       } catch (err: unknown) {
         alert(`Could not remove member: ${err instanceof Error ? err.message : String(err)}`);
@@ -237,28 +200,6 @@ export function AdminPage() {
     }
     alert("Supabase client not initialized");
   };
-  const overview: any = useMemo(
-    () => ({
-      health: cockpitHealth,
-      sources,
-      scheduled,
-      ...activity,
-      counts,
-      hermesWaiting: hermes
-        ? { queued: hermes.queued, claimed: hermes.claimed }
-        : undefined,
-      hermes: hermes
-        ? {
-            queued: hermes.queued,
-            doneToday: hermes.recentDone.filter((at: number) => at > now - 86400_000)
-              .length,
-            lastDone: hermes.lastDone,
-            actions: (actions ?? []).filter((a: Any) => a.at > now - 86400_000),
-          }
-        : undefined,
-    }),
-    [cockpitHealth, sources, scheduled, activity, counts, hermes, actions, now],
-  );
 
   const rows = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -272,17 +213,17 @@ export function AdminPage() {
   const healthFor = (app: string) => health.find(h => h.app === app);
 
   const sourcesDown = ((overview?.sources ?? []) as Any[]).filter(
-    src => src.ok === false && src.streak >= 3,
+    src => src.ok === false,
   ).length;
   const jobsFailing = ((overview?.scheduled ?? []) as Any[]).filter(
-    j => !j.ok || now - j.at > Math.max(3 * j.everyMin, 45) * 60_000,
+    j => !j.ok || (j.maxAgeMin !== null && (!j.at || now - j.at > j.maxAgeMin * 60_000)),
   ).length;
   const healthLine = [
     sourcesDown
-      ? `${sourcesDown} data source${sourcesDown === 1 ? "" : "s"} down`
+      ? `${sourcesDown} native check${sourcesDown === 1 ? " needs" : "s need"} attention`
       : "",
     jobsFailing
-      ? `${jobsFailing} job${jobsFailing === 1 ? "" : "s"} failing`
+      ? `${jobsFailing} worker check${jobsFailing === 1 ? " needs" : "s need"} attention`
       : "",
   ]
     .filter(Boolean)
@@ -298,7 +239,7 @@ export function AdminPage() {
             the right cockpit opens for them the moment they log in.
           </p>
         </div>
-        <Button onClick={() => setEditing("new")}>
+        <Button disabled={!overview} onClick={() => setEditing("new")}>
           <Plus className="size-4" /> Add a team member
         </Button>
       </header>
@@ -326,7 +267,7 @@ export function AdminPage() {
               </div>
               <Dot tone={ok === false ? "bad" : ok ? "good" : "idle"}>
                 {ok === false
-                  ? `Failing: ${(h.failing ?? []).join(", ")}`
+                  ? `Needs attention: ${(h.failing ?? []).join(", ")}`
                   : ok
                     ? `Healthy, checked ${ago(h.at)}`
                     : "No check yet"}
@@ -367,10 +308,16 @@ export function AdminPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {members === undefined ? (
+              {membersLoading ? (
                 <TableRow>
                   <TableCell colSpan={5} className="text-muted-foreground">
                     Loading…
+                  </TableCell>
+                </TableRow>
+              ) : membersError ? (
+                <TableRow>
+                  <TableCell colSpan={5} className="text-destructive">
+                    Could not read the team directory: {membersError}
                   </TableCell>
                 </TableRow>
               ) : rows.length === 0 ? (
@@ -381,7 +328,7 @@ export function AdminPage() {
                 </TableRow>
               ) : (
                 rows.map(m => (
-                  <TableRow key={m.id || m._id}>
+                  <TableRow key={m.id}>
                     <TableCell>
                       <div className="font-medium">
                         {m.name || m.email.split("@")[0]}
@@ -425,16 +372,18 @@ export function AdminPage() {
                       )}
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground">
-                      {m.auth_user_id ? (
+                      {m.auth_user_id && m.auth_confirmed ? (
                         <span className="inline-flex items-center text-xs font-medium text-emerald-600 dark:text-emerald-400">
                           Linked & active
                         </span>
+                      ) : m.auth_user_id ? (
+                        <span className="text-xs">Email confirmation pending</span>
                       ) : m.lastSeenAt ? (
                         <>
                           {ago(m.lastSeenAt)}
                           {m.lastCockpit ? (
                             <span className="block text-xs">
-                              {COCKPIT_META[m.lastCockpit]?.label ?? m.lastCockpit}
+                              {Object.hasOwn(cockpitLabels, m.lastCockpit) ? cockpitLabels[m.lastCockpit].label : m.lastCockpit}
                             </span>
                           ) : null}
                         </>
@@ -479,51 +428,50 @@ export function AdminPage() {
       <details className="group rounded-2xl border bg-card">
         <summary className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3 sm:px-6 sm:py-4">
           <span className="text-[15px] font-semibold">System health</span>
-          <Dot tone={healthLine ? "bad" : "good"}>
-            {healthLine ||
-              (overview?.lastSync
-                ? `All running, last sync ${ago(overview.lastSync.at)}`
-                : "Reading…")}
+          <Dot tone={overviewError || healthLine ? "bad" : !overview || overviewLoading ? "idle" : "good"}>
+            {overviewError ? `Native health could not be read: ${overviewError}` : healthLine ||
+              (overviewLoading ? "Reading native health…" : overview ? "Native checks passed" : "Native health unavailable")}
           </Dot>
         </summary>
         <div className="space-y-6 border-t p-4 sm:p-6">
+          {overviewError ? <p className="text-sm text-destructive">Reload the portal after checking native access and schema: {overviewError}</p> : null}
           {/* Numbers that say whether the machine is running. */}
           <section className="grid grid-cols-2 gap-4 lg:grid-cols-4">
             <Stat
               icon={Users}
               label="Team"
               value={overview?.counts?.members ?? "…"}
-              hint={`${overview?.counts?.admins ?? 0} admin${overview?.counts?.admins === 1 ? "" : "s"}`}
+              hint={overview ? `${overview.counts.admins} admin${overview.counts.admins === 1 ? "" : "s"}` : undefined}
             />
             <Stat
               icon={Activity}
               label="Last data sync"
-              value={overview?.lastSync ? ago(overview.lastSync.at) : "…"}
+              value={overview?.lastSync ? ago(overview.lastSync.at) : overviewLoading ? "…" : "unavailable"}
               hint={
                 overview?.lastSync?.problems?.length
                   ? `${overview.lastSync.problems.length} problem(s)`
                   : overview?.lastSync
                     ? "clean"
-                    : "no run yet"
+                    : "No completed refresh recorded"
               }
               bad={Boolean(overview?.lastSync && !overview.lastSync.ok)}
             />
             <Stat
               icon={ShieldCheck}
               label="Live campaigns"
-              value={overview?.counts?.liveCampaigns ?? "…"}
-              hint={`${overview?.counts?.campaigns ?? 0} on the board, ${overview?.counts?.clients ?? 0} clients`}
+              value={overview?.counts.liveCampaigns ?? (overviewLoading ? "…" : "unavailable")}
+              hint={overview ? `${overview.counts.campaigns ?? "Unknown"} on the board, ${overview.counts.clients ?? "unknown"} clients` : "Native catalog unavailable"}
             />
             <Stat
               icon={Bot}
               label="Hermes"
               value={
-                overview?.hermes ? `${overview.hermes.queued} waiting` : "…"
+                overview?.hermes ? `${overview.hermes.queued} waiting` : overviewLoading ? "…" : "unavailable"
               }
               hint={
                 overview?.hermes
                   ? `${overview.hermes.doneToday} done today, last ${ago(overview.hermes.lastDone)}`
-                  : ""
+                  : "Native queue catalog unavailable"
               }
               bad={(overview?.hermes?.queued ?? 0) > 5}
             />
@@ -533,14 +481,11 @@ export function AdminPage() {
           <section>
             <h2 className="text-[15px] font-semibold">Data sources</h2>
             <p className="mt-1 text-xs text-muted-foreground">
-              Three failures in a row send one Slack message with the fix. Green
-              means the last call worked. Repeated successful checks are
-              recorded at most every 5 minutes.
+              These checks come from native ledgers. Missing sources are unavailable, not healthy.
             </p>
             <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {(overview?.sources ?? []).map((src: Any) => {
-                const down = src.ok === false && src.streak >= 3;
-                const blip = src.ok === false && src.streak < 3;
+                const down = src.ok === false;
                 return (
                   <div
                     key={src.source}
@@ -552,22 +497,10 @@ export function AdminPage() {
                       </span>
                       <Dot
                         tone={
-                          down
-                            ? "bad"
-                            : blip
-                              ? "warn"
-                              : src.ok
-                                ? "good"
-                                : "idle"
+                          down ? "bad" : src.ok ? "good" : "idle"
                         }
                       >
-                        {down
-                          ? `down, ${src.streak} in a row`
-                          : blip
-                            ? `failed ${src.streak}×, watching`
-                            : src.ok
-                              ? `ok ${ago(src.at)}`
-                              : "not used yet"}
+                        {down ? "Needs attention" : src.at ? `Current data ${ago(src.at)}` : "Current queue check passed"}
                       </Dot>
                     </div>
                     {src.ok === false ? (
@@ -579,16 +512,13 @@ export function AdminPage() {
                           {src.lastError}
                         </p>
                         <p className="mt-1 text-xs">
-                          <span className="font-semibold">{src.owner}:</span>{" "}
                           {src.fix}
                         </p>
                       </>
                     ) : (
                       <p className="mt-1 text-xs text-muted-foreground">
-                        {src.lastFailAt
-                          ? `last failed ${ago(src.lastFailAt)}`
-                          : "no failures recorded"}
-                        {src.source === "hermes" && overview?.hermesWaiting
+                        The current native check passed.
+                        {src.source === "queue:ask-ai" && overview?.hermesWaiting
                           ? ` · ${overview.hermesWaiting.queued} waiting, ${overview.hermesWaiting.claimed} in progress`
                           : ""}
                       </p>
@@ -601,70 +531,59 @@ export function AdminPage() {
 
           {/* The clockwork: every job's last run and whether it is failing. */}
           <section>
-            <h2 className="text-[15px] font-semibold">Scheduled jobs</h2>
+            <h2 className="text-[15px] font-semibold">Native worker health</h2>
             <p className="mt-1 text-xs text-muted-foreground">
-              A job that fails three times in a row files a fix job for Hermes
-              and sends one message. One that stops running is flagged within
-              the hour.
+              {overview?.scheduleNote ?? "Native worker evidence is unavailable. Verify the source and host configuration."}
             </p>
             <div className="mt-4 overflow-x-auto">
               <Table>
                 <TableHeader>
                   <TableRow>
                     <TableHead>Job</TableHead>
-                    <TableHead>Every</TableHead>
-                    <TableHead>Last run</TableHead>
-                    <TableHead>Took</TableHead>
+                    <TableHead>Freshness limit</TableHead>
+                    <TableHead>Last recorded data</TableHead>
+                    <TableHead>Duration</TableHead>
                     <TableHead>State</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {(overview?.scheduled ?? []).length === 0 ? (
+                  {overviewLoading ? (
+                    <TableRow><TableCell colSpan={5}>Reading native worker ledgers…</TableCell></TableRow>
+                  ) : (overview?.scheduled ?? []).length === 0 ? (
                     <TableRow>
                       <TableCell colSpan={5} className="text-muted-foreground">
-                        No job has reported yet.
+                        Native worker evidence is unavailable.
                       </TableCell>
                     </TableRow>
                   ) : (
-                    (overview.scheduled as Any[]).map(j => {
+                    (overview?.scheduled ?? []).map(j => {
                       const late =
-                        now - j.at > Math.max(3 * j.everyMin, 45) * 60_000;
+                        j.maxAgeMin !== null && (!j.at || now - j.at > j.maxAgeMin * 60_000);
                       return (
                         <TableRow key={j.job}>
                           <TableCell className="font-medium">{j.job}</TableCell>
                           <TableCell className="text-muted-foreground">
-                            {j.everyMin >= 1440
-                              ? `${Math.round(j.everyMin / 1440)} d`
-                              : j.everyMin >= 60
-                                ? `${Math.round(j.everyMin / 60)} h`
-                                : `${j.everyMin} min`}
+                            {j.maxAgeMin !== null ? `${j.maxAgeMin} min` : "Not specified"}
                           </TableCell>
                           <TableCell
                             className={
                               late ? "txt-bad" : "text-muted-foreground"
                             }
                           >
-                            {ago(j.at)}
-                            {j.everyMin < 5 && (
-                              <span className="block text-xs">
-                                Successful checks saved every 5 min
-                              </span>
-                            )}
+                            {j.at ? ago(j.at) : "Not recorded"}
                           </TableCell>
                           <TableCell className="text-muted-foreground">
-                            {j.ms >= 1000
-                              ? `${Math.round(j.ms / 1000)} s`
-                              : `${j.ms} ms`}
+                            {j.ms === null ? "Not recorded" : j.ms >= 1000 ? `${Math.round(j.ms / 1000)} s` : `${j.ms} ms`}
                           </TableCell>
                           <TableCell>
                             {j.ok && !late ? (
                               <Dot tone="good">ok</Dot>
                             ) : late ? (
-                              <Dot tone="bad">not running</Dot>
+                              <Dot tone="bad">Data overdue</Dot>
                             ) : (
-                              <span title={j.error}>
+                              <span title={j.error ?? undefined}>
                                 <Dot tone="bad">
-                                  failing ({j.streak} in a row)
+                                  Needs attention
                                 </Dot>
                               </span>
                             )}
@@ -700,7 +619,7 @@ export function AdminPage() {
                       className="flex gap-3"
                     >
                       <span className="w-16 shrink-0 text-xs text-muted-foreground">
-                        {ago(a.at)}
+                        {a.at ? ago(a.at) : "Not recorded"}
                       </span>
                       <span className="min-w-0 whitespace-pre-wrap">
                         {a.text}
@@ -737,9 +656,20 @@ export function AdminPage() {
                 </ul>
               ) : (
                 <p className="mt-3 text-sm text-muted-foreground">
-                  No ad account actions in the last day.
+                  {overview?.hermes ? "No recorded ad account actions in the last day." : "Native action history is unavailable."}
                 </p>
               )}
+              <h3 className="mt-4 text-sm font-semibold">Directory and system changes</h3>
+              {overview?.activity.length ? (
+                <ul className="mt-2 space-y-2 text-xs">
+                  {overview.activity.map(entry => (
+                    <li key={entry.id} className="flex gap-3">
+                      <span className="w-16 shrink-0 text-muted-foreground">{entry.at ? ago(entry.at) : "Not recorded"}</span>
+                      <span>{entry.action} · {entry.entity}{entry.actor ? ` · ${entry.actor}` : ""}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : <p className="mt-2 text-xs text-muted-foreground">{overview ? "No audit summaries recorded." : "Native audit history is unavailable."}</p>}
             </div>
           </section>
         </div>
@@ -749,8 +679,9 @@ export function AdminPage() {
         <MemberDialog
           member={editing === "new" ? null : editing}
           clientNames={clientNames ?? []}
+          clientError={clientsError}
           supabase={supabase}
-          onSaved={loadMembers}
+          onSaved={refreshAdmin}
           onClose={() => setEditing(null)}
         />
       ) : null}
@@ -794,12 +725,14 @@ function Stat({
 function MemberDialog({
   member,
   clientNames,
+  clientError,
   supabase,
   onSaved,
   onClose,
 }: {
   member: Any | null;
   clientNames: string[];
+  clientError?: string | null;
   supabase?: Any | null;
   onSaved: () => void;
   onClose: () => void;
@@ -930,6 +863,7 @@ function MemberDialog({
                 All clients
               </span>
             </div>
+            {clientError ? <p className="text-sm text-destructive">Client options are unavailable: {clientError} Existing selections are preserved.</p> : null}
             {!allClients ? (
               <div className="rounded-md border">
                 <div className="border-b p-2">

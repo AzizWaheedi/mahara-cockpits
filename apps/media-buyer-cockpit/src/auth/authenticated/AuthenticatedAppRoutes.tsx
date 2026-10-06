@@ -1,5 +1,4 @@
 import { Navigate, Route, Routes } from "react-router";
-import { OAUTH_CALLBACK_PATH } from "@/auth/oauthReturn";
 import { AppLayout } from "@/components/AppLayout";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { PublicLayout } from "@/components/PublicLayout";
@@ -27,7 +26,6 @@ import {
 } from "@/pages";
 import { MeetingPage } from "@/pages/team/MeetingPage";
 import { TeamPage } from "@/pages/team/TeamPage";
-import { ViktorOAuthCallbackPage } from "@/pages/ViktorOAuthCallbackPage";
 
 export function AuthenticatedRoutes() {
   return (
@@ -38,16 +36,14 @@ export function AuthenticatedRoutes() {
         <Route element={<PublicOnlyRoute />}>
           <Route path="/login" element={<LoginPage />} />
           <Route path="/signup" element={<SignupPage />} />
-          <Route path="/first-sign-in" element={<FirstSignInPage />} />
         </Route>
+        {/* OTP creates a session before password setup finishes; keep the form mounted. */}
+        <Route path="/first-sign-in" element={<FirstSignInPage />} />
       </Route>
 
-      {/* Return leg of "Sign in with Viktor" — outside the auth guards
-          because it owns the loading/outcome handling itself. */}
-      <Route path={OAUTH_CALLBACK_PATH} element={<ViktorOAuthCallbackPage />} />
 
       <Route element={<ProtectedRoute />}>
-        {/* The door into the cockpits on the other deployments. */}
+        {/* Same-origin cockpit navigation reuses the native Supabase session. */}
         <Route path="/go/:cockpit" element={<GoPage />} />
         <Route element={<AppLayout />}>
           {/* biome-ignore lint/a11y/useValidAriaRole: RoleRoute's role prop is a seat name, not an ARIA role */}

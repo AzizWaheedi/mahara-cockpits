@@ -1,5 +1,25 @@
 import { motion } from "framer-motion";
-import { BarChart3, CalendarClock, CalendarDays, DollarSign, Flame, LayoutGrid, Link2, ListChecks, ListTodo, LogOut, MessageSquare, Moon, MoonStar, Settings, Sun, Sunrise, X } from "lucide-react";
+import {
+  BarChart3,
+  CalendarClock,
+  CalendarDays,
+  DollarSign,
+  Flame,
+  LayoutGrid,
+  Link2,
+  ListChecks,
+  ListTodo,
+  LogOut,
+  MessageSquare,
+  Moon,
+  MoonStar,
+  Settings,
+  Sun,
+  Sunrise,
+  Target,
+  UserMinus,
+  X,
+} from "lucide-react";
 import { Link, useLocation } from "react-router";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { portalUrl } from "@/lib/portal";
@@ -40,6 +60,8 @@ const navGroups = [
   {
     label: "Growth",
     items: [
+      { href: "/projections", label: "Projections", icon: Target },
+      { href: "/churn", label: "Churn tracker", icon: UserMinus },
       { href: "/hotlist", label: "Hot list", icon: Flame },
       { href: "/money", label: "My money", icon: DollarSign },
     ],

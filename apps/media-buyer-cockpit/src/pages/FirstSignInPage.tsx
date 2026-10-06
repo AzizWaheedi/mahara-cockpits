@@ -1,4 +1,4 @@
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { ArrowLeft, CheckCircle2, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Wordmark } from "@/components/Wordmark";
 import { getCockpitSupabaseClient, useCockpitAuth } from "@/auth/SupabaseAuthProvider";
+import { loadSupabaseAccess, assertSupabaseActor, cockpitAccessError } from "@/auth/supabaseAccess";
 
 type SetupStep = "requestOtp" | "verifyAndSetPassword" | "complete";
 
@@ -22,88 +23,96 @@ export function FirstSignInPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const attempt = useRef<{ email: string; userId: string | null } | null>(null);
+
+  useEffect(() => {
+    const { data } = supabase.auth.onAuthStateChange((event, next) => {
+      const pending = attempt.current;
+      if (!pending || event === "INITIAL_SESSION") return;
+      if (next?.user.email?.trim().toLowerCase() === pending.email &&
+        (!pending.userId || next.user.id === pending.userId)) return;
+      // Cancel the old actor's work before any of its awaited results can touch this form.
+      attempt.current = null;
+      setEmail(next?.user.email ?? "");
+      setCode("");
+      setPassword("");
+      setStep("requestOtp");
+      setBusy(false);
+      setError(null);
+      setStatusMessage(null);
+    });
+    return () => {
+      attempt.current = null;
+      data.subscription.unsubscribe();
+    };
+  }, [supabase]);
 
   async function handleSendCode(e: FormEvent) {
     e.preventDefault();
+    const cleanEmail = email.trim().toLowerCase();
+    const pending = { email: cleanEmail, userId: null };
+    attempt.current = pending;
     setBusy(true);
     setError(null);
     setStatusMessage(null);
-
-    const cleanEmail = email.trim().toLowerCase();
-
     try {
-      // Check if user is in directory
-      const { data: member, error: memberErr } = await supabase
-        .from("cockpit_members")
-        .select("email,active")
-        .eq("email", cleanEmail)
-        .maybeSingle();
-
-      if (memberErr || !member || !member.active) {
-        setError("This email does not have an active cockpit seat. Ask Aziz to add you in the portal first.");
-        setBusy(false);
-        return;
-      }
-
+      // Directory seats can predate Auth accounts. Create only an unprivileged
+      // Auth identity; the private directory is checked after email confirmation.
       const { error: otpErr } = await supabase.auth.signInWithOtp({
         email: cleanEmail,
-        options: { shouldCreateUser: false },
+        options: { shouldCreateUser: true },
       });
-
-      if (otpErr) {
-        setError(otpErr.message);
-      } else {
-        setStep("verifyAndSetPassword");
-        setStatusMessage(`A setup code has been sent to ${cleanEmail}. Enter it below along with your chosen password.`);
-      }
+      if (attempt.current !== pending) return;
+      if (otpErr) throw otpErr;
+      setStep("verifyAndSetPassword");
+      setStatusMessage(`A setup code has been sent to ${cleanEmail}. Enter it below along with your chosen password.`);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to initiate password setup.");
+      if (attempt.current === pending) setError(cockpitAccessError(err));
     } finally {
-      setBusy(false);
+      if (attempt.current === pending) setBusy(false);
     }
   }
 
   async function handleVerifyAndSetPassword(e: FormEvent) {
     e.preventDefault();
-    setBusy(true);
-    setError(null);
-
     const cleanEmail = email.trim().toLowerCase();
     const cleanCode = code.replace(/\D/g, "").slice(-6);
-
+    const pending: { email: string; userId: string | null } = { email: cleanEmail, userId: null };
+    attempt.current = pending;
+    setBusy(true);
+    setError(null);
     try {
       const { data, error: verifyErr } = await supabase.auth.verifyOtp({
         email: cleanEmail,
         token: cleanCode,
         type: "email",
       });
-
-      if (verifyErr || !data.session) {
-        setError(verifyErr?.message ?? "Invalid or expired code. Please request a new code.");
-        setBusy(false);
-        return;
+      if (attempt.current !== pending) return;
+      if (verifyErr) throw verifyErr;
+      const verifiedUser = data.session?.user;
+      if (!verifiedUser?.email_confirmed_at ||
+        verifiedUser.email?.trim().toLowerCase() !== cleanEmail) {
+        throw new Error("The setup code did not confirm this email. Request a new code.");
       }
+      pending.userId = verifiedUser.id;
+      const access = await loadSupabaseAccess(supabase, verifiedUser.id);
+      if (attempt.current !== pending) return;
+      if (!access) throw new Error("No active directory seat matches this confirmed account. Ask an admin to check your seat.");
 
-      // Link confirmed Auth user to cockpit directory
-      await supabase.rpc("cockpit_link_confirmed_member", {
-        p_user_id: data.session.user.id,
-      });
-
-      // Update password
-      const { error: pwdErr } = await supabase.auth.updateUser({
-        password,
-      });
-
-      if (pwdErr) {
-        setError(`Seat linked, but setting password failed: ${pwdErr.message}`);
-      } else {
-        setStep("complete");
-        await refreshAccess();
-      }
+      // Never apply a password to whichever account happens to be current later.
+      await assertSupabaseActor(supabase, verifiedUser);
+      if (attempt.current !== pending) return;
+      const { error: pwdErr } = await supabase.auth.updateUser({ password });
+      if (attempt.current !== pending) return;
+      if (pwdErr) throw pwdErr;
+      await refreshAccess();
+      if (attempt.current !== pending) return;
+      await assertSupabaseActor(supabase, verifiedUser);
+      if (attempt.current === pending) setStep("complete");
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to complete account setup.");
+      if (attempt.current === pending) setError(cockpitAccessError(err));
     } finally {
-      setBusy(false);
+      if (attempt.current === pending) setBusy(false);
     }
   }
 

@@ -311,6 +311,46 @@ export function planSeriesChange(
   };
 }
 
+/**
+ * Whether a series already is what the change asks for: the same days, the
+ * same start and the same length. A meeting made of one series a day runs
+ * the change on every day's series, and a day that is not changing must not
+ * be split or re-sent (unticking Sunday on CSM Daily ends Sunday's series
+ * and leaves the other four alone).
+ */
+export function seriesUnchanged(
+  now: {
+    start_time: string | null;
+    minutes: number | null;
+    weekdays: number[] | null;
+  },
+  change: { weekdays: number[]; startTime: string; minutes: number },
+): boolean {
+  if (!now.start_time || now.minutes === null) return false;
+  const days = (d: number[] | null) =>
+    [...new Set(d ?? [])].sort((a, b) => a - b).join(",");
+  return (
+    hhmm(now.start_time) === hhmm(change.startTime) &&
+    now.minutes === change.minutes &&
+    days(now.weekdays) === days(change.weekdays)
+  );
+}
+
+/**
+ * How a series ends on its last day. A series whose first sitting comes
+ * after that day is cancelled, never deleted: an end date before its start
+ * would still keep the first sitting, since a rule's start always counts as
+ * its first occurrence. A single event on or before the day is left alone.
+ */
+export function endPlan(
+  rrule: string | null,
+  firstDay: string | null,
+  lastDay: string,
+): "cancel" | "until" | "keep" {
+  if (firstDay && firstDay > lastDay) return "cancel";
+  return rrule ? "until" : "keep";
+}
+
 /** The wall-clock end of a sitting, over midnight if it must. */
 export function endOf(day: string, start: string, minutes: number): string {
   const [h, m] = hhmm(start).split(":").map(Number);

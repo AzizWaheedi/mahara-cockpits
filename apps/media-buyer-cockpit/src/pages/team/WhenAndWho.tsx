@@ -15,7 +15,6 @@ import { Input } from "@/components/ui/input";
 import {
   addDays,
   dayLabel,
-  seriesLine,
   seriesPreview,
   utcToZoned,
 } from "@/lib/teamCore";
@@ -31,12 +30,27 @@ import {
   timeRange,
   useBusy,
 } from "./teamKit";
+import {
+  inViewer,
+  localToday,
+  rangeIn,
+  sameClock,
+  seriesIn,
+  seriesInDays,
+  viewerZone,
+  zoneName,
+} from "./teamTime";
+
+/** " (Kuwait time)" on a time field when the viewer's clock is not the meeting's. */
+function zoneTag(tz: string): string {
+  return sameClock(tz, viewerZone()) ? "" : ` (${zoneName(tz)} time)`;
+}
 
 /**
  * When and who: the top of a meeting's page. The series in one line, what
  * Google Calendar holds, the next four sittings, and the people. Hosts,
  * admins and the CEO change it here and it lands on the Google Calendar
- * event (convex/teamCalendar.ts); everyone else reads it.
+ * event through the native calendar queue; everyone else reads it.
  */
 
 type Act = (fn: () => Promise<unknown>) => Promise<void>;
@@ -57,19 +71,23 @@ export function WhenAndWho({ page, act }: { page: Page; act: Act }) {
   const livePartDays = cal.parts.filter(
     p => !p.endsOn || p.endsOn >= page.today,
   );
-  const line =
-    m.startTime || m.weekdays?.length
-      ? seriesLine({
-          weekdays: m.weekdays ?? null,
-          startTime: m.startTime ?? null,
-          minutes: m.minutes ?? null,
-          tz: m.tz,
-          rrule: m.rrule,
-          onDay: !m.weekdays?.length
-            ? (page.next[0]?.onDate ?? m.endsOn)
-            : null,
-        })
-      : "No time set yet";
+  const series =
+    seriesInDays(livePartDays, m.tz, page.today) ??
+    (m.startTime || m.weekdays?.length
+      ? seriesIn(
+          {
+            weekdays: m.weekdays,
+            startTime: m.startTime,
+            minutes: m.minutes,
+            tz: m.tz,
+            rrule: m.rrule,
+            onDay: !m.weekdays?.length
+              ? (page.next[0]?.onDate ?? m.endsOn)
+              : null,
+          },
+          page.today,
+        )
+      : { line: "No time set yet", theirs: null });
   return (
     <section
       className="rounded-2xl border bg-card"
@@ -83,8 +101,13 @@ export function WhenAndWho({ page, act }: { page: Page; act: Act }) {
                 When and who
               </h2>
               <p className="mt-1 text-lg font-semibold tracking-tight">
-                {line}
+                {series.line}
               </p>
+              {series.theirs ? (
+                <p className="text-sm text-muted-foreground">
+                  {series.theirs}, as the calendar keeps it
+                </p>
+              ) : null}
               {m.endsOn && m.weekdays?.length ? (
                 <p className="text-sm text-muted-foreground">
                   {m.endsOn < page.today ? "Ended" : "Last sitting"}{" "}
@@ -343,7 +366,7 @@ function SeriesEditor({
       )}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
         <label className="grid gap-1 text-xs font-medium text-muted-foreground">
-          Starts
+          Starts{zoneTag(m.tz)}
           <input
             type="time"
             value={start}
@@ -460,14 +483,17 @@ function SittingRow({ s, page, act }: { s: Sitting; page: Page; act: Act }) {
   );
   const [busy, run] = useBusy();
   const cancelled = s.status === "cancelled";
-  // A moved sitting shows where it went; its own day stays its name.
-  const at = s.startsAt
-    ? utcToZoned(s.startsAt, page.meeting.tz ?? "Asia/Kuwait").day
+  // A moved sitting shows where it went; its own day stays its name. The
+  // day and time shown are the viewer's; "moved" is judged on the meeting's
+  // own calendar.
+  const homeDay = s.startsAt
+    ? utcToZoned(s.startsAt, page.meeting.tz).day
     : s.onDate;
+  const at = inViewer(s.startsAt)?.day ?? s.onDate;
   const movedFrom =
     s.status !== "moved"
       ? null
-      : at !== s.onDate
+      : homeDay !== s.onDate
         ? dayLabel(s.onDate)
         : page.meeting.startTime
           ? page.meeting.startTime.slice(0, 5)
@@ -479,10 +505,10 @@ function SittingRow({ s, page, act }: { s: Sitting; page: Page; act: Act }) {
           className={`min-w-0 flex-1 text-sm ${cancelled ? "text-muted-foreground line-through" : ""}`}
         >
           <span className="font-medium">
-            {at === page.today ? "Today" : dayLabel(at)}
+            {at === localToday() ? "Today" : dayLabel(at)}
           </span>{" "}
           <span className="font-mono text-[13px] text-muted-foreground">
-            {timeRange(s.time ?? null, s.endTime ?? null)}
+            {rangeIn(s.startsAt, s.endsAt) || timeRange(s.time, s.endTime)}
           </span>
           {movedFrom ? (
             <span className="ml-2 text-xs txt-warn">
@@ -561,7 +587,7 @@ function SittingRow({ s, page, act }: { s: Sitting; page: Page; act: Act }) {
             step={300}
             onChange={e => setStart(e.target.value)}
             className={`${fieldClass} sm:w-28`}
-            aria-label="Start"
+            aria-label={`Start${zoneTag(page.meeting.tz)}`}
           />
           <input
             type="number"
@@ -593,6 +619,12 @@ function SittingRow({ s, page, act }: { s: Sitting; page: Page; act: Act }) {
             <p className="text-xs text-muted-foreground sm:col-span-4">
               Only this sitting moves on Google Calendar; the series stays as it
               is.
+            </p>
+          ) : null}
+          {zoneTag(page.meeting.tz) ? (
+            <p className="text-xs text-muted-foreground sm:col-span-4">
+              The date and time are {zoneName(page.meeting.tz)} time, as the
+              calendar keeps them.
             </p>
           ) : null}
         </form>
@@ -647,7 +679,7 @@ function AddOneOff({
         step={300}
         onChange={e => setStart(e.target.value)}
         className={`${fieldClass} sm:w-28`}
-        aria-label="Start"
+        aria-label={`Start${zoneTag(page.meeting.tz)}`}
       />
       <input
         type="number"
@@ -674,6 +706,12 @@ function AddOneOff({
         <p className="text-xs text-muted-foreground sm:col-span-4">
           It goes on Google Calendar as its own event, with the same guests and
           a Meet link.
+        </p>
+      ) : null}
+      {zoneTag(page.meeting.tz) ? (
+        <p className="text-xs text-muted-foreground sm:col-span-4">
+          The date and time are {zoneName(page.meeting.tz)} time, as the
+          calendar keeps them.
         </p>
       ) : null}
     </form>

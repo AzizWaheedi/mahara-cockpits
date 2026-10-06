@@ -23,8 +23,8 @@ import { displayLabel, plainText, plural, sentence, shortDay } from "@/lib/forma
 import { publishOpenClient } from "@/lib/openClient";
 import { useCsmSnapshot } from "@/lib/useCsmSnapshot";
 import { cn } from "@/lib/utils";
-
-
+import type { MonthRow } from "@/lib/churnCore";
+import { readChurnPage } from "@/lib/churnClient";
 
 /** Tickets the CSM raises. Picking the request picks the board — she never picks a team. */
 const TICKETS: { label: string; dept: string; deptLabel: string }[] = [
@@ -2628,8 +2628,10 @@ export function CsmPage({ section }: { section: Section }) {
 }
 
 /**
- * His own money screen. Churn is never computed here — it is read from the company's Churn
- * Tracker sheet and shown with its month and source, so nobody argues about the number.
+ * His own money screen. Churn is never computed here: it is the churn tracker's
+ * figure for the month (/churn, mahara-context's rule: clients lost before day 90
+ * over the clients active at the start), with the daily roster's count beside it.
+ * Until the month has a start, the roster's count stands in, and says so.
  */
 function MoneySection({
   snap,
@@ -2649,7 +2651,7 @@ function MoneySection({
   setClientsEdit: (v: string | null) => void;
   countEdits: Counts;
   setCountEdits: (v: Counts) => void;
-  // biome-ignore lint/suspicious/noExplicitAny: convex mutation
+  // biome-ignore lint/suspicious/noExplicitAny: income-plan save callback
   onSave: any;
 }) {
   const saved = snap.money ?? null;
@@ -2664,9 +2666,29 @@ function MoneySection({
   }[] = snap.kpis ?? [];
   const churnKpi = kpis.find(k => k.key === "churn");
   const churnMissing = kpis.find(k => k.key === "churn_missing");
-  // My own measurement wins. The sheet is kept as a cross-check underneath.
   const measured = snap.churn ?? null;
-  const churn: number | null = measured?.pct ?? null;
+  // The churn tracker is the one figure; the roster stands in until the month has a start.
+  const { client, session } = useCockpitAuth();
+  const [tracker, setTracker] = useState<MonthRow | null | undefined>(
+    undefined,
+  );
+  useEffect(() => {
+    let live = true;
+    setTracker(undefined);
+    readChurnPage(client)
+      .then(r => live && setTracker(r.months.find(m => m.month === r.month) ?? null))
+      .catch(() => live && setTracker(null));
+    return () => {
+      live = false;
+    };
+  }, [client, session?.user.id]);
+  const fromTracker =
+    tracker && tracker.churnPct !== null && tracker.activeAtStart
+      ? tracker
+      : null;
+  const churn: number | null = fromTracker
+    ? fromTracker.churnPct
+    : (measured?.pct ?? null);
 
   const target = Number(targetEdit ?? saved?.target ?? 0);
   const clients = Number(
@@ -2712,7 +2734,33 @@ function MoneySection({
               Target: under {CHURN_TARGET}%
             </div>
           </div>
-          {measured ? (
+          {fromTracker ? (
+            <div className="min-w-0 text-sm">
+              <div>
+                <span className="font-semibold">{fromTracker.churned}</span>{" "}
+                churned of{" "}
+                <span className="font-semibold">
+                  {fromTracker.activeAtStart}
+                </span>{" "}
+                active at the start
+                {fromTracker.completed
+                  ? `, ${fromTracker.completed} finished the term`
+                  : ""}
+              </div>
+              <div className="text-xs text-muted-foreground">
+                From the{" "}
+                <Link
+                  to="/churn"
+                  className="text-primary underline-offset-2 hover:underline"
+                >
+                  churn tracker
+                </Link>
+                {measured
+                  ? ` · the daily roster saw ${measured.lost} leave`
+                  : ""}
+              </div>
+            </div>
+          ) : measured ? (
             <div className="min-w-0 text-sm">
               <div>
                 <span className="font-semibold">{measured.lost}</span> lost out
@@ -2773,10 +2821,12 @@ function MoneySection({
         <details className="border-t px-4 py-3 text-xs text-muted-foreground sm:px-6">
           <summary>How this is counted</summary>
           <p className="mt-2">
-            Measured from our own daily client roster: paying clients at the
-            start of the month, minus the ones now stopped, cancelled, paused or
-            off the board. Nobody has to fill anything in for this to stay
-            correct.
+            From the churn tracker: clients lost before day 90 this month, over
+            the clients active at the start. A client who finishes the term and
+            does not renew is not churn. Until the month has its start count on
+            the churn tracker, the daily roster's count stands in: paying
+            clients at the start of the month, minus the ones now stopped,
+            cancelled, paused past 14 days or off the board.
             {churnKpi?.value
               ? ` Your churn tracker sheet says ${churnKpi.value} for the same month.`
               : churnMissing

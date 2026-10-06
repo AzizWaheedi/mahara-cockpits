@@ -1,4 +1,6 @@
+import { z } from "zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { cleanDoc, cleanLinks, DOC_MAX, linksOf, picturePaths, PICTURE_BUCKET, withPictureUrls, type MeetingLink } from "./teamDoc";
 import {
   addDays,
   blocksFor,
@@ -6,13 +8,9 @@ import {
   hhmm,
   notPlanned,
   overdue,
-  pickIndex,
   pipelineStrip,
   renderOption,
-  seriesLine,
   slipsAdded,
-  spinLine,
-  spinRefusal,
   utcToZoned,
   weekdayOf,
   weekStart,
@@ -39,10 +37,11 @@ export type MeetingSummary = {
   lastSitting: string | null;
   openItems: number;
   mine: boolean;
-  startTime?: string | null;
-  minutes?: number | null;
-  weekdays?: number[] | null;
-  onCalendar?: boolean;
+  startTime: string | null;
+  minutes: number | null;
+  weekdays: number[] | null;
+  tz: string;
+  onCalendar: boolean;
 };
 
 export type WeekItem = {
@@ -51,9 +50,11 @@ export type WeekItem = {
   theme: string | null;
   day: string;
   time: string | null;
-  endTime?: string | null;
-  status?: string;
-  onCalendar?: boolean;
+  endTime: string | null;
+  startsAt: string | null;
+  endsAt: string | null;
+  status: "scheduled" | "moved" | "cancelled";
+  onCalendar: boolean;
 };
 
 export type WeekDay = {
@@ -208,6 +209,8 @@ export type CalendarStatus = {
     title: string | null;
     writable: boolean;
     endsOn: string | null;
+    startTime: string | null;
+    minutes: number | null;
   }[];
 };
 
@@ -235,6 +238,8 @@ export type MeetingPage = {
     endsOn: string | null;
     meetLink: string | null;
     pipeline: "board" | "strip" | null;
+    embed: "cs-projections" | "cs-daily" | null;
+    links: MeetingLink[];
   };
   people: Person[];
   members: { personId: string; part: "host" | "required" | "optional" }[];
@@ -282,19 +287,8 @@ function slug(text: string): string {
     .slice(0, 48);
 }
 
-const CADENCES = [
-  "daily",
-  "three times a week",
-  "twice a week",
-  "weekly",
-  "every two weeks",
-  "monthly",
-  "quarterly",
-  "as needed",
-] as const;
 
 const PARTS = ["host", "required", "optional"] as const;
-const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 export async function logChange(
   client: SupabaseClient,
@@ -303,61 +297,32 @@ export async function logChange(
   what: string,
   detail?: Record<string, unknown>,
 ) {
-  try {
-    await client.from("team_changes").insert({
-      by_whom: by,
-      meeting_id: meetingId,
-      what,
-      detail: detail ?? null,
-    });
-  } catch (e) {
-    console.error("Failed to log team change:", e);
-  }
+  const { error } = await client.from("team_changes").insert({
+    by_whom: by, meeting_id: meetingId, what, detail: detail ?? null,
+  }).throwOnError();
+  if (error) throw error;
 }
 
-export async function enqueueCalendarOp(
+async function calendarCommand(
   client: SupabaseClient,
-  by: string,
-  meetingId: string,
-  op: string,
-  payload: Record<string, unknown> | null,
-  sittingId: string | null = null,
-) {
-  try {
-    await client.from("team_calendar_ops").insert({
-      meeting_id: meetingId,
-      op,
-      payload: payload ?? null,
-      sitting_id: sittingId,
-      by_whom: by,
-      status: "pending",
-      attempts: 0,
-    });
-  } catch (e) {
-    console.error("Failed to enqueue calendar op:", e);
-  }
+  u: TeamUserContext,
+  action: string,
+  args: Record<string, unknown>,
+): Promise<MeetingPage> {
+  const { data, error } = await client.rpc("cockpit_team_calendar_command", { p_action: action, p_args: args });
+  if (error) throw error;
+  if (typeof data !== "string") throw new Error("The meeting command returned no meeting.");
+  return fetchMeetingPage(client, u, data);
 }
 
 export async function canManage(
   client: SupabaseClient,
-  u: TeamUserContext,
+  _u: TeamUserContext,
   meetingId: string,
 ): Promise<boolean> {
-  if (u.isCeo || u.isAdmin) return true;
-  const { data: people } = await client
-    .from("team_people")
-    .select("id, email")
-    .ilike("email", u.email)
-    .limit(1);
-  const me = people?.[0];
-  if (!me) return false;
-  const { data: rows } = await client
-    .from("team_meeting_people")
-    .select("part")
-    .eq("meeting_id", meetingId)
-    .eq("person_id", me.id)
-    .eq("removed", false);
-  return (rows ?? []).some(r => r.part === "host");
+  const { data, error } = await client.rpc("cockpit_team_can_manage", { p_meeting_id: meetingId });
+  if (error) throw error;
+  return Boolean(data);
 }
 
 function sittingOfRow(s: DbRow, tz: string): Sitting {
@@ -436,32 +401,23 @@ export async function fetchTeamOverview(
   const [peopleRes, meetingsRes, linksRes, sittingsRes, openRes, themesRes] =
     await Promise.all([
       client
-        .from("team_people")
-        .select("id, name, role, department, email, active")
+        .from("team_people").select("id, name, role, department, email, active").throwOnError()
         .eq("active", true)
         .order("name", { ascending: true }),
       client
-        .from("team_meetings")
-        .select(
-          "id, title, purpose, cadence, department, start_time, minutes, weekdays, cal_event_id, ends_on, tz, active",
-        )
+        .from("team_meetings").select("id, title, purpose, cadence, department, start_time, minutes, weekdays, cal_event_id, ends_on, tz, active",).throwOnError()
         .eq("active", true)
         .order("title", { ascending: true }),
       client
-        .from("team_meeting_people")
-        .select("meeting_id, person_id, part, removed")
+        .from("team_meeting_people").select("meeting_id, person_id, part, removed").throwOnError()
         .eq("removed", false),
       client
-        .from("team_sittings")
-        .select(
-          "id, meeting_id, on_date, starts_at, ends_at, status, cal_instance_id",
-        )
+        .from("team_sittings").select("id, meeting_id, on_date, starts_at, ends_at, status, cal_instance_id",).throwOnError()
         .gte("on_date", addDays(today, -180))
         .order("on_date", { ascending: true }),
-      client.from("team_agenda").select("meeting_id").eq("status", "open"),
+      client.from("team_agenda").select("meeting_id").throwOnError().eq("status", "open"),
       client
-        .from("team_meeting_blocks")
-        .select("meeting_id, weekday, title, position")
+        .from("team_meeting_blocks").select("meeting_id, weekday, title, position").throwOnError()
         .not("weekday", "is", null)
         .order("position", { ascending: true }),
     ]);
@@ -532,6 +488,8 @@ export async function fetchTeamOverview(
         day: s.startsAt ? utcToZoned(s.startsAt, tz).day : s.onDate,
         time: s.time ?? (m.start_time ? hhmm(String(m.start_time)) : null),
         endTime: s.endTime,
+        startsAt: s.startsAt,
+        endsAt: s.endsAt,
         status: s.status,
         onCalendar: s.onCalendar,
       });
@@ -577,6 +535,7 @@ export async function fetchTeamOverview(
       startTime: m.start_time ? String(m.start_time) : null,
       minutes: typeof m.minutes === "number" ? m.minutes : null,
       weekdays: Array.isArray(m.weekdays) ? (m.weekdays as number[]) : null,
+      tz: String(m.tz ?? "Asia/Kuwait"),
       onCalendar: Boolean(m.cal_event_id),
     };
   });
@@ -617,75 +576,65 @@ export async function fetchMeetingPage(
     opsRes,
     seriesRes,
   ] = await Promise.all([
-    client.from("team_meetings").select("*").eq("id", id).maybeSingle(),
+    client.from("team_meetings").select("*").throwOnError().eq("id", id).maybeSingle(),
     client
-      .from("team_people")
-      .select("id, name, role, department, email, active")
+      .from("team_people").select("id, name, role, department, email, active").throwOnError()
       .eq("active", true)
       .order("name", { ascending: true }),
     client
-      .from("team_meeting_people")
-      .select("person_id, part")
+      .from("team_meeting_people").select("person_id, part").throwOnError()
       .eq("meeting_id", id)
       .eq("removed", false),
     client
-      .from("team_sittings")
-      .select("*")
+      .from("team_sittings").select("*").throwOnError()
       .eq("meeting_id", id)
       .gte("on_date", addDays(today, -400))
       .order("on_date", { ascending: false })
       .limit(120),
     client
-      .from("team_agenda")
-      .select("*")
+      .from("team_agenda").select("*").throwOnError()
       .eq("meeting_id", id)
       .or(`status.eq.open,closed_at.gte.${addDays(today, -120)}`)
       .order("position", { ascending: true }),
     client
-      .from("team_changes")
-      .select("at, by_whom, what")
+      .from("team_changes").select("at, by_whom, what").throwOnError()
       .eq("meeting_id", id)
       .order("at", { ascending: false })
       .limit(25),
     client
-      .from("team_meeting_blocks")
-      .select("*")
+      .from("team_meeting_blocks").select("*").throwOnError()
       .eq("meeting_id", id)
       .order("position", { ascending: true }),
     client
-      .from("team_wheels")
-      .select("*")
+      .from("team_wheels").select("*").throwOnError()
       .eq("meeting_id", id)
       .order("position", { ascending: true }),
     client
-      .from("team_wheel_options")
-      .select("*")
+      .from("team_wheel_options").select("*").throwOnError()
       .order("position", { ascending: true }),
     client
-      .from("team_wheel_spins")
-      .select("*")
-      .order("spun_at", { ascending: false })
+      .from("team_wheel_spins").select("*").throwOnError()
+      .order("at", { ascending: false })
       .limit(30),
     client
-      .from("team_creative_rows")
-      .select("*")
+      .from("team_creative_rows").select("*").throwOnError()
       .order("launch_on", { ascending: true })
       .limit(300),
     client
-      .from("team_calendar_ops")
-      .select("id, op, status, error, at")
+      .from("team_calendar_ops").select("id, op, status, error, at").throwOnError()
       .eq("meeting_id", id)
-      .or("status.eq.pending,status.eq.failed")
+      .or("status.eq.pending,status.eq.running,status.eq.failed")
       .order("id", { ascending: false })
       .limit(20),
     client
-      .from("team_meeting_series")
-      .select("*")
+      .from("team_meeting_series").select("*").throwOnError()
       .eq("meeting_id", id)
       .order("weekday", { ascending: true }),
   ]);
 
-  if (meetingRes.error) throw meetingRes.error;
+  for (const result of [meetingRes, peopleRes, linksRes, sittingsRes, itemsRes, changesRes, blocksRes, wheelsRes, wheelOptionsRes, spinsRes, creativeRes, opsRes, seriesRes]) {
+    if (result.error) throw result.error;
+  }
   const m = meetingRes.data;
   if (!m) {
     throw new Error(
@@ -718,11 +667,7 @@ export async function fetchMeetingPage(
     people.find(
       p => String(p.email ?? "").toLowerCase() === u.email.toLowerCase(),
     ) ?? null;
-  const hosts = links
-    .filter(l => l.part === "host")
-    .map(l => String(l.person_id));
-  const canManageMeeting =
-    u.isCeo || u.isAdmin || Boolean(me && hosts.includes(me.id));
+  const canManageMeeting = await canManage(client, u, id);
 
   const sittings: Sitting[] = rawSittings.map(s =>
     sittingOfRow(s as DbRow, tz),
@@ -865,12 +810,23 @@ export async function fetchMeetingPage(
       }
     : null;
 
+  const liveParts = rawSeries.filter(s => !s.ends_on || String(s.ends_on) >= today);
+  const writable = liveParts.length ? liveParts.every(s => s.cal_writable) : Boolean(m.cal_writable);
+  const { data: workerStatus, error: statusError } = await client.rpc("cockpit_team_calendar_ready");
+  if (statusError) throw statusError;
+  const paths = picturePaths(String(m.doc ?? ""));
+  const pictures = new Map<string, string>();
+  if (paths.length) {
+    const { data, error } = await client.storage.from(PICTURE_BUCKET).createSignedUrls(paths, 7 * 24 * 3600);
+    if (error) throw error;
+    for (const picture of data ?? []) if (picture.path && picture.signedUrl) pictures.set(picture.path, picture.signedUrl);
+  }
   const calendar: CalendarStatus = {
-    state: m.cal_event_id ? "on" : "off",
-    ready: true,
+    state: m.cal_event_id ? writable ? "on" : "someone-else" : "off",
+    ready: Boolean(workerStatus),
     syncedAt: m.cal_synced_at ? String(m.cal_synced_at) : null,
     error: m.cal_error ? String(m.cal_error) : null,
-    waiting: rawOps.filter(o => o.status === "pending").length,
+    waiting: rawOps.filter(o => o.status === "pending" || o.status === "running").length,
     failed: rawOps
       .filter(o => o.status === "failed")
       .map(o => ({
@@ -880,14 +836,18 @@ export async function fetchMeetingPage(
         at: String(o.at),
       })),
     organizer: m.cal_calendar ? String(m.cal_calendar) : null,
-    link: m.cal_event_id ? `https://meet.google.com` : null,
+    link: m.cal_event_id && m.cal_calendar
+      ? `https://www.google.com/calendar/event?eid=${btoa(`${m.cal_event_id} ${m.cal_calendar}`).replace(/=+$/, "")}`
+      : null,
     parts: rawSeries.map(s => ({
       calendar: String(s.cal_calendar ?? ""),
       eventId: String(s.cal_event_id ?? ""),
       weekday: typeof s.weekday === "number" ? s.weekday : null,
-      title: s.title ? String(s.title) : null,
+      title: s.cal_title ? String(s.cal_title) : null,
       writable: Boolean(s.cal_writable),
       endsOn: s.ends_on ? String(s.ends_on) : null,
+      startTime: s.start_time ? String(s.start_time) : null,
+      minutes: s.minutes == null ? null : Number(s.minutes),
     })),
   };
 
@@ -903,7 +863,7 @@ export async function fetchMeetingPage(
       department: m.department ? String(m.department) : null,
       fromCalendar: Boolean(m.cal_event_id),
       managed: m.managed ? String(m.managed) : "cockpit",
-      doc: String(m.doc ?? ""),
+      doc: withPictureUrls(String(m.doc ?? ""), pictures),
       docBy: m.doc_by ? String(m.doc_by) : null,
       docAt: m.doc_at ? String(m.doc_at) : null,
       docVersion: Number(m.doc_version ?? 0),
@@ -915,6 +875,8 @@ export async function fetchMeetingPage(
       endsOn: m.ends_on ? String(m.ends_on) : null,
       meetLink: m.meet_link ? String(m.meet_link) : null,
       pipeline: m.pipeline as "board" | "strip" | null,
+      embed: m.embed === "cs-projections" || m.embed === "cs-daily" ? m.embed : null,
+      links: linksOf(m.links),
     },
     people,
     members: links.map(l => ({
@@ -940,283 +902,39 @@ export async function fetchMeetingPage(
   };
 }
 
-export async function saveMeeting(
-  client: SupabaseClient,
-  u: TeamUserContext,
-  a: {
-    id?: string;
-    title: string;
-    purpose: string;
-    cadence: string;
-    department?: string;
-  },
-): Promise<MeetingPage> {
-  const title = clean(a.title, 120);
-  const purpose = clean(a.purpose, 300);
-  const department = clean(a.department, 60) || null;
-  if (title.length < 3) throw new Error("Give the meeting a name.");
-  if (purpose.length < 8)
-    throw new Error(
-      "Say what the meeting is for in one sentence: every meeting has a purpose.",
-    );
-  if (!(CADENCES as readonly string[]).includes(a.cadence as (typeof CADENCES)[number]))
-    throw new Error("Pick how often it meets.");
+export async function saveMeeting(client: SupabaseClient, u: TeamUserContext, a: { id?: string; title: string; purpose: string; cadence: string; department?: string; onCalendar?: boolean; weekdays?: number[]; startTime?: string; minutes?: number; firstDate?: string }): Promise<MeetingPage> { return calendarCommand(client, u, 'saveMeeting', a); }
 
-  if (a.id) {
-    const ok = await canManage(client, u, a.id);
-    if (!ok)
-      throw new Error(
-        "Only this meeting's hosts, admins and Aziz change who is in it and what it is for. Ask a host.",
-      );
-    const { data: before } = await client
-      .from("team_meetings")
-      .select("title, purpose, cadence, department")
-      .eq("id", a.id)
-      .maybeSingle();
-    if (!before) throw new Error("That meeting is not in the list any more.");
+export async function setPart(client: SupabaseClient,
+u: TeamUserContext,
+a: {
+  meetingId: string;
+  personId?: string;
+  part: "host" | "required" | "optional" | "off";
+},): Promise<MeetingPage> { return calendarCommand(client, u, 'setPart', a); }
 
-    const calendarFields =
-      before.title !== title ||
-      before.cadence !== a.cadence ||
-      (before.department ?? null) !== department;
-
-    const { error: updErr } = await client
-      .from("team_meetings")
-      .update({
-        title,
-        purpose,
-        cadence: a.cadence,
-        department,
-        updated_at: new Date().toISOString(),
-        ...(calendarFields ? { managed: "cockpit" } : {}),
-      })
-      .eq("id", a.id);
-    if (updErr) throw updErr;
-
-    const changed = [
-      before.title !== title ? `renamed it "${title}"` : null,
-      before.purpose !== purpose ? "set its purpose" : null,
-      before.cadence !== a.cadence ? `made it ${a.cadence}` : null,
-      (before.department ?? null) !== department
-        ? department
-          ? `put it under ${department}`
-          : "took its department off"
-        : null,
-    ].filter(Boolean);
-
-    if (changed.length) {
-      await logChange(client, u.email, a.id, changed.join(", "), {
-        before,
-        after: { title, purpose, cadence: a.cadence, department },
-      });
-    }
-    return fetchMeetingPage(client, u, a.id);
-  }
-
-  const base = slug(title) || "meeting";
-  const { data: existing } = await client
-    .from("team_meetings")
-    .select("id")
-    .like("id", `${base}%`);
-  const taken = new Set((existing ?? []).map(r => String(r.id)));
-  let id = base;
-  for (let n = 2; taken.has(id); n++) id = `${base}-${n}`;
-
-  const { data: people } = await client
-    .from("team_people")
-    .select("id, email")
-    .ilike("email", u.email)
-    .limit(1);
-  const me = people?.[0] ?? null;
-
-  const { error: insErr } = await client.from("team_meetings").insert({
-    id,
-    title,
-    purpose,
-    cadence: a.cadence,
-    department,
-    host_id: me?.id ?? null,
-    active: true,
-    managed: "cockpit",
-    created_by: u.email,
-  });
-  if (insErr) throw insErr;
-
-  if (me) {
-    await client.from("team_meeting_people").insert({
-      meeting_id: id,
-      person_id: me.id,
-      part: "host",
-      source: "cockpit",
-      changed_by: u.email,
-      changed_at: new Date().toISOString(),
-    });
-  }
-
-  await logChange(client, u.email, id, `made the meeting "${title}"`, {
-    purpose,
-    cadence: a.cadence,
-    department,
-  });
-
-  return fetchMeetingPage(client, u, id);
-}
-
-export async function setPart(
-  client: SupabaseClient,
-  u: TeamUserContext,
-  a: {
-    meetingId: string;
-    personId?: string;
-    part: "host" | "required" | "optional" | "off";
-  },
-): Promise<MeetingPage> {
-  const ok = await canManage(client, u, a.meetingId);
-  if (!ok)
-    throw new Error(
-      "Only this meeting's hosts, admins and Aziz change who is in it and what it is for. Ask a host.",
-    );
-
-  const targetPersonId = a.personId;
-  if (!targetPersonId) throw new Error("Choose a person.");
-
-  const { data: person } = await client
-    .from("team_people")
-    .select("id, name")
-    .eq("id", targetPersonId)
-    .maybeSingle();
-  if (!person) throw new Error("That person is not on the team roster.");
-
-  const { data: current } = await client
-    .from("team_meeting_people")
-    .select("part, removed")
-    .eq("meeting_id", a.meetingId)
-    .eq("person_id", targetPersonId)
-    .maybeSingle();
-
-  if (a.part === "off" || (current?.part === "host" && a.part !== "host")) {
-    const { data: hosts } = await client
-      .from("team_meeting_people")
-      .select("person_id")
-      .eq("meeting_id", a.meetingId)
-      .eq("part", "host")
-      .eq("removed", false);
-    const others = (hosts ?? []).filter(h => h.person_id !== targetPersonId);
-    if (current?.part === "host" && !current.removed && !others.length)
-      throw new Error("Make somebody else the host first: every meeting has one.");
-  }
-
-  const now = new Date().toISOString();
-  await client.from("team_meeting_people").upsert(
-    {
-      meeting_id: a.meetingId,
-      person_id: targetPersonId,
-      part: a.part === "off" ? (current?.part ?? "required") : a.part,
-      removed: a.part === "off",
-      source: "cockpit",
-      changed_by: u.email,
-      changed_at: now,
-    },
-    { onConflict: "meeting_id,person_id" },
-  );
-
-  const { data: hosts } = await client
-    .from("team_meeting_people")
-    .select("person_id")
-    .eq("meeting_id", a.meetingId)
-    .eq("part", "host")
-    .eq("removed", false)
-    .order("changed_at", { ascending: true });
-
-  await client
-    .from("team_meetings")
-    .update({
-      host_id: hosts?.[0]?.person_id ?? null,
-      managed: "cockpit",
-      updated_at: now,
-    })
-    .eq("id", a.meetingId);
-
-  const name = String(person.name);
-  await logChange(
-    client,
-    u.email,
-    a.meetingId,
-    a.part === "off"
-      ? `took ${name} off the meeting`
-      : !current || current.removed
-        ? `added ${name} as ${a.part === "host" ? "a host" : a.part}`
-        : `made ${name} ${a.part === "host" ? "a host" : a.part}`,
-  );
-
-  await enqueueCalendarOp(client, u.email, a.meetingId, "guest", {
-    personId: targetPersonId,
-    part: a.part,
-  });
-
-  return fetchMeetingPage(client, u, a.meetingId);
-}
-
-export async function addSitting(
-  client: SupabaseClient,
-  u: TeamUserContext,
-  a: { meetingId: string; date: string },
-): Promise<MeetingPage> {
-  const ok = await canManage(client, u, a.meetingId);
-  if (!ok)
-    throw new Error(
-      "Only this meeting's hosts, admins and Aziz change who is in it and what it is for. Ask a host.",
-    );
-  if (!DAY_RE.test(a.date)) throw new Error("Pick a date.");
-  const today = kuwaitDay();
-  if (a.date < addDays(today, -60) || a.date > addDays(today, 370))
-    throw new Error("Pick a date within the year.");
-
-  await client.from("team_sittings").upsert(
-    {
-      id: `${a.meetingId}:${a.date}`,
-      meeting_id: a.meetingId,
-      on_date: a.date,
-      held: a.date <= today,
-    },
-    { onConflict: "id", ignoreDuplicates: true },
-  );
-
-  await logChange(client, u.email, a.meetingId, `set a meeting on ${a.date}`);
-  await enqueueCalendarOp(
-    client,
-    u.email,
-    a.meetingId,
-    "addSitting",
-    { date: a.date },
-    `${a.meetingId}:${a.date}`,
-  );
-  return fetchMeetingPage(client, u, a.meetingId);
-}
+export async function addSitting(client: SupabaseClient, u: TeamUserContext, a: { meetingId: string; date: string; startTime?: string; minutes?: number }): Promise<MeetingPage> { return calendarCommand(client, u, 'addSitting', a); }
 
 export async function saveDoc(
   client: SupabaseClient,
   u: TeamUserContext,
   a: { meetingId: string; text: string; version: number },
 ): Promise<Saved> {
-  const text = String(a.text).slice(0, 60_000);
+  const text = cleanDoc(String(a.text).slice(0, DOC_MAX));
   const version = Math.trunc(a.version);
-  const { data: done } = await client
-    .from("team_meetings")
-    .update({
-      doc: text,
-      doc_by: u.email,
-      doc_at: new Date().toISOString(),
-      doc_version: version + 1,
-    })
+  const { data: done, error } = await client
+    .from("team_meetings").update({
+    doc: text,
+    doc_by: u.email,
+    doc_at: new Date().toISOString(),
+    doc_version: version + 1,
+  }).throwOnError()
     .eq("id", a.meetingId)
-    .eq("doc_version", version)
-    .select("doc_version");
+    .eq("doc_version", version).select("doc_version").throwOnError();
+  if (error) throw error;
 
   if (!done || done.length === 0) {
     const { data: now } = await client
-      .from("team_meetings")
-      .select("doc, doc_by, doc_at, doc_version")
+      .from("team_meetings").select("doc, doc_by, doc_at, doc_version").throwOnError()
       .eq("id", a.meetingId)
       .maybeSingle();
     if (!now) throw new Error("That meeting is not in the list any more.");
@@ -1239,36 +957,48 @@ export async function saveDoc(
   return { ok: true, page: p };
 }
 
+export async function saveLinks(
+  client: SupabaseClient,
+  u: TeamUserContext,
+  a: { meetingId: string; links: MeetingLink[] },
+): Promise<MeetingPage> {
+  const links = cleanLinks(a.links);
+  const { error } = await client.from("team_meetings").update({ links }).throwOnError().eq("id", a.meetingId);
+  if (error) throw error;
+  return fetchMeetingPage(client, u, a.meetingId);
+}
+
 export async function saveNotes(
   client: SupabaseClient,
   u: TeamUserContext,
   a: { sittingId: string; text: string; version: number },
 ): Promise<Saved> {
+  const { error: ensureError } = await client.rpc("cockpit_team_ensure_sitting", {
+    p_meeting_id: a.sittingId.slice(0, -11), p_sitting_id: a.sittingId,
+  });
+  if (ensureError) throw ensureError;
   const { data: sitting } = await client
-    .from("team_sittings")
-    .select("id, meeting_id, on_date")
+    .from("team_sittings").select("id, meeting_id, on_date").throwOnError()
     .eq("id", a.sittingId)
     .maybeSingle();
   if (!sitting) throw new Error("That meeting date is not in the list any more.");
 
   const text = String(a.text).slice(0, 30_000);
   const version = Math.trunc(a.version);
-  const { data: done } = await client
-    .from("team_sittings")
-    .update({
-      notes: text,
-      notes_by: u.email,
-      notes_at: new Date().toISOString(),
-      notes_version: version + 1,
-    })
+  const { data: done, error } = await client
+    .from("team_sittings").update({
+    notes: text,
+    notes_by: u.email,
+    notes_at: new Date().toISOString(),
+    notes_version: version + 1,
+  }).throwOnError()
     .eq("id", a.sittingId)
-    .eq("notes_version", version)
-    .select("notes_version");
+    .eq("notes_version", version).select("notes_version").throwOnError();
+  if (error) throw error;
 
   if (!done || done.length === 0) {
     const { data: now } = await client
-      .from("team_sittings")
-      .select("notes, notes_by, notes_at, notes_version")
+      .from("team_sittings").select("notes, notes_by, notes_at, notes_version").throwOnError()
       .eq("id", a.sittingId)
       .maybeSingle();
     return {
@@ -1301,15 +1031,13 @@ export async function addItem(
   if (text.length < 3) throw new Error("Write the agenda item first.");
 
   const { data: meeting } = await client
-    .from("team_meetings")
-    .select("id")
+    .from("team_meetings").select("id").throwOnError()
     .eq("id", a.meetingId)
     .maybeSingle();
   if (!meeting) throw new Error("That meeting is not in the list any more.");
 
   const { data: last } = await client
-    .from("team_agenda")
-    .select("position")
+    .from("team_agenda").select("position").throwOnError()
     .eq("meeting_id", a.meetingId)
     .eq("status", "open")
     .order("position", { ascending: false })
@@ -1322,7 +1050,7 @@ export async function addItem(
     status: "open",
     position: Number(last?.[0]?.position ?? 0) + 1,
     added_by: u.email,
-  });
+  }).throwOnError();
   if (error) throw error;
 
   await logChange(client, u.email, a.meetingId, `added "${text.slice(0, 80)}"`);
@@ -1335,8 +1063,7 @@ export async function editItem(
   a: { id: number; text?: string; ownerId?: string | null },
 ): Promise<MeetingPage> {
   const { data: item } = await client
-    .from("team_agenda")
-    .select("*")
+    .from("team_agenda").select("*").throwOnError()
     .eq("id", Math.trunc(a.id))
     .maybeSingle();
   if (!item) throw new Error("That agenda item is not there any more.");
@@ -1352,8 +1079,7 @@ export async function editItem(
     return fetchMeetingPage(client, u, String(item.meeting_id));
 
   await client
-    .from("team_agenda")
-    .update(body)
+    .from("team_agenda").update(body).throwOnError()
     .eq("id", Math.trunc(a.id));
 
   await logChange(
@@ -1373,8 +1099,7 @@ export async function closeItem(
   a: { id: number; status: "done" | "dropped" | "open" },
 ): Promise<MeetingPage> {
   const { data: item } = await client
-    .from("team_agenda")
-    .select("*")
+    .from("team_agenda").select("*").throwOnError()
     .eq("id", Math.trunc(a.id))
     .maybeSingle();
   if (!item) throw new Error("That agenda item is not there any more.");
@@ -1382,13 +1107,12 @@ export async function closeItem(
 
   if (a.status === "open") {
     await client
-      .from("team_agenda")
-      .update({
-        status: "open",
-        sitting_id: null,
-        closed_at: null,
-        closed_by: null,
-      })
+      .from("team_agenda").update({
+      status: "open",
+      sitting_id: null,
+      closed_at: null,
+      closed_by: null,
+    }).throwOnError()
       .eq("id", Math.trunc(a.id));
 
     await logChange(
@@ -1402,21 +1126,19 @@ export async function closeItem(
 
   const today = kuwaitDay();
   const { data: at } = await client
-    .from("team_sittings")
-    .select("id")
+    .from("team_sittings").select("id").throwOnError()
     .eq("meeting_id", meetingId)
     .lte("on_date", today)
     .order("on_date", { ascending: false })
     .limit(1);
 
   await client
-    .from("team_agenda")
-    .update({
-      status: a.status,
-      sitting_id: at?.[0]?.id ?? null,
-      closed_at: new Date().toISOString(),
-      closed_by: u.email,
-    })
+    .from("team_agenda").update({
+    status: a.status,
+    sitting_id: at?.[0]?.id ?? null,
+    closed_at: new Date().toISOString(),
+    closed_by: u.email,
+  }).throwOnError()
     .eq("id", Math.trunc(a.id));
 
   await logChange(
@@ -1434,16 +1156,14 @@ export async function moveItem(
   a: { id: number; dir: "up" | "down" },
 ): Promise<MeetingPage> {
   const { data: item } = await client
-    .from("team_agenda")
-    .select("*")
+    .from("team_agenda").select("*").throwOnError()
     .eq("id", Math.trunc(a.id))
     .maybeSingle();
   if (!item) throw new Error("That agenda item is not there any more.");
   const meetingId = String(item.meeting_id);
 
   const { data: open } = await client
-    .from("team_agenda")
-    .select("id, position")
+    .from("team_agenda").select("id, position").throwOnError()
     .eq("meeting_id", meetingId)
     .eq("status", "open")
     .order("position", { ascending: true })
@@ -1460,8 +1180,7 @@ export async function moveItem(
 
   for (let i = 0; i < order.length; i++) {
     await client
-      .from("team_agenda")
-      .update({ position: i + 1 })
+      .from("team_agenda").update({ position: i + 1 }).throwOnError()
       .eq("id", order[i]);
   }
   return fetchMeetingPage(client, u, meetingId);
@@ -1493,8 +1212,7 @@ export async function saveBlock(
 
   if (a.id !== undefined) {
     const { data: b } = await client
-      .from("team_meeting_blocks")
-      .select("*")
+      .from("team_meeting_blocks").select("*").throwOnError()
       .eq("id", a.id)
       .maybeSingle();
     if (!b) throw new Error("That block is not there any more.");
@@ -1502,15 +1220,14 @@ export async function saveBlock(
       throw new Error("That block belongs to another meeting.");
 
     await client
-      .from("team_meeting_blocks")
-      .update({
-        title,
-        ...(detail !== undefined ? { detail } : {}),
-        ...(minutes !== undefined ? { minutes } : {}),
-        ...(weekday !== undefined ? { weekday } : {}),
-        updated_by: u.email,
-        updated_at: now,
-      })
+      .from("team_meeting_blocks").update({
+      title,
+      ...(detail !== undefined ? { detail } : {}),
+      ...(minutes !== undefined ? { minutes } : {}),
+      ...(weekday !== undefined ? { weekday } : {}),
+      updated_by: u.email,
+      updated_at: now,
+    }).throwOnError()
       .eq("id", a.id);
 
     await logChange(
@@ -1524,8 +1241,7 @@ export async function saveBlock(
   }
 
   const { data: last } = await client
-    .from("team_meeting_blocks")
-    .select("position")
+    .from("team_meeting_blocks").select("position").throwOnError()
     .eq("meeting_id", a.meetingId)
     .order("position", { ascending: false })
     .limit(1);
@@ -1539,7 +1255,7 @@ export async function saveBlock(
     detail,
     updated_by: u.email,
     updated_at: now,
-  });
+  }).throwOnError();
 
   await logChange(
     client,
@@ -1556,14 +1272,13 @@ export async function deleteBlock(
   a: { id: number },
 ): Promise<MeetingPage> {
   const { data: b } = await client
-    .from("team_meeting_blocks")
-    .select("*")
+    .from("team_meeting_blocks").select("*").throwOnError()
     .eq("id", a.id)
     .maybeSingle();
   if (!b) throw new Error("That block is not there any more.");
   const meetingId = String(b.meeting_id);
 
-  await client.from("team_meeting_blocks").delete().eq("id", a.id);
+  await client.from("team_meeting_blocks").delete().throwOnError().eq("id", a.id);
 
   await logChange(
     client,
@@ -1581,16 +1296,14 @@ export async function moveBlock(
   a: { id: number; dir: "up" | "down"; weekday?: number | null },
 ): Promise<MeetingPage> {
   const { data: b } = await client
-    .from("team_meeting_blocks")
-    .select("*")
+    .from("team_meeting_blocks").select("*").throwOnError()
     .eq("id", a.id)
     .maybeSingle();
   if (!b) throw new Error("That block is not there any more.");
   const meetingId = String(b.meeting_id);
 
   const { data: all } = await client
-    .from("team_meeting_blocks")
-    .select("id, weekday, position")
+    .from("team_meeting_blocks").select("id, weekday, position").throwOnError()
     .eq("meeting_id", meetingId)
     .order("position", { ascending: true })
     .order("id", { ascending: true });
@@ -1614,12 +1327,10 @@ export async function moveBlock(
     const itemB = all.find(x => Number(x.id) === swapWith.id);
     if (itemA && itemB) {
       await client
-        .from("team_meeting_blocks")
-        .update({ position: itemB.position })
+        .from("team_meeting_blocks").update({ position: itemB.position }).throwOnError()
         .eq("id", itemA.id);
       await client
-        .from("team_meeting_blocks")
-        .update({ position: itemA.position })
+        .from("team_meeting_blocks").update({ position: itemA.position }).throwOnError()
         .eq("id", itemB.id);
     }
   }
@@ -1654,8 +1365,7 @@ export async function saveWheel(
 
   if (a.id) {
     const { data: wheel } = await client
-      .from("team_wheels")
-      .select("*")
+      .from("team_wheels").select("*").throwOnError()
       .eq("id", a.id)
       .maybeSingle();
     if (!wheel) throw new Error("That wheel is not there any more.");
@@ -1663,16 +1373,15 @@ export async function saveWheel(
       throw new Error("Only the CEO and admins change prize wheels.");
 
     await client
-      .from("team_wheels")
-      .update({
-        name,
-        ...(a.lockedUntilGoal !== undefined && wheel.kind === "prize"
-          ? { locked_until_goal: a.lockedUntilGoal }
-          : {}),
-        ...(a.active !== undefined ? { active: a.active } : {}),
-        ...(sourceUrl !== undefined ? { source_url: sourceUrl } : {}),
-        ...stamp,
-      })
+      .from("team_wheels").update({
+      name,
+      ...(a.lockedUntilGoal !== undefined && wheel.kind === "prize"
+        ? { locked_until_goal: a.lockedUntilGoal }
+        : {}),
+      ...(a.active !== undefined ? { active: a.active } : {}),
+      ...(sourceUrl !== undefined ? { source_url: sourceUrl } : {}),
+      ...stamp,
+    }).throwOnError()
       .eq("id", a.id);
 
     await logChange(
@@ -1691,16 +1400,14 @@ export async function saveWheel(
 
   const base = slug(`${a.meetingId}-${name}`) || "wheel";
   const { data: existing } = await client
-    .from("team_wheels")
-    .select("id")
+    .from("team_wheels").select("id").throwOnError()
     .like("id", `${base}%`);
   const taken = new Set((existing ?? []).map(r => String(r.id)));
   let id = base;
   for (let n = 2; taken.has(id); n++) id = `${base}-${n}`;
 
   const { data: last } = await client
-    .from("team_wheels")
-    .select("position")
+    .from("team_wheels").select("position").throwOnError()
     .eq("meeting_id", a.meetingId)
     .order("position", { ascending: false })
     .limit(1);
@@ -1715,7 +1422,7 @@ export async function saveWheel(
     active: true,
     position: Number(last?.[0]?.position ?? 0) + 1,
     ...stamp,
-  });
+  }).throwOnError();
 
   await logChange(client, u.email, a.meetingId, `added the ${name} wheel`, {
     wheel: id,
@@ -1730,15 +1437,14 @@ export async function deleteWheel(
   a: { id: string },
 ): Promise<MeetingPage> {
   const { data: wheel } = await client
-    .from("team_wheels")
-    .select("*")
+    .from("team_wheels").select("*").throwOnError()
     .eq("id", a.id)
     .maybeSingle();
   if (!wheel) throw new Error("That wheel is not there any more.");
   if (wheel.kind === "prize" && !u.isCeo && !u.isAdmin)
     throw new Error("Only the CEO and admins delete prize wheels.");
 
-  await client.from("team_wheels").delete().eq("id", a.id);
+  await client.from("team_wheels").delete().throwOnError().eq("id", a.id);
   await logChange(
     client,
     u.email,
@@ -1764,8 +1470,7 @@ export async function saveWheelOption(
   },
 ): Promise<MeetingPage> {
   const { data: wheel } = await client
-    .from("team_wheels")
-    .select("*")
+    .from("team_wheels").select("*").throwOnError()
     .eq("id", a.wheelId)
     .maybeSingle();
   if (!wheel) throw new Error("That wheel is not there any more.");
@@ -1797,8 +1502,7 @@ export async function saveWheelOption(
   const meetingId = String(wheel.meeting_id ?? "");
   if (a.id !== undefined) {
     await client
-      .from("team_wheel_options")
-      .update(body)
+      .from("team_wheel_options").update(body).throwOnError()
       .eq("id", Math.trunc(a.id));
     await logChange(
       client,
@@ -1808,8 +1512,7 @@ export async function saveWheelOption(
     );
   } else {
     const { data: last } = await client
-      .from("team_wheel_options")
-      .select("position")
+      .from("team_wheel_options").select("position").throwOnError()
       .eq("wheel_id", a.wheelId)
       .order("position", { ascending: false })
       .limit(1);
@@ -1819,7 +1522,7 @@ export async function saveWheelOption(
       active: true,
       position: Number(last?.[0]?.position ?? 0) + 1,
       ...body,
-    });
+    }).throwOnError();
     await logChange(
       client,
       u.email,
@@ -1837,22 +1540,19 @@ export async function deleteWheelOption(
   a: { id: number },
 ): Promise<MeetingPage> {
   const { data: option } = await client
-    .from("team_wheel_options")
-    .select("*")
+    .from("team_wheel_options").select("*").throwOnError()
     .eq("id", Math.trunc(a.id))
     .maybeSingle();
   if (!option) throw new Error("That option is not there any more.");
   const { data: wheel } = await client
-    .from("team_wheels")
-    .select("*")
+    .from("team_wheels").select("*").throwOnError()
     .eq("id", option.wheel_id)
     .maybeSingle();
   if (wheel?.kind === "prize" && !u.isCeo && !u.isAdmin)
     throw new Error("Only the CEO and admins delete prize options.");
 
   await client
-    .from("team_wheel_options")
-    .delete()
+    .from("team_wheel_options").delete().throwOnError()
     .eq("id", Math.trunc(a.id));
   await logChange(
     client,
@@ -1870,14 +1570,12 @@ export async function moveWheelOption(
   a: { id: number; dir: "up" | "down" },
 ): Promise<MeetingPage> {
   const { data: option } = await client
-    .from("team_wheel_options")
-    .select("*")
+    .from("team_wheel_options").select("*").throwOnError()
     .eq("id", Math.trunc(a.id))
     .maybeSingle();
   if (!option) throw new Error("That option is not there any more.");
   const { data: rows } = await client
-    .from("team_wheel_options")
-    .select("id, position")
+    .from("team_wheel_options").select("id, position").throwOnError()
     .eq("wheel_id", option.wheel_id)
     .order("position", { ascending: true })
     .order("id", { ascending: true });
@@ -1890,15 +1588,13 @@ export async function moveWheelOption(
       [order[at], order[to]] = [order[to], order[at]];
       for (let i = 0; i < order.length; i++) {
         await client
-          .from("team_wheel_options")
-          .update({ position: i + 1 })
+          .from("team_wheel_options").update({ position: i + 1 }).throwOnError()
           .eq("id", order[i]);
       }
     }
   }
   const { data: wheel } = await client
-    .from("team_wheels")
-    .select("meeting_id")
+    .from("team_wheels").select("meeting_id").throwOnError()
     .eq("id", option.wheel_id)
     .maybeSingle();
   return fetchMeetingPage(client, u, String(wheel?.meeting_id ?? ""));
@@ -1914,186 +1610,32 @@ export async function setPrizeAmount(
 
   const amount = Math.round(a.amount * 100) / 100;
   await client
-    .from("team_wheel_options")
-    .update({
-      amount,
-      updated_by: u.email,
-      updated_at: new Date().toISOString(),
-    })
+    .from("team_wheel_options").update({
+    amount,
+    updated_by: u.email,
+    updated_at: new Date().toISOString(),
+  }).throwOnError()
     .eq("id", Math.trunc(a.optionId));
 
   if (a.meetingId) return fetchMeetingPage(client, u, a.meetingId);
   return fetchTeamOverview(client, u);
 }
 
-export async function spin(
-  client: SupabaseClient,
-  u: TeamUserContext,
-  a: {
-    wheelId: string;
-    sittingId: string;
-    among?: string[];
-    forPerson?: string;
-  },
-): Promise<{
+export async function spin(client: SupabaseClient,
+u: TeamUserContext,
+a: {
+  wheelId: string;
+  sittingId: string;
+  among?: string[];
+  forPerson?: string;
+},): Promise<{
   page: MeetingPage;
   result: { wheelId: string; index: number; label: string; choices: string[] };
-}> {
-  const { data: wheel } = await client
-    .from("team_wheels")
-    .select("*")
-    .eq("id", a.wheelId)
-    .maybeSingle();
-  if (!wheel) throw new Error("That wheel is not there any more.");
-  const meetingId = String(wheel.meeting_id ?? "");
+}> { const { data, error } = await client.rpc('cockpit_team_spin', { p_wheel_id: a.wheelId, p_sitting_id: a.sittingId, p_among: a.among ?? null, p_for_person: a.forPerson ?? null }); if (error) throw error; const draw = z.object({ meetingId: z.string(), result: z.object({ wheelId: z.string(), index: z.number().int().nonnegative(), label: z.string(), choices: z.array(z.string()) }) }).parse(data); return { page: await fetchMeetingPage(client, u, draw.meetingId), result: draw.result }; }
 
-  const { data: sitting } = await client
-    .from("team_sittings")
-    .select("*")
-    .eq("id", a.sittingId)
-    .maybeSingle();
-  if (!sitting) throw new Error("That sitting is not there any more.");
-
-  let choices: { id: number | null; label: string }[] = [];
-  if (wheel.kind === "person") {
-    const { data: links } = await client
-      .from("team_meeting_people")
-      .select("person_id")
-      .eq("meeting_id", meetingId)
-      .eq("removed", false);
-    const ids = (links ?? [])
-      .map(l => String(l.person_id))
-      .filter(id => !a.among || a.among.includes(id));
-    const { data: people } = ids.length
-      ? await client.from("team_people").select("id, name").in("id", ids)
-      : { data: [] };
-    choices = ids
-      .map(id => people?.find(p => p.id === id))
-      .filter((p): p is { id: string; name: string } => Boolean(p))
-      .map(p => ({ id: null, label: String(p.name) }));
-  } else {
-    const { data: options } = await client
-      .from("team_wheel_options")
-      .select("*")
-      .eq("wheel_id", a.wheelId)
-      .eq("active", true)
-      .order("position", { ascending: true });
-    choices = (options ?? []).map(o => ({
-      id: Number(o.id),
-      label: renderOption({
-        label: String(o.label),
-        amount: typeof o.amount === "number" ? o.amount : null,
-        currency: o.currency ? String(o.currency) : null,
-        amount_suffix: o.amount_suffix ? String(o.amount_suffix) : null,
-      }),
-    }));
-  }
-
-  const refusal = spinRefusal(
-    {
-      kind: String(wheel.kind),
-      locked_until_goal: Boolean(wheel.locked_until_goal),
-      active: wheel.active !== false,
-      name: String(wheel.name),
-    },
-    { goal_hit: sitting.goal_hit ?? null },
-    choices.length,
-  );
-  if (refusal) throw new Error(refusal);
-
-  const index = pickIndex(
-    choices.length,
-    () => crypto.getRandomValues(new Uint32Array(1))[0],
-  );
-  const won = choices[index];
-
-  let forName: string | null = null;
-  if (a.forPerson) {
-    const { data: p } = await client
-      .from("team_people")
-      .select("name")
-      .eq("id", a.forPerson)
-      .maybeSingle();
-    forName = p ? String(p.name) : null;
-  }
-
-  const spinText = spinLine(String(wheel.name), won.label, forName);
-  const notesCurrent = String(sitting.notes ?? "");
-  const version = Number(sitting.notes_version ?? 0);
-  const updatedNotes = notesCurrent ? `${notesCurrent}\n${spinText}` : spinText;
-
-  await client
-    .from("team_sittings")
-    .update({
-      notes: updatedNotes,
-      notes_by: u.email,
-      notes_at: new Date().toISOString(),
-      notes_version: version + 1,
-    })
-    .eq("id", a.sittingId);
-
-  await client.from("team_wheel_spins").insert({
-    wheel_id: a.wheelId,
-    sitting_id: a.sittingId,
-    option_id: won.id,
-    result_label: won.label,
-    spun_by: u.email,
-    spun_for: forName,
-  });
-
-  await logChange(
-    client,
-    u.email,
-    meetingId,
-    `spun the ${wheel.name} wheel: ${won.label}`,
-    { sitting: a.sittingId },
-  );
-
-  const p = await fetchMeetingPage(client, u, meetingId);
-  return {
-    page: p,
-    result: {
-      wheelId: a.wheelId,
-      index,
-      label: won.label,
-      choices: choices.map(c => c.label),
-    },
-  };
-}
-
-export async function setGoalHit(
-  client: SupabaseClient,
-  u: TeamUserContext,
-  a: { sittingId: string; hit: boolean | null },
-): Promise<MeetingPage> {
-  const { data: sitting } = await client
-    .from("team_sittings")
-    .select("*")
-    .eq("id", a.sittingId)
-    .maybeSingle();
-  if (!sitting) throw new Error("That sitting is not there any more.");
-  const meetingId = String(sitting.meeting_id);
-  const ok = await canManage(client, u, meetingId);
-  if (!ok)
-    throw new Error(
-      "Only this meeting's hosts, admins and Aziz set the goal. Ask a host.",
-    );
-
-  await client
-    .from("team_sittings")
-    .update({ goal_hit: a.hit })
-    .eq("id", a.sittingId);
-
-  await logChange(
-    client,
-    u.email,
-    meetingId,
-    a.hit === null
-      ? `cleared the goal for ${sitting.on_date}`
-      : `marked the week's goal ${a.hit ? "hit" : "missed"} on ${sitting.on_date}`,
-  );
-  return fetchMeetingPage(client, u, meetingId);
-}
+export async function setGoalHit(client: SupabaseClient,
+u: TeamUserContext,
+a: { sittingId: string; hit: boolean | null },): Promise<MeetingPage> { return calendarCommand(client, u, 'setGoalHit', a); }
 
 // --- Creative Pipeline ---
 
@@ -2151,8 +1693,7 @@ export async function saveCreativeRow(
 
   if (a.id !== undefined) {
     const { data: before } = await client
-      .from("team_creative_rows")
-      .select("*")
+      .from("team_creative_rows").select("*").throwOnError()
       .eq("id", Math.trunc(a.id))
       .maybeSingle();
     if (!before) throw new Error("That row is not on the pipeline any more.");
@@ -2161,8 +1702,7 @@ export async function saveCreativeRow(
     if (slips) body.slip_count = Number(before.slip_count ?? 0) + slips;
 
     await client
-      .from("team_creative_rows")
-      .update(body)
+      .from("team_creative_rows").update(body).throwOnError()
       .eq("id", Math.trunc(a.id));
 
     await logChange(
@@ -2181,7 +1721,7 @@ export async function saveCreativeRow(
     ...body,
     status: body.status ?? "planned",
     created_by: u.email,
-  });
+  }).throwOnError();
 
   await logChange(
     client,
@@ -2198,15 +1738,13 @@ export async function deleteCreativeRow(
   a: { meetingId: string; id: number },
 ): Promise<MeetingPage> {
   const { data: row } = await client
-    .from("team_creative_rows")
-    .select("*")
+    .from("team_creative_rows").select("*").throwOnError()
     .eq("id", Math.trunc(a.id))
     .maybeSingle();
   if (!row) throw new Error("That row is not on the pipeline any more.");
 
   await client
-    .from("team_creative_rows")
-    .delete()
+    .from("team_creative_rows").delete().throwOnError()
     .eq("id", Math.trunc(a.id));
 
   await logChange(
@@ -2233,14 +1771,12 @@ export async function openCreativeRequests(
 }>> {
   const [requestsRes, rowsRes] = await Promise.all([
     client
-      .from("cockpit_creative_requests")
-      .select("id, client_name, campaign_name, request_reason, note, status, created_at")
+      .from("cockpit_creative_requests").select("id, client_name, campaign_name, request_reason, note, status, created_at").throwOnError()
       .in("status", ["requested", "script_ready", "editing", "asset_ready"])
       .order("created_at", { ascending: false })
       .limit(60),
     client
-      .from("team_creative_rows")
-      .select("creative_request_id")
+      .from("team_creative_rows").select("creative_request_id").throwOnError()
       .not("creative_request_id", "is", null),
   ]);
 
@@ -2260,267 +1796,46 @@ export async function openCreativeRequests(
 
 // --- Calendar / Attendance Operations ---
 
-export async function setSeries(
-  client: SupabaseClient,
-  u: TeamUserContext,
-  a: {
-    meetingId: string;
-    weekdays: number[];
-    startTime: string;
-    minutes: number;
-    from: string;
-  },
-): Promise<MeetingPage> {
-  const ok = await canManage(client, u, a.meetingId);
-  if (!ok)
-    throw new Error(
-      "Only this meeting's hosts, admins and Aziz change who is in it and what it is for. Ask a host.",
-    );
+export async function setSeries(client: SupabaseClient,
+u: TeamUserContext,
+a: {
+  meetingId: string;
+  weekdays: number[];
+  startTime: string;
+  minutes: number;
+  from: string;
+},): Promise<MeetingPage> { return calendarCommand(client, u, 'setSeries', a); }
 
-  const weekdays = [...new Set(a.weekdays)].sort((x, y) => x - y);
-  const minutes = Math.trunc(a.minutes);
+export async function moveSitting(client: SupabaseClient,
+u: TeamUserContext,
+a: {
+  meetingId: string;
+  sittingId: string;
+  day: string;
+  startTime: string;
+  minutes: number;
+},): Promise<MeetingPage> { return calendarCommand(client, u, 'moveSitting', a); }
 
-  const { data: m } = await client
-    .from("team_meetings")
-    .select("*")
-    .eq("id", a.meetingId)
-    .maybeSingle();
-  if (!m) throw new Error("That meeting is not in the list any more.");
+export async function cancelSitting(client: SupabaseClient,
+u: TeamUserContext,
+a: { meetingId: string; sittingId: string },): Promise<MeetingPage> { return calendarCommand(client, u, 'cancelSitting', a); }
 
-  await client
-    .from("team_meetings")
-    .update({
-      weekdays: weekdays.length ? weekdays : null,
-      start_time: a.startTime,
-      minutes,
-      managed: "cockpit",
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", a.meetingId);
+export async function endMeeting(client: SupabaseClient,
+u: TeamUserContext,
+a: { meetingId: string; lastDate: string },): Promise<MeetingPage> { return calendarCommand(client, u, 'endMeeting', a); }
 
-  const line = seriesLine({
-    weekdays,
-    startTime: a.startTime,
-    minutes,
-    tz: m.tz ? String(m.tz) : null,
-  });
+export async function setEmail(client: SupabaseClient,
+u: TeamUserContext,
+a: { meetingId: string; personId: string; email: string },): Promise<MeetingPage> { return calendarCommand(client, u, 'setEmail', a); }
 
-  await logChange(
-    client,
-    u.email,
-    a.meetingId,
-    `set the series to ${line}, from ${a.from}`,
-    { before: { weekdays: m.weekdays, start_time: m.start_time, minutes: m.minutes } },
-  );
+export async function putOnCalendar(client: SupabaseClient,
+u: TeamUserContext,
+a: { meetingId: string; from?: string },): Promise<MeetingPage> { return calendarCommand(client, u, 'putOnCalendar', a); }
 
-  await enqueueCalendarOp(client, u.email, a.meetingId, "series", {
-    weekdays,
-    startTime: a.startTime,
-    minutes,
-    from: a.from,
-  });
+export async function takeOver(client: SupabaseClient,
+u: TeamUserContext,
+a: { meetingId: string },): Promise<MeetingPage> { return calendarCommand(client, u, 'takeOver', a); }
 
-  return fetchMeetingPage(client, u, a.meetingId);
-}
-
-export async function moveSitting(
-  client: SupabaseClient,
-  u: TeamUserContext,
-  a: {
-    meetingId: string;
-    sittingId: string;
-    day: string;
-    startTime: string;
-    minutes: number;
-  },
-): Promise<MeetingPage> {
-  const ok = await canManage(client, u, a.meetingId);
-  if (!ok)
-    throw new Error(
-      "Only this meeting's hosts, admins and Aziz change sitting times. Ask a host.",
-    );
-
-  const { data: sitting } = await client
-    .from("team_sittings")
-    .select("*")
-    .eq("id", a.sittingId)
-    .maybeSingle();
-  if (!sitting) throw new Error("That sitting is not there any more.");
-
-  const tz = "Asia/Kuwait";
-  const start = zonedToUtc(a.day, a.startTime, tz);
-  const end = new Date(start.getTime() + a.minutes * 60_000);
-
-  await client
-    .from("team_sittings")
-    .update({
-      on_date: a.day,
-      starts_at: start.toISOString(),
-      ends_at: end.toISOString(),
-      status: "moved",
-    })
-    .eq("id", a.sittingId);
-
-  await logChange(
-    client,
-    u.email,
-    a.meetingId,
-    `moved the sitting to ${a.day} at ${a.startTime}`,
-  );
-
-  await enqueueCalendarOp(
-    client,
-    u.email,
-    a.meetingId,
-    "moveSitting",
-    { day: a.day, startTime: a.startTime, minutes: a.minutes },
-    a.sittingId,
-  );
-
-  return fetchMeetingPage(client, u, a.meetingId);
-}
-
-export async function cancelSitting(
-  client: SupabaseClient,
-  u: TeamUserContext,
-  a: { meetingId: string; sittingId: string },
-): Promise<MeetingPage> {
-  const ok = await canManage(client, u, a.meetingId);
-  if (!ok)
-    throw new Error(
-      "Only this meeting's hosts, admins and Aziz cancel a sitting. Ask a host.",
-    );
-
-  const { data: sitting } = await client
-    .from("team_sittings")
-    .select("*")
-    .eq("id", a.sittingId)
-    .maybeSingle();
-  if (!sitting) throw new Error("That sitting is not there any more.");
-
-  await client
-    .from("team_sittings")
-    .update({ status: "cancelled" })
-    .eq("id", a.sittingId);
-
-  await logChange(
-    client,
-    u.email,
-    a.meetingId,
-    `cancelled the sitting on ${sitting.on_date}`,
-  );
-
-  await enqueueCalendarOp(
-    client,
-    u.email,
-    a.meetingId,
-    "cancelSitting",
-    null,
-    a.sittingId,
-  );
-
-  return fetchMeetingPage(client, u, a.meetingId);
-}
-
-export async function endMeeting(
-  client: SupabaseClient,
-  u: TeamUserContext,
-  a: { meetingId: string; lastDate: string },
-): Promise<MeetingPage> {
-  const ok = await canManage(client, u, a.meetingId);
-  if (!ok)
-    throw new Error(
-      "Only this meeting's hosts, admins and Aziz end a meeting. Ask a host.",
-    );
-
-  await client
-    .from("team_meetings")
-    .update({
-      ends_on: a.lastDate,
-      managed: "cockpit",
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", a.meetingId);
-
-  await logChange(
-    client,
-    u.email,
-    a.meetingId,
-    `ended the meeting: last sitting on ${a.lastDate}`,
-  );
-
-  await enqueueCalendarOp(client, u.email, a.meetingId, "endMeeting", {
-    lastDate: a.lastDate,
-  });
-
-  return fetchMeetingPage(client, u, a.meetingId);
-}
-
-export async function setEmail(
-  client: SupabaseClient,
-  u: TeamUserContext,
-  a: { meetingId: string; personId: string; email: string },
-): Promise<MeetingPage> {
-  const ok = await canManage(client, u, a.meetingId);
-  if (!ok)
-    throw new Error(
-      "Only this meeting's hosts, admins and Aziz set attendee email. Ask a host.",
-    );
-
-  const email = a.email.toLowerCase().trim();
-  await client.from("team_people").update({ email }).eq("id", a.personId);
-
-  await logChange(client, u.email, a.meetingId, `set email for person ${a.personId}`);
-  return fetchMeetingPage(client, u, a.meetingId);
-}
-
-export async function putOnCalendar(
-  client: SupabaseClient,
-  u: TeamUserContext,
-  a: { meetingId: string; from?: string },
-): Promise<MeetingPage> {
-  const ok = await canManage(client, u, a.meetingId);
-  if (!ok)
-    throw new Error(
-      "Only this meeting's hosts, admins and Aziz put a meeting on the calendar.",
-    );
-
-  await logChange(client, u.email, a.meetingId, "requested putting on Google Calendar");
-  await enqueueCalendarOp(client, u.email, a.meetingId, "putOnCalendar", {
-    from: a.from ?? kuwaitDay(),
-  });
-  return fetchMeetingPage(client, u, a.meetingId);
-}
-
-export async function takeOver(
-  client: SupabaseClient,
-  u: TeamUserContext,
-  a: { meetingId: string },
-): Promise<MeetingPage> {
-  const ok = await canManage(client, u, a.meetingId);
-  if (!ok)
-    throw new Error("Only hosts, admins and Aziz can take over a calendar meeting.");
-
-  await logChange(client, u.email, a.meetingId, "took over Google Calendar series");
-  await enqueueCalendarOp(client, u.email, a.meetingId, "takeOver", null);
-  return fetchMeetingPage(client, u, a.meetingId);
-}
-
-export async function retryCalendar(
-  client: SupabaseClient,
-  u: TeamUserContext,
-  a: { meetingId: string },
-): Promise<MeetingPage> {
-  const ok = await canManage(client, u, a.meetingId);
-  if (!ok)
-    throw new Error("Only hosts, admins and Aziz can retry calendar operations.");
-
-  await client
-    .from("team_calendar_ops")
-    .update({ status: "pending", attempts: 0, error: null })
-    .eq("meeting_id", a.meetingId)
-    .eq("status", "failed");
-
-  await logChange(client, u.email, a.meetingId, "retried failed calendar operations");
-  return fetchMeetingPage(client, u, a.meetingId);
-}
+export async function retryCalendar(client: SupabaseClient,
+u: TeamUserContext,
+a: { meetingId: string },): Promise<MeetingPage> { return calendarCommand(client, u, 'retryCalendar', a); }

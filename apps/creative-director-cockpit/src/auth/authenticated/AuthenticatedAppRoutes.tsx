@@ -1,5 +1,4 @@
 import { Navigate, Route, Routes } from "react-router";
-import { OAUTH_CALLBACK_PATH } from "@/auth/oauthReturn";
 import { AppLayout } from "@/components/AppLayout";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { PublicLayout } from "@/components/PublicLayout";
@@ -30,7 +29,6 @@ import {
   TouchpointsPage,
   WorkPage,
 } from "@/pages";
-import { ViktorOAuthCallbackPage } from "@/pages/ViktorOAuthCallbackPage";
 
 export function AuthenticatedRoutes() {
   return (
@@ -40,13 +38,11 @@ export function AuthenticatedRoutes() {
         <Route element={<PublicOnlyRoute />}>
           <Route path="/login" element={<LoginPage />} />
           <Route path="/signup" element={<SignupPage />} />
-          <Route path="/first-sign-in" element={<FirstSignInPage />} />
         </Route>
+        {/* OTP creates a session before password setup finishes; keep the form mounted. */}
+        <Route path="/first-sign-in" element={<FirstSignInPage />} />
       </Route>
 
-      {/* Return leg of "Sign in with Viktor" — outside the auth guards
-          because it owns the loading/outcome handling itself. */}
-      <Route path={OAUTH_CALLBACK_PATH} element={<ViktorOAuthCallbackPage />} />
 
       <Route element={<ProtectedRoute />}>
         <Route element={<AppLayout />}>

@@ -59,6 +59,7 @@ import {
 } from "../components/ScriptParts";
 import { ApiError, api, uncertain } from "../lib/api";
 import { assetStage, objectionsFrom } from "../lib/assets";
+import { CLIENT_NOTE, isClient } from "../lib/clients";
 import {
   useLead,
   useLeadActivity,
@@ -2791,6 +2792,14 @@ function LeadPane({
             }
             label={classLabel(l.lead_class)}
           />
+          {isClient(l) ? (
+            <StatusChip
+              size="md"
+              tone="good"
+              label="Active client"
+              title={CLIENT_NOTE}
+            />
+          ) : null}
           {item ? (
             <StatusChip
               size="md"
@@ -2818,7 +2827,11 @@ function LeadPane({
             .filter(Boolean)
             .join(" · ")}
         </p>
-        <HotControl me={me} contactId={contactId} />
+        {isClient(l) ? (
+          <p className="muted text-xs">{CLIENT_NOTE}</p>
+        ) : (
+          <HotControl me={me} contactId={contactId} />
+        )}
         <div className="flex flex-wrap gap-3 text-xs">
           <Link
             to={`/lead/${contactId}`}

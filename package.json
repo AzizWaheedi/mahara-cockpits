@@ -3,5 +3,8 @@
   "private": true,
   "scripts": {
     "build": "bash scripts/build-video-editor.sh"
+  },
+  "dependencies": {
+    "zod": "^4.1.12"
   }
 }

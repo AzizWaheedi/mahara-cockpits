@@ -5,6 +5,8 @@ import {executePlan,prepareRecommendation} from './execute.ts';
 import {prepareLtv} from './ltv.ts';
 import {buildDraft,copyIdeas,prepareLaunch,toDraft,checkDraft} from './launch.ts';
 import {prepareSlack,prepareDetail} from './slack.ts';
+import {cachedPreview,readAdPreview} from './preview.ts';
+import {executeWhatsappReply} from './whatsapp.ts';
 const cors={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'authorization,apikey,content-type,x-client-info','Access-Control-Allow-Methods':'POST,OPTIONS'};
 const json=(body:unknown,status=200)=>new Response(JSON.stringify(body),{status,headers:{...cors,'Content-Type':'application/json'}});
 const sorted=(value:any):any=>value&&typeof value==='object'?(Array.isArray(value)?value.map(sorted):Object.fromEntries(Object.keys(value).sort().filter(k=>value[k]!==undefined).map(k=>[k,sorted(value[k])]))):value;
@@ -24,7 +26,11 @@ Deno.serve(async(req:Request)=>{
   if(authError||!auth.user) return json({ok:false,error:'Sign in again'},401);
   const input=await req.json(); const operation=input.operation; const args=input.args??{};
   if(!OPERATIONS.has(operation)) return json({ok:false,error:`Unsupported provider operation: ${String(operation)}`},400);
-  const scopeCall=()=>operation==='cockpit.askForDetail'?userClient.rpc('cockpit_media_task_scope',{p_task:args.taskId}):operation==='edit.askViktorFor'?userClient.rpc('cockpit_media_request_scope',{p_campaign:args.campaignName??null,p_client:args.client??null}):userClient.rpc('cockpit_media_scope',{p_operation:operation,p_campaign:args.campaignName??(args.level==='campaign'?args.name:null)});
+  if(operation==='comms.sendReply'){
+   admin=createClient(url,service,{auth:{persistSession:false}});
+   return json(await executeWhatsappReply(userClient,admin,args,env));
+  }
+  const scopeCall=()=>operation==='previews.fresh'?userClient.rpc('cockpit_ad_preview_scope',{p_ad:args.adId}):operation==='cockpit.askForDetail'?userClient.rpc('cockpit_media_task_scope',{p_task:args.taskId}):operation==='edit.askViktorFor'?userClient.rpc('cockpit_media_request_scope',{p_campaign:args.campaignName??null,p_client:args.client??null}):userClient.rpc('cockpit_media_scope',{p_operation:operation,p_campaign:args.campaignName??(args.level==='campaign'?args.name:null)});
   const {data:scope,error:scopeError}=await scopeCall();
   if(scopeError) return json({ok:false,error:scopeError.message},403);
   let serverPreview:Row|null=null;
@@ -41,6 +47,20 @@ Deno.serve(async(req:Request)=>{
    if(error) throw new Error('Could not save provider health receipt');
   };
   const provider=providerTools(env,health);
+  if(operation==='previews.fresh'){
+   const format=args.format??'MOBILE_FEED_STANDARD';
+   const {data:cached,error:cacheError}=await admin.from('cockpit_ad_preview_cache').select('payload,account_id,campaign_id').eq('ad_id',args.adId).eq('format',format).maybeSingle();
+   if(cacheError)throw new Error('The native preview cache is unavailable. Apply 20261005c_cockpit_ad_previews.sql in the coordinated release.');
+   const reusable=cached&&(!scope.account||scope.account===cached.account_id)&&(!scope.campaign||scope.campaign===cached.campaign_id)?cachedPreview(cached.payload,args.adId):null;
+   const fresh=reusable?null:await readAdPreview(args,scope,provider);
+   const finalScope=await scopeCall();
+   if(finalScope.error||canonical(finalScope.data)!==canonical(scope))throw new Error('Access or ad ownership changed. The preview was discarded.');
+   if(fresh?.result.ok){
+    const {data:saved,error:saveError}=await admin.rpc('cockpit_ad_preview_cache_save',{p_actor:auth.user.id,p_ad:args.adId,p_format:fresh.format,p_account:fresh.accountId,p_campaign:fresh.campaignId,p_payload:fresh.result});
+    if(saveError||saved?.ok!==true)throw new Error('Meta confirmed the preview, but its native cache receipt was not confirmed.');
+   }
+   return json(reusable??fresh!.result);
+  }
   const draftRpc=async(action:string,params:Row)=>{const {data,error}=await userClient.rpc('cockpit_b2b_draft_action',{p_action:action,p_args:params});if(error)throw new Error(error.message);return data;};
   if(input.apply===true&&/^[0-9a-f-]{36}$/i.test(input.requestId??'')){
    const {data:prior}=await admin.from('cockpit_media_actions').select('*').eq('id',input.requestId).eq('actor_id',auth.user.id).maybeSingle();

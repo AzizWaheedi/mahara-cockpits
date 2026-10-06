@@ -8,7 +8,6 @@ import {
 import {
   type ReactNode,
   useEffect,
-  useRef,
   useState,
   useSyncExternalStore,
 } from "react";
@@ -31,15 +30,15 @@ import {
   REASON_TEXT,
   uniqueUrls,
 } from "@/lib/metaMedia";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
+import { nativeAdPreview } from "@/lib/nativePreviewClient";
 
 export type LocalStill = { url?: string; tinyUrl?: string };
 
 type FreshArgs = { adId: string; campaignName?: string; clientName?: string };
-type FreshCall = (args: FreshArgs) => Promise<PreviewResult>;
+type FreshCall = (args: FreshArgs, actorId: string | undefined) => Promise<PreviewResult>;
 
 const NO_STILLS: Record<string, LocalStill> = {};
-const noFresh: FreshCall = () =>
-  Promise.reject(new Error("Live previews are not available here."));
 
 /**
  * Saved stills for the rows a screen shows.
@@ -81,9 +80,6 @@ export type CreativePreviewProps = {
   backupStillTinyUrl?: string;
   /** Meta CDN still from the row. Used only while its link has not expired. */
   thumbUrl?: string;
-  /** Old stored preview link. Ignored unless previewAt is under 20 hours old. */
-  previewSrc?: string;
-  previewAt?: number;
   /** Trigger size: 40, 56 or 72px. */
   size?: "sm" | "md" | "lg";
   /** card: the bigger still inline, and "Watch" swaps in the live preview. */
@@ -135,6 +131,7 @@ const NOTE = {
 
 /** The note for a failed answer. Own keys only, never a built-in like toString. */
 function reasonNote(r: PreviewResult): string {
+  if (typeof r.message === "string" && r.message) return r.message;
   const reason = String(r.reason ?? "");
   if (Object.hasOwn(REASON_TEXT, reason)) {
     return REASON_TEXT[reason as PreviewReason];
@@ -174,18 +171,18 @@ function useFirstWorking(sources: string[]): string | undefined {
 }
 
 /** This tab's held preview result for one ad, while it is still fresh. */
-function useHeld(adId: string | undefined): PreviewResult | undefined {
-  const pick = () => (adId ? heldResult(adId) : undefined);
+function useHeld(key: string | undefined): PreviewResult | undefined {
+  const pick = () => (key ? heldResult(key) : undefined);
   return useSyncExternalStore(subscribe, pick, pick);
 }
 
-function heldResult(adId: string): PreviewResult | undefined {
-  const hit = held.get(adId);
+function heldResult(key: string): PreviewResult | undefined {
+  const hit = held.get(key);
   return hit && hit.until > Date.now() ? hit.result : undefined;
 }
 
-function forgetResult(adId: string) {
-  held.delete(adId);
+function forgetResult(key: string) {
+  held.delete(key);
   changed();
 }
 
@@ -230,7 +227,7 @@ function failedCall(
     timedOut ||
     browserOffline() ||
     /connection|network|websocket|failed to fetch/i.test(text);
-  return { ok: false, adId, reason: offline ? "offline" : "error" };
+  return { ok: false, adId, reason: offline ? "offline" : "error", ...(text ? { message: text } : {}) };
 }
 
 function cleanResult(adId: string, r: unknown): PreviewResult {
@@ -240,11 +237,10 @@ function cleanResult(adId: string, r: unknown): PreviewResult {
 }
 
 /** One call per ad at a time, reused until it goes stale. */
-function loadPreview(call: FreshCall, args: FreshArgs): Promise<PreviewResult> {
+function loadPreview(call: FreshCall, args: FreshArgs, actorId: string | undefined): Promise<PreviewResult> {
   const { adId } = args;
-  const hit = heldResult(adId);
-  if (hit) return Promise.resolve(hit);
-  const inFlight = pending.get(adId);
+  const key = `${actorId ?? "signed-out"}:${adId}`;
+  const inFlight = pending.get(key);
   if (inFlight) return inFlight;
 
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -253,22 +249,22 @@ function loadPreview(call: FreshCall, args: FreshArgs): Promise<PreviewResult> {
   });
   const request: Promise<PreviewResult | "timeout"> = browserOffline()
     ? Promise.resolve("timeout")
-    : Promise.race([call(args), timeout]);
+    : Promise.race([call(args, actorId), timeout]);
   const job = request
     .then(r =>
       r === "timeout" ? failedCall(adId, null, true) : cleanResult(adId, r),
     )
     .catch(err => failedCall(adId, err, false))
     .then(result => {
-      held.set(adId, { result, until: holdUntil(result, Date.now()) });
+      held.set(key, { result, until: holdUntil(result, Date.now()) });
       return result;
     })
     .finally(() => {
       clearTimeout(timer);
-      pending.delete(adId);
+      pending.delete(key);
       changed();
     });
-  pending.set(adId, job);
+  pending.set(key, job);
   return job;
 }
 
@@ -345,26 +341,14 @@ function bigChain(
   ]);
 }
 
-/** An old stored preview link, only while it is under 20 hours old. */
-function storedLink(p: CreativePreviewProps): PreviewResult | undefined {
-  if (!p.previewSrc || typeof p.previewAt !== "number") return undefined;
-  const link: PreviewResult = {
-    ok: true,
-    adId: cleanId(p.metaAdId) ?? "",
-    src: p.previewSrc,
-    fetchedAt: p.previewAt,
-    expiresAt: p.previewAt + PREVIEW_MAX_AGE_MS,
-  };
-  return linkUntil(link, Date.now()) ? link : undefined;
-}
 
 /**
  * The open preview starts over when the row now shows another ad, so it never
  * plays the previous ad under a new name.
  */
-function bodyKey(p: CreativePreviewProps): string {
+function bodyKey(p: CreativePreviewProps, actorId: string | undefined): string {
   const adId = cleanId(p.metaAdId);
-  return adId ? `ad:${adId}` : `link:${p.previewSrc ?? ""}`;
+  return `${actorId ?? "signed-out"}:ad:${adId ?? "none"}`;
 }
 
 /**
@@ -507,22 +491,19 @@ function PreviewBody({
   header?: (description: string) => ReactNode;
   onClose?: () => void;
 }) {
-  const callRef = useRef<FreshCall>(noFresh);
+  const actorId = useCockpitAuth().session?.user.id;
   const adId = cleanId(p.metaAdId);
   const campaignName = cleanName(p.campaignName);
   const clientName = cleanName(p.clientName);
-  const [initial] = useState(
-    () => storedLink(p) ?? (adId ? heldResult(adId) : undefined),
-  );
   const [attempt, setAttempt] = useState(0);
-  const [result, setResult] = useState<PreviewResult | undefined>(initial);
-  const [loading, setLoading] = useState(Boolean(adId) && !initial);
+  const [result, setResult] = useState<PreviewResult | undefined>();
+  const [loading, setLoading] = useState(Boolean(adId));
   const [stillChosen, setStillChosen] = useState(false);
   const [frameLoaded, setFrameLoaded] = useState(false);
   const [frameTimedOut, setFrameTimedOut] = useState(false);
 
   useEffect(() => {
-    if (!adId || (attempt === 0 && initial)) return;
+    if (!adId) return;
     let live = true;
     setLoading(true);
     // Only names that are there are sent, so a missing one never fails the
@@ -530,7 +511,7 @@ function PreviewBody({
     const args: FreshArgs = { adId };
     if (campaignName) args.campaignName = campaignName;
     if (clientName) args.clientName = clientName;
-    loadPreview(callRef.current, args).then(r => {
+    loadPreview(nativeAdPreview, args, actorId).then(r => {
       if (!live) return;
       setResult(r);
       setLoading(false);
@@ -538,7 +519,7 @@ function PreviewBody({
     return () => {
       live = false;
     };
-  }, [adId, attempt, campaignName, clientName, initial]);
+  }, [adId, actorId, attempt, campaignName, clientName]);
 
   const now = Date.now();
   const frameSrc = linkUntil(result, now) ? result?.src : undefined;
@@ -579,7 +560,7 @@ function PreviewBody({
   if (noPicture) description = description.replace(/^Saved picture\.\s*/, "");
 
   const retry = () => {
-    if (adId) forgetResult(adId);
+    if (adId) forgetResult(`${actorId ?? "signed-out"}:${adId}`);
     setResult(undefined);
     setStillChosen(false);
     setFrameLoaded(false);
@@ -684,6 +665,7 @@ function PreviewBody({
 
 export function CreativePreview(props: CreativePreviewProps) {
   const { name, size = "sm", variant = "thumb" } = props;
+  const actorId = useCockpitAuth().session?.user.id;
   const metaAdId = cleanId(props.metaAdId);
   const [ownOpen, setOwnOpen] = useState(false);
   const isOpen = props.open ?? ownOpen;
@@ -693,22 +675,22 @@ export function CreativePreview(props: CreativePreviewProps) {
   };
 
   const now = Date.now();
-  const known = useHeld(metaAdId);
+  const known = useHeld(actorId && metaAdId ? `${actorId}:${metaAdId}` : undefined);
   const reason = emptyText(props, now);
   const chain =
     variant === "card"
       ? bigChain(props, known, now)
       : smallChain(props, known, now);
   const shown = useFirstWorking(chain);
-  // Something to play: a Meta id to fetch with, or a stored link still valid.
-  const canWatch = Boolean(metaAdId || storedLink(props));
+  // Live links are authorized on opening, including server-cache hits.
+  const canWatch = Boolean(metaAdId);
 
   if (variant === "card") {
     return (
       <div className="min-w-0 space-y-1.5">
         {isOpen ? (
           <PreviewBody
-            key={bodyKey(props)}
+            key={bodyKey(props, actorId)}
             p={props}
             onClose={() => setOpen(false)}
           />
@@ -810,7 +792,7 @@ export function CreativePreview(props: CreativePreviewProps) {
           {/* Mounted only while open, so each opening starts fresh. Keyed by
               the ad, so a row that now points at another ad starts over. */}
           <PreviewBody
-            key={bodyKey(props)}
+            key={bodyKey(props, actorId)}
             p={props}
             header={description => (
               <DialogHeader>

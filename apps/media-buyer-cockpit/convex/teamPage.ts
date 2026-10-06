@@ -12,7 +12,14 @@ import {
   weekStart,
   zonedToUtc,
 } from "./teamCore";
-import { db, enc, isBoss, meOf, type Who } from "./teamDb";
+import { db, enc, isBoss, meOf, signPictures, type Who } from "./teamDb";
+import {
+  isHtml,
+  linksOf,
+  type MeetingLink,
+  picturePaths,
+  withPictureUrls,
+} from "./teamDoc";
 import { calendarWriteReady } from "./tools";
 
 /**
@@ -57,6 +64,8 @@ export type MeetingSummary = {
   startTime: string | null;
   minutes: number | null;
   weekdays: number[] | null;
+  /** The meeting's own zone: its start time is on this clock. */
+  tz: string;
   onCalendar: boolean;
 };
 
@@ -68,6 +77,9 @@ export type WeekItem = {
   day: string;
   time: string | null;
   endTime: string | null;
+  /** The instants, so the page can show them in the viewer's own zone. */
+  startsAt: string | null;
+  endsAt: string | null;
   status: "scheduled" | "moved" | "cancelled";
   onCalendar: boolean;
 };
@@ -226,6 +238,9 @@ export type CalendarStatus = {
     title: string | null;
     writable: boolean;
     endsOn: string | null;
+    /** The day's own time: CSM Daily's Thursday wrap starts later. */
+    startTime: string | null;
+    minutes: number | null;
   }[];
 };
 
@@ -241,6 +256,7 @@ export type MeetingPage = {
     department: string | null;
     fromCalendar: boolean;
     managed: string;
+    /** HTML since the editor (2026-09-30); plain text before, converted on open. */
     doc: string;
     docBy: string | null;
     docAt: string | null;
@@ -253,6 +269,13 @@ export type MeetingPage = {
     endsOn: string | null;
     meetLink: string | null;
     pipeline: "board" | "strip" | null;
+    /**
+     * A client success panel on the page, read live from that cockpit:
+     * the week's projections and the renewal window, or CSM Daily's corner.
+     */
+    embed: "cs-projections" | "cs-daily" | null;
+    /** What the meeting keeps open: boards, docs, the cockpit's screens. */
+    links: MeetingLink[];
   };
   calendar: CalendarStatus;
   people: Person[];
@@ -483,7 +506,8 @@ export async function page(w: Who, id: string): Promise<MeetingPage> {
     );
   const tz = String(m.tz ?? "Asia/Kuwait");
   const wheelIds = wheels.map(x => String(x.id));
-  const [options, spins, creative] = await Promise.all([
+  const rawDoc = String(m.doc ?? "");
+  const [options, spins, creative, pictures] = await Promise.all([
     wheelIds.length
       ? db(
           `team_wheel_options?select=*&wheel_id=in.(${wheelIds.map(x => `"${x}"`).join(",")})`,
@@ -495,6 +519,9 @@ export async function page(w: Who, id: string): Promise<MeetingPage> {
         )
       : Promise.resolve([] as SbRow[]),
     m.pipeline ? creativeRows(today) : Promise.resolve([] as CreativeRow[]),
+    isHtml(rawDoc)
+      ? signPictures(picturePaths(rawDoc))
+      : Promise.resolve(new Map<string, string>()),
   ]);
   const me = meOf(people, w);
   const hosts = links.filter(l => l.part === "host").map(l => l.person_id);
@@ -531,7 +558,7 @@ export async function page(w: Who, id: string): Promise<MeetingPage> {
       department: m.department ?? null,
       fromCalendar: Boolean(m.cal_event_id),
       managed: String(m.managed ?? "calendar"),
-      doc: String(m.doc ?? ""),
+      doc: withPictureUrls(rawDoc, pictures),
       docBy: m.doc_by ?? null,
       docAt: m.doc_at ?? null,
       docVersion: Number(m.doc_version ?? 0),
@@ -546,6 +573,9 @@ export async function page(w: Who, id: string): Promise<MeetingPage> {
       endsOn: m.ends_on ?? null,
       meetLink: m.meet_link ?? null,
       pipeline: m.pipeline ?? null,
+      embed:
+        m.embed === "cs-projections" || m.embed === "cs-daily" ? m.embed : null,
+      links: linksOf(m.links),
     },
     calendar: {
       state: !m.cal_event_id ? "off" : writable ? "on" : "someone-else",
@@ -578,6 +608,11 @@ export async function page(w: Who, id: string): Promise<MeetingPage> {
         title: p.cal_title ?? null,
         writable: Boolean(p.cal_writable),
         endsOn: p.ends_on ?? null,
+        startTime: p.start_time ?? null,
+        minutes:
+          p.minutes === null || p.minutes === undefined
+            ? null
+            : Number(p.minutes),
       })),
     },
     people: people.map(personOf),
@@ -727,6 +762,8 @@ export async function overviewOf(w: Who): Promise<Overview> {
         day: s.startsAt ? utcToZoned(s.startsAt, tz).day : s.onDate,
         time: s.time ?? (m.start_time ? hhmm(m.start_time) : null),
         endTime: s.endTime,
+        startsAt: s.startsAt,
+        endsAt: s.endsAt,
         status: s.status,
         onCalendar: s.onCalendar,
       });
@@ -824,6 +861,7 @@ export async function overviewOf(w: Who): Promise<Overview> {
             ? null
             : Number(m.minutes),
         weekdays: m.weekdays ?? null,
+        tz: String(m.tz ?? "Asia/Kuwait"),
         onCalendar: Boolean(m.cal_event_id),
       };
     }),

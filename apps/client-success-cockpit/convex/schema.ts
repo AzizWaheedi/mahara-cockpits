@@ -40,6 +40,16 @@ const schema = defineSchema({
     reportDays: v.optional(v.number()),
     reportTracked: v.optional(v.boolean()),
     reportDue: v.optional(v.boolean()),
+    /**
+     * The contract's end, from the ClickUp "Contract end date" field (a Date
+     * field on Clients - Mahara, resolved by name). `renewalTracked` is false
+     * while that field does not exist, so the renewal window can say "unknown"
+     * instead of pretending nobody renews. Never worked out from the signup.
+     */
+    renewalDate: v.optional(v.string()),
+    renewalTracked: v.optional(v.boolean()),
+    /** The media buyer's first-win rule (Active and live 14 days), sent with the row. */
+    firstWin: v.optional(v.boolean()),
     silentDays: v.optional(v.number()),
     /** Days since the client record was created: day 0 of the onboarding spine. */
     signupDays: v.optional(v.number()),
@@ -257,6 +267,8 @@ const schema = defineSchema({
     lastFu: v.optional(v.string()),
     nextFu: v.optional(v.string()),
     notes: v.optional(v.string()),
+    /** When this row's win was announced to the team, so it is announced once. */
+    celebratedAt: v.optional(v.number()),
     at: v.number(),
   }).index("by_key", ["key"]),
 
@@ -475,6 +487,11 @@ const schema = defineSchema({
     name: v.optional(v.string()),
     roles: v.array(v.string()),
     clients: v.array(v.string()),
+    /**
+     * The portal's own CEO flag, carried in its signed pass. Never written
+     * from a member list or a role: only a pass the portal signed sets it.
+     */
+    isCeo: v.optional(v.boolean()),
     at: v.number(),
     /** Removed in the portal: the row stays, with no roles, so the static allowlist cannot let them back in. */
     revokedAt: v.optional(v.number()),
@@ -535,6 +552,110 @@ const schema = defineSchema({
     error: v.optional(v.string()),
     syncedAt: v.number(),
   }).index("by_lastAt", ["lastAt"]),
+  /**
+   * The week's projection per metric: blood (the floor) and stretch, set by
+   * the CSM for a Kuwait week that starts on Sunday. `actual` is only ever a
+   * number typed in by hand for a metric whose source cannot answer; the
+   * screen fills the actual from the source whenever it can, and never
+   * writes a zero for a missing one. One row per week, person and metric.
+   */
+  projections: defineTable({
+    weekStart: v.string(),
+    byEmail: v.string(),
+    metric: v.string(), // resell | renewal | cash | review | referral
+    blood: v.number(),
+    stretch: v.number(),
+    actual: v.optional(v.number()),
+    missReason: v.optional(v.string()),
+    at: v.number(),
+  })
+    .index("by_week_email_metric", ["weekStart", "byEmail", "metric"])
+    .index("by_week", ["weekStart"]),
+
+  /**
+   * One client's renewal, planned: where they are, the angle, the objection
+   * and its answer, the offer, the proactive call and the outcome. One row
+   * per client per renewal date, kept for good: rows are never deleted, so
+   * last cycle's plan and its recording stay in the gold-standard library.
+   */
+  renewalPlans: defineTable({
+    taskId: v.string(),
+    clientName: v.string(),
+    renewalDate: v.string(),
+    onboardedOn: v.optional(v.string()),
+    /** What the client has paid so far, from the billing ledger when it can say. */
+    paidAmount: v.optional(v.number()),
+    paidSource: v.optional(v.string()),
+    likelihood: v.optional(v.string()), // high | medium | low
+    /** Prefilled from the sources, one fact per line with where it came from. */
+    whereTheyAre: v.optional(
+      v.array(
+        v.object({ label: v.string(), value: v.string(), source: v.string() }),
+      ),
+    ),
+    angle: v.optional(v.string()),
+    objection: v.optional(v.string()),
+    objectionAnswer: v.optional(v.string()),
+    offer: v.optional(
+      v.object({
+        price: v.optional(v.number()),
+        deliverables: v.optional(v.string()),
+        durationMonths: v.optional(v.number()),
+      }),
+    ),
+    /** When the proactive call is, ISO with the Kuwait offset, or a day. */
+    callBookedFor: v.optional(v.string()),
+    /** The GoHighLevel appointment "Book call" made, when it was booked from here. */
+    ghlAppointmentId: v.optional(v.string()),
+    status: v.string(), // planned | call_booked | renewed | resold | not_this_cycle | lost
+    notThisCycleReason: v.optional(v.string()),
+    outcomeNote: v.optional(v.string()),
+    callRecordingUrl: v.optional(v.string()),
+    goldStandard: v.optional(v.boolean()),
+    goldBy: v.optional(v.string()),
+    /** When a renewed or re-sold outcome was announced, so it is announced once. */
+    celebratedAt: v.optional(v.number()),
+    updatedBy: v.string(),
+    updatedAt: v.number(),
+  })
+    .index("by_task_date", ["taskId", "renewalDate"])
+    .index("by_gold", ["goldStandard"]),
+
+  /**
+   * The billing ledger as this cockpit last read it from Supabase
+   * (cockpit_client_payments and cockpit_billing_accounts), every half hour.
+   * Cash actuals and "paid so far" come from here; `fetchedAt` and `error`
+   * say how fresh it is, so a stale ledger reads as missing, never as zero.
+   */
+  billingFeed: defineTable({
+    key: v.string(), // "ledger"
+    payments: v.array(
+      v.object({
+        id: v.string(),
+        taskId: v.optional(v.string()),
+        clientName: v.string(),
+        day: v.string(),
+        usd: v.number(),
+        side: v.optional(v.string()),
+        kind: v.optional(v.string()),
+      }),
+    ),
+    accounts: v.array(
+      v.object({
+        taskId: v.string(),
+        clientName: v.string(),
+        ltvUsd: v.optional(v.number()),
+        plan: v.optional(v.string()),
+      }),
+    ),
+    /** When the CEO cockpit last mirrored the accounts, per Supabase. */
+    ledgerSyncedAt: v.optional(v.number()),
+    fetchedAt: v.number(),
+    okAt: v.optional(v.number()),
+    error: v.optional(v.string()),
+    failures: v.optional(v.number()),
+  }).index("by_key", ["key"]),
+
   /** The chat with Hermes: one thread per signed-in person. */
   hermesChat: defineTable({
     thread: v.string(),

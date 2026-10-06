@@ -9,7 +9,9 @@ import {
   saveGoalPlan,
   saveGoalTargets,
 } from "../src/lib/ceoGoalsClient";
-import { buildGoalsBoard } from "../src/lib/ceoGoalsModel";
+import { buildGoalsBoard, goalTargetPatch } from "../src/lib/ceoGoalsModel";
+import type { CallCenterMetrics } from "../src/types/ceo/callCenterContract";
+import { scoreboard } from "../src/types/ceo/scoreboard";
 import {
   actor,
   cockpitTestDb,
@@ -415,4 +417,37 @@ test("actual API dispatcher calls the real goals operations and rejects unknown 
     "Unknown goals operation",
   );
   expect(api.ceo.goals.board).toBe(api.ceo.goals.board);
+});
+
+test("native goals score distinct call-window totals, never daily sums or a missing report as zero", () => {
+  const overall: CallCenterMetrics = {
+    dials: 500, providerDials: 500, connections: 200, talkSeconds: 1000,
+    leads: 100, leadsDialed: 90, leadsContacted: 80, noVerifiedDial: 10,
+    confirmedBookings: 25, provisionalBookings: 10, unclassifiedBookings: 5,
+    shows: 10, noShow: 2, closed: 3, values: [],
+    showRate: null, closeRate: null, connectionRate: null, avgSpeedSeconds: null,
+    medianSpeedSeconds: null, speedSamples: 0, withinTwoMinutes: 0,
+    withinTwoMinutesRate: null, avgCallGapSeconds: null, callGapSamples: 0,
+  };
+  const payloads = { callsWindow: { from: "2026-09-01", to: "2026-09-19", overall } };
+  expect(scoreboard(payloads, "2026-09-01", "2026-09-19")).toMatchObject({
+    callLeads: 100, callBookings: 25, callLeadToBooking: 0.25,
+  });
+  expect(scoreboard(payloads, "2026-09-02", "2026-09-19").callLeads).toBeUndefined();
+  expect(scoreboard({}, "2026-09-01", "2026-09-19").callBookings).toBeUndefined();
+  const zero = scoreboard({ callsWindow: { ...payloads.callsWindow, overall: {
+    ...overall, leads: 0, confirmedBookings: 0,
+  } } }, "2026-09-01", "2026-09-19");
+  expect(zero.callLeads).toBe(0);
+  expect(zero.callBookings).toBe(0);
+  expect(zero.callLeadToBooking).toBeUndefined();
+});
+
+test("target edits omit stale metadata, clear only edited blanks and reject invalid numbers", () => {
+  expect(goalTargetPatch(4, { target: "12" })).toEqual({ id: 4, target: 12 });
+  expect(goalTargetPatch(4, { stretch: "", actualManual: "0" })).toEqual({
+    id: 4, stretch: null, actualManual: 0,
+  });
+  expect(goalTargetPatch(4, {})).toEqual({ id: 4 });
+  expect(() => goalTargetPatch(4, { target: "Infinity" })).toThrow("finite");
 });

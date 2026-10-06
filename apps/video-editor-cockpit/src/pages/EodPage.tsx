@@ -3,7 +3,7 @@ import { FIELD, Page, PageHeader, Problem, Section } from "../components/bits";
 import { Button } from "../components/ui/button";
 import { useWho } from "../lib/auth";
 import { askFor, useEodToday } from "../lib/data";
-import { moment } from "../lib/format";
+import { kuwaitDay, moment } from "../lib/format";
 
 /**
  * End of day, in the cockpit instead of the Typeform.
@@ -84,14 +84,6 @@ const BLOCKS: { title: string; questions: Question[] }[] = [
   },
 ];
 
-/** Kuwait's day, which is what the sheet records. */
-function today(): string {
-  const now = new Date();
-  const kuwait = new Date(
-    now.getTime() + (3 * 60 + now.getTimezoneOffset()) * 60_000,
-  );
-  return kuwait.toISOString().slice(0, 10);
-}
 
 /** "2026-09-26" read as a person says it: "Saturday 26 September". */
 function spoken(isoDay: string): string {
@@ -107,8 +99,8 @@ function spoken(isoDay: string): string {
 
 export default function EodPage() {
   const { email, name } = useWho();
-  const day = useMemo(today, []);
-  const filed = useEodToday(day);
+  const day = useMemo(kuwaitDay, []);
+  const filed = useEodToday(day, email || null);
   const [answers, setAnswers] = useState<Record<string, string>>({});
   // The name the row is filed under: the seat's name unless the editor
   // changes it (the Who card used to be a field; it is one tap away now).
@@ -181,6 +173,13 @@ export default function EodPage() {
           )
         }
       />
+
+      {filed.error && (
+        <Problem>
+          Could not check your report: {filed.error}.{" "}
+          <button type="button" className="underline" onClick={filed.reload}>Try again</button>
+        </Problem>
+      )}
 
       {already ? (
         <div className="mb-4 sm:mb-6">

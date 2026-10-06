@@ -9,6 +9,12 @@ import type { QueryCtx } from "./_generated/server";
 import { PAUSE_IS_CHURN_DAYS, stateOf } from "./csmSync";
 import { authenticatedMutation, authenticatedQuery } from "./functions";
 import { currentProfile, currentProfiles } from "./profileRows";
+import { missedRenewals } from "./projections";
+import {
+  hotUsedThisMonth,
+  metricOfHotType,
+  wonAction,
+} from "./projectionsCore";
 import { allowedClients, assertRole, userEmail } from "./roles";
 
 function kuwaitToday(): string {
@@ -131,6 +137,19 @@ async function churnThisMonth(ctx: any, month: string) {
         day: event?.day,
       });
     }
+  }
+
+  // A renewal date that went by with the plan still "planned" is a missed
+  // renewal (Projections), counted the same way: once, by id or by name.
+  for (const m of await missedRenewals(ctx, month, kuwaitToday())) {
+    if (lost.some(l => l.key === m.key || norm(l.name) === norm(m.name)))
+      continue;
+    lost.push({
+      key: m.key,
+      name: m.name,
+      reason: `renewal date ${m.renewalDate} passed with nothing logged`,
+      day: m.renewalDate,
+    });
   }
 
   // A client the CSM confirmed offboarded counts even if ClickUp still says otherwise.
@@ -257,15 +276,9 @@ export async function buildSnapshot(
     .order("desc")
     .take(400);
   // One upsell / referral / review conversation per client per month, enforced here
-  // rather than left to the CSM to remember.
-  const hotUsed = new Set(
-    monthDecisions
-      .filter(
-        d => d.role === "csm" && d.day.startsWith(month) && d.kind !== "left",
-      )
-      .filter(d => /upsell|referral|review/i.test(d.action))
-      .map(d => d.subject),
-  );
+  // rather than left to the CSM to remember. The same rule caps re-sells on
+  // the Projections screen (projectionsCore.hotUsedThisMonth).
+  const hotUsed = hotUsedThisMonth(monthDecisions, month);
 
   // Loose ends written off stay written off, except money ones, which cannot be.
   const dismissed = new Set(
@@ -728,8 +741,49 @@ export const saveHotRow = authenticatedMutation({
       .query("hotList")
       .withIndex("by_key", q => q.eq("key", args.key))
       .first();
+    let id = existing?._id;
     if (existing) await ctx.db.patch(existing._id, { ...args, at: Date.now() });
-    else await ctx.db.insert("hotList", { ...args, at: Date.now() });
+    else id = await ctx.db.insert("hotList", { ...args, at: Date.now() });
+
+    // A row moved onto or off Closed is a win logged or taken back: the
+    // Projections actuals count these, and a won re-sell is announced to
+    // the team once.
+    const metric = metricOfHotType(args.type);
+    const wasClosed = existing?.status === "Closed";
+    const isClosed = args.status === "Closed";
+    const client = args.clientName.trim();
+    if (metric && client && wasClosed !== isClosed) {
+      const email = await userEmail(ctx);
+      const day = kuwaitToday();
+      await ctx.db.insert("decisions", {
+        day,
+        role: "csm",
+        subject: client,
+        action: isClosed
+          ? wonAction(metric, args.type)
+          : `Won undone: ${metric === "resell" ? "re-sell" : metric}`,
+        kind: isClosed ? "won" : "unwon",
+        evidence: "Hot list",
+        byEmail: email,
+        at: Date.now(),
+      });
+      await ctx.db.insert("usage", {
+        email,
+        role: "csm",
+        event: isClosed ? "hot_won" : "hot_won_undone",
+        detail: `${client}: ${args.type}`,
+        at: Date.now(),
+      });
+      if (isClosed && metric === "resell" && id && !existing?.celebratedAt) {
+        await ctx.scheduler.runAfter(0, internal.projections.celebrate, {
+          metric,
+          clientName: client,
+          key: `hot:${args.key}`,
+          detail: args.type.replace(/^Upsell\s*-\s*/i, "") || undefined,
+        });
+        await ctx.db.patch(id, { celebratedAt: Date.now() });
+      }
+    }
     return null;
   },
 });

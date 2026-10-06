@@ -415,3 +415,13 @@ Run `python scripts/verify-cutover-readiness.py` from the repository root:
    - Confirm zero incoming traffic to Convex before deleting deployments.
 
 
+## 2026-10-04 candidate verification — not a production cutover
+
+- Work stays in `codex/supabase-completion-20261004`; the original user worktrees are unchanged.
+- Native team meeting projections now use the existing CSM SQL contracts. The canonical PostgreSQL suite passes 7 tests with 45 assertions. A disposable native-client smoke proved 4/8 renewal target persistence/readback, actor audit, and revoked-member denial.
+- Actual application compilation passed for all five cockpits. Shared-source enforcement passed. The assembled Edge Function suite passes 258 tests with 775 assertions.
+- These checks do not prove authenticated production journeys, fresh native feed publication, real queued provider processing, or final data reconciliation.
+- Do not apply the rejected Gemini native feed migration: it assumes a singleton `id` in existing per-table `cockpit_*_sources` ledgers and fails against canonical schema. Do not activate the submitted media queue worker: its intent flag can report committed delivery without a provider receipt. Their changes remain isolated and outside the assembly.
+- Identity adoption and five-app directory-owned role bootstraps still need reviewed corrections. Gemini 3.8 returned a provider quota error; no alternate model was used.
+- Both available GitHub credentials lack push permission. Vercel authorization is absent. Hermes SSH authentication is denied. Production schema, data, deployments, writers and Convex runtimes have not been changed during this completion work.
+

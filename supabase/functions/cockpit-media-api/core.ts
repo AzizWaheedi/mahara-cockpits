@@ -9,8 +9,8 @@ export const STATUS_FIELD = '7f118f61-34b6-483a-b749-ff9fc31fd423';
 export const CITIES_FIELD = 'b98aa20e-c2d1-4785-baae-67e67506023d';
 export const OPERATIONS = new Set(['control.setStatus','ceo.b2bControl.setStatus','edit.setAdSetBudget',
  'edit.duplicateAdSet','board.adStatusOptions','board.advertisingCityOptions','board.setAdStatus',
- 'board.setAdvertisingCities','board.renameCard','board.addToBoard','board.dismissOffBoard','ceo.ltv.apply','edit.askViktorFor','cockpit.askForDetail','execute.runAction',...B2B_OPERATIONS,...CREATIVE_OPERATIONS,...LAUNCH_OPERATIONS]);
-export interface Provider { call(provider:'meta'|'clickup'|'slack', method:string,path:string,body?:Row):Promise<Row> }
+ 'board.setAdvertisingCities','board.renameCard','board.addToBoard','board.dismissOffBoard','ceo.ltv.apply','edit.askViktorFor','cockpit.askForDetail','execute.runAction','previews.fresh','comms.sendReply',...B2B_OPERATIONS,...CREATIVE_OPERATIONS,...LAUNCH_OPERATIONS]);
+export interface Provider { call(provider:'meta'|'clickup'|'slack'|'ghl', method:string,path:string,body?:Row):Promise<Row> }
 export interface Plan { provider:'meta'|'clickup'|'slack'; method:string; path:string; body?:Row; verifyPath:string; expected:Row; result?:Row; imageUpload?:boolean; precondition?:Row; liveAdsGuard?:{path:string;target:string};slackMessage?:boolean;clickupComment?:boolean }
 export interface MultiPlan {steps:Plan[]; result:Row}
 const id = (x:unknown) => { if(!/^\d{5,}$/.test(String(x??''))) throw new Error('A valid Meta id is required'); return String(x); };

@@ -86,6 +86,28 @@ import {
   routePhone,
   slotOffered,
 } from "./dialer.ts";
+import { hotFresh, hotPatch, stillHot } from "./hot.ts";
+import { CLIENT_DRAFT_CLOSED, CLIENT_REFUSAL, isClient } from "./clients.ts";
+import {
+  type ContractSetting,
+  type ContractTerms,
+  cleanTemplates,
+  keepPayments,
+  contactFieldsFor,
+  contactFill,
+  contractName,
+  contractPatch,
+  contractTerms,
+  docKind,
+  goneFrom,
+  isoTime,
+  rowFromDoc,
+  senderOf,
+  sentAtOf,
+  signerOf,
+  signingLink,
+} from "./contracts.ts";
+import { clientFormRow, CLIENT_FORM_ID } from "./clientforms.ts";
 
 type Row = Record<string, unknown>;
 
@@ -1807,10 +1829,21 @@ function leadHour(country: unknown, now = Date.now()): number {
 
 async function sendFollowup(who: Who, f: Row, b: Row, auto: boolean) {
   if (f.status !== "draft") throw new Refusal(`This draft was already ${f.status}.`, 409);
+  const lead = (await svc(`cockpit_sales_leads?contact_id=eq.${enc(String(f.contact_id))}&select=country,tags`))[0];
+  // An active client gets no sales follow-up: the draft closes, saying why.
+  if (isClient(lead)) {
+    await svc(`cockpit_sales_followups?id=eq.${enc(String(f.id))}&status=eq.draft`, {
+      method: "PATCH",
+      body: { status: "expired", decided_at: new Date().toISOString(), error: CLIENT_DRAFT_CLOSED },
+      prefer: "return=minimal",
+    });
+    await audit(who, auto ? "followup.autosend" : "followup.approve", "cockpit_sales_followups", String(f.id), f,
+      { status: "expired", error: CLIENT_DRAFT_CLOSED });
+    throw new Refusal(CLIENT_REFUSAL, 409);
+  }
   // A follow-up does not arrive at night: an answer to a lead who just wrote
   // may, anything else waits for 09:00 on the lead's own clock.
   if (f.segment !== "reply") {
-    const lead = (await svc(`cockpit_sales_leads?contact_id=eq.${enc(String(f.contact_id))}&select=country`))[0];
     const h = leadHour(lead?.country);
     if (h < 9 || h >= 21)
       throw new Refusal("It is night where the lead is. Send it after 9 in the morning, their time.", 409);
@@ -1845,17 +1878,23 @@ async function sendFollowup(who: Who, f: Row, b: Row, auto: boolean) {
     });
     throw new Refusal("The conversation has moved on since this draft was made, so it was not sent. Read it first; the agent writes a fresh draft if one is still due.", 409);
   }
-  const template = f.channel === "whatsapp_template";
+  // The draft's channel, or WhatsApp when the rep picks it (Aziz,
+  // 2026-09-27: inside the lead's 24-hour window a follow-up can go on
+  // WhatsApp as well). convo.send checks the window live and refuses outside
+  // it, and the draft then waits with the reason.
+  const channel = b.channel === "whatsapp" ? "whatsapp" : String(f.channel);
+  const switched = channel !== f.channel;
+  const template = channel === "whatsapp_template";
   const body = template ? templateLine(b.body ?? f.body) : String(b.body ?? f.body).replace(/\r\n/g, "\n").trim();
   if (!body) throw new Refusal("Write the message first.");
-  const subject = f.channel === "email" ? cleanText(b.subject ?? f.subject, 300) : null;
+  const subject = channel === "email" ? cleanText(b.subject ?? f.subject, 300) : null;
   const claimed = await svc(`cockpit_sales_followups?id=eq.${enc(String(f.id))}&status=eq.draft`, {
     method: "PATCH",
     body: { status: "sending", decided_by: who.email, decided_at: new Date().toISOString() },
     prefer: "return=representation",
   });
   if (!claimed.length) throw new Refusal("Someone else has just dealt with this draft.", 409);
-  const edited = body !== String(f.body).trim() || (f.channel === "email" && subject !== (f.subject ?? null));
+  const edited = body !== String(f.body).trim() || (channel === "email" && subject !== (f.subject ?? null));
   try {
     const out = template
       ? await sendTemplate(who, {
@@ -1867,7 +1906,7 @@ async function sendFollowup(who: Who, f: Row, b: Row, auto: boolean) {
         })
       : await convoSend(who, {
           contact_id: f.contact_id,
-          channel: f.channel,
+          channel,
           body,
           subject,
           request_id: f.id,
@@ -1884,15 +1923,17 @@ async function sendFollowup(who: Who, f: Row, b: Row, auto: boolean) {
         message_id: m.id ?? null,
         error: m.state === "failed" ? (m.error ?? "HighLevel marked it failed") : null,
         auto,
+        // The channel it went on: a draft written for email may go on WhatsApp.
+        ...(switched ? { channel } : {}),
       },
       prefer: "return=representation",
     }))[0];
     await audit(who, auto ? "followup.autosend" : "followup.approve", "cockpit_sales_followups", String(f.id), f,
-      { status: saved.status, edited, segment: f.segment, channel: f.channel });
+      { status: saved.status, edited, segment: f.segment, channel, ...(switched ? { written_for: f.channel } : {}) });
     if (saved.status === "sent") {
       // A confirmation message counts as a try: the dialer's confirmation
       // call waits for the lead to answer it first.
-      if (f.segment === "confirm" && f.appointment_id) await confirmationSent(who, f);
+      if (f.segment === "confirm" && f.appointment_id) await confirmationSent(who, { ...f, channel });
       // The lead leaves the old automation only once the message is seen to
       // have gone; a send not seen yet is settled by the desk (followup.settle).
       if (sendSettled(m))
@@ -1909,7 +1950,7 @@ async function sendFollowup(who: Who, f: Row, b: Row, auto: boolean) {
       method: "PATCH",
       body: fixable
         ? { status: "draft", error: err, decided_by: null, decided_at: null }
-        : { status: "failed", error: err, final_body: body, final_subject: subject, edited },
+        : { status: "failed", error: err, final_body: body, final_subject: subject, edited, ...(switched ? { channel } : {}) },
       prefer: "return=minimal",
     });
     await audit(who, auto ? "followup.autosend" : "followup.approve", "cockpit_sales_followups", String(f.id), f,
@@ -2305,7 +2346,7 @@ const ms = (v: unknown) => {
 let heavy: { at: number; leads: Row[]; appts: Row[]; dials: Row[]; deals: Row[]; missed: Row[] } | null = null;
 const HEAVY_FOR = 20_000;
 const LEAD_COLS =
-  "contact_id,name,phone,phone8,lead_created_at,stage_id,stage_name,pipeline_id,lead_class,dnd,contact_type,revenue,readiness,assigned_to";
+  "contact_id,name,phone,phone8,lead_created_at,stage_id,stage_name,pipeline_id,lead_class,dnd,contact_type,revenue,readiness,assigned_to,tags";
 
 type DialFacts = { last: number; reached: boolean; tries: number[] };
 
@@ -2360,19 +2401,25 @@ type QueueCandidate = Candidate &
 /** Everything the queue needs, read in a handful of queries, no huge id lists. */
 async function candidates(now: number): Promise<{ list: QueueCandidate[] }> {
   const soon = enc(new Date(now - 3_600_000).toISOString());
-  const [states, inbox, attempts, h, confirmations, hotRows, roles, seats, introTries] = await Promise.all([
+  const [states, inbox, attempts, h, confirmations, hotList, roles, seats, introTries] = await Promise.all([
     svcAll("cockpit_sales_queue_state?select=*&order=contact_id"),
     svc(`cockpit_sales_inbox?select=contact_id,last_message_at,last_direction&last_direction=eq.inbound&last_message_at=gte.${enc(new Date(now - 86_400_000).toISOString())}`),
     svc("cockpit_sales_attempts?select=contact_id,rep_email,started_at,call_checked_at&state=in.(dialing,placed)"),
     heavyReads(now),
     svc(`cockpit_sales_confirmations?select=appointment_id,result,at&start_at=gte.${soon}&order=at.desc&limit=2000`),
-    svc("cockpit_sales_hot?select=contact_id,owner_email,next_at&removed_at=is.null&limit=2000"),
+    // Every column, and the status filtered here (hot.ts stillHot): naming
+    // the status column in the read would fail the whole queue until the
+    // 2026-09-27 migration is in.
+    svc("cockpit_sales_hot?select=*&removed_at=is.null&limit=2000"),
     stageRoles(),
     svc("cockpit_sales_people?select=email,ghl_user_id,role&active=eq.true&via_portal=eq.true&limit=500"),
     // Intro calls that rang out in the last hour: the intro waits a few
     // minutes before it comes back (dialer.ts introWaiting).
     svc(`cockpit_sales_attempts?select=appointment_id,saved_at&state=eq.saved&item_kind=eq.intro&outcome=eq.no_answer&saved_at=gte.${soon}&limit=2000`),
   ]);
+  // A closed or lost hot lead stays on the list for the record, and is no
+  // longer hot here (Aziz, 2026-09-27).
+  const hotRows = hotList.filter(stillHot);
   // Who owns a lead: a working rep's seat by HighLevel's owner field. A
   // manager's or a leaver's lead is the shared queue's (Aziz, 2026-09-27).
   const working = new Set(seats.map(s => String(s.email)));
@@ -2453,7 +2500,9 @@ async function candidates(now: number): Promise<{ list: QueueCandidate[] }> {
     if (id && t && (lastTry.get(id) ?? 0) < t) lastTry.set(id, t);
   }
   const hotBy = new Map(hotRows.map(r => [String(r.contact_id), r]));
-  const list = leads.map(l => {
+  // An active client (tagged client in HighLevel) is never in the queue
+  // (clients.ts): client success looks after them.
+  const list = leads.filter(l => !isClient(l)).map(l => {
     const id = String(l.contact_id);
     const st = stateBy.get(id) ?? {};
     const mine = apptBy.get(id) ?? [];
@@ -3988,7 +4037,7 @@ async function pipelineBoard(who: Who, b: Row) {
   const now = Date.now();
   const since = now - 60 * 86_400_000;
   const cols =
-    "contact_id,name,lead_class,stage_id,stage_name,opp_status,pipeline_id,assigned_to,revenue,readiness,lead_created_at,opp_updated_at,dnd";
+    "contact_id,name,lead_class,stage_id,stage_name,opp_status,pipeline_id,assigned_to,revenue,readiness,lead_created_at,opp_updated_at,dnd,tags";
   const [inPipe, loose, inbox, hotRows, states, appts, people] = await Promise.all([
     svcAll(`cockpit_sales_leads?pipeline_id=eq.${enc(pipe.id)}&select=${cols}&order=contact_id`),
     svc(
@@ -4005,7 +4054,8 @@ async function pipelineBoard(who: Who, b: Row) {
   const inboundBy = new Map<string, number>();
   for (const i of inbox)
     if (i.last_direction === "inbound") inboundBy.set(String(i.contact_id), ms(i.last_message_at) ?? 0);
-  const hotBy = new Map(hotRows.map(r => [String(r.contact_id), r]));
+  // As in the dialer: a closed or lost hot row is kept, and is not hot.
+  const hotBy = new Map(hotRows.filter(stillHot).map(r => [String(r.contact_id), r]));
   const stateBy = new Map(states.map(r => [String(r.contact_id), r]));
   const apptBy = new Map<string, Row>();
   for (const a of appts)
@@ -4018,6 +4068,9 @@ async function pipelineBoard(who: Who, b: Row) {
   const cards: Row[] = [];
   for (const l of [...inPipe, ...loose]) {
     if (l.opp_status && l.opp_status !== "open") continue;
+    // An active client sits in the pipeline from their own deal; the board
+    // is the sales team's, so they are left off it (clients.ts).
+    if (isClient(l)) continue;
     const id = String(l.contact_id);
     const hot = hotBy.get(id);
     const st = stateBy.get(id);
@@ -4136,44 +4189,55 @@ async function tagOutcome(contactId: string, outcome: AnyOutcome): Promise<strin
 // The hot list
 // ---------------------------------------------------------------------------
 
-const HOW = ["call", "whatsapp", "email", "meeting"] as const;
-
-/** Put a lead on the hot list, or change when and how to follow up. */
+/**
+ * Put a lead on the hot list, or change fields of its row. The list is
+ * edited like a sheet (Aziz, 2026-09-27), a cell at a time, so only the
+ * fields the body names change (hot.ts hotPatch): a note saved just after an
+ * amount never puts the old amount back. A lead not on the list, or taken
+ * off it, starts a fresh row that whoever puts it there owns (a manager may
+ * name another seat). Only the owner or a manager changes a row; closing or
+ * losing a deal keeps the row (hot.remove takes it off).
+ */
 async function hotSave(who: Who, b: Row) {
   const contact = cleanText(b.contact_id, 80);
-  const lead = (await svc(`cockpit_sales_leads?contact_id=eq.${enc(contact)}&select=contact_id`))[0];
+  if (!contact) throw new Refusal("Which lead?");
+  const lead = (await svc(`cockpit_sales_leads?contact_id=eq.${enc(contact)}&select=contact_id,tags`))[0];
   if (!lead) throw new Refusal("That lead is not in the cockpit.", 404);
+  if (isClient(lead)) throw new Refusal(CLIENT_REFUSAL, 409);
   const before = (await svc(`cockpit_sales_hot?contact_id=eq.${enc(contact)}&select=*`))[0] ?? null;
-  if (before && !before.removed_at && !who.manager && before.owner_email !== who.email)
-    throw new Refusal(`This lead is on ${String(before.owner_email).split("@")[0]}'s hot list. Ask them or a manager.`, 403);
-  let nextAt: string | null = null;
-  if (b.next_at) {
-    const t = Date.parse(String(b.next_at));
-    if (!Number.isFinite(t) || t < Date.now() - 86_400_000 || t > Date.now() + 90 * 86_400_000)
-      throw new Refusal("Pick when to follow up, within the next 90 days.");
-    nextAt = new Date(t).toISOString();
+  const live = before && !before.removed_at ? before : null;
+  if (live && !who.manager && live.owner_email !== who.email)
+    throw new Refusal(`This lead is on ${String(live.owner_email).split("@")[0]}'s hot list. Ask them or a manager.`, 403);
+  const checked = hotPatch(b, Date.now(), { email: String(who.email ?? ""), manager: Boolean(who.manager) });
+  if (!checked.ok) throw new Refusal(checked.error);
+  const patch = checked.patch;
+  if (typeof patch.owner_email === "string" && patch.owner_email !== String(who.email ?? "").toLowerCase()) {
+    // A working seat, as the dialer counts one (candidates): else the lead
+    // would be nobody's there.
+    const seat = (await svc(
+      `cockpit_sales_people?email=eq.${enc(patch.owner_email)}&active=eq.true&via_portal=eq.true&select=email`,
+    ))[0];
+    if (!seat) throw new Refusal("Give it to someone with a working seat in the sales cockpit.");
   }
-  const how = cleanText(b.next_how, 10);
-  if (how && !(HOW as readonly string[]).includes(how)) throw new Refusal("Follow up by call, WhatsApp, email or a meeting.");
-  const owner = who.manager && b.owner_email ? cleanText(b.owner_email, 200).toLowerCase() : String(who.email);
-  const row = {
-    contact_id: contact,
-    owner_email: owner,
-    next_at: nextAt,
-    next_how: how || null,
-    last_objection: cleanText(b.last_objection, 500) || null,
-    note: cleanText(b.note, 4000) || null,
-    updated_at: new Date().toISOString(),
-    removed_at: null,
-    removed_why: null,
-    ...(before && !before.removed_at ? {} : { added_by: who.email, added_at: new Date().toISOString() }),
-  };
-  const out = (await svc("cockpit_sales_hot?on_conflict=contact_id", {
-    method: "POST",
-    body: row,
-    prefer: "resolution=merge-duplicates,return=representation",
-  }))[0];
-  await audit(who, "hot.save", "cockpit_sales_hot", contact, before, out);
+  const at = new Date().toISOString();
+  let out: Row | undefined;
+  if (live) {
+    // Already on the list and nothing named: nothing to write.
+    if (!Object.keys(patch).length) return { hot: live };
+    out = (await svc(`cockpit_sales_hot?contact_id=eq.${enc(contact)}&removed_at=is.null`, {
+      method: "PATCH",
+      body: { ...patch, updated_at: at },
+      prefer: "return=representation",
+    }))[0];
+    if (!out) throw new Refusal("This lead came off the hot list a moment ago. Put it back on to change it.", 409);
+  } else {
+    out = (await svc("cockpit_sales_hot?on_conflict=contact_id", {
+      method: "POST",
+      body: { ...hotFresh(contact, String(who.email), at), ...patch },
+      prefer: "resolution=merge-duplicates,return=representation",
+    }))[0];
+  }
+  await audit(who, "hot.save", "cockpit_sales_hot", contact, before, out, { fields: Object.keys(patch) });
   return { hot: out };
 }
 
@@ -4190,6 +4254,682 @@ async function hotRemove(who: Who, b: Row) {
   });
   await audit(who, "hot.remove", "cockpit_sales_hot", contact, before, null);
   return {};
+}
+
+// ---------------------------------------------------------------------------
+// Contracts: HighLevel's Documents & Contracts, from the lead's page
+// ---------------------------------------------------------------------------
+
+/** Every column a seat may read: all but the client's signing link. */
+const CONTRACT_COLS =
+  "document_id,contact_id,template_id,template_name,name,status,fields,created_by,sent_by,sent_via,sent_at,viewed_at,signed_at,revision,ghl_updated_at,created_at,updated_at,checked_at,source";
+
+function needCloser(who: Who) {
+  if (!who.manager && !["closer", "both"].includes(String(who.role)))
+    throw new Refusal("Contracts are made and sent by closers and managers.", 403);
+}
+
+/** A contract row as the cockpit shows it: never with the signing link. */
+function contractOut(r: Row | undefined): Row | null {
+  if (!r) return null;
+  const { client_link: _link, ...rest } = r;
+  return rest;
+}
+
+async function contractSetting(): Promise<ContractSetting> {
+  return (await setting<ContractSetting>("contracts")) ?? {};
+}
+
+/**
+ * Make the contract in HighLevel as a draft for this lead, from one of the
+ * main templates, with the fields it prints filled from what the rep wrote.
+ * A draft can still be edited in HighLevel; sending locks it. The same lead
+ * and template with a draft already open gets that draft back with its
+ * fields brought up to date, so a second tap never makes a second contract.
+ */
+async function contractCreate(who: Who, b: Row) {
+  needCloser(who);
+  const contact = cleanText(b.contact_id, 80);
+  if (!contact) throw new Refusal("Which lead?");
+  const lead = (await svc(`cockpit_sales_leads?contact_id=eq.${enc(contact)}&select=contact_id`))[0];
+  if (!lead) throw new Refusal("That lead is not in the cockpit.", 404);
+  if (!who.ghl_user_id)
+    throw new Refusal("Your seat has no HighLevel user, so the contract cannot be made in your name. A manager links it on the Team page.", 409);
+  const s = await contractSetting();
+  const template = (s.templates ?? []).find(t => t.id === cleanText(b.template_id, 40));
+  if (!template) throw new Refusal("Pick one of the main contract templates.");
+  const checked = contractTerms(b, template, s);
+  if (!checked.ok) throw new Refusal(checked.error);
+  const fill = contactFill(checked.terms, s);
+  if (!fill.ok) throw new Refusal(fill.error, 409);
+
+  try {
+    await ghl("PUT", `/contacts/${enc(contact)}`, fill.body, "2021-07-28");
+  } catch (e) {
+    throw new Refusal(`HighLevel did not take the contract details: ${redact(String((e as Error).message ?? e))}`, 502);
+  }
+  const now = new Date().toISOString();
+  const open = (await svc(
+    `cockpit_sales_contracts?contact_id=eq.${enc(contact)}&template_id=eq.${enc(template.id)}&status=eq.draft&select=*&order=created_at.desc&limit=1`,
+  ))[0];
+  if (open) {
+    const saved = (await svc(`cockpit_sales_contracts?document_id=eq.${enc(String(open.document_id))}`, {
+      method: "PATCH",
+      body: { fields: checked.terms, updated_at: now },
+      prefer: "return=representation",
+    }))[0];
+    await audit(who, "contract.update", "cockpit_sales_contracts", String(open.document_id), open.fields ?? null, checked.terms);
+    await keepFieldsInStep([contact], who);
+    return { contract: contractOut(saved), reused: true };
+  }
+
+  let out: Row;
+  try {
+    out = await ghl("POST", "/proposals/templates/send", {
+      templateId: template.id,
+      userId: who.ghl_user_id,
+      sendDocument: false,
+      locationId: LOCATION,
+      contactId: contact,
+    }, "2021-07-28");
+  } catch (e) {
+    throw new Refusal(`HighLevel did not make the contract: ${redact(String((e as Error).message ?? e))}`, 502);
+  }
+  const doc = ((out.document ?? {}) as Row);
+  const id = String(doc._id ?? doc.id ?? "");
+  if (!id)
+    throw new Refusal("HighLevel did not say which contract it made. Look in HighLevel's Documents & Contracts before trying again, so it is not made twice.", 502);
+  // The sync may have copied the new document a moment before this row
+  // landed; the cockpit's own row, with the terms, wins.
+  const saved = (await svc("cockpit_sales_contracts?on_conflict=document_id", {
+    method: "POST",
+    body: {
+      document_id: id,
+      contact_id: contact,
+      template_id: template.id,
+      template_name: template.name,
+      name: cleanText(doc.name, 200) || template.name,
+      status: "draft",
+      fields: checked.terms,
+      created_by: who.email,
+      revision: typeof doc.documentRevision === "number" ? doc.documentRevision : null,
+      ghl_updated_at: isoTime(doc.updatedAt),
+      created_at: now,
+      updated_at: now,
+      checked_at: now,
+      source: "cockpit",
+    },
+    prefer: "resolution=merge-duplicates,return=representation",
+  }))[0];
+  await audit(who, "contract.create", "cockpit_sales_contracts", id, null, {
+    contact_id: contact,
+    template: template.name,
+    fields: checked.terms,
+  });
+  await keepFieldsInStep([contact], who);
+  return { contract: contractOut(saved) };
+}
+
+/**
+ * Send a draft for signature: HighLevel emails it to the lead, or marks it
+ * sent and returns the link for the rep to share (on WhatsApp, say). The
+ * fields are written again first, in case another contract for the same
+ * lead changed them since this draft was made.
+ */
+async function contractSend(who: Who, b: Row) {
+  needCloser(who);
+  const id = cleanText(b.document_id, 40);
+  const c = (await svc(`cockpit_sales_contracts?document_id=eq.${enc(id)}&select=*`))[0];
+  if (!c) throw new Refusal("That contract is not here.", 404);
+  if (c.status !== "draft")
+    throw new Refusal(
+      c.status === "completed"
+        ? "This contract is already signed."
+        : c.status === "deleted"
+          ? "HighLevel no longer has this contract. Make a new one."
+          : "This contract was already sent.",
+      409,
+    );
+  const via = b.via === "email" ? "email" : b.via === "link" ? "link" : null;
+  if (!via) throw new Refusal("Send it by email, or as a link to share.");
+  if (!who.ghl_user_id)
+    throw new Refusal("Your seat has no HighLevel user, so the contract cannot be sent in your name. A manager links it on the Team page.", 409);
+  const contact = String(c.contact_id);
+  if (via === "email") {
+    const lead = (await svc(`cockpit_sales_leads?contact_id=eq.${enc(contact)}&select=email`))[0];
+    if (!String(lead?.email ?? "").trim())
+      throw new Refusal("This lead has no email address in HighLevel. Send it as a link and share it on WhatsApp.", 409);
+  }
+  const s = await contractSetting();
+  // A draft made in HighLevel was filled in there: its terms and name stay.
+  const ours = c.source !== "highlevel";
+  const terms = (c.fields ?? {}) as ContractTerms;
+  const fill = ours ? contactFill(terms, s) : null;
+  if (fill && !fill.ok) throw new Refusal(fill.error, 409);
+  const name = ours
+    ? contractName(String(terms.company_name ?? ""))
+    : cleanText(c.name, 200) || cleanText(c.template_name, 200) || "Contract";
+  let out: Row;
+  try {
+    if (fill?.ok) await ghl("PUT", `/contacts/${enc(contact)}`, fill.body, "2021-07-28");
+    out = await ghl("POST", "/proposals/document/send", {
+      locationId: LOCATION,
+      documentId: id,
+      documentName: name,
+      medium: via,
+      sentBy: who.ghl_user_id,
+    }, "2021-07-28");
+  } catch (e) {
+    throw new Refusal(`HighLevel did not send the contract: ${redact(String((e as Error).message ?? e))}`, 502);
+  }
+  const link = signingLink(out.links, contact, s.link_base);
+  const now = new Date().toISOString();
+  const saved = (await svc(`cockpit_sales_contracts?document_id=eq.${enc(id)}`, {
+    method: "PATCH",
+    body: { status: "sent", name, sent_by: who.email, sent_via: via, sent_at: now, client_link: link, updated_at: now },
+    prefer: "return=representation",
+  }))[0];
+  await audit(who, "contract.send", "cockpit_sales_contracts", id, { status: c.status }, { status: "sent", via, name });
+  await keepFieldsInStep([contact], who);
+  return { contract: contractOut(saved), link: via === "link" ? link : null };
+}
+
+/** The client's signing link, for a closer or manager to share again. */
+async function contractLink(who: Who, b: Row) {
+  needCloser(who);
+  const id = cleanText(b.document_id, 40);
+  const c = (await svc(`cockpit_sales_contracts?document_id=eq.${enc(id)}&select=document_id,status,client_link`))[0];
+  if (!c) throw new Refusal("That contract is not here.", 404);
+  if (!c.client_link)
+    throw new Refusal(c.status === "draft" ? "The link exists once the contract is sent." : "HighLevel gave no link for this contract. Open it in HighLevel.", 409);
+  await audit(who, "contract.link", "cockpit_sales_contracts", id, null, {});
+  return { link: c.client_link };
+}
+
+/**
+ * HighLevel's documents, newest change first, page by page until every one
+ * wanted is seen or the pages run out. Says how far back the pages reached
+ * (the oldest change read) and whether they were the whole list.
+ */
+async function readDocs(want: Set<string>, pages = 10) {
+  const left = new Set(want);
+  const hits: Row[] = [];
+  let floor: string | null = null;
+  let read = 0;
+  let total: number | null = null;
+  for (let skip = 0; skip < pages * 20 && left.size; skip += 20) {
+    const page = await ghl("GET", `/proposals/document?locationId=${LOCATION}&limit=20&skip=${skip}`, undefined, "2021-07-28");
+    const docs = (page.documents ?? []) as Row[];
+    if (typeof page.total === "number") total = page.total;
+    read += docs.length;
+    for (const d of docs) {
+      const changed = isoTime(d.updatedAt);
+      if (changed && (!floor || changed < floor)) floor = changed;
+      if (left.delete(String(d._id ?? ""))) hits.push(d);
+    }
+    if (docs.length < 20) break;
+  }
+  return { hits, floor, ended: total !== null && read > 0 && read >= total };
+}
+
+/**
+ * Read the status of our open contracts back from HighLevel. Its list comes
+ * newest change first, so a contract just opened or signed is on the first
+ * page; at most ten pages are read. Once a minute is enough unless asked.
+ * A contract deleted in HighLevel leaves the list; one that should have been
+ * on the pages read and was not is marked deleted, after a second read in
+ * case the client opened it mid-read and it jumped to the top.
+ */
+async function contractRefresh(who: Who, b: Row) {
+  const contact = cleanText(b.contact_id, 80);
+  const open = await svc(
+    `cockpit_sales_contracts?status=in.(draft,sent,viewed)${contact ? `&contact_id=eq.${enc(contact)}` : ""}&select=document_id,contact_id,status,checked_at,ghl_updated_at&limit=500`,
+  );
+  if (!open.length) return { checked: 0 };
+  const now = Date.now();
+  const oldest = Math.min(...open.map(r => ms(r.checked_at) ?? 0));
+  if (!b.force && oldest > now - 60_000) return { checked: 0, fresh: true };
+  const left = new Map(open.map(r => [String(r.document_id), r] as const));
+  const at = new Date(now).toISOString();
+  let found = 0;
+  const take = async (docs: Row[]) => {
+    for (const d of docs) {
+      const id = String(d._id ?? "");
+      const r = left.get(id);
+      if (!r) continue;
+      await svc(`cockpit_sales_contracts?document_id=eq.${enc(id)}`, {
+        method: "PATCH",
+        body: contractPatch(d, String(r.contact_id), at),
+        prefer: "return=minimal",
+      });
+      left.delete(id);
+      found++;
+    }
+  };
+  const missing = () =>
+    [...left.values()].map(r => ({ document_id: String(r.document_id), ghl_updated_at: (r.ghl_updated_at as string | null) ?? null }));
+
+  const first = await readDocs(new Set(left.keys()));
+  await take(first.hits);
+  let gone = goneFrom(missing(), first.floor, first.ended);
+  if (gone.length) {
+    const again = await readDocs(new Set(gone));
+    await take(again.hits);
+    const still = new Set(goneFrom(missing(), again.floor, again.ended));
+    gone = gone.filter(id => still.has(id));
+    for (const id of gone) {
+      const r = left.get(id);
+      await svc(`cockpit_sales_contracts?document_id=eq.${enc(id)}&status=in.(draft,sent,viewed)`, {
+        method: "PATCH",
+        body: { status: "deleted", checked_at: at, updated_at: at },
+        prefer: "return=minimal",
+      });
+      await audit(who, "contract.gone", "cockpit_sales_contracts", id, { status: r?.status ?? null }, { status: "deleted" }, {
+        reason: "not in HighLevel's document list on two reads",
+      });
+      left.delete(id);
+    }
+  }
+  // The ones not on those pages have not changed lately: say they were checked.
+  if (left.size)
+    await svc(`cockpit_sales_contracts?document_id=in.(${[...left.keys()].map(enc).join(",")})`, {
+      method: "PATCH",
+      body: { checked_at: at },
+      prefer: "return=minimal",
+    });
+  return { checked: found + gone.length, gone: gone.length, unchanged: left.size };
+}
+
+// ---------------------------------------------------------------------------
+// Contracts made in HighLevel, and HighLevel's Contract Status / Contract URL
+// ---------------------------------------------------------------------------
+
+const FIELDS_RECENT = 30 * 86_400_000;
+const SYNC_FULL_EVERY = 6 * 3_600_000;
+/** A document this young that the cockpit does not know may be one contract.create is still saving. */
+const SYNC_SETTLE = 2 * 60_000;
+
+/**
+ * Keep HighLevel's Contract Status and Contract URL on each lead in step with
+ * their latest contract (Aziz, 2026-10-01: "Make it do those things"). A
+ * lead is written only when their contracts changed in the last 30 days or
+ * the cockpit wrote them before, and only when the value differs from what
+ * the cockpit last wrote. The signing link is never put in the audit row.
+ * A lead that fails is tried again by the next sync (contract.sync keeps
+ * the list).
+ */
+async function syncContactFields(
+  contactIds: string[],
+  who: Who,
+): Promise<{ written: number; failed: string[]; off?: true }> {
+  const ids = [...new Set(contactIds.filter(Boolean))];
+  if (!ids.length) return { written: 0, failed: [] };
+  const s = await contractSetting();
+  const statusField = s.fields?.contract_status;
+  const urlField = s.fields?.contract_url;
+  if (s.write_fields === false || !statusField?.id || !urlField?.id) return { written: 0, failed: [], off: true };
+  const options = new Set(statusField.options ?? []);
+  const rows: Row[] = [];
+  const before = new Map<string, Row>();
+  for (let i = 0; i < ids.length; i += 100) {
+    const part = ids.slice(i, i + 100).map(enc).join(",");
+    rows.push(...(await svcAll(
+      `cockpit_sales_contracts?contact_id=in.(${part})&select=document_id,contact_id,status,client_link,created_at,signed_at,ghl_updated_at,updated_at`,
+    )));
+    for (const r of await svc(`cockpit_sales_contract_fields?contact_id=in.(${part})&select=*`))
+      before.set(String(r.contact_id), r);
+  }
+  const byLead = new Map<string, Row[]>();
+  for (const r of rows) byLead.set(String(r.contact_id), [...(byLead.get(String(r.contact_id)) ?? []), r]);
+  const now = Date.now();
+  let written = 0;
+  const failed: string[] = [];
+  for (const id of ids) {
+    const list = byLead.get(id) ?? [];
+    const was = before.get(id);
+    const changed = Math.max(0, ...list.map(r => ms(r.ghl_updated_at) ?? ms(r.updated_at) ?? 0));
+    if (!was && changed < now - FIELDS_RECENT) continue;
+    if (!was && !list.some(r => String(r.status) !== "deleted")) continue;
+    const want = contactFieldsFor(list.map(r => ({
+      document_id: String(r.document_id),
+      status: String(r.status),
+      client_link: (r.client_link as string | null) ?? null,
+      created_at: String(r.created_at),
+      signed_at: (r.signed_at as string | null) ?? null,
+    })));
+    const status = want.status && options.has(want.status) ? want.status : null;
+    if (!was && !status && !want.url) continue;
+    if (was && ((was.status as string | null) ?? null) === status && String(was.url ?? "") === want.url) continue;
+    const customFields: { id: string; field_value: string }[] = [{ id: urlField.id, field_value: want.url }];
+    if (status) customFields.unshift({ id: statusField.id, field_value: status });
+    try {
+      await ghl("PUT", `/contacts/${enc(id)}`, { customFields }, "2021-07-28");
+      await svc("cockpit_sales_contract_fields?on_conflict=contact_id", {
+        method: "POST",
+        body: { contact_id: id, document_id: want.document_id, status, url: want.url, written_at: new Date().toISOString() },
+        prefer: "resolution=merge-duplicates,return=minimal",
+      });
+      await audit(
+        who,
+        "contract.fields",
+        "cockpit_sales_contract_fields",
+        id,
+        was ? { status: was.status ?? null, link: Boolean(was.url) } : null,
+        { status, link: Boolean(want.url), document_id: want.document_id },
+      );
+      written++;
+    } catch (e) {
+      failed.push(id);
+      console.error("contract fields", id, redact(String(e)));
+    }
+  }
+  return { written, failed };
+}
+
+/** The fields after a rep's own step; a failure waits for the next sync rather than failing the step. */
+async function keepFieldsInStep(contactIds: string[], who: Who): Promise<void> {
+  try {
+    await syncContactFields(contactIds, who);
+  } catch (e) {
+    console.error("contract fields", redact(String(e)));
+  }
+}
+
+/**
+ * HighLevel's documents, newest change first, down to a moment (all of them
+ * when there is none, up to the page limit). Says how far back the pages
+ * reached and whether they were the whole list.
+ */
+async function readSince(since: number | null, pages: number) {
+  const docs: Row[] = [];
+  let floor: string | null = null;
+  let read = 0;
+  let total: number | null = null;
+  for (let skip = 0; skip < pages * 20; skip += 20) {
+    const page = await ghl("GET", `/proposals/document?locationId=${LOCATION}&limit=20&skip=${skip}`, undefined, "2021-07-28");
+    const list = (page.documents ?? []) as Row[];
+    if (typeof page.total === "number") total = page.total;
+    read += list.length;
+    docs.push(...list);
+    for (const d of list) {
+      const changed = isoTime(d.updatedAt);
+      if (changed && (!floor || changed < floor)) floor = changed;
+    }
+    if (list.length < 20) break;
+    if (since !== null && floor && Date.parse(floor) < since) break;
+  }
+  return { docs, floor, ended: total !== null && read > 0 && read >= total };
+}
+
+interface SyncState {
+  since?: string | null;
+  full_at?: string | null;
+  ran_at?: string | null;
+  counts?: Row;
+  /** Leads whose contract fields failed to write last run: tried again. */
+  retry?: string[];
+}
+
+/**
+ * Copy HighLevel's client contracts into the cockpit, the ones made in
+ * HighLevel itself too, and keep each lead's Contract Status and Contract
+ * URL in step. The sales mirror runs it every three minutes with the service
+ * key: the documents changed since the last run, and all of them every six
+ * hours. Staff contracts, documents nobody signs and leads the cockpit does
+ * not have are left out. A contract HighLevel no longer has is marked
+ * deleted after a second read, as in contract.refresh.
+ */
+async function contractSync(desk: Who, b: Row) {
+  const who: Who = { ...desk, email: "contract-sync", name: "Contract sync" };
+  const s = await contractSetting();
+  const state = (await setting<SyncState>("contracts_sync")) ?? {};
+  const now = Date.now();
+  const at = new Date(now).toISOString();
+  const last = ms(state.since);
+  const full = b.full === true || last === null || (ms(state.full_at) ?? 0) < now - SYNC_FULL_EVERY;
+  const since = full || last === null ? null : last - 10 * 60_000;
+  const read = await readSince(since, full ? 60 : 10);
+
+  const ids = read.docs.map(d => String(d._id ?? "")).filter(Boolean);
+  const known = new Map<string, Row>();
+  for (let i = 0; i < ids.length; i += 100)
+    for (const r of await svc(
+      `cockpit_sales_contracts?document_id=in.(${ids.slice(i, i + 100).map(enc).join(",")})&select=document_id,contact_id,status,ghl_updated_at,client_link,sent_at,source`,
+    ))
+      known.set(String(r.document_id), r);
+
+  const fresh = read.docs.filter(d => !known.has(String(d._id ?? "")) && docKind(d, s.staff) === "client");
+  const signers = [...new Set(fresh.map(signerOf).filter((x): x is string => Boolean(x)))];
+  const leads = new Set<string>();
+  for (let i = 0; i < signers.length; i += 100)
+    for (const r of await svc(`cockpit_sales_leads?contact_id=in.(${signers.slice(i, i + 100).map(enc).join(",")})&select=contact_id`))
+      leads.add(String(r.contact_id));
+  const people = new Map(
+    (await svc("cockpit_sales_people?ghl_user_id=not.is.null&select=email,ghl_user_id")).map(p => [String(p.ghl_user_id), String(p.email)] as const),
+  );
+  const templateNames = (s.templates ?? []).map(t => t.name);
+
+  const touched = new Set<string>(Array.isArray(state.retry) ? state.retry.map(String) : []);
+  const inserts: Row[] = [];
+  let updated = 0;
+  let notLeads = 0;
+  const patchKnown = async (d: Row, row: Row) => {
+    const contactId = String(row.contact_id);
+    touched.add(contactId);
+    if (isoTime(d.updatedAt) === isoTime(row.ghl_updated_at) && row.status !== "deleted") return;
+    const patch = contractPatch(d, contactId, at);
+    if (String(patch.status) !== "draft") {
+      if (!row.client_link) {
+        const link = signingLink(d.links, contactId, s.link_base);
+        if (link) patch.client_link = link;
+      }
+      if (!row.sent_at) {
+        const sent = sentAtOf(d);
+        if (sent) patch.sent_at = sent;
+      }
+    }
+    patch.updated_at = at;
+    await svc(`cockpit_sales_contracts?document_id=eq.${enc(String(row.document_id))}`, {
+      method: "PATCH",
+      body: patch,
+      prefer: "return=minimal",
+    });
+    updated++;
+  };
+  // A copied contract the staff rules now cover leaves the cockpit; HighLevel keeps it.
+  const staffRows: Row[] = [];
+  for (const d of read.docs) {
+    const id = String(d._id ?? "");
+    const row = known.get(id);
+    if (row?.source === "highlevel" && docKind(d, s.staff) !== "client") {
+      staffRows.push(row);
+      continue;
+    }
+    if (row) {
+      await patchKnown(d, row);
+      continue;
+    }
+    if (docKind(d, s.staff) !== "client") continue;
+    if ((ms(d.createdAt) ?? 0) > now - SYNC_SETTLE) continue;
+    const signer = signerOf(d);
+    if (!signer || !leads.has(signer)) {
+      notLeads++;
+      continue;
+    }
+    const sender = senderOf(d);
+    const r = rowFromDoc(d, {
+      now: at,
+      linkBase: s.link_base,
+      templateNames,
+      senderEmail: sender ? (people.get(sender) ?? null) : null,
+    });
+    if (r) {
+      inserts.push(r);
+      touched.add(signer);
+    }
+  }
+  for (let i = 0; i < inserts.length; i += 100)
+    await svc("cockpit_sales_contracts?on_conflict=document_id", {
+      method: "POST",
+      body: inserts.slice(i, i + 100),
+      prefer: "resolution=ignore-duplicates,return=minimal",
+    });
+  if (staffRows.length) {
+    // A rule that suddenly covers a fifth of the copies is a wrong rule, not a fifth of staff.
+    const copies = [...known.values()].filter(r => r.source === "highlevel").length;
+    if (staffRows.length > 5 && staffRows.length > copies / 5)
+      throw new Error(`The staff rules would take out ${staffRows.length} of ${copies} copied contracts. Check the staff names and words.`);
+    for (const row of staffRows) {
+      const id = String(row.document_id);
+      await svc(`cockpit_sales_contracts?document_id=eq.${enc(id)}&source=eq.highlevel`, {
+        method: "DELETE",
+        prefer: "return=minimal",
+      });
+      await audit(who, "contract.staff", "cockpit_sales_contracts", id, { status: row.status ?? null }, null, {
+        reason: "a staff contract by its name; HighLevel keeps it",
+      });
+      touched.add(String(row.contact_id));
+    }
+  }
+
+  // Contracts HighLevel no longer lists, read twice before saying so.
+  const seen = new Set(ids);
+  const open = (await svcAll("cockpit_sales_contracts?status=in.(draft,sent,viewed)&select=document_id,contact_id,status,ghl_updated_at"))
+    .filter(r => !seen.has(String(r.document_id)));
+  const missing = () =>
+    open.map(r => ({ document_id: String(r.document_id), ghl_updated_at: (r.ghl_updated_at as string | null) ?? null }));
+  let gone = goneFrom(missing(), read.floor, read.ended);
+  if (gone.length) {
+    const again = await readDocs(new Set(gone), full ? 60 : 10);
+    for (const d of again.hits) {
+      const row = open.find(r => String(r.document_id) === String(d._id ?? ""));
+      if (row) await patchKnown(d, row);
+    }
+    const back = new Set(again.hits.map(d => String(d._id ?? "")));
+    const still = new Set(goneFrom(missing().filter(r => !back.has(r.document_id)), again.floor, again.ended));
+    gone = gone.filter(id => still.has(id));
+    for (const id of gone) {
+      const row = open.find(r => String(r.document_id) === id);
+      await svc(`cockpit_sales_contracts?document_id=eq.${enc(id)}&status=in.(draft,sent,viewed)`, {
+        method: "PATCH",
+        body: { status: "deleted", checked_at: at, updated_at: at },
+        prefer: "return=minimal",
+      });
+      await audit(who, "contract.gone", "cockpit_sales_contracts", id, { status: row?.status ?? null }, { status: "deleted" }, {
+        reason: "not in HighLevel's document list on two reads",
+      });
+      if (row) touched.add(String(row.contact_id));
+    }
+  }
+
+  const fields = await syncContactFields([...touched], who);
+
+  // How far this run read: all the way to the last run's mark, or the whole list.
+  const complete = read.ended || (since !== null && read.floor !== null && Date.parse(read.floor) < since);
+  const newest = read.docs.map(d => isoTime(d.updatedAt)).filter((t): t is string => Boolean(t)).sort().pop() ?? null;
+  const counts = {
+    read: read.docs.length,
+    full,
+    added: inserts.length,
+    updated,
+    staff_removed: staffRows.length,
+    not_leads: notLeads,
+    gone: gone.length,
+    fields_written: fields.written,
+    fields_failed: fields.failed.length,
+    ...(fields.off ? { fields_off: true } : {}),
+  };
+  const next: SyncState = {
+    since: complete ? (newest ?? state.since ?? null) : (state.since ?? null),
+    // A run that could not read back to its mark makes the next one a full pass.
+    full_at: !complete ? null : full ? at : (state.full_at ?? null),
+    ran_at: at,
+    counts,
+    retry: fields.failed.slice(0, 200),
+  };
+  await svc("cockpit_sales_settings?on_conflict=key", {
+    method: "POST",
+    body: { key: "contracts_sync", value: next, updated_by: who.email, updated_at: at },
+    prefer: "resolution=merge-duplicates,return=minimal",
+  });
+  return counts;
+}
+
+/** Every template in HighLevel's Documents & Contracts, for a manager to choose from. */
+async function contractTemplates(who: Who) {
+  needManager(who);
+  const all: Row[] = [];
+  for (let skip = 0; skip < 200; skip += 20) {
+    const page = await ghl("GET", `/proposals/templates?locationId=${LOCATION}&limit=20&skip=${skip}`, undefined, "2021-07-28");
+    const list = (page.data ?? []) as Row[];
+    all.push(...list.filter(t => !t.deleted && t.type === "proposal"));
+    if (list.length < 20) break;
+  }
+  return {
+    templates: all.map(t => ({ id: String(t._id ?? t.id), name: String(t.name ?? ""), updated_at: t.updatedAt ?? null })),
+  };
+}
+
+/** The templates the team may use, and the fields each one prints. */
+async function contractTemplatesSave(who: Who, b: Row) {
+  needManager(who);
+  const before = await contractSetting();
+  const templates = keepPayments(cleanTemplates(b.templates), before.templates);
+  if (!templates.length) throw new Refusal("Keep at least one template for the team.");
+  const staffNames = Array.isArray(b.staff_names)
+    ? [...new Set((b.staff_names as unknown[]).map(n => cleanText(n, 120)).filter(Boolean))].slice(0, 60)
+    : null;
+  const value = { ...before, templates, ...(staffNames ? { staff: { ...(before.staff ?? {}), names: staffNames } } : {}) };
+  await svc("cockpit_sales_settings?on_conflict=key", {
+    method: "POST",
+    body: { key: "contracts", value, updated_by: who.email, updated_at: new Date().toISOString() },
+    prefer: "resolution=merge-duplicates,return=minimal",
+  });
+  await audit(
+    who,
+    "contract.templates",
+    "cockpit_sales_settings",
+    "contracts",
+    { templates: before.templates ?? null, staff: before.staff?.names ?? null },
+    { templates, staff: staffNames ?? before.staff?.names ?? null },
+  );
+  return { templates };
+}
+
+// ---------------------------------------------------------------------------
+// The New Client Form, filled on a lead's page
+// ---------------------------------------------------------------------------
+
+/**
+ * Typeform saved a New Client Form filled on this lead's page (Aziz,
+ * 2026-10-02): note which response it was, for whom, and who sent it. The
+ * form itself is Typeform's, embedded, so the onboarding has already started
+ * by the time this runs; the deal reaches the cockpit through B2B.
+ */
+async function clientFormSent(who: Who, b: Row) {
+  if (!who.manager && !["closer", "both"].includes(String(who.role)))
+    throw new Refusal("The New Client Form is filled by closers and managers.", 403);
+  const form = await setting<{ form_id?: string }>("client_form");
+  const checked = clientFormRow(b, form?.form_id ?? CLIENT_FORM_ID);
+  if (!checked.ok) throw new Refusal(checked.error);
+  const lead = (await svc(
+    `cockpit_sales_leads?contact_id=eq.${enc(checked.row.contact_id)}&select=contact_id`,
+  ))[0];
+  if (!lead) throw new Refusal("That lead is not in the cockpit.", 404);
+  const row = {
+    ...checked.row,
+    sent_by: who.email,
+    sent_by_name: who.name ?? null,
+    sent_at: new Date().toISOString(),
+  };
+  const saved = await svc("cockpit_sales_client_forms?on_conflict=response_id", {
+    method: "POST",
+    body: row,
+    prefer: "resolution=ignore-duplicates,return=representation",
+  });
+  if (saved.length)
+    await audit(who, "client_form.sent", "cockpit_sales_client_forms", row.response_id, null, row);
+  return { form: saved[0] ?? row, noted: saved.length > 0 };
 }
 
 // ---------------------------------------------------------------------------
@@ -4311,6 +5051,13 @@ const ACTIONS: Record<string, (who: Who, b: Row) => Promise<Row>> = {
   "pipeline.move": pipelineMove,
   "hot.save": hotSave,
   "hot.remove": hotRemove,
+  "contract.create": contractCreate,
+  "contract.send": contractSend,
+  "contract.link": contractLink,
+  "contract.refresh": contractRefresh,
+  "contract.templates": contractTemplates,
+  "contract.templates.save": contractTemplatesSave,
+  "client_form.sent": clientFormSent,
   "review.ask": reviewAsk,
   "coach.save": coachSave,
   "coach.delete": coachDelete,
@@ -4328,10 +5075,15 @@ const ACTIONS: Record<string, (who: Who, b: Row) => Promise<Row>> = {
 
 /** What the desk's service key may do: nothing but a trusted follow-up. */
 const DESK_ACTIONS: Record<string, (who: Who, b: Row) => Promise<Row>> = {
+  // The sales mirror's three-minute run: HighLevel's contracts and the contract fields.
+  "contract.sync": contractSync,
   "followup.autosend": followupAutosend,
   "followup.settle": followupSettle,
   "dial.resync_stuck": dialResyncStuck,
 };
+
+/** What the sales mirror's scheduled run may ask for with the cron secret. */
+const CRON_ACTIONS = new Set(["contract.sync"]);
 
 /** The role claim of a token the gateway has already verified. */
 function jwtRole(jwt: string): string | null {
@@ -4375,7 +5127,16 @@ Deno.serve(async (req: Request) => {
   // deployed with verify_jwt), so its role claim can be read as it stands;
   // comparing the key's text failed because the desk and the function hold
   // two different, equally valid service keys (2026-09-24).
-  if (jwtRole(jwt) === "service_role") {
+  // The sales mirror's scheduled run comes with the shared cron secret from
+  // the vault, the door sales-mirror itself is opened with: the service key
+  // the gateway hands that function is not a token whose role can be read
+  // here (2026-10-01). It may run the contract sync and nothing else.
+  const cronSecret = env("CRON_SECRET");
+  const byCron =
+    Boolean(cronSecret) &&
+    (req.headers.get("x-cron-secret") ?? "").trim() === cronSecret &&
+    CRON_ACTIONS.has(String(body?.action ?? ""));
+  if (jwtRole(jwt) === "service_role" || byCron) {
     const deskHandler = DESK_ACTIONS[String(body?.action ?? "")];
     if (!deskHandler) return reply({ ok: false, error: "Not an action the desk may take." }, 403);
     const desk: Who = { signed_in: true, seat: true, manager: false, email: "sales-desk", name: "Sales desk" };

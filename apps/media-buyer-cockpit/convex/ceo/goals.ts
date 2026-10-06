@@ -2,6 +2,8 @@ import { v } from "convex/values";
 import { internal } from "../_generated/api";
 import { internalMutation } from "../_generated/server";
 import { authenticatedAction } from "../functions";
+import { readCallCenterReport } from "./callCenterSource";
+import { type CostsSummary, costsSummary } from "./costs";
 import { rest } from "./sbWrite";
 import {
   GROUPS,
@@ -116,6 +118,20 @@ export type Board = {
   /** Metrics that can be added to the plan, for the editor. */
   catalogue: typeof METRICS;
   bounds: { first: string | null; last: string | null };
+  /**
+   * Every number the cockpit measured for the plan's days so far, planned or
+   * not, so next month's plan can start from what really happened.
+   */
+  measured: Record<string, number>;
+  /**
+   * The call centre's lead to booking client by client over the same days,
+   * most leads first. Null when the shared report could not be read.
+   */
+  callClients:
+    | { name: string; leads: number; bookings: number; rate: number | null }[]
+    | null;
+  /** The Costs page's totals and payroll, for next month's plan; null when unreadable. */
+  costs: CostsSummary | null;
 };
 
 function workingDaysBetween(from: string, to: string): number {
@@ -236,6 +252,9 @@ export async function buildBoard(
         behind: [],
         catalogue: METRICS,
         bounds,
+        measured: {},
+        callClients: null,
+        costs: await costsSummary().catch(() => null),
       };
 
     const plan = toPlan(row);
@@ -253,6 +272,32 @@ export async function buildBoard(
         : 0,
     );
     const share = plan.workingDays > 0 ? worked / plan.workingDays : 0;
+    // The call centre for exactly these days, from the report the Calls tab
+    // and the dialler share. It makes its own distinct totals for a window,
+    // so it is read for this one rather than added up from days. Unreadable
+    // means no number, never a zero.
+    let callClients: Board["callClients"] = null;
+    if (through >= plan.periodFrom) {
+      try {
+        const report = await readCallCenterReport(plan.periodFrom, through);
+        p.callsWindow = {
+          from: plan.periodFrom,
+          to: through,
+          overall: report.overall,
+        };
+        callClients = report.clients
+          .filter(c => c.leads > 0)
+          .map(c => ({
+            name: c.name,
+            leads: c.leads,
+            bookings: c.confirmedBookings,
+            rate: c.leads > 0 ? r2(c.confirmedBookings / c.leads) : null,
+          }))
+          .sort((a, b) => b.leads - a.leads);
+      } catch {
+        p.callsWindow = null;
+      }
+    }
     const measured = scoreboard(p, plan.periodFrom, through);
     // The one number the goals tables can answer themselves: how many
     // one-to-ones were actually held and signed off in the period.
@@ -396,6 +441,9 @@ export async function buildBoard(
       behind,
       catalogue: METRICS,
       bounds,
+      measured,
+      callClients,
+      costs: await costsSummary().catch(() => null),
     };
   }
 }

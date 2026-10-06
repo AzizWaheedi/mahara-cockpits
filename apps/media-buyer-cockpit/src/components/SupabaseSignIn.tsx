@@ -12,7 +12,10 @@ type Mode = "password" | "code" | "codeSent" | "resetPassword";
 export function SupabaseSignIn() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { home, refreshAccess } = useCockpitAuth();
+  const { home, session, access, ready, refreshAccess, error: accessError } = useCockpitAuth();
+  const noSeat = ready && session && !access && !accessError
+    ? "This account has no active confirmed directory seat. Ask an admin to check your email and seat, then try again."
+    : null;
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -181,11 +184,12 @@ export function SupabaseSignIn() {
             </div>
           )}
 
-          {error && (
+          {(accessError || error || noSeat) && (
             <p className="rounded-lg bg-destructive/10 px-3 py-2 text-center text-sm text-destructive">
-              {error}
+              {accessError || error || noSeat}
             </p>
           )}
+          {(accessError || noSeat) && <Button type="button" variant="outline" onClick={() => { void refreshAccess().catch(() => {}); }}>Try again</Button>}
 
           {info && (
             <p className="rounded-lg bg-primary/10 px-3 py-2 text-center text-sm text-primary">

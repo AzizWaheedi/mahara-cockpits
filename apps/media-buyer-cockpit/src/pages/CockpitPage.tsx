@@ -7,7 +7,12 @@ import { AccountView } from "@/components/AccountView";
 import { BuildPanel } from "@/components/BuildPanel";
 import { CampaignRange } from "@/components/CampaignRange";
 import { CityPicker } from "@/components/CityPicker";
-import { type ClientUpdate, ClientUpdateList, relevantUpdates } from "@/components/ClientUpdates";
+import { ClientLogo } from "@/components/ClientLogo";
+import {
+  type ClientUpdate,
+  ClientUpdateList,
+  relevantUpdates,
+} from "@/components/ClientUpdates";
 import { CockpitSelect } from "@/components/CockpitSelect";
 import { CreativePreview } from "@/components/CreativePreview";
 import { DosDontsList, parseDosDonts } from "@/components/DosDonts";
@@ -35,7 +40,7 @@ import { useMediaBuyerSnapshot } from "@/lib/useMediaBuyerSnapshot";
 import { howItIsGoing, joinList, whatWeDid, whatWeDidAll } from "@/lib/clientUpdate";
 import { kuwaitDay as kuwaitToday } from "@/lib/range";
 
-import type { Id } from "@/lib/cockpitApi";
+import { type Id, useQueries } from "@/lib/cockpitApi";
 import { CampaignChangesResults } from "../components/CampaignChangesResults";
 import { CampaignChat } from "../components/CampaignChat";
 import { RequestCreativeButton } from "../components/RequestCreativeButton";
@@ -205,6 +210,64 @@ const KICKER =
 // biome-ignore lint/suspicious/noExplicitAny: snapshot payload is untyped by design
 type Campaign = any;
 
+/**
+ * The board's numbers for one campaign. On the 7-day default they are the
+ * snapshot's own 7-day read (the one the calls are made on); on any other
+ * range they come from the same per-campaign range read the campaign panel
+ * and the account page use, so all three agree. [aziz, 2026-10-01]
+ */
+type BoardNumbers =
+  | { state: "loading" | "error" }
+  | {
+      state: "ok";
+      spend?: number;
+      leads?: number;
+      cpl?: number;
+      bookings?: number;
+      bookingRate?: number;
+      costPerBooking?: number;
+    };
+
+function boardNumbers(
+  c: Campaign,
+  ranged: boolean,
+  read: Campaign | Error | undefined,
+): BoardNumbers {
+  if (!ranged)
+    return {
+      state: "ok",
+      spend: c.spend7d,
+      leads: c.leads7d,
+      cpl: c.cpl,
+      bookings: c.bookings7d,
+      bookingRate: c.bookingRate,
+      costPerBooking: c.costPerBooking,
+    };
+  if (read === undefined) return { state: "loading" };
+  if (read instanceof Error) return { state: "error" };
+  const t = read.total ?? {};
+  const spend = Number(t.spend ?? 0);
+  const leads = Number(t.leads ?? 0);
+  // Done-with-you accounts have no bookings at all: keep them n/a, not 0.
+  const bookings =
+    c.bookings7d === undefined
+      ? undefined
+      : Number(read.bookingsTotal ?? t.bookings ?? 0);
+  return {
+    state: "ok",
+    spend,
+    leads,
+    cpl: leads > 0 ? spend / leads : undefined,
+    bookings,
+    bookingRate:
+      bookings !== undefined && leads > 0
+        ? (bookings / leads) * 100
+        : undefined,
+    costPerBooking:
+      bookings && bookings > 0 && spend > 0 ? spend / bookings : undefined,
+  };
+}
+
 /** Who a decision was sent to, in words: "client_success" reads "CSM". */
 const DEPT_LABEL: Record<string, string> = Object.fromEntries(
   REQUESTS.map(r => [r.dept, r.deptLabel]),
@@ -303,9 +366,6 @@ function LiveInMeta({ c, tree }: { c: Campaign; tree: Campaign[] }) {
                       stillUrl={ad.stillUrl}
                       stillTinyUrl={ad.stillTinyUrl}
                       thumbUrl={ad.thumbUrl}
-                      // Old stored link: used only while under 20 hours old.
-                      previewSrc={ad.previewSrc}
-                      previewAt={ad.previewAt}
                       open={openAdId === ad.metaId}
                       onOpenChange={open =>
                         setOpenAdId(open ? ad.metaId : null)
@@ -379,6 +439,12 @@ const isOffOnBoard = (c: Campaign) =>
 const clientOf = (c: Campaign | undefined) =>
   String(c?.clientName ?? c?.accountName ?? "Unassigned");
 
+const logoKey = (c: Campaign) =>
+  String(c.clientTag || c.clientName || c.accountName || c.tag || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]/gu, "");
+
 /** Digested comments for the client whose links these are (matched on the card id). */
 function updatesFor(all: ClientUpdate[] | undefined, links?: Campaign) {
   const taskId = String(links?.url ?? "")
@@ -396,11 +462,13 @@ function updatesFor(all: ClientUpdate[] | undefined, links?: Campaign) {
 /** The client's name row: their links, and their do's and don'ts and latest card comments one click away. */
 function ClientHeader({
   name,
+  logoSrc,
   links,
   updates,
   onOpen,
 }: {
   name: string;
+  logoSrc?: string;
   links?: Campaign;
   updates: ClientUpdate[];
   /** Shows this one client in full, in place of the table. */
@@ -410,18 +478,23 @@ function ClientHeader({
   const hasRules = parseDosDonts(links?.dosDonts).length > 0;
   return (
     <>
-      {onOpen ? (
-        <button
-          type="button"
-          className="campaign-client-name text-left hover:underline"
-          onClick={onOpen}
-          title={`Show ${name} in full`}
-        >
-          {name}
-        </button>
-      ) : (
-        <span className="campaign-client-name">{name}</span>
-      )}
+      <span className="inline-flex max-w-full items-center gap-2 align-middle">
+        <ClientLogo name={name} src={logoSrc} />
+        {onOpen ? (
+          <button
+            type="button"
+            className="campaign-client-name min-w-0 break-words text-left hover:underline"
+            onClick={onOpen}
+            title={`Show ${name} in full`}
+          >
+            {name}
+          </button>
+        ) : (
+          <span className="campaign-client-name min-w-0 break-words">
+            {name}
+          </span>
+        )}
+      </span>
       <ClientLinks
         links={links}
         dosOpen={open}
@@ -646,9 +719,11 @@ function RenameCardButton({ campaignName }: { campaignName: string }) {
 function BoardView({
   cards,
   campaigns,
+  clientLogos,
 }: {
   cards: Campaign[];
   campaigns: Campaign[];
+  clientLogos: Record<string, string>;
 }) {
   const [tab, setTab] = useState<"notLive" | "live" | "all">("notLive");
   const [q, setQ] = useState("");
@@ -723,12 +798,26 @@ function BoardView({
                 key={c.taskId}
                 className="flex flex-wrap items-center gap-x-3 gap-y-1.5 py-2.5"
               >
-                <span className="min-w-0 font-medium">{c.name}</span>
-                {c.tag && (
-                  <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-                    {c.tag}
-                  </span>
-                )}
+                <span className="min-w-0 break-words font-medium">
+                  {c.name}
+                </span>
+                <span className="inline-flex min-w-0 max-w-full items-center gap-2">
+                  <ClientLogo
+                    name={String(
+                      c.clientTag ||
+                        c.clientName ||
+                        c.accountName ||
+                        c.tag ||
+                        "Unassigned",
+                    )}
+                    src={clientLogos[logoKey(c)]}
+                  />
+                  {c.tag && (
+                    <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+                      {c.tag}
+                    </span>
+                  )}
+                </span>
                 {spending.has(c.taskId) && (
                   <span className="text-xs txt-good">spending now</span>
                 )}
@@ -902,8 +991,32 @@ function Cockpit({ view }: { view: View }) {
   const auth = useCockpitAuth();
   const sb = useMediaBuyerSnapshot(auth.client, auth.clients);
   const snap = sb.snap;
-  const toggleCheck = sb.toggleCheck as any;
-  const decide = sb.decide as any;
+  const toggleCheck = sb.toggleCheck;
+  const decide = sb.decide;
+  const loadClientLogos = useAction(api.clientLogos.list);
+  const [clientLogos, setClientLogos] = useState<Record<string, string>>({});
+  const [clientLogosError, setClientLogosError] = useState(false);
+  const hasSnapshot = Boolean(snap);
+  useEffect(() => {
+    setClientLogos({});
+    if (!hasSnapshot || view !== "ads") return;
+    let cancelled = false;
+    setClientLogosError(false);
+    void loadClientLogos({}).then(
+      (logos: { clientKey: string; url: string }[]) => {
+        if (!cancelled)
+          setClientLogos(
+            Object.fromEntries(logos.map((logo: {clientKey: string; url: string}) => [logo.clientKey, logo.url])),
+          );
+      },
+      () => {
+        if (!cancelled) setClientLogosError(true);
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [hasSnapshot, view, loadClientLogos, auth.session?.user.id]);
   const run = useAction(api.execute.runAction);
   const addPlanItems = sb.addPlanItems as any;
   const askForDetail = useAction(api.cockpit.askForDetail);
@@ -927,6 +1040,38 @@ function Cockpit({ view }: { view: View }) {
   const rangeFor = (name: string) => ranges[name] ?? globalRange;
   const setRange = (name: string, r: Range) =>
     setRanges(prev => ({ ...prev, [name]: r }));
+  // The board follows the picked range. On the 7-day default it keeps the
+  // snapshot's read; otherwise one range read per campaign. useQueries keys on
+  // the object's identity, so the object is rebuilt only when the campaigns or
+  // the range change (see AccountView, React error #301).
+  const boardKey =
+    globalRange.key === "7d"
+      ? ""
+      : JSON.stringify([
+          ((snap?.campaigns ?? []) as Campaign[])
+            .map(c => String(c.campaignName))
+            .sort(),
+          globalRange.start,
+          globalRange.end,
+        ]);
+  const boardQueries = useMemo(() => {
+    if (!boardKey) return {};
+    const [names, start, end] = JSON.parse(boardKey) as [
+      string[],
+      string,
+      string,
+    ];
+    return Object.fromEntries(
+      names.map(campaignName => [
+        campaignName,
+        { query: api.stats.range, args: { campaignName, start, end } },
+      ]),
+    );
+  }, [boardKey]);
+  const boardReads = useQueries(boardQueries) as Record<
+    string,
+    Campaign | Error | undefined
+  >;
   const [mode, setMode] = useState<"ads" | "reroute" | "leave">("ads");
   const [campaignPanelTab, setCampaignPanelTab] = useState<
     "recommendations" | "changes"
@@ -1408,7 +1553,7 @@ function Cockpit({ view }: { view: View }) {
       .map(text => ({
         text,
         listName: "Marketing / ADs",
-        dueDate: "tomorrow",
+        dueDate: kuwaitToday(-1),
       }));
     if (!items.length) return;
     await addPlanItems({ items });
@@ -1727,7 +1872,7 @@ function Cockpit({ view }: { view: View }) {
             >
               <button
                 type="button"
-                onClick={() => toggleCheck({ id: c._id })}
+                onClick={() => toggleCheck({ id: c._id, done: !c.done })}
                 aria-pressed={Boolean(c.done)}
                 aria-label={`${c.done ? "Untick" : "Tick"}: ${c.label}`}
                 className={`no-touch relative mt-0.5 grid size-5 flex-none place-items-center rounded-full border text-xs font-semibold tabular-nums after:absolute after:-inset-2.5 after:content-[''] ${c.done ? "border-primary bg-primary text-primary-foreground" : "border-muted-foreground/40 text-muted-foreground"}`}
@@ -2367,7 +2512,7 @@ function Cockpit({ view }: { view: View }) {
           <button
             key={c._id}
             type="button"
-            onClick={() => toggleCheck({ id: c._id })}
+            onClick={() => toggleCheck({ id: c._id, done: !c.done })}
             aria-pressed={Boolean(c.done)}
             className="flex items-start gap-2.5 rounded-lg py-1.5 text-left"
           >
@@ -3000,6 +3145,11 @@ function Cockpit({ view }: { view: View }) {
           USD, currency-corrected
         </span>
       </div>
+      {clientLogosError && (
+        <p className="mt-3 text-sm text-muted-foreground" role="status">
+          Client logos could not load. Refresh the page to try again.
+        </p>
+      )}
       {/* The window every campaign opens on. Each campaign can still be
           switched on its own once it is open. [aziz, 2026-09-07] */}
       <div className="mt-4 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 rounded-xl bg-muted/40 px-3 py-2">
@@ -3011,8 +3161,9 @@ function Cockpit({ view }: { view: View }) {
           }}
         />
         <span className="text-xs text-muted-foreground">
-          The table always shows the 7-day read the calls are made on; the range
-          applies inside each campaign.
+          {globalRange.key === "7d"
+            ? "Spend, leads and bookings below are for the last 7 days, the read the calls are made on."
+            : `Spend, leads and bookings below are for ${globalRange.label.toLowerCase()}. The Call column always uses the last 7 days.`}
         </span>
       </div>
       {adsTab === "off" ? (
@@ -3091,6 +3242,25 @@ function Cockpit({ view }: { view: View }) {
                 );
                 const decided = decidedBySubject.get(c.campaignName);
                 const flag = flagFor(c);
+                const nums = boardNumbers(
+                  c,
+                  globalRange.key !== "7d",
+                  boardReads[String(c.campaignName)],
+                );
+                const cell = (value: React.ReactNode) =>
+                  nums.state === "loading" ? (
+                    <span className="font-normal text-muted-foreground">…</span>
+                  ) : nums.state === "error" ? (
+                    <span
+                      className="font-normal text-muted-foreground"
+                      title="This range could not be read. Pick it again, or open the campaign."
+                    >
+                      n/a
+                    </span>
+                  ) : (
+                    value
+                  );
+                const ok = nums.state === "ok" ? nums : undefined;
                 // Only a real finding earns the eye-catching button.
                 const needsDecision = (c.findings ?? []).some(
                   (f: Campaign) => f.severity !== "optimization",
@@ -3109,6 +3279,7 @@ function Cockpit({ view }: { view: View }) {
                         <td colSpan={8} className="campaign-client-header">
                           <ClientHeader
                             name={clientOf(c)}
+                            logoSrc={clientLogos[logoKey(c)]}
                             links={links}
                             updates={updates}
                             onOpen={
@@ -3168,42 +3339,44 @@ function Cockpit({ view }: { view: View }) {
                         ) : null}
                       </td>
                       <td className="px-2 tabular-nums font-semibold">
-                        {moneyOr(c.spend7d)}
+                        {cell(moneyOr(ok?.spend))}
                       </td>
                       <td className="px-2 tabular-nums font-semibold">
-                        {c.leads7d}
+                        {cell(ok?.leads ?? "n/a")}
                       </td>
                       <td
-                        className={`px-2 tabular-nums font-semibold ${c.cpl === undefined ? "" : c.cpl > CPL_GATE ? "txt-bad" : "txt-good"}`}
+                        className={`px-2 tabular-nums font-semibold ${ok?.cpl === undefined ? "" : ok.cpl > CPL_GATE ? "txt-bad" : "txt-good"}`}
                       >
-                        {moneyOr(c.cpl, 2)}
+                        {cell(moneyOr(ok?.cpl, 2))}
                       </td>
                       <td className="px-2 tabular-nums font-semibold">
-                        {c.bookings7d === undefined ? (
-                          <span className="font-normal text-muted-foreground">
-                            n/a
-                          </span>
-                        ) : (
-                          <>
-                            {c.bookings7d}
-                            {c.bookingRate !== undefined && (
-                              <span className="ml-1 text-xs font-normal text-muted-foreground">
-                                {Math.round(c.bookingRate)}%
-                              </span>
-                            )}
-                          </>
+                        {cell(
+                          ok?.bookings === undefined ? (
+                            <span className="font-normal text-muted-foreground">
+                              n/a
+                            </span>
+                          ) : (
+                            <>
+                              {ok.bookings}
+                              {ok.bookingRate !== undefined && (
+                                <span className="ml-1 text-xs font-normal text-muted-foreground">
+                                  {Math.round(ok.bookingRate)}%
+                                </span>
+                              )}
+                            </>
+                          ),
                         )}
                       </td>
                       <td
                         className={`px-2 tabular-nums font-semibold ${
-                          c.costPerBooking === undefined
+                          ok?.costPerBooking === undefined
                             ? ""
-                            : c.costPerBooking > 80
+                            : ok.costPerBooking > 80
                               ? "txt-bad"
                               : "txt-good"
                         }`}
                       >
-                        {moneyOr(c.costPerBooking, 0)}
+                        {cell(moneyOr(ok?.costPerBooking, 0))}
                       </td>
                       <td className="px-2 tabular-nums">
                         {/* What is set on Meta, where it lives, and what it actually spends. */}
@@ -3310,6 +3483,7 @@ function Cockpit({ view }: { view: View }) {
         <BoardView
           cards={(snap.boardCards ?? []) as Campaign[]}
           campaigns={(snap.campaigns ?? []) as Campaign[]}
+          clientLogos={clientLogos}
         />
       )}
     </section>

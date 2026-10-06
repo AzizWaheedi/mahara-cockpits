@@ -253,6 +253,17 @@ class Sittings(unittest.TestCase):
         self.assertIn("DELETE team_sittings?id=eq.slow-client-call%3A2026-10-08", paths(p))
         self.assertIn("PATCH team_sittings?id=eq.slow-client-call%3A2026-10-11", paths(p))
 
+    def test_a_sitting_moved_to_another_series_is_rewritten_not_deleted(self):
+        # The day's sitting was the old series' occurrence; the new series has
+        # the same day under its own id (CSM Daily, 2026-09-30).
+        stored = [{"id": "slow-client-call:2026-10-04", "meeting_id": "slow-client-call", "on_date": "2026-10-04",
+                   "cal_instance_id": "old_20261004T103000Z", "status": "scheduled", "notes": ""}]
+        st = state([meeting()], sittings=stored)
+        p = plan(st, [occ("2026-10-04")], {(ORG, "abc"): master_event()})
+        rows = [r for m, path, body, _ in p.writes if path.startswith("team_sittings?on_conflict") for r in body]
+        self.assertEqual([r["cal_instance_id"] for r in rows], [occ("2026-10-04")["id"]])
+        self.assertNotIn("DELETE team_sittings?id=eq.slow-client-call%3A2026-10-04", paths(p))
+
 
 class Quiet(unittest.TestCase):
     def test_a_quiet_calendar_meeting_is_marked_inactive_never_a_cockpit_one(self):
@@ -267,6 +278,81 @@ class Quiet(unittest.TestCase):
         quiet = meeting(id="one-to-one", managed="calendar", cal_calendar=None, cal_event_id="q1", calendar_id="q1")
         p = plan(state([quiet]), [], everything=False)
         self.assertEqual(p.writes, [])
+
+
+class StaleCopies(unittest.TestCase):
+    """2026-09-30: a teammate's calendar kept weekly occurrences of series the
+    CEO had ended, and the cockpit kept their sittings because of it."""
+
+    def tagged(self, e: dict, on: str) -> dict:
+        return {**e, "_on": on.lower()}
+
+    def test_the_organisers_calendar_decides_when_it_was_read(self):
+        events = [
+            self.tagged(occ("2026-09-20"), ORG),  # the organiser's copy: nothing after the end
+            self.tagged(occ("2026-09-20"), CSM),
+            self.tagged(occ("2026-10-04"), CSM),  # the guest's stale copy
+        ]
+        series = sync.group(events, {ORG.lower(), CSM.lower()})
+        self.assertEqual(sorted(series[(ORG, "abc")].items), [occ("2026-09-20")["id"]])
+        # When only the guest's calendar could be read, its copy is all there is.
+        series = sync.group(events, {CSM.lower()})
+        self.assertEqual(len(series[(ORG, "abc")].items), 2)
+
+    def test_the_stale_sittings_go(self):
+        stored = [{"id": "slow-client-call:2026-10-04", "meeting_id": "slow-client-call", "on_date": "2026-10-04",
+                   "cal_instance_id": occ("2026-10-04")["id"], "status": "scheduled", "notes": ""}]
+        st = state([meeting()], sittings=stored)
+        events = [self.tagged(occ("2026-09-27"), ORG), self.tagged(occ("2026-10-04"), CSM)]
+        series = sync.group(events, {ORG.lower(), CSM.lower()})
+        p = sync.plan_pass(st, series, {(ORG, "abc"): master_event()}, {ORG}, NOW, True, sync.roster(st, []))
+        self.assertIn("DELETE team_sittings?id=eq.slow-client-call%3A2026-10-04", paths(p))
+
+    def test_a_calendar_meeting_whose_series_ended_is_inactive_at_once(self):
+        m = meeting(id="pulse", managed="calendar", cal_event_id="pulse", calendar_id="pulse", cal_title="Pulse")
+        part = {"meeting_id": "pulse", "cal_calendar": ORG, "cal_event_id": "pulse", "weekday": None}
+        st = sync.State([m], PEOPLE, [], [], set(), [part])
+        ended = master_event(master="pulse", title="Pulse", byday="SU")
+        ended["recurrence"] = ["RRULE:FREQ=WEEKLY;UNTIL=20260926T205959Z;BYDAY=SU"]
+        events = [self.tagged(occ("2026-09-20", master="pulse", title="Pulse"), ORG)]  # ten days ago
+        p = sync.plan_pass(st, sync.group(events, {ORG.lower()}), {(ORG, "pulse"): ended}, {ORG}, NOW, True,
+                           sync.roster(st, []))
+        patch = next(body for m_, path, body, _ in p.writes if path == "team_meetings?id=eq.pulse")
+        self.assertIs(patch["active"], False)
+        self.assertIn("marked it inactive: its series ended on 2026-09-26", [c["what"] for c in p.changes])
+        # A meeting the cockpit manages is left to the page.
+        st = sync.State([{**m, "managed": "cockpit"}], PEOPLE, [], [], set(), [part])
+        p = sync.plan_pass(st, sync.group(events, {ORG.lower()}), {(ORG, "pulse"): ended}, {ORG}, NOW, True,
+                           sync.roster(st, []))
+        self.assertFalse(any(body.get("active") is False for _, path, body, _ in p.writes
+                             if path == "team_meetings?id=eq.pulse"))
+
+
+class Masters(unittest.TestCase):
+    """The series event itself decides a series' time and days."""
+
+    class FakeGoogle:
+        def __init__(self, have):
+            self.have = have
+
+        def event(self, calendar, event_id):
+            if (calendar, event_id) in self.have:
+                return self.have[(calendar, event_id)]
+            raise sync.urllib.error.HTTPError("u", 404, "Not Found", {}, None)
+
+    def test_a_teammates_series_is_read_even_when_its_calendar_is_not_listed(self):
+        mate = "mate@maharamedia.com"
+        m = meeting(id="video-sync", managed="calendar", cal_calendar=mate, cal_event_id="vq", calendar_id="vq",
+                    cal_writable=False)
+        part = {"meeting_id": "video-sync", "cal_calendar": mate, "cal_event_id": "vq", "weekday": None}
+        st = sync.State([m], PEOPLE, [], [], set(), [part])
+        series = sync.group([occ("2026-09-29", master="vq", org=mate, start="17:00")])
+        g = self.FakeGoogle({(mate, "vq"): master_event(master="vq", byday="TU", start="2026-07-21T17:00:00+03:00")})
+        got = sync.read_masters(g, st, series, {ORG}, NOW.date())
+        self.assertEqual(got[(mate, "vq")]["recurrence"], ["RRULE:FREQ=WEEKLY;BYDAY=TU"])
+        # One it cannot find is left unread, never taken for deleted.
+        got = sync.read_masters(self.FakeGoogle({}), st, series, {ORG}, NOW.date())
+        self.assertNotIn((mate, "vq"), got)
 
 
 class ADayEach(unittest.TestCase):
@@ -298,6 +384,16 @@ class ADayEach(unittest.TestCase):
         self.assertIn("added An Agent", [c["what"] for c in p.changes])
         stored = [body[0] for m_, path, body, _ in p.writes if path.startswith("team_meeting_series")]
         self.assertEqual({(r["cal_event_id"], r["weekday"]) for r in stored}, {("sun", 0), ("mon", 1)})
+
+
+    def test_a_days_series_that_ends_before_its_next_sitting_is_not_a_day(self):
+        # CSM Daily's Sunday series, ended the day before the Sunday meeting starts.
+        self.assertTrue(sync.over_before_next([0], "2026-10-03", dt.date(2026, 9, 28)))
+        # On the Sunday itself its last sitting is still today.
+        self.assertFalse(sync.over_before_next([0], "2026-10-03", dt.date(2026, 9, 27)))
+        self.assertFalse(sync.over_before_next([1], "2026-10-20", dt.date(2026, 9, 28)))
+        self.assertFalse(sync.over_before_next([0], None, dt.date(2026, 9, 28)))
+        self.assertFalse(sync.over_before_next([], "2026-10-03", dt.date(2026, 9, 28)))
 
 
 class Links(unittest.TestCase):

@@ -1,0 +1,735 @@
+/* The pitch deck: Mahara Media Brand Guidelines v1.0 on a 1920x1080 canvas.
+   Deep Space is the ground, Mahara Teal the one accent, Royal Blue only
+   inside the Mahara gradient. Geist for words, Geist Mono for figures,
+   IBM Plex Sans Arabic for Arabic (Geist has no Arabic glyphs). */
+@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@500;600;700&display=swap");
+
+.dk-root {
+  --dk-space: #091333;
+  --dk-deep: #060d24;
+  --dk-panel: #0e1a42;
+  --dk-panel-2: #132253;
+  --dk-teal: #00cfc8;
+  --dk-teal-soft: rgba(0, 207, 200, 0.14);
+  --dk-blue: #2e5bd6;
+  --dk-grad: linear-gradient(135deg, #2e5bd6 0%, #00cfc8 65%, #00cfc8 100%);
+  --dk-ink: #f2f6fa;
+  --dk-ink-2: rgba(242, 246, 250, 0.7);
+  --dk-ink-3: rgba(242, 246, 250, 0.46);
+  --dk-line: rgba(255, 255, 255, 0.1);
+  --dk-leak: #f5b84b;
+  --dk-good: #3ed598;
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: var(--dk-deep);
+  color: var(--dk-ink);
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+.dk-stage {
+  position: absolute;
+  inset: 0;
+}
+
+/* Centred by hand: a box bigger than the window, centred by grid or flex,
+   drifts to one side once it overflows, so the scale would clip it. */
+.dk-canvas {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 1920px;
+  height: 1080px;
+  flex: none;
+  overflow: hidden;
+  background: var(--dk-space);
+  font-family: "Geist", "IBM Plex Sans Arabic", ui-sans-serif, sans-serif;
+  font-size: 30px;
+  line-height: 1.45;
+  transform-origin: center center;
+  box-shadow: 0 40px 120px -40px rgba(0, 0, 0, 0.7);
+}
+.dk-canvas[dir="rtl"] {
+  font-family: "IBM Plex Sans Arabic", "Geist", ui-sans-serif, sans-serif;
+}
+
+.dk-slide {
+  position: absolute;
+  inset: 0;
+  padding: 112px 136px 184px;
+  display: flex;
+  flex-direction: column;
+  /* No word left alone on a last line, in any block on a slide. */
+  text-wrap: pretty;
+}
+.dk-slide.dk-deep {
+  background: var(--dk-deep);
+}
+.dk-slide > * {
+  position: relative;
+}
+/* No rail at the foot: the slide has that room back. */
+.dk-slide.dk-norail {
+  padding-bottom: 104px;
+}
+.dk-photo {
+  position: absolute !important;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.dk-scrim {
+  position: absolute !important;
+  inset: 0;
+}
+
+/* A browser window around a page we built, so it reads as a real page. */
+.dk-browser {
+  border-radius: 20px;
+  overflow: hidden;
+  border: 1px solid var(--dk-line);
+  background: var(--dk-deep);
+  box-shadow: 0 40px 90px -40px rgba(0, 0, 0, 0.8);
+}
+.dk-browser-bar {
+  height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 18px;
+  background: #0b1638;
+  border-bottom: 1px solid var(--dk-line);
+}
+.dk-browser-bar i {
+  width: 12px;
+  height: 12px;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.18);
+}
+.dk-browser-bar span {
+  margin-inline-start: 14px;
+  font-family: "Geist Mono", ui-monospace, monospace;
+  font-size: 18px;
+  color: var(--dk-ink-3);
+  direction: ltr;
+}
+.dk-browser img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+/* The portal tour: the screens as tabs beside one large frame. */
+.dk-stop {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  padding: 12px 24px 12px 30px;
+  border: 0;
+  border-radius: 14px;
+  background: none;
+  color: var(--dk-ink-3);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+  transition:
+    background 200ms,
+    color 200ms;
+}
+.dk-stop::before {
+  content: "";
+  position: absolute;
+  inset-block: 14px;
+  inset-inline-start: 0;
+  width: 4px;
+  border-radius: 4px;
+  background: transparent;
+}
+.dk-stop[data-on] {
+  background: var(--dk-panel);
+  color: var(--dk-ink);
+}
+.dk-stop[data-on]::before {
+  background: var(--dk-teal);
+}
+.dk-stop:focus-visible {
+  outline: 2px solid var(--dk-teal);
+  outline-offset: 2px;
+}
+.dk-stop-name {
+  font-size: 30px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+.dk-stop-line {
+  font-size: 24px;
+  line-height: 1.4;
+  color: var(--dk-ink-2);
+}
+[dir="rtl"] .dk-stop {
+  padding: 12px 30px 12px 24px;
+}
+[dir="rtl"] .dk-stop-name {
+  font-size: 32px;
+  line-height: 1.4;
+}
+[dir="rtl"] .dk-stop-line {
+  font-size: 26px;
+  line-height: 1.6;
+}
+.dk-tour-shot {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top center;
+  opacity: 0;
+  transition: opacity 320ms ease;
+}
+.dk-tour-shot[data-on] {
+  opacity: 1;
+}
+.dk-demo-badge {
+  position: absolute;
+  bottom: 20px;
+  inset-inline-end: 20px;
+  padding: 8px 16px;
+  border-radius: 999px;
+  background: rgba(9, 19, 51, 0.82);
+  color: var(--dk-ink);
+  font-size: 20px;
+  line-height: 1.2;
+}
+
+/* The big rail: the pipeline drawn large on the opening. */
+.dk-bigrail {
+  position: relative;
+  height: 250px;
+}
+.dk-bigrail-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 190px;
+  height: 3px;
+  background: linear-gradient(90deg, #2e5bd6 0%, #00cfc8 65%, #00cfc8 100%);
+  border-radius: 3px;
+}
+[dir="rtl"] .dk-bigrail-line {
+  background: linear-gradient(270deg, #2e5bd6 0%, #00cfc8 65%, #00cfc8 100%);
+}
+.dk-bignode {
+  position: absolute;
+  top: 176px;
+  width: 32px;
+  height: 32px;
+  margin-inline-start: -16px;
+  border-radius: 99px;
+  background: var(--dk-space);
+  border: 3px solid var(--dk-teal);
+  box-shadow: 0 0 0 10px rgba(0, 207, 200, 0.12), 0 0 30px rgba(0, 207, 200, 0.5);
+}
+.dk-biglabel {
+  position: absolute;
+  top: 40px;
+  width: 300px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* ------------------------------------------------------------- type */
+
+.dk-label {
+  font-family: "Geist Mono", ui-monospace, monospace;
+  font-size: 24px;
+  line-height: 1.2;
+  color: var(--dk-teal);
+  letter-spacing: 0;
+}
+[dir="rtl"] .dk-label {
+  font-family: "IBM Plex Sans Arabic", "Geist Mono", sans-serif;
+  font-size: 26px;
+}
+.dk-display {
+  font-size: 118px;
+  line-height: 1.02;
+  font-weight: 600;
+  letter-spacing: -0.035em;
+  text-wrap: balance;
+}
+.dk-h1 {
+  font-size: 80px;
+  line-height: 1.06;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  text-wrap: balance;
+}
+.dk-h2 {
+  font-size: 56px;
+  line-height: 1.12;
+  font-weight: 600;
+  letter-spacing: -0.025em;
+  text-wrap: balance;
+}
+.dk-h3 {
+  font-size: 40px;
+  line-height: 1.2;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
+.dk-lead {
+  font-size: 38px;
+  line-height: 1.38;
+  color: var(--dk-ink-2);
+  text-wrap: pretty;
+}
+.dk-body {
+  font-size: 30px;
+  line-height: 1.45;
+  color: var(--dk-ink-2);
+  text-wrap: pretty;
+}
+.dk-small {
+  font-size: 24px;
+  line-height: 1.4;
+  color: var(--dk-ink-3);
+}
+.dk-num {
+  font-family: "Geist Mono", ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+/* Geist Mono has no Arabic: without Plex first, an Arabic figure ("٦ آلاف
+   دولار") falls to the system monospace and its letters come apart. */
+[dir="rtl"] .dk-num {
+  font-family: "IBM Plex Sans Arabic", "Geist Mono", sans-serif;
+  letter-spacing: 0;
+}
+[dir="rtl"] .dk-display {
+  font-size: 112px;
+  line-height: 1.2;
+  letter-spacing: 0;
+  font-weight: 700;
+}
+[dir="rtl"] .dk-h1 {
+  font-size: 84px;
+  line-height: 1.25;
+  letter-spacing: 0;
+  font-weight: 700;
+}
+[dir="rtl"] .dk-h2 {
+  font-size: 60px;
+  line-height: 1.3;
+  letter-spacing: 0;
+  font-weight: 700;
+}
+[dir="rtl"] .dk-h3 {
+  font-size: 42px;
+  line-height: 1.35;
+  letter-spacing: 0;
+}
+[dir="rtl"] .dk-lead {
+  font-size: 40px;
+  line-height: 1.6;
+}
+[dir="rtl"] .dk-body {
+  font-size: 32px;
+  line-height: 1.65;
+}
+[dir="rtl"] .dk-small {
+  font-size: 26px;
+}
+.dk-teal {
+  color: var(--dk-teal);
+}
+.dk-ink2 {
+  color: var(--dk-ink-2);
+}
+.dk-ink3 {
+  color: var(--dk-ink-3);
+}
+.dk-ltr {
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+
+/* ----------------------------------------------------------- motion */
+
+.dk-rv {
+  opacity: 0;
+}
+.dk-slide[data-active] .dk-rv {
+  animation: dk-up 620ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  animation-delay: calc(var(--i, 0) * 75ms + 60ms);
+}
+@keyframes dk-up {
+  from {
+    opacity: 0;
+    transform: translateY(26px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dk-slide[data-active] .dk-rv {
+    animation: none;
+    opacity: 1;
+  }
+  .dk-tour-shot,
+  .dk-stop {
+    transition: none;
+  }
+}
+
+/* --------------------------------------------------------- surfaces */
+
+.dk-card {
+  background: var(--dk-panel);
+  border: 1px solid var(--dk-line);
+  border-radius: 24px;
+  padding: 40px 44px;
+}
+.dk-hair {
+  border-top: 1px solid var(--dk-line);
+}
+.dk-glow {
+  box-shadow:
+    0 0 0 1px rgba(0, 207, 200, 0.45),
+    0 24px 70px -24px rgba(0, 207, 200, 0.45);
+}
+.dk-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  border-radius: 999px;
+  padding: 8px 20px;
+  font-size: 24px;
+  line-height: 1.2;
+  border: 1px solid var(--dk-line);
+  color: var(--dk-ink-2);
+}
+.dk-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 26px;
+  color: var(--dk-teal);
+  text-decoration: none;
+  border-bottom: 1px solid rgba(0, 207, 200, 0.35);
+  padding-bottom: 2px;
+  cursor: pointer;
+}
+.dk-link:hover {
+  border-bottom-color: var(--dk-teal);
+}
+.dk-link:focus-visible,
+.dk-btn:focus-visible,
+.dk-choice:focus-visible {
+  outline: 3px solid var(--dk-teal);
+  outline-offset: 4px;
+}
+
+/* ------------------------------------------------------------ video */
+
+.dk-video {
+  position: relative;
+  overflow: hidden;
+  border-radius: 20px;
+  border: 1px solid var(--dk-line);
+  background: var(--dk-deep);
+}
+.dk-video iframe,
+.dk-video video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+.dk-video-poster {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: radial-gradient(120% 90% at 30% 20%, #132253 0%, #060d24 70%);
+}
+
+/* ------------------------------------------------ the pipeline rail */
+
+.dk-rail {
+  position: absolute;
+  inset-inline-start: 136px;
+  inset-inline-end: 330px;
+  bottom: 60px;
+  height: 64px;
+}
+.dk-rail-line {
+  position: absolute;
+  inset-inline-start: 0;
+  inset-inline-end: 0;
+  top: 10px;
+  height: 2px;
+  background: var(--dk-line);
+}
+.dk-rail-fill {
+  position: absolute;
+  top: 10px;
+  height: 2px;
+  background: var(--dk-teal);
+  transition: width 600ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+.dk-canvas[dir="rtl"] .dk-rail-fill {
+  right: 0;
+}
+.dk-canvas[dir="ltr"] .dk-rail-fill {
+  left: 0;
+}
+.dk-node {
+  position: absolute;
+  top: 0;
+  width: 22px;
+  height: 22px;
+  margin-inline-start: -11px;
+  border-radius: 999px;
+  background: var(--dk-space);
+  border: 2px solid rgba(255, 255, 255, 0.28);
+}
+.dk-node[data-state="past"] {
+  border-color: var(--dk-teal);
+}
+.dk-node[data-state="now"] {
+  background: var(--dk-teal);
+  border-color: var(--dk-teal);
+  box-shadow: 0 0 0 8px rgba(0, 207, 200, 0.16), 0 0 26px rgba(0, 207, 200, 0.6);
+}
+.dk-node[data-match] {
+  outline: 2px dashed rgba(0, 207, 200, 0.85);
+  outline-offset: 7px;
+}
+.dk-node-label {
+  position: absolute;
+  top: 34px;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  font-size: 21px;
+  line-height: 1.2;
+  color: var(--dk-ink-3);
+}
+.dk-canvas[dir="rtl"] .dk-node-label {
+  transform: translateX(50%);
+  font-size: 22px;
+}
+.dk-node-label[data-state="now"] {
+  color: var(--dk-ink);
+}
+.dk-count {
+  position: absolute;
+  bottom: 60px;
+  inset-inline-end: 136px;
+  font-family: "Geist Mono", ui-monospace, monospace;
+  font-size: 22px;
+  color: var(--dk-ink-3);
+}
+[dir="rtl"] .dk-count {
+  font-family: "IBM Plex Sans Arabic", "Geist Mono", sans-serif;
+  font-size: 24px;
+}
+
+/* ------------------------------------------------ controls in slides */
+
+.dk-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  height: 64px;
+  padding: 0 32px;
+  border-radius: 16px;
+  font-size: 26px;
+  font-weight: 600;
+  background: var(--dk-teal);
+  color: #04121d;
+  border: 0;
+  cursor: pointer;
+}
+.dk-btn.dk-quiet {
+  background: transparent;
+  color: var(--dk-ink);
+  border: 1px solid var(--dk-line);
+}
+.dk-choice {
+  text-align: start;
+  background: var(--dk-panel);
+  border: 1px solid var(--dk-line);
+  border-radius: 24px;
+  padding: 36px 40px;
+  color: var(--dk-ink);
+  cursor: pointer;
+  transition:
+    border-color 180ms,
+    box-shadow 180ms,
+    transform 180ms;
+}
+.dk-choice:hover {
+  border-color: rgba(0, 207, 200, 0.5);
+  transform: translateY(-2px);
+}
+.dk-choice[aria-pressed="true"] {
+  border-color: var(--dk-teal);
+  box-shadow:
+    0 0 0 1px var(--dk-teal),
+    0 24px 60px -24px rgba(0, 207, 200, 0.5);
+}
+.dk-select {
+  height: 72px;
+  border-radius: 16px;
+  padding: 0 24px;
+  font: inherit;
+  font-size: 28px;
+  background: var(--dk-panel);
+  color: var(--dk-ink);
+  border: 1px solid var(--dk-line);
+}
+.dk-input {
+  height: 72px;
+  width: 100%;
+  border-radius: 16px;
+  padding: 0 24px;
+  font-family: "Geist Mono", ui-monospace, monospace;
+  font-size: 32px;
+  background: var(--dk-deep);
+  color: var(--dk-ink);
+  border: 1px solid var(--dk-line);
+}
+.dk-input:focus,
+.dk-select:focus {
+  outline: 3px solid rgba(0, 207, 200, 0.7);
+  outline-offset: 2px;
+}
+.dk-range {
+  width: 100%;
+  accent-color: var(--dk-teal);
+  height: 40px;
+}
+
+/* ------------------------------------------------------ side panel */
+
+.dk-panel {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  inset-inline-end: 0;
+  width: 720px;
+  background: rgba(10, 20, 52, 0.97);
+  border-inline-start: 1px solid var(--dk-line);
+  padding: 96px 64px 64px;
+  overflow-y: auto;
+  animation: dk-in 360ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  z-index: 5;
+}
+@keyframes dk-in {
+  from {
+    opacity: 0;
+    transform: translateX(40px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+[dir="rtl"] .dk-panel {
+  animation-name: dk-in-rtl;
+}
+@keyframes dk-in-rtl {
+  from {
+    opacity: 0;
+    transform: translateX(-40px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+
+/* ------------------------------------------------------- the chrome */
+
+.dk-chrome {
+  position: absolute;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: opacity 300ms;
+  font-family: "Geist", "IBM Plex Sans Arabic", sans-serif;
+}
+.dk-root[data-idle] .dk-chrome {
+  opacity: 0;
+  pointer-events: none;
+}
+.dk-chrome button,
+.dk-chrome a {
+  height: 36px;
+  min-width: 36px;
+  padding: 0 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(9, 19, 51, 0.8);
+  color: var(--dk-ink);
+  font-size: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  cursor: pointer;
+  text-decoration: none;
+  backdrop-filter: blur(8px);
+}
+.dk-chrome button[aria-pressed="true"] {
+  background: var(--dk-teal);
+  color: #04121d;
+  border-color: var(--dk-teal);
+}
+.dk-chrome button:focus-visible,
+.dk-chrome a:focus-visible {
+  outline: 2px solid var(--dk-teal);
+  outline-offset: 2px;
+}
+
+.dk-overview {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  background: rgba(6, 13, 36, 0.97);
+  overflow-y: auto;
+  padding: 56px 48px;
+  font-family: "Geist", "IBM Plex Sans Arabic", sans-serif;
+}
+.dk-overview button {
+  text-align: start;
+  width: 100%;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  padding: 12px 14px;
+  background: rgba(14, 26, 66, 0.7);
+  color: var(--dk-ink);
+  font-size: 15px;
+  cursor: pointer;
+}
+.dk-overview button[aria-current="true"] {
+  border-color: var(--dk-teal);
+}
+
+@media print {
+  .dk-chrome {
+    display: none !important;
+  }
+}

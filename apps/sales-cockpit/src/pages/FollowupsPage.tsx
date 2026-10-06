@@ -209,6 +209,36 @@ export default function FollowupsPage({ me }: { me: Me }) {
     );
   const done = all.filter(f => f.status !== "draft");
   const leads = useLeadsById([...new Set(all.map(f => f.contact_id))]);
+  // When each waiting lead last wrote on WhatsApp (the inbox copy): inside
+  // 24 hours of it a draft can go on WhatsApp as well (Aziz, 2026-09-27).
+  // The send checks the window again with HighLevel itself.
+  const waitingKey = [...new Set(waiting.map(f => f.contact_id))]
+    .sort()
+    .join(",");
+  const lastWa = useQuery<
+    { contact_id: string; inbound_whatsapp_at: string | null }[]
+  >(
+    () =>
+      waitingKey
+        ? supabase
+            .from("cockpit_sales_inbox")
+            .select("contact_id,inbound_whatsapp_at")
+            .in("contact_id", waitingKey.split(","))
+            .not("inbound_whatsapp_at", "is", null)
+        : Promise.resolve({ data: [], error: null }),
+    [waitingKey],
+    60_000,
+  );
+  const waUntil = useMemo(() => {
+    const out = new Map<string, number>();
+    for (const r of lastWa.data ?? []) {
+      const at = Date.parse(String(r.inbound_whatsapp_at));
+      if (!Number.isFinite(at)) continue;
+      const until = at + 24 * 3_600_000;
+      if (until > (out.get(r.contact_id) ?? 0)) out.set(r.contact_id, until);
+    }
+    return out;
+  }, [lastWa.data]);
   const nameOf = useMemo(
     () => new Map((leads.data ?? []).map(l => [l.contact_id, l.name] as const)),
     [leads.data],
@@ -280,6 +310,7 @@ export default function FollowupsPage({ me }: { me: Me }) {
                 showOwner={Boolean(everyone)}
                 steps={settings.data?.cadence?.[f.segment]?.length ?? null}
                 templates={templates}
+                waUntil={waUntil.get(f.contact_id) ?? null}
                 onDone={rows.reload}
               />
             ))}
@@ -317,10 +348,12 @@ export default function FollowupsPage({ me }: { me: Me }) {
         HighLevel and any research. It writes WhatsApp while the lead's 24-hour
         window is open; outside it, one line for an approved WhatsApp template
         once one is live in the WhatsApp library; email only where neither can
-        go and that kind allows it. While a HighLevel automation or a rep has
-        messaged the lead lately, it waits. When a rep changes a draft before
-        sending it, the next drafts of that kind are shown the change as what
-        good looks like.
+        go and that kind allows it. A draft written for email can go on WhatsApp
+        instead while the lead's window is open: pick WhatsApp beside the send
+        button. Contacts tagged client in HighLevel are active clients and get
+        no follow-ups. While a HighLevel automation or a rep has messaged the
+        lead lately, it waits. When a rep changes a draft before sending it, the
+        next drafts of that kind are shown the change as what good looks like.
       </SourceNote>
     </main>
   );
@@ -332,6 +365,7 @@ function DraftCard({
   showOwner,
   steps,
   templates,
+  waUntil,
   onDone,
 }: {
   f: Followup;
@@ -339,10 +373,18 @@ function DraftCard({
   showOwner: boolean;
   steps: number | null;
   templates: ReturnType<typeof useTemplates>;
+  /** When the lead's WhatsApp window closes, if they wrote in the last 24 hours. */
+  waUntil: number | null;
   onDone: () => void;
 }) {
   const [body, setBody] = useState(f.body);
   const [subject, setSubject] = useState(f.subject ?? "");
+  // The channel it goes on: the draft's, or WhatsApp while the lead's window
+  // is open (the server checks the window again and says so if it closed).
+  const waOpen = waUntil !== null && waUntil > Date.now();
+  const [via, setVia] = useState<FChannel>(f.channel);
+  const channel: FChannel =
+    via === "whatsapp" && !waOpen && f.channel !== "whatsapp" ? f.channel : via;
   const [busy, setBusy] = useState(false);
   // Sent or skipped: the card stays until the list reads again, its buttons off.
   const [settled, setSettled] = useState<string | null>(null);
@@ -370,7 +412,10 @@ function DraftCard({
       }>("followup.approve", {
         id: f.id,
         body,
-        subject: f.channel === "email" ? subject : undefined,
+        subject: channel === "email" ? subject : undefined,
+        ...(channel === "whatsapp" && f.channel !== "whatsapp"
+          ? { channel: "whatsapp" }
+          : {}),
       });
       if (out.followup.status === "failed") {
         toast.error(
@@ -381,7 +426,7 @@ function DraftCard({
         toast.success(
           out.message.provider_status === "enrolled"
             ? "HighLevel is sending the template now."
-            : `Sent by ${CHANNEL[f.channel]}.`,
+            : `Sent by ${CHANNEL[channel]}.`,
         );
         setSettled("Sent.");
       }
@@ -433,6 +478,9 @@ function DraftCard({
               {f.expires_at
                 ? ` · good until ${day(f.expires_at)} ${clock(f.expires_at)}`
                 : ""}
+              {waOpen && f.channel !== "whatsapp" && waUntil
+                ? ` · WhatsApp open until ${clock(new Date(waUntil).toISOString())}`
+                : ""}
               {!f.owner_email
                 ? " · nobody's lead yet: anyone can send it"
                 : showOwner
@@ -454,7 +502,7 @@ function DraftCard({
         </div>
         <p className="muted text-xs">Written {ago(f.created_at)}</p>
       </div>
-      {f.channel === "email" ? (
+      {channel === "email" ? (
         <input
           value={subject}
           onChange={e => setSubject(e.target.value)}
@@ -467,25 +515,30 @@ function DraftCard({
         value={body}
         onChange={e =>
           setBody(
-            f.channel === "whatsapp_template"
+            channel === "whatsapp_template"
               ? e.target.value.replace(/[\r\n]+/g, " ")
               : e.target.value,
           )
         }
         rows={
-          f.channel === "whatsapp_template"
+          channel === "whatsapp_template"
             ? 2
             : Math.min(10, Math.max(3, body.split("\n").length + 1))
         }
         className={`${field} h-auto py-2 leading-relaxed`}
         dir="auto"
         aria-label={
-          f.channel === "whatsapp_template"
+          channel === "whatsapp_template"
             ? "The line that goes in the template"
             : "The message"
         }
       />
-      {f.channel === "whatsapp_template" ? (
+      {channel === "whatsapp" && f.channel === "email" ? (
+        <p className="muted text-xs">
+          Written as an email: read it as a WhatsApp message before it goes.
+        </p>
+      ) : null}
+      {channel === "whatsapp_template" ? (
         templates.error ? (
           <p className="text-xs">
             The WhatsApp templates could not be read, so this draft cannot be
@@ -522,13 +575,24 @@ function DraftCard({
         )
       ) : null}
       <div className="flex flex-wrap items-center gap-2">
+        {waOpen && f.channel !== "whatsapp" ? (
+          <Segmented
+            label="Send on"
+            value={channel}
+            options={[
+              [f.channel, CHANNEL[f.channel]],
+              ["whatsapp", "WhatsApp"],
+            ]}
+            onChange={v => setVia(v as FChannel)}
+          />
+        ) : null}
         <button
           type="submit"
           disabled={
             busy ||
             Boolean(settled) ||
             !body.trim() ||
-            (f.channel === "whatsapp_template" &&
+            (channel === "whatsapp_template" &&
               !(template?.active && template.workflow_id))
           }
           className={buttonPrimary}
@@ -538,10 +602,13 @@ function DraftCard({
             ? settled
             : busy
               ? "Sending…"
-              : body.trim() !== f.body.trim()
-                ? "Send my version"
-                : "Approve and send"}
+              : channel !== f.channel
+                ? `Send on ${CHANNEL[channel]}`
+                : body.trim() !== f.body.trim()
+                  ? "Send my version"
+                  : "Approve and send"}
         </button>
+
         {skipping ? (
           <span className="flex flex-wrap items-center gap-1.5">
             {SKIPS.map(r => (

@@ -374,6 +374,14 @@
   .txt-warn {
     color: color-mix(in oklch, var(--warning) 85%, var(--foreground));
   }
+  /* A row of chips that scrolls sideways on a phone instead of wrapping
+     (the same rule as the client success cockpit's). */
+  .no-scrollbar {
+    scrollbar-width: none;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
   /* Signature elevation on dark surfaces (brand §4). Use sparingly. */
   .glow-teal {
     box-shadow:

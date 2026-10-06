@@ -1,6 +1,7 @@
 import {createClient} from 'npm:@supabase/supabase-js@2';
 import {providerTools} from './tools.ts';
 import {prepareCsm,executeCsm} from './core.ts';
+import {runProjectionOperation,ProjectionAccessError} from './projections.ts';
 const cors={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'authorization,apikey,content-type,x-client-info','Access-Control-Allow-Methods':'POST,OPTIONS'};
 const json=(body:unknown,status=200)=>new Response(JSON.stringify(body),{status,headers:{...cors,'Content-Type':'application/json'}});
 const canonical=(v:any):string=>JSON.stringify(v&&typeof v==='object'?(Array.isArray(v)?v.map(x=>JSON.parse(canonical(x))):Object.fromEntries(Object.keys(v).sort().filter(k=>v[k]!==undefined).map(k=>[k,JSON.parse(canonical(v[k]))]))):v);
@@ -12,6 +13,10 @@ Deno.serve(async(req:Request)=>{
   const url=Deno.env.get('SUPABASE_URL')!,anon=Deno.env.get('SUPABASE_ANON_KEY')!,service=Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
   const client=createClient(url,anon,{global:{headers:{Authorization:auth}},auth:{persistSession:false}});
   const input=await req.json(),args=input.args??{},operation=input.operation;
+  if(operation==='projections.bookCall'||operation==='projections.refreshBillingNow'){
+   const providerAdmin=createClient(url,service,{auth:{persistSession:false}});
+   return json(await runProjectionOperation(client,providerAdmin,input,name=>Deno.env.get(name)));
+  }
   const scope=()=>client.rpc('cockpit_csm_action_context',{p_operation:operation,p_args:args});const {data:context,error:gate}=await scope();if(gate)return json({error:gate.message},403);
   admin=createClient(url,service,{auth:{persistSession:false}});
   if(input.apply===true){
@@ -30,5 +35,5 @@ Deno.serve(async(req:Request)=>{
   actionId=input.requestId;const done=await executeCsm(plan,provider);
   const {data:result,error:finish}=await admin.rpc('cockpit_finish_csm_action',{p_id:actionId,p_result:done.result,p_patch:done.patch});if(finish)throw Error('ClickUp changed but its local confirmation failed. Reconcile before retrying.');
   return json(result);
- }catch(error){const message=error instanceof Error?error.message:'Client-success action failed';if(admin&&actionId)await admin.from('cockpit_csm_actions').update({state:'reconcile',error:message.slice(0,1500),finished_at:new Date().toISOString()}).eq('id',actionId).eq('state','sending');return json({error:message},400);}
+ }catch(error){const message=error instanceof Error?error.message:'Client-success action failed';if(admin&&actionId)await admin.from('cockpit_csm_actions').update({state:'reconcile',error:message.slice(0,1500),finished_at:new Date().toISOString()}).eq('id',actionId).eq('state','sending');return json({error:message},error instanceof ProjectionAccessError?403:400);}
 });

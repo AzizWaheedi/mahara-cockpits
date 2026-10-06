@@ -10,7 +10,7 @@
 # Two copies may differ only in their imports, because the Convex cockpits
 # reach Supabase through an action holding the service key and the editor
 # talks to PostgREST with the editor's own session. So the comparison drops
-# import lines and compares everything below them.
+# import lines and compares everything below them, ignoring LF/CRLF differences.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
@@ -23,6 +23,7 @@ fails=0
 # Everything below the import block, which is the part that must match.
 body() {
   awk '
+    { sub(/\r$/, "") }
     !started && (/^import / || /^} from / || /^  [A-Za-z{}]/ && importing) { importing = 1; next }
     /^$/ && importing { next }
     { started = 1; print }
@@ -58,6 +59,15 @@ same adAsIdea "$CD/convex/adAsIdea.ts" "$ED/src/lib/adAsIdea.ts"
 # What a client is told about their ads (no leads, no cost per lead, what we
 # did in their words) reads the same from the media buyer and from the CSM.
 same clientUpdate "$MB/src/lib/clientUpdate.ts" "apps/client-success-cockpit/src/lib/clientUpdate.ts"
+
+# The Projections screen: the client success cockpit owns the data and its
+# own tab, and the Sunday meeting's page in the media buyer shows the same
+# parts. One set of words and shapes, one set of parts.
+same projectionsView "apps/client-success-cockpit/src/lib/projectionsView.ts" "$MB/src/lib/projectionsView.ts"
+same projectionsCore "apps/client-success-cockpit/src/lib/projectionsCore.ts" "$MB/src/lib/projectionsCore.ts"
+same projectionsSchema "apps/client-success-cockpit/src/lib/projectionsSchema.ts" "$MB/src/lib/projectionsSchema.ts"
+same projectionsModel "apps/client-success-cockpit/src/lib/projectionsModel.ts" "$MB/src/lib/projectionsModel.ts"
+same ProjectionsKit "apps/client-success-cockpit/src/components/projections/ProjectionsKit.tsx" "$MB/src/components/projections/ProjectionsKit.tsx"
 
 # The swipe file's backend is the same in the two Convex cockpits, bar the
 # role each one checks.
@@ -98,6 +108,14 @@ if [ "$(echo "$pins" | wc -l)" -ne 1 ] || echo "$pins" | grep -q '[\^~]'; then
   echo "$pins" | sed 's/^/         /'
   fails=$((fails + 1))
 fi
+
+# Authorization is byte-identical, including imports and session configuration.
+for app in apps/client-success-cockpit apps/creative-director-cockpit apps/video-editor-cockpit apps/sales-cockpit; do
+  if ! cmp -s "$MB/src/auth/supabaseAccess.ts" "$app/src/auth/supabaseAccess.ts"; then
+    echo "DRIFTED  supabaseAccess.ts: $app"
+    fails=$((fails + 1))
+  fi
+done
 
 if [ "$fails" -ne 0 ]; then
   echo

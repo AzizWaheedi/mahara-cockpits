@@ -19,12 +19,14 @@
   },
   "guarantee": {
     "default": false,
-    "text": "{meetings} qualified appointments in {days} days, or we work for free until we deliver.",
-    "source": "Aziz's closer framework, stage 13 (Investment & Close). The script's em dash is a comma here, because a proposal carries no em dashes.",
-    "confirm": "Aziz to confirm. It is printed only when the closer chooses the guarantee; a request that does not say is taken as no guarantee. {meetings}, {days} and {months} are filled in from the program and the closer's choice."
+    "label": "Include the 7-day satisfaction guarantee",
+    "text": "A 7-day satisfaction guarantee: if you are unhappy with the process for any reason within 7 days of paying in full, tell us by email or WhatsApp and we refund the program fee in full, once onboarding is done. Advertising paid to the platforms is not refunded.",
+    "source": "Aziz, 2026-10-02: \"it's a 7-day satisfaction guarantee. If they're unhappy with the process whatsoever in the first 7 days, then we'll just refund them\", and \"we legally can't give them a result guarantee because everybody's different\". The words follow that contract, HighLevel's 90 Day Agreement (7 Day Satisfaction Guarantee), section 3, read on 2026-10-02. It replaced 30 qualified appointments in 90 days or we work for free.",
+    "confirm": "Printed only when the closer chooses it, because it is offered only to a prospect who asked for certainty; a request that does not say is taken as no guarantee. It is on the process, never on results: no proposal promises results, free work or a number of meetings, whatever the closer chose. {meetings}, {days} and {months} would be filled in from the program and the closer's choice."
   },
   "payment": {
     "default": "pif",
+    "source": "Aziz, 2026-10-03: \"we only have 2 options for newer clients $3k $3k after 30 days or $6k pif\". At the program price that is $6,000 paid in full, or $3,000 at the start and $3,000 30 days later; the monthly plan is no longer offered. The New Client Form and HighLevel's Payment Structure For Program say the same two: \"Paid in full ($6,000)\" and \"Split pay ($3,000 + $3,000 after 30 days)\".",
     "options": {
       "pif": {
         "label": "Paid in full at the start",
@@ -33,17 +35,11 @@
         ]
       },
       "two_payments": {
-        "label": "Two payments",
-        "confirm": "Aziz to confirm: half at the start, half 45 days in.",
+        "label": "Two payments: half at the start, half 30 days later",
         "instalments": [
           {"share": 1, "due_days": 0, "due": "at the start"},
-          {"share": 1, "due_days": 45, "due": "45 days after the start"}
+          {"share": 1, "due_days": 30, "due": "30 days after the start"}
         ]
-      },
-      "monthly": {
-        "label": "Monthly across the term",
-        "confirm": "Aziz to confirm: one equal payment a month, the first at the start.",
-        "per_month": true
       }
     }
   },

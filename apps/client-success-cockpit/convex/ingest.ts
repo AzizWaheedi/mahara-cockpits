@@ -1,6 +1,7 @@
 import { internal } from "./_generated/api";
 import type { ActionCtx } from "./_generated/server";
 import { copyStills } from "./previews";
+import { messageOf } from "./projections";
 
 /**
  * The machine door for Viktor's sync bridge, reached over HTTP (`POST /bridge`).
@@ -190,6 +191,19 @@ export async function runBridge(
       });
     case "smoke":
       return await ctx.runQuery(internal.smoke.run, {});
+    // The Projections strip and renewal window on the media buyer's Team
+    // meetings page. The media buyer decides who may see and change them
+    // (the meeting's people, the CEO, admins) and says who is asking; the
+    // refusals come back in words the page can show.
+    case "projections":
+    case "projectionsEdit":
+    case "projectionsBook":
+    case "projectionsSelfTest":
+      try {
+        return await projectionsBridge(ctx, fn, args);
+      } catch (e) {
+        throw new Error(messageOf(e));
+      }
     case "storeWhatsapp":
       return await ctx.runMutation(internal.comms.storeWhatsapp, {
         threads: args.threads ?? [],
@@ -199,4 +213,40 @@ export async function runBridge(
     default:
       throw new Error(`unknown bridge function: ${fn}`);
   }
+}
+
+async function projectionsBridge(
+  ctx: ActionCtx,
+  fn: string,
+  args: Args,
+): Promise<unknown> {
+  const viewer = {
+    email: String(args.viewer?.email ?? ""),
+    isCeo: args.viewer?.isCeo === true,
+    isAdmin: args.viewer?.isAdmin === true,
+  };
+  if (fn === "projections")
+    return await ctx.runQuery(internal.projections.pageFor, {
+      viewer,
+      ...(args.forEmail ? { forEmail: String(args.forEmail) } : {}),
+    });
+  if (fn === "projectionsEdit") {
+    await ctx.runMutation(internal.projections.editFor, {
+      viewer,
+      edit: args.edit,
+    });
+    return await ctx.runQuery(internal.projections.pageFor, {
+      viewer,
+      ...(args.forEmail ? { forEmail: String(args.forEmail) } : {}),
+    });
+  }
+  if (fn === "projectionsBook")
+    return await ctx.runAction(internal.projections.bookFor, {
+      viewer,
+      taskId: String(args.taskId ?? ""),
+      day: String(args.day ?? ""),
+      time: String(args.time ?? ""),
+      ...(args.minutes ? { minutes: Number(args.minutes) } : {}),
+    });
+  return await ctx.runMutation(internal.projections.selfTest, {});
 }

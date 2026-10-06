@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { fetchMeetingsOverview, linkCalendar, sendReply, unlinkCalendar } from "@/lib/comms";
@@ -71,7 +71,7 @@ function Ext({ href, children }: { href: string; children: string }) {
 
 /**
  * Connect your own Google Calendar: share it with the cockpit's service
- * account, type the Google email, done. Checked within a minute.
+ * account, then save the Google email. The worker verifies sharing.
  */
 function CalendarLink({
   link,
@@ -92,7 +92,7 @@ function CalendarLink({
       link.status === "ok"
         ? `connected, ${link.events ?? 0} event${link.events === 1 ? "" : "s"} in view`
         : link.status === "pending"
-          ? "checking, under a minute"
+          ? "sharing verification pending"
           : "not readable yet";
     return (
       <div className="text-xs text-muted-foreground">
@@ -175,29 +175,35 @@ function CalendarLink({
   );
 }
 
-export function MeetingsPage() {
+function MeetingsContent() {
   const auth = useCockpitAuth();
   const [data, setData] = useState<Any | null>(null);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [sending, setSending] = useState<Record<string, boolean>>({});
   const [openThread, setOpenThread] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const loadSequence = useRef(0);
 
   const loadOverview = useCallback(() => {
     if (!auth.client) return;
-    fetchMeetingsOverview(auth.client, auth.clients)
-      .then(setData)
-      .catch(console.error);
-  }, [auth.client, auth.clients]);
+    const sequence = ++loadSequence.current;
+    fetchMeetingsOverview(auth.client)
+      .then(value => { if (sequence === loadSequence.current) { setData(value); setLoadError(null); } })
+      .catch(error => { if (sequence === loadSequence.current) setLoadError(error instanceof Error ? error.message : "Meetings are unavailable. Reload the view."); });
+  }, [auth.client]);
 
   useEffect(() => {
     loadOverview();
+    return () => { loadSequence.current++; };
   }, [loadOverview]);
 
   const handleSendReply = async ({ chatId, text }: { chatId: string; text: string }) => {
     if (!auth.client) return;
     try {
-      await sendReply(auth.client, auth.email, { chatId, text });
-      toast.success("Sent on WhatsApp");
+      const thread = data?.threads.find((value: Any) => value.chatId === chatId);
+      if (!thread?.contextKey) throw new Error("Refresh this conversation before replying.");
+      const receipt = await sendReply(auth.client, { chatId, text, contextKey: thread.contextKey });
+      toast.success(receipt.deliveryConfirmed ? "Delivery confirmed" : "Submitted to WhatsApp. Delivery is not confirmed.");
       loadOverview();
     } catch (e) {
       toast.error(String(e));
@@ -207,18 +213,19 @@ export function MeetingsPage() {
   const handleLinkCalendar = async (calId: string) => {
     if (!auth.client) return;
     try {
-      await linkCalendar(auth.client, auth.email, calId);
-      toast.success("Calendar connected");
+      await linkCalendar(auth.client, calId);
+      toast.success("Calendar choice saved. Sharing verification is pending.");
       loadOverview();
     } catch (e) {
       toast.error(String(e));
+      throw e;
     }
   };
 
   const handleUnlinkCalendar = async () => {
     if (!auth.client) return;
     try {
-      await unlinkCalendar(auth.client, auth.email);
+      await unlinkCalendar(auth.client);
       toast.success("Calendar disconnected");
       loadOverview();
     } catch (e) {
@@ -226,6 +233,7 @@ export function MeetingsPage() {
     }
   };
 
+  if (loadError && !data) return <p role="alert" className="text-sm text-destructive">{loadError}</p>;
   if (!data) return <p className="text-sm text-muted-foreground">Loading…</p>;
   const {
     today,
@@ -247,9 +255,9 @@ export function MeetingsPage() {
     {},
   );
   const waiting = (threads as Any[]).filter(
-    t => t.waitingSince && !t.repliedAt && !t.sendingAt,
+    t => t.waitingSince && !t.repliedAt && !["intent", "accepted", "reconcile"].includes(t.replyState ?? ""),
   );
-  const inFlight = (threads as Any[]).filter(t => t.sendingAt);
+  const inFlight = (threads as Any[]).filter(t => ["intent", "accepted", "reconcile"].includes(t.replyState ?? ""));
   const quiet = (threads as Any[]).filter(
     t => !t.waitingSince && (t.silentDays ?? 0) >= 3 && t.clientName,
   );
@@ -262,10 +270,13 @@ export function MeetingsPage() {
         </h1>
         <p className="mt-1 text-sm text-muted-foreground">
           {syncedAt ? `Refreshed ${ago(syncedAt)} ago. ` : ""}
-          {!calendarConfigured ? "No calendar events yet. " : ""}
+          {!calendarConfigured ? "Calendar connection is not verified. " : ""}
           {!whatsappConfigured ? "WhatsApp not connected yet." : ""}
         </p>
       </header>
+      {loadError ? <p role="alert" className="text-sm text-destructive">{loadError}</p> : null}
+      {data.sourceNote ? <p role="status" className="text-sm text-muted-foreground">{data.sourceNote}</p> : null}
+      {data.whatsappNote ? <p role="status" className="text-sm text-muted-foreground">{data.whatsappNote}</p> : null}
 
       <section className={CARD}>
         <div className="mb-4 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-2">
@@ -347,7 +358,7 @@ export function MeetingsPage() {
               >
                 <span className="font-medium">{t.name}</span>
                 <span className="text-muted-foreground">
-                  Reply leaving within a minute, queued {ago(t.sendingAt)} ago
+                  {t.replyState === "accepted" ? "Submitted. Delivery is not confirmed." : "The provider outcome needs reconciliation. Nothing will be resent automatically."}
                 </span>
               </li>
             ))}
@@ -399,7 +410,7 @@ export function MeetingsPage() {
         <h2 className={`mb-4 ${CARD_TITLE}`}>Waiting on you in WhatsApp</h2>
         {waiting.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            Nobody is waiting for a reply.
+            {inFlight.length ? "No new conversation needs another reply." : data.whatsappReady ? "No conversations are waiting in the verified inbox." : "WhatsApp is not verified. Refresh the inbox before relying on an empty list."}
           </p>
         ) : (
           <ul className="divide-y">
@@ -453,7 +464,7 @@ export function MeetingsPage() {
                     <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
                       <button
                         type="button"
-                        disabled={!text.trim() || sending[t.chatId]}
+                        disabled={!text.trim() || sending[t.chatId] || !t.sendSupported}
                         onClick={async () => {
                           setSending(x => ({ ...x, [t.chatId]: true }));
                           try {
@@ -467,7 +478,7 @@ export function MeetingsPage() {
                         {sending[t.chatId] ? "Sending…" : "Send on WhatsApp"}
                       </button>
                       <span className="text-xs text-muted-foreground">
-                        Edit it first if you want. It leaves within a minute.
+                        Review the reply before submitting. Delivery needs provider confirmation.
                       </span>
                     </div>
                   </div>
@@ -573,4 +584,8 @@ export function MeetingsPage() {
       </section>
     </div>
   );
+}
+export function MeetingsPage() {
+  const auth = useCockpitAuth();
+  return <MeetingsContent key={auth.session?.user.id ?? "signed-out"} />;
 }

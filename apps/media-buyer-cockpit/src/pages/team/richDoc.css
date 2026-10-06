@@ -1,0 +1,358 @@
+/*
+ * The meeting's doc (RichDoc.tsx): the page the editor writes on, in the
+ * cockpit's own type and colours (docs/DESIGN.md). Geist, IBM Plex Sans
+ * Arabic after it; teal for the caret, links, selection and handles.
+ */
+
+.team-doc-body {
+  outline: none;
+  min-height: 18rem;
+  font-family: var(--font-sans), "IBM Plex Sans Arabic", sans-serif;
+  font-size: 16px;
+  line-height: 1.7;
+  color: var(--foreground);
+  caret-color: var(--primary);
+  overflow-wrap: anywhere;
+  padding-bottom: 4rem;
+}
+
+.team-doc-body ::selection {
+  background: color-mix(in oklab, var(--primary) 32%, transparent);
+}
+
+.team-doc-body > * + * {
+  margin-top: 0.85em;
+}
+
+.team-doc-body > :first-child {
+  margin-top: 0;
+}
+
+.team-doc-body h1,
+.team-doc-body h2,
+.team-doc-body h3 {
+  font-weight: 600;
+  scroll-margin-top: 7.5rem;
+}
+
+.team-doc-body h1 {
+  font-size: 1.875rem;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+  margin-top: 1.5em;
+}
+
+.team-doc-body h2 {
+  font-size: 1.5rem;
+  line-height: 1.25;
+  letter-spacing: -0.015em;
+  margin-top: 1.4em;
+}
+
+.team-doc-body h3 {
+  font-size: 1.1875rem;
+  line-height: 1.35;
+  margin-top: 1.3em;
+}
+
+/* Lists: discs, then circles, then squares; numbers, letters, numerals. */
+.team-doc-body ul,
+.team-doc-body ol {
+  padding-inline-start: 1.6em;
+}
+
+.team-doc-body ul {
+  list-style: disc;
+}
+
+.team-doc-body ul ul {
+  list-style: circle;
+}
+
+.team-doc-body ul ul ul {
+  list-style: square;
+}
+
+.team-doc-body ol {
+  list-style: decimal;
+}
+
+.team-doc-body ol ol {
+  list-style: lower-alpha;
+}
+
+.team-doc-body ol ol ol {
+  list-style: lower-roman;
+}
+
+.team-doc-body li {
+  margin-top: 0.2em;
+}
+
+.team-doc-body li > p {
+  margin: 0;
+}
+
+.team-doc-body li > ul,
+.team-doc-body li > ol {
+  margin-top: 0.2em;
+}
+
+.team-doc-body li::marker {
+  color: var(--muted-foreground);
+}
+
+/* Checklists: the box in teal, a ticked line struck through and muted. */
+.team-doc-body ul[data-type="taskList"] {
+  list-style: none;
+  padding-inline-start: 0.15em;
+}
+
+.team-doc-body ul[data-type="taskList"] li {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6em;
+}
+
+.team-doc-body ul[data-type="taskList"] li > label {
+  flex: none;
+  display: flex;
+  height: 1.7em;
+  align-items: center;
+  user-select: none;
+}
+
+.team-doc-body ul[data-type="taskList"] li > div {
+  flex: 1;
+  min-width: 0;
+}
+
+.team-doc-body ul[data-type="taskList"] input[type="checkbox"] {
+  width: 1.05em;
+  height: 1.05em;
+  accent-color: var(--primary);
+  cursor: pointer;
+}
+
+.team-doc-body ul[data-type="taskList"] li[data-checked="true"] > div {
+  color: var(--muted-foreground);
+  text-decoration: line-through;
+}
+
+.team-doc-body blockquote {
+  border-inline-start: 3px solid
+    color-mix(in oklab, var(--primary) 55%, transparent);
+  padding-inline-start: 1em;
+  color: var(--muted-foreground);
+}
+
+.team-doc-body a {
+  color: var(--primary);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  cursor: text;
+}
+
+.team-doc-body code {
+  font-family: var(--font-mono);
+  font-size: 0.875em;
+  background: var(--muted);
+  border-radius: 6px;
+  padding: 0.1em 0.35em;
+}
+
+.team-doc-body pre {
+  font-family: var(--font-mono);
+  font-size: 0.875em;
+  line-height: 1.6;
+  background: var(--muted);
+  border-radius: 12px;
+  padding: 0.9em 1em;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.team-doc-body pre code {
+  background: none;
+  padding: 0;
+}
+
+.team-doc-body hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 1.75em 0;
+}
+
+.team-doc-body mark {
+  color: inherit;
+  border-radius: 3px;
+  padding: 0 0.12em;
+  background-color: color-mix(in oklab, var(--primary) 30%, transparent);
+}
+
+/* The empty doc's prompt. */
+.team-doc-body p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  color: var(--muted-foreground);
+  pointer-events: none;
+}
+
+/* Pictures: rounded, never wider than the page, handles on the corners. */
+.team-doc-body img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: 10px;
+}
+
+.team-doc-body [data-resize-container] {
+  max-width: 100%;
+  margin: 0.25em 0;
+}
+
+.team-doc-body [data-resize-wrapper] {
+  max-width: 100%;
+}
+
+.team-doc-body [data-resize-handle] {
+  z-index: 2;
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  border: 2px solid var(--card);
+  background: var(--primary);
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.team-doc-body [data-resize-handle="top-left"] {
+  transform: translate(-40%, -40%);
+  cursor: nwse-resize;
+}
+
+.team-doc-body [data-resize-handle="top-right"] {
+  transform: translate(40%, -40%);
+  cursor: nesw-resize;
+}
+
+.team-doc-body [data-resize-handle="bottom-left"] {
+  transform: translate(-40%, 40%);
+  cursor: nesw-resize;
+}
+
+.team-doc-body [data-resize-handle="bottom-right"] {
+  transform: translate(40%, 40%);
+  cursor: nwse-resize;
+}
+
+.team-doc-body [data-resize-container]:hover [data-resize-handle],
+.team-doc-body .ProseMirror-selectednode [data-resize-handle],
+.team-doc-body [data-resize-state="true"] [data-resize-handle] {
+  opacity: 1;
+}
+
+.team-doc-body .ProseMirror-selectednode img,
+.team-doc-body img.ProseMirror-selectednode {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+/* A picture still on its way to the bucket. */
+.team-doc-body img[src^="blob:"] {
+  opacity: 0.55;
+}
+
+/* Tables: hairlines, a quiet header row, teal on the selected cells. */
+.team-doc-body .tableWrapper {
+  overflow-x: auto;
+  margin: 1em 0;
+}
+
+.team-doc-body table {
+  border-collapse: collapse;
+  table-layout: fixed;
+  width: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+.team-doc-body th,
+.team-doc-body td {
+  position: relative;
+  min-width: 4em;
+  border: 1px solid var(--border);
+  padding: 0.4em 0.6em;
+  vertical-align: top;
+  box-sizing: border-box;
+}
+
+.team-doc-body th {
+  background: var(--muted);
+  font-weight: 600;
+  text-align: start;
+}
+
+.team-doc-body th > p,
+.team-doc-body td > p {
+  margin: 0;
+}
+
+.team-doc-body .selectedCell::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: color-mix(in oklab, var(--primary) 18%, transparent);
+  pointer-events: none;
+}
+
+.team-doc-body .column-resize-handle {
+  position: absolute;
+  top: 0;
+  right: -2px;
+  bottom: -2px;
+  width: 4px;
+  background: var(--primary);
+  pointer-events: none;
+}
+
+.team-doc-body.resize-cursor {
+  cursor: col-resize;
+}
+
+/* Where a dragged picture or block will land. */
+.team-doc .ProseMirror-dropcursor {
+  background: var(--primary);
+}
+
+/* The outline's lamp: the rail's active row, for the heading in view. */
+.team-doc-outline button[aria-current="true"] {
+  color: var(--foreground);
+}
+
+.team-doc-outline button[aria-current="true"]::before {
+  opacity: 1;
+}
+
+.team-doc-outline button::before {
+  content: "";
+  position: absolute;
+  inset-inline-start: 0;
+  top: 0.35rem;
+  bottom: 0.35rem;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--primary);
+  box-shadow: 0 0 8px color-mix(in oklab, var(--primary) 60%, transparent);
+  opacity: 0;
+  transition: opacity 150ms ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .team-doc-body [data-resize-handle],
+  .team-doc-outline button::before {
+    transition: none;
+  }
+}
