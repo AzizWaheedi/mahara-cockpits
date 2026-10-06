@@ -108,6 +108,15 @@ $$;
 insert into public.cockpit_sales_people (email, name, role, active, updated_by)
 values ('lc-test-manager@example.invalid', 'Test Manager', 'manager', true, 'lc-test')
 on conflict (email) do nothing;
+-- The run names that manager as the actor of its writes (20261004a's
+-- guard reads mahara.actor, m1 round 6); a check that needs a write naming
+-- nobody clears it for that write.
+select set_config('mahara.actor', 'lc-test-manager@example.invalid', true);
+-- Production's open door alerts (sales-live is not deployed yet) are
+-- resolved for this run, so the sweep's own row reads as these checks set it
+-- up (20261004a keeps it red while one is open, m1 round 6).
+update public.cockpit_sales_alerts set resolved_at = now()
+ where dedupe_key in ('sweep:door_refused', 'sweep:pg_net_silent') and resolved_at is null;
 
 -- A2. Settings: the new rows are the glossary values; existing rows gained
 --     only the keys they lacked and kept every value they had.
@@ -2552,10 +2561,16 @@ begin
                   and metadata -> 'turned_on' = '["rooms.settle"]'::jsonb and before -> 'rooms.settle' = 'false'::jsonb
                   and after -> 'rooms.settle' = 'true'::jsonb),
     e);
-  -- A later write that leaves the manager's name on the row cannot borrow it.
+  -- A later write that leaves the manager's name on the row cannot borrow
+  -- it: a write that names no actor (m1 round 6), stamped or not.
+  perform set_config('mahara.actor', '', true);
   e := pg_temp.err($q$update public.cockpit_sales_settings
        set value = value || '{"count_on_join": true}'::jsonb where key = 'rooms'$q$);
-  perform pg_temp.ck('M a write that does not stamp itself cannot borrow the last manager''s name (42501)', e = '42501', e);
+  perform pg_temp.ck('M a write that names no actor cannot borrow the last manager''s name (42501)', e = '42501', e);
+  e := pg_temp.err($q$update public.cockpit_sales_settings
+       set value = value || '{"count_on_join": true}'::jsonb, updated_at = clock_timestamp() where key = 'rooms'$q$);
+  perform pg_temp.ck('M a write that names no actor and refreshes updated_at cannot borrow it either (42501)', e = '42501', e);
+  perform set_config('mahara.actor', 'lc-test-manager@example.invalid', true);
   e := pg_temp.errm(format($q$update public.cockpit_sales_settings
        set value = value || '{"settle": false}'::jsonb, updated_by = %L, updated_at = clock_timestamp() where key = 'rooms'$q$, 'sales-desk'));
   perform pg_temp.ck('M rooms.settle off again (by the desk)', e = 'none', e);
@@ -2654,6 +2669,148 @@ begin
   perform pg_temp.ck('N a night decision other than intro or replacing is refused', refused);
 exception when others then
   perform pg_temp.ck('N section crashed', false, sqlstate || ': ' || sqlerrm);
+end;
+$$;
+
+-- R6. Video-link round 6: the settings guard reads who wrote a change from
+--     the write's own transaction (mahara.actor, or the x-mahara-actor
+--     header through the API), keeps a guarded row's key, compares a new
+--     rooms row with the shipped one, guards fallback.scope, and audits a
+--     deleted row; the sweep's row stays red while the door is refused.
+do $$
+declare
+  e text;
+  n0 integer;
+  n1 integer;
+  mgr constant text := 'lc-test-manager@example.invalid';
+  rooms_v jsonb := (select value from public.cockpit_sales_settings where key = 'rooms');
+  taken boolean := false;
+  row_ok boolean;
+  row_said text;
+begin
+  e := pg_temp.err($q$update public.cockpit_sales_settings set key = 'lc_test_rooms_aside' where key = 'rooms'$q$);
+  perform pg_temp.ck('R6 the rooms row is never renamed aside (42501)', e = '42501', e);
+  insert into public.cockpit_sales_settings (key, value, updated_by)
+  values ('lc_test_rooms_copy', rooms_v || '{"enabled": true, "test_only": false}'::jsonb, 'lc-test');
+  e := pg_temp.err($q$update public.cockpit_sales_settings set key = 'live' where key = 'lc_test_rooms_copy'$q$);
+  perform pg_temp.ck('R6 no other row is renamed to a guarded key (42501)', e = '42501', e);
+  delete from public.cockpit_sales_settings where key = 'lc_test_rooms_copy';
+
+  -- A deleted guarded row is its switches turned off, by anyone, audited.
+  perform set_config('mahara.actor', '', true);
+  begin
+    delete from public.cockpit_sales_settings where key = 'rooms';
+    n1 := (select count(*) from public.cockpit_audit_log where action = 'settings.switch' and entity_id = 'rooms'
+             and metadata ->> 'op' = 'delete' and metadata ->> 'by' = 'not named');
+    raise exception using errcode = 'P0001', message = 'lc_undo';
+  exception when sqlstate 'P0001' then
+    null;
+  end;
+  perform pg_temp.ck('R6 deleting the rooms row needs no one and leaves one settings.switch row naming nobody', n1 = 1, format('%s rows', n1));
+  -- A row whose switch is on unless false (followups.enabled) is not
+  -- removed to turn it on by someone who names no manager.
+  begin
+    update public.cockpit_sales_settings set value = jsonb_set(value, '{enabled}', 'false') where key = 'followups';
+    e := pg_temp.err($q$delete from public.cockpit_sales_settings where key = 'followups'$q$);
+    raise exception using errcode = 'P0001', message = 'lc_undo';
+  exception when sqlstate 'P0001' then
+    null;
+  end;
+  perform pg_temp.ck('R6 deleting the followups row while followups.enabled is false (on once gone) needs a manager (42501)', e = '42501', e);
+
+  -- A new rooms row is compared with the shipped one: a wider test list needs the manager.
+  begin
+    delete from public.cockpit_sales_settings where key = 'rooms';
+    e := pg_temp.err(format($q$insert into public.cockpit_sales_settings (key, value, updated_by)
+         values ('rooms', %L::jsonb, %L)$q$,
+         jsonb_set(rooms_v, '{test_contacts}', (rooms_v -> 'test_contacts') || '["lc-test-real-lead"]'::jsonb)::text, mgr));
+    perform pg_temp.ck('R6 a rooms row inserted again with a wider test list and no actor named is refused (42501)', e = '42501', e);
+    perform set_config('mahara.actor', mgr, true);
+    e := pg_temp.err(format($q$insert into public.cockpit_sales_settings (key, value, updated_by)
+         values ('rooms', %L::jsonb, %L)$q$,
+         jsonb_set(rooms_v, '{test_contacts}', (rooms_v -> 'test_contacts') || '["lc-test-real-lead"]'::jsonb)::text, mgr));
+    taken := e = 'none' and exists (select 1 from public.cockpit_audit_log where action = 'settings.switch' and entity_id = 'rooms'
+                                      and actor_email = mgr and metadata -> 'changed' ? 'rooms.test_contacts');
+    raise exception using errcode = 'P0001', message = 'lc_undo';
+  exception when sqlstate 'P0001' then
+    null;
+  end;
+  perform pg_temp.ck('R6 the manager who names themself inserts it, and the audit row names the test list', taken);
+
+  -- fallback.scope is guarded whatever its spelling.
+  perform set_config('mahara.actor', '', true);
+  e := pg_temp.err($q$update public.cockpit_sales_settings set value = jsonb_set(value, '{fallback,scope}', '"any "'),
+       updated_by = 'sales-desk', updated_at = clock_timestamp() where key = 'rooms'$q$);
+  perform pg_temp.ck('R6 fallback.scope "any " is not written by the desk (42501)', e = '42501', e);
+
+  -- The API names the actor in its request header (sales-api's followup.settings).
+  perform set_config('request.headers', jsonb_build_object('x-mahara-actor', mgr)::text, true);
+  e := pg_temp.errm(format($q$update public.cockpit_sales_settings set value = value || '{"settle": true}'::jsonb,
+       updated_by = %L, updated_at = clock_timestamp() where key = 'rooms'$q$, mgr));
+  perform pg_temp.ck('R6 the manager named in the request header turns a switch on', e = 'none', e);
+  e := pg_temp.errm($q$update public.cockpit_sales_settings set value = value || '{"settle": false}'::jsonb,
+       updated_by = 'sales-desk', updated_at = clock_timestamp() where key = 'rooms'$q$);
+  perform set_config('request.headers', '', true);
+  perform set_config('mahara.actor', mgr, true);
+
+  -- The sweep's row stays red, with the door's words, while the door alert is open.
+  perform public.cockpit_sales_alert_set('sweep:door_refused', true, 'sweep_door', 'sales-api/sweep',
+    '1 of the sweep''s calls to sales-live/cron were not taken (404), checked by lc.', '{}'::jsonb);
+  perform public.cockpit_sales_rooms_sweep();
+  select ok, detail into row_ok, row_said from public.cockpit_sales_worker_status where worker = 'sales-api' and job = 'sweep';
+  perform pg_temp.ck('R6 the sweep''s row stays red with the door''s words while sweep:door_refused is open',
+    row_ok = false and row_said like '1 of the sweep''s calls to sales-live/cron were not taken (404)%', row_said);
+  perform public.cockpit_sales_alert_set('sweep:door_refused', false, 'sweep_door', 'sales-api/sweep', '', '{}'::jsonb);
+  perform public.cockpit_sales_rooms_sweep();
+  select ok, detail into row_ok, row_said from public.cockpit_sales_worker_status where worker = 'sales-api' and job = 'sweep';
+  perform pg_temp.ck('R6 the door''s alert resolved, the next sweep''s row is green', row_ok, row_said);
+exception when others then
+  perform set_config('mahara.actor', 'lc-test-manager@example.invalid', true);
+  perform set_config('request.headers', '', true);
+  perform pg_temp.ck('R6 section crashed', false, sqlstate || ': ' || sqlerrm);
+end;
+$$;
+
+-- R6b. Video-link round 6, the sweep's R4: a given-up worker event says
+--      nothing about joins (a Meet room closes as the lead's no-show), and a
+--      link left to the rep by a final refusal whose lead_by write was lost
+--      waits the lead's ten minutes from the refusal.
+do $$
+declare
+  m uuid := gen_random_uuid();
+  f uuid := gen_random_uuid();
+  mr record;
+  fr record;
+begin
+  insert into public.cockpit_sales_rooms (id, request_id, contact_id, purpose, call_kind, provider, host_email, made_by, state,
+                                          join_url, provider_meeting_id, requested_at, claimed_at, opened_at, link_claimed_at,
+                                          link_sent_at, link_channels, refusal, host_by, lead_by, ends_at, trigger, version)
+  values
+    (m, gen_random_uuid(), 'lc-test-r6b-m', 'manual', 'intro', 'meet', 'lc-test-r6b-m@example.invalid', 'lc-test-r6b-m@example.invalid',
+     'open', 'https://meet.google.com/lct-rsix-mmm', 'lct-rsix-mmm', now() - interval '14 minutes 6 seconds',
+     now() - interval '14 minutes 5 seconds', now() - interval '14 minutes', now() - interval '11 minutes',
+     now() - interval '11 minutes', '{email}', null, now() + interval '4 minutes', now() - interval '1 minute',
+     now() + interval '16 minutes', 'manual', 7),
+    (f, gen_random_uuid(), 'lc-test-r6b-f', 'manual', 'intro', 'zoom', 'lc-test-r6b-f@example.invalid', 'lc-test-r6b-f@example.invalid',
+     'open', 'https://zoom.example.invalid/j/86660000001', '86660000001', now() - interval '10 minutes 46 seconds',
+     now() - interval '10 minutes 45 seconds', now() - interval '10 minutes 40 seconds', now() - interval '10 minutes 40 seconds',
+     null, '{}', 'HighLevel did not take the link in 10 minutes (HighLevel said 429: Too Many Requests).',
+     now() + interval '4 minutes 20 seconds', null, now() + interval '19 minutes 20 seconds', 'manual', 6);
+  insert into public.cockpit_sales_room_events (room_id, kind, source, dedupe_key, text, detail, handled_at, tries, last_try_at, at)
+  values (m, 'worker.ready', 'worker', 'worker.ready:' || m::text, 'Room made on Meet in 3 s.',
+          jsonb_build_object('worker_run', 'lc-test-run', 'gave_up', true, 'tries', 10),
+          now() - interval '10 minutes', 10, now() - interval '10 minutes 30 seconds', now() - interval '14 minutes');
+  perform public.cockpit_sales_rooms_sweep();
+  select state, end_reason, result into mr from public.cockpit_sales_rooms where id = m;
+  select state, end_reason, result into fr from public.cockpit_sales_rooms where id = f;
+  perform pg_temp.ck('R6b a Meet room whose only given-up event is the worker''s closes as the lead''s no-show, never events_lost',
+    mr.state = 'expired' and mr.end_reason = 'lead_no_show' and mr.result = 'no_join',
+    format('%s %s %s', mr.state, mr.end_reason, mr.result));
+  perform pg_temp.ck('R6b a link left to the rep 40 s ago with its lead_by lost still waits for the rep''s delivery',
+    fr.state = 'open', format('%s %s %s', fr.state, fr.end_reason, fr.result));
+  update public.cockpit_sales_rooms set state = 'cancelled' where id in (m, f) and state not in ('expired', 'cancelled', 'ended', 'failed');
+exception when others then
+  perform pg_temp.ck('R6b section crashed', false, sqlstate || ': ' || sqlerrm);
 end;
 $$;
 

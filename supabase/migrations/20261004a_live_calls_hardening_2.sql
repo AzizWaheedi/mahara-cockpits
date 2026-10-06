@@ -35,8 +35,11 @@
 --             live.enabled is off (it closes empty standby rooms and ends
 --             open offers instead); the count's claim answers "missed"
 --             while rooms.count_on_join is off; and a switch is turned on
---             only by a write that names a sales manager, with an audit row
---             for every switch change (cockpit_sales_settings_guard).
+--             only by a write that names a sales manager as its actor in its
+--             own transaction (mahara.actor, or the x-mahara-actor header)
+--             and in updated_by, with an audit row for every switch change,
+--             a deleted or truncated row included (cockpit_sales_settings_guard,
+--             cockpit_sales_settings_guard_delete).
 --
 -- Checks: supabase/migrations/tests/run_checks.py applies a, b, c, d and
 -- this file in one rolled-back run; the stress runs apply d and this file
@@ -657,6 +660,7 @@ declare
   -- minutes after the claim plus two for the re-ask that says it final.
   w_link_retry constant interval := interval '720 seconds';
   unsent uuid[];
+  door text;
 begin
   if not pg_try_advisory_xact_lock(hashtext('cockpit_sales_rooms_sweep')) then
     return jsonb_build_object('skipped', 'Another sweep is running.');
@@ -807,8 +811,12 @@ begin
              -- press-grace): no lead waited on a link, so never a no-show.
              (x.link_sent_at is null and x.lead_by is null and x.link_claimed_at is not null
               and x.purpose in ('manual', 'fallback')) as unstarted,
+             -- Only an event that could carry a join (Zoom's): a given-up
+             -- worker.ready or worker.failed says nothing about who joined
+             -- (m1 round 6, m1-chaos-r6-events-lost-worker-ready-meet-room-
+             -- closed-in-zoom-words), so that room closes as any other.
              exists (select 1 from public.cockpit_sales_room_events as e
-                      where e.room_id = x.id and e.source in ('zoom', 'worker') and e.detail ? 'gave_up') as lost
+                      where e.room_id = x.id and e.source = 'zoom' and e.detail ? 'gave_up') as lost
         from public.cockpit_sales_rooms as x
        -- A knock that still stands (m1 round 4, zoom-knock-of-taken-back-
        -- person-kept; roomlogic.ts knockStands): after every lead join on
@@ -843,7 +851,21 @@ begin
                          case when k.stands
                               then least(x.lead_waiting_at + w_grace, c.cap) end,
                          -- The lead's ten minutes start at the link, never while it is tried again.
-                         case when rt.retrying then x.link_claimed_at + w_link_retry end) as due) as d
+                         case when rt.retrying then x.link_claimed_at + w_link_retry end,
+                         -- A link left to the rep by a final refusal whose lead_by
+                         -- write was lost (m1 round 6, m1-chaos-r6-final-refusal-
+                         -- lead-wait-blip-room-closed-under-hand-sent-link): the
+                         -- lead's ten minutes from the refusal (its line, or the
+                         -- re-ask's ten minutes at the latest), never a close a
+                         -- minute after the rep was told to send it by hand.
+                         -- sales-api's tick writes lead_by again within a minute.
+                         case when x.link_sent_at is null and x.lead_by is null and x.link_claimed_at is not null
+                                   and x.purpose in ('manual', 'fallback') and x.refusal is not null and not rt.retrying
+                                   and x.refusal !~* '^It is night where the lead is'
+                              then greatest(x.link_claimed_at + interval '600 seconds',
+                                            coalesce((select max(e.at) from public.cockpit_sales_room_events as e
+                                                       where e.room_id = x.id and e.kind in ('link.not_sent', 'link.unclear')),
+                                                     '-infinity'::timestamptz)) + w_lead end) as due) as d
        where x.state in ('open', 'host_in')
          and x.contact_id is not null
          and (x.purpose <> 'booked' or x.lead_by is not null)
@@ -1727,6 +1749,19 @@ begin
            and exists (select 1 from public.cockpit_sales_room_events as v
                         where v.room_id = x.id and v.kind = 'link.unclear')
         union all
+        -- A room the desk closed as moved to the phone (an answered call)
+        -- whose run stopped before its line or audit row (its mark
+        -- room.phone_close not done): room.event finishes them (m1 round 6,
+        -- m1-chaos-r6-phone-close-killed-after-room-write-no-audit-row).
+        select x.id, 1, -extract(epoch from x.ended_at)
+          from public.cockpit_sales_rooms as x
+         where x.state = 'cancelled' and x.result = 'moved_to_phone' and x.contact_id is not null
+           and x.ended_at > t - interval '1 hour'
+           and not coalesce(x.lead_in_at > t - interval '1 hour' or x.count_undo_at > t - interval '1 hour', false)
+           and exists (select 1 from public.cockpit_sales_room_events as v
+                        where v.dedupe_key = 'room.phone_close:' || x.id::text
+                          and not coalesce(v.detail ->> 'done' = 'true', false))
+        union all
         -- A count that could not book (failed or unclear) whose alert still
         -- asks a person to add the live call by hand: posted every ten
         -- minutes for the alert's three days, so a call added after the
@@ -1754,13 +1789,24 @@ begin
     'at', t, 'rooms_moved', moved_rooms, 'handovers_moved', moved_live,
     'replay', replay, 'settle', settle, 'tick', ticks, 'errors', errs);
 
+  -- The door to sales-api still refused or silent (the tick's
+  -- sweep:door_refused or sweep:pg_net_silent alert open): the row stays red
+  -- with the door's words, never green on a minute that posted nothing
+  -- (m1 round 6, m1-numbers-r6-sweep-row-green-minute-after-door-refused).
+  -- An answered post resolves the alert, and the next minute's row is green.
+  select a.message into door
+    from public.cockpit_sales_alerts as a
+   where a.dedupe_key in ('sweep:door_refused', 'sweep:pg_net_silent') and a.resolved_at is null
+   order by a.dedupe_key
+   limit 1;
   insert into public.cockpit_sales_worker_status (worker, job, ok, detail, at)
-  values ('sales-api', 'sweep', jsonb_array_length(errs) = 0,
-          left(case when jsonb_array_length(errs) = 0
-                 then format('%s rooms closed, %s handovers moved, %s events sent back to room.event, %s rooms to settle, %s rooms to re-check.',
+  values ('sales-api', 'sweep', jsonb_array_length(errs) = 0 and door is null,
+          left(case when jsonb_array_length(errs) > 0
+                 then format('%s rules failed: %s', jsonb_array_length(errs), errs::text)
+                 when door is not null then door
+                 else format('%s rooms closed, %s handovers moved, %s events sent back to room.event, %s rooms to settle, %s rooms to re-check.',
                              moved_rooms, moved_live, jsonb_array_length(replay), jsonb_array_length(settle),
-                             jsonb_array_length(ticks))
-                 else format('%s rules failed: %s', jsonb_array_length(errs), errs::text) end, 500),
+                             jsonb_array_length(ticks)) end, 500),
           t)
   on conflict (worker, job) do update
      set ok = excluded.ok, detail = excluded.detail, at = excluded.at;
@@ -2787,15 +2833,54 @@ $$;
 revoke all on function public.cockpit_sales_switches(text, jsonb) from public, anon, authenticated;
 grant execute on function public.cockpit_sales_switches(text, jsonb) to service_role;
 
--- Who a guarded change may come from: a write whose updated_by names an
--- active sales manager (cockpit_sales_people), stamped by this write (its
--- updated_by or updated_at differs from the row's, or a new row), so a later
--- write that leaves the last manager's name on the row cannot borrow it.
--- Guarded: any switch above turned on, and any change to who the rooms may
--- reach (test_contacts, test_calendar_id, live_calendar_id,
--- fallback.pilot_emails). Turning a switch off needs no one: a kill switch
--- works for whoever holds it. Every change to a switch or to who the rooms
--- reach leaves one audit row (settings.switch), whoever made it.
+-- Who wrote a guarded change: the actor the write names in its own
+-- transaction (m1 round 6, m1-security-r6-settings-updated-at-only-borrows-
+-- managers-name), never inferred from the row's own columns, which a later
+-- write may leave as the last manager left them. SQL names it with
+--   set local mahara.actor = '<email>';
+-- (or select set_config('mahara.actor', '<email>', true)), and a request
+-- through the API with the header x-mahara-actor (sales-api's
+-- followup.settings sends the manager's email). Both last only for that
+-- transaction. Null when nothing is named.
+create or replace function public.cockpit_sales_settings_actor()
+returns text
+language plpgsql
+stable
+set search_path = ''
+as $$
+declare
+  a text := nullif(btrim(coalesce(current_setting('mahara.actor', true), '')), '');
+  h text;
+begin
+  if a is null then
+    h := nullif(current_setting('request.headers', true), '');
+    if h is not null then
+      begin
+        a := nullif(btrim(coalesce(h::jsonb ->> 'x-mahara-actor', '')), '');
+      exception when others then
+        a := null;
+      end;
+    end if;
+  end if;
+  return lower(left(a, 200));
+end;
+$$;
+revoke all on function public.cockpit_sales_settings_actor() from public, anon, authenticated;
+grant execute on function public.cockpit_sales_settings_actor() to service_role;
+
+-- A guarded change is a manager's only when the write names an active sales
+-- manager as its actor (cockpit_sales_settings_actor) and its updated_by is
+-- that same manager. Guarded: any switch above turned on, and any change to
+-- who the rooms may reach (test_contacts, test_calendar_id,
+-- live_calendar_id, fallback.pilot_emails, fallback.scope), a new row's
+-- compared with the shipped row (m1 round 6, m1-security-r6-settings-
+-- delete-insert-widens-test-list-unguarded). A guarded row's key never
+-- changes (m1 round 6, m1-security-r6-settings-key-rename-turns-switches-on-
+-- unguarded): a copy staged under another key and renamed to rooms would
+-- pass every comparison. Turning a switch off needs no one: a kill switch
+-- works for whoever holds it, a deleted row included (the delete trigger
+-- below). Every change to a switch or to who the rooms reach leaves one
+-- audit row (settings.switch), naming the actor or "not named".
 create or replace function public.cockpit_sales_settings_guard()
 returns trigger
 language plpgsql
@@ -2803,6 +2888,10 @@ security definer
 set search_path = ''
 as $$
 declare
+  guarded constant text[] := array['rooms', 'live', 'threads', 'followups'];
+  -- The rooms row as 20261003a ships it, for who the rooms reach.
+  shipped constant jsonb := '{"test_only": true, "test_contacts": ["VjPfR4Cc1Y0OFvaqeor5"], "test_calendar_id": null,
+                              "live_calendar_id": null, "fallback": {"scope": "intro", "pilot_emails": []}}'::jsonb;
   old_v jsonb := '{}'::jsonb;
   old_sw jsonb;
   new_sw jsonb;
@@ -2810,16 +2899,24 @@ declare
   widened text[] := '{}';
   changed text[] := '{}';
   scope_paths constant text[][] := array[['rooms', 'test_contacts'], ['rooms', 'test_calendar_id'],
-                                         ['rooms', 'live_calendar_id'], ['rooms', 'fallback,pilot_emails']];
+                                         ['rooms', 'live_calendar_id'], ['rooms', 'fallback,pilot_emails'],
+                                         ['rooms', 'fallback,scope']];
   i integer;
   sp text[];
   sname text;
   before_j jsonb := '{}'::jsonb;
   after_j jsonb := '{}'::jsonb;
+  actor text := public.cockpit_sales_settings_actor();
   manager boolean;
-  stamped boolean;
 begin
-  if new.key not in ('rooms', 'live', 'threads', 'followups') then
+  if tg_op = 'UPDATE' and new.key is distinct from old.key
+     and (old.key = any (guarded) or new.key = any (guarded)) then
+    raise exception using errcode = '42501',
+      message = format('The %s setting keeps its key: write its value instead of renaming a row to or from it.',
+                       case when old.key = any (guarded) then old.key else new.key end),
+      hint = 'To turn every switch off, delete the row or set them false; to turn one on, a manager writes it.';
+  end if;
+  if not (new.key = any (guarded)) then
     return new;
   end if;
   -- An insert on a key that is already there is skipped (on conflict do
@@ -2829,8 +2926,10 @@ begin
   end if;
   if tg_op = 'UPDATE' then
     old_v := old.value;
+  elsif new.key = 'rooms' then
+    old_v := shipped;
   end if;
-  old_sw := public.cockpit_sales_switches(new.key, old_v);
+  old_sw := public.cockpit_sales_switches(new.key, case when tg_op = 'UPDATE' then old_v else '{}'::jsonb end);
   new_sw := public.cockpit_sales_switches(new.key, new.value);
   for k in select e.key from jsonb_each(old_sw || new_sw) as e loop
     if (new_sw -> k) is distinct from (old_sw -> k) then
@@ -2842,12 +2941,11 @@ begin
       end if;
     end if;
   end loop;
-  -- A new rooms row (a fresh database) starts from its own test list.
-  if new.key = 'rooms' and tg_op = 'UPDATE' then
+  if new.key = 'rooms' then
     for i in 1 .. array_length(scope_paths, 1) loop
       sp := string_to_array(scope_paths[i][2], ',');
       sname := 'rooms.' || array_to_string(sp, '.');
-      if (new.value #> sp) is distinct from (old_v #> sp) then
+      if coalesce(new.value #> sp, 'null'::jsonb) is distinct from coalesce(old_v #> sp, 'null'::jsonb) then
         changed := changed || sname;
         widened := widened || sname;
         before_j := before_j || jsonb_build_object(sname, old_v #> sp);
@@ -2858,30 +2956,24 @@ begin
   if cardinality(changed) = 0 then
     return new;
   end if;
-  -- A write is someone's only when it stamps itself (an insert, or a new
-  -- updated_by or updated_at): an unstamped write keeps the last writer's
-  -- name in updated_by, which is never its author (m1 round 5,
-  -- m1-numbers-r5-kill-switch-audit-names-earlier-manager).
-  stamped := true;
-  if tg_op = 'UPDATE' then
-    stamped := new.updated_by is distinct from old.updated_by or new.updated_at is distinct from old.updated_at;
-  end if;
   if cardinality(widened) > 0 then
-    manager := exists (select 1 from public.cockpit_sales_people as p
-                        where lower(p.email) = lower(btrim(coalesce(new.updated_by, '')))
-                          and p.role = 'manager' and p.active);
-    if not manager or not stamped then
+    manager := actor is not null
+               and actor = lower(btrim(coalesce(new.updated_by, '')))
+               and exists (select 1 from public.cockpit_sales_people as p
+                            where lower(p.email) = actor and p.role = 'manager' and p.active);
+    if not manager then
       raise exception using errcode = '42501',
-        message = format('Only a sales manager turns on or widens %s: write it with updated_by set to the manager''s email and updated_at to now().',
+        message = format('Only a sales manager turns on or widens %s: name yourself in the same transaction (set local mahara.actor = ''<your email>'') and write updated_by as that email.',
                          array_to_string(widened, ', ')),
         hint = 'Turning a switch off needs no manager.';
     end if;
   end if;
   insert into public.cockpit_audit_log (action, entity_type, entity_id, actor_email, source_app, source_system, before, after, metadata)
   values ('settings.switch', 'cockpit_sales_settings', new.key,
-          case when stamped and coalesce(new.updated_by, '') ~ '^[^@\s]+@[^@\s]+$' then lower(new.updated_by) end,
+          case when actor ~ '^[^@\s]+@[^@\s]+$' then actor end,
           'sales', 'database', before_j, after_j,
-          jsonb_build_object('by', case when stamped then new.updated_by end, 'stamped', stamped,
+          jsonb_build_object('by', coalesce(actor, 'not named'), 'named', actor is not null,
+                             'updated_by', new.updated_by, 'op', lower(tg_op),
                              'session_user', session_user,
                              'role', nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'role',
                              'changed', to_jsonb(changed), 'turned_on', to_jsonb(widened)));
@@ -2894,6 +2986,91 @@ drop trigger if exists cockpit_sales_settings_guard on public.cockpit_sales_sett
 create trigger cockpit_sales_settings_guard
   before insert or update on public.cockpit_sales_settings
   for each row execute function public.cockpit_sales_settings_guard();
+
+-- A guarded row deleted is every one of its switches turned off (m1 round 6,
+-- m1-security-r6-settings-row-delete-switch-off-unaudited: sales-api, the
+-- sweep and the worker read a missing row as off). Anyone may, as with any
+-- kill switch; it leaves its settings.switch row, naming the actor or "not
+-- named". TRUNCATE does the same for every guarded row there was.
+create or replace function public.cockpit_sales_settings_gone(p_key text, p_value jsonb, p_op text)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  old_sw jsonb := public.cockpit_sales_switches(p_key, p_value);
+  off_sw jsonb := public.cockpit_sales_switches(p_key, '{}'::jsonb);
+  k text;
+  changed text[] := '{}';
+  widened text[] := '{}';
+  before_j jsonb := '{}'::jsonb;
+  after_j jsonb := '{}'::jsonb;
+  actor text := public.cockpit_sales_settings_actor();
+begin
+  for k in select e.key from jsonb_each(old_sw) as e loop
+    changed := changed || k;
+    before_j := before_j || jsonb_build_object(k, old_sw -> k);
+    after_j := after_j || jsonb_build_object(k, coalesce(off_sw -> k, 'false'::jsonb));
+    -- A switch that is on unless false (followups.enabled, live.standby)
+    -- reads on once its row is gone: that delete turns it on.
+    if coalesce(off_sw -> k = 'true'::jsonb, false) and not coalesce(old_sw -> k = 'true'::jsonb, false) then
+      widened := widened || k;
+    end if;
+  end loop;
+  if cardinality(widened) > 0
+     and not (actor is not null
+              and exists (select 1 from public.cockpit_sales_people as p
+                           where lower(p.email) = actor and p.role = 'manager' and p.active)) then
+    raise exception using errcode = '42501',
+      message = format('Removing the %s row turns on %s, which only a sales manager does: name yourself in the same transaction (set local mahara.actor = ''<your email>'').',
+                       p_key, array_to_string(widened, ', ')),
+      hint = 'To turn switches off, set them false instead.';
+  end if;
+  insert into public.cockpit_audit_log (action, entity_type, entity_id, actor_email, source_app, source_system, before, after, metadata)
+  values ('settings.switch', 'cockpit_sales_settings', p_key,
+          case when actor ~ '^[^@\s]+@[^@\s]+$' then actor end,
+          'sales', 'database', before_j, after_j,
+          jsonb_build_object('by', coalesce(actor, 'not named'), 'named', actor is not null, 'op', p_op,
+                             'row_removed', true, 'session_user', session_user,
+                             'role', nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'role',
+                             'changed', to_jsonb(changed), 'turned_on', to_jsonb(widened)));
+end;
+$$;
+revoke all on function public.cockpit_sales_settings_gone(text, jsonb, text) from public, anon, authenticated;
+
+create or replace function public.cockpit_sales_settings_guard_delete()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  r record;
+begin
+  if tg_op = 'TRUNCATE' then
+    for r in select s.key, s.value from public.cockpit_sales_settings as s
+              where s.key in ('rooms', 'live', 'threads', 'followups') loop
+      perform public.cockpit_sales_settings_gone(r.key, r.value, 'truncate');
+    end loop;
+    return null;
+  end if;
+  if old.key in ('rooms', 'live', 'threads', 'followups') then
+    perform public.cockpit_sales_settings_gone(old.key, old.value, 'delete');
+  end if;
+  return old;
+end;
+$$;
+revoke all on function public.cockpit_sales_settings_guard_delete() from public, anon, authenticated;
+
+drop trigger if exists cockpit_sales_settings_guard_delete on public.cockpit_sales_settings;
+create trigger cockpit_sales_settings_guard_delete
+  before delete on public.cockpit_sales_settings
+  for each row execute function public.cockpit_sales_settings_guard_delete();
+drop trigger if exists cockpit_sales_settings_guard_truncate on public.cockpit_sales_settings;
+create trigger cockpit_sales_settings_guard_truncate
+  before truncate on public.cockpit_sales_settings
+  for each statement execute function public.cockpit_sales_settings_guard_delete();
 
 -- 7. Grants (the view was made again) ---------------------------------------------
 

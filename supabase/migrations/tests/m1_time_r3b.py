@@ -41,6 +41,8 @@ insert into public.cockpit_sales_people (email, name, role, active, updated_by)
 values ('stress-m1t3b-boss@stress.invalid', 'Stress Boss', 'manager', true, 'stress-m1t3b')
 on conflict (email) do nothing;
 
+-- The manager names themself in the write's own transaction (round 6's settings guard).
+select set_config('mahara.actor', 'stress-m1t3b-boss@stress.invalid', true);
 update public.cockpit_sales_settings
    set value = value || jsonb_build_object(
          'enabled', true, 'test_only', true, 'settle', false, 'wrap', false, 'count_on_join', false, 'short_link', false,
@@ -48,6 +50,8 @@ update public.cockpit_sales_settings
          'send', '{"whatsapp_text": true, "whatsapp_template": true, "email": true}'::jsonb),
        updated_by = 'stress-m1t3b-boss@stress.invalid', updated_at = clock_timestamp()
  where key = 'rooms';
+-- Nobody named for the rest of the run.
+select set_config('mahara.actor', '', true);
 update public.cockpit_sales_settings
    set value = jsonb_set(jsonb_set(value, '{enabled}', 'false'), '{slack}', 'false')
  where key = 'live';

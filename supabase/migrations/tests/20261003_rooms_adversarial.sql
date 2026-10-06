@@ -29,6 +29,10 @@ $$;
 insert into public.cockpit_sales_people (email, name, role, active, updated_by)
 values ('lc-test-manager@example.invalid', 'Test Manager', 'manager', true, 'lc-test')
 on conflict (email) do nothing;
+-- The run names that manager as the actor of its writes (20261004a's
+-- guard reads mahara.actor, m1 round 6); a check that needs a write naming
+-- nobody clears it for that write.
+select set_config('mahara.actor', 'lc-test-manager@example.invalid', true);
 
 -- These checks are about what the sweep does once its switches are on: live
 -- handover (L3's re-offer, R5's fresh standby room) and settling no-shows

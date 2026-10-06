@@ -413,7 +413,10 @@ export function roomsSetting(raw: unknown): RoomsSetting {
     booking_min: { intro: bounded(book.intro, 15, 600), demo: bounded(book.demo, 45, 600) },
     available_hours: bounded(r.available_hours, 2, 24),
     fallback: {
-      scope: str(fb.scope, 20) ?? "intro",
+      // Only the exact word "any" widens the scope, as 20261004a's guard
+      // reads it (m1 round 6, m1-security-r6-fallback-scope-any-with-space-
+      // unguarded): "any " or " ANY" is the narrow default, never trimmed wide.
+      scope: fb.scope === "any" ? "any" : "intro",
       auto_on_miss: on(fb.auto_on_miss),
       pilot_emails: strList(fb.pilot_emails).map(e => e.toLowerCase()),
       ended_page_whatsapp: str(fb.ended_page_whatsapp, 40),
@@ -903,6 +906,10 @@ export const LANE_COPY = {
   why_wa_paused: "WhatsApp is paused after two identical messages",
   why_wa_health: "WhatsApp video links are failing",
   why_window: "the WhatsApp window is closed",
+  /** The window still open, closing within the link's 15-minute margin (m1 round 6). */
+  why_window_closing: "the WhatsApp window closes in under 15 minutes",
+  /** The window known only from the inbox mirror, which may be minutes behind (m1 round 6). */
+  why_window_unsure: "the lead's WhatsApp window could not be read from HighLevel and looks closed, so the link is tried again in a minute",
   why_no_template: "no call link template is live",
   why_template_waiting: "an earlier WhatsApp template to this lead has not arrived yet",
   why_no_short_link: "the short link is not live yet",
@@ -3189,6 +3196,12 @@ export interface ChannelInput {
    * link twice (fix round 4). The template is skipped.
    */
   template_waiting?: boolean;
+  /**
+   * HighLevel's conversation could not be read for the lead's last WhatsApp
+   * (m1 round 6): the window is known only from the inbox mirror, up to its
+   * three minutes behind, so a shut window is not certain.
+   */
+  window_unread?: boolean;
 }
 
 export interface ChannelPlan {
@@ -3203,6 +3216,12 @@ export interface ChannelPlan {
   skipped: { channel: LinkChannel; why: string }[];
   /** "Not sent: {reason}." when nothing can go. */
   not_sent_reason: string | null;
+  /**
+   * Nothing can go only because the free text's window reads shut from the
+   * inbox mirror alone (window_unread): the minute's re-ask tries again,
+   * never a final refusal (m1 round 6, m1-time-r6-inbox-mirror-lag).
+   */
+  window_unsure?: boolean;
   /** The picker's line (P1). */
   line: string;
 }
@@ -3271,13 +3290,23 @@ export function channelPlan(i: ChannelInput): ChannelPlan {
   // never sent in the window's last minutes, where Meta may refuse it
   // (131047) by the time it is delivered; the template goes instead.
   const window = whatsappWindow(i.last_inbound_at, i.now + LINK_WINDOW_MARGIN_MS);
+  // Still open now, closing within the margin: said as closing, never "closed" (m1 round 6).
+  const closing = !window.open && whatsappWindow(i.last_inbound_at, i.now).open;
   // The room source's health gates the free text only (final_spec_foundation,
   // message service 1): a template still goes, so its sends can show the
   // number is fine again and the share recovers (stress2, round 1).
   const why: Record<LinkChannel, string | null> = {
     whatsapp_text:
       common ??
-      (!i.setting.send.whatsapp_text ? L.why_wa_off : !window.open ? L.why_window : !health.ok ? L.why_wa_health : null),
+      (!i.setting.send.whatsapp_text
+        ? L.why_wa_off
+        : !window.open
+          ? closing
+            ? L.why_window_closing
+            : L.why_window
+          : !health.ok
+            ? L.why_wa_health
+            : null),
     whatsapp_template:
       common ??
       (!i.setting.send.whatsapp_template
@@ -3306,6 +3335,7 @@ export function channelPlan(i: ChannelInput): ChannelPlan {
     read_out: primary === null,
     skipped,
     not_sent_reason: primary === null ? joinWords(reasons) : null,
+    ...(primary === null && i.window_unread === true && why.whatsapp_text === L.why_window ? { window_unsure: true } : {}),
     line: primary ? fill(ROOM_COPY.dialer.picker, { channel: CHANNEL_WORDS[primary] }) : ROOM_COPY.dialer.picker_none,
   };
 }
@@ -4473,6 +4503,12 @@ export interface RoomView {
   link_held: string[];
   /** Meta said the lead's number is not on WhatsApp (131026) for this room's link. */
   link_no_whatsapp: boolean;
+  /**
+   * When Zoom last said the host left the meeting (m1 round 6,
+   * m1-journeys-r6-host-dropped-joined-room-no-way-back-in): later than
+   * host_in_at, the host is out of a call the lead may still be in.
+   */
+  host_left_at: string | null;
 }
 
 export const ROOM_VIEW_KEYS = [
@@ -4524,6 +4560,7 @@ export const ROOM_VIEW_KEYS = [
   "link_failed",
   "link_held",
   "link_no_whatsapp",
+  "host_left_at",
 ] as const;
 
 /** The channels the link went on, from link_channels or the keys of link_message_ids. */
@@ -4601,6 +4638,7 @@ export function toRoomView(
     end_reason: /^[a-z_]{1,40}$/.test(String(row.end_reason ?? "")) ? String(row.end_reason) : null,
     last_open_at: isoOrNull(row.last_open_at),
     last_link_at: isoOrNull(row.last_link_at),
+    host_left_at: isoOrNull(row.host_left_at),
     late_open_at: isFinal(row.state) && !leadJoined(row) ? isoOrNull(opts.late_open_at) : null,
     moved_from: row.night_cleared === "replacing" && isProvider(row.provider) ? otherProvider(row.provider) : null,
     opened_at: isoOrNull(row.opened_at),

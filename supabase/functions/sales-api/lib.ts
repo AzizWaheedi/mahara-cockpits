@@ -776,6 +776,13 @@ export function leadFirstName(first: unknown, full: unknown): string {
   // A dotted host (example.com, mahara-refunds.example): WhatsApp and mail
   // clients make it a link. Initials (J.R.) stay.
   if (/[\p{L}\p{N}-]{2,}\.[\p{L}]{2,}/u.test(word)) return "";
+  // Any other shape a phone may link (m1 round 6, m1-security-r6-lead-name-
+  // ip-or-one-letter-domain-in-link-message): a query, a fragment or a port
+  // (? # :), an IPv4 address (203.0.113.5), and a dot or colon before a
+  // letter or digit (x.co, q.xyz) unless the word is initials.
+  if (/[?#:]/.test(word)) return "";
+  if (/\d+\.\d+/.test(word)) return "";
+  if (/[.:][\p{L}\p{N}]/u.test(word) && !/^(\p{L}\.)+\p{L}?$/u.test(word)) return "";
   return word;
 }
 

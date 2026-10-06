@@ -283,6 +283,8 @@ const LANE_SENTENCES = {
   why_wa_paused: "WhatsApp is paused after two identical messages",
   why_wa_health: "WhatsApp video links are failing",
   why_window: "the WhatsApp window is closed",
+  why_window_closing: "the WhatsApp window closes in under 15 minutes",
+  why_window_unsure: "the lead's WhatsApp window could not be read from HighLevel and looks closed, so the link is tried again in a minute",
   why_no_template: "no call link template is live",
   why_template_waiting: "an earlier WhatsApp template to this lead has not arrived yet",
   why_no_short_link: "the short link is not live yet",

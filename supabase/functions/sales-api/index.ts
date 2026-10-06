@@ -72,6 +72,7 @@ import {
   tagsFor,
   targetRoles,
   calendarFor,
+  confirmationRoomHeld,
   callSummary,
   dayStats,
   ghlTime,
@@ -192,7 +193,7 @@ async function fetchWithin(url: string, init: RequestInit, ms: number, what: str
 
 async function svc(
   path: string,
-  init: { method?: string; body?: unknown; prefer?: string } = {},
+  init: { method?: string; body?: unknown; prefer?: string; actor?: string } = {},
 ): Promise<Row[]> {
   const key = env("SUPABASE_SERVICE_ROLE_KEY");
   const res = await fetchWithin(`${env("SUPABASE_URL")}/rest/v1/${path}`, {
@@ -202,6 +203,9 @@ async function svc(
       Authorization: `Bearer ${key}`,
       "Content-Type": "application/json",
       ...(init.prefer ? { Prefer: init.prefer } : {}),
+      // Who wrote a setting, for 20261004a's settings guard (m1 round 6):
+      // read from this request only, never from the row.
+      ...(init.actor ? { "x-mahara-actor": init.actor } : {}),
     },
     body: init.body === undefined ? undefined : JSON.stringify(init.body),
   }, SVC_MS, "The database");
@@ -382,6 +386,7 @@ async function saveSettingIf(
           method: "POST",
           body: { key, value, updated_by: by, updated_at: at },
           prefer: "return=minimal",
+          actor: by,
         });
         return { before, value };
       } catch (e) {
@@ -395,6 +400,7 @@ async function saveSettingIf(
       method: "PATCH",
       body: { value, updated_by: by, updated_at: at },
       prefer: "return=representation",
+      actor: by,
     });
     if (out.length) return { before, value };
   }
@@ -515,7 +521,16 @@ async function markAppointment(
   who: Who,
   id: string,
   status: string,
-  opts: { reason?: string | null; note?: string | null; anyRep?: boolean; quiet?: boolean; onlyIfUnmarked?: boolean; raced?: boolean } = {},
+  opts: {
+    reason?: string | null;
+    note?: string | null;
+    anyRep?: boolean;
+    quiet?: boolean;
+    onlyIfUnmarked?: boolean;
+    raced?: boolean;
+    /** A showed mark whose call was had on video before its booked time (a confirmation call's room the lead joined). */
+    heldEarly?: boolean;
+  } = {},
 ): Promise<Row> {
   const appt = (await svc(
     `cockpit_sales_appointments?appointment_id=eq.${enc(id)}&select=*`,
@@ -526,7 +541,10 @@ async function markAppointment(
       404,
     );
   const now = Date.now();
-  const no = refuseMark(opts.anyRep ? { ...who, manager: true } : who, appt, status, now);
+  // Held on video before its booked time (m1 round 6): the early-mark rule
+  // judges the moment the lead joined the room asked for it, not now.
+  const early = status === "showed" && opts.heldEarly ? await joinedForCall(String(appt.contact_id ?? ""), String(appt.appointment_id ?? id), now) : null;
+  const no = refuseMark(opts.anyRep ? { ...who, manager: true } : who, appt, status, early ?? now);
   if (no) throw new Refusal(no, 403);
   // A person's no-show while the lead's video link is out (m1 round 2,
   // noshow-mark-while-video-link-out): HighLevel's no-show automation would
@@ -599,6 +617,31 @@ async function markAppointment(
   return result;
 }
 
+/**
+ * When the lead joined a video room asked for this call (its own, or a
+ * confirmation call's), as a join that stands, in the last three hours; a
+ * moment late enough for the early-mark rule (the booked start), or null.
+ */
+async function joinedForCall(contactId: string, appointmentId: string, now: number): Promise<number | null> {
+  if (!contactId || !appointmentId) return null;
+  try {
+    const rows = await svc(
+      `cockpit_sales_rooms?contact_id=eq.${enc(contactId)}&lead_in_at=gte.${enc(new Date(now - 3 * 3_600_000).toISOString())}&select=*&limit=20`,
+    );
+    const mine = rows.filter(
+      r =>
+        String(r.appointment_id ?? "") === appointmentId ||
+        (!r.appointment_id && String(r.asked_appointment_id ?? "") === appointmentId && confirmationRoomHeld(r)),
+    );
+    const appt = (await svc(`cockpit_sales_appointments?appointment_id=eq.${enc(appointmentId)}&select=start_at`))[0];
+    const start = ms(appt?.start_at);
+    if (start === null || !mine.some(r => leadJoined(r as unknown as RoomRow))) return null;
+    return Math.max(now, start);
+  } catch {
+    return null;
+  }
+}
+
 /** How long after a room closed on an open or a knock a no-show still waits (m1 round 2). */
 const NOSHOW_AFTER_KNOCK_MS = 5 * 60_000;
 
@@ -660,6 +703,25 @@ async function videoLinkHoldsNoShow(
   // time and our room locked her out, so it is never a no-show (m1 round 4,
   // admit-blocked-replacement-expiry-offers-noshow).
   const joinedSince = rows.some(r => leadJoined(r as unknown as RoomRow));
+  // The lead joined a video room asked for this very call (its own, or a
+  // confirmation call's whose link invited the call now): the call was had,
+  // never a no-show (m1 round 6, m1-journeys-r6-confirm-call-link-invites-
+  // call-now-intro-never-held).
+  // A confirmation call's room (asked for this call, not carrying it)
+  // counts only for a talk's length (dialer.ts confirmationRoomHeld): a
+  // quick "yes, talk at 10" leaves the call ahead (stress2 round 2).
+  const had = call
+    ? rows.find(
+        r =>
+          leadJoined(r as unknown as RoomRow) &&
+          (String(r.appointment_id ?? "") === call.appointment_id ||
+            (!r.appointment_id && String(r.asked_appointment_id ?? "") === call.appointment_id && confirmationRoomHeld(r))),
+      )
+    : undefined;
+  if (had) {
+    const at = ms(had.lead_in_at);
+    return `${name === "This lead" ? "This lead" : name} joined the video call for it${at !== null ? ` at ${kuwaitClock(at)}` : ""}, so it was held, not a no-show. Mark it held instead.`;
+  }
   if (!joinedSince && rows.some(r => r.result === "admit_blocked" || r.night_cleared === "replacing"))
     return `${name === "This lead" ? "This lead" : name} knocked on the video room and could not be let in, so the no-show was not marked. Call them, or mark how the call went.`;
   // The wait the lead's link promised ("I'll wait for you for the next 10
@@ -678,8 +740,11 @@ async function videoLinkHoldsNoShow(
       !leadJoined(r as unknown as RoomRow) &&
       (r.first_open_at || r.last_open_at || r.lead_waiting_at || r.result === "admit_blocked"),
   );
+  // A knock is said as a knock (m1 round 6): the lead was at the room's door.
   if (knocked)
-    return `${name === "This lead" ? "This lead" : name} opened the video link a few minutes ago, so the no-show was not marked. Call them, or mark it in a few minutes.`;
+    return knocked.lead_waiting_at || knocked.result === "admit_blocked"
+      ? `${name === "This lead" ? "This lead" : name} knocked on the video room a few minutes ago, so the no-show was not marked. Call them, or mark it in a few minutes.`
+      : `${name === "This lead" ? "This lead" : name} opened the video link a few minutes ago, so the no-show was not marked. Call them, or mark it in a few minutes.`;
   return null;
 }
 
@@ -1489,7 +1554,9 @@ function twinStamped(back: Row | undefined, mine: string | null): boolean {
  * the send stops before anything went.
  */
 async function markAsked(row: Row): Promise<Row> {
-  const at = new Date().toISOString();
+  // Date.now(), as every other clock read of the send (the stamp is read
+  // against the row's own time: m1 round 6).
+  const at = new Date(Date.now()).toISOString();
   const id = enc(String(row.id ?? ""));
   try {
     const out = await svc(`cockpit_sales_messages?id=eq.${id}&state=eq.sending&ghl_asked_at=is.null`, {
@@ -3728,7 +3795,7 @@ async function candidates(now: number): Promise<{ list: QueueCandidate[] }> {
     // standing (not taken back by "That was not the lead"): the intro was
     // had, so it never comes back as "Intro call now" (stress2, round 1).
     svc(
-      `cockpit_sales_rooms?appointment_id=not.is.null&lead_in_at=gte.${enc(new Date(now - 3 * 3_600_000).toISOString())}&select=appointment_id,appointment_start_at,lead_in_at,count_undo_at,taken_back_join_at&limit=1000`,
+      `cockpit_sales_rooms?lead_in_at=gte.${enc(new Date(now - 3 * 3_600_000).toISOString())}&or=${enc("(appointment_id.not.is.null,asked_appointment_id.not.is.null)")}&select=appointment_id,asked_appointment_id,appointment_start_at,lead_in_at,count_undo_at,taken_back_join_at,state,ended_at&limit=1000`,
     ).catch(e => {
       console.error("room joins unread", redact(String((e as Error)?.message ?? e)));
       return [] as Row[];
@@ -3759,8 +3826,10 @@ async function candidates(now: number): Promise<{ list: QueueCandidate[] }> {
   // confirmation call's room the hour before, still comes up.
   const joinsByAppt = new Map<string, Row[]>();
   for (const r of roomJoins) {
-    const k = String(r.appointment_id);
-    joinsByAppt.set(k, [...(joinsByAppt.get(k) ?? []), r]);
+    // A room asked for the intro and not carrying it (a confirmation
+    // call's, m1 round 6) counts for that intro too (roomJoinedFor's asked rule).
+    for (const k of new Set([r.appointment_id, r.asked_appointment_id].filter(Boolean).map(String)))
+      joinsByAppt.set(k, [...(joinsByAppt.get(k) ?? []), r]);
   }
   // A closed or lost hot lead stays on the list for the record, and is no
   // longer hot here (Aziz, 2026-09-27).
@@ -4372,7 +4441,11 @@ async function saveOutcome(
       ))[0];
       anyRep = !current || !["showed", "noshow", "invalid"].includes(String(current.status));
     }
-    marked = await markAppointment(who, String(appt.appointment_id), effect.mark, { note: note || null, anyRep });
+    marked = await markAppointment(who, String(appt.appointment_id), effect.mark, {
+      note: note || null,
+      anyRep,
+      ...(kind === "confirm" && effect.mark === "showed" ? { heldEarly: true } : {}),
+    });
   }
   const st = (await svc(`cockpit_sales_queue_state?contact_id=eq.${enc(contactId)}&select=*`))[0];
   const next = effect.ladder

@@ -47,7 +47,11 @@ const INTRO = kw("10:00");
  */
 function joinedFor(rooms: Row[], now: number, appt: { id: string; start: number }): boolean {
   const ms = (v: unknown) => (v ? Date.parse(String(v)) : null);
-  const roomJoins = rooms.filter(r => r.appointment_id != null && (ms(r.lead_in_at) ?? 0) >= now - 3 * 3_600_000);
+  // Since m1 round 6 the read takes rooms asked for the call too (a
+  // confirmation call's), which count only for a talk's length.
+  const roomJoins = rooms.filter(
+    r => (r.appointment_id != null || r.asked_appointment_id != null) && (ms(r.lead_in_at) ?? 0) >= now - 3 * 3_600_000,
+  );
   return roomJoinedFor(roomJoins, appt);
 }
 

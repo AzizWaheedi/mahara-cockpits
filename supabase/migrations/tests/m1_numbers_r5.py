@@ -46,6 +46,8 @@ values ('%(boss)s', 'Stress Boss', 'manager', true, 'stress-m1n5')
 on conflict (email) do nothing;
 
 -- A. The pilot's switch-on, as m1-scope.md section 3 writes it.
+-- The manager names themself in the write's own transaction (round 6's settings guard).
+select set_config('mahara.actor', '%(boss)s', true);
 update public.cockpit_sales_settings
    set value = value || jsonb_build_object(
          'enabled', true,
@@ -58,6 +60,8 @@ update public.cockpit_sales_settings
          'send', '{"whatsapp_text": true, "whatsapp_template": true, "email": true}'::jsonb),
        updated_by = '%(boss)s', updated_at = clock_timestamp()
  where key = 'rooms';
+-- Nobody named for the rest of the run.
+select set_config('mahara.actor', '', true);
 insert into pg_temp.m1n5_checks (name, ok, detail)
 select 'control: the pilot''s switch-on by the manager leaves one settings.switch row naming the manager',
        count(*) = 1 and bool_and(a.actor_email = '%(boss)s'),

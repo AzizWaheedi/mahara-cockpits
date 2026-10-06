@@ -456,17 +456,43 @@ export function roomJoinedFor(
     return Number.isFinite(n) ? n : null;
   };
   return rooms.some(r => {
-    if (String(r.appointment_id ?? "") !== appt.id) return false;
+    // A room asked for this call that does not carry it (a confirmation
+    // call's, whose link invited the call now: m1 round 6): a join there,
+    // in the three hours before the call to twenty past, is the call had
+    // when the lead stayed a talk's length (confirmationRoomHeld), never a
+    // quick "yes, talk at 10" (stress2 round 2).
+    const asked = !r.appointment_id && String(r.asked_appointment_id ?? "") === appt.id;
+    if (String(r.appointment_id ?? "") !== appt.id && !asked) return false;
     const joined = t(r.lead_in_at);
     const undo = t(r.count_undo_at);
     // A join stands after the taken-back join's own time (stress2 round 5).
     const taken = t(r.taken_back_join_at);
     const bound = undo === null ? null : taken === null ? undo : Math.min(taken, undo);
     if (joined === null || (bound !== null && joined <= bound)) return false;
+    if (asked)
+      return joined >= appt.start - 3 * 60 * MIN && joined <= appt.start + 20 * MIN && confirmationRoomHeld(r);
     const stored = t(r.appointment_start_at);
     if (stored !== null && Math.abs(stored - appt.start) >= 1000) return false;
     return joined >= appt.start - 5 * MIN && joined <= appt.start + 20 * MIN;
   });
+}
+
+/** A confirmation call's video room the lead stayed in this long was the call itself, not a quick yes (m1 round 6). */
+export const CONFIRM_ROOM_HELD_MIN = 10;
+
+/**
+ * A confirmation call's room the lead joined and stayed in for a talk's
+ * length (CONFIRM_ROOM_HELD_MIN), or is in now: the intro was had there
+ * (m1 round 6, m1-journeys-r6-confirm-call-link-invites-call-now-intro-
+ * never-held: its link says "we can talk on video now"). A shorter join is
+ * the lead confirming (stress2 round 2), and the intro still comes up.
+ */
+export function confirmationRoomHeld(r: Record<string, unknown>): boolean {
+  const joined = r.lead_in_at ? Date.parse(String(r.lead_in_at)) : Number.NaN;
+  if (!Number.isFinite(joined)) return false;
+  if (r.state === "lead_in") return true;
+  const ended = r.ended_at ? Date.parse(String(r.ended_at)) : Number.NaN;
+  return Number.isFinite(ended) && ended - joined >= CONFIRM_ROOM_HELD_MIN * MIN;
 }
 
 /** How long an intro that rang out waits before it comes back, inside its window. */
@@ -1006,6 +1032,9 @@ export function appointmentEffect(kind: ItemKind, outcome: AnyOutcome): Effect |
     return null;
   }
   if (outcome === "confirmed") return { ...none, confirmation: "confirmed" };
+  // The intro had on video in the confirmation call's room (m1 round 6):
+  // the intro is marked held, and it was confirmed by being had.
+  if (outcome === "showed") return { ...none, mark: "showed", confirmation: "confirmed" };
   if (outcome === "no_answer") return { ...none, confirmation: "no_answer" };
   if (outcome === "cancelled") return { ...none, mark: "cancelled", confirmation: "cancelled", rebook: true };
   if (outcome === "not_interested" || outcome === "disqualified")
