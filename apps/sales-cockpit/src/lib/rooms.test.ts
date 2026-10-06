@@ -257,11 +257,17 @@ describe("which moment a room is in", () => {
         { state: "lead_in", ends_at: iso(NOW - S) },
         "still_on_call",
       ],
-      ["expired", { state: "expired" }, "expired"],
+      // The link went (m1 round 3b: a room whose link reached nobody closes
+      // as expired_unsent, never "nobody joined").
+      [
+        "expired",
+        { state: "expired", link_sent_at: iso(NOW - 11 * MIN) },
+        "expired",
+      ],
       [
         // Ended by the rep (or Zoom), not the sweep's expiry: it says it ended.
         "ended with nobody joining",
-        { state: "ended", result: "no_join" },
+        { state: "ended", result: "no_join", link_sent_at: iso(NOW - MIN) },
         "ended_empty",
       ],
       ["ended", { state: "ended", result: "joined" }, "closed"],
@@ -409,7 +415,11 @@ describe("the room panel's words, as the specs write them", () => {
   });
 
   test("nobody joined: P1 asks for the intro's mark, the foundation says what next", () => {
-    const r = room({ state: "expired", result: "no_join" });
+    const r = room({
+      state: "expired",
+      result: "no_join",
+      link_sent_at: iso(NOW - 11 * MIN),
+    });
     expect(say(r, { canMarkIntro: true })).toBe(
       "Nobody joined in 10 minutes. The room is closed. Mark the intro:",
     );
@@ -762,7 +772,7 @@ describe("the one right button", () => {
   });
 
   test("expired: the intro's mark when the page can make it, else nothing", () => {
-    const r = room({ state: "expired" });
+    const r = room({ state: "expired", link_sent_at: iso(NOW - 11 * MIN) });
     expect(acts(r, { canMarkIntro: true }).quiet).toEqual([
       "No-show",
       "We spoke on the phone",

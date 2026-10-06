@@ -625,12 +625,20 @@ export function afterMiss(o: {
   // who came in, so the rep may have talked on video for minutes. Asked,
   // never "No answer" (stress2 round 4).
   const shortLink = Boolean(v?.short_url) && v?.short_url !== v?.join_url;
+  // Only a link that reached the lead (or may have, or was left to the rep
+  // to read out): a link still tried again when the room closed reached
+  // nobody, so there was no video call to ask about (m1 round 3b,
+  // meet-ended-before-link-went-said-as-maybe-joined).
+  const reached =
+    Boolean(v?.link_sent_at) ||
+    (Boolean(v?.refusal) && !linkRetrying(v?.refusal));
   if (
     v &&
     v.provider === "meet" &&
     ["ended", "expired"].includes(v.state) &&
     !v.lead_in_at &&
     !shortLink &&
+    reached &&
     (v.result === "no_join" || v.result === null || v.result === undefined) &&
     !(v.first_open_at || v.last_open_at)
   )
@@ -711,6 +719,23 @@ export function afterMiss(o: {
       title: "The video link has not gone yet",
       text: "The video link has not gone yet. It is tried again in a minute. Wait for them here, or go to the next lead.",
       send: null,
+    };
+  // The link did not go, said as final while the room still waits for the
+  // lead (m1 round 3b, final-not-sent-step-offers-missed-call-email): the
+  // step points to the room's link, never a missed-call message without it.
+  if (
+    v &&
+    (v.state === "open" || v.state === "host_in") &&
+    !v.link_sent_at &&
+    v.refusal &&
+    !mayHaveGone(v.refusal) &&
+    !linkRetrying(v.refusal)
+  )
+    return {
+      title: "The video link did not go",
+      text: "The video link did not go. Call them now and read the link from the panel above.",
+      send: null,
+      callNow: true,
     };
   // A room still being made past the sweep's minute with the worker down, or
   // past the panel's own "taking too long": no link is on its way, so the

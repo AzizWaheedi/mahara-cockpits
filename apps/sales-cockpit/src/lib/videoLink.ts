@@ -226,8 +226,13 @@ export function gateLine(why: GateWhy): string | null {
   return null;
 }
 
-/** A booked demo's length when its end is not known on the page (sales-api reads the stored end). */
-export const DEMO_MINUTES = 60;
+/**
+ * A booked demo's length, as room.create counts it: its start plus
+ * rooms.booking_min.demo (45 as shipped). The appointments mirror keeps no
+ * end (m1 round 3b, demo-end-column-missing-breaks-room-create), so the
+ * page and sales-api count the same 45 minutes.
+ */
+export const DEMO_MINUTES = 45;
 
 /**
  * The lead has a booked demo that has not ended (m1 round 2,

@@ -138,6 +138,7 @@ import {
 } from "../lib/format";
 import {
   errorText,
+  forThisMiss,
   leaveToast,
   type RoomView,
   refusalCode,
@@ -1821,11 +1822,14 @@ function CallPane({
   // happened, so the step after the miss becomes "How did the intro go?",
   // and neither the missed-call WhatsApp nor another video link is offered
   // (final review).
-  const joinedAt = videoJoinedAt(video.room);
+  // Only this miss's call (m1 round 3b): a room the lead joined for an
+  // earlier call, left open on Meet, never turns a call-back's miss into
+  // "How did the intro go?".
+  const joinedAt = forThisMiss(videoJoinedAt(video.room), video.room, missed);
   // We are on the phone: the room closed as moved to the phone, or the rep
   // marked the intro from the panel (stress2, round 2). Neither the
   // missed-call WhatsApp nor another video link is offered after it.
-  const spoke = spokeAt(video.room);
+  const spoke = forThisMiss(spokeAt(video.room), video.room, missed);
   const [introMarked, setIntroMarked] = useState(false);
   const offerVideo =
     gate.show &&

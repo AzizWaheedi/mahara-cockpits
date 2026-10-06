@@ -141,6 +141,7 @@ export const ROOM_VIEW_KEYS = [
   "moved_from",
   "opened_at",
   "link_claimed_at",
+  "rang_at",
 ] as const;
 
 /** A room as the browser sees it. `start_url` is never part of it. */
@@ -222,6 +223,13 @@ export interface RoomView {
    */
   opened_at?: string | null;
   link_claimed_at?: string | null;
+  /**
+   * A call to the lead placed after their join (m1 round 3b): the rep rang
+   * them again, so the video call may be over, which Meet never says. The
+   * panel and the banner ask "Still on the call?". Absent from an older
+   * sales-api: never asked on it.
+   */
+  rang_at?: string | null;
 }
 
 export interface RoomEvent {
@@ -438,6 +446,7 @@ const OPTIONAL_TIMES = [
   "late_open_at",
   "opened_at",
   "link_claimed_at",
+  "rang_at",
 ] as const;
 const OPTIONAL_TEXT = [
   "trigger",
@@ -745,6 +754,28 @@ export function spokeAt(room: RoomView | null | undefined): string | null {
   return room.ended_at ?? room.created_at ?? null;
 }
 
+/** How long before the miss was seen a join (or a move to the phone) still belongs to that call: the call rang for up to a minute or two. */
+export const MISS_JOIN_SLACK_MS = 5 * 60_000;
+
+/**
+ * The join (videoJoinedAt) or the move to the phone (spokeAt) of the call
+ * that missed, or null (m1 round 3b,
+ * meet-joined-room-left-open-hijacks-callback-miss): the room made for that
+ * call (its attempt), or a join no older than the call itself. A room the
+ * lead joined for an earlier call (an intro at 10:03, left open on Meet)
+ * never says a call-back's miss at 10:25 was a video call.
+ */
+export function forThisMiss(
+  at: string | null,
+  room: RoomView | null | undefined,
+  missed: { at: number; attemptId: string | null } | null | undefined,
+): string | null {
+  if (!at || !missed) return at;
+  if (missed.attemptId && room?.attempt_id === missed.attemptId) return at;
+  const when = t(at);
+  return when !== null && when >= missed.at - MISS_JOIN_SLACK_MS ? at : null;
+}
+
 export function isMaking(s: RoomState): boolean {
   return s === "requested" || s === "creating";
 }
@@ -1049,7 +1080,37 @@ function meetUnseen(room: RoomView): boolean {
     room.provider === "meet" &&
     Boolean(room.contact_id) &&
     !shortLinkOn(room) &&
-    !room.lead_in_at
+    !room.lead_in_at &&
+    linkReachedOrLeft(room)
+  );
+}
+
+/**
+ * The lead got the link, it may have gone, or it was left to the rep to
+ * give (a refusal said as final: read it out): only then may the lead have
+ * come into a Meet room unseen. A link still tried again, or never asked
+ * for, reached nobody (m1 round 3b,
+ * meet-ended-before-link-went-said-as-maybe-joined). A booked room's link
+ * went with the booking.
+ */
+export function linkReachedOrLeft(room: {
+  purpose?: string | null;
+  link_sent_at?: string | null;
+  refusal?: string | null;
+}): boolean {
+  if (room.purpose === "booked" || room.link_sent_at) return true;
+  return Boolean(room.refusal) && !linkRetrying(room.refusal);
+}
+
+/** A video-link room (from the dialer or the lead page) whose link reached nobody. */
+function linkReachedNobody(room: RoomView): boolean {
+  return (
+    Boolean(room.contact_id) &&
+    (room.purpose === "fallback" || room.purpose === "manual") &&
+    !linkReachedOrLeft(room) &&
+    !room.first_open_at &&
+    !room.last_open_at &&
+    !room.late_open_at
   );
 }
 
@@ -1090,6 +1151,7 @@ export function roomMoment(room: RoomView, now: number): RoomMoment {
     if (room.end_reason === "link_not_sent" && !room.link_sent_at)
       return "expired_unsent";
     if (room.end_reason === "events_lost") return "expired_unknown";
+    if (linkReachedNobody(room)) return "expired_unsent";
     if (
       room.first_open_at ||
       room.last_open_at ||
@@ -1112,6 +1174,9 @@ export function roomMoment(room: RoomView, now: number): RoomMoment {
       meetUnseen(room)
     )
       return "expired_opened";
+    // Ended before its link reached the lead (m1 round 3b): said as a link
+    // that never went, never "nobody joined" with a No-show.
+    if (linkReachedNobody(room)) return "expired_unsent";
     return "ended_empty";
   }
   if (s === "ended" || s === "cancelled") return "closed";
@@ -1123,6 +1188,11 @@ export function roomMoment(room: RoomView, now: number): RoomMoment {
     const joined = t(room.lead_in_at);
     if (knock !== null && (joined === null || knock > joined))
       return "waiting_room";
+    // The rep rang the lead again after the join (m1 round 3b): the video
+    // call may be over, which Meet never says, so the room asks.
+    const rang = t(room.rang_at ?? null);
+    if (rang !== null && joined !== null && rang > joined)
+      return "still_on_call";
     const end = t(room.ends_at);
     return end !== null && now >= end ? "still_on_call" : "joined";
   }
@@ -2434,7 +2504,11 @@ export function bannerRoomSentence(
     (m === "not_confirmed" && !(room.link_channels ?? []).includes("email"))
   )
     return roomSentence(room, { now, workerDown: ctx.workerDown });
-  if (m === "joined" || m === "still_on_call") return [`${Name} joined.`];
+  if (m === "joined") return [`${Name} joined.`];
+  // Past the call's planned end, or the rep rang the lead again since the
+  // join (m1 round 3b): asked, never "joined" for an hour.
+  if (m === "still_on_call")
+    return [`Still on the call with ${name ?? "the lead"}?`];
   // The host opened their Meet room: Meet will not say when the lead is in,
   // so the banner says the next step (stress2, round 2).
   if (
@@ -2460,9 +2534,24 @@ export function bannerRoomSentence(
   const head: Sentence = name
     ? [`Video room: ${name}`]
     : ["Video room: ", { mono: room.code }];
+  // Meet's own link (the short link off): the lead's Ask to join reaches
+  // nobody and is never reported while the rep is not in the room (m1
+  // round 3b, short-link-off-meet-next-lead-lead-asks-to-join-empty-room).
+  const beThere: Sentence =
+    room.provider === "meet" &&
+    room.state === "open" &&
+    room.contact_id &&
+    room.link_sent_at &&
+    !shortLinkOn(room)
+      ? [` Meet lets ${name ?? "the lead"} in only when you are in the room.`]
+      : [];
   return left === null
-    ? [...head, "."]
-    : [...head, { left, form: "sentence", lead: ", ", spoken: "." }];
+    ? [...head, ".", ...beThere]
+    : [
+        ...head,
+        { left, form: "sentence", lead: ", ", spoken: "." },
+        ...beThere,
+      ];
 }
 
 /**
