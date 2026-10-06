@@ -91,6 +91,20 @@ def slack_on(sw: Optional[dict[str, dict]]) -> bool:
     return live.get("enabled") is True and live.get("slack") is True
 
 
+def agent_on(ctx: Context) -> bool:
+    """Whether the follow-up agent's own work runs (followups.agent true):
+    its waves and the drafting model are live-calls parts only then (m1
+    round 6, m1-numbers-r6-guardian-live-status-rows-fail-on-model-and-waves;
+    the desk's own checks and the SQL watchdog watch them otherwise). A
+    setting that cannot be read counts as on, so nothing goes unwatched."""
+    try:
+        rows = ctx.rows("cockpit_sales_settings", "key,value", where=[("key", "in", ["followups"])])
+    except SourceError:
+        return True
+    value = next((r.get("value") for r in rows if r.get("key") == "followups"), None)
+    return isinstance(value, dict) and value.get("agent") is True
+
+
 def needed(check_id: str, sw: Optional[dict[str, dict]]) -> bool:
     """Whether a lead's call needs this piece with the switches as they are:
     the call site only while the short link is on (m1 round 1,
@@ -262,6 +276,8 @@ def run_status_rows(ctx: Context) -> Result:
         skip |= {("sales-live", "open"), ("sales-live", "go")}
     if not slack_on(sw):
         skip |= {("sales-live", "slack"), ("sales-desk", "slack")}
+    if not agent_on(ctx):
+        skip |= {("sales-desk", "waves"), ("sales-desk", "model")}
     watched = {w: tuple(j for j in jobs if (w, j) not in skip) for w, jobs in STATUS_ROWS.items()}
     missing = [f"{w}/{j}" for w, jobs in watched.items() for j in jobs if (w, j) not in have]
     bad = [f"{w}/{j} ({clean(have[(w, j)].get('detail'), 80)})" for w, jobs in watched.items() for j in jobs

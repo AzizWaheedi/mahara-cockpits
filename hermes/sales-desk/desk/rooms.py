@@ -1749,10 +1749,27 @@ class Worker:
             return None
         except (SupabaseError, http.HttpError) as e:
             self._db_trouble(e)
+            self._claim_lost(room, body)
             return None
         if got:
             self._audit("room.worker.claim", got[0], {"state": "requested"}, {"state": "creating"})
         return got[0] if got else None
+
+    def _claim_lost(self, room: dict[str, Any], body: dict[str, Any]) -> None:
+        """A claim whose answer never came (m1 round 6,
+        m1-numbers-r6-worker-claim-lost-answer-no-claim-row): the room read
+        back; creating on this run with this claim's time, the claim landed,
+        so it has its audit row (the orphan path makes it a moment later).
+        Never fatal."""
+        try:
+            current = self._read(str(room["id"]))
+        except TimeUp:
+            return
+        except (SupabaseError, http.HttpError):
+            return
+        if (current and current.get("state") == "creating" and current.get("worker_run") == self.run_id
+                and parse_ts(current.get("claimed_at")) == parse_ts(body.get("claimed_at"))):
+            self._audit("room.worker.claim", current, {"state": "requested"}, {"state": "creating", "answer_lost": True})
 
     def _audit(self, action: str, room: dict[str, Any], before: dict[str, Any], after: dict[str, Any]) -> None:
         """One audit row for a room change the worker made; never fatal."""
@@ -2535,6 +2552,11 @@ class Worker:
             current = self._read(rid)
             if current and current.get("state") == "failed" and current.get("error") == sentence:
                 row = current
+                # The fail landed and its answer was lost (m1 round 6,
+                # m1-numbers-r6-worker-fail-unclaimed-lost-answer-no-audit-row):
+                # its row all the same, as Worker.fail writes it.
+                self._audit("room.worker.fail", row, {"state": "requested"},
+                            {"state": "failed", "error": sentence, "answer_lost": True})
             else:
                 self._fail_missed(rid, current)
         elif got:
@@ -2666,12 +2688,13 @@ class Worker:
                     self._stray(room, str(meeting_id), str(made.get("start_url") or start_url or ""))
                 return False
         opened = self._fill_deadlines(opened, now)
-        if rid in self._failed_stored:
-            # This run stored "The room was not made" and its failed write
-            # never landed (m1 round 4, fail-write-lost-room-made): the room
-            # opened after all, so that line is closed as not true.
-            self._failed_stored.discard(rid)
-            self.close_event(f"worker.failed:{rid}", "the room opened after all")
+        # A stored "The room was not made" whose failed write never landed
+        # (m1 round 4, fail-write-lost-room-made), whichever run stored it
+        # (m1 round 6, m1-chaos-r6-killed-after-failed-line-room-made-timeline-
+        # says-not-made: a run killed between the line and the write): the
+        # room opened after all, so that line is closed as not true.
+        self._failed_stored.discard(rid)
+        self._close_failed_line(rid)
         self._made.pop(rid, None)
         self._retry_at.pop(rid, None)
         self._tries.pop(rid, None)
@@ -2682,6 +2705,31 @@ class Worker:
         self.log.info(f"rooms: room {opened.get('code') or room.get('code')} ready on {provider} "
                       f"{payload['seconds']}s after it was asked for")
         return True
+
+    def _close_failed_line(self, rid: str) -> None:
+        """The room's worker.failed line, if any run stored one, closed as not
+        true now that the room opened: taken with the lease when unhandled;
+        one sales-api already handled is marked closed_by in its detail, so
+        room.status leaves its words out. Never fatal."""
+        key = f"worker.failed:{rid}"
+        try:
+            rows = self.sb.select(EVENTS, f"select=detail,handled_at&dedupe_key=eq.{_q(key)}&limit=1")
+            if not rows:
+                return
+            if not rows[0].get("handled_at") and self.close_event(key, "the room opened after all"):
+                return
+            back = self.sb.select(EVENTS, f"select=detail,handled_at&dedupe_key=eq.{_q(key)}&limit=1")
+            detail = (back[0].get("detail") if back else None) or {}
+            if not back or not back[0].get("handled_at") or (isinstance(detail, dict) and detail.get("closed_by")):
+                return
+            self.sb.rest("PATCH", f"{EVENTS}?dedupe_key=eq.{_q(key)}&handled_at=not.is.null", prefer="return=minimal",
+                         json_body={"detail": {**(detail if isinstance(detail, dict) else {}), "closed_by": "worker",
+                                               "closed_why": "the room opened after all"}})
+        except TimeUp:
+            return
+        except (SupabaseError, http.HttpError) as e:
+            self._warn_once("failed_line", f"rooms: a 'room was not made' line could not be closed after the room "
+                                           f"opened: {db_reason(e)}")
 
     def _withdrawn(self, room: dict[str, Any], current: dict[str, Any], meeting_id: Any) -> None:
         """Cancelled while it was being made: its meeting is closed like any
@@ -2921,6 +2969,7 @@ class Worker:
         self._scan_strays()
         secrets = self.sb.select(SECRETS, "select=room_id&limit=200")
         ids = [str(s["room_id"]) for s in secrets if s.get("room_id")]
+        self._scan_hostless(set(ids))
         if not ids:
             return
         rows = self.sb.select(ROOMS, f"select=*&id=in.{_in(ids)}&state=in.(ended,expired,failed,cancelled)")
@@ -2943,11 +2992,58 @@ class Worker:
             # (m1 round 5, m1-time-r5-final-refusal-ten-minutes-cut-by-host-wait:
             # the link left to the rep, who sent it by hand): its meeting is
             # the link the lead holds, so it is kept until lead_by, then closed.
-            lead_by = parse_ts(r.get("lead_by"))
-            if r.get("state") == "expired" and lead_by is not None and lead_by > self.clock():
+            # lead_by is on the database's clock (m1 round 6,
+            # m1-chaos-r6-vps-clock-ahead-deletes-meeting-before-lead-by): a
+            # VPS clock ahead of it never closes the meeting early.
+            if self._lead_still_waits(r):
                 self._forget_close(rid)
                 continue
             self._to_close[rid] = {**r, "provider_meeting_id": str(mid)}
+            self._close_at.setdefault(rid, self.clock())
+
+    def _lead_still_waits(self, r: dict[str, Any]) -> bool:
+        """A room a timer closed while the lead's ten minutes still run, on
+        the database's clock (lead_by is stamped there). A link the panel
+        left to the rep (a refusal stands, nothing went) with no lead_by on
+        the room (its write lost, m1 round 6,
+        m1-chaos-r6-final-refusal-lead-wait-blip-room-closed-under-hand-sent-link)
+        keeps its meeting for the lead's ten minutes from the close."""
+        if r.get("state") != "expired":
+            return False
+        lead_by = parse_ts(r.get("lead_by"))
+        if lead_by is None and r.get("refusal") and not r.get("link_sent_at"):
+            ended = parse_ts(r.get("ended_at"))
+            if ended is not None and r.get("end_reason") == "link_not_sent":
+                lead_by = ended + self.waits("lead", 600.0)
+        return lead_by is not None and lead_by > self.db_now()
+
+    def _scan_hostless(self, held: set[str]) -> None:
+        """Finished Zoom rooms of the last hour with a meeting and no host
+        link left (m1 round 6, m1-conc-r6-press-end-deletes-host-link-so-
+        worker-never-closes-zoom-meeting: a close through an older sales-api
+        deleted it): the meeting is closed all the same, unless the worker
+        closed it already (its worker.closing line). Looked at once a run."""
+        if not self.zoom:
+            return
+        rows = self.sb.select(ROOMS, "select=*&provider=eq.zoom&state=in.(ended,expired,failed,cancelled)"
+                                     "&provider_meeting_id=not.is.null"
+                                     f"&ended_at=gte.{_q(iso(self.clock() - 3600))}&order=ended_at.desc&limit=20")
+        rows = [r for r in rows if str(r["id"]) not in held and str(r["id"]) not in self._swept
+                and str(r["id"]) not in self._to_close and not join_stands(r) and r.get("purpose") != "booked"]
+        if not rows:
+            return
+        ids = [str(r["id"]) for r in rows]
+        closing = {str(e.get("room_id")) for e in self.sb.select(
+            EVENTS, f"select=room_id&kind=eq.worker.closing&room_id=in.{_in(ids)}&limit=50")}
+        for r in rows:
+            rid = str(r["id"])
+            if rid in closing:
+                self._swept.add(rid)
+                continue
+            if self._lead_still_waits(r):
+                continue
+            self._swept.add(rid)
+            self._to_close[rid] = {**r, "provider_meeting_id": str(r["provider_meeting_id"]), "_hostless": True}
             self._close_at.setdefault(rid, self.clock())
 
     def _scan_unsaved(self) -> None:
@@ -3031,6 +3127,12 @@ class Worker:
                     self.log.warn(f"rooms: Zoom did not close room {room.get('code')} yet: {e.why}")
             return
         if outcome == "closed":
+            if room.get("_hostless") and rid not in self._noted:
+                # Already gone at Zoom: its line, so the next run's scan of
+                # hostless rooms leaves it.
+                self._noted.add(rid)
+                self.store_event(rid, "worker.closing", {"meeting_id": str(room.get("provider_meeting_id")), "gone": True},
+                                 handled=True, text=TEXT["worker.closing"].format(provider=provider_word("zoom")))
             self._drop_secret(rid)
             self._forget_close(rid)
             self._count("closed")
@@ -3533,11 +3635,13 @@ class Worker:
                          f" the rep uses {label[works]}.")
             lines.append(line)
         if rows:
-            self.sb.upsert(HOSTS, rows, "email")
-            # Every change the check made to a seat's host row has its audit
+            # Every change the check makes to a seat's host row has its audit
             # row (stress2 round 3, host-check-writes-unaudited): the Zoom user
             # that hosts the rep's rooms, the licence that picks their default
             # room, and whether Google works. Once per change, never every run.
+            # The rows go first, then the host rows (m1 round 6, host check
+            # killed between the two): a run stopped in between leaves a row
+            # the next run writes again, never a change with no row.
             for row in rows:
                 before = existing.get(row["email"]) or {}
                 changed = {k: row[k] for k in ("zoom_user_id", "zoom_status", "google_ok")
@@ -3546,6 +3650,7 @@ class Worker:
                     audit(self.sb, "room.hosts", HOSTS, row["email"],
                           before={k: before.get(k) for k in changed}, after=changed,
                           metadata={"by": "the host check", "worker_run": self.run_id})
+            self.sb.upsert(HOSTS, rows, "email")
         self._report_only_mismatch = False
         report_ok, report_lines = self.report_check(now, seat_ids)
         lines += report_lines
