@@ -1,6 +1,6 @@
 import { createHash, createPrivateKey, sign } from 'node:crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { isSavedWinner, isAutoWinner } from '../../apps/media-buyer-cockpit/convex/metaMedia';
+import { isSavedWinner, isAutoWinner } from '../cockpit-sync/metaMedia';
 
 export type Row = Record<string, unknown>;
 export const row = (value: unknown): Row => {
