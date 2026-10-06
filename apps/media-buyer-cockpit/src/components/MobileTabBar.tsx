@@ -2,19 +2,20 @@ import { useQuery } from "convex/react";
 import type { LucideIcon } from "lucide-react";
 import {
   Gauge,
-  LayoutDashboard,
-  ListChecks,
+  Library,
   Megaphone,
   Menu,
-  MessageSquare,
   MousePointerClick,
+  Search,
   ShieldCheck,
   Sun,
+  Sunrise,
   Truck,
   Wallet,
 } from "lucide-react";
 import { Link, useLocation, useSearchParams } from "react-router";
 import { COCKPIT_ICON } from "@/lib/cockpits";
+import { openSearch } from "@/lib/search";
 import { cn } from "@/lib/utils";
 import { api } from "../../convex/_generated/api";
 import { useSidebar } from "./ui/sidebar";
@@ -25,16 +26,17 @@ type Item = {
   icon: LucideIcon;
   to: string;
   active: boolean;
+  /** A button instead of a link, as Search is. */
+  onClick?: () => void;
 };
 
 /**
  * The bar at the foot of a phone screen: the four places a thumb goes most,
  * and "More" for the rest of the rail. Which four depends on where you are:
  * the CEO cockpit's own sections on /ceo, the media buyer's day for a media
- * buyer, otherwise the CEO, Admin and Team meetings doors a seat has.
- * Hidden from 1024px up, where the rail is on the left. The labels are the
- * rail's own words (Start of day, Touchpoints), shortened only where the
- * rail's longer name would not fit (Ads, Tasks).
+ * buyer (Today, Ads, Library and Search, since 2026-10-06), otherwise the
+ * CEO, Admin and Team meetings doors a seat has. Hidden from 1024px up, where
+ * the rail is on the left. The labels are the rail's own words.
  */
 export function MobileTabBar() {
   const { setOpenMobile, isMobile } = useSidebar();
@@ -81,10 +83,10 @@ export function MobileTabBar() {
       ? [
           {
             key: "day",
-            label: "Start of day",
-            icon: LayoutDashboard,
+            label: "Today",
+            icon: Sunrise,
             to: "/dashboard",
-            active: path === "/dashboard",
+            active: path === "/dashboard" || path === "/eod",
           },
           {
             key: "ads",
@@ -94,18 +96,19 @@ export function MobileTabBar() {
             active: path === "/ads",
           },
           {
-            key: "tasks",
-            label: "Tasks",
-            icon: ListChecks,
-            to: "/tasks",
-            active: path === "/tasks",
+            key: "library",
+            label: "Library",
+            icon: Library,
+            to: "/playbook",
+            active: ["/playbook", "/ideation", "/swipe"].includes(path),
           },
           {
-            key: "clients",
-            label: "Touchpoints",
-            icon: MessageSquare,
-            to: "/touchpoints",
-            active: path === "/touchpoints",
+            key: "search",
+            label: "Search",
+            icon: Search,
+            to: "",
+            active: false,
+            onClick: openSearch,
           },
         ]
       : [
@@ -151,19 +154,30 @@ export function MobileTabBar() {
       <ul className="grid auto-cols-fr grid-flow-col">
         {items.map(it => (
           <li key={it.key}>
-            <Link
-              to={it.to}
-              aria-current={it.active ? "page" : undefined}
-              className={cn(
-                cell,
-                it.active
-                  ? "text-[color:var(--mahara-teal,#00cfc8)]"
-                  : "text-sidebar-foreground/70",
-              )}
-            >
-              <it.icon className="size-5" aria-hidden />
-              {it.label}
-            </Link>
+            {it.onClick ? (
+              <button
+                type="button"
+                onClick={it.onClick}
+                className={cn(cell, "text-sidebar-foreground/70")}
+              >
+                <it.icon className="size-5" aria-hidden />
+                {it.label}
+              </button>
+            ) : (
+              <Link
+                to={it.to}
+                aria-current={it.active ? "page" : undefined}
+                className={cn(
+                  cell,
+                  it.active
+                    ? "text-[color:var(--mahara-teal,#00cfc8)]"
+                    : "text-sidebar-foreground/70",
+                )}
+              >
+                <it.icon className="size-5" aria-hidden />
+                {it.label}
+              </Link>
+            )}
           </li>
         ))}
         <li>

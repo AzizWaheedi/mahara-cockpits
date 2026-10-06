@@ -9,27 +9,21 @@
  *   today.json    - the result of ceo/queries:today
  *   people.json   - the result of ceo/people:list
  *   fixtures.json - any other function's result, keyed by its Convex name
- * The media buyer's own screens (/dashboard, /ads, /tasks, /touchpoints,
- * /eod, /playbook) and /admin and /settings read the stand-in data in
+ * The media buyer's own screens (/dashboard, /ads, /eod, /playbook) and /admin and /settings read the stand-in data in
  * portalFixtures.ts.
  */
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { MemoryRouter, Navigate, Route, Routes } from "react-router";
 import { AppLayout } from "@/components/AppLayout";
+import { Library } from "@/components/Library";
 import { PublicLayout } from "@/components/PublicLayout";
 import { Toaster } from "@/components/ui/sonner";
 import { ThemeProvider } from "@/contexts/ThemeContext";
 import { ThemeProvider as LibThemeProvider } from "@/lib/theme";
 import { AdminPage } from "@/pages/AdminPage";
 import { CeoPage } from "@/pages/CeoPage";
-import {
-  AdsPage,
-  EndOfDayPage,
-  StartOfDayPage,
-  TaskListPage,
-  TouchpointsPage,
-} from "@/pages/CockpitPage";
+import { AdsPage, EndOfDayPage, TodayPage } from "@/pages/CockpitPage";
 import { LoginPage } from "@/pages/LoginPage";
 import { PlaybookPage } from "@/pages/PlaybookPage";
 import { SettingsPage } from "@/pages/SettingsPage";
@@ -88,12 +82,17 @@ async function main() {
                 <Route path="/ceo" element={<CeoPage />} />
                 <Route path="/team" element={<TeamPage />} />
                 <Route path="/team/:id" element={<MeetingPage />} />
-                <Route path="/dashboard" element={<StartOfDayPage />} />
+                <Route path="/dashboard" element={<TodayPage />} />
                 <Route path="/ads" element={<AdsPage />} />
-                <Route path="/tasks" element={<TaskListPage />} />
-                <Route path="/touchpoints" element={<TouchpointsPage />} />
                 <Route path="/eod" element={<EndOfDayPage />} />
-                <Route path="/playbook" element={<PlaybookPage />} />
+                <Route
+                  path="/playbook"
+                  element={
+                    <Library>
+                      <PlaybookPage />
+                    </Library>
+                  }
+                />
                 <Route path="/admin" element={<AdminPage />} />
                 <Route path="/settings" element={<SettingsPage />} />
                 <Route path="*" element={<Navigate to="/ceo" replace />} />

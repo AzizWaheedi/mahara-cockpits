@@ -71,6 +71,10 @@ same ProjectionsKit "apps/client-success-cockpit/src/components/projections/Proj
 # Doc report the media buyer backend writes from it.
 same reportPeriod "apps/client-success-cockpit/src/lib/reportPeriod.ts" "$MB/src/lib/reportPeriod.ts"
 
+# Search (Ctrl/Cmd + K, and the lists that filter by name) forgives the same
+# way in every cockpit: Arabic letter forms folded, one typo allowed.
+same search.ts "apps/client-success-cockpit/src/lib/search.ts" "$MB/src/lib/search.ts"
+
 # The swipe file's backend is the same in the two Convex cockpits, bar the
 # role each one checks.
 same convex/foreplay.ts "$CD/convex/foreplay.ts" "$MB/convex/foreplay.ts"

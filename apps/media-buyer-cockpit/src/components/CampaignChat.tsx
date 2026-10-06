@@ -191,7 +191,7 @@ export function CampaignChat({
             }
           }}
           rows={2}
-          placeholder="Ask about this campaign, or say what you want done with it."
+          placeholder="Ask the CEO about this campaign. A change you made in Ads Manager goes under Changes and results."
           className="min-h-[38px] min-w-0 flex-1 resize-y rounded-lg border bg-background px-2 py-1.5 text-sm"
         />
         <Button

@@ -9,6 +9,7 @@ import { useLayoutEffect, useRef } from "react";
 import { useLocation, useOutlet } from "react-router";
 import { api } from "../../convex/_generated/api";
 import { AppSidebar } from "./AppSidebar";
+import { CommandPalette } from "./CommandPalette";
 import { HermesChat } from "./HermesChat";
 import { MobileTabBar } from "./MobileTabBar";
 import { OfflineBanner } from "./OfflineBanner";
@@ -84,6 +85,7 @@ function LayoutContent() {
             </AnimatePresence>
           </RouteErrorBoundary>
         </main>
+        <CommandPalette />
         <HermesChat />
         <MobileTabBar />
       </SidebarInset>
