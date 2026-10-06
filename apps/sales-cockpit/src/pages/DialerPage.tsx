@@ -144,14 +144,15 @@ import {
   roomsApi,
   spokeAt,
   videoJoinedAt,
+  workerDownOf,
 } from "../lib/rooms";
 import { type Fill, groupBlocks, personalise } from "../lib/script";
 import { toast } from "../lib/toast";
 import type { Lead, Me } from "../lib/types";
 import {
+  gateLine,
   linkPlanLine,
   missTrigger,
-  NIGHT_LINE,
   NOBODY_SPOKE_VIDEO,
   PICKER_NONE,
   providerChoice,
@@ -1726,7 +1727,7 @@ function CallPane({
     convo,
     wa,
     video.room ?? null,
-    video.live?.health?.worker_ok === false,
+    workerDownOf(video.live?.health),
   );
   const status = useCallStatus(open, () => {
     // Maqsam's record saved it as No answer. A save of the rep's own on its
@@ -1774,6 +1775,7 @@ function CallPane({
     // The lead's clock (stress2 round 6): no link, and no countdown, at
     // night where they are, unless it is their own booked intro's time.
     country: l?.country ?? null,
+    phone: l?.phone ?? null,
     now: Date.now(),
     introNow: introCall,
   });
@@ -2252,7 +2254,7 @@ function CallPane({
   // open room, or a failed one offering the other provider), or a link is
   // being picked or about to go, Call and Next lead step back.
   const panelLeads =
-    video.open || (failedOnScreen && video.live?.health?.worker_ok !== false);
+    video.open || (failedOnScreen && !workerDownOf(video.live?.health));
   const callQuiet = panelLeads || picking || autoAt !== null;
 
   async function copyNumber() {
@@ -2505,8 +2507,8 @@ function CallPane({
             videoUnread={
               roomsSetup.error && missed !== null && !video.room
                 ? ROOMS_UNREAD
-                : gate.why === "lead_night" && missed !== null && !video.room
-                  ? NIGHT_LINE
+                : missed !== null && !video.room
+                  ? gateLine(gate.why)
                   : null
             }
           />

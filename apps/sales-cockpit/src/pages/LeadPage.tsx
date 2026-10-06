@@ -84,6 +84,7 @@ import { ghlContactUrl } from "../lib/highlevel";
 import { toast } from "../lib/toast";
 import type { CalendarRow, Deal, Lead, Me } from "../lib/types";
 import {
+  DEMO_LINK_LINE,
   demoStillOn,
   linkPlanLine,
   type MenuKey,
@@ -329,6 +330,9 @@ export default function LeadPage({ me }: { me: Me }) {
           />
           {roomsSetup.error && !isClient(l) ? (
             <span className="muted self-center text-xs">{ROOMS_UNREAD}</span>
+          ) : gate.why === "booked_demo" && !isClient(l) && !video.open ? (
+            // The menu is gone while the demo is on: say where its link is (m1 round 3).
+            <span className="muted self-center text-xs">{DEMO_LINK_LINE}</span>
           ) : null}
           {canContract(me) ? (
             <button

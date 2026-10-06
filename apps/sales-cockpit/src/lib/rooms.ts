@@ -25,6 +25,7 @@ import { api } from "./api";
 import { ApiError, type ApiFailure, uncertain } from "./apiErrors";
 import {
   CLAIM_MINUTE_STEP_MS,
+  LINK_LATE_STEP_MS,
   MAKING_LATE_STEP_MS,
   mayHaveGone,
   movedByEmailOnly,
@@ -137,6 +138,8 @@ export const ROOM_VIEW_KEYS = [
   "last_link_at",
   "late_open_at",
   "moved_from",
+  "opened_at",
+  "link_claimed_at",
 ] as const;
 
 /** A room as the browser sees it. `start_url` is never part of it. */
@@ -211,6 +214,13 @@ export interface RoomView {
    * to tell them where the new link is.
    */
   moved_from?: Provider | null;
+  /**
+   * When the room opened, and when its link was asked for (m1 round 3):
+   * "The link has not gone yet" counts from the later of the two, never
+   * from the press. Absent from an older sales-api: the press's time.
+   */
+  opened_at?: string | null;
+  link_claimed_at?: string | null;
 }
 
 export interface RoomEvent {
@@ -222,6 +232,8 @@ export interface RoomEvent {
 
 export interface Health {
   worker_ok: boolean;
+  /** The worker runs and makes rooms but reports a problem: red line, never "not being made" (m1 round 3). */
+  worker_trouble?: boolean;
   last_run_at: string | null;
   /** null when sales-api could not count them: missing is never 0. */
   rooms_today: number | null;
@@ -423,6 +435,8 @@ const OPTIONAL_TIMES = [
   "last_open_at",
   "last_link_at",
   "late_open_at",
+  "opened_at",
+  "link_claimed_at",
 ] as const;
 const OPTIONAL_TEXT = [
   "trigger",
@@ -545,6 +559,9 @@ export function normalizeHealth(v: unknown): Health | null {
   if (!isObj(v) || typeof v.worker_ok !== "boolean") return null;
   return {
     worker_ok: v.worker_ok === true,
+    ...(v.worker_ok === false && v.worker_trouble === true
+      ? { worker_trouble: true }
+      : {}),
     last_run_at: when(v.last_run_at),
     rooms_today: count(v.rooms_today),
     failed_today: count(v.failed_today),
@@ -1105,25 +1122,39 @@ export function roomMoment(room: RoomView, now: number): RoomMoment {
   // was never asked for (a lost worker.ready) or its send died. The rep reads
   // it out. Not a booked call's room (its link went with the booking), nor a
   // handover room before its closer is in (its link waits for them).
-  const opened = t(room.created_at);
+  // Counted from the later of the room's open and the link's claim, never
+  // from the press (m1 round 3, link-late-counts-from-press-not-open): a room
+  // that opened late but on time, or a send asked a moment ago, is not late.
+  const since = linkLateFrom(room);
   const waitsForHost = room.purpose === "handover" && s === "open";
   if (
     room.contact_id &&
     room.purpose !== "booked" &&
     !waitsForHost &&
-    opened !== null &&
-    now - opened >= LINK_LATE_MS
+    since !== null &&
+    now - since >= LINK_LATE_MS
   )
     return "link_late";
   return "ready";
 }
 
+/** Where "The link has not gone yet" counts from: the later of the open (else the press) and the link's claim. */
+export function linkLateFrom(room: RoomView): number | null {
+  const opened = t(room.opened_at ?? null) ?? t(room.created_at);
+  const claimed = t(room.link_claimed_at ?? null);
+  if (opened === null) return claimed;
+  return claimed === null ? opened : Math.max(opened, claimed);
+}
+
 /**
  * How long a room with a lead may say "Room ready." before the panel says
  * the link has not gone: the sweep asks for a link never claimed a minute
- * after the room opened, and a send takes up to half a minute more.
+ * after the room opened, and a send has 90 s (sales-api SEND_BUDGET_MS),
+ * counted from the later of the open and the link's claim (linkLateFrom).
+ * sales-api never sends a link it claims this late after the open when the
+ * link cannot be read out: the panel has told the rep to send it.
  */
-export const LINK_LATE_MS = 90_000;
+export const LINK_LATE_MS = LINK_LATE_STEP_MS;
 
 /**
  * How long "Making your room..." may say so: the sweep fails a room the
@@ -1633,7 +1664,8 @@ export function roomSentence(room: RoomView, ctx: RoomCtx): Sentence {
             ? `The room is closed, and Meet cannot say whether ${whom} came in. If you spoke, say so below; if not, call them now.`
             : ctx.talkBelow
               ? `The room is closed, and Meet cannot say whether ${whom} came in. If you spoke, save how it went below; if not, call them now.`
-              : `The room is closed, and Meet cannot say whether ${whom} came in. If you did not speak, call them now.`,
+              : // The lead page (m1 round 3, lead-page-meet-closed-no-step-if-spoke): Meet reports nothing, so the usual case is that they spoke.
+                `The room is closed, and Meet cannot say whether ${whom} came in. If you spoke, save how it went in the dialer; if not, call them now.`,
         ];
       }
       // Meet sends no join signal: the room cannot say they did not join
@@ -1648,7 +1680,7 @@ export function roomSentence(room: RoomView, ctx: RoomCtx): Sentence {
             ? ". The room is closed, and Meet cannot say whether they came in. If you spoke, say so below; if not, call them now."
             : ctx.talkBelow
               ? ". The room is closed, and Meet cannot say whether they came in. If you spoke, save how it went below; if not, call them now."
-              : ". The room is closed, and Meet cannot say whether they came in. If you did not speak, call them now.",
+              : ". The room is closed, and Meet cannot say whether they came in. If you spoke, save how it went in the dialer; if not, call them now.",
         ];
       return [
         `${who} opened the link at `,
@@ -1926,9 +1958,15 @@ function momentActions(
       // The lead knocked, opened the link, or may have joined: never a
       // No-show press here (it is not quiet: HighLevel's no-show automation
       // writes to the lead), only what the rep can say (stress2, round 1).
+      // A Meet room on the lead page: the way to the dialer, where how it
+      // went is saved (m1 round 3).
       return {
         primary: null,
-        quiet: ctx.canMarkIntro ? [act("showed", "We spoke on the phone")] : [],
+        quiet: ctx.canMarkIntro
+          ? [act("showed", "We spoke on the phone")]
+          : m === "expired_opened" && room.provider === "meet"
+            ? saveInDialer(room, ctx)
+            : [],
       };
     case "closed":
       // "I can't let them in" closed this room and its replacement was not
@@ -2045,6 +2083,17 @@ function toDialer(room: RoomView, ctx: RoomCtx): RoomAction[] {
   if (room.purpose !== "fallback" && room.purpose !== "manual") return [];
   if (!room.lead_in_at) return [];
   return [act("to_dialer", "Book the next call")];
+}
+
+/**
+ * A closed Meet room nothing was seen in, on the lead page (no intro marks
+ * and no saved outcome below the panel): Meet reports nothing, so the rep
+ * who spoke saves how it went in the dialer (m1 round 3).
+ */
+function saveInDialer(room: RoomView, ctx: RoomCtx): RoomAction[] {
+  if (ctx.canMarkIntro || ctx.talkBelow || !room.contact_id) return [];
+  if (room.purpose !== "fallback" && room.purpose !== "manual") return [];
+  return [act("to_dialer", "Save how it went")];
 }
 
 /**
@@ -2758,7 +2807,7 @@ export function stripLine(i: StripInput): StripLine {
       const open =
         standby !== null &&
         (standby.state === "open" || standby.state === "host_in");
-      if (!open && i.health && !i.health.worker_ok)
+      if (!open && i.health && workerDownOf(i.health))
         return line(
           "down",
           [healthSentence(i.health)],
@@ -2960,7 +3009,7 @@ export function liveNews(
       key: `room:${r.id}:${m}`,
       text: sentenceText(
         bannerRoomSentence(r, now, {
-          workerDown: next.health?.worker_ok === false,
+          workerDown: workerDownOf(next.health),
         }),
         true,
       ),
@@ -2972,6 +3021,17 @@ export function liveNews(
 // ---------------------------------------------------------------------------
 // The health line
 // ---------------------------------------------------------------------------
+
+/**
+ * The room worker is down for the screens: no rooms are being made. A
+ * worker that runs and reports a problem (worker_trouble) is not down: its
+ * red line says what is wrong, and the other provider is still offered.
+ */
+export function workerDownOf(
+  h: Pick<Health, "worker_ok" | "worker_trouble"> | null | undefined,
+): boolean {
+  return h?.worker_ok === false && h.worker_trouble !== true;
+}
 
 export function healthTone(h: Health): "good" | "owed" | "bad" {
   if (!h.worker_ok) return "bad";

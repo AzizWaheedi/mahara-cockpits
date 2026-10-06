@@ -42,6 +42,7 @@ import {
   useLiveStatus,
   useRoomShown,
   withRoom,
+  workerDownOf,
 } from "../lib/rooms";
 import { AvailabilityStrip, PresenceDot, StaleNote } from "./AvailabilityStrip";
 import { button, buttonPrimary } from "./kit";
@@ -197,7 +198,7 @@ export function SalesBannerView({
     reply: Boolean(replyAlert),
   });
   const presence = liveOn ? (data?.me.state ?? null) : null;
-  const workerDown = data?.health?.worker_ok === false;
+  const workerDown = workerDownOf(data?.health);
   const roomSentence = room
     ? bannerRoomSentence(room, now, { workerDown })
     : null;

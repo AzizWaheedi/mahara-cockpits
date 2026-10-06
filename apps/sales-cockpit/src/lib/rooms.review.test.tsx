@@ -1184,6 +1184,9 @@ describe("14. every fixture draws", () => {
     "last_link_at",
     "late_open_at",
     "moved_from",
+    // m1 round 3: the open and the link's claim (link_late counts from them).
+    "opened_at",
+    "link_claimed_at",
   ];
 
   test("the browser's key list is contract v2's, in full", () => {

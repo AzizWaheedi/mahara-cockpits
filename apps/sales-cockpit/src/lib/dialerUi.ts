@@ -443,6 +443,8 @@ export type MissMoment = "missed_call" | "confirm";
  * at a minute (R1) and one whose create never answered at two (R2).
  */
 export const MAKING_LATE_STEP_MS = 150_000;
+/** lib/rooms.ts LINK_LATE_MS: the panel's "The link has not gone yet", here for the step under it. */
+export const LINK_LATE_STEP_MS = 90_000;
 export const CLAIM_MINUTE_STEP_MS = 60_000;
 
 /** sales-api's "may have gone" (ROOMS_COPY.may_have_gone_*): the link may be with the lead already. */
@@ -570,6 +572,9 @@ export function afterMiss(o: {
     lead_waiting_at?: string | null;
     late_open_at?: string | null;
     created_at?: string | null;
+    /** When the room opened and its link was asked for: the panel's "has not gone yet" counts from the later (m1 round 3). */
+    opened_at?: string | null;
+    link_claimed_at?: string | null;
     moved_from?: string | null;
     contact_first_name?: string | null;
   } | null;
@@ -643,6 +648,15 @@ export function afterMiss(o: {
   const live =
     v &&
     ["requested", "creating", "open", "host_in", "lead_in"].includes(v.state);
+  // The lead is in Zoom's waiting room: the step says so and points to the
+  // room, never the next lead (m1 round 3, step-next-lead-while-lead-in-
+  // waiting-room).
+  if (v && (v.state === "open" || v.state === "host_in") && v.lead_waiting_at)
+    return {
+      title: "They are in the waiting room",
+      text: "They are waiting to be let in. Open your room and admit them.",
+      send: null,
+    };
   if (v && live && v.link_sent_at) {
     // The room in place of one the lead could not get into, its link by
     // email only: they wait at the old door, so the step is a call to tell
@@ -700,6 +714,35 @@ export function afterMiss(o: {
       send: null,
       callNow: true,
     };
+  // The panel's "The link has not gone yet" (lib/rooms.ts link_late, from
+  // the later of the room's open and the link's claim): the step says the
+  // same, a call with the link from the panel, never "on its way" or the
+  // next lead (m1 round 3, step-on-its-way-under-link-late).
+  if (
+    v &&
+    (v.state === "open" || v.state === "host_in") &&
+    !v.link_sent_at &&
+    !v.refusal
+  ) {
+    const t = (x: string | null | undefined) =>
+      x ? Date.parse(x) : Number.NaN;
+    const opened = Number.isFinite(t(v.opened_at))
+      ? t(v.opened_at)
+      : t(v.created_at);
+    const claimed = t(v.link_claimed_at);
+    const from = Number.isFinite(claimed)
+      ? Number.isFinite(opened)
+        ? Math.max(opened, claimed)
+        : claimed
+      : opened;
+    if (Number.isFinite(from) && now - from >= LINK_LATE_STEP_MS)
+      return {
+        title: "The video link has not gone",
+        text: "The video link has not gone yet. Call them now and give them the link from the panel above.",
+        send: null,
+        callNow: true,
+      };
+  }
   if (v && live && !v.refusal)
     return {
       title: "The video link is on its way",

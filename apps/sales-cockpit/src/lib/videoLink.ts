@@ -186,6 +186,8 @@ export interface GateInput {
    * so it is never offered then. Left out, the clock is not read.
    */
   country?: unknown;
+  /** The lead's phone: a Gulf number's own clock comes first (m1 round 3, as sales-api reads it). */
+  phone?: unknown;
   now?: number;
   /** The call is the lead's own booked intro, in its time: they chose the hour, so the night rule never holds it. */
   introNow?: boolean;
@@ -202,8 +204,26 @@ export const NIGHT_LINE =
  */
 export function pickerSends(code: string | null | undefined): boolean {
   return (
-    code !== "lead_night" && code !== "booked_demo" && code !== "worker_down"
+    code !== "lead_night" &&
+    code !== "booked_demo" &&
+    code !== "worker_down" &&
+    // One link per missed call (m1 round 3): a new link waits for a new call.
+    code !== "link_already_sent"
   );
+}
+
+/**
+ * Said where Send a video link would be when the gate hides it for a reason
+ * the rep can act on (m1 round 3, closer-missed-demo-no-link-no-sentence):
+ * the lead's night, or a booked demo whose own Zoom link comes from
+ * HighLevel. Null: nothing to say.
+ */
+export const DEMO_LINK_LINE =
+  "This demo has its own Zoom link from HighLevel. Send them that link, or call again.";
+export function gateLine(why: GateWhy): string | null {
+  if (why === "lead_night") return NIGHT_LINE;
+  if (why === "booked_demo") return DEMO_LINK_LINE;
+  return null;
 }
 
 /** A booked demo's length when its end is not known on the page (sales-api reads the stored end). */
@@ -280,7 +300,7 @@ export function videoLinkGate(i: GateInput): { show: boolean; why: GateWhy } {
     if (
       i.country !== undefined &&
       !i.introNow &&
-      nightForLead(i.country, i.now ?? Date.now())
+      nightForLead(i.country, i.now ?? Date.now(), i.phone)
     )
       return no("lead_night");
   }

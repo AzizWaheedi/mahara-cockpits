@@ -131,6 +131,9 @@ export function baseRoom(now: number, over: Partial<RoomView> = {}): RoomView {
     last_link_at: null,
     late_open_at: null,
     moved_from: null,
+    // m1 round 3: unknown here, so link_late counts from created_at as before.
+    opened_at: null,
+    link_claimed_at: null,
     ...over,
   };
 }

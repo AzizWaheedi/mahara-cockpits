@@ -110,6 +110,38 @@ export function leadZones(country: unknown): readonly string[] | null {
   return LEAD_ZONES.kw as readonly string[];
 }
 
+/**
+ * The Gulf country a phone number dials into (the dialer only rings these),
+ * or null; sales-api sendrules.ts phoneCountry. The number names the lead's
+ * clock better than a stored country (m1 round 3: +971 leads stored KW,
+ * +966 leads stored US).
+ */
+const GULF_CODES: readonly [string, string][] = [
+  ["965", "KW"],
+  ["966", "SA"],
+  ["971", "AE"],
+  ["968", "OM"],
+  ["973", "BH"],
+  ["974", "QA"],
+];
+export function phoneCountry(phone: unknown): string | null {
+  const digits = String(phone ?? "")
+    .trim()
+    .replace(/[^\d+]/g, "");
+  const intl = digits.startsWith("+")
+    ? digits.slice(1)
+    : digits.startsWith("00")
+      ? digits.slice(2)
+      : null;
+  if (!intl) return null;
+  return GULF_CODES.find(([code]) => intl.startsWith(code))?.[1] ?? null;
+}
+
+/** The country whose clock a lead keeps: a Gulf number's own, else the stored country (sendrules.ts clockCountry). */
+export function clockCountry(country: unknown, phone: unknown): string {
+  return phoneCountry(phone) ?? String(country ?? "").trim();
+}
+
 /** The lead's first clock (the one a message names), or null when it is not known. */
 export function leadClock(country: unknown): string | null {
   return leadZones(country)?.[0] ?? null;
@@ -132,11 +164,18 @@ export function zoneHour(zone: string, at: number): number {
 
 /**
  * Night where the lead is: outside 09:00 to 21:00 on any of their clocks
- * (sales-api's rule for a video link, rooms.ts leadAtNight); a country the
- * table does not know keeps to Kuwait's clock.
+ * (sales-api's rule for a video link, rooms.ts leadAtNight), a Gulf
+ * number's own clock first; a country the table does not know keeps to
+ * Kuwait's clock.
  */
-export function nightForLead(country: unknown, at: number): boolean {
-  const zones = leadZones(country) ?? (LEAD_ZONES.kw as readonly string[]);
+export function nightForLead(
+  country: unknown,
+  at: number,
+  phone?: unknown,
+): boolean {
+  const zones =
+    leadZones(clockCountry(country, phone)) ??
+    (LEAD_ZONES.kw as readonly string[]);
   return zones.some(z => {
     const h = zoneHour(z, at);
     return !(h >= 9 && h < 21);
