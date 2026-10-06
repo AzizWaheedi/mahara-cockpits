@@ -443,7 +443,10 @@ export default function LeadPage({ me }: { me: Me }) {
                 <MarkControls
                   row={r}
                   onDone={() => activity.reload()}
-                  noShowHeld={video.open && r.call_type === "intro"}
+                  // Every call's No-show waits while the lead's video room
+                  // is open, as sales-api holds it (index.ts
+                  // videoLinkHoldsNoShow; m1 round 4, journey r4-r).
+                  noShowHeld={video.open}
                 />
               </li>
             ))}
