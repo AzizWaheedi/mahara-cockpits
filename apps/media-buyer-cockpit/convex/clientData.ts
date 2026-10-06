@@ -1,6 +1,11 @@
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
-import { internalMutation, internalQuery } from "./_generated/server";
+import {
+  internalAction,
+  internalMutation,
+  internalQuery,
+} from "./_generated/server";
+import { flush, note } from "./health";
 import { googleAccessToken, paceSheets } from "./tools";
 
 const wait = (ms: number) => new Promise(r => setTimeout(r, ms));
@@ -253,5 +258,112 @@ export const saveCopy = internalMutation({
     if (row) await ctx.db.patch(row._id, doc);
     else await ctx.db.insert("docCache", doc);
     return null;
+  },
+});
+
+// --- Correcting a client's name --------------------------------------------------------
+
+/**
+ * Which cell a name correction writes, or why it writes nothing. The row is
+ * found by its ClickUp id and must still read exactly the old name, so a
+ * correction can never land on the wrong client or undo someone's edit.
+ */
+export function renameCell(
+  rows: ClientDataRow[],
+  nameCol: number,
+  clickupId: string,
+  from: string,
+  to: string,
+): { cell: string; rowNumber: number } | { error: string } {
+  const name = to.trim();
+  if (!name) return { error: "The new name is empty." };
+  if (nameCol < 0 || nameCol > 25)
+    return { error: "Client Data has no Client Name column." };
+  const row = rows.find(r => r.clickupId === clickupId);
+  if (!row) return { error: `No Client Data row has ClickUp id ${clickupId}.` };
+  if (row.name !== from)
+    return {
+      error: `Row ${row.rowNumber} reads "${row.name}", not "${from}", so nothing was written.`,
+    };
+  return {
+    cell: `${String.fromCharCode(65 + nameCol)}${row.rowNumber}`,
+    rowNumber: row.rowNumber,
+  };
+}
+
+/** The audit row for a correction: one sentence, before and after. */
+export const auditRename = internalMutation({
+  args: { cell: v.string(), from: v.string(), to: v.string(), by: v.string() },
+  returns: v.null(),
+  handler: async (ctx, a) => {
+    await ctx.db.insert("ceoAudit", {
+      action: "clientData.rename",
+      table: "Client Data (sheet)",
+      rowId: a.cell,
+      what: `Renamed "${a.from}" to "${a.to}" in Client Data (${a.cell})`,
+      before: { name: a.from },
+      after: { name: a.to },
+      by: a.by,
+      at: Date.now(),
+    });
+    return null;
+  },
+});
+
+/**
+ * Correct a client's name in Client Data: the name every cockpit matches the
+ * client's campaigns, ad leads, spend and reports on. Run by hand, on the
+ * CEO's word. Aziz, 2026-10-06: "its arcturus fix it thats the correct
+ * name". The row said "Acturus Construction", so Arcturus Construction's
+ * card and profile matched none of its ad numbers.
+ */
+export const renameClient = internalAction({
+  args: {
+    clickupId: v.string(),
+    from: v.string(),
+    to: v.string(),
+    /** Whose word it is, for the audit row. */
+    by: v.string(),
+  },
+  returns: v.object({
+    ok: v.boolean(),
+    cell: v.optional(v.string()),
+    error: v.optional(v.string()),
+  }),
+  handler: async (ctx, { clickupId, from, to, by }) => {
+    const [{ col }, rows] = await Promise.all([
+      clientDataHeader(),
+      readClientData(),
+    ]);
+    const plan = renameCell(rows, col.name, clickupId, from, to);
+    if ("error" in plan) return { ok: false, error: plan.error };
+    const res = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${DATABASE_SHEET}/values/${encodeURIComponent(`Client Data!${plan.cell}`)}?valueInputOption=RAW`,
+      {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${await googleAccessToken()}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ values: [[to.trim()]] }),
+      },
+    );
+    if (!res.ok) {
+      const error = `Sheets ${res.status}: ${(await res.text()).slice(0, 160)}`;
+      note("sheets", false, error);
+      await flush(ctx);
+      return { ok: false, error };
+    }
+    note("sheets", true);
+    // The next read in this isolate sees the new name.
+    memo = undefined;
+    await ctx.runMutation(internal.clientData.auditRename, {
+      cell: plan.cell,
+      from,
+      to: to.trim(),
+      by,
+    });
+    await flush(ctx);
+    return { ok: true, cell: plan.cell };
   },
 });
