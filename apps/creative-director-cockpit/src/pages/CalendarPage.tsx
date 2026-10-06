@@ -1,11 +1,5 @@
 import { useMutation, useQuery } from "convex/react";
-import {
-  ArrowUpRight,
-  CalendarDays,
-  FolderOpen,
-  Plus,
-  Sparkles,
-} from "lucide-react";
+import { ArrowUpRight, CalendarDays, Plus, Sparkles } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Link } from "react-router";
 import { api } from "@/../convex/_generated/api";
@@ -475,13 +469,20 @@ export function ScriptingCalendar({ compact = false }: { compact?: boolean }) {
       </section>
 
       {/* Drive ---------------------------------------------------------------- */}
-      <section className={`${CARD} overflow-hidden`}>
-        <CardHead
-          icon={FolderOpen}
-          title="Client Drive folders"
-          sub="Scripts and footage, straight from the client folder"
-        />
-        <ul className="-mx-4 -mb-4 mt-4 divide-y border-t sm:-mx-6 sm:-mb-6">
+      {/* A reference list as long as the rest of the calendar, so it starts
+          folded: Today stays about what to write. A client's own page links
+          their folder too. [simplification audit, 2026-10-06] */}
+      <details className="overflow-hidden rounded-2xl border bg-card">
+        <summary className="flex flex-wrap items-center gap-x-2 gap-y-0.5 px-4 py-3 sm:px-6">
+          <span className="text-[15px] font-semibold">
+            Client Drive folders
+          </span>
+          <span className="text-xs text-muted-foreground">
+            Scripts and footage for {cal.clients.length} clients, straight from
+            each folder
+          </span>
+        </summary>
+        <ul className="divide-y border-t">
           {/* biome-ignore lint/suspicious/noExplicitAny: query payload is untyped */}
           {cal.clients.map((c: any) => (
             <li
@@ -535,7 +536,7 @@ export function ScriptingCalendar({ compact = false }: { compact?: boolean }) {
             </li>
           ))}
         </ul>
-      </section>
+      </details>
     </div>
   );
 }

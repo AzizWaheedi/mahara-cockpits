@@ -223,13 +223,12 @@ function Creative({ view }: { view: View }) {
   const { hash } = useLocation();
 
   // An old address (/work, /touchpoints) or a part's link lands on its part
-  // once the page has something to scroll to.
+  // once the page has something to scroll to. A jump, not a glide: a glide
+  // never runs in a tab opened in the background.
   const ready = snap !== undefined;
   useEffect(() => {
     if (view !== "sod" || !hash || !ready) return;
-    document
-      .getElementById(hash.slice(1))
-      ?.scrollIntoView({ behavior: "smooth", block: "start" });
+    document.getElementById(hash.slice(1))?.scrollIntoView({ block: "start" });
   }, [view, hash, ready]);
 
   if (snap === undefined) {
