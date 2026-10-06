@@ -2059,7 +2059,7 @@ function CallPane({
     if (!attempt) saveId.current ??= crypto.randomUUID();
     try {
       const out = await api<{
-        attempt?: { outcome?: string | null } | null;
+        attempt?: { id?: string | null; outcome?: string | null } | null;
         repeated?: boolean;
       }>("dial.save", {
         ...(attempt
@@ -2106,12 +2106,15 @@ function CallPane({
         return;
       }
       // A no-answer to message: the box opens with the ready message.
+      // A call saved by hand (none through the dialer) is tied to the
+      // attempt row the save wrote, so its video link is this call's one
+      // link (m1 round 4, hand-saved-miss-second-link).
       if (outcome === "no_answer")
         setMissed(
           m =>
             m ?? {
               trigger: "no_answer",
-              attemptId: attempt?.id ?? null,
+              attemptId: attempt?.id ?? out.attempt?.id ?? null,
               at: Date.now(),
             },
         );

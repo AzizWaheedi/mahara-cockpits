@@ -376,6 +376,15 @@ export const PICKER_NONE =
   "No message can reach this lead. You can still make the room and read the link out.";
 
 /**
+ * The picker's line at night on the lead's clock (m1 round 4,
+ * lead-page-picker-promises-link-at-night): sales-api holds every message
+ * of a lead-page room then (rooms.ts nightHolds), so the line never names a
+ * channel; the room can still be made and its link read out.
+ */
+export const PICKER_NIGHT =
+  "It is night where the lead is, so no message goes. You can make the room and read the link out.";
+
+/**
  * P1's picker line, "The lead gets the link on WhatsApp.", worked out as
  * roomlogic `channelPlan` does: free WhatsApp inside the lead's 24 hours,
  * then the call link template, then email ("bad number" puts email first).
@@ -391,8 +400,21 @@ export function linkPlanLine(i: {
   guardOpen: boolean | null;
   templateLive: boolean | null;
   emailFirst?: boolean;
+  /**
+   * The lead's country, phone and the moment (m1 round 4): at night on the
+   * lead's clock no message goes, so the line says so. Left out, the clock
+   * is not read.
+   */
+  country?: unknown;
+  phone?: unknown;
+  now?: number;
 }): string | null {
   const s = i.setting;
+  if (
+    i.country !== undefined &&
+    nightForLead(i.country, i.now ?? Date.now(), i.phone)
+  )
+    return PICKER_NIGHT;
   const wa = i.whatsapp;
   const em = i.email;
   // WhatsApp at all: the cockpit's switch, a number, no do-not-disturb, the gate.

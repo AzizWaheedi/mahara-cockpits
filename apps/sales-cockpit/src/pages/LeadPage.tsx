@@ -390,6 +390,10 @@ export default function LeadPage({ me }: { me: Me }) {
                   email: live?.channels.email,
                   guardOpen: roomsSetup.guard,
                   templateLive: roomsSetup.templateLive,
+                  // Night on the lead's clock: no message goes (m1 round 4).
+                  country: l.country ?? null,
+                  phone: l.phone ?? null,
+                  now: Date.now(),
                 })
               : null
           }

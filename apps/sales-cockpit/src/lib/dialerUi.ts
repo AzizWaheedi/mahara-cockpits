@@ -453,6 +453,16 @@ export function mayHaveGone(refusal: string | null | undefined): boolean {
 }
 
 /**
+ * sales-api's refusals the minute's re-ask tries again (roomlogic.ts
+ * linkRetrying: they end "tried again in a minute"): the link has not gone
+ * yet and goes by itself, so the panel never says "Not sent" or "send it
+ * another way" for them (m1 round 4, not-sent-then-reask-sends-on-top).
+ */
+export function linkRetrying(refusal: string | null | undefined): boolean {
+  return /tried again in a minute\.?$/i.test(String(refusal ?? "").trim());
+}
+
+/**
  * A room made in place of one the lead could not get into ("I can't let
  * them in"), whose link went by email only: the sentence that tells the rep
  * to call the lead, who is still at the old room's door; else null (m1
@@ -694,6 +704,14 @@ export function afterMiss(o: {
       send: null,
     };
   }
+  // The link is tried again by sales-api in a minute (m1 round 4): the step
+  // says so too, never a message of its own beside it.
+  if (v && live && linkRetrying(v.refusal) && !v.link_sent_at)
+    return {
+      title: "The video link has not gone yet",
+      text: "The video link has not gone yet. It is tried again in a minute. Wait for them here, or go to the next lead.",
+      send: null,
+    };
   // A room still being made past the sweep's minute with the worker down, or
   // past the panel's own "taking too long": no link is on its way, so the
   // step says to call, as the panel does (m1 round 2).

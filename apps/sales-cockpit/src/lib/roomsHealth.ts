@@ -16,6 +16,9 @@ import {
   type ZoomStatus,
 } from "./rooms";
 
+/** desk/rooms.py NOT_MAKING (roomlogic.ts NOT_MAKING_PREFIX): the worker runs and makes no room. */
+const NOT_MAKING_PREFIX = "Not making rooms: ";
+
 export interface JobRow {
   worker: string;
   job: string;
@@ -178,6 +181,34 @@ export function roomJobLines(
         `${j.what} reported at a time that cannot be read.`,
       );
     const when = clock(r.at);
+    // The room worker that runs and reports a problem it rode out (a
+    // database blip, a refused room message: desk/rooms.py ok false with
+    // rooms made) is not down (m1 round 4,
+    // team-page-worker-line-failed-while-making-rooms): owed, its own
+    // words, and no "not being made" runbook. Red only for a fresh row that
+    // says "Not making rooms:" or for a row gone stale (below).
+    if (
+      !r.ok &&
+      key === "sales-desk:rooms" &&
+      !String(r.detail ?? "").startsWith(NOT_MAKING_PREFIX) &&
+      !(j.staleS !== null && now - at > j.staleS * 1000)
+    )
+      return line(
+        "owed",
+        `${j.what} reported a problem at ${when}${r.detail ? `: ${sentence(r.detail)}` : "."} If a room fails, make it on the other provider.`,
+      );
+    // A room worker whose last row is old has stopped, whatever that row
+    // said (the guardian and the watchdog read its age first too).
+    if (
+      key === "sales-desk:rooms" &&
+      !r.ok &&
+      j.staleS !== null &&
+      now - at > j.staleS * 1000
+    )
+      return line(
+        roomsOn ? "bad" : "owed",
+        `${j.what} last ran at ${when}, later than it should.`,
+      );
     if (!r.ok)
       return line(
         "bad",

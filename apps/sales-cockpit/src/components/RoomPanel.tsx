@@ -29,6 +29,7 @@ import {
   openHostRoom,
   otherProvider,
   type Provider,
+  panelHealthSentence,
   providerName,
   type RoomAction,
   type RoomActionKey,
@@ -275,7 +276,13 @@ export function RoomPanelView({
 
       {/* Said right under the sentence when the worker is in trouble; a
           room still being made says it in its own sentence instead. */}
-      {red && health ? <HealthLine health={health} className="mt-3" /> : null}
+      {red && health ? (
+        <HealthLine
+          health={health}
+          sentence={panelHealthSentence(health, room)}
+          className="mt-3"
+        />
+      ) : null}
 
       {confirmEnd ? (
         <ConfirmEnd busy={busy !== null} onAnswer={onConfirmEnd} />

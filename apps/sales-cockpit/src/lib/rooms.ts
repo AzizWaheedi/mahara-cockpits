@@ -26,13 +26,14 @@ import { ApiError, type ApiFailure, uncertain } from "./apiErrors";
 import {
   CLAIM_MINUTE_STEP_MS,
   LINK_LATE_STEP_MS,
+  linkRetrying,
   MAKING_LATE_STEP_MS,
   mayHaveGone,
   movedByEmailOnly,
 } from "./dialerUi";
 import { clock, KUWAIT } from "./format";
 
-export { mayHaveGone, movedByEmailOnly };
+export { linkRetrying, mayHaveGone, movedByEmailOnly };
 
 // ---------------------------------------------------------------------------
 // The contract: what sales-api sends the browser
@@ -883,6 +884,14 @@ const OPENERS = new Set([
  * A server sentence set after a colon: no closing full stop, and a lower
  * first letter only when the first word is a known sentence opener.
  */
+/** A server sentence as the panel shows it: its first letter capital, one full stop. */
+export function reasonSentence(text: string | null | undefined): string {
+  const t = String(text ?? "")
+    .trim()
+    .replace(/[.!]+$/, "");
+  return t ? `${t.charAt(0).toUpperCase()}${t.slice(1)}.` : "";
+}
+
 export function reasonWords(text: string | null | undefined): string {
   const s = String(text ?? "")
     .trim()
@@ -970,6 +979,12 @@ export type RoomMoment =
   | "sent"
   | "not_sent"
   /**
+   * The link has not gone yet and sales-api tries it again in a minute
+   * (HighLevel busy, a contact read that did not answer): the panel says
+   * only that, never "Not sent" or "send it another way" (m1 round 4).
+   */
+  | "retrying"
+  /**
    * The link may have gone (HighLevel took the send and its answer was
    * lost): never "Not sent", which asks for a second copy (m1 round 1).
    */
@@ -998,6 +1013,12 @@ export type RoomMoment =
   | "expired_opened"
   /** Ended (by the rep, or by Zoom) with nobody in it. */
   | "ended_empty"
+  /**
+   * Closed by the sweep while its link was still being tried (link_not_sent,
+   * m1 round 4): the lead never got it, so never "nobody joined" and never a
+   * No-show press.
+   */
+  | "expired_unsent"
   | "closed";
 
 function isStandby(room: RoomView): boolean {
@@ -1066,6 +1087,8 @@ export function roomMoment(room: RoomView, now: number): RoomMoment {
   if (s === "expired") {
     if (room.result === "admit_blocked" || room.lead_waiting_at)
       return "expired_knocked";
+    if (room.end_reason === "link_not_sent" && !room.link_sent_at)
+      return "expired_unsent";
     if (room.end_reason === "events_lost") return "expired_unknown";
     if (
       room.first_open_at ||
@@ -1093,6 +1116,13 @@ export function roomMoment(room: RoomView, now: number): RoomMoment {
   }
   if (s === "ended" || s === "cancelled") return "closed";
   if (s === "lead_in") {
+    // Back in Zoom's waiting room after a drop (m1 round 4,
+    // zoom-rejoin-waiting-room-unseen): sales-api's view carries only a
+    // knock after the lead's join.
+    const knock = t(room.lead_waiting_at);
+    const joined = t(room.lead_in_at);
+    if (knock !== null && (joined === null || knock > joined))
+      return "waiting_room";
     const end = t(room.ends_at);
     return end !== null && now >= end ? "still_on_call" : "joined";
   }
@@ -1104,7 +1134,11 @@ export function roomMoment(room: RoomView, now: number): RoomMoment {
   // message could go (the rep read the link out), so it comes first.
   if (room.lead_waiting_at) return "waiting_room";
   if (!room.link_sent_at && room.refusal)
-    return mayHaveGone(room.refusal) ? "unclear" : "not_sent";
+    return mayHaveGone(room.refusal)
+      ? "unclear"
+      : linkRetrying(room.refusal)
+        ? "retrying"
+        : "not_sent";
   if (s === "host_in")
     return room.provider === "meet" && room.first_open_at
       ? "host_in_opened"
@@ -1319,6 +1353,18 @@ export function phoneInstead(text: string): string {
   return `${head} Call the lead on the phone.`;
 }
 
+/**
+ * The sweep failed the room because no room worker made it (R1: never picked
+ * up; R2: the make never answered): another room on the other provider
+ * waits on the same worker, so the next step is the phone (m1 round 4,
+ * worker-down-failed-room-says-try-zoom).
+ */
+export function workerNeverCame(room: Pick<RoomView, "error">): boolean {
+  return /room worker did not (pick this room up|start this room)|making the room took (too long|more than)/i.test(
+    String(room.error ?? ""),
+  );
+}
+
 export function failedSentence(room: RoomView): Sentence {
   const P = providerName(room.provider);
   const O = providerName(otherProvider(room.provider));
@@ -1496,7 +1542,9 @@ export function roomSentence(room: RoomView, ctx: RoomCtx): Sentence {
     case "overdue":
       return ["This room should have closed. Call the lead, or end the room."];
     case "failed":
-      return ctx.otherOk === false
+      return ctx.otherOk === false ||
+        ctx.workerDown === true ||
+        workerNeverCame(room)
         ? [phoneInstead(sentenceText(failedSentence(room)))]
         : failedSentence(room);
     case "ready":
@@ -1567,6 +1615,10 @@ export function roomSentence(room: RoomView, ctx: RoomCtx): Sentence {
         `The link may have gone ${how}. Check the lead's conversation in HighLevel before sending anything else.`,
       ];
     }
+    case "retrying":
+      // sales-api's own words ("..., so it is tried again in a minute"):
+      // nothing for the rep to send, so nothing goes twice (m1 round 4).
+      return [`${reasonSentence(room.refusal)}`];
     case "not_sent": {
       const said = readOut(room);
       // Ours: a link nobody could say (a Zoom link before the short link).
@@ -1586,6 +1638,10 @@ export function roomSentence(room: RoomView, ctx: RoomCtx): Sentence {
       return ["The lead opened the link at ", at, dev ? ` on a ${dev}.` : "."];
     }
     case "waiting_room":
+      if (room.state === "lead_in")
+        return [
+          `${name || "The lead"} is back in the waiting room. Admit them in Zoom.`,
+        ];
       if (v === "p1")
         return [`${name} is in the waiting room. Admit them in Zoom.`];
       if (v === "p2")
@@ -1596,7 +1652,13 @@ export function roomSentence(room: RoomView, ctx: RoomCtx): Sentence {
       // Meet never says a lead is knocking, and with the other provider out
       // of reach "I can't let them in" has nowhere to go: the next step for
       // a knock nobody can answer is said (m1 round 1, meet-knock-no-next-step).
-      if (room.provider === "meet" && room.contact_id && ctx.otherOk === false)
+      // The same while the room worker is down (m1 round 4,
+      // worker-down-panel-keeps-admit-blocked): no other room can be made.
+      if (
+        room.provider === "meet" &&
+        room.contact_id &&
+        (ctx.otherOk === false || ctx.workerDown === true)
+      )
         return [
           ...paren(`You are in. Waiting for ${who} `),
           " If Meet will not let them in, call them on the phone.",
@@ -1623,6 +1685,10 @@ export function roomSentence(room: RoomView, ctx: RoomCtx): Sentence {
         : [
             "The lead did not join in 10 minutes. Room closed. Call again or send a message.",
           ];
+    case "expired_unsent":
+      return [
+        "The room closed and its link never reached the lead. Call them, or send a new video link.",
+      ];
     case "expired_knocked": {
       const who = name || "The lead";
       const at =
@@ -1757,8 +1823,10 @@ export function roomTone(m: RoomMoment, room?: RoomView | null): Tone {
     case "joined":
       return "good";
     case "not_sent":
+    case "retrying":
     case "unclear":
     case "link_late":
+    case "expired_unsent":
     case "not_confirmed":
     case "expired":
     case "expired_knocked":
@@ -1803,7 +1871,9 @@ export function roomSteps(
 ): Step[] {
   const s = room.state;
   const final = isFinal(s);
-  const readOutOnly = !room.link_sent_at && Boolean(room.refusal);
+  // A link still tried again is neither read out nor "not sent" (m1 round 4).
+  const readOutOnly =
+    !room.link_sent_at && Boolean(room.refusal) && !linkRetrying(room.refusal);
   const steps: Step[] = [
     {
       key: "sent",
@@ -1847,8 +1917,15 @@ export function roomSteps(
     },
   ];
   if (!final && !isStandby(room) && !opts.frozen) {
+    // Meet's own link reports no open while the short link is off: the
+    // teal step is the one the room can still hear about (m1 round 4,
+    // journey r4-6), never Opened.
+    const blindOpen = room.provider === "meet" && !shortLinkOn(room);
     const next = steps.find(
-      st => !st.done && !(st.key === "sent" && readOutOnly),
+      st =>
+        !st.done &&
+        !(st.key === "sent" && readOutOnly) &&
+        !(st.key === "opened" && blindOpen),
     );
     if (next) next.current = true;
   }
@@ -1952,6 +2029,12 @@ function momentActions(
           ? [act("noshow", "No-show"), act("showed", "We spoke on the phone")]
           : [],
       };
+    case "expired_unsent":
+      // The link never went (m1 round 4): never a No-show press.
+      return {
+        primary: null,
+        quiet: ctx.canMarkIntro ? [act("showed", "We spoke on the phone")] : [],
+      };
     case "expired_knocked":
     case "expired_opened":
     case "expired_unknown":
@@ -1995,6 +2078,11 @@ function momentActions(
         primary: act("open", "Open my room"),
         quiet: room.provider === "meet" ? [act("host_in", "I'm in")] : [],
       };
+    case "waiting_room":
+      // On a call already: the lead dropped and is back at Zoom's door, so
+      // the call's own presses stay (m1 round 4).
+      if (room.state !== "lead_in") break;
+      return { primary: null, quiet: [act("finished", "Finished")] };
     case "joined":
     case "still_on_call": {
       const quiet: RoomAction[] = [];
@@ -2017,11 +2105,16 @@ function momentActions(
   const hostIn = room.state === "host_in" || m === "host_in_opened";
   const quiet: RoomAction[] = [];
   const late = m === "link_late" && Boolean(shortLink(room));
+  // The rep opened this Meet room from this tab: the next press is I'm in,
+  // as the banner says it (m1 round 4, journey r4-7), never a second tab.
+  const openedMeet = meet && !hostIn && openedHere.has(room.id);
   const primary = late
     ? act("copy", "Copy link")
     : hostIn
       ? act("lead_in", "The lead is in")
-      : act("open", "Open my room");
+      : openedMeet
+        ? act("host_in", "I'm in")
+        : act("open", "Open my room");
   // Only someone in the room can let the lead in, so "The lead is in"
   // waits for "I'm in" (or Zoom's own word that the host joined).
   if (late)
@@ -2029,6 +2122,9 @@ function momentActions(
       hostIn ? act("lead_in", "The lead is in") : act("open", "Open my room"),
     );
   if (hostIn) quiet.push(act("open", "Open my room"));
+  else if (openedMeet) {
+    if (!late) quiet.push(act("open", "Open my room"));
+  }
   // One label for the one step ("You're in" on the line), on Meet and Zoom.
   else if (meet || manualButtons(room, ctx.now))
     quiet.push(act("host_in", "I'm in"));
@@ -2036,6 +2132,7 @@ function momentActions(
   if (
     hasLead &&
     !booked &&
+    m !== "retrying" &&
     !room.link_channels.includes("email") &&
     !emailBlocked(room)
   )
@@ -2065,7 +2162,10 @@ function momentActions(
     meet &&
     (room.purpose === "fallback" || room.purpose === "manual") &&
     hasLead &&
-    ctx.otherOk !== false
+    ctx.otherOk !== false &&
+    // Its replacement needs the room worker (m1 round 4): hidden while it is
+    // down, as Try Zoom and Use Meet are.
+    !ctx.workerDown
   )
     quiet.push(act("admit_blocked", "I can't let them in"));
   if (!booked) quiet.push(act("end", "End room"));
@@ -2219,6 +2319,7 @@ const BANNER_SAYS_PANEL: ReadonlySet<RoomMoment> = new Set([
   "waiting_room",
   "host_in_opened",
   "not_sent",
+  "retrying",
   "unclear",
   "link_late",
   "making_down",
@@ -2279,10 +2380,17 @@ export function bannerRoomSentence(
   if (m === "making")
     return [`Making your ${providerName(room.provider)} room...`];
   // A room that failed after the rep moved on (stress2 round 3).
-  if (m === "failed" && isFinal(room.state))
+  if (m === "failed" && isFinal(room.state)) {
+    const failed = sentenceText(failedSentence(room));
+    // No other room can be made while the worker is down (m1 round 4).
+    const said =
+      ctx.workerDown === true || workerNeverCame(room)
+        ? phoneInstead(failed)
+        : failed;
     return [
-      `The link to ${name ?? "the lead"} was not sent. ${sentenceText(failedSentence(room))} Open the lead.`,
+      `The link to ${name ?? "the lead"} was not sent. ${said} Open the lead.`,
     ];
+  }
   // The lead opened the link and the room closed with nobody seen in it,
   // after the rep moved on (stress2 round 4): Meet's Ask to join is never
   // reported, so the one rep who should act is told.
@@ -3037,6 +3145,29 @@ export function healthTone(h: Health): "good" | "owed" | "bad" {
   if (!h.worker_ok) return "bad";
   if (/disagree/i.test(h.line ?? "")) return "owed";
   return "good";
+}
+
+/**
+ * The health line under a room's panel (m1 round 4,
+ * worker-red-line-under-live-room-says-send-own-link): under a room that is
+ * already open (its link out, or the call on), the worker being down only
+ * means no new room can be made, so the line says that and never "send your
+ * own Zoom or Meet link", which would send the lead a second link. The full
+ * sentence stays for the Team page and for rooms still being made or failed.
+ */
+export function panelHealthSentence(
+  h: Health,
+  room: Pick<RoomView, "state"> | null | undefined,
+): string {
+  if (
+    workerDownOf(h) &&
+    room &&
+    (room.state === "open" ||
+      room.state === "host_in" ||
+      room.state === "lead_in")
+  )
+    return "New video rooms cannot be made right now. This room still works.";
+  return healthSentence(h);
 }
 
 /** The server's sentence; the foundation's wording when it sent none. */
