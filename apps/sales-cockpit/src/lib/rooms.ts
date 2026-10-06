@@ -153,6 +153,10 @@ export const ROOM_VIEW_KEYS = [
   "link_claimed_at",
   "rang_at",
   "send_night",
+  // m1 round 5: what reached the lead, by lane.
+  "link_failed",
+  "link_held",
+  "link_no_whatsapp",
 ] as const;
 
 /** A room as the browser sees it. `start_url` is never part of it. */
@@ -199,6 +203,16 @@ export interface RoomView {
    * (m1 round 4).
    */
   send_night?: boolean;
+  /**
+   * The lanes the link failed on after it went (an email that bounced,
+   * Meta's late failure of a WhatsApp message) and the lanes HighLevel still
+   * holds at pending, from sales-api's own lines (m1 round 5): the panel
+   * says what reached the lead by lane.
+   */
+  link_failed?: string[];
+  link_held?: string[];
+  /** Meta said the lead's number is not on WhatsApp (131026). */
+  link_no_whatsapp?: boolean;
   /** When the room first showed the join (fix round 4): That was not the lead counts from the later of this and lead_in_at. */
   lead_in_seen_at?: string | null;
   /** What made the room, so "Try Zoom" makes the same kind of room. */
@@ -528,6 +542,12 @@ export function normalizeRoom(v: unknown): RoomView | null {
   if ("moved_from" in v)
     room.moved_from = oneOf(PROVIDERS, v.moved_from) ? v.moved_from : null;
   if ("send_night" in v) room.send_night = v.send_night === true;
+  const lanes = (x: unknown) =>
+    list(x).filter((c): c is string => typeof c === "string");
+  if ("link_failed" in v) room.link_failed = lanes(v.link_failed);
+  if ("link_held" in v) room.link_held = lanes(v.link_held);
+  if ("link_no_whatsapp" in v)
+    room.link_no_whatsapp = v.link_no_whatsapp === true;
   dropOpensBeforeLink(room);
   return room;
 }
@@ -1109,12 +1129,33 @@ export function linkReachedOrLeft(room: {
   return Boolean(room.refusal) && !linkRetrying(room.refusal);
 }
 
+/**
+ * The lanes the link still stands on: it went there, and it neither failed
+ * after it went nor is held by HighLevel (m1 round 5, sales-api's
+ * link_failed and link_held).
+ */
+export function standingLanes(room: RoomView): string[] {
+  const off = new Set([...(room.link_failed ?? []), ...(room.link_held ?? [])]);
+  return (room.link_channels ?? []).filter(c => !off.has(c));
+}
+
+/**
+ * Every lane the link went on failed after it went (a bounce, Meta's late
+ * failure): the link reached the lead nowhere (m1 round 5,
+ * neither-way-expiry-offers-noshow).
+ */
+export function linkFailedEverywhere(room: RoomView): boolean {
+  const ch = room.link_channels ?? [];
+  const failed = room.link_failed ?? [];
+  return ch.length > 0 && ch.every(c => failed.includes(c));
+}
+
 /** A video-link room (from the dialer or the lead page) whose link reached nobody. */
 function linkReachedNobody(room: RoomView): boolean {
   return (
     Boolean(room.contact_id) &&
     (room.purpose === "fallback" || room.purpose === "manual") &&
-    !linkReachedOrLeft(room) &&
+    (!linkReachedOrLeft(room) || linkFailedEverywhere(room)) &&
     !room.first_open_at &&
     !room.last_open_at &&
     !room.late_open_at
@@ -1650,28 +1691,84 @@ export function roomSentence(room: RoomView, ctx: RoomCtx): Sentence {
       return [head, at, "."];
     }
     case "not_confirmed": {
-      // Fix round 4: a template nobody saw whose email backup did not go is
-      // no send at all; the rep reads the link out.
-      if (!(room.link_channels ?? []).includes("email")) {
-        const said = readOut(room);
-        const head =
-          "WhatsApp did not confirm the template and the email did not go.";
-        return said
+      // Said by lane (m1 round 5): what failed or HighLevel holds, in its
+      // own words, and what still reached the lead, never a template
+      // nobody sent nor "sent by email" about an email that bounced.
+      const ch = room.link_channels ?? [];
+      const failed = room.link_failed ?? [];
+      const held = room.link_held ?? [];
+      const standing = standingLanes(room);
+      const said = readOut(room);
+      const readTail = (head: string): Sentence =>
+        said
           ? [`${head} Read the link out: `, { mono: said }]
           : [
               `${head} ${unsayable ? ZOOM_NOT_SAYABLE : "Copy the link and send it another way."}`,
             ];
+      const who = name || "the lead";
+      const textWhy = failed.includes("whatsapp_text")
+        ? room.link_no_whatsapp
+          ? "WhatsApp could not deliver the link (the number is not on WhatsApp)."
+          : "WhatsApp could not deliver the link."
+        : held.includes("whatsapp_text")
+          ? "WhatsApp has not taken the link yet."
+          : null;
+      const templateWhy = failed.includes("whatsapp_template")
+        ? "The WhatsApp template failed."
+        : ch.includes("whatsapp_template") && !standing.includes("email")
+          ? "WhatsApp did not confirm the template."
+          : null;
+      const emailWhy = failed.includes("email")
+        ? "The email bounced."
+        : held.includes("email")
+          ? "HighLevel has not sent the email yet."
+          : null;
+      if (failed.length || held.length) {
+        if (!standing.length) {
+          // Nothing reached the lead: two lanes down is "neither way".
+          const down = ch.filter(c => failed.includes(c) || held.includes(c));
+          if (down.length > 1)
+            return readTail(
+              `Neither way reached ${who === "the lead" ? "the lead" : who}.`,
+            );
+          return readTail(
+            emailWhy ??
+              textWhy ??
+              templateWhy ??
+              "The link did not reach the lead.",
+          );
+        }
+        const went = t(room.last_link_at ?? null) ?? t(room.link_sent_at);
+        const at = went === null ? null : clock(new Date(went).toISOString());
+        const on = standing.includes("email") ? "by email" : "on WhatsApp";
+        const why = emailWhy ?? textWhy ?? templateWhy ?? "";
+        return [
+          `${why} The link went ${on}${at ? " at " : "."}`.trimStart(),
+          ...(at ? [{ mono: at }, "."] : []),
+        ] as Sentence;
       }
+      // Fix round 4: a template nobody saw whose email backup did not go is
+      // no send at all; the rep reads the link out.
+      if (!ch.includes("email"))
+        return readTail(
+          ch.includes("whatsapp_template")
+            ? "WhatsApp did not confirm the template and the email did not go."
+            : "WhatsApp has not confirmed the link and no email went.",
+        );
       // The link went by email only and HighLevel still holds it (sales-api's
       // pendingEmail, m1 round 4, email-pending-said-as-template-unconfirmed):
       // no WhatsApp went, so the rep reads the link out, never waits.
-      if (!(room.link_channels ?? []).some(c => c.startsWith("whatsapp"))) {
-        const said = readOut(room);
-        const head = "HighLevel has not sent the email yet.";
+      if (!ch.some(c => c.startsWith("whatsapp")))
         return said
-          ? [`${head} Read the link out: `, { mono: said }]
-          : [`${head} Copy the link and send it another way.`];
-      }
+          ? [
+              "HighLevel has not sent the email yet. Read the link out: ",
+              { mono: said },
+            ]
+          : [
+              "HighLevel has not sent the email yet. Copy the link and send it another way.",
+            ];
+      if (!ch.includes("whatsapp_template"))
+        return ["WhatsApp has not confirmed the link. It went by email too."];
       return v === "p1"
         ? [
             "HighLevel did not confirm the WhatsApp template. The link went by email.",
@@ -2279,6 +2376,10 @@ function momentActions(
     ctx.otherOk !== false &&
     !readOut(room) &&
     !linkWentByEmail &&
+    // Never on the room made in place of a Meet room the lead could not get
+    // into: Use Meet sends her back to that door (m1 round 5,
+    // m1-journeys-r5-replacement-link-refused-by-link-cap).
+    !room.moved_from &&
     (m === "not_sent" || m === "link_late" || m === "not_confirmed")
   )
     quiet.push(act("retry", "Use Meet"));
@@ -2335,6 +2436,26 @@ export function roomHoldsNoShow(
   if (room.lead_in_at) return false;
   if (room.result === "admit_blocked" || room.moved_from) return true;
   return promisedWaitAhead(room, now) !== null;
+}
+
+/**
+ * Why the dialer's outcome grid leaves out Didn't show for this room's call
+ * now, or null (m1 round 5, m1-journeys-r5-dialer-grid-offers-noshow-room-holds):
+ * roomHoldsNoShow's rule, which the lead page's Mark this call reads and
+ * sales-api's videoLinkHoldsNoShow refuses by, said as what to do instead.
+ */
+export function noShowHold(
+  room: RoomView | null | undefined,
+  now: number,
+): string | null {
+  if (!room || !roomHoldsNoShow(room, now)) return null;
+  const name = first(room);
+  if (!isFinal(room.state))
+    return `${name ? `${name}'s` : "The lead's"} video room is still open, so Didn't show waits. Wait for it, or end the room first.`;
+  if (room.result === "admit_blocked" || room.moved_from)
+    return `${name ?? "The lead"} knocked on the video room and could not be let in, so Didn't show is not offered. Call them, or save how the call went.`;
+  const until = promisedWaitAhead(room, now);
+  return `The video link told ${name ?? "the lead"} the room would wait until ${clock(new Date(until ?? now).toISOString())}, so Didn't show waits until then. Call them now.`;
 }
 
 /** sales-api's night refusals (lead_night_read_out, lead_night_unsayable): no message goes now. */
@@ -2571,6 +2692,20 @@ export function bannerRoomSentence(
   if (m === "making")
     return [`Making your ${providerName(room.provider)} room...`];
   // A room that failed after the rep moved on (stress2 round 3).
+  // The room in place of one the lead knocked on was not made: the panel's
+  // own sentence, a call now, never back to the door she was locked out of
+  // nor "try again" (m1 round 5, m1-journeys-r5-banner-failed-replacement-says-use-meet).
+  if (
+    m === "failed" &&
+    isFinal(room.state) &&
+    room.moved_from &&
+    room.contact_id
+  ) {
+    const from = providerName(room.moved_from === "zoom" ? "zoom" : "meet");
+    return [
+      `${Name} knocked on the ${from} room and could not be let in, and the ${providerName(room.provider)} room was not made. Call them on the phone now. Open the lead.`,
+    ];
+  }
   if (m === "failed" && isFinal(room.state)) {
     const failed = sentenceText(failedSentence(room));
     // No other room can be made while the worker is down (m1 round 4).

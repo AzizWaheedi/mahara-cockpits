@@ -1011,12 +1011,15 @@ describe("journey r3b-D: the closer, on Huda's lead page at 11:05 after her miss
     for (const bad of [p.words]) expect(sane(bad)).toEqual([]);
     expect(p.moment).toBe("not_sent");
     expect(p.keys).toContain("retry");
-    // RoomPanel retry(): a room still open is cancelled first, then the other provider.
+    // RoomPanel retry() since m1 round 4c: one room.create naming the room
+    // it replaces (sales-api cancels it only when the new one will be made).
+    // A cancel first and then a create naming the cancelled room is refused
+    // since m1 round 5 (m1-conc-r5-use-meet-on-room-closed-by-other-tab):
+    // a room closed another way makes no room in its place.
     const r = p.room;
     let notice: string | null = null;
     let next: Row | null = null;
     try {
-      if (!R.isFinal(r.state)) await R.roomsApi.end(r, "cancel");
       const out = await R.roomsApi.create(R.retryRequest(r, ask, "meet"));
       next = out.room as Row;
     } catch (e) {

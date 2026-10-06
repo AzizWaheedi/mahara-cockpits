@@ -1195,6 +1195,10 @@ describe("14. every fixture draws", () => {
     "rang_at",
     // m1 round 4: room.status says whether a send is held for night.
     "send_night",
+    // m1 round 5: what reached the lead, by lane.
+    "link_failed",
+    "link_held",
+    "link_no_whatsapp",
   ];
 
   test("the browser's key list is contract v2's, in full", () => {

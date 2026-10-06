@@ -233,6 +233,23 @@ export function roomJobLines(
         roomsOn ? "bad" : "owed",
         `${j.what} last ran at ${when}, later than it should.`,
       );
+    // The watchdog that records alerts and posts none (no webhook in the
+    // vault): open alerts reach nobody, so never a green working line (m1
+    // round 5, m1-numbers-r5-team-page-watchdog-green-while-recorded-only).
+    if (
+      key === "sales-api:watchdog" &&
+      /recorded only/i.test(String(r.detail ?? ""))
+    ) {
+      const open = Number(
+        /^(\d+) open alerts?/i.exec(String(r.detail ?? ""))?.[1] ?? 0,
+      );
+      return line(
+        open > 0 ? "bad" : "owed",
+        open > 0
+          ? `${j.what}: ${open} open ${open === 1 ? "alert reaches" : "alerts reach"} nobody, last at ${when}. Put a working incoming webhook for #sales-alerts in the vault as sales_alerts_slack_webhook.`
+          : `${j.what}: no Slack webhook, so the next alert would reach nobody (last at ${when}). Put a working incoming webhook for #sales-alerts in the vault as sales_alerts_slack_webhook.`,
+      );
+    }
     return line(
       "good",
       `${j.what}: working, last at ${when}.${r.detail && j.staleS !== null ? ` ${sentence(r.detail)}` : ""}`,

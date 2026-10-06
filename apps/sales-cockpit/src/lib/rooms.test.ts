@@ -372,8 +372,10 @@ describe("the room panel's words, as the specs write them", () => {
     expect(say({ ...r, purpose: "manual" })).toBe(
       "You are in. Waiting for the lead (9:12 left).",
     );
+    // No lead_by: the sweep's R4 counts the lead's ten minutes from the link
+    // (m1 round 5, unsent-room-deadline-said-as-host-by), so the countdown does too.
     expect(say({ ...r, purpose: "manual", lead_by: null })).toBe(
-      "You are in. Waiting for the lead.",
+      "You are in. Waiting for the lead (9:12 left).",
     );
   });
 
@@ -543,10 +545,23 @@ describe("the room panel's words, as the specs write them", () => {
 describe("countdowns", () => {
   test("an open room counts to the first of its deadlines", () => {
     expect(R.roomLeft(sentRoom(), NOW)).toBe(552_000);
+    // A handover keeps its taker wait: the first deadline is host_by.
+    expect(
+      R.roomLeft(
+        sentRoom({ host_by: iso(NOW + 60 * S), purpose: "handover" }),
+        NOW,
+      ),
+    ).toBe(60_000);
+    // A video-link room whose link went waits for the host at least the
+    // lead's ten minutes and their grace (the sweep's R3, m1 round 3), so
+    // its first deadline is the lead's.
     expect(R.roomLeft(sentRoom({ host_by: iso(NOW + 60 * S) }), NOW)).toBe(
-      60_000,
+      552_000,
     );
-    expect(R.roomLeft(room(), NOW)).toBe(14 * MIN);
+    // No link and no lead_by yet: the sweep's R4 closes it ten minutes from
+    // the room's start, before host_by (m1 round 5,
+    // m1-time-r5-unsent-room-deadline-said-as-host-by).
+    expect(R.roomLeft(room(), NOW)).toBe(9 * MIN);
   });
 
   test("a room with the host in counts the lead's wait only", () => {

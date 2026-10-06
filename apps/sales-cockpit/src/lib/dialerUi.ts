@@ -548,6 +548,28 @@ function blocked(c: Reach, channel: "whatsapp" | "email"): string | null {
 const lower = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
 
 /**
+ * The message the plain step after a miss would offer this lead now: a
+ * WhatsApp where one can go (inside the window, or as a live template),
+ * else an email, else none (m1 round 5).
+ */
+function nextMessage(o: {
+  whatsapp: Reach | null | undefined;
+  email: Reach | null | undefined;
+  templatesLive: boolean | null;
+}): { send: "whatsapp" | "email" | null; say: string } {
+  const wa = o.whatsapp;
+  if (!wa) return { send: "whatsapp", say: "send them a WhatsApp" };
+  if (
+    !blocked(wa, "whatsapp") &&
+    (wa.window?.open || o.templatesLive !== false)
+  )
+    return { send: "whatsapp", say: "send them a WhatsApp" };
+  const emWhy = o.email ? blocked(o.email, "email") : null;
+  if (!emWhy) return { send: "email", say: "send them an email" };
+  return { send: null, say: "" };
+}
+
+/**
  * The step after a no-answer. WhatsApp goes free within 24 hours of the
  * lead's last message and as an approved template after that; with no
  * template set up, only email goes. Unknown (still reading) offers WhatsApp
@@ -595,6 +617,10 @@ export function afterMiss(o: {
     host_by?: string | null;
     last_link_at?: string | null;
     ends_at?: string | null;
+    /** The link's doubt, and what failed or is held by lane (m1 round 5, sales-api's view). */
+    link_unconfirmed_at?: string | null;
+    link_failed?: readonly string[] | null;
+    link_held?: readonly string[] | null;
   } | null;
   /**
    * A Send a video link press whose room.create has not answered yet (the
@@ -621,6 +647,13 @@ export function afterMiss(o: {
           created_at: new Date(o.videoPending).toISOString(),
         }
       : null);
+  // The message a "call them now" step falls back to: the one the plain
+  // step would offer for this lead now (m1 round 5,
+  // m1-journeys-r5-call-now-steps-say-whatsapp-that-cannot-go), never a
+  // WhatsApp that cannot go.
+  const way = nextMessage(o);
+  const ifNot = (extra = "") =>
+    way.send ? `; if they do not answer, ${way.say}${extra}.` : ".";
   // The room made in place of one the lead knocked on ("I can't let them
   // in", moved_from) closed with nobody in it, or was not made: the lead
   // came on time and was locked out by our own room, so the step is a call
@@ -638,9 +671,9 @@ export function afterMiss(o: {
       title: "They knocked and were not let in. Call them now.",
       text:
         v.state === "failed"
-          ? `They knocked on the ${from} room and could not be let in, and the ${to} room was not made. Call them now; if they do not answer, send them a WhatsApp.`
-          : `They knocked on the ${from} room and could not be let in, and nobody came into the ${to} room. Call them now; if they do not answer, send them a WhatsApp.`,
-      send: "whatsapp",
+          ? `They knocked on the ${from} room and could not be let in, and the ${to} room was not made. Call them now${ifNot()}`
+          : `They knocked on the ${from} room and could not be let in, and nobody came into the ${to} room. Call them now${ifNot()}`,
+      send: way.send,
       callNow: true,
     };
   }
@@ -670,8 +703,8 @@ export function afterMiss(o: {
   if (closedEmpty && (v.lead_waiting_at || v.result === "admit_blocked"))
     return {
       title: "They knocked and were not let in. Call them now.",
-      text: "They waited at the room's door and nobody let them in, so the room closed. Call them now; if they do not answer, send them a WhatsApp with a new link.",
-      send: "whatsapp",
+      text: `They waited at the room's door and nobody let them in, so the room closed. Call them now${ifNot(" with a new link")}`,
+      send: way.send,
       callNow: true,
     };
   // They opened a Zoom link and never came in (Zoom reports joins), or
@@ -683,8 +716,8 @@ export function afterMiss(o: {
   )
     return {
       title: "They opened the video link. Call them now.",
-      text: "They opened the link but did not get in, and the room has closed. Call them now; if they do not answer, send them a WhatsApp with a new link.",
-      send: "whatsapp",
+      text: `They opened the link but did not get in, and the room has closed. Call them now${ifNot(" with a new link")}`,
+      send: way.send,
       callNow: true,
     };
   // The room closed with nothing seen and nothing pressed, and the lead's
@@ -711,8 +744,8 @@ export function afterMiss(o: {
   )
     return {
       title: "Did you speak on video?",
-      text: "Meet cannot say whether they came in. If you spoke, save how it went. If not, send them a WhatsApp.",
-      send: "whatsapp",
+      text: `Meet cannot say whether they came in. If you spoke, save how it went. If not, ${way.send ? way.say : "call them again"}.`,
+      send: way.send,
       talk: true,
     };
   // The room closed after the lead opened its Meet link: they may have
@@ -726,8 +759,8 @@ export function afterMiss(o: {
   )
     return {
       title: "They opened the video link. Did you speak?",
-      text: "Meet cannot say whether they came in. If you spoke, save how it went. If not, send them a WhatsApp.",
-      send: "whatsapp",
+      text: `Meet cannot say whether they came in. If you spoke, save how it went. If not, ${way.send ? way.say : "call them again"}.`,
+      send: way.send,
       talk: true,
     };
   const live =
@@ -767,7 +800,20 @@ export function afterMiss(o: {
         send: null,
         callNow: true,
       };
-    const ch = v.link_channels ?? [];
+    // What still reached them (m1 round 5,
+    // late-failure-step-says-link-went-next-lead): a lane that failed after
+    // it went (a bounce, Meta's late failure) or that HighLevel holds is no
+    // link they have, and with none standing the step is a call now with
+    // the link read out, never "go to the next lead".
+    const off = new Set([...(v.link_failed ?? []), ...(v.link_held ?? [])]);
+    const ch = (v.link_channels ?? []).filter(c => !off.has(c));
+    if (v.link_unconfirmed_at && (v.link_channels ?? []).length && !ch.length)
+      return {
+        title: "The video link did not reach them",
+        text: "The video link did not reach them. Call them now and read the link from the panel above.",
+        send: null,
+        callNow: true,
+      };
     const how =
       ch.includes("whatsapp_text") || ch.includes("whatsapp_template")
         ? " on WhatsApp"

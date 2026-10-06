@@ -136,6 +136,10 @@ export function baseRoom(now: number, over: Partial<RoomView> = {}): RoomView {
     link_claimed_at: null,
     rang_at: null,
     send_night: false,
+    // m1 round 5: what reached the lead, by lane.
+    link_failed: [],
+    link_held: [],
+    link_no_whatsapp: false,
     ...over,
   };
 }

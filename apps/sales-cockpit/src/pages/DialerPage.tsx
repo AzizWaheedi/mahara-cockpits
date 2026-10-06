@@ -141,6 +141,7 @@ import {
   forThisMiss,
   leaveToast,
   linkMayHaveGoneClosed,
+  noShowHold,
   type RoomView,
   refusalCode,
   roomsApi,
@@ -153,6 +154,7 @@ import { toast } from "../lib/toast";
 import type { Lead, Me } from "../lib/types";
 import {
   gateLine,
+  introCallInWindow,
   linkPlanLine,
   missTrigger,
   NOBODY_SPOKE_VIDEO,
@@ -1718,6 +1720,8 @@ function CallPane({
     attemptId: string | null;
     /** When the miss was seen: a video link is offered for MISS_FRESH_MS after it (m1 round 1). */
     at: number;
+    /** When the missed call was placed: an intro's window is read by it, as sales-api does (m1 round 5). */
+    startedAt?: number | null;
   } | null>(null);
   // The after-miss step left open (the laptop asleep over lunch) no longer
   // offers a video link that would tell the lead "I tried to call you just
@@ -1762,6 +1766,7 @@ function CallPane({
           trigger: "no_answer",
           attemptId: open?.id ?? null,
           at: Date.now(),
+          startedAt: open?.started_at ? Date.parse(open.started_at) : null,
         },
     );
     onStay(contactId);
@@ -1775,16 +1780,32 @@ function CallPane({
     call: status.call,
   });
   const openId = open?.id ?? null;
+  const openStarted = open?.started_at ?? null;
   useEffect(() => {
     if (liveMiss)
-      setMissed({ trigger: liveMiss, attemptId: openId, at: Date.now() });
-  }, [liveMiss, openId]);
+      setMissed({
+        trigger: liveMiss,
+        attemptId: openId,
+        at: Date.now(),
+        startedAt: openStarted ? Date.parse(openStarted) : null,
+      });
+  }, [liveMiss, openId, openStarted]);
   const bookedIntro =
     (kind === "intro" || kind === "confirm") && appt?.type === "intro";
   // The intro itself, not its confirmation call (the evening before, or that
   // morning): only the intro's own room carries it, so an empty confirmation
   // room never settles the intro and a join there never marks it shown.
   const introCall = kind === "intro" && appt?.type === "intro";
+  // Its own hour clears the night rule only for a call inside the intro's
+  // window, as room.create reads it (m1 round 5): a late or early call at
+  // night gets the night line, never a button sales-api refuses.
+  const introNow =
+    introCall &&
+    introCallInWindow(
+      missed?.startedAt ?? missed?.at ?? Date.now(),
+      appt?.start_at,
+      roomsSetup.rooms?.settle_s ?? 1200,
+    );
   const gate = videoLinkGate({
     setting: roomsSetup.rooms,
     contactId,
@@ -1799,7 +1820,7 @@ function CallPane({
     country: l?.country ?? null,
     phone: l?.phone ?? null,
     now: Date.now(),
-    introNow: introCall,
+    introNow,
   });
   // A closer's video call is a demo (stress2 round 4): its length, its Zoom
   // rule, and never booked as an intro in a setter's place.
@@ -1960,10 +1981,18 @@ function CallPane({
   }
   // No-show is not offered while the lead's video room is open: HighLevel's
   // no-show automation writes to a lead who may be opening the link now
-  // (m1 round 2; sales-api refuses it too).
+  // (m1 round 2; sales-api refuses it too). Nor while the closed room still
+  // holds it (m1 round 5, m1-journeys-r5-dialer-grid-offers-noshow-room-holds):
+  // the wait its link promised, or the lead's knock we could not answer,
+  // as the lead page's Mark this call and sales-api read it.
+  const noShowHeld = video.open ? null : noShowHold(video.room, Date.now());
   const outcomes = OUTCOMES[kind].filter(
-    o => !(o.key === "noshow" && video.open),
+    o => !(o.key === "noshow" && (video.open || noShowHeld)),
   );
+  const noShowLine =
+    noShowHeld && OUTCOMES[kind].some(o => o.key === "noshow")
+      ? noShowHeld
+      : null;
   const chosen = outcomes.find(o => o.key === draft.outcome) ?? null;
   const dnd = Boolean(l?.dnd);
 
@@ -2147,6 +2176,9 @@ function CallPane({
               trigger: "no_answer",
               attemptId: attempt?.id ?? out.attempt?.id ?? null,
               at: Date.now(),
+              startedAt: attempt?.started_at
+                ? Date.parse(attempt.started_at)
+                : null,
             },
         );
       setSaved(words);
@@ -2621,6 +2653,11 @@ function CallPane({
               })}
             </div>
             {chosen ? <p className="muted text-xs">{chosen.hint}</p> : null}
+            {noShowLine ? (
+              <p className="muted text-xs" aria-live="polite">
+                {noShowLine}
+              </p>
+            ) : null}
 
             {draft.outcome === "callback" ? (
               <div className="space-y-2">

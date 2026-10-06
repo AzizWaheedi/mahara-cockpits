@@ -38,6 +38,8 @@ export interface RoomsSwitches {
   short_link: boolean;
   template_route: string;
   fallback: { scope: string; auto_on_miss: boolean; pilot_emails: string[] };
+  /** rooms.waits_s.settle: a booked intro's window runs to its start + this (sales-api inIntroWindow). */
+  settle_s: number;
 }
 
 type Raw = Record<string, unknown>;
@@ -64,7 +66,9 @@ export function readRoomsSetting(raw: unknown): RoomsSwitches | null {
   const def = obj(r.default_provider);
   const send = obj(r.send);
   const fb = obj(r.fallback);
+  const settle = Number(obj(r.waits_s).settle);
   return {
+    settle_s: Number.isFinite(settle) && settle > 0 ? settle : 1200,
     enabled: on(r.enabled),
     test_only: r.test_only !== false,
     test_contacts: strList(r.test_contacts),
@@ -191,6 +195,29 @@ export interface GateInput {
   now?: number;
   /** The call is the lead's own booked intro, in its time: they chose the hour, so the night rule never holds it. */
   introNow?: boolean;
+}
+
+/** A booked intro's window opens this long before its start (sales-api roomlogic INTRO_EARLY_MS). */
+export const INTRO_EARLY_MS = 5 * 60_000;
+
+/**
+ * The call is inside its booked intro's own window, as sales-api's
+ * room.create reads it (roomlogic inIntroWindow): from five minutes before
+ * the start to the start + rooms.waits_s.settle, by the time the call was
+ * placed (m1 round 5, m1-time-r5-late-intro-call-step-offers-link-refused-at-night).
+ * Only then does the lead's own hour clear the night rule.
+ */
+export function introCallInWindow(
+  callAt: number,
+  start: string | null | undefined,
+  settleS: number,
+): boolean {
+  const at = start ? Date.parse(start) : Number.NaN;
+  return (
+    Number.isFinite(at) &&
+    callAt >= at - INTRO_EARLY_MS &&
+    callAt <= at + settleS * 1000
+  );
 }
 
 /** Said where the link's button would be, at night on the lead's clock. */

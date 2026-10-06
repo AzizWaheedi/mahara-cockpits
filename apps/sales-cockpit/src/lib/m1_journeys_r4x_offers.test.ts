@@ -1110,7 +1110,9 @@ async function press(b: Built, key: string): Promise<Press> {
           }
           break;
         }
-        if (!R.isFinal(r.state)) await R.roomsApi.end(r, "cancel");
+        // RoomPanel retry() since m1 round 4c: one room.create naming the
+        // room it replaces, never a cancel first (m1 round 5 refuses a
+        // create naming a room closed another way).
         const out = await R.roomsApi.create(
           R.retryRequest(r, b.ask as never, R.otherProvider(r.provider)),
         );
