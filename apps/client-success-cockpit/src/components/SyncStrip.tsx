@@ -8,8 +8,13 @@ const STALE_MINUTES = 50;
  * One honest line about the data underneath every screen. Green path: nothing shows.
  * If the last bridge run failed, or nothing has landed for the best part of an hour,
  * the CSM sees it here instead of trusting stale numbers.
+ *
+ * `only="stale"` is the every-page copy: it shows only when the sync itself has
+ * stopped. One feed failing (one client's sheet not shared, say) is `only="feed"`,
+ * shown on Today alone, because a red line on every page for one client teaches
+ * people to stop reading it (the simplification audit, 2026-10-06).
  */
-export function SyncStrip() {
+export function SyncStrip({ only }: { only?: "stale" | "feed" } = {}) {
   const s = useQuery(api.csm.syncStatus, {});
   if (!s) return null;
 
@@ -25,6 +30,8 @@ export function SyncStrip() {
   const workingHours = hour >= 7 && hour < 21;
   const stale = ageMin === null || (workingHours && ageMin > STALE_MINUTES);
   if (s.ok && !stale) return null;
+  if (only === "stale" && !stale) return null;
+  if (only === "feed" && stale) return null;
 
   const when = at
     ? new Date(at).toLocaleTimeString("en-GB", {

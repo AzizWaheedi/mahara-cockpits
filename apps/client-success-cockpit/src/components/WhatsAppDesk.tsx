@@ -2,13 +2,15 @@ import { useAction } from "convex/react";
 import {
   Archive,
   CheckCheck,
+  ChevronRight,
   LoaderCircle,
   Mic,
   Send,
   Users,
 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
+import { clientMatcher } from "@/lib/search";
 import { api } from "../../convex/_generated/api";
 
 /**
@@ -256,10 +258,26 @@ const CONNECTED: Record<Desk, boolean> = {
   creative: false,
 };
 
-export function WhatsAppDesk({ desk }: { desk: Desk }) {
+export function WhatsAppDesk({
+  desk,
+  clients,
+}: {
+  desk: Desk;
+  /**
+   * The client list, when the desk should put client groups first. The rest
+   * (team chats, job-post groups, people whose name is not a client's) fold
+   * under them with their count, never dropped (the simplification audit,
+   * 2026-10-06).
+   */
+  clients?: string[];
+}) {
   const inbox = useAction(api.wa.inbox);
   const [threads, setThreads] = useState<Thread[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const isClient = useMemo(
+    () => (clients ? clientMatcher(clients) : null),
+    [clients],
+  );
 
   const load = useCallback(async () => {
     try {
@@ -303,22 +321,59 @@ export function WhatsAppDesk({ desk }: { desk: Desk }) {
       </p>
     );
 
+  const mine = isClient
+    ? threads.filter(t => isClient(t.contact_name ?? ""))
+    : threads;
+  const others = isClient
+    ? threads.filter(t => !isClient(t.contact_name ?? ""))
+    : [];
+
   return (
     <section>
       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
         <h2 className="text-[15px] font-semibold tracking-tight">WhatsApp</h2>
         <span className="text-xs text-muted-foreground">
-          {threads.length
-            ? `${threads.length} waiting on a reply`
-            : "Every conversation is answered. New ones appear here within fifteen minutes of a client writing."}
+          {threads.length === 0
+            ? "Every conversation is answered. New ones appear here within fifteen minutes of a client writing."
+            : isClient
+              ? `${mine.length} client ${mine.length === 1 ? "conversation" : "conversations"} waiting on a reply${
+                  others.length
+                    ? `, ${others.length} other conversations below`
+                    : ""
+                }`
+              : `${threads.length} waiting on a reply`}
         </span>
       </div>
-      {threads.length ? (
+      {mine.length ? (
         <ul className="mt-3 space-y-3">
-          {threads.map(t => (
+          {mine.map(t => (
             <Thread key={t.id} t={t} desk={desk} onDone={() => void load()} />
           ))}
         </ul>
+      ) : threads.length ? (
+        <p className="mt-3 text-sm text-muted-foreground">
+          No client is waiting on a reply. The other conversations are below.
+        </p>
+      ) : null}
+      {others.length ? (
+        <details className="group mt-4 rounded-2xl border border-dashed">
+          <summary className="no-marker flex cursor-pointer flex-wrap items-center gap-2 px-4 py-3 text-sm font-medium sm:px-6">
+            <ChevronRight
+              aria-hidden
+              className="size-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-90"
+            />
+            Other conversations ({others.length})
+            <span className="text-xs font-normal text-muted-foreground">
+              team chats, other groups, and people whose name is not a client's.
+              Archive the ones that need nothing.
+            </span>
+          </summary>
+          <ul className="space-y-3 px-2 pb-3 sm:px-3">
+            {others.map(t => (
+              <Thread key={t.id} t={t} desk={desk} onDone={() => void load()} />
+            ))}
+          </ul>
+        </details>
       ) : null}
     </section>
   );

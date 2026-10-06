@@ -265,14 +265,15 @@ export function OnboardingKit({
   const payment = lines(h.billing_notes);
   const lastOk = page?.lastOk ?? null;
   const problem = error ?? page?.problem ?? page?.last?.problem ?? null;
+  // The same names as the client page's links row: one name per link.
   const files: [string, string | null | undefined][] = [
-    ["Drive folder", links.drive_folder ?? links.drive],
-    ["Report sheet", links.report_sheet ?? client.sheetLink],
+    ["Client drive", links.drive_folder ?? links.drive],
+    ["Performance sheet", links.report_sheet ?? client.sheetLink],
     ["Market research", links.market_research],
     ["Client history", links.history_doc],
-    ["HighLevel", links.ghl],
+    ["GHL sub-account", links.ghl],
     ["Website", links.website],
-    ["ClickUp card", links.clickup ?? client.taskUrl],
+    ["ClickUp record", links.clickup ?? client.taskUrl],
   ];
   const shownFiles = files.filter(
     (x): x is [string, string] => typeof x[1] === "string" && isUrl(x[1]),

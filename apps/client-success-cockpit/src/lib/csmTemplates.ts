@@ -357,9 +357,9 @@ const TEMPLATES: Template[] = [
         ? `No report sent in ${c.reportDays} days, the monthly report is overdue`
         : "No monthly report has ever been sent to this client",
     en: c =>
-      `Hi ${first(c.name)}, your monthly report is ready, numbers, what we changed and what we are doing next month are all in here: ${c.sheetLink ?? "[report link]"}\n\nTwo things worth your eye: the leads that came in, and any appointment still missing an outcome. If you fill those in, next month's report gets sharper for both of us.\n\nHappy to walk you through it on a quick call if you would rather hear it than read it.`,
+      `Hi ${first(c.name)}, your monthly report is ready, numbers, what we changed and what we are doing next month are all in here: ${c.reportUrl ?? "[report link]"}\n\nTwo things worth your eye: the leads that came in, and any appointment still missing an outcome. If you fill those in, next month's report gets sharper for both of us.\n\nHappy to walk you through it on a quick call if you would rather hear it than read it.`,
     ar: c =>
-      `السلام عليكم ${first(c.name)}، تقريركم الشهري جاهز, الأرقام، والتعديلات اللي سويناها، وخطتنا للشهر الجديد، كلها هنا: ${c.sheetLink ?? "[رابط التقرير]"}\n\nأمرين يستاهلون نظرتكم: العملاء المحتملين اللي وصلوا، وأي موعد مازال بدون نتيجة مسجلة. إذا عبيتوها، تقرير الشهر الجاي يصير أدق لنا ولكم.\n\nوإذا تفضلون أشرحه لكم على مكالمة قصيرة، جاهز.`,
+      `السلام عليكم ${first(c.name)}، تقريركم الشهري جاهز, الأرقام، والتعديلات اللي سويناها، وخطتنا للشهر الجديد، كلها هنا: ${c.reportUrl ?? "[رابط التقرير]"}\n\nأمرين يستاهلون نظرتكم: العملاء المحتملين اللي وصلوا، وأي موعد مازال بدون نتيجة مسجلة. إذا عبيتوها، تقرير الشهر الجاي يصير أدق لنا ولكم.\n\nوإذا تفضلون أشرحه لكم على مكالمة قصيرة، جاهز.`,
   },
   {
     id: "routine",
@@ -373,6 +373,23 @@ const TEMPLATES: Template[] = [
       `هلا ${first(c.name)}، تحديث سريع من طرفنا, الحملة شغالة وأنا أتابعها يومياً.\n\nأي شي تبي منه أكثر، أو نوع مشاريع ما تبي يوصلك، خبرني وأوجّهها بهذا الاتجاه.`,
   },
 ];
+
+/** The templates' names, so the search box finds "invoice" or "monthly report". */
+export const TEMPLATE_TITLES: string[] = TEMPLATES.map(t => t.title);
+
+/**
+ * The blanks a draft can carry for the CSM to fill: the report link it does
+ * not have yet, the onboarding spine's list, date and time. A message still
+ * holding one never reaches a client (the simplification audit, 2026-10-06).
+ */
+export const PLACEHOLDER =
+  /\[(report link|رابط التقرير|list|القائمة)\]|\b(DATE|TIME)\b/;
+
+/** Every blank left in a message, once each, to say what to fill in. */
+export function blanksIn(text: string): string[] {
+  const all = text.match(new RegExp(PLACEHOLDER.source, "g")) ?? [];
+  return [...new Set(all)];
+}
 
 /** Every template that applies, most urgent first — she picks the angle. */
 /**

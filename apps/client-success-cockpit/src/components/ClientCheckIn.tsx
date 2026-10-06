@@ -103,6 +103,7 @@ export function BookCallDialog({
   prepare,
   book,
   onBooked,
+  defaultOpen,
 }: {
   taskId: string;
   clientName: string;
@@ -112,9 +113,11 @@ export function BookCallDialog({
   prepare: Prepare;
   book: Book;
   onBooked?: (receipt: Receipt, kind: CallKind) => void;
+  /** Open on arrival, when the search box's "Book a call" brought you here. */
+  defaultOpen?: boolean;
 }) {
   const suggested = suggestedCall(stage);
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(Boolean(defaultOpen));
   const [kind, setKind] = useState<CallKind>(initialKind ?? suggested);
   const [day, setDay] = useState(today);
   const [prepared, setPrepared] = useState<Prepared | null>(null);
@@ -454,6 +457,10 @@ type Props = {
   prepare: Prepare;
   book: Book;
   loadContact: LoadContact;
+  /** Open the booking on arrival. */
+  autoOpen?: boolean;
+  /** Anything else that belongs beside the booking button. */
+  extra?: ReactNode;
 };
 
 /** The client's ID, their main contact and booking, at the top of their profile. */
@@ -465,6 +472,8 @@ export function ClientCheckInCard({
   prepare,
   book,
   loadContact,
+  autoOpen,
+  extra,
 }: Props) {
   const [copied, setCopied] = useState(false);
   const [lastBooked, setLastBooked] = useState<string | null>(null);
@@ -524,26 +533,33 @@ export function ClientCheckInCard({
           </p>
         ) : null}
       </div>
-      <BookCallDialog
-        taskId={taskId}
-        clientName={clientName}
-        stage={stage}
-        prepare={prepare}
-        book={book}
-        onBooked={r => setLastBooked(r.startTime)}
-        trigger={
-          <Button>
-            <CalendarPlus aria-hidden />
-            Book a call
-          </Button>
-        }
-      />
+      <div className="flex flex-wrap items-center gap-2">
+        <BookCallDialog
+          taskId={taskId}
+          clientName={clientName}
+          stage={stage}
+          prepare={prepare}
+          book={book}
+          defaultOpen={autoOpen}
+          onBooked={r => setLastBooked(r.startTime)}
+          trigger={
+            <Button>
+              <CalendarPlus aria-hidden />
+              Book a call
+            </Button>
+          }
+        />
+        {extra}
+      </div>
     </div>
   );
 }
 
 export function ClientCheckIn(
-  props: Pick<Props, "taskId" | "clientName" | "nextCallAt" | "stage">,
+  props: Pick<
+    Props,
+    "taskId" | "clientName" | "nextCallAt" | "stage" | "autoOpen" | "extra"
+  >,
 ) {
   const prepare = useAction(api.checkIns.prepare);
   const book = useAction(api.checkIns.book);

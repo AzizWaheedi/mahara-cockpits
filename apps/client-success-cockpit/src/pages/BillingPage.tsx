@@ -14,7 +14,7 @@ import type { Account } from "../../convex/billingCore";
  * the portal gave this success manager. A payment logged here waits in the
  * billing inbox until the CEO cockpit takes it into the ledger.
  */
-export function BillingPage() {
+export function BillingPage({ embedded = false }: { embedded?: boolean }) {
   const sheet = useAction(api.billing.sheet);
   const edit = useAction(api.billing.edit);
   const logPayment = useAction(api.billing.logPayment);
@@ -42,8 +42,11 @@ export function BillingPage() {
   );
 
   return (
-    <div className="mx-auto w-full max-w-6xl space-y-6">
+    <div
+      className={embedded ? "space-y-6" : "mx-auto w-full max-w-6xl space-y-6"}
+    >
       <PageHeader
+        as={embedded ? "h2" : "h1"}
         title="Billing"
         sub="Who pays next, how they pay, and what the billing SOP says to do today. Every change is made on the ClickUp card."
       />

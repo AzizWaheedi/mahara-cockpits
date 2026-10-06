@@ -1,5 +1,5 @@
-import { ArrowUpRight } from "lucide-react";
-import type { ReactNode } from "react";
+import { ArrowUpRight, ChevronRight } from "lucide-react";
+import { type ReactNode, useState } from "react";
 import { cn } from "@/lib/utils";
 
 /**
@@ -15,19 +15,29 @@ export function PageHeader({
   sub,
   actions,
   children,
+  as = "h1",
 }: {
   title: ReactNode;
   sub?: ReactNode;
   actions?: ReactNode;
   /** Anything that belongs to the title block, under the muted line. */
   children?: ReactNode;
+  /** h2 when the page sits inside another one, as a tab of Money does. */
+  as?: "h1" | "h2";
 }) {
+  const Title = as;
   return (
     <header className="flex flex-wrap items-end justify-between gap-3">
       <div className="min-w-0">
-        <h1 className="text-2xl font-semibold tracking-tight sm:text-[28px] sm:leading-9">
+        <Title
+          className={
+            as === "h1"
+              ? "text-2xl font-semibold tracking-tight sm:text-[28px] sm:leading-9"
+              : "text-lg font-semibold tracking-tight"
+          }
+        >
           {title}
-        </h1>
+        </Title>
         {sub ? (
           <p className="mt-1 text-sm text-muted-foreground">{sub}</p>
         ) : null}
@@ -231,5 +241,47 @@ export function Kicker({
     >
       {children}
     </div>
+  );
+}
+
+/**
+ * A folded section whose contents are drawn, and their data read, only once
+ * it is opened: a closed fold costs the database nothing (the Convex usage
+ * rule since the September 2026 overage).
+ */
+export function Fold({
+  title,
+  hint,
+  children,
+  className,
+}: {
+  title: ReactNode;
+  /** One muted line beside the title, saying what is inside. */
+  hint?: ReactNode;
+  children: ReactNode;
+  className?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <details
+      className={cn("group rounded-2xl border bg-card", className)}
+      onToggle={e => setOpen((e.currentTarget as HTMLDetailsElement).open)}
+    >
+      <summary className="no-marker flex cursor-pointer flex-wrap items-center gap-2 px-4 py-4 text-[15px] font-semibold sm:px-6">
+        <ChevronRight
+          aria-hidden
+          className="size-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-90"
+        />
+        {title}
+        {hint ? (
+          <span className="text-xs font-normal text-muted-foreground">
+            {hint}
+          </span>
+        ) : null}
+      </summary>
+      {open ? (
+        <div className="border-t px-4 py-4 sm:px-6">{children}</div>
+      ) : null}
+    </details>
   );
 }

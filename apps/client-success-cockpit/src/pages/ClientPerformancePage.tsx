@@ -84,8 +84,11 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
   return <h3 className="text-[15px] font-semibold">{children}</h3>;
 }
 
-/** Each link's source of truth, so a missing one says where to add it. */
-const LINK_LABELS: {
+/**
+ * Each link's source of truth, so a missing one says where to add it. One
+ * name per link everywhere in the cockpit (the client page's header uses it).
+ */
+export const LINK_LABELS: {
   key: string;
   label: string;
   hint: string;
@@ -130,7 +133,7 @@ const LINK_LABELS: {
   },
 ];
 
-function Links({ links }: { links: Record<string, string> }) {
+export function ClientLinks({ links }: { links: Record<string, string> }) {
   return (
     <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
       {LINK_LABELS.map(l => {
@@ -494,18 +497,17 @@ function ConstraintCard({ c, first }: { c: Constraint; first?: boolean }) {
 }
 
 /**
- * One card that makes the CSM walk into a call with solutions instead of questions.
+ * Before the call: one block that makes the CSM walk in with solutions.
  *
  * The company rule is that the CSM always brings solutions. That is a preparation problem, not a
- * character problem, so this assembles the four things a good call needs from data already on
- * the profile: where the client stands, the single constraint to lead with, the fix to offer,
- * and the ask that is owed. Nothing here is invented. When a number is missing the card says
- * what to ask for instead of guessing.
+ * character problem, so this assembles what a good call needs from data already on the profile:
+ * where the client stands, the first thing holding them back with its fix and its message (the
+ * diagnosis below), and the ask that is owed. It was two blocks, "Prep for this call" and the
+ * diagnosis, and the first repeated the second's top card (the simplification audit,
+ * 2026-10-06). Nothing here is invented: when a number is missing it says what to ask for.
  */
-function CallPrep({ p }: { p: Any }) {
-  const [open, setOpen] = useState(false);
+function BeforeTheCall({ p }: { p: Any }) {
   const perf = (p.performance ?? {}) as Any;
-  const d = useMemo(() => diagnose(p), [p]);
   const m = (perf.month ?? {}) as Any;
   const l = (perf.lastMonth ?? {}) as Any;
   const useLast = Number(m.leads ?? 0) === 0 && Number(l.leads ?? 0) > 0;
@@ -513,7 +515,6 @@ function CallPrep({ p }: { p: Any }) {
   const label = useLast
     ? (perf.lastMonthLabel ?? "last month")
     : (perf.monthLabel ?? "this month");
-  const lead = d.top ?? d.rest?.[0];
   const stale = Number(perf.staleCount ?? 0);
   const facts = [
     `${label}: ${Number(n.leads ?? 0)} enquiries, ${Number(n.booked ?? 0)} booked, ${Number(n.shows ?? 0)} attended, ${Number(n.closes ?? 0)} closed`,
@@ -521,15 +522,15 @@ function CallPrep({ p }: { p: Any }) {
       ? `${stale} appointments still have no outcome on their sheet`
       : "Every appointment has an outcome, their tracking is clean",
     p.liveDays != null
-      ? `Live ${p.liveDays} days, stage ${p.stage ?? "unknown"}`
-      : `Stage ${p.stage ?? "unknown"}`,
+      ? `Live ${p.liveDays} days, stage ${displayLabel(p.stage) || "unknown"}`
+      : `Stage ${displayLabel(p.stage) || "unknown"}`,
     p.happiness
-      ? `Their own happiness rating: ${p.happiness}`
+      ? `Their own happiness rating: ${displayLabel(p.happiness)}`
       : "No happiness rating on their record, ask for one",
   ];
   const nudge = p.reportNudge as Any;
   return (
-    <section className="space-y-4 rounded-2xl border border-primary/30 bg-card p-4 sm:p-6">
+    <section className="space-y-5 rounded-2xl border border-primary/30 bg-card p-4 sm:p-6">
       {nudge?.url ? (
         <div className="callout-warn rounded-xl p-4 text-sm">
           <p className="font-medium">
@@ -547,59 +548,30 @@ function CallPrep({ p }: { p: Any }) {
           </Button>
         </div>
       ) : null}
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0 flex-1 basis-60">
-          <h3 className="text-[15px] font-semibold">Prep for this call</h3>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Read this once before you dial. Lead with the constraint, offer the
-            fix, then make the ask.
-          </p>
-        </div>
-        <Button
-          size="sm"
-          variant="outline"
-          aria-expanded={open}
-          onClick={() => setOpen(v => !v)}
-        >
-          {open ? "Hide" : "Show"}
-        </Button>
+      <div>
+        <h3 className="text-[15px] font-semibold">Before the call</h3>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Read this once before you dial. Lead with the first thing holding them
+          back, offer its fix, then make the ask.
+        </p>
       </div>
-      {open ? (
-        <div className="space-y-4 text-sm">
-          <div>
-            <p className="font-medium">Where they stand</p>
-            <ul className="mt-1 ml-4 list-disc space-y-0.5 text-muted-foreground">
-              {facts.map(f => (
-                <li key={f}>{f}</li>
-              ))}
-            </ul>
-          </div>
-          <div>
-            <p className="font-medium">Lead with this</p>
-            <p className="mt-1 text-muted-foreground">
-              {lead ? lead.title : d.headline}
-            </p>
-          </div>
-          {lead?.fixes?.length ? (
-            <div>
-              <p className="font-medium">The fix you are bringing</p>
-              <ul className="mt-1 ml-4 list-disc space-y-0.5 text-muted-foreground">
-                {lead.fixes.slice(0, 3).map((x: string) => (
-                  <li key={x}>{x}</li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
-          <div>
-            <p className="font-medium">Before you hang up</p>
-            <p className="mt-1 text-muted-foreground">
-              {stale
-                ? "Agree who fills the missing outcomes and by when. Get a name, not a nod."
-                : "Book the next check in on the call, and ask for the review or the referral while they are happy."}
-            </p>
-          </div>
-        </div>
-      ) : null}
+      <div className="text-sm">
+        <p className="font-medium">Where they stand</p>
+        <ul className="mt-1 ml-4 list-disc space-y-0.5 text-muted-foreground">
+          {facts.map(f => (
+            <li key={f}>{f}</li>
+          ))}
+        </ul>
+      </div>
+      <DiagnosisSection p={p} />
+      <div className="text-sm">
+        <p className="font-medium">Before you hang up</p>
+        <p className="mt-1 text-muted-foreground">
+          {stale
+            ? "Agree who fills the missing outcomes and by when. Get a name, not a nod."
+            : "Book the next check-in on the call, and ask for the review or the referral while they are happy."}
+        </p>
+      </div>
     </section>
   );
 }
@@ -856,16 +828,19 @@ const TEAMS: [string, string][] = [
  * Add a task for this client: a reminder for me, or a request to another
  * team. It reaches ClickUp within five minutes with the client's tag on it.
  */
-function AddTask({
+export function AddTask({
   taskId,
   clientName,
+  inline = false,
 }: {
   taskId: string;
   clientName: string;
+  /** Inside the client page's "Add a task" panel: the form is already open. */
+  inline?: boolean;
 }) {
   const add = useMutation(api.csm.addTask);
   const added = useQuery(api.csm.tasksAdded, { taskId }) as Any[] | undefined;
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(inline);
   const [title, setTitle] = useState("");
   const [note, setNote] = useState("");
   const [team, setTeam] = useState("");
@@ -888,18 +863,20 @@ function AddTask({
     setTitle("");
     setNote("");
     setDue("");
-    setOpen(false);
+    if (!inline) setOpen(false);
   };
   return (
     <div className="space-y-3">
-      <Button
-        size="sm"
-        variant="outline"
-        aria-expanded={open}
-        onClick={() => setOpen(v => !v)}
-      >
-        {open ? "Close" : "Add a task for this client"}
-      </Button>
+      {inline ? null : (
+        <Button
+          size="sm"
+          variant="outline"
+          aria-expanded={open}
+          onClick={() => setOpen(v => !v)}
+        >
+          {open ? "Close" : "Add a task for this client"}
+        </Button>
+      )}
       {open ? (
         <form
           className="space-y-3 rounded-2xl border bg-card p-4 text-sm sm:p-6"
@@ -1677,17 +1654,30 @@ function RangePicker({
   );
 }
 
-function Profile({
+export function ClientProfile({
   name,
   onBack,
   period,
   onPeriod,
+  part = "all",
+  embedded = false,
+  afterPrep,
 }: {
   name: string;
-  onBack: () => void;
+  onBack?: () => void;
   /** The reporting period, shared with the list so it carries across. */
   period: PeriodKey;
   onPeriod: (k: PeriodKey) => void;
+  /**
+   * The client page shows this in two tabs: "overview" (before the call,
+   * do's and don'ts, the latest from their card, recent calls) and
+   * "results" (the period, the report, the numbers, the ads).
+   */
+  part?: "all" | "overview" | "results";
+  /** Inside the client page, which carries the name, booking and links. */
+  embedded?: boolean;
+  /** What the client page puts right after "Before the call". */
+  afterPrep?: React.ReactNode;
 }) {
   const p = useQuery(api.csm.clientProfile, { clientName: name });
   // Hooks before any early return, so their order never changes.
@@ -1714,15 +1704,20 @@ function Profile({
   if (p === null)
     return (
       <div className="space-y-3">
-        <Button size="sm" variant="ghost" className="-ml-3" onClick={onBack}>
-          <ArrowLeft aria-hidden />
-          All clients
-        </Button>
+        {onBack && !embedded ? (
+          <Button size="sm" variant="ghost" className="-ml-3" onClick={onBack}>
+            <ArrowLeft aria-hidden />
+            All clients
+          </Button>
+        ) : null}
         <p className="text-sm text-muted-foreground">
-          No profile stored for {name} yet.
+          No profile stored for {name} yet. It fills in on the next sync, within
+          15 minutes of the client's ClickUp card being found.
         </p>
       </div>
     );
+  const showOverview = part !== "results";
+  const showResults = part !== "overview";
   const perf = p.performance ?? {};
   const { m, l } = fig;
   const all = perf.allTime ?? {};
@@ -1738,376 +1733,431 @@ function Profile({
     : m.leadsFrom !== "sheet";
   return (
     <div className="space-y-6">
-      <div className="space-y-3">
-        <Button size="sm" variant="ghost" className="-ml-3" onClick={onBack}>
-          <ArrowLeft aria-hidden />
-          All clients
-        </Button>
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div className="min-w-0">
-            <h2 className="text-xl font-semibold tracking-tight" dir="auto">
-              {p.clientName}
-            </h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              {[
-                displayLabel(p.stage),
-                serviceModel(p.service).label,
-                displayLabel(p.happiness),
-                p.liveDays != null ? `${p.liveDays} days live` : null,
-                p.ghlName && p.ghlName !== p.clientName
-                  ? `GHL: ${p.ghlName}`
-                  : null,
-              ]
-                .filter(Boolean)
-                .join(" · ")}
-            </p>
-          </div>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => openReport(p, per, fig)}
-          >
-            Print report, {per.label}
-          </Button>
-        </div>
-        <PeriodBar
-          per={per}
-          value={period}
-          onChange={onPeriod}
-          months={months}
-          earliest={earliest}
-        />
-        {p.taskId ? (
-          <ClientCheckIn
-            taskId={String(p.taskId)}
-            clientName={String(p.clientName)}
-            nextCallAt={p.nextCallAt}
-            stage={p.stage ? String(p.stage) : undefined}
-          />
-        ) : null}
-        {p.taskId ? (
-          <div className="flex flex-wrap items-start gap-2">
-            <AddTask
-              taskId={String(p.taskId)}
-              clientName={String(p.clientName)}
-            />
-            <PortalTasksButton
-              taskId={String(p.taskId)}
-              clientName={String(p.clientName)}
-            />
-          </div>
-        ) : null}
-      </div>
-
-      <Links links={(p.links ?? {}) as Record<string, string>} />
-
-      <DosDontsCard
-        text={p.dosDonts as string | undefined}
-        url={p.links?.clickup as string | undefined}
-      />
-
-      <ClientUpdates
-        updates={p.updates as never}
-        focus="csm"
-        url={p.links?.clickup as string | undefined}
-      />
-
-      <CallPrep p={p} />
-
-      <DiagnosisSection p={p} />
-
-      {perf.error ? (
-        <div className="callout-warn space-y-1 rounded-2xl border p-4 text-sm">
-          <p className="font-medium">
-            {/UNAUTHENTICATED|401/.test(String(perf.error))
-              ? "Their numbers are not showing because our Google Sheets connection is down, not because the sheet is empty."
-              : "Their sheet could not be read."}
-          </p>
-          <p className="text-xs">
-            {/UNAUTHENTICATED|401/.test(String(perf.error))
-              ? "Google returned 401 invalid credentials. Reconnect Google Sheets in integrations and the numbers refill on the next sync, within 15 minutes. Nothing has been lost, and nothing here is a guess."
-              : String(perf.error)}
-          </p>
-        </div>
-      ) : null}
-      {!p.links?.sheet && !dwy ? (
-        <div className="rounded-2xl border border-dashed p-4 text-sm text-muted-foreground">
-          No performance sheet is linked on their ClickUp record, so there are
-          no outcomes to show. Add the Sheet Link field and this fills in on the
-          next sync.
-        </div>
-      ) : (
-        <section className="space-y-4">
-          <SectionTitle>
-            {capital(per.label)}, {dwy ? "from their ads" : "from their sheet"}
-          </SectionTitle>
-          {dwy ? (
-            <>
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-                <StatTile
-                  label={leadsFromAds ? "Leads (from ads)" : "Leads"}
-                  value={num(m.leads)}
-                  sub={was("leads")}
-                />
-                <StatTile
-                  label="Spent"
-                  value={`$${Math.round(num(m.spend))}`}
-                  sub={
-                    l
-                      ? `$${Math.round(num(l.spend))} in ${per.prevLabel}`
-                      : undefined
-                  }
-                />
-                <StatTile
-                  label="Cost per lead"
-                  value={m.cpl != null ? `$${m.cpl}` : "-"}
-                  sub={
-                    l?.cpl != null ? `$${l.cpl} in ${per.prevLabel}` : undefined
-                  }
-                  className="col-span-2 sm:col-span-1"
-                />
-              </div>
-              <ProfileTrends
-                p={p}
-                from={per.from}
-                to={upTo(per)}
-                changes={changes}
-                adsOnly
-              />
-              <p className="text-xs text-muted-foreground">
-                Done with you: the client books their own appointments, so
-                bookings, attendance and closes are not ours to report. Leads
-                and cost per lead are the numbers we own.
+      {embedded ? (
+        showResults ? (
+          // The period and the report sit together at the top of Results.
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-end justify-between gap-3">
+              <p className="text-sm text-muted-foreground">
+                {capital(per.label)}
+                {per.prevLabel ? `, compared with ${per.prevLabel}` : ""}. The
+                numbers, the report and the charts all follow this.
               </p>
-            </>
-          ) : (
-            <div className="space-y-3">
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-                <StatTile
-                  label={leadsFromAds ? "Leads (from ads)" : "Leads"}
-                  value={num(m.leads)}
-                  sub={was("leads")}
-                />
-                <StatTile
-                  label="Booked"
-                  value={num(m.booked)}
-                  sub={was("booked")}
-                />
-                <StatTile
-                  label="Attended"
-                  value={num(m.shows)}
-                  sub={
-                    m.showRate != null
-                      ? `${m.showRate}% of decided`
-                      : "No outcome yet"
-                  }
-                />
-                <StatTile
-                  label="No show"
-                  value={num(m.noshows)}
-                  sub={was("noshows")}
-                />
-                <StatTile
-                  label="Quotes"
-                  value={num(m.quotes)}
-                  sub={was("quotes")}
-                />
-                <StatTile
-                  label="Closed"
-                  value={num(m.closes)}
-                  tone={num(m.closes) ? "txt-good" : undefined}
-                  sub={
-                    m.closeRate != null
-                      ? `${m.closeRate}% of attended`
-                      : was("closes")
-                  }
-                />
-              </div>
-              {m.spend ? (
-                <p className="text-xs text-muted-foreground">
-                  ${Math.round(num(m.spend))} spent on their ads
-                  {m.cpl != null ? `, $${m.cpl} per lead` : ""}.
-                </p>
-              ) : null}
-              <ProfileTrends
-                p={p}
-                from={per.from}
-                to={upTo(per)}
-                changes={changes}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => openReport(p, per, fig)}
+              >
+                Print report, {per.label}
+              </Button>
+            </div>
+            <PeriodBar
+              per={per}
+              value={period}
+              onChange={onPeriod}
+              months={months}
+              earliest={earliest}
+            />
+          </div>
+        ) : null
+      ) : (
+        <div className="space-y-3">
+          {onBack ? (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="-ml-3"
+              onClick={onBack}
+            >
+              <ArrowLeft aria-hidden />
+              All clients
+            </Button>
+          ) : null}
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <div className="min-w-0">
+              <h2 className="text-xl font-semibold tracking-tight" dir="auto">
+                {p.clientName}
+              </h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {[
+                  displayLabel(p.stage),
+                  serviceModel(p.service).label,
+                  displayLabel(p.happiness),
+                  p.liveDays != null ? `${p.liveDays} days live` : null,
+                  p.ghlName && p.ghlName !== p.clientName
+                    ? `GHL: ${p.ghlName}`
+                    : null,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </p>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => openReport(p, per, fig)}
+            >
+              Print report, {per.label}
+            </Button>
+          </div>
+          <PeriodBar
+            per={per}
+            value={period}
+            onChange={onPeriod}
+            months={months}
+            earliest={earliest}
+          />
+          {p.taskId ? (
+            <ClientCheckIn
+              taskId={String(p.taskId)}
+              clientName={String(p.clientName)}
+              nextCallAt={p.nextCallAt}
+              stage={p.stage ? String(p.stage) : undefined}
+            />
+          ) : null}
+          {p.taskId ? (
+            <div className="flex flex-wrap items-start gap-2">
+              <AddTask
+                taskId={String(p.taskId)}
+                clientName={String(p.clientName)}
+              />
+              <PortalTasksButton
+                taskId={String(p.taskId)}
+                clientName={String(p.clientName)}
               />
             </div>
-          )}
-          {!dwy && (
-            <p className="text-xs text-muted-foreground">
-              All time on this sheet: {num(all.leads)} leads · {num(all.booked)}{" "}
-              booked · {num(all.shows)} attended · {num(all.closes)} closed
-              {perf.undated ? ` · ${perf.undated} rows have no date` : ""} ·
-              source: {perf.source}
-            </p>
-          )}
-          {perf.staleReason ? (
-            <p className="callout-warn rounded-2xl border px-4 py-3 text-xs">
-              These numbers were last read on {shortDay(perf.staleAt)}. Today's
-              read failed, so you are looking at the last good copy rather than
-              a partial one. Reason: {perf.staleReason}
-            </p>
           ) : null}
-        </section>
+        </div>
       )}
 
-      <ChangesList changes={changes} per={per} />
+      {embedded ? null : (
+        <ClientLinks links={(p.links ?? {}) as Record<string, string>} />
+      )}
 
-      {p.links?.sheet ? (
+      {showOverview ? (
         <>
-          <section
-            className={`space-y-3 ${serviceModel(p.service).dwy ? "hidden" : ""}`}
-          >
-            <SectionTitle>
-              Appointments with no outcome on the sheet
-              <span className="ml-1.5 font-normal text-muted-foreground tabular-nums">
-                {perf.staleCount ?? 0}
-              </span>
-            </SectionTitle>
-            {stale.length === 0 ? (
-              <p className="text-sm text-muted-foreground">
-                Nothing outstanding, every appointment has an outcome.
-              </p>
-            ) : (
-              <>
-                <p className="text-xs text-muted-foreground">
-                  Every unfilled row reads as a loss in the monthly report.
-                  Chase these before the next check-in call.
-                </p>
-                <div className="overflow-x-auto rounded-2xl border bg-card">
-                  <table className="w-full min-w-max">
-                    <thead className="border-b">
-                      <tr>
-                        {[
-                          "Name",
-                          "Added",
-                          "Appointment",
-                          "Caller",
-                          "Missing",
-                          "Days",
-                        ].map(h => (
-                          <Th key={h}>{h}</Th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y">
-                      {(staleAll ? stale : stale.slice(0, 20)).map(r => (
-                        <tr key={`${r.name}-${r.added}-${r.appDate}`}>
-                          <Cell v={r.name} />
-                          <Cell v={shortDay(r.added)} muted />
-                          <Cell v={shortDay(r.appDate)} />
-                          <Cell v={r.caller} muted />
-                          <Cell v={r.missing} />
-                          <Cell v={r.appDaysAgo ?? r.ageDays} />
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-                {stale.length > 20 ? (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setStaleAll(v => !v)}
-                  >
-                    {staleAll
-                      ? "Show fewer"
-                      : `Show the other ${stale.length - 20}`}
-                  </Button>
-                ) : null}
-              </>
-            )}
-          </section>
-          {byAd.length ? (
-            <section className="space-y-3">
-              <div>
-                <SectionTitle>
-                  Which ad is producing the better leads
-                </SectionTitle>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {capital(per.label)}, per ad. Judge an ad on what its leads
-                  did, not on how many it produced. "No outcome" is the ad's
-                  rows nobody filled in, so a high number there means the
-                  comparison is not fair yet.
-                </p>
-              </div>
-              <div className="overflow-x-auto rounded-2xl border bg-card">
-                <table className="w-full min-w-max">
-                  <thead className="border-b">
-                    <tr>
-                      {[
-                        "Ad or source",
-                        "Leads",
-                        "Attended",
-                        "Attendance",
-                        "Closed",
-                        "Close rate",
-                        "No outcome",
-                      ].map(h => (
-                        <Th key={h}>{h}</Th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y">
-                    {byAd.map(a => (
-                      <tr key={a.ad}>
-                        <Cell v={a.ad} />
-                        <Cell v={a.leads} />
-                        <Cell v={a.shows} />
-                        <Cell
-                          v={a.showRate == null ? "-" : `${a.showRate}%`}
-                          muted
-                        />
-                        <td className="px-3 py-2 text-sm tabular-nums">
-                          {num(a.closes) ? (
-                            <span className="font-medium txt-good">
-                              {a.closes}
-                            </span>
-                          ) : (
-                            "0"
-                          )}
-                        </td>
-                        <Cell
-                          v={a.closeRate == null ? "-" : `${a.closeRate}%`}
-                          muted
-                        />
-                        <Cell v={a.unknown ?? 0} muted />
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-          ) : null}
-          {(perf.recent ?? []).length ? (
-            <LeadsByAd rows={perf.recent as Any[]} />
+          <BeforeTheCall p={p} />
+
+          {afterPrep}
+
+          <DosDontsCard
+            text={p.dosDonts as string | undefined}
+            url={p.links?.clickup as string | undefined}
+          />
+
+          <ClientUpdates
+            updates={p.updates as never}
+            focus="csm"
+            url={p.links?.clickup as string | undefined}
+          />
+
+          {p.calls ? (
+            <RecentCalls
+              calls={p.calls as Any[]}
+              brief={p.callsBrief as string | undefined}
+            />
           ) : null}
         </>
       ) : null}
 
-      {p.lost ? <LostLeads lost={p.lost as Any} /> : null}
-      {p.provisional ? <Provisional pv={p.provisional as Any} /> : null}
-      {p.calls ? (
-        <RecentCalls
-          calls={p.calls as Any[]}
-          brief={p.callsBrief as string | undefined}
-        />
+      {showResults && embedded ? (
+        <ReportSection p={p} per={per} fig={fig} />
       ) : null}
 
-      <section className="space-y-3">
-        <SectionTitle>
-          Live campaigns, ad sets and ads, last 7 days
-        </SectionTitle>
-        <AdTree ads={(p.ads ?? []) as Any[]} clientName={name} />
-      </section>
+      {showResults ? (
+        <>
+          {perf.error ? (
+            <div className="callout-warn space-y-1 rounded-2xl border p-4 text-sm">
+              <p className="font-medium">
+                {/UNAUTHENTICATED|401/.test(String(perf.error))
+                  ? "Their numbers are not showing because our Google Sheets connection is down, not because the sheet is empty."
+                  : "Their sheet could not be read."}
+              </p>
+              <p className="text-xs">
+                {/UNAUTHENTICATED|401/.test(String(perf.error))
+                  ? "Google returned 401 invalid credentials. Reconnect Google Sheets in integrations and the numbers refill on the next sync, within 15 minutes. Nothing has been lost, and nothing here is a guess."
+                  : String(perf.error)}
+              </p>
+            </div>
+          ) : null}
+          {!p.links?.sheet && !dwy ? (
+            <div className="rounded-2xl border border-dashed p-4 text-sm text-muted-foreground">
+              No performance sheet is linked on their ClickUp record, so there
+              are no outcomes to show. Add the Sheet Link field and this fills
+              in on the next sync.
+            </div>
+          ) : (
+            <section className="space-y-4">
+              <SectionTitle>
+                {capital(per.label)},{" "}
+                {dwy ? "from their ads" : "from their sheet"}
+              </SectionTitle>
+              {dwy ? (
+                <>
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                    <StatTile
+                      label={leadsFromAds ? "Leads (from ads)" : "Leads"}
+                      value={num(m.leads)}
+                      sub={was("leads")}
+                    />
+                    <StatTile
+                      label="Spent"
+                      value={`$${Math.round(num(m.spend))}`}
+                      sub={
+                        l
+                          ? `$${Math.round(num(l.spend))} in ${per.prevLabel}`
+                          : undefined
+                      }
+                    />
+                    <StatTile
+                      label="Cost per lead"
+                      value={m.cpl != null ? `$${m.cpl}` : "-"}
+                      sub={
+                        l?.cpl != null
+                          ? `$${l.cpl} in ${per.prevLabel}`
+                          : undefined
+                      }
+                      className="col-span-2 sm:col-span-1"
+                    />
+                  </div>
+                  <ProfileTrends
+                    p={p}
+                    from={per.from}
+                    to={upTo(per)}
+                    changes={changes}
+                    adsOnly
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Done with you: the client books their own appointments, so
+                    bookings, attendance and closes are not ours to report.
+                    Leads and cost per lead are the numbers we own.
+                  </p>
+                </>
+              ) : (
+                <div className="space-y-3">
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+                    <StatTile
+                      label={leadsFromAds ? "Leads (from ads)" : "Leads"}
+                      value={num(m.leads)}
+                      sub={was("leads")}
+                    />
+                    <StatTile
+                      label="Booked"
+                      value={num(m.booked)}
+                      sub={was("booked")}
+                    />
+                    <StatTile
+                      label="Attended"
+                      value={num(m.shows)}
+                      sub={
+                        m.showRate != null
+                          ? `${m.showRate}% of decided`
+                          : "No outcome yet"
+                      }
+                    />
+                    <StatTile
+                      label="No show"
+                      value={num(m.noshows)}
+                      sub={was("noshows")}
+                    />
+                    <StatTile
+                      label="Quotes"
+                      value={num(m.quotes)}
+                      sub={was("quotes")}
+                    />
+                    <StatTile
+                      label="Closed"
+                      value={num(m.closes)}
+                      tone={num(m.closes) ? "txt-good" : undefined}
+                      sub={
+                        m.closeRate != null
+                          ? `${m.closeRate}% of attended`
+                          : was("closes")
+                      }
+                    />
+                  </div>
+                  {m.spend ? (
+                    <p className="text-xs text-muted-foreground">
+                      ${Math.round(num(m.spend))} spent on their ads
+                      {m.cpl != null ? `, $${m.cpl} per lead` : ""}.
+                    </p>
+                  ) : null}
+                  <ProfileTrends
+                    p={p}
+                    from={per.from}
+                    to={upTo(per)}
+                    changes={changes}
+                  />
+                </div>
+              )}
+              {!dwy && (
+                <p className="text-xs text-muted-foreground">
+                  All time on this sheet: {num(all.leads)} leads ·{" "}
+                  {num(all.booked)} booked · {num(all.shows)} attended ·{" "}
+                  {num(all.closes)} closed
+                  {perf.undated ? ` · ${perf.undated} rows have no date` : ""} ·
+                  source: {perf.source}
+                </p>
+              )}
+              {perf.staleReason ? (
+                <p className="callout-warn rounded-2xl border px-4 py-3 text-xs">
+                  These numbers were last read on {shortDay(perf.staleAt)}.
+                  Today's read failed, so you are looking at the last good copy
+                  rather than a partial one. Reason: {perf.staleReason}
+                </p>
+              ) : null}
+            </section>
+          )}
 
-      <ReportSection p={p} per={per} fig={fig} />
+          <ChangesList changes={changes} per={per} />
 
-      {p.profileText ? (
+          {p.links?.sheet ? (
+            <>
+              <section
+                className={`space-y-3 ${serviceModel(p.service).dwy ? "hidden" : ""}`}
+              >
+                <SectionTitle>
+                  Appointments with no outcome on the sheet
+                  <span className="ml-1.5 font-normal text-muted-foreground tabular-nums">
+                    {perf.staleCount ?? 0}
+                  </span>
+                </SectionTitle>
+                {stale.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">
+                    Nothing outstanding, every appointment has an outcome.
+                  </p>
+                ) : (
+                  <>
+                    <p className="text-xs text-muted-foreground">
+                      Every unfilled row reads as a loss in the monthly report.
+                      Chase these before the next check-in call.
+                    </p>
+                    <div className="overflow-x-auto rounded-2xl border bg-card">
+                      <table className="w-full min-w-max">
+                        <thead className="border-b">
+                          <tr>
+                            {[
+                              "Name",
+                              "Added",
+                              "Appointment",
+                              "Caller",
+                              "Missing",
+                              "Days",
+                            ].map(h => (
+                              <Th key={h}>{h}</Th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y">
+                          {(staleAll ? stale : stale.slice(0, 20)).map(r => (
+                            <tr key={`${r.name}-${r.added}-${r.appDate}`}>
+                              <Cell v={r.name} />
+                              <Cell v={shortDay(r.added)} muted />
+                              <Cell v={shortDay(r.appDate)} />
+                              <Cell v={r.caller} muted />
+                              <Cell v={r.missing} />
+                              <Cell v={r.appDaysAgo ?? r.ageDays} />
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    {stale.length > 20 ? (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setStaleAll(v => !v)}
+                      >
+                        {staleAll
+                          ? "Show fewer"
+                          : `Show the other ${stale.length - 20}`}
+                      </Button>
+                    ) : null}
+                  </>
+                )}
+              </section>
+              {byAd.length ? (
+                <section className="space-y-3">
+                  <div>
+                    <SectionTitle>
+                      Which ad is producing the better leads
+                    </SectionTitle>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {capital(per.label)}, per ad. Judge an ad on what its
+                      leads did, not on how many it produced. "No outcome" is
+                      the ad's rows nobody filled in, so a high number there
+                      means the comparison is not fair yet.
+                    </p>
+                  </div>
+                  <div className="overflow-x-auto rounded-2xl border bg-card">
+                    <table className="w-full min-w-max">
+                      <thead className="border-b">
+                        <tr>
+                          {[
+                            "Ad or source",
+                            "Leads",
+                            "Attended",
+                            "Attendance",
+                            "Closed",
+                            "Close rate",
+                            "No outcome",
+                          ].map(h => (
+                            <Th key={h}>{h}</Th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y">
+                        {byAd.map(a => (
+                          <tr key={a.ad}>
+                            <Cell v={a.ad} />
+                            <Cell v={a.leads} />
+                            <Cell v={a.shows} />
+                            <Cell
+                              v={a.showRate == null ? "-" : `${a.showRate}%`}
+                              muted
+                            />
+                            <td className="px-3 py-2 text-sm tabular-nums">
+                              {num(a.closes) ? (
+                                <span className="font-medium txt-good">
+                                  {a.closes}
+                                </span>
+                              ) : (
+                                "0"
+                              )}
+                            </td>
+                            <Cell
+                              v={a.closeRate == null ? "-" : `${a.closeRate}%`}
+                              muted
+                            />
+                            <Cell v={a.unknown ?? 0} muted />
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
+              ) : null}
+              {(perf.recent ?? []).length ? (
+                <LeadsByAd rows={perf.recent as Any[]} />
+              ) : null}
+            </>
+          ) : null}
+
+          {p.lost ? <LostLeads lost={p.lost as Any} /> : null}
+          {p.provisional ? <Provisional pv={p.provisional as Any} /> : null}
+
+          <section className="space-y-3">
+            <SectionTitle>
+              Live campaigns, ad sets and ads, last 7 days
+            </SectionTitle>
+            <AdTree ads={(p.ads ?? []) as Any[]} clientName={name} />
+          </section>
+
+          {embedded ? null : <ReportSection p={p} per={per} fig={fig} />}
+        </>
+      ) : null}
+
+      {showOverview && p.profileText ? (
         <section className="space-y-3">
           <SectionTitle>Client profile</SectionTitle>
           <p
@@ -2164,7 +2214,15 @@ function lastMonths(today: string): string[] {
   return out;
 }
 
-export function ClientPerformancePage() {
+export function ClientPerformancePage({
+  embedded = false,
+  onOpen,
+}: {
+  /** Inside Clients as its Results view: no page title of its own. */
+  embedded?: boolean;
+  /** Open a client on its own page, with the period picked here. */
+  onOpen?: (clientName: string, period: PeriodKey) => void;
+} = {}) {
   const data = useQuery(api.csm.performanceOverview, {});
   // One reporting period for the list and every client opened from it.
   const [period, setPeriod] = useState<PeriodKey>("month");
@@ -2195,8 +2253,14 @@ export function ClientPerformancePage() {
 
   if (data === undefined)
     return (
-      <div className="mx-auto w-full max-w-6xl text-sm text-muted-foreground">
-        Loading client performance…
+      <div
+        className={
+          embedded
+            ? "text-sm text-muted-foreground"
+            : "mx-auto w-full max-w-6xl text-sm text-muted-foreground"
+        }
+      >
+        Loading client results…
       </div>
     );
 
@@ -2231,12 +2295,16 @@ export function ClientPerformancePage() {
     period === "month" ? c.month : ranged?.get(c.clientName);
 
   return (
-    <div className="mx-auto w-full max-w-6xl space-y-6">
-      <PageHeader
-        title="Client performance"
-        sub="Every client's own numbers, straight off their performance sheet. Open a client for their drive, their CRM, their ads and a report you can send."
-        actions={<ReportIssue page="performance" />}
-      />
+    <div
+      className={embedded ? "space-y-6" : "mx-auto w-full max-w-6xl space-y-6"}
+    >
+      {embedded ? null : (
+        <PageHeader
+          title="Client performance"
+          sub="Every client's own numbers, straight off their performance sheet. Open a client for their drive, their CRM, their ads and a report you can send."
+          actions={<ReportIssue page="performance" />}
+        />
+      )}
 
       {!openClient && waiting.length ? (
         <details className="callout-warn rounded-2xl border px-4 py-3 text-sm sm:px-6">
@@ -2270,7 +2338,7 @@ export function ClientPerformancePage() {
       ) : null}
 
       {openClient ? (
-        <Profile
+        <ClientProfile
           name={openClient}
           onBack={() => setOpenClient(null)}
           period={period}
@@ -2314,7 +2382,7 @@ export function ClientPerformancePage() {
               label="Appointments with no outcome"
               value={totalStale}
               tone={totalStale ? "txt-bad" : "txt-good"}
-              sub="Across every sheet"
+              sub={`Across the ${chosen.label.toLowerCase()} clients' sheets`}
             />
             <StatTile
               label={`Closed, ${per.label}`}
@@ -2461,7 +2529,11 @@ export function ClientPerformancePage() {
                         <Button
                           size="sm"
                           variant="outline"
-                          onClick={() => setOpenClient(c.clientName)}
+                          onClick={() =>
+                            onOpen
+                              ? onOpen(c.clientName, period)
+                              : setOpenClient(c.clientName)
+                          }
                         >
                           Open
                         </Button>

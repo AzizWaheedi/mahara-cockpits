@@ -29,7 +29,7 @@ import { api } from "../../convex/_generated/api";
  * "Renewals & Re-sell Projections" meeting shows the same parts on its
  * page in the Team meetings screen (the shared ProjectionsKit).
  */
-export function ProjectionsPage() {
+export function ProjectionsPage({ embedded = false }: { embedded?: boolean }) {
   const [params, setParams] = useSearchParams();
   const forEmail = params.get("for") ?? undefined;
   const page = useQuery(api.projections.page, forEmail ? { forEmail } : {}) as
@@ -40,6 +40,8 @@ export function ProjectionsPage() {
   const readBilling = useAction(api.projections.refreshBillingNow);
   const [openTask, setOpenTask] = useState<string | null>(params.get("client"));
   const [reading, setReading] = useState(false);
+  /** What the last "Read billing again" found, said on the page, not only in a toast. */
+  const [lastRead, setLastRead] = useState<string | null>(null);
 
   const onEdit: Edit = async e => {
     await edit({ edit: e });
@@ -59,8 +61,25 @@ export function ProjectionsPage() {
     setReading(true);
     try {
       const r = await readBilling({});
-      if (r.ok) toast.success("Billing read again");
-      else toast.error(r.error ?? "Billing could not be read");
+      const at = new Date().toLocaleTimeString("en-GB", {
+        timeZone: "Asia/Kuwait",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+      if (r.ok) {
+        const line = `Billing read again at ${at}: ${
+          typeof r.payments === "number"
+            ? `${r.payments} payment${r.payments === 1 ? "" : "s"} in the ledger`
+            : "the ledger answered"
+        }. Actuals below use it.`;
+        setLastRead(line);
+        toast.success(line);
+      } else {
+        setLastRead(
+          `Billing could not be read at ${at}: ${r.error ?? "no reason given"}.`,
+        );
+        toast.error(r.error ?? "Billing could not be read");
+      }
     } catch (e) {
       toast.error(
         (e as { data?: { message?: string } })?.data?.message ??
@@ -72,8 +91,11 @@ export function ProjectionsPage() {
   };
 
   return (
-    <div className="mx-auto w-full max-w-6xl space-y-6">
+    <div
+      className={embedded ? "space-y-6" : "mx-auto w-full max-w-6xl space-y-6"}
+    >
       <PageHeader
+        as={embedded ? "h2" : "h1"}
         title="Projections"
         sub="Blood is the floor and stretch the goal. Actuals fill in from what is logged."
         actions={
@@ -88,10 +110,16 @@ export function ProjectionsPage() {
               {reading ? <Loader2 className="animate-spin" /> : <RefreshCw />}
               Read billing again
             </Button>
-            <ReportIssue page="projections" />
+            {/* Inside Money, the page's own report button covers it. */}
+            {embedded ? null : <ReportIssue page="projections" />}
           </>
         }
       >
+        {lastRead ? (
+          <p className="mt-2 text-xs text-muted-foreground" aria-live="polite">
+            {lastRead}
+          </p>
+        ) : null}
         {page?.canEditOthers && page.owners.length > 1 ? (
           <div className="mt-3">
             <PillRow>

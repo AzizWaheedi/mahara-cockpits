@@ -21,21 +21,30 @@ const GAP_NAMES: Record<string, string> = {
  * fix. One click queues it as a task on the Client Success list in ClickUp;
  * the media buyer backend sends queued tasks every five minutes.
  */
-export function BacklogPage() {
+export function BacklogPage({ embedded = false }: { embedded?: boolean }) {
   const data = useQuery(api.gaps.list, {});
   const queue = useMutation(api.gaps.queue);
   if (!data)
     return (
-      <p className="mx-auto w-full max-w-6xl text-sm text-muted-foreground">
+      <p
+        className={
+          embedded
+            ? "text-sm text-muted-foreground"
+            : "mx-auto w-full max-w-6xl text-sm text-muted-foreground"
+        }
+      >
         Loading…
       </p>
     );
   const { rows, counts, activeClients } = data as Any;
 
   return (
-    <div className="mx-auto w-full max-w-6xl space-y-6">
+    <div
+      className={embedded ? "space-y-6" : "mx-auto w-full max-w-6xl space-y-6"}
+    >
       <PageHeader
-        title="Data backlog"
+        as={embedded ? "h2" : "h1"}
+        title="Data fixes"
         sub={`${rows.length} of ${activeClients} active clients are missing something the cockpit needs. Queue a fix and it becomes a ClickUp task on the Client Success list.`}
       >
         {/* Only the gaps that exist: a chip reading "0" says nothing. */}

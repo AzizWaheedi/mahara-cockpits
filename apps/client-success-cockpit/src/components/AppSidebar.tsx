@@ -2,24 +2,17 @@ import { useAuthActions } from "@convex-dev/auth/react";
 import { useQuery } from "convex/react";
 import { motion } from "framer-motion";
 import {
-  BarChart3,
-  CalendarClock,
-  CalendarDays,
-  DollarSign,
-  Flame,
+  Inbox,
   LayoutGrid,
   Link2,
-  ListChecks,
-  ListTodo,
   LogOut,
-  MessageSquare,
   Moon,
-  MoonStar,
+  Search,
   Settings,
   Sun,
   Sunrise,
-  Target,
-  UserMinus,
+  Users,
+  Wallet,
   X,
 } from "lucide-react";
 import { Link, useLocation } from "react-router";
@@ -27,6 +20,7 @@ import { portalUrl } from "@/components/PortalAutoSignIn";
 import { Wordmark } from "@/components/Wordmark";
 import { useTheme } from "@/contexts/ThemeContext";
 import { COCKPIT_ICON } from "@/lib/cockpits";
+import { openSearch } from "@/lib/search";
 import { api } from "../../convex/_generated/api";
 import { Avatar, AvatarFallback } from "./ui/avatar";
 import {
@@ -42,7 +36,6 @@ import {
   SidebarFooter,
   SidebarGroup,
   SidebarGroupContent,
-  SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
   SidebarMenuButton,
@@ -51,46 +44,28 @@ import {
 } from "./ui/sidebar";
 
 /**
- * Grouped so the CSM reads the sidebar as a day, not as eight equal choices: the day runs
- * top to bottom, client work sits in the middle, reference material last.
+ * Five places, in the order the day runs (the simplification audit, approved
+ * by Aziz on 2026-10-06): Today for the day itself, Inbox for WhatsApp,
+ * Clients for any one client, Money for billing, renewals, the hot list,
+ * churn and pay, and Links for the SOPs and forms. Everything else is a tab
+ * inside one of them or a step away in the search box.
  */
-const navGroups = [
-  {
-    label: "My day",
-    items: [
-      { href: "/dashboard", label: "Start of day", icon: Sunrise },
-      { href: "/tasks", label: "Task list", icon: ListChecks },
-      {
-        href: "/meetings",
-        label: "Meetings & messages",
-        icon: CalendarDays,
-      },
-      { href: "/eod", label: "End of day", icon: MoonStar },
-    ],
-  },
-  {
-    label: "Clients",
-    items: [
-      { href: "/clients", label: "Clients & touchpoints", icon: MessageSquare },
-      { href: "/performance", label: "Client performance", icon: BarChart3 },
-      { href: "/billing", label: "Billing", icon: CalendarClock },
-      { href: "/backlog", label: "Data backlog", icon: ListTodo },
-    ],
-  },
-  {
-    label: "Growth",
-    items: [
-      { href: "/projections", label: "Projections", icon: Target },
-      { href: "/churn", label: "Churn tracker", icon: UserMinus },
-      { href: "/hotlist", label: "Hot list", icon: Flame },
-      { href: "/money", label: "My money", icon: DollarSign },
-    ],
-  },
-  {
-    label: "Reference",
-    items: [{ href: "/links", label: "Key links", icon: Link2 }],
-  },
+const navItems = [
+  { href: "/dashboard", label: "Today", icon: Sunrise },
+  { href: "/inbox", label: "Inbox", icon: Inbox },
+  { href: "/clients", label: "Clients", icon: Users },
+  { href: "/money", label: "Money", icon: Wallet },
+  { href: "/links", label: "Links", icon: Link2 },
 ];
+
+/** A place stays lit on its own pages too: a client's page is under Clients. */
+function isActive(pathname: string, href: string): boolean {
+  if (pathname === href || pathname.startsWith(`${href}/`)) return true;
+  // End of day and the data fixes are Today's own pages.
+  return (
+    href === "/dashboard" && (pathname === "/eod" || pathname === "/backlog")
+  );
+}
 
 function NavLink({
   href,
@@ -206,26 +181,52 @@ function SidebarNav() {
 
   return (
     <SidebarContent>
-      {navGroups.map(group => (
-        <SidebarGroup key={group.label}>
-          <SidebarGroupLabel>{group.label}</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {group.items.map(item => (
-                <NavLink
-                  key={item.href}
-                  href={item.href}
-                  label={item.label}
-                  icon={item.icon}
-                  isActive={location.pathname === item.href}
-                />
-              ))}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-      ))}
+      <SidebarGroup>
+        <SidebarGroupContent>
+          <SidebarMenu>
+            {navItems.map(item => (
+              <NavLink
+                key={item.href}
+                href={item.href}
+                label={item.label}
+                icon={item.icon}
+                isActive={isActive(location.pathname, item.href)}
+              />
+            ))}
+          </SidebarMenu>
+        </SidebarGroupContent>
+      </SidebarGroup>
       <PortalGroup />
     </SidebarContent>
+  );
+}
+
+/**
+ * The search field at the top of the rail: it opens the search box, which
+ * also opens with Ctrl/Cmd + K or "/" from any page.
+ */
+function SearchField() {
+  const { setOpenMobile } = useSidebar();
+  const mac =
+    typeof navigator !== "undefined" &&
+    /Mac|iPhone|iPad/.test(navigator.platform ?? "");
+  return (
+    <div className="px-2 pb-2">
+      <button
+        type="button"
+        onClick={() => {
+          setOpenMobile(false);
+          openSearch();
+        }}
+        className="flex h-10 w-full items-center gap-2 rounded-lg border border-sidebar-border bg-background/60 px-3 text-left text-sm text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+      >
+        <Search aria-hidden className="size-4 shrink-0" />
+        <span className="min-w-0 flex-1 truncate">Search clients, links…</span>
+        <kbd className="hidden shrink-0 rounded border border-sidebar-border px-1.5 py-0.5 font-mono text-[10px] tracking-[0.08em] lg:inline">
+          {mac ? "⌘K" : "Ctrl K"}
+        </kbd>
+      </button>
+    </div>
   );
 }
 
@@ -334,6 +335,7 @@ export function AppSidebar() {
   return (
     <Sidebar>
       <SidebarHeaderContent />
+      <SearchField />
       <SidebarNav />
       <SidebarUserMenu />
     </Sidebar>

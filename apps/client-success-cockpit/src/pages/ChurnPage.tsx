@@ -66,7 +66,7 @@ type Draft = {
   note: string;
 };
 
-export function ChurnPage() {
+export function ChurnPage({ embedded = false }: { embedded?: boolean }) {
   const load = useAction(api.churn.page);
   const saveDeparture = useAction(api.churn.saveDeparture);
   const removeDeparture = useAction(api.churn.removeDeparture);
@@ -115,8 +115,13 @@ export function ChurnPage() {
 
   if (!page)
     return (
-      <div className="mx-auto w-full max-w-6xl space-y-6">
+      <div
+        className={
+          embedded ? "space-y-6" : "mx-auto w-full max-w-6xl space-y-6"
+        }
+      >
         <PageHeader
+          as={embedded ? "h2" : "h1"}
           title="Churn tracker"
           sub="A client lost before day 90 is churn. A client who finishes the term is not, renewed or not."
         />
@@ -146,8 +151,11 @@ export function ChurnPage() {
   });
 
   return (
-    <div className="mx-auto w-full max-w-6xl space-y-6">
+    <div
+      className={embedded ? "space-y-6" : "mx-auto w-full max-w-6xl space-y-6"}
+    >
       <PageHeader
+        as={embedded ? "h2" : "h1"}
         title="Churn tracker"
         sub="A client lost before day 90 is churn. A client who finishes the term is not, renewed or not."
         actions={

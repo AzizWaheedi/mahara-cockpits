@@ -1,4 +1,4 @@
-import { Navigate, Route, Routes } from "react-router";
+import { Navigate, Route, Routes, useLocation } from "react-router";
 import { OAUTH_CALLBACK_PATH } from "@/auth/oauthReturn";
 import { AppLayout } from "@/components/AppLayout";
 import { PortalAutoSignIn } from "@/components/PortalAutoSignIn";
@@ -11,24 +11,29 @@ import { ViktorAutoSignIn } from "@/components/ViktorAutoSignIn";
 import { ViktorProductAuthProvider } from "@/lib/viktor-spaces-access/ViktorProductAuthProvider";
 import {
   BacklogPage,
-  BillingPage,
-  ChurnPage,
-  ClientPerformancePage,
+  ClientPage,
   ClientsPage,
   EndOfDayPage,
-  HotListPage,
+  InboxPage,
   KeyLinksPage,
   LandingPage,
   LoginPage,
-  MeetingsPage,
-  MyMoneyPage,
-  ProjectionsPage,
+  MoneyPage,
   SettingsPage,
   SignupPage,
-  StartOfDayPage,
-  TaskListPage,
+  TodayPage,
 } from "@/pages";
 import { ViktorOAuthCallbackPage } from "@/pages/ViktorOAuthCallbackPage";
+
+/** An old address, sent on to where its page lives now, with its query string. */
+function Moved({ to }: { to: string }) {
+  const { search, hash } = useLocation();
+  const [path, query = ""] = to.split("?");
+  const merged = new URLSearchParams(search);
+  for (const [k, v] of new URLSearchParams(query)) merged.set(k, v);
+  const qs = merged.toString();
+  return <Navigate to={`${path}${qs ? `?${qs}` : ""}${hash}`} replace />;
+}
 
 export function AuthenticatedRoutes() {
   return (
@@ -49,22 +54,37 @@ export function AuthenticatedRoutes() {
         <Route element={<AppLayout />}>
           {/* biome-ignore lint/a11y/useValidAriaRole: RoleRoute's role prop is a seat name, not an ARIA role */}
           <Route element={<RoleRoute role="csm" />}>
-            <Route path="/dashboard" element={<StartOfDayPage />} />
+            {/* Five places (the simplification audit, approved 2026-10-06). */}
+            <Route path="/dashboard" element={<TodayPage />} />
+            <Route path="/inbox" element={<InboxPage />} />
             <Route path="/clients" element={<ClientsPage />} />
-            <Route path="/performance" element={<ClientPerformancePage />} />
-            <Route path="/tasks" element={<TaskListPage />} />
-            <Route path="/hotlist" element={<HotListPage />} />
+            <Route path="/clients/:key" element={<ClientPage />} />
+            <Route path="/money" element={<MoneyPage />} />
             <Route path="/links" element={<KeyLinksPage />} />
-            <Route path="/money" element={<MyMoneyPage />} />
-            <Route path="/projections" element={<ProjectionsPage />} />
-            <Route path="/churn" element={<ChurnPage />} />
+            {/* Today's own pages. */}
             <Route path="/eod" element={<EndOfDayPage />} />
-            {/* Every page in this cockpit is the CSM's: a session minted for
-                another seat gets "not yours", not a crashed screen. */}
-            <Route path="/meetings" element={<MeetingsPage />} />
             <Route path="/backlog" element={<BacklogPage />} />
-            <Route path="/billing" element={<BillingPage />} />
             <Route path="/settings" element={<SettingsPage />} />
+            {/* The old addresses land where their page lives now, query string
+                kept, so a bookmark or a Slack link never breaks. Every page in
+                this cockpit is the CSM's: a session minted for another seat
+                gets "not yours", not a crashed screen. */}
+            <Route path="/tasks" element={<Moved to="/dashboard" />} />
+            <Route path="/meetings" element={<Moved to="/inbox" />} />
+            <Route
+              path="/performance"
+              element={<Moved to="/clients?view=results" />}
+            />
+            <Route
+              path="/billing"
+              element={<Moved to="/money?tab=billing" />}
+            />
+            <Route
+              path="/projections"
+              element={<Moved to="/money?tab=projections" />}
+            />
+            <Route path="/churn" element={<Moved to="/money?tab=churn" />} />
+            <Route path="/hotlist" element={<Moved to="/money?tab=hot" />} />
           </Route>
         </Route>
       </Route>

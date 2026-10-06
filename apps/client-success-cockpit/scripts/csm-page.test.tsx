@@ -13,6 +13,9 @@ import { expect, mock, test } from "bun:test";
 const snapshot = await Bun.file(
   new URL("./fixtures/csm-snapshot.json", import.meta.url),
 ).json();
+const perfFixture = await Bun.file(
+  new URL("./fixtures/csm-profiles.json", import.meta.url),
+).json();
 
 let queryResult: unknown;
 /** Per-query results, so a screen with two queries gets the right payload in each. */
@@ -52,10 +55,15 @@ const actionResults: Record<string, unknown> = {
   "review.sent": [],
 };
 
+/** Every mutation the screens send, by name, so a test can read what went out. */
+const sent: [string, Record<string, unknown>][] = [];
 mock.module("convex/react", () => ({
   useQuery: (name: string) =>
     name in queryByName ? queryByName[name] : queryResult,
-  useMutation: () => async () => null,
+  useMutation: (name: string) => async (args: Record<string, unknown>) => {
+    sent.push([name, args]);
+    return null;
+  },
   useAction: (name: string) => async () => actionResults[name] ?? null,
 }));
 /**
@@ -120,16 +128,28 @@ for (const key of Object.getOwnPropertyNames(win)) {
 g.getComputedStyle ??= win.getComputedStyle.bind(win);
 g.IS_REACT_ACT_ENVIRONMENT = true;
 
-/** Every section, because the tabs differ per section and each one renders its own rows. */
+/** Every section, because each one renders its own rows. */
 const SECTIONS = [
-  "start",
+  "today",
   "clients",
-  "tasks",
+  "client",
   "hot",
   "links",
   "money",
   "eod",
 ] as const;
+
+/** Greystone Contracting in the fixture: an onboarding client. */
+const GREYSTONE = "86exnk0v4";
+/** MOFAG in the fixture: commitments from a call, and a report due. */
+const MOFAG = "86exr5zcm";
+
+/** The page for one section, the client page on Greystone. */
+const pageFor = (section: string, clientKey = GREYSTONE) =>
+  createElement(CsmPage, {
+    section: section as never,
+    ...(section === "client" ? { clientKey } : {}),
+  });
 
 for (const section of SECTIONS) {
   test(`CSM ${section} survives loading → loaded without a hooks error`, async () => {
@@ -144,24 +164,15 @@ for (const section of SECTIONS) {
     };
     try {
       queryResult = undefined; // still loading
+      queryByName = section === "client" ? { clientProfile: undefined } : {};
       await reactAct(async () => {
-        root.render(
-          createElement(
-            MemoryRouter,
-            null,
-            createElement(CsmPage, { section }),
-          ),
-        );
+        root.render(createElement(MemoryRouter, null, pageFor(section)));
       });
       queryResult = snapshot; // data arrives — the render that used to crash
+      queryByName =
+        section === "client" ? { clientProfile: perfFixture.profile } : {};
       await reactAct(async () => {
-        root.render(
-          createElement(
-            MemoryRouter,
-            null,
-            createElement(CsmPage, { section }),
-          ),
-        );
+        root.render(createElement(MemoryRouter, null, pageFor(section)));
       });
       const html = host.innerHTML;
       expect(html.length).toBeGreaterThan(500);
@@ -170,13 +181,18 @@ for (const section of SECTIONS) {
       expect(errors.filter(e => /error/i.test(e)).join("\n")).toBe("");
     } finally {
       console.error = originalError;
+      queryByName = {};
       await reactAct(async () => root.unmount());
     }
   });
 }
 
-/** Renders one section with live data and returns its visible text. */
-async function renderSection(section: string): Promise<string> {
+/** Renders one section with live data at an address and returns its visible text. */
+async function renderSection(
+  section: string,
+  url = "/",
+  clientKey = GREYSTONE,
+): Promise<string> {
   const host = win.document.createElement("div");
   win.document.body.appendChild(host);
   // biome-ignore lint/suspicious/noExplicitAny: happy-dom element into React DOM
@@ -186,8 +202,8 @@ async function renderSection(section: string): Promise<string> {
     root.render(
       createElement(
         MemoryRouter,
-        null,
-        createElement(CsmPage, { section: section as never }),
+        { initialEntries: [url] },
+        pageFor(section, clientKey),
       ),
     );
   });
@@ -225,9 +241,6 @@ test("the hot list and the message drafts render real client copy", async () => 
 const { ClientPerformancePage } = await import(
   "../src/pages/ClientPerformancePage"
 );
-const perfFixture = await Bun.file(
-  new URL("./fixtures/csm-profiles.json", import.meta.url),
-).json();
 
 test("client performance renders the overview then a single client", async () => {
   const host = win.document.createElement("div");
@@ -398,8 +411,8 @@ test("the onboarding spine gives the right day, in both languages, and names mis
 });
 
 test("the day blocks read in order and the quiet screens stay quiet", async () => {
-  // Start of day must read 1 to 5 in that order, or the sprints stop meaning anything.
-  const start = await renderSection("start");
+  // Today's day plan must read 1 to 5 in that order, or the sprints stop meaning anything.
+  const start = await renderSection("today");
   const order = [
     "1 · Morning sprint",
     "2 · Then the work",
@@ -413,8 +426,13 @@ test("the day blocks read in order and the quiet screens stay quiet", async () =
     expect(at).toBeGreaterThan(cursor);
     cursor = at;
   }
-  // Start of day is the day plan, not a second copy of the client list.
-  expect(start).not.toContain("Onboarding, get them live");
+  // Who needs you lives on Today, once: the Clients page lists everyone instead.
+  expect(start).toContain("Onboarding, get them live");
+  expect(start).toContain("Commitments from calls");
+  expect(start).toContain("File my end of day");
+  const list = await renderSection("clients");
+  expect(list).not.toContain("Onboarding, get them live");
+  expect(list).toContain("Greystone Contracting");
   // End of day is the report only.
   const eod = await renderSection("eod");
   expect(eod).not.toContain("Onboarding, get them live");
@@ -423,15 +441,17 @@ test("the day blocks read in order and the quiet screens stay quiet", async () =
 
 /**
  * The onboarding links (2026-10-05): an onboarding client's row says which forms
- * are in, and opening it lands on the three steps around the onboarding call,
- * with the kickoff form as the one teal action once their onboarding form is in.
+ * are in, and their page's Onboarding & files tab holds the three steps around
+ * the onboarding call, with the kickoff form as the one teal action once their
+ * onboarding form is in.
  */
-test("an onboarding client opens on its onboarding steps", async () => {
+test("an onboarding client's row and page show its onboarding steps", async () => {
   const host = win.document.createElement("div");
   win.document.body.appendChild(host);
   // biome-ignore lint/suspicious/noExplicitAny: happy-dom element into React DOM
   const root = createRoot(host as any);
   queryResult = snapshot;
+  queryByName = { clientProfile: perfFixture.profile };
   const settle = () =>
     reactAct(async () => {
       await new Promise(r => setTimeout(r, 0));
@@ -441,32 +461,38 @@ test("an onboarding client opens on its onboarding steps", async () => {
       root.render(
         createElement(
           MemoryRouter,
-          null,
-          createElement(CsmPage, { section: "clients" }),
+          { initialEntries: ["/clients?view=onboarding"] },
+          pageFor("clients"),
         ),
       );
     });
     await settle();
-    const buttons = () =>
-      [...host.querySelectorAll("button")] as unknown as HTMLButtonElement[];
-    const tab = buttons().find(b =>
-      (b.textContent ?? "").startsWith("Client onboarding"),
-    );
-    expect(tab).toBeDefined();
-    await reactAct(async () => tab?.click());
-    await settle();
-    const row = buttons().find(
-      b =>
-        b.getAttribute("aria-expanded") !== null &&
-        (b.textContent ?? "").includes("Greystone Contracting"),
+    const row = [...host.querySelectorAll("a")].find(a =>
+      (a.textContent ?? "").includes("Greystone Contracting"),
     );
     expect(row).toBeDefined();
-    // The forms' line on the closed row.
+    // The row opens the client's own page.
+    expect(row?.getAttribute("href")).toBe(`/clients/${GREYSTONE}`);
+    // The forms' line on the row.
     expect(row?.textContent).toContain("Onboarding form");
     expect(row?.textContent).toContain("Kickoff");
-    await reactAct(async () => row?.click());
+    await reactAct(async () => root.unmount());
+
+    const page = win.document.createElement("div");
+    win.document.body.appendChild(page);
+    // biome-ignore lint/suspicious/noExplicitAny: happy-dom element into React DOM
+    const root2 = createRoot(page as any);
+    await reactAct(async () => {
+      root2.render(
+        createElement(
+          MemoryRouter,
+          { initialEntries: [`/clients/${GREYSTONE}?tab=onboarding`] },
+          pageFor("client"),
+        ),
+      );
+    });
     await settle();
-    const text = (host.textContent ?? "").replace(/\s+/g, " ");
+    const text = (page.textContent ?? "").replace(/\s+/g, " ");
     expect(text).toContain("Before the call");
     expect(text).toContain("On the call");
     expect(text).toContain("After the call");
@@ -474,13 +500,101 @@ test("an onboarding client opens on its onboarding steps", async () => {
     expect(text).toContain("Open the kickoff form");
     expect(text).toContain("You are here");
     // With no card links, the kickoff form still opens, with the card id.
-    const kickoff = [...host.querySelectorAll("a")].find(a =>
+    const kickoff = [...page.querySelectorAll("a")].find(a =>
       (a.textContent ?? "").includes("Open the kickoff form"),
     );
     expect(kickoff?.getAttribute("href")).toBe(
       "https://maharamedia.typeform.com/to/tG7dnxBn#onboarding_client_id=86exnk0v4",
     );
+    await reactAct(async () => root2.unmount());
   } finally {
+    queryByName = {};
+  }
+});
+
+/**
+ * One client page (2026-10-06): the name, the next step, one "Book a call",
+ * the actions, and four tabs, from one address that survives a refresh.
+ */
+test("a client's page has one booking button, the actions and four tabs", async () => {
+  queryByName = { clientProfile: perfFixture.profile };
+  try {
+    const text = await renderSection("client", `/clients/${GREYSTONE}`);
+    expect(text).toContain("Greystone Contracting");
+    expect(text).toContain("All clients");
+    expect(text.match(/Book a call/g)?.length).toBe(1);
+    expect(text).toContain("Or send the booking link");
+    expect(text).toContain("Client ID · ClickUp client board");
+    for (const action of [
+      "Message",
+      "Log a call",
+      "Update the board",
+      "Add a task",
+      "Leave it",
+    ])
+      expect(text).toContain(action);
+    for (const tab of ["Overview", "Results", "Onboarding & files", "Money"])
+      expect(text).toContain(tab);
+    // Overview: one "Before the call" block, the diagnosis inside it.
+    expect(text).toContain("What is holding this client back");
+    expect(text).toContain("What the media buyer changed since your last call");
+    expect(text).not.toContain("Prep for this call");
+    // Results: the period and the report at the top.
+    const results = await renderSection(
+      "client",
+      `/clients/${GREYSTONE}?tab=results&period=lastMonth`,
+    );
+    expect(results).toContain("Print report");
+    expect(results).toContain("Write the Google Doc");
+    // A client who is not on the list says so and where to look.
+    const missing = await renderSection("client", "/clients/nope", "nope");
+    expect(missing).toContain("This client is not on your list");
+  } finally {
+    queryByName = {};
+  }
+});
+
+/**
+ * The worst bug the audit found: "All done already" on a call's commitments
+ * logged a touchpoint, so ClickUp's last contact became today for a client
+ * nobody had contacted. It now closes the commitment without touching contact.
+ */
+test("closing a commitment is not contact with the client", async () => {
+  const host = win.document.createElement("div");
+  win.document.body.appendChild(host);
+  // biome-ignore lint/suspicious/noExplicitAny: happy-dom element into React DOM
+  const root = createRoot(host as any);
+  queryResult = snapshot;
+  queryByName = { clientProfile: perfFixture.profile };
+  sent.length = 0;
+  try {
+    await reactAct(async () => {
+      root.render(
+        createElement(
+          MemoryRouter,
+          { initialEntries: [`/clients/${MOFAG}`] },
+          pageFor("client", MOFAG),
+        ),
+      );
+    });
+    const call = [...host.querySelectorAll("button")].find(b =>
+      (b.textContent ?? "").startsWith("Your call on"),
+    );
+    expect(call).toBeDefined();
+    await reactAct(async () => call?.click());
+    const doneButton = [...host.querySelectorAll("button")].find(
+      b => b.textContent?.trim() === "All done already",
+    );
+    expect(doneButton).toBeDefined();
+    await reactAct(async () => doneButton?.click());
+    const acts = sent.filter(([name]) => name === "act").map(([, a]) => a);
+    expect(acts.length).toBeGreaterThan(0);
+    for (const a of acts) {
+      expect(a.kind).toBe("commitment");
+      expect(String(a.action)).toStartWith("Commitment handled: ");
+    }
+  } finally {
+    queryByName = {};
     await reactAct(async () => root.unmount());
   }
 });
