@@ -3084,12 +3084,13 @@ export function CsmPage({
 
 /**
  * His own money screen. Churn is never computed here: it is the churn tracker's
- * figure (Money, Churn; mahara-context's rule: clients lost before day 90 over
- * the clients active at the start). The tracker manages against the rolling
- * three months and reads the retention band from it, so this does too, with
- * the month beside it (the simplification audit, 2026-10-06: it used to call
- * one month "the one number you are held to" and quote the retired sheet).
- * Until the month has a start, the daily roster's count stands in, and says so.
+ * figure for the month (Money, Churn; mahara-context's rule: clients lost before
+ * day 90 over the clients active at the start), and the retention bonus reads
+ * that month figure (src/lib/csmMoney.ts). Beside it sits the tracker's last
+ * three months, the figure the team manages against (the simplification audit,
+ * 2026-10-06: this screen called one month "the one number you are held to"
+ * and quoted the retired churn sheet). Until the month has a start on the
+ * tracker, the daily roster's count stands in, and says so.
  */
 function MoneySection({
   snap,
@@ -3129,13 +3130,12 @@ function MoneySection({
     };
   }, [thisMonth]);
   const fromTracker =
-    tracker?.activeAtStart &&
-    (tracker.rolling3Pct !== null || tracker.churnPct !== null)
-      ? tracker
-      : null;
-  const rolling = fromTracker?.rolling3Pct ?? null;
-  const churn: number | null =
-    rolling ?? fromTracker?.churnPct ?? measured?.pct ?? null;
+    tracker?.activeAtStart && tracker.churnPct !== null ? tracker : null;
+  // The month is the pay figure; the three months are the one to manage.
+  const churn: number | null = fromTracker
+    ? fromTracker.churnPct
+    : (measured?.pct ?? null);
+  const rolling = tracker?.rolling3Pct ?? null;
 
   const target = Number(targetEdit ?? saved?.target ?? 0);
   const clients = Number(
@@ -3154,11 +3154,7 @@ function MoneySection({
     <div className="space-y-6">
       <section className="rounded-2xl border bg-card">
         <div className="flex flex-wrap items-center justify-between gap-2 px-4 pt-4 sm:px-6 sm:pt-6">
-          <h2 className="text-[15px] font-semibold">
-            {rolling !== null
-              ? "Churn, the last three months"
-              : "Churn this month"}
-          </h2>
+          <h2 className="text-[15px] font-semibold">Churn this month</h2>
           {churn === null ? null : churn <= CHURN_TARGET ? (
             <Chip tone="good">Under target</Chip>
           ) : (
@@ -3186,9 +3182,6 @@ function MoneySection({
           {fromTracker ? (
             <div className="min-w-0 text-sm">
               <div>
-                {rolling !== null && fromTracker.churnPct !== null
-                  ? `This month ${fromTracker.churnPct.toFixed(1)}%: `
-                  : "This month: "}
                 <span className="font-semibold">{fromTracker.churned}</span>{" "}
                 churned of{" "}
                 <span className="font-semibold">
@@ -3240,6 +3233,25 @@ function MoneySection({
               is exact, and every loss below is named and dated.
             </div>
           )}
+          {rolling !== null ? (
+            <div className="min-w-0 text-sm">
+              <div>
+                Last three months:{" "}
+                <span className="font-semibold tabular-nums">
+                  {rolling.toFixed(1)}%
+                </span>
+              </div>
+              <div className="text-xs text-muted-foreground">
+                The figure the team manages against, on the{" "}
+                <Link
+                  to="/money?tab=churn"
+                  className="text-primary underline-offset-2 hover:underline"
+                >
+                  churn tracker
+                </Link>
+              </div>
+            </div>
+          ) : null}
           <div className="text-sm">
             <div>
               Retention bonus at this rate:{" "}
@@ -3273,13 +3285,14 @@ function MoneySection({
         <details className="border-t px-4 py-3 text-xs text-muted-foreground sm:px-6">
           <summary>How this is counted</summary>
           <p className="mt-2">
-            From the churn tracker: clients lost before day 90, over the clients
-            active at the start of each month, across the last three months,
-            because at 17 clients one departure is 5.9% of a single month. The
-            retention bonus band reads the same figure. A client who finishes
-            the term and does not renew is not churn. Until the month has its
-            start count on the churn tracker, the daily roster's count stands
-            in: paying clients at the start of the month, minus the ones now
+            From the churn tracker: clients lost before day 90 this month, over
+            the clients active at the start. Your retention bonus reads this
+            month's figure. The tracker also shows the last three months,
+            because at 17 clients one departure is 5.9% of a single month; that
+            is the figure the team manages against. A client who finishes the
+            term and does not renew is not churn. Until the month has its start
+            count on the churn tracker, the daily roster's count stands in:
+            paying clients at the start of the month, minus the ones now
             stopped, cancelled, paused past 14 days or off the board.
           </p>
         </details>
