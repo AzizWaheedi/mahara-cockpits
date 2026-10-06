@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { type ReactNode, useMemo } from "react";
 import { Link } from "react-router";
 import { Empty, Page, PageHeader, Problem, Spinner } from "../components/bits";
 import { useJobs } from "../lib/data";
@@ -97,7 +97,11 @@ function Legend() {
   );
 }
 
-export default function PipelinePage() {
+export default function PipelinePage({
+  actions,
+}: {
+  actions?: ReactNode;
+} = {}) {
   const { data: jobs, error, loading } = useJobs();
 
   const columns = useMemo(() => {
@@ -117,9 +121,14 @@ export default function PipelinePage() {
   return (
     <Page wide>
       <PageHeader
-        title="Pipeline"
+        title="Jobs"
         sub="Every open job by its status on the board."
-        actions={<Legend />}
+        actions={
+          <>
+            {actions}
+            <Legend />
+          </>
+        }
       />
 
       {error && <Problem>The board could not be read: {error}</Problem>}
