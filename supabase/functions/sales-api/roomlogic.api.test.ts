@@ -68,13 +68,14 @@ function workerOpened(over: Partial<RoomRow> = {}): RoomRow {
 }
 
 describe("S2: worker.ready on a room the worker opened", () => {
-  test("claims the link and fills only lead_by; never touches what the worker set; the version stays", () => {
+  test("claims the link (lead_by waits for the link's send); never touches what the worker set; the version stays", () => {
     const r = workerOpened();
     const a = ok(apply(r, { kind: "ready" }, T0 + 5 * S));
     expect(a.changed).toBe(true);
     expect(a.effects).toEqual([{ kind: "send_link" }]);
-    expect(a.patch).toEqual({ lead_by: at(T0 + 5 * S + W.lead * S), link_claimed_at: at(T0 + 5 * S) });
-    expect(a.expect).toEqual({ state: "open", lead_by: null, link_claimed_at: null });
+    // m1 round 4: lead_by is set by the link's first send, never at the open.
+    expect(a.patch).toEqual({ link_claimed_at: at(T0 + 5 * S) });
+    expect(a.expect).toEqual({ state: "open", link_claimed_at: null });
     expect(a.room.version).toBe(3);
   });
 

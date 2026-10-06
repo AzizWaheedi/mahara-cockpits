@@ -202,6 +202,8 @@ const SPEC_SENTENCES = {
 };
 
 const LANE_SENTENCES = {
+  // m1 round 4: the lead back in Zoom's waiting room after a drop.
+  back_in_waiting_room: "{name} is back in the waiting room. Admit them in Zoom.",
   moved_provider:
     "Hi {first_name}, {old} would not let you in, sorry about that. Let's use {provider} instead: {link} I'm waiting for you there now.",
   moved_email_subject: "Our call moved to {provider}.",

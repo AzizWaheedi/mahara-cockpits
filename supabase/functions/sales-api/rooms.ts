@@ -17,12 +17,15 @@
 
 import { ghlTime } from "./dialer.ts";
 import { clockCountry, healthSince, hoursRefusal, queuedTemplatesQuery, templateMayBeQueued } from "./sendrules.ts";
-import { cleanText, greetingName, leadFirstName, redact, slackSafe, stateOf, type Who } from "./lib.ts";
+import { cleanText, errorOf, failedStatus, greetingName, leadFirstName, redact, slackSafe, stateOf, type Who } from "./lib.ts";
 import { ApiRefusal, DbError, GhlError, isUnique, type LiveIO, uuidFrom } from "./liveio.ts";
 import {
   adoptRefusal,
   type Applied,
   COUNT_STUCK_S,
+  LINK_RETRY_S,
+  linkRefusalFinal,
+  linkRetrying,
   REASK_AFTER_S,
   REASK_WINDOW_S,
   applyRoomEvent,
@@ -282,7 +285,20 @@ function windowShutFailure(why: string): boolean {
  * as index.ts's follow-up send (HighLevel said 429, 401 or 403).
  */
 export function passingFailure(why: unknown): boolean {
-  return /HighLevel said (429|401|403)\b|too many requests|rate.?limit|insufficient (balance|funds|credit)|wallet/i.test(String(why ?? ""));
+  // HighLevel's gateway answers its own 400 and 422 pages during a deploy
+  // ("Version header is not valid"): nothing about the lead, so passing too
+  // (m1 round 4, not-sent-then-reask-sends-on-top).
+  return /HighLevel said (429|401|403|400|422)\b|too many requests|rate.?limit|insufficient (balance|funds|credit)|wallet|version header/i.test(String(why ?? ""));
+}
+
+/**
+ * A sentence's first letter lower-cased to follow "Not sent: ", unless its
+ * first word is a name (HighLevel, WhatsApp, Zoom...), which keeps its
+ * capitals (m1 round 4: never "highLevel").
+ */
+function lowerOpener(sentence: string): string {
+  if (/^(HighLevel|WhatsApp|Zoom|Meet|Google|Meta|Mahara|Slack)\b/.test(sentence)) return sentence;
+  return sentence.charAt(0).toLowerCase() + sentence.slice(1);
 }
 
 /** A seat's role as the team's words say it (roles, never names). */
@@ -467,6 +483,15 @@ export const ROOMS_COPY = {
    * final (m1 round 2, throttled-all-lanes-said-final).
    */
   all_failed_passing: "HighLevel did not take the link yet ({why}), so it is tried again in a minute",
+  /**
+   * A refusal that may pass, tried again for LINK_RETRY_S from the link's
+   * claim and still not taken (m1 round 4): said as final now, so the panel
+   * tells the rep to send the link another way, and nothing goes on top.
+   */
+  retry_over: "HighLevel did not take the link in {minutes} minutes ({why})",
+  /** HighLevel answered that the lead is gone, once: asked again, so never final yet (m1 round 4). */
+  contact_gone_retry:
+    "This lead is not in HighLevel any more (merged or deleted, HighLevel answered), so the link has not gone yet. It is tried again in a minute.",
   /** A lane's link keys all spent on refusals: only a new room sends the link now (m1 round 2). */
   keys_spent: "The link could not go after several tries ({why}). End this room and make a new one, or read the link out",
   /** The fence where the link leaves (m1 round 2): rooms switched off after the press. */
@@ -653,6 +678,8 @@ export const EVENT_TEXT = {
   link_pending_emailed: "WhatsApp has not taken the link yet, so it went by email too.",
   link_pending_no_email: "WhatsApp has not taken the link yet and no email could go. Read the link out.",
   link_pending_email_unclear: "WhatsApp has not taken the link yet, and the email may have gone. Check the conversation, or read the link out.",
+  /** The night rule held the stuck free text's email backup (m1 round 4). */
+  link_pending_night: "WhatsApp has not taken the link yet. It is night where the lead is, so nothing else went. Read the link out if you reach them.",
   /** A link HighLevel took was not found in the lead's conversation on one read (m1 round 3): read again before anything is said. */
   link_not_seen: "HighLevel's conversation did not show the link on one read. It is read again in a minute.",
   /** The late failure or the stuck free text, said while HighLevel did not answer for the lead's contact (m1 round 3). */
@@ -664,6 +691,24 @@ export const EVENT_TEXT = {
   link_email_pending: "HighLevel has not sent the email yet. Read the link out.",
   link_email_pending_texted: "HighLevel has not sent the email yet, so the link went on WhatsApp too.",
   link_email_pending_text_unclear: "HighLevel has not sent the email yet, and the WhatsApp message may have gone. Check the conversation, or read the link out.",
+  /**
+   * A late backup HighLevel did not take yet (its 429, a contact read that
+   * did not answer): tried again by the next minute's read, the lane's own
+   * line left open (m1 round 4, late-backup-email-429-said-no-email-never-retried).
+   */
+  link_failed_late_email_waiting:
+    "WhatsApp failed the link after it was sent. HighLevel did not take the email yet, so it is tried again in a minute. Read the link out if you reach them.",
+  link_pending_email_waiting:
+    "WhatsApp has not taken the link yet. HighLevel did not take the email yet, so it is tried again in a minute. Read the link out if you reach them.",
+  link_bounced_text_waiting:
+    "The email bounced. HighLevel did not take the WhatsApp message yet, so it is tried again in a minute. Read the link out if you reach them.",
+  link_email_pending_text_waiting:
+    "HighLevel has not sent the email yet and did not take the WhatsApp message yet, so it is tried again in a minute. Read the link out if you reach them.",
+  /** The bounce's free text whose answer was lost (m1 round 4, bounce-backup-text-unclear-tells-rep-send-on-whatsapp). */
+  link_bounced_text_unclear: "The email bounced, and the WhatsApp message may have gone. Check the conversation, or read the link out.",
+  /** A backup HighLevel still holds as pending, after the first lane failed (m1 round 4, backup-lane-stuck-pending-never-doubted). */
+  link_backup_email_pending: "HighLevel has not sent the email yet, so neither way reached the lead. Read the link out.",
+  link_backup_text_pending: "HighLevel has not sent the WhatsApp message yet, so neither way reached the lead. Read the link out.",
   /** A late failure after rooms were switched off or the lead left the test list (m1 round 2): nothing more went. */
   link_failed_late_fenced: "The link did not reach the lead, and nothing else went because {why}. Call the lead.",
   not_sent: "Not sent: {why}.",
@@ -695,7 +740,9 @@ const KIND_TEXT: Record<string, string> = {
 };
 
 export function eventText(e: { kind?: unknown; text?: unknown; source?: unknown }): string {
-  const t = typeof e.text === "string" ? e.text.trim() : "";
+  // No direction override reaches a rep's timeline, whoever wrote the line
+  // (m1 round 4, zoom-name-bidi-spoofs-room-timeline: a lead's Zoom name).
+  const t = typeof e.text === "string" ? e.text.replace(/[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, "").trim() : "";
   if (t) return redact(t);
   const kind = String(e.kind ?? "");
   if (KIND_TEXT[kind]) return KIND_TEXT[kind];
@@ -1444,6 +1491,33 @@ export function makeRooms(deps: RoomDeps): Rooms {
         return { refused: refuse("link_already_sent", { time: clockWithDay(at, now) }) };
       }
     }
+    // The same for a miss saved by hand, which carries no attempt id (m1
+    // round 4, hand-saved-miss-second-link: a call made from a mobile and
+    // saved as made elsewhere): the same host's missed-call room for this
+    // lead whose link went less than STALE_MISS_MS ago (its miss, which came
+    // before the link, is still the dialer's fresh miss) and closed waiting for
+    // them, with no newer call to the lead from this seat since that link,
+    // is this miss's link. Not readable: the press goes ahead.
+    if (a.purpose === "fallback" && !a.replacing && a.contact_id && !a.attempt_id) {
+      const recent = (
+        await io
+          .db(
+            `${ROOMS}?contact_id=eq.${enc(a.contact_id)}&host_email=eq.${enc(a.host)}&purpose=eq.fallback&state=eq.expired&link_sent_at=gt.${enc(isoAt(now - STALE_MISS_MS))}&select=*&order=link_sent_at.desc&limit=1`,
+          )
+          .catch(() => [] as Row[])
+      )[0] as unknown as RoomRow | undefined;
+      if (recent?.link_sent_at) {
+        const newer = await io
+          .db(
+            `cockpit_sales_attempts?contact_id=eq.${enc(a.contact_id)}&rep_email=eq.${enc(a.host)}&started_at=gt.${enc(String(recent.link_sent_at))}&select=id&limit=1`,
+          )
+          .catch(() => null);
+        if (newer && !newer.length) {
+          const at = ms(recent.link_sent_at) ?? now;
+          return { refused: refuse("link_already_sent", { time: clockWithDay(at, now) }) };
+        }
+      }
+    }
     // The room worker is down (the VPS, its cron or its lock): no room can be
     // made, so the rep is told at once what to do instead (fix round 4),
     // never left on "Making your room" for the minute the sweep waits.
@@ -2061,6 +2135,34 @@ export function makeRooms(deps: RoomDeps): Rooms {
     }
   }
 
+  /**
+   * A host join's own Zoom session has no leave stored: true only when the
+   * room's stored Zoom events were read and none of the host's leaves is of
+   * this join's session (a second device). A join naming no session, or an
+   * unread history, is no proof (the room keeps waiting, as before).
+   */
+  async function hostSessionOpen(room: RoomRow, join: ZoomEvent): Promise<boolean> {
+    const mine = zoomSession(join);
+    if (!mine || room.provider !== "zoom") return false;
+    try {
+      const evs = await io.db(
+        `${EVENTS}?room_id=eq.${enc(room.id)}&source=eq.zoom&kind=eq.zoom.meeting.participant_left&select=id,detail&order=at.desc&limit=200`,
+      );
+      const ctx = await staffCtx(room);
+      for (const e of evs) {
+        const d = obj(e.detail) as ZoomEvent;
+        if (zoomMeetingId(d) !== String(room.provider_meeting_id)) continue;
+        const p = d.payload?.object?.participant;
+        if (!p || zoomRole(p, d.payload?.object?.host_id, ctx) !== "host") continue;
+        if (zoomSession(d) === mine) return false;
+      }
+      return true;
+    } catch (e) {
+      io.log(`rooms: the host's Zoom leaves were not read: ${redact(String((e as Error)?.message ?? e))}`);
+      return false;
+    }
+  }
+
   async function laterJoinStands(room: RoomRow, setting: RoomsSetting): Promise<RoomRow | null> {
     if (room.provider !== "zoom" || !room.provider_meeting_id) return null;
     const takenAt = ms(room.taken_back_join_at) ?? ms(room.lead_in_at);
@@ -2281,7 +2383,20 @@ export function makeRooms(deps: RoomDeps): Rooms {
     if ((replace && replace.kind === "replace") || again) {
       const provider: Provider = replace && replace.kind === "replace" ? replace.provider : room.provider === "zoom" ? "meet" : "zoom";
       Object.assign(answer, await replacementFor(who, room, provider, setting));
+    } else if (reason === "admit_blocked" && !applied.changed && isFinal(room.state) && room.contact_id) {
+      // The room closed between the press's first read and its write (the
+      // sweep's timer at the ten-minute mark, a second tab's End): the rule
+      // for a press on a closed room runs on the row as it is now (m1 round
+      // 4, admit-blocked-raced-by-timer-close-answers-neither). A timer's
+      // close within open_grace records the knock and makes the
+      // replacement; any other close says why no room was made.
+      const mine = lower(room.host_email) === actor.email || actor.manager;
+      if (mine) return await knockAfterClose(who, room, setting);
     }
+    // Never an "I can't let them in" answer with neither a replacement nor a
+    // reason: the panel would read it as "make a plain room".
+    if (reason === "admit_blocked" && !answer.replacement && typeof answer.replacement_refusal !== "string" && isFinal(room.state))
+      answer.replacement_refusal = closedSentence(room, io.now());
     return { room: await view(room, setting), ...answer };
   }
 
@@ -2308,9 +2423,16 @@ export function makeRooms(deps: RoomDeps): Rooms {
     if (!timerClose) return { room: await view(cur, setting), replacement_refusal: closedSentence(cur, now) };
     // The knock, on the room it was for: never settled as a no-show, and the
     // replacement's link says the call moved (replacedAdmitBlocked).
+    // Guarded on the row as read (m1 round 4,
+    // knock-after-close-lost-after-taken-back-join): a join "That was not the
+    // lead" took back keeps its time in lead_in_at as evidence and is no
+    // join (checked above with leadJoined), so the guard is that value as
+    // read, never "no join time at all"; a late join kept since (result
+    // joined) or any other move makes this write miss.
+    const joinGuard = cur.lead_in_at ? `lead_in_at=eq.${enc(String(cur.lead_in_at))}` : "lead_in_at=is.null";
     const knocked = (
       await io
-        .db(`${ROOMS}?id=eq.${enc(cur.id)}&state=eq.expired&result=eq.no_join&lead_in_at=is.null`, {
+        .db(`${ROOMS}?id=eq.${enc(cur.id)}&state=eq.expired&result=eq.no_join&version=eq.${Number(cur.version)}&${joinGuard}`, {
           method: "PATCH",
           body: { result: "admit_blocked" },
           prefer: "return=representation",
@@ -2894,12 +3016,48 @@ export function makeRooms(deps: RoomDeps): Rooms {
    * re-ask, which writes its own (resumed: true).
    */
   async function auditLink(room: RoomRow, channel: LinkChannel, extra: Row): Promise<void> {
+    // One room.link row per room and channel, whoever records the send (m1
+    // round 4, reask-beside-finishing-send-second-link-row: the minute's
+    // re-ask that finds the send went, and the run that sent it, both reach
+    // here). The send's own timeline line (recordSent's link.sent, the same
+    // key) is the claim, with audited false until the row is written; a run
+    // that finds it claimed writes nothing, unless the claimer stopped
+    // before its row (still unaudited STEP_STALE_MS on), when it takes the
+    // row over once.
+    const key = `link.sent:${room.id}:${channel}`;
+    const text = channel === "email" ? EVENT_TEXT.link_sent_email : EVENT_TEXT.link_sent;
+    let claimed = await claimLine(room.id, "link.sent", text, { channel, audited: false }, key);
+    if (!claimed) {
+      const line = (await io.db(`${EVENTS}?dedupe_key=eq.${enc(key)}&select=id,at,handled_at,detail`).catch(() => null))?.[0];
+      if (!line) return;
+      const d = obj(line.detail);
+      const at = ms(line.handled_at) ?? ms(line.at);
+      if (d.audited === true) return;
+      // Claimed by another run that is still writing its row: theirs.
+      if (d.audited === false && (at === null || io.now() - at < STEP_STALE_MS)) return;
+      // A line recordSent wrote with no claim (a send recorded with no row
+      // yet), or a claimer that stopped: this run writes the row, once.
+      const guard = d.audited === false ? "detail->>audited=eq.false" : "detail->>audited=is.null";
+      const took = await io
+        .db(`${EVENTS}?id=eq.${enc(String(line.id))}&${guard}`, {
+          method: "PATCH",
+          body: { detail: { ...d, audited: true } },
+          prefer: "return=representation",
+        })
+        .catch(() => [] as Row[]);
+      if (!took.length) return;
+      claimed = false;
+    }
     const had = Array.isArray(room.link_channels) ? (room.link_channels as string[]) : [];
     await deps.audit(DESK, "room.link", ROOMS, room.id, { link_sent_at: room.link_sent_at ?? null }, {
       link_sent_at: room.link_sent_at ?? isoAt(io.now()),
       link_channels: [...new Set([...had, channel])],
       ...extra,
     }, { host_email: lower(room.host_email) });
+    if (claimed)
+      await io
+        .db(`${EVENTS}?dedupe_key=eq.${enc(key)}`, { method: "PATCH", body: { detail: { channel, audited: true } }, prefer: "return=minimal" })
+        .catch(e => io.log(`rooms: the link line was not marked audited: ${redact(String((e as Error)?.message ?? e))}`));
   }
 
   /** A send's words as the message service stored them (the rendered template), or null. */
@@ -3019,22 +3177,28 @@ export function makeRooms(deps: RoomDeps): Rooms {
    * because a lead waiting on a link matters more.
    */
   async function leadLinksThisHour(contactId: string): Promise<number> {
-    return await io
-      .db(
-        `${ROOMS}?contact_id=eq.${enc(contactId)}&link_sent_at=gte.${enc(isoAt(io.now() - LINK_FLOOD_WINDOW_MS))}&select=id,link_channels,link_unconfirmed_at&limit=50`,
-      )
-      .then(rows =>
-        rows.reduce((n, r) => {
-          const ch = Array.isArray(r.link_channels) ? (r.link_channels as string[]) : [];
-          // The backup email after an unseen template is that same link.
-          const backup = r.link_unconfirmed_at && ch.includes("whatsapp_template") && ch.includes("email") ? 1 : 0;
-          return n + Math.max(1, ch.length - backup);
-        }, 0),
-      )
-      .catch(e => {
-        io.log(`rooms: the lead's recent links could not be read, the link goes: ${redact(String((e as Error)?.message ?? e))}`);
-        return 0;
-      });
+    const since = isoAt(io.now() - LINK_FLOOD_WINDOW_MS);
+    try {
+      const rows = await io.db(
+        `${ROOMS}?contact_id=eq.${enc(contactId)}&link_sent_at=gte.${enc(since)}&select=id,link_channels,link_unconfirmed_at&limit=50`,
+      );
+      const inHour = rows.reduce((n, r) => {
+        const ch = Array.isArray(r.link_channels) ? (r.link_channels as string[]) : [];
+        // The backup email after an unseen template is that same link.
+        const backup = r.link_unconfirmed_at && ch.includes("whatsapp_template") && ch.includes("email") ? 1 : 0;
+        return n + Math.max(1, ch.length - backup);
+      }, 0);
+      // A room whose first send left the hour while a later channel's is
+      // still in it (m1 round 4: A's WhatsApp at 14:00, its email at 14:05):
+      // that later link counts, so no hour ever holds four.
+      const later = await io.db(
+        `${ROOMS}?contact_id=eq.${enc(contactId)}&link_sent_at=lt.${enc(since)}&last_link_at=gte.${enc(since)}&select=id&limit=50`,
+      );
+      return inHour + later.length;
+    } catch (e) {
+      io.log(`rooms: the lead's recent links could not be read, the link goes: ${redact(String((e as Error)?.message ?? e))}`);
+      return 0;
+    }
   }
 
   /**
@@ -3071,6 +3235,13 @@ export function makeRooms(deps: RoomDeps): Rooms {
   async function recordNotSent(room: RoomRow, why: string, unclear: LinkChannel | null = null): Promise<boolean> {
     const sentence = why.charAt(0).toUpperCase() + why.slice(1).replace(/\.+$/, "");
     const text = `${sentence}.`.slice(0, 500);
+    // The lead's ten minutes start when the room stops trying on its own
+    // (m1 round 4, unsent-link-closed-as-lead-no-show-at-open-plus-ten): a
+    // refusal that is final, or a send that may have gone, leaves the link
+    // to the rep, who sends it or reads it out now. While the link is tried
+    // again, lead_by stays unset (readyOnOpen sets it only for a link that
+    // went) and the sweep's R4 waits for the retries.
+    if (!linkRetrying(text)) await startLeadWait(room);
     if ((room.refusal ?? null) === text) return false;
     try {
       const guard = room.refusal ? `refusal=eq.${enc(room.refusal)}` : "refusal=is.null";
@@ -3093,8 +3264,41 @@ export function makeRooms(deps: RoomDeps): Rooms {
     // may-have-gone-shown-as-not-sent): its own line, never "Not sent: ...",
     // which the rep reads as failed and sends the link a second way.
     if (unclear) await note(room.id, "link.unclear", text, { channel: unclear }, `link.unclear:${room.id}:${unclear === "email" ? "email" : "whatsapp"}`);
-    else await note(room.id, "link.not_sent", fill(EVENT_TEXT.not_sent, { why: sentence.charAt(0).toLowerCase() + sentence.slice(1) }), {});
+    else await note(room.id, "link.not_sent", fill(EVENT_TEXT.not_sent, { why: lowerOpener(sentence) }), {});
     return true;
+  }
+
+  /**
+   * lead_by for a room whose link the rep now delivers (a final refusal, or
+   * a send that may have gone): now + the lead's wait, only where none is
+   * set and no link went. Never fatal (R4 falls back to the open + the wait).
+   */
+  async function startLeadWait(room: RoomRow): Promise<void> {
+    if (room.lead_by || room.link_sent_at || !room.contact_id || room.purpose === "booked") return;
+    if (room.state !== "open" && room.state !== "host_in") return;
+    try {
+      const { rooms: setting } = await roomsAndLive();
+      await io.db(`${ROOMS}?id=eq.${enc(room.id)}&lead_by=is.null&link_sent_at=is.null&state=in.(open,host_in)`, {
+        method: "PATCH",
+        body: { lead_by: isoAt(io.now() + setting.waits_s.lead * S) },
+        prefer: "return=minimal",
+      });
+    } catch (e) {
+      io.log(`rooms: the lead's wait was not started: ${redact(String((e as Error)?.message ?? e))}`);
+    }
+  }
+
+  /**
+   * A refusal that may pass (the re-ask tries again in a minute), or, once
+   * LINK_RETRY_S has passed since the link's claim, the same refusal said as
+   * final (m1 round 4, not-sent-then-reask-sends-on-top): the panel then
+   * tells the rep to send the link another way, and the re-ask stops, so
+   * nothing goes on top of what the rep sent.
+   */
+  async function recordRetrying(room: RoomRow, sentence: string, why: string): Promise<void> {
+    const claimed = ms(room.link_claimed_at);
+    const over = claimed !== null && io.now() - claimed >= LINK_RETRY_S * S;
+    await recordNotSent(room, over ? fill(ROOMS_COPY.retry_over, { minutes: Math.round(LINK_RETRY_S / 60), why: why.replace(/\.+$/, "") }) : sentence);
   }
 
   /**
@@ -3111,7 +3315,7 @@ export function makeRooms(deps: RoomDeps): Rooms {
     // HighLevel said this lead is gone: asked once more a minute later, and
     // nothing more after a second "gone" (stress2, round 2: one answer is
     // never final, it may be a deploy's or a gateway's).
-    if (!first.link_sent_at && String(first.refusal ?? "").startsWith(ROOMS_COPY.contact_gone_send.slice(0, 40)) && (await goneSettled(first))) return;
+    if (!first.link_sent_at && String(first.refusal ?? "").startsWith(ROOMS_COPY.contact_gone_send.slice(0, 40)) && (await goneWaits(first))) return;
     if (first.link_sent_at) {
       // Sent: only a record that never finished (no channel on the room) or
       // an unseen template's backup that never ran is resumed here.
@@ -3175,19 +3379,17 @@ export function makeRooms(deps: RoomDeps): Rooms {
     return row ? (ms(row.handled_at) ?? 0) : null;
   }
   /**
-   * A gone lead's link waits: the first "gone" answer is under a minute old
-   * (asked again after it). After a second "gone", HighLevel is still asked
-   * every minute until the lead's ten minutes are over (m1 round 2: a run of
-   * one gateway's answers is never final while the lead may be waiting), and
-   * only then is the link settled. Not readable: settled for now (the next
-   * minute asks again).
+   * A gone lead's link waits while the first "gone" answer is under a minute
+   * old (asked again after it). After that HighLevel is asked every minute
+   * while the link is tried again (m1 round 2: a run of one gateway's
+   * answers is never final while the lead may be waiting); the refusal says
+   * so ("tried again in a minute") until LINK_RETRY_S has passed, and only
+   * then says the lead is gone, as final (m1 round 4), which ends the
+   * re-asks. Not readable: waits (the next minute asks again).
    */
-  async function goneSettled(room: RoomRow): Promise<boolean> {
+  async function goneWaits(room: RoomRow): Promise<boolean> {
     try {
-      if ((await goneAt(room.id, "link.gone_again")) !== null) {
-        const leadBy = ms(room.lead_by);
-        return leadBy === null || io.now() > leadBy;
-      }
+      if ((await goneAt(room.id, "link.gone_again")) !== null) return false;
       const first = await goneAt(room.id, "link.gone");
       return first !== null && io.now() - first < GONE_AGAIN_MS;
     } catch {
@@ -3421,24 +3623,35 @@ export function makeRooms(deps: RoomDeps): Rooms {
     // sendLink read the room open (or the host in); the lead may have come in
     // since (a link on its way still goes, as stillOpen allows).
     if (room.state !== "open" && room.state !== "host_in" && room.state !== "lead_in") return;
+    // A refusal said as final (the panel's "Not sent", which tells the rep to
+    // send the link another way or read it out): nothing of the room's own
+    // goes after it (m1 round 4, not-sent-then-reask-sends-on-top). Only a
+    // send of ours that already went is recorded.
+    if (!room.link_sent_at && linkRefusalFinal(room.refusal)) {
+      const had = await linkRows(room.id).catch(() => null);
+      if (!had || ![...had.rows.values()].some(r => ["sent", "delivered", "read"].includes(String(r.state)))) return;
+    }
     const raw = await settingsOf(["rooms", "whatsapp_guard", "messaging"]);
     const setting = roomsSetting(raw.rooms);
     const healthFrom = isoAt(healthSince(raw.whatsapp_guard, io.now()));
     const read = await readContactOrGone(room.contact_id);
     if (read === "gone") {
-      // Merged away or deleted in HighLevel: said once. The minute's re-ask
-      // reads HighLevel once more a minute on, and a second "gone" stops it
-      // for this room (sendLink, goneSettled).
+      // Merged away or deleted in HighLevel: said once, and asked again each
+      // minute (one answer is never final: m1 round 2) while the link is
+      // tried again; past LINK_RETRY_S the lead is said gone, as final, and
+      // the re-asks stop (m1 round 4).
       const firstGone = await goneAt(room.id, "link.gone");
       if (firstGone === null) await note(room.id, "link.gone", "HighLevel answered that this lead is not there.", {}, `link.gone:${room.id}`);
       else if (io.now() - firstGone >= GONE_AGAIN_MS)
         await note(room.id, "link.gone", "HighLevel answered again that this lead is not there.", {}, `link.gone_again:${room.id}`);
-      await recordNotSent(room, ROOMS_COPY.contact_gone_send);
+      const claimed = ms(room.link_claimed_at);
+      const over = claimed !== null && io.now() - claimed >= LINK_RETRY_S * S;
+      await recordNotSent(room, over ? ROOMS_COPY.contact_gone_send : ROOMS_COPY.contact_gone_retry);
       return;
     }
     const contact = read;
     if (!contact) {
-      await recordNotSent(room, ROOMS_COPY.contact_unread_send);
+      await recordRetrying(room, ROOMS_COPY.contact_unread_send, "HighLevel did not answer");
       return;
     }
     // A re-ask resumes, never plans afresh: a send that went (its record lost
@@ -3464,6 +3677,10 @@ export function makeRooms(deps: RoomDeps): Rooms {
       return Boolean(cur && (cur.state === "open" || cur.state === "host_in" || cur.state === "lead_in"));
     };
     const went = earlier.find(x => ["sent", "delivered", "read"].includes(String(x.row.state)));
+    // A send that went is recorded here even while another run holds the
+    // link's lease (a run killed after HighLevel took it is never waited
+    // for); its room.link row is written once, by auditLink's claim (m1
+    // round 4, reask-beside-finishing-send-second-link-row).
     if (went) {
       // A template nobody saw, cut off before its backup: the same backup now.
       const unseen = went.channel === "whatsapp_template" && String(went.row.provider_status ?? "") === "enrolled";
@@ -3555,7 +3772,17 @@ export function makeRooms(deps: RoomDeps): Rooms {
       const requestId = currentKey(link.keys[channel], link.rows);
       const sent = await sendOn(room, channel, requestId, setting, undefined, contact, stepGuard(held, channel, stillOpen));
       if (!sent.ok) {
-        if (sent.stopped || sent.inflight) return;
+        if (sent.stopped) return;
+        // The message service stopped before anything went (HighLevel's
+        // contact read or the database did not answer): the room says the
+        // link is tried again in a minute, so the panel never reads its
+        // silence as late and tells the rep to send it another way (m1
+        // round 4); this lane is asked again by the minute's re-ask.
+        if (sent.inflight && sent.not_yet) {
+          await recordRetrying(room, ROOMS_COPY.contact_unread_send, "HighLevel did not answer");
+          return;
+        }
+        if (sent.inflight) return;
         if (sent.fenced) {
           await recordNotSent(room, sent.why);
           return;
@@ -3583,14 +3810,13 @@ export function makeRooms(deps: RoomDeps): Rooms {
     // A refusal that may pass in a minute (a 429 burst, a wallet hold) on
     // every lane is said as tried again, never as final (m1 round 2,
     // throttled-all-lanes-said-final); spent keys say to make a new room.
-    await recordNotSent(
-      room,
-      spent
-        ? fill(ROOMS_COPY.keys_spent, { why: whys })
-        : fails.length && fails.every(f => f.passing)
-          ? fill(ROOMS_COPY.all_failed_passing, { why: whys })
-          : fill(ROOMS_COPY.all_failed, { why: whys }),
-    );
+    if (!spent && fails.length && fails.every(f => f.passing)) {
+      await recordRetrying(room, fill(ROOMS_COPY.all_failed_passing, { why: whys }), whys);
+      return;
+    }
+    // Final: the panel says "Not sent" and tells the rep to send the link
+    // another way, so the minute's re-ask never sends on top (reaskPlan).
+    await recordNotSent(room, spent ? fill(ROOMS_COPY.keys_spent, { why: whys }) : fill(ROOMS_COPY.all_failed, { why: whys }));
   }
 
   /**
@@ -3697,6 +3923,71 @@ export function makeRooms(deps: RoomDeps): Rooms {
   }
 
   /**
+   * A late backup's send, finished (m1 round 4): "went" (recorded, with its
+   * room.link row when `audit` is given), "waiting" (HighLevel did not take
+   * it yet: a passing refusal, or the message service stopped before it
+   * wrote it; the next minute's read sends it again on the lane's key),
+   * "unclear" (it may have gone: the lead's conversation is read for it on
+   * its request id each minute, found it is recorded, not there a send's
+   * budget on it goes on the lane's next key, at once), "stop" (the room
+   * closed, or a send still runs), "refused" (certain and final). Only
+   * "went" and "refused" let the caller claim the lane's line.
+   */
+  async function lateSend(
+    fresh: RoomRow,
+    lane: LinkChannel,
+    send: () => Promise<SendOutcome>,
+    setting: RoomsSetting,
+    audit: Row | null,
+    again = true,
+  ): Promise<"went" | "waiting" | "unclear" | "stop" | "refused"> {
+    const sent = await send();
+    if (sent.ok) {
+      if (audit) await auditLink(fresh, lane, audit);
+      await recordSent(fresh, lane, sent.message_id, setting);
+      return "went";
+    }
+    if (sent.stopped) return "stop";
+    if (sent.inflight && !sent.not_yet) return "stop";
+    if (sent.passing || sent.not_yet) return "waiting";
+    if (sent.unclear) {
+      const v = await maybeSent(fresh, lane, sent, setting);
+      if (v === "sent") return "went";
+      if (v === "unclear") return "unclear";
+      // Certainly not sent (failed in the conversation, or not there): its
+      // row is failed now, so the lane's next key goes, once, at once.
+      return again ? await lateSend(fresh, lane, send, setting, audit, false) : "waiting";
+    }
+    return "refused";
+  }
+
+  /**
+   * A late backup's send on its lane's current key; a lane whose keys are
+   * all spent sends nothing more and is a final refusal, never "tried again
+   * in a minute" for good.
+   */
+  async function laneSend(
+    fresh: RoomRow,
+    lane: LinkChannel,
+    setting: RoomsSetting,
+    contact: Row | null,
+    guard: (() => Promise<boolean>) | undefined,
+  ): Promise<SendOutcome> {
+    const l = await linkRows(fresh.id);
+    if (keysSpent(l.keys[lane], l.rows)) return { ok: false, why: "it could not go after several tries", status: 409 };
+    return sendOn(fresh, lane, currentKey(l.keys[lane], l.rows), setting, undefined, contact, guard);
+  }
+
+  /** One line and its audit row for a late backup that is waiting or may have gone, on a key of its own, once. */
+  async function lateSay(room: RoomRow, kind: "link.backup_waiting" | "link.unclear", lane: LinkChannel, text: string, why: string): Promise<void> {
+    const key = kind === "link.unclear" ? `link.unclear:${room.id}:${lane === "email" ? "email" : "whatsapp"}` : `link.backup_waiting:${room.id}:${lane}`;
+    if (await claimLine(room.id, kind, text, { channel: lane, late: true }, key))
+      await deps.audit(DESK, kind === "link.unclear" ? "room.link.unclear" : "room.link.waiting", ROOMS, room.id, null, { channel: lane, why: why.slice(0, 300) }, {
+        host_email: lower(room.host_email),
+      });
+  }
+
+  /**
    * A link's status at HighLevel read by its message id: failed (with why),
    * a status, or null when HighLevel would not say (an error, or an answer
    * with no status: "an email's id is not always readable this way").
@@ -3711,11 +4002,16 @@ export function makeRooms(deps: RoomDeps): Rooms {
     }
     const st = lower(one.status);
     if (!st) return null;
-    if (st === "failed" || st === "undelivered" || st === "bounced")
+    if (failedStatus(st))
       return {
         failed: true,
         status: st,
-        why: cleanText(obj(one.meta).error ?? one.error ?? one.errorMessage ?? "", 300) || (st === "bounced" ? "the email bounced" : "HighLevel marked it failed"),
+        // The reason read from every field HighLevel uses for it, as the
+        // message service's read-back reads it (m1 round 4,
+        // late-failure-reason-unread-counts-against-whatsapp-health): Meta's
+        // 131026 in meta.failedReason or as an object stays readable, so a
+        // failure about one lead never counts against the number.
+        why: errorOf(one) || (st === "bounced" ? "the email bounced" : "HighLevel marked it failed"),
       };
     return { status: st };
   }
@@ -3904,6 +4200,25 @@ export function makeRooms(deps: RoomDeps): Rooms {
       !(await pendingNoted(room.id))
     )
       await pendingEmail(room);
+    // The backup lane HighLevel still holds (m1 round 4,
+    // backup-lane-stuck-pending-never-doubted): the lane before it failed
+    // (or was held and backed up), and the backup never left HighLevel
+    // either, so neither way reached the lead. Said once on its own key.
+    else if (
+      before &&
+      lanes.length > 1 &&
+      m.state !== "unclear" &&
+      ["pending", "queued"].includes(channel === "email" ? readNow : status) &&
+      went !== null &&
+      io.now() - went >= PENDING_STUCK_MS &&
+      ((await failedLateNoted(room.id, before)) || ((before === "whatsapp_text" || before === "email") && (await pendingNoted(room.id))))
+    ) {
+      await markUnconfirmed(room.id);
+      const text = channel === "email" ? EVENT_TEXT.link_backup_email_pending : EVENT_TEXT.link_backup_text_pending;
+      const said = { channel, pending: true, after: before, neither: true };
+      if (await claimLine(room.id, "link.unconfirmed", text, said, `link.pending_backup:${room.id}:${channel}`))
+        await deps.audit(DESK, "room.link.unconfirmed", ROOMS, room.id, null, said, { host_email: lower(room.host_email) });
+    }
   }
 
   /**
@@ -3929,31 +4244,36 @@ export function makeRooms(deps: RoomDeps): Rooms {
         await doubtContactUnread(room, "email", EVENT_TEXT.link_email_pending, { pending: true });
         return;
       }
-      let sent: SendOutcome | null = null;
+      let sent: Awaited<ReturnType<typeof lateSend>> | null = null;
       if (read !== "gone") {
         const raw = await settingsOf(["rooms", "whatsapp_guard", "messaging"]);
         const setting = roomsSetting(raw.rooms);
         const plan = await linkPlan(fresh, read, setting, raw, isoAt(healthSince(raw.whatsapp_guard, io.now())));
         if (!sendFence(fresh, setting) && !plan.refusal && plan.order.includes("whatsapp_text") && !(await nightHolds(fresh, read, io.now(), false))) {
-          const link = await linkRows(room.id);
           const stillOpen = async () => {
             const cur = await readRoom(room.id).catch(() => null);
             return Boolean(cur && (cur.state === "open" || cur.state === "host_in" || cur.state === "lead_in"));
           };
-          sent = await sendOn(fresh, "whatsapp_text", currentKey(link.keys.whatsapp_text, link.rows), setting, undefined, read, stepGuard(held, "text_late", stillOpen));
-          if (!sent.ok && (sent.stopped || sent.inflight || held.lost)) return;
-          if (sent.ok) {
-            await auditLink(fresh, "whatsapp_text", { after_pending: true });
-            await recordSent(fresh, "whatsapp_text", sent.message_id, setting);
+          sent = await lateSend(
+            fresh,
+            "whatsapp_text",
+            () => laneSend(fresh, "whatsapp_text", setting, read, stepGuard(held, "text_late", stillOpen)),
+            setting,
+            { after_pending: true },
+          );
+          if (sent === "stop" || held.lost) return;
+          if (sent === "waiting") {
+            await lateSay(room, "link.backup_waiting", "whatsapp_text", EVENT_TEXT.link_email_pending_text_waiting, "HighLevel did not take the WhatsApp message yet");
+            return;
+          }
+          if (sent === "unclear") {
+            await lateSay(room, "link.unclear", "whatsapp_text", EVENT_TEXT.link_email_pending_text_unclear, "the WhatsApp message's answer was lost");
+            return;
           }
         }
       }
-      const text = sent?.ok
-        ? EVENT_TEXT.link_email_pending_texted
-        : sent && !sent.ok && sent.unclear
-          ? EVENT_TEXT.link_email_pending_text_unclear
-          : EVENT_TEXT.link_email_pending;
-      const said = { channel: "email", pending: true, texted: sent?.ok ? true : sent && !sent.ok && sent.unclear ? "unclear" : false };
+      const text = sent === "went" ? EVENT_TEXT.link_email_pending_texted : EVENT_TEXT.link_email_pending;
+      const said = { channel: "email", pending: true, texted: sent === "went" };
       if (await claimLine(room.id, "link.unconfirmed", text, said, `link.pending:${room.id}`))
         await deps.audit(DESK, "room.link.unconfirmed", ROOMS, room.id, null, said, { host_email: lower(room.host_email) });
     } finally {
@@ -4016,22 +4336,42 @@ export function makeRooms(deps: RoomDeps): Rooms {
       }
       const contact = read === "gone" ? null : read;
       const { rooms: setting } = await roomsAndLive();
-      let mail: SendOutcome | null = null;
-      if (contact && !sendFence(fresh, setting) && emailPossible(contact, setting) && !(await nightHolds(fresh, contact, io.now(), false))) {
-        const link = await linkRows(room.id);
+      let mail: Awaited<ReturnType<typeof lateSend>> | null = null;
+      // Night on the lead's clock holds the backup, and the line says so
+      // (m1 round 4), never "no email could go" about a lead who has one.
+      const night = Boolean(contact) && emailPossible(contact as Row, setting) && (await nightHolds(fresh, contact, io.now(), false));
+      if (contact && !sendFence(fresh, setting) && emailPossible(contact, setting) && !night) {
         const stillOpen = async () => {
           const cur = await readRoom(room.id).catch(() => null);
           return Boolean(cur && (cur.state === "open" || cur.state === "host_in" || cur.state === "lead_in"));
         };
-        mail = await sendOn(fresh, "email", currentKey(link.keys.email, link.rows), setting, undefined, contact, stepGuard(held, "email_backup", stillOpen));
-        if (!mail.ok && (mail.stopped || mail.inflight || held.lost)) return;
-        if (mail.ok) {
-          await auditLink(fresh, "email", { after_pending: true });
-          await recordSent(fresh, "email", mail.message_id, setting);
+        mail = await lateSend(
+          fresh,
+          "email",
+          () => laneSend(fresh, "email", setting, contact, stepGuard(held, "email_backup", stillOpen)),
+          setting,
+          { after_pending: true },
+        );
+        if (mail === "stop" || held.lost) return;
+        // Not taken yet, or it may have gone: said once on its own key, and
+        // the next minute's read asks again (m1 round 4); link.pending stays
+        // open until the email went or could not.
+        if (mail === "waiting") {
+          await lateSay(room, "link.backup_waiting", "email", EVENT_TEXT.link_pending_email_waiting, "HighLevel did not take the email yet");
+          return;
+        }
+        if (mail === "unclear") {
+          await lateSay(room, "link.unclear", "email", EVENT_TEXT.link_pending_email_unclear, "the email's answer was lost");
+          return;
         }
       }
-      const text = mail?.ok ? EVENT_TEXT.link_pending_emailed : mail && !mail.ok && mail.unclear ? EVENT_TEXT.link_pending_email_unclear : EVENT_TEXT.link_pending_no_email;
-      const said = { emailed: Boolean(mail?.ok), pending: true, ...(read === "gone" ? { contact: "gone" } : {}) };
+      const text =
+        mail === "went"
+          ? EVENT_TEXT.link_pending_emailed
+          : night
+            ? EVENT_TEXT.link_pending_night
+            : EVENT_TEXT.link_pending_no_email;
+      const said = { emailed: mail === "went", pending: true, ...(read === "gone" ? { contact: "gone" } : {}) };
       if (await claimLine(room.id, "link.unconfirmed", text, said, `link.pending:${room.id}`))
         await deps.audit(DESK, "room.link.unconfirmed", ROOMS, room.id, null, said, { host_email: lower(room.host_email) });
     } finally {
@@ -4104,7 +4444,6 @@ export function makeRooms(deps: RoomDeps): Rooms {
       // unclear one as unclearTemplate does; either writes its own doubt line.
       let templated = false;
       let backedUp = false;
-      let mailUnclear = false;
       const canEmail = emailPossible(contact, setting);
       if (channel === "whatsapp_text" && !ch.includes("whatsapp_template") && windowShutFailure(why)) {
         const raw = await settingsOf(["rooms", "whatsapp_guard", "messaging"]);
@@ -4142,32 +4481,38 @@ export function makeRooms(deps: RoomDeps): Rooms {
         }
       }
       if (!backedUp && canEmail) {
-        const mail = await sendOn(fresh, "email", currentKey(link.keys.email, link.rows), setting, undefined, contact, stepGuard(held, "email_late", stillOpen));
-        if (mail.ok) {
-          await recordSent(fresh, "email", mail.message_id, setting);
-          emailed = true;
-        } else if (mail.inflight || held.lost) return;
-        else if (mail.unclear) {
-          // HighLevel may have taken the email (its answer was lost): never
-          // "no email could go" (stress2 round 6,
-          // late-failure-email-unclear-says-no-email-could-go). Said once,
-          // as room.send says it.
-          mailUnclear = true;
-          const first = await claimLine(room.id, "link.unclear", `${ROOMS_COPY.may_have_gone_email}.`, { channel: "email" }, `link.unclear:${room.id}:email`);
-          if (first) await deps.audit(DESK, "room.link.unclear", ROOMS, room.id, null, { channel: "email", why: mail.why }, { host_email: lower(room.host_email) });
+        const mail = await lateSend(
+          fresh,
+          "email",
+          () => laneSend(fresh, "email", setting, contact, stepGuard(held, "email_late", stillOpen)),
+          setting,
+          null,
+        );
+        if (mail === "stop" || held.lost) return;
+        if (mail === "went") emailed = true;
+        // HighLevel did not take the email yet (its 429, a contact read that
+        // did not answer): tried again the next minute, as the cascade does,
+        // never "no email could go" (m1 round 4,
+        // late-backup-email-429-said-no-email-never-retried).
+        else if (mail === "waiting") {
+          await lateSay(room, "link.backup_waiting", "email", EVENT_TEXT.link_failed_late_email_waiting, why);
+          return;
+        }
+        // HighLevel may have taken the email (its answer was lost): never "no
+        // email could go" (stress2 round 6). Said once, and the conversation
+        // is read for it each minute until it is found or known not to have
+        // gone (m1 round 4, late-backup-email-unclear-never-resolved): the
+        // lane's own line stays open until then.
+        else if (mail === "unclear") {
+          await lateSay(room, "link.unclear", "email", EVENT_TEXT.link_failed_late_email_unclear, why);
+          return;
         }
       }
       await failedLate(
         room,
         channel,
-        templated
-          ? EVENT_TEXT.link_failed_late_template
-          : emailed
-            ? EVENT_TEXT.link_failed_late
-            : mailUnclear
-              ? EVENT_TEXT.link_failed_late_email_unclear
-              : EVENT_TEXT.link_failed_late_no_email,
-        { why: why.slice(0, 300), emailed: mailUnclear ? "unclear" : emailed, templated },
+        templated ? EVENT_TEXT.link_failed_late_template : emailed ? EVENT_TEXT.link_failed_late : EVENT_TEXT.link_failed_late_no_email,
+        { why: why.slice(0, 300), emailed, templated },
       );
     } finally {
       await releaseLink(held);
@@ -4216,19 +4561,33 @@ export function makeRooms(deps: RoomDeps): Rooms {
         else if (textPossible) {
           line = EVENT_TEXT.link_bounced;
           if (!(await nightHolds(fresh, contact, io.now(), false))) {
-            const link = await linkRows(room.id);
             const stillOpen = async () => {
               const cur = await readRoom(room.id).catch(() => null);
               return Boolean(cur && (cur.state === "open" || cur.state === "host_in" || cur.state === "lead_in"));
             };
-            const sent = await sendOn(fresh, "whatsapp_text", currentKey(link.keys.whatsapp_text, link.rows), setting, undefined, contact, stepGuard(held, "text_late", stillOpen));
-            if (!sent.ok && (sent.stopped || held.lost)) return;
-            if (sent.ok) {
+            const sent = await lateSend(
+              fresh,
+              "whatsapp_text",
+              () => laneSend(fresh, "whatsapp_text", setting, contact, stepGuard(held, "text_late", stillOpen)),
+              setting,
+              { after_bounce: true },
+            );
+            if (sent === "stop" || held.lost) return;
+            if (sent === "went") {
               texted = true;
               line = EVENT_TEXT.link_bounced_whatsapp;
-              await auditLink(fresh, "whatsapp_text", { after_bounce: true });
-              await recordSent(fresh, "whatsapp_text", sent.message_id, setting);
-            }
+            } else if (sent === "waiting") {
+              // Not taken yet: tried again the next minute (m1 round 4).
+              await lateSay(room, "link.backup_waiting", "whatsapp_text", EVENT_TEXT.link_bounced_text_waiting, why);
+              return;
+            } else if (sent === "unclear") {
+              // The free text may have gone (HighLevel's answer was lost):
+              // never "send it on WhatsApp", which would send it twice (m1
+              // round 4, bounce-backup-text-unclear-tells-rep-send-on-whatsapp).
+              // Read again in the conversation each minute.
+              await lateSay(room, "link.unclear", "whatsapp_text", EVENT_TEXT.link_bounced_text_unclear, why);
+              return;
+            } else line = EVENT_TEXT.link_bounced_read_out;
           }
         }
       }
@@ -6671,6 +7030,31 @@ export function makeRooms(deps: RoomDeps): Rooms {
       await finishEvent(by, { ignored: "another of the host's Zoom sessions is still in", role: effect.role });
       return { ok: true, handled: true, skipped: "host still in" };
     }
+    // The lead back in the waiting room during the call (m1 round 4,
+    // zoom-rejoin-waiting-room-unseen), read after their join that ended it
+    // (Zoom does not order its webhooks): already let back in, so nobody is
+    // at the door.
+    if (effect.role === "lead" && effect.room_event.kind === "lead_waiting" && room.state === "lead_in") {
+      const t = ms((effect.room_event as { at?: string }).at);
+      const joins = t === null ? [] : await zoomLeadJoins(room).catch(() => []);
+      if (t !== null && joins.some(j => j.at >= t)) {
+        await finishEvent(by, { ignored: "the lead was let back in", role: effect.role });
+        return { ok: true, handled: true, skipped: "let back in" };
+      }
+    }
+    // A host join older than the host's last leave, read after it: the
+    // session that left, replayed, keeps the room waiting; another device's
+    // join whose own leave never came is the host in the meeting now (m1
+    // round 4, zoom-second-device-join-read-after-first-device-leave-ignored).
+    if (
+      effect.role === "host" &&
+      effect.room_event.kind === "host_in" &&
+      room.state === "open" &&
+      room.host_left_at &&
+      (ms((effect.room_event as { at?: string }).at) ?? Number.POSITIVE_INFINITY) <= (ms(room.host_left_at) ?? 0) &&
+      (await hostSessionOpen(room, detail))
+    )
+      (effect.room_event as { still_in?: boolean }).still_in = true;
     const out = await applyLoop(room.id, () => effect.room_event, setting, room);
     if ("refused" in out) return await settleRefusal(by, out.refused);
     // The applied change's audit row first (stress2 round 4,

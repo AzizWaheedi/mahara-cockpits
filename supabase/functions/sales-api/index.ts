@@ -41,6 +41,7 @@ import {
   mergeThreads,
   sendBody,
   stateOf,
+  failedStatus,
   type ThreadMessage,
   toThread,
   whatsappWindow,
@@ -115,7 +116,7 @@ import {
 import { clientFormRow, CLIENT_FORM_ID } from "./clientforms.ts";
 import { ApiRefusal, makeLiveIO, uuidFrom } from "./liveio.ts";
 import { makeRooms } from "./rooms.ts";
-import { kuwaitClock } from "./roomlogic.ts";
+import { kuwaitClock, leadJoined, type RoomRow } from "./roomlogic.ts";
 import { makeFollowupAgent } from "./followupAgent.ts";
 import {
   clockCountry,
@@ -609,7 +610,7 @@ async function videoLinkHoldsNoShow(contactId: string, now: number): Promise<str
   let rows: Row[];
   try {
     rows = await svc(
-      `cockpit_sales_rooms?contact_id=eq.${enc(contactId)}&purpose=neq.booked&requested_at=gte.${enc(new Date(now - 3 * 3_600_000).toISOString())}&select=state,lead_by,host_by,first_open_at,last_open_at,lead_waiting_at,lead_in_at,result,ended_at,contact_first_name&order=requested_at.desc&limit=20`,
+      `cockpit_sales_rooms?contact_id=eq.${enc(contactId)}&purpose=neq.booked&requested_at=gte.${enc(new Date(now - 3 * 3_600_000).toISOString())}&select=state,lead_by,host_by,first_open_at,last_open_at,lead_waiting_at,lead_in_at,count_undo_at,taken_back_join_at,result,ended_at,contact_first_name&order=requested_at.desc&limit=20`,
     );
   } catch (e) {
     console.error("no-show room check unread", redact(String((e as Error)?.message ?? e)));
@@ -624,10 +625,13 @@ async function videoLinkHoldsNoShow(contactId: string, now: number): Promise<str
       ? `${whose} video room is open until ${kuwaitClock(until)}, so the no-show was not marked. Wait for it, or end the room first.`
       : `${whose} video room is still open, so the no-show was not marked. Wait for it, or end the room first.`;
   }
+  // Only a join that stands is a join (m1 round 4,
+  // noshow-hold-skipped-after-taken-back-join): one "That was not the lead"
+  // took back keeps its time in lead_in_at and is nobody.
   const knocked = rows.find(
     r =>
       (ms(r.ended_at) ?? 0) >= now - NOSHOW_AFTER_KNOCK_MS &&
-      !r.lead_in_at &&
+      !leadJoined(r as unknown as RoomRow) &&
       (r.first_open_at || r.last_open_at || r.lead_waiting_at || r.result === "admit_blocked"),
   );
   if (knocked)
@@ -1559,8 +1563,15 @@ async function convoSendOnce(who: Who, b: Row, opts: SendOpts, taken: () => void
   const lead = (await svc(`cockpit_sales_leads?contact_id=eq.${enc(contactId)}&select=contact_id,name`))[0];
   if (!lead) throw new Refusal("That lead is not in the cockpit.", 404);
 
-  const contact = (((await ghl("GET", `/contacts/${enc(contactId)}`, undefined, "2021-07-28")) as Row).contact ??
-    {}) as Row;
+  const read = (await ghl("GET", `/contacts/${enc(contactId)}`, undefined, "2021-07-28")) as Row;
+  const contact = (read?.contact ?? null) as Row | null;
+  // An answer with no contact in it (a JSON 200 from HighLevel's gateway
+  // while its contact service blinks) is no answer, as rooms.ts
+  // readContactOrGone reads it (m1 round 4, contactless-answer-said-as-no-
+  // email): thrown as a plain error, so convoSend calls it "not sent yet"
+  // and the caller tries again, never "this lead has no email address".
+  if (!contact || typeof contact !== "object" || Array.isArray(contact) || !Object.keys(contact).length)
+    throw new Error("HighLevel answered the contact read without a contact");
   if (dndFor(contact, channel))
     throw new Refusal(`This lead asked not to be contacted by ${CHANNEL_WORD[channel]} (do not disturb is on in HighLevel).`, 409);
   if (channel === "email" && !contact.email) throw new Refusal("This lead has no email address in HighLevel.", 409);
@@ -1663,7 +1674,7 @@ async function convoSendOnce(who: Who, b: Row, opts: SendOpts, taken: () => void
       status = String(one.status ?? status);
       const [shaped] = toThread([{ ...one, id: one.id ?? messageId }], String(out.conversationId ?? ""));
       error = shaped?.error ?? null;
-      if (["delivered", "read", "failed", "undelivered", "opened"].includes(status)) break;
+      if (["delivered", "read", "opened"].includes(status) || failedStatus(status)) break;
     } catch {
       break; // an email's id is not always readable this way; keep what we have
     }

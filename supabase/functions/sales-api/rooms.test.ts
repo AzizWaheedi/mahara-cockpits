@@ -279,8 +279,10 @@ describe("defect 1: worker.ready on a room the worker opened sends the lead's li
     expect(out.handled).toBe(true);
     const r = w.room(id);
     expect(r.link_claimed_at).toBeTruthy();
-    expect(r.lead_by).toBeTruthy();
+    // m1 round 4: the lead's ten minutes start at the link's send, never at the open.
+    expect(r.lead_by ?? null).toBeNull();
     await w.flush();
+    expect(w.room(id).lead_by).toBeTruthy();
     expect(w.texts).toHaveLength(1);
     expect(w.texts[0]).toMatchObject({ who: SETTER, contact_id: LEAD, channel: "whatsapp", source: "room", readBackMs: 20 * S });
     expect(String(w.texts[0]?.body)).toContain(MEET_URL);

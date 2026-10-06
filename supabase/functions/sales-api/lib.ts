@@ -286,7 +286,7 @@ export function redact(s: string): string {
     .replace(/pit-[A-Za-z0-9-]+/g, "[key]")
     .replace(/eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g, "[jwt]")
     // zak written with an escaped letter (%7Aak=) is the same host token to Zoom (m1 round 1).
-    .replace(/((?:api_?key|access_token|token|secret|(?:z|%7a)(?:a|%61)(?:k|%6b)|pwd)=)[^&\s"']+/gi, "$1[key]")
+    .replace(/((?:api_?key|access_token|token|secret|(?:z|%7a|%5a)(?:a|%61|%41)(?:k|%6b|%4b)|pwd)=)[^&\s"']+/gi, "$1[key]")
     .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/g, "Bearer [key]")
     .slice(0, 300);
 }
@@ -374,7 +374,24 @@ export function channelOf(messageType: unknown): ThreadMessage["channel"] {
 }
 
 /** A failure's reason, wherever HighLevel put it on this message. */
-function errorOf(m: Record<string, unknown>): string | null {
+/**
+ * HighLevel's message statuses that mean the message did not reach the lead
+ * (m1 round 4, readback-bounced-stored-as-sending): one vocabulary for
+ * stateOf, convoSend's read-back, matchSent's "did it go" and rooms.ts
+ * statusById. "bounced" is the mail service's hard bounce.
+ */
+export const FAILED_STATUSES: readonly string[] = ["failed", "undelivered", "bounced", "opt_out"];
+export function failedStatus(status: unknown): boolean {
+  return FAILED_STATUSES.includes(String(status ?? "").trim().toLowerCase());
+}
+
+/**
+ * Why HighLevel says a message failed, from every field it uses for it
+ * (error, errorMessage, meta.error, meta.errorMessage, meta.failedReason,
+ * statusReason); an object (Meta's {code, title}) is kept as JSON so its
+ * code can be read. Null when none says.
+ */
+export function errorOf(m: Record<string, unknown>): string | null {
   const meta = (m.meta ?? {}) as Record<string, unknown>;
   for (const v of [m.error, m.errorMessage, meta.error, meta.errorMessage, meta.failedReason, m.statusReason]) {
     if (!v) continue;
@@ -407,7 +424,8 @@ export function toThread(list: unknown, conversationId: string): ThreadMessage[]
         .map(a => String(a ?? ""))
         .filter(a => /^https:\/\//.test(a))
         .slice(0, 5),
-      error: m.status === "failed" || m.status === "undelivered" ? errorOf(m) : null,
+      // A hard bounce HighLevel gives no reason for is still said as a bounce (m1 round 4).
+      error: failedStatus(m.status) ? (errorOf(m) ?? (String(m.status).toLowerCase() === "bounced" ? "The email bounced" : null)) : null,
       source: m.source ? String(m.source) : null,
     }];
   });
@@ -476,7 +494,7 @@ export function sendBody(channel: Channel, contactId: string, text: string, subj
 /** HighLevel's message status as the cockpit's send state. */
 export function stateOf(status: unknown): "sending" | "sent" | "delivered" | "read" | "failed" {
   const s = String(status ?? "").toLowerCase();
-  if (["failed", "undelivered", "opt_out"].includes(s)) return "failed";
+  if (failedStatus(s)) return "failed";
   if (s === "read" || s === "opened" || s === "clicked") return "read";
   if (s === "delivered") return "delivered";
   if (["sent", "connected"].includes(s)) return "sent";

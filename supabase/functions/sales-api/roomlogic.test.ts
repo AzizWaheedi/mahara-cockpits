@@ -334,9 +334,13 @@ describe("making a room: claim, ready, fail", () => {
     expect(c.to).toBe("open");
     expect(c.room.opened_at).toBe(at(T0 + 5 * S));
     expect(c.room.host_by).toBe(at(T0 + 5 * S + 900 * S));
-    expect(c.room.lead_by).toBe(at(T0 + 5 * S + 600 * S));
+    // m1 round 4: the lead's ten minutes run from the link, never from the
+    // open (a link still tried again is no no-show): set by its first send.
+    expect(c.room.lead_by ?? null).toBeNull();
     expect(c.room.ends_at).toBe(at(T0 + 5 * S + 30 * MIN));
     expect(kinds(c)).toEqual(["send_link"]);
+    const sent = ok(apply(c.room, { kind: "link_sent", channel: "email", at: T0 + 7 * S }, T0 + 8 * S));
+    expect(sent.room.lead_by).toBe(at(T0 + 7 * S + 600 * S));
   });
 
   test("a handover made for a taker sends its link only when the host is in", () => {
@@ -586,7 +590,12 @@ describe("who may press, and stale buttons", () => {
     expect(stale.status).toBe(409);
     const closed = step(r, { kind: "end", reason: "end" }, T0 + S);
     expect(no(apply(closed, { kind: "lead_in", source: "mark", actor: { email: SETTER } }, T0 + 2 * S)).code).toBe("stale");
-    expect(no(apply(closed, { kind: "lead_in", source: "zoom" }, T0 + 2 * S)).code).toBe("final");
+    // m1 round 4: Zoom's join from before a person's End, or within
+    // open_grace of it, is kept on the closed room as evidence; one later is
+    // an event on a closed room.
+    expect(no(apply(closed, { kind: "lead_in", source: "zoom" }, T0 + S + 200 * S)).code).toBe("final");
+    const kept = ok(apply(closed, { kind: "lead_in", source: "zoom", at: T0 }, T0 + 2 * S));
+    expect([kept.to, kept.room.result, kept.room.lead_in_at]).toEqual(["ended", "joined", at(T0)]);
   });
 
   test("room.mark's three presses, and nonsense refused", () => {
@@ -1597,7 +1606,9 @@ describe("stress", () => {
   });
 
   test("two writers raising lead_by from one snapshot: the loser re-reads, and the later deadline wins", () => {
-    const store = new Store(opened());
+    // The lead's ten minutes are set (m1 round 4: by a send, or a refusal
+    // that left the link to the rep; here as rooms.ts startLeadWait sets it).
+    const store = new Store({ ...opened(), lead_by: at(T0 + 5 * S + 600 * S) });
     const snap = store.row;
     const leadBy = Date.parse(snap.lead_by as string);
     store.run({ kind: "opened" }, leadBy - 10 * S, snap); // lead_by → leadBy + 170 s
@@ -1774,16 +1785,20 @@ describe("10,000 random event sequences", () => {
         // takes the count back, and a lead join the timer's close raced, kept as evidence only (lead_in_at, result).
         // And the time a link that went is recorded on a room a press closed
         // while the send was read back (m1 round 2): link_sent_at only.
+        // And Zoom's knock from before a person's or a timer's close (m1
+        // round 4): lead_waiting_at only.
         if (isFinal(before.state)) {
           if (a.changed) {
-            expect(["not_lead", "lead_in", "link_sent"]).toContain(e.kind);
+            expect(["not_lead", "lead_in", "link_sent", "lead_waiting"]).toContain(e.kind);
             expect([after.state, after.version]).toEqual([before.state, before.version]);
             const keys =
               e.kind === "lead_in"
                 ? ["lead_in_at", "lead_in_seen_at", "result"]
                 : e.kind === "link_sent"
                   ? ["link_sent_at", "link_claimed_at", "link_unconfirmed_at"]
-                  : ["count_undo_at", "taken_back_join_at", "count_result", "result"];
+                  : e.kind === "lead_waiting"
+                    ? ["lead_waiting_at"]
+                    : ["count_undo_at", "taken_back_join_at", "count_result", "result"];
             if (e.kind === "link_sent") expect(before.link_sent_at ?? null).toBeNull();
             expect(Object.keys(a.patch).every(k => keys.includes(k))).toBe(true);
             if (e.kind === "not_lead") finalUndos++;

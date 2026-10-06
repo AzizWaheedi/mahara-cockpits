@@ -148,7 +148,8 @@ describe("#1 who opens a room", () => {
     const a = ok(apply(workerSaved, { kind: "ready" }, T0 + 6 * S));
     expect(a.to).toBe("open");
     expect(a.room).toMatchObject({ join_url: MEET_URL, provider_meeting_id: "evt-1", opened_at: at(T0 + 6 * S), link_claimed_at: at(T0 + 6 * S) });
-    expect(a.room.lead_by).toBe(at(T0 + 6 * S + W.lead * S));
+    // m1 round 4: the lead's ten minutes start at the link, set by its first send.
+    expect(a.room.lead_by ?? null).toBe(null);
     expect(kinds(a)).toEqual(["send_link"]);
     // The handler's retry, or a second worker.ready, asks for nothing more.
     expect(ok(apply(a.room, { kind: "ready" }, T0 + 9 * S)).changed).toBe(false);

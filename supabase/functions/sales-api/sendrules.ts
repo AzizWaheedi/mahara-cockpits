@@ -9,6 +9,8 @@
 // - the month's template budget;
 // - the two settings saves that keep every key they do not edit.
 
+import { failedStatus } from "./lib.ts";
+
 type Row = Record<string, unknown>;
 
 const HOUR = 3_600_000;
@@ -376,7 +378,7 @@ export function matchSent<T extends SeenMessage>(
     const t = Date.parse(String(m.at ?? ""));
     if (m.direction !== "outbound" || m.channel !== channel || !Number.isFinite(t) || t < since - 15_000) continue;
     if (text && !(channel === "email" ? sameEmailText(m.body, text) : sameText(m.body, text))) continue;
-    if (o.went && ["failed", "undelivered"].includes(String(m.status ?? "").toLowerCase())) continue;
+    if (o.went && failedStatus(m.status)) continue;
     return m;
   }
   return null;

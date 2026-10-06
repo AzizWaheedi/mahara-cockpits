@@ -649,6 +649,13 @@ declare
   -- roomlogic.ts PENDING_HOLD_MAX_S: a timer waits at most this long past
   -- its due time for the room's unhandled events to be replayed.
   w_hold constant interval := interval '300 seconds';
+  -- roomlogic.ts LINK_RETRY_HOLD_S (m1 round 4,
+  -- unsent-link-closed-as-lead-no-show-at-open-plus-ten): a room's link still
+  -- tried again (claimed, never sent, its refusal one the re-ask tries again)
+  -- is never closed as the lead's no-show before the retries end, ten
+  -- minutes after the claim plus two for the re-ask that says it final.
+  w_link_retry constant interval := interval '720 seconds';
+  unsent uuid[];
 begin
   if not pg_try_advisory_xact_lock(hashtext('cockpit_sales_rooms_sweep')) then
     return jsonb_build_object('skipped', 'Another sweep is running.');
@@ -786,12 +793,25 @@ begin
   -- result admit_blocked.
   begin
     select coalesce(array_agg(q.id), '{}'), coalesce(array_agg(q.id) filter (where q.knocked), '{}'),
-           coalesce(array_agg(q.id) filter (where q.lost and not q.knocked), '{}')
-      into ids, knocked, lost from (
-      select x.id, x.lead_waiting_at is not null as knocked,
+           coalesce(array_agg(q.id) filter (where q.lost and not q.knocked), '{}'),
+           coalesce(array_agg(q.id) filter (where q.retrying and not q.knocked and not q.lost), '{}')
+      into ids, knocked, lost, unsent from (
+      select x.id, k.stands as knocked, rt.retrying,
              exists (select 1 from public.cockpit_sales_room_events as e
                       where e.room_id = x.id and e.source in ('zoom', 'worker') and e.detail ? 'gave_up') as lost
         from public.cockpit_sales_rooms as x
+       -- A knock that still stands (m1 round 4, zoom-knock-of-taken-back-
+       -- person-kept; roomlogic.ts knockStands): after every lead join on
+       -- record. The knock of the person let in and taken back by "That was
+       -- not the lead" was answered, so it is nobody at the door.
+       cross join lateral (
+         select (x.lead_waiting_at is not null
+                 and x.lead_waiting_at > coalesce(greatest(x.lead_in_at, x.taken_back_join_at), '-infinity'::timestamptz)) as stands) as k
+       -- The link still tried again (roomlogic.ts linkRetrying, m1 round 4):
+       -- claimed, never sent, its refusal one the minute's re-ask tries again.
+       cross join lateral (
+         select (x.link_sent_at is null and x.link_claimed_at is not null
+                 and coalesce(x.refusal, '') ~* 'tried again in a minute\.?$') as retrying) as rt
        cross join lateral (
          select coalesce(case when x.purpose = 'booked' then x.ends_at
                               -- From the latest send of the link (stress2 round 5: a later
@@ -803,8 +823,10 @@ begin
                                   x.opened_at + w_lead, x.requested_at + w_lead),
                          case when coalesce(x.last_open_at, x.first_open_at) is not null
                               then least(coalesce(x.last_open_at, x.first_open_at) + w_grace, c.cap) end,
-                         case when x.lead_waiting_at is not null
-                              then least(x.lead_waiting_at + w_grace, c.cap) end) as due) as d
+                         case when k.stands
+                              then least(x.lead_waiting_at + w_grace, c.cap) end,
+                         -- The lead's ten minutes start at the link, never while it is tried again.
+                         case when rt.retrying then x.link_claimed_at + w_link_retry end) as due) as d
        where x.state in ('open', 'host_in')
          and x.contact_id is not null
          and (x.purpose <> 'booked' or x.lead_by is not null)
@@ -818,8 +840,14 @@ begin
     n := n + public.cockpit_sales_rooms_close(lost, array['open', 'host_in'], 'expired', 'events_lost',
       'Closed: some of Zoom''s events for this room were never read, so whether the lead joined is not known. Mark the call by hand.',
       null, null);
+    -- The link never went and was still tried again (m1 round 4): never the
+    -- lead's no-show (no result, so nothing settles it and the panel offers
+    -- no No-show press).
+    n := n + public.cockpit_sales_rooms_close(unsent, array['open', 'host_in'], 'expired', 'link_not_sent',
+      'Closed: the link never reached the lead, so this was no no-show.', null, null);
     n := n + public.cockpit_sales_rooms_close(
-      array(select i from unnest(ids) as i where not (i = any (knocked)) and not (i = any (lost))), array['open', 'host_in'], 'expired', 'lead_no_show',
+      array(select i from unnest(ids) as i where not (i = any (knocked)) and not (i = any (lost)) and not (i = any (unsent))),
+      array['open', 'host_in'], 'expired', 'lead_no_show',
       format('Closed: the lead did not join in %s minutes.', lead_min), 'no_join', null);
     summary := summary || jsonb_build_object('lead_no_show', n); moved_rooms := moved_rooms + n;
   exception when others then

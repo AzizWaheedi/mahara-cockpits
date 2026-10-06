@@ -432,7 +432,11 @@ describe("F19 worker.ready on a row the worker already set to open (contract.md 
     const workerWrote: RoomRow = { ...claimed(), state: "open", join_url: MEET_URL, provider_meeting_id: null };
     const a = ok(apply(workerWrote, { kind: "ready", join_url: MEET_URL }, T0 + 6 * S));
     expect(kinds(a)).toContain("send_link");
-    expect(a.room.lead_by).not.toBe(null);
+    expect(a.room.host_by).not.toBe(null);
+    // m1 round 4: the lead's ten minutes start at the link's first send.
+    expect(a.room.lead_by ?? null).toBe(null);
+    const sent = ok(apply(a.room, { kind: "link_sent", at: T0 + 7 * S }, T0 + 7 * S));
+    expect(sent.room.lead_by).not.toBe(null);
   });
 });
 
@@ -497,6 +501,12 @@ describe("checked: holds that stand", () => {
       if (a.ok && a.changed && e.kind === "link_sent" && !ended.link_sent_at) {
         expect([a.room.state, a.room.version]).toEqual([ended.state, ended.version]);
         expect(Object.keys(a.patch).every(k => ["link_sent_at", "link_claimed_at", "link_unconfirmed_at"].includes(k))).toBe(true);
+      } else if (a.ok && a.changed && (e.kind === "lead_waiting" || e.kind === "lead_in")) {
+        // Zoom's knock or join within open_grace of a person's End (m1 round
+        // 4): kept as evidence, the state and version as they were.
+        expect([a.room.state, a.room.version]).toEqual([ended.state, ended.version]);
+        const keys = e.kind === "lead_waiting" ? ["lead_waiting_at"] : ["lead_in_at", "lead_in_seen_at", "result"];
+        expect(Object.keys(a.patch).every(k => keys.includes(k))).toBe(true);
       } else if (a.ok) expect(a.changed).toBe(false);
     }
   });
