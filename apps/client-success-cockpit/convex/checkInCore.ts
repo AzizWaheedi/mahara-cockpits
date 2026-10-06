@@ -197,10 +197,11 @@ export async function findContact(request: GhlRequest, taskId: string) {
   const c = exact[0];
   return {
     id: String(c.id),
+    // HighLevel keeps contactName in lower case; the name fields keep the client's own capitals.
     name: String(
-      c.contactName ||
+      [c.firstName, c.lastName].filter(Boolean).join(" ") ||
+        c.contactName ||
         c.name ||
-        [c.firstName, c.lastName].filter(Boolean).join(" ") ||
         c.companyName ||
         "Client contact",
     ),

@@ -385,6 +385,8 @@ describe("every call type (2026-10-06)", () => {
   });
 
   test("the main contact is read for the client, inside the CSM's scope only", async () => {
+    // HighLevel's contactName is lower case; the name fields win.
+    contacts[0].contactName = "example owner";
     contacts[0].phone = "+96550000000";
     contacts[0].email = "owner@example.test";
     const c = await app.run("checkIns:contact", { taskId: TASK }, { as: user });
