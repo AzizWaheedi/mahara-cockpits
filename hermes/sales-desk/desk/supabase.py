@@ -195,12 +195,22 @@ class Supabase:
         return json.loads(body.decode("utf-8")) if body else {}
 
     # ---- the request queue ----------------------------------------------
-    def queued(self, kind: str, *, max_attempts: int, limit: int) -> list[dict[str, Any]]:
-        return self.select(
-            REQUESTS,
-            f"select=*&kind=eq.{http.quote(kind)}&status=eq.queued&attempts=lt.{int(max_attempts)}"
-            f"&order=requested_at.asc&limit={int(limit)}",
-        )
+    def queued(self, kind: str, *, max_attempts: int, limit: int, first: str = "",
+               only_first: bool = False) -> list[dict[str, Any]]:
+        """The oldest queued requests of a kind, at most `limit`. `first` is a
+        filter whose rows come before the rest whatever their age (a proposal
+        rebuild, which asks no model, ahead of drafts that may be waiting on
+        one), so a run's limit can never leave them behind older rows.
+        `only_first` reads those rows alone (the rebuilds asked while a run
+        was drafting)."""
+        where = (f"select=*&kind=eq.{http.quote(kind)}&status=eq.queued&attempts=lt.{int(max_attempts)}"
+                 "&order=requested_at.asc")
+        ahead = self.select(REQUESTS, f"{where}&{first}&limit={int(limit)}") if first else []
+        if len(ahead) >= limit or (first and only_first):
+            return ahead[:limit]
+        ids = {str(r.get("id")) for r in ahead}
+        rest = self.select(REQUESTS, f"{where}&limit={int(limit) + len(ahead)}")
+        return (ahead + [r for r in rest if str(r.get("id")) not in ids])[:limit]
 
     def stuck(self, kind: str, cutoff: str) -> list[dict[str, Any]]:
         """Rows a run claimed and never finished: running, with no sign of life since the cutoff."""
@@ -243,6 +253,12 @@ class Supabase:
                    {"status": "queued", "attempts": max(0, int(attempts)), "error": message[:600],
                     "claimed_at": None, "claimed_by": None})
 
+    def request_cancelled(self, request_id: str, message: str) -> None:
+        """Closed undone, because what it was for is gone (the closer archived the proposal)."""
+        self.patch(REQUESTS, f"id=eq.{http.quote(request_id)}",
+                   {"status": "cancelled", "error": message[:600], "finished_at": now_iso(),
+                    "claimed_at": None, "claimed_by": None})
+
     def reaped(self, req: dict[str, Any], message: str, *, final: bool) -> bool:
         """A stuck row back to the queue, or parked. Conditional on nobody having touched it since."""
         where = (f"id=eq.{http.quote(req['id'])}&status=eq.running"
@@ -262,10 +278,15 @@ class Supabase:
         rows = self.select(PROPOSALS, f"select=*&request_id=eq.{http.quote(request_id)}&order=created_at.desc&limit=1")
         return rows[0] if rows else None
 
-    def update_proposal(self, proposal_id: str, **fields: Any) -> None:
+    def update_proposal(self, proposal_id: str, *, status_is: str = "", **fields: Any) -> None:
+        """A patch by id. `status_is`, a PostgREST filter on the row's status
+        ("eq.drafting", "neq.archived"), makes it conditional: a note on why a
+        draft waits lands only while it is drafting, and an archived proposal
+        is never brought back by a worker that was late to hear of it."""
         body = {k: v for k, v in fields.items() if k in PROPOSAL_COLUMNS}
         body["updated_at"] = now_iso()
-        self.patch(PROPOSALS, f"id=eq.{http.quote(proposal_id)}", body)
+        where = f"id=eq.{http.quote(proposal_id)}" + (f"&status={status_is}" if status_is else "")
+        self.patch(PROPOSALS, where, body)
 
     # ---- the lead and the people ----------------------------------------
     def lead(self, contact_id: str) -> Optional[dict[str, Any]]:

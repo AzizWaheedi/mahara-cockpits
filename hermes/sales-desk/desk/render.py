@@ -6,16 +6,20 @@ a page and exits, `--print-to-pdf` writes a file and exits, and neither needs
 anything installed beyond the browser. That is what this used, and on a laptop
 it is still the right answer.
 
-On the VPS they hang. Both of them, indefinitely, on a blank `data:` URL as
-readily as on a seven-page proposal, with the sandbox off, background
-networking off, 7.8G free in /dev/shm and the machine idle. Zero bytes out
-every time. The binary is fine: `--version` answers instantly, so it is the
-one-shot path itself that never completes there.
+When this ran on the B2B account, both hung on its VPS, indefinitely, on a
+blank `data:` URL as readily as on a seven-page proposal, while `--version`
+answered instantly. The cockpit's VPS prints with Playwright's headless shell
+instead (CHROME_PATH, chromium_headless_shell-1193, Chromium 140), and there
+both finish. Measured on 2026-10-04 as the cron user: the seven-page proposal
+of 24 Sep printed in half a second, five times out of five, every page A4,
+pixel for pixel the PDF Playwright prints from the same shell, and
+`--dump-dom` flagged the same overflowing sheet the DevTools path flags. So
+Python Playwright is optional there, not required.
 
-So talk to the same binary the way every browser automation library does, over
-the DevTools protocol, and let Playwright own the part that is fiddly: waiting
-for the renderer to actually be ready before asking it anything. It launches
-the Chrome already on the box rather than downloading a second one.
+When it is installed it is used first: it talks to the same binary over the
+DevTools protocol and owns the part that is fiddly, waiting for the renderer
+to actually be ready before asking it anything. It launches the Chrome already
+on the box rather than downloading a second one.
 
 Both paths return the same two things, so callers do not care which ran:
 
@@ -62,6 +66,22 @@ def _real_home() -> Path:
 
 REAL_HOME = _real_home()
 
+
+def _headless_shell(home: Optional[Path] = None) -> Optional[str]:
+    """Playwright's Linux headless shell, newest revision first, when one is
+    in the account's cache. It is what the VPS prints with (CHROME_PATH points
+    at it), so a cron line that forgets ~/.sales-desk/env still finds it."""
+    cache = (home or REAL_HOME) / ".cache" / "ms-playwright"
+
+    def revision(shell: Path) -> int:
+        tail = shell.parent.parent.name.rsplit("-", 1)[-1]
+        return int(tail) if tail.isdigit() else 0
+
+    found = [*cache.glob("chromium_headless_shell-*/chrome-linux/headless_shell"),
+             *cache.glob("chromium_headless_shell-*/chrome-headless-shell-linux64/chrome-headless-shell")]
+    return str(max(found, key=revision)) if found else None
+
+
 CHROME_CANDIDATES = [
     # An explicit path wins. The server has no root, so Chrome may live in a
     # home directory rather than on PATH.
@@ -76,6 +96,7 @@ CHROME_CANDIDATES = [
     "google-chrome",
     "chromium",
     "chromium-browser",
+    _headless_shell(),
 ]
 
 
@@ -245,3 +266,34 @@ def engine() -> str:
     if has_playwright():
         return "playwright"
     return "chrome one-shot" if find_chrome() else "none"
+
+
+PROBE_PAGE = ("<!doctype html><html><head><meta charset=\"utf-8\"><title>probe</title>"
+              "<style>@page { size: A4; margin: 0; }</style></head>"
+              "<body><p id=\"probe-ok\">ok</p></body></html>")
+
+
+def probe(timeout_s: int = 30) -> dict[str, Any]:
+    """One small page through dom() and pdf(), whichever path this machine
+    takes, for doctor. A report, not a decision: the engine never calls it.
+    A browser that hangs is given timeout_s per step, not the drafting one."""
+    global TIMEOUT_MS
+    started, kept = time.monotonic(), TIMEOUT_MS
+    TIMEOUT_MS = min(kept, int(timeout_s) * 1000)
+    try:
+        with tempfile.TemporaryDirectory(prefix="proposal-probe-") as tmp:
+            page = Path(tmp) / "probe.html"
+            page.write_text(PROBE_PAGE, encoding="utf-8")
+            try:
+                got = dom(page)
+            except Exception:  # noqa: BLE001
+                got = None
+            out = Path(tmp) / "probe.pdf"
+            try:
+                printed = bool(pdf(page, out)) and out.read_bytes()[:5] == b"%PDF-"
+            except Exception:  # noqa: BLE001
+                printed = False
+    finally:
+        TIMEOUT_MS = kept
+    return {"engine": engine(), "chrome": find_chrome(), "dom": bool(got and 'id="probe-ok"' in got),
+            "pdf": printed, "seconds": round(time.monotonic() - started, 1)}

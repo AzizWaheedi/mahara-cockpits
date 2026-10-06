@@ -618,6 +618,113 @@ class RuntimePlanTests(unittest.TestCase):
         self.assertFalse(blocked["scope_complete"])
         self.assertTrue(any("different source identity" in str(b) for b in blocked["blockers"]))
 
+    def test_whatsapp_history_preserves_captures_ordered_fragments_and_draft_versions(self):
+        stamp = datetime.now(timezone.utc).isoformat()
+        thread_rows = [
+            {
+                "_id": "wat-csm-1",
+                "_creationTime": 1790208000000,
+                "channel": "whatsapp",
+                "chatId": "chat-99",
+                "clientName": "Acme",
+                "contactId": "ghl-contact-1",
+                "draft": "Original captured draft text",
+                "draftAt": 1790208001000,
+                "isGroup": False,
+                "lastAt": 1790208002000,
+                "lastFromUs": False,
+                "name": "John Doe",
+                "recent": [
+                    {"at": 1790207999000, "fromMe": False, "text": "Hello there", "who": "John"},
+                    {"at": 1790208002000, "fromMe": True, "text": "Hi John!", "who": "Agent"}
+                ],
+                "silentDays": 0,
+                "source": "ghl",
+                "syncedAt": 1790208003000,
+                "unread": 1,
+                "waitingSince": 1790208000000,
+            }
+        ]
+        draft_rows = [
+            {
+                "_id": "rd-mb-1",
+                "_creationTime": 1790208005000,
+                "at": 1790208005000,
+                "chatId": "chat-99",
+                "draft": "Generated draft response",
+                "jobId": "job-101",
+                "lastAt": 1790208002000,
+                "status": "done"
+            },
+            {
+                "_id": "rd-mb-2",
+                "_creationTime": 1790208006000,
+                "at": 1790208006000,
+                "chatId": "chat-unmatched",
+                "draft": "Unmatched draft response",
+                "jobId": "job-102",
+                "lastAt": None,
+                "status": "queued"
+            }
+        ]
+        snapshot_csm = {
+            "app": "client-success", "deployment": "test-csm", "sha256": "3" * 64,
+            "captured_at": stamp, "tables": {"clients": [{"_id": "c1", "name": "Acme"}], "waThreads": thread_rows},
+            "table_hashes": {"clients": imp.content_hash([{"_id": "c1", "name": "Acme"}]),
+                            "waThreads": imp.content_hash(thread_rows)}
+        }
+        snapshot_mb = {
+            "app": "media-buyer", "deployment": "test-mb", "sha256": "4" * 64,
+            "captured_at": stamp, "tables": {"replyDrafts": draft_rows},
+            "table_hashes": {"replyDrafts": imp.content_hash(draft_rows)}
+        }
+        targets = {
+            "cockpit_runtime_imports": [],
+            "cockpit_wa_thread_captures": [],
+            "cockpit_wa_draft_history": [],
+        }
+        inventory = {"project_ref": imp.PROJECT_REF, "captured_at": stamp,
+                     "complete_tables": list(targets), "tables": targets, "files": {}}
+        plan = imp.build_plan([snapshot_csm, snapshot_mb], inventory, ["client-success/waThreads", "media-buyer/replyDrafts"])
+        self.assertTrue(plan["scope_complete"], plan["blockers"])
+        self.assertEqual(len(plan["operations"]), 2)
+
+        op_threads = next(o for o in plan["operations"] if o["table"] == "waThreads")
+        self.assertEqual(op_threads["target"], "cockpit_wa_thread_captures")
+        t_data = op_threads["rows"][0]["data"]
+        self.assertEqual(t_data["chat_id"], "chat-99")
+        self.assertEqual(t_data["channel"], "whatsapp")
+        self.assertEqual(t_data["client_name"], "Acme")
+        self.assertEqual(t_data["contact_id"], "ghl-contact-1")
+        self.assertEqual(t_data["source"], "ghl")
+        self.assertEqual(t_data["is_group"], False)
+        self.assertEqual(t_data["unread"], 1)
+        self.assertEqual(t_data["last_from_us"], False)
+        self.assertEqual(len(t_data["recent"]), 2)
+        self.assertEqual(t_data["recent"][0]["text"], "Hello there")
+        self.assertEqual(op_threads["rows"][0]["client_names"], ["Acme"])
+
+        op_drafts = next(o for o in plan["operations"] if o["table"] == "replyDrafts")
+        self.assertEqual(op_drafts["target"], "cockpit_wa_draft_history")
+        d1 = op_drafts["rows"][0]["data"]
+        self.assertEqual(d1["chat_id"], "chat-99")
+        self.assertEqual(d1["status"], "done")
+        self.assertEqual(d1["job_id"], "job-101")
+        self.assertEqual(d1["draft"], "Generated draft response")
+        d2 = op_drafts["rows"][1]["data"]
+        self.assertEqual(d2["chat_id"], "chat-unmatched")
+        self.assertEqual(d2["status"], "queued")
+        self.assertEqual(d2["job_id"], "job-102")
+
+        # Collision detection
+        targets["cockpit_wa_thread_captures"] = [{"id": 10, "chat_id": "chat-99", "source_app": "client-success", "source_id": "other-t", "source_deployment": "test-csm"}]
+        targets["cockpit_wa_draft_history"] = [{"id": 20, "chat_id": "chat-99", "source_app": "media-buyer", "at": d1["at"], "source_id": "other-d", "source_deployment": "test-mb"}]
+        blocked = imp.build_plan([snapshot_csm, snapshot_mb], inventory, ["client-success/waThreads", "media-buyer/replyDrafts"])
+        self.assertFalse(blocked["scope_complete"])
+        self.assertTrue(any("thread capture has a different source identity" in str(b) for b in blocked["blockers"]))
+        self.assertTrue(any("draft version has a different source identity" in str(b) for b in blocked["blockers"]))
+
 
 if __name__ == "__main__":
     unittest.main()
+

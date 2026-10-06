@@ -2,16 +2,16 @@
 
 ## 1. Executive Summary & Current Cutover Status
 
-- **Current Source Assembly**: The candidate combines migration `2b262f6` and fetched main `5f08b5f` on `codex/supabase-completion-20261004`. Generated acceptance evidence binds the final clean merge HEAD.
+- **Current Source Assembly**: The candidate merges `9034e051004ecf977a39e42b8998726373326f4b` into `cf7f21c5467660ec6340efbf565551c9e562d929` on `codex/supabase-completion-20261004`. Generated acceptance evidence must bind the final clean merge HEAD.
 - **Cutover Status**: **NOT READY FOR CUTOVER**
 - **Current Blockers**:
   1. **Incomplete History/File Reconciliation**: Fresh protected exports and canonical history proofs exist. Full storage ownership, WhatsApp history and saved calendar-choice reconciliation remain unverified. Do not silently omit business history.
-  2. **Incomplete End-to-End Acceptance**: Reported local suites and builds are green. Native SQL, installed-SDK and selected real UI journeys have local proof. Complete durable-save journeys and production workers/providers remain unverified.
-  3. **Production Access**: Available GitHub credentials lack push rights; Vercel authorization is absent; Hermes SSH is denied.
+  2. **Incomplete End-to-End Acceptance**: Five actual unauthenticated entries render with Convex blocked, zero Convex requests and zero transport failures. The editor returns HTTP 401 for anonymous native reads. Authenticated business journeys and durable saves remain unverified. Chrome relay access timed out; no saved session was found in the repository or configured auth location.
+  3. **Production Preparation**: No production deployment or worker cutover ran in this session. Earlier missing-access claims are superseded by the dated access observations in `docs/superpowers/plans/2026-10-04-supabase-completion.md:78-86`. Those observations do not certify installed native schema, provider configuration or worker readiness.
   4. **Incomplete Release Evidence**: `evidence/cutover-acceptance.json` records exact-source local proof and unresolved release categories. It must not claim production acceptance from build results. The generated file stays outside the commit because it binds that commit and expires.
 
 > [!CAUTION]
-> The verification tool defaults to **Release Mode** (`--mode release`). Invoking the tool without arguments (as done in deployment scripts like `ship.sh`) requires valid acceptance evidence; if evidence is absent, the tool exits **nonzero** and reports **`NOT READY FOR CUTOVER`**.
+> The verifier defaults to release mode. `scripts/ship.sh` invokes it **after** outward frontend deployments. Therefore, shipping is not a safe preflight: incomplete evidence can produce a failed command after production already changed. Review native backend readiness, deployment authorization and rollback before invoking it. Local mode does not authorize cutover.
 
 ---
 

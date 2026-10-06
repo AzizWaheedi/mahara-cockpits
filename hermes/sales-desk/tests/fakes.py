@@ -134,7 +134,8 @@ class FakePostgrest:
             col, key = column.split("->>", 1)
             inner = row.get(col) or {}
             v = inner.get(key) if isinstance(inner, dict) else None
-            return None if v is None else str(v)
+            # ->> is the value as text, as Postgres writes it: true, not True.
+            return None if v is None else json.dumps(v) if isinstance(v, (bool, dict, list)) else str(v)
         return row.get(column)
 
     def _test(self, row: dict[str, Any], column: str, expr: str) -> bool:

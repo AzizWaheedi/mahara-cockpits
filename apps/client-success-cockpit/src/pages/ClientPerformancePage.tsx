@@ -4,6 +4,7 @@ import { ArrowLeft, ArrowUpRight, ChevronDown } from "lucide-react";
 
 import { toast } from "sonner";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
+import { ClientCheckIn } from "@/components/ClientCheckIn";
 import { ClientUpdates } from "@/components/ClientUpdates";
 import { CreativePreview, stillPropsFor, useLocalStills } from "@/components/CreativePreview";
 import { DosDontsCard } from "@/components/DosDonts";
@@ -1611,6 +1612,13 @@ function Profile({ name, onBack }: { name: string; onBack: () => void }) {
             Print report
           </Button>
         </div>
+        {p.taskId ? (
+          <ClientCheckIn
+            taskId={String(p.taskId)}
+            clientName={String(p.clientName)}
+            nextCallAt={p.nextCallAt}
+          />
+        ) : null}
         {p.taskId ? (
           <AddTask
             taskId={String(p.taskId)}

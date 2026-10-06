@@ -36,6 +36,12 @@ from datetime import date, datetime
 from typing import Any, Iterable, Optional
 
 from . import offer as offer_mod
+from .config import ROOT
+
+# Our record of the case studies a proposal quotes as proof: PATTERNS.md's
+# "Numbers quoted as proof". The CEO, 5 October 2026: the written record is
+# official, not the figures as a rep says them on a call.
+PATTERNS_FILE = ROOT / "PATTERNS.md"
 
 REQUIRED = [
     "reference", "client_company", "client_contact", "date", "headline", "subhead",
@@ -105,6 +111,190 @@ NUMBER_WORDS = {
     100: ["مئة", "مائة", "مية", "ميه", "hundred"],
 }
 
+# ---- number words, read as figures ----------------------------------------
+# A draft that writes "six projects signed" on one page and "two signed" on
+# another got through, because only digits were ever read (5 October 2026).
+# So a number written in words, English or Arabic (Gulf and Levantine forms
+# too), is turned into digits before the evidence, prose and proof checks.
+# Whole words only: "someone" is not "one".
+_EN_UNITS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven",
+             "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen"]
+_EN_TENS = {"twenty": 20, "thirty": 30, "forty": 40, "fifty": 50, "sixty": 60, "seventy": 70, "eighty": 80,
+            "ninety": 90}
+# kind: n adds, h multiplies what came before by a hundred, s closes a group
+# of thousands or millions, S does too but only after a number (the plural).
+WORD_VALUES: dict[str, tuple[str, int]] = {w: ("n", i) for i, w in enumerate(_EN_UNITS)}
+WORD_VALUES.update({w: ("n", v) for w, v in _EN_TENS.items()})
+WORD_VALUES.update({"hundred": ("h", 100), "thousand": ("s", 1_000), "million": ("s", 1_000_000),
+                    "billion": ("s", 1_000_000_000)})
+for _v, _words in {
+    # Not وحدة: in a proposal it is "a unit" (وحدة سكنية) far more often
+    # than the Gulf "one" (5 October 2026 review).
+    1: "واحد واحدة", 2: "اثنين اثنان إثنين اتنين ثنين اثنتين", 3: "ثلاثة ثلاث تلاتة تلات ثلاثه",
+    4: "أربعة اربعة أربع اربع اربعه", 5: "خمسة خمس خمسه", 6: "ستة ست سته", 7: "سبعة سبع سبعه",
+    8: "ثمانية ثمان تمانية تمان ثمانيه ثماني", 9: "تسعة تسع تسعه", 10: "عشرة عشر عشره",
+    11: "احدعش إحدعش", 12: "اثنعش", 13: "ثلطعش", 14: "اربعطعش", 15: "خمستعش خمسطعش", 16: "سطعش",
+    17: "سبعطعش", 18: "ثمنطعش", 19: "تسعطعش",
+    20: "عشرين عشرون", 30: "ثلاثين ثلاثون تلاتين", 40: "أربعين اربعين أربعون اربعون", 50: "خمسين خمسون",
+    60: "ستين ستون", 70: "سبعين سبعون", 80: "ثمانين ثمانون تمانين", 90: "تسعين تسعون",
+    200: "مئتين مئتان مائتين مائتان ميتين", 300: "ثلاثمائة ثلاثمئة ثلثمية ثلاثمية",
+    400: "أربعمائة اربعمائة أربعمئة اربعمئة اربعمية", 500: "خمسمائة خمسمئة خمسمية",
+    600: "ستمائة ستمئة ستمية", 700: "سبعمائة سبعمئة سبعمية", 800: "ثمانمائة ثمانمئة ثمنمية",
+    900: "تسعمائة تسعمئة تسعمية", 2000: "ألفين الفين", 2_000_000: "مليونين",
+}.items():
+    WORD_VALUES.update({w: ("n", _v) for w in _words.split()})
+WORD_VALUES.update({w: ("h", 100) for w in "مئة مائة مية ميه".split()})
+WORD_VALUES.update({w: ("s", 1_000) for w in "ألف الف ألفا الفا".split()})
+WORD_VALUES.update({w: ("S", 1_000) for w in "آلاف الاف ألاف".split()})
+WORD_VALUES.update({"مليون": ("s", 1_000_000), "ملايين": ("S", 1_000_000)})
+
+_TOKEN = re.compile(r"[A-Za-z]+|[ء-ي٠-٩ٱ-ۓ]+")
+# A figure with its scale: 149K, USD 2M, 2 million, 450 ألف. A lower-case m is
+# left alone: it is as likely to be metres.
+_SCALED = re.compile(r"(\d[\d,]*(?:\.\d+)?)\s*(k|K|M|mn|bn|thousand|million|billion|ألف|الف|آلاف|الاف|ألفا|مليون|ملايين)"
+                     r"(?![A-Za-z0-9ء-ي])")
+_SCALE_OF = {"k": 1_000, "thousand": 1_000, "ألف": 1_000, "الف": 1_000, "آلاف": 1_000, "الاف": 1_000,
+             "ألفا": 1_000, "m": 1_000_000, "mn": 1_000_000, "million": 1_000_000, "مليون": 1_000_000,
+             "ملايين": 1_000_000, "bn": 1_000_000_000, "billion": 1_000_000_000}
+
+
+# Modern Standard Arabic's eleven and twelve are two words, the first of
+# which is no number on its own: أحد عشر read as 10, اثنا عشر as 10.
+_AR_TEENS = [(re.compile(r"(?<![ء-ي])(?:أحد|احد|إحدى|احدى)\s+عشر[ةه]?(?![ء-ي])"), "11"),
+             (re.compile(r"(?<![ء-ي])(?:اثنا|اثني|إثنا|إثني|اثنتا|اثنتي)\s+عشر[ةه]?(?![ء-ي])"), "12")]
+# "Each one", "no one", "the one channel", "one by one", "كل واحد": the word
+# one with no count in it. On 5 October 2026 a note saying what "each one"
+# of a stage's quotes cost read as the figure 1, and the funnel check called
+# the stage's correct loss a contradiction.
+_ONE_WORDS = ("one", "واحد", "واحدة")
+_NOT_A_COUNT_BEFORE = {"each", "every", "no", "any", "the", "this", "that", "which", "a", "an", "another",
+                       "كل", "أي", "اي", "لا", "ولا"}
+_NOT_A_COUNT_AFTER = {"another", "by"}
+# A range with one scale for both ends: "225 to 252 thousand", "2 to 3
+# million", "٢٢٥ إلى ٢٥٢ ألف". The first end is in the same thousands; read
+# alone it was 225 and failed the proof check against the record's 225,000.
+_SCALED_RANGE = re.compile(
+    r"(\d[\d,]*(?:\.\d+)?)(\s*(?:to|-|–|—|and|or|إلى|الى|حتى|او|أو|و)\s*)(?=(\d[\d,]*(?:\.\d+)?)\s*"
+    r"(k|K|M|mn|bn|thousand|million|billion|ألف|الف|آلاف|الاف|ألفا|مليون|ملايين)(?![A-Za-z0-9ء-ي]))")
+
+
+# Halves and quarters of a scale, as money is said: "half a million", "a
+# million and a half", "مليون ونص", "ربع مليون". Read as the scale alone they
+# were a million, and a draft saying "half a million" against the client's
+# 500,000 failed the prose check.
+_FRACTION_SCALES = {"thousand": 1_000, "million": 1_000_000, "billion": 1_000_000_000, "ألف": 1_000, "الف": 1_000,
+                    "مليون": 1_000_000}
+_FRACTIONS = [
+    (re.compile(r"\bhalf\s+(?:a\s+)?(thousand|million|billion)\b", re.I), 0.5, None),
+    (re.compile(r"\b(?:a\s+)?quarter\s+(?:of\s+)?(?:a\s+)?(thousand|million|billion)\b", re.I), 0.25, None),
+    (re.compile(r"\b(?:a|one|(\d+))\s+(thousand|million|billion)\s+and\s+a\s+half\b", re.I), 1.5, "n"),
+    (re.compile(r"(?<![ء-ي])(?:نص|نصف)\s+(مليون|ألف|الف)(?![ء-ي])"), 0.5, None),
+    (re.compile(r"(?<![ء-ي])ربع\s+(مليون|ألف|الف)(?![ء-ي])"), 0.25, None),
+    (re.compile(r"(?<![ء-ي\d])(?:(\d+)\s+)?(مليون|ألف|الف)\s+و\s?(?:نص|نصف)(?![ء-ي])"), 1.5, "n"),
+]
+
+
+def _fractions(text: str) -> str:
+    for rx, share, counted in _FRACTIONS:
+        def put(m: "re.Match[str]") -> str:
+            if counted:
+                n = int(m.group(1)) if m.group(1) else 1
+                scale = _FRACTION_SCALES[m.group(2).lower()]
+                return str(int(n * scale + scale * (share - 1)))
+            return str(int(_FRACTION_SCALES[m.group(1).lower()] * share))
+        text = rx.sub(put, text)
+    return text
+
+
+def _range_scale(m: "re.Match[str]") -> str:
+    low, high = float(m.group(1).replace(",", "")), float(m.group(3).replace(",", ""))
+    if low > high:
+        return m.group(0)
+    scale = _SCALE_OF[m.group(4).lower() if m.group(4) != "M" else "m"]
+    return str(int(round(low * scale))) + m.group(2)
+
+
+def _word(token: str) -> Optional[tuple[str, int]]:
+    """A token's value as a number word, with Arabic's joined "and" (وثلاثين) taken off."""
+    low = token.lower()
+    if low in WORD_VALUES:
+        return WORD_VALUES[low]
+    if low.startswith("و") and low[1:] in WORD_VALUES:
+        return WORD_VALUES[low[1:]]
+    return None
+
+
+def _scaled(m: "re.Match[str]") -> str:
+    n = float(m.group(1).replace(",", ""))
+    return str(int(round(n * _SCALE_OF[m.group(2).lower() if m.group(2) != "M" else "m"])))
+
+
+def spoken_figures(text: str) -> str:
+    """The text with every figure as plain digits: Arabic digits, figures with
+    a scale (149K, 2 million, ٤٥٠ ألف) and numbers written in words
+    (thirty-five, خمسة وثلاثين, two hundred and fifty)."""
+    text = _plain(str(text)).translate(ARABIC_DIGITS)
+    for rx, digits in _AR_TEENS:
+        text = rx.sub(digits, text)
+    text = _fractions(text)
+    text = _SCALED_RANGE.sub(_range_scale, text)
+    text = _SCALED.sub(_scaled, text)
+    tokens = list(_TOKEN.finditer(text))
+    spans: list[tuple[int, int, int]] = []
+    i = 0
+    while i < len(tokens):
+        first = _word(tokens[i].group(0))
+        if first is None or first[0] == "S":
+            i += 1
+            continue
+        group = [first]
+        start, end, last = tokens[i].start(), tokens[i].end(), first[0]
+        j = i + 1
+        while j < len(tokens):
+            gap = text[end:tokens[j].start()]
+            word = tokens[j].group(0).lower()
+            if word in ("and", "و") and j + 1 < len(tokens) and re.fullmatch(r"\s*", gap) \
+                    and (word == "و" or last in ("h", "s")) and _word(tokens[j + 1].group(0)):
+                end, j = tokens[j].end(), j + 1
+                continue
+            nxt = _word(tokens[j].group(0))
+            if nxt is None or not re.fullmatch(r"[\s-]*", gap):
+                break
+            group.append(nxt)
+            end, last, j = tokens[j].end(), nxt[0], j + 1
+        if len(group) == 1 and tokens[i].group(0).lower() in _ONE_WORDS:
+            before = tokens[i - 1].group(0).lower() if i > 0 else ""
+            after = tokens[j].group(0).lower() if j < len(tokens) else ""
+            if (before in _NOT_A_COUNT_BEFORE and re.fullmatch(r"\s*", text[tokens[i - 1].end():start])) or (
+                    after in _NOT_A_COUNT_AFTER and re.fullmatch(r"\s*", text[end:tokens[j].start()])):
+                i = j
+                continue
+        total = current = 0
+        for kind, v in group:
+            if kind == "n":
+                current += v
+            elif kind == "h":
+                current = (current or 1) * v
+            else:
+                total += (current or 1) * v
+                current = 0
+        spans.append((start, end, total + current))
+        i = j
+    for start, end, value in reversed(spans):
+        text = text[:start] + str(value) + text[end:]
+    return text
+
+
+def figures_in(text: Any) -> list[int]:
+    """Every whole figure in a piece of copy, however it is written."""
+    out = []
+    for raw in re.findall(r"\d[\d,]*", spoken_figures(str(text or ""))):
+        cleaned = raw.replace(",", "")
+        if cleaned.isdigit():
+            out.append(int(cleaned))
+    return out
+
+
 # Below this, a figure is a count (one project, five meetings) and is as
 # likely to be spoken as a word as a digit, in any of a dozen dialect spellings.
 # Above it, a figure is a price, a volume or a percentage: specific, said
@@ -136,10 +326,56 @@ EMOJI = re.compile(
 ARABIC = re.compile("[؀-ۿݐ-ݿ]")
 
 CURRENCIES = ("USD", "SAR", "AED", "QAR", "KWD", "BHD", "OMR")
+# Local currency to one dollar. All but the dinar are fixed pegs; Kuwait's is a
+# basket that has stayed near 0.307 since 2015, close enough for a page that
+# rounds to whole dinars.
+USD_PEGS = {"USD": 1, "SAR": 3.75, "AED": 3.6725, "QAR": 3.64, "BHD": 0.376, "OMR": 0.3845, "KWD": 0.307}
+
+
+# What a closer types for a currency, to its code: "dirhams", "SR", "ريال".
+# A dinar alone is Kuwait's or Bahrain's, so it is not guessed.
+CURRENCY_NAMES = {
+    "USD": r"usd|us\s*\$|\$|dollars?|us\s+dollars?|دولار|دولارات|دولار\s+أمريكي",
+    "SAR": r"sar|sr|saudi\s+ri[y]?als?|ri[y]?als?|ريال|ريالات|ريال\s+سعودي|ر\.?\s?س\.?",
+    "AED": r"aed|dhs?|dirhams?|uae\s+dirhams?|درهم|دراهم|درهم\s+إماراتي|د\.?\s?إ\.?",
+    "QAR": r"qar|qr|qatari\s+ri[y]?als?|ريال\s+قطري|ر\.?\s?ق\.?",
+    "KWD": r"kwd|kd|kuwaiti\s+dinars?|دينار\s+كويتي|د\.?\s?ك\.?",
+    "BHD": r"bhd|bd|bahraini\s+dinars?|دينار\s+بحريني|د\.?\s?ب\.?",
+    "OMR": r"omr|ro|omani\s+ri[y]?als?|ريال\s+عماني|ر\.?\s?ع\.?",
+}
+_CURRENCY_NAMES = [(code, re.compile(rf"^(?:{rx})$", re.I)) for code, rx in CURRENCY_NAMES.items()]
+
+
+def currency_code(text: Any) -> Optional[str]:
+    """The three-letter code for a currency as a closer might type it, or
+    None when it is not one the page can price in. Longer names first, so a
+    Qatari riyal is not taken for a Saudi one."""
+    raw = re.sub(r"\s+", " ", _plain(str(text or ""))).strip()
+    if not raw:
+        return None
+    if raw.upper() in USD_PEGS:
+        return raw.upper()
+    codes = {c.upper() for c in re.findall(r"\b(usd|sar|aed|qar|kwd|bhd|omr)\b", raw, re.I)}
+    if len(codes) == 1:
+        return codes.pop()
+    for code, rx in sorted(_CURRENCY_NAMES, key=lambda c: c[0] == "SAR" or c[0] == "USD"):
+        if rx.match(raw):
+            return code
+    return None
+
+
+def rate_off(currency: str, rate: Any) -> bool:
+    """A dollar rate more than 5% away from the currency's peg."""
+    peg = USD_PEGS.get(str(currency).upper())
+    if not peg or not isinstance(rate, (int, float)) or isinstance(rate, bool) or rate <= 0:
+        return bool(peg)
+    return abs(rate - peg) / peg > 0.05
 
 # Keys that are machine data rather than anything a reader reads: images, and
 # the offer stamp the desk writes so a deal can be checked again later.
-NOT_CONTENT = ("logo", "cover_image", "offer")
+# And the figures the closer typed into the blanks, kept so a fresh draft
+# can take them back (sales-api proposal.fill).
+NOT_CONTENT = ("logo", "cover_image", "offer", "closer_figures")
 
 FILL_RE = re.compile(r"\bFILL\b")
 
@@ -255,6 +491,19 @@ def check_schema(data: dict[str, Any], rep: Report, general: bool = False, blind
                                "discussed yet, so the reader is being asked to countersign a "
                                "guess; set sign: false and end on the cta instead.")
 
+    # A funnel stage's value is the count its bar is drawn from, as a number
+    # (0 when there is none); words go in display. "a handful" in value drew
+    # an empty box beside four bold lines of text (5 October 2026).
+    stages = ((data.get("funnel") or {}).get("stages") or []) if isinstance(data.get("funnel"), dict) else []
+    for i, st in enumerate(stages):
+        if not isinstance(st, dict):
+            continue
+        v = st.get("value")
+        if isinstance(v, str) and FILL_RE.search(v):
+            continue
+        if isinstance(v, bool) or figure(v) is None:
+            rep.add(FAIL, "schema funnel", f"funnel.stages[{i}].value is {v!r}; it has to be the stage's count as "
+                                           "a number, 0 when there is none, with any words in display")
     sheets = expected_sheets(data)
     if len(data.get("solution") or []) != 5:
         rep.add(WARN, "schema solution",
@@ -276,8 +525,13 @@ def expected_sheets(data: dict[str, Any]) -> int:
     if (data.get("cost") or {}).get("layers"):
         n += 1
     arith = data.get("arithmetic") or {}
-    has_arith = (bool(arith.get("project_values")) or bool(arith.get("project_value"))
-                 or bool(arith.get("project_value_low")))
+    # renderDoc's own test: a single value draws the page only in its mode,
+    # and only as a number (JavaScript's Number(), so a FILL draws nothing).
+    mode = arith.get("mode")
+    has_arith = (bool(arith.get("project_values"))
+                 or (mode == "threshold" and bool(arith.get("margins")))
+                 or (mode == "margin" and bool(figure(arith.get("project_value"))))
+                 or (mode == "volume" and bool(figure(arith.get("project_value_low")))))
     if has_arith and not arith.get("inline"):
         n += 1
     if data.get("problems"):
@@ -352,6 +606,27 @@ def content_strings(data: dict[str, Any]) -> Iterable[tuple[str, str]]:
         yield path, text
 
 
+def figure(value: Any) -> Optional[float]:
+    """A figure the arithmetic page computes with, read the way the template
+    reads it (Number()): a number, or a string of plain digits. A FILL, or
+    "1,000,000" typed as text, is None: a gap, never a crash. (The cockpit's
+    fill already turns a typed figure into a number.)"""
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = str(value).strip()
+    return float(text) if re.fullmatch(r"-?\d+(?:\.\d+)?", text) else None
+
+
+def dec(value: float) -> str:
+    """A share or a count of projects the way the template prints one: two
+    decimals under 10 (0.35, 1.05), one from there, and a trailing zero
+    dropped (0.3, 2.5). One decimal printed 0.35 as 0.3 and 1.05% as 1.1%."""
+    text = f"{value:.2f}" if abs(value) < 10 else f"{value:.1f}"
+    return text[:-1] if re.search(r"\.\d0$", text) else text
+
+
 def our_numbers(data: dict[str, Any], resolved: dict[str, Any], offer: Optional[dict[str, Any]] = None) -> set[int]:
     """Figures that are ours, not the client's, so evidence does not apply:
     the chosen offer in dollars and in the local currency, the engagement,
@@ -373,15 +648,65 @@ def our_numbers(data: dict[str, Any], resolved: dict[str, Any], offer: Optional[
         int(ads * months), int(fee * rate), int(ads * rate),
     }
     total = (fee + ads * months) * rate
-    for m in (arith.get("margins") or []):
+    for m in map(figure, arith.get("margins") or []):
         if m:
             ours.add(int(round(total / (m / 100.0))))
-    for v in (arith.get("project_values") or []):
+    for v in map(figure, [*(arith.get("project_values") or []), arith.get("project_value")]):
         if v:
             ours.add(int(v))
-    if arith.get("project_value"):
-        ours.add(int(arith["project_value"]))
+    gross = figure(arith.get("gross_margin"))
+    if gross:
+        for v in map(figure, [arith.get("project_value"), arith.get("project_value_low"),
+                              arith.get("project_value_high")]):
+            if v:
+                ours.add(int(round(v * gross / 100)))
     return {n for n in ours if n}
+
+
+# --------------------------------------------------------------- the proof ---
+PROOF_SECTION = re.compile(r"^##\s+Numbers quoted as proof.*?$(.*?)(?=^##\s|\Z)", re.M | re.S | re.I)
+# Below this a figure is a count of years, months or times ("4x"), which the
+# record words in many ways; at or above it, it is the case study's own figure.
+PROOF_FLOOR = 10
+
+
+def proof_record(path: Optional[Any] = None) -> Optional[set[int]]:
+    """Every figure in PATTERNS.md's "Numbers quoted as proof", or None when
+    the file or the section cannot be read."""
+    try:
+        text = (path or PATTERNS_FILE).read_text(encoding="utf-8")
+    except OSError:
+        return None
+    m = PROOF_SECTION.search(text)
+    if not m:
+        return None
+    return set(figures_in(m.group(1)))
+
+
+def check_proof(data: dict[str, Any], rep: Report) -> None:
+    """Our case studies are quoted from the record, exactly: never the way a
+    rep said them on the call. Every figure of 10 or more in `proof` has to be
+    in PATTERNS.md's proof list."""
+    items = [x for x in (data.get("proof") or []) if isinstance(x, dict)]
+    if not items:
+        return
+    record = proof_record()
+    if record is None:
+        rep.add(WARN, "proof", "PATTERNS.md's \"Numbers quoted as proof\" could not be read, so the proof "
+                               "figures are unchecked; read them against it by hand")
+        return
+    bad = []
+    for i, item in enumerate(items):
+        for key in ("v", "k"):
+            for n in figures_in(item.get(key)):
+                if n >= PROOF_FLOOR and n not in record:
+                    bad.append(f"proof[{i}].{key}: {n:,}")
+    if bad:
+        rep.add(FAIL, "proof", "%d figure(s) in the proof are not in our record: %s. Copy proof figures exactly "
+                               "from PATTERNS.md's \"Numbers quoted as proof\", never from the call"
+                % (len(bad), "; ".join(bad[:6]) + (" ..." if len(bad) > 6 else "")))
+    else:
+        rep.add(PASS, "proof", "every proof figure is from our record")
 
 
 # ----------------------------------------------------------- prose figures ---
@@ -389,7 +714,9 @@ def check_prose(data: dict[str, Any], said: Optional[set[int]], rep: Report, res
                 offer: Optional[dict[str, Any]], checked_note: str = "") -> None:
     """Every figure in client-facing text, not only the five in the schema. A
     number in the headline, the subhead or the verdict block reached the client
-    unexamined, and those are the lines a reader believes first."""
+    unexamined, and those are the lines a reader believes first. The proof is
+    ours, and is checked against our record whether or not there is a call."""
+    check_proof(data, rep)
     if said is None:
         if checked_note:
             rep.add(PASS, "prose", checked_note)
@@ -410,8 +737,8 @@ def check_prose(data: dict[str, Any], said: Optional[set[int]], rep: Report, res
 
     bad = []
     for path, text in client_strings(data):
-        for raw in re.findall(r"\d[\d,]*", text.translate(ARABIC_DIGITS)):
-            n = int(raw.replace(",", "") or 0)
+        for n in figures_in(text):
+            raw = f"{n:,}"
             if n < HARD_EVIDENCE_FLOOR:
                 continue
             if n in said or n in ours or n in derived:
@@ -504,11 +831,76 @@ SPLIT = re.compile(
     r"(?<![\d,.])\b(?:[1-9]|1[0-2])\s*[x×]\s*(?:[A-Z]{3}\s*)?\d[\d,]{2,}"
     r"|\b(?:two|three|four|2|3|4)\s+(?:equal\s+)?(?:payments|instal+ments|parts)\b"
     r"|\bsecond\s+(?:payment|instal+ment|half)\b"
+    # "The second USD 3,000 falls due when ...": the reference's own terms[3].
+    r"|\bsecond\s+(?:[A-Z]{3}\s*)?\d[\d,]{2,}"
     r"|\bhalf\s+(?:at|up)\s*(?:the\s+)?(?:start|front|signing)\b"
     r"|\b(?:monthly|quarterly)\s+(?:payments|instal+ments)\b"
     r"|دفعتين|على دفعات|(?:ثلاث|أربع|اربع)\s+دفعات|الدفعة الثانية|القسط الثاني|أقساط شهرية|اقساط شهرية|نصف المبلغ",
     re.I)
+# A payment tied to a result: the retired split paid its second half "after
+# the first contract signs". Since 3 October 2026 the offer is USD 6,000 in
+# full, or USD 3,000 and USD 3,000 thirty days later, both on dates. Read
+# sentence by sentence: "Paid in full at the start. We begin with your first
+# project's campaign" is two sentences, and only one of them is about paying.
+# Not a meeting on its own: "thirty days after your first meeting with us" is
+# a date from the kickoff. The first meetings booked, or the first ten, are a
+# result (_FIRST_MEETINGS).
+_RESULT_EVENT = (r"(?:contracts?|projects?|deals?|clients?|sales?|wins?|jobs?|orders?|results?|signatures?|"
+                 r"signings?)")
+_FIRST_MEETINGS = (r"first\s+(?:\d+\s+)?(?:qualified\s+)?(?:meetings|appointments|leads|bookings)\b"
+                   r"|first\s+\d+\s+(?:qualified\s+)?(?:meetings?|appointments?|leads?)\b"
+                   r"|first\s+(?:qualified\s+)?(?:meeting|appointment|lead)\s+(?:is\s+)?(?:booked|delivered|held)\b")
+# Strong words: a payment that waits "until", "once", "after" a result.
+TIED_STRONG = re.compile(
+    rf"\b(?:when|once|after|upon|until|till|tied\s+to|linked\s+to|conditional\s+on|subject\s+to|depends\s+on|"
+    rf"dependent\s+on)\s+(?:[^\s,،;]+\s+){{0,4}}?(?:first\s+(?:[^\s,،;]+\s+){{0,2}}?{_RESULT_EVENT}\b|{_FIRST_MEETINGS})"
+    rf"|\b(?:when|once|after|upon|until|till)\s+(?:[^\s,،;]+\s+){{0,3}}?(?:a|the|your|any)\s+(?:new\s+)?"
+    r"(?:contract|project|deal|sale|job|order)\s+(?:is\s+|has\s+been\s+|gets\s+)?(?:signed|closed|won|awarded|booked)\b"
+    rf"|\bfirst\s+(?:contract|project|deal|client|sale|job|order)\s+(?:signs|is\s+signed|closes|is\s+closed|is\s+won|lands)\b"
+    r"|(?:بعد|عند|حين|لما|لين|حتى|مرتبط\s+ب|مرتبطة\s+ب|مشروط\s+ب|مشروطة\s+ب)\s*(?:[^\s,،;]+\s+){0,3}?"
+    r"(?:(?:أول|اول)\s+(?:عقد|مشروع|صفقة|عميل|بيعة|بيع|اجتماع|موعد)"
+    r"|(?:العقد|المشروع|الصفقة|العميل|البيع)\s+(?:الأول|الاول|الأولى|الاولى))",
+    re.I)
+# Weak words ("on", "with", "against", "مع") tie a payment only when the
+# payment is right before them: "the rest on your first deal", not "the work
+# on your first project brief".
+TIED_WEAK = re.compile(
+    rf"\b(?:due|payable|paid|pay|payment|balance|rest|remainder|remaining|half|instal+ment|second)\s+"
+    rf"(?:[^\s,،;]+\s+){{0,2}}?(?:on|with|against|at)\s+(?:[^\s,،;]+\s+){{0,3}}?first\s+(?:[^\s,،;]+\s+){{0,2}}?{_RESULT_EVENT}\b"
+    r"|(?:الدفعة|القسط|المتبقي|الباقي|النصف|المبلغ|تستحق|يستحق|تدفع|يدفع)\s+(?:[^\s,،;]+\s+){0,2}?(?:مع|على)\s+"
+    r"(?:[^\s,،;]+\s+){0,2}?(?:أول|اول)\s+(?:عقد|مشروع|صفقة|عميل|بيعة|بيع)",
+    re.I)
+# A line that is about paying, so a first project mentioned for any other
+# reason is left alone. "Pays for itself" is the arithmetic, not a payment.
+PAYMENT_WORDS = re.compile(r"\bpa(?:y|id|ys|ying|yment|yments|yable)\b(?!\s+for\s+(?:itself|themselves))"
+                           r"|\binstal+ments?\b|\bdue\b|\bbalance\b|\bhalf\b"
+                           r"|\bsecond\b|\bremaining\b|\bremainder\b|\brest\b|\bfee\b|\d[\d,]{2,}"
+                           r"|دفع|دفعة|الدفعة|القسط|قسط|يستحق|تستحق|المتبقي|الباقي|النصف|نصف|المبلغ|رسوم",
+                           re.I)
+_PAY_NEGATED = re.compile(r"\b(?:no|not|never|nothing|none)\b|n't|(?:^|\s)(?:لا|ليس|ليست|لن|غير)\s", re.I)
+
+
+def tied_to_a_result(text: str) -> bool:
+    """A sentence about paying that ties the payment to a result: a first
+    contract, project, deal, client, sale or meeting, or a contract signed.
+    A sentence that says it is not tied ("never waits on a first contract")
+    is the honest form."""
+    for sentence in re.split(r"(?<=[.!?؟;؛])\s+|\n+", spoken_figures(text)):
+        if not PAYMENT_WORDS.search(sentence):
+            continue
+        for rx in (TIED_STRONG, TIED_WEAK):
+            for m in rx.finditer(sentence):
+                if not _PAY_NEGATED.search(sentence[:m.start()]):
+                    return True
+    return False
+
+
 N_TIMES = re.compile(r"(?<![\d,.])\b([1-9]|1[0-2])\s*[x×]\s*(?:([A-Z]{3})\s*)?(\d[\d,]{2,})")
+# A first payment implies a second. Paid in full, the deposit comes off the one
+# payment at the start (the references' deposit_label said "the first payment"
+# on every draft, 5 October 2026).
+FIRST_OF_SEVERAL = re.compile(r"\bfirst\s+(?:payment|instal+ment)\b|الدفعة\s+(?:الأولى|الاولى)|(?:أول|اول)\s+دفعة"
+                              r"|القسط\s+(?:الأول|الاول)", re.I)
 
 
 def price_page(data: dict[str, Any]) -> list[tuple[str, str]]:
@@ -581,7 +973,10 @@ def check_offer(data: dict[str, Any], resolved: dict[str, Any], offer: Optional[
 
     rows_all = list((data.get("investment") or {}).get("rows") or [])
     rows = [r for r in rows_all if isinstance(r, dict)]
-    ad_rows = [r for r in rows if AD_WORDS.search(f"{r.get('item') or ''} {r.get('detail') or ''}")]
+    # By the item first: "Ads" in the program row's description is not the
+    # advertising line (5 October 2026). The detail only when no item says it.
+    ad_rows = ([r for r in rows if AD_WORDS.search(str(r.get("item") or ""))]
+               or [r for r in rows if AD_WORDS.search(str(r.get("detail") or ""))])
     if rows and not ad_rows:
         rep.add(FAIL, "offer", "the advertising budget is not its own line on the price page; it is always "
                                "separate from the fee")
@@ -599,11 +994,35 @@ def check_offer(data: dict[str, Any], resolved: dict[str, Any], offer: Optional[
     # the platforms, and saying so is not a payment plan.
     ad_paths = {f"investment.rows[{i}]." for i, r in enumerate(rows_all) if r in ad_rows}
     fee_page = [(p, t) for p, t in page if not any(p.startswith(a) for a in ad_paths)]
+    tied = [p for p, t in fee_page if tied_to_a_result(t)]
+    if tied:
+        rep.add(FAIL, "offer", "a payment is tied to the client's first contract, project, deal or sale in "
+                + ", ".join(tied[:4]) + ". Payments fall due on dates only: "
+                + " and ".join(f"{offer_mod.money(p['amount'], cur)} {p['due']}" for p in resolved["instalments"])
+                + ". Take the link to a result out")
+    # The total is what is paid to us at the start: the first instalment, in
+    # dollars or the local currency. Not the program plus advertising, which
+    # reads as one bill (two drafts on 5 October 2026 printed USD 10,500).
+    total_text = str((data.get("investment") or {}).get("total_amount") or "").translate(ARABIC_DIGITS)
+    total_figs = [n for n in _figures(total_text) if n >= 100]
+    if total_figs and not FILL_RE.search(total_text) and not any(same(n, instalments[0]) for n in total_figs):
+        rep.add(FAIL, "offer", f"investment.total_amount says {(data.get('investment') or {}).get('total_amount')}; "
+                               f"the total is what is paid to us at the start, {offer_mod.money(instalments[0], cur)}. "
+                               "Advertising stays on its own line, outside the total")
     if len(instalments) == 1:
         hits = [p for p, t in fee_page if SPLIT.search(t)]
         if hits:
             rep.add(FAIL, "offer", "the closer chose payment in full, and the price page prints a split in "
                                    + ", ".join(hits[:4]) + ". Print no schedule nobody chose.")
+        # A warning of its own, not the offer's: the corrected references
+        # still say "the first payment", and an offer warning fails a
+        # reference (references.STRICT). The drafter is told the right words
+        # (offer.prompt_block, prompt.system_for).
+        firsts = [p for p, t in fee_page if p not in hits and FIRST_OF_SEVERAL.search(t)]
+        if firsts:
+            rep.add(WARN, "deposit", "the closer chose payment in full, and " + ", ".join(firsts[:4])
+                                     + " speaks of a first payment. There is one payment, at the start: the "
+                                       "deposit comes off that")
     else:
         missing = [a for a in sorted(set(instalments)) if not shown(a)]
         if missing:
@@ -652,15 +1071,79 @@ MENTION = re.compile(r"\bguarantee[ds]?\b|free of charge|\bat no (?:extra|furthe
 FREE_WORK = re.compile(
     r"\bwork(?:ing)?\s+for\s+free\b|\bfor\s+free\s+until\b"
     r"|\bkeep\s+working\b[^.]{0,60}\b(?:free|no\s+(?:further|extra|additional))"
-    r"|(?:نعمل|نشتغل|نستمر|نكمل)[^.]{0,40}(?:مجانا|ببلاش|بلاش|بدون مقابل|دون مقابل)",
+    # "or we continue at no further fee until you have them" (the reference's
+    # terms[2]). Only PROMISE caught it, so a closer who chose the 7-day
+    # guarantee would have had it passed as that guarantee.
+    r"|\bwe(?:'ll|\s+will)?\s+(?:continue|carry\s+on|keep\s+going)\b[^.]{0,60}?"
+    r"\bno\s+(?:further|extra|additional)\s+(?:fees?|costs?|charges?)\b"
+    r"|(?:نعمل|نشتغل|نستمر|نكمل)[^.]{0,40}(?:مجانا|ببلاش|بلاش|بدون مقابل|دون مقابل)"
+    # The same line in an Arabic draft: "أو نستمر دون رسوم إضافية حتى تكتمل".
+    r"|(?:نستمر|نكمل|نواصل)[^.]{0,40}(?:دون|بدون|بلا)\s+(?:أي\s+)?رسوم",
     re.I)
-_RESULT = r"(?:results?|appointments?|meetings?|leads?|projects?|revenue|sales|roi|clients?|bookings?)"
+_RESULT = r"(?:results?|appointments?|meetings?|visits?|leads?|projects?|revenue|sales|roi|clients?|bookings?)"
 RESULT_GUARANTEED = re.compile(
     rf"\bguarantee[ds]?\b(?:\s+\w+){{0,4}}?\s+(?:\d[\d,]*\s+)?(?:qualified\s+)?{_RESULT}\b"
     rf"|\bguaranteed\s+{_RESULT}\b"
-    r"|(?:نضمن|يضمن|تضمن)(?:\s+\S+){0,3}?\s+(?:[٠-٩0-9]+\s+)?(?:موعد|مواعيد|نتائج|نتيجة|مشاريع|مشروع|عملاء|ليدز)"
+    r"|(?:نضمن|يضمن|تضمن|سنضمن)(?:\s+\S+){0,3}?\s+(?:[٠-٩0-9]+\s+)?"
+    r"(?:موعد|مواعيد|موعدا|اجتماع|اجتماعات|اجتماعا|زيارة|زيارات|نتائج|نتيجة|مشاريع|مشروع|مشروعا|عملاء|عميل|ليدز|صفقات|عقود)"
     r"|ضمان\s+(?:على\s+)?(?:ال)?(?:نتائج|مواعيد)",
     re.I)
+# The guarantee after the result, closing the clause: "Qualified meetings
+# across the three months, guaranteed" (the reference's solution_targets[0]),
+# which read as a mere mention and only warned.
+RESULT_THEN_GUARANTEED = re.compile(
+    rf"\b{_RESULT}\b[^.;:]{{0,80}}?,\s*guaranteed\s*(?:[.;:)]|$)"
+    r"|(?:اجتماع|اجتماعات|موعد|مواعيد|زيارة|زيارات|نتائج|مشاريع|مشروع|عملاء)[^.؛:]{0,80}?،\s*مضمون[ةه]?\s*(?:[.؛:)]|$)",
+    re.I)
+# What the program is "built to deliver": a number of meetings, projects or
+# signed work stated as the program's output is a promise of results in all
+# but the word (Aziz, 2026-10-05: the meetings figure is "the target we work
+# to, not a promise"). The same sentence calling it a target is the honest form.
+# Read on the copy with its number words as digits (spoken_figures).
+_OUTPUT_NOUN = (rf"(?:{_RESULT}|signed|deals?|contracts?"
+                r"|موعد|مواعيد|موعدا|اجتماع|اجتماعات|اجتماعا|زيارة|زيارات|مشروع|مشاريع|مشروعا|عملاء|عميل|"
+                r"نتائج|صفقات|صفقة|عقود|عقدا|ليدز)")
+BUILT_TO = re.compile(
+    # The program, made to produce them: built, designed, set up, engineered.
+    r"\b(?:built|designed|made|set\s+up|engineered|structured)\s+to\s+(?:deliver|produce|add|bring|generate|book|get)\b"
+    r"|(?:بني|مبني|مبنية|مصمم|مصممة|صمم|صممت)\s+(?:\S+\s+){0,2}?(?:ل|لكي\s+)?"
+    r"(?:يحقق|تحقق|يضيف|تضيف|يجلب|تجلب|يولد|تولد|يقدم|تقدم|يوفر|توفر|تحقيق|إضافة|اضافة|جلب|توليد)",
+    re.I)
+# We, or the program, as the one that delivers them: "the program delivers
+# thirty qualified meetings", "we will book 30 meetings", "you will get 30
+# meetings", "expect thirty meetings". Past tense is our record, not a promise.
+DELIVERS = re.compile(
+    r"\b(?:we|the\s+program(?:me)?|this\s+program(?:me)?|our\s+program(?:me)?|the\s+engagement|the\s+system|"
+    r"(?:the|our)\s+(?:campaigns?|ads|funnel|call\s+cent(?:re|er)|team))\s+(?:will\s+|'ll\s+|can\s+)?"
+    r"(?:deliver|delivers|produce|produces|add|adds|bring|brings|"
+    r"generate|generates|book|books|get\s+you|gets\s+you|secure|secures)\b"
+    r"|\bwe(?:'ll|\s+will)\s+(?:deliver|produce|add|bring|generate|book|get\s+you|secure)\b"
+    r"|\byou(?:'ll|\s+will)\s+(?:get|receive|have|see)\b|\b(?:you\s+can\s+|you\s+should\s+)?expect\b"
+    r"|(?:سن|ن)(?:وفر|قدم|حقق|جلب|ضيف|ولد|حجز)(?:\s+لك|\s+لكم)?\s"
+    r"|(?:البرنامج|برنامجنا)\s+(?:سي|ي)(?:وفر|قدم|حقق|جلب|ضيف|ولد)|(?:سي|ي)(?:وفر|قدم|حقق|جلب|ضيف|ولد)\s+"
+    r"(?:لك\s+|لكم\s+)?(?:البرنامج|برنامجنا)|ستحصل(?:ون)?\s+على",
+    re.I)
+# The old offer's own sentence, the other way round: "Thirty qualified
+# meetings across the term is what the program is built to deliver."
+WHAT_IT_DELIVERS = re.compile(
+    rf"\d[\d,]*\s+(?:\S+\s+){{0,2}}?{_OUTPUT_NOUN}\b[^.!?]{{0,80}}?\b(?:is|are)\s+what\s+"
+    r"(?:the\s+program(?:me)?|this\s+program(?:me)?|we|the\s+engagement)\s+(?:is\s+|was\s+|are\s+)?"
+    r"(?:(?:built|designed|made|set\s+up)\s+to\s+)?(?:deliver|produce|add|bring|generate|book)s?\b"
+    r"|(?:هو|هي)\s+ما\s+(?:بني|صمم|يقدمه|يحققه|يوفره|يجلبه|سيقدمه|سيحققه|سيوفره|نقدمه|نحققه|نوفره)",
+    re.I)
+# The client's own firm is built to deliver its projects: "Your team is built
+# to deliver projects on time" says nothing of ours. The words just before
+# the verb, so "You get a program built to add ..." is still ours.
+_CLIENT_SUBJECT = re.compile(
+    r"\b(?:your|their)\s+\w+(?:\s+\w+)?\s+(?:is\s+|are\s+|was\s+|were\s+)?$"
+    r"|\b(?:you|they)(?:'re|\s+are|\s+were)?\s+$|(?:ك|كم)\s+(?:\S+\s+)?$", re.I)
+# "What the program is built to add", with the result left unsaid.
+WHAT_IT_IS_BUILT_TO = re.compile(
+    r"\bwhat\s+(?:the|this|our)\s+program(?:me)?\s+(?:is|was)\s+(?:built|designed|made|set\s+up)\s+to\s+"
+    r"(?:deliver|produce|add|bring|generate)\b", re.I)
+TARGET_WORD = re.compile(r"\btargets?\b|\btargeted\b|هدف|الهدف|مستهدف|المستهدف", re.I)
+SENTENCE_END = re.compile(r"[.!?؟]")
+_NOT = re.compile(r"\b(?:not|never|no|cannot)\b|n't", re.I)
 # "We do not guarantee results" says the opposite, so a guarantee of results
 # right after a negation is let through.
 _NEGATED = re.compile(r"(?:\b(?:not|never|no|cannot)\b|n't|(?:^|\s)(?:ما|مو|لا|ماحد|محد)\s)\s*(?:\S+\s+){0,2}$",
@@ -672,15 +1155,534 @@ def _plain(text: str) -> str:
     return _TASHKEEL.sub("", unicodedata.normalize("NFC", text))
 
 
+def sentence_at(text: str, start: int, end: int) -> str:
+    """The sentence a match sits in."""
+    before = [m.end() for m in SENTENCE_END.finditer(text, 0, start)]
+    after = SENTENCE_END.search(text, end)
+    return text[(before[-1] if before else 0):(after.end() if after else len(text))]
+
+
+def built_to_deliver(text: str) -> bool:
+    """Meetings, projects or signed work stated as what we or the program
+    will produce, in a sentence that does not call it a target. Built (or
+    designed) to deliver them, unless it is the client's firm that is built
+    so, or their own clients who are delivered to; we, the program or "you
+    will get" with a figure for them; and the old offer's sentence turned
+    round ("thirty meetings is what the program is built to deliver")."""
+    text = spoken_figures(text)
+
+    def honest(m: "re.Match[str]") -> bool:
+        return bool(TARGET_WORD.search(sentence_at(text, m.start(), m.end())) or _NEGATED.search(text[:m.start()]))
+
+    for rx in (BUILT_TO, DELIVERS):
+        for m in rx.finditer(text):
+            if honest(m):
+                continue
+            if rx is BUILT_TO and _CLIENT_SUBJECT.search(text[:m.start()][-60:]):
+                continue
+            after = re.split(r"[.!?؟;؛]", text[m.end():], maxsplit=1)[0][:70]
+            for noun in re.finditer(rf"(?:\b|(?<=\s)){_OUTPUT_NOUN}(?![A-Za-z])", after, re.I):
+                figure_first = bool(re.search(r"\d", after[:noun.start()]))
+                if rx is DELIVERS and not figure_first:
+                    continue
+                # Delivering to "your clients" is the client's business, not a result of ours.
+                if not figure_first and re.search(r"\b(?:your|their|to)\s+$", after[:noun.start()], re.I):
+                    continue
+                return True
+    return any(not honest(m) for rx in (WHAT_IT_DELIVERS, WHAT_IT_IS_BUILT_TO) for m in rx.finditer(text))
+
+
+# An outcome stated as certain where we describe what we sell: "so small jobs
+# never arrive" (180273419's solution row, live check of 5 October 2026),
+# "every lead is qualified", "no more wasted meetings", "a calendar that is
+# always full". The program filters and lowers; it cannot promise none or all.
+# Only the outcome pages are read: the diagnosis may say the large villas
+# never arrive, because that is the client's own state. And only an outcome:
+# "we never share your data", "never a promise" and "every enquiry called in
+# minutes" (what we do, not what the client is sure to get) pass.
+_ARRIVE = (r"(?:arrives?|arriving"
+           r"|reach(?:es|ing)?\s+(?:you|your|the\s+(?:team|calendar|diary|desk|showroom|office|sales))"
+           r"|gets?\s+through|comes?\s+through|lands?\s+(?:on|in)\s+your|makes?\s+it\s+(?:to|through|into)"
+           r"|slips?\s+(?:through|away)|goes?\s+(?:cold|unanswered|to\s+waste|missing)|go\s+(?:cold|unanswered|missing)"
+           r"|falls?\s+through|wastes?\s+your|turns?\s+up|shows?\s+up|misses|miss|let\s+through"
+           # "Small jobs are never booked" is an outcome; "never booked
+           # without a budget check" (or "if", "below") is what we do.
+           r"|booked)"
+           # A condition after it is a rule we apply, not an outcome: "never
+           # reaches you without a budget check", "never arrives late".
+           r"(?!\s+(?:without|before|until|unless|if|when|below|under|outside|unchecked|unfiltered|unqualified|"
+           r"unannounced|late|early|on\s+time|by|via)\b)")
+_LEAD_NOUN = (r"(?:leads?|enquir(?:y|ies)|inquir(?:y|ies)|meetings?|appointments?|bookings?|visits?|calls?|"
+              r"prospects?|buyers?|clients?|contacts?|opportunit(?:y|ies)|jobs?|projects?)")
+# "Ready" alone is a lead sitting in the CRM; "worth a reply" is no promise.
+_SURE_QUALITY = (r"(?:real|serious|qualified|pre-?qualified|genuine|ready\s+to\s+(?:buy|sign|commit|proceed|start)|"
+                 r"warm|hot|high[- ]intent|on\s+budget|within\s+budget|worth\s+(?:your|the)\s+(?:time|trip|drive|visit)|"
+                 r"buyers?|a\s+buyer|a\s+fit|interested|decision[- ]makers?|the\s+decision[- ]maker)(?![-\w])")
+_AR_ARRIVE = (r"(?:يصل|تصل|يصلك|تصلك|يصلكم|تصلكم|يصلونك|يوصل|توصل|يوصلك|توصلك|يجي|تجي|يجيك|تجيك|يأتي|تأتي|يأتيك|"
+              r"تأتيك|يضيع|تضيع|يفوت|تفوت|يفوتك|تفوتك)")
+_AR_FULL = (r"(?:ممتلئ|ممتلئة|مليء|مليئة|مليان|مليانة|محجوز|محجوزة|مشغول|مشغولة|مؤهل|مؤهلة|جاهز|جاهزة|جاد|جادة)")
+_AR_ALWAYS = r"(?:دائما|دائماً|دايما|دايماً|دايم|على\s+الدوام)"
+_AR_SURE = r"(?:ال)?(?:جاد|جدي|مؤهل|جاهز|حقيقي)(?:ة|ون|ين|ه)?"
+_AR_LEADS = (r"(?:ال)?(?:عملاء|استفسارات|طلبات|اجتماعات|مواعيد|زيارات|مشترين|مشترون)(?:\s+(?:ال)?محتملين)?")
+ABSOLUTE_OUTCOME = re.compile(
+    rf"\b(?:never|will\s+not|won['’]t|no\s+longer|do\s+not|don['’]t|does\s+not|doesn['’]t|cannot|can['’]t)\s+"
+    rf"(?:again\s+|ever\s+)?(?:be\s+)?{_ARRIVE}\b"
+    rf"|\b(?:nothing|none|no\s+one|nobody)(?:\s+of\s+(?:them|these|those|it))?\s+(?:ever\s+)?{_ARRIVE}\b"
+    rf"|\b(?:nothing|none|no\s+one|nobody|no\s+(?:lead|enquiry|inquiry|job|project|meeting|call))\b[^.,;]{{0,40}}?"
+    rf"\bever\s+{_ARRIVE}\b"
+    rf"|\b(?:not\s+(?:one|a\s+single)|no)\s+(?:[a-z-]+\s+){{0,2}}?{_LEAD_NOUN}\s+(?:(?:is|are|will|gets?)\s+)?"
+    rf"(?:ever\s+)?{_ARRIVE}\b"
+    r"|\b(?:every|each|all(?:\s+the)?|100\s*(?:%|percent)\s+of(?:\s+the)?)\s+"
+    rf"(?:single\s+)?(?:[a-z-]+\s+)?{_LEAD_NOUN}(?:\s+(?!is\b|are\b)[^\s.,;:!?]+){{0,4}}?\s+"
+    rf"(?:is|are|will\s+be|becomes?|turns?\s+into|arrives?(?:\s+as)?)\s+(?:with\s+)?(?:a\s+|an\s+)?{_SURE_QUALITY}"
+    rf"|\b100\s*(?:%|percent|per\s+cent)\s+(?:[a-z-]+\s+)?{_SURE_QUALITY}"
+    rf"|\bonly\s+(?:[a-z-]+\s+)?{_SURE_QUALITY}\s+(?:[a-z-]+\s+)?{_LEAD_NOUN}\s+(?:will\s+|ever\s+)?"
+    # "Only qualified meetings are booked" is a rule we apply, so not "booked".
+    rf"(?:reach|arrive|get\s+through|make\s+it|come\s+through|land|turn\s+up|show\s+up)"
+    rf"|\byou(?:['’]ll|\s+will)?\s+only\s+(?:ever\s+)?(?:meet|see|speak\s+(?:to|with)|talk\s+(?:to|with)|get|receive)"
+    rf"\s+(?:with\s+)?(?:[a-z-]+\s+)?{_SURE_QUALITY}"
+    # "No more wasted meetings"; not a comparison ("no more than", "no more
+    # per month than a hire") nor what we charge ("no more fees").
+    r"|\bno\s+more\s+(?!(?:than|to|of\s+(?:your|the)|for|and|or|is|are|will|can|if|when|per|expensive|costly|"
+    r"complicated|difficult|work|effort|admin|paperwork|fees?|charges?|costs?|money|payments?|spend|budget|ads?)\b)"
+    r"[a-z](?![^.;:!?]{0,60}\bthan\b)"
+    r"|\bzero\s+(?:wasted|bad|cold|dead|unqualified|lost|missed|empty|small|junk|fake|tyre|tire|time[- ]?wasters?|"
+    r"no[- ]shows?)"
+    r"|\bnever\s+(?:again\s+)?(?:waste|spend)\s+(?:(?:your|another|an?|any\s+more)\s+)?(?:time|hours?|afternoons?|"
+    r"days?|evenings?|trips?)\b"
+    r"|\bnever\s+again\s+(?:meet|deal\s+with|chase|see|sit|speak|talk|drive)\b"
+    r"|\balways\s+(?:(?:be|stay|stays|remain|remains|is|are|kept|fully|completely|totally)\s+){0,2}"
+    r"(?:full|booked|busy|qualified|serious|ready\s+to\s+buy|buying|converting|flowing|arriving|coming\s+in)(?![-\w])"
+    r"|\b(?:full|booked|busy)\s*,?\s+always\b"
+    rf"|(?<![ء-ي])[فو]?(?:لن|(?:ما|مب|مو)\s+(?:راح|رح))\s+(?:\S+\s+)?{_AR_ARRIVE}(?![ء-ي])"
+    rf"|(?<![ء-ي])[فو]?(?:لا|ما)\s+(?:\S+\s+)?{_AR_ARRIVE}(?![ء-ي])(?:\s+\S+){{0,4}}?\s+(?:أبدا|أبداً|ابدا|ابداً|أبد|ابد)"
+    r"(?![ء-ي])"
+    rf"|(?<![ء-ي])كل\s+(?:عميل\s+محتمل|عميل|ليد|استفسار|طلب|اجتماع|موعد|زيارة|مشتر[يٍ]?)\s+(?:\S+\s+){{0,3}}?"
+    r"(?:هو\s+|هي\s+|يكون\s+|تكون\s+|سيكون\s+|ستكون\s+)?ل?(?:جاد|جادة|جدي|جدية|مؤهل|مؤهلة|جاهز|جاهزة|حقيقي|حقيقية|"
+    r"مشتر|مشتري)(?![ء-ي])"
+    rf"|(?<![ء-ي])(?:كل|جميع|كافة)\s+{_AR_LEADS}\s+(?:\S+\s+){{0,3}}?(?:مع\s+)?(?:(?:ال)?مشترين\s+)?{_AR_SURE}(?![ء-ي])"
+    rf"|(?<![ء-ي])(?:فقط|إلا|الا)\s+{_AR_LEADS}\s+{_AR_SURE}(?![ء-ي])"
+    rf"|{_AR_SURE}\s+(?:\S+\s+)?(?:بنسبة\s+)?100\s*[%٪]|(?<![\d.])100\s*[%٪]\s+(?:\S+\s+)?{_AR_SURE}(?![ء-ي])"
+    # "لا مزيد من الرسوم" is what we charge, not an outcome.
+    r"|(?<![ء-ي])لا\s+مزيد(?![ء-ي])(?!\s+من\s+(?:ال)?(?:رسوم|تكاليف|مصاريف|دفعات|مبالغ))|(?<![ء-ي])وداعا\s+ل"
+    rf"|{_AR_ALWAYS}\s+(?:\S+\s+){{0,2}}?{_AR_FULL}(?![ء-ي])|(?<![ء-ي]){_AR_FULL}\s+(?:\S+\s+){{0,2}}?{_AR_ALWAYS}",
+    re.I)
+# A sentence that says the outcome is not promised is the honest form.
+_NOT_PROMISED = re.compile(r"\b(?:not|never|no|cannot|can't)\s+(?:a\s+)?(?:promise|guarantee)"
+                           r"|ليس\s+وعدا|لا\s+نضمن", re.I)
+# What we do, said of ourselves: "we never miss a follow-up", "our team will
+# not let a small job through", "فريقنا لن يفوت".
+_OUR_SUBJECT = re.compile(r"(?:\bwe(?:['’]ll|\s+will)?|\bour\s+(?:\w+\s+){0,2}?(?:team|setters?|callers?|agents?|"
+                          r"centre|center|desk|people|staff))\s*$|(?:نحن|فريقنا|فريق\s+الاتصال)\s*$", re.I)
+# A relative clause naming today's leak, followed by what we do with it:
+# "enquiries that never reach the showroom today get a call in minutes".
+_THAT_BEFORE = re.compile(r"\b(?:that|which|who)\s*$", re.I)
+# A condition is no outcome either: "if they do not arrive, we keep working"
+# (the old offer's line, which the guarantee check judges on its own).
+_IF_BEFORE = re.compile(r"(?:\b(?:if|unless|whether|in\s+case|should)|(?<![ء-ي])(?:إذا|اذا|لو))"
+                        r"\s+(?:\S+\s+){0,3}$", re.I)
+_MAIN_VERB_AFTER = re.compile(r"^[^.;:!?]*?\b(?:get|gets|receive|receives|are|is)\b", re.I)
+
+
+def _ordinary(text: str, m: "re.Match[str]") -> bool:
+    """A match that is what we do, or a clause describing today's leak."""
+    before = text[max(0, m.start() - 60):m.start()]
+    if _OUR_SUBJECT.search(before) or _IF_BEFORE.search(before):
+        return True
+    return bool(_THAT_BEFORE.search(before) and _MAIN_VERB_AFTER.search(text[m.end():]))
+
+
+def outcome_strings(data: dict[str, Any]) -> list[tuple[str, str]]:
+    """The strings where the document says what the client gets: the cover's
+    headline (the outcome they want), the solution page's fixes, close and
+    targets, the program, the investment's rows and close and the start steps
+    (and a blind document's call to action)."""
+    out: list[tuple[str, str]] = []
+    for key in ("headline", "solution_title", "solution_close", "investment_close", "start_note"):
+        if isinstance(data.get(key), str):
+            out.append((key, data[key]))
+    investment = data.get("investment") if isinstance(data.get("investment"), dict) else {}
+    for i, row in enumerate(investment.get("rows") or []):
+        if isinstance(row, dict):
+            out += [(f"investment.rows[{i}].{f}", row[f]) for f in ("item", "detail") if isinstance(row.get(f), str)]
+    for block, fields in (("solution", ("fix",)), ("program", ("title", "note")), ("solution_targets", ("v", "k")),
+                          ("start_steps", ("when", "title", "body"))):
+        for i, row in enumerate(data.get(block) or []):
+            if isinstance(row, dict):
+                out += [(f"{block}[{i}].{f}", row[f]) for f in fields if isinstance(row.get(f), str)]
+    cta = data.get("cta")
+    if isinstance(cta, dict):
+        out += [(f"cta.{k}", v) for k, v in cta.items() if isinstance(v, str)]
+    return out
+
+
+def absolute_outcomes(data: dict[str, Any]) -> list[tuple[str, str]]:
+    """(field, the words) for each outcome stated as certain on the outcome pages."""
+    found = []
+    for path, raw in outcome_strings(data):
+        text = _TAGS.sub("", _plain(raw)).translate(ARABIC_DIGITS)
+        for m in ABSOLUTE_OUTCOME.finditer(text):
+            if _NOT_PROMISED.search(sentence_at(text, m.start(), m.end())) or _ordinary(text, m):
+                continue
+            found.append((path, m.group(0).strip()))
+            break
+    return found
+
+
+# ------------------------------------------------------- a date for a result ---
+# A result given a date as though it were certain: "first meetings land within
+# ten days" (180273419's page 7, proof run of 5 October 2026), "you will have
+# meetings by day 10", "تصل أول الاجتماعات خلال عشرة أيام". The program aims
+# for its timeline (PATTERNS.md: launch on day 7, first meetings between days
+# 10 and 15); it cannot promise a day, so the same sentence calls it the aim
+# or the target, or it is a promise in other words.
+_DAY_ORDINALS = {"seventh": 7, "eighth": 8, "ninth": 9, "tenth": 10, "eleventh": 11, "twelfth": 12,
+                 "thirteenth": 13, "fourteenth": 14, "fifteenth": 15, "twentieth": 20, "thirtieth": 30,
+                 "الحادي عشر": 11, "الثاني عشر": 12, "الثالث عشر": 13, "الرابع عشر": 14, "الخامس عشر": 15,
+                 "السابع": 7, "الثامن": 8, "التاسع": 9, "العاشر": 10, "العشرين": 20, "الثلاثين": 30}
+_EN_ORDINAL_DAY = re.compile(r"\b(?:the\s+)?(" + "|".join(k for k in _DAY_ORDINALS if k.isascii()) + r")\s+day\b",
+                             re.I)
+_AR_ORDINAL_DAY = re.compile(r"(?<![ء-ي])(ال)?يوم\s+("
+                             + "|".join(sorted((k for k in _DAY_ORDINALS if not k.isascii()), key=len, reverse=True))
+                             + r")(?![ء-ي])")
+# "The second week", "الأسبوع الثاني": week 2, which the rules below read like
+# "week 2" ("the first week" keeps its own form, which they already read).
+_WEEK_ORDINALS = {"second": 2, "third": 3, "fourth": 4, "fifth": 5, "sixth": 6,
+                  "الأول": 1, "الاول": 1, "الثاني": 2, "الثالث": 3, "الرابع": 4, "الخامس": 5, "السادس": 6}
+_EN_ORDINAL_WEEK = re.compile(r"\b(?:the\s+)?(second|third|fourth|fifth|sixth)\s+week\b", re.I)
+_AR_ORDINAL_WEEK = re.compile(r"(?<![ء-ي])(ال)?(أسبوع|اسبوع)\s+(الأول|الاول|الثاني|الثالث|الرابع|الخامس|السادس)(?![ء-ي])")
+# Our own meetings with the client's team, and our own paperwork, are no
+# result: "the first onboarding meeting is within two days", "our first
+# meeting with your team", "weekly review meetings start in week 3", "you
+# receive the contract within one working day", "the project starts on day 1".
+# Read as sessions, an agreement and the engagement.
+_OUR_MEETING = re.compile(
+    r"\b(?P<q>(?:weekly|monthly|daily|fortnightly|bi-?weekly|review|onboarding|on-boarding|kick-?off|training|"
+    r"reporting|report|strategy|planning|check-?in|progress|alignment|internal|team|setup|set-up)\s+)"
+    r"(?:meeting|appointment)(?P<s>s?)\b"
+    r"|\b(?P<our>our\s+(?:first\s+)?)meeting\b"
+    r"|\bmeeting(?P<s2>s?)(?P<with>\s+with\s+(?:us\b|our\b|the\s+(?:mahara\s+)?team\b|mahara\b))"
+    r"|\bmeeting(?P<with2>\s+with\s+your\s+team\b)",
+    re.I)
+_AR_OUR_MEETING = re.compile(
+    r"(?<![ء-ي])(?P<n>(?:ال)?(?:اجتماع(?:ات)?|موعدا?))(?=\s+(?:ال|لل|ل)?(?:انبوردينج|أونبوردينج|اونبوردينج|تعريفي|تعريفية|تعريف|"
+    r"انطلاق|متابعة|مراجعة|أسبوعي|أسبوعية|اسبوعي|اسبوعية|شهري|شهرية|تدريب|تأسيس|إعداد|اعداد)(?![ء-ي]))"
+    r"|(?<![ء-ي])(?P<n2>(?:ال)?اجتماع(?:ات)?)(?=\s+(?:معنا|مع\s+فريقنا|مع\s+مهارة|مع\s+فريق\s+مهارة)(?![ء-ي]))"
+    r"|(?<![ء-ي])(?P<n3>(?:ال)?اجتماع)(?=\s+مع\s+(?:فريقكم|فريقك)(?![ء-ي]))"
+    r"|(?<![ء-ي])(?P<n4>اجتماعنا)(?![ء-ي])")
+_OUR_PAPER = re.compile(
+    r"\b(?P<a>(?:the|our|this|your)\s+(?:(?:formal|written|signed|service|mahara|program(?:me)?|engagement)\s+)?)"
+    r"contract\b"
+    r"|\A(?P<lead>\s*)contract\b"
+    r"|\b(?P<b>(?:the|our|this)\s+)project(?=\s+(?:starts?|begins?|kicks?\s+off)\b)",
+    re.I)
+_SPAN = r"\d+(?:\.\d+)?(?:\s*(?:to|-|–|and|or|إلى|الى|حتى|و|أو|او)\s*\d+(?:\.\d+)?)?"
+_EN_UNIT = r"(?:working\s+|business\s+|calendar\s+)?(?:days?|weeks?|months?|fortnight)"
+_AR_UNIT = (r"(?:يوم(?:ا|ًا|اً|ين|ان)?|أيام|ايام|أسبوع(?:ا|ين)?|اسبوع(?:ا|ين)?|أسابيع|اسابيع|شهر(?:ا|ين)?|أشهر|اشهر)"
+            r"(?![ء-ي])")
+TIMING = re.compile(
+    rf"\b(?:within|in|inside|after|by|before|over|under|in\s+under|in\s+less\s+than|less\s+than)\s+(?:the\s+)?"
+    rf"(?:first\s+|next\s+|opening\s+)?(?:{_SPAN}|an?|one|a\s+couple\s+of)\s+{_EN_UNIT}\b"
+    r"|\b(?:within|in|inside|over|during|by\s+the\s+end\s+of)\s+(?:the|your)\s+(?:first|opening)\s+"
+    r"(?:days?|week|fortnight|month)\b"
+    rf"|\b(?:by|from|on|before|around|between|within|in|during)\s+(?:the\s+end\s+of\s+)?(?:days?|weeks?)\s+{_SPAN}"
+    rf"|\b{_SPAN}\s+{_EN_UNIT}\s+(?:after|from|of|into|since|following)\b"
+    # A date on the calendar: "ahead of National Day" (174685535's page 7),
+    # "before the end of the month", "قبل اليوم الوطني".
+    r"|\b(?:by|before|ahead\s+of|in\s+time\s+for)\s+(?:(?:the\s+)?end\s+of\s+(?:the\s+|this\s+|next\s+)?"
+    r"(?:week|month|quarter|year)|(?:mid-?\s*)?(?:january|february|march|april|may|june|july|august|september|"
+    r"october|november|december)|ramadan|eid|national\s+day|the\s+(?:season|summer|winter|holidays?)|"
+    r"next\s+(?:week|month|quarter))\b"
+    r"|(?<![ء-ي])(?:قبل|بحلول)\s+(?:نهاية\s+(?:ال)?(?:شهر|أسبوع|اسبوع|سنة|ربع|موسم)|(?:ال)?يوم\s+الوطني|رمضان|"
+    r"(?:ال)?عيد|(?:ال)?موسم)(?![ء-ي])"
+    # "بحلول اليوم 10" before "بحلول اليوم", so the day is read with it.
+    rf"|(?<![ء-ي])(?:بحلول|من|قبل|في|بين|حتى)\s+(?:ال)?(?:يوم|أسبوع|اسبوع)\s+{_SPAN}"
+    rf"|(?<![ء-ي])(?:خلال|غضون|بعد|قبل|بحلول|في\s+أول|في\s+اول|في\s+أقل\s+من)\s+(?:ال)?(?:{_SPAN}\s*)?{_AR_UNIT}"
+    rf"|(?<![ء-ي\d]){_SPAN}\s*{_AR_UNIT}\s+(?:من|بعد)(?![ء-ي])"
+    # The days before the first meeting: "15 days to your first meeting".
+    rf"|\b(?:{_SPAN}|an?|one)\s+{_EN_UNIT}(?=\s+(?:from\s+\S+\s+)?(?:to|until|before)\s+(?:your|the)\s+first\b)"
+    rf"|(?<![ء-ي\d]){_SPAN}\s*{_AR_UNIT}(?=\s+(?:من\s+\S+\s+)?(?:إلى|الى|حتى|قبل)\s+(?:أول|اول)\s)",
+    re.I)
+# What lies between a date and the first meeting it counts to.
+_TO_THE_FIRST = re.compile(r"\s*(?:from\s+\S+\s+)?(?:to|until|before)\s+(?:your|the)\s+"
+                           r"|\s*(?:من\s+\S+\s+)?(?:إلى|الى|حتى|قبل)\s+", re.I)
+# A result, stated as arriving: the noun and its verb, the client told he will
+# have them, us saying we book them, or the first of them with a date beside.
+_T_NOUN = (r"(?:meetings?|appointments?|bookings?|leads?|enquir(?:y|ies)|inquir(?:y|ies)|visits?|results?|"
+           r"projects?|contracts?|deals?|clients?|buyers?|prospects?|opportunit(?:y|ies))")
+_T_VERB = (r"(?:land(?:s|ing)?|arriv(?:e|es|ing)|com(?:e|es|ing)\s+(?:in|through)|flow(?:s|ing)?|"
+           r"reach(?:es|ing)?\s+(?:you|your)|show(?:s|ing)?\s+up|turn(?:s|ing)?\s+up|hit(?:s|ting)?\s+your|"
+           r"(?:are|is|get|gets|will\s+be|being)\s+(?:booked|signed|closed|won|delivered)|booked|signed|"
+           r"(?:in|on)\s+your\s+(?:calendar|diary|inbox|crm|showroom)|start(?:s|ing)?|begin(?:s|ning)?|"
+           r"(?:are\s+|is\s+)?guaranteed)")
+_AR_T_NOUN = (r"(?:ال)?(?:اجتماعات|اجتماعا|اجتماع|مواعيد|موعدا|موعد|زيارات|زيارة|عملاء|عميلا|عميل|استفسارات|"
+              r"استفسارا|استفسار|طلبات|ليدز|نتائج|مشاريع|مشروعا|مشروع|صفقات|عقود)")
+_AR_T_VERB = (r"(?:[سب]?(?:تصل|يصل|توصل|يوصل|تبدأ|يبدأ|تبدا|يبدا|تجي|يجي|تأتي|يأتي|تدخل|يدخل)(?:ك|كم)?|"
+              r"تنحجز|ينحجز|تحجز|تُحجز)")
+TIMED_RESULT = re.compile(
+    rf"\b{_T_NOUN}\b(?:\s+[^\s.;:!?]+){{0,4}}?\s+(?:will\s+|then\s+)?{_T_VERB}\b"
+    rf"|\byou(?:['’]ll|\s+will)?\s+(?:start\s+(?:to\s+)?|begin\s+(?:to\s+)?)?"
+    rf"(?:have|see|get|receive|meet|be\s+meeting|getting|seeing|receiving|meeting)\b(?:\s+[^\s.;:!?]+){{0,4}}?\s+{_T_NOUN}\b"
+    rf"|\bwe(?:['’]ll|\s+will)?\s+(?:book|deliver|bring|send|get\s+you|land|put)\b(?:\s+[^\s.;:!?]+){{0,4}}?\s+{_T_NOUN}\b"
+    rf"|\bfirst\s+(?:[a-z-]+\s+)?{_T_NOUN}\b(?=\s*[:–-]?\s*(?:{TIMING.pattern}))"
+    rf"|\b(?:{_SPAN}|an?|one)\s+{_EN_UNIT}\s+(?:from\s+\S+\s+)?(?:to|until|before)\s+your\s+first\s+"
+    rf"(?:[a-z-]+\s+)?{_T_NOUN}\b(?!\s+with\s+(?:us|our|the\s+team|mahara)\b)"
+    rf"|(?<![ء-ي\d]){_SPAN}\s*{_AR_UNIT}\s+(?:من\s+\S+\s+)?(?:إلى|الى|حتى|قبل)\s+(?:أول|اول)\s+{_AR_T_NOUN}(?![ء-ي])"
+    rf"|(?<![ء-ي]){_AR_T_NOUN}(?![ء-ي])(?:\s+\S+){{0,3}}?\s+(?:راح\s+|رح\s+)?{_AR_T_VERB}(?![ء-ي])"
+    rf"|(?<![ء-ي])[وف]?(?:راح\s+|رح\s+)?{_AR_T_VERB}(?![ء-ي])(?:\s+\S+){{0,3}}?\s+{_AR_T_NOUN}(?![ء-ي])"
+    rf"|(?<![ء-ي])(?:[سب]?(?:يكون|تكون)|راح\s+(?:يكون|تكون))\s+(?:لديكم|لديك|عندكم|عندك|لكم|لك)\s+(?:\S+\s+){{0,2}}?"
+    rf"{_AR_T_NOUN}(?![ء-ي])"
+    rf"|(?<![ء-ي])(?:[سب]?(?:تحصل|تحصلون|تشوف|تشوفون|ترى|ترون)|راح\s+(?:تحصل|تشوف))\s+(?:على\s+)?(?:\S+\s+){{0,2}}?"
+    rf"{_AR_T_NOUN}(?![ء-ي])"
+    rf"|{_AR_T_NOUN}\s+(?:\S+\s+)?(?:في|على)\s+(?:تقويمكم|تقويمك|جدولكم|جدولك|التقويم)(?![ء-ي])"
+    # Told to expect them: "expect meetings within ten days of launch".
+    rf"|\bexpect\b(?:\s+(?:your|the|first|qualified|booked|new|sales|more|\d+(?:\s*(?:to|-|–)\s*\d+)?))*\s+{_T_NOUN}\b"
+    r"|\b(?:your\s+)?(?:calendar|diary|pipeline)\s+(?:will\s+)?(?:starts?\s+(?:to\s+)?)?"
+    r"(?:fill(?:s|ing)?|is\s+full|be\s+full)\b"
+    # The bare result at the head of its clause with a day of the program:
+    # "launch on day 7, meetings on day 10", "Meetings from day 10".
+    rf"|(?:^|[,;:–—]|\band\b|\bthen\b)\s*(?:(?:your|the)\s+)?(?:(?:qualified|booked|new|sales|first)\s+)?{_T_NOUN}\b"
+    r"(?=\s*[:–-]?\s*(?:from|by|on|before|in)\s+(?:the\s+end\s+of\s+)?(?:days?|weeks?)\s+\d)"
+    # A count of them with a date: "15 meetings within 30 days".
+    rf"|\b\d+(?:\s*(?:to|-|–)\s*\d+)?\s+(?:(?:qualified|booked|new|sales|signed|more)\s+)?{_T_NOUN}\b"
+    r"(?=\s*(?:within|inside|in\s+under|in\s+less\s+than|(?:by|from|before)\s+(?:the\s+end\s+of\s+)?(?:days?|weeks?)\s+\d"
+    r"|in\s+(?:the|your)\s+(?:first|opening))\b)"
+    # The Arabic of the same: the first of them with a date beside ("أول
+    # الاجتماعات خلال عشرة أيام"), us booking or bringing them ("نحجز لكم"),
+    # them guaranteed ("مضمونة"), the client told to expect them, and the bare
+    # result at the head of its clause with a day ("والاجتماعات من اليوم 10").
+    rf"|(?<![ء-ي])(?:أول|اول)\s+{_AR_T_NOUN}(?![ء-ي])(?=\s*[:–-]?\s*(?:{TIMING.pattern}))"
+    rf"|(?<![ء-ي])[وف]?(?:سن|بن|ن)(?:حجز|جيب|جلب|وفر|حقق|وصل)(?:لكم|لك|كم|ك)?(?![ء-ي])(?:\s+\S+){{0,3}}?\s+"
+    rf"{_AR_T_NOUN}(?![ء-ي])"
+    rf"|(?<![ء-ي]){_AR_T_NOUN}(?![ء-ي])\s+(?:\S+\s+)?مضمون(?:ة|ه)?(?![ء-ي])"
+    rf"|(?<![ء-ي])[وف]?(?:توقع|توقعوا|توقعو|تتوقع|تتوقعون|تتوقعوا)(?![ء-ي])(?:\s+\S+){{0,3}}?\s+{_AR_T_NOUN}(?![ء-ي])"
+    rf"|(?:^|[,،;:؛]|(?<![ء-ي])و)\s*{_AR_T_NOUN}(?![ء-ي])"
+    r"(?=\s*(?:من|بحلول|قبل|في|حتى)\s+(?:ال)?(?:يوم|أسبوع|اسبوع)\s+\d)",
+    re.I)
+# Worded as the aim or the target: honest. "Aimed for between days 10 and 15".
+# The target as a figure, not the targeting of an audience: "targeted
+# campaigns", "we target villa owners" and "حملات مستهدفة" aim at nothing.
+_AIM = re.compile(
+    r"\b(?:the|our|a|your|this|that|its)\s+targets?\b|\btargets?\s*(?::|is\b|are\b|of\b|for\b)"
+    r"|\btarget(?:s|ed|ing)?\s+(?:for|between|within|by|at\s+day)\b"
+    r"|\bwe\s+target\s+(?:your\s+|the\s+)?(?:first|meetings?|appointments?|days?|between|within|\d)"
+    r"|\baim(?:s|ed|ing)?\b|\bgoals?\b"
+    r"|(?<![ء-ي])(?:ال|و|ف)?(?:هدف|هدفنا|نهدف|يهدف|تهدف|المستهدف|المستهدفة)(?![ء-ي])|نسعى|نطمح", re.I)
+# "You can expect" is the expectation set, not a hedge.
+_CAN_EXPECT = re.compile(r"\b(?:can|should)\s+(?=expect\b)", re.I)
+# Not stated as certain: "may land", "clients typically see"; nor said in the
+# past, which is a record ("had his first meetings within nine days").
+_HEDGED = re.compile(r"\b(?:may|might|could|should|can|usually|typically|often|likely|had|got|saw|was|were|did)\b"
+                     r"|(?<![ء-ي])(?:قد|ممكن|يمكن|عادة|غالبا)(?![ء-ي])", re.I)
+_SUBJECT_OF = re.compile(r"\s+(?:onwards?\s+)?(?:are|is|get|gets|will\s+be|go|goes)\s+(?!(?:booked|signed|closed|won|in|on)\b)\w"
+                         r"|\s+(?:نتصل|نراجع|نتابع|نؤهل|نفلتر|نرد|يتم|تتم)(?![ء-ي])", re.I)
+# Nor a negation of it, inside the words themselves.
+_NEGATION = re.compile(r"\b(?:not|never|no)\b|n['’]t|(?<![ء-ي])(?:لا|لن|ما|لم)(?![ء-ي])", re.I)
+# Or just ahead of them ("No meetings land before launch"), where "no more
+# than 15 days" is still the promise.
+_NEG_BEFORE = re.compile(r"\b(?:not|never|no|none)\b|n['’]t\b|(?<![ء-ي])(?:لا|لن|لم)(?![ء-ي])", re.I)
+_UPPER_BOUND = re.compile(r"\b(?:no|not)\s+(?:more|later|longer)\s+than\b|(?<![ء-ي])لا\s+(?:تتجاوز|يتجاوز|تزيد|يزيد)",
+                          re.I)
+# The result as the object of what we do with it: "we review the first leads",
+# "reporting on results starts in week 1".
+_HANDLED_BEFORE = re.compile(
+    r"(?:\b(?:on|for|about|to|into)\s+"
+    r"|\b(?:we|our\s+(?:\w+\s+)?(?:team|setters?|callers?|agents?|cent(?:re|er)))\s+(?:will\s+|['’]ll\s+)?"
+    r"(?:review|check|call|qualify|score|track|answer|contact|filter|analy[sz]e|confirm|read|study|follow\s+up\s+on|"
+    r"report\s+on)\s+)(?:(?:the|your|all|every|each|new|incoming|any)\s+)?$", re.I)
+_RESULT_NOUN = re.compile(rf"\b{_T_NOUN}\b|(?<![ء-ي]){_AR_T_NOUN}(?![ء-ي])", re.I)
+# After a comma, a clause of its own that the date belongs to: "first meetings
+# land in your calendar, each confirmed within 2 days".
+_OWN_CLAUSE = re.compile(r"\b(?:each|every|which|who|all|both)\b"
+                         r"|\b(?!(?:booked|signed|closed|won|delivered|guaranteed|landed)\b)[a-z]+ed\b", re.I)
+_CONDITION = re.compile(r"\b(?:if|unless|in\s+case|whether)\b|(?<![ء-ي])(?:إذا|اذا|لو)(?![ء-ي])", re.I)
+_SEGMENT_END = re.compile(r"[.!?؟;؛]")
+# Between a result and its date, a new clause means the date is another's:
+# "launch on day 7, and first meetings land" dates the launch.
+_NEW_CLAUSE = re.compile(r"[;:]|\b(?:and|then|while|but|once)\b|(?<![ء-ي])(?:ثم|لكن|بعدها)(?![ء-ي])", re.I)
+
+
+def timing_text(raw: str) -> str:
+    """The copy as the timing rules read it: no markup, digits for number
+    words, and "the tenth day" or "اليوم العاشر" as day 10."""
+    text = spoken_figures(_TAGS.sub("", _plain(str(raw or ""))))
+    text = _EN_ORDINAL_DAY.sub(lambda m: f"day {_DAY_ORDINALS[m.group(1).lower()]}", text)
+    text = _AR_ORDINAL_DAY.sub(lambda m: f"{m.group(1) or ''}يوم {_DAY_ORDINALS[m.group(2)]}", text)
+    text = _EN_ORDINAL_WEEK.sub(lambda m: f"week {_WEEK_ORDINALS[m.group(1).lower()]}", text)
+    text = _AR_ORDINAL_WEEK.sub(lambda m: f"{m.group(1) or ''}{m.group(2)} {_WEEK_ORDINALS[m.group(3)]}", text)
+    return ours(text)
+
+
+def ours(text: str) -> str:
+    """Our own meetings and paperwork read as sessions, an agreement and the
+    engagement, so neither rule below takes them for the client's result."""
+    def meeting(m: "re.Match[str]") -> str:
+        if m.group("q") is not None:
+            return f"{m.group('q')}session{m.group('s')}"
+        if m.group("our") is not None:
+            return f"{m.group('our')}session"
+        if m.group("with") is not None:
+            return f"session{m.group('s2')}{m.group('with')}"
+        return f"session{m.group('with2')}"
+
+    def ar_meeting(m: "re.Match[str]") -> str:
+        word = next(g for g in m.groups() if g)
+        return (word.replace("اجتماعنا", "لقاؤنا").replace("اجتماعات", "لقاءات").replace("اجتماع", "لقاء")
+                .replace("موعدا", "لقاء").replace("موعد", "لقاء"))
+
+    def paper(m: "re.Match[str]") -> str:
+        if m.group("a") is not None:
+            return f"{m.group('a')}agreement"
+        if m.group("lead") is not None:
+            return f"{m.group('lead')}Agreement"
+        return f"{m.group('b')}engagement"
+
+    text = _OUR_MEETING.sub(meeting, text)
+    text = _AR_OUR_MEETING.sub(ar_meeting, text)
+    return _OUR_PAPER.sub(paper, text)
+
+
+def _segments(text: str) -> Iterable[tuple[int, str]]:
+    start = 0
+    for m in _SEGMENT_END.finditer(text + "."):
+        # A decimal point is no sentence end.
+        if m.group(0) == "." and m.start() < len(text) and m.start() > 0 and text[m.start() - 1].isdigit() \
+                and m.start() + 1 < len(text) and text[m.start() + 1].isdigit():
+            continue
+        yield start, text[start:m.start()]
+        start = m.end()
+
+
+def dated_results(text: str, said: "re.Pattern[str]" = TIMED_RESULT) -> list[tuple[str, "re.Match[str]"]]:
+    """(the words, the timing) for each result (or each match of `said`)
+    given a date in a piece of copy that has already been through
+    timing_text, whether or not it is worded as the aim."""
+    out = []
+    for _at, seg in _segments(text):
+        timings = list(TIMING.finditer(seg))
+        if not timings:
+            continue
+        for m in said.finditer(seg):
+            for t in timings:
+                if t.start() >= m.start() and t.end() <= m.end():
+                    near = True
+                elif t.end() <= m.start() and _TO_THE_FIRST.fullmatch(seg[t.end():m.start()]):
+                    near = True
+                elif t.start() >= m.end():
+                    gap = seg[m.end():t.start()]
+                    # The last stretch after a comma may be a clause of its
+                    # own whose date it is ("..., each confirmed within 2 days").
+                    after_comma = re.split(r"[,،]", gap)[-1] if re.search(r"[,،]", gap) else ""
+                    near = ((len(gap) <= 60 and not _NEW_CLAUSE.search(gap) and not _OWN_CLAUSE.search(after_comma))
+                            or gap.strip() in (":", "-", "–"))
+                else:
+                    # The date comes first: it opens its clause ("Within ten
+                    # days, the first meetings land") and the result follows,
+                    # not after another clause the date belongs to ("Within 7
+                    # days of signing we launch, and first meetings land").
+                    gap = seg[t.end():m.start()]
+                    opening = re.split(r"[,،:]", seg[:t.start()])[-1]
+                    joined = bool(re.search(r"[,،]", gap)) and bool(re.match(r"[وف][ء-ي]", seg[m.start():m.start() + 2]))
+                    near = (t.end() <= m.start() and len(gap) <= 40 and not joined
+                            and not re.search(r";|\b(?:and|then|while|but|once)\b|(?<![ء-ي])(?:ثم|لكن|بعدها)(?![ء-ي])",
+                                              gap, re.I)
+                            and not re.sub(r"(?i)\b(?:and|then|so)\b|(?<![ء-ي])(?:و|ثم)(?![ء-ي])", "", opening).strip())
+                if near:
+                    out.append((seg[min(m.start(), t.start()):max(m.end(), t.end())].strip(), t))
+                    break
+    return out
+
+
+def timed_outcomes_in(raw: str) -> list[str]:
+    """The words of each result a piece of copy dates as though certain: not
+    worded as the aim or the target, not hedged, not a condition."""
+    text = timing_text(raw)
+    found = []
+    for _at, seg in _segments(text):
+        if _AIM.search(seg) or _NOT_PROMISED.search(seg):
+            continue
+        for words, t in dated_results(seg):
+            claim_at = max(0, seg.find(words))
+            own = words.replace(t.group(0), " ")
+            # A hedge, the past or a negation belongs to the result's own
+            # clause; a condition anywhere ahead of it makes the whole of it one.
+            clause = re.split(r"[,،:–—]|\s-\s|\b(?:and|but|then)\b", seg[:claim_at])[-1][-40:]
+            if (_HEDGED.search(_CAN_EXPECT.sub("", clause + own)) or _NEGATION.search(_UPPER_BOUND.sub("", own))
+                    or _NEG_BEFORE.search(_UPPER_BOUND.sub("", clause))
+                    or _CONDITION.search(seg[:claim_at] + own)):
+                continue
+            # The dated words as the subject of what we do with them: "leads
+            # arriving in the first month are called within minutes".
+            if _SUBJECT_OF.match(seg[claim_at + len(words):]):
+                continue
+            # Or, when the words open on the result itself, the result as
+            # the subject or the object of something else: "results are
+            # reviewed weekly, starting on day 14", "we review the first
+            # leads within ten days of launch".
+            noun = _RESULT_NOUN.search(words)
+            if noun and re.sub(r"(?i)^(?:(?:the|your)\s+)?first\s*$", "", words[:noun.start()].strip()) == "":
+                if _SUBJECT_OF.match(words[noun.end():]) or _HANDLED_BEFORE.search(seg[:claim_at]):
+                    continue
+            found.append(words)
+            break
+    return found
+
+
+def timed_strings(data: dict[str, Any]) -> list[tuple[str, str]]:
+    """Where a date for a result can be stated as ours: the outcome pages, the
+    cover's subhead and the terms. Not the target tiles, which print under
+    the page's "Target" label, and not the diagnosis, which is the client's."""
+    out = [(p, t) for p, t in outcome_strings(data) if not p.startswith("solution_targets")]
+    if isinstance(data.get("subhead"), str):
+        out.append(("subhead", data["subhead"]))
+    for i, t in enumerate(data.get("terms") or []):
+        if isinstance(t, str):
+            out.append((f"terms[{i}]", t))
+    return out
+
+
+def timed_outcomes(data: dict[str, Any]) -> list[tuple[str, str]]:
+    """(field, the words) for each result given a date as though certain."""
+    found = []
+    for path, raw in timed_strings(data):
+        words = timed_outcomes_in(raw)
+        if words:
+            found.append((path, words[0]))
+    return found
+
+
 def promises_results(text: str) -> bool:
     """Free work, or results guaranteed, in a line of the document."""
     if FREE_WORK.search(text):
+        return True
+    if built_to_deliver(text):
+        return True
+    if any(not _NEGATED.search(text[:m.start()]) and not _NOT.search(m.group(0))
+           for m in RESULT_THEN_GUARANTEED.finditer(text)):
         return True
     return any(not _NEGATED.search(text[:m.start()]) for m in RESULT_GUARANTEED.finditer(text))
 
 
 def check_guarantee(data: dict[str, Any], resolved: dict[str, Any], rep: Report) -> None:
-    results = [p for p, t in content_strings(data) if promises_results(_plain(t))]
+    # A fail, not a warning: it is a result promised in other words, which the
+    # rule forbids whatever the closer chose, and only a fail reaches the
+    # repair round, which rewords it before anyone has to read the page.
+    certain = absolute_outcomes(data)
+    if certain:
+        rep.add(FAIL, "guarantee", "the document states an outcome as certain in "
+                + ", ".join(f"{p} (\"{w}\")" for p, w in certain[:4])
+                + ". The program filters and lowers; it cannot promise none or all. Write \"fewer\" or "
+                "\"filtered out\", never \"never\", \"every lead is\", \"no more\" or \"always\"")
+    # A date for a result is the same promise: a fail, for the same reasons.
+    dated = timed_outcomes(data)
+    if dated:
+        rep.add(FAIL, "guarantee", "the document states a timing for a result as certain in "
+                + ", ".join(f"{p} (\"{w}\")" for p, w in dated[:4])
+                + ". The program aims for its timeline and cannot promise a day: word it as the aim, as PATTERNS.md "
+                "gives it (\"launch on day 7, first meetings aimed for between days 10 and 15\"), or call it the "
+                "target")
+    certain = certain + dated
+    results =[p for p, t in content_strings(data) if promises_results(_plain(t))]
     if results:
         rep.add(FAIL, "guarantee", "the document promises results in " + ", ".join(results[:4])
                 + ". We never guarantee results, free work or a number of meetings; take it out. "
@@ -689,9 +1691,9 @@ def check_guarantee(data: dict[str, Any], resolved: dict[str, Any], rep: Report)
     promised = [p for p, t in content_strings(data) if PROMISE.search(_plain(t))]
     mentioned = [p for p, t in content_strings(data) if MENTION.search(_plain(t))]
     if resolved["guarantee"]:
-        if promised or mentioned:
+        if (promised or mentioned) and not certain:
             rep.add(PASS, "guarantee", "the guarantee the closer chose is stated (" + ", ".join((promised or mentioned)[:2]) + ")")
-        else:
+        elif not (promised or mentioned):
             rep.add(WARN, "guarantee", "the closer chose the guarantee and the document does not state it; "
                                        "add it as one line in the terms")
         return
@@ -701,7 +1703,7 @@ def check_guarantee(data: dict[str, Any], resolved: dict[str, Any], rep: Report)
     elif mentioned:
         rep.add(WARN, "guarantee", "no guarantee was chosen, and " + ", ".join(mentioned[:4])
                                    + " reads like one. Check it promises nothing.")
-    else:
+    elif not certain:
         rep.add(PASS, "guarantee", "no guarantee was chosen and none is promised")
 
 
@@ -784,13 +1786,204 @@ def check_echoes(data: dict[str, Any], rep: Report) -> None:
         rep.add(PASS, "echoes", "nothing printed twice")
 
 
+# --------------------------------------------------------------- timeline ---
+# The days to the first meeting, told once. 180273419's proof run printed 15
+# days from signature on page 5's target tile and "Days 7 to 10", with the
+# first meetings "within ten days", on page 7's third step (5 October 2026);
+# PATTERNS.md gives 10 to 15. Days counted from another clock (from launch)
+# are another figure and are only held against their own kind.
+_FIRST_MEETING = re.compile(
+    r"\bfirst\s+(?:[a-z-]+\s+){0,2}?(?:meetings?|appointments?|visits?|bookings?)\b"
+    r"|\b(?:meetings?|appointments?|visits?|bookings?)\s+(?:will\s+)?(?:start|begin)\b"
+    r"|(?<![ء-ي])(?:أول|اول)\s+(?:ال)?(?:اجتماعات|اجتماع|مواعيد|موعد|زيارات|زيارة)(?![ء-ي])", re.I)
+_DAYS_WORD = re.compile(r"\bdays?\b|\bweeks?\b|(?<![ء-ي])(?:ال)?(?:يوم|أيام|ايام|أسبوع|اسبوع|أسابيع|اسابيع)", re.I)
+_FROM_LAUNCH = re.compile(r"\b(?:launch(?:es|ed|ing)?|go(?:es|ing)?[- ]live|live)\b|(?<![ء-ي])(?:ال)?(?:إطلاق|اطلاق)", re.I)
+_WEEKS = re.compile(r"\bweeks?\b|\bfortnight\b|أسبوع|اسبوع|أسابيع|اسابيع", re.I)
+_MONTHS = re.compile(r"\bmonths?\b|شهر|أشهر|اشهر", re.I)
+
+
+# "From day 10" or "after ten days" opens the window and names no last day.
+_LOWER_BOUND = re.compile(r"^\s*(?:from|after|starting|beginning|من|بعد)(?![ء-ي])\b", re.I)
+# "Week 3" or "weeks 2 to 3" count weeks by number: week 3 is days 15 to 21.
+_WEEK_NUMBER = re.compile(r"\bweeks?\s+\d|(?<![ء-ي])(?:ال)?(?:أسبوع|اسبوع)\s+\d|\bfirst\s+week\b", re.I)
+# The first meetings said to follow a step rather than to fall inside it.
+_FOLLOW = re.compile(r"\b(?:follow(?:s|ed|ing)?|come\s+after|afterwards|from\s+there|soon\s+after|shortly\s+after|later)\b"
+                     r"|(?<![ء-ي])(?:تليها|يليها|تتبعها|تتبعه|بعدها|بعده|لاحقا|لاحقًا)(?![ء-ي])|بعد\s+ذلك", re.I)
+_PAST = re.compile(r"\b(?:had|got|saw|was|were|did|took)\b", re.I)
+
+
+def last_day(words: str) -> Optional[tuple[int, int, int]]:
+    """The last day a timing names (the end of a range), with the days it
+    can stand for: one day for a count of days, a day either side for a count
+    of weeks ("two weeks" is 13 to 15), the whole week and a day for a week
+    by number ("week 3" is 15 to 22). None for months, for a window's opening day
+    alone ("from day 10"), or for no figure at all."""
+    if _MONTHS.search(words):
+        return None
+    nums = [float(x) for x in re.findall(r"\d+(?:\.\d+)?", words)]
+    if _LOWER_BOUND.search(words) and len(nums) < 2:
+        return None
+    weekly = bool(_WEEKS.search(words))
+    if re.search(r"\bfortnight\b|أسبوعين|اسبوعين|يومين|يومان", words, re.I):
+        nums = nums or [2]
+    elif not nums and weekly:
+        nums = [1]
+    if not nums:
+        return None
+    if weekly and _WEEK_NUMBER.search(words):
+        week = int(round(max(nums)))
+        return 7 * week, 7 * week - 6, 7 * week + 1
+    day = int(round(max(nums) * (7 if weekly else 1)))
+    return (day, day - 1, day + 1) if weekly else (day, day, day)
+
+
+def first_meeting_days(data: dict[str, Any]) -> list[tuple[str, int, tuple[int, int], str]]:
+    """(field, last day, the days it can stand for, clock) for each place the
+    document says how many days to the first meeting: a target tile counting
+    them, a step to start that says the first meetings land (by its own words,
+    or by its window when they give no day and do not say the meetings follow
+    it), and any other line of ours that dates them. Not a condition ("if no
+    meeting has landed by day 21"), a negation or a record in the past. The
+    clock is "launch" when counted from the launch, else "start"."""
+    out: list[tuple[str, int, tuple[int, int], str]] = []
+
+    def clock(words: str) -> str:
+        return "launch" if _FROM_LAUNCH.search(words) else "start"
+
+    def add(path: str, span: Optional[tuple[int, int, int]], words: str) -> bool:
+        if span:
+            out.append((path, span[0], (span[1], span[2]), clock(words)))
+        return bool(span)
+
+    def stated(path: str, raw: str) -> bool:
+        text = timing_text(raw)
+        for _at, seg in _segments(text):
+            for words, t in dated_results(seg, _FIRST_MEETING):
+                claim_at = max(0, seg.find(words))
+                clause = re.split(r"[,،:–—]|\s-\s|\b(?:and|but|then)\b", seg[:claim_at])[-1][-40:]
+                own = words.replace(t.group(0), " ")
+                if (_CONDITION.search(seg[:claim_at] + own) or _PAST.search(clause + own)
+                        or _NEG_BEFORE.search(_UPPER_BOUND.sub("", clause + own))):
+                    continue
+                # The clock is read where the timing stands, to the end of its
+                # clause: "within 8 days of the ads and the funnel going live".
+                if add(path, last_day(t.group(0)), t.group(0) + re.split(r"[,،;]", seg[t.end():])[0][:60]):
+                    return True
+        return False
+
+    for i, tile in enumerate(data.get("solution_targets") or []):
+        if not isinstance(tile, dict):
+            continue
+        k = timing_text(tile.get("k") or "")
+        if _FIRST_MEETING.search(k) and _DAYS_WORD.search(k) or _FIRST_MEETING.search(timing_text(tile.get("v") or "")):
+            add(f"solution_targets[{i}]", last_day(f"{timing_text(tile.get('v') or '')} "
+                                                   f"{'weeks' if _WEEKS.search(k) else ''}"), k)
+    for i, step in enumerate(data.get("start_steps") or []):
+        if not isinstance(step, dict):
+            continue
+        said = timing_text(". ".join(str(step.get(f) or "") for f in ("title", "body")))
+        if not _FIRST_MEETING.search(said) or stated(f"start_steps[{i}]", said):
+            continue
+        # "Day 7: launch. The first meetings follow." The window is the
+        # launch's, not the meetings'.
+        if any(_FIRST_MEETING.search(seg) and _FOLLOW.search(seg) for _at, seg in _segments(said)):
+            continue
+        when = timing_text(step.get("when") or "")
+        if _DAYS_WORD.search(when):
+            add(f"start_steps[{i}]", last_day(when), when)
+    for path, raw in timed_strings(data):
+        if not path.startswith("start_steps"):
+            stated(path, raw)
+    return out
+
+
+def check_timeline(data: dict[str, Any], rep: Report) -> None:
+    # A fail, not a warning, unlike two counts of the client's that disagree:
+    # this is one quantity of ours, the client reads both pages, and it is a
+    # date he will hold us to. Only a fail reaches the repair round, which
+    # aligns the pages before anyone reads them; the proof run that printed
+    # 15 and 10 passed every other row.
+    told = first_meeting_days(data)
+    clashes, agreed = [], []
+    for kind in ("start", "launch"):
+        group = [(p, d, span) for p, d, span, c in told if c == kind]
+        if len(group) < 2:
+            continue
+        # Two places agree when the days they can stand for meet.
+        same = all(a[2][0] <= b[2][1] and b[2][0] <= a[2][1] for a in group for b in group)
+        if same:
+            agreed.append(group[0][1])
+        else:
+            clashes.append(", ".join(f"{p} says {d}" for p, d, _span in group[:4]))
+    if clashes:
+        rep.add(FAIL, "timeline", "the days to the first meeting are told more than one way: " + "; ".join(clashes)
+                + ". It is one figure of ours: say it the same way on every page, from PATTERNS.md's timeline "
+                "(launch on day 7, first meetings aimed for between days 10 and 15 from signature), and change "
+                "the field that differs")
+    elif agreed:
+        rep.add(PASS, "timeline", "the days to the first meeting are the same wherever they are told ("
+                + ", ".join(str(d) for d in agreed) + ")")
+
+
+# --------------------------------------------------------- the tree's note ---
+# The tree has two branches by design, so a note saying there is no third is
+# filler printed under the exhibit: "No third branch." on 176954619's page 3
+# (live check, 5 October 2026), and in thirteen of B2B's fourteen drafts,
+# copied from the references' tree.note (prompt.shape_of now leaves it out).
+NO_THIRD_BRANCH = re.compile(r"\bthird\s+branch(?:es)?\b|(?<![ء-ي])(?:ال)?فرع(?:ا)?\s+(?:ال)?ثالث(?:ا)?(?![ء-ي])",
+                             re.I)
+
+
+def check_tree_note(data: dict[str, Any], rep: Report) -> None:
+    tree = data.get("tree") if isinstance(data.get("tree"), dict) else {}
+    note = tree.get("note")
+    if isinstance(note, str) and NO_THIRD_BRANCH.search(_plain(note)):
+        rep.add(WARN, "tree", "tree.note says there is no third branch. The tree has two by design, so the line "
+                              "is filler under the exhibit: leave tree.note empty, or keep only a finding the "
+                              "branches do not show")
+
+
 # --------------------------------------------------------------- currency ---
+# Words saying no currency was named. A currency left for the closer is
+# settled before the page goes out, and then the page states it in its figures
+# while its words still say there is none (180273419 on 5 October 2026: AED
+# filled, "You named no net margin and no currency, so this page assumes
+# neither" left as it was, and the gate said ready).
+_TAGS = re.compile(r"<[^>]+>")
+NO_CURRENCY = re.compile(
+    r"\bno\s+currency\b|\bnamed\s+no\s+(?:[a-z]+\s+){0,4}?currency\b"
+    r"|\bwithout\s+(?:a\s+|any\s+|naming\s+(?:a\s+|the\s+)?)?currency\b"
+    r"|\bcurrency\s+(?:was|is|has)\s+(?:not|never)\s+(?:been\s+)?(?:named|given|stated|said|set|settled|confirmed)"
+    r"|\b(?:did\s+not|didn't|never)\s+(?:name|give|state|say|set|mention)\s+(?:a\s+|the\s+|any\s+|which\s+)?currency\b"
+    r"|\bcurrency\s+(?:is\s+)?(?:still\s+)?(?:unstated|unknown|unnamed|open|to\s+be\s+(?:confirmed|settled))\b"
+    r"|\bonce\s+the\s+currency\s+is\s+(?:settled|confirmed|known|named|agreed)\b"
+    r"|(?:بدون|دون|بلا)\s+(?:ذكر\s+|تحديد\s+)?(?:أي\s+|اي\s+)?(?:عملة|العملة)"
+    r"|لم\s+(?:\S+\s+){0,2}?(?:أي\s+|اي\s+)?(?:عملة|العملة)"
+    r"|ما\s+(?:ذكرت|حددت|سميت|ذكرتو|حددتو|ذكرتوا|حددتوا)\s+(?:أي\s+|اي\s+)?(?:عملة|العملة)",
+    re.I)
+
+
 def check_currency(data: dict[str, Any], rep: Report) -> None:
+    # A currency the closer typed that the page cannot price in is put back to
+    # a blank on the rebuild (engine.follow_currency); say why, or the closer
+    # types it again into the same blank.
+    typed = (data.get("closer_figures") or {}).get("arithmetic.currency") if isinstance(
+        data.get("closer_figures"), dict) else None
+    arith = data.get("arithmetic") if isinstance(data.get("arithmetic"), dict) else {}
+    if typed and FILL_RE.search(str(arith.get("currency") or "")) and currency_code(typed) is None:
+        rep.add(WARN, "currency", f"the currency typed for the arithmetic page, {str(typed)[:40]!r}, is not one the "
+                                  "page can price in. Type one of " + ", ".join(USD_PEGS) + " in that blank")
+    unnamed = [p for p, text in client_strings(data) if NO_CURRENCY.search(_TAGS.sub("", _plain(text)))]
+    if unnamed:
+        rep.add(FAIL, "currency", f"{', '.join(unnamed[:3])} says no currency was named. The closer names one "
+                                  "before the page is sent and the page then prints it, so the words must not say "
+                                  "it: rewrite them without it (on a filled proposal, Draft again)")
     used = set()
     for block in ("cost", "arithmetic", "roi"):
         b = data.get(block) or {}
         for key in ("local_currency", "currency"):
-            if b.get(key):
+            # A currency left for the closer is a blank, not a second currency.
+            if b.get(key) and not FILL_RE.search(str(b[key])):
                 used.add(str(b[key]).upper())
     for _path, text in client_strings(data):
         for c in CURRENCIES:
@@ -798,7 +1991,7 @@ def check_currency(data: dict[str, Any], rep: Report) -> None:
                 used.add(c)
     if len(used) > 1:
         rep.add(WARN, "currency", "the money is quoted in more than one currency: %s" % ", ".join(sorted(used)))
-    elif used:
+    elif used and not unnamed:
         rep.add(PASS, "currency", "priced throughout in %s" % used.pop())
 
 
@@ -826,6 +2019,9 @@ def transcript_numbers(text: str) -> set[int]:
             found.add(n)
             for scale in (1_000, 100_000, 1_000_000):
                 found.add(n * scale)
+    # And whole numbers said in words or with a scale: "four hundred and fifty
+    # thousand", "خمسة وثلاثين", "149K", each as the one figure it is.
+    found.update(figures_in(text))
     return found
 
 
@@ -835,12 +2031,7 @@ def numbers_in(value: Any) -> list[int]:
         return []
     if isinstance(value, (int, float)):
         return [int(value)] if float(value).is_integer() else []
-    out = []
-    for raw in re.findall(r"\d[\d,]*", str(value).translate(ARABIC_DIGITS)):
-        cleaned = raw.replace(",", "")
-        if cleaned.isdigit():
-            out.append(int(cleaned))
-    return out
+    return figures_in(value)
 
 
 def check_evidence(data: dict[str, Any], said: Optional[set[int]], rep: Report, checked_note: str = "") -> None:
@@ -874,6 +2065,13 @@ def check_evidence(data: dict[str, Any], said: Optional[set[int]], rep: Report, 
         claims.append((f"cost.layers[{i}].monthly", layer.get("monthly")))
     for key in ("avg_project_value", "margin_pct"):
         claims.append((f"roi.{key}", roi.get(key)))
+    # The arithmetic page's own client figures: the project value in margin or
+    # volume mode (the grid's values are illustrative), and a gross margin.
+    arith = data.get("arithmetic") if isinstance(data.get("arithmetic"), dict) else {}
+    if str(arith.get("mode") or "") in ("margin", "volume"):
+        for key in ("project_value", "project_value_low", "project_value_high"):
+            claims.append((f"arithmetic.{key}", arith.get(key)))
+    claims.append(("arithmetic.gross_margin", arith.get("gross_margin")))
 
     unverified, soft, ok, drv = [], [], 0, 0
     for path, value in claims:
@@ -897,6 +2095,310 @@ def check_evidence(data: dict[str, Any], said: Optional[set[int]], rep: Report, 
                 "read them back against the call: " + "; ".join(soft))
 
 
+# ------------------------------------------------- the same count, twice ----
+# The things a client counts, by the words a proposal names them in. A count
+# of one of them told with two different figures on the gap page, in the
+# driver tree and in the funnel is one of the two wrong (5 October 2026: six
+# projects signed on the gap tile, "two signed" in the tree).
+COUNTED = {
+    # Signed work, by any of the words a page says it in. A bare "projects" is
+    # not counted: on one page it is the quotes sent this year, on another
+    # every job since the firm began, and on a third the goal (5 October 2026
+    # review: four drafts warned on counts that were never the same thing).
+    "signed": r"signed|موقع|موقعة|الموقعة|موقعين|وقعت|وقعنا|وقعناها",
+    "meetings": r"meetings?|appointments?|اجتماع|اجتماعات|الاجتماعات|موعد|مواعيد|المواعيد",
+    "leads": r"leads?|enquiry|enquiries|inquiry|inquiries|ليد|ليدز|استفسار|استفسارات",
+}
+_COUNTED = {k: re.compile(rf"^(?:{v})$", re.I) for k, v in COUNTED.items()}
+# A noun after these is not the thing counted: "related to a project",
+# "signed from those leads", "channels bringing you projects".
+_NOT_COUNTED_AFTER = re.compile(r"^(?:a|an|per|each|every|from|of|to|those|these|the|with|for|you|من|إلى|الى|لكل|كل|في|لك|لكم)$",
+                                re.I)
+# Nor is an increment: "one more project a month" is a target, not a count.
+_INCREMENT = re.compile(r"^(?:more|extra|additional|another|new|further|أكثر|اكثر|إضافي|إضافية|اضافي|اضافية|جديد|جديدة)$",
+                        re.I)
+_WORDS = re.compile(r"\d[\d,]*|[A-Za-z]+|[ء-ي]+|[.,;:!?؟،؛]")
+_CLAUSE_END = re.compile(r"[.,;:!?؟،؛]")
+# A rate is not a count: "two a month" against "six in eight months" is the
+# same client, told per period.
+RATE = re.compile(
+    r"\b(?:a|per|each|every|an)\s+(?:day|week|month|quarter|year)\b|\b(?:daily|weekly|monthly|quarterly|yearly|annually)\b"
+    r"|يوميا|أسبوعيا|اسبوعيا|شهريا|سنويا|في\s+(?:اليوم|الأسبوع|الاسبوع|الشهر|السنة|العام)"
+    r"|كل\s+(?:يوم|أسبوع|اسبوع|شهر|سنة|عام)|(?:باليوم|بالأسبوع|بالاسبوع|بالشهر|بالسنة)", re.I)
+# A goal, a plan or what is needed is not a count of what happened.
+AIMED = re.compile(
+    r"\b(?:targets?|goals?|aim|aims|want|wants|plan|plans|would|could|next|need|needs|needed|enough|should)\b"
+    r"|هدف|الهدف|نريد|تريد|يريد|نحتاج|تحتاج|يحتاج|القادمة|القادم|نطمح|تطمح", re.I)
+# What a figure counts when it is followed by one of these: a period, a share
+# or money, not people or work.
+_UNIT_AFTER = re.compile(
+    r"^\s*(?:%|٪|percent|per\s+cent|days?|weeks?|months?|quarters?|years?|hours?|minutes?|sqm|m2|"
+    r"usd|sar|aed|kwd|qar|bhd|omr|dollars?|riyals?|dirhams?|dinars?|"
+    r"يوم|يوما|أيام|ايام|أسبوع|اسبوع|أسابيع|اسابيع|شهر|شهرا|أشهر|اشهر|شهور|سنة|سنوات|عام|أعوام|ساعة|ساعات|"
+    r"دولار|ريال|درهم|دينار)\b", re.I)
+_UNIT_BEFORE = re.compile(r"(?:usd|sar|aed|kwd|qar|bhd|omr|\$|دولار|ريال|درهم|دينار)\s*$", re.I)
+
+
+# No client of ours counts ten thousand of anything they sign, meet or are
+# asked about in a term; a figure that size beside "signed" is the money.
+COUNT_CEILING = 10_000
+
+
+def count_figures(text: Any) -> list[int]:
+    """The figures in a piece of copy that count people or work: not a
+    period ("two days", "in eight months"), a share, money or a year."""
+    plain = spoken_figures(str(text or ""))
+    out = []
+    for m in re.finditer(r"\d[\d,]*(?:\.\d+)?", plain):
+        raw = m.group(0).replace(",", "")
+        if "." in raw or not raw.isdigit():
+            continue
+        n = int(raw)
+        if n >= COUNT_CEILING or 1900 <= n <= 2100 or _UNIT_AFTER.match(plain[m.end():]) \
+                or _UNIT_BEFORE.search(plain[:m.start()]):
+            continue
+        out.append(n)
+    return out
+
+
+def _nouns_named(text: str) -> set[str]:
+    """The counted things a gap tile's label names: in its first clause, never
+    after a preposition, an article or "you", never a thing the label counts
+    with a figure of its own ("Kitchens quoted since March. Three signed"),
+    and never in a label that is a rate or a goal."""
+    first = _CLAUSE_END.split(spoken_figures(text), 1)[0]
+    if RATE.search(first) or AIMED.search(first):
+        return set()
+    words = _WORDS.findall(first)
+    out = set()
+    for i, w in enumerate(words):
+        if re.fullmatch(r"\d[\d,]*", w):
+            continue
+        before = words[max(0, i - 2):i]
+        if any(_NOT_COUNTED_AFTER.match(b) or re.fullmatch(r"\d[\d,]*", b) for b in before):
+            continue
+        out.update(k for k, rx in _COUNTED.items() if rx.match(w))
+    return out
+
+
+def _counts_in_prose(text: str) -> list[tuple[str, int]]:
+    """(noun, figure) for each figure followed within three words by a
+    counted thing, leaving out a rate, a period and a sentence about a goal."""
+    out = []
+    for sentence in re.split(r"(?<=[.!?؟;؛])\s+", spoken_figures(text)):
+        if AIMED.search(sentence):
+            continue
+        words = _WORDS.findall(sentence)
+        for i, w in enumerate(words):
+            if not re.fullmatch(r"\d[\d,]*", w):
+                continue
+            n = int(w.replace(",", ""))
+            # "Six hundred thousand signed this year" is money, not signatures.
+            if n >= COUNT_CEILING or 1900 <= n <= 2100 or (i and _UNIT_BEFORE.search(words[i - 1])):
+                continue
+            if i + 1 < len(words) and _UNIT_AFTER.match(words[i + 1]):
+                continue
+            clause = []
+            for nxt in words[i + 1:]:
+                if re.fullmatch(r"[.,;:!?؟،؛]", nxt):
+                    break
+                clause.append(nxt)
+            if RATE.search(" ".join(clause[:6])):
+                continue
+            for nxt in clause[:3]:
+                if re.fullmatch(r"\d[\d,]*", nxt) or _INCREMENT.match(nxt):
+                    break
+                out.extend((k, n) for k, rx in _COUNTED.items() if rx.match(nxt))
+    return out
+
+
+def stated_counts(data: dict[str, Any]) -> dict[str, list[tuple[str, str, int]]]:
+    """Every count of a counted thing on the gap page, in the tree and in the
+    funnel: block -> [(field, noun, figure)]. The tree's goal is a goal, so
+    it is left out."""
+    out: dict[str, list[tuple[str, str, int]]] = {"gap_points": [], "tree": [], "funnel": []}
+    for i, g in enumerate(data.get("gap_points") or []):
+        if isinstance(g, dict):
+            for n in count_figures(g.get("v")):
+                out["gap_points"].extend((f"gap_points[{i}]", k, n) for k in _nouns_named(str(g.get("k") or "")))
+    funnel = data.get("funnel") if isinstance(data.get("funnel"), dict) else {}
+    for i, st in enumerate(funnel.get("stages") or []):
+        if not isinstance(st, dict):
+            continue
+        shown = st.get("display")
+        nums = count_figures(shown)[:1] if isinstance(shown, str) else ([int(st["value"])] if isinstance(
+            st.get("value"), (int, float)) and not isinstance(st.get("value"), bool) else [])
+        if isinstance(shown, str) and RATE.search(shown):
+            nums = []
+        for n in nums:
+            out["funnel"].extend((f"funnel.stages[{i}]", k, n) for k in _nouns_named(str(st.get("label") or "")))
+    for f in ("title", "note"):
+        if isinstance(funnel.get(f), str):
+            out["funnel"].extend((f"funnel.{f}", k, n) for k, n in _counts_in_prose(funnel[f]))
+    tree = data.get("tree") if isinstance(data.get("tree"), dict) else {}
+    prose = [(f"tree.{f}", tree.get(f)) for f in ("goal_note", "note")]
+    for i, br in enumerate(tree.get("branches") or []):
+        if isinstance(br, dict):
+            prose += [(f"tree.branches[{i}].{f}", br.get(f)) for f in ("title", "note")]
+            for j, sb in enumerate(br.get("subs") or []):
+                if isinstance(sb, dict):
+                    prose += [(f"tree.branches[{i}].subs[{j}].{f}", sb.get(f)) for f in ("title", "note")]
+    for path, text in prose:
+        if isinstance(text, str):
+            out["tree"].extend((path, k, n) for k, n in _counts_in_prose(text))
+    return out
+
+
+# A count told about an earlier period ("last year", "in 2024") is not the
+# same count as one told about this one, however both are worded: a funnel of
+# last year's quotes against this year's figure on the gap tile. Anything else
+# is taken as now, since "this year" and "in eight months" are one stretch.
+_EARLIER = re.compile(
+    r"\b(?:last|previous|prior)\s+(?:year|month|quarter|season)\b|\b(?:a\s+year|years)\s+ago\b|\bin\s+(?:19|20)\d\d\b"
+    r"|(?:العام|السنة|الشهر|الربع)\s+(?:الماضي|الماضية|السابق|السابقة)|(?:عام|سنة)\s+(?:19|20)\d\d", re.I)
+
+
+def period_of(text: Any) -> str:
+    """"earlier" when a field's count is about an earlier period, else "now"."""
+    plain = _plain(str(text or ""))
+    years = [int(y) for y in re.findall(r"\b((?:19|20)\d\d)\b", plain)]
+    if _EARLIER.search(plain) and not (years and max(years) >= date.today().year):
+        return "earlier"
+    return "now"
+
+
+def _field_text(data: dict[str, Any], path: str) -> str:
+    """A counted field's own words, with the label or note that says over what."""
+    m = re.fullmatch(r"(gap_points|funnel\.stages)\[(\d+)\]", path)
+    if m:
+        items = data.get("gap_points") if m.group(1) == "gap_points" else (data.get("funnel") or {}).get("stages")
+        item = (items or [])[int(m.group(2))]
+        return " ".join(str(item.get(k) or "") for k in ("k", "v", "label", "display", "note"))
+    node: Any = data
+    for part in re.findall(r"[a-z_]+|\d+", path):
+        node = node[int(part)] if part.isdigit() else (node or {}).get(part)
+    return str(node or "")
+
+
+def check_counts(data: dict[str, Any], rep: Report) -> None:
+    """The same thing counted with different figures on two of the three pages
+    that describe the client, over the same period or none said. A warning
+    naming both fields: one of them is wrong, and only the call says which."""
+    counts = stated_counts(data)
+    period = {p: period_of(_field_text(data, p)) for block in counts.values() for p, _k, _n in block}
+    blocks = list(counts)
+    clashes = []
+    for noun in COUNTED:
+        for a in range(len(blocks)):
+            for b in range(a + 1, len(blocks)):
+                left = [(p, n) for p, k, n in counts[blocks[a]] if k == noun]
+                right = [(p, n) for p, k, n in counts[blocks[b]] if k == noun]
+                # A count of an earlier period is another count.
+                pairs = [(lp, ln, rp, rn) for lp, ln in left for rp, rn in right if period[lp] == period[rp]]
+                if not pairs:
+                    continue
+                left = [(lp, ln) for lp, ln, _rp, _rn in pairs]
+                right = [(rp, rn) for _lp, _ln, rp, rn in pairs]
+                if left and right and not any(ln == rn for _lp, ln, _rp, rn in pairs):
+                    clashes.append(f"{left[0][0]} says {left[0][1]:,} {noun} and {right[0][0]} says "
+                                   f"{right[0][1]:,} {noun}")
+    if clashes:
+        rep.add(WARN, "figures", "the same count is told two ways: " + "; ".join(clashes[:4])
+                + ". Check both against the call and make them agree")
+    elif any(counts.values()):
+        rep.add(PASS, "figures", "each count is told the same way wherever it appears")
+
+
+# ------------------------------------------------------------ the funnel ----
+def stage_figure(st: dict[str, Any]) -> Optional[float]:
+    """A stage's count when the page prints it as a figure: a number in value,
+    and a display that is that same figure or absent. A range ("8 to 10") or
+    words are not subtracted from anything. The template's own test."""
+    v = st.get("value")
+    if isinstance(v, bool) or figure(v) is None:
+        return None
+    shown = st.get("display")
+    if shown is None or str(shown).strip() == "":
+        return figure(v)
+    text = str(shown).translate(ARABIC_DIGITS).replace(",", "").strip()
+    if re.fullmatch(r"\d+(?:\.\d+)?", text) and float(text) == figure(v):
+        return figure(v)
+    return None
+
+
+def funnel_losses(funnel: dict[str, Any]) -> list[tuple[int, float]]:
+    """(stage, lost) for each "lost here" the template draws: between two
+    stages printed as figures, from the same pool, where the count falls.
+    Stages are numbered as they stand in the deal."""
+    stages = funnel.get("stages") or []
+    out = []
+    for i in range(1, len(stages)):
+        above, here = stages[i - 1], stages[i]
+        if not (isinstance(above, dict) and isinstance(here, dict)):
+            continue
+        prev, cur = stage_figure(above), stage_figure(here)
+        same_pool = (here.get("pool", funnel.get("pool")) or "") == (above.get("pool", funnel.get("pool")) or "")
+        if prev is not None and cur is not None and same_pool and prev - cur > 0:
+            out.append((i, prev - cur))
+    return out
+
+
+# A note that says what became of the stage's people: "five signed, nine did
+# not". Only such a note can contradict the loss drawn under it. One that
+# says where they came from ("12 from Google, 28 from Instagram") or how long
+# it took ("across three days") does not, and code used to give the next
+# stage a pool of its own on either, which dropped a correct "lost here"
+# (5 October 2026 review).
+OUTCOME = re.compile(
+    r"\b(?:signed|signs?|signature|reached|closed|won|booked|became|converted|went\s+on|walked|lost|dropped|"
+    r"declined|did\s+not|didn't|never\s+(?:signed|came|showed)|no[- ]shows?|showed|turned\s+down)\b"
+    r"|وقع|وقعوا|توقيع|تم\s+التوقيع|انسحب|انسحبوا|خسر|خسرنا|رفض|رفضوا|لم\s+(?:يوقع|يوقعوا|يكمل|يكملوا|يحضر|يحضروا)",
+    re.I)
+
+
+def pool_clashes(funnel: dict[str, Any]) -> list[tuple[int, float, list[int]]]:
+    """(stage, lost, the counts in the note above) for each drawn loss that
+    the note on the stage above contradicts: a note that says what became of
+    that stage's people, in counts of its own (no period, share or money),
+    none of which is the loss drawn."""
+    stages = funnel.get("stages") or []
+    out = []
+    for i, lost in funnel_losses(funnel):
+        above = stages[i - 1]
+        note = str(above.get("note") or "")
+        prev = stage_figure(above) or 0
+        own = [n for n in count_figures(note) if 0 < n <= prev]
+        if own and OUTCOME.search(_plain(note)) and int(lost) not in own:
+            out.append((i, lost, own))
+    return out
+
+
+def separate_pools(deal: dict[str, Any]) -> list[int]:
+    """Give each stage whose drawn loss its note above contradicts a pool of
+    its own, so no loss is drawn into it: the notes say what happened, and a
+    computed figure that disagrees with them is the one to drop. The stages
+    changed."""
+    funnel = deal.get("funnel") if isinstance(deal.get("funnel"), dict) else {}
+    changed = []
+    for i, _lost, _own in pool_clashes(funnel):
+        funnel["stages"][i]["pool"] = f"stage {i + 1}"
+        changed.append(i)
+    return changed
+
+
+def check_funnel(data: dict[str, Any], rep: Report) -> None:
+    """A "lost here" the stage above contradicts: 14 meetings then 6 signed
+    printed 8 lost, under a note saying four signed and ten did not. The
+    second stage counted another pool (a year, not those meetings). A draft
+    gets the pool from code (engine.stamp); a deal edited since is warned."""
+    funnel = data.get("funnel") if isinstance(data.get("funnel"), dict) else {}
+    clashes = [f"funnel.stages[{i}] prints {lost:g} lost after funnel.stages[{i - 1}], whose note gives its own "
+               f"figures ({', '.join(str(n) for n in own[:4])})" for i, lost, own in pool_clashes(funnel)]
+    if clashes:
+        rep.add(WARN, "funnel", "; ".join(clashes[:3]) + ". If the two stages do not count the same people, give "
+                                "the later one its own pool (\"pool\": \"...\") and no loss is drawn")
+
+
 # ----------------------------------------------------------- the quotes ----
 def check_quotes(data: dict[str, Any], rep: Report) -> None:
     """There is no quotes block, so carrying one is the failure. It was the
@@ -912,17 +2414,51 @@ def check_quotes(data: dict[str, Any], rep: Report) -> None:
 
 
 # --------------------------------------------------------- the arithmetic ----
+# The share of one project the engagement may cost (SKILL.md: above a fifth
+# the check warns, above a third it fails). One pair for margin mode and the
+# volume page's note, so the note never says margin mode would carry a share
+# it warns on (over a fifth) or fails (it failed above a bare 33, under a
+# third, while the note called 33.2 percent inside one third).
+SHARE_WARN = 20
+SHARE_FAIL = 100 / 3
+
+
 def check_arithmetic(data: dict[str, Any], rep: Report) -> None:
     """The general variant's fee band: the table divides the real engagement,
     and it is not rigged. A table whose every row says "less than one project"
     has had its cheapest row quietly removed."""
     a = data.get("arithmetic") or {}
     roi = data.get("roi") or {}
+
+    # The drafter writes FILL where the call gave no figure. Divided by, it
+    # crashed the whole check, and the queue then drafted the call again from
+    # the start, four times. A FILL is a gap for the closer like any other;
+    # anything else that is not a number is the draft's fault.
+    scalars = ("project_value", "project_value_low", "project_value_high", "target_additional_low",
+               "target_additional_high", "engagement_total", "gross_margin")
+    given = [(k, a.get(k)) for k in scalars]
+    given += [(f"project_values[{i}]", v) for i, v in enumerate(a.get("project_values") or [])]
+    given += [(f"margins[{i}]", v) for i, v in enumerate(a.get("margins") or [])]
+    gaps = [(k, v) for k, v in given if v not in (None, "") and figure(v) is None]
+    if gaps:
+        names = ", ".join("arithmetic." + k for k, _v in gaps)
+        if all(FILL_RE.search(str(v)) for _k, v in gaps):
+            rep.add(WARN, "arithmetic", f"the break-even page waits on {names}, still FILL. Fill it with the "
+                                        "figure from the call and the page is built", send=FAIL)
+        else:
+            rep.add(FAIL, "arithmetic", f"{names} is not a number the page can compute with. Write the "
+                                        "figure as digits only, or FILL where the call never gave it")
+        return
+    a = {**a, **{k: figure(v) for k, v in given[:len(scalars)] if v not in (None, "")},
+         "project_values": [figure(v) for v in (a.get("project_values") or [])],
+         "margins": [figure(v) for v in a["margins"]] if a.get("margins") else None}
     threshold = a.get("mode") == "threshold"
     margin_mode = a.get("mode") == "margin"
     volume_mode = a.get("mode") == "volume"
     values = [v for v in (a.get("project_values") or []) if v]
-    margins = [m for m in (a.get("margins") or [10, 20]) if m]
+    # The margins the page divides by, as the template picks them: the
+    # deal's, else the client's gross margin alone, else 10 and 20.
+    margins = [m for m in (a.get("margins") or ([a["gross_margin"]] if a.get("gross_margin") else [10, 20])) if m]
     grid = list(values)
     if margin_mode:
         values = [a.get("project_value")] if a.get("project_value") else []
@@ -942,6 +2478,16 @@ def check_arithmetic(data: dict[str, Any], rep: Report) -> None:
         rep.add(FAIL, "arithmetic",
                 "the break-even table has no rows: no project_values, and mode "
                 "%r has no single value either" % (a.get("mode") or "grid"))
+        return
+
+    # The engagement is our fee, converted at roi.usd_rate: a page in one
+    # currency and a rate for another prints the engagement in the wrong money.
+    cur_named = str(a.get("currency") or "").strip().upper()
+    if cur_named in USD_PEGS and not a.get("engagement_total") and rate_off(cur_named, roi.get("usd_rate") or 1):
+        rep.add(FAIL, "arithmetic",
+                f"the arithmetic page is in {cur_named}, and roi is in {roi.get('local_currency') or 'USD'} at a "
+                f"usd_rate of {roi.get('usd_rate') or 1}, so the engagement would print in the wrong money. Set "
+                f"roi.local_currency to {cur_named} and roi.usd_rate to {USD_PEGS[cur_named]}")
         return
 
     months = a.get("months") or roi.get("months") or 3
@@ -966,25 +2512,48 @@ def check_arithmetic(data: dict[str, Any], rep: Report) -> None:
                     "volume mode needs target_additional_low: the whole page is the "
                     "engagement against the projects the term is meant to add")
             return
-        need = total / values[0]
-        detail = ("%s %s over %s months needs %.1f of a %s %s project, against %s to %s "
-                  "additional projects targeted"
-                  % (cur, f"{total:,.0f}", months, need, cur, f"{values[0]:,.0f}", add_low, add_high))
-        if need <= add_low:
-            rep.add(PASS, "arithmetic", detail)
-        elif need <= add_high:
-            rep.add(WARN, "arithmetic", detail + ": only the upper end of the target covers it")
+        gross = a.get("gross_margin")
+        if gross:
+            # Counted at the client's own gross margin, and said to be gross.
+            need = total / (values[0] * gross / 100)
+            detail = ("%s %s over %s months needs %s projects of %s %s at a %s%% gross margin, against %s to %s "
+                      "additional projects targeted"
+                      % (cur, f"{total:,.0f}", months, dec(need), cur, f"{values[0]:,.0f}", f"{gross:g}",
+                         f"{add_low:g}", f"{add_high:g}"))
         else:
-            rep.add(FAIL, "arithmetic", detail + ": even the whole target does not cover the engagement")
+            need = total / values[0]
+            detail = ("%s %s over %s months needs %s of a %s %s project, against %s to %s "
+                      "additional projects targeted"
+                      % (cur, f"{total:,.0f}", months, dec(need), cur, f"{values[0]:,.0f}", f"{add_low:g}",
+                         f"{add_high:g}"))
+        # The rule that sent the page here, named (176954619, live check of 5
+        # October 2026: 35 percent of one project, and no line said why the
+        # page counts projects instead of stating that share).
+        share = total / values[0] * 100
+        rule = "; %s%% of one project at the bottom value, %s" % (dec(share), (
+            "over one third, so the page counts projects" if share > SHARE_FAIL else
+            "over a fifth, so margin mode would warn and counting projects is the stronger page"
+            if share > SHARE_WARN else
+            "inside a fifth, so a share of one project (margin mode) would also carry it"))
+        if need <= add_low:
+            rep.add(PASS, "arithmetic", detail + rule)
+        elif need <= add_high:
+            rep.add(WARN, "arithmetic", detail + ": only the upper end of the target covers it" + rule)
+        else:
+            rep.add(FAIL, "arithmetic", detail + ": even the whole target does not cover the engagement" + rule)
         return
 
     if margin_mode:
         need = total / values[0] * 100
-        detail = ("one project of %s %s covers %s %s at %.1f%% kept"
-                  % (cur, f"{values[0]:,.0f}", cur, f"{total:,.0f}", need))
-        if need > 33:
-            rep.add(FAIL, "arithmetic", detail + ": more than a third of one project, which no contractor will accept")
-        elif need > 20:
+        detail = ("one project of %s %s covers %s %s at %s%% kept"
+                  % (cur, f"{values[0]:,.0f}", cur, f"{total:,.0f}", dec(need)))
+        if a.get("gross_margin"):
+            detail += ("; at the client's %s%% gross margin that is %s projects"
+                       % (f"{a['gross_margin']:g}", dec(total / (values[0] * a["gross_margin"] / 100))))
+        if need > SHARE_FAIL:
+            rep.add(FAIL, "arithmetic", detail + ": more than a third of one project, which no contractor will accept"
+                    "; where the call gave a signing rate, mode volume counts projects instead")
+        elif need > SHARE_WARN:
             rep.add(WARN, "arithmetic", detail + ": high; check the project value is the average")
         else:
             rep.add(PASS, "arithmetic", detail)
@@ -1006,7 +2575,7 @@ def check_arithmetic(data: dict[str, Any], rep: Report) -> None:
     over = sum(1 for row in counts if any(c >= 1 for c in row))
     best, worst = min(min(r) for r in counts), max(max(r) for r in counts)
     detail = (f"{len(values)} rows x {len(margins)} margins against "
-              f"{cur} {total:,.0f}, {best:.1f} to {worst:.1f} projects")
+              f"{cur} {total:,.0f}, {dec(best)} to {dec(worst)} projects")
     if not under:
         rep.add(FAIL, "arithmetic", detail + ": not one row breaks even inside a single "
                                              "project, so the table argues against the fee")
@@ -1016,6 +2585,336 @@ def check_arithmetic(data: dict[str, Any], rep: Report) -> None:
         rep.add(WARN, "arithmetic",
                 "every row breaks even inside one project. Add a lower project value so "
                 "the reader can see the table was not built to flatter us.")
+
+
+# Saying the return comes "before you count a cent of margin" talks around the
+# one figure the reader needs (176954619 on 5 October 2026, where the client
+# had given a gross margin of 20 to 30 percent).
+AROUND_MARGIN = re.compile(
+    r"\bbefore\s+(?:you\s+)?(?:count|counting|any|a\s+cent\s+of|a\s+single|the)\b[^.]{0,30}?\bmargins?\b"
+    r"|\bwithout\s+(?:counting\s+|touching\s+)?(?:any\s+|your\s+|the\s+|a\s+)?margins?\b"
+    r"|\bwhatever\s+(?:your|the)\s+margin|\bregardless\s+of\s+(?:your\s+|the\s+)?margin"
+    r"|\bnot\s+counting\s+(?:the\s+|your\s+|any\s+)?margin|\bmargin\s+(?:aside|untouched)\b"
+    r"|قبل\s+(?:احتساب|حساب)\s+(?:أي\s+)?(?:هامش|الهامش|ربح|الربح)|بغض\s+النظر\s+عن\s+(?:الهامش|هامش)",
+    re.I)
+# Gross said of a margin: not gross revenue, sales or takings, which are no
+# margin at all. "هامشك الإجمالي" and the hamza-less spelling count.
+GROSS_WORDS = re.compile(
+    r"\bgross\b(?!\s+(?:revenue|sales|takings|turnover|income|billings?|receipts|value|contract|orders?|bookings?|"
+    r"area|floor)\b)"
+    r"|(?:هامش|الهامش|ربح|الربح)\S*\s+(?:(?:ال)?ربح\s+)?(?:ال)?(?:إجمالي|اجمالي)", re.I)
+# A margin is a figure given in percent. 180273419's intro (live check, 5
+# October 2026) said gross beside the project count, 4, and that count was
+# read as a gross margin the page left out. The sign may come first ("٪٢٥",
+# typed left to right), and "a margin of 25" with no sign is a margin too.
+PERCENT_FIGURE = re.compile(r"(?<![\d.])(\d+(?:\.\d+)?)\s*(?:%|٪|percent\b|per\s+cent\b|بالمئة|بالمائة|بالمية|"
+                            r"في\s+المئة|في\s+المائة)|[%٪](\d+(?:\.\d+)?)(?![\d.])", re.I)
+_NOT_A_SHARE_AFTER = (r"(?![\d,.]*\s*(?:k\b|m\b|usd|sar|aed|kwd|qar|bhd|omr|\$|dollars?|riyals?|dirhams?|dinars?|"
+                      r"thousand|million|projects?|jobs?|months?|years?|days?|weeks?|deals?|clients?|"
+                      r"ألف|الف|آلاف|مليون|دينار|ريال|درهم|دولار|مشروع|مشاريع|شهر|أشهر|اشهر|سنة|يوم))")
+MARGIN_FIGURE = re.compile(
+    r"\bmargins?\s+(?:of|at|is|was|:)?\s*(?:about|around|roughly|nearly|some|approximately|close\s+to)?\s*"
+    r"(\d+(?:\.\d+)?)" + _NOT_A_SHARE_AFTER
+    + r"|(?:هامش|الهامش)\S*\s+(?:(?:ال)?ربح\s+)?(?:(?:ال)?(?:إجمالي|اجمالي)\s+)?(?:\S+\s+){0,2}?(\d+(?:\.\d+)?)"
+    + _NOT_A_SHARE_AFTER, re.I)
+# Net said of a margin, in the clause that says it was not given: "no figure
+# for the margin after overheads", "ولم تذكر الهامش الصافي".
+_NET_WORDS = re.compile(r"\bnet\b|\bafter\s+(?:all\s+)?(?:the\s+)?(?:overheads?|costs?|expenses|everything|admin)\b"
+                        r"|\bbottom[- ]line\b|\btake[- ]home\b|صافي|الصافي|بعد\s+(?:كل\s+)?(?:المصاريف|التكاليف|المصروفات)",
+                        re.I)
+_CLAUSE_TAIL = re.compile(r"[^,;:.،؛!?؟]*")
+# A sentence saying no margin was given, gross or net, or no gross one: the
+# same intro said so, and its words are no margin. "No net margin" alone is
+# not one: a sentence giving a gross margin says that too.
+NO_MARGIN = re.compile(
+    r"\b(?:no|not\s+(?:a|any)|never\s+(?:a|any)|without\s+(?:a\s+|any\s+)?)\s*(?:[a-z]+\s+){0,3}?margins?\b"
+    r"|\bneither\s+(?:a\s+)?gross\s+nor\s+(?:a\s+)?net\b"
+    r"|\bmargins?\s+(?:was|were|is|has\s+been)\s+(?:not|never)\s+(?:given|stated|said|named|shared)\b"
+    r"|\b(?:did\s+not|didn't|never)\s+(?:give|say|name|share|state|mention)\b[^.;]{0,60}?\bmargins?\b"
+    r"|لم\s+(?:\S+\s+){0,3}?(?:أي\s+|اي\s+)?(?:هامش|الهامش)"
+    r"|ما\s+(?:ذكرت|ذكرتوا|حددت|حددتوا|عطيت|عطيتوا|اعطيت|أعطيت|أخذنا|اخذنا)\s+(?:\S+\s+){0,2}?(?:أي\s+|اي\s+)?"
+    r"(?:هامش|الهامش)|(?:بدون|دون|بلا|لا)\s+(?:أي\s+|اي\s+)?(?:هامش|الهامش)",
+    re.I)
+
+
+def says_no_margin(sentence: str) -> bool:
+    """A sentence saying no margin was given; a net margin alone is not one."""
+    for m in NO_MARGIN.finditer(sentence):
+        words = m.group(0) + _CLAUSE_TAIL.match(sentence, m.end()).group(0)
+        if _NET_WORDS.search(words) and not GROSS_WORDS.search(words) \
+                and not re.search(r"\bneither\b", words, re.I):
+            continue
+        return True
+    return False
+
+
+def gives_gross_margin(text: str) -> bool:
+    """Words saying the call gave a gross margin: gross, and a figure in
+    percent, in what is left once sentences saying no margin was given are out."""
+    kept = " ".join(s for s in _sentences(spoken_figures(_TAGS.sub("", text))) if not says_no_margin(s))
+    shares = [float(m.group(1) or m.group(2)) for rx in (PERCENT_FIGURE, MARGIN_FIGURE) for m in rx.finditer(kept)]
+    return bool(GROSS_WORDS.search(kept)) and any(0 < n < 100 for n in shares)
+
+
+def check_margin_words(data: dict[str, Any], rep: Report) -> None:
+    """The arithmetic page and the client's margin: a gross margin the call
+    gave is counted, labelled gross (arithmetic.gross_margin), and the page
+    never talks around it."""
+    a = data.get("arithmetic") if isinstance(data.get("arithmetic"), dict) else {}
+    if not a:
+        return
+    around = [f"arithmetic.{k}" for k in ("verdict", "close", "note", "intro")
+              if isinstance(a.get(k), str) and AROUND_MARGIN.search(_plain(a[k]))]
+    if around:
+        rep.add(WARN, "arithmetic", f"{', '.join(around)} talks around the margin. Count the projects at the "
+                                    "client's own margin when the call gave one (arithmetic.gross_margin, labelled "
+                                    "gross), or say plainly that none was given")
+    roi = data.get("roi") or {}
+    said_gross = [p for p, text in (("roi.margin_note", roi.get("margin_note")), ("arithmetic.note", a.get("note")),
+                                    ("arithmetic.intro", a.get("intro")))
+                  if isinstance(text, str) and gives_gross_margin(text)]
+    if said_gross and figure(a.get("gross_margin")) is None and not FILL_RE.search(str(a.get("gross_margin") or "")):
+        rep.add(WARN, "arithmetic", f"{said_gross[0]} says the call gave a gross margin, and the arithmetic page "
+                                    "does not use it. Set arithmetic.gross_margin to the bottom of it, so the "
+                                    "projects are counted at it and labelled gross")
+
+
+# ------------------------------------------------------ the signing rate ----
+# The volume page sets the rate the client signs at today ("You sign") above
+# the projects the term targets. On 5 October 2026 176954619's "You sign" read
+# "2 to 4 over the term", the target, directly above the target row saying the
+# same, where the call gave three projects since the start of the year. A
+# target said as more than today ("2 more a month") is the honest way to state
+# a target that equals today's rate, so it is not a repeat.
+INCREMENT = re.compile(r"\b(?:more|additional|extra|another|on\s+top)\b|إضافي|إضافية|اضافي|اضافية|زيادة|أخرى|اخرى",
+                       re.I)
+
+
+def per_period(text: str) -> Optional[str]:
+    """The period a figure is told per ("a month", "weekly", "في الشهر"), or
+    None when it is told over a stretch (the term, since January)."""
+    m = RATE.search(_plain(text))
+    if not m:
+        return None
+    words = m.group(0).lower()
+    for unit, rx in (("day", r"day|daily|يوم"), ("week", r"week|أسبوع|اسبوع"), ("month", r"month|شهر"),
+                     ("quarter", r"quarter"), ("year", r"year|annual|سنة|سنوي|عام")):
+        if re.search(rx, words):
+            return unit
+    return "other"
+
+
+# A stretch already lived (the client's own record: "since January", "over
+# the last three months") or the term we propose ("over the term", "across the
+# three months"). Today's signing rate is never told over the term.
+_HISTORY = re.compile(
+    r"\b(?:since|so\s+far|to\s+date|year\s+to\s+date|ytd|this\s+year|until\s+now|today|currently|at\s+the\s+moment"
+    r"|(?:last|past|previous)\s+(?:year|quarter|month|\w+\s+(?:months|quarters|years)))\b|\bin\s+20\d\d\b"
+    r"|منذ|حتى\s+(?:الآن|الان)|هذه\s+السنة|هذا\s+العام|(?:السنة|العام)\s+(?:الماضية|الماضي)"
+    r"|(?:الأشهر|الاشهر|الشهور)\s+(?:\S+\s+)?(?:الماضية|الأخيرة|الاخيرة)|حاليا", re.I)
+_TERM = re.compile(
+    r"\b(?:over|across|within|during|in)\s+(?:the\s+)?(?:term|engagement|program(?:me)?|(?:first|next)\s+\w+\s+months?"
+    r"|\w+\s+months?)\b|\bthe\s+term\b"
+    r"|خلال\s+(?:المدة|الفترة|البرنامج|الأشهر|الاشهر|الشهور)|على\s+مدى", re.I)
+
+
+def stretch_of(text: str) -> Optional[str]:
+    """"history" for a figure told over a stretch already lived, "term" for
+    one told over the term we propose, None for neither."""
+    plain = _plain(text)
+    if _HISTORY.search(plain):
+        return "history"
+    if _TERM.search(plain):
+        return "term"
+    return None
+
+
+def check_rate(data: dict[str, Any], rep: Report) -> None:
+    """The volume page's "You sign" row is the client's own signing rate, never
+    the target. It fails when it carries the target's figures over the term
+    (176954619's "2 to 4 over the term") or over no period at all. The same
+    figures per the same period ("2 a month" twice) can be true, since the
+    target's row is labelled additional projects, so that only warns: failing
+    it sent a true rate to the repair round, which could only write FILL."""
+    a = data.get("arithmetic") if isinstance(data.get("arithmetic"), dict) else {}
+    if str(a.get("mode") or "").strip().lower() != "volume":
+        return
+    rate, target = str(a.get("rate_display") or "").strip(), str(a.get("target_display") or "").strip()
+    if not rate or not target or FILL_RE.search(rate) or FILL_RE.search(target):
+        return
+    said, aimed = sorted(set(count_figures(rate))), sorted(set(count_figures(target)))
+    figures = " and ".join(str(n) for n in said)
+    per_rate, per_target = per_period(rate), per_period(target)
+    told_rate, told_target = stretch_of(rate), stretch_of(target)
+    # A target said as more than today ("2 more a month") is the honest way to
+    # state one that equals today's rate, unless the rate is told over the term.
+    more = INCREMENT.search(_plain(target)) and not INCREMENT.search(_plain(rate)) and told_rate != "term"
+    if not said or said != aimed or more or per_rate != per_target:
+        rep.add(PASS, "rate", "the signing rate is not the target")
+    elif per_rate is not None:
+        rep.add(WARN, "rate", f"arithmetic.rate_display and arithmetic.target_display both say {figures} per "
+                f"{per_rate}. That stands only if the client signs {figures} a {per_rate} today and the plan adds "
+                f"as many again; if the rate was copied from the target, write the client's own rate or FILL, "
+                f"and a true one reads better as the target \"{figures} more a {per_rate}\"")
+    elif told_rate is not None and told_target is not None and told_rate != told_target and told_rate != "term":
+        rep.add(PASS, "rate", "the signing rate is not the target")
+    else:
+        rep.add(FAIL, "rate", "arithmetic.rate_display carries the same figures as arithmetic.target_display ("
+                + figures + ")" + (" over the term" if told_rate == "term" else "")
+                + ", so \"You sign\" repeats the target. It is the rate the client signs at today, as the call "
+                "gave it (a gap tile, the funnel or the tree may say it), or FILL for the closer; never the target")
+
+
+# ------------------------------------------------- the arithmetic's words ----
+# The verdict and the close divide into what the table divides into (SKILL.md,
+# "One denominator per page"). On 5 October 2026 two drafts on the reviewed
+# code passed every check with words that left the table: 180273419 set "the
+# USD 6,000 engagement" (the fee alone; the table's whole engagement was
+# 10,500) beside one project and said it paid for the three months "many times
+# over" on a page that assumes no margin, and 176954619 said one project covers
+# the term "if you keep a fifth of its value" (the fee alone again) where the
+# table needs 35.0 percent. The words are the drafter's to change, so this is
+# its own check, which the repair round reads.
+_SHARE_UNIT = {"half": 2, "halves": 2, "third": 3, "thirds": 3, "quarter": 4, "quarters": 4, "fifth": 5,
+               "fifths": 5, "sixth": 6, "sixths": 6, "eighth": 8, "eighths": 8, "tenth": 10, "tenths": 10,
+               "twentieth": 20, "twentieths": 20}
+# "if you keep a fifth of its value", "keep a little over 1 percent of it",
+# "as long as it leaves you 35 percent". Read on spoken_figures' text, where
+# "one percent" is already "1 percent" and "two thirds" is "2 thirds".
+KEPT_SHARE = re.compile(
+    r"\b(?:keep|keeps|kept|keeping|clear|clears|retain|retains|leaves?\s+you|leaving\s+you)\s+"
+    r"(?:only\s+|just\s+|about\s+|around\s+|roughly\s+|some\s+)?"
+    r"(?P<over>(?:a\s+little\s+|just\s+|slightly\s+)?(?:over|above|more\s+than)\s+)?"
+    r"(?:(?P<count>a|an|\d+)\s+(?P<unit>" + "|".join(_SHARE_UNIT) + r")\b|(?P<half>half)\b"
+    r"|(?P<n>\d+(?:\.\d+)?)\s*(?:%|percent\b|per\s+cent\b))",
+    re.I)
+# One project paying for the term several times: a ratio the page can only
+# state with a margin to count at.
+MULTIPLE = re.compile(
+    r"\b(?P<word>many|several|multiple|numerous|countless|a\s+few|\d+(?:\.\d+)?)\s+times\s+over\b"
+    r"|\b(?P<twice>twice)\s+over\b"
+    r"|\b(?P<loose>many|several|numerous|countless)\s+times\b"
+    r"|\bover\s+and\s+over\b"
+    r"|أضعاف|عدة\s+مرات|مرات\s+عديدة|مرات\s+كثيرة",
+    re.I)
+ONE_PROJECT = re.compile(r"\b(?:1|a\s+single|a)\s+(?:signed\s+|new\s+|won\s+|single\s+)?"
+                         r"(?:projects?|jobs?|contracts?|deals?|villas?|fit-?outs?)\b", re.I)
+COVERS = re.compile(r"\b(?:covers?|covered|pays?\s+for|paid\s+for|pays?\s+back|recovers?|recoups?)\b", re.I)
+# The words that make "one project covers it" a condition, not a claim.
+CONDITION = re.compile(r"\b(?:if|keep|keeps|kept|unless|provided|as\s+long\s+as|share|percent|per\s+cent|"
+                       r"margin|leaves?|below|under|whether)\b|%", re.I)
+
+
+def _sentences(text: str) -> list[str]:
+    return [s for s in re.split(r"(?<=[.!?؟;؛])\s+|\n+", text) if s.strip()]
+
+
+def check_verdict(data: dict[str, Any], rep: Report) -> None:
+    """The arithmetic page's words against its table: the verdict, the close,
+    the intro and the note divide into the whole engagement, state the share
+    of one project the table states, and claim a multiple only when a margin
+    the page counts at supports it."""
+    a = data.get("arithmetic") if isinstance(data.get("arithmetic"), dict) else {}
+    roi = data.get("roi") if isinstance(data.get("roi"), dict) else {}
+    if not a:
+        return
+    fields = [(f"arithmetic.{k}", a[k]) for k in ("verdict", "close", "intro", "note")
+              if isinstance(a.get(k), str) and a[k].strip()]
+    if not fields:
+        return
+    rate = figure(roi.get("usd_rate")) or 1
+    months = figure(a.get("months")) or figure(roi.get("months")) or 3
+    fee = figure(roi.get("fee_usd")) or 0
+    ads = figure(roi.get("ad_monthly_usd")) or 0
+    total = figure(a.get("engagement_total")) or (fee + ads * months) * rate
+    mode = str(a.get("mode") or "").strip().lower()
+    grid = bool(a.get("project_values")) and mode in ("", "grid")
+    value = figure(a.get("project_value")) if mode == "margin" else (
+        figure(a.get("project_value_low")) if mode == "volume" else None)
+    gross = figure(a.get("gross_margin"))
+    gross = gross if gross and 0 < gross < 100 else None
+    # The page's own quantities: the share of one project the engagement is
+    # (margin mode), and how many of the client's projects it takes at the
+    # gross margin he gave (margin and volume mode).
+    share = total / value * 100 if (mode == "margin" and value and total) else None
+    count = total / (value * gross / 100) if (value and gross and total) else None
+    # A grid's best cell: the most any row of it lets one project cover.
+    if grid and total:
+        values = [v for v in (figure(x) for x in a.get("project_values") or []) if v]
+        margins = [m for m in (figure(x) for x in (a.get("margins") or ([gross] if gross else [10, 20]))) if m]
+        cells = [total / (v * m / 100) for v in values for m in margins if v * m > 0]
+        best = min(cells) if cells else None
+    else:
+        best = count
+    problems: list[str] = []
+
+    for path, raw in fields:
+        text = spoken_figures(_TAGS.sub("", raw))
+        conclusion = path in ("arithmetic.verdict", "arithmetic.close")
+        for sentence in _sentences(text):
+            # The fee alone, set where the whole engagement belongs.
+            if fee and ads and total and abs(total - fee * rate) > 1 and not AD_WORDS.search(sentence):
+                quoted = [n for n in figures_in(sentence) if n >= 100 and (n == round(fee) or abs(n - fee * rate) <= 1)]
+                if quoted and (conclusion or not re.search(r"\bfees?\b|رسوم|الرسوم", sentence, re.I)):
+                    problems.append(f"{path} sets {quoted[0]:,}, our fee alone, where the table divides the whole "
+                                    f"engagement, {total:,.0f} with the advertising. Use the table's figure, or "
+                                    "say both parts")
+            # A share kept that covers the term: no less than the table's.
+            if share is not None:
+                for m in KEPT_SHARE.finditer(sentence):
+                    if m.group("n"):
+                        said = float(m.group("n"))
+                    elif m.group("half"):
+                        said = 50.0
+                    else:
+                        n = 1 if m.group("count").lower() in ("a", "an") else int(m.group("count"))
+                        said = n * 100 / _SHARE_UNIT[m.group("unit").lower()]
+                    if m.group("over"):
+                        wrong = said > share + 0.05 or share > said * 2
+                    else:
+                        wrong = said < share * 0.95
+                    if wrong:
+                        problems.append(f"{path} says one project covers the term if the client keeps "
+                                        f"{m.group(0).split(None, 1)[1]}; the table needs {dec(share)}% of one "
+                                        "project. Say the table's share")
+        # A multiple claimed: it needs a margin the page counts at, and that
+        # count has to bear it out.
+        for m in MULTIPLE.finditer(text):
+            times = 1 / best if best else None
+            if m.group("word") and re.fullmatch(r"\d+(?:\.\d+)?", m.group("word")):
+                need = float(m.group("word"))
+            elif m.group("twice"):
+                need = 2.0
+            else:
+                need = 3.0
+            if times is None:
+                problems.append(f"{path} claims a multiple ({m.group(0)}), and the page counts at no margin the "
+                                "client gave, so it cannot say how many times the engagement is covered. State the "
+                                "share or the count the table states")
+            elif times < need:
+                problems.append(f"{path} says {m.group(0)}; the most the table counts is one project covering "
+                                f"the term {dec(times)} times. Say the table's count")
+        # One project said to cover the term outright, when the page has no
+        # margin to say it with, or counts more than one at the gross margin.
+        if conclusion and not grid and mode in ("margin", "volume"):
+            for sentence in _sentences(text):
+                if not (ONE_PROJECT.search(sentence) and COVERS.search(sentence)) or _NOT.search(sentence):
+                    continue
+                if count is not None and count > 1 and dec(count) not in text:
+                    problems.append(f"{path} says one project covers the term; at the {gross:g}% gross margin the "
+                                    f"table counts {dec(count)} projects. Say that count")
+                elif count is None and mode == "margin" and not CONDITION.search(sentence):
+                    problems.append(f"{path} says one project pays for the term outright, and the page assumes no "
+                                    "margin. Say it with the share the table states (if you keep "
+                                    f"{dec(share) if share else 'that share'}% of it)")
+    if problems:
+        seen: list[str] = []
+        for p in problems:
+            if p not in seen:
+                seen.append(p)
+        rep.add(FAIL, "verdict", "; ".join(seen[:3]))
+    else:
+        rep.add(PASS, "verdict", "the page's words divide into the table's engagement")
 
 
 # --------------------------------------------------------------- fee band ----
@@ -1108,7 +3007,30 @@ def check_render(dom: Optional[str], expected: int, rep: Report, engine: str = "
         rep.add(FAIL, "render", f"{over} page(s) overflow A4: trim before sending")
     else:
         rep.add(PASS, "render", "no page overflows A4")
+    zero = zero_break_even(live)
+    if zero:
+        rep.add(FAIL, "render", "a break-even tile reads %s on the price page, which says the program pays for "
+                                "itself with no projects at all. It is drawn from roi.avg_project_value and "
+                                "roi.margin_pct; without a margin there are no tiles to draw: check roi" % zero)
     return sheets
+
+
+# The break-even row as the template draws it: its side label, in either
+# language, then the tiles' figures.
+BREAK_EVEN_ROW = re.compile(
+    r'<div class="side">\s*(?:Break-even|نقطة التعادل)\s*</div>\s*<div class="main">\s*'
+    r'<div class="big accent">(.*?)</div>\s*</div>\s*</div>', re.S)
+TILE_VALUE = re.compile(r'<span class="v">\s*([^<]*?)\s*</span>')
+
+
+def zero_break_even(live: str) -> Optional[str]:
+    """The first break-even tile that reads zero, as printed, or None."""
+    for row in BREAK_EVEN_ROW.finditer(live):
+        for raw in TILE_VALUE.findall(row.group(1)):
+            text = raw.translate(ARABIC_DIGITS).replace(",", "")
+            if re.fullmatch(r"0+(?:\.0+)?", text):
+                return raw
+    return None
 
 
 def validate(data: dict[str, Any], transcript: Optional[str] = None, *, resolved: Optional[dict[str, Any]] = None,
@@ -1131,10 +3053,15 @@ def validate(data: dict[str, Any], transcript: Optional[str] = None, *, resolved
     sheets = check_schema(data, rep, general, blind)
     if not blind:
         check_evidence(data, said, rep, checked_note)
+        check_counts(data, rep)
+        check_funnel(data, rep)
     check_quotes(data, rep)
     pct = None
     if general or blind:
         check_arithmetic(data, rep)
+        check_margin_words(data, rep)
+        check_rate(data, rep)
+        check_verdict(data, rep)
     else:
         pct = check_fee_band(data, rep)
     check_prose(data, said, rep, resolved, offer, checked_note)
@@ -1145,6 +3072,8 @@ def validate(data: dict[str, Any], transcript: Optional[str] = None, *, resolved
     check_identity(data, rep)
     check_dates(data, rep, today)
     check_echoes(data, rep)
+    check_timeline(data, rep)
+    check_tree_note(data, rep)
     check_currency(data, rep)
     rendered = check_render(dom, sheets, rep, engine)
 

@@ -1,5 +1,5 @@
 import { Copy, ExternalLink, MessageCircle, Send } from "lucide-react";
-import { type FormEvent, useEffect, useMemo, useState } from "react";
+import { type FormEvent, useEffect, useId, useMemo, useState } from "react";
 import { api } from "../lib/api";
 import {
   CONTRACT_COLUMNS,
@@ -21,7 +21,15 @@ import { planFor } from "../lib/plans";
 import { supabase } from "../lib/supabase";
 import { toast } from "../lib/toast";
 import type { Me } from "../lib/types";
-import { button, buttonPrimary, Failed, field, Reading, select } from "./kit";
+import {
+  AnimatedSelect,
+  button,
+  buttonPrimary,
+  Failed,
+  field,
+  Reading,
+  select,
+} from "./kit";
 
 /**
  * A lead's contracts, made in HighLevel's Documents & Contracts from the
@@ -464,6 +472,7 @@ function NewContract({
   onMade: () => void;
   onCancel: (() => void) | null;
 }) {
+  const formId = useId();
   const templates = setting.templates ?? [];
   const [templateId, setTemplateId] = useState(
     templates.find(t => t.id === last?.template_id)?.id ??
@@ -523,9 +532,10 @@ function NewContract({
 
   return (
     <form onSubmit={make} className="space-y-3" aria-label="New contract">
-      <label className="block">
+      <label htmlFor={`${formId}-template`} className="block">
         <span className="muted mb-1 block text-xs">Template</span>
-        <select
+        <AnimatedSelect
+          id={`${formId}-template`}
           className={`${select} w-full`}
           value={templateId}
           onChange={e => setTemplateId(e.target.value)}
@@ -535,7 +545,7 @@ function NewContract({
               {t.name}
             </option>
           ))}
-        </select>
+        </AnimatedSelect>
       </label>
       <label className="block">
         <span className="muted mb-1 block text-xs">
@@ -552,9 +562,10 @@ function NewContract({
         />
       </label>
       {uses(template, "payment_structure") ? (
-        <label className="block">
+        <label htmlFor={`${formId}-payment`} className="block">
           <span className="muted mb-1 block text-xs">How they pay</span>
-          <select
+          <AnimatedSelect
+            id={`${formId}-payment`}
             className={`${select} w-full`}
             value={payment}
             onChange={e => setPayment(e.target.value)}
@@ -568,7 +579,7 @@ function NewContract({
                 {o}
               </option>
             ))}
-          </select>
+          </AnimatedSelect>
           {planFor(payment) ? (
             <span className="muted mt-1 block text-xs">
               {planFor(payment)?.schedule}

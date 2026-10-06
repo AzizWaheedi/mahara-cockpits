@@ -6,6 +6,7 @@ import {
   internalQuery,
 } from "./_generated/server";
 import { bridge } from "./comms";
+import { shouldSkipDraft } from "./replyDraftRules";
 import { googleAccessToken } from "./tools";
 
 // biome-ignore lint/suspicious/noExplicitAny: thread rows and doc payloads
@@ -162,11 +163,7 @@ export const queue = internalAction({
       });
       // Same message, already drafted, or still in Hermes's queue for less than
       // half an hour: leave it. A job that never came back is asked again.
-      if (
-        existing &&
-        existing.lastAt === t.lastAt &&
-        (existing.status === "done" || Date.now() - existing.at < 30 * 60_000)
-      ) {
+      if (shouldSkipDraft(existing, t.lastAt, Date.now())) {
         have++;
         continue;
       }

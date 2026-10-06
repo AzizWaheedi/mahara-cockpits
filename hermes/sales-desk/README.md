@@ -17,7 +17,7 @@ sent. It writes the draft, checks it and says what is left for the closer.
 
 | Command | What happens |
 |---|---|
-| `doctor` | every key by name (never its value), the tables, the bucket, a one-token call to the model, the model list, Fathom, Playwright, the reference deals; each blocker named in one sentence |
+| `doctor` | every key by name (never its value), the tables, the bucket, a one-token call to the model and one to the fallback, both model lists, Fathom, the browser (and, online, a real page and PDF printed with it), the reference deals, each put through the validator against today's offer.json; each blocker named in one sentence |
 | `requests` | drafts, or rebuilds, the proposals the cockpit asked for; quiet when nothing is queued |
 | `recordings` | indexes Fathom's sales calls for every rep and matches each to a lead |
 | `calls-vault` | copies every sales call in the Obsidian vault in, summary and transcript too; `--fathom-days N` asks Fathom about the calls whose note cannot say whether the lead joined |
@@ -78,7 +78,49 @@ The proposal row then says one of three things:
 
 `validation` carries `ok`, `errors`, `warnings`, `fills` (the fields still
 to fill), `variant` and `offer`, then the full record: every check's row,
-the triage answer, the reference used, the tightening rounds, the notes.
+the triage answer, the reference used, the tightening rounds, the notes, and
+`model_route`: the provider and model that wrote it.
+
+**When the model cannot answer.** Steps 4 to 7 go through one provider. When
+the primary (`SALES_MODEL_PROVIDER`, the VPS's Claude) cannot answer at all
+(the sign-in lapsed, the proxy is down, a refused key, no credit) before the
+draft's first answer, the run hands over to the fallback
+(`SALES_MODEL_FALLBACK`, below) for that draft and every one after it in the
+run, and the proposal's first note says so: *Drafted through openai
+(gpt-5) because the Claude sign-in on the VPS has lapsed.* A primary that
+stops partway is never finished by another model: the request waits, its try
+not counted, and starts again from the beginning on the next run. When
+neither answers, the request waits the same way, with the fix on the request
+row and this on the proposal, for the closer: *No model can answer right now:
+the Claude sign-in on the VPS has lapsed, and openai refused its key. This
+proposal waits and drafts by itself once either is fixed, so there is no need
+to ask again; if it is still waiting in an hour, tell the CEO.*
+
+**Before anything is claimed.** The VPS proxy needs no key, so a lapsed
+sign-in used to show only at the draft's first call, after the request was
+claimed and the call read from Fathom. Now a run with a draft to claim pings
+the VPS primary with one token first (`model.Failover.check`): a lapse found
+there hands over to the fallback, or, with none, holds every draft unclaimed.
+A ping that merely times out holds nothing; the draft asks anyway. A keyed
+provider is never pinged: a missing key already shows when it is made.
+
+**The closer always has a sentence.** Whatever holds a request (no model, the
+bucket missing, Fathom's key or Fathom down, a stop partway), the proposal it is for says so
+in one line, whether the outage was found before the request was claimed or
+while it ran: *The proposal writer cannot work right now: the Claude sign-in
+on the VPS has lapsed. This proposal waits and drafts by itself once that is
+fixed, so there is no need to ask again; if it is still waiting in an hour,
+tell the CEO.* The fix (a key's name, a command on the VPS) stays on the
+request row. The note lands only while the proposal is drafting. The cockpit
+shows it on the proposal's page and the lead's Proposal card, with the try
+count and "Taking longer than usual" after 20 minutes, and a Stop drafting
+button while the request has not started (sales-api `request.set`).
+
+**Archived means stopped.** Archiving a proposal (sales-api `proposal.set`)
+cancels its queued requests, and is refused while one is running: *It is
+being written right now. Archive it when it finishes.* A request that reaches
+the worker for an archived proposal anyway is closed as `cancelled`; the
+proposal is never drafted, rebuilt, marked failed or brought back.
 
 ### The rebuild
 
@@ -90,6 +132,34 @@ version. The call's figures were checked when the proposal was drafted, and
 what the closer filled in is the closer's own, so the evidence rows say that
 rather than warn. The offer comes from the stamp in the deal (or
 `validation.offer`, or the first request's choice).
+
+What the closer typed is never lost to Draft again (5 October 2026).
+`proposal.fill` keeps it, as typed, in the deal's `closer_figures` (which the
+validator does not read as copy). A rebuild that fails for good tells the
+closer the figures are saved and that Draft again rebuilds with them, and
+then it does: `proposal.retry` after a failed rebuild queues a rebuild. Any
+other Draft again is a fresh draft carrying `fills`, and the worker puts each
+figure back into the new draft's blank at the same place, but only on the same
+line: a path through a list (a tile, a stage, a price row) is followed only when
+that item has the same label as in the version the closer filled, so a fresh
+draft that ordered its tiles differently never prints a figure on the wrong
+one. The notes say how many went back and which did not, and the new draft is
+checked with the closer's figures counted as the closer's own. Try again on a
+failed request (`request.set`) is refused for a proposal that was archived or
+sent, and for a request the proposal has moved on from (not its
+`request_id`), which would write a draft from the call over a version the
+closer has filled since.
+
+Rebuilds are read ahead of drafts, whatever their age, so a run's limit
+(`SALES_REQUESTS_PER_RUN`, 3) can never leave one behind drafts that wait on a
+model. An outage holds only the requests of its own kind for the rest of the
+run: a draft that cannot be written never holds up a rebuild, and the other
+way round. A rebuild asked while a run is drafting goes before that run's next
+draft: the run looks for new rebuilds after each draft.
+
+Fathom down (unreachable, 429, 502, 503 or 504 after the client's own retries)
+is an outage like a model's: the draft waits untried and its closer is told.
+A 404, a 500 or an answer that is not JSON stays a try.
 
 ## The offer
 
@@ -180,6 +250,71 @@ answer that was cut short is never taken for a whole deal.
 A missing or refused key, or a model the key cannot use, is an outage, not
 a failed try: nothing is claimed, the requests wait with the reason on them,
 and `doctor` names the fix.
+
+### The fallback
+
+The CEO, 2026-10-04: "fallbacks just in case anything breaks". One lapsed
+Claude sign-in on the VPS used to stop every proposal. Now
+`SALES_MODEL_FALLBACK` names a second provider (`openrouter`, `openai`,
+`anthropic` or `vps`; unset or `none` means no fallback), and proposals draft
+through it whenever the primary cannot
+answer at all. A failed try (a timeout, a garbled answer) is not an outage
+and never switches; nor does the day's AI ceiling, which counts every
+provider.
+
+On the VPS the fallback is OpenAI's `gpt-5` (2026-10-04): the OpenRouter
+account is out of credit, while OpenAI's key works and `gpt-5` drafted the
+proposal of 24 Sep. The fallback is opt-in since 2026-10-05: until then a
+key on the box chose it, and `OPENROUTER_API_KEY` in `/opt/data/.env` would
+have sent lead data to OpenRouter once its credit was topped up, without
+anyone choosing it. Without `SALES_MODEL_FALLBACK=openai` in
+`~/.sales-desk/env` there is no fallback at all. gpt-5 is a
+reasoning model: it is sent no sampling temperature, its limit goes out as
+`max_completion_tokens`, and `SALES_REASONING_EFFORT` reaches it only as a
+value it takes (`minimal` to `high`; `none` and `xhigh` are left out).
+
+- **The model** is `SALES_FALLBACK_MODEL`, else the primary's own as the
+  fallback names it: Claude Code's `opus` (the VPS proxy lists it beside
+  `claude-opus-4-8`) is `anthropic/claude-opus-4.8` through OpenRouter and
+  `claude-opus-4-8` at Anthropic; `gpt-5` is `openai/gpt-5` through
+  OpenRouter; OpenAI has no Claude, so there it is `gpt-5`. The allowlist
+  applies to it as to any model, and refuses every router variant
+  (`openai/gpt-5:online` adds a web search, `:free` goes to providers that may
+  keep what they are sent). A Claude model gets 64,000 tokens of room,
+  as from Anthropic directly: OpenRouter holds credit against the most a
+  reply may be.
+- **Once a run, never mid-draft.** The run decides at the first outage and
+  stays on the fallback for every draft left in it; the next run tries the
+  primary first again. A draft that has had one answer from a provider
+  stays on it, tightening and repair included.
+- **A draft that waits holds up no rebuild.** The run's other drafts wait
+  unclaimed with the reason on them and the closer's sentence on their
+  proposals; a rebuild asks no model, is read first, and still goes ahead.
+- **Never silent.** The handover is a WARN line in `~/.sales-desk.log` (the
+  cron runs `--quiet`, which keeps only warnings), and the `requests` health
+  line starts with how many drafts went through the fallback and why.
+- **The model has to be one the fallback serves**: `anthropic/...` or
+  `openai/...` through OpenRouter, bare names at OpenAI and Anthropic. An
+  OpenRouter name left in `SALES_FALLBACK_MODEL` after switching
+  `SALES_MODEL_FALLBACK` to `openai` is one sentence at once, not a 404 later.
+  Claude Opus 4.7 and later are sent no sampling temperature through
+  OpenRouter (they refuse one), and an account out of credit that OpenRouter
+  reports inside an opened stream is the same wait as a 402.
+- **Only proposals**, unless `SALES_FALLBACK_JOBS` names others (`proposal,
+  notes, digest, reviews, followups`). Notes, reviews, the digest and
+  follow-ups wait for the primary as they always have.
+- **What it costs is counted**: each `cockpit_sales_ai_usage` row names the
+  provider that answered (`20261004p_sales_ai_usage_provider.sql`; until it
+  is applied the provider goes inside `model`, `openai:gpt-5`). A
+  reply that reports no usage is counted at three characters a token, never
+  as nothing.
+- **`doctor`** shows both: the primary's key, answer and model list, the
+  fallback's key, answer, model list and, for OpenRouter, the credit left on
+  the account (a key's own limit can have room while the account is spent)
+  or, for OpenAI, whether it streams the model. It is blocked only when
+  neither can answer; a primary that cannot while the fallback can is a
+  warning that says where proposals are going. The browser and render lines
+  read the same way: the path found, then whether it printed a real page.
 
 ## Fathom and the recordings
 
@@ -278,6 +413,60 @@ To make one from a finished proposal's HTML:
 python3 extract_reference.py 2026-09-05-client.html ~/.sales-desk/reference/general.json
 ```
 
+The drafter copies a reference's faults as faithfully as its shape. On
+4 October 2026 the VPS's `general.json`, written on 5 September, promised
+results and free work, printed a split under paid in full and called its
+meetings target guaranteed: the offer had moved on 2 and 3 October and the
+reference had not. So `desk/references.py` puts every reference through the
+validator the way a draft goes through it, against offer.json as it stands
+and the closer's default choice, under the send gate, and the offer and
+guarantee warnings count as failures too. doctor's `reference deals` line
+names each file, its variant and its verdict (file and check names only),
+and `tests/test_references.py` fails on the VPS when one breaks a rule.
+`python3 desk.py validate FILE --send` names each field to correct.
+
+Online, doctor also builds and renders each reference, as `validate --send`
+does, so a reference whose copy no longer fits today's template fails too
+(`render`): on 5 October 2026 B2B's margin-mode draft 180273419, its offer
+lines corrected, passed every rule and still overflowed a sheet. Offline, and
+in the tests, nothing is rendered, and the line says so.
+
+Which references to keep, from the gate (5 October 2026): `general.json` in
+margin mode (B2B's 175209069), because a general draft is most often a call
+that gave a project value and no margin, and that is the case SKILL.md puts in
+margin mode; `specific.json` (B2B's 173625821), because a specific draft
+copying a general reference has no `cost` block to copy; and the grid
+general (the old 180279552) as `general-grid.json`. The desk reads
+`general.json` first for a general draft whose call gave a project value, and
+`general-grid.json` (else any general reference with a grid page) for one whose
+call gave none: on 5 October 2026 such a draft copied the margin-mode file and
+lost the grid page's summary sentence and its total label. The grid file is
+also the stand-in for a blind draft (the first file by name), which suits one:
+no project value and a grid. B2B holds no blind draft to make one from.
+
+Two things the references carry are put right as the drafter is shown them.
+`general-grid.json` has no `gap_points`, and a draft that copied it drew the
+gap page as the funnel alone (175832813, about 430 px blank), so a general
+reference without them shows the drafter the two or three tiles to write from
+the call (`prompt.GAP_POINTS_SHAPE`). And every reference's `deposit_label`
+says the deposit "comes off the first payment"; paid in full there is one
+payment, so for that choice the label becomes an instruction to say it comes
+off the payment at the start (`prompt.DEPOSIT_IN_FULL_SHAPE`). The validator
+warns on a first payment under paid in full in a check of its own
+(`deposit`), not the offer's, so the references are not failed for it.
+`general.json` and `specific.json` open their `tree.note` with "No third
+branch.", filler under a tree that has two branches by design, and thirteen
+of B2B's fourteen drafts printed it (176954619's page 3 on the live check of
+5 October 2026). The drafter is shown the rest of the note, or none
+(`prompt.without_third_branch`), and the validator warns on a note that
+mentions a third branch in a check of its own (`tree`), so the references
+are not failed for it.
+
+Its dates are not held against it. The drafter is told today's date and the
+date two weeks on in place of the reference's own (`prompt.shape_of`), since
+it is told the date nowhere else and the 24 September draft kept the
+reference's expiry. A reference is judged as of the day it was written.
+
 ## The New Client Form
 
 Aziz, 2026-10-02: the closer fills the New Client Form (Typeform
@@ -302,7 +491,9 @@ response id.
 As `hermes`, from the repo clone at `~/mahara-cockpits`. The Supabase pair is
 the editor desk's (`~/.editor-desk/env`, Creative Triage); `OPENAI_API_KEY` and
 `FATHOM_API_KEY` are in `/opt/data/bibi/api-keys.env`. The desk's own env file
-holds settings only, never a key:
+holds settings only, never a key. The fallback is OpenAI's `gpt-5` while the
+OpenRouter account is out of credit (The fallback, above), and `CHROME_PATH`
+is the browser that prints the PDF (below):
 
 ```bash
 cd ~/mahara-cockpits && git pull -q --ff-only
@@ -310,6 +501,10 @@ mkdir -p ~/.sales-desk/reference && chmod 700 ~/.sales-desk
 cat > ~/.sales-desk/env <<'EOF'
 SALES_MODEL_PROVIDER=vps
 SALES_PROPOSAL_MODEL=opus
+SALES_MODEL_FALLBACK=openai
+SALES_FALLBACK_MODEL=gpt-5
+SALES_FALLBACK_JOBS=proposal
+CHROME_PATH=/home/hermes/.cache/ms-playwright/chromium_headless_shell-1193/chrome-linux/headless_shell
 EOF
 chmod 600 ~/.sales-desk/env
 cd hermes/sales-desk
@@ -319,15 +514,23 @@ python3 desk.py offer-sync
 python3 desk.py recordings --days 60   # once, to fill the index
 ```
 
-The PDF and the overflow measurement need Playwright and a Chrome the
-`hermes` user can run: `python3 -m pip install --user playwright`, then
-either `python3 -m playwright install chromium` or `CHROME_PATH` pointing at
-an existing Chrome. `doctor`'s playwright and render lines say whether it
-works. Without it the HTML is still made, and the proposal's notes say the PDF
-was skipped. Chrome's one-shot flags were measured hanging on this box
-(render.py's note, from the B2B account); the fallback now takes Chrome's
-answer as soon as it is complete, which is what makes it usable on a laptop,
-but Playwright is the path to rely on here.
+On the VPS today `~/.sales-desk/env` already holds the two `SALES_` lines at
+the top and `CHROME_PATH`; the three fallback lines are the ones to add to it
+(append them, rather than writing the file again). `doctor` then shows
+`fallback` as `SALES_MODEL_FALLBACK=openai, model gpt-5`.
+
+The PDF and the overflow measurement need a Chrome the `hermes` user can
+run. On the VPS that is Playwright's headless shell, already in the cache:
+`CHROME_PATH=/home/hermes/.cache/ms-playwright/chromium_headless_shell-1193/chrome-linux/headless_shell`
+in `~/.sales-desk/env` (render.py also finds the newest one there by itself).
+Chrome's one-shot flags print through it in about half a second, the same
+pages, pixel for pixel, as Playwright prints from it (measured 2026-10-04), so
+Python Playwright is optional; when installed it is used first. `doctor`'s
+browser line says which path is taken, and its render line (online only)
+prints a real page and a real PDF to say whether it works. Without a browser
+the HTML is still made, and the proposal's notes say the PDF was skipped.
+`SALES_RENDER_LIVE=1 python3 -m unittest tests.test_render` prints real
+proposals on the box: one A4 page per sheet.
 
 ### Cron
 
@@ -356,6 +559,9 @@ editor desk's README says. Never pipe a stale copy.
 |---|---|
 | `SALES_MODEL_PROVIDER` | `vps` |
 | `SALES_PROPOSAL_MODEL` | per provider, above |
+| `SALES_MODEL_FALLBACK` | `none`: only the provider named here is ever a fallback; the VPS sets `openai` |
+| `SALES_FALLBACK_MODEL` | the primary's model as the fallback names it (`anthropic/claude-opus-4.8` for `opus` through OpenRouter, `gpt-5` at OpenAI); the VPS sets `gpt-5` |
+| `SALES_FALLBACK_JOBS` | `proposal` (add `notes`, `digest`, `reviews`, `followups` to let them fall back too) |
 | `SALES_MODEL_TIMEOUT` | `900` seconds of silence per try |
 | `SALES_MODEL_ATTEMPTS` | `3` tries per model call |
 | `SALES_MAX_TOKENS` | unset (the model's own limit); Anthropic uses 64,000 |
@@ -392,6 +598,8 @@ In Creative Triage (`supabase/migrations/20260924a_sales_cockpit.sql` and
 - Storage `sales-calls` (private): each call's transcript, `<recording id>.md`
   and `maqsam/<id>.md`.
 - `cockpit_sales_worker_status`: one row per job.
+- `cockpit_sales_ai_usage`: one row per model call, with the job, the
+  provider and the model that answered, and its tokens.
 - Storage `sales-proposals` (private): `proposals/<id>/v<n>.html` and `.pdf`.
 
 On the VPS, `~/.sales-desk/out/<proposal id>/` keeps the working files of

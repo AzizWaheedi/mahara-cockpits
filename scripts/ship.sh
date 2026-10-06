@@ -15,6 +15,10 @@ command -v python >/dev/null 2>&1 || py_bin="python3"
 
 # Nothing ships if the copies of a shared page have drifted apart.
 scripts/check-shared.sh || exit 1
+# The guard that keeps a backend deploy from removing someone else's
+# functions (convex-removals.ts, below) is itself tested first.
+bun test scripts/convex-removals.test.ts >/dev/null 2>&1 \
+  || { echo "the deploy guard's tests fail (bun test scripts/convex-removals.test.ts)"; exit 1; }
 
 # The Frame.io webhook is a public URL that writes to our notes, so its
 # signature check is tested on every ship rather than when somebody
@@ -50,6 +54,10 @@ fi
 if [ -f apps/client-success-cockpit/scripts/projections.test.ts ]; then
   (cd apps/client-success-cockpit && bun test scripts/projections.test.ts >/dev/null 2>&1) \
     || { echo "the projections rules tests fail"; exit 1; }
+fi
+if [ -f apps/client-success-cockpit/scripts/check-in.test.ts ]; then
+  (cd apps/client-success-cockpit && bun test scripts/check-in.test.ts >/dev/null 2>&1) \
+    || { echo "the client check-in booking tests fail"; exit 1; }
 fi
 if [ -f hermes/team-sync/test_sync.py ]; then
   (cd hermes/team-sync && "$py_bin" -m unittest test_sync >/dev/null 2>&1) \
@@ -101,6 +109,10 @@ ship() {
   (cd "$dir" && bunx biome check --line-ending=auto $lint_dirs >/dev/null) || { echo "lint failed in $dir (run: cd $dir && bunx biome check --line-ending=auto --write $lint_dirs)"; exit 1; }
   echo "== $app: typecheck"
   (cd "$dir" && bun run tsc --project tsconfig.app.json --noEmit && bun run tsc --project tsconfig.node.json --noEmit)
+  if [ "$app" = "sales" ]; then
+    echo "== sales: tests"
+    (cd "$dir" && bun test src)
+  fi
   echo "== $app: backend (native Supabase; schema and workers must already be verified)"
   # What the site serves right now, so the check after the deploy compares
   # the page against itself rather than against a local build. Vercel builds
@@ -136,6 +148,11 @@ ship() {
   local -a vercel_cli=(bunx vercel)
   command -v vercel >/dev/null 2>&1 && vercel_cli=(vercel)
   if (cd "$dir" && "${vercel_cli[@]}" whoami ${tok[@]+"${tok[@]}"} >/dev/null 2>&1); then
+    # Without the app's link the CLI makes a new project named after the
+    # folder and deploys there; the site keeps the old bundle (2026-10-05, a
+    # fresh worktree made client-success-cockpit beside mahara-client-success).
+    # The Composio path refuses the same way.
+    [ -f "$dir/.vercel/project.json" ] || { echo "$dir is not linked to a Vercel project (.vercel/project.json missing): copy it from a linked checkout"; exit 1; }
     out=$(cd "$dir" && "${vercel_cli[@]}" deploy --prod --yes --force ${tok[@]+"${tok[@]}"} 2>&1) || { echo "$out" | tail -20; echo "vercel deploy failed for $app"; exit 1; }
   else
     # No Vercel login on this Mac (2026-09-20): the same source goes up
@@ -201,5 +218,10 @@ case "${1:-all}" in
 esac
 
 echo "== smoke check"
+if [ "${1:-all}" = "sales" ]; then
+  curl -fsS -m 30 -o /dev/null https://mahara-sales.vercel.app/sales/
+  curl -fsS -m 30 -o /dev/null https://cockpit.maharamedia.com/sales/
+  echo "sales origin and portal route respond."
+fi
 "$py_bin" scripts/verify-cutover-readiness.py
 echo "shipped."

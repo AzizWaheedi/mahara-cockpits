@@ -603,6 +603,9 @@ export const PROPOSALS: Row[] = [
         "The client did not say a net margin, so the return is shown as break-even.",
       ],
       fills: ["headline", "investment.rows.0.amount"],
+      notes: [
+        "No PDF yet: it is made when the proposal passes the send gate, with nothing left to fill.",
+      ],
     },
     fill_count: 2,
     html_path: "proposals/p1/v1.html",
@@ -616,6 +619,140 @@ export const PROPOSALS: Row[] = [
     error: null,
   },
 ];
+
+// ---- The proposal writer's states, as hermes/sales-desk/desk/queue.py
+// leaves the rows: open /proposal/<id> or the lead's page for each.
+const SIGN_IN_FIX =
+  "The Claude sign-in on the VPS has lapsed, so nothing can be drafted. Sign Claude Code in again on the VPS as aziz (run claude, then /login); drafting resumes by itself.";
+const SIGN_IN_CLOSER =
+  "The proposal writer cannot work right now: the Claude sign-in on the VPS has lapsed. This proposal waits and drafts by itself once that is fixed, so there is no need to ask again; if it is still waiting in an hour, tell the CEO.";
+const NO_RECORDING =
+  "No Fathom recording of this lead's demo was found. Share the recording with the team in Fathom, then draft again.";
+const RETRY =
+  "Try 2 of 4 failed (the draft call failed 2 times: no JSON object in the reply); it will be tried again.";
+
+const ago = (minutes: number) =>
+  new Date(Date.now() - minutes * 60_000).toISOString();
+
+function proposal(id: string, lead: number, over: Row): Row {
+  return {
+    id,
+    request_id: `q-${id}`,
+    contact_id: LEADS[lead].contact_id,
+    appointment_id: null,
+    recording_id: null,
+    lang: "ar",
+    variant: null,
+    status: "drafting",
+    deal: null,
+    validation: null,
+    fill_count: null,
+    html_path: null,
+    pdf_path: null,
+    model: null,
+    created_by: "aziz@maharamedia.com",
+    created_at: ago(6),
+    updated_at: ago(1),
+    sent_at: null,
+    sent_by: null,
+    error: null,
+    ...over,
+  };
+}
+
+function request(id: string, lead: number, over: Row): Row {
+  return {
+    id: `q-${id}`,
+    kind: "proposal",
+    contact_id: LEADS[lead].contact_id,
+    appointment_id: null,
+    params: { proposal_id: id, lang: "ar" },
+    status: "queued",
+    requested_by: "aziz@maharamedia.com",
+    requested_at: ago(6),
+    claimed_at: null,
+    attempts: 0,
+    finished_at: null,
+    error: null,
+    result: null,
+    ...over,
+  };
+}
+
+PROPOSALS.push(
+  // Waiting with a reason: no model answers, so nothing was claimed.
+  proposal("p-wait", 6, { error: SIGN_IN_CLOSER }),
+  // Retrying: a try failed, the next one is running, and it is slow.
+  proposal("p-retry", 8, { created_at: ago(38), error: RETRY }),
+  // Failed: no recording of the demo in Fathom.
+  proposal("p-norec", 7, {
+    status: "failed",
+    created_at: ago(180),
+    updated_at: ago(178),
+    error: NO_RECORDING,
+  }),
+  // Ready, but no browser could print the PDF; drafted on the fallback.
+  proposal("p-nopdf", 9, {
+    status: "ready",
+    lang: "en",
+    variant: "specific",
+    model: "openai:gpt-5",
+    fill_count: 0,
+    deal: { headline: "Two more villas a quarter" },
+    html_path: "proposals/p-nopdf/v1.html",
+    created_at: ago(240),
+    updated_at: ago(225),
+    validation: {
+      ok: true,
+      status: "ready",
+      errors: [],
+      warnings: [],
+      fills: [],
+      notes: [
+        "Drafted through openai (gpt-5) because the Claude sign-in on the VPS has lapsed.",
+        "The PDF was skipped: no browser on this machine could print it (none). The HTML is complete: open it and print to PDF, or point CHROME_PATH on the VPS at Playwright's headless shell (doctor's render line says whether it prints).",
+      ],
+    },
+  }),
+);
+
+export const REQUESTS: Row[] = [
+  request("p-wait", 6, { error: SIGN_IN_FIX }),
+  request("p-retry", 8, {
+    status: "running",
+    attempts: 3,
+    requested_at: ago(38),
+    claimed_at: ago(2),
+    error: null,
+  }),
+  request("p-norec", 7, {
+    status: "failed",
+    attempts: 1,
+    requested_at: ago(180),
+    finished_at: ago(178),
+    error: NO_RECORDING,
+  }),
+  request("p-nopdf", 9, {
+    status: "done",
+    attempts: 1,
+    requested_at: ago(240),
+    finished_at: ago(225),
+  }),
+];
+
+/**
+ * The desk's health rows. `desk` in the harness address picks the proposal
+ * writer's: ok (default), waiting (an outage it waits out) or late.
+ */
+export function workerStatus(desk: string): Row[] {
+  const requests =
+    desk === "waiting"
+      ? { ok: false, detail: `waiting: ${SIGN_IN_FIX}`, at: ago(1) }
+      : desk === "late"
+        ? { ok: true, detail: "nothing queued", at: ago(45) }
+        : { ok: true, detail: "nothing queued", at: ago(1) };
+  return [{ worker: "sales-desk", job: "requests", ...requests }];
+}
 
 export const MIRROR_RUN: Row = {
   id: 1,

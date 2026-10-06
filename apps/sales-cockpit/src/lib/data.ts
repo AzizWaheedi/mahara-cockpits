@@ -3,6 +3,7 @@ import type { Asset } from "./assets";
 import type { CallRow, LeadRow } from "./calls";
 import type { ClientFormSent } from "./clientForm";
 import type { GoalRow } from "./goals";
+import { requestRead } from "./proposals";
 import { supabase } from "./supabase";
 import type {
   BoardRow,
@@ -880,16 +881,41 @@ export function useProposals(mine: string | null): Loaded<Proposal[]> {
   );
 }
 
+/** One proposal, looked at again every 20 seconds. Nothing is read without an id. */
 export function useProposal(id: string): Loaded<Proposal> {
   return useQuery<Proposal>(
     () =>
-      supabase
-        .from("cockpit_sales_proposals")
-        .select("*")
-        .eq("id", id)
-        .maybeSingle(),
+      id
+        ? supabase
+            .from("cockpit_sales_proposals")
+            .select("*")
+            .eq("id", id)
+            .maybeSingle()
+        : none<Proposal>(),
     [id],
     20_000,
+  );
+}
+
+/**
+ * One of the worker's requests by id, looked at again every 20 seconds
+ * while the page is open: where a draft is, its tries, and the writer's
+ * reason when it waits. Nothing is read without an id.
+ */
+export function useRequest(id: string | null): Loaded<WorkRequest> {
+  return useQuery<WorkRequest>(
+    async () => {
+      if (!id) return { data: null, error: null };
+      const { data, error } = await supabase
+        .from("cockpit_sales_requests")
+        .select("*")
+        .eq("id", id)
+        .maybeSingle();
+      // A request that is not there says so (REQUEST_GONE), never blank.
+      return requestRead<WorkRequest>(data as WorkRequest | null, error);
+    },
+    [id],
+    id ? 20_000 : 0,
   );
 }
 

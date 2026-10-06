@@ -108,6 +108,14 @@ import {
   signingLink,
 } from "./contracts.ts";
 import { clientFormRow, CLIENT_FORM_ID } from "./clientforms.ts";
+import {
+  ALREADY_DRAFTING,
+  archivePlan,
+  BEING_WRITTEN,
+  retryPlan,
+  retryRefusal,
+  stoppedProposal,
+} from "./proposals.ts";
 
 type Row = Record<string, unknown>;
 
@@ -462,7 +470,7 @@ async function proposalDraft(who: Who, b: Row) {
     `cockpit_sales_requests?kind=eq.proposal&contact_id=eq.${enc(contact)}&status=in.(queued,running)&select=id`,
   );
   if (open.length)
-    throw new Refusal("A proposal for this lead is already being drafted. It takes about ten minutes.");
+    throw new Refusal(ALREADY_DRAFTING);
   const offer = checkOffer(b.offer);
   if (!offer.ok) throw new Refusal(offer.error);
   const lang = b.lang === "en" ? "en" : "ar";
@@ -528,13 +536,51 @@ async function proposalSet(who: Who, b: Row) {
     patch.sent_at = patch.updated_at;
     patch.sent_by = who.email;
   }
+  // Archiving stops the draft: its queued requests are cancelled with it,
+  // and a running one makes it wait (proposals.ts archivePlan). The cancel is
+  // conditional on queued, so a request the worker claimed in the meantime
+  // is never cancelled under it: then the archive waits too.
+  let cancelled: string[] = [];
+  if (status === "archived") {
+    const open = await svc(
+      `cockpit_sales_requests?kind=eq.proposal&params->>proposal_id=eq.${enc(id)}&status=in.(queued,running)&select=id,status`,
+    );
+    const plan = archivePlan(open.map(r => ({ id: String(r.id), status: String(r.status) })));
+    if (!plan.ok) throw new Refusal(plan.error, 409);
+    if (plan.cancel.length) {
+      const out = await svc(
+        `cockpit_sales_requests?id=in.(${plan.cancel.map(enc).join(",")})&status=eq.queued`,
+        {
+          method: "PATCH",
+          body: {
+            status: "cancelled",
+            finished_at: patch.updated_at,
+            error: `Archived by ${who.email} before it was drafted.`,
+          },
+          prefer: "return=representation",
+        },
+      );
+      cancelled = out.map(r => String(r.id));
+      if (cancelled.length < plan.cancel.length) {
+        await audit(who, "request.cancelled", "cockpit_sales_requests", id, null, null, {
+          cancelled,
+          proposal_id: id,
+          why: "archive",
+        });
+        // The worker took one between the read and the cancel: it is running now.
+        throw new Refusal(BEING_WRITTEN, 409);
+      }
+    }
+  }
   await svc(`cockpit_sales_proposals?id=eq.${enc(id)}`, {
     method: "PATCH",
     body: patch,
     prefer: "return=minimal",
   });
-  await audit(who, `proposal.${status}`, "cockpit_sales_proposals", id, p, { ...p, ...patch });
-  return { proposal: { ...p, ...patch } };
+  await audit(who, `proposal.${status}`, "cockpit_sales_proposals", id, p, { ...p, ...patch }, {
+    ...(cancelled.length ? { cancelled_requests: cancelled } : {}),
+  });
+  return { proposal: { ...p, ...patch }, cancelled };
 }
 
 /**
@@ -606,6 +652,13 @@ async function proposalRetry(who: Who, b: Row) {
     `cockpit_sales_requests?kind=eq.proposal&params->>proposal_id=eq.${enc(id)}&select=params&order=requested_at.asc&limit=1`,
   ))[0];
   const was = (first?.params ?? {}) as Row;
+  // The figures the closer typed are never lost to Draft again: a rebuild
+  // that failed for good is rebuilt, and a fresh draft carries them
+  // (proposals.ts retryPlan).
+  const last = p.request_id
+    ? (await svc(`cockpit_sales_requests?id=eq.${enc(String(p.request_id))}&select=params,status`))[0]
+    : null;
+  const plan = retryPlan(p, last ?? null);
   const requestId = crypto.randomUUID();
   await svc("cockpit_sales_requests", {
     method: "POST",
@@ -614,20 +667,26 @@ async function proposalRetry(who: Who, b: Row) {
       kind: "proposal",
       contact_id: p.contact_id,
       appointment_id: p.appointment_id,
-      params: {
-        lang: p.lang,
-        recording_id: p.recording_id ?? was.recording_id ?? null,
-        proposal_id: id,
-        offer: was.offer ?? { guarantee: false, payment: "pif" },
-      },
+      params: plan.rebuild
+        ? { proposal_id: id, rebuild: true, lang: p.lang }
+        : {
+            lang: p.lang,
+            recording_id: p.recording_id ?? was.recording_id ?? null,
+            proposal_id: id,
+            offer: was.offer ?? { guarantee: false, payment: "pif" },
+            ...(plan.fills ? { fills: plan.fills } : {}),
+          },
       requested_by: who.email,
     },
     prefer: "return=minimal",
   });
   const patch = { status: "drafting", request_id: requestId, error: null, updated_at: new Date().toISOString() };
   await svc(`cockpit_sales_proposals?id=eq.${enc(id)}`, { method: "PATCH", body: patch, prefer: "return=minimal" });
-  await audit(who, "proposal.retry", "cockpit_sales_proposals", id, { status: p.status }, patch);
-  return { proposal: { ...p, ...patch } };
+  await audit(who, "proposal.retry", "cockpit_sales_proposals", id, { status: p.status }, patch, {
+    rebuild: plan.rebuild,
+    ...(!plan.rebuild && plan.fills ? { fills_carried: Object.keys(plan.fills) } : {}),
+  });
+  return { proposal: { ...p, ...patch }, rebuild: plan.rebuild, figures_kept: plan.rebuild || !!plan.fills };
 }
 
 async function requestSet(who: Who, b: Row) {
@@ -639,10 +698,20 @@ async function requestSet(who: Who, b: Row) {
     throw new Refusal("Only the person who asked or a manager can change it.", 403);
   let patch: Row;
   if (to === "cancelled") {
+    if (r.status === "running")
+      throw new Refusal("It is being written right now, so it cannot be stopped. Wait for it to finish.", 409);
     if (r.status !== "queued") throw new Refusal("Only a request that has not started can be cancelled.");
     patch = { status: "cancelled", finished_at: new Date().toISOString() };
   } else if (to === "queued") {
     if (r.status !== "failed") throw new Refusal("Only a failed request can be tried again.");
+    // Never back to drafting for a proposal the closer archived or sent, nor
+    // for a request the proposal has since moved on from.
+    const forId = (r.params as Row | null)?.proposal_id;
+    if (r.kind === "proposal" && forId) {
+      const p = (await svc(`cockpit_sales_proposals?id=eq.${enc(String(forId))}&select=id,status,request_id`))[0];
+      const refused = retryRefusal(p, String(r.id));
+      if (refused) throw new Refusal(refused, 409);
+    }
     patch = { status: "queued", attempts: 0, error: null, claimed_at: null, finished_at: null };
   } else throw new Refusal("Cancel it or try it again.");
   // Conditional on the status read above, so a worker that claimed it in
@@ -654,17 +723,24 @@ async function requestSet(who: Who, b: Row) {
   });
   if (!out.length) throw new Refusal("It changed while you were looking. Refresh and try again.", 409);
   const pid = (r.params as Row | null)?.proposal_id;
-  if (r.kind === "proposal" && pid)
+  let proposal: Row | null = null;
+  if (r.kind === "proposal" && pid) {
+    // Stopped: a first draft is archived; a retry or a rebuild of a proposal
+    // that has a version goes back to it (proposals.ts stoppedProposal).
+    const p = (await svc(`cockpit_sales_proposals?id=eq.${enc(String(pid))}&select=id,status,html_path,validation`))[0];
+    const body =
+      to === "cancelled"
+        ? { ...(p ? stoppedProposal(p) : { status: "archived" }), updated_at: new Date().toISOString() }
+        : { status: "drafting", error: null, updated_at: new Date().toISOString() };
     await svc(`cockpit_sales_proposals?id=eq.${enc(String(pid))}`, {
       method: "PATCH",
-      body:
-        to === "cancelled"
-          ? { status: "archived", updated_at: new Date().toISOString() }
-          : { status: "drafting", error: null, updated_at: new Date().toISOString() },
+      body,
       prefer: "return=minimal",
     });
-  await audit(who, `request.${to}`, "cockpit_sales_requests", id, r, out[0]);
-  return { request: out[0] };
+    proposal = { id: String(pid), ...body };
+  }
+  await audit(who, `request.${to}`, "cockpit_sales_requests", id, r, out[0], proposal ? { proposal } : {});
+  return { request: out[0], proposal };
 }
 
 // ---------------------------------------------------------------------------

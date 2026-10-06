@@ -4,5 +4,29 @@
     "orgId": "team_CYujeiq6dPtfcUEHS14lcJuV",
     "projectName": "mahara-media-buyer",
     "domain": "cockpit.maharamedia.com"
+  },
+  "apps/client-success-cockpit": {
+    "projectId": "prj_8U3cRoO4xw7Wl5xHjeVhJ56epntP",
+    "orgId": "team_CYujeiq6dPtfcUEHS14lcJuV",
+    "projectName": "mahara-client-success",
+    "domain": "cockpit.maharamedia.com/client-success"
+  },
+  "apps/creative-director-cockpit": {
+    "projectId": "prj_rIpHvn2pxBQ0XAXp1pBw7N4pyGd0",
+    "orgId": "team_CYujeiq6dPtfcUEHS14lcJuV",
+    "projectName": "mahara-creative-director",
+    "domain": "cockpit.maharamedia.com/creative"
+  },
+  "apps/video-editor-cockpit": {
+    "projectId": "prj_ynBCE5T44Ek2rZzCl8AGlvqaJEUE",
+    "orgId": "team_CYujeiq6dPtfcUEHS14lcJuV",
+    "projectName": "mahara-video-editor",
+    "domain": "cockpit.maharamedia.com/editor"
+  },
+  "apps/sales-cockpit": {
+    "projectId": "prj_HWMjmMJPtaayugqRGzqKhMsR3LIX",
+    "orgId": "team_CYujeiq6dPtfcUEHS14lcJuV",
+    "projectName": "mahara-sales",
+    "domain": "cockpit.maharamedia.com/sales"
   }
 }

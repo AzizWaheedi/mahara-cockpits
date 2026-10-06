@@ -441,8 +441,10 @@ LANGUAGE sql IMMUTABLE SET search_path='' AS $$
   WHEN 'projections' THEN jsonb_build_object('week_start',p_data->'week_start','owner_email',p_data->'owner_email','metric',p_data->'metric','data',p_data->'data','source_id',p_data->'source_id')
   WHEN 'renewalPlans' THEN jsonb_build_object('task_id',p_data->'task_id','client_name',p_data->'client_name','renewal_date',p_data->'renewal_date','data',p_data->'data','source_id',p_data->'source_id')
   WHEN 'callBriefs' THEN jsonb_build_object('client_name',p_data->'client_name','key',p_data->'key','job_id',p_data->'job_id','status',p_data->'status','overall',p_data->'overall','per_call',p_data->'per_call','at',to_char((p_data->>'at')::timestamptz AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),'source_deployment',p_data->'source_deployment','source_id',p_data->'source_id')
+  WHEN 'waThreads' THEN jsonb_build_object('source_app',p_data->'source_app','chat_id',p_data->'chat_id','channel',p_data->'channel','name',p_data->'name','client_name',p_data->'client_name','contact_id',p_data->'contact_id','source',p_data->'source','is_group',p_data->'is_group','unread',p_data->'unread','last_from_us',p_data->'last_from_us','silent_days',p_data->'silent_days','draft',p_data->'draft','recent',p_data->'recent','draft_at',CASE WHEN p_data->>'draft_at' IS NOT NULL THEN to_char((p_data->>'draft_at')::timestamptz AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') END,'last_at',to_char((p_data->>'last_at')::timestamptz AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),'waiting_since',CASE WHEN p_data->>'waiting_since' IS NOT NULL THEN to_char((p_data->>'waiting_since')::timestamptz AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') END,'synced_at',CASE WHEN p_data->>'synced_at' IS NOT NULL THEN to_char((p_data->>'synced_at')::timestamptz AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') END,'creation_time',to_char((p_data->>'creation_time')::timestamptz AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),'source_deployment',p_data->'source_deployment','source_id',p_data->'source_id')
+  WHEN 'replyDrafts' THEN jsonb_build_object('source_app',p_data->'source_app','chat_id',p_data->'chat_id','status',p_data->'status','job_id',p_data->'job_id','draft',p_data->'draft','at',to_char((p_data->>'at')::timestamptz AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),'last_at',CASE WHEN p_data->>'last_at' IS NOT NULL THEN to_char((p_data->>'last_at')::timestamptz AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') END,'creation_time',to_char((p_data->>'creation_time')::timestamptz AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),'source_deployment',p_data->'source_deployment','source_id',p_data->'source_id')
   ELSE NULL END
- || CASE WHEN p_table IN('clientPrefs','hotList','looseDismissed','moneyGoals','projections','renewalPlans','callBriefs')
+ || CASE WHEN p_table IN('clientPrefs','hotList','looseDismissed','moneyGoals','projections','renewalPlans','callBriefs','waThreads','replyDrafts')
   THEN jsonb_build_object('source_record',p_data->'source_record','source_deployment',p_data->'source_deployment') ELSE '{}'::jsonb END
  || CASE WHEN p_table IN('clientPrefs','moneyGoals','projections','renewalPlans')
   THEN jsonb_build_object('updated_at',to_char((p_data->>'updated_at')::timestamptz AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"'))
@@ -454,7 +456,7 @@ REVOKE ALL ON FUNCTION public.cockpit_native_durable_projection(text,jsonb) FROM
 CREATE FUNCTION public.cockpit_native_bootstrap_inventory() RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
 DECLARE name text; rows jsonb; tables jsonb:='{}';complete jsonb:='[]';
 BEGIN
- FOREACH name IN ARRAY ARRAY['cockpit_media_sources','cockpit_media_source_state','cockpit_csm_sources','cockpit_csm_source_state','cockpit_creative_sources','cockpit_creative_source_state','cockpit_runtime_imports','cockpit_campaigns','cockpit_ads','cockpit_media_daily_stats','cockpit_media_booking_events','cockpit_media_feed_state','cockpit_native_stills','cockpit_native_mirror_owners','cockpit_client_profiles','cockpit_csm_client_overrides','cockpit_offboard_dismissals','cockpit_eod_reports','cockpit_decisions','cockpit_daily_checks','cockpit_issue_reports','cockpit_members','cockpit_plan_items','cockpit_team_status','cockpit_team_status_state','cockpit_metric_days','cockpit_client_billing_days','cockpit_csm_client_preferences','cockpit_csm_hot_rows','cockpit_csm_loose_dismissals','cockpit_csm_money_goals','cockpit_csm_projections','cockpit_csm_renewal_plans','cockpit_media_call_briefs'] LOOP
+ FOREACH name IN ARRAY ARRAY['cockpit_media_sources','cockpit_media_source_state','cockpit_csm_sources','cockpit_csm_source_state','cockpit_creative_sources','cockpit_creative_source_state','cockpit_runtime_imports','cockpit_campaigns','cockpit_ads','cockpit_media_daily_stats','cockpit_media_booking_events','cockpit_media_feed_state','cockpit_native_stills','cockpit_native_mirror_owners','cockpit_client_profiles','cockpit_csm_client_overrides','cockpit_offboard_dismissals','cockpit_eod_reports','cockpit_decisions','cockpit_daily_checks','cockpit_issue_reports','cockpit_members','cockpit_plan_items','cockpit_team_status','cockpit_team_status_state','cockpit_metric_days','cockpit_client_billing_days','cockpit_csm_client_preferences','cockpit_csm_hot_rows','cockpit_csm_loose_dismissals','cockpit_csm_money_goals','cockpit_csm_projections','cockpit_csm_renewal_plans','cockpit_media_call_briefs','cockpit_wa_thread_captures','cockpit_wa_draft_history'] LOOP
   IF to_regclass('public.'||name) IS NULL THEN CONTINUE;END IF;
   EXECUTE format('LOCK TABLE public.%I IN SHARE MODE',name);
   EXECUTE format('SELECT coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text),''[]''::jsonb) FROM public.%I t',name) INTO rows;
@@ -485,7 +487,7 @@ BEGIN
  PERFORM public.cockpit_native_media_fence(p_run_id,p_lease_token);
  IF p_plan->>'project_ref' IS DISTINCT FROM 'bldgtotkfmhoxmlzowdx' OR p_plan->'scope_complete' IS DISTINCT FROM 'true'::jsonb OR p_plan->'blockers' IS DISTINCT FROM '[]'::jsonb OR coalesce(p_plan_sha,'') !~ '^[0-9a-f]{64}$' THEN RAISE EXCEPTION 'Reviewed complete bootstrap plan required';END IF;
  IF p_plan->>'created_at' IS NULL OR (p_plan->>'created_at')::timestamptz<clock_timestamp()-interval '24 hours' OR (p_plan->>'created_at')::timestamptz>clock_timestamp()+interval '1 minute' THEN RAISE EXCEPTION 'Bootstrap plan is not fresh';END IF;
- LOCK TABLE public.cockpit_runtime_imports,public.cockpit_media_sources,public.cockpit_media_source_state,public.cockpit_csm_sources,public.cockpit_csm_source_state,public.cockpit_creative_sources,public.cockpit_creative_source_state,public.cockpit_campaigns,public.cockpit_ads,public.cockpit_media_daily_stats,public.cockpit_media_booking_events,public.cockpit_media_feed_state,public.cockpit_csm_client_preferences,public.cockpit_csm_hot_rows,public.cockpit_csm_loose_dismissals,public.cockpit_csm_money_goals,public.cockpit_csm_projections,public.cockpit_csm_renewal_plans,public.cockpit_media_call_briefs IN SHARE ROW EXCLUSIVE MODE;
+ LOCK TABLE public.cockpit_runtime_imports,public.cockpit_media_sources,public.cockpit_media_source_state,public.cockpit_csm_sources,public.cockpit_csm_source_state,public.cockpit_creative_sources,public.cockpit_creative_source_state,public.cockpit_campaigns,public.cockpit_ads,public.cockpit_media_daily_stats,public.cockpit_media_booking_events,public.cockpit_media_feed_state,public.cockpit_csm_client_preferences,public.cockpit_csm_hot_rows,public.cockpit_csm_loose_dismissals,public.cockpit_csm_money_goals,public.cockpit_csm_projections,public.cockpit_csm_renewal_plans,public.cockpit_media_call_briefs,public.cockpit_wa_thread_captures,public.cockpit_wa_draft_history IN SHARE ROW EXCLUSIVE MODE;
  inventory:=public.cockpit_native_bootstrap_inventory();
  IF inventory->'tables' IS DISTINCT FROM p_plan->'expected_tables' THEN RAISE EXCEPTION 'Bootstrap inventory revision conflict';END IF;
  IF jsonb_typeof(p_plan->'operations') IS DISTINCT FROM 'array' THEN RAISE EXCEPTION 'Bootstrap operations missing';END IF;
@@ -570,6 +572,8 @@ BEGIN
     WHEN app='client-success' AND tab='projections' THEN 'cockpit_csm_projections'
     WHEN app='client-success' AND tab='renewalPlans' THEN 'cockpit_csm_renewal_plans'
     WHEN app='media-buyer' AND tab='callBriefs' THEN 'cockpit_media_call_briefs'
+    WHEN app IN('client-success','creative-director') AND tab='waThreads' THEN 'cockpit_wa_thread_captures'
+    WHEN app='media-buyer' AND tab='replyDrafts' THEN 'cockpit_wa_draft_history'
     ELSE NULL END;
    IF target IS NULL OR op->>'target' IS DISTINCT FROM target THEN RAISE EXCEPTION 'Unsupported durable canonical target';END IF;
    rows:=op->'rows';stamp:=(op->>'source_snapshot_at')::timestamptz;
@@ -706,8 +710,37 @@ BEGIN
       OR nullif(btrim(durable_row_data->>'client_name'),'') IS NULL OR nullif(durable_row_data->>'key','') IS NULL
       OR jsonb_typeof(durable_row_data->'per_call') IS DISTINCT FROM 'array'
      THEN RAISE EXCEPTION 'Invalid call brief mapping';END IF;
+    ELSIF tab='waThreads' THEN
+     IF durable_row_data - ARRAY['source_app','chat_id','channel','name','client_name','contact_id','source','is_group','unread','last_from_us','silent_days','draft','draft_at','recent','last_at','waiting_since','synced_at','creation_time','source_deployment','source_id','source_record']<>'{}'::jsonb
+      OR durable_row_data->>'source_deployment' IS DISTINCT FROM op->>'deployment' OR durable_row_data->>'source_id' IS DISTINCT FROM source_id
+      OR durable_row_data->>'source_app' IS DISTINCT FROM app
+      OR nullif(btrim(durable_row_data->>'chat_id'),'') IS NULL OR nullif(btrim(durable_row_data->>'channel'),'') IS NULL
+      OR nullif(btrim(durable_row_data->>'name'),'') IS NULL OR nullif(btrim(durable_row_data->>'contact_id'),'') IS NULL
+      OR durable_row_data->>'source' IS DISTINCT FROM 'ghl'
+      OR jsonb_typeof(durable_row_data->'is_group') IS DISTINCT FROM 'boolean'
+      OR jsonb_typeof(durable_row_data->'last_from_us') IS DISTINCT FROM 'boolean'
+      OR (durable_row_data->'unread'<>'null'::jsonb AND (durable_row_data->>'unread') !~ '^[0-9]+$')
+      OR jsonb_typeof(durable_row_data->'recent') IS DISTINCT FROM 'array'
+      OR nullif(durable_row_data->>'last_at','') IS NULL OR nullif(durable_row_data->>'creation_time','') IS NULL
+     THEN RAISE EXCEPTION 'Invalid WhatsApp thread mapping';END IF;
+     IF EXISTS(
+      SELECT 1 FROM jsonb_array_elements(durable_row_data->'recent') AS frag(val)
+      WHERE jsonb_typeof(val)<>'object'
+       OR nullif(frag.val->>'at','') IS NULL
+       OR jsonb_typeof(frag.val->'fromMe') IS DISTINCT FROM 'boolean'
+       OR jsonb_typeof(frag.val->'text') IS DISTINCT FROM 'string'
+       OR jsonb_typeof(frag.val->'who') IS DISTINCT FROM 'string'
+     ) THEN RAISE EXCEPTION 'Invalid WhatsApp thread fragment';END IF;
+    ELSIF tab='replyDrafts' THEN
+     IF durable_row_data - ARRAY['source_app','chat_id','status','job_id','draft','at','last_at','creation_time','source_deployment','source_id','source_record']<>'{}'::jsonb
+      OR durable_row_data->>'source_deployment' IS DISTINCT FROM op->>'deployment' OR durable_row_data->>'source_id' IS DISTINCT FROM source_id
+      OR durable_row_data->>'source_app' IS DISTINCT FROM app
+      OR nullif(btrim(durable_row_data->>'chat_id'),'') IS NULL
+      OR coalesce(durable_row_data->>'status','') NOT IN('done','queued','declined')
+      OR nullif(durable_row_data->>'at','') IS NULL OR nullif(durable_row_data->>'creation_time','') IS NULL
+     THEN RAISE EXCEPTION 'Invalid reply draft mapping';END IF;
     END IF;
-    IF tab IN('clientPrefs','hotList','looseDismissed','moneyGoals','projections','renewalPlans','callBriefs') THEN
+    IF tab IN('clientPrefs','hotList','looseDismissed','moneyGoals','projections','renewalPlans','callBriefs','waThreads','replyDrafts') THEN
      IF durable_row_data->'source_record'->>'_id' IS DISTINCT FROM source_id
       OR durable_row_data->>'source_deployment' IS DISTINCT FROM op->>'deployment' THEN RAISE EXCEPTION 'Original CSM record identity mismatch';END IF;
      IF tab IN('clientPrefs','hotList','moneyGoals','projections','renewalPlans') AND nullif(durable_row_data->>'updated_at','') IS NULL
@@ -719,7 +752,7 @@ BEGIN
      THEN RAISE EXCEPTION 'Invalid member assignments';END IF;
     ELSIF tab='feedback' THEN
      IF durable_row_data->'metadata'->>'_id' IS DISTINCT FROM source_id THEN RAISE EXCEPTION 'Issue report source identity mismatch';END IF;
-    ELSIF tab NOT IN('ceoTeamStatus','ceoDaily','ceoAudit','ceoClientBilling','clientPrefs','hotList','looseDismissed','moneyGoals','projections','renewalPlans','callBriefs') AND durable_row_data->'source_row'->>'_id' IS DISTINCT FROM source_id THEN
+    ELSIF tab NOT IN('ceoTeamStatus','ceoDaily','ceoAudit','ceoClientBilling','clientPrefs','hotList','looseDismissed','moneyGoals','projections','renewalPlans','callBriefs','waThreads','replyDrafts') AND durable_row_data->'source_row'->>'_id' IS DISTINCT FROM source_id THEN
      RAISE EXCEPTION 'Durable archive identity does not match source row';
     END IF;
     IF EXISTS(SELECT 1 FROM jsonb_array_elements(item->'client_names') AS n(value) WHERE jsonb_typeof(value)<>'string')
@@ -786,6 +819,12 @@ BEGIN
      ELSIF tab='callBriefs' THEN
       SELECT count(*) INTO exact_count FROM public.cockpit_media_call_briefs WHERE client_name=durable_row_data->>'client_name' AND key=durable_row_data->>'key';
       IF exact_count>0 THEN RAISE EXCEPTION 'Protected call brief has a different source identity';END IF;
+     ELSIF tab='waThreads' THEN
+      SELECT count(*) INTO exact_count FROM public.cockpit_wa_thread_captures WHERE chat_id=durable_row_data->>'chat_id' AND source_app=durable_row_data->>'source_app';
+      IF exact_count>0 THEN RAISE EXCEPTION 'Protected WhatsApp thread capture has a different source identity';END IF;
+     ELSIF tab='replyDrafts' THEN
+      SELECT count(*) INTO exact_count FROM public.cockpit_wa_draft_history WHERE chat_id=durable_row_data->>'chat_id' AND source_app=durable_row_data->>'source_app' AND at=(durable_row_data->>'at')::timestamptz;
+      IF exact_count>0 THEN RAISE EXCEPTION 'Protected WhatsApp draft version has a different source identity';END IF;
      END IF;
     END IF;
     IF old IS NULL AND prior.source_id IS NOT NULL THEN RAISE EXCEPTION 'Previously imported durable target disappeared';END IF;
@@ -911,10 +950,29 @@ BEGIN
         durable_row_data->>'status',durable_row_data->>'overall',durable_row_data->'per_call',
         (durable_row_data->>'at')::timestamptz,op->>'deployment',source_id,durable_row_data->'source_record')
        RETURNING to_jsonb(cockpit_media_call_briefs.*) INTO new_row;
+      ELSIF tab='waThreads' THEN
+       INSERT INTO public.cockpit_wa_thread_captures(source_app,chat_id,channel,name,client_name,contact_id,source,is_group,unread,last_from_us,silent_days,draft,draft_at,recent,last_at,waiting_since,synced_at,creation_time,source_deployment,source_id,source_record)
+       VALUES(durable_row_data->>'source_app',durable_row_data->>'chat_id',durable_row_data->>'channel',durable_row_data->>'name',
+        durable_row_data->>'client_name',durable_row_data->>'contact_id',durable_row_data->>'source',
+        (durable_row_data->>'is_group')::boolean,(durable_row_data->>'unread')::integer,(durable_row_data->>'last_from_us')::boolean,
+        nullif(durable_row_data->>'silent_days','')::integer,durable_row_data->>'draft',
+        nullif(durable_row_data->>'draft_at','')::timestamptz,durable_row_data->'recent',
+        (durable_row_data->>'last_at')::timestamptz,nullif(durable_row_data->>'waiting_since','')::timestamptz,
+        nullif(durable_row_data->>'synced_at','')::timestamptz,(durable_row_data->>'creation_time')::timestamptz,
+        op->>'deployment',source_id,durable_row_data->'source_record')
+       RETURNING to_jsonb(cockpit_wa_thread_captures.*) INTO new_row;
+      ELSIF tab='replyDrafts' THEN
+       INSERT INTO public.cockpit_wa_draft_history(source_app,chat_id,status,job_id,draft,at,last_at,creation_time,source_deployment,source_id,source_record)
+       VALUES(durable_row_data->>'source_app',durable_row_data->>'chat_id',durable_row_data->>'status',
+        durable_row_data->>'job_id',durable_row_data->>'draft',
+        (durable_row_data->>'at')::timestamptz,nullif(durable_row_data->>'last_at','')::timestamptz,
+        (durable_row_data->>'creation_time')::timestamptz,
+        op->>'deployment',source_id,durable_row_data->'source_record')
+       RETURNING to_jsonb(cockpit_wa_draft_history.*) INTO new_row;
       END IF;
-      IF tab IN('ceoTeamStatus','planItems','ceoDaily','ceoClientBilling','clientPrefs','hotList','looseDismissed','moneyGoals','projections','renewalPlans','callBriefs') THEN
+      IF tab IN('ceoTeamStatus','planItems','ceoDaily','ceoClientBilling','clientPrefs','hotList','looseDismissed','moneyGoals','projections','renewalPlans','callBriefs','waThreads','replyDrafts') THEN
        INSERT INTO public.cockpit_audit_log(action,entity_type,entity_id,source_app,source_system,before,after)
-       VALUES('bootstrap.insert',target,coalesce(new_row->>'key',new_row->>'id',new_row->>'person_key',new_row->>'task_id',concat_ws(':',new_row->>'week_start',new_row->>'owner_email',new_row->>'metric'),concat_ws(':',new_row->>'day',new_row->>'clickup_task_id',new_row->>'metric',new_row->>'scope')),app,'convex',NULL,new_row);
+       VALUES('bootstrap.insert',target,coalesce(new_row->>'chat_id',new_row->>'key',new_row->>'id',new_row->>'person_key',new_row->>'task_id',concat_ws(':',new_row->>'week_start',new_row->>'owner_email',new_row->>'metric'),concat_ws(':',new_row->>'day',new_row->>'clickup_task_id',new_row->>'metric',new_row->>'scope')),app,'convex',NULL,new_row);
       ELSE
       INSERT INTO public.cockpit_issue_reports(kind,text,status,batch,note,created_by,source_system,source_id,app,page,role,actor_email,metadata)
       VALUES(durable_row_data->>'kind',durable_row_data->>'text',durable_row_data->>'status',durable_row_data->>'batch',

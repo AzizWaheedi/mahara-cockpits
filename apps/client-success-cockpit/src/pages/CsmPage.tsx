@@ -2,10 +2,10 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router";
 import { toast } from "sonner";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
-
 import { ArrowUpRight, Check, ChevronDown, ChevronRight, X } from "lucide-react";
 import { type ReactNode } from "react";
 import { Chip, Dot, ExtLink, Kicker, PageHeader, Pill, PillRow, StatTile, type Tone } from "@/components/kit";
+import { KitSummary, OnboardingKit } from "@/components/OnboardingKit";
 import { ReportIssue } from "@/components/ReportIssue";
 import { SendForReview } from "@/components/SendForReview";
 import { AnimatedSelect } from "@/components/ui/animated-select";
@@ -25,6 +25,8 @@ import { useCsmSnapshot } from "@/lib/useCsmSnapshot";
 import { cn } from "@/lib/utils";
 import type { MonthRow } from "@/lib/churnCore";
 import { readChurnPage } from "@/lib/churnClient";
+import type { KitsPage } from "@/lib/onboardingCore";
+import { readOnboardingKits, refreshOnboardingKits } from "@/lib/onboardingClient";
 
 /** Tickets the CSM raises. Picking the request picks the board — she never picks a team. */
 const TICKETS: { label: string; dept: string; deptLabel: string }[] = [
@@ -987,7 +989,16 @@ function HotSheet({
   );
 }
 
-export function CsmPage({ section }: { section: Section }) {
+function kitErrorText(error: unknown): string {
+  return error instanceof Error ? error.message : "The onboarding links could not be read. Reload the view.";
+}
+
+export function CsmPage(props: { section: Section }) {
+  const auth = useCockpitAuth();
+  return <CsmContent key={auth.session?.user.id ?? "signed-out"} {...props} />;
+}
+
+function CsmContent({ section }: { section: Section }) {
   const auth = useCockpitAuth();
   const sb = useCsmSnapshot(auth.client, auth.clients);
   const snap = sb.snap;
@@ -1015,7 +1026,13 @@ export function CsmPage({ section }: { section: Section }) {
     return () => publishOpenClient(null);
   }, [open]);
   const [panel, setPanel] = useState<
-    "message" | "actions" | "book" | "ticket" | "leave" | "update"
+    | "onboarding"
+    | "message"
+    | "actions"
+    | "book"
+    | "ticket"
+    | "leave"
+    | "update"
   >("message");
   const [ticket, setTicket] = useState(TICKETS[0].label);
   const [ticketNote, setTicketNote] = useState("");
@@ -1094,6 +1111,46 @@ export function CsmPage({ section }: { section: Section }) {
     [snap],
   );
 
+  const refreshKits = (args: { taskId: string; taskIds: string[] }) => refreshOnboardingKits(auth.client, args.taskId, args.taskIds);
+  const [kitPage, setKitPage] = useState<KitsPage | null>(null);
+  const [kitLoadedFor, setKitLoadedFor] = useState("");
+  const [kitError, setKitError] = useState<string | null>(null);
+  const [kitRefreshing, setKitRefreshing] = useState<string | null>(null);
+  const kitKey = useMemo(() => {
+    const list: Client[] = snap?.clients ?? [];
+    const ids = new Set(list.filter(c => c.bucket === "onboarding").map(c => String(c.taskId)));
+    const openRow = list.find(c => c.name === open);
+    if (openRow) ids.add(String(openRow.taskId));
+    return [...ids].sort().join(",");
+  }, [snap, open]);
+  useEffect(() => {
+    if (section !== "clients" || !kitKey) return;
+    let live = true;
+    const load = () => readOnboardingKits(auth.client, kitKey.split(","))
+      .then(page => { if (live) { setKitPage(page); setKitLoadedFor(kitKey); setKitError(null); } })
+      .catch(error => { if (live) setKitError(kitErrorText(error)); });
+    void load();
+    const timer = setInterval(load, 180_000);
+    return () => { live = false; clearInterval(timer); };
+  }, [section, kitKey, auth.client]);
+  const kitOf = (client: Client) => {
+    const id = String(client.taskId);
+    if (!kitLoadedFor.split(",").includes(id)) return undefined;
+    return kitPage?.rows.find(row => row.clickup_task_id === id) ?? null;
+  };
+  const refreshKit = async (taskId: string) => {
+    setKitRefreshing(taskId);
+    try {
+      const ids = kitKey ? kitKey.split(",") : [];
+      if (!ids.includes(taskId)) ids.push(taskId);
+      const page = await refreshKits({ taskId, taskIds: ids });
+      setKitPage(page); setKitLoadedFor(ids.sort().join(",")); setKitError(null);
+      if (page.problem) toast.error(page.problem);
+      else toast.success("Read again from ClickUp and Typeform");
+    } catch (error) {
+      setKitError(kitErrorText(error)); toast.error(kitErrorText(error));
+    } finally { setKitRefreshing(null); }
+  };
   if (sb.error) {
     return (
       <div className="p-10 text-sm text-muted-foreground" role="alert">
@@ -1226,7 +1283,7 @@ export function CsmPage({ section }: { section: Section }) {
           className="flex w-full items-start justify-between gap-3 px-4 py-3 text-left sm:px-6 sm:py-4"
           onClick={() => {
             setOpen(isOpen ? null : c.name);
-            setPanel("message");
+            setPanel(c.bucket === "onboarding" ? "onboarding" : "message");
           }}
         >
           <div className="min-w-0 flex-1">
@@ -1260,6 +1317,11 @@ export function CsmPage({ section }: { section: Section }) {
             <div className="mt-1 text-sm" dir="auto">
               {plainText(c.todo)}
             </div>
+            {c.bucket === "onboarding" && kitOf(c) ? (
+              <KitSummary
+                kit={kitOf(c) as NonNullable<ReturnType<typeof kitOf>>}
+              />
+            ) : null}
             <div className="mt-1 text-xs text-muted-foreground">
               {c.lastPoc
                 ? `Last contact ${shortDay(c.lastPoc)}`
@@ -1289,6 +1351,7 @@ export function CsmPage({ section }: { section: Section }) {
             <PillRow>
               {(
                 [
+                  "onboarding",
                   "message",
                   "actions",
                   "book",
@@ -1298,20 +1361,35 @@ export function CsmPage({ section }: { section: Section }) {
                 ] as const
               ).map(p => (
                 <Pill key={p} active={panel === p} onClick={() => setPanel(p)}>
-                  {p === "message"
-                    ? "Message (SOP template)"
-                    : p === "actions"
-                      ? "Log a touchpoint"
-                      : p === "book"
-                        ? "Book the next call"
-                        : p === "update"
-                          ? "Update the board"
-                          : p === "ticket"
-                            ? "Raise a ticket"
-                            : "Leave it"}
+                  {p === "onboarding"
+                    ? c.bucket === "onboarding"
+                      ? "Onboarding"
+                      : "Links"
+                    : p === "message"
+                      ? "Message (SOP template)"
+                      : p === "actions"
+                        ? "Log a touchpoint"
+                        : p === "book"
+                          ? "Book the next call"
+                          : p === "update"
+                            ? "Update the board"
+                            : p === "ticket"
+                              ? "Raise a ticket"
+                              : "Leave it"}
                 </Pill>
               ))}
             </PillRow>
+
+            {panel === "onboarding" && (
+              <OnboardingKit
+                client={c}
+                kit={kitOf(c)}
+                page={kitPage}
+                error={kitError}
+                refreshing={kitRefreshing === String(c.taskId)}
+                onRefresh={() => void refreshKit(String(c.taskId))}
+              />
+            )}
 
             {panel === "message" && (
               <TemplatePicker

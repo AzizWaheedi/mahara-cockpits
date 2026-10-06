@@ -325,6 +325,15 @@ export const run = internalAction({
               lastAt: Number(lastAt),
               draft: text,
             });
+          // Hermes declined this message (not a client thread, or nothing to
+          // reply to). Record it, so replyDrafts.queue stops asking again.
+          else if (job.status === "failed")
+            await ctx.runMutation(internal.replyDrafts.saveDraft, {
+              chatId,
+              lastAt: Number(lastAt),
+              jobId: String(r.jobId),
+              status: "declined",
+            });
         } else if ((r.app as string) === "fix") {
           // Hermes's report on a flagged error goes to Aziz, not to a thread.
           const res =

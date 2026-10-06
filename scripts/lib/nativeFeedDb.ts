@@ -50,6 +50,6 @@ export async function nativeFeedDb() {
  for(const name of ['20260927s_creative_read_models.sql','20260927v_csm_read_models.sql','20260927w_media_read_models.sql','20261005f_cockpit_csm_history.sql'])await db.exec(migration(name));
  const calendarOwner=migration('20260927a_cockpit_ask_ai_jobs.sql').match(/CREATE OR REPLACE FUNCTION public\.cockpit_ask_ai_owner_allowed\([\s\S]*?\$\$;/)?.[0];
  if(!calendarOwner)throw new Error('Canonical calendar owner permission missing');await db.exec(calendarOwner);
- for(const name of ['20261004d_media_native_surface.sql','20261004e_media_native_worker_contracts.sql','20260927x_cockpit_native_media_sync.sql'])await db.exec(migration(name));
+ for(const name of ['20261004d_media_native_surface.sql','20261004e_media_native_worker_contracts.sql','20261006b_cockpit_whatsapp_history.sql','20260927x_cockpit_native_media_sync.sql'])await db.exec(migration(name));
  return db;
 }

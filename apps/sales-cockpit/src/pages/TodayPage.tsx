@@ -299,17 +299,17 @@ function OwedCard({
             {list.slice(0, 15).map(r => (
               <li
                 key={r.appointment_id}
-                className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center"
+                className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center hover:bg-white/[0.02] transition-colors"
               >
                 <div className="min-w-0 flex-1">
                   <Link
                     to={`/lead/${r.contact_id ?? ""}`}
-                    className="block truncate text-sm font-medium hover:underline"
+                    className="block truncate text-sm font-semibold hover:underline hover:text-[color:var(--primary)] transition-colors"
                     dir="auto"
                   >
                     {r.contact_name ?? "A lead"}
                   </Link>
-                  <p className="muted text-xs">
+                  <p className="muted text-xs mt-0.5">
                     <Parts
                       items={[
                         callType(r.call_type),

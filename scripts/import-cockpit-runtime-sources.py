@@ -43,6 +43,8 @@ DOMAIN_TABLES = {
     "projections": "cockpit_csm_projections",
     "renewalPlans": "cockpit_csm_renewal_plans",
     "callBriefs": "cockpit_media_call_briefs",
+    "waThreads": "cockpit_wa_thread_captures",
+    "replyDrafts": "cockpit_wa_draft_history",
 }
 GLOBAL_SOURCES = frozenset("clickupMembers syncRuns kpi marketPlays winnersArchive checks eodReports members feedback ceoTeamStatus ceoDaily ceoAudit ceoClientBilling moneyGoals projections".split())
 BILLING_FIELDS = {
@@ -135,6 +137,10 @@ def classify(app, table):
         return "durable", DOMAIN_TABLES[table]
     if table == "callBriefs" and app == "media-buyer":
         return "durable", DOMAIN_TABLES[table]
+    if table == "waThreads" and app in ("client-success", "creative-director"):
+        return "durable", DOMAIN_TABLES[table]
+    if table == "replyDrafts" and app == "media-buyer":
+        return "durable", DOMAIN_TABLES[table]
     if table in AUTH_TABLES:
         return "invalidate", "Legacy sessions and tokens are not imported; Supabase login is required"
     if table in SOURCE_TABLES.get(app, ()):
@@ -226,7 +232,7 @@ def client_names(app, table, row, tables):
             requested.extend(names)
     if not requested:
         # Retain unassigned work and role-shared legacy plans without inventing a scope.
-        if table in ("creativeTasks", "videoJobs", "contentPosts", "csTasks", "inbox", "feedback", "planItems", "hotList"):
+        if table in ("creativeTasks", "videoJobs", "contentPosts", "csTasks", "inbox", "feedback", "planItems", "hotList", "waThreads", "replyDrafts"):
             return []
         raise ValueError(f"Missing client scope: {app}/{table}")
     result = []
@@ -677,6 +683,106 @@ def durable_data(snapshot, table, row):
         return {"client_name": client_name.strip(), "key": key.strip(), "job_id": row.get("jobId"),
                 "status": status, "overall": overall, "per_call": per_call or [], "at": at,
                 "source_deployment": deployment, "source_id": source_id, "source_record": row}
+    if table == "waThreads":
+        chat_id = row.get("chatId")
+        if not isinstance(chat_id, str) or not chat_id.strip():
+            raise ValueError("WhatsApp thread chatId is missing")
+        channel = row.get("channel")
+        if not isinstance(channel, str) or not channel.strip():
+            raise ValueError("WhatsApp thread channel is missing")
+        name = row.get("name")
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError("WhatsApp thread name is missing")
+        contact_id = row.get("contactId")
+        if not isinstance(contact_id, str) or not contact_id.strip():
+            raise ValueError("WhatsApp thread contactId is missing")
+        source = row.get("source")
+        if source != "ghl":
+            raise ValueError("WhatsApp thread source must be ghl")
+        is_group = row.get("isGroup")
+        if not isinstance(is_group, bool):
+            raise ValueError("WhatsApp thread isGroup must be a boolean")
+        unread = row.get("unread")
+        if unread is not None:
+            if not isinstance(unread, (int, float)) or isinstance(unread, bool) or not math.isfinite(unread) or unread < 0 or int(unread) != unread:
+                raise ValueError("WhatsApp thread unread must be a non-negative whole number or missing")
+            unread = int(unread)
+        last_from_us = row.get("lastFromUs")
+        if not isinstance(last_from_us, bool):
+            raise ValueError("WhatsApp thread lastFromUs must be a boolean")
+        recent = row.get("recent")
+        if not isinstance(recent, list):
+            raise ValueError("WhatsApp thread recent must be a list")
+        for frag in recent:
+            if not isinstance(frag, dict):
+                raise ValueError("WhatsApp thread fragment must be an object")
+            if not isinstance(frag.get("at"), (int, float)) or isinstance(frag.get("at"), bool):
+                raise ValueError("WhatsApp thread fragment at must be a timestamp")
+            if not isinstance(frag.get("fromMe"), bool):
+                raise ValueError("WhatsApp thread fragment fromMe must be a boolean")
+            if not isinstance(frag.get("text"), str):
+                raise ValueError("WhatsApp thread fragment text must be a string")
+            if not isinstance(frag.get("who"), str):
+                raise ValueError("WhatsApp thread fragment who must be a string")
+        last_at = _source_time(row.get("lastAt"), "waThreads lastAt")
+        if last_at is None:
+            raise ValueError("WhatsApp thread lastAt is missing")
+        waiting_since = _source_time(row.get("waitingSince"), "waThreads waitingSince")
+        draft_at = _source_time(row.get("draftAt"), "waThreads draftAt")
+        synced_at = _source_time(row.get("syncedAt"), "waThreads syncedAt")
+        creation_time = _source_time(row.get("_creationTime"), "waThreads _creationTime")
+        if creation_time is None:
+            raise ValueError("WhatsApp thread _creationTime is missing")
+        return {
+            "source_app": app,
+            "chat_id": chat_id.strip(),
+            "channel": channel.strip(),
+            "name": name,
+            "client_name": row.get("clientName"),
+            "contact_id": contact_id.strip(),
+            "source": source,
+            "is_group": is_group,
+            "unread": unread,
+            "last_from_us": last_from_us,
+            "silent_days": row.get("silentDays"),
+            "draft": row.get("draft"),
+            "draft_at": draft_at,
+            "recent": recent,
+            "last_at": last_at,
+            "waiting_since": waiting_since,
+            "synced_at": synced_at,
+            "creation_time": creation_time,
+            "source_deployment": deployment,
+            "source_id": source_id,
+            "source_record": row,
+        }
+    if table == "replyDrafts":
+        chat_id = row.get("chatId")
+        if not isinstance(chat_id, str) or not chat_id.strip():
+            raise ValueError("replyDraft chatId is missing")
+        status = row.get("status")
+        if status not in ("done", "queued", "declined"):
+            raise ValueError("replyDraft status must be done, queued, or declined")
+        at = _source_time(row.get("at"), "replyDraft at")
+        if at is None:
+            raise ValueError("replyDraft at timestamp is missing")
+        creation_time = _source_time(row.get("_creationTime"), "replyDraft _creationTime")
+        if creation_time is None:
+            raise ValueError("replyDraft _creationTime is missing")
+        last_at = _source_time(row.get("lastAt"), "replyDraft lastAt")
+        return {
+            "source_app": app,
+            "chat_id": chat_id.strip(),
+            "status": status,
+            "job_id": row.get("jobId"),
+            "draft": row.get("draft"),
+            "at": at,
+            "last_at": last_at,
+            "creation_time": creation_time,
+            "source_deployment": deployment,
+            "source_id": source_id,
+            "source_record": row,
+        }
     raise ValueError(f"No durable mapping for {app}/{table}")
 
 def durable_guard_data(table, data):
@@ -709,9 +815,11 @@ def durable_guard_data(table, data):
         "projections": ("week_start", "owner_email", "metric", "data", "updated_at", "source_deployment", "source_id", "source_record"),
         "renewalPlans": ("task_id", "client_name", "renewal_date", "data", "updated_at", "source_deployment", "source_id", "source_record"),
         "callBriefs": ("client_name", "key", "job_id", "status", "overall", "per_call", "at", "source_deployment", "source_id", "source_record"),
+        "waThreads": ("source_app", "chat_id", "channel", "name", "client_name", "contact_id", "source", "is_group", "unread", "last_from_us", "silent_days", "draft", "draft_at", "recent", "last_at", "waiting_since", "synced_at", "creation_time", "source_deployment", "source_id", "source_record"),
+        "replyDrafts": ("source_app", "chat_id", "status", "job_id", "draft", "at", "last_at", "creation_time", "source_deployment", "source_id", "source_record"),
     }
     result = {key: data.get(key) for key in fields[table]}
-    for key in ("set_at",) if table == "ceoTeamStatus" else ("created_at",) if table in ("planItems", "ceoAudit") else ("captured_at",) if table in ("ceoDaily", "ceoClientBilling") else ("cleared_at",) if table == "looseDismissed" else ("at",) if table == "callBriefs" else ("created_at", "updated_at") if table == "hotList" else ("updated_at",) if table in ("clientPrefs", "moneyGoals", "projections", "renewalPlans") else ():
+    for key in ("set_at",) if table == "ceoTeamStatus" else ("created_at",) if table in ("planItems", "ceoAudit") else ("captured_at",) if table in ("ceoDaily", "ceoClientBilling") else ("cleared_at",) if table == "looseDismissed" else ("at",) if table == "callBriefs" else ("created_at", "updated_at") if table == "hotList" else ("updated_at",) if table in ("clientPrefs", "moneyGoals", "projections", "renewalPlans") else ("draft_at", "last_at", "waiting_since", "synced_at", "creation_time") if table == "waThreads" else ("at", "last_at", "creation_time") if table == "replyDrafts" else ():
         if result[key] is not None:
             value = datetime.fromisoformat(result[key].replace("Z", "+00:00"))
             if value.tzinfo is None:
@@ -828,6 +936,12 @@ def durable_reconcile(snapshot, table, rows, inventory):
             elif table == "callBriefs":
                 if any(item.get("client_name") == data["client_name"] and item.get("key") == data["key"] for item in targets):
                     raise ValueError("Protected call brief has a different source identity")
+            elif table == "waThreads":
+                if any(item.get("chat_id") == data["chat_id"] and item.get("source_app") == data["source_app"] for item in targets):
+                    raise ValueError("Protected WhatsApp thread capture has a different source identity")
+            elif table == "replyDrafts":
+                if any(item.get("chat_id") == data["chat_id"] and item.get("source_app") == data["source_app"] and str(item.get("at")) == data["at"] for item in targets):
+                    raise ValueError("Protected WhatsApp draft version has a different source identity")
         if len(matches) > 1:
             raise ValueError("Ambiguous durable target identity")
         current = matches[0] if matches else None

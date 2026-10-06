@@ -9,7 +9,15 @@
  * the cockpit uses), the whoami call, the proposal file and the sales-api
  * function. Nothing leaves the browser. The real scripts are read from
  * tmp/harness/scripts.json when it exists (gitignored); without it the call
- * screen says the script is not imported.
+ * screen says the script is not imported. A proposal's document is
+ * public/tmp/harness/proposal.html when it exists (a deal from the desk's
+ * test fakes, built by proposal-template.html), else a one-line page.
+ *
+ * The proposal writer's states each have a row: /proposal/p-wait (no model
+ * answering), /proposal/p-retry (a failed try, slow), /proposal/p-norec
+ * (failed, no recording), /proposal/p-nopdf (ready, no PDF), /proposal/p1
+ * (needs figures); Draft proposal on a lead's page queues a new one, and
+ * Draft again, Stop drafting and Archive answer as sales-api does.
  *
  * The dialer's side of sales-api keeps state, so the next-lead flow behaves
  * as it does live: a call opens, rings and ends; a saved lead leaves the
@@ -25,6 +33,7 @@
  *   resync   ok | done | fail
  *   crm      pending | failed     (what a save's HighLevel half does)
  *   hot      ok | fail       (hot.save refuses every change: a cell's failed state)
+ *   desk     ok | waiting | late   (the proposal writer's health line)
  *   wait     ms every sales-api answer takes (250)
  *   queueWait  ms dial.queue takes; it reads when asked and answers late,
  *            as a slow server does (0: the same as wait)
@@ -55,6 +64,7 @@ const knobs = {
   resync: "ok",
   crm: "pending",
   hot: "ok",
+  desk: "ok",
   wait: 250,
   queueWait: 0,
   gap: 12_000,
@@ -821,6 +831,127 @@ async function salesApi(b: Row, signal?: AbortSignal | null): Promise<Row> {
       };
       return {};
     }
+    case "proposal.draft": {
+      const id = `p-new-${now}`;
+      const contact = String(b.contact_id ?? "");
+      const lang = b.lang === "en" ? "en" : "ar";
+      F.REQUESTS.unshift({
+        id: `q-${id}`,
+        kind: "proposal",
+        contact_id: contact,
+        appointment_id: b.appointment_id ?? null,
+        params: { proposal_id: id, lang, offer: b.offer ?? null },
+        status: "queued",
+        requested_by: F.ME.email,
+        requested_at: new Date(now).toISOString(),
+        claimed_at: null,
+        attempts: 0,
+        finished_at: null,
+        error: null,
+        result: null,
+      });
+      const row = {
+        id,
+        request_id: `q-${id}`,
+        contact_id: contact,
+        appointment_id: b.appointment_id ?? null,
+        recording_id: b.recording_id ?? null,
+        lang,
+        variant: null,
+        status: "drafting",
+        deal: null,
+        validation: null,
+        fill_count: null,
+        html_path: null,
+        pdf_path: null,
+        model: null,
+        created_by: F.ME.email,
+        created_at: new Date(now).toISOString(),
+        updated_at: new Date(now).toISOString(),
+        sent_at: null,
+        sent_by: null,
+        error: null,
+      };
+      F.PROPOSALS.unshift(row);
+      return { proposal: row };
+    }
+    case "proposal.retry": {
+      // Draft again: a new request on the same proposal, as sales-api does.
+      const p = F.PROPOSALS.find(x => x.id === String(b.id ?? ""));
+      if (!p) throw new Refusal("That proposal is not there any more.", 404);
+      if (!["failed", "needs_input", "ready"].includes(String(p.status)))
+        throw new Refusal("This proposal is already being written.");
+      const rid = `q-${p.id}-${now}`;
+      F.REQUESTS.unshift({
+        id: rid,
+        kind: "proposal",
+        contact_id: p.contact_id,
+        appointment_id: p.appointment_id ?? null,
+        params: { proposal_id: p.id, lang: p.lang },
+        status: "queued",
+        requested_by: F.ME.email,
+        requested_at: new Date(now).toISOString(),
+        claimed_at: null,
+        attempts: 0,
+        finished_at: null,
+        error: null,
+        result: null,
+      });
+      Object.assign(p, {
+        status: "drafting",
+        request_id: rid,
+        error: null,
+        updated_at: new Date(now).toISOString(),
+      });
+      return { proposal: p };
+    }
+    case "request.set": {
+      // Stop drafting: sales-api cancels a queued request and archives a
+      // first draft (a retry or rebuild goes back to its last version).
+      const r = F.REQUESTS.find(x => x.id === String(b.id ?? ""));
+      if (!r) throw new Refusal("That request is not there any more.", 404);
+      if (r.status === "running")
+        throw new Refusal(
+          "It is being written right now, so it cannot be stopped. Wait for it to finish.",
+          409,
+        );
+      if (r.status !== "queued")
+        throw new Refusal(
+          "Only a request that has not started can be cancelled.",
+        );
+      r.status = "cancelled";
+      r.finished_at = new Date(now).toISOString();
+      const pid = String((r.params as Row | null)?.proposal_id ?? "");
+      const p = F.PROPOSALS.find(x => x.id === pid);
+      if (p) {
+        const before = String((p.validation as Row | null)?.status ?? "");
+        p.status =
+          p.html_path && ["needs_input", "ready", "failed"].includes(before)
+            ? before
+            : "archived";
+      }
+      return {
+        request: r,
+        proposal: p ? { id: pid, status: p.status } : null,
+      };
+    }
+    case "proposal.set": {
+      const p = F.PROPOSALS.find(x => x.id === String(b.id ?? ""));
+      if (!p) throw new Refusal("That proposal is not there any more.", 404);
+      const open = F.REQUESTS.filter(
+        r =>
+          (r.params as Row | null)?.proposal_id === p.id &&
+          (r.status === "queued" || r.status === "running"),
+      );
+      if (b.status === "archived" && open.some(r => r.status === "running"))
+        throw new Refusal(
+          "It is being written right now. Archive it when it finishes.",
+          409,
+        );
+      if (b.status === "archived") for (const r of open) r.status = "cancelled";
+      p.status = String(b.status);
+      return { proposal: p };
+    }
     case "ghl.users":
       return {
         users: [
@@ -843,6 +974,17 @@ async function main() {
   } catch {
     // no scripts staged
   }
+  let proposalPage =
+    "<!doctype html><html dir='rtl'><body style='font-family:system-ui;padding:40px'><h1>مقترح شراكة</h1><p>مشاريعكم القادمة FILL</p></body></html>";
+  try {
+    const res = await fetch("/sales/tmp/harness/proposal.html");
+    const text = res.ok ? await res.text() : "";
+    // Vite answers a missing file with the app's own page.
+    if (text.includes("proposal") && !text.includes("/src/main.tsx"))
+      proposalPage = text;
+  } catch {
+    // no document staged
+  }
 
   const tables: Record<string, Row[]> = {
     cockpit_sales_leads: F.LEADS,
@@ -851,7 +993,7 @@ async function main() {
     cockpit_sales_deals: F.DEALS,
     cockpit_sales_notes: [],
     cockpit_sales_proposals: F.PROPOSALS,
-    cockpit_sales_requests: [],
+    cockpit_sales_requests: F.REQUESTS,
     cockpit_sales_recordings: F.RECORDINGS,
     cockpit_sales_client_forms: [],
     cockpit_sales_scorecards: F.scorecards(),
@@ -862,7 +1004,7 @@ async function main() {
     cockpit_sales_links: F.LINKS,
     cockpit_sales_settings: F.SETTINGS,
     cockpit_sales_mirror_runs: [F.MIRROR_RUN],
-    cockpit_sales_worker_status: [],
+    cockpit_sales_worker_status: F.workerStatus(knobs.desk),
     cockpit_sales_inbox: [...F.INBOX, ...F.HOT_INBOX],
     cockpit_sales_followups: F.FOLLOWUPS,
     cockpit_sales_contracts: F.CONTRACTS,
@@ -911,10 +1053,10 @@ async function main() {
       }
     }
     if (path.startsWith("/storage/v1/object")) {
-      return new Response(
-        "<!doctype html><html dir='rtl'><body style='font-family:system-ui;padding:40px'><h1>مقترح شراكة</h1><p>مشاريعكم القادمة FILL</p></body></html>",
-        { status: 200, headers: { "Content-Type": "text/html" } },
-      );
+      return new Response(proposalPage, {
+        status: 200,
+        headers: { "Content-Type": "text/html" },
+      });
     }
     const m = path.match(/\/rest\/v1\/([a-z_]+)$/);
     if (!m) return json([]);

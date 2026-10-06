@@ -1,7 +1,8 @@
 import { ChartNoAxesColumn, Link2Off } from "lucide-react";
-import { useMemo } from "react";
+import { useId, useMemo } from "react";
 import { useSearchParams } from "react-router";
 import {
+  AnimatedSelect,
   EmptyState,
   Failed,
   page,
@@ -76,6 +77,7 @@ function seatFor(people: Person[], key: string): Person | null {
 }
 
 export default function NumbersPage({ me }: { me: Me }) {
+  const scopeId = useId();
   const now = useNow(60_000);
   const today = kuwaitDay(now);
   const [params, setParams] = useSearchParams();
@@ -226,9 +228,13 @@ export default function NumbersPage({ me }: { me: Me }) {
           </p>
         </div>
         {manager ? (
-          <label className="flex min-w-0 items-center gap-2 text-sm">
+          <label
+            htmlFor={scopeId}
+            className="flex min-w-0 items-center gap-2 text-sm"
+          >
             <span className="muted shrink-0">Whose numbers</span>
-            <select
+            <AnimatedSelect
+              id={scopeId}
               value={team ? TEAM : (key ?? TEAM)}
               onChange={e => setParam("who", e.target.value)}
               className={select}
@@ -239,7 +245,7 @@ export default function NumbersPage({ me }: { me: Me }) {
                   {o.name}
                 </option>
               ))}
-            </select>
+            </AnimatedSelect>
           </label>
         ) : null}
       </header>

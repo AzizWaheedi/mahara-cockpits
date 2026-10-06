@@ -32,21 +32,37 @@ import {
 } from "@/lib/metaMedia";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { nativeAdPreview } from "@/lib/nativePreviewClient";
+import { nativeStillsRead, type NativeStill } from "@/lib/nativeStillClient";
 
-export type LocalStill = { url?: string; tinyUrl?: string };
+export type LocalStill = NativeStill;
 
 type FreshArgs = { adId: string; campaignName?: string; clientName?: string };
 type FreshCall = (args: FreshArgs, actorId: string | undefined) => Promise<PreviewResult>;
 
-const NO_STILLS: Record<string, LocalStill> = {};
-
 /**
  * Saved stills for the rows a screen shows.
  */
-export function useLocalStills(
-  _keys: (string | null | undefined)[],
-): Record<string, LocalStill> {
-  return NO_STILLS;
+export function useLocalStills(keys: (string | null | undefined)[]): Record<string, LocalStill> {
+  const auth = useCockpitAuth();
+  const actor = auth.session?.user.id;
+  const requested = Array.from(new Set(keys.filter((key): key is string => typeof key === "string" && key.length > 0))).sort();
+  const keysKey = JSON.stringify(requested);
+  const identity = `${actor ?? ""}:${keysKey}`;
+  const [state, setState] = useState<{ identity: string; rows: Record<string, LocalStill> }>({ identity: "", rows: {} });
+  // The serialized key set, not the caller's new array object, defines this request.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: keysKey contains every requested key
+  useEffect(() => {
+    let current = true;
+    if (!actor || !auth.client || requested.length === 0) return;
+    nativeStillsRead(auth.client, requested).then(rows => {
+      if (current) setState({ identity, rows });
+    }).catch(error => {
+      if (current) setState({ identity, rows: Object.fromEntries(requested.map(key => [key, { error: error instanceof Error ? error.message : "Saved images are unavailable. Reload the view." }])) });
+    });
+    return () => { current = false; };
+  }, [actor, auth.client, keysKey, identity]);
+  if (state.identity === identity) return state.rows;
+  return Object.fromEntries(requested.map(key => [key, { error: actor ? "Loading saved image." : "Sign in to load saved images." }]));
 }
 
 /** The picture props for a row: this cockpit's copy first, the media buyer's as backup. */
@@ -59,6 +75,7 @@ export function stillPropsFor(
   local: Record<string, LocalStill>,
 ) {
   const mine = row.stillKey ? local[row.stillKey] : undefined;
+  if (mine?.error) return { stillUrl: undefined, stillTinyUrl: undefined, backupStillUrl: undefined, backupStillTinyUrl: undefined, thumbUrl: undefined, emptyReason: mine.error };
   return {
     stillUrl: mine?.url,
     stillTinyUrl: mine?.tinyUrl,

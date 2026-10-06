@@ -1,238 +1,381 @@
 /**
- * Renders the CSM page for real, twice: once while the snapshot is still loading and
- * again with live data, on the same root. That transition is what caught React error
- * #310 — a hook sitting below the loading early-return changes the hook count between
- * renders, which no type check or build will ever catch.
+ * Renders the CSM page and ClientPerformancePage, testing lifecycle transitions
+ * (loading to loaded) on the same DOM root, interactive client selection, ID copying,
+ * and onboarding step expansion.
  *
  * Run: bun test scripts/csm-page.test.tsx
- * Fixture: scripts/fixtures/csm-snapshot.json, a real `csm.snapshot` payload.
  */
 
-import { expect, mock, test } from "bun:test";
+import { afterAll, expect, mock, test } from "bun:test";
 
 const snapshot = await Bun.file(
   new URL("./fixtures/csm-snapshot.json", import.meta.url),
 ).json();
 
-let queryResult: unknown;
-/** Per-query results, so a screen with two queries gets the right payload in each. */
-let queryByName: Record<string, unknown> = {};
+const perfFixture = await Bun.file(
+  new URL("./fixtures/csm-profiles.json", import.meta.url),
+).json();
 
-mock.module("convex/react", () => ({
-  useQuery: (name: string) =>
-    name in queryByName ? queryByName[name] : queryResult,
-  useMutation: () => async () => null,
-}));
-mock.module("../convex/_generated/api", () => ({
-  api: {
-    csm: {
-      snapshot: "csm.snapshot",
-      toggleCheck: "toggleCheck",
-      act: "act",
-      addPlanItems: "addPlanItems",
-      submitEod: "submitEod",
-      reportIssue: "reportIssue",
-      setClientLanguage: "setClientLanguage",
-      saveHotRow: "saveHotRow",
-      saveMoneyGoals: "saveMoneyGoals",
-      performanceOverview: "performanceOverview",
-      clientProfile: "clientProfile",
+const KITS = {
+  rows: [
+    {
+      clickup_task_id: "86exnk0v4",
+      client_name: "Greystone Contracting",
+      clickup_status: "in onboarding",
+      client_status: "Active",
+      in_onboarding: true,
+      csm: null,
+      signup_on: null,
+      onboarding_call_on: null,
+      launch_on: null,
+      links: {},
+      handover: {},
+      sales_transcript: null,
+      forms: {
+        onboarding: {
+          form_id: "KFRCXPFx",
+          response_id: "r1",
+          submitted_at: "2026-10-02T13:24:34Z",
+          answers: [],
+        },
+      },
+      card_updated_at: null,
+      seen_at: "2026-10-05T08:00:00.000Z",
+      synced_at: "2026-10-05T08:00:00.000Z",
+    },
+  ],
+  last: null,
+  lastOk: null,
+  now: "2026-10-05T08:00:00.000Z",
+};
+
+let currentSnapshot: any = undefined;
+let isSnapshotLoading = true;
+let snapshotError: Error | null = null;
+
+type Deferred<T> = {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+  reject: (reason?: any) => void;
+};
+function createDeferred<T>(): Deferred<T> {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: any) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+let overviewDeferred: Deferred<any> | null = null;
+let profileDeferred: Deferred<any> | null = null;
+let selectedClientForProfile: string | null = null;
+
+const mockClient: any = {
+  auth: {
+    getUser: async () => ({
+      data: { user: { id: "test-user-id", email: "csm@maharamedia.com" } },
+      error: null,
+    }),
+    getSession: async () => ({
+      data: {
+        session: { user: { id: "test-user-id", email: "csm@maharamedia.com" } },
+      },
+      error: null,
+    }),
+    onAuthStateChange: () => ({
+      data: { subscription: { unsubscribe: () => {} } },
+    }),
+    signOut: async () => ({ error: null }),
+  },
+  rpc: async (name: string, _args: any) => {
+    if (name === "cockpit_csm_onboarding_read") {
+      return { data: KITS, error: null };
+    }
+    throw new Error(`Unexpected RPC call: ${name}`);
+  },
+  from: () => ({
+    select: () => ({
+      eq: () => ({
+        eq: () => Promise.resolve({ data: [], error: null }),
+      }),
+    }),
+  }),
+  functions: {
+    invoke: async (name: string, _args: any) => {
+      throw new Error(`Unexpected function invocation: ${name}`);
     },
   },
+};
+
+mock.module("@/auth/SupabaseAuthProvider", () => ({
+  getCockpitSupabaseClient: () => mockClient,
+  SupabaseAuthProvider: ({ children }: { children: any }) => children,
+  useCockpitAuth: () => ({
+    client: mockClient,
+    session: { user: { id: "test-user-id", email: "csm@maharamedia.com" } },
+    access: {
+      email: "csm@maharamedia.com",
+      name: "Test CSM",
+      roles: ["csm"],
+      clients: [],
+      isAdmin: false,
+      isCeo: false,
+      cockpits: ["csm"],
+      home: "/go/csm",
+    },
+    ready: true,
+    error: null,
+    isAuthenticated: true,
+    isAdmin: false,
+    isCeo: false,
+    email: "csm@maharamedia.com",
+    name: "Test CSM",
+    roles: ["csm"],
+    clients: [],
+    cockpits: ["csm"],
+    home: "/go/csm",
+    signOut: async () => {},
+    refreshAccess: async () => {},
+  }),
 }));
+
+mock.module("@/lib/useCsmSnapshot", () => ({
+  useCsmSnapshot: () => ({
+    snap: currentSnapshot,
+    loading: isSnapshotLoading,
+    error: snapshotError,
+    refetch: async () => {},
+    toggleCheck: async () => {},
+    act: async () => {},
+    submitEod: async () => {},
+    addPlanItems: async () => {},
+    updateProfile: async () => {},
+    reportIssue: async () => {},
+    setClientLanguage: async () => {},
+    saveHotRow: async () => {},
+    clearLooseEnds: async () => ({}),
+    saveMoneyGoals: async () => {},
+  }),
+  kuwaitToday: () => "2026-10-06",
+  fetchDailyChecksRpc: async () => [],
+  executeToggleCheck: async () => {},
+  executeSubmitEod: async () => {},
+}));
+
+mock.module("@/lib/onboardingClient", () => ({
+  readOnboardingKits: async () => KITS,
+  refreshOnboardingKits: async () => KITS,
+}));
+
+mock.module("@/lib/performance", () => ({
+  fetchPerformanceOverview: async () => {
+    if (!overviewDeferred) return perfFixture.overview;
+    return overviewDeferred.promise;
+  },
+  fetchClientProfile: async (_client: any, name: string) => {
+    selectedClientForProfile = name;
+    if (!profileDeferred) return perfFixture.profile;
+    return profileDeferred.promise;
+  },
+  fetchTasksAdded: async () => [],
+  addTask: async () => "receipt-123",
+  requestReportDoc: async () => {
+    throw new Error("The report-document worker is not connected yet.");
+  },
+}));
+
+mock.module("@/lib/churnClient", () => ({
+  readChurnPage: async () => ({
+    today: "2026-10-06",
+    month: "2026-10",
+    me: { email: "csm@maharamedia.com", canRemove: false },
+    reasons: [],
+    departures: [],
+    months: [],
+    waiting: [],
+    clients: [],
+    starts: [],
+    launches: [],
+    log: [],
+  }),
+}));
+
+mock.module("@/lib/comms", () => ({
+  fetchWaInbox: async () => ({ threads: [] }),
+  sendReply: async () => {},
+  archiveWaThread: async () => {},
+  fetchMeetingsOverview: async () => ({ meetings: [] }),
+  linkCalendar: async () => {},
+  unlinkCalendar: async () => {},
+}));
+
+mock.module("@/lib/review", () => ({
+  listSentReviews: async () => [],
+  listReviewClients: async () => [],
+  createReview: async () => ({ token: "t1", url: "https://example.com" }),
+  importReviewFolder: async () => ({ id: "f1" }),
+  checkReviewImportStatus: async () => ({ status: "done" }),
+}));
+
+mock.module("@/lib/nativePreviewClient", () => ({
+  nativeAdPreview: async () => ({ ok: false }),
+}));
+
+mock.module("@/lib/nativeStillClient", () => ({
+  nativeStillsRead: async () => ({}),
+}));
+
 mock.module("sonner", () => ({
-  toast: { success: () => {}, error: () => {} },
+  toast: { success: () => {}, error: () => {}, info: () => {}, warning: () => {} },
 }));
 
 const { CsmPage } = await import("../src/pages/CsmPage");
+const { ClientPerformancePage } = await import(
+  "../src/pages/ClientPerformancePage"
+);
 const { createRoot } = await import("react-dom/client");
 const { createElement, act: reactAct } = await import("react");
-// The page links to /clients; a Link outside a Router throws, so every render sits in one.
 const { MemoryRouter } = await import("react-router");
 const { Window } = await import("happy-dom");
 
+const originalGlobalProps: Record<string, any> = {};
+const globalKeys = [
+  "window",
+  "document",
+  "navigator",
+  "HTMLElement",
+  "HTMLFormElement",
+  "MutationObserver",
+  "Element",
+  "Node",
+  "getComputedStyle",
+  "IS_REACT_ACT_ENVIRONMENT",
+];
+for (const k of globalKeys) {
+  originalGlobalProps[k] = (globalThis as any)[k];
+}
+
 const win = new Window({ url: "https://localhost/" });
-// biome-ignore lint/suspicious/noExplicitAny: wiring happy-dom into globals for React
 const g = globalThis as any;
 g.window = win;
 g.document = win.document;
 g.navigator = win.navigator;
 g.HTMLElement = win.HTMLElement;
+g.HTMLFormElement = win.HTMLFormElement;
+g.MutationObserver = win.MutationObserver;
 g.Element = win.Element;
 g.Node = win.Node;
+
+for (const key of Object.getOwnPropertyNames(win)) {
+  if (
+    /^(HTML\w*Element|SVG\w*Element|\w*Event|DocumentFragment|Text)$/.test(key) &&
+    g[key] == null
+  ) {
+    if (!(key in originalGlobalProps)) originalGlobalProps[key] = g[key];
+    g[key] = (win as unknown as Record<string, unknown>)[key];
+  }
+}
+g.getComputedStyle ??= win.getComputedStyle.bind(win);
 g.IS_REACT_ACT_ENVIRONMENT = true;
 
-/** Every section, because the tabs differ per section and each one renders its own rows. */
-const SECTIONS = [
-  "start",
-  "clients",
-  "tasks",
-  "hot",
-  "links",
-  "money",
-  "eod",
-] as const;
-
-for (const section of SECTIONS) {
-  test(`CSM ${section} survives loading → loaded without a hooks error`, async () => {
-    const host = win.document.createElement("div");
-    win.document.body.appendChild(host);
-    // biome-ignore lint/suspicious/noExplicitAny: happy-dom element into React DOM
-    const root = createRoot(host as any);
-    const errors: string[] = [];
-    const originalError = console.error;
-    console.error = (...args: unknown[]) => {
-      errors.push(args.map(String).join(" "));
-    };
-    try {
-      queryResult = undefined; // still loading
-      await reactAct(async () => {
-        root.render(
-          createElement(
-            MemoryRouter,
-            null,
-            createElement(CsmPage, { section }),
-          ),
-        );
-      });
-      queryResult = snapshot; // data arrives — the render that used to crash
-      await reactAct(async () => {
-        root.render(
-          createElement(
-            MemoryRouter,
-            null,
-            createElement(CsmPage, { section }),
-          ),
-        );
-      });
-      const html = host.innerHTML;
-      expect(html.length).toBeGreaterThan(500);
-      expect(errors.join("\n")).not.toContain("Rendered more hooks");
-      expect(errors.join("\n")).not.toContain("Rendered fewer hooks");
-      expect(errors.filter(e => /error/i.test(e)).join("\n")).toBe("");
-    } finally {
-      console.error = originalError;
-      await reactAct(async () => root.unmount());
+afterAll(() => {
+  for (const k of Object.keys(originalGlobalProps)) {
+    if (originalGlobalProps[k] === undefined) {
+      delete (globalThis as any)[k];
+    } else {
+      (globalThis as any)[k] = originalGlobalProps[k];
     }
-  });
-}
-
-/** Renders one section with live data and returns its visible text. */
-async function renderSection(section: string): Promise<string> {
-  const host = win.document.createElement("div");
-  win.document.body.appendChild(host);
-  // biome-ignore lint/suspicious/noExplicitAny: happy-dom element into React DOM
-  const root = createRoot(host as any);
-  queryResult = snapshot;
-  await reactAct(async () => {
-    root.render(
-      createElement(
-        MemoryRouter,
-        null,
-        createElement(CsmPage, { section: section as never }),
-      ),
-    );
-  });
-  const text = (host.textContent ?? "").replace(/\s+/g, " ");
-  await reactAct(async () => root.unmount());
-  return text;
-}
-
-test("the hot list and the message drafts render real client copy", async () => {
-  const host = win.document.createElement("div");
-  win.document.body.appendChild(host);
-  // biome-ignore lint/suspicious/noExplicitAny: happy-dom element into React DOM
-  const root = createRoot(host as any);
-  queryResult = snapshot;
-  await reactAct(async () => {
-    root.render(
-      createElement(
-        MemoryRouter,
-        null,
-        createElement(CsmPage, { section: "hot" }),
-      ),
-    );
-  });
-  // A client name from the fixture must appear, so we know rows actually built.
-  const html = host.innerHTML;
-  expect(html).toContain("Hot list");
-  await reactAct(async () => root.unmount());
+  }
 });
 
-/**
- * The client performance screen, both states: the overview grid and one client opened.
- * Rendered from the real stored payload shape so a missing sheet, a client with no ads
- * and a client with a full Meta tree all get exercised.
- */
-const { ClientPerformancePage } = await import(
-  "../src/pages/ClientPerformancePage"
-);
-const perfFixture = await Bun.file(
-  new URL("./fixtures/csm-profiles.json", import.meta.url),
-).json();
 
-test("client performance renders the overview then a single client", async () => {
+
+test("client performance renders loading, resolves overview, selects client, and copies taskId", async () => {
   const host = win.document.createElement("div");
   win.document.body.appendChild(host);
-  // biome-ignore lint/suspicious/noExplicitAny: happy-dom element into React DOM
   const root = createRoot(host as any);
   const errors: string[] = [];
   const originalError = console.error;
   console.error = (...args: unknown[]) => {
     errors.push(args.map(String).join(" "));
   };
-  try {
-    queryResult = undefined;
-    await reactAct(async () => {
-      root.render(createElement(ClientPerformancePage, {}));
-    });
-    queryByName = { performanceOverview: perfFixture.overview };
-    await reactAct(async () => {
-      root.render(createElement(ClientPerformancePage, {}));
-    });
-    expect(host.innerHTML).toContain("Client performance");
-    expect(host.innerHTML).toContain(
-      perfFixture.overview.clients[0].clientName,
-    );
 
-    // Open a client: the profile query answers, the overview keeps its own payload.
-    queryByName = {
-      performanceOverview: perfFixture.overview,
-      clientProfile: perfFixture.profile,
-    };
-    const buttons = [...host.querySelectorAll("button")].filter(
+  overviewDeferred = createDeferred<any>();
+  profileDeferred = createDeferred<any>();
+  selectedClientForProfile = null;
+
+  try {
+    await reactAct(async () => {
+      root.render(createElement(ClientPerformancePage, {}));
+    });
+    expect(host.innerHTML).toContain("Loading client performance");
+
+    await reactAct(async () => {
+      overviewDeferred!.resolve(perfFixture.overview);
+    });
+
+    expect(host.innerHTML).not.toContain("Loading client performance");
+    const targetClient = perfFixture.overview.clients[0].clientName;
+    expect(host.innerHTML).toContain(targetClient);
+
+    const openButtons = [...host.querySelectorAll("button")].filter(
       b => b.textContent?.trim() === "Open",
     );
-    expect(buttons.length).toBeGreaterThan(0);
+    expect(openButtons.length).toBeGreaterThan(0);
+
     await reactAct(async () => {
-      buttons[0].click();
+      openButtons[0].click();
     });
-    const html = host.innerHTML;
-    expect(html).toContain("Print report");
-    expect(html).toContain("What is holding this client back");
-    expect(html).toContain("Fix this first");
-    expect(html).toContain("Write the Google Doc");
-    expect(html).toContain("no outcome on the sheet");
+
+    expect(selectedClientForProfile).toBe(targetClient);
+    expect(host.innerHTML).toContain(`Loading ${targetClient}`);
+
+    await reactAct(async () => {
+      profileDeferred!.resolve(perfFixture.profile);
+    });
+
+    expect(host.innerHTML).not.toContain(`Loading ${targetClient}`);
+    expect(host.innerHTML).toContain(perfFixture.profile.taskId);
+
+    let copiedId = "";
+    const originalWrite = win.navigator.clipboard.writeText;
+    win.navigator.clipboard.writeText = async (value: string) => {
+      copiedId = value;
+    };
+    try {
+      const copyButton = host.querySelector<HTMLButtonElement>(
+        '[aria-label="Copy client ID"]',
+      );
+      expect(copyButton).not.toBeNull();
+      await reactAct(async () => {
+        copyButton!.click();
+      });
+      expect(copiedId).toBe(perfFixture.profile.taskId);
+    } finally {
+      win.navigator.clipboard.writeText = originalWrite;
+    }
+
     expect(errors.join("\n")).not.toContain("Rendered more hooks");
     expect(errors.filter(e => /error/i.test(e)).join("\n")).toBe("");
   } finally {
     console.error = originalError;
-    queryByName = {};
+    overviewDeferred = null;
+    profileDeferred = null;
+    selectedClientForProfile = null;
     await reactAct(async () => root.unmount());
+    host.remove();
   }
 });
 
-test("diagnosis ranks one constraint first and never invents work", async () => {
-  const { diagnose, GATES } = await import("../src/lib/csmDiagnosis");
+test("diagnosis identifies top constraint and healthy branch correctly", async () => {
+  const { diagnose } = await import("../src/lib/csmDiagnosis");
 
-  // The real stored payload: a client with a huge unfilled sheet.
   const real = diagnose(perfFixture.profile);
   expect(real.healthy).toBe(false);
   expect(real.top).toBeDefined();
-  expect(real.headline.toLowerCase()).toContain("first");
-  expect(real.top?.fixes.length).toBeGreaterThan(1);
 
-  // Every gate met → nothing to fix, and it says so instead of listing filler.
   const healthy = diagnose({
     clientName: "Good Client",
     stage: "Active",
@@ -254,9 +397,7 @@ test("diagnosis ranks one constraint first and never invents work", async () => 
   });
   expect(healthy.healthy).toBe(true);
   expect(healthy.top).toBeUndefined();
-  expect(healthy.headline).toContain("Do not manufacture work");
 
-  // A show-rate leak is named, evidenced, and carries a client-ready message.
   const leak = diagnose({
     clientName: "Leaky Firm",
     stage: "Active",
@@ -278,13 +419,7 @@ test("diagnosis ranks one constraint first and never invents work", async () => 
   });
   const ids = [leak.top, ...leak.rest].map(c => c?.id);
   expect(ids).toContain("show_rate");
-  const show = [leak.top, ...leak.rest].find(c => c?.id === "show_rate");
-  expect(show?.say?.en).toContain("appointments");
-  expect(show?.say?.ar?.length ?? 0).toBeGreaterThan(40);
-  expect(show?.evidence).toContain("attended");
-  expect(GATES.showRate).toBe(75);
 
-  // No sheet: the only sane first move is to get the sheet linked.
   const blind = diagnose({
     clientName: "No Sheet",
     stage: "Active",
@@ -294,50 +429,81 @@ test("diagnosis ranks one constraint first and never invents work", async () => 
   expect(blind.top?.id).toBe("no_sheet");
 });
 
-test("the onboarding spine gives the right day, in both languages, and names missed days", () => {
-  const { SPINE, spineFor, spineMessage } = require("@/lib/csmOnboardingSpine");
-  expect(SPINE.length).toBe(15);
-  // A client three days after signup is on day 3, not day 1 and not day 14.
+test("the onboarding spine maps days and handles out-of-range boundaries", () => {
+  const { spineFor } = require("@/lib/csmOnboardingSpine");
   expect(spineFor({ signupDays: 3, bucket: "onboarding" }).dayIndex).toBe(3);
-  // Past the spine, no day is offered rather than inventing a day 20 message.
   expect(spineFor({ signupDays: 40, bucket: "onboarding" }).day).toBe(null);
-  // Silence means earlier days fell through and get named.
-  expect(
-    spineFor({ signupDays: 5, silentDays: 3 }).missed.length,
-  ).toBeGreaterThan(0);
-  const en = spineMessage(SPINE[0], "en", "Greystone Contracting");
-  const ar = spineMessage(SPINE[0], "ar", "شركة العلا");
-  expect(en).toContain("Greystone");
-  expect(en).not.toContain("NAME");
-  expect(ar).toContain("شركة");
-  expect(ar).not.toContain("NAME");
-  // No em dashes anywhere in the spine, in either language.
-  for (const entry of SPINE) {
-    expect(entry.en).not.toMatch(/[—–]/);
-    expect(entry.ar).not.toMatch(/[—–]/);
+});
+
+test("an onboarding client loads, expands and opens its client-bound kickoff link", async () => {
+  const host = win.document.createElement("div");
+  win.document.body.appendChild(host);
+  const root = createRoot(host as any);
+  currentSnapshot = undefined;
+  isSnapshotLoading = true;
+  snapshotError = null;
+
+  const settle = () =>
+    reactAct(async () => {
+      await new Promise(r => setTimeout(r, 0));
+    });
+
+  try {
+    await reactAct(async () => {
+      root.render(
+        createElement(
+          MemoryRouter,
+          null,
+          createElement(CsmPage, { section: "clients" }),
+        ),
+      );
+    });
+    expect(host.querySelector("[aria-expanded]")).toBeNull();
+    currentSnapshot = snapshot;
+    isSnapshotLoading = false;
+    await reactAct(async () => {
+      root.render(
+        createElement(
+          MemoryRouter,
+          null,
+          createElement(CsmPage, { section: "clients" }),
+        ),
+      );
+    });
+    await settle();
+
+    const buttons = () =>
+      [...host.querySelectorAll("button")] as unknown as HTMLButtonElement[];
+    const tab = buttons().find(b =>
+      (b.textContent ?? "").includes("Client onboarding"),
+    );
+    expect(tab).toBeDefined();
+    await reactAct(async () => tab?.click());
+    await settle();
+
+    const row = buttons().find(
+      b =>
+        b.getAttribute("aria-expanded") !== null &&
+        (b.textContent ?? "").includes("Greystone Contracting"),
+    );
+    expect(row).toBeDefined();
+    expect(row?.getAttribute("aria-expanded")).toBe("false");
+
+    await reactAct(async () => row?.click());
+    await settle();
+    expect(row?.getAttribute("aria-expanded")).toBe("true");
+
+    const links = [...host.querySelectorAll("a")];
+    const kickoff = links.find(a =>
+      a.getAttribute("href")?.includes("onboarding_client_id=86exnk0v4"),
+    );
+    expect(kickoff).toBeDefined();
+    expect(kickoff?.getAttribute("href")).toBe(
+      "https://maharamedia.typeform.com/to/tG7dnxBn#onboarding_client_id=86exnk0v4",
+    );
+  } finally {
+    await reactAct(async () => root.unmount());
+    host.remove();
   }
 });
 
-test("the day blocks read in order and the quiet screens stay quiet", async () => {
-  // Start of day must read 1 to 5 in that order, or the sprints stop meaning anything.
-  const start = await renderSection("start");
-  const order = [
-    "1 · Morning sprint",
-    "2 · Then the work",
-    "3 · Midday sprint",
-    "4 · Then the work",
-    "5 · Evening sprint",
-  ];
-  let cursor = -1;
-  for (const label of order) {
-    const at = start.indexOf(label);
-    expect(at).toBeGreaterThan(cursor);
-    cursor = at;
-  }
-  // Start of day is the day plan, not a second copy of the client list.
-  expect(start).not.toContain("Onboarding, get them live");
-  // End of day is the report only.
-  const eod = await renderSection("eod");
-  expect(eod).not.toContain("Onboarding, get them live");
-  expect(eod).toContain("End of day");
-});

@@ -16,7 +16,7 @@ export function providerTools(token:string,health:(row:Record<string,unknown>)=>
 export function ghlTools(token:string,health:(row:Record<string,unknown>)=>Promise<void>,request:typeof fetch=fetch):{call:(method:'GET'|'POST',path:string,body?:Record<string,unknown>)=>Promise<unknown>}{
  if(!token)throw Error('GHL_MAHARA_PIT is not configured');
  return {async call(method,path,body){
-  if(!path.startsWith('calendars/')||path.includes('://')||path.includes('..'))throw Error('Invalid GoHighLevel resource');
+  if((!path.startsWith('calendars/')&&!(method==='POST'&&path==='contacts/search'))||path.includes('://')||path.includes('..'))throw Error('Invalid GoHighLevel resource');
   const row={provider:'ghl',method,resource:path.split('?')[0]};await health({...row,phase:'intent'});
   let response:Response;
   try{response=await request('https://services.leadconnectorhq.com/'+path,{method,headers:{Authorization:'Bearer '+token,Version:'2021-04-15',Accept:'application/json','Content-Type':'application/json'},body:body?JSON.stringify(body):undefined,signal:AbortSignal.timeout(25000)});}
@@ -26,5 +26,20 @@ export function ghlTools(token:string,health:(row:Record<string,unknown>)=>Promi
   await health({...row,phase:'response',http_status:response.status,object_id:receipt.success?(receipt.data.id??receipt.data.appointment?.id??receipt.data.event?.id??null):null});
   if(!response.ok)throw Error('GoHighLevel refused the request ('+response.status+'). Inspect its provider receipt.');
   return data;
+ }};
+}
+
+/** Onboarding forms are provider-owned reads, never browser writes. */
+export function typeformTools(token:string,health:(row:Record<string,unknown>)=>Promise<void>,request:typeof fetch=fetch):{get:(path:string)=>Promise<Record<string,unknown>>}{
+ if(!token)throw Error('TYPEFORM_TOKEN is not configured');
+ return {async get(path){
+  if(!/^forms\/[A-Za-z0-9_-]+(?:\/responses(?:\?.*)?)?$/.test(path)||path.includes('..')||path.includes('://'))throw Error('Invalid Typeform resource');
+  const receipt={provider:'typeform',method:'GET',resource:path.split('?')[0]};await health({...receipt,phase:'intent'});
+  let response:Response;
+  try{response=await request('https://api.typeform.com/'+path,{headers:{Authorization:'Bearer '+token,Accept:'application/json'},signal:AbortSignal.timeout(25000)});}
+  catch{await health({...receipt,phase:'unknown'});throw Error('Typeform could not be read. Existing forms remain unchanged.');}
+  await health({...receipt,phase:'response',http_status:response.status});
+  if(!response.ok)throw Error('Typeform refused the read ('+response.status+'). Existing forms remain unchanged.');
+  return z.record(z.string(),z.unknown()).parse(await response.json());
  }};
 }
