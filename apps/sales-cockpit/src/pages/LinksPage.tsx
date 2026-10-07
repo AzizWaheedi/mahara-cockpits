@@ -12,7 +12,7 @@ import {
 } from "../components/kit";
 import { ReferenceAsks, ReferenceList } from "../components/References";
 import { api } from "../lib/api";
-import { COCKPIT_SOP } from "../lib/cockpits";
+import { COCKPIT_GUIDES } from "../lib/cockpits";
 import { useLinks } from "../lib/data";
 import { toast } from "../lib/toast";
 import type { Me, SalesLink } from "../lib/types";
@@ -236,14 +236,23 @@ export default function LinksPage({ me }: { me: Me }) {
             The deck, forms and calculators for your calls, and the proof to
             send after them. New here?{" "}
             <a
-              href={COCKPIT_SOP.sales}
+              href={COCKPIT_GUIDES.sales.video}
               target="_blank"
               rel="noreferrer"
               className="underline underline-offset-2 hover:text-[color:var(--foreground)]"
             >
-              Read how to use this cockpit
+              Watch the demo
             </a>
-            .
+            , then keep{" "}
+            <a
+              href={COCKPIT_GUIDES.sales.simple}
+              target="_blank"
+              rel="noreferrer"
+              className="underline underline-offset-2 hover:text-[color:var(--foreground)]"
+            >
+              the simple SOP
+            </a>{" "}
+            open beside you.
           </p>
         </div>
         {manager && !adding ? addButton : null}

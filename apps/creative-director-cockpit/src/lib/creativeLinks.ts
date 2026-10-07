@@ -11,7 +11,7 @@
  * and the ClickUp client ticketing form.
  */
 
-import { COCKPIT_SOP } from "./cockpits";
+import { COCKPIT_GUIDES, COCKPIT_SOP } from "./cockpits";
 
 export type LinkRow = { label: string; url: string; note?: string };
 export type LinkGroup = { title: string; blurb: string; rows: LinkRow[] };
@@ -20,8 +20,23 @@ export const LINK_GROUPS: LinkGroup[] = [
   {
     title: "How this cockpit works",
     blurb:
-      "Read this once. What every screen is for, how the day is meant to run, and what to do when something looks wrong.",
+      "Watch the demo once, then keep the simple SOP open beside you while you learn the day.",
     rows: [
+      {
+        label: "Watch the demo",
+        url: COCKPIT_GUIDES.creative.video,
+        note: "Two minutes on the real cockpit, step by step",
+      },
+      {
+        label: "The simple SOP",
+        url: COCKPIT_GUIDES.creative.simple,
+        note: "Your day step by step, with a picture of every step",
+      },
+      {
+        label: "The in-depth SOP",
+        url: COCKPIT_GUIDES.creative.deep,
+        note: "Every screen, and how to use it",
+      },
       {
         // The SOP written with the simplification (2026-10-06); the old
         // Google Doc described the sixteen pages that came before it.
