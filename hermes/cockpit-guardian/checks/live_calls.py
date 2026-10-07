@@ -6,10 +6,15 @@ gate the rows, the cron jobs and the settings; the function, the DNS name
 and the VPS worker each gate themselves.
 
 "Not deployed yet" stops being an excuse in two cases:
-- the piece was seen working before (state["seen_deployed"]): gone now is a
-  failure (a deleted function, a lost DNS record);
+- the piece was seen working before (state["seen_deployed"], or DEPLOYED below
+  for the pieces deployed by 2026-10-07): gone now is a failure (a deleted
+  function, a lost DNS record);
 - live calls are switched on: then a missing piece breaks a lead's call, so it
   fails, folded into live-settings, which fails urgent.
+
+live-code reads which source modules sales-api and sales-live were deployed
+with, once per deploy: a deploy from a branch without live calls keeps its
+name and gets a higher version, and only its modules tell.
 """
 from __future__ import annotations
 
@@ -60,6 +65,23 @@ WATCHDOG_LATE_MIN = 15
 UNPOSTED_MIN = 15
 PIECES = ("live-function", "live-dns", "live-rooms-worker", "live-status-rows")
 URGENT_WHEN_ON = ("live-function", "live-rooms-worker")
+# The pieces seen working in production, as state["seen_deployed"] on the VPS
+# held them on 2026-10-07. Kept in the code too: a guardian whose state was lost
+# (~/.cockpit-guardian removed, a reinstall) or that reads a new Supabase project
+# says a missing piece is gone, never "not deployed yet".
+DEPLOYED = {
+    "live-tables": "2026-10-03T19:10:02+00:00",
+    "live-cron": "2026-10-03T19:10:02+00:00",
+    "live-alerts": "2026-10-04T15:45:02+00:00",
+    "live-function": "2026-10-07T10:00:01+00:00",
+    "live-rooms-worker": "2026-10-07T10:20:02+00:00",
+}
+# The live-calls modules in each deployed function (sales-api v65 and sales-live
+# v2, 2026-10-07); a deploy from codex/supabase-completion-20261004 has none of them.
+LIVE_MODULES = {
+    "sales-api": ("rooms.ts", "roomlogic.ts", "liveio.ts", "followupAgent.ts", "sendrules.ts"),
+    "sales-live": ("cron.ts", "door.ts", "handler.ts", "sign.ts", "slack.ts", "zoom.ts"),
+}
 
 
 def _switches(ctx: Context) -> Optional[dict[str, dict]]:
@@ -122,6 +144,7 @@ def deployable(check_id: str, label: str, run: Callable[[Context], Result]) -> C
         if res.status == OK:
             seen.setdefault(check_id, ctx.now.isoformat())
             return res
+        first = seen.get(check_id) or DEPLOYED.get(check_id)
         on = switched_on(ctx) if check_id in PIECES else None
         if on and not needed(check_id, _switches(ctx)):
             on = []
@@ -130,8 +153,8 @@ def deployable(check_id: str, label: str, run: Callable[[Context], Result]) -> C
                 return fail(f"{res.summary.rstrip('.')}, although live calls are switched on ({', '.join(on)}): a lead's "
                             "call has nothing to land on.", caused_by="live-settings", urgent=True,
                             data={"missing": True}, evidence=res.evidence)
-            if check_id in seen:
-                return fail(f"{label} was deployed (first seen working {kuwait(parse_time(seen[check_id]))}) and is "
+            if first:
+                return fail(f"{label} was deployed (first seen working {kuwait(parse_time(first))}) and is "
                             f"missing now: {res.summary}", data={"missing": True}, evidence=res.evidence,
                             urgent=bool(on))
             return res
@@ -191,6 +214,47 @@ def run_function(ctx: Context) -> Result:
     if r.status == 200:
         return ok("sales-live answers its health check.")
     return fail(f"sales-live/health answers {r.status}.", evidence={"status": r.status})
+
+
+def known_deployed(ctx: Context, check_id: str) -> bool:
+    return check_id in (ctx.state.get("seen_deployed") or {}) or check_id in DEPLOYED
+
+
+def run_code(ctx: Context) -> Result:
+    """Each function's modules are read once per deploy (a new version or bundle hash) and kept in the state."""
+    try:
+        listed = ctx.functions()
+    except SourceError as e:
+        if not getattr(e, "gap", False):
+            raise
+        if not known_deployed(ctx, "live-function"):
+            return not_deployed("The live-calls code is not deployed yet (sales-live has never been seen working).")
+        return unknown("Which code sales-api and sales-live run needs SUPABASE_ACCESS_TOKEN.", coverage_gap=True)
+    if not any(x.get("slug") == "sales-live" for x in listed) and not known_deployed(ctx, "live-function"):
+        return not_deployed("The live-calls code is not deployed yet (sales-live is not in the functions list).")
+    known = ctx.state.setdefault("live_code", {})
+    problems, seen = [], []
+    for slug, need in LIVE_MODULES.items():
+        f = next((x for x in listed if x.get("slug") == slug), None)
+        if f is None:
+            problems.append(f"{slug} is not deployed")
+            continue
+        key = f"v{f.get('version')}:{f.get('ezbr_sha256') or ''}"
+        rec = known.get(slug)
+        if not isinstance(rec, dict) or rec.get("key") != key:
+            names = ctx.function_files(slug)
+            rec = {"key": key, "missing": [m for m in need if m not in names], "modules": len(names),
+                   "read_at": ctx.now.isoformat()}
+            known[slug] = rec
+        if rec["missing"]:
+            problems.append(f"{slug} {key.split(':')[0]} was deployed without {', '.join(rec['missing'])}")
+        else:
+            seen.append(f"{slug} {key.split(':')[0]}")
+    ev = {k: {"key": v.get("key"), "missing": v.get("missing")} for k, v in known.items() if isinstance(v, dict)}
+    if problems:
+        return fail("The live-calls code is not what runs: " + "; ".join(problems) + " (deployed from a branch "
+                    "without live calls?).", evidence=ev, items=sorted(LIVE_MODULES), urgent=True)
+    return ok(f"sales-api and sales-live run the live-calls code ({', '.join(seen)}).", evidence=ev)
 
 
 def run_cron(ctx: Context) -> Result:
@@ -398,6 +462,12 @@ CHECKS = [
           means="The sales-live Edge Function is ACTIVE with verify_jwt false.", severity="high",
           reads="The functions list, or GET /functions/v1/sales-live/health", threshold="Missing: not deployed yet; anything else wrong: fail.",
           run=deployable("live-function", "sales-live", run_function), action="Redeploy sales-live with verify_jwt false."),
+    Check(id="live-code", area="live-calls", name="Live calls: deployed code",
+          means="sales-api and sales-live were deployed with their live-calls modules.", severity="high",
+          reads="The functions list, and once per deploy the function's source module names (management API)",
+          threshold="A function deployed without its live-calls modules: fail (urgent).", run=run_code,
+          action="Redeploy from main at e166a0b or later: python3 scripts/dev/deploy_fn.py sales-api "
+                 "supabase/functions/sales-api, and sales-live with --no-verify-jwt (a person does this)."),
     Check(id="live-cron", area="live-calls", name="Live calls: database jobs",
           means="The rooms sweep and the sales watchdog are scheduled once the tables exist.", severity="high",
           reads="cron.job through the probe", threshold="Tables missing: not deployed yet; tables there and a job missing: fail.",

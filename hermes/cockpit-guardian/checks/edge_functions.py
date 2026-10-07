@@ -15,6 +15,9 @@ from guard.model import Check, Result, fail, ok, unknown
 
 EXPECTED = {
     "sales-api": True,            # slug: verify_jwt
+    # The door Zoom, Slack and pg_cron reach (live calls, deployed 2026-10-07): it
+    # checks its own signatures, so verify_jwt is off on purpose.
+    "sales-live": False,
     "sales-mirror": False,
     "webinar-events": False,
     "ghl-appointments-sync": False,
@@ -40,7 +43,7 @@ def run_functions(ctx: Context) -> Result:
             raise SourceError(f"neither the functions list (no SUPABASE_ACCESS_TOKEN) nor sales-api answered ({e2})",
                               source="db") from e2
         if r.status == 401:
-            return unknown("sales-api is up (401 without sign-in); the other nine functions need SUPABASE_ACCESS_TOKEN "
+            return unknown("sales-api is up (401 without sign-in); the other ten functions need SUPABASE_ACCESS_TOKEN "
                            "to be checked.", coverage_gap=True, evidence={"sales-api": r.status})
         return fail(f"sales-api answers {r.status} instead of 401, so the sales cockpit cannot reach its server.",
                     evidence={"sales-api": r.status})
@@ -77,7 +80,8 @@ def run_sales_api(ctx: Context) -> Result:
 CHECKS = [
     Check(
         id="edge-functions", area="supabase", name="Edge Functions", catalogue="S7",
-        means="The ten Edge Functions are ACTIVE, sales-api with verify_jwt on and the rest off.", severity="high",
+        means="The eleven Edge Functions are ACTIVE, sales-api with verify_jwt on and the rest off, sales-live included.",
+        severity="high",
         reads="Management API GET /v1/projects/{ref}/functions (needs SUPABASE_ACCESS_TOKEN)",
         threshold="A function missing, not ACTIVE, or with the wrong verify_jwt: fail.", run=run_functions,
         action="Redeploy the function from supabase/functions with its documented flags (a person does this).",

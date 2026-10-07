@@ -52,7 +52,7 @@ class StateUnwritable(Exception):
 def empty_state() -> dict[str, Any]:
     return {"version": VERSION, "open": {}, "resolved": [], "streaks": {}, "last_alert": {}, "pending_db": [],
             "pending_db_since": None, "db_rejected": [], "history": {}, "daily_sent": None, "last_scan": None,
-            "fix_history": {}, "pending_hooks": [], "seen_deployed": {}, "log_offsets": {}, "hung_cpu": {},
+            "fix_history": {}, "pending_hooks": [], "seen_deployed": {}, "live_code": {}, "log_offsets": {}, "hung_cpu": {},
             "killed": {}, "beat": {}, "due_since": {}}
 
 

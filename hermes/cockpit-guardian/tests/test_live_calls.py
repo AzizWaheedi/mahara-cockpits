@@ -2,6 +2,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from tests import fakes
 from checks import live_calls
@@ -23,6 +24,13 @@ def today():
 
 
 class NotDeployedYet(unittest.TestCase):
+    """Production on 2026-10-03, before anything was deployed: nothing remembered as deployed either."""
+
+    def setUp(self):
+        patcher = mock.patch.dict(live_calls.DEPLOYED, clear=True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_every_live_calls_check_reads_not_deployed_today(self):
         c = today()
         for check in live_calls.CHECKS:
@@ -92,6 +100,75 @@ class OnceDeployed(unittest.TestCase):
         c = self.deployed()
         self.assertEqual(live_calls.run_dns(c).status, OK)
         self.assertEqual(live_calls.run_function(c).status, OK)
+
+
+class StateLost(unittest.TestCase):
+    """2026-10-07 and later: the pieces deployed by then are remembered in the code, so a guardian whose state
+    was lost (~/.cockpit-guardian removed) or that reads a new, empty project says they are gone."""
+
+    def test_remembered_pieces_are_the_ones_seen_on_the_vps(self):
+        self.assertEqual(set(live_calls.DEPLOYED),
+                         {"live-tables", "live-cron", "live-alerts", "live-function", "live-rooms-worker"})
+
+    def test_missing_tables_and_function_fail_with_no_state(self):
+        c = today()
+        self.assertEqual(c.state, {})
+        for check in live_calls.CHECKS:
+            if check.id not in ("live-tables", "live-function", "live-cron", "live-alerts"):
+                continue
+            r = check.run(c)
+            self.assertEqual(r.status, FAIL, (check.id, r.summary))
+            self.assertIn("was deployed", r.summary)
+            self.assertTrue((r.data or {}).get("missing"), check.id)
+
+    def test_the_call_page_never_deployed_still_reads_not_deployed(self):
+        r = next(c for c in live_calls.CHECKS if c.id == "live-dns").run(today())
+        self.assertEqual(r.status, NOT_DEPLOYED)
+
+
+LIVE_FILES = {"sales-api": ["clientforms.ts", "clients.ts", "contracts.ts", "dialer.ts", "followupAgent.ts", "hot.ts",
+                            "index.ts", "lib.ts", "liveio.ts", "proposals.ts", "roomlogic.ts", "rooms.ts", "sendrules.ts"],
+              "sales-live": ["cron.ts", "door.ts", "handler.ts", "index.ts", "sign.ts", "slack.ts", "util.ts", "zoom.ts"]}
+OLD_BRANCH_FILES = {"sales-api": ["clientforms.ts", "clients.ts", "contracts.ts", "dialer.ts", "hot.ts", "index.ts",
+                                  "lib.ts", "proposals.ts"], "sales-live": LIVE_FILES["sales-live"]}
+
+
+def listed(api=65, live=2):
+    return [{"slug": "sales-api", "status": "ACTIVE", "version": api, "verify_jwt": True, "ezbr_sha256": f"a{api}"},
+            {"slug": "sales-live", "status": "ACTIVE", "version": live, "verify_jwt": False, "ezbr_sha256": f"l{live}"}]
+
+
+class DeployedCode(unittest.TestCase):
+    def run_code(self, files, state, functions=None):
+        db = fakes.FakeDb({}, functions=functions or listed(), files=files)
+        return live_calls.run_code(fakes.ctx(Path(tempfile.mkdtemp()), db=db, state=state)), db
+
+    def test_the_live_calls_code_is_ok_and_read_once_per_deploy(self):
+        state = {}
+        r, db = self.run_code(LIVE_FILES, state)
+        self.assertEqual(r.status, OK, r.summary)
+        self.assertEqual(sorted(db.file_reads), ["sales-api", "sales-live"])
+        r, db = self.run_code(LIVE_FILES, state)
+        self.assertEqual((r.status, db.file_reads), (OK, []))
+
+    def test_a_deploy_from_the_old_branch_fails_urgent(self):
+        state = {}
+        self.run_code(LIVE_FILES, state)
+        r, db = self.run_code(OLD_BRANCH_FILES, state, functions=listed(api=66))
+        self.assertEqual(r.status, FAIL)
+        self.assertTrue(r.urgent)
+        self.assertEqual(db.file_reads, ["sales-api"])
+        self.assertIn("sales-api v66 was deployed without rooms.ts, roomlogic.ts, liveio.ts, followupAgent.ts, "
+                      "sendrules.ts", r.summary)
+
+    def test_sales_live_gone_from_the_list_fails(self):
+        r, _ = self.run_code(LIVE_FILES, {}, functions=listed()[:1])
+        self.assertEqual(r.status, FAIL)
+        self.assertIn("sales-live is not deployed", r.summary)
+
+    def test_without_the_token_it_is_a_coverage_gap(self):
+        r = live_calls.run_code(fakes.ctx(Path(tempfile.mkdtemp()), db=fakes.FakeDb({}), state={}))
+        self.assertTrue(r.coverage_gap)
 
 
 if __name__ == "__main__":

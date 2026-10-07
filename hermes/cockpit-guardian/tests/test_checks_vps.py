@@ -121,6 +121,37 @@ class Crontab(unittest.TestCase):
         self.assertIn("desk-notes", names)
         self.assertEqual(len(names), len(set(names)), names)
 
+    LIVE_CALLS = (("desk.py --quiet rooms --for 57", "desk-rooms"),
+                  ("desk.py --quiet rooms --check-hosts", "desk-room-hosts"),
+                  ("desk.py --quiet doctor --cron", "desk-doctor"))
+
+    def test_live_calls_lines_are_in_the_manifest(self):
+        from guard import jobs
+        manifest = jobs.manifest_lines()
+        for marker, name in self.LIVE_CALLS:
+            lines = [l for l in manifest if marker in l]
+            self.assertEqual(len(lines), 1, marker)
+            self.assertEqual(jobs.job_for_line(lines[0]).name, name)
+        # The room worker waits on its lock (flock -w), so it is never a catch-up run.
+        self.assertIsNone(jobs.command_for(jobs.BY_NAME["desk-rooms"], manifest))
+        self.assertNotIn("desk-rooms", jobs.COPY_JOBS)
+
+    def test_a_lost_live_calls_line_is_urgent(self):
+        for marker, name in self.LIVE_CALLS:
+            lines = [l for l in fakes.snapshot()["crontab"]["lines"] if marker not in l]
+            r = vps_cron.run_crontab(make(fakes.snapshot(crontab={"lines": lines})))
+            self.assertEqual(r.status, FAIL, marker)
+            self.assertTrue(r.urgent, marker)
+            self.assertEqual(r.items, [name])
+
+    def test_a_commented_live_calls_line_is_paused_not_missing(self):
+        live = fakes.snapshot()["crontab"]["lines"]
+        held = [l for l in live if "rooms --check-hosts" in l]
+        lines = [l for l in live if "rooms --check-hosts" not in l]
+        r = vps_cron.run_crontab(make(fakes.snapshot(crontab={"lines": lines, "commented": held})))
+        self.assertNotEqual(r.status, FAIL)
+        self.assertIn("desk-room-hosts", r.summary)
+
 
 class Logs(unittest.TestCase):
     def test_old_log_fails_with_stale_flag(self):

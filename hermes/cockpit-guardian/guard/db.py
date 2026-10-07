@@ -156,6 +156,16 @@ class Mgmt:
         out = self._get(f"/v1/projects/{self.ref}/functions")
         return out if isinstance(out, list) else []
 
+    def function_files(self, slug: str) -> list[str]:
+        """The source module names a function was deployed with (its body read back as multipart; only the
+        file names are kept)."""
+        r = http.get(f"{MGMT_API}/v1/projects/{self.ref}/functions/{slug}/body", timeout=self.timeout,
+                     headers={"Authorization": f"Bearer {self.token}", "Accept": "multipart/form-data"})
+        if r.status != 200:
+            raise DbError(f"management API {r.status}: {scrub(r.text(300))}")
+        names = re.findall(rb'filename="([^"]+)"', r.body)
+        return sorted({n.decode("utf-8", "replace").split("/")[-1] for n in names})
+
     def sql(self, query: str) -> list[dict[str, Any]]:
         r = http.request("POST", f"{MGMT_API}/v1/projects/{self.ref}/database/query",
                          headers={"Authorization": f"Bearer {self.token}"},
@@ -190,6 +200,11 @@ class Db:
         if not self.mgmt:
             raise Unavailable("SUPABASE_ACCESS_TOKEN is not set, so the Edge Function list cannot be read")
         return self.mgmt.functions()
+
+    def function_files(self, slug: str) -> list[str]:
+        if not self.mgmt:
+            raise Unavailable("SUPABASE_ACCESS_TOKEN is not set, so the deployed code cannot be read")
+        return self.mgmt.function_files(slug)
 
     def health(self) -> list[dict[str, Any]]:
         if not self.mgmt:
