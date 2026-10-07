@@ -310,6 +310,22 @@ test('still uploader checks live SQL fence before provider writes',async()=>{
   const request:typeof fetch=async()=>{uploads++;return new Response('',{status:200});};
   await expect(storeStills(assets,{adStills:[],ads:[],metaTree:[],winnersArchive:[]},{SUPABASE_URL:'https://bldgtotkfmhoxmlzowdx.supabase.co',SUPABASE_SERVICE_ROLE_KEY:'fixture'},fence,receipts,request)).rejects.toThrow(/expired/i);
   expect(uploads).toBe(0);expect(receipts).toEqual([]);
+  const live=await claim(db),liveFence=async()=>{await db.query('SELECT cockpit_native_media_fence($1,$2)',[live.run_id,live.lease_token]);};
+  const image=new Uint8Array([1]),asset={...assets[0],sha256:createHash('sha256').update(image).digest('hex')};
+  for(const status of [400,409]){
+   const output={adStills:[{key:asset.key,status:'captured'}],ads:[],metaTree:[],winnersArchive:[]};let reads=0;
+   const duplicate:typeof fetch=async(_url,init)=>{
+    if(init?.method==='POST'){expect(new Headers(init.headers).get('x-upsert')).toBe('false');return new Response(JSON.stringify({statusCode:'409',error:'Duplicate',message:'The resource already exists'}),{status});}
+    reads++;return new Response(image);
+   };
+   await storeStills([asset],output,{SUPABASE_URL:'https://bldgtotkfmhoxmlzowdx.supabase.co',SUPABASE_SERVICE_ROLE_KEY:'fixture'},liveFence,[],duplicate);
+   expect(reads).toBe(1);expect(output.adStills[0].status).toBe('saved');
+  }
+  const wrongBytes:typeof fetch=async(_url,init)=>init?.method==='POST'?new Response(JSON.stringify({error:'Duplicate'}),{status:400}):new Response(new Uint8Array([2]));
+  await expect(storeStills([asset],{adStills:[]},{SUPABASE_URL:'https://bldgtotkfmhoxmlzowdx.supabase.co',SUPABASE_SERVICE_ROLE_KEY:'fixture'},liveFence,[],wrongBytes)).rejects.toThrow(/not verified/);
+  let unexpectedReads=0;
+  const invalidMime:typeof fetch=async(_url,init)=>{if(init?.method!=='POST')unexpectedReads++;return new Response(JSON.stringify({error:'InvalidMimeType'}),{status:400});};
+  await expect(storeStills([asset],{adStills:[]},{SUPABASE_URL:'https://bldgtotkfmhoxmlzowdx.supabase.co',SUPABASE_SERVICE_ROLE_KEY:'fixture'},liveFence,[],invalidMime)).rejects.toThrow(/storage upload failed/);expect(unexpectedReads).toBe(0);
  }finally{await db.close();}
 },30000);
 

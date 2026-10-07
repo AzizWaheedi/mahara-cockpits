@@ -81,7 +81,14 @@ export async function storeStills(assets: StillAsset[], tables: Record<string, R
       } catch { receipts.push({resource,method:'POST',phase:'unknown',attempt}); throw new Error('Still upload transport failed'); }
       receipts.push({resource, method: 'POST', phase: 'response', http_status: response.status, attempt, at: new Date().toISOString()});
       if (response.ok) { stored = true; break; }
-      if (response.status === 409) {
+      let duplicate=response.status===409;
+      if(response.status===400){
+        try{
+          const detail=await response.clone().json();
+          duplicate=Number(detail.statusCode)===409||['Duplicate','ResourceAlreadyExists','already_exists'].includes(detail.code??detail.error);
+        }catch{/* Unrecognized errors remain fatal. */}
+      }
+      if (duplicate) {
         const publicResource=`/storage/v1/object/public/cockpit-ad-stills/${asset.path}`;
         receipts.push({resource:publicResource,method:'GET',phase:'intent',attempt});
         try {
