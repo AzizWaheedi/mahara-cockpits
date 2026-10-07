@@ -74,7 +74,7 @@ export function prepareTables(tables:Record<string,Row[]>, prior:Record<string,R
    case 'clientLinks':case 'clients':return [r.taskId??r.name??r.id];
    case 'clientProfiles':return [r.taskId??r.clientName];
    case 'csTasks':case 'creativeTasks':case 'videoJobs':case 'contentPosts':return [r.taskId??r.id];
-   case 'funnels':return [r.account,r.kind,r.formId??r.url];
+   case 'funnels':return [r.account,r.kind,r.formId??r.url??r.kind];
    case 'rosterDays':return [r.day];
    case 'churnEvents':return r._id?[r._id]:[r.day,r.key,r.from,r.to,r.kind];
    case 'appointments':return [r.apptId];
