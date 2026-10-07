@@ -37,6 +37,38 @@ class PackageTests(unittest.TestCase):
         with self.assertRaises(ValueError):module.materialize(self.root,plan,Path(self.temp.name)/'changed.zip')
         required.unlink()
         with self.assertRaises(ValueError):module.build_plan(self.root)
+    def test_helper_families_are_explicitly_hashed_and_packaged(self):
+        helpers=[
+            'hermes/webinar-pull/pull.py',
+            'hermes/webinar-pull/test_pull.py',
+            'hermes/eod-out/out.py',
+            'hermes/eod-out/test_out.py',
+            'hermes/eod-out/RUNBOOK.md',
+            'hermes/team-sync/sync.py',
+            'hermes/team-sync/test_sync.py',
+            'hermes/team-sync/README.md',
+        ]
+        plan=module.build_plan(self.root)
+        paths={row['path'] for row in plan['files']}
+        for h in helpers:
+            self.assertIn(h, paths)
+        self.assertIn('python3 hermes/eod-out/out.py --doctor', plan['doctors'])
+        self.assertIn('python3 hermes/team-sync/sync.py doctor', plan['doctors'])
+        self.assertIn('python3 hermes/webinar-pull/pull.py doctor', plan['doctors'])
+        out=Path(self.temp.name)/'bundle_helpers.zip'
+        module.materialize(self.root,plan,out)
+        with zipfile.ZipFile(out) as z:
+            manifest=json.loads(z.read('manifest.json'))
+            by_path={r['path']:r for r in manifest['files']}
+            for h in helpers:
+                self.assertIn(h, by_path)
+                self.assertEqual(hashlib.sha256(z.read(h)).hexdigest(), by_path[h]['sha256'])
+        for h in helpers:
+            modified_plan=module.build_plan(self.root)
+            (self.root/h).write_text('// modified content\n')
+            with self.assertRaises(ValueError):
+                module.materialize(self.root, modified_plan, Path(self.temp.name)/f'invalid_{Path(h).name}.zip')
+            (self.root/h).write_text('// fixture\n')
     def test_runtime_symlinks_are_refused(self):
         required=self.root/module.REQUIRED[0];required.unlink();target=Path(self.temp.name)/'external.ts';target.write_text('// outside\n')
         try:required.symlink_to(target)
