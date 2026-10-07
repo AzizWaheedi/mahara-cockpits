@@ -14,6 +14,8 @@
 // - Test charges (live_mode false) are never cash and are skipped.
 // - Refunds are a separate endpoint and are not read yet.
 
+import { parseTapChargePage } from "./tapResponse.ts";
+
 const TAP_URL = "https://api.tap.company/v2/charges/list";
 const LOOKBACK_DAYS = 45;
 const WINDOW_DAYS = 30;
@@ -80,11 +82,7 @@ async function listPage(
     },
     body: JSON.stringify(body),
   });
-  const text = await res.text();
-  if (!res.ok) throw new Error(`Tap returned HTTP ${res.status}: ${redact(text)}`);
-  const json = JSON.parse(text);
-  const charges: Row[] = Array.isArray(json?.charges) ? json.charges : [];
-  return { charges, hasMore: json?.has_more === true };
+  return parseTapChargePage(res.status, await res.text());
 }
 
 Deno.serve(async (req: Request) => {
