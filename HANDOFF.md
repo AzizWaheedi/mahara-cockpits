@@ -135,3 +135,12 @@ Mahara Media operates five cockpit applications (`media-buyer`, `client-success`
 - Activated canonical CEO provider-health GET/POST and refresh-id fields from `20260927i:22-24`, after rollback preflight. Human finance/person rows were unchanged.
 - Actual merged guest sign-in surface rendered in a managed headless browser. Password/code-mode toggle worked. No screenshot, relay, sign-in, email, business write or authenticated acceptance was attempted. The smoke intentionally blocked external font requests.
 - Next: commit the supported-key-name correction, rebind evidence, push the reviewed source to origin/main, redeploy affected gateways, run `scripts/ship.sh all` and verify production. Full-cutover acceptance and Convex retirement remain separate.
+
+## Production shipping recovery
+
+- `1998074` passed the full release gate and was pushed to both existing origin/main and the migration branch.
+- First ship preflight needed the linked checkout's existing ignored Convex-generated test references. Restored those exact artifacts only for legacy tests; no source import, commit or Convex deployment was added.
+- The next ship run uploaded Client Success, Creative Director, Media Buyer and Editor before stopping at Editor's bundle check. Sales had not yet been reached.
+- The Editor public production bundle contained the correct native Supabase URL. The checker falsely failed because `grep -q` closed the pipe early and curl exited 23 under pipefail.
+- Reproduced the actual public-bundle pipeline as statuses `23 0`. Changed only the checker to consume the full response. The same live bundle then returned statuses `0 0`.
+- Commit and push this operational correction, rerun the approved all-app ship command, and record its final footer and production route verification. Do not weaken lint, source, test or native configuration gates.

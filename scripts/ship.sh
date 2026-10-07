@@ -216,8 +216,10 @@ ship() {
   # bundle a few seconds before the proxy serves it (seen 2026-09-24).
   if [ -n "$live" ] && grep -q '^VITE_SUPABASE_URL=' "$dir/.env.example" 2>/dev/null; then
     local carries=""
+    # Read the whole response: grep -q closes early and makes curl fail
+    # with a broken pipe under pipefail even when the native URL is present.
     for _ in 1 2 3 4 5 6; do
-      if curl -fsS -m 30 "$SITE/assets/$live" 2>/dev/null | grep -q 'https://[a-z0-9]\{20\}\.supabase\.co'; then
+      if curl -fsS -m 30 "$SITE/assets/$live" 2>/dev/null | grep 'https://[a-z0-9]\{20\}\.supabase\.co' >/dev/null; then
         carries=1
         break
       fi
