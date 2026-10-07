@@ -44,3 +44,136 @@ test('a successful creation followed by a lost checkpoint preserves the original
  const result=await runReport(h.admin,'fixture',context,args,env,async()=>{},h.request);
  expect(h.creates).toBe(1);expect(result).toMatchObject({ok:false,state:'reconcile',retrySafe:false,docId:'document_fixture_123456'});
 });
+
+test('verifyReportAudience defaults allowPublicEdit to false and denies anyone writer', ()=>{
+ const approved=new Set([identity,context.email]);
+ const publicWriter=[{type:'user',emailAddress:identity,role:'owner'},{type:'anyone',role:'writer'}];
+ expect(()=>verifyReportAudience(publicWriter as any,approved)).toThrow('unapproved');
+});
+
+test('verifyReportAudience allows anyone writer only when allowPublicEdit is true', ()=>{
+ const approved=new Set([identity,context.email]);
+ const publicWriter=[{type:'user',emailAddress:identity,role:'owner'},{type:'anyone',role:'writer'}];
+ expect(()=>verifyReportAudience(publicWriter as any,approved,true)).not.toThrow();
+});
+
+test.each([
+ {type:'anyone',role:'reader'},
+ {type:'anyone',role:'commenter'},
+ {type:'group',emailAddress:'team@example.com',role:'writer'},
+ {type:'domain',domain:'maharamedia.com',role:'writer'},
+ {type:'user',emailAddress:'unapproved@example.com',role:'writer'}
+])('verifyReportAudience rejects non-anyone/writer audiences even with allowPublicEdit true: %j', permission=>{
+ const approved=new Set([identity,context.email]);
+ const perms=[{type:'user',emailAddress:identity,role:'owner'},permission];
+ expect(()=>verifyReportAudience(perms as any,approved,true)).toThrow('unapproved');
+});
+
+test('runReport allows public edit when approved folder matches and guards document audience', async()=>{
+ const folderId='folder_fixture_123456';
+ const customEnv=(name:string)=>({
+  CSM_REPORTS_FOLDER_ID:folderId,
+  CSM_REPORTS_PUBLIC_EDIT_APPROVED_FOLDER_ID:folderId,
+  GOOGLE_SERVICE_ACCOUNT_JSON:JSON.stringify({client_email:identity,private_key:privateKey})
+ })[name as 'CSM_REPORTS_FOLDER_ID'];
+
+ const h=harness([{type:'user',emailAddress:identity,role:'owner'},{type:'anyone',role:'writer'}]);
+ const result=await runReport(h.admin,'fixture',context,args,customEnv,async()=>{},h.request);
+ expect(h.creates).toBe(1);
+ expect(result).toMatchObject({ok:false,state:'reconcile'});
+});
+
+test('runReport denies public edit when approved folder id does not match', async()=>{
+ const customEnv=(name:string)=>({
+  CSM_REPORTS_FOLDER_ID:'folder_fixture_123456',
+  CSM_REPORTS_PUBLIC_EDIT_APPROVED_FOLDER_ID:'different_folder_999999',
+  GOOGLE_SERVICE_ACCOUNT_JSON:JSON.stringify({client_email:identity,private_key:privateKey})
+ })[name as 'CSM_REPORTS_FOLDER_ID'];
+
+ const h=harness([{type:'user',emailAddress:identity,role:'owner'},{type:'anyone',role:'writer'}]);
+ const result=await runReport(h.admin,'fixture',context,args,customEnv,async()=>{},h.request);
+ expect(h.creates).toBe(0);
+ expect(result).toMatchObject({ok:false,state:'failed'});
+});
+
+test('runReport denies folder owner email when member has active nonstaff role', async()=>{
+ const customEnv=(name:string)=>({
+  CSM_REPORTS_FOLDER_ID:'folder_fixture_123456',
+  CSM_REPORTS_FOLDER_OWNER_EMAIL:'active_viewer@example.com',
+  GOOGLE_SERVICE_ACCOUNT_JSON:JSON.stringify({client_email:identity,private_key:privateKey})
+ })[name as 'CSM_REPORTS_FOLDER_ID'];
+
+ const h=harness([{type:'user',emailAddress:identity,role:'owner'},{type:'user',emailAddress:'active_viewer@example.com',role:'writer'}]);
+ const origFrom=h.admin.from;
+ h.admin.from=(table:string)=>{
+  if(table==='cockpit_members'){
+   return {
+    select:()=>({
+     eq:()=>({
+      maybeSingle:async()=>({data:{email:'active_viewer@example.com',roles:['viewer'],active:true},error:null})
+     })
+    })
+   };
+  }
+  return origFrom(table);
+ };
+
+ const result=await runReport(h.admin,'fixture',context,args,customEnv,async()=>{},h.request);
+ expect(h.creates).toBe(0);
+ expect(result).toMatchObject({ok:false,state:'failed'});
+});
+
+test('runReport denies folder owner email when member has staff role but is inactive', async()=>{
+ const customEnv=(name:string)=>({
+  CSM_REPORTS_FOLDER_ID:'folder_fixture_123456',
+  CSM_REPORTS_FOLDER_OWNER_EMAIL:'inactive_csm@example.com',
+  GOOGLE_SERVICE_ACCOUNT_JSON:JSON.stringify({client_email:identity,private_key:privateKey})
+ })[name as 'CSM_REPORTS_FOLDER_ID'];
+
+ const h=harness([{type:'user',emailAddress:identity,role:'owner'},{type:'user',emailAddress:'inactive_csm@example.com',role:'writer'}]);
+ const origFrom=h.admin.from;
+ h.admin.from=(table:string)=>{
+  if(table==='cockpit_members'){
+   return {
+    select:()=>({
+     eq:()=>({
+      maybeSingle:async()=>({data:{email:'inactive_csm@example.com',roles:['csm'],active:false},error:null})
+     })
+    })
+   };
+  }
+  return origFrom(table);
+ };
+
+ const result=await runReport(h.admin,'fixture',context,args,customEnv,async()=>{},h.request);
+ expect(h.creates).toBe(0);
+ expect(result).toMatchObject({ok:false,state:'failed'});
+});
+
+test('runReport allows confirmed folder owner when active staff role matches', async()=>{
+ const ownerEmail='staff_owner@maharamedia.com';
+ const customEnv=(name:string)=>({
+  CSM_REPORTS_FOLDER_ID:'folder_fixture_123456',
+  CSM_REPORTS_FOLDER_OWNER_EMAIL:ownerEmail,
+  GOOGLE_SERVICE_ACCOUNT_JSON:JSON.stringify({client_email:identity,private_key:privateKey})
+ })[name as 'CSM_REPORTS_FOLDER_ID'];
+
+ const h=harness([{type:'user',emailAddress:identity,role:'owner'},{type:'user',emailAddress:ownerEmail,role:'writer'}]);
+ const origFrom=h.admin.from;
+ h.admin.from=(table:string)=>{
+  if(table==='cockpit_members'){
+   return {
+    select:()=>({
+     eq:()=>({
+      maybeSingle:async()=>({data:{email:ownerEmail,roles:['csm'],active:true},error:null})
+     })
+    })
+   };
+  }
+  return origFrom(table);
+ };
+
+ const result=await runReport(h.admin,'fixture',context,args,customEnv,async()=>{},h.request);
+ expect(h.creates).toBe(1);
+ expect(result).toMatchObject({ok:false,state:'reconcile'});
+});

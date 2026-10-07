@@ -13,9 +13,15 @@ async function permissionsFor(google:(url:string,init?:RequestInit)=>Promise<Row
  }
  throw Error('Report permission pagination exceeded its review limit');
 }
-export function verifyReportAudience(permissions:Row[],approved:Set<string>){
+export function verifyReportAudience(permissions:Row[],approved:Set<string>,allowPublicEdit:boolean=false){
  const active=permissions.filter(p=>p.deleted!==true);
- if(!active.length||active.some(p=>p.type!=='user'||typeof p.emailAddress!=='string'||!approved.has(p.emailAddress.trim().toLowerCase())||!['owner','organizer','fileOrganizer','writer','commenter','reader'].includes(p.role)))throw Error('The reports folder or document has unapproved recipients. Use a folder shared only with the confirmed report staff.');
+ if(!active.length)throw Error('The reports folder or document has unapproved recipients. Use a folder shared only with the confirmed report staff.');
+ for(const p of active){
+  if(allowPublicEdit&&p.type==='anyone'&&p.role==='writer')continue;
+  if(p.type!=='user'||typeof p.emailAddress!=='string'||!approved.has(p.emailAddress.trim().toLowerCase())||!['owner','organizer','fileOrganizer','writer','commenter','reader'].includes(p.role)){
+   throw Error('The reports folder or document has unapproved recipients. Use a folder shared only with the confirmed report staff.');
+  }
+ }
 }
 export async function runReport(admin:any,id:string,context:Row,args:Row,env:(name:string)=>string|undefined,scopeCheck:()=>Promise<void>,request:typeof fetch=fetch){
  let attemptedCreate=false;let docId:string|undefined;
@@ -28,9 +34,20 @@ export async function runReport(admin:any,id:string,context:Row,args:Row,env:(na
   const writers=[...new Set(['aziz@maharamedia.com','abdulelah@maharamedia.com',context.email])];
   if(writers.some(email=>typeof email!=='string'||!/^\S+@\S+\.\S+$/.test(email)))throw Error('The confirmed report staff identity is unavailable');
   const approved=new Set([...writers.map(email=>email.trim().toLowerCase()),serviceEmail]);
+  const rawOwner=env('CSM_REPORTS_FOLDER_OWNER_EMAIL');
+  if(rawOwner!==undefined&&rawOwner!==''){
+   const ownerEmail=rawOwner.trim().toLowerCase();
+   if(!/^\S+@\S+\.\S+$/.test(ownerEmail))throw Error('CSM_REPORTS_FOLDER_OWNER_EMAIL must be a valid email address');
+   const {data:member,error:memberError}=await admin.from('cockpit_members').select('email,roles,active').eq('email',ownerEmail).maybeSingle();
+   if(memberError||!member||member.active!==true||!Array.isArray(member.roles)||!member.roles.some((r:string)=>['admin','ceo','csm'].includes(r))){
+    throw Error('Configured folder owner is not an active staff member');
+   }
+   approved.add(ownerEmail);
+  }
+  const allowPublicEdit=env('CSM_REPORTS_PUBLIC_EDIT_APPROVED_FOLDER_ID')===folder;
   const google=await googleTools(env,health,request);
   const folderMeta=await google('https://www.googleapis.com/drive/v3/files/'+folder+'?supportsAllDrives=true&fields=id,mimeType,capabilities(canAddChildren)');if(folderMeta.mimeType!=='application/vnd.google-apps.folder'||folderMeta.capabilities?.canAddChildren!==true)throw Error('The service account cannot write the internal reports folder');
-  const folderAccess=await permissionsFor(google,folder);verifyReportAudience(folderAccess,approved);
+  const folderAccess=await permissionsFor(google,folder);verifyReportAudience(folderAccess,approved,allowPublicEdit);
   let story:{means:string;next:string[]}|undefined;
   const hasModel=['ANTHROPIC_API_KEY','OPENAI_API_KEY','GOOGLE_AI_API_KEY','DEEPSEEK_API_KEY'].some(key=>env(key));
   if(hasModel){const raw=await structuredJson(narrativePrompt(profile,args.language==='ar'?'ar':'en',args.note),NARRATIVE_SCHEMA,env,health,request);story=storyFromResult(raw)??undefined;if(!story)throw Error('Report narrative was not usable');}
@@ -43,7 +60,7 @@ export async function runReport(admin:any,id:string,context:Row,args:Row,env:(na
   const docUrl='https://docs.google.com/document/d/'+docId+'/edit';await checkpoint({phase:'created',docId,docUrl,title:plan.title,period:plan.period});
   const content=await writeReportDocument(google,confirmedDocId,plan);await checkpoint({phase:'written',docId,docUrl,title:plan.title,period:plan.period,characters:content.characters});await scopeCheck();
   for(const email of writers)await google('https://www.googleapis.com/drive/v3/files/'+docId+'/permissions?sendNotificationEmail=false&supportsAllDrives=true',{method:'POST',body:JSON.stringify({role:'writer',type:'user',emailAddress:email})});
-  const access=await permissionsFor(google,confirmedDocId);verifyReportAudience(access,approved);
+  const access=await permissionsFor(google,confirmedDocId);verifyReportAudience(access,approved,allowPublicEdit);
   if(!writers.every(email=>access.some((p:Row)=>p.type==='user'&&String(p.emailAddress).toLowerCase()===email.toLowerCase()&&['writer','owner','organizer'].includes(p.role))))throw Error('Report writer permissions were not confirmed');
   const result={ok:true,docId,docUrl,title:plan.title,period:plan.period,contentReadbackVerified:true,sharingVerified:true};
   const {data:receipt,error}=await admin.rpc('cockpit_csm_report_finish',{p_id:id,p_result:result});if(error)throw Error('Report exists, but its local confirmation failed');return receipt;

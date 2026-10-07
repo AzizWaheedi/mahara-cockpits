@@ -114,3 +114,23 @@ Work remains active. [Inventory](docs/CONVEX-RETIREMENT-INVENTORY-20261007.md).
 - History conflicts, statistics, report folder, host setup, final delta, authenticated tests, and recovery remain open.
 - No schedules, outward actions, frontend deployment, freeze, or deletion ran in this phase. Retirement flags remain false.
 - Next: finish the remaining backend proposal and approve its exact live run. Preserve concurrent edits and protected exports.
+
+## Single-owner consolidation: 2026-10-07
+
+- Previous repair session completed and safely stopped. Retirement session was aborted at 15:09:38Z after its last completed command. No remaining local worker process was observed.
+- Protected backup: `D:/secure/cockpit-retirement-prep-20261007/consolidation-20261007/`. All 57 changed paths were preserved before integration.
+- Retirement preparation checkpoint: `6a5d16f1`. Repair merge: `b35e8a9b36de27ea4670c820ada0afd101d53022`. Both runbook histories remain. Root main checkout remains untouched.
+- VERIFIED: integrated clean-source local gate passed 66 suites, ten typechecks, five builds, source/shared checks. Receipt: `integrated-local-verification.json` in the protected backup folder.
+- VERIFIED LIVE READ: 11,829 source imports. Original 7,091 and approved 4,738 records were not replayed. All media/CSM/creative readiness states remain present.
+- The twelve final cost/goal definitions were already applied at 15:06:58Z. Receipt verifies unchanged cost and goal business rows. Do not rerun that installation.
+- STAGED AND VERIFIED: 128 runtime files at `/opt/data/mahara-native-staging/b35e8a9b`. Every file hash verified. Bun 1.4.2 installed from its pinned integrity-verified distribution. Three dependency installs passed. No active worker or scheduler was changed.
+- CONFIGURED: named native credentials from the existing approved media deployment. Stored remotely with mode 600. Media, source-sync, CEO and Ask AI doctors pass. Guardian still needs its service-user configuration.
+- DRY RUN FAILED SAFELY: CEO finance readiness blocks its combined run. No data or provider write occurred. Source-sync dry run also failed before producing a plan; diagnosis is active.
+- User selected report folder `1YolkzE6ycBQT69hFa_iGUnDMiEMUCQ09`. Verified owner is active cockpit admin/CSM. Folder currently has anyone/writer access. User explicitly instructed keeping public editing. Implement an explicit folder-bound exception, keeping private default and server/audit checks.
+- Still open: exact historical conflict resolution, statistics freshness, finance alias/history proof, report audience completion, native live-run acceptance, final delta/freeze, production deployment and Convex-blocked browser/recovery proof. No schedules, outward report run, writer freeze or deletion occurred.
+
+### Native EOD and chosen report audience, verified 7 October
+
+- Applied the existing `20260927b_eod_delivery_claims.sql` after its nine isolated tests and a live ROLLBACK preview. The queue was empty before and after. Three service-only RPCs, nine missing columns, and both protection/audit triggers are installed. Receipt: `eod-native-contract-receipt.json` under consolidation evidence. No deliveries or schedules ran.
+- Report audience change passed 39 focused tests and the Deno server check. Public editing remains denied by default. An explicit folder-ID match accepts anyone/writer for the user-selected folder. Its configured owner must remain an active admin/CEO/CSM member. Both folder and final-document audiences use the same policy.
+- Deno's frozen check found the pre-existing root lock out of date. The successful server check used `--node-modules-dir=auto --no-lock`; no source lockfile was changed.
