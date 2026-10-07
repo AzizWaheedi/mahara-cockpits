@@ -14,6 +14,24 @@ export function doctor(env:Env){
 export function transport(env:Env,request:typeof fetch=fetch,wait=(ms:number)=>new Promise(r=>setTimeout(r,ms))){
  const receipts:Row[]=[],faults:Row[]=[],logs:Row[]=[];const cache=new Map<string,Response>();let requests=0;let googleToken:string|undefined;let googleEmail:string|undefined;
  const needed=(name:string)=>{if(!env[name])throw new Error(`Missing named key: ${name}`);return env[name]!;};
+ let fathomQueue: Promise<void> = Promise.resolve();
+ const HTTP_DATE_REGEX=/^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun),\s\d{2}\s(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s\d{4}\s\d{2}:\d{2}:\d{2}\sGMT$/;
+ const parseRetryAfter=(header:string|null):number|undefined=>{
+  if(!header)return undefined;
+  const trimmed=header.trim();
+  if(/^\d+$/.test(trimmed)){
+   const sec=parseInt(trimmed,10);
+   return Number.isFinite(sec)&&sec>=0?sec*1000:undefined;
+  }
+  if(HTTP_DATE_REGEX.test(trimmed)){
+   const parsedDate=Date.parse(trimmed);
+   if(!Number.isNaN(parsedDate)){
+    const diff=parsedDate-Date.now();
+    return Math.max(0,diff);
+   }
+  }
+  return undefined;
+ };
  const fetchRead:typeof fetch=async(input,init={})=>{
   const url=new URL(typeof input==='string'?input:input instanceof URL?input.href:input.url),method=(init.method??'GET').toUpperCase();
   if(url.protocol!=='https:'||(!Object.hasOwn(HOSTS,url.hostname)&&!/(^|\.)(fbcdn\.net|fbsbx\.com|facebook\.com)$/.test(url.hostname))||url.username||url.password||url.port)throw new Error('Unapproved provider URL');
@@ -25,15 +43,49 @@ export function transport(env:Env,request:typeof fetch=fetch,wait=(ms:number)=>n
   const held=cache.get(key);if(held)return held.clone();
   if(++requests>2000)throw new Error('Read budget exhausted; refusing partial publication');
   const resource=`${url.hostname}${url.pathname}`;
+  const isFathom=url.hostname==='api.fathom.ai';
   for(let attempt=1;attempt<=3;attempt++){
    receipts.push({resource,method,phase:'intent',attempt,at:new Date().toISOString()});
+   let releaseFathom: (()=>void)|undefined;
    try{
+    if(isFathom){
+     const current=fathomQueue;
+     fathomQueue=new Promise<void>(resolve=>{releaseFathom=resolve;});
+     await current;
+     const cachedAfterLock=cache.get(key);
+     if(cachedAfterLock){
+      return cachedAfterLock.clone();
+     }
+     await wait(1500);
+    }
     const response=await request(url.href,{...init,headers,redirect:'error',signal:AbortSignal.timeout(30000)});
     receipts.push({resource,method,phase:'response',http_status:response.status,attempt,at:new Date().toISOString()});
-    if((response.status===429||response.status>=500)&&attempt<3){await wait(attempt*1000);continue;}
+    if(response.status===429||response.status===503||response.status>=500){
+     const retryMs=parseRetryAfter(response.headers.get('retry-after'));
+     if(retryMs!==undefined&&retryMs>60000){
+      try{await response.body?.cancel();}catch{}
+      faults.push({resource,status:response.status});
+      return response;
+     }
+     if(attempt<3){
+      try{await response.body?.cancel();}catch{}
+      await wait(retryMs!==undefined?retryMs:attempt*1000);
+      continue;
+     }
+    }
     if(!response.ok){faults.push({resource,status:response.status});return response;}
     if(!response.headers.get('content-type')?.startsWith('image/'))cache.set(key,response.clone());return response;
-   }catch(error){receipts.push({resource,method,phase:'unknown',attempt});if(attempt<3){await wait(attempt*1000);continue;}faults.push({resource,error:'Transport unavailable'});throw new Error(`Read unavailable: ${resource}`);}
+   }catch(error){
+    receipts.push({resource,method,phase:'unknown',attempt});
+    if(attempt<3){
+     await wait(attempt*1000);
+     continue;
+    }
+    faults.push({resource,error:'Transport unavailable'});
+    throw new Error(`Read unavailable: ${resource}`);
+   }finally{
+    releaseFathom?.();
+   }
   }
   throw new Error('Read attempts exhausted');
  };
