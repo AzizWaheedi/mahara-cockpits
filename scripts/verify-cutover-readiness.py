@@ -45,6 +45,7 @@ RELEVANT_TEST_FILES = [
     "apps/media-buyer-cockpit/scripts/cockpit-auth-sql.test.ts",
     "apps/client-success-cockpit/scripts/auth-password-ui.test.tsx",
     "scripts/test_check_cockpit_auth_config.py",
+    "scripts/test_vercel_project_guard.py",
     "apps/media-buyer-cockpit/scripts/supabase-access.test.ts",
     "apps/media-buyer-cockpit/scripts/cockpit-self-adoption.test.ts",
     "apps/media-buyer-cockpit/scripts/cockpit-editor-identity.test.ts",
