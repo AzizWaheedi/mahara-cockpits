@@ -44,7 +44,7 @@ Other modes:
     --project REF       check another Supabase project (after a planned move) against the same records
     --record FILE       save what every source answered (names, digests, booleans; never a secret or a row)
     --replay FILE       judge a saved recording instead of the live sources (dry simulations: change the
-                        recording, replay it; scripts/preserve_scenarios.py does this for 22 cutover actions)
+                        recording, replay it; scripts/preserve_scenarios.py does this for 24 cutover actions)
 
 It changes nothing anywhere. On the VPS the only write is a scratch folder under /tmp for the doctor's
 write probe, removed at once. SQL goes with read_only true; the one read that needs the owner role (the
@@ -275,10 +275,11 @@ def git(*args: str, data: Optional[bytes] = None, timeout: int = 60) -> bytes:
 
 
 class Later:
-    """Migrations in this checkout that were not in main at the inventory (or changed since): what can
-    explain a database object that no longer matches the manifest."""
+    """Migrations that were not in main at the inventory (or changed since), in this checkout or on the ref
+    (origin/main, or the cutover branch with --ref): what can explain a database object that no longer
+    matches the manifest. The ref counts only when it contains the restore point."""
 
-    def __init__(self, baseline: str, recorded: Iterable[str]) -> None:
+    def __init__(self, baseline: str, recorded: Iterable[str], ref: Optional[str] = None) -> None:
         mig = ROOT / "supabase" / "migrations"
         on_disk = sorted(p for p in mig.glob("*.sql")) if mig.is_dir() else []
         self.files: Dict[str, str] = {}
@@ -297,6 +298,15 @@ class Later:
             try:
                 self.files[str(p.relative_to(ROOT))] = p.read_text(encoding="utf-8", errors="replace").lower()
             except OSError:
+                pass
+        if ref:
+            try:
+                names = git("diff", "--name-only", "--diff-filter=AM", baseline, ref, "--", "supabase/migrations/")
+                for path in names.decode().split("\n"):
+                    if path.endswith(".sql") and "/tests/" not in path and path not in self.files:
+                        self.files[path] = git("show", f"{ref}:{path}").decode("utf-8", "replace").lower()
+                self.how += f", and on {ref}"
+            except (SourceError, OSError, subprocess.SubprocessError):
                 pass
 
     def find(self, pattern: str) -> List[str]:
@@ -518,6 +528,7 @@ from c
 
 Q_FUNCTIONS = """
 select p.proname as name, pg_get_function_identity_arguments(p.oid) as args, md5(pg_get_functiondef(p.oid)) as md5,
+  md5(lower(btrim(regexp_replace(p.prosrc, '\s+', ' ', 'g')))) as body_md5,
   (select coalesce(json_object_agg(g.grantee, g.privs), '{{}}'::json) from (
      select case when x.grantee = 0 then 'PUBLIC' else pg_get_userbyid(x.grantee) end as grantee,
             json_agg(distinct x.privilege_type) as privs
@@ -763,12 +774,25 @@ def check_functions(rep: Report, mg: Mgmt, man: Dict[str, Any], later: Later) ->
         opened = [g for g in ("anon", "PUBLIC") if g in (cur.get("grants") or {}) and g not in (rec.get("grants") or {})]
         files = later.function(name)
         regress = later.older_copy(name, files) if files else None
+        # A later migration explains the change only if the live body is the one it writes (whitespace and
+        # case folded); a migration that merely mentions the function explains nothing.
+        live_body = cur.get("body_md5")
+        mine = [f for f in files if any(hashlib.md5(b.encode("utf-8")).hexdigest() == live_body
+                                        for b in later.bodies(later.files.get(f, ""), name))] if live_body else files
         if opened and rec.get("group") == "created":
             rep.add("supabase", label, CHANGED, "; ".join(diffs) + f"; now executable by {', '.join(opened)}")
         elif regress:
             rep.add("supabase", label, CHANGED, "; ".join(diffs) + f"; {regress}")
+        elif files and not mine:
+            who = ", ".join(Path(f).name for f in files[:3])
+            rep.add("supabase", label, CHANGED, "; ".join(diffs) + f"; {who} " + ("defines" if len(files) == 1 else "define")
+                    + " it, but the live body is not " + ("its" if len(files) == 1 else "any of theirs")
+                    + " (changed by hand, or by SQL that is not in the repo)")
         else:
-            rep.add("supabase", label, CHANGED, "; ".join(diffs), explained_by(files))
+            why = explained_by(mine)
+            if why and live_body:
+                why += "; the live body is that file's"
+            rep.add("supabase", label, CHANGED, "; ".join(diffs), why)
 
 
 def check_cron(rep: Report, mg: Mgmt, man: Dict[str, Any], later: Later) -> None:
@@ -1976,7 +2000,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     elif mg is None:
         rep.add("supabase", "Creative Triage", UNKNOWN, mg_error)
     else:
-        later = Later(sman["source"]["main_sha"], sman["source"]["migrations"])
+        later = Later(sman["source"]["main_sha"], sman["source"]["migrations"], args.ref if ref_ok else None)
         steps: List[Tuple[str, Callable[[], None]]] = [
             ("tables and views", lambda: check_relations(rep, mg, sman, later)),
             ("functions", lambda: check_functions(rep, mg, sman, later)),

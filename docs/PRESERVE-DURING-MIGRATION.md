@@ -199,13 +199,19 @@ It changes nothing. SQL goes with `read_only` true; the one read that needs the
 owner role (the vault digest) runs inside a read-only transaction. It never
 prints or saves a secret.
 
-A `CHANGED` line says whether it is explained: a migration added to the repo
-after `e166a0b` redefines the object, the VPS still has the copy recorded on
-2026-10-07, the object is not part of this work, or a function was redeployed
-from a ref that contains the restore point. "Explained by a later migration"
-means: read that migration, it is the one that changed the object. A later
+A `CHANGED` line says whether it is explained: a migration added after
+`e166a0b`, in this checkout or on `--ref` (`origin/main` by default; pass the
+cutover branch if it is not merged yet), redefines the object; the VPS still has
+the copy recorded on 2026-10-07; the object is not part of this work; or a
+function was redeployed from a ref that contains the restore point. For a
+function, the live body must be the body that migration writes; a migration that
+only mentions it explains nothing, so a later hand edit is not explained. A later
 migration that puts back a definition the older migrations had already replaced
-(an old file copied into a new one) is not explained: the line names both files.
+(an old file copied into a new one) is not explained either: the line names both
+files. For tables, triggers, jobs and settings, "explained by a later migration"
+means: read that migration, it is the one that changed the object.
+`20261007b_cockpit_auth_contract.sql` (on main since 2026-10-07) was applied
+before the inventory, so the records already hold its `cockpit_get_my_access()`.
 Exit code 0 means nothing is missing, every change is explained and every check
 could be made; 1 means something is missing or a change is not explained; 2 means
 some checks could not be made.
@@ -221,7 +227,7 @@ three explained ones recorded at the inventory (two sales-desk import files olde
 on the VPS, two never copied there, seven Mac metadata files).
 
 **Dry simulations.** `python3 scripts/preserve_scenarios.py` replays the
-verifier against copies of the records changed the way 22 cutover actions would
+verifier against copies of the records changed the way 24 cutover actions would
 change them (section 7) and says which lines each one fails; with
 `--tape <file>` it starts from a live recording made with
 `python3 scripts/verify-preserved.py --record <file>` (names, digests, counts and
@@ -326,9 +332,10 @@ into a chat, a file or a commit. If `IP_SALT` is lost, set a new random value;
 the only effect is that stored join-page IP hashes no longer match. The verifier's
 pairing line says when they match again.
 
-**The cockpit.** `scripts/ship.sh sales` from main at `e166a0b` or later, then
-open `/sales` and check that the room screens and the deck are there; the
-verifier's two bundle lines must read ok.
+**The cockpit.** `scripts/ship.sh sales` from main at `e166a0b` or later (since
+`7d303f8` it needs the Vercel CLI signed in; it no longer falls back to
+Composio), then open `/sales` and check that the room screens and the deck are
+there; the verifier's two bundle lines must read ok.
 
 **VPS workers.** Either `git reset --hard origin/main` in `~/mahara-cockpits` at
 `e166a0b` or later (both folders are on main; other untracked workers there are
@@ -453,4 +460,6 @@ because the vault has no Slack webhook for it.
 | Database restored to 2026-10-04 | Definitions from `20261004a`, the `provider` column and newer rows go back | CHANGED: functions, columns, older settings rows, fewer rows | Nothing (the tables and jobs still exist) | Nothing | The seven files, then rows |
 | Database restored to 2026-10-02 | Live calls gone from the database | MISSING tables, functions, jobs, settings rows | `live-tables`, `live-cron` fail | The same, even with its state lost | The seven files, then rows |
 | Checkout reset to current `origin/main` | Nothing | Passes | Passes | Passes | Nothing to do |
-| A function changed on purpose by a new migration on the cutover branch | The intended change | CHANGED, explained by that migration | Nothing | Nothing | Read that migration |
+| A function changed on purpose by a new migration on the cutover branch | The intended change | CHANGED, explained by that migration (its body is the live one) | Nothing | Nothing | Read that migration |
+| A cutover migration merged to main redefines a function the rooms use (as `20261007b` does `cockpit_get_my_access()`) | The intended change | CHANGED, explained by the file on `origin/main` | Nothing | Nothing | Read that migration |
+| That function then edited by hand | A definition no file in the repo holds | CHANGED, not explained: the file defines it, but the live body is not its | Nothing | Nothing | Re-apply the migration that should hold it |

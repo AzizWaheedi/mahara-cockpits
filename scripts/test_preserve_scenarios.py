@@ -114,6 +114,22 @@ class Scenarios(unittest.TestCase):
         line = next(r for r in out["checks"] if "cockpit_sales_setter_deals" in r["check"])
         self.assertIn("20261010b_cutover_sales.sql", line["why"])
 
+    def test_k_a_cutover_migration_on_main_explains_its_change(self):
+        if not ps.git("ls-tree", "--name-only", "origin/main", "--", ps.AUTH_CONTRACT).strip():
+            self.skipTest("origin/main in this clone does not hold 20261007b yet (git fetch origin)")
+        out = replay("k")
+        self.assertEqual(lines(out), {})
+        line = next(r for r in out["checks"] if r["check"] == "function cockpit_get_my_access()")
+        self.assertIn("20261007b_cockpit_auth_contract.sql", line["why"])
+        self.assertIn("the live body is that file's", line["why"])
+
+    def test_l_a_hand_edit_is_not_explained_by_a_migration_that_mentions_it(self):
+        if not ps.git("ls-tree", "--name-only", "origin/main", "--", ps.AUTH_CONTRACT).strip():
+            self.skipTest("origin/main in this clone does not hold 20261007b yet (git fetch origin)")
+        status, detail = lines(replay("l"))["function cockpit_get_my_access()"]
+        self.assertEqual(status, "CHANGED")
+        self.assertIn("defines it, but the live body is not its", detail)
+
     def test_e2_guard_trigger_dropped(self):
         self.assertIn("trigger cockpit_sales_settings_guard gone",
                       lines(replay("e2"))["table cockpit_sales_settings (dependency)"][1])
@@ -165,6 +181,8 @@ class Scenarios(unittest.TestCase):
 
     def test_every_scenario_but_the_passing_ones_fails_the_run(self):
         for sid, _, _ in ps.SCENARIOS:
+            if sid in ("k", "l"):
+                continue  # need origin/main to hold 20261007b; their own tests say so
             caught = bool(lines(replay(sid)))
             self.assertEqual(caught, sid not in ps.PASSING, sid)
 

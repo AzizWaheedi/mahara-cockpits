@@ -282,11 +282,41 @@ def e5(t, ctx):
                       git("show", "e166a0b:supabase/migrations/20260927a_sales_setter_pay.sql")}
 
 
+def body_md5(text: str, name: str) -> str:
+    return hashlib.md5(VP.Later.bodies(text, name)[-1].encode("utf-8")).hexdigest()
+
+
 def e6(t, ctx):
     e1(t, ctx)
-    t["__later__"] = {"supabase/migrations/20261010b_cutover_sales.sql":
-                      "create or replace function public.cockpit_sales_setter_deals(p_rep_id text, p_from timestamptz, "
-                      "p_to timestamptz) returns jsonb language sql as $$ select '{}'::jsonb $$;"}
+    sql = ("create or replace function public.cockpit_sales_setter_deals(p_rep_id text, p_from timestamptz, "
+           "p_to timestamptz) returns jsonb language sql as $$ select '{}'::jsonb $$;")
+    t["__later__"] = {"supabase/migrations/20261010b_cutover_sales.sql": sql}
+    for f in t["sql functions"]:
+        if f["name"] == "cockpit_sales_setter_deals":
+            f["body_md5"] = body_md5(sql, f["name"])
+
+
+AUTH_CONTRACT = "supabase/migrations/20261007b_cockpit_auth_contract.sql"
+
+
+def k(t, ctx):
+    """A cutover migration on origin/main redefines a function the rooms depend on, and the live body is its
+    body: modelled with 20261007b_cockpit_auth_contract (on main and applied on 2026-10-07, before the inventory),
+    as if it had come after."""
+    sql = git("show", f"{ctx.ref}:{AUTH_CONTRACT}")
+    for f in t["sql functions"]:
+        if f["name"] == "cockpit_get_my_access":
+            f["md5"] = sha("20261007b " + f["name"])[:32]
+            f["body_md5"] = body_md5(sql, f["name"])
+
+
+def l(t, ctx):
+    """cockpit_get_my_access() edited by hand after the cutover migration: 20261007b on main defines it, but
+    the live body is not its body."""
+    for f in t["sql functions"]:
+        if f["name"] == "cockpit_get_my_access":
+            f["md5"] = sha("by hand " + f["name"])[:32]
+            f["body_md5"] = sha("by hand body")[:32]
 
 
 def e4(t, ctx):
@@ -366,8 +396,9 @@ def j3(t, ctx):
 
 
 # Actions after which the run passes: nothing done; the checkout reset to current main (it carries both folders);
-# a function changed on purpose by a migration the verifier can read.
-PASSING = ("baseline", "a2", "e6")
+# a function changed on purpose by a migration the verifier can read (in its checkout, or on the ref: k needs
+# origin/main to hold 20261007b, as it does since 2026-10-07).
+PASSING = ("baseline", "a2", "e6", "k")
 
 SCENARIOS: List[Tuple[str, str, Callable[[Dict[str, Any], Ctx], None]]] = [
     ("a1", "VPS checkout cleaned (git clean -fd, or re-cloned at its September commit): copied desk and guardian gone", a1),
@@ -392,6 +423,8 @@ SCENARIOS: List[Tuple[str, str, Callable[[Dict[str, Any], Ctx], None]]] = [
     ("j1", f"the cockpits and workers moved to a new Supabase project ({NEW_PROJECT}); the old one left as it was", j1),
     ("j2", "the database restored to 2026-10-04 12:00 (before 20261004a and 20261004p)", j2),
     ("j3", "the database restored to 2026-10-02 (before live calls)", j3),
+    ("k", "a cutover migration on origin/main redefines cockpit_get_my_access() (as 20261007b does)", k),
+    ("l", "cockpit_get_my_access() then edited by hand (20261007b on main defines it, the live body is not its)", l),
 ]
 
 
