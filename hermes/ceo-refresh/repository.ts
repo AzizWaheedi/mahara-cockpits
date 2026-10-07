@@ -227,23 +227,119 @@ export function createRepository(read: ReadFunction): Repository {
       const campaigns = campaignData.rows.filter(row => row.onBoard === true && row.internal !== true)
         .map(row => ({ ...row, syncedAt: row.syncedAt ?? campaignData.stamp }));
       const daily = dailyRows.map(row => typeof row.data === "string" ? JSON.parse(row.data) as Row : row.data as Row);
-      const bookingMap = new Map<string, Row>();
+      const bookings: Row[] = [];
+      let bookingsSyncedAt = 0;
+      // Legacy groups: campaignName -> groupKey -> syncedAt -> count
+      const legacyGroups = new Map<string, Map<string, Map<number, number>>>();
+      const modernMap = new Map<string, Row>();
+
       for (const row of bookingRows) {
         const data = (typeof row.data === "string" ? JSON.parse(row.data) : row.data) as Row;
         const date = String(data.date ?? "");
         const campaignName = String(data.campaignName ?? "");
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !campaignName) {
+          throw new Error("Canonical booking event has no stable campaign, date, or event identity");
+        }
+
         const eventId = String(data.eventId ?? data.id ?? data.contactId ?? "");
+        const hasLegacyGroupFields = data.appointmentDate !== undefined || (data.status !== undefined && data.eventId === undefined && data.contactId === undefined);
+
+        if (!eventId && hasLegacyGroupFields) {
+          if (data.status === undefined || data.status === null) {
+            throw new Error("Canonical booking event has no verified calendar classification");
+          }
+          const rawStatus = String(data.status).trim().toLowerCase();
+          let kind: "provisional" | "confirmed" | null = null;
+          if (rawStatus === "provisional" || rawStatus === "not confirmed") {
+            kind = "provisional";
+          } else if (rawStatus === "confirmed" || rawStatus === "showed" || rawStatus === "noshow") {
+            kind = "confirmed";
+          }
+          if (!kind) throw new Error("Canonical booking event has no verified calendar classification");
+
+          if (data.syncedAt === undefined || data.syncedAt === null) {
+            throw new Error("Canonical legacy booking event has no verified syncedAt timestamp");
+          }
+          const syncStamp = asNumber(data.syncedAt, "legacy booking syncedAt");
+          if (!Number.isFinite(syncStamp) || syncStamp <= 0) {
+            throw new Error("Canonical legacy booking event has no verified syncedAt timestamp");
+          }
+          bookingsSyncedAt = Math.max(bookingsSyncedAt, syncStamp);
+
+          const groupKey = [
+            date,
+            kind,
+            String(data.client ?? ""),
+            String(data.appointmentDate ?? ""),
+            String(data.status),
+            String(data.adId ?? ""),
+          ].join("|");
+
+          let campaignMap = legacyGroups.get(campaignName);
+          if (!campaignMap) {
+            campaignMap = new Map<string, Map<number, number>>();
+            legacyGroups.set(campaignName, campaignMap);
+          }
+          const bySync = campaignMap.get(groupKey) ?? new Map<number, number>();
+          bySync.set(syncStamp, (bySync.get(syncStamp) ?? 0) + 1);
+          campaignMap.set(groupKey, bySync);
+          continue;
+        }
+
         const eventTime = String(data.startTime ?? data.date ?? "");
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !campaignName || !eventId || !eventTime) throw new Error("Canonical booking event has no stable campaign, date, or event identity");
+        if (!eventId || !eventTime) {
+          throw new Error("Canonical booking event has no stable campaign, date, or event identity");
+        }
         const calendar = String(data.kind ?? data.calendarType ?? data.calendar ?? data.calendarName ?? data.status ?? "").toLowerCase();
         const kind = /provisional|not confirmed/.test(calendar) ? "provisional" : /confirmed|main|online/.test(calendar) ? "confirmed" : null;
         if (!kind) throw new Error("Canonical booking event has no verified calendar classification");
+
         const identity = JSON.stringify([campaignName, String(data.locationId ?? ""), eventId, eventTime]);
-        const existing = bookingMap.get(identity);
-        if (existing) existing.copies = Number(existing.copies ?? 0) + 1;
-        else bookingMap.set(identity, { ...data, date, kind, count: typeof data.count === "number" ? data.count : 1, future: date > today ? (typeof data.count === "number" ? data.count : 1) : 0, copies: Number(data.copies ?? 0) });
+        const existing = modernMap.get(identity);
+        if (existing) {
+          existing.copies = Number(existing.copies ?? 0) + 1;
+        } else {
+          modernMap.set(identity, {
+            ...data,
+            campaignName,
+            date,
+            kind,
+            count: typeof data.count === "number" ? data.count : 1,
+            future: date > today ? (typeof data.count === "number" ? data.count : 1) : 0,
+            copies: Number(data.copies ?? 0),
+          });
+        }
       }
-      const bookings = [...bookingMap.values()];
+
+      for (const [campaignName, campaignMap] of legacyGroups) {
+        // (date, kind) -> { count, copies }
+        const bookedByDateAndKind = new Map<string, { count: number; copies: number; date: string; kind: "provisional" | "confirmed" }>();
+        for (const [groupKey, bySync] of campaignMap) {
+          const kept = Math.max(...bySync.values());
+          let all = 0;
+          for (const n of bySync.values()) all += n;
+          const [groupDate, groupKind] = groupKey.split("|");
+          const dateKindKey = `${groupDate}|${groupKind}`;
+          const b = bookedByDateAndKind.get(dateKindKey) ?? { count: 0, copies: 0, date: groupDate, kind: groupKind as "provisional" | "confirmed" };
+          b.count += kept;
+          b.copies += all - kept;
+          bookedByDateAndKind.set(dateKindKey, b);
+        }
+        for (const b of bookedByDateAndKind.values()) {
+          bookings.push({
+            campaignName,
+            date: b.date,
+            count: b.count,
+            copies: b.copies,
+            kind: b.kind,
+            future: b.date > today ? b.count : 0,
+          });
+        }
+      }
+
+      for (const row of modernMap.values()) {
+        bookings.push(row);
+      }
       const latestRun = syncRuns.rows.slice().sort((a, b) => asNumber(b.at, "media sync timestamp") - asNumber(a.at, "media sync timestamp"))[0];
       const health = (latestRun?.health && typeof latestRun.health === "object" ? latestRun.health : {}) as Row;
       const dates = daily.map(row => String(row.date ?? "")).filter(Boolean).sort();
@@ -264,7 +360,7 @@ export function createRepository(read: ReadFunction): Repository {
         firstDate: dates[0] ?? null,
         lastDate: dates.at(-1) ?? null,
         
-        bookingsSyncedAt: stateStamp(bookingState[0]),
+        bookingsSyncedAt: stateStamp(bookingState[0]) ?? (bookingsSyncedAt > 0 ? bookingsSyncedAt : undefined),
       };
     },
 
