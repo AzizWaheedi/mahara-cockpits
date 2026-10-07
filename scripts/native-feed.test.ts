@@ -93,6 +93,9 @@ test('atomic rollback, duplicate identity, missing output, wrong counts, stale s
  const retainedLinks=[{_id:'original-link-1',name:'Same client',dosDonts:'Keep first human note'},{_id:'original-link-2',name:'Same client',dosDonts:'Keep second human note'}];
  expect(prepareTables({clientLinks:retainedLinks},{clientLinks:retainedLinks}).clientLinks).toBe(retainedLinks);
  expect(()=>prepareTables({clientLinks:[{name:'Same client'}]},{clientLinks:retainedLinks})).toThrow(/Ambiguous prior/);
+ const linkedPrior=retainedLinks.map((r,i)=>({...r,url:`https://app.clickup.com/t/task-${i}`}));
+ const linkedFresh=linkedPrior.map((r,i)=>({name:r.name,taskId:`task-${i}`,dosDonts:r.dosDonts}));
+ expect(prepareTables({clientLinks:linkedFresh},{clientLinks:linkedPrior}).clientLinks.map(r=>r._id)).toEqual(retainedLinks.map(r=>r._id));
  const duplicateIds=[{_id:'same-id',name:'One'},{_id:'same-id',name:'Two'}];
  expect(()=>prepareTables({clientLinks:duplicateIds},{clientLinks:duplicateIds})).toThrow(/Duplicate/);
  const db=await fixture();try{

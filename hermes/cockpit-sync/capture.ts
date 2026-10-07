@@ -71,7 +71,8 @@ export function prepareTables(tables:Record<string,Row[]>, prior:Record<string,R
    case 'marketPlays':return [r.adsetId??r.id??r.name];
    case 'winnersArchive':return [r.adId??r.metaAdId??r.id];
    case 'adStills':return [r.key??r.adId??r.id];
-   case 'clientLinks':case 'clients':return [r.taskId??r.name??r.id];
+   case 'clientLinks':return [r.taskId??/^https:\/\/app\.clickup\.com\/t\/([A-Za-z0-9_-]+)(?:[/?#]|$)/.exec(String(r.url??''))?.[1]??r.name??r.id];
+   case 'clients':return [r.taskId??r.name??r.id];
    case 'clientProfiles':return [r.taskId??r.clientName];
    case 'csTasks':case 'creativeTasks':case 'videoJobs':case 'contentPosts':return [r.taskId??r.id];
    case 'funnels':return [r.account,r.kind,r.formId??r.url??r.kind];
