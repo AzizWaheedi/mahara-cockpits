@@ -84,7 +84,7 @@ class RuntimeImportTests(unittest.TestCase):
         inventory = {"project_ref": imp.PROJECT_REF, "captured_at": stamp,
                      "complete_tables": ["cockpit_runtime_imports"],
                      "tables": {"cockpit_runtime_imports": []}, "files": {}}
-        plan = imp.build_plan([snapshot], inventory, ["media-buyer/hermesChat"])
+        plan = imp.build_plan([snapshot], inventory, ["media-buyer/hermesChat", "media-buyer/ceoManualPayments"])
         self.assertFalse(plan["scope_complete"])
         self.assertTrue(any("ceoManualPayments" in blocker for blocker in plan["blockers"]))
         self.assertEqual(plan["operations"], [])
@@ -198,13 +198,35 @@ class RuntimeImportTests(unittest.TestCase):
         row = {"clientName": "Recorded Former Client"}
         self.assertEqual(imp.client_names("media-buyer", "callBriefs", row, tables), ["Recorded Former Client"])
         for unknown in ("Campaign display name", "Recorded Former", "Unrecorded Client"):
-            with self.assertRaisesRegex(ValueError, "scope"):
-                imp.client_names("media-buyer", "callBriefs", {"clientName": unknown}, tables)
+            original={"clientName": unknown}
+            self.assertEqual(imp.client_names("media-buyer", "callBriefs", original, tables),[])
+            self.assertEqual(original['clientName'],unknown)
 
     def test_campaign_scope_uses_exact_campaign_and_client_names(self):
         sets = {"clients": [{"name": "Acme"}], "campaigns": [{"campaignName": "Sales", "clientName": "Acme"}]}
         self.assertEqual(imp.client_names("media-buyer", "adChanges", {"_id": "a", "campaignName": "Sales"}, sets), ["Acme"])
         self.assertEqual(imp.client_names("media-buyer", "adChanges", {"_id": "a", "campaignName": "Sale"}, sets), [])
+    def test_media_decision_subject_is_not_a_client_identity(self):
+        row={'_id':'decision-original','role':'media_buyer','subject':'Review the weekly plan'}
+        self.assertEqual(imp.client_names('media-buyer','decisions',row,{}),[])
+        self.assertEqual(row['subject'],'Review the weekly plan')
+
+    def test_legacy_booking_records_with_no_provider_id_remain_distinct(self):
+        first={'_id':'original-first','campaignName':'Campaign','date':'2026-10-01'}
+        second={**first,'_id':'original-second'}
+        self.assertNotEqual(imp.statistics_key('bookingEvents',first),imp.statistics_key('bookingEvents',second))
+        self.assertEqual(imp.statistics_key('bookingEvents',first),('legacy-source-row','original-first'))
+        provider={**first,'eventId':'event-one','locationId':'location-one','startTime':'2026-10-01T09:00:00Z'}
+        self.assertEqual(imp.statistics_key('bookingEvents',provider),('Campaign','location-one','event-one','2026-10-01T09:00:00Z'))
+        with self.assertRaisesRegex(ValueError,'identity'):
+            imp.statistics_key('bookingEvents',{'campaignName':'Campaign','date':'2026-10-01'})
+
+    def test_historical_brief_retains_its_original_client_without_inventing_assignment(self):
+        row={'_id':'brief-original','clientName':'Former client'}
+        self.assertEqual(imp.client_names('media-buyer','callBriefs',row,{'clients':[{'name':'Current client'}]}),[])
+        self.assertEqual(row['clientName'],'Former client')
+        self.assertEqual(imp.client_names('media-buyer','callBriefs',row,{'clients':[{'name':'Former client'}]}),['Former client'])
+
     def test_churn_scope_resolves_only_by_exact_client_identity(self):
         clients = {"clients": [{"_id": "c1", "taskId": "cu1", "name": "Acme"}]}
         event = {"_id": "e1", "key": "cu1", "kind": "lost"}
@@ -359,15 +381,30 @@ class RuntimePlanTests(unittest.TestCase):
         self.assertFalse(plan["scope_complete"])
         self.assertEqual(plan["operations"], [])
 
-    def test_hash_tampering_and_unsupported_empty_history_block_readiness(self):
+    def test_unsupported_unscoped_table_allows_scoped_readiness(self):
         source, inventory = self.inputs([])
         source["tables"]["futureFinancialHistory"] = []
         source["table_hashes"]["futureFinancialHistory"] = imp.content_hash([])
+        plan = imp.build_plan([source], inventory, ["media-buyer/inbox"])
+        self.assertTrue(plan["scope_complete"], plan["blockers"])
+        self.assertFalse(plan["full_migration_complete"])
+        classification = next(item for item in plan["classifications"] if item["table"] == "futureFinancialHistory")
+        self.assertEqual(classification["kind"], "unsupported")
+
+    def test_unsupported_scoped_table_blocks_readiness(self):
+        source, inventory = self.inputs([])
+        source["tables"]["futureFinancialHistory"] = []
+        source["table_hashes"]["futureFinancialHistory"] = imp.content_hash([])
+        plan = imp.build_plan([source], inventory, ["media-buyer/inbox", "media-buyer/futureFinancialHistory"])
+        self.assertFalse(plan["scope_complete"])
+        self.assertTrue(any("Unsupported durable table: media-buyer/futureFinancialHistory" in item for item in plan["blockers"]))
+
+    def test_tampered_scoped_hashes_still_block_readiness(self):
+        source, inventory = self.inputs([])
         source["table_hashes"]["inbox"] = "0" * 64
         plan = imp.build_plan([source], inventory, ["media-buyer/inbox"])
         self.assertFalse(plan["scope_complete"])
         self.assertTrue(any("checksum" in item for item in plan["blockers"]))
-        self.assertTrue(any("Unsupported durable" in item for item in plan["blockers"]))
     def test_ready_source_state_requires_exact_count_and_snapshot_rows(self):
         source, inventory = self.inputs([])
         stamp = source["captured_at"]

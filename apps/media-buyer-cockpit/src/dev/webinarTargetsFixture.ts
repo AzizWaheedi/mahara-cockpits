@@ -3,7 +3,7 @@ import {
   selectTargets,
   type TargetVersion,
   webinarTargetsSchema,
-} from "../../convex/ceo/webinarTargetsModel";
+} from "../types/ceo/webinarTargetsModel";
 export function webinarTargetsFixtures() {
   const versions: TargetVersion[] = [];
   return {

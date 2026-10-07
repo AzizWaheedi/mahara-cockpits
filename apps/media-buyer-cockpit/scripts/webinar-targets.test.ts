@@ -8,7 +8,7 @@ import {
   type TargetVersion,
   targetsToInputs,
   webinarTargetsSchema,
-} from "../convex/ceo/webinarTargetsModel";
+} from "../src/types/ceo/webinarTargetsModel";
 
 const clone = () => structuredClone(baseline);
 const invalid = [

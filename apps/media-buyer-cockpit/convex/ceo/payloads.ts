@@ -1,6 +1,6 @@
 import type { CallCenterReport } from "./callCenterContract";
-import type { WebinarReadiness } from "./webinarReadiness";
-import type { TargetSelection, WebinarTargets } from "./webinarTargetsModel";
+import type { WebinarReadiness } from "../../src/types/ceo/webinarReadiness";
+import type { TargetSelection, WebinarTargets } from "../../src/types/ceo/webinarTargetsModel";
 /**
  * The exact shape of every CEO section payload. Adapters on the backend fill
  * these; the /ceo screens read them. Change a shape here first.
@@ -17,7 +17,7 @@ import type { TargetSelection, WebinarTargets } from "./webinarTargetsModel";
 import type { ContentWindow } from "./content";
 import type { ObjectionStats, ReminderStats } from "./webinarFollowUp";
 import type { PageStats } from "./webinarPage";
-import type { Room } from "./webinarRoom";
+import type { Room } from "../../src/types/ceo/webinarRoom";
 
 export type Note = { level: "info" | "warn"; text: string };
 export type Point = { date: string; value: number };

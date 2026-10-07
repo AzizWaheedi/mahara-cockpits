@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { PGlite } from "@electric-sql/pglite";
-import { WEBINAR_TARGETS } from "../convex/ceo/webinarTargetsModel";
+import { WEBINAR_TARGETS } from "../src/types/ceo/webinarTargetsModel";
 
 const db = new PGlite();
 beforeAll(async () => {

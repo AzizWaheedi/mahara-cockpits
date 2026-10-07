@@ -2,7 +2,7 @@ import {z} from 'zod';
 import {ghlTools,providerTools} from './tools.ts';
 import {prepareCsm,executeCsm} from './core.ts';
 import {prepareCheckIn,verifySelection,createCheckIn,findContact,callOf,stageAfterBooking,CLIENT_ACCOUNT} from '../../../apps/client-success-cockpit/src/lib/checkInCore.ts';
-type RpcClient={rpc:(name:string,args:Record<string,unknown>)=>Promise<{data:unknown;error:{message:string}|null}>};
+type RpcClient={rpc:(name:string,args:Record<string,unknown>)=>PromiseLike<{data:unknown;error:{message:string}|null}>};
 type Admin=RpcClient&{from:(table:string)=>any};
 const object=z.record(z.string(),z.unknown());
 const kind=z.enum(['onboarding','blueprint','launch','checkin']);

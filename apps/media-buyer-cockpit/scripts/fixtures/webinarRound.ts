@@ -1,5 +1,5 @@
 import type { WebinarRound } from "../../convex/ceo/payloads";
-import { roomOf } from "../../convex/ceo/webinarRoom";
+import { roomOf } from "../../src/types/ceo/webinarRoom";
 
 const start = Date.parse("2026-09-24T17:00:00Z");
 const room = roomOf(

@@ -282,6 +282,9 @@ export async function readCsmClientProfile(
       ? confirmed.data
       : {};
   const c = { ...original, ...patch };
+  const {data:nativeReports,error:reportError}=await client.rpc('cockpit_csm_report_history',{p_client_name:args.clientName});
+  if(reportError)throw Error(reportError.message);
+  if(!Array.isArray(nativeReports))throw Error('Native report history is unavailable');
   return {
     ...p,
     stage: patch.stage ?? p.stage ?? c?.stage,
@@ -295,7 +298,7 @@ export async function readCsmClientProfile(
     reportDays: c?.reportDays,
     reportTracked: c?.reportTracked,
     csmAssigned: c?.csmAssigned,
-    reports: tables.reportDocs
+    reports: [...tables.reportDocs,...nativeReports]
       .filter(r => norm(r.clientName) === norm(args.clientName))
       .sort((a, b) => b.requestedAt - a.requestedAt)
       .slice(0, 5),

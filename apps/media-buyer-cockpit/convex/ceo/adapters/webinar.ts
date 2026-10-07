@@ -22,7 +22,7 @@ import {
   type PitchClick,
   pageStats,
 } from "../webinarPage";
-import { webinarReadiness } from "../webinarReadiness";
+import { webinarReadiness } from "../../../src/types/ceo/webinarReadiness";
 import {
   phoneKey,
   QUALIFIED_PROFIT,
@@ -30,7 +30,7 @@ import {
   type ZoomAttendance,
   type ZoomEngagement,
   type ZoomSession,
-} from "../webinarRoom";
+} from "../../../src/types/ceo/webinarRoom";
 import {
   fieldValue,
   latestRoundTag,
@@ -40,12 +40,12 @@ import {
   webbyCampaign,
   webbyFrom,
   webbyLead,
-} from "../webinarSql";
+} from "../../../src/types/ceo/webinarSql";
 import {
   roundTargetStart,
   selectTargets,
   type TargetVersion,
-} from "../webinarTargetsModel";
+} from "../../../src/types/ceo/webinarTargetsModel";
 import { BY_SALES_REP, CALL_IS_WITH_LEAD, DEPOSIT_CONFIRMED } from "./growth";
 
 /**
@@ -79,7 +79,7 @@ import { BY_SALES_REP, CALL_IS_WITH_LEAD, DEPOSIT_CONFIRMED } from "./growth";
 // biome-ignore lint/suspicious/noExplicitAny: SQL and Graph rows
 type Any = any;
 
-export { WEBINAR_TARGETS } from "../webinarTargetsModel";
+export { WEBINAR_TARGETS } from "../../../src/types/ceo/webinarTargetsModel";
 
 const MONTHS: Record<string, string> = {
   jan: "January",

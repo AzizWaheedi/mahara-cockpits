@@ -2,7 +2,7 @@ import {z} from 'zod';
 import {providerTools,typeformTools} from './tools.ts';
 import {LIST_ID,FORMS,cardRow,optionsOf,missingFields,formsFor,type FormData} from '../../../apps/client-success-cockpit/src/lib/onboardingCore.ts';
 
-type RpcClient={rpc:(name:string,args:Record<string,unknown>)=>Promise<{data:unknown;error:{message:string}|null}>};
+type RpcClient={rpc:(name:string,args:Record<string,unknown>)=>PromiseLike<{data:unknown;error:{message:string}|null}>};
 type Admin=RpcClient&{from:(table:string)=>any};
 const inputSchema=z.object({operation:z.literal('onboarding.refresh'),args:z.object({taskId:z.string().regex(/^[A-Za-z0-9_-]{1,40}$/),taskIds:z.array(z.string().regex(/^[A-Za-z0-9_-]{1,40}$/)).max(200)}),apply:z.boolean().optional(),requestId:z.string().uuid()});
 const contextSchema=z.object({actorId:z.string().uuid(),email:z.string(),taskId:z.string(),clientName:z.string(),sourceSnapshotAt:z.string()}).strict();

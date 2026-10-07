@@ -1,43 +1,14 @@
 import { type ReactNode, useEffect, useState } from "react";
 import { Wordmark } from "@/components/Wordmark";
-
-/**
- * What a page shows while the sign-in is still loading, until it is clear
- * that the backend is not there.
- *
- * 2026-09-23: the Convex team went over the free plan and every deployment
- * was switched off. A signed-in person's session has to be renewed through
- * Convex before any page can open, so everybody sat on "One moment…" or an
- * empty skeleton with no word of why. After a few seconds of waiting this
- * asks the deployment one public question that needs no sign-in
- * (portal:info). If that fails too, the page says the cockpits are offline,
- * keeps asking, and reloads itself once the answer comes back.
- */
+import {
+  type BackendAvailability,
+  probeCockpitBackend,
+} from "@/lib/backendAvailability";
 
 const PROBE_AFTER_MS = 4_000;
 const RETRY_MS = 20_000;
 
-type Answer = "up" | "down" | "offline";
 type State = "waiting" | "down" | "offline";
-
-async function probe(): Promise<Answer> {
-  const base = import.meta.env.VITE_CONVEX_URL as string | undefined;
-  if (!base) return "up";
-  try {
-    const res = await fetch(`${base.replace(/\/+$/, "")}/api/query`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path: "portal:info", args: {}, format: "json" }),
-    });
-    const body = (await res.json().catch(() => null)) as {
-      status?: string;
-    } | null;
-    return res.ok && body?.status === "success" ? "up" : "down";
-  } catch {
-    // The request never left or never came back: this device's connection.
-    return "offline";
-  }
-}
 
 function useBackendState(): State {
   const [state, setState] = useState<State>("waiting");
@@ -46,12 +17,12 @@ function useBackendState(): State {
     let wasDown = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const run = async () => {
-      const answer = await probe();
+      const url = import.meta.env.VITE_SUPABASE_URL as string | undefined;
+      const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
+      const answer: BackendAvailability = await probeCockpitBackend(url, anonKey);
       if (stopped) return;
       if (answer === "up") {
-        // The sign-in gave up while the backend was away; start clean.
         if (wasDown) window.location.reload();
-        // Up and still loading is a slow sign-in, not an outage: stop asking.
         return;
       }
       wasDown = true;
@@ -67,7 +38,6 @@ function useBackendState(): State {
   return state;
 }
 
-/** Shows `children` (the usual loading screen) unless the backend is gone. */
 export function BackendWait({ children }: { children: ReactNode }) {
   const state = useBackendState();
   if (state === "waiting") return <>{children}</>;
@@ -81,13 +51,9 @@ export function BackendWait({ children }: { children: ReactNode }) {
               The cockpits are offline right now
             </h1>
             <p className="text-sm text-muted-foreground">
-              Convex, the service every cockpit runs on, is refusing every
-              request, so nothing can load. Nothing is lost. This page reloads
-              by itself as soon as it answers again.
-            </p>
-            <p className="text-sm text-muted-foreground">
-              Aziz: the Convex dashboard says why. Last time it was the plan's
-              usage limit, and upgrading the team brought everything back.
+              The backend service is refusing requests, so nothing can load.
+              Nothing is lost. This page reloads by itself as soon as it answers
+              again.
             </p>
           </>
         ) : (

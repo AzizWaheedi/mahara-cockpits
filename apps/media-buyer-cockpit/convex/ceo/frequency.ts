@@ -10,7 +10,7 @@ import { authenticatedAction } from "../functions";
 import { graph } from "../tools";
 import { isCeoEmail } from "./gate";
 import { addDays, kuwaitDay } from "./time";
-import { WEBINAR_CAMPAIGN_NAME } from "./webinarSql";
+import { WEBINAR_CAMPAIGN_NAME } from "../../src/types/ceo/webinarSql";
 
 /**
  * Reach and frequency for Mahara's own ad account over a chosen window, one

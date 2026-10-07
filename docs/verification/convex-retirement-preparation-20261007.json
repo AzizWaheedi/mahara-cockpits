@@ -1,0 +1,239 @@
+{
+  "version": 1,
+  "checked_at": "2026-10-07T11:20:28.334933+00:00",
+  "status": "LOCAL_PREPARATION_FOR_REVIEW",
+  "retirement_complete": false,
+  "live_writes_in_this_phase": 0,
+  "deployments_in_this_phase": 0,
+  "schedules_activated": false,
+  "baseline": "1bccb342b1e177fb5372935b94e5fd99bd4acda1",
+  "branch": "codex/supabase-completion-20261004",
+  "acceptance": {
+    "full_cutover_ready": false,
+    "convex_retirement_authorized": false,
+    "sha256": "361c1a401adaeac6bc4f4e813517222109f83e4db784cbb35d6a70bdbc89139f"
+  },
+  "tests": [
+    {
+      "command": "bun test scripts/native-csm-report.test.ts supabase/functions/cockpit-csm-api apps/client-success-cockpit/scripts/report-native.test.ts apps/client-success-cockpit/scripts/report-period.test.ts apps/client-success-cockpit/scripts/csm-read-model.test.ts",
+      "passed": 94,
+      "failed": 0,
+      "assertions": 663,
+      "exit_code": 0
+    },
+    {
+      "command": "python3 -m unittest discover -s tests",
+      "cwd": "hermes/cockpit-guardian",
+      "platform": "WSL Ubuntu",
+      "passed": 264,
+      "failed": 0,
+      "exit_code": 0,
+      "log": "D:\\secure\\cockpit-retirement-prep-20261007\\guardian-tests.log"
+    },
+    {
+      "command": "python -m unittest discover -s hermes/cockpit-ask-ai/scripts -p test_askai.py",
+      "passed": 15,
+      "failed": 0,
+      "exit_code": 0,
+      "log": "D:\\secure\\cockpit-retirement-prep-20261007\\ask-ai-tests.log"
+    },
+    {
+      "command": "python -m unittest discover -s scripts -p test_prepare_native_worker_package.py",
+      "passed": 4,
+      "failed": 0,
+      "exit_code": 0
+    }
+  ],
+  "build": {
+    "command": "bun run --cwd apps/client-success-cockpit build",
+    "exit_code": 0,
+    "log": "D:\\secure\\cockpit-retirement-prep-20261007\\csm-build.log",
+    "warning": "Vite large chunks remain"
+  },
+  "server_typecheck": {
+    "command": "deno check --no-lock supabase/functions/cockpit-csm-api/index.ts",
+    "exit_code": 0
+  },
+  "review": {
+    "agent": "prep_review",
+    "result": "No remaining Critical or Important findings in targeted local review. Production activation is outside this review.",
+    "fixes": [
+      "Fixed runtime-file package inventory",
+      "Paginated inherited and final Google audience checks",
+      "Selected-period comparison dates and model facts",
+      "Selected-period backlog counts"
+    ]
+  },
+  "gemini": {
+    "result": "Scoped Codex fallback after inadequate investigation correction and no-work-produced test task",
+    "manifests": [
+      "D:/MaharaMedia/worktrees/convex-retirement-prep-20261007-investigation/manifest.json",
+      "C:/Users/20106/.codex/gemini-worker/runs/20261007-125300-6d131576/manifest.json",
+      "D:/MaharaMedia/worktrees/convex-retirement-prep-20261007-monitor-tests/manifest.json"
+    ]
+  },
+  "sources": {
+    "write_freeze": false,
+    "verified_snapshot_hashes": [
+      {
+        "cockpit": "media-buyer",
+        "sha256": "798a6510160fd8225b30728edd463e07973f0b56ca368f9477c0e58fe92030f7",
+        "captured_at": "2026-10-07T10:52:52.855747+00:00"
+      },
+      {
+        "cockpit": "client-success",
+        "sha256": "a4987cb42559a7963fa7f2f0ab22649949e78145ea7295c85930476dd7540e9f",
+        "captured_at": "2026-10-07T10:52:25.083979+00:00"
+      },
+      {
+        "cockpit": "creative-director",
+        "sha256": "b6262861e531c8bc5a48ed09f93d14db574fd571cbbf893284fe28e8eed2bb4f",
+        "captured_at": "2026-10-07T10:52:22.615198+00:00"
+      }
+    ],
+    "runtime_plan_sha256": "fbd1faeadb6bd3659e5c08ee8359d8ede52fe0e31860d4393e723f596c679d96",
+    "blockers": 5,
+    "statistics_extra_target": 200,
+    "statistics_changed": 6,
+    "source_file_references": 1137,
+    "verified_original_objects": 224,
+    "preserved_concurrent_import_rows": 7091,
+    "scope_complete": false,
+    "full_migration_complete": false
+  },
+  "worker_package": {
+    "path": "D:\\secure\\cockpit-retirement-prep-20261007\\native-worker-package-final.zip",
+    "sha256": "cda2b2373ce329a6540bba4bb3c6702d414ae2e9777f2d95245ba2e254f4ff66",
+    "files": 125,
+    "all_manifest_hashes_read_back": true,
+    "current_source_matches_package": true,
+    "schedules_enabled": false
+  },
+  "pure_report_period": {
+    "frontend": "D:\\MaharaMedia\\worktrees\\mahara-cockpits-supabase-completion\\apps\\client-success-cockpit\\src\\lib\\reportPeriod.ts",
+    "server": "D:\\MaharaMedia\\worktrees\\mahara-cockpits-supabase-completion\\supabase\\functions\\cockpit-csm-api\\reportPeriod.ts",
+    "sha256": "98ba9b06e56594c10bbadb470b2745d4697cefe2239351ceb48ad2360d732fa4",
+    "byte_identical": true
+  },
+  "static_inventory": {
+    "path": "D:\\secure\\cockpit-retirement-prep-20261007\\static-boundary-inventory.json",
+    "sha256": "5a77bf4cc5d9cef7b78ccaab9fe143b0a16aae24a29edb610f3c4827f67d2bf8",
+    "matched_files": 213,
+    "external_completeness_verified": false
+  },
+  "source_files": [
+    {
+      "path": "apps/client-success-cockpit/src/lib/reportClient.ts",
+      "sha256": "c6fce271fcd239f24d40d84781fb997026622643f060b73ac6aa64040579542e"
+    },
+    {
+      "path": "apps/client-success-cockpit/src/lib/performance.ts",
+      "sha256": "e41e3ff722c52683d22f8e35c1cbea168e7074fd5521f260b2679729b7c2df11"
+    },
+    {
+      "path": "apps/client-success-cockpit/src/lib/csmReadModel.ts",
+      "sha256": "7f3bf146bb651d98cff6e02dc26f8d5e930929a6c4965685abff55cf4ee8e8d8"
+    },
+    {
+      "path": "apps/client-success-cockpit/src/pages/ClientPerformancePage.tsx",
+      "sha256": "d13a4fa94a54f62c90f167b5831cf109d455c3e3cef1c35ba4573b7953abaafb"
+    },
+    {
+      "path": "apps/client-success-cockpit/scripts/report-native.test.ts",
+      "sha256": "12f55c16aa613917c458cd7bbe482017e76b4b56c2675ed2c0fd7cbf1086a336"
+    },
+    {
+      "path": "supabase/functions/cockpit-csm-api/index.ts",
+      "sha256": "7c93e4622dd9989e84d06b10cb4dd13adc1ed2f140f733567a7612094e987884"
+    },
+    {
+      "path": "supabase/functions/cockpit-csm-api/report.ts",
+      "sha256": "d7de5a7588bce4e4ec924c3b407a7891ffceb8ec6d987f1876b4fee2b7f19f45"
+    },
+    {
+      "path": "supabase/functions/cockpit-csm-api/reportFormatter.ts",
+      "sha256": "8449a02f58153ad0cda4bba18a0d00dd838e0bb3c103f96625e1d1d8e27e6093"
+    },
+    {
+      "path": "supabase/functions/cockpit-csm-api/reportFormatter.test.ts",
+      "sha256": "7ac82a765a064c90440b14c413a13d6ab21a310e0aee0c00bb9580e3499bd80a"
+    },
+    {
+      "path": "supabase/functions/cockpit-csm-api/reportOperation.ts",
+      "sha256": "1c819d9d71d97a30f07b2d8aaec949e43e715925904f7c2bf698a646d23426b9"
+    },
+    {
+      "path": "supabase/functions/cockpit-csm-api/reportOperation.test.ts",
+      "sha256": "55f22b4e276e9a1c07d7d5d2ae632da1507a806be13fb3b80ba2a7a0def33f4a"
+    },
+    {
+      "path": "supabase/functions/cockpit-csm-api/reportPeriod.ts",
+      "sha256": "98ba9b06e56594c10bbadb470b2745d4697cefe2239351ceb48ad2360d732fa4"
+    },
+    {
+      "path": "supabase/functions/cockpit-csm-api/checkins.ts",
+      "sha256": "6ed154417df3f7f2e33c0bca8e12c0433dc9b6fd31d4e63a5847bd157fc7f476"
+    },
+    {
+      "path": "supabase/functions/cockpit-csm-api/onboarding.ts",
+      "sha256": "bffc94be7983a82233d4e33d0866eaea42e3bf129572adcbd996fbc48bb50d76"
+    },
+    {
+      "path": "supabase/functions/cockpit-csm-api/portalTasks.ts",
+      "sha256": "0fdbdb95d43bd6a2465ea10a07c94a1bc6faec1f231857b8eaec9c9851c74ece"
+    },
+    {
+      "path": "supabase/migrations/20261007b_csm_report_generation.sql",
+      "sha256": "69f62c51130217788f603ca584c35ca7d7dc649dafa0ce4ebfd4718744634391"
+    },
+    {
+      "path": "hermes/cockpit-guardian/checks/native.py",
+      "sha256": "9a76f312b23c28f5f34f366888a93b6714fa36ca6222aa4382257b0145a4cee8"
+    },
+    {
+      "path": "hermes/cockpit-guardian/checks/__init__.py",
+      "sha256": "affe93d1cfd55c04adf02ddeefe38f2250f0865056d9be9071726c3d27c48a7d"
+    },
+    {
+      "path": "hermes/cockpit-guardian/guardian.py",
+      "sha256": "277e12e951e6e0c6405404d48ada5107559cc33e2adfc87015b0f6fbb26dac77"
+    },
+    {
+      "path": "hermes/cockpit-guardian/tests/test_native.py",
+      "sha256": "f1b08fc46b3db72a577585189174b246ef49f4e8106787daa606b4ba70d1f00d"
+    },
+    {
+      "path": "scripts/native-csm-report.test.ts",
+      "sha256": "f9a4cac28c03af842373d0710348fb8038b1551dc6f91a1a2cb9e5d17a5e02ba"
+    },
+    {
+      "path": "scripts/prepare-native-worker-package.py",
+      "sha256": "1c83f25e459e5c7b40b83c06df592cd564603a6fa91727af1f69b652c8069490"
+    },
+    {
+      "path": "scripts/test_prepare_native_worker_package.py",
+      "sha256": "a06aae8fcfbad6f173163798bed393b5464d4dde0d9a082002fd01a8c30248fe"
+    },
+    {
+      "path": "supabase/functions/cockpit-csm-api/reportProvider.test.ts",
+      "sha256": "bb5c181450ea26dbf3e8f84e95df002556d4e81ed9b78464416ef3e6b91738ff"
+    }
+  ],
+  "known_remaining_gates": [
+    "Five runtime-data blockers and statistics conflicts",
+    "Native monitor missing live view and additional worker/provider evidence keys",
+    "Both stale Ask AI host copies and legacy Meta helper cutover",
+    "Separate portal monitor",
+    "Report live source/credential/folder/provider acceptance",
+    "Authenticated Convex-blocked journeys",
+    "Final approved writer freeze and fresh delta",
+    "Deletion-independent recovery",
+    "Explicit destructive retirement approval"
+  ],
+  "unrelated_paths_preserved": [
+    "scripts/import-cockpit-runtime-sources.py",
+    "scripts/test_import_cockpit_runtime_sources.py",
+    "supabase/MIGRATION_RUNBOOK.md"
+  ],
+  "context_sync": "Stopped on pre-existing dirty context work; preserved"
+}

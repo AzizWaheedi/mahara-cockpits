@@ -168,7 +168,9 @@ def queue_pending(app, table, row):
 
 
 def client_names(app, table, row, tables):
-    private_history = table in SOURCE_TABLES.get(app, ()) or table == "waThreads"
+    # Unmatched media decision subjects are role-owned notes, not invented clients.
+    # Former-client briefs retain their original names behind canonical client access.
+    private_history = table in SOURCE_TABLES.get(app, ()) or table == "waThreads" or (app == "media-buyer" and table in ("callBriefs", "decisions"))
     if table in GLOBAL_SOURCES:
         return []
     canonical = {}
@@ -1013,7 +1015,15 @@ def durable_reconcile(snapshot, table, rows, inventory):
 def statistics_key(table, row):
     if table == "dailyStats":
         return (row.get("campaignName"), row.get("date"), row.get("metaAdId", row.get("adName", "")), row.get("adSetName", ""))
-    return (row.get("campaignName"), row.get("locationId", ""), row.get("eventId", row.get("id", row.get("contactId"))), row.get("startTime", row.get("date")))
+    if table != "bookingEvents":
+        raise ValueError("Unsupported statistics table")
+    identity = next((row.get(field) for field in ("eventId", "id", "contactId") if row.get(field) not in (None, "")), None)
+    if identity is None:
+        source_id = row.get("_id")
+        if not isinstance(source_id, str) or not source_id:
+            raise ValueError("Booking event identity is unavailable")
+        return ("legacy-source-row", source_id)
+    return (row.get("campaignName"), row.get("locationId", ""), identity, row.get("startTime", row.get("date")))
 
 def validate_source_inventory(state, rows, label, count_field, stamped_rows=False):
     ready, count, stamp = state.get("ready"), state.get(count_field), state.get("source_snapshot_at")
@@ -1053,8 +1063,6 @@ def build_plan(snapshots, inventory, scope):
         for table, rows in snapshot["tables"].items():
             kind, target = classify(snapshot["app"], table)
             classifications.append({"app": snapshot["app"], "table": table, "kind": kind, "target": target, "count": len(rows), "sha256": content_hash(rows), "pending_quarantined": sum(queue_pending(snapshot["app"], table, row) for row in rows)})
-            if kind == "unsupported":
-                blockers.append(f"Unsupported durable table: {snapshot['app']}/{table}")
     if len(scope) != len(set(scope)):
         blockers.append("Duplicate scope")
     operations = []
@@ -1069,6 +1077,8 @@ def build_plan(snapshots, inventory, scope):
             if snapshot.get("table_hashes", {}).get(table) != content_hash(rows):
                 raise ValueError("Source table checksum mismatch")
             kind, target = classify(app, table)
+            if kind == "unsupported":
+                raise ValueError(f"Unsupported durable table: {app}/{table}")
             if kind in ("invalidate", "quarantine", "metadata", "archive"):
                 continue
             if kind == "durable":

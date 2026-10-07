@@ -1,0 +1,612 @@
+{
+  "checked_at": "2026-10-07T14:16:33.507988+00:00",
+  "status": "APPROVED_SOURCE_RUN_APPLIED_AND_VERIFIED",
+  "retirement_complete": false,
+  "supabase_cutover_complete": false,
+  "live_writes_in_this_phase": {
+    "approved_source_records": 4738,
+    "function_migrations_installed": 2,
+    "timestamp_comparison_function_corrected": 1,
+    "worker_activations": 0,
+    "outbound_actions": 0,
+    "convex_deletions": 0
+  },
+  "approval_request": "Import the reviewed 4738 records in 23 source feeds and two history tables. Install reporting and monitoring database functions. No schedules, outbound messages or deletion are authorized by this request.",
+  "pending_run": {
+    "target": "bldgtotkfmhoxmlzowdx",
+    "dry_run": false,
+    "apply_authorized": true,
+    "captured_at": "2026-10-07T14:45:23.342683+03:00",
+    "write_freeze": false,
+    "scope_tables": 25,
+    "source_feeds": 23,
+    "history_tables": 2,
+    "rows": [
+      {
+        "app": "client-success",
+        "table": "appointments",
+        "kind": "source",
+        "source_count": 0
+      },
+      {
+        "app": "client-success",
+        "table": "churnEvents",
+        "kind": "source",
+        "source_count": 7
+      },
+      {
+        "app": "client-success",
+        "table": "clientProfiles",
+        "kind": "source",
+        "source_count": 52
+      },
+      {
+        "app": "client-success",
+        "table": "clients",
+        "kind": "source",
+        "source_count": 52
+      },
+      {
+        "app": "client-success",
+        "table": "csTasks",
+        "kind": "source",
+        "source_count": 6
+      },
+      {
+        "app": "client-success",
+        "table": "decisions",
+        "kind": "source",
+        "source_count": 7
+      },
+      {
+        "app": "client-success",
+        "table": "kpi",
+        "kind": "source",
+        "source_count": 0
+      },
+      {
+        "app": "client-success",
+        "table": "outbox",
+        "kind": "source",
+        "source_count": 10
+      },
+      {
+        "app": "client-success",
+        "table": "reportDocs",
+        "kind": "source",
+        "source_count": 3
+      },
+      {
+        "app": "client-success",
+        "table": "rosterDays",
+        "kind": "source",
+        "source_count": 29
+      },
+      {
+        "app": "client-success",
+        "table": "syncRuns",
+        "kind": "source",
+        "source_count": 3998
+      },
+      {
+        "app": "creative-director",
+        "table": "ads",
+        "kind": "source",
+        "source_count": 51
+      },
+      {
+        "app": "creative-director",
+        "table": "blueprints",
+        "kind": "source",
+        "source_count": 0
+      },
+      {
+        "app": "creative-director",
+        "table": "campaigns",
+        "kind": "source",
+        "source_count": 16
+      },
+      {
+        "app": "creative-director",
+        "table": "clients",
+        "kind": "source",
+        "source_count": 66
+      },
+      {
+        "app": "creative-director",
+        "table": "contentPosts",
+        "kind": "source",
+        "source_count": 0
+      },
+      {
+        "app": "creative-director",
+        "table": "creativeTasks",
+        "kind": "source",
+        "source_count": 97
+      },
+      {
+        "app": "creative-director",
+        "table": "funnels",
+        "kind": "source",
+        "source_count": 22
+      },
+      {
+        "app": "creative-director",
+        "table": "marketPlays",
+        "kind": "source",
+        "source_count": 87
+      },
+      {
+        "app": "creative-director",
+        "table": "metaTree",
+        "kind": "source",
+        "source_count": 100
+      },
+      {
+        "app": "creative-director",
+        "table": "touchLog",
+        "kind": "source",
+        "source_count": 0
+      },
+      {
+        "app": "creative-director",
+        "table": "videoJobs",
+        "kind": "source",
+        "source_count": 58
+      },
+      {
+        "app": "creative-director",
+        "table": "winnersArchive",
+        "kind": "source",
+        "source_count": 38
+      },
+      {
+        "app": "media-buyer",
+        "table": "callBriefs",
+        "kind": "durable",
+        "source_count": 19
+      },
+      {
+        "app": "media-buyer",
+        "table": "decisions",
+        "kind": "durable",
+        "source_count": 20
+      }
+    ],
+    "total_source_rows": 4738,
+    "plan_sha256": "bd80bbf6df64d66c0433f134118e450bd74948fe89639a9e7d07aadb41e33d5c",
+    "plan": "D:\\secure\\cockpit-retirement-prep-20261007\\live-run-review\\source-feeds-and-history-plan.json",
+    "remaining_history_blockers": [
+      "media-buyer/ceoAudit: Protected durable source differs from canonical cockpit_audit_log/ss77s0r5v92haqds3s82ftx91h8ezqnd",
+      "media-buyer/checks: Protected durable source differs from canonical cockpit_daily_checks/ks7016v2pyb3mhskf6pypdk10h8f3nth",
+      "client-success/checks: protected logical checklist row has a different source identity"
+    ],
+    "preserved_concurrent_imports": 7091,
+    "before_target_counts": {
+      "cockpit_csm_sources": 0,
+      "cockpit_creative_sources": 0
+    },
+    "status": "APPLIED_AND_VERIFIED",
+    "applied_plan_sha256": "c470e01b8483d6e2166df178e07ac231d3d7d2e07ea6400eed01cfe075c12361"
+  },
+  "fixed": [
+    "Unmatched media decision subjects retain role-owned history",
+    "Former-client call briefs retain original names and canonical client access",
+    "Native guardian matches authoritative SQL and rejects optional provider failures",
+    "Media source freshness agrees with the existing 90-minute contract",
+    "Malformed monitor keys fail safely",
+    "Browser availability check uses the fixed Supabase function only",
+    "Four pure models belong to native modules; obsolete files removed and callers migrated",
+    "Original booking rows missing provider IDs keep their real source identity",
+    "Standalone worker package includes all runtime dependency scopes and the shared frequency module"
+  ],
+  "tests": [
+    {
+      "name": "frontend availability and migrated model callers",
+      "passed": 83,
+      "failed": 0,
+      "assertions": 267,
+      "log": "D:\\secure\\cockpit-retirement-prep-20261007\\frontend-retirement-tests-final.log"
+    },
+    {
+      "name": "Linux guardian",
+      "passed": 270,
+      "failed": 0,
+      "log": "D:\\secure\\cockpit-retirement-prep-20261007\\guardian-retirement-final.log"
+    },
+    {
+      "name": "runtime importer",
+      "passed": 45,
+      "failed": 0,
+      "log": "D:\\secure\\cockpit-retirement-prep-20261007\\booking-python-after.log"
+    },
+    {
+      "name": "canonical booking SQL and feed contracts",
+      "passed": 21,
+      "failed": 0,
+      "assertions": 148,
+      "log": "D:\\secure\\cockpit-retirement-prep-20261007\\booking-grain-after.log"
+    },
+    {
+      "name": "worker package",
+      "passed": 5,
+      "failed": 0,
+      "log": "D:\\secure\\cockpit-retirement-prep-20261007\\worker-final-package-tests.log"
+    }
+  ],
+  "media_build": {
+    "exit_code": 0,
+    "log": "D:\\secure\\cockpit-retirement-prep-20261007\\media-retirement-build.log",
+    "warning": "Existing large-chunk warning remains"
+  },
+  "pure_models": {
+    "webinarTargetsModel": {
+      "original_calculation_unchanged": true,
+      "owner_sha256": "80980ae974dffff2751b2327a621ba7949e65cdb1a71c8364e370ba95412deea"
+    },
+    "webinarRoom": {
+      "original_calculation_unchanged": true,
+      "owner_sha256": "138de939472f0d6f26bb33508812679dc7296d08ce53c7fa017bec6455669400"
+    },
+    "webinarReadiness": {
+      "original_calculation_unchanged": true,
+      "owner_sha256": "6b8900ba6f23a3fdf10ab95bfa6491d33268846b0524af4596c30079545af896"
+    },
+    "webinarSql": {
+      "original_calculation_unchanged": true,
+      "owner_sha256": "366dac5e3304894a363c13e227797c8850b5466e0b8164caac3d333f2137a22a"
+    }
+  },
+  "worker_boot": {
+    "package_files": 128,
+    "package_sha256": "955b20c7c2181888ba1e1c7d3456e6eaddf074a40c9f6d026888346b6eb15bce",
+    "all_file_hashes_verified": true,
+    "offline_dependencies": [
+      {
+        "directory": ".",
+        "exit_code": 0
+      },
+      {
+        "directory": "hermes\\ceo-refresh",
+        "exit_code": 0
+      },
+      {
+        "directory": "hermes\\media-native",
+        "exit_code": 0
+      },
+      {
+        "worker": "media",
+        "exit_code": 1,
+        "structured_doctor": true,
+        "runtime_ready": false,
+        "credentials_provided": false,
+        "log": "D:\\secure\\cockpit-retirement-prep-20261007\\worker-doctor-media.log"
+      },
+      {
+        "worker": "sync",
+        "exit_code": 1,
+        "structured_doctor": true,
+        "runtime_ready": false,
+        "credentials_provided": false,
+        "log": "D:\\secure\\cockpit-retirement-prep-20261007\\worker-doctor-sync.log"
+      },
+      {
+        "worker": "ceo",
+        "exit_code": 1,
+        "structured_doctor": true,
+        "runtime_ready": false,
+        "credentials_provided": false,
+        "log": "D:\\secure\\cockpit-retirement-prep-20261007\\worker-doctor-ceo.log"
+      }
+    ],
+    "live_writes": 0,
+    "schedules_enabled": false,
+    "host_activation_verified": false
+  },
+  "source_sensitive_fields_review": {
+    "recognized_nonempty_credential_fields": 0,
+    "private_evidence": "D:\\secure\\cockpit-retirement-prep-20261007\\refresh\\source-sensitive-fields-review.json"
+  },
+  "real_history_diagnosis": {
+    "remaining_blocked_table_scopes": 3,
+    "blocked_media_checks": 210,
+    "blocked_csm_checks": 41,
+    "blocked_ceo_audit_rows": 1,
+    "unmatched_client_names_are_not_guessed": true,
+    "daily_stats_extra_ids": 200,
+    "daily_stats_recreated_grains": 85,
+    "daily_stats_changed_rows": 6,
+    "booking_events_extra_ids": 87,
+    "legacy_booking_records": 73435,
+    "source_booking_identity_collisions_after_fix": 0,
+    "no_human_or_target_records_overwritten": true
+  },
+  "still_required": [
+    "Approval for the prepared live database run",
+    "Review and preserve conflicting checklist and audit histories",
+    "Statistics reconciliation and full historical counts",
+    "Report folder configuration and approved real document test",
+    "Host credential and provider checks",
+    "Legacy writer freeze and fresh final exports",
+    "Native worker activation with no provider overlap",
+    "Authenticated production tests with Convex blocked",
+    "Independent recovery proof",
+    "Explicit deletion approval after all gates pass"
+  ],
+  "acceptance_flags_unchanged": true,
+  "context_sync": "Previously stopped on dirty context edits; not retried",
+  "review_source_files": [
+    {
+      "path": "apps/client-success-cockpit/scripts/report-native.test.ts",
+      "sha256": "12f55c16aa613917c458cd7bbe482017e76b4b56c2675ed2c0fd7cbf1086a336",
+      "deleted": false
+    },
+    {
+      "path": "apps/client-success-cockpit/src/lib/csmReadModel.ts",
+      "sha256": "7f3bf146bb651d98cff6e02dc26f8d5e930929a6c4965685abff55cf4ee8e8d8",
+      "deleted": false
+    },
+    {
+      "path": "apps/client-success-cockpit/src/lib/performance.ts",
+      "sha256": "e41e3ff722c52683d22f8e35c1cbea168e7074fd5521f260b2679729b7c2df11",
+      "deleted": false
+    },
+    {
+      "path": "apps/client-success-cockpit/src/lib/reportClient.ts",
+      "sha256": "c6fce271fcd239f24d40d84781fb997026622643f060b73ac6aa64040579542e",
+      "deleted": false
+    },
+    {
+      "path": "apps/client-success-cockpit/src/pages/ClientPerformancePage.tsx",
+      "sha256": "d13a4fa94a54f62c90f167b5831cf109d455c3e3cef1c35ba4573b7953abaafb",
+      "deleted": false
+    },
+    {
+      "path": "apps/media-buyer-cockpit/convex/ceo/adapters/growth.ts",
+      "sha256": "7ac74d9da5b9af8b6598cde1c767029d306c86f5fbde0ba67544e57ec5764e60",
+      "deleted": false
+    },
+    {
+      "path": "apps/media-buyer-cockpit/convex/ceo/adapters/webinar.ts",
+      "sha256": "50d755df334abd0c02084a006860fbd9054278f4d56ccc7469209e9291e24a2f",
+      "deleted": false
+    },
+    {
+      "path": "apps/media-buyer-cockpit/convex/ceo/frequency.ts",
+      "sha256": "900ba3e0c0c7077d73a346c0f889488ed800a64ecb6ec65fd1c3fb282e2c448a",
+      "deleted": false
+    },
+    {
+      "path": "apps/media-buyer-cockpit/convex/ceo/payloads.ts",
+      "sha256": "b4fea93dc93f88b03f4d758ee8e1812b9439630451e59ebd568e0d70008fda91",
+      "deleted": false
+    },
+    {
+      "path": "apps/media-buyer-cockpit/convex/ceo/webinarReadiness.ts",
+      "sha256": null,
+      "deleted": true
+    },
+    {
+      "path": "apps/media-buyer-cockpit/convex/ceo/webinarRoom.ts",
+      "sha256": null,
+      "deleted": true
+    },
+    {
+      "path": "apps/media-buyer-cockpit/convex/ceo/webinarSql.ts",
+      "sha256": null,
+      "deleted": true
+    },
+    {
+      "path": "apps/media-buyer-cockpit/convex/ceo/webinarTargets.ts",
+      "sha256": "d46e87820bf638a4544e920088848f8ca501844484957e4fc6279710fda56d67",
+      "deleted": false
+    },
+    {
+      "path": "apps/media-buyer-cockpit/convex/ceo/webinarTargetsModel.ts",
+      "sha256": null,
+      "deleted": true
+    },
+    {
+      "path": "apps/media-buyer-cockpit/scripts/backend-availability.test.ts",
+      "sha256": "304cd9ab00f84189de542fa753830b904092fd6f78023a30c8d2ca7ea333b23f",
+      "deleted": false
+    },
+    {
+      "path": "apps/media-buyer-cockpit/scripts/fixtures/webinarRound.ts",
+      "sha256": "71000108368d926ecb55b71ce9d02cf8e3d458939f470e612472a3d5794789ec",
+      "deleted": false
+    },
+    {
+      "path": "apps/media-buyer-cockpit/scripts/webinar-ingestion.test.ts",
+      "sha256": "99f6140c7e0c1cea15bfdb9434b46987c1bc0a0bd04abc54339e1b748957698d",
+      "deleted": false
+    },
+    {
+      "path": "apps/media-buyer-cockpit/scripts/webinar-targets.test.ts",
+      "sha256": "05bd66eb66be7fa6204e4d2c9b27507ac5b31ecf7b52be81816b7dbf9a70dbd7",
+      "deleted": false
+    },
+    {
+      "path": "apps/media-buyer-cockpit/scripts/webinar.test.ts",
+      "sha256": "3d057b6950228179fced1489b0ba16b0d0d6a3161346898f087487724841c13c",
+      "deleted": false
+    },
+    {
+      "path": "apps/media-buyer-cockpit/src/components/BackendWait.tsx",
+      "sha256": "943677f7e803444419ad9ff6ed115a54f0ab3916fdcf7e7190e2700323ba10e0",
+      "deleted": false
+    },
+    {
+      "path": "apps/media-buyer-cockpit/src/dev/webinarTargetsFixture.ts",
+      "sha256": "0488e12ba4b7cd55b47a478b543dd1dc0e9520d84252a3fb8b328975da1e95ac",
+      "deleted": false
+    },
+    {
+      "path": "apps/media-buyer-cockpit/src/lib/backendAvailability.ts",
+      "sha256": "2eeadc618f36995d7bbf63996c836593a1f63ee1120c45f57068c518b478d8e4",
+      "deleted": false
+    },
+    {
+      "path": "apps/media-buyer-cockpit/src/types/ceo/webinarReadiness.ts",
+      "sha256": "6b8900ba6f23a3fdf10ab95bfa6491d33268846b0524af4596c30079545af896",
+      "deleted": false
+    },
+    {
+      "path": "apps/media-buyer-cockpit/src/types/ceo/webinarRoom.ts",
+      "sha256": "138de939472f0d6f26bb33508812679dc7296d08ce53c7fa017bec6455669400",
+      "deleted": false
+    },
+    {
+      "path": "apps/media-buyer-cockpit/src/types/ceo/webinarSql.ts",
+      "sha256": "366dac5e3304894a363c13e227797c8850b5466e0b8164caac3d333f2137a22a",
+      "deleted": false
+    },
+    {
+      "path": "apps/media-buyer-cockpit/src/types/ceo/webinarTargetsModel.ts",
+      "sha256": "80980ae974dffff2751b2327a621ba7949e65cdb1a71c8364e370ba95412deea",
+      "deleted": false
+    },
+    {
+      "path": "docs/CONVEX-RETIREMENT-INVENTORY-20261007.md",
+      "sha256": "adda53839e44d4d74cf83f43b2884b69faf5bbe513a3663c5cffa2a62b2bfc06",
+      "deleted": false
+    },
+    {
+      "path": "docs/verification/convex-retirement-preparation-20261007.json",
+      "sha256": "23949192f27e96ff3a591b746ca77b955e1543f58a324f5a0ab0c223b484c48a",
+      "deleted": false
+    },
+    {
+      "path": "hermes/cockpit-guardian/checks/__init__.py",
+      "sha256": "affe93d1cfd55c04adf02ddeefe38f2250f0865056d9be9071726c3d27c48a7d",
+      "deleted": false
+    },
+    {
+      "path": "hermes/cockpit-guardian/checks/native.py",
+      "sha256": "9743ff46670fa1b8be34ac6f863e864a7d47b0e3ff24fccd2c9c5700ea828b71",
+      "deleted": false
+    },
+    {
+      "path": "hermes/cockpit-guardian/guardian.py",
+      "sha256": "277e12e951e6e0c6405404d48ada5107559cc33e2adfc87015b0f6fbb26dac77",
+      "deleted": false
+    },
+    {
+      "path": "hermes/cockpit-guardian/tests/test_native.py",
+      "sha256": "e8c2f98f6846450da81398373e78443981e01f07cf4f72ca0a87ea491e52e72d",
+      "deleted": false
+    },
+    {
+      "path": "scripts/import-cockpit-runtime-sources.py",
+      "sha256": "eb577b212ead6b03377af3cb5149831afbb8449a8af4d250d52e507cd1ba0783",
+      "deleted": false
+    },
+    {
+      "path": "scripts/native-booking-grain.test.ts",
+      "sha256": "24c7f28d428cd0984b518a0af567dffde6b5496368da7f5cda6c59fc3b4914a6",
+      "deleted": false
+    },
+    {
+      "path": "scripts/native-csm-report.test.ts",
+      "sha256": "f9a4cac28c03af842373d0710348fb8038b1551dc6f91a1a2cb9e5d17a5e02ba",
+      "deleted": false
+    },
+    {
+      "path": "scripts/prepare-native-worker-package.py",
+      "sha256": "a7a0da3ed4de32e3ddd2b187d2c2e3c68b8c6e6ec789dc44cd49e809088234a1",
+      "deleted": false
+    },
+    {
+      "path": "scripts/test_import_cockpit_runtime_sources.py",
+      "sha256": "f9894cd3e381effdc79fedd19cf3959928130c61d118d2be2fc2cdcaec67c0b2",
+      "deleted": false
+    },
+    {
+      "path": "scripts/test_prepare_native_worker_package.py",
+      "sha256": "853744f72f2ed6944755c7ba98baa440bb484fa28cdbb470a14037c2986b4021",
+      "deleted": false
+    },
+    {
+      "path": "supabase/functions/cockpit-csm-api/checkins.ts",
+      "sha256": "6ed154417df3f7f2e33c0bca8e12c0433dc9b6fd31d4e63a5847bd157fc7f476",
+      "deleted": false
+    },
+    {
+      "path": "supabase/functions/cockpit-csm-api/index.ts",
+      "sha256": "7c93e4622dd9989e84d06b10cb4dd13adc1ed2f140f733567a7612094e987884",
+      "deleted": false
+    },
+    {
+      "path": "supabase/functions/cockpit-csm-api/onboarding.ts",
+      "sha256": "bffc94be7983a82233d4e33d0866eaea42e3bf129572adcbd996fbc48bb50d76",
+      "deleted": false
+    },
+    {
+      "path": "supabase/functions/cockpit-csm-api/portalTasks.ts",
+      "sha256": "0fdbdb95d43bd6a2465ea10a07c94a1bc6faec1f231857b8eaec9c9851c74ece",
+      "deleted": false
+    },
+    {
+      "path": "supabase/functions/cockpit-csm-api/report.ts",
+      "sha256": "d7de5a7588bce4e4ec924c3b407a7891ffceb8ec6d987f1876b4fee2b7f19f45",
+      "deleted": false
+    },
+    {
+      "path": "supabase/functions/cockpit-csm-api/reportFormatter.test.ts",
+      "sha256": "7ac82a765a064c90440b14c413a13d6ab21a310e0aee0c00bb9580e3499bd80a",
+      "deleted": false
+    },
+    {
+      "path": "supabase/functions/cockpit-csm-api/reportFormatter.ts",
+      "sha256": "8449a02f58153ad0cda4bba18a0d00dd838e0bb3c103f96625e1d1d8e27e6093",
+      "deleted": false
+    },
+    {
+      "path": "supabase/functions/cockpit-csm-api/reportOperation.test.ts",
+      "sha256": "55f22b4e276e9a1c07d7d5d2ae632da1507a806be13fb3b80ba2a7a0def33f4a",
+      "deleted": false
+    },
+    {
+      "path": "supabase/functions/cockpit-csm-api/reportOperation.ts",
+      "sha256": "1c819d9d71d97a30f07b2d8aaec949e43e715925904f7c2bf698a646d23426b9",
+      "deleted": false
+    },
+    {
+      "path": "supabase/functions/cockpit-csm-api/reportPeriod.ts",
+      "sha256": "98ba9b06e56594c10bbadb470b2745d4697cefe2239351ceb48ad2360d732fa4",
+      "deleted": false
+    },
+    {
+      "path": "supabase/functions/cockpit-csm-api/reportProvider.test.ts",
+      "sha256": "bb5c181450ea26dbf3e8f84e95df002556d4e81ed9b78464416ef3e6b91738ff",
+      "deleted": false
+    },
+    {
+      "path": "supabase/migrations/20261007b_csm_report_generation.sql",
+      "sha256": "69f62c51130217788f603ca584c35ca7d7dc649dafa0ce4ebfd4718744634391",
+      "deleted": false
+    },
+    {
+      "path": "supabase/migrations/20261007c_native_booking_identity.sql",
+      "sha256": "ac97ee85eac34d47b290989a8f8efccc3eb9b6d8376deb41f4900ebcecb47070",
+      "deleted": false
+    }
+  ],
+  "shared_importer_changes": "The importer and its tests preserve the concurrent scoped-media repair changes alongside this phase fixes.",
+  "live_run": {
+    "verification": "D:\\secure\\cockpit-retirement-prep-20261007\\approved-live-run\\approved-backend-run-verification.json",
+    "verification_sha256": "2758ba59a32f34cb6ef6c2749c5a1ef4cb95001ce22c55061e477235bbde9738",
+    "source_records_verified": 4738,
+    "prior_imports_preserved": 7091,
+    "every_record_value_verified": true,
+    "original_file_readback_verified": true,
+    "report_documents_created": 0,
+    "monitor_checks": 22,
+    "missing_catalog_functions": 37,
+    "catalog_verification": "D:\\secure\\cockpit-retirement-prep-20261007\\approved-live-run\\native-caller-live-catalog-expanded.json",
+    "write_freeze": false,
+    "no_new_worker_schedule": true,
+    "import_fixes": "Bounded staged transport and transaction-only timeout preserve the same native bootstrap fence and target revision checks. UTC comparison spelling was corrected without changing stored business timestamps.",
+    "failed_attempts": "Bulk failures were reconciled before retry. Their business writes rolled back. Protected intents and receipts remain outside the repository."
+  }
+}

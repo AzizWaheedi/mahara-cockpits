@@ -1,10 +1,11 @@
 """Every check, one module per area. Order is the order of the report."""
 from __future__ import annotations
+import os
 
 from guard.model import Check
 
 from . import (claude_proxy, convex, edge_functions, guardian_self, hermes_monitors, keys, live_calls, pg_cron, queues,
-               sites, supabase, syncs, vps_cron, vps_resources, whatsapp, worker_status)
+               sites, supabase, syncs, vps_cron, vps_resources, whatsapp, worker_status, native)
 
 # supabase-health runs first: when Creative Triage does not answer it trips the
 # breaker, so the rest of the scan does not wait 30 s per read. The live-calls
@@ -13,10 +14,16 @@ MODULES = (supabase, guardian_self, claude_proxy, convex, vps_resources, vps_cro
            pg_cron, edge_functions, whatsapp, keys, queues, sites, hermes_monitors)
 
 
-def all_checks() -> list[Check]:
+def all_checks(backend: str | None = None) -> list[Check]:
+    if backend is None:
+        backend=os.environ.get('COCKPIT_MONITOR_BACKEND','hybrid')
+    if backend not in ('hybrid','native'):
+        raise ValueError('COCKPIT_MONITOR_BACKEND must be hybrid or native')
     out: list[Check] = []
     seen: set[str] = set()
-    for m in MODULES:
+    for m in MODULES+(native,):
+        if backend=='native' and m is convex:
+            continue
         for c in m.CHECKS:
             if c.id in seen:
                 raise ValueError(f"two checks share the id {c.id}")

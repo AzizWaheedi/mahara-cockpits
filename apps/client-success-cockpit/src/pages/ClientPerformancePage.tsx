@@ -710,6 +710,7 @@ function ReportSection({ p, per, fig }: { p: Any; per: Period; fig: Figures }) {
             try {
               await requestReportDoc(auth.client, {
                 clientName: p.clientName,
+                month: per.month,
                 from: per.from,
                 to: upTo(per),
                 label: capital(per.label),
@@ -718,7 +719,7 @@ function ReportSection({ p, per, fig }: { p: Any; per: Period; fig: Figures }) {
                 extras,
               });
               toast.success(
-                "Asked for it, the link appears here within about 15 minutes",
+                "Report created. Refresh to see its link.",
               );
               setNote("");
             } catch (e) {

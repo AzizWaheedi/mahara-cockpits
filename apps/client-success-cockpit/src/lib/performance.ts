@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { executeCsmAction } from "./csmActionClient";
+import {requestNativeReport,type ReportRequest} from './reportClient';
 import {
   currentCsmProfiles,
   readCsmClientProfile,
@@ -72,16 +73,6 @@ export async function addTask(
   });
   return result.receiptId;
 }
-type ReportRequest = {
-  clientName: string;
-  month?: string;
-  from?: string;
-  to?: string;
-  label?: string;
-  language?: string;
-  note?: string;
-  extras?: string[];
-};
 export async function requestReportDoc(
   client: SupabaseClient,
   userEmailOrArgs: string | ReportRequest,
@@ -91,12 +82,5 @@ export async function requestReportDoc(
     typeof userEmailOrArgs === "object"
       ? userEmailOrArgs
       : (maybeArgs ?? { clientName: "" });
-  // Verify client access before reporting the unavailable producer. A decision row is not a report job.
-  const profile = await readCsmClientProfile(client, {
-    clientName: args.clientName,
-  });
-  if (!profile) throw Error("Choose an assigned client");
-  throw Error(
-    "The report-document worker is not connected yet. No report request was queued.",
-  );
+  return requestNativeReport(client,args);
 }
