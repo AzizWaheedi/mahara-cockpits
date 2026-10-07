@@ -228,6 +228,9 @@ def call(method: str, url: str, headers: Optional[dict] = None, body: Any = None
 
 # --- Composio, over MCP ------------------------------------------------------
 
+SUPPORTED_MCP_VERSIONS = ("2025-06-18",)
+
+
 class Composio:
     """Composio's MCP door with the consumer key (a `ck_` key is an MCP client
     credential; the REST execute endpoint refuses it, checked 2026-09-19)."""
@@ -235,6 +238,8 @@ class Composio:
     def __init__(self, key: str):
         self.key = key
         self.session = ""
+        self.initialized = False
+        self.protocol_version = ""
         self.calls = 0
 
     def _headers(self) -> dict:
@@ -243,38 +248,68 @@ class Composio:
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",
         }
+        if self.initialized and self.protocol_version:
+            h["mcp-protocol-version"] = self.protocol_version
         if self.session:
             h["mcp-session-id"] = self.session
         return h
 
     @staticmethod
-    def sse(body: bytes) -> dict:
-        """One JSON-RPC answer out of a server-sent-event body."""
+    def sse(body: bytes, expected_id: Optional[Any] = None) -> dict:
+        """One JSON-RPC answer out of a server-sent-event body, optionally matching expected_id."""
+        first_obj: Optional[dict] = None
         for raw in body.decode("utf-8", "replace").splitlines():
             line = raw.strip()
             if line.startswith("data:"):
                 line = line[5:].strip()
             if line.startswith("{"):
                 try:
-                    return json.loads(line)
+                    obj = json.loads(line)
                 except ValueError:
                     continue
+                if isinstance(obj, dict):
+                    if first_obj is None:
+                        first_obj = obj
+                    if expected_id is not None and obj.get("id") == expected_id:
+                        return obj
+        if expected_id is not None and first_obj is not None and first_obj.get("id") == expected_id:
+            return first_obj
+        if expected_id is None and first_obj is not None:
+            return first_obj
         return {}
 
     def open(self) -> None:
-        if self.session:
+        if self.initialized:
             return
-        status, headers, _body = call("POST", COMPOSIO_MCP, self._headers(), {
+        status, headers, body = call("POST", COMPOSIO_MCP, self._headers(), {
             "jsonrpc": "2.0", "id": 1, "method": "initialize",
             "params": {
                 "protocolVersion": "2025-06-18", "capabilities": {},
                 "clientInfo": {"name": "webinar-pull", "version": "1"},
             },
         }, timeout=60)
+        if status != 200:
+            raise Failure(f"Composio initialize failed (HTTP {status})")
+        ans = self.sse(body, expected_id=1)
+        if ans.get("id") != 1:
+            raise Failure(f"Composio initialize response missing id 1 (HTTP {status})")
+        if ans.get("jsonrpc") != "2.0":
+            raise Failure(f"Composio initialize missing jsonrpc 2.0 (HTTP {status})")
+        if ans.get("error"):
+            raise Failure(f"Composio initialize error: {json.dumps(ans['error'])[:200]}")
+        result = ans.get("result")
+        if not isinstance(result, dict):
+            raise Failure(f"Composio initialize returned invalid result (HTTP {status})")
+        version = result.get("protocolVersion")
+        if not isinstance(version, str) or version not in SUPPORTED_MCP_VERSIONS:
+            raise Failure(f"Composio initialize returned unsupported protocolVersion: {version}")
+        capabilities = result.get("capabilities")
+        if not isinstance(capabilities, dict):
+            raise Failure(f"Composio initialize missing capabilities object (HTTP {status})")
         sid = next((str(v).strip() for k, v in headers.items() if k.lower() == "mcp-session-id"), "")
-        if not sid:
-            raise Failure(f"Composio gave no MCP session (HTTP {status})")
         self.session = sid
+        self.protocol_version = version
+        self.initialized = True
         try:
             call("POST", COMPOSIO_MCP, self._headers(),
                  {"jsonrpc": "2.0", "method": "notifications/initialized"}, timeout=30)
@@ -293,8 +328,10 @@ class Composio:
         }, timeout=180, retry_safe=slug.startswith(("ZOOM_GET_", "TYPEFORM_GET_")))
         if status in (400, 404) and retry and b"session" in body.lower():
             self.session = ""  # the MCP session expired; open a new one once
+            self.protocol_version = ""
+            self.initialized = False
             return self.run(slug, args, retry=False)
-        answer = self.sse(body)
+        answer = self.sse(body, expected_id=2)
         if answer.get("error"):
             raise Failure(f"Composio refused {slug}: {json.dumps(answer['error'])[:200]}")
         text = next((str(c["text"]) for c in ((answer.get("result") or {}).get("content") or [])
