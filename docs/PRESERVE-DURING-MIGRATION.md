@@ -14,8 +14,8 @@ what they are, what to leave alone, how to check, and how to put them back.
 **Restore point:** git tag `pre-supabase-migration-2026-10-07` (commit
 `e166a0b`). Deploy from main at that commit or later, never from an older branch.
 The tag holds the code. This page, the two records, the verifier and the restore
-helpers came after it: they are on the branch that carries this page
-(`preserve-2026-10-07`), so run them from that checkout.
+helpers came after it and are on main since `1a5eb1b`, so run them from main at
+`1a5eb1b` or later.
 
 **Before each step and after it:** run `python3 scripts/verify-preserved.py`
 (section 3). Nothing else will tell you in time: the guardian's dead-man
