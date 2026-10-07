@@ -1,5 +1,5 @@
-import { useAction } from "convex/react";
 import { useState } from "react";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { dateTime } from "@/components/ceo/format";
 import { Button } from "@/components/ui/button";
 import {
@@ -10,8 +10,11 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { api } from "../../../convex/_generated/api";
-import type { WebinarRound } from "../../../convex/ceo/payloads";
+import {
+  fetchWebinarTargetContext,
+  saveWebinarTargets,
+} from "@/lib/webinarTargetsClient";
+import type { WebinarRound } from "@/types/ceo/payloads";
 import {
   inputsToTargets,
   TARGET_FIELDS,
@@ -19,7 +22,7 @@ import {
   type TargetSelection,
   targetsToInputs,
   type WebinarTargets,
-} from "../../../convex/ceo/webinarTargetsModel";
+} from "@/types/ceo/webinarTargetsModel";
 
 export function WebinarTargetsEditor({
   round,
@@ -28,8 +31,7 @@ export function WebinarTargetsEditor({
   round: WebinarRound | null;
   onSaved: (scope: string, selection: TargetSelection) => void;
 }) {
-  const get = useAction(api.ceo.webinarTargets.get);
-  const save = useAction(api.ceo.webinarTargets.save);
+  const { client } = useCockpitAuth();
   const [open, setOpen] = useState(false);
   const [scope, setScope] = useState("defaults");
   const [state, setState] = useState<TargetEditorState | null>(null);
@@ -43,6 +45,7 @@ export function WebinarTargetsEditor({
     signature: string;
   } | null>(null);
   const canEditRound = round && !["next", "untagged"].includes(round.key);
+
   async function load(nextScope: string) {
     setScope(nextScope);
     setBusy(true);
@@ -52,7 +55,8 @@ export function WebinarTargetsEditor({
     setConflict(false);
     setRequest(null);
     try {
-      const next = (await get({ scope: nextScope })) as TargetEditorState;
+      if (!client) throw new Error("Supabase client unavailable");
+      const next = await fetchWebinarTargetContext(client, nextScope);
       if (!next?.selection) throw new Error("Unavailable");
       setState(next);
       setInputs(targetsToInputs(next.selection.values));
@@ -64,6 +68,7 @@ export function WebinarTargetsEditor({
       setBusy(false);
     }
   }
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (!state || busy || conflict) return;
@@ -84,23 +89,27 @@ export function WebinarTargetsEditor({
     setRequest(nextRequest);
     setBusy(true);
     try {
-      const result = (await save({
+      if (!client) throw new Error("Supabase client unavailable");
+      const result = await saveWebinarTargets(client, {
         scope,
         expectedRevision: state.selection.revision,
         values,
         requestId: nextRequest.id,
-      })) as TargetEditorState | { conflict: true };
-      if ("conflict" in result) {
+      });
+
+      if (result.conflict) {
         setConflict(true);
         setError(
           "Targets changed in another window. Copy any edits you need, then reload the latest targets before saving.",
         );
         return;
       }
-      if (!result?.selection) throw new Error("No save receipt");
+
+      if (!result.selection) throw new Error("No save receipt");
       setState({
-        ...result,
-        history: [...result.history, ...state.history].slice(0, 10),
+        scope,
+        selection: result.selection,
+        history: [result.version, ...state.history].slice(0, 10),
       });
       setInputs(targetsToInputs(result.selection.values));
       setRequest(null);
@@ -116,6 +125,7 @@ export function WebinarTargetsEditor({
       setBusy(false);
     }
   }
+
   return (
     <>
       <Button

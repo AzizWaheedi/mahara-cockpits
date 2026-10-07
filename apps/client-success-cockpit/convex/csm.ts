@@ -4,6 +4,7 @@ import { internal } from "./_generated/api";
 // biome-ignore lint/suspicious/noExplicitAny: joined rows
 type Any = any;
 
+import { periodNumbers } from "../src/lib/reportPeriod";
 import type { Id } from "./_generated/dataModel";
 import type { QueryCtx } from "./_generated/server";
 import { PAUSE_IS_CHURN_DAYS, stateOf } from "./csmSync";
@@ -827,6 +828,47 @@ export const performanceOverview = authenticatedQuery({
   handler: async ctx => buildPerformanceOverview(ctx, false),
 });
 
+/**
+ * Every client's numbers for a reporting period the CSM picked on the list
+ * (lib/reportPeriod.ts), summed from the same rows the client's own page
+ * sums, so the two always agree. Separate from the overview so the list
+ * keeps showing while a new period loads; "This month" never asks for it.
+ */
+export const performancePeriod = authenticatedQuery({
+  args: { from: v.string(), to: v.string() },
+  returns: v.any(),
+  handler: async (ctx, { from, to }) => {
+    await assertRole(ctx, "csm");
+    const iso = /^\d{4}-\d{2}-\d{2}$/;
+    if (!iso.test(from) || !iso.test(to)) return [];
+    const scope = await allowedClients(ctx);
+    return periodRows(
+      (await currentProfiles(ctx)).filter(
+        r => !scope || scope.has(r.clientName.toLowerCase()),
+      ),
+      from,
+      to,
+    );
+  },
+});
+
+/**
+ * One row per client for the period. A list, not an object keyed by name:
+ * Convex field names must be ASCII, and many client names are Arabic (the
+ * first version failed on حول العمران للمقاولات, 2026-10-06).
+ */
+export function periodRows(rows: Any[], from: string, to: string): Any[] {
+  return rows.map(r => ({
+    clientName: r.clientName,
+    ...periodNumbers(
+      ((r.performance as Any)?.appointments ?? []) as Any[],
+      ((r.adLeads as Any)?.daily ?? []) as Any[],
+      from,
+      to,
+    ),
+  }));
+}
+
 /** The overview grid; `smoke` runs it without a user for the 15-minute check. */
 export async function buildPerformanceOverview(
   ctx: QueryCtx,
@@ -1037,6 +1079,9 @@ export async function buildClientProfile(
       csmAssigned: row?.csmAssigned,
       language: prefs?.language ?? "en",
       reports: reports.slice(0, 5),
+      // The media buyer's decisions and changes on this client's campaigns,
+      // last 90 days (csmSync in the media buyer), for any period picked.
+      changes: (row as Any)?.changes ?? [],
     };
   }
 }
@@ -1053,6 +1098,11 @@ export const requestReportDoc = authenticatedMutation({
   args: {
     clientName: v.string(),
     month: v.optional(v.string()),
+    /** The reporting period picked on the page (lib/reportPeriod.ts). */
+    from: v.optional(v.string()),
+    to: v.optional(v.string()),
+    /** Its name, "September 2026" or "last 7 days", shown on the request. */
+    label: v.optional(v.string()),
     language: v.optional(v.string()),
     note: v.optional(v.string()),
     extras: v.optional(v.array(v.string())),
@@ -1061,7 +1111,15 @@ export const requestReportDoc = authenticatedMutation({
   handler: async (ctx, args) => {
     await assertRole(ctx, "csm");
     await assertInScope(ctx, args.clientName);
-    const month = args.month ?? kuwaitToday().slice(0, 7);
+    const iso = /^\d{4}-\d{2}-\d{2}$/;
+    const period =
+      args.from && args.to && iso.test(args.from) && iso.test(args.to)
+        ? { from: args.from, to: args.to }
+        : undefined;
+    const month =
+      (period && args.label?.trim().slice(0, 60)) ||
+      args.month ||
+      kuwaitToday().slice(0, 7);
     const existing = await ctx.db
       .query("reportDocs")
       .withIndex("by_client", q => q.eq("clientName", args.clientName))
@@ -1072,6 +1130,7 @@ export const requestReportDoc = authenticatedMutation({
         note: args.note,
         language: args.language,
         extras: args.extras,
+        ...(period ?? {}),
         requestedAt: Date.now(),
         error: undefined,
       });
@@ -1080,6 +1139,7 @@ export const requestReportDoc = authenticatedMutation({
     const id = await ctx.db.insert("reportDocs", {
       clientName: args.clientName,
       month,
+      ...(period ?? {}),
       language: args.language,
       note: args.note,
       extras: args.extras,

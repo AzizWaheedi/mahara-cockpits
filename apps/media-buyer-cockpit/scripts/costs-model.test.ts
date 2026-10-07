@@ -6,7 +6,7 @@ import {
   type Projection,
   payroll,
   totalOf,
-} from "../convex/ceo/costsModel";
+} from "../src/types/ceo/costsModel";
 
 const FX = { USD: 1, KWD: 3.26 };
 const say = {

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { readSearchAssets, type SearchAsset } from "./assetSearch";
 import { STILLS_BUCKET, supabase } from "./supabase";
 import type {
   Asset,
@@ -116,6 +117,10 @@ export function useAllAssets(limit = 300): Loaded<Asset[]> {
   );
 }
 
+export function useSearchAssets(): Loaded<SearchAsset[]> {
+  return useQuery<SearchAsset[]>(() => readSearchAssets(supabase), []);
+}
+
 export function useVersions(taskId: string): Loaded<Version[]> {
   return useQuery<Version[]>(
     () =>
@@ -196,18 +201,25 @@ export function useWinners(): Loaded<WinnerAd[]> {
   );
 }
 
-/** Has an end of day already been filed for this day, and did it land? */
-export function useEodToday(day: string): Loaded<WorkRequest[]> {
+/** Has this editor filed today? Unowned legacy history is not a personal report. */
+export function useEodToday(
+  day: string,
+  email: string | null,
+): Loaded<WorkRequest[]> {
+  const owner = email?.trim().toLowerCase();
   return useQuery<WorkRequest[]>(
     () =>
-      supabase
-        .from("editor_requests")
-        .select("*")
-        .eq("kind", "eod")
-        .eq("task_id", `eod:${day}`)
-        .order("created_at", { ascending: false })
-        .limit(1),
-    [day],
+      owner
+        ? supabase
+            .from("editor_requests")
+            .select("*")
+            .eq("kind", "eod")
+            .eq("task_id", `eod:${day}`)
+            .ilike("requested_by", owner.replace(/[\\%_]/g, "\\$&"))
+            .order("created_at", { ascending: false })
+            .limit(1)
+        : Promise.resolve({ data: null, error: null }),
+    [day, owner],
   );
 }
 

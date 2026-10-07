@@ -1,4 +1,3 @@
-import { useAction } from "convex/react";
 import {
   Facebook,
   Instagram,
@@ -9,7 +8,8 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
-import { api } from "../../../convex/_generated/api";
+import { api, useAction } from "@/lib/social";
+
 import { useConfirm } from "./Confirm";
 
 /**

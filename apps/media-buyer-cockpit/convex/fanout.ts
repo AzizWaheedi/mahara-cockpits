@@ -9,7 +9,11 @@ import {
   normTight,
   readClientData,
 } from "./clientData";
-import { daysBetween, kuwaitToday, parseAdded, parseAppt } from "./csmProfiles";
+import {
+  creativeMonthStats,
+  kuwaitToday,
+  readClientSheetReport,
+} from "./clientSheetReport";
 import { CS_LIST } from "./csmSync";
 import { cleanDosDonts } from "./dosDonts";
 import { flush } from "./health";
@@ -375,62 +379,6 @@ function sheetIdOf(link: unknown): string | undefined {
   return m?.[1];
 }
 
-const yes = (cell: unknown) =>
-  String(cell ?? "")
-    .trim()
-    .toUpperCase()
-    .startsWith("Y");
-
-/**
- * Columns are fixed by the template: Name(0) Added(1) Appointment(2) …
- * Show(9) Quotation(10) Closed(11).
- *
- * Aziz, 2026-09-18: the show rate counts only appointments whose time has
- * passed AND that carry a status in the Show column. A booking for next
- * week is not a no-show yet, and a past one nobody marked is not decided.
- * `booked` still counts every booking (the booking rate needs it); `due`
- * is the show rate's denominator.
- */
-async function readStatSheet(
-  sheetId: string,
-  tab: string,
-  cache?: SheetCache,
-  fresh?: SheetCache,
-) {
-  let rows: string[][];
-  const key = `sheet:${sheetId}:${tab}`;
-  const hit = cache?.get(key);
-  if (hit) rows = hit.data as string[][];
-  else {
-    try {
-      rows = await sheet(sheetId, `'${tab}'!A3:L400`);
-      fresh?.set(key, { at: Date.now(), data: rows });
-    } catch {
-      return undefined; // an empty or missing tab is not an error
-    }
-  }
-  let booked = 0,
-    due = 0,
-    shows = 0,
-    quotes = 0,
-    closes = 0;
-  const today = kuwaitToday();
-  for (const r of rows) {
-    if (!String(r[0] ?? "").trim()) continue;
-    booked++;
-    if (yes(r[10])) quotes++;
-    if (yes(r[11])) closes++;
-    const status = String(r[9] ?? "").trim();
-    if (!status) continue;
-    const appt = parseAppt(r[2], today, parseAdded(r[1], today));
-    // No readable date: the team marked it, so it happened. A future date: not yet.
-    if (appt && daysBetween(appt, today) > 0) continue;
-    due++;
-    if (yes(status)) shows++;
-  }
-  return booked ? { tab, booked, due, shows, quotes, closes } : undefined;
-}
-
 /** Leads and spend per day per client from the ad grain, for the creative trend charts. */
 // biome-ignore lint/suspicious/noExplicitAny: action ctx
 async function attachDaily(ctx: any, roster: Any[]) {
@@ -471,24 +419,71 @@ async function attachDaily(ctx: any, roster: Any[]) {
 }
 
 // biome-ignore lint/suspicious/noExplicitAny: action ctx
-async function attachStatSheets(ctx: any, roster: Any[]) {
-  const tab = currentMonthTab();
-  const now = Date.now();
-  let read = 0;
-  const cache = await loadSheetCache(ctx);
-  const fresh: SheetCache = new Map();
+export async function attachStatSheets(
+  ctx: any,
+  roster: Any[],
+  sources = {
+    previous: () => bridge("creative", "statCache", {}),
+    read: readClientSheetReport,
+  },
+) {
+  const tab = currentMonthTab(),
+    today = kuwaitToday();
+  const cache = await loadSheetCache(ctx),
+    fresh: SheetCache = new Map();
+  const errors: string[] = [];
+  let previous: Any = {};
+  try {
+    previous = await sources.previous();
+  } catch {
+    errors.push("Prior creative statistics unavailable");
+  }
   for (const row of roster) {
     const sid = sheetIdOf(row.sheetLink);
-    if (!sid) continue;
-    const stats = await readStatSheet(sid, tab, cache, fresh);
-    read++;
-    if (stats) row.stats = stats;
-    row.statsScannedAt = now;
+    delete row.stats;
+    delete row.statsScannedAt;
+    row.statsStatus = "unavailable";
+    row.statsCheckedAt = Date.now();
+    if (!sid) {
+      errors.push(`Client sheet ${row.taskId}: missing sheet link`);
+      continue;
+    }
+    try {
+      const report = await sources.read(
+        sid,
+        today,
+        async url =>
+          unwrap(await callTool("pd_google_sheets_proxy_get", { url })),
+        cache,
+        fresh,
+      );
+      // Old monthly tabs do not prove that this month's sheet is empty.
+      // A verified legacy Appointments tab covers months without their own tab.
+      if (
+        !report.tabTitles.includes(tab) &&
+        !report.tabTitles.includes("Appointments")
+      )
+        throw new Error("Current reporting month unavailable");
+      row.stats = creativeMonthStats(report.rows, tab, today);
+      row.statsScannedAt = report.sourceReadAt;
+      row.statsStatus = "ready";
+    } catch {
+      const old = previous?.[row.taskId];
+      // Restore only the same immutable client and sheet, never a name match.
+      if (
+        old?.taskId === row.taskId &&
+        sheetIdOf(old?.sheetLink) === sid &&
+        old?.stats
+      ) {
+        row.stats = old.stats;
+        row.statsScannedAt = old.statsScannedAt;
+        row.statsStatus = "stale";
+      }
+      errors.push(`Client sheet ${row.taskId}: statistics unavailable`);
+    }
   }
   await saveSheetCache(ctx, fresh);
-  console.log(
-    `stat sheets: ${read} read (${fresh.size} from Google, the rest cached), ${roster.filter(r => r.stats).length} with appointments in ${tab}`,
-  );
+  return errors;
 }
 
 // --- The creative director's three boards ------------------------------------
@@ -1209,7 +1204,10 @@ export const feedCreative = internalAction({
       roster = await gatherClients();
       await attachDriveSubfolders(roster);
       // Stat sheets are filled by hand through the day: read on the full run only.
-      if (withStats) await attachStatSheets(ctx, roster);
+      if (withStats) {
+        const errors = await attachStatSheets(ctx, roster);
+        if (errors.length) report.stats = `FAILED ${errors.join("; ")}`;
+      }
       await attachDaily(ctx, roster);
       // Do's & Don'ts in the clean format everywhere; a card someone typed
       // loosely is rewritten on ClickUp too. [Aziz, 2026-09-14]

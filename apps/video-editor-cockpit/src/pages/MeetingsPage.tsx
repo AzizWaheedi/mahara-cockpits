@@ -1,3 +1,4 @@
+import { ArrowUpRight } from "lucide-react";
 import { useMemo, useState } from "react";
 import {
   Empty,
@@ -9,9 +10,10 @@ import {
   Prose,
   Spinner,
 } from "../components/bits";
-import { Button } from "../components/ui/button";
+import { Button, buttonClass } from "../components/ui/button";
 import { useMeetings } from "../lib/data";
 import { moment } from "../lib/format";
+import { portalUrl } from "../lib/portal";
 
 /**
  * Team meetings, from Fathom.
@@ -64,6 +66,16 @@ export default function MeetingsPage() {
       <PageHeader
         title="Meetings"
         sub="The team meetings you were on, recorded by Fathom. Client calls are not here."
+        actions={
+          // The schedule and agendas live in the portal; one Meetings here.
+          <a
+            href={`${portalUrl()}/team`}
+            className={buttonClass({ variant: "outline", size: "sm" })}
+          >
+            Team schedule and agendas
+            <ArrowUpRight aria-hidden />
+          </a>
+        }
       />
 
       {meetings.error && (

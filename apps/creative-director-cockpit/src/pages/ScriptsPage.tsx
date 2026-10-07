@@ -1,14 +1,14 @@
-import { useMutation, useQuery } from "convex/react";
 import { ArrowUpRight, ChevronRight, Film, Search } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { PageHeader } from "@/components/PageHeader";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
 import { DateInput } from "@/components/ui/date-input";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { api } from "../../convex/_generated/api";
+import { fetchScriptsList, queueClientAction } from "@/lib/clients";
 
 /**
  * Scripts we made.
@@ -49,10 +49,25 @@ function serverMessage(e: unknown): string {
 }
 
 export function ScriptsPage() {
-  const data = useQuery(api.scripts.list, { limit: 300 });
+  const auth = useCockpitAuth();
+  // biome-ignore lint/suspicious/noExplicitAny: data shape is untyped
+  const [data, setData] = useState<any>(undefined);
   const [q, setQ] = useState("");
   const [client, setClient] = useState("");
   const [showForm, setShowForm] = useState(false);
+
+  useEffect(() => {
+    if (!auth.client) return;
+    let cancelled = false;
+    void fetchScriptsList(auth.client, { limit: 300 })
+      .then(res => {
+        if (!cancelled) setData(res);
+      })
+      .catch(console.error);
+    return () => {
+      cancelled = true;
+    };
+  }, [auth.client]);
 
   const rows: Row[] = useMemo(() => {
     const all: Row[] = data?.rows ?? [];
@@ -184,7 +199,11 @@ function ScriptRow({ r }: { r: Row }) {
   const [busy, setBusy] = useState(false);
   const [sent, setSent] = useState(false);
   const [copied, setCopied] = useState(false);
-  const queue = useMutation(api.clients.queueAction);
+  const auth = useCockpitAuth();
+  const queue = async (args: any) => {
+    if (!auth.client) return;
+    await queueClientAction(auth.client, args);
+  };
 
   const send = async () => {
     const brief = text.trim();

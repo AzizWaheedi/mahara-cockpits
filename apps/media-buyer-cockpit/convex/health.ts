@@ -44,6 +44,11 @@ export const RUNBOOK: Record<
     fix: "If 401: make a new personal API token in ClickUp (Settings, Apps) and set CLICKUP_API_TOKEN. If 429: it clears on the next run. If a list or task is 404: someone deleted or moved it; check the list ids in SOURCES.md.",
     owner: "Aziz",
   },
+  outbox: {
+    label: "Media buyer changes waiting for ClickUp",
+    fix: "Changes made in the media buyer cockpit could not be written to ClickUp and are queued. Read the ClickUp line first: a 401 means a new CLICKUP_API_TOKEN, a 429 clears by itself. Queued changes go out within a minute of ClickUp answering; anything older than two days is closed unsent so old numbers never overwrite new ones.",
+    owner: "Aziz",
+  },
   sheets: {
     label: "Google Sheets",
     fix: "If 403: share the sheet with claude@studied-handler-508106-m5.iam.gserviceaccount.com (viewer is enough for reads, editor for the Client Data writes). If 429: quota; it clears within a minute. If 404: the sheet id in Client Data is wrong.",

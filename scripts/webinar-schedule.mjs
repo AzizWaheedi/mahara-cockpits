@@ -178,7 +178,7 @@ export async function generate(c, root = ROOT, check = false) {
   const history = `config/webinar/history/${c.event_key}/revision-${c.revision}.json`;
   let previous;
   try { previous = await readFile(join(root, history), "utf8"); } catch (e) { if (e.code !== "ENOENT") throw e; }
-  if (previous && previous !== json(c)) fail("Immutable revision already exists. Increment revision for a schedule change.");
+  if (previous && previous.replaceAll("\r\n", "\n") !== json(c)) fail("Immutable revision already exists. Increment revision for a schedule change.");
   if (c.revision > 1) {
     const prior = JSON.parse(await readFile(join(root, `config/webinar/history/${c.event_key}/revision-${c.revision - 1}.json`), "utf8"));
     validate(prior);
@@ -190,7 +190,7 @@ export async function generate(c, root = ROOT, check = false) {
     if (check) {
       let current;
       try { current = await readFile(join(root, file), "utf8"); } catch (e) { if (e.code !== "ENOENT") throw e; }
-      if (current !== content) drift.push(file);
+      if (current?.replaceAll("\r\n", "\n") !== content.replaceAll("\r\n", "\n")) drift.push(file);
     } else {
       await mkdir(dirname(join(root, file)), { recursive: true });
       await writeFile(join(root, file), content);

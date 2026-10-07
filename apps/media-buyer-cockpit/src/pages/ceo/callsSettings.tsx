@@ -1,12 +1,11 @@
-import { useAction } from "convex/react";
 import { useEffect, useMemo, useState } from "react";
 import { date } from "@/components/ceo/format";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatusChip } from "@/components/ceo/StatusChip";
 import { useRefresh } from "@/components/ceo/useCeo";
+import { api, useAction } from "@/lib/cockpitApi";
 import { cn } from "@/lib/utils";
-import { api } from "../../../convex/_generated/api";
-import type { WorkingHours } from "../../../convex/ceo/payloads";
+import type { WorkingHours } from "@/types/ceo/payloads";
 import {
   DAY_NAMES,
   DAY_SHORT,
@@ -15,7 +14,7 @@ import {
   normalizeWorkingHours,
   parseTime,
   WEEK_ORDER,
-} from "../../../convex/ceo/workingHours";
+} from "@/types/ceo/workingHours";
 
 /**
  * The working hours the speed to lead clock runs on (Aziz, 2026-09-21).
@@ -63,7 +62,7 @@ export function CallsSettingsCard({
   useEffect(() => {
     let alive = true;
     load({})
-      .then(r => {
+      .then((r: any) => {
         if (!alive) return;
         setStored(r.hours);
         setReady(r.ready);
@@ -73,7 +72,7 @@ export function CallsSettingsCard({
             f ?? { start: r.hours.start, end: r.hours.end, days: r.hours.days },
         );
       })
-      .catch(e => {
+      .catch((e: any) => {
         if (alive) setError(message(e));
       });
     return () => {

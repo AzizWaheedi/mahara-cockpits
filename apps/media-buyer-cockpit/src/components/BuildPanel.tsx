@@ -1,4 +1,3 @@
-import { useMutation, useQuery } from "convex/react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { AnimatedSelect } from "@/components/ui/animated-select";
@@ -9,7 +8,7 @@ import {
   SERVICE_LINES,
   type ServiceLine,
 } from "@/lib/audiences";
-import { api } from "../../convex/_generated/api";
+import { api, useMutation, useQuery } from "@/lib/cockpitApi";
 import { CreativePreview } from "./CreativePreview";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -208,7 +207,13 @@ export function BuildPanel({
                   setLinks("");
                   setTargeting("");
                   setOpen(false);
-                  toast.success("Building it. Copy and settings in a moment.");
+                  toast.success("Draft ready. Review the copy and settings.");
+                } catch (error) {
+                  toast.error(
+                    error instanceof Error
+                      ? error.message
+                      : "The draft could not be built.",
+                  );
                 } finally {
                   setBusy(false);
                 }
@@ -237,7 +242,7 @@ export function BuildPanel({
           {latest.status === "launched" && (
             <p className="text-sm txt-good">
               Built and <span className="font-semibold">paused</span> on Meta.{" "}
-              {latest.note} Logged on the ClickUp task.
+              {latest.note}
             </p>
           )}
           {(latest.status === "ready" || latest.status === "launching") && (
@@ -249,7 +254,7 @@ export function BuildPanel({
               }}
               onLaunch={async () => {
                 await launchBuild({ id: latest._id });
-                toast.success("Going up on Meta, paused");
+                toast.success("Created on Meta, paused.");
               }}
               onDiscard={async () => {
                 await discardBuild({ id: latest._id });
@@ -566,7 +571,7 @@ function ProvenPlays({
         Worked elsewhere for {info.serviceLine?.toLowerCase()}, not tried here
       </div>
       <div className="mt-1.5 divide-y">
-        {info.suggestions.map(s => (
+        {info.suggestions.map((s: any) => (
           <div
             key={`${s.city}${s.playType}${s.interests.join()}`}
             className="flex flex-wrap items-center justify-between gap-2 py-2 first:pt-0 last:pb-0"

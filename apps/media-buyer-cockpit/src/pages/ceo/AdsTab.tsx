@@ -1,4 +1,3 @@
-import { useAction } from "convex/react";
 import {
   ArrowDown,
   ArrowUp,
@@ -37,15 +36,15 @@ import { TimeframeBar } from "@/components/ceo/TimeframeBar";
 import { useTimeframe } from "@/components/ceo/timeframe";
 import { range as rangeText } from "@/components/ceo/windows";
 import { Switch } from "@/components/ui/switch";
+import { api, useAction } from "@/lib/cockpitApi";
 import { cn } from "@/lib/utils";
-import { api } from "../../../convex/_generated/api";
 import type {
   B2bAdNode,
   B2bAdsPayload,
   B2bAdWindow,
   B2bPeople,
   B2bVerdict,
-} from "../../../convex/ceo/payloads";
+} from "@/types/ceo/payloads";
 import { ManageBar, ManagePanel, type Target } from "./adsManage";
 import { LaunchCard } from "./LaunchCard";
 import type { CeoTabProps } from "./types";

@@ -1,6 +1,6 @@
 import { ArrowUpRight, Check, Loader2, Pencil, Plus, X } from "lucide-react";
 import { type FormEvent, useState } from "react";
-import { linkName, type MeetingLink } from "../../../convex/teamDoc";
+import { linkName, type MeetingLink } from "@/lib/teamDoc";
 
 /**
  * What a meeting keeps open while it runs: its boards, docs and the

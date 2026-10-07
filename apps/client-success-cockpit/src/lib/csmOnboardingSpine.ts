@@ -170,12 +170,12 @@ Ask now while we're early. Small things fixed in week two save months later.`,
 
 What's working: [x]. What we're changing this week: [y].
 
-Your check-in call is booked for DATE. From here we move to our regular rhythm, which is a call every two weeks and updates in this group as things happen.`,
+Your check-in call is booked for DATE. From here we move to our regular rhythm: a call every week through your first month live, then every two weeks, and updates in this group as things happen.`,
     ar: `هلا NAME، صار لنا أسبوعين. هذي الصورة: [الأرقام].
 
 اللي شغال: [x]. واللي بنغيره هالأسبوع: [y].
 
-مكالمة المتابعة عندك محجوزة بتاريخ DATE. ومن هني ننتقل للإيقاع المعتاد، مكالمة كل أسبوعين وتحديثات بالقروب أول بأول.`,
+مكالمة المتابعة عندك محجوزة بتاريخ DATE. ومن هني ننتقل للإيقاع المعتاد، مكالمة كل أسبوع لين يخلص أول شهر، وبعدها كل أسبوعين، وتحديثات بالقروب أول بأول.`,
   },
 ];
 

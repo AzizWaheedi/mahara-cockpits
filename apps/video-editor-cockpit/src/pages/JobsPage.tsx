@@ -1,5 +1,5 @@
 import { ChevronRight, RefreshCw } from "lucide-react";
-import { useMemo, useState } from "react";
+import { type ReactNode, useMemo, useState } from "react";
 import { Link } from "react-router";
 import {
   chip,
@@ -162,7 +162,7 @@ function Stat({
   );
 }
 
-export default function JobsPage() {
+export default function JobsPage({ actions }: { actions?: ReactNode } = {}) {
   const { data: jobs, error, loading, reload } = useJobs();
   const { email } = useWho();
   const [onlyMine, setOnlyMine] = useState(false);
@@ -220,10 +220,13 @@ export default function JobsPage() {
         title="Jobs"
         sub="Everything on the Video Pipeline, read by the desk every half hour."
         actions={
-          <Button variant="outline" size="sm" onClick={reload}>
-            <RefreshCw aria-hidden />
-            Refresh
-          </Button>
+          <>
+            {actions}
+            <Button variant="outline" size="sm" onClick={reload}>
+              <RefreshCw aria-hidden />
+              Refresh
+            </Button>
+          </>
         }
       />
 

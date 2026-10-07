@@ -1,4 +1,3 @@
-import { useAction } from "convex/react";
 import {
   ArrowUpRight,
   CalendarPlus,
@@ -12,14 +11,9 @@ import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
 import { DateInput } from "@/components/ui/date-input";
 import { Input } from "@/components/ui/input";
-import { api } from "../../../convex/_generated/api";
-import {
-  addDays,
-  dayLabel,
-  seriesPreview,
-  utcToZoned,
-} from "../../../convex/teamCore";
-import type { MeetingPage as Page, Sitting } from "../../../convex/teamPage";
+import { api, useAction } from "@/lib/cockpitApi";
+import type { MeetingPage as Page, Sitting } from "@/lib/team";
+import { addDays, dayLabel, seriesPreview, utcToZoned } from "@/lib/teamCore";
 import {
   ConfirmInline,
   DayChips,
@@ -51,7 +45,7 @@ function zoneTag(tz: string): string {
  * When and who: the top of a meeting's page. The series in one line, what
  * Google Calendar holds, the next four sittings, and the people. Hosts,
  * admins and the CEO change it here and it lands on the Google Calendar
- * event (convex/teamCalendar.ts); everyone else reads it.
+ * event through the native calendar queue; everyone else reads it.
  */
 
 type Act = (fn: () => Promise<unknown>) => Promise<void>;

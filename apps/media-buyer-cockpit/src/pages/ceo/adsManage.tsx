@@ -1,4 +1,3 @@
-import { useAction } from "convex/react";
 import { Check, ChevronDown, Loader2, Plus, Sparkles } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { money } from "@/components/ceo/format";
@@ -11,9 +10,9 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { api, useAction } from "@/lib/cockpitApi";
 import { cn } from "@/lib/utils";
-import { api } from "../../../convex/_generated/api";
-import type { B2bAdsPayload } from "../../../convex/ceo/payloads";
+import type { B2bAdsPayload } from "@/types/ceo/payloads";
 
 /**
  * Everything Ads Manager can do to Mahara's own account, done from the row it
@@ -364,7 +363,7 @@ export function ManagePanel({
           setAgeMax(o.audience?.ageMax ? String(o.audience.ageMax) : "");
         }
       })
-      .catch(e => {
+      .catch((e: any) => {
         if (alive)
           setError(String(e instanceof Error ? e.message : e).slice(0, 300));
       })

@@ -1,27 +1,10 @@
 import { Clock, Moon, PanelLeftClose, PanelLeftOpen, Sun } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link, useLocation } from "react-router";
+import { pageTitle } from "../lib/pages";
+import { useDark } from "../lib/theme";
 import { Avatar } from "./kit";
 import { Wordmark } from "./Wordmark";
-
-const ROUTE_NAMES: Record<string, string> = {
-  "/": "Today's Agenda",
-  "/dialer": "Power Dialer",
-  "/calendar": "Call Calendar",
-  "/leads": "Leads Directory",
-  "/pipeline": "Sales Pipeline",
-  "/proposals": "Proposals Studio",
-  "/contracts": "Client Contracts",
-  "/numbers": "Scorecard & Dials",
-  "/goals": "Goals & Pace",
-  "/eod": "End of Day Report",
-  "/followups": "Follow-up Queue",
-  "/recordings": "Call Recordings",
-  "/deck": "Interactive Pitch Deck",
-  "/team": "Sales Team Management",
-  "/links": "Key Links & Resources",
-  "/intelligence": "Prospect Intelligence",
-};
 
 export function MacOSMenuBar({
   name,
@@ -39,21 +22,8 @@ export function MacOSMenuBar({
   const location = useLocation();
   const [timeStr, setTimeStr] = useState("");
   const [dateStr, setDateStr] = useState("");
-  const [dark, setDark] = useState(() => {
-    try {
-      const stored = localStorage.getItem("theme");
-      if (stored === "light" || stored === "dark") return stored === "dark";
-    } catch {}
-    return true;
-  });
-
-  useEffect(() => {
-    document.documentElement.classList.toggle("dark", dark);
-    document.documentElement.style.colorScheme = dark ? "dark" : "light";
-    try {
-      localStorage.setItem("theme", dark ? "dark" : "light");
-    } catch {}
-  }, [dark]);
+  // One theme for the whole cockpit: the sidebar's switch flips this too.
+  const [dark, toggleDark] = useDark();
 
   useEffect(() => {
     const update = () => {
@@ -80,17 +50,8 @@ export function MacOSMenuBar({
     return () => clearInterval(interval);
   }, []);
 
-  const routeTitle =
-    ROUTE_NAMES[location.pathname] ||
-    (location.pathname.startsWith("/lead/")
-      ? "Lead Details"
-      : location.pathname.startsWith("/call/")
-        ? "Guided Call Script"
-        : location.pathname.startsWith("/proposal/")
-          ? "Proposal Editor"
-          : location.pathname.startsWith("/recording/")
-            ? "Recording Review"
-            : "Sales Cockpit");
+  // The page's one name, the same as the sidebar's (lib/pages.ts).
+  const routeTitle = pageTitle(location.pathname);
 
   return (
     <header className="sticky top-0 z-20 flex h-10 w-full items-center justify-between border-b hairline bg-[color:var(--background)]/80 px-3 text-xs backdrop-blur-xl transition-all">
@@ -146,7 +107,7 @@ export function MacOSMenuBar({
         <button
           type="button"
           title={dark ? "Switch to light mode" : "Switch to dark mode"}
-          onClick={() => setDark((d: boolean) => !d)}
+          onClick={toggleDark}
           className="flex size-7 items-center justify-center rounded-[8px] text-muted-foreground hover:bg-foreground/[0.08] hover:text-foreground transition-colors"
         >
           {dark ? <Sun className="size-3.5" /> : <Moon className="size-3.5" />}

@@ -1,4 +1,3 @@
-import { useAction } from "convex/react";
 import { ArrowUpRight, Clapperboard, TriangleAlert } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { EmptyState } from "@/components/ceo/EmptyState";
@@ -8,9 +7,9 @@ import { Kicker } from "@/components/ceo/Kicker";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatusChip, type StatusTone } from "@/components/ceo/StatusChip";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { api, useAction } from "@/lib/cockpitApi";
 import { cn } from "@/lib/utils";
-import { api } from "../../../convex/_generated/api";
-import type { Post } from "../../../convex/ceo/posting";
+import type { Post } from "@/types/ceo/posting";
 import type { CeoTabProps } from "./types";
 
 /**
@@ -941,7 +940,7 @@ function Editor({
               />
               {post.thumbTextOptions.length ? (
                 <div className="flex flex-wrap gap-1.5">
-                  {post.thumbTextOptions.map(o => (
+                  {post.thumbTextOptions.map((o: any) => (
                     <button
                       key={o}
                       type="button"
@@ -1016,7 +1015,7 @@ function Editor({
               </Kicker>
               {post.ytTitleOptions.length ? (
                 <div className="flex flex-wrap gap-1.5">
-                  {post.ytTitleOptions.map(o => (
+                  {post.ytTitleOptions.map((o: any) => (
                     <button
                       key={o}
                       type="button"
@@ -1200,7 +1199,7 @@ export function PostingTab(_props: CeoTabProps) {
 
   const [channels, setChannels] = useState<Channel[]>([]);
   const [posts, setPosts] = useState<Post[] | null>(null);
-  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [selectedId, setSelectedId] = useState<number | string | null>(null);
   const [post, setPost] = useState<Post | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -1341,7 +1340,7 @@ export function PostingTab(_props: CeoTabProps) {
                           tone={STATUS_TONE[p.status] ?? "neutral"}
                           label={STATUS_LABEL[p.status] ?? p.status}
                         />
-                        <span className="text-xs text-muted-foreground">{`${KIND_LABEL[p.kind]} · ${p.targets.map(t => PLATFORM_LABEL[t] ?? t).join(", ")}`}</span>
+                        <span className="text-xs text-muted-foreground">{`${(KIND_LABEL as Record<string, string>)[p.kind]} · ${p.targets.map((t: string) => (PLATFORM_LABEL as Record<string, string>)[t] ?? t).join(", ")}`}</span>
                       </div>
                     </div>
                   </button>

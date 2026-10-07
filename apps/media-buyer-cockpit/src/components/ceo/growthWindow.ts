@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import type { FunnelWindow, GrowthPayload } from "../../../convex/ceo/payloads";
+import type { FunnelWindow, GrowthPayload } from "@/types/ceo/payloads";
 import { dailyHasStages, type Timeframe, windowFromDaily } from "./timeframe";
 
 /**

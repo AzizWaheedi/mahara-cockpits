@@ -1,4 +1,3 @@
-import { useAction, useMutation } from "convex/react";
 import { ReceiptText } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useTabParam } from "@/components/ceo/CeoTabs";
@@ -14,13 +13,13 @@ import { TabLink } from "@/components/ceo/TabLink";
 import { TimeframeBar } from "@/components/ceo/TimeframeBar";
 import { useTimeframe } from "@/components/ceo/timeframe";
 import { AnimatedSelect } from "@/components/ui/animated-select";
-import { api } from "../../../convex/_generated/api";
+import { api, useAction, useMutation } from "@/lib/cockpitApi";
 import type {
   AttributionTotals,
   MoneyAttribution,
   Note,
   Transaction,
-} from "../../../convex/ceo/payloads";
+} from "@/types/ceo/payloads";
 import type { CeoTabProps } from "./types";
 
 /**

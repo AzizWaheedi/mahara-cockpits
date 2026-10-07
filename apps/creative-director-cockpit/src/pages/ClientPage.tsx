@@ -1,4 +1,3 @@
-import { useAction, useMutation, useQuery } from "convex/react";
 import {
   ArrowLeft,
   ArrowUpRight,
@@ -10,9 +9,10 @@ import {
   MoreHorizontal,
   Rocket,
 } from "lucide-react";
-import { useState } from "react";
-import { Link, useParams } from "react-router";
+import { useEffect, useState } from "react";
+import { Link, useParams, useSearchParams } from "react-router";
 import { toast } from "sonner";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { ClientUpdates } from "@/components/ClientUpdates";
 import {
   CreativePreview,
@@ -34,9 +34,18 @@ import {
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { CopyButton, WinningAds } from "@/components/WinningAds";
+import {
+  fetchClientDetail,
+  fetchClientOutbox,
+  fetchContextPack,
+  fetchFunnels,
+  logClientTouch,
+  queueClientAction,
+} from "@/lib/clients";
 import { TEMPLATES } from "@/lib/creativeTemplates";
+import { saveFromClientAd } from "@/lib/ideation";
+import { fetchWinners } from "@/lib/playbook";
 import { FunnelRow } from "@/pages/FunnelsPage";
-import { api } from "../../convex/_generated/api";
 
 /**
  * One client, fullscreen.
@@ -70,6 +79,18 @@ const TAB_LABEL: Record<Tab, string> = {
   "Work in flight": "In flight",
   "Everything we made": "All work",
   "Talk to them": "Talk to them",
+};
+
+/**
+ * Each tab's word in the address (?tab=flight), so a refresh, the Back
+ * button, a shared link or the search box lands on the same tab.
+ */
+const TAB_KEY: Record<Tab, string> = {
+  "Script from here": "script",
+  "Their funnel": "funnel",
+  "Work in flight": "flight",
+  "Everything we made": "made",
+  "Talk to them": "talk",
 };
 
 /**
@@ -184,43 +205,39 @@ type PackCounts = {
  * header then offers the download, as the button always did.
  */
 function useContextPack(name: string) {
-  const [wanted, setWanted] = useState(false);
-  const pack = useQuery(api.clients.contextPack, wanted ? { name } : "skip");
-  // What the last download held. The query is switched off once the file is
-  // built, so the pack does not keep re-running on every feed.
+  const auth = useCockpitAuth();
+  const [busy, setBusy] = useState(false);
   const [done, setDone] = useState<null | PackCounts>(null);
 
-  function download() {
-    if (!pack) {
-      setWanted(true);
-      return;
+  async function download() {
+    if (!auth.client) return;
+    setBusy(true);
+    try {
+      const pack = await fetchContextPack(auth.client, name);
+      const blob = new Blob([pack.markdown], {
+        type: "text/markdown;charset=utf-8",
+      });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `${name.replace(/[^\w\u0600-\u06FF -]/g, "")} context.md`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+      setDone(pack.counts);
+    } finally {
+      setBusy(false);
     }
-    const blob = new Blob([pack.markdown], {
-      type: "text/markdown;charset=utf-8",
-    });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = `${name.replace(/[^\w\u0600-\u06FF -]/g, "")} context.md`;
-    a.click();
-    URL.revokeObjectURL(a.href);
-    setDone(pack.counts);
-    setWanted(false);
   }
 
-  const label =
-    wanted && !pack
-      ? "Building the pack…"
-      : pack
-        ? "Download the context pack"
-        : done
-          ? "Extract client context again"
-          : "Extract client context";
   return {
-    active: wanted || Boolean(pack) || Boolean(done),
-    building: wanted && !pack,
-    label,
-    counts: (pack?.counts ?? done) as PackCounts | null,
-    downloaded: Boolean(done) && !pack,
+    active: busy || Boolean(done),
+    building: busy,
+    label: busy
+      ? "Building the pack…"
+      : done
+        ? "Extract client context again"
+        : "Extract client context",
+    counts: done,
+    downloaded: Boolean(done),
     download,
   };
 }
@@ -268,8 +285,8 @@ function ClientStats({ s }: { s: any }) {
   if (!s) {
     return (
       <p className="text-sm text-muted-foreground">
-        No appointments on their stat sheet this month, so booking, show,
-        quotation and close rates cannot be worked out yet.
+        Their stat sheet data is unavailable, so booking, show, quotation and
+        close rates cannot be worked out yet.
       </p>
     );
   }
@@ -326,7 +343,10 @@ function ClientStats({ s }: { s: any }) {
         ))}
       </div>
       <details className="mt-3 text-xs text-muted-foreground">
-        <summary className="w-fit">From their {s.month} stat sheet</summary>
+        <summary className="w-fit">
+          From their {s.month} stat sheet
+          {s.status === "stale" ? " · last verified data" : ""}
+        </summary>
         <ul className="mt-2 space-y-0.5">
           {cells.map(c => (
             <li key={c.label}>
@@ -356,7 +376,7 @@ function SaveAdToIdeation(props: {
   cpl?: number;
   live?: boolean;
 }) {
-  const save = useAction(api.ideation.saveFromClientAd);
+  const save = saveFromClientAd;
   const [state, setState] = useState<"idle" | "busy" | "done">("idle");
   const label =
     state === "busy" ? "Saving…" : state === "done" ? "Saved" : "To Ideation";
@@ -373,7 +393,7 @@ function SaveAdToIdeation(props: {
             toast.success("On the Ideation board, under Saved ideas.");
             setTimeout(() => setState("idle"), 2500);
           })
-          .catch(e => {
+          .catch((e: any) => {
             setState("idle");
             toast.error(String((e as Error)?.message ?? e).split("\n")[0]);
           });
@@ -438,9 +458,33 @@ function ClientTrends({ client }: { client: any }) {
 export function ClientPage() {
   const params = useParams();
   const name = decodeURIComponent(params.name ?? "");
-  const d = useQuery(api.clients.detail, name ? { name } : "skip");
-  const [tab, setTab] = useState<Tab>("Script from here");
+  const auth = useCockpitAuth();
+  // biome-ignore lint/suspicious/noExplicitAny: detail shape is untyped
+  const [d, setD] = useState<any | null | undefined>(undefined);
+  const [query, setQuery] = useSearchParams();
+  const tab: Tab =
+    TABS.find(t => TAB_KEY[t] === query.get("tab")) ?? "Script from here";
+  const setTab = (next: Tab) => {
+    const q = new URLSearchParams(query);
+    q.set("tab", TAB_KEY[next]);
+    setQuery(q, { replace: true });
+  };
   const ctx = useContextPack(d?.client?.name ?? name);
+
+  useEffect(() => {
+    if (!auth.client || !name) return;
+    let cancelled = false;
+    void fetchClientDetail(auth.client, name)
+      .then(res => {
+        if (!cancelled) setD(res);
+      })
+      .catch(() => {
+        if (!cancelled) setD(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [auth.client, name]);
 
   if (d === undefined) {
     return (
@@ -597,13 +641,28 @@ export function ClientPage() {
 /** Live ads, their own history, then what won elsewhere in the same service. */
 // biome-ignore lint/suspicious/noExplicitAny: query payload is untyped
 function ScriptFromHere({ d }: { d: any }) {
+  const auth = useCockpitAuth();
   const service = d.serviceLine ?? "";
   const [scope, setScope] = useState<"service" | "all">("service");
-  const winners = useQuery(api.winners.list, {
-    serviceLine: scope === "service" ? serviceLineOf(service) : undefined,
-    excludeClient: d.client.name,
-    limit: 40,
-  });
+  // biome-ignore lint/suspicious/noExplicitAny: winners shape is untyped
+  const [winners, setWinners] = useState<any>(undefined);
+
+  useEffect(() => {
+    if (!auth.client) return;
+    let cancelled = false;
+    void fetchWinners(auth.client, {
+      serviceLine: scope === "service" ? serviceLineOf(service) : undefined,
+      limit: 40,
+    })
+      .then(rows => {
+        if (!cancelled) setWinners({ rows });
+      })
+      .catch(console.error);
+    return () => {
+      cancelled = true;
+    };
+  }, [auth.client, scope, service]);
+
   // One look-up for every saved picture this tab shows.
   const history = (d.history as any[]).slice(0, 12);
   const stills = useLocalStills([
@@ -765,11 +824,28 @@ function serviceLineOf(service: string): string | undefined {
 
 // biome-ignore lint/suspicious/noExplicitAny: query payload is untyped
 function WorkInFlight({ d, name }: { d: any; name: string }) {
-  const queue = useMutation(api.clients.queueAction);
+  const auth = useCockpitAuth();
+  const queue = async (args: any) => {
+    if (!auth.client) return;
+    await queueClientAction(auth.client, args);
+  };
   // biome-ignore lint/suspicious/noExplicitAny: outbox rows are untyped
-  const outbox = useQuery(api.clients.outbox, {}) as any[] | undefined;
+  const [outbox, setOutbox] = useState<any[] | undefined>(undefined);
   const [busy, setBusy] = useState<string | null>(null);
   const [note, setNote] = useState("");
+
+  useEffect(() => {
+    if (!auth.client) return;
+    let cancelled = false;
+    void fetchClientOutbox(auth.client)
+      .then(rows => {
+        if (!cancelled) setOutbox(rows);
+      })
+      .catch(console.error);
+    return () => {
+      cancelled = true;
+    };
+  }, [auth.client]);
   const [feedback, setFeedback] = useState<{
     tone: "warn" | "bad";
     text: string;
@@ -1099,7 +1175,11 @@ function Everything({ d }: { d: any }) {
 /** The SOP touchpoint floor, with a message you can send in one click. */
 // biome-ignore lint/suspicious/noExplicitAny: query payload is untyped
 function TalkToThem({ d, name }: { d: any; name: string }) {
-  const log = useMutation(api.creative.logTouch);
+  const auth = useCockpitAuth();
+  const log = async (args: any) => {
+    if (!auth.client) return;
+    await logClientTouch(auth.client, args);
+  };
   const t = d.touch;
 
   return (
@@ -1320,8 +1400,26 @@ function NewVideoRequest({
  * page the ads point at. Read from Meta, matched to the client's ad account.
  */
 function TheirFunnel({ name }: { name: string }) {
-  const data = useQuery(api.funnels.list, { client: name });
-  if (!data) return <p className="text-sm text-muted-foreground">Loading…</p>;
+  const auth = useCockpitAuth();
+  // biome-ignore lint/suspicious/noExplicitAny: funnels shape is untyped
+  const [data, setData] = useState<any>(undefined);
+
+  useEffect(() => {
+    if (!auth.client) return;
+    let cancelled = false;
+    void fetchFunnels(auth.client, name)
+      .then(res => {
+        if (!cancelled) setData(res);
+      })
+      .catch(() => {
+        if (!cancelled) setData({ rows: [] });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [auth.client, name]);
+
+  if (!data) return <p className="text-[13px]">Loading…</p>;
   if (data.rows.length === 0) {
     return (
       <p className="text-sm text-muted-foreground">

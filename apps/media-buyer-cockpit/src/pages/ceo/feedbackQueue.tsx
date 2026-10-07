@@ -1,4 +1,3 @@
-import { useAction, useQuery } from "convex/react";
 import { ListTodo } from "lucide-react";
 import { useEffect, useState } from "react";
 import { EmptyState } from "@/components/ceo/EmptyState";
@@ -7,7 +6,7 @@ import { plural, relative } from "@/components/ceo/format";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatusChip } from "@/components/ceo/StatusChip";
 import { Button } from "@/components/ui/button";
-import { api } from "../../../convex/_generated/api";
+import { api, useAction, useQuery } from "@/lib/cockpitApi";
 
 /**
  * Changes and bugs, Aziz's own queue (2026-09-21). Two kinds, a text, a

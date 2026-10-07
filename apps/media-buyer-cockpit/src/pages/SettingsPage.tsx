@@ -1,8 +1,8 @@
-import { useAuthActions } from "@convex-dev/auth/react";
-import { useMutation, useQuery } from "convex/react";
 import { ChevronRight, Loader2, User } from "lucide-react";
+
 import { useState } from "react";
 import { useNavigate } from "react-router";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
@@ -15,15 +15,12 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { getEmailPasswordSignInAvailable } from "@/lib/viktor-spaces-access/config";
-import { api } from "../../convex/_generated/api";
 
 export function SettingsPage() {
-  const user = useQuery(api.auth.currentUser);
-  const { signIn, signOut } = useAuthActions();
-  const deleteAccount = useMutation(api.users.deleteAccount);
+  const auth = useCockpitAuth();
   const navigate = useNavigate();
-  const emailPasswordAvailable = getEmailPasswordSignInAvailable();
+  const emailPasswordAvailable = true;
+  const user = { name: auth.name, email: auth.email };
 
   const [changePasswordOpen, setChangePasswordOpen] = useState(false);
   const [deleteAccountOpen, setDeleteAccountOpen] = useState(false);
@@ -39,19 +36,15 @@ export function SettingsPage() {
     setError("");
     setLoading(true);
 
-    const formData = new FormData();
-    formData.append("email", user?.email || "");
-    formData.append("flow", "reset");
-
     try {
-      await signIn("password", formData);
-      setPasswordStep("verify");
-    } catch (e) {
-      setError(
-        String(e).includes("InvalidAccountId")
-          ? "This account has no password: you signed in through the portal pass. Nothing to change here."
-          : "Could not send the reset code. Try again.",
-      );
+      if (auth.client && auth.email) {
+        const { error: resetErr } =
+          await auth.client.auth.resetPasswordForEmail(auth.email);
+        if (resetErr) throw resetErr;
+        setSuccess("Password reset email sent!");
+      }
+    } catch {
+      setError("Could not send reset code. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -63,17 +56,21 @@ export function SettingsPage() {
     setLoading(true);
 
     const formData = new FormData(e.currentTarget);
-    formData.append("email", user?.email || "");
-    formData.append("flow", "reset-verification");
+    const newPassword = (formData.get("newPassword") as string) || "";
 
     try {
-      await signIn("password", formData);
-      setSuccess("Password changed.");
-      setTimeout(() => {
-        setChangePasswordOpen(false);
-        setPasswordStep("request");
-        setSuccess("");
-      }, 1500);
+      if (auth.client) {
+        const { error: updateErr } = await auth.client.auth.updateUser({
+          password: newPassword,
+        });
+        if (updateErr) throw updateErr;
+        setSuccess("Password changed successfully!");
+        setTimeout(() => {
+          setChangePasswordOpen(false);
+          setPasswordStep("request");
+          setSuccess("");
+        }, 1500);
+      }
     } catch {
       setError("That code or password did not work. Try again.");
     } finally {
@@ -86,11 +83,10 @@ export function SettingsPage() {
     setError("");
 
     try {
-      await deleteAccount();
-      await signOut();
+      await auth.signOut();
       navigate("/");
     } catch {
-      setError("Could not delete the account. Try again.");
+      setError("Could not sign out. Please try again.");
       setLoading(false);
     }
   };

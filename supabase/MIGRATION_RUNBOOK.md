@@ -303,3 +303,125 @@ copying was never enabled. The canary and batch steps formerly listed here
 must **not** be run. The direct Supabase contract above is the replacement
 direction. Keep the old schema and audit history until the full cutover is
 verified; do not delete records to tidy up the migration.
+
+## Phase 3 & 4: Direct Migration Architecture and Cutover Verification
+
+As of 24 September 2026, the transition architecture from Convex to Supabase (`bldgtotkfmhoxmlzowdx`) covers all 5 cockpits: Media Buyer, Client Success, Creative Director, Video Editor, and Sales Cockpit.
+
+### Applied Schema & Backend Migrations
+
+1. **`20260923m_cockpit_ceo_gate.sql` & `20260923n_cockpit_identity.sql`**:
+   - Shared identity directory `cockpit_members` and audit log `cockpit_audit_log`.
+   - Founder CEO gate strictly limited to confirmed identities matching founder email addresses (`aziz@maharamedia.com`, `awaheedi2008@gmail.com`).
+   - 8 members linked and active.
+
+2. **`20260923o_cockpit_domain_tables.sql`**:
+   - Reconciled domain tables with fail-closed RLS policies:
+     - `cockpit_members` (8 rows)
+     - `cockpit_daily_checks` (287 rows)
+     - `cockpit_issue_reports` (4 rows)
+     - `cockpit_eod_reports` (4 rows)
+     - `cockpit_campaigns` (15 rows)
+     - `cockpit_ads` (42 rows)
+     - `cockpit_decisions` (23 rows)
+     - `cockpit_client_profiles` (48 rows)
+   - Idempotent backfill verified via `scripts/import-snapshot-data.py` (0 duplicate writes).
+
+3. **`20260923p_cockpit_actions_and_rpcs.sql`**:
+   - Added `cockpit_plan_items` table with RLS.
+   - Enforced unique constraint on `cockpit_eod_reports (role, day)`.
+   - 14 security-definer RPC stored procedures deployed and verified in `pg_proc`:
+     - `cockpit_get_my_access`
+     - `cockpit_link_confirmed_member`
+     - `cockpit_admin_upsert_member`
+     - `cockpit_admin_remove_member`
+     - `cockpit_get_daily_checks`
+     - `cockpit_set_daily_check`
+     - `cockpit_save_eod`
+     - `cockpit_log_decision`
+     - `cockpit_remove_decision`
+     - `cockpit_update_client_profile`
+     - `cockpit_add_plan_item`
+     - `cockpit_remove_plan_item`
+     - `cockpit_get_dashboard_summary`
+     - `cockpit_submit_issue_report`
+
+4. **`20260924a_sales_cockpit.sql` through `20260924j_sales_dialer.sql`**:
+   - Added sales domain tables, leads, proposals, dialer integration, and sales compensation rules.
+
+### Frontend Cockpits Integration
+
+- **Media Buyer Cockpit / Portal (`apps/media-buyer-cockpit`)**:
+  - Direct Supabase auth provider (`useCockpitAuth`), role/CEO gate, and RPC client.
+  - `GoPage` inter-cockpit switcher routes directly with session preservation, without requiring Convex token minting.
+  - NullConvexClient and fallback ConvexProvider prevent runtime crashes when Convex is unconfigured.
+  - Tests: `scripts/supabase-access.test.ts` (4/4 pass), `scripts/supabase-actions.test.ts` (4/4 pass).
+
+- **Client Success Cockpit (`apps/client-success-cockpit`)**:
+  - Integrated `@supabase/supabase-js` with `supabaseAccess.ts`, `SupabaseAuthProvider.tsx`, `SupabaseSignIn.tsx`, and `FirstSignInPage.tsx`.
+  - Converted routes and protected gates to `useCockpitAuth()`.
+  - NullConvexClient fallback active when `VITE_CONVEX_URL` is empty.
+
+- **Creative Director Cockpit (`apps/creative-director-cockpit`)**:
+  - Integrated `@supabase/supabase-js` with `supabaseAccess.ts`, `SupabaseAuthProvider.tsx`, `SupabaseSignIn.tsx`, and `FirstSignInPage.tsx`.
+  - Converted routes and protected gates to `useCockpitAuth()`.
+  - NullConvexClient fallback active when `VITE_CONVEX_URL` is empty.
+
+- **Video Editor Cockpit (`apps/video-editor-cockpit`)**:
+  - De-Convexed: `adPreview` queries `cockpit_ads` and `winner_ads` directly from Supabase.
+  - `signInWithPortalToken` supports native Supabase sessions and OTP tokens without contacting Convex.
+
+- **Sales Cockpit (`apps/sales-cockpit`)**:
+  - Pure Supabase data model with dialer, proposals, and pay calculations.
+  - `adPreview` queries `cockpit_ads` directly from Supabase.
+  - `signInWithPortalToken` supports native Supabase sessions without contacting Convex.
+  - Tests: `apps/sales-cockpit/src/lib/pay.test.ts` (36/36 pass).
+
+### Fail-Closed Verification Gate
+
+Run `python scripts/verify-cutover-readiness.py` from the repository root:
+- Checks project reference and credentials with 20s network timeouts.
+- Verifies exact table existence and row counts in live Supabase.
+- Verifies RLS is active (`True`) on all 9 domain tables.
+- Verifies all 14 RPCs exist in `pg_proc` in schema `public`.
+- Verifies fresh production build outputs (`dist/index.html`) across all 5 cockpits.
+- Runs core unit test suites via `bun test` and exits with code 1 if any check fails.
+
+### Production Cutover Procedure
+
+1. **Environment Variables**:
+   In Vercel and production deployment environment:
+   ```bash
+   VITE_SUPABASE_URL="https://bldgtotkfmhoxmlzowdx.supabase.co"
+   VITE_SUPABASE_ANON_KEY="<production_anon_key>"
+   VITE_CONVEX_URL=""
+   COCKPITS_BACKEND="supabase"
+   ```
+
+2. **Execute Deployment**:
+   ```bash
+   USE_SUPABASE=1 scripts/ship.sh all
+   ```
+   `ship.sh` operates in pure Supabase mode:
+   - Bypasses `convex deploy`.
+   - Runs linting and typechecking.
+   - Builds all 5 Vite cockpits targeting Supabase with `VITE_CONVEX_URL=""`.
+   - Deploys sites to production and validates bundle updates.
+   - Executes smoke check via `verify-cutover-readiness.py`.
+
+3. **Retire Convex**:
+   - Place Convex deployments (`adorable-seahorse-418`, `impressive-dinosaur-375`, `colorful-wombat-644`) in read-only / maintenance mode.
+   - Retain snapshot backups in `D:\secure\snapshot-*-20260923.zip`.
+   - Confirm zero incoming traffic to Convex before deleting deployments.
+
+
+## 2026-10-04 candidate verification — not a production cutover
+
+- Work stays in `codex/supabase-completion-20261004`; the original user worktrees are unchanged.
+- Native team meeting projections now use the existing CSM SQL contracts. The canonical PostgreSQL suite passes 7 tests with 45 assertions. A disposable native-client smoke proved 4/8 renewal target persistence/readback, actor audit, and revoked-member denial.
+- Actual application compilation passed for all five cockpits. Shared-source enforcement passed. The assembled Edge Function suite passes 258 tests with 775 assertions.
+- These checks do not prove authenticated production journeys, fresh native feed publication, real queued provider processing, or final data reconciliation.
+- Do not apply the rejected Gemini native feed migration: it assumes a singleton `id` in existing per-table `cockpit_*_sources` ledgers and fails against canonical schema. Do not activate the submitted media queue worker: its intent flag can report committed delivery without a provider receipt. Their changes remain isolated and outside the assembly.
+- Identity adoption and five-app directory-owned role bootstraps still need reviewed corrections. Gemini 3.8 returned a provider quota error; no alternate model was used.
+- Both available GitHub credentials lack push permission. Vercel authorization is absent. Hermes SSH authentication is denied. Production schema, data, deployments, writers and Convex runtimes have not been changed during this completion work.
+

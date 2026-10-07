@@ -25,8 +25,8 @@ import type {
   Ladder,
   Sheet,
   SheetRow,
-} from "../../../convex/billingCore";
-import { ladderOf, METHODS, PLANS } from "../../../convex/billingCore";
+} from "@/lib/billingCore";
+import { ladderOf, METHODS, PLANS } from "@/lib/billingCore";
 
 /**
  * The client billing sheet. The same file in the CEO cockpit and the client
@@ -794,8 +794,8 @@ function Panel({
           ) : (
             <div className="grid gap-3 sm:max-w-md">
               <p className="text-sm text-muted-foreground">
-                The SOP pauses on the third day late, and only after a call.
-                Fifteen days after the pause is churn.
+                The SOP pauses on the third day late, and only after a call. A
+                pause that runs past 14 days is churn.
               </p>
               <Field label="Why">
                 {id => (
@@ -1343,7 +1343,7 @@ export function BillingSheet({ api }: { api: BillingApi }) {
               const isPaused = r.group === "paused";
               const due = isPaused
                 ? r.pausedOn
-                  ? `paused ${shortDay(r.pausedOn)}, day ${-(r.ladder.days ?? 0)} of 15`
+                  ? `paused ${shortDay(r.pausedOn)}, day ${-(r.ladder.days ?? 0)}, churn after day 14`
                   : "paused, no pause date"
                 : r.nextDate
                   ? `${shortDay(r.nextDate)}, ${when(r.ladder.days)}`

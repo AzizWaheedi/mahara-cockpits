@@ -1,8 +1,10 @@
-import { useMutation, useQuery } from "convex/react";
 import { ArrowUpRight } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { toast } from "sonner";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { ExtLink, PageHeader } from "@/components/kit";
 import { Button } from "@/components/ui/button";
-import { api } from "../../convex/_generated/api";
+import { fetchBacklog, queueGap } from "@/lib/backlog";
 
 // biome-ignore lint/suspicious/noExplicitAny: gap rows
 type Any = any;
@@ -21,21 +23,61 @@ const GAP_NAMES: Record<string, string> = {
  * fix. One click queues it as a task on the Client Success list in ClickUp;
  * the media buyer backend sends queued tasks every five minutes.
  */
-export function BacklogPage() {
-  const data = useQuery(api.gaps.list, {});
-  const queue = useMutation(api.gaps.queue);
-  if (!data)
+export function BacklogPage({ embedded = false }: { embedded?: boolean }) {
+  const auth = useCockpitAuth();
+  const [data, setData] = useState<Any | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadData = useCallback(() => {
+    if (!auth.client) return;
+    setError(null);
+    fetchBacklog(auth.client, auth.clients)
+      .then(setData)
+      .catch(err => {
+        setError(
+          err instanceof Error
+            ? err.message
+            : "Data fixes could not be read. Reload the page.",
+        );
+      });
+  }, [auth.client, auth.clients]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  const handleQueue = async (args: {
+    taskId?: string;
+    clientName: string;
+    label: string;
+    fix: string;
+  }) => {
+    if (!auth.client) return;
+    try {
+      await queueGap(auth.client, auth.email, args);
+      toast.success(`Queued task for ${args.clientName}`);
+      loadData();
+    } catch (e) {
+      toast.error(String(e));
+    }
+  };
+
+  if (error)
     return (
-      <p className="mx-auto w-full max-w-6xl text-sm text-muted-foreground">
-        Loading…
+      <p role="alert" className="text-sm text-destructive">
+        {error}
       </p>
     );
+  if (!data) return <p className="text-sm text-muted-foreground">Loading…</p>;
   const { rows, counts, activeClients } = data as Any;
 
   return (
-    <div className="mx-auto w-full max-w-6xl space-y-6">
+    <div
+      className={embedded ? "space-y-6" : "mx-auto w-full max-w-6xl space-y-6"}
+    >
       <PageHeader
-        title="Data backlog"
+        as={embedded ? "h2" : "h1"}
+        title="Data fixes"
         sub={`${rows.length} of ${activeClients} active clients are missing something the cockpit needs. Queue a fix and it becomes a ClickUp task on the Client Success list.`}
       >
         {/* Only the gaps that exist: a chip reading "0" says nothing. */}
@@ -113,7 +155,7 @@ export function BacklogPage() {
                         size="sm"
                         variant="outline"
                         onClick={() =>
-                          queue({
+                          handleQueue({
                             taskId: r.taskId,
                             clientName: r.clientName,
                             label: g.label,

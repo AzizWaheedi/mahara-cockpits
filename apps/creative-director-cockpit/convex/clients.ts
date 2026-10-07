@@ -367,6 +367,7 @@ export async function buildDetail(
         quotationRate: pct(s2.quotes, s2.shows),
         closeRate: pct(s2.closes, s2.quotes),
         scannedAt: client.statsScannedAt ?? null,
+        status: client.statsStatus ?? "ready",
       };
     })(),
     client: {

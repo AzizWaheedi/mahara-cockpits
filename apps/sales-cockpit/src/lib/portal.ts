@@ -1,19 +1,8 @@
 import { supabase } from "./supabase";
 
-/**
- * Sign-in through the portal.
- *
- * Everyone signs in once at the media buyer app, which is the identity
- * provider for every cockpit. It sends people here with a two-minute
- * `portal_token` in the address. The other cockpits swap that for a Convex
- * session inside their own backend; this one has no backend, so it posts the
- * pass to the portal, which verifies the signature it made and returns a
- * Supabase sign-in token. No password travels, and the browser never chooses
- * whose address it is asking about.
- */
+/** Cockpits on the production origin share the native Supabase session. */
 
 const PORTAL_URL = "https://cockpit.maharamedia.com";
-const PORTAL_SITE = "https://adorable-seahorse-418.convex.site";
 const OWN_HOSTS = ["mahara-sales.vercel.app"];
 
 export const COCKPIT = "sales";
@@ -31,48 +20,13 @@ export function portalUrl(): string {
   return PORTAL_URL;
 }
 
-function portalSite(): string {
-  const env = (
-    import.meta.env.VITE_PORTAL_SITE_URL as string | undefined
-  )?.trim();
-  return (env || PORTAL_SITE).replace(/\/$/, "");
-}
-
-export interface PortalWho {
-  email: string;
-  name: string;
-  roles: string[];
-  cockpits: string[];
-}
-
-/** Swap the pass for a session. Throws with a sentence a person can act on. */
-export async function signInWithPortalToken(token: string): Promise<PortalWho> {
-  const res = await fetch(`${portalSite()}/portal/sales-session`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ token }),
-  });
-  const body = (await res.json().catch(() => null)) as
-    | ({
-        ok: boolean;
-        error?: string;
-        token_hash?: string;
-      } & Partial<PortalWho>)
-    | null;
-  if (!res.ok || !body?.ok || !body.token_hash)
-    throw new Error(body?.error ?? `the portal answered ${res.status}`);
-
-  const { error } = await supabase.auth.verifyOtp({
-    token_hash: body.token_hash,
-    type: "magiclink",
-  });
-  if (error) throw new Error(error.message);
-  return {
-    email: body.email ?? "",
-    name: body.name ?? "",
-    roles: body.roles ?? [],
-    cockpits: body.cockpits ?? [],
-  };
+/**
+ * Where to send someone whose session ran out: the portal's door for this
+ * cockpit, which signs them in and brings them back to `next`. The banner's
+ * "Sign in again" uses it when a refresh cannot restore the session.
+ */
+export function portalDoor(next: string): string {
+  return `${portalUrl()}/go/${COCKPIT}?next=${encodeURIComponent(next)}`;
 }
 
 export interface AdPreview {
@@ -92,42 +46,34 @@ export interface AdPreview {
 
 /**
  * The Facebook preview of the ad a lead came from.
- *
- * Meta's preview links die within a day, which is why none is stored. The
- * media buyer deployment fetches a fresh one on demand; this asks it, proving
- * who is asking with the Supabase session the cockpit already holds.
+ * Reads directly from Supabase cockpit_ads.
  */
 export async function adPreview(
   adId: string,
-  format?: string,
+  _format?: string,
 ): Promise<AdPreview> {
-  const { data } = await supabase.auth.getSession();
-  const token = data.session?.access_token;
-  if (!token) return { ok: false, error: "Sign in again to load previews." };
   try {
-    const res = await fetch(`${portalSite()}/portal/sales-preview`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({ adId, format }),
-    });
-    const body = (await res.json().catch(() => null)) as AdPreview | null;
-    if (!res.ok || !body?.ok)
+    const { data: ad, error } = await supabase
+      .from("cockpit_ads")
+      .select("still_url, thumbnail_url, meta_ad_id, reason")
+      .eq("meta_ad_id", adId)
+      .maybeSingle();
+
+    if (error) {
+      return { ok: false, error: error.message };
+    }
+    if (ad && (ad.still_url || ad.thumbnail_url)) {
       return {
-        ok: false,
-        error: body?.error ?? `the portal answered ${res.status}`,
+        ok: true,
+        stillUrl: ad.still_url ?? undefined,
+        thumbUrl: ad.thumbnail_url ?? undefined,
+        reason: ad.reason ?? undefined,
       };
-    return body;
+    }
+    return { ok: false, reason: "No preview captured yet for this ad." };
   } catch (e) {
     return { ok: false, error: String((e as Error).message ?? e) };
   }
-}
-
-/** Where to send someone who needs a pass. */
-export function portalDoor(next: string): string {
-  return `${portalUrl()}/go/${COCKPIT}?next=${encodeURIComponent(next)}`;
 }
 
 /** The other cockpits this person may open, for the switcher. */

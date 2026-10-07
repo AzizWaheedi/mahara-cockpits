@@ -1,33 +1,56 @@
-import { useAction } from "convex/react";
 import { useEffect, useRef, useState } from "react";
-import { Link, useParams, useSearchParams } from "react-router";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router";
+import { cockpitSwitchPath } from "@/auth/cockpitNavigation";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { Wordmark } from "@/components/Wordmark";
-import { api } from "../../convex/_generated/api";
 
 /**
- * The door into a cockpit that lives on another deployment. Mints a
- * two-minute pass from the portal and hands it to the cockpit, which opens
- * its own session and drops the pass from the address bar.
+ * Inter-cockpit redirector and access gate.
+ * Validates permission against verified Supabase identity, then routes
+ * directly to the requested cockpit with session preservation.
  */
 export function GoPage() {
   const { cockpit = "" } = useParams();
   const [params] = useSearchParams();
-  const mint = useAction(api.portal.mintToken);
+  const navigate = useNavigate();
+  const {
+    access,
+    ready,
+    isAuthenticated,
+    error: accessError,
+  } = useCockpitAuth();
   const [error, setError] = useState<string | null>(null);
   const started = useRef(false);
 
   useEffect(() => {
-    if (started.current) return;
-    started.current = true;
-    mint({ cockpit })
-      .then(({ token, path }) => {
-        const next = params.get("next") ?? "/dashboard";
-        const q = new URLSearchParams({ portal_token: token, next });
-        // A real route, not the bare root, so the proxy rule always matches.
-        window.location.replace(`${path}/dashboard?${q}`);
-      })
-      .catch(e => setError(String((e as Error).message ?? e)));
-  }, [mint, cockpit, params]);
+    if (!ready || started.current) return;
+    if (accessError) {
+      setError(accessError);
+      return;
+    }
+
+    if (!isAuthenticated) {
+      const wanted = window.location.pathname + window.location.search;
+      navigate(`/login?next=${encodeURIComponent(wanted)}`, { replace: true });
+      return;
+    }
+
+    try {
+      const targetPath = cockpitSwitchPath(
+        access,
+        cockpit,
+        params.get("next") ?? "/dashboard",
+      );
+      started.current = true;
+      window.location.replace(targetPath);
+    } catch (error) {
+      setError(
+        error instanceof Error
+          ? error.message
+          : "Could not open that cockpit. Try again.",
+      );
+    }
+  }, [ready, isAuthenticated, access, accessError, cockpit, params, navigate]);
 
   return (
     <div className="flex flex-1 items-center justify-center p-6">

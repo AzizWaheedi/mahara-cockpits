@@ -1,7 +1,7 @@
-import { useMutation } from "convex/react";
 import { Flag } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { Button } from "@/components/ui/button";
 import {
   Popover,
@@ -9,7 +9,6 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { Textarea } from "@/components/ui/textarea";
-import { api } from "../../convex/_generated/api";
 
 /**
  * "This screen is wrong", said where it was noticed. It files an owned fix
@@ -21,7 +20,7 @@ import { api } from "../../convex/_generated/api";
  * panel; questions still go to Ask Hermes, bottom right. [aziz, 2026-09-26]
  */
 export function ReportIssue({ page }: { page: string }) {
-  const report = useMutation(api.csm.reportIssue);
+  const auth = useCockpitAuth();
   const [open, setOpen] = useState(false);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
@@ -31,8 +30,15 @@ export function ReportIssue({ page }: { page: string }) {
     if (!body) return;
     setBusy(true);
     try {
-      await report({ page, text: body });
-      toast.success("Sent, a fix task was created");
+      if (!auth.client) throw new Error("Sign in to report an issue.");
+      const { error } = await auth.client.rpc("cockpit_submit_issue_report", {
+        p_app: "client-success",
+        p_role: "csm",
+        p_page: page,
+        p_text: body,
+      });
+      if (error) throw error;
+      toast.success("Issue recorded for review");
       setOpen(false);
       setText("");
     } catch (e) {
@@ -63,7 +69,7 @@ export function ReportIssue({ page }: { page: string }) {
           <p className="text-sm font-semibold">This screen is wrong</p>
           <p className="mt-1 text-xs text-muted-foreground">
             Wrong client, wrong instruction or a missing field: say it here and
-            a fix task is created. Questions go to Ask Hermes.
+            it is recorded for review. Questions go to Ask Hermes.
           </p>
         </div>
         <Textarea

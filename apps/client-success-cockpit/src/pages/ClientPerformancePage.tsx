@@ -1,7 +1,8 @@
-import { useMutation, useQuery } from "convex/react";
 import { ArrowLeft, ArrowUpRight, ChevronDown } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+
 import { toast } from "sonner";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { ClientCheckIn } from "@/components/ClientCheckIn";
 import { ClientUpdates } from "@/components/ClientUpdates";
 import {
@@ -19,6 +20,7 @@ import {
   PillRow,
   StatTile,
 } from "@/components/kit";
+import { PortalTasksButton } from "@/components/PortalTasks";
 import { ReportIssue } from "@/components/ReportIssue";
 import { bucketDays, TrendChart } from "@/components/TrendChart";
 import { AnimatedSelect } from "@/components/ui/animated-select";
@@ -29,8 +31,28 @@ import { type Constraint, diagnose } from "@/lib/csmDiagnosis";
 import { serviceModel } from "@/lib/csmTemplates";
 import { displayLabel, plural, shortDay } from "@/lib/format";
 import { publishOpenClient } from "@/lib/openClient";
+import {
+  addTask,
+  fetchClientProfile,
+  fetchPerformanceOverview,
+  fetchPerformancePeriod,
+  fetchTasksAdded,
+  requestReportDoc,
+} from "@/lib/performance";
+
+import {
+  byAdIn,
+  type CardChange,
+  changesIn,
+  dayLabel,
+  kuwaitDay,
+  type Period,
+  type PeriodKey,
+  periodNumbers,
+  periodOf,
+  shiftDay,
+} from "@/lib/reportPeriod";
 import { cn } from "@/lib/utils";
-import { api } from "../../convex/_generated/api";
 
 /**
  * Client performance: the high-level board, then one client in full.
@@ -71,8 +93,11 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
   return <h3 className="text-[15px] font-semibold">{children}</h3>;
 }
 
-/** Each link's source of truth, so a missing one says where to add it. */
-const LINK_LABELS: {
+/**
+ * Each link's source of truth, so a missing one says where to add it. One
+ * name per link everywhere in the cockpit (the client page's header uses it).
+ */
+export const LINK_LABELS: {
   key: string;
   label: string;
   hint: string;
@@ -117,7 +142,7 @@ const LINK_LABELS: {
   },
 ];
 
-function Links({ links }: { links: Record<string, string> }) {
+export function ClientLinks({ links }: { links: Record<string, string> }) {
   return (
     <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
       {LINK_LABELS.map(l => {
@@ -157,11 +182,11 @@ function Links({ links }: { links: Record<string, string> }) {
   );
 }
 
-/** A printable one-pager. Opened in a new tab; Cmd/Ctrl+P saves it as a PDF. */
-function reportHtml(p: Any): string {
+/** A printable one-pager for the reporting period. Opened in a new tab; Cmd/Ctrl+P saves it as a PDF. */
+function reportHtml(p: Any, per: Period, fig: Figures): string {
   const perf = p.performance ?? {};
-  const m = perf.month ?? {};
-  const l = perf.lastMonth ?? {};
+  const m = fig.m ?? {};
+  const l = fig.l ?? {};
   const rows = (perf.stale ?? []) as Any[];
   // Done with you clients book their own appointments, so their report is leads and cost
   // per lead. Printing empty booking and close rows would just look like failure.
@@ -186,9 +211,9 @@ function reportHtml(p: Any): string {
     .note{font-size:12px;color:#6b7280;margin-top:8px}
   </style></head><body>
   <h1>${esc(p.clientName)}</h1>
-  <div class="sub">Performance report · ${esc(perf.monthLabel ?? "")} · generated ${new Date().toISOString().slice(0, 10)} · source: the client's own performance sheet</div>
+  <div class="sub">Performance report · ${esc(capital(per.label))} · ${esc(dayLabel(per.from))} to ${esc(dayLabel(upTo(per)))} · generated ${new Date().toISOString().slice(0, 10)} · source: the client's own performance sheet</div>
   <h2>${dwy ? "Lead volume" : "The funnel"}</h2>
-  <table><tr><th>Metric</th><th class="n">${esc(perf.monthLabel ?? "This month")}</th><th class="n">${esc(perf.lastMonthLabel ?? "Last month")}</th></tr>
+  <table><tr><th>Metric</th><th class="n">${esc(capital(per.label))}</th><th class="n">${esc(per.prevLabel ? capital(per.prevLabel) : "")}</th></tr>
   ${line("Leads", m.leads, l.leads)}
   ${
     dwy
@@ -234,10 +259,10 @@ function reportHtml(p: Any): string {
   </body></html>`;
 }
 
-function openReport(p: Any) {
+function openReport(p: Any, per: Period, fig: Figures) {
   const w = window.open("", "_blank");
   if (!w) return;
-  w.document.write(reportHtml(p));
+  w.document.write(reportHtml(p, per, fig));
   w.document.close();
 }
 
@@ -481,18 +506,17 @@ function ConstraintCard({ c, first }: { c: Constraint; first?: boolean }) {
 }
 
 /**
- * One card that makes the CSM walk into a call with solutions instead of questions.
+ * Before the call: one block that makes the CSM walk in with solutions.
  *
  * The company rule is that the CSM always brings solutions. That is a preparation problem, not a
- * character problem, so this assembles the four things a good call needs from data already on
- * the profile: where the client stands, the single constraint to lead with, the fix to offer,
- * and the ask that is owed. Nothing here is invented. When a number is missing the card says
- * what to ask for instead of guessing.
+ * character problem, so this assembles what a good call needs from data already on the profile:
+ * where the client stands, the first thing holding them back with its fix and its message (the
+ * diagnosis below), and the ask that is owed. It was two blocks, "Prep for this call" and the
+ * diagnosis, and the first repeated the second's top card (the simplification audit,
+ * 2026-10-06). Nothing here is invented: when a number is missing it says what to ask for.
  */
-function CallPrep({ p }: { p: Any }) {
-  const [open, setOpen] = useState(false);
+function BeforeTheCall({ p }: { p: Any }) {
   const perf = (p.performance ?? {}) as Any;
-  const d = useMemo(() => diagnose(p), [p]);
   const m = (perf.month ?? {}) as Any;
   const l = (perf.lastMonth ?? {}) as Any;
   const useLast = Number(m.leads ?? 0) === 0 && Number(l.leads ?? 0) > 0;
@@ -500,7 +524,6 @@ function CallPrep({ p }: { p: Any }) {
   const label = useLast
     ? (perf.lastMonthLabel ?? "last month")
     : (perf.monthLabel ?? "this month");
-  const lead = d.top ?? d.rest?.[0];
   const stale = Number(perf.staleCount ?? 0);
   const facts = [
     `${label}: ${Number(n.leads ?? 0)} enquiries, ${Number(n.booked ?? 0)} booked, ${Number(n.shows ?? 0)} attended, ${Number(n.closes ?? 0)} closed`,
@@ -508,15 +531,15 @@ function CallPrep({ p }: { p: Any }) {
       ? `${stale} appointments still have no outcome on their sheet`
       : "Every appointment has an outcome, their tracking is clean",
     p.liveDays != null
-      ? `Live ${p.liveDays} days, stage ${p.stage ?? "unknown"}`
-      : `Stage ${p.stage ?? "unknown"}`,
+      ? `Live ${p.liveDays} days, stage ${displayLabel(p.stage) || "unknown"}`
+      : `Stage ${displayLabel(p.stage) || "unknown"}`,
     p.happiness
-      ? `Their own happiness rating: ${p.happiness}`
+      ? `Their own happiness rating: ${displayLabel(p.happiness)}`
       : "No happiness rating on their record, ask for one",
   ];
   const nudge = p.reportNudge as Any;
   return (
-    <section className="space-y-4 rounded-2xl border border-primary/30 bg-card p-4 sm:p-6">
+    <section className="space-y-5 rounded-2xl border border-primary/30 bg-card p-4 sm:p-6">
       {nudge?.url ? (
         <div className="callout-warn rounded-xl p-4 text-sm">
           <p className="font-medium">
@@ -534,59 +557,30 @@ function CallPrep({ p }: { p: Any }) {
           </Button>
         </div>
       ) : null}
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0 flex-1 basis-60">
-          <h3 className="text-[15px] font-semibold">Prep for this call</h3>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Read this once before you dial. Lead with the constraint, offer the
-            fix, then make the ask.
-          </p>
-        </div>
-        <Button
-          size="sm"
-          variant="outline"
-          aria-expanded={open}
-          onClick={() => setOpen(v => !v)}
-        >
-          {open ? "Hide" : "Show"}
-        </Button>
+      <div>
+        <h3 className="text-[15px] font-semibold">Before the call</h3>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Read this once before you dial. Lead with the first thing holding them
+          back, offer its fix, then make the ask.
+        </p>
       </div>
-      {open ? (
-        <div className="space-y-4 text-sm">
-          <div>
-            <p className="font-medium">Where they stand</p>
-            <ul className="mt-1 ml-4 list-disc space-y-0.5 text-muted-foreground">
-              {facts.map(f => (
-                <li key={f}>{f}</li>
-              ))}
-            </ul>
-          </div>
-          <div>
-            <p className="font-medium">Lead with this</p>
-            <p className="mt-1 text-muted-foreground">
-              {lead ? lead.title : d.headline}
-            </p>
-          </div>
-          {lead?.fixes?.length ? (
-            <div>
-              <p className="font-medium">The fix you are bringing</p>
-              <ul className="mt-1 ml-4 list-disc space-y-0.5 text-muted-foreground">
-                {lead.fixes.slice(0, 3).map((x: string) => (
-                  <li key={x}>{x}</li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
-          <div>
-            <p className="font-medium">Before you hang up</p>
-            <p className="mt-1 text-muted-foreground">
-              {stale
-                ? "Agree who fills the missing outcomes and by when. Get a name, not a nod."
-                : "Book the next check in on the call, and ask for the review or the referral while they are happy."}
-            </p>
-          </div>
-        </div>
-      ) : null}
+      <div className="text-sm">
+        <p className="font-medium">Where they stand</p>
+        <ul className="mt-1 ml-4 list-disc space-y-0.5 text-muted-foreground">
+          {facts.map(f => (
+            <li key={f}>{f}</li>
+          ))}
+        </ul>
+      </div>
+      <DiagnosisSection p={p} />
+      <div className="text-sm">
+        <p className="font-medium">Before you hang up</p>
+        <p className="mt-1 text-muted-foreground">
+          {stale
+            ? "Agree who fills the missing outcomes and by when. Get a name, not a nod."
+            : "Book the next check-in on the call, and ask for the review or the referral while they are happy."}
+        </p>
+      </div>
     </section>
   );
 }
@@ -646,8 +640,8 @@ const REPORT_EXTRAS: { key: string; label: string }[] = [
   { key: "ads", label: "What is running right now" },
 ];
 
-function ReportSection({ p }: { p: Any }) {
-  const request = useMutation(api.csm.requestReportDoc);
+function ReportSection({ p, per, fig }: { p: Any; per: Period; fig: Figures }) {
+  const auth = useCockpitAuth();
   const [note, setNote] = useState("");
   const [lang, setLang] = useState<"en" | "ar">("en");
   const [busy, setBusy] = useState(false);
@@ -658,10 +652,14 @@ function ReportSection({ p }: { p: Any }) {
   return (
     <section className="space-y-4 rounded-2xl border bg-card p-4 sm:p-6">
       <div>
-        <h3 className="text-[15px] font-semibold">Monthly report</h3>
+        <h3 className="text-[15px] font-semibold">
+          Client report, {per.label}
+        </h3>
         <p className="mt-1 text-sm text-muted-foreground">
-          Written as a Google Doc you can edit before it goes anywhere. Same
-          template every month, so the client learns to read it.
+          Written as a Google Doc you can edit before it goes anywhere, for the
+          reporting period at the top of the page
+          {per.prevLabel ? `, compared with ${per.prevLabel}` : ""}. Same
+          template every time, so the client learns to read it.
         </p>
       </div>
       <div className="rounded-xl bg-muted/40 p-4 text-sm">
@@ -705,12 +703,16 @@ function ReportSection({ p }: { p: Any }) {
         </div>
         <Button
           size="sm"
-          disabled={busy}
+          disabled={busy || !auth.client}
           onClick={async () => {
+            if (!auth.client) return;
             setBusy(true);
             try {
-              await request({
+              await requestReportDoc(auth.client, {
                 clientName: p.clientName,
+                from: per.from,
+                to: upTo(per),
+                label: capital(per.label),
                 language: lang,
                 note: note.trim() || undefined,
                 extras,
@@ -728,7 +730,11 @@ function ReportSection({ p }: { p: Any }) {
         >
           Write the Google Doc
         </Button>
-        <Button size="sm" variant="secondary" onClick={() => openReport(p)}>
+        <Button
+          size="sm"
+          variant="secondary"
+          onClick={() => openReport(p, per, fig)}
+        >
           Or print a one-pager now
         </Button>
       </div>
@@ -832,23 +838,36 @@ const TEAMS: [string, string][] = [
  * Add a task for this client: a reminder for me, or a request to another
  * team. It reaches ClickUp within five minutes with the client's tag on it.
  */
-function AddTask({
+export function AddTask({
   taskId,
   clientName,
+  inline = false,
 }: {
   taskId: string;
   clientName: string;
+  /** Inside the client page's "Add a task" panel: the form is already open. */
+  inline?: boolean;
 }) {
-  const add = useMutation(api.csm.addTask);
-  const added = useQuery(api.csm.tasksAdded, { taskId }) as Any[] | undefined;
-  const [open, setOpen] = useState(false);
+  const auth = useCockpitAuth();
+  const [added, setAdded] = useState<Any[] | undefined>(undefined);
+  const [open, setOpen] = useState(inline);
   const [title, setTitle] = useState("");
   const [note, setNote] = useState("");
   const [team, setTeam] = useState("");
   const [due, setDue] = useState("");
+
+  const reloadTasks = useCallback(() => {
+    if (!auth.client) return;
+    fetchTasksAdded(auth.client, taskId).then(setAdded).catch(console.error);
+  }, [auth.client, taskId]);
+
+  useEffect(() => {
+    reloadTasks();
+  }, [reloadTasks]);
+
   const submit = async () => {
-    if (!title.trim()) return;
-    await add({
+    if (!title.trim() || !auth.client) return;
+    await addTask(auth.client, auth.email, {
       taskId,
       clientName,
       title: title.trim(),
@@ -864,18 +883,21 @@ function AddTask({
     setTitle("");
     setNote("");
     setDue("");
-    setOpen(false);
+    if (!inline) setOpen(false);
+    reloadTasks();
   };
   return (
     <div className="space-y-3">
-      <Button
-        size="sm"
-        variant="outline"
-        aria-expanded={open}
-        onClick={() => setOpen(v => !v)}
-      >
-        {open ? "Close" : "Add a task for this client"}
-      </Button>
+      {inline ? null : (
+        <Button
+          size="sm"
+          variant="outline"
+          aria-expanded={open}
+          onClick={() => setOpen(v => !v)}
+        >
+          {open ? "Close" : "Add a task for this client"}
+        </Button>
+      )}
       {open ? (
         <form
           className="space-y-3 rounded-2xl border bg-card p-4 text-sm sm:p-6"
@@ -1208,40 +1230,21 @@ function LeadsByAd({ rows }: { rows: Any[] }) {
 }
 
 /** Quick keys, a month "YYYY-MM", "all", or "custom:YYYY-MM-DD:YYYY-MM-DD". */
-type RangeKey = "month" | "3d" | "7d" | "30d" | "lastMonth" | "all" | string;
+type RangeKey = PeriodKey;
 
-const kuwaitToday = () =>
-  new Date(Date.now() + 3 * 3600_000).toISOString().slice(0, 10);
-const shiftDays = (iso: string, n: number) =>
-  new Date(Date.parse(`${iso}T00:00:00Z`) + n * 86400_000)
-    .toISOString()
-    .slice(0, 10);
-
-/** [from, to] inclusive ISO dates for a range key; months are "YYYY-MM". */
-function rangeBounds(key: RangeKey, p?: Any): [string, string, string] {
+const kuwaitToday = () => kuwaitDay();
+const shiftDays = shiftDay;
+const capital = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);
+/** The last day the period has data for: never later than today. */
+const upTo = (per: Period) => {
   const today = kuwaitToday();
-  if (key === "all") return [firstDate(p) ?? "2000-01-01", today, "all time"];
-  if (key.startsWith("custom:")) {
-    const [, from, to] = key.split(":");
-    return [from, to, "custom range"];
-  }
-  if (key === "3d") return [shiftDays(today, -2), today, "last 3 days"];
-  if (key === "7d") return [shiftDays(today, -6), today, "last 7 days"];
-  if (key === "30d") return [shiftDays(today, -29), today, "last 30 days"];
-  const ym =
-    key === "month"
-      ? today.slice(0, 7)
-      : key === "lastMonth"
-        ? shiftDays(`${today.slice(0, 7)}-01`, -1).slice(0, 7)
-        : key;
-  const [y, mo] = ym.split("-").map(Number);
-  const last = new Date(Date.UTC(y, mo, 0)).toISOString().slice(0, 10);
-  const label = new Date(Date.UTC(y, mo - 1, 1)).toLocaleDateString("en-GB", {
-    month: "long",
-    year: "numeric",
-    timeZone: "UTC",
-  });
-  return [`${ym}-01`, last, label];
+  return per.to > today ? today : per.to;
+};
+
+/** [from, to, label] for a pick, by the shared period rules (lib/reportPeriod.ts). */
+function rangeBounds(key: RangeKey, p?: Any): [string, string, string] {
+  const per = periodOf(key, kuwaitToday(), firstDate(p));
+  return [per.from, per.to, per.label];
 }
 
 /** The earliest day with any data, ads or sheet, for "all time" and the custom picker. */
@@ -1256,42 +1259,31 @@ function firstDate(p: Any): string | undefined {
   return first;
 }
 
-/** Sum the profile's daily grain for one range: ad leads and spend, sheet outcomes. */
-function rangeMetrics(p: Any, key: RangeKey) {
-  const [from, to, label] = rangeBounds(key, p);
-  const daily: Any[] = p.adLeads?.daily ?? [];
-  let leads = 0;
-  let spend = 0;
-  for (const d of daily) {
-    if (d.date >= from && d.date <= to) {
-      leads += d.leads;
-      spend += d.spend;
-    }
-  }
-  const rows: Any[] = (p.performance?.appointments ?? []).filter(
-    (r: Any) =>
-      r.added && r.added.slice(0, 10) >= from && r.added.slice(0, 10) <= to,
-  );
-  const booked = rows.filter((r: Any) => r.booked).length;
-  const shows = rows.filter((r: Any) => r.show === "y").length;
-  const noshows = rows.filter((r: Any) => r.show === "n").length;
-  const quotes = rows.filter((r: Any) => r.quote === "y").length;
-  const closes = rows.filter((r: Any) => r.closed === "y").length;
-  const decided = shows + noshows;
+type Figures = { m: Any; l: Any | null; sheetMonth: boolean };
+
+/**
+ * The period's numbers and the ones it is compared with. "This month" keeps
+ * the sheet's own month figures, which carry fields the daily rows do not;
+ * every other period is summed from the daily rows, ads and sheet alike.
+ */
+function periodFigures(p: Any, per: Period): Figures {
+  const perf = p?.performance ?? {};
+  const appts = (perf.appointments ?? []) as Any[];
+  const daily = (p?.adLeads?.daily ?? []) as Any[];
+  const sum = (from?: string, to?: string) =>
+    from && to ? periodNumbers(appts, daily, from, to) : null;
+  if (per.key === "month" && perf.month)
+    return {
+      m: { ...sum(per.from, per.to), ...perf.month },
+      l: perf.lastMonth
+        ? { ...sum(per.prevFrom, per.prevTo), ...perf.lastMonth }
+        : sum(per.prevFrom, per.prevTo),
+      sheetMonth: true,
+    };
   return {
-    label,
-    from,
-    to,
-    leads,
-    spend: Math.round(spend * 100) / 100,
-    cpl: leads ? Math.round((spend / leads) * 100) / 100 : null,
-    booked,
-    shows,
-    noshows,
-    quotes,
-    closes,
-    showRate: decided ? Math.round((100 * shows) / decided) : null,
-    closeRate: shows ? Math.round((100 * closes) / shows) : null,
+    m: sum(per.from, per.to) ?? {},
+    l: sum(per.prevFrom, per.prevTo),
+    sheetMonth: false,
   };
 }
 
@@ -1309,7 +1301,21 @@ function monthsAvailable(p: Any): string[] {
  * and what came of it per day or per week (weekly once the span passes 45
  * days). Cost per booking divides ad spend by bookings made in the bucket.
  */
-function ProfileTrends({ p, from, to }: { p: Any; from: string; to: string }) {
+function ProfileTrends({
+  p,
+  from,
+  to,
+  changes,
+  adsOnly,
+}: {
+  p: Any;
+  from: string;
+  to: string;
+  /** The media buyer's changes in the period, marked on every chart. */
+  changes: CardChange[];
+  /** Done with you: the sheet's outcomes are not ours, so only the ad charts. */
+  adsOnly?: boolean;
+}) {
   const daily: Any[] = (p.adLeads?.daily ?? []).filter(
     (d: Any) => d.date >= from && d.date <= to,
   );
@@ -1318,6 +1324,28 @@ function ProfileTrends({ p, from, to }: { p: Any; from: string; to: string }) {
     .map((r: Any) => ({ ...r, date: String(r.added).slice(0, 10) }));
   const adBuckets = bucketDays(daily, from, to);
   const apptBuckets = bucketDays(appts, from, to);
+  // Changes go in the same day or week buckets as the numbers they explain.
+  const notes = new Map(
+    bucketDays(
+      changes.map(c => ({ date: c.day, text: c.action })),
+      from,
+      to,
+    ).map(b => [b.key, b.rows.map(r => r.text)]),
+  );
+  // A change on a day with nothing charted still gets its day on the axis,
+  // so its mark shows.
+  const marked = (points: { x: string; y: number | null }[]) => {
+    if (!points.length) return points;
+    const have = new Set(points.map(pt => pt.x));
+    return [
+      ...points,
+      ...[...notes.keys()]
+        .filter(k => !have.has(k))
+        .map(k => ({ x: k, y: null as number | null })),
+    ]
+      .sort((a, b) => (a.x < b.x ? -1 : a.x > b.x ? 1 : 0))
+      .map(pt => ({ ...pt, note: notes.get(pt.x) }));
+  };
   const spendByKey = new Map(
     adBuckets.map(b => [
       b.key,
@@ -1353,31 +1381,149 @@ function ProfileTrends({ p, from, to }: { p: Any; from: string; to: string }) {
     const sp = spendByKey.get(b.key) ?? 0;
     return { x: b.key, y: bk && sp ? Math.round((sp / bk) * 100) / 100 : null };
   });
-  const weekly =
-    adBuckets.length > 0 &&
-    apptBuckets.length > 0 &&
-    (Date.parse(to) - Date.parse(from)) / 86400_000 > 45;
+  const weekly = (Date.parse(to) - Date.parse(from)) / 86400_000 > 45;
   const per = weekly ? "per week" : "per day";
   return (
     <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 lg:gap-4">
-      <TrendChart title={`Leads ${per}`} points={leads} kind="bar" />
-      <TrendChart title={`Spend ${per}`} points={spend} unit="$" />
+      <TrendChart title={`Leads ${per}`} points={marked(leads)} kind="bar" />
+      <TrendChart title={`Spend ${per}`} points={marked(spend)} unit="$" />
       <TrendChart
         title="Cost per lead"
-        points={cpl}
+        points={marked(cpl)}
         unit="$"
         mode="avg"
         goodWhen="down"
       />
-      <TrendChart title={`Booked ${per}`} points={booked} kind="bar" />
-      <TrendChart title="Show rate" points={showRate} unit="%" mode="avg" />
-      <TrendChart
-        title="Cost per booking"
-        points={cpb}
-        unit="$"
-        mode="avg"
-        goodWhen="down"
-        hint="Ad spend in the bucket divided by bookings made in it."
+      {adsOnly ? null : (
+        <>
+          <TrendChart
+            title={`Booked ${per}`}
+            points={marked(booked)}
+            kind="bar"
+          />
+          <TrendChart
+            title="Show rate"
+            points={marked(showRate)}
+            unit="%"
+            mode="avg"
+          />
+          <TrendChart
+            title="Cost per booking"
+            points={marked(cpb)}
+            unit="$"
+            mode="avg"
+            goodWhen="down"
+            hint="Ad spend in the bucket divided by bookings made in it."
+          />
+        </>
+      )}
+    </div>
+  );
+}
+
+/** What a decision was, in a word the CSM would use. A change needs no label. */
+const DECISION: Record<string, string> = {
+  touch: "Client told",
+  rerouted: "Sent to a team",
+  left: "Left as is",
+  approved: "Decision",
+  alternative: "Decision",
+};
+
+/**
+ * Everything the media buyer did on this client's campaigns in the period:
+ * the on/off switches, budgets, new ads and creatives, builds and decisions.
+ * Each sits on the charts above on its day.
+ */
+function ChangesList({ changes, per }: { changes: CardChange[]; per: Period }) {
+  // The client's card carries the last 90 days of changes (csmSync).
+  const kept = shiftDay(kuwaitToday(), -89);
+  return (
+    <section className="space-y-3">
+      <div>
+        <SectionTitle>
+          What the media buyer changed
+          <span className="ml-1.5 font-normal text-muted-foreground tabular-nums">
+            {changes.length}
+          </span>
+        </SectionTitle>
+        <p className="mt-1 text-xs text-muted-foreground">
+          {capital(per.label)}. The dotted lines on the charts are these days.
+        </p>
+      </div>
+      {changes.length === 0 ? (
+        <p className="text-sm text-muted-foreground">
+          Nothing was changed on their campaigns in {per.label}. Every switch,
+          budget and new ad made in the media buyer cockpit shows here.
+        </p>
+      ) : (
+        <ol className="divide-y rounded-2xl border bg-card">
+          {changes.map((c, i) => (
+            <li
+              key={`${c.day}-${c.at ?? i}-${c.action}`}
+              className="flex items-start gap-3 px-4 py-2.5 text-sm sm:px-6"
+            >
+              <span className="w-14 shrink-0 pt-px text-xs tabular-nums text-muted-foreground">
+                {dayLabel(c.day)}
+              </span>
+              <span className="min-w-0 flex-1">
+                <span dir="auto">{c.action}</span>
+                {c.evidence ? (
+                  <span
+                    className="mt-0.5 block text-xs text-muted-foreground"
+                    dir="auto"
+                  >
+                    {c.evidence}
+                  </span>
+                ) : null}
+              </span>
+              {DECISION[c.kind] ? (
+                <Chip dot={false}>{DECISION[c.kind]}</Chip>
+              ) : null}
+            </li>
+          ))}
+        </ol>
+      )}
+      {per.from < kept ? (
+        <p className="text-xs text-muted-foreground">
+          Changes are kept for 90 days, so nothing before {dayLabel(kept)} is
+          listed.
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
+/** The one control every number on a client's page follows. */
+function PeriodBar({
+  per,
+  value,
+  onChange,
+  months,
+  earliest,
+}: {
+  per: Period;
+  value: PeriodKey;
+  onChange: (k: PeriodKey) => void;
+  months: string[];
+  earliest?: string;
+}) {
+  return (
+    <div className="space-y-2 rounded-2xl border bg-card px-4 py-3 sm:px-6">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+        <Kicker>Reporting period</Kicker>
+        <span className="text-xs tabular-nums text-muted-foreground">
+          {per.key === "all" && !earliest
+            ? "Everything on record"
+            : `${dayLabel(per.from)} to ${dayLabel(upTo(per))}`}
+          {per.prevLabel ? `, compared with ${per.prevLabel}` : ""}
+        </span>
+      </div>
+      <RangePicker
+        value={value}
+        onChange={onChange}
+        months={months}
+        earliest={earliest}
       />
     </div>
   );
@@ -1529,368 +1675,539 @@ function RangePicker({
   );
 }
 
-function Profile({ name, onBack }: { name: string; onBack: () => void }) {
-  const p = useQuery(api.csm.clientProfile, { clientName: name });
+export function ClientProfile({
+  name,
+  onBack,
+  period,
+  onPeriod,
+  part = "all",
+  embedded = false,
+  afterPrep,
+}: {
+  name: string;
+  onBack?: () => void;
+  /** The reporting period, shared with the list so it carries across. */
+  period: PeriodKey;
+  onPeriod: (k: PeriodKey) => void;
+  /**
+   * The client page shows this in two tabs: "overview" (before the call,
+   * do's and don'ts, the latest from their card, recent calls) and
+   * "results" (the period, the report, the numbers, the ads).
+   */
+  part?: "all" | "overview" | "results";
+  /** Inside the client page, which carries the name, booking and links. */
+  embedded?: boolean;
+  /** What the client page puts right after "Before the call". */
+  afterPrep?: React.ReactNode;
+}) {
+  const auth = useCockpitAuth();
+  const [p, setP] = useState<Any | undefined>(undefined);
+  const [profileError, setProfileError] = useState<string | null>(null);
+  useEffect(() => {
+    setP(undefined);
+    setProfileError(null);
+    if (!auth.client) return;
+    let active = true;
+    void fetchClientProfile(auth.client, name)
+      .then(value => {
+        if (active) setP(value);
+      })
+      .catch(error => {
+        if (active)
+          setProfileError(
+            error instanceof Error
+              ? error.message
+              : "The client profile could not be read.",
+          );
+      });
+    return () => {
+      active = false;
+    };
+  }, [auth.client, name]);
   // Hooks before any early return, so their order never changes.
-  const [range, setRange] = useState<RangeKey>("month");
   // The chase list can run past a hundred rows: first 20, the rest on a tap.
   const [staleAll, setStaleAll] = useState(false);
-  const rv = useMemo(() => rangeMetrics(p ?? {}, range), [p, range]);
+  const earliest = useMemo(() => firstDate(p ?? {}), [p]);
+  const per = useMemo(
+    () => periodOf(period, kuwaitToday(), earliest),
+    [period, earliest],
+  );
+  const fig = useMemo(() => periodFigures(p ?? {}, per), [p, per]);
   const months = useMemo(() => monthsAvailable(p ?? {}), [p]);
+  const changes = useMemo(
+    () => changesIn(p?.changes as CardChange[] | undefined, per.from, per.to),
+    [p, per],
+  );
+  const byAd = useMemo(
+    () =>
+      byAdIn((p?.performance?.appointments ?? []) as Any[], per.from, per.to),
+    [p, per],
+  );
+  if (profileError)
+    return (
+      <p role="alert" className="text-sm text-destructive">
+        {profileError}
+      </p>
+    );
   if (p === undefined)
     return <div className="text-sm text-muted-foreground">Loading {name}…</div>;
   if (p === null)
     return (
       <div className="space-y-3">
-        <Button size="sm" variant="ghost" className="-ml-3" onClick={onBack}>
-          <ArrowLeft aria-hidden />
-          All clients
-        </Button>
+        {onBack && !embedded ? (
+          <Button size="sm" variant="ghost" className="-ml-3" onClick={onBack}>
+            <ArrowLeft aria-hidden />
+            All clients
+          </Button>
+        ) : null}
         <p className="text-sm text-muted-foreground">
-          No profile stored for {name} yet.
+          No profile stored for {name} yet. It fills in on the next sync, within
+          15 minutes of the client's ClickUp card being found.
         </p>
       </div>
     );
+  const showOverview = part !== "results";
+  const showResults = part !== "overview";
   const perf = p.performance ?? {};
-  // "This month" keeps the profile's own month figures (they carry the sheet's
-  // extra fields); every other range is summed from the daily grain.
-  const custom = range !== "month";
-  const m: Any = custom ? rv : (perf.month ?? {});
-  const l: Any = custom ? {} : (perf.lastMonth ?? {});
+  const { m, l } = fig;
   const all = perf.allTime ?? {};
   const stale: Any[] = perf.stale ?? [];
+  const dwy = serviceModel(p.service).dwy;
+  /** "12 in September 2026", "12 in the 7 days before"; nothing for all time. */
+  const was = (key: string) =>
+    l && per.prevLabel ? `${num(l[key])} in ${per.prevLabel}` : undefined;
+  // Where the leads figure came from: the sheet's own month figures say so
+  // in leadsSource; a summed period says so in leadsFrom.
+  const leadsFromAds = fig.sheetMonth
+    ? perf.leadsSource === "meta"
+    : m.leadsFrom !== "sheet";
   return (
     <div className="space-y-6">
-      <div className="space-y-3">
-        <Button size="sm" variant="ghost" className="-ml-3" onClick={onBack}>
-          <ArrowLeft aria-hidden />
-          All clients
-        </Button>
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div className="min-w-0">
-            <h2 className="text-xl font-semibold tracking-tight" dir="auto">
-              {p.clientName}
-            </h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              {[
-                displayLabel(p.stage),
-                serviceModel(p.service).label,
-                displayLabel(p.happiness),
-                p.liveDays != null ? `${p.liveDays} days live` : null,
-                p.ghlName && p.ghlName !== p.clientName
-                  ? `GHL: ${p.ghlName}`
-                  : null,
-              ]
-                .filter(Boolean)
-                .join(" · ")}
-            </p>
-          </div>
-          <Button variant="outline" size="sm" onClick={() => openReport(p)}>
-            Print report
-          </Button>
-        </div>
-        {p.taskId ? (
-          <ClientCheckIn
-            taskId={String(p.taskId)}
-            clientName={String(p.clientName)}
-            nextCallAt={p.nextCallAt}
-          />
-        ) : null}
-        {p.taskId ? (
-          <AddTask
-            taskId={String(p.taskId)}
-            clientName={String(p.clientName)}
-          />
-        ) : null}
-      </div>
-
-      <Links links={(p.links ?? {}) as Record<string, string>} />
-
-      <DosDontsCard
-        text={p.dosDonts as string | undefined}
-        url={p.links?.clickup as string | undefined}
-      />
-
-      <ClientUpdates
-        updates={p.updates as never}
-        focus="csm"
-        url={p.links?.clickup as string | undefined}
-      />
-
-      <CallPrep p={p} />
-
-      <DiagnosisSection p={p} />
-
-      {perf.error ? (
-        <div className="callout-warn space-y-1 rounded-2xl border p-4 text-sm">
-          <p className="font-medium">
-            {/UNAUTHENTICATED|401/.test(String(perf.error))
-              ? "Their numbers are not showing because our Google Sheets connection is down, not because the sheet is empty."
-              : "Their sheet could not be read."}
-          </p>
-          <p className="text-xs">
-            {/UNAUTHENTICATED|401/.test(String(perf.error))
-              ? "Google returned 401 invalid credentials. Reconnect Google Sheets in integrations and the numbers refill on the next sync, within 15 minutes. Nothing has been lost, and nothing here is a guess."
-              : String(perf.error)}
-          </p>
-        </div>
-      ) : null}
-      {!p.links?.sheet ? (
-        <div className="rounded-2xl border border-dashed p-4 text-sm text-muted-foreground">
-          No performance sheet is linked on their ClickUp record, so there are
-          no numbers to show. Add the Sheet Link field and this fills in on the
-          next sync.
-        </div>
-      ) : (
-        <>
-          <section className="space-y-4">
-            <SectionTitle>
-              {perf.monthLabel ?? "This month"}, from their sheet
-            </SectionTitle>
-            {serviceModel(p.service).dwy ? (
-              <>
-                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-                  <StatTile
-                    label="Leads"
-                    value={num(m.leads)}
-                    sub={custom ? rv.label : `${num(l.leads)} last month`}
-                  />
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  Done with you: the client books their own appointments, so
-                  bookings, attendance and closes are not ours to report. Leads
-                  and cost per lead are the numbers we own, and they sit in the
-                  ad table below.
-                </p>
-              </>
-            ) : (
-              <div className="space-y-3">
-                <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
-                  <RangePicker
-                    value={range}
-                    onChange={setRange}
-                    months={months}
-                    earliest={firstDate(p)}
-                  />
-                  <span className="text-xs text-muted-foreground">
-                    {custom
-                      ? `${rv.label} · ${shortDay(rv.from)} to ${shortDay(rv.to)}`
-                      : (perf.monthLabel ?? "this month")}
-                    {custom && rv.cpl != null
-                      ? ` · $${rv.spend} spent, $${rv.cpl} per lead`
-                      : ""}
-                  </span>
-                </div>
-                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-                  <StatTile
-                    label={
-                      perf.leadsSource === "meta" ? "Leads (from ads)" : "Leads"
-                    }
-                    value={num(m.leads)}
-                    sub={
-                      perf.leadsSource === "meta"
-                        ? custom
-                          ? rv.label
-                          : `${num(l.leads)} last month · ${num(p.adLeads?.allTime)} since launch`
-                        : custom
-                          ? rv.label
-                          : `${num(l.leads)} last month`
-                    }
-                  />
-                  <StatTile
-                    label="Booked"
-                    value={num(m.booked)}
-                    sub={custom ? rv.label : `${num(l.booked)} last month`}
-                  />
-                  <StatTile
-                    label="Attended"
-                    value={num(m.shows)}
-                    sub={
-                      m.showRate != null
-                        ? `${m.showRate}% of decided`
-                        : "No outcome yet"
-                    }
-                  />
-                  <StatTile label="No show" value={num(m.noshows)} />
-                  <StatTile label="Quotes" value={num(m.quotes)} />
-                  <StatTile
-                    label="Closed"
-                    value={num(m.closes)}
-                    tone={num(m.closes) ? "txt-good" : undefined}
-                    sub={
-                      m.closeRate != null
-                        ? `${m.closeRate}% of attended`
-                        : undefined
-                    }
-                  />
-                </div>
-                <ProfileTrends p={p} from={rv.from} to={rv.to} />
-              </div>
-            )}
-            {!serviceModel(p.service).dwy && (
-              <p className="text-xs text-muted-foreground">
-                All time on this sheet: {num(all.leads)} leads ·{" "}
-                {num(all.booked)} booked · {num(all.shows)} attended ·{" "}
-                {num(all.closes)} closed
-                {perf.undated ? ` · ${perf.undated} rows have no date` : ""} ·
-                source: {perf.source}
-              </p>
-            )}
-            {perf.staleReason ? (
-              <p className="callout-warn rounded-2xl border px-4 py-3 text-xs">
-                These numbers were last read on {shortDay(perf.staleAt)}.
-                Today's read failed, so you are looking at the last good copy
-                rather than a partial one. Reason: {perf.staleReason}
-              </p>
-            ) : null}
-          </section>
-          <section
-            className={`space-y-3 ${serviceModel(p.service).dwy ? "hidden" : ""}`}
-          >
-            <SectionTitle>
-              Appointments with no outcome on the sheet
-              <span className="ml-1.5 font-normal text-muted-foreground tabular-nums">
-                {perf.staleCount ?? 0}
-              </span>
-            </SectionTitle>
-            {stale.length === 0 ? (
+      {embedded ? (
+        showResults ? (
+          // The period and the report sit together at the top of Results.
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-end justify-between gap-3">
               <p className="text-sm text-muted-foreground">
-                Nothing outstanding, every appointment has an outcome.
+                {capital(per.label)}
+                {per.prevLabel ? `, compared with ${per.prevLabel}` : ""}. The
+                numbers, the report and the charts all follow this.
               </p>
-            ) : (
-              <>
-                <p className="text-xs text-muted-foreground">
-                  Every unfilled row reads as a loss in the monthly report.
-                  Chase these before the next check-in call.
-                </p>
-                <div className="overflow-x-auto rounded-2xl border bg-card">
-                  <table className="w-full min-w-max">
-                    <thead className="border-b">
-                      <tr>
-                        {[
-                          "Name",
-                          "Added",
-                          "Appointment",
-                          "Caller",
-                          "Missing",
-                          "Days",
-                        ].map(h => (
-                          <Th key={h}>{h}</Th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y">
-                      {(staleAll ? stale : stale.slice(0, 20)).map(r => (
-                        <tr key={`${r.name}-${r.added}-${r.appDate}`}>
-                          <Cell v={r.name} />
-                          <Cell v={shortDay(r.added)} muted />
-                          <Cell v={shortDay(r.appDate)} />
-                          <Cell v={r.caller} muted />
-                          <Cell v={r.missing} />
-                          <Cell v={r.appDaysAgo ?? r.ageDays} />
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-                {stale.length > 20 ? (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setStaleAll(v => !v)}
-                  >
-                    {staleAll
-                      ? "Show fewer"
-                      : `Show the other ${stale.length - 20}`}
-                  </Button>
-                ) : null}
-              </>
-            )}
-          </section>
-          {(perf.byAd ?? []).length ? (
-            <section className="space-y-3">
-              <div>
-                <SectionTitle>
-                  Which ad is producing the better leads
-                </SectionTitle>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Last two months, per ad. Judge an ad on what its leads did,
-                  not on how many it produced. "No outcome" is the ad's rows
-                  nobody filled in, so a high number there means the comparison
-                  is not fair yet.
-                </p>
-              </div>
-              <div className="overflow-x-auto rounded-2xl border bg-card">
-                <table className="w-full min-w-max">
-                  <thead className="border-b">
-                    <tr>
-                      {[
-                        "Ad or source",
-                        "Leads",
-                        "Attended",
-                        "Attendance",
-                        "Closed",
-                        "Close rate",
-                        "No outcome",
-                      ].map(h => (
-                        <Th key={h}>{h}</Th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y">
-                    {(perf.byAd as Any[]).map(a => (
-                      <tr key={a.ad}>
-                        <Cell v={a.ad} />
-                        <Cell v={a.leads} />
-                        <Cell v={a.shows} />
-                        <Cell
-                          v={a.showRate == null ? "-" : `${a.showRate}%`}
-                          muted
-                        />
-                        <td className="px-3 py-2 text-sm tabular-nums">
-                          {num(a.closes) ? (
-                            <span className="font-medium txt-good">
-                              {a.closes}
-                            </span>
-                          ) : (
-                            "0"
-                          )}
-                        </td>
-                        <Cell
-                          v={a.closeRate == null ? "-" : `${a.closeRate}%`}
-                          muted
-                        />
-                        <Cell v={a.unknown ?? 0} muted />
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </section>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => openReport(p, per, fig)}
+              >
+                Print report, {per.label}
+              </Button>
+            </div>
+            <PeriodBar
+              per={per}
+              value={period}
+              onChange={onPeriod}
+              months={months}
+              earliest={earliest}
+            />
+          </div>
+        ) : null
+      ) : (
+        <div className="space-y-3">
+          {onBack ? (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="-ml-3"
+              onClick={onBack}
+            >
+              <ArrowLeft aria-hidden />
+              All clients
+            </Button>
           ) : null}
-          {(perf.recent ?? []).length ? (
-            <LeadsByAd rows={perf.recent as Any[]} />
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <div className="min-w-0">
+              <h2 className="text-xl font-semibold tracking-tight" dir="auto">
+                {p.clientName}
+              </h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {[
+                  displayLabel(p.stage),
+                  serviceModel(p.service).label,
+                  displayLabel(p.happiness),
+                  p.liveDays != null ? `${p.liveDays} days live` : null,
+                  p.ghlName && p.ghlName !== p.clientName
+                    ? `GHL: ${p.ghlName}`
+                    : null,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </p>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => openReport(p, per, fig)}
+            >
+              Print report, {per.label}
+            </Button>
+          </div>
+          <PeriodBar
+            per={per}
+            value={period}
+            onChange={onPeriod}
+            months={months}
+            earliest={earliest}
+          />
+          {p.taskId ? (
+            <ClientCheckIn
+              taskId={String(p.taskId)}
+              clientName={String(p.clientName)}
+              nextCallAt={p.nextCallAt}
+              stage={p.stage ? String(p.stage) : undefined}
+            />
           ) : null}
-        </>
+          {p.taskId ? (
+            <div className="flex flex-wrap items-start gap-2">
+              <AddTask
+                taskId={String(p.taskId)}
+                clientName={String(p.clientName)}
+              />
+              <PortalTasksButton
+                taskId={String(p.taskId)}
+                clientName={String(p.clientName)}
+              />
+            </div>
+          ) : null}
+        </div>
       )}
 
-      {p.lost ? <LostLeads lost={p.lost as Any} /> : null}
-      {p.provisional ? <Provisional pv={p.provisional as Any} /> : null}
-      {p.calls ? (
-        <RecentCalls
-          calls={p.calls as Any[]}
-          brief={p.callsBrief as string | undefined}
-        />
+      {embedded ? null : (
+        <ClientLinks links={(p.links ?? {}) as Record<string, string>} />
+      )}
+
+      {showOverview ? (
+        <>
+          <BeforeTheCall p={p} />
+
+          {afterPrep}
+
+          <DosDontsCard
+            text={p.dosDonts as string | undefined}
+            url={p.links?.clickup as string | undefined}
+          />
+
+          <ClientUpdates
+            updates={p.updates as never}
+            focus="csm"
+            url={p.links?.clickup as string | undefined}
+          />
+
+          {p.calls ? (
+            <RecentCalls
+              calls={p.calls as Any[]}
+              brief={p.callsBrief as string | undefined}
+            />
+          ) : null}
+        </>
       ) : null}
 
-      <section className="space-y-3">
-        <SectionTitle>Live campaigns, ad sets and ads</SectionTitle>
-        <AdTree ads={(p.ads ?? []) as Any[]} clientName={name} />
-      </section>
+      {showResults && embedded ? (
+        <ReportSection p={p} per={per} fig={fig} />
+      ) : null}
 
-      <ReportSection p={p} />
+      {showResults ? (
+        <>
+          {perf.error ? (
+            <div className="callout-warn space-y-1 rounded-2xl border p-4 text-sm">
+              <p className="font-medium">
+                {/UNAUTHENTICATED|401/.test(String(perf.error))
+                  ? "Their numbers are not showing because our Google Sheets connection is down, not because the sheet is empty."
+                  : "Their sheet could not be read."}
+              </p>
+              <p className="text-xs">
+                {/UNAUTHENTICATED|401/.test(String(perf.error))
+                  ? "Google returned 401 invalid credentials. Reconnect Google Sheets in integrations and the numbers refill on the next sync, within 15 minutes. Nothing has been lost, and nothing here is a guess."
+                  : String(perf.error)}
+              </p>
+            </div>
+          ) : null}
+          {!p.links?.sheet && !dwy ? (
+            <div className="rounded-2xl border border-dashed p-4 text-sm text-muted-foreground">
+              No performance sheet is linked on their ClickUp record, so there
+              are no outcomes to show. Add the Sheet Link field and this fills
+              in on the next sync.
+            </div>
+          ) : (
+            <section className="space-y-4">
+              <SectionTitle>
+                {capital(per.label)},{" "}
+                {dwy ? "from their ads" : "from their sheet"}
+              </SectionTitle>
+              {dwy ? (
+                <>
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                    <StatTile
+                      label={leadsFromAds ? "Leads (from ads)" : "Leads"}
+                      value={num(m.leads)}
+                      sub={was("leads")}
+                    />
+                    <StatTile
+                      label="Spent"
+                      value={`$${Math.round(num(m.spend))}`}
+                      sub={
+                        l
+                          ? `$${Math.round(num(l.spend))} in ${per.prevLabel}`
+                          : undefined
+                      }
+                    />
+                    <StatTile
+                      label="Cost per lead"
+                      value={m.cpl != null ? `$${m.cpl}` : "-"}
+                      sub={
+                        l?.cpl != null
+                          ? `$${l.cpl} in ${per.prevLabel}`
+                          : undefined
+                      }
+                      className="col-span-2 sm:col-span-1"
+                    />
+                  </div>
+                  <ProfileTrends
+                    p={p}
+                    from={per.from}
+                    to={upTo(per)}
+                    changes={changes}
+                    adsOnly
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Done with you: the client books their own appointments, so
+                    bookings, attendance and closes are not ours to report.
+                    Leads and cost per lead are the numbers we own.
+                  </p>
+                </>
+              ) : (
+                <div className="space-y-3">
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+                    <StatTile
+                      label={leadsFromAds ? "Leads (from ads)" : "Leads"}
+                      value={num(m.leads)}
+                      sub={was("leads")}
+                    />
+                    <StatTile
+                      label="Booked"
+                      value={num(m.booked)}
+                      sub={was("booked")}
+                    />
+                    <StatTile
+                      label="Attended"
+                      value={num(m.shows)}
+                      sub={
+                        m.showRate != null
+                          ? `${m.showRate}% of decided`
+                          : "No outcome yet"
+                      }
+                    />
+                    <StatTile
+                      label="No show"
+                      value={num(m.noshows)}
+                      sub={was("noshows")}
+                    />
+                    <StatTile
+                      label="Quotes"
+                      value={num(m.quotes)}
+                      sub={was("quotes")}
+                    />
+                    <StatTile
+                      label="Closed"
+                      value={num(m.closes)}
+                      tone={num(m.closes) ? "txt-good" : undefined}
+                      sub={
+                        m.closeRate != null
+                          ? `${m.closeRate}% of attended`
+                          : was("closes")
+                      }
+                    />
+                  </div>
+                  {m.spend ? (
+                    <p className="text-xs text-muted-foreground">
+                      ${Math.round(num(m.spend))} spent on their ads
+                      {m.cpl != null ? `, $${m.cpl} per lead` : ""}.
+                    </p>
+                  ) : null}
+                  <ProfileTrends
+                    p={p}
+                    from={per.from}
+                    to={upTo(per)}
+                    changes={changes}
+                  />
+                </div>
+              )}
+              {!dwy && (
+                <p className="text-xs text-muted-foreground">
+                  All time on this sheet: {num(all.leads)} leads ·{" "}
+                  {num(all.booked)} booked · {num(all.shows)} attended ·{" "}
+                  {num(all.closes)} closed
+                  {perf.undated ? ` · ${perf.undated} rows have no date` : ""} ·
+                  source: {perf.source}
+                </p>
+              )}
+              {perf.staleReason ? (
+                <p className="callout-warn rounded-2xl border px-4 py-3 text-xs">
+                  These numbers were last read on {shortDay(perf.staleAt)}.
+                  Today's read failed, so you are looking at the last good copy
+                  rather than a partial one. Reason: {perf.staleReason}
+                </p>
+              ) : null}
+            </section>
+          )}
 
-      {p.profileText ? (
+          <ChangesList changes={changes} per={per} />
+
+          {p.links?.sheet ? (
+            <>
+              <section
+                className={`space-y-3 ${serviceModel(p.service).dwy ? "hidden" : ""}`}
+              >
+                <SectionTitle>
+                  Appointments with no outcome on the sheet
+                  <span className="ml-1.5 font-normal text-muted-foreground tabular-nums">
+                    {perf.staleCount ?? 0}
+                  </span>
+                </SectionTitle>
+                {stale.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">
+                    Nothing outstanding, every appointment has an outcome.
+                  </p>
+                ) : (
+                  <>
+                    <p className="text-xs text-muted-foreground">
+                      Every unfilled row reads as a loss in the monthly report.
+                      Chase these before the next check-in call.
+                    </p>
+                    <div className="overflow-x-auto rounded-2xl border bg-card">
+                      <table className="w-full min-w-max">
+                        <thead className="border-b">
+                          <tr>
+                            {[
+                              "Name",
+                              "Added",
+                              "Appointment",
+                              "Caller",
+                              "Missing",
+                              "Days",
+                            ].map(h => (
+                              <Th key={h}>{h}</Th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y">
+                          {(staleAll ? stale : stale.slice(0, 20)).map(r => (
+                            <tr key={`${r.name}-${r.added}-${r.appDate}`}>
+                              <Cell v={r.name} />
+                              <Cell v={shortDay(r.added)} muted />
+                              <Cell v={shortDay(r.appDate)} />
+                              <Cell v={r.caller} muted />
+                              <Cell v={r.missing} />
+                              <Cell v={r.appDaysAgo ?? r.ageDays} />
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    {stale.length > 20 ? (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setStaleAll(v => !v)}
+                      >
+                        {staleAll
+                          ? "Show fewer"
+                          : `Show the other ${stale.length - 20}`}
+                      </Button>
+                    ) : null}
+                  </>
+                )}
+              </section>
+              {byAd.length ? (
+                <section className="space-y-3">
+                  <div>
+                    <SectionTitle>
+                      Which ad is producing the better leads
+                    </SectionTitle>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {capital(per.label)}, per ad. Judge an ad on what its
+                      leads did, not on how many it produced. "No outcome" is
+                      the ad's rows nobody filled in, so a high number there
+                      means the comparison is not fair yet.
+                    </p>
+                  </div>
+                  <div className="overflow-x-auto rounded-2xl border bg-card">
+                    <table className="w-full min-w-max">
+                      <thead className="border-b">
+                        <tr>
+                          {[
+                            "Ad or source",
+                            "Leads",
+                            "Attended",
+                            "Attendance",
+                            "Closed",
+                            "Close rate",
+                            "No outcome",
+                          ].map(h => (
+                            <Th key={h}>{h}</Th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y">
+                        {byAd.map(a => (
+                          <tr key={a.ad}>
+                            <Cell v={a.ad} />
+                            <Cell v={a.leads} />
+                            <Cell v={a.shows} />
+                            <Cell
+                              v={a.showRate == null ? "-" : `${a.showRate}%`}
+                              muted
+                            />
+                            <td className="px-3 py-2 text-sm tabular-nums">
+                              {num(a.closes) ? (
+                                <span className="font-medium txt-good">
+                                  {a.closes}
+                                </span>
+                              ) : (
+                                "0"
+                              )}
+                            </td>
+                            <Cell
+                              v={a.closeRate == null ? "-" : `${a.closeRate}%`}
+                              muted
+                            />
+                            <Cell v={a.unknown ?? 0} muted />
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
+              ) : null}
+              {(perf.recent ?? []).length ? (
+                <LeadsByAd rows={perf.recent as Any[]} />
+              ) : null}
+            </>
+          ) : null}
+
+          {p.lost ? <LostLeads lost={p.lost as Any} /> : null}
+          {p.provisional ? <Provisional pv={p.provisional as Any} /> : null}
+
+          <section className="space-y-3">
+            <SectionTitle>
+              Live campaigns, ad sets and ads, last 7 days
+            </SectionTitle>
+            <AdTree ads={(p.ads ?? []) as Any[]} clientName={name} />
+          </section>
+
+          {embedded ? null : <ReportSection p={p} per={per} fig={fig} />}
+        </>
+      ) : null}
+
+      {showOverview && p.profileText ? (
         <section className="space-y-3">
           <SectionTitle>Client profile</SectionTitle>
           <p
@@ -1936,8 +2253,82 @@ const GROUPS = [
 const isChurnedStage = (stage: string) =>
   /stop|cancel|churn|offboard|lost/i.test(stage ?? "");
 
-export function ClientPerformancePage() {
-  const data = useQuery(api.csm.performanceOverview, {});
+/** The last twelve months, newest first, for the list's month picker. */
+function lastMonths(today: string): string[] {
+  const out: string[] = [];
+  let d = `${today.slice(0, 7)}-01`;
+  for (let i = 0; i < 12; i++) {
+    out.push(d.slice(0, 7));
+    d = `${shiftDay(d, -1).slice(0, 7)}-01`;
+  }
+  return out;
+}
+
+export function ClientPerformancePage({
+  embedded = false,
+  onOpen,
+}: {
+  /** Inside Clients as its Results view: no page title of its own. */
+  embedded?: boolean;
+  /** Open a client on its own page, with the period picked here. */
+  onOpen?: (clientName: string, period: PeriodKey) => void;
+} = {}) {
+  const auth = useCockpitAuth();
+  const [data, setData] = useState<Any | undefined>(undefined);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    setData(undefined);
+    setError(null);
+    if (!auth.client) return;
+    let active = true;
+    void fetchPerformanceOverview(auth.client, auth.clients)
+      .then(value => {
+        if (active) setData(value);
+      })
+      .catch(error => {
+        if (active)
+          setError(
+            error instanceof Error
+              ? error.message
+              : "Client results could not be read.",
+          );
+      });
+    return () => {
+      active = false;
+    };
+  }, [auth.client, auth.clients]);
+  // One reporting period for the list and every client opened from it.
+  const [period, setPeriod] = useState<PeriodKey>("month");
+  const per = useMemo(() => periodOf(period, kuwaitToday()), [period]);
+  // "This month" is the sheets' own month figures, already in the list.
+  const [rangedRows, setRangedRows] = useState<Any[] | undefined>(undefined);
+  useEffect(() => {
+    setRangedRows(undefined);
+    if (!auth.client || period === "month") return;
+    let active = true;
+    void fetchPerformancePeriod(auth.client, per.from, upTo(per))
+      .then(value => {
+        if (active) setRangedRows(value);
+      })
+      .catch(error => {
+        if (active)
+          setError(
+            error instanceof Error
+              ? error.message
+              : "The reporting period could not be read.",
+          );
+      });
+    return () => {
+      active = false;
+    };
+  }, [auth.client, period, per]);
+  const ranged = useMemo(
+    () =>
+      rangedRows
+        ? new Map(rangedRows.map(r => [String(r.clientName), r]))
+        : undefined,
+    [rangedRows],
+  );
   const [openClient, setOpenClient] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [group, setGroup] = useState<"active" | "onboarding" | "paused">(
@@ -1950,10 +2341,22 @@ export function ClientPerformancePage() {
     return () => publishOpenClient(null);
   }, [openClient]);
 
+  if (error)
+    return (
+      <p role="alert" className="text-sm text-destructive">
+        {error}
+      </p>
+    );
   if (data === undefined)
     return (
-      <div className="mx-auto w-full max-w-6xl text-sm text-muted-foreground">
-        Loading client performance…
+      <div
+        className={
+          embedded
+            ? "text-sm text-muted-foreground"
+            : "mx-auto w-full max-w-6xl text-sm text-muted-foreground"
+        }
+      >
+        Loading client results…
       </div>
     );
 
@@ -1981,14 +2384,23 @@ export function ClientPerformancePage() {
     0,
   );
   const waiting = live.filter(c => (c.reportNudge as Any)?.url);
+  // The list's numbers for the period: the sheet's month figures for this
+  // month, the period query for anything else.
+  const periodLoading = period !== "month" && ranged === undefined;
+  const figuresOf = (c: Any): Any =>
+    period === "month" ? c.month : ranged?.get(c.clientName);
 
   return (
-    <div className="mx-auto w-full max-w-6xl space-y-6">
-      <PageHeader
-        title="Client performance"
-        sub="Every client's own numbers, straight off their performance sheet. Open a client for their drive, their CRM, their ads and a report you can send."
-        actions={<ReportIssue page="performance" />}
-      />
+    <div
+      className={embedded ? "space-y-6" : "mx-auto w-full max-w-6xl space-y-6"}
+    >
+      {embedded ? null : (
+        <PageHeader
+          title="Client performance"
+          sub="Every client's own numbers, straight off their performance sheet. Open a client for their drive, their CRM, their ads and a report you can send."
+          actions={<ReportIssue page="performance" />}
+        />
+      )}
 
       {!openClient && waiting.length ? (
         <details className="callout-warn rounded-2xl border px-4 py-3 text-sm sm:px-6">
@@ -2022,7 +2434,12 @@ export function ClientPerformancePage() {
       ) : null}
 
       {openClient ? (
-        <Profile name={openClient} onBack={() => setOpenClient(null)} />
+        <ClientProfile
+          name={openClient}
+          onBack={() => setOpenClient(null)}
+          period={period}
+          onPeriod={setPeriod}
+        />
       ) : (
         <>
           <div className="space-y-2">
@@ -2048,17 +2465,28 @@ export function ClientPerformancePage() {
             </p>
           </div>
 
+          <PeriodBar
+            per={per}
+            value={period}
+            onChange={setPeriod}
+            months={lastMonths(kuwaitToday())}
+          />
+
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4">
             <StatTile label="Clients" value={rows.length} />
             <StatTile
               label="Appointments with no outcome"
               value={totalStale}
               tone={totalStale ? "txt-bad" : "txt-good"}
-              sub="Across every sheet"
+              sub={`Across the ${chosen.label.toLowerCase()} clients' sheets`}
             />
             <StatTile
-              label="Closed this month"
-              value={rows.reduce((n, c) => n + num(c.month?.closes), 0)}
+              label={`Closed, ${per.label}`}
+              value={
+                periodLoading
+                  ? "…"
+                  : rows.reduce((n, c) => n + num(figuresOf(c)?.closes), 0)
+              }
               sub="What the client actually banked"
               className="col-span-2 sm:col-span-1"
             />
@@ -2079,6 +2507,9 @@ export function ClientPerformancePage() {
                   {chosen.label} clients
                 </h2>
                 <p className="mt-0.5 text-xs text-muted-foreground">
+                  {periodLoading
+                    ? `Loading ${per.label}…`
+                    : `Leads to closed are ${per.label}.`}{" "}
                   Biggest admin debt first: sorted by how many appointments are
                   missing an outcome.
                 </p>
@@ -2126,30 +2557,39 @@ export function ClientPerformancePage() {
                         ) : null}
                       </td>
                       <Cell v={displayLabel(c.stage)} muted />
-                      <Cell v={c.month?.leads ?? 0} />
                       <Cell
-                        v={
-                          serviceModel(c.service).dwy
-                            ? "-"
-                            : (c.month?.booked ?? 0)
-                        }
-                        muted={serviceModel(c.service).dwy}
+                        v={periodLoading ? "…" : (figuresOf(c)?.leads ?? 0)}
+                        muted={periodLoading}
                       />
                       <Cell
                         v={
                           serviceModel(c.service).dwy
                             ? "-"
-                            : (c.month?.shows ?? 0)
+                            : periodLoading
+                              ? "…"
+                              : (figuresOf(c)?.booked ?? 0)
                         }
-                        muted={serviceModel(c.service).dwy}
+                        muted={serviceModel(c.service).dwy || periodLoading}
                       />
                       <Cell
                         v={
                           serviceModel(c.service).dwy
                             ? "-"
-                            : (c.month?.closes ?? 0)
+                            : periodLoading
+                              ? "…"
+                              : (figuresOf(c)?.shows ?? 0)
                         }
-                        muted={serviceModel(c.service).dwy}
+                        muted={serviceModel(c.service).dwy || periodLoading}
+                      />
+                      <Cell
+                        v={
+                          serviceModel(c.service).dwy
+                            ? "-"
+                            : periodLoading
+                              ? "…"
+                              : (figuresOf(c)?.closes ?? 0)
+                        }
+                        muted={serviceModel(c.service).dwy || periodLoading}
                       />
                       <td className="px-3 py-2 text-sm tabular-nums">
                         {serviceModel(c.service).dwy ? (
@@ -2185,7 +2625,11 @@ export function ClientPerformancePage() {
                         <Button
                           size="sm"
                           variant="outline"
-                          onClick={() => setOpenClient(c.clientName)}
+                          onClick={() =>
+                            onOpen
+                              ? onOpen(c.clientName, period)
+                              : setOpenClient(c.clientName)
+                          }
                         >
                           Open
                         </Button>

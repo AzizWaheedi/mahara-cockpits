@@ -1,4 +1,3 @@
-import { useAction } from "convex/react";
 import { ArrowUpRight, Check, Copy, LoaderCircle, Plus, X } from "lucide-react";
 import {
   type ReactNode,
@@ -8,8 +7,15 @@ import {
   useState,
 } from "react";
 import { toast } from "sonner";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { AnimatedSelect } from "@/components/ui/animated-select";
-import { api } from "../../convex/_generated/api";
+import {
+  checkReviewImportStatus,
+  createReview,
+  importReviewFolder,
+  listReviewClients,
+  listSentReviews,
+} from "@/lib/review";
 
 /**
  * Send a finished video to a client for review.
@@ -50,11 +56,40 @@ const files = (n?: number) => `${n ?? 0} file${n === 1 ? "" : "s"}`;
  * all day. It opens by itself while a link is being made or is ready.
  */
 export function SendForReview({ folded = false }: { folded?: boolean }) {
-  const create = useAction(api.review.create);
-  const listSent = useAction(api.review.sent);
-  const listClients = useAction(api.review.clients);
-  const importFolder = useAction(api.review.importFolder);
-  const importStatus = useAction(api.review.importStatus);
+  const auth = useCockpitAuth();
+  const create = useCallback(
+    (args: any) =>
+      createReview(auth.client, auth.session?.user?.email ?? "creative", args),
+    [auth.client, auth.session?.user?.email],
+  );
+  const listSent = useCallback(
+    (_args?: any) =>
+      listSentReviews(auth.client, auth.session?.user?.email ?? "creative"),
+    [auth.client, auth.session?.user?.email],
+  );
+  const listClients = useCallback(
+    (_args?: any) =>
+      listReviewClients(auth.client, auth.session?.user?.email ?? "creative"),
+    [auth.client, auth.session?.user?.email],
+  );
+  const importFolder = useCallback(
+    (args: any) =>
+      importReviewFolder(
+        auth.client,
+        auth.session?.user?.email ?? "creative",
+        args,
+      ),
+    [auth.client, auth.session?.user?.email],
+  );
+  const importStatus = useCallback(
+    (args: any) =>
+      checkReviewImportStatus(
+        auth.client,
+        auth.session?.user?.email ?? "creative",
+        args,
+      ),
+    [auth.client, auth.session?.user?.email],
+  );
 
   const [links, setLinks] = useState<string[]>([""]);
   const [folder, setFolder] = useState("");
@@ -181,6 +216,7 @@ export function SendForReview({ folded = false }: { folded?: boolean }) {
   async function pullFolder() {
     try {
       const chosen = clients.find(c => c.task_id === client);
+      if (!chosen) throw new Error("Choose a client first.");
       const { id } = (await importFolder({
         folder,
         title: title.trim() || undefined,
@@ -198,6 +234,7 @@ export function SendForReview({ folded = false }: { folded?: boolean }) {
     setBusy(true);
     try {
       const chosen = clients.find(c => c.task_id === client);
+      if (!chosen) throw new Error("Choose a client first.");
       const out = (await create({
         title: title.trim() || "Videos for review",
         note: note.trim() || undefined,
@@ -315,7 +352,7 @@ export function SendForReview({ folded = false }: { folded?: boolean }) {
             onChange={e => setClient(e.target.value)}
             className="h-9"
           >
-            <option value="">Which client</option>
+            <option value="">Choose a client (required)</option>
             {clients.map(c => (
               <option key={c.task_id} value={c.task_id}>
                 {c.name}
@@ -332,7 +369,7 @@ export function SendForReview({ folded = false }: { folded?: boolean }) {
 
         <button
           type="button"
-          disabled={busy || !ready}
+          disabled={busy || !ready || !client}
           onClick={() => void (folder.trim() ? pullFolder() : send())}
           className="mt-1 inline-flex h-9 w-fit items-center gap-1.5 rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground disabled:opacity-50"
         >

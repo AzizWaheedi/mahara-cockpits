@@ -1,5 +1,5 @@
-import { useConvexAuth } from "convex/react";
 import { Navigate, Outlet, useLocation } from "react-router";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { BackendWait } from "./BackendWait";
 import {
   Sidebar,
@@ -78,10 +78,10 @@ function AppSkeleton() {
 }
 
 export function ProtectedRoute() {
-  const { isAuthenticated, isLoading } = useConvexAuth();
+  const { ready, session, isAuthenticated } = useCockpitAuth();
   const location = useLocation();
 
-  if (isLoading) {
+  if (!ready) {
     return (
       <BackendWait>
         <AppSkeleton />
@@ -89,7 +89,7 @@ export function ProtectedRoute() {
     );
   }
 
-  if (!isAuthenticated) {
+  if (!session || !isAuthenticated) {
     // Carry the page asked for, so a hand-off to another cockpit (/go/...)
     // or a deep link resumes right after the one sign-in (Aziz, 2026-09-21).
     const wanted = `${location.pathname}${location.search}`;

@@ -1,6 +1,6 @@
 import { capitalize, humanize } from "@/components/ceo/format";
 import type { StatusTone } from "@/components/ceo/StatusChip";
-import type { MachinePayload } from "../../../convex/ceo/payloads";
+import type { MachinePayload } from "@/types/ceo/payloads";
 
 /**
  * Health rules for the machine payload, shared by the Machine tab and the
@@ -52,6 +52,7 @@ export function feedState(f: Feed): MachineState {
 export const SOURCE_LABELS: Record<string, string> = {
   meta: "Meta ads",
   clickup: "ClickUp",
+  outbox: "Media buyer changes to ClickUp",
   sheets: "Google Sheets",
   docs: "Google Docs",
   calendar: "Google Calendar",

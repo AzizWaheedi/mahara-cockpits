@@ -7,7 +7,7 @@ import {
   type MonthInput,
   rollUp,
   verdictLine,
-} from "../convex/churnCore";
+} from "../src/lib/churnCore";
 
 // The day a client left, a launch date `days` before it.
 function left(leftOn: string, days: number | null) {

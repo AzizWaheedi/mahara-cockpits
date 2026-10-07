@@ -124,3 +124,43 @@ export function customRange(start: string, end: string): Range {
 export function rangeDays(r: Range): number {
   return Math.round((Date.parse(r.end) - Date.parse(r.start)) / 86400000) + 1;
 }
+
+/** A range as it sits in the address: a preset's key, or "start..end". */
+export function rangeToParam(r: Range): string {
+  return r.key === "custom" ? `${r.start}..${r.end}` : r.key;
+}
+
+/** A range from the address, or undefined when the value is not one. */
+export function rangeFromParam(
+  value: string | null | undefined,
+): Range | undefined {
+  if (!value) return undefined;
+  const preset = PRESETS.find(p => p.key === value);
+  if (preset) return preset.make();
+  const m = /^(\d{4}-\d{2}-\d{2})\.\.(\d{4}-\d{2}-\d{2})$/.exec(value);
+  return m ? customRange(m[1], m[2]) : undefined;
+}
+
+const SAVED_RANGE = "cockpit-range";
+
+/**
+ * The last preset picked on this device, so a 3-day pick is still 3 days
+ * after a reload or a trip to another page (Nada, 2026-10-01: it snapped
+ * back to 7). A custom span stays in the address only: dates go stale.
+ */
+export function savedRange(): Range | undefined {
+  try {
+    const key = window.localStorage.getItem(SAVED_RANGE);
+    return key ? PRESETS.find(p => p.key === key)?.make() : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function saveRange(r: Range): void {
+  try {
+    if (r.key !== "custom") window.localStorage.setItem(SAVED_RANGE, r.key);
+  } catch {
+    // A private window has no storage; the address still holds the range.
+  }
+}

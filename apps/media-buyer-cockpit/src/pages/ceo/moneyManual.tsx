@@ -1,6 +1,3 @@
-import { useMutation, useQuery } from "convex/react";
-import type { FunctionReturnType } from "convex/server";
-import { ConvexError } from "convex/values";
 import {
   CopyCheck,
   HandCoins,
@@ -13,6 +10,7 @@ import {
   type ReactNode,
   useId,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import { toast } from "sonner";
@@ -53,17 +51,18 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import type { FunctionReturnType, Id } from "@/lib/cockpitApi";
+import { api, ConvexError, useMutation } from "@/lib/cockpitApi";
+import { useManualPaymentQuery } from "@/lib/useManualPaymentQuery";
 import { cn } from "@/lib/utils";
-import { api } from "../../../convex/_generated/api";
-import type { Id } from "../../../convex/_generated/dataModel";
-import type { ManualPaymentRefusal } from "../../../convex/ceo/manualPayments";
+import type { ManualPaymentRefusal } from "@/types/ceo/manualPayments";
 import type {
   ManualPaymentRow,
   ManualRail,
   MoneyPayload,
   Note,
   PossibleDuplicate,
-} from "../../../convex/ceo/payloads";
+} from "@/types/ceo/payloads";
 
 /**
  * Payments Aziz logs by hand (decision of 2026-09-16): the form, this
@@ -247,7 +246,7 @@ const nameMatch = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ");
 function validate(
   d: Draft,
   today: string,
-  tapLive: boolean,
+  tapLive: boolean | null,
   card: ClientOption | null,
   usdPerKwd: number | null,
 ): { errors: Partial<Record<keyof Draft, string>>; ready: Ready | null } {
@@ -266,9 +265,11 @@ function validate(
     errors.client = "Keep the name under 120 characters.";
 
   if (!d.rail) errors.rail = "Pick how the money arrived.";
-  else if (d.rail === "tap" && tapLive)
+  else if (d.rail === "tap" && tapLive !== false)
     errors.rail =
-      "Tap is connected, so Tap payments reach the Tap rail by themselves. Logging one here would count it twice.";
+      tapLive === true
+        ? "Tap is connected, so Tap payments reach the Tap rail by themselves. Logging one here would count it twice."
+        : "Tap connection status is unavailable. Check it before logging a Tap payment.";
 
   let deal: number | null = null;
   if (d.deal.trim()) {
@@ -396,8 +397,13 @@ export function LogPaymentCard({
   recentDeals: RecentDeal[] | null;
   order: number;
 }) {
-  const info = useQuery(api.ceo.manualPayments.formInfo);
-  const options = useQuery(api.ceo.manualPayments.clientOptions);
+  const { data: info, error: infoError } = useManualPaymentQuery(
+    api.ceo.manualPayments.formInfo,
+  );
+  const { data: options, error: optionsError } = useManualPaymentQuery(
+    api.ceo.manualPayments.clientOptions,
+  );
+  const requestId = useRef(crypto.randomUUID());
   const add = useMutation(api.ceo.manualPayments.add);
   const base = useId();
   const id = (k: string) => `${base}-${k}`;
@@ -413,12 +419,12 @@ export function LogPaymentCard({
   const card = useMemo(() => {
     const key = nameMatch(draft.client);
     if (!key || !options) return null;
-    return options.find(o => nameMatch(o.name) === key) ?? null;
+    return (options ?? []).find((o: any) => nameMatch(o.name) === key) ?? null;
   }, [draft.client, options]);
   const { errors, ready } = validate(
     draft,
     day,
-    info?.tapLive ?? false,
+    info?.tapLive ?? null,
     card,
     info?.usdPerKwd ?? null,
   );
@@ -445,7 +451,8 @@ export function LogPaymentCard({
   const onSubmit = (e: FormEvent) => {
     e.preventDefault();
     setShowErrors(true);
-    if (!ready) return;
+    if (!ready || !info?.historyReady) return;
+    requestId.current = crypto.randomUUID();
     setProblem(null);
     setConfirm(ready);
   };
@@ -455,6 +462,7 @@ export function LogPaymentCard({
     setPending(true);
     try {
       await add({
+        requestId: requestId.current,
         day: confirm.day,
         amount: confirm.amount,
         currency: confirm.currency,
@@ -469,8 +477,8 @@ export function LogPaymentCard({
       const elsewhere = confirm.day.slice(0, 7) !== day.slice(0, 7);
       toast.success(
         elsewhere
-          ? `Logged for ${month(confirm.day, { long: true, year: true })}. Pick that month in the list below to see it. Totals update in about a minute.`
-          : "Logged. Totals update in about a minute.",
+          ? `Logged for ${month(confirm.day, { long: true, year: true })}. Pick that month below. Totals still need reconciliation.`
+          : "Logged. Totals still need reconciliation.",
       );
       setConfirm(null);
       setProblem(null);
@@ -494,6 +502,21 @@ export function LogPaymentCard({
       order={order}
     >
       <form onSubmit={onSubmit} noValidate className="grid gap-5">
+        {infoError || optionsError || !info?.historyReady ? (
+          <p role="alert" className="text-sm text-muted-foreground">
+            {infoError ||
+              optionsError ||
+              (info
+                ? "Existing payment history must be imported and reconciled before this log can accept new entries."
+                : "Loading payment configuration.")}
+          </p>
+        ) : null}
+        {info?.tapLive === null ? (
+          <p className="text-sm text-muted-foreground">
+            Tap connection status is unavailable. Tap entries are blocked until
+            it is checked.
+          </p>
+        ) : null}
         <div className="grid gap-4 @xl:grid-cols-2 @4xl:grid-cols-4">
           <FormField id={id("day")} label="Day received" error={shown.day}>
             <DateInput
@@ -636,7 +659,7 @@ export function LogPaymentCard({
               aria-describedby={describe("client")}
             />
             <datalist id={id("clients")}>
-              {(options ?? []).map(o => (
+              {(options ?? []).map((o: any) => (
                 <option key={o.clickupTaskId} value={o.name} />
               ))}
             </datalist>
@@ -686,7 +709,11 @@ export function LogPaymentCard({
         </div>
 
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-          <Button type="submit" size="sm" disabled={pending}>
+          <Button
+            type="submit"
+            size="sm"
+            disabled={pending || !info?.historyReady}
+          >
             <HandCoins aria-hidden />
             Review and log
           </Button>
@@ -828,10 +855,12 @@ function EntryDialog({
       if (removing) {
         const why = reason.trim();
         await remove(why ? { id, reason: why } : { id });
-        toast.success("Removed. Totals update in about a minute.");
+        toast.success(
+          "Removed from the log. Totals still need reconciliation.",
+        );
       } else {
         await restore(repeat ? { id, allowRepeat: true } : { id });
-        toast.success("Restored. Totals update in about a minute.");
+        toast.success("Restored to the log. Totals still need reconciliation.");
       }
       setReason("");
       setProblem(null);
@@ -978,7 +1007,14 @@ export function ManualEntriesCard({
   const current = payload?.month ?? today.slice(0, 7);
   const [picked, setPicked] = useState<string | null>(null);
   const shownMonth = picked ?? current;
-  const rows = useQuery(api.ceo.manualPayments.list, { month: shownMonth });
+  const {
+    data: rows,
+    error: rowsError,
+    retry,
+  } = useManualPaymentQuery(api.ceo.manualPayments.list, { month: shownMonth });
+  const { data: manualInfo } = useManualPaymentQuery(
+    api.ceo.manualPayments.formInfo,
+  );
   const [open, setOpen] = useState<EntryRef | null>(null);
 
   const months = useMemo(() => {
@@ -1005,7 +1041,9 @@ export function ManualEntriesCard({
     return out;
   }, [payload]);
   const tapConnected = payload?.rails?.tap.connected ?? false;
-  const hasFlags = payload?.manualEntries !== undefined;
+  const hasFlags =
+    payload?.manualEntries !== undefined &&
+    manualInfo?.totalsNeedRefresh === false;
 
   const columns = useMemo<Column<ListRow>[]>(
     () => [
@@ -1031,7 +1069,7 @@ export function ManualEntriesCard({
               {r.client}
             </span>
             <span className="block max-w-[10rem] truncate text-xs text-muted-foreground @md:max-w-[16rem]">
-              {RAIL_LABEL[r.rail]}
+              {(RAIL_LABEL as Record<string, string>)[r.rail] ?? r.rail}
               {r.clickupTaskId ? "" : ", no client card"}
               {r.note ? `, ${r.note}` : ""}
             </span>
@@ -1130,14 +1168,17 @@ export function ManualEntriesCard({
     [computed, flags, hasFlags, kinds, now, tapConnected],
   );
 
-  const live = (rows ?? []).filter(r => r.deletedAt === null);
+  const live = (rows ?? []).filter((r: any) => r.deletedAt === null);
   const removedCount = (rows ?? []).length - live.length;
   const monthRow = payload?.monthly.find(m => m.month === shownMonth);
-  const railFigure = computed
-    ? payload?.rails?.manual?.connected
-      ? payload.rails.manual.mtd
-      : null
-    : (monthRow?.manualCash ?? null);
+  const railFigure =
+    manualInfo?.totalsNeedRefresh !== false
+      ? null
+      : computed
+        ? payload?.rails?.manual?.connected
+          ? payload.rails.manual.mtd
+          : null
+        : (monthRow?.manualCash ?? null);
 
   return (
     <SectionCard
@@ -1165,7 +1206,20 @@ export function ManualEntriesCard({
         </Select>
       }
     >
-      {rows === undefined ? (
+      {manualInfo?.totalsNeedRefresh ? (
+        <p className="mb-3 text-sm text-muted-foreground">
+          This log has not been reconciled with the money totals and duplicate
+          comparisons yet.
+        </p>
+      ) : null}
+      {rowsError ? (
+        <p role="alert" className="py-4 text-sm">
+          {rowsError}{" "}
+          <button type="button" className="underline" onClick={retry}>
+            Retry
+          </button>
+        </p>
+      ) : rows === undefined ? (
         <p className="py-6 text-center text-xs text-muted-foreground">
           Loading the entries.
         </p>
@@ -1183,7 +1237,7 @@ export function ManualEntriesCard({
               variant="plain"
               label="Live entries"
               value={count(live.length)}
-              sub={`${money(live.reduce((t, r) => t + r.amountUsd, 0))} as logged`}
+              sub={`${money(live.reduce((t: any, r: any) => t + r.amountUsd, 0))} as logged`}
             />
             <StatTile
               variant="plain"

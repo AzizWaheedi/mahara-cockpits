@@ -1,22 +1,24 @@
-import { useAction } from "convex/react";
 import { CalendarDays, Loader2, Plus } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DateInput } from "@/components/ui/date-input";
 import { Input } from "@/components/ui/input";
+import { api, useAction } from "@/lib/cockpitApi";
+import {
+  fetchTeamOverview,
+  type MeetingSummary,
+  type Overview,
+  type Prize,
+  saveMeeting as saveMeetingApi,
+  type WeekDay,
+  type WeekItem,
+} from "@/lib/team";
+import { DAY_NAMES, dayLabel } from "@/lib/teamCore";
 import { usePageVisible } from "@/lib/usePageVisible";
-import { api } from "../../../convex/_generated/api";
-import { DAY_NAMES, dayLabel } from "../../../convex/teamCore";
-import type {
-  MeetingSummary,
-  Overview,
-  Prize,
-  WeekDay,
-  WeekItem,
-} from "../../../convex/teamPage";
 import { CADENCES } from "./MeetingPage";
 import {
   chip,
@@ -46,8 +48,7 @@ import {
  */
 
 export function TeamPage() {
-  const overview = useAction(api.team.overview);
-  const saveMeeting = useAction(api.teamCalendar.saveMeeting);
+  const auth = useCockpitAuth();
   const setAmount = useAction(api.team.setPrizeAmount);
   const navigate = useNavigate();
   const visible = usePageVisible();
@@ -57,16 +58,39 @@ export function TeamPage() {
   const [dept, setDept] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
 
+  const userContext = useMemo(
+    () => ({
+      email: auth.email ?? "",
+      isCeo: auth.isCeo,
+      isAdmin: auth.isAdmin,
+    }),
+    [auth.email, auth.isCeo, auth.isAdmin],
+  );
+
   const load = useCallback(async () => {
+    if (!auth.client) return;
     try {
-      const d = (await overview({})) as Overview;
+      const d = await fetchTeamOverview(auth.client, userContext);
       setData(d);
       setError(null);
       setFilter(f => f ?? (d.meetings.some(m => m.mine) ? "mine" : "all"));
     } catch (e) {
       setError(errorText(e));
     }
-  }, [overview]);
+  }, [auth.client, userContext]);
+
+  const saveMeeting = useCallback(
+    async (args: {
+      title: string;
+      purpose: string;
+      cadence: string;
+      department?: string;
+    }) => {
+      if (!auth.client) throw new Error("Not signed in");
+      return saveMeetingApi(auth.client, userContext, args);
+    },
+    [auth.client, userContext],
+  );
 
   useEffect(() => {
     if (!visible) return;

@@ -72,6 +72,22 @@ test("reschedule keeps event identity and immutable previous revision", async (t
   await assert.rejects(generate({ ...next, duration_minutes: 120 }, root), /Immutable revision/);
 });
 
+test("a Windows checkout permits a real reschedule without weakening immutable history", async (t) => {
+  const root = await fixture(t);
+  const paths = Object.keys(await outputs(draft, root));
+  paths.push(`config/webinar/history/${draft.event_key}/revision-1.json`);
+  for (const path of paths) {
+    const content = await readFile(join(root, path), "utf8");
+    await writeFile(join(root, path), content.replace(/\r?\n/g, "\r\n"));
+  }
+  await main(["set", "--at", scheduled.starts_at, "--expected-revision", "1"], root);
+  const next = JSON.parse(await readFile(join(root, "config/webinar/current.json")));
+  assert.equal(next.revision, 2);
+  assert.equal(next.starts_at, scheduled.starts_at);
+  assert.deepEqual(next.providers, draft.providers);
+  await assert.rejects(generate({ ...draft, duration_minutes: 120 }, root), /Immutable revision/);
+});
+
 test("a second event in the same month gets a separate key; cannot reuse history", async (t) => {
   const root = await fixture(t);
   await main(["set", "--at", scheduled.starts_at, "--expected-revision", "1"], root);

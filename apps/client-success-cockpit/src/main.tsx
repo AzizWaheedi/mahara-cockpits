@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router";
 import App from "./App";
 import "./index.css";
+import { startClarity } from "./lib/clarity";
 
 // The auth library asks the browser to show "changes may not be saved" while
 // it is refreshing a token. Nothing here is unsaved, and the prompt fires on
@@ -11,6 +12,9 @@ import "./index.css";
 window.addEventListener("beforeunload", e => e.stopImmediatePropagation(), {
   capture: true,
 });
+
+// Recordings of real use, every word masked; off until the id is set.
+startClarity("csm");
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

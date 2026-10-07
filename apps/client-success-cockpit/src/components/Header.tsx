@@ -1,5 +1,5 @@
-import { useConvexAuth } from "convex/react";
 import { Link, useLocation } from "react-router";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { Wordmark } from "@/components/Wordmark";
 import { APP_NAME } from "@/lib/constants";
 import { Button } from "./ui/button";
@@ -59,11 +59,11 @@ function HeaderView({
 }
 
 export function Header() {
-  const { isAuthenticated, isLoading } = useConvexAuth();
+  const { isAuthenticated, ready } = useCockpitAuth();
   return (
     <HeaderView
       isAuthenticated={isAuthenticated}
-      isLoading={isLoading}
+      isLoading={!ready}
       showAuthActions
     />
   );

@@ -1,4 +1,3 @@
-import { useAction } from "convex/react";
 import {
   Bot,
   Check,
@@ -28,14 +27,14 @@ import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
 import { DateInput } from "@/components/ui/date-input";
 import { Switch } from "@/components/ui/switch";
-import { api } from "../../../convex/_generated/api";
+import { api, useAction } from "@/lib/cockpitApi";
 import {
   COMMISSION_BASES,
   COMMISSION_SHORT,
   type CommissionBasis,
   SHARE_BASES,
-} from "../../../convex/ceo/commission";
-import type { Person, Roster } from "../../../convex/ceo/people";
+} from "@/types/ceo/commission";
+import type { Person, Roster } from "@/types/ceo/people";
 import {
   DAY_LABEL,
   DAY_SHORT,
@@ -49,7 +48,7 @@ import {
   type Schedule,
   scheduleSummary,
   WEEK_ORDER,
-} from "../../../convex/ceo/schedule";
+} from "@/types/ceo/schedule";
 
 import { usePersonParam } from "./personPage";
 import type { CeoTabProps } from "./types";

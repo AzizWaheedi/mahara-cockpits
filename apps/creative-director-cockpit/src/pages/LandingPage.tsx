@@ -1,6 +1,6 @@
-import { useConvexAuth } from "convex/react";
 import { ArrowRight, Check } from "lucide-react";
 import { Link } from "react-router";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { Button } from "@/components/ui/button";
 import { Wordmark } from "@/components/Wordmark";
 
@@ -86,11 +86,11 @@ function LandingPageView({
 }
 
 export function LandingPage() {
-  const { isAuthenticated, isLoading } = useConvexAuth();
+  const { isAuthenticated, ready } = useCockpitAuth();
   return (
     <LandingPageView
       isAuthenticated={isAuthenticated}
-      isLoading={isLoading}
+      isLoading={!ready}
       showAuthActions
     />
   );

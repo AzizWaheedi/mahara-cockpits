@@ -1,7 +1,6 @@
-import { useQuery } from "convex/react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { api } from "../../convex/_generated/api";
+import { api, useQuery } from "@/lib/cockpitApi";
 
 /**
  * Tracking faults on live ads, checked against Meta directly.
@@ -14,7 +13,7 @@ export function TrackingIssues() {
   const [open, setOpen] = useState(false);
   if (!rows || rows.length === 0) return null;
 
-  const total = rows.reduce((n, r) => n + r.count, 0);
+  const total = rows.reduce((n: any, r: any) => n + r.count, 0);
 
   return (
     <section className="rounded-2xl border bg-card p-4 sm:p-6">
@@ -40,7 +39,7 @@ export function TrackingIssues() {
 
       {open && (
         <ul className="mt-4 divide-y">
-          {rows.map(r => (
+          {rows.map((r: any) => (
             <li key={r.client} className="py-2.5 first:pt-0 last:pb-0">
               <div className="text-sm font-medium">
                 {r.client}{" "}
@@ -49,7 +48,9 @@ export function TrackingIssues() {
                 </span>
               </div>
               <div className="mt-0.5 text-xs text-muted-foreground">
-                {[...new Set(r.ads.map(a => a.issue))].join(" · ")}
+                {[...new Set((r.ads ?? []).map((a: any) => a.issue))].join(
+                  " · ",
+                )}
               </div>
             </li>
           ))}

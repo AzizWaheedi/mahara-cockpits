@@ -1,0 +1,756 @@
+{
+  "tool": "verify-cutover-readiness",
+  "timestamp": "2026-09-27T09:36:26.619752+00:00",
+  "mode": "release",
+  "repo_root": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-verification\\mahara-cockpits",
+  "initial_git": {
+    "available": true,
+    "sha": "9c50b9bdaf2bcaaa6740ffcf5e61e3ac3328ed9d",
+    "is_dirty": false,
+    "dirty_files": [],
+    "error": null
+  },
+  "checks": {
+    "structure": {
+      "passed": true,
+      "failures": []
+    },
+    "no_convex_source_imports": {
+      "passed": true,
+      "failures": [],
+      "note": "Proves no detected static source imports in apps/*/src; not full runtime Convex independence proof."
+    },
+    "shared_files": {
+      "passed": true,
+      "failures": []
+    },
+    "typechecks": {
+      "passed": true,
+      "details": {
+        "media-buyer-cockpit": {
+          "tsconfig.app.json": {
+            "status": "pass"
+          },
+          "tsconfig.node.json": {
+            "status": "pass"
+          }
+        },
+        "client-success-cockpit": {
+          "tsconfig.app.json": {
+            "status": "pass"
+          },
+          "tsconfig.node.json": {
+            "status": "pass"
+          }
+        },
+        "creative-director-cockpit": {
+          "tsconfig.app.json": {
+            "status": "pass"
+          },
+          "tsconfig.node.json": {
+            "status": "pass"
+          }
+        },
+        "video-editor-cockpit": {
+          "tsconfig.app.json": {
+            "status": "pass"
+          },
+          "tsconfig.node.json": {
+            "status": "pass"
+          }
+        },
+        "sales-cockpit": {
+          "tsconfig.app.json": {
+            "status": "pass"
+          },
+          "tsconfig.node.json": {
+            "status": "pass"
+          }
+        }
+      },
+      "failures": []
+    },
+    "fresh_builds": {
+      "passed": true,
+      "details": {
+        "media-buyer-cockpit": {
+          "status": "pass",
+          "output_size_bytes": 1875,
+          "fresh_temp_verified": true
+        },
+        "client-success-cockpit": {
+          "status": "pass",
+          "output_size_bytes": 1779,
+          "fresh_temp_verified": true
+        },
+        "creative-director-cockpit": {
+          "status": "pass",
+          "output_size_bytes": 1752,
+          "fresh_temp_verified": true
+        },
+        "video-editor-cockpit": {
+          "status": "pass",
+          "output_size_bytes": 2503,
+          "fresh_temp_verified": true
+        },
+        "sales-cockpit": {
+          "status": "pass",
+          "output_size_bytes": 4279,
+          "fresh_temp_verified": true
+        }
+      },
+      "failures": []
+    },
+    "test_suites": {
+      "passed": true,
+      "details": {
+        "apps/media-buyer-cockpit/scripts/supabase-access.test.ts": {
+          "status": "pass"
+        },
+        "apps/media-buyer-cockpit/scripts/snapshot-rpc-contracts.test.ts": {
+          "status": "pass"
+        },
+        "apps/media-buyer-cockpit/scripts/cockpit-dispatch-auth.test.ts": {
+          "status": "pass"
+        },
+        "apps/media-buyer-cockpit/scripts/ceo-goals-supabase.test.ts": {
+          "status": "pass"
+        },
+        "apps/media-buyer-cockpit/scripts/ceo-people-supabase.test.ts": {
+          "status": "pass"
+        },
+        "apps/media-buyer-cockpit/scripts/ceo-manual-payments-supabase.test.ts": {
+          "status": "pass"
+        },
+        "apps/media-buyer-cockpit/scripts/csm-state-supabase.test.ts": {
+          "status": "pass"
+        },
+        "apps/media-buyer-cockpit/scripts/supabase-ask-ai.test.ts": {
+          "status": "pass"
+        },
+        "apps/media-buyer-cockpit/scripts/eod-delivery-supabase.test.ts": {
+          "status": "pass"
+        },
+        "hermes/cockpit-ask-ai/scripts/test_askai.py": {
+          "status": "pass"
+        },
+        "hermes/eod-out/test_out.py": {
+          "status": "pass"
+        },
+        "scripts/test_plan_manual_payments_import.py": {
+          "status": "pass"
+        },
+        "apps/media-buyer-cockpit/scripts/cockpit-test-db.test.ts": {
+          "status": "pass"
+        },
+        "apps/media-buyer-cockpit/scripts/webinar-supabase-targets.test.ts": {
+          "status": "pass"
+        },
+        "apps/media-buyer-cockpit/scripts/webinar-target-access.test.ts": {
+          "status": "pass"
+        },
+        "apps/media-buyer-cockpit/scripts/webinar-targets.test.ts": {
+          "status": "pass"
+        },
+        "apps/media-buyer-cockpit/scripts/webinar-ingestion.test.ts": {
+          "status": "pass"
+        },
+        "apps/media-buyer-cockpit/scripts/reporting-view-access.test.ts": {
+          "status": "pass"
+        },
+        "apps/media-buyer-cockpit/scripts/frameio-webhook.test.ts": {
+          "status": "pass"
+        },
+        "apps/media-buyer-cockpit/scripts/billing.test.ts": {
+          "status": "pass"
+        },
+        "apps/media-buyer-cockpit/scripts/webinar.test.ts": {
+          "status": "pass"
+        },
+        "apps/creative-director-cockpit/scripts/social.test.ts": {
+          "status": "pass"
+        },
+        "apps/sales-cockpit/src/lib/pay.test.ts": {
+          "status": "pass"
+        },
+        "apps/sales-cockpit/src/lib/goals.test.ts": {
+          "status": "pass"
+        },
+        "apps/sales-cockpit/src/lib/env.test.ts": {
+          "status": "pass"
+        },
+        "apps/sales-cockpit/src/components/Prose.test.tsx": {
+          "status": "pass"
+        }
+      },
+      "failures": []
+    },
+    "release_evidence": {
+      "passed": false,
+      "details": {
+        "error": "Evidence file not found"
+      },
+      "failures": [
+        "Release mode requires acceptance evidence, but file was not found: C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-verification\\mahara-cockpits\\evidence\\cutover-acceptance.json"
+      ]
+    }
+  },
+  "failures": [
+    "Release mode requires acceptance evidence, but file was not found: C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-verification\\mahara-cockpits\\evidence\\cutover-acceptance.json"
+  ],
+  "command_logs": [
+    {
+      "cmd": [
+        "C:\\Program Files\\nodejs\\node.EXE",
+        "C:\\Users\\20106\\.codex\\worktrees\\cockpits-supabase-migration\\apps\\media-buyer-cockpit\\node_modules\\typescript\\bin\\tsc",
+        "-p",
+        "tsconfig.app.json",
+        "--noEmit"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-verification\\mahara-cockpits\\apps\\media-buyer-cockpit",
+      "returncode": 0,
+      "stdout": "",
+      "stderr": "",
+      "duration_s": 14.65
+    },
+    {
+      "cmd": [
+        "C:\\Program Files\\nodejs\\node.EXE",
+        "C:\\Users\\20106\\.codex\\worktrees\\cockpits-supabase-migration\\apps\\media-buyer-cockpit\\node_modules\\typescript\\bin\\tsc",
+        "-p",
+        "tsconfig.node.json",
+        "--noEmit"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-verification\\mahara-cockpits\\apps\\media-buyer-cockpit",
+      "returncode": 0,
+      "stdout": "",
+      "stderr": "",
+      "duration_s": 0.79
+    },
+    {
+      "cmd": [
+        "C:\\Program Files\\nodejs\\node.EXE",
+        "C:\\Users\\20106\\.codex\\worktrees\\cockpits-supabase-migration\\apps\\client-success-cockpit\\node_modules\\typescript\\bin\\tsc",
+        "-p",
+        "tsconfig.app.json",
+        "--noEmit"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-verification\\mahara-cockpits\\apps\\client-success-cockpit",
+      "returncode": 0,
+      "stdout": "",
+      "stderr": "",
+      "duration_s": 6.16
+    },
+    {
+      "cmd": [
+        "C:\\Program Files\\nodejs\\node.EXE",
+        "C:\\Users\\20106\\.codex\\worktrees\\cockpits-supabase-migration\\apps\\client-success-cockpit\\node_modules\\typescript\\bin\\tsc",
+        "-p",
+        "tsconfig.node.json",
+        "--noEmit"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-verification\\mahara-cockpits\\apps\\client-success-cockpit",
+      "returncode": 0,
+      "stdout": "",
+      "stderr": "",
+      "duration_s": 0.68
+    },
+    {
+      "cmd": [
+        "C:\\Program Files\\nodejs\\node.EXE",
+        "C:\\Users\\20106\\.codex\\worktrees\\cockpits-supabase-migration\\apps\\creative-director-cockpit\\node_modules\\typescript\\bin\\tsc",
+        "-p",
+        "tsconfig.app.json",
+        "--noEmit"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-verification\\mahara-cockpits\\apps\\creative-director-cockpit",
+      "returncode": 0,
+      "stdout": "",
+      "stderr": "",
+      "duration_s": 7.15
+    },
+    {
+      "cmd": [
+        "C:\\Program Files\\nodejs\\node.EXE",
+        "C:\\Users\\20106\\.codex\\worktrees\\cockpits-supabase-migration\\apps\\creative-director-cockpit\\node_modules\\typescript\\bin\\tsc",
+        "-p",
+        "tsconfig.node.json",
+        "--noEmit"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-verification\\mahara-cockpits\\apps\\creative-director-cockpit",
+      "returncode": 0,
+      "stdout": "",
+      "stderr": "",
+      "duration_s": 0.71
+    },
+    {
+      "cmd": [
+        "C:\\Program Files\\nodejs\\node.EXE",
+        "C:\\Users\\20106\\.codex\\worktrees\\cockpits-supabase-migration\\apps\\video-editor-cockpit\\node_modules\\typescript\\bin\\tsc",
+        "-p",
+        "tsconfig.app.json",
+        "--noEmit"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-verification\\mahara-cockpits\\apps\\video-editor-cockpit",
+      "returncode": 0,
+      "stdout": "",
+      "stderr": "",
+      "duration_s": 0.91
+    },
+    {
+      "cmd": [
+        "C:\\Program Files\\nodejs\\node.EXE",
+        "C:\\Users\\20106\\.codex\\worktrees\\cockpits-supabase-migration\\apps\\video-editor-cockpit\\node_modules\\typescript\\bin\\tsc",
+        "-p",
+        "tsconfig.node.json",
+        "--noEmit"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-verification\\mahara-cockpits\\apps\\video-editor-cockpit",
+      "returncode": 0,
+      "stdout": "",
+      "stderr": "",
+      "duration_s": 0.69
+    },
+    {
+      "cmd": [
+        "C:\\Program Files\\nodejs\\node.EXE",
+        "C:\\Users\\20106\\.codex\\worktrees\\cockpits-supabase-migration\\apps\\sales-cockpit\\node_modules\\typescript\\bin\\tsc",
+        "-p",
+        "tsconfig.app.json",
+        "--noEmit"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-verification\\mahara-cockpits\\apps\\sales-cockpit",
+      "returncode": 0,
+      "stdout": "",
+      "stderr": "",
+      "duration_s": 0.97
+    },
+    {
+      "cmd": [
+        "C:\\Program Files\\nodejs\\node.EXE",
+        "C:\\Users\\20106\\.codex\\worktrees\\cockpits-supabase-migration\\apps\\sales-cockpit\\node_modules\\typescript\\bin\\tsc",
+        "-p",
+        "tsconfig.node.json",
+        "--noEmit"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-verification\\mahara-cockpits\\apps\\sales-cockpit",
+      "returncode": 0,
+      "stdout": "",
+      "stderr": "",
+      "duration_s": 0.7
+    },
+    {
+      "cmd": [
+        "C:\\Program Files\\nodejs\\node.EXE",
+        "C:\\Users\\20106\\.codex\\worktrees\\cockpits-supabase-migration\\apps\\media-buyer-cockpit\\node_modules\\vite\\bin\\vite.js",
+        "build",
+        "--outDir",
+        "C:\\Users\\20106\\AppData\\Local\\Temp\\cutover_build_media-buyer-cockpit_6bq0jycf",
+        "--emptyOutDir"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-verification\\mahara-cockpits\\apps\\media-buyer-cockpit",
+      "returncode": 0,
+      "stdout": "vite v7.3.6 building client environment for production...\ntransforming...\n\u2713 4179 modules transformed.\nrendering chunks...\ncomputing gzip size...\n../../../../../../AppData/Local/Temp/cutover_build_media-buyer-cockpit_6bq0jycf/manifest.webmanifest                            0.53 kB\n../../../../../../AppData/Local/Temp/cutover_build_media-buyer-cockpit_6bq0jycf/index.html                                      1.88 kB \u2502 gzip:   0.74 kB\n../../../../../../AppData/Local/Temp/cutover_build_media-buyer-cockpit_6bq0jycf/assets/mahara-logo-light-Yb7lWkqK.png          11.20 kB\n../../../../../../AppData/Local/Temp/cutover_build_media-buyer-cockpit_6bq0jycf/assets/mahara-logo-dark-C-yVwZ7S.png           11.52 kB\n../../../../../../AppData/Local/Temp/cutover_build_media-buyer-cockpit_6bq0jycf/assets/AuthenticatedAppRoutes-D-Tz0X1C.css      2.46 kB \u2502 gzip:   0.90 kB\n../../../../../../AppData/Local/Temp/cutover_build_media-buyer-cockpit_6bq0jycf/assets/index-DcKJd5Op.css                     200.79 kB \u2502 gzip:  31.00 kB\n../../../../../../AppData/Local/Temp/cutover_build_media-buyer-cockpit_6bq0jycf/assets/constants-yVFvVbH1.js                    1.39 kB \u2502 gzip:   0.62 kB\n../../../../../../AppData/Local/Temp/cutover_build_media-buyer-cockpit_6bq0jycf/assets/workbox-window.prod.es5-BBnX5xw4.js      5.75 kB \u2502 gzip:   2.36 kB\n../../../../../../AppData/Local/Temp/cutover_build_media-buyer-cockpit_6bq0jycf/assets/PublicAppRoutes-04TkX1M2.js              8.16 kB \u2502 gzip:   2.20 kB\n../../../../../../AppData/Local/Temp/cutover_build_media-buyer-cockpit_6bq0jycf/assets/index-B9spSSfO.js                      529.54 kB \u2502 gzip: 155.72 kB\n../../../../../../AppData/Local/Temp/cutover_build_media-buyer-cockpit_6bq0jycf/assets/AuthenticatedAppRoutes-CyQ-dkbi.js   2,159.60 kB \u2502 gzip: 624.19 kB\n\u2713 built in 9.47s\n\nPWA v1.3.0\nmode      generateSW\nprecache  24 entries (3028.70 KiB)\nfiles generated\n  ../../../../../../AppData/Local/Temp/cutover_build_media-buyer-cockpit_6bq0jycf/sw.js\n  ../../../../../../AppData/Local/Temp/cutover_build_media-buyer-cockpit_6bq0jycf/workbox-a3c94b52.js\n",
+      "stderr": "../../../../cockpits-supabase-migration/apps/media-buyer-cockpit/node_modules/zod/v4/core/util.js (330:0): A comment\n\n\"// Wrapped in a `@__PURE__` IIFE: esbuild never tree-shakes a top-level initializer that contains a member access on `Number`, so the bare object literal survived into every bundle.\"\n\nin \"../../../../cockpits-supabase-migration/apps/media-buyer-cockpit/node_modules/zod/v4/core/util.js\" contains an annotation that Rollup cannot interpret due to the position of the comment. The comment will be removed to avoid issues.\n../../../../cockpits-supabase-migration/apps/media-buyer-cockpit/node_modules/zod/v4/core/regexes.js (70:0): A comment\n\n\"/** Anchors a pattern source. The interpolation lives here rather than at the call site because\n * esbuild will not drop a `@__PURE__` call whose own argument interpolates a variable, but it\n * will drop `anchor(dateSource)`. Keeping it inline pinned `date` into every bundle. */\"\n\nin \"../../../../cockpits-supabase-migration/apps/media-buyer-cockpit/node_modules/zod/v4/core/regexes.js\" contains an annotation that Rollup cannot interpret due to the position of the comment. The comment will be removed to avoid issues.\n\n(!) Some chunks are larger than 500 kB after minification. Consider:\n- Using dynamic import() to code-split the application\n- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks\n- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.\n",
+      "duration_s": 12.4
+    },
+    {
+      "cmd": [
+        "C:\\Program Files\\nodejs\\node.EXE",
+        "C:\\Users\\20106\\.codex\\worktrees\\cockpits-supabase-migration\\apps\\client-success-cockpit\\node_modules\\vite\\bin\\vite.js",
+        "build",
+        "--outDir",
+        "C:\\Users\\20106\\AppData\\Local\\Temp\\cutover_build_client-success-cockpit_79qzta_j",
+        "--emptyOutDir"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-verification\\mahara-cockpits\\apps\\client-success-cockpit",
+      "returncode": 0,
+      "stdout": "vite v7.3.6 building client environment for production...\ntransforming...\n\u2713 3532 modules transformed.\nrendering chunks...\ncomputing gzip size...\n../../../../../../AppData/Local/Temp/cutover_build_client-success-cockpit_79qzta_j/index.html                                   1.78 kB \u2502 gzip:   0.72 kB\n../../../../../../AppData/Local/Temp/cutover_build_client-success-cockpit_79qzta_j/assets/mahara-logo-light-Yb7lWkqK.png       11.20 kB\n../../../../../../AppData/Local/Temp/cutover_build_client-success-cockpit_79qzta_j/assets/mahara-logo-dark-C-yVwZ7S.png        11.52 kB\n../../../../../../AppData/Local/Temp/cutover_build_client-success-cockpit_79qzta_j/assets/index-BNEyNIEL.css                  155.51 kB \u2502 gzip:  24.71 kB\n../../../../../../AppData/Local/Temp/cutover_build_client-success-cockpit_79qzta_j/assets/constants-DAxdb-ew.js                 0.15 kB \u2502 gzip:   0.16 kB\n../../../../../../AppData/Local/Temp/cutover_build_client-success-cockpit_79qzta_j/assets/PublicAppRoutes-B0oXbwTW.js           9.36 kB \u2502 gzip:   2.64 kB\n../../../../../../AppData/Local/Temp/cutover_build_client-success-cockpit_79qzta_j/assets/index-C110sipO.js                   528.86 kB \u2502 gzip: 155.34 kB\n../../../../../../AppData/Local/Temp/cutover_build_client-success-cockpit_79qzta_j/assets/AuthenticatedAppRoutes-DlDnkr0v.js  955.33 kB \u2502 gzip: 280.27 kB\n\u2713 built in 6.89s\n",
+      "stderr": "\n(!) Some chunks are larger than 500 kB after minification. Consider:\n- Using dynamic import() to code-split the application\n- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks\n- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.\n",
+      "duration_s": 7.42
+    },
+    {
+      "cmd": [
+        "C:\\Program Files\\nodejs\\node.EXE",
+        "C:\\Users\\20106\\.codex\\worktrees\\cockpits-supabase-migration\\apps\\creative-director-cockpit\\node_modules\\vite\\bin\\vite.js",
+        "build",
+        "--outDir",
+        "C:\\Users\\20106\\AppData\\Local\\Temp\\cutover_build_creative-director-cockpit_rb0la1f9",
+        "--emptyOutDir"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-verification\\mahara-cockpits\\apps\\creative-director-cockpit",
+      "returncode": 0,
+      "stdout": "vite v7.3.6 building client environment for production...\ntransforming...\n\u2713 3947 modules transformed.\nrendering chunks...\ncomputing gzip size...\n../../../../../../AppData/Local/Temp/cutover_build_creative-director-cockpit_rb0la1f9/index.html                                     1.75 kB \u2502 gzip:   0.72 kB\n../../../../../../AppData/Local/Temp/cutover_build_creative-director-cockpit_rb0la1f9/assets/mahara-logo-light-Yb7lWkqK.png         11.20 kB\n../../../../../../AppData/Local/Temp/cutover_build_creative-director-cockpit_rb0la1f9/assets/mahara-logo-dark-C-yVwZ7S.png          11.52 kB\n../../../../../../AppData/Local/Temp/cutover_build_creative-director-cockpit_rb0la1f9/assets/index-DJWmO92c.css                    164.52 kB \u2502 gzip:  25.19 kB\n../../../../../../AppData/Local/Temp/cutover_build_creative-director-cockpit_rb0la1f9/assets/constants-DlrGUL7J.js                   1.40 kB \u2502 gzip:   0.63 kB\n../../../../../../AppData/Local/Temp/cutover_build_creative-director-cockpit_rb0la1f9/assets/PublicAppRoutes-B-xmcUg_.js             8.16 kB \u2502 gzip:   2.20 kB\n../../../../../../AppData/Local/Temp/cutover_build_creative-director-cockpit_rb0la1f9/assets/index-CjU9i5Zb.js                     528.94 kB \u2502 gzip: 155.36 kB\n../../../../../../AppData/Local/Temp/cutover_build_creative-director-cockpit_rb0la1f9/assets/AuthenticatedAppRoutes-C_XqCxqA.js  1,143.65 kB \u2502 gzip: 333.55 kB\n\u2713 built in 9.00s\n",
+      "stderr": "\n(!) Some chunks are larger than 500 kB after minification. Consider:\n- Using dynamic import() to code-split the application\n- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks\n- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.\n",
+      "duration_s": 9.52
+    },
+    {
+      "cmd": [
+        "C:\\Program Files\\nodejs\\node.EXE",
+        "C:\\Users\\20106\\.codex\\worktrees\\cockpits-supabase-migration\\apps\\video-editor-cockpit\\node_modules\\vite\\bin\\vite.js",
+        "build",
+        "--outDir",
+        "C:\\Users\\20106\\AppData\\Local\\Temp\\cutover_build_video-editor-cockpit_jv0xjefl",
+        "--emptyOutDir"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-verification\\mahara-cockpits\\apps\\video-editor-cockpit",
+      "returncode": 0,
+      "stdout": "vite v7.3.6 building client environment for production...\ntransforming...\n\u2713 2117 modules transformed.\nrendering chunks...\ncomputing gzip size...\n../../../../../../AppData/Local/Temp/cutover_build_video-editor-cockpit_jv0xjefl/index.html                               2.50 kB \u2502 gzip:   1.04 kB\n../../../../../../AppData/Local/Temp/cutover_build_video-editor-cockpit_jv0xjefl/assets/mahara-logo-light-Yb7lWkqK.png   11.20 kB\n../../../../../../AppData/Local/Temp/cutover_build_video-editor-cockpit_jv0xjefl/assets/mahara-logo-dark-C-yVwZ7S.png    11.52 kB\n../../../../../../AppData/Local/Temp/cutover_build_video-editor-cockpit_jv0xjefl/assets/index-CEWcfrrD.css               55.81 kB \u2502 gzip:  11.43 kB\n../../../../../../AppData/Local/Temp/cutover_build_video-editor-cockpit_jv0xjefl/assets/index-pd9FAaF2.js               740.50 kB \u2502 gzip: 219.90 kB\n\u2713 built in 4.34s\n",
+      "stderr": "\n(!) Some chunks are larger than 500 kB after minification. Consider:\n- Using dynamic import() to code-split the application\n- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks\n- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.\n",
+      "duration_s": 4.86
+    },
+    {
+      "cmd": [
+        "C:\\Program Files\\nodejs\\node.EXE",
+        "C:\\Users\\20106\\.codex\\worktrees\\cockpits-supabase-migration\\apps\\sales-cockpit\\node_modules\\vite\\bin\\vite.js",
+        "build",
+        "--outDir",
+        "C:\\Users\\20106\\AppData\\Local\\Temp\\cutover_build_sales-cockpit_53j2usy4",
+        "--emptyOutDir"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-verification\\mahara-cockpits\\apps\\sales-cockpit",
+      "returncode": 0,
+      "stdout": "vite v7.3.6 building client environment for production...\ntransforming...\n\u2713 2086 modules transformed.\nrendering chunks...\ncomputing gzip size...\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_53j2usy4/index.html                               4.28 kB \u2502 gzip:   1.75 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_53j2usy4/assets/mahara-logo-light-Yb7lWkqK.png   11.20 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_53j2usy4/assets/mahara-logo-dark-C-yVwZ7S.png    11.52 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_53j2usy4/assets/index-Crl6JbAD.css               45.64 kB \u2502 gzip:   9.07 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_53j2usy4/assets/chevron-down-zd99Fsah.js          0.16 kB \u2502 gzip:   0.16 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_53j2usy4/assets/chevron-left-DAULJn4H.js          0.16 kB \u2502 gzip:   0.17 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_53j2usy4/assets/chevron-right-CZSfx4GH.js         0.16 kB \u2502 gzip:   0.16 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_53j2usy4/assets/plus-5mTrPbWK.js                  0.19 kB \u2502 gzip:   0.17 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_53j2usy4/assets/arrow-left-_9u7hFem.js            0.20 kB \u2502 gzip:   0.18 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_53j2usy4/assets/search-D1kHkgJo.js                0.20 kB \u2502 gzip:   0.19 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_53j2usy4/assets/flame-DTZihJrm.js                 0.23 kB \u2502 gzip:   0.21 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_53j2usy4/assets/copy-DB8wJ9ei.js                  0.27 kB \u2502 gzip:   0.23 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_53j2usy4/assets/external-link-BDwdJJV9.js         0.29 kB \u2502 gzip:   0.23 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_53j2usy4/assets/pencil-BWyk-OsQ.js                0.31 kB \u2502 gzip:   0.25 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_53j2usy4/assets/send-BXLjkc3e.js                  0.32 kB \u2502 gzip:   0.25 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_53j2usy4/assets/refresh-cw-Dy6dkvFG.js            0.36 kB \u2502 gzip:   0.25 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_53j2usy4/assets/phone-DgO_ixPv.js                 0.36 kB \u2502 gzip:   0.25 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_53j2usy4/assets/trash-DVH2E5hE.js                 0.38 kB \u2502 gzip:   0.25 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_53j2usy4/assets/calendar-clock-Bf_rERyM.js        0.42 kB \u2502 gzip:   0.28 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_53j2usy4/assets/phone-off-D1Ma5nwu.js             0.48 kB \u2502 gzip:   0.30 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_53j2usy4/assets/sparkles-DMhM3JYV.js              0.55 kB \u2502 gzip:   0.32 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_53j2usy4/assets/whatsapp-BwZMbw1A.js              2.11 kB \u2502 gzip:   1.20 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_53j2usy4/assets/ProposalsPage-z9aFx856.js         2.11 kB \u2502 gzip:   1.10 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_53j2usy4/assets/IntelligencePage-wRB9q1aT.js      3.64 kB \u2502 gzip:   1.52 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_53j2usy4/assets/ProposalPanel-DCw2ojiC.js         4.43 kB \u2502 gzip:   1.81 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_53j2usy4/assets/NumbersGoals-PilztKQN.js          5.14 kB \u2502 gzip:   1.95 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_53j2usy4/assets/ReviewCard-C1DIvZ8Y.js            5.43 kB \u2502 gzip:   2.27 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_53j2usy4/assets/ScriptParts-C-60AlHn.js           5.88 kB \u2502 gzip:   2.67 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_53j2usy4/assets/CoachReviews-YL9wV0Ii.js          5.96 kB \u2502 gzip:   2.21 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_53j2usy4/assets/pay-c3TKz5pa.js                   6.58 kB \u2502 gzip:   2.82 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_53j2usy4/assets/ProposalPage-_PT1rUYY.js          7.35 kB \u2502 gzip:   3.11 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_53j2usy4/assets/RecordingPage-dm4AUsMW.js         8.71 kB \u2502 gzip:   3.28 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_53j2usy4/assets/EodPage-C_eF2T2a.js               8.91 kB \u2502 gzip:   3.52 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_53j2usy4/assets/PipelinePage-amwXncHk.js          9.11 kB \u2502 gzip:   3.70 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_53j2usy4/assets/References-EEmKO3Rn.js            9.31 kB \u2502 gzip:   3.39 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_53j2usy4/assets/LinksPage-Ur0BCQYe.js             9.42 kB \u2502 gzip:   3.55 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_53j2usy4/assets/LeadsPage-CIoFHfAm.js             9.67 kB \u2502 gzip:   3.61 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_53j2usy4/assets/RecordingsPage-WJbnkPjT.js        9.86 kB \u2502 gzip:   3.84 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_53j2usy4/assets/CalendarPage-DrAmKTgm.js         10.23 kB \u2502 gzip:   4.18 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_53j2usy4/assets/AssetPicker-9MgDfpVk.js          10.89 kB \u2502 gzip:   4.64 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_53j2usy4/assets/CallPage-YS1vgpGl.js             11.06 kB \u2502 gzip:   4.33 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_53j2usy4/assets/GoalsPage-C1BBxsel.js            13.78 kB \u2502 gzip:   5.13 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_53j2usy4/assets/LeadPage-Bozpp-9z.js             14.21 kB \u2502 gzip:   5.17 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_53j2usy4/assets/TeamPage-KDzmx9k2.js             21.28 kB \u2502 gzip:   7.01 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_53j2usy4/assets/NumbersPage-DVknKc5b.js          23.91 kB \u2502 gzip:   8.64 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_53j2usy4/assets/FollowupsPage-BIng6b1R.js        29.85 kB \u2502 gzip:   9.42 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_53j2usy4/assets/ResearchPanel-Brkje7eK.js        39.69 kB \u2502 gzip:  13.46 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_53j2usy4/assets/DialerPage-CzCHNEl7.js           42.62 kB \u2502 gzip:  13.86 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_53j2usy4/assets/index-BV5BSWgt.js               563.47 kB \u2502 gzip: 166.75 kB\n\u2713 built in 4.32s\n",
+      "stderr": "\n(!) Some chunks are larger than 500 kB after minification. Consider:\n- Using dynamic import() to code-split the application\n- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks\n- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.\n",
+      "duration_s": 4.92
+    },
+    {
+      "cmd": [
+        "C:\\Users\\20106\\AppData\\Roaming\\npm\\bun.CMD",
+        "test",
+        "apps/media-buyer-cockpit/scripts/supabase-access.test.ts"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-verification\\mahara-cockpits",
+      "returncode": 0,
+      "stdout": "bun test v1.4.2 (744846f84)\n",
+      "stderr": "\napps\\media-buyer-cockpit\\scripts\\supabase-access.test.ts:\n(pass) Supabase cockpit access > only a confirmed, exact active Auth link grants access [0.24ms]\n(pass) Supabase cockpit access > an admin cannot acquire CEO access by adding a role [0.05ms]\n(pass) Supabase cockpit access > a linked founder gets CEO access without a delegated CEO role [0.03ms]\n(pass) Supabase cockpit access > the lookup verifies Auth and asks only for the active matching link [0.38ms]\n\n 4 pass\n 0 fail\n 15 expect() calls\nRan 4 tests across 1 file. [60.00ms]\n",
+      "duration_s": 0.13
+    },
+    {
+      "cmd": [
+        "C:\\Users\\20106\\AppData\\Roaming\\npm\\bun.CMD",
+        "test",
+        "apps/media-buyer-cockpit/scripts/snapshot-rpc-contracts.test.ts"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-verification\\mahara-cockpits",
+      "returncode": 0,
+      "stdout": "bun test v1.4.2 (744846f84)\n",
+      "stderr": "\napps\\media-buyer-cockpit\\scripts\\snapshot-rpc-contracts.test.ts:\n(pass) Snapshot RPC contracts > Defect 1: Daily checks RPC read (cockpit_get_daily_checks) > Media Buyer fetchDailyChecksRpc uses cockpit_get_daily_checks RPC with role/day and never queries cockpit_daily_checks table [0.30ms]\n(pass) Snapshot RPC contracts > Defect 1: Daily checks RPC read (cockpit_get_daily_checks) > CSM fetchDailyChecksRpc uses cockpit_get_daily_checks RPC with role/day and never queries cockpit_daily_checks table [0.13ms]\n(pass) Snapshot RPC contracts > Defect 1: Daily checks RPC read (cockpit_get_daily_checks) > normalizeChecks preserves display order and maps RPC schema fields exactly [0.20ms]\n(pass) Snapshot RPC contracts > Defect 1: Daily checks RPC read (cockpit_get_daily_checks) > surfaces RPC errors on fetch failure and rejects missing client [0.28ms]\n(pass) Snapshot RPC contracts > Defect 2: Toggle check (cockpit_set_daily_check) & optimistic concurrency > checking an item sends expectedCurrent: false and done: true [0.27ms]\n(pass) Snapshot RPC contracts > Defect 2: Toggle check (cockpit_set_daily_check) & optimistic concurrency > unchecking an item sends expectedCurrent: true and done: false [0.07ms]\n(pass) Snapshot RPC contracts > Defect 2: Toggle check (cockpit_set_daily_check) & optimistic concurrency > propagates optimistic concurrency rejection from RPC (ERRCODE 40001) [0.09ms]\n(pass) Snapshot RPC contracts > Defect 2: Toggle check (cockpit_set_daily_check) & optimistic concurrency > rejects missing client, missing/invalid id, or missing/invalid done boolean [0.25ms]\n(pass) Snapshot RPC contracts > Defect 3: Decisions & actions (cockpit_log_decision) parameter names and metadata roundtrip > executeDecide sends exact supported parameters, preserving numeric metricAtDecision=0 and reason [0.42ms]\n(pass) Snapshot RPC contracts > Defect 3: Decisions & actions (cockpit_log_decision) parameter names and metadata roundtrip > executeDecide passes non-zero numeric metricAtDecision and reason properly [0.08ms]\n(pass) Snapshot RPC contracts > Defect 3: Decisions & actions (cockpit_log_decision) parameter names and metadata roundtrip > executeAct sends exact supported parameters, preserves metricAtDecision=0, and sets reroutedTo for tickets [0.29ms]\n(pass) Snapshot RPC contracts > Defect 3: Decisions & actions (cockpit_log_decision) parameter names and metadata roundtrip > executeAct does NOT invent reroutedTo from unrelated department when kind is not ticket or rerouted [0.06ms]\n(pass) Snapshot RPC contracts > Defect 3: Decisions & actions (cockpit_log_decision) parameter names and metadata roundtrip > normalizeDecisions roundtrip: reads reason, metric_at_decision=0, reroutedTo, and amount=0 from persisted row [0.24ms]\n(pass) Snapshot RPC contracts > Defect 3: Decisions & actions (cockpit_log_decision) parameter names and metadata roundtrip > normalizeDecisions preserves legacy provenance fields when metadata is absent, null, or empty [0.07ms]\n(pass) Snapshot RPC contracts > Defect 3: Decisions & actions (cockpit_log_decision) parameter names and metadata roundtrip > normalizeDecisions ensures genuine absent or null metadata cannot overwrite legacy provenance [0.07ms]\n(pass) Snapshot RPC contracts > Defect 3: Decisions & actions (cockpit_log_decision) parameter names and metadata roundtrip > normalizeDecisions never invents a rerouting destination from unrelated department [0.04ms]\n(pass) Snapshot RPC contracts > Defect 3: Decisions & actions (cockpit_log_decision) parameter names and metadata roundtrip > normalizeDecisions prioritizes metadata amount=0 over legacy non-zero amount [0.03ms]\n(pass) Snapshot RPC contracts > Defect 3: Decisions & actions (cockpit_log_decision) parameter names and metadata roundtrip > rejects missing client or invalid inputs in decide and act, propagating RPC errors [0.21ms]\n\n 18 pass\n 0 fail\n 114 expect() calls\nRan 18 tests across 1 file. [36.00ms]\n",
+      "duration_s": 0.09
+    },
+    {
+      "cmd": [
+        "C:\\Users\\20106\\AppData\\Roaming\\npm\\bun.CMD",
+        "test",
+        "apps/media-buyer-cockpit/scripts/cockpit-dispatch-auth.test.ts"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-verification\\mahara-cockpits",
+      "returncode": 0,
+      "stdout": "bun test v1.4.2 (744846f84)\n",
+      "stderr": "\napps\\media-buyer-cockpit\\scripts\\cockpit-dispatch-auth.test.ts:\n(pass) action and query references stay stable without thenable behavior [0.16ms]\n(pass) roles.me uses verified active membership, never invented role or email defaults [1.07ms]\n\n 2 pass\n 0 fail\n 13 expect() calls\nRan 2 tests across 1 file. [73.00ms]\n",
+      "duration_s": 0.14
+    },
+    {
+      "cmd": [
+        "C:\\Users\\20106\\AppData\\Roaming\\npm\\bun.CMD",
+        "test",
+        "apps/media-buyer-cockpit/scripts/ceo-goals-supabase.test.ts"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-verification\\mahara-cockpits",
+      "returncode": 0,
+      "stdout": "bun test v1.4.2 (744846f84)\n",
+      "stderr": "\napps\\media-buyer-cockpit\\scripts\\ceo-goals-supabase.test.ts:\n(pass) founder creates and edits a plan, preserving omitted human fields [33.94ms]\n(pass) targets persist zero, human notes, source labels and correct pacing [25.15ms]\n(pass) invalid later target rolls back the entire batch and its audits [13.82ms]\n(pass) cloning preserves notes and zero baseline, clears actuals and binds source snapshot [26.74ms]\n(pass) all five server operations reject admins, unconfirmed and revoked users [37.60ms]\n(pass) delete is audited, repeat deletion is harmless, browser writes remain closed [13.82ms]\n(pass) client rejects empty success receipts and nonfinite input [0.32ms]\n(pass) measured actuals, including zero, come from stored section facts and carry into copies [30.19ms]\n(pass) actual API dispatcher calls the real goals operations and rejects unknown routes [72.10ms]\n\n 9 pass\n 0 fail\n 89 expect() calls\nRan 9 tests across 1 file. [1.51s]\n",
+      "duration_s": 1.61
+    },
+    {
+      "cmd": [
+        "C:\\Users\\20106\\AppData\\Roaming\\npm\\bun.CMD",
+        "test",
+        "apps/media-buyer-cockpit/scripts/ceo-people-supabase.test.ts"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-verification\\mahara-cockpits",
+      "returncode": 0,
+      "stdout": "bun test v1.4.2 (744846f84)\n",
+      "stderr": "\napps\\media-buyer-cockpit\\scripts\\ceo-people-supabase.test.ts:\n(pass) both verified founders save/read real roster with zero, missing costs, pauses and bot totals [1178.47ms]\n(pass) partial edits preserve human data, schedules and original provenance; explicit null clears [846.04ms]\n(pass) deactivation and reactivation preserve payroll history and never modify login seats [891.49ms]\n(pass) ordinary admin, spoofed claims, unconfirmed and revoked founders are denied on server [830.51ms]\n(pass) bad values, unknown IDs, duplicate names and forged attribution roll back without false receipts [738.47ms]\n(pass) audit failure rolls back pay update; unavailable provider and malformed receipts never succeed [706.89ms]\n\n 6 pass\n 0 fail\n 67 expect() calls\nRan 6 tests across 1 file. [5.24s]\n",
+      "duration_s": 5.35
+    },
+    {
+      "cmd": [
+        "C:\\Users\\20106\\AppData\\Roaming\\npm\\bun.CMD",
+        "test",
+        "apps/media-buyer-cockpit/scripts/ceo-manual-payments-supabase.test.ts"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-verification\\mahara-cockpits",
+      "returncode": 0,
+      "stdout": "bun test v1.4.2 (744846f84)\n",
+      "stderr": "\napps\\media-buyer-cockpit\\scripts\\ceo-manual-payments-supabase.test.ts:\n(pass) history import is a real readiness gate, not an empty zero-payment log [1063.95ms]\n(pass) add/read uses original FX, contact masking, stable retries and explicit total reconciliation [728.55ms]\n(pass) duplicate name/card payments require confirmation; delete/restore preserves originals and history [717.80ms]\n(pass) Tap unknown is not disconnected; precision, dates, references and forged fields fail atomically [779.77ms]\n(pass) both founders work; ordinary admins, spoofed and revoked identities cannot read or write [725.48ms]\n(pass) audit failure rolls back payment and revision; imported identifiers/rates survive status changes [1004.98ms]\n(pass) success-shaped objects are rejected by payment adapters [0.48ms]\n\n 7 pass\n 0 fail\n 130 expect() calls\nRan 7 tests across 1 file. [5.06s]\n",
+      "duration_s": 5.18
+    },
+    {
+      "cmd": [
+        "C:\\Users\\20106\\AppData\\Roaming\\npm\\bun.CMD",
+        "test",
+        "apps/media-buyer-cockpit/scripts/csm-state-supabase.test.ts"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-verification\\mahara-cockpits",
+      "returncode": 0,
+      "stdout": "bun test v1.4.2 (744846f84)\n",
+      "stderr": "\napps\\media-buyer-cockpit\\scripts\\csm-state-supabase.test.ts:\n(pass) client scope applies to state and direct profile reads; language persists separately [46.84ms]\n(pass) blank drafts are private and cannot be stolen or reassigned outside scope [75.66ms]\n(pass) loose-end clearing is scoped, preserves money and never edits original notes [45.68ms]\n(pass) personal monthly plans preserve zero and merge only changed counts [52.89ms]\n(pass) profile patches preserve omitted human fields and enforce client scope [27.01ms]\n(pass) unconfirmed, revoked, unrelated and anonymous identities are denied [34.77ms]\n(pass) all state writes are audited; rerun preserves data and audit history [31.18ms]\n(pass) malformed receipts and invalid numeric edits cannot claim success [0.43ms]\n\n 8 pass\n 0 fail\n 98 expect() calls\nRan 8 tests across 1 file. [1.65s]\n",
+      "duration_s": 1.76
+    },
+    {
+      "cmd": [
+        "C:\\Users\\20106\\AppData\\Roaming\\npm\\bun.CMD",
+        "test",
+        "apps/media-buyer-cockpit/scripts/supabase-ask-ai.test.ts"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-verification\\mahara-cockpits",
+      "returncode": 0,
+      "stdout": "bun test v1.4.2 (744846f84)\n",
+      "stderr": "\napps\\media-buyer-cockpit\\scripts\\supabase-ask-ai.test.ts:\n(pass) actual client adapters persist, claim, finish, reload and clear with preserved audit/history [1258.17ms]\n(pass) wrong roles, other owners, unconfirmed identities and raw browser access fail closed [817.63ms]\n(pass) membership and client scope changes invalidate reads and in-flight context [790.27ms]\n(pass) expired leases reject old results, retain attempts and rebuild claims [786.34ms]\n(pass) clearing cancels pending work; named app configuration and server context remain scoped [747.60ms]\n(pass) adapters reject success-shaped objects and malformed history instead of inventing success [0.52ms]\n\n 6 pass\n 0 fail\n 96 expect() calls\nRan 6 tests across 1 file. [4.46s]\n",
+      "duration_s": 4.58
+    },
+    {
+      "cmd": [
+        "C:\\Users\\20106\\AppData\\Roaming\\npm\\bun.CMD",
+        "test",
+        "apps/media-buyer-cockpit/scripts/eod-delivery-supabase.test.ts"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-verification\\mahara-cockpits",
+      "returncode": 0,
+      "stdout": "bun test v1.4.2 (744846f84)\n",
+      "stderr": "\napps\\media-buyer-cockpit\\scripts\\eod-delivery-supabase.test.ts:\n(pass) EOD delivery claims and receipts in PostgreSQL (in-memory PGlite) > real producer retries cannot replace claims; receipts, retries and audits are enforced [952.99ms]\n(pass) EOD delivery claims and receipts in PostgreSQL (in-memory PGlite) > claim exclusivity: only one worker claims queued row, concurrent claims return 0 [651.94ms]\n(pass) EOD delivery claims and receipts in PostgreSQL (in-memory PGlite) > expired receipt rejection: stale lease, wrong worker, or wrong claim token throws [696.15ms]\n(pass) EOD delivery claims and receipts in PostgreSQL (in-memory PGlite) > durable send intent and crash-recovery: interrupted send triggers reconciliation_needed [626.77ms]\n(pass) EOD delivery claims and receipts in PostgreSQL (in-memory PGlite) > clean crash before send can be reclaimed cleanly after lease expiry [684.26ms]\n(pass) EOD delivery claims and receipts in PostgreSQL (in-memory PGlite) > exhausted retries terminalize as failed [678.14ms]\n(pass) EOD delivery claims and receipts in PostgreSQL (in-memory PGlite) > partial receipts: sheet_at preserved, only marks sent when both receipts confirmed [684.93ms]\n(pass) EOD delivery claims and receipts in PostgreSQL (in-memory PGlite) > audit logging and producer protection trigger [670.94ms]\n(pass) EOD delivery claims and receipts in PostgreSQL (in-memory PGlite) > security: anon and authenticated cannot execute claim RPCs [673.20ms]\n\n 9 pass\n 0 fail\n 44 expect() calls\nRan 9 tests across 1 file. [6.36s]\n",
+      "duration_s": 6.46
+    },
+    {
+      "cmd": [
+        "C:\\Python314\\python.exe",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-verification\\mahara-cockpits\\hermes\\cockpit-ask-ai\\scripts",
+        "-p",
+        "test_askai.py"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-verification\\mahara-cockpits",
+      "returncode": 0,
+      "stdout": "",
+      "stderr": "...............\n----------------------------------------------------------------------\nRan 15 tests in 0.020s\n\nOK\n",
+      "duration_s": 0.35
+    },
+    {
+      "cmd": [
+        "C:\\Python314\\python.exe",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-verification\\mahara-cockpits\\hermes\\eod-out",
+        "-p",
+        "test_out.py"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-verification\\mahara-cockpits",
+      "returncode": 0,
+      "stdout": "[09:38:08] Starting live EOD delivery worker (worker_id=ASUS-25796-206c89c4, lease=300s, limit=20)\n[09:38:08]   Row #5 [AMBIGUOUS SLACK]: Connection reset by peer during postMessage. Failing closed for reconciliation.\n[09:38:08] Run completed: 0 sent, 0 failed, 1 flagged for reconciliation.\n[09:38:08] Starting live EOD delivery worker (worker_id=ASUS-25796-93f93d2f, lease=300s, limit=20)\n[09:38:08]   Row #2: filed to sheet 'CSM'\n[09:38:08]   Row #2: posted to Slack channel C456\n[09:38:08]   Completed #2 for Dina Ezzat (csm) -> C456\n[09:38:08] Run completed: 1 sent, 0 failed, 0 flagged for reconciliation.\n[09:38:08] Starting live EOD delivery worker (worker_id=ASUS-25796-cdb87f62, lease=300s, limit=20)\n[09:38:08]   Row #3: filed to sheet 'Video Editors'\n[09:38:08]   Completed #3 for Karim Abdelrahman (video_editor) -> C789\n[09:38:08] Run completed: 1 sent, 0 failed, 0 flagged for reconciliation.\n[09:38:08] Starting live EOD delivery worker (worker_id=ASUS-25796-a3f78210, lease=300s, limit=20)\n[09:38:08]   Row #4 [CRITICAL]: Sheet append succeeded but receipt write failed (Database error writing receipt for row 4). Halting row.\n[09:38:08] Run completed: 0 sent, 1 failed, 0 flagged for reconciliation.\n[09:38:08] Starting live EOD delivery worker (worker_id=ASUS-25796-94d88dd5, lease=300s, limit=20)\n[09:38:08]   Row #99: uncertain Slack outcome; durable intent retained for reconciliation\n[09:38:08] Run completed: 0 sent, 1 failed, 0 flagged for reconciliation.\n",
+      "stderr": ".............\n----------------------------------------------------------------------\nRan 13 tests in 0.259s\n\nOK\n",
+      "duration_s": 0.61
+    },
+    {
+      "cmd": [
+        "C:\\Python314\\python.exe",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-verification\\mahara-cockpits\\scripts",
+        "-p",
+        "test_plan_manual_payments_import.py"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-verification\\mahara-cockpits",
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ".......\n----------------------------------------------------------------------\nRan 7 tests in 0.032s\n\nOK\n",
+      "duration_s": 0.2
+    },
+    {
+      "cmd": [
+        "C:\\Users\\20106\\AppData\\Roaming\\npm\\bun.CMD",
+        "test",
+        "apps/media-buyer-cockpit/scripts/cockpit-test-db.test.ts"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-verification\\mahara-cockpits",
+      "returncode": 0,
+      "stdout": "bun test v1.4.2 (744846f84)\n",
+      "stderr": "\napps\\media-buyer-cockpit\\scripts\\cockpit-test-db.test.ts:\n(pass) real founder gate rejects role spoofing, unconfirmed users and revoked seats [954.58ms]\n\n 1 pass\n 0 fail\n 5 expect() calls\nRan 1 test across 1 file. [992.00ms]\n",
+      "duration_s": 1.07
+    },
+    {
+      "cmd": [
+        "C:\\Users\\20106\\AppData\\Roaming\\npm\\bun.CMD",
+        "test",
+        "apps/media-buyer-cockpit/scripts/webinar-supabase-targets.test.ts"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-verification\\mahara-cockpits",
+      "returncode": 0,
+      "stdout": "bun test v1.4.2 (744846f84)\n",
+      "stderr": "\napps\\media-buyer-cockpit\\scripts\\webinar-supabase-targets.test.ts:\n(pass) webinarTargetsClient contract and pure logic > throws when client is null [0.46ms]\n(pass) webinarTargetsClient contract and pure logic > fetchWebinarTargetContext calls cockpit_ceo_webinar_target_context RPC and parses valid response [3.45ms]\n(pass) webinarTargetsClient contract and pure logic > fetchWebinarTargetContext handles round scope inheritance correctly [0.33ms]\n(pass) webinarTargetsClient contract and pure logic > fetchWebinarTargetContext throws on RPC error or unrecognized payload [0.13ms]\n(pass) webinarTargetsClient contract and pure logic > saveWebinarTargets validates input schema before invoking RPC [0.54ms]\n(pass) webinarTargetsClient contract and pure logic > saveWebinarTargets handles conflict: true response [0.23ms]\n(pass) webinarTargetsClient contract and pure logic > saveWebinarTargets builds confirmed success without secondary read [0.21ms]\n(pass) webinarTargetsClient contract and pure logic > saveWebinarTargets throws on missing version in saved response [0.09ms]\n\n 8 pass\n 0 fail\n 24 expect() calls\nRan 8 tests across 1 file. [50.00ms]\n",
+      "duration_s": 0.11
+    },
+    {
+      "cmd": [
+        "C:\\Users\\20106\\AppData\\Roaming\\npm\\bun.CMD",
+        "test",
+        "apps/media-buyer-cockpit/scripts/webinar-target-access.test.ts"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-verification\\mahara-cockpits",
+      "returncode": 0,
+      "stdout": "bun test v1.4.2 (744846f84)\n",
+      "stderr": "\napps\\media-buyer-cockpit\\scripts\\webinar-target-access.test.ts:\n(pass) existing round inherits its historical defaults, not newer defaults [17.17ms]\n(pass) real client saves, reads after refresh, retries without duplicate version or audit [24.74ms]\n(pass) anonymous, ordinary admin, unconfirmed and revoked founder cannot read or write [15.85ms]\n(pass) invalid scopes/values fail, underlying service function and table remain inaccessible [7.53ms]\n(pass) migration rerun preserves history and service-side inserts also receive one audit [10.28ms]\n(pass) malformed successful responses cannot masquerade as loaded defaults or saved targets [0.27ms]\n\n 6 pass\n 0 fail\n 36 expect() calls\nRan 6 tests across 1 file. [1067.00ms]\n",
+      "duration_s": 1.14
+    },
+    {
+      "cmd": [
+        "C:\\Users\\20106\\AppData\\Roaming\\npm\\bun.CMD",
+        "test",
+        "apps/media-buyer-cockpit/scripts/webinar-targets.test.ts"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-verification\\mahara-cockpits",
+      "returncode": 0,
+      "stdout": "bun test v1.4.2 (744846f84)\n",
+      "stderr": "\napps\\media-buyer-cockpit\\scripts\\webinar-targets.test.ts:\n(pass) target contract > all displayed fields round trip with readable percentages [2.94ms]\n(pass) target contract > rejects invalid shape and commercial bounds: null [0.46ms]\n(pass) target contract > rejects invalid shape and commercial bounds: {} [0.08ms]\n(pass) target contract > rejects invalid shape and commercial bounds: {\"plannedSpend\":2000,\"costPerRegistration\":{\"low\":6,\"high\":10,\"plan\":8},\"registrations\":{\"low\":200,\"high\":330,\"plan\":250},\"pageConversion\":{\"low\":0.15,\"high\":0.25,\"floor\":0.1},\"showRate\":{\"low\":0.3,\"high\":0.4},\"retentionAtPitch1\":0.5,\"attendeeToBooked\":{\"low\":0.1,\"high\":0.15},\"bookedToHeld\":0.6,\"closeRate\":0.2,\"killRule\":{\"spendAfter\":500,\"costPerRegistrationAbove\":15},\"extra\":1} [0.24ms]\n(pass) target contract > rejects invalid shape and commercial bounds: {\"plannedSpend\":\"2000\",\"costPerRegistration\":{\"low\":6,\"high\":10,\"plan\":8},\"registrations\":{\"low\":200,\"high\":330,\"plan\":250},\"pageConversion\":{\"low\":0.15,\"high\":0.25,\"floor\":0.1},\"showRate\":{\"low\":0.3,\"high\":0.4},\"retentionAtPitch1\":0.5,\"attendeeToBooked\":{\"low\":0.1,\"high\":0.15},\"bookedToHeld\":0.6,\"closeRate\":0.2,\"killRule\":{\"spendAfter\":500,\"costPerRegistrationAbove\":15}} [0.09ms]\n(pass) target contract > rejects invalid shape and commercial bounds: {\"plannedSpend\":2000,\"costPerRegistration\":{\"low\":6,\"high\":10,\"plan\":8},\"registrations\":{\"low\":200,\"high\":330,\"plan\":250},\"pageConversion\":{\"low\":0.15,\"high\":0.25,\"floor\":0.1},\"showRate\":{},\"retentionAtPitch1\":0.5,\"attendeeToBooked\":{\"low\":0.1,\"high\":0.15},\"bookedToHeld\":0.6,\"closeRate\":0.2,\"killRule\":{\"spendAfter\":500,\"costPerRegistrationAbove\":15}} [0.06ms]\n(pass) target contract > rejects invalid shape and commercial bounds: {\"plannedSpend\":2000,\"costPerRegistration\":{\"low\":6,\"high\":10,\"plan\":8},\"registrations\":{\"low\":200,\"high\":330,\"plan\":250},\"pageConversion\":{\"low\":0.15,\"high\":0.25,\"floor\":0.1},\"showRate\":{\"low\":0.3,\"high\":0.4},\"retentionAtPitch1\":0.5,\"attendeeToBooked\":{\"low\":0.1,\"high\":0.15},\"bookedToHeld\":0.6,\"closeRate\":1.01,\"killRule\":{\"spendAfter\":500,\"costPerRegistrationAbove\":15}} [0.27ms]\n(pass) target contract > rejects invalid shape and commercial bounds: {\"plannedSpend\":0,\"costPerRegistration\":{\"low\":6,\"high\":10,\"plan\":8},\"registrations\":{\"low\":200,\"high\":330,\"plan\":250},\"pageConversion\":{\"low\":0.15,\"high\":0.25,\"floor\":0.1},\"showRate\":{\"low\":0.3,\"high\":0.4},\"retentionAtPitch1\":0.5,\"attendeeToBooked\":{\"low\":0.1,\"high\":0.15},\"bookedToHeld\":0.6,\"closeRate\":0.2,\"killRule\":{\"spendAfter\":500,\"costPerRegistrationAbove\":15}} [0.07ms]\n(pass) target contract > rejects invalid shape and commercial bounds: {\"plannedSpend\":2000,\"costPerRegistration\":{\"low\":6,\"high\":10,\"plan\":8},\"registrations\":{\"low\":1,\"plan\":1.5,\"high\":3},\"pageConversion\":{\"low\":0.15,\"high\":0.25,\"floor\":0.1},\"showRate\":{\"low\":0.3,\"high\":0.4},\"retentionAtPitch1\":0.5,\"attendeeToBooked\":{\"low\":0.1,\"high\":0.15},\"bookedToHeld\":0.6,\"closeRate\":0.2,\"killRule\":{\"spendAfter\":500,\"costPerRegistrationAbove\":15}} [0.05ms]\n(pass) target contract > rejects invalid shape and commercial bounds: {\"plannedSpend\":2000,\"costPerRegistration\":{\"low\":10,\"plan\":5,\"high\":9},\"registrations\":{\"low\":200,\"high\":330,\"plan\":250},\"pageConversion\":{\"low\":0.15,\"high\":0.25,\"floor\":0.1},\"showRate\":{\"low\":0.3,\"high\":0.4},\"retentionAtPitch1\":0.5,\"attendeeToBooked\":{\"low\":0.1,\"high\":0.15},\"bookedToHeld\":0.6,\"closeRate\":0.2,\"killRule\":{\"spendAfter\":500,\"costPerRegistrationAbove\":15}} [0.16ms]\n(pass) target contract > rejects invalid shape and commercial bounds: {\"plannedSpend\":2000,\"costPerRegistration\":{\"low\":6,\"high\":10,\"plan\":8},\"registrations\":{\"low\":200,\"high\":330,\"plan\":250},\"pageConversion\":{\"floor\":0.2,\"low\":0.1,\"high\":0.3},\"showRate\":{\"low\":0.3,\"high\":0.4},\"retentionAtPitch1\":0.5,\"attendeeToBooked\":{\"low\":0.1,\"high\":0.15},\"bookedToHeld\":0.6,\"closeRate\":0.2,\"killRule\":{\"spendAfter\":500,\"costPerRegistrationAbove\":15}} [0.07ms]\n(pass) target contract > rejects invalid shape and commercial bounds: {\"plannedSpend\":2000,\"costPerRegistration\":{\"low\":6,\"high\":10,\"plan\":8},\"registrations\":{\"low\":200,\"high\":330,\"plan\":250},\"pageConversion\":{\"low\":0.15,\"high\":0.25,\"floor\":0.1},\"showRate\":{\"low\":0.3,\"high\":0.4,\"extra\":0},\"retentionAtPitch1\":0.5,\"attendeeToBooked\":{\"low\":0.1,\"high\":0.15},\"bookedToHeld\":0.6,\"closeRate\":0.2,\"killRule\":{\"spendAfter\":500,\"costPerRegistrationAbove\":15}} [0.07ms]\n(pass) target contract > blank, scientific, infinite and negative input cannot silently become zero [0.30ms]\n(pass) target contract > future defaults preserve prior round targets [0.43ms]\n(pass) actual PostgreSQL migration > valid baseline passes; invalid contract fails in SQL too [21.68ms]\n(pass) actual PostgreSQL migration > RLS and browser access are denied [2.91ms]\n(pass) actual PostgreSQL migration > atomic revision, conflict, safe retry and immutable audit under service role [19.31ms]\n\n 17 pass\n 0 fail\n 47 expect() calls\nRan 17 tests across 1 file. [997.00ms]\n",
+      "duration_s": 1.08
+    },
+    {
+      "cmd": [
+        "C:\\Users\\20106\\AppData\\Roaming\\npm\\bun.CMD",
+        "test",
+        "apps/media-buyer-cockpit/scripts/webinar-ingestion.test.ts"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-verification\\mahara-cockpits",
+      "returncode": 0,
+      "stdout": "bun test v1.4.2 (744846f84)\n",
+      "stderr": "\napps\\media-buyer-cockpit\\scripts\\webinar-ingestion.test.ts:\n(pass) atomic snapshot, retry, stale replay and child-write rollback [23.44ms]\n(pass) partial channel failure preserves last readable rows [9.00ms]\n(pass) rescheduling keeps registrations; repeat events have separate occurrences [115.62ms]\n(pass) browser roles cannot read the ledger or execute ingestion [4.49ms]\n\n 4 pass\n 0 fail\n 25 expect() calls\nRan 4 tests across 1 file. [1126.00ms]\n",
+      "duration_s": 1.21
+    },
+    {
+      "cmd": [
+        "C:\\Users\\20106\\AppData\\Roaming\\npm\\bun.CMD",
+        "test",
+        "apps/media-buyer-cockpit/scripts/reporting-view-access.test.ts"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-verification\\mahara-cockpits",
+      "returncode": 0,
+      "stdout": "bun test v1.4.2 (744846f84)\n",
+      "stderr": "\napps\\media-buyer-cockpit\\scripts\\reporting-view-access.test.ts:\n(pass) internal reporting views deny browser roles while service and token panel continue [902.09ms]\n\n 1 pass\n 0 fail\n 22 expect() calls\nRan 1 test across 1 file. [944.00ms]\n",
+      "duration_s": 1.03
+    },
+    {
+      "cmd": [
+        "C:\\Users\\20106\\AppData\\Roaming\\npm\\bun.CMD",
+        "test",
+        "apps/media-buyer-cockpit/scripts/frameio-webhook.test.ts"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-verification\\mahara-cockpits",
+      "returncode": 0,
+      "stdout": "bun test v1.4.2 (744846f84)\n",
+      "stderr": "\napps\\media-buyer-cockpit\\scripts\\frameio-webhook.test.ts:\n(pass) verify > accepts what Frame.io actually sends [0.40ms]\n(pass) verify > accepts the bare v0= form with the timestamp header [0.05ms]\n(pass) verify > refuses a body that was altered in flight [0.04ms]\n(pass) verify > refuses a signature made with the wrong secret [0.02ms]\n(pass) verify > refuses a captured request replayed later [0.04ms]\n(pass) verify > refuses a replay dressed up with a fresh unsigned header [0.02ms]\n(pass) verify > refuses a missing, empty or malformed header rather than throwing [0.05ms]\n(pass) verify > refuses a signature of the wrong length without comparing [0.02ms]\n(pass) verify > refuses when there is no timestamp anywhere [0.02ms]\n(pass) fresh > accepts a timestamp from a moment ago [0.02ms]\n(pass) fresh > refuses one too old to be anything but a replay [0.01ms]\n(pass) fresh > refuses one from the future by more than the window\n(pass) fresh > refuses rubbish rather than treating it as zero [0.02ms]\n(pass) WANTED > covers the events the worker knows how to act on [0.02ms]\n(pass) WANTED > does not queue events nothing acts on [0.02ms]\n\n 15 pass\n 0 fail\n 32 expect() calls\nRan 15 tests across 1 file. [29.00ms]\n",
+      "duration_s": 0.08
+    },
+    {
+      "cmd": [
+        "C:\\Users\\20106\\AppData\\Roaming\\npm\\bun.CMD",
+        "test",
+        "apps/media-buyer-cockpit/scripts/billing.test.ts"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-verification\\mahara-cockpits",
+      "returncode": 0,
+      "stdout": "bun test v1.4.2 (744846f84)\n",
+      "stderr": "\napps\\media-buyer-cockpit\\scripts\\billing.test.ts:\n(pass) amounts > every cent amount up to $10,000 is a payment [9.49ms]\n(pass) amounts > every fils amount up to 10,000 KWD is a payment [55.21ms]\n(pass) amounts > what is not a payment [0.12ms]\n(pass) the ladder, as the SOP and Maher's scan have it > before the day [0.23ms]\n(pass) the ladder, as the SOP and Maher's scan have it > the day and after [0.03ms]\n(pass) the ladder, as the SOP and Maher's scan have it > paused is counted from Paused On, never from the payment date [0.04ms]\n(pass) the ladder, as the SOP and Maher's scan have it > cards that are not paying clients have no step [0.02ms]\n(pass) a hand-logged payment and the bank line that is the same money > a transfer matches within three days either way [0.06ms]\n(pass) a hand-logged payment and the bank line that is the same money > a cheque matches its deposit up to two weeks later [0.03ms]\n\n 9 pass\n 0 fail\n 31 expect() calls\nRan 9 tests across 1 file. [89.00ms]\n",
+      "duration_s": 0.13
+    },
+    {
+      "cmd": [
+        "C:\\Users\\20106\\AppData\\Roaming\\npm\\bun.CMD",
+        "test",
+        "apps/media-buyer-cockpit/scripts/webinar.test.ts"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-verification\\mahara-cockpits",
+      "returncode": 0,
+      "stdout": "bun test v1.4.2 (744846f84)\n",
+      "stderr": "\napps\\media-buyer-cockpit\\scripts\\webinar.test.ts:\n(pass) people in the room > a rejoin is one person, and the team is left out [0.27ms]\n(pass) people in the room > two devices at once do not double the watch time [0.05ms]\n(pass) people in the room > on time is within three minutes of the scheduled start [0.14ms]\n(pass) people in the room > a false start with only the host does not stretch the room [0.12ms]\n(pass) the curve > people present at the middle of each minute [0.03ms]\n(pass) the curve > the biggest drop-offs, largest first [0.02ms]\n(pass) the curve > stay to end counts who is there two minutes before it ends\n(pass) the curve > the curve ends with the last minute anybody was in the room [0.16ms]\n(pass) pitches > pitch 1 is found from the burst of 1s in the chat [0.49ms]\n(pass) pitches > two stray 1s are not a pitch [0.03ms]\n(pass) pitches > a time set in the cockpit wins over the chat [0.33ms]\n(pass) pitches > the team's chat and direct messages are not the room's [0.36ms]\n(pass) what Zoom cannot say > polls and Q&A are unknown, not zero, when they cannot be read [0.09ms]\n(pass) what Zoom cannot say > only emails and contact ids leave the room for matching, never names [0.16ms]\n(pass) what Zoom cannot say > no session, no room [0.02ms]\n(pass) phones > requires the full country code [0.13ms]\n(pass) the landing page > visitors, the form's steps and the thank-you page [0.42ms]\n(pass) the landing page > join-link clicks: each person once before and once after the start [0.05ms]\n(pass) the landing page > pitch link clicks: each person once per pitch, around the session [0.06ms]\n(pass) the landing page > no session time, no join-link split [0.03ms]\n(pass) reminders > read counts as delivered, failures apart, steps in send order [0.35ms]\n(pass) reminders > nobody messaged, nothing to show [0.03ms]\n(pass) objections > calls per category, raised and answered [0.21ms]\n(pass) launch readiness is separate from data collection > old workers and missing evidence never pass [0.46ms]\n(pass) launch readiness is separate from data collection > fresh dates agree, but identity without registration is blocked [0.14ms]\n(pass) launch readiness is separate from data collection > registration on is not proof of matched people [0.06ms]\n(pass) launch readiness is separate from data collection > draft workflows and absent registration credential block [0.09ms]\n(pass) launch readiness is separate from data collection > disagreeing, expired, or nonstandard session times block [0.11ms]\n(pass) launch readiness is separate from data collection > stale and future-dated evidence is unknown [0.08ms]\n(pass) launch readiness is separate from data collection > partial or duplicate workflow evidence cannot pass [0.04ms]\n(pass) webinar metrics projection > each round has its own scope and missing identity stays null [0.41ms]\n(pass) webinar metrics projection > no rounds means no invented zero-valued metrics [0.02ms]\n(pass) webinar metrics projection > attendance is unavailable until there is evidence [0.07ms]\n(pass) webinar metrics projection > lead-gen and retargeting leave the call funnel separately [0.26ms]\n(pass) retention evidence boundaries > missing leaves never become full-session watches [0.15ms]\n(pass) retention evidence boundaries > invalid rows do not invent attendees [0.15ms]\n(pass) retention evidence boundaries > peak and pitch use exact seconds [0.13ms]\n(pass) retention evidence boundaries > invalid pitch times are not clamped into a valid minute [0.07ms]\n(pass) retention evidence boundaries > unknown chat senders do not count as one known person [0.07ms]\n(pass) retention evidence boundaries > cohort retention is distinct from share of peak [0.13ms]\n(pass) retention evidence boundaries > team polls are excluded and sources have independent coverage [0.12ms]\n(pass) retention evidence boundaries > long rooms flag chart limits but retain full watch totals [0.11ms]\n\n 42 pass\n 0 fail\n 111 expect() calls\nRan 42 tests across 1 file. [39.00ms]\n",
+      "duration_s": 0.09
+    },
+    {
+      "cmd": [
+        "C:\\Users\\20106\\AppData\\Roaming\\npm\\bun.CMD",
+        "test",
+        "apps/creative-director-cockpit/scripts/social.test.ts"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-verification\\mahara-cockpits",
+      "returncode": 0,
+      "stdout": "bun test v1.4.2 (744846f84)\n",
+      "stderr": "\napps\\creative-director-cockpit\\scripts\\social.test.ts:\n(pass) ourStatus > maps what GHL says onto where the post actually is [0.07ms]\n(pass) ourStatus > is not case sensitive, because their casing is not consistent [0.02ms]\n(pass) ourStatus > carries an unfamiliar status through rather than inventing one\n(pass) spread > puts one post per slot across the month, in order [0.24ms]\n(pass) spread > never schedules the 1st, so a batch approved that morning is not late [0.12ms]\n(pass) spread > stays inside the month, including a short one [0.10ms]\n(pass) spread > handles a leap February [0.03ms]\n(pass) spread > posts mid-morning in Kuwait, not at midnight [0.02ms]\n(pass) spread > does not stack two posts on the same day for a normal month [0.14ms]\n(pass) GhlError > tells a missing scope apart from a bad token [0.17ms]\n(pass) GhlError > translates Invalid JWT into the thing that is actually wrong [0.03ms]\n(pass) GhlError > names the scopes a refused token needs [0.01ms]\n(pass) GhlError > says a 404 is a missing sub-account, not a broken call\n(pass) GhlError > passes anything else through with its body [0.01ms]\n(pass) VERSION > keeps the read and write versions separate\n(pass) what the live API actually wants > sends limit as a number string [0.04ms]\n(pass) what the live API actually wants > clamps the limit but keeps it a string [0.02ms]\n(pass) what the live API actually wants > passes a window through only when given one [0.02ms]\n(pass) reading GHL's answers > finds the post id where GHL actually puts it [0.02ms]\n(pass) reading GHL's answers > still copes if they flatten it or rename the field [0.02ms]\n(pass) reading GHL's answers > returns empty rather than a string of undefined [0.02ms]\n\n 21 pass\n 0 fail\n 185 expect() calls\nRan 21 tests across 1 file. [22.00ms]\n",
+      "duration_s": 0.07
+    },
+    {
+      "cmd": [
+        "C:\\Users\\20106\\AppData\\Roaming\\npm\\bun.CMD",
+        "test",
+        "apps/sales-cockpit/src/lib/pay.test.ts"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-verification\\mahara-cockpits",
+      "returncode": 0,
+      "stdout": "bun test v1.4.2 (744846f84)\n",
+      "stderr": "\napps\\sales-cockpit\\src\\lib\\pay.test.ts:\n(pass) working days (Saturday to Thursday, Friday off) > a whole week is six days, with or without its Friday [0.25ms]\n(pass) working days (Saturday to Thursday, Friday off) > September 2026 has 26 working days, August 27 [0.72ms]\n(pass) working days (Saturday to Thursday, Friday off) > an empty or reversed range is zero [0.04ms]\n(pass) working days (Saturday to Thursday, Friday off) > elapsed counts today, and stops at the period's end [0.09ms]\n(pass) projection > actual \u00f7 elapsed \u00d7 total [0.05ms]\n(pass) projection > nothing to project before the first working day, or without an actual [0.02ms]\n(pass) projection > a finished period projects to what it made\n(pass) periods and windows > the week starts on Saturday [0.06ms]\n(pass) periods and windows > month ends, leap years included [0.18ms]\n(pass) periods and windows > goal periods: Saturday to Thursday, or the calendar month [0.10ms]\n(pass) periods and windows > window days match the mirror's (Kuwait days) [0.12ms]\n(pass) periods and windows > half past midnight in Kuwait is already the next day [0.02ms]\n(pass) pace verdict > met, on track, close, behind [0.05ms]\n(pass) pace verdict > a finished period is met or missed [0.02ms]\n(pass) pace verdict > no verdict without an actual, a goal or a projection [0.02ms]\n(pass) pay estimate (Aziz, 2026-09-24) > $2,000 upfront of $6,000 at 10%: $200 now, $400 later, no bonus [0.18ms]\n(pass) pay estimate (Aziz, 2026-09-24) > $6,000 of $6,000: $600 now and the $250 paid-in-full bonus [0.02ms]\n(pass) pay estimate (Aziz, 2026-09-24) > both deals together, amounts as B2B sends them (strings) [0.04ms]\n(pass) pay estimate (Aziz, 2026-09-24) > a deal missing an amount is counted apart, never as zero [0.02ms]\n(pass) pay estimate (Aziz, 2026-09-24) > a zero contract is not paid in full [0.01ms]\n(pass) pay estimate (Aziz, 2026-09-24) > an empty rule earns nothing it can name [0.22ms]\n(pass) pay estimate (Aziz, 2026-09-24) > a fixed amount per signed client [0.05ms]\n(pass) pay rules > {} and a lone currency are not a rule [0.09ms]\n(pass) pay rules > the closer plan in words [1.93ms]\n(pass) pay rules > a setter's rule in words [0.20ms]\n(pass) pay rules > the form round trip: 10 is sent as 0.10, blanks are left out [0.27ms]\n(pass) pay rules > the form refuses what the server would [0.11ms]\n(pass) goals form > blank is no goal; keys the page does not edit are kept [0.18ms]\n(pass) goals form > refuses a negative goal [0.04ms]\n(pass) closer matching > aliases and the display name, any case, outer spaces ignored [0.19ms]\n(pass) closer matching > no rep, no names [0.01ms]\n(pass) team total > rates come from the summed counts, never from averaged rates [0.27ms]\n(pass) team total > close rate on qualified demos and the average deal, as B2B rounds them [0.37ms]\n(pass) team total > with nothing to divide by, a rate is unknown rather than zero [0.08ms]\n(pass) team total > goals read the scorecard, dials read Maqsam [0.07ms]\n(pass) dials > outbound, connected, talk time and inbound [0.08ms]\n\n 36 pass\n 0 fail\n 114 expect() calls\nRan 36 tests across 1 file. [28.00ms]\n",
+      "duration_s": 0.08
+    },
+    {
+      "cmd": [
+        "C:\\Users\\20106\\AppData\\Roaming\\npm\\bun.CMD",
+        "test",
+        "apps/sales-cockpit/src/lib/goals.test.ts"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-verification\\mahara-cockpits",
+      "returncode": 0,
+      "stdout": "bun test v1.4.2 (744846f84)\n",
+      "stderr": "\napps\\sales-cockpit\\src\\lib\\goals.test.ts:\n(pass) months > Kuwait's month, then back through the year [0.35ms]\n(pass) months > shifting and naming [7.67ms]\n(pass) the goal in force > the month's own row wins over the seat's standing goal [0.24ms]\n(pass) the goal in force > a month with no row takes the standing goal, and says so [0.03ms]\n(pass) the goal in force > a row with only a forecast does not hide the standing goal [0.02ms]\n(pass) the goal in force > no goal anywhere is no goal, not zero [0.01ms]\n(pass) a month's lines > mid-month: the pace projects to the month's working days [1.40ms]\n(pass) a month's lines > a pace under four fifths of the goal is behind [0.13ms]\n(pass) a month's lines > a finished month is met or missed on the actual [0.31ms]\n(pass) a month's lines > no scorecard is no data, not zero; no Maqsam address is no dials [0.11ms]\n(pass) a month's lines > a month that has not begun has no actuals yet [0.10ms]\n\n 11 pass\n 0 fail\n 22 expect() calls\nRan 11 tests across 1 file. [32.00ms]\n",
+      "duration_s": 0.08
+    },
+    {
+      "cmd": [
+        "C:\\Users\\20106\\AppData\\Roaming\\npm\\bun.CMD",
+        "test",
+        "apps/sales-cockpit/src/lib/env.test.ts"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-verification\\mahara-cockpits",
+      "returncode": 0,
+      "stdout": "bun test v1.4.2 (744846f84)\n",
+      "stderr": "\napps\\sales-cockpit\\src\\lib\\env.test.ts:\n(pass) supabaseEnvProblem > the project's anon key and address pass [0.82ms]\n(pass) supabaseEnvProblem > missing values are named [0.08ms]\n(pass) supabaseEnvProblem > Vercel ciphertext in place of the address is refused (2026-09-24) [0.08ms]\n(pass) supabaseEnvProblem > a service key never reaches the browser [0.04ms]\n(pass) supabaseEnvProblem > a key from another project is refused [0.02ms]\n(pass) supabaseEnvProblem > an address that is not a Supabase project is refused [0.01ms]\n\n 6 pass\n 0 fail\n 10 expect() calls\nRan 6 tests across 1 file. [22.00ms]\n",
+      "duration_s": 0.07
+    },
+    {
+      "cmd": [
+        "C:\\Users\\20106\\AppData\\Roaming\\npm\\bun.CMD",
+        "test",
+        "apps/sales-cockpit/src/components/Prose.test.tsx"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-verification\\mahara-cockpits",
+      "returncode": 0,
+      "stdout": "bun test v1.4.2 (744846f84)\n",
+      "stderr": "\napps\\sales-cockpit\\src\\components\\Prose.test.tsx:\n(pass) Prose > a model's HTML stays text [5.32ms]\n(pass) Prose > only http links become links [0.32ms]\n(pass) Prose > Slack bold, markdown bold, bullets and headings [1.09ms]\n(pass) Prose > Arabic lines set their own direction [0.25ms]\n(pass) Prose > nothing to show is nothing [0.07ms]\n\n 5 pass\n 0 fail\n 13 expect() calls\nRan 5 tests across 1 file. [54.00ms]\n",
+      "duration_s": 0.1
+    }
+  ],
+  "local_checks_passed": true,
+  "release_ready": false,
+  "status": "FAILED",
+  "post_git": {
+    "available": true,
+    "sha": "9c50b9bdaf2bcaaa6740ffcf5e61e3ac3328ed9d",
+    "is_dirty": false,
+    "dirty_files": [],
+    "error": null
+  },
+  "summary": "NOT READY FOR CUTOVER: release acceptance evidence missing or invalid."
+}

@@ -1,7 +1,7 @@
-import { useQuery } from "convex/react";
 import { ChevronRight, Search } from "lucide-react";
-import { useMemo, useRef, useState } from "react";
-import { Link } from "react-router";
+import { useEffect, useMemo, useState } from "react";
+import { Link, useSearchParams } from "react-router";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { PageHeader } from "@/components/PageHeader";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import {
@@ -9,7 +9,9 @@ import {
   type WinnerOrigin,
   WinningAds,
 } from "@/components/WinningAds";
-import { api } from "../../convex/_generated/api";
+import { type ClientRosterResult, fetchClientRoster } from "@/lib/clients";
+import { fetchScriptDatabase, type ScriptDatabaseResult } from "@/lib/playbook";
+import { ClientProfilesView } from "./DashboardPage";
 
 /**
  * The client database.
@@ -17,9 +19,6 @@ import { api } from "../../convex/_generated/api";
  * One row per live client, click through to everything: the Brand DNA and
  * Offer Cheat Sheet you already wrote, every open task with its real ClickUp
  * status, what is live on the ad account right now, and what has run before.
- *
- * Actions queue into the outbox and are executed by the sync, so the screen
- * never pretends a ClickUp write already landed.
  */
 
 /** A status chip: the words stay plain, a dot carries the colour. */
@@ -76,9 +75,43 @@ function SearchBox({
   );
 }
 
+/**
+ * The two ways to see the clients: the list to open one from, and every
+ * client worst first with the creative picture folded under each (it was
+ * /profiles, which nothing linked to; the simplification audit, 2026-10-06).
+ */
+const VIEWS = [
+  { key: "all", label: "All clients", to: "/clients" },
+  { key: "worst", label: "Worst first", to: "/clients?view=worst" },
+];
+
 export function ClientDatabasePage() {
-  const data = useQuery(api.clients.roster, {});
+  const auth = useCockpitAuth();
+  const [data, setData] = useState<ClientRosterResult | null | undefined>(
+    undefined,
+  );
   const [q, setQ] = useState("");
+  const [params] = useSearchParams();
+  const view = params.get("view") === "worst" ? "worst" : "all";
+
+  useEffect(() => {
+    if (!auth.client) {
+      setData(null);
+      return;
+    }
+    let cancelled = false;
+    void fetchClientRoster(auth.client, auth.clients)
+      .then(res => {
+        if (!cancelled) setData(res);
+      })
+      .catch(err => {
+        console.error("Failed to load client roster:", err);
+        if (!cancelled) setData(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [auth.client, auth.clients]);
 
   const rows = useMemo(() => {
     if (!data) return [];
@@ -97,83 +130,132 @@ export function ClientDatabasePage() {
     );
   }
 
+  if (data === null) {
+    return (
+      <p className="p-4 text-[14px] text-muted-foreground">
+        Unable to load clients.
+      </p>
+    );
+  }
+
   return (
     <div className="mx-auto w-full max-w-6xl">
       <PageHeader
         title="Clients"
         sub={`${data.counts.live} live · ${data.counts.toContact} waiting on you`}
         actions={
-          <SearchBox value={q} onChange={setQ} placeholder="Find a client" />
+          view === "all" ? (
+            <SearchBox value={q} onChange={setQ} placeholder="Find a client" />
+          ) : undefined
         }
       />
 
-      <div className="divide-y overflow-hidden rounded-xl border">
-        {rows.map(r => (
+      <nav aria-label="Show the clients" className="-mt-2 mb-4 flex gap-1.5">
+        {VIEWS.map(v => (
           <Link
-            key={r.taskId}
-            to={`/clients/${encodeURIComponent(r.name)}`}
-            className="flex items-center gap-3 px-4 py-3 text-sm hover:bg-muted/40"
+            key={v.key}
+            to={v.to}
+            aria-current={view === v.key ? "page" : undefined}
+            className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+              view === v.key
+                ? "border-primary/50 bg-primary/10 text-foreground"
+                : "text-muted-foreground hover:border-primary/40 hover:text-foreground"
+            }`}
           >
-            {/* The flags drop to their own line on a phone rather than
-                squeezing the client's name to nothing. */}
-            <span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1">
-              <span className="flex min-w-0 items-center gap-2">
-                <strong className="min-w-0 truncate font-medium" dir="auto">
-                  {r.name}
-                </strong>
-                <Pill tone={r.prelaunch ? "warn" : "neutral"}>
-                  {r.clientStatus}
-                </Pill>
-              </span>
-              <span className="flex basis-full flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground sm:ml-auto sm:basis-auto">
-                {r.hisMove > 0 && (
-                  <span className="txt-bad">{r.hisMove} on you</span>
-                )}
-                {r.openScripts > 0 && <span>{r.openScripts} scripts</span>}
-                {r.openVideos > 0 && <span>{r.openVideos} videos</span>}
-                {!r.docsReady && <span className="txt-bad">Docs missing</span>}
-              </span>
-            </span>
-            <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
+            {v.label}
           </Link>
         ))}
-        {rows.length === 0 && (
-          <p className="px-4 py-3 text-sm text-muted-foreground">
-            {q.trim() ? "No client matches that." : "No live clients yet."}
-          </p>
-        )}
-      </div>
+      </nav>
+
+      {view === "worst" ? (
+        <ClientProfilesView />
+      ) : (
+        <div className="divide-y overflow-hidden rounded-xl border">
+          {rows.map(r => (
+            <Link
+              key={r.taskId}
+              to={`/clients/${encodeURIComponent(r.name)}`}
+              className="flex items-center gap-3 px-4 py-3 text-sm hover:bg-muted/40"
+            >
+              {/* The flags drop to their own line on a phone rather than
+                squeezing the client's name to nothing. */}
+              <span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1">
+                <span className="flex min-w-0 items-center gap-2">
+                  <strong className="min-w-0 truncate font-medium" dir="auto">
+                    {r.name}
+                  </strong>
+                  <Pill tone={r.prelaunch ? "warn" : "neutral"}>
+                    {r.clientStatus}
+                  </Pill>
+                </span>
+                <span className="flex basis-full flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground sm:ml-auto sm:basis-auto">
+                  {r.hisMove > 0 && (
+                    <span className="txt-bad">{r.hisMove} on you</span>
+                  )}
+                  {r.openScripts > 0 && <span>{r.openScripts} scripts</span>}
+                  {r.openVideos > 0 && <span>{r.openVideos} videos</span>}
+                  {!r.docsReady && (
+                    <span className="txt-bad">Docs missing</span>
+                  )}
+                </span>
+              </span>
+              <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
+            </Link>
+          ))}
+          {rows.length === 0 && (
+            <p className="px-4 py-3 text-sm text-muted-foreground">
+              {q.trim() ? "No client matches that." : "No live clients yet."}
+            </p>
+          )}
+        </div>
+      )}
     </div>
   );
 }
 
 /**
  * The scripting database.
- *
- * Aziz, 2026-09-07: the first version of this was a bare table of ad names and
- * it did not help anyone. So it is now the same view the media buyer has, on
- * the same rows: the creative itself, watchable, with the hook, the copy and
- * the transcript, and one click through to the client it ran for.
  */
 export function ScriptDatabasePage() {
+  const auth = useCockpitAuth();
   const [service, setService] = useState<string>("");
   const [liveOnly, setLiveOnly] = useState(false);
   const [q, setQ] = useState("");
   const [origin, setOrigin] = useState<WinnerOrigin>("all");
   const [savedBy, setSavedBy] = useState("");
-  const latest = useQuery(api.winners.list, {
-    serviceLine: service || undefined,
-    liveOnly: liveOnly || undefined,
-    limit: 200,
-    origin: origin === "all" ? undefined : origin,
-    savedBy: savedBy || undefined,
-  });
-  // A new filter loads in the background: keep showing the last list so the
-  // page (and the "Saved by" names it has seen) stays put meanwhile.
-  const kept = useRef(latest);
-  if (latest !== undefined) kept.current = latest;
-  const data = latest ?? kept.current;
-  const roster = useQuery(api.clients.roster, {});
+  const [data, setData] = useState<ScriptDatabaseResult | undefined>(undefined);
+  const [roster, setRoster] = useState<ClientRosterResult | null>(null);
+
+  useEffect(() => {
+    if (!auth.client) return;
+    void fetchClientRoster(auth.client, auth.clients)
+      .then(setRoster)
+      .catch(console.error);
+  }, [auth.client, auth.clients]);
+
+  useEffect(() => {
+    if (!auth.client) {
+      setData(undefined);
+      return;
+    }
+    let cancelled = false;
+    void fetchScriptDatabase(auth.client, {
+      serviceLine: service || undefined,
+      liveOnly: liveOnly || undefined,
+      limit: 200,
+      origin: origin === "all" ? undefined : origin,
+      savedBy: savedBy || undefined,
+    })
+      .then(res => {
+        if (!cancelled) setData(res);
+      })
+      .catch(err => {
+        console.error("Failed to load script database:", err);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [auth.client, service, liveOnly, origin, savedBy]);
 
   const rows = useMemo(() => {
     if (!data) return undefined;

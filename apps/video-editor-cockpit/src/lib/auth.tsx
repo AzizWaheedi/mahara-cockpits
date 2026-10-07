@@ -5,20 +5,29 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
+import {
+  observeSupabaseAccess,
+  type SupabaseAccessObserver,
+  type SupabaseAccessState,
+} from "../auth/supabaseAccess";
 import { supabase } from "./supabase";
 
 interface Who {
   session: Session | null;
   email: string;
   name: string;
-  /** Portal roles, from app_metadata, which only the portal can write. */
+  /** Current confirmed directory roles; profile metadata never grants access. */
   roles: string[];
   /** The other cockpits this person may open. */
   cockpits: string[];
   isAdmin: boolean;
+  isCeo: boolean;
   ready: boolean;
+  error: string | null;
+  refreshAccess: () => Promise<void>;
   signOut: () => Promise<void>;
 }
 
@@ -29,23 +38,30 @@ const Ctx = createContext<Who>({
   roles: [],
   cockpits: [],
   isAdmin: false,
+  isCeo: false,
   ready: false,
+  error: null,
+  refreshAccess: async () => {},
   signOut: async () => {},
 });
 
 export function SessionProvider({ children }: { children: ReactNode }) {
-  const [session, setSession] = useState<Session | null>(null);
-  const [ready, setReady] = useState(false);
+  const [state, setState] = useState<SupabaseAccessState>({
+    session: null,
+    access: null,
+    ready: false,
+    error: null,
+  });
+  const { session, access, ready, error } = state;
+  const observer = useRef<SupabaseAccessObserver | null>(null);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      setSession(data.session);
-      setReady(true);
-    });
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, next) =>
-      setSession(next),
-    );
-    return () => sub.subscription.unsubscribe();
+    const subscription = observeSupabaseAccess(supabase, setState);
+    observer.current = subscription;
+    return () => {
+      subscription.unsubscribe();
+      observer.current = null;
+    };
   }, []);
 
   const value = useMemo<Who>(() => {
@@ -53,23 +69,26 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     const meta = session?.user?.user_metadata as
       | { name?: string; full_name?: string }
       | undefined;
-    const app = session?.user?.app_metadata as
-      | { roles?: string[]; cockpits?: string[] }
-      | undefined;
-    const roles = app?.roles ?? [];
+    const roles = access?.roles ?? [];
     return {
       session,
       email,
       name: meta?.name || meta?.full_name || email.split("@")[0] || "",
       roles,
-      cockpits: app?.cockpits ?? [],
-      isAdmin: roles.includes("admin"),
+      cockpits: access?.cockpits ?? [],
+      isAdmin: access?.isAdmin ?? false,
+      isCeo: access?.isCeo ?? false,
       ready,
+      error,
+      refreshAccess: async () => {
+        await observer.current?.refresh();
+      },
       signOut: async () => {
-        await supabase.auth.signOut();
+        const { error: signOutError } = await supabase.auth.signOut();
+        if (signOutError) throw signOutError;
       },
     };
-  }, [session, ready]);
+  }, [session, access, ready, error]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

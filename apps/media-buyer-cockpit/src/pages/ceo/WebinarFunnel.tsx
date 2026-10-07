@@ -1,4 +1,3 @@
-import { useAction } from "convex/react";
 import { Check, TriangleAlert } from "lucide-react";
 import { type ReactNode, useId, useMemo, useState } from "react";
 import {
@@ -33,14 +32,12 @@ import { StatTile } from "@/components/ceo/StatTile";
 import { StatusChip } from "@/components/ceo/StatusChip";
 import type { CeoSection } from "@/components/ceo/useCeo";
 import { Button } from "@/components/ui/button";
-import { api } from "../../../convex/_generated/api";
-import type {
-  WebinarPayload,
-  WebinarRound,
-} from "../../../convex/ceo/payloads";
-import { webinarReadiness } from "../../../convex/ceo/webinarReadiness";
-import type { Room } from "../../../convex/ceo/webinarRoom";
-import type { TargetSelection } from "../../../convex/ceo/webinarTargetsModel";
+import { api, useAction } from "@/lib/cockpitApi";
+import type { WebinarPayload, WebinarRound } from "@/types/ceo/payloads";
+import { webinarReadiness } from "@/types/ceo/webinarReadiness";
+import type { Room } from "@/types/ceo/webinarRoom";
+import type { TargetSelection } from "@/types/ceo/webinarTargetsModel";
+
 import { WebinarTargetsEditor } from "./WebinarTargetsEditor";
 
 /**

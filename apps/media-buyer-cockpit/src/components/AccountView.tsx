@@ -1,4 +1,3 @@
-import { useQueries, useQuery } from "convex/react";
 import { ChevronLeft } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { CreativePreview } from "@/components/CreativePreview";
@@ -16,10 +15,10 @@ import {
 import { StatusToggle } from "@/components/StatusToggle";
 import { TrendChart } from "@/components/TrendChart";
 import { Button } from "@/components/ui/button";
+import { api, useQueries, useQuery } from "@/lib/cockpitApi";
 import { CPB_GATE, CPL_GATE } from "@/lib/kpi";
 import { kuwaitDay, type Range } from "@/lib/range";
 import { cn } from "@/lib/utils";
-import { api } from "../../convex/_generated/api";
 
 /**
  * One client on a page of its own: everything the Ads management table can

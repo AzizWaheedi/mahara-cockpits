@@ -1,14 +1,14 @@
-import { useMutation } from "convex/react";
 import {
   AnimatePresence,
   MotionConfig,
   motion,
   useReducedMotion,
 } from "framer-motion";
-import { useLayoutEffect, useRef } from "react";
+import { useCallback, useLayoutEffect, useRef } from "react";
 import { useLocation, useOutlet } from "react-router";
-import { api } from "../../convex/_generated/api";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { AppSidebar } from "./AppSidebar";
+import { CommandPalette } from "./CommandPalette";
 import { HermesChat } from "./HermesChat";
 import { MobileTabBar } from "./MobileTabBar";
 import { OfflineBanner } from "./OfflineBanner";
@@ -26,13 +26,32 @@ export function AppLayout() {
 }
 
 function LayoutContent() {
-  const report = useMutation(api.issues.report);
+  const { client } = useCockpitAuth();
   const outlet = useOutlet();
   const location = useLocation();
   const reduced = useReducedMotion();
   const { open, isMobile } = useSidebar();
   const inset = useRef<HTMLDivElement>(null);
   const previousOpen = useRef(open);
+
+  const handleReport = useCallback(
+    // biome-ignore lint/suspicious/noExplicitAny: error boundary param
+    async (r: any) => {
+      if (!client) return;
+      try {
+        const { error } = await client.rpc("cockpit_submit_issue_report", {
+          p_app: "media-buyer",
+          p_page: location.pathname,
+          p_text: typeof r === "string" ? r : (r?.message ?? "App error"),
+          p_role: "media_buyer",
+        });
+        if (error) throw error;
+      } catch (err) {
+        console.error("Failed to report issue:", err);
+      }
+    },
+    [client, location.pathname],
+  );
   useLayoutEffect(() => {
     if (previousOpen.current === open) return;
     previousOpen.current = open;
@@ -63,7 +82,7 @@ function LayoutContent() {
             it clear of the tab bar. */}
         <main className="flex-1 px-4 pt-[max(1rem,env(safe-area-inset-top))] pb-28 sm:px-6 sm:pt-[max(1.5rem,env(safe-area-inset-top))] lg:px-8 lg:pt-8 lg:pb-12">
           <OfflineBanner />
-          <RouteErrorBoundary report={r => report(r)}>
+          <RouteErrorBoundary report={handleReport}>
             <AnimatePresence initial={false} mode="wait">
               <motion.div
                 key={location.pathname}
@@ -84,6 +103,7 @@ function LayoutContent() {
             </AnimatePresence>
           </RouteErrorBoundary>
         </main>
+        <CommandPalette />
         <HermesChat />
         <MobileTabBar />
       </SidebarInset>

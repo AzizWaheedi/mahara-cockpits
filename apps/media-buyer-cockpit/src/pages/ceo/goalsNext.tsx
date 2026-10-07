@@ -1,4 +1,3 @@
-import { useAction } from "convex/react";
 import { Loader2, Wand2 } from "lucide-react";
 import { Fragment, type ReactNode, useMemo, useRef, useState } from "react";
 import { count, money, pct } from "@/components/ceo/format";
@@ -7,11 +6,11 @@ import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatusChip, StatusDot } from "@/components/ceo/StatusChip";
 import { Button } from "@/components/ui/button";
 import { DateInput } from "@/components/ui/date-input";
+import { api, useAction } from "@/lib/cockpitApi";
 import { BOOKING_RATE_GATE, CPB_GATE, CPL_GATE } from "@/lib/kpi";
 import { cn } from "@/lib/utils";
-import { api } from "../../../convex/_generated/api";
-import { payroll } from "../../../convex/ceo/costsModel";
-import type { Board, TargetRow } from "../../../convex/ceo/goals";
+import { payroll } from "@/types/ceo/costsModel";
+import type { Board, TargetRow } from "@/types/ceo/goals";
 import { fmt, paceTone, planName, planTitle, worstThree } from "./goalsKit";
 import {
   ALWAYS,
@@ -646,6 +645,11 @@ export function NextMonth({
                         unit="usd"
                       />
                     </Line>
+                    {costs.unpriced.length ? (
+                      <p className="text-xs text-muted-foreground">
+                        {`Cost totals leave out ${costs.unpriced.join(", ")} because their currencies have no planning rate. Update them on Costs before relying on the profit projection.`}
+                      </p>
+                    ) : null}
                     {costs.marketingUsd > 0 ? (
                       <Line label="Other marketing, from Costs">
                         <Worked value={costs.marketingUsd} unit="usd" />
@@ -663,6 +667,11 @@ export function NextMonth({
                   </>
                 ) : (
                   <>
+                    <p className="text-xs text-muted-foreground">
+                      The Costs sheet could not be read. These are typed
+                      planning amounts, not current payroll or software totals.
+                      Open Costs to check them before saving.
+                    </p>
                     <Line label="Payroll">{input("labour", "Payroll")}</Line>
                     <Line label="Software and overhead">
                       {input("overhead", "Software and overhead")}

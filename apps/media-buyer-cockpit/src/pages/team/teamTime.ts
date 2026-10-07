@@ -9,7 +9,7 @@ import {
   utcToZoned,
   zonedToUtc,
   zoneOffset,
-} from "../../../convex/teamCore";
+} from "@/lib/teamCore";
 
 /**
  * Meeting times in the viewer's own zone (the CEO, 2026-09-30: "make sure

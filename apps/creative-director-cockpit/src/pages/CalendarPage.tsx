@@ -1,20 +1,19 @@
-import { useMutation, useQuery } from "convex/react";
-import {
-  ArrowUpRight,
-  CalendarDays,
-  FolderOpen,
-  Plus,
-  Sparkles,
-} from "lucide-react";
-import { useMemo, useState } from "react";
+import { ArrowUpRight, CalendarDays, Plus, Sparkles } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router";
-import { api } from "@/../convex/_generated/api";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
+
 import { PageHeader } from "@/components/PageHeader";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
 import { DateInput } from "@/components/ui/date-input";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  fetchCalendar,
+  fetchScriptQueue,
+  queueClientAction,
+} from "@/lib/clients";
 
 /**
  * The scripting calendar.
@@ -179,10 +178,43 @@ function QueueRow({
  */
 function ScriptQueue({
   onPlan,
+  onReadyChange,
 }: {
   onPlan: (client: string, title: string) => void;
+  onReadyChange?: (ready: boolean) => void;
 }) {
-  const q = useQuery(api.creative.scriptQueue, {});
+  const auth = useCockpitAuth();
+  // biome-ignore lint/suspicious/noExplicitAny: query shape is untyped
+  const [q, setQ] = useState<any>(undefined);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    onReadyChange?.(false);
+    setError(null);
+    if (!auth.client) return;
+    let cancelled = false;
+    void fetchScriptQueue(auth.client)
+      .then(res => {
+        if (!cancelled) {
+          setQ(res);
+          onReadyChange?.(true);
+        }
+      })
+      .catch(reason => {
+        if (!cancelled) {
+          setError(reason instanceof Error ? reason.message : String(reason));
+          onReadyChange?.(true);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [auth.client, onReadyChange]);
+  if (error)
+    return (
+      <p role="alert" className="text-sm">
+        Could not load the script queue: {error}. Reload to try again.
+      </p>
+    );
   if (!q) return null;
   // biome-ignore lint/suspicious/noExplicitAny: query payload is untyped
   const rows = q.rows as any[];
@@ -222,9 +254,41 @@ function ScriptQueue({
   );
 }
 
-export function ScriptingCalendar({ compact = false }: { compact?: boolean }) {
-  const cal = useQuery(api.creative.calendar, {});
-  const queueAction = useMutation(api.clients.queueAction);
+export function ScriptingCalendar({
+  compact = false,
+  onReadyChange,
+}: {
+  compact?: boolean;
+  onReadyChange?: (ready: boolean) => void;
+}) {
+  const auth = useCockpitAuth();
+  // biome-ignore lint/suspicious/noExplicitAny: calendar shape is untyped
+  const [cal, setCal] = useState<any>(undefined);
+  const [error, setError] = useState<string | null>(null);
+  const queueAction = async (args: any) => {
+    if (!auth.client) return;
+    await queueClientAction(auth.client, args);
+  };
+
+  useEffect(() => {
+    onReadyChange?.(false);
+    setError(null);
+    if (!auth.client) return;
+    let cancelled = false;
+    void fetchCalendar(auth.client)
+      .then(res => {
+        if (!cancelled) setCal(res);
+      })
+      .catch(reason => {
+        if (!cancelled) {
+          setError(reason instanceof Error ? reason.message : String(reason));
+          onReadyChange?.(true);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [auth.client, onReadyChange]);
 
   const [moving, setMoving] = useState<string | null>(null);
   const [moveTo, setMoveTo] = useState(todayKey());
@@ -240,6 +304,13 @@ export function ScriptingCalendar({ compact = false }: { compact?: boolean }) {
     () => (cal?.clients ?? []).map((c: any) => c.name),
     [cal],
   );
+
+  if (error)
+    return (
+      <p role="alert" className="text-sm">
+        Could not load the scripting calendar: {error}. Reload to try again.
+      </p>
+    );
 
   if (cal === undefined) {
     return <p className="text-sm text-muted-foreground">Loading…</p>;
@@ -293,8 +364,8 @@ export function ScriptingCalendar({ compact = false }: { compact?: boolean }) {
       }
     >
       {compact ? (
-        // Inside the middle of the day the page already has its title, so
-        // the calendar is a section of it, not a second page.
+        // Inside Today the page already has its title, so the calendar is a
+        // section of it, not a second page.
         <CardHead icon={CalendarDays} title="Scripting calendar" sub={counts} />
       ) : (
         <PageHeader title="Scripting calendar" sub={counts} />
@@ -354,6 +425,7 @@ export function ScriptingCalendar({ compact = false }: { compact?: boolean }) {
       </section>
 
       <ScriptQueue
+        onReadyChange={onReadyChange}
         onPlan={(client, title) => {
           setPlanClient(client);
           setPlanTitle(title);
@@ -475,13 +547,20 @@ export function ScriptingCalendar({ compact = false }: { compact?: boolean }) {
       </section>
 
       {/* Drive ---------------------------------------------------------------- */}
-      <section className={`${CARD} overflow-hidden`}>
-        <CardHead
-          icon={FolderOpen}
-          title="Client Drive folders"
-          sub="Scripts and footage, straight from the client folder"
-        />
-        <ul className="-mx-4 -mb-4 mt-4 divide-y border-t sm:-mx-6 sm:-mb-6">
+      {/* A reference list as long as the rest of the calendar, so it starts
+          folded: Today stays about what to write. A client's own page links
+          their folder too. [simplification audit, 2026-10-06] */}
+      <details className="overflow-hidden rounded-2xl border bg-card">
+        <summary className="flex flex-wrap items-center gap-x-2 gap-y-0.5 px-4 py-3 sm:px-6">
+          <span className="text-[15px] font-semibold">
+            Client Drive folders
+          </span>
+          <span className="text-xs text-muted-foreground">
+            Scripts and footage for {cal.clients.length} clients, straight from
+            each folder
+          </span>
+        </summary>
+        <ul className="divide-y border-t">
           {/* biome-ignore lint/suspicious/noExplicitAny: query payload is untyped */}
           {cal.clients.map((c: any) => (
             <li
@@ -535,12 +614,7 @@ export function ScriptingCalendar({ compact = false }: { compact?: boolean }) {
             </li>
           ))}
         </ul>
-      </section>
+      </details>
     </div>
   );
-}
-
-/** Standalone route, kept so a bookmarked /calendar still works. */
-export function CalendarPage() {
-  return <ScriptingCalendar />;
 }

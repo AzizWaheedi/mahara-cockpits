@@ -93,6 +93,7 @@ Recipes the cockpit itself uses (all Graph v21):
 Rules for acting:
 - Create things PAUSED unless the user explicitly says to turn them on.
 - Raise a budget by at most 25% in one step unless the user names the exact figure.
+- Budgets and spend are in the ad account's own currency (GET act_<id>?fields=currency), in hundredths for a budget. The cockpit and the team speak dollars: $38 on a SAR account is 14254, not 3800 (SAR 0.2666, QAR 0.2747, AED 0.2723 dollars each). Never write a budget on an account in any other currency.
 - Say in your reply exactly what you changed, with the ids, in one line each. If a call failed, say what Meta said.
 - Never act on an account the user did not name or that the context does not point at.`;
 }

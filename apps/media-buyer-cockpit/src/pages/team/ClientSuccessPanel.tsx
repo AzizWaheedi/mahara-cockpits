@@ -1,4 +1,3 @@
-import { useAction } from "convex/react";
 import { Loader2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import {
@@ -9,9 +8,9 @@ import {
   ProjectionStrip,
   RenewalWindow,
 } from "@/components/projections/ProjectionsKit";
+import { api, useAction } from "@/lib/cockpitApi";
 import type { ProjectionsPage } from "@/lib/projectionsView";
 import { usePageVisible } from "@/lib/usePageVisible";
-import { api } from "../../../convex/_generated/api";
 import { errorText } from "./teamKit";
 
 /**
@@ -62,6 +61,7 @@ export function ClientSuccessPanel({
       ...(page?.owner ? { forEmail: page.owner } : {}),
     })) as ProjectionsPage;
     setPage(next);
+    setError(null);
   };
   const onBook: Book = async a => {
     await book({ meetingId, ...a });

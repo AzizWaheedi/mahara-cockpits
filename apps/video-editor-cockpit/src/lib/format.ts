@@ -2,6 +2,11 @@
 
 const KUWAIT = "Asia/Kuwait";
 
+/** Filing day is Kuwait UTC+3, independent of the browser's local timezone. */
+export function kuwaitDay(now = new Date()): string {
+  return new Date(now.getTime() + 3 * 60 * 60_000).toISOString().slice(0, 10);
+}
+
 /** What an empty value reads as, in words rather than dashes. */
 const NOT_SET = "Not set";
 

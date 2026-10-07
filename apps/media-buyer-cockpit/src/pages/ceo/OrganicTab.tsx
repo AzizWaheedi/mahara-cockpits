@@ -6,7 +6,7 @@ import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatTile } from "@/components/ceo/StatTile";
 import { StatusChip } from "@/components/ceo/StatusChip";
 import { buttonVariants } from "@/components/ui/button";
-import type { OrganicPayload } from "../../../convex/ceo/payloads";
+import type { OrganicPayload } from "@/types/ceo/payloads";
 import { ContentBusiness } from "./contentBusiness";
 import type { CeoTabProps } from "./types";
 

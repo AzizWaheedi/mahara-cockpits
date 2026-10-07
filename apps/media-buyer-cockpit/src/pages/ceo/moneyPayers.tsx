@@ -1,4 +1,3 @@
-import { useAction, useQuery } from "convex/react";
 import { UserSearch } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { EmptyState } from "@/components/ceo/EmptyState";
@@ -8,14 +7,14 @@ import { StatTile } from "@/components/ceo/StatTile";
 import { StatusChip } from "@/components/ceo/StatusChip";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
-import { api } from "../../../convex/_generated/api";
+import { api, useAction, useQuery } from "@/lib/cockpitApi";
 
 // The kit's table look: sentence-case headers in muted 12px, hairline rows.
 const TH =
   "h-9 px-3 text-left text-xs font-medium text-muted-foreground first:pl-0 last:pr-0";
 const TD = "px-3 py-2.5 align-top first:pl-0 last:pr-0";
 
-import type { PayerList, UnmappedPayer } from "../../../convex/ceo/payers";
+import type { PayerList, UnmappedPayer } from "@/types/ceo/payers";
 
 /**
  * Say who each unattributed Whop payer is.
@@ -178,7 +177,7 @@ export function PayerMappingCard({ order }: { order?: number }) {
                           className="ceo-select-sm w-full"
                         >
                           <option value="">Not set</option>
-                          {cards.map(c => (
+                          {cards.map((c: any) => (
                             <option
                               key={c.clickupTaskId}
                               value={c.clickupTaskId}

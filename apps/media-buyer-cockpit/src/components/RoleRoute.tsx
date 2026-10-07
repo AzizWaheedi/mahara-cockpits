@@ -1,6 +1,6 @@
-import { useQuery } from "convex/react";
 import { Navigate, Outlet, useLocation } from "react-router";
-import { api } from "../../convex/_generated/api";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
+
 import { Spinner } from "./ui/spinner";
 
 /**
@@ -9,10 +9,10 @@ import { Spinner } from "./ui/spinner";
  * plainly instead of shown an empty dashboard. The server enforces the same rule.
  */
 export function RoleRoute({ role }: { role: string }) {
-  const me = useQuery(api.roles.me, {});
+  const { access, ready, session } = useCockpitAuth();
   const location = useLocation();
 
-  if (me === undefined) {
+  if (!ready) {
     return (
       <div className="flex min-h-[50vh] items-center justify-center gap-2 text-sm text-muted-foreground">
         <Spinner />
@@ -20,9 +20,12 @@ export function RoleRoute({ role }: { role: string }) {
       </div>
     );
   }
-  if (me.isAdmin || me.roles.includes(role)) return <Outlet />;
-  if (me.home && me.home !== location.pathname)
-    return <Navigate to={me.home} replace />;
+  if (access?.isAdmin || access?.isCeo || access?.roles.includes(role)) {
+    return <Outlet key={session?.user.id ?? "signed-out"} />;
+  }
+  if (access?.home && access.home !== location.pathname) {
+    return <Navigate to={access.home} replace />;
+  }
 
   return (
     <div className="mx-auto max-w-md space-y-2 py-10 text-center">

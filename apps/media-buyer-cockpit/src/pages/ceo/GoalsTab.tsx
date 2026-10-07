@@ -1,4 +1,3 @@
-import { useAction } from "convex/react";
 import { CalendarPlus, Loader2, Pencil, Target } from "lucide-react";
 import {
   type ReactNode,
@@ -21,10 +20,10 @@ import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatusChip, StatusDot } from "@/components/ceo/StatusChip";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
+import { api, useAction } from "@/lib/cockpitApi";
 import { BOOKING_RATE_GATE } from "@/lib/kpi";
 import { cn } from "@/lib/utils";
-import { api } from "../../../convex/_generated/api";
-import type { Board, TargetRow } from "../../../convex/ceo/goals";
+import type { Board, TargetRow } from "@/types/ceo/goals";
 import { PlanEditor } from "./goalsEdit";
 import {
   behindBy,
@@ -363,7 +362,7 @@ export function GoalsTab({ sections, goTab }: CeoTabProps) {
     if (!board?.plan) return null;
     if (!board.behind?.length)
       return "Everything with a number on it is on pace.";
-    const names = board.behind.map(b => b.label.toLowerCase());
+    const names = (board.behind ?? []).map((b: any) => b.label.toLowerCase());
     return `Behind on ${names.slice(0, 3).join(", ")}${names.length > 3 ? ` and ${names.length - 3} more` : ""}.`;
   }, [board]);
 

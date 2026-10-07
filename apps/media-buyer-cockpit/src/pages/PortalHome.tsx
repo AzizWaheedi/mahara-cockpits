@@ -1,10 +1,10 @@
-import { useConvexAuth, useQuery } from "convex/react";
 import { Link, Navigate } from "react-router";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { BackendWait } from "@/components/BackendWait";
 import { Spinner } from "@/components/ui/spinner";
 import { Wordmark } from "@/components/Wordmark";
 import { COCKPIT_ICON } from "@/lib/cockpits";
-import { api } from "../../convex/_generated/api";
+
 import { LoginPage } from "./LoginPage";
 
 export const COCKPIT_META: Record<
@@ -50,8 +50,9 @@ export const COCKPIT_META: Record<
  * automatically brings them to their cockpit."
  */
 export function PortalHome() {
-  const { isAuthenticated, isLoading } = useConvexAuth();
-  if (isLoading)
+  const { ready, session, isAuthenticated } = useCockpitAuth();
+
+  if (!ready) {
     return (
       <BackendWait>
         <div className="flex flex-1 items-center justify-center gap-2 p-10 text-sm text-muted-foreground">
@@ -60,26 +61,33 @@ export function PortalHome() {
         </div>
       </BackendWait>
     );
-  if (!isAuthenticated) return <LoginPage />;
+  }
+
+  if (!session || !isAuthenticated) {
+    return <LoginPage />;
+  }
+
   return <Chooser />;
 }
 
 function Chooser() {
-  const me = useQuery(api.roles.me, {});
-  if (me === undefined)
+  const { isCeo, isAdmin, cockpits, email, name, ready } = useCockpitAuth();
+
+  if (!ready)
     return (
-      <div className="flex flex-1 items-center justify-center gap-2 p-10 text-sm text-muted-foreground">
-        <Spinner />
+      <div className="p-10 text-sm text-muted-foreground">
         Checking your access…
       </div>
     );
-  // The founder opens on his own cockpit's Today; other admins on the admin view.
-  if (me.isCeo) return <Navigate to="/ceo" replace />;
-  if (me.isAdmin) return <Navigate to="/admin" replace />;
-  const cockpits: string[] = me.cockpits ?? [];
-  if (cockpits.length === 1)
+
+  if (isCeo) return <Navigate to="/ceo" replace />;
+  if (isAdmin) return <Navigate to="/admin" replace />;
+
+  if (cockpits.length === 1 && COCKPIT_META[cockpits[0]]) {
     return <Navigate to={COCKPIT_META[cockpits[0]].to} replace />;
-  if (cockpits.length === 0)
+  }
+
+  if (cockpits.length === 0) {
     return (
       <div className="flex flex-1 items-center justify-center p-6">
         <div className="max-w-md space-y-3 text-center">
@@ -88,19 +96,21 @@ function Chooser() {
             No cockpit on your account yet
           </h1>
           <p className="text-sm text-muted-foreground">
-            You are signed in as {me.email}. Ask Aziz to add you in the portal's
+            You are signed in as {email}. Ask Aziz to add you in the portal's
             admin view, then reload this page.
           </p>
         </div>
       </div>
     );
+  }
+
   return (
     <div className="flex flex-1 items-center justify-center p-6">
       <div className="w-full max-w-2xl space-y-6">
         <div className="text-center">
           <Wordmark size="lg" className="mx-auto" />
           <h1 className="mt-4 text-2xl font-semibold tracking-tight">
-            Where to, {me.name?.split(" ")[0] ?? "there"}?
+            Where to, {name ? name.split(" ")[0] : "there"}?
           </h1>
           <p className="text-sm text-muted-foreground">
             You have more than one seat. Pick a cockpit.
@@ -108,6 +118,7 @@ function Chooser() {
         </div>
         <div className="grid gap-3 sm:grid-cols-2">
           {cockpits.map(c => {
+            if (!COCKPIT_META[c]) return null;
             const Icon = COCKPIT_ICON[c];
             return (
               <Link

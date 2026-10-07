@@ -1,0 +1,481 @@
+import { googleYoutubeToken, graph, providerFetch } from "../tools.js";
+import { contentWindow } from "../content.js";
+import { B2B, num, sql } from "../sb.js";
+import { addDays, kuwaitDay } from "../time.js";
+import { voidedDeals } from "../voids.js";
+/**
+ * Mahara's own organic presence: the Facebook Page, @mahara_media on
+ * Instagram, and the maharamedia YouTube channel.
+ *
+ * Facebook and Instagram come straight from the Graph API on the Meta
+ * system-user token the cockpit already holds for ads: the page and the
+ * Instagram business account are in the same Business Manager, so no new
+ * credential was needed. YouTube's public statistics come from the Data API on
+ * the Google service account, once that API is switched on in the Cloud
+ * project; until then the section says exactly which switch, rather than
+ * showing a channel with no numbers.
+ *
+ * Publishing cadence comes from the B2B asset library, which already mirrors
+ * every YouTube video and Instagram reel with its publish date. That is the
+ * one organic fact the business has had all along; the reach and engagement
+ * beside it are new as of 2026-09-19.
+ *
+ * Nothing here is an ad number and nothing here is added to one.
+ */
+const PAGE_ID = "587094101153861";
+const IG_ID = "17841473441237528";
+const YT_HANDLE = "maharamedia";
+const YT_ENABLE_URL = "https://console.developers.google.com/apis/api/youtube.googleapis.com/overview?project=195153154932";
+/**
+ * Page insights answer only to the Page's own token, which the system user
+ * can mint from me/accounts. A metric Meta will not return is null, never a
+ * throw and never a zero. `sum` adds a daily series (new follows), otherwise
+ * the last value of the period is taken.
+ */
+async function pageMetric(pageToken, metric, period, sum = false) {
+    try {
+        const res = await providerFetch(`https://graph.facebook.com/v21.0/${PAGE_ID}/insights?metric=${metric}&period=${period}&access_token=${pageToken}`);
+        const r = (await res.json());
+        if (r.error)
+            return null;
+        const values = (r.data?.[0]?.values ?? [])
+            .map(x => x.value)
+            .filter((x) => typeof x === "number");
+        if (!values.length)
+            return null;
+        return sum ? values.reduce((a, b) => a + b, 0) : values[values.length - 1];
+    }
+    catch {
+        return null;
+    }
+}
+async function pageToken() {
+    try {
+        const r = (await graph("me/accounts", { fields: "id,access_token" }));
+        return r.data?.find(p => p.id === PAGE_ID)?.access_token ?? null;
+    }
+    catch {
+        return null;
+    }
+}
+function median(xs) {
+    if (!xs.length)
+        return null;
+    const s = [...xs].sort((a, b) => a - b);
+    const mid = Math.floor(s.length / 2);
+    return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+}
+/** One post's insights. Reels take `views`; images and carousels do not, so the second try leaves it out. */
+async function mediaInsights(id, type) {
+    const out = {
+        views: null,
+        reach: null,
+        saved: null,
+        shares: null,
+        interactions: null,
+    };
+    const sets = type === "VIDEO"
+        ? [
+            "views,reach,saved,shares,total_interactions",
+            "reach,saved,shares,total_interactions",
+        ]
+        : [
+            "reach,saved,shares,total_interactions",
+            "views,reach,saved,shares,total_interactions",
+        ];
+    for (const metric of sets) {
+        try {
+            const r = (await graph(`${id}/insights`, { metric }));
+            for (const m of r.data ?? []) {
+                const v = m.values?.[0]?.value;
+                if (typeof v !== "number")
+                    continue;
+                if (m.name === "views")
+                    out.views = v;
+                else if (m.name === "reach")
+                    out.reach = v;
+                else if (m.name === "saved")
+                    out.saved = v;
+                else if (m.name === "shares")
+                    out.shares = v;
+                else if (m.name === "total_interactions")
+                    out.interactions = v;
+            }
+            return out;
+        }
+        catch {
+            // try the next set
+        }
+    }
+    return out;
+}
+export const organic = {
+    key: "organic",
+    label: "Organic",
+    compute: async (ctx) => {
+        void ctx;
+        const now = Date.now();
+        const today = kuwaitDay(now);
+        const from28 = addDays(today, -27);
+        const notes = [];
+        const sources = [];
+        const missing = [];
+        // --- Facebook page ----------------------------------------------------
+        let facebook = null;
+        try {
+            const page = (await graph(PAGE_ID, {
+                fields: "id,name,fan_count,followers_count,link",
+            }));
+            const token = await pageToken();
+            const [views, engagements, newFollows] = token
+                ? await Promise.all([
+                    pageMetric(token, "page_views_total", "days_28"),
+                    pageMetric(token, "page_post_engagements", "days_28"),
+                    pageMetric(token, "page_daily_follows_unique", "day", true),
+                ])
+                : [null, null, null];
+            if (views === null)
+                missing.push("Facebook page views");
+            if (engagements === null)
+                missing.push("Facebook post engagement");
+            if (newFollows === null)
+                missing.push("Facebook new followers");
+            facebook = {
+                pageId: String(page.id),
+                name: String(page.name ?? "Facebook page"),
+                url: page.link ? String(page.link) : null,
+                followers: num(page.followers_count ?? page.fan_count),
+                views28: views,
+                engagements28: engagements,
+                newFollowers28: newFollows,
+            };
+            sources.push({
+                name: "Facebook Page (Graph API)",
+                ok: true,
+                freshestAt: now,
+            });
+        }
+        catch (e) {
+            sources.push({
+                name: "Facebook Page (Graph API)",
+                ok: false,
+                note: String(e instanceof Error ? e.message : e).slice(0, 160),
+            });
+        }
+        // --- Instagram business account ---------------------------------------
+        let instagram = null;
+        try {
+            const acct = (await graph(IG_ID, {
+                fields: "id,username,followers_count,media_count",
+            }));
+            const since = Math.floor(new Date(`${from28}T00:00:00Z`).getTime() / 1000);
+            const until = Math.floor(now / 1000);
+            let reach28 = null;
+            let engaged28 = null;
+            try {
+                const ins = (await graph(`${IG_ID}/insights`, {
+                    metric: "reach,accounts_engaged",
+                    period: "day",
+                    metric_type: "total_value",
+                    since,
+                    until,
+                }));
+                for (const m of ins.data ?? []) {
+                    const v = m.total_value?.value;
+                    if (m.name === "reach" && typeof v === "number")
+                        reach28 = v;
+                    if (m.name === "accounts_engaged" && typeof v === "number")
+                        engaged28 = v;
+                }
+            }
+            catch {
+                missing.push("Instagram reach");
+            }
+            const media = (await graph(`${IG_ID}/media`, {
+                fields: "id,media_type,timestamp,like_count,comments_count,permalink,thumbnail_url,media_url,caption",
+                limit: 24,
+            }));
+            const posts = (media.data ?? []).map(m => ({
+                id: String(m.id),
+                type: String(m.media_type ?? ""),
+                at: String(m.timestamp ?? ""),
+                likes: num(m.like_count),
+                comments: num(m.comments_count),
+                url: String(m.permalink ?? ""),
+                thumbnail: m.thumbnail_url
+                    ? String(m.thumbnail_url)
+                    : m.media_type === "IMAGE" && m.media_url
+                        ? String(m.media_url)
+                        : null,
+                caption: m.caption ? String(m.caption).slice(0, 120) : null,
+            }));
+            const from28Ms = new Date(`${from28}T00:00:00Z`).getTime();
+            const published28 = posts.filter(p => Date.parse(p.at) >= from28Ms).length;
+            // Per-post insights, one call each: views is what the platform ranks a
+            // reel on, reach is the people it found. A metric Meta will not return
+            // for a post stays null, never zero.
+            const withInsights = [];
+            for (const p of posts) {
+                const ins = await mediaInsights(p.id, p.type);
+                withInsights.push({ ...p, ...ins, multiple: null });
+            }
+            const normalViews = median(withInsights
+                .map(p => p.views ?? p.reach)
+                .filter((v) => v !== null && v > 0));
+            for (const p of withInsights) {
+                const v = p.views ?? p.reach;
+                p.multiple =
+                    v !== null && normalViews
+                        ? Math.round((v / normalViews) * 100) / 100
+                        : null;
+            }
+            instagram = {
+                id: String(acct.id),
+                username: String(acct.username ?? "mahara_media"),
+                followers: num(acct.followers_count),
+                mediaCount: num(acct.media_count),
+                reach28,
+                engaged28,
+                /** Posts in the last 28 days, counted from the live media list (a floor once it hits the page size). */
+                published28,
+                normalViews,
+                posts: withInsights,
+            };
+            sources.push({
+                name: "Instagram business account (Graph API)",
+                ok: true,
+                freshestAt: now,
+            });
+        }
+        catch (e) {
+            sources.push({
+                name: "Instagram business account (Graph API)",
+                ok: false,
+                note: String(e instanceof Error ? e.message : e).slice(0, 160),
+            });
+        }
+        // --- YouTube channel --------------------------------------------------
+        let youtube = {
+            enabled: false,
+            enableUrl: YT_ENABLE_URL,
+            channelId: null,
+            subscribers: null,
+            views: null,
+            videos: null,
+            published28: null,
+            normalViewsPerDay: null,
+            recent: [],
+        };
+        try {
+            const token = await googleYoutubeToken();
+            const h = { Authorization: `Bearer ${token}` };
+            const ch = await providerFetch(`https://www.googleapis.com/youtube/v3/channels?part=statistics,contentDetails&forHandle=${YT_HANDLE}`, { headers: h });
+            const chText = await ch.text();
+            if (!ch.ok)
+                throw new Error(`HTTP ${ch.status}: ${chText.slice(0, 120)}`);
+            const c = (JSON.parse(chText).items ?? [])[0];
+            if (c) {
+                const stats = (c.statistics ?? {});
+                const uploads = String(c.contentDetails?.relatedPlaylists?.uploads ?? "");
+                const recent = [];
+                if (uploads) {
+                    const pl = await providerFetch(`https://www.googleapis.com/youtube/v3/playlistItems?part=snippet,contentDetails&maxResults=12&playlistId=${uploads}`, { headers: h });
+                    const items = (pl.ok ? (JSON.parse(await pl.text()).items ?? []) : []);
+                    const ids = items
+                        .map(i => String(i.contentDetails?.videoId ?? ""))
+                        .filter(Boolean);
+                    if (ids.length) {
+                        const vs = await providerFetch(`https://www.googleapis.com/youtube/v3/videos?part=statistics,snippet&id=${ids.join(",")}`, { headers: h });
+                        const vids = (vs.ok ? (JSON.parse(await vs.text()).items ?? []) : []);
+                        for (const v of vids) {
+                            const sn = (v.snippet ?? {});
+                            const st = (v.statistics ?? {});
+                            const ageDays = Math.max(1, (now - Date.parse(String(sn.publishedAt ?? ""))) / 86_400_000);
+                            recent.push({
+                                id: String(v.id),
+                                title: String(sn.title ?? ""),
+                                at: String(sn.publishedAt ?? ""),
+                                views: num(st.viewCount),
+                                likes: num(st.likeCount),
+                                comments: num(st.commentCount),
+                                thumbnail: String(sn.thumbnails?.medium?.url ?? "") ||
+                                    null,
+                                viewsPerDay: Math.round((num(st.viewCount) / ageDays) * 10) / 10,
+                                multiple: null,
+                            });
+                        }
+                    }
+                }
+                const from28Ms = new Date(`${from28}T00:00:00Z`).getTime();
+                const normalViewsPerDay = median(recent.map(v => v.viewsPerDay ?? 0).filter(v => v > 0));
+                for (const v of recent)
+                    v.multiple =
+                        v.viewsPerDay !== null && normalViewsPerDay
+                            ? Math.round((v.viewsPerDay / normalViewsPerDay) * 100) / 100
+                            : null;
+                youtube = {
+                    enabled: true,
+                    enableUrl: YT_ENABLE_URL,
+                    channelId: String(c.id),
+                    subscribers: num(stats.subscriberCount),
+                    views: num(stats.viewCount),
+                    videos: num(stats.videoCount),
+                    published28: recent.filter(v => Date.parse(v.at) >= from28Ms).length,
+                    normalViewsPerDay,
+                    recent,
+                };
+                sources.push({ name: "YouTube Data API", ok: true, freshestAt: now });
+            }
+        }
+        catch (e) {
+            sources.push({
+                name: "YouTube Data API",
+                ok: false,
+                note: String(e instanceof Error ? e.message : e).slice(0, 160),
+            });
+            notes.push({
+                level: "warn",
+                text: `YouTube is not measured yet: the YouTube Data API is switched off in the Google Cloud project behind the cockpit's service account. One switch enables it, at the link on the card. Until then the channel's subscribers and views are missing, not zero.`,
+            });
+        }
+        // --- Publishing cadence from the asset library ------------------------
+        const cadence = [];
+        try {
+            const rows = await sql(B2B, `select asset_type,
+                count(*) filter (where published_at >= current_date - 27) as last28,
+                count(*) filter (where published_at >= current_date - 89) as last90,
+                to_char(max(published_at), 'YYYY-MM-DD') as newest
+         from public.assets
+         where asset_type in ('youtube_video','reel')
+         group by asset_type`);
+            for (const r of rows)
+                cadence.push({
+                    platform: String(r.asset_type) === "reel"
+                        ? "Instagram reels"
+                        : "YouTube videos",
+                    last28: num(r.last28),
+                    last90: num(r.last90),
+                    newest: r.newest ? String(r.newest) : null,
+                });
+            sources.push({ name: "B2B asset library (publish dates)", ok: true });
+        }
+        catch (e) {
+            sources.push({
+                name: "B2B asset library (publish dates)",
+                ok: false,
+                note: String(e instanceof Error ? e.message : e).slice(0, 160),
+            });
+        }
+        if (missing.length)
+            notes.push({
+                level: "info",
+                text: `Not returned by Meta on this run: ${missing.join(", ")}. Meta's page insights answer the Page token with empty series for this page, so the page's follower count is live and its 28-day roll-ups are missing rather than zero. Instagram's reach and engaged accounts read fine.`,
+            });
+        notes.push({
+            level: "info",
+            text: `Facebook and Instagram read live from the Graph API on the same token the ads use; the page and the account sit in the same Business Manager. Reach and engaged accounts cover the last 28 days. Publishing cadence comes from the asset library, which mirrors every video and reel with its publish date. None of this is an ad number and none of it is added to one.`,
+        });
+        // What is performing best on each platform: the biggest multiples of
+        // that platform's own normal. Six from Instagram, six from YouTube, kept
+        // apart because a reel and a long video are different work.
+        const best = [];
+        for (const p of instagram?.posts ?? [])
+            if (p.multiple !== null && (p.views ?? p.reach) !== null)
+                best.push({
+                    platform: "instagram",
+                    id: p.id,
+                    url: p.url,
+                    thumbnail: p.thumbnail,
+                    title: p.caption ?? "",
+                    at: p.at,
+                    value: (p.views ?? p.reach),
+                    metric: p.views !== null ? "views" : "reach",
+                    multiple: p.multiple,
+                });
+        for (const v of youtube.recent)
+            if (v.multiple !== null)
+                best.push({
+                    platform: "youtube",
+                    id: v.id,
+                    url: `https://www.youtube.com/watch?v=${v.id}`,
+                    thumbnail: v.thumbnail,
+                    title: v.title,
+                    at: v.at,
+                    value: v.views,
+                    metric: "views",
+                    multiple: v.multiple,
+                });
+        best.sort((a, b) => b.multiple - a.multiple);
+        const bestOf = (platform) => best.filter(b => b.platform === platform).slice(0, 6);
+        // What the content brings in, beside what it reaches. Thirty days, the
+        // cockpit's default timeframe; the tab asks for any other run of days.
+        let business = null;
+        try {
+            business = await contentWindow(addDays(kuwaitDay(), -29), kuwaitDay());
+            sources.push({ name: "B2B contacts, calls and closed deals", ok: true });
+            if (business.totals.organicLeads === 0 && business.totals.leads > 0)
+                notes.push({
+                    level: "warn",
+                    text: `Not one lead in the last thirty days is tagged as coming from content. That is the tagging, not the content: the ROAS tag a setter puts on a lead is a step in the paid funnel, so a contact who arrives from a reel or a DM never gets one and never reaches a lead count anywhere in this cockpit. The contacts and booked calls per platform below are counted from the contact itself and do not need the tag.`,
+                });
+            if (business.dealsOrganic.deals > 0)
+                notes.push({
+                    level: "info",
+                    text: `${business.dealsOrganic.deals} of the ${business.dealsAll.deals} deals signed in this window were put down to something other than ads by the closer who signed them, worth $${business.dealsOrganic.contracted.toLocaleString("en-US")}. That answer on the closing form is the only place a non-paid origin is ever named: no signed deal in the database traces back to an organic contact by its contact id.`,
+                });
+            const voided = business.voided?.deals ?? 0;
+            if (voided > 0)
+                notes.push({
+                    level: "info",
+                    text: `${voidedDeals(voided)} signed in this window ${voided === 1 ? "is" : "are"} left out of every deal figure here ($${(business.voided?.contracted ?? 0).toLocaleString("en-US")} contracted): B2B keeps a voided closing form in its table and marks it void.`,
+                });
+        }
+        catch (e) {
+            sources.push({
+                name: "B2B contacts, calls and closed deals",
+                ok: false,
+                note: String(e instanceof Error ? e.message : e).slice(0, 160),
+            });
+        }
+        const payload = {
+            facebook,
+            instagram,
+            youtube,
+            cadence,
+            business,
+            best: [...bestOf("instagram"), ...bestOf("youtube")],
+            notes,
+        };
+        const daily = [];
+        if (facebook)
+            daily.push({
+                date: today,
+                metric: "organic.facebook.followers",
+                scope: "company",
+                value: facebook.followers,
+            });
+        if (instagram) {
+            daily.push({
+                date: today,
+                metric: "organic.instagram.followers",
+                scope: "company",
+                value: instagram.followers,
+            });
+            if (instagram.reach28 !== null)
+                daily.push({
+                    date: today,
+                    metric: "organic.instagram.reach28",
+                    scope: "company",
+                    value: instagram.reach28,
+                });
+        }
+        if (youtube.enabled && youtube.subscribers !== null)
+            daily.push({
+                date: today,
+                metric: "organic.youtube.subscribers",
+                scope: "company",
+                value: youtube.subscribers,
+            });
+        return { payload, daily, sources };
+    },
+};

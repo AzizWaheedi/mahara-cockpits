@@ -10,8 +10,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { DAY_NAMES, utcToZoned } from "../../../convex/teamCore";
-import type { Person } from "../../../convex/teamPage";
+import type { Person } from "@/lib/team";
+import { DAY_NAMES, utcToZoned } from "@/lib/teamCore";
 import { localToday, viewerZone } from "./teamTime";
 
 /** Native selects styled as the kit's Input, so a phone gets its own picker. */

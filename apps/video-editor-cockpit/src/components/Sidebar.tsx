@@ -1,20 +1,18 @@
 import {
-  Bookmark,
   CalendarDays,
-  Clapperboard,
   Film,
-  Lightbulb,
+  Library,
   ListChecks,
   type LucideIcon,
-  MoonStar,
+  Search,
   Send,
-  Trophy,
 } from "lucide-react";
 import { useEffect, useState } from "react";
-import { NavLink } from "react-router";
+import { NavLink, useLocation } from "react-router";
 import { useWho } from "../lib/auth";
-import { COCKPIT_ICON } from "../lib/cockpits";
+import { COCKPIT_ICON, COCKPIT_SOP } from "../lib/cockpits";
 import { otherCockpits, portalUrl } from "../lib/portal";
+import { openSearch } from "../lib/search";
 import { Wordmark } from "./Wordmark";
 
 /**
@@ -37,26 +35,37 @@ interface Item {
   icon: LucideIcon;
   /** The key in `counts` whose number, when above zero, is worth a mark. */
   badge?: "ready" | "eod";
+  /** Other addresses that are part of this place, so it stays lit there. */
+  also?: RegExp;
 }
 
+/**
+ * Five places (the simplification audit, approved by Aziz on 2026-10-06):
+ * Jobs is home and a job's page is part of it (the board is its second
+ * view, End of day a button on it); the three library pages are one
+ * Library with tabs; Meetings is one place, with the team schedule linked
+ * from it.
+ */
 const GROUPS: { label: string; items: Item[] }[] = [
   {
-    label: "Your day",
+    label: "Your desk",
     items: [
-      { to: "/", label: "Jobs", icon: ListChecks, badge: "ready" },
-      { to: "/pipeline", label: "Pipeline", icon: Clapperboard },
+      {
+        to: "/",
+        label: "Jobs",
+        icon: ListChecks,
+        badge: "ready",
+        also: /^\/(job\/|eod$)/,
+      },
       { to: "/videos", label: "Footage", icon: Film },
       { to: "/send-review", label: "Send for review", icon: Send },
+      {
+        to: "/winners",
+        label: "Library",
+        icon: Library,
+        also: /^\/(ideas|swipe)$/,
+      },
       { to: "/meetings", label: "Meetings", icon: CalendarDays },
-      { to: "/eod", label: "End of day", icon: MoonStar, badge: "eod" },
-    ],
-  },
-  {
-    label: "Library",
-    items: [
-      { to: "/ideas", label: "Ideation", icon: Lightbulb },
-      { to: "/swipe", label: "Swipe file", icon: Bookmark },
-      { to: "/winners", label: "What works", icon: Trophy },
     ],
   },
 ];
@@ -128,17 +137,45 @@ export default function Sidebar({
   onNavigate?: () => void;
 }) {
   const { cockpits, signOut } = useWho();
-  // Team meetings are everybody's, so they sit with the other doors.
-  const foot = [
-    { key: "team", label: "Team meetings", href: `${portalUrl()}/team` },
-    ...otherCockpits(cockpits, isAdmin),
-  ];
+  const { pathname } = useLocation();
+  // The other cockpits. The team's schedule opens from Meetings, so the
+  // sidebar has one Meetings, not two.
+  // The desk's SOP first (ClickUp, a new tab), then the other cockpits.
+  const foot: { key: string; label: string; href: string; newTab?: boolean }[] =
+    [
+      {
+        key: "sop",
+        label: "How to use this desk",
+        href: COCKPIT_SOP.editor,
+        newTab: true,
+      },
+      ...otherCockpits(cockpits, isAdmin),
+    ];
 
   return (
     <div className="flex h-full flex-col gap-6 overflow-y-auto px-3 py-4">
       <a href={`${portalUrl()}/`} className="self-start px-2">
         <Wordmark size="md" />
       </a>
+
+      {/* The search box opens from here, or with Ctrl/Cmd + K anywhere. */}
+      <button
+        type="button"
+        onClick={() => {
+          onNavigate?.();
+          openSearch();
+        }}
+        className="flex h-10 w-full items-center gap-2 rounded-lg border bg-background/60 px-3 text-left text-sm text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+      >
+        <Search aria-hidden className="size-4 shrink-0" />
+        <span className="min-w-0 flex-1 truncate">Search…</span>
+        <kbd className="hidden shrink-0 rounded border px-1.5 py-0.5 font-mono text-[10px] tracking-[0.08em] lg:inline">
+          {typeof navigator !== "undefined" &&
+          /Mac|iPhone|iPad/.test(navigator.platform ?? "")
+            ? "⌘K"
+            : "Ctrl K"}
+        </kbd>
+      </button>
 
       <nav className="flex flex-col gap-5">
         {GROUPS.map(g => (
@@ -147,7 +184,7 @@ export default function Sidebar({
               {g.label}
             </p>
             <ul className="space-y-0.5">
-              {g.items.map(({ to, label, icon: Icon, badge }) => (
+              {g.items.map(({ to, label, icon: Icon, badge, also }) => (
                 <li key={to}>
                   <NavLink
                     to={to}
@@ -155,24 +192,30 @@ export default function Sidebar({
                     onClick={onNavigate}
                     className={({ isActive }) =>
                       `cockpit-nav-link ${ROW} ${
-                        isActive
+                        isActive || also?.test(pathname)
                           ? "font-medium text-foreground"
                           : "text-muted-foreground hover:bg-muted hover:text-foreground"
                       }`
                     }
                   >
-                    {({ isActive }) => (
-                      <>
-                        {isActive ? (
-                          <span aria-hidden className="cockpit-nav-lamp" />
-                        ) : null}
-                        <Icon className="size-4 shrink-0" strokeWidth={1.75} />
-                        <span className="truncate">{label}</span>
-                        {badge ? (
-                          <Mark kind={badge} n={counts[badge] ?? 0} />
-                        ) : null}
-                      </>
-                    )}
+                    {({ isActive: exact }) => {
+                      const isActive = exact || Boolean(also?.test(pathname));
+                      return (
+                        <>
+                          {isActive ? (
+                            <span aria-hidden className="cockpit-nav-lamp" />
+                          ) : null}
+                          <Icon
+                            className="size-4 shrink-0"
+                            strokeWidth={1.75}
+                          />
+                          <span className="truncate">{label}</span>
+                          {badge ? (
+                            <Mark kind={badge} n={counts[badge] ?? 0} />
+                          ) : null}
+                        </>
+                      );
+                    }}
                   </NavLink>
                 </li>
               ))}
@@ -189,6 +232,7 @@ export default function Sidebar({
               <li key={d.key}>
                 <a
                   href={d.href}
+                  {...(d.newTab ? { target: "_blank", rel: "noreferrer" } : {})}
                   className={`${ROW} rounded-xl text-muted-foreground hover:bg-muted hover:text-foreground`}
                 >
                   {Icon ? (

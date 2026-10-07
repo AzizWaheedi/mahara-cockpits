@@ -19,7 +19,6 @@ import {
   useEditorState,
 } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
-import { useAction } from "convex/react";
 import {
   AlignCenter,
   AlignJustify,
@@ -73,7 +72,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { api } from "../../../convex/_generated/api";
+import { api, useAction } from "@/lib/cockpitApi";
 import {
   docHtml,
   docText,
@@ -81,7 +80,7 @@ import {
   PICTURE_MAX_BYTES,
   PICTURE_PATH,
   PICTURE_TYPES,
-} from "../../../convex/teamDoc";
+} from "@/lib/teamDoc";
 import { cleanPasted, sameColour } from "./pasteClean";
 import { errorText, type SaveResult, shortName, when } from "./teamKit";
 
@@ -96,8 +95,8 @@ import { errorText, type SaveResult, shortName, when } from "./teamKit";
  * person chooses (the rule SharedText keeps for the notes).
  *
  * The doc is HTML; one written as plain text before opens converted
- * (convex/teamDoc.ts). A picture goes to the private team-docs bucket before
- * the doc keeps it (convex/teamPictures.ts); one pasted as a web address is
+ * (lib/teamDoc.ts). A picture goes to the private team-docs bucket before
+ * the doc keeps it (the native picture endpoint); one pasted as a web address is
  * copied in. The outline beside the page lists the doc's headings, the one
  * in view lit like the rail's active row.
  */

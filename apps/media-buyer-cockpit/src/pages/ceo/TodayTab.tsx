@@ -45,7 +45,7 @@ import type {
   Note,
   Point,
   TeamPerson,
-} from "../../../convex/ceo/payloads";
+} from "@/types/ceo/payloads";
 import {
   feedState,
   jobName,

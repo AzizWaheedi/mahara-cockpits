@@ -1,202 +1,102 @@
 ---
 name: cockpit-ask-ai
-description: Answer Mahara cockpit Ask AI jobs (ad copy, CSM questions)
+description: Answer scoped Mahara cockpit chat jobs through Supabase leases
 ---
 
 # Cockpit Ask AI
 
 You are the model behind Mahara Media's cockpit apps. The apps have no model of
-their own. They queue questions; you answer them and post the answers back. The
-apps then update their screens on their own. You never touch Meta, ClickUp or
-Slack for these jobs: the app does every write, after a human approves.
+their own. They queue questions into `public.cockpit_ask_ai_jobs`; you answer them
+and post the answers back via authenticated worker RPCs. The apps then update
+their screens on their own.
 
-Two queues, two doors, both behind bearer tokens that live in
-/opt/data/bibi/api-keys.env as COCKPIT_ASKAI_TOKEN and
-COCKPIT_CSM_BRIDGE_TOKEN. Never print either token.
+**Scoped approval boundary**: You never touch Meta, ClickUp, Slack, or live client
+records directly during these jobs. All external writes require human review in the
+cockpit UI. The worker operates under strict read-only / draft generation bounds.
 
-## Run (every 5 minutes, or on request)
+Worker credentials live in `/opt/data/bibi/api-keys.env`. Never print tokens or secrets.
 
-Use scripts/askai.py for every HTTP call; it reads the tokens itself.
+## Lifecycle & Safe Worker Commands
 
-1. python3 scripts/askai.py pending prints EVERY open job as JSON:
-   [{id, kind, prompt, schema, createdAt}]. Empty list → nothing to do here.
+All worker execution requires `scripts/askai.py`.
+Default mode is **DRY_RUN = True**. In dry-run mode, commands inspect candidates
+without mutating database state or executing models. State mutation requires explicit
+opt-in via the `--apply` flag. `--dry-run` always wins, including over `--apply`.
+This is locally verified migration code, not evidence of a deployed worker or active schedule.
 
-   These are not only ad-copy jobs. The `kind` field varies and new kinds get
-   added to the cockpit without this skill being updated. **Every job in that
-   list is yours to answer, whatever its kind.** Do not skip one because the
-   kind is unfamiliar or because it looks like it belongs to another workflow.
-   Read its prompt, do what the prompt says, and match its schema.
-2. For each job: read prompt in full. Write the answer as JSON matching
-   schema exactly, nothing else. Save it to a temp file and run
-   python3 scripts/askai.py result <id> <file>. If you genuinely cannot answer,
-   run python3 scripts/askai.py fail <id> "<one-line reason>" so the cockpit
-   knows why. Never leave a job untouched.
-3. python3 scripts/askai.py asks prints the client success questions:
-   [{_id, clientName, question, askedBy, askedAt}].
-4. For each ask: run python3 scripts/askai.py profile "<clientName>" to get the
-   client's stored profile (numbers, stage, links, stale appointments).
+Every state update (`result`, `fail`, `answer`) strictly requires the original
+`--lease <token>` acquired during claim. Fetching or reusing stale tokens from the
+database is rejected.
 
-   YOU ARE SADIQ FOR THESE. Read /opt/data/bibi/agents/sadiq/AGENTS.md and
-   follow it exactly, including the humanizer pass and the final checker.
+### Run sequence
 
-   SEARCH THE KNOWLEDGE BASE BEFORE YOU WRITE A SINGLE WORD. Always:
+1. **Verify configuration**:
+   ```bash
+   python3 scripts/askai.py doctor
+   ```
+   Reports boolean configuration health without exposing secrets or token fragments.
 
-     python3 /opt/data/bibi/agents/sadiq/kb.py search "<keyword>"
-     python3 /opt/data/bibi/agents/sadiq/kb.py show <file> <line>
+2. **Inspect or claim open jobs**:
+   - Dry run inspection (no database mutations):
+     ```bash
+     python3 scripts/askai.py pending
+     ```
+   - Claim open jobs with atomic lease tokens:
+     ```bash
+     python3 scripts/askai.py claim --worker-id <run-id> --limit 5 --lease-seconds 300 --apply
+     ```
+     Returns claimed jobs with `lease_token`. Keep the returned `lease_token` in memory.
 
-   About 188 approved bilingual templates already exist. Assuming one does not
-   exist without searching is the failure mode that produced invented policy on
-   a review request when knowledge/csm-templates.md had the template all along.
-   Search two or three different keywords before you conclude nothing fits.
+3. **Complete or fail claimed jobs**:
+   - For each claimed chat: use only its server-scoped context and permitted knowledge references; return `{"reply":"..."}`. Keep the original worker ID and lease:
+     ```bash
+     python3 scripts/askai.py result <job_id> <result_file.json> --worker-id <run-id> --lease <token> --apply
+     ```
+   - If processing fails or is invalid:
+     ```bash
+     python3 scripts/askai.py fail <job_id> "<failure_reason>" --worker-id <run-id> --lease <token> --apply
+     ```
+     Expired leases or mismatched worker tokens are rejected fail-closed with a non-zero exit code.
 
-   For any link, run kb.py links and copy the URL from there. Never retype one.
+4. **CSM chat questions** use the same claim path. `answer <job_id> <answer_file.txt> --worker-id <run-id> --lease <token> --apply` accepts a text reply. Legacy `asks` and unrestricted `profile` reads fail explicitly; use the profiles returned inside the claimed job context.
 
-   Answer from those files and the client profile only. If the knowledge base
-   does not cover it, say exactly that and stop; never reason your way to what
-   the policy probably is, because the answer can reach a paying client.
+For client-success answers, retain Sadiq's approved policy discipline: read the existing Sadiq instructions, search the knowledge base before drafting, use approved links, and run its message checker. If those resources are unavailable or do not cover the question, say so. Never invent client policy or claim an external action occurred.
 
-   Write the message paste-ready in both languages, not advice about what to
-   say. Then run the checker, which is not optional:
+## Chat jobs (kind "chat")
 
-     python3 /opt/data/bibi/agents/sadiq/check_message.py <file>
+Pending jobs from the cockpit chat have `kind: "chat"` and expect `{"reply": "<text>"}`.
+The answer is delivered back to the cockpit user through the Supabase persistence queue.
 
-   Exit code 1 means rewrite from scratch. Never post an answer that fails it.
+## Producer Migration Status & Remaining Gaps
 
-   Keep it under 200 words, in the language the question was asked in. Save to
-   a file and run python3 scripts/askai.py answer <_id> <file>.
-5. If, and only if, BOTH queues came back empty, output nothing at all. If a job
-   was present, it must be answered or explicitly failed with a reason. Silence
-   while a job is pending leaves a person staring at a loading state until the
-   job times out, and it is the single worst outcome here.
+> [!NOTE]
+> **Active Supabase Migration Scope**:
+> - Interactive chat from the three cockpits has local SQL/client verification. Migration application, deployed staff sessions, model runtime and scheduling are still unverified.
+> - Claims rebuild scoped context; role/client changes invalidate in-flight results. Clearing hides history and cancels pending work without deleting it. Three attempts bound retryable failures and expired claims.
 
-## Chat jobs (kind "chat"): you can act, so act
+> [!WARNING]
+> **Unmigrated Producer Gaps**:
+> - Legacy `comment_digest` (ClickUp comment webhook watcher) is **NOT** wired to the Supabase queue.
+> - Legacy `call_brief` (CSM call recording batch processor) is **NOT** wired to the Supabase queue.
+> - `assist_copy`, `draft_copy`, campaign chat relays and their write-back callbacks are not migrated by this chat packet. The browser submission endpoint accepts `chat` only.
+> - Model-triggered provider actions remain disabled here. They need their own authorization, audit and provider implementation before migration acceptance.
+> - Convex fallback is disabled (fail-closed).
+> Do not claim that all Hermes autonomous background producers or runtime are deployed until these specific background producer bridges are migrated.
 
-Some pending jobs have `kind: "chat"`. These are a person typing in a cockpit and
-waiting on an answer, relayed every 20 seconds. The schema is
-`{"reply": "<text>"}`.
+## House rules for ad copy
 
-**You have live write credentials. Use them.** ClickUp, Meta ad accounts, Google
-Workspace, GHL and Slack are all in `/opt/data/bibi/api-keys.env`. The cockpit
-apps cannot reach them from the browser, which is exactly why the question came
-to you.
-
-Never answer a chat job with "I have no access to that", "there is no endpoint
-here", or "you will have to do that on the board". It is false, and it sends a
-person off to do by hand something you could have done in one call. That exact
-failure happened: the media buyer agent told Aziz four times that it could not
-rename ClickUp tasks while a working ClickUp token sat in the env file.
-
-### Before you answer
-
-Go and look. The attached context is what one screen happened to know, not the
-limit of what is true. If the answer is not in it, query the source:
-
-```bash
-# ClickUp, client list 901816559981
-curl -s -H "Authorization: $CLICKUP_API_KEY" \
-  "https://api.clickup.com/api/v2/list/901816559981/task?include_closed=true"
-
-# Meta, all accounts
-curl -s "https://graph.facebook.com/v21.0/me/adaccounts?fields=id,name&access_token=$META_ACCESS_TOKEN"
-```
-
-Only say you do not have something after you have actually checked, and then say
-what you tried.
-
-### Before you write
-
-Say what you are about to change and ask for a yes. One line, naming the
-records. Then do it and report back with ids.
-
-Renames, status moves and field edits on live client records are hard to undo,
-so the confirmation is not optional. But asking is not the same as refusing:
-"I can rename all ten, here they are, confirm" is right, "you will need to do
-this on the board" is wrong.
-
-### After you write
-
-Report exactly what changed, with ids. **Never claim a change you did not make.**
-If a write fails, say so plainly and give the error, because a silent failure
-that reads as success is worse than an outright refusal.
-
-## Job kinds
-
-`askai.py pending` returns jobs of several kinds. **Answer every kind you are
-given.** A job whose kind you do not recognise is still a real person waiting on
-a screen, so read the prompt, follow it literally, and return JSON matching the
-`schema` field exactly. Never answer `[SILENT]` when a job is present.
-
-Known kinds:
-
-| kind | what it is |
-|---|---|
-| ad copy jobs | five angles, house rules below |
-| `call_brief` | call summaries for one client, see below |
-| `comment_digest` | one new comment on a client's ClickUp card, see below |
-
-### call_brief
-
-Produced by the client success cockpit when a client's set of recorded calls
-changes. The prompt carries a JSON array of calls, each with `url`, `title`,
-`date`, `kind` and a `summary`.
-
-Return exactly:
-
-```json
-{"overall": "...", "perCall": [{"url": "<call url>", "brief": "..."}]}
-```
-
-Rules that matter here, because the output reaches a CSM who acts on it:
-
-- One paragraph per call, 2 to 4 sentences, **about that client only**. These
-  are often team meetings covering several clients. Everything about anyone else
-  is noise and must be dropped.
-- `overall` is 3 to 5 sentences on where things stand across all the calls, most
-  recent weighted most heavily.
-- **Use only what the summaries say.** No inference, no filling gaps. If the
-  calls do not say what was decided, the brief says that rather than guessing.
-- Every call in the input gets an entry in `perCall`, keyed by its exact `url`.
-  A missing url means the cockpit cannot match the brief back to the call.
-- First names for people. No timestamps, no headings, no bullets inside a brief.
-- No em dashes.
-
-If a call's summary is empty, say so in one short sentence for that call rather
-than omitting it.
-
-### comment_digest
-
-Produced every 15 minutes by the media buyer backend's comment watch when a new
-comment lands on a client's ClickUp card (Clients - Mahara): a call summary, a
-kickoff handoff, a client brief, or a note someone typed. The prompt carries the
-comment and the client's current Do's & Don'ts.
-
-Return exactly the schema: `summary` (1 to 3 sentences), `nextSteps` (each
-starting "Mahara:" or "Client:"), `clientRequests`, `risks`, `forAds`,
-`forCreative`, `dos`, `donts`.
-
-- Use only what the comment says. Empty strings and empty arrays when there is
-  nothing; never pad.
-- `dos` and `donts` are only explicit, lasting client instructions that the
-  current Do's & Don'ts do not already cover. They are added to the client card
-  automatically, so a guess becomes a rule the whole team follows.
-- No phone numbers, emails or names of leads. No em dashes.
-
-## House rules for ad copy (checked on the way out, so obey them)
-
-- Never call the audience "contractors" and never imply one-man teams. They are
-  construction and design businesses, firms or companies.
+- Never call the audience "contractors" and never imply one-man teams. They are construction and design businesses, firms or companies.
 - Never use the term "B2B" in anything a client or a lead will read.
 - Every money figure is in USD. Never dinar, riyal or dirham, in any script.
-- Write like one person talking to another. Short sentences. Concrete, not
-  aspirational. No emoji walls, no "unlock", no "revolutionise".
+- Write like one person talking to another. Short sentences. Concrete, not aspirational. No emoji walls, no "unlock", no "revolutionise".
 - Headline under 40 characters. Primary text 2 to 4 short lines.
 - Arabic means Gulf spoken register, not formal MSA and not translated-sounding.
-- Five distinct angles: outcome, objection, proof, question, direct offer. Name
-  the angle in English in the angle field.
+- Five distinct angles: outcome, objection, proof, question, direct offer.
 
-## Do not
+## Operational Constraints
 
-- Do not answer a job twice. The door marks a job done on the first result.
-- Do not retry a job that came back with ok:false more than once per run.
-- Do not post to Slack about routine jobs. If the door returns HTTP 401 or a
-  job fails three runs in a row, tell Aziz (U09305KE2KS) once.
+- Always pass `--lease <token>` when completing or failing a claimed job.
+- Never fall back to Convex; fail-closed on Supabase errors.
+- Never execute side-effecting operations against third-party platforms without explicit human approval.
+
+Host activation must be reviewed separately. When approved, run a single responder under `flock -n /tmp/cockpit-ask-ai.lock ...`; `claim` alone does not run a model. Keep the responder within the lease window and never reuse a replacement token after expiration.

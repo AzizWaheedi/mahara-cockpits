@@ -16,7 +16,7 @@ import {
   Wallet,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { FeedItem } from "../../../convex/ceo/payloads";
+import type { FeedItem } from "@/types/ceo/payloads";
 import { EmptyState } from "./EmptyState";
 import { dateTime, relative } from "./format";
 import { Hint } from "./Hint";

@@ -1,7 +1,7 @@
 import { count, money, NA, pct } from "@/components/ceo/format";
 import { gateTone, STATUS_COLOR } from "@/components/ceo/StatusChip";
-import type { TargetRow } from "../../../convex/ceo/goals";
-import type { Unit } from "../../../convex/ceo/scoreboard";
+import type { TargetRow } from "@/types/ceo/goals";
+import type { Unit } from "@/types/ceo/scoreboard";
 
 /**
  * The parts the Goals screens share: how a target is written, and the one

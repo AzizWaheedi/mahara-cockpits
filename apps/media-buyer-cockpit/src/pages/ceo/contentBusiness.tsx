@@ -1,4 +1,3 @@
-import { useAction } from "convex/react";
 import { Loader2, Sprout } from "lucide-react";
 import { useCallback } from "react";
 import { EmptyState } from "@/components/ceo/EmptyState";
@@ -11,12 +10,8 @@ import { TimeframeBar } from "@/components/ceo/TimeframeBar";
 import { useTimeframe } from "@/components/ceo/timeframe";
 import type { CeoSection } from "@/components/ceo/useCeo";
 import { range as rangeText } from "@/components/ceo/windows";
-import { api } from "../../../convex/_generated/api";
-import type {
-  ContentWindow,
-  Note,
-  OrganicPayload,
-} from "../../../convex/ceo/payloads";
+import { api, useAction } from "@/lib/cockpitApi";
+import type { ContentWindow, Note, OrganicPayload } from "@/types/ceo/payloads";
 
 /**
  * What the content brings in, beside what it reaches.

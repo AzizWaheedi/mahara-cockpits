@@ -1,4 +1,4 @@
-import { Menu } from "lucide-react";
+import { Menu, Search } from "lucide-react";
 import {
   lazy,
   type ReactNode,
@@ -11,16 +11,14 @@ import { Navigate, Route, Routes, useLocation, useParams } from "react-router";
 import { MacOSDock } from "./components/MacOSDock";
 import { MacOSMenuBar } from "./components/MacOSMenuBar";
 import { PageBoundary } from "./components/PageBoundary";
-import {
-  PortalAutoSignIn,
-  portalSignInPending,
-} from "./components/PortalAutoSignIn";
 import { SalesBanner } from "./components/SalesBanner";
+import { SearchBox } from "./components/SearchBox";
 import Sidebar from "./components/Sidebar";
 import { Wordmark } from "./components/Wordmark";
 import { SessionProvider, useWho } from "./lib/auth";
 import { useFollowupsWaiting, useMe, useOwed, useProposals } from "./lib/data";
 import { portalUrl } from "./lib/portal";
+import { openSearch } from "./lib/search";
 import { Toaster } from "./lib/toast";
 import type { Me } from "./lib/types";
 import SignInPage from "./pages/SignInPage";
@@ -66,53 +64,32 @@ const ROLE_WORDS: Record<string, string> = {
 };
 
 function Shell() {
-  const { session, email, name, isAdmin, ready, signOut } = useWho();
-  const [bumped, setBumped] = useState(0);
+  const {
+    session,
+    email,
+    name,
+    isAdmin,
+    isCeo,
+    cockpits,
+    ready,
+    error: accessError,
+    refreshAccess,
+    signOut,
+  } = useWho();
   const [drawer, setDrawer] = useState(false);
   const location = useLocation();
-  const me = useMe(Boolean(session));
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies: a portal sign-in reloads the seat
-  useEffect(() => {
-    if (bumped) me.reload();
-  }, [bumped]);
-
-  // While the portal is signing this person in, the sign-in form stays out
-  // of sight; a swap that never finishes falls through after its window.
-  const portalWaiting = !session && portalSignInPending();
-  const [, wake] = useState(0);
-  useEffect(() => {
-    if (!portalWaiting) return;
-    const t = setTimeout(() => wake(n => n + 1), 46_000);
-    return () => clearTimeout(t);
-  }, [portalWaiting]);
+  const allowed =
+    ready && !accessError && (isCeo || isAdmin || cockpits.includes("sales"));
+  const me = useMe(Boolean(session) && allowed);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: closing follows the route
   useEffect(() => setDrawer(false), [location.pathname]);
 
-  const portalBanner = (
-    <PortalAutoSignIn
-      hasSession={Boolean(session)}
-      ready={ready}
-      onSignedIn={() => setBumped(b => b + 1)}
-    />
-  );
-
   if (!ready) return <Waiting text="Opening the sales cockpit…" />;
 
-  if (!session)
-    return (
-      <>
-        {portalBanner}
-        {portalWaiting ? (
-          <Waiting text="Opening the sales cockpit from the portal…" />
-        ) : (
-          <SignInPage />
-        )}
-      </>
-    );
+  if (!session && !accessError) return <SignInPage />;
 
-  if (me.error)
+  if (accessError || me.error)
     return (
       <div className="mx-auto max-w-md px-4 py-20 text-center">
         <h1 className="text-lg font-semibold">
@@ -123,12 +100,15 @@ function Shell() {
           fault, not a permission: nobody needs to add you to anything.
         </p>
         <p className="muted mt-3 rounded-[var(--radius-md)] bg-[color:var(--muted)] px-3 py-2 font-mono text-xs">
-          {me.error}
+          {accessError || me.error}
         </p>
         <div className="mt-6 flex justify-center gap-4">
           <button
             type="button"
-            onClick={() => me.reload()}
+            onClick={() => {
+              void refreshAccess().catch(() => {});
+              me.reload();
+            }}
             className="muted text-sm underline underline-offset-4"
           >
             Try again
@@ -144,10 +124,10 @@ function Shell() {
       </div>
     );
 
-  if (me.loading && !me.data)
+  if (allowed && me.loading && !me.data)
     return <Waiting text="Opening the sales cockpit…" />;
 
-  if (!me.data?.seat)
+  if (!allowed || !me.data?.seat)
     return (
       <div className="mx-auto max-w-md px-4 py-20 text-center">
         <h1 className="text-lg font-semibold">Not on the sales team</h1>
@@ -179,9 +159,10 @@ function Shell() {
       isAdmin={isAdmin}
       drawer={drawer}
       setDrawer={setDrawer}
-      // The banner slot: a live offer, the seat's open room, then presence,
-      // with the portal's sign-in banner kept mounted underneath it.
-      banner={<SalesBanner portal={portalBanner} />}
+      // The banner slot: a live offer, the seat's open room, then presence.
+      // The portal's sign-in banner went with the Supabase cutover, so there
+      // is nothing to keep mounted underneath it.
+      banner={<SalesBanner portal={null} />}
     />
   );
 }
@@ -308,17 +289,27 @@ export function Seated({
             <Wordmark size="sm" />
             <span className="muted text-sm">Sales</span>
           </div>
-          {counts.owed > 0 ? (
-            <span
-              className="rounded-full px-2 py-0.5 text-xs font-semibold tabular-nums"
-              style={{
-                background: "var(--owed)",
-                color: "var(--warning-foreground)",
-              }}
+          <div className="flex items-center gap-2">
+            {counts.owed > 0 ? (
+              <span
+                className="rounded-full px-2 py-0.5 text-xs font-semibold tabular-nums"
+                style={{
+                  background: "var(--owed)",
+                  color: "var(--warning-foreground)",
+                }}
+              >
+                {counts.owed} owed
+              </span>
+            ) : null}
+            <button
+              type="button"
+              onClick={openSearch}
+              aria-label="Search leads and pages"
+              className="-mr-2 flex size-10 items-center justify-center rounded-[12px] text-muted-foreground hover:bg-foreground/[0.08] hover:text-foreground"
             >
-              {counts.owed} owed
-            </span>
-          ) : null}
+              <Search className="size-5" strokeWidth={1.8} aria-hidden />
+            </button>
+          </div>
         </header>
 
         {/* Keyed by the address, so moving to another page clears an error. */}
@@ -374,6 +365,7 @@ export function Seated({
       </div>
 
       <TabBar owed={counts.owed} onMore={() => setDrawer(true)} />
+      <SearchBox isManager={Boolean(me.manager)} />
     </div>
   );
 }

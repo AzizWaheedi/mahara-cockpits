@@ -35,12 +35,8 @@ import { useTimeframe } from "@/components/ceo/timeframe";
 import { useFrequency } from "@/components/ceo/useFrequency";
 import { range } from "@/components/ceo/windows";
 import { cn } from "@/lib/utils";
-import type { FrequencyFigure } from "../../../convex/ceo/frequency";
-import type {
-  FunnelWindow,
-  GrowthPayload,
-  Note,
-} from "../../../convex/ceo/payloads";
+import type { FrequencyFigure } from "@/types/ceo/frequency";
+import type { FunnelWindow, GrowthPayload, Note } from "@/types/ceo/payloads";
 import type { CeoTabProps } from "./types";
 
 // --- Derived numbers, each null when its denominator is 0 ---
@@ -832,7 +828,7 @@ function FrequencyFigureTiles({
           variant="plain"
           label="Spend"
           value={figure ? money(figure.spend) : NA}
-          sub={figure ? plural(figure.campaigns, "campaign") : undefined}
+          sub={figure ? plural(figure.campaigns ?? 0, "campaign") : undefined}
           naHint={na}
         />
       </div>

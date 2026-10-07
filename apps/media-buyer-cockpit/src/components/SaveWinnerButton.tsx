@@ -1,5 +1,3 @@
-import { useMutation, useQuery } from "convex/react";
-import { ConvexError } from "convex/values";
 import { ImageOff, Star } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -34,9 +32,9 @@ import {
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Textarea } from "@/components/ui/textarea";
+import { api, ConvexError, useMutation, useQuery } from "@/lib/cockpitApi";
 import { metaImageUsable } from "@/lib/metaMedia";
 import type { Range } from "@/lib/range";
-import { api } from "../../convex/_generated/api";
 
 /**
  * "Save as winner" on one row of the Ads table in Ads management.
@@ -285,7 +283,7 @@ function SaveDialog({
   });
 
   const adId = p?.adId;
-  const pick = p?.candidates.find(c => c.adId === adId);
+  const pick = p?.candidates.find((c: any) => c.adId === adId);
   const stats = p?.stats;
   const already = adId ? savedIn?.[adId] : undefined;
   const belowBar =
@@ -380,7 +378,7 @@ function SaveDialog({
               onValueChange={setPicked}
               className="gap-1.5"
             >
-              {p.candidates.map(c => {
+              {p.candidates.map((c: any) => {
                 const state = savedIn?.[c.adId];
                 return (
                   <Label

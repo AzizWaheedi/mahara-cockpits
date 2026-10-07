@@ -1,4 +1,3 @@
-import { useAction } from "convex/react";
 import {
   ArrowUpRight,
   Bot,
@@ -37,13 +36,13 @@ import { useRefresh } from "@/components/ceo/useCeo";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
-import { api } from "../../../convex/_generated/api";
+import { api, useAction } from "@/lib/cockpitApi";
 import type {
   HiringCandidate,
   HiringPayload,
   HiringRoleFunnel,
-} from "../../../convex/ceo/payloads";
-import { STAGES, type StageKey } from "../../../convex/hiring/spec";
+} from "@/types/ceo/payloads";
+import { STAGES, type StageKey } from "@/types/hiring/spec";
 import type { CeoTabProps } from "./types";
 
 /**

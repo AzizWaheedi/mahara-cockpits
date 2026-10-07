@@ -1,4 +1,3 @@
-import { useAction } from "convex/react";
 import {
   ArrowDown,
   ArrowLeft,
@@ -17,17 +16,27 @@ import {
   useState,
 } from "react";
 import { Link, useParams } from "react-router";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  addItem as addItemApi,
+  closeItem as closeItemApi,
+  editItem as editItemApi,
+  fetchMeetingPage,
+  type Item,
+  moveItem as moveItemApi,
+  type MeetingPage as Page,
+  type Person,
+  type Sitting,
+  saveDoc as saveDocApi,
+  saveLinks as saveLinksApi,
+  saveMeeting as saveMeetingApi,
+  saveNotes as saveNotesApi,
+} from "@/lib/team";
+import type { MeetingLink } from "@/lib/teamDoc";
 import { usePageVisible } from "@/lib/usePageVisible";
-import { api } from "../../../convex/_generated/api";
-import type {
-  Item,
-  MeetingPage as Page,
-  Person,
-  Sitting,
-} from "../../../convex/teamPage";
 import { ClientSuccessPanel } from "./ClientSuccessPanel";
 import { MeetingLinks } from "./MeetingLinks";
 import { PipelineBoard, PipelineStrip } from "./Pipeline";
@@ -76,15 +85,93 @@ export const CADENCES = [
 
 export function MeetingPage() {
   const { id = "" } = useParams();
-  const load = useAction(api.team.meeting);
-  const saveMeeting = useAction(api.teamCalendar.saveMeeting);
-  const saveDoc = useAction(api.team.saveDoc);
-  const saveLinks = useAction(api.team.saveLinks);
-  const saveNotes = useAction(api.team.saveNotes);
-  const addItem = useAction(api.team.addItem);
-  const editItem = useAction(api.team.editItem);
-  const closeItem = useAction(api.team.closeItem);
-  const moveItem = useAction(api.team.moveItem);
+  const auth = useCockpitAuth();
+  const userContext = useMemo(
+    () => ({
+      email: auth.email ?? "",
+      isCeo: auth.isCeo,
+      isAdmin: auth.isAdmin,
+    }),
+    [auth.email, auth.isCeo, auth.isAdmin],
+  );
+
+  const load = useCallback(
+    async (args: { id: string }) => {
+      if (!auth.client) throw new Error("Not signed in");
+      return fetchMeetingPage(auth.client, userContext, args.id);
+    },
+    [auth.client, userContext],
+  );
+
+  const saveMeeting = useCallback(
+    async (args: {
+      id?: string;
+      title: string;
+      purpose: string;
+      cadence: string;
+      department?: string;
+    }) => {
+      if (!auth.client) throw new Error("Not signed in");
+      return saveMeetingApi(auth.client, userContext, args);
+    },
+    [auth.client, userContext],
+  );
+
+  const saveDoc = useCallback(
+    async (args: { meetingId: string; text: string; version: number }) => {
+      if (!auth.client) throw new Error("Not signed in");
+      return saveDocApi(auth.client, userContext, args);
+    },
+    [auth.client, userContext],
+  );
+
+  const saveNotes = useCallback(
+    async (args: { sittingId: string; text: string; version: number }) => {
+      if (!auth.client) throw new Error("Not signed in");
+      return saveNotesApi(auth.client, userContext, args);
+    },
+    [auth.client, userContext],
+  );
+
+  const addItem = useCallback(
+    async (args: { meetingId: string; text: string; ownerId?: string }) => {
+      if (!auth.client) throw new Error("Not signed in");
+      return addItemApi(auth.client, userContext, args);
+    },
+    [auth.client, userContext],
+  );
+
+  const editItem = useCallback(
+    async (args: { id: number; text?: string; ownerId?: string | null }) => {
+      if (!auth.client) throw new Error("Not signed in");
+      return editItemApi(auth.client, userContext, args);
+    },
+    [auth.client, userContext],
+  );
+
+  const closeItem = useCallback(
+    async (args: { id: number; status: "done" | "dropped" | "open" }) => {
+      if (!auth.client) throw new Error("Not signed in");
+      return closeItemApi(auth.client, userContext, args);
+    },
+    [auth.client, userContext],
+  );
+
+  const moveItem = useCallback(
+    async (args: { id: number; dir: "up" | "down" }) => {
+      if (!auth.client) throw new Error("Not signed in");
+      return moveItemApi(auth.client, userContext, args);
+    },
+    [auth.client, userContext],
+  );
+
+  const saveLinks = useCallback(
+    async (args: { meetingId: string; links: MeetingLink[] }) => {
+      if (!auth.client) throw new Error("Not signed in");
+      return saveLinksApi(auth.client, userContext, args);
+    },
+    [auth.client, userContext],
+  );
   const visible = usePageVisible();
   const [page, setPage] = useState<Page | null>(null);
   const [error, setError] = useState<string | null>(null);

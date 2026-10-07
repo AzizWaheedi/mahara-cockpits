@@ -1,4 +1,3 @@
-import { useAction, useMutation, useQuery } from "convex/react";
 import { TriangleAlert, Upload } from "lucide-react";
 import { type ChangeEvent, useMemo, useRef, useState } from "react";
 import { EmptyState } from "@/components/ceo/EmptyState";
@@ -9,7 +8,7 @@ import { SectionCard } from "@/components/ceo/SectionCard";
 import { STATUS_COLOR, StatusChip } from "@/components/ceo/StatusChip";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
-import { api } from "../../../convex/_generated/api";
+import { api, useAction, useMutation, useQuery } from "@/lib/cockpitApi";
 
 // The kit's table look for the hand-built previews: sentence-case headers in
 // muted 12px, hairline rows, no box of their own inside the card.

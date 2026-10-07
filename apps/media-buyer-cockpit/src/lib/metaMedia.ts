@@ -1,10 +1,11 @@
 /**
  * Helpers for pictures and previews of Meta ads.
  *
- * Meta's links do not last. A preview iframe link is good for about a day, and
- * an fbcdn image link carries its own expiry in the `oe` parameter (hex Unix
- * seconds). Nothing here trusts a stored Meta link without checking its age.
- * The backend keeps a copy of these helpers in convex/metaMedia.ts.
+ * Meta's links do not last. A preview iframe link is good for about a day,
+ * and an fbcdn image link carries its own expiry in the `oe` parameter (hex
+ * Unix seconds). Nothing here trusts a stored Meta link without checking its
+ * age. The media buyer cockpit keeps the same helpers in its own
+ * src/lib/metaMedia.ts and convex/metaMedia.ts.
  */
 
 /** A fetched preview link is used for at most this long. */
@@ -79,7 +80,7 @@ export type PreviewReason =
   | "no_access"
   | "offline";
 
-/** What previews.fresh returns, in all three cockpits. */
+/** What `previews.fresh` returns. The same shape in all three cockpits. */
 export type PreviewResult = {
   ok: boolean;
   adId: string;
@@ -93,7 +94,7 @@ export type PreviewResult = {
   stillKey?: string;
   /** The media buyer's saved copy, about 320px. */
   stillUrl?: string;
-  /** The same still at about 96px. */
+  /** About 96px. */
   stillTinyUrl?: string;
   /** A fresh Meta CDN still. */
   thumbUrl?: string;
@@ -103,3 +104,43 @@ export type PreviewResult = {
   /** Plain words, safe to show. */
   message?: string;
 };
+
+/** What a person reads when the live preview is not there, by reason. */
+export const REASON_TEXT: Record<PreviewReason, string> = {
+  gone: "Meta no longer has this ad. It was deleted, or the ad account was unshared. Showing the saved picture.",
+  no_meta_access:
+    "Mahara's Meta access does not cover this ad account right now. Showing the saved picture.",
+  rate_limited:
+    "Meta asked us to slow down. Try the live preview again in a few minutes. Showing the saved picture.",
+  offline:
+    "The live preview comes through the media buyer system, which is offline right now. Showing the saved picture.",
+  no_access:
+    "This client is not on your list, so the live preview is not available to you.",
+  error:
+    "Meta did not return a live preview this time. Showing the saved picture.",
+};
+
+/** How long the browser keeps an answer before asking again, by reason. */
+export function cacheUntil(result: PreviewResult, now = Date.now()): number {
+  if (result.ok)
+    return result.expiresAt && result.expiresAt > now
+      ? result.expiresAt
+      : now + 2 * 60_000;
+  switch (result.reason) {
+    case "rate_limited":
+      return now + 2 * 60_000;
+    case "gone":
+    case "no_meta_access":
+    case "no_access":
+      return now + 3600_000;
+    default:
+      return now + 10 * 60_000;
+  }
+}
+
+/** Every value once, blanks dropped, order kept. */
+export function uniqueUrls(list: (string | null | undefined)[]): string[] {
+  const out: string[] = [];
+  for (const u of list) if (u && !out.includes(u)) out.push(u);
+  return out;
+}

@@ -1,4 +1,3 @@
-import { useAction } from "convex/react";
 import {
   CalendarClock,
   CalendarSync,
@@ -45,13 +44,13 @@ import {
   type StatusTone,
 } from "@/components/ceo/StatusChip";
 import { Button } from "@/components/ui/button";
+import { api, useAction } from "@/lib/cockpitApi";
 import { CPL_GATE } from "@/lib/kpi";
 import { cn } from "@/lib/utils";
-import { api } from "../../../convex/_generated/api";
 import type {
   ApplyResult,
   ExtensionsWithLastMonth,
-} from "../../../convex/ceo/extensions";
+} from "@/types/ceo/extensions";
 import type {
   ChurnClient,
   ClientRow,
@@ -60,7 +59,7 @@ import type {
   PortalPayload,
   RenewalEvidence,
   TermClient,
-} from "../../../convex/ceo/payloads";
+} from "@/types/ceo/payloads";
 import type { CeoTabProps } from "./types";
 
 // --- Clients ---

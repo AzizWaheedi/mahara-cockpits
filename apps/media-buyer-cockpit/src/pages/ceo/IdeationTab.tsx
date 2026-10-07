@@ -1,4 +1,3 @@
-import { useAction } from "convex/react";
 import { ArrowUpRight, Radar } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { EmptyState } from "@/components/ceo/EmptyState";
@@ -14,7 +13,7 @@ import { StatTile } from "@/components/ceo/StatTile";
 import { StatusChip } from "@/components/ceo/StatusChip";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
-import { api } from "../../../convex/_generated/api";
+import { api, useAction } from "@/lib/cockpitApi";
 import { IdeationPage } from "../IdeationPage";
 import type { CeoTabProps } from "./types";
 
@@ -472,7 +471,7 @@ export function IdeationTab(_props: CeoTabProps) {
                         onClick={() =>
                           void watchlistRemove({ key: w.key })
                             .then(load)
-                            .catch(e => setNotice(serverMessage(e)))
+                            .catch((e: any) => setNotice(serverMessage(e)))
                         }
                         className="ml-auto"
                       >

@@ -1,7 +1,6 @@
-import { useAction } from "convex/react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { api } from "../../convex/_generated/api";
+import { api, useAction } from "@/lib/cockpitApi";
 
 /**
  * On/off for a live campaign, ad set or ad.

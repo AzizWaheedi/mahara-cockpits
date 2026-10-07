@@ -1,22 +1,20 @@
-import { Menu } from "lucide-react";
+import { Menu, Search } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { Link, Navigate, Route, Routes, useLocation } from "react-router";
-import {
-  PortalAutoSignIn,
-  portalSignInPending,
-} from "./components/PortalAutoSignIn";
+import { JobsHome, Library } from "./components/Places";
+import { SearchBox } from "./components/SearchBox";
 import Sidebar from "./components/Sidebar";
 import { Wordmark } from "./components/Wordmark";
 import { SessionProvider, useWho } from "./lib/auth";
 import { useCanOpen, useEodToday, useJobs, useMe } from "./lib/data";
+import { kuwaitDay } from "./lib/format";
 import { portalUrl } from "./lib/portal";
+import { openSearch } from "./lib/search";
 import { Toaster } from "./lib/toast";
 import EodPage from "./pages/EodPage";
 import { IdeationPage } from "./pages/IdeationPage";
 import JobPage from "./pages/JobPage";
-import JobsPage from "./pages/JobsPage";
 import MeetingsPage from "./pages/MeetingsPage";
-import PipelinePage from "./pages/PipelinePage";
 import ReviewPage from "./pages/ReviewPage";
 import SendReviewPage from "./pages/SendReviewPage";
 import SignInPage from "./pages/SignInPage";
@@ -24,28 +22,31 @@ import SwipePage from "./pages/SwipePage";
 import VideosPage from "./pages/VideosPage";
 import WinnersPage from "./pages/WinnersPage";
 
-/** Kuwait's day, which is the day the end of day is filed for. */
-function kuwaitDay(): string {
-  const now = new Date();
-  const kuwait = new Date(
-    now.getTime() + (3 * 60 + now.getTimezoneOffset()) * 60_000,
-  );
-  return kuwait.toISOString().slice(0, 10);
-}
-
 function Shell() {
-  const { session, email, name, isAdmin, ready, signOut } = useWho();
-  const [bumped, setBumped] = useState(0);
+  const {
+    session,
+    email,
+    name,
+    isAdmin,
+    isCeo,
+    cockpits,
+    ready,
+    error: accessError,
+    refreshAccess,
+    signOut,
+  } = useWho();
   const [drawer, setDrawer] = useState(false);
   const location = useLocation();
-  const me = useMe(session ? email : null);
-  const canOpen = useCanOpen(session ? email : null);
+  const allowed =
+    ready && !accessError && (isCeo || isAdmin || cockpits.includes("editor"));
+  const me = useMe(session && allowed ? email : null);
+  const canOpen = useCanOpen(session && allowed ? email : null);
   // The marks beside the navigation. Only things to act on get one: jobs
   // ready to start, and a dot until the day has been filed. (Meetings had a
   // count of every meeting, which never cleared, so it has none.)
   const jobs = useJobs();
   const eodDay = useMemo(kuwaitDay, []);
-  const eodToday = useEodToday(eodDay);
+  const eodToday = useEodToday(eodDay, session && allowed ? email : null);
   const counts = useMemo(
     () => ({
       ready: (jobs.data ?? []).filter(j => j.state === "ready").length,
@@ -60,50 +61,18 @@ function Shell() {
     document.title = "Editor desk · Mahara";
   }, []);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: a portal sign-in reloads the seat
-  useEffect(() => {
-    if (bumped) {
-      me.reload();
-      canOpen.reload();
-    }
-  }, [bumped]);
-
-  // While the portal is signing this person in, the sign-in form stays out
-  // of sight; a swap that never finishes falls through after its window.
-  const portalWaiting = !session && portalSignInPending();
-  const [, wake] = useState(0);
-  useEffect(() => {
-    if (!portalWaiting) return;
-    const t = setTimeout(() => wake(n => n + 1), 46_000);
-    return () => clearTimeout(t);
-  }, [portalWaiting]);
-
   // A tap on the phone menu should not leave the drawer over the new page.
   // biome-ignore lint/correctness/useExhaustiveDependencies: closing follows the route
   useEffect(() => setDrawer(false), [location.pathname]);
 
-  const portalBanner = (
-    <PortalAutoSignIn
-      hasSession={Boolean(session)}
-      ready={ready}
-      onSignedIn={() => setBumped(b => b + 1)}
-    />
-  );
-
   if (!ready) return null;
 
-  if (!session)
-    return (
-      <>
-        {portalBanner}
-        {portalWaiting ? <PortalWaiting /> : <SignInPage />}
-      </>
-    );
+  if (!session && !accessError) return <SignInPage />;
 
   // The database refused the question rather than answering it. Show what it
   // said: this is not the same as being turned away, and guessing which one
   // it was is how the owner of the place got told he had no seat.
-  if (canOpen.error) {
+  if (accessError || canOpen.error) {
     return (
       <div className="mx-auto max-w-md px-4 py-20 text-center">
         <h1 className="text-lg font-semibold">The desk could not be opened</h1>
@@ -112,12 +81,15 @@ function Shell() {
           fault, not a permission: nobody needs to add you to anything.
         </p>
         <p className="muted mt-3 rounded-[var(--radius-md)] bg-[color:var(--muted)] px-3 py-2 font-mono text-xs">
-          {canOpen.error}
+          {accessError || canOpen.error}
         </p>
         <div className="mt-6 flex justify-center gap-4">
           <button
             type="button"
-            onClick={() => canOpen.reload()}
+            onClick={() => {
+              void refreshAccess().catch(() => {});
+              canOpen.reload();
+            }}
             className="muted text-sm underline underline-offset-4"
           >
             Try again
@@ -135,7 +107,7 @@ function Shell() {
   }
 
   // The database answered, and the answer was no.
-  if (!canOpen.loading && canOpen.data === false) {
+  if (!allowed || (!canOpen.loading && canOpen.data === false)) {
     return (
       <div className="mx-auto max-w-md px-4 py-20 text-center">
         <h1 className="text-lg font-semibold">Not on the editor list</h1>
@@ -148,7 +120,7 @@ function Shell() {
           >
             {portalUrl().replace(/^https?:\/\//, "")}/admin
           </a>
-          , or being named Assigned Editor on a ClickUp card is enough.
+          .
         </p>
         <button
           type="button"
@@ -161,7 +133,6 @@ function Shell() {
     );
   }
 
-  const admin = isAdmin || me.data?.role === "admin";
   const who = me.data?.name || name;
 
   return (
@@ -169,7 +140,7 @@ function Shell() {
       {/* A rail from 1024px up, a drawer below it: an iPad held upright
           gets the whole width for the page, as in the other cockpits. */}
       <aside className="hidden w-60 shrink-0 border-r bg-card pt-safe lg:block">
-        <Sidebar name={who} isAdmin={admin} counts={counts} />
+        <Sidebar name={who} isAdmin={isAdmin} counts={counts} />
       </aside>
 
       {drawer ? (
@@ -183,7 +154,7 @@ function Shell() {
           <aside className="absolute inset-y-0 left-0 w-[min(18rem,85vw)] border-r bg-card pt-safe pb-safe sm:w-[22rem]">
             <Sidebar
               name={who}
-              isAdmin={admin}
+              isAdmin={isAdmin}
               counts={counts}
               onNavigate={() => setDrawer(false)}
             />
@@ -192,7 +163,6 @@ function Shell() {
       ) : null}
 
       <div className="flex min-w-0 flex-1 flex-col overflow-y-auto">
-        {portalBanner}
         {/* Pinned to the very top and padded by the status bar, so in the
             installed app it covers the strip behind the clock instead of
             starting under it. */}
@@ -208,32 +178,57 @@ function Shell() {
             </button>
             <Wordmark size="sm" />
             <span className="text-sm text-muted-foreground">Editor desk</span>
+            <button
+              type="button"
+              onClick={openSearch}
+              aria-label="Search"
+              className="ml-auto grid size-10 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            >
+              <Search aria-hidden className="size-5" />
+            </button>
           </div>
         </header>
 
         <main className="min-w-0 flex-1 lg:pt-[env(safe-area-inset-top,0px)]">
           <Routes>
-            <Route path="/" element={<JobsPage />} />
+            {/* Jobs is home: the list, or the board (?view=board). */}
+            <Route path="/" element={<JobsHome eodDue={counts.eod > 0} />} />
             {/* The portal's door lands on /dashboard in every cockpit. */}
             <Route path="/dashboard" element={<Navigate to="/" replace />} />
-            <Route path="/pipeline" element={<PipelinePage />} />
+            {/* The Pipeline page is the board view of Jobs now. */}
+            <Route
+              path="/pipeline"
+              element={<Navigate to="/?view=board" replace />}
+            />
             <Route path="/meetings" element={<MeetingsPage />} />
             <Route path="/videos" element={<VideosPage />} />
-            <Route path="/winners" element={<WinnersPage />} />
+            {/* What works, Ideation and the swipe file: one Library. */}
+            <Route
+              path="/winners"
+              element={
+                <Library>
+                  <WinnersPage />
+                </Library>
+              }
+            />
             <Route
               path="/ideas"
               element={
-                <Gutter>
-                  <IdeationPage />
-                </Gutter>
+                <Library>
+                  <Gutter>
+                    <IdeationPage />
+                  </Gutter>
+                </Library>
               }
             />
             <Route
               path="/swipe"
               element={
-                <Gutter>
-                  <SwipePage />
-                </Gutter>
+                <Library>
+                  <Gutter>
+                    <SwipePage />
+                  </Gutter>
+                </Library>
               }
             />
             <Route path="/eod" element={<EodPage />} />
@@ -256,6 +251,7 @@ function Shell() {
           </Routes>
         </main>
       </div>
+      <SearchBox />
     </div>
   );
 }
@@ -298,16 +294,5 @@ export default function App() {
       <Shell />
       <Toaster />
     </SessionProvider>
-  );
-}
-
-/** What shows for the seconds the portal takes to open the desk. */
-function PortalWaiting() {
-  return (
-    <div className="flex min-h-[60vh] items-center justify-center p-6 text-center">
-      <p className="text-sm" style={{ color: "var(--muted-foreground)" }}>
-        Opening the editor desk from the portal…
-      </p>
-    </div>
   );
 }

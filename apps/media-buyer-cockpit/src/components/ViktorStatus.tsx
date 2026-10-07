@@ -1,5 +1,4 @@
-import { useQuery } from "convex/react";
-import { api } from "../../convex/_generated/api";
+import { api, useQuery } from "@/lib/cockpitApi";
 
 /**
  * "Is this thing working?"

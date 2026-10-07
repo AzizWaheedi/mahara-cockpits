@@ -13,6 +13,8 @@ const schema = defineSchema({
     clientName: v.string(),
     contactId: v.string(),
     startTime: v.string(),
+    // onboarding | blueprint | launch | checkin; absent on check-ins booked before 2026-10-06.
+    kind: v.optional(v.string()),
     userId: v.id("users"),
     status: v.string(),
     appointmentId: v.optional(v.string()),
@@ -201,7 +203,11 @@ const schema = defineSchema({
    */
   reportDocs: defineTable({
     clientName: v.string(),
+    /** The period's name: "2026-10" for older requests, "September 2026" or "last 7 days" now. */
     month: v.string(),
+    /** The reporting period picked on the Client performance page, when one was. */
+    from: v.optional(v.string()),
+    to: v.optional(v.string()),
     language: v.optional(v.string()),
     note: v.optional(v.string()),
     /** Optional sections the CSM ticked on top of the standard template. */

@@ -1,6 +1,6 @@
 import { Info, TriangleAlert } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { Note } from "../../../convex/ceo/payloads";
+import type { Note } from "@/types/ceo/payloads";
 
 /**
  * Trust caveats from a payload. A warning is always in view: it changes how

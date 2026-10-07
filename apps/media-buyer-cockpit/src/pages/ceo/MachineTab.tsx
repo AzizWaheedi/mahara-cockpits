@@ -28,7 +28,7 @@ import {
   type SectionKey,
   STALE_AFTER_MS,
 } from "@/components/ceo/useCeo";
-import type { MachinePayload } from "../../../convex/ceo/payloads";
+import type { MachinePayload } from "@/types/ceo/payloads";
 import { FeedbackQueueCard } from "./feedbackQueue";
 import {
   feedState,

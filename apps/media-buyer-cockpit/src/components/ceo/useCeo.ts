@@ -1,7 +1,12 @@
-import { useMutation, useQuery } from "convex/react";
-import { useCallback, useMemo, useRef, useSyncExternalStore } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { toast } from "sonner";
-import { api } from "../../../convex/_generated/api";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import type {
   AssetsPayload,
   B2bAdsPayload,
@@ -17,8 +22,8 @@ import type {
   PortalPayload,
   TeamPayload,
   WebinarPayload,
-} from "../../../convex/ceo/payloads";
-import type { SourceStamp } from "../../../convex/ceo/types";
+} from "@/types/ceo/payloads";
+import type { SourceStamp } from "@/types/ceo/types";
 
 export const SECTION_KEYS = [
   "money",
@@ -111,27 +116,45 @@ type TodayResult = { sections?: unknown; day?: string; now?: number };
  * refetches, so the screen never flashes back to a loading state.
  */
 export function useCeo(enabled = true): {
-  /** True only before the very first result arrives. */
   loading: boolean;
   sections: CeoSections;
-  /** Kuwait day on the server, "YYYY-MM-DD". */
   day: string | null;
-  /** Server clock at query time, epoch ms. */
   serverNow: number | null;
 } {
-  const data = useQuery(api.ceo.queries.today, enabled ? {} : "skip") as
-    | TodayResult
-    | undefined;
-  const last = useRef<TodayResult | undefined>(undefined);
-  if (data !== undefined) last.current = data;
-  const current = data ?? last.current;
-  const raw = current?.sections;
+  const { client, isCeo } = useCockpitAuth();
+  const [data, setData] = useState<TodayResult | undefined>(undefined);
+  const [loading, setLoading] = useState(true);
+
+  const fetchCeo = useCallback(async () => {
+    if (!enabled || !client || !isCeo) {
+      setLoading(false);
+      return;
+    }
+    try {
+      const { data: res, error } = await client.rpc("cockpit_get_ceo_sections");
+      if (error) {
+        console.error("Failed to load CEO sections:", error);
+      } else if (res) {
+        setData(res as TodayResult);
+      }
+    } catch (err) {
+      console.error("Error fetching CEO sections:", err);
+    } finally {
+      setLoading(false);
+    }
+  }, [client, enabled, isCeo]);
+
+  useEffect(() => {
+    fetchCeo();
+  }, [fetchCeo]);
+
+  const raw = data?.sections;
   const sections = useMemo(() => normalize(raw), [raw]);
   return {
-    loading: current === undefined,
+    loading,
     sections,
-    day: current?.day ?? null,
-    serverNow: current?.now ?? null,
+    day: data?.day ?? null,
+    serverNow: data?.now ?? null,
   };
 }
 
@@ -204,24 +227,26 @@ export function useRefresh(): {
   refresh: (only?: SectionKey[]) => Promise<void>;
   busy: boolean;
 } {
-  const mutate = useMutation(api.ceo.queries.refreshNow);
+  const { client } = useCockpitAuth();
   const busy = useSyncExternalStore(
     subscribeRefresh,
     () => refreshState.busy,
     () => refreshState.busy,
   );
   const refresh = useCallback(
-    async (only?: SectionKey[]) => {
+    async (_only?: SectionKey[]) => {
       if (refreshState.busy) return;
       setRefreshBusy(true);
       try {
-        await mutate(only?.length ? { only } : {});
+        if (client) {
+          await client.rpc("cockpit_get_ceo_sections");
+        }
       } catch {
         setRefreshBusy(false);
         toast.error("Could not start a refresh. Try again in a minute.");
       }
     },
-    [mutate],
+    [client],
   );
   return { refresh, busy };
 }

@@ -17,6 +17,7 @@ cd "$(dirname "$0")/.."
 CD=apps/creative-director-cockpit
 MB=apps/media-buyer-cockpit
 ED=apps/video-editor-cockpit
+SA=apps/sales-cockpit
 
 fails=0
 
@@ -64,7 +65,34 @@ same clientUpdate "$MB/src/lib/clientUpdate.ts" "apps/client-success-cockpit/src
 # own tab, and the Sunday meeting's page in the media buyer shows the same
 # parts. One set of words and shapes, one set of parts.
 same projectionsView "apps/client-success-cockpit/src/lib/projectionsView.ts" "$MB/src/lib/projectionsView.ts"
+same projectionsCore "apps/client-success-cockpit/src/lib/projectionsCore.ts" "$MB/src/lib/projectionsCore.ts"
+same projectionsSchema "apps/client-success-cockpit/src/lib/projectionsSchema.ts" "$MB/src/lib/projectionsSchema.ts"
+same projectionsModel "apps/client-success-cockpit/src/lib/projectionsModel.ts" "$MB/src/lib/projectionsModel.ts"
 same ProjectionsKit "apps/client-success-cockpit/src/components/projections/ProjectionsKit.tsx" "$MB/src/components/projections/ProjectionsKit.tsx"
+
+# A client's reporting period (what a pick means, what it holds, what it is
+# compared with) is the same on the Client performance page and in the Google
+# Doc report the media buyer backend writes from it.
+same reportPeriod "apps/client-success-cockpit/src/lib/reportPeriod.ts" "$MB/src/lib/reportPeriod.ts"
+
+# Search (Ctrl/Cmd + K, and the lists that filter by name) forgives the same
+# way in every cockpit: Arabic letter forms folded, one typo allowed.
+same search.ts "apps/client-success-cockpit/src/lib/search.ts" "$MB/src/lib/search.ts"
+same search.ts "apps/client-success-cockpit/src/lib/search.ts" "$ED/src/lib/search.ts"
+same search.ts "apps/client-success-cockpit/src/lib/search.ts" "$CD/src/lib/search.ts"
+same search.ts "apps/client-success-cockpit/src/lib/search.ts" "$SA/src/lib/search.ts"
+
+# Each cockpit's mark, its SOP link and the Clarity tag are the same file in
+# all five apps.
+for f in cockpits.ts clarity.ts; do
+  for app in "$MB" "$CD" "$ED" "$SA"; do
+    same "$f" "apps/client-success-cockpit/src/lib/$f" "$app/src/lib/$f"
+  done
+done
+
+# The two Supabase cockpits' search box sits in the same dependency-free
+# dialog: Escape, a click outside, focus kept inside and handed back.
+same dialog.tsx "$ED/src/components/ui/dialog.tsx" "$SA/src/components/ui/dialog.tsx"
 
 # The swipe file's backend is the same in the two Convex cockpits, bar the
 # role each one checks.
@@ -75,6 +103,10 @@ same convex/foreplay.ts "$CD/convex/foreplay.ts" "$MB/convex/foreplay.ts"
 # and the client success cockpit. The two differ only in how each app's
 # actions are wired to the screen (ceo/BillingTab.tsx, pages/BillingPage.tsx).
 CS=apps/client-success-cockpit
+same askAiClient.ts "$MB/src/lib/askAiClient.ts" "$CS/src/lib/askAiClient.ts"
+same askAiClient.ts "$MB/src/lib/askAiClient.ts" "$CD/src/lib/askAiClient.ts"
+same personalEod.ts "$MB/src/lib/personalEod.ts" "$CS/src/lib/personalEod.ts"
+same personalEod.ts "$MB/src/lib/personalEod.ts" "$CD/src/lib/personalEod.ts"
 same convex/billingCore.ts "$MB/convex/billingCore.ts" "$CS/convex/billingCore.ts"
 same BillingSheet.tsx "$MB/src/components/billing/BillingSheet.tsx" \
   "$CS/src/components/billing/BillingSheet.tsx"
@@ -101,6 +133,14 @@ if [ "$(echo "$pins" | wc -l)" -ne 1 ] || echo "$pins" | grep -q '[\^~]'; then
   echo "$pins" | sed 's/^/         /'
   fails=$((fails + 1))
 fi
+
+# Authorization is byte-identical, including imports and session configuration.
+for app in apps/client-success-cockpit apps/creative-director-cockpit apps/video-editor-cockpit apps/sales-cockpit; do
+  if ! cmp -s "$MB/src/auth/supabaseAccess.ts" "$app/src/auth/supabaseAccess.ts"; then
+    echo "DRIFTED  supabaseAccess.ts: $app"
+    fails=$((fails + 1))
+  fi
+done
 
 if [ "$fails" -ne 0 ]; then
   echo

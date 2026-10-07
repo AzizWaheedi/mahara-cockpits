@@ -52,7 +52,7 @@ import type {
   GrowthPayload,
   MoneyPayload,
   Note,
-} from "../../../convex/ceo/payloads";
+} from "@/types/ceo/payloads";
 import type { CeoTabProps } from "./types";
 import { WebinarFunnel } from "./WebinarFunnel";
 

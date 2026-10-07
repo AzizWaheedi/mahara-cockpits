@@ -46,7 +46,7 @@ import type {
   ExpensesPayload,
   MoneyPayload,
   Note,
-} from "../../../convex/ceo/payloads";
+} from "@/types/ceo/payloads";
 import { BankExpensesBody, BankStatementsCard } from "./moneyBank";
 import { ImportPaymentsCard, LtvWriteCard } from "./moneyImport";
 import {

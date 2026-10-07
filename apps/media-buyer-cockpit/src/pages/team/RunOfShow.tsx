@@ -1,18 +1,17 @@
-import { useAction } from "convex/react";
 import { ArrowDown, ArrowUp, Loader2, Plus, X } from "lucide-react";
 import { useState } from "react";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { api } from "../../../convex/_generated/api";
+import { api, useAction } from "@/lib/cockpitApi";
+import type { BlockRow, MeetingPage as Page } from "@/lib/team";
 import {
   blocksFor,
   DAY_NAMES,
   totalMinutes,
   variesByDay,
   weekdayOf,
-} from "../../../convex/teamCore";
-import type { BlockRow, MeetingPage as Page } from "../../../convex/teamPage";
+} from "@/lib/teamCore";
 import {
   ConfirmInline,
   chip,

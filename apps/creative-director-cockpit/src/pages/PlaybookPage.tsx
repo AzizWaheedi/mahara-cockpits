@@ -1,5 +1,6 @@
-import { useQuery } from "convex/react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
+
 import { PageHeader } from "@/components/PageHeader";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
@@ -8,7 +9,17 @@ import {
   type WinnerOrigin,
   WinningAds,
 } from "@/components/WinningAds";
-import { api } from "../../convex/_generated/api";
+import {
+  type CreativePatternRow,
+  type DimensionsResult,
+  fetchCreativePatterns,
+  fetchDimensions,
+  fetchPlaybook,
+  fetchWinners,
+  type PlaybookRow,
+  type WinnerAdRow,
+} from "@/lib/playbook";
+import { WhatToMakeMoreOf } from "./DashboardPage";
 
 /**
  * What works in the GCC.
@@ -39,25 +50,47 @@ function verdictDot(v: string): string {
 }
 
 export function PlaybookPage() {
+  const auth = useCockpitAuth();
   const [service, setService] = useState("");
   const [city, setCity] = useState("");
   const [shown, setShown] = useState(PAGE);
   const [origin, setOrigin] = useState<WinnerOrigin>("all");
   const [savedBy, setSavedBy] = useState("");
-  const dims = useQuery(api.market.dimensions, {});
-  const rows = useQuery(api.market.playbook, {
-    serviceLine: service || undefined,
-    city: city || undefined,
-  });
-  const patterns = useQuery(api.market.creativePatterns, {
-    serviceLine: service || undefined,
-  });
-  const winners = useQuery(api.market.winners, {
-    serviceLine: service || undefined,
-    limit: 40,
-    origin: origin === "all" ? undefined : origin,
-    savedBy: savedBy || undefined,
-  });
+  const [dims, setDims] = useState<DimensionsResult | undefined>(undefined);
+  const [rows, setRows] = useState<PlaybookRow[] | undefined>(undefined);
+  const [patterns, setPatterns] = useState<CreativePatternRow[] | undefined>(
+    undefined,
+  );
+  const [winners, setWinners] = useState<WinnerAdRow[] | undefined>(undefined);
+
+  useEffect(() => {
+    if (!auth.client) return;
+    void fetchDimensions(auth.client).then(setDims);
+  }, [auth.client]);
+
+  useEffect(() => {
+    if (!auth.client) return;
+    void fetchPlaybook(auth.client, {
+      serviceLine: service || undefined,
+      city: city || undefined,
+    }).then(setRows);
+  }, [auth.client, service, city]);
+
+  useEffect(() => {
+    if (!auth.client) return;
+    void fetchCreativePatterns(auth.client, {
+      serviceLine: service || undefined,
+    }).then(setPatterns);
+  }, [auth.client, service]);
+
+  useEffect(() => {
+    if (!auth.client) return;
+    void fetchWinners(auth.client, {
+      serviceLine: service || undefined,
+      limit: 40,
+      origin: origin === "all" ? undefined : origin,
+    }).then(setWinners);
+  }, [auth.client, service, origin]);
 
   // The headline finding: cheapest proven play whose city differs from the
   // most expensive one in the same service line.
@@ -91,6 +124,9 @@ export function PlaybookPage() {
       />
 
       <div className="space-y-6">
+        {/* The live accounts first: what to make more of, what is burning out. */}
+        <WhatToMakeMoreOf />
+
         {opportunity && (
           <div className="bg-mahara-gradient rounded-2xl p-px">
             <div className="rounded-[15px] bg-card p-4 sm:p-6">

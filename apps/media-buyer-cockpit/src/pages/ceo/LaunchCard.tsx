@@ -1,4 +1,3 @@
-import { useAction } from "convex/react";
 import { Rocket } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { EmptyState } from "@/components/ceo/EmptyState";
@@ -7,9 +6,9 @@ import { Kicker } from "@/components/ceo/Kicker";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatusChip, type StatusTone } from "@/components/ceo/StatusChip";
 import { Button } from "@/components/ui/button";
+import { api, useAction } from "@/lib/cockpitApi";
 import { cn } from "@/lib/utils";
-import { api } from "../../../convex/_generated/api";
-import type { B2bAdsPayload } from "../../../convex/ceo/payloads";
+import type { B2bAdsPayload } from "@/types/ceo/payloads";
 
 /**
  * Launch a campaign on Mahara's own account, the way the launch skill says:

@@ -1,15 +1,17 @@
-import { useAction } from "convex/react";
 import {
   Archive,
   CheckCheck,
+  ChevronRight,
   LoaderCircle,
   Mic,
   Send,
   Users,
 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { api } from "../../convex/_generated/api";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
+import { archiveWaThread, fetchWaInbox, sendReply } from "@/lib/comms";
+import { clientMatcher } from "@/lib/search";
 
 /**
  * The WhatsApp desk.
@@ -32,24 +34,7 @@ type Message = {
   at: string;
 };
 
-type Draft = {
-  ar: string | null;
-  en: string | null;
-  why: string | null;
-  sent_at: string | null;
-  sent_by: string | null;
-} | null;
-
-type Thread = {
-  id: string;
-  contact_name: string | null;
-  phone: string | null;
-  is_group: boolean;
-  desk: string;
-  last_inbound_at: string | null;
-  draft: Draft;
-  messages: Message[];
-};
+type Thread = Awaited<ReturnType<typeof fetchWaInbox>>["threads"][number];
 
 function ago(iso: string | null): string {
   if (!iso) return "";
@@ -85,8 +70,34 @@ function Thread({
   desk: Desk;
   onDone: () => void;
 }) {
-  const send = useAction(api.wa.send);
-  const archive = useAction(api.wa.archive);
+  const auth = useCockpitAuth();
+  const [archiveRequestId] = useState(() => crypto.randomUUID());
+  const send = async (args: {
+    threadId?: string;
+    chatId?: string;
+    text?: string;
+    body?: string;
+    lang?: "ar" | "en";
+    desk?: Desk;
+  }) => {
+    if (!auth.client) return;
+    const cid = args.chatId ?? args.threadId ?? "";
+    const msg = args.text ?? args.body ?? "";
+    return sendReply(auth.client, {
+      chatId: cid,
+      text: msg,
+      contextKey: t.contextKey,
+    });
+  };
+  const archive = async (args: {
+    threadId?: string;
+    chatId?: string;
+    desk?: Desk;
+  }) => {
+    if (!auth.client) return;
+    const cid = args.chatId ?? args.threadId ?? "";
+    await archiveWaThread(auth.client, cid, t.contextKey, archiveRequestId);
+  };
 
   const hasAr = Boolean(t.draft?.ar);
   const [lang, setLang] = useState<"ar" | "en">(hasAr ? "ar" : "en");
@@ -206,12 +217,26 @@ function Thread({
           <div className="mt-2 flex items-center gap-2">
             <button
               type="button"
-              disabled={busy || !text.trim()}
+              disabled={
+                busy ||
+                !text.trim() ||
+                !t.sendSupported ||
+                ["intent", "accepted", "reconcile"].includes(t.replyState ?? "")
+              }
               onClick={async () => {
                 setBusy(true);
                 try {
-                  await send({ threadId: t.id, desk, body: text, lang });
-                  toast.success("Sent.");
+                  const receipt = await send({
+                    threadId: t.id,
+                    desk,
+                    body: text,
+                    lang,
+                  });
+                  toast.success(
+                    receipt?.deliveryConfirmed
+                      ? "Delivery confirmed"
+                      : "Submitted. Delivery is not confirmed.",
+                  );
                   onDone();
                 } catch (e) {
                   toast.error(
@@ -250,34 +275,64 @@ type Desk = "csm" | "ads" | "creative";
  * theirs is not connected rather than showing an empty list that reads
  * like everything is answered.
  */
-const CONNECTED: Record<Desk, boolean> = {
-  csm: true,
-  ads: false,
-  creative: false,
-};
 
-export function WhatsAppDesk({ desk }: { desk: Desk }) {
-  const inbox = useAction(api.wa.inbox);
+function WhatsAppDeskContent({
+  desk,
+  clients,
+}: {
+  desk: Desk;
+  clients?: string[];
+}) {
+  const auth = useCockpitAuth();
+  const inbox = useCallback(
+    async (_args: { desk: Desk }) => {
+      if (!auth.client)
+        throw new Error("Sign in again before reading WhatsApp.");
+      return fetchWaInbox(auth.client, desk);
+    },
+    [auth.client, desk],
+  );
   const [threads, setThreads] = useState<Thread[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [connection, setConnection] = useState<{
+    configured: boolean;
+    ready: boolean;
+    sourceNote: string | null;
+  } | null>(null);
+  const loadSequence = useRef(0);
+  const isClient = useMemo(
+    () => (clients ? clientMatcher(clients) : null),
+    [clients],
+  );
 
   const load = useCallback(async () => {
+    const sequence = ++loadSequence.current;
     try {
-      const out = (await inbox({ desk })) as { threads: Thread[] };
-      setThreads(out.threads ?? []);
+      const out = await inbox({ desk });
+      if (sequence !== loadSequence.current) return;
+      setThreads(out.threads);
+      setConnection({
+        configured: out.configured,
+        ready: out.ready,
+        sourceNote: out.sourceNote,
+      });
       setError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "The desk did not load.");
+      if (sequence === loadSequence.current)
+        setError(e instanceof Error ? e.message : "The desk did not load.");
     }
   }, [inbox, desk]);
 
   useEffect(() => {
-    if (CONNECTED[desk]) void load();
-  }, [load, desk]);
+    void load();
+    return () => {
+      loadSequence.current++;
+    };
+  }, [load]);
 
   // Not connected: one quiet line, the why folded under it, so a desk
   // without its own WhatsApp does not spend a card saying so every day.
-  if (!CONNECTED[desk])
+  if (connection?.configured === false)
     return (
       <details className="text-sm text-muted-foreground">
         <summary>WhatsApp is not connected for this desk</summary>
@@ -303,23 +358,83 @@ export function WhatsAppDesk({ desk }: { desk: Desk }) {
       </p>
     );
 
+  const mine = isClient
+    ? threads.filter(t => isClient(t.contact_name ?? ""))
+    : threads;
+  const others = isClient
+    ? threads.filter(t => !isClient(t.contact_name ?? ""))
+    : [];
+
   return (
     <section>
       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
         <h2 className="text-[15px] font-semibold tracking-tight">WhatsApp</h2>
+        {connection?.sourceNote ? (
+          <p role="status" className="text-sm text-muted-foreground">
+            {connection.sourceNote}
+          </p>
+        ) : null}
         <span className="text-xs text-muted-foreground">
-          {threads.length
-            ? `${threads.length} waiting on a reply`
-            : "Every conversation is answered. New ones appear here within fifteen minutes of a client writing."}
+          {threads.length === 0
+            ? connection?.ready
+              ? "No conversations are waiting in the verified inbox."
+              : "The inbox is not verified. Refresh it before relying on an empty list."
+            : isClient
+              ? `${mine.length} client ${mine.length === 1 ? "conversation" : "conversations"} waiting on a reply${
+                  others.length
+                    ? `, ${others.length} other conversations below`
+                    : ""
+                }`
+              : `${threads.length} waiting on a reply`}
         </span>
       </div>
-      {threads.length ? (
+      {mine.length ? (
         <ul className="mt-3 space-y-3">
-          {threads.map(t => (
+          {mine.map(t => (
             <Thread key={t.id} t={t} desk={desk} onDone={() => void load()} />
           ))}
         </ul>
+      ) : threads.length ? (
+        <p className="mt-3 text-sm text-muted-foreground">
+          No client is waiting on a reply. The other conversations are below.
+        </p>
+      ) : null}
+      {others.length ? (
+        <details className="group mt-4 rounded-2xl border border-dashed">
+          <summary className="no-marker flex cursor-pointer flex-wrap items-center gap-2 px-4 py-3 text-sm font-medium sm:px-6">
+            <ChevronRight
+              aria-hidden
+              className="size-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-90"
+            />
+            Other conversations ({others.length})
+            <span className="text-xs font-normal text-muted-foreground">
+              team chats, other groups, and people whose name is not a client's.
+              Archive the ones that need nothing.
+            </span>
+          </summary>
+          <ul className="space-y-3 px-2 pb-3 sm:px-3">
+            {others.map(t => (
+              <Thread key={t.id} t={t} desk={desk} onDone={() => void load()} />
+            ))}
+          </ul>
+        </details>
       ) : null}
     </section>
+  );
+}
+export function WhatsAppDesk({
+  desk,
+  clients,
+}: {
+  desk: Desk;
+  clients?: string[];
+}) {
+  const auth = useCockpitAuth();
+  return (
+    <WhatsAppDeskContent
+      key={auth.session?.user.id ?? "signed-out"}
+      desk={desk}
+      clients={clients}
+    />
   );
 }

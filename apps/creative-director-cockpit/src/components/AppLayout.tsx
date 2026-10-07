@@ -1,9 +1,11 @@
-import { useMutation } from "convex/react";
 import { MotionConfig, motion, useReducedMotion } from "framer-motion";
-import { useEffect, useLayoutEffect, useRef } from "react";
+import { Search } from "lucide-react";
+import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import { useLocation, useOutlet } from "react-router";
-import { api } from "../../convex/_generated/api";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
+import { openSearch } from "@/lib/search";
 import { AppSidebar } from "./AppSidebar";
+import { CommandPalette } from "./CommandPalette";
 import { HermesChat } from "./HermesChat";
 import { RouteErrorBoundary } from "./RouteErrorBoundary";
 import {
@@ -25,13 +27,32 @@ export function AppLayout() {
 }
 
 function LayoutContent() {
-  const queue = useMutation(api.clients.queueAction);
+  const { client } = useCockpitAuth();
   const outlet = useOutlet();
   const location = useLocation();
   const reduced = useReducedMotion();
   const { open, isMobile } = useSidebar();
   const inset = useRef<HTMLDivElement>(null);
   const previousOpen = useRef(open);
+
+  const handleReport = useCallback(
+    // biome-ignore lint/suspicious/noExplicitAny: error boundary param
+    async (r: any) => {
+      if (!client) return;
+      try {
+        const { error } = await client.rpc("cockpit_submit_issue_report", {
+          p_app: "creative",
+          p_page: location.pathname,
+          p_text: typeof r === "string" ? r : (r?.message ?? "App error"),
+          p_role: "creative",
+        });
+        if (error) throw error;
+      } catch (err) {
+        console.error("Failed to report issue:", err);
+      }
+    },
+    [client, location.pathname],
+  );
   // The first screen appears as it is; only a change of page fades in.
   const mounted = useRef(false);
   useEffect(() => {
@@ -70,6 +91,14 @@ function LayoutContent() {
             <span className="text-sm text-muted-foreground">
               Creative director
             </span>
+            <button
+              type="button"
+              onClick={openSearch}
+              aria-label="Search"
+              className="ml-auto inline-flex size-10 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground"
+            >
+              <Search aria-hidden className="size-5" />
+            </button>
           </div>
         </header>
         {/* A div, not a second <main>: SidebarInset is the page's <main>,
@@ -79,9 +108,7 @@ function LayoutContent() {
             only: a transform here would pin the Social sheet (position:
             fixed) to this wrapper instead of the screen. */}
         <div className="flex-1 px-4 pt-4 pb-24 sm:px-6 sm:pt-6 lg:px-8 lg:pt-8 lg:pb-12">
-          <RouteErrorBoundary
-            report={r => queue({ kind: "issue", payload: r })}
-          >
+          <RouteErrorBoundary report={handleReport}>
             <motion.div
               key={location.pathname}
               initial={mounted.current && !reduced ? { opacity: 0 } : false}
@@ -94,6 +121,7 @@ function LayoutContent() {
         </div>
         <HermesChat />
       </SidebarInset>
+      <CommandPalette />
     </>
   );
 }

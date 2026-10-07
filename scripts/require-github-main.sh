@@ -21,7 +21,9 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 dir="${1:?usage: scripts/require-github-main.sh <app dir> [site url]}"
 [ -d "$dir" ] || { echo "no such app directory: $dir"; exit 2; }
-python3 scripts/check-vercel-project.py "$dir"
+py_bin="python"
+command -v python >/dev/null 2>&1 || py_bin="python3"
+"$py_bin" scripts/check-vercel-project.py "$dir"
 
 case "$dir" in
   apps/media-buyer-cockpit)      default_site=https://cockpit.maharamedia.com ;;

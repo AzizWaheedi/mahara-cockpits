@@ -1,6 +1,6 @@
-import { useQuery } from "convex/react";
-import { Navigate, Outlet, useLocation } from "react-router";
-import { api } from "../../convex/_generated/api";
+import { Outlet } from "react-router";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
+import { portalUrl } from "@/lib/portal";
 
 /**
  * One cockpit per role, one link per cockpit. A media buyer who opens the client
@@ -8,19 +8,18 @@ import { api } from "../../convex/_generated/api";
  * plainly instead of shown an empty dashboard. The server enforces the same rule.
  */
 export function RoleRoute({ role }: { role: string }) {
-  const me = useQuery(api.roles.me, {});
-  const location = useLocation();
+  const { access, ready, session } = useCockpitAuth();
 
-  if (me === undefined) {
+  if (!ready) {
     return (
       <div className="p-10 text-sm text-muted-foreground">
         Checking your access…
       </div>
     );
   }
-  if (me.roles.includes(role)) return <Outlet />;
-  if (me.home && me.home !== location.pathname)
-    return <Navigate to={me.home} replace />;
+  if (access?.isAdmin || access?.isCeo || access?.roles.includes(role)) {
+    return <Outlet key={session?.user.id ?? "signed-out"} />;
+  }
 
   return (
     <div className="mx-auto max-w-md space-y-2 p-10 text-center">
@@ -29,6 +28,11 @@ export function RoleRoute({ role }: { role: string }) {
         Each role has its own link, and this one is for a different seat. Ask
         your manager for yours.
       </p>
+      {access?.home && (
+        <a className="text-sm underline" href={`${portalUrl()}${access.home}`}>
+          Open your cockpit
+        </a>
+      )}
     </div>
   );
 }

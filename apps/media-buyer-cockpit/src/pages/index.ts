@@ -1,14 +1,7 @@
 export { AdminPage } from "./AdminPage";
 export { CeoPage } from "./CeoPage";
-export {
-  AdsPage,
-  EndOfDayPage,
-  StartOfDayPage,
-  TaskListPage,
-  TouchpointsPage,
-} from "./CockpitPage";
-export { CsmPage } from "./CsmPage";
-export { DashboardPage } from "./DashboardPage";
+export { AdsPage, EndOfDayPage, TodayPage } from "./CockpitPage";
+export { FirstSignInPage } from "./FirstSignInPage";
 export { GoPage } from "./GoPage";
 export { IdeationPage } from "./IdeationPage";
 export { LandingPage } from "./LandingPage";

@@ -1,7 +1,5 @@
-import { useConvexAuth } from "convex/react";
-import { useEffect, useState } from "react";
-import { Navigate, Outlet } from "react-router";
-import { portalSignInPending } from "@/components/PortalAutoSignIn";
+import { Navigate, Outlet, useLocation } from "react-router";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import {
   Sidebar,
   SidebarContent,
@@ -76,23 +74,17 @@ function AppSkeleton() {
 }
 
 export function ProtectedRoute() {
-  const { isAuthenticated, isLoading } = useConvexAuth();
-  // While the portal is signing this person in, wait instead of flashing the
-  // login page; a swap that never finishes falls through after its window.
-  const pending = !isAuthenticated && portalSignInPending();
-  const [, wake] = useState(0);
-  useEffect(() => {
-    if (!pending) return;
-    const t = setTimeout(() => wake(n => n + 1), 46_000);
-    return () => clearTimeout(t);
-  }, [pending]);
+  const { ready, session, isAuthenticated } = useCockpitAuth();
+  const location = useLocation();
 
-  if (isLoading || pending) {
+  if (!ready) {
     return <AppSkeleton />;
   }
 
-  if (!isAuthenticated) {
-    return <Navigate to="/login" replace />;
+  if (!session || !isAuthenticated) {
+    const wanted = `${location.pathname}${location.search}`;
+    const next = wanted === "/" ? "" : `?next=${encodeURIComponent(wanted)}`;
+    return <Navigate to={`/login${next}`} replace />;
   }
 
   return <Outlet />;

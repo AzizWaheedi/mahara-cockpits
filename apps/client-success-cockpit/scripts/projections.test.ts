@@ -21,7 +21,7 @@ import {
   whereTheyAre,
   winsInWeek,
   wonAction,
-} from "../convex/projectionsCore";
+} from "../src/lib/projectionsCore";
 
 const TODAY = "2026-09-27";
 const out = (n: number) => addDays(TODAY, n);

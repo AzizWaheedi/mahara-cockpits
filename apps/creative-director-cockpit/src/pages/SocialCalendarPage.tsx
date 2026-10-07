@@ -1,4 +1,3 @@
-import { useAction } from "convex/react";
 import {
   ArrowUpRight,
   Check,
@@ -29,7 +28,8 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { api } from "../../convex/_generated/api";
+import { api, useAction } from "@/lib/social";
+
 import { AccountsPicker } from "../components/social/Accounts";
 import { Captions } from "../components/social/Captions";
 import { useConfirm } from "../components/social/Confirm";

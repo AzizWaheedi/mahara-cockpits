@@ -16,6 +16,10 @@ __pycache__/
 
 # Read-only query helpers and one-off SQL, never part of a build.
 scratchpad/
+scripts/*.json
 
 # Supabase CLI local cache
 supabase/.temp/
+
+# Acceptance reports bind HEAD after commit and expire; never embed them in that commit.
+evidence/cutover-acceptance.json

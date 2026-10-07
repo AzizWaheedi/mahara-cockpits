@@ -24,6 +24,7 @@ person reads the draft, edits it, and presses the button.
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import re
@@ -32,6 +33,9 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
+from tools import provider_json
+
+DRY_RUN = True
 
 GHL = "https://services.leadconnectorhq.com"
 # Higgsfield and GoHighLevel both sit behind a Cloudflare bot rule that
@@ -51,11 +55,19 @@ def note(line: str) -> None:
 
 
 class Store:
-    def __init__(self) -> None:
+    def __init__(self, *, apply: bool = False) -> None:
         self.base = os.environ["DESK_SUPABASE_URL"].rstrip("/")
+        if self.base != "https://bldgtotkfmhoxmlzowdx.supabase.co":
+            raise ValueError("The inbox target must be Creative Triage")
         self.key = os.environ["DESK_SUPABASE_KEY"]
+        self.apply = apply
+        self.planned_writes = 0
 
     def _call(self, method: str, path: str, body=None, prefer: str = ""):
+        if method != "GET" and not self.apply:
+            self.planned_writes += 1
+            note(f"DRY_RUN: {method} {path.split('?', 1)[0]}")
+            return []
         data = json.dumps(body).encode() if body is not None else None
         headers = {
             "apikey": self.key,
@@ -88,22 +100,29 @@ class Store:
     def patch(self, path: str, body: dict):
         self._call("PATCH", path, body, "return=minimal")
 
+    def health(self, provider, method, resource, phase, status):
+        self._call("POST", "cockpit_csm_provider_health", {
+            "provider": provider, "method": method, "resource": resource,
+            "phase": phase, "http_status": status,
+        }, "return=minimal")
 
-def ghl(path: str, token: str, version: str = "2021-04-15") -> dict:
-    req = urllib.request.Request(
-        GHL + path,
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Version": version,
-            "Accept": "application/json",
-            "User-Agent": UA,
-        },
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=60) as r:
-            return json.loads(r.read().decode())
-    except urllib.error.HTTPError as e:
-        raise RuntimeError(f"GHL {e.code}: {e.read().decode()[:200]}") from e
+    def save_draft(self, thread, previous_drafted_at, draft):
+        return self._call("POST", "rpc/cockpit_wa_worker_draft", {
+            "p_thread": thread["id"], "p_inbound_at": thread["last_inbound_at"],
+            "p_previous_drafted_at": previous_drafted_at, "p_draft": draft,
+        })
+
+    def publish_thread(self, thread, messages):
+        return self._call("POST", "rpc/cockpit_wa_worker_thread", {
+            "p_thread": thread, "p_messages": messages,
+        })
+
+
+def ghl(path: str, token: str, version: str = "2021-04-15", *, store: Store) -> dict:
+    return provider_json(store, "ghl", "GET", GHL + path, {
+        "Authorization": f"Bearer {token}", "Version": version,
+        "Accept": "application/json", "User-Agent": UA,
+    })
 
 
 # The bridge's own markers. Stripped before a model reads the text, and
@@ -210,7 +229,7 @@ discuss money, another client, or anything internal in a group.
 """
 
 
-def deepseek(system: str, user: str, *, max_tokens: int = 1200) -> str:
+def deepseek(store: Store, system: str, user: str, *, max_tokens: int = 1200) -> str:
     key = os.environ.get("DEEPSEEK_API_KEY")
     if not key:
         raise RuntimeError("DEEPSEEK_API_KEY is not set")
@@ -224,13 +243,8 @@ def deepseek(system: str, user: str, *, max_tokens: int = 1200) -> str:
         "temperature": 0.3,
         "response_format": {"type": "json_object"},
     }
-    req = urllib.request.Request(
-        "https://api.deepseek.com/chat/completions",
-        data=json.dumps(body).encode(),
-        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-    )
-    with urllib.request.urlopen(req, timeout=180) as r:
-        out = json.loads(r.read().decode())
+    out = provider_json(store, "deepseek", "POST", "https://api.deepseek.com/chat/completions",
+                        {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}, body)
     return out["choices"][0]["message"]["content"]
 
 
@@ -254,9 +268,11 @@ def scan(sb: Store, token: str, location: str, since: str) -> tuple[int, int]:
         data = ghl(
             f"/conversations/search?locationId={urllib.parse.quote(location)}"
             f"&limit=100&offset={page * 100}&sort=desc&sortBy=last_message_date",
-            token,
+            token, store=sb,
         )
-        convs = data.get("conversations") or []
+        convs = data.get("conversations")
+        if not isinstance(convs, list):
+            raise ValueError("The provider conversation page is missing")
         if not convs:
             break
 
@@ -270,54 +286,86 @@ def scan(sb: Store, token: str, location: str, since: str) -> tuple[int, int]:
                 break
             threads += 1
             messages += pull_thread(sb, token, location, cv, cutoff)
-        if stop:
+        if stop or len(convs) < 100:
             break
         page += 1
+    else:
+        raise ValueError("The conversation scan reached its safety bound. Do not publish a healthy scan")
     return threads, messages
 
 
-def pull_thread(sb: Store, token: str, location: str, cv: dict, cutoff) -> int:
-    cid = str(cv.get("id"))
-    data = ghl(f"/conversations/{urllib.parse.quote(cid)}/messages?limit=50", token)
-    raw = data.get("messages")
-    msgs = raw.get("messages") if isinstance(raw, dict) else (raw or [])
+def messages_since(sb: Store, token: str, cid: str, cutoff) -> list[dict]:
+    result, seen, cursor = [], set(), None
+    for _ in range(20):
+        path = f"/conversations/{urllib.parse.quote(cid)}/messages?limit=50&type=TYPE_CUSTOM_SMS"
+        if cursor:
+            path += "&lastMessageId=" + urllib.parse.quote(cursor)
+        data = ghl(path, token, store=sb)
+        raw = data.get("messages")
+        page = raw.get("messages") if isinstance(raw, dict) else raw
+        if not isinstance(page, list):
+            raise ValueError("The provider message page is missing")
+        crossed_watermark = False
+        for message in page:
+            mid, at = message.get("id"), iso(message.get("dateAdded"))
+            if not isinstance(mid, str) or not mid or mid in seen or at is None:
+                raise ValueError("The provider page contains a missing or repeated message identity")
+            seen.add(mid)
+            if datetime.fromisoformat(at) < cutoff:
+                crossed_watermark = True
+            else:
+                result.append(message)
+        more = raw.get("nextPage") if isinstance(raw, dict) else None
+        if crossed_watermark or more is False or (more is not True and len(page) < 50):
+            return result
+        if not page:
+            raise ValueError("The provider cursor did not advance")
+        cursor = page[-1]["id"]
+    raise ValueError("The message scan reached its safety bound. Do not publish a healthy scan")
 
-    rows, newest_in, newest_out, newest = [], None, None, None
-    provider = None
-    for m in msgs or []:
+
+def pull_thread(sb: Store, token: str, location: str, cv: dict, cutoff) -> int:
+    cid, contact = cv.get("id"), cv.get("contactId")
+    if not isinstance(cid, str) or not cid or not isinstance(contact, str) or not contact:
+        raise ValueError("The provider conversation or contact identity is missing")
+    existing = sb.get(f"wa_threads?select=id,provider_id,last_at,last_inbound_at,last_outbound_at&id=eq.{urllib.parse.quote(cid)}")
+    previous = existing[0] if existing else {}
+    msgs = messages_since(sb, token, cid, cutoff)
+
+    rows, newest_in, newest_out, newest = [], previous.get("last_inbound_at"), previous.get("last_outbound_at"), previous.get("last_at")
+    provider = previous.get("provider_id")
+    for m in msgs:
         at = iso(m.get("dateAdded"))
         if not at or datetime.fromisoformat(at) < cutoff:
             continue
-        provider = provider or m.get("conversationProviderId")
+        mid = m.get("id")
+        if not isinstance(mid, str) or not mid or m.get("direction") not in ("inbound", "outbound"):
+            raise ValueError("The provider message identity or direction is missing")
+        provider = m.get("conversationProviderId") or provider
         kind, text, speaker = read_body(str(m.get("body") or ""))
-        direction = "inbound" if m.get("direction") == "inbound" else "outbound"
+        direction = m["direction"]
+        status = m.get("status")
+        delivery_status = status if direction == "outbound" and status in ("pending", "sent", "delivered", "read", "failed") else None
         rows.append({
-            "id": str(m.get("id")),
-            "thread_id": cid,
-            "direction": direction,
-            "body": text,
-            "kind": kind,
-            "speaker": speaker,
-            "at": at,
+            "id": mid, "thread_id": cid, "direction": direction,
+            "body": text, "kind": kind, "speaker": speaker, "at": at,
+            "delivery_status": delivery_status,
         })
-        newest = max(newest or at, at)
-        # A Mahara name on a group message means it was one of ours, so it
-        # counts as us having spoken however the bridge labelled it.
+        newest = later(newest, at)
         if direction == "inbound" and not ours(speaker):
-            newest_in = max(newest_in or at, at)
-        else:
-            newest_out = max(newest_out or at, at)
-
+            newest_in = later(newest_in, at)
+        elif direction == "inbound" or delivery_status in ("delivered", "read"):
+            newest_out = later(newest_out, at)
     if not rows:
         return 0
 
     name = str(cv.get("fullName") or cv.get("contactName") or "")
     phone = str(cv.get("phone") or "")
-    sb.upsert("wa_threads", [{
+    sb.publish_thread({
         "id": cid,
         "location_id": location,
         "is_group": is_group(name, phone),
-        "contact_id": str(cv.get("contactId") or ""),
+        "contact_id": contact,
         "contact_name": name[:120] or None,
         "phone": phone[:40] or None,
         "provider_id": provider,
@@ -326,16 +374,42 @@ def pull_thread(sb: Store, token: str, location: str, cv: dict, cutoff) -> int:
         "last_outbound_at": newest_out,
         # They spoke last, so it is on us. GHL's unread count treats our
         # own sends from the phone as reads and gets this wrong.
-        "awaiting_us": bool(newest_in and (not newest_out or newest_in > newest_out)),
+        "awaiting_us": bool(newest_in and (not newest_out or datetime.fromisoformat(newest_in) > datetime.fromisoformat(newest_out))),
         "updated_at": now(),
-    }])
-    sb.upsert("wa_messages", rows)
+    }, rows)
     return len(rows)
+
+def later(left: str | None, right: str) -> str:
+    return right if left is None or datetime.fromisoformat(right) > datetime.fromisoformat(left) else left
+
+
+def observe_submitted(sb: Store, token: str, location: str) -> int:
+    intents = sb.get("cockpit_wa_reply_intents?select=id,thread_id,provider_message_id,context&state=eq.accepted&order=accepted_at.asc")
+    observed = 0
+    for intent in intents:
+        context = intent["context"]
+        if context.get("locationId") != location:
+            continue
+        mid = intent["provider_message_id"]
+        message = ghl(f"/conversations/messages/{urllib.parse.quote(mid)}", token, version="2023-02-21", store=sb)
+        if (message.get("id") != mid or message.get("conversationId") != intent["thread_id"]
+                or message.get("locationId") != location or message.get("contactId") != context.get("contactId")
+                or message.get("conversationProviderId") != context.get("providerId")
+                or message.get("direction") != "outbound" or message.get("messageType") != "TYPE_CUSTOM_SMS"):
+            raise ValueError("The provider delivery observation does not match the submitted WhatsApp message")
+        status = message.get("status")
+        if status not in ("pending", "sent", "delivered", "read", "failed"):
+            continue
+        sb.patch(f"wa_messages?id=eq.{urllib.parse.quote(mid)}&thread_id=eq.{urllib.parse.quote(intent['thread_id'])}", {"delivery_status": status})
+        observed += 1
+    return observed
 
 
 def draft_for(sb: Store, thread: dict) -> bool:
     """Write the reply for one thread. False when there is nothing to answer."""
     tid = thread["id"]
+    previous = sb.get(f"wa_drafts?select=drafted_at&thread_id=eq.{urllib.parse.quote(tid)}")
+    previous_drafted_at = previous[0]["drafted_at"] if previous else None
     msgs = sb.get(
         f"wa_messages?select=direction,body,kind,speaker,at"
         f"&thread_id=eq.{urllib.parse.quote(tid)}&order=at.desc&limit=14"
@@ -355,15 +429,11 @@ def draft_for(sb: Store, thread: dict) -> bool:
         # A voice note is the commonest last message here and we cannot
         # hear it. Guessing a reply to an unread message is worse than
         # saying plainly that somebody has to listen.
-        sb.upsert("wa_drafts", [{
-            "thread_id": tid,
+        return bool(sb.save_draft(thread, previous_drafted_at, {
             "ar": None, "en": None,
             "why": "Their last message is a voice note. Listen to it in WhatsApp first.",
-            "based_on": "(voice note)",
-            "model": "none",
-            "drafted_at": now(),
-        }], on_conflict="thread_id")
-        return True
+            "based_on": "(voice note)", "model": "none",
+        }))
 
     lines = []
     for m in msgs:
@@ -384,6 +454,7 @@ def draft_for(sb: Store, thread: dict) -> bool:
         else "A one-to-one chat."
     )
     answer = deepseek(
+        sb,
         DRAFT_SYSTEM,
         f"CONTACT: {thread.get('contact_name') or 'unknown'}\n"
         f"WHERE: {where}\n\n"
@@ -396,39 +467,56 @@ def draft_for(sb: Store, thread: dict) -> bool:
     if not ar and not en:
         raise ValueError("the model returned no reply")
 
-    sb.upsert("wa_drafts", [{
-        "thread_id": tid,
-        "ar": ar or None,
-        "en": en or None,
+    return bool(sb.save_draft(thread, previous_drafted_at, {
+        "ar": ar or None, "en": en or None,
         "why": str(parsed.get("why") or "")[:300] or None,
-        "based_on": (last_in.get("body") or "")[:300],
-        "model": "deepseek-chat",
-        "drafted_at": now(),
-        # A new inbound invalidates whatever was sent before it.
-        "sent_at": None, "sent_by": None, "sent_lang": None, "sent_body": None,
-    }], on_conflict="thread_id")
-    return True
+        "based_on": (last_in.get("body") or "")[:300], "model": "deepseek-chat",
+    }))
 
 
 def main() -> int:
-    token = os.environ.get("GHL_MAHARA_PIT")
-    location = os.environ.get("GHL_MAHARA_LOCATION")
-    if not token or not location:
-        note("GHL_MAHARA_PIT / GHL_MAHARA_LOCATION are not set")
+    parser = argparse.ArgumentParser(description="Native CSM inbox. Dry-run by default. Never sends messages.")
+    parser.add_argument("--apply", action="store_true", default=not DRY_RUN, help="Apply source writes and generate drafts. Requires approval for this run.")
+    parser.add_argument("--doctor", action="store_true")
+    args = parser.parse_args()
+    required = ["GHL_MAHARA_PIT", "GHL_MAHARA_LOCATION", "DESK_SUPABASE_URL", "DESK_SUPABASE_KEY"]
+    if args.apply:
+        required.append("DEEPSEEK_API_KEY")
+    missing = [name for name in required if not os.environ.get(name)]
+    if missing:
+        note("Missing configuration: " + ", ".join(missing))
         return 2
-
-    sb = Store()
+    token, location = os.environ["GHL_MAHARA_PIT"], os.environ["GHL_MAHARA_LOCATION"]
+    sb = Store(apply=args.apply)
     state = sb.get(f"wa_state?select=*&location_id=eq.{urllib.parse.quote(location)}")
     if not state:
         note("no watermark for this location; refusing to scan the whole history")
         return 2
+    floor = datetime(2026, 9, 20, tzinfo=timezone.utc)
+    watermark = datetime.fromisoformat(state[0]["scan_since"])
+    if watermark.tzinfo is None or watermark < floor:
+        note("The watermark predates switch-on. Refusing to draft old conversations.")
+        return 2
+    connection = sb.get("cockpit_wa_connections?select=app,desk,enabled,location_id&app=eq.client-success")
+    if len(connection) != 1 or not connection[0]["enabled"] or connection[0]["location_id"] != location:
+        note("The native CSM connection does not match this location. Do not use another desk inbox.")
+        return 2
+    if args.doctor:
+        note("Native inbox configuration, CSM connection, and switch-on watermark are valid. No scan or model call ran.")
+        return 0
 
+    begun_at = now()
     threads, messages = scan(sb, token, location, state[0]["scan_since"])
     note(f"scanned: {threads} thread(s) moved, {messages} new message(s)")
+    observed = observe_submitted(sb, token, location)
+    note(f"Delivery observations: {observed}. Only delivered/read confirms delivery.")
+    if not sb.apply:
+        note(f"DRY_RUN complete: {sb.planned_writes} planned writes. No drafts, heartbeat, or model call was applied.")
+        return 0
 
     waiting = sb.get(
         "wa_threads?select=id,contact_name,is_group,last_inbound_at"
-        "&awaiting_us=is.true&archived=is.false&order=last_inbound_at.desc&limit=40"
+        f"&location_id=eq.{urllib.parse.quote(location)}&desk=eq.csm&awaiting_us=is.true&archived=is.false&order=last_inbound_at.desc&limit=40"
     )
     drafted = failed = 0
     for t in waiting:
@@ -436,18 +524,18 @@ def main() -> int:
             f"wa_drafts?select=drafted_at&thread_id=eq.{urllib.parse.quote(t['id'])}"
         )
         # Redraft only when they have said something since the last draft.
-        if existing and str(existing[0]["drafted_at"]) > str(t["last_inbound_at"]):
+        if existing and datetime.fromisoformat(existing[0]["drafted_at"]) >= datetime.fromisoformat(t["last_inbound_at"]):
             continue
         try:
             if draft_for(sb, t):
                 drafted += 1
         except Exception as e:  # one bad thread must not stop the desk
             failed += 1
-            note(f"  {t['id']} ({t.get('contact_name')}): {type(e).__name__}: {e}")
+            note(f"Draft unavailable: {type(e).__name__}. Check the provider health ledger.")
 
     sb.patch(
         f"wa_state?location_id=eq.{urllib.parse.quote(location)}",
-        {"last_scan": now()},
+        {"last_scan": now(), "scan_since": begun_at},
     )
     note(f"{len(waiting)} waiting on us, {drafted} drafted, {failed} failed")
     return 0
