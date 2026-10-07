@@ -1,11 +1,15 @@
 import { Lightbulb, Star } from "lucide-react";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
-import { CreativePreview, type LocalStill, stillPropsFor, useLocalStills } from "@/components/CreativePreview";
+import {
+  CreativePreview,
+  type LocalStill,
+  stillPropsFor,
+  useLocalStills,
+} from "@/components/CreativePreview";
 import { AnimatedSelect } from "@/components/ui/animated-select";
-import { api, useAction } from "@/lib/ideation";
 import { Button } from "@/components/ui/button";
-
+import { api, useAction } from "@/lib/ideation";
 
 /**
  * The winning ads, word for word.

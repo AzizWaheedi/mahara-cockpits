@@ -1,8 +1,46 @@
-import type { Fact, GoldRow, Likelihood, ProjectionsPage, ProjectionWeek, StripRow, WindowRow } from './projectionsView';
-import { actualOf,addDays,daysToRenewal,filtersOf,GOLD_TARGET,hardestOf,hotUsedThisMonth,inWindow,isDay,kuwaitDay,METRIC_LABEL,METRIC_UNIT,METRICS,type Metric,type Paid,type PlanStatus,RENEWAL_FIELD,resellGate,rowState,shortDay,verdictOf,weekStartOf,whereTheyAre,winsInWeek } from './projectionsCore';
-import type { ProjectionSource, ProjectionClient, ProjectionPlan } from './projectionsSchema';
+import {
+  actualOf,
+  addDays,
+  daysToRenewal,
+  filtersOf,
+  GOLD_TARGET,
+  hardestOf,
+  hotUsedThisMonth,
+  inWindow,
+  isDay,
+  kuwaitDay,
+  METRIC_LABEL,
+  METRIC_UNIT,
+  METRICS,
+  type Metric,
+  type Paid,
+  type PlanStatus,
+  RENEWAL_FIELD,
+  resellGate,
+  rowState,
+  shortDay,
+  verdictOf,
+  weekStartOf,
+  whereTheyAre,
+  winsInWeek,
+} from "./projectionsCore";
+import type {
+  ProjectionClient,
+  ProjectionPlan,
+  ProjectionSource,
+} from "./projectionsSchema";
+import type {
+  Fact,
+  GoldRow,
+  Likelihood,
+  ProjectionsPage,
+  ProjectionWeek,
+  StripRow,
+  WindowRow,
+} from "./projectionsView";
+
 type Feed = ProjectionSource["feed"];
-const norm=(s:string)=>s.trim().toLowerCase().replace(/\s+/g,' ');
+const norm = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ");
 const hoursAgo = (ms: number, now: number) => {
   const h = Math.round((now - ms) / 3600_000);
   return h < 1
@@ -120,13 +158,42 @@ function paidLine(p: NonNullable<Paid>): string {
     ? `billing ledger, ${p.payments} payment${p.payments === 1 ? "" : "s"}${p.since ? ` since ${shortDay(p.since)}` : ""}`
     : "the LTV field on the ClickUp card";
 }
-function onboardedOf(appointments:ProjectionSource["appointments"],c:ProjectionClient,today:string): {day:string;source:string}|null {
- const first=appointments.filter(a=>a.clientName===c.name&&a.kind==='onboarding'&&a.status!=='cancelled').map(a=>a.day as string).sort()[0];
- return first?{day:first,source:'the onboarding call in GoHighLevel'}:typeof c.signupDays==='number'?{day:addDays(today,-c.signupDays),source:'the day the ClickUp card was made'}:null;
+function onboardedOf(
+  appointments: ProjectionSource["appointments"],
+  c: ProjectionClient,
+  today: string,
+): { day: string; source: string } | null {
+  const first = appointments
+    .filter(
+      a =>
+        a.clientName === c.name &&
+        a.kind === "onboarding" &&
+        a.status !== "cancelled",
+    )
+    .map(a => a.day as string)
+    .sort()[0];
+  return first
+    ? { day: first, source: "the onboarding call in GoHighLevel" }
+    : typeof c.signupDays === "number"
+      ? {
+          day: addDays(today, -c.signupDays),
+          source: "the day the ClickUp card was made",
+        }
+      : null;
 }
-function liveFacts(profiles:ProjectionSource["profiles"],c:ProjectionClient,feed:Feed): Fact[] {
- const profile=profiles.find(p=>norm(p.clientName??p.client_name??'')===norm(c.name));
- return whereTheyAre(c,profile?.performance??null,paidOf(feed,{taskId:c.taskId,name:c.name}));
+function liveFacts(
+  profiles: ProjectionSource["profiles"],
+  c: ProjectionClient,
+  feed: Feed,
+): Fact[] {
+  const profile = profiles.find(
+    p => norm(p.clientName ?? p.client_name ?? "") === norm(c.name),
+  );
+  return whereTheyAre(
+    c,
+    profile?.performance ?? null,
+    paidOf(feed, { taskId: c.taskId, name: c.name }),
+  );
 }
 function planOf(p: ProjectionPlan | null | undefined) {
   return {
@@ -135,16 +202,33 @@ function planOf(p: ProjectionPlan | null | undefined) {
     notThisCycleReason: p?.notThisCycleReason ?? null,
   };
 }
-export function buildProjections(data:ProjectionSource):ProjectionsPage {
- const now=Date.now(), today=data.today, weekStart=weekStartOf(today);
- const weeks=[weekStart,...Array.from({length:8},(_,i)=>addDays(weekStart,-7*(i+1)))];
- const clients=data.clients, owner=data.owner, rows=data.projections;
- const owners=[...new Set(rows.map(r=>String(r.byEmail)))];
- const mine=new Map(rows.filter(r=>r.byEmail===owner).map(r=>[r.weekStart+'|'+r.metric,r]));
- const countable=data.decisions.filter(d=>d.role==='csm');
- const hotUsed=hotUsedThisMonth(countable,today.slice(0,7));
- const feed=data.feed;
- const sources:Sources={now,today,feed,tracked:clients.some(c=>c.renewalTracked===true),inScope:()=>true};
+export function buildProjections(data: ProjectionSource): ProjectionsPage {
+  const now = Date.now(),
+    today = data.today,
+    weekStart = weekStartOf(today);
+  const weeks = [
+    weekStart,
+    ...Array.from({ length: 8 }, (_, i) => addDays(weekStart, -7 * (i + 1))),
+  ];
+  const clients = data.clients,
+    owner = data.owner,
+    rows = data.projections;
+  const owners = [...new Set(rows.map(r => String(r.byEmail)))];
+  const mine = new Map(
+    rows
+      .filter(r => r.byEmail === owner)
+      .map(r => [r.weekStart + "|" + r.metric, r]),
+  );
+  const countable = data.decisions.filter(d => d.role === "csm");
+  const hotUsed = hotUsedThisMonth(countable, today.slice(0, 7));
+  const feed = data.feed;
+  const sources: Sources = {
+    now,
+    today,
+    feed,
+    tracked: clients.some(c => c.renewalTracked === true),
+    inScope: () => true,
+  };
   const weekOf = (ws: string): ProjectionWeek => {
     const weekEnd = addDays(ws, 6);
     const over = weekEnd < today;
@@ -178,15 +262,26 @@ export function buildProjections(data:ProjectionSource):ProjectionsPage {
     };
   };
 
- const windowRows:WindowRow[]=[];
- for(const c of clients){
-  if(!c.renewalDate||!isDay(c.renewalDate))continue;
-  const renewalDate=c.renewalDate;
-  const plan=data.plans.find(p=>p.taskId===c.taskId&&p.renewalDate===renewalDate);
+  const windowRows: WindowRow[] = [];
+  for (const c of clients) {
+    if (!c.renewalDate || !isDay(c.renewalDate)) continue;
+    const renewalDate = c.renewalDate;
+    const plan = data.plans.find(
+      p => p.taskId === c.taskId && p.renewalDate === renewalDate,
+    );
     const pl = planOf(plan);
     if (!inWindow(renewalDate, today, pl.status)) continue;
-    const gate = resellGate({name:c.name,stage:c.stage,liveDays:c.liveDays,firstWin:c.firstWin}, hotUsed, today);
-    const paid = paidOf(feed, {taskId:c.taskId,name:c.name});
+    const gate = resellGate(
+      {
+        name: c.name,
+        stage: c.stage,
+        liveDays: c.liveDays,
+        firstWin: c.firstWin,
+      },
+      hotUsed,
+      today,
+    );
+    const paid = paidOf(feed, { taskId: c.taskId, name: c.name });
     const saved = plan?.whereTheyAre?.length ? plan.whereTheyAre : null;
     windowRows.push({
       taskId: c.taskId,
@@ -244,9 +339,8 @@ export function buildProjections(data:ProjectionSource):ProjectionsPage {
     .sort((a, b) => a.clientName.localeCompare(b.clientName));
 
   const gold: GoldRow[] = data.plans
-    .filter(
-      (p): p is ProjectionPlan & { callRecordingUrl: string } =>
-        Boolean(p.goldStandard && p.callRecordingUrl),
+    .filter((p): p is ProjectionPlan & { callRecordingUrl: string } =>
+      Boolean(p.goldStandard && p.callRecordingUrl),
     )
     .sort((a, b) => b.updatedAt - a.updatedAt)
     .map(p => ({

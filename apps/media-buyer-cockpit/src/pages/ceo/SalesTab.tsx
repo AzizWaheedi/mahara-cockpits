@@ -5,22 +5,56 @@ import { Delta, type DeltaKind, type GoodWhen } from "@/components/ceo/Delta";
 import { EmptyState } from "@/components/ceo/EmptyState";
 import { Facts } from "@/components/ceo/Facts";
 import { FunnelStrip } from "@/components/ceo/FunnelStrip";
-import { change, count, date, decimal, diff, humanize, isNum, kuwaitDay, money, month, NA, pct, plural, shiftMonth } from "@/components/ceo/format";
+import {
+  change,
+  count,
+  date,
+  decimal,
+  diff,
+  humanize,
+  isNum,
+  kuwaitDay,
+  money,
+  month,
+  NA,
+  pct,
+  plural,
+  shiftMonth,
+} from "@/components/ceo/format";
 import { DERIVED_NOTE, useGrowthWindow } from "@/components/ceo/growthWindow";
 import { Kicker } from "@/components/ceo/Kicker";
-import { CANCEL_RATE, CLOSE_RATE, contractedHeadline, INTRO_SHOW_RATE, INTRO_TO_DEMO, QUALIFIED_CLOSE_RATE, ROAS_CASH, ROAS_CONTRACTED, SHOW_RATE } from "@/components/ceo/metrics";
+import {
+  CANCEL_RATE,
+  CLOSE_RATE,
+  contractedHeadline,
+  INTRO_SHOW_RATE,
+  INTRO_TO_DEMO,
+  QUALIFIED_CLOSE_RATE,
+  ROAS_CASH,
+  ROAS_CONTRACTED,
+  SHOW_RATE,
+} from "@/components/ceo/metrics";
 import { Value } from "@/components/ceo/Na";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatTile } from "@/components/ceo/StatTile";
 import { StatusChip } from "@/components/ceo/StatusChip";
 import { TabLink } from "@/components/ceo/TabLink";
-import { SALES_TARGET_METRICS, TargetMeter } from "@/components/ceo/TargetMeter";
+import {
+  SALES_TARGET_METRICS,
+  TargetMeter,
+} from "@/components/ceo/TargetMeter";
 import { TimeframeBar } from "@/components/ceo/TimeframeBar";
 import { TimeSeriesChart } from "@/components/ceo/TimeSeriesChart";
 import { useTimeframe } from "@/components/ceo/timeframe";
 import { range } from "@/components/ceo/windows";
 import { cn } from "@/lib/utils";
-import type { AssetsPayload, FunnelWindow, GrowthPayload, MoneyPayload, Note } from "@/types/ceo/payloads";
+import type {
+  AssetsPayload,
+  FunnelWindow,
+  GrowthPayload,
+  MoneyPayload,
+  Note,
+} from "@/types/ceo/payloads";
 import type { CeoTabProps } from "./types";
 
 /** a over b, null when b cannot carry a rate. A real zero stays 0. */

@@ -1,7 +1,6 @@
-import { useQuery } from "@/lib/cockpitApi";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { api } from "@/lib/cockpitApi";
+import { api, useQuery } from "@/lib/cockpitApi";
 
 /**
  * Tracking faults on live ads, checked against Meta directly.
@@ -49,7 +48,9 @@ export function TrackingIssues() {
                 </span>
               </div>
               <div className="mt-0.5 text-xs text-muted-foreground">
-                {[...new Set((r.ads ?? []).map((a: any) => a.issue))].join(" · ")}
+                {[...new Set((r.ads ?? []).map((a: any) => a.issue))].join(
+                  " · ",
+                )}
               </div>
             </li>
           ))}

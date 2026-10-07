@@ -1,7 +1,8 @@
 // One client, one row, whatever state a push leaves the table in.
 // Run from the client success app directory: bun test scripts/profile-rows.test.ts
 import { describe, expect, test } from "bun:test";
-import { buildPerformanceOverview } from "../convex/csm";
+import { convexToJson } from "convex/values";
+import { buildPerformanceOverview, periodRows } from "../convex/csm";
 import { clientKey, onePerClient } from "../convex/profileRows";
 
 const OLD = "2026-09-27-1790500000000";
@@ -96,5 +97,27 @@ describe("the client performance overview", () => {
       { date: "2026-09-26", leads: 30, spend: 300, cpl: 10 },
     ]);
     expect(out.weeklyOutcomes[0].booked).toBe(3);
+  });
+});
+
+describe("the client list for a picked period", () => {
+  test("Arabic client names survive the trip to the browser", () => {
+    const rows = periodRows(
+      [profile("حول العمران للمقاولات", NEW), profile("Ocean Home", NEW)],
+      "2026-09-20",
+      "2026-09-30",
+    );
+    // What Convex does to a query's result before sending it.
+    expect(() => convexToJson(rows)).not.toThrow();
+    expect(rows.map(r => r.clientName)).toEqual([
+      "حول العمران للمقاولات",
+      "Ocean Home",
+    ]);
+    expect(rows[0]).toMatchObject({
+      leads: 10,
+      spend: 100,
+      booked: 1,
+      shows: 1,
+    });
   });
 });

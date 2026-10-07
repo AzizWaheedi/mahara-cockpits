@@ -24,7 +24,15 @@ export const all = internalQuery({
 });
 
 export const save = internalMutation({
-  args: { entries: v.array(v.object({ key: v.string(), text: v.string() })) },
+  args: {
+    entries: v.array(
+      v.object({
+        key: v.string(),
+        text: v.string(),
+        at: v.optional(v.number()),
+      }),
+    ),
+  },
   returns: v.null(),
   handler: async (ctx, { entries }) => {
     for (const e of entries) {
@@ -36,7 +44,7 @@ export const save = internalMutation({
         docId: e.key,
         title: "sheet read",
         text: e.text,
-        at: Date.now(),
+        at: e.at ?? Date.now(),
       };
       if (row) await ctx.db.patch(row._id, doc);
       else await ctx.db.insert("docCache", doc);
@@ -69,7 +77,7 @@ export async function loadSheetCache(ctx: any): Promise<SheetCache> {
   return map;
 }
 
-/** Persist the entries an action fetched fresh (marked with at = 0 by the caller). */
+/** Persist entries with the time the provider read actually succeeded. */
 // biome-ignore lint/suspicious/noExplicitAny: action ctx
 export async function saveSheetCache(
   ctx: any,
@@ -78,6 +86,7 @@ export async function saveSheetCache(
   const entries = [...fresh.entries()].map(([key, v]) => ({
     key,
     text: JSON.stringify(v.data),
+    at: v.at,
   }));
   if (!entries.length) return;
   try {

@@ -1,9 +1,10 @@
-import { api, useAction } from "@/lib/cockpitApi";
 import { ArrowDown, ArrowUp, Loader2, Plus, X } from "lucide-react";
 import { useState } from "react";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { api, useAction } from "@/lib/cockpitApi";
+import type { BlockRow, MeetingPage as Page } from "@/lib/team";
 import {
   blocksFor,
   DAY_NAMES,
@@ -11,7 +12,6 @@ import {
   variesByDay,
   weekdayOf,
 } from "@/lib/teamCore";
-import type { BlockRow, MeetingPage as Page } from "@/lib/team";
 import {
   ConfirmInline,
   chip,

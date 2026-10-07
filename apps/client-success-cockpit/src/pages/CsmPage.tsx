@@ -1,32 +1,96 @@
-import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router";
+import {
+  ArrowLeft,
+  ArrowUpRight,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  MoonStar,
+  X,
+} from "lucide-react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
+import {
+  Link,
+  useLocation,
+  useNavigate,
+  useParams,
+  useSearchParams,
+} from "react-router";
 import { toast } from "sonner";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
-import { ArrowUpRight, Check, ChevronDown, ChevronRight, X } from "lucide-react";
-import { type ReactNode } from "react";
-import { Chip, Dot, ExtLink, Kicker, PageHeader, Pill, PillRow, StatTile, type Tone } from "@/components/kit";
+import { ClientCheckIn } from "@/components/ClientCheckIn";
+import {
+  Chip,
+  Dot,
+  ExtLink,
+  Fold,
+  Kicker,
+  PageHeader,
+  Pill,
+  PillRow,
+  StatTile,
+  type Tone,
+} from "@/components/kit";
 import { KitSummary, OnboardingKit } from "@/components/OnboardingKit";
+import { PortalTasksButton } from "@/components/PortalTasks";
 import { ReportIssue } from "@/components/ReportIssue";
-import { SendForReview } from "@/components/SendForReview";
+import { SyncStrip } from "@/components/SyncStrip";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
 import { DateInput } from "@/components/ui/date-input";
 import { Textarea } from "@/components/ui/textarea";
-import { WhatsAppDesk } from "@/components/WhatsAppDesk";
+import { readChurnPage } from "@/lib/churnClient";
+import type { MonthRow } from "@/lib/churnCore";
 import { opportunitiesFor, rankOpportunities } from "@/lib/csmHotList";
 import { LINK_GROUPS } from "@/lib/csmLinks";
-import { CHURN_TARGET, type Counts, computePay, EARNERS, FOUR_RS, PENALTIES } from "@/lib/csmMoney";
+import {
+  CHURN_TARGET,
+  type Counts,
+  computePay,
+  EARNERS,
+  FOUR_RS,
+  PENALTIES,
+} from "@/lib/csmMoney";
 import { spineFor } from "@/lib/csmOnboardingSpine";
 import { csmMoneyPatch } from "@/lib/csmStateClient";
-import { cadence, draftsFor, guessLang, humanise, isChurned, type Lang, LINKS, nextCall, nextPocState, serviceModel } from "@/lib/csmTemplates";
-import { displayLabel, plainText, plural, sentence, shortDay } from "@/lib/format";
+import {
+  blanksIn,
+  cadence,
+  draftsFor,
+  guessLang,
+  humanise,
+  isChurned,
+  type Lang,
+  LINKS,
+  nextCall,
+  nextPocState,
+  serviceModel,
+} from "@/lib/csmTemplates";
+import {
+  displayLabel,
+  plainText,
+  plural,
+  sentence,
+  shortDay,
+} from "@/lib/format";
+import {
+  readOnboardingKits,
+  refreshOnboardingKits,
+} from "@/lib/onboardingClient";
+import type { KitsPage, OnboardingRow } from "@/lib/onboardingCore";
 import { publishOpenClient } from "@/lib/openClient";
+import { fetchClientProfile } from "@/lib/performance";
+import { fold, matchScore } from "@/lib/search";
 import { useCsmSnapshot } from "@/lib/useCsmSnapshot";
 import { cn } from "@/lib/utils";
-import type { MonthRow } from "@/lib/churnCore";
-import { readChurnPage } from "@/lib/churnClient";
-import type { KitsPage } from "@/lib/onboardingCore";
-import { readOnboardingKits, refreshOnboardingKits } from "@/lib/onboardingClient";
+import { BacklogPage } from "./BacklogPage";
+import {
+  AddTask,
+  ClientLinks,
+  ClientPerformancePage,
+  ClientProfile,
+  LINK_LABELS,
+} from "./ClientPerformancePage";
+import { MeetingsPage } from "./MeetingsPage";
 
 /** Tickets the CSM raises. Picking the request picks the board — she never picks a team. */
 const TICKETS: { label: string; dept: string; deptLabel: string }[] = [
@@ -76,15 +140,23 @@ const TICKETS: { label: string; dept: string; deptLabel: string }[] = [
   },
 ];
 
+/**
+ * The ClickUp board's Client Status options, spelled exactly as ClickUp has
+ * them (the write matches the name), in journey order. Brand Blueprint
+ * Booked and Cancelled onboarding were missing (the simplification audit,
+ * 2026-10-06); "Sales team to contact" is the sales team's, not the CSM's.
+ */
 const STAGES = [
-  "Active",
   "Needs Contacting",
   "Onboarding Booked",
+  "Brand Blueprint Booked♠️",
   "LAUNCH BOOKED",
   "Ready For Launch🚀",
+  "Active",
+  "Paused",
   "DELAY OUT OF OUR CONTROL",
   "GHOSTED",
-  "Paused",
+  "CANCELLED ONBOARDING",
   "Stopped",
 ];
 const HAPPINESS = [
@@ -396,6 +468,9 @@ function TemplatePicker({
   const editKey = `${lang}:${chosen.id}`;
   const text = edits[editKey] ?? chosen.message;
   const nc = nextCall(c, lang);
+  // A message still holding a blank ("[report link]", DATE) never reaches a client.
+  const blanks = blanksIn(text);
+  const missingLink = blanks.length > 0;
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -439,9 +514,18 @@ function TemplatePicker({
         onChange={e => setEdits(x => ({ ...x, [editKey]: e.target.value }))}
         dir={lang === "ar" ? "rtl" : "ltr"}
       />
+      {missingLink ? (
+        <p className="callout-warn rounded-xl border px-3 py-2 text-xs">
+          Fill in {blanks.join(", ")} before this goes to the client.
+          {blanks.some(b => b.includes("report") || b.includes("التقرير"))
+            ? " Write the report on the Results tab, then paste its link."
+            : ""}
+        </p>
+      ) : null}
       <div className="flex flex-wrap gap-2">
         <Button
           size="sm"
+          disabled={missingLink}
           onClick={() => {
             navigator.clipboard.writeText(text);
             toast.success("Copied, paste it into the client's WhatsApp group");
@@ -452,6 +536,7 @@ function TemplatePicker({
         <Button
           size="sm"
           variant="secondary"
+          disabled={missingLink}
           onClick={() => {
             onLog(c, `Messaged the client, ${chosen.short}`, "touchpoint", {
               note: text,
@@ -492,7 +577,7 @@ function TemplatePicker({
           </span>
         )}
         {c.sheetLink && (
-          <ExtLink href={c.sheetLink}>Their report sheet</ExtLink>
+          <ExtLink href={c.sheetLink}>Their performance sheet</ExtLink>
         )}
         {c.noteMissing && (
           <a
@@ -519,118 +604,6 @@ function TemplatePicker({
         onLog={onLog}
         emphasise={justSent}
       />
-    </div>
-  );
-}
-
-/**
- * One client on the touchpoints view, with the cadence they are on, both clocks, and the
- * SOP messages behind one click. Messages run on `lastPoc`, calls on `lastCall`.
- */
-function TouchpointRow({
-  c,
-  lang,
-  onLang,
-  onLog,
-  defaultOpen,
-  today,
-}: {
-  c: Client;
-  lang: Lang;
-  onLang: (lang: Lang) => void;
-  onLog: (
-    c: Client,
-    action: string,
-    kind: string,
-    extra?: Record<string, unknown>,
-  ) => void;
-  defaultOpen?: boolean;
-  today: string;
-}) {
-  const count = draftsFor(c, lang).length;
-  // The top row opens itself, otherwise the ready-to-send drafts are invisible
-  // behind a collapsed row and nobody knows they exist.
-  const [open, setOpen] = useState(defaultOpen ?? false);
-  const cad = cadence(c);
-  const poc = nextPocState(c, today);
-  const spineDay = spineFor(c).dayIndex;
-  const sm = serviceModel(c.service);
-  return (
-    <div className="rounded-2xl border bg-card">
-      <button
-        type="button"
-        aria-expanded={open}
-        className="flex w-full items-start justify-between gap-3 px-4 py-3 text-left sm:px-6 sm:py-4"
-        onClick={() => setOpen(!open)}
-      >
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <LevelDot level={c.level} />
-            <span className="font-semibold">{c.name}</span>
-            <Chip dot={false}>{displayLabel(c.stage)}</Chip>
-            <Chip tone={poc.missing || poc.past ? "bad" : "good"}>
-              {poc.label}
-            </Chip>
-            {sm.code ? null : (
-              <Chip tone="warn" title={sm.kpi}>
-                {sm.label}
-              </Chip>
-            )}
-          </div>
-          <div className="mt-1 text-xs text-muted-foreground">
-            {cad.stage}, messages {cad.label}
-            {sm.code ? ` · ${sm.code}` : ""}
-            {spineDay != null ? ` · onboarding day ${spineDay} of 14` : ""}
-          </div>
-          <div className="mt-0.5 text-xs text-muted-foreground">
-            <span className={cad.messageOverdue ? "font-semibold txt-bad" : ""}>
-              Last message{" "}
-              {c.lastPoc
-                ? `${shortDay(c.lastPoc)} (${c.silentDays}d ago)`
-                : "never"}
-              {cad.daysLate > 0 ? `, ${cad.daysLate}d late` : ""}
-            </span>
-            {" · "}
-            <span className={cad.callOverdue ? "font-semibold txt-bad" : ""}>
-              last call {c.lastCall ? shortDay(c.lastCall) : "never"} (
-              {cad.callLabel}){cad.callOverdue ? ", due" : ""}
-            </span>
-            {" · 1-1 notes "}
-            {c.lastNoteOn ? shortDay(c.lastNoteOn) : "none"}
-            {sm.dwy ? "" : " · report "}
-            {!sm.dwy && (
-              <span className={c.reportDue ? "font-semibold txt-bad" : ""}>
-                {c.reportTracked === false
-                  ? "not tracked yet"
-                  : c.lastReport
-                    ? `${shortDay(c.lastReport)} (${c.reportDays}d ago)`
-                    : "never sent"}
-              </span>
-            )}
-          </div>
-        </div>
-        <span className="mt-0.5 flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
-          {open ? null : plural(count, "draft")}
-          <ChevronDown
-            aria-hidden
-            className={cn(
-              "size-4 transition-transform",
-              open ? "rotate-180" : "",
-            )}
-          />
-        </span>
-      </button>
-      {open && (
-        <div className="border-t px-4 py-4 sm:px-6">
-          <TemplatePicker
-            c={c}
-            lang={lang}
-            onLang={onLang}
-            onLog={onLog}
-            today={today}
-          />
-        </div>
-      )}
     </div>
   );
 }
@@ -701,10 +674,14 @@ function Capped({ items, limit = 10 }: { items: ReactNode[]; limit?: number }) {
   );
 }
 
+/**
+ * The places this page draws. Today, Clients and one client's page are their
+ * own addresses; the hot list and the CSM's pay are tabs of Money.
+ */
 type Section =
-  | "start"
+  | "today"
   | "clients"
-  | "tasks"
+  | "client"
   | "hot"
   | "links"
   | "money"
@@ -989,27 +966,157 @@ function HotSheet({
   );
 }
 
-function kitErrorText(error: unknown): string {
-  return error instanceof Error ? error.message : "The onboarding links could not be read. Reload the view.";
+/**
+ * The media buyer's changes since the last logged call, or the last two weeks
+ * when no call is logged: the newest eight. The card carries 90 days of them
+ * (the Client performance page shows any period).
+ */
+function sinceLastCall(c: Client): Client[] {
+  const since = c.lastCall
+    ? String(c.lastCall).slice(0, 10)
+    : new Date(Date.now() + 3 * 3_600_000 - 14 * 86_400_000)
+        .toISOString()
+        .slice(0, 10);
+  return ((c.changes ?? []) as Client[])
+    .filter(ch => String(ch.day) >= since)
+    .sort((a, b) => (b.at ?? 0) - (a.at ?? 0))
+    .slice(0, 8);
 }
 
-export function CsmPage(props: { section: Section }) {
+/** The client page's tabs, in the order a CSM reaches for them. */
+const CLIENT_TABS = [
+  { key: "overview", label: "Overview" },
+  { key: "results", label: "Results" },
+  { key: "onboarding", label: "Onboarding & files" },
+  { key: "money", label: "Money" },
+] as const;
+type ClientTab = (typeof CLIENT_TABS)[number]["key"];
+
+/**
+ * What you do to a client, one panel each. Booking is not here: it is the
+ * one "Book a call" button at the top of the page, with the booking link as
+ * its second option.
+ */
+const ACTIONS = [
+  { key: "message", label: "Message" },
+  { key: "log", label: "Log a call" },
+  { key: "update", label: "Update the board" },
+  { key: "task", label: "Add a task" },
+  { key: "leave", label: "Leave it" },
+] as const;
+type Panel = (typeof ACTIONS)[number]["key"] | "link";
+const PANELS: string[] = [...ACTIONS.map(a => a.key), "link"];
+
+/** The Clients page's views; who needs you today is on Today. */
+const VIEWS = [
+  { key: "all", label: "All" },
+  { key: "onboarding", label: "Onboarding" },
+  { key: "live", label: "Live" },
+  { key: "results", label: "Results" },
+] as const;
+type View = (typeof VIEWS)[number]["key"];
+
+/**
+ * One client in a list: the dot, the name, where they are, the next step,
+ * and the clocks. The whole row opens the client's page.
+ */
+function ClientRow({
+  c,
+  today,
+  handled,
+  kit,
+}: {
+  c: Client;
+  today: string;
+  handled: boolean;
+  kit?: OnboardingRow | null;
+}) {
+  const poc = nextPocState(c, today);
+  const sm = serviceModel(c.service);
+  return (
+    <Link
+      to={`/clients/${c.taskId}`}
+      className={cn(
+        "group flex items-start justify-between gap-3 rounded-2xl border bg-card px-4 py-3 transition-colors hover:border-primary/40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary sm:px-6 sm:py-4",
+        handled ? "opacity-60" : "",
+      )}
+    >
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <LevelDot level={c.level} />
+          <span className="font-semibold" dir="auto">
+            {c.name}
+          </span>
+          <Chip dot={false}>{displayLabel(c.stage)}</Chip>
+          <Chip tone={poc.missing || poc.past ? "bad" : "good"}>
+            {poc.label}
+          </Chip>
+          {sm.code ? null : (
+            <Chip tone="warn" title={sm.kpi}>
+              {sm.label}
+            </Chip>
+          )}
+          {handled && (
+            <span className="inline-flex items-center gap-1 text-xs font-medium txt-good">
+              <Check aria-hidden className="size-3.5" />
+              Handled today
+            </span>
+          )}
+        </div>
+        <div className="mt-1 text-sm" dir="auto">
+          {plainText(c.todo)}
+        </div>
+        {c.bucket === "onboarding" && kit ? <KitSummary kit={kit} /> : null}
+        <div className="mt-1 text-xs text-muted-foreground">
+          {c.lastPoc
+            ? `Last contact ${shortDay(c.lastPoc)}`
+            : "Never contacted"}
+          {c.lastCall
+            ? ` · last call ${shortDay(c.lastCall)}`
+            : " · no call logged"}
+          {c.liveDays !== undefined ? ` · live ${c.liveDays}d` : ""}
+          {c.happiness ? ` · ${displayLabel(c.happiness)}` : ""}
+          {sm.code ? ` · ${sm.code}` : ""}
+          {c.csmAssigned ? ` · ${c.csmAssigned}` : ""}
+        </div>
+      </div>
+      <ChevronRight
+        aria-hidden
+        className="mt-0.5 size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-primary"
+      />
+    </Link>
+  );
+}
+
+type CsmProps = { section: Section; embedded?: boolean; clientKey?: string };
+export function CsmPage(props: CsmProps) {
   const auth = useCockpitAuth();
   return <CsmContent key={auth.session?.user.id ?? "signed-out"} {...props} />;
 }
 
-function CsmContent({ section }: { section: Section }) {
+function kitErrorText(error: unknown): string {
+  return error instanceof Error
+    ? error.message
+    : "The onboarding links could not be read. Reload the view.";
+}
+
+function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
   const auth = useCockpitAuth();
   const sb = useCsmSnapshot(auth.client, auth.clients);
-  const snap = sb.snap;
-  const toggleCheck = sb.toggleCheck as any;
-  const act = sb.act as any;
-  const addPlanItems = sb.addPlanItems as any;
-  const submitEod = sb.submitEod as any;
-  const setClientLanguage = sb.setClientLanguage as any;
-  const saveHotRow = sb.saveHotRow as any;
-  const clearLooseEnds = sb.clearLooseEnds as any;
-  const saveMoneyGoals = sb.saveMoneyGoals as any;
+  const {
+    snap,
+    toggleCheck,
+    act,
+    addPlanItems,
+    submitEod,
+    setClientLanguage,
+    saveHotRow,
+    clearLooseEnds,
+    saveMoneyGoals,
+  } = sb;
+  const navigate = useNavigate();
+  const location = useLocation();
+  const [params, setParams] = useSearchParams();
 
   /** Her saved choice wins; the client's own name is only the fallback guess. */
   const langOf = (c: Client): Lang => {
@@ -1019,21 +1126,87 @@ function CsmContent({ section }: { section: Section }) {
     return saved === "ar" || saved === "en" ? saved : guessLang(c.name);
   };
 
-  const [open, setOpen] = useState<string | null>(null);
-  // The open row is state, not a URL: tell the Hermes chat which client it is.
+  /**
+   * The client page's client: by ClickUp id, or by name when a link from the
+   * results list carried the name. undefined while the list loads, null when
+   * the client is not on this CSM's list.
+   */
+  const clientRow: Client | null | undefined = useMemo(() => {
+    if (section !== "client" || !clientKey) return null;
+    if (!snap) return undefined;
+    const list: Client[] = snap.clients ?? [];
+    return (
+      list.find(c => String(c.taskId) === clientKey) ??
+      list.find(c => fold(String(c.name)) === fold(clientKey)) ??
+      null
+    );
+  }, [section, clientKey, snap]);
+  // One address per client: a name in the address becomes the ClickUp id.
   useEffect(() => {
-    publishOpenClient(open);
+    if (clientRow && clientKey !== String(clientRow.taskId))
+      navigate(
+        { pathname: `/clients/${clientRow.taskId}`, search: location.search },
+        { replace: true },
+      );
+  }, [clientRow, clientKey, location.search, navigate]);
+  // The Hermes chat answers about the client on screen.
+  const openName = clientRow ? String(clientRow.name) : null;
+  useEffect(() => {
+    publishOpenClient(openName);
     return () => publishOpenClient(null);
-  }, [open]);
-  const [panel, setPanel] = useState<
-    | "onboarding"
-    | "message"
-    | "actions"
-    | "book"
-    | "ticket"
-    | "leave"
-    | "update"
-  >("message");
+  }, [openName]);
+  /** The client's profile: their links in the header (the tabs read it too). */
+  const [profile, setProfile] = useState<Client | undefined>(undefined);
+  useEffect(() => {
+    setProfile(undefined);
+    if (!auth.client || !clientRow) return;
+    let live = true;
+    void fetchClientProfile(auth.client, String(clientRow.name))
+      .then(value => {
+        if (live) setProfile(value);
+      })
+      .catch(error => {
+        if (live)
+          toast.error(
+            error instanceof Error
+              ? error.message
+              : "The client profile could not be read.",
+          );
+      });
+    return () => {
+      live = false;
+    };
+  }, [auth.client, clientRow]);
+
+  // The client page's tab, period and open panel live in the address, so a
+  // refresh, the Back button or a shared link lands on the same view.
+  const tabParam = params.get("tab");
+  const clientTab: ClientTab = CLIENT_TABS.some(t => t.key === tabParam)
+    ? (tabParam as ClientTab)
+    : "overview";
+  const period = params.get("period") ?? "month";
+  const actParam = params.get("act");
+  const setParam = (key: string, value: string | null) => {
+    const next = new URLSearchParams(params);
+    if (value === null) next.delete(key);
+    else next.set(key, value);
+    // A tab or a period is a new view: the search box's action is done.
+    if (key !== "act") next.delete("act");
+    setParams(next, { replace: true });
+  };
+  const [panel, setPanel] = useState<Panel | null>(null);
+  // The search box's "Message", "Log a call"… arrive with that panel open.
+  useEffect(() => {
+    if (actParam && PANELS.includes(actParam)) setPanel(actParam as Panel);
+  }, [actParam]);
+  const togglePanel = (p: Panel) => setPanel(v => (v === p ? null : p));
+
+  const viewParam = params.get("view");
+  const view: View = VIEWS.some(v => v.key === viewParam)
+    ? (viewParam as View)
+    : "all";
+  const [find, setFind] = useState("");
+
   const [ticket, setTicket] = useState(TICKETS[0].label);
   const [ticketNote, setTicketNote] = useState("");
   const [reason, setReason] = useState(REASONS[0]);
@@ -1059,49 +1232,32 @@ function CsmContent({ section }: { section: Section }) {
   const [offboarded, setOffboarded] = useState("");
   const [extended, setExtended] = useState("");
   const [pausedToday, setPausedToday] = useState("");
-  const [eodSaving,setEodSaving]=useState(false);
-  useEffect(()=>{
-    if(!snap?.eodOwner)return;
-    const a=snap.eod?.answers??{};
-    setEnergy(String(snap.eod?.energy??"7"));setStress(String(snap.eod?.stress??"4"));
-    setCallSummary(String(a.callSummary??""));setExpectations(String(a.expectations??""));
-    setTouchpoints(String(a.touchpoints??"Y"));setFathom(String(a.fathom??"Y"));
-    setNewSignups(String(a.newSignups??"N"));setUpsells(String(a.upsells??"N"));
-    setReviews(String(a.reviews??"N"));setReferrals(String(a.referrals??"N"));
-    setLost(String(a.lost??""));setOnePercent(String(a.onePercent??""));setRollup(String(a.rollup??""));
-    setOffboarded(String(a.offboarded??""));setExtended(String(a.extended??""));setPausedToday(String(a.paused??""));
-  },[snap?.eodOwner,snap?.eodDay,snap?.eod?._id]);
+  const [eodSaving, setEodSaving] = useState(false);
+  useEffect(() => {
+    if (!snap?.eodOwner) return;
+    const a = snap.eod?.answers ?? {};
+    setEnergy(String(snap.eod?.energy ?? "7"));
+    setStress(String(snap.eod?.stress ?? "4"));
+    setCallSummary(String(a.callSummary ?? ""));
+    setExpectations(String(a.expectations ?? ""));
+    setTouchpoints(String(a.touchpoints ?? "Y"));
+    setFathom(String(a.fathom ?? "Y"));
+    setNewSignups(String(a.newSignups ?? "N"));
+    setUpsells(String(a.upsells ?? "N"));
+    setReviews(String(a.reviews ?? "N"));
+    setReferrals(String(a.referrals ?? "N"));
+    setLost(String(a.lost ?? ""));
+    setOnePercent(String(a.onePercent ?? ""));
+    setRollup(String(a.rollup ?? ""));
+    setOffboarded(String(a.offboarded ?? ""));
+    setExtended(String(a.extended ?? ""));
+    setPausedToday(String(a.paused ?? ""));
+  }, [snap?.eodOwner, snap?.eodDay, snap?.eod?._id]);
 
   // Income plan. Local overrides win over the saved row until he saves again.
   const [targetEdit, setTargetEdit] = useState<string | null>(null);
   const [clientsEdit, setClientsEdit] = useState<string | null>(null);
   const [countEdits, setCountEdits] = useState<Counts>({});
-  const [tabState, setTab] = useState<
-    | "today"
-    | "touchpoints"
-    | "management"
-    | "onboarding"
-    | "hot"
-    | "loose"
-    | "tasks"
-    | "links"
-    | "money"
-  >("today");
-  const TABS: Record<Section, string[]> = {
-    start: [],
-    clients: ["today", "touchpoints", "management", "onboarding"],
-    tasks: ["tasks", "loose"],
-    hot: ["hot"], // its own screen in the sidebar, so the tab bar stays hidden
-    links: ["links"],
-    money: ["money"],
-    eod: [],
-  };
-  // Start of day and End of day have no tabs, and must not fall back to the client lists:
-  // those live on the Clients screen. Falling back to "today" made both screens twice as
-  // long as they needed to be.
-  const tab = TABS[section].includes(tabState)
-    ? tabState
-    : (TABS[section][0] ?? "none");
 
   const done = useMemo(
     () =>
@@ -1111,28 +1267,45 @@ function CsmContent({ section }: { section: Section }) {
     [snap],
   );
 
-  const refreshKits = (args: { taskId: string; taskIds: string[] }) => refreshOnboardingKits(auth.client, args.taskId, args.taskIds);
+  const refreshKits = (args: { taskId: string; taskIds: string[] }) =>
+    refreshOnboardingKits(auth.client, args.taskId, args.taskIds);
   const [kitPage, setKitPage] = useState<KitsPage | null>(null);
   const [kitLoadedFor, setKitLoadedFor] = useState("");
   const [kitError, setKitError] = useState<string | null>(null);
   const [kitRefreshing, setKitRefreshing] = useState<string | null>(null);
   const kitKey = useMemo(() => {
+    if (section === "client") return clientRow ? String(clientRow.taskId) : "";
     const list: Client[] = snap?.clients ?? [];
-    const ids = new Set(list.filter(c => c.bucket === "onboarding").map(c => String(c.taskId)));
-    const openRow = list.find(c => c.name === open);
-    if (openRow) ids.add(String(openRow.taskId));
-    return [...ids].sort().join(",");
-  }, [snap, open]);
+    return list
+      .filter(c => c.bucket === "onboarding")
+      .map(c => String(c.taskId))
+      .sort()
+      .join(",");
+  }, [snap, section, clientRow]);
+  const kitsWanted =
+    section === "today" || section === "clients" || section === "client";
   useEffect(() => {
-    if (section !== "clients" || !kitKey) return;
+    if (!kitsWanted || !kitKey) return;
     let live = true;
-    const load = () => readOnboardingKits(auth.client, kitKey.split(","))
-      .then(page => { if (live) { setKitPage(page); setKitLoadedFor(kitKey); setKitError(null); } })
-      .catch(error => { if (live) setKitError(kitErrorText(error)); });
+    const load = () =>
+      readOnboardingKits(auth.client, kitKey.split(","))
+        .then(page => {
+          if (live) {
+            setKitPage(page);
+            setKitLoadedFor(kitKey);
+            setKitError(null);
+          }
+        })
+        .catch(error => {
+          if (live) setKitError(kitErrorText(error));
+        });
     void load();
     const timer = setInterval(load, 180_000);
-    return () => { live = false; clearInterval(timer); };
-  }, [section, kitKey, auth.client]);
+    return () => {
+      live = false;
+      clearInterval(timer);
+    };
+  }, [kitsWanted, kitKey, auth.client]);
   const kitOf = (client: Client) => {
     const id = String(client.taskId);
     if (!kitLoadedFor.split(",").includes(id)) return undefined;
@@ -1144,12 +1317,17 @@ function CsmContent({ section }: { section: Section }) {
       const ids = kitKey ? kitKey.split(",") : [];
       if (!ids.includes(taskId)) ids.push(taskId);
       const page = await refreshKits({ taskId, taskIds: ids });
-      setKitPage(page); setKitLoadedFor(ids.sort().join(",")); setKitError(null);
+      setKitPage(page);
+      setKitLoadedFor(ids.sort().join(","));
+      setKitError(null);
       if (page.problem) toast.error(page.problem);
       else toast.success("Read again from ClickUp and Typeform");
     } catch (error) {
-      setKitError(kitErrorText(error)); toast.error(kitErrorText(error));
-    } finally { setKitRefreshing(null); }
+      setKitError(kitErrorText(error));
+      toast.error(kitErrorText(error));
+    } finally {
+      setKitRefreshing(null);
+    }
   };
   if (sb.error) {
     return (
@@ -1171,18 +1349,20 @@ function CsmContent({ section }: { section: Section }) {
     );
   }
 
+  const wrap = embedded ? "space-y-6" : "mx-auto w-full max-w-6xl space-y-6";
   if (snap === undefined) {
     return (
-      <div className="mx-auto w-full max-w-6xl text-sm text-muted-foreground">
-        Loading today's clients…
+      <div className={cn(wrap, "text-sm text-muted-foreground")}>
+        {section === "client" ? "Loading the client…" : "Loading your clients…"}
       </div>
     );
   }
 
-  const t = snap.totals;
   // biome-ignore lint/suspicious/noExplicitAny: decision rows
   const ds: any[] = snap.decisions ?? [];
-  const callsToday = ds.filter(d => /call/i.test(d.action)).length;
+  // A call is a call logged ("Held a call"), not a booking that mentions one.
+  const callsToday = ds.filter(d => /^held a call/i.test(d.action)).length;
+  const clientsHandled = new Set(ds.map(d => d.subject)).size;
   const signupsToday = ds.filter(d =>
     /signup|welcome|onboarding/i.test(d.action),
   ).length;
@@ -1191,8 +1371,7 @@ function CsmContent({ section }: { section: Section }) {
   ).length;
   const ticketsToday = ds.filter(d => d.kind === "rerouted").length;
   const clients: Client[] = snap.clients;
-  // Today = the combined priority list across both motions; the other two tabs are the
-  // split, so he can work one motion at a time.
+  // Who needs you = the combined priority list across both motions.
   const needsAction = (c: Client) => c.rank < 40 && c.level !== "green";
   const todayList = clients.filter(needsAction);
   const managementList = clients.filter(c => c.bucket === "management");
@@ -1220,6 +1399,20 @@ function CsmContent({ section }: { section: Section }) {
       )
       .map((item: { text: string; source: string }) => ({ client: c, item })),
   );
+  /**
+   * The day's numbers, counted from the list on the page: the board-wide
+   * totals counted every client, which is wrong once there are two CSMs, and
+   * the hot list follows the Hot list tab's own rule.
+   */
+  const t = {
+    dueToday: todayList.length,
+    newSignups: clients.filter(c => c.newSignup).length,
+    pastDue: clients.filter(c => (c.paymentDue ?? -99) >= 1).length,
+    onboarding: onboardingList.length,
+    managed: managementList.length,
+    hot: hotRows.length,
+    loose: looseList.reduce((n, c) => n + c.loose.length, 0),
+  };
 
   const run = async (
     c: Client,
@@ -1240,9 +1433,10 @@ function CsmContent({ section }: { section: Section }) {
       toast.error(String((e as Error).message ?? e));
       return;
     }
-    setOpen(null);
     setNote("");
     setTicketNote("");
+    // The message panel stays open: it asks for the next call once logged.
+    if (panel !== "message" && panel !== "update") setPanel(null);
     toast.success(
       kind === "ticket"
         ? "Ticket created on the right board"
@@ -1266,134 +1460,262 @@ function CsmContent({ section }: { section: Section }) {
     );
   };
 
-  const row = (c: Client) => {
-    const isOpen = open === c.name;
+  const row = (c: Client) => (
+    <ClientRow
+      key={c.taskId}
+      c={c}
+      today={snap.day}
+      handled={done.has(c.name)}
+      kit={kitOf(c)}
+    />
+  );
+
+  /** One call's commitments: make them tasks, or close them as done. */
+  const commitmentsBlock = (rows: typeof commitmentRows, withClient: boolean) =>
+    [
+      ...new Map(
+        rows.map(r => [`${r.client.taskId}|${r.item.source}`, r]),
+      ).values(),
+    ].map(({ client, item }) => {
+      const call = item.source;
+      const items = rows
+        .filter(
+          r => r.client.taskId === client.taskId && r.item.source === call,
+        )
+        .map(r => r.item);
+      const when = call.replace("1-1 call notes, ", "");
+      return (
+        <ChecklistItem
+          key={`${client.taskId}-${call}`}
+          title={
+            withClient
+              ? `${client.name}, your call on ${shortDay(when)}`
+              : `Your call on ${shortDay(when)}`
+          }
+          why={`${plural(items.length, "thing")} you said you would do. Anything another team has to do goes to them with "Add a task" on the client's page.`}
+          action={
+            <div className="space-y-3">
+              <ul className="ml-4 list-disc space-y-1 text-sm text-foreground">
+                {items.map(i => (
+                  <li key={i.text} dir="auto">
+                    {i.text}
+                  </li>
+                ))}
+              </ul>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  size="sm"
+                  onClick={() =>
+                    addPlanItems({
+                      items: items.map(i => ({
+                        text: i.text,
+                        clientName: client.name,
+                      })),
+                    }).then(() =>
+                      toast.success(
+                        `${items.length} task${items.length === 1 ? "" : "s"} created on Client Success`,
+                      ),
+                    )
+                  }
+                >
+                  Create {items.length === 1 ? "the task" : "the tasks"}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={async () => {
+                    // Closing a commitment is not contact with the client:
+                    // "commitment" leaves Last POC and the silence clock alone
+                    // (it used to log a touchpoint; the simplification audit,
+                    // 2026-10-06). The ClickUp card still gets the note.
+                    for (const i of items)
+                      await run(
+                        client,
+                        `Commitment handled: ${i.text}`,
+                        "commitment",
+                        { note: i.source },
+                      );
+                  }}
+                >
+                  All done already
+                </Button>
+                <Link
+                  to={`/clients/${client.taskId}?act=task`}
+                  className="text-xs text-primary underline-offset-4 hover:underline"
+                >
+                  Ask a team
+                </Link>
+              </div>
+            </div>
+          }
+        />
+      );
+    });
+
+  /** The client's page: everything about one client, in one place. */
+  const clientPage = (c: Client) => {
+    const poc = nextPocState(c, snap.day);
+    const sm = serviceModel(c.service);
+    const cad = cadence(c);
+    const spineDay = spineFor(c).dayIndex;
     const handled = done.has(c.name);
+    // The next client on Today's list, so the list can be worked from here.
+    const at = todayList.findIndex(x => x.taskId === c.taskId);
+    const nextUp = todayList.find(
+      (x, i) => i > at && x.taskId !== c.taskId && !done.has(x.name),
+    );
+    const links: Record<string, string> = {
+      ...(c.sheetLink ? { sheet: String(c.sheetLink) } : {}),
+      ...(c.taskUrl ? { clickup: String(c.taskUrl) } : {}),
+      ...((profile?.links ?? {}) as Record<string, string>),
+    };
+    const mine = commitmentRows.filter(r => r.client.taskId === c.taskId);
+    const changes = sinceLastCall(c);
+    const nc = nextCall(c, langOf(c));
+    const reportUrl: string | undefined = (
+      (profile?.reports ?? []) as { builtAt?: number; docUrl?: string }[]
+    ).find(r => r.builtAt && r.docUrl)?.docUrl;
     return (
-      <div
-        key={c.taskId}
-        className={cn(
-          "rounded-2xl border bg-card",
-          handled && !isOpen ? "opacity-60" : "",
-        )}
-      >
-        <button
-          type="button"
-          aria-expanded={isOpen}
-          className="flex w-full items-start justify-between gap-3 px-4 py-3 text-left sm:px-6 sm:py-4"
-          onClick={() => {
-            setOpen(isOpen ? null : c.name);
-            setPanel(c.bucket === "onboarding" ? "onboarding" : "message");
-          }}
-        >
-          <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+      <div className="space-y-6">
+        <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+          <Link
+            to="/clients"
+            className="inline-flex items-center gap-1 text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+          >
+            <ArrowLeft aria-hidden className="size-4" />
+            All clients
+          </Link>
+          {nextUp ? (
+            <Link
+              to={`/clients/${nextUp.taskId}`}
+              className="inline-flex min-w-0 items-center gap-1 text-primary underline-offset-4 hover:underline"
+            >
+              <span className="truncate">
+                Next who needs you: {nextUp.name}
+              </span>
+              <ChevronRight aria-hidden className="size-4 shrink-0" />
+            </Link>
+          ) : null}
+        </div>
+
+        <header className="space-y-2">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
               <LevelDot level={c.level} />
-              <span className="font-semibold">{c.name}</span>
+              <h1
+                className="text-2xl font-semibold tracking-tight sm:text-[28px] sm:leading-9"
+                dir="auto"
+              >
+                {c.name}
+              </h1>
               <Chip dot={false}>{displayLabel(c.stage)}</Chip>
-              {(() => {
-                const poc = nextPocState(c, snap.day);
-                return (
-                  <Chip tone={poc.missing || poc.past ? "bad" : "good"}>
-                    {poc.label}
-                  </Chip>
-                );
-              })()}
-              {(() => {
-                const sm = serviceModel(c.service);
-                return sm.code ? null : (
-                  <Chip tone="warn" title={sm.kpi}>
-                    {sm.label}
-                  </Chip>
-                );
-              })()}
-              {handled && (
+              <Chip tone={poc.missing || poc.past ? "bad" : "good"}>
+                {poc.label}
+              </Chip>
+              {sm.code ? (
+                <Chip dot={false} title={sm.kpi}>
+                  {sm.code}
+                </Chip>
+              ) : (
+                <Chip tone="warn" title={sm.kpi}>
+                  {sm.label}
+                </Chip>
+              )}
+              {handled ? (
                 <span className="inline-flex items-center gap-1 text-xs font-medium txt-good">
                   <Check aria-hidden className="size-3.5" />
                   Handled today
                 </span>
-              )}
+              ) : null}
             </div>
-            <div className="mt-1 text-sm" dir="auto">
-              {plainText(c.todo)}
-            </div>
-            {c.bucket === "onboarding" && kitOf(c) ? (
-              <KitSummary
-                kit={kitOf(c) as NonNullable<ReturnType<typeof kitOf>>}
-              />
-            ) : null}
-            <div className="mt-1 text-xs text-muted-foreground">
-              {c.lastPoc
-                ? `Last contact ${shortDay(c.lastPoc)}`
-                : "Never contacted"}
-              {c.lastCall
-                ? ` · last call ${shortDay(c.lastCall)}`
-                : " · no call logged"}
-              {c.liveDays !== undefined ? ` · live ${c.liveDays}d` : ""}
-              {c.happiness ? ` · ${displayLabel(c.happiness)}` : ""}
-              {serviceModel(c.service).code
-                ? ` · ${serviceModel(c.service).code}`
-                : ""}
-              {c.csmAssigned ? ` · ${c.csmAssigned}` : ""}
-            </div>
+            <ReportIssue page={`client: ${c.name}`} />
           </div>
-          <ChevronDown
-            aria-hidden
-            className={cn(
-              "mt-0.5 size-4 shrink-0 text-muted-foreground transition-transform",
-              isOpen ? "rotate-180" : "",
+          <p className="text-[15px] leading-6" dir="auto">
+            {plainText(c.todo)}
+          </p>
+          <p className="text-xs text-muted-foreground">
+            {cad.stage}, messages {cad.label}
+            {spineDay != null ? ` · onboarding day ${spineDay} of 14` : ""}
+            {c.liveDays !== undefined ? ` · live ${c.liveDays} days` : ""}
+            {c.happiness ? ` · ${displayLabel(c.happiness)}` : ""}
+            {c.csmAssigned ? ` · ${c.csmAssigned}` : ""}
+          </p>
+          <p className="text-xs text-muted-foreground">
+            <span className={cad.messageOverdue ? "font-semibold txt-bad" : ""}>
+              Last message{" "}
+              {c.lastPoc
+                ? `${shortDay(c.lastPoc)} (${c.silentDays}d ago)`
+                : "never"}
+              {cad.daysLate > 0 ? `, ${cad.daysLate}d late` : ""}
+            </span>
+            {" · "}
+            <span className={cad.callOverdue ? "font-semibold txt-bad" : ""}>
+              last call {c.lastCall ? shortDay(c.lastCall) : "never"} (
+              {cad.callLabel}){cad.callOverdue ? ", due" : ""}
+            </span>
+            {" · 1-1 notes "}
+            {c.lastNoteOn ? shortDay(c.lastNoteOn) : "none"}
+            {sm.dwy ? "" : " · report "}
+            {!sm.dwy && (
+              <span className={c.reportDue ? "font-semibold txt-bad" : ""}>
+                {c.reportTracked === false
+                  ? "not tracked yet"
+                  : c.lastReport
+                    ? `${shortDay(c.lastReport)} (${c.reportDays}d ago)`
+                    : "never sent"}
+              </span>
             )}
-          />
-        </button>
+          </p>
+          {/* One links row, one name per link, the same names as Results. */}
+          <div className="flex flex-wrap gap-x-4 gap-y-1 pt-1 text-sm">
+            {LINK_LABELS.filter(l => links[l.key]).map(l => (
+              <ExtLink key={l.key} href={links[l.key]}>
+                {l.label}
+              </ExtLink>
+            ))}
+          </div>
+        </header>
 
-        {isOpen && (
-          <div className="space-y-4 border-t px-4 py-4 sm:px-6">
-            <PillRow>
-              {(
-                [
-                  "onboarding",
-                  "message",
-                  "actions",
-                  "book",
-                  "update",
-                  "ticket",
-                  "leave",
-                ] as const
-              ).map(p => (
-                <Pill key={p} active={panel === p} onClick={() => setPanel(p)}>
-                  {p === "onboarding"
-                    ? c.bucket === "onboarding"
-                      ? "Onboarding"
-                      : "Links"
-                    : p === "message"
-                      ? "Message (SOP template)"
-                      : p === "actions"
-                        ? "Log a touchpoint"
-                        : p === "book"
-                          ? "Book the next call"
-                          : p === "update"
-                            ? "Update the board"
-                            : p === "ticket"
-                              ? "Raise a ticket"
-                              : "Leave it"}
-                </Pill>
-              ))}
-            </PillRow>
+        <ClientCheckIn
+          taskId={String(c.taskId)}
+          clientName={String(c.name)}
+          nextCallAt={c.nextCallAt}
+          stage={c.stage}
+          autoOpen={actParam === "book"}
+          onAutoOpenConsumed={() => setParam("act", null)}
+          extra={
+            <Button
+              variant="outline"
+              aria-expanded={panel === "link"}
+              onClick={() => togglePanel("link")}
+            >
+              Or send the booking link
+            </Button>
+          }
+        />
 
-            {panel === "onboarding" && (
-              <OnboardingKit
-                client={c}
-                kit={kitOf(c)}
-                page={kitPage}
-                error={kitError}
-                refreshing={kitRefreshing === String(c.taskId)}
-                onRefresh={() => void refreshKit(String(c.taskId))}
-              />
-            )}
+        <section aria-label="Actions" className="space-y-3">
+          {/* Things you do, so they look like buttons; each opens its panel. */}
+          <div className="flex flex-wrap gap-2">
+            {ACTIONS.map(a => (
+              <Button
+                key={a.key}
+                size="sm"
+                variant={panel === a.key ? "secondary" : "outline"}
+                aria-expanded={panel === a.key}
+                onClick={() => togglePanel(a.key)}
+              >
+                {a.label}
+              </Button>
+            ))}
+          </div>
 
-            {panel === "message" && (
+          {panel === "message" && (
+            <div className="rounded-2xl border bg-card p-4 sm:p-6">
               <TemplatePicker
-                c={c}
+                // The monthly report message links the report itself, the
+                // newest Google Doc written for them, never the tracking sheet.
+                c={{ ...c, reportUrl }}
                 today={snap.day}
                 lang={langOf(c)}
                 onLang={l =>
@@ -1401,284 +1723,225 @@ function CsmContent({ section }: { section: Section }) {
                 }
                 onLog={run}
               />
-            )}
+            </div>
+          )}
 
-            {panel === "actions" && (
-              <div className="space-y-3">
-                <Textarea
-                  placeholder="Call summary or what you said to them (optional, goes on the ClickUp task)"
-                  value={note}
-                  onChange={e => setNote(e.target.value)}
-                  rows={2}
+          {panel === "log" && (
+            <div className="space-y-3 rounded-2xl border bg-card p-4 sm:p-6">
+              <Textarea
+                placeholder="Call summary or what you said to them (optional, goes on the ClickUp card)"
+                value={note}
+                onChange={e => setNote(e.target.value)}
+                rows={3}
+                dir="auto"
+              />
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  size="sm"
+                  onClick={() => run(c, "Held a call", "call", { note })}
+                >
+                  Log the call and summary
+                </Button>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() =>
+                    run(c, "Messaged the client", "touchpoint", { note })
+                  }
+                >
+                  Log a message
+                </Button>
+                <BookDate
+                  c={c}
+                  today={snap.day}
+                  label="Book the next touchpoint"
+                  onBook={d =>
+                    run(c, `Booked the next touchpoint for ${d}`, "booked", {
+                      value: d,
+                    })
+                  }
                 />
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    size="sm"
-                    onClick={() =>
-                      run(c, "Messaged the client", "touchpoint", { note })
-                    }
-                  >
-                    Logged a message
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    onClick={() => run(c, "Held a call", "call", { note })}
-                  >
-                    Logged a call and summary
-                  </Button>
-                  <BookDate
-                    c={c}
-                    today={snap.day}
-                    label="Book the next touchpoint"
-                    onBook={d =>
-                      run(c, `Booked the next touchpoint for ${d}`, "booked", {
-                        value: d,
-                      })
-                    }
-                  />
-                </div>
-                {c.sheetLink || c.taskUrl ? (
-                  <div className="flex flex-wrap gap-x-4 gap-y-2 text-xs">
-                    {c.sheetLink && (
-                      <ExtLink href={c.sheetLink}>Report sheet</ExtLink>
-                    )}
-                    {c.taskUrl && <ExtLink href={c.taskUrl}>ClickUp</ExtLink>}
-                  </div>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                The call summary form is still the record of the call:{" "}
+                <ExtLink href={LINKS.callSummaryForm}>
+                  1-1 call summary form
+                </ExtLink>
+                .
+              </p>
+            </div>
+          )}
+
+          {panel === "link" && (
+            <div className="space-y-3 rounded-2xl border bg-card p-4 text-sm sm:p-6">
+              <h2 className="text-[15px] font-semibold">
+                Send the booking link
+              </h2>
+              <p className="text-xs text-muted-foreground">
+                Next in the journey: <strong>{nc.label}</strong>. {nc.doNow}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                "Book a call" above books it straight into HighLevel at a free
+                time. This is the other way: send them the link and they pick.
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                {nc.url ? (
+                  <>
+                    <Button size="sm" variant="outline" asChild>
+                      <a href={nc.url} target="_blank" rel="noreferrer">
+                        Open the booking link
+                        <ArrowUpRight aria-hidden />
+                      </a>
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        navigator.clipboard.writeText(nc.url);
+                        toast.success("Booking link copied");
+                      }}
+                    >
+                      Copy the link
+                    </Button>
+                  </>
+                ) : (
+                  <span className="text-xs text-muted-foreground">
+                    {nc.label}, no link needed.
+                  </span>
+                )}
+                {nc.framework ? (
+                  <ExtLink href={nc.framework} className="text-xs">
+                    Call framework
+                  </ExtLink>
                 ) : null}
-                {c.hot.length > 0 && !c.hotBlocked && (
-                  <div className="space-y-2 rounded-xl bg-muted/40 p-4">
-                    <div className="flex items-center gap-1.5 text-xs font-semibold">
-                      <Dot tone="good" />
-                      Hot list
-                    </div>
-                    {c.hot.map((h: { kind: string; why: string }) => (
-                      <div
-                        key={h.kind}
-                        className="flex flex-wrap items-center justify-between gap-2 text-xs"
-                      >
-                        <span className="min-w-0">
-                          <strong>{h.kind}</strong>, {h.why}
-                        </span>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() =>
-                            run(c, `${h.kind} conversation had`, "upsell", {
-                              note: h.why,
-                            })
-                          }
-                        >
-                          Log the conversation
-                        </Button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                {c.changes.length > 0 && (
-                  <div className="rounded-xl bg-muted/40 p-4">
-                    <div className="text-xs font-semibold">
-                      Campaign changes since your last call
-                    </div>
-                    {c.changes.map(
-                      (
-                        ch: { action: string; day: string; evidence: string },
-                        i: number,
-                      ) => (
-                        <div
-                          key={`${ch.day}-${i}`}
-                          className="mt-1 text-xs text-muted-foreground"
-                        >
-                          <span className="text-foreground">
-                            {shortDay(ch.day)}
-                          </span>
-                          , {ch.action}. {ch.evidence}
-                        </div>
-                      ),
-                    )}
-                  </div>
-                )}
-                {c.loose.length > 0 && (
-                  <div className="text-xs txt-bad">
-                    Loose ends: {c.loose.join(" · ")}
-                  </div>
-                )}
               </div>
-            )}
-
-            {panel === "book" && (
-              <div className="space-y-3 text-sm">
-                {(() => {
-                  const nc = nextCall(c, langOf(c));
-                  return (
-                    <>
-                      <div className="text-xs text-muted-foreground">
-                        Next in the journey: <strong>{nc.label}</strong>
-                      </div>
-                      <div className="text-xs">{nc.doNow}</div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        {nc.url ? (
-                          <>
-                            <Button size="sm" variant="outline" asChild>
-                              <a href={nc.url} target="_blank" rel="noreferrer">
-                                Open the booking link
-                                <ArrowUpRight aria-hidden />
-                              </a>
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => {
-                                navigator.clipboard.writeText(nc.url);
-                                toast.success("Booking link copied");
-                              }}
-                            >
-                              Copy the link
-                            </Button>
-                          </>
-                        ) : null}
-                      </div>
-                      <div className="flex flex-wrap gap-x-4 gap-y-2 text-xs">
-                        {nc.framework ? (
-                          <ExtLink href={nc.framework}>Call framework</ExtLink>
-                        ) : null}
-                        <ExtLink href={LINKS.callSummaryForm}>
-                          1-1 call summary form
-                        </ExtLink>
-                      </div>
-                      <Textarea
-                        rows={4}
-                        defaultValue={nc.message}
-                        id={`msg-${c.taskId}`}
-                      />
-                      <div className="flex flex-wrap gap-2">
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          onClick={() => {
-                            const el = document.getElementById(
-                              `msg-${c.taskId}`,
-                            ) as HTMLTextAreaElement | null;
-                            navigator.clipboard.writeText(
-                              el?.value ?? nc.message,
-                            );
-                            toast.success(
-                              "Message copied, send it from WhatsApp",
-                            );
-                          }}
-                        >
-                          Copy the message
-                        </Button>
-                        <BookDate
-                          c={c}
-                          today={snap.day}
-                          label="They booked, log the date"
-                          onBook={d =>
-                            run(c, `Booked ${nc.label} for ${d}`, "booked", {
-                              value: d,
-                              note: nc.url
-                                ? `Sent the booking link (${nc.url}).`
-                                : `${nc.label} booked.`,
-                            })
-                          }
-                        />
-                        {nc.url ? (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() =>
-                              run(
-                                c,
-                                `Sent the ${nc.label} booking link`,
-                                "touchpoint",
-                                {
-                                  note: `Booking link sent: ${nc.url}`,
-                                },
-                              )
-                            }
-                          >
-                            Sent it, not booked yet
-                          </Button>
-                        ) : null}
-                      </div>
-                      <p className="text-xs text-muted-foreground">
-                        The cockpit drafts, you send. Nothing goes to the client
-                        from here.
-                      </p>
-                    </>
-                  );
-                })()}
+              <Textarea
+                rows={4}
+                defaultValue={nc.message}
+                id={`msg-${c.taskId}`}
+                dir="auto"
+              />
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => {
+                    const el = document.getElementById(
+                      `msg-${c.taskId}`,
+                    ) as HTMLTextAreaElement | null;
+                    navigator.clipboard.writeText(el?.value ?? nc.message);
+                    toast.success("Message copied, send it from WhatsApp");
+                  }}
+                >
+                  Copy the message
+                </Button>
+                <BookDate
+                  c={c}
+                  today={snap.day}
+                  label="They booked, log the date"
+                  onBook={d =>
+                    run(c, `Booked ${nc.label} for ${d}`, "booked", {
+                      value: d,
+                      note: nc.url
+                        ? `Sent the booking link (${nc.url}).`
+                        : `${nc.label} booked.`,
+                    })
+                  }
+                />
+                {nc.url ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() =>
+                      run(
+                        c,
+                        `Sent the ${nc.label} booking link`,
+                        "touchpoint",
+                        { note: `Booking link sent: ${nc.url}` },
+                      )
+                    }
+                  >
+                    Sent it, not booked yet
+                  </Button>
+                ) : null}
               </div>
-            )}
+              <p className="text-xs text-muted-foreground">
+                The cockpit drafts, you send. Nothing goes to the client from
+                here.
+              </p>
+            </div>
+          )}
 
-            {panel === "update" && (
-              <div className="space-y-4 text-sm">
-                <div>
-                  <div className="text-xs text-muted-foreground">
-                    Client status
-                  </div>
-                  <div className="mt-1.5 flex flex-wrap gap-1">
-                    {STAGES.map(s => (
-                      <Pill
-                        key={s}
-                        active={s === c.stage}
-                        onClick={() =>
-                          run(c, `Moved to ${s}`, "stage", { value: s })
-                        }
-                      >
-                        {displayLabel(s)}
-                      </Pill>
-                    ))}
-                  </div>
+          {panel === "update" && (
+            <div className="space-y-4 rounded-2xl border bg-card p-4 text-sm sm:p-6">
+              <div>
+                <div className="text-xs text-muted-foreground">
+                  Client status, as on the ClickUp board
                 </div>
-                <div>
-                  <div className="text-xs text-muted-foreground">
-                    Service model, what we owe them
-                  </div>
-                  <div className="mt-1.5 flex flex-wrap items-center gap-1">
-                    {(["DFY", "DWY"] as const).map(v => (
-                      <Pill
-                        key={v}
-                        active={serviceModel(c.service).code === v}
-                        onClick={() =>
-                          run(c, `Service model set to ${v}`, "service", {
-                            value: v,
-                          })
-                        }
-                      >
-                        {v}
-                      </Pill>
-                    ))}
-                    <span className="ml-1 text-xs text-muted-foreground">
-                      {serviceModel(c.service).kpi}
-                    </span>
-                  </div>
-                </div>
-                <div>
-                  <div className="text-xs text-muted-foreground">
-                    Client happiness
-                  </div>
-                  <div className="mt-1.5 flex flex-wrap gap-1">
-                    {HAPPINESS.map(h => (
-                      <Pill
-                        key={h}
-                        active={h === c.happiness}
-                        onClick={() =>
-                          run(c, `Happiness set to ${h}`, "happiness", {
-                            value: h,
-                          })
-                        }
-                      >
-                        {displayLabel(h)}
-                      </Pill>
-                    ))}
-                  </div>
+                <div className="mt-1.5 flex flex-wrap gap-1">
+                  {STAGES.map(s => (
+                    <Pill
+                      key={s}
+                      active={s === c.stage}
+                      onClick={() =>
+                        run(c, `Moved to ${s}`, "stage", { value: s })
+                      }
+                    >
+                      {displayLabel(s)}
+                    </Pill>
+                  ))}
                 </div>
               </div>
-            )}
+              <div>
+                <div className="text-xs text-muted-foreground">
+                  Service model, what we owe them
+                </div>
+                <div className="mt-1.5 flex flex-wrap items-center gap-1">
+                  {(["DFY", "DWY"] as const).map(v => (
+                    <Pill
+                      key={v}
+                      active={sm.code === v}
+                      onClick={() =>
+                        run(c, `Service model set to ${v}`, "service", {
+                          value: v,
+                        })
+                      }
+                    >
+                      {v}
+                    </Pill>
+                  ))}
+                  <span className="ml-1 text-xs text-muted-foreground">
+                    {sm.kpi}
+                  </span>
+                </div>
+              </div>
+              <div>
+                <div className="text-xs text-muted-foreground">
+                  Client happiness
+                </div>
+                <div className="mt-1.5 flex flex-wrap gap-1">
+                  {HAPPINESS.map(h => (
+                    <Pill
+                      key={h}
+                      active={h === c.happiness}
+                      onClick={() =>
+                        run(c, `Happiness set to ${h}`, "happiness", {
+                          value: h,
+                        })
+                      }
+                    >
+                      {displayLabel(h)}
+                    </Pill>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
 
-            {panel === "ticket" && (
-              <div className="space-y-3 text-sm">
+          {panel === "task" && (
+            <div className="space-y-6 rounded-2xl border bg-card p-4 text-sm sm:p-6">
+              <div className="space-y-3">
+                <h2 className="text-[15px] font-semibold">Ask a team</h2>
                 <AnimatedSelect
                   className="w-full"
                   value={ticket}
@@ -1695,11 +1958,13 @@ function CsmContent({ section }: { section: Section }) {
                   value={ticketNote}
                   onChange={e => setTicketNote(e.target.value)}
                   rows={2}
+                  dir="auto"
                 />
                 <Button
                   size="sm"
                   onClick={() => {
-                    const hit = TICKETS.find(r => r.label === ticket)!;
+                    const hit = TICKETS.find(r => r.label === ticket);
+                    if (!hit) return;
                     run(c, hit.label, "ticket", {
                       department: hit.dept,
                       note: ticketNote,
@@ -1710,41 +1975,318 @@ function CsmContent({ section }: { section: Section }) {
                   {TICKETS.find(r => r.label === ticket)?.deptLabel}
                 </Button>
               </div>
-            )}
+              <div className="space-y-3 border-t pt-5">
+                <h2 className="text-[15px] font-semibold">
+                  Anything else, for you or a team
+                </h2>
+                <AddTask
+                  taskId={String(c.taskId)}
+                  clientName={String(c.name)}
+                  inline
+                />
+              </div>
+              <div className="space-y-2 border-t pt-5">
+                <h2 className="text-[15px] font-semibold">
+                  Something for the client to do
+                </h2>
+                <p className="text-xs text-muted-foreground">
+                  It shows in their Mahara OS portal with a due reminder.
+                </p>
+                <PortalTasksButton
+                  taskId={String(c.taskId)}
+                  clientName={String(c.name)}
+                />
+              </div>
+            </div>
+          )}
 
-            {panel === "leave" && (
-              <div className="space-y-3 text-sm">
-                <AnimatedSelect
-                  className="w-full"
-                  value={reason}
-                  onChange={e => setReason(e.target.value)}
+          {panel === "leave" && (
+            <div className="space-y-3 rounded-2xl border bg-card p-4 text-sm sm:p-6">
+              <AnimatedSelect
+                className="w-full"
+                value={reason}
+                onChange={e => setReason(e.target.value)}
+              >
+                {REASONS.map(r => (
+                  <option key={r}>{r}</option>
+                ))}
+              </AnimatedSelect>
+              <div className="flex flex-wrap gap-1">
+                {CLOCKS.map(k => (
+                  <Pill
+                    key={k}
+                    active={k === clock}
+                    onClick={() => setClock(k)}
+                  >
+                    {k}
+                  </Pill>
+                ))}
+              </div>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() =>
+                  run(c, "Left as is", "left", { reason, snooze: clock })
+                }
+              >
+                Leave it, show me {clock.toLowerCase()}
+              </Button>
+            </div>
+          )}
+        </section>
+
+        <nav
+          aria-label="About this client"
+          className="flex gap-1 overflow-x-auto border-b"
+        >
+          {CLIENT_TABS.map(tb => (
+            <button
+              key={tb.key}
+              type="button"
+              aria-current={clientTab === tb.key ? "page" : undefined}
+              onClick={() => setParam("tab", tb.key)}
+              className={cn(
+                "-mb-px shrink-0 border-b-2 px-3 py-2 text-sm font-medium transition-colors",
+                clientTab === tb.key
+                  ? "border-primary text-foreground"
+                  : "border-transparent text-muted-foreground hover:text-foreground",
+              )}
+            >
+              {tb.label}
+            </button>
+          ))}
+        </nav>
+
+        {clientTab === "overview" && (
+          <ClientProfile
+            name={String(c.name)}
+            part="overview"
+            embedded
+            period={period}
+            onPeriod={k => setParam("period", k)}
+            afterPrep={
+              <>
+                <SectionCard
+                  title="What the media buyer changed since your last call"
+                  count={changes.length}
+                  sub={
+                    <>
+                      Since{" "}
+                      {c.lastCall
+                        ? `your call on ${shortDay(c.lastCall)}`
+                        : "two weeks ago, no call is logged"}
+                      .{" "}
+                      <button
+                        type="button"
+                        className="text-primary underline-offset-4 hover:underline"
+                        onClick={() => setParam("tab", "results")}
+                      >
+                        Any period on Results
+                      </button>
+                    </>
+                  }
+                  flush
                 >
-                  {REASONS.map(r => (
-                    <option key={r}>{r}</option>
-                  ))}
-                </AnimatedSelect>
-                <div className="flex flex-wrap gap-1">
-                  {CLOCKS.map(k => (
-                    <Pill
-                      key={k}
-                      active={k === clock}
-                      onClick={() => setClock(k)}
+                  {changes.length === 0 ? (
+                    <p className="px-4 py-4 text-sm text-muted-foreground sm:px-6">
+                      No campaign changes since then.
+                    </p>
+                  ) : (
+                    changes.map(
+                      (
+                        ch: { action: string; day: string; evidence: string },
+                        i: number,
+                      ) => (
+                        <div
+                          key={`${ch.day}-${i}`}
+                          className="px-4 py-3 text-sm sm:px-6"
+                        >
+                          <span className="font-medium">
+                            {shortDay(ch.day)}
+                          </span>
+                          , {ch.action}
+                          {ch.evidence ? (
+                            <span className="text-muted-foreground">
+                              . {ch.evidence}
+                            </span>
+                          ) : null}
+                        </div>
+                      ),
+                    )
+                  )}
+                </SectionCard>
+                {mine.length ? (
+                  <SectionCard
+                    title="What you said you would do"
+                    count={mine.length}
+                    sub="From your 1-1 call notes. Make each one a task, or close it."
+                    flush
+                  >
+                    {commitmentsBlock(mine, false)}
+                  </SectionCard>
+                ) : null}
+                {c.loose.length ? (
+                  <SectionCard title="Loose ends" count={c.loose.length} flush>
+                    {c.loose.map((l: string) => (
+                      <div key={l} className="px-4 py-3 text-sm sm:px-6">
+                        {plainText(l)}
+                      </div>
+                    ))}
+                  </SectionCard>
+                ) : null}
+              </>
+            }
+          />
+        )}
+
+        {clientTab === "results" && (
+          <ClientProfile
+            name={String(c.name)}
+            part="results"
+            embedded
+            period={period}
+            onPeriod={k => setParam("period", k)}
+          />
+        )}
+
+        {clientTab === "onboarding" && (
+          <div className="space-y-6">
+            <OnboardingKit
+              client={c}
+              kit={kitOf(c)}
+              page={kitPage}
+              error={kitError}
+              refreshing={kitRefreshing === String(c.taskId)}
+              onRefresh={() => void refreshKit(String(c.taskId))}
+            />
+            <section className="space-y-3">
+              <h2 className="text-[15px] font-semibold">Their links</h2>
+              <ClientLinks links={links} />
+            </section>
+          </div>
+        )}
+
+        {clientTab === "money" && (
+          <div className="space-y-6">
+            <SectionCard title="Billing">
+              <div className="space-y-3 text-sm">
+                <p>
+                  {(c.paymentDue ?? -99) >= 1 ? (
+                    <span className="font-medium txt-bad">
+                      Invoice {c.paymentDue} day
+                      {c.paymentDue === 1 ? "" : "s"} past due.
+                    </span>
+                  ) : c.paymentDate ? (
+                    <>Next payment {shortDay(c.paymentDate)}.</>
+                  ) : (
+                    <span className="text-muted-foreground">
+                      No payment date on their card.
+                    </span>
+                  )}
+                  {c.pauseRequired ? (
+                    <span className="txt-bad">
+                      {" "}
+                      The billing SOP says pause: 3 or more days late with no
+                      extension logged.
+                    </span>
+                  ) : null}
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <Button size="sm" variant="outline" asChild>
+                    <Link to="/money?tab=billing">Open billing</Link>
+                  </Button>
+                  <Button size="sm" variant="outline" asChild>
+                    <Link to={`/money?tab=projections&client=${c.taskId}`}>
+                      Plan the renewal
+                    </Link>
+                  </Button>
+                </div>
+              </div>
+            </SectionCard>
+
+            <SectionCard
+              title="Hot list"
+              sub="One upsell, referral or review conversation per client a month."
+            >
+              {isChurned(c) ? (
+                <p className="text-sm text-muted-foreground">
+                  A client who has left is never an upsell, a review or a
+                  referral.
+                </p>
+              ) : c.hotBlocked ? (
+                <p className="text-sm text-muted-foreground">
+                  This month's conversation is logged. The next one opens on the
+                  1st.
+                </p>
+              ) : c.hot.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  Nothing on the hot list for them yet.
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  {c.hot.map((h: { kind: string; why: string }) => (
+                    <div
+                      key={h.kind}
+                      className="flex flex-wrap items-center justify-between gap-2 text-sm"
                     >
-                      {k}
-                    </Pill>
+                      <span className="min-w-0">
+                        <strong>{h.kind}</strong>, {h.why}
+                      </span>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() =>
+                          run(c, `${h.kind} conversation had`, "upsell", {
+                            note: h.why,
+                          })
+                        }
+                      >
+                        Log the conversation
+                      </Button>
+                    </div>
                   ))}
                 </div>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() =>
-                    run(c, "Left as is", "left", { reason, snooze: clock })
-                  }
+              )}
+              <Link
+                to="/money?tab=hot"
+                className="mt-3 inline-block text-xs text-primary underline-offset-4 hover:underline"
+              >
+                Open the hot list
+              </Link>
+            </SectionCard>
+
+            <SectionCard
+              title="Changing their plan"
+              sub="Pause, extend, reactivate or end. One form per change, after a call."
+              flush
+            >
+              {(
+                LINK_GROUPS.find(g => /changing a client/i.test(g.title))
+                  ?.rows ?? []
+              ).map(r => (
+                <div
+                  key={r.url + r.label}
+                  className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 px-4 py-3 sm:px-6"
                 >
-                  Leave it, show me {clock.toLowerCase()}
-                </Button>
+                  <ExtLink href={r.url} className="text-sm font-medium">
+                    {r.label}
+                  </ExtLink>
+                  {r.note ? (
+                    <span className="text-xs text-muted-foreground">
+                      {r.note}
+                    </span>
+                  ) : null}
+                </div>
+              ))}
+              <div className="px-4 py-3 sm:px-6">
+                <Link
+                  to="/money?tab=churn"
+                  className="text-sm text-primary underline-offset-4 hover:underline"
+                >
+                  They left: log the departure on Churn
+                </Link>
               </div>
-            )}
+            </SectionCard>
           </div>
         )}
       </div>
@@ -1752,66 +2294,78 @@ function CsmContent({ section }: { section: Section }) {
   };
 
   const TITLE: Record<Section, string> = {
-    start: "Start of day",
-    clients: "Clients & touchpoints",
-    tasks: "Task list",
+    today: "Today",
+    clients: "Clients",
+    client: "Client",
     hot: "Hot list",
     links: "Key links",
     money: "My money",
     eod: "End of day",
   };
-  /** The pill for each tab. The order the pills sit in follows TABS, so the default is first. */
-  const TAB_LABEL: Record<string, string> = {
-    today: `Today (${todayList.length})`,
-    management: `Client management (${managementList.filter(needsAction).length}/${managementList.length})`,
-    onboarding: `Client onboarding (${onboardingList.filter(needsAction).length}/${onboardingList.length})`,
-    hot: `Hot list (${hotRows.length})`,
-    loose: `Loose ends (${looseList.length})`,
-    tasks: `ClickUp tasks (${snap.tasks.length})`,
-  };
+  const todayLine = (
+    <>
+      {new Date().toLocaleDateString("en-GB", {
+        weekday: "long",
+        day: "numeric",
+        month: "long",
+      })}{" "}
+      ·{" "}
+      {snap.lastSyncAt
+        ? `synced ${new Date(snap.lastSyncAt).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}`
+        : "not yet synced"}
+      {section === "today" ? " · clients on WhatsApp, team on Slack" : ""}
+    </>
+  );
+  const findList = (list: Client[]) =>
+    find.trim() ? list.filter(c => matchScore(String(c.name), find) > 0) : list;
+  const viewList =
+    view === "onboarding"
+      ? onboardingList
+      : view === "live"
+        ? managementList
+        : clients;
 
   return (
-    <div className="mx-auto w-full max-w-6xl space-y-6">
-      <PageHeader
-        title={TITLE[section]}
-        sub={
-          <>
-            {new Date().toLocaleDateString("en-GB", {
-              weekday: "long",
-              day: "numeric",
-              month: "long",
-            })}{" "}
-            ·{" "}
-            {snap.lastSyncAt
-              ? `synced ${new Date(snap.lastSyncAt).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}`
-              : "not yet synced"}
-            {section === "start" ? " · clients on WhatsApp, team on Slack" : ""}
-          </>
-        }
-        actions={<ReportIssue page={tab} />}
-      />
+    <div className={wrap}>
+      {section === "client" ? null : (
+        <PageHeader
+          as={embedded ? "h2" : "h1"}
+          title={TITLE[section]}
+          sub={
+            section === "clients"
+              ? "Every client you look after. Open one for everything about them."
+              : todayLine
+          }
+          actions={
+            <>
+              {section === "today" ? (
+                <Button size="sm" variant="outline" asChild>
+                  <Link to="/eod">
+                    <MoonStar aria-hidden />
+                    End of day
+                  </Link>
+                </Button>
+              ) : null}
+              {embedded ? null : <ReportIssue page={section} />}
+            </>
+          }
+        />
+      )}
 
-      {section === "start" && (
+      {section === "today" && <SyncStrip only="feed" />}
+
+      {section === "today" && (
         <p className="text-[15px] leading-6">
           {t.dueToday === 0
             ? "Nothing is waiting on you. Use the time on the hot list."
-            : `${t.dueToday} ${t.dueToday === 1 ? "client needs" : "clients need"} a message or a call today.`}
+            : `${t.dueToday} ${t.dueToday === 1 ? "client needs" : "clients need"} a message or a call today. Start with the first one below.`}
           {t.pastDue > 0
             ? ` ${t.pastDue} ${t.pastDue === 1 ? "invoice is" : "invoices are"} past due.`
-            : ""}{" "}
-          {t.dueToday > 0 && (
-            <Link
-              to="/clients"
-              className="inline-flex items-center font-medium text-primary underline-offset-4 hover:underline"
-            >
-              Open the client list
-              <ChevronRight aria-hidden className="size-4" />
-            </Link>
-          )}
+            : ""}
         </p>
       )}
 
-      {section === "start" && (
+      {section === "today" && (
         <div className="space-y-3">
           <div className="grid grid-cols-3 gap-3 sm:gap-4">
             <StatTile
@@ -1837,7 +2391,7 @@ function CsmContent({ section }: { section: Section }) {
             </summary>
             <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4 sm:gap-4">
               <StatTile label="In onboarding" value={t.onboarding} />
-              <StatTile label="Managed clients" value={t.managed ?? 0} />
+              <StatTile label="Managed clients" value={t.managed} />
               <StatTile
                 label="Hot list"
                 value={t.hot}
@@ -1849,9 +2403,221 @@ function CsmContent({ section }: { section: Section }) {
         </div>
       )}
 
-      {section === "start" && <TodaysCalls snap={snap} />}
+      {section === "today" && <TodaysCalls snap={snap} />}
 
-      {section === "start" && (
+      {section === "today" && (
+        <section id="who-needs-you" className="space-y-8">
+          <ShortList
+            title="Onboarding, get them live"
+            items={onboardingList.filter(needsAction)}
+            render={row}
+            empty="Every onboarding client has been dealt with today."
+          />
+          <ShortList
+            title="Management, keep them alive"
+            items={managementList.filter(needsAction)}
+            render={row}
+            empty="Every managed client has been dealt with today."
+          />
+        </section>
+      )}
+
+      {section === "today" && (
+        <div className="space-y-6">
+          <SectionCard
+            title="Commitments from calls"
+            count={commitmentRows.length}
+            sub="Pulled from the 1-1 call notes form. Each one becomes a real task, or you close it."
+            flush
+          >
+            {commitmentRows.length === 0 ? (
+              <p className="px-4 py-4 text-sm text-muted-foreground sm:px-6">
+                Nothing outstanding from the last round of calls.
+              </p>
+            ) : (
+              // One row per CALL, not per line. A call is one conversation: here is what
+              // was said, and here are the tasks that come out of it.
+              commitmentsBlock(commitmentRows, true)
+            )}
+          </SectionCard>
+
+          <SectionCard
+            title="Tickets raised today"
+            count={ticketRows.length}
+            sub="Verified against ClickUp: a ticket only counts once it exists on the other team's board."
+            flush
+          >
+            {ticketRows.length === 0 ? (
+              <p className="px-4 py-4 text-sm text-muted-foreground sm:px-6">
+                No tickets raised today.
+              </p>
+            ) : (
+              ticketRows.map(
+                (d: {
+                  _id: string;
+                  subject: string;
+                  action: string;
+                  reroutedTo?: string;
+                  clickupTaskUrl?: string;
+                  logError?: string;
+                }) => (
+                  <ChecklistItem
+                    key={d._id}
+                    title={`${d.subject}, ${d.action}`}
+                    meta={
+                      <>
+                        <span className="text-xs text-muted-foreground">
+                          to {d.reroutedTo ?? "an unknown team"}
+                        </span>
+                        <Chip
+                          tone={
+                            d.clickupTaskUrl
+                              ? "good"
+                              : d.logError
+                                ? "bad"
+                                : "neutral"
+                          }
+                        >
+                          {d.clickupTaskUrl
+                            ? "Landed"
+                            : d.logError
+                              ? "Failed"
+                              : "Sending"}
+                        </Chip>
+                      </>
+                    }
+                    why={
+                      d.clickupTaskUrl
+                        ? `Created on the ${d.reroutedTo} board.`
+                        : d.logError
+                          ? `ClickUp rejected it: ${d.logError}. Raise it again.`
+                          : "Still being created, refresh in a moment."
+                    }
+                    action={
+                      d.clickupTaskUrl ? (
+                        <ExtLink href={d.clickupTaskUrl}>
+                          Open it in ClickUp
+                        </ExtLink>
+                      ) : undefined
+                    }
+                  />
+                ),
+              )
+            )}
+          </SectionCard>
+
+          <SectionCard
+            title="Loose ends"
+            count={t.loose}
+            sub="What the board says nobody closed. Anything about money stays; the rest can be written off in one go, and who cleared it is recorded."
+            action={
+              looseList.length ? (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() =>
+                    clearLooseEnds({}).then(r =>
+                      toast.success(
+                        `Cleared ${r.cleared}, kept ${r.kept} money ones`,
+                      ),
+                    )
+                  }
+                >
+                  Clear these (money stays)
+                </Button>
+              ) : undefined
+            }
+            flush
+          >
+            {looseList.length === 0 ? (
+              <p className="px-4 py-4 text-sm text-muted-foreground sm:px-6">
+                Nothing loose. This is what a clean board looks like.
+              </p>
+            ) : (
+              <Capped
+                items={looseList.flatMap((c: Client) =>
+                  c.loose.map((l: string, i: number) => (
+                    <ChecklistItem
+                      key={`${c.taskId}-loose-${i}`}
+                      title={`${c.name}, ${plainText(l)}`}
+                      why={`${displayLabel(c.stage)}. ${plainText(c.todo)}. Clear it before 18:00 or it shows in your EOD.`}
+                      action={
+                        <div className="flex flex-wrap gap-x-4 gap-y-2">
+                          <Link
+                            to={`/clients/${c.taskId}`}
+                            className="text-primary underline-offset-4 hover:underline"
+                          >
+                            Open the client
+                          </Link>
+                          {c.taskUrl ? (
+                            <ExtLink href={c.taskUrl}>ClickUp card</ExtLink>
+                          ) : null}
+                        </div>
+                      }
+                    />
+                  )),
+                )}
+              />
+            )}
+          </SectionCard>
+
+          <SectionCard
+            title="Client Success board"
+            count={snap.tasks.length}
+            sub="Due, overdue or undated, in ClickUp."
+            flush
+          >
+            {snap.tasks.length === 0 ? (
+              <p className="px-4 py-4 text-sm text-muted-foreground sm:px-6">
+                Nothing due on the board.
+              </p>
+            ) : (
+              <Capped
+                limit={20}
+                items={snap.tasks.map(
+                  (task: {
+                    taskId: string;
+                    name: string;
+                    taskUrl?: string;
+                    status: string;
+                    dueDate?: string;
+                    overdueDays?: number;
+                  }) => (
+                    <div
+                      key={task.taskId}
+                      className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 px-4 py-3 text-sm sm:px-6"
+                    >
+                      <div className="min-w-0">
+                        <div className="font-medium" dir="auto">
+                          {task.name}
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          {displayLabel(task.status)}
+                          {task.dueDate
+                            ? ` · due ${shortDay(task.dueDate)}`
+                            : " · no due date"}
+                          {task.overdueDays && task.overdueDays > 0 ? (
+                            <span className="txt-bad">
+                              {` · ${task.overdueDays}d overdue`}
+                            </span>
+                          ) : null}
+                        </div>
+                      </div>
+                      {task.taskUrl && (
+                        <ExtLink href={task.taskUrl} className="text-xs">
+                          Open
+                        </ExtLink>
+                      )}
+                    </div>
+                  ),
+                )}
+              />
+            )}
+          </SectionCard>
+        </div>
+      )}
+
+      {section === "today" && (
         <section className="rounded-2xl border bg-card">
           <h2 className="px-4 pt-4 pb-3 text-[15px] font-semibold sm:px-6 sm:pt-6">
             Day plan
@@ -1931,7 +2697,11 @@ function CsmContent({ section }: { section: Section }) {
                         aria-pressed={c.done}
                         className="flex w-full items-start gap-3 px-4 py-2 text-left text-sm hover:bg-muted/40 sm:px-6"
                         onClick={() =>
-                          toggleCheck({ id: c._id })
+                          toggleCheck({
+                            id: c._id,
+                            done: !c.done,
+                            expectedCurrent: c.done,
+                          })
                         }
                       >
                         <span
@@ -1974,429 +2744,120 @@ function CsmContent({ section }: { section: Section }) {
         </section>
       )}
 
-      {/* The replies waiting on her, after the plan for the day. The
-          desk keeps the replies drafted, with a send button on each. */}
-      {section === "start" && <WhatsAppDesk desk="csm" />}
-
-      {/* Sending a cut for review, folded until it is needed: the reply
-          a client is waiting for is often "here it is". */}
-      {section === "start" && <SendForReview folded />}
-
-      {TABS[section].length > 1 && (
-        <PillRow>
-          {TABS[section]
-            .filter(k => k in TAB_LABEL)
-            .map(k => (
-              <Pill
-                key={k}
-                active={tab === k}
-                onClick={() => setTab(k as typeof tabState)}
-              >
-                {TAB_LABEL[k]}
-              </Pill>
-            ))}
-        </PillRow>
+      {section === "today" && (
+        <Fold
+          title="Calendar and data fixes"
+          hint="Google Calendar for the week, and clients missing a sheet, a CRM account or a call"
+        >
+          <div className="space-y-8">
+            <MeetingsPage embedded part="calendar" />
+            <BacklogPage embedded />
+          </div>
+        </Fold>
       )}
 
-      {tab === "today" && (
-        <div className="space-y-8">
-          <ShortList
-            title="Onboarding, get them live"
-            items={onboardingList.filter(needsAction)}
-            render={row}
-            empty="Every onboarding client has been dealt with today."
-          />
-          <ShortList
-            title="Management, keep them alive"
-            items={managementList.filter(needsAction)}
-            render={row}
-            empty="Every managed client has been dealt with today."
-          />
+      {section === "today" && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-dashed px-4 py-4 sm:px-6">
+          <p className="text-sm text-muted-foreground">
+            At 17:30, close the loose ends, then file your end of day. It writes
+            itself from what you did today.
+          </p>
+          <Button size="sm" asChild>
+            <Link to="/eod">File my end of day</Link>
+          </Button>
         </div>
       )}
-      {tab === "touchpoints" && (
-        <div className="space-y-8">
-          {[
-            {
-              key: "nopoc",
-              title: "No next call booked",
-              hint: "Every client needs a booked next call. Send the booking link here and save the date, it writes to the Next POC field in ClickUp. Messages are tracked automatically, they do not need booking.",
-              rows: clients.filter(c => {
-                const poc = nextPocState(c, snap.day);
-                return poc.missing || poc.past;
-              }),
-            },
-            {
-              key: "launch",
-              title: "Launch week, message every day",
-              hint: "Day 1–7 after launch, plus the day-7 review call.",
-              rows: clients.filter(
-                c => c.bucket === "management" && (c.liveDays ?? 99) <= 7,
-              ),
-            },
-            {
-              key: "pipeline",
-              title: "In onboarding, message every working day until they move",
-              hint: "Nothing else moves them forward.",
-              rows: onboardingList.filter(needsAction),
-            },
-            {
-              key: "call",
-              title: "Check-in call due",
-              hint: "Weekly through their first month live, every 2 weeks after that. A message does not clear this, it needs a call.",
-              rows: clients.filter(
-                c => c.bucket === "management" && cadence(c).callOverdue,
-              ),
-            },
-            {
-              key: "silent",
-              title: "Going quiet, 7 days or more with no contact",
-              hint: "Comms level slips to Meh at 14 days, Danger at 30.",
-              rows: clients.filter(
-                c =>
-                  c.bucket === "management" &&
-                  (c.silentDays === undefined || c.silentDays >= 7),
-              ),
-            },
-            {
-              key: "booked",
-              title: "Booked ahead, nothing due",
-              hint: "Suppressed until the booked date, unless an invoice goes past due.",
-              rows: clients.filter(c => c.nextPoc && c.nextPoc > snap.day),
-            },
-          ].map(group => (
-            <div key={group.key} className="space-y-3">
-              <div>
-                <h2 className="text-[15px] font-semibold">
-                  {group.title}
-                  <span className="ml-1.5 font-normal text-muted-foreground tabular-nums">
-                    {group.rows.length}
-                  </span>
-                </h2>
-                <p className="mt-0.5 text-xs text-muted-foreground">
-                  {group.hint}
-                </p>
-              </div>
-              {group.rows.length === 0 ? (
-                <p className="text-sm text-muted-foreground">
-                  Nothing here today.
-                </p>
-              ) : (
-                group.rows.map((c, i) => (
-                  <TouchpointRow
-                    key={c.taskId}
-                    today={snap.day}
-                    defaultOpen={i === 0}
-                    c={c}
-                    lang={langOf(c)}
-                    onLang={l =>
-                      void setClientLanguage({
-                        clientName: c.name,
-                        language: l,
-                      })
-                    }
-                    onLog={run}
-                  />
-                ))
-              )}
-            </div>
-          ))}
+
+      {section === "clients" && (
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <PillRow>
+              {VIEWS.map(v => (
+                <Pill
+                  key={v.key}
+                  active={view === v.key}
+                  onClick={() =>
+                    setParam("view", v.key === "all" ? null : v.key)
+                  }
+                >
+                  {v.label}
+                  {v.key === "all"
+                    ? ` (${clients.length})`
+                    : v.key === "onboarding"
+                      ? ` (${onboardingList.length})`
+                      : v.key === "live"
+                        ? ` (${managementList.length})`
+                        : ""}
+                </Pill>
+              ))}
+            </PillRow>
+            {view === "results" ? null : (
+              <input
+                value={find}
+                onChange={e => setFind(e.target.value)}
+                placeholder="Find a client…"
+                aria-label="Find a client"
+                dir="auto"
+                className="h-9 w-full rounded-lg border bg-background px-3 text-sm sm:w-64"
+              />
+            )}
+          </div>
+          {view === "results" ? (
+            <ClientPerformancePage
+              embedded
+              onOpen={(name, per) =>
+                navigate(
+                  `/clients/${encodeURIComponent(name)}?tab=results&period=${encodeURIComponent(per)}`,
+                )
+              }
+            />
+          ) : findList(viewList).length === 0 ? (
+            <p className="rounded-2xl border border-dashed px-4 py-6 text-sm text-muted-foreground">
+              {find.trim()
+                ? `No client here matches "${find.trim()}". Press Ctrl K to search links, pages and every client.`
+                : "No clients in this view."}
+            </p>
+          ) : (
+            <div className="space-y-3">{findList(viewList).map(row)}</div>
+          )}
         </div>
       )}
-      {tab === "management" && (
-        <div className="space-y-3">{managementList.map(row)}</div>
-      )}
-      {tab === "onboarding" && (
-        <div className="space-y-3">{onboardingList.map(row)}</div>
-      )}
-      {tab === "hot" && (
+
+      {section === "client" &&
+        (clientRow ? (
+          clientPage(clientRow)
+        ) : (
+          <div className="space-y-3">
+            <Link
+              to="/clients"
+              className="inline-flex items-center gap-1 text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+            >
+              <ArrowLeft aria-hidden className="size-4" />
+              All clients
+            </Link>
+            <p className="rounded-2xl border border-dashed px-4 py-6 text-sm text-muted-foreground">
+              This client is not on your list. Their ClickUp card may have been
+              renamed or moved. Find them in Clients, or press Ctrl K and type
+              their name.
+            </p>
+          </div>
+        ))}
+
+      {section === "hot" && (
         <HotSheet
           suggestions={hotRows}
           saved={(snap.hotRows ?? []) as Any[]}
           onSave={saveHotRow}
         />
       )}
-      {tab === "loose" && (
-        <div className="space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border bg-card px-4 py-4 sm:px-6">
-            <p className="min-w-0 flex-1 basis-64 text-xs text-muted-foreground">
-              Loose ends are what the board says nobody closed. Anything about
-              money stays, everything else can be written off in one go, and who
-              cleared it is recorded.
-            </p>
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={() =>
-                clearLooseEnds({}).then((r: any) =>
-                  toast.success(
-                    `Cleared ${r.cleared}, kept ${r.kept} money ones`,
-                  ),
-                )
-              }
-            >
-              Clear these (money stays)
-            </Button>
-          </div>
-          {looseList.length === 0 ? (
-            <p className="rounded-2xl border border-dashed px-4 py-6 text-sm text-muted-foreground">
-              Nothing loose. This is what a clean board looks like.
-            </p>
-          ) : (
-            <div className="space-y-3">{looseList.map(row)}</div>
-          )}
-        </div>
-      )}
-      {tab === "tasks" && (
-        <div className="space-y-6">
-          <SectionCard
-            title="Commitments from calls"
-            count={commitmentRows.length}
-            sub="Pulled from the 1-1 call notes form. Each one becomes a real task, or you say why not."
-            flush
-          >
-            {commitmentRows.length === 0 ? (
-              <p className="px-4 py-4 text-sm text-muted-foreground sm:px-6">
-                Nothing outstanding from the last round of calls.
-              </p>
-            ) : (
-              // One row per CALL, not per line. A call is one conversation: here is what
-              // was said, here are the tasks that come out of it, and here is the
-              // ticketing form for the ones another team has to do.
-              [
-                ...new Map(
-                  commitmentRows.map(r => [
-                    `${r.client.taskId}|${r.item.source}`,
-                    r,
-                  ]),
-                ).values(),
-              ].map(({ client, item }) => {
-                const call = item.source;
-                const items = commitmentRows
-                  .filter(
-                    r =>
-                      r.client.taskId === client.taskId &&
-                      r.item.source === call,
-                  )
-                  .map(r => r.item);
-                const when = call.replace("1-1 call notes, ", "");
-                return (
-                  <ChecklistItem
-                    key={`${client.taskId}-${call}`}
-                    title={`${client.name}, your call on ${shortDay(when)}`}
-                    why={`${plural(items.length, "thing")} you said you would do. Anything another team has to do goes on the ticketing form.`}
-                    action={
-                      <div className="space-y-3">
-                        <ul className="ml-4 list-disc space-y-1 text-sm text-foreground">
-                          {items.map(i => (
-                            <li key={i.text} dir="auto">
-                              {i.text}
-                            </li>
-                          ))}
-                        </ul>
-                        <div className="flex flex-wrap items-center gap-2">
-                          <Button
-                            size="sm"
-                            onClick={() =>
-                              addPlanItems({
-                                items: items.map(i => ({
-                                  text: i.text,
-                                  clientName: client.name,
-                                })),
-                              }).then(() =>
-                                toast.success(
-                                  `${items.length} task${items.length === 1 ? "" : "s"} created on Client Success`,
-                                ),
-                              )
-                            }
-                          >
-                            Create{" "}
-                            {items.length === 1 ? "the task" : "the tasks"}
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={async () => {
-                              for (const i of items)
-                                await run(
-                                  client,
-                                  `Commitment handled: ${i.text}`,
-                                  "touchpoint",
-                                  { note: i.source },
-                                );
-                            }}
-                          >
-                            All done already
-                          </Button>
-                          <ExtLink
-                            href={LINKS.ticketingForm}
-                            className="text-xs"
-                          >
-                            Ticketing form
-                          </ExtLink>
-                        </div>
-                      </div>
-                    }
-                  />
-                );
-              })
-            )}
-          </SectionCard>
 
-          <SectionCard
-            title="Tickets raised today"
-            count={ticketRows.length}
-            sub="Verified against ClickUp: a ticket only counts once it exists on the other team's board."
-            flush
-          >
-            {ticketRows.length === 0 ? (
-              <p className="px-4 py-4 text-sm text-muted-foreground sm:px-6">
-                No tickets raised today.
-              </p>
-            ) : (
-              ticketRows.map(
-                (d: {
-                  _id: string;
-                  subject: string;
-                  action: string;
-                  reroutedTo?: string;
-                  clickupTaskUrl?: string;
-                  logError?: string;
-                }) => (
-                  <ChecklistItem
-                    key={d._id}
-                    title={`${d.subject}, ${d.action}`}
-                    meta={
-                      <>
-                        <span className="text-xs text-muted-foreground">
-                          to {d.reroutedTo ?? "an unknown team"}
-                        </span>
-                        <Chip
-                          tone={
-                            d.clickupTaskUrl
-                              ? "good"
-                              : d.logError
-                                ? "bad"
-                                : "neutral"
-                          }
-                        >
-                          {d.clickupTaskUrl
-                            ? "Landed"
-                            : d.logError
-                              ? "Failed"
-                              : "Sending"}
-                        </Chip>
-                      </>
-                    }
-                    why={
-                      d.clickupTaskUrl
-                        ? `Created on the ${d.reroutedTo} board.`
-                        : d.logError
-                          ? `ClickUp rejected it: ${d.logError}. Raise it again.`
-                          : "Still being created, refresh in a moment."
-                    }
-                    action={
-                      d.clickupTaskUrl ? (
-                        <ExtLink href={d.clickupTaskUrl}>
-                          Open it in ClickUp
-                        </ExtLink>
-                      ) : undefined
-                    }
-                  />
-                ),
-              )
-            )}
-          </SectionCard>
-
-          <SectionCard title="Loose ends" count={t.loose} flush>
-            {looseList.length === 0 ? (
-              <p className="px-4 py-4 text-sm text-muted-foreground sm:px-6">
-                Nothing loose on the board.
-              </p>
-            ) : (
-              <Capped
-                items={looseList.flatMap((c: Client) =>
-                  c.loose.map((l: string, i: number) => (
-                    <ChecklistItem
-                      key={`${c.taskId}-loose-${i}`}
-                      title={`${c.name}, ${plainText(l)}`}
-                      why={`${displayLabel(c.stage)}. ${plainText(c.todo)}. Clear it before 18:00 or it shows in your EOD.`}
-                      action={
-                        c.taskUrl ? (
-                          <ExtLink href={c.taskUrl}>
-                            Open the client task
-                          </ExtLink>
-                        ) : undefined
-                      }
-                    />
-                  )),
-                )}
-              />
-            )}
-          </SectionCard>
-
-          <SectionCard
-            title="Client Success board"
-            count={snap.tasks.length}
-            sub="Due, overdue or undated."
-            flush
-          >
-            {snap.tasks.length === 0 ? (
-              <p className="px-4 py-4 text-sm text-muted-foreground sm:px-6">
-                Nothing due on the board.
-              </p>
-            ) : (
-              <Capped
-                limit={20}
-                items={snap.tasks.map(
-                  (task: {
-                    taskId: string;
-                    name: string;
-                    taskUrl?: string;
-                    status: string;
-                    dueDate?: string;
-                    overdueDays?: number;
-                  }) => (
-                    <div
-                      key={task.taskId}
-                      className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 px-4 py-3 text-sm sm:px-6"
-                    >
-                      <div className="min-w-0">
-                        <div className="font-medium" dir="auto">
-                          {task.name}
-                        </div>
-                        <div className="text-xs text-muted-foreground">
-                          {displayLabel(task.status)}
-                          {task.dueDate
-                            ? ` · due ${shortDay(task.dueDate)}`
-                            : " · no due date"}
-                          {task.overdueDays && task.overdueDays > 0 ? (
-                            <span className="txt-bad">
-                              {` · ${task.overdueDays}d overdue`}
-                            </span>
-                          ) : null}
-                        </div>
-                      </div>
-                      {task.taskUrl && (
-                        <ExtLink href={task.taskUrl} className="text-xs">
-                          Open
-                        </ExtLink>
-                      )}
-                    </div>
-                  ),
-                )}
-              />
-            )}
-          </SectionCard>
-        </div>
-      )}
-
-      {tab === "links" && (
+      {section === "links" && (
         <div className="space-y-6">
           <p className="text-sm text-muted-foreground">
             Everything you need to open in a day, from the Client Journey SOP,
-            the exit process and #csm-general. If a link is missing, say so with
-            Report an issue and it gets added.
+            the exit process and #csm-general. Every link is in the search box
+            too (Ctrl K). If a link is missing, say so with Report an issue and
+            it gets added.
           </p>
           <div className="grid gap-4 lg:grid-cols-2 lg:gap-6">
             {LINK_GROUPS.map(g => (
@@ -2434,7 +2895,7 @@ function CsmContent({ section }: { section: Section }) {
         </div>
       )}
 
-      {tab === "money" && (
+      {section === "money" && (
         <MoneySection
           snap={snap}
           targetEdit={targetEdit}
@@ -2457,26 +2918,10 @@ function CsmContent({ section }: { section: Section }) {
               <StatTile
                 plain
                 label="Clients handled today"
-                value={snap.decisions.length}
+                value={clientsHandled}
               />
-              <StatTile
-                plain
-                label="Calls logged"
-                value={
-                  snap.decisions.filter((d: { kind: string; action: string }) =>
-                    /call/i.test(d.action),
-                  ).length
-                }
-              />
-              <StatTile
-                plain
-                label="Tickets raised"
-                value={
-                  snap.decisions.filter(
-                    (d: { kind: string }) => d.kind === "rerouted",
-                  ).length
-                }
-              />
+              <StatTile plain label="Calls logged" value={callsToday} />
+              <StatTile plain label="Tickets raised" value={ticketsToday} />
               <StatTile
                 plain
                 label="Left with a reason"
@@ -2508,15 +2953,23 @@ function CsmContent({ section }: { section: Section }) {
           title={
             <span className="inline-flex flex-wrap items-center gap-2">
               Your EOD
-              {snap.eod?.submittedAt ? <Chip tone="good">Submitted</Chip> : snap.eod ? <Chip>Draft saved</Chip> : null}
+              {snap.eod?.submittedAt ? (
+                <Chip tone="good">Submitted</Chip>
+              ) : snap.eod ? (
+                <Chip>Draft saved</Chip>
+              ) : null}
             </span>
           }
         >
-          <fieldset aria-label="Your EOD" disabled={eodSaving || Boolean(snap.eod?.submittedAt)} className="space-y-4">
+          <fieldset
+            aria-label="Your EOD"
+            disabled={eodSaving || Boolean(snap.eod?.submittedAt)}
+            className="space-y-4"
+          >
             <div className="grid gap-3 text-xs sm:grid-cols-2">
               <div className="rounded-xl bg-muted/40 p-3">
-                Call summaries logged: <strong>{callsToday}</strong> · New
-                signups contacted: <strong>{signupsToday}</strong>
+                Calls logged: <strong>{callsToday}</strong> · New signups
+                contacted: <strong>{signupsToday}</strong>
               </div>
               <div className="rounded-xl bg-muted/40 p-3">
                 Upsell, referral or review conversations:{" "}
@@ -2659,44 +3112,55 @@ function CsmContent({ section }: { section: Section }) {
               onClick={async () => {
                 setEodSaving(true);
                 try {
-                await submitEod({
-                  energy,
-                  stress,
-                  answers: {
-                    callSummary,
-                    expectations,
-                    touchpoints,
-                    fathom,
-                    newSignups,
-                    upsells,
-                    reviews,
-                    referrals,
-                    lost,
-                    onePercent,
-                    rollup,
-                    offboarded,
-                    extended,
-                    paused: pausedToday,
-                  },
-                  computed: {
-                    handled: snap.decisions.length,
-                    calls: callsToday,
-                    signups: signupsToday,
-                    hot: hotToday,
-                    tickets: ticketsToday,
-                    left: snap.decisions.filter(
-                      (d: { kind: string }) => d.kind === "left",
-                    ).length,
-                  },
-                });
-                toast.success(
-                  "Your EOD is submitted in the cockpit. Slack and sheet delivery are not enabled here yet.",
-                );
-                } catch (error) { toast.error(error instanceof Error ? error.message : "Could not save your EOD."); }
-                finally { setEodSaving(false); }
+                  await submitEod({
+                    energy,
+                    stress,
+                    answers: {
+                      callSummary,
+                      expectations,
+                      touchpoints,
+                      fathom,
+                      newSignups,
+                      upsells,
+                      reviews,
+                      referrals,
+                      lost,
+                      onePercent,
+                      rollup,
+                      offboarded,
+                      extended,
+                      paused: pausedToday,
+                    },
+                    computed: {
+                      handled: clientsHandled,
+                      calls: callsToday,
+                      signups: signupsToday,
+                      hot: hotToday,
+                      tickets: ticketsToday,
+                      left: snap.decisions.filter(
+                        (d: { kind: string }) => d.kind === "left",
+                      ).length,
+                    },
+                  });
+                  toast.success(
+                    "Your EOD is submitted in the cockpit. Slack and sheet delivery are not enabled here yet.",
+                  );
+                } catch (error) {
+                  toast.error(
+                    error instanceof Error
+                      ? error.message
+                      : "Could not save your EOD.",
+                  );
+                } finally {
+                  setEodSaving(false);
+                }
               }}
             >
-              {eodSaving ? "Saving…" : snap.eod?.submittedAt ? "Submitted" : "File my EOD"}
+              {eodSaving
+                ? "Saving…"
+                : snap.eod?.submittedAt
+                  ? "Submitted"
+                  : "File my EOD"}
             </Button>
           </fieldset>
         </SectionCard>
@@ -2707,9 +3171,13 @@ function CsmContent({ section }: { section: Section }) {
 
 /**
  * His own money screen. Churn is never computed here: it is the churn tracker's
- * figure for the month (/churn, mahara-context's rule: clients lost before day 90
- * over the clients active at the start), with the daily roster's count beside it.
- * Until the month has a start, the roster's count stands in, and says so.
+ * figure for the month (Money, Churn; mahara-context's rule: clients lost before
+ * day 90 over the clients active at the start), and the retention bonus reads
+ * that month figure (src/lib/csmMoney.ts). Beside it sits the tracker's last
+ * three months, the figure the team manages against (the simplification audit,
+ * 2026-10-06: this screen called one month "the one number you are held to"
+ * and quoted the retired churn sheet). Until the month has a start on the
+ * tracker, the daily roster's count stands in, and says so.
  */
 function MoneySection({
   snap,
@@ -2733,17 +3201,6 @@ function MoneySection({
   onSave: any;
 }) {
   const saved = snap.money ?? null;
-  const kpis: {
-    key: string;
-    label: string;
-    value?: string;
-    numeric?: number;
-    month?: string;
-    source: string;
-    note?: string;
-  }[] = snap.kpis ?? [];
-  const churnKpi = kpis.find(k => k.key === "churn");
-  const churnMissing = kpis.find(k => k.key === "churn_missing");
   const measured = snap.churn ?? null;
   // The churn tracker is the one figure; the roster stands in until the month has a start.
   const { client, session } = useCockpitAuth();
@@ -2754,23 +3211,26 @@ function MoneySection({
     let live = true;
     setTracker(undefined);
     readChurnPage(client)
-      .then(r => live && setTracker(r.months.find(m => m.month === r.month) ?? null))
+      .then(
+        r =>
+          live && setTracker(r.months.find(m => m.month === r.month) ?? null),
+      )
       .catch(() => live && setTracker(null));
     return () => {
       live = false;
     };
   }, [client, session?.user.id]);
   const fromTracker =
-    tracker && tracker.churnPct !== null && tracker.activeAtStart
-      ? tracker
-      : null;
+    tracker?.activeAtStart && tracker.churnPct !== null ? tracker : null;
+  // The month is the pay figure; the three months are the one to manage.
   const churn: number | null = fromTracker
     ? fromTracker.churnPct
     : (measured?.pct ?? null);
+  const rolling = tracker?.rolling3Pct ?? null;
 
   const target = Number(targetEdit ?? saved?.target ?? 0);
   const clients = Number(
-    clientsEdit ?? saved?.clients ?? snap.totals.clients ?? 0,
+    clientsEdit ?? saved?.clients ?? (snap.clients ?? []).length,
   );
   const counts: Counts = { ...(saved?.counts ?? {}), ...countEdits };
   const pay = computePay(clients, churn, counts);
@@ -2785,9 +3245,7 @@ function MoneySection({
     <div className="space-y-6">
       <section className="rounded-2xl border bg-card">
         <div className="flex flex-wrap items-center justify-between gap-2 px-4 pt-4 sm:px-6 sm:pt-6">
-          <h2 className="text-[15px] font-semibold">
-            Churn, the one number you are held to
-          </h2>
+          <h2 className="text-[15px] font-semibold">Churn this month</h2>
           {churn === null ? null : churn <= CHURN_TARGET ? (
             <Chip tone="good">Under target</Chip>
           ) : (
@@ -2828,7 +3286,7 @@ function MoneySection({
               <div className="text-xs text-muted-foreground">
                 From the{" "}
                 <Link
-                  to="/churn"
+                  to="/money?tab=churn"
                   className="text-primary underline-offset-2 hover:underline"
                 >
                   churn tracker
@@ -2866,6 +3324,25 @@ function MoneySection({
               is exact, and every loss below is named and dated.
             </div>
           )}
+          {rolling !== null ? (
+            <div className="min-w-0 text-sm">
+              <div>
+                Last three months:{" "}
+                <span className="font-semibold tabular-nums">
+                  {rolling.toFixed(1)}%
+                </span>
+              </div>
+              <div className="text-xs text-muted-foreground">
+                The figure the team manages against, on the{" "}
+                <Link
+                  to="/money?tab=churn"
+                  className="text-primary underline-offset-2 hover:underline"
+                >
+                  churn tracker
+                </Link>
+              </div>
+            </div>
+          ) : null}
           <div className="text-sm">
             <div>
               Retention bonus at this rate:{" "}
@@ -2900,16 +3377,14 @@ function MoneySection({
           <summary>How this is counted</summary>
           <p className="mt-2">
             From the churn tracker: clients lost before day 90 this month, over
-            the clients active at the start. A client who finishes the term and
-            does not renew is not churn. Until the month has its start count on
-            the churn tracker, the daily roster's count stands in: paying
-            clients at the start of the month, minus the ones now stopped,
-            cancelled, paused past 14 days or off the board.
-            {churnKpi?.value
-              ? ` Your churn tracker sheet says ${churnKpi.value} for the same month.`
-              : churnMissing
-                ? " Your churn tracker sheet has no usable number for this month."
-                : ""}
+            the clients active at the start. Your retention bonus reads this
+            month's figure. The tracker also shows the last three months,
+            because at 17 clients one departure is 5.9% of a single month; that
+            is the figure the team manages against. A client who finishes the
+            term and does not renew is not churn. Until the month has its start
+            count on the churn tracker, the daily roster's count stands in:
+            paying clients at the start of the month, minus the ones now
+            stopped, cancelled, paused past 14 days or off the board.
           </p>
         </details>
       </section>
@@ -3111,12 +3586,20 @@ function MoneySection({
   );
 }
 
-export const StartOfDayPage = () => <CsmPage section="start" />;
+export const TodayPage = () => <CsmPage section="today" />;
 export const ClientsPage = () => <CsmPage section="clients" />;
-export const TaskListPage = () => <CsmPage section="tasks" />;
-export const HotListPage = () => <CsmPage section="hot" />;
+/** One client's page. Keyed by client, so moving to the next one starts clean. */
+export function ClientPage() {
+  const { key } = useParams();
+  return <CsmPage key={key} section="client" clientKey={key} />;
+}
+export const HotListPage = ({ embedded }: { embedded?: boolean } = {}) => (
+  <CsmPage section="hot" embedded={embedded} />
+);
 export const KeyLinksPage = () => <CsmPage section="links" />;
-export const MyMoneyPage = () => <CsmPage section="money" />;
+export const MyMoneyPage = ({ embedded }: { embedded?: boolean } = {}) => (
+  <CsmPage section="money" embedded={embedded} />
+);
 /** The EOD sheet is scored out of 10, so the app must offer the same range. */
 const SCORES = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"];
 
@@ -3206,8 +3689,8 @@ function TodaysCalls({
       </div>
       {todays.length === 0 ? (
         <p className="mt-4 text-sm text-muted-foreground">
-          Nothing booked today. If a client is due a call, book it from the
-          client list.
+          Nothing booked today. If a client is due a call, open them and press
+          Book a call.
         </p>
       ) : (
         <ul className="mt-4 divide-y">

@@ -1,12 +1,21 @@
-import { Check, Copy, LoaderCircle, Plus, X } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
-
-import { ArrowUpRight } from "lucide-react";
-import { type ReactNode, useRef } from "react";
+import { ArrowUpRight, Check, Copy, LoaderCircle, Plus, X } from "lucide-react";
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { toast } from "sonner";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { AnimatedSelect } from "@/components/ui/animated-select";
-import { checkReviewImportStatus, createReview, importReviewFolder, listReviewClients, listSentReviews } from "@/lib/review";
+import {
+  checkReviewImportStatus,
+  createReview,
+  importReviewFolder,
+  listReviewClients,
+  listSentReviews,
+} from "@/lib/review";
 
 /**
  * Send a finished video to a client for review.
@@ -48,11 +57,39 @@ const files = (n?: number) => `${n ?? 0} file${n === 1 ? "" : "s"}`;
  */
 export function SendForReview({ folded = false }: { folded?: boolean }) {
   const auth = useCockpitAuth();
-  const create = useCallback((args: any) => createReview(auth.client, auth.session?.user?.email ?? "creative", args), [auth.client, auth.session?.user?.email]);
-  const listSent = useCallback((_args?: any) => listSentReviews(auth.client, auth.session?.user?.email ?? "creative"), [auth.client, auth.session?.user?.email]);
-  const listClients = useCallback((_args?: any) => listReviewClients(auth.client, auth.session?.user?.email ?? "creative"), [auth.client, auth.session?.user?.email]);
-  const importFolder = useCallback((args: any) => importReviewFolder(auth.client, auth.session?.user?.email ?? "creative", args), [auth.client, auth.session?.user?.email]);
-  const importStatus = useCallback((args: any) => checkReviewImportStatus(auth.client, auth.session?.user?.email ?? "creative", args), [auth.client, auth.session?.user?.email]);
+  const create = useCallback(
+    (args: any) =>
+      createReview(auth.client, auth.session?.user?.email ?? "creative", args),
+    [auth.client, auth.session?.user?.email],
+  );
+  const listSent = useCallback(
+    (_args?: any) =>
+      listSentReviews(auth.client, auth.session?.user?.email ?? "creative"),
+    [auth.client, auth.session?.user?.email],
+  );
+  const listClients = useCallback(
+    (_args?: any) =>
+      listReviewClients(auth.client, auth.session?.user?.email ?? "creative"),
+    [auth.client, auth.session?.user?.email],
+  );
+  const importFolder = useCallback(
+    (args: any) =>
+      importReviewFolder(
+        auth.client,
+        auth.session?.user?.email ?? "creative",
+        args,
+      ),
+    [auth.client, auth.session?.user?.email],
+  );
+  const importStatus = useCallback(
+    (args: any) =>
+      checkReviewImportStatus(
+        auth.client,
+        auth.session?.user?.email ?? "creative",
+        args,
+      ),
+    [auth.client, auth.session?.user?.email],
+  );
 
   const [links, setLinks] = useState<string[]>([""]);
   const [folder, setFolder] = useState("");

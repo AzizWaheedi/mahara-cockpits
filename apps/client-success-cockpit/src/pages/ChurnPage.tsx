@@ -1,20 +1,22 @@
-import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
-import { changeChurn, readChurnPage } from "@/lib/churnClient";
 import { Check, Loader2, Pencil, Plus, X } from "lucide-react";
-import { type ReactNode, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { toast } from "sonner";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { Chip, Kicker, PageHeader, StatTile } from "@/components/kit";
 import { Button } from "@/components/ui/button";
 import { DateInput } from "@/components/ui/date-input";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { plural, shortDay } from "@/lib/format";
-import { cn } from "@/lib/utils";
-import type {
-  ChurnPage as Page,
-  PickClient,
-  Waiting,
-} from "@/lib/churnClient";
+import type { ChurnPage as Page, PickClient, Waiting } from "@/lib/churnClient";
+import { changeChurn, readChurnPage } from "@/lib/churnClient";
 import {
   countsAs,
   type Departure,
@@ -25,6 +27,8 @@ import {
   TARGET_PCT,
   verdictLine,
 } from "@/lib/churnCore";
+import { plural, shortDay } from "@/lib/format";
+import { cn } from "@/lib/utils";
 
 /**
  * The churn tracker (the CEO, 2026-10-01): mahara-context's churn sheet,
@@ -66,23 +70,39 @@ type Draft = {
   note: string;
 };
 
-export function ChurnPage() {
+export function ChurnPage({ embedded = false }: { embedded?: boolean }) {
   const { client, session } = useCockpitAuth();
-  const load = useCallback(() => readChurnPage(client), [client, session?.user.id]);
-  const { saveDeparture, removeDeparture, saveMonth, dismiss } = useMemo(() => ({
-    saveDeparture: (args: Record<string, unknown>) => changeChurn(client, "saveDeparture", args),
-    removeDeparture: (args: Record<string, unknown>) => changeChurn(client, "removeDeparture", args),
-    saveMonth: (args: Record<string, unknown>) => changeChurn(client, "saveMonth", args),
-    dismiss: (args: Record<string, unknown>) => changeChurn(client, "dismiss", args),
-  }), [client, session?.user.id]);
+  const load = useCallback(
+    () => readChurnPage(client),
+    [client, session?.user.id],
+  );
+  const { saveDeparture, removeDeparture, saveMonth, dismiss } = useMemo(
+    () => ({
+      saveDeparture: (args: Record<string, unknown>) =>
+        changeChurn(client, "saveDeparture", args),
+      removeDeparture: (args: Record<string, unknown>) =>
+        changeChurn(client, "removeDeparture", args),
+      saveMonth: (args: Record<string, unknown>) =>
+        changeChurn(client, "saveMonth", args),
+      dismiss: (args: Record<string, unknown>) =>
+        changeChurn(client, "dismiss", args),
+    }),
+    [client, session?.user.id],
+  );
   const scope = session?.user.id ?? "";
   const currentScope = useRef(scope);
   currentScope.current = scope;
-  const [loaded, setLoaded] = useState<{scope:string;page:Page} | null>(null);
+  const [loaded, setLoaded] = useState<{ scope: string; page: Page } | null>(
+    null,
+  );
   const page = loaded?.scope === scope ? loaded.page : null;
-  const setPage = useCallback((next: Page | null) => {
-    if (currentScope.current === scope) setLoaded(next ? {scope,page:next} : null);
-  }, [scope]);
+  const setPage = useCallback(
+    (next: Page | null) => {
+      if (currentScope.current === scope)
+        setLoaded(next ? { scope, page: next } : null);
+    },
+    [scope],
+  );
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
 
@@ -128,8 +148,13 @@ export function ChurnPage() {
 
   if (!page)
     return (
-      <div className="mx-auto w-full max-w-6xl space-y-6">
+      <div
+        className={
+          embedded ? "space-y-6" : "mx-auto w-full max-w-6xl space-y-6"
+        }
+      >
         <PageHeader
+          as={embedded ? "h2" : "h1"}
           title="Churn tracker"
           sub="A client lost before day 90 is churn. A client who finishes the term is not, renewed or not."
         />
@@ -159,8 +184,11 @@ export function ChurnPage() {
   });
 
   return (
-    <div className="mx-auto w-full max-w-6xl space-y-6">
+    <div
+      className={embedded ? "space-y-6" : "mx-auto w-full max-w-6xl space-y-6"}
+    >
       <PageHeader
+        as={embedded ? "h2" : "h1"}
         title="Churn tracker"
         sub="A client lost before day 90 is churn. A client who finishes the term is not, renewed or not."
         actions={

@@ -17,6 +17,7 @@ cd "$(dirname "$0")/.."
 CD=apps/creative-director-cockpit
 MB=apps/media-buyer-cockpit
 ED=apps/video-editor-cockpit
+SA=apps/sales-cockpit
 
 fails=0
 
@@ -68,6 +69,30 @@ same projectionsCore "apps/client-success-cockpit/src/lib/projectionsCore.ts" "$
 same projectionsSchema "apps/client-success-cockpit/src/lib/projectionsSchema.ts" "$MB/src/lib/projectionsSchema.ts"
 same projectionsModel "apps/client-success-cockpit/src/lib/projectionsModel.ts" "$MB/src/lib/projectionsModel.ts"
 same ProjectionsKit "apps/client-success-cockpit/src/components/projections/ProjectionsKit.tsx" "$MB/src/components/projections/ProjectionsKit.tsx"
+
+# A client's reporting period (what a pick means, what it holds, what it is
+# compared with) is the same on the Client performance page and in the Google
+# Doc report the media buyer backend writes from it.
+same reportPeriod "apps/client-success-cockpit/src/lib/reportPeriod.ts" "$MB/src/lib/reportPeriod.ts"
+
+# Search (Ctrl/Cmd + K, and the lists that filter by name) forgives the same
+# way in every cockpit: Arabic letter forms folded, one typo allowed.
+same search.ts "apps/client-success-cockpit/src/lib/search.ts" "$MB/src/lib/search.ts"
+same search.ts "apps/client-success-cockpit/src/lib/search.ts" "$ED/src/lib/search.ts"
+same search.ts "apps/client-success-cockpit/src/lib/search.ts" "$CD/src/lib/search.ts"
+same search.ts "apps/client-success-cockpit/src/lib/search.ts" "$SA/src/lib/search.ts"
+
+# Each cockpit's mark, its SOP link and the Clarity tag are the same file in
+# all five apps.
+for f in cockpits.ts clarity.ts; do
+  for app in "$MB" "$CD" "$ED" "$SA"; do
+    same "$f" "apps/client-success-cockpit/src/lib/$f" "$app/src/lib/$f"
+  done
+done
+
+# The two Supabase cockpits' search box sits in the same dependency-free
+# dialog: Escape, a click outside, focus kept inside and handed back.
+same dialog.tsx "$ED/src/components/ui/dialog.tsx" "$SA/src/components/ui/dialog.tsx"
 
 # The swipe file's backend is the same in the two Convex cockpits, bar the
 # role each one checks.

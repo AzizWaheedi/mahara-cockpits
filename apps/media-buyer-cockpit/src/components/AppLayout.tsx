@@ -1,8 +1,14 @@
-import { AnimatePresence, MotionConfig, motion, useReducedMotion } from "framer-motion";
+import {
+  AnimatePresence,
+  MotionConfig,
+  motion,
+  useReducedMotion,
+} from "framer-motion";
 import { useCallback, useLayoutEffect, useRef } from "react";
 import { useLocation, useOutlet } from "react-router";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { AppSidebar } from "./AppSidebar";
+import { CommandPalette } from "./CommandPalette";
 import { HermesChat } from "./HermesChat";
 import { MobileTabBar } from "./MobileTabBar";
 import { OfflineBanner } from "./OfflineBanner";
@@ -36,7 +42,7 @@ function LayoutContent() {
         const { error } = await client.rpc("cockpit_submit_issue_report", {
           p_app: "media-buyer",
           p_page: location.pathname,
-          p_text: typeof r === "string" ? r : r?.message ?? "App error",
+          p_text: typeof r === "string" ? r : (r?.message ?? "App error"),
           p_role: "media_buyer",
         });
         if (error) throw error;
@@ -97,6 +103,7 @@ function LayoutContent() {
             </AnimatePresence>
           </RouteErrorBoundary>
         </main>
+        <CommandPalette />
         <HermesChat />
         <MobileTabBar />
       </SidebarInset>

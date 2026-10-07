@@ -1,18 +1,24 @@
-import { useAction, useMutation } from "@/lib/cockpitApi";
 import { Landmark } from "lucide-react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { EmptyState } from "@/components/ceo/EmptyState";
-import { count, humanize, money, month, plural, shortDate } from "@/components/ceo/format";
+import {
+  count,
+  humanize,
+  money,
+  month,
+  plural,
+  shortDate,
+} from "@/components/ceo/format";
 import { Kicker } from "@/components/ceo/Kicker";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatTile } from "@/components/ceo/StatTile";
 import { StatusChip } from "@/components/ceo/StatusChip";
 import type { CeoSection } from "@/components/ceo/useCeo";
 import { AnimatedSelect } from "@/components/ui/animated-select";
-import { api } from "@/lib/cockpitApi";
-import type { MoneyPayload, Note } from "@/types/ceo/payloads";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { api, useAction, useMutation } from "@/lib/cockpitApi";
 import { cn } from "@/lib/utils";
+import type { MoneyPayload, Note } from "@/types/ceo/payloads";
 
 /**
  * The bank statement door (Aziz, 2026-09-21). CBK has no API, so the CBK

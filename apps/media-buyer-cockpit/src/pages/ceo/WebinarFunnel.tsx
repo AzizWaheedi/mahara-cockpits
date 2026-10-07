@@ -1,22 +1,42 @@
 import { Check, TriangleAlert } from "lucide-react";
 import { type ReactNode, useId, useMemo, useState } from "react";
-import { Area, CartesianGrid, ComposedChart, ReferenceDot, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import {
+  Area,
+  CartesianGrid,
+  ComposedChart,
+  ReferenceDot,
+  ReferenceLine,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import { BarList } from "@/components/ceo/BarList";
 import { AXIS_TICK } from "@/components/ceo/chartKit";
 import { EmptyState } from "@/components/ceo/EmptyState";
 import { FilterChips } from "@/components/ceo/FilterChips";
-import { count, dateTime, decimal, minutes, money, NA, pct, plural, seconds, shortDate } from "@/components/ceo/format";
+import {
+  count,
+  dateTime,
+  decimal,
+  minutes,
+  money,
+  NA,
+  pct,
+  plural,
+  seconds,
+  shortDate,
+} from "@/components/ceo/format";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatTile } from "@/components/ceo/StatTile";
 import { StatusChip } from "@/components/ceo/StatusChip";
 import type { CeoSection } from "@/components/ceo/useCeo";
+import { Button } from "@/components/ui/button";
 import { api, useAction } from "@/lib/cockpitApi";
 import type { WebinarPayload, WebinarRound } from "@/types/ceo/payloads";
 import { webinarReadiness } from "@/types/ceo/webinarReadiness";
 import type { Room } from "@/types/ceo/webinarRoom";
 import type { TargetSelection } from "@/types/ceo/webinarTargetsModel";
-import { Button } from "@/components/ui/button";
-
 
 import { WebinarTargetsEditor } from "./WebinarTargetsEditor";
 

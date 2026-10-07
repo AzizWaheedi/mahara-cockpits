@@ -11,10 +11,10 @@ import { afterAll, expect, mock, test } from "bun:test";
 const snapshot = await Bun.file(
   new URL("./fixtures/csm-snapshot.json", import.meta.url),
 ).json();
-
 const perfFixture = await Bun.file(
   new URL("./fixtures/csm-profiles.json", import.meta.url),
 ).json();
+
 
 const KITS = {
   rows: [
@@ -108,6 +108,8 @@ const mockClient: any = {
     },
   },
 };
+const sent: [string, Record<string, unknown>][] = [];
+const allowedClients: string[] = [];
 
 mock.module("@/auth/SupabaseAuthProvider", () => ({
   getCockpitSupabaseClient: () => mockClient,
@@ -133,7 +135,7 @@ mock.module("@/auth/SupabaseAuthProvider", () => ({
     email: "csm@maharamedia.com",
     name: "Test CSM",
     roles: ["csm"],
-    clients: [],
+    clients: allowedClients,
     cockpits: ["csm"],
     home: "/go/csm",
     signOut: async () => {},
@@ -148,7 +150,7 @@ mock.module("@/lib/useCsmSnapshot", () => ({
     error: snapshotError,
     refetch: async () => {},
     toggleCheck: async () => {},
-    act: async () => {},
+    act: async (args: Record<string, unknown>) => { sent.push(["act", args]); },
     submitEod: async () => {},
     addPlanItems: async () => {},
     updateProfile: async () => {},
@@ -180,6 +182,7 @@ mock.module("@/lib/performance", () => ({
     return profileDeferred.promise;
   },
   fetchTasksAdded: async () => [],
+  fetchPerformancePeriod: async () => [],
   addTask: async () => "receipt-123",
   requestReportDoc: async () => {
     throw new Error("The report-document worker is not connected yet.");
@@ -225,6 +228,16 @@ mock.module("@/lib/nativePreviewClient", () => ({
 
 mock.module("@/lib/nativeStillClient", () => ({
   nativeStillsRead: async () => ({}),
+}));
+
+mock.module("@/lib/checkInClient", () => ({
+  readClientContact: async () => ({id:"contact-1",name:"Example Owner",phone:null,email:null,url:"https://example.com/contact"}),
+  prepareClientCheckIn: async () => { throw new Error("Choose a booking day in the booking test."); },
+  bookClientCheckIn: async () => { throw new Error("Booking is not exercised by page rendering."); },
+}));
+mock.module("@/lib/backlog", () => ({
+  fetchBacklog: async () => ({rows:[],counts:{},activeClients:snapshot.clients.length}),
+  queueGap: async () => { throw new Error("Gap queueing is not exercised by page rendering."); },
 }));
 
 mock.module("sonner", () => ({
@@ -290,6 +303,113 @@ afterAll(() => {
   }
 });
 
+/** Every section, because each one renders its own rows. */
+const SECTIONS = [
+  "today",
+  "clients",
+  "client",
+  "hot",
+  "links",
+  "money",
+  "eod",
+] as const;
+
+/** Greystone Contracting in the fixture: an onboarding client. */
+const GREYSTONE = "86exnk0v4";
+/** MOFAG in the fixture: commitments from a call, and a report due. */
+const MOFAG = "86exr5zcm";
+
+/** The page for one section, the client page on Greystone. */
+const pageFor = (section: string, clientKey = GREYSTONE) =>
+  createElement(CsmPage, {
+    section: section as never,
+    ...(section === "client" ? { clientKey } : {}),
+  });
+
+for (const section of SECTIONS) {
+  test(`CSM ${section} survives loading → loaded without a hooks error`, async () => {
+    const host = win.document.createElement("div");
+    win.document.body.appendChild(host);
+    // biome-ignore lint/suspicious/noExplicitAny: happy-dom element into React DOM
+    const root = createRoot(host as any);
+    const errors: string[] = [];
+    const originalError = console.error;
+    console.error = (...args: unknown[]) => {
+      errors.push(args.map(String).join(" "));
+    };
+    try {
+      currentSnapshot = undefined;
+      isSnapshotLoading = true;
+      snapshotError = null;
+      await reactAct(async () => {
+        root.render(createElement(MemoryRouter, null, pageFor(section)));
+      });
+      currentSnapshot = snapshot;
+      isSnapshotLoading = false;
+      await reactAct(async () => {
+        root.render(createElement(MemoryRouter, null, pageFor(section)));
+      });
+      const html = host.innerHTML;
+      expect(html.length).toBeGreaterThan(500);
+      expect(errors.join("\n")).not.toContain("Rendered more hooks");
+      expect(errors.join("\n")).not.toContain("Rendered fewer hooks");
+      expect(errors.filter(e => /error/i.test(e)).join("\n")).toBe("");
+    } finally {
+      console.error = originalError;
+      await reactAct(async () => root.unmount());
+    }
+  });
+}
+
+/** Renders one section with live data at an address and returns its visible text. */
+async function renderSection(
+  section: string,
+  url = "/",
+  clientKey = GREYSTONE,
+): Promise<string> {
+  const host = win.document.createElement("div");
+  win.document.body.appendChild(host);
+  // biome-ignore lint/suspicious/noExplicitAny: happy-dom element into React DOM
+  const root = createRoot(host as any);
+  currentSnapshot = snapshot;
+  isSnapshotLoading = false;
+  snapshotError = null;
+  await reactAct(async () => {
+    root.render(
+      createElement(
+        MemoryRouter,
+        { initialEntries: [url] },
+        pageFor(section, clientKey),
+      ),
+    );
+  });
+  const text = (host.textContent ?? "").replace(/\s+/g, " ");
+  await reactAct(async () => root.unmount());
+  return text;
+}
+
+test("the hot list and the message drafts render real client copy", async () => {
+  const host = win.document.createElement("div");
+  win.document.body.appendChild(host);
+  // biome-ignore lint/suspicious/noExplicitAny: happy-dom element into React DOM
+  const root = createRoot(host as any);
+  currentSnapshot = snapshot;
+  isSnapshotLoading = false;
+  await reactAct(async () => {
+    root.render(
+      createElement(
+        MemoryRouter,
+        null,
+        createElement(CsmPage, { section: "hot" }),
+      ),
+    );
+  });
+  // A client name from the fixture must appear, so we know rows actually built.
+  const html = host.innerHTML;
+  expect(html).toContain("Hot list");
+  await reactAct(async () => root.unmount());
+});
+
 
 
 test("client performance renders loading, resolves overview, selects client, and copies taskId", async () => {
@@ -310,13 +430,13 @@ test("client performance renders loading, resolves overview, selects client, and
     await reactAct(async () => {
       root.render(createElement(ClientPerformancePage, {}));
     });
-    expect(host.innerHTML).toContain("Loading client performance");
+    expect(host.innerHTML).toContain("Loading client results");
 
     await reactAct(async () => {
       overviewDeferred!.resolve(perfFixture.overview);
     });
 
-    expect(host.innerHTML).not.toContain("Loading client performance");
+    expect(host.innerHTML).not.toContain("Loading client results");
     const targetClient = perfFixture.overview.clients[0].clientName;
     expect(host.innerHTML).toContain(targetClient);
 
@@ -339,6 +459,11 @@ test("client performance renders loading, resolves overview, selects client, and
     expect(host.innerHTML).not.toContain(`Loading ${targetClient}`);
     expect(host.innerHTML).toContain(perfFixture.profile.taskId);
 
+    const html = host.innerHTML;
+    expect(html).toContain("Print report");
+    expect(html).toContain("Book a call");
+    expect(html).toContain("Client ID · ClickUp client board");
+    expect(html).toContain(perfFixture.profile.taskId);
     let copiedId = "";
     const originalWrite = win.navigator.clipboard.writeText;
     win.navigator.clipboard.writeText = async (value: string) => {
@@ -435,7 +560,42 @@ test("the onboarding spine maps days and handles out-of-range boundaries", () =>
   expect(spineFor({ signupDays: 40, bucket: "onboarding" }).day).toBe(null);
 });
 
-test("an onboarding client loads, expands and opens its client-bound kickoff link", async () => {
+test("the day blocks read in order and the quiet screens stay quiet", async () => {
+  // Today's day plan must read 1 to 5 in that order, or the sprints stop meaning anything.
+  const start = await renderSection("today");
+  const order = [
+    "1 · Morning sprint",
+    "2 · Then the work",
+    "3 · Midday sprint",
+    "4 · Then the work",
+    "5 · Evening sprint",
+  ];
+  let cursor = -1;
+  for (const label of order) {
+    const at = start.indexOf(label);
+    expect(at).toBeGreaterThan(cursor);
+    cursor = at;
+  }
+  // Who needs you lives on Today, once: the Clients page lists everyone instead.
+  expect(start).toContain("Onboarding, get them live");
+  expect(start).toContain("Commitments from calls");
+  expect(start).toContain("File my end of day");
+  const list = await renderSection("clients");
+  expect(list).not.toContain("Onboarding, get them live");
+  expect(list).toContain("Greystone Contracting");
+  // End of day is the report only.
+  const eod = await renderSection("eod");
+  expect(eod).not.toContain("Onboarding, get them live");
+  expect(eod).toContain("End of day");
+});
+
+/**
+ * The onboarding links (2026-10-05): an onboarding client's row says which forms
+ * are in, and their page's Onboarding & files tab holds the three steps around
+ * the onboarding call, with the kickoff form as the one teal action once their
+ * onboarding form is in.
+ */
+test("an onboarding client's row and page show its onboarding steps", async () => {
   const host = win.document.createElement("div");
   win.document.body.appendChild(host);
   const root = createRoot(host as any);
@@ -453,8 +613,8 @@ test("an onboarding client loads, expands and opens its client-bound kickoff lin
       root.render(
         createElement(
           MemoryRouter,
-          null,
-          createElement(CsmPage, { section: "clients" }),
+          { initialEntries: ["/clients?view=onboarding"] },
+          pageFor("clients"),
         ),
       );
     });
@@ -471,36 +631,132 @@ test("an onboarding client loads, expands and opens its client-bound kickoff lin
       );
     });
     await settle();
-
-    const buttons = () =>
-      [...host.querySelectorAll("button")] as unknown as HTMLButtonElement[];
-    const tab = buttons().find(b =>
-      (b.textContent ?? "").includes("Client onboarding"),
-    );
-    expect(tab).toBeDefined();
-    await reactAct(async () => tab?.click());
-    await settle();
-
-    const row = buttons().find(
-      b =>
-        b.getAttribute("aria-expanded") !== null &&
-        (b.textContent ?? "").includes("Greystone Contracting"),
+    const row = [...host.querySelectorAll("a")].find(a =>
+      (a.textContent ?? "").includes("Greystone Contracting"),
     );
     expect(row).toBeDefined();
-    expect(row?.getAttribute("aria-expanded")).toBe("false");
+    // The row opens the client's own page.
+    expect(row?.getAttribute("href")).toBe(`/clients/${GREYSTONE}`);
+    // The forms' line on the row.
+    expect(row?.textContent).toContain("Onboarding form");
+    expect(row?.textContent).toContain("Kickoff");
+    await reactAct(async () => root.unmount());
 
-    await reactAct(async () => row?.click());
+    const page = win.document.createElement("div");
+    win.document.body.appendChild(page);
+    // biome-ignore lint/suspicious/noExplicitAny: happy-dom element into React DOM
+    const root2 = createRoot(page as any);
+    await reactAct(async () => {
+      root2.render(
+        createElement(
+          MemoryRouter,
+          { initialEntries: [`/clients/${GREYSTONE}?tab=onboarding`] },
+          pageFor("client"),
+        ),
+      );
+    });
     await settle();
-    expect(row?.getAttribute("aria-expanded")).toBe("true");
-
-    const links = [...host.querySelectorAll("a")];
-    const kickoff = links.find(a =>
-      a.getAttribute("href")?.includes("onboarding_client_id=86exnk0v4"),
+    const text = (page.textContent ?? "").replace(/\s+/g, " ");
+    expect(text).toContain("Before the call");
+    expect(text).toContain("On the call");
+    expect(text).toContain("After the call");
+    expect(text).toContain("Filled 2 Oct");
+    expect(text).toContain("Open the kickoff form");
+    expect(text).toContain("You are here");
+    // With no card links, the kickoff form still opens, with the card id.
+    const kickoff = [...page.querySelectorAll("a")].find(a =>
+      (a.textContent ?? "").includes("Open the kickoff form"),
     );
     expect(kickoff).toBeDefined();
     expect(kickoff?.getAttribute("href")).toBe(
       "https://maharamedia.typeform.com/to/tG7dnxBn#onboarding_client_id=86exnk0v4",
     );
+    await reactAct(async () => root2.unmount());
+  } finally {
+    host.remove();
+  }
+});
+
+/**
+ * One client page (2026-10-06): the name, the next step, one "Book a call",
+ * the actions, and four tabs, from one address that survives a refresh.
+ */
+test("a client's page has one booking button, the actions and four tabs", async () => {
+  profileDeferred = null;
+  try {
+    const text = await renderSection("client", `/clients/${GREYSTONE}`);
+    expect(text).toContain("Greystone Contracting");
+    expect(text).toContain("All clients");
+    expect(text.match(/Book a call/g)?.length).toBe(1);
+    expect(text).toContain("Or send the booking link");
+    expect(text).toContain("Client ID · ClickUp client board");
+    for (const action of [
+      "Message",
+      "Log a call",
+      "Update the board",
+      "Add a task",
+      "Leave it",
+    ])
+      expect(text).toContain(action);
+    for (const tab of ["Overview", "Results", "Onboarding & files", "Money"])
+      expect(text).toContain(tab);
+    // Overview: one "Before the call" block, the diagnosis inside it.
+    expect(text).toContain("What is holding this client back");
+    expect(text).toContain("What the media buyer changed since your last call");
+    expect(text).not.toContain("Prep for this call");
+    // Results: the period and the report at the top.
+    const results = await renderSection(
+      "client",
+      `/clients/${GREYSTONE}?tab=results&period=lastMonth`,
+    );
+    expect(results).toContain("Print report");
+    expect(results).toContain("Write the Google Doc");
+    // A client who is not on the list says so and where to look.
+    const missing = await renderSection("client", "/clients/nope", "nope");
+    expect(missing).toContain("This client is not on your list");
+  } finally {
+  }
+});
+
+/**
+ * The worst bug the audit found: "All done already" on a call's commitments
+ * logged a touchpoint, so ClickUp's last contact became today for a client
+ * nobody had contacted. It now closes the commitment without touching contact.
+ */
+test("closing a commitment is not contact with the client", async () => {
+  const host = win.document.createElement("div");
+  win.document.body.appendChild(host);
+  // biome-ignore lint/suspicious/noExplicitAny: happy-dom element into React DOM
+  const root = createRoot(host as any);
+  currentSnapshot = snapshot;
+  isSnapshotLoading = false;
+  sent.length = 0;
+  try {
+    await reactAct(async () => {
+      root.render(
+        createElement(
+          MemoryRouter,
+          { initialEntries: [`/clients/${MOFAG}`] },
+          pageFor("client", MOFAG),
+        ),
+      );
+    });
+    const call = [...host.querySelectorAll("button")].find(b =>
+      (b.textContent ?? "").startsWith("Your call on"),
+    );
+    expect(call).toBeDefined();
+    await reactAct(async () => call?.click());
+    const doneButton = [...host.querySelectorAll("button")].find(
+      b => b.textContent?.trim() === "All done already",
+    );
+    expect(doneButton).toBeDefined();
+    await reactAct(async () => doneButton?.click());
+    const acts = sent.filter(([name]) => name === "act").map(([, a]) => a);
+    expect(acts.length).toBeGreaterThan(0);
+    for (const a of acts) {
+      expect(a.kind).toBe("commitment");
+      expect(String(a.action)).toStartWith("Commitment handled: ");
+    }
   } finally {
     await reactAct(async () => root.unmount());
     host.remove();

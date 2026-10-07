@@ -1,16 +1,14 @@
-import { useAction } from "@/lib/cockpitApi";
 import { Loader2, Plus, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
 import { DateInput } from "@/components/ui/date-input";
-import { api } from "@/lib/cockpitApi";
-import { goalTargetPatch, type GoalTargetPatch } from "@/lib/ceoGoalsModel";
+import { type GoalTargetPatch, goalTargetPatch } from "@/lib/ceoGoalsModel";
+import { api, useAction } from "@/lib/cockpitApi";
 import type { Board, TargetRow } from "@/types/ceo/goals";
 import type { MetricDef } from "@/types/ceo/scoreboard";
-import { fmt } from "./goalsKit";
-import { planTitle } from "./goalsKit";
+import { fmt, planTitle } from "./goalsKit";
 
 /**
  * Writing the plan: the period and the sentence it is for, then a target on
@@ -425,7 +423,10 @@ function TargetList({
   planId: number;
   busy: boolean;
   onSaved: () => void;
-  onSave: (args: { planId: number; targets: GoalTargetPatch[] }) => Promise<unknown>;
+  onSave: (args: {
+    planId: number;
+    targets: GoalTargetPatch[];
+  }) => Promise<unknown>;
   onRemove: (args: { id: number }) => Promise<unknown>;
 }) {
   const [edits, setEdits] = useState<Record<number, Partial<Draft>>>({});

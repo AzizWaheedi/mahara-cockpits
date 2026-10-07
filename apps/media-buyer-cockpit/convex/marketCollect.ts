@@ -1,8 +1,15 @@
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import { internalAction } from "./_generated/server";
+import { rateOf } from "./currency";
 import { creativeCopyParts, readCreativeCopy, stillKeyFor } from "./metaMedia";
-import { allAdAccounts, callTool, graph, unwrap } from "./tools";
+import {
+  accountCurrency,
+  allAdAccounts,
+  callTool,
+  graph,
+  unwrap,
+} from "./tools";
 
 /**
  * Mine every Mahara ad account into the GCC winning-data database.
@@ -230,10 +237,15 @@ function copyTraits(
   return [traits, language];
 }
 
+/**
+ * Spend in dollars: Meta reports it in the account's own currency, and the
+ * playbook averages across accounts (a riyal account's cost per lead read as
+ * dollars is 3.75 times too high). `usdPer` is the account's rate.
+ */
 // biome-ignore lint/suspicious/noExplicitAny: Meta payload
-function leadsOf(insights: any): { spend: number; leads: number } {
+function leadsOf(insights: any, usdPer = 1): { spend: number; leads: number } {
   const first = insights?.data?.[0] ?? {};
-  const spend = Number(first.spend ?? 0);
+  const spend = Number(first.spend ?? 0) * usdPer;
   let leads = 0;
   for (const a of first.actions ?? []) {
     if (String(a.action_type ?? "").includes("lead")) {
@@ -244,7 +256,7 @@ function leadsOf(insights: any): { spend: number; leads: number } {
 }
 
 // biome-ignore lint/suspicious/noExplicitAny: Meta payload
-function readCreatives(ads: any[]) {
+function readCreatives(ads: any[], usdPer = 1) {
   const out: Record<string, unknown>[] = [];
   const formats = new Set<string>();
   const ctas = new Set<string>();
@@ -258,7 +270,7 @@ function readCreatives(ads: any[]) {
     const full = creativeCopyParts(spec);
     const copy = readCreativeCopy(cr);
     const [t, lang] = copyTraits(full.body, full.headline);
-    const { spend, leads } = leadsOf(ad.insights);
+    const { spend, leads } = leadsOf(ad.insights, usdPer);
     formats.add(copy.format);
     if (copy.cta) ctas.add(copy.cta);
     for (const x of t) traits.add(x);
@@ -300,7 +312,7 @@ function readCreatives(ads: any[]) {
 
 /** Turn one ad set's targeting into a comparable "play". */
 // biome-ignore lint/suspicious/noExplicitAny: Meta payload
-function readPlay(adset: any) {
+function readPlay(adset: any, usdPer = 1) {
   const t = adset.targeting ?? {};
   const names = new Set<string>();
   for (const spec of t.flexible_spec ?? [])
@@ -312,7 +324,7 @@ function readPlay(adset: any) {
     : interests.length
       ? "interests"
       : "broad";
-  const { spend, leads } = leadsOf(adset.insights);
+  const { spend, leads } = leadsOf(adset.insights, usdPer);
   return {
     adsetId: String(adset.id),
     adsetName: String(adset.name ?? ""),
@@ -452,12 +464,29 @@ export const collectAccount = internalAction({
       return { adsets: 0, stored: 0 };
     }
 
+    // The account's currency, per Meta. One the cockpit has no rate for is
+    // left out rather than averaged in as dollars.
+    let currency = "USD";
+    try {
+      currency = await accountCurrency(a.accountId);
+    } catch (e) {
+      console.warn(
+        `${a.client}: currency unread, taken as USD: ${String(e).slice(0, 120)}`,
+      );
+    }
+    const usdPer = rateOf(currency);
+    if (usdPer === undefined) {
+      console.warn(
+        `${a.client} (act_${a.accountId}) is in ${currency}: no rate, not stored`,
+      );
+      return { adsets: 0, stored: 0 };
+    }
     const rows: Record<string, unknown>[] = [];
     for (const adset of res.data ?? []) {
-      const play = readPlay(adset);
+      const play = readPlay(adset, usdPer);
       // No spend means no evidence. Storing it would dilute every average.
       if (play.spend <= 0) continue;
-      const creative = readCreatives(adset.ads?.data ?? []);
+      const creative = readCreatives(adset.ads?.data ?? [], usdPer);
       rows.push({
         ...play,
         ...creative,

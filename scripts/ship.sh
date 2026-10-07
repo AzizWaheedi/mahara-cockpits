@@ -20,6 +20,17 @@ scripts/check-shared.sh || exit 1
 bun test scripts/convex-removals.test.ts >/dev/null 2>&1 \
   || { echo "the deploy guard's tests fail (bun test scripts/convex-removals.test.ts)"; exit 1; }
 
+# New-client onboarding stores location OAuth credentials alongside legacy
+# private integration tokens. Both must stay visible to the cockpit feeds.
+(cd apps/media-buyer-cockpit && bun test scripts/ghl-credential.test.ts >/dev/null 2>&1) \
+  || { echo "the GHL credential compatibility tests fail"; exit 1; }
+
+(cd apps/media-buyer-cockpit && bun test scripts/client-sheet-report.test.ts scripts/ceo-outcome-identity.test.ts scripts/creative-stat-isolation.test.ts >/dev/null 2>&1) \
+  || { echo "the reporting identity and worksheet tests fail"; exit 1; }
+
+(cd apps/creative-director-cockpit && bun test scripts/client-stat-retention.test.ts >/dev/null 2>&1) \
+  || { echo "the creative statistics retention tests fail"; exit 1; }
+
 # The Frame.io webhook is a public URL that writes to our notes, so its
 # signature check is tested on every ship rather than when somebody
 # remembers.
@@ -127,6 +138,13 @@ ship() {
   [ -n "${VITE_SUPABASE_URL:-}" ] && sup_env+=(VITE_SUPABASE_URL="$VITE_SUPABASE_URL")
   [ -n "${VITE_SUPABASE_ANON_KEY:-}" ] && sup_env+=(VITE_SUPABASE_ANON_KEY="$VITE_SUPABASE_ANON_KEY")
   (cd "$dir" && env VITE_CONVEX_URL="" ${sup_env[@]+"${sup_env[@]}"} bun run build)
+  # Remote Vercel builds need the same public native configuration as the
+  # local build. Never pass a service-role key through VITE_* variables.
+  local -a build_env=(--build-env VITE_CONVEX_URL=)
+  local setting
+  for setting in ${sup_env[@]+"${sup_env[@]}"}; do
+    build_env+=(--build-env "$setting")
+  done
   # The Vercel CLI prints JSON when not on a terminal and can exit 0 without a
   # production deployment (seen 2026-09-18: the creative site kept the old
   # bundle while the log showed one "}"), so the confirmation is checked, not
@@ -153,7 +171,9 @@ ship() {
     # fresh worktree made client-success-cockpit beside mahara-client-success).
     # The Composio path refuses the same way.
     [ -f "$dir/.vercel/project.json" ] || { echo "$dir is not linked to a Vercel project (.vercel/project.json missing): copy it from a linked checkout"; exit 1; }
-    out=$(cd "$dir" && "${vercel_cli[@]}" deploy --prod --yes --force ${tok[@]+"${tok[@]}"} 2>&1) || { echo "$out" | tail -20; echo "vercel deploy failed for $app"; exit 1; }
+    # An archived upload avoids the per-file fetch failures observed during
+    # the native branch preview run. It does not change the deployment target.
+    out=$(cd "$dir" && "${vercel_cli[@]}" deploy --prod --yes --force --archive tgz ${build_env[@]+"${build_env[@]}"} ${tok[@]+"${tok[@]}"} 2>&1) || { echo "$out" | tail -20; echo "vercel deploy failed for $app"; exit 1; }
   else
     # No Vercel login on this Mac (2026-09-20): the same source goes up
     # through Composio's Vercel connection instead. `bunx vercel login`

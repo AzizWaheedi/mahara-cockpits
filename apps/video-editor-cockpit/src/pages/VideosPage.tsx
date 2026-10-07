@@ -11,6 +11,7 @@ import {
 import { AnimatedSelect } from "../components/ui/animated-select";
 import { useAllAssets, useJobs, useStills } from "../lib/data";
 import { clock, minutes, shape } from "../lib/format";
+import { matchScore } from "../lib/search";
 
 /**
  * Every clip the desk has read, in one wall. Called Footage, as in the
@@ -26,6 +27,9 @@ export default function VideosPage() {
   const jobs = useJobs();
   const [client, setClient] = useState<string>("");
   const [onlyWithSpeech, setOnlyWithSpeech] = useState(false);
+  // Across every job: a file's name, its client, and what is said in it
+  // (the job page searches one job's words; this is the way across them).
+  const [find, setFind] = useState("");
 
   const clientOf = useMemo(() => {
     const map = new Map<string, string>();
@@ -39,8 +43,18 @@ export default function VideosPage() {
     if (client) rows = rows.filter(a => clientOf.get(a.task_id) === client);
     if (onlyWithSpeech)
       rows = rows.filter(a => (a.transcript ?? "").trim().length > 0);
+    if (find.trim())
+      rows = rows.filter(
+        a =>
+          matchScore(
+            [a.name, clientOf.get(a.task_id), a.transcript]
+              .filter(Boolean)
+              .join(" "),
+            find,
+          ) > 0,
+      );
     return rows;
-  }, [assets.data, client, onlyWithSpeech, clientOf]);
+  }, [assets.data, client, onlyWithSpeech, clientOf, find]);
 
   const clients = useMemo(() => {
     const counts = new Map<string, number>();
@@ -71,6 +85,14 @@ export default function VideosPage() {
       />
 
       <div className="mb-6 flex flex-wrap items-center gap-2">
+        <input
+          value={find}
+          onChange={e => setFind(e.target.value)}
+          placeholder="Find a clip: a name, or words said in it"
+          aria-label="Find a clip"
+          dir="auto"
+          className="h-9 w-full rounded-lg border bg-background px-3 text-sm sm:w-72"
+        />
         <AnimatedSelect
           aria-label="Client"
           value={client}

@@ -7,6 +7,13 @@ import {
   internalQuery,
 } from "./_generated/server";
 import { type BillingRow, billingRows, writeBilling } from "./ceo/billing";
+import {
+  type CardChange,
+  changesForCard,
+  isChange,
+  isClientOf,
+} from "./changeLog";
+import { kuwaitDay } from "./changeResultsCore";
 import { authenticatedAction } from "./functions";
 import { metaImageUsable } from "./metaMedia";
 import { latestStillAt } from "./previews";
@@ -570,10 +577,21 @@ export const buildCsmSnapshot = internalAction({
       return hit && hit.spend7d > 0 ? hit.spend7d : undefined;
     };
     const csTasks = await allTasks(ctx, CS_LIST, false);
-    // Campaign decisions already logged by the media buyer, so the CSM walks into a
-    // check-in call knowing every change made on that client's account.
+    // Everything the media buyer did, decisions and changes alike, so the CSM
+    // walks into a check-in call knowing every change made on that client's
+    // account.
     const campaigns = await ctx.runQuery(internal.csmSync.campaignsForCsm, {});
-    const changeLog = await ctx.runQuery(internal.csmSync.recentDecisions, {});
+    const changeLog: CardChange[] = await ctx.runQuery(
+      internal.csmSync.recentChanges,
+      {},
+    );
+    // Each card's other names (clientLinks), so a campaign filed under a
+    // variant of the client's name still lands on the right card.
+    const aliasRows: { name: string; aliases: string[] }[] = await ctx.runQuery(
+      internal.csmWork.clientAliases,
+      {},
+    );
+    const aliasesOf = new Map(aliasRows.map(a => [a.name, a.aliases]));
 
     // biome-ignore lint/suspicious/noExplicitAny: rows for storage
     const clients: any[] = [];
@@ -635,23 +653,23 @@ export const buildCsmSnapshot = internalAction({
             today,
           )
         : undefined;
-      const norm = String(t.name)
-        .toLowerCase()
-        .replace(/[^\p{L}\p{N}]/gu, "");
-      const clientCampaigns = campaigns.filter(
-        (c: { clientName?: string }) =>
-          c.clientName &&
-          String(c.clientName)
-            .toLowerCase()
-            .replace(/[^\p{L}\p{N}]/gu, "") === norm,
+      const card = { name: String(t.name), aliases: aliasesOf.get(t.name) };
+      const clientCampaigns = campaigns.filter((c: { clientName?: string }) =>
+        isClientOf(c.clientName, card),
       );
-      const changes = changeLog
-        .filter((d: { subject: string }) =>
-          clientCampaigns.some(
-            (c: { campaignName: string }) => c.campaignName === d.subject,
+      // The last 90 days of the media buyer's changes on this client. The
+      // touchpoint panel shows those since the last call; the client's page
+      // shows whatever reporting period the CSM picks.
+      const changes = changesForCard(
+        changeLog,
+        {
+          name: String(t.name),
+          campaigns: clientCampaigns.map(
+            (c: { campaignName: string }) => c.campaignName,
           ),
-        )
-        .slice(0, 6);
+        },
+        Date.now(),
+      );
 
       // Hot list: only ever after a first win, one conversation per client per month.
       const hot: { kind: string; why: string }[] = [];
@@ -951,19 +969,52 @@ export const campaignsForCsm = internalQuery({
 });
 
 /** The media buyer's decision ledger, newest first — the client change history. */
-export const recentDecisions = internalQuery({
+/**
+ * The media buyer's decisions and her changes in Meta (switches, budgets,
+ * copied ad sets, new ads and creatives, builds, the typed log), newest
+ * first. Until 2026-10-06 the client card listed decisions only, so a budget
+ * raised from the cockpit never reached the CSM.
+ */
+export const recentChanges = internalQuery({
   args: {},
   returns: v.any(),
-  handler: async ctx => {
-    const rows = await ctx.db.query("decisions").order("desc").take(200);
-    return rows.map(d => ({
-      subject: d.subject,
-      action: d.action,
-      kind: d.kind,
-      evidence: d.evidence,
-      day: d.day,
-      taskUrl: d.clickupTaskUrl,
-    }));
+  handler: async (ctx): Promise<CardChange[]> => {
+    // The last 90 days, by index: this runs with every CSM sync, and a card
+    // carries at most forty.
+    const since = Date.now() - 90 * 86_400_000;
+    const decisions = await ctx.db
+      .query("decisions")
+      .withIndex("by_day", q => q.gte("day", kuwaitDay(since)))
+      .order("desc")
+      .take(200);
+    const changes = await ctx.db
+      .query("manualChanges")
+      .withIndex("by_at", q => q.gte("at", since))
+      .order("desc")
+      .take(300);
+    const out: CardChange[] = [
+      ...decisions.map(d => ({
+        subject: d.subject,
+        action: d.action,
+        kind: d.kind,
+        evidence: d.evidence,
+        day: d.day,
+        at: d.at,
+        taskUrl: d.clickupTaskUrl,
+      })),
+      ...changes
+        .filter(m => isChange(m.what))
+        .map(m => ({
+          subject: m.campaignName,
+          // The cockpit's own wording already names the ad or ad set.
+          action: m.what,
+          kind: "change",
+          evidence: "",
+          day: kuwaitDay(m.at),
+          at: m.at,
+        })),
+    ];
+    return out.sort((a, b) => b.at - a.at);
   },
 });
 

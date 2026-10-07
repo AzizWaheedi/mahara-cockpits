@@ -297,7 +297,10 @@ export default function JobPage() {
             // Making the client's review link is its own page; this card
             // moves the ClickUp card. Two different things, two names.
             <Link
-              to="/send-review"
+              to={`/send-review?${new URLSearchParams({
+                client: j.client ?? "",
+                card: j.client_task_id ?? "",
+              }).toString()}`}
               className={buttonClass({
                 variant: "outline",
                 size: "sm",

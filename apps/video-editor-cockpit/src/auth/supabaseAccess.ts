@@ -105,19 +105,29 @@ export function accessFromSupabaseMember(
 }
 
 /** Bind an awaited result or password operation to the same confirmed Auth actor. */
-export async function assertSupabaseActor(client: SupabaseClient, expected: User): Promise<User> {
+export async function assertSupabaseActor(
+  client: SupabaseClient,
+  expected: User,
+): Promise<User> {
   const { data, error } = await client.auth.getUser();
   if (error) throw error;
   const user = data.user;
-  if (!user || user.id !== expected.id || !user.email_confirmed_at ||
-    user.email?.trim().toLowerCase() !== expected.email?.trim().toLowerCase()) {
+  if (
+    !user ||
+    user.id !== expected.id ||
+    !user.email_confirmed_at ||
+    user.email?.trim().toLowerCase() !== expected.email?.trim().toLowerCase()
+  ) {
     throw new Error("The signed-in account changed. Try again.");
   }
   // getUser is a network request. Check local Auth state again after that await.
   const { data: current, error: sessionError } = await client.auth.getSession();
   if (sessionError) throw sessionError;
-  if (current.session?.user.id !== user.id ||
-    current.session.user.email?.trim().toLowerCase() !== user.email?.trim().toLowerCase()) {
+  if (
+    current.session?.user.id !== user.id ||
+    current.session.user.email?.trim().toLowerCase() !==
+      user.email?.trim().toLowerCase()
+  ) {
     throw new Error("The signed-in account changed. Try again.");
   }
   return user;
@@ -134,9 +144,12 @@ export async function loadSupabaseAccess(
     throw new Error("The signed-in account changed. Try again.");
   }
 
-  const { data: adopted, error: adoptError } = await client.rpc("cockpit_adopt_member");
+  const { data: adopted, error: adoptError } = await client.rpc(
+    "cockpit_adopt_member",
+  );
   if (adoptError) throw adoptError;
-  if (typeof adopted !== "boolean") throw new Error("Malformed cockpit adoption response");
+  if (typeof adopted !== "boolean")
+    throw new Error("Malformed cockpit adoption response");
   if (!adopted) {
     await assertSupabaseActor(client, authData.user);
     return null;
@@ -196,8 +209,13 @@ export interface SupabaseAccessObserver {
 }
 
 export function cockpitAccessError(error: unknown): string {
-  const message = error && typeof error === "object" && "message" in error
-    && typeof error.message === "string" ? error.message : "Cockpit access could not be loaded.";
+  const message =
+    error &&
+    typeof error === "object" &&
+    "message" in error &&
+    typeof error.message === "string"
+      ? error.message
+      : "Cockpit access could not be loaded.";
   return `${message} Try again. If it continues, ask an admin to check the sign-in service.`;
 }
 
@@ -209,7 +227,12 @@ export function observeSupabaseAccess(
   let active = true;
   let generation = 0;
   let session: Session | null = null;
-  let state: SupabaseAccessState = { session: null, access: null, ready: false, error: null };
+  let state: SupabaseAccessState = {
+    session: null,
+    access: null,
+    ready: false,
+    error: null,
+  };
   let timer: ReturnType<typeof setTimeout> | undefined;
   const current = (version: number) => active && version === generation;
   function publish(next: SupabaseAccessState) {
@@ -220,11 +243,19 @@ export function observeSupabaseAccess(
   async function load(version: number, target: Session | null): Promise<void> {
     if (!current(version)) return;
     try {
-      const access = target ? await loadSupabaseAccess(client, target.user.id) : null;
-      if (current(version)) publish({ session: target, access, ready: true, error: null });
+      const access = target
+        ? await loadSupabaseAccess(client, target.user.id)
+        : null;
+      if (current(version))
+        publish({ session: target, access, ready: true, error: null });
     } catch (error) {
       if (!current(version)) return;
-      publish({ session: target, access: null, ready: true, error: cockpitAccessError(error) });
+      publish({
+        session: target,
+        access: null,
+        ready: true,
+        error: cockpitAccessError(error),
+      });
       throw error;
     }
   }
@@ -232,35 +263,52 @@ export function observeSupabaseAccess(
   function begin(next: Session | null) {
     clearTimeout(timer);
     const sameVerifiedActor = Boolean(
-      state.ready && state.access && next?.user.email_confirmed_at &&
-      state.session?.user.id === next.user.id &&
-      state.access.email === next.user.email?.trim().toLowerCase(),
+      state.ready &&
+        state.access &&
+        next?.user.email_confirmed_at &&
+        state.session?.user.id === next.user.id &&
+        state.access.email === next.user.email?.trim().toLowerCase(),
     );
     session = next;
     const version = ++generation;
     // Token refresh must not unmount a verified actor's unsaved page state.
     // A changed subject loses access immediately; denial/fault also clears it.
-    publish(sameVerifiedActor
-      ? { ...state, session: next }
-      : { session: next, access: null, ready: false, error: null });
+    publish(
+      sameVerifiedActor
+        ? { ...state, session: next }
+        : { session: next, access: null, ready: false, error: null },
+    );
     return version;
   }
 
   function changed(next: Session | null) {
     if (!active) return;
     const version = begin(next);
-    timer = setTimeout(() => { void load(version, next).catch(() => {}); }, 0);
+    timer = setTimeout(() => {
+      void load(version, next).catch(() => {});
+    }, 0);
   }
 
   const initial = generation;
-  void client.auth.getSession().then(({ data, error }) => {
-    if (!current(initial)) return;
-    if (error) throw error;
-    changed(data.session);
-  }).catch(error => {
-    if (current(initial)) publish({ session: null, access: null, ready: true, error: cockpitAccessError(error) });
-  });
-  const { data: subscription } = client.auth.onAuthStateChange((_event, next) => changed(next));
+  void client.auth
+    .getSession()
+    .then(({ data, error }) => {
+      if (!current(initial)) return;
+      if (error) throw error;
+      changed(data.session);
+    })
+    .catch(error => {
+      if (current(initial))
+        publish({
+          session: null,
+          access: null,
+          ready: true,
+          error: cockpitAccessError(error),
+        });
+    });
+  const { data: subscription } = client.auth.onAuthStateChange((_event, next) =>
+    changed(next),
+  );
 
   return {
     async refresh() {
@@ -273,7 +321,12 @@ export function observeSupabaseAccess(
         version = begin(data.session);
       } catch (error) {
         if (!current(version)) return;
-        publish({ session, access: null, ready: true, error: cockpitAccessError(error) });
+        publish({
+          session,
+          access: null,
+          ready: true,
+          error: cockpitAccessError(error),
+        });
         throw error;
       }
       await load(version, session);

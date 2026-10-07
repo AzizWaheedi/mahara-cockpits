@@ -1,10 +1,17 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-
 import { MessageCircle } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useLocation } from "react-router";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
-import { type ChatMessage, type CockpitApp, type CockpitRole, clearAskAiThread, getAskAiThread, jobsToChatMessages, submitAskAiJob } from "@/lib/askAiClient";
+import {
+  type ChatMessage,
+  type CockpitApp,
+  type CockpitRole,
+  clearAskAiThread,
+  getAskAiThread,
+  jobsToChatMessages,
+  submitAskAiJob,
+} from "@/lib/askAiClient";
 
 const ago = (ms: number) => {
   const m = Math.round((Date.now() - ms) / 60000);
@@ -87,19 +94,46 @@ export function HermesChat() {
   const location = useLocation();
   const auth = useCockpitAuth();
   const { client } = auth;
-  const requiredRole = ({ "media-buyer": "media_buyer", "client-success": "csm", "creative": "creative" } as const)[app];
-  const activeRole: CockpitRole = auth.isCeo ? "ceo" : auth.roles.includes("admin") ? "admin" : requiredRole;
-  const isAllowed = auth.ready && auth.isAuthenticated &&
-    (auth.isCeo || auth.roles.includes("admin") || auth.roles.includes(requiredRole));
-  const scopeKey = JSON.stringify([auth.session?.user.id, auth.email, [...auth.roles].sort(), [...auth.clients].sort(), auth.isCeo, isAllowed]);
+  const requiredRole = (
+    {
+      "media-buyer": "media_buyer",
+      "client-success": "csm",
+      creative: "creative",
+    } as const
+  )[app];
+  const activeRole: CockpitRole = auth.isCeo
+    ? "ceo"
+    : auth.roles.includes("admin")
+      ? "admin"
+      : requiredRole;
+  const isAllowed =
+    auth.ready &&
+    auth.isAuthenticated &&
+    (auth.isCeo ||
+      auth.roles.includes("admin") ||
+      auth.roles.includes(requiredRole));
+  const scopeKey = JSON.stringify([
+    auth.session?.user.id,
+    auth.email,
+    [...auth.roles].sort(),
+    [...auth.clients].sort(),
+    auth.isCeo,
+    isAllowed,
+  ]);
   const currentScope = useRef(scopeKey);
   currentScope.current = scopeKey;
   const sending = useRef(false);
   const thread = threadOwner === scopeKey ? storedThread : [];
   const clientName = useMemo(() => {
-    const match = /\/(clients|performance|client)\/([^/?#]+)/.exec(location.pathname);
+    const match = /\/(clients|performance|client)\/([^/?#]+)/.exec(
+      location.pathname,
+    );
     if (!match) return undefined;
-    try { return decodeURIComponent(match[2]); } catch { return undefined; }
+    try {
+      return decodeURIComponent(match[2]);
+    } catch {
+      return undefined;
+    }
   }, [location.pathname]);
 
   useEffect(() => {
@@ -126,28 +160,50 @@ export function HermesChat() {
         setThreadOwner(scopeKey);
         setThreadError(null);
       }
-      if (open || error || jobs.some(j => j.status === "queued" || j.status === "claimed")) {
+      if (
+        open ||
+        error ||
+        jobs.some(j => j.status === "queued" || j.status === "claimed")
+      ) {
         timer = setTimeout(load, error ? 5000 : 1500);
       }
     };
     void load();
-    return () => { cancelled = true; clearTimeout(timer); };
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
   }, [client, app, isAllowed, scopeKey, open, refresh]);
 
-  const send = async ({text: prompt, targetClient, page}: {text: string; targetClient?: string; page?: string}) => {
+  const send = async ({
+    text: prompt,
+    targetClient,
+    page,
+  }: {
+    text: string;
+    targetClient?: string;
+    page?: string;
+  }) => {
     if (!client || !isAllowed || sending.current) return;
     sending.current = true;
     const requestScope = scopeKey;
     const key = crypto.randomUUID();
     const { jobId, error } = await submitAskAiJob(client, {
-      app, role: activeRole, prompt, clientName: targetClient, kind: "chat",
-      context: {page}, idempotencyKey: key,
+      app,
+      role: activeRole,
+      prompt,
+      clientName: targetClient,
+      kind: "chat",
+      context: { page },
+      idempotencyKey: key,
     });
     sending.current = false;
     if (currentScope.current !== requestScope) return;
     if (error || !jobId) {
       setText(prompt);
-      setThreadError(error?.message ?? "The request was not accepted. Try again.");
+      setThreadError(
+        error?.message ?? "The request was not accepted. Try again.",
+      );
       return;
     }
     setThreadError(null);
@@ -160,7 +216,9 @@ export function HermesChat() {
     const { success, error } = await clearAskAiThread(client, app);
     if (currentScope.current !== requestScope) return;
     if (error || !success) {
-      setThreadError(error?.message ?? "Could not clear the conversation. Try again.");
+      setThreadError(
+        error?.message ?? "Could not clear the conversation. Try again.",
+      );
       return;
     }
     setThread([]);
@@ -286,7 +344,9 @@ export function HermesChat() {
                         : "bg-primary/15 text-foreground"
                     }`}
                   >
-                    <p className="whitespace-pre-wrap" dir="auto">{m.text}</p>
+                    <p className="whitespace-pre-wrap" dir="auto">
+                      {m.text}
+                    </p>
                     <p
                       className={`mt-1 text-xs ${
                         m.status === "failed"

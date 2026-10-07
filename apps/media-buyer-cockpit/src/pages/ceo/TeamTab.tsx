@@ -1,20 +1,54 @@
-import { useAction } from "@/lib/cockpitApi";
-import { Bot, Check, Clock, Pause, Play, Plus, UserPlus, Users, X } from "lucide-react";
+import {
+  Bot,
+  Check,
+  Clock,
+  Pause,
+  Play,
+  Plus,
+  UserPlus,
+  Users,
+  X,
+} from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { EmptyState } from "@/components/ceo/EmptyState";
 import { Facts } from "@/components/ceo/Facts";
-import { capitalize, count, kuwaitDay, money, plural, shortDate } from "@/components/ceo/format";
+import {
+  capitalize,
+  count,
+  kuwaitDay,
+  money,
+  plural,
+  shortDate,
+} from "@/components/ceo/format";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatTile } from "@/components/ceo/StatTile";
 import { StatusChip } from "@/components/ceo/StatusChip";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
 import { DateInput } from "@/components/ui/date-input";
-import { api } from "@/lib/cockpitApi";
 import { Switch } from "@/components/ui/switch";
-import { COMMISSION_BASES, COMMISSION_SHORT, type CommissionBasis, SHARE_BASES } from "@/types/ceo/commission";
+import { api, useAction } from "@/lib/cockpitApi";
+import {
+  COMMISSION_BASES,
+  COMMISSION_SHORT,
+  type CommissionBasis,
+  SHARE_BASES,
+} from "@/types/ceo/commission";
 import type { Person, Roster } from "@/types/ceo/people";
-import { DAY_LABEL, DAY_SHORT, type DayHours, type DayKey, DEFAULT_TIMEZONE, defaultSchedule, minutesOf, normaliseSchedule, normaliseTime, type Schedule, scheduleSummary, WEEK_ORDER } from "@/types/ceo/schedule";
+import {
+  DAY_LABEL,
+  DAY_SHORT,
+  type DayHours,
+  type DayKey,
+  DEFAULT_TIMEZONE,
+  defaultSchedule,
+  minutesOf,
+  normaliseSchedule,
+  normaliseTime,
+  type Schedule,
+  scheduleSummary,
+  WEEK_ORDER,
+} from "@/types/ceo/schedule";
 
 import { usePersonParam } from "./personPage";
 import type { CeoTabProps } from "./types";

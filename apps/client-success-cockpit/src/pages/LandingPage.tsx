@@ -1,6 +1,5 @@
 import { Check } from "lucide-react";
 
-
 import { Link } from "react-router";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { Button } from "@/components/ui/button";

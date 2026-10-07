@@ -1,21 +1,50 @@
-import { useAction } from "@/lib/cockpitApi";
-import { ArrowDown, ArrowUp, ArrowUpRight, ChartColumn, ChevronRight, Loader2, Megaphone, Table2, TriangleAlert } from "lucide-react";
+import {
+  ArrowDown,
+  ArrowUp,
+  ArrowUpRight,
+  ChartColumn,
+  ChevronRight,
+  Loader2,
+  Megaphone,
+  Table2,
+  TriangleAlert,
+} from "lucide-react";
 import { type ReactNode, useCallback, useMemo, useState } from "react";
 import { CreativePreview } from "@/components/CreativePreview";
 import { EmptyState } from "@/components/ceo/EmptyState";
-import { capitalize, count, countCompact, humanize, money, pct, plural } from "@/components/ceo/format";
+import {
+  capitalize,
+  count,
+  countCompact,
+  humanize,
+  money,
+  pct,
+  plural,
+} from "@/components/ceo/format";
 import { Na } from "@/components/ceo/Na";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatTile } from "@/components/ceo/StatTile";
-import { gateLabel, gateTone, StatusChip, StatusDot, type StatusTone } from "@/components/ceo/StatusChip";
+import {
+  gateLabel,
+  gateTone,
+  StatusChip,
+  StatusDot,
+  type StatusTone,
+} from "@/components/ceo/StatusChip";
 import { useServerWindow } from "@/components/ceo/serverWindow";
 import { TimeframeBar } from "@/components/ceo/TimeframeBar";
 import { useTimeframe } from "@/components/ceo/timeframe";
 import { range as rangeText } from "@/components/ceo/windows";
-import { api } from "@/lib/cockpitApi";
 import { Switch } from "@/components/ui/switch";
+import { api, useAction } from "@/lib/cockpitApi";
 import { cn } from "@/lib/utils";
-import type { B2bAdNode, B2bAdsPayload, B2bAdWindow, B2bPeople, B2bVerdict } from "@/types/ceo/payloads";
+import type {
+  B2bAdNode,
+  B2bAdsPayload,
+  B2bAdWindow,
+  B2bPeople,
+  B2bVerdict,
+} from "@/types/ceo/payloads";
 import { ManageBar, ManagePanel, type Target } from "./adsManage";
 import { LaunchCard } from "./LaunchCard";
 import type { CeoTabProps } from "./types";

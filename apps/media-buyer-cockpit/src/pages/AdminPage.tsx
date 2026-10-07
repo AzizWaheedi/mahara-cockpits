@@ -35,9 +35,10 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { useNow } from "@/lib/useNow";
 import { useNativeAdminData } from "@/lib/nativeAdminClient";
+import { useNow } from "@/lib/useNow";
 import { COCKPIT_META } from "./PortalHome";
+
 const cockpitLabels: Readonly<Record<string, { label: string }>> = COCKPIT_META;
 
 // biome-ignore lint/suspicious/noExplicitAny: admin rows
@@ -171,22 +172,38 @@ export function AdminPage() {
   const now = useNow();
   const ago = (ms?: number | null) => agoAt(now, ms);
   const actorId = auth.session?.user.id ?? null;
-  const [editor, setEditor] = useState<{ actor: string | null; value: Any | null | "new" }>({ actor: null, value: null });
+  const [editor, setEditor] = useState<{
+    actor: string | null;
+    value: Any | null | "new";
+  }>({ actor: null, value: null });
   const editing = editor.actor === actorId ? editor.value : null;
-  const setEditing = (value: Any | null | "new") => setEditor({ actor: actorId, value });
+  const setEditing = (value: Any | null | "new") =>
+    setEditor({ actor: actorId, value });
   const [query, setQuery] = useState("");
 
-  const { overview, overviewLoading, overviewError, members, membersLoading, membersError,
-    clients, clientsError, refetch: refreshAdmin } = useNativeAdminData(supabase, actorId);
+  const {
+    overview,
+    overviewLoading,
+    overviewError,
+    members,
+    membersLoading,
+    membersError,
+    clients,
+    clientsError,
+    refetch: refreshAdmin,
+  } = useNativeAdminData(supabase, actorId);
   const clientNames = clients ?? [];
 
   const handleRemove = async (email: string) => {
     if (!confirm(`Remove ${email} from every cockpit?`)) return;
     if (supabase) {
       try {
-        const { error: rpcErr } = await supabase.rpc("cockpit_admin_remove_member", {
-          p_email: email,
-        });
+        const { error: rpcErr } = await supabase.rpc(
+          "cockpit_admin_remove_member",
+          {
+            p_email: email,
+          },
+        );
         if (rpcErr) {
           alert(`Could not remove member: ${rpcErr.message}`);
           return;
@@ -194,7 +211,9 @@ export function AdminPage() {
         await refreshAdmin();
         return;
       } catch (err: unknown) {
-        alert(`Could not remove member: ${err instanceof Error ? err.message : String(err)}`);
+        alert(
+          `Could not remove member: ${err instanceof Error ? err.message : String(err)}`,
+        );
         return;
       }
     }
@@ -216,7 +235,9 @@ export function AdminPage() {
     src => src.ok === false,
   ).length;
   const jobsFailing = ((overview?.scheduled ?? []) as Any[]).filter(
-    j => !j.ok || (j.maxAgeMin !== null && (!j.at || now - j.at > j.maxAgeMin * 60_000)),
+    j =>
+      !j.ok ||
+      (j.maxAgeMin !== null && (!j.at || now - j.at > j.maxAgeMin * 60_000)),
   ).length;
   const healthLine = [
     sourcesDown
@@ -360,7 +381,8 @@ export function AdminPage() {
                       </div>
                     </TableCell>
                     <TableCell className="text-sm">
-                      {(m.roles ?? []).includes("admin") || (m.clients ?? []).length === 0 ? (
+                      {(m.roles ?? []).includes("admin") ||
+                      (m.clients ?? []).length === 0 ? (
                         <span className="text-muted-foreground">
                           All clients
                         </span>
@@ -377,13 +399,17 @@ export function AdminPage() {
                           Linked & active
                         </span>
                       ) : m.auth_user_id ? (
-                        <span className="text-xs">Email confirmation pending</span>
+                        <span className="text-xs">
+                          Email confirmation pending
+                        </span>
                       ) : m.lastSeenAt ? (
                         <>
                           {ago(m.lastSeenAt)}
                           {m.lastCockpit ? (
                             <span className="block text-xs">
-                              {Object.hasOwn(cockpitLabels, m.lastCockpit) ? cockpitLabels[m.lastCockpit].label : m.lastCockpit}
+                              {Object.hasOwn(cockpitLabels, m.lastCockpit)
+                                ? cockpitLabels[m.lastCockpit].label
+                                : m.lastCockpit}
                             </span>
                           ) : null}
                         </>
@@ -428,25 +454,54 @@ export function AdminPage() {
       <details className="group rounded-2xl border bg-card">
         <summary className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3 sm:px-6 sm:py-4">
           <span className="text-[15px] font-semibold">System health</span>
-          <Dot tone={overviewError || healthLine ? "bad" : !overview || overviewLoading ? "idle" : "good"}>
-            {overviewError ? `Native health could not be read: ${overviewError}` : healthLine ||
-              (overviewLoading ? "Reading native health…" : overview ? "Native checks passed" : "Native health unavailable")}
+          <Dot
+            tone={
+              overviewError || healthLine
+                ? "bad"
+                : !overview || overviewLoading
+                  ? "idle"
+                  : "good"
+            }
+          >
+            {overviewError
+              ? `Native health could not be read: ${overviewError}`
+              : healthLine ||
+                (overviewLoading
+                  ? "Reading native health…"
+                  : overview
+                    ? "Native checks passed"
+                    : "Native health unavailable")}
           </Dot>
         </summary>
         <div className="space-y-6 border-t p-4 sm:p-6">
-          {overviewError ? <p className="text-sm text-destructive">Reload the portal after checking native access and schema: {overviewError}</p> : null}
+          {overviewError ? (
+            <p className="text-sm text-destructive">
+              Reload the portal after checking native access and schema:{" "}
+              {overviewError}
+            </p>
+          ) : null}
           {/* Numbers that say whether the machine is running. */}
           <section className="grid grid-cols-2 gap-4 lg:grid-cols-4">
             <Stat
               icon={Users}
               label="Team"
               value={overview?.counts?.members ?? "…"}
-              hint={overview ? `${overview.counts.admins} admin${overview.counts.admins === 1 ? "" : "s"}` : undefined}
+              hint={
+                overview
+                  ? `${overview.counts.admins} admin${overview.counts.admins === 1 ? "" : "s"}`
+                  : undefined
+              }
             />
             <Stat
               icon={Activity}
               label="Last data sync"
-              value={overview?.lastSync ? ago(overview.lastSync.at) : overviewLoading ? "…" : "unavailable"}
+              value={
+                overview?.lastSync
+                  ? ago(overview.lastSync.at)
+                  : overviewLoading
+                    ? "…"
+                    : "unavailable"
+              }
               hint={
                 overview?.lastSync?.problems?.length
                   ? `${overview.lastSync.problems.length} problem(s)`
@@ -459,14 +514,25 @@ export function AdminPage() {
             <Stat
               icon={ShieldCheck}
               label="Live campaigns"
-              value={overview?.counts.liveCampaigns ?? (overviewLoading ? "…" : "unavailable")}
-              hint={overview ? `${overview.counts.campaigns ?? "Unknown"} on the board, ${overview.counts.clients ?? "unknown"} clients` : "Native catalog unavailable"}
+              value={
+                overview?.counts.liveCampaigns ??
+                (overviewLoading ? "…" : "unavailable")
+              }
+              hint={
+                overview
+                  ? `${overview.counts.campaigns ?? "Unknown"} on the board, ${overview.counts.clients ?? "unknown"} clients`
+                  : "Native catalog unavailable"
+              }
             />
             <Stat
               icon={Bot}
               label="Hermes"
               value={
-                overview?.hermes ? `${overview.hermes.queued} waiting` : overviewLoading ? "…" : "unavailable"
+                overview?.hermes
+                  ? `${overview.hermes.queued} waiting`
+                  : overviewLoading
+                    ? "…"
+                    : "unavailable"
               }
               hint={
                 overview?.hermes
@@ -481,7 +547,8 @@ export function AdminPage() {
           <section>
             <h2 className="text-[15px] font-semibold">Data sources</h2>
             <p className="mt-1 text-xs text-muted-foreground">
-              These checks come from native ledgers. Missing sources are unavailable, not healthy.
+              These checks come from native ledgers. Missing sources are
+              unavailable, not healthy.
             </p>
             <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {(overview?.sources ?? []).map((src: Any) => {
@@ -495,12 +562,12 @@ export function AdminPage() {
                       <span className="min-w-0 truncate font-medium">
                         {src.label}
                       </span>
-                      <Dot
-                        tone={
-                          down ? "bad" : src.ok ? "good" : "idle"
-                        }
-                      >
-                        {down ? "Needs attention" : src.at ? `Current data ${ago(src.at)}` : "Current queue check passed"}
+                      <Dot tone={down ? "bad" : src.ok ? "good" : "idle"}>
+                        {down
+                          ? "Needs attention"
+                          : src.at
+                            ? `Current data ${ago(src.at)}`
+                            : "Current queue check passed"}
                       </Dot>
                     </div>
                     {src.ok === false ? (
@@ -511,14 +578,13 @@ export function AdminPage() {
                         >
                           {src.lastError}
                         </p>
-                        <p className="mt-1 text-xs">
-                          {src.fix}
-                        </p>
+                        <p className="mt-1 text-xs">{src.fix}</p>
                       </>
                     ) : (
                       <p className="mt-1 text-xs text-muted-foreground">
                         The current native check passed.
-                        {src.source === "queue:ask-ai" && overview?.hermesWaiting
+                        {src.source === "queue:ask-ai" &&
+                        overview?.hermesWaiting
                           ? ` · ${overview.hermesWaiting.queued} waiting, ${overview.hermesWaiting.claimed} in progress`
                           : ""}
                       </p>
@@ -533,7 +599,8 @@ export function AdminPage() {
           <section>
             <h2 className="text-[15px] font-semibold">Native worker health</h2>
             <p className="mt-1 text-xs text-muted-foreground">
-              {overview?.scheduleNote ?? "Native worker evidence is unavailable. Verify the source and host configuration."}
+              {overview?.scheduleNote ??
+                "Native worker evidence is unavailable. Verify the source and host configuration."}
             </p>
             <div className="mt-4 overflow-x-auto">
               <Table>
@@ -548,7 +615,11 @@ export function AdminPage() {
                 </TableHeader>
                 <TableBody>
                   {overviewLoading ? (
-                    <TableRow><TableCell colSpan={5}>Reading native worker ledgers…</TableCell></TableRow>
+                    <TableRow>
+                      <TableCell colSpan={5}>
+                        Reading native worker ledgers…
+                      </TableCell>
+                    </TableRow>
                   ) : (overview?.scheduled ?? []).length === 0 ? (
                     <TableRow>
                       <TableCell colSpan={5} className="text-muted-foreground">
@@ -558,12 +629,15 @@ export function AdminPage() {
                   ) : (
                     (overview?.scheduled ?? []).map(j => {
                       const late =
-                        j.maxAgeMin !== null && (!j.at || now - j.at > j.maxAgeMin * 60_000);
+                        j.maxAgeMin !== null &&
+                        (!j.at || now - j.at > j.maxAgeMin * 60_000);
                       return (
                         <TableRow key={j.job}>
                           <TableCell className="font-medium">{j.job}</TableCell>
                           <TableCell className="text-muted-foreground">
-                            {j.maxAgeMin !== null ? `${j.maxAgeMin} min` : "Not specified"}
+                            {j.maxAgeMin !== null
+                              ? `${j.maxAgeMin} min`
+                              : "Not specified"}
                           </TableCell>
                           <TableCell
                             className={
@@ -573,7 +647,11 @@ export function AdminPage() {
                             {j.at ? ago(j.at) : "Not recorded"}
                           </TableCell>
                           <TableCell className="text-muted-foreground">
-                            {j.ms === null ? "Not recorded" : j.ms >= 1000 ? `${Math.round(j.ms / 1000)} s` : `${j.ms} ms`}
+                            {j.ms === null
+                              ? "Not recorded"
+                              : j.ms >= 1000
+                                ? `${Math.round(j.ms / 1000)} s`
+                                : `${j.ms} ms`}
                           </TableCell>
                           <TableCell>
                             {j.ok && !late ? (
@@ -582,9 +660,7 @@ export function AdminPage() {
                               <Dot tone="bad">Data overdue</Dot>
                             ) : (
                               <span title={j.error ?? undefined}>
-                                <Dot tone="bad">
-                                  Needs attention
-                                </Dot>
+                                <Dot tone="bad">Needs attention</Dot>
                               </span>
                             )}
                             {!j.ok && j.error ? (
@@ -656,20 +732,35 @@ export function AdminPage() {
                 </ul>
               ) : (
                 <p className="mt-3 text-sm text-muted-foreground">
-                  {overview?.hermes ? "No recorded ad account actions in the last day." : "Native action history is unavailable."}
+                  {overview?.hermes
+                    ? "No recorded ad account actions in the last day."
+                    : "Native action history is unavailable."}
                 </p>
               )}
-              <h3 className="mt-4 text-sm font-semibold">Directory and system changes</h3>
+              <h3 className="mt-4 text-sm font-semibold">
+                Directory and system changes
+              </h3>
               {overview?.activity.length ? (
                 <ul className="mt-2 space-y-2 text-xs">
                   {overview.activity.map(entry => (
                     <li key={entry.id} className="flex gap-3">
-                      <span className="w-16 shrink-0 text-muted-foreground">{entry.at ? ago(entry.at) : "Not recorded"}</span>
-                      <span>{entry.action} · {entry.entity}{entry.actor ? ` · ${entry.actor}` : ""}</span>
+                      <span className="w-16 shrink-0 text-muted-foreground">
+                        {entry.at ? ago(entry.at) : "Not recorded"}
+                      </span>
+                      <span>
+                        {entry.action} · {entry.entity}
+                        {entry.actor ? ` · ${entry.actor}` : ""}
+                      </span>
                     </li>
                   ))}
                 </ul>
-              ) : <p className="mt-2 text-xs text-muted-foreground">{overview ? "No audit summaries recorded." : "Native audit history is unavailable."}</p>}
+              ) : (
+                <p className="mt-2 text-xs text-muted-foreground">
+                  {overview
+                    ? "No audit summaries recorded."
+                    : "Native audit history is unavailable."}
+                </p>
+              )}
             </div>
           </section>
         </div>
@@ -863,7 +954,12 @@ function MemberDialog({
                 All clients
               </span>
             </div>
-            {clientError ? <p className="text-sm text-destructive">Client options are unavailable: {clientError} Existing selections are preserved.</p> : null}
+            {clientError ? (
+              <p className="text-sm text-destructive">
+                Client options are unavailable: {clientError} Existing
+                selections are preserved.
+              </p>
+            ) : null}
             {!allClients ? (
               <div className="rounded-md border">
                 <div className="border-b p-2">

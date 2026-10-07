@@ -15,6 +15,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { useSearchParams } from "react-router";
 import {
   FIELD,
   KICKER,
@@ -139,7 +140,10 @@ function Field({
 export default function SendReviewPage() {
   const [rows, setRows] = useState<Row[] | null>(null);
   const [title, setTitle] = useState("");
-  const [client, setClient] = useState("");
+  // From a job's "Make a review link": the client is already known.
+  const [params] = useSearchParams();
+  const [client, setClient] = useState(() => params.get("client") ?? "");
+  const card = params.get("card") || null;
   const [note, setNote] = useState("");
   const [drafts, setDrafts] = useState<Draft[]>([{ ...BLANK }]);
   const [busy, setBusy] = useState(false);
@@ -155,7 +159,8 @@ export default function SendReviewPage() {
     void load();
   }, [load]);
 
-  const ready = client.trim() && title.trim() && drafts.some(d => d.video_url.trim());
+  const ready =
+    client.trim() && title.trim() && drafts.some(d => d.video_url.trim());
 
   function patch(i: number, change: Partial<Draft>) {
     setDrafts(cur => cur.map((x, j) => (j === i ? { ...x, ...change } : x)));
@@ -176,7 +181,12 @@ export default function SendReviewPage() {
         p_title: title.trim(),
         p_note: note.trim(),
         p_client: client.trim() || null,
-        p_client_task_id: null,
+        // The client's card id when this came from their job and the name
+        // was left as it came; a typed-over name is not that card's.
+        p_client_task_id:
+          card && client.trim() === (params.get("client") ?? "").trim()
+            ? card
+            : null,
         p_by: (await supabase.auth.getUser()).data.user?.email ?? "unknown",
         p_items: items,
         p_days: 30,

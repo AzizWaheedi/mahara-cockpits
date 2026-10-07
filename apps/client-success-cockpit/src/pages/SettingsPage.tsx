@@ -1,16 +1,22 @@
 import { ChevronRight, Loader2, Moon, Palette, Sun, User } from "lucide-react";
 import { useState } from "react";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
-import { portalUrl } from "@/lib/portal";
 import { PageHeader } from "@/components/kit";
-
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { useTheme } from "@/contexts/ThemeContext";
+import { portalUrl } from "@/lib/portal";
 
 export function SettingsPage() {
   const auth = useCockpitAuth();
@@ -33,7 +39,8 @@ export function SettingsPage() {
 
     try {
       if (auth.client && auth.email) {
-        const { error: resetErr } = await auth.client.auth.resetPasswordForEmail(auth.email);
+        const { error: resetErr } =
+          await auth.client.auth.resetPasswordForEmail(auth.email);
         if (resetErr) throw resetErr;
         setSuccess("Password reset email sent!");
       }
@@ -54,7 +61,9 @@ export function SettingsPage() {
 
     try {
       if (auth.client) {
-        const { error: updateErr } = await auth.client.auth.updateUser({ password: newPassword });
+        const { error: updateErr } = await auth.client.auth.updateUser({
+          password: newPassword,
+        });
         if (updateErr) throw updateErr;
         setSuccess("Password changed successfully!");
         setTimeout(() => {

@@ -1,15 +1,23 @@
-import { useAction } from "@/lib/cockpitApi";
 import { ArrowLeft, FileText, Loader2, Paperclip, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "react-router";
 import { CeoTabs } from "@/components/ceo/CeoTabs";
-import { humanize, money, month as monthName, shortDate } from "@/components/ceo/format";
+import {
+  humanize,
+  money,
+  month as monthName,
+  shortDate,
+} from "@/components/ceo/format";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatusChip } from "@/components/ceo/StatusChip";
 import { AnimatedSelect } from "@/components/ui/animated-select";
-import { api } from "@/lib/cockpitApi";
 import { Button } from "@/components/ui/button";
-import type { PersonFile as FileRow, Profile, Scorecard } from "@/types/ceo/profiles";
+import { api, useAction } from "@/lib/cockpitApi";
+import type {
+  PersonFile as FileRow,
+  Profile,
+  Scorecard,
+} from "@/types/ceo/profiles";
 import { Dial } from "./goalsKit";
 import { ScorecardPanel } from "./personScorecard";
 

@@ -1,19 +1,20 @@
-import { Menu } from "lucide-react";
+import { Menu, Search } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { Link, Navigate, Route, Routes, useLocation } from "react-router";
+import { JobsHome, Library } from "./components/Places";
+import { SearchBox } from "./components/SearchBox";
 import Sidebar from "./components/Sidebar";
 import { Wordmark } from "./components/Wordmark";
 import { SessionProvider, useWho } from "./lib/auth";
 import { useCanOpen, useEodToday, useJobs, useMe } from "./lib/data";
 import { kuwaitDay } from "./lib/format";
 import { portalUrl } from "./lib/portal";
+import { openSearch } from "./lib/search";
 import { Toaster } from "./lib/toast";
 import EodPage from "./pages/EodPage";
 import { IdeationPage } from "./pages/IdeationPage";
 import JobPage from "./pages/JobPage";
-import JobsPage from "./pages/JobsPage";
 import MeetingsPage from "./pages/MeetingsPage";
-import PipelinePage from "./pages/PipelinePage";
 import ReviewPage from "./pages/ReviewPage";
 import SendReviewPage from "./pages/SendReviewPage";
 import SignInPage from "./pages/SignInPage";
@@ -21,12 +22,23 @@ import SwipePage from "./pages/SwipePage";
 import VideosPage from "./pages/VideosPage";
 import WinnersPage from "./pages/WinnersPage";
 
-
 function Shell() {
-  const { session, email, name, isAdmin, isCeo, cockpits, ready, error: accessError, refreshAccess, signOut } = useWho();
+  const {
+    session,
+    email,
+    name,
+    isAdmin,
+    isCeo,
+    cockpits,
+    ready,
+    error: accessError,
+    refreshAccess,
+    signOut,
+  } = useWho();
   const [drawer, setDrawer] = useState(false);
   const location = useLocation();
-  const allowed = ready && !accessError && (isCeo || isAdmin || cockpits.includes("editor"));
+  const allowed =
+    ready && !accessError && (isCeo || isAdmin || cockpits.includes("editor"));
   const me = useMe(session && allowed ? email : null);
   const canOpen = useCanOpen(session && allowed ? email : null);
   // The marks beside the navigation. Only things to act on get one: jobs
@@ -49,11 +61,9 @@ function Shell() {
     document.title = "Editor desk · Mahara";
   }, []);
 
-
   // A tap on the phone menu should not leave the drawer over the new page.
   // biome-ignore lint/correctness/useExhaustiveDependencies: closing follows the route
   useEffect(() => setDrawer(false), [location.pathname]);
-
 
   if (!ready) return null;
 
@@ -76,7 +86,10 @@ function Shell() {
         <div className="mt-6 flex justify-center gap-4">
           <button
             type="button"
-            onClick={() => { void refreshAccess().catch(() => {}); canOpen.reload(); }}
+            onClick={() => {
+              void refreshAccess().catch(() => {});
+              canOpen.reload();
+            }}
             className="muted text-sm underline underline-offset-4"
           >
             Try again
@@ -165,32 +178,57 @@ function Shell() {
             </button>
             <Wordmark size="sm" />
             <span className="text-sm text-muted-foreground">Editor desk</span>
+            <button
+              type="button"
+              onClick={openSearch}
+              aria-label="Search"
+              className="ml-auto grid size-10 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            >
+              <Search aria-hidden className="size-5" />
+            </button>
           </div>
         </header>
 
         <main className="min-w-0 flex-1 lg:pt-[env(safe-area-inset-top,0px)]">
           <Routes>
-            <Route path="/" element={<JobsPage />} />
+            {/* Jobs is home: the list, or the board (?view=board). */}
+            <Route path="/" element={<JobsHome eodDue={counts.eod > 0} />} />
             {/* The portal's door lands on /dashboard in every cockpit. */}
             <Route path="/dashboard" element={<Navigate to="/" replace />} />
-            <Route path="/pipeline" element={<PipelinePage />} />
+            {/* The Pipeline page is the board view of Jobs now. */}
+            <Route
+              path="/pipeline"
+              element={<Navigate to="/?view=board" replace />}
+            />
             <Route path="/meetings" element={<MeetingsPage />} />
             <Route path="/videos" element={<VideosPage />} />
-            <Route path="/winners" element={<WinnersPage />} />
+            {/* What works, Ideation and the swipe file: one Library. */}
+            <Route
+              path="/winners"
+              element={
+                <Library>
+                  <WinnersPage />
+                </Library>
+              }
+            />
             <Route
               path="/ideas"
               element={
-                <Gutter>
-                  <IdeationPage />
-                </Gutter>
+                <Library>
+                  <Gutter>
+                    <IdeationPage />
+                  </Gutter>
+                </Library>
               }
             />
             <Route
               path="/swipe"
               element={
-                <Gutter>
-                  <SwipePage />
-                </Gutter>
+                <Library>
+                  <Gutter>
+                    <SwipePage />
+                  </Gutter>
+                </Library>
               }
             />
             <Route path="/eod" element={<EodPage />} />
@@ -213,6 +251,7 @@ function Shell() {
           </Routes>
         </main>
       </div>
+      <SearchBox />
     </div>
   );
 }
@@ -257,4 +296,3 @@ export default function App() {
     </SessionProvider>
   );
 }
-

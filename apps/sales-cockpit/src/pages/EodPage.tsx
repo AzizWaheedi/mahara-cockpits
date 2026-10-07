@@ -122,7 +122,8 @@ export default function EodPage({ me }: { me: Me }) {
   }, [load]);
 
   // While it is on its way out, look at where it got to every 20 seconds.
-  const waiting = data?.outbox?.status === "queued" || data?.outbox?.status === "processing";
+  const waiting =
+    data?.outbox?.status === "queued" || data?.outbox?.status === "processing";
   useEffect(() => {
     if (!waiting) return;
     const t = window.setInterval(() => void load(), 20_000);

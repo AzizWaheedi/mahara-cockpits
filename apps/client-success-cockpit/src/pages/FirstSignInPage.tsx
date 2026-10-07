@@ -1,13 +1,20 @@
+import { ArrowLeft, CheckCircle2, Loader2 } from "lucide-react";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
-import { ArrowLeft, CheckCircle2, Loader2 } from "lucide-react";
+import {
+  getCockpitSupabaseClient,
+  useCockpitAuth,
+} from "@/auth/SupabaseAuthProvider";
+import {
+  assertSupabaseActor,
+  cockpitAccessError,
+  loadSupabaseAccess,
+} from "@/auth/supabaseAccess";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Wordmark } from "@/components/Wordmark";
-import { getCockpitSupabaseClient, useCockpitAuth } from "@/auth/SupabaseAuthProvider";
-import { loadSupabaseAccess, assertSupabaseActor, cockpitAccessError } from "@/auth/supabaseAccess";
 
 type SetupStep = "requestOtp" | "verifyAndSetPassword" | "complete";
 
@@ -29,8 +36,11 @@ export function FirstSignInPage() {
     const { data } = supabase.auth.onAuthStateChange((event, next) => {
       const pending = attempt.current;
       if (!pending || event === "INITIAL_SESSION") return;
-      if (next?.user.email?.trim().toLowerCase() === pending.email &&
-        (!pending.userId || next.user.id === pending.userId)) return;
+      if (
+        next?.user.email?.trim().toLowerCase() === pending.email &&
+        (!pending.userId || next.user.id === pending.userId)
+      )
+        return;
       // Cancel the old actor's work before any of its awaited results can touch this form.
       attempt.current = null;
       setEmail(next?.user.email ?? "");
@@ -65,7 +75,9 @@ export function FirstSignInPage() {
       if (attempt.current !== pending) return;
       if (otpErr) throw otpErr;
       setStep("verifyAndSetPassword");
-      setStatusMessage(`A setup code has been sent to ${cleanEmail}. Enter it below along with your chosen password.`);
+      setStatusMessage(
+        `A setup code has been sent to ${cleanEmail}. Enter it below along with your chosen password.`,
+      );
     } catch (err: unknown) {
       if (attempt.current === pending) setError(cockpitAccessError(err));
     } finally {
@@ -77,7 +89,10 @@ export function FirstSignInPage() {
     e.preventDefault();
     const cleanEmail = email.trim().toLowerCase();
     const cleanCode = code.replace(/\D/g, "").slice(-6);
-    const pending: { email: string; userId: string | null } = { email: cleanEmail, userId: null };
+    const pending: { email: string; userId: string | null } = {
+      email: cleanEmail,
+      userId: null,
+    };
     attempt.current = pending;
     setBusy(true);
     setError(null);
@@ -90,14 +105,21 @@ export function FirstSignInPage() {
       if (attempt.current !== pending) return;
       if (verifyErr) throw verifyErr;
       const verifiedUser = data.session?.user;
-      if (!verifiedUser?.email_confirmed_at ||
-        verifiedUser.email?.trim().toLowerCase() !== cleanEmail) {
-        throw new Error("The setup code did not confirm this email. Request a new code.");
+      if (
+        !verifiedUser?.email_confirmed_at ||
+        verifiedUser.email?.trim().toLowerCase() !== cleanEmail
+      ) {
+        throw new Error(
+          "The setup code did not confirm this email. Request a new code.",
+        );
       }
       pending.userId = verifiedUser.id;
       const access = await loadSupabaseAccess(supabase, verifiedUser.id);
       if (attempt.current !== pending) return;
-      if (!access) throw new Error("No active directory seat matches this confirmed account. Ask an admin to check your seat.");
+      if (!access)
+        throw new Error(
+          "No active directory seat matches this confirmed account. Ask an admin to check your seat.",
+        );
 
       // Never apply a password to whichever account happens to be current later.
       await assertSupabaseActor(supabase, verifiedUser);
@@ -256,7 +278,8 @@ export function FirstSignInPage() {
                 <CheckCircle2 className="mx-auto size-12 text-primary" />
                 <h2 className="text-lg font-semibold">Seat Ready</h2>
                 <p className="text-sm text-muted-foreground">
-                  Your password has been saved and your cockpit seat is verified.
+                  Your password has been saved and your cockpit seat is
+                  verified.
                 </p>
                 <Button
                   onClick={() => navigate("/dashboard", { replace: true })}

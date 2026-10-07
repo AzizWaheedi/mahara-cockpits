@@ -1,8 +1,7 @@
-import {readMediaSnapshot} from "./mediaSourceClient";
-import {readPersonalEod,savePersonalEod} from "./personalEod";
-import {useRef} from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { readMediaSnapshot } from "./mediaSourceClient";
+import { readPersonalEod, savePersonalEod } from "./personalEod";
 
 // biome-ignore lint/suspicious/noExplicitAny: generic cockpit rows
 type Any = any;
@@ -341,7 +340,11 @@ export function useMediaBuyerSnapshot(
       if (pErr) throw pErr;
 
       // 6. Fetch EOD report
-      const eodContext = await readPersonalEod(client,"media_buyer",reportDay.current);
+      const eodContext = await readPersonalEod(
+        client,
+        "media_buyer",
+        reportDay.current,
+      );
       const eodRow = eodContext.report;
       reportDay.current = eodContext.day;
 
@@ -362,8 +365,21 @@ export function useMediaBuyerSnapshot(
         dueDate: p.due_date,
       }));
 
-      const model=await readMediaSnapshot(client,day,checks,decisions,plan,eodRow??null);
-      const builtSnap:Any={...model,eodSubmitted:Boolean(eodRow?.submitted_at),eod:eodRow??null,eodOwner:eodContext.owner,eodDay:eodContext.day};
+      const model = await readMediaSnapshot(
+        client,
+        day,
+        checks,
+        decisions,
+        plan,
+        eodRow ?? null,
+      );
+      const builtSnap: Any = {
+        ...model,
+        eodSubmitted: Boolean(eodRow?.submitted_at),
+        eod: eodRow ?? null,
+        eodOwner: eodContext.owner,
+        eodDay: eodContext.day,
+      };
 
       setSnap(builtSnap);
       setError(null);
@@ -440,7 +456,12 @@ export function useMediaBuyerSnapshot(
       if (!client) {
         throw new Error("Supabase client is required");
       }
-      await savePersonalEod(client,"media_buyer",{owner:snap?.eodOwner??"",day:snap?.eodDay??""},{...args,submit:args.submit ?? false});
+      await savePersonalEod(
+        client,
+        "media_buyer",
+        { owner: snap?.eodOwner ?? "", day: snap?.eodDay ?? "" },
+        { ...args, submit: args.submit ?? false },
+      );
       await fetchSnapshot();
     },
     [client, fetchSnapshot, snap?.eodOwner, snap?.eodDay],

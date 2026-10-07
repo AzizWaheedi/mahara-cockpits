@@ -3,16 +3,19 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 import { Toaster } from "sonner";
 import { ClientCheckInCard } from "../src/components/ClientCheckIn";
+import { CALLS, type CallKind } from "../src/lib/checkInCore";
 import "../src/index.css";
 
-const prepare = async ({ day }: { day: string }) => ({
-  contact: { id: "fictional-contact", name: "Omar, Example Design" },
-  calendar: { id: "fictional-calendar", name: "Client check-in", minutes: 30 },
+const contact = { id: "fictional-contact", name: "Omar, Example Design", phone: null, email: null, url: "https://example.com/contact" };
+const prepare = async ({ day, kind }: { day: string; kind: CallKind }) => ({
+  contact,
+  calendar: { id: "fictional-calendar", name: CALLS[kind].label, minutes: 30, kind, label: CALLS[kind].label },
+  kind,
   slots: ["10:00", "10:30", "11:00", "13:00", "13:30", "15:00"].map(
     time => `${day}T${time}:00+03:00`,
   ),
   day,
-  timezone: "Asia/Kuwait",
+  timezone: "Asia/Kuwait" as const,
 });
 const book = async ({ startTime }: { startTime: string }) => ({
   appointmentId: "fictional-receipt",
@@ -38,6 +41,7 @@ function Preview() {
         clientName="Example Design"
         prepare={prepare}
         book={book}
+        loadContact={async () => contact}
       />
       <div className="rounded-xl border p-6">
         <h2 className="font-medium">Client performance</h2>

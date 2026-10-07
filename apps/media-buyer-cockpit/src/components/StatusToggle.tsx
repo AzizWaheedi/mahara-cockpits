@@ -1,7 +1,6 @@
-import { useAction } from "@/lib/cockpitApi";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { api } from "@/lib/cockpitApi";
+import { api, useAction } from "@/lib/cockpitApi";
 
 /**
  * On/off for a live campaign, ad set or ad.

@@ -1,5 +1,4 @@
-import { useQuery } from "@/lib/cockpitApi";
-import { api } from "@/lib/cockpitApi";
+import { api, useQuery } from "@/lib/cockpitApi";
 import { TrendChart } from "./TrendChart";
 
 // biome-ignore lint/suspicious/noExplicitAny: series rows

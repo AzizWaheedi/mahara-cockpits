@@ -1,4 +1,3 @@
-import { useAction } from "@/lib/cockpitApi";
 import {
   CalendarClock,
   CalendarSync,
@@ -45,9 +44,9 @@ import {
   type StatusTone,
 } from "@/components/ceo/StatusChip";
 import { Button } from "@/components/ui/button";
+import { api, useAction } from "@/lib/cockpitApi";
 import { CPL_GATE } from "@/lib/kpi";
 import { cn } from "@/lib/utils";
-import { api } from "@/lib/cockpitApi";
 import type {
   ApplyResult,
   ExtensionsWithLastMonth,

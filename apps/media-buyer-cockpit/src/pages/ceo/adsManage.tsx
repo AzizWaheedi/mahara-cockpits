@@ -1,15 +1,18 @@
-import { useAction } from "@/lib/cockpitApi";
-import { Check, Loader2, Sparkles } from "lucide-react";
-import { ChevronDown, Plus } from "lucide-react";
+import { Check, ChevronDown, Loader2, Plus, Sparkles } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { money } from "@/components/ceo/format";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
 import { DateInput } from "@/components/ui/date-input";
-import { api } from "@/lib/cockpitApi";
-import type { B2bAdsPayload } from "@/types/ceo/payloads";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { api, useAction } from "@/lib/cockpitApi";
 import { cn } from "@/lib/utils";
+import type { B2bAdsPayload } from "@/types/ceo/payloads";
 
 /**
  * Everything Ads Manager can do to Mahara's own account, done from the row it

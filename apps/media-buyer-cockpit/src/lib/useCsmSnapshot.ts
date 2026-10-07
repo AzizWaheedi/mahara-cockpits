@@ -1,7 +1,6 @@
-import {readPersonalEod,savePersonalEod} from "./personalEod";
-import {useRef} from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { readPersonalEod, savePersonalEod } from "./personalEod";
 
 // biome-ignore lint/suspicious/noExplicitAny: generic client success rows
 type Any = any;
@@ -15,7 +14,11 @@ export interface UseCsmSnapshotResult {
   loading: boolean;
   error: Error | null;
   refetch: () => Promise<void>;
-  toggleCheck: (args: { id: string | number; done: boolean; expectedCurrent?: boolean }) => Promise<void>;
+  toggleCheck: (args: {
+    id: string | number;
+    done: boolean;
+    expectedCurrent?: boolean;
+  }) => Promise<void>;
   act: (args: {
     clientName: string;
     action: string;
@@ -23,7 +26,14 @@ export interface UseCsmSnapshotResult {
     kind?: string;
     amount?: number;
   }) => Promise<void>;
-  submitEod: (args: { energy?: string; stress?: string; submit?: boolean; body?: string; answers?: Any; computed?: Any }) => Promise<void>;
+  submitEod: (args: {
+    energy?: string;
+    stress?: string;
+    submit?: boolean;
+    body?: string;
+    answers?: Any;
+    computed?: Any;
+  }) => Promise<void>;
   addPlanItems: (args: {
     items: Array<{
       text: string;
@@ -42,11 +52,23 @@ export interface UseCsmSnapshotResult {
     kpi?: Any;
     notes?: Any;
   }) => Promise<void>;
-  reportIssue: (args: { title: string; description: string; category?: string }) => Promise<void>;
-  setClientLanguage: (args: { clientName: string; language: string }) => Promise<void>;
+  reportIssue: (args: {
+    title: string;
+    description: string;
+    category?: string;
+  }) => Promise<void>;
+  setClientLanguage: (args: {
+    clientName: string;
+    language: string;
+  }) => Promise<void>;
   saveHotRow: (args: Any) => Promise<void>;
   clearLooseEnds: (args: { clientName?: string }) => Promise<Any>;
-  saveMoneyGoals: (args: { month: string; target?: number; clients?: number; counts?: Any }) => Promise<void>;
+  saveMoneyGoals: (args: {
+    month: string;
+    target?: number;
+    clients?: number;
+    counts?: Any;
+  }) => Promise<void>;
 }
 
 export function useCsmSnapshot(
@@ -103,7 +125,11 @@ export function useCsmSnapshot(
       if (plErr) throw plErr;
 
       // 5. Fetch EOD report
-      const eodContext = await readPersonalEod(client,"csm",reportDay.current);
+      const eodContext = await readPersonalEod(
+        client,
+        "csm",
+        reportDay.current,
+      );
       const eodRow = eodContext.report;
       reportDay.current = eodContext.day;
 
@@ -188,7 +214,9 @@ export function useCsmSnapshot(
           clientName: p.client_name,
           language: (p.overview as Any)?.language,
         })),
-        hotRows: (profileRows ?? []).flatMap(p => ((p.overview as Any)?.hot ?? [])),
+        hotRows: (profileRows ?? []).flatMap(
+          p => (p.overview as Any)?.hot ?? [],
+        ),
         kpis: [],
         churn: null,
         money: null,
@@ -201,10 +229,16 @@ export function useCsmSnapshot(
         eodOwner: eodContext.owner,
         eodDay: eodContext.day,
         lastSyncAt: Date.now(),
-        syncHealth: { ok: true, at: Date.now(), profiles: clients.length, errors: [] },
+        syncHealth: {
+          ok: true,
+          at: Date.now(),
+          profiles: clients.length,
+          errors: [],
+        },
         totals: {
           clients: clients.length,
-          dueToday: clients.filter(c => c.rank < 40 && c.level !== "green").length,
+          dueToday: clients.filter(c => c.rank < 40 && c.level !== "green")
+            .length,
           newSignups: clients.filter(c => c.newSignup).length,
           pauses: clients.filter(c => c.pauseRequired).length,
           onboarding: clients.filter(c => c.bucket === "onboarding").length,
@@ -231,7 +265,11 @@ export function useCsmSnapshot(
   }, [fetchSnapshot]);
 
   const toggleCheck = useCallback(
-    async (args: { id: string | number; done: boolean; expectedCurrent?: boolean }) => {
+    async (args: {
+      id: string | number;
+      done: boolean;
+      expectedCurrent?: boolean;
+    }) => {
       if (!client) return;
       const numId = Number(args.id);
       const { error: rpcErr } = await client.rpc("cockpit_set_daily_check", {
@@ -273,9 +311,21 @@ export function useCsmSnapshot(
   );
 
   const submitEod = useCallback(
-    async (args: { energy?: string; stress?: string; submit?: boolean; body?: string; answers?: Any; computed?: Any }) => {
+    async (args: {
+      energy?: string;
+      stress?: string;
+      submit?: boolean;
+      body?: string;
+      answers?: Any;
+      computed?: Any;
+    }) => {
       if (!client) throw new Error("Sign in before saving your EOD.");
-      await savePersonalEod(client,"csm",{owner:snap?.eodOwner??"",day:snap?.eodDay??""},{...args,submit:true});
+      await savePersonalEod(
+        client,
+        "csm",
+        { owner: snap?.eodOwner ?? "", day: snap?.eodDay ?? "" },
+        { ...args, submit: true },
+      );
       await fetchSnapshot();
     },
     [client, fetchSnapshot, snap?.eodOwner, snap?.eodDay],
@@ -321,15 +371,18 @@ export function useCsmSnapshot(
       notes?: Any;
     }) => {
       if (!client) return;
-      const { error: rpcErr } = await client.rpc("cockpit_update_client_profile", {
-        p_client_name: args.clientName,
-        p_stage: args.stage ?? null,
-        p_health: args.health ?? null,
-        p_service: args.service ?? null,
-        p_kpi: args.kpi ?? null,
-        p_notes: args.notes ?? null,
-        p_overview: args.overview ?? null,
-      });
+      const { error: rpcErr } = await client.rpc(
+        "cockpit_update_client_profile",
+        {
+          p_client_name: args.clientName,
+          p_stage: args.stage ?? null,
+          p_health: args.health ?? null,
+          p_service: args.service ?? null,
+          p_kpi: args.kpi ?? null,
+          p_notes: args.notes ?? null,
+          p_overview: args.overview ?? null,
+        },
+      );
       if (rpcErr) throw rpcErr;
       await fetchSnapshot();
     },
@@ -339,13 +392,16 @@ export function useCsmSnapshot(
   const reportIssue = useCallback(
     async (args: { title: string; description: string; category?: string }) => {
       if (!client) return;
-      const { error: rpcErr } = await client.rpc("cockpit_submit_issue_report", {
-        p_role: "csm",
-        p_title: args.title,
-        p_description: args.description,
-        p_category: args.category ?? "feedback",
-        p_metadata: {},
-      });
+      const { error: rpcErr } = await client.rpc(
+        "cockpit_submit_issue_report",
+        {
+          p_role: "csm",
+          p_title: args.title,
+          p_description: args.description,
+          p_category: args.category ?? "feedback",
+          p_metadata: {},
+        },
+      );
       if (rpcErr) throw rpcErr;
     },
     [client],
@@ -381,7 +437,9 @@ export function useCsmSnapshot(
         .eq("client_name", args.clientName)
         .maybeSingle();
       const currentOverview = (profile?.overview as Any) ?? {};
-      const currentHot = Array.isArray(currentOverview.hot) ? currentOverview.hot : [];
+      const currentHot = Array.isArray(currentOverview.hot)
+        ? currentOverview.hot
+        : [];
       const updatedHot = currentHot.filter((h: Any) => h.key !== args.key);
       if (!args.hidden) updatedHot.push(args);
       await client
@@ -419,7 +477,10 @@ export function useCsmSnapshot(
           .select("client_name, overview");
         for (const p of profiles ?? []) {
           const currentOverview = (p.overview as Any) ?? {};
-          if (Array.isArray(currentOverview.loose) && currentOverview.loose.length > 0) {
+          if (
+            Array.isArray(currentOverview.loose) &&
+            currentOverview.loose.length > 0
+          ) {
             await client
               .from("cockpit_client_profiles")
               .update({
@@ -437,19 +498,26 @@ export function useCsmSnapshot(
   );
 
   const saveMoneyGoals = useCallback(
-    async (args: { month: string; target?: number; clients?: number; counts?: Any }) => {
+    async (args: {
+      month: string;
+      target?: number;
+      clients?: number;
+      counts?: Any;
+    }) => {
       if (!client) return;
-      await client
-        .from("cockpit_goal_targets")
-        .upsert(
-          {
-            plan_id: `csm:${args.month}`,
-            metric_key: "csm_income",
-            target_value: args.target ?? 0,
-            metadata: { clients: args.clients, counts: args.counts, month: args.month },
+      await client.from("cockpit_goal_targets").upsert(
+        {
+          plan_id: `csm:${args.month}`,
+          metric_key: "csm_income",
+          target_value: args.target ?? 0,
+          metadata: {
+            clients: args.clients,
+            counts: args.counts,
+            month: args.month,
           },
-          { onConflict: "plan_id,metric_key" },
-        );
+        },
+        { onConflict: "plan_id,metric_key" },
+      );
       await fetchSnapshot();
     },
     [client, fetchSnapshot],

@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router";
 import App from "./App";
 import "./index.css";
+import { startClarity } from "./lib/clarity";
 import { ThemeProvider } from "./lib/theme";
 
 // The app shell installs and updates on its own; a new build takes over on
@@ -17,6 +18,9 @@ registerSW({ immediate: true });
 window.addEventListener("beforeunload", e => e.stopImmediatePropagation(), {
   capture: true,
 });
+
+// Recordings of real use, every word masked; off until the id is set.
+startClarity("media_buyer");
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

@@ -1,11 +1,13 @@
+import { ArrowUpRight } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
-import { fetchMeetingsOverview, linkCalendar, sendReply, unlinkCalendar } from "@/lib/comms";
-
-import { ArrowUpRight } from "lucide-react";
-
-
+import {
+  fetchMeetingsOverview,
+  linkCalendar,
+  sendReply,
+  unlinkCalendar,
+} from "@/lib/comms";
 
 // biome-ignore lint/suspicious/noExplicitAny: feed rows
 type Any = any;
@@ -49,6 +51,13 @@ const KIND_DOT: Record<string, string> = {
   team: "bg-muted-foreground/60",
   other: "bg-muted-foreground/60",
 };
+
+/**
+ * A thread's name as people say it: the CRM tacks its channel on the end
+ * ("Karim · custom_sms"), which is noise on the screen.
+ */
+const plainName = (name: string) =>
+  String(name ?? "").replace(/\s*·\s*(custom_)?[a-z_]*(sms|whatsapp)$/i, "");
 
 /** One card per block of the page, the same everywhere in the portal. */
 const CARD = "rounded-2xl border bg-card p-4 sm:p-6";
@@ -175,7 +184,11 @@ function CalendarLink({
   );
 }
 
-function MeetingsContent() {
+type MeetingsProps = {
+  embedded?: boolean;
+  part?: "all" | "calendar" | "whatsapp" | "history";
+};
+function MeetingsContent({ embedded = false, part = "all" }: MeetingsProps) {
   const auth = useCockpitAuth();
   const [data, setData] = useState<Any | null>(null);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
@@ -188,22 +201,53 @@ function MeetingsContent() {
     if (!auth.client) return;
     const sequence = ++loadSequence.current;
     fetchMeetingsOverview(auth.client)
-      .then(value => { if (sequence === loadSequence.current) { setData(value); setLoadError(null); } })
-      .catch(error => { if (sequence === loadSequence.current) setLoadError(error instanceof Error ? error.message : "Meetings are unavailable. Reload the view."); });
+      .then(value => {
+        if (sequence === loadSequence.current) {
+          setData(value);
+          setLoadError(null);
+        }
+      })
+      .catch(error => {
+        if (sequence === loadSequence.current)
+          setLoadError(
+            error instanceof Error
+              ? error.message
+              : "Meetings are unavailable. Reload the view.",
+          );
+      });
   }, [auth.client]);
 
   useEffect(() => {
     loadOverview();
-    return () => { loadSequence.current++; };
+    return () => {
+      loadSequence.current++;
+    };
   }, [loadOverview]);
 
-  const handleSendReply = async ({ chatId, text }: { chatId: string; text: string }) => {
+  const handleSendReply = async ({
+    chatId,
+    text,
+  }: {
+    chatId: string;
+    text: string;
+  }) => {
     if (!auth.client) return;
     try {
-      const thread = data?.threads.find((value: Any) => value.chatId === chatId);
-      if (!thread?.contextKey) throw new Error("Refresh this conversation before replying.");
-      const receipt = await sendReply(auth.client, { chatId, text, contextKey: thread.contextKey });
-      toast.success(receipt.deliveryConfirmed ? "Delivery confirmed" : "Submitted to WhatsApp. Delivery is not confirmed.");
+      const thread = data?.threads.find(
+        (value: Any) => value.chatId === chatId,
+      );
+      if (!thread?.contextKey)
+        throw new Error("Refresh this conversation before replying.");
+      const receipt = await sendReply(auth.client, {
+        chatId,
+        text,
+        contextKey: thread.contextKey,
+      });
+      toast.success(
+        receipt.deliveryConfirmed
+          ? "Delivery confirmed"
+          : "Submitted to WhatsApp. Delivery is not confirmed.",
+      );
       loadOverview();
     } catch (e) {
       toast.error(String(e));
@@ -232,13 +276,22 @@ function MeetingsContent() {
       toast.error(String(e));
     }
   };
-  if (loadError && !data) return <p role="alert" className="text-sm text-destructive">{loadError}</p>;
+  if (loadError && !data)
+    return (
+      <p role="alert" className="text-sm text-destructive">
+        {loadError}
+      </p>
+    );
   if (!data) return <p className="text-sm text-muted-foreground">Loading…</p>;
+  const calendar = part === "all" || part === "calendar";
+  const whatsapp = part !== "calendar";
+  // The second drafts and their Send: not in the Inbox's fold.
+  const replies = part === "all" || part === "whatsapp";
   const {
-    today,
-    upcoming,
-    nextCall,
-    threads,
+    today = [],
+    upcoming = [],
+    nextCall = [],
+    threads = [],
     calendarConfigured,
     whatsappConfigured,
     syncedAt,
@@ -254,99 +307,130 @@ function MeetingsContent() {
     {},
   );
   const waiting = (threads as Any[]).filter(
-    t => t.waitingSince && !t.repliedAt && !["intent", "accepted", "reconcile"].includes(t.replyState ?? ""),
+    t =>
+      t.waitingSince &&
+      !t.repliedAt &&
+      !["intent", "accepted", "reconcile"].includes(t.replyState ?? ""),
   );
-  const inFlight = (threads as Any[]).filter(t => ["intent", "accepted", "reconcile"].includes(t.replyState ?? ""));
+  const inFlight = (threads as Any[]).filter(t =>
+    ["intent", "accepted", "reconcile"].includes(t.replyState ?? ""),
+  );
   const quiet = (threads as Any[]).filter(
     t => !t.waitingSince && (t.silentDays ?? 0) >= 3 && t.clientName,
   );
 
   return (
-    <div className="mx-auto w-full max-w-6xl space-y-6">
-      <header>
-        <h1 className="text-2xl font-semibold tracking-tight sm:text-[28px] sm:leading-9">
-          Meetings and messages
-        </h1>
-        <p className="mt-1 text-sm text-muted-foreground">
+    <div
+      className={embedded ? "space-y-6" : "mx-auto w-full max-w-6xl space-y-6"}
+    >
+      {embedded ? (
+        <p className="text-xs text-muted-foreground">
           {syncedAt ? `Refreshed ${ago(syncedAt)} ago. ` : ""}
-          {!calendarConfigured ? "Calendar connection is not verified. " : ""}
-          {!whatsappConfigured ? "WhatsApp not connected yet." : ""}
+          {calendar && !calendarConfigured
+            ? "Calendar connection is not verified. "
+            : ""}
+          {whatsapp && !whatsappConfigured ? "WhatsApp not connected yet." : ""}
         </p>
-      </header>
-      {loadError ? <p role="alert" className="text-sm text-destructive">{loadError}</p> : null}
-      {data.sourceNote ? <p role="status" className="text-sm text-muted-foreground">{data.sourceNote}</p> : null}
-      {data.whatsappNote ? <p role="status" className="text-sm text-muted-foreground">{data.whatsappNote}</p> : null}
-
-      <section className={CARD}>
-        <div className="mb-4 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-2">
-          <h2 className={CARD_TITLE}>
-            Today
-            {today.length ? (
-              <span className="ml-2 text-xs font-normal text-muted-foreground">
-                {[
-                  todayCounts.client ? `${todayCounts.client} client` : "",
-                  todayCounts.team ? `${todayCounts.team} team` : "",
-                  todayCounts.other ? `${todayCounts.other} other` : "",
-                ]
-                  .filter(Boolean)
-                  .join(", ")}
-              </span>
-            ) : null}
-          </h2>
-          <CalendarLink
-            link={myCalendar}
-            saEmail={saEmail}
-            onLink={handleLinkCalendar}
-            onUnlink={handleUnlinkCalendar}
-          />
-        </div>
-        {today.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            Nothing in the calendar today.
+      ) : (
+        <header>
+          <h1 className="text-2xl font-semibold tracking-tight sm:text-[28px] sm:leading-9">
+            Meetings and messages
+          </h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {syncedAt ? `Refreshed ${ago(syncedAt)} ago. ` : ""}
+            {!calendarConfigured ? "Calendar connection is not verified. " : ""}
+            {!whatsappConfigured ? "WhatsApp not connected yet." : ""}
           </p>
-        ) : (
-          <ul className="divide-y">
-            {(today as Any[]).map(e => (
-              <li
-                key={e.eventId}
-                className="flex flex-wrap items-baseline gap-x-3 gap-y-1 py-3 text-sm first:pt-0 last:pb-0"
-              >
-                <span className="w-14 shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
-                  {e.allDay ? "All day" : clock(e.start)}
-                </span>
-                <span className="min-w-0 font-medium" dir="auto">
-                  {e.title}
-                </span>
-                {(() => {
-                  const k = e.kind ?? (e.clientName ? "client" : "other");
-                  return KIND_LABEL[k] ? (
-                    <span className="inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs font-medium">
-                      <span
-                        aria-hidden
-                        className={`size-1.5 rounded-full ${KIND_DOT[k]}`}
-                      />
-                      {KIND_LABEL[k]}
-                    </span>
-                  ) : null;
-                })()}
-                {e.clientName ? (
-                  <span className="rounded-full bg-muted px-2 py-0.5 text-xs">
-                    {e.clientName}
-                  </span>
-                ) : null}
-                {e.meetLink ? <Ext href={e.meetLink}>Join</Ext> : null}
-                {e.attendees?.length ? (
-                  <span className="basis-full text-xs text-muted-foreground sm:ml-auto sm:basis-auto">
-                    {e.attendees.slice(0, 3).join(", ")}
-                  </span>
-                ) : null}
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
+        </header>
+      )}
+      {loadError ? (
+        <p role="alert" className="text-sm text-destructive">
+          {loadError}
+        </p>
+      ) : null}
+      {data.sourceNote ? (
+        <p role="status" className="text-sm text-muted-foreground">
+          {data.sourceNote}
+        </p>
+      ) : null}
+      {data.whatsappNote ? (
+        <p role="status" className="text-sm text-muted-foreground">
+          {data.whatsappNote}
+        </p>
+      ) : null}
 
-      {inFlight.length ? (
+      {calendar ? (
+        <section className={CARD}>
+          <div className="mb-4 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-2">
+            <h2 className={CARD_TITLE}>
+              Today
+              {today.length ? (
+                <span className="ml-2 text-xs font-normal text-muted-foreground">
+                  {[
+                    todayCounts.client ? `${todayCounts.client} client` : "",
+                    todayCounts.team ? `${todayCounts.team} team` : "",
+                    todayCounts.other ? `${todayCounts.other} other` : "",
+                  ]
+                    .filter(Boolean)
+                    .join(", ")}
+                </span>
+              ) : null}
+            </h2>
+            <CalendarLink
+              link={myCalendar}
+              saEmail={saEmail}
+              onLink={handleLinkCalendar}
+              onUnlink={handleUnlinkCalendar}
+            />
+          </div>
+          {today.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              Nothing in the calendar today.
+            </p>
+          ) : (
+            <ul className="divide-y">
+              {(today as Any[]).map(e => (
+                <li
+                  key={e.eventId}
+                  className="flex flex-wrap items-baseline gap-x-3 gap-y-1 py-3 text-sm first:pt-0 last:pb-0"
+                >
+                  <span className="w-14 shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
+                    {e.allDay ? "All day" : clock(e.start)}
+                  </span>
+                  <span className="min-w-0 font-medium" dir="auto">
+                    {e.title}
+                  </span>
+                  {(() => {
+                    const k = e.kind ?? (e.clientName ? "client" : "other");
+                    return KIND_LABEL[k] ? (
+                      <span className="inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs font-medium">
+                        <span
+                          aria-hidden
+                          className={`size-1.5 rounded-full ${KIND_DOT[k]}`}
+                        />
+                        {KIND_LABEL[k]}
+                      </span>
+                    ) : null;
+                  })()}
+                  {e.clientName ? (
+                    <span className="rounded-full bg-muted px-2 py-0.5 text-xs">
+                      {e.clientName}
+                    </span>
+                  ) : null}
+                  {e.meetLink ? <Ext href={e.meetLink}>Join</Ext> : null}
+                  {e.attendees?.length ? (
+                    <span className="basis-full text-xs text-muted-foreground sm:ml-auto sm:basis-auto">
+                      {e.attendees.slice(0, 3).join(", ")}
+                    </span>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      ) : null}
+
+      {replies && inFlight.length ? (
         <section className={CARD}>
           <h2 className={`mb-4 ${CARD_TITLE}`}>Sending</h2>
           <ul className="divide-y text-sm">
@@ -355,9 +439,11 @@ function MeetingsContent() {
                 key={t.chatId}
                 className="flex flex-wrap items-baseline gap-x-2 gap-y-1 py-3 first:pt-0 last:pb-0"
               >
-                <span className="font-medium">{t.name}</span>
+                <span className="font-medium">{plainName(t.name)}</span>
                 <span className="text-muted-foreground">
-                  {t.replyState === "accepted" ? "Submitted. Delivery is not confirmed." : "The provider outcome needs reconciliation. Nothing will be resent automatically."}
+                  {t.replyState === "accepted"
+                    ? "Submitted. Delivery is not confirmed."
+                    : "The provider outcome needs reconciliation. Nothing will be resent automatically."}
                 </span>
               </li>
             ))}
@@ -365,130 +451,146 @@ function MeetingsContent() {
         </section>
       ) : null}
 
-      <section className={CARD}>
-        <h2 className={`mb-4 ${CARD_TITLE}`}>Next check-in per client</h2>
-        {nextCall.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            No client calls booked in the next three weeks.
-          </p>
-        ) : (
-          <div className="-mx-4 overflow-x-auto px-4 sm:-mx-6 sm:px-6">
-            <table className="w-full text-sm">
-              <tbody className="divide-y">
-                {(nextCall as Any[]).map(n => (
-                  <tr key={n.clientName} className="align-baseline">
-                    <td className="py-2 pr-4">
-                      <div className="font-medium">{n.clientName}</div>
-                      {/* On a phone the title sits under the name, so the
+      {calendar ? (
+        <section className={CARD}>
+          <h2 className={`mb-4 ${CARD_TITLE}`}>Next check-in per client</h2>
+          {nextCall.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              No client calls booked in the next three weeks.
+            </p>
+          ) : (
+            <div className="-mx-4 overflow-x-auto px-4 sm:-mx-6 sm:px-6">
+              <table className="w-full text-sm">
+                <tbody className="divide-y">
+                  {(nextCall as Any[]).map(n => (
+                    <tr key={n.clientName} className="align-baseline">
+                      <td className="py-2 pr-4">
+                        <div className="font-medium">{n.clientName}</div>
+                        {/* On a phone the title sits under the name, so the
                           date keeps its place on the right. */}
-                      <div
-                        className="text-xs text-muted-foreground sm:hidden"
+                        <div
+                          className="text-xs text-muted-foreground sm:hidden"
+                          dir="auto"
+                        >
+                          {n.title}
+                        </div>
+                      </td>
+                      <td
+                        className="py-2 pr-4 text-muted-foreground max-sm:hidden"
                         dir="auto"
                       >
                         {n.title}
-                      </div>
-                    </td>
-                    <td
-                      className="py-2 pr-4 text-muted-foreground max-sm:hidden"
-                      dir="auto"
-                    >
-                      {n.title}
-                    </td>
-                    <td className="whitespace-nowrap py-2 text-right font-mono text-xs tabular-nums">
-                      {day(n.start)} {n.allDay ? "" : clock(n.start)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
+                      </td>
+                      <td className="whitespace-nowrap py-2 text-right font-mono text-xs tabular-nums">
+                        {day(n.start)} {n.allDay ? "" : clock(n.start)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      ) : null}
 
-      <section className={CARD}>
-        <h2 className={`mb-4 ${CARD_TITLE}`}>Waiting on you in WhatsApp</h2>
-        {waiting.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            {inFlight.length ? "No new conversation needs another reply." : data.whatsappReady ? "No conversations are waiting in the verified inbox." : "WhatsApp is not verified. Refresh the inbox before relying on an empty list."}
-          </p>
-        ) : (
-          <ul className="divide-y">
-            {waiting.map(t => {
-              const text = drafts[t.chatId] ?? t.draft ?? "";
-              return (
-                <li
-                  key={t.chatId}
-                  className="py-4 text-sm first:pt-0 last:pb-0"
-                >
-                  <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-                    <span className="font-medium">{t.name}</span>
-                    {t.clientName ? (
-                      <span className="rounded-full bg-muted px-2 py-0.5 text-xs">
-                        {t.clientName}
+      {replies ? (
+        <section className={CARD}>
+          <h2 className={`mb-4 ${CARD_TITLE}`}>Waiting on you in WhatsApp</h2>
+          {waiting.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              {inFlight.length
+                ? "No new conversation needs another reply."
+                : data.whatsappReady
+                  ? "No conversations are waiting in the verified inbox."
+                  : "WhatsApp is not verified. Refresh the inbox before relying on an empty list."}
+            </p>
+          ) : (
+            <ul className="divide-y">
+              {waiting.map(t => {
+                const text = drafts[t.chatId] ?? t.draft ?? "";
+                return (
+                  <li
+                    key={t.chatId}
+                    className="py-4 text-sm first:pt-0 last:pb-0"
+                  >
+                    <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                      <span className="font-medium" dir="auto">
+                        {plainName(t.name)}
                       </span>
-                    ) : null}
-                    <span className="ml-auto text-xs text-muted-foreground">
-                      Waiting {ago(t.waitingSince)}
-                    </span>
-                  </div>
-                  <p className="mt-1 text-muted-foreground" dir="auto">
-                    {t.recent?.length
-                      ? `${t.recent[t.recent.length - 1].who}: ${t.recent[t.recent.length - 1].text}`
-                      : ""}
-                  </p>
-                  <div className="mt-3 rounded-xl bg-muted/40 p-3">
-                    <p className="mb-2 text-xs font-medium text-muted-foreground">
-                      Recommended reply
-                      {t.draft ? ", from the communication SOP" : ""}
-                    </p>
-                    {t.sendError ? (
-                      <p className="mb-2 text-xs txt-bad">
-                        The last send failed: {t.sendError}. Fix and send again.
-                      </p>
-                    ) : null}
-                    <textarea
-                      value={text}
-                      onChange={e =>
-                        setDrafts(d => ({ ...d, [t.chatId]: e.target.value }))
-                      }
-                      rows={3}
-                      placeholder={
-                        t.draft
-                          ? ""
-                          : "Hermes is drafting a reply from the SOP…"
-                      }
-                      dir="auto"
-                      className="w-full resize-y rounded-lg border bg-background px-3 py-2 text-sm"
-                    />
-                    <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
-                      <button
-                        type="button"
-                        disabled={!text.trim() || sending[t.chatId] || !t.sendSupported}
-                        onClick={async () => {
-                          setSending(x => ({ ...x, [t.chatId]: true }));
-                          try {
-                            await handleSendReply({ chatId: t.chatId, text });
-                          } finally {
-                            setSending(x => ({ ...x, [t.chatId]: false }));
-                          }
-                        }}
-                        className="inline-flex h-9 items-center rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground disabled:opacity-50"
-                      >
-                        {sending[t.chatId] ? "Sending…" : "Send on WhatsApp"}
-                      </button>
-                      <span className="text-xs text-muted-foreground">
-                        Review the reply before submitting. Delivery needs provider confirmation.
+                      {t.clientName ? (
+                        <span className="rounded-full bg-muted px-2 py-0.5 text-xs">
+                          {t.clientName}
+                        </span>
+                      ) : null}
+                      <span className="ml-auto text-xs text-muted-foreground">
+                        Waiting {ago(t.waitingSince)}
                       </span>
                     </div>
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </section>
+                    <p className="mt-1 text-muted-foreground" dir="auto">
+                      {t.recent?.length
+                        ? `${t.recent[t.recent.length - 1].who}: ${t.recent[t.recent.length - 1].text}`
+                        : ""}
+                    </p>
+                    <div className="mt-3 rounded-xl bg-muted/40 p-3">
+                      <p className="mb-2 text-xs font-medium text-muted-foreground">
+                        Recommended reply
+                        {t.draft ? ", from the communication SOP" : ""}
+                      </p>
+                      {t.sendError ? (
+                        <p className="mb-2 text-xs txt-bad">
+                          The last send failed: {t.sendError}. Fix and send
+                          again.
+                        </p>
+                      ) : null}
+                      <textarea
+                        value={text}
+                        onChange={e =>
+                          setDrafts(d => ({ ...d, [t.chatId]: e.target.value }))
+                        }
+                        rows={3}
+                        placeholder={
+                          t.draft
+                            ? ""
+                            : "Hermes is drafting a reply from the SOP…"
+                        }
+                        dir="auto"
+                        className="w-full resize-y rounded-lg border bg-background px-3 py-2 text-sm"
+                      />
+                      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+                        <button
+                          type="button"
+                          disabled={
+                            !text.trim() ||
+                            sending[t.chatId] ||
+                            !t.sendSupported
+                          }
+                          onClick={async () => {
+                            setSending(x => ({ ...x, [t.chatId]: true }));
+                            try {
+                              await handleSendReply({ chatId: t.chatId, text });
+                            } finally {
+                              setSending(x => ({ ...x, [t.chatId]: false }));
+                            }
+                          }}
+                          className="inline-flex h-9 items-center rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground disabled:opacity-50"
+                        >
+                          {sending[t.chatId] ? "Sending…" : "Send on WhatsApp"}
+                        </button>
+                        <span className="text-xs text-muted-foreground">
+                          Review the reply before submitting. Delivery needs
+                          provider confirmation.
+                        </span>
+                      </div>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </section>
+      ) : null}
 
-      {quiet.length > 0 ? (
+      {whatsapp && quiet.length > 0 ? (
         <section className={CARD}>
           <h2 className={`mb-4 ${CARD_TITLE}`}>Quiet clients</h2>
           <ul className="flex flex-wrap gap-2 text-sm">
@@ -504,87 +606,95 @@ function MeetingsContent() {
         </section>
       ) : null}
 
-      <section className={CARD}>
-        <h2 className={`mb-4 ${CARD_TITLE}`}>Next 7 days</h2>
-        {upcoming.length === 0 ? (
-          <p className="text-sm text-muted-foreground">Nothing booked.</p>
-        ) : (
-          <ul className="divide-y">
-            {(upcoming as Any[]).map(e => (
-              <li
-                key={e.eventId}
-                className="flex flex-wrap items-baseline gap-x-3 gap-y-1 py-3 text-sm first:pt-0 last:pb-0"
-              >
-                <span className="w-24 shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
-                  {day(e.start)}
-                </span>
-                <span className="w-12 shrink-0 font-mono text-xs tabular-nums">
-                  {e.allDay ? "" : clock(e.start)}
-                </span>
-                <span className="min-w-0" dir="auto">
-                  {e.title}
-                </span>
-                {e.clientName ? (
-                  <span className="rounded-full bg-muted px-2 py-0.5 text-xs">
-                    {e.clientName}
+      {calendar ? (
+        <section className={CARD}>
+          <h2 className={`mb-4 ${CARD_TITLE}`}>Next 7 days</h2>
+          {upcoming.length === 0 ? (
+            <p className="text-sm text-muted-foreground">Nothing booked.</p>
+          ) : (
+            <ul className="divide-y">
+              {(upcoming as Any[]).map(e => (
+                <li
+                  key={e.eventId}
+                  className="flex flex-wrap items-baseline gap-x-3 gap-y-1 py-3 text-sm first:pt-0 last:pb-0"
+                >
+                  <span className="w-24 shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
+                    {day(e.start)}
                   </span>
+                  <span className="w-12 shrink-0 font-mono text-xs tabular-nums">
+                    {e.allDay ? "" : clock(e.start)}
+                  </span>
+                  <span className="min-w-0" dir="auto">
+                    {e.title}
+                  </span>
+                  {e.clientName ? (
+                    <span className="rounded-full bg-muted px-2 py-0.5 text-xs">
+                      {e.clientName}
+                    </span>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      ) : null}
+
+      {whatsapp ? (
+        <section className={CARD}>
+          <h2 className={`mb-4 ${CARD_TITLE}`}>All WhatsApp threads</h2>
+          <ul className="divide-y">
+            {(threads as Any[]).map(t => (
+              <li key={t.chatId} className="text-sm">
+                <button
+                  type="button"
+                  aria-expanded={openThread === t.chatId}
+                  className="flex w-full flex-wrap items-baseline gap-x-2 gap-y-1 py-3 text-left"
+                  onClick={() =>
+                    setOpenThread(v => (v === t.chatId ? null : t.chatId))
+                  }
+                >
+                  <span className="font-medium" dir="auto">
+                    {plainName(t.name)}
+                  </span>
+                  {!t.isGroup ? (
+                    <span className="rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
+                      Private
+                    </span>
+                  ) : null}
+                  {t.clientName ? (
+                    <span className="rounded-full bg-muted px-2 py-0.5 text-xs">
+                      {t.clientName}
+                    </span>
+                  ) : null}
+                  <span className="ml-auto text-xs text-muted-foreground">
+                    {t.lastAt
+                      ? `${t.lastFromUs ? "We wrote" : "They wrote"} ${ago(t.lastAt)} ago`
+                      : (t.error ?? "")}
+                  </span>
+                </button>
+                {openThread === t.chatId ? (
+                  <ul className="mb-3 space-y-2 rounded-xl bg-muted/40 p-3">
+                    {(t.recent as Any[]).map((m, i) => (
+                      <li key={i} className={m.fromMe ? "text-right" : ""}>
+                        <span className="text-xs text-muted-foreground">
+                          {m.who} · {ago(m.at)} ago
+                        </span>
+                        <p dir="auto">{m.text}</p>
+                      </li>
+                    ))}
+                  </ul>
                 ) : null}
               </li>
             ))}
           </ul>
-        )}
-      </section>
-
-      <section className={CARD}>
-        <h2 className={`mb-4 ${CARD_TITLE}`}>All WhatsApp threads</h2>
-        <ul className="divide-y">
-          {(threads as Any[]).map(t => (
-            <li key={t.chatId} className="text-sm">
-              <button
-                type="button"
-                aria-expanded={openThread === t.chatId}
-                className="flex w-full flex-wrap items-baseline gap-x-2 gap-y-1 py-3 text-left"
-                onClick={() =>
-                  setOpenThread(v => (v === t.chatId ? null : t.chatId))
-                }
-              >
-                <span className="font-medium" dir="auto">
-                  {t.name}
-                </span>
-                {!t.isGroup ? (
-                  <span className="text-xs text-muted-foreground">Private</span>
-                ) : null}
-                {t.clientName ? (
-                  <span className="rounded-full bg-muted px-2 py-0.5 text-xs">
-                    {t.clientName}
-                  </span>
-                ) : null}
-                <span className="ml-auto text-xs text-muted-foreground">
-                  {t.lastAt
-                    ? `${t.lastFromUs ? "We wrote" : "They wrote"} ${ago(t.lastAt)} ago`
-                    : (t.error ?? "")}
-                </span>
-              </button>
-              {openThread === t.chatId ? (
-                <ul className="mb-3 space-y-2 rounded-xl bg-muted/40 p-3">
-                  {(t.recent as Any[]).map((m, i) => (
-                    <li key={i} className={m.fromMe ? "text-right" : ""}>
-                      <span className="text-xs text-muted-foreground">
-                        {m.who} · {ago(m.at)} ago
-                      </span>
-                      <p dir="auto">{m.text}</p>
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
-            </li>
-          ))}
-        </ul>
-      </section>
+        </section>
+      ) : null}
     </div>
   );
 }
-export function MeetingsPage() {
+export function MeetingsPage(props: MeetingsProps = {}) {
   const auth = useCockpitAuth();
-  return <MeetingsContent key={auth.session?.user.id ?? "signed-out"} />;
+  return (
+    <MeetingsContent key={auth.session?.user.id ?? "signed-out"} {...props} />
+  );
 }

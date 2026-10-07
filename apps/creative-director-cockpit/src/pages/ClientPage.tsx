@@ -1,21 +1,47 @@
-import { ArrowLeft, ArrowUpRight, Download, Film, Lightbulb, LoaderCircle, MessageSquare, MoreHorizontal, Rocket } from "lucide-react";
+import {
+  ArrowLeft,
+  ArrowUpRight,
+  Download,
+  Film,
+  Lightbulb,
+  LoaderCircle,
+  MessageSquare,
+  MoreHorizontal,
+  Rocket,
+} from "lucide-react";
 import { useEffect, useState } from "react";
-import { Link, useParams } from "react-router";
+import { Link, useParams, useSearchParams } from "react-router";
 import { toast } from "sonner";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { ClientUpdates } from "@/components/ClientUpdates";
-import { CreativePreview, stillPropsFor, useLocalStills } from "@/components/CreativePreview";
+import {
+  CreativePreview,
+  stillPropsFor,
+  useLocalStills,
+} from "@/components/CreativePreview";
 import { DosDontsCard } from "@/components/DosDonts";
 import { TemplateCard } from "@/components/TemplateCard";
 import { bucketDays, TrendChart } from "@/components/TrendChart";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
 import { DateInput } from "@/components/ui/date-input";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { CopyButton, WinningAds } from "@/components/WinningAds";
-import { fetchClientDetail, fetchClientOutbox, fetchContextPack, fetchFunnels, logClientTouch, queueClientAction } from "@/lib/clients";
+import {
+  fetchClientDetail,
+  fetchClientOutbox,
+  fetchContextPack,
+  fetchFunnels,
+  logClientTouch,
+  queueClientAction,
+} from "@/lib/clients";
 import { TEMPLATES } from "@/lib/creativeTemplates";
 import { saveFromClientAd } from "@/lib/ideation";
 import { fetchWinners } from "@/lib/playbook";
@@ -53,6 +79,18 @@ const TAB_LABEL: Record<Tab, string> = {
   "Work in flight": "In flight",
   "Everything we made": "All work",
   "Talk to them": "Talk to them",
+};
+
+/**
+ * Each tab's word in the address (?tab=flight), so a refresh, the Back
+ * button, a shared link or the search box lands on the same tab.
+ */
+const TAB_KEY: Record<Tab, string> = {
+  "Script from here": "script",
+  "Their funnel": "funnel",
+  "Work in flight": "flight",
+  "Everything we made": "made",
+  "Talk to them": "talk",
 };
 
 /**
@@ -193,7 +231,11 @@ function useContextPack(name: string) {
   return {
     active: busy || Boolean(done),
     building: busy,
-    label: busy ? "Building the pack…" : done ? "Extract client context again" : "Extract client context",
+    label: busy
+      ? "Building the pack…"
+      : done
+        ? "Extract client context again"
+        : "Extract client context",
     counts: done,
     downloaded: Boolean(done),
     download,
@@ -243,8 +285,8 @@ function ClientStats({ s }: { s: any }) {
   if (!s) {
     return (
       <p className="text-sm text-muted-foreground">
-        No appointments on their stat sheet this month, so booking, show,
-        quotation and close rates cannot be worked out yet.
+        Their stat sheet data is unavailable, so booking, show, quotation and
+        close rates cannot be worked out yet.
       </p>
     );
   }
@@ -301,7 +343,10 @@ function ClientStats({ s }: { s: any }) {
         ))}
       </div>
       <details className="mt-3 text-xs text-muted-foreground">
-        <summary className="w-fit">From their {s.month} stat sheet</summary>
+        <summary className="w-fit">
+          From their {s.month} stat sheet
+          {s.status === "stale" ? " · last verified data" : ""}
+        </summary>
         <ul className="mt-2 space-y-0.5">
           {cells.map(c => (
             <li key={c.label}>
@@ -416,18 +461,29 @@ export function ClientPage() {
   const auth = useCockpitAuth();
   // biome-ignore lint/suspicious/noExplicitAny: detail shape is untyped
   const [d, setD] = useState<any | null | undefined>(undefined);
-  const [tab, setTab] = useState<Tab>("Script from here");
+  const [query, setQuery] = useSearchParams();
+  const tab: Tab =
+    TABS.find(t => TAB_KEY[t] === query.get("tab")) ?? "Script from here";
+  const setTab = (next: Tab) => {
+    const q = new URLSearchParams(query);
+    q.set("tab", TAB_KEY[next]);
+    setQuery(q, { replace: true });
+  };
   const ctx = useContextPack(d?.client?.name ?? name);
 
   useEffect(() => {
     if (!auth.client || !name) return;
     let cancelled = false;
-    void fetchClientDetail(auth.client, name).then(res => {
-      if (!cancelled) setD(res);
-    }).catch(() => {
-      if (!cancelled) setD(null);
-    });
-    return () => { cancelled = true; };
+    void fetchClientDetail(auth.client, name)
+      .then(res => {
+        if (!cancelled) setD(res);
+      })
+      .catch(() => {
+        if (!cancelled) setD(null);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [auth.client, name]);
 
   if (d === undefined) {
@@ -597,10 +653,14 @@ function ScriptFromHere({ d }: { d: any }) {
     void fetchWinners(auth.client, {
       serviceLine: scope === "service" ? serviceLineOf(service) : undefined,
       limit: 40,
-    }).then(rows => {
-      if (!cancelled) setWinners({ rows });
-    }).catch(console.error);
-    return () => { cancelled = true; };
+    })
+      .then(rows => {
+        if (!cancelled) setWinners({ rows });
+      })
+      .catch(console.error);
+    return () => {
+      cancelled = true;
+    };
   }, [auth.client, scope, service]);
 
   // One look-up for every saved picture this tab shows.
@@ -777,10 +837,14 @@ function WorkInFlight({ d, name }: { d: any; name: string }) {
   useEffect(() => {
     if (!auth.client) return;
     let cancelled = false;
-    void fetchClientOutbox(auth.client).then(rows => {
-      if (!cancelled) setOutbox(rows);
-    }).catch(console.error);
-    return () => { cancelled = true; };
+    void fetchClientOutbox(auth.client)
+      .then(rows => {
+        if (!cancelled) setOutbox(rows);
+      })
+      .catch(console.error);
+    return () => {
+      cancelled = true;
+    };
   }, [auth.client]);
   const [feedback, setFeedback] = useState<{
     tone: "warn" | "bad";
@@ -1343,12 +1407,16 @@ function TheirFunnel({ name }: { name: string }) {
   useEffect(() => {
     if (!auth.client) return;
     let cancelled = false;
-    void fetchFunnels(auth.client, name).then(res => {
-      if (!cancelled) setData(res);
-    }).catch(() => {
-      if (!cancelled) setData({ rows: [] });
-    });
-    return () => { cancelled = true; };
+    void fetchFunnels(auth.client, name)
+      .then(res => {
+        if (!cancelled) setData(res);
+      })
+      .catch(() => {
+        if (!cancelled) setData({ rows: [] });
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [auth.client, name]);
 
   if (!data) return <p className="text-[13px]">Loading…</p>;

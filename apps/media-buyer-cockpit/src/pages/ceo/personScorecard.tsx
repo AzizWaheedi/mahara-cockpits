@@ -1,13 +1,12 @@
-import { useAction } from "@/lib/cockpitApi";
 import { Loader2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { month as monthName, shortDate } from "@/components/ceo/format";
 import { STATUS_COLOR, StatusChip } from "@/components/ceo/StatusChip";
 import { AnimatedSelect } from "@/components/ui/animated-select";
-import { api } from "@/lib/cockpitApi";
-import type { Scorecard, ScorecardItem } from "@/types/ceo/profiles";
 import { Button } from "@/components/ui/button";
+import { api, useAction } from "@/lib/cockpitApi";
 import { cn } from "@/lib/utils";
+import type { Scorecard, ScorecardItem } from "@/types/ceo/profiles";
 
 /**
  * The working document of a monthly one-to-one.

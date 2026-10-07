@@ -52,6 +52,7 @@ export function feedState(f: Feed): MachineState {
 export const SOURCE_LABELS: Record<string, string> = {
   meta: "Meta ads",
   clickup: "ClickUp",
+  outbox: "Media buyer changes to ClickUp",
   sheets: "Google Sheets",
   docs: "Google Docs",
   calendar: "Google Calendar",

@@ -2,6 +2,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useCockpitAuth } from "../auth/SupabaseAuthProvider";
 import { loadSupabaseAccess } from "../auth/supabaseAccess";
 import {
+  callCenterRange,
+  parseCallCenterReport,
+} from "../types/ceo/callCenterContract";
+import { campaignBuildAction } from "./campaignBuildsClient";
+import { ceoAction } from "./ceoActionsClient";
+import { readCostsSheet, removeCostLine, saveCostLine } from "./ceoCostsClient";
+import {
   copyGoalPlan,
   goalCatalogue,
   readGoalsBoard,
@@ -9,65 +16,92 @@ import {
   saveGoalPlan,
   saveGoalTargets,
 } from "./ceoGoalsClient";
-import { supabase } from "./supabase";
-import {ManualPaymentError,manualPaymentList,manualPaymentInfo,manualPaymentClients,addManualPayment,changeManualPayment,manualPaymentHistory} from "./ceoManualPaymentsClient";
-import {readCostsSheet,saveCostLine,removeCostLine} from "./ceoCostsClient";
-import {readPeople,readPeopleRoles,savePerson,setPersonActive,setPersonPay} from "./ceoPeopleClient";
-import { readFrequencyForRange, readAdsWindow, readContentWindow, readWorkspaceDirectory, importWorkspace } from "./ceoProviderClient";
-import {teamPicturesAction,type TeamPictureOperation} from "./teamPicturesClient";
-import { callCenterRange, parseCallCenterReport } from "../types/ceo/callCenterContract";
-import { readMediaStats } from "./mediaStatsClient";
-import { mediaAction } from "./mediaActionsClient";
-import { handleMediaNativeCall, isMediaNativeRead, isMediaNativeWrite } from "./mediaNativeClient";
-import { ceoAction } from "./ceoActionsClient";
-import { listCreativeRequests, reviewCreativeRequest, creativeProviderAction } from "./creativeActionsClient";
-import { api as ideationApi } from "./ideation";
-import { api as swipeApi } from "./swipe";
 import {
-  readTeamProjections,
-  editTeamProjections,
-  bookTeamProjectionCall,
-} from "./teamProjectionsClient";
-import { campaignBuildAction } from "./campaignBuildsClient";
-import { runWinnerSave } from "./winnerSavesClient";
+  addManualPayment,
+  changeManualPayment,
+  ManualPaymentError,
+  manualPaymentClients,
+  manualPaymentHistory,
+  manualPaymentInfo,
+  manualPaymentList,
+} from "./ceoManualPaymentsClient";
+import {
+  readPeople,
+  readPeopleRoles,
+  savePerson,
+  setPersonActive,
+  setPersonPay,
+} from "./ceoPeopleClient";
+import {
+  importWorkspace,
+  readAdsWindow,
+  readContentWindow,
+  readFrequencyForRange,
+  readWorkspaceDirectory,
+} from "./ceoProviderClient";
 import { readClientLogos } from "./clientLogosClient";
 import {
-  type TeamUserContext,
-  fetchTeamOverview,
-  fetchMeetingPage,
-  saveMeeting,
-  saveLinks,
-  setPart,
-  addSitting,
-  saveDoc,
-  saveNotes,
+  creativeProviderAction,
+  listCreativeRequests,
+  reviewCreativeRequest,
+} from "./creativeActionsClient";
+import { api as ideationApi } from "./ideation";
+import { mediaAction } from "./mediaActionsClient";
+import {
+  handleMediaNativeCall,
+  isMediaNativeRead,
+  isMediaNativeWrite,
+} from "./mediaNativeClient";
+import { readMediaStats } from "./mediaStatsClient";
+import { supabase } from "./supabase";
+import { api as swipeApi } from "./swipe";
+import {
   addItem,
-  editItem,
-  closeItem,
-  moveItem,
-  saveBlock,
-  deleteBlock,
-  moveBlock,
-  saveWheel,
-  deleteWheel,
-  saveWheelOption,
-  deleteWheelOption,
-  moveWheelOption,
-  setPrizeAmount,
-  spin,
-  setGoalHit,
-  saveCreativeRow,
-  deleteCreativeRow,
-  openCreativeRequests,
-  setSeries,
-  moveSitting,
+  addSitting,
   cancelSitting,
+  closeItem,
+  deleteBlock,
+  deleteCreativeRow,
+  deleteWheel,
+  deleteWheelOption,
+  editItem,
   endMeeting,
-  setEmail,
+  fetchMeetingPage,
+  fetchTeamOverview,
+  moveBlock,
+  moveItem,
+  moveSitting,
+  moveWheelOption,
+  openCreativeRequests,
   putOnCalendar,
-  takeOver,
   retryCalendar,
+  saveBlock,
+  saveCreativeRow,
+  saveDoc,
+  saveLinks,
+  saveMeeting,
+  saveNotes,
+  saveWheel,
+  saveWheelOption,
+  setEmail,
+  setGoalHit,
+  setPart,
+  setPrizeAmount,
+  setSeries,
+  spin,
+  type TeamUserContext,
+  takeOver,
 } from "./team";
+import {
+  type TeamPictureOperation,
+  teamPicturesAction,
+} from "./teamPicturesClient";
+import {
+  bookTeamProjectionCall,
+  editTeamProjections,
+  readTeamProjections,
+} from "./teamProjectionsClient";
+import { runWinnerSave } from "./winnerSavesClient";
 
 async function getTeamUserContext(client: any): Promise<TeamUserContext> {
   const access = await loadSupabaseAccess(client);
@@ -75,23 +109,65 @@ async function getTeamUserContext(client: any): Promise<TeamUserContext> {
   return { email: access.email, isCeo: access.isCeo, isAdmin: access.isAdmin };
 }
 
-const MEDIA_READS = new Set(["board.adStatusOptions", "board.advertisingCityOptions", "ceo.b2bManage.inspect", "ceo.b2bLaunch.list"]);
+const MEDIA_READS = new Set([
+  "board.adStatusOptions",
+  "board.advertisingCityOptions",
+  "ceo.b2bManage.inspect",
+  "ceo.b2bLaunch.list",
+]);
 const MEDIA_WRITES = new Set([
-  "control.setStatus", "ceo.b2bControl.setStatus", "edit.setAdSetBudget", "edit.duplicateAdSet",
-  "board.setAdStatus", "board.setAdvertisingCities", "board.renameCard", "board.addToBoard",
-  "edit.newAdsFromExisting", "edit.addCreativeToCampaign", "ceo.b2bManage.rename",
-  "ceo.b2bManage.setBudget", "ceo.b2bManage.setSchedule", "ceo.b2bManage.setAudience",
-  "ceo.b2bManage.createAdset", "ceo.b2bManage.duplicateAdset", "ceo.b2bManage.createAds", "ceo.ltv.apply",
-  "execute.runAction", "cockpit.askForDetail", "edit.askViktorFor", "board.dismissOffBoard",
-  "ceo.b2bManage.copyIdeas", "ceo.b2bLaunch.build", "ceo.b2bLaunch.save", "ceo.b2bLaunch.discard", "ceo.b2bLaunch.launch",
+  "control.setStatus",
+  "ceo.b2bControl.setStatus",
+  "edit.setAdSetBudget",
+  "edit.duplicateAdSet",
+  "board.setAdStatus",
+  "board.setAdvertisingCities",
+  "board.renameCard",
+  "board.addToBoard",
+  "edit.newAdsFromExisting",
+  "edit.addCreativeToCampaign",
+  "ceo.b2bManage.rename",
+  "ceo.b2bManage.setBudget",
+  "ceo.b2bManage.setSchedule",
+  "ceo.b2bManage.setAudience",
+  "ceo.b2bManage.createAdset",
+  "ceo.b2bManage.duplicateAdset",
+  "ceo.b2bManage.createAds",
+  "ceo.ltv.apply",
+  "execute.runAction",
+  "cockpit.askForDetail",
+  "edit.askViktorFor",
+  "board.dismissOffBoard",
+  "ceo.b2bManage.copyIdeas",
+  "ceo.b2bLaunch.build",
+  "ceo.b2bLaunch.save",
+  "ceo.b2bLaunch.discard",
+  "ceo.b2bLaunch.launch",
 ]);
 const DATA_CHANGED = "cockpit-data-changed";
-const refreshWrappers = new WeakMap<(...args: any[]) => any, (...args: any[]) => any>();
+const refreshWrappers = new WeakMap<
+  (...args: any[]) => any,
+  (...args: any[]) => any
+>();
 const READ_VERBS: Record<string, true> = {
-  get: true, list: true, detail: true, counts: true, preview: true,
-  inspect: true, page: true, templates: true, history: true, overview: true,
-  fileUrl: true, formInfo: true, clientOptions: true, catalogue: true,
-  board: true, read: true, requestsList: true, watchlistList: true,
+  get: true,
+  list: true,
+  detail: true,
+  counts: true,
+  preview: true,
+  inspect: true,
+  page: true,
+  templates: true,
+  history: true,
+  overview: true,
+  fileUrl: true,
+  formInfo: true,
+  clientOptions: true,
+  catalogue: true,
+  board: true,
+  read: true,
+  requestsList: true,
+  watchlistList: true,
   projections: true,
 };
 function refreshAfter<T extends (...args: any[]) => any>(fn: T): T {
@@ -100,7 +176,11 @@ function refreshAfter<T extends (...args: any[]) => any>(fn: T): T {
   const wrapped = async (...args: any[]) => {
     const result = await fn(...args);
     const endpoint = (fn as any).__endpoint as string | undefined;
-    if (!isMediaNativeRead(endpoint ?? "") && !Object.hasOwn(READ_VERBS, endpoint?.split(".").at(-1) ?? "") && typeof window !== "undefined") {
+    if (
+      !isMediaNativeRead(endpoint ?? "") &&
+      !Object.hasOwn(READ_VERBS, endpoint?.split(".").at(-1) ?? "") &&
+      typeof window !== "undefined"
+    ) {
       window.dispatchEvent(new Event(DATA_CHANGED));
     }
     return result;
@@ -117,7 +197,6 @@ export class ConvexError extends Error {
   }
 }
 
-
 export type Id<_T extends string = string> = string;
 export type FunctionReturnType<F extends (...args: any) => any = any> =
   F extends (...args: any) => infer R ? Awaited<R> : any;
@@ -128,30 +207,53 @@ export function useQuery<T = any>(queryFn: any, args?: any): T {
   const [error, setError] = useState<Error | null>(null);
   const { session } = useCockpitAuth();
   const owner = session?.user.id ?? null;
-  const previous = useRef<{ query: any; args: string | undefined; owner: string | null } | null>(null);
+  const previous = useRef<{
+    query: any;
+    args: string | undefined;
+    owner: string | null;
+  } | null>(null);
 
   const argsJson = JSON.stringify(args);
 
   useEffect(() => {
-    const changed = previous.current?.query !== queryFn || previous.current?.args !== argsJson || previous.current?.owner !== owner;
+    const changed =
+      previous.current?.query !== queryFn ||
+      previous.current?.args !== argsJson ||
+      previous.current?.owner !== owner;
     previous.current = { query: queryFn, args: argsJson, owner };
-    if (changed) { setError(null); setData(undefined); }
+    if (changed) {
+      setError(null);
+      setData(undefined);
+    }
     if (args === "skip" || !queryFn || !owner) return;
     let active = true;
     let generation = 0;
     const load = () => {
       const run = ++generation;
-      Promise.resolve().then(() => typeof queryFn === "function" ? queryFn(args) : queryFn)
-        .then(res => { if (active && run === generation) { setData(res); setError(null); } })
-        .catch(err => { if (active && run === generation) setError(err instanceof Error ? err : new Error(String(err))); });
+      Promise.resolve()
+        .then(() => (typeof queryFn === "function" ? queryFn(args) : queryFn))
+        .then(res => {
+          if (active && run === generation) {
+            setData(res);
+            setError(null);
+          }
+        })
+        .catch(err => {
+          if (active && run === generation)
+            setError(err instanceof Error ? err : new Error(String(err)));
+        });
     };
     load();
-    const poll = setInterval(() => { if (typeof document === "undefined" || !document.hidden) load(); }, 30_000);
-    if (typeof window !== "undefined") window.addEventListener(DATA_CHANGED, load);
+    const poll = setInterval(() => {
+      if (typeof document === "undefined" || !document.hidden) load();
+    }, 30_000);
+    if (typeof window !== "undefined")
+      window.addEventListener(DATA_CHANGED, load);
     return () => {
       active = false;
       clearInterval(poll);
-      if (typeof window !== "undefined") window.removeEventListener(DATA_CHANGED, load);
+      if (typeof window !== "undefined")
+        window.removeEventListener(DATA_CHANGED, load);
     };
   }, [queryFn, argsJson, owner]);
 
@@ -174,24 +276,44 @@ export function useQueries(queries: any[] | Record<string, any>): any {
   const current = useRef(queries);
   current.current = queries;
   const queriesJson = JSON.stringify(queries);
-  const load = useMemo(() => async () => {
-    const values = current.current;
-    const read = async (q: any) => {
-      if (!q || q.args === "skip") return undefined;
-      if (typeof q.query !== "function") throw new Error("A callable query is required.");
-      return q.query(q.args);
-    };
-    if (Array.isArray(values)) return Promise.all(values.map(read));
-    return Object.fromEntries(await Promise.all(Object.entries(values ?? {}).map(async ([key,q]) => [key,await read(q)])));
-  }, [queriesJson, isArray]);
+  const load = useMemo(
+    () => async () => {
+      const values = current.current;
+      const read = async (q: any) => {
+        if (!q || q.args === "skip") return undefined;
+        if (typeof q.query !== "function")
+          throw new Error("A callable query is required.");
+        return q.query(q.args);
+      };
+      if (Array.isArray(values)) return Promise.all(values.map(read));
+      return Object.fromEntries(
+        await Promise.all(
+          Object.entries(values ?? {}).map(async ([key, q]) => [
+            key,
+            await read(q),
+          ]),
+        ),
+      );
+    },
+    [queriesJson, isArray],
+  );
   const result = useQuery(load);
-  return result ?? (isArray ? queries.map(() => undefined) : Object.fromEntries(Object.keys(queries ?? {}).map(key => [key,undefined])));
+  return (
+    result ??
+    (isArray
+      ? queries.map(() => undefined)
+      : Object.fromEntries(
+          Object.keys(queries ?? {}).map(key => [key, undefined]),
+        ))
+  );
 }
 
 async function handleApiCall(endpoint: string, args: any = {}): Promise<any> {
   const [domain, sub, ...rest] = endpoint.split(".");
   const unavailable = (): never => {
-    throw new Error(`This operation has not completed its Supabase migration (${endpoint}). No action was performed.`);
+    throw new Error(
+      `This operation has not completed its Supabase migration (${endpoint}). No action was performed.`,
+    );
   };
 
   // 1. Roles
@@ -199,41 +321,88 @@ async function handleApiCall(endpoint: string, args: any = {}): Promise<any> {
     return loadSupabaseAccess(supabase);
   }
   if (endpoint === "clientLogos.list") return readClientLogos(supabase);
-  if (domain === "stats" && ["range", "campaignTrend", "portfolioTrend", "coverage"].includes(sub)) {
+  if (
+    domain === "stats" &&
+    ["range", "campaignTrend", "portfolioTrend", "coverage"].includes(sub)
+  ) {
     return readMediaStats(supabase, sub, args);
   }
   if (MEDIA_READS.has(endpoint)) return mediaAction(endpoint, args);
-  if (MEDIA_WRITES.has(endpoint)) return mediaAction(endpoint, args, { apply: true });
-  if (isMediaNativeRead(endpoint)) return handleMediaNativeCall(endpoint, args, {}, supabase);
-  if (isMediaNativeWrite(endpoint)) return handleMediaNativeCall(endpoint, args, { apply: true }, supabase);
+  if (MEDIA_WRITES.has(endpoint))
+    return mediaAction(endpoint, args, { apply: true });
+  if (isMediaNativeRead(endpoint))
+    return handleMediaNativeCall(endpoint, args, {}, supabase);
+  if (isMediaNativeWrite(endpoint))
+    return handleMediaNativeCall(endpoint, args, { apply: true }, supabase);
   if (domain === "ideation" && Object.hasOwn(ideationApi.ideation, sub)) {
-    return (ideationApi.ideation as Record<string, (args: any) => Promise<any>>)[sub](args);
+    return (
+      ideationApi.ideation as Record<string, (args: any) => Promise<any>>
+    )[sub](args);
   }
   if (domain === "foreplay" && Object.hasOwn(swipeApi.foreplay, sub)) {
-    return (swipeApi.foreplay as Record<string, (args: any) => Promise<any>>)[sub](args);
+    return (swipeApi.foreplay as Record<string, (args: any) => Promise<any>>)[
+      sub
+    ](args);
   }
   if (domain === "winnerSaves") return runWinnerSave(supabase, sub, args);
-  if (domain === "cockpit" && ["buildsFor", "requestBuild", "saveVariants", "launchBuild", "discardBuild"].includes(sub)) {
+  if (
+    domain === "cockpit" &&
+    [
+      "buildsFor",
+      "requestBuild",
+      "saveVariants",
+      "launchBuild",
+      "discardBuild",
+    ].includes(sub)
+  ) {
     return campaignBuildAction(supabase, sub, args);
   }
   if (domain === "cockpit" && sub === "setClientLanguage") {
-    const { data, error } = await supabase.rpc("cockpit_media_preferences", { p_client: args.clientName, p_language: args.language });
+    const { data, error } = await supabase.rpc("cockpit_media_preferences", {
+      p_client: args.clientName,
+      p_language: args.language,
+    });
     if (error) throw error;
-    if (data?.ok !== true) throw new Error("The language preference was not saved.");
+    if (data?.ok !== true)
+      throw new Error("The language preference was not saved.");
     return null;
   }
-  if (domain === "creativeRequests" && sub === "list") return listCreativeRequests(supabase, args);
-  if (domain === "creativeRequests" && sub === "review") return reviewCreativeRequest(supabase, args);
-  if (domain === "creativeRequests" && ["request", "linkLaunch", "retryFeedback"].includes(sub)) {
-    return creativeProviderAction(supabase, sub as "request" | "linkLaunch" | "retryFeedback", args, true);
+  if (domain === "creativeRequests" && sub === "list")
+    return listCreativeRequests(supabase, args);
+  if (domain === "creativeRequests" && sub === "review")
+    return reviewCreativeRequest(supabase, args);
+  if (
+    domain === "creativeRequests" &&
+    ["request", "linkLaunch", "retryFeedback"].includes(sub)
+  ) {
+    return creativeProviderAction(
+      supabase,
+      sub as "request" | "linkLaunch" | "retryFeedback",
+      args,
+      true,
+    );
   }
-  if (domain === "ceo" && ["settings", "feedback", "profiles", "teamStatus", "bankImport", "bankPdf", "payers", "ltv"].includes(sub)) {
+  if (
+    domain === "ceo" &&
+    [
+      "settings",
+      "feedback",
+      "profiles",
+      "teamStatus",
+      "bankImport",
+      "bankPdf",
+      "payers",
+      "ltv",
+    ].includes(sub)
+  ) {
     return ceoAction(supabase, `${sub}.${rest.join(".")}`, args);
   }
-  if (domain === "teamPictures" && ["upload", "ready", "fromUrl"].includes(sub)) {
+  if (
+    domain === "teamPictures" &&
+    ["upload", "ready", "fromUrl"].includes(sub)
+  ) {
     return teamPicturesAction(supabase, endpoint as TeamPictureOperation, args);
   }
-
 
   // 6. CEO Features
   if (domain === "ceo") {
@@ -268,39 +437,70 @@ async function handleApiCall(endpoint: string, args: any = {}): Promise<any> {
       }
     }
     if (sub === "people") {
-      switch(rest.join(".")) {
-        case "list": return readPeople(supabase);
-        case "roles": return readPeopleRoles(supabase);
-        case "save": return savePerson(supabase,args);
-        case "setActive": return setPersonActive(supabase,args);
-        case "setPay": return setPersonPay(supabase,args);
-        case "workspace": return readWorkspaceDirectory(supabase);
-        case "importWorkspace": return importWorkspace(supabase, args, { apply: true });
-        case "remove": throw new Error("Preserve the person's history: mark them as gone instead of deleting them.");
-        default: throw new Error("Unknown people operation.");
+      switch (rest.join(".")) {
+        case "list":
+          return readPeople(supabase);
+        case "roles":
+          return readPeopleRoles(supabase);
+        case "save":
+          return savePerson(supabase, args);
+        case "setActive":
+          return setPersonActive(supabase, args);
+        case "setPay":
+          return setPersonPay(supabase, args);
+        case "workspace":
+          return readWorkspaceDirectory(supabase);
+        case "importWorkspace":
+          return importWorkspace(supabase, args, { apply: true });
+        case "remove":
+          throw new Error(
+            "Preserve the person's history: mark them as gone instead of deleting them.",
+          );
+        default:
+          throw new Error("Unknown people operation.");
       }
     }
     if (sub === "manualPayments") {
       try {
-        switch(rest.join(".")){
-          case "list": return await manualPaymentList(supabase,args);
-          case "formInfo": return await manualPaymentInfo(supabase);
-          case "clientOptions": return await manualPaymentClients(supabase);
-          case "add": return await addManualPayment(supabase,args);
-          case "softDelete": return await changeManualPayment(supabase,args,true);
-          case "restore": return await changeManualPayment(supabase,args,false);
-          case "history": return await manualPaymentHistory(supabase,args);
-          default: throw new Error("Unknown manual-payment operation.");
+        switch (rest.join(".")) {
+          case "list":
+            return await manualPaymentList(supabase, args);
+          case "formInfo":
+            return await manualPaymentInfo(supabase);
+          case "clientOptions":
+            return await manualPaymentClients(supabase);
+          case "add":
+            return await addManualPayment(supabase, args);
+          case "softDelete":
+            return await changeManualPayment(supabase, args, true);
+          case "restore":
+            return await changeManualPayment(supabase, args, false);
+          case "history":
+            return await manualPaymentHistory(supabase, args);
+          default:
+            throw new Error("Unknown manual-payment operation.");
         }
-      } catch(error) {
-        throw new ConvexError(error instanceof ManualPaymentError ? error.data :
-          {code:"refused",message:error instanceof Error?error.message:"The payment operation was not confirmed."});
+      } catch (error) {
+        throw new ConvexError(
+          error instanceof ManualPaymentError
+            ? error.data
+            : {
+                code: "refused",
+                message:
+                  error instanceof Error
+                    ? error.message
+                    : "The payment operation was not confirmed.",
+              },
+        );
       }
     }
 
     if (sub === "queries" && rest[0] === "callCenterReport") {
       const { from, to } = callCenterRange(args.from, args.to);
-      const { data, error } = await supabase.rpc("cockpit_ceo_call_center_report", { p_from: from, p_to: to });
+      const { data, error } = await supabase.rpc(
+        "cockpit_ceo_call_center_report",
+        { p_from: from, p_to: to },
+      );
       if (error) throw error;
       return parseCallCenterReport(data, from, to);
     }
@@ -323,48 +523,86 @@ async function handleApiCall(endpoint: string, args: any = {}): Promise<any> {
     const op = sub;
     if (domain === "team") {
       switch (op) {
-        case "overview": return fetchTeamOverview(supabase, u);
-        case "page": return fetchMeetingPage(supabase, u, args.id);
-        case "saveMeeting": return saveMeeting(supabase, u, args);
-        case "saveLinks": return saveLinks(supabase, u, args);
-        case "setPart": return setPart(supabase, u, args);
-        case "addSitting": return addSitting(supabase, u, args);
-        case "saveDoc": return saveDoc(supabase, u, args);
-        case "saveNotes": return saveNotes(supabase, u, args);
-        case "addItem": return addItem(supabase, u, args);
-        case "editItem": return editItem(supabase, u, args);
-        case "closeItem": return closeItem(supabase, u, args);
-        case "moveItem": return moveItem(supabase, u, args);
-        case "saveBlock": return saveBlock(supabase, u, args);
-        case "deleteBlock": return deleteBlock(supabase, u, args);
-        case "moveBlock": return moveBlock(supabase, u, args);
-        case "saveWheel": return saveWheel(supabase, u, args);
-        case "deleteWheel": return deleteWheel(supabase, u, args);
-        case "saveWheelOption": return saveWheelOption(supabase, u, args);
-        case "deleteWheelOption": return deleteWheelOption(supabase, u, args);
-        case "moveWheelOption": return moveWheelOption(supabase, u, args);
-        case "setPrizeAmount": return setPrizeAmount(supabase, u, args);
-        case "spin": return spin(supabase, u, args);
-        case "setGoalHit": return setGoalHit(supabase, u, args);
-        case "saveCreativeRow": return saveCreativeRow(supabase, u, args);
-        case "deleteCreativeRow": return deleteCreativeRow(supabase, u, args);
-        case "openCreativeRequests": return openCreativeRequests(supabase, u);
-        default: throw new Error(`Unknown team operation: ${op}`);
+        case "overview":
+          return fetchTeamOverview(supabase, u);
+        case "page":
+          return fetchMeetingPage(supabase, u, args.id);
+        case "saveMeeting":
+          return saveMeeting(supabase, u, args);
+        case "saveLinks":
+          return saveLinks(supabase, u, args);
+        case "setPart":
+          return setPart(supabase, u, args);
+        case "addSitting":
+          return addSitting(supabase, u, args);
+        case "saveDoc":
+          return saveDoc(supabase, u, args);
+        case "saveNotes":
+          return saveNotes(supabase, u, args);
+        case "addItem":
+          return addItem(supabase, u, args);
+        case "editItem":
+          return editItem(supabase, u, args);
+        case "closeItem":
+          return closeItem(supabase, u, args);
+        case "moveItem":
+          return moveItem(supabase, u, args);
+        case "saveBlock":
+          return saveBlock(supabase, u, args);
+        case "deleteBlock":
+          return deleteBlock(supabase, u, args);
+        case "moveBlock":
+          return moveBlock(supabase, u, args);
+        case "saveWheel":
+          return saveWheel(supabase, u, args);
+        case "deleteWheel":
+          return deleteWheel(supabase, u, args);
+        case "saveWheelOption":
+          return saveWheelOption(supabase, u, args);
+        case "deleteWheelOption":
+          return deleteWheelOption(supabase, u, args);
+        case "moveWheelOption":
+          return moveWheelOption(supabase, u, args);
+        case "setPrizeAmount":
+          return setPrizeAmount(supabase, u, args);
+        case "spin":
+          return spin(supabase, u, args);
+        case "setGoalHit":
+          return setGoalHit(supabase, u, args);
+        case "saveCreativeRow":
+          return saveCreativeRow(supabase, u, args);
+        case "deleteCreativeRow":
+          return deleteCreativeRow(supabase, u, args);
+        case "openCreativeRequests":
+          return openCreativeRequests(supabase, u);
+        default:
+          throw new Error(`Unknown team operation: ${op}`);
       }
     }
     if (domain === "teamCalendar") {
       switch (op) {
-        case "setPart": return setPart(supabase, u, args);
-        case "setEmail": return setEmail(supabase, u, args);
-        case "setSeries": return setSeries(supabase, u, args);
-        case "moveSitting": return moveSitting(supabase, u, args);
-        case "cancelSitting": return cancelSitting(supabase, u, args);
-        case "addSitting": return addSitting(supabase, u, args);
-        case "endMeeting": return endMeeting(supabase, u, args);
-        case "putOnCalendar": return putOnCalendar(supabase, u, args);
-        case "takeOver": return takeOver(supabase, u, args);
-        case "retryCalendar": return retryCalendar(supabase, u, args);
-        default: throw new Error(`Unknown team calendar operation: ${op}`);
+        case "setPart":
+          return setPart(supabase, u, args);
+        case "setEmail":
+          return setEmail(supabase, u, args);
+        case "setSeries":
+          return setSeries(supabase, u, args);
+        case "moveSitting":
+          return moveSitting(supabase, u, args);
+        case "cancelSitting":
+          return cancelSitting(supabase, u, args);
+        case "addSitting":
+          return addSitting(supabase, u, args);
+        case "endMeeting":
+          return endMeeting(supabase, u, args);
+        case "putOnCalendar":
+          return putOnCalendar(supabase, u, args);
+        case "takeOver":
+          return takeOver(supabase, u, args);
+        case "retryCalendar":
+          return retryCalendar(supabase, u, args);
+        default:
+          throw new Error(`Unknown team calendar operation: ${op}`);
       }
     }
   }
@@ -380,7 +618,6 @@ async function handleApiCall(endpoint: string, args: any = {}): Promise<any> {
         throw new Error(`Unknown team projections operation: ${sub}`);
     }
   }
-
 
   // Default fallback
   return unavailable();

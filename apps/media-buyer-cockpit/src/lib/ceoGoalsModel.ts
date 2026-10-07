@@ -1,4 +1,3 @@
-import { addDays } from "../types/ceo/time";
 import type { Board, PlanRow, TargetRow } from "../types/ceo/goals";
 import {
   GROUPS,
@@ -9,6 +8,7 @@ import {
   seriesBounds,
   type Unit,
 } from "../types/ceo/scoreboard";
+import { addDays } from "../types/ceo/time";
 
 export type GoalContext = {
   plan: Record<string, any> | null;
@@ -42,7 +42,8 @@ export function goalTargetPatch(
     if (text.trim() === "") patch[key] = null;
     else {
       const value = Number(text);
-      if (!Number.isFinite(value)) throw new Error("Goal numbers must be finite");
+      if (!Number.isFinite(value))
+        throw new Error("Goal numbers must be finite");
       patch[key] = value;
     }
   }
@@ -92,7 +93,10 @@ function isLevel(unit: Unit, metricKey: string): boolean {
 }
 
 // The existing goal pacing and scoring calculation, fed by the secured SQL context.
-export function buildGoalsBoard(context: GoalContext, today = context.today): Board {
+export function buildGoalsBoard(
+  context: GoalContext,
+  today = context.today,
+): Board {
   const all = context.plans;
   const plans = all.map(r => ({
     id: Number(r.id),

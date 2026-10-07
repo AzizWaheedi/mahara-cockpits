@@ -1,7 +1,21 @@
-import type { SupabaseClient } from '@supabase/supabase-js';
-import { addMonths, REASONS, rollUp, type Departure, type MonthInput, type MonthRow, type Reason } from './churnCore';
-import { addDays } from './projectionsCore';
-import { churnSourceSchema, type ChurnSource, type DepartureSource, type MonthSource } from './churnSchema';
+import type { SupabaseClient } from "@supabase/supabase-js";
+import {
+  addMonths,
+  type Departure,
+  type MonthInput,
+  type MonthRow,
+  REASONS,
+  type Reason,
+  rollUp,
+} from "./churnCore";
+import {
+  type ChurnSource,
+  churnSourceSchema,
+  type DepartureSource,
+  type MonthSource,
+} from "./churnSchema";
+import { addDays } from "./projectionsCore";
+
 const PAUSE_IS_CHURN_DAYS = 14;
 export type Waiting = {
   key: string;
@@ -42,7 +56,6 @@ export type ChurnPage = {
   log: { at: string; by: string; what: string }[];
 };
 
-
 function departureOf(r: DepartureSource): Departure {
   return {
     id: Number(r.id),
@@ -80,8 +93,17 @@ function monthInputOf(r: MonthSource): MonthInput {
 
 const norm = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ");
 export function buildChurnPage(input: unknown): ChurnPage {
- const { today, month, deps, monthRows, cards, log, roster: r, me: seatRow }: ChurnSource = churnSourceSchema.parse(input);
- const departures = deps.map(departureOf);
+  const {
+    today,
+    month,
+    deps,
+    monthRows,
+    cards,
+    log,
+    roster: r,
+    me: seatRow,
+  }: ChurnSource = churnSourceSchema.parse(input);
+  const departures = deps.map(departureOf);
   const billing = new Map(cards.map(c => [String(c.clickup_task_id), c]));
   const rosterByKey = new Map(r.cards.map(c => [c.key, c]));
 
@@ -223,16 +245,26 @@ export function buildChurnPage(input: unknown): ChurnPage {
     })),
   };
 }
-export async function readChurnPage(client: SupabaseClient | null): Promise<ChurnPage> {
- if (!client) throw new Error('Client-success sign-in is required');
- const {data,error}=await client.rpc('cockpit_csm_churn_read');
- if(error) throw new Error(error.message);
- if(!data || !Array.isArray(data.deps) || !data.roster) throw new Error('Churn register could not be read');
- return buildChurnPage(data);
+export async function readChurnPage(
+  client: SupabaseClient | null,
+): Promise<ChurnPage> {
+  if (!client) throw new Error("Client-success sign-in is required");
+  const { data, error } = await client.rpc("cockpit_csm_churn_read");
+  if (error) throw new Error(error.message);
+  if (!data || !Array.isArray(data.deps) || !data.roster)
+    throw new Error("Churn register could not be read");
+  return buildChurnPage(data);
 }
-export async function changeChurn(client: SupabaseClient | null, operation: string, args: Record<string, unknown>): Promise<ChurnPage> {
- if(!client) throw new Error('Client-success sign-in is required');
- const {error}=await client.rpc('cockpit_csm_churn_edit',{p_operation:operation,p_args:args});
- if(error) throw new Error(error.message);
- return readChurnPage(client);
+export async function changeChurn(
+  client: SupabaseClient | null,
+  operation: string,
+  args: Record<string, unknown>,
+): Promise<ChurnPage> {
+  if (!client) throw new Error("Client-success sign-in is required");
+  const { error } = await client.rpc("cockpit_csm_churn_edit", {
+    p_operation: operation,
+    p_args: args,
+  });
+  if (error) throw new Error(error.message);
+  return readChurnPage(client);
 }

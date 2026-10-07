@@ -51,7 +51,11 @@ async function boards(_args: Record<string, never> = {}) {
  * rather than duplicating.
  */
 async function toIdeation({ id }: { id: string }) {
-  const { data, error } = await supabase.rpc("cockpit_ideation_copy", {p_source: "foreplay", p_id: id, p_note: null});
+  const { data, error } = await supabase.rpc("cockpit_ideation_copy", {
+    p_source: "foreplay",
+    p_id: id,
+    p_note: null,
+  });
   boom(error);
   if (!data?.key) throw new Error("The ad was not saved to the board.");
   return data;

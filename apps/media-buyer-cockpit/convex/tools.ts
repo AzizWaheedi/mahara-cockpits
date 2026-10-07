@@ -1111,6 +1111,22 @@ export async function allAdAccounts(): Promise<
 }
 
 /**
+ * The ad account's own currency, per Meta: what every budget in it is
+ * counted in. Read before any budget is written (see currency.ts).
+ */
+export async function accountCurrency(accountId: string): Promise<string> {
+  const id = String(accountId).replace(/^act_/, "");
+  const r = await graph<{ currency?: string }>(`act_${id}`, {
+    fields: "currency",
+  });
+  if (!r?.currency)
+    throw new Error(
+      "Meta did not say which currency this ad account is in, so no budget was written.",
+    );
+  return String(r.currency);
+}
+
+/**
  * Write to the Graph API with the system-user token. Same reasoning as `graph()`:
  * it goes straight to Meta, so turning things on and off keeps working even while
  * the Viktor tool gateway is down.

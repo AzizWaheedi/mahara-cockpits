@@ -6,9 +6,16 @@ import {
   internalMutation,
   internalQuery,
 } from "./_generated/server";
+import {
+  boardStatusAfter,
+  cardFor,
+  changeComment,
+  isChange,
+} from "./changeLog";
 import { AZIZ_SLACK_ID, CPB_GATE, CPL_GATE } from "./constants";
 import { flush } from "./health";
-import { callTool, mirrorCockpitFeedback, unwrap } from "./tools";
+import { isRefusal } from "./outboxCore";
+import { callTool, graph, mirrorCockpitFeedback, unwrap } from "./tools";
 
 declare const process: { env: Record<string, string | undefined> };
 
@@ -38,8 +45,12 @@ async function callOrQueue(
 ) {
   try {
     return unwrap(await callTool(role, args));
-  } catch {
-    await ctx.runMutation(internal.outbox.enqueue, { role, args });
+  } catch (e) {
+    await ctx.runMutation(internal.outbox.enqueue, {
+      role,
+      args,
+      error: String(e instanceof Error ? e.message : e).slice(0, 300),
+    });
     return null;
   }
 }
@@ -139,25 +150,52 @@ export const DEPARTMENT_LIST: Record<string, { id: string; label: string }> = {
 };
 
 /**
- * POST to ClickUp, or queue it if the tool endpoint is unreachable.
+ * Write to ClickUp, or queue it when ClickUp cannot be reached.
  *
  * A dropped write is worse than a visible failure: she would believe the client
- * record was updated when it wasn't. See convex/outbox.ts.
+ * record was updated when it wasn't. See convex/outbox.ts. A refusal (a
+ * deleted task, a value the field does not take) is thrown, not queued: a
+ * retry cannot change it, and a queue full of them is what hid the outbox
+ * jam of 2026-09-12 for three weeks. `queue: false` is for numbers that are
+ * rewritten every hour anyway, where a late copy would only be a stale one.
  */
+async function send(
+  ctx: ActionCtx,
+  role: "pd_clickup_proxy_post" | "pd_clickup_proxy_put",
+  url: string,
+  json_body: Record<string, unknown>,
+  { queue = true }: { queue?: boolean } = {},
+) {
+  try {
+    return unwrap(await callTool(role, { url, json_body }));
+  } catch (e) {
+    const error = String(e instanceof Error ? e.message : e).slice(0, 300);
+    if (!queue || isRefusal(error)) throw e;
+    await ctx.runMutation(internal.outbox.enqueue, {
+      role,
+      args: { url, json_body },
+      error,
+    });
+    return null;
+  }
+}
+
 async function post(
   ctx: ActionCtx,
   url: string,
   json_body: Record<string, unknown>,
+  opts?: { queue?: boolean },
 ) {
-  try {
-    return unwrap(await callTool("pd_clickup_proxy_post", { url, json_body }));
-  } catch {
-    await ctx.runMutation(internal.outbox.enqueue, {
-      role: "pd_clickup_proxy_post",
-      args: { url, json_body },
-    });
-    return null;
-  }
+  return send(ctx, "pd_clickup_proxy_post", url, json_body, opts);
+}
+
+/** ClickUp updates a task with PUT; a POST to /task/<id> is a 405. */
+async function put(
+  ctx: ActionCtx,
+  url: string,
+  json_body: Record<string, unknown>,
+) {
+  return send(ctx, "pd_clickup_proxy_put", url, json_body);
 }
 
 async function setField(
@@ -165,6 +203,7 @@ async function setField(
   taskId: string,
   fieldId: string,
   value: unknown,
+  opts?: { queue?: boolean },
 ) {
   await post(
     ctx,
@@ -172,6 +211,7 @@ async function setField(
     {
       value,
     },
+    opts,
   );
 }
 
@@ -242,24 +282,37 @@ export const getManualChange = internalQuery({
   handler: async (ctx, { id }) => {
     const m = await ctx.db.get(id);
     if (!m) return null;
-    const campaign = await ctx.db
-      .query("campaigns")
-      .filter(q => q.eq(q.field("campaignName"), m.campaignName))
-      .first();
-    return { ...m, taskId: campaign?.taskId };
+    const campaigns = (await ctx.db.query("campaigns").collect()).filter(
+      c => !c.internal,
+    );
+    const card = cardFor(m.campaignName, campaigns);
+    return {
+      ...m,
+      taskId: card?.taskId,
+      ownCard: card?.ownCard ?? false,
+      metaCampaignId: card?.campaign?.metaCampaignId,
+      boardAdStatus: card?.campaign?.boardAdStatus,
+    };
   },
 });
 
 export const markChangeLogged = internalMutation({
-  args: { id: v.id("manualChanges"), taskId: v.string() },
+  args: {
+    id: v.id("manualChanges"),
+    taskId: v.optional(v.string()),
+    /** False when the comment is queued rather than on the card yet. */
+    delivered: v.optional(v.boolean()),
+    error: v.optional(v.string()),
+  },
   returns: v.null(),
-  handler: async (ctx, { id, taskId }) => {
+  handler: async (ctx, { id, taskId, delivered, error }) => {
     const m = await ctx.db.get(id);
-    if (m)
-      await ctx.db.patch(id, {
-        clickupTaskId: taskId,
-        clickupLoggedAt: Date.now(),
-      });
+    if (!m) return null;
+    await ctx.db.patch(id, {
+      ...(taskId ? { clickupTaskId: taskId } : {}),
+      ...(delivered ? { clickupLoggedAt: Date.now() } : {}),
+      clickupError: error?.slice(0, 300),
+    });
     return null;
   },
 });
@@ -320,7 +373,7 @@ export const logDecision = internalAction({
       // older campaign name, rename that task and note the dead campaign — never open
       // a second row for the same client.
       if (taskId && d.campaign?.staleTaskName) {
-        await post(ctx, `https://api.clickup.com/api/v2/task/${taskId}`, {
+        await put(ctx, `https://api.clickup.com/api/v2/task/${taskId}`, {
           name: d.campaign.campaignName,
         });
         await post(
@@ -465,41 +518,72 @@ export const logDecision = internalAction({
 });
 
 /**
- * Pushes the live 7 day numbers onto every matched board task, so the CPL and
- * Last Updated columns stop being hand-typed.
+ * Every change made in the cockpit, onto the client's card on the ads
+ * management board: the switches, budgets, copied ad sets, new ads, new
+ * creatives, builds and the typed change log (see changeLog.ts). A campaign
+ * switched on or off in Meta also moves the card's Ad Status, read back from
+ * Meta so two quick switches can never leave the card on the wrong one.
  */
-/** Mirror a hand-logged change onto the client's task. */
 export const logManualChange = internalAction({
-  args: { id: v.id("manualChanges") },
+  args: {
+    id: v.id("manualChanges"),
+    /** A whole campaign was switched on or off: bring the card's Ad Status along. */
+    syncAdStatus: v.optional(v.boolean()),
+  },
   returns: v.null(),
-  handler: async (ctx, { id }) => {
+  handler: async (ctx, { id, syncAdStatus }) => {
     const m = await ctx.runQuery(internal.writeback.getManualChange, { id });
-    if (!m?.taskId) return null;
+    if (!m || !isChange(m.what)) return null;
+    if (!m.taskId) {
+      await ctx.runMutation(internal.writeback.markChangeLogged, {
+        id,
+        error: `No card on the ads management board for ${m.campaignName}, so this change is in the cockpit only.`,
+      });
+      return null;
+    }
     try {
       const posted = await post(
         ctx,
         `https://api.clickup.com/api/v2/task/${m.taskId}/comment`,
-        {
-          comment_text: [
-            `🎯 Cockpit · CHANGE LOG — ${m.by}`,
-            "",
-            m.adName ? `${m.campaignName} · ${m.adName}` : m.campaignName,
-            m.what,
-            "",
-            "Logged from the media buyer cockpit. Three days before this is judged.",
-          ].join("\n"),
-          notify_all: false,
-        },
+        { comment_text: changeComment(m), notify_all: false },
       );
-      if (posted) {
-        await ctx.runMutation(internal.writeback.markChangeLogged, {
-          id,
-          taskId: m.taskId,
-        });
-      }
-    } catch {
-      // The cockpit entry stands even if ClickUp is down.
+      await ctx.runMutation(internal.writeback.markChangeLogged, {
+        id,
+        taskId: m.taskId,
+        delivered: Boolean(posted),
+      });
+    } catch (e) {
+      // The cockpit entry stands; the reason is kept on it.
+      await ctx.runMutation(internal.writeback.markChangeLogged, {
+        id,
+        taskId: m.taskId,
+        error: String(e instanceof Error ? e.message : e),
+      });
     }
+    if (syncAdStatus && m.ownCard && m.metaCampaignId) {
+      try {
+        const live = await graph<{ status?: string }>(m.metaCampaignId, {
+          fields: "status",
+        });
+        const status = boardStatusAfter(live?.status, m.boardAdStatus);
+        const option = status
+          ? await optionId(FIELD.adStatus, status)
+          : undefined;
+        if (status && option) {
+          await setField(ctx, m.taskId, FIELD.adStatus, option);
+          await ctx.runMutation(internal.board.patchStatus, {
+            campaignName: m.campaignName,
+            status,
+            taskId: m.taskId,
+          });
+        }
+      } catch (e) {
+        console.error(
+          `ad status for ${m.campaignName}: ${String(e).slice(0, 200)}`,
+        );
+      }
+    }
+    await flush(ctx);
     return null;
   },
 });
@@ -526,15 +610,27 @@ export const askOnTask = internalAction({
       notify_all: true,
     };
     if (args.assignee !== undefined) body.assignee = args.assignee;
-    await post(
-      ctx,
-      `https://api.clickup.com/api/v2/task/${args.taskId}/comment`,
-      body,
-    );
+    try {
+      await post(
+        ctx,
+        `https://api.clickup.com/api/v2/task/${args.taskId}/comment`,
+        body,
+      );
+    } catch (e) {
+      console.error(`ask on task ${args.taskId}: ${String(e).slice(0, 200)}`);
+    }
+    await flush(ctx);
     return null;
   },
 });
 
+/**
+ * Pushes the live 7 day numbers onto every matched board task, so the CPL and
+ * Last Updated columns stop being hand-typed. Not queued: the next hour
+ * writes fresh numbers, and a queued copy would only be a stale one (1,927
+ * of them piled up from 24 to 27 September). A run where no card took the
+ * numbers fails, so the job ledger says so.
+ */
 export const pushMetrics = internalAction({
   args: {},
   returns: v.object({ updated: v.number(), failed: v.number() }),
@@ -542,17 +638,28 @@ export const pushMetrics = internalAction({
     const campaigns = await ctx.runQuery(internal.writeback.boardCampaigns, {});
     let updated = 0;
     let failed = 0;
+    let lastError = "";
     for (const c of campaigns) {
       if (!c.taskId) continue;
       try {
         if (c.cpl !== undefined)
-          await setField(ctx, c.taskId, FIELD.cpl7d, Number(c.cpl.toFixed(2)));
-        await setField(ctx, c.taskId, FIELD.lastUpdated, Date.now());
+          await setField(ctx, c.taskId, FIELD.cpl7d, Number(c.cpl.toFixed(2)), {
+            queue: false,
+          });
+        await setField(ctx, c.taskId, FIELD.lastUpdated, Date.now(), {
+          queue: false,
+        });
         updated += 1;
-      } catch {
+      } catch (e) {
         failed += 1;
+        lastError = String(e instanceof Error ? e.message : e).slice(0, 200);
       }
     }
+    await flush(ctx);
+    if (failed > 0 && updated === 0)
+      throw new Error(
+        `No board card took the KPI columns (${failed} tried): ${lastError}`,
+      );
     return { updated, failed };
   },
 });

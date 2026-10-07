@@ -5,11 +5,15 @@ import {
   useContext,
   useEffect,
   useMemo,
-  useState,
   useRef,
+  useState,
 } from "react";
+import {
+  observeSupabaseAccess,
+  type SupabaseAccessObserver,
+  type SupabaseAccessState,
+} from "../auth/supabaseAccess";
 import { supabase } from "./supabase";
-import { observeSupabaseAccess, type SupabaseAccessObserver, type SupabaseAccessState } from "../auth/supabaseAccess";
 
 interface Who {
   session: Session | null;
@@ -42,14 +46,22 @@ const Ctx = createContext<Who>({
 });
 
 export function SessionProvider({ children }: { children: ReactNode }) {
-  const [state, setState] = useState<SupabaseAccessState>({ session: null, access: null, ready: false, error: null });
+  const [state, setState] = useState<SupabaseAccessState>({
+    session: null,
+    access: null,
+    ready: false,
+    error: null,
+  });
   const { session, access, ready, error } = state;
   const observer = useRef<SupabaseAccessObserver | null>(null);
 
   useEffect(() => {
     const subscription = observeSupabaseAccess(supabase, setState);
     observer.current = subscription;
-    return () => { subscription.unsubscribe(); observer.current = null; };
+    return () => {
+      subscription.unsubscribe();
+      observer.current = null;
+    };
   }, []);
 
   const value = useMemo<Who>(() => {
@@ -68,7 +80,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       isCeo: access?.isCeo ?? false,
       ready,
       error,
-      refreshAccess: async () => { await observer.current?.refresh(); },
+      refreshAccess: async () => {
+        await observer.current?.refresh();
+      },
       signOut: async () => {
         const { error: signOutError } = await supabase.auth.signOut();
         if (signOutError) throw signOutError;

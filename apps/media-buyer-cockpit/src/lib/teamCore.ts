@@ -320,13 +320,21 @@ export function planSeriesChange(
 
 /** Do not split or notify an unchanged part of a multi-day series. */
 export function seriesUnchanged(
-  now: { start_time: string | null; minutes: number | null; weekdays: number[] | null },
+  now: {
+    start_time: string | null;
+    minutes: number | null;
+    weekdays: number[] | null;
+  },
   change: { weekdays: number[]; startTime: string; minutes: number },
 ): boolean {
   if (!now.start_time || now.minutes === null) return false;
-  const days = (d: number[] | null) => [...new Set(d ?? [])].sort((a, b) => a - b).join(",");
-  return hhmm(now.start_time) === hhmm(change.startTime) &&
-    now.minutes === change.minutes && days(now.weekdays) === days(change.weekdays);
+  const days = (d: number[] | null) =>
+    [...new Set(d ?? [])].sort((a, b) => a - b).join(",");
+  return (
+    hhmm(now.start_time) === hhmm(change.startTime) &&
+    now.minutes === change.minutes &&
+    days(now.weekdays) === days(change.weekdays)
+  );
 }
 
 /** Ending before the first sitting cancels it rather than retaining DTSTART. */

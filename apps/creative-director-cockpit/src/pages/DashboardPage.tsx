@@ -1,7 +1,30 @@
-import { AlertTriangle, ArrowUpRight, CalendarDays, Check, ChevronRight, Circle, Dna, Film, ListChecks, MessageSquare, Minus, MoonStar, PenLine, Rocket, Send, Trophy, Users } from "lucide-react";
-import { useState } from "react";
-import { Link } from "react-router";
-import { CreativePreview, stillPropsFor, useLocalStills } from "@/components/CreativePreview";
+import {
+  AlertTriangle,
+  ArrowUpRight,
+  CalendarDays,
+  Check,
+  ChevronRight,
+  Circle,
+  Dna,
+  Film,
+  ListChecks,
+  MessageSquare,
+  Minus,
+  MoonStar,
+  PenLine,
+  Rocket,
+  Send,
+  Trophy,
+  Users,
+} from "lucide-react";
+import { useEffect, useState } from "react";
+import { Link, useLocation } from "react-router";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
+import {
+  CreativePreview,
+  stillPropsFor,
+  useLocalStills,
+} from "@/components/CreativePreview";
 import { PageHeader } from "@/components/PageHeader";
 import { TemplateCard } from "@/components/TemplateCard";
 import { AnimatedSelect } from "@/components/ui/animated-select";
@@ -11,7 +34,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { WhatsAppDesk } from "@/components/WhatsAppDesk";
 import { CopyButton } from "@/components/WinningAds";
 import { fill, TEMPLATES } from "@/lib/creativeTemplates";
-import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { useCreativeSnapshot } from "@/lib/useCreativeSnapshot";
 import { ScriptingCalendar } from "./CalendarPage";
 
@@ -119,47 +141,56 @@ function DotChip({
   );
 }
 
-type View = "sod" | "work" | "touch" | "eod" | "works" | "clients";
+type View = "sod" | "eod";
 
 const TITLES: Record<View, { title: string; sub?: string }> = {
-  // Start of day's line under the title is the day's counts, set below.
-  sod: { title: "Start of day" },
-  work: {
-    title: "Middle of the day",
-    sub: "Brand DNA, scripts, the video pipeline and the calendar",
-  },
-  touch: {
-    title: "Client touchpoints",
-    sub: "One proactive message per client, drafted from what changed, with the SOP templates on the row",
-  },
-  clients: {
-    title: "Clients",
-    sub: "The creative picture for one client, end to end",
-  },
-  works: {
-    title: "What works",
-    sub: "What to make more of, and what is burning out",
-  },
+  // Today's line under the title is the day's counts, set below.
+  sod: { title: "Today" },
   eod: {
     title: "End of day",
     sub: "Your EOD report, already written from today's work",
   },
 };
 
+/** Today's parts, one tap away on a long page. */
+const PARTS = [
+  { id: "morning", label: "Morning" },
+  { id: "scripting", label: "Scripting" },
+  { id: "videos", label: "Videos" },
+  { id: "touchpoints", label: "Touchpoints" },
+];
+
+/**
+ * Today: the day in order on one page (the simplification audit, approved by
+ * Aziz on 2026-10-06). The morning, then scripting and the videos, then the
+ * client touchpoints: what were Start of day, Middle of the day and Client
+ * touchpoints. Their old addresses land on their part of it.
+ */
 export function DashboardPage() {
   return <Creative view="sod" />;
 }
-export function WorkPage() {
-  return <Creative view="work" />;
-}
-export function TouchpointsPage() {
-  return <Creative view="touch" />;
-}
-export function ClientsPage() {
-  return <Creative view="clients" />;
-}
 export function CreativeEodPage() {
   return <Creative view="eod" />;
+}
+
+/**
+ * Every client, worst first, each opening onto their onboarding, numbers,
+ * touchpoints and work. The Clients page's second view (it was /profiles,
+ * which nothing linked to).
+ */
+export function ClientProfilesView() {
+  const auth = useCockpitAuth();
+  const { snap, error } = useCreativeSnapshot(auth.client, auth.clients);
+  if (error)
+    return (
+      <p role="alert" className="text-sm">
+        Could not load clients: {error.message}. Reload to try again.
+      </p>
+    );
+  if (snap === undefined) {
+    return <p className="text-sm text-muted-foreground">Loading…</p>;
+  }
+  return <ClientProfiles rows={snap.clients} />;
 }
 
 /**
@@ -167,7 +198,12 @@ export function CreativeEodPage() {
  * you never work off a board that quietly stopped updating. [aziz, 2026-09-07]
  */
 function SyncHealth() {
-  return <p role="status" className="text-sm text-muted-foreground">Feed freshness is not verified yet. Check the source before using these figures.</p>;
+  return (
+    <p role="status" className="text-sm text-muted-foreground">
+      Feed freshness is not verified yet. Check the source before using these
+      figures.
+    </p>
+  );
 }
 
 function Creative({ view }: { view: View }) {
@@ -175,8 +211,45 @@ function Creative({ view }: { view: View }) {
   const sb = useCreativeSnapshot(auth.client, auth.clients);
   const snap = sb.snap;
   const [showAllBrand, setShowAllBrand] = useState(false);
+  const [calendarReady, setCalendarReady] = useState(false);
+  const { hash } = useLocation();
 
-  if (sb.error) return <p role="alert" className="p-6 text-sm">Could not load your cockpit: {sb.error.message}. Reload to try again.</p>;
+  // Wait for the embedded native calendar and queue before following a hash.
+  const ready = snap !== undefined && (view !== "sod" || calendarReady);
+  useEffect(() => {
+    if (view !== "sod" || !hash || !ready) return;
+    const part = document.getElementById(hash.slice(1));
+    if (!part) return;
+    part.scrollIntoView({ block: "start" });
+    // Anything still arriving above it would push it down again: keep it
+    // in place for a few seconds, until the person scrolls themselves.
+    let theirs = false;
+    const mine = () => {
+      theirs = true;
+    };
+    window.addEventListener("wheel", mine, { passive: true });
+    window.addEventListener("touchstart", mine, { passive: true });
+    window.addEventListener("keydown", mine);
+    const follow = new ResizeObserver(() => {
+      if (!theirs) part.scrollIntoView({ block: "start" });
+    });
+    follow.observe(document.body);
+    const stop = setTimeout(() => follow.disconnect(), 4000);
+    return () => {
+      clearTimeout(stop);
+      follow.disconnect();
+      window.removeEventListener("wheel", mine);
+      window.removeEventListener("touchstart", mine);
+      window.removeEventListener("keydown", mine);
+    };
+  }, [view, hash, ready]);
+
+  if (sb.error)
+    return (
+      <p role="alert" className="p-6 text-sm">
+        Could not load your cockpit: {sb.error.message}. Reload to try again.
+      </p>
+    );
   if (snap === undefined) {
     return (
       <div className="mx-auto w-full max-w-6xl text-sm text-muted-foreground">
@@ -193,8 +266,8 @@ function Creative({ view }: { view: View }) {
   );
   const brandShown = showAllBrand ? snap.brandDNA : brandOpen.slice(0, 8);
 
-  // The day's counts belong to Start of day; the other screens say what
-  // they are for instead.
+  // The day's counts belong to Today; the other screens say what they are
+  // for instead.
   const sub =
     view === "sod"
       ? `${c.brandDNA} brand DNA missing · ${c.scripts} scripts open · ${c.overdueVideos} video${c.overdueVideos === 1 ? "" : "s"} late`
@@ -207,453 +280,492 @@ function Creative({ view }: { view: View }) {
         sub={sub}
         actions={
           view === "sod" ? (
-            // Sending a cut out has its own page; Start of day links to it
-            // rather than carrying a second copy of the form.
-            <Button asChild size="sm" variant="outline">
-              <Link to="/review">
-                <Send />
-                Send for review
-              </Link>
-            </Button>
+            // Sending a cut out, the calendar and the EOD have their own
+            // pages; Today links to them rather than carrying second copies.
+            <>
+              <Button asChild size="sm" variant="outline">
+                <Link to="/review">
+                  <Send />
+                  Send for review
+                </Link>
+              </Button>
+              <Button asChild size="sm" variant="outline">
+                <Link to="/meetings">
+                  <CalendarDays />
+                  Meetings
+                </Link>
+              </Button>
+              <Button asChild size="sm" variant="outline">
+                <Link to="/eod">
+                  <MoonStar />
+                  End of day
+                </Link>
+              </Button>
+            </>
           ) : undefined
         }
       />
 
+      {view === "sod" ? (
+        <nav aria-label="On this page" className="-mt-2 flex flex-wrap gap-1.5">
+          {PARTS.map(p => (
+            <a
+              key={p.id}
+              href={`#${p.id}`}
+              className="rounded-full border px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
+            >
+              {p.label}
+            </a>
+          ))}
+        </nav>
+      ) : null}
+
       <SyncHealth />
 
-      {/* 1. What is late right now: the most expensive thing on the screen. */}
-      {view === "sod" &&
-        (c.overdueVideos > 0 || snap.overduePosts.length > 0) && (
-          <Section
-            icon={AlertTriangle}
-            title="Late and blocking a client"
-            sub="Deal with these first"
-            flush
-          >
-            <ul className="divide-y">
-              {snap.videoJobs
-                .filter((j: Any) => j.overdueDays > 0)
-                .map((j: Any) => (
-                  <li key={j.taskId}>
-                    <a
-                      href={j.url ?? "#"}
-                      target="_blank"
-                      rel="noreferrer"
-                      className={`${ROW} flex items-center gap-3 hover:bg-muted/40`}
-                    >
-                      <span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1">
-                        <StatusChip icon={Film} tone="txt-bad">
-                          {j.overdueDays}d late
-                        </StatusChip>
-                        <span className="min-w-0 flex-1 truncate font-medium">
-                          {j.unidentified ? (
-                            <span className="italic text-muted-foreground">
-                              Untitled video request, no client on the task
+      {view === "sod" && (
+        <>
+          {/* The morning: what is late, what clients said, the checks. */}
+          <div id="morning" className="scroll-mt-20 space-y-6">
+            {/* What is late right now: the most expensive thing on the screen. */}
+            {(c.overdueVideos > 0 || snap.overduePosts.length > 0) && (
+              <Section
+                icon={AlertTriangle}
+                title="Late and blocking a client"
+                sub="Deal with these first"
+                flush
+              >
+                <ul className="divide-y">
+                  {snap.videoJobs
+                    .filter((j: Any) => j.overdueDays > 0)
+                    .map((j: Any) => (
+                      <li key={j.taskId}>
+                        <a
+                          href={j.url ?? "#"}
+                          target="_blank"
+                          rel="noreferrer"
+                          className={`${ROW} flex items-center gap-3 hover:bg-muted/40`}
+                        >
+                          <span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1">
+                            <StatusChip icon={Film} tone="txt-bad">
+                              {j.overdueDays}d late
+                            </StatusChip>
+                            <span className="min-w-0 flex-1 truncate font-medium">
+                              {j.unidentified ? (
+                                <span className="italic text-muted-foreground">
+                                  Untitled video request, no client on the task
+                                </span>
+                              ) : (
+                                j.name
+                              )}
                             </span>
-                          ) : (
-                            j.name
+                            <span className="basis-full text-xs text-muted-foreground sm:basis-auto">
+                              {j.status} ·{" "}
+                              {j.editors.join(", ") || "unassigned"}
+                            </span>
+                          </span>
+                          <ArrowUpRight className="size-3.5 shrink-0 text-muted-foreground" />
+                        </a>
+                      </li>
+                    ))}
+                  {snap.overduePosts.slice(0, 4).map((p: Any) => (
+                    <li key={p.taskId}>
+                      <a
+                        href={p.url ?? "#"}
+                        target="_blank"
+                        rel="noreferrer"
+                        className={`${ROW} flex items-center gap-3 hover:bg-muted/40`}
+                      >
+                        <span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1">
+                          <StatusChip icon={CalendarDays} tone="txt-warn">
+                            {p.lateDays}d late
+                          </StatusChip>
+                          <span className="min-w-0 flex-1 truncate font-medium">
+                            {p.name}
+                          </span>
+                          <span className="basis-full text-xs text-muted-foreground sm:basis-auto">
+                            {p.client ?? "No client"}
+                          </span>
+                        </span>
+                        <ArrowUpRight className="size-3.5 shrink-0 text-muted-foreground" />
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+                {snap.overduePosts.length > 4 && (
+                  <p
+                    className={`${ROW} border-t text-xs text-muted-foreground`}
+                  >
+                    {snap.overduePosts.length - 4} more unpublished posts past
+                    their date.
+                  </p>
+                )}
+              </Section>
+            )}
+            {/* What clients said on WhatsApp, with the reply already drafted. */}
+            <WhatsAppDesk desk="creative" />
+            <Checklist
+              phase="sod"
+              checks={snap.checks}
+              onToggle={auth.client ? sb.toggleCheck : undefined}
+            />
+          </div>
+
+          {/* The middle of the day is scripting, so the sweep and the calendar
+              lead it and everything you write from sits below. [aziz, 2026-09-08] */}
+          <div id="scripting" className="scroll-mt-20 space-y-6">
+            <Checklist
+              phase="mid"
+              checks={snap.checks}
+              onToggle={auth.client ? sb.toggleCheck : undefined}
+            />
+            <ScriptingCalendar compact onReadyChange={setCalendarReady} />
+            {/* Brand DNA. Mostly already written, so the board rows are noise. */}
+            <Section
+              icon={Dna}
+              title="Brand DNA board rows"
+              sub="The doc is what counts, not the task. Rows marked done are already written and can be closed"
+              flush
+            >
+              {brandShown.length === 0 ? (
+                <p className={`${ROW} text-muted-foreground`}>
+                  Every client has a Brand DNA doc on file.
+                </p>
+              ) : (
+                <ul className="divide-y">
+                  {brandShown.map((b: Any) => (
+                    <li key={b.taskId}>
+                      <a
+                        href={b.url ?? "#"}
+                        target="_blank"
+                        rel="noreferrer"
+                        className={`${ROW} flex items-center gap-3 hover:bg-muted/40`}
+                      >
+                        <span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1">
+                          <span className="min-w-0 truncate font-medium">
+                            {b.client}
+                          </span>
+                          {b.docOnFile && (
+                            <DotChip color="var(--success)">
+                              Doc on file
+                              {b.matchedTo && b.matchedTo !== b.client
+                                ? ` under "${b.matchedTo}"`
+                                : ""}
+                              , close the task
+                            </DotChip>
+                          )}
+                          {b.duplicate && (
+                            <DotChip color="var(--warning)">
+                              Duplicate task
+                            </DotChip>
+                          )}
+                          <span
+                            className={`basis-full text-xs sm:ml-auto sm:basis-auto ${
+                              !b.docOnFile && b.ageDays >= 21
+                                ? "txt-bad font-semibold"
+                                : "text-muted-foreground"
+                            }`}
+                          >
+                            {b.docOnFile
+                              ? `Open ${b.ageDays}d`
+                              : `Waiting ${b.ageDays}d`}
+                          </span>
+                        </span>
+                        <ArrowUpRight className="size-3.5 shrink-0 text-muted-foreground" />
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {snap.brandDNA.length > brandShown.length || showAllBrand ? (
+                <div className="border-t px-2 py-1.5 sm:px-4">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setShowAllBrand(!showAllBrand)}
+                  >
+                    {showAllBrand
+                      ? "Show fewer"
+                      : `Show all ${snap.brandDNA.length}`}
+                  </Button>
+                </div>
+              ) : null}
+            </Section>
+            {/* Onboarding: the one parent task per client. Aziz, 2026-09-10:
+                "just the main task, not the subtasks below it." */}
+            {snap.journeys.length > 0 && (
+              <Section
+                icon={Rocket}
+                title="Clients in creative onboarding"
+                sub="One task per client, open it in ClickUp for the steps"
+                flush
+              >
+                <ul className="divide-y">
+                  {snap.journeys.map((j: Any) => (
+                    <li key={j.taskId}>
+                      <a
+                        href={j.url ?? "#"}
+                        target="_blank"
+                        rel="noreferrer"
+                        className={`${ROW} flex items-center gap-3 hover:bg-muted/40`}
+                      >
+                        <span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1">
+                          <span className="min-w-0 flex-1 truncate font-medium">
+                            {j.client}
+                          </span>
+                          <span className="basis-full text-xs text-muted-foreground sm:basis-auto">
+                            {j.status} · day {j.ageDays}
+                          </span>
+                        </span>
+                        <ArrowUpRight className="size-3.5 shrink-0 text-muted-foreground" />
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              </Section>
+            )}
+            <Section
+              icon={PenLine}
+              title="Script requests"
+              sub={`${snap.staleScripts} sitting 3+ days`}
+              flush
+            >
+              {snap.scripts.length === 0 ? (
+                <p className={`${ROW} text-muted-foreground`}>
+                  No script request is open.
+                </p>
+              ) : (
+                <ul className="divide-y">
+                  {snap.scripts.slice(0, 8).map((s: Any) => (
+                    <li key={s.taskId}>
+                      <a
+                        href={s.url ?? "#"}
+                        target="_blank"
+                        rel="noreferrer"
+                        className={`${ROW} flex items-center gap-3 hover:bg-muted/40`}
+                      >
+                        <span className="min-w-0 flex-1">
+                          <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                            <span className="min-w-0 flex-1 truncate font-medium">
+                              {s.client ?? (
+                                <span className="italic text-muted-foreground">
+                                  No client on this task
+                                </span>
+                              )}
+                            </span>
+                            <span
+                              className={`basis-full text-xs sm:basis-auto ${
+                                s.ageDays >= 7
+                                  ? "txt-bad font-semibold"
+                                  : "text-muted-foreground"
+                              }`}
+                            >
+                              {s.ageDays}d old · {s.status}
+                            </span>
+                          </span>
+                          {s.notes && (
+                            <span className="mt-0.5 line-clamp-1 block text-xs text-muted-foreground">
+                              {s.notes}
+                            </span>
                           )}
                         </span>
-                        <span className="basis-full text-xs text-muted-foreground sm:basis-auto">
-                          {j.status} · {j.editors.join(", ") || "unassigned"}
-                        </span>
-                      </span>
-                      <ArrowUpRight className="size-3.5 shrink-0 text-muted-foreground" />
-                    </a>
-                  </li>
-                ))}
-              {snap.overduePosts.slice(0, 4).map((p: Any) => (
-                <li key={p.taskId}>
-                  <a
-                    href={p.url ?? "#"}
-                    target="_blank"
-                    rel="noreferrer"
-                    className={`${ROW} flex items-center gap-3 hover:bg-muted/40`}
-                  >
-                    <span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1">
-                      <StatusChip icon={CalendarDays} tone="txt-warn">
-                        {p.lateDays}d late
-                      </StatusChip>
+                        <ArrowUpRight className="size-3.5 shrink-0 text-muted-foreground" />
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </Section>
+          </div>
+
+          {/* The videos: the pipeline, then who owes what. */}
+          <div id="videos" className="scroll-mt-20 space-y-6">
+            <VideoPipeline snap={snap} />
+            <Section icon={Film} title="Editors" sub="Who owes what" flush>
+              {snap.editors.length === 0 ? (
+                <p className={`${ROW} text-muted-foreground`}>
+                  Nothing open in the video pipeline.
+                </p>
+              ) : (
+                <ul className="divide-y">
+                  {snap.editors.map((e: Any) => (
+                    <li
+                      key={e.editor}
+                      className={`${ROW} flex flex-wrap items-center gap-x-3 gap-y-1`}
+                    >
                       <span className="min-w-0 flex-1 truncate font-medium">
-                        {p.name}
+                        {e.editor}
                       </span>
-                      <span className="basis-full text-xs text-muted-foreground sm:basis-auto">
-                        {p.client ?? "No client"}
+                      <span className="text-xs text-muted-foreground">
+                        {e.open} open
+                        {e.overdue > 0 && (
+                          <span className="txt-bad ml-1.5 font-semibold">
+                            {e.overdue} late
+                          </span>
+                        )}
+                        <span className="ml-1.5">· next {days(e.nextDue)}</span>
                       </span>
-                    </span>
-                    <ArrowUpRight className="size-3.5 shrink-0 text-muted-foreground" />
-                  </a>
-                </li>
-              ))}
-            </ul>
-            {snap.overduePosts.length > 4 && (
-              <p className={`${ROW} border-t text-xs text-muted-foreground`}>
-                {snap.overduePosts.length - 4} more unpublished posts past their
-                date.
-              </p>
-            )}
-          </Section>
-        )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </Section>
+            {/* Posts are planned on Social, the one calendar since 2026-09-23.
+                The ClickUp content list speaks here only when it holds posts
+                and a client has nothing scheduled. [audit, 2026-10-06] */}
+            {(snap.plannedAhead > 0 || snap.overduePosts.length > 0) &&
+              snap.uncovered.length > 0 && (
+                <Section
+                  icon={CalendarDays}
+                  title="Social calendar"
+                  sub={`${snap.plannedAhead} posts scheduled ahead on ClickUp`}
+                >
+                  <div className="callout-warn rounded-xl p-3 text-sm">
+                    <strong className="font-semibold">
+                      {snap.uncovered.length} client
+                      {snap.uncovered.length === 1 ? "" : "s"} with nothing
+                      scheduled from today:
+                    </strong>{" "}
+                    {snap.uncovered.map((u: Any) => u.client).join(", ")}. A
+                    paying social client with an empty calendar is a churn risk
+                    before they ever complain.
+                  </div>
+                </Section>
+              )}
+          </div>
 
-      {/* What clients said on WhatsApp, with the reply already drafted. */}
-      {view === "sod" && <WhatsAppDesk desk="creative" />}
-
-      {(view === "sod" || view === "work") && (
-        <Checklist
-          phase={view === "sod" ? "sod" : "mid"}
-          checks={snap.checks}
-          onToggle={auth.client ? (sb.toggleCheck as any) : undefined}
-        />
-      )}
-      {view === "touch" && (
-        <>
-          <Section
-            icon={MessageSquare}
-            title="The rule"
-            sub="Creative director floor, lighter than the CSM's"
-          >
-            <p className="text-sm">
-              <strong className="font-semibold">
-                1 to 2 messages a week in the client's group per active client.
-              </strong>{" "}
-              A touchpoint gives them something, a script going out, a video to
-              review, a creative refresh, an answer. "Just checking in" does not
-              count, and a real concern gets a call, not a text.
-            </p>
-            <a
-              href="https://docs.google.com/document/d/10wQorQfSebiX3Lmh0jXkEUkp3I_xMP68p4b1q-oUxcY/edit"
-              target="_blank"
-              rel="noreferrer"
-              className="mt-2 inline-flex items-center gap-1 text-sm text-primary hover:underline"
+          {/* Who is owed a message, with the SOP templates on the row. */}
+          <div id="touchpoints" className="scroll-mt-20 space-y-6">
+            <Section
+              icon={MessageSquare}
+              title="The rule"
+              sub="Creative director floor, lighter than the CSM's"
             >
-              Open the client communication SOP
-              <ArrowUpRight className="size-3.5" />
-            </a>
-          </Section>
-          <Touchpoints
-            rows={snap.touchpoints}
-            onLogTouch={auth.client ? (sb.logTouch as any) : undefined}
-          />
-          <AllTemplates roster={snap.clients} />
+              <p className="text-sm">
+                <strong className="font-semibold">
+                  1 to 2 messages a week in the client's group per active
+                  client.
+                </strong>{" "}
+                A touchpoint gives them something, a script going out, a video
+                to review, a creative refresh, an answer. "Just checking in"
+                does not count, and a real concern gets a call, not a text.
+              </p>
+              <a
+                href="https://docs.google.com/document/d/10wQorQfSebiX3Lmh0jXkEUkp3I_xMP68p4b1q-oUxcY/edit"
+                target="_blank"
+                rel="noreferrer"
+                className="mt-2 inline-flex items-center gap-1 text-sm text-primary hover:underline"
+              >
+                Open the client communication SOP
+                <ArrowUpRight className="size-3.5" />
+              </a>
+            </Section>
+            <Touchpoints
+              rows={snap.touchpoints}
+              onLogTouch={auth.client ? sb.logTouch : undefined}
+            />
+            <AllTemplates roster={snap.clients} />
+          </div>
         </>
       )}
-      {view === "clients" && <ClientProfiles rows={snap.clients} />}
       {view === "eod" && (
         <EndOfDay
           key={`${snap.eodOwner}:${snap.eodDay}`}
           snap={snap}
-          onSave={auth.client ? (sb.saveEod as any) : undefined}
-          onAddItem={auth.client ? (sb.addPlanItem as any) : undefined}
-          onRemoveItem={auth.client ? (sb.removePlanItem as any) : undefined}
+          onSave={auth.client ? sb.saveEod : undefined}
+          onAddItem={auth.client ? sb.addPlanItem : undefined}
+          onRemoveItem={auth.client ? sb.removePlanItem : undefined}
         />
       )}
-
-      {/* 2. Brand DNA. Mostly already written, so the board rows are noise. */}
-      {view === "work" && (
-        <>
-          {/* The middle of the day is scripting, so the calendar leads it and
-              everything you write from sits one line below. [aziz, 2026-09-08] */}
-          <ScriptingCalendar compact />
-          <Section
-            icon={Dna}
-            title="Brand DNA board rows"
-            sub="The doc is what counts, not the task. Rows marked done are already written and can be closed"
-            flush
-          >
-            {brandShown.length === 0 ? (
-              <p className={`${ROW} text-muted-foreground`}>
-                Every client has a Brand DNA doc on file.
-              </p>
-            ) : (
-              <ul className="divide-y">
-                {brandShown.map((b: Any) => (
-                  <li key={b.taskId}>
-                    <a
-                      href={b.url ?? "#"}
-                      target="_blank"
-                      rel="noreferrer"
-                      className={`${ROW} flex items-center gap-3 hover:bg-muted/40`}
-                    >
-                      <span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1">
-                        <span className="min-w-0 truncate font-medium">
-                          {b.client}
-                        </span>
-                        {b.docOnFile && (
-                          <DotChip color="var(--success)">
-                            Doc on file
-                            {b.matchedTo && b.matchedTo !== b.client
-                              ? ` under "${b.matchedTo}"`
-                              : ""}
-                            , close the task
-                          </DotChip>
-                        )}
-                        {b.duplicate && (
-                          <DotChip color="var(--warning)">
-                            Duplicate task
-                          </DotChip>
-                        )}
-                        <span
-                          className={`basis-full text-xs sm:ml-auto sm:basis-auto ${
-                            !b.docOnFile && b.ageDays >= 21
-                              ? "txt-bad font-semibold"
-                              : "text-muted-foreground"
-                          }`}
-                        >
-                          {b.docOnFile
-                            ? `Open ${b.ageDays}d`
-                            : `Waiting ${b.ageDays}d`}
-                        </span>
-                      </span>
-                      <ArrowUpRight className="size-3.5 shrink-0 text-muted-foreground" />
-                    </a>
-                  </li>
-                ))}
-              </ul>
-            )}
-            {snap.brandDNA.length > brandShown.length || showAllBrand ? (
-              <div className="border-t px-2 py-1.5 sm:px-4">
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => setShowAllBrand(!showAllBrand)}
-                >
-                  {showAllBrand
-                    ? "Show fewer"
-                    : `Show all ${snap.brandDNA.length}`}
-                </Button>
-              </div>
-            ) : null}
-          </Section>
-        </>
-      )}
-
-      {/* 3. Onboarding: the one parent task per client. Aziz, 2026-09-10:
-          "just the main task, not the subtasks below it." */}
-      {view === "work" && snap.journeys.length > 0 && (
-        <Section
-          icon={Rocket}
-          title="Clients in creative onboarding"
-          sub="One task per client, open it in ClickUp for the steps"
-          flush
-        >
-          <ul className="divide-y">
-            {snap.journeys.map((j: Any) => (
-              <li key={j.taskId}>
-                <a
-                  href={j.url ?? "#"}
-                  target="_blank"
-                  rel="noreferrer"
-                  className={`${ROW} flex items-center gap-3 hover:bg-muted/40`}
-                >
-                  <span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1">
-                    <span className="min-w-0 flex-1 truncate font-medium">
-                      {j.client}
-                    </span>
-                    <span className="basis-full text-xs text-muted-foreground sm:basis-auto">
-                      {j.status} · day {j.ageDays}
-                    </span>
-                  </span>
-                  <ArrowUpRight className="size-3.5 shrink-0 text-muted-foreground" />
-                </a>
-              </li>
-            ))}
-          </ul>
-        </Section>
-      )}
-
-      {/* 4. Script requests. */}
-      {view === "work" && (
-        <Section
-          icon={PenLine}
-          title="Script requests"
-          sub={`${snap.staleScripts} sitting 3+ days`}
-          flush
-        >
-          {snap.scripts.length === 0 ? (
-            <p className={`${ROW} text-muted-foreground`}>
-              No script request is open.
-            </p>
-          ) : (
-            <ul className="divide-y">
-              {snap.scripts.slice(0, 8).map((s: Any) => (
-                <li key={s.taskId}>
-                  <a
-                    href={s.url ?? "#"}
-                    target="_blank"
-                    rel="noreferrer"
-                    className={`${ROW} flex items-center gap-3 hover:bg-muted/40`}
-                  >
-                    <span className="min-w-0 flex-1">
-                      <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                        <span className="min-w-0 flex-1 truncate font-medium">
-                          {s.client ?? (
-                            <span className="italic text-muted-foreground">
-                              No client on this task
-                            </span>
-                          )}
-                        </span>
-                        <span
-                          className={`basis-full text-xs sm:basis-auto ${
-                            s.ageDays >= 7
-                              ? "txt-bad font-semibold"
-                              : "text-muted-foreground"
-                          }`}
-                        >
-                          {s.ageDays}d old · {s.status}
-                        </span>
-                      </span>
-                      {s.notes && (
-                        <span className="mt-0.5 line-clamp-1 block text-xs text-muted-foreground">
-                          {s.notes}
-                        </span>
-                      )}
-                    </span>
-                    <ArrowUpRight className="size-3.5 shrink-0 text-muted-foreground" />
-                  </a>
-                </li>
-              ))}
-            </ul>
-          )}
-        </Section>
-      )}
-
-      {view === "work" && <VideoPipeline snap={snap} />}
-
-      {/* 5. Editors. */}
-      {view === "work" && (
-        <Section icon={Film} title="Editors" sub="Who owes what" flush>
-          {snap.editors.length === 0 ? (
-            <p className={`${ROW} text-muted-foreground`}>
-              Nothing open in the video pipeline.
-            </p>
-          ) : (
-            <ul className="divide-y">
-              {snap.editors.map((e: Any) => (
-                <li
-                  key={e.editor}
-                  className={`${ROW} flex flex-wrap items-center gap-x-3 gap-y-1`}
-                >
-                  <span className="min-w-0 flex-1 truncate font-medium">
-                    {e.editor}
-                  </span>
-                  <span className="text-xs text-muted-foreground">
-                    {e.open} open
-                    {e.overdue > 0 && (
-                      <span className="txt-bad ml-1.5 font-semibold">
-                        {e.overdue} late
-                      </span>
-                    )}
-                    <span className="ml-1.5">· next {days(e.nextDue)}</span>
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </Section>
-      )}
-
-      {/* 6. Social coverage. */}
-      {view === "work" && (
-        <Section
-          icon={CalendarDays}
-          title="Social calendar"
-          sub={`${snap.plannedAhead} posts scheduled ahead`}
-        >
-          {/* The ClickUp content list holds no real posts yet, so an
-              "everyone is uncovered" warning would be noise, not signal.
-              [aziz, 2026-09-08] */}
-          {snap.plannedAhead === 0 && snap.overduePosts.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              Nothing is on the content calendar list in ClickUp yet, so there
-              is nothing to show. Social posts appear here the moment real ones
-              are added to the board.
-            </p>
-          ) : snap.uncovered.length > 0 ? (
-            <div className="callout-warn rounded-xl p-3 text-sm">
-              <strong className="font-semibold">
-                {snap.uncovered.length} client
-                {snap.uncovered.length === 1 ? "" : "s"} with nothing scheduled
-                from today:
-              </strong>{" "}
-              {snap.uncovered.map((u: Any) => u.client).join(", ")}. A paying
-              social client with an empty calendar is a churn risk before they
-              ever complain.
-            </div>
-          ) : (
-            <p className="text-sm text-muted-foreground">
-              Every client on the calendar has upcoming posts.
-            </p>
-          )}
-        </Section>
-      )}
-
-      {/* 7. What the numbers say. */}
-      {view === "works" && (
-        <Section
-          icon={Trophy}
-          title="What to make more of"
-          sub="From the live ad accounts"
-        >
-          <div className="grid gap-6 md:grid-cols-2">
-            <div>
-              <h3 className={`mb-2 ${KICKER}`}>Winning creatives</h3>
-              {snap.winners.length === 0 ? (
-                <p className="text-sm text-muted-foreground">
-                  No ad has enough spend yet to call a winner.
-                </p>
-              ) : (
-                <ul className="divide-y rounded-xl bg-muted/40">
-                  {snap.winners.map((w: Any, i: Any) => (
-                    <li key={i} className="px-3 py-2.5 text-sm">
-                      <div className="font-medium">{w.client}</div>
-                      <div className="text-xs text-muted-foreground">
-                        {w.adName} · {money(w.cpl)} CPL · {w.leads} leads
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-
-            <div>
-              <h3 className={`mb-2 ${KICKER}`}>Frequency watch</h3>
-              {!snap.anyBurning && (
-                <p className="mb-2 text-sm text-muted-foreground">
-                  Nothing is fatiguing: the highest frequency in the accounts is{" "}
-                  {snap.fatiguing[0]?.frequency.toFixed(1) ?? "n/a"}, well under
-                  the {snap.fatigueGate} gate. No replacements needed today.
-                </p>
-              )}
-              {snap.fatiguing.length > 0 && (
-                <ul className="divide-y rounded-xl bg-muted/40">
-                  {snap.fatiguing.slice(0, 5).map((f: Any, i: Any) => (
-                    <li key={i} className="px-3 py-2.5 text-sm">
-                      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-                        <span className="inline-flex min-w-0 items-center gap-1.5 font-medium">
-                          {f.burning && (
-                            <AlertTriangle
-                              className="size-3.5 shrink-0 txt-bad"
-                              aria-label="Burning out"
-                            />
-                          )}
-                          <span className="truncate">{f.client}</span>
-                        </span>
-                        <span className="text-xs text-muted-foreground tabular-nums">
-                          freq {f.frequency.toFixed(2)}
-                        </span>
-                      </div>
-                      <div className="text-xs text-muted-foreground">
-                        {f.adName}
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          </div>
-        </Section>
-      )}
     </div>
+  );
+}
+
+/**
+ * What the live ad accounts say to make more of, and what is burning out.
+ * It was a view no address opened; it sits on What works now, where the
+ * midday sweep's "Replace the creatives that are burning out" points (Aziz
+ * left the call to Claude, 2026-10-06).
+ */
+export function WhatToMakeMoreOf() {
+  const auth = useCockpitAuth();
+  const { snap, error } = useCreativeSnapshot(auth.client, auth.clients);
+  if (error)
+    return (
+      <p role="alert" className="text-sm">
+        Could not load creative performance: {error.message}. Reload to try
+        again.
+      </p>
+    );
+  if (snap === undefined)
+    return (
+      <p role="status" className="text-sm text-muted-foreground">
+        Loading creative performance…
+      </p>
+    );
+  return (
+    <Section
+      icon={Trophy}
+      title="What to make more of"
+      sub="From the live ad accounts"
+    >
+      <div className="grid gap-6 md:grid-cols-2">
+        <div>
+          <h3 className={`mb-2 ${KICKER}`}>Winning creatives</h3>
+          {snap.winners.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              No ad has enough spend yet to call a winner.
+            </p>
+          ) : (
+            <ul className="divide-y rounded-xl bg-muted/40">
+              {snap.winners.map((w: Any, i: Any) => (
+                <li key={i} className="px-3 py-2.5 text-sm">
+                  <div className="font-medium">{w.client}</div>
+                  <div className="text-xs text-muted-foreground">
+                    {w.adName} · {money(w.cpl)} CPL · {w.leads} leads
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        <div>
+          <h3 className={`mb-2 ${KICKER}`}>Frequency watch</h3>
+          {!snap.anyBurning && (
+            <p className="mb-2 text-sm text-muted-foreground">
+              Nothing is fatiguing: the highest frequency in the accounts is{" "}
+              {snap.fatiguing[0]?.frequency.toFixed(1) ?? "n/a"}, well under the{" "}
+              {snap.fatigueGate} gate. No replacements needed today.
+            </p>
+          )}
+          {snap.fatiguing.length > 0 && (
+            <ul className="divide-y rounded-xl bg-muted/40">
+              {snap.fatiguing.slice(0, 5).map((f: Any, i: Any) => (
+                <li key={i} className="px-3 py-2.5 text-sm">
+                  <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+                    <span className="inline-flex min-w-0 items-center gap-1.5 font-medium">
+                      {f.burning && (
+                        <AlertTriangle
+                          className="size-3.5 shrink-0 txt-bad"
+                          aria-label="Burning out"
+                        />
+                      )}
+                      <span className="truncate">{f.client}</span>
+                    </span>
+                    <span className="text-xs text-muted-foreground tabular-nums">
+                      freq {f.frequency.toFixed(2)}
+                    </span>
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    {f.adName}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
+    </Section>
   );
 }
 
@@ -1101,6 +1213,13 @@ function ClientProfiles({
               </button>
               {isOpen && (
                 <div className="space-y-4 border-t bg-muted/30 px-4 py-4 text-sm sm:px-6">
+                  <Link
+                    to={`/clients/${encodeURIComponent(r.client)}`}
+                    className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline"
+                  >
+                    Open their page
+                    <ChevronRight aria-hidden className="size-3.5" />
+                  </Link>
                   <div className="grid gap-4 sm:grid-cols-3">
                     <Stat label="Creative onboarding">
                       <OnboardingSteps r={r} />
@@ -1316,7 +1435,11 @@ function EndOfDay({
   onAddItem?: (args: any) => Promise<void>;
   onRemoveItem?: (args: any) => Promise<void>;
 }) {
-  const save = onSave ?? (async () => {throw new Error("Sign in before saving your EOD.");});
+  const save =
+    onSave ??
+    (async () => {
+      throw new Error("Sign in before saving your EOD.");
+    });
   const addItem = onAddItem ?? (async () => {});
   const removeItem = onRemoveItem ?? (async () => {});
   const [line, setLine] = useState("");
@@ -1324,7 +1447,7 @@ function EndOfDay({
     snap.eod?.answers ?? {},
   );
   const [saving, setSaving] = useState(false);
-  const [saveError,setSaveError]=useState<string|null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const computed = {
     brandDnaOpen: snap.counts.brandDNA,
@@ -1471,34 +1594,44 @@ function EndOfDay({
             </div>
           ))}
           <div className="flex flex-wrap items-center gap-3">
-          <Button
-            size="sm"
-            className="h-8 text-[12px]"
-            disabled={saving || Boolean(snap.eod?.submittedAt)}
-            onClick={async () => {
-              setSaving(true);
-              setSaveError(null);
-              try {
-                await save({ answers, computed, submit: false });
-              } catch(error) {
-                setSaveError(error instanceof Error?error.message:"Could not save your EOD.");
-              } finally {
-                setSaving(false);
-              }
-            }}
-          >
-            {saving
-              ? "Saving…"
-              : snap.eod
-                ? "Update the draft"
-                : "Save a draft"}
-          </Button>
-          {saveError && <p role="alert" className="text-sm">{saveError}</p>}
-          {snap.eod && (
-            <p className="text-[12px] text-muted-foreground">
-              {snap.eod.submittedAt ? "Submitted" : "Draft saved"} for {snap.eodDay} at {new Date(snap.eod.at).toLocaleTimeString()}. Slack and sheet delivery are not enabled here yet.
-            </p>
-          )}
+            <Button
+              size="sm"
+              className="h-8 text-[12px]"
+              disabled={saving || Boolean(snap.eod?.submittedAt)}
+              onClick={async () => {
+                setSaving(true);
+                setSaveError(null);
+                try {
+                  await save({ answers, computed, submit: false });
+                } catch (error) {
+                  setSaveError(
+                    error instanceof Error
+                      ? error.message
+                      : "Could not save your EOD.",
+                  );
+                } finally {
+                  setSaving(false);
+                }
+              }}
+            >
+              {saving
+                ? "Saving…"
+                : snap.eod
+                  ? "Update the draft"
+                  : "Save a draft"}
+            </Button>
+            {saveError && (
+              <p role="alert" className="text-sm">
+                {saveError}
+              </p>
+            )}
+            {snap.eod && (
+              <p className="text-[12px] text-muted-foreground">
+                {snap.eod.submittedAt ? "Submitted" : "Draft saved"} for{" "}
+                {snap.eodDay} at {new Date(snap.eod.at).toLocaleTimeString()}.
+                Slack and sheet delivery are not enabled here yet.
+              </p>
+            )}
           </div>
         </div>
       </Section>

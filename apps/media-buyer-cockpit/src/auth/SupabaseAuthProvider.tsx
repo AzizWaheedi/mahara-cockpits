@@ -1,21 +1,21 @@
 import type { Session, SupabaseClient } from "@supabase/supabase-js";
 import {
   createContext,
+  type ReactNode,
   useCallback,
   useContext,
   useEffect,
   useMemo,
   useRef,
   useState,
-  type ReactNode,
 } from "react";
 import {
+  cockpitAccessError,
   createCockpitSupabaseClient,
   observeSupabaseAccess,
-  cockpitAccessError,
   type SupabaseAccess,
-  type SupabaseAccessState,
   type SupabaseAccessObserver,
+  type SupabaseAccessState,
 } from "./supabaseAccess";
 
 export interface CockpitAuthState {
@@ -68,7 +68,10 @@ export function getCockpitSupabaseClient(): SupabaseClient {
 
 export function SupabaseAuthProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<SupabaseAccessState>({
-    session: null, access: null, ready: false, error: null,
+    session: null,
+    access: null,
+    ready: false,
+    error: null,
   });
   const { session, access, ready, error } = state;
   const observer = useRef<SupabaseAccessObserver | null>(null);
@@ -77,11 +80,15 @@ export function SupabaseAuthProvider({ children }: { children: ReactNode }) {
     try {
       return getCockpitSupabaseClient();
     } catch (err) {
-      setState({ session: null, access: null, ready: true, error: cockpitAccessError(err) });
+      setState({
+        session: null,
+        access: null,
+        ready: true,
+        error: cockpitAccessError(err),
+      });
       return null;
     }
   }, []);
-
 
   useEffect(() => {
     if (!client) return;

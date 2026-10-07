@@ -5,8 +5,8 @@ import { count, countCompact, shortDate } from "@/components/ceo/format";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatTile } from "@/components/ceo/StatTile";
 import { StatusChip } from "@/components/ceo/StatusChip";
-import type { OrganicPayload } from "@/types/ceo/payloads";
 import { buttonVariants } from "@/components/ui/button";
+import type { OrganicPayload } from "@/types/ceo/payloads";
 import { ContentBusiness } from "./contentBusiness";
 import type { CeoTabProps } from "./types";
 

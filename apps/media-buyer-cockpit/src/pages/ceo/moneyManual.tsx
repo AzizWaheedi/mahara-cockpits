@@ -1,28 +1,68 @@
-import { useMutation } from "@/lib/cockpitApi";
-import { useManualPaymentQuery } from "@/lib/useManualPaymentQuery";
-import type { FunctionReturnType } from "@/lib/cockpitApi";
-import { ConvexError } from "@/lib/cockpitApi";
-import { CopyCheck, HandCoins, RotateCcw, Trash2, TriangleAlert } from "lucide-react";
-import { type FormEvent, type ReactNode, useId, useMemo, useRef, useState } from "react";
+import {
+  CopyCheck,
+  HandCoins,
+  RotateCcw,
+  Trash2,
+  TriangleAlert,
+} from "lucide-react";
+import {
+  type FormEvent,
+  type ReactNode,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { toast } from "sonner";
 import { type Column, DataTable } from "@/components/ceo/DataTable";
 import { EmptyState } from "@/components/ceo/EmptyState";
-import { count, date, dateTime, isNum, money, month, pct, plural, shiftMonth } from "@/components/ceo/format";
+import {
+  count,
+  date,
+  dateTime,
+  isNum,
+  money,
+  month,
+  pct,
+  plural,
+  shiftMonth,
+} from "@/components/ceo/format";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatTile } from "@/components/ceo/StatTile";
 import { StatusChip, type StatusTone } from "@/components/ceo/StatusChip";
 import type { CeoSection } from "@/components/ceo/useCeo";
-import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { DateInput } from "@/components/ui/date-input";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import type { FunctionReturnType, Id } from "@/lib/cockpitApi";
+import { api, ConvexError, useMutation } from "@/lib/cockpitApi";
+import { useManualPaymentQuery } from "@/lib/useManualPaymentQuery";
 import { cn } from "@/lib/utils";
-import { api } from "@/lib/cockpitApi";
-import type { Id } from "@/lib/cockpitApi";
 import type { ManualPaymentRefusal } from "@/types/ceo/manualPayments";
-import type { ManualPaymentRow, ManualRail, MoneyPayload, Note, PossibleDuplicate } from "@/types/ceo/payloads";
+import type {
+  ManualPaymentRow,
+  ManualRail,
+  MoneyPayload,
+  Note,
+  PossibleDuplicate,
+} from "@/types/ceo/payloads";
 
 /**
  * Payments Aziz logs by hand (decision of 2026-09-16): the form, this
@@ -226,9 +266,10 @@ function validate(
 
   if (!d.rail) errors.rail = "Pick how the money arrived.";
   else if (d.rail === "tap" && tapLive !== false)
-    errors.rail = tapLive === true
-      ? "Tap is connected, so Tap payments reach the Tap rail by themselves. Logging one here would count it twice."
-      : "Tap connection status is unavailable. Check it before logging a Tap payment.";
+    errors.rail =
+      tapLive === true
+        ? "Tap is connected, so Tap payments reach the Tap rail by themselves. Logging one here would count it twice."
+        : "Tap connection status is unavailable. Check it before logging a Tap payment.";
 
   let deal: number | null = null;
   if (d.deal.trim()) {
@@ -356,8 +397,12 @@ export function LogPaymentCard({
   recentDeals: RecentDeal[] | null;
   order: number;
 }) {
-  const {data:info,error:infoError} = useManualPaymentQuery(api.ceo.manualPayments.formInfo);
-  const {data:options,error:optionsError} = useManualPaymentQuery(api.ceo.manualPayments.clientOptions);
+  const { data: info, error: infoError } = useManualPaymentQuery(
+    api.ceo.manualPayments.formInfo,
+  );
+  const { data: options, error: optionsError } = useManualPaymentQuery(
+    api.ceo.manualPayments.clientOptions,
+  );
   const requestId = useRef(crypto.randomUUID());
   const add = useMutation(api.ceo.manualPayments.add);
   const base = useId();
@@ -458,9 +503,20 @@ export function LogPaymentCard({
     >
       <form onSubmit={onSubmit} noValidate className="grid gap-5">
         {infoError || optionsError || !info?.historyReady ? (
-          <p role="alert" className="text-sm text-muted-foreground">{infoError || optionsError || (info ? "Existing payment history must be imported and reconciled before this log can accept new entries." : "Loading payment configuration.")}</p>
+          <p role="alert" className="text-sm text-muted-foreground">
+            {infoError ||
+              optionsError ||
+              (info
+                ? "Existing payment history must be imported and reconciled before this log can accept new entries."
+                : "Loading payment configuration.")}
+          </p>
         ) : null}
-        {info?.tapLive === null ? <p className="text-sm text-muted-foreground">Tap connection status is unavailable. Tap entries are blocked until it is checked.</p> : null}
+        {info?.tapLive === null ? (
+          <p className="text-sm text-muted-foreground">
+            Tap connection status is unavailable. Tap entries are blocked until
+            it is checked.
+          </p>
+        ) : null}
         <div className="grid gap-4 @xl:grid-cols-2 @4xl:grid-cols-4">
           <FormField id={id("day")} label="Day received" error={shown.day}>
             <DateInput
@@ -653,7 +709,11 @@ export function LogPaymentCard({
         </div>
 
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-          <Button type="submit" size="sm" disabled={pending || !info?.historyReady}>
+          <Button
+            type="submit"
+            size="sm"
+            disabled={pending || !info?.historyReady}
+          >
             <HandCoins aria-hidden />
             Review and log
           </Button>
@@ -795,7 +855,9 @@ function EntryDialog({
       if (removing) {
         const why = reason.trim();
         await remove(why ? { id, reason: why } : { id });
-        toast.success("Removed from the log. Totals still need reconciliation.");
+        toast.success(
+          "Removed from the log. Totals still need reconciliation.",
+        );
       } else {
         await restore(repeat ? { id, allowRepeat: true } : { id });
         toast.success("Restored to the log. Totals still need reconciliation.");
@@ -945,8 +1007,14 @@ export function ManualEntriesCard({
   const current = payload?.month ?? today.slice(0, 7);
   const [picked, setPicked] = useState<string | null>(null);
   const shownMonth = picked ?? current;
-  const {data:rows,error:rowsError,retry} = useManualPaymentQuery(api.ceo.manualPayments.list, { month: shownMonth });
-  const {data:manualInfo} = useManualPaymentQuery(api.ceo.manualPayments.formInfo);
+  const {
+    data: rows,
+    error: rowsError,
+    retry,
+  } = useManualPaymentQuery(api.ceo.manualPayments.list, { month: shownMonth });
+  const { data: manualInfo } = useManualPaymentQuery(
+    api.ceo.manualPayments.formInfo,
+  );
   const [open, setOpen] = useState<EntryRef | null>(null);
 
   const months = useMemo(() => {
@@ -973,7 +1041,9 @@ export function ManualEntriesCard({
     return out;
   }, [payload]);
   const tapConnected = payload?.rails?.tap.connected ?? false;
-  const hasFlags = payload?.manualEntries !== undefined && manualInfo?.totalsNeedRefresh === false;
+  const hasFlags =
+    payload?.manualEntries !== undefined &&
+    manualInfo?.totalsNeedRefresh === false;
 
   const columns = useMemo<Column<ListRow>[]>(
     () => [
@@ -1101,11 +1171,14 @@ export function ManualEntriesCard({
   const live = (rows ?? []).filter((r: any) => r.deletedAt === null);
   const removedCount = (rows ?? []).length - live.length;
   const monthRow = payload?.monthly.find(m => m.month === shownMonth);
-  const railFigure = manualInfo?.totalsNeedRefresh !== false ? null : computed
-    ? payload?.rails?.manual?.connected
-      ? payload.rails.manual.mtd
-      : null
-    : (monthRow?.manualCash ?? null);
+  const railFigure =
+    manualInfo?.totalsNeedRefresh !== false
+      ? null
+      : computed
+        ? payload?.rails?.manual?.connected
+          ? payload.rails.manual.mtd
+          : null
+        : (monthRow?.manualCash ?? null);
 
   return (
     <SectionCard
@@ -1133,9 +1206,19 @@ export function ManualEntriesCard({
         </Select>
       }
     >
-      {manualInfo?.totalsNeedRefresh ? <p className="mb-3 text-sm text-muted-foreground">This log has not been reconciled with the money totals and duplicate comparisons yet.</p> : null}
+      {manualInfo?.totalsNeedRefresh ? (
+        <p className="mb-3 text-sm text-muted-foreground">
+          This log has not been reconciled with the money totals and duplicate
+          comparisons yet.
+        </p>
+      ) : null}
       {rowsError ? (
-        <p role="alert" className="py-4 text-sm">{rowsError} <button type="button" className="underline" onClick={retry}>Retry</button></p>
+        <p role="alert" className="py-4 text-sm">
+          {rowsError}{" "}
+          <button type="button" className="underline" onClick={retry}>
+            Retry
+          </button>
+        </p>
       ) : rows === undefined ? (
         <p className="py-6 text-center text-xs text-muted-foreground">
           Loading the entries.

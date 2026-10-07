@@ -96,7 +96,8 @@ export const GROUPS: { key: GroupKey; label: string; blurb: string }[] = [
   {
     key: "calls",
     label: "Call centre",
-    blurb: "Client leads into bookings: lead to booking is the main number, then dials and talk time.",
+    blurb:
+      "Client leads into bookings: lead to booking is the main number, then dials and talk time.",
   },
   {
     key: "content",

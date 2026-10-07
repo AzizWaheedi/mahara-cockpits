@@ -1,15 +1,26 @@
-import { useAction } from "@/lib/cockpitApi";
 import { useEffect, useRef, useState } from "react";
 import { type Column, DataTable } from "@/components/ceo/DataTable";
 import { FilterChips } from "@/components/ceo/FilterChips";
-import { count, date, dateTime, decimal, kuwaitDay, pct, seconds } from "@/components/ceo/format";
+import {
+  count,
+  date,
+  dateTime,
+  decimal,
+  kuwaitDay,
+  pct,
+  seconds,
+} from "@/components/ceo/format";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatTile } from "@/components/ceo/StatTile";
-
-import { api } from "@/lib/cockpitApi";
 import { TabLink } from "@/components/ceo/TabLink";
 import { Button } from "@/components/ui/button";
-import { type CallCenterMetrics, type CallCenterReport, callCenterRange, parseCallCenterReport } from "@/types/ceo/callCenterContract";
+import { api, useAction } from "@/lib/cockpitApi";
+import {
+  type CallCenterMetrics,
+  type CallCenterReport,
+  callCenterRange,
+  parseCallCenterReport,
+} from "@/types/ceo/callCenterContract";
 import type { CeoTabProps } from "./types";
 
 const FIELD =

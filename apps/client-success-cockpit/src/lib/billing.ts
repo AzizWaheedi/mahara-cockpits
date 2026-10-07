@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import type { BillingPayload } from "@/components/billing/BillingSheet";
 import {
   type Account,
   accountFrom,
@@ -9,7 +10,6 @@ import {
   type EventRow,
   kuwaitToday,
 } from "./billingCore";
-import type { BillingPayload } from "@/components/billing/BillingSheet";
 
 // biome-ignore lint/suspicious/noExplicitAny: generic billing payload
 type Any = any;
@@ -87,9 +87,7 @@ export async function fetchBillingSheet(
       overdue: {
         count: rows.filter(
           r =>
-            r.ladder.days !== null &&
-            r.ladder.days < 0 &&
-            r.group !== "paused",
+            r.ladder.days !== null && r.ladder.days < 0 && r.group !== "paused",
         ).length,
         usd:
           Math.round(

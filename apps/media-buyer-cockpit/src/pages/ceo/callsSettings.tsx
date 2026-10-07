@@ -1,11 +1,10 @@
-import { useAction } from "@/lib/cockpitApi";
 import { useEffect, useMemo, useState } from "react";
 import { date } from "@/components/ceo/format";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatusChip } from "@/components/ceo/StatusChip";
 import { useRefresh } from "@/components/ceo/useCeo";
+import { api, useAction } from "@/lib/cockpitApi";
 import { cn } from "@/lib/utils";
-import { api } from "@/lib/cockpitApi";
 import type { WorkingHours } from "@/types/ceo/payloads";
 import {
   DAY_NAMES,

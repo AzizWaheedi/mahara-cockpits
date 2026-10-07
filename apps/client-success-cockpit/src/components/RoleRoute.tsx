@@ -28,7 +28,11 @@ export function RoleRoute({ role }: { role: string }) {
         Each role has its own link, and this one is for a different seat. Ask
         your manager for yours.
       </p>
-      {access?.home && <a className="text-sm underline" href={`${portalUrl()}${access.home}`}>Open your cockpit</a>}
+      {access?.home && (
+        <a className="text-sm underline" href={`${portalUrl()}${access.home}`}>
+          Open your cockpit
+        </a>
+      )}
     </div>
   );
 }

@@ -19,7 +19,6 @@ import {
   useEditorState,
 } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
-import { api, useAction } from "@/lib/cockpitApi";
 import {
   AlignCenter,
   AlignJustify,
@@ -73,6 +72,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import { api, useAction } from "@/lib/cockpitApi";
 import {
   docHtml,
   docText,

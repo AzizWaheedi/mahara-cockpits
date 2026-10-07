@@ -1,5 +1,5 @@
-import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { Navigate, Outlet } from "react-router";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import {
   Card,
   CardContent,

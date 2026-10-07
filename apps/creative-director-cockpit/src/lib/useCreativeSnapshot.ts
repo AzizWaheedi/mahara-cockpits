@@ -1,9 +1,8 @@
-import {buildSnapshot,snapshotContext} from "./creativeSourceModels";
-import {logClientTouch} from "./clients";
-import {readPersonalEod,savePersonalEod} from "./personalEod";
-import {useRef} from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { logClientTouch } from "./clients";
+import { buildSnapshot, snapshotContext } from "./creativeSourceModels";
+import { readPersonalEod, savePersonalEod } from "./personalEod";
 
 // biome-ignore lint/suspicious/noExplicitAny: generic creative director rows
 type Any = any;
@@ -75,9 +74,26 @@ export interface UseCreativeSnapshotResult {
   error: Error | null;
   refetch: () => Promise<void>;
   toggleCheck: (args: { key: string; done: boolean }) => Promise<void>;
-  logTouch: (args: { client?: string; clientName?: string; action?: string; note?: string; kind?: string }) => Promise<void>;
-  saveEod: (args: { energy?: string; stress?: string; submit?: boolean; body?: string; answers?: Any; computed?: Any }) => Promise<void>;
-  addPlanItem: (args: { text: string; clientName?: string; dueDate?: string }) => Promise<void>;
+  logTouch: (args: {
+    client?: string;
+    clientName?: string;
+    action?: string;
+    note?: string;
+    kind?: string;
+  }) => Promise<void>;
+  saveEod: (args: {
+    energy?: string;
+    stress?: string;
+    submit?: boolean;
+    body?: string;
+    answers?: Any;
+    computed?: Any;
+  }) => Promise<void>;
+  addPlanItem: (args: {
+    text: string;
+    clientName?: string;
+    dueDate?: string;
+  }) => Promise<void>;
   removePlanItem: (args: { id: string | number }) => Promise<void>;
 }
 
@@ -127,13 +143,20 @@ export function useCreativeSnapshot(
       if (plErr) throw plErr;
 
       // 4. Fetch EOD report
-      const eodContext = await readPersonalEod(client,"creative",reportDay.current);
+      const eodContext = await readPersonalEod(
+        client,
+        "creative",
+        reportDay.current,
+      );
       const eodRow = eodContext.report;
       reportDay.current = eodContext.day;
 
-      const {data:source,error:sourceError}=await client.rpc("cockpit_creative_source_read");
-      if(sourceError) throw sourceError;
-      if(!source?.tables) throw new Error("Creative source data is unavailable.");
+      const { data: source, error: sourceError } = await client.rpc(
+        "cockpit_creative_source_read",
+      );
+      if (sourceError) throw sourceError;
+      if (!source?.tables)
+        throw new Error("Creative source data is unavailable.");
 
       const checksMap = new Map((checkRows ?? []).map(c => [c.check_key, c]));
       const checks = DEFAULT_CREATIVE_CHECKS.map((def, idx) => {
@@ -170,13 +193,41 @@ export function useCreativeSnapshot(
         dueDate: pl.due_date,
       }));
 
-      const model = await buildSnapshot(snapshotContext({...source.tables,
-        checks:(checkRows??[]).map(c=>({...c,key:c.check_key,doneAt:c.done_at?Date.parse(c.done_at):null})),
-        planItems:(planRows??[]).map(p=>({...p,_id:String(p.id),client:p.client_name})),
-        eodReports:eodRow?[{...eodRow,day}]:[],
-      }),allowedClients?.length?new Set(allowedClients.map(n=>n.trim().toLowerCase())):null);
-      const builtSnap:Any={...model,day,checks,decisions,plan,eod:eodRow??null,eodOwner:eodContext.owner,eodDay:eodContext.day,source:source.source,
-        counts:{...model.counts,checksDone:checks.filter(c=>c.done).length,checksTotal:checks.length}};
+      const model = await buildSnapshot(
+        snapshotContext({
+          ...source.tables,
+          checks: (checkRows ?? []).map(c => ({
+            ...c,
+            key: c.check_key,
+            doneAt: c.done_at ? Date.parse(c.done_at) : null,
+          })),
+          planItems: (planRows ?? []).map(p => ({
+            ...p,
+            _id: String(p.id),
+            client: p.client_name,
+          })),
+          eodReports: eodRow ? [{ ...eodRow, day }] : [],
+        }),
+        allowedClients?.length
+          ? new Set(allowedClients.map(n => n.trim().toLowerCase()))
+          : null,
+      );
+      const builtSnap: Any = {
+        ...model,
+        day,
+        checks,
+        decisions,
+        plan,
+        eod: eodRow ?? null,
+        eodOwner: eodContext.owner,
+        eodDay: eodContext.day,
+        source: source.source,
+        counts: {
+          ...model.counts,
+          checksDone: checks.filter(c => c.done).length,
+          checksTotal: checks.length,
+        },
+      };
 
       setSnap(builtSnap);
       setError(null);
@@ -205,17 +256,20 @@ export function useCreativeSnapshot(
         .eq("check_key", args.key)
         .maybeSingle();
 
-      if(existingError) throw existingError;
+      if (existingError) throw existingError;
       if (existing) {
-        const {error:writeError}=await client.rpc("cockpit_set_daily_check", {
-          p_id: existing.id,
-          p_expected_done: !args.done,
-          p_done: args.done,
-        });
-        if(writeError) throw writeError;
+        const { error: writeError } = await client.rpc(
+          "cockpit_set_daily_check",
+          {
+            p_id: existing.id,
+            p_expected_done: !args.done,
+            p_done: args.done,
+          },
+        );
+        if (writeError) throw writeError;
       } else {
         const def = DEFAULT_CREATIVE_CHECKS.find(c => c.key === args.key);
-        const {error:writeError}=await client
+        const { error: writeError } = await client
           .from("cockpit_daily_checks")
           .insert({
             role: "creative",
@@ -228,7 +282,7 @@ export function useCreativeSnapshot(
             done_at: args.done ? new Date().toISOString() : null,
             source_system: "supabase",
           });
-        if(writeError) throw writeError;
+        if (writeError) throw writeError;
       }
       await fetchSnapshot();
     },
@@ -236,18 +290,40 @@ export function useCreativeSnapshot(
   );
 
   const logTouch = useCallback(
-    async (args: { client?: string; clientName?: string; action?: string; note?: string; kind?: string }) => {
+    async (args: {
+      client?: string;
+      clientName?: string;
+      action?: string;
+      note?: string;
+      kind?: string;
+    }) => {
       if (!client) return;
-      await logClientTouch(client,{client:args.client??args.clientName,kind:args.kind??args.action,note:args.note});
+      await logClientTouch(client, {
+        client: args.client ?? args.clientName,
+        kind: args.kind ?? args.action,
+        note: args.note,
+      });
       await fetchSnapshot();
     },
     [client, fetchSnapshot],
   );
 
   const saveEod = useCallback(
-    async (args: { energy?: string; stress?: string; submit?: boolean; body?: string; answers?: Any; computed?: Any }) => {
+    async (args: {
+      energy?: string;
+      stress?: string;
+      submit?: boolean;
+      body?: string;
+      answers?: Any;
+      computed?: Any;
+    }) => {
       if (!client) throw new Error("Sign in before saving your EOD.");
-      await savePersonalEod(client,"creative",{owner:snap?.eodOwner??"",day:snap?.eodDay??""},{...args,submit:args.submit ?? false});
+      await savePersonalEod(
+        client,
+        "creative",
+        { owner: snap?.eodOwner ?? "", day: snap?.eodDay ?? "" },
+        { ...args, submit: args.submit ?? false },
+      );
       await fetchSnapshot();
     },
     [client, fetchSnapshot, snap?.eodOwner, snap?.eodDay],

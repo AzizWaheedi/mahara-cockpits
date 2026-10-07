@@ -1,12 +1,25 @@
 import { useEffect, useState } from "react";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 
-
 import { PageHeader } from "@/components/PageHeader";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
-import { WinnerFilter, type WinnerOrigin, WinningAds } from "@/components/WinningAds";
-import { fetchCreativePatterns, fetchDimensions, fetchPlaybook, fetchWinners, type CreativePatternRow, type DimensionsResult, type PlaybookRow, type WinnerAdRow } from "@/lib/playbook";
+import {
+  WinnerFilter,
+  type WinnerOrigin,
+  WinningAds,
+} from "@/components/WinningAds";
+import {
+  type CreativePatternRow,
+  type DimensionsResult,
+  fetchCreativePatterns,
+  fetchDimensions,
+  fetchPlaybook,
+  fetchWinners,
+  type PlaybookRow,
+  type WinnerAdRow,
+} from "@/lib/playbook";
+import { WhatToMakeMoreOf } from "./DashboardPage";
 
 /**
  * What works in the GCC.
@@ -45,7 +58,9 @@ export function PlaybookPage() {
   const [savedBy, setSavedBy] = useState("");
   const [dims, setDims] = useState<DimensionsResult | undefined>(undefined);
   const [rows, setRows] = useState<PlaybookRow[] | undefined>(undefined);
-  const [patterns, setPatterns] = useState<CreativePatternRow[] | undefined>(undefined);
+  const [patterns, setPatterns] = useState<CreativePatternRow[] | undefined>(
+    undefined,
+  );
   const [winners, setWinners] = useState<WinnerAdRow[] | undefined>(undefined);
 
   useEffect(() => {
@@ -109,6 +124,9 @@ export function PlaybookPage() {
       />
 
       <div className="space-y-6">
+        {/* The live accounts first: what to make more of, what is burning out. */}
+        <WhatToMakeMoreOf />
+
         {opportunity && (
           <div className="bg-mahara-gradient rounded-2xl p-px">
             <div className="rounded-[15px] bg-card p-4 sm:p-6">

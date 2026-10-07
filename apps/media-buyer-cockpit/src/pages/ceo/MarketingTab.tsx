@@ -1,12 +1,29 @@
 import { Image as ImageIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 import { BarList, type BarListItem } from "@/components/ceo/BarList";
-import { type CustomRange, RangeControl, type RangeKey, rangeStart } from "@/components/ceo/chartKit";
+import {
+  type CustomRange,
+  RangeControl,
+  type RangeKey,
+  rangeStart,
+} from "@/components/ceo/chartKit";
 import { type Column, DataTable } from "@/components/ceo/DataTable";
 import { Delta, type DeltaKind, type GoodWhen } from "@/components/ceo/Delta";
 import { EmptyState } from "@/components/ceo/EmptyState";
 import { Facts } from "@/components/ceo/Facts";
-import { change, count, date, diff, isNum, kuwaitDay, money, NA, pct, plural, type Unit } from "@/components/ceo/format";
+import {
+  change,
+  count,
+  date,
+  diff,
+  isNum,
+  kuwaitDay,
+  money,
+  NA,
+  pct,
+  plural,
+  type Unit,
+} from "@/components/ceo/format";
 import { DERIVED_NOTE, useGrowthWindow } from "@/components/ceo/growthWindow";
 import { Kicker } from "@/components/ceo/Kicker";
 import { Na, Value } from "@/components/ceo/Na";
@@ -17,8 +34,8 @@ import { TimeSeriesChart } from "@/components/ceo/TimeSeriesChart";
 import { useTimeframe } from "@/components/ceo/timeframe";
 import { useFrequency } from "@/components/ceo/useFrequency";
 import { range } from "@/components/ceo/windows";
-import type { FrequencyFigure } from "@/types/ceo/frequency";
 import { cn } from "@/lib/utils";
+import type { FrequencyFigure } from "@/types/ceo/frequency";
 import type { FunnelWindow, GrowthPayload, Note } from "@/types/ceo/payloads";
 import type { CeoTabProps } from "./types";
 

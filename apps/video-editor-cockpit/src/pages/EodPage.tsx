@@ -84,7 +84,6 @@ const BLOCKS: { title: string; questions: Question[] }[] = [
   },
 ];
 
-
 /** "2026-09-26" read as a person says it: "Saturday 26 September". */
 function spoken(isoDay: string): string {
   const d = new Date(`${isoDay}T12:00:00Z`);
@@ -177,7 +176,9 @@ export default function EodPage() {
       {filed.error && (
         <Problem>
           Could not check your report: {filed.error}.{" "}
-          <button type="button" className="underline" onClick={filed.reload}>Try again</button>
+          <button type="button" className="underline" onClick={filed.reload}>
+            Try again
+          </button>
         </Problem>
       )}
 

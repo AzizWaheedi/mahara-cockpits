@@ -1,9 +1,8 @@
-import { useQuery } from "@/lib/cockpitApi";
 import { ArrowUpRight, Check, Circle, X } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { assistLabel, useAssist } from "@/components/useAssist";
-import { api } from "@/lib/cockpitApi";
+import { api, useQuery } from "@/lib/cockpitApi";
 
 /**
  * New client launches, as one job instead of a ClickUp scavenger hunt.

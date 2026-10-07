@@ -1,68 +1,106 @@
 import { motion } from "framer-motion";
-import { Bookmark, LayoutDashboard, Lightbulb, ListChecks, LogOut, Megaphone, MessageSquare, Moon, MoonStar, PanelLeft, PanelLeftClose, Settings, Sun, Trophy, X } from "lucide-react";
+import {
+  Library,
+  LogOut,
+  Megaphone,
+  Moon,
+  PanelLeft,
+  PanelLeftClose,
+  Search,
+  Settings,
+  Sun,
+  Sunrise,
+  X,
+} from "lucide-react";
 import { Link, useLocation, useSearchParams } from "react-router";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { STATUS_COLOR } from "@/components/ceo/StatusChip";
 import { useCeo } from "@/components/ceo/useCeo";
 import { Wordmark } from "@/components/Wordmark";
 import { useTheme } from "@/contexts/ThemeContext";
-import { COCKPIT_ICON } from "@/lib/cockpits";
+import { COCKPIT_ICON, COCKPIT_SOP } from "@/lib/cockpits";
+import { openSearch } from "@/lib/search";
 import { ceoBadges } from "@/pages/CeoPage";
 import { CEO_NAV } from "@/pages/ceo/nav";
 import type { CeoTabKey } from "@/pages/ceo/types";
 import { Avatar, AvatarFallback } from "./ui/avatar";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "./ui/dropdown-menu";
-import { Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarHeader, SidebarMenu, SidebarMenuButton, SidebarMenuItem, useSidebar } from "./ui/sidebar";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "./ui/dropdown-menu";
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarHeader,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  useSidebar,
+} from "./ui/sidebar";
 
 // Each nav item belongs to exactly one cockpit; nobody sees another role's screens.
+// Three places for the media buyer (the simplification audit, approved by Aziz
+// on 2026-10-06): Today holds the start of day, the tasks, the touchpoints and
+// the change log; Ads holds the board and each client's page; Library holds
+// What works, Ideation and the swipe file as tabs. End of day opens from Today.
 const navItems = [
   {
     href: "/dashboard",
-    label: "Start of day",
-    icon: LayoutDashboard,
+    label: "Today",
+    icon: Sunrise,
     role: "media_buyer",
+    also: ["/eod"],
   },
   {
     href: "/ads",
-    label: "Ads management",
+    label: "Ads",
     icon: Megaphone,
     role: "media_buyer",
-  },
-  {
-    href: "/tasks",
-    label: "Task list",
-    icon: ListChecks,
-    role: "media_buyer",
-  },
-  {
-    href: "/touchpoints",
-    label: "Touchpoints",
-    icon: MessageSquare,
-    role: "media_buyer",
+    also: [] as string[],
   },
   {
     href: "/playbook",
-    label: "What works",
-    icon: Trophy,
+    label: "Library",
+    icon: Library,
     role: "media_buyer",
+    also: ["/ideation", "/swipe"],
   },
-  {
-    href: "/ideation",
-    label: "Ideation",
-    icon: Lightbulb,
-    role: "media_buyer",
-  },
-  {
-    href: "/swipe",
-    label: "Swipe file",
-    icon: Bookmark,
-    role: "media_buyer",
-  },
-  { href: "/eod", label: "End of day", icon: MoonStar, role: "media_buyer" },
 ];
 
 /** Rows are 28px in the CEO rail on a laptop, so seventeen of them fit; the sheet below 1024px keeps the full 40px for thumbs. */
 const DENSE = "cockpit-nav-link lg:h-7";
+
+/** The cockpit's SOP: a row like the others, opening ClickUp in a new tab. */
+function SopLink({ href }: { href: string }) {
+  const { setOpenMobile } = useSidebar();
+  const Icon = COCKPIT_ICON.sop;
+  return (
+    <SidebarMenuItem>
+      <SidebarMenuButton
+        asChild
+        tooltip="How to use this cockpit"
+        className="cockpit-nav-link"
+      >
+        <a
+          href={href}
+          target="_blank"
+          rel="noreferrer"
+          onClick={() => setOpenMobile(false)}
+        >
+          <Icon />
+          <span>How to use this cockpit</span>
+        </a>
+      </SidebarMenuButton>
+    </SidebarMenuItem>
+  );
+}
 
 function NavLink({
   href,
@@ -283,6 +321,10 @@ function SidebarNav() {
                 isActive={location.pathname.startsWith("/team")}
               />
             ) : null}
+            {/* The media buyer's SOP, in ClickUp, in a new tab. */}
+            {allowed.includes("media_buyer") ? (
+              <SopLink href={COCKPIT_SOP.media_buyer} />
+            ) : null}
           </SidebarMenu>
         </SidebarGroupContent>
       </SidebarGroup>
@@ -297,7 +339,10 @@ function SidebarNav() {
                   href={item.href}
                   label={item.label}
                   icon={item.icon}
-                  isActive={location.pathname === item.href}
+                  isActive={
+                    location.pathname === item.href ||
+                    item.also.includes(location.pathname)
+                  }
                 />
               ))}
             </SidebarMenu>
@@ -459,10 +504,57 @@ function SidebarHeaderContent() {
   );
 }
 
+/**
+ * The search field at the top of the rail: it opens the search box, which
+ * also opens with Ctrl/Cmd + K or "/" from any page. A folded rail keeps the
+ * icon. The CEO rail keeps every row it has; the keys still work there.
+ */
+function SearchField() {
+  const { setOpenMobile, open, isMobile } = useSidebar();
+  const location = useLocation();
+  if (location.pathname.startsWith("/ceo")) return null;
+  const mac =
+    typeof navigator !== "undefined" &&
+    /Mac|iPhone|iPad/.test(navigator.platform ?? "");
+  const click = () => {
+    setOpenMobile(false);
+    openSearch();
+  };
+  if (!open && !isMobile)
+    return (
+      <div className="flex justify-center px-2 pt-2">
+        <button
+          type="button"
+          onClick={click}
+          aria-label="Search"
+          className="inline-flex size-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
+        >
+          <Search aria-hidden className="size-4" />
+        </button>
+      </div>
+    );
+  return (
+    <div className="px-2 pt-2">
+      <button
+        type="button"
+        onClick={click}
+        className="flex h-10 w-full items-center gap-2 rounded-lg border border-sidebar-border bg-background/60 px-3 text-left text-sm text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+      >
+        <Search aria-hidden className="size-4 shrink-0" />
+        <span className="min-w-0 flex-1 truncate">Search…</span>
+        <kbd className="hidden shrink-0 rounded border border-sidebar-border px-1.5 py-0.5 font-mono text-[10px] tracking-[0.08em] lg:inline">
+          {mac ? "⌘K" : "Ctrl K"}
+        </kbd>
+      </button>
+    </div>
+  );
+}
+
 export function AppSidebar() {
   return (
     <Sidebar collapsible="icon" variant="floating">
       <SidebarHeaderContent />
+      <SearchField />
       <SidebarNav />
       <SidebarUserMenu />
     </Sidebar>

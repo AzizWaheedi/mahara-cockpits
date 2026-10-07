@@ -1,21 +1,32 @@
+import { ArrowLeft, Loader2 } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
-import { ArrowLeft, Loader2 } from "lucide-react";
+import {
+  getCockpitSupabaseClient,
+  useCockpitAuth,
+} from "@/auth/SupabaseAuthProvider";
 import { Button } from "./ui/button";
 import { Card, CardContent } from "./ui/card";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
-import { getCockpitSupabaseClient, useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 
 type Mode = "password" | "code" | "codeSent" | "resetPassword";
 
 export function SupabaseSignIn() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { home, session, access, ready, refreshAccess, error: accessError } = useCockpitAuth();
-  const noSeat = ready && session && !access && !accessError
-    ? "This account has no active confirmed directory seat. Ask an admin to check your email and seat, then try again."
-    : null;
+  const {
+    home,
+    session,
+    access,
+    ready,
+    refreshAccess,
+    error: accessError,
+  } = useCockpitAuth();
+  const noSeat =
+    ready && session && !access && !accessError
+      ? "This account has no active confirmed directory seat. Ask an admin to check your email and seat, then try again."
+      : null;
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -56,9 +67,11 @@ export function SupabaseSignIn() {
           password,
         });
         if (err) {
-          setError(err.message === "Invalid login credentials"
-            ? "Invalid email or password. Use the email Aziz set you up with, or try an emailed code."
-            : err.message);
+          setError(
+            err.message === "Invalid login credentials"
+              ? "Invalid email or password. Use the email Aziz set you up with, or try an emailed code."
+              : err.message,
+          );
         } else {
           await finishLogin();
         }
@@ -71,7 +84,9 @@ export function SupabaseSignIn() {
           setError(err.message);
         } else {
           setMode("codeSent");
-          setInfo("Check your inbox for a one-time code. It is valid for one hour.");
+          setInfo(
+            "Check your inbox for a one-time code. It is valid for one hour.",
+          );
         }
       } else if (mode === "codeSent") {
         const cleanCode = code.replace(/\D/g, "").slice(-6);
@@ -81,7 +96,9 @@ export function SupabaseSignIn() {
           type: "email",
         });
         if (err) {
-          setError("That code did not match. Please check the newest code or request a fresh one.");
+          setError(
+            "That code did not match. Please check the newest code or request a fresh one.",
+          );
         } else {
           await finishLogin();
         }
@@ -97,7 +114,9 @@ export function SupabaseSignIn() {
         }
       }
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "An unexpected error occurred.");
+      setError(
+        err instanceof Error ? err.message : "An unexpected error occurred.",
+      );
     } finally {
       setBusy(false);
     }
@@ -189,7 +208,17 @@ export function SupabaseSignIn() {
               {accessError || error || noSeat}
             </p>
           )}
-          {(accessError || noSeat) && <Button type="button" variant="outline" onClick={() => { void refreshAccess().catch(() => {}); }}>Try again</Button>}
+          {(accessError || noSeat) && (
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                void refreshAccess().catch(() => {});
+              }}
+            >
+              Try again
+            </Button>
+          )}
 
           {info && (
             <p className="rounded-lg bg-primary/10 px-3 py-2 text-center text-sm text-primary">

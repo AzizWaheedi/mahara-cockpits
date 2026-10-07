@@ -1,4 +1,3 @@
-import { api, useAction } from "@/lib/cockpitApi";
 import {
   ArrowUpRight,
   CalendarPlus,
@@ -12,13 +11,9 @@ import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
 import { DateInput } from "@/components/ui/date-input";
 import { Input } from "@/components/ui/input";
-import {
-  addDays,
-  dayLabel,
-  seriesPreview,
-  utcToZoned,
-} from "@/lib/teamCore";
+import { api, useAction } from "@/lib/cockpitApi";
 import type { MeetingPage as Page, Sitting } from "@/lib/team";
+import { addDays, dayLabel, seriesPreview, utcToZoned } from "@/lib/teamCore";
 import {
   ConfirmInline,
   DayChips,

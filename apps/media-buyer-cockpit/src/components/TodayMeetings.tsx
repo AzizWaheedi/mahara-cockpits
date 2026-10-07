@@ -1,6 +1,5 @@
-import { useMutation, useQuery } from "@/lib/cockpitApi";
 import { useState } from "react";
-import { api } from "@/lib/cockpitApi";
+import { api, useMutation, useQuery } from "@/lib/cockpitApi";
 
 // biome-ignore lint/suspicious/noExplicitAny: calendar rows
 type Any = any;

@@ -1,4 +1,13 @@
-import { ArrowUpRight, CircleAlert, CircleCheck, CircleDashed, type LucideIcon, MessageSquare, OctagonAlert, TriangleAlert } from "lucide-react";
+import {
+  ArrowUpRight,
+  CircleAlert,
+  CircleCheck,
+  CircleDashed,
+  type LucideIcon,
+  MessageSquare,
+  OctagonAlert,
+  TriangleAlert,
+} from "lucide-react";
 import type { ReactNode } from "react";
 import { type Column, DataTable } from "@/components/ceo/DataTable";
 import { Delta } from "@/components/ceo/Delta";
@@ -8,17 +17,42 @@ import { type FunnelStep, FunnelStrip } from "@/components/ceo/FunnelStrip";
 import * as f from "@/components/ceo/format";
 import { HeroFigure } from "@/components/ceo/HeroFigure";
 import { Meter } from "@/components/ceo/Meter";
-import { CLOSE_RATE, cashHeadline, contractedHeadline, INTRO_TO_DEMO, SHOW_RATE } from "@/components/ceo/metrics";
+import {
+  CLOSE_RATE,
+  cashHeadline,
+  contractedHeadline,
+  INTRO_TO_DEMO,
+  SHOW_RATE,
+} from "@/components/ceo/metrics";
 import { Value } from "@/components/ceo/Na";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { Sparkline } from "@/components/ceo/Sparkline";
 import { StatTile } from "@/components/ceo/StatTile";
-import { gateLabel, gateTone, STATUS_COLOR, StatusChip, type StatusTone } from "@/components/ceo/StatusChip";
+import {
+  gateLabel,
+  gateTone,
+  STATUS_COLOR,
+  StatusChip,
+  type StatusTone,
+} from "@/components/ceo/StatusChip";
 import { TabLink } from "@/components/ceo/TabLink";
 import type { CeoSections } from "@/components/ceo/useCeo";
 import { cn } from "@/lib/utils";
-import type { ClientRow, DeliveryPayload, MoneyPayload, Note, Point, TeamPerson } from "@/types/ceo/payloads";
-import { feedState, jobName, sourceLabel, syncEvery, syncState } from "./machineState";
+import type {
+  ClientRow,
+  DeliveryPayload,
+  MoneyPayload,
+  Note,
+  Point,
+  TeamPerson,
+} from "@/types/ceo/payloads";
+import {
+  feedState,
+  jobName,
+  sourceLabel,
+  syncEvery,
+  syncState,
+} from "./machineState";
 import { buildRoster, useLiveStatuses } from "./teamRoster";
 import type { CeoTabProps } from "./types";
 

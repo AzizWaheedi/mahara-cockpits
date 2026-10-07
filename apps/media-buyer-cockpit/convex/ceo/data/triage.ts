@@ -152,7 +152,7 @@ export type TriageAppointment = {
   /** The attendance sheet's mark, or null when it marked nothing. */
   attended: boolean | null;
   /**
-   * Mahara OS's outcome at its highest revision: attendance is showed,
+   * Mahara OS's latest confirmed non-null value for each field: attendance is showed,
    * no_show or unknown; deal is won, lost, pending or unknown. Null when
    * Mahara OS holds no row for the appointment.
    */
@@ -287,6 +287,36 @@ const tied = (where: string) => `
   left join public.ghl_clients g on g.location_id = ap.ghl_location_id
   where ${where}`;
 
+/** A portal revision is a command until its exact outbox operation succeeds.
+ * Imported source rows have no portal command and remain eligible as before.
+ */
+export const CONFIRMED_OUTCOMES_SQL = `
+  select o.* from portal_data.appointment_outcomes o
+  where o.source <> 'portal' or exists (
+    select 1 from portal_data.outbox command
+    where command.location_id = o.location_id
+      and command.request_id = o.request_id
+      and command.operation = 'appointment-outcome'
+      and command.object_id = o.appointment_id
+      and command.expected_revision = o.revision::text
+      and command.state = 'succeeded'
+  )`;
+
+/** Revisions are sparse patches: a quotation-only save must not erase an
+ * earlier attendance or deal. Explicit 'unknown' is a value, not a null.
+ */
+export const OUTCOME_HISTORY_JOIN_SQL = `left join lateral (
+  with confirmed as (${CONFIRMED_OUTCOMES_SQL})
+  select max(o.appointment_id) as appointment_id,
+    (array_agg(o.attendance order by o.revision desc)
+      filter (where o.attendance is not null))[1] as attendance,
+    (array_agg(o.deal order by o.revision desc)
+      filter (where o.deal is not null))[1] as deal
+  from confirmed o
+  where o.appointment_id = ap.ghl_appointment_id
+    and o.location_id = ap.ghl_location_id
+) o on true`;
+
 /**
  * Read client delivery between two Kuwait days, inclusive, plus every past
  * appointment from `recentFrom` with its Mahara OS outcome.
@@ -375,8 +405,8 @@ export async function clientDelivery(
        group by 1, 2`,
       ),
       // One row per past appointment since `recentFrom`, with the CRM status,
-      // the attendance sheet's mark and Mahara OS's outcome at its highest
-      // revision (portal_data.appointment_outcomes.appointment_id is the GHL
+      // the attendance sheet's mark and Mahara OS's latest confirmed value
+      // for each field (portal_data.appointment_outcomes.appointment_id is the GHL
       // appointment id). Cancelled and invalid never count for anything, so
       // they are not read. The calendar name comes back and is classified
       // here, so the booking rule lives in one place.
@@ -395,13 +425,7 @@ export async function clientDelivery(
               (o.appointment_id is not null) as has_outcome
        from ap
        left join public.ghl_calendars cal on cal.calendar_id = ap.calendar_id
-       left join lateral (
-         select o.appointment_id, o.attendance, o.deal
-         from portal_data.appointment_outcomes o
-         where o.appointment_id = ap.ghl_appointment_id
-         order by o.revision desc
-         limit 1
-       ) o on true
+       ${OUTCOME_HISTORY_JOIN_SQL}
        where ap.tie is not null
        order by ap.start_at desc`,
       ),
@@ -409,15 +433,17 @@ export async function clientDelivery(
       // synced a row, and how far Mahara OS's outcomes reach.
       sql(
         TRIAGE,
-        `select (select count(*) from public.ghl_calendars cal where cal.name ~* '${PROVISIONAL.source}') as provisional_calendars,
+        `with confirmed as (${CONFIRMED_OUTCOMES_SQL})
+         select (select count(*) from public.ghl_calendars cal where cal.name ~* '${PROVISIONAL.source}') as provisional_calendars,
               (select string_agg(distinct cal.name, '|') from public.ghl_calendars cal where cal.name ~* '${PROVISIONAL.source}') as provisional_names,
               (select count(*) from public.appointments ap join public.ghl_calendars cal on cal.calendar_id = ap.calendar_id
                  where cal.name ~* '${PROVISIONAL.source}') as provisional_rows,
-              (select count(*) from portal_data.appointment_outcomes) as outcome_rows,
-              (select count(distinct o.appointment_id) from portal_data.appointment_outcomes o
-                 join public.appointments ap on ap.ghl_appointment_id = o.appointment_id) as outcomes_joined,
-              (select to_char(min(o.captured_at) at time zone 'Asia/Kuwait', 'YYYY-MM-DD') from portal_data.appointment_outcomes o) as outcomes_since,
-              (select max(o.captured_at) from portal_data.appointment_outcomes o) as outcomes_latest`,
+              (select count(*) from confirmed) as outcome_rows,
+              (select count(distinct (o.location_id, o.appointment_id)) from confirmed o
+                 join public.appointments ap on ap.ghl_appointment_id = o.appointment_id
+                   and ap.ghl_location_id = o.location_id) as outcomes_joined,
+              (select to_char(min(o.captured_at) at time zone 'Asia/Kuwait', 'YYYY-MM-DD') from confirmed o) as outcomes_since,
+              (select max(o.captured_at) from confirmed o) as outcomes_latest`,
       ),
     ]);
 

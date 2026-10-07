@@ -21,7 +21,7 @@ import {
   optionsOf,
   questionTitle,
   stepOf,
-} from "../convex/onboardingCore";
+} from "../src/lib/onboardingCore";
 
 const fieldsBody = {
   fields: [

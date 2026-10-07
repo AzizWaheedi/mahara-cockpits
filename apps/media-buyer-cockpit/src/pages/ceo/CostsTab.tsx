@@ -1,4 +1,3 @@
-import { useAction } from "@/lib/cockpitApi";
 import { Loader2, Plus, Receipt, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { EmptyState } from "@/components/ceo/EmptyState";
@@ -8,8 +7,8 @@ import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatTile } from "@/components/ceo/StatTile";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
+import { api, useAction } from "@/lib/cockpitApi";
 import { cn } from "@/lib/utils";
-import { api } from "@/lib/cockpitApi";
 import {
   COMMISSION_BASES,
   COMMISSION_SHORT,
@@ -331,7 +330,12 @@ export function CostsTab({ goTab }: CeoTabProps) {
             <span className="text-xs">{`labour ${money(spent("labour"))}`}</span>
             <span className="text-xs">{`other ${money(spent("other") + spent("bank") + spent("courses"))}`}</span>
           </div>
-        ) : <p className="mt-3 text-xs text-muted-foreground">Last month's statement expenses are missing. Import the bank statements in Money to compare them.</p>}
+        ) : (
+          <p className="mt-3 text-xs text-muted-foreground">
+            Last month's statement expenses are missing. Import the bank
+            statements in Money to compare them.
+          </p>
+        )}
         {saveError ? (
           <p className="mt-3 text-sm text-[var(--ceo-critical)]">{saveError}</p>
         ) : null}

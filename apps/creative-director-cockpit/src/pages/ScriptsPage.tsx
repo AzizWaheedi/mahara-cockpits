@@ -1,18 +1,14 @@
-import { Film, Search } from "lucide-react";
+import { ArrowUpRight, ChevronRight, Film, Search } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
+import { PageHeader } from "@/components/PageHeader";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
 import { DateInput } from "@/components/ui/date-input";
-import { fetchScriptsList, queueClientAction } from "@/lib/clients";
-
-import { ArrowUpRight, ChevronRight } from "lucide-react";
-
-import { PageHeader } from "@/components/PageHeader";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-
+import { fetchScriptsList, queueClientAction } from "@/lib/clients";
 
 /**
  * Scripts we made.
@@ -63,10 +59,14 @@ export function ScriptsPage() {
   useEffect(() => {
     if (!auth.client) return;
     let cancelled = false;
-    void fetchScriptsList(auth.client, { limit: 300 }).then(res => {
-      if (!cancelled) setData(res);
-    }).catch(console.error);
-    return () => { cancelled = true; };
+    void fetchScriptsList(auth.client, { limit: 300 })
+      .then(res => {
+        if (!cancelled) setData(res);
+      })
+      .catch(console.error);
+    return () => {
+      cancelled = true;
+    };
   }, [auth.client]);
 
   const rows: Row[] = useMemo(() => {

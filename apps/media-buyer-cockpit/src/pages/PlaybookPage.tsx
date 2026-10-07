@@ -3,12 +3,12 @@ import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { CreativePreview } from "@/components/CreativePreview";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import {
+  type CreativePatternRow,
+  type DimensionsResult,
   fetchCreativePatterns,
   fetchDimensions,
   fetchPlaybook,
   fetchWinners,
-  type CreativePatternRow,
-  type DimensionsResult,
   type PlaybookRow,
   type WinnerAdRow,
 } from "@/lib/playbook";
@@ -27,7 +27,9 @@ export function PlaybookPage() {
   const [city, setCity] = useState("");
   const [dims, setDims] = useState<DimensionsResult | undefined>(undefined);
   const [rows, setRows] = useState<PlaybookRow[] | undefined>(undefined);
-  const [patterns, setPatterns] = useState<CreativePatternRow[] | undefined>(undefined);
+  const [patterns, setPatterns] = useState<CreativePatternRow[] | undefined>(
+    undefined,
+  );
 
   useEffect(() => {
     if (!auth.client) return;
@@ -534,7 +536,9 @@ function WinningAds({ serviceLine }: { serviceLine?: string }) {
                         r.playType,
                         ...(r.copyTraits ?? []),
                       ]
-                        .filter((t): t is string => Boolean(t) && t !== "unknown")
+                        .filter(
+                          (t): t is string => Boolean(t) && t !== "unknown",
+                        )
                         .map((t: string) => (
                           <span
                             key={t}
@@ -607,7 +611,11 @@ function WinningAds({ serviceLine }: { serviceLine?: string }) {
                             `, link CTR ${r.savedStats.linkCtr.toFixed(2)}%`}
                           {typeof r.savedStats.cpm === "number" &&
                             `, CPM ${money2(r.savedStats.cpm)}`}
-                          {Boolean(r.savedStats.bookingsAttributed && r.savedStats.bookings && r.savedStats.bookings > 0) &&
+                          {Boolean(
+                            r.savedStats.bookingsAttributed &&
+                              r.savedStats.bookings &&
+                              r.savedStats.bookings > 0,
+                          ) &&
                             `, ${r.savedStats.bookings} booking${r.savedStats.bookings === 1 ? "" : "s"}`}
                           {typeof r.savedStats.costPerBooking === "number" &&
                             r.savedStats.bookingsAttributed &&

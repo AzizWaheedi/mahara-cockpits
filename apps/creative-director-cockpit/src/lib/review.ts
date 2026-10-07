@@ -127,7 +127,9 @@ export async function checkReviewImportStatus(
   if (error) throw new Error(error.message);
   const out = data as Record<string, unknown> | null;
   if (!out) return null;
-  return out.token ? { ...out, url: `${REVIEW_BASE}/${String(out.token)}` } : out;
+  return out.token
+    ? { ...out, url: `${REVIEW_BASE}/${String(out.token)}` }
+    : out;
 }
 
 export const api = {
@@ -136,6 +138,7 @@ export const api = {
     sent: () => listSentReviews(supabase),
     clients: () => listReviewClients(supabase),
     importFolder: (args: any) => importReviewFolder(supabase, "creative", args),
-    importStatus: (args: any) => checkReviewImportStatus(supabase, "creative", args),
+    importStatus: (args: any) =>
+      checkReviewImportStatus(supabase, "creative", args),
   },
 };

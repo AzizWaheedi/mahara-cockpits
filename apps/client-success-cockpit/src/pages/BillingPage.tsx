@@ -1,50 +1,33 @@
 import { useMemo } from "react";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
-import { type BillingApi, type BillingPayload, BillingSheet } from "@/components/billing/BillingSheet";
-import { editBillingAccount, fetchBillingSheet, logBillingPayment } from "@/lib/billing";
+import {
+  type BillingApi,
+  BillingSheet,
+} from "@/components/billing/BillingSheet";
 import { PageHeader } from "@/components/kit";
-
-
+import {
+  editBillingAccount,
+  fetchBillingSheet,
+  logBillingPayment,
+} from "@/lib/billing";
 
 /**
  * Billing: the same sheet as the CEO cockpit's Billing tab, over the clients
  * the portal gave this success manager. A payment logged here waits in the
  * billing inbox until the CEO cockpit takes it into the ledger.
  */
-export function BillingPage() {
+export function BillingPage({ embedded = false }: { embedded?: boolean }) {
   const auth = useCockpitAuth();
 
   const wired = useMemo<BillingApi>(
     () => ({
       sheet: async () => {
-        if (!auth.client) {
-          return {
-            today: new Date().toISOString().slice(0, 10),
-            rows: [],
-            cards: [],
-            events: [],
-            inbox: [],
-            syncedAt: null,
-            totals: {
-              dueThisWeek: { count: 0, usd: 0 },
-              overdue: { count: 0, usd: 0 },
-              paused: 0,
-              extended: 0,
-              noMethod: 0,
-              noDate: 0,
-            },
-          } as unknown as BillingPayload;
-        }
+        if (!auth.client) throw new Error("Sign in to read billing.");
         return fetchBillingSheet(auth.client, auth.clients);
       },
       edit: async args => {
         if (!auth.client) throw new Error("Not signed in");
-        return editBillingAccount(
-          auth.client,
-          auth.email,
-          args,
-          "csm",
-        );
+        return editBillingAccount(auth.client, auth.email, args, "csm");
       },
       logPayment: async p => {
         if (!auth.client) throw new Error("Not signed in");
@@ -72,8 +55,11 @@ export function BillingPage() {
   );
 
   return (
-    <div className="mx-auto w-full max-w-6xl space-y-6">
+    <div
+      className={embedded ? "space-y-6" : "mx-auto w-full max-w-6xl space-y-6"}
+    >
       <PageHeader
+        as={embedded ? "h2" : "h1"}
         title="Billing"
         sub="Who pays next, how they pay, and what the billing SOP says to do today. Every change is made on the ClickUp card."
       />

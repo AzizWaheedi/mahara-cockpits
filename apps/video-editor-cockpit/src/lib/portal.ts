@@ -20,7 +20,6 @@ export function portalUrl(): string {
   return PORTAL_URL;
 }
 
-
 export interface AdPreview {
   ok: boolean;
   error?: string;
@@ -87,7 +86,6 @@ export async function adPreview(
     return { ok: false, error: String((e as Error).message ?? e) };
   }
 }
-
 
 /** The other cockpits this person may open, for the switcher. */
 export function otherCockpits(cockpits: string[], isAdmin: boolean) {

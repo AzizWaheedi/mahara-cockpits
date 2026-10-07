@@ -4,6 +4,7 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
+  ReferenceLine,
   XAxis,
   YAxis,
 } from "recharts";
@@ -14,8 +15,27 @@ import { ChartContainer, ChartTooltip } from "./ui/chart";
  * one chart with two axes. The title names the series, so there is no legend;
  * the header carries the last value and the change against the period before.
  * Money is USD; a percentage is shown as one.
+ *
+ * A point can carry notes: what the media buyer changed that day (or week).
+ * Each one is a thin mark on the chart and reads in the tooltip, so a jump
+ * sits next to its cause.
  */
-export type TrendPoint = { x: string; y: number | null };
+export type TrendPoint = { x: string; y: number | null; note?: string[] };
+
+/** The marks: one hairline per point that has a change on it. */
+function changeMarks(points: TrendPoint[]) {
+  return points
+    .filter(p => p.note?.length)
+    .map(p => (
+      <ReferenceLine
+        key={`mark-${p.x}`}
+        x={p.x}
+        stroke="var(--foreground)"
+        strokeOpacity={0.45}
+        strokeDasharray="2 3"
+      />
+    ));
+}
 
 const fmt = (v: number | null | undefined, unit: string) => {
   if (v === null || v === undefined || Number.isNaN(v)) return "";
@@ -119,6 +139,7 @@ export function TrendChart({
                 cursor={{ fill: "var(--muted)" }}
                 content={<Tip unit={unit} />}
               />
+              {changeMarks(points)}
               <Bar
                 dataKey="y"
                 fill="currentColor"
@@ -165,6 +186,7 @@ export function TrendChart({
                 cursor={{ stroke: "var(--border)" }}
                 content={<Tip unit={unit} />}
               />
+              {changeMarks(points)}
               <Area
                 type="monotone"
                 dataKey="y"
@@ -201,10 +223,25 @@ function Tip({
 }) {
   if (!active || !payload?.length) return null;
   const p = payload[0].payload;
+  const notes = p.note ?? [];
   return (
-    <div className="rounded-lg border bg-popover px-2 py-1 text-xs shadow-sm dark:shadow-none">
+    <div className="max-w-64 rounded-lg border bg-popover px-2 py-1 text-xs shadow-sm dark:shadow-none">
       <div className="text-muted-foreground">{p.x}</div>
       <div className="font-semibold tabular-nums">{fmt(p.y, unit)}</div>
+      {notes.length ? (
+        <div className="mt-1 space-y-0.5 border-t pt-1">
+          {notes.slice(0, 3).map(n => (
+            <div key={n} dir="auto">
+              {n}
+            </div>
+          ))}
+          {notes.length > 3 ? (
+            <div className="text-muted-foreground">
+              and {notes.length - 3} more
+            </div>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -1,5 +1,3 @@
-
-
 import { Link, useLocation } from "react-router";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { Wordmark } from "@/components/Wordmark";

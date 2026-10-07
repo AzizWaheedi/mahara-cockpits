@@ -1,10 +1,8 @@
-
-
 import { Link, Navigate } from "react-router";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { BackendWait } from "@/components/BackendWait";
 import { Spinner } from "@/components/ui/spinner";
 import { Wordmark } from "@/components/Wordmark";
-import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { COCKPIT_ICON } from "@/lib/cockpits";
 
 import { LoginPage } from "./LoginPage";
@@ -75,7 +73,12 @@ export function PortalHome() {
 function Chooser() {
   const { isCeo, isAdmin, cockpits, email, name, ready } = useCockpitAuth();
 
-  if (!ready) return <div className="p-10 text-sm text-muted-foreground">Checking your access…</div>;
+  if (!ready)
+    return (
+      <div className="p-10 text-sm text-muted-foreground">
+        Checking your access…
+      </div>
+    );
 
   if (isCeo) return <Navigate to="/ceo" replace />;
   if (isAdmin) return <Navigate to="/admin" replace />;

@@ -1,4 +1,3 @@
-import { useAction, useQuery } from "@/lib/cockpitApi";
 import { UserSearch } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { EmptyState } from "@/components/ceo/EmptyState";
@@ -8,7 +7,7 @@ import { StatTile } from "@/components/ceo/StatTile";
 import { StatusChip } from "@/components/ceo/StatusChip";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
-import { api } from "@/lib/cockpitApi";
+import { api, useAction, useQuery } from "@/lib/cockpitApi";
 
 // The kit's table look: sentence-case headers in muted 12px, hairline rows.
 const TH =

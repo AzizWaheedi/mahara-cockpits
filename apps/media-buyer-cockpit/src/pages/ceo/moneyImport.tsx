@@ -1,6 +1,4 @@
-import { useAction, useMutation, useQuery } from "@/lib/cockpitApi";
-import { Upload } from "lucide-react";
-import { TriangleAlert } from "lucide-react";
+import { TriangleAlert, Upload } from "lucide-react";
 import { type ChangeEvent, useMemo, useRef, useState } from "react";
 import { EmptyState } from "@/components/ceo/EmptyState";
 import { money, plural } from "@/components/ceo/format";
@@ -9,8 +7,8 @@ import { Na } from "@/components/ceo/Na";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { STATUS_COLOR, StatusChip } from "@/components/ceo/StatusChip";
 import { AnimatedSelect } from "@/components/ui/animated-select";
-import { api } from "@/lib/cockpitApi";
 import { Button } from "@/components/ui/button";
+import { api, useAction, useMutation, useQuery } from "@/lib/cockpitApi";
 
 // The kit's table look for the hand-built previews: sentence-case headers in
 // muted 12px, hairline rows, no box of their own inside the card.

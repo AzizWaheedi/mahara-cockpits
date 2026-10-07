@@ -1,11 +1,13 @@
+import { ArrowUpRight } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
-import { fetchMeetingsOverview, linkCalendar, sendReply, unlinkCalendar } from "@/lib/comms";
-
-import { ArrowUpRight } from "lucide-react";
-
-
+import {
+  fetchMeetingsOverview,
+  linkCalendar,
+  sendReply,
+  unlinkCalendar,
+} from "@/lib/comms";
 
 // biome-ignore lint/suspicious/noExplicitAny: feed rows
 type Any = any;
@@ -188,22 +190,53 @@ function MeetingsContent() {
     if (!auth.client) return;
     const sequence = ++loadSequence.current;
     fetchMeetingsOverview(auth.client)
-      .then(value => { if (sequence === loadSequence.current) { setData(value); setLoadError(null); } })
-      .catch(error => { if (sequence === loadSequence.current) setLoadError(error instanceof Error ? error.message : "Meetings are unavailable. Reload the view."); });
+      .then(value => {
+        if (sequence === loadSequence.current) {
+          setData(value);
+          setLoadError(null);
+        }
+      })
+      .catch(error => {
+        if (sequence === loadSequence.current)
+          setLoadError(
+            error instanceof Error
+              ? error.message
+              : "Meetings are unavailable. Reload the view.",
+          );
+      });
   }, [auth.client]);
 
   useEffect(() => {
     loadOverview();
-    return () => { loadSequence.current++; };
+    return () => {
+      loadSequence.current++;
+    };
   }, [loadOverview]);
 
-  const handleSendReply = async ({ chatId, text }: { chatId: string; text: string }) => {
+  const handleSendReply = async ({
+    chatId,
+    text,
+  }: {
+    chatId: string;
+    text: string;
+  }) => {
     if (!auth.client) return;
     try {
-      const thread = data?.threads.find((value: Any) => value.chatId === chatId);
-      if (!thread?.contextKey) throw new Error("Refresh this conversation before replying.");
-      const receipt = await sendReply(auth.client, { chatId, text, contextKey: thread.contextKey });
-      toast.success(receipt.deliveryConfirmed ? "Delivery confirmed" : "Submitted to WhatsApp. Delivery is not confirmed.");
+      const thread = data?.threads.find(
+        (value: Any) => value.chatId === chatId,
+      );
+      if (!thread?.contextKey)
+        throw new Error("Refresh this conversation before replying.");
+      const receipt = await sendReply(auth.client, {
+        chatId,
+        text,
+        contextKey: thread.contextKey,
+      });
+      toast.success(
+        receipt.deliveryConfirmed
+          ? "Delivery confirmed"
+          : "Submitted to WhatsApp. Delivery is not confirmed.",
+      );
       loadOverview();
     } catch (e) {
       toast.error(String(e));
@@ -233,7 +266,12 @@ function MeetingsContent() {
     }
   };
 
-  if (loadError && !data) return <p role="alert" className="text-sm text-destructive">{loadError}</p>;
+  if (loadError && !data)
+    return (
+      <p role="alert" className="text-sm text-destructive">
+        {loadError}
+      </p>
+    );
   if (!data) return <p className="text-sm text-muted-foreground">Loading…</p>;
   const {
     today,
@@ -255,9 +293,14 @@ function MeetingsContent() {
     {},
   );
   const waiting = (threads as Any[]).filter(
-    t => t.waitingSince && !t.repliedAt && !["intent", "accepted", "reconcile"].includes(t.replyState ?? ""),
+    t =>
+      t.waitingSince &&
+      !t.repliedAt &&
+      !["intent", "accepted", "reconcile"].includes(t.replyState ?? ""),
   );
-  const inFlight = (threads as Any[]).filter(t => ["intent", "accepted", "reconcile"].includes(t.replyState ?? ""));
+  const inFlight = (threads as Any[]).filter(t =>
+    ["intent", "accepted", "reconcile"].includes(t.replyState ?? ""),
+  );
   const quiet = (threads as Any[]).filter(
     t => !t.waitingSince && (t.silentDays ?? 0) >= 3 && t.clientName,
   );
@@ -274,9 +317,21 @@ function MeetingsContent() {
           {!whatsappConfigured ? "WhatsApp not connected yet." : ""}
         </p>
       </header>
-      {loadError ? <p role="alert" className="text-sm text-destructive">{loadError}</p> : null}
-      {data.sourceNote ? <p role="status" className="text-sm text-muted-foreground">{data.sourceNote}</p> : null}
-      {data.whatsappNote ? <p role="status" className="text-sm text-muted-foreground">{data.whatsappNote}</p> : null}
+      {loadError ? (
+        <p role="alert" className="text-sm text-destructive">
+          {loadError}
+        </p>
+      ) : null}
+      {data.sourceNote ? (
+        <p role="status" className="text-sm text-muted-foreground">
+          {data.sourceNote}
+        </p>
+      ) : null}
+      {data.whatsappNote ? (
+        <p role="status" className="text-sm text-muted-foreground">
+          {data.whatsappNote}
+        </p>
+      ) : null}
 
       <section className={CARD}>
         <div className="mb-4 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-2">
@@ -358,7 +413,9 @@ function MeetingsContent() {
               >
                 <span className="font-medium">{t.name}</span>
                 <span className="text-muted-foreground">
-                  {t.replyState === "accepted" ? "Submitted. Delivery is not confirmed." : "The provider outcome needs reconciliation. Nothing will be resent automatically."}
+                  {t.replyState === "accepted"
+                    ? "Submitted. Delivery is not confirmed."
+                    : "The provider outcome needs reconciliation. Nothing will be resent automatically."}
                 </span>
               </li>
             ))}
@@ -410,7 +467,11 @@ function MeetingsContent() {
         <h2 className={`mb-4 ${CARD_TITLE}`}>Waiting on you in WhatsApp</h2>
         {waiting.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            {inFlight.length ? "No new conversation needs another reply." : data.whatsappReady ? "No conversations are waiting in the verified inbox." : "WhatsApp is not verified. Refresh the inbox before relying on an empty list."}
+            {inFlight.length
+              ? "No new conversation needs another reply."
+              : data.whatsappReady
+                ? "No conversations are waiting in the verified inbox."
+                : "WhatsApp is not verified. Refresh the inbox before relying on an empty list."}
           </p>
         ) : (
           <ul className="divide-y">
@@ -464,7 +525,9 @@ function MeetingsContent() {
                     <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
                       <button
                         type="button"
-                        disabled={!text.trim() || sending[t.chatId] || !t.sendSupported}
+                        disabled={
+                          !text.trim() || sending[t.chatId] || !t.sendSupported
+                        }
                         onClick={async () => {
                           setSending(x => ({ ...x, [t.chatId]: true }));
                           try {
@@ -478,7 +541,8 @@ function MeetingsContent() {
                         {sending[t.chatId] ? "Sending…" : "Send on WhatsApp"}
                       </button>
                       <span className="text-xs text-muted-foreground">
-                        Review the reply before submitting. Delivery needs provider confirmation.
+                        Review the reply before submitting. Delivery needs
+                        provider confirmation.
                       </span>
                     </div>
                   </div>

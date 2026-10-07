@@ -11,7 +11,14 @@ import {
   internalMutation,
   internalQuery,
 } from "./_generated/server";
-import { allAdAccounts, callTool, graph, unwrap } from "./tools";
+import { budgetWords, usdToBudget } from "./currency";
+import {
+  accountCurrency,
+  allAdAccounts,
+  callTool,
+  graph,
+  unwrap,
+} from "./tools";
 
 /**
  * Building a campaign for her.
@@ -342,6 +349,11 @@ export const launchDraft = internalAction({
     try {
       const act = `act_${accountId}`;
       const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, "\\");
+      // She types dollars; Meta counts the budget in the account's own
+      // currency. Converted before anything is created, so an account the
+      // cockpit cannot convert is refused with nothing half-built.
+      const currency = await accountCurrency(String(accountId));
+      const dailyMinor = usdToBudget(draft.dailyBudget, currency);
 
       const campaign = unwrap(
         await callTool("mcp_meta_ads_create_campaign", {
@@ -374,7 +386,7 @@ export const launchDraft = internalAction({
           campaign_id: campaignId,
           name: `${draft.clientName} — ${draft.kind === "refresh" ? "creative refresh" : "new build"}`,
           status: "PAUSED",
-          daily_budget: String(Math.round(draft.dailyBudget * 100)),
+          daily_budget: String(dailyMinor),
           // Meta needs an explicit bid strategy or it asks for a bid amount
           // (subcode 2490487); lowest cost is what every campaign here runs.
           bid_strategy: "LOWEST_COST_WITHOUT_CAP",
@@ -406,7 +418,7 @@ export const launchDraft = internalAction({
       await ctx.runMutation(internal.cockpit.recordBuild, {
         clientTag: draft.clientTag,
         clientName: draft.clientName,
-        what: `Built a new campaign — ${draft.variants.length} copy variants, $${draft.dailyBudget}/day, ${draft.sourceAdSetName ? `settings copied from ${draft.sourceAdSetName}` : "fresh targeting"}. Paused on Meta.`,
+        what: `Built a new campaign — ${draft.variants.length} copy variants, ${budgetWords(draft.dailyBudget, currency)}/day, ${draft.sourceAdSetName ? `settings copied from ${draft.sourceAdSetName}` : "fresh targeting"}. Paused on Meta.`,
       });
     } catch (e) {
       await ctx.runMutation(internal.builder.patchDraft, {

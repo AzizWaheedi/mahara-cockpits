@@ -1,12 +1,31 @@
-import { useAction } from "@/lib/cockpitApi";
-import { ArrowUpRight, Bot, CircleDashed, Inbox, Mail, MoveRight, Send, Star, StickyNote, Timer, UserPlus, Users } from "lucide-react";
+import {
+  ArrowUpRight,
+  Bot,
+  CircleDashed,
+  Inbox,
+  Mail,
+  MoveRight,
+  Send,
+  Star,
+  StickyNote,
+  Timer,
+  UserPlus,
+  Users,
+} from "lucide-react";
 import { useCallback, useState } from "react";
 import { EmptyState } from "@/components/ceo/EmptyState";
 import { Facts } from "@/components/ceo/Facts";
 import { FeedList } from "@/components/ceo/FeedList";
 import { FilterChips } from "@/components/ceo/FilterChips";
 import { FunnelStrip } from "@/components/ceo/FunnelStrip";
-import { count, decimal, humanize, isNum, pct, plural } from "@/components/ceo/format";
+import {
+  count,
+  decimal,
+  humanize,
+  isNum,
+  pct,
+  plural,
+} from "@/components/ceo/format";
 import { Kicker } from "@/components/ceo/Kicker";
 import { Na } from "@/components/ceo/Na";
 import { SectionCard } from "@/components/ceo/SectionCard";
@@ -15,10 +34,14 @@ import { StatTile } from "@/components/ceo/StatTile";
 import { StatusChip } from "@/components/ceo/StatusChip";
 import { useRefresh } from "@/components/ceo/useCeo";
 import { AnimatedSelect } from "@/components/ui/animated-select";
-import { api } from "@/lib/cockpitApi";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
-import type { HiringCandidate, HiringPayload, HiringRoleFunnel } from "@/types/ceo/payloads";
+import { api, useAction } from "@/lib/cockpitApi";
+import type {
+  HiringCandidate,
+  HiringPayload,
+  HiringRoleFunnel,
+} from "@/types/ceo/payloads";
 import { STAGES, type StageKey } from "@/types/hiring/spec";
 import type { CeoTabProps } from "./types";
 

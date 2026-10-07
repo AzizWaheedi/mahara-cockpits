@@ -1,6 +1,12 @@
-import { ArrowUpRight, Check, ChevronRight, MessageSquareWarning } from "lucide-react";
+import {
+  ArrowUpRight,
+  Check,
+  ChevronRight,
+  MessageSquareWarning,
+  MoonStar,
+} from "lucide-react";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { Link, useSearchParams } from "react-router";
+import { Link, useLocation, useSearchParams } from "react-router";
 import { toast } from "sonner";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { AccountView } from "@/components/AccountView";
@@ -27,20 +33,35 @@ import { PortfolioTrends } from "@/components/Trends";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { ViktorStatus } from "@/components/ViktorStatus";
 import { WhatsAppDesk } from "@/components/WhatsAppDesk";
 import { useContentTransition } from "@/hooks/use-content-transition";
 import { api, useAction } from "@/lib/board";
-import { CPB_GATE, CPL_GATE, LEARNING_DAYS } from "@/lib/kpi";
-import { defaultRange, type Range } from "@/lib/range";
-import { useMediaBuyerSnapshot } from "@/lib/useMediaBuyerSnapshot";
-import { howItIsGoing, joinList, whatWeDid, whatWeDidAll } from "@/lib/clientUpdate";
-import { kuwaitDay as kuwaitToday } from "@/lib/range";
-
+import {
+  howItIsGoing,
+  joinList,
+  whatWeDid,
+  whatWeDidAll,
+} from "@/lib/clientUpdate";
 import { type Id, useQueries } from "@/lib/cockpitApi";
+import { CPB_GATE, CPL_GATE, LEARNING_DAYS } from "@/lib/kpi";
+import {
+  defaultRange,
+  kuwaitDay as kuwaitToday,
+  type Range,
+  rangeFromParam,
+  rangeToParam,
+  savedRange,
+  saveRange,
+} from "@/lib/range";
+import { useMediaBuyerSnapshot } from "@/lib/useMediaBuyerSnapshot";
 import { CampaignChangesResults } from "../components/CampaignChangesResults";
 import { CampaignChat } from "../components/CampaignChat";
 import { RequestCreativeButton } from "../components/RequestCreativeButton";
@@ -428,7 +449,12 @@ function actionsFor(c: Campaign): string[] {
   return ["Scale the winner", "Duplicate the winner"];
 }
 
-type View = "sod" | "ads" | "tasks" | "touch" | "eod";
+/**
+ * The media buyer's three screens here (the simplification audit, approved
+ * 2026-10-06): Today (it took in the Task list and Touchpoints, which
+ * redirect to their part of it), Ads, and End of day.
+ */
+type View = "sod" | "ads" | "eod";
 
 /** Ad Status values that take a campaign out of the active list (the board is the truth). */
 const OFF_STATUSES = ["Paused", "Dead Campaign", "Lost Client"];
@@ -466,6 +492,7 @@ function ClientHeader({
   links,
   updates,
   onOpen,
+  rulesBelow = false,
 }: {
   name: string;
   logoSrc?: string;
@@ -473,6 +500,11 @@ function ClientHeader({
   updates: ClientUpdate[];
   /** Shows this one client in full, in place of the table. */
   onOpen?: () => void;
+  /**
+   * One of this client's campaigns is open below, carrying the same do's and
+   * don'ts and card comment, so the header does not show them a second time.
+   */
+  rulesBelow?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const hasRules = parseDosDonts(links?.dosDonts).length > 0;
@@ -499,9 +531,9 @@ function ClientHeader({
         links={links}
         dosOpen={open}
         hasUpdates={updates.length > 0}
-        onDos={() => setOpen(o => !o)}
+        onDos={rulesBelow ? undefined : () => setOpen(o => !o)}
       />
-      {open && (
+      {open && !rulesBelow && (
         <div className="mt-2 grid max-w-4xl gap-3 rounded-xl bg-card p-3 font-normal text-foreground">
           {hasRules ? <DosDontsList text={links?.dosDonts} /> : null}
           {updates.length ? (
@@ -652,9 +684,13 @@ function AdStatusPicker({
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     if (!hasCard) return;
-    const request: Promise<string[]> = statusOptionsCache ?? Promise.resolve(loadOptions({}));
+    const request: Promise<string[]> =
+      statusOptionsCache ?? Promise.resolve(loadOptions({}));
     statusOptionsCache = request;
-    request.then(setOptions).catch(() => { statusOptionsCache = null; setOptions([]); });
+    request.then(setOptions).catch(() => {
+      statusOptionsCache = null;
+      setOptions([]);
+    });
   }, [hasCard, loadOptions]);
   if (!hasCard) return null;
   const list = options.length ? options : status ? [status] : [];
@@ -962,27 +998,25 @@ function OffBoardCampaigns({ rows }: { rows: Campaign[] }) {
   );
 }
 
-export function StartOfDayPage() {
+export function TodayPage() {
   return <Cockpit view="sod" />;
 }
 export function AdsPage() {
   return <Cockpit view="ads" />;
 }
-export function TaskListPage() {
-  return <Cockpit view="tasks" />;
-}
-export function TouchpointsPage() {
-  return <Cockpit view="touch" />;
-}
 export function EndOfDayPage() {
   return <Cockpit view="eod" />;
 }
 
+/** The morning checklist's links into what used to be pages, now parts of Today. */
+const HERE: Record<string, string> = {
+  "/tasks": "/dashboard#tasks",
+  "/touchpoints": "/dashboard#touchpoints",
+};
+
 const TITLES: Record<View, string> = {
-  sod: "Start of day",
-  ads: "Ads management",
-  tasks: "Task list",
-  touch: "Client touchpoints",
+  sod: "Today",
+  ads: "Ads",
   eod: "End of day",
 };
 
@@ -1006,7 +1040,12 @@ function Cockpit({ view }: { view: View }) {
       (logos: { clientKey: string; url: string }[]) => {
         if (!cancelled)
           setClientLogos(
-            Object.fromEntries(logos.map((logo: {clientKey: string; url: string}) => [logo.clientKey, logo.url])),
+            Object.fromEntries(
+              logos.map((logo: { clientKey: string; url: string }) => [
+                logo.clientKey,
+                logo.url,
+              ]),
+            ),
           );
       },
       () => {
@@ -1032,10 +1071,43 @@ function Cockpit({ view }: { view: View }) {
   } | null;
 
   const [open, setOpen] = useState<string | null>(null);
+  /**
+   * When set, the ads tab shows one client in full instead of the table. It
+   * lives in the address (?account=), so the page can be opened, reloaded,
+   * shared and left with the browser's back button like any other.
+   */
+  const [params, setParams] = useSearchParams();
+  const accountView = view === "ads" ? params.get("account") : null;
+  const setAccountView = (name: string | null) =>
+    setParams(prev => {
+      const next = new URLSearchParams(prev);
+      if (name) next.set("account", name);
+      else next.delete("account");
+      next.delete("campaign");
+      return next;
+    });
   // The window each campaign is being read over. One default for the screen,
   // overridable per campaign — she often wants "today" on one client while
-  // the rest stay on the 7-day read. [aziz, 2026-09-07]
-  const [globalRange, setGlobalRange] = useState<Range>(defaultRange);
+  // the rest stay on the 7-day read. [aziz, 2026-09-07] The board and a
+  // client's page share it, it lives in the address (?range=3d), and the
+  // last preset is kept on this device, so a 3-day pick no longer snaps back
+  // to 7 days (Nada, 2026-10-01; the simplification audit, 2026-10-06).
+  const rangeParam = params.get("range");
+  const globalRange = useMemo(
+    () => rangeFromParam(rangeParam) ?? savedRange() ?? defaultRange(),
+    [rangeParam],
+  );
+  const setGlobalRange = (r: Range) => {
+    saveRange(r);
+    setParams(
+      prev => {
+        const next = new URLSearchParams(prev);
+        next.set("range", rangeToParam(r));
+        return next;
+      },
+      { replace: true },
+    );
+  };
   const [ranges, setRanges] = useState<Record<string, Range>>({});
   const rangeFor = (name: string) => ranges[name] ?? globalRange;
   const setRange = (name: string, r: Range) =>
@@ -1044,8 +1116,10 @@ function Cockpit({ view }: { view: View }) {
   // snapshot's read; otherwise one range read per campaign. useQueries keys on
   // the object's identity, so the object is rebuilt only when the campaigns or
   // the range change (see AccountView, React error #301).
+  // Only while the board is on screen: a client's page and the other
+  // screens read nothing for it (the Convex usage rule).
   const boardKey =
-    globalRange.key === "7d"
+    globalRange.key === "7d" || view !== "ads" || accountView
       ? ""
       : JSON.stringify([
           ((snap?.campaigns ?? []) as Campaign[])
@@ -1076,6 +1150,11 @@ function Cockpit({ view }: { view: View }) {
   const [campaignPanelTab, setCampaignPanelTab] = useState<
     "recommendations" | "changes"
   >("recommendations");
+  // A client's page opens on "What to do", whatever tab the last one had.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a new client is the trigger
+  useEffect(() => {
+    setCampaignPanelTab("recommendations");
+  }, [accountView]);
   const [dept, setDept] = useState(REQUESTS[0].label);
   const [reason, setReason] = useState(REASONS[0]);
   const [clock, setClock] = useState(CLOCKS[1]);
@@ -1093,23 +1172,28 @@ function Cockpit({ view }: { view: View }) {
   const [note, setNote] = useState("");
   const [onePercent, setOnePercent] = useState("");
   const [eodSending, setEodSending] = useState(false);
-  /**
-   * When set, the ads tab shows one client in full instead of the table. It
-   * lives in the address (?account=), so the page can be opened, reloaded,
-   * shared and left with the browser's back button like any other.
-   */
-  const [params, setParams] = useSearchParams();
-  const accountView = view === "ads" ? params.get("account") : null;
-  const setAccountView = (name: string | null) =>
+  /** A client's page reads the board's range, and opens a campaign the
+   *  search box named (?campaign=). */
+  const accountRange = globalRange;
+  const setAccountRange = setGlobalRange;
+  const accountCampaign = params.get("campaign");
+  const setAccountCampaign = (name: string | null) =>
     setParams(prev => {
       const next = new URLSearchParams(prev);
-      if (name) next.set("account", name);
-      else next.delete("account");
+      if (name) next.set("campaign", name);
+      else next.delete("campaign");
       return next;
     });
-  /** The account page's own range and open campaign. */
-  const [accountRange, setAccountRange] = useState<Range>(defaultRange);
-  const [accountCampaign, setAccountCampaign] = useState<string | null>(null);
+  // The old Task list and Touchpoints addresses land on their part of Today.
+  const location = useLocation();
+  const ready = snap !== undefined;
+  useEffect(() => {
+    if (view !== "sod" || !location.hash || !ready) return;
+    // A jump, not a glide: a glide never runs in a background tab.
+    document
+      .getElementById(location.hash.slice(1))
+      ?.scrollIntoView({ block: "start" });
+  }, [view, location.hash, ready]);
   /** The EOD form's own human answers. Numbers are filled in for her. */
   const [eodForm, setEodForm] = useState<Record<string, string>>({
     focus: "",
@@ -1305,7 +1389,8 @@ function Cockpit({ view }: { view: View }) {
   }, [snap]);
 
   const eodReport = useMemo(() => {
-    if (snap?.eod?.submittedAt && typeof snap.eod.body === "string") return snap.eod.body;
+    if (snap?.eod?.submittedAt && typeof snap.eod.body === "string")
+      return snap.eod.body;
     const cs = ((snap?.campaigns ?? []) as Campaign[]).filter(c => !c.internal);
     const ds = (snap?.decisions ?? []) as {
       subject: string;
@@ -1363,6 +1448,14 @@ function Cockpit({ view }: { view: View }) {
       m.set(d.subject, { action: d.action, reroutedTo: d.reroutedTo });
     return m;
   }, [snap]);
+
+  if (sb.error) {
+    return (
+      <p role="alert" className="p-6 text-sm">
+        Could not load your cockpit: {sb.error.message}. Reload to try again.
+      </p>
+    );
+  }
 
   if (snap === undefined) {
     return (
@@ -1892,7 +1985,8 @@ function Cockpit({ view }: { view: View }) {
                 )}
                 {c.href && (
                   <Link
-                    to={c.href}
+                    // The Task list and Touchpoints are parts of Today now.
+                    to={HERE[c.href] ?? c.href}
                     className="mt-1 inline-flex items-center gap-0.5 text-xs font-medium text-primary hover:underline"
                   >
                     Open it
@@ -2000,46 +2094,6 @@ function Cockpit({ view }: { view: View }) {
     overdue?: boolean;
     taskId?: string;
   }[];
-  const clickUp = (
-    <section className={CARD}>
-      <div className="flex items-baseline justify-between gap-3">
-        <h2 className="text-[15px] font-semibold">Your ClickUp</h2>
-        <span className="text-xs tabular-nums text-muted-foreground">
-          {inbox.length} open
-        </span>
-      </div>
-      {inbox.length === 0 ? (
-        <p className="mt-4 text-sm text-muted-foreground">
-          Nothing assigned to you and no comments tagging you.
-        </p>
-      ) : (
-        <ul className="mt-3 divide-y">
-          {inbox.slice(0, 12).map(i => (
-            <li key={i._id}>
-              <a
-                href={i.url}
-                target="_blank"
-                rel="noreferrer"
-                className="-mx-2 block rounded-lg px-2 py-2.5 text-sm hover:bg-muted/40"
-              >
-                <span className="font-medium">{i.title}</span>
-                <span className="block text-xs text-muted-foreground">
-                  {i.kind === "mention" ? `${i.author} tagged you` : i.reason}
-                  {i.overdue ? " · overdue" : ""}
-                </span>
-                {i.body && (
-                  <span className="mt-0.5 line-clamp-2 block text-xs text-muted-foreground">
-                    {i.body}
-                  </span>
-                )}
-              </a>
-            </li>
-          ))}
-        </ul>
-      )}
-    </section>
-  );
-
   const tasksCard = (
     <section className={CARD}>
       <h2 className="text-[15px] font-semibold">Your ClickUp tasks</h2>
@@ -2279,7 +2333,10 @@ function Cockpit({ view }: { view: View }) {
       <pre className="mt-4 whitespace-pre-wrap rounded-xl bg-muted/40 p-4 font-sans text-sm leading-relaxed">
         {eodReport}
       </pre>
-      <fieldset disabled={eodSending || Boolean(eodRow?.submittedAt)} className="mt-6 space-y-6">
+      <fieldset
+        disabled={eodSending || Boolean(eodRow?.submittedAt)}
+        className="mt-6 space-y-6"
+      >
         <div>
           <div className={KICKER}>Health</div>
           <div className="mt-2 grid grid-cols-3 gap-3">
@@ -2446,11 +2503,16 @@ function Cockpit({ view }: { view: View }) {
               "Submit my EOD"
             )}
           </Button>
-          {eodRow && !eodRow.submittedAt && <span className="text-xs text-muted-foreground">Draft saved. Submit when it is ready.</span>}
+          {eodRow && !eodRow.submittedAt && (
+            <span className="text-xs text-muted-foreground">
+              Draft saved. Submit when it is ready.
+            </span>
+          )}
         </div>
       </fieldset>
       <p className="mt-4 text-xs text-muted-foreground">
-        Your personal report is saved in the cockpit. Slack and sheet delivery are not enabled here yet.
+        Your personal report is saved in the cockpit. Slack and sheet delivery
+        are not enabled here yet.
       </p>
     </section>
   );
@@ -2748,7 +2810,7 @@ function Cockpit({ view }: { view: View }) {
             }}
             className={`-mb-px shrink-0 whitespace-nowrap border-b-2 px-2.5 py-2 text-sm font-medium sm:px-3 ${campaignPanelTab === "recommendations" ? "border-primary text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"}`}
           >
-            Recommendations
+            What to do
           </button>
           <button
             type="button"
@@ -3282,12 +3344,19 @@ function Cockpit({ view }: { view: View }) {
                             logoSrc={clientLogos[logoKey(c)]}
                             links={links}
                             updates={updates}
+                            rulesBelow={
+                              Boolean(open) &&
+                              mode === "ads" &&
+                              clientOf(
+                                (snap.campaigns as Campaign[]).find(
+                                  x => x.campaignName === open,
+                                ),
+                              ) === clientOf(c)
+                            }
                             onOpen={
                               c.internal
                                 ? undefined
                                 : () => {
-                                    setAccountRange(globalRange);
-                                    setAccountCampaign(null);
                                     setAccountView(
                                       c.clientName ?? c.accountName,
                                     );
@@ -3442,7 +3511,7 @@ function Cockpit({ view }: { view: View }) {
                                 setOpen(isOpen ? null : c.campaignName);
                               }}
                             >
-                              {isOpen ? "Close" : "Recommendations"}
+                              {isOpen ? "Close" : "What to do"}
                             </Button>
                           )}
                         </div>
@@ -3507,7 +3576,17 @@ function Cockpit({ view }: { view: View }) {
             · {synced}
           </p>
         </div>
-        {reportProblem}
+        <div className="flex flex-wrap items-center gap-2">
+          {view === "sod" ? (
+            <Button size="sm" variant="outline" asChild>
+              <Link to="/eod">
+                <MoonStar aria-hidden />
+                End of day
+              </Link>
+            </Button>
+          ) : null}
+          {reportProblem}
+        </div>
       </header>
 
       {/* Only when the data is stale or the last refresh had problems. */}
@@ -3515,24 +3594,46 @@ function Cockpit({ view }: { view: View }) {
 
       {/* Clients who wrote on WhatsApp, with the reply already drafted.
           Above the numbers: an unanswered client costs more than a
-          metric that moved two points. */}
-      <WhatsAppDesk desk="ads" />
+          metric that moved two points. Once, on Today: it used to sit on
+          every page, saying it is not connected for this desk. */}
+      {view === "sod" ? <WhatsAppDesk desk="ads" /> : null}
 
+      {/* Today took in the Task list and Touchpoints (the simplification
+          audit, approved 2026-10-06): the day in the morning sprint's own
+          order, with the ClickUp list, the meetings and the change log
+          once each. */}
       {view === "sod" && (
         <>
           <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px] lg:items-start">
             <div className="min-w-0 space-y-6">
               {sprint}
+              <div id="tasks" className="scroll-mt-6 space-y-6">
+                <Onboardings />
+                {tasksCard}
+              </div>
+              <div id="touchpoints" className="scroll-mt-6">
+                {touch}
+              </div>
               {watch}
               {accounts}
             </div>
             <div className="min-w-0 space-y-6">
               <TodayMeetings />
-              {clickUp}
+              {planned}
+              {changeLog}
             </div>
           </div>
           {tiles}
           <PortfolioTrends />
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-dashed px-4 py-4 sm:px-6">
+            <p className="text-sm text-muted-foreground">
+              Before you log off, file your end of day. The numbers and the
+              change log are already in it.
+            </p>
+            <Button size="sm" asChild>
+              <Link to="/eod">File my end of day</Link>
+            </Button>
+          </div>
         </>
       )}
 
@@ -3576,27 +3677,6 @@ function Cockpit({ view }: { view: View }) {
           {!accountView && sweep}
           {!accountView && board}
         </>
-      )}
-
-      {view === "tasks" && (
-        <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px] lg:items-start">
-          <div className="min-w-0 space-y-6">
-            <Onboardings />
-            {tasksCard}
-          </div>
-          <div className="min-w-0 space-y-6">
-            <TodayMeetings />
-            {planned}
-            {changeLog}
-          </div>
-        </div>
-      )}
-
-      {view === "touch" && (
-        <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px] lg:items-start">
-          <div className="min-w-0">{touch}</div>
-          <div className="min-w-0">{changeLog}</div>
-        </div>
       )}
 
       {view === "eod" && (

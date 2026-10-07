@@ -72,7 +72,11 @@ export function gapsFor(client: Any, profile: Any | undefined): Gap[] {
 export async function fetchBacklog(
   client: SupabaseClient,
   allowedClients?: string[] | null,
-): Promise<{ rows: Any[]; counts: Record<string, number>; activeClients: number }> {
+): Promise<{
+  rows: Any[];
+  counts: Record<string, number>;
+  activeClients: number;
+}> {
   const { data: profiles, error: pErr } = await client
     .from("cockpit_client_profiles")
     .select("*")

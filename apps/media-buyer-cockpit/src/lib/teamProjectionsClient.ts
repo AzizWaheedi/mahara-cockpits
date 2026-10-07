@@ -34,7 +34,9 @@ export type BookingResult = z.infer<typeof bookingResultSchema>;
 
 const pending = new Map<string, string>();
 
-async function getVerifiedUserId(client: SupabaseClient | null): Promise<string> {
+async function getVerifiedUserId(
+  client: SupabaseClient | null,
+): Promise<string> {
   if (!client) throw new Error("Client-success sign-in is required");
   const { data: auth, error: authError } = await client.auth.getSession();
   if (authError || !auth.session?.user?.id) {

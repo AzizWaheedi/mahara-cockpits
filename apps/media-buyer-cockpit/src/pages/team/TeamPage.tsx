@@ -7,13 +7,39 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DateInput } from "@/components/ui/date-input";
 import { Input } from "@/components/ui/input";
-import { usePageVisible } from "@/lib/usePageVisible";
-import { fetchTeamOverview, saveMeeting as saveMeetingApi, type MeetingSummary, type Overview, type Prize, type WeekDay, type WeekItem } from "@/lib/team";
 import { api, useAction } from "@/lib/cockpitApi";
+import {
+  fetchTeamOverview,
+  type MeetingSummary,
+  type Overview,
+  type Prize,
+  saveMeeting as saveMeetingApi,
+  type WeekDay,
+  type WeekItem,
+} from "@/lib/team";
 import { DAY_NAMES, dayLabel } from "@/lib/teamCore";
+import { usePageVisible } from "@/lib/usePageVisible";
 import { CADENCES } from "./MeetingPage";
-import { chip, DayChips, dayName, errorText, Field, fieldClass, Initials, peopleById, selectClass, timeRange } from "./teamKit";
-import { inViewer, localToday, offsetLine, rangeIn, seriesIn, viewerZone } from "./teamTime";
+import {
+  chip,
+  DayChips,
+  dayName,
+  errorText,
+  Field,
+  fieldClass,
+  Initials,
+  peopleById,
+  selectClass,
+  timeRange,
+} from "./teamKit";
+import {
+  inViewer,
+  localToday,
+  offsetLine,
+  rangeIn,
+  seriesIn,
+  viewerZone,
+} from "./teamTime";
 
 /**
  * Team meetings: every meeting the team holds, the week at its real times,

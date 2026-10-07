@@ -48,12 +48,7 @@ export function BillingTab(_: CeoTabProps) {
       },
       edit: async args => {
         if (!auth.client) throw new Error("Not signed in");
-        return editBillingAccount(
-          auth.client,
-          auth.email,
-          args,
-          "ceo",
-        );
+        return editBillingAccount(auth.client, auth.email, args, "ceo");
       },
       logPayment: async p => {
         if (!auth.client) throw new Error("Not signed in");

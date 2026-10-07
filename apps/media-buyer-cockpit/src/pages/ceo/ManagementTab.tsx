@@ -1,5 +1,3 @@
-import { useAction, useMutation, useQueries } from "@/lib/cockpitApi";
-import type { FunctionReturnType } from "@/lib/cockpitApi";
 import { History, LoaderCircle, UserRoundX, Users } from "lucide-react";
 import {
   createContext,
@@ -52,8 +50,9 @@ import {
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import type { FunctionReturnType } from "@/lib/cockpitApi";
+import { api, useAction, useMutation, useQueries } from "@/lib/cockpitApi";
 import { cn } from "@/lib/utils";
-import { api } from "@/lib/cockpitApi";
 import type {
   FeedItem,
   Note,

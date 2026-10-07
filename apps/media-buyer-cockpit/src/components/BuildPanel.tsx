@@ -1,9 +1,14 @@
-import { useMutation, useQuery } from "@/lib/cockpitApi";
 import { useState } from "react";
 import { toast } from "sonner";
 import { AnimatedSelect } from "@/components/ui/animated-select";
-import { ALWAYS, ageLine, recommendAdSets, SERVICE_LINES, type ServiceLine } from "@/lib/audiences";
-import { api } from "@/lib/cockpitApi";
+import {
+  ALWAYS,
+  ageLine,
+  recommendAdSets,
+  SERVICE_LINES,
+  type ServiceLine,
+} from "@/lib/audiences";
+import { api, useMutation, useQuery } from "@/lib/cockpitApi";
 import { CreativePreview } from "./CreativePreview";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -204,7 +209,11 @@ export function BuildPanel({
                   setOpen(false);
                   toast.success("Draft ready. Review the copy and settings.");
                 } catch (error) {
-                  toast.error(error instanceof Error ? error.message : "The draft could not be built.");
+                  toast.error(
+                    error instanceof Error
+                      ? error.message
+                      : "The draft could not be built.",
+                  );
                 } finally {
                   setBusy(false);
                 }

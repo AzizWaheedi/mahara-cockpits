@@ -1,13 +1,9 @@
-import { Filter } from "lucide-react";
+import { ArrowUpRight, ChevronRight, Filter } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
-import { fetchFunnels } from "@/lib/clients";
-
-import { ArrowUpRight, ChevronRight } from "lucide-react";
-
-
 import { PageHeader } from "@/components/PageHeader";
 import { Button } from "@/components/ui/button";
+import { fetchFunnels } from "@/lib/clients";
 
 /**
  * Funnels and lead forms.
@@ -197,10 +193,14 @@ export function FunnelsPage() {
   useEffect(() => {
     if (!auth.client) return;
     let cancelled = false;
-    void fetchFunnels(auth.client).then(res => {
-      if (!cancelled) setData(res);
-    }).catch(console.error);
-    return () => { cancelled = true; };
+    void fetchFunnels(auth.client)
+      .then(res => {
+        if (!cancelled) setData(res);
+      })
+      .catch(console.error);
+    return () => {
+      cancelled = true;
+    };
   }, [auth.client]);
   const [rowsShown, setRowsShown] = useState(PAGE);
   const [bankShown, setBankShown] = useState(PAGE);

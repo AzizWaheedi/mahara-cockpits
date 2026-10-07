@@ -1,17 +1,52 @@
-import { ArrowUpRight, Check, ChevronLeft, ChevronRight, Facebook, Images, Instagram, LoaderCircle, Play, Plus, RefreshCw, Send, SlidersHorizontal, Sparkles, Trash2, TriangleAlert, Upload, X } from "lucide-react";
+import {
+  ArrowUpRight,
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  Facebook,
+  Images,
+  Instagram,
+  LoaderCircle,
+  Play,
+  Plus,
+  RefreshCw,
+  Send,
+  SlidersHorizontal,
+  Sparkles,
+  Trash2,
+  TriangleAlert,
+  Upload,
+  X,
+} from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
 import { DateInput } from "@/components/ui/date-input";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { api, useAction } from "@/lib/social";
-
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
 import { AccountsPicker } from "../components/social/Accounts";
 import { Captions } from "../components/social/Captions";
 import { useConfirm } from "../components/social/Confirm";
-import { ASPECTS, type Aspect, formatOf, itemsOf, type Job, LOOKS, type Look, type MediaItem, PLATFORMS, type Platform, REEL, useUploader } from "../components/social/media";
+import {
+  ASPECTS,
+  type Aspect,
+  formatOf,
+  itemsOf,
+  type Job,
+  LOOKS,
+  type Look,
+  type MediaItem,
+  PLATFORMS,
+  type Platform,
+  REEL,
+  useUploader,
+} from "../components/social/media";
 import { DraftMedia, MediaEditor } from "../components/social/PostMedia";
 import { References, useLibrary } from "../components/social/References";
 import { ShapePicker } from "../components/social/ShapePicker";

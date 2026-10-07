@@ -5,7 +5,14 @@ import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { PageHeader } from "@/components/PageHeader";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
@@ -34,7 +41,8 @@ export function SettingsPage() {
 
     try {
       if (auth.client && auth.email) {
-        const { error: resetErr } = await auth.client.auth.resetPasswordForEmail(auth.email);
+        const { error: resetErr } =
+          await auth.client.auth.resetPasswordForEmail(auth.email);
         if (resetErr) throw resetErr;
         setSuccess("Password reset email sent!");
       }
@@ -55,7 +63,9 @@ export function SettingsPage() {
 
     try {
       if (auth.client) {
-        const { error: updateErr } = await auth.client.auth.updateUser({ password: newPassword });
+        const { error: updateErr } = await auth.client.auth.updateUser({
+          password: newPassword,
+        });
         if (updateErr) throw updateErr;
         setSuccess("Password changed successfully!");
         setTimeout(() => {

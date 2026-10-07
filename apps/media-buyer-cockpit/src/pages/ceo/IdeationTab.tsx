@@ -1,16 +1,19 @@
-import { useAction } from "@/lib/cockpitApi";
-import { Radar } from "lucide-react";
-import { ArrowUpRight } from "lucide-react";
+import { ArrowUpRight, Radar } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { EmptyState } from "@/components/ceo/EmptyState";
-import { count, countCompact, humanize, shortDate } from "@/components/ceo/format";
+import {
+  count,
+  countCompact,
+  humanize,
+  shortDate,
+} from "@/components/ceo/format";
 import { Kicker } from "@/components/ceo/Kicker";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatTile } from "@/components/ceo/StatTile";
 import { StatusChip } from "@/components/ceo/StatusChip";
 import { AnimatedSelect } from "@/components/ui/animated-select";
-import { api } from "@/lib/cockpitApi";
 import { Button } from "@/components/ui/button";
+import { api, useAction } from "@/lib/cockpitApi";
 import { IdeationPage } from "../IdeationPage";
 import type { CeoTabProps } from "./types";
 

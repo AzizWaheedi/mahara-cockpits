@@ -1,7 +1,7 @@
-import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { Flag } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { Button } from "@/components/ui/button";
 import {
   Popover,
@@ -31,7 +31,12 @@ export function ReportIssue({ page }: { page: string }) {
     setBusy(true);
     try {
       if (!auth.client) throw new Error("Sign in to report an issue.");
-      const { error } = await auth.client.rpc("cockpit_submit_issue_report", { p_app: "client-success", p_role: "csm", p_page: page, p_text: body });
+      const { error } = await auth.client.rpc("cockpit_submit_issue_report", {
+        p_app: "client-success",
+        p_role: "csm",
+        p_page: page,
+        p_text: body,
+      });
       if (error) throw error;
       toast.success("Issue recorded for review");
       setOpen(false);

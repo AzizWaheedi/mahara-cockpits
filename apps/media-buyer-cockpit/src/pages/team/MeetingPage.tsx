@@ -1,18 +1,58 @@
-import { ArrowDown, ArrowLeft, ArrowUp, Check, Loader2, Pencil, X } from "lucide-react";
-import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import {
+  ArrowDown,
+  ArrowLeft,
+  ArrowUp,
+  Check,
+  Loader2,
+  Pencil,
+  X,
+} from "lucide-react";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import { Link, useParams } from "react-router";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { usePageVisible } from "@/lib/usePageVisible";
-import { addItem as addItemApi, closeItem as closeItemApi, editItem as editItemApi, fetchMeetingPage, moveItem as moveItemApi, saveDoc as saveDocApi, saveLinks as saveLinksApi, saveMeeting as saveMeetingApi, saveNotes as saveNotesApi, type Item, type MeetingPage as Page, type Person, type Sitting } from "@/lib/team";
+import {
+  addItem as addItemApi,
+  closeItem as closeItemApi,
+  editItem as editItemApi,
+  fetchMeetingPage,
+  type Item,
+  moveItem as moveItemApi,
+  type MeetingPage as Page,
+  type Person,
+  type Sitting,
+  saveDoc as saveDocApi,
+  saveLinks as saveLinksApi,
+  saveMeeting as saveMeetingApi,
+  saveNotes as saveNotesApi,
+} from "@/lib/team";
 import type { MeetingLink } from "@/lib/teamDoc";
+import { usePageVisible } from "@/lib/usePageVisible";
 import { ClientSuccessPanel } from "./ClientSuccessPanel";
 import { MeetingLinks } from "./MeetingLinks";
 import { PipelineBoard, PipelineStrip } from "./Pipeline";
 import { RunOfShow } from "./RunOfShow";
-import { dayName, errorText, Field, peopleById, peopleOptions, type SaveResult, SharedText, selectClass, shortName, when } from "./teamKit";
+import {
+  dayName,
+  errorText,
+  Field,
+  peopleById,
+  peopleOptions,
+  type SaveResult,
+  SharedText,
+  selectClass,
+  shortName,
+  when,
+} from "./teamKit";
 import { Wheels } from "./Wheels";
 import { WhenAndWho } from "./WhenAndWho";
 

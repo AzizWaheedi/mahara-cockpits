@@ -1,8 +1,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { GROUPS, METRICS, scoreboard } from "../types/ceo/scoreboard";
-import { buildGoalsBoard, type GoalContext } from "./ceoGoalsModel";
 import { parseCallCenterReport } from "../types/ceo/callCenterContract";
+import { GROUPS, METRICS, scoreboard } from "../types/ceo/scoreboard";
 import { costsSummary, getCostsContext } from "./ceoCostsClient";
+import { buildGoalsBoard, type GoalContext } from "./ceoGoalsModel";
 
 function positiveId(id: unknown): asserts id is number {
   if (!Number.isSafeInteger(id) || Number(id) <= 0)
@@ -69,19 +69,38 @@ export async function readGoalsBoard(
 ) {
   const context = await getGoalContext(client, args.planId);
   const initial = buildGoalsBoard(context);
-  const costs = getCostsContext(client).then(costsSummary).catch(() => null);
-  if (initial.plan && initial.pace && initial.pace.through >= initial.plan.periodFrom) {
+  const costs = getCostsContext(client)
+    .then(costsSummary)
+    .catch(() => null);
+  if (
+    initial.plan &&
+    initial.pace &&
+    initial.pace.through >= initial.plan.periodFrom
+  ) {
     const from = initial.plan.periodFrom;
     const to = initial.pace.through;
     try {
       const report = parseCallCenterReport(
-        await rpc(client, "cockpit_ceo_call_center_report", { p_from: from, p_to: to }), from, to,
+        await rpc(client, "cockpit_ceo_call_center_report", {
+          p_from: from,
+          p_to: to,
+        }),
+        from,
+        to,
       );
-      context.payloads = { ...context.payloads, callsWindow: { from, to, overall: report.overall } };
-      context.callClients = report.clients.filter(c => c.leads > 0).map(c => ({
-        name: c.name, leads: c.leads, bookings: c.confirmedBookings,
-        rate: c.confirmedBookings / c.leads,
-      })).sort((a, b) => b.leads - a.leads);
+      context.payloads = {
+        ...context.payloads,
+        callsWindow: { from, to, overall: report.overall },
+      };
+      context.callClients = report.clients
+        .filter(c => c.leads > 0)
+        .map(c => ({
+          name: c.name,
+          leads: c.leads,
+          bookings: c.confirmedBookings,
+          rate: c.confirmedBookings / c.leads,
+        }))
+        .sort((a, b) => b.leads - a.leads);
     } catch {
       // Unreadable call data is missing, not a zero or a sum of daily distinct counts.
       context.callClients = null;

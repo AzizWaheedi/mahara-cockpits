@@ -1,4 +1,3 @@
-import { useAction } from "@/lib/cockpitApi";
 import { CalendarPlus, Loader2, Pencil, Target } from "lucide-react";
 import {
   type ReactNode,
@@ -20,13 +19,20 @@ import { Na } from "@/components/ceo/Na";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatusChip, StatusDot } from "@/components/ceo/StatusChip";
 import { AnimatedSelect } from "@/components/ui/animated-select";
-import { api } from "@/lib/cockpitApi";
-import type { Board, TargetRow } from "@/types/ceo/goals";
 import { Button } from "@/components/ui/button";
+import { api, useAction } from "@/lib/cockpitApi";
 import { BOOKING_RATE_GATE } from "@/lib/kpi";
 import { cn } from "@/lib/utils";
+import type { Board, TargetRow } from "@/types/ceo/goals";
 import { PlanEditor } from "./goalsEdit";
-import { behindBy, fmt, PaceBar, paceTone, planName, worstThree } from "./goalsKit";
+import {
+  behindBy,
+  fmt,
+  PaceBar,
+  paceTone,
+  planName,
+  worstThree,
+} from "./goalsKit";
 import { NextMonth } from "./goalsNext";
 import type { CeoTabProps } from "./types";
 

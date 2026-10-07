@@ -189,7 +189,7 @@ export function ladderOf(a: Account, today = kuwaitToday()): Ladder {
     if (inPause >= 15)
       return {
         rung: "churn",
-        label: "Fifteen days paused: churn",
+        label: "Paused past 14 days: churn",
         days: -inPause,
         tone: "critical",
       };
@@ -259,7 +259,7 @@ export function ladderOf(a: Account, today = kuwaitToday()): Ladder {
   if (d <= -15)
     return {
       rung: "churn",
-      label: "Fifteen days late: churn",
+      label: "Late past 14 days: churn",
       days: d,
       tone: "critical",
     };

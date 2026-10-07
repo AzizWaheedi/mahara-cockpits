@@ -55,11 +55,16 @@ export function extractAnswerText(result: unknown): string {
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function checkedJob(value: unknown): AskAiJobItem {
   const j = value as AskAiJobItem | null;
-  if (!j || typeof j !== "object" || !UUID.test(j.id) ||
-      !["queued","claimed","completed","failed"].includes(j.status) ||
-      !["media-buyer","client-success","creative"].includes(j.app) ||
-      typeof j.prompt !== "string" || !Number.isFinite(Date.parse(j.created_at)) ||
-      (j.status === "completed" && !extractAnswerText(j.result).trim())) {
+  if (
+    !j ||
+    typeof j !== "object" ||
+    !UUID.test(j.id) ||
+    !["queued", "claimed", "completed", "failed"].includes(j.status) ||
+    !["media-buyer", "client-success", "creative"].includes(j.app) ||
+    typeof j.prompt !== "string" ||
+    !Number.isFinite(Date.parse(j.created_at)) ||
+    (j.status === "completed" && !extractAnswerText(j.result).trim())
+  ) {
     throw new Error("The server returned an invalid conversation receipt.");
   }
   return j;
@@ -82,10 +87,14 @@ export async function submitAskAiJob(
     if (error) {
       return { jobId: null, error: new Error(error.message) };
     }
-    if (typeof data !== "string" || !UUID.test(data)) throw new Error("The request was not confirmed by the server.");
+    if (typeof data !== "string" || !UUID.test(data))
+      throw new Error("The request was not confirmed by the server.");
     return { jobId: data, error: null };
   } catch (err: any) {
-    return { jobId: null, error: err instanceof Error ? err : new Error(String(err)) };
+    return {
+      jobId: null,
+      error: err instanceof Error ? err : new Error(String(err)),
+    };
   }
 }
 
@@ -102,7 +111,10 @@ export async function getAskAiJob(
     }
     return { job: data === null ? null : checkedJob(data), error: null };
   } catch (err: any) {
-    return { job: null, error: err instanceof Error ? err : new Error(String(err)) };
+    return {
+      job: null,
+      error: err instanceof Error ? err : new Error(String(err)),
+    };
   }
 }
 
@@ -119,10 +131,16 @@ export async function getAskAiThread(
     if (error) {
       return { thread: [], error: new Error(error.message) };
     }
-    if (!Array.isArray(data)) throw new Error("The conversation history was not confirmed by the server.");
+    if (!Array.isArray(data))
+      throw new Error(
+        "The conversation history was not confirmed by the server.",
+      );
     return { thread: data.map(checkedJob), error: null };
   } catch (err: any) {
-    return { thread: [], error: err instanceof Error ? err : new Error(String(err)) };
+    return {
+      thread: [],
+      error: err instanceof Error ? err : new Error(String(err)),
+    };
   }
 }
 
@@ -137,10 +155,16 @@ export async function clearAskAiThread(
     if (error) {
       return { success: false, error: new Error(error.message) };
     }
-    if (data !== true) throw new Error("The conversation clear was not confirmed by the server.");
+    if (data !== true)
+      throw new Error(
+        "The conversation clear was not confirmed by the server.",
+      );
     return { success: true, error: null };
   } catch (err: any) {
-    return { success: false, error: err instanceof Error ? err : new Error(String(err)) };
+    return {
+      success: false,
+      error: err instanceof Error ? err : new Error(String(err)),
+    };
   }
 }
 

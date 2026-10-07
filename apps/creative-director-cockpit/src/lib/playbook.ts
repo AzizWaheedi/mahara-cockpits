@@ -275,10 +275,11 @@ export async function fetchWinners(
     isSaved: r.origin === "saved",
     isAuto: r.origin !== "saved",
     savedAt: r.first_seen_at ? new Date(r.first_seen_at).getTime() : undefined,
-    savedBy: r.origin === "saved" ? (r.saved_by || r.client) : undefined,
-    savedByName: r.origin === "saved" ? (r.saved_by_name || r.client) : undefined,
+    savedBy: r.origin === "saved" ? r.saved_by || r.client : undefined,
+    savedByName: r.origin === "saved" ? r.saved_by_name || r.client : undefined,
     savedNote: r.hook || undefined,
-    savedRange: r.won_from && r.won_to ? { start: r.won_from, end: r.won_to } : undefined,
+    savedRange:
+      r.won_from && r.won_to ? { start: r.won_from, end: r.won_to } : undefined,
     accountId: r.account_id || undefined,
     stillUrl: r.still_url || undefined,
     stillTinyUrl: r.still_tiny_url || undefined,
@@ -320,7 +321,9 @@ export async function fetchScriptDatabase(
     else if (args.origin === "auto") query = query.neq("origin", "saved");
   }
   if (args.savedBy) {
-    query = query.or(`saved_by.eq.${args.savedBy},saved_by_name.eq.${args.savedBy}`);
+    query = query.or(
+      `saved_by.eq.${args.savedBy},saved_by_name.eq.${args.savedBy}`,
+    );
   }
   query = query.order("cpl", { ascending: true }).limit(args.limit ?? 200);
 
@@ -348,10 +351,11 @@ export async function fetchScriptDatabase(
     isSaved: r.origin === "saved",
     isAuto: r.origin !== "saved",
     savedAt: r.first_seen_at ? new Date(r.first_seen_at).getTime() : undefined,
-    savedBy: r.origin === "saved" ? (r.saved_by || r.client) : undefined,
-    savedByName: r.origin === "saved" ? (r.saved_by_name || r.client) : undefined,
+    savedBy: r.origin === "saved" ? r.saved_by || r.client : undefined,
+    savedByName: r.origin === "saved" ? r.saved_by_name || r.client : undefined,
     savedNote: r.hook || undefined,
-    savedRange: r.won_from && r.won_to ? { start: r.won_from, end: r.won_to } : undefined,
+    savedRange:
+      r.won_from && r.won_to ? { start: r.won_from, end: r.won_to } : undefined,
     accountId: r.account_id || undefined,
     stillUrl: r.still_url || undefined,
     stillTinyUrl: r.still_tiny_url || undefined,

@@ -1,6 +1,89 @@
 /** Provider adapter, kept independent of Convex so identity and retries are testable. */
 export const CHECK_IN_CALENDAR = "SHjlq0UjeR11maltYNyh";
 export const CLIENT_ACCOUNT = "wwG426bwruWWv9W3fazQ";
+
+/**
+ * Every call the CSM books, one calendar each in the Mahara Media client
+ * account (Aziz, 2026-10-06: "book all the types of calls, not just check-in
+ * calls"). In journey order. Booking one moves the client's ClickUp stage to
+ * `stage` when that is further along than where they are; a check-in moves
+ * nothing. Only these calendars can be booked.
+ */
+export const CALLS = {
+  onboarding: {
+    calendarId: "z1Ne59rohCCj87KhcXoi",
+    label: "Onboarding call",
+    stage: "Onboarding Booked",
+  },
+  blueprint: {
+    calendarId: "x84ET6KnA8odlsjYiVLq",
+    label: "Brand Blueprint call",
+    stage: "Brand Blueprint Booked\u2660\ufe0f",
+  },
+  launch: {
+    calendarId: "5E1EVxLJbGiDM3iYl2kL",
+    label: "Launch call",
+    stage: "LAUNCH BOOKED",
+  },
+  checkin: {
+    calendarId: CHECK_IN_CALENDAR,
+    label: "Check-in call",
+    stage: null,
+  },
+} as const;
+export type CallKind = keyof typeof CALLS;
+export const CALL_KINDS = Object.keys(CALLS) as CallKind[];
+
+export function callOf(kind: string | undefined): (typeof CALLS)[CallKind] & {
+  kind: CallKind;
+} {
+  const k = (kind ?? "checkin") as CallKind;
+  if (!(k in CALLS)) throw new Error("Choose which call to book.");
+  return { ...CALLS[k], kind: k };
+}
+
+/** The stages before launch, in order. A booking only ever moves a client forward along them. */
+const JOURNEY = [
+  "Needs Contacting",
+  "GHOSTED",
+  "DELAY OUT OF OUR CONTROL",
+  "Onboarding Booked",
+  "Brand Blueprint Booked\u2660\ufe0f",
+  "LAUNCH BOOKED",
+];
+
+/** The ClickUp stage a booking should move the client to, or null to leave it. */
+export function stageAfterBooking(
+  current: string | null | undefined,
+  kind: CallKind,
+): string | null {
+  const target = CALLS[kind].stage;
+  if (!target) return null;
+  const at = JOURNEY.indexOf(String(current ?? ""));
+  // Live, paused or stopped clients, and anyone already past the target, stay put.
+  if (at < 0 || at >= JOURNEY.indexOf(target)) return null;
+  return target;
+}
+
+/**
+ * The call the journey books next, from the client's ClickUp stage
+ * (csmTemplates nextCall): a new signup's onboarding call, the Blueprint once
+ * onboarding is booked, the launch call once the Blueprint is, and check-ins
+ * for everyone else.
+ */
+export function suggestedCall(stage: string | null | undefined): CallKind {
+  const s = String(stage ?? "");
+  if (["Needs Contacting", "GHOSTED", "DELAY OUT OF OUR CONTROL"].includes(s))
+    return "onboarding";
+  if (/^onboarding booked$/i.test(s)) return "blueprint";
+  if (/blueprint/i.test(s)) return "launch";
+  return "checkin";
+}
+
+/** The client's contact in the Mahara Media client account, opened in HighLevel. */
+export function contactUrl(contactId: string): string {
+  return `https://app.maharamedia.com/v2/location/${CLIENT_ACCOUNT}/contacts/detail/${encodeURIComponent(contactId)}`;
+}
 export const CLIENT_ID_FIELD = "Csj6vsVH3wSRseT3OkMU";
 export const CHECK_IN_ZONE = "Asia/Kuwait";
 
@@ -114,26 +197,36 @@ export async function findContact(request: GhlRequest, taskId: string) {
   const c = exact[0];
   return {
     id: String(c.id),
+    // HighLevel keeps contactName in lower case; the name fields keep the client's own capitals.
     name: String(
-      c.contactName ||
+      [c.firstName, c.lastName].filter(Boolean).join(" ") ||
+        c.contactName ||
         c.name ||
-        [c.firstName, c.lastName].filter(Boolean).join(" ") ||
         c.companyName ||
         "Client contact",
     ),
+    phone: c.phone ? String(c.phone) : null,
+    email: c.email ? String(c.email) : null,
+    url: contactUrl(String(c.id)),
   };
 }
 
-export async function getCalendar(request: GhlRequest) {
-  const result = await request("GET", `/calendars/${CHECK_IN_CALENDAR}`);
+export async function getCalendar(
+  request: GhlRequest,
+  kind: CallKind = "checkin",
+) {
+  const call = callOf(kind);
+  const result = await request("GET", `/calendars/${call.calendarId}`);
   const c = result.calendar;
   if (
     !c ||
-    c.id !== CHECK_IN_CALENDAR ||
+    c.id !== call.calendarId ||
     c.locationId !== CLIENT_ACCOUNT ||
     c.isActive === false
   )
-    throw new Error("The Mahara Media check-in calendar is unavailable.");
+    throw new Error(
+      `The Mahara Media ${call.label.toLowerCase()} calendar is unavailable.`,
+    );
   const minutes = Number(c.slotDuration);
   if (
     !Number.isFinite(minutes) ||
@@ -141,19 +234,28 @@ export async function getCalendar(request: GhlRequest) {
     minutes > 120 ||
     !["mins", "minutes"].includes(c.slotDurationUnit)
   )
-    throw new Error("The check-in calendar's call duration needs checking.");
-  return { id: CHECK_IN_CALENDAR, name: String(c.name), minutes };
+    throw new Error(
+      `The ${call.label.toLowerCase()} calendar's call duration needs checking.`,
+    );
+  return {
+    id: call.calendarId,
+    name: String(c.name),
+    minutes,
+    kind: call.kind,
+    label: call.label,
+  };
 }
 
 export async function availableSlots(
   request: GhlRequest,
   day: string,
   now = Date.now(),
+  kind: CallKind = "checkin",
 ) {
   const start = validateDay(day, now);
   const result = await request(
     "GET",
-    `/calendars/${CHECK_IN_CALENDAR}/free-slots?${new URLSearchParams({
+    `/calendars/${callOf(kind).calendarId}/free-slots?${new URLSearchParams({
       startDate: String(start),
       endDate: String(start + 86400_000 - 1),
       timezone: CHECK_IN_ZONE,
@@ -182,14 +284,42 @@ export async function prepareCheckIn(
   taskId: string,
   day: string,
   now = Date.now(),
-) {
+  kind: CallKind = "checkin",
+): Promise<PreparedCall> {
+  callOf(kind);
   validateDay(day, now);
   const [contact, calendar, slots] = await Promise.all([
     findContact(request, taskId),
-    getCalendar(request),
-    availableSlots(request, day, now),
+    getCalendar(request, kind),
+    availableSlots(request, day, now, kind),
   ]);
-  return { contact, calendar, slots, day, timezone: CHECK_IN_ZONE };
+  return { contact, calendar, slots, day, timezone: CHECK_IN_ZONE, kind };
+}
+
+export interface PreparedCall {
+  contact: {
+    id: string;
+    name: string;
+    phone: string | null;
+    email: string | null;
+    url: string;
+  };
+  calendar: {
+    id: string;
+    name: string;
+    minutes: number;
+    kind: CallKind;
+    label: string;
+  };
+  slots: string[];
+  day: string;
+  timezone: "Asia/Kuwait";
+  kind: CallKind;
+}
+
+export interface ClientCallSelection extends PreparedCall {
+  startTime: string;
+  endTime: string;
 }
 
 export async function verifySelection(
@@ -198,11 +328,12 @@ export async function verifySelection(
   contactId: string,
   startTime: string,
   now = Date.now(),
-) {
+  kind: CallKind = "checkin",
+): Promise<ClientCallSelection> {
   const start = Date.parse(startTime);
   if (!Number.isFinite(start)) throw new Error("Choose an available time.");
   const day = new Date(start + 3 * 3600_000).toISOString().slice(0, 10);
-  const prepared = await prepareCheckIn(request, taskId, day, now);
+  const prepared = await prepareCheckIn(request, taskId, day, now, kind);
   if (prepared.contact.id !== contactId)
     throw new Error("The linked contact changed. Reopen booking to review it.");
   if (!prepared.slots.some(s => Date.parse(s) === start))
@@ -216,16 +347,17 @@ export async function verifySelection(
 
 export async function createCheckIn(
   request: GhlRequest,
-  selection: Awaited<ReturnType<typeof verifySelection>>,
+  selection: ClientCallSelection,
   clientName: string,
 ) {
+  const call = callOf(selection.kind);
   const made = await request("POST", "/calendars/events/appointments", {
-    calendarId: CHECK_IN_CALENDAR,
+    calendarId: call.calendarId,
     locationId: CLIENT_ACCOUNT,
     contactId: selection.contact.id,
     startTime: selection.startTime,
     endTime: selection.endTime,
-    title: `${clientName} | Check-in call`,
+    title: `${clientName} | ${call.label}`,
     appointmentStatus: "confirmed",
     ignoreFreeSlotValidation: false,
     ignoreDateRange: false,
@@ -235,7 +367,7 @@ export async function createCheckIn(
   if (
     !receipt.id ||
     receipt.contactId !== selection.contact.id ||
-    receipt.calendarId !== CHECK_IN_CALENDAR ||
+    receipt.calendarId !== call.calendarId ||
     receipt.locationId !== CLIENT_ACCOUNT ||
     Date.parse(receipt.startTime) !== Date.parse(selection.startTime)
   )

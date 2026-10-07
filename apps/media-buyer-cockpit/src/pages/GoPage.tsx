@@ -1,9 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router";
+import { cockpitSwitchPath } from "@/auth/cockpitNavigation";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { Wordmark } from "@/components/Wordmark";
-import { cockpitSwitchPath } from "@/auth/cockpitNavigation";
-
 
 /**
  * Inter-cockpit redirector and access gate.
@@ -14,13 +13,21 @@ export function GoPage() {
   const { cockpit = "" } = useParams();
   const [params] = useSearchParams();
   const navigate = useNavigate();
-  const { access, ready, isAuthenticated, error: accessError } = useCockpitAuth();
+  const {
+    access,
+    ready,
+    isAuthenticated,
+    error: accessError,
+  } = useCockpitAuth();
   const [error, setError] = useState<string | null>(null);
   const started = useRef(false);
 
   useEffect(() => {
     if (!ready || started.current) return;
-    if (accessError) { setError(accessError); return; }
+    if (accessError) {
+      setError(accessError);
+      return;
+    }
 
     if (!isAuthenticated) {
       const wanted = window.location.pathname + window.location.search;
@@ -29,11 +36,19 @@ export function GoPage() {
     }
 
     try {
-      const targetPath = cockpitSwitchPath(access, cockpit, params.get("next") ?? "/dashboard");
+      const targetPath = cockpitSwitchPath(
+        access,
+        cockpit,
+        params.get("next") ?? "/dashboard",
+      );
       started.current = true;
       window.location.replace(targetPath);
     } catch (error) {
-      setError(error instanceof Error ? error.message : "Could not open that cockpit. Try again.");
+      setError(
+        error instanceof Error
+          ? error.message
+          : "Could not open that cockpit. Try again.",
+      );
     }
   }, [ready, isAuthenticated, access, accessError, cockpit, params, navigate]);
 
@@ -58,4 +73,3 @@ export function GoPage() {
     </div>
   );
 }
-

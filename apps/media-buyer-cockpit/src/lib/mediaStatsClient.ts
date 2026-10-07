@@ -215,34 +215,79 @@ async function computeRange(
   }
 }
 
+export type MediaStatsData = {
+  rows: Record<string, any>[];
+  bookings: Record<string, any>[];
+  historical: Record<string, any>[];
+};
 
-export type MediaStatsData = { rows: Record<string, any>[]; bookings: Record<string, any>[]; historical: Record<string, any>[] };
-
-export async function computeMediaRange(data: MediaStatsData, args: {campaignName:string;start:string;end:string}) {
-  const context = {db:{query(table:string) {
-    let rows = table === "dailyStats" ? [...data.historical,...data.rows] : [...data.bookings];
-    const conditions: ((r:Record<string,any>)=>boolean)[]=[];
-    const builder = {
-      eq: (key:string,v:unknown) => {conditions.push(r=>r[key]===v);return builder;},
-      gte: (key:string,v:string) => {conditions.push(r=>r[key]>=v);return builder;},
-      lte: (key:string,v:string) => {conditions.push(r=>r[key]<=v);return builder;},
-      lt: (key:string,v:string) => {conditions.push(r=>r[key]<v);return builder;},
-    };
-    return {withIndex(_index:string,filter:(q:typeof builder)=>unknown){
-      filter(builder); rows=rows.filter(r=>conditions.every(f=>f(r)));
-      return {collect:async()=>rows};
-    }};
-  }}};
-  return computeRange(context,args);
+export async function computeMediaRange(
+  data: MediaStatsData,
+  args: { campaignName: string; start: string; end: string },
+) {
+  const context = {
+    db: {
+      query(table: string) {
+        let rows =
+          table === "dailyStats"
+            ? [...data.historical, ...data.rows]
+            : [...data.bookings];
+        const conditions: ((r: Record<string, any>) => boolean)[] = [];
+        const builder = {
+          eq: (key: string, v: unknown) => {
+            conditions.push(r => r[key] === v);
+            return builder;
+          },
+          gte: (key: string, v: string) => {
+            conditions.push(r => r[key] >= v);
+            return builder;
+          },
+          lte: (key: string, v: string) => {
+            conditions.push(r => r[key] <= v);
+            return builder;
+          },
+          lt: (key: string, v: string) => {
+            conditions.push(r => r[key] < v);
+            return builder;
+          },
+        };
+        return {
+          withIndex(_index: string, filter: (q: typeof builder) => unknown) {
+            filter(builder);
+            rows = rows.filter(r => conditions.every(f => f(r)));
+            return { collect: async () => rows };
+          },
+        };
+      },
+    },
+  };
+  return computeRange(context, args);
 }
 
-export async function readMediaStats(client:SupabaseClient,kind:string,args:Record<string,any>={}) {
-  const {data,error}=await client.rpc("cockpit_media_statistics",{
-    p_kind:kind,p_campaign:args.campaignName??null,p_start:args.start??null,p_end:args.end??null,
+export async function readMediaStats(
+  client: SupabaseClient,
+  kind: string,
+  args: Record<string, any> = {},
+) {
+  const { data, error } = await client.rpc("cockpit_media_statistics", {
+    p_kind: kind,
+    p_campaign: args.campaignName ?? null,
+    p_start: args.start ?? null,
+    p_end: args.end ?? null,
   });
-  if(error)throw error;
-  if(data===null||data===undefined)throw new Error("Statistics source did not return a result.");
-  if(kind!=="range")return data;
-  if(!Array.isArray(data.rows)||!Array.isArray(data.bookings)||!Array.isArray(data.historical))throw new Error("Statistics source returned an invalid result.");
-  return computeMediaRange(data,{campaignName:args.campaignName,start:args.start,end:args.end});
+  if (error) throw error;
+  if (data === null || data === undefined)
+    throw new Error("Statistics source did not return a result.");
+  if (kind !== "range") return data;
+  if (
+    !Array.isArray(data.rows) ||
+    !Array.isArray(data.bookings) ||
+    !Array.isArray(data.historical)
+  )
+    throw new Error("Statistics source returned an invalid result.");
+  return computeMediaRange(data, {
+    campaignName: args.campaignName,
+    start: args.start,
+    end: args.end,
+  });
 }

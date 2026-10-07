@@ -81,3 +81,46 @@ Mahara Media operates five cockpit applications (`media-buyer`, `client-success`
 - The corrected admin suite passed all six tests with 26 assertions. Commit this correction and rerun the full release command against the rebound clean HEAD.
 - Push, frontend deployment and Convex retirement have not run. Check the final generated evidence/report for the current release-verification result.
 - Local fallback was recorded for dirty-state inputs excluded from isolated Gemini worktrees. No worker or browser relay was started.
+
+## Live branch previews and background upstream merge
+
+- Muhammed approved pushing the verified migration branch, delegating the upstream merge to Gemini 3.8, then pushing the reviewed merge to main and running `scripts/ship.sh all`.
+- Published `307b6f11ed621d62705ef791eaadcae6a3021225` to `origin/codex/supabase-completion-20261004`.
+- The correct cockpit projects did not all receive GitHub previews. Created previews on their existing Vercel project IDs without changing production aliases.
+- Four preview builds lacked the Supabase project URL. Client Success's Preview and Production configuration lists confirmed that its Supabase variables were missing.
+- Validated only named local `VITE_SUPABASE_URL` and public `VITE_SUPABASE_ANON_KEY` values against Creative Triage. JWT browser keys have role `anon`, never `service_role`. No key values were disclosed.
+- Rebuilt the affected previews with explicit public build configuration. All five protected entries and entry bundles returned HTTP 200 and carried the Creative Triage project URL. No legacy Convex deployment URL was found in those entry bundles.
+- This is cloud entry/configuration smoke, not a new authenticated business-journey or browser-network replay.
+- Correct previews:
+  - Media Buyer: https://mahara-media-buyer-lr1ppiv4g-aziz-6097s-projects.vercel.app/
+  - Client Success: https://mahara-client-success-kfl35t0e2-aziz-6097s-projects.vercel.app/client-success/
+  - Creative Director: https://mahara-creative-director-pze472hkf-aziz-6097s-projects.vercel.app/creative/
+  - Video Editor: https://mahara-video-editor-8u8jx361k-aziz-6097s-projects.vercel.app/editor/
+  - Sales: https://mahara-sales-cfrjl5sqi-aziz-6097s-projects.vercel.app/sales/
+- Preview smoke: `D:/MaharaMedia/worktrees/cockpit-option-c-preview-smoke-20261007.json`. Preview build metadata/logs: matching `cockpit-option-c-fixed-preview-deployments-20261007.json` and per-app `.log` files.
+- Parent prepared a real upstream merge against `704352820551280af5e21daa855b6b7a11ffae24` in `D:/MaharaMedia/worktrees/mahara-cockpits-option-c-merge-20261007`.
+- Gemini 3.8 Flash High owns conflict resolution in clean disposable worktree `D:/MaharaMedia/worktrees/mahara-cockpits-gemini-layout-20261007`. Its ignored packet includes base/ours/upstream and automatic merge content for all 31 conflicts. No credentials or terminal capabilities were delegated.
+- Gemini runner output directory: `D:/MaharaMedia/worktrees/cockpit-option-c-gemini-merge-20261007-report`. Do not edit worker-owned files while it runs. Parent reviews and executes typechecks/tests.
+- Observed per-file Vercel uploads fail with `fetch failed`. Archived uploads succeeded. Shipping now forwards the same validated public native configuration to remote Vercel builds and uses archived uploads.
+- Prepared links to all five existing production projects. No new production project or alias was created.
+- Pending: integrate and review Gemini's resolution, verify typechecks/release gates against one clean merge commit, rebind evidence, push to existing origin/main and execute the approved ship command.
+- Historical backfill remains offline. Full-cutover acceptance and Convex retirement are not authorized by this release.
+- Shared-context pull stopped on existing dirty changes. Preserved them. No routine team/client message was sent.
+
+## Reviewed merge packaging checkpoint
+
+- Gemini returned no tracked edits. Its initial manifest recorded a print timeout with the turn in progress. A supported same-conversation stop completed with no further writes and `fallback_required: true`.
+- Stop evidence: `D:/MaharaMedia/worktrees/cockpit-option-c-gemini-stop-20261007-report/manifest.json`. The stopped worker worktree was preserved and not integrated.
+- Recorded local fallback resolved all 31 frontend/test conflicts. Preserved main's SOP links, global search, sidebars, route consolidation and mobile/dock behavior together with native Supabase calls.
+- Added actual native parity for upstream call kinds/contact lookup, PortalTasks reads, and commitment-not-contact authorization. Added matching audited SQL in `20261007a_csm_call_kinds.sql`.
+- Independent static reviews found eight actionable defects. Corrected actor-scoped search history, final contact/prepare access checks, plan-save reconciliation feedback/retry, repeated booking-query opening, URL-driven media range/campaign state, whole-corpus asset search and visible lead-search errors.
+- Parent verification passed 106 native CSM/portal tests, four isolated CSM interaction tests, four editor pagination tests, and two period-data availability tests. All ten app/node typechecks passed.
+- Missing period series now returns an explicit unavailable error instead of fabricated zeros. Verified empty series remains a measured zero. The pre-existing report-document producer remains explicitly unavailable; no report job is falsely queued.
+- New public booking/selection contracts are named at their owner modules. Consumers no longer publish concrete helper ReturnType contracts.
+- Production shipping lint errors were formatting/import ordering only. Normalized only diagnostic-reported files using the repository's Biome settings. Existing warnings and unrelated rules were not suppressed.
+- `scripts/ship.sh` now uses archived uploads and forwards only validated public native VITE values to remote Vercel builds. `require-github-main.sh` uses the same installed-Python fallback as the ship entrypoint.
+- Live registry inspection found five native gateways unpublished and required CSM/preview/team/CEO RPCs missing. A canonical activation closure passed the live rollback-only preflight. No business record or provider operation ran.
+- Activation artifact: `D:/MaharaMedia/worktrees/cockpit-option-c-native-gateway-activation-20261007.sql`. Existing protected preview scope matched canonical source. Existing CSM action context matched the old canonical body before the reviewed commitment extension.
+- Recovered existing named GHL and ClickUp credentials from the correct legacy CSM deployment without printing values. The GHL account matched the canonical client-account ID. A differently named local ClickUp credential did not match, so it was not substituted.
+- Remaining execution: commit the reviewed source, bind and run the full unskipped release gate, activate the reviewed native dependencies/gateways, push the merge to origin/main, execute the approved `scripts/ship.sh all`, and verify the five production routes.
+- Historical backfill remains offline. No Convex retirement, paid customer-content provider call, staff/client message or client booking ran during packaging.

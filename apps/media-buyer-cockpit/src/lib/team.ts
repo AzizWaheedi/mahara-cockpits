@@ -1,6 +1,5 @@
-import { z } from "zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { cleanDoc, cleanLinks, DOC_MAX, linksOf, picturePaths, PICTURE_BUCKET, withPictureUrls, type MeetingLink } from "./teamDoc";
+import { z } from "zod";
 import {
   addDays,
   blocksFor,
@@ -16,6 +15,16 @@ import {
   weekStart,
   zonedToUtc,
 } from "./teamCore";
+import {
+  cleanDoc,
+  cleanLinks,
+  DOC_MAX,
+  linksOf,
+  type MeetingLink,
+  PICTURE_BUCKET,
+  picturePaths,
+  withPictureUrls,
+} from "./teamDoc";
 
 export type Person = {
   id: string;
@@ -79,7 +88,12 @@ export type Prize = {
 
 export type Overview = {
   today: string;
-  me: { email: string; personId: string | null; canCreate: boolean; isBoss: boolean };
+  me: {
+    email: string;
+    personId: string | null;
+    canCreate: boolean;
+    isBoss: boolean;
+  };
   people: Person[];
   meetings: MeetingSummary[];
   weeks: WeekDay[][];
@@ -287,7 +301,6 @@ function slug(text: string): string {
     .slice(0, 48);
 }
 
-
 const PARTS = ["host", "required", "optional"] as const;
 
 export async function logChange(
@@ -297,9 +310,15 @@ export async function logChange(
   what: string,
   detail?: Record<string, unknown>,
 ) {
-  const { error } = await client.from("team_changes").insert({
-    by_whom: by, meeting_id: meetingId, what, detail: detail ?? null,
-  }).throwOnError();
+  const { error } = await client
+    .from("team_changes")
+    .insert({
+      by_whom: by,
+      meeting_id: meetingId,
+      what,
+      detail: detail ?? null,
+    })
+    .throwOnError();
   if (error) throw error;
 }
 
@@ -309,9 +328,13 @@ async function calendarCommand(
   action: string,
   args: Record<string, unknown>,
 ): Promise<MeetingPage> {
-  const { data, error } = await client.rpc("cockpit_team_calendar_command", { p_action: action, p_args: args });
+  const { data, error } = await client.rpc("cockpit_team_calendar_command", {
+    p_action: action,
+    p_args: args,
+  });
   if (error) throw error;
-  if (typeof data !== "string") throw new Error("The meeting command returned no meeting.");
+  if (typeof data !== "string")
+    throw new Error("The meeting command returned no meeting.");
   return fetchMeetingPage(client, u, data);
 }
 
@@ -320,7 +343,9 @@ export async function canManage(
   _u: TeamUserContext,
   meetingId: string,
 ): Promise<boolean> {
-  const { data, error } = await client.rpc("cockpit_team_can_manage", { p_meeting_id: meetingId });
+  const { data, error } = await client.rpc("cockpit_team_can_manage", {
+    p_meeting_id: meetingId,
+  });
   if (error) throw error;
   return Boolean(data);
 }
@@ -401,23 +426,41 @@ export async function fetchTeamOverview(
   const [peopleRes, meetingsRes, linksRes, sittingsRes, openRes, themesRes] =
     await Promise.all([
       client
-        .from("team_people").select("id, name, role, department, email, active").throwOnError()
+        .from("team_people")
+        .select("id, name, role, department, email, active")
+        .throwOnError()
         .eq("active", true)
         .order("name", { ascending: true }),
       client
-        .from("team_meetings").select("id, title, purpose, cadence, department, start_time, minutes, weekdays, cal_event_id, ends_on, tz, active",).throwOnError()
+        .from("team_meetings")
+        .select(
+          "id, title, purpose, cadence, department, start_time, minutes, weekdays, cal_event_id, ends_on, tz, active",
+        )
+        .throwOnError()
         .eq("active", true)
         .order("title", { ascending: true }),
       client
-        .from("team_meeting_people").select("meeting_id, person_id, part, removed").throwOnError()
+        .from("team_meeting_people")
+        .select("meeting_id, person_id, part, removed")
+        .throwOnError()
         .eq("removed", false),
       client
-        .from("team_sittings").select("id, meeting_id, on_date, starts_at, ends_at, status, cal_instance_id",).throwOnError()
+        .from("team_sittings")
+        .select(
+          "id, meeting_id, on_date, starts_at, ends_at, status, cal_instance_id",
+        )
+        .throwOnError()
         .gte("on_date", addDays(today, -180))
         .order("on_date", { ascending: true }),
-      client.from("team_agenda").select("meeting_id").throwOnError().eq("status", "open"),
       client
-        .from("team_meeting_blocks").select("meeting_id, weekday, title, position").throwOnError()
+        .from("team_agenda")
+        .select("meeting_id")
+        .throwOnError()
+        .eq("status", "open"),
+      client
+        .from("team_meeting_blocks")
+        .select("meeting_id, weekday, title, position")
+        .throwOnError()
         .not("weekday", "is", null)
         .order("position", { ascending: true }),
     ]);
@@ -576,63 +619,106 @@ export async function fetchMeetingPage(
     opsRes,
     seriesRes,
   ] = await Promise.all([
-    client.from("team_meetings").select("*").throwOnError().eq("id", id).maybeSingle(),
     client
-      .from("team_people").select("id, name, role, department, email, active").throwOnError()
+      .from("team_meetings")
+      .select("*")
+      .throwOnError()
+      .eq("id", id)
+      .maybeSingle(),
+    client
+      .from("team_people")
+      .select("id, name, role, department, email, active")
+      .throwOnError()
       .eq("active", true)
       .order("name", { ascending: true }),
     client
-      .from("team_meeting_people").select("person_id, part").throwOnError()
+      .from("team_meeting_people")
+      .select("person_id, part")
+      .throwOnError()
       .eq("meeting_id", id)
       .eq("removed", false),
     client
-      .from("team_sittings").select("*").throwOnError()
+      .from("team_sittings")
+      .select("*")
+      .throwOnError()
       .eq("meeting_id", id)
       .gte("on_date", addDays(today, -400))
       .order("on_date", { ascending: false })
       .limit(120),
     client
-      .from("team_agenda").select("*").throwOnError()
+      .from("team_agenda")
+      .select("*")
+      .throwOnError()
       .eq("meeting_id", id)
       .or(`status.eq.open,closed_at.gte.${addDays(today, -120)}`)
       .order("position", { ascending: true }),
     client
-      .from("team_changes").select("at, by_whom, what").throwOnError()
+      .from("team_changes")
+      .select("at, by_whom, what")
+      .throwOnError()
       .eq("meeting_id", id)
       .order("at", { ascending: false })
       .limit(25),
     client
-      .from("team_meeting_blocks").select("*").throwOnError()
+      .from("team_meeting_blocks")
+      .select("*")
+      .throwOnError()
       .eq("meeting_id", id)
       .order("position", { ascending: true }),
     client
-      .from("team_wheels").select("*").throwOnError()
+      .from("team_wheels")
+      .select("*")
+      .throwOnError()
       .eq("meeting_id", id)
       .order("position", { ascending: true }),
     client
-      .from("team_wheel_options").select("*").throwOnError()
+      .from("team_wheel_options")
+      .select("*")
+      .throwOnError()
       .order("position", { ascending: true }),
     client
-      .from("team_wheel_spins").select("*").throwOnError()
+      .from("team_wheel_spins")
+      .select("*")
+      .throwOnError()
       .order("at", { ascending: false })
       .limit(30),
     client
-      .from("team_creative_rows").select("*").throwOnError()
+      .from("team_creative_rows")
+      .select("*")
+      .throwOnError()
       .order("launch_on", { ascending: true })
       .limit(300),
     client
-      .from("team_calendar_ops").select("id, op, status, error, at").throwOnError()
+      .from("team_calendar_ops")
+      .select("id, op, status, error, at")
+      .throwOnError()
       .eq("meeting_id", id)
       .or("status.eq.pending,status.eq.running,status.eq.failed")
       .order("id", { ascending: false })
       .limit(20),
     client
-      .from("team_meeting_series").select("*").throwOnError()
+      .from("team_meeting_series")
+      .select("*")
+      .throwOnError()
       .eq("meeting_id", id)
       .order("weekday", { ascending: true }),
   ]);
 
-  for (const result of [meetingRes, peopleRes, linksRes, sittingsRes, itemsRes, changesRes, blocksRes, wheelsRes, wheelOptionsRes, spinsRes, creativeRes, opsRes, seriesRes]) {
+  for (const result of [
+    meetingRes,
+    peopleRes,
+    linksRes,
+    sittingsRes,
+    itemsRes,
+    changesRes,
+    blocksRes,
+    wheelsRes,
+    wheelOptionsRes,
+    spinsRes,
+    creativeRes,
+    opsRes,
+    seriesRes,
+  ]) {
     if (result.error) throw result.error;
   }
   const m = meetingRes.data;
@@ -810,23 +896,35 @@ export async function fetchMeetingPage(
       }
     : null;
 
-  const liveParts = rawSeries.filter(s => !s.ends_on || String(s.ends_on) >= today);
-  const writable = liveParts.length ? liveParts.every(s => s.cal_writable) : Boolean(m.cal_writable);
-  const { data: workerStatus, error: statusError } = await client.rpc("cockpit_team_calendar_ready");
+  const liveParts = rawSeries.filter(
+    s => !s.ends_on || String(s.ends_on) >= today,
+  );
+  const writable = liveParts.length
+    ? liveParts.every(s => s.cal_writable)
+    : Boolean(m.cal_writable);
+  const { data: workerStatus, error: statusError } = await client.rpc(
+    "cockpit_team_calendar_ready",
+  );
   if (statusError) throw statusError;
   const paths = picturePaths(String(m.doc ?? ""));
   const pictures = new Map<string, string>();
   if (paths.length) {
-    const { data, error } = await client.storage.from(PICTURE_BUCKET).createSignedUrls(paths, 7 * 24 * 3600);
+    const { data, error } = await client.storage
+      .from(PICTURE_BUCKET)
+      .createSignedUrls(paths, 7 * 24 * 3600);
     if (error) throw error;
-    for (const picture of data ?? []) if (picture.path && picture.signedUrl) pictures.set(picture.path, picture.signedUrl);
+    for (const picture of data ?? [])
+      if (picture.path && picture.signedUrl)
+        pictures.set(picture.path, picture.signedUrl);
   }
   const calendar: CalendarStatus = {
-    state: m.cal_event_id ? writable ? "on" : "someone-else" : "off",
+    state: m.cal_event_id ? (writable ? "on" : "someone-else") : "off",
     ready: Boolean(workerStatus),
     syncedAt: m.cal_synced_at ? String(m.cal_synced_at) : null,
     error: m.cal_error ? String(m.cal_error) : null,
-    waiting: rawOps.filter(o => o.status === "pending" || o.status === "running").length,
+    waiting: rawOps.filter(
+      o => o.status === "pending" || o.status === "running",
+    ).length,
     failed: rawOps
       .filter(o => o.status === "failed")
       .map(o => ({
@@ -836,9 +934,10 @@ export async function fetchMeetingPage(
         at: String(o.at),
       })),
     organizer: m.cal_calendar ? String(m.cal_calendar) : null,
-    link: m.cal_event_id && m.cal_calendar
-      ? `https://www.google.com/calendar/event?eid=${btoa(`${m.cal_event_id} ${m.cal_calendar}`).replace(/=+$/, "")}`
-      : null,
+    link:
+      m.cal_event_id && m.cal_calendar
+        ? `https://www.google.com/calendar/event?eid=${btoa(`${m.cal_event_id} ${m.cal_calendar}`).replace(/=+$/, "")}`
+        : null,
     parts: rawSeries.map(s => ({
       calendar: String(s.cal_calendar ?? ""),
       eventId: String(s.cal_event_id ?? ""),
@@ -853,7 +952,11 @@ export async function fetchMeetingPage(
 
   return {
     today,
-    me: { email: u.email, personId: me?.id ?? null, isBoss: u.isCeo || u.isAdmin },
+    me: {
+      email: u.email,
+      personId: me?.id ?? null,
+      isBoss: u.isCeo || u.isAdmin,
+    },
     canManage: canManageMeeting,
     meeting: {
       id: String(m.id),
@@ -875,7 +978,8 @@ export async function fetchMeetingPage(
       endsOn: m.ends_on ? String(m.ends_on) : null,
       meetLink: m.meet_link ? String(m.meet_link) : null,
       pipeline: m.pipeline as "board" | "strip" | null,
-      embed: m.embed === "cs-projections" || m.embed === "cs-daily" ? m.embed : null,
+      embed:
+        m.embed === "cs-projections" || m.embed === "cs-daily" ? m.embed : null,
       links: linksOf(m.links),
     },
     people,
@@ -902,17 +1006,44 @@ export async function fetchMeetingPage(
   };
 }
 
-export async function saveMeeting(client: SupabaseClient, u: TeamUserContext, a: { id?: string; title: string; purpose: string; cadence: string; department?: string; onCalendar?: boolean; weekdays?: number[]; startTime?: string; minutes?: number; firstDate?: string }): Promise<MeetingPage> { return calendarCommand(client, u, 'saveMeeting', a); }
+export async function saveMeeting(
+  client: SupabaseClient,
+  u: TeamUserContext,
+  a: {
+    id?: string;
+    title: string;
+    purpose: string;
+    cadence: string;
+    department?: string;
+    onCalendar?: boolean;
+    weekdays?: number[];
+    startTime?: string;
+    minutes?: number;
+    firstDate?: string;
+  },
+): Promise<MeetingPage> {
+  return calendarCommand(client, u, "saveMeeting", a);
+}
 
-export async function setPart(client: SupabaseClient,
-u: TeamUserContext,
-a: {
-  meetingId: string;
-  personId?: string;
-  part: "host" | "required" | "optional" | "off";
-},): Promise<MeetingPage> { return calendarCommand(client, u, 'setPart', a); }
+export async function setPart(
+  client: SupabaseClient,
+  u: TeamUserContext,
+  a: {
+    meetingId: string;
+    personId?: string;
+    part: "host" | "required" | "optional" | "off";
+  },
+): Promise<MeetingPage> {
+  return calendarCommand(client, u, "setPart", a);
+}
 
-export async function addSitting(client: SupabaseClient, u: TeamUserContext, a: { meetingId: string; date: string; startTime?: string; minutes?: number }): Promise<MeetingPage> { return calendarCommand(client, u, 'addSitting', a); }
+export async function addSitting(
+  client: SupabaseClient,
+  u: TeamUserContext,
+  a: { meetingId: string; date: string; startTime?: string; minutes?: number },
+): Promise<MeetingPage> {
+  return calendarCommand(client, u, "addSitting", a);
+}
 
 export async function saveDoc(
   client: SupabaseClient,
@@ -922,19 +1053,25 @@ export async function saveDoc(
   const text = cleanDoc(String(a.text).slice(0, DOC_MAX));
   const version = Math.trunc(a.version);
   const { data: done, error } = await client
-    .from("team_meetings").update({
-    doc: text,
-    doc_by: u.email,
-    doc_at: new Date().toISOString(),
-    doc_version: version + 1,
-  }).throwOnError()
+    .from("team_meetings")
+    .update({
+      doc: text,
+      doc_by: u.email,
+      doc_at: new Date().toISOString(),
+      doc_version: version + 1,
+    })
+    .throwOnError()
     .eq("id", a.meetingId)
-    .eq("doc_version", version).select("doc_version").throwOnError();
+    .eq("doc_version", version)
+    .select("doc_version")
+    .throwOnError();
   if (error) throw error;
 
   if (!done || done.length === 0) {
     const { data: now } = await client
-      .from("team_meetings").select("doc, doc_by, doc_at, doc_version").throwOnError()
+      .from("team_meetings")
+      .select("doc, doc_by, doc_at, doc_version")
+      .throwOnError()
       .eq("id", a.meetingId)
       .maybeSingle();
     if (!now) throw new Error("That meeting is not in the list any more.");
@@ -963,7 +1100,11 @@ export async function saveLinks(
   a: { meetingId: string; links: MeetingLink[] },
 ): Promise<MeetingPage> {
   const links = cleanLinks(a.links);
-  const { error } = await client.from("team_meetings").update({ links }).throwOnError().eq("id", a.meetingId);
+  const { error } = await client
+    .from("team_meetings")
+    .update({ links })
+    .throwOnError()
+    .eq("id", a.meetingId);
   if (error) throw error;
   return fetchMeetingPage(client, u, a.meetingId);
 }
@@ -973,32 +1114,45 @@ export async function saveNotes(
   u: TeamUserContext,
   a: { sittingId: string; text: string; version: number },
 ): Promise<Saved> {
-  const { error: ensureError } = await client.rpc("cockpit_team_ensure_sitting", {
-    p_meeting_id: a.sittingId.slice(0, -11), p_sitting_id: a.sittingId,
-  });
+  const { error: ensureError } = await client.rpc(
+    "cockpit_team_ensure_sitting",
+    {
+      p_meeting_id: a.sittingId.slice(0, -11),
+      p_sitting_id: a.sittingId,
+    },
+  );
   if (ensureError) throw ensureError;
   const { data: sitting } = await client
-    .from("team_sittings").select("id, meeting_id, on_date").throwOnError()
+    .from("team_sittings")
+    .select("id, meeting_id, on_date")
+    .throwOnError()
     .eq("id", a.sittingId)
     .maybeSingle();
-  if (!sitting) throw new Error("That meeting date is not in the list any more.");
+  if (!sitting)
+    throw new Error("That meeting date is not in the list any more.");
 
   const text = String(a.text).slice(0, 30_000);
   const version = Math.trunc(a.version);
   const { data: done, error } = await client
-    .from("team_sittings").update({
-    notes: text,
-    notes_by: u.email,
-    notes_at: new Date().toISOString(),
-    notes_version: version + 1,
-  }).throwOnError()
+    .from("team_sittings")
+    .update({
+      notes: text,
+      notes_by: u.email,
+      notes_at: new Date().toISOString(),
+      notes_version: version + 1,
+    })
+    .throwOnError()
     .eq("id", a.sittingId)
-    .eq("notes_version", version).select("notes_version").throwOnError();
+    .eq("notes_version", version)
+    .select("notes_version")
+    .throwOnError();
   if (error) throw error;
 
   if (!done || done.length === 0) {
     const { data: now } = await client
-      .from("team_sittings").select("notes, notes_by, notes_at, notes_version").throwOnError()
+      .from("team_sittings")
+      .select("notes, notes_by, notes_at, notes_version")
+      .throwOnError()
       .eq("id", a.sittingId)
       .maybeSingle();
     return {
@@ -1031,26 +1185,33 @@ export async function addItem(
   if (text.length < 3) throw new Error("Write the agenda item first.");
 
   const { data: meeting } = await client
-    .from("team_meetings").select("id").throwOnError()
+    .from("team_meetings")
+    .select("id")
+    .throwOnError()
     .eq("id", a.meetingId)
     .maybeSingle();
   if (!meeting) throw new Error("That meeting is not in the list any more.");
 
   const { data: last } = await client
-    .from("team_agenda").select("position").throwOnError()
+    .from("team_agenda")
+    .select("position")
+    .throwOnError()
     .eq("meeting_id", a.meetingId)
     .eq("status", "open")
     .order("position", { ascending: false })
     .limit(1);
 
-  const { error } = await client.from("team_agenda").insert({
-    meeting_id: a.meetingId,
-    text,
-    owner_id: a.ownerId || null,
-    status: "open",
-    position: Number(last?.[0]?.position ?? 0) + 1,
-    added_by: u.email,
-  }).throwOnError();
+  const { error } = await client
+    .from("team_agenda")
+    .insert({
+      meeting_id: a.meetingId,
+      text,
+      owner_id: a.ownerId || null,
+      status: "open",
+      position: Number(last?.[0]?.position ?? 0) + 1,
+      added_by: u.email,
+    })
+    .throwOnError();
   if (error) throw error;
 
   await logChange(client, u.email, a.meetingId, `added "${text.slice(0, 80)}"`);
@@ -1063,7 +1224,9 @@ export async function editItem(
   a: { id: number; text?: string; ownerId?: string | null },
 ): Promise<MeetingPage> {
   const { data: item } = await client
-    .from("team_agenda").select("*").throwOnError()
+    .from("team_agenda")
+    .select("*")
+    .throwOnError()
     .eq("id", Math.trunc(a.id))
     .maybeSingle();
   if (!item) throw new Error("That agenda item is not there any more.");
@@ -1079,7 +1242,9 @@ export async function editItem(
     return fetchMeetingPage(client, u, String(item.meeting_id));
 
   await client
-    .from("team_agenda").update(body).throwOnError()
+    .from("team_agenda")
+    .update(body)
+    .throwOnError()
     .eq("id", Math.trunc(a.id));
 
   await logChange(
@@ -1099,7 +1264,9 @@ export async function closeItem(
   a: { id: number; status: "done" | "dropped" | "open" },
 ): Promise<MeetingPage> {
   const { data: item } = await client
-    .from("team_agenda").select("*").throwOnError()
+    .from("team_agenda")
+    .select("*")
+    .throwOnError()
     .eq("id", Math.trunc(a.id))
     .maybeSingle();
   if (!item) throw new Error("That agenda item is not there any more.");
@@ -1107,12 +1274,14 @@ export async function closeItem(
 
   if (a.status === "open") {
     await client
-      .from("team_agenda").update({
-      status: "open",
-      sitting_id: null,
-      closed_at: null,
-      closed_by: null,
-    }).throwOnError()
+      .from("team_agenda")
+      .update({
+        status: "open",
+        sitting_id: null,
+        closed_at: null,
+        closed_by: null,
+      })
+      .throwOnError()
       .eq("id", Math.trunc(a.id));
 
     await logChange(
@@ -1126,19 +1295,23 @@ export async function closeItem(
 
   const today = kuwaitDay();
   const { data: at } = await client
-    .from("team_sittings").select("id").throwOnError()
+    .from("team_sittings")
+    .select("id")
+    .throwOnError()
     .eq("meeting_id", meetingId)
     .lte("on_date", today)
     .order("on_date", { ascending: false })
     .limit(1);
 
   await client
-    .from("team_agenda").update({
-    status: a.status,
-    sitting_id: at?.[0]?.id ?? null,
-    closed_at: new Date().toISOString(),
-    closed_by: u.email,
-  }).throwOnError()
+    .from("team_agenda")
+    .update({
+      status: a.status,
+      sitting_id: at?.[0]?.id ?? null,
+      closed_at: new Date().toISOString(),
+      closed_by: u.email,
+    })
+    .throwOnError()
     .eq("id", Math.trunc(a.id));
 
   await logChange(
@@ -1156,14 +1329,18 @@ export async function moveItem(
   a: { id: number; dir: "up" | "down" },
 ): Promise<MeetingPage> {
   const { data: item } = await client
-    .from("team_agenda").select("*").throwOnError()
+    .from("team_agenda")
+    .select("*")
+    .throwOnError()
     .eq("id", Math.trunc(a.id))
     .maybeSingle();
   if (!item) throw new Error("That agenda item is not there any more.");
   const meetingId = String(item.meeting_id);
 
   const { data: open } = await client
-    .from("team_agenda").select("id, position").throwOnError()
+    .from("team_agenda")
+    .select("id, position")
+    .throwOnError()
     .eq("meeting_id", meetingId)
     .eq("status", "open")
     .order("position", { ascending: true })
@@ -1180,7 +1357,9 @@ export async function moveItem(
 
   for (let i = 0; i < order.length; i++) {
     await client
-      .from("team_agenda").update({ position: i + 1 }).throwOnError()
+      .from("team_agenda")
+      .update({ position: i + 1 })
+      .throwOnError()
       .eq("id", order[i]);
   }
   return fetchMeetingPage(client, u, meetingId);
@@ -1203,16 +1382,20 @@ export async function saveBlock(
   const title = clean(a.title, 200);
   if (!title) throw new Error("Give the block a title.");
   const detail = a.detail !== undefined ? clean(a.detail, 1000) || null : null;
-  const minutes =
-    typeof a.minutes === "number" ? Math.trunc(a.minutes) : null;
+  const minutes = typeof a.minutes === "number" ? Math.trunc(a.minutes) : null;
   if (typeof minutes === "number" && (minutes < 0 || minutes > 480))
     throw new Error("A block runs between 0 and 480 minutes.");
-  const weekday = typeof a.weekday === "number" && a.weekday >= 0 && a.weekday <= 6 ? a.weekday : null;
+  const weekday =
+    typeof a.weekday === "number" && a.weekday >= 0 && a.weekday <= 6
+      ? a.weekday
+      : null;
   const now = new Date().toISOString();
 
   if (a.id !== undefined) {
     const { data: b } = await client
-      .from("team_meeting_blocks").select("*").throwOnError()
+      .from("team_meeting_blocks")
+      .select("*")
+      .throwOnError()
       .eq("id", a.id)
       .maybeSingle();
     if (!b) throw new Error("That block is not there any more.");
@@ -1220,14 +1403,16 @@ export async function saveBlock(
       throw new Error("That block belongs to another meeting.");
 
     await client
-      .from("team_meeting_blocks").update({
-      title,
-      ...(detail !== undefined ? { detail } : {}),
-      ...(minutes !== undefined ? { minutes } : {}),
-      ...(weekday !== undefined ? { weekday } : {}),
-      updated_by: u.email,
-      updated_at: now,
-    }).throwOnError()
+      .from("team_meeting_blocks")
+      .update({
+        title,
+        ...(detail !== undefined ? { detail } : {}),
+        ...(minutes !== undefined ? { minutes } : {}),
+        ...(weekday !== undefined ? { weekday } : {}),
+        updated_by: u.email,
+        updated_at: now,
+      })
+      .throwOnError()
       .eq("id", a.id);
 
     await logChange(
@@ -1241,21 +1426,26 @@ export async function saveBlock(
   }
 
   const { data: last } = await client
-    .from("team_meeting_blocks").select("position").throwOnError()
+    .from("team_meeting_blocks")
+    .select("position")
+    .throwOnError()
     .eq("meeting_id", a.meetingId)
     .order("position", { ascending: false })
     .limit(1);
 
-  await client.from("team_meeting_blocks").insert({
-    meeting_id: a.meetingId,
-    weekday,
-    position: Number(last?.[0]?.position ?? 0) + 1,
-    minutes,
-    title,
-    detail,
-    updated_by: u.email,
-    updated_at: now,
-  }).throwOnError();
+  await client
+    .from("team_meeting_blocks")
+    .insert({
+      meeting_id: a.meetingId,
+      weekday,
+      position: Number(last?.[0]?.position ?? 0) + 1,
+      minutes,
+      title,
+      detail,
+      updated_by: u.email,
+      updated_at: now,
+    })
+    .throwOnError();
 
   await logChange(
     client,
@@ -1272,13 +1462,19 @@ export async function deleteBlock(
   a: { id: number },
 ): Promise<MeetingPage> {
   const { data: b } = await client
-    .from("team_meeting_blocks").select("*").throwOnError()
+    .from("team_meeting_blocks")
+    .select("*")
+    .throwOnError()
     .eq("id", a.id)
     .maybeSingle();
   if (!b) throw new Error("That block is not there any more.");
   const meetingId = String(b.meeting_id);
 
-  await client.from("team_meeting_blocks").delete().throwOnError().eq("id", a.id);
+  await client
+    .from("team_meeting_blocks")
+    .delete()
+    .throwOnError()
+    .eq("id", a.id);
 
   await logChange(
     client,
@@ -1296,14 +1492,18 @@ export async function moveBlock(
   a: { id: number; dir: "up" | "down"; weekday?: number | null },
 ): Promise<MeetingPage> {
   const { data: b } = await client
-    .from("team_meeting_blocks").select("*").throwOnError()
+    .from("team_meeting_blocks")
+    .select("*")
+    .throwOnError()
     .eq("id", a.id)
     .maybeSingle();
   if (!b) throw new Error("That block is not there any more.");
   const meetingId = String(b.meeting_id);
 
   const { data: all } = await client
-    .from("team_meeting_blocks").select("id, weekday, position").throwOnError()
+    .from("team_meeting_blocks")
+    .select("id, weekday, position")
+    .throwOnError()
     .eq("meeting_id", meetingId)
     .order("position", { ascending: true })
     .order("id", { ascending: true });
@@ -1327,10 +1527,14 @@ export async function moveBlock(
     const itemB = all.find(x => Number(x.id) === swapWith.id);
     if (itemA && itemB) {
       await client
-        .from("team_meeting_blocks").update({ position: itemB.position }).throwOnError()
+        .from("team_meeting_blocks")
+        .update({ position: itemB.position })
+        .throwOnError()
         .eq("id", itemA.id);
       await client
-        .from("team_meeting_blocks").update({ position: itemA.position }).throwOnError()
+        .from("team_meeting_blocks")
+        .update({ position: itemA.position })
+        .throwOnError()
         .eq("id", itemB.id);
     }
   }
@@ -1365,7 +1569,9 @@ export async function saveWheel(
 
   if (a.id) {
     const { data: wheel } = await client
-      .from("team_wheels").select("*").throwOnError()
+      .from("team_wheels")
+      .select("*")
+      .throwOnError()
       .eq("id", a.id)
       .maybeSingle();
     if (!wheel) throw new Error("That wheel is not there any more.");
@@ -1373,15 +1579,17 @@ export async function saveWheel(
       throw new Error("Only the CEO and admins change prize wheels.");
 
     await client
-      .from("team_wheels").update({
-      name,
-      ...(a.lockedUntilGoal !== undefined && wheel.kind === "prize"
-        ? { locked_until_goal: a.lockedUntilGoal }
-        : {}),
-      ...(a.active !== undefined ? { active: a.active } : {}),
-      ...(sourceUrl !== undefined ? { source_url: sourceUrl } : {}),
-      ...stamp,
-    }).throwOnError()
+      .from("team_wheels")
+      .update({
+        name,
+        ...(a.lockedUntilGoal !== undefined && wheel.kind === "prize"
+          ? { locked_until_goal: a.lockedUntilGoal }
+          : {}),
+        ...(a.active !== undefined ? { active: a.active } : {}),
+        ...(sourceUrl !== undefined ? { source_url: sourceUrl } : {}),
+        ...stamp,
+      })
+      .throwOnError()
       .eq("id", a.id);
 
     await logChange(
@@ -1400,29 +1608,36 @@ export async function saveWheel(
 
   const base = slug(`${a.meetingId}-${name}`) || "wheel";
   const { data: existing } = await client
-    .from("team_wheels").select("id").throwOnError()
+    .from("team_wheels")
+    .select("id")
+    .throwOnError()
     .like("id", `${base}%`);
   const taken = new Set((existing ?? []).map(r => String(r.id)));
   let id = base;
   for (let n = 2; taken.has(id); n++) id = `${base}-${n}`;
 
   const { data: last } = await client
-    .from("team_wheels").select("position").throwOnError()
+    .from("team_wheels")
+    .select("position")
+    .throwOnError()
     .eq("meeting_id", a.meetingId)
     .order("position", { ascending: false })
     .limit(1);
 
-  await client.from("team_wheels").insert({
-    id,
-    meeting_id: a.meetingId,
-    name,
-    kind,
-    source_url: sourceUrl ?? null,
-    locked_until_goal: kind === "prize" ? (a.lockedUntilGoal ?? true) : false,
-    active: true,
-    position: Number(last?.[0]?.position ?? 0) + 1,
-    ...stamp,
-  }).throwOnError();
+  await client
+    .from("team_wheels")
+    .insert({
+      id,
+      meeting_id: a.meetingId,
+      name,
+      kind,
+      source_url: sourceUrl ?? null,
+      locked_until_goal: kind === "prize" ? (a.lockedUntilGoal ?? true) : false,
+      active: true,
+      position: Number(last?.[0]?.position ?? 0) + 1,
+      ...stamp,
+    })
+    .throwOnError();
 
   await logChange(client, u.email, a.meetingId, `added the ${name} wheel`, {
     wheel: id,
@@ -1437,7 +1652,9 @@ export async function deleteWheel(
   a: { id: string },
 ): Promise<MeetingPage> {
   const { data: wheel } = await client
-    .from("team_wheels").select("*").throwOnError()
+    .from("team_wheels")
+    .select("*")
+    .throwOnError()
     .eq("id", a.id)
     .maybeSingle();
   if (!wheel) throw new Error("That wheel is not there any more.");
@@ -1470,7 +1687,9 @@ export async function saveWheelOption(
   },
 ): Promise<MeetingPage> {
   const { data: wheel } = await client
-    .from("team_wheels").select("*").throwOnError()
+    .from("team_wheels")
+    .select("*")
+    .throwOnError()
     .eq("id", a.wheelId)
     .maybeSingle();
   if (!wheel) throw new Error("That wheel is not there any more.");
@@ -1502,7 +1721,9 @@ export async function saveWheelOption(
   const meetingId = String(wheel.meeting_id ?? "");
   if (a.id !== undefined) {
     await client
-      .from("team_wheel_options").update(body).throwOnError()
+      .from("team_wheel_options")
+      .update(body)
+      .throwOnError()
       .eq("id", Math.trunc(a.id));
     await logChange(
       client,
@@ -1512,17 +1733,22 @@ export async function saveWheelOption(
     );
   } else {
     const { data: last } = await client
-      .from("team_wheel_options").select("position").throwOnError()
+      .from("team_wheel_options")
+      .select("position")
+      .throwOnError()
       .eq("wheel_id", a.wheelId)
       .order("position", { ascending: false })
       .limit(1);
 
-    await client.from("team_wheel_options").insert({
-      wheel_id: a.wheelId,
-      active: true,
-      position: Number(last?.[0]?.position ?? 0) + 1,
-      ...body,
-    }).throwOnError();
+    await client
+      .from("team_wheel_options")
+      .insert({
+        wheel_id: a.wheelId,
+        active: true,
+        position: Number(last?.[0]?.position ?? 0) + 1,
+        ...body,
+      })
+      .throwOnError();
     await logChange(
       client,
       u.email,
@@ -1540,19 +1766,25 @@ export async function deleteWheelOption(
   a: { id: number },
 ): Promise<MeetingPage> {
   const { data: option } = await client
-    .from("team_wheel_options").select("*").throwOnError()
+    .from("team_wheel_options")
+    .select("*")
+    .throwOnError()
     .eq("id", Math.trunc(a.id))
     .maybeSingle();
   if (!option) throw new Error("That option is not there any more.");
   const { data: wheel } = await client
-    .from("team_wheels").select("*").throwOnError()
+    .from("team_wheels")
+    .select("*")
+    .throwOnError()
     .eq("id", option.wheel_id)
     .maybeSingle();
   if (wheel?.kind === "prize" && !u.isCeo && !u.isAdmin)
     throw new Error("Only the CEO and admins delete prize options.");
 
   await client
-    .from("team_wheel_options").delete().throwOnError()
+    .from("team_wheel_options")
+    .delete()
+    .throwOnError()
     .eq("id", Math.trunc(a.id));
   await logChange(
     client,
@@ -1570,12 +1802,16 @@ export async function moveWheelOption(
   a: { id: number; dir: "up" | "down" },
 ): Promise<MeetingPage> {
   const { data: option } = await client
-    .from("team_wheel_options").select("*").throwOnError()
+    .from("team_wheel_options")
+    .select("*")
+    .throwOnError()
     .eq("id", Math.trunc(a.id))
     .maybeSingle();
   if (!option) throw new Error("That option is not there any more.");
   const { data: rows } = await client
-    .from("team_wheel_options").select("id, position").throwOnError()
+    .from("team_wheel_options")
+    .select("id, position")
+    .throwOnError()
     .eq("wheel_id", option.wheel_id)
     .order("position", { ascending: true })
     .order("id", { ascending: true });
@@ -1588,13 +1824,17 @@ export async function moveWheelOption(
       [order[at], order[to]] = [order[to], order[at]];
       for (let i = 0; i < order.length; i++) {
         await client
-          .from("team_wheel_options").update({ position: i + 1 }).throwOnError()
+          .from("team_wheel_options")
+          .update({ position: i + 1 })
+          .throwOnError()
           .eq("id", order[i]);
       }
     }
   }
   const { data: wheel } = await client
-    .from("team_wheels").select("meeting_id").throwOnError()
+    .from("team_wheels")
+    .select("meeting_id")
+    .throwOnError()
     .eq("id", option.wheel_id)
     .maybeSingle();
   return fetchMeetingPage(client, u, String(wheel?.meeting_id ?? ""));
@@ -1610,32 +1850,63 @@ export async function setPrizeAmount(
 
   const amount = Math.round(a.amount * 100) / 100;
   await client
-    .from("team_wheel_options").update({
-    amount,
-    updated_by: u.email,
-    updated_at: new Date().toISOString(),
-  }).throwOnError()
+    .from("team_wheel_options")
+    .update({
+      amount,
+      updated_by: u.email,
+      updated_at: new Date().toISOString(),
+    })
+    .throwOnError()
     .eq("id", Math.trunc(a.optionId));
 
   if (a.meetingId) return fetchMeetingPage(client, u, a.meetingId);
   return fetchTeamOverview(client, u);
 }
 
-export async function spin(client: SupabaseClient,
-u: TeamUserContext,
-a: {
-  wheelId: string;
-  sittingId: string;
-  among?: string[];
-  forPerson?: string;
-},): Promise<{
+export async function spin(
+  client: SupabaseClient,
+  u: TeamUserContext,
+  a: {
+    wheelId: string;
+    sittingId: string;
+    among?: string[];
+    forPerson?: string;
+  },
+): Promise<{
   page: MeetingPage;
   result: { wheelId: string; index: number; label: string; choices: string[] };
-}> { const { data, error } = await client.rpc('cockpit_team_spin', { p_wheel_id: a.wheelId, p_sitting_id: a.sittingId, p_among: a.among ?? null, p_for_person: a.forPerson ?? null }); if (error) throw error; const draw = z.object({ meetingId: z.string(), result: z.object({ wheelId: z.string(), index: z.number().int().nonnegative(), label: z.string(), choices: z.array(z.string()) }) }).parse(data); return { page: await fetchMeetingPage(client, u, draw.meetingId), result: draw.result }; }
+}> {
+  const { data, error } = await client.rpc("cockpit_team_spin", {
+    p_wheel_id: a.wheelId,
+    p_sitting_id: a.sittingId,
+    p_among: a.among ?? null,
+    p_for_person: a.forPerson ?? null,
+  });
+  if (error) throw error;
+  const draw = z
+    .object({
+      meetingId: z.string(),
+      result: z.object({
+        wheelId: z.string(),
+        index: z.number().int().nonnegative(),
+        label: z.string(),
+        choices: z.array(z.string()),
+      }),
+    })
+    .parse(data);
+  return {
+    page: await fetchMeetingPage(client, u, draw.meetingId),
+    result: draw.result,
+  };
+}
 
-export async function setGoalHit(client: SupabaseClient,
-u: TeamUserContext,
-a: { sittingId: string; hit: boolean | null },): Promise<MeetingPage> { return calendarCommand(client, u, 'setGoalHit', a); }
+export async function setGoalHit(
+  client: SupabaseClient,
+  u: TeamUserContext,
+  a: { sittingId: string; hit: boolean | null },
+): Promise<MeetingPage> {
+  return calendarCommand(client, u, "setGoalHit", a);
+}
 
 // --- Creative Pipeline ---
 
@@ -1667,21 +1938,31 @@ export async function saveCreativeRow(
 
   const body: Record<string, unknown> = {
     client: clientName,
-    ...(a.angle !== undefined ? { angle: a.angle ? clean(a.angle, 200) : null } : {}),
+    ...(a.angle !== undefined
+      ? { angle: a.angle ? clean(a.angle, 200) : null }
+      : {}),
     ...(a.kind !== undefined ? { kind: a.kind || null } : {}),
     ...(a.source !== undefined ? { source: a.source || null } : {}),
     ...(a.creativeRequestId !== undefined
       ? { creative_request_id: a.creativeRequestId || null }
       : {}),
     ...(a.scriptDue !== undefined ? { script_due: a.scriptDue || null } : {}),
-    ...(a.footageDue !== undefined ? { footage_due: a.footageDue || null } : {}),
+    ...(a.footageDue !== undefined
+      ? { footage_due: a.footageDue || null }
+      : {}),
     ...(a.editDue !== undefined ? { edit_due: a.editDue || null } : {}),
-    ...(a.approvedOn !== undefined ? { approved_on: a.approvedOn || null } : {}),
+    ...(a.approvedOn !== undefined
+      ? { approved_on: a.approvedOn || null }
+      : {}),
     ...(a.launchOn !== undefined ? { launch_on: a.launchOn || null } : {}),
-    ...(a.launchedOn !== undefined ? { launched_on: a.launchedOn || null } : {}),
+    ...(a.launchedOn !== undefined
+      ? { launched_on: a.launchedOn || null }
+      : {}),
     ...(a.status !== undefined ? { status: a.status } : {}),
     ...(a.ownerId !== undefined ? { owner_id: a.ownerId || null } : {}),
-    ...(a.notes !== undefined ? { notes: a.notes ? clean(a.notes, 2000) : null } : {}),
+    ...(a.notes !== undefined
+      ? { notes: a.notes ? clean(a.notes, 2000) : null }
+      : {}),
     updated_by: u.email,
     updated_at: new Date().toISOString(),
   };
@@ -1693,16 +1974,24 @@ export async function saveCreativeRow(
 
   if (a.id !== undefined) {
     const { data: before } = await client
-      .from("team_creative_rows").select("*").throwOnError()
+      .from("team_creative_rows")
+      .select("*")
+      .throwOnError()
       .eq("id", Math.trunc(a.id))
       .maybeSingle();
     if (!before) throw new Error("That row is not on the pipeline any more.");
 
-    const slips = slipsAdded(before as never, { ...before, ...body } as never, today);
+    const slips = slipsAdded(
+      before as never,
+      { ...before, ...body } as never,
+      today,
+    );
     if (slips) body.slip_count = Number(before.slip_count ?? 0) + slips;
 
     await client
-      .from("team_creative_rows").update(body).throwOnError()
+      .from("team_creative_rows")
+      .update(body)
+      .throwOnError()
       .eq("id", Math.trunc(a.id));
 
     await logChange(
@@ -1717,11 +2006,14 @@ export async function saveCreativeRow(
     return fetchMeetingPage(client, u, a.meetingId);
   }
 
-  await client.from("team_creative_rows").insert({
-    ...body,
-    status: body.status ?? "planned",
-    created_by: u.email,
-  }).throwOnError();
+  await client
+    .from("team_creative_rows")
+    .insert({
+      ...body,
+      status: body.status ?? "planned",
+      created_by: u.email,
+    })
+    .throwOnError();
 
   await logChange(
     client,
@@ -1738,13 +2030,17 @@ export async function deleteCreativeRow(
   a: { meetingId: string; id: number },
 ): Promise<MeetingPage> {
   const { data: row } = await client
-    .from("team_creative_rows").select("*").throwOnError()
+    .from("team_creative_rows")
+    .select("*")
+    .throwOnError()
     .eq("id", Math.trunc(a.id))
     .maybeSingle();
   if (!row) throw new Error("That row is not on the pipeline any more.");
 
   await client
-    .from("team_creative_rows").delete().throwOnError()
+    .from("team_creative_rows")
+    .delete()
+    .throwOnError()
     .eq("id", Math.trunc(a.id));
 
   await logChange(
@@ -1760,27 +2056,37 @@ export async function deleteCreativeRow(
 export async function openCreativeRequests(
   client: SupabaseClient,
   _u: TeamUserContext,
-): Promise<Array<{
-  id: string;
-  client: string;
-  campaign: string | null;
-  reason: string | null;
-  note: string | null;
-  status: string;
-  createdAt: string;
-}>> {
+): Promise<
+  Array<{
+    id: string;
+    client: string;
+    campaign: string | null;
+    reason: string | null;
+    note: string | null;
+    status: string;
+    createdAt: string;
+  }>
+> {
   const [requestsRes, rowsRes] = await Promise.all([
     client
-      .from("cockpit_creative_requests").select("id, client_name, campaign_name, request_reason, note, status, created_at").throwOnError()
+      .from("cockpit_creative_requests")
+      .select(
+        "id, client_name, campaign_name, request_reason, note, status, created_at",
+      )
+      .throwOnError()
       .in("status", ["requested", "script_ready", "editing", "asset_ready"])
       .order("created_at", { ascending: false })
       .limit(60),
     client
-      .from("team_creative_rows").select("creative_request_id").throwOnError()
+      .from("team_creative_rows")
+      .select("creative_request_id")
+      .throwOnError()
       .not("creative_request_id", "is", null),
   ]);
 
-  const onBoard = new Set((rowsRes.data ?? []).map(r => String(r.creative_request_id)));
+  const onBoard = new Set(
+    (rowsRes.data ?? []).map(r => String(r.creative_request_id)),
+  );
   return (requestsRes.data ?? [])
     .filter(r => !onBoard.has(String(r.id)))
     .map(r => ({
@@ -1796,46 +2102,78 @@ export async function openCreativeRequests(
 
 // --- Calendar / Attendance Operations ---
 
-export async function setSeries(client: SupabaseClient,
-u: TeamUserContext,
-a: {
-  meetingId: string;
-  weekdays: number[];
-  startTime: string;
-  minutes: number;
-  from: string;
-},): Promise<MeetingPage> { return calendarCommand(client, u, 'setSeries', a); }
+export async function setSeries(
+  client: SupabaseClient,
+  u: TeamUserContext,
+  a: {
+    meetingId: string;
+    weekdays: number[];
+    startTime: string;
+    minutes: number;
+    from: string;
+  },
+): Promise<MeetingPage> {
+  return calendarCommand(client, u, "setSeries", a);
+}
 
-export async function moveSitting(client: SupabaseClient,
-u: TeamUserContext,
-a: {
-  meetingId: string;
-  sittingId: string;
-  day: string;
-  startTime: string;
-  minutes: number;
-},): Promise<MeetingPage> { return calendarCommand(client, u, 'moveSitting', a); }
+export async function moveSitting(
+  client: SupabaseClient,
+  u: TeamUserContext,
+  a: {
+    meetingId: string;
+    sittingId: string;
+    day: string;
+    startTime: string;
+    minutes: number;
+  },
+): Promise<MeetingPage> {
+  return calendarCommand(client, u, "moveSitting", a);
+}
 
-export async function cancelSitting(client: SupabaseClient,
-u: TeamUserContext,
-a: { meetingId: string; sittingId: string },): Promise<MeetingPage> { return calendarCommand(client, u, 'cancelSitting', a); }
+export async function cancelSitting(
+  client: SupabaseClient,
+  u: TeamUserContext,
+  a: { meetingId: string; sittingId: string },
+): Promise<MeetingPage> {
+  return calendarCommand(client, u, "cancelSitting", a);
+}
 
-export async function endMeeting(client: SupabaseClient,
-u: TeamUserContext,
-a: { meetingId: string; lastDate: string },): Promise<MeetingPage> { return calendarCommand(client, u, 'endMeeting', a); }
+export async function endMeeting(
+  client: SupabaseClient,
+  u: TeamUserContext,
+  a: { meetingId: string; lastDate: string },
+): Promise<MeetingPage> {
+  return calendarCommand(client, u, "endMeeting", a);
+}
 
-export async function setEmail(client: SupabaseClient,
-u: TeamUserContext,
-a: { meetingId: string; personId: string; email: string },): Promise<MeetingPage> { return calendarCommand(client, u, 'setEmail', a); }
+export async function setEmail(
+  client: SupabaseClient,
+  u: TeamUserContext,
+  a: { meetingId: string; personId: string; email: string },
+): Promise<MeetingPage> {
+  return calendarCommand(client, u, "setEmail", a);
+}
 
-export async function putOnCalendar(client: SupabaseClient,
-u: TeamUserContext,
-a: { meetingId: string; from?: string },): Promise<MeetingPage> { return calendarCommand(client, u, 'putOnCalendar', a); }
+export async function putOnCalendar(
+  client: SupabaseClient,
+  u: TeamUserContext,
+  a: { meetingId: string; from?: string },
+): Promise<MeetingPage> {
+  return calendarCommand(client, u, "putOnCalendar", a);
+}
 
-export async function takeOver(client: SupabaseClient,
-u: TeamUserContext,
-a: { meetingId: string },): Promise<MeetingPage> { return calendarCommand(client, u, 'takeOver', a); }
+export async function takeOver(
+  client: SupabaseClient,
+  u: TeamUserContext,
+  a: { meetingId: string },
+): Promise<MeetingPage> {
+  return calendarCommand(client, u, "takeOver", a);
+}
 
-export async function retryCalendar(client: SupabaseClient,
-u: TeamUserContext,
-a: { meetingId: string },): Promise<MeetingPage> { return calendarCommand(client, u, 'retryCalendar', a); }
+export async function retryCalendar(
+  client: SupabaseClient,
+  u: TeamUserContext,
+  a: { meetingId: string },
+): Promise<MeetingPage> {
+  return calendarCommand(client, u, "retryCalendar", a);
+}

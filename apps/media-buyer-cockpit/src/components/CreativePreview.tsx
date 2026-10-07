@@ -11,6 +11,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -30,39 +31,77 @@ import {
   REASON_TEXT,
   uniqueUrls,
 } from "@/lib/metaMedia";
-import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { nativeAdPreview } from "@/lib/nativePreviewClient";
-import { nativeStillsRead, type NativeStill } from "@/lib/nativeStillClient";
+import { type NativeStill, nativeStillsRead } from "@/lib/nativeStillClient";
 
 export type LocalStill = NativeStill;
 
 type FreshArgs = { adId: string; campaignName?: string; clientName?: string };
-type FreshCall = (args: FreshArgs, actorId: string | undefined) => Promise<PreviewResult>;
+type FreshCall = (
+  args: FreshArgs,
+  actorId: string | undefined,
+) => Promise<PreviewResult>;
 
 /**
  * Saved stills for the rows a screen shows.
  */
-export function useLocalStills(keys: (string | null | undefined)[]): Record<string, LocalStill> {
+export function useLocalStills(
+  keys: (string | null | undefined)[],
+): Record<string, LocalStill> {
   const auth = useCockpitAuth();
   const actor = auth.session?.user.id;
-  const requested = Array.from(new Set(keys.filter((key): key is string => typeof key === "string" && key.length > 0))).sort();
+  const requested = Array.from(
+    new Set(
+      keys.filter(
+        (key): key is string => typeof key === "string" && key.length > 0,
+      ),
+    ),
+  ).sort();
   const keysKey = JSON.stringify(requested);
   const identity = `${actor ?? ""}:${keysKey}`;
-  const [state, setState] = useState<{ identity: string; rows: Record<string, LocalStill> }>({ identity: "", rows: {} });
+  const [state, setState] = useState<{
+    identity: string;
+    rows: Record<string, LocalStill>;
+  }>({ identity: "", rows: {} });
   // The serialized key set, not the caller's new array object, defines this request.
   // biome-ignore lint/correctness/useExhaustiveDependencies: keysKey contains every requested key
   useEffect(() => {
     let current = true;
     if (!actor || !auth.client || requested.length === 0) return;
-    nativeStillsRead(auth.client, requested).then(rows => {
-      if (current) setState({ identity, rows });
-    }).catch(error => {
-      if (current) setState({ identity, rows: Object.fromEntries(requested.map(key => [key, { error: error instanceof Error ? error.message : "Saved images are unavailable. Reload the view." }])) });
-    });
-    return () => { current = false; };
+    nativeStillsRead(auth.client, requested)
+      .then(rows => {
+        if (current) setState({ identity, rows });
+      })
+      .catch(error => {
+        if (current)
+          setState({
+            identity,
+            rows: Object.fromEntries(
+              requested.map(key => [
+                key,
+                {
+                  error:
+                    error instanceof Error
+                      ? error.message
+                      : "Saved images are unavailable. Reload the view.",
+                },
+              ]),
+            ),
+          });
+      });
+    return () => {
+      current = false;
+    };
   }, [actor, auth.client, keysKey, identity]);
   if (state.identity === identity) return state.rows;
-  return Object.fromEntries(requested.map(key => [key, { error: actor ? "Loading saved image." : "Sign in to load saved images." }]));
+  return Object.fromEntries(
+    requested.map(key => [
+      key,
+      {
+        error: actor ? "Loading saved image." : "Sign in to load saved images.",
+      },
+    ]),
+  );
 }
 
 /** The picture props for a row: this cockpit's copy first, the media buyer's as backup. */
@@ -75,7 +114,15 @@ export function stillPropsFor(
   local: Record<string, LocalStill>,
 ) {
   const mine = row.stillKey ? local[row.stillKey] : undefined;
-  if (mine?.error) return { stillUrl: undefined, stillTinyUrl: undefined, backupStillUrl: undefined, backupStillTinyUrl: undefined, thumbUrl: undefined, emptyReason: mine.error };
+  if (mine?.error)
+    return {
+      stillUrl: undefined,
+      stillTinyUrl: undefined,
+      backupStillUrl: undefined,
+      backupStillTinyUrl: undefined,
+      thumbUrl: undefined,
+      emptyReason: mine.error,
+    };
   return {
     stillUrl: mine?.url,
     stillTinyUrl: mine?.tinyUrl,
@@ -244,7 +291,12 @@ function failedCall(
     timedOut ||
     browserOffline() ||
     /connection|network|websocket|failed to fetch/i.test(text);
-  return { ok: false, adId, reason: offline ? "offline" : "error", ...(text ? { message: text } : {}) };
+  return {
+    ok: false,
+    adId,
+    reason: offline ? "offline" : "error",
+    ...(text ? { message: text } : {}),
+  };
 }
 
 function cleanResult(adId: string, r: unknown): PreviewResult {
@@ -254,7 +306,11 @@ function cleanResult(adId: string, r: unknown): PreviewResult {
 }
 
 /** One call per ad at a time, reused until it goes stale. */
-function loadPreview(call: FreshCall, args: FreshArgs, actorId: string | undefined): Promise<PreviewResult> {
+function loadPreview(
+  call: FreshCall,
+  args: FreshArgs,
+  actorId: string | undefined,
+): Promise<PreviewResult> {
   const { adId } = args;
   const key = `${actorId ?? "signed-out"}:${adId}`;
   const inFlight = pending.get(key);
@@ -357,7 +413,6 @@ function bigChain(
     rowThumb(p, now),
   ]);
 }
-
 
 /**
  * The open preview starts over when the row now shows another ad, so it never
@@ -692,7 +747,9 @@ export function CreativePreview(props: CreativePreviewProps) {
   };
 
   const now = Date.now();
-  const known = useHeld(actorId && metaAdId ? `${actorId}:${metaAdId}` : undefined);
+  const known = useHeld(
+    actorId && metaAdId ? `${actorId}:${metaAdId}` : undefined,
+  );
   const reason = emptyText(props, now);
   const chain =
     variant === "card"

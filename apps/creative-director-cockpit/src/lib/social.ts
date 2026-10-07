@@ -17,20 +17,26 @@ function now(): string {
 }
 
 async function who() {
-  const { data: { session } } = await supabase.auth.getSession();
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
   return {
     email: session?.user?.email ?? "creative@maharamedia.com",
-    name: session?.user?.user_metadata?.full_name ?? session?.user?.email ?? "Creative",
+    name:
+      session?.user?.user_metadata?.full_name ??
+      session?.user?.email ??
+      "Creative",
   };
 }
 
 export async function roster(_args?: { month?: string }) {
   const month = _args?.month || thisMonth();
-  const [{ data: profiles }, { data: social }, { data: batches }] = await Promise.all([
-    supabase.from("cockpit_client_profiles").select("*").order("client_name"),
-    supabase.from("social_clients").select("*"),
-    supabase.from("social_batches").select("*").eq("month", month),
-  ]);
+  const [{ data: profiles }, { data: social }, { data: batches }] =
+    await Promise.all([
+      supabase.from("cockpit_client_profiles").select("*").order("client_name"),
+      supabase.from("social_clients").select("*"),
+      supabase.from("social_batches").select("*").eq("month", month),
+    ]);
 
   const byId = new Map((social ?? []).map(s => [s.client_task_id, s]));
   const batchBy = new Map((batches ?? []).map(b => [b.client_task_id, b]));
@@ -89,7 +95,9 @@ export async function pending(_args?: any) {
   ]);
 
   const reviewBatches = (batches ?? []).filter(b => b.status === "review");
-  const clientReviewBatches = (batches ?? []).filter(b => b.status === "with_client");
+  const clientReviewBatches = (batches ?? []).filter(
+    b => b.status === "with_client",
+  );
   const scheduledPosts = (posts ?? []).filter(p => p.status === "scheduled");
 
   return {
@@ -104,16 +112,31 @@ export async function batch(args: { clientTaskId: string; month?: string }) {
   const month = args.month || thisMonth();
   const id = `${args.clientTaskId}:${month}`;
 
-  const [{ data: found }, { data: posts }, { data: jobs }, { data: health }] = await Promise.all([
-    supabase.from("social_batches").select("*").eq("id", id).maybeSingle(),
-    supabase.from("social_posts").select("*").eq("batch_id", id).order("n", { ascending: true }),
-    supabase.from("social_jobs").select("id,kind,post_id,params,status,updated_at").eq("batch_id", id).in("status", ["queued", "running"]).order("created_at", { ascending: true }).limit(200),
-    supabase.from("social_worker_status").select("check_name,ok,detail,checked_at").eq("ok", false),
-  ]);
+  const [{ data: found }, { data: posts }, { data: jobs }, { data: health }] =
+    await Promise.all([
+      supabase.from("social_batches").select("*").eq("id", id).maybeSingle(),
+      supabase
+        .from("social_posts")
+        .select("*")
+        .eq("batch_id", id)
+        .order("n", { ascending: true }),
+      supabase
+        .from("social_jobs")
+        .select("id,kind,post_id,params,status,updated_at")
+        .eq("batch_id", id)
+        .in("status", ["queued", "running"])
+        .order("created_at", { ascending: true })
+        .limit(200),
+      supabase
+        .from("social_worker_status")
+        .select("check_name,ok,detail,checked_at")
+        .eq("ok", false),
+    ]);
 
   const stale = Date.now() - 20 * 60_000;
   const filteredJobs = (jobs ?? []).filter(
-    j => j.status === "queued" || new Date(String(j.updated_at)).getTime() > stale,
+    j =>
+      j.status === "queued" || new Date(String(j.updated_at)).getTime() > stale,
   );
 
   const formattedHealth = (health ?? []).map(h => ({
@@ -131,7 +154,10 @@ export async function batch(args: { clientTaskId: string; month?: string }) {
   };
 }
 
-export async function setActive(args: { clientTaskId: string; active: boolean }) {
+export async function setActive(args: {
+  clientTaskId: string;
+  active: boolean;
+}) {
   const stamp = now();
   const { error } = await supabase.from("social_clients").upsert({
     client_task_id: args.clientTaskId,
@@ -143,7 +169,10 @@ export async function setActive(args: { clientTaskId: string; active: boolean })
   return { ok: true };
 }
 
-export async function configure(args: { clientTaskId: string; [key: string]: any }) {
+export async function configure(args: {
+  clientTaskId: string;
+  [key: string]: any;
+}) {
   const { clientTaskId, ...rest } = args;
   const stamp = now();
   const { error } = await supabase
@@ -153,7 +182,11 @@ export async function configure(args: { clientTaskId: string; [key: string]: any
   return { ok: true };
 }
 
-export async function onboardingStep(args: { clientTaskId: string; step: string; done: boolean }) {
+export async function onboardingStep(args: {
+  clientTaskId: string;
+  step: string;
+  done: boolean;
+}) {
   const stamp = now();
   const fieldMap: Record<string, string> = {
     socials: "socials_connected_at",
@@ -162,14 +195,20 @@ export async function onboardingStep(args: { clientTaskId: string; step: string;
     bank: "bank_ready_at",
   };
   const col = fieldMap[args.step] || `${args.step}_at`;
-  const { error } = await supabase
-    .from("social_clients")
-    .upsert({ client_task_id: args.clientTaskId, [col]: args.done ? stamp : null, updated_at: stamp });
+  const { error } = await supabase.from("social_clients").upsert({
+    client_task_id: args.clientTaskId,
+    [col]: args.done ? stamp : null,
+    updated_at: stamp,
+  });
   if (error) throw new Error(error.message);
   return { ok: true };
 }
 
-export async function setMix(args: { clientTaskId: string; month?: string; mix: Record<string, number> }) {
+export async function setMix(args: {
+  clientTaskId: string;
+  month?: string;
+  mix: Record<string, number>;
+}) {
   const month = args.month || thisMonth();
   const id = `${args.clientTaskId}:${month}`;
   const stamp = now();
@@ -184,17 +223,28 @@ export async function setMix(args: { clientTaskId: string; month?: string; mix: 
   return { ok: true };
 }
 
-export async function approvePlan(args: { clientTaskId?: string; month?: string; batchId?: string }) {
-  const id = args.batchId || (args.clientTaskId ? `${args.clientTaskId}:${args.month || thisMonth()}` : "");
+export async function approvePlan(args: {
+  clientTaskId?: string;
+  month?: string;
+  batchId?: string;
+}) {
+  const id =
+    args.batchId ||
+    (args.clientTaskId
+      ? `${args.clientTaskId}:${args.month || thisMonth()}`
+      : "");
   if (!id) throw new Error("Batch ID required");
   const user = await who();
   const stamp = now();
-  const { error } = await supabase.from("social_batches").update({
-    status: "approved",
-    plan_approved_at: stamp,
-    plan_approved_by: user.email,
-    updated_at: stamp,
-  }).eq("id", id);
+  const { error } = await supabase
+    .from("social_batches")
+    .update({
+      status: "approved",
+      plan_approved_at: stamp,
+      plan_approved_by: user.email,
+      updated_at: stamp,
+    })
+    .eq("id", id);
   if (error) throw new Error(error.message);
   return { ok: true };
 }
@@ -211,7 +261,11 @@ export async function checkConnection(args: { clientTaskId: string }) {
   };
 }
 
-export async function writePlan(args: { clientTaskId: string; month?: string; posts?: any[] }) {
+export async function writePlan(args: {
+  clientTaskId: string;
+  month?: string;
+  posts?: any[];
+}) {
   const month = args.month || thisMonth();
   const id = `${args.clientTaskId}:${month}`;
   const stamp = now();
@@ -225,8 +279,16 @@ export async function writePlan(args: { clientTaskId: string; month?: string; po
   return { ok: true };
 }
 
-export async function generateBatch(args: { clientTaskId?: string; month?: string; batchId?: string }) {
-  const id = args.batchId || (args.clientTaskId ? `${args.clientTaskId}:${args.month || thisMonth()}` : "");
+export async function generateBatch(args: {
+  clientTaskId?: string;
+  month?: string;
+  batchId?: string;
+}) {
+  const id =
+    args.batchId ||
+    (args.clientTaskId
+      ? `${args.clientTaskId}:${args.month || thisMonth()}`
+      : "");
   if (!id) throw new Error("Batch ID required");
   const user = await who();
   const stamp = now();
@@ -243,17 +305,28 @@ export async function generateBatch(args: { clientTaskId?: string; month?: strin
   return { ok: true };
 }
 
-export async function passReview(args: { clientTaskId?: string; month?: string; batchId?: string }) {
-  const id = args.batchId || (args.clientTaskId ? `${args.clientTaskId}:${args.month || thisMonth()}` : "");
+export async function passReview(args: {
+  clientTaskId?: string;
+  month?: string;
+  batchId?: string;
+}) {
+  const id =
+    args.batchId ||
+    (args.clientTaskId
+      ? `${args.clientTaskId}:${args.month || thisMonth()}`
+      : "");
   if (!id) throw new Error("Batch ID required");
   const user = await who();
   const stamp = now();
-  await supabase.from("social_batches").update({
-    status: "scheduled",
-    reviewed_at: stamp,
-    reviewed_by: user.email,
-    updated_at: stamp,
-  }).eq("id", id);
+  await supabase
+    .from("social_batches")
+    .update({
+      status: "scheduled",
+      reviewed_at: stamp,
+      reviewed_by: user.email,
+      updated_at: stamp,
+    })
+    .eq("id", id);
   return { ok: true };
 }
 
@@ -263,13 +336,17 @@ export async function schedulePost(args: {
   when?: string | null;
   [key: string]: any;
 }) {
-  const at = args.scheduledAt !== undefined ? args.scheduledAt : (args.when ?? null);
+  const at =
+    args.scheduledAt !== undefined ? args.scheduledAt : (args.when ?? null);
   const stamp = now();
-  const { error } = await supabase.from("social_posts").update({
-    scheduled_at: at,
-    status: at ? "scheduled" : "draft",
-    updated_at: stamp,
-  }).eq("id", args.postId);
+  const { error } = await supabase
+    .from("social_posts")
+    .update({
+      scheduled_at: at,
+      status: at ? "scheduled" : "draft",
+      updated_at: stamp,
+    })
+    .eq("id", args.postId);
   if (error) throw new Error(error.message);
   return { ok: true };
 }
@@ -282,10 +359,13 @@ export async function attachImages(args: {
 }) {
   const stamp = now();
   const mediaItems = args.media ?? args.urls ?? [];
-  const { error } = await supabase.from("social_posts").update({
-    media: mediaItems,
-    updated_at: stamp,
-  }).eq("id", args.postId);
+  const { error } = await supabase
+    .from("social_posts")
+    .update({
+      media: mediaItems,
+      updated_at: stamp,
+    })
+    .eq("id", args.postId);
   if (error) throw new Error(error.message);
   return { ok: true };
 }
@@ -307,7 +387,8 @@ export async function addPost(args: {
 }) {
   const month = args.month || thisMonth();
   const batchId = `${args.clientTaskId}:${month}`;
-  const at = args.scheduledAt !== undefined ? args.scheduledAt : (args.when ?? null);
+  const at =
+    args.scheduledAt !== undefined ? args.scheduledAt : (args.when ?? null);
   const stamp = now();
   const id = `post_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
   const { error } = await supabase.from("social_posts").insert({
@@ -329,7 +410,10 @@ export async function addPost(args: {
   return { ok: true, id };
 }
 
-export async function generatePost(args: { postId: string; [key: string]: any }) {
+export async function generatePost(args: {
+  postId: string;
+  [key: string]: any;
+}) {
   const user = await who();
   const stamp = now();
   await supabase.from("social_jobs").insert({
@@ -346,14 +430,23 @@ export async function generatePost(args: { postId: string; [key: string]: any })
 }
 
 export async function removePost(args: { postId: string }) {
-  const { error } = await supabase.from("social_posts").delete().eq("id", args.postId);
+  const { error } = await supabase
+    .from("social_posts")
+    .delete()
+    .eq("id", args.postId);
   if (error) throw new Error(error.message);
   return { ok: true };
 }
 
-export async function fillMonth(args: { clientTaskId?: string; month?: string; batchId?: string; [key: string]: any }) {
+export async function fillMonth(args: {
+  clientTaskId?: string;
+  month?: string;
+  batchId?: string;
+  [key: string]: any;
+}) {
   const month = args.month || thisMonth();
-  const id = args.batchId || (args.clientTaskId ? `${args.clientTaskId}:${month}` : "");
+  const id =
+    args.batchId || (args.clientTaskId ? `${args.clientTaskId}:${month}` : "");
   if (id) {
     const stamp = now();
     await supabase.from("social_batches").upsert({
@@ -367,15 +460,22 @@ export async function fillMonth(args: { clientTaskId?: string; month?: string; b
   return { ok: true, filling: 0 };
 }
 
-export async function updatePost(args: { id?: string; postId?: string; [key: string]: any }) {
+export async function updatePost(args: {
+  id?: string;
+  postId?: string;
+  [key: string]: any;
+}) {
   const targetId = args.id || args.postId;
   if (!targetId) throw new Error("Post ID required.");
   const { id: _id, postId: _pid, ...updates } = args;
   const stamp = now();
-  const { error } = await supabase.from("social_posts").update({
-    ...updates,
-    updated_at: stamp,
-  }).eq("id", targetId);
+  const { error } = await supabase
+    .from("social_posts")
+    .update({
+      ...updates,
+      updated_at: stamp,
+    })
+    .eq("id", targetId);
   if (error) throw new Error(error.message);
   return { ok: true };
 }
@@ -391,69 +491,122 @@ export async function uploadUrl(args: {
   const clientTaskId = args.clientTaskId || "general";
   const path = args.path || `${clientTaskId}/${Date.now()}_${filename}`;
   const cleanPath = path.replace(/^\/+/, "");
-  const kind: "image" | "video" = args.contentType?.startsWith("video/") || /\.(mp4|mov|webm)$/i.test(cleanPath)
-    ? "video"
-    : "image";
+  const kind: "image" | "video" =
+    args.contentType?.startsWith("video/") ||
+    /\.(mp4|mov|webm)$/i.test(cleanPath)
+      ? "video"
+      : "image";
 
-  const { data, error } = await supabase.storage.from("social-media").createSignedUploadUrl(cleanPath);
+  const { data, error } = await supabase.storage
+    .from("social-media")
+    .createSignedUploadUrl(cleanPath);
   const pub = supabase.storage.from("social-media").getPublicUrl(cleanPath);
   if (error) {
-    return { uploadUrl: pub.data.publicUrl, publicUrl: pub.data.publicUrl, kind };
+    return {
+      uploadUrl: pub.data.publicUrl,
+      publicUrl: pub.data.publicUrl,
+      kind,
+    };
   }
   return { uploadUrl: data.signedUrl, publicUrl: pub.data.publicUrl, kind };
 }
 
-export async function setMedia(args: { postId: string; media?: any[]; urls?: any[]; [key: string]: any }) {
+export async function setMedia(args: {
+  postId: string;
+  media?: any[];
+  urls?: any[];
+  [key: string]: any;
+}) {
   return attachImages(args);
 }
 
-export async function setRefs(args: { postId: string; refs: any[]; [key: string]: any }) {
+export async function setRefs(args: {
+  postId: string;
+  refs: any[];
+  [key: string]: any;
+}) {
   const stamp = now();
-  const { error } = await supabase.from("social_posts").update({
-    reference_urls: args.refs,
-    updated_at: stamp,
-  }).eq("id", args.postId);
+  const { error } = await supabase
+    .from("social_posts")
+    .update({
+      reference_urls: args.refs,
+      updated_at: stamp,
+    })
+    .eq("id", args.postId);
   if (error) throw new Error(error.message);
   return { ok: true };
 }
 
-export async function writeCaption(args: { postId: string; caption?: string; [key: string]: any }) {
+export async function writeCaption(args: {
+  postId: string;
+  caption?: string;
+  [key: string]: any;
+}) {
   const stamp = now();
   const updateData: Record<string, any> = { updated_at: stamp };
   if (args.caption !== undefined) {
     updateData.caption = args.caption;
   }
-  const { error } = await supabase.from("social_posts").update(updateData).eq("id", args.postId);
+  const { error } = await supabase
+    .from("social_posts")
+    .update(updateData)
+    .eq("id", args.postId);
   if (error) throw new Error(error.message);
   return { ok: true };
 }
 
-export async function makeCover(args: { postId: string; mediaIndex?: number; index?: number; [key: string]: any }) {
+export async function makeCover(args: {
+  postId: string;
+  mediaIndex?: number;
+  index?: number;
+  [key: string]: any;
+}) {
   const stamp = now();
-  const idx = args.mediaIndex !== undefined ? args.mediaIndex : (args.index ?? 0);
-  const { error } = await supabase.from("social_posts").update({
-    cover_index: idx,
-    updated_at: stamp,
-  }).eq("id", args.postId);
+  const idx =
+    args.mediaIndex !== undefined ? args.mediaIndex : (args.index ?? 0);
+  const { error } = await supabase
+    .from("social_posts")
+    .update({
+      cover_index: idx,
+      updated_at: stamp,
+    })
+    .eq("id", args.postId);
   if (error) throw new Error(error.message);
   return { ok: true };
 }
 
-export async function setWords(args: { postId: string; words?: any; index?: number; [key: string]: any }) {
+export async function setWords(args: {
+  postId: string;
+  words?: any;
+  index?: number;
+  [key: string]: any;
+}) {
   const stamp = now();
-  const { error } = await supabase.from("social_posts").update({
-    on_screen_text: args.words,
-    updated_at: stamp,
-  }).eq("id", args.postId);
+  const { error } = await supabase
+    .from("social_posts")
+    .update({
+      on_screen_text: args.words,
+      updated_at: stamp,
+    })
+    .eq("id", args.postId);
   if (error) throw new Error(error.message);
   return { ok: true };
 }
 
-export async function addWords(_args: { postId: string; index?: number; word?: string; [key: string]: any }) {
+export async function addWords(_args: {
+  postId: string;
+  index?: number;
+  word?: string;
+  [key: string]: any;
+}) {
   return { ok: true };
 }
 
-export async function makeItMove(args: { postId: string; index?: number; [key: string]: any }) {
+export async function makeItMove(args: {
+  postId: string;
+  index?: number;
+  [key: string]: any;
+}) {
   const user = await who();
   const stamp = now();
   await supabase.from("social_jobs").insert({
@@ -483,7 +636,11 @@ export async function library(args: { clientTaskId: string }) {
   }));
 }
 
-export async function addToLibrary(args: { clientTaskId: string; url: string; kind?: string }) {
+export async function addToLibrary(args: {
+  clientTaskId: string;
+  url: string;
+  kind?: string;
+}) {
   const stamp = now();
   const id = `asset_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
   const { error } = await supabase.from("social_assets").insert({
@@ -499,7 +656,10 @@ export async function addToLibrary(args: { clientTaskId: string; url: string; ki
 
 export async function removeFromLibrary(args: { id: string }) {
   await supabase.from("social_assets").delete().eq("id", args.id);
-  await supabase.from("social_bank").update({ active: false }).eq("id", args.id);
+  await supabase
+    .from("social_bank")
+    .update({ active: false })
+    .eq("id", args.id);
   return { ok: true };
 }
 
@@ -508,7 +668,11 @@ export async function pages(args?: { clientTaskId?: string }) {
     .from("social_meta_pages")
     .select("*");
   const { data: clientRow } = args?.clientTaskId
-    ? await supabase.from("social_clients").select("*").eq("client_task_id", args.clientTaskId).maybeSingle()
+    ? await supabase
+        .from("social_clients")
+        .select("*")
+        .eq("client_task_id", args.clientTaskId)
+        .maybeSingle()
     : { data: null };
 
   const pagesList = (pageRows ?? []).map(p => ({
@@ -521,14 +685,16 @@ export async function pages(args?: { clientTaskId?: string }) {
     suggested: null as "ads" | "name" | null,
   }));
 
-  const current = clientRow?.fb_page_id ? {
-    pageId: clientRow.fb_page_id,
-    name: clientRow.fb_page_name ?? null,
-    igUserId: clientRow.ig_user_id ?? null,
-    igUsername: clientRow.ig_username ?? null,
-    linkedAt: clientRow.updated_at ?? null,
-    linkedBy: null,
-  } : null;
+  const current = clientRow?.fb_page_id
+    ? {
+        pageId: clientRow.fb_page_id,
+        name: clientRow.fb_page_name ?? null,
+        igUserId: clientRow.ig_user_id ?? null,
+        igUsername: clientRow.ig_username ?? null,
+        linkedAt: clientRow.updated_at ?? null,
+        linkedBy: null,
+      }
+    : null;
 
   return {
     pages: pagesList,
@@ -539,12 +705,18 @@ export async function pages(args?: { clientTaskId?: string }) {
   };
 }
 
-export async function linkAccounts(args: { clientTaskId: string; pageId?: string | null }) {
+export async function linkAccounts(args: {
+  clientTaskId: string;
+  pageId?: string | null;
+}) {
   const stamp = now();
-  await supabase.from("social_clients").update({
-    fb_page_id: args.pageId ?? null,
-    updated_at: stamp,
-  }).eq("client_task_id", args.clientTaskId);
+  await supabase
+    .from("social_clients")
+    .update({
+      fb_page_id: args.pageId ?? null,
+      updated_at: stamp,
+    })
+    .eq("client_task_id", args.clientTaskId);
   return { ok: true };
 }
 
@@ -561,11 +733,14 @@ export async function sendForSignoff(args: {
 }) {
   const id = `${args.clientTaskId}:${args.month}`;
   const stamp = now();
-  await supabase.from("social_batches").update({
-    status: "with_client",
-    sent_to_client_at: stamp,
-    updated_at: stamp,
-  }).eq("id", id);
+  await supabase
+    .from("social_batches")
+    .update({
+      status: "with_client",
+      sent_to_client_at: stamp,
+      updated_at: stamp,
+    })
+    .eq("id", id);
   return {
     ok: true,
     url: `https://cockpit.maharamedia.com/social/review/${encodeURIComponent(args.clientTaskId)}/${args.month}`,

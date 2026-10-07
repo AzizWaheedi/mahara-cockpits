@@ -7,7 +7,16 @@ import {
   internalQuery,
 } from "./_generated/server";
 import { CPB_GATE, CPL_GATE, NEW_CAMPAIGN_FORM_URL } from "./constants";
+import {
+  accountIndex,
+  budgetToUsd,
+  currencyCode,
+  type MetaAccount,
+  rowKeys,
+  spendToUsd,
+} from "./currency";
 import { authenticatedAction } from "./functions";
+import { hasGhlCredential } from "./ghlCredential";
 import { flush } from "./health";
 import {
   hasPicture,
@@ -89,14 +98,8 @@ const C = {
   currency: 24,
 };
 
-// Rates to USD. The tracker stores raw account currency in a column labelled USD.
-const FX: Record<string, number> = {
-  USD: 1,
-  QAR: 0.2747,
-  SAR: 0.2666,
-  AED: 0.2723,
-  KWD: 3.26,
-};
+// The tracker stores raw account currency in a column labelled USD. Which
+// currency is Meta's word for the account, not the sheet's (currency.ts).
 
 function num(x: unknown): number {
   const n = Number(String(x ?? "").replace(/,/g, ""));
@@ -119,6 +122,26 @@ function normalize(s: string): string {
     .replace(/[^\p{L}\p{N}]/gu, "");
 }
 
+/** Every ad account the business reaches, with its currency and 30-day spend. One call per edge. */
+async function metaAccounts(): Promise<MetaAccount[]> {
+  const out: MetaAccount[] = [];
+  for (const edge of ["owned_ad_accounts", "client_ad_accounts"]) {
+    // biome-ignore lint/suspicious/noExplicitAny: Graph rows
+    const r = await graph<any>(`${MAHARA_BUSINESS_ID}/${edge}`, {
+      fields: "id,name,currency,insights.date_preset(last_30d){spend}",
+      limit: 200,
+    });
+    for (const a of r.data ?? [])
+      out.push({
+        id: String(a.id ?? "").replace(/^act_/, ""),
+        name: String(a.name ?? "").trim(),
+        currency: currencyCode(a.currency),
+        spend30: num(a.insights?.data?.[0]?.spend),
+      });
+  }
+  return out;
+}
+
 /**
  * Ad-level daily rows, straight from Meta, for every visible account with
  * spend in the last 30 days that the tracker sheet does not keep up to date:
@@ -135,39 +158,47 @@ function normalize(s: string): string {
 async function metaRowsForMissingAccounts(
   sheetRows: string[][],
   since: string,
+  accounts: MetaAccount[],
 ): Promise<{ rows: string[][]; accounts: string[] }> {
+  const index = accountIndex(accounts);
+  // The sheet's label for an account is not always Meta's: "718146936708597,
+  // SAR" in the sheet is "718146936708597" in Meta. Keyed by Meta's id where
+  // the label can be resolved, so the same account is never read twice.
+  const accountKey = (label: string) =>
+    index.find(label)?.id ?? `name:${normalize(label)}`;
   const lastInSheet = new Map<string, string>();
+  // Every ad-day the sheet already has. A Meta row matching one is the same
+  // row, whatever either source calls the account: Ardon's spend and leads
+  // were counted twice until 2026-10-06.
+  const inSheet = new Set<string>();
   for (const r of sheetRows)
     if (r[C.date] >= since && r[C.account]) {
-      const k = normalize(r[C.account]);
+      const k = accountKey(r[C.account]);
       if ((lastInSheet.get(k) ?? "") < r[C.date]) lastInSheet.set(k, r[C.date]);
+      for (const key of rowKeys({
+        date: r[C.date],
+        adId: r[C.adId],
+        campaign: r[C.campaign],
+        adSet: r[C.adSet],
+        adName: r[C.adName],
+      }))
+        inSheet.add(key);
     }
   // A day of slack: the connector fills yesterday some time today, and a
   // sheet one day behind is on schedule, not broken.
   const stale = daysAgo(2);
   const until = daysAgo(1);
-  // One call per edge for the 30-day spend of every account at once.
-  // biome-ignore lint/suspicious/noExplicitAny: Graph rows
-  const accounts: any[] = [];
-  for (const edge of ["owned_ad_accounts", "client_ad_accounts"]) {
-    // biome-ignore lint/suspicious/noExplicitAny: Graph rows
-    const r = await graph<any>(`${MAHARA_BUSINESS_ID}/${edge}`, {
-      fields: "id,name,currency,insights.date_preset(last_30d){spend}",
-      limit: 200,
-    });
-    accounts.push(...(r.data ?? []));
-  }
   const out: string[][] = [];
   const names: string[] = [];
   for (const a of accounts) {
-    const name = String(a.name ?? "").trim();
+    const name = a.name;
     const key = normalize(name);
     if (!key || INTERNAL_ACCOUNTS.includes(key)) continue;
-    const last = lastInSheet.get(key);
+    const last = lastInSheet.get(a.id) ?? lastInSheet.get(`name:${key}`);
     if (last && last >= stale) continue;
-    const spend = num(a.insights?.data?.[0]?.spend);
+    const spend = a.spend30;
     if (spend <= 0) continue;
-    const currency = String(a.currency ?? "USD");
+    const currency = a.currency;
     // From the day after the sheet's last row, or the whole window when the
     // sheet has none.
     const from = last
@@ -188,6 +219,16 @@ async function metaRowsForMissingAccounts(
     let guard = 0;
     while (page && guard++ < 10) {
       for (const d of page.data ?? []) {
+        if (
+          rowKeys({
+            date: String(d.date_start ?? ""),
+            adId: String(d.ad_id ?? ""),
+            campaign: String(d.campaign_name ?? ""),
+            adSet: String(d.adset_name ?? ""),
+            adName: String(d.ad_name ?? ""),
+          }).some(k => inSheet.has(k))
+        )
+          continue;
         const leads = num(
           // biome-ignore lint/suspicious/noExplicitAny: Graph rows
           (d.actions ?? []).find((x: any) => x.action_type === "lead")?.value,
@@ -1255,8 +1296,17 @@ async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
   // for. Any account Meta shows us that the sheet does not (City Wood, Al Ola
   // on 2026-09-12) is read straight from Meta in the same row shape, so a new
   // ad account never needs anyone to touch the sheet's connector first.
+  // Every account Meta shows us, once: the fallback below reads it, and it
+  // is the word on each account's currency.
+  let accounts: MetaAccount[] = [];
   try {
-    const extra = await metaRowsForMissingAccounts(rows, since30);
+    accounts = await metaAccounts();
+  } catch (e) {
+    console.error(`meta accounts: ${String(e).slice(0, 200)}`);
+  }
+  const accountsByLabel = accountIndex(accounts);
+  try {
+    const extra = await metaRowsForMissingAccounts(rows, since30, accounts);
     if (extra.rows.length) {
       rows.push(...extra.rows);
       console.log(
@@ -1298,7 +1348,7 @@ async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
     // Each row needs its own sub-account token: agency-level tokens cannot
     // read location endpoints (tested 2026-09-10).
     const token = String(r[col("GHL API")] ?? "").trim();
-    if (name && loc && token.startsWith("pit-")) {
+    if (name && loc && hasGhlCredential(token)) {
       ghlByClient.set(normalize(name), {
         loc: String(loc),
         token,
@@ -1418,6 +1468,20 @@ async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
     >;
   };
   const byCampaign = new Map<string, Agg>();
+  // Meta's currency for the account wins over the sheet's column, which can
+  // be blank or stale. A disagreement is said once per account.
+  const currencyNoted = new Set<string>();
+  const currencyFor = (r: string[]): string => {
+    const sheet = r[C.currency] ? currencyCode(r[C.currency]) : undefined;
+    const meta = accountsByLabel.currencyOf(r[C.account]);
+    if (meta && sheet && meta !== sheet && !currencyNoted.has(r[C.account])) {
+      currencyNoted.add(r[C.account]);
+      console.log(
+        `currency: the sheet says ${sheet} for "${r[C.account]}", Meta says ${meta}; using ${meta}`,
+      );
+    }
+    return meta ?? sheet ?? "USD";
+  };
 
   for (const r of rows) {
     if (!r[C.date] || !r[C.campaign]) continue;
@@ -1428,7 +1492,7 @@ async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
     if (!a) {
       a = {
         account: r[C.account] ?? "",
-        currency: r[C.currency] || "USD",
+        currency: currencyFor(r),
         spend: 0,
         leads: 0,
         impressions: 0,
@@ -1444,8 +1508,7 @@ async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
       };
       byCampaign.set(key, a);
     }
-    const fx = FX[a.currency] ?? 1;
-    const cost = num(r[C.cost]) * fx;
+    const cost = spendToUsd(num(r[C.cost]), a.currency);
     if (date < a.first) a.first = date;
     a.spend30 += cost;
     a.days30.add(date);
@@ -2405,8 +2468,13 @@ async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
           "daily_budget,lifetime_budget,adsets.limit(200){id,name,status,effective_status,daily_budget,lifetime_budget}",
       });
       const sets = campRes?.adsets ?? { data: [] };
+      // Budgets come back in minor units of the account's own currency; the
+      // cockpit shows dollars (Ardon's 175 SAR a day is $46.66, not $175).
+      const budgetCurrency =
+        accountsByLabel.byId.get(String(c.metaAccountId).replace(/^act_/, ""))
+          ?.currency ?? c.currency;
       {
-        const minor = (x: unknown) => (x ? Number(x) / 100 : undefined);
+        const minor = (x: unknown) => budgetToUsd(x, budgetCurrency);
         const setRows = (sets?.data ?? []) as any[];
         const delivering = setRows.filter(
           s => String(s.effective_status ?? s.status) === "ACTIVE",
@@ -2439,9 +2507,7 @@ async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
           name: String(s.name ?? ""),
           status: String(s.status ?? ""),
           effectiveStatus: s.effective_status,
-          dailyBudget: s.daily_budget
-            ? Number(s.daily_budget) / 100
-            : undefined,
+          dailyBudget: budgetToUsd(s.daily_budget, budgetCurrency),
           syncedAt: now,
         });
       }

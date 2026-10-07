@@ -1,6 +1,4 @@
-import { useAction } from "@/lib/cockpitApi";
-import { Clapperboard } from "lucide-react";
-import { ArrowUpRight, TriangleAlert } from "lucide-react";
+import { ArrowUpRight, Clapperboard, TriangleAlert } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { EmptyState } from "@/components/ceo/EmptyState";
 import { FilterChips } from "@/components/ceo/FilterChips";
@@ -8,10 +6,10 @@ import { shortDate } from "@/components/ceo/format";
 import { Kicker } from "@/components/ceo/Kicker";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatusChip, type StatusTone } from "@/components/ceo/StatusChip";
-import { api } from "@/lib/cockpitApi";
-import type { Post } from "@/types/ceo/posting";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { api, useAction } from "@/lib/cockpitApi";
 import { cn } from "@/lib/utils";
+import type { Post } from "@/types/ceo/posting";
 import type { CeoTabProps } from "./types";
 
 /**

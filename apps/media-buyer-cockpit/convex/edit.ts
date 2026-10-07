@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { AZIZ_SLACK_ID } from "./constants";
+import { budgetWords, usdToBudget } from "./currency";
 import { isDriveLink, reusable } from "./driveCreative";
 import { authenticatedAction } from "./functions";
 import { refusal } from "./gate";
@@ -13,7 +14,7 @@ import {
   flattenNote,
   setCopy,
 } from "./metaCreative";
-import { callTool, graph, graphPost, unwrap } from "./tools";
+import { accountCurrency, callTool, graph, graphPost, unwrap } from "./tools";
 
 declare const process: { env: Record<string, string | undefined> };
 
@@ -53,8 +54,11 @@ function sanitizeTargeting(targeting: any): any {
   return t;
 }
 
-/** Meta takes budgets in minor units. She types dollars. */
-const toMinor = (dollars: number) => Math.round(dollars * 100);
+/**
+ * Meta takes budgets in minor units of the ad account's own currency. She
+ * types dollars, so every budget is converted on the way out (currency.ts):
+ * $38 on Ardon's riyal account is 142.54 SAR, not 38.
+ */
 
 async function logIt(
   ctx: any,
@@ -67,6 +71,7 @@ async function logIt(
     name: args.adName ?? args.campaignName,
     campaignName: args.campaignName,
     overrideNote: args.what,
+    userId: ctx.userId,
   });
 }
 
@@ -111,10 +116,13 @@ export async function duplicateAdSetCore(args: {
     status: "PAUSED",
   };
   if (!campaignHoldsBudget) {
+    // The copy's own budget stays as it was, in the account's currency; a
+    // budget she typed is dollars and is converted.
     payload.daily_budget =
       args.dailyBudget !== undefined
-        ? toMinor(args.dailyBudget)
-        : (src.daily_budget ?? toMinor(30));
+        ? usdToBudget(args.dailyBudget, await accountCurrency(src.account_id))
+        : (src.daily_budget ??
+          usdToBudget(30, await accountCurrency(src.account_id)));
   }
   if (src.promoted_object)
     payload.promoted_object = JSON.stringify(src.promoted_object);
@@ -170,21 +178,23 @@ export const duplicateAdSet = authenticatedAction({
 export async function setDailyBudget(
   adsetId: string,
   dailyBudget: number,
-): Promise<{ level: "campaign" | "ad set"; id: string }> {
+): Promise<{ level: "campaign" | "ad set"; id: string; currency: string }> {
   const adset = await graph<any>(adsetId, {
-    fields: "campaign{id,daily_budget,lifetime_budget}",
+    fields: "account_id,campaign{id,daily_budget,lifetime_budget}",
   });
   const camp = adset?.campaign;
   if (camp?.lifetime_budget)
     throw new Error(
       "This campaign runs on a lifetime budget, not a daily one. Change it in Ads Manager.",
     );
+  const currency = await accountCurrency(String(adset?.account_id ?? ""));
+  const minor = usdToBudget(dailyBudget, currency);
   if (camp?.id && camp.daily_budget) {
-    await graphPost(camp.id, { daily_budget: toMinor(dailyBudget) });
-    return { level: "campaign", id: String(camp.id) };
+    await graphPost(camp.id, { daily_budget: minor });
+    return { level: "campaign", id: String(camp.id), currency };
   }
-  await graphPost(adsetId, { daily_budget: toMinor(dailyBudget) });
-  return { level: "ad set", id: adsetId };
+  await graphPost(adsetId, { daily_budget: minor });
+  return { level: "ad set", id: adsetId, currency };
 }
 
 /** Change an ad set's daily budget. */
@@ -206,8 +216,8 @@ export const setAdSetBudget = authenticatedAction({
         adName: args.name,
         what:
           where.level === "campaign"
-            ? `Set the campaign's daily budget to $${args.dailyBudget} (the budget lives on the campaign)`
-            : `Set daily budget on ad set "${args.name}" to $${args.dailyBudget}`,
+            ? `Set the campaign's daily budget to ${budgetWords(args.dailyBudget, where.currency)} (the budget lives on the campaign)`
+            : `Set daily budget on ad set "${args.name}" to ${budgetWords(args.dailyBudget, where.currency)}`,
       });
       return { ok: true };
     } catch (e) {

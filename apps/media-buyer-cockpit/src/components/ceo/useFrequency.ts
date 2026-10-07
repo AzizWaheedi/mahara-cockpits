@@ -1,6 +1,5 @@
-import { useAction } from "@/lib/cockpitApi";
 import { useEffect, useRef, useState } from "react";
-import { api } from "@/lib/cockpitApi";
+import { api, useAction } from "@/lib/cockpitApi";
 import type { FrequencyRead } from "@/types/ceo/frequency";
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/;

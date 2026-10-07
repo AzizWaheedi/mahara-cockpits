@@ -23,7 +23,11 @@ export function RoleRoute({ role }: { role: string }) {
       <p className="text-sm text-muted-foreground">
         Ask Aziz to give you the creative director seat in the portal.
       </p>
-      {access?.home && <a className="text-sm underline" href={`${portalUrl()}${access.home}`}>Open your cockpit</a>}
+      {access?.home && (
+        <a className="text-sm underline" href={`${portalUrl()}${access.home}`}>
+          Open your cockpit
+        </a>
+      )}
     </div>
   );
 }

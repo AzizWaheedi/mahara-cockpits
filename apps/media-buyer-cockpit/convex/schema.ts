@@ -333,6 +333,8 @@ const schema = defineSchema({
     at: v.number(),
     clickupTaskId: v.optional(v.string()),
     clickupLoggedAt: v.optional(v.number()),
+    /** Why the change is not on ClickUp: no card for the client, or ClickUp refused. */
+    clickupError: v.optional(v.string()),
   })
     .index("by_campaign", ["campaignName"])
     .index("by_at", ["at"]),
@@ -530,6 +532,8 @@ const schema = defineSchema({
     tries: v.number(),
     lastError: v.optional(v.string()),
     doneAt: v.optional(v.number()),
+    /** Closed unsent after MAX_TRIES failures; lastError says why. */
+    gaveUpAt: v.optional(v.number()),
   }).index("by_done", ["doneAt"]),
 
   /**

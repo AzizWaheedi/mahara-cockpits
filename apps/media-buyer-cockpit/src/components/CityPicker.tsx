@@ -1,7 +1,6 @@
-import { useAction } from "@/lib/cockpitApi";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { api } from "@/lib/cockpitApi";
+import { api, useAction } from "@/lib/cockpitApi";
 import { Button } from "./ui/button";
 
 type CityOption = { id: string; label: string; color?: string };
@@ -46,7 +45,9 @@ export function CityPicker({
         optionsCache = null;
         throw e;
       });
-    (optionsCache as Promise<CityOption[]> | null)?.then(setOptions).catch(() => setOptions([]));
+    (optionsCache as Promise<CityOption[]> | null)
+      ?.then(setOptions)
+      .catch(() => setOptions([]));
   }, [hasCard, load]);
 
   useEffect(() => {

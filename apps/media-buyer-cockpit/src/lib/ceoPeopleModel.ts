@@ -1,10 +1,20 @@
 // Preserves the original CEO people.ts shaping and fixed-rate arithmetic.
-import {COMMISSION_BASES, type CommissionBasis} from "../types/ceo/commission";
-import {parseSchedule} from "../types/ceo/schedule";
-import type {Person,Roster} from "../types/ceo/people";
+import {
+  COMMISSION_BASES,
+  type CommissionBasis,
+} from "../types/ceo/commission";
+import type { Person, Roster } from "../types/ceo/people";
+import { parseSchedule } from "../types/ceo/schedule";
+
 type Row = Record<string, unknown>;
 // Same fixed rates as convex/ceo/data/tap.ts; migration tests pin parity.
-const USD_PER: Record<string,number> = {USD:1,KWD:3.26,AED:0.2723,SAR:0.2666,QAR:0.2747};
+const USD_PER: Record<string, number> = {
+  USD: 1,
+  KWD: 3.26,
+  AED: 0.2723,
+  SAR: 0.2666,
+  QAR: 0.2747,
+};
 export const TEAM_ROLES = [
   "CEO",
   "Systems manager",
@@ -66,18 +76,32 @@ function shape(r: Row): Person {
   };
 }
 
-
 export function peopleRoster(rows: Row[]): Roster {
- const people=rows.map(shape);
- const working=people.filter(p=>p.working);
- const paused=people.filter(p=>p.active && p.pausedOn && p.engagement!=="bot");
- const cost=(list:Person[])=>round2(list.reduce((n,p)=>n+(p.monthlyUsd??0),0));
- return {people,ready:true,activeCount:working.length,activeMonthlyUsd:cost(working),
- pausedCount:paused.length,pausedMonthlyUsd:cost(paused),botCount:people.filter(p=>p.engagement==="bot").length,
- salesMonthlyUsd:cost(working.filter(p=>p.isSales)),missingCost:working.filter(p=>p.monthlyUsd===null).map(p=>p.name)};
+  const people = rows.map(shape);
+  const working = people.filter(p => p.working);
+  const paused = people.filter(
+    p => p.active && p.pausedOn && p.engagement !== "bot",
+  );
+  const cost = (list: Person[]) =>
+    round2(list.reduce((n, p) => n + (p.monthlyUsd ?? 0), 0));
+  return {
+    people,
+    ready: true,
+    activeCount: working.length,
+    activeMonthlyUsd: cost(working),
+    pausedCount: paused.length,
+    pausedMonthlyUsd: cost(paused),
+    botCount: people.filter(p => p.engagement === "bot").length,
+    salesMonthlyUsd: cost(working.filter(p => p.isSales)),
+    missingCost: working.filter(p => p.monthlyUsd === null).map(p => p.name),
+  };
 }
 export function peopleRoles(rows: Row[]): string[] {
- const custom=new Set(rows.map(r=>String(r.role??"").trim()).filter(Boolean)
- .filter(r=>!TEAM_ROLES.some(t=>t.toLowerCase()===r.toLowerCase())));
- return [...TEAM_ROLES,...[...custom].sort()];
+  const custom = new Set(
+    rows
+      .map(r => String(r.role ?? "").trim())
+      .filter(Boolean)
+      .filter(r => !TEAM_ROLES.some(t => t.toLowerCase() === r.toLowerCase())),
+  );
+  return [...TEAM_ROLES, ...[...custom].sort()];
 }

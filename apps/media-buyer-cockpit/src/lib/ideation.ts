@@ -223,9 +223,17 @@ async function one(key: string, select = "*"): Promise<Row | null> {
 }
 
 async function patch(key: string, body: Row): Promise<void> {
-  const { data, error } = await supabase.from(TABLE).update(body).eq("key", key).select("key").maybeSingle();
+  const { data, error } = await supabase
+    .from(TABLE)
+    .update(body)
+    .eq("key", key)
+    .select("key")
+    .maybeSingle();
   boom(error);
-  if (!data) throw new Error("That idea could not be updated. Refresh the board and try again.");
+  if (!data)
+    throw new Error(
+      "That idea could not be updated. Refresh the board and try again.",
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -323,7 +331,8 @@ async function counts(
       if (tab === "trends") query = query.not("trend_id", "is", null);
       const { count, error } = await query;
       boom(error);
-      if (count === null) throw new Error("The board counts are unavailable. Try again.");
+      if (count === null)
+        throw new Error("The board counts are unavailable. Try again.");
       return [tab, count] as const;
     }),
   );
@@ -527,9 +536,14 @@ async function watchlistRemove({ key }: { key: string }) {
   const { data, error } = await supabase
     .from("ideation_watchlist")
     .update({ active: false, updated_at: now() })
-    .eq("key", key).select("key").maybeSingle();
+    .eq("key", key)
+    .select("key")
+    .maybeSingle();
   boom(error);
-  if (!data) throw new Error("That watchlist entry could not be updated. Refresh and try again.");
+  if (!data)
+    throw new Error(
+      "That watchlist entry could not be updated. Refresh and try again.",
+    );
   return null;
 }
 
@@ -618,12 +632,19 @@ async function requestsList({ limit }: { limit?: number } = {}) {
  * The same shape the page imports from Convex in the other two cockpits, so
  * the page file itself does not have to know which one it is running in.
  */
-export async function requireIdeationAccess():Promise<void>{
-  const {data,error}=await supabase.rpc("cockpit_ideation_allowed");
+export async function requireIdeationAccess(): Promise<void> {
+  const { data, error } = await supabase.rpc("cockpit_ideation_allowed");
   boom(error);
-  if(data!==true) throw new Error("Your account does not have access to this board. Ask Aziz to check your role.");
+  if (data !== true)
+    throw new Error(
+      "Your account does not have access to this board. Ask Aziz to check your role.",
+    );
 }
-const checked=<F extends (...args:any[])=>Promise<any>>(fn:F):F=>(async(...args:Parameters<F>)=>{await requireIdeationAccess();return fn(...args);}) as F;
+const checked = <F extends (...args: any[]) => Promise<any>>(fn: F): F =>
+  (async (...args: Parameters<F>) => {
+    await requireIdeationAccess();
+    return fn(...args);
+  }) as F;
 
 export const api = {
   ideation: {

@@ -47,4 +47,3 @@ export type CostsSummary = {
   people: Payee[];
   usdPer: Record<string, number>;
 };
-

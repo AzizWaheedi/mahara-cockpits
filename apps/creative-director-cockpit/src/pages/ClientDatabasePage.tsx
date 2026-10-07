@@ -1,15 +1,17 @@
-import { Search } from "lucide-react";
+import { ChevronRight, Search } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router";
+import { Link, useSearchParams } from "react-router";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
-
-import { ChevronRight } from "lucide-react";
-
 import { PageHeader } from "@/components/PageHeader";
 import { AnimatedSelect } from "@/components/ui/animated-select";
-import { WinnerFilter, type WinnerOrigin, WinningAds } from "@/components/WinningAds";
-import { fetchClientRoster, type ClientRosterResult } from "@/lib/clients";
+import {
+  WinnerFilter,
+  type WinnerOrigin,
+  WinningAds,
+} from "@/components/WinningAds";
+import { type ClientRosterResult, fetchClientRoster } from "@/lib/clients";
 import { fetchScriptDatabase, type ScriptDatabaseResult } from "@/lib/playbook";
+import { ClientProfilesView } from "./DashboardPage";
 
 /**
  * The client database.
@@ -73,10 +75,24 @@ function SearchBox({
   );
 }
 
+/**
+ * The two ways to see the clients: the list to open one from, and every
+ * client worst first with the creative picture folded under each (it was
+ * /profiles, which nothing linked to; the simplification audit, 2026-10-06).
+ */
+const VIEWS = [
+  { key: "all", label: "All clients", to: "/clients" },
+  { key: "worst", label: "Worst first", to: "/clients?view=worst" },
+];
+
 export function ClientDatabasePage() {
   const auth = useCockpitAuth();
-  const [data, setData] = useState<ClientRosterResult | null | undefined>(undefined);
+  const [data, setData] = useState<ClientRosterResult | null | undefined>(
+    undefined,
+  );
   const [q, setQ] = useState("");
+  const [params] = useSearchParams();
+  const view = params.get("view") === "worst" ? "worst" : "all";
 
   useEffect(() => {
     if (!auth.client) {
@@ -115,7 +131,11 @@ export function ClientDatabasePage() {
   }
 
   if (data === null) {
-    return <p className="p-4 text-[14px] text-muted-foreground">Unable to load clients.</p>;
+    return (
+      <p className="p-4 text-[14px] text-muted-foreground">
+        Unable to load clients.
+      </p>
+    );
   }
 
   return (
@@ -124,46 +144,71 @@ export function ClientDatabasePage() {
         title="Clients"
         sub={`${data.counts.live} live · ${data.counts.toContact} waiting on you`}
         actions={
-          <SearchBox value={q} onChange={setQ} placeholder="Find a client" />
+          view === "all" ? (
+            <SearchBox value={q} onChange={setQ} placeholder="Find a client" />
+          ) : undefined
         }
       />
 
-      <div className="divide-y overflow-hidden rounded-xl border">
-        {rows.map(r => (
+      <nav aria-label="Show the clients" className="-mt-2 mb-4 flex gap-1.5">
+        {VIEWS.map(v => (
           <Link
-            key={r.taskId}
-            to={`/clients/${encodeURIComponent(r.name)}`}
-            className="flex items-center gap-3 px-4 py-3 text-sm hover:bg-muted/40"
+            key={v.key}
+            to={v.to}
+            aria-current={view === v.key ? "page" : undefined}
+            className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+              view === v.key
+                ? "border-primary/50 bg-primary/10 text-foreground"
+                : "text-muted-foreground hover:border-primary/40 hover:text-foreground"
+            }`}
           >
-            {/* The flags drop to their own line on a phone rather than
-                squeezing the client's name to nothing. */}
-            <span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1">
-              <span className="flex min-w-0 items-center gap-2">
-                <strong className="min-w-0 truncate font-medium" dir="auto">
-                  {r.name}
-                </strong>
-                <Pill tone={r.prelaunch ? "warn" : "neutral"}>
-                  {r.clientStatus}
-                </Pill>
-              </span>
-              <span className="flex basis-full flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground sm:ml-auto sm:basis-auto">
-                {r.hisMove > 0 && (
-                  <span className="txt-bad">{r.hisMove} on you</span>
-                )}
-                {r.openScripts > 0 && <span>{r.openScripts} scripts</span>}
-                {r.openVideos > 0 && <span>{r.openVideos} videos</span>}
-                {!r.docsReady && <span className="txt-bad">Docs missing</span>}
-              </span>
-            </span>
-            <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
+            {v.label}
           </Link>
         ))}
-        {rows.length === 0 && (
-          <p className="px-4 py-3 text-sm text-muted-foreground">
-            {q.trim() ? "No client matches that." : "No live clients yet."}
-          </p>
-        )}
-      </div>
+      </nav>
+
+      {view === "worst" ? (
+        <ClientProfilesView />
+      ) : (
+        <div className="divide-y overflow-hidden rounded-xl border">
+          {rows.map(r => (
+            <Link
+              key={r.taskId}
+              to={`/clients/${encodeURIComponent(r.name)}`}
+              className="flex items-center gap-3 px-4 py-3 text-sm hover:bg-muted/40"
+            >
+              {/* The flags drop to their own line on a phone rather than
+                squeezing the client's name to nothing. */}
+              <span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1">
+                <span className="flex min-w-0 items-center gap-2">
+                  <strong className="min-w-0 truncate font-medium" dir="auto">
+                    {r.name}
+                  </strong>
+                  <Pill tone={r.prelaunch ? "warn" : "neutral"}>
+                    {r.clientStatus}
+                  </Pill>
+                </span>
+                <span className="flex basis-full flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground sm:ml-auto sm:basis-auto">
+                  {r.hisMove > 0 && (
+                    <span className="txt-bad">{r.hisMove} on you</span>
+                  )}
+                  {r.openScripts > 0 && <span>{r.openScripts} scripts</span>}
+                  {r.openVideos > 0 && <span>{r.openVideos} videos</span>}
+                  {!r.docsReady && (
+                    <span className="txt-bad">Docs missing</span>
+                  )}
+                </span>
+              </span>
+              <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
+            </Link>
+          ))}
+          {rows.length === 0 && (
+            <p className="px-4 py-3 text-sm text-muted-foreground">
+              {q.trim() ? "No client matches that." : "No live clients yet."}
+            </p>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -183,7 +228,9 @@ export function ScriptDatabasePage() {
 
   useEffect(() => {
     if (!auth.client) return;
-    void fetchClientRoster(auth.client, auth.clients).then(setRoster).catch(console.error);
+    void fetchClientRoster(auth.client, auth.clients)
+      .then(setRoster)
+      .catch(console.error);
   }, [auth.client, auth.clients]);
 
   useEffect(() => {

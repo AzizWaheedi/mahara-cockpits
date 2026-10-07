@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { importPKCS8 } from "jose";
 import { internalAction, internalMutation } from "./_generated/server";
 import { clientDataFor, readClientData } from "./clientData";
+import { hasGhlCredential } from "./ghlCredential";
 import { pkcs8Pem } from "./portal";
 import { allAdAccounts, callTool, graph, unwrap } from "./tools";
 
@@ -353,7 +354,7 @@ export const ghlCalendarNames = internalAction({
   returns: v.any(),
   handler: async () => {
     const rows = (await readClientData()).filter(
-      r => r.ghlToken.startsWith("pit-") && r.ghlLocationId,
+      r => hasGhlCredential(r.ghlToken) && r.ghlLocationId,
     );
     const out: Any[] = [];
     for (const r of rows) {

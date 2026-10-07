@@ -1,8 +1,7 @@
-import { useAction } from "@/lib/cockpitApi";
 import { useState } from "react";
 import { toast } from "sonner";
 import { AnimatedSelect } from "@/components/ui/animated-select";
-import { api } from "@/lib/cockpitApi";
+import { api, useAction } from "@/lib/cockpitApi";
 import { Button } from "./ui/button";
 import {
   Dialog,

@@ -4,12 +4,29 @@
  * Sourced from the Client Journey SOP, the Client Exit Process doc and #csm-general —
  * never invented. If a link is not in one of those, it does not belong here.
  * The coaching logs are deliberately absent: those are leadership's own tools, not his.
+ * So is the team's ClickUp ticketing form: a ticket goes from the client's page
+ * ("Add a task", Ask a team), which files the same task with the client on it
+ * (the simplification audit, approved 2026-10-06).
  */
+
+import { COCKPIT_SOP } from "./cockpits";
 
 export type LinkRow = { label: string; url: string; note?: string };
 export type LinkGroup = { title: string; blurb: string; rows: LinkRow[] };
 
 export const LINK_GROUPS: LinkGroup[] = [
+  {
+    title: "How this cockpit works",
+    blurb:
+      "Read this once: the five places, the search box and your day in ten steps.",
+    rows: [
+      {
+        label: "Client success cockpit, how to use it",
+        url: COCKPIT_SOP.csm,
+        note: "The SOP for this cockpit, in ClickUp",
+      },
+    ],
+  },
   {
     title: "Booking links",
     blurb: "Send these, never a manual time. The client picks the slot.",
@@ -44,11 +61,6 @@ export const LINK_GROUPS: LinkGroup[] = [
         label: "1-1 call summary form",
         url: "https://maharamedia.typeform.com/to/fRokTITH",
         note: "After every client call, same day",
-      },
-      {
-        label: "Client ticketing form",
-        url: "https://forms.clickup.com/90182518398/f/2kzmr1ky-1178/R1O1N5QXYLUTJOWQ3E",
-        note: "Any work a client needs from tech, media or ads, one ticket each",
       },
     ],
   },
@@ -129,7 +141,7 @@ export const LINK_GROUPS: LinkGroup[] = [
       {
         label: "Client Communication SOP",
         url: "https://docs.google.com/document/d/10wQorQfSebiX3Lmh0jXkEUkp3I_xMP68p4b1q-oUxcY/edit",
-        note: "Every message template in the touchpoints tab comes from here",
+        note: "Every message template on a client's page comes from here",
       },
       {
         label: "Content hub",

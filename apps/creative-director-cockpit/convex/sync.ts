@@ -30,11 +30,40 @@ export const storeClients = internalMutation({
         "storeClients received an empty roster — refusing to wipe the spine",
       );
     }
-    for (const row of await ctx.db.query("clients").collect()) {
+    const previous = await ctx.db.query("clients").collect();
+    const sheetId = (link: unknown) =>
+      /\/spreadsheets\/d\/([A-Za-z0-9_-]{20,})/.exec(String(link ?? ""))?.[1];
+    for (const row of previous) {
       await ctx.db.delete(row._id);
     }
     for (const row of clients) {
-      await ctx.db.insert("clients", { ...row, syncedAt: now });
+      const next = { ...row, syncedAt: now };
+      const sid = sheetId(row.sheetLink);
+      const matches = previous.filter(old => old.taskId === row.taskId);
+      const old = matches.length === 1 ? matches[0] : undefined;
+      // Most feeds only refresh the roster. Retain a snapshot only while both
+      // immutable identities still match; changed/missing links cannot inherit it.
+      if (
+        !next.stats &&
+        sid &&
+        old &&
+        sheetId(old.sheetLink) === sid &&
+        old.stats
+      ) {
+        next.stats = old.stats;
+        next.statsScannedAt = old.statsScannedAt;
+        next.statsStatus =
+          row.statsStatus === "unavailable"
+            ? "stale"
+            : (old.statsStatus ?? "ready");
+        next.statsCheckedAt = row.statsCheckedAt ?? old.statsCheckedAt;
+      }
+      if (!next.stats || !sid) {
+        delete next.stats;
+        delete next.statsScannedAt;
+        next.statsStatus = "unavailable";
+      }
+      await ctx.db.insert("clients", next);
     }
     return { clients: clients.length };
   },

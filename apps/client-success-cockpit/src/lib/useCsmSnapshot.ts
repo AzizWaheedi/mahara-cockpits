@@ -1,9 +1,7 @@
-import {executeCsmAction} from "./csmActionClient";
-import {readCsmSources,buildCsmReadModel} from "./csmReadModel";
-import {readPersonalEod,savePersonalEod} from "./personalEod";
-import {useRef} from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { executeCsmAction } from "./csmActionClient";
+import { buildCsmReadModel, readCsmSources } from "./csmReadModel";
 import {
   type CsmMoneyPatch,
   dismissCsmLooseEnds,
@@ -12,6 +10,7 @@ import {
   saveCsmLanguage,
   saveCsmMoneyGoals,
 } from "./csmStateClient";
+import { readPersonalEod, savePersonalEod } from "./personalEod";
 
 // biome-ignore lint/suspicious/noExplicitAny: generic client success rows
 type Any = any;
@@ -50,6 +49,7 @@ export interface UseCsmSnapshotResult {
   }) => Promise<void>;
   submitEod: (args: {
     energy?: string;
+    stress?: string;
     answers?: Any;
     computed?: Any;
   }) => Promise<void>;
@@ -383,9 +383,11 @@ export function useCsmSnapshot(
     try {
       setLoading(true);
 
-      const [staffState,source] = await Promise.all([readCsmState(client),readCsmSources(client)]);
+      const [staffState, source] = await Promise.all([
+        readCsmState(client),
+        readCsmSources(client),
+      ]);
       const day = staffState.day;
-
 
       const [checkRows, decisionsResult, planResult, eodResult] =
         await Promise.all([
@@ -400,7 +402,7 @@ export function useCsmSnapshot(
             .select("*")
             .eq("role", "csm")
             .eq("day", day),
-          readPersonalEod(client,"csm",reportDay.current),
+          readPersonalEod(client, "csm", reportDay.current),
         ]);
       if (decisionsResult.error) throw decisionsResult.error;
       if (planResult.error) throw planResult.error;
@@ -430,7 +432,14 @@ export function useCsmSnapshot(
         clickupTaskUrl: pl.provider_task_url,
       }));
 
-      const builtSnap = buildCsmReadModel(source,staffState,{checks,decisions,plan,eod:eodRow??null,eodOwner:eodContext.owner,eodDay:eodContext.day});
+      const builtSnap = buildCsmReadModel(source, staffState, {
+        checks,
+        decisions,
+        plan,
+        eod: eodRow ?? null,
+        eodOwner: eodContext.owner,
+        eodDay: eodContext.day,
+      });
 
       setSnap(builtSnap);
       setError(null);
@@ -484,11 +493,23 @@ export function useCsmSnapshot(
   );
 
   const submitEod = useCallback(
-    async (args: { energy?: string; stress?: string; submit?: boolean; body?: string; answers?: Any; computed?: Any }) => {
+    async (args: {
+      energy?: string;
+      stress?: string;
+      submit?: boolean;
+      body?: string;
+      answers?: Any;
+      computed?: Any;
+    }) => {
       if (!client) {
         throw new Error("Supabase client is required");
       }
-      await savePersonalEod(client,"csm",{owner:snap?.eodOwner??"",day:snap?.eodDay??""},{...args,submit:true});
+      await savePersonalEod(
+        client,
+        "csm",
+        { owner: snap?.eodOwner ?? "", day: snap?.eodDay ?? "" },
+        { ...args, submit: true },
+      );
       await fetchSnapshot();
     },
     [client, fetchSnapshot, snap?.eodOwner, snap?.eodDay],
@@ -504,7 +525,7 @@ export function useCsmSnapshot(
         dueDate?: string;
       }>;
     }) => {
-      await executeCsmAction(client,'plan',args);
+      await executeCsmAction(client, "plan", args);
       await fetchSnapshot();
     },
     [client, fetchSnapshot],
