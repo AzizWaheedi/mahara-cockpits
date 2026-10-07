@@ -125,7 +125,7 @@ def main():
                 failures.append("Missing production cockpit RPCs: " + ", ".join(missing))
             if not missing:
                 contracts = request(token, "database/query", {"read_only": True, "query": "select p.proname,pg_get_functiondef(p.oid) as definition,has_function_privilege('anon',p.oid,'EXECUTE') as anon_allowed from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname in ('cockpit_has_active_seat','cockpit_team_guard_write','cockpit_log_decision')"})
-                expected_files = {"cockpit_has_active_seat": "20261007d_cockpit_team_rpc_restore.sql", "cockpit_team_guard_write": "20261007d_cockpit_team_rpc_restore.sql", "cockpit_log_decision": "20261007f_cockpit_write_contract.sql"}
+                expected_files = {"cockpit_has_active_seat": "20261007d_cockpit_team_rpc_restore.sql", "cockpit_team_guard_write": "20261007g_cockpit_team_role_guard.sql", "cockpit_log_decision": "20261007f_cockpit_write_contract.sql"}
                 for name, file in expected_files.items():
                     actual = [row for row in contracts if row["proname"] == name]
                     source = (root / "supabase/migrations" / file).read_text(encoding="utf-8")

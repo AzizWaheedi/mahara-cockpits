@@ -6,6 +6,7 @@ const BUYER = "00000000-0000-4000-8000-000000000002";
 const UNCONFIRMED = "00000000-0000-4000-8000-000000000003";
 const coreRepair = "20261007c_cockpit_rpc_restore.sql";
 const teamRepair = "20261007d_cockpit_team_rpc_restore.sql";
+const teamGuard = "20261007g_cockpit_team_role_guard.sql";
 
 async function fixture() {
   const db = await cockpitTestDb();
@@ -17,7 +18,7 @@ async function fixture() {
       CREATE FUNCTION public.gen_random_bytes(n integer) RETURNS bytea LANGUAGE sql AS
       $$ SELECT decode(replace(gen_random_uuid()::text,'-',''),'hex') $$;
       CREATE FUNCTION auth.role() RETURNS text LANGUAGE sql STABLE AS
-      $$ SELECT coalesce(auth.jwt()->>'role','') $$;`);
+      $$ SELECT auth.jwt()->>'role' $$;`);
     const core = migration("20260919_cockpit_core.sql");
     for (const pattern of [
       /create table if not exists public\.cockpit_payroll_months \([\s\S]*?\n\);/i,
@@ -60,9 +61,9 @@ test("the repair restores real missing RPCs and preserves rows on repeat applica
     await expect(db.query("select cockpit_ceo_people_list()")).rejects.toThrow();
     const before = (await db.query("SELECT to_jsonb(p) AS row FROM cockpit_people p ORDER BY id")).rows;
     await db.exec(migration(coreRepair));
-    await db.exec(migration(teamRepair));
+    await db.exec((migration(teamRepair) + migration(teamGuard)));
     await db.exec(migration(coreRepair));
-    await db.exec(migration(teamRepair));
+    await db.exec((migration(teamRepair) + migration(teamGuard)));
     expect((await db.query("SELECT to_jsonb(p) AS row FROM cockpit_people p ORDER BY id")).rows).toEqual(before);
     expect((await db.query("SELECT count(*)::int AS n FROM cockpit_finance_refreshes")).rows[0]?.n).toBe(0);
     expect((await db.query("SELECT count(*)::int AS n FROM cockpit_team_calendar_worker")).rows[0]?.n).toBe(0);
@@ -74,7 +75,7 @@ test("the repair restores real missing RPCs and preserves rows on repeat applica
 test("restored sensitive RPCs deny buyers and unconfirmed identities", async () => {
   const db = await fixture();
   try {
-    await db.exec(migration(coreRepair)); await db.exec(migration(teamRepair));
+    await db.exec(migration(coreRepair)); await db.exec((migration(teamRepair) + migration(teamGuard)));
     for (const id of [BUYER, UNCONFIRMED]) {
       await actor(db, id);
       await expect(db.query("SELECT cockpit_ceo_people_list()")).rejects.toThrow();
@@ -103,7 +104,7 @@ test("review wrappers derive identity, restrict clients and deny legacy bypass",
 test("new stores have RLS and worker actions remain service-only", async () => {
   const db = await fixture();
   try {
-    await db.exec(migration(coreRepair)); await db.exec(migration(teamRepair));
+    await db.exec(migration(coreRepair)); await db.exec((migration(teamRepair) + migration(teamGuard)));
     const stores = await db.query<{ relrowsecurity: boolean }>(`SELECT relrowsecurity FROM pg_class WHERE oid IN('cockpit_finance_refreshes'::regclass,'cockpit_campaign_drafts'::regclass,'cockpit_team_calendar_worker'::regclass)`);
     expect(stores.rows).toHaveLength(3); expect(stores.rows.every(r => r.relrowsecurity)).toBe(true);
     await actor(db, BUYER);
@@ -136,7 +137,7 @@ test("team access rejects an identity whose email no longer matches its seat", a
   const db = await fixture();
   try {
     await db.exec("INSERT INTO team_meetings(id,title,purpose,cadence,active,managed) VALUES('email-check','Email check','Check access','weekly',true,'cockpit')");
-    await db.exec(migration(teamRepair));
+    await db.exec((migration(teamRepair) + migration(teamGuard)));
     await db.exec(`UPDATE auth.users SET email='changed@tests.invalid' WHERE id='${BUYER}'`);
     await actor(db, BUYER);
     expect((await db.query<{ allowed: boolean }>("SELECT cockpit_has_active_seat() AS allowed")).rows[0]?.allowed).toBe(false);
@@ -149,7 +150,7 @@ test("team access rejects an identity whose email no longer matches its seat", a
 test("authorized team commands and calendar leases work without forged receipts", async () => {
   const db = await fixture();
   try {
-    await db.exec(migration(teamRepair));
+    await db.exec((migration(teamRepair) + migration(teamGuard)));
     await actor(db, CEO);
     await db.query(`SELECT cockpit_team_calendar_command('saveMeeting','{"title":"Review test","purpose":"Check commands and lease receipts","cadence":"weekly","onCalendar":false,"startTime":"10:00","minutes":30,"weekdays":[4]}'::jsonb)`);
     await db.query("SELECT cockpit_team_ensure_sitting('review-test','review-test:2026-10-08')");
@@ -201,7 +202,7 @@ test("team guards prevent forged provider receipts and stamp the actual editor",
   try {
     await db.exec(`INSERT INTO team_meetings(id,title,purpose,cadence,active,managed)
       VALUES('weekly-sync','Weekly Sync','Align the team on goals and week priorities','weekly',true,'cockpit');`);
-    await db.exec(migration(teamRepair));
+    await db.exec((migration(teamRepair) + migration(teamGuard)));
     await actor(db, BUYER);
     await expect(db.query("UPDATE team_meetings SET cal_event_id='forged' WHERE id='weekly-sync'")).rejects.toThrow();
     await db.query("UPDATE team_meetings SET doc='Human edit',doc_by='spoofed',doc_version=doc_version+1 WHERE id='weekly-sync'");
@@ -210,4 +211,15 @@ test("team guards prevent forged provider receipts and stamp the actual editor",
     await db.query("INSERT INTO team_changes(meeting_id,by_whom,what) VALUES('weekly-sync','spoofed','test edit')");
     expect((await db.query<{ by_whom: string }>("SELECT by_whom FROM team_changes WHERE what='test edit'")).rows[0]?.by_whom).toBe("buyer@tests.invalid");
   } finally { await db.close(); }
+});
+
+test("roleless requests cannot bypass the team write guard",async()=>{
+ const db=await fixture();try{
+ await db.exec("INSERT INTO team_meetings(id,title,purpose,cadence,active,managed) VALUES('role-check','Role check','Check role','weekly',true,'cockpit')");
+ await db.exec((migration(teamRepair) + migration(teamGuard)));
+ await db.exec("CREATE OR REPLACE FUNCTION auth.role() RETURNS text LANGUAGE sql STABLE AS $$ SELECT auth.jwt()->>'role' $$");
+ await actor(db,BUYER);
+ await db.query("SELECT set_config('request.jwt.claims',$1,false)",[JSON.stringify({sub:BUYER})]);
+ await expect(db.query("UPDATE team_meetings SET cal_event_id='forged' WHERE id='role-check'")).rejects.toThrow();
+ }finally{await db.close();}
 });
