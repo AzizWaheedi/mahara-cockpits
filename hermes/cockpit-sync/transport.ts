@@ -206,7 +206,9 @@ export function transport(env:Env,request:typeof fetch=fetch,wait=(ms:number)=>n
   log:(level)=>{logs.push({level,message:'Native calculator diagnostic; detailed provider bodies omitted'});if(level==='error')faults.push({resource:'calculator',error:'Calculator reported incomplete source'});},
   retainSheetFailure:(error)=>{
    const e=error as Row;
-   if(!e||![403,404].includes(e.status)||!/^sheets\.googleapis\.com\/v4\/spreadsheets\/[A-Za-z0-9_-]+\/values:batchGet$/.test(String(e.resource)))return;
+   const performance=/^sheets\.googleapis\.com\/v4\/spreadsheets\/[A-Za-z0-9_-]+\/values:batchGet$/.test(String(e?.resource));
+   const churn=/^sheets\.googleapis\.com\/v4\/spreadsheets\/1p8CAd5pL9zKjc1mZ73Gc_hoj4NSWHfFPs4FoC_WuBUU(?:\/.*)?$/.test(String(e?.resource));
+   if(!e||![403,404].includes(e.status)||(!performance&&!churn))return;
    if(Array.isArray(e.nativeFaults))for(const fault of e.nativeFaults)if(faults.includes(fault))fault.retained_history=true;
   },
  };

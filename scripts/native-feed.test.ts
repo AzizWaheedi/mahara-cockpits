@@ -414,6 +414,15 @@ test('real worker calculations from raw provider fixture publish campaign, CSM a
   expect(recoveredProfile.performance.staleReason).toContain('403');
   expect(recoveredProfile.performanceSyncedAt).toBe(originalCheck);
   expect(recoveredProfile.performanceRetained).toBe(true);
+  const churnState=structuredClone(s);
+  churnState.csm.kpi=[{_id:'original-churn',key:'churn',numeric:25,month:'2026-09',at:originalCheck,note:'Preserve original human context'}];
+  const churnDenied:Reads={...reads,async tool(name,args){
+    if(name==='pd_google_sheets_proxy_get'&&String(args.url).includes('1p8CAd5pL9zKjc1mZ73Gc_hoj4NSWHfFPs4FoC_WuBUU'))throw Object.assign(new Error('Read rejected (403) at sheets.googleapis.com'),{status:403,resource:'sheets.googleapis.com'+new URL(args.url).pathname});
+    return reads.tool(name,args);
+  }};
+  const churnRetained=await calculate(churnState,churnDenied,{receipts:[]},fixtureEnv);
+  expect(churnRetained.csm.kpi.find((r:Row)=>r._id==='original-churn')).toEqual(churnState.csm.kpi[0]);
+  expect(churnRetained.csm.kpi.find((r:Row)=>r.key==='churn_source_unavailable').numeric).toBeUndefined();
   await publish(db,c,p);
   await owner(db);
   expect((await db.query<{spend:string}>('SELECT spend_7d::text spend FROM cockpit_campaigns')).rows[0].spend).toBe('120');

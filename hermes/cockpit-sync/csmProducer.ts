@@ -378,7 +378,14 @@ export async function collectCsm(state: Row, tables: Record<string, Row[]>, seed
     };
     return profile;
   });
-  const [kpiRows,calendar]=await Promise.all([churnValues(),staffAppointments(snapshot.clients.map(c=>String(c.name)),today)]);
+  const kpiRead=churnValues().then(rows=>parseKpi(rows,today,now)).catch(error=>{
+    const status=Number((error as Row)?.status??/\b(403|404)\b/.exec(String(error))?.[1]);
+    if(![403,404].includes(status))throw error;
+    retainSheetFailure(error);
+    const id=stableId('kpi',['native-churn-access',today.slice(0,7)]);
+    return [...state.csm.kpi.filter((r:Row)=>r._id!==id),{_id:id,key:'churn_source_unavailable',label:'Churn update unavailable',value:'unfilled',month:today.slice(0,7),source:'Churn tracker',note:`Sheet read failed (${status}). Existing values retain their original dates. Confirm read access before refreshing.`,at:now}];
+  });
+  const [kpi,calendar]=await Promise.all([kpiRead,staffAppointments(snapshot.clients.map(c=>String(c.name)),today)]);
   const appointments=new Map<string,Row>();
   for(const old of state.csm.appointments){
     const start=Date.parse(old.startTime);
@@ -387,5 +394,5 @@ export async function collectCsm(state: Row, tables: Record<string, Row[]>, seed
   for(const row of calendar.rows)appointments.set(row.apptId,row);
 
   // Reports, decisions and delivery history have no replay route and retain their source stamps.
-  return { tables: {...state.csm,clients:snapshot.clients,csTasks:snapshot.tasks,checks:snapshot.checks.map((c:Row)=>({...c,role:'csm',day:today})),rosterDays:roster.rosterDays,churnEvents:roster.churnEvents,clientProfiles,kpi:parseKpi(kpiRows,today,now),appointments:[...appointments.values()].sort((a,b)=>String(a.startTime??'').localeCompare(String(b.startTime??'')))}, calendarWindow: {from:calendar.from,to:calendar.to,checkedAt:calendar.checkedAt,calendars:calendar.calendars,eventIds:calendar.rows.map(row=>String(row.apptId))} };
+  return { tables: {...state.csm,clients:snapshot.clients,csTasks:snapshot.tasks,checks:snapshot.checks.map((c:Row)=>({...c,role:'csm',day:today})),rosterDays:roster.rosterDays,churnEvents:roster.churnEvents,clientProfiles,kpi,appointments:[...appointments.values()].sort((a,b)=>String(a.startTime??'').localeCompare(String(b.startTime??'')))}, calendarWindow: {from:calendar.from,to:calendar.to,checkedAt:calendar.checkedAt,calendars:calendar.calendars,eventIds:calendar.rows.map(row=>String(row.apptId))} };
 }
