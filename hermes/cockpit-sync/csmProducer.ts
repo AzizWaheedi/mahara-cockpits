@@ -224,6 +224,40 @@ export function fathomSince(syncRuns: Row[], now: number, optionalSeed?: string)
   throw new Error('Verified checkpoint required: no successful native_fathom or health record found and no valid seed provided');
 }
 
+export interface PerformanceSnapshotResult {
+  performance: Row | undefined;
+  performanceSyncedAt: number | undefined;
+  performanceRetained: boolean;
+}
+
+export async function performanceSnapshot(
+  stage: string | undefined,
+  link: unknown,
+  oldProfile: Row | undefined,
+  today: string | { y: number; m: number; d: number },
+  now: number,
+): Promise<PerformanceSnapshotResult> {
+  const day = typeof today === 'string'
+    ? { y: Number(today.slice(0, 4)), m: Number(today.slice(5, 7)), d: Number(today.slice(8, 10)) }
+    : today;
+
+  if (stateOf(String(stage ?? '')) === 'lost') {
+    const retainedAt = (typeof oldProfile?.performanceSyncedAt === 'number' && Number.isFinite(oldProfile.performanceSyncedAt) && oldProfile.performanceSyncedAt>0)
+      ? oldProfile.performanceSyncedAt
+      : (oldProfile?.performanceRetained!==true && typeof oldProfile?.syncedAt === 'number' && Number.isFinite(oldProfile.syncedAt) && oldProfile.syncedAt>0)
+        ? oldProfile.syncedAt
+        : undefined;
+
+    return {
+      performance: oldProfile?.performance,
+      performanceSyncedAt: oldProfile?.performance ? retainedAt : undefined,
+      performanceRetained: true,
+    };
+  }
+
+  const perf = await sheetPerformance(link, day);
+  return {performance:perf,performanceSyncedAt:perf ? now : undefined,performanceRetained:false};
+}
 export async function collectCsm(state: Row, tables: Record<string, Row[]>, seed?: string): Promise<{ tables: Record<string, Row[]>; calendarWindow: { from: number; to: number; checkedAt: number; calendars: { id: string; name: string }[]; eventIds: string[] } }> {
   await assertNativeFence();
   for (const key of ['clients','csTasks','kpi','appointments','rosterDays','churnEvents','syncRuns','clientProfiles','decisions','reportDocs','outbox'])
@@ -277,10 +311,22 @@ export async function collectCsm(state: Row, tables: Record<string, Row[]>, seed
     const ads = adsForClient(c.name,tables.campaigns,tables.metaTree);
     const meta = metaAccountFor(c.name,data,ads.find(a=>a.accountId)?.accountId,visibleAccounts);
     const acct = data?.ghlLocationId && data.ghlToken ? {name:data.clientName,locationId:data.ghlLocationId,token:data.ghlToken,clickupId:data.clickupId} : undefined;
-    const perf = await sheetPerformance(sheetLink,day);
-    const lost = acct ? await lostLeads(acct) : undefined;
-    const provisional = acct ? await provisionalFor(acct) : undefined;
     const old = state.csm.clientProfiles.find((p:Row)=>p.taskId===c.taskId || p.clientName===c.name);
+    const isLost = stateOf(String(c.stage ?? '')) === 'lost';
+    const perfSnap = await performanceSnapshot(c.stage, sheetLink, old, day, now);
+    let perf = perfSnap.performance;
+    if (perfSnap.performanceRetained && perf) {
+      const staleAt = perfSnap.performanceSyncedAt !== undefined
+        ? new Date(perfSnap.performanceSyncedAt).toISOString().slice(0, 10)
+        : perf.staleAt;
+      perf = {
+        ...perf,
+        staleReason: 'Client stopped. Performance history is retained.',
+        staleAt,
+      };
+    }
+    const lost = isLost ? old?.lost : (acct ? await lostLeads(acct) : undefined);
+    const provisional = isLost ? old?.provisional : (acct ? await provisionalFor(acct) : undefined);
     const clientCalls = mergeCalls(callsFor(c.name,calls),old?.calls ?? [],c.name);
     const matchingBriefs = (state.callBriefs ?? [])
       .filter((b:Row) => b.clientName === c.name && b.status === 'done')
@@ -314,7 +360,7 @@ export async function collectCsm(state: Row, tables: Record<string, Row[]>, seed
       launchDate:isoDate(fields[PROFILE_CF.launch]),adsPlatform:drop(fields[PROFILE_CF.platform]),
       profileText:fields[PROFILE_CF.profile]?.value,dosDonts:cleanDosDonts(String(fields[PROFILE_CF.dosDonts]?.value??'')).text,
       links:{clickup:c.taskUrl,sheet:sheetLink,drive:driveLink,ghl:acct?`https://app.maharamedia.com/v2/location/${acct.locationId}/dashboard`:undefined,adAccount:meta?`https://adsmanager.facebook.com/adsmanager/manage/campaigns?act=${meta.id}`:undefined,contract:fields[PROFILE_CF.contract]?.value},
-      performance:perf,ads,live:liveCounts(ads),adsAccess:adsAccess(ads),lost,provisional,
+      performance:perf,performanceSyncedAt:perfSnap.performanceSyncedAt,performanceRetained:perfSnap.performanceRetained,ads,live:liveCounts(ads),adsAccess:adsAccess(ads),lost,provisional,
       adLeads:adLeadsFor(c.name,adLeads),calls:clientCalls,callsBrief,
       updates:state.media.clientComments.filter((r:Row)=>r.taskId===c.taskId),
       gaps:gapsFor({client:{...c,sheetLink,driveLink},row:data,perf,acct,lost,accountId:meta?.visible?meta.id:undefined,onBoard:tables.campaigns.some(k=>normTight(k.clientName)===normTight(c.name)),visibleAccounts,calls:clientCalls.length,clientDataOk:true}),

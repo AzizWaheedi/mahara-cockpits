@@ -394,6 +394,9 @@ test('real worker calculations from raw provider fixture publish campaign, CSM a
   expect(p.csm.clientProfiles[0].calls.find((call:Row)=>call.url==='https://fathom.video/recorded-call').brief).toBe('Original recorded per-call brief');
   expect(p.creative.clients[0].name).toBe('Alpha');
   expect(p.creative.clients[0].daily[0].leads).toBe(10);
+  const retainedProfile={...p.csm.clientProfiles[0],performance:{sheetId:'verified-fixture-sheet',creativeStats:{booked:2}},performanceRetained:true,performanceSyncedAt:undefined};
+  const retainedCreative=await withNativeContext(reads,{receipts:[]},()=>collectCreative(s,structuredClone(p.tables),{...p.csm,clientProfiles:[retainedProfile]}));
+  expect(retainedCreative.clients[0].statsScannedAt).toBeUndefined();
   await publish(db,c,p);
   await owner(db);
   expect((await db.query<{spend:string}>('SELECT spend_7d::text spend FROM cockpit_campaigns')).rows[0].spend).toBe('120');

@@ -2052,9 +2052,12 @@ export function ClientProfile({
               )}
               {perf.staleReason ? (
                 <p className="callout-warn rounded-2xl border px-4 py-3 text-xs">
-                  These numbers were last read on {shortDay(perf.staleAt)}.
-                  Today's read failed, so you are looking at the last good copy
-                  rather than a partial one. Reason: {perf.staleReason}
+                  {perf.staleAt ? (
+                    <>These numbers were last read on {shortDay(perf.staleAt)}.</>
+                  ) : (
+                    "The last confirmed read date is unknown."
+                  )}{" "}
+                  The last verified values are retained. Reason: {perf.staleReason}
                 </p>
               ) : null}
             </section>

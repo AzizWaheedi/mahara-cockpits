@@ -529,7 +529,7 @@ export async function collectCreative(state: Row, tables: Record<string, Row[]>,
         const since=new Date(Date.now()-90*86400000).toISOString().slice(0,10);
         client.daily=profile.adLeads.daily.filter((row:Row)=>row.date>=since).map((row:Row)=>({date:row.date,leads:row.leads,spend:row.spend}));
       }
-      if(profile.performance?.sheetId){client.stats=profile.performance.creativeStats;client.statsScannedAt=profile.syncedAt;}
+      if(profile.performance?.sheetId){client.stats=profile.performance.creativeStats;client.statsScannedAt=profile.performanceRetained ? profile.performanceSyncedAt : profile.performanceSyncedAt ?? profile.syncedAt;}
       client.driveLink ??= profile.links?.drive;
       client.sheetLink ??= profile.links?.sheet;
     }
