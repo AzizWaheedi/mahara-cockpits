@@ -277,6 +277,17 @@ class EdgeFunctions(unittest.TestCase):
         self.assertIn("verify_jwt", r.summary)
         self.assertIn("missing", r.summary)
 
+    def test_sales_live_is_expected_with_verify_jwt_off(self):
+        self.assertIs(edge_functions.EXPECTED.get("sales-live"), False)
+        signed = [dict(f, verify_jwt=True) if f["slug"] == "sales-live" else f for f in self.listed()]
+        r = edge_functions.run_functions(make(db=fakes.FakeDb(functions=signed)))
+        self.assertEqual(r.status, FAIL)
+        self.assertIn("sales-live has verify_jwt True", r.summary)
+        gone = [f for f in self.listed() if f["slug"] != "sales-live"]
+        r = edge_functions.run_functions(make(db=fakes.FakeDb(functions=gone)))
+        self.assertEqual(r.status, FAIL)
+        self.assertIn("sales-live is missing", r.summary)
+
     def test_without_token_only_sales_api_is_checked(self):
         web = fakes.FakeWeb({"https://bldgtotkfmhoxmlzowdx.supabase.co/functions/v1/sales-api": fakes.resp(401)})
         r = edge_functions.run_functions(make(web=web))

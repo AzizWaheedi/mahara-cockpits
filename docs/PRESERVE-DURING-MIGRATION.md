@@ -110,8 +110,10 @@ The plans and specs are in `docs/live-calls/`.
 11. **On the VPS, keep crontab lines 59 and 62 to 64**, the six
     `~/.sales-desk/env` lines, `~/.cockpit-guardian/env`, the reference deals,
     `~/.sales-desk/vince`, `~/.cockpit-guardian` and the Playwright shell. The
-    guardian's own crontab list does not include lines 62 to 64, so it will not
-    report them missing.
+    guardian's crontab list in git includes lines 62 to 64 since 2026-10-07, but
+    the guardian on the VPS reads its own copy, which does not, until its folder
+    is copied there again. Until then only the verifier reports those lines
+    missing.
 12. **If the Supabase keys change**, change the `DESK_`, `COCKPIT_`, `RADAR_` and
     plain `SUPABASE_` keys in the VPS env files together.
 13. **Do not restore Hermes from its git mirror.** The mirror's copy of
@@ -123,16 +125,38 @@ Run the verifier from the repository root before the cutover starts, for a
 baseline, and again after the last step:
 
 ```sh
-python3 scripts/verify-preserved.py
+python3 scripts/verify-preserved.py              # one line per check, then the verdict
+python3 scripts/verify-preserved.py --problems   # only the lines that are not ok
+python3 scripts/verify-preserved.py --json       # for machines
 ```
 
-It compares what is live with the two manifests in `docs/preserve/` and lists
-every difference. It changes nothing. Version numbers of Edge Functions will go
-up after a redeploy; what matters is that the code comes from main at `e166a0b`
-or later and the JWT setting matches.
+It compares what is live with the two manifests in `docs/preserve/` and prints
+one line per check: `ok`, `CHANGED`, `MISSING` or `UNKNOWN`. It covers every
+recorded table, view, function, trigger and pg_cron job, the settings switches,
+the Edge Functions (version not lower, `verify_jwt` as recorded), the secret
+names, our VPS crontab lines, worker files, env settings, reference deals, call
+reviews, the doctor, `deploy-check`, the guardian's last scan, the live sales
+bundle and both backups. It changes nothing; SQL goes with `read_only` true and
+the VPS checks only read.
 
-If the verifier is not in your checkout yet, these read-only checks cover the
-essentials.
+A `CHANGED` line says whether it is explained: a migration added to the repo
+after `e166a0b` redefines the object, the VPS still has the copy recorded on
+2026-10-07, the object is not part of this work, or an Edge Function was
+redeployed with a higher version and the same JWT setting. Exit code 0 means
+nothing is missing, every change is explained and every check could be made; 1
+means something is missing or a change is not explained; 2 means some checks
+could not be made.
+
+It needs the management API token in a file (`SUPABASE_MGMT_TOKEN_FILE`,
+default `~/.config/mahara/sb_mgmt_token`), the Creative Triage service key in a
+file to read the private bucket (`SUPABASE_SERVICE_KEY_FILE`, default
+`~/.config/mahara/sb_service_key`) and ssh access as `hermes` to the VPS
+(`--ssh`, `--ssh-key`). It never prints a secret. The baseline on 2026-10-07
+passed: 189 checks, no missing, the only changes the explained ones recorded at
+the inventory (two sales-desk import files older on the VPS, two never copied
+there, seven Mac metadata files).
+
+Without those keys, these read-only checks cover the essentials.
 
 Database (`scripts/dev/sq.py` is read-only unless `--write` is passed):
 
@@ -252,14 +276,17 @@ Lead and client data never goes into git. Private copies are kept in two places:
   `backups/2026-10-07-pre-migration/`.
 - The VPS, folder `~/backups/2026-10-07-pre-migration/`.
 
-List both folders before the cutover starts; if one is empty, the backup has
-not been made yet, so stop and ask the CEO. Neither holds secret values: those
+Both were filled on 2026-10-07 and read back: 35 files with a `SHA256SUMS`
+(37 objects in the bucket). The verifier checks every one. If either folder is
+empty or the verifier says a backup file is missing, stop and ask the CEO before
+the cutover. Neither holds secret values: those
 stay in the vault, the Supabase function secrets and the VPS env files. Older
 copies of the worker code are in `~/.sales-desk/backup-*` on the VPS.
 
 ## 6. What else is in the repository
 
 - `docs/live-calls/`: the live-calls plans, specs and reviews (see its README).
+- `scripts/verify-preserved.py`: the verifier in section 3.
 - `scripts/dev/`: `sq.py` (SQL), `deploy_fn.py` (Edge Function deploys and
   `--info`) and `matrix.sh` (the live-calls test matrix).
 - `docs/preserve/`: the two manifests. The Supabase one also has

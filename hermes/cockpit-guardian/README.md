@@ -349,7 +349,7 @@ the box.
 | `guardian.py` | The commands |
 | `guard/` | config (keys by name), db (two doors, the probe SQL), host and `vps_snapshot.py` (the read-only VPS look), context (sources and the breaker), engine (scan, dedupe, folding, fixes, alerts), store (state file and Supabase rows), alerts, beat (the dead-man heartbeat), fixes, report, ai, redact |
 | `checks/` | One module per area; each check has an id, what it means, its severity, how it reads, its threshold and its optional safe fix |
-| `crontab.manifest` | The 28 job lines of 2026-10-03, compared with the live crontab (a line commented out there reads paused) |
+| `crontab.manifest` | The 28 job lines of 2026-10-03, the guardian's own and the three live-calls lines of 2026-10-07 (`rooms --for 57`, `rooms --check-hosts`, `doctor --cron`), compared with the live crontab (a line commented out there reads paused) |
 | `PROMPT.md` | The AI fixer prompt for a Claude session or a scheduled routine |
 | `tests/` | Fakes for every source; `python3 -m unittest` |
 

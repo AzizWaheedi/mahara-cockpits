@@ -60,6 +60,13 @@ JOBS: tuple[Job, ...] = (
     Job("desk-digest", "desk.py --quiet digest", 1440, "ai", "~/.sales-desk.log", "~/.sales-desk/digest.lock"),
     Job("desk-notes", "desk.py --quiet notes", 30, "ai", "~/.sales-desk.log", "~/.sales-desk/notes.lock"),
     Job("desk-maqsam-calls", "desk.py --quiet maqsam-calls", 30, "copy", "~/.sales-desk.log", "~/.sales-desk/maqsam-calls.lock"),
+    # Live calls Milestone 1 (2026-10-07). The room worker holds `flock -w 10`, not
+    # `-n`, so the guardian never starts a catch-up run of it (command_for); it can
+    # send a lead a link once rooms are switched on, so it is never re-run either.
+    Job("desk-rooms", "desk.py --quiet rooms --for", 1, "sends", "~/.sales-desk.log", "~/.sales-desk/rooms.lock"),
+    Job("desk-room-hosts", "desk.py --quiet rooms --check-hosts", 10, "other", "~/.sales-desk.log",
+        "~/.sales-desk/room-hosts.lock"),
+    Job("desk-doctor", "desk.py --quiet doctor", 60, "other", "~/.sales-desk.log", "~/.sales-desk/doctor.lock"),
     Job("radar-scan", "radar.py --quiet scan", 10080, "paid", "~/.ideation-radar/out/cron.log", "~/.ideation-radar/scan.lock"),
     Job("radar-pending", "radar.py --quiet pending", 5, "paid", "~/.ideation-radar/out/cron.log", "~/.ideation-radar/pending.lock"),
 )

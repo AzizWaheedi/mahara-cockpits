@@ -1,4 +1,5 @@
-# The hermes crontab as it ran on 2026-10-03 (28 job lines, then the guardian's own at install: 29), read with crontab -l.
+# The hermes crontab as it ran on 2026-10-03 (28 job lines, then the guardian's own at install: 29), read with crontab -l,
+# and the three live-calls lines installed on 2026-10-07 (32 job lines in all).
 # The guardian compares the live crontab with these lines by the command each one runs
 # (vps-crontab). A line missing from the live crontab is reported; extra live lines are fine.
 # When a line is changed or removed on purpose, change it here in the same commit.
@@ -35,3 +36,10 @@
 
 # The guardian itself, installed 2026-10-03 in report-only mode.
 */5 * * * *  flock -n $HOME/.cockpit-guardian/run.lock bash -c "cd $HOME/mahara-cockpits/hermes/cockpit-guardian && set -a; . $HOME/.editor-desk/env; . /opt/data/bibi/api-keys.env; [ -f $HOME/.cockpit-guardian/env ] && . $HOME/.cockpit-guardian/env; set +a; python3 guardian.py --mode report-only --quiet run" >> $HOME/.cockpit-guardian/cron.log 2>&1
+
+# Live calls Milestone 1 (hermes/sales-desk), installed 2026-10-07: the video room worker every minute, the room
+# host check every 10 minutes, the hourly doctor. Copied exactly from the live crontab (lines 62 to 64 of
+# docs/preserve/vps-manifest.json); hermes/sales-desk/README.md has the same three lines in its Cron block.
+* * * * *    flock -w 10 $HOME/.sales-desk/rooms.lock bash -c "cd $HOME/mahara-cockpits/hermes/sales-desk && set -a; . $HOME/.editor-desk/env; . /opt/data/bibi/api-keys.env; . $HOME/.sales-desk/env; set +a; python3 desk.py --quiet rooms --for 57" >> $HOME/.sales-desk.log 2>&1
+*/10 * * * * flock -n $HOME/.sales-desk/room-hosts.lock bash -c "cd $HOME/mahara-cockpits/hermes/sales-desk && set -a; . $HOME/.editor-desk/env; . /opt/data/bibi/api-keys.env; . $HOME/.sales-desk/env; set +a; python3 desk.py --quiet rooms --check-hosts" >> $HOME/.sales-desk.log 2>&1
+5 * * * *    flock -n $HOME/.sales-desk/doctor.lock bash -c "cd $HOME/mahara-cockpits/hermes/sales-desk && set -a; . $HOME/.editor-desk/env; . /opt/data/bibi/api-keys.env; . $HOME/.sales-desk/env; set +a; python3 desk.py --quiet doctor --cron" >> $HOME/.sales-desk.log 2>&1
