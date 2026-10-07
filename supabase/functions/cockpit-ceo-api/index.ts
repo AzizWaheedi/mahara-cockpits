@@ -73,7 +73,7 @@ Deno.serve(async(req:Request)=>{
    }
    if(operation==='ceo.windows.ads'||operation==='ceo.windows.content'){
     const from=requiredString(rawArgs,'from'),to=requiredString(rawArgs,'to');
-    const readSql=financeSources(env('SUPABASE_MANAGEMENT_TOKEN')??'',recordHealth);
+    const readSql=financeSources(env('COCKPIT_MANAGEMENT_TOKEN')??'',recordHealth);
     if(operation==='ceo.windows.ads'){
      const readMeta=(path:string,params:Record<string,string|number>={})=>metaGraph(env,recordHealth,fetch,path,params);
      return json(await readAdsWindow(from,to,{readSql,readMeta}));

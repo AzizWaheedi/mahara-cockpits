@@ -124,3 +124,14 @@ Mahara Media operates five cockpit applications (`media-buyer`, `client-success`
 - Recovered existing named GHL and ClickUp credentials from the correct legacy CSM deployment without printing values. The GHL account matched the canonical client-account ID. A differently named local ClickUp credential did not match, so it was not substituted.
 - Remaining execution: commit the reviewed source, bind and run the full unskipped release gate, activate the reviewed native dependencies/gateways, push the merge to origin/main, execute the approved `scripts/ship.sh all`, and verify the five production routes.
 - Historical backfill remains offline. No Convex retirement, paid customer-content provider call, staff/client message or client booking ran during packaging.
+
+## Native activation and reserved-key correction
+
+- Reviewed merge `4a69e22` passed the full unskipped release verifier: five gates, ten typechecks, five fresh builds and all 59 offline suites. Source was clean before and after.
+- Activated the rollback-tested canonical missing CSM, preview, team-picture and CEO database contracts in Creative Triage. Matching grants/RLS and the deployment audit were recorded. No historical import or provider action ran.
+- Deployed all five source gateways: `cockpit-csm-api`, `cockpit-media-api`, `cockpit-creative-api`, `cockpit-ceo-api`, `cockpit-team-api`. Registry returned ACTIVE for each.
+- Reused existing named non-paid legacy GHL/ClickUp/Meta/Slack/Typeform/Google configuration as server-only secrets. Values were not disclosed and temporary secret files were removed.
+- Supabase rejected custom `SUPABASE_` secret names. Native read-only source callers now use `COCKPIT_MANAGEMENT_TOKEN` consistently. The same existing management credential passed `read_only:true` probes against Creative Triage and B2B. No B2B write was made.
+- Activated canonical CEO provider-health GET/POST and refresh-id fields from `20260927i:22-24`, after rollback preflight. Human finance/person rows were unchanged.
+- Actual merged guest sign-in surface rendered in a managed headless browser. Password/code-mode toggle worked. No screenshot, relay, sign-in, email, business write or authenticated acceptance was attempted. The smoke intentionally blocked external font requests.
+- Next: commit the supported-key-name correction, rebind evidence, push the reviewed source to origin/main, redeploy affected gateways, run `scripts/ship.sh all` and verify production. Full-cutover acceptance and Convex retirement remain separate.

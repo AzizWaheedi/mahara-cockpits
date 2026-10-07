@@ -16,7 +16,7 @@ async function ownAd(id:unknown,p:Provider){const target=metaId(id),ad=await p.c
 function cleanPromoted(p:Row|undefined){if(!p)return undefined;return Object.fromEntries(['pixel_id','custom_event_type','custom_event_str','page_id','application_id','object_store_url','product_set_id','product_catalog_id','event_id','offer_id'].filter(k=>p[k]!=null).map(k=>[k,p[k]]));}
 export async function readB2b(_project:string,query:string,env:ModelEnv,health:ModelHealth,request:typeof fetch=fetch){
  if(_project!==B2B||!/^\s*(select|with)\b/i.test(query))throw new Error('Only fixed B2B read-only source queries are allowed');
- const token=env('SUPABASE_ACCESS_TOKEN');if(!token)throw new Error('SUPABASE_ACCESS_TOKEN is required for B2B winner source reads');
+ const token=env('COCKPIT_MANAGEMENT_TOKEN');if(!token)throw new Error('COCKPIT_MANAGEMENT_TOKEN is required for B2B winner source reads');
  const receipt={provider:'supabase-management',method:'POST',resource:`${B2B}/database/query`};await health({...receipt,phase:'intent'});
  let response:Response;try{response=await request(`https://api.supabase.com/v1/projects/${B2B}/database/query`,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({query,read_only:true}),signal:AbortSignal.timeout(30000)});}catch{await health({...receipt,phase:'unknown'});throw new Error('B2B source is unavailable; no source values were assumed');}
  await health({...receipt,phase:'response',http_status:response.status});if(!response.ok)throw new Error(`B2B source unavailable (${response.status})`);const rows=await response.json();if(!Array.isArray(rows))throw new Error('B2B source did not return rows');return rows;

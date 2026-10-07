@@ -4,7 +4,7 @@ import {financeSources} from './finance/tools.ts';
 export async function runFinanceRefresh(admin:any,id:string,env:(name:string)=>string|undefined){
  try{
   const {data:source,error}=await admin.rpc('cockpit_finance_refresh_input',{p_id:id});if(error)throw Error(error.message);
-  const read=financeSources(env('SUPABASE_MANAGEMENT_TOKEN')??'',async row=>{const {error}=await admin.from('cockpit_ceo_provider_health').insert({...row,refresh_id:id});if(error)throw Error('Finance source health receipt could not be saved');});
+  const read=financeSources(env('COCKPIT_MANAGEMENT_TOKEN')??'',async row=>{const {error}=await admin.from('cockpit_ceo_provider_health').insert({...row,refresh_id:id});if(error)throw Error('Finance source health receipt could not be saved');});
   const runtime={read,context:financeContext(source),payments:[],failures:[]};
   const output=await computeFinance(runtime);
   const {data:result,error:commitError}=await admin.rpc('cockpit_finish_finance_refresh',{p_id:id,p_output:output});

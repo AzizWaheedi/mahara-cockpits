@@ -1,6 +1,6 @@
 // The browser cannot supply SQL. Only the bundled finance adapters call this helper.
 export function financeSources(token:string,health:(row:Record<string,unknown>)=>Promise<void>,request:typeof fetch=fetch){
- if(!token)throw Error('SUPABASE_MANAGEMENT_TOKEN is not configured');
+ if(!token)throw Error('COCKPIT_MANAGEMENT_TOKEN is not configured');
  return async(project:string,query:string)=>{
   if(!['flwboeijllbtrufxkhts','bldgtotkfmhoxmlzowdx'].includes(project)||!/^\s*(select|with)\b/i.test(query)||query.includes(';'))throw Error('Finance source query is not allowed');
   const receipt={provider:'supabase-read-only',method:'POST',resource:'database/query/'+project};
