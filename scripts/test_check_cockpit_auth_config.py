@@ -1,5 +1,6 @@
 import importlib.util
 import pathlib
+import tempfile
 import unittest
 
 SCRIPT = pathlib.Path(__file__).with_name("check-cockpit-auth-config.py")
@@ -18,6 +19,40 @@ def good_config():
 
 
 class AuthConfigurationTests(unittest.TestCase):
+    def test_browser_rpc_inventory_catches_missing_migrations(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = pathlib.Path(folder)
+            src = root / "apps" / "fixture" / "src"
+            src.mkdir(parents=True)
+            (src / "actual.ts").write_text('client.rpc("cockpit_missing", {}); client.rpc(\n"cockpit_present", {});')
+            (src / "isolated.test.ts").write_text('client.rpc("cockpit_test_only", {});')
+            (src / "dev").mkdir()
+            (src / "dev" / "fixture.ts").write_text('client.rpc("cockpit_dev_only", {});')
+            expected = MODULE.browser_rpc_names(root)
+            self.assertEqual(expected, {"cockpit_missing", "cockpit_present"})
+            self.assertEqual(MODULE.missing_backend_rpcs(expected, ["cockpit_present"]), ["cockpit_missing"])
+            self.assertEqual(MODULE.missing_backend_rpcs(expected, list(expected)), [])
+
+    def test_backend_catalog_requires_a_real_array(self):
+        with self.assertRaises(ValueError):
+            MODULE.missing_backend_rpcs({"cockpit_present"}, "cockpit_present")
+
+    def test_server_and_worker_contracts_are_checked_without_fixtures(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = pathlib.Path(folder)
+            server = root / "supabase/functions/fixture"
+            server.mkdir(parents=True)
+            (server / "index.ts").write_text('client.rpc("cockpit_server", {});')
+            worker = root / "hermes/worker"
+            worker.mkdir(parents=True)
+            (worker / "worker.ts").write_text('callRpc(driver.tools, "cockpit_worker", {}); rpc(env,"cockpit_sync",{});')
+            (worker / "worker.test.ts").write_text('rpc(env,"cockpit_fixture",{});')
+            (worker / "scripts").mkdir()
+            (worker / "scripts/run.py").write_text('call(f"{rest}/rpc/cockpit_python", args)')
+            (worker / "node_modules").mkdir()
+            (worker / "node_modules/fake.ts").write_text('rpc(env,"cockpit_dependency",{});')
+            self.assertEqual(MODULE.production_rpc_names(root), {"cockpit_server", "cockpit_worker", "cockpit_sync", "cockpit_python"})
+
     def test_valid_configuration_passes(self):
         self.assertEqual(MODULE.check_config(good_config()), [])
 

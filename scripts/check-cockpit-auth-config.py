@@ -1,4 +1,4 @@
-"""Read-only production authentication preflight. Never sends email or logs secrets."""
+"""Read-only authentication and production RPC preflight. Never sends email or logs secrets."""
 import argparse
 import json
 import os
@@ -53,6 +53,44 @@ def token_from_env(env_file):
     raise ValueError("Management token unavailable for read-only auth verification")
 
 
+def browser_rpc_names(root):
+    names = set()
+    pattern = re.compile(r'\.rpc\(\s*["\'](cockpit_[a-z0-9_]+)["\']')
+    for path in (root / "apps").glob("*/src/**/*"):
+        if not path.is_file() or path.suffix not in (".ts", ".tsx", ".js", ".jsx"):
+            continue
+        if "dev" in path.relative_to(root / "apps").parts or re.search(r"\.(test|spec)\.", path.name):
+            continue
+        names.update(pattern.findall(path.read_text(encoding="utf-8")))
+    return names
+
+
+def missing_backend_rpcs(expected, actual):
+    if not isinstance(actual, list) or not all(isinstance(name, str) for name in actual):
+        raise ValueError("The backend function catalog must be a real array")
+    return sorted(expected - set(actual))
+
+
+def production_rpc_names(root):
+    names = browser_rpc_names(root)
+    patterns = [
+        re.compile(r'\.rpc\(\s*["\'](cockpit_[a-z0-9_]+)["\']'),
+        re.compile(r'\b(?:rpc|callRpc)\([^,\n]+,\s*["\'](cockpit_[a-z0-9_]+)["\']'),
+        re.compile(r'/rpc/(cockpit_[a-z0-9_]+)'),
+    ]
+    for area in (root / "supabase/functions", root / "hermes"):
+        for directory, children, files in os.walk(area):
+            children[:] = [name for name in children if name not in ("node_modules", "dist", "test", "tests", ".venv", "__pycache__")]
+            for name in files:
+                path = pathlib.Path(directory) / name
+                if path.suffix not in (".ts", ".tsx", ".js", ".py") or re.search(r"\.(test|spec)\.|^test_|^smoke\.", name):
+                    continue
+                source = path.read_text(encoding="utf-8")
+                for pattern in patterns:
+                    names.update(pattern.findall(source))
+    return names
+
+
 def request(token, path, payload=None):
     data = json.dumps(payload).encode() if payload is not None else None
     req = urllib.request.Request(f"https://api.supabase.com/v1/projects/{PROJECT}/{path}", data=data,
@@ -78,6 +116,22 @@ def main():
                 failures.append("Live directory access function differs from the tested five-cockpit contract")
             if rows and (not rows[0]["secure"] or rows[0]["anon_allowed"] or not rows[0]["authenticated_allowed"] or not rows[0]["directory_rls"]):
                 failures.append("Directory access security or grants changed")
+            root = pathlib.Path(__file__).resolve().parents[1]
+            catalog = request(token, "database/query", {"read_only": True, "query": "select coalesce(jsonb_agg(distinct p.proname),'[]'::jsonb) as functions from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname like 'cockpit_%'"})
+            if len(catalog) != 1:
+                raise ValueError("Backend function catalog missing")
+            missing = missing_backend_rpcs(production_rpc_names(root), catalog[0]["functions"])
+            if missing:
+                failures.append("Missing production cockpit RPCs: " + ", ".join(missing))
+            if not missing:
+                contracts = request(token, "database/query", {"read_only": True, "query": "select p.proname,pg_get_functiondef(p.oid) as definition,has_function_privilege('anon',p.oid,'EXECUTE') as anon_allowed from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname in ('cockpit_has_active_seat','cockpit_team_guard_write','cockpit_log_decision')"})
+                expected_files = {"cockpit_has_active_seat": "20261007d_cockpit_team_rpc_restore.sql", "cockpit_team_guard_write": "20261007d_cockpit_team_rpc_restore.sql", "cockpit_log_decision": "20261007f_cockpit_write_contract.sql"}
+                for name, file in expected_files.items():
+                    actual = [row for row in contracts if row["proname"] == name]
+                    source = (root / "supabase/migrations" / file).read_text(encoding="utf-8")
+                    definition = re.search(r"create or replace function public\." + name + r"\([\s\S]*?\$\$;", source, re.I)
+                    if not definition or len(actual) != 1 or body(actual[0]["definition"]) != body(definition[0]) or actual[0]["anon_allowed"]:
+                        failures.append("Live access or write contract changed: " + name)
         print(json.dumps({"status": "failed" if failures else "ok", "production_verified": not args.config_file and not failures, "failures": failures}))
         return int(bool(failures))
     except Exception as error:
