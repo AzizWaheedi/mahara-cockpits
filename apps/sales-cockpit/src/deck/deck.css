@@ -588,6 +588,25 @@
     0 0 0 1px var(--dk-teal),
     0 24px 60px -24px rgba(0, 207, 200, 0.5);
 }
+/* The cockpit draws every bare select small (animated-select.css, a
+   stronger selector); the deck's own controls are drawn for its canvas. */
+.dk-canvas select.dk-select:not(.sr-only) {
+  height: 72px;
+  min-height: 72px;
+  padding: 0 60px 0 24px;
+  border-radius: 16px;
+  border: 1px solid var(--dk-line);
+  background-color: var(--dk-panel);
+  background-position: right 22px center;
+  background-size: 26px;
+  box-shadow: none;
+  font-size: 28px;
+  color: var(--dk-ink);
+}
+.dk-canvas[dir="rtl"] select.dk-select:not(.sr-only) {
+  padding: 0 24px 0 60px;
+  background-position: left 22px center;
+}
 .dk-select {
   height: 72px;
   border-radius: 16px;
@@ -659,6 +678,921 @@
   }
 }
 
+
+/* ------------------------------------------------ tours and the proof */
+
+/* A tour (the portal's pattern, for every step): the stops down the start
+   side, the stop's real screens beside them, the stage fitted to its box. */
+.dk-tour {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 480px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  gap: 56px;
+}
+.dk-tour-side {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.dk-tour-title {
+  margin-top: 14px;
+  font-size: 44px;
+}
+[dir="rtl"] .dk-tour-title {
+  font-size: 46px;
+}
+/* Six stops and the open one's two lines share the side: the names are set
+   a size down from the portal's first version, so the list never meets the
+   rail. */
+.dk-stops {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.dk-stops .dk-stop {
+  gap: 4px;
+  padding: 9px 20px 9px 26px;
+}
+[dir="rtl"] .dk-stops .dk-stop {
+  padding: 9px 26px 9px 20px;
+}
+.dk-stops .dk-stop-name {
+  font-size: 25px;
+}
+.dk-stops .dk-stop[data-on] .dk-stop-name {
+  font-size: 28px;
+}
+[dir="rtl"] .dk-stops .dk-stop-name {
+  font-size: 27px;
+  line-height: 1.4;
+}
+[dir="rtl"] .dk-stops .dk-stop[data-on] .dk-stop-name {
+  font-size: 30px;
+}
+.dk-stops .dk-stop-line {
+  font-size: 22px;
+}
+[dir="rtl"] .dk-stops .dk-stop-line {
+  font-size: 24px;
+  line-height: 1.55;
+}
+.dk-stops .dk-why {
+  margin-top: 6px;
+  padding: 10px 14px;
+  font-size: 20px;
+}
+[dir="rtl"] .dk-stops .dk-why {
+  font-size: 22px;
+}
+.dk-stage-area {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+}
+.dk-stop-media {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  animation: dk-fade 420ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+@keyframes dk-fade {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+/* The box a stop's screens are laid out in, measured in canvas pixels. */
+.dk-fit {
+  position: relative;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  min-height: 0;
+}
+.dk-more {
+  display: flex;
+  justify-content: center;
+  margin-top: 18px;
+}
+.dk-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.dk-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+/* Why it matters: the one line in a stop the partner should keep. */
+.dk-why {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 10px;
+  padding: 12px 16px;
+  border-radius: 12px;
+  background: var(--dk-teal-soft);
+  color: var(--dk-ink);
+  font-size: 22px;
+  line-height: 1.4;
+}
+.dk-why-label {
+  font-family: "Geist Mono", ui-monospace, monospace;
+  font-size: 16px;
+  line-height: 1.2;
+  color: var(--dk-teal);
+}
+[dir="rtl"] .dk-why {
+  font-size: 24px;
+  line-height: 1.55;
+}
+[dir="rtl"] .dk-why-label {
+  font-family: "IBM Plex Sans Arabic", sans-serif;
+  font-size: 18px;
+}
+.dk-gain {
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid var(--dk-line);
+  font-size: 26px;
+  line-height: 1.4;
+  color: var(--dk-ink);
+}
+[dir="rtl"] .dk-gain {
+  font-size: 28px;
+  line-height: 1.6;
+}
+
+/* Real screenshots: white paper, a hairline, a soft drop to the ground. */
+.dk-gallery {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.dk-gallery-row {
+  display: flex;
+  align-items: flex-start;
+}
+.dk-shot,
+.dk-review {
+  flex: none;
+  margin: 0;
+  overflow: hidden;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow:
+    0 0 0 1px var(--dk-line),
+    0 30px 60px -30px rgba(0, 0, 0, 0.75);
+}
+.dk-shot img,
+.dk-review img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* A stack of real documents, fanned; a page lifts to the top under the mouse. */
+.dk-fan {
+  position: relative;
+  flex: none;
+}
+.dk-fan-page {
+  position: absolute;
+  top: 50%;
+  margin: 0;
+  overflow: hidden;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.06),
+    0 30px 60px -18px rgba(0, 0, 0, 0.8);
+  transform: translateY(calc(-50% + var(--lift, 0px))) rotate(var(--rot, 0deg));
+  transition: transform 280ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+[dir="rtl"] .dk-fan-page {
+  transform: translateY(calc(-50% + var(--lift, 0px)))
+    rotate(calc(var(--rot, 0deg) * -1));
+}
+.dk-fan-page:hover {
+  z-index: 20 !important;
+  transform: translateY(calc(-50% - 16px)) rotate(0deg) scale(1.03);
+}
+.dk-fan-page img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top;
+}
+
+/* A phone: a dark body, a hairline edge, the island over the screen. */
+.dk-phone {
+  position: relative;
+  flex: none;
+  padding: 12px;
+  border-radius: 46px;
+  background: linear-gradient(160deg, #1d2950 0%, #0a1230 100%);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.16),
+    inset 0 0 0 2px rgba(255, 255, 255, 0.05),
+    0 40px 80px -30px rgba(0, 0, 0, 0.85);
+}
+.dk-phone-screen {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  border-radius: 35px;
+  background: #000;
+}
+.dk-phone-screen > img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top;
+}
+.dk-phone-screen iframe {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+.dk-phone-notch {
+  position: absolute;
+  top: 22px;
+  left: 50%;
+  z-index: 2;
+  width: 26%;
+  height: 20px;
+  border-radius: 999px;
+  background: #000;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+.dk-reel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  width: min-content;
+  text-align: center;
+}
+.dk-reel .dk-small {
+  font-size: 21px;
+  line-height: 1.3;
+}
+[dir="rtl"] .dk-reel .dk-small {
+  font-size: 23px;
+  line-height: 1.5;
+}
+.dk-marks {
+  display: flex;
+  justify-content: center;
+  gap: 18px;
+  margin-top: 34px;
+}
+.dk-mark {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  border-radius: 28%;
+  box-shadow: 0 14px 30px -14px rgba(0, 0, 0, 0.7);
+}
+
+/* A reel as Instagram shows it, cut below the reel. */
+.dk-ig {
+  position: relative;
+  flex: none;
+  overflow: hidden;
+  border-radius: 18px;
+  background: #fff;
+  box-shadow:
+    0 0 0 1px var(--dk-line),
+    0 30px 60px -30px rgba(0, 0, 0, 0.8);
+}
+.dk-ig iframe {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  border: 0;
+}
+
+/* The same page in a browser and on a phone, the phone in front. */
+.dk-devices {
+  position: relative;
+  flex: none;
+}
+.dk-devices > .dk-browser {
+  position: absolute;
+  top: 0;
+  inset-inline-start: 0;
+}
+.dk-devices > .dk-browser img {
+  display: block;
+  object-position: top;
+}
+.dk-devices-phone {
+  position: absolute !important;
+  bottom: 0;
+  inset-inline-end: 0;
+}
+
+/* A WhatsApp message as it arrived. */
+.dk-chat {
+  flex: none;
+  margin: 0;
+  padding: 0 20px 20px;
+  border-radius: 22px;
+  background: #0b141a;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.1),
+    0 30px 60px -30px rgba(0, 0, 0, 0.8);
+}
+.dk-chat-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 46px;
+  font-size: 20px;
+  color: rgba(233, 237, 239, 0.8);
+}
+.dk-chat img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 12px;
+}
+
+/* The six stages of a call: a numbered path, because the order is the method. */
+.dk-stages {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-auto-flow: column;
+  grid-template-rows: repeat(3, auto);
+  gap: 22px 40px;
+  width: 100%;
+  max-width: 980px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.dk-stages li {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  padding: 26px 28px;
+  border-radius: 20px;
+  background: var(--dk-panel);
+  border: 1px solid var(--dk-line);
+}
+.dk-stage-n {
+  flex: none;
+  font-size: 44px;
+  line-height: 1;
+  color: var(--dk-teal);
+}
+.dk-stage-name {
+  font-size: 32px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+[dir="rtl"] .dk-stage-name {
+  font-size: 34px;
+  line-height: 1.4;
+}
+
+/* A real call: what the client said, how the team answered, the recording. */
+.dk-call {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+  width: 100%;
+}
+.dk-quote {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 28px 30px;
+  border-radius: 20px;
+  background: var(--dk-panel);
+  border: 1px solid var(--dk-line);
+}
+.dk-quote[data-us] {
+  background: var(--dk-teal-soft);
+  border-color: rgba(0, 207, 200, 0.35);
+}
+.dk-quote p {
+  font-size: 30px;
+  line-height: 1.4;
+}
+[dir="rtl"] .dk-quote p {
+  font-size: 32px;
+  line-height: 1.6;
+}
+.dk-audio {
+  position: relative;
+  grid-column: 1 / -1;
+  height: 150px;
+  overflow: hidden;
+  border-radius: 20px;
+  border: 1px solid var(--dk-line);
+  background: var(--dk-deep);
+}
+.dk-audio iframe {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+
+/* The platforms for a market: the picks the prospect sees change with it. */
+.dk-picker {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 48px;
+  width: 100%;
+}
+.dk-picks {
+  display: flex;
+  justify-content: center;
+  gap: 24px;
+}
+.dk-pick {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  width: 300px;
+  padding: 36px 24px 30px;
+  border-radius: 24px;
+  background: var(--dk-panel);
+  border: 1px solid var(--dk-line);
+}
+.dk-pick[data-main] {
+  border-color: var(--dk-teal);
+  box-shadow:
+    0 0 0 1px var(--dk-teal),
+    0 24px 60px -24px rgba(0, 207, 200, 0.5);
+}
+.dk-pick-name {
+  font-size: 32px;
+  font-weight: 600;
+}
+
+/* The journey: five steps on a path that fills as → walks it. */
+.dk-path {
+  position: relative;
+  height: 104px;
+  margin: 30px 70px 0;
+}
+.dk-path-line,
+.dk-path-fill {
+  position: absolute;
+  top: 25px;
+  height: 3px;
+  border-radius: 3px;
+}
+.dk-path-line {
+  inset-inline: 0;
+  background: var(--dk-line);
+}
+.dk-path-fill {
+  inset-inline-start: 0;
+  background: linear-gradient(90deg, #2e5bd6 0%, #00cfc8 70%);
+  box-shadow: 0 0 18px rgba(0, 207, 200, 0.55);
+  transition: width 700ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+[dir="rtl"] .dk-path-fill {
+  background: linear-gradient(270deg, #2e5bd6 0%, #00cfc8 70%);
+}
+.dk-path-node {
+  position: absolute;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  width: 280px;
+  margin-inline-start: -140px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--dk-ink-3);
+  font: inherit;
+  cursor: pointer;
+}
+.dk-path-node:focus-visible {
+  outline: 2px solid var(--dk-teal);
+  outline-offset: 4px;
+  border-radius: 12px;
+}
+.dk-path-dot {
+  display: grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  border-radius: 999px;
+  background: var(--dk-space);
+  border: 2px solid rgba(255, 255, 255, 0.24);
+  font-size: 24px;
+  line-height: 1;
+  transition:
+    background 300ms,
+    border-color 300ms,
+    box-shadow 300ms,
+    color 300ms;
+}
+.dk-path-node[data-state="past"] .dk-path-dot {
+  border-color: var(--dk-teal);
+  color: var(--dk-teal);
+}
+.dk-path-node[data-state="now"] {
+  color: var(--dk-ink);
+}
+.dk-path-node[data-state="now"] .dk-path-dot {
+  background: var(--dk-teal);
+  border-color: var(--dk-teal);
+  color: #04121d;
+  box-shadow:
+    0 0 0 9px rgba(0, 207, 200, 0.16),
+    0 0 30px rgba(0, 207, 200, 0.6);
+}
+.dk-path-name {
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+[dir="rtl"] .dk-path-name {
+  font-size: 26px;
+}
+/* An arrowhead halfway between two steps, lit once the lead has passed it. */
+.dk-path-arrow {
+  position: absolute;
+  top: 18px;
+  width: 17px;
+  height: 17px;
+  margin-inline-start: -8px;
+  border-top: 3px solid rgba(255, 255, 255, 0.3);
+  border-inline-end: 3px solid rgba(255, 255, 255, 0.3);
+  transform: rotate(45deg);
+  transition: border-color 300ms;
+}
+[dir="rtl"] .dk-path-arrow {
+  transform: rotate(-45deg);
+}
+.dk-path-arrow[data-lit] {
+  border-color: var(--dk-teal);
+}
+.dk-journey-body {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 440px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  gap: 56px;
+  min-height: 0;
+  margin-top: 26px;
+  animation: dk-fade 420ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+.dk-journey-words {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 16px;
+}
+.dk-journey-words .dk-why {
+  margin-top: 6px;
+}
+
+/* Google reviews: Google's mark and score, then the cards as Google showed them. */
+.dk-google-head {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+.dk-google-score {
+  font-size: 44px;
+  font-weight: 600;
+  line-height: 1;
+}
+.dk-stars {
+  color: #fbbc04;
+  letter-spacing: 2px;
+  line-height: 1;
+}
+.dk-reviews {
+  flex: 1;
+  display: flex;
+  gap: 48px;
+  min-height: 0;
+  margin-top: 30px;
+}
+.dk-review {
+  border-radius: 16px;
+}
+.dk-pull {
+  flex: none;
+  align-self: center;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 20px;
+  width: 520px;
+  margin: 0;
+  padding-inline-start: 30px;
+  border-inline-start: 3px solid var(--dk-teal);
+  font-family: "Geist", sans-serif;
+  text-align: left;
+}
+.dk-pull p {
+  font-size: 38px;
+  font-weight: 500;
+  line-height: 1.32;
+  letter-spacing: -0.01em;
+  color: var(--dk-ink);
+}
+[dir="rtl"] .dk-pull {
+  border-inline-start: 0;
+  border-inline-end: 3px solid var(--dk-teal);
+  padding-inline-start: 0;
+  padding-inline-end: 30px;
+}
+
+/* The YouTube channel: real videos, their real titles. */
+.dk-yt-grid {
+  display: grid;
+  justify-content: center;
+  align-content: center;
+}
+.dk-yt {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.dk-yt .dk-small {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  font-size: 22px;
+  line-height: 1.35;
+}
+[dir="rtl"] .dk-yt .dk-small {
+  font-size: 24px;
+  line-height: 1.5;
+}
+
+/* The #1 page. */
+.dk-grad-text {
+  background: var(--dk-grad);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.dk-n1-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-top: 56px;
+  border-top: 1px solid var(--dk-line);
+}
+.dk-n1-stats > div {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 28px 28px 0 0;
+}
+.dk-n1-stats > div + div {
+  padding-inline-start: 28px;
+  border-inline-start: 1px solid var(--dk-line);
+}
+[dir="rtl"] .dk-n1-stats > div {
+  padding: 28px 0 0 28px;
+}
+[dir="rtl"] .dk-n1-stats > div + div {
+  padding-inline-start: 28px;
+}
+.dk-n1-value {
+  font-size: 64px;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--dk-ink);
+}
+[dir="rtl"] .dk-n1-value {
+  font-size: 54px;
+  line-height: 1.25;
+}
+.dk-logo-wall {
+  display: grid;
+  grid-template-columns: repeat(10, minmax(0, 1fr));
+  gap: 26px 30px;
+  align-items: center;
+  justify-items: center;
+}
+.dk-logo-wall img {
+  max-width: 100%;
+  max-height: 70px;
+  object-fit: contain;
+  filter: grayscale(1);
+  opacity: 0.72;
+  transition:
+    filter 200ms,
+    opacity 200ms;
+}
+.dk-logo-wall img:hover {
+  filter: none;
+  opacity: 1;
+}
+
+/* A partner: flags and place, their case study's headline and numbers. */
+.dk-place {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 21px;
+  line-height: 1.2;
+  color: var(--dk-ink-2);
+}
+[dir="rtl"] .dk-place {
+  font-size: 23px;
+}
+.dk-flag {
+  width: 30px;
+  height: 20px;
+  border-radius: 3px;
+  object-fit: cover;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.18);
+}
+.dk-case {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 26px 30px;
+  border-radius: 22px;
+  background: var(--dk-panel);
+  border: 1px solid var(--dk-line);
+}
+.dk-case-head {
+  font-size: 28px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+[dir="rtl"] .dk-case-head {
+  font-size: 30px;
+  line-height: 1.5;
+}
+.dk-case-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px 44px;
+}
+.dk-case-metrics > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.dk-case-value {
+  font-size: 46px;
+  font-weight: 600;
+  line-height: 1.1;
+  color: var(--dk-teal);
+}
+[dir="rtl"] .dk-case-value {
+  font-size: 40px;
+  line-height: 1.4;
+}
+
+/* Partners' results: one tile each, the logo, the number, the country. */
+.dk-partners {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 22px;
+}
+.dk-partner {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  height: 100%;
+  padding: 20px 22px 18px;
+  border-radius: 22px;
+  background: var(--dk-panel);
+  border: 1px solid var(--dk-line);
+  color: var(--dk-ink);
+  text-decoration: none;
+  transition:
+    border-color 180ms,
+    transform 180ms;
+}
+.dk-partner:hover {
+  border-color: rgba(0, 207, 200, 0.55);
+  transform: translateY(-3px);
+}
+.dk-partner:focus-visible {
+  outline: 3px solid var(--dk-teal);
+  outline-offset: 3px;
+}
+.dk-partner-logo {
+  display: flex;
+  align-items: center;
+  height: 56px;
+  margin-bottom: 6px;
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--dk-ink-2);
+}
+.dk-partner-logo img {
+  max-width: 190px;
+  max-height: 56px;
+  object-fit: contain;
+}
+.dk-partner-value {
+  font-size: 40px;
+  font-weight: 600;
+  line-height: 1.05;
+  color: var(--dk-teal);
+}
+[dir="rtl"] .dk-partner-value {
+  font-size: 36px;
+  line-height: 1.4;
+}
+.dk-partner .dk-small {
+  flex: 1;
+  font-size: 21px;
+}
+[dir="rtl"] .dk-partner .dk-small {
+  font-size: 23px;
+}
+
+/* One partner's story: the video and who they are, then what they got. */
+.dk-story {
+  flex: 1;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 64px;
+  min-height: 0;
+}
+.dk-story-media {
+  display: flex;
+  flex-direction: column;
+  gap: 26px;
+}
+.dk-story-id {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+}
+.dk-story-logo {
+  flex: none;
+  width: 84px;
+  height: 84px;
+  padding: 10px;
+  border-radius: 20px;
+  background: var(--dk-panel);
+  border: 1px solid var(--dk-line);
+  object-fit: contain;
+}
+.dk-story-words {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  min-width: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dk-stop-media,
+  .dk-journey-body {
+    animation: none;
+  }
+  .dk-path-fill,
+  .dk-path-dot,
+  .dk-fan-page,
+  .dk-partner,
+  .dk-logo-wall img {
+    transition: none;
+  }
+}
 
 /* ------------------------------------------------------- the chrome */
 

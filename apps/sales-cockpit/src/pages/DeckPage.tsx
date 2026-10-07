@@ -17,6 +17,7 @@ import {
   t,
 } from "../deck/content";
 import { FaqPanel, Rail } from "../deck/parts";
+import { PROOF_PHOTOS } from "../deck/proof";
 import { DECK_PHOTOS, type DeckCtx, deckSlides } from "../deck/slides";
 import { PORTAL_TOUR } from "../deck/tour";
 import { useLead, useQuery } from "../lib/data";
@@ -207,6 +208,7 @@ export default function DeckPage({ me }: { me: Me }) {
     const timer = window.setTimeout(() => {
       for (const src of [
         ...DECK_PHOTOS,
+        ...PROOF_PHOTOS,
         ...PORTAL_TOUR.flatMap(s => [s.src.en, s.src.ar]),
       ]) {
         const img = new Image();
