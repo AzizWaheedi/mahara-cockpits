@@ -2,6 +2,26 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { transport } from './transport';
 
+it('isolates only confirmed unavailable lead forms and keeps ordinary Meta batches strict',async()=>{
+ const fields='name,status,leads_count,questions,question_page_custom_headline,follow_up_action_url';
+ const reader=transport({META_SYSTEM_TOKEN:'fixture-token'},async input=>{
+  const url=new URL(String(input));assert.equal(url.searchParams.has('nativeFormMetadata'),false);
+  return new Response(JSON.stringify(url.pathname.endsWith('/22')?{error:{code:100,error_subcode:33}}:{'11':{id:'11',name:'Verified',questions:[]}}),{status:url.pathname.endsWith('/22')?400:200,headers:{'content-type':'application/json'}});
+ });
+ const forms=await reader.reads.graph('',{ids:'11,22',fields,nativeFormMetadata:true});
+ assert.equal(forms['11'].name,'Verified');assert.equal(forms['22'].nativeMetadataUnavailable,true);
+ assert.equal(reader.faults.length,1);assert.equal(reader.faults[0].retained_history,true);
+ assert.equal(reader.receipts.filter(r=>r.http_status===400).length,1);
+ await assert.rejects(()=>reader.reads.graph('',{ids:'11,22',fields}),/incomplete/);
+ assert.equal(reader.faults.at(-1)?.retained_history,undefined);
+ for(const error of [{code:190,error_subcode:33},{code:100,error_subcode:99}]){
+  const denied=transport({META_SYSTEM_TOKEN:'fixture-token'},async input=>new Response(JSON.stringify(String(input).includes('/22?')?{error}:{'11':{id:'11'}}),{status:String(input).includes('/22?')?400:200,headers:{'content-type':'application/json'}}));
+  await assert.rejects(()=>denied.reads.graph('',{ids:'11,22',fields,nativeFormMetadata:true}),/without a confirmed/);
+  assert.equal(denied.faults.some(f=>f.retained_history),false);
+ }
+ await assert.rejects(()=>reader.reads.graph('11/ads',{ids:'11,22',fields,nativeFormMetadata:true}),/Invalid retained-form/);
+});
+
 it('retained Sheet access failures keep health evidence and do not hide other provider faults',async()=>{
  const reader=transport({},async()=>new Response('{}',{status:403,headers:{'content-type':'application/json'}}));
  const resource='sheets.googleapis.com/v4/spreadsheets/fixture-sheet/values:batchGet';

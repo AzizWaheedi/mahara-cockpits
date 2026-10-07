@@ -102,12 +102,28 @@ export function transport(env:Env,request:typeof fetch=fetch,wait=(ms:number)=>n
   return googleToken=token.access_token;
  };
  const graph=async(path:string,params:Row={})=>{
+  const formMetadata=params.nativeFormMetadata===true;
+  if(formMetadata){
+   if(path||!/^\d+(?:,\d+)*$/.test(String(params.ids??''))||params.fields!=='name,status,leads_count,questions,question_page_custom_headline,follow_up_action_url')throw new Error('Invalid retained-form metadata request');
+   params={...params};delete params.nativeFormMetadata;
+  }
   if(path.includes('://')||path.startsWith('/')||path.includes('..'))throw new Error('Invalid Meta resource');
   const url=new URL(`https://graph.facebook.com/${env.META_GRAPH_VERSION??'v21.0'}/${path}`);for(const [k,v]of Object.entries(params))url.searchParams.set(k,String(v));
   let page=await json(url.href,{headers:{Authorization:`Bearer ${needed('META_SYSTEM_TOKEN')}`}});if(page.error){faults.push({resource:'graph.facebook.com',error:'Meta response error'});throw new Error('Meta refused a source read');}
   if(/\/(owned_ad_accounts|client_ad_accounts|campaigns|adsets|ads|insights)$/.test(path)&&!Array.isArray(page.data))throw new Error('Meta collection is unavailable');
   if(String(params.fields??'').includes('adsets.')&&!Array.isArray(page.adsets?.data))throw new Error('Meta ad set expansion is unavailable');
-  if(params.ids)for(const id of String(params.ids).split(','))if(!page[id]||page[id].error)throw new Error('Meta batch is incomplete');
+  if(params.ids)for(const id of String(params.ids).split(','))if(!page[id]||page[id].error||(formMetadata&&page[id].id!==id)){
+   if(!formMetadata)throw new Error('Meta batch is incomplete');
+   const single=new URL(`https://graph.facebook.com/${env.META_GRAPH_VERSION??'v21.0'}/${id}`);single.searchParams.set('fields',String(params.fields));
+   const response=await fetchRead(single.href,{headers:{Authorization:`Bearer ${needed('META_SYSTEM_TOKEN')}`}}),node=await response.json();
+   if(response.ok&&node.id===id&&!node.error){page[id]=node;continue;}
+   if(!response.ok&&node.error?.code===100&&node.error?.error_subcode===33){
+    const resource=single.hostname+single.pathname;
+    for(const fault of faults)if(fault.resource===resource&&fault.status===response.status)fault.retained_history=true;
+    page[id]={id,nativeMetadataUnavailable:true};continue;
+   }
+   throw new Error('Form metadata read failed without a confirmed unavailable-object response');
+  }
   // All outer pages; truncation is a publication failure rather than a plausible zero.
   const edge=Array.isArray(page.data)?page:page.adsets;
   if(edge){

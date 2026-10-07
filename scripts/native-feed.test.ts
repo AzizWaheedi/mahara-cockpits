@@ -8,7 +8,7 @@ import type {Row} from '../hermes/cockpit-sync/runtime';
 import {calculate} from '../hermes/cockpit-sync/worker';
 import {prepareTables} from '../hermes/cockpit-sync/capture';
 import {collectCsm} from '../hermes/cockpit-sync/csmProducer';
-import {collectCreative} from '../hermes/cockpit-sync/creativeProducer';
+import {collectCreative,gatherFunnels} from '../hermes/cockpit-sync/creativeProducer';
 import {CF} from '../hermes/cockpit-sync/csmCadence';
 import {storeStills} from '../hermes/cockpit-sync/stills';
 import type {Reads} from '../hermes/cockpit-sync/runtime';
@@ -98,6 +98,13 @@ test('atomic rollback, duplicate identity, missing output, wrong counts, stale s
  expect(prepareTables({clientLinks:linkedFresh},{clientLinks:linkedPrior}).clientLinks.map(r=>r._id)).toEqual(retainedLinks.map(r=>r._id));
  const duplicateIds=[{_id:'same-id',name:'One'},{_id:'same-id',name:'Two'}];
  expect(()=>prepareTables({clientLinks:duplicateIds},{clientLinks:duplicateIds})).toThrow(/Duplicate/);
+ const day=new Date().toISOString().slice(0,10),raw=(ad:string)=>{const r=Array(25).fill('');Object.assign(r,{0:day,1:'Alpha',4:'10',5:'2',16:ad,17:'Ad',18:'ACTIVE'});return r;};
+ const previousForm={account:'Alpha',kind:'Instant form',formId:'22',formName:'Stored name',questions:[{label:'Project type',type:'CUSTOM',isGate:true,options:['One']}],gates:1,formCheckedAt:100};
+ const formReads:Reads={async tool(){return {values:[raw('10'),raw('20')]};},async graph(_path,params){return String(params?.fields).startsWith('name,effective_status')?{'10':{creative:{lead_gen_form_id:'11'},effective_status:'ACTIVE'},'20':{creative:{lead_gen_form_id:'22'},effective_status:'ACTIVE'}}:{'11':{id:'11',name:'Live name',questions:[]},'22':{id:'22',nativeMetadataUnavailable:true}};},async fetch(){throw new Error('Unexpected raw read');},log(){}};
+ const formRows=await withNativeContext(formReads,{receipts:[]},()=>gatherFunnels([previousForm]));
+ const retainedForm=formRows.find(r=>r.formId==='22')!;
+ expect(retainedForm.questions).toEqual(previousForm.questions);expect(retainedForm.formCheckedAt).toBe(100);expect(retainedForm.staleReason).toContain('unavailable');
+ expect(formRows.find(r=>r.formId==='11')!.formName).toBe('Live name');
  const db=await fixture();try{
   await initialize(db);const s=await state(db),c=await claim(db);
   for(const mutate of [

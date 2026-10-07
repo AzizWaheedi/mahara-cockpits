@@ -1068,6 +1068,7 @@ export async function buildFunnels(
 ) {
   let all = (await ctx.db.query("funnels").collect()) as unknown as (Row & {
     syncedAt: number;
+    staleReason?: string;
   })[];
   // Ad accounts carry no client of their own: with a client list from the
   // portal, keep only the accounts that match one of those clients.
@@ -1101,7 +1102,7 @@ export async function buildFunnels(
     }
   >();
   for (const r of all) {
-    if (r.kind !== "Instant form") continue;
+    if (r.kind !== "Instant form" || r.staleReason) continue;
     const key = r.gates >= 3 ? "3+" : String(r.gates);
     const b = buckets.get(key) || { spend: 0, leads: 0, forms: 0 };
     b.spend += r.spend;
@@ -1131,6 +1132,7 @@ export async function buildFunnels(
     }
   >();
   for (const r of all) {
+    if (r.staleReason) continue;
     for (const q of r.questions) {
       if (!q.isGate) continue;
       const key = norm(q.label);
@@ -1166,8 +1168,13 @@ export async function buildFunnels(
       destinations: rows.length,
       accounts: new Set(all.map((r: any) => r.account)).size,
       forms: all.filter((r: any) => r.kind === "Instant form").length,
-      noGate: all.filter((r: any) => r.kind === "Instant form" && r.gates === 0)
-        .length,
+      metadataUnavailable: all.filter(
+        (r: any) => r.kind === "Instant form" && r.staleReason,
+      ).length,
+      noGate: all.filter(
+        (r: any) =>
+          r.kind === "Instant form" && !r.staleReason && r.gates === 0,
+      ).length,
     },
     syncedAt: all[0]?.syncedAt,
   };

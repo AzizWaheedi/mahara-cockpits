@@ -384,7 +384,7 @@ function destination(ad: Row) {
   return { kind, url: found.url, formId: found.formId };
 }
 
-async function gatherFunnels(): Promise<Row[]> {
+export async function gatherFunnels(prior:Row[]=[]): Promise<Row[]> {
   const rows = await sheet(TRACKER, "'data_fb'!A3:Y11005");
   const since = new Date(Date.now() - 30 * 86400_000)
     .toISOString()
@@ -463,6 +463,7 @@ async function gatherFunnels(): Promise<Row[]> {
         forms,
         await graph<Record<string, Row>>("", {
           ids: fl.slice(i, i + 40).join(","),
+          nativeFormMetadata: true,
           fields:
             "name,status,leads_count,questions,question_page_custom_headline,follow_up_action_url",
         }),
@@ -476,7 +477,9 @@ async function gatherFunnels(): Promise<Row[]> {
   const out: Row[] = [];
   for (const g of groups.values()) {
     const form = forms[g.formId ?? ""] ?? {};
-    const questions = ((form.questions ?? []) as Row[]).map(q => {
+    const unavailable=form.nativeMetadataUnavailable===true;
+    const old=unavailable?prior.find(r=>r.account===g.account&&r.formId===g.formId):undefined;
+    const questions = unavailable?structuredClone(old?.questions??[]):((form.questions ?? []) as Row[]).map(q => {
       const label = String(q.label ?? q.key ?? "");
       const qtype = String(q.type ?? "");
       const low = label.toLowerCase();
@@ -495,13 +498,15 @@ async function gatherFunnels(): Promise<Row[]> {
       kind: g.kind,
       url: g.url,
       formId: g.formId,
-      formName: form.name,
-      formStatus: form.status,
-      headline: form.question_page_custom_headline,
-      followUpUrl: form.follow_up_action_url,
-      leadsAllTime: Number(form.leads_count ?? 0) || undefined,
+      formName: unavailable?old?.formName:form.name,
+      formStatus: unavailable?old?.formStatus:form.status,
+      headline: unavailable?old?.headline:form.question_page_custom_headline,
+      followUpUrl: unavailable?old?.followUpUrl:form.follow_up_action_url,
+      leadsAllTime: unavailable?old?.leadsAllTime:Number(form.leads_count ?? 0) || undefined,
       questions,
-      gates: questions.filter(q => q.isGate).length,
+      gates: unavailable?old?.gates:questions.filter((q:Row) => q.isGate).length,
+      formCheckedAt: unavailable?old?.formCheckedAt:g.formId?Date.now():undefined,
+      staleReason: unavailable?'Form metadata is unavailable. Stored questions are retained. Check Meta access before using them.':undefined,
       spend: Math.round(g.spend * 100) / 100,
       leads: g.leads,
       cpl: g.leads ? Math.round((g.spend / g.leads) * 100) / 100 : undefined,
@@ -558,5 +563,5 @@ export async function collectCreative(state: Row, tables: Record<string, Row[]>,
   }
   const creative = await gatherCreative(clients);
   tables.clientLinks = clients.map(row => ({name: row.name, taskId: row.taskId, aliases: row.aliases, url: row.url, driveLink: row.driveLink ?? row.driveFolder, brandDnaDoc: row.brandDnaDoc, offerCheatSheet: row.offerCheatSheet, dosDonts: row.dosDonts}));
-  return {clients, creativeTasks: creative.tasks, videoJobs: creative.videos, contentPosts: creative.posts, campaigns: tables.campaigns, ads: tables.ads, metaTree: tables.metaTree, funnels: await gatherFunnels(), winnersArchive: tables.winnersArchive, marketPlays: tables.marketPlays};
+  return {clients, creativeTasks: creative.tasks, videoJobs: creative.videos, contentPosts: creative.posts, campaigns: tables.campaigns, ads: tables.ads, metaTree: tables.metaTree, funnels: await gatherFunnels(state.creative?.funnels??[]), winnersArchive: tables.winnersArchive, marketPlays: tables.marketPlays};
 }
