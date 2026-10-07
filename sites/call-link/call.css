@@ -1,0 +1,438 @@
+/* call.maharamedia.com: Mahara brand (Deep Space canvas, Mahara Teal, the
+   Mahara Gradient only on the ring), Geist for English, IBM Plex Sans Arabic
+   for Arabic, Geist Mono for the code. One signature: the ring that fills
+   while the call opens. Dark only, as the brand is on the web. */
+
+:root {
+  --space: #091333;
+  --raised: #0f1d4a;
+  --teal: #00cfc8;
+  --blue: #2e5bd6;
+  --ink: #f4f7ff;
+  --soft: #a9b4cf;
+  --line: rgba(244, 247, 255, 0.13);
+  --font-en: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-ar: "IBM Plex Sans Arabic", "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Tahoma, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color-scheme: dark;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  background: var(--space);
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  min-height: 100svh;
+  background: var(--space);
+  color: var(--ink);
+  font-family: var(--font-en);
+  display: flex;
+  justify-content: center;
+  overflow-x: hidden;
+}
+
+/* The brand's elevation is a teal glow; here it is the light from the door. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(110% 55% at 50% -8%, rgba(0, 207, 200, 0.11), transparent 62%);
+}
+
+[lang="ar"] {
+  font-family: var(--font-ar);
+  letter-spacing: 0;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+.page {
+  position: relative;
+  width: 100%;
+  max-width: 440px;
+  min-height: 100vh;
+  min-height: 100svh;
+  padding: max(20px, env(safe-area-inset-top)) 20px max(20px, env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.brand {
+  display: block;
+  height: 22px;
+  width: auto;
+  margin-top: 8px;
+}
+
+.stage {
+  flex: 1;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 28px;
+  padding: 28px 0;
+}
+
+/* ------------------------------------------------------------ the ring */
+
+.ring {
+  position: relative;
+  width: 148px;
+  height: 148px;
+  flex: none;
+  transition: filter 0.6s ease;
+}
+
+.ring svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+}
+
+.track {
+  fill: none;
+  stroke: var(--line);
+  stroke-width: 3;
+}
+
+.arc {
+  fill: none;
+  stroke: url(#mahara-gradient);
+  stroke-width: 4;
+  stroke-linecap: round;
+  stroke-dasharray: 390;
+  stroke-dashoffset: 390;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.initial {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: 54px;
+  line-height: 1;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+}
+
+.initial[lang="ar"] {
+  font-size: 50px;
+  padding-bottom: 6px;
+}
+
+.initial img {
+  width: 54px;
+  height: 54px;
+}
+
+/* Looking for the room: one arc going round. */
+[data-state="loading"] .arc,
+[data-state="preparing"] .arc {
+  stroke-dashoffset: 300;
+  animation: turn 1.5s linear infinite;
+}
+
+/* Found it: the ring fills, then the room opens. */
+[data-state="opening"] .arc {
+  animation: fill 1.4s cubic-bezier(0.45, 0, 0.2, 1) forwards;
+}
+
+[data-state="opened"] .arc {
+  stroke-dashoffset: 0;
+}
+
+[data-state="opening"] .ring,
+[data-state="opened"] .ring {
+  filter: drop-shadow(0 0 22px rgba(0, 207, 200, 0.3));
+}
+
+/* Over, not valid or not reachable: the ring goes quiet. */
+[data-state="ended"] .arc,
+[data-state="unknown"] .arc,
+[data-state="error"] .arc,
+[data-state="busy"] .arc {
+  stroke: var(--soft);
+  stroke-dashoffset: 0;
+  opacity: 0.3;
+}
+
+[data-state="unknown"] .track {
+  stroke-dasharray: 3 9;
+}
+
+[data-state="ended"] .initial,
+[data-state="unknown"] .initial,
+[data-state="error"] .initial,
+[data-state="busy"] .initial {
+  color: var(--soft);
+  opacity: 0.75;
+}
+
+[data-state="ended"] .initial img,
+[data-state="unknown"] .initial img {
+  filter: grayscale(1);
+  opacity: 0.6;
+}
+
+@keyframes fill {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes turn {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ----------------------------------------------------------- the words */
+
+.lines {
+  width: 100%;
+  text-align: center;
+}
+
+.l1 {
+  margin: 0;
+  font-size: clamp(21px, 6.4vw, 27px);
+  line-height: 1.32;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  text-wrap: balance;
+  overflow-wrap: anywhere;
+}
+
+.l1[lang="ar"] {
+  font-size: clamp(20px, 6vw, 25px);
+  line-height: 1.65;
+}
+
+.l2 {
+  margin: 10px 0 0;
+  font-size: 15px;
+  line-height: 1.55;
+  color: var(--soft);
+  text-wrap: pretty;
+  overflow-wrap: anywhere;
+}
+
+.l2[lang="ar"] {
+  font-size: 15.5px;
+  line-height: 1.85;
+}
+
+.hint {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(15, 29, 74, 0.55);
+  padding: 13px 16px;
+  text-align: center;
+}
+
+.hint p {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--ink);
+}
+
+.hint .h2 {
+  margin-top: 4px;
+  color: var(--soft);
+  font-size: 13.5px;
+}
+
+/* --------------------------------------------------------- the buttons */
+
+.actions {
+  width: 100%;
+  display: grid;
+  gap: 10px;
+}
+
+.actions:empty {
+  display: none;
+}
+
+.btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  width: 100%;
+  min-height: 60px;
+  padding: 10px 18px;
+  border: 0;
+  border-radius: 14px;
+  background: var(--teal);
+  color: var(--space);
+  font: inherit;
+  text-decoration: none;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  box-shadow: 0 10px 30px -12px rgba(0, 207, 200, 0.55);
+  transition:
+    transform 0.12s ease,
+    box-shadow 0.2s ease,
+    background-color 0.2s ease;
+}
+
+.btn .b1 {
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.btn .b2 {
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.4;
+  opacity: 0.78;
+}
+
+.btn:hover {
+  box-shadow: 0 12px 36px -10px rgba(0, 207, 200, 0.7);
+}
+
+.btn:active {
+  transform: scale(0.985);
+}
+
+.btn:focus-visible {
+  outline: 3px solid var(--ink);
+  outline-offset: 3px;
+}
+
+.btn.quiet {
+  background: transparent;
+  color: var(--ink);
+  border: 1px solid var(--line);
+  box-shadow: none;
+}
+
+.btn.quiet:hover {
+  background: rgba(244, 247, 255, 0.05);
+}
+
+/* The way in when the script never ran (a blocked or broken load). The
+   no-script fallback shows at once; this one waits 6 s, unless the script
+   took over (html.js) or asked for it (.show). */
+.fallback {
+  visibility: hidden;
+  animation: reveal 0s linear 6s forwards;
+}
+
+html.js .fallback {
+  display: none;
+}
+
+html.js .fallback.show {
+  display: flex;
+  visibility: visible;
+  animation: none;
+}
+
+@keyframes reveal {
+  to {
+    visibility: visible;
+  }
+}
+
+/* ------------------------------------------------------------ the code */
+
+.code {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 6px 10px;
+  font-size: 12px;
+  color: var(--soft);
+  padding-top: 4px;
+}
+
+.code .c2 {
+  opacity: 0.7;
+}
+
+.code b {
+  font-family: var(--font-mono);
+  font-weight: 500;
+  font-size: 13px;
+  letter-spacing: 0.24em;
+  color: var(--ink);
+  direction: ltr;
+  unicode-bidi: isolate;
+  padding: 3px 4px 3px 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+@media (min-width: 560px) {
+  .stage {
+    gap: 32px;
+  }
+  .ring {
+    width: 164px;
+    height: 164px;
+  }
+}
+
+@media (max-width: 340px) {
+  .page {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+  .ring {
+    width: 128px;
+    height: 128px;
+  }
+  .initial {
+    font-size: 46px;
+  }
+  .stage {
+    gap: 22px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .arc {
+    animation: none !important;
+  }
+  [data-state="opening"] .arc {
+    stroke-dashoffset: 0;
+  }
+  .btn,
+  .ring {
+    transition: none;
+  }
+}
+
+/* No button to show yet (loading, preparing, unknown): no empty gap either. */
+html.js .actions:not(:has(.made, .fallback.show)) {
+  display: none;
+}

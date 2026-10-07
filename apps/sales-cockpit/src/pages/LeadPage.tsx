@@ -4,6 +4,7 @@ import {
   ClipboardList,
   Copy,
   Phone,
+  PhoneCall,
   ScrollText,
 } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
@@ -20,7 +21,11 @@ import {
   canContract,
   useContracts,
 } from "../components/ContractPanel";
-import { Conversation, useConversation } from "../components/Conversation";
+import {
+  Conversation,
+  ConversationFailed,
+  useConversation,
+} from "../components/Conversation";
 import { HotControl } from "../components/HotList";
 import {
   button,
@@ -42,6 +47,16 @@ import { NotesPanel } from "../components/NotesPanel";
 import { ProposalPanel } from "../components/ProposalPanel";
 import { AskReference } from "../components/References";
 import { ResearchPanel } from "../components/ResearchPanel";
+import { LiveBoundary } from "../components/RoomLine";
+import { RoomPanel } from "../components/RoomPanel";
+import {
+  LiveAskForm,
+  ROOMS_UNREAD,
+  useLeadRoom,
+  useRoomsSetup,
+  VideoCallMenu,
+  VideoPicker,
+} from "../components/VideoLink";
 import { assetStage, objectionsFrom } from "../lib/assets";
 import {
   type ClientFormSent,
@@ -66,8 +81,17 @@ import {
   when,
 } from "../lib/format";
 import { ghlContactUrl } from "../lib/highlevel";
+import { roomHoldsNoShow } from "../lib/rooms";
 import { toast } from "../lib/toast";
 import type { CalendarRow, Deal, Lead, Me } from "../lib/types";
+import {
+  DEMO_LINK_LINE,
+  demoStillOn,
+  linkPlanLine,
+  type MenuKey,
+  providerChoice,
+  videoLinkGate,
+} from "../lib/videoLink";
 import { leadLanguage } from "../lib/whatsapp";
 
 const CLASS_TONE: Record<string, Tone> = {
@@ -93,6 +117,12 @@ export default function LeadPage({ me }: { me: Me }) {
   const leadContracts = useContracts(contactId);
   const clientForms = useClientForms(contactId);
   const [formOpen, setFormOpen] = useState(false);
+  // The "Video call" menu (C42): the room for this lead, the picker, or a
+  // live option's note, under the header.
+  const roomsSetup = useRoomsSetup();
+  const video = useLeadRoom(contactId);
+  const [videoOpen, setVideoOpen] = useState<MenuKey | null>(null);
+  const [videoSaid, setVideoSaid] = useState<string | null>(null);
   // A sales asset's message from "Proof to send", or a contract's link.
   const [convoPrefill, setConvoPrefill] = useState<{
     text: string;
@@ -177,6 +207,30 @@ export default function LeadPage({ me }: { me: Me }) {
   const lastDemo = appointments.find(r => r.call_type === "demo");
   const people = formPeople(l, appointments, me);
   const owed = appointments.filter(r => r.needs_mark);
+  const gate = videoLinkGate({
+    setting: roomsSetup.rooms,
+    contactId: l.contact_id,
+    seatEmail: me.email,
+    purpose: "manual",
+    client: isClient(l),
+    dnd: Boolean(live?.contact.dnd || l.dnd),
+    // A demo still on counts until it ends, as room.create counts it (m1
+    // round 2): a closer whose demo started gets no press refused every time.
+    bookedDemo: demoStillOn(appointments, Date.now()),
+  });
+  // A closer's video call is a demo (60 minutes, the demo's Zoom rule),
+  // never an intro that the count would book in a setter's place (stress2
+  // round 4); sales-api holds the same rule for every closer's room.
+  const roomKind: "intro" | "demo" = me.role === "closer" ? "demo" : "intro";
+  const choice = roomsSetup.rooms
+    ? providerChoice({
+        setting: roomsSetup.rooms,
+        role: me.role === "closer" ? "closer" : "setter",
+        me: video.presence,
+        kind: roomKind,
+      })
+    : null;
+  const linkShown = gate.show && choice !== null && !video.open;
 
   return (
     <Page>
@@ -254,7 +308,8 @@ export default function LeadPage({ me }: { me: Me }) {
           {isClient(l) ? null : (
             <Link
               to={`/call/${l.contact_id}?script=${callScript(me, appointments)}`}
-              className={buttonPrimary}
+              // While a video room is open its panel holds the teal button.
+              className={video.open ? button : buttonPrimary}
             >
               <ScrollText className="size-3.5" aria-hidden />
               {callScript(me, appointments) === "demo"
@@ -266,6 +321,20 @@ export default function LeadPage({ me }: { me: Me }) {
             <CopyChip icon={Phone} text={l.phone} label="Copy the number" />
           ) : null}
           {l.email ? <CopyChip text={l.email} label="Copy the email" /> : null}
+          <VideoCallMenu
+            linkShown={linkShown}
+            liveOn={roomsSetup.liveOn && !isClient(l)}
+            onPick={key => {
+              setVideoSaid(null);
+              setVideoOpen(key);
+            }}
+          />
+          {roomsSetup.error && !isClient(l) ? (
+            <span className="muted self-center text-xs">{ROOMS_UNREAD}</span>
+          ) : gate.why === "booked_demo" && !isClient(l) && !video.open ? (
+            // The menu is gone while the demo is on: say where its link is (m1 round 3).
+            <span className="muted self-center text-xs">{DEMO_LINK_LINE}</span>
+          ) : null}
           {canContract(me) ? (
             <button
               type="button"
@@ -277,6 +346,17 @@ export default function LeadPage({ me }: { me: Me }) {
               New client form
             </button>
           ) : null}
+          {isClient(l) ? null : (
+            // The dialer's pane for this lead: book the next call, or save
+            // how a call went (stress2 round 4: the lead page has neither).
+            <Link
+              to={`/dialer?lead=${encodeURIComponent(l.contact_id)}`}
+              className={button}
+            >
+              <PhoneCall className="size-3.5" aria-hidden />
+              Open in the dialer
+            </Link>
+          )}
           <a
             href={ghlContactUrl(l.contact_id)}
             target="_blank"
@@ -287,6 +367,62 @@ export default function LeadPage({ me }: { me: Me }) {
           </a>
         </div>
       </header>
+
+      {/* A room still running always shows; a closed one gives way to the
+          menu's next choice. */}
+      {video.room && (video.open || videoOpen === null) ? (
+        <RoomPanel
+          room={video.room}
+          request={video.request}
+          onRoomChange={r => video.setRoom(r)}
+        />
+      ) : videoOpen === "link" && linkShown && choice ? (
+        <VideoPicker
+          contactId={l.contact_id}
+          purpose="manual"
+          callKind={roomKind}
+          trigger="manual"
+          choice={choice}
+          planLine={
+            roomsSetup.rooms
+              ? linkPlanLine({
+                  setting: roomsSetup.rooms,
+                  whatsapp: live?.channels.whatsapp,
+                  email: live?.channels.email,
+                  guardOpen: roomsSetup.guard,
+                  templateLive: roomsSetup.templateLive,
+                  // Night on the lead's clock: no message goes (m1 round 4).
+                  country: l.country ?? null,
+                  phone: l.phone ?? null,
+                  now: Date.now(),
+                })
+              : null
+          }
+          onRoom={(room, ask) => {
+            video.setRoom(room, ask);
+            setVideoOpen(null);
+          }}
+          onCancel={() => setVideoOpen(null)}
+        />
+      ) : (videoOpen === "demo_now" || videoOpen === "intro_now") &&
+        roomsSetup.liveOn ? (
+        <LiveAskForm
+          contactId={l.contact_id}
+          kind={videoOpen}
+          onDone={line => {
+            setVideoOpen(null);
+            setVideoSaid(line);
+          }}
+          onCancel={() => setVideoOpen(null)}
+        />
+      ) : videoSaid ? (
+        <p
+          role="status"
+          className="callout-good rounded-[var(--radius-md)] border px-3 py-2 text-sm"
+        >
+          {videoSaid}
+        </p>
+      ) : null}
 
       {owed.length ? (
         <SectionCard title="Mark this call">
@@ -305,7 +441,15 @@ export default function LeadPage({ me }: { me: Me }) {
                     </span>
                   ) : null}
                 </p>
-                <MarkControls row={r} onDone={() => activity.reload()} />
+                <MarkControls
+                  row={r}
+                  onDone={() => activity.reload()}
+                  // Every call's No-show waits while the lead's video room
+                  // is open, as sales-api holds it (index.ts
+                  // videoLinkHoldsNoShow; m1 round 4, journey r4-r), and
+                  // after a knock or inside the wait the link promised.
+                  noShowHeld={roomHoldsNoShow(video.room, Date.now())}
+                />
               </li>
             ))}
           </ul>
@@ -332,14 +476,16 @@ export default function LeadPage({ me }: { me: Me }) {
         <div className="min-w-0 space-y-4 xl:col-span-5 xl:space-y-6">
           <div ref={convoRef}>
             <SectionCard title="Conversation">
-              <Conversation
-                contactId={l.contact_id}
-                convo={convo}
-                rep={me.name}
-                callAt={nextAppt?.start_at ?? null}
-                country={l.country}
-                prefill={convoPrefill}
-              />
+              <LiveBoundary fallback={<ConversationFailed />}>
+                <Conversation
+                  contactId={l.contact_id}
+                  convo={convo}
+                  rep={me.name}
+                  callAt={nextAppt?.start_at ?? null}
+                  country={l.country}
+                  prefill={convoPrefill}
+                />
+              </LiveBoundary>
             </SectionCard>
           </div>
           <SectionCard title="Everything so far">

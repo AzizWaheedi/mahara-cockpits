@@ -265,12 +265,28 @@ export function trimMessages(list: unknown): Record<string, unknown>[] {
   });
 }
 
+/**
+ * A shared secret compared in constant time (the door's sign.ts
+ * timingSafeEqual): every byte of the longer string is walked, so the time
+ * says nothing about where the first difference is.
+ */
+export function timingSafeEqual(given: string, expected: string): boolean {
+  const enc = new TextEncoder();
+  const x = enc.encode(given);
+  const y = enc.encode(expected);
+  const n = Math.max(x.length, y.length);
+  let diff = x.length ^ y.length;
+  for (let i = 0; i < n; i++) diff |= (x[i] ?? 0) ^ (y[i] ?? 0);
+  return diff === 0;
+}
+
 export function redact(s: string): string {
   return String(s)
     .replace(/sbp_[A-Za-z0-9]+/g, "[key]")
     .replace(/pit-[A-Za-z0-9-]+/g, "[key]")
     .replace(/eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g, "[jwt]")
-    .replace(/((?:api_?key|access_token|token|secret)=)[^&\s"']+/gi, "$1[key]")
+    // zak written with an escaped letter (%7Aak=) is the same host token to Zoom (m1 round 1).
+    .replace(/((?:api_?key|access_token|token|secret|(?:z|%7a|%5a)(?:a|%61|%41)(?:k|%6b|%4b)|pwd)=)[^&\s"']+/gi, "$1[key]")
     .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/g, "Bearer [key]")
     .slice(0, 300);
 }
@@ -358,7 +374,24 @@ export function channelOf(messageType: unknown): ThreadMessage["channel"] {
 }
 
 /** A failure's reason, wherever HighLevel put it on this message. */
-function errorOf(m: Record<string, unknown>): string | null {
+/**
+ * HighLevel's message statuses that mean the message did not reach the lead
+ * (m1 round 4, readback-bounced-stored-as-sending): one vocabulary for
+ * stateOf, convoSend's read-back, matchSent's "did it go" and rooms.ts
+ * statusById. "bounced" is the mail service's hard bounce.
+ */
+export const FAILED_STATUSES: readonly string[] = ["failed", "undelivered", "bounced", "opt_out"];
+export function failedStatus(status: unknown): boolean {
+  return FAILED_STATUSES.includes(String(status ?? "").trim().toLowerCase());
+}
+
+/**
+ * Why HighLevel says a message failed, from every field it uses for it
+ * (error, errorMessage, meta.error, meta.errorMessage, meta.failedReason,
+ * statusReason); an object (Meta's {code, title}) is kept as JSON so its
+ * code can be read. Null when none says.
+ */
+export function errorOf(m: Record<string, unknown>): string | null {
   const meta = (m.meta ?? {}) as Record<string, unknown>;
   for (const v of [m.error, m.errorMessage, meta.error, meta.errorMessage, meta.failedReason, m.statusReason]) {
     if (!v) continue;
@@ -391,7 +424,8 @@ export function toThread(list: unknown, conversationId: string): ThreadMessage[]
         .map(a => String(a ?? ""))
         .filter(a => /^https:\/\//.test(a))
         .slice(0, 5),
-      error: m.status === "failed" || m.status === "undelivered" ? errorOf(m) : null,
+      // A hard bounce HighLevel gives no reason for is still said as a bounce (m1 round 4).
+      error: failedStatus(m.status) ? (errorOf(m) ?? (String(m.status).toLowerCase() === "bounced" ? "The email bounced" : null)) : null,
       source: m.source ? String(m.source) : null,
     }];
   });
@@ -460,7 +494,7 @@ export function sendBody(channel: Channel, contactId: string, text: string, subj
 /** HighLevel's message status as the cockpit's send state. */
 export function stateOf(status: unknown): "sending" | "sent" | "delivered" | "read" | "failed" {
   const s = String(status ?? "").toLowerCase();
-  if (["failed", "undelivered", "opt_out"].includes(s)) return "failed";
+  if (failedStatus(s)) return "failed";
   if (s === "read" || s === "opened" || s === "clicked") return "read";
   if (s === "delivered") return "delivered";
   if (["sent", "connected"].includes(s)) return "sent";
@@ -661,11 +695,14 @@ export function checkCoachReview(b: Record<string, unknown>):
 // WhatsApp templates and the ready-made messages
 // ---------------------------------------------------------------------------
 
-export const FOLLOWUP_SEGMENTS = ["reply", "confirm", "no_show", "cancelled", "new", "after_call", "nurture"] as const;
+// reactivate: the backlog wave's opener (P3 phase 1). good_intro joins in phase 2.
+export const FOLLOWUP_SEGMENTS = ["reply", "confirm", "no_show", "cancelled", "new", "after_call", "nurture", "reactivate"] as const;
 export type FollowupSegment = (typeof FOLLOWUP_SEGMENTS)[number];
 
 /** What each {{n}} of a template carries, in order. */
-export const TEMPLATE_VARIABLES = ["first_name", "rep_name", "line"] as const;
+// call_time: a booked call's day and time on the lead's clock (demo_host). The
+// room code is a button variable (wa_templates.button_variable), never here.
+export const TEMPLATE_VARIABLES = ["first_name", "rep_name", "line", "call_time"] as const;
 export type TemplateVariable = (typeof TEMPLATE_VARIABLES)[number];
 
 export const SNIPPET_MOMENTS = [
@@ -702,10 +739,51 @@ export function renderTemplate(
   });
 }
 
+/**
+ * Text bound for Slack (an alert to #sales-alerts, an offer to a closer)
+ * with every angle bracket made harmless: Slack reads <!channel>, <!here>,
+ * <@U…>, <!subteam^…> and <https://…|label> as markup, and a lead types their
+ * own name and company on the ad's form. The brackets become ‹ and ›, which
+ * read the same in Slack and on every page and are never markup. (An & is
+ * harmless: "&lt;" reaches Slack as the words, never as a bracket.)
+ */
+export function slackSafe(v: unknown): string {
+  return String(v ?? "").replace(/</g, "\u2039").replace(/>/g, "\u203a");
+}
+
 /** The name to greet a lead by: HighLevel's first name, else the first word of the whole name. */
 export function greetingName(first: unknown, full: unknown): string {
   const f = cleanText(first, 60) || cleanText(full, 120);
   return f.split(/\s+/)[0] ?? "";
+}
+
+/** Bidi overrides, embeddings, isolates and invisible joiners: never carried from a lead's own name into a message. */
+const INVISIBLE = /[\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/g;
+
+/**
+ * The lead's first name as Mahara's own message may carry it (m1 round 1,
+ * lead-name-link-in-link-message, lead-name-placeholder-blocks-link): a
+ * public lead form takes any name, so a name that is a link or a domain
+ * (a scheme, www., a dotted host, a path), an address (@), markup (< >) or
+ * an unfilled merge tag ({name}, {{name}}) is no name, and bidi or invisible
+ * controls are taken out. Empty when nothing is left: the caller says "there".
+ */
+export function leadFirstName(first: unknown, full: unknown): string {
+  const clean = (v: unknown) => String(v ?? "").replace(INVISIBLE, "");
+  const word = greetingName(clean(first), clean(full));
+  if (!word) return "";
+  if (/:\/\/|^www\.|[@<>{}\[\]\\/|`]|%[0-9a-f]{2}/i.test(word)) return "";
+  // A dotted host (example.com, mahara-refunds.example): WhatsApp and mail
+  // clients make it a link. Initials (J.R.) stay.
+  if (/[\p{L}\p{N}-]{2,}\.[\p{L}]{2,}/u.test(word)) return "";
+  // Any other shape a phone may link (m1 round 6, m1-security-r6-lead-name-
+  // ip-or-one-letter-domain-in-link-message): a query, a fragment or a port
+  // (? # :), an IPv4 address (203.0.113.5), and a dot or colon before a
+  // letter or digit (x.co, q.xyz) unless the word is initials.
+  if (/[?#:]/.test(word)) return "";
+  if (/\d+\.\d+/.test(word)) return "";
+  if (/[.:][\p{L}\p{N}]/u.test(word) && !/^(\p{L}\.)+\p{L}?$/u.test(word)) return "";
+  return word;
 }
 
 /** A ready-made message with what the cockpit knows put in; anything unknown stays marked for the rep. */
@@ -727,6 +805,8 @@ export interface TemplateRoute {
   active: boolean;
   segments: FollowupSegment[];
   sort: number;
+  /** The URL button's variable (join_code), when the template has one. Saved only when the save names it. */
+  button_variable?: "join_code" | null;
 }
 
 /** A template route as a manager saves it, or why it cannot be saved. */
@@ -744,7 +824,7 @@ export function checkTemplateRoute(b: Record<string, unknown>): { ok: true; valu
   if (!preview || preview.length > 1024) return { ok: false, error: "Paste the approved text (1,024 characters at most)." };
   const variables = (Array.isArray(b.variables) ? b.variables : []).map(v => String(v)) as TemplateVariable[];
   if (variables.some(v => !(TEMPLATE_VARIABLES as readonly string[]).includes(v)))
-    return { ok: false, error: "Each {{n}} is the first name, the rep's name or the line." };
+    return { ok: false, error: "Each {{n}} is the first name, the rep's name, the line or the call's time." };
   const slots = [...new Set([...preview.matchAll(/\{\{(\d+)\}\}/g)].map(m => Number(m[1])))].sort((a, b) => a - b);
   if (slots.length !== variables.length || slots.some((n, i) => n !== i + 1))
     return { ok: false, error: `The text has ${slots.length} {{n}} and ${variables.length} values are named; they have to match, from {{1}} on.` };
@@ -758,7 +838,12 @@ export function checkTemplateRoute(b: Record<string, unknown>): { ok: true; valu
     return { ok: false, error: "That is not a kind of follow-up." };
   const sort = Number(b.sort ?? 100);
   if (!Number.isInteger(sort) || sort < 0 || sort > 1000) return { ok: false, error: "The order is a whole number from 0 to 1000." };
-  return { ok: true, value: { key, name, language, purpose, preview, variables, workflow_id: workflow, active, segments, sort } };
+  // The button variable changes only when the save names it, so a save from a
+  // screen that does not know it never clears call_link's join_code.
+  if ("button_variable" in b && b.button_variable !== null && b.button_variable !== "join_code")
+    return { ok: false, error: "The button takes the room code (join_code) or nothing." };
+  const button = "button_variable" in b ? { button_variable: (b.button_variable === "join_code" ? "join_code" : null) as TemplateRoute["button_variable"] } : {};
+  return { ok: true, value: { key, name, language, purpose, preview, variables, workflow_id: workflow, active, segments, sort, ...button } };
 }
 
 /** A ready-made message as a manager saves it, or why it cannot be saved. */

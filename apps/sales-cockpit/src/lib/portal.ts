@@ -20,6 +20,15 @@ export function portalUrl(): string {
   return PORTAL_URL;
 }
 
+/**
+ * Where to send someone whose session ran out: the portal's door for this
+ * cockpit, which signs them in and brings them back to `next`. The banner's
+ * "Sign in again" uses it when a refresh cannot restore the session.
+ */
+export function portalDoor(next: string): string {
+  return `${portalUrl()}/go/${COCKPIT}?next=${encodeURIComponent(next)}`;
+}
+
 export interface AdPreview {
   ok: boolean;
   error?: string;

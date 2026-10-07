@@ -442,7 +442,8 @@ describe("outcomes on appointment work", () => {
     expect(appointmentEffect("confirm", "confirmed")?.confirmation).toBe("confirmed");
     expect(appointmentEffect("confirm", "cancelled")).toEqual({ mark: "cancelled", confirmation: "cancelled", ladder: false, rebook: true });
     expect(appointmentEffect("confirm", "not_interested")).toMatchObject({ mark: "cancelled", ladder: true });
-    expect(appointmentEffect("confirm", "showed")).toBeNull();
+    // m1 round 6: the intro had on video in the confirmation call's room is marked held.
+    expect(appointmentEffect("confirm", "showed")).toEqual({ mark: "showed", confirmation: "confirmed", ladder: false, rebook: false });
   });
   test("a cancelled call comes back the next working morning", () => {
     const thu = Date.parse("2026-09-24T13:00:00Z"); // Thursday 16:00 Kuwait

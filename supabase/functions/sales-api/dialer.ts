@@ -3,6 +3,8 @@
 // sub-account: phone routing and caller IDs, the retry ladder, and the order
 // the queue is worked in. Pure functions; bun test supabase/functions/sales-api.
 
+import { hoursRefusal, leadZones } from "./sendrules.ts";
+
 /** Where a number rings and which of our lines calls it (the dialer's routes plus Bahrain). */
 export const ROUTES: Record<string, { country: string; flag: string; caller: string; pattern: RegExp }> = {
   "966": { country: "Saudi Arabia", flag: "SA", caller: "966115203895", pattern: /^966(?:1[1-467]\d{7}|5\d{8})$/ },
@@ -71,6 +73,30 @@ export function nextTry(step: number, now: number): { step: number; due: number 
   // evening miss goes to the next working morning, not the next evening.
   const due = next === 1 && five - now >= HOUR ? five : nextWorkingNine(now);
   return { step: next, due, unreachable: false };
+}
+
+/**
+ * A talk in a video room (a join that stands, or the call moved to the
+ * phone) after the dialer's last outcome, when that outcome was Maqsam's
+ * No answer (stress2 round 6, joined-step-next-lead-keeps-auto-no-answer):
+ * the lead was reached, so the ladder's "unreachable" close from before the
+ * talk is lifted and its retry moves to the next working morning after the
+ * talk. Any later save (the joined step's own) stands as it is.
+ */
+export function afterTalk(o: {
+  lastOutcome: string | null;
+  lastOutcomeAt: number | null;
+  closed: string | null;
+  due: number | null;
+  talkedAt: number | null;
+}): { talked: boolean; closed: string | null; due: number | null } {
+  const talked = o.talkedAt !== null && o.lastOutcome === "no_answer" && (o.lastOutcomeAt ?? 0) <= o.talkedAt;
+  if (!talked || o.talkedAt === null) return { talked: false, closed: o.closed, due: o.due };
+  return {
+    talked: true,
+    closed: o.closed === "unreachable" ? null : o.closed,
+    due: Math.max(o.due ?? 0, nextWorkingNine(o.talkedAt)),
+  };
 }
 
 export const OUTCOMES = [
@@ -281,6 +307,18 @@ export interface Appt {
   confirmed: boolean;
   /** The last confirmation try that did not reach them. */
   last_try: number | null;
+  /**
+   * The lead joined a video room carrying this call and the join stands (not
+   * taken back): the intro was had on video, so it never comes back as
+   * "Intro call now" while its mark catches up (stress2, round 1).
+   */
+  room_joined?: boolean;
+  /**
+   * The lead's country (cockpit_sales_leads.country): the confirmation call
+   * comes up only while it is 09:00 to 21:00 on every clock of theirs, as
+   * the desk's confirmation message does (stress2 round 5). Unknown: Kuwait's.
+   */
+  country?: string | null;
 }
 
 /** One lead as the queue sees it. */
@@ -400,6 +438,63 @@ function introWindow(a: Appt, now: number): boolean {
   return now >= a.start - 5 * MIN && now <= a.start + 20 * MIN;
 }
 
+/**
+ * The lead joined a video room for this call as it starts now, the join
+ * standing (Appt.room_joined, index.ts candidates): the room carries the
+ * call's id, it stored this start (within a second) when it was made, and
+ * the join fell inside the call's own window (five minutes before its start
+ * to twenty after). A join on a room made for the intro before it was moved,
+ * or before its window (a confirmation call's room), never hides the intro
+ * as it is booked now (stress2, round 2).
+ */
+export function roomJoinedFor(
+  rooms: readonly Record<string, unknown>[],
+  appt: { id: string; start: number },
+): boolean {
+  const t = (v: unknown) => {
+    const n = v ? Date.parse(String(v)) : Number.NaN;
+    return Number.isFinite(n) ? n : null;
+  };
+  return rooms.some(r => {
+    // A room asked for this call that does not carry it (a confirmation
+    // call's, whose link invited the call now: m1 round 6): a join there,
+    // in the three hours before the call to twenty past, is the call had
+    // when the lead stayed a talk's length (confirmationRoomHeld), never a
+    // quick "yes, talk at 10" (stress2 round 2).
+    const asked = !r.appointment_id && String(r.asked_appointment_id ?? "") === appt.id;
+    if (String(r.appointment_id ?? "") !== appt.id && !asked) return false;
+    const joined = t(r.lead_in_at);
+    const undo = t(r.count_undo_at);
+    // A join stands after the taken-back join's own time (stress2 round 5).
+    const taken = t(r.taken_back_join_at);
+    const bound = undo === null ? null : taken === null ? undo : Math.min(taken, undo);
+    if (joined === null || (bound !== null && joined <= bound)) return false;
+    if (asked)
+      return joined >= appt.start - 3 * 60 * MIN && joined <= appt.start + 20 * MIN && confirmationRoomHeld(r);
+    const stored = t(r.appointment_start_at);
+    if (stored !== null && Math.abs(stored - appt.start) >= 1000) return false;
+    return joined >= appt.start - 5 * MIN && joined <= appt.start + 20 * MIN;
+  });
+}
+
+/** A confirmation call's video room the lead stayed in this long was the call itself, not a quick yes (m1 round 6). */
+export const CONFIRM_ROOM_HELD_MIN = 10;
+
+/**
+ * A confirmation call's room the lead joined and stayed in for a talk's
+ * length (CONFIRM_ROOM_HELD_MIN), or is in now: the intro was had there
+ * (m1 round 6, m1-journeys-r6-confirm-call-link-invites-call-now-intro-
+ * never-held: its link says "we can talk on video now"). A shorter join is
+ * the lead confirming (stress2 round 2), and the intro still comes up.
+ */
+export function confirmationRoomHeld(r: Record<string, unknown>): boolean {
+  const joined = r.lead_in_at ? Date.parse(String(r.lead_in_at)) : Number.NaN;
+  if (!Number.isFinite(joined)) return false;
+  if (r.state === "lead_in") return true;
+  const ended = r.ended_at ? Date.parse(String(r.ended_at)) : Number.NaN;
+  return Number.isFinite(ended) && ended - joined >= CONFIRM_ROOM_HELD_MIN * MIN;
+}
+
 /** How long an intro that rang out waits before it comes back, inside its window. */
 export const INTRO_RETRY = 5 * MIN;
 
@@ -431,7 +526,7 @@ export function appointmentWork(
   if (!a || ENDED.has(String(a.status ?? ""))) return null;
   const mine = !meGhl || !a.assigned || a.assigned === meGhl;
   if (as === "setter" && a.type === "intro" && mine && introWindow(a, now)) {
-    if (introWaiting(a, now)) return null;
+    if (introWaiting(a, now) || a.room_joined === true) return null;
     return { tier: 0, kind: "intro", why: `Intro call now, booked for ${whenWords(a.start, now).replace(/^today at /, "")}`, sort: a.start };
   }
   const farAhead = a.booked !== null && a.start - a.booked > DAY;
@@ -442,12 +537,36 @@ export function appointmentWork(
   if (!whose) return null;
   const soon = a.start - now <= 3 * HOUR;
   if (a.last_try !== null && now - a.last_try < (soon ? 30 * MIN : 2 * HOUR)) return null;
+  // Never a confirmation call (nor the video link after it) at night where
+  // the lead is: 09:00 to 21:00 on each of their clocks (sendrules.ts
+  // hoursRefusal, a later message), as followups.py confirm_from keeps the
+  // desk's confirmation message.
+  // A lead whose country is not known keeps the call centre's Kuwait rule.
+  if (a.country && hoursRefusal({ segment: "confirm", touch: 2, country: a.country, now, followups: {} }) !== null) return null;
   return {
     tier: soon ? 0 : 1,
     kind: "confirm",
-    why: `Confirm the ${a.type} ${whenWords(a.start, now)}`,
+    why: `Confirm the ${a.type} ${whenWords(a.start, now)}${theirClock(a.country, now)}`,
     sort: a.start,
   };
+}
+
+/**
+ * " (it is 10:05 there)" for a lead whose clock is not Kuwait's, so the
+ * setter sees the hour where the lead is before calling (stress2 round 5).
+ * Empty for a lead in Kuwait's hour or whose zone is not known.
+ */
+export function theirClock(country: string | null | undefined, now: number): string {
+  if (!country) return "";
+  const zone = leadZones(country)?.[0];
+  if (!zone) return "";
+  const at = (z: string) => new Intl.DateTimeFormat("en-GB", { timeZone: z, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(now);
+  try {
+    const there = at(zone);
+    return there === at("Asia/Kuwait") ? "" : ` (it is ${there} there)`;
+  } catch {
+    return "";
+  }
 }
 
 function place(out: Ranked[], c: Candidate, h: { score: number; reasons: string[] }, item: Omit<Ranked, keyof Candidate | "heat" | "hot_reasons">) {
@@ -913,6 +1032,9 @@ export function appointmentEffect(kind: ItemKind, outcome: AnyOutcome): Effect |
     return null;
   }
   if (outcome === "confirmed") return { ...none, confirmation: "confirmed" };
+  // The intro had on video in the confirmation call's room (m1 round 6):
+  // the intro is marked held, and it was confirmed by being had.
+  if (outcome === "showed") return { ...none, mark: "showed", confirmation: "confirmed" };
   if (outcome === "no_answer") return { ...none, confirmation: "no_answer" };
   if (outcome === "cancelled") return { ...none, mark: "cancelled", confirmation: "cancelled", rebook: true };
   if (outcome === "not_interested" || outcome === "disqualified")

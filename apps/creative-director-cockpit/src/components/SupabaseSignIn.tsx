@@ -5,12 +5,18 @@ import {
   getCockpitSupabaseClient,
   useCockpitAuth,
 } from "@/auth/SupabaseAuthProvider";
+import {
+  cockpitAuthError,
+  normalizeCockpitCode,
+  requestCockpitCode,
+  safeCockpitNext,
+} from "@/auth/supabaseAccess";
 import { Button } from "./ui/button";
 import { Card, CardContent } from "./ui/card";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 
-type Mode = "password" | "code" | "codeSent" | "resetPassword";
+type Mode = "password" | "code" | "codeSent";
 
 export function SupabaseSignIn() {
   const navigate = useNavigate();
@@ -30,7 +36,6 @@ export function SupabaseSignIn() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
-  const [newPassword, setNewPassword] = useState("");
   const [mode, setMode] = useState<Mode>("password");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -43,7 +48,7 @@ export function SupabaseSignIn() {
   const finishLogin = async () => {
     await refreshAccess();
     if (nextDestination) {
-      navigate(nextDestination, { replace: true });
+      navigate(safeCockpitNext(nextDestination), { replace: true });
     } else {
       navigate("/dashboard", { replace: true });
     }
@@ -73,47 +78,26 @@ export function SupabaseSignIn() {
           await finishLogin();
         }
       } else if (mode === "code") {
-        const { error: err } = await supabase.auth.signInWithOtp({
-          email: cleanEmail,
-          options: { shouldCreateUser: false },
-        });
-        if (err) {
-          setError(err.message);
-        } else {
-          setMode("codeSent");
-          setInfo(
-            "Check your inbox for a one-time code. It is valid for one hour.",
-          );
-        }
+        await requestCockpitCode(supabase, cleanEmail);
+        setMode("codeSent");
+        setInfo(
+          "Check your inbox for a one-time code. It is valid for one hour.",
+        );
       } else if (mode === "codeSent") {
-        const cleanCode = code.replace(/\D/g, "").slice(-6);
+        const cleanCode = normalizeCockpitCode(code);
         const { error: err } = await supabase.auth.verifyOtp({
           email: cleanEmail,
           token: cleanCode,
           type: "email",
         });
         if (err) {
-          setError(
-            "That code did not match. Please check the newest code or request a fresh one.",
-          );
+          setError(cockpitAuthError(err));
         } else {
-          await finishLogin();
-        }
-      } else if (mode === "resetPassword") {
-        const { error: err } = await supabase.auth.updateUser({
-          password: newPassword,
-        });
-        if (err) {
-          setError(err.message);
-        } else {
-          setInfo("Password updated successfully.");
           await finishLogin();
         }
       }
     } catch (err: unknown) {
-      setError(
-        err instanceof Error ? err.message : "An unexpected error occurred.",
-      );
+      setError(cockpitAuthError(err));
     } finally {
       setBusy(false);
     }
@@ -134,7 +118,7 @@ export function SupabaseSignIn() {
               onChange={e => setEmail(e.target.value)}
               placeholder="you@maharamedia.com"
               className="h-11"
-              disabled={mode === "codeSent"}
+              disabled={busy || mode === "codeSent"}
             />
           </div>
 
@@ -144,6 +128,7 @@ export function SupabaseSignIn() {
                 <Label htmlFor="supabase-password">Password</Label>
                 <button
                   type="button"
+                  disabled={busy}
                   onClick={() => {
                     setMode("code");
                     setError(null);
@@ -156,6 +141,7 @@ export function SupabaseSignIn() {
               </div>
               <Input
                 id="supabase-password"
+                disabled={busy}
                 type="password"
                 autoComplete="current-password"
                 required
@@ -169,9 +155,10 @@ export function SupabaseSignIn() {
 
           {mode === "codeSent" && (
             <div className="space-y-2">
-              <Label htmlFor="supabase-code">6-digit Code</Label>
+              <Label htmlFor="supabase-code">Email code</Label>
               <Input
                 id="supabase-code"
+                disabled={busy}
                 inputMode="numeric"
                 autoComplete="one-time-code"
                 required
@@ -179,23 +166,6 @@ export function SupabaseSignIn() {
                 onChange={e => setCode(e.target.value)}
                 placeholder="123456"
                 className="h-11 font-mono tracking-widest text-center"
-              />
-            </div>
-          )}
-
-          {mode === "resetPassword" && (
-            <div className="space-y-2">
-              <Label htmlFor="supabase-new-password">New Password</Label>
-              <Input
-                id="supabase-new-password"
-                type="password"
-                autoComplete="new-password"
-                required
-                minLength={8}
-                value={newPassword}
-                onChange={e => setNewPassword(e.target.value)}
-                placeholder="••••••••"
-                className="h-11"
               />
             </div>
           )}
@@ -233,10 +203,8 @@ export function SupabaseSignIn() {
               "Sign In"
             ) : mode === "code" ? (
               "Email me a code"
-            ) : mode === "codeSent" ? (
-              "Verify and Sign In"
             ) : (
-              "Save Password"
+              "Verify and Sign In"
             )}
           </Button>
 
@@ -244,6 +212,7 @@ export function SupabaseSignIn() {
             {mode === "password" ? (
               <button
                 type="button"
+                disabled={busy}
                 onClick={() => {
                   setMode("code");
                   setError(null);
@@ -256,6 +225,7 @@ export function SupabaseSignIn() {
             ) : (
               <button
                 type="button"
+                disabled={busy}
                 onClick={() => {
                   setMode("password");
                   setError(null);

@@ -11,6 +11,7 @@ import { Navigate, Route, Routes, useLocation, useParams } from "react-router";
 import { MacOSDock } from "./components/MacOSDock";
 import { MacOSMenuBar } from "./components/MacOSMenuBar";
 import { PageBoundary } from "./components/PageBoundary";
+import { SalesBanner } from "./components/SalesBanner";
 import { SearchBox } from "./components/SearchBox";
 import Sidebar from "./components/Sidebar";
 import { Wordmark } from "./components/Wordmark";
@@ -158,7 +159,10 @@ function Shell() {
       isAdmin={isAdmin}
       drawer={drawer}
       setDrawer={setDrawer}
-      banner={null}
+      // The banner slot: a live offer, the seat's open room, then presence.
+      // The portal's sign-in banner went with the Supabase cutover, so there
+      // is nothing to keep mounted underneath it.
+      banner={<SalesBanner portal={null} />}
     />
   );
 }
@@ -261,7 +265,11 @@ export function Seated({
         </div>
       ) : null}
 
-      <div className="flex min-w-0 flex-1 flex-col overflow-y-auto pb-[calc(5.5rem+env(safe-area-inset-bottom,0px))] lg:pb-0">
+      {/* relative: the screen-reader-only words inside (absolutely placed)
+          stay in this scroll area instead of stretching the window, which
+          would scroll twice on a phone and carry a sticky banner away.
+          5.5rem clears the floating dock on a phone. */}
+      <div className="relative flex min-w-0 flex-1 flex-col overflow-y-auto pb-[calc(5.5rem+env(safe-area-inset-bottom,0px))] lg:pb-0">
         {banner}
 
         {/* Desktop authentic macOS Menu Bar */}

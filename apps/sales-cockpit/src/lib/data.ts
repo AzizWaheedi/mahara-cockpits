@@ -45,35 +45,63 @@ type Result<T> = PromiseLike<{
   error: { message: string } | null;
 }>;
 
+/** A failed read is tried again this often while the tab shows, and when the connection returns. */
+export const READ_RETRY_MS = 30_000;
+
+/** The words for a read that did not answer in time. */
+export function readTimeoutWords(ms: number): string {
+  return `It did not answer within ${Math.max(1, Math.round(ms / 1000))} seconds. It tries again by itself.`;
+}
+
 /**
  * Run a read, again whenever its inputs change, and again every `everyMs`
  * while the tab is visible. A reload keeps the old rows on screen until the
  * new ones arrive, so a refresh never blanks a list someone is working in.
+ *
+ * A read that failed is tried again by itself every 30 s while the tab
+ * shows, and at once when the connection comes back; with `timeoutMs` a
+ * read that hangs fails after that long instead of "Loading..." for ever.
  */
 export function useQuery<T>(
   run: () => Result<T>,
   deps: unknown[],
   everyMs = 0,
+  opts: { timeoutMs?: number } = {},
 ): Loaded<T> {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [tick, setTick] = useState(0);
+  const timeoutMs = opts.timeoutMs ?? 0;
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: deps are the caller's
   const fetcher = useCallback(run, [...deps, tick]);
 
   useEffect(() => {
     let alive = true;
+    let timer = 0;
     setLoading(true);
-    Promise.resolve(fetcher()).then(
+    const gaveUp =
+      timeoutMs > 0
+        ? new Promise<never>((_, reject) => {
+            timer = window.setTimeout(
+              () => reject(new Error(readTimeoutWords(timeoutMs))),
+              timeoutMs,
+            );
+          })
+        : null;
+    gaveUp?.catch(() => undefined);
+    const read = Promise.resolve(fetcher());
+    (gaveUp ? Promise.race([read, gaveUp]) : read).then(
       ({ data: rows, error: err }) => {
+        window.clearTimeout(timer);
         if (!alive) return;
         setError(err ? err.message : null);
         if (!err) setData(rows ?? null);
         setLoading(false);
       },
       (e: unknown) => {
+        window.clearTimeout(timer);
         if (!alive) return;
         setError(String((e as Error)?.message ?? e));
         setLoading(false);
@@ -81,8 +109,23 @@ export function useQuery<T>(
     );
     return () => {
       alive = false;
+      window.clearTimeout(timer);
     };
-  }, [fetcher]);
+  }, [fetcher, timeoutMs]);
+
+  // A failed read never stays failed for the life of the page.
+  useEffect(() => {
+    if (!error) return;
+    const t = window.setInterval(() => {
+      if (document.visibilityState === "visible") setTick(n => n + 1);
+    }, READ_RETRY_MS);
+    const online = () => setTick(n => n + 1);
+    window.addEventListener("online", online);
+    return () => {
+      window.clearInterval(t);
+      window.removeEventListener("online", online);
+    };
+  }, [error]);
 
   useEffect(() => {
     if (!everyMs) return;
@@ -830,15 +873,23 @@ export function useLinks(): Loaded<SalesLink[]> {
   );
 }
 
+/** How long a small read (a setting, the status rows) may take before it is said to have failed. */
+export const SMALL_READ_MS = 15_000;
+
 export function useSetting<T>(key: string): Loaded<T> {
-  return useQuery<T>(async () => {
-    const { data, error } = await supabase
-      .from("cockpit_sales_settings")
-      .select("value")
-      .eq("key", key)
-      .maybeSingle();
-    return { data: (data?.value as T) ?? null, error };
-  }, [key]);
+  return useQuery<T>(
+    async () => {
+      const { data, error } = await supabase
+        .from("cockpit_sales_settings")
+        .select("value")
+        .eq("key", key)
+        .maybeSingle();
+      return { data: (data?.value as T) ?? null, error };
+    },
+    [key],
+    0,
+    { timeoutMs: SMALL_READ_MS },
+  );
 }
 
 export function useMirrorRun(everyMs = 60_000): Loaded<MirrorRun> {
@@ -861,6 +912,7 @@ export function useWorkerStatus(): Loaded<WorkerStatus[]> {
     () => supabase.from("cockpit_sales_worker_status").select("*"),
     [],
     120_000,
+    { timeoutMs: SMALL_READ_MS },
   );
 }
 
@@ -978,6 +1030,8 @@ export function useTemplates() {
   return useQuery<TemplateRoute[]>(
     () => supabase.from("cockpit_sales_wa_templates").select("*").order("sort"),
     [],
+    0,
+    { timeoutMs: SMALL_READ_MS },
   );
 }
 

@@ -70,7 +70,9 @@
   --muted-foreground: oklch(0.48 0.02 265);
   --destructive: oklch(0.55 0.22 25);
   --border: oklch(0.91 0.008 250);
-  --ring: var(--mahara-teal);
+  /* Pure teal is under 2:1 on white, too faint for a focus ring: on the
+     light canvas the ring mixes it with the ink (as the countdown does). */
+  --ring: color-mix(in oklch, var(--mahara-teal) 55%, var(--foreground));
 }
 
 .dark {

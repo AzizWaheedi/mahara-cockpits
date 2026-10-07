@@ -1,0 +1,3003 @@
+{
+ "manifest": "VPS inventory before the native Supabase cutover",
+ "generated_utc": "2026-10-07T11:38:06Z",
+ "host": {
+  "ssh": "hermes@187.77.156.166",
+  "hostname": "srv1490962",
+  "user": "hermes",
+  "disk_root": "193G size, 154G used, 40G free (80%)",
+  "python": "3.12.3"
+ },
+ "rules_followed": "Read-only on the VPS: nothing written there except one transient crontab copy in /tmp, removed at once; no setting, cron line or file changed. No secret value read into this file: env files are listed by key name only; the six allowlisted sales-desk settings and GUARDIAN_BEAT are configuration, not secrets. No env file digests. Lead and client file names (the vince call reviews) are counted and digested, not named.",
+ "compared_against": {
+  "repo": "AzizWaheedi/mahara-cockpits",
+  "ref": "origin/main",
+  "commit": "e166a0b5b8cd0581daf651a1b99246a53de0842e",
+  "restore_tag": "pre-supabase-migration-2026-10-07"
+ },
+ "checkout": {
+  "path": "~/mahara-cockpits",
+  "branch": "main",
+  "head": "754585045c0c67989ac0728305fb4119d2aac7f7",
+  "head_date": "2026-09-19 (Merge branch 'ceo-sources')",
+  "local_origin_main_ref": "75279075c1dfacbf966876fd29f207ec6e804199 (fetched, never merged)",
+  "porcelain_entries": 84,
+  "untracked": 72,
+  "modified_tracked": 9,
+  "added_modified": 3,
+  "sales_desk_and_guardian_tracked_at_head": false,
+  "state": "Stale and dirty: hermes/sales-desk and hermes/cockpit-guardian are untracked at HEAD (copied by hand); hermes/eod-out, review-import, webinar-pull and ~50 supabase/migrations files are untracked too; editor-desk, ideation-radar and team-sync have uncommitted edits."
+ },
+ "crontab": {
+  "sha256": "16970f8e50d1eebabf042de29c97ed7f3796586247eb46df4c4c2e1805d9c331",
+  "lines_including_trailing_empty": 65,
+  "bytes": 10175,
+  "secret_scan": "No KEY/TOKEN/SECRET/PASSWORD assignments, auth headers or long token-like strings in any line; every job sources env files instead.",
+  "job_lines": 32,
+  "comment_lines": 23,
+  "blank_lines": 10,
+  "lines": [
+   {
+    "n": 1,
+    "sha256": "c9c5b7470d92e648f16f7e85fcd56cd0b5798704b4bc7bb9eaebb7e851a452e5",
+    "kind": "comment",
+    "text": "# editor desk (hermes/editor-desk): the board in, the footage read. README has the details."
+   },
+   {
+    "n": 2,
+    "sha256": "14821412e6a8eeae2f6307803fdb596293e9b2fd06a7c76894e877f5ba563e0e",
+    "kind": "job",
+    "text": "2,32 * * * *  flock -n $HOME/.editor-desk/sync.lock    bash -c \"set -a; . $HOME/.editor-desk/env; set +a; cd $HOME/mahara-cockpits/hermes/editor-desk && python3 desk.py --quiet sync\"    >> $HOME/.editor-desk/out/cron.log 2>&1",
+    "schedule": "2,32 * * * *",
+    "component": "editor-desk",
+    "runs": "desk.py --quiet sync",
+    "lock": "$HOME/.editor-desk/sync.lock",
+    "in_git_crontab_manifest": true,
+    "in_git_sales_desk_readme": false
+   },
+   {
+    "n": 3,
+    "sha256": "02615702ad919bfaa3441d0a711c358c33fb557f25269feae1fb20af8bcb0929",
+    "kind": "job",
+    "text": "7,37 * * * *  flock -n $HOME/.editor-desk/prepare.lock bash -c \"set -a; . $HOME/.editor-desk/env; set +a; cd $HOME/mahara-cockpits/hermes/editor-desk && python3 desk.py --quiet prepare\" >> $HOME/.editor-desk/out/cron.log 2>&1",
+    "schedule": "7,37 * * * *",
+    "component": "editor-desk",
+    "runs": "desk.py --quiet prepare",
+    "lock": "$HOME/.editor-desk/prepare.lock",
+    "in_git_crontab_manifest": true,
+    "in_git_sales_desk_readme": false
+   },
+   {
+    "n": 4,
+    "sha256": "7a28f2d13f59b90cdb609f96bc92148e197e15fb8c5f064f252b90b9fdb9824f",
+    "kind": "job",
+    "text": "17 * * * *    flock -n $HOME/.editor-desk/notes.lock   bash -c \"set -a; . $HOME/.editor-desk/env; set +a; cd $HOME/mahara-cockpits/hermes/editor-desk && python3 desk.py --quiet notes\"    >> $HOME/.editor-desk/out/cron.log 2>&1",
+    "schedule": "17 * * * *",
+    "component": "editor-desk",
+    "runs": "desk.py --quiet notes",
+    "lock": "$HOME/.editor-desk/notes.lock",
+    "in_git_crontab_manifest": true,
+    "in_git_sales_desk_readme": false
+   },
+   {
+    "n": 5,
+    "sha256": "4a5ec361a8504beceae94961faf7a2e368a728fdc263254f402da5dc0ba31ec3",
+    "kind": "job",
+    "text": "*/3 * * * *   flock -n $HOME/.editor-desk/requests.lock bash -c \"set -a; . $HOME/.editor-desk/env; set +a; cd $HOME/mahara-cockpits/hermes/editor-desk && python3 desk.py --quiet requests\" >> $HOME/.editor-desk/out/cron.log 2>&1",
+    "schedule": "*/3 * * * *",
+    "component": "editor-desk",
+    "runs": "desk.py --quiet requests",
+    "lock": "$HOME/.editor-desk/requests.lock",
+    "in_git_crontab_manifest": true,
+    "in_git_sales_desk_readme": false
+   },
+   {
+    "n": 6,
+    "sha256": "f24ae05aa032cd0821c5d836522c88464ca76dfe832784c9ca9fa8f843bad65a",
+    "kind": "job",
+    "text": "27 * * * *    flock -n $HOME/.editor-desk/meetings.lock bash -c \"set -a; . $HOME/.editor-desk/env; . /opt/data/bibi/api-keys.env; set +a; cd $HOME/mahara-cockpits/hermes/editor-desk && python3 desk.py --quiet meetings\" >> $HOME/.editor-desk/out/cron.log 2>&1",
+    "schedule": "27 * * * *",
+    "component": "editor-desk",
+    "runs": "desk.py --quiet meetings",
+    "lock": "$HOME/.editor-desk/meetings.lock",
+    "in_git_crontab_manifest": true,
+    "in_git_sales_desk_readme": false
+   },
+   {
+    "n": 7,
+    "sha256": "e94f8c64a3a548564b4fb86e48a3a850184833c7cfc6aed1939bd0b2466a3a83",
+    "kind": "job",
+    "text": "*/20 * * * *  flock -n $HOME/.editor-desk/foreplay.lock bash -c \"set -a; . $HOME/.editor-desk/env; . /opt/data/bibi/api-keys.env; set +a; cd $HOME/mahara-cockpits/hermes/editor-desk && python3 desk.py --quiet foreplay\" >> $HOME/.editor-desk/out/cron.log 2>&1",
+    "schedule": "*/20 * * * *",
+    "component": "editor-desk",
+    "runs": "desk.py --quiet foreplay",
+    "lock": "$HOME/.editor-desk/foreplay.lock",
+    "in_git_crontab_manifest": true,
+    "in_git_sales_desk_readme": false
+   },
+   {
+    "n": 8,
+    "sha256": "2f3c75168f620937b7de4127eeb300ebdf49a5f9cdee3f1c9a3ebc9d2db18081",
+    "kind": "job",
+    "text": "41 3 * * *    flock -n $HOME/.editor-desk/archive.lock bash -c \"set -a; . $HOME/.editor-desk/env; . /opt/data/bibi/api-keys.env; set +a; cd $HOME/mahara-cockpits/hermes/editor-desk && python3 desk.py --quiet archive --limit 25\" >> $HOME/.editor-desk/out/cron.log 2>&1",
+    "schedule": "41 3 * * *",
+    "component": "editor-desk",
+    "runs": "desk.py --quiet archive --limit 25",
+    "lock": "$HOME/.editor-desk/archive.lock",
+    "in_git_crontab_manifest": true,
+    "in_git_sales_desk_readme": false
+   },
+   {
+    "n": 9,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "kind": "blank",
+    "text": ""
+   },
+   {
+    "n": 10,
+    "sha256": "2bfa5bfb441737517241d4016fbb322ebcde93c5d000a2902efd60e8e62b56a0",
+    "kind": "comment",
+    "text": "# Salma, the social media producer. Drains social_jobs: plans, captions and"
+   },
+   {
+    "n": 11,
+    "sha256": "89396ab74b8fd9241f210d71382da052f2721a7719426caf48d3ccea0c052689",
+    "kind": "comment",
+    "text": "# here, generation is deferred to the agent session that can reach Higgsfield"
+   },
+   {
+    "n": 12,
+    "sha256": "2b47505ec048b2a66479b4711e2145ea098734dc69038d7eb132dbb7b5b171b6",
+    "kind": "comment",
+    "text": "# MCP. Silent when the queue is empty."
+   },
+   {
+    "n": 13,
+    "sha256": "354e23f72c7fbf381c083ff2a5b5a0fc712359784ac8e8d76cadd0fd62a4cd89",
+    "kind": "job",
+    "text": "* * * * *   flock -n $HOME/.salma.lock bash -c \"set -a; . $HOME/.editor-desk/env; . /opt/data/bibi/api-keys.env; set +a; python3 /opt/data/bibi/agents/salma/salma.py 5\" >> $HOME/.salma.log 2>&1",
+    "schedule": "* * * * *",
+    "component": "bibi agent salma",
+    "runs": "/opt/data/bibi/agents/salma/salma.py 5",
+    "lock": "$HOME/.salma.lock",
+    "in_git_crontab_manifest": true,
+    "in_git_sales_desk_readme": false
+   },
+   {
+    "n": 14,
+    "sha256": "c0e40c66a9731dbe0ebbdaac9605287e52715e089f841d01d8bf0ac24691f0db",
+    "kind": "job",
+    "text": "*/2 * * * * flock -n $HOME/.ideation-radar/posts.lock bash -c \"set -a; . $HOME/.ideation-radar/env; . /opt/data/bibi/api-keys.env; set +a; cd $HOME/mahara-cockpits/hermes/ideation-radar && python3 radar.py --quiet posts\" >> $HOME/.ideation-radar/out/cron.log 2>&1",
+    "schedule": "*/2 * * * *",
+    "component": "ideation-radar",
+    "runs": "radar.py --quiet posts",
+    "lock": "$HOME/.ideation-radar/posts.lock",
+    "in_git_crontab_manifest": true,
+    "in_git_sales_desk_readme": false
+   },
+   {
+    "n": 15,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "kind": "blank",
+    "text": ""
+   },
+   {
+    "n": 16,
+    "sha256": "e4c25fda951f3c9d236aed0db43434c068038569cccd401aed57cb6232c72892",
+    "kind": "comment",
+    "text": "# Hala, the WhatsApp desk. Scans the Mahara client account and drafts a"
+   },
+   {
+    "n": 17,
+    "sha256": "81490e338dc6016eeec323fe17dc0c2d704e46faff3c71ac931bc3e00765739f",
+    "kind": "comment",
+    "text": "# reply in both languages wherever the client spoke last. Every 15 minutes"
+   },
+   {
+    "n": 18,
+    "sha256": "465ca715466e583ff5cfd380e236d0146248bf327ad77fe64223ad8206200d96",
+    "kind": "comment",
+    "text": "# rather than daily: the watermark makes a scan with nothing new almost"
+   },
+   {
+    "n": 19,
+    "sha256": "b002a5cfd944f769191d26abad6205b7339cf184437025fa07d56bb0e4e215da",
+    "kind": "comment",
+    "text": "# free, and a recommended reply that is a day old is not a reply."
+   },
+   {
+    "n": 20,
+    "sha256": "565af75b35c3f6b8f8fe1d7cdab4f6e49c6230a0f244b204d2553a92367db061",
+    "kind": "job",
+    "text": "*/15 * * * *   flock -n $HOME/.hala.lock bash -c \"set -a; . $HOME/.editor-desk/env; . /opt/data/bibi/api-keys.env; set +a; python3 /opt/data/bibi/agents/hala/inbox.py\" >> $HOME/.hala.log 2>&1",
+    "schedule": "*/15 * * * *",
+    "component": "bibi agent hala",
+    "runs": "/opt/data/bibi/agents/hala/inbox.py",
+    "lock": "$HOME/.hala.lock",
+    "in_git_crontab_manifest": true,
+    "in_git_sales_desk_readme": false
+   },
+   {
+    "n": 21,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "kind": "blank",
+    "text": ""
+   },
+   {
+    "n": 22,
+    "sha256": "df860997ba713b21e1670b70f9c477631eed2f4e1fc45ec0e1a8b93443a7e393",
+    "kind": "comment",
+    "text": "# Tells the editors a client has been through a review. The notes reach"
+   },
+   {
+    "n": 23,
+    "sha256": "cdaf74bee48cd53c50d2786c5fdd3b3e377749d51d60b0f74c06c214f3039735",
+    "kind": "comment",
+    "text": "# them regardless -- review_decide writes them into editor_notes in the"
+   },
+   {
+    "n": 24,
+    "sha256": "67df6e55dd53ca448b383366d6adc47cc568b3d95d6f1b84917f3fa64a72d070",
+    "kind": "comment",
+    "text": "# same transaction -- so this is the nudge, not the delivery."
+   },
+   {
+    "n": 25,
+    "sha256": "ba6f5741be278d76a3a8f52521f855297dc3daac8f40c1798934100af2edbf67",
+    "kind": "job",
+    "text": "*/10 * * * *  flock -n $HOME/.reviewwatch.lock bash -c \"set -a; . $HOME/.editor-desk/env; . /opt/data/bibi/api-keys.env; set +a; python3 /opt/data/bibi/agents/review-watch/watch.py\" >> $HOME/.reviewwatch.log 2>&1",
+    "schedule": "*/10 * * * *",
+    "component": "bibi agent review-watch",
+    "runs": "/opt/data/bibi/agents/review-watch/watch.py",
+    "lock": "$HOME/.reviewwatch.lock",
+    "in_git_crontab_manifest": true,
+    "in_git_sales_desk_readme": false
+   },
+   {
+    "n": 26,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "kind": "blank",
+    "text": ""
+   },
+   {
+    "n": 27,
+    "sha256": "eaac7533bd2beb075f4fc02074b2e1befe093dce01277ff82e6c8992880a634a",
+    "kind": "comment",
+    "text": "# Pulls a Drive folder into a client review: copies every video and image"
+   },
+   {
+    "n": 28,
+    "sha256": "41fa35f085dfc0f607b725e0d632cd18d980030f3388482e75c492079053159c",
+    "kind": "comment",
+    "text": "# into our own bucket so the client can actually open them. Every two"
+   },
+   {
+    "n": 29,
+    "sha256": "6363c140b60999f23f2fe63c15aa07525a0f8c668d3ff82e7ff0a543ed4d9e48",
+    "kind": "comment",
+    "text": "# minutes, because somebody is watching the screen while it runs."
+   },
+   {
+    "n": 30,
+    "sha256": "3c51ccda60f15eb4776ca98c3b8fa70c780523614709e125d852ca2a5589dac1",
+    "kind": "job",
+    "text": "*/2 * * * *  flock -n $HOME/.reviewimport.lock bash -c \"cd $HOME/mahara-cockpits/hermes/review-import && set -a; . $HOME/.editor-desk/env; . /opt/data/bibi/api-keys.env; set +a; python3 import.py\" >> $HOME/.reviewimport.log 2>&1",
+    "schedule": "*/2 * * * *",
+    "component": "review-import",
+    "runs": "import.py",
+    "lock": "$HOME/.reviewimport.lock",
+    "in_git_crontab_manifest": true,
+    "in_git_sales_desk_readme": false
+   },
+   {
+    "n": 31,
+    "sha256": "12e75bff717b3f7b0b5f58e6d7dcb74b1e9998dd46176f4f263c644c8f34a53e",
+    "kind": "job",
+    "text": "*/30 * * * * flock -n $HOME/.ideation-radar/hiring.lock bash -c \"set -a; . $HOME/.ideation-radar/env; . /opt/data/bibi/api-keys.env; set +a; cd $HOME/mahara-cockpits/hermes/ideation-radar && python3 radar.py --quiet hiring --limit 12\" >> $HOME/.ideation-radar/out/hiring.log 2>&1",
+    "schedule": "*/30 * * * *",
+    "component": "ideation-radar",
+    "runs": "radar.py --quiet hiring --limit 12",
+    "lock": "$HOME/.ideation-radar/hiring.lock",
+    "in_git_crontab_manifest": true,
+    "in_git_sales_desk_readme": false
+   },
+   {
+    "n": 32,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "kind": "blank",
+    "text": ""
+   },
+   {
+    "n": 33,
+    "sha256": "2b2f20019f0c886090c6355906d9da5b779779b341921b396eb2cecf079e4093",
+    "kind": "comment",
+    "text": "# Carries every cockpit's end of day to its Slack channel and the EOD"
+   },
+   {
+    "n": 34,
+    "sha256": "4228f8d7670178b4200451b2a0c535c48eabc9b69c9802148397cc97daf31ccc",
+    "kind": "comment",
+    "text": "# Reports sheet. Every 5 minutes: somebody has just pressed submit and"
+   },
+   {
+    "n": 35,
+    "sha256": "14583f37c3d5e519fb3511d35cb7f8850200ad55e05e1a6f8f38fa5f94a9e740",
+    "kind": "comment",
+    "text": "# wants to see it land before they close the laptop."
+   },
+   {
+    "n": 36,
+    "sha256": "9346e4fe8f24c5f3cf7309f33c1d594562231a1c582bea2f7cbb6c54c414d916",
+    "kind": "job",
+    "text": "*/5 * * * *  flock -n $HOME/.eodout.lock bash -c \"cd $HOME/mahara-cockpits/hermes/eod-out && set -a; . $HOME/.editor-desk/env; . /opt/data/bibi/api-keys.env; set +a; python3 out.py\" >> $HOME/.eodout.log 2>&1",
+    "schedule": "*/5 * * * *",
+    "component": "eod-out",
+    "runs": "out.py",
+    "lock": "$HOME/.eodout.lock",
+    "in_git_crontab_manifest": true,
+    "in_git_sales_desk_readme": false
+   },
+   {
+    "n": 37,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "kind": "blank",
+    "text": ""
+   },
+   {
+    "n": 38,
+    "sha256": "83dddf4aa5a2bfa7a48f218b125b72d740811b5ab67eacbf8d7d7acf71e9a6f4",
+    "kind": "comment",
+    "text": "# Keeps the team's meetings in step with Google Calendar, every five minutes"
+   },
+   {
+    "n": 39,
+    "sha256": "c4c096f073eb777e37090ec69c945cf6b3a5f26d42a46928a4b994cd268f4b3e",
+    "kind": "comment",
+    "text": "# (team meetings v5, 2026-09-27; hermes/team-sync/README.md). GOOGLE_CAL_* in ~/.team-sync/env when set."
+   },
+   {
+    "n": 40,
+    "sha256": "009083f897d59417c727f2cb115d84a2f6a253a49b9b49a4e765311c5ebba3f4",
+    "kind": "job",
+    "text": "*/5 * * * *  flock -n $HOME/.teamsync.lock bash -c \"cd $HOME/mahara-cockpits/hermes/team-sync && set -a; . $HOME/.editor-desk/env; . /opt/data/bibi/api-keys.env; [ -f $HOME/.team-sync/env ] && . $HOME/.team-sync/env; set +a; python3 sync.py\" >> $HOME/.teamsync.log 2>&1",
+    "schedule": "*/5 * * * *",
+    "component": "team-sync",
+    "runs": "sync.py",
+    "lock": "$HOME/.teamsync.lock",
+    "in_git_crontab_manifest": true,
+    "in_git_sales_desk_readme": false
+   },
+   {
+    "n": 41,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "kind": "blank",
+    "text": ""
+   },
+   {
+    "n": 42,
+    "sha256": "4b77fcc0f9972f4574a5d61e7e65dff335626c67a48e9fc043a74dbe193b4f0b",
+    "kind": "comment",
+    "text": "# Webinar pull: Zoom and the gift survey into Creative Triage (hermes/webinar-pull/README.md)"
+   },
+   {
+    "n": 43,
+    "sha256": "fd4300df8a4c4299b34a30b251a8d8dae385d13f43bda8cbdf1941b5877057b3",
+    "kind": "job",
+    "text": "23 * * * *  flock -n $HOME/.webinar-pull.lock bash -c \"cd $HOME/mahara-cockpits/hermes/webinar-pull && set -a; . $HOME/.editor-desk/env; . /opt/data/bibi/api-keys.env; set +a; python3 pull.py --quiet\" >> $HOME/.webinar-pull.log 2>&1",
+    "schedule": "23 * * * *",
+    "component": "webinar-pull",
+    "runs": "pull.py --quiet",
+    "lock": "$HOME/.webinar-pull.lock",
+    "in_git_crontab_manifest": true,
+    "in_git_sales_desk_readme": false
+   },
+   {
+    "n": 44,
+    "sha256": "d67ea98f9474b59d7f232d88332d78571d36facbe1a6b529e6603dcf216e3531",
+    "kind": "job",
+    "text": "*/2 * * * *  flock -n $HOME/.sales-desk/requests.lock bash -c \"cd $HOME/mahara-cockpits/hermes/sales-desk && set -a; . $HOME/.editor-desk/env; . /opt/data/bibi/api-keys.env; . $HOME/.sales-desk/env; set +a; python3 desk.py --quiet requests\" >> $HOME/.sales-desk.log 2>&1",
+    "schedule": "*/2 * * * *",
+    "component": "sales-desk",
+    "runs": "desk.py --quiet requests",
+    "lock": "$HOME/.sales-desk/requests.lock",
+    "in_git_crontab_manifest": true,
+    "in_git_sales_desk_readme": false
+   },
+   {
+    "n": 45,
+    "sha256": "a45f2767da29f268d7734c26abfff0a603679ae1364623dde0591a4dfc830751",
+    "kind": "job",
+    "text": "11,41 * * * * flock -n $HOME/.sales-desk/recordings.lock bash -c \"cd $HOME/mahara-cockpits/hermes/sales-desk && set -a; . $HOME/.editor-desk/env; . /opt/data/bibi/api-keys.env; . $HOME/.sales-desk/env; set +a; python3 desk.py --quiet recordings\" >> $HOME/.sales-desk.log 2>&1",
+    "schedule": "11,41 * * * *",
+    "component": "sales-desk",
+    "runs": "desk.py --quiet recordings",
+    "lock": "$HOME/.sales-desk/recordings.lock",
+    "in_git_crontab_manifest": true,
+    "in_git_sales_desk_readme": false
+   },
+   {
+    "n": 46,
+    "sha256": "8c1c708afc9b51a102888763584974e176de3c1fe566a46932de71b651f179ac",
+    "kind": "job",
+    "text": "26,56 * * * * flock -n $HOME/.sales-desk/calls-vault.lock bash -c \"cd $HOME/mahara-cockpits/hermes/sales-desk && set -a; . $HOME/.editor-desk/env; . /opt/data/bibi/api-keys.env; . $HOME/.sales-desk/env; set +a; python3 desk.py --quiet calls-vault\" >> $HOME/.sales-desk.log 2>&1",
+    "schedule": "26,56 * * * *",
+    "component": "sales-desk",
+    "runs": "desk.py --quiet calls-vault",
+    "lock": "$HOME/.sales-desk/calls-vault.lock",
+    "in_git_crontab_manifest": true,
+    "in_git_sales_desk_readme": false
+   },
+   {
+    "n": 47,
+    "sha256": "d9c414b9cc50e2c8cd9c5de3a798cd49090a2182dc65c886d6ad7434346e5ed3",
+    "kind": "job",
+    "text": "3,33 * * * * flock -n $HOME/.sales-desk/reviews.lock bash -c \"cd $HOME/mahara-cockpits/hermes/sales-desk && set -a; . $HOME/.editor-desk/env; . /opt/data/bibi/api-keys.env; . $HOME/.sales-desk/env; set +a; python3 desk.py --quiet reviews --limit 2\" >> $HOME/.sales-desk.log 2>&1",
+    "schedule": "3,33 * * * *",
+    "component": "sales-desk",
+    "runs": "desk.py --quiet reviews --limit 2",
+    "lock": "$HOME/.sales-desk/reviews.lock",
+    "in_git_crontab_manifest": true,
+    "in_git_sales_desk_readme": false
+   },
+   {
+    "n": 48,
+    "sha256": "05ed5656d54906c1829ac2828d270bc9ed07e81da3e8ee38d08d9bac64759f69",
+    "kind": "job",
+    "text": "*/2 * * * * flock -n $HOME/.sales-desk/research.lock bash -c \"cd $HOME/mahara-cockpits/hermes/sales-desk && set -a; . $HOME/.editor-desk/env; . /opt/data/bibi/api-keys.env; . $HOME/.sales-desk/env; set +a; python3 desk.py --quiet research\" >> $HOME/.sales-desk.log 2>&1",
+    "schedule": "*/2 * * * *",
+    "component": "sales-desk",
+    "runs": "desk.py --quiet research",
+    "lock": "$HOME/.sales-desk/research.lock",
+    "in_git_crontab_manifest": true,
+    "in_git_sales_desk_readme": false
+   },
+   {
+    "n": 49,
+    "sha256": "80f59dd192a07031d987d9df710b43900db38de5da8df40fab54b65d97dffde3",
+    "kind": "job",
+    "text": "7,37 * * * * flock -n $HOME/.sales-desk/followups.lock bash -c \"cd $HOME/mahara-cockpits/hermes/sales-desk && set -a; . $HOME/.editor-desk/env; . /opt/data/bibi/api-keys.env; . $HOME/.sales-desk/env; set +a; python3 desk.py --quiet followups\" >> $HOME/.sales-desk.log 2>&1",
+    "schedule": "7,37 * * * *",
+    "component": "sales-desk",
+    "runs": "desk.py --quiet followups",
+    "lock": "$HOME/.sales-desk/followups.lock",
+    "in_git_crontab_manifest": true,
+    "in_git_sales_desk_readme": false
+   },
+   {
+    "n": 50,
+    "sha256": "72c95c60cdf6b0bcb18dcb8c5d29e4bb3b35c96ccdb284dedc5610ed2006c45f",
+    "kind": "job",
+    "text": "*/2 * * * * flock -n $HOME/.sales-desk/reviews-asked.lock bash -c \"cd $HOME/mahara-cockpits/hermes/sales-desk && set -a; . $HOME/.editor-desk/env; . /opt/data/bibi/api-keys.env; . $HOME/.sales-desk/env; set +a; python3 desk.py --quiet reviews --asked\" >> $HOME/.sales-desk.log 2>&1",
+    "schedule": "*/2 * * * *",
+    "component": "sales-desk",
+    "runs": "desk.py --quiet reviews --asked",
+    "lock": "$HOME/.sales-desk/reviews-asked.lock",
+    "in_git_crontab_manifest": true,
+    "in_git_sales_desk_readme": false
+   },
+   {
+    "n": 51,
+    "sha256": "50ce1b7ab4c4f1c4008aa095ca53687b7268c684f2d0a82d9c246c717381e69a",
+    "kind": "job",
+    "text": "15 3 * * * flock -n $HOME/.sales-desk/digest.lock bash -c \"cd $HOME/mahara-cockpits/hermes/sales-desk && set -a; . $HOME/.editor-desk/env; . /opt/data/bibi/api-keys.env; . $HOME/.sales-desk/env; set +a; python3 desk.py --quiet digest\" >> $HOME/.sales-desk.log 2>&1",
+    "schedule": "15 3 * * *",
+    "component": "sales-desk",
+    "runs": "desk.py --quiet digest",
+    "lock": "$HOME/.sales-desk/digest.lock",
+    "in_git_crontab_manifest": true,
+    "in_git_sales_desk_readme": false
+   },
+   {
+    "n": 52,
+    "sha256": "7c4279b3573c4b1700b39b6961101106f8984d7d113c79dff4afed452e1eccae",
+    "kind": "job",
+    "text": "19,49 * * * * flock -n $HOME/.sales-desk/notes.lock bash -c \"cd $HOME/mahara-cockpits/hermes/sales-desk && set -a; . $HOME/.editor-desk/env; . /opt/data/bibi/api-keys.env; . $HOME/.sales-desk/env; set +a; python3 desk.py --quiet notes --limit 4\" >> $HOME/.sales-desk.log 2>&1",
+    "schedule": "19,49 * * * *",
+    "component": "sales-desk",
+    "runs": "desk.py --quiet notes --limit 4",
+    "lock": "$HOME/.sales-desk/notes.lock",
+    "in_git_crontab_manifest": true,
+    "in_git_sales_desk_readme": false
+   },
+   {
+    "n": 53,
+    "sha256": "f512d58b9cac20f9ce6c9e9d1534953a4126ad8e23736770c01ce383355100ed",
+    "kind": "job",
+    "text": "16,46 * * * * flock -n $HOME/.sales-desk/maqsam-calls.lock bash -c \"cd $HOME/mahara-cockpits/hermes/sales-desk && set -a; . $HOME/.editor-desk/env; . /opt/data/bibi/api-keys.env; . $HOME/.sales-desk/env; set +a; ulimit -v 1500000; python3 desk.py --quiet maqsam-calls\" >> $HOME/.sales-desk.log 2>&1",
+    "schedule": "16,46 * * * *",
+    "component": "sales-desk",
+    "runs": "desk.py --quiet maqsam-calls",
+    "lock": "$HOME/.sales-desk/maqsam-calls.lock",
+    "in_git_crontab_manifest": true,
+    "in_git_sales_desk_readme": false
+   },
+   {
+    "n": 54,
+    "sha256": "74c4ebc6f3fa72109dd0b8add88fbeee33773cfc787bf66e57ebb84dd1ba432a",
+    "kind": "comment",
+    "text": "# Ideation radar: the weekly outlier scan (Saturday 07:07 Kuwait) and links pasted in the cockpit every 5 minutes (hermes/ideation-radar/README.md). Restored 2026-09-27: both lines had gone missing after 2026-09-19."
+   },
+   {
+    "n": 55,
+    "sha256": "04cd28742ed2597c9123ae834dd88454e61e3e7ab4da56e07f0604bf74dc4638",
+    "kind": "job",
+    "text": "7 4 * * 6   flock -n $HOME/.ideation-radar/scan.lock    bash -c \"set -a; . $HOME/.ideation-radar/env; . /opt/data/bibi/api-keys.env; set +a; cd $HOME/mahara-cockpits/hermes/ideation-radar && python3 radar.py --quiet scan\" >> $HOME/.ideation-radar/out/cron.log 2>&1",
+    "schedule": "7 4 * * 6",
+    "component": "ideation-radar",
+    "runs": "radar.py --quiet scan",
+    "lock": "$HOME/.ideation-radar/scan.lock",
+    "in_git_crontab_manifest": true,
+    "in_git_sales_desk_readme": false
+   },
+   {
+    "n": 56,
+    "sha256": "5e5cb78a8426e4e1a92bd4e75683339dd660815de136fd06b10f2842e82b49e9",
+    "kind": "job",
+    "text": "*/5 * * * * flock -n $HOME/.ideation-radar/pending.lock bash -c \"set -a; . $HOME/.ideation-radar/env; . /opt/data/bibi/api-keys.env; set +a; cd $HOME/mahara-cockpits/hermes/ideation-radar && python3 radar.py --quiet pending\" >> $HOME/.ideation-radar/out/cron.log 2>&1",
+    "schedule": "*/5 * * * *",
+    "component": "ideation-radar",
+    "runs": "radar.py --quiet pending",
+    "lock": "$HOME/.ideation-radar/pending.lock",
+    "in_git_crontab_manifest": true,
+    "in_git_sales_desk_readme": false
+   },
+   {
+    "n": 57,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "kind": "blank",
+    "text": ""
+   },
+   {
+    "n": 58,
+    "sha256": "9c3e2ecf5d72a6d33822c0fbab33a460a67d8e60af4d15be7c5134c14a4af8ee",
+    "kind": "comment",
+    "text": "# cockpit guardian (hermes/cockpit-guardian): scan every 5 min, report-only until its reports prove accurate"
+   },
+   {
+    "n": 59,
+    "sha256": "a595f2b8de7f5c243716180de3d79d4f218fecddaa11f94b5516e052501b8e6f",
+    "kind": "job",
+    "text": "*/5 * * * *  flock -n $HOME/.cockpit-guardian/run.lock bash -c \"cd $HOME/mahara-cockpits/hermes/cockpit-guardian && set -a; . $HOME/.editor-desk/env; . /opt/data/bibi/api-keys.env; [ -f $HOME/.cockpit-guardian/env ] && . $HOME/.cockpit-guardian/env; set +a; python3 guardian.py --mode report-only --quiet run\" >> $HOME/.cockpit-guardian/cron.log 2>&1",
+    "schedule": "*/5 * * * *",
+    "component": "cockpit-guardian",
+    "runs": "guardian.py --mode report-only --quiet run",
+    "lock": "$HOME/.cockpit-guardian/run.lock",
+    "in_git_crontab_manifest": true,
+    "in_git_sales_desk_readme": false
+   },
+   {
+    "n": 60,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "kind": "blank",
+    "text": ""
+   },
+   {
+    "n": 61,
+    "sha256": "1b8ca6c69d72ced53a32e76c4b6c4304c2ebe10d015064c930bba1f97eb2e3b3",
+    "kind": "comment",
+    "text": "# live calls Milestone 1 (hermes/sales-desk): the video room worker, the room host check, the hourly doctor (2026-10-07)"
+   },
+   {
+    "n": 62,
+    "sha256": "fafcce7b641dc53c2626e45d84ff172b3c47ab5d7a150fc752352e5d1acc06a7",
+    "kind": "job",
+    "text": "* * * * *    flock -w 10 $HOME/.sales-desk/rooms.lock bash -c \"cd $HOME/mahara-cockpits/hermes/sales-desk && set -a; . $HOME/.editor-desk/env; . /opt/data/bibi/api-keys.env; . $HOME/.sales-desk/env; set +a; python3 desk.py --quiet rooms --for 57\" >> $HOME/.sales-desk.log 2>&1",
+    "schedule": "* * * * *",
+    "component": "sales-desk",
+    "runs": "desk.py --quiet rooms --for 57",
+    "lock": "$HOME/.sales-desk/rooms.lock",
+    "in_git_crontab_manifest": false,
+    "in_git_sales_desk_readme": true
+   },
+   {
+    "n": 63,
+    "sha256": "0ce2d320c4881c70b9caa1a2988b2eac1058430c8de9bced4fc0c81b29c8ab74",
+    "kind": "job",
+    "text": "*/10 * * * * flock -n $HOME/.sales-desk/room-hosts.lock bash -c \"cd $HOME/mahara-cockpits/hermes/sales-desk && set -a; . $HOME/.editor-desk/env; . /opt/data/bibi/api-keys.env; . $HOME/.sales-desk/env; set +a; python3 desk.py --quiet rooms --check-hosts\" >> $HOME/.sales-desk.log 2>&1",
+    "schedule": "*/10 * * * *",
+    "component": "sales-desk",
+    "runs": "desk.py --quiet rooms --check-hosts",
+    "lock": "$HOME/.sales-desk/room-hosts.lock",
+    "in_git_crontab_manifest": false,
+    "in_git_sales_desk_readme": true
+   },
+   {
+    "n": 64,
+    "sha256": "750759556315feaf989c5b2e1cfabe1b418853ad0cebab4b6ebd4a68ff37bc85",
+    "kind": "job",
+    "text": "5 * * * *    flock -n $HOME/.sales-desk/doctor.lock bash -c \"cd $HOME/mahara-cockpits/hermes/sales-desk && set -a; . $HOME/.editor-desk/env; . /opt/data/bibi/api-keys.env; . $HOME/.sales-desk/env; set +a; python3 desk.py --quiet doctor --cron\" >> $HOME/.sales-desk.log 2>&1",
+    "schedule": "5 * * * *",
+    "component": "sales-desk",
+    "runs": "desk.py --quiet doctor --cron",
+    "lock": "$HOME/.sales-desk/doctor.lock",
+    "in_git_crontab_manifest": false,
+    "in_git_sales_desk_readme": true
+   },
+   {
+    "n": 65,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "kind": "blank",
+    "text": ""
+   }
+  ],
+  "vs_git_crontab_manifest": {
+   "file": "hermes/cockpit-guardian/crontab.manifest",
+   "manifest_job_lines": 29,
+   "live_job_lines": 32,
+   "live_missing_from_manifest": [
+    62,
+    63,
+    64
+   ],
+   "manifest_missing_from_live": [],
+   "note": "Lines 62-64 (live calls M1: rooms --for 57, rooms --check-hosts, doctor --cron) are not in crontab.manifest, so the guardian would not report them missing; they are recorded verbatim in hermes/sales-desk/README.md lines 549-551 on origin/main."
+  },
+  "guardian_cronline": {
+   "file": "~/.cockpit-guardian/cronline",
+   "sha256": "76d2b539939aa4df3f5b30cc78b8ebf9703233ca7ff5ea7d533855022df63f58",
+   "matches_crontab_line": 59
+  },
+  "backups": {
+   "~/.cockpit-guardian/backups/crontab.20261003T190937Z": {
+    "bytes": 8757,
+    "mtime_utc": "2026-10-03T19:09:37Z",
+    "mode": "0o664",
+    "sha256": "318e669706da561608a5bba54980b74dda2dff6b6171c1e9e7790485504e8f4c"
+   },
+   "~/.cockpit-guardian/backups/crontab.20261007T101943Z.before-live-calls": {
+    "bytes": 9218,
+    "mtime_utc": "2026-10-07T10:19:43Z",
+    "mode": "0o664",
+    "sha256": "883b3d094333488a317d98f896989959fb1ba78b356eae7be06325d67ed4f2ea"
+   },
+   "~/.crontab.backup": {
+    "bytes": 4868,
+    "mtime_utc": "2026-09-23T09:11:58Z",
+    "mode": "0o664",
+    "sha256": "27da791bbfbbc54f07432b22652800d4f3c4e898f73c927147ba453ec9fb6e99"
+   },
+   "~/.crontab.backup.202609260839": {
+    "bytes": 6841,
+    "mtime_utc": "2026-09-26T08:39:44Z",
+    "mode": "0o664",
+    "sha256": "57681de9efba43772fa193fd4860f6a66bf44a9653b6f534a6359cddd7236940"
+   },
+   "~/.crontab.backup.20260926102036": {
+    "bytes": 7664,
+    "mtime_utc": "2026-09-26T10:20:36Z",
+    "mode": "0o664",
+    "sha256": "fb2018bf003cce62c4c433d92bfa9abf940e6bf376f55aa5c857b0dc4152b5fb"
+   },
+   "~/.crontab.backup.20260927075338": {
+    "bytes": 7963,
+    "mtime_utc": "2026-09-27T07:53:38Z",
+    "mode": "0o664",
+    "sha256": "24b1de551751b0f9b115c419de032f9be94d6fa7e11ff23f76f0eec180b3d90a"
+   },
+   "~/.crontab.bak-teamsync-v5-20260927": {
+    "bytes": 8712,
+    "mtime_utc": "2026-09-27T09:03:28Z",
+    "mode": "0o664",
+    "sha256": "23171c77a9e6d6e77d319cc1ec0e73462d9150135f77888f88f49b964b60b3dd"
+   },
+   "~/.crontab.bak-teamsync-v5-5min-20260927": {
+    "bytes": 8789,
+    "mtime_utc": "2026-09-27T10:32:59Z",
+    "mode": "0o664",
+    "sha256": "7abef1df0e10e7166d5227ae95f26262156a1d52cddbd7d309e86e2e01d99ed6"
+   }
+  },
+  "vs_git_sales_desk_readme": {
+   "file": "hermes/sales-desk/README.md (Cron block, lines 545-554)",
+   "live_lines_matching_verbatim": [
+    62,
+    63,
+    64
+   ],
+   "readme_line_not_installed": "*/5 desk.py waves (waves.lock): documented in the README and RUNBOOK but not in the live crontab; consistent with Milestone 1 shipping dark (followups.agent off). Not installed by this inventory."
+  }
+ },
+ "repo_files": {
+  "summary": {
+   "hermes/sales-desk": {
+    "vps_only": 7,
+    "same": 141,
+    "differs": 2,
+    "git_only": 2
+   },
+   "hermes/cockpit-guardian": {
+    "same": 52
+   }
+  },
+  "pycache_dirs_on_vps": 7,
+  "conclusion": "All 52 guardian files and 141 of 145 sales-desk files match origin/main e166a0b byte for byte. The VPS holds nothing newer than git: scripts_import/captures.json and load.py are the older 2026-09-24 versions, scripts_import/revise.py and tests/test_scripts_revise.py were never copied, and seven ._ files are Mac metadata. The live-calls desk code on the VPS (desk.py, desk/rooms.py, desk/followups.py and the rest) is identical to origin/main.",
+  "files": [
+   {
+    "path": "hermes/cockpit-guardian/PROMPT.md",
+    "status": "same",
+    "vps_sha256": "1f053cfa96507db4d15465c973c4944b419d0fe6004466c0509d4987f364f6cf",
+    "git_sha256": "1f053cfa96507db4d15465c973c4944b419d0fe6004466c0509d4987f364f6cf",
+    "vps_bytes": 5597,
+    "vps_mtime_utc": "2026-10-03T19:06:45Z"
+   },
+   {
+    "path": "hermes/cockpit-guardian/README.md",
+    "status": "same",
+    "vps_sha256": "0951248035bb5295211897b00ff7b488a71459cbfeada9c4b4e13a2a41a5b34e",
+    "git_sha256": "0951248035bb5295211897b00ff7b488a71459cbfeada9c4b4e13a2a41a5b34e",
+    "vps_bytes": 34998,
+    "vps_mtime_utc": "2026-10-03T19:25:04Z"
+   },
+   {
+    "path": "hermes/cockpit-guardian/checks/__init__.py",
+    "status": "same",
+    "vps_sha256": "9e5d3b711326f592a873f635b2d8b170bcf3d398228b146247656583468ec20f",
+    "git_sha256": "9e5d3b711326f592a873f635b2d8b170bcf3d398228b146247656583468ec20f",
+    "vps_bytes": 1163,
+    "vps_mtime_utc": "2026-10-03T19:06:45Z"
+   },
+   {
+    "path": "hermes/cockpit-guardian/checks/claude_proxy.py",
+    "status": "same",
+    "vps_sha256": "cf468cdaa73d59a22fdf965078391858ed8f812623267790f8947612b678ee26",
+    "git_sha256": "cf468cdaa73d59a22fdf965078391858ed8f812623267790f8947612b678ee26",
+    "vps_bytes": 6776,
+    "vps_mtime_utc": "2026-10-03T19:06:45Z"
+   },
+   {
+    "path": "hermes/cockpit-guardian/checks/convex.py",
+    "status": "same",
+    "vps_sha256": "5ff66502d6b2d4d5ffe7a67204e62087343519bd388d861f109ae86b637b8725",
+    "git_sha256": "5ff66502d6b2d4d5ffe7a67204e62087343519bd388d861f109ae86b637b8725",
+    "vps_bytes": 12008,
+    "vps_mtime_utc": "2026-10-03T19:06:45Z"
+   },
+   {
+    "path": "hermes/cockpit-guardian/checks/edge_functions.py",
+    "status": "same",
+    "vps_sha256": "2ceafb421392723ec4d087d41d9f4cd62d1577fb9b9e947ddb73891d6a1a8ed7",
+    "git_sha256": "2ceafb421392723ec4d087d41d9f4cd62d1577fb9b9e947ddb73891d6a1a8ed7",
+    "vps_bytes": 4112,
+    "vps_mtime_utc": "2026-10-03T19:06:45Z"
+   },
+   {
+    "path": "hermes/cockpit-guardian/checks/guardian_self.py",
+    "status": "same",
+    "vps_sha256": "0b1328a0dce87de53b39251b5fc1664a3353978c7b43dfeb1851592eeb670374",
+    "git_sha256": "0b1328a0dce87de53b39251b5fc1664a3353978c7b43dfeb1851592eeb670374",
+    "vps_bytes": 6770,
+    "vps_mtime_utc": "2026-10-03T19:24:21Z"
+   },
+   {
+    "path": "hermes/cockpit-guardian/checks/hermes_monitors.py",
+    "status": "same",
+    "vps_sha256": "dbd2d6f0b2e6a553bb5234201f4666b84f046723e27692923e09030309136841",
+    "git_sha256": "dbd2d6f0b2e6a553bb5234201f4666b84f046723e27692923e09030309136841",
+    "vps_bytes": 11368,
+    "vps_mtime_utc": "2026-10-03T19:24:21Z"
+   },
+   {
+    "path": "hermes/cockpit-guardian/checks/keys.py",
+    "status": "same",
+    "vps_sha256": "2c22fc59985e94908c829dd1856e0967146a57dd642465ac763fbf8d1655fe03",
+    "git_sha256": "2c22fc59985e94908c829dd1856e0967146a57dd642465ac763fbf8d1655fe03",
+    "vps_bytes": 10709,
+    "vps_mtime_utc": "2026-10-03T19:06:45Z"
+   },
+   {
+    "path": "hermes/cockpit-guardian/checks/live_calls.py",
+    "status": "same",
+    "vps_sha256": "6761e5166952004a48a227f0c2d545afdf52f12a66197e8995b4df317cfd19c9",
+    "git_sha256": "6761e5166952004a48a227f0c2d545afdf52f12a66197e8995b4df317cfd19c9",
+    "vps_bytes": 24953,
+    "vps_mtime_utc": "2026-10-06T20:01:15Z"
+   },
+   {
+    "path": "hermes/cockpit-guardian/checks/pg_cron.py",
+    "status": "same",
+    "vps_sha256": "e4fa2106ef70783c35d967415d6ed5fc269bb52d177314f4bd4d14571ac24429",
+    "git_sha256": "e4fa2106ef70783c35d967415d6ed5fc269bb52d177314f4bd4d14571ac24429",
+    "vps_bytes": 8971,
+    "vps_mtime_utc": "2026-10-03T19:06:45Z"
+   },
+   {
+    "path": "hermes/cockpit-guardian/checks/queues.py",
+    "status": "same",
+    "vps_sha256": "2a6561c17b3001e9bab2f698ee76aed88790f016c85f08a2adcc99de0d4074cd",
+    "git_sha256": "2a6561c17b3001e9bab2f698ee76aed88790f016c85f08a2adcc99de0d4074cd",
+    "vps_bytes": 7509,
+    "vps_mtime_utc": "2026-10-03T19:06:45Z"
+   },
+   {
+    "path": "hermes/cockpit-guardian/checks/sites.py",
+    "status": "same",
+    "vps_sha256": "64e9f8e2374de7f922f3791b7a28eb7d554b0bdb245235e3d2eb76b4d0be0729",
+    "git_sha256": "64e9f8e2374de7f922f3791b7a28eb7d554b0bdb245235e3d2eb76b4d0be0729",
+    "vps_bytes": 5879,
+    "vps_mtime_utc": "2026-10-03T19:06:45Z"
+   },
+   {
+    "path": "hermes/cockpit-guardian/checks/supabase.py",
+    "status": "same",
+    "vps_sha256": "e462dc8a058017c71096724b4da57fd482bf8d19278d0a4f989981341ac7403c",
+    "git_sha256": "e462dc8a058017c71096724b4da57fd482bf8d19278d0a4f989981341ac7403c",
+    "vps_bytes": 2637,
+    "vps_mtime_utc": "2026-10-03T19:06:45Z"
+   },
+   {
+    "path": "hermes/cockpit-guardian/checks/syncs.py",
+    "status": "same",
+    "vps_sha256": "01454a393c762e45ae6b74fae74b9683dd00f310fd7da3220b5ca7ab4b66fae0",
+    "git_sha256": "01454a393c762e45ae6b74fae74b9683dd00f310fd7da3220b5ca7ab4b66fae0",
+    "vps_bytes": 13063,
+    "vps_mtime_utc": "2026-10-03T19:06:45Z"
+   },
+   {
+    "path": "hermes/cockpit-guardian/checks/vps_cron.py",
+    "status": "same",
+    "vps_sha256": "98739b7e347adccf1e290dc4326ca08e64cef441a8637bb04579e2576464d911",
+    "git_sha256": "98739b7e347adccf1e290dc4326ca08e64cef441a8637bb04579e2576464d911",
+    "vps_bytes": 9258,
+    "vps_mtime_utc": "2026-10-03T19:06:45Z"
+   },
+   {
+    "path": "hermes/cockpit-guardian/checks/vps_resources.py",
+    "status": "same",
+    "vps_sha256": "40ff2a0a3c7e9371a20ef9a81bb94c36d5e072d0b25e1cb8e66fc37b3d10759f",
+    "git_sha256": "40ff2a0a3c7e9371a20ef9a81bb94c36d5e072d0b25e1cb8e66fc37b3d10759f",
+    "vps_bytes": 7691,
+    "vps_mtime_utc": "2026-10-03T19:06:45Z"
+   },
+   {
+    "path": "hermes/cockpit-guardian/checks/whatsapp.py",
+    "status": "same",
+    "vps_sha256": "de07e9d2d4a8aba31f66e25857ece1e04ac4a469ae84e3dc4504bb20b847e6b7",
+    "git_sha256": "de07e9d2d4a8aba31f66e25857ece1e04ac4a469ae84e3dc4504bb20b847e6b7",
+    "vps_bytes": 5281,
+    "vps_mtime_utc": "2026-10-03T19:06:45Z"
+   },
+   {
+    "path": "hermes/cockpit-guardian/checks/worker_status.py",
+    "status": "same",
+    "vps_sha256": "aaa2cd54a3f7a4791dbba917d9fa9aed50d61091ccd585f7660e1acf99f90b7d",
+    "git_sha256": "aaa2cd54a3f7a4791dbba917d9fa9aed50d61091ccd585f7660e1acf99f90b7d",
+    "vps_bytes": 22886,
+    "vps_mtime_utc": "2026-10-03T19:06:45Z"
+   },
+   {
+    "path": "hermes/cockpit-guardian/crontab.manifest",
+    "status": "same",
+    "vps_sha256": "2d9932fea93b72ee8be6834571a768b3293bd2a8adf5fd4b7911b066ccd76f86",
+    "git_sha256": "2d9932fea93b72ee8be6834571a768b3293bd2a8adf5fd4b7911b066ccd76f86",
+    "vps_bytes": 7986,
+    "vps_mtime_utc": "2026-10-03T19:09:53Z"
+   },
+   {
+    "path": "hermes/cockpit-guardian/guard/__init__.py",
+    "status": "same",
+    "vps_sha256": "43f6de20f1ada1f69b09a6043a45cf97081dbe13349af3fdc19905a761b17348",
+    "git_sha256": "43f6de20f1ada1f69b09a6043a45cf97081dbe13349af3fdc19905a761b17348",
+    "vps_bytes": 218,
+    "vps_mtime_utc": "2026-10-03T19:06:45Z"
+   },
+   {
+    "path": "hermes/cockpit-guardian/guard/ai.py",
+    "status": "same",
+    "vps_sha256": "39fbbd0a64de76846d090e63a5259a908bd982039c8dd5908f5e0815e235784e",
+    "git_sha256": "39fbbd0a64de76846d090e63a5259a908bd982039c8dd5908f5e0815e235784e",
+    "vps_bytes": 18198,
+    "vps_mtime_utc": "2026-10-03T19:06:45Z"
+   },
+   {
+    "path": "hermes/cockpit-guardian/guard/alerts.py",
+    "status": "same",
+    "vps_sha256": "a721729434df6855c148ffcc08d3d7d52e27e107568f99e2563467d5c9c47fbc",
+    "git_sha256": "a721729434df6855c148ffcc08d3d7d52e27e107568f99e2563467d5c9c47fbc",
+    "vps_bytes": 7756,
+    "vps_mtime_utc": "2026-10-03T19:06:45Z"
+   },
+   {
+    "path": "hermes/cockpit-guardian/guard/beat.py",
+    "status": "same",
+    "vps_sha256": "83d3f1cf84b8a5c66c57789d060d2ba842313f731e2ad737bf618cdae23961c8",
+    "git_sha256": "83d3f1cf84b8a5c66c57789d060d2ba842313f731e2ad737bf618cdae23961c8",
+    "vps_bytes": 3644,
+    "vps_mtime_utc": "2026-10-03T19:24:21Z"
+   },
+   {
+    "path": "hermes/cockpit-guardian/guard/config.py",
+    "status": "same",
+    "vps_sha256": "4498c37adbdd608305df3ae5d691f6d4c8f6602555d1a9c194d3d6f9b9e4fa7d",
+    "git_sha256": "4498c37adbdd608305df3ae5d691f6d4c8f6602555d1a9c194d3d6f9b9e4fa7d",
+    "vps_bytes": 7168,
+    "vps_mtime_utc": "2026-10-03T19:06:45Z"
+   },
+   {
+    "path": "hermes/cockpit-guardian/guard/context.py",
+    "status": "same",
+    "vps_sha256": "04c2b359adbb7087b131d616ebf32a278faabefb1d2a48488e528c5839908ded",
+    "git_sha256": "04c2b359adbb7087b131d616ebf32a278faabefb1d2a48488e528c5839908ded",
+    "vps_bytes": 10181,
+    "vps_mtime_utc": "2026-10-03T19:06:45Z"
+   },
+   {
+    "path": "hermes/cockpit-guardian/guard/db.py",
+    "status": "same",
+    "vps_sha256": "469c6b3870191d7f4732ab344b791b678de65d8a64cca044715720d9d925a2cf",
+    "git_sha256": "469c6b3870191d7f4732ab344b791b678de65d8a64cca044715720d9d925a2cf",
+    "vps_bytes": 16829,
+    "vps_mtime_utc": "2026-10-03T19:06:45Z"
+   },
+   {
+    "path": "hermes/cockpit-guardian/guard/engine.py",
+    "status": "same",
+    "vps_sha256": "bb0cbc3c6bd945e45b85393ffa1e30ce62e087937b15e45f43baa60fca2c3dc6",
+    "git_sha256": "bb0cbc3c6bd945e45b85393ffa1e30ce62e087937b15e45f43baa60fca2c3dc6",
+    "vps_bytes": 32405,
+    "vps_mtime_utc": "2026-10-04T09:21:49Z"
+   },
+   {
+    "path": "hermes/cockpit-guardian/guard/fixes.py",
+    "status": "same",
+    "vps_sha256": "5215bdfbb7d35ae75e7f5ea87cf44db2ce5e11743b909c27f490e5e18b6e19a1",
+    "git_sha256": "5215bdfbb7d35ae75e7f5ea87cf44db2ce5e11743b909c27f490e5e18b6e19a1",
+    "vps_bytes": 19466,
+    "vps_mtime_utc": "2026-10-03T19:06:45Z"
+   },
+   {
+    "path": "hermes/cockpit-guardian/guard/host.py",
+    "status": "same",
+    "vps_sha256": "402ec0f5bfed017db1927c83ba8636c81b52f4042fcd48121158704bf4e58ad8",
+    "git_sha256": "402ec0f5bfed017db1927c83ba8636c81b52f4042fcd48121158704bf4e58ad8",
+    "vps_bytes": 8284,
+    "vps_mtime_utc": "2026-10-03T19:24:21Z"
+   },
+   {
+    "path": "hermes/cockpit-guardian/guard/http.py",
+    "status": "same",
+    "vps_sha256": "6053376916b1d66497314bf7a182af0b0ffbe922ddb87d9ec02a3540e8fc4cfa",
+    "git_sha256": "6053376916b1d66497314bf7a182af0b0ffbe922ddb87d9ec02a3540e8fc4cfa",
+    "vps_bytes": 3225,
+    "vps_mtime_utc": "2026-10-03T19:06:45Z"
+   },
+   {
+    "path": "hermes/cockpit-guardian/guard/jobs.py",
+    "status": "same",
+    "vps_sha256": "9d053d39ccf7be9fe5624de1c42f6282652dfef62d1af9d31b06af9bbe805906",
+    "git_sha256": "9d053d39ccf7be9fe5624de1c42f6282652dfef62d1af9d31b06af9bbe805906",
+    "vps_bytes": 6852,
+    "vps_mtime_utc": "2026-10-03T19:06:45Z"
+   },
+   {
+    "path": "hermes/cockpit-guardian/guard/model.py",
+    "status": "same",
+    "vps_sha256": "a39493def9181247b12ea492a34da935c71802d62ea65fb3109d7b3c93b8dbca",
+    "git_sha256": "a39493def9181247b12ea492a34da935c71802d62ea65fb3109d7b3c93b8dbca",
+    "vps_bytes": 6372,
+    "vps_mtime_utc": "2026-10-03T19:06:45Z"
+   },
+   {
+    "path": "hermes/cockpit-guardian/guard/redact.py",
+    "status": "same",
+    "vps_sha256": "89b7548f5b9e20e8d8a53055d685548afff9fc77d154258b4e7e332fa63457ac",
+    "git_sha256": "89b7548f5b9e20e8d8a53055d685548afff9fc77d154258b4e7e332fa63457ac",
+    "vps_bytes": 8318,
+    "vps_mtime_utc": "2026-10-03T19:26:36Z"
+   },
+   {
+    "path": "hermes/cockpit-guardian/guard/report.py",
+    "status": "same",
+    "vps_sha256": "0ee81dc53f769cfb3b7dc472778d1b331ebf0dad72a51dce318ba4fb256553ac",
+    "git_sha256": "0ee81dc53f769cfb3b7dc472778d1b331ebf0dad72a51dce318ba4fb256553ac",
+    "vps_bytes": 6498,
+    "vps_mtime_utc": "2026-10-03T19:06:45Z"
+   },
+   {
+    "path": "hermes/cockpit-guardian/guard/store.py",
+    "status": "same",
+    "vps_sha256": "7bfd32d04e5d36bc819783ae5aa8a9e7df3c8cb11ae773ea7ed1073b9da3d677",
+    "git_sha256": "7bfd32d04e5d36bc819783ae5aa8a9e7df3c8cb11ae773ea7ed1073b9da3d677",
+    "vps_bytes": 13489,
+    "vps_mtime_utc": "2026-10-03T19:06:45Z"
+   },
+   {
+    "path": "hermes/cockpit-guardian/guard/vps_snapshot.py",
+    "status": "same",
+    "vps_sha256": "c858df7510f9dca83176031e61bfb85e454e9c3e48a240f4b8480cf68c17869e",
+    "git_sha256": "c858df7510f9dca83176031e61bfb85e454e9c3e48a240f4b8480cf68c17869e",
+    "vps_bytes": 18831,
+    "vps_mtime_utc": "2026-10-03T19:24:21Z"
+   },
+   {
+    "path": "hermes/cockpit-guardian/guardian.py",
+    "status": "same",
+    "vps_sha256": "d5c7a631344fedecb257cd398d776d01c84ccce224c0525b3154f4884e34bb51",
+    "git_sha256": "d5c7a631344fedecb257cd398d776d01c84ccce224c0525b3154f4884e34bb51",
+    "vps_bytes": 26282,
+    "vps_mtime_utc": "2026-10-03T19:06:45Z"
+   },
+   {
+    "path": "hermes/cockpit-guardian/tests/__init__.py",
+    "status": "same",
+    "vps_sha256": "c50c8305f585c9551191788e47ab0cbebac1b54229902d72a7bd11ce8f5ae4b5",
+    "git_sha256": "c50c8305f585c9551191788e47ab0cbebac1b54229902d72a7bd11ce8f5ae4b5",
+    "vps_bytes": 101,
+    "vps_mtime_utc": "2026-10-03T19:06:45Z"
+   },
+   {
+    "path": "hermes/cockpit-guardian/tests/fakes.py",
+    "status": "same",
+    "vps_sha256": "378d1b2ce21cd53feb0fca7c801e9146c47d63811d4ddbf315d0d907cb23d076",
+    "git_sha256": "378d1b2ce21cd53feb0fca7c801e9146c47d63811d4ddbf315d0d907cb23d076",
+    "vps_bytes": 11674,
+    "vps_mtime_utc": "2026-10-03T19:24:32Z"
+   },
+   {
+    "path": "hermes/cockpit-guardian/tests/test_ai_report.py",
+    "status": "same",
+    "vps_sha256": "7d2c53ec6d6e188a250e20bf3083838c10dc849faa9df77bf91cdc68b5b2506f",
+    "git_sha256": "7d2c53ec6d6e188a250e20bf3083838c10dc849faa9df77bf91cdc68b5b2506f",
+    "vps_bytes": 5786,
+    "vps_mtime_utc": "2026-10-03T19:06:45Z"
+   },
+   {
+    "path": "hermes/cockpit-guardian/tests/test_checks_data.py",
+    "status": "same",
+    "vps_sha256": "0e82e8c4eab2f62b096a51579389e5d9b6f16c813f68c9dec0b50b3b9392e622",
+    "git_sha256": "0e82e8c4eab2f62b096a51579389e5d9b6f16c813f68c9dec0b50b3b9392e622",
+    "vps_bytes": 18653,
+    "vps_mtime_utc": "2026-10-03T19:06:45Z"
+   },
+   {
+    "path": "hermes/cockpit-guardian/tests/test_checks_vps.py",
+    "status": "same",
+    "vps_sha256": "bc427c64bea4b1e1c56f9f08de40701d72f295b8fa7c2e329c8a1e44cf200aaf",
+    "git_sha256": "bc427c64bea4b1e1c56f9f08de40701d72f295b8fa7c2e329c8a1e44cf200aaf",
+    "vps_bytes": 8855,
+    "vps_mtime_utc": "2026-10-03T19:06:45Z"
+   },
+   {
+    "path": "hermes/cockpit-guardian/tests/test_checks_web.py",
+    "status": "same",
+    "vps_sha256": "c179c849b4441d0f961ef6708d393366143ed44941da90a25898c694a010d165",
+    "git_sha256": "c179c849b4441d0f961ef6708d393366143ed44941da90a25898c694a010d165",
+    "vps_bytes": 7821,
+    "vps_mtime_utc": "2026-10-03T19:24:48Z"
+   },
+   {
+    "path": "hermes/cockpit-guardian/tests/test_coverage.py",
+    "status": "same",
+    "vps_sha256": "0b24d184fb473c788ea62a82878fd38cfede763d5ae9f0e9c23f26efe3e73f39",
+    "git_sha256": "0b24d184fb473c788ea62a82878fd38cfede763d5ae9f0e9c23f26efe3e73f39",
+    "vps_bytes": 26118,
+    "vps_mtime_utc": "2026-10-04T09:21:59Z"
+   },
+   {
+    "path": "hermes/cockpit-guardian/tests/test_db_redact.py",
+    "status": "same",
+    "vps_sha256": "c3335475b6bf8243e053641c17bfbacd2979bd7ae93e810911c344b038599e32",
+    "git_sha256": "c3335475b6bf8243e053641c17bfbacd2979bd7ae93e810911c344b038599e32",
+    "vps_bytes": 7618,
+    "vps_mtime_utc": "2026-10-03T19:26:43Z"
+   },
+   {
+    "path": "hermes/cockpit-guardian/tests/test_engine.py",
+    "status": "same",
+    "vps_sha256": "0911132fa5c80b25eb26192c7f09d4f10428b925e2251936f90c6721d56430ae",
+    "git_sha256": "0911132fa5c80b25eb26192c7f09d4f10428b925e2251936f90c6721d56430ae",
+    "vps_bytes": 16388,
+    "vps_mtime_utc": "2026-10-03T19:06:45Z"
+   },
+   {
+    "path": "hermes/cockpit-guardian/tests/test_fixes.py",
+    "status": "same",
+    "vps_sha256": "31bff14679e6af71cf9bd49940a47d3d213beb8a7eee43469d3814629b97f920",
+    "git_sha256": "31bff14679e6af71cf9bd49940a47d3d213beb8a7eee43469d3814629b97f920",
+    "vps_bytes": 8743,
+    "vps_mtime_utc": "2026-10-03T19:06:45Z"
+   },
+   {
+    "path": "hermes/cockpit-guardian/tests/test_live_calls.py",
+    "status": "same",
+    "vps_sha256": "febbad8e81cbd432d6a9a331fc533915dd03f1adc7b5418406330e989e6a896d",
+    "git_sha256": "febbad8e81cbd432d6a9a331fc533915dd03f1adc7b5418406330e989e6a896d",
+    "vps_bytes": 4802,
+    "vps_mtime_utc": "2026-10-03T19:06:45Z"
+   },
+   {
+    "path": "hermes/cockpit-guardian/tests/test_native.py",
+    "status": "same",
+    "vps_sha256": "8218bdba8773165ff18bf0cab364c8a8235b419c3531b31ffa7b1e186b36b15e",
+    "git_sha256": "8218bdba8773165ff18bf0cab364c8a8235b419c3531b31ffa7b1e186b36b15e",
+    "vps_bytes": 2160,
+    "vps_mtime_utc": "2026-10-07T07:55:25Z"
+   },
+   {
+    "path": "hermes/cockpit-guardian/tests/test_safety.py",
+    "status": "same",
+    "vps_sha256": "f3b9e96034beeb696692ec4decee3997ec1585c69dc17174d4f6614ea95ec62e",
+    "git_sha256": "f3b9e96034beeb696692ec4decee3997ec1585c69dc17174d4f6614ea95ec62e",
+    "vps_bytes": 37495,
+    "vps_mtime_utc": "2026-10-05T21:09:21Z"
+   },
+   {
+    "path": "hermes/cockpit-guardian/tests/test_snapshot_imports.py",
+    "status": "same",
+    "vps_sha256": "5f8220dbc90680458c70aba4f707106d0e1fb24833e7d0c3d76bbf92399d7dcd",
+    "git_sha256": "5f8220dbc90680458c70aba4f707106d0e1fb24833e7d0c3d76bbf92399d7dcd",
+    "vps_bytes": 1160,
+    "vps_mtime_utc": "2026-10-03T19:08:10Z"
+   },
+   {
+    "path": "hermes/sales-desk/._README.md",
+    "status": "vps_only",
+    "vps_sha256": "37a10b3800a92cc363ceba263c89f92fa8fc09e1ee73250518a89728aac6d0e7",
+    "git_sha256": null,
+    "vps_bytes": 163,
+    "vps_mtime_utc": "2026-10-02T15:07:40Z",
+    "note": "macOS AppleDouble metadata (163 bytes) left by a Mac copy on 2026-10-02; not code, safe to ignore."
+   },
+   {
+    "path": "hermes/sales-desk/._SKILL.md",
+    "status": "vps_only",
+    "vps_sha256": "37a10b3800a92cc363ceba263c89f92fa8fc09e1ee73250518a89728aac6d0e7",
+    "git_sha256": null,
+    "vps_bytes": 163,
+    "vps_mtime_utc": "2026-10-02T15:07:40Z",
+    "note": "macOS AppleDouble metadata (163 bytes) left by a Mac copy on 2026-10-02; not code, safe to ignore."
+   },
+   {
+    "path": "hermes/sales-desk/._offer.json",
+    "status": "vps_only",
+    "vps_sha256": "37a10b3800a92cc363ceba263c89f92fa8fc09e1ee73250518a89728aac6d0e7",
+    "git_sha256": null,
+    "vps_bytes": 163,
+    "vps_mtime_utc": "2026-10-02T15:06:02Z",
+    "note": "macOS AppleDouble metadata (163 bytes) left by a Mac copy on 2026-10-02; not code, safe to ignore."
+   },
+   {
+    "path": "hermes/sales-desk/.gitignore",
+    "status": "same",
+    "vps_sha256": "bf4b351b53866aff09e1660b278a28692898569cdb1063433d6a9a1714f9c420",
+    "git_sha256": "bf4b351b53866aff09e1660b278a28692898569cdb1063433d6a9a1714f9c420",
+    "vps_bytes": 269,
+    "vps_mtime_utc": "2026-09-27T07:54:35Z"
+   },
+   {
+    "path": "hermes/sales-desk/NOTES-followup-agent.md",
+    "status": "same",
+    "vps_sha256": "6698cb3d353e509c96ecc6ada2baa332e799900255dd2f68e22f0050c35fa152",
+    "git_sha256": "6698cb3d353e509c96ecc6ada2baa332e799900255dd2f68e22f0050c35fa152",
+    "vps_bytes": 41241,
+    "vps_mtime_utc": "2026-10-03T13:40:25Z"
+   },
+   {
+    "path": "hermes/sales-desk/PATTERNS.md",
+    "status": "same",
+    "vps_sha256": "e5c4156ee459aad6968cab2c8348a9d535ef856a98a6870a00ee1ba3f6a184fe",
+    "git_sha256": "e5c4156ee459aad6968cab2c8348a9d535ef856a98a6870a00ee1ba3f6a184fe",
+    "vps_bytes": 8395,
+    "vps_mtime_utc": "2026-10-05T14:26:52Z"
+   },
+   {
+    "path": "hermes/sales-desk/README.md",
+    "status": "same",
+    "vps_sha256": "5a98bb225baaa591d853db3016dbd22f6d6bd96217bab5b037b2487b652814b0",
+    "git_sha256": "5a98bb225baaa591d853db3016dbd22f6d6bd96217bab5b037b2487b652814b0",
+    "vps_bytes": 65611,
+    "vps_mtime_utc": "2026-10-05T19:04:09Z"
+   },
+   {
+    "path": "hermes/sales-desk/SKILL.md",
+    "status": "same",
+    "vps_sha256": "de9beb2fea47000299e004e26bf90591ff9c67a96c032d9b43e953814cb70205",
+    "git_sha256": "de9beb2fea47000299e004e26bf90591ff9c67a96c032d9b43e953814cb70205",
+    "vps_bytes": 29484,
+    "vps_mtime_utc": "2026-10-05T14:53:29Z"
+   },
+   {
+    "path": "hermes/sales-desk/assets/mahara-logo.png",
+    "status": "same",
+    "vps_sha256": "70a18340bba9fb801dee878eef299700d985dffd2774fd35449fb5df2ead31a5",
+    "git_sha256": "70a18340bba9fb801dee878eef299700d985dffd2774fd35449fb5df2ead31a5",
+    "vps_bytes": 9500,
+    "vps_mtime_utc": "2026-09-27T07:54:35Z"
+   },
+   {
+    "path": "hermes/sales-desk/desk.py",
+    "status": "same",
+    "vps_sha256": "b7edca5b65a1fd8e009066dee587b6def51fa55c27b986635b45ce9ba82bcec7",
+    "git_sha256": "b7edca5b65a1fd8e009066dee587b6def51fa55c27b986635b45ce9ba82bcec7",
+    "vps_bytes": 87030,
+    "vps_mtime_utc": "2026-10-05T18:09:34Z"
+   },
+   {
+    "path": "hermes/sales-desk/desk/._offer.py",
+    "status": "vps_only",
+    "vps_sha256": "37a10b3800a92cc363ceba263c89f92fa8fc09e1ee73250518a89728aac6d0e7",
+    "git_sha256": null,
+    "vps_bytes": 163,
+    "vps_mtime_utc": "2026-10-02T15:06:15Z",
+    "note": "macOS AppleDouble metadata (163 bytes) left by a Mac copy on 2026-10-02; not code, safe to ignore."
+   },
+   {
+    "path": "hermes/sales-desk/desk/._validate.py",
+    "status": "vps_only",
+    "vps_sha256": "37a10b3800a92cc363ceba263c89f92fa8fc09e1ee73250518a89728aac6d0e7",
+    "git_sha256": null,
+    "vps_bytes": 163,
+    "vps_mtime_utc": "2026-10-02T15:06:36Z",
+    "note": "macOS AppleDouble metadata (163 bytes) left by a Mac copy on 2026-10-02; not code, safe to ignore."
+   },
+   {
+    "path": "hermes/sales-desk/desk/__init__.py",
+    "status": "same",
+    "vps_sha256": "8abd5191e5de6670fef36a85a9dc1c76bc9f94b96177536f5306115ca46574c9",
+    "git_sha256": "8abd5191e5de6670fef36a85a9dc1c76bc9f94b96177536f5306115ca46574c9",
+    "vps_bytes": 322,
+    "vps_mtime_utc": "2026-09-27T07:54:35Z"
+   },
+   {
+    "path": "hermes/sales-desk/desk/b2b_fathom.py",
+    "status": "same",
+    "vps_sha256": "520536d0f0943779b0051c1b42f3ec6a1c8e76496ff32098211653165f0f7fc7",
+    "git_sha256": "520536d0f0943779b0051c1b42f3ec6a1c8e76496ff32098211653165f0f7fc7",
+    "vps_bytes": 12464,
+    "vps_mtime_utc": "2026-09-27T07:54:35Z"
+   },
+   {
+    "path": "hermes/sales-desk/desk/build.py",
+    "status": "same",
+    "vps_sha256": "274d2a959d41fbc4e5e92567e807f5b03dd8b7ec822ee996af2b1e63a3857032",
+    "git_sha256": "274d2a959d41fbc4e5e92567e807f5b03dd8b7ec822ee996af2b1e63a3857032",
+    "vps_bytes": 4191,
+    "vps_mtime_utc": "2026-09-27T07:54:35Z"
+   },
+   {
+    "path": "hermes/sales-desk/desk/calls_vault.py",
+    "status": "same",
+    "vps_sha256": "fe7f7794fabbfcc173490a5171fa2bce8ee31ad8ae0546aafbf4975fc220579f",
+    "git_sha256": "fe7f7794fabbfcc173490a5171fa2bce8ee31ad8ae0546aafbf4975fc220579f",
+    "vps_bytes": 21771,
+    "vps_mtime_utc": "2026-09-27T07:54:35Z"
+   },
+   {
+    "path": "hermes/sales-desk/desk/clientform.py",
+    "status": "same",
+    "vps_sha256": "90778e9dcaf9bdaba0943c7872f85530f1e6e2b18c959d88b94c61697507278a",
+    "git_sha256": "90778e9dcaf9bdaba0943c7872f85530f1e6e2b18c959d88b94c61697507278a",
+    "vps_bytes": 5186,
+    "vps_mtime_utc": "2026-10-02T15:42:21Z"
+   },
+   {
+    "path": "hermes/sales-desk/desk/config.py",
+    "status": "same",
+    "vps_sha256": "35765d2b1b2acc206d6dade2bc934a88829767bedf8757f42c3b26febe73c5f2",
+    "git_sha256": "35765d2b1b2acc206d6dade2bc934a88829767bedf8757f42c3b26febe73c5f2",
+    "vps_bytes": 8781,
+    "vps_mtime_utc": "2026-10-05T10:26:50Z"
+   },
+   {
+    "path": "hermes/sales-desk/desk/deploycheck.py",
+    "status": "same",
+    "vps_sha256": "c7576f9eafc4e61f87dcb3ee0cc126d37907c0757b530e648728a29784a7e8c2",
+    "git_sha256": "c7576f9eafc4e61f87dcb3ee0cc126d37907c0757b530e648728a29784a7e8c2",
+    "vps_bytes": 40383,
+    "vps_mtime_utc": "2026-10-06T12:35:49Z"
+   },
+   {
+    "path": "hermes/sales-desk/desk/engine.py",
+    "status": "same",
+    "vps_sha256": "5bb9bb9001db4bfb51f7c36b5b45eecb9753e6a9509c829780aacf12e52357f0",
+    "git_sha256": "5bb9bb9001db4bfb51f7c36b5b45eecb9753e6a9509c829780aacf12e52357f0",
+    "vps_bytes": 33353,
+    "vps_mtime_utc": "2026-10-05T14:51:46Z"
+   },
+   {
+    "path": "hermes/sales-desk/desk/errors.py",
+    "status": "same",
+    "vps_sha256": "c9478cd53ad07cc9cd8e88c61a6dbdf22f3f7a2b3f37391acb22af0e38ea1562",
+    "git_sha256": "c9478cd53ad07cc9cd8e88c61a6dbdf22f3f7a2b3f37391acb22af0e38ea1562",
+    "vps_bytes": 1302,
+    "vps_mtime_utc": "2026-10-05T09:49:36Z"
+   },
+   {
+    "path": "hermes/sales-desk/desk/fathom.py",
+    "status": "same",
+    "vps_sha256": "b6588e8cb84380b5597c812426cf5e1010aaca580f43e85733050774a07eb89a",
+    "git_sha256": "b6588e8cb84380b5597c812426cf5e1010aaca580f43e85733050774a07eb89a",
+    "vps_bytes": 6196,
+    "vps_mtime_utc": "2026-09-27T07:54:35Z"
+   },
+   {
+    "path": "hermes/sales-desk/desk/followups.py",
+    "status": "same",
+    "vps_sha256": "201dbda5f31a46c462a4dc43acdeefcb05996f2254044642234851bc29b5375e",
+    "git_sha256": "201dbda5f31a46c462a4dc43acdeefcb05996f2254044642234851bc29b5375e",
+    "vps_bytes": 153976,
+    "vps_mtime_utc": "2026-10-05T18:49:49Z"
+   },
+   {
+    "path": "hermes/sales-desk/desk/http.py",
+    "status": "same",
+    "vps_sha256": "bb361b1765b0fb5a240e7e249760de5992ec804296895e234d5e74d71e31aa31",
+    "git_sha256": "bb361b1765b0fb5a240e7e249760de5992ec804296895e234d5e74d71e31aa31",
+    "vps_bytes": 6610,
+    "vps_mtime_utc": "2026-10-06T05:11:07Z"
+   },
+   {
+    "path": "hermes/sales-desk/desk/log.py",
+    "status": "same",
+    "vps_sha256": "caff65d2db063d0996fc4a998032123ea9aa2ab03dce0c75bda3ca846ee1887f",
+    "git_sha256": "caff65d2db063d0996fc4a998032123ea9aa2ab03dce0c75bda3ca846ee1887f",
+    "vps_bytes": 923,
+    "vps_mtime_utc": "2026-09-27T07:54:35Z"
+   },
+   {
+    "path": "hermes/sales-desk/desk/maqsam_calls.py",
+    "status": "same",
+    "vps_sha256": "3100d44d0fffe4dfe14140eea1756fe945faf4afbefb820f90811cb3ed7dd93d",
+    "git_sha256": "3100d44d0fffe4dfe14140eea1756fe945faf4afbefb820f90811cb3ed7dd93d",
+    "vps_bytes": 36197,
+    "vps_mtime_utc": "2026-09-27T07:54:35Z"
+   },
+   {
+    "path": "hermes/sales-desk/desk/model.py",
+    "status": "same",
+    "vps_sha256": "cd1fdc0dcf202e500242fd952ed2ce09bf3d4df646f62e7279e9d14f3ae6196b",
+    "git_sha256": "cd1fdc0dcf202e500242fd952ed2ce09bf3d4df646f62e7279e9d14f3ae6196b",
+    "vps_bytes": 59792,
+    "vps_mtime_utc": "2026-10-05T18:09:34Z"
+   },
+   {
+    "path": "hermes/sales-desk/desk/notes.py",
+    "status": "same",
+    "vps_sha256": "07a7d8ef8e083c7dfaaa6e55684ca986b454d61f7a8b2917bc0b57d0a81ad815",
+    "git_sha256": "07a7d8ef8e083c7dfaaa6e55684ca986b454d61f7a8b2917bc0b57d0a81ad815",
+    "vps_bytes": 20032,
+    "vps_mtime_utc": "2026-09-27T07:54:35Z"
+   },
+   {
+    "path": "hermes/sales-desk/desk/offer.py",
+    "status": "same",
+    "vps_sha256": "629a81e62d3c422d8948562636188bec4e5b70cc8bfd65cac018b22b04beedfa",
+    "git_sha256": "629a81e62d3c422d8948562636188bec4e5b70cc8bfd65cac018b22b04beedfa",
+    "vps_bytes": 15143,
+    "vps_mtime_utc": "2026-10-05T12:38:23Z"
+   },
+   {
+    "path": "hermes/sales-desk/desk/prompt.py",
+    "status": "same",
+    "vps_sha256": "7e350278f3fd6bb7d1f0b6f5e94fe45c7dde576546ee900c6ae47f17ba43d5b8",
+    "git_sha256": "7e350278f3fd6bb7d1f0b6f5e94fe45c7dde576546ee900c6ae47f17ba43d5b8",
+    "vps_bytes": 31807,
+    "vps_mtime_utc": "2026-10-05T14:26:33Z"
+   },
+   {
+    "path": "hermes/sales-desk/desk/queue.py",
+    "status": "same",
+    "vps_sha256": "6021a9a0afc08096c50e5ad268a102a5c35841c485c763ea2eca5492816a7b01",
+    "git_sha256": "6021a9a0afc08096c50e5ad268a102a5c35841c485c763ea2eca5492816a7b01",
+    "vps_bytes": 32562,
+    "vps_mtime_utc": "2026-10-05T11:48:45Z"
+   },
+   {
+    "path": "hermes/sales-desk/desk/recordings.py",
+    "status": "same",
+    "vps_sha256": "69fe4569885573fcfdae34cf51bd9a492e75a75929f92d4deae22b2ee9b6d39d",
+    "git_sha256": "69fe4569885573fcfdae34cf51bd9a492e75a75929f92d4deae22b2ee9b6d39d",
+    "vps_bytes": 15547,
+    "vps_mtime_utc": "2026-09-27T07:54:35Z"
+   },
+   {
+    "path": "hermes/sales-desk/desk/references.py",
+    "status": "same",
+    "vps_sha256": "5537634e24f19064b9124a6892eaa65ea340d56e56ebb37d4aa182fa9dd33dfd",
+    "git_sha256": "5537634e24f19064b9124a6892eaa65ea340d56e56ebb37d4aa182fa9dd33dfd",
+    "vps_bytes": 7101,
+    "vps_mtime_utc": "2026-10-05T09:49:37Z"
+   },
+   {
+    "path": "hermes/sales-desk/desk/render.py",
+    "status": "same",
+    "vps_sha256": "df82d2525857cf0b3e1eebacfd2135ca6f68edaf7558cfbc9f4c8846efd11196",
+    "git_sha256": "df82d2525857cf0b3e1eebacfd2135ca6f68edaf7558cfbc9f4c8846efd11196",
+    "vps_bytes": 12075,
+    "vps_mtime_utc": "2026-10-05T09:49:36Z"
+   },
+   {
+    "path": "hermes/sales-desk/desk/research.py",
+    "status": "same",
+    "vps_sha256": "1d3b217806b904362f1b27e0adf64eeff1cc239aba0e1af032f303decf47183b",
+    "git_sha256": "1d3b217806b904362f1b27e0adf64eeff1cc239aba0e1af032f303decf47183b",
+    "vps_bytes": 17093,
+    "vps_mtime_utc": "2026-10-05T09:49:36Z"
+   },
+   {
+    "path": "hermes/sales-desk/desk/reviews.py",
+    "status": "same",
+    "vps_sha256": "280155604e97bd72dd0f78053b5f7fd63815f3d305eb0cbe3b1c070fb5fec925",
+    "git_sha256": "280155604e97bd72dd0f78053b5f7fd63815f3d305eb0cbe3b1c070fb5fec925",
+    "vps_bytes": 32644,
+    "vps_mtime_utc": "2026-09-27T07:54:35Z"
+   },
+   {
+    "path": "hermes/sales-desk/desk/rooms.py",
+    "status": "same",
+    "vps_sha256": "e294eb53b73bd60ea919810a0c6d4cb04618293a5c206bbc698a45b51614943c",
+    "git_sha256": "e294eb53b73bd60ea919810a0c6d4cb04618293a5c206bbc698a45b51614943c",
+    "vps_bytes": 196728,
+    "vps_mtime_utc": "2026-10-06T20:00:47Z"
+   },
+   {
+    "path": "hermes/sales-desk/desk/slackpost.py",
+    "status": "same",
+    "vps_sha256": "da17f75796414dc4ce453664275d51e1e74905aa088630a49bd8590e4d8bde9d",
+    "git_sha256": "da17f75796414dc4ce453664275d51e1e74905aa088630a49bd8590e4d8bde9d",
+    "vps_bytes": 22681,
+    "vps_mtime_utc": "2026-10-05T15:42:04Z"
+   },
+   {
+    "path": "hermes/sales-desk/desk/supabase.py",
+    "status": "same",
+    "vps_sha256": "2e46949ae0b1a4ada8c0d153836bb3ca6c2a3abac9facc6e3bba1bd67191f055",
+    "git_sha256": "2e46949ae0b1a4ada8c0d153836bb3ca6c2a3abac9facc6e3bba1bd67191f055",
+    "vps_bytes": 22532,
+    "vps_mtime_utc": "2026-10-05T18:01:59Z"
+   },
+   {
+    "path": "hermes/sales-desk/desk/validate.py",
+    "status": "same",
+    "vps_sha256": "f721ea15738632d5855e142e47d9c9aeac9eff29d60b27e8e412a876fdde9cea",
+    "git_sha256": "f721ea15738632d5855e142e47d9c9aeac9eff29d60b27e8e412a876fdde9cea",
+    "vps_bytes": 177267,
+    "vps_mtime_utc": "2026-10-05T14:55:01Z"
+   },
+   {
+    "path": "hermes/sales-desk/desk/waves.py",
+    "status": "same",
+    "vps_sha256": "46b473a479fa5e0172bb7bc1cfcdfae9aaf04984fc60cfbc32ad5670e85ea582",
+    "git_sha256": "46b473a479fa5e0172bb7bc1cfcdfae9aaf04984fc60cfbc32ad5670e85ea582",
+    "vps_bytes": 156204,
+    "vps_mtime_utc": "2026-10-05T19:04:15Z"
+   },
+   {
+    "path": "hermes/sales-desk/extract_reference.py",
+    "status": "same",
+    "vps_sha256": "630407bea6e76794d3acea6846560c28cb4e03a1af64a00b8e74c0f22ce44ab6",
+    "git_sha256": "630407bea6e76794d3acea6846560c28cb4e03a1af64a00b8e74c0f22ce44ab6",
+    "vps_bytes": 5867,
+    "vps_mtime_utc": "2026-09-27T07:54:35Z"
+   },
+   {
+    "path": "hermes/sales-desk/offer.json",
+    "status": "same",
+    "vps_sha256": "ea906b0877fe82761b74b4596d699c15770c9e25bad73deef9facd955bfd7671",
+    "git_sha256": "ea906b0877fe82761b74b4596d699c15770c9e25bad73deef9facd955bfd7671",
+    "vps_bytes": 3175,
+    "vps_mtime_utc": "2026-10-03T10:36:36Z"
+   },
+   {
+    "path": "hermes/sales-desk/proposal-template.html",
+    "status": "same",
+    "vps_sha256": "a74a9ff31406a8a70d1e09764346154a0d9e70979ee93aaa542b17278eafc66f",
+    "git_sha256": "a74a9ff31406a8a70d1e09764346154a0d9e70979ee93aaa542b17278eafc66f",
+    "vps_bytes": 384833,
+    "vps_mtime_utc": "2026-10-05T11:48:52Z"
+   },
+   {
+    "path": "hermes/sales-desk/scripts_import/captures.json",
+    "status": "differs",
+    "vps_sha256": "c132413907269b40f7bd12d0c5e02346e1fe78a00a657f45e67465b9622e2b02",
+    "git_sha256": "99b20b9e7b27e3c4a1807b2796688c50ac48564064453896d7b059a48ca62ae7",
+    "vps_bytes": 4078,
+    "vps_mtime_utc": "2026-09-27T07:54:35Z",
+    "note": "VPS copy is the 2026-09-24 version (commit 1083797); origin/main has the 2026-09-27 version (e682737). Older on the VPS, nothing to save from it."
+   },
+   {
+    "path": "hermes/sales-desk/scripts_import/load.py",
+    "status": "differs",
+    "vps_sha256": "60629859383a737b02a8aaed0ec224108d6312aac8a4ad9766a0032d78c13d29",
+    "git_sha256": "ace930afd34b42ea73d3750b17fee832d64130026e9859eed958b69e7f20b66c",
+    "vps_bytes": 3066,
+    "vps_mtime_utc": "2026-09-27T07:54:35Z",
+    "note": "VPS copy is the 2026-09-24 version (commit 1083797); origin/main has the 2026-09-27 version (e682737). Older on the VPS, nothing to save from it."
+   },
+   {
+    "path": "hermes/sales-desk/scripts_import/parse.py",
+    "status": "same",
+    "vps_sha256": "1c6fbce5d93ecb39d42d8af9ce342c6e3645ae6b158d060a44b4062a45ccb4c0",
+    "git_sha256": "1c6fbce5d93ecb39d42d8af9ce342c6e3645ae6b158d060a44b4062a45ccb4c0",
+    "vps_bytes": 12509,
+    "vps_mtime_utc": "2026-09-27T07:54:35Z"
+   },
+   {
+    "path": "hermes/sales-desk/scripts_import/revise.py",
+    "status": "git_only",
+    "vps_sha256": null,
+    "git_sha256": "83fdc224e7635e6aca11877eca13f7a61648359ece2ca0c331fb3ed8e8372334",
+    "note": "Not copied to the VPS (the call-script import runs from the Mac)."
+   },
+   {
+    "path": "hermes/sales-desk/tests/._fakes.py",
+    "status": "vps_only",
+    "vps_sha256": "37a10b3800a92cc363ceba263c89f92fa8fc09e1ee73250518a89728aac6d0e7",
+    "git_sha256": null,
+    "vps_bytes": 163,
+    "vps_mtime_utc": "2026-10-02T15:07:07Z",
+    "note": "macOS AppleDouble metadata (163 bytes) left by a Mac copy on 2026-10-02; not code, safe to ignore."
+   },
+   {
+    "path": "hermes/sales-desk/tests/._test_desk.py",
+    "status": "vps_only",
+    "vps_sha256": "37a10b3800a92cc363ceba263c89f92fa8fc09e1ee73250518a89728aac6d0e7",
+    "git_sha256": null,
+    "vps_bytes": 163,
+    "vps_mtime_utc": "2026-10-02T15:07:07Z",
+    "note": "macOS AppleDouble metadata (163 bytes) left by a Mac copy on 2026-10-02; not code, safe to ignore."
+   },
+   {
+    "path": "hermes/sales-desk/tests/__init__.py",
+    "status": "same",
+    "vps_sha256": "f864e5e09639041d1bb41f1034ff17f7e0fb485e60db4db5029d5b8f4f65f046",
+    "git_sha256": "f864e5e09639041d1bb41f1034ff17f7e0fb485e60db4db5029d5b8f4f65f046",
+    "vps_bytes": 808,
+    "vps_mtime_utc": "2026-10-05T09:49:37Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/fakes.py",
+    "status": "same",
+    "vps_sha256": "924c68e071b230ca19ef39984a02e2db26b2c65ec7ba7abfea876a044c175d31",
+    "git_sha256": "924c68e071b230ca19ef39984a02e2db26b2c65ec7ba7abfea876a044c175d31",
+    "vps_bytes": 33538,
+    "vps_mtime_utc": "2026-10-05T18:01:59Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_b2b_fathom.py",
+    "status": "same",
+    "vps_sha256": "b45d50798863b061ecc87b3a323933d22c21013967c07c1ce847a992ebd402c5",
+    "git_sha256": "b45d50798863b061ecc87b3a323933d22c21013967c07c1ce847a992ebd402c5",
+    "vps_bytes": 8825,
+    "vps_mtime_utc": "2026-09-27T07:54:35Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_calls_vault.py",
+    "status": "same",
+    "vps_sha256": "f81fa08e0b79d24b15d51ce2a6e27ae926d7657aeb4080c5af9442c37dd38321",
+    "git_sha256": "f81fa08e0b79d24b15d51ce2a6e27ae926d7657aeb4080c5af9442c37dd38321",
+    "vps_bytes": 14916,
+    "vps_mtime_utc": "2026-09-27T07:54:35Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_clientform.py",
+    "status": "same",
+    "vps_sha256": "697690f6f4b1ce28b4c8257709a66f72bcf7d5b294ac677d9dfb021436a1ce30",
+    "git_sha256": "697690f6f4b1ce28b4c8257709a66f72bcf7d5b294ac677d9dfb021436a1ce30",
+    "vps_bytes": 4210,
+    "vps_mtime_utc": "2026-10-02T15:43:01Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_closer_flow.py",
+    "status": "same",
+    "vps_sha256": "7eef4baf99533957407b16bc0e3e6efc28ab9c62bb13a9169e1ff551cb13c30f",
+    "git_sha256": "7eef4baf99533957407b16bc0e3e6efc28ab9c62bb13a9169e1ff551cb13c30f",
+    "vps_bytes": 22767,
+    "vps_mtime_utc": "2026-10-05T09:49:37Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_contact_name.py",
+    "status": "same",
+    "vps_sha256": "c21dd8561b9d7e506f607d75d9da32dec1a9ac30393d0224b1afc73f77ca3818",
+    "git_sha256": "c21dd8561b9d7e506f607d75d9da32dec1a9ac30393d0224b1afc73f77ca3818",
+    "vps_bytes": 9969,
+    "vps_mtime_utc": "2026-10-05T14:52:48Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_deploy_check.py",
+    "status": "same",
+    "vps_sha256": "e0855c77ef6ed0b987ec3af7c14b64db3b4129d63ae61d7a80a5fc411f22bfd9",
+    "git_sha256": "e0855c77ef6ed0b987ec3af7c14b64db3b4129d63ae61d7a80a5fc411f22bfd9",
+    "vps_bytes": 23775,
+    "vps_mtime_utc": "2026-10-06T12:35:49Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_desk.py",
+    "status": "same",
+    "vps_sha256": "82a890d8da01ff202ac0a59320cff7b571254366149e7cefa00c76d7c006a8af",
+    "git_sha256": "82a890d8da01ff202ac0a59320cff7b571254366149e7cefa00c76d7c006a8af",
+    "vps_bytes": 70908,
+    "vps_mtime_utc": "2026-10-05T13:31:21Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_doctor.py",
+    "status": "same",
+    "vps_sha256": "123b17ea06f98e0f477a47df237ac54faf7d877de97d41edf6253b5a7f9b7a65",
+    "git_sha256": "123b17ea06f98e0f477a47df237ac54faf7d877de97d41edf6253b5a7f9b7a65",
+    "vps_bytes": 19452,
+    "vps_mtime_utc": "2026-10-05T18:51:03Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_fallback.py",
+    "status": "same",
+    "vps_sha256": "b1f74cedca504e18e13b0484316ffcd0f7b8209f5aedb367dde24f6d5e1e942f",
+    "git_sha256": "b1f74cedca504e18e13b0484316ffcd0f7b8209f5aedb367dde24f6d5e1e942f",
+    "vps_bytes": 55879,
+    "vps_mtime_utc": "2026-10-05T10:26:50Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_followups.py",
+    "status": "same",
+    "vps_sha256": "f0398f7946b378f907bd11623ae794146ddad4824aee96069de73225a243afca",
+    "git_sha256": "f0398f7946b378f907bd11623ae794146ddad4824aee96069de73225a243afca",
+    "vps_bytes": 56637,
+    "vps_mtime_utc": "2026-10-05T18:50:20Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_followups_phase0.py",
+    "status": "same",
+    "vps_sha256": "e3460bca4cb7cb7e2f5624bf60b4669f615e4716574f81c12c9d05dd0e07d989",
+    "git_sha256": "e3460bca4cb7cb7e2f5624bf60b4669f615e4716574f81c12c9d05dd0e07d989",
+    "vps_bytes": 35283,
+    "vps_mtime_utc": "2026-10-03T12:43:22Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_m1_chaos_r1.py",
+    "status": "same",
+    "vps_sha256": "9ce79fd18907247890a1a427bf0bb16361fd1198d569833b85d1d30ddd7c7ec5",
+    "git_sha256": "9ce79fd18907247890a1a427bf0bb16361fd1198d569833b85d1d30ddd7c7ec5",
+    "vps_bytes": 20011,
+    "vps_mtime_utc": "2026-10-05T19:59:09Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_m1_chaos_r2.py",
+    "status": "same",
+    "vps_sha256": "ac62911ed3ec329f4d92a40f6d047f4a601eedd7c814c7c2753e1dd4ec45c7f9",
+    "git_sha256": "ac62911ed3ec329f4d92a40f6d047f4a601eedd7c814c7c2753e1dd4ec45c7f9",
+    "vps_bytes": 4239,
+    "vps_mtime_utc": "2026-10-05T21:53:23Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_m1_chaos_r3.py",
+    "status": "same",
+    "vps_sha256": "aec1e28e60ff9fe3294ab02654074cc345f392d3ba06ebda40768ecdc134fdd2",
+    "git_sha256": "aec1e28e60ff9fe3294ab02654074cc345f392d3ba06ebda40768ecdc134fdd2",
+    "vps_bytes": 5049,
+    "vps_mtime_utc": "2026-10-06T13:20:26Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_m1_chaos_r4.py",
+    "status": "same",
+    "vps_sha256": "3c22f54563469d40f4f2d444c35c05d084d1717bf9620eeeb571d0d22a2c7fa2",
+    "git_sha256": "3c22f54563469d40f4f2d444c35c05d084d1717bf9620eeeb571d0d22a2c7fa2",
+    "vps_bytes": 10065,
+    "vps_mtime_utc": "2026-10-06T04:18:16Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_m1_chaos_r4c.py",
+    "status": "same",
+    "vps_sha256": "4e5ca8b8e605cc1a507176014434a5d644e87835e1fd6d9aa6d5654fa2756cfd",
+    "git_sha256": "4e5ca8b8e605cc1a507176014434a5d644e87835e1fd6d9aa6d5654fa2756cfd",
+    "vps_bytes": 16681,
+    "vps_mtime_utc": "2026-10-06T14:38:21Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_m1_chaos_r6.py",
+    "status": "same",
+    "vps_sha256": "a84dbd8c68df52df54955ad7a294e3efe4a7d301c765f3503d4efd96644da721",
+    "git_sha256": "a84dbd8c68df52df54955ad7a294e3efe4a7d301c765f3503d4efd96644da721",
+    "vps_bytes": 16922,
+    "vps_mtime_utc": "2026-10-06T20:00:57Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_m1_concurrency_r6.py",
+    "status": "same",
+    "vps_sha256": "dbdfc3eb05a698228b720d600fe1ee2a4b1fb16db84dbccc0167e771fefb89ac",
+    "git_sha256": "dbdfc3eb05a698228b720d600fe1ee2a4b1fb16db84dbccc0167e771fefb89ac",
+    "vps_bytes": 2912,
+    "vps_mtime_utc": "2026-10-06T19:28:40Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_m1_fence.py",
+    "status": "same",
+    "vps_sha256": "df1dfd092a4de8bc57abc5e4d9f43cc9fafdc6881e17bb89138cdf1f271070c1",
+    "git_sha256": "df1dfd092a4de8bc57abc5e4d9f43cc9fafdc6881e17bb89138cdf1f271070c1",
+    "vps_bytes": 8645,
+    "vps_mtime_utc": "2026-10-05T18:56:06Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_m1_numbers_r1.py",
+    "status": "same",
+    "vps_sha256": "8a09505f63394e39317c8bb5872e84e31b9ed2529bb97036691d25310ea97093",
+    "git_sha256": "8a09505f63394e39317c8bb5872e84e31b9ed2529bb97036691d25310ea97093",
+    "vps_bytes": 7871,
+    "vps_mtime_utc": "2026-10-05T19:56:14Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_m1_numbers_r1_guardian.py",
+    "status": "same",
+    "vps_sha256": "feef79760be993cc412438674d8be4adf0f278184d5dd410a7df9a02ccac9dd3",
+    "git_sha256": "feef79760be993cc412438674d8be4adf0f278184d5dd410a7df9a02ccac9dd3",
+    "vps_bytes": 6366,
+    "vps_mtime_utc": "2026-10-05T22:36:51Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_m1_numbers_r2_guardian.py",
+    "status": "same",
+    "vps_sha256": "4c566a0010948f4b5160c39eb2291c85d496a7b5095d82a319d16ac1cea5c753",
+    "git_sha256": "4c566a0010948f4b5160c39eb2291c85d496a7b5095d82a319d16ac1cea5c753",
+    "vps_bytes": 5960,
+    "vps_mtime_utc": "2026-10-05T22:04:56Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_m1_numbers_r4.py",
+    "status": "same",
+    "vps_sha256": "d594cd36ec348671b8e496133199449bedd9dd516955bfb7f1bf11fff762eaa8",
+    "git_sha256": "d594cd36ec348671b8e496133199449bedd9dd516955bfb7f1bf11fff762eaa8",
+    "vps_bytes": 3163,
+    "vps_mtime_utc": "2026-10-06T04:08:16Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_m1_numbers_r4_guardian.py",
+    "status": "same",
+    "vps_sha256": "7a573c92423072e6e2f56f7efcd996024635ca371dd467b352003319cd2f754f",
+    "git_sha256": "7a573c92423072e6e2f56f7efcd996024635ca371dd467b352003319cd2f754f",
+    "vps_bytes": 6314,
+    "vps_mtime_utc": "2026-10-06T04:03:54Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_m1_numbers_r4b_guardian.py",
+    "status": "same",
+    "vps_sha256": "250e808617cd2db519e5c15d715a5914a7f5b04d861927ee82308ebd519deae7",
+    "git_sha256": "250e808617cd2db519e5c15d715a5914a7f5b04d861927ee82308ebd519deae7",
+    "vps_bytes": 5576,
+    "vps_mtime_utc": "2026-10-06T14:18:54Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_m1_numbers_r6.py",
+    "status": "same",
+    "vps_sha256": "af9dd4a0ab5ac6f89b97e08573bf8ec4dea97a9df00618808107c75a296e2b06",
+    "git_sha256": "af9dd4a0ab5ac6f89b97e08573bf8ec4dea97a9df00618808107c75a296e2b06",
+    "vps_bytes": 6841,
+    "vps_mtime_utc": "2026-10-06T19:38:48Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_m1_numbers_r6_guardian.py",
+    "status": "same",
+    "vps_sha256": "43b318aa527f21415a9bc23d51ca2e963f38f4273aacdaf8e23ae70046463fff",
+    "git_sha256": "43b318aa527f21415a9bc23d51ca2e963f38f4273aacdaf8e23ae70046463fff",
+    "vps_bytes": 6044,
+    "vps_mtime_utc": "2026-10-06T19:44:28Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_m1_providers_r1.py",
+    "status": "same",
+    "vps_sha256": "38e4df337fc26083826d8695f0f23c9c90d46d1c3172343b31748324b3c1f990",
+    "git_sha256": "38e4df337fc26083826d8695f0f23c9c90d46d1c3172343b31748324b3c1f990",
+    "vps_bytes": 3729,
+    "vps_mtime_utc": "2026-10-05T19:43:17Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_m1_providers_r5.py",
+    "status": "same",
+    "vps_sha256": "e6818c52e73fb6f4ad086d064246de5d353b07e399f16b5819f6b40987f34195",
+    "git_sha256": "e6818c52e73fb6f4ad086d064246de5d353b07e399f16b5819f6b40987f34195",
+    "vps_bytes": 3072,
+    "vps_mtime_utc": "2026-10-06T16:31:11Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_m1_security_r1.py",
+    "status": "same",
+    "vps_sha256": "6283b9d45b5432b5f961873416825406ae3a0f995c3573160431c90ec78e8b93",
+    "git_sha256": "6283b9d45b5432b5f961873416825406ae3a0f995c3573160431c90ec78e8b93",
+    "vps_bytes": 1067,
+    "vps_mtime_utc": "2026-10-05T19:49:17Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_m1_security_r2_worker.py",
+    "status": "same",
+    "vps_sha256": "3de296988e45d0ba4de6485c05b625ecf3881b6c4df87a341305fe7b3e895244",
+    "git_sha256": "3de296988e45d0ba4de6485c05b625ecf3881b6c4df87a341305fe7b3e895244",
+    "vps_bytes": 3643,
+    "vps_mtime_utc": "2026-10-05T22:40:06Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_m1_security_r3.py",
+    "status": "same",
+    "vps_sha256": "03f92e085f1f7d9b5a3d734d98840fda912255c172e4b9ab24db6f2e9c1e0df7",
+    "git_sha256": "03f92e085f1f7d9b5a3d734d98840fda912255c172e4b9ab24db6f2e9c1e0df7",
+    "vps_bytes": 990,
+    "vps_mtime_utc": "2026-10-05T23:54:06Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_m1_time_r4b.py",
+    "status": "same",
+    "vps_sha256": "6daf87d99d3a2412fb1dcd649832b955a576efe18cbdd2af92cc642d46f404fd",
+    "git_sha256": "6daf87d99d3a2412fb1dcd649832b955a576efe18cbdd2af92cc642d46f404fd",
+    "vps_bytes": 3475,
+    "vps_mtime_utc": "2026-10-06T14:07:08Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_m1_time_r5.py",
+    "status": "same",
+    "vps_sha256": "2cdfd223967288c5e5a87a2845e9e219c6410129deef0d7daedb3bd2351f6a9f",
+    "git_sha256": "2cdfd223967288c5e5a87a2845e9e219c6410129deef0d7daedb3bd2351f6a9f",
+    "vps_bytes": 3652,
+    "vps_mtime_utc": "2026-10-06T16:34:20Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_maqsam_calls.py",
+    "status": "same",
+    "vps_sha256": "7436261b3cdfa15b521b500059c165087da0c2755850b943c47f14a65cc95210",
+    "git_sha256": "7436261b3cdfa15b521b500059c165087da0c2755850b943c47f14a65cc95210",
+    "vps_bytes": 30983,
+    "vps_mtime_utc": "2026-09-27T07:54:35Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_meter.py",
+    "status": "same",
+    "vps_sha256": "302caf0a240394662c0c399dc6f8dfaf3c568f09ae9d368a56c526beb07632af",
+    "git_sha256": "302caf0a240394662c0c399dc6f8dfaf3c568f09ae9d368a56c526beb07632af",
+    "vps_bytes": 6242,
+    "vps_mtime_utc": "2026-10-05T09:49:36Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_notes.py",
+    "status": "same",
+    "vps_sha256": "936c8fad9c27559e04d0eae571a71636a656cbc020b40fb40391028ced3cb5ee",
+    "git_sha256": "936c8fad9c27559e04d0eae571a71636a656cbc020b40fb40391028ced3cb5ee",
+    "vps_bytes": 9413,
+    "vps_mtime_utc": "2026-09-27T07:54:35Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_ops_contract.py",
+    "status": "same",
+    "vps_sha256": "54ba78a1d698fe022d6b4ed5d858bd03ae269b34076de21cb5115f156d045f5d",
+    "git_sha256": "54ba78a1d698fe022d6b4ed5d858bd03ae269b34076de21cb5115f156d045f5d",
+    "vps_bytes": 42865,
+    "vps_mtime_utc": "2026-10-04T15:13:50Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_proposal_judge.py",
+    "status": "same",
+    "vps_sha256": "3f087aa8c80f4999abe1161f53ca419cdacf88e22ec04e7ba46168503be92cd6",
+    "git_sha256": "3f087aa8c80f4999abe1161f53ca419cdacf88e22ec04e7ba46168503be92cd6",
+    "vps_bytes": 13334,
+    "vps_mtime_utc": "2026-10-05T12:42:12Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_proposal_quality.py",
+    "status": "same",
+    "vps_sha256": "7083ec6f6573e690e714f72847e6087727cbb9e5471e4a1d7108b37a267629c1",
+    "git_sha256": "7083ec6f6573e690e714f72847e6087727cbb9e5471e4a1d7108b37a267629c1",
+    "vps_bytes": 44602,
+    "vps_mtime_utc": "2026-10-05T12:44:14Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_proposal_review.py",
+    "status": "same",
+    "vps_sha256": "308594fea464a877ce658895a287e11557a18eb578f90f546037ee8f5eee2a5b",
+    "git_sha256": "308594fea464a877ce658895a287e11557a18eb578f90f546037ee8f5eee2a5b",
+    "vps_bytes": 28527,
+    "vps_mtime_utc": "2026-10-05T12:44:14Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_proposal_timing.py",
+    "status": "same",
+    "vps_sha256": "a498c9f7325b7e19f50df5aa5ad0f0582be6d2798430129df7d0c5f3dedec175",
+    "git_sha256": "a498c9f7325b7e19f50df5aa5ad0f0582be6d2798430129df7d0c5f3dedec175",
+    "vps_bytes": 23083,
+    "vps_mtime_utc": "2026-10-05T14:55:32Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_proposal_wording.py",
+    "status": "same",
+    "vps_sha256": "d6b6d94b482822d7e62f93e00ded0b7baa4e3d6aafd81176027aea96f0dccf13",
+    "git_sha256": "d6b6d94b482822d7e62f93e00ded0b7baa4e3d6aafd81176027aea96f0dccf13",
+    "vps_bytes": 24374,
+    "vps_mtime_utc": "2026-10-05T13:48:02Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_references.py",
+    "status": "same",
+    "vps_sha256": "153440752be978b61226fb80f453743dab22b8147f600641e60885616dec96f9",
+    "git_sha256": "153440752be978b61226fb80f453743dab22b8147f600641e60885616dec96f9",
+    "vps_bytes": 19094,
+    "vps_mtime_utc": "2026-10-05T10:12:33Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_render.py",
+    "status": "same",
+    "vps_sha256": "f84d45f9c17a98c4919e307d36e518b2803836588e83d175b240a504bd36e78e",
+    "git_sha256": "f84d45f9c17a98c4919e307d36e518b2803836588e83d175b240a504bd36e78e",
+    "vps_bytes": 7935,
+    "vps_mtime_utc": "2026-10-05T09:49:36Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_research.py",
+    "status": "same",
+    "vps_sha256": "1d7efc7f095a79d467c5d1c07a6b2040b0edd83703f39c6c37290c99019e8c21",
+    "git_sha256": "1d7efc7f095a79d467c5d1c07a6b2040b0edd83703f39c6c37290c99019e8c21",
+    "vps_bytes": 8702,
+    "vps_mtime_utc": "2026-09-27T07:54:35Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_reviews.py",
+    "status": "same",
+    "vps_sha256": "e1b397c6cbf3c3ff504db09a623823ff49b062b55e0b9cceef894761cec45881",
+    "git_sha256": "e1b397c6cbf3c3ff504db09a623823ff49b062b55e0b9cceef894761cec45881",
+    "vps_bytes": 17742,
+    "vps_mtime_utc": "2026-09-27T07:54:35Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_rooms.py",
+    "status": "same",
+    "vps_sha256": "0d44ebe43cc8d62086c2ea1ed55d23b2033c383d724627b9d08517d775ec0708",
+    "git_sha256": "0d44ebe43cc8d62086c2ea1ed55d23b2033c383d724627b9d08517d775ec0708",
+    "vps_bytes": 67732,
+    "vps_mtime_utc": "2026-10-06T18:00:03Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_rooms_adversarial.py",
+    "status": "same",
+    "vps_sha256": "f9bffc1add8c50689227c03f5d2be409c37b348348cb8c268096577505be04bb",
+    "git_sha256": "f9bffc1add8c50689227c03f5d2be409c37b348348cb8c268096577505be04bb",
+    "vps_bytes": 17526,
+    "vps_mtime_utc": "2026-10-05T18:50:04Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_rooms_hardening.py",
+    "status": "same",
+    "vps_sha256": "31ac507da592cf0fa46edfcc45b3657c10f8e5f7333fc2ca4402519684528bdc",
+    "git_sha256": "31ac507da592cf0fa46edfcc45b3657c10f8e5f7333fc2ca4402519684528bdc",
+    "vps_bytes": 40034,
+    "vps_mtime_utc": "2026-10-05T21:19:52Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_round1_fixes.py",
+    "status": "same",
+    "vps_sha256": "a3c7949398a9cf31ef2d25800143a0fb8598cf56b4a8d7388dafe8f32c048dba",
+    "git_sha256": "a3c7949398a9cf31ef2d25800143a0fb8598cf56b4a8d7388dafe8f32c048dba",
+    "vps_bytes": 5401,
+    "vps_mtime_utc": "2026-10-03T22:32:52Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_scripts_revise.py",
+    "status": "git_only",
+    "vps_sha256": null,
+    "git_sha256": "502e9d9a8e35c732e3c99c6969ece08ac8461b077e5e9c93694673af44652efd",
+    "note": "Not copied to the VPS."
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_stress2_chaos_r2.py",
+    "status": "same",
+    "vps_sha256": "1e93c8c9f7154b9a323c6134c963bd6913eead63f9779ce534d0774a2bfa5c76",
+    "git_sha256": "1e93c8c9f7154b9a323c6134c963bd6913eead63f9779ce534d0774a2bfa5c76",
+    "vps_bytes": 5071,
+    "vps_mtime_utc": "2026-10-04T13:23:11Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_stress2_chaos_r4.py",
+    "status": "same",
+    "vps_sha256": "2603569b395ed2c69b6b05afb1a40abcdd7dbdf7b533b8fda35d5a1ab55b7516",
+    "git_sha256": "2603569b395ed2c69b6b05afb1a40abcdd7dbdf7b533b8fda35d5a1ab55b7516",
+    "vps_bytes": 6374,
+    "vps_mtime_utc": "2026-10-05T10:49:20Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_stress2_chaos_r5.py",
+    "status": "same",
+    "vps_sha256": "0fb86ef0a7be48953ac0e6645b560f2a9670f6c38720b5ca10a3c9765c3c1904",
+    "git_sha256": "0fb86ef0a7be48953ac0e6645b560f2a9670f6c38720b5ca10a3c9765c3c1904",
+    "vps_bytes": 8683,
+    "vps_mtime_utc": "2026-10-05T12:46:22Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_stress2_chaos_r6.py",
+    "status": "same",
+    "vps_sha256": "ff374f377678eadae1708c76d6f11d52fa10a761c41c143cb2eb73c208a64754",
+    "git_sha256": "ff374f377678eadae1708c76d6f11d52fa10a761c41c143cb2eb73c208a64754",
+    "vps_bytes": 24376,
+    "vps_mtime_utc": "2026-10-05T15:37:14Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_stress2_concurrency_r6.py",
+    "status": "same",
+    "vps_sha256": "1b9fadf5b92e84a41b87a09fb52630f67499891fd59214d76cc4e371aaca2d6b",
+    "git_sha256": "1b9fadf5b92e84a41b87a09fb52630f67499891fd59214d76cc4e371aaca2d6b",
+    "vps_bytes": 5910,
+    "vps_mtime_utc": "2026-10-05T15:05:51Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_stress2_desk.py",
+    "status": "same",
+    "vps_sha256": "4b952745ba5011da6cb3ba71c645c366fe53331c60765d7d85958d1fbc659383",
+    "git_sha256": "4b952745ba5011da6cb3ba71c645c366fe53331c60765d7d85958d1fbc659383",
+    "vps_bytes": 13324,
+    "vps_mtime_utc": "2026-10-04T12:08:34Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_stress2_desk_r2.py",
+    "status": "same",
+    "vps_sha256": "75a45ce1399279345509e08348b2cf60ecaeee2ac51a4af9b016d69b794ab645",
+    "git_sha256": "75a45ce1399279345509e08348b2cf60ecaeee2ac51a4af9b016d69b794ab645",
+    "vps_bytes": 14449,
+    "vps_mtime_utc": "2026-10-04T15:14:29Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_stress2_desk_r3.py",
+    "status": "same",
+    "vps_sha256": "f287c27e0d118551ac10dbb5d6925dcbf739dbb2d93a80c4649fa9a961768b81",
+    "git_sha256": "f287c27e0d118551ac10dbb5d6925dcbf739dbb2d93a80c4649fa9a961768b81",
+    "vps_bytes": 24122,
+    "vps_mtime_utc": "2026-10-05T10:04:50Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_stress2_desk_r4.py",
+    "status": "same",
+    "vps_sha256": "cab85223abae4189f738a0bd780876af2259d35ad312894116d8f56631082d7f",
+    "git_sha256": "cab85223abae4189f738a0bd780876af2259d35ad312894116d8f56631082d7f",
+    "vps_bytes": 24526,
+    "vps_mtime_utc": "2026-10-05T11:57:11Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_stress2_desk_r5.py",
+    "status": "same",
+    "vps_sha256": "746102f5fddcd02eeb450ed3e9f7ddda2843dc5cdcef39c0f1cbc3b97d2fb395",
+    "git_sha256": "746102f5fddcd02eeb450ed3e9f7ddda2843dc5cdcef39c0f1cbc3b97d2fb395",
+    "vps_bytes": 18520,
+    "vps_mtime_utc": "2026-10-05T12:38:30Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_stress2_desk_r6.py",
+    "status": "same",
+    "vps_sha256": "a5b54a43e38ec8a230495b6c51a2b9321f126ee61462287db21607fffbcfeaca",
+    "git_sha256": "a5b54a43e38ec8a230495b6c51a2b9321f126ee61462287db21607fffbcfeaca",
+    "vps_bytes": 24594,
+    "vps_mtime_utc": "2026-10-05T15:41:22Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_stress2_journeys_r2.py",
+    "status": "same",
+    "vps_sha256": "bd9f537c0df6dbce787e935b164a04b71f832bf3791808e9c792b26fc0e59952",
+    "git_sha256": "bd9f537c0df6dbce787e935b164a04b71f832bf3791808e9c792b26fc0e59952",
+    "vps_bytes": 2366,
+    "vps_mtime_utc": "2026-10-04T14:44:50Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_stress2_numbers_audit.py",
+    "status": "same",
+    "vps_sha256": "a47a9a7ff847dc75594a9591012aa1bc62796af81b0231a565af4b8eb028a81b",
+    "git_sha256": "a47a9a7ff847dc75594a9591012aa1bc62796af81b0231a565af4b8eb028a81b",
+    "vps_bytes": 3400,
+    "vps_mtime_utc": "2026-10-04T09:32:12Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_stress2_numbers_r2.py",
+    "status": "same",
+    "vps_sha256": "2a7cab2127d161ee462a81d9bfc1e8167c31c7d7b6c5a6a1cf93f4f1f307fae0",
+    "git_sha256": "2a7cab2127d161ee462a81d9bfc1e8167c31c7d7b6c5a6a1cf93f4f1f307fae0",
+    "vps_bytes": 4840,
+    "vps_mtime_utc": "2026-10-04T13:24:00Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_stress2_numbers_r3.py",
+    "status": "same",
+    "vps_sha256": "2c0702f76bbc88b6a1e6e1e8702c4317dd0e1824b08d136e59a2c92839737692",
+    "git_sha256": "2c0702f76bbc88b6a1e6e1e8702c4317dd0e1824b08d136e59a2c92839737692",
+    "vps_bytes": 11289,
+    "vps_mtime_utc": "2026-10-04T15:33:14Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_stress2_numbers_r4.py",
+    "status": "same",
+    "vps_sha256": "6d066ca5828e39dcbf49f965b92739153082f83593c9e7a65c06509ad0719ea7",
+    "git_sha256": "6d066ca5828e39dcbf49f965b92739153082f83593c9e7a65c06509ad0719ea7",
+    "vps_bytes": 4476,
+    "vps_mtime_utc": "2026-10-05T10:53:18Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_stress2_numbers_r5.py",
+    "status": "same",
+    "vps_sha256": "1876deb4978896bd025d5ec82ca74a41c657ca0c5911cd0f4fd0cfa58a060d9a",
+    "git_sha256": "1876deb4978896bd025d5ec82ca74a41c657ca0c5911cd0f4fd0cfa58a060d9a",
+    "vps_bytes": 10498,
+    "vps_mtime_utc": "2026-10-05T12:36:21Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_stress2_numbers_r6.py",
+    "status": "same",
+    "vps_sha256": "b782775a1da46bd3c3abd6ab35383816c649f2497de0a0ef342804bc29bae345",
+    "git_sha256": "b782775a1da46bd3c3abd6ab35383816c649f2497de0a0ef342804bc29bae345",
+    "vps_bytes": 4417,
+    "vps_mtime_utc": "2026-10-05T14:58:55Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_stress2_providers.py",
+    "status": "same",
+    "vps_sha256": "a34954110e220d2921ec777f35d59b7f3908fe5a4089f48747331a64aba83790",
+    "git_sha256": "a34954110e220d2921ec777f35d59b7f3908fe5a4089f48747331a64aba83790",
+    "vps_bytes": 22384,
+    "vps_mtime_utc": "2026-10-04T12:05:18Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_stress2_providers_r2.py",
+    "status": "same",
+    "vps_sha256": "b908870b39fd46ee56ed01969b6c58e74d713264125c406b05475b9e328b3ef2",
+    "git_sha256": "b908870b39fd46ee56ed01969b6c58e74d713264125c406b05475b9e328b3ef2",
+    "vps_bytes": 11283,
+    "vps_mtime_utc": "2026-10-04T15:09:14Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_stress2_providers_r3.py",
+    "status": "same",
+    "vps_sha256": "23b6671aa9dd20b70caaa4aa3bba2a3aec7f20cad9c2b253a4b9a71f448c3e4c",
+    "git_sha256": "23b6671aa9dd20b70caaa4aa3bba2a3aec7f20cad9c2b253a4b9a71f448c3e4c",
+    "vps_bytes": 16209,
+    "vps_mtime_utc": "2026-10-04T15:57:09Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_stress2_providers_r5.py",
+    "status": "same",
+    "vps_sha256": "fe08a5513981c13c9d512c82a5113a2d47e5ee56c7e4a6d0bc84f71c3c583fdc",
+    "git_sha256": "fe08a5513981c13c9d512c82a5113a2d47e5ee56c7e4a6d0bc84f71c3c583fdc",
+    "vps_bytes": 5799,
+    "vps_mtime_utc": "2026-10-05T12:58:01Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_stress2_time_r3.py",
+    "status": "same",
+    "vps_sha256": "ab19b3745f958a126196ec1fa0c26e544060914f197a0d037f1abe09b3d26786",
+    "git_sha256": "ab19b3745f958a126196ec1fa0c26e544060914f197a0d037f1abe09b3d26786",
+    "vps_bytes": 1853,
+    "vps_mtime_utc": "2026-10-04T15:35:31Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_stress2_time_r4.py",
+    "status": "same",
+    "vps_sha256": "74861c8cfeda0a941f9744bddda787a3aef8bd0c5a40760e1e169775c7e59547",
+    "git_sha256": "74861c8cfeda0a941f9744bddda787a3aef8bd0c5a40760e1e169775c7e59547",
+    "vps_bytes": 7355,
+    "vps_mtime_utc": "2026-10-05T11:06:26Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_stress2_time_r6.py",
+    "status": "same",
+    "vps_sha256": "08ce83d9f8a49f1748b5de4ffe1ca8e525ba42b4a1d539e0cc85d5883e916f2a",
+    "git_sha256": "08ce83d9f8a49f1748b5de4ffe1ca8e525ba42b4a1d539e0cc85d5883e916f2a",
+    "vps_bytes": 7320,
+    "vps_mtime_utc": "2026-10-05T15:54:33Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_stress_chaos_r2.py",
+    "status": "same",
+    "vps_sha256": "d8d3f6699ae1e5f8af80112bd96c2e56f5790daf22524583cb78335354ca3474",
+    "git_sha256": "d8d3f6699ae1e5f8af80112bd96c2e56f5790daf22524583cb78335354ca3474",
+    "vps_bytes": 4825,
+    "vps_mtime_utc": "2026-10-03T19:47:40Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_stress_chaos_r3.py",
+    "status": "same",
+    "vps_sha256": "bf9d358a5f9d2f1b731ff2aefe8b9216bab6cd74ed3ee5d813551421913103be",
+    "git_sha256": "bf9d358a5f9d2f1b731ff2aefe8b9216bab6cd74ed3ee5d813551421913103be",
+    "vps_bytes": 2728,
+    "vps_mtime_utc": "2026-10-06T18:00:03Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_stress_chaos_r4.py",
+    "status": "same",
+    "vps_sha256": "db8c809fcfe3a79516044695057a2608a759a0720c6705ca4a1a2e7bc1190dc0",
+    "git_sha256": "db8c809fcfe3a79516044695057a2608a759a0720c6705ca4a1a2e7bc1190dc0",
+    "vps_bytes": 5470,
+    "vps_mtime_utc": "2026-10-03T23:02:40Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_stress_chaos_rooms.py",
+    "status": "same",
+    "vps_sha256": "9e60406ca181af7e1967bd058f5bf5162d5375e291d7ad977773a2ab8f7b4836",
+    "git_sha256": "9e60406ca181af7e1967bd058f5bf5162d5375e291d7ad977773a2ab8f7b4836",
+    "vps_bytes": 2979,
+    "vps_mtime_utc": "2026-10-05T18:50:04Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_stress_concurrency_r3.py",
+    "status": "same",
+    "vps_sha256": "4c0f1e148f9f100ab9ebb71970003b24f8afabd109d110519bdf6b1e4a5c2292",
+    "git_sha256": "4c0f1e148f9f100ab9ebb71970003b24f8afabd109d110519bdf6b1e4a5c2292",
+    "vps_bytes": 3688,
+    "vps_mtime_utc": "2026-10-05T18:50:04Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_stress_desk.py",
+    "status": "same",
+    "vps_sha256": "6183ee3853e6ffd7cb5b6725b6e155c3ae8856f2ad2dc7bc3e03e53d93c6dae4",
+    "git_sha256": "6183ee3853e6ffd7cb5b6725b6e155c3ae8856f2ad2dc7bc3e03e53d93c6dae4",
+    "vps_bytes": 18751,
+    "vps_mtime_utc": "2026-10-03T17:50:17Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_stress_desk_r2.py",
+    "status": "same",
+    "vps_sha256": "6c3aadf3394228ac39a204d6f01ddf1e77a435b839aa46f434ed5b190701c3c8",
+    "git_sha256": "6c3aadf3394228ac39a204d6f01ddf1e77a435b839aa46f434ed5b190701c3c8",
+    "vps_bytes": 12227,
+    "vps_mtime_utc": "2026-10-03T19:52:22Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_stress_desk_r3.py",
+    "status": "same",
+    "vps_sha256": "432f289df844308cc8ba054eebbf8821cde1722a311db12cb0127d45477a0f77",
+    "git_sha256": "432f289df844308cc8ba054eebbf8821cde1722a311db12cb0127d45477a0f77",
+    "vps_bytes": 13899,
+    "vps_mtime_utc": "2026-10-03T21:10:42Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_stress_desk_r4.py",
+    "status": "same",
+    "vps_sha256": "3e3c0616751f70aa6f2725e7fc4d9548164383917f627dc64e56176600c073dc",
+    "git_sha256": "3e3c0616751f70aa6f2725e7fc4d9548164383917f627dc64e56176600c073dc",
+    "vps_bytes": 19934,
+    "vps_mtime_utc": "2026-10-03T23:09:26Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_stress_numbers_audit.py",
+    "status": "same",
+    "vps_sha256": "7932ab8c60913182fee1ea27dba26c68ea62c0bc056bb0bb9cee4c8095c2f4e4",
+    "git_sha256": "7932ab8c60913182fee1ea27dba26c68ea62c0bc056bb0bb9cee4c8095c2f4e4",
+    "vps_bytes": 3399,
+    "vps_mtime_utc": "2026-10-03T17:55:51Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_stress_numbers_holdout_clock.py",
+    "status": "same",
+    "vps_sha256": "1340634327632e1f8a62222b65ddb7e506a9503f4e1c35895f4a0415755bc72e",
+    "git_sha256": "1340634327632e1f8a62222b65ddb7e506a9503f4e1c35895f4a0415755bc72e",
+    "vps_bytes": 9008,
+    "vps_mtime_utc": "2026-10-03T19:48:31Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_stress_numbers_live_calls_seen.py",
+    "status": "same",
+    "vps_sha256": "3c3cf38eee42c2752b4d873f94d216705330b8f5bef3cb20ec4edef50430c401",
+    "git_sha256": "3c3cf38eee42c2752b4d873f94d216705330b8f5bef3cb20ec4edef50430c401",
+    "vps_bytes": 4078,
+    "vps_mtime_utc": "2026-10-03T19:57:06Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_stress_numbers_r3.py",
+    "status": "same",
+    "vps_sha256": "c6d1591c71d1b85962a084017ea528bcbc3ed783cfec49ea9ad0101fa8eb2f88",
+    "git_sha256": "c6d1591c71d1b85962a084017ea528bcbc3ed783cfec49ea9ad0101fa8eb2f88",
+    "vps_bytes": 3236,
+    "vps_mtime_utc": "2026-10-03T21:08:10Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_stress_numbers_waves.py",
+    "status": "same",
+    "vps_sha256": "0e683575da07378f7e2eb5c78cc99a1802fd39800e0ac427719908b9f2d10a79",
+    "git_sha256": "0e683575da07378f7e2eb5c78cc99a1802fd39800e0ac427719908b9f2d10a79",
+    "vps_bytes": 9446,
+    "vps_mtime_utc": "2026-10-03T19:09:46Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_stress_time.py",
+    "status": "same",
+    "vps_sha256": "46f9d9852c9543fdce374f600f333772b831cb1cf54c10f384c15cdf5b295698",
+    "git_sha256": "46f9d9852c9543fdce374f600f333772b831cb1cf54c10f384c15cdf5b295698",
+    "vps_bytes": 9806,
+    "vps_mtime_utc": "2026-10-05T09:34:25Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_stress_time_day.py",
+    "status": "same",
+    "vps_sha256": "c6a061750983cecac44b457ef9a2e1fa83ef50a3bb0e00b813cf78117a1f7ec1",
+    "git_sha256": "c6a061750983cecac44b457ef9a2e1fa83ef50a3bb0e00b813cf78117a1f7ec1",
+    "vps_bytes": 4951,
+    "vps_mtime_utc": "2026-10-04T00:01:25Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_stress_time_r3.py",
+    "status": "same",
+    "vps_sha256": "d618acda566bbb0fd2898efa838491e1f39bd75a2ef05d267562fe5d85f9e27f",
+    "git_sha256": "d618acda566bbb0fd2898efa838491e1f39bd75a2ef05d267562fe5d85f9e27f",
+    "vps_bytes": 8973,
+    "vps_mtime_utc": "2026-10-06T18:01:44Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_stress_time_r4.py",
+    "status": "same",
+    "vps_sha256": "b227e7fce376dd2a6818c7d08148447306556b8317793d133e49a8b5ae03bad3",
+    "git_sha256": "b227e7fce376dd2a6818c7d08148447306556b8317793d133e49a8b5ae03bad3",
+    "vps_bytes": 5099,
+    "vps_mtime_utc": "2026-10-03T22:57:17Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_template_fonts.py",
+    "status": "same",
+    "vps_sha256": "e9a7657fba1866c3d128fcbf55ef5402b134c49dd7eb453526cfb045b23136f1",
+    "git_sha256": "e9a7657fba1866c3d128fcbf55ef5402b134c49dd7eb453526cfb045b23136f1",
+    "vps_bytes": 1542,
+    "vps_mtime_utc": "2026-10-05T09:49:36Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_tmp_cleanup.py",
+    "status": "same",
+    "vps_sha256": "6ff819459fbb03c88b1bceb3bb31f8ef9bfc83581e4a8ba00c1d70129c8bd44d",
+    "git_sha256": "6ff819459fbb03c88b1bceb3bb31f8ef9bfc83581e4a8ba00c1d70129c8bd44d",
+    "vps_bytes": 1253,
+    "vps_mtime_utc": "2026-10-05T09:49:37Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_vps.py",
+    "status": "same",
+    "vps_sha256": "87ed7318d70c37d0379c7f699c192d884920394eb690238a345576b4f296feeb",
+    "git_sha256": "87ed7318d70c37d0379c7f699c192d884920394eb690238a345576b4f296feeb",
+    "vps_bytes": 4039,
+    "vps_mtime_utc": "2026-09-27T08:20:06Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_waves.py",
+    "status": "same",
+    "vps_sha256": "37be08d5f90c30be5cd2281d74bddc4aa5d5360632faefa480c82463148669f5",
+    "git_sha256": "37be08d5f90c30be5cd2281d74bddc4aa5d5360632faefa480c82463148669f5",
+    "vps_bytes": 39781,
+    "vps_mtime_utc": "2026-10-05T18:49:55Z"
+   },
+   {
+    "path": "hermes/sales-desk/tests/test_waves_breakit.py",
+    "status": "same",
+    "vps_sha256": "9a9754cf8e909a306397c8d86d9666e3aa3579a4561287dd13a58573a6a3e6eb",
+    "git_sha256": "9a9754cf8e909a306397c8d86d9666e3aa3579a4561287dd13a58573a6a3e6eb",
+    "vps_bytes": 51761,
+    "vps_mtime_utc": "2026-10-05T11:57:11Z"
+   }
+  ]
+ },
+ "env_files": {
+  "~/.sales-desk/env": {
+   "path": "~/.sales-desk/env",
+   "exists": true,
+   "mode": "0o600",
+   "bytes": 333,
+   "mtime_utc": "2026-10-05T09:51:30Z",
+   "key_names": [
+    "SALES_MODEL_PROVIDER",
+    "SALES_PROPOSAL_MODEL",
+    "CHROME_PATH",
+    "SALES_MODEL_FALLBACK",
+    "SALES_FALLBACK_MODEL",
+    "SALES_FALLBACK_JOBS"
+   ],
+   "non_secret_values": {
+    "SALES_MODEL_PROVIDER": "vps",
+    "SALES_PROPOSAL_MODEL": "opus",
+    "CHROME_PATH": "/home/hermes/.cache/ms-playwright/chromium_headless_shell-1193/chrome-linux/headless_shell",
+    "SALES_MODEL_FALLBACK": "openai",
+    "SALES_FALLBACK_MODEL": "gpt-5",
+    "SALES_FALLBACK_JOBS": "proposal"
+   },
+   "empty_keys": [],
+   "duplicate_keys": [],
+   "non_assignment_lines": 0
+  },
+  "~/.cockpit-guardian/env": {
+   "path": "~/.cockpit-guardian/env",
+   "exists": true,
+   "mode": "0o600",
+   "bytes": 18,
+   "mtime_utc": "2026-10-03T19:25:20Z",
+   "key_names": [
+    "GUARDIAN_BEAT"
+   ],
+   "non_secret_values": {
+    "GUARDIAN_BEAT": "off"
+   },
+   "empty_keys": [],
+   "duplicate_keys": [],
+   "non_assignment_lines": 0
+  },
+  "~/.editor-desk/env": {
+   "path": "~/.editor-desk/env",
+   "exists": true,
+   "mode": "0o600",
+   "bytes": 464,
+   "mtime_utc": "2026-09-24T09:35:54Z",
+   "key_names": [
+    "DESK_SUPABASE_URL",
+    "DESK_SUPABASE_KEY",
+    "DESK_CLICKUP_WRITEBACK",
+    "FOREPLAY_DROP_BOX",
+    "SOCIAL_SLACK_CHANNEL"
+   ],
+   "non_secret_values": {},
+   "empty_keys": [],
+   "duplicate_keys": [],
+   "non_assignment_lines": 0
+  },
+  "/opt/data/bibi/api-keys.env": {
+   "path": "/opt/data/bibi/api-keys.env",
+   "exists": true,
+   "mode": "0o600",
+   "bytes": 5914,
+   "mtime_utc": "2026-09-23T09:33:21Z",
+   "key_names": [
+    "GOOGLE_CLIENT_ID",
+    "GOOGLE_CLIENT_SECRET",
+    "GOOGLE_REFRESH_TOKEN",
+    "GOOGLE_AI_API_KEY",
+    "YOUTUBE_API_KEY",
+    "GHL_API_KEY",
+    "WINDSOR_API_KEY",
+    "CLICKUP_API_KEY",
+    "APIFY_API_KEY",
+    "MANUS_API_KEY",
+    "ELEVENLABS_API_KEY",
+    "ELEVENLABS_DEFAULT_VOICE",
+    "ELEVENLABS_DEFAULT_VOICE_NAME",
+    "GROQ_API_KEY",
+    "FATHOM_API_KEY",
+    "META_ACCESS_TOKEN",
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "AGENTMAIL_API_KEY",
+    "HEYGEN_API_KEY",
+    "HIGGSFIELD_ID",
+    "HIGGSFIELD_SECRET",
+    "ELEVENLABS_API_KEY_V2",
+    "SUPABASE_URL",
+    "SUPABASE_ANON_KEY",
+    "SUPABASE_SERVICE_ROLE_KEY",
+    "SKOOL_EMAIL",
+    "SKOOL_PASSWORD",
+    "GHL_B2B_SUB_ACCOUNT_ID",
+    "TYPEFORM_API_TOKEN",
+    "MAQSAM_ACCESS_KEY",
+    "MAQSAM_SECRET",
+    "WHOP_API_KEY",
+    "WHOP_API_KEY_V2",
+    "GHL_B2B_API_KEY",
+    "YOUTUBE_CHANNEL_ID",
+    "META_AD_ACCOUNT_ID",
+    "KAI_API_KEY",
+    "VERCEL_TOKEN",
+    "EXCALIDRAW_API_KEY",
+    "GARMIN_USERNAME",
+    "GARMIN_PASSWORD",
+    "WISTIA_API_TOKEN",
+    "CLOUDFLARE_API_TOKEN",
+    "CLOUDFLARE_ACCOUNT_ID",
+    "HEVY_EMAIL",
+    "HEVY_PASSWORD",
+    "HEVY_API_KEY",
+    "STRAVA_CLIENT_ID",
+    "STRAVA_CLIENT_SECRET",
+    "STRAVA_ACCESS_TOKEN",
+    "STRAVA_REFRESH_TOKEN",
+    "STRAVA_DOMAIN",
+    "CRONOMETER_EMAIL",
+    "CRONOMETER_PASSWORD",
+    "CRONOMETER_MCP_URL",
+    "APPLE_HEALTH_INGEST_HOST",
+    "APOLLO_DASHBOARD_TOKEN",
+    "APPLE_HEALTH_WEBHOOK_SECRET",
+    "STRAVA_VERIFY_TOKEN",
+    "APOLLO_PORT",
+    "SLACK_BOT_TOKEN",
+    "SLACK_USER_TOKEN_RO",
+    "SLACK_HEALTH_CHANNEL",
+    "DASHBOARD_PASSWORD",
+    "STRAVA_SCOPES",
+    "ZOOM_ACCOUNT_ID",
+    "ZOOM_CLIENT_ID",
+    "ZOOM_CLIENT_SECRET",
+    "COCKPIT_ASKAI_TOKEN",
+    "COCKPIT_CSM_BRIDGE_TOKEN",
+    "MK_LEAD_FORM_ID",
+    "GITHUB_TOKEN",
+    "DEEPSEEK_API_KEY",
+    "MAKE_MCP_TOKEN",
+    "MAKE_API_KEY",
+    "MAKE_ZONE",
+    "GHL_CLIENT_ACCOUNT_API_KEY",
+    "GHL_CLIENT_ACCOUNT_LOCATION_ID",
+    "GHL_PRIVATE_TOKEN_MaharaClientAccount",
+    "GHL_LOCATION_ID_MaharaClientAccount",
+    "SCRAPECREATORS_API_KEY",
+    "COMPOSIO_API_KEY",
+    "GHL_MAHARA_PIT",
+    "GHL_MAHARA_LOCATION",
+    "REVIEW_SLACK_CHANNEL",
+    "COCKPIT_SUPABASE_URL",
+    "COCKPIT_SUPABASE_KEY"
+   ],
+   "non_secret_values": {},
+   "empty_keys": [
+    "ANTHROPIC_API_KEY"
+   ],
+   "duplicate_keys": [],
+   "non_assignment_lines": 0
+  },
+  "~/.team-sync/env": {
+   "path": "~/.team-sync/env",
+   "exists": false
+  },
+  "~/.ideation-radar/env": {
+   "path": "~/.ideation-radar/env",
+   "exists": true,
+   "mode": "0o600",
+   "bytes": 343,
+   "mtime_utc": "2026-09-18T08:16:35Z",
+   "key_names": [
+    "RADAR_SUPABASE_URL",
+    "RADAR_SUPABASE_KEY",
+    "RADAR_SLACK_CHANNEL"
+   ],
+   "non_secret_values": {},
+   "empty_keys": [],
+   "duplicate_keys": [],
+   "non_assignment_lines": 0
+  }
+ },
+ "env_notes": [
+  "~/.team-sync/env does not exist (cron line 40 guards it with [ -f ]; GOOGLE_CAL_* unset).",
+  "/opt/data/bibi/api-keys.env has ANTHROPIC_API_KEY present but empty.",
+  "~/.sales-desk/env.bak-20260927082032 holds the older three keys: SALES_MODEL_PROVIDER SALES_PROPOSAL_MODEL CHROME_PATH.",
+  "Other env files the jobs read, not inventoried here: ~/.cockpit-worker/env, /opt/data/.cockpit-worker/env (read by the guardian), ~/.higgsfield-api.env."
+ ],
+ "sales_desk_settings": {
+  "SALES_MODEL_PROVIDER": "vps",
+  "SALES_PROPOSAL_MODEL": "opus",
+  "CHROME_PATH": "/home/hermes/.cache/ms-playwright/chromium_headless_shell-1193/chrome-linux/headless_shell",
+  "SALES_MODEL_FALLBACK": "openai",
+  "SALES_FALLBACK_MODEL": "gpt-5",
+  "SALES_FALLBACK_JOBS": "proposal"
+ },
+ "guardian_settings": {
+  "GUARDIAN_BEAT": "off"
+ },
+ "reference_deals": {
+  "dir": "~/.sales-desk/reference",
+  "used_by": "desk/config.py reference_dir (SALES_REFERENCE_DIR default ~/.sales-desk/reference); engine.py notes 'No reference deal on this machine' when absent",
+  "client_derived": true,
+  "in_git": false,
+  "files": {
+   "general-grid.json": {
+    "bytes": 9504,
+    "mtime_utc": "2026-10-05T12:47:27Z",
+    "mode": "0o600",
+    "sha256": "02c056cc7d64b00cab25825c28b9a903178d32f7382f54a4f83e86193b2d86cc"
+   },
+   "general.json": {
+    "bytes": 10402,
+    "mtime_utc": "2026-10-05T12:47:27Z",
+    "mode": "0o600",
+    "sha256": "2c6d4ea078c814c247d16eb26a976d7b3605056698ecb9edb99a849250daf438"
+   },
+   "specific.json": {
+    "bytes": 10687,
+    "mtime_utc": "2026-10-05T12:47:27Z",
+    "mode": "0o600",
+    "sha256": "fb7c61d4c6dbbe49798d46a078a72de3769d3a5d845026e29ab64a057ccab679"
+   }
+  },
+  "older_copies": {
+   "~/.sales-desk/backup-20261005-124727-reference/general.json": {
+    "bytes": 10388,
+    "mtime_utc": "2026-10-05T09:01:46Z",
+    "mode": "0o600",
+    "sha256": "d601a6ca4bb504cb250f3bd136e87cfefae59b34a466fbe5b5e23fa95b8af35d"
+   },
+   "~/.sales-desk/backup-20261005-124727-reference/specific.json": {
+    "bytes": 10748,
+    "mtime_utc": "2026-10-05T09:01:46Z",
+    "mode": "0o600",
+    "sha256": "dab2b0cff0989306f6d8bf165eede38b9a92990cbb60054eb6adce6633051c66"
+   },
+   "~/.sales-desk/backup-2026-10-05/alt-general-corrected.json": {
+    "bytes": 9451,
+    "mtime_utc": "2026-10-05T09:02:08Z",
+    "mode": "0o600",
+    "sha256": "70f9ec5c74e435c4ceb60eaa3d5eb242478def17b6072333533425aec37ea36c"
+   },
+   "~/.sales-desk/backup-2026-10-05/general.json": {
+    "bytes": 9512,
+    "mtime_utc": "2026-09-24T09:28:43Z",
+    "mode": "0o600",
+    "sha256": "2781a9996349d4532347ca25cb39bf028439e32b92dbc32d97c3cd8a52274e23"
+   }
+  }
+ },
+ "playwright": {
+  "CHROME_PATH": "/home/hermes/.cache/ms-playwright/chromium_headless_shell-1193/chrome-linux/headless_shell",
+  "exists": true,
+  "bytes": 304364144,
+  "sha256": "003728e0b77eb9d52e4d258594bd55ce22ecd245eb6d3b6858fbd844c901ad7d",
+  "version": "Chromium 140.0.7339.186 (chromium_headless_shell-1193)",
+  "cache_dir": "~/.cache/ms-playwright (chromium_headless_shell-1193 321M, ffmpeg-1011 4.9M)",
+  "node_package": "~/.sales-desk/browser (playwright 1.55.1 in node_modules, 458 files, 13M)",
+  "python_playwright": "not installed (renders go through the node package / CHROME_PATH)",
+  "rebuild": "cd ~/.sales-desk/browser && npm ci && npx playwright install chromium-headless-shell (re-download, nothing unique to save)"
+ },
+ "sales_desk_state": {
+  "dir": "~/.sales-desk",
+  "total": "21M",
+  "mode": "0700",
+  "subdirs": {
+   "reference": "3 files 40K (see reference_deals)",
+   "vince": "127 files 1.8M",
+   "browser": "458 files 13M (Playwright node package)",
+   "out": "4 files 872K (one 2026-09-24 proposal run)",
+   "backup-2026-10-02": "2 files 96K",
+   "backup-2026-10-03": "1 file 32K",
+   "backup-2026-10-05": "2 files 28K",
+   "backup-2026-10-05-code": "4 files 3.9M",
+   "backup-2026-10-07-livecalls": "1 file 768K (129 entries: hermes/sales-desk before live calls)",
+   "backup-20261005-124727-reference": "2 files 28K"
+  },
+  "vince": {
+   "what": "Call-review knowledge the desk reads (desk.py: SALES_VINCE_DIR default ~/.sales-desk/vince; reviews.py source_ref 'vince:<file>'). 121 per-call reviews named after leads plus 6 framework/template/script files.",
+   "files": 127,
+   "bytes": 1512133,
+   "digest_of_sorted_file_sha256s": "8b98d521bb38c6d9e4c8f2a6b98ee848209aeb56201671ea213166ad6e650f73",
+   "non_lead_files": [
+    "sales-framework.md (50067)",
+    "intro-call-framework.md (16022)",
+    "coaching-log-template.md (3359)",
+    "intro-coaching-log-template.md (2362)",
+    "generate-review.py (3235)",
+    "generate-intro-review.py (3848)"
+   ],
+   "lead_data": true,
+   "in_git": false
+  },
+  "out": {
+   "~/.sales-desk/out/7a26fd6c-c7f2-4fce-96b2-fc43af2cd6fd/draft-2.html": {
+    "bytes": 393035,
+    "mtime_utc": "2026-09-24T10:20:03Z",
+    "mode": "0o664",
+    "sha256": "09ba599e463255080e62898af638fb3c09d8436d9dcc1c8cde48cc31ac71d7d1"
+   },
+   "~/.sales-desk/out/7a26fd6c-c7f2-4fce-96b2-fc43af2cd6fd/draft-1.html": {
+    "bytes": 393288,
+    "mtime_utc": "2026-09-24T10:18:05Z",
+    "mode": "0o664",
+    "sha256": "43330aa66c2f7a0343e2dec9e94d6f93481128bdb5723c4796e245896ac3ec2e"
+   },
+   "~/.sales-desk/out/7a26fd6c-c7f2-4fce-96b2-fc43af2cd6fd/call.txt": {
+    "bytes": 78575,
+    "mtime_utc": "2026-09-24T10:14:05Z",
+    "mode": "0o664",
+    "sha256": "137b3075798c8b38c38b4aa2eb2b8f30759ca3ed42ca96b11a25787defd597bf"
+   },
+   "~/.sales-desk/out/7a26fd6c-c7f2-4fce-96b2-fc43af2cd6fd/deal.json": {
+    "bytes": 9852,
+    "mtime_utc": "2026-09-24T10:20:04Z",
+    "mode": "0o664",
+    "sha256": "a0c123c85ae3bbcfa5664865175f6e80ce599c9d28cec08941538bbfb95fe97f"
+   }
+  },
+  "out_note": "call.txt and deal.json are lead data from one proposal run; draft-*.html are the rendered drafts.",
+  "lock_files": [
+   "requests",
+   "recordings",
+   "calls-vault",
+   "reviews",
+   "research",
+   "followups",
+   "reviews-asked",
+   "digest",
+   "notes",
+   "maqsam-calls",
+   "rooms",
+   "room-hosts",
+   "doctor"
+  ],
+  "logs": {
+   "~/.sales-desk.log": {
+    "bytes": 1582487,
+    "mtime_utc": "2026-10-07T11:26:22Z",
+    "mode": "0o664",
+    "sha256": "ddf26b936a979b2c7bd5c5e2c25c7d4c98c7cb7329a0f64ef65543ab7dc3094b"
+   },
+   "~/.sales-desk/mq-backfill.log": {
+    "bytes": 1282,
+    "mtime_utc": "2026-09-26T13:09:36Z",
+    "mode": "0o664",
+    "sha256": "9ecfe7410dade1596e684a30f5bd0ebae3fae69a3fb0dee154dca8c7a6ba9dbe"
+   }
+  },
+  "browser_package": {
+   "~/.sales-desk/browser/package.json": {
+    "bytes": 271,
+    "mtime_utc": "2026-09-24T09:27:31Z",
+    "mode": "0o664",
+    "sha256": "402a7f5b091b39471cfe44a88dda1431c39918c5f5fba471b9e0e4368aea95aa"
+   },
+   "~/.sales-desk/browser/package-lock.json": {
+    "bytes": 1685,
+    "mtime_utc": "2026-09-24T09:27:31Z",
+    "mode": "0o664",
+    "sha256": "1ce4ad5b58c89e3702955bb580d5cf2111f61f7261b2ee9ac662cbec0f25cde4"
+   }
+  },
+  "code_backups": {
+   "~/.sales-desk/backup-2026-10-02/before-client-form.tgz": {
+    "bytes": 31671,
+    "mtime_utc": "2026-10-02T15:57:48Z",
+    "mode": "0o664",
+    "sha256": "649a696c348daffcf9469a566d9440f2521e9ba7417d4e87fa01249bf0a80fe2"
+   },
+   "~/.sales-desk/backup-2026-10-02/before-guarantee.tgz": {
+    "bytes": 60698,
+    "mtime_utc": "2026-10-02T15:14:34Z",
+    "mode": "0o664",
+    "sha256": "61123b88d9d229f3451ebe32d30abfce4de8adf9a5eaf9119c08c64e90faa969"
+   },
+   "~/.sales-desk/backup-2026-10-03/before-payment-plans.tgz": {
+    "bytes": 26910,
+    "mtime_utc": "2026-10-03T10:37:45Z",
+    "mode": "0o664",
+    "sha256": "e77e64e3459d72e6554d10421fc7e0488be58e64ce9cafdab4ed66bbe349384b"
+   },
+   "~/.sales-desk/backup-2026-10-05-code/sales-desk-before-quality.tgz": {
+    "bytes": 1082442,
+    "mtime_utc": "2026-10-05T12:48:23Z",
+    "mode": "0o664",
+    "sha256": "b26d791257562a2cfb6bb0cc39bf7df2c997be19488df7ac027af5ce873b2904"
+   },
+   "~/.sales-desk/backup-2026-10-05-code/sales-desk-before-timing.tgz": {
+    "bytes": 1017858,
+    "mtime_utc": "2026-10-05T14:58:52Z",
+    "mode": "0o664",
+    "sha256": "1fe9b2ed80600e45c6c10de3e8d6aec49a0ae7a4136c0236b0a76d86396bfd11"
+   },
+   "~/.sales-desk/backup-2026-10-05-code/sales-desk-before-wording.tgz": {
+    "bytes": 989419,
+    "mtime_utc": "2026-10-05T14:12:35Z",
+    "mode": "0o664",
+    "sha256": "21f398d0e16e1669292d126db1fc935c6a2303051826bf47e681307471df3841"
+   },
+   "~/.sales-desk/backup-2026-10-05-code/sales-desk-before.tgz": {
+    "bytes": 922634,
+    "mtime_utc": "2026-10-05T09:51:30Z",
+    "mode": "0o664",
+    "sha256": "a524162d8846fd05bad8502a2fe66378e862d147dfbc5fd8d2142050092d350c"
+   },
+   "~/.sales-desk/backup-2026-10-07-livecalls/before.tgz": {
+    "bytes": 778596,
+    "mtime_utc": "2026-10-07T10:00:30Z",
+    "mode": "0o664",
+    "sha256": "78e287f39438de1c71fe39e02d740b3762b5f562d6f832851038420db496627c"
+   }
+  }
+ },
+ "guardian_state": {
+  "dir": "~/.cockpit-guardian",
+  "total": "276K",
+  "mode": "0700",
+  "files": {
+   "~/.cockpit-guardian/backups/crontab.20261003T190937Z": {
+    "bytes": 8757,
+    "mtime_utc": "2026-10-03T19:09:37Z",
+    "mode": "0o664",
+    "sha256": "318e669706da561608a5bba54980b74dda2dff6b6171c1e9e7790485504e8f4c"
+   },
+   "~/.cockpit-guardian/backups/crontab.20261007T101943Z.before-live-calls": {
+    "bytes": 9218,
+    "mtime_utc": "2026-10-07T10:19:43Z",
+    "mode": "0o664",
+    "sha256": "883b3d094333488a317d98f896989959fb1ba78b356eae7be06325d67ed4f2ea"
+   },
+   "~/.cockpit-guardian/state.json": {
+    "bytes": 197720,
+    "mtime_utc": "2026-10-07T11:35:29Z",
+    "mode": "0o600",
+    "sha256": "0584a08430875f9c7d53c8fdd934f301709ef462d9ce05f9a312cde700110727"
+   },
+   "~/.cockpit-guardian/guardian.log": {
+    "bytes": 35653,
+    "mtime_utc": "2026-10-07T11:10:32Z",
+    "mode": "0o664",
+    "sha256": "5189394049b45a6b7de82c93c4e1b4a19952d7240cedb7f89df6a705a4bdeb7b"
+   },
+   "~/.cockpit-guardian/cronline": {
+    "bytes": 351,
+    "mtime_utc": "2026-10-03T19:09:44Z",
+    "mode": "0o644",
+    "sha256": "76d2b539939aa4df3f5b30cc78b8ebf9703233ca7ff5ea7d533855022df63f58"
+   },
+   "~/.cockpit-guardian/cron.log": {
+    "bytes": 0,
+    "mtime_utc": "2026-10-03T19:10:01Z",
+    "mode": "0o664",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+   },
+   "~/.cockpit-guardian/state.lock": {
+    "bytes": 0,
+    "mtime_utc": "2026-10-03T19:10:02Z",
+    "mode": "0o664",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+   },
+   "~/.cockpit-guardian/run.lock": {
+    "bytes": 0,
+    "mtime_utc": "2026-10-03T19:10:01Z",
+    "mode": "0o664",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+   },
+   "~/.cockpit-guardian/.unwritable-alerted": {
+    "bytes": 0,
+    "mtime_utc": "1970-01-01T00:00:00Z",
+    "mode": "0o600",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+   }
+  },
+  "env": "~/.cockpit-guardian/env (18 bytes, mode 600): GUARDIAN_BEAT=off",
+  "state_json_shape": {
+   "version": 1,
+   "open": 23,
+   "resolved": 104,
+   "streaks": 106,
+   "last_alert": 25,
+   "pending_db": 0,
+   "db_rejected": 0,
+   "outbox": 0,
+   "db_table_missing": false,
+   "keys": [
+    "version",
+    "open",
+    "resolved",
+    "streaks",
+    "last_alert",
+    "pending_db",
+    "pending_db_since",
+    "db_rejected",
+    "history",
+    "daily_sent",
+    "last_scan",
+    "fix_history",
+    "pending_hooks",
+    "seen_deployed",
+    "log_offsets",
+    "hung_cpu",
+    "killed",
+    "beat",
+    "due_since",
+    "outbox",
+    "db_table_missing"
+   ]
+  },
+  "last_log_lines_utc": [
+   "2026-10-07T10:35:29Z opened hermes-jobs (warn)",
+   "2026-10-07T11:05:27Z opened hermes-ask-ai (fail)",
+   "2026-10-07T11:10:32Z resolved desk-doctor"
+  ],
+  "also_reads": [
+   "/opt/data/cron/jobs.json",
+   "/opt/data/.cockpit-worker/env",
+   "~/.cockpit-guardian/crontab.proposed (written only in fix mode; absent)"
+  ]
+ },
+ "other_backups": {
+  "~/backups": {
+   "~/backups/team-sync.sync.py.bak-20260923": {
+    "bytes": 10375,
+    "mtime_utc": "2026-09-23T12:11:05Z",
+    "mode": "0o644",
+    "sha256": "624f1d33c1bcd06d8e1e613314e9b14ba330713956f9ee989d2db5ddcc99cdfc"
+   },
+   "~/backups/billing-agent-20260923/cockpit.py.v1": {
+    "bytes": 14769,
+    "mtime_utc": "2026-09-23T09:33:29Z",
+    "mode": "0o644",
+    "sha256": "0d109e657f7a3c1c927b507ed557742997fe232be3339246435d8c8dc2fca1e9"
+   },
+   "~/backups/billing-agent-20260923/log_payment.py": {
+    "bytes": 6923,
+    "mtime_utc": "2026-09-14T09:16:47Z",
+    "mode": "0o644",
+    "sha256": "6cc4bdaee2a64a77465c7df24af5a9018bfa8870a13946e59d66d7c07103c14b"
+   },
+   "~/backups/billing-agent-20260923/billing.py": {
+    "bytes": 12280,
+    "mtime_utc": "2026-09-14T08:00:51Z",
+    "mode": "0o644",
+    "sha256": "887a1fede849a81443efce51ef97b3dcbe3211f07aa0a00340718339f1fd9761"
+   },
+   "~/backups/billing-agent-20260923/SKILL.md": {
+    "bytes": 7753,
+    "mtime_utc": "2026-09-23T08:20:26Z",
+    "mode": "0o644",
+    "sha256": "00dd90dd505e46b8c1c7e0dc25adfe6706ca8231c3cfd186f714d78ae5b8ad9b"
+   }
+  },
+  "~/.deploy-staging": "README.md, sync.py, test_sync.py, salma/, sd/, team-sync/, backup-20260927082006/ (2026-09-27..10-01 staging copies; not inventoried file by file)",
+  "~/.webinar-backup-20260926T100748Z": "present (not inventoried)",
+  "~/backups/2026-10-07-pre-migration": "not created yet"
+ },
+ "fixer_projects": {
+  "file": "/opt/data/bibi/workspace/reliability/fixer-projects.json",
+  "real_path": "/docker/hermes-agent-ff5p/data/bibi/workspace/reliability/fixer-projects.json",
+  "bytes": 703,
+  "mtime": "2026-10-04 12:00",
+  "sha256": "e5f8a5d59b8cf46ebbcc05c9c1ca1da392008689c190185b083197065f5be9d9",
+  "keys": [
+   "portal",
+   "dialer",
+   "mahara-cockpits",
+   "aziz-cockpit",
+   "public-sites",
+   "cockpit-guardian"
+  ],
+  "cockpit-guardian": {
+   "label": "Cockpit guardian",
+   "repo": "AzizWaheedi/mahara-cockpits",
+   "fix_policy": "pr"
+  },
+  "git_mirror_copy": {
+   "file": "/opt/data/backups/git-mirror/bibi/workspace/reliability/fixer-projects.json",
+   "bytes": 575,
+   "mtime": "2026-09-27 09:38",
+   "sha256": "f820d88cddd306c79fdfa5176a936c8dc57164abac99004eb2cae3493a0a8e45",
+   "has_cockpit_guardian": false
+  }
+ },
+ "external_dependencies": {
+  "/opt/data/bibi/api-keys.env": "88 keys (names above)",
+  "/opt/data/obsidian-sync-vault": "symlink to /docker/hermes-agent-ff5p/data/obsidian-sync-vault (calls-vault job reads it)",
+  "/opt/data/scripts/vault-fathom.py": "6465 bytes, 2026-09-21 (writes the vault notes the calls-vault job reads)",
+  "/opt/data/cron/jobs.json": "Hermes scheduled jobs, read by the guardian",
+  "~/.salma-vps.json": {
+   "bytes": 45,
+   "mtime_utc": "2026-10-04T15:30:09Z",
+   "mode": "0o664",
+   "sha256": "4139cb7a776f8dab26d26197329f53dd179efad0d289857579bd678fff32d439"
+  }
+ },
+ "risks": [
+  {
+   "risk": "The VPS checkout is not a clean git copy",
+   "detail": "~/mahara-cockpits sits on 7545850 (2026-09-19) with 84 porcelain entries. hermes/sales-desk (live calls M1 + proposal generator) and hermes/cockpit-guardian are untracked at HEAD, as are eod-out, review-import, webinar-pull and ~50 supabase/migrations files; editor-desk, ideation-radar and team-sync have uncommitted edits. A git clean -fd, git reset --hard, re-clone or fresh checkout would delete every running cockpit worker. A plain git pull would refuse on the untracked files rather than overwrite them.",
+   "mitigation": "Today the code matches origin/main e166a0b, so it can be re-copied from git or from the restore tag; a tar of the two folders into ~/backups/2026-10-07-pre-migration/ plus the bucket is the belt and braces."
+  },
+  {
+   "risk": "Reference deals exist only on the VPS",
+   "detail": "~/.sales-desk/reference/general.json, specific.json, general-grid.json (client-derived, never in git). Without them the proposal generator still drafts but notes 'No reference deal on this machine'. Two older generations sit in ~/.sales-desk/backup-20261005-124727-reference/ and backup-2026-10-05/, on the same disk.",
+   "mitigation": "Copy to the private bucket sales-proposals under backups/2026-10-07-pre-migration/ (never git)."
+  },
+  {
+   "risk": "The vince call-review folder exists only on the VPS",
+   "detail": "~/.sales-desk/vince: 127 files, 1.5 MB, 121 named after leads; the desk reads it (SALES_VINCE_DIR) for reviews and knowledge. Lead data, never git.",
+   "mitigation": "Private bucket only."
+  },
+  {
+   "risk": "Env files are single copies on the VPS",
+   "detail": "~/.sales-desk/env (6 keys incl. the OpenAI fallback for proposals), ~/.cockpit-guardian/env (GUARDIAN_BEAT=off), ~/.editor-desk/env (5), ~/.ideation-radar/env (3), /opt/data/bibi/api-keys.env (88). If a migration swaps the Supabase project or keys, DESK_SUPABASE_*/COCKPIT_SUPABASE_*/RADAR_SUPABASE_*/SUPABASE_* must be changed together; the cron lines source them by path.",
+   "mitigation": "Names are in this manifest; values stay where they are (never copied here)."
+  },
+  {
+   "risk": "The live-calls cron lines are missing from the guardian's crontab.manifest",
+   "detail": "Lines 62-64 (rooms --for 57, rooms --check-hosts, doctor --cron) are not in hermes/cockpit-guardian/crontab.manifest, so if a migration rewrites the crontab and drops them the guardian will not report it. They are recorded verbatim in hermes/sales-desk/README.md and in this manifest (line digests).",
+   "mitigation": "After the migration compare crontab -l against crontab.sha256 / per-line sha256 here; a later commit can add the three lines to crontab.manifest."
+  },
+  {
+   "risk": "The guardian's Hermes fixer entry is newer than its mirror",
+   "detail": "fixer-projects.json has cockpit-guardian (label, repo, fix_policy pr) since 2026-10-04, but the git-mirror copy (/opt/data/backups/git-mirror/..., 2026-09-27) does not; restoring Hermes from that mirror would drop the entry.",
+   "mitigation": "The entry is recorded in full here."
+  },
+  {
+   "risk": "Guardian state is local",
+   "detail": "~/.cockpit-guardian/state.json (198 KB: 23 open, 104 resolved incidents, streaks, outbox empty) and two crontab snapshots; losing it resets streaks and re-opens incidents, nothing worse.",
+   "mitigation": "Copy into the VPS backup folder; the incidents also live in cockpit_guardian_incidents."
+  },
+  {
+   "risk": "Playwright shell is a re-downloadable 304 MB binary",
+   "detail": "CHROME_PATH points into ~/.cache/ms-playwright (chromium_headless_shell-1193, Chromium 140.0.7339.186); a cache wipe or new box breaks proposal PDFs until reinstalled from ~/.sales-desk/browser (playwright 1.55.1).",
+   "mitigation": "Record only (digest + version here); do not copy."
+  },
+  {
+   "risk": "Other VPS-only state the desk and guardian lean on",
+   "detail": "/opt/data/obsidian-sync-vault (calls-vault), /opt/data/scripts/vault-fathom.py, /opt/data/cron/jobs.json, /opt/data/.cockpit-worker/env, ~/.salma-vps.json; plus ~/.sales-desk/out holds one proposal run with lead data.",
+   "mitigation": "Out of this migration's path; noted so a box move does not miss them."
+  }
+ ]
+}

@@ -34,12 +34,14 @@ import {
   type CrmSettings,
   redact,
   refuseMark,
+  timingSafeEqual,
   trimMessages,
   type Channel,
   dndFor,
   mergeThreads,
   sendBody,
   stateOf,
+  failedStatus,
   type ThreadMessage,
   toThread,
   whatsappWindow,
@@ -51,10 +53,13 @@ import {
   eodMessage,
   eodValue,
   type Who,
+  greetingName,
 } from "./lib.ts";
 import {
   afterOutcome,
+  afterTalk,
   ANY_OUTCOME_WORDS,
+  appointmentWork,
   type AnyOutcome,
   APPOINTMENT_OUTCOMES,
   appointmentEffect,
@@ -67,6 +72,7 @@ import {
   tagsFor,
   targetRoles,
   calendarFor,
+  confirmationRoomHeld,
   callSummary,
   dayStats,
   ghlTime,
@@ -83,6 +89,7 @@ import {
   parseSlots,
   rankForCloser,
   rankForSetter,
+  roomJoinedFor,
   routePhone,
   slotOffered,
 } from "./dialer.ts";
@@ -108,6 +115,33 @@ import {
   signingLink,
 } from "./contracts.ts";
 import { clientFormRow, CLIENT_FORM_ID } from "./clientforms.ts";
+import { ApiRefusal, makeLiveIO, uuidFrom } from "./liveio.ts";
+import { makeRooms } from "./rooms.ts";
+import { holdUntil, kuwaitClock, leadJoined, roomCtx, type RoomRow, roomsSetting } from "./roomlogic.ts";
+import { makeFollowupAgent } from "./followupAgent.ts";
+import {
+  clockCountry,
+  budgetCap,
+  budgetCheck,
+  DUPLICATE_PAUSED,
+  duplicatePair,
+  duplicateWatchOn,
+  followupSettingsValue,
+  GATE_SHUT,
+  gateOpen,
+  healthCfg,
+  hoursRefusal,
+  kuwaitMonthStart,
+  agentOff,
+  agentWorkOff,
+  matchSent,
+  queuedTemplatesQuery,
+  relativeDay,
+  type SendSource,
+  sourceHealth,
+  templateMayBeQueued,
+  whatsappGuardValue,
+} from "./sendrules.ts";
 import {
   ALREADY_DRAFTING,
   archivePlan,
@@ -126,37 +160,83 @@ const LOCATION = "7NI8yyJtwsh2OOWA5Icr";
 const UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36";
 
-class Refusal extends Error {
-  constructor(
-    message: string,
-    public status = 400,
-  ) {
-    super(message);
+/**
+ * A refusal: one sentence that says what to do next, and its status. The
+ * live-call modules throw the same kind (liveio.ts ApiRefusal), which can
+ * carry extra keys for the answer: `code`, and for the desk `retry`,
+ * `cleanup` or `hold_all`.
+ */
+class Refusal extends ApiRefusal {
+  constructor(message: string, status = 400, extra: Row = {}) {
+    super(message, status, extra);
   }
 }
 
 const env = (n: string) => (Deno.env.get(n) ?? "").trim();
 const enc = encodeURIComponent;
 
+/** Every database call waits this long at most, and every HighLevel call this long: a hung call is an error, never a hang. */
+const SVC_MS = 20_000;
+const GHL_CALL_MS = 25_000;
+
+/** fetch with a deadline; a call that runs out says so in plain words. */
+async function fetchWithin(url: string, init: RequestInit, ms: number, what: string): Promise<Response> {
+  try {
+    return await fetch(url, { ...init, signal: AbortSignal.timeout(ms) });
+  } catch (e) {
+    const name = (e as { name?: string })?.name ?? "";
+    if (name === "TimeoutError" || name === "AbortError")
+      throw Object.assign(new Error(`${what} did not answer within ${Math.round(ms / 1000)} seconds`), { status: 0 });
+    throw e;
+  }
+}
+
 async function svc(
   path: string,
-  init: { method?: string; body?: unknown; prefer?: string } = {},
+  init: { method?: string; body?: unknown; prefer?: string; actor?: string } = {},
 ): Promise<Row[]> {
   const key = env("SUPABASE_SERVICE_ROLE_KEY");
-  const res = await fetch(`${env("SUPABASE_URL")}/rest/v1/${path}`, {
+  const res = await fetchWithin(`${env("SUPABASE_URL")}/rest/v1/${path}`, {
     method: init.method ?? "GET",
     headers: {
       apikey: key,
       Authorization: `Bearer ${key}`,
       "Content-Type": "application/json",
       ...(init.prefer ? { Prefer: init.prefer } : {}),
+      // Who wrote a setting, for 20261004a's settings guard (m1 round 6):
+      // read from this request only, never from the row.
+      ...(init.actor ? { "x-mahara-actor": init.actor } : {}),
     },
     body: init.body === undefined ? undefined : JSON.stringify(init.body),
-  });
-  const text = await res.text();
-  if (!res.ok) throw new Error(`database ${res.status}: ${redact(text)}`);
-  const out = text ? JSON.parse(text) : [];
-  return Array.isArray(out) ? out : [out];
+  }, SVC_MS, "The database");
+  let text: string;
+  try {
+    text = await res.text();
+  } catch (e) {
+    throw Object.assign(new Error(`The database's answer was cut off (${redact(String((e as Error)?.message ?? e))}), so it may or may not have landed`), { status: 0 });
+  }
+  if (!res.ok) throw Object.assign(new Error(`database ${res.status}: ${redact(text)}`), { status: res.status });
+  // A read, or a write that asked for its rows back, always answers a JSON
+  // list (at least "[]"), as liveio.ts db reads it (stress2 round 5,
+  // svc-empty-200-read-as-no-rows): an empty body, a page that is not JSON,
+  // or an object is an answer nobody can read, never "no rows".
+  const method = (init.method ?? "GET").toUpperCase();
+  const wantsRows = method === "GET" || /return=representation/.test(init.prefer ?? "");
+  if (!text) {
+    if (wantsRows) throw Object.assign(new Error("The database's answer was empty, so nothing was read"), { status: 0 });
+    return [];
+  }
+  let out: unknown;
+  try {
+    out = JSON.parse(text);
+  } catch {
+    throw Object.assign(new Error("The database's answer was not JSON, so it may or may not have landed"), { status: 0 });
+  }
+  if (!Array.isArray(out)) {
+    if (wantsRows) throw Object.assign(new Error("The database's answer was not a list of rows, so nothing was read"), { status: 0 });
+    return [out as Row];
+  }
+  return out as Row[];
 }
 
 /**
@@ -176,7 +256,7 @@ async function svcAll(path: string, cap = 50_000): Promise<Row[]> {
 }
 
 async function whoami(jwt: string): Promise<Who> {
-  const res = await fetch(`${env("SUPABASE_URL")}/rest/v1/rpc/cockpit_sales_whoami`, {
+  const res = await fetchWithin(`${env("SUPABASE_URL")}/rest/v1/rpc/cockpit_sales_whoami`, {
     method: "POST",
     headers: {
       apikey: env("SUPABASE_ANON_KEY"),
@@ -184,7 +264,7 @@ async function whoami(jwt: string): Promise<Who> {
       "Content-Type": "application/json",
     },
     body: "{}",
-  });
+  }, SVC_MS, "The seat check");
   if (res.status === 401) return { signed_in: false };
   if (!res.ok) throw new Error(`the seat check answered ${res.status}`);
   return (await res.json()) as Who;
@@ -229,7 +309,7 @@ async function ghl(
 ): Promise<Row> {
   const token = env("SALES_GHL_TOKEN");
   if (!token) throw new Error("HighLevel is not connected (SALES_GHL_TOKEN is missing)");
-  const res = await fetch(`${GHL}${path}`, {
+  const res = await fetchWithin(`${GHL}${path}`, {
     method,
     headers: {
       Authorization: `Bearer ${token}`,
@@ -239,7 +319,7 @@ async function ghl(
       ...(body === undefined ? {} : { "Content-Type": "application/json" }),
     },
     body: body === undefined ? undefined : JSON.stringify(body),
-  });
+  }, GHL_CALL_MS, "HighLevel");
   const text = await res.text();
   if (!res.ok) {
     let msg = text;
@@ -253,12 +333,78 @@ async function ghl(
     }
     throw Object.assign(new Error(`HighLevel said ${res.status}: ${redact(msg)}`), { status: res.status });
   }
-  return text ? (JSON.parse(text) as Row) : {};
+  // An empty or unreadable 200 is no answer (stress2 round 5, as liveio.ts
+  // ghl reads it): a read that says nothing is never "nothing there", and a
+  // page that is not JSON may or may not have done what was asked. A write
+  // HighLevel answers with no body (a delete) is done.
+  if (!text) {
+    if (method.toUpperCase() === "GET") throw Object.assign(new Error("HighLevel's answer was empty, so nothing was read"), { status: 0 });
+    return {};
+  }
+  let out: unknown;
+  try {
+    out = JSON.parse(text);
+  } catch {
+    throw Object.assign(new Error("HighLevel's answer was not JSON, so it may or may not have landed"), { status: 0 });
+  }
+  if (!out || typeof out !== "object" || Array.isArray(out)) {
+    if (method.toUpperCase() === "GET") throw Object.assign(new Error("HighLevel's answer was not readable, so nothing was read"), { status: 0 });
+    return {};
+  }
+  return out as Row;
 }
 
 async function setting<T>(key: string): Promise<T | null> {
   const rows = await svc(`cockpit_sales_settings?key=eq.${enc(key)}&select=value`);
   return (rows[0]?.value as T) ?? null;
+}
+
+/** A save that found nothing to write (saveSettingIf's `make` throws it): the setting is left as it is. */
+class NothingToSave extends Error {}
+
+/**
+ * A setting written only over the value it was read as (fix round 4): two
+ * managers saving at once (the agent's switch on one screen, openers a day on
+ * another), or a save beside the duplicate detector's pause, never write
+ * back a key the other just changed. `make` builds the value from the row as
+ * read (and may refuse); a write another save beat (its updated_at moved) is
+ * read again and made again, at most five times, then "Reload".
+ */
+async function saveSettingIf(
+  key: string,
+  by: string,
+  make: (before: Row | null) => Row,
+): Promise<{ before: Row | null; value: Row }> {
+  for (let i = 0; i < 5; i++) {
+    const row = (await svc(`cockpit_sales_settings?key=eq.${enc(key)}&select=value,updated_at`))[0] ?? null;
+    const before = (row?.value ?? null) as Row | null;
+    const value = make(before);
+    const at = new Date().toISOString();
+    if (!row) {
+      try {
+        await svc("cockpit_sales_settings", {
+          method: "POST",
+          body: { key, value, updated_by: by, updated_at: at },
+          prefer: "return=minimal",
+          actor: by,
+        });
+        return { before, value };
+      } catch (e) {
+        // Another save made the row a moment ago: read it and merge again.
+        if (/23505|duplicate/.test(String((e as Error).message ?? e))) continue;
+        throw e;
+      }
+    }
+    const since = row.updated_at ? `updated_at=eq.${enc(String(row.updated_at))}` : "updated_at=is.null";
+    const out = await svc(`cockpit_sales_settings?key=eq.${enc(key)}&${since}`, {
+      method: "PATCH",
+      body: { value, updated_by: by, updated_at: at },
+      prefer: "return=representation",
+      actor: by,
+    });
+    if (out.length) return { before, value };
+  }
+  throw new Refusal("The settings changed a moment ago. Reload.", 409);
 }
 
 function needManager(who: Who) {
@@ -269,25 +415,70 @@ function needManager(who: Who) {
 // Marking calls
 // ---------------------------------------------------------------------------
 
+const SUPERSEDED_CRM = "A later mark replaced this one, so HighLevel was given the later mark.";
+
 async function writeMarkToCrm(id: number, appointmentId: string, status: string, notify = true) {
   // Quiet: the status changes in HighLevel and none of its automations run.
   let crm = notify ? "written" : "quiet";
   let crmError: string | null = null;
-  try {
-    await ghl("PUT", `/calendars/events/appointments/${enc(appointmentId)}`, {
-      appointmentStatus: status,
-      toNotify: notify,
-    });
-  } catch (e) {
-    crm = "failed";
-    crmError = redact(String((e as Error).message ?? e));
+  // A mark replaced before its PUT goes (stress2 round 6,
+  // settle-noshow-crm-write-lands-after-rep-mark): HighLevel is never given
+  // a mark the cockpit no longer holds.
+  let superseded = await markSuperseded(id);
+  if (!superseded) {
+    try {
+      await ghl("PUT", `/calendars/events/appointments/${enc(appointmentId)}`, {
+        appointmentStatus: status,
+        toNotify: notify,
+      });
+    } catch (e) {
+      crm = "failed";
+      crmError = redact(String((e as Error).message ?? e));
+    }
+    // Replaced while the PUT ran (a rep's mark landed and its own PUT went
+    // first): the current mark is put back on top, so a superseded mark
+    // never lands last in HighLevel, which B2B's show rate reads.
+    if (crm !== "failed" && (await markSuperseded(id))) {
+      superseded = true;
+      await putCurrentMark(appointmentId);
+    }
+  }
+  if (superseded) {
+    crm = "skipped";
+    crmError = SUPERSEDED_CRM;
   }
   await svc(`cockpit_sales_dispositions?id=eq.${id}`, {
     method: "PATCH",
     body: { crm, crm_error: crmError, crm_at: new Date().toISOString() },
     prefer: "return=minimal",
   });
-  return { crm, crm_error: crmError };
+  return { crm, crm_error: crmError, ...(superseded ? { superseded: true } : {}) };
+}
+
+/** This mark is no longer the call's current one; false when it could not be read (the write goes on as before). */
+async function markSuperseded(id: number): Promise<boolean> {
+  try {
+    const rows = await svc(`cockpit_sales_dispositions?id=eq.${id}&select=superseded_at`);
+    return Boolean(rows[0]?.superseded_at);
+  } catch {
+    return false;
+  }
+}
+
+/** The call's current mark written to HighLevel again, quietly (its own write may have landed before a superseded one). */
+async function putCurrentMark(appointmentId: string): Promise<void> {
+  try {
+    const cur = (await svc(
+      `cockpit_sales_dispositions?appointment_id=eq.${enc(appointmentId)}&superseded_at=is.null&select=id,status,crm`,
+    ))[0];
+    if (!cur || !["written", "quiet", "pending"].includes(String(cur.crm ?? ""))) return;
+    await ghl("PUT", `/calendars/events/appointments/${enc(appointmentId)}`, {
+      appointmentStatus: String(cur.status),
+      toNotify: false,
+    });
+  } catch (e) {
+    console.error("mark put back", redact(String((e as Error)?.message ?? e)));
+  }
 }
 
 async function mark(who: Who, b: Row) {
@@ -297,7 +488,27 @@ async function mark(who: Who, b: Row) {
     reason: cleanText(b.reason, 300) || null,
     note: cleanText(b.note, 4000) || null,
   });
+  await resolveRoomMarkAlerts(id);
   return { mark: result };
+}
+
+/**
+ * A person marked the call: the rooms' "mark this intro" alerts for it are
+ * answered (final review: per-room alerts were never resolved, so the
+ * watchdog's open count only grew). Never fatal: the mark stands.
+ */
+async function resolveRoomMarkAlerts(appointmentId: string): Promise<void> {
+  try {
+    const rooms = await svc(`cockpit_sales_rooms?appointment_id=eq.${enc(appointmentId)}&select=id&limit=20`);
+    for (const r of rooms)
+      for (const what of ["mark_intro", "count_other_rep", "showed_failed"])
+        await svc("rpc/cockpit_sales_alert_set", {
+          method: "POST",
+          body: { p_key: `room:${r.id}:${what}`, p_on: false, p_kind: "room_mark_intro", p_subject: null, p_message: null, p_detail: null },
+        });
+  } catch (e) {
+    console.error("room mark alerts resolve", redact(String(e)));
+  }
 }
 
 /**
@@ -310,7 +521,16 @@ async function markAppointment(
   who: Who,
   id: string,
   status: string,
-  opts: { reason?: string | null; note?: string | null; anyRep?: boolean } = {},
+  opts: {
+    reason?: string | null;
+    note?: string | null;
+    anyRep?: boolean;
+    quiet?: boolean;
+    onlyIfUnmarked?: boolean;
+    raced?: boolean;
+    /** A showed mark whose call was had on video before its booked time (a confirmation call's room the lead joined). */
+    heldEarly?: boolean;
+  } = {},
 ): Promise<Row> {
   const appt = (await svc(
     `cockpit_sales_appointments?appointment_id=eq.${enc(id)}&select=*`,
@@ -321,13 +541,32 @@ async function markAppointment(
       404,
     );
   const now = Date.now();
-  const no = refuseMark(opts.anyRep ? { ...who, manager: true } : who, appt, status, now);
+  // Held on video before its booked time (m1 round 6): the early-mark rule
+  // judges the moment the lead joined the room asked for it, not now.
+  const early = status === "showed" && opts.heldEarly ? await joinedForCall(String(appt.contact_id ?? ""), String(appt.appointment_id ?? id), now) : null;
+  const no = refuseMark(opts.anyRep ? { ...who, manager: true } : who, appt, status, early ?? now);
   if (no) throw new Refusal(no, 403);
+  // A person's no-show while the lead's video link is out (m1 round 2,
+  // noshow-mark-while-video-link-out): HighLevel's no-show automation would
+  // write to a lead who may be opening the link now. A timer's mark (the
+  // settle, onlyIfUnmarked) judges its own room.
+  if (status === "noshow" && !opts.onlyIfUnmarked) {
+    const held = await videoLinkHoldsNoShow(String(appt.contact_id ?? ""), now, {
+      appointment_id: String(appt.appointment_id ?? id),
+      start_at: (appt as unknown as Row).start_at ?? null,
+    });
+    if (held) throw new Refusal(held, 409, { code: "room_open" });
+  }
 
   const decision = crmDecision(await setting<CrmSettings>("crm_writes"), appt, now);
   const current = (await svc(
     `cockpit_sales_dispositions?appointment_id=eq.${enc(id)}&superseded_at=is.null&select=*`,
   ))[0];
+  // A timer's mark (the settle's no-show) goes only where nobody has marked
+  // the call: a person's mark that landed while the timer ran is never
+  // superseded. The same mark by the same seat is its own earlier try.
+  if (opts.onlyIfUnmarked && current && !(current.status === status && current.marked_by === who.email))
+    throw new Refusal("This call was already marked, so the timer left it as it is.", 409, { code: "marked" });
   // The same mark again (a second tap, a retry after a dropped connection)
   // is not sent to HighLevel twice: only a new note is kept.
   if (current && current.status === status && current.crm !== "failed") {
@@ -339,35 +578,234 @@ async function markAppointment(
       });
     return { ...current, note: opts.note ?? current.note, repeated: true };
   }
-  if (current)
-    await svc(`cockpit_sales_dispositions?id=eq.${current.id}`, {
-      method: "PATCH",
-      body: { superseded_at: new Date(now).toISOString() },
-      prefer: "return=minimal",
-    });
-  const row = (await svc("cockpit_sales_dispositions", {
-    method: "POST",
-    body: {
-      appointment_id: id,
-      contact_id: appt.contact_id,
-      call_type: appt.call_type,
-      start_at: appt.start_at,
-      status,
-      reason: opts.reason ?? null,
-      note: opts.note ?? null,
-      marked_by: who.email,
-      crm: decision === "write" || decision === "quiet" ? "pending" : decision,
-    },
-    prefer: "return=representation",
-  }))[0];
+  const fresh = {
+    appointment_id: id,
+    contact_id: appt.contact_id,
+    call_type: appt.call_type,
+    start_at: appt.start_at,
+    status,
+    reason: opts.reason ?? null,
+    note: opts.note ?? null,
+    marked_by: who.email,
+    crm: decision === "write" || decision === "quiet" ? "pending" : decision,
+  };
+  let row: Row;
+  try {
+    row = await replaceMark(current ? Number(current.id) : null, fresh, now);
+  } catch (e) {
+    if (!(e instanceof MarkChanged)) throw e;
+    // Another mark of this call landed between the read and this write (two
+    // tabs, the setter and the closer, the live count's quiet showed): the
+    // one current mark per call holds, and nothing moved. A timer's mark
+    // leaves the person's standing; a person's press reads the call again
+    // once (the same mark already there is its twin), and is told otherwise
+    // (stress2 round 4, concurrent-marks-raw-unique-violation).
+    if (opts.onlyIfUnmarked) throw new Refusal("This call was already marked, so the timer left it as it is.", 409, { code: "marked" });
+    if (opts.raced) throw new Refusal("This call was marked a moment ago. Reload it and mark again.", 409, { code: "changed" });
+    return await markAppointment(who, id, status, { ...opts, raced: true });
+  }
   let result: Row = { ...row };
+  // quiet: the status changes in HighLevel and none of its automations run
+  // (a live call counted at the join, D2), whatever crm_writes says.
   if (decision === "write" || decision === "quiet")
-    result = { ...result, ...(await writeMarkToCrm(Number(row.id), id, status, decision === "write")) };
+    result = { ...result, ...(await writeMarkToCrm(Number(row.id), id, status, decision === "write" && !opts.quiet)) };
   await audit(who, "mark", "cockpit_sales_dispositions", id, current ?? null, result, {
     crm_status_before: appt.status,
     ...(opts.anyRep ? { by_other_rep: true } : {}),
+    ...(opts.quiet ? { quiet: true } : {}),
   });
   return result;
+}
+
+/**
+ * When the lead joined a video room asked for this call (its own, or a
+ * confirmation call's), as a join that stands, in the last three hours; a
+ * moment late enough for the early-mark rule (the booked start), or null.
+ */
+async function joinedForCall(contactId: string, appointmentId: string, now: number): Promise<number | null> {
+  if (!contactId || !appointmentId) return null;
+  try {
+    const rows = await svc(
+      `cockpit_sales_rooms?contact_id=eq.${enc(contactId)}&lead_in_at=gte.${enc(new Date(now - 3 * 3_600_000).toISOString())}&select=*&limit=20`,
+    );
+    const mine = rows.filter(
+      r =>
+        String(r.appointment_id ?? "") === appointmentId ||
+        (!r.appointment_id && String(r.asked_appointment_id ?? "") === appointmentId && confirmationRoomHeld(r)),
+    );
+    const appt = (await svc(`cockpit_sales_appointments?appointment_id=eq.${enc(appointmentId)}&select=start_at`))[0];
+    const start = ms(appt?.start_at);
+    if (start === null || !mine.some(r => leadJoined(r as unknown as RoomRow))) return null;
+    return Math.max(now, start);
+  } catch {
+    return null;
+  }
+}
+
+/** How long after a room closed on an open or a knock a no-show still waits (m1 round 2). */
+const NOSHOW_AFTER_KNOCK_MS = 5 * 60_000;
+
+/**
+ * Why a no-show must wait for the lead's video room, or null (m1 round 2):
+ * a room that is not a booked call's own, open or still being made, or
+ * closed in the last few minutes after the lead opened its link or knocked.
+ * Not readable: nothing holds the mark (a blip never blocks a rep's mark).
+ */
+async function videoLinkHoldsNoShow(
+  contactId: string,
+  now: number,
+  call: { appointment_id: string; start_at: unknown } | null = null,
+): Promise<string | null> {
+  if (!contactId) return null;
+  let all: Row[];
+  let rooms: Row | null = null;
+  try {
+    [all, rooms] = await Promise.all([
+      svc(
+        `cockpit_sales_rooms?contact_id=eq.${enc(contactId)}&purpose=neq.booked&requested_at=gte.${enc(new Date(now - 3 * 3_600_000).toISOString())}&select=*&order=requested_at.desc&limit=20`,
+      ),
+      setting<Row>("rooms").catch(() => null),
+    ]);
+  } catch (e) {
+    console.error("no-show room check unread", redact(String((e as Error)?.message ?? e)));
+    return null;
+  }
+  const ctx = roomCtx(roomsSetting(rooms));
+  const name = greetingName(all[0]?.contact_first_name, null) || "This lead";
+  const whose = name === "This lead" ? "This lead's" : `${name}'s`;
+  // A room open or being made right now holds every call's no-show: the
+  // lead may be opening its link this minute.
+  const live = all.find(r => ["requested", "creating", "open", "host_in", "lead_in"].includes(String(r.state)));
+  // Every other hold is the call being marked's own (m1 round 5,
+  // m1-numbers-r5-knock-on-intro-room-holds-other-calls-noshow): a room
+  // that carries this appointment, or was asked for inside its own window
+  // (an hour before its start to its start + settle). A knock on the
+  // morning's intro room never holds the afternoon demo's no-show.
+  const start = ms(call?.start_at);
+  const rows = call
+    ? all.filter(r => {
+        if (String(r.appointment_id ?? "") === call.appointment_id || String(r.asked_appointment_id ?? "") === call.appointment_id) return true;
+        const asked = ms(r.requested_at);
+        return start !== null && asked !== null && asked >= start - 3_600_000 && asked <= start + ctx.waits.settle * 1000;
+      })
+    : all;
+  if (live) {
+    // When the sweep closes it (holdUntil: R3 and R4 as the sweep reads
+    // them), never host_by alone (m1 round 5, unsent-room-deadline-said-as-host-by).
+    const until = holdUntil(live as unknown as RoomRow, ctx) ?? ms(live.lead_by) ?? ms(live.host_by);
+    return until !== null && until > now
+      ? `${whose} video room is open until ${kuwaitClock(until)}, so the no-show was not marked. Wait for it, or end the room first.`
+      : `${whose} video room is still open, so the no-show was not marked. Wait for it, or end the room first.`;
+  }
+  // The lead knocked on this call's room and could not be let in ("I can't
+  // let them in": a room closed admit_blocked, or the room made in its
+  // place), and no room of theirs has a join that stands since: she came on
+  // time and our room locked her out, so it is never a no-show (m1 round 4,
+  // admit-blocked-replacement-expiry-offers-noshow).
+  const joinedSince = rows.some(r => leadJoined(r as unknown as RoomRow));
+  // The lead joined a video room asked for this very call (its own, or a
+  // confirmation call's whose link invited the call now): the call was had,
+  // never a no-show (m1 round 6, m1-journeys-r6-confirm-call-link-invites-
+  // call-now-intro-never-held).
+  // A confirmation call's room (asked for this call, not carrying it)
+  // counts only for a talk's length (dialer.ts confirmationRoomHeld): a
+  // quick "yes, talk at 10" leaves the call ahead (stress2 round 2).
+  const had = call
+    ? rows.find(
+        r =>
+          leadJoined(r as unknown as RoomRow) &&
+          (String(r.appointment_id ?? "") === call.appointment_id ||
+            (!r.appointment_id && String(r.asked_appointment_id ?? "") === call.appointment_id && confirmationRoomHeld(r))),
+      )
+    : undefined;
+  if (had) {
+    const at = ms(had.lead_in_at);
+    return `${name === "This lead" ? "This lead" : name} joined the video call for it${at !== null ? ` at ${kuwaitClock(at)}` : ""}, so it was held, not a no-show. Mark it held instead.`;
+  }
+  if (!joinedSince && rows.some(r => r.result === "admit_blocked" || r.night_cleared === "replacing"))
+    return `${name === "This lead" ? "This lead" : name} knocked on the video room and could not be let in, so the no-show was not marked. Call them, or mark how the call went.`;
+  // The wait the lead's link promised ("I'll wait for you for the next 10
+  // minutes") is not over, even though a person ended the room early (m1
+  // round 4, end-early-offers-noshow-inside-promised-ten-minutes): the lead
+  // may be opening the link now.
+  const promised = rows.find(r => r.link_sent_at && !leadJoined(r as unknown as RoomRow) && (ms(r.lead_by) ?? 0) > now);
+  if (promised)
+    return `${whose} video link told them the room would wait until ${kuwaitClock(ms(promised.lead_by) as number)}, so the no-show was not marked. Mark it after that, or call them now.`;
+  // Only a join that stands is a join (m1 round 4,
+  // noshow-hold-skipped-after-taken-back-join): one "That was not the lead"
+  // took back keeps its time in lead_in_at and is nobody.
+  const knocked = rows.find(
+    r =>
+      (ms(r.ended_at) ?? 0) >= now - NOSHOW_AFTER_KNOCK_MS &&
+      !leadJoined(r as unknown as RoomRow) &&
+      (r.first_open_at || r.last_open_at || r.lead_waiting_at || r.result === "admit_blocked"),
+  );
+  // A knock is said as a knock (m1 round 6): the lead was at the room's door.
+  if (knocked)
+    return knocked.lead_waiting_at || knocked.result === "admit_blocked"
+      ? `${name === "This lead" ? "This lead" : name} knocked on the video room a few minutes ago, so the no-show was not marked. Call them, or mark it in a few minutes.`
+      : `${name === "This lead" ? "This lead" : name} opened the video link a few minutes ago, so the no-show was not marked. Call them, or mark it in a few minutes.`;
+  return null;
+}
+
+/**
+ * The call's current mark superseded and the new one inserted in ONE step
+ * (cockpit_sales_disposition_replace, 20261004a; stress2, round 2): a write
+ * cut off between the two never leaves the call with no current mark. While
+ * the function is missing (sales-api deployed before the migration), the two
+ * writes as before, the insert first refused by the one-current index only
+ * when another mark landed.
+ */
+async function replaceMark(currentId: number | null, fresh: Row, now: number): Promise<Row> {
+  try {
+    const out = await svc("rpc/cockpit_sales_disposition_replace", {
+      method: "POST",
+      body: { p_current_id: currentId, p_row: fresh },
+    });
+    if (out[0]) return out[0];
+    // 20261004a answers no row when the mark it was given is no longer the
+    // call's current one (another landed first, under the call's lock).
+    throw new MarkChanged();
+  } catch (e) {
+    if (e instanceof MarkChanged) throw e;
+    if (oneCurrentRefused(e)) throw new MarkChanged();
+    if (!/database 404|PGRST202/.test(String((e as Error)?.message ?? e))) throw e;
+  }
+  try {
+    if (currentId !== null)
+      await svc(`cockpit_sales_dispositions?id=eq.${currentId}`, {
+        method: "PATCH",
+        body: { superseded_at: new Date(now).toISOString() },
+        prefer: "return=minimal",
+      });
+    return (await svc("cockpit_sales_dispositions", { method: "POST", body: fresh, prefer: "return=representation" }))[0] as Row;
+  } catch (e) {
+    if (oneCurrentRefused(e)) throw new MarkChanged();
+    throw e;
+  }
+}
+
+/** Another mark of the call landed first: the mark this write read is not current any more. */
+class MarkChanged extends Error {
+  constructor() {
+    super("This call was marked a moment ago.");
+  }
+}
+/** The one-current-mark index refused a write (Postgres 23505 on cockpit_sales_dispositions_current). */
+function oneCurrentRefused(e: unknown): boolean {
+  return /cockpit_sales_dispositions_current|23505/.test(String((e as Error)?.message ?? e));
+}
+
+/**
+ * A mark whose HighLevel write was cut off half way (the function stopped
+ * between the cockpit's row and HighLevel's answer): "pending" long after a
+ * write takes (HighLevel's 25 s, the row's own write), so it is sent again.
+ */
+const CRM_PENDING_STUCK_MS = 120_000;
+function crmStuck(current: Row): boolean {
+  if (current.crm === "failed") return true;
+  const at = Date.parse(String(current.marked_at ?? ""));
+  return current.crm === "pending" && !current.crm_at && Number.isFinite(at) && Date.now() - at >= CRM_PENDING_STUCK_MS;
 }
 
 async function markRetry(who: Who, b: Row) {
@@ -376,7 +814,7 @@ async function markRetry(who: Who, b: Row) {
     `cockpit_sales_dispositions?appointment_id=eq.${enc(id)}&superseded_at=is.null&select=*`,
   ))[0];
   if (!current) throw new Refusal("That call has no mark to send.", 404);
-  if (current.crm !== "failed")
+  if (!crmStuck(current))
     throw new Refusal("That mark is not waiting to be sent to HighLevel.");
   if (!who.manager && current.marked_by !== who.email)
     throw new Refusal("Only the rep who marked it or a manager can send it again.", 403);
@@ -398,6 +836,36 @@ async function markRetry(who: Who, b: Row) {
   const out = await writeMarkToCrm(Number(current.id), id, String(current.status), decision === "write");
   await audit(who, "mark.retry", "cockpit_sales_dispositions", id, current, out);
   return { mark: { ...current, ...out } };
+}
+
+/**
+ * The settle's own no-show sent to HighLevel again, quietly (rooms.ts
+ * resendMark): only a mark HighLevel refused (crm failed) or whose write was
+ * cut off ("pending" past CRM_PENDING_STUCK_MS). Any other mark is answered
+ * as it stands.
+ */
+async function resendMark(who: Who, id: string): Promise<Row> {
+  const current = (await svc(
+    `cockpit_sales_dispositions?appointment_id=eq.${enc(id)}&superseded_at=is.null&select=*`,
+  ))[0];
+  if (!current) throw new Refusal("That call has no mark to send.", 404);
+  if (!crmStuck(current)) return current;
+  const appt = (await svc(`cockpit_sales_appointments?appointment_id=eq.${enc(id)}&select=*`))[0] as unknown as
+    | Appointment
+    | undefined;
+  const decision = appt ? crmDecision(await setting<CrmSettings>("crm_writes"), appt, Date.now()) : "skipped";
+  if (decision === "off" || decision === "skipped") {
+    await svc(`cockpit_sales_dispositions?id=eq.${current.id}`, {
+      method: "PATCH",
+      body: { crm: decision, crm_error: null, crm_at: new Date().toISOString() },
+      prefer: "return=minimal",
+    });
+    await audit(who, "mark.resend", "cockpit_sales_dispositions", id, current, { crm: decision });
+    return { ...current, crm: decision, crm_error: null };
+  }
+  const out = await writeMarkToCrm(Number(current.id), id, String(current.status), false);
+  await audit(who, "mark.resend", "cockpit_sales_dispositions", id, current, out, { quiet: true });
+  return { ...current, ...out };
 }
 
 // ---------------------------------------------------------------------------
@@ -842,13 +1310,8 @@ async function settingSave(who: Who, b: Row) {
   if (!Number.isInteger(days) || days < 1 || days > 60)
     throw new Refusal("Old calls are counted in whole days, 1 to 60.");
   const value = { dispositions: Boolean(v.dispositions), backlog_days: days };
-  const before = await setting<Row>(key);
-  await svc("cockpit_sales_settings?on_conflict=key", {
-    method: "POST",
-    body: { key, value, updated_by: who.email, updated_at: new Date().toISOString() },
-    prefer: "resolution=merge-duplicates,return=minimal",
-  });
-  await audit(who, "setting.save", "cockpit_sales_settings", key, before, value);
+  const saved = await saveSettingIf(key, String(who.email ?? ""), () => value);
+  await audit(who, "setting.save", "cockpit_sales_settings", key, saved.before, value);
   return { setting: { key, value } };
 }
 
@@ -941,13 +1404,242 @@ async function convoRead(_who: Who, b: Row) {
   };
 }
 
+/** How a send is recorded and read back (the hooks commit): who it is from, and for how long it is read back. */
+interface SendOpts {
+  /** rep, followup, room or thread (cockpit_sales_messages.source); else rep, or followup for a draft. */
+  source?: SendSource;
+  /** How long the send is read back from HighLevel (rooms 20 s, everyone else the default). */
+  readBackMs?: number;
+  /**
+   * The caller's last check, run after the message service's own reads and
+   * its slot, right before the row is stamped and HighLevel is asked (m1
+   * round 1, link-sent-after-end-inside-message-service): a room's link asks
+   * whether the room is still open. False: the unstamped row is given up and
+   * the send stops with code "stopped" (certainly not sent).
+   */
+  beforeSend?: () => Promise<boolean>;
+}
+
+/** The caller's last check said no (a room closed while its link was on its way): nothing went. */
+const STOPPED = "Not sent: the room closed before the link went.";
+async function lastCheck(beforeSend: (() => Promise<boolean>) | undefined): Promise<void> {
+  if (!beforeSend) return;
+  let go = false;
+  try {
+    go = await beforeSend();
+  } catch {
+    go = false;
+  }
+  if (!go) throw new Refusal(STOPPED, 409, { code: "stopped", certain: true });
+}
+
 /**
  * Send one message to a lead now. Written first (request_id is unique, so a
  * retry returns the first send and never sends twice), then sent, then read
- * back from HighLevel for up to ten seconds, because a WhatsApp send
- * HighLevel accepts can still fail at Meta.
+ * back from HighLevel for up to ten seconds (opts.readBackMs), because a
+ * WhatsApp send HighLevel accepts can still fail at Meta.
  */
-async function convoSend(who: Who, b: Row) {
+/**
+ * A send that stopped before its message row was written (stress2 round 4,
+ * pre-send-highlevel-5xx-read-as-may-have-gone): HighLevel's contact read,
+ * the conversation search, a setting read or the slot did not answer, so
+ * nothing went. Certain and to be tried again, never "may have gone": a
+ * room's link waits for the minute's re-ask on the same channel. A refusal
+ * (the lead's do not disturb, a switch, a ceiling) passes through as it is.
+ */
+function notSentYet(e: unknown): unknown {
+  if (e instanceof ApiRefusal) return e;
+  const cause = redact(String((e as Error)?.message ?? e)).slice(0, 300);
+  const status = (e as { status?: unknown })?.status;
+  return new Refusal(
+    `Not sent: HighLevel or the database did not answer before anything went (${cause.slice(0, 160)}). Try again in a minute.`,
+    503,
+    // What stopped it, for a caller that tells a lead's own refusal (a merged
+    // contact) from an outage (stress2 round 5, not-sent-yet-sets-opener-aside).
+    { certain: true, retry: true, code: "not_sent_yet", cause, ...(typeof status === "number" ? { cause_status: status } : {}) },
+  );
+}
+
+/**
+ * Runs a send; a failure before HighLevel is asked is a certain "not sent
+ * yet". The message slot's row may have landed with its answer lost (stress2
+ * round 5, slot-lost-answer-orphan-row-read-as-sent): that row never went, so
+ * it is given up here (voidUnsent), and the retry the answer asks for gets a
+ * fresh slot on the same request id, never "already sent".
+ */
+async function beforeRowCertain<T>(requestId: string, run: (taken: () => void) => Promise<T>): Promise<T> {
+  let taken = false;
+  try {
+    return await run(() => {
+      taken = true;
+    });
+  } catch (e) {
+    if (taken) throw e;
+    await voidUnsent(requestId);
+    throw notSentYet(e);
+  }
+}
+
+/** A "sending" row is stamped this long after its slot at most; older and unstamped, HighLevel was never asked. */
+const UNASKED_MS = 30_000;
+
+/**
+ * The request id's "sending" row that HighLevel was never asked about (no
+ * ghl_asked_at): deleted, so it holds nothing (the same words, the queue of
+ * templates, a repeat). Only such a row, so a send under way is never touched.
+ * Not done (the database down): the next try gives it up first (priorTry),
+ * and the message slot reads it as unasked once UNASKED_MS has passed.
+ */
+async function voidUnsent(requestId: string): Promise<void> {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(requestId)) return;
+  await svc(`cockpit_sales_messages?request_id=eq.${enc(requestId)}&state=eq.sending&ghl_asked_at=is.null`, {
+    method: "DELETE",
+    prefer: "return=minimal",
+  }).catch(e => console.error("an unsent message row was not given up", redact(String((e as Error)?.message ?? e))));
+}
+
+/** A "sending" row HighLevel was never asked about (the column exists and is empty), at any age. */
+function unasked(m: Row | null | undefined): boolean {
+  return Boolean(m && m.state === "sending" && Object.hasOwn(m, "ghl_asked_at") && !m.ghl_asked_at);
+}
+
+/**
+ * This request id's earlier row. One HighLevel was never asked about never
+ * went, however young (stress2 round 6, give-up-lost-retry-says-already-sent:
+ * the earlier try answered "Not sent, try again" and its own give-up was
+ * lost, so the retry inside 30 s was told "already sent" with nothing sent).
+ * With the same words it is this try's slot (`adopt`): stamped by markAsked
+ * only while unstamped, so of two tries at once exactly one sends and the
+ * other stops before HighLevel is asked. With other words it is given up;
+ * not given up (the database down), thrown, so the caller answers "Not sent
+ * yet". A stamped row, a send under way or done, is the repeat (`already`).
+ */
+async function priorTry(requestId: string, same: (m: Row) => boolean): Promise<{ already?: Row; adopt?: Row }> {
+  const read = async () => (await svc(`cockpit_sales_messages?request_id=eq.${enc(requestId)}&select=*`))[0] as Row | undefined;
+  const first = await read();
+  if (!unasked(first)) return { already: first };
+  if (same(first as Row)) return { adopt: first };
+  await voidUnsent(requestId);
+  const again = await read();
+  if (unasked(again)) throw new Error("an earlier try's unsent message row could not be given up");
+  return { already: again };
+}
+
+/**
+ * The stamp went to another try of the same request id (two callers on one
+ * key, the second adopting the first's unstamped row with the same words):
+ * that try sends, and its row is this one's answer, a repeat (m1 round 3,
+ * send-by-email-adopt-race-says-not-gone). Never "not sent yet": one of the
+ * two did ask HighLevel.
+ */
+class StampedByTwin extends Error {
+  constructor(readonly row: Row) {
+    super("another try of this send was stamped first");
+  }
+}
+
+/** A row another try stamped (or finished): HighLevel was asked by that try. */
+function twinStamped(back: Row | undefined, mine: string | null): boolean {
+  if (!back) return false;
+  const asked = String(back.ghl_asked_at ?? "");
+  if (back.state === "sending") return Boolean(asked) && (mine === null || Date.parse(asked) !== Date.parse(mine));
+  return ["sent", "delivered", "read", "unclear", "failed"].includes(String(back.state ?? ""));
+}
+
+/**
+ * The row's stamp that HighLevel is about to be asked, right before the
+ * send: from here on the send may have gone. Lands only on the row still
+ * "sending" and unstamped, so a row given up meanwhile is never sent. Its
+ * answer lost: read back; not stamped, or not read, the row is given up and
+ * the send stops before anything went.
+ */
+async function markAsked(row: Row): Promise<Row> {
+  // Date.now(), as every other clock read of the send (the stamp is read
+  // against the row's own time: m1 round 6).
+  const at = new Date(Date.now()).toISOString();
+  const id = enc(String(row.id ?? ""));
+  try {
+    const out = await svc(`cockpit_sales_messages?id=eq.${id}&state=eq.sending&ghl_asked_at=is.null`, {
+      method: "PATCH",
+      body: { ghl_asked_at: at },
+      prefer: "return=representation",
+    });
+    if (out[0]) return out[0];
+  } catch (e) {
+    // A database without the column (20261004a not applied): as before.
+    if (/ghl_asked_at/.test(String((e as Error)?.message ?? e))) return row;
+    const back = (await svc(`cockpit_sales_messages?id=eq.${id}&select=*`).catch(() => [] as Row[]))[0];
+    if (back && Date.parse(String(back.ghl_asked_at ?? "")) === Date.parse(at)) return back;
+    if (twinStamped(back, at)) throw new StampedByTwin(back as Row);
+    // This run stops before HighLevel is asked, so its stamp must not stay
+    // (m1 round 1, stamped-orphan-strands-link): a stamp that landed with
+    // its answer lost is taken back, only where it is this run's own, and
+    // asked again across a blip. Unstamped, the row is an earlier try that
+    // never went: the next try adopts it, never "already sent".
+    await unstamp(String(row.id ?? ""), at);
+    throw e;
+  }
+  // Nothing stamped: another try of this request id stamped it first (its
+  // send is this one's answer), or the row was given up (nothing went).
+  const back = (await svc(`cockpit_sales_messages?id=eq.${id}&select=*`).catch(() => [] as Row[]))[0];
+  if (twinStamped(back, null)) throw new StampedByTwin(back as Row);
+  throw new Error("the message row was given up before it went");
+}
+
+/** markAsked, with a stamp another try of the same request id won answered as that try's send (a repeat). */
+async function stampOrTwin(row: Row): Promise<{ row: Row } | { twin: Row }> {
+  try {
+    return { row: await markAsked(row) };
+  } catch (e) {
+    if (e instanceof StampedByTwin) return { twin: e.row };
+    throw e;
+  }
+}
+
+/**
+ * Takes back this run's own stamp (ghl_asked_at equal to `at`) on a row
+ * still "sending": HighLevel was never asked. Tried three times across a
+ * blip; a stamp that was never written matches nothing, which is the same
+ * answer. Never fatal.
+ */
+async function unstamp(rowId: string, at: string): Promise<boolean> {
+  for (let n = 0; n < 3; n++) {
+    try {
+      await svc(`cockpit_sales_messages?id=eq.${enc(rowId)}&state=eq.sending&ghl_asked_at=eq.${enc(at)}`, {
+        method: "PATCH",
+        body: { ghl_asked_at: null },
+        prefer: "return=minimal",
+      });
+      return true;
+    } catch (e) {
+      if (n === 2) console.error("a stamp HighLevel was never asked about was not taken back", redact(String((e as Error)?.message ?? e)));
+      else await sleep(400 * (n + 1));
+    }
+  }
+  return false;
+}
+
+/**
+ * A stamped row whose send stopped before the one HighLevel call that sends
+ * (the room closed while a template's contact fields were written): given
+ * up, so it holds nothing. Only the row this run stamped.
+ */
+async function giveUpAsked(row: Row): Promise<void> {
+  const at = String(row.ghl_asked_at ?? "");
+  const id = String(row.id ?? "");
+  if (!id) return;
+  const filter = at ? `ghl_asked_at=eq.${enc(at)}` : "ghl_asked_at=is.null";
+  await svc(`cockpit_sales_messages?id=eq.${enc(id)}&state=eq.sending&${filter}`, { method: "DELETE", prefer: "return=minimal" }).catch(async e => {
+    console.error("a stopped template's row was not given up", redact(String((e as Error)?.message ?? e)));
+    if (at) await unstamp(id, at);
+  });
+}
+
+function convoSend(who: Who, b: Row, opts: SendOpts = {}) {
+  return beforeRowCertain(String(b.request_id ?? ""), taken => convoSendOnce(who, b, opts, taken));
+}
+
+async function convoSendOnce(who: Who, b: Row, opts: SendOpts, taken: () => void) {
   const contactId = cleanText(b.contact_id, 80);
   const channel = String(b.channel ?? "") as Channel;
   const requestId = String(b.request_id ?? "");
@@ -966,7 +1658,10 @@ async function convoSend(who: Who, b: Row) {
   const followupId = b.followup_id ? cleanText(b.followup_id, 40) : null;
   const assetId = await assetFor(b.asset_id);
 
-  const already = (await svc(`cockpit_sales_messages?request_id=eq.${enc(requestId)}&select=*`))[0];
+  // An earlier try's row HighLevel was never asked about: it never went, so
+  // this try sends (stress2 rounds 5 and 6).
+  const prior = await priorTry(requestId, m => m.contact_id === contactId && m.body === text && m.channel === channel);
+  const already = prior.already;
   if (already) {
     if (already.contact_id === contactId && already.body === text && already.channel === channel)
       return { message: already, repeated: true };
@@ -974,19 +1669,28 @@ async function convoSend(who: Who, b: Row) {
   }
   if (!(await messagingSwitch())[channel])
     throw new Refusal(`Sending by ${CHANNEL_WORD[channel]} is switched off in the cockpit.`, 409);
+  const waGuard = channel === "whatsapp" ? await duplicatePauseCheck() : null;
   await senderCeiling(who);
   const lead = (await svc(`cockpit_sales_leads?contact_id=eq.${enc(contactId)}&select=contact_id,name`))[0];
   if (!lead) throw new Refusal("That lead is not in the cockpit.", 404);
 
-  const contact = (((await ghl("GET", `/contacts/${enc(contactId)}`, undefined, "2021-07-28")) as Row).contact ??
-    {}) as Row;
+  const read = (await ghl("GET", `/contacts/${enc(contactId)}`, undefined, "2021-07-28")) as Row;
+  const contact = (read?.contact ?? null) as Row | null;
+  // An answer with no contact in it (a JSON 200 from HighLevel's gateway
+  // while its contact service blinks) is no answer, as rooms.ts
+  // readContactOrGone reads it (m1 round 4, contactless-answer-said-as-no-
+  // email): thrown as a plain error, so convoSend calls it "not sent yet"
+  // and the caller tries again, never "this lead has no email address".
+  if (!contact || typeof contact !== "object" || Array.isArray(contact) || !Object.keys(contact).length)
+    throw new Error("HighLevel answered the contact read without a contact");
   if (dndFor(contact, channel))
     throw new Refusal(`This lead asked not to be contacted by ${CHANNEL_WORD[channel]} (do not disturb is on in HighLevel).`, 409);
   if (channel === "email" && !contact.email) throw new Refusal("This lead has no email address in HighLevel.", 409);
   if (channel !== "email" && !contact.phone) throw new Refusal("This lead has no phone number in HighLevel.", 409);
   if (channel === "whatsapp") {
-    const convs = (((await ghl("GET", `/conversations/search?locationId=${LOCATION}&contactId=${enc(contactId)}&limit=20`)) as Row)
-      .conversations ?? []) as Row[];
+    // An answer with no list is not read (m1 round 2): never "the window is
+    // shut" on a gateway's garbage; the send stops before anything went.
+    const convs = conversationList(await ghl("GET", `/conversations/search?locationId=${LOCATION}&contactId=${enc(contactId)}&limit=20`));
     const w = whatsappWindow(lastWhatsappIn(convs, []), Date.now());
     if (!w.open)
       throw new Refusal(
@@ -995,49 +1699,85 @@ async function convoSend(who: Who, b: Row) {
       );
   }
 
+  const fresh: Row = {
+    request_id: requestId,
+    contact_id: contactId,
+    channel,
+    subject,
+    body: text,
+    source: opts.source ?? (followupId ? "followup" : "rep"),
+    followup_id: followupId,
+    sent_by: who.email,
+    state: "sending",
+  };
+  // The sender's ceiling is checked where the row is written, in one step,
+  // so fifteen sends at once cannot pass it. An earlier try's unsent row of
+  // these words passed it when it was written: it is this try's slot.
+  const slot = prior.adopt ? { message: prior.adopt } : await takeSlot(fresh, { template: false, guard: waGuard });
   let row: Row;
-  try {
-    row = (await svc("cockpit_sales_messages", {
-      method: "POST",
-      body: {
-        request_id: requestId,
-        contact_id: contactId,
-        channel,
-        subject,
-        body: text,
-        source: followupId ? "followup" : "rep",
-        followup_id: followupId,
-        sent_by: who.email,
-        state: "sending",
-      },
-      prefer: "return=representation",
-    }))[0];
-  } catch (e) {
-    if (/23505|duplicate/.test(String((e as Error).message ?? e))) {
-      const twin = (await svc(`cockpit_sales_messages?request_id=eq.${enc(requestId)}&select=*`))[0];
-      return { message: twin, repeated: true };
+  if (slot) {
+    if (slot.repeated) {
+      if (slot.message.contact_id === contactId && slot.message.body === text && slot.message.channel === channel) return slot;
+      throw new Refusal("That send was already used for other words. Press Send again.", 409);
     }
-    throw e;
+    row = slot.message;
+  } else {
+    try {
+      row = (await svc("cockpit_sales_messages", { method: "POST", body: fresh, prefer: "return=representation" }))[0];
+    } catch (e) {
+      if (/23505|duplicate/.test(String((e as Error).message ?? e))) {
+        const twin = (await svc(`cockpit_sales_messages?request_id=eq.${enc(requestId)}&select=*`))[0];
+        return { message: twin, repeated: true };
+      }
+      throw e;
+    }
   }
+  // The caller's last word, after every read above (a room closed meanwhile
+  // stops its link here; beforeRowCertain gives the unstamped row up).
+  await lastCheck(opts.beforeSend);
+  const stamp = await stampOrTwin(row);
+  if ("twin" in stamp) return { message: stamp.twin, repeated: true };
+  row = stamp.row;
+  taken();
 
   let out: Row;
   try {
     out = await ghl("POST", "/conversations/messages", sendBody(channel, contactId, text, subject));
   } catch (e) {
     const err = redact(String((e as Error).message ?? e));
+    // A timeout, a 5xx or a dropped connection: HighLevel may have sent it.
+    // Such a row is "unclear", never "failed", so nothing sends it again.
+    const unclear = unclearError(e);
     await svc(`cockpit_sales_messages?id=eq.${row.id}`, {
       method: "PATCH",
-      body: { state: "failed", error: err, updated_at: new Date().toISOString() },
+      body: { state: unclear ? "unclear" : "failed", error: err, updated_at: new Date().toISOString() },
       prefer: "return=minimal",
-    });
-    await audit(who, "convo.send", "cockpit_sales_messages", String(row.id), null, { channel, state: "failed", error: err });
-    throw new Refusal(`HighLevel did not send it: ${err}`, 502);
+    }).catch(x => console.error("message state", redact(String(x))));
+    await audit(who, "convo.send", "cockpit_sales_messages", String(row.id), null, { channel, state: unclear ? "unclear" : "failed", error: err });
+    if (unclear) throw new Refusal(`${MAY_HAVE_GONE} (${err})`, 502, { unclear: true });
+    // HighLevel answered and refused it (a 4xx such as 429): certainly not
+    // sent, so a caller may try again later on a fresh request id.
+    throw new Refusal(`HighLevel did not send it: ${err}`, 502, { certain: true });
   }
-  const messageId = String(out.messageId ?? "");
+  const messageId = String(out.messageId ?? out.emailMessageId ?? "");
+  if (!messageId) {
+    // A 200 that names no message (an empty body, a proxy's page) is no
+    // proof it went (stress2 round 5, send-200-without-message-id): unclear,
+    // so the conversation check decides, and nothing is taken over on it.
+    const err = "HighLevel answered without a message id, so whether it went is not known";
+    await svc(`cockpit_sales_messages?id=eq.${row.id}`, {
+      method: "PATCH",
+      body: { state: "unclear", error: err, updated_at: new Date().toISOString() },
+      prefer: "return=minimal",
+    }).catch(x => console.error("message state", redact(String(x))));
+    await audit(who, "convo.send", "cockpit_sales_messages", String(row.id), null, { channel, state: "unclear", error: err });
+    throw new Refusal(`${MAY_HAVE_GONE} (${err})`, 502, { unclear: true });
+  }
   let status = String(out.status ?? "pending");
   let error: string | null = null;
   // Read it back: HighLevel answers "pending" and Meta decides afterwards.
-  for (let i = 0; i < 5 && messageId; i++) {
+  const reads = Math.max(1, Math.round((opts.readBackMs ?? 10_000) / 2000));
+  for (let i = 0; i < reads && messageId; i++) {
     await sleep(2000);
     try {
       const m = (await ghl("GET", `/conversations/messages/${enc(messageId)}`)) as Row;
@@ -1045,27 +1785,35 @@ async function convoSend(who: Who, b: Row) {
       status = String(one.status ?? status);
       const [shaped] = toThread([{ ...one, id: one.id ?? messageId }], String(out.conversationId ?? ""));
       error = shaped?.error ?? null;
-      if (["delivered", "read", "failed", "undelivered", "opened"].includes(status)) break;
+      if (["delivered", "read", "opened"].includes(status) || failedStatus(status)) break;
     } catch {
       break; // an email's id is not always readable this way; keep what we have
     }
   }
   const state = stateOf(status === "pending" && !error ? "sent" : status);
-  const saved = (await svc(`cockpit_sales_messages?id=eq.${row.id}`, {
-    method: "PATCH",
-    body: {
-      state,
-      provider_status: status,
-      error: state === "failed" ? (error ?? "HighLevel marked it failed without a reason") : null,
-      ghl_message_id: messageId || null,
-      ghl_conversation_id: out.conversationId ?? null,
-      updated_at: new Date().toISOString(),
-    },
-    prefer: "return=representation",
-  }))[0];
+  let saved: Row;
+  try {
+    saved = (await svc(`cockpit_sales_messages?id=eq.${row.id}`, {
+      method: "PATCH",
+      body: {
+        state,
+        provider_status: status,
+        error: state === "failed" ? (error ?? "HighLevel marked it failed without a reason") : null,
+        ghl_message_id: messageId || null,
+        ghl_conversation_id: out.conversationId ?? null,
+        updated_at: new Date().toISOString(),
+      },
+      prefer: "return=representation",
+    }))[0];
+  } catch (e) {
+    // HighLevel took it; only the record of it failed. It went: never sent again for this request.
+    throw new Refusal(`${MAY_HAVE_GONE} (${redact(String((e as Error)?.message ?? e))})`, 502, { unclear: true });
+  }
   await audit(who, "convo.send", "cockpit_sales_messages", String(row.id), null,
-    { channel, state, provider_status: status, followup_id: followupId, asset_id: assetId }, { lead: lead.name ?? null });
+    { channel, state, provider_status: status, followup_id: followupId, asset_id: assetId, source: opts.source ?? null },
+    { lead: lead.name ?? null });
   if (assetId && state !== "failed") await assetSent(who, assetId, contactId, channel === "email" ? "email" : "whatsapp", String(row.id));
+  if (channel === "whatsapp" && state !== "failed") background(duplicateWatch(contactId, String(out.conversationId ?? "")));
   return { message: saved };
 }
 
@@ -1103,7 +1851,24 @@ async function whatsappGuard(): Promise<WhatsappGuard> {
  * limits, an empty wallet, a paused template). While it is high, drafts wait
  * for a person, who sees the reasons on the Follow-ups page.
  */
-async function whatsappHealth(): Promise<{ paused: boolean; why: string; sent: number; failed: number }> {
+async function whatsappHealth(
+  o: { source?: SendSource } = {},
+): Promise<{ paused: boolean; why: string; sent: number; failed: number }> {
+  // One source's own window (whatsapp_guard.health.{source}, C27): a bad run
+  // of room links never pauses follow-ups, and the other way round.
+  // Bounded in time as the page's line is (the last day), and from a
+  // manager's "Clear the pause" (whatsapp_guard.health_cleared_at): an outage
+  // that ended never holds a source for good when nothing has gone since.
+  if (o.source) {
+    const guardRaw = (await setting<Row>("whatsapp_guard")) ?? {};
+    const cfg = healthCfg(guardRaw, o.source);
+    const cleared = Date.parse(String(guardRaw.health_cleared_at ?? ""));
+    const floor = Math.max(Date.now() - 86_400_000, Number.isFinite(cleared) ? cleared : 0);
+    const rows = await svc(
+      `cockpit_sales_messages?channel=eq.whatsapp&source=eq.${enc(o.source)}&state=in.(sent,delivered,read,failed)&created_at=gte.${enc(new Date(floor).toISOString())}&select=state,error&order=created_at.desc&limit=${cfg.window}`,
+    );
+    return sourceHealth(rows, cfg, o.source);
+  }
   const guard = await whatsappGuard();
   const rows = await svc(
     `cockpit_sales_messages?channel=eq.whatsapp&state=in.(sent,delivered,read,failed)&created_at=gte.${enc(new Date(Date.now() - 86_400_000).toISOString())}&select=state,error&limit=2000`,
@@ -1130,8 +1895,92 @@ async function senderCeiling(who: Who) {
   const recent = await svc(
     `cockpit_sales_messages?sent_by=eq.${enc(String(who.email ?? ""))}&created_at=gte.${enc(new Date(Date.now() - 600_000).toISOString())}&select=id&limit=31`,
   );
-  if (recent.length >= 30)
-    throw new Refusal("That is 30 messages in ten minutes from you. Wait a few minutes; the ceiling keeps a stuck page or a script from flooding leads.", 429);
+  if (recent.length >= 30) throw new Refusal(SENDER_CEILING, 429, { code: "sender_ceiling" });
+}
+
+/** A HighLevel or database error after which a send may or may not have gone: a timeout (status 0), a 5xx, or no answer at all. */
+function unclearError(e: unknown): boolean {
+  const st = (e as { status?: unknown })?.status;
+  return typeof st !== "number" || st === 0 || st >= 500;
+}
+
+const SENDER_CEILING =
+  "That is 30 messages in ten minutes from you. Wait a few minutes; the ceiling keeps a stuck page or a script from flooding leads.";
+const LEAD_GAP = "A template went to this lead a moment ago. Wait two minutes before sending another.";
+/** The message slot's same_words: one rep's two tabs, or two seats with one snippet (stress2, round 1). */
+const SAME_WORDS = "This message went to this lead a moment ago. Read the conversation before sending it again.";
+const dayCeiling = (n: number) =>
+  `Today's ${n} WhatsApp templates have gone out. The ceiling protects the number's standing with Meta; more tomorrow, or a manager raises it under Follow-ups, How it works.`;
+
+/**
+ * The message row, written under the send ceilings in one step: the
+ * database function cockpit_sales_message_slot takes a lock per sender, per
+ * lead and (for templates) for the day and the month, counts again, and
+ * inserts the "sending" row, so a burst of parallel sends cannot pass a
+ * ceiling. A repeat of the request id answers the row as it stands. Null
+ * when the database has no such function yet: the caller then checks the
+ * ceilings one by one as before.
+ */
+async function takeSlot(
+  row: Row,
+  o: { template: boolean; perDay?: number; monthCap?: number; guard?: Row | null },
+): Promise<{ message: Row; repeated?: boolean } | null> {
+  let out: Row;
+  try {
+    out = (await svc("rpc/cockpit_sales_message_slot", {
+      method: "POST",
+      body: {
+        p_row: row,
+        p_limits: {
+          sender_max: 30,
+          sender_window_s: 600,
+          lead_gap_s: 120,
+          template: o.template,
+          per_day: o.perDay ?? 250,
+          month_cap: o.monthCap ?? 1_000_000,
+          day_start: kuwaitMidnightIso(Date.now()),
+          month_start: kuwaitMonthStart(Date.now()),
+          // The duplicate window (whatsapp_guard.dup_window_s, 10 to 600 s):
+          // the same free WhatsApp words to one lead inside it are one send.
+          ...(Number.isInteger(Number(o.guard?.dup_window_s)) && Number(o.guard?.dup_window_s) > 0
+            ? { dup_window_s: Number(o.guard?.dup_window_s) }
+            : {}),
+        },
+      },
+    }))[0] ?? {};
+  } catch (e) {
+    if (/PGRST202|Could not find the function|database 404/i.test(String((e as Error)?.message ?? e))) return null;
+    throw e;
+  }
+  const code = String(out.code ?? "");
+  if (code === "ok") return { message: out.row as Row };
+  if (code === "repeat") return { message: out.row as Row, repeated: true };
+  // The same words went to this lead a moment ago from another tab or seat
+  // (20261004a): the lead gets them once (stress2, round 1).
+  if (code === "same_words") throw new Refusal(SAME_WORDS, 409, { code: "same_words" });
+  // Coded (m1 round 3b): a room's link sent as the rep reads it as passing,
+  // tried again once the ceiling clears, never a final "not sent".
+  if (code === "sender_ceiling") throw new Refusal(SENDER_CEILING, 429, { code: "sender_ceiling" });
+  if (code === "lead_gap") throw new Refusal(LEAD_GAP, 409);
+  if (code === "per_day") throw new Refusal(dayCeiling(o.perDay ?? 250), 409, { hold_all: true });
+  if (code === "budget")
+    throw new Refusal(budgetCheck(Number(out.count ?? o.monthCap ?? 0), o.guard).refusal ?? "This month's WhatsApp template budget is spent.", 409, {
+      hold_all: true,
+    });
+  throw new Error(`the message slot answered ${redact(JSON.stringify(out)).slice(0, 200)}`);
+}
+
+/** The template ceilings one by one, for a database without the slot function (every row counted, past the 1,000-row answer). */
+async function templateCeilings(contactId: string, guard: WhatsappGuard, guardRaw: Row | null): Promise<void> {
+  const recent = await svc(
+    `cockpit_sales_messages?contact_id=eq.${enc(contactId)}&via=eq.workflow&state=neq.failed&created_at=gte.${enc(new Date(Date.now() - 120_000).toISOString())}&select=id&limit=1`,
+  );
+  if (recent.length) throw new Refusal(LEAD_GAP, 409);
+  const today = await svcAll(`cockpit_sales_messages?via=eq.workflow&state=neq.failed&created_at=gte.${enc(kuwaitMidnightIso(Date.now()))}&select=id`);
+  if (today.length >= guard.templates_per_day) throw new Refusal(dayCeiling(guard.templates_per_day), 409, { hold_all: true });
+  const month = await svcAll(`cockpit_sales_messages?via=eq.workflow&state=neq.failed&created_at=gte.${enc(kuwaitMonthStart(Date.now()))}&select=id`);
+  const budget = budgetCheck(month.length, guardRaw);
+  if (budget.refusal) throw new Refusal(budget.refusal, 409, { hold_all: true });
 }
 
 /** The sales asset a message carries, if it names one the cockpit has. */
@@ -1163,29 +2012,211 @@ async function assetSent(who: Who, assetId: string, contactId: string, channel: 
 
 async function templateRoute(key: string): Promise<TemplateRoute> {
   const r = (await svc(`cockpit_sales_wa_templates?key=eq.${enc(key)}&select=*`))[0] as unknown as TemplateRoute | undefined;
-  if (!r) throw new Refusal("That WhatsApp template is not in the cockpit.", 404);
+  // A setup fault, not the lead's: every send of this template waits (code
+  // setup, hold_all), so the desk leaves its batch in the queue.
+  if (!r) throw new Refusal("That WhatsApp template is not in the cockpit.", 404, { code: "setup", hold_all: true });
   if (!r.active || !r.workflow_id)
     throw new Refusal(
       `The ${r.name} template is not set up yet. A manager picks the HighLevel workflow that sends it, under Follow-ups, WhatsApp library.`,
       409,
+      { code: "setup", hold_all: true },
     );
   return r;
 }
 
-/** The newest WhatsApp that went to this lead since `since`, read back from their conversations. */
-async function whatsappSentSince(contactId: string, since: number): Promise<ThreadMessage | null> {
-  const convs = (((await ghl("GET", `/conversations/search?locationId=${LOCATION}&contactId=${enc(contactId)}&limit=5`)) as Row)
-    .conversations ?? []) as Row[];
+/**
+ * The WhatsApp that went to this lead since `since`, read back from their
+ * conversations: with `text`, only a message with those words (C29), so a
+ * WA Connector copy or another rep's message never counts as this send.
+ * `seen` is every message read, for the duplicate detector.
+ */
+async function whatsappSentSince(
+  contactId: string,
+  since: number,
+  text?: string | null,
+  o: { went?: boolean; channel?: "whatsapp" | "email" } = {},
+): Promise<{ hit: ThreadMessage | null; seen: ThreadMessage[]; failed?: ThreadMessage | null; others?: boolean }> {
+  // A read that says nothing is never nothing there (m1 round 2,
+  // conversation-garbage-read-as-not-there-second-link): an answer with no
+  // list in it (a gateway's JSON, a search index rebuilding) throws, so the
+  // caller reads it as "not read", never as "not sent".
+  // Only the lead's own conversations (a search that answers another
+  // contact's is no read of this lead's). An empty list is no proof either
+  // (m1 round 3, empty-conversation-read-as-not-there): HighLevel's search
+  // answers a proper empty list while its index rebuilds, and after a merge
+  // the conversation moves to the surviving contact. For a lead known to
+  // have a conversation (the inbox, or a message HighLevel filed in one) it
+  // throws, so the caller reads it as "not read", never "not there".
+  const convs = conversationList(await ghl("GET", `/conversations/search?locationId=${LOCATION}&contactId=${enc(contactId)}&limit=5`)).filter(
+    cv => cv.contactId === undefined || cv.contactId === null || cv.contactId === "" || String(cv.contactId) === contactId,
+  );
+  if (!convs.length && (await knownConversation(contactId)))
+    throw new Error("HighLevel's conversation search listed none of the lead's conversations, so nothing was read");
+  const seen: ThreadMessage[] = [];
+  // With `went`, a copy Meta failed (or a bounced email) is kept apart from
+  // "not there" (m1 round 1, unclear-text-failed-in-conversation): the
+  // caller marks the send failed and moves on, never "may have gone".
+  let failed: ThreadMessage | null = null;
+  // Any outbound message on the lane since, whatever its words: an email
+  // whose body HighLevel keeps in a shape the words cannot be found in is
+  // never read as "not there" (the caller then says it may have gone).
+  let others = false;
+  // Whether every conversation was read back past the send (m1 round 2,
+  // lead-chatter-pushes-link-out-of-read-window-second-link): a lead who
+  // wrote ten lines since must never push the link out of the page read.
+  let covered = true;
   for (const cv of convs.slice(0, 3)) {
-    const m = await ghl("GET", `/conversations/${enc(String(cv.id))}/messages?limit=10`);
-    const inner = ((m as Row).messages ?? {}) as Row;
-    const list = toThread(Array.isArray(inner.messages) ? inner.messages : (m as Row).messages, String(cv.id));
-    const hit = list.find(
-      x => x.direction === "outbound" && x.channel === "whatsapp" && x.at !== null && Date.parse(x.at) >= since - 15_000,
-    );
-    if (hit) return hit;
+    const cid = String(cv.id);
+    let cursor: string | null = null;
+    let reached = false;
+    for (let page = 0; page < SENT_SINCE_PAGES && !reached; page++) {
+      const m = await ghl("GET", `/conversations/${enc(cid)}/messages?limit=${SENT_SINCE_PAGE}${cursor ? `&lastMessageId=${enc(cursor)}` : ""}`);
+      const inner = (m as Row).messages;
+      const arr = Array.isArray((inner as Row | undefined)?.messages) ? ((inner as Row).messages as unknown[]) : Array.isArray(inner) ? inner : null;
+      if (!arr) throw new Error("HighLevel answered a conversation's page with no messages in it");
+      // An empty page is no read either (m1 round 3): a conversation the
+      // search lists has messages, so nothing was read back to the send.
+      if (!arr.length) {
+        if (page === 0) throw new Error("HighLevel answered the lead's conversation with an empty page, so nothing was read");
+        break;
+      }
+      const list = toThread(arr, cid);
+      seen.push(...list);
+      const hit = matchSent(list, since, text, o);
+      if (hit) return { hit, seen, failed: null, others: true };
+      if (o.went && !failed) failed = matchSent(list, since, text, { channel: o.channel });
+      if (!others) others = Boolean(matchSent(list, since, null, { channel: o.channel }));
+      const times = list.map(x => Date.parse(String(x.at ?? ""))).filter(Number.isFinite);
+      const oldest = times.length ? Math.min(...times) : null;
+      const more = Array.isArray(inner) ? false : Boolean((inner as Row | undefined)?.nextPage);
+      if (!more || (oldest !== null && oldest < since - 15_000)) reached = true;
+      else cursor = String((inner as Row).lastMessageId ?? list.at(-1)?.id ?? "") || null;
+      if (!reached && !cursor) break;
+    }
+    if (!reached) covered = false;
   }
-  return null;
+  // Not found, and the read did not reach back past the send: not known.
+  if (!failed && !covered) throw new Error("the lead's conversation could not be read back to the send");
+  return { hit: null, seen, failed, others };
+}
+
+/**
+ * Whether the lead is known to have a HighLevel conversation: the inbox's
+ * row, or a message HighLevel filed in one. Not readable: thrown (the caller
+ * reads the conversation check as not read).
+ */
+async function knownConversation(contactId: string): Promise<boolean> {
+  const c = enc(contactId);
+  const [inbox, sent] = await Promise.all([
+    svc(`cockpit_sales_inbox?contact_id=eq.${c}&select=conversation_id&limit=1`),
+    svc(`cockpit_sales_messages?contact_id=eq.${c}&ghl_conversation_id=not.is.null&select=id&limit=1`),
+  ]);
+  return inbox.length > 0 || sent.length > 0;
+}
+
+/** How many messages one conversation page asks for, and how many pages whatsappSentSince reads back at most. */
+const SENT_SINCE_PAGE = 20;
+const SENT_SINCE_PAGES = 3;
+
+/** HighLevel's conversation search, as a list; an answer with no list in it throws (m1 round 2). */
+function conversationList(out: unknown): Row[] {
+  const list = (out as Row | null)?.conversations;
+  if (!Array.isArray(list)) throw new Error("HighLevel answered the conversation search with no list in it");
+  return list as Row[];
+}
+
+/**
+ * The duplicate detector (C28): two identical outbound WhatsApp messages to
+ * one lead within whatsapp_guard.dup_window_s (60 s) mean the WA Connector
+ * is still copying sends. WhatsApp then pauses for every source until a
+ * manager clears it (whatsapp.guard), with one alert and an audit row.
+ */
+async function duplicateWatch(contactId: string, conversationId: string, seen?: ThreadMessage[]): Promise<void> {
+  const guard = ((await setting<Row>("whatsapp_guard")) ?? {}) as Row;
+  // Only once a manager has said the WA Connector is off, and never on top of a pause.
+  if (!duplicateWatchOn(guard)) return;
+  const windowS = Number.isInteger(Number(guard.dup_window_s)) && Number(guard.dup_window_s) > 0 ? Number(guard.dup_window_s) : 60;
+  let list = seen ?? [];
+  if (!list.length && conversationId) {
+    const m = await ghl("GET", `/conversations/${enc(conversationId)}/messages?limit=10`);
+    const inner = ((m as Row).messages ?? {}) as Row;
+    list = toThread(Array.isArray(inner.messages) ? inner.messages : (m as Row).messages, conversationId);
+  }
+  // The cockpit's own sends, each with its own request id (two tabs, two
+  // seats with one snippet, which the message slot now answers as one
+  // send): never the WA Connector's copy (stress2, round 1). Not readable:
+  // every pair counts, as before.
+  const ids = [...new Set(list.map(m => String(m.id ?? "")).filter(Boolean))];
+  const ours = new Map<string, string>();
+  if (ids.length)
+    try {
+      for (const r of await svc(
+        `cockpit_sales_messages?ghl_message_id=in.(${ids.map(i => `"${enc(i)}"`).join(",")})&select=ghl_message_id,request_id&limit=100`,
+      ))
+        ours.set(String(r.ghl_message_id), String(r.request_id ?? ""));
+    } catch (e) {
+      console.error("duplicate watch: own sends unread", redact(String((e as Error)?.message ?? e)));
+    }
+  const ownPair = (a: ThreadMessage, b: ThreadMessage) => {
+    const x = ours.get(String(a.id ?? ""));
+    const y = ours.get(String(b.id ?? ""));
+    return x !== undefined && y !== undefined && x !== y;
+  };
+  const pair = duplicatePair(list, windowS, ownPair);
+  if (!pair) return;
+  const at = new Date().toISOString();
+  const reason = `Two identical WhatsApp messages went to one lead ${Math.round(Math.abs(Date.parse(String(pair[1].at)) - Date.parse(String(pair[0].at))) / 1000)} seconds apart.`;
+  // Written over the guard as it stands (a manager's save a moment ago is
+  // kept), and never on top of a pause another check wrote meanwhile.
+  let saved: { before: Row | null; value: Row };
+  try {
+    saved = await saveSettingIf("whatsapp_guard", "sales-api", read => {
+      if (!duplicateWatchOn((read ?? {}) as Row)) throw new NothingToSave();
+      return { ...(read ?? {}), dup_paused_at: at, dup_reason: reason };
+    });
+  } catch (e) {
+    if (e instanceof NothingToSave) return;
+    throw e;
+  }
+  await audit({ signed_in: true, email: "sales-api" }, "whatsapp.duplicate_pause", "cockpit_sales_settings", "whatsapp_guard", saved.before, saved.value, {
+    contact_id: contactId,
+    message_ids: [pair[0].id, pair[1].id],
+  });
+  try {
+    await svc("rpc/cockpit_sales_alert_set", {
+      method: "POST",
+      body: {
+        // One alert per pause (fix round 4): a second pause the same day,
+        // after a manager cleared the first, reaches #sales-alerts again.
+        p_key: `wa_duplicate:${at}`,
+        p_on: true,
+        p_kind: "wa_duplicate",
+        p_subject: "WhatsApp paused",
+        p_message: DUPLICATE_PAUSED.replace("{seconds}", String(windowS)),
+        p_detail: { contact_id: contactId },
+      },
+    });
+  } catch (e) {
+    console.error("duplicate alert", redact(String(e)));
+  }
+}
+
+/** Every WhatsApp send stops while the duplicate detector's pause stands. */
+async function duplicatePauseCheck(): Promise<Row> {
+  const guard = ((await setting<Row>("whatsapp_guard")) ?? {}) as Row;
+  if (guard.dup_paused_at) {
+    const windowS = Number(guard.dup_window_s) > 0 ? Number(guard.dup_window_s) : 60;
+    throw new Refusal(DUPLICATE_PAUSED.replace("{seconds}", String(windowS)), 409, { hold_all: true });
+  }
+  return guard;
+}
+
+/** The person a template is signed by when a send names them (signAs): the room's host. */
+async function signatureOfSeat(email: string, language: "ar" | "en"): Promise<string> {
+  const p = (await svc(`cockpit_sales_people?email=eq.${enc(email)}&select=name,name_ar`))[0];
+  const first = (v: unknown) => String(v ?? "").trim().split(/\s+/)[0] ?? "";
+  if (language === "ar") return first(p?.name_ar) || "فريق المبيعات";
+  return first(p?.name) || "the sales team";
 }
 
 /**
@@ -1215,9 +2246,33 @@ async function signatureFor(contactId: string, who: Who, language: "ar" | "en"):
  * retry never sends twice), then read back from the conversation, because a
  * template HighLevel accepts can still fail at Meta.
  */
-async function sendTemplate(
+function sendTemplate(who: Who, o: Parameters<typeof sendTemplateOnce>[1]) {
+  return beforeRowCertain(String(o.requestId ?? ""), taken => sendTemplateOnce(who, o, taken));
+}
+
+async function sendTemplateOnce(
   who: Who,
-  o: { contactId: string; key: string; line: string; requestId: string; followupId: string | null; assetId?: string | null },
+  o: {
+    contactId: string;
+    key: string;
+    line: string;
+    requestId: string;
+    followupId: string | null;
+    assetId?: string | null;
+    /** rep, followup, room or thread; else followup for a draft, rep otherwise. */
+    source?: SendSource;
+    /** Sign as this seat (a room's host), not the lead's own rep. */
+    signAs?: string | null;
+    /** The URL button's variable: the room code, written to wa_fields.join first. */
+    buttonVariable?: { join_code: string } | null;
+    /** How long the send is read back (rooms 20 s; default 12 s). */
+    readBackMs?: number;
+    /** call_time for demo_host: the call's day and time on the lead's clock. */
+    values?: { call_time?: string | null };
+    /** The caller's last check before the row is stamped and again before the enrolment (SendOpts.beforeSend). */
+    beforeSend?: () => Promise<boolean>;
+  },
+  taken: () => void,
 ) {
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(o.requestId))
     throw new Refusal("Reload the page and send again.");
@@ -1228,32 +2283,43 @@ async function sendTemplate(
   const blank = /\{(name|rep|day|time)\}/.exec(line);
   if (blank) throw new Refusal(`Fill in ${blank[0]} before sending: the cockpit did not know it.`);
 
-  const already = (await svc(`cockpit_sales_messages?request_id=eq.${enc(o.requestId)}&select=*`))[0];
+  const prior = await priorTry(o.requestId, m => m.contact_id === o.contactId && m.template_key === o.key);
+  const already = prior.already;
   if (already) {
     if (already.contact_id === o.contactId && already.template_key === o.key) return { message: already, repeated: true };
     throw new Refusal("That send was already used for other words. Press Send again.", 409);
   }
   if (!(await messagingSwitch()).whatsapp) throw new Refusal("Sending by WhatsApp is switched off in the cockpit.", 409);
+  await duplicatePauseCheck();
   await senderCeiling(who);
+  // An earlier template to this lead that HighLevel took and nobody saw yet
+  // is still in HighLevel's workflow queue (fix round 4): when it runs it
+  // reads the contact fields as they are then, so writing them now and
+  // enrolling again sends these words twice (and the duplicate detector
+  // pauses WhatsApp for every rep). Refused before anything is written, so
+  // certainly not sent: a room's link moves on to email.
+  // An enrolment whose answer was lost (unclear) or a send orphaned between
+  // its row and HighLevel's answer (sending, past its budget) may be queued
+  // just the same (stress2, round 2).
+  // Not read (an empty or unreadable answer): counted as waiting, never as
+  // "nothing queued" (stress2 round 5, svc-empty-200-read-as-no-rows), as
+  // rooms.ts reads it, so the new words never overwrite a queued template's.
+  const waiting = await svc(queuedTemplatesQuery(o.contactId, Date.now()))
+    .then(rows => templateMayBeQueued(rows, Date.now()))
+    .catch(() => true);
+  if (waiting)
+    throw new Refusal(
+      "An earlier WhatsApp template to this lead has not arrived yet. Wait for it, or send by email.",
+      409,
+      { certain: true, code: "template_waiting" },
+    );
   const lead = (await svc(`cockpit_sales_leads?contact_id=eq.${enc(o.contactId)}&select=contact_id,name`))[0];
   if (!lead) throw new Refusal("That lead is not in the cockpit.", 404);
-  // The line rides in a contact field until the workflow reads it: a second
-  // template within two minutes could overwrite the first one's line.
-  const recent = await svc(
-    `cockpit_sales_messages?contact_id=eq.${enc(o.contactId)}&via=eq.workflow&state=neq.failed&created_at=gte.${enc(new Date(Date.now() - 120_000).toISOString())}&select=id&limit=1`,
-  );
-  if (recent.length) throw new Refusal("A template went to this lead a moment ago. Wait two minutes before sending another.", 409);
-  // A daily ceiling on templates: too many at once, or too many ignored, and
-  // Meta lowers the number's quality and then limits it.
+  // The template ceilings (two minutes a lead, the day's templates, the
+  // month's budget) are checked where the message row is written, in one
+  // step (takeSlot), so a burst of sends at once cannot pass them.
   const guard = await whatsappGuard();
-  const sentToday = await svc(
-    `cockpit_sales_messages?via=eq.workflow&state=neq.failed&created_at=gte.${enc(kuwaitMidnightIso(Date.now()))}&select=id&limit=${guard.templates_per_day + 1}`,
-  );
-  if (sentToday.length >= guard.templates_per_day)
-    throw new Refusal(
-      `Today's ${guard.templates_per_day} WhatsApp templates have gone out. The ceiling protects the number's standing with Meta; more tomorrow, or a manager raises it under Follow-ups, How it works.`,
-      409,
-    );
+  const guardRaw = await setting<Row>("whatsapp_guard");
   const contact = (((await ghl("GET", `/contacts/${enc(o.contactId)}`, undefined, "2021-07-28")) as Row).contact ?? {}) as Row;
   if (dndFor(contact, "whatsapp"))
     throw new Refusal("This lead asked not to be contacted on WhatsApp (do not disturb is on in HighLevel).", 409);
@@ -1261,90 +2327,168 @@ async function sendTemplate(
   const firstName = cleanText(contact.firstName, 60).split(/\s+/)[0] ?? "";
   if (route.variables.includes("first_name") && !firstName)
     throw new Refusal("This lead has no first name in HighLevel, and the template greets them by it. Add it there first.", 409);
-  const signature = route.variables.includes("rep_name") ? await signatureFor(o.contactId, who, route.language) : "";
-  const text = renderTemplate(route.preview, route.variables, { first_name: firstName, rep_name: signature, line });
-  const fields = (await setting<{ line?: { id: string }; rep?: { id: string } }>("wa_fields")) ?? {};
+  const signature = route.variables.includes("rep_name")
+    ? o.signAs
+      ? await signatureOfSeat(o.signAs, route.language)
+      : await signatureFor(o.contactId, who, route.language)
+    : "";
+  const callTime = route.variables.includes("call_time") ? templateLine(o.values?.call_time ?? "", 80) : "";
+  if (route.variables.includes("call_time") && !callTime)
+    throw new Refusal("This template names the call's time, and the cockpit did not know it.", 409);
+  const button = route.button_variable === "join_code" ? String(o.buttonVariable?.join_code ?? "") : "";
+  if (route.button_variable === "join_code" && !/^[A-HJ-NP-Z2-9]{6}$/.test(button))
+    throw new Refusal("This template's button opens a room, and no room code was given.", 409);
+  const text = renderTemplate(route.preview, route.variables, { first_name: firstName, rep_name: signature, line, call_time: callTime });
+  const fields = (await setting<{ line?: { id: string }; rep?: { id: string }; join?: { id: string | null }; when?: { id: string | null } }>("wa_fields")) ?? {};
   if ((needsLine && !fields.line?.id) || (route.variables.includes("rep_name") && !fields.rep?.id))
-    throw new Refusal("The cockpit's two HighLevel contact fields are not set (setting wa_fields).", 409);
+    throw new Refusal("The cockpit's two HighLevel contact fields are not set (setting wa_fields).", 409, { code: "setup", hold_all: true });
+  if ((button && !fields.join?.id) || (callTime && !fields.when?.id))
+    throw new Refusal("The HighLevel contact fields for the room code and the call's time are not set (setting wa_fields, join and when).", 409, {
+      code: "setup",
+      hold_all: true,
+    });
 
+  const fresh: Row = {
+    request_id: o.requestId,
+    contact_id: o.contactId,
+    channel: "whatsapp",
+    via: "workflow",
+    template_key: route.key,
+    workflow_id: route.workflow_id,
+    body: text,
+    source: o.source ?? (o.followupId ? "followup" : "rep"),
+    followup_id: o.followupId,
+    sent_by: who.email,
+    state: "sending",
+  };
+  const slot = prior.adopt
+    ? { message: prior.adopt }
+    : await takeSlot(fresh, { template: true, perDay: guard.templates_per_day, monthCap: budgetCap(guardRaw), guard: guardRaw });
   let row: Row;
-  try {
-    row = (await svc("cockpit_sales_messages", {
-      method: "POST",
-      body: {
-        request_id: o.requestId,
-        contact_id: o.contactId,
-        channel: "whatsapp",
-        via: "workflow",
-        template_key: route.key,
-        workflow_id: route.workflow_id,
-        body: text,
-        source: o.followupId ? "followup" : "rep",
-        followup_id: o.followupId,
-        sent_by: who.email,
-        state: "sending",
-      },
-      prefer: "return=representation",
-    }))[0];
-  } catch (e) {
-    if (/23505|duplicate/.test(String((e as Error).message ?? e))) {
-      const twin = (await svc(`cockpit_sales_messages?request_id=eq.${enc(o.requestId)}&select=*`))[0];
-      return { message: twin, repeated: true };
+  if (slot) {
+    if (slot.repeated) {
+      if (slot.message.contact_id === o.contactId && slot.message.template_key === o.key) return slot;
+      throw new Refusal("That send was already used for other words. Press Send again.", 409);
     }
-    throw e;
+    row = slot.message;
+  } else {
+    // The database has no slot function yet: the same ceilings, one by one.
+    await templateCeilings(o.contactId, guard, guardRaw);
+    try {
+      row = (await svc("cockpit_sales_messages", { method: "POST", body: fresh, prefer: "return=representation" }))[0];
+    } catch (e) {
+      if (/23505|duplicate/.test(String((e as Error).message ?? e))) {
+        const twin = (await svc(`cockpit_sales_messages?request_id=eq.${enc(o.requestId)}&select=*`))[0];
+        return { message: twin, repeated: true };
+      }
+      throw e;
+    }
   }
+  await lastCheck(o.beforeSend);
+  const stamp = await stampOrTwin(row);
+  if ("twin" in stamp) return { message: stamp.twin, repeated: true };
+  row = stamp.row;
+  taken();
 
-  const fail = async (err: string) => {
+  // `enrolling`: the failure came from the workflow enrolment itself. Only
+  // that call can send the template, so only its timeout, 5xx or lost answer
+  // may have sent it; a failure before it (the contact field write) is
+  // certain: nothing went.
+  const fail = async (e: unknown, enrolling: boolean) => {
+    const err = redact(String((e as Error)?.message ?? e));
+    // A timeout, a 5xx or a dropped connection on the enrolment: it may have
+    // happened, so the template may go. Never "failed" then (C29).
+    const unclear = enrolling && unclearError(e);
     await svc(`cockpit_sales_messages?id=eq.${row.id}`, {
       method: "PATCH",
-      body: { state: "failed", error: err, updated_at: new Date().toISOString() },
+      body: { state: unclear ? "unclear" : "failed", error: err, updated_at: new Date().toISOString() },
       prefer: "return=minimal",
-    });
-    await audit(who, "wa.template", "cockpit_sales_messages", String(row.id), null, { template: route.key, state: "failed", error: err });
-    throw new Refusal(`HighLevel did not send it: ${err}`, 502);
+    }).catch(x => console.error("template state", redact(String(x))));
+    await audit(who, "wa.template", "cockpit_sales_messages", String(row.id), null, { template: route.key, state: unclear ? "unclear" : "failed", error: err });
+    if (unclear) throw new Refusal(`${MAY_HAVE_GONE} (${err})`, 502, { unclear: true });
+    throw new Refusal(`HighLevel did not send it: ${err}`, 502, { certain: true });
   };
   const customFields = [
     ...(needsLine ? [{ id: fields.line?.id, field_value: line }] : []),
     ...(route.variables.includes("rep_name") ? [{ id: fields.rep?.id, field_value: signature }] : []),
+    ...(button ? [{ id: fields.join?.id, field_value: button }] : []),
+    ...(callTime ? [{ id: fields.when?.id, field_value: callTime }] : []),
   ];
-  const startedAt = Date.now();
   try {
     if (customFields.length) await ghl("PUT", `/contacts/${enc(o.contactId)}`, { customFields }, "2021-07-28");
+  } catch (e) {
+    return await fail(e, false);
+  }
+  // The contact field write may take HighLevel's whole timeout: the caller
+  // is asked once more right before the enrolment, the one call that sends.
+  // Stopped here, nothing was enrolled: the stamped row is given up.
+  try {
+    await lastCheck(o.beforeSend);
+  } catch (e) {
+    await giveUpAsked(row);
+    throw e;
+  }
+  const startedAt = Date.now();
+  try {
     await ghl("POST", `/contacts/${enc(o.contactId)}/workflow/${enc(String(route.workflow_id))}`,
       { eventStartTime: new Date(startedAt).toISOString() }, "2021-07-28");
   } catch (e) {
-    return await fail(redact(String((e as Error).message ?? e)));
+    return await fail(e, true);
   }
   // Read it back: the workflow sends within seconds, and Meta decides after.
+  // Only a message with these words counts (C29).
   let seen: ThreadMessage | null = null;
-  for (let i = 0; i < 6; i++) {
+  let read: ThreadMessage[] = [];
+  const reads = Math.max(1, Math.round((o.readBackMs ?? 12_000) / 2000));
+  for (let i = 0; i < reads; i++) {
     await sleep(2000);
     try {
-      seen = await whatsappSentSince(o.contactId, startedAt);
+      const back = await whatsappSentSince(o.contactId, startedAt, text);
+      seen = back.hit;
+      read = back.seen;
     } catch {
       seen = null;
     }
     if (seen && seen.status && !["pending", "queued"].includes(seen.status)) break;
   }
   const state = seen ? stateOf(seen.status === "pending" && !seen.error ? "sent" : seen.status) : "sent";
-  const saved = (await svc(`cockpit_sales_messages?id=eq.${row.id}`, {
-    method: "PATCH",
-    body: {
-      state,
-      provider_status: seen ? seen.status : "enrolled",
-      error: state === "failed" ? (seen?.error ?? "HighLevel marked it failed without a reason") : null,
-      ghl_message_id: seen?.id ?? null,
-      ghl_conversation_id: seen?.conversation_id ?? null,
-      updated_at: new Date().toISOString(),
-    },
-    prefer: "return=representation",
-  }))[0];
+  let saved: Row;
+  try {
+    saved = (await svc(`cockpit_sales_messages?id=eq.${row.id}`, {
+      method: "PATCH",
+      body: {
+        state,
+        provider_status: seen ? seen.status : "enrolled",
+        error: state === "failed" ? (seen?.error ?? "HighLevel marked it failed without a reason") : null,
+        ghl_message_id: seen?.id ?? null,
+        ghl_conversation_id: seen?.conversation_id ?? null,
+        updated_at: new Date().toISOString(),
+      },
+      prefer: "return=representation",
+    }))[0];
+  } catch (e) {
+    // The workflow ran; only the record of it failed. It went: never sent again for this request.
+    throw new Refusal(`${MAY_HAVE_GONE} (${redact(String((e as Error)?.message ?? e))})`, 502, { unclear: true });
+  }
   await audit(who, "wa.template", "cockpit_sales_messages", String(row.id), null,
     { template: route.key, workflow: route.workflow_id, state, seen: Boolean(seen), followup_id: o.followupId,
-      asset_id: o.assetId ?? null },
+      asset_id: o.assetId ?? null, source: o.source ?? null },
     { lead: lead.name ?? null });
   if (o.assetId && state !== "failed") await assetSent(who, o.assetId, o.contactId, "whatsapp", String(row.id));
+  if (read.length) background(duplicateWatch(o.contactId, "", read));
   return { message: saved };
+}
+
+/**
+ * A seat's message request id, hashed with its email (rooms.ts
+ * seatRequestId): the room link's message keys are computable from a room id
+ * every seat can read, so a seat's own id can never be one of them. A value
+ * that is not a request id passes through for the send's own refusal.
+ */
+async function seatMessageId(who: Who, v: unknown): Promise<unknown> {
+  const s = String(v ?? "").trim().toLowerCase();
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(s)) return v;
+  return await uuidFrom(`seat/${String(who.email ?? "").trim().toLowerCase()}/${s}`);
 }
 
 /** A rep sends an approved template from the lead's conversation. */
@@ -1543,23 +2687,29 @@ async function referenceAnswer(who: Who, b: Row) {
   return { ask: out[0] };
 }
 
-/** A manager sets the WhatsApp ceilings. */
+/**
+ * A manager sets the WhatsApp ceilings and the gate (connector_off,
+ * single_copy_ok_at), or clears the duplicate detector's pause. Every key
+ * the save does not name keeps its value (sendrules.ts whatsappGuardValue).
+ */
 async function whatsappGuardSave(who: Who, b: Row) {
   needManager(who);
   const v = (b.value ?? {}) as Row;
-  const perDay = Number(v.templates_per_day);
-  if (!Number.isInteger(perDay) || perDay < 1 || perDay > 5000)
-    throw new Refusal("Templates a day is a whole number from 1 to 5,000.");
-  const share = Number(v.pause_fail_share ?? 0.3);
-  if (!Number.isFinite(share) || share <= 0 || share > 1) throw new Refusal("The pause share is between 0 and 1.");
-  const before = await setting<Row>("whatsapp_guard");
-  const value = { templates_per_day: perDay, pause_fail_share: share, pause_min_sends: Math.max(1, Math.round(Number(v.pause_min_sends ?? 5))) };
-  await svc("cockpit_sales_settings?on_conflict=key", {
-    method: "POST",
-    body: { key: "whatsapp_guard", value, updated_by: who.email, updated_at: new Date().toISOString() },
-    prefer: "resolution=merge-duplicates,return=minimal",
+  const { before, value } = await saveSettingIf("whatsapp_guard", String(who.email ?? ""), read => {
+    const checked = whatsappGuardValue((read ?? {}) as Row, v, Date.now());
+    if (!checked.ok) throw new Refusal(checked.error);
+    return checked.value;
   });
   await audit(who, "whatsapp.guard", "cockpit_sales_settings", "whatsapp_guard", before, value);
+  // "Clear the pause" resolves that pause's alert (fix round 4), so the next
+  // pause is a fresh alert that reaches #sales-alerts.
+  const paused = String((before ?? {}).dup_paused_at ?? "");
+  if (paused && !value.dup_paused_at)
+    for (const k of [`wa_duplicate:${paused}`, `wa_duplicate:${paused.slice(0, 10)}`])
+      await svc("rpc/cockpit_sales_alert_set", {
+        method: "POST",
+        body: { p_key: k, p_on: false, p_kind: "wa_duplicate", p_subject: null, p_message: null, p_detail: null },
+      }).catch(e => console.error("duplicate alert resolve", redact(String(e))));
   return { setting: { key: "whatsapp_guard", value } };
 }
 
@@ -1896,14 +3046,7 @@ async function followupRow(id: string): Promise<Row> {
  * first send. The words go out through convo.send's checks: do-not-disturb,
  * the WhatsApp window, the read-back.
  */
-/** The lead's clock: UTC+4 in the UAE and Oman (the lead copy holds ISO codes), UTC+3 elsewhere in the Gulf. */
-function leadHour(country: unknown, now = Date.now()): number {
-  const c = String(country ?? "").trim();
-  const off = /^(ae|om)$/i.test(c) || /emirates|\buae\b|dubai|oman|muscat/i.test(c) ? 4 : 3;
-  return new Date(now + off * 3_600_000).getUTCHours();
-}
-
-async function sendFollowup(who: Who, f: Row, b: Row, auto: boolean) {
+async function sendFollowup(who: Who, f: Row, b: Row, auto: boolean, opts: { decidedBy?: string | null } = {}) {
   if (f.status !== "draft") throw new Refusal(`This draft was already ${f.status}.`, 409);
   const lead = (await svc(`cockpit_sales_leads?contact_id=eq.${enc(String(f.contact_id))}&select=country,tags`))[0];
   // An active client gets no sales follow-up: the draft closes, saying why.
@@ -1918,12 +3061,16 @@ async function sendFollowup(who: Who, f: Row, b: Row, auto: boolean) {
     throw new Refusal(CLIENT_REFUSAL, 409);
   }
   // A follow-up does not arrive at night: an answer to a lead who just wrote
-  // may, anything else waits for 09:00 on the lead's own clock.
-  if (f.segment !== "reply") {
-    const h = leadHour(lead?.country);
-    if (h < 9 || h >= 21)
-      throw new Refusal("It is night where the lead is. Send it after 9 in the morning, their time.", 409);
-  }
+  // may; a first message goes within followups.first_hours (9 to 18), and
+  // anything else within 9 to 21, on the lead's own clock.
+  const hours = hoursRefusal({
+    segment: f.segment,
+    touch: f.touch,
+    country: lead?.country,
+    now: Date.now(),
+    followups: (await setting<Row>("followups")) ?? {},
+  });
+  if (hours) throw new Refusal(hours, 409);
   if (f.expires_at && Date.parse(String(f.expires_at)) < Date.now()) {
     await svc(`cockpit_sales_followups?id=eq.${enc(String(f.id))}&status=eq.draft`, {
       method: "PATCH",
@@ -1937,15 +3084,50 @@ async function sendFollowup(who: Who, f: Row, b: Row, auto: boolean) {
       409,
     );
   }
+  // The call the draft is about, as it is now (stress2 round 6,
+  // confirm-draft-sent-after-call-moved, confirm-draft-tomorrow-sent-on-call-day,
+  // confirm-draft-sent-after-phone-confirmation): moved, cancelled, held,
+  // started, confirmed by phone since, or the day it names no longer the
+  // day it is: never sent, and closed with the reason before anything is
+  // recorded against the call.
+  const gone = await callGone(f, lead?.country, Date.now());
+  if (gone) {
+    await svc(`cockpit_sales_followups?id=eq.${enc(String(f.id))}&status=eq.draft`, {
+      method: "PATCH",
+      body: { status: "expired", decided_at: new Date().toISOString(), error: gone },
+      prefer: "return=minimal",
+    });
+    await audit(who, auto ? "followup.autosend" : "followup.approve", "cockpit_sales_followups", String(f.id), f, { status: "expired", error: gone });
+    throw new Refusal(gone, 409, { code: "call_changed" });
+  }
   // The conversation may have moved on since the draft was made: a rep wrote
   // in HighLevel or from the cockpit, or the lead wrote again. Either way the
   // draft answers an older conversation; the agent writes a fresh one.
+  // Aligned with the desk: an outbound email moves nothing on for a WhatsApp
+  // draft (an automation's email after a WhatsApp reply). The lead copy of
+  // the inbox cannot tell a rep's message in HighLevel from an automation's,
+  // so any other outbound message still counts (the draft waits for a person).
   const madeAt = String(f.created_at);
+  const forWhatsapp = f.channel !== "email";
   const [inbox, ours] = await Promise.all([
-    svc(`cockpit_sales_inbox?contact_id=eq.${enc(String(f.contact_id))}&last_message_at=gt.${enc(madeAt)}&select=last_message_at&limit=1`),
-    svc(`cockpit_sales_messages?contact_id=eq.${enc(String(f.contact_id))}&created_at=gt.${enc(madeAt)}&state=neq.failed&select=created_at&limit=1`),
+    // The inbox copy keeps a conversation's latest message, and the lead's
+    // latest WhatsApp apart (inbound_whatsapp_at): a reply followed by an
+    // automation's email still moved the conversation on.
+    svc(`cockpit_sales_inbox?contact_id=eq.${enc(String(f.contact_id))}&or=${enc(`(last_message_at.gt."${madeAt}",inbound_whatsapp_at.gt."${madeAt}")`)}&select=last_message_at,last_direction,last_type,inbound_whatsapp_at&limit=5`),
+    svc(`cockpit_sales_messages?contact_id=eq.${enc(String(f.contact_id))}&created_at=gt.${enc(madeAt)}&state=neq.failed&select=*&order=created_at.desc&limit=10`),
   ]);
-  const since = inbox[0]?.last_message_at ?? ours[0]?.created_at;
+  // This draft's own earlier try is not the conversation moving on, nor is a
+  // row HighLevel was never asked about (its slot's answer lost; stress2
+  // round 5, slot-lost-answer-orphan-row-read-as-sent).
+  const theirs = ours.filter(m => String(m.request_id ?? "") !== String(f.id) && !(m.state === "sending" && Object.hasOwn(m, "ghl_asked_at") && !m.ghl_asked_at));
+  const emailType = (t: unknown) => /email/i.test(String(t ?? ""));
+  const after = (t: unknown) => typeof t === "string" && Date.parse(t) > Date.parse(madeAt);
+  const inboxMoved = inbox.find(
+    i => after(i.last_message_at) && (i.last_direction === "inbound" || !(forWhatsapp && emailType(i.last_type))),
+  );
+  const repliedOnWhatsapp = inbox.find(i => after(i.inbound_whatsapp_at));
+  const oursMoved = theirs.find(m => !(forWhatsapp && m.channel === "email"));
+  const since = inboxMoved?.last_message_at ?? repliedOnWhatsapp?.inbound_whatsapp_at ?? oursMoved?.created_at;
   if (since) {
     await svc(`cockpit_sales_followups?id=eq.${enc(String(f.id))}&status=eq.draft`, {
       method: "PATCH",
@@ -1961,12 +3143,18 @@ async function sendFollowup(who: Who, f: Row, b: Row, auto: boolean) {
   const channel = b.channel === "whatsapp" ? "whatsapp" : String(f.channel);
   const switched = channel !== f.channel;
   const template = channel === "whatsapp_template";
-  const body = template ? templateLine(b.body ?? f.body) : String(b.body ?? f.body).replace(/\r\n/g, "\n").trim();
+  // A backlog opener is the CEO's fixed words: an edit is never sent.
+  const fixed = f.segment === "reactivate";
+  if (fixed && b.body !== undefined && templateLine(b.body) !== templateLine(f.body))
+    throw new Refusal("A backlog opener cannot be edited: it goes as written, or a rep skips it.", 409);
+  const given = fixed ? f.body : (b.body ?? f.body);
+  const body = template ? templateLine(given) : String(given).replace(/\r\n/g, "\n").trim();
   if (!body) throw new Refusal("Write the message first.");
   const subject = channel === "email" ? cleanText(b.subject ?? f.subject, 300) : null;
   const claimed = await svc(`cockpit_sales_followups?id=eq.${enc(String(f.id))}&status=eq.draft`, {
     method: "PATCH",
-    body: { status: "sending", decided_by: who.email, decided_at: new Date().toISOString() },
+    // The desk's paced send records the person who approved the batch.
+    body: { status: "sending", decided_by: opts.decidedBy || who.email, decided_at: new Date().toISOString() },
     prefer: "return=representation",
   });
   if (!claimed.length) throw new Refusal("Someone else has just dealt with this draft.", 409);
@@ -1989,21 +3177,33 @@ async function sendFollowup(who: Who, f: Row, b: Row, auto: boolean) {
           followup_id: f.id,
         });
     const m = out.message as Row;
-    const saved = (await svc(`cockpit_sales_followups?id=eq.${enc(String(f.id))}`, {
-      method: "PATCH",
-      body: {
-        status: m.state === "failed" ? "failed" : "sent",
-        final_body: body,
-        final_subject: subject,
-        edited,
-        message_id: m.id ?? null,
-        error: m.state === "failed" ? (m.error ?? "HighLevel marked it failed") : null,
-        auto,
-        // The channel it went on: a draft written for email may go on WhatsApp.
-        ...(switched ? { channel } : {}),
-      },
-      prefer: "return=representation",
-    }))[0];
+    const done: Row = {
+      status: m.state === "failed" ? "failed" : "sent",
+      final_body: body,
+      final_subject: subject,
+      edited,
+      message_id: m.id ?? null,
+      error: m.state === "failed" ? (m.error ?? "HighLevel marked it failed") : null,
+      auto,
+      // The channel it went on: a draft written for email may go on WhatsApp.
+      ...(switched ? { channel } : {}),
+    };
+    const write = async () =>
+      (await svc(`cockpit_sales_followups?id=eq.${enc(String(f.id))}`, { method: "PATCH", body: done, prefer: "return=representation" }))[0];
+    let saved: Row;
+    try {
+      saved = await write();
+    } catch (e) {
+      // The send went and only the follow-up's write lost its answer
+      // (stress2 round 5, followup-sent-write-lost-skips-takeover): read
+      // back; written, the success path finishes (the audit, the
+      // confirmation, the take-over); not written, written once more.
+      // Unread or still failing, the doubt below stands.
+      const back = (await svc(`cockpit_sales_followups?id=eq.${enc(String(f.id))}&select=*`).catch(() => [] as Row[]))[0];
+      if (back && back.status === done.status && String(back.message_id ?? "") === String(done.message_id ?? "")) saved = back;
+      else if (back) saved = await write();
+      else throw e;
+    }
     await audit(who, auto ? "followup.autosend" : "followup.approve", "cockpit_sales_followups", String(f.id), f,
       { status: saved.status, edited, segment: f.segment, channel, ...(switched ? { written_for: f.channel } : {}) });
     if (saved.status === "sent") {
@@ -2020,20 +3220,122 @@ async function sendFollowup(who: Who, f: Row, b: Row, auto: boolean) {
     const err = e instanceof Refusal ? e.message : redact(String((e as Error).message ?? e));
     // Refused before anything went out (a closed window, the day's ceiling,
     // too many sends, a blank to fill): the draft waits again, with the
-    // reason. Only a send HighLevel tried and failed ends the draft.
-    const fixable = e instanceof Refusal && e.status !== 502;
+    // reason. A send that may have reached the lead (its message row is
+    // there and not failed: the answer was lost, or a write after HighLevel
+    // failed) is never "failed": it stays sent with the doubt noted, so no
+    // second opener is ever written for it. Only a send that certainly did
+    // not go ends the draft as failed.
+    const fixable = e instanceof Refusal && e.status !== 502 && e.extra?.unclear !== true;
+    // Whether it may have gone is read from the message row alone: the row is
+    // written (the slot, or the insert) before HighLevel is ever asked, so no
+    // row means nothing went (HighLevel's contact read, a database read or
+    // the slot's lock failing first): the draft waits again with the reason.
+    // A lookup that itself fails cannot tell, so the doubt stays.
+    let row: Row | null = null;
+    let unread = false;
+    if (!fixable) {
+      try {
+        row = (await svc(`cockpit_sales_messages?request_id=eq.${enc(String(f.id))}&select=id,state`))[0] ?? null;
+      } catch {
+        unread = true;
+      }
+    }
+    // HighLevel's own 429, 401 or 403 is the account's state, not the lead's
+    // (stress2 round 3): the failed row keeps the attempt under a key of its
+    // own, so the follow-up's request id is free again and the draft waits
+    // for the next run with its approval, never closed as failed.
+    let freed = false;
+    if (!fixable && !unread && row !== null && row.state === "failed" && /HighLevel said (429|401|403)\b|too many requests/i.test(err)) {
+      try {
+        const moved = await svc(`cockpit_sales_messages?id=eq.${enc(String(row.id))}&state=eq.failed`, {
+          method: "PATCH",
+          body: { request_id: crypto.randomUUID() },
+          prefer: "return=representation",
+        });
+        freed = moved.length > 0;
+      } catch (e2) {
+        console.error("followup: a refused send's key was not freed", redact(String((e2 as Error)?.message ?? e2)));
+      }
+    }
+    const notSent = (!fixable && !unread && !row) || freed;
+    const mayHaveGone = !fixable && !freed && (unread || (row !== null && row.state !== "failed"));
+    const doubt = `${MAY_HAVE_GONE} (${err.slice(0, 200)})`;
     await svc(`cockpit_sales_followups?id=eq.${enc(String(f.id))}`, {
       method: "PATCH",
-      body: fixable
+      body: fixable || notSent
         ? { status: "draft", error: err, decided_by: null, decided_at: null }
-        : { status: "failed", error: err, final_body: body, final_subject: subject, edited, ...(switched ? { channel } : {}) },
+        : mayHaveGone
+          ? { status: "sent", error: doubt, final_body: body, final_subject: subject, edited, message_id: row?.id ?? null, auto, ...(switched ? { channel } : {}) }
+          : { status: "failed", error: err, final_body: body, final_subject: subject, edited, ...(switched ? { channel } : {}) },
       prefer: "return=minimal",
     });
     await audit(who, auto ? "followup.autosend" : "followup.approve", "cockpit_sales_followups", String(f.id), f,
-      { status: fixable ? "draft" : "failed", error: err });
+      { status: fixable || notSent ? "draft" : mayHaveGone ? "sent" : "failed", error: err, ...(mayHaveGone ? { unclear: true } : {}) });
     throw e;
   }
 }
+
+/** The kinds of draft written about one booked call. */
+const CALL_SEGMENTS = new Set(["confirm", "no_show", "cancelled"]);
+
+/**
+ * Why a draft about a booked call is no longer to be sent, or null while it
+ * is (the desk's gone_reason, read again at the send). The cockpit's copy of
+ * the call first, else HighLevel's own; unread, the send waits (thrown before
+ * the claim), never "the call is gone" on a blip.
+ */
+async function callGone(f: Row, country: unknown, now: number): Promise<string | null> {
+  const aid = String(f.appointment_id ?? "");
+  if (!aid || !CALL_SEGMENTS.has(String(f.segment ?? ""))) return null;
+  const ctx = (f.context && typeof f.context === "object" ? f.context : {}) as Row;
+  let a = (await svc(`cockpit_sales_appointments?appointment_id=eq.${enc(aid)}&select=status,start_at`))[0] as Row | undefined;
+  if (!a) {
+    let one: Row | null = null;
+    try {
+      const g = (await ghl("GET", `/calendars/events/appointments/${enc(aid)}`)) as Row;
+      one = ((g.appointment ?? g) as Row) ?? null;
+    } catch (e) {
+      const st = (e as { status?: unknown })?.status;
+      if (st !== 404 && st !== 410)
+        throw new Refusal("The call this draft is about could not be read just now, so it was not sent. Try again in a minute.", 503, { retry: true });
+    }
+    if (one && (one.id || one.startTime))
+      a = { status: String(one.appointmentStatus ?? one.appoinmentStatus ?? "").toLowerCase(), start_at: one.startTime ?? null };
+  }
+  const status = String(a?.status ?? "").toLowerCase();
+  const start = Date.parse(String(a?.start_at ?? ""));
+  const was = Date.parse(String(ctx.start_at ?? ""));
+  const moved = Number.isFinite(start) && Number.isFinite(was) && Math.abs(start - was) >= 60_000;
+  if (f.segment !== "confirm") {
+    // A no-show or cancelled call's message: the call held after all, or booked at another time since.
+    if (status === "showed" || status === "invalid") return "The call was held after all, so this message is not needed.";
+    if (moved) return "The call was booked at another time since, so this message is not needed.";
+    return null;
+  }
+  if (!a) return "The call this confirms is no longer on the calendar, so this message is not needed.";
+  if (status === "cancelled" || status === "invalid") return "The call this confirms was cancelled, so this message is not needed.";
+  if (status === "showed" || status === "noshow" || (Number.isFinite(start) && start <= now))
+    return "The call this confirms has already started, so this message is not needed.";
+  if (moved)
+    return "The call this confirms was moved, so this message names the wrong time. A confirmation for the new time is written when it is due.";
+  const rel = String(((ctx.the_call ?? {}) as Row).relative ?? "");
+  if (rel && Number.isFinite(was) && relativeDay(was, now, country) !== rel)
+    return `This message says "${rel}", which is no longer the call's day where the lead is, so it was not sent. The agent writes a fresh one if it is still due.`;
+  const made = String(f.created_at ?? "");
+  if (Number.isFinite(Date.parse(made))) {
+    const since = await svc(
+      `cockpit_sales_confirmations?appointment_id=eq.${enc(aid)}&at=gt.${enc(made)}&result=in.(confirmed,reschedule,cancelled,message_sent)&select=result&order=at.desc&limit=1`,
+    );
+    const r = String(since[0]?.result ?? "");
+    if (r === "confirmed") return "The lead confirmed on the phone, so this message is not needed.";
+    if (r === "reschedule" || r === "cancelled") return "The lead already answered about this call on the phone, so this message is not needed.";
+    if (r === "message_sent") return "A confirmation already went to the lead for this call, so this message is not needed.";
+  }
+  return null;
+}
+
+/** A follow-up whose send may have reached the lead: kept as sent, so nothing is written to the lead again for it. */
+const MAY_HAVE_GONE = "The send may have gone; read the conversation in HighLevel before writing to the lead again";
 
 /** A send HighLevel reports as gone (not merely taken): email, or WhatsApp sent, delivered or read. */
 function sendSettled(m: Row): boolean {
@@ -2091,6 +3393,15 @@ async function confirmationSent(who: Who, f: Row) {
 async function followupApprove(who: Who, b: Row) {
   const f = await followupRow(cleanText(b.id, 40));
   if (!who.manager && f.owner_email && f.owner_email !== who.email) throw new Refusal("That is another rep's lead.", 403);
+  // A backlog opener goes only in an approved, paced batch (followup.batch,
+  // then the desk's followup.send_due), where the wave's state, the agent's
+  // switch and the WhatsApp gate are checked on every send.
+  if (f.segment === "reactivate")
+    throw new Refusal("Backlog openers go out in an approved batch. Approve it under Today's batch.", 409);
+  // Confirmation drafts are the agent's own work (Milestone 1 fence): refused
+  // while followups.agent is off, so a confirmation goes on the phone.
+  if (f.segment === "confirm" && agentWorkOff((await setting<Row>("followups")) ?? {}))
+    throw new Refusal("Confirmation messages are switched off for now (followups.agent). Call the lead to confirm instead.", 409);
   return await sendFollowup(who, f, b, false);
 }
 
@@ -2098,11 +3409,21 @@ async function followupApprove(who: Who, b: Row) {
 async function followupAutosend(who: Who, b: Row) {
   const f = await followupRow(cleanText(b.id, 40));
   const settings = (await setting<Row>("followups")) ?? {};
-  const auto = ((settings.autosend ?? {}) as Row)[String(f.segment)] === true;
+  // The agent's kill switch holds the desk's every send (P3 phase 1), and a
+  // draft that goes by itself is the agent's own send (followups.agent,
+  // Milestone 1 fence).
+  if (agentOff(settings))
+    throw new Refusal("The follow-up agent is switched off (followups.enabled), so nothing is sent.", 409, { hold_all: true });
+  if (agentWorkOff(settings))
+    throw new Refusal("The follow-up agent's own sends are switched off (followups.agent), so nothing is sent by itself.", 409, { hold_all: true });
+  // Openers go only in an approved, paced batch (followup.batch, followup.send_due).
+  const auto = f.segment !== "reactivate" && ((settings.autosend ?? {}) as Row)[String(f.segment)] === true;
   if (!auto) throw new Refusal(`${String(f.segment)} drafts wait for a person; a manager has not switched them to send by themselves.`, 403);
   if (f.channel !== "email") {
-    const health = await whatsappHealth();
-    if (health.paused) throw new Refusal(health.why, 409);
+    // Both doors agree: no WhatsApp from the desk while the gate is shut.
+    if (!gateOpen(await setting<Row>("whatsapp_guard"))) throw new Refusal(GATE_SHUT, 409, { hold_all: true });
+    const health = await whatsappHealth({ source: "followup" });
+    if (health.paused) throw new Refusal(health.why, 409, { hold_all: true });
   }
   const why = needsPerson(String(f.body ?? ""), f.subject as string | null);
   if (why) throw new Refusal(`This draft waits for a person: ${why}.`, 409);
@@ -2127,49 +3448,20 @@ async function followupSkip(who: Who, b: Row) {
 async function followupSettings(who: Who, b: Row) {
   needManager(who);
   const v = (b.value ?? {}) as Row;
-  const before = (await setting<Row>("followups")) ?? {};
   // Only what was sent changes: a switch flipped on the page, or the form's
-  // own fields. Everything else keeps its value, so a form opened before a
-  // switch was flipped can never flip it back (or switch the agent on).
-  const given = (k: string) => (v[k] !== undefined ? v[k] : before[k]);
-  const map = (k: string) => ({ ...((before[k] ?? {}) as Row), ...((v[k] ?? {}) as Row) });
-  const int = (x: unknown, lo: number, hi: number, name: string) => {
-    const n = Number(x);
-    if (!Number.isInteger(n) || n < lo || n > hi) throw new Refusal(`${name} has to be a whole number from ${lo} to ${hi}.`);
-    return n;
-  };
-  const quiet = (given("quiet") ?? {}) as Row;
-  const quietFrom = int(quiet.from ?? 21, 0, 23, "The quiet hours' start");
-  const quietTo = int(quiet.to ?? 9, 0, 23, "The quiet hours' end");
-  const auto = map("autosend");
-  const takeover = map("takeover");
-  const fallback = map("email_fallback");
-  const replaces = (before.replaces ?? {}) as Row;
-  const days = given("quiet_days");
-  const value = {
-    enabled: given("enabled") !== false,
-    autosend: Object.fromEntries(FOLLOWUP_SEGMENTS.map(s => [s, auto[s] === true])),
-    // Only kinds that replace a HighLevel automation can take a lead out of it.
-    takeover: Object.fromEntries(Object.keys(replaces).map(s => [s, takeover[s] === true])),
-    replaces,
-    email_fallback: Object.fromEntries(FOLLOWUP_SEGMENTS.map(s => [s, fallback[s] !== false])),
-    cadence: before.cadence ?? {},
-    automation_gap_hours: int(given("automation_gap_hours") ?? 20, 0, 72, "Hours to wait after an automation's message"),
-    // Days on which only replies and confirmations are written (the Gulf's day off).
-    quiet_days: (Array.isArray(days) ? days : ["friday"])
-      .map(d => String(d).toLowerCase())
-      .filter(d => ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"].includes(d)),
-    per_run: int(given("per_run") ?? 12, 1, 50, "Drafts per run"),
-    per_day: int(given("per_day") ?? 60, 1, 400, "Drafts per day"),
-    quiet: { from: quietFrom, to: quietTo },
-    nurture_every_days: int(given("nurture_every_days") ?? 7, 2, 60, "Days between nurture messages"),
-    nurture_per_day: int(given("nurture_per_day") ?? 20, 0, 200, "Long-term messages a day"),
-  };
-  await svc("cockpit_sales_settings?on_conflict=key", {
-    method: "POST",
-    body: { key: "followups", value, updated_by: who.email, updated_at: new Date().toISOString() },
-    prefer: "resolution=merge-duplicates,return=minimal",
+  // own fields. Everything else keeps its value, including the keys this
+  // form does not know (sendrules.ts followupSettingsValue), so a form
+  // opened before a switch was flipped can never flip it back. The write
+  // holds only over the value it merged into (saveSettingIf: a compare on
+  // updated_at, read and merged again on a miss), so two managers saving at
+  // once never write back each other's key (fix round 4).
+  const saved = await saveSettingIf("followups", String(who.email ?? ""), read => {
+    const checked = followupSettingsValue(read ?? {}, v, FOLLOWUP_SEGMENTS);
+    if (!checked.ok) throw new Refusal(checked.error);
+    return checked.value as Row;
   });
+  const before = saved.before ?? {};
+  const value = saved.value;
   await audit(who, "followup.settings", "cockpit_sales_settings", "followups", before, value);
   return { setting: { key: "followups", value } };
 }
@@ -2422,7 +3714,7 @@ const ms = (v: unknown) => {
 let heavy: { at: number; leads: Row[]; appts: Row[]; dials: Row[]; deals: Row[]; missed: Row[] } | null = null;
 const HEAVY_FOR = 20_000;
 const LEAD_COLS =
-  "contact_id,name,phone,phone8,lead_created_at,stage_id,stage_name,pipeline_id,lead_class,dnd,contact_type,revenue,readiness,assigned_to,tags";
+  "contact_id,name,phone,phone8,lead_created_at,stage_id,stage_name,pipeline_id,lead_class,dnd,contact_type,revenue,readiness,assigned_to,tags,country";
 
 type DialFacts = { last: number; reached: boolean; tries: number[] };
 
@@ -2477,7 +3769,7 @@ type QueueCandidate = Candidate &
 /** Everything the queue needs, read in a handful of queries, no huge id lists. */
 async function candidates(now: number): Promise<{ list: QueueCandidate[] }> {
   const soon = enc(new Date(now - 3_600_000).toISOString());
-  const [states, inbox, attempts, h, confirmations, hotList, roles, seats, introTries] = await Promise.all([
+  const [states, inbox, attempts, h, confirmations, hotList, roles, seats, introTries, roomHeld, roomJoins, roomTalks] = await Promise.all([
     svcAll("cockpit_sales_queue_state?select=*&order=contact_id"),
     svc(`cockpit_sales_inbox?select=contact_id,last_message_at,last_direction&last_direction=eq.inbound&last_message_at=gte.${enc(new Date(now - 86_400_000).toISOString())}`),
     svc("cockpit_sales_attempts?select=contact_id,rep_email,started_at,call_checked_at&state=in.(dialing,placed)"),
@@ -2492,7 +3784,53 @@ async function candidates(now: number): Promise<{ list: QueueCandidate[] }> {
     // Intro calls that rang out in the last hour: the intro waits a few
     // minutes before it comes back (dialer.ts introWaiting).
     svc(`cockpit_sales_attempts?select=appointment_id,saved_at&state=eq.saved&item_kind=eq.intro&outcome=eq.no_answer&saved_at=gte.${soon}&limit=2000`),
+    // A lead whose video room is open, or still being made, stays out of the
+    // queue until its deadline (glossary C6, roomlogic roomHolds). A booked
+    // room holds nobody. Unread rooms hold nobody, and say so in the log.
+    rooms.heldSince(now).catch(e => {
+      console.error("room holds unread", redact(String((e as Error)?.message ?? e)));
+      return new Map<string, number>();
+    }),
+    // Booked calls the lead joined by video in the last three hours, the join
+    // standing (not taken back by "That was not the lead"): the intro was
+    // had, so it never comes back as "Intro call now" (stress2, round 1).
+    svc(
+      `cockpit_sales_rooms?lead_in_at=gte.${enc(new Date(now - 3 * 3_600_000).toISOString())}&or=${enc("(appointment_id.not.is.null,asked_appointment_id.not.is.null)")}&select=appointment_id,asked_appointment_id,appointment_start_at,lead_in_at,count_undo_at,taken_back_join_at,state,ended_at&limit=1000`,
+    ).catch(e => {
+      console.error("room joins unread", redact(String((e as Error)?.message ?? e)));
+      return [] as Row[];
+    }),
+    // Leads the rep talked to in a video room in the last two days (a join
+    // that stands, or the call moved to the phone), whatever the room was
+    // for: the dialer's automatic No answer just before such a talk does not
+    // stand (stress2 round 6, joined-step-next-lead-keeps-auto-no-answer).
+    svc(
+      `cockpit_sales_rooms?contact_id=not.is.null&or=${enc(`(lead_in_at.gte."${new Date(now - 2 * 86_400_000).toISOString()}",and(result.eq.moved_to_phone,ended_at.gte."${new Date(now - 2 * 86_400_000).toISOString()}"))`)}&select=contact_id,lead_in_at,count_undo_at,taken_back_join_at,result,ended_at&limit=2000`,
+    ).catch(e => {
+      console.error("room talks unread", redact(String((e as Error)?.message ?? e)));
+      return [] as Row[];
+    }),
   ]);
+  const talkedBy = new Map<string, number>();
+  for (const r of roomTalks) {
+    const k = String(r.contact_id ?? "");
+    const joined = ms(r.lead_in_at);
+    const undo = ms(r.count_undo_at);
+    const taken = ms(r.taken_back_join_at);
+    const stands = joined !== null && (undo === null || joined > Math.min(taken ?? undo, undo));
+    const t = stands ? joined : r.result === "moved_to_phone" ? ms(r.ended_at) : null;
+    if (k && t !== null && (talkedBy.get(k) ?? 0) < t) talkedBy.set(k, t);
+  }
+  // Only a join for the call as it starts now, inside its own window
+  // (dialer.ts roomJoinedFor, stress2, round 2): an intro moved later, or a
+  // confirmation call's room the hour before, still comes up.
+  const joinsByAppt = new Map<string, Row[]>();
+  for (const r of roomJoins) {
+    // A room asked for the intro and not carrying it (a confirmation
+    // call's, m1 round 6) counts for that intro too (roomJoinedFor's asked rule).
+    for (const k of new Set([r.appointment_id, r.asked_appointment_id].filter(Boolean).map(String)))
+      joinsByAppt.set(k, [...(joinsByAppt.get(k) ?? []), r]);
+  }
   // A closed or lost hot lead stays on the list for the record, and is no
   // longer hot here (Aziz, 2026-09-27).
   const hotRows = hotList.filter(stillHot);
@@ -2578,7 +3916,56 @@ async function candidates(now: number): Promise<{ list: QueueCandidate[] }> {
   const hotBy = new Map(hotRows.map(r => [String(r.contact_id), r]));
   // An active client (tagged client in HighLevel) is never in the queue
   // (clients.ts): client success looks after them.
-  const list = leads.filter(l => !isClient(l)).map(l => {
+  // A room's hold keeps the rep's own calls off a lead who has a link; a
+  // lead who rang back or wrote since the link went is the rep's to answer
+  // now, so the hold ends for them (stress2 round 4).
+  // The lead's own booked intro, due for its try now (the item
+  // appointmentWork ranks tier 0 "Intro call now"): the hold never hides the
+  // call the lead booked for this minute (m1 round 2,
+  // room-hold-hides-intro-at-booked-minute).
+  const introDue = (l: Row): boolean => {
+    const id = String(l.contact_id);
+    const intro = (apptBy.get(id) ?? [])
+      .filter(
+        a =>
+          a.call_type === "intro" &&
+          (ms(a.start_at) ?? 0) >= now - 20 * 60_000 &&
+          !["cancelled", "noshow", "invalid", "showed"].includes(String(a.status ?? "")),
+      )
+      .sort((a, b) => (ms(a.start_at) ?? 0) - (ms(b.start_at) ?? 0))[0];
+    if (!intro) return false;
+    const appt: Appt = {
+      id: String(intro.appointment_id),
+      type: "intro",
+      start: ms(intro.start_at) ?? 0,
+      booked: ms(intro.booked_at),
+      status: (intro.status as string) ?? null,
+      assigned: (intro.assigned_user_id as string) ?? null,
+      confirmed: confirmedAppt.has(String(intro.appointment_id)),
+      last_try: lastTry.get(String(intro.appointment_id)) ?? null,
+      room_joined: roomJoinedFor(joinsByAppt.get(String(intro.appointment_id)) ?? [], {
+        id: String(intro.appointment_id),
+        start: ms(intro.start_at) ?? 0,
+      }),
+      country: clockCountry(l.country, l.phone) || null,
+    };
+    return appointmentWork(appt, now, "setter", null)?.kind === "intro";
+  };
+  const roomHolds = (l: Row): boolean => {
+    const id = String(l.contact_id);
+    const since = roomHeld.get(id);
+    if (since === undefined) return false;
+    const missed = Math.max(missedBy.get(`c:${id}`) ?? 0, l.phone8 ? (missedBy.get(`p:${l.phone8}`) ?? 0) : 0);
+    const wrote = inboxBy.get(id) ?? 0;
+    // A rep's own outcome saved for the lead after the hold began (a
+    // call-back, a booking, held): they spoke, so the lead's queue is theirs
+    // again (m1 round 3, lead-in-room-holds-agreed-callback). A No answer
+    // never lifts it: that is the miss the room's link follows.
+    const st = stateBy.get(id) ?? {};
+    const saved = st.last_outcome && st.last_outcome !== "no_answer" ? (ms(st.last_outcome_at) ?? 0) : 0;
+    return !(missed > since || wrote > since || saved > since || introDue(l));
+  };
+  const list = leads.filter(l => !isClient(l) && !roomHolds(l)).map(l => {
     const id = String(l.contact_id);
     const st = stateBy.get(id) ?? {};
     const mine = apptBy.get(id) ?? [];
@@ -2637,7 +4024,19 @@ async function candidates(now: number): Promise<{ list: QueueCandidate[] }> {
       Boolean(missedAt && closedAt && missedAt > closedAt) ||
       Boolean(bookedBack && closedAt && bookedBack > closedAt);
     const bookedPast = st.closed === "booked" && !future;
-    const closed = st.closed && !reopened && !bookedPast ? String(st.closed) : null;
+    // A talk in a video room after the dialer's last outcome, when that was
+    // Maqsam's No answer (stress2 round 6): the lead was reached, so the
+    // ladder's retry and its "unreachable" close from before the talk do not
+    // stand; they come back the next working morning, unless a later save
+    // says otherwise (the joined step's own save).
+    const talk = afterTalk({
+      lastOutcome: (st.last_outcome as string | null) ?? null,
+      lastOutcomeAt,
+      closed: st.closed ? String(st.closed) : null,
+      due: ms(st.due_at),
+      talkedAt: talkedBy.get(id) ?? null,
+    });
+    const closed = talk.closed && !reopened && !bookedPast ? talk.closed : null;
     const lastDial = Math.max(dial?.last ?? 0, lastOutcomeAt ?? 0) || null;
     return {
       contact_id: id,
@@ -2649,13 +4048,13 @@ async function candidates(now: number): Promise<{ list: QueueCandidate[] }> {
       lead_class: (l.lead_class as string) ?? null,
       dnd: Boolean(l.dnd),
       last_dial_at: lastDial,
-      reached: Boolean(dial?.reached),
+      reached: Boolean(dial?.reached) || talk.talked,
       inbound_at: inboundAt,
       booked_at: future ? ms(future.start_at) : null,
       last_call_status: past ? String(past.status ?? "") : null,
       last_call_type: past ? String(past.call_type ?? "") : null,
       last_call_at: past ? ms(past.start_at) : null,
-      due_at: ms(st.due_at),
+      due_at: talk.due,
       callback_at: callbackAt,
       closed,
       claimed_by: claimBy.get(id) ?? null,
@@ -2686,6 +4085,13 @@ async function candidates(now: number): Promise<{ list: QueueCandidate[] }> {
             assigned: (current.assigned_user_id as string) ?? null,
             confirmed: confirmedAppt.has(String(current.appointment_id)),
             last_try: lastTry.get(String(current.appointment_id)) ?? null,
+            room_joined: roomJoinedFor(joinsByAppt.get(String(current.appointment_id)) ?? [], {
+              id: String(current.appointment_id),
+              start: ms(current.start_at) ?? 0,
+            }),
+            // The confirmation call keeps to the lead's own clock (stress2 round 5),
+            // a Gulf number's own first (m1 round 3: the stored country is often not where it rings).
+            country: clockCountry(l.country, l.phone) || null,
           }
         : null,
     };
@@ -3035,7 +4441,11 @@ async function saveOutcome(
       ))[0];
       anyRep = !current || !["showed", "noshow", "invalid"].includes(String(current.status));
     }
-    marked = await markAppointment(who, String(appt.appointment_id), effect.mark, { note: note || null, anyRep });
+    marked = await markAppointment(who, String(appt.appointment_id), effect.mark, {
+      note: note || null,
+      anyRep,
+      ...(kind === "confirm" && effect.mark === "showed" ? { heldEarly: true } : {}),
+    });
   }
   const st = (await svc(`cockpit_sales_queue_state?contact_id=eq.${enc(contactId)}&select=*`))[0];
   const next = effect.ladder
@@ -3563,17 +4973,59 @@ async function freeSlots(calendarId: string, from: number, to: number, userId: s
   return parseSlots(await ghl("GET", `/calendars/${enc(calendarId)}/free-slots?${q}`), Date.now());
 }
 
-/** The lead's next intro or demo on HighLevel's calendar, if one is booked. */
-async function upcoming(contactId: string, kind: BookingKind): Promise<{ id: string; start: number } | null> {
+/**
+ * The lead's next intro or demo on HighLevel's calendar, if one is booked,
+ * with its end, its rep and its status (the live count moves it only when it
+ * can put all of them back). `booked_before`: only a call HighLevel says was
+ * booked (dateAdded) before then, so the live count reads the lead's calls
+ * as they stood at the join (a call booked during the conversation is its
+ * outcome, never the call itself). A call with no dateAdded is kept.
+ */
+async function upcoming(
+  contactId: string,
+  kind: BookingKind,
+  opts: { booked_before?: number | null; after?: number | null } = {},
+): Promise<{
+  id: string;
+  start: number;
+  end: number | null;
+  assigned_user_id: string | null;
+  status: string | null;
+  booked_at: number | null;
+} | null> {
+  const bound = typeof opts.booked_before === "number" && Number.isFinite(opts.booked_before) ? opts.booked_before : null;
+  // The calls ahead of this moment: now, or the join a late count reads the
+  // calls as of (rooms.ts upcomingWhole), so a manager's confirm after the
+  // intro's time still finds the intro the join was (stress2, round 1).
+  const after = typeof opts.after === "number" && Number.isFinite(opts.after) ? Math.min(opts.after, Date.now()) : Date.now();
   const [d, types] = await Promise.all([
     ghl("GET", `/contacts/${enc(contactId)}/appointments`, undefined, "2021-07-28"),
     setting<Record<string, { type: string }>>("calendars"),
   ]);
-  const events = ((d.events ?? d.appointments ?? []) as Row[])
+  // An answer with no list of calls in it, or no calendars to tell an intro
+  // from a demo, is unread, never "nothing booked" (stress2 round 5,
+  // upcoming-garbage-read-as-nothing-booked): the count waits for the
+  // minute's re-ask instead of booking a live call beside the lead's intro.
+  const list = Array.isArray(d.events) ? d.events : Array.isArray(d.appointments) ? d.appointments : null;
+  if (!list) throw Object.assign(new Error("HighLevel's answer for the lead's calls had no list of calls in it"), { status: 0 });
+  if (!types || typeof types !== "object") throw Object.assign(new Error("The calendars setting could not be read"), { status: 0 });
+  const events = (list as Row[])
     .filter(e => !e.deleted && !["cancelled", "invalid", "noshow"].includes(String(e.appointmentStatus ?? e.appoinmentStatus ?? "")))
     .filter(e => types?.[String(e.calendarId ?? "")]?.type === kind)
-    .map(e => ({ id: String(e.id ?? ""), start: ghlTime(e.startTime) }))
-    .filter(e => e.id && Number.isFinite(e.start) && e.start > Date.now())
+    .map(e => {
+      const end = ghlTime(e.endTime);
+      const added = ghlTime(e.dateAdded);
+      return {
+        id: String(e.id ?? ""),
+        start: ghlTime(e.startTime),
+        end: Number.isFinite(end) ? end : null,
+        assigned_user_id: (e.assignedUserId as string | undefined) || null,
+        status: String(e.appointmentStatus ?? e.appoinmentStatus ?? "") || null,
+        booked_at: Number.isFinite(added) && added > 0 ? added : null,
+      };
+    })
+    .filter(e => e.id && Number.isFinite(e.start) && e.start > after)
+    .filter(e => bound === null || e.booked_at === null || e.booked_at < bound)
     .sort((x, y) => x.start - y.start);
   return events[0] ?? null;
 }
@@ -5085,7 +6537,57 @@ async function coachDelete(who: Who, b: Row) {
   return {};
 }
 
+// The live-call and follow-up agent modules (contract v2): their IO has a
+// timeout on every call, and index.ts lends them the sends and the marks.
+const liveio = makeLiveIO({ env, background });
+const rooms = makeRooms({
+  io: liveio,
+  audit,
+  markAppointment: (who, id, status, opts) => markAppointment(who, id, status, opts),
+  resendMark: (who, id) => resendMark(who, id),
+  sendText: (who, b, opts) => convoSend(who, { ...b, followup_id: undefined }, opts) as Promise<{ message: Row; repeated?: boolean }>,
+  sendTemplate: (who, o) => sendTemplate(who, o) as Promise<{ message: Row; repeated?: boolean }>,
+  upcoming: (contactId, kind, opts) => upcoming(contactId, kind, opts ?? {}),
+  // "Did this link go?" after its answer was lost: only a message with the
+  // send's own words that reached the lead counts (never a failed one, never
+  // any other WhatsApp to the lead), and with no words known nothing counts.
+  // Found, its HighLevel id and status come back, so a link confirmed this
+  // way can be read again for a late failure at Meta (stress2 round 3).
+  // A copy that is there and failed (Meta's 131026, a bounced email) comes
+  // back as failed with its error, apart from "not there" (false).
+  sentSince: async (contactId, since, text, channel) => {
+    if (!text) return null;
+    try {
+      const back = await whatsappSentSince(contactId, since, text, { went: true, channel: channel ?? "whatsapp" });
+      const hit = back.hit;
+      if (hit) return { id: hit.id ? String(hit.id) : null, status: hit.status ? String(hit.status) : null };
+      const bad = back.failed;
+      if (bad)
+        return {
+          id: bad.id ? String(bad.id) : null,
+          status: bad.status ? String(bad.status) : "failed",
+          failed: true,
+          error: bad.error ? String(bad.error) : null,
+        };
+      // An email is "not there" only when no email at all went to the lead
+      // since: words HighLevel keeps as HTML are never the only proof.
+      if (channel === "email" && back.others) return null;
+      return false;
+    } catch {
+      return null;
+    }
+  },
+});
+const followupAgent = makeFollowupAgent({
+  io: liveio,
+  audit,
+  sendFollowup: (who, f, b, auto, opts) => sendFollowup(who, f, b, auto, opts),
+  whatsappHealth: source => whatsappHealth({ source }),
+});
+
 const ACTIONS: Record<string, (who: Who, b: Row) => Promise<Row>> = {
+  ...rooms.actions,
+  ...followupAgent.actions,
   mark,
   "mark.retry": markRetry,
   "note.add": noteAdd,
@@ -5109,7 +6611,9 @@ const ACTIONS: Record<string, (who: Who, b: Row) => Promise<Row>> = {
   "eod.retry": eodRetry,
   "convo.read": convoRead,
   // A follow-up send is only ever made by followup.approve / autosend.
-  "convo.send": (who, b) => convoSend(who, { ...b, followup_id: undefined }),
+  // A seat's request id is kept apart from the ids the server derives (a
+  // room link's message keys): final review, handover-request-id-squat.
+  "convo.send": async (who, b) => convoSend(who, { ...b, followup_id: undefined, request_id: await seatMessageId(who, b.request_id) }),
   "goal.set": goalSet,
   "deal.status": dealStatus,
   "dial.resync": dialResync,
@@ -5137,7 +6641,7 @@ const ACTIONS: Record<string, (who: Who, b: Row) => Promise<Row>> = {
   "review.ask": reviewAsk,
   "coach.save": coachSave,
   "coach.delete": coachDelete,
-  "wa.template.send": waTemplateSend,
+  "wa.template.send": async (who, b) => waTemplateSend(who, { ...b, request_id: await seatMessageId(who, b.request_id) }),
   "wa.template.save": waTemplateSave,
   "ghl.workflows": ghlWorkflows,
   "snippet.save": snippetSave,
@@ -5156,12 +6660,60 @@ const DESK_ACTIONS: Record<string, (who: Who, b: Row) => Promise<Row>> = {
   "followup.autosend": followupAutosend,
   "followup.settle": followupSettle,
   "dial.resync_stuck": dialResyncStuck,
+  // room.event (the worker, the door, the sweep), live.press, thread.tick, reply.seen.
+  ...rooms.desk,
+  // The waves' paced send (desk NOTES section 4).
+  ...followupAgent.desk,
 };
 
-/** What the sales mirror's scheduled run may ask for with the cron secret. */
-const CRON_ACTIONS = new Set(["contract.sync"]);
+/**
+ * What a caller with the cron secret may ask for: the sales mirror's
+ * contract sync, and what sales-live/cron passes on (room.event's replays,
+ * settles and ticks, thread.tick). live.press and reply.seen are taken on
+ * the service key only (final review: the secret is shared by the vault,
+ * sales-mirror, sales-api and sales-live).
+ */
+const CRON_ACTIONS = new Set(["contract.sync", ...rooms.cron]);
 
-/** The role claim of a token the gateway has already verified. */
+/**
+ * Whether a service-role token's signature is good: PostgREST checks it (the
+ * project's own key, whatever its kind), so a token nobody signed is answered
+ * 401 there whatever the gateway did. A good one is kept for ten minutes by
+ * its hash (never the token itself), so the desk's minute does not ask twice.
+ * Throws when the database cannot say.
+ */
+const signedDesk = new Map<string, number>();
+async function deskTokenSigned(jwt: string): Promise<boolean> {
+  const parts = jwt.split(".");
+  if (parts.length !== 3 || !parts[2]) return false;
+  // An unsigned token says so in its header: refused without asking. Any
+  // other header is PostgREST's to judge.
+  let header: Row = {};
+  try {
+    const b64 = (parts[0] ?? "").replace(/-/g, "+").replace(/_/g, "/");
+    header = JSON.parse(atob(b64 + "=".repeat((4 - (b64.length % 4)) % 4))) as Row;
+  } catch {
+    header = {};
+  }
+  if (String(header.alg ?? "").toLowerCase() === "none") return false;
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(jwt));
+  const key = Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, "0")).join("");
+  const until = signedDesk.get(key);
+  if (until !== undefined && until > Date.now()) return true;
+  const res = await fetchWithin(`${env("SUPABASE_URL")}/rest/v1/rpc/cockpit_sales_whoami`, {
+    method: "POST",
+    headers: { apikey: env("SUPABASE_ANON_KEY"), Authorization: `Bearer ${jwt}`, "Content-Type": "application/json" },
+    body: "{}",
+  }, SVC_MS, "The desk's key check");
+  if (res.status === 401 || res.status === 403) return false;
+  if (!res.ok) throw new Error(`the key check answered ${res.status}`);
+  await res.body?.cancel().catch(() => null);
+  if (signedDesk.size > 50) signedDesk.clear();
+  signedDesk.set(key, Date.now() + 10 * 60_000);
+  return true;
+}
+
+/** The role claim of a token (its signature checked by deskTokenSigned before the desk is taken). */
 function jwtRole(jwt: string): string | null {
   const part = jwt.split(".")[1];
   if (!part) return null;
@@ -5199,10 +6751,11 @@ Deno.serve(async (req: Request) => {
 
   // The sales desk on the VPS calls with the service key, for the one thing
   // it may do by itself: send a follow-up a manager trusts to go alone. The
-  // gateway has already checked the token's signature (this function is
-  // deployed with verify_jwt), so its role claim can be read as it stands;
-  // comparing the key's text failed because the desk and the function hold
-  // two different, equally valid service keys (2026-09-24).
+  // gateway checks the token's signature (this function is deployed with
+  // verify_jwt), and sales-api has PostgREST check it again before the role
+  // claim is read (deskTokenSigned, m1 round 1); comparing the key's text
+  // failed because the desk and the function hold two different, equally
+  // valid service keys (2026-09-24).
   // The sales mirror's scheduled run comes with the shared cron secret from
   // the vault, the door sales-mirror itself is opened with: the service key
   // the gateway hands that function is not a token whose role can be read
@@ -5210,16 +6763,29 @@ Deno.serve(async (req: Request) => {
   const cronSecret = env("CRON_SECRET");
   const byCron =
     Boolean(cronSecret) &&
-    (req.headers.get("x-cron-secret") ?? "").trim() === cronSecret &&
+    timingSafeEqual((req.headers.get("x-cron-secret") ?? "").trim(), cronSecret) &&
     CRON_ACTIONS.has(String(body?.action ?? ""));
   if (jwtRole(jwt) === "service_role" || byCron) {
     const deskHandler = DESK_ACTIONS[String(body?.action ?? "")];
     if (!deskHandler) return reply({ ok: false, error: "Not an action the desk may take." }, 403);
+    // The role claim is read only from a token whose signature is good (m1
+    // round 1, forged-service-role-desk): the gateway's verify_jwt is one
+    // deploy flag away from off, so sales-api has the database check it too.
+    if (!byCron) {
+      let signed: boolean;
+      try {
+        signed = await deskTokenSigned(jwt);
+      } catch (e) {
+        return reply({ ok: false, error: `The desk's key could not be checked. Try again in a minute. (${redact(String((e as Error)?.message ?? e))})` }, 503);
+      }
+      if (!signed) return reply({ ok: false, error: "Sign in again." }, 401);
+    }
     const desk: Who = { signed_in: true, seat: true, manager: false, email: "sales-desk", name: "Sales desk" };
     try {
       return reply({ ok: true, ...(await deskHandler(desk, body)) });
     } catch (e) {
-      if (e instanceof Refusal) return reply({ ok: false, error: e.message }, e.status);
+      // The desk and the door also read retry, cleanup and hold_all.
+      if (e instanceof ApiRefusal) return reply({ ...e.extra, ok: false, error: e.message }, e.status);
       return reply({ ok: false, error: `That did not work: ${redact(String((e as Error).message ?? e))}` }, 500);
     }
   }
@@ -5239,7 +6805,11 @@ Deno.serve(async (req: Request) => {
   try {
     return reply({ ok: true, ...(await handler(who, body)) });
   } catch (e) {
-    if (e instanceof Refusal) return reply({ ok: false, error: e.message }, e.status);
+    if (e instanceof ApiRefusal) {
+      // A seat gets the sentence and its code; retry and cleanup are the desk's.
+      const { retry: _retry, cleanup: _cleanup, ...extra } = e.extra;
+      return reply({ ...extra, ok: false, error: e.message }, e.status);
+    }
     console.error(String(body.action), redact(String(e)));
     return reply(
       { ok: false, error: `That did not work: ${redact(String((e as Error).message ?? e))}` },

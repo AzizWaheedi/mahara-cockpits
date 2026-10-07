@@ -94,10 +94,17 @@ export function MarkControls({
   row,
   onDone,
   compact = false,
+  noShowHeld = false,
 }: {
   row: CalendarRow;
   onDone: (r: MarkResult) => void;
   compact?: boolean;
+  /**
+   * The lead's video room is open: No-show is not offered, because
+   * HighLevel's no-show automation writes to a lead who may be opening the
+   * link now (m1 round 2; sales-api refuses it too).
+   */
+  noShowHeld?: boolean;
 }) {
   const [asking, setAsking] = useState(false);
   const [pending, setPending] = useState<{
@@ -258,21 +265,23 @@ export function MarkControls({
 
   return (
     <div className="flex flex-wrap items-center gap-1.5">
-      {OPTIONS.map(({ status, label, icon: Icon, toneStyle }) => (
-        <button
-          key={status}
-          type="button"
-          onClick={() =>
-            status === "invalid" ? setAsking(true) : choose(status)
-          }
-          className={`inline-flex items-center gap-1.5 rounded-full border font-medium shadow-sm transition-all ${toneStyle} ${
-            compact ? "h-7 px-2.5 text-xs" : "h-8 px-3 text-xs"
-          }`}
-        >
-          <Icon className="size-3.5" aria-hidden />
-          {label}
-        </button>
-      ))}
+      {OPTIONS.filter(o => !(noShowHeld && o.status === "noshow")).map(
+        ({ status, label, icon: Icon, toneStyle }) => (
+          <button
+            key={status}
+            type="button"
+            onClick={() =>
+              status === "invalid" ? setAsking(true) : choose(status)
+            }
+            className={`inline-flex items-center gap-1.5 rounded-full border font-medium shadow-sm transition-all ${toneStyle} ${
+              compact ? "h-7 px-2.5 text-xs" : "h-8 px-3 text-xs"
+            }`}
+          >
+            <Icon className="size-3.5" aria-hidden />
+            {label}
+          </button>
+        ),
+      )}
     </div>
   );
 }
@@ -301,17 +310,26 @@ export function CrmLine({
         : "sent to HighLevel without its automations";
   else if (row.mark_crm === "skipped") text = "kept here, older than a week";
   else if (row.mark_crm === "off") text = "kept here";
-  else if (row.mark_crm === "pending") text = "sending to HighLevel";
+  // A send cut off half way (the server stopped between the cockpit's mark
+  // and HighLevel's answer) stays "pending": after two minutes it is offered
+  // again like a refusal, never left as "sending" for good.
+  const markedAt = row.marked_at ? Date.parse(row.marked_at) : Number.NaN;
+  const stuck =
+    row.mark_crm === "pending" &&
+    Number.isFinite(markedAt) &&
+    Date.now() - markedAt >= 120_000;
+  if (row.mark_crm === "pending" && !stuck) text = "sending to HighLevel";
   return (
     <span className="muted text-xs">
       {statusLabel(row.marked_status)} by {who}
       {text ? ` · ${text}` : ""}
-      {row.mark_crm === "failed" ? (
+      {row.mark_crm === "failed" || stuck ? (
         <>
           {" · "}
           <span style={{ color: "var(--destructive)" }}>
-            HighLevel refused it
-            {row.mark_crm_error ? `: ${row.mark_crm_error}` : ""}
+            {stuck
+              ? "HighLevel has not confirmed it"
+              : `HighLevel refused it${row.mark_crm_error ? `: ${row.mark_crm_error}` : ""}`}
           </span>{" "}
           <button
             type="button"

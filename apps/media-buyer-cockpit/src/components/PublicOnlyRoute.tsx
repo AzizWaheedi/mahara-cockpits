@@ -1,5 +1,6 @@
 import { Navigate, Outlet, useSearchParams } from "react-router";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
+import { safeCockpitNext } from "@/auth/supabaseAccess";
 import { BackendWait } from "./BackendWait";
 import {
   Card,
@@ -57,7 +58,7 @@ export function PublicOnlyRoute() {
   if (isAuthenticated) {
     // Only a path on this site: never an address someone pasted into the link.
     const next = params.get("next") ?? "";
-    const safe = /^\/(?!\/)[^\s]*$/.test(next) ? next : "/";
+    const safe = safeCockpitNext(next);
     return <Navigate to={safe} replace />;
   }
 

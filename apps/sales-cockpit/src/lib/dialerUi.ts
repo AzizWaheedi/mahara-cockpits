@@ -16,6 +16,7 @@ import {
   urgentEvents,
 } from "./dialer";
 import { ago, clock, dayLabel } from "./format";
+import { OVERDUE_MS, roomDeadline } from "./roomClock";
 
 /** A queue item as sales-api sends it, with the lead's last missed call to us. */
 export interface DialItem extends QueueItem {
@@ -171,6 +172,36 @@ export function afterSave(
   if (kind === "intro" && outcome === "showed") return "held";
   if (outcome === "no_answer" && thenMessage) return "message";
   return "next";
+}
+
+/**
+ * A message to the lead went since the missed call (the missed-call
+ * message, from the step or the conversation box: the cockpit's own sends,
+ * never a room's link): the step no longer offers a video link, whose words
+ * open with "I tried to call you" again (m1 round 6,
+ * m1-journeys-r6-missed-call-message-then-video-link-two-tried-to-call).
+ * The lead page's Video call still makes one.
+ */
+export function messagedSinceMiss(
+  sends:
+    | readonly {
+        source?: string | null;
+        state?: string | null;
+        channel?: string | null;
+        created_at?: string | null;
+      }[]
+    | null
+    | undefined,
+  since: number | null,
+): boolean {
+  if (since === null || !sends?.length) return false;
+  return sends.some(s => {
+    if (s.source === "room" || String(s.state ?? "") === "failed") return false;
+    if (!["whatsapp", "email", "sms"].includes(String(s.channel ?? "")))
+      return false;
+    const at = Date.parse(String(s.created_at ?? ""));
+    return Number.isFinite(at) && at >= since;
+  });
 }
 
 /** Alt+→ opens the next lead, but not inside a text box, where it moves the cursor by a word. */
@@ -437,11 +468,76 @@ export interface Reach {
 
 export type MissMoment = "missed_call" | "confirm";
 
+/**
+ * The panel's clocks for a room in the making (lib/rooms.ts MAKING_LATE_MS
+ * and CLAIM_MINUTE_MS read these): the sweep fails a room no worker claimed
+ * at a minute (R1) and one whose create never answered at two (R2).
+ */
+export const MAKING_LATE_STEP_MS = 150_000;
+/** lib/rooms.ts LINK_LATE_MS: the panel's "The link has not gone yet", here for the step under it. */
+export const LINK_LATE_STEP_MS = 90_000;
+export const CLAIM_MINUTE_STEP_MS = 60_000;
+
+/** sales-api's "may have gone" (ROOMS_COPY.may_have_gone_*): the link may be with the lead already. */
+export function mayHaveGone(refusal: string | null | undefined): boolean {
+  return /^the link may have gone/i.test(String(refusal ?? "").trim());
+}
+
+/**
+ * sales-api's refusals the minute's re-ask tries again (roomlogic.ts
+ * linkRetrying: they end "tried again in a minute"): the link has not gone
+ * yet and goes by itself, so the panel never says "Not sent" or "send it
+ * another way" for them (m1 round 4, not-sent-then-reask-sends-on-top).
+ */
+export function linkRetrying(refusal: string | null | undefined): boolean {
+  return /tried again in a minute\.?$/i.test(String(refusal ?? "").trim());
+}
+
+/**
+ * A room made in place of one the lead could not get into ("I can't let
+ * them in"), whose link went by email only: the sentence that tells the rep
+ * to call the lead, who is still at the old room's door; else null (m1
+ * round 2, admit-blocked-email-replacement-lead-left-knocking).
+ */
+export function movedByEmailOnly(room: {
+  moved_from?: string | null;
+  provider?: string | null;
+  link_channels?: readonly string[] | null;
+  contact_first_name?: string | null;
+  state?: string;
+}): string | null {
+  if (!room.moved_from || room.state === "lead_in") return null;
+  const ch = room.link_channels ?? [];
+  if (
+    !ch.includes("email") ||
+    ch.includes("whatsapp_text") ||
+    ch.includes("whatsapp_template")
+  )
+    return null;
+  const from = room.moved_from === "zoom" ? "Zoom" : "Meet";
+  const to = room.provider === "zoom" ? "Zoom" : "Meet";
+  const name = room.contact_first_name?.trim() || "The lead";
+  return `${name} is still at the ${from} door. Call them and tell them the ${to} link is in their email.`;
+}
+
 export interface AfterMiss {
   title: string;
   text: string;
   /** What the main button opens: WhatsApp with the ready message, the email box, or nothing. */
   send: "whatsapp" | "email" | null;
+  /**
+   * The rep may have spoken with the lead on video (a closed Meet room whose
+   * link the lead opened: Meet sends no join signal), so the step also
+   * offers Save how it went (stress2 round 3).
+   */
+  talk?: true;
+  /**
+   * The lead was at the room's door a moment ago (they knocked and nobody
+   * let them in, or they opened the link) and the room has closed: the
+   * step's teal button is Call, never Next lead, and the WhatsApp opens
+   * with no missed-call message (stress2 round 5).
+   */
+  callNow?: true;
 }
 
 const LEAD_IN: Record<MissMoment, string> = {
@@ -482,6 +578,28 @@ function blocked(c: Reach, channel: "whatsapp" | "email"): string | null {
 const lower = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
 
 /**
+ * The message the plain step after a miss would offer this lead now: a
+ * WhatsApp where one can go (inside the window, or as a live template),
+ * else an email, else none (m1 round 5).
+ */
+function nextMessage(o: {
+  whatsapp: Reach | null | undefined;
+  email: Reach | null | undefined;
+  templatesLive: boolean | null;
+}): { send: "whatsapp" | "email" | null; say: string } {
+  const wa = o.whatsapp;
+  if (!wa) return { send: "whatsapp", say: "send them a WhatsApp" };
+  if (
+    !blocked(wa, "whatsapp") &&
+    (wa.window?.open || o.templatesLive !== false)
+  )
+    return { send: "whatsapp", say: "send them a WhatsApp" };
+  const emWhy = o.email ? blocked(o.email, "email") : null;
+  if (!emWhy) return { send: "email", say: "send them an email" };
+  return { send: null, say: "" };
+}
+
+/**
  * The step after a no-answer. WhatsApp goes free within 24 hours of the
  * lead's last message and as an approved template after that; with no
  * template set up, only email goes. Unknown (still reading) offers WhatsApp
@@ -496,8 +614,339 @@ export function afterMiss(o: {
   templatesLive: boolean | null;
   /** Whether a ready-made message exists for the moment; null while being read. */
   messageReady: boolean | null;
+  /**
+   * The lead's video room after this miss, as the room panel reads it: while
+   * its link is out (or on its way), the step says so and offers no
+   * missed-call message, never a second "I tried to call you" (stress2,
+   * round 2).
+   */
+  video?: {
+    state: string;
+    link_sent_at: string | null;
+    link_channels?: readonly string[] | null;
+    refusal?: string | null;
+    provider?: string | null;
+    first_open_at?: string | null;
+    last_open_at?: string | null;
+    short_url?: string | null;
+    join_url?: string | null;
+    lead_in_at?: string | null;
+    result?: string | null;
+    lead_waiting_at?: string | null;
+    late_open_at?: string | null;
+    created_at?: string | null;
+    /** When the room opened and its link was asked for: the panel's "has not gone yet" counts from the later (m1 round 3). */
+    opened_at?: string | null;
+    link_claimed_at?: string | null;
+    moved_from?: string | null;
+    contact_first_name?: string | null;
+    /** The room's deadlines (the panel's "should have closed", m1 round 4). */
+    purpose?: string | null;
+    contact_id?: string | null;
+    lead_by?: string | null;
+    host_by?: string | null;
+    last_link_at?: string | null;
+    ends_at?: string | null;
+    /** The link's doubt, and what failed or is held by lane (m1 round 5, sales-api's view). */
+    link_unconfirmed_at?: string | null;
+    link_failed?: readonly string[] | null;
+    link_held?: readonly string[] | null;
+  } | null;
+  /**
+   * A Send a video link press whose room.create has not answered yet (the
+   * moment it was pressed): a room on its way, so the step never offers the
+   * missed-call message beside it (m1 round 4,
+   * missed-call-message-offered-while-video-link-press-on-its-way).
+   */
+  videoPending?: number | null;
+  /** Now, for how long a room has been in the making (the panel's clock). */
+  now?: number;
+  /** The room worker's health line is red (live.status health.worker_ok false). */
+  workerDown?: boolean;
+  /** The other provider is usable for this seat now (room.status other_ok); false hides Try {other}. */
+  otherOk?: boolean;
 }): AfterMiss {
   const { moment } = o;
+  const now = o.now ?? Date.now();
+  const v =
+    o.video ??
+    (o.videoPending != null
+      ? {
+          state: "requested",
+          link_sent_at: null,
+          created_at: new Date(o.videoPending).toISOString(),
+        }
+      : null);
+  // The message a "call them now" step falls back to: the one the plain
+  // step would offer for this lead now (m1 round 5,
+  // m1-journeys-r5-call-now-steps-say-whatsapp-that-cannot-go), never a
+  // WhatsApp that cannot go.
+  const way = nextMessage(o);
+  const ifNot = (extra = "") =>
+    way.send ? `; if they do not answer, ${way.say}${extra}.` : ".";
+  // The room made in place of one the lead knocked on ("I can't let them
+  // in", moved_from) closed with nobody in it, or was not made: the lead
+  // came on time and was locked out by our own room, so the step is a call
+  // now, never "No answer" with the missed-call message (m1 round 4,
+  // admit-blocked-replacement-expiry-offers-noshow,
+  // failed-replacement-try-meet-sends-missed-call-words).
+  if (
+    v?.moved_from &&
+    !v.lead_in_at &&
+    ["ended", "expired", "cancelled", "failed"].includes(v.state)
+  ) {
+    const from = v.moved_from === "zoom" ? "Zoom" : "Meet";
+    const to = v.provider === "zoom" ? "Zoom" : "Meet";
+    return {
+      title: "They knocked and were not let in. Call them now.",
+      text:
+        v.state === "failed"
+          ? `They knocked on the ${from} room and could not be let in, and the ${to} room was not made. Call them now${ifNot()}`
+          : `They knocked on the ${from} room and could not be let in, and nobody came into the ${to} room. Call them now${ifNot()}`,
+      send: way.send,
+      callNow: true,
+    };
+  }
+  // The room failed and the panel above offers Try {other} (the worker up,
+  // the other provider usable): that press sends its own message, so the
+  // step offers no missed-call message beside it (m1 round 4,
+  // failed-room-step-offers-missed-call-email-beside-try-zoom).
+  if (
+    v &&
+    (v.state === "failed" ||
+      (v.state === "cancelled" && v.result === "failed")) &&
+    o.workerDown !== true &&
+    o.otherOk !== false
+  ) {
+    const other = v.provider === "zoom" ? "Meet" : "Zoom";
+    return {
+      title: "The video room was not made",
+      text: `The video room was not made. Try ${other} above, or call them again.`,
+      send: null,
+    };
+  }
+  // The lead knocked in the waiting room and nobody let them in, and the
+  // room has closed: they were there a moment ago, so the step says to call
+  // them now, never "No answer" with Next lead first (stress2 round 5).
+  const closedEmpty =
+    v && ["ended", "expired", "cancelled"].includes(v.state) && !v.lead_in_at;
+  if (closedEmpty && (v.lead_waiting_at || v.result === "admit_blocked"))
+    return {
+      title: "They knocked and were not let in. Call them now.",
+      text: `They waited at the room's door and nobody let them in, so the room closed. Call them now${ifNot(" with a new link")}`,
+      send: way.send,
+      callNow: true,
+    };
+  // They opened a Zoom link and never came in (Zoom reports joins), or
+  // opened any link after its room closed: call them now.
+  if (
+    closedEmpty &&
+    (v.late_open_at ||
+      (v.provider !== "meet" && (v.first_open_at || v.last_open_at)))
+  )
+    return {
+      title: "They opened the video link. Call them now.",
+      text: `They opened the link but did not get in, and the room has closed. Call them now${ifNot(" with a new link")}`,
+      send: way.send,
+      callNow: true,
+    };
+  // The room closed with nothing seen and nothing pressed, and the lead's
+  // link was Meet's own (rooms.short_link off, as shipped): Meet never says
+  // who came in, so the rep may have talked on video for minutes. Asked,
+  // never "No answer" (stress2 round 4).
+  const shortLink = Boolean(v?.short_url) && v?.short_url !== v?.join_url;
+  // Only a link that reached the lead (or may have, or was left to the rep
+  // to read out): a link still tried again when the room closed reached
+  // nobody, so there was no video call to ask about (m1 round 3b,
+  // meet-ended-before-link-went-said-as-maybe-joined).
+  const reached =
+    Boolean(v?.link_sent_at) ||
+    (Boolean(v?.refusal) && !linkRetrying(v?.refusal));
+  if (
+    v &&
+    v.provider === "meet" &&
+    ["ended", "expired"].includes(v.state) &&
+    !v.lead_in_at &&
+    !shortLink &&
+    reached &&
+    (v.result === "no_join" || v.result === null || v.result === undefined) &&
+    !(v.first_open_at || v.last_open_at)
+  )
+    return {
+      title: "Did you speak on video?",
+      text: `Meet cannot say whether they came in. If you spoke, save how it went. If not, ${way.send ? way.say : "call them again"}.`,
+      send: way.send,
+      talk: true,
+    };
+  // The room closed after the lead opened its Meet link: they may have
+  // talked on video, which Meet never reports. The step asks, with Save how
+  // it went beside the WhatsApp, never "No answer" first (stress2 round 3).
+  if (
+    v &&
+    v.provider === "meet" &&
+    ["ended", "expired", "cancelled"].includes(v.state) &&
+    (v.first_open_at || v.last_open_at)
+  )
+    return {
+      title: "They opened the video link. Did you speak?",
+      text: `Meet cannot say whether they came in. If you spoke, save how it went. If not, ${way.send ? way.say : "call them again"}.`,
+      send: way.send,
+      talk: true,
+    };
+  const live =
+    v &&
+    ["requested", "creating", "open", "host_in", "lead_in"].includes(v.state);
+  // The lead is in Zoom's waiting room: the step says so and points to the
+  // room, never the next lead (m1 round 3, step-next-lead-while-lead-in-
+  // waiting-room).
+  if (v && (v.state === "open" || v.state === "host_in") && v.lead_waiting_at)
+    return {
+      title: "They are in the waiting room",
+      text: "They are waiting to be let in. Open your room and admit them.",
+      send: null,
+    };
+  // Past its close and still open (the sweep is late): the panel says the
+  // room should have closed, so the step says the same, never "Wait for
+  // them here" (m1 round 4, overdue-room-step-says-wait-for-them).
+  if (v && (v.state === "open" || v.state === "host_in")) {
+    const deadline = roomDeadline(v);
+    if (deadline !== null && now >= deadline + OVERDUE_MS)
+      return {
+        title: "This room should have closed",
+        text: "This room should have closed. Call them now, or end the room.",
+        send: null,
+        callNow: true,
+      };
+  }
+  if (v && live && v.link_sent_at) {
+    // The room in place of one the lead could not get into, its link by
+    // email only: they wait at the old door, so the step is a call to tell
+    // them, never the next lead (m1 round 2).
+    const moved = movedByEmailOnly(v);
+    if (moved)
+      return {
+        title: "Tell them the new link is in their email",
+        text: moved,
+        send: null,
+        callNow: true,
+      };
+    // What still reached them (m1 round 5,
+    // late-failure-step-says-link-went-next-lead): a lane that failed after
+    // it went (a bounce, Meta's late failure) or that HighLevel holds is no
+    // link they have, and with none standing the step is a call now with
+    // the link read out, never "go to the next lead".
+    const off = new Set([...(v.link_failed ?? []), ...(v.link_held ?? [])]);
+    const ch = (v.link_channels ?? []).filter(c => !off.has(c));
+    if (v.link_unconfirmed_at && (v.link_channels ?? []).length && !ch.length)
+      return {
+        title: "The video link did not reach them",
+        text: "The video link did not reach them. Call them now and read the link from the panel above.",
+        send: null,
+        callNow: true,
+      };
+    const how =
+      ch.includes("whatsapp_text") || ch.includes("whatsapp_template")
+        ? " on WhatsApp"
+        : ch.includes("email")
+          ? " by email"
+          : "";
+    return {
+      title: "The video link went",
+      text: `The video link went${how} at ${clock(v.link_sent_at)}. Wait for them here, or go to the next lead.`,
+      send: null,
+    };
+  }
+  // The link may have gone (HighLevel's answer was lost): the panel says to
+  // check the conversation first, and so does the step, never a second
+  // "I tried to call you" beside it (m1 round 2,
+  // unclear-link-step-offers-missed-call-message).
+  if (v && live && mayHaveGone(v.refusal)) {
+    const how = /whatsapp/i.test(v.refusal ?? "") ? "on WhatsApp" : "by email";
+    return {
+      title: "The video link may have gone",
+      text: `The video link may have gone ${how}. Check the conversation in HighLevel before writing to them.`,
+      send: null,
+    };
+  }
+  // The link is tried again by sales-api in a minute (m1 round 4): the step
+  // says so too, never a message of its own beside it.
+  if (v && live && linkRetrying(v.refusal) && !v.link_sent_at)
+    return {
+      title: "The video link has not gone yet",
+      text: "The video link has not gone yet. It is tried again in a minute. Wait for them here, or go to the next lead.",
+      send: null,
+    };
+  // The link did not go, said as final while the room still waits for the
+  // lead (m1 round 3b, final-not-sent-step-offers-missed-call-email): the
+  // step points to the room's link, never a missed-call message without it.
+  if (
+    v &&
+    (v.state === "open" || v.state === "host_in") &&
+    !v.link_sent_at &&
+    v.refusal &&
+    !mayHaveGone(v.refusal) &&
+    !linkRetrying(v.refusal)
+  )
+    return {
+      title: "The video link did not go",
+      text: "The video link did not go. Call them now and read the link from the panel above.",
+      send: null,
+      callNow: true,
+    };
+  // A room still being made past the sweep's minute with the worker down, or
+  // past the panel's own "taking too long": no link is on its way, so the
+  // step says to call, as the panel does (m1 round 2).
+  const making = v && (v.state === "requested" || v.state === "creating");
+  const asked = v?.created_at ? Date.parse(v.created_at) : Number.NaN;
+  if (
+    v &&
+    making &&
+    !v.refusal &&
+    Number.isFinite(asked) &&
+    (now - asked >= MAKING_LATE_STEP_MS ||
+      (o.workerDown === true && now - asked >= CLAIM_MINUTE_STEP_MS))
+  )
+    return {
+      title: "The video room is late",
+      text: "The video room has not been made, so no link has gone. Call them on the phone.",
+      send: null,
+      callNow: true,
+    };
+  // The panel's "The link has not gone yet" (lib/rooms.ts link_late, from
+  // the later of the room's open and the link's claim): the step says the
+  // same, a call with the link from the panel, never "on its way" or the
+  // next lead (m1 round 3, step-on-its-way-under-link-late).
+  if (
+    v &&
+    (v.state === "open" || v.state === "host_in") &&
+    !v.link_sent_at &&
+    !v.refusal
+  ) {
+    const t = (x: string | null | undefined) =>
+      x ? Date.parse(x) : Number.NaN;
+    const opened = Number.isFinite(t(v.opened_at))
+      ? t(v.opened_at)
+      : t(v.created_at);
+    const claimed = t(v.link_claimed_at);
+    const from = Number.isFinite(claimed)
+      ? Number.isFinite(opened)
+        ? Math.max(opened, claimed)
+        : claimed
+      : opened;
+    if (Number.isFinite(from) && now - from >= LINK_LATE_STEP_MS)
+      return {
+        title: "The video link has not gone",
+        text: "The video link has not gone yet. Call them now and give them the link from the panel above.",
+        send: null,
+        callNow: true,
+      };
+  }
+  if (v && live && !v.refusal)
+    return {
+      title: "The video link is on its way",
+      text: "The video link is on its way to them. Wait for them here, or go to the next lead.",
+      send: null,
+    };
   const tail = TAIL[moment];
   const unknown: AfterMiss = {
     title: ASK_WHATSAPP,

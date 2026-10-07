@@ -12,6 +12,7 @@ import {
   observeSupabaseAccess,
   type SupabaseAccessObserver,
   type SupabaseAccessState,
+  signOutCockpitSession,
 } from "../auth/supabaseAccess";
 import { supabase } from "./supabase";
 
@@ -84,8 +85,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         await observer.current?.refresh();
       },
       signOut: async () => {
-        const { error: signOutError } = await supabase.auth.signOut();
-        if (signOutError) throw signOutError;
+        await signOutCockpitSession(supabase);
       },
     };
   }, [session, access, ready, error]);

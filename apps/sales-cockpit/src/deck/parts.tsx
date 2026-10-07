@@ -33,15 +33,18 @@ export function Wistia({
   id,
   on,
   title,
+  color = "00CFC8",
 }: {
   id: string;
   /** Only the slide on screen loads its player. */
   on: boolean;
   title: string;
+  /** The player's colour; an audio player is all colour, so it takes a quiet one. */
+  color?: string;
 }) {
   return on ? (
     <iframe
-      src={`https://fast.wistia.net/embed/iframe/${id}?seo=false&playerColor=00CFC8&fullscreenButton=true`}
+      src={`https://fast.wistia.net/embed/iframe/${id}?seo=false&playerColor=${color}&fullscreenButton=true`}
       title={title}
       allow="autoplay; fullscreen"
       allowFullScreen

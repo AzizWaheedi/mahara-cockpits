@@ -4,6 +4,7 @@ import {
   BellRing,
   CalendarClock,
   CalendarPlus,
+  Check,
   Copy,
   ExternalLink,
   Flame,
@@ -24,11 +25,15 @@ import {
   useRef,
   useState,
 } from "react";
-import { Link } from "react-router";
+import { Link, useSearchParams } from "react-router";
 import { AdOrigin } from "../components/AdOrigin";
 import { ProofToSend } from "../components/AssetPicker";
 import { CallNotesList, useCallNotes } from "../components/CallNotes";
-import { Conversation, useConversation } from "../components/Conversation";
+import {
+  Conversation,
+  ConversationFailed,
+  useConversation,
+} from "../components/Conversation";
 import { SavedWorkLine } from "../components/DialSavedWork";
 import { HotControl } from "../components/HotList";
 import {
@@ -45,6 +50,8 @@ import {
 import { Answers } from "../components/LeadAnswers";
 import { LeadTimeline, type LiveMessage } from "../components/LeadTimeline";
 import { ResearchPanel } from "../components/ResearchPanel";
+import { LiveBoundary } from "../components/RoomLine";
+import { RoomPanel } from "../components/RoomPanel";
 import {
   Blocks,
   BranchGroup,
@@ -57,6 +64,16 @@ import {
   useScript,
   writePrefs,
 } from "../components/ScriptParts";
+import {
+  AutoVideoStrip,
+  createAsk,
+  ROOMS_UNREAD,
+  type RoomsSetup,
+  useLeadRoom,
+  useRoomsSetup,
+  VideoLinkButton,
+  VideoPicker,
+} from "../components/VideoLink";
 import { ApiError, api, uncertain } from "../lib/api";
 import { assetStage, objectionsFrom } from "../lib/assets";
 import { CLIENT_NOTE, isClient } from "../lib/clients";
@@ -80,6 +97,7 @@ import {
   primeSound,
   readDraft,
   setAlertsWanted,
+  spokeCallbackAt,
   type UrgentEvent,
   writeDraft,
 } from "../lib/dialer";
@@ -94,6 +112,7 @@ import {
   lateSentence,
   liveSkips,
   type MissMoment,
+  messagedSinceMiss,
   missedCallLine,
   openAfterRead,
   plainError,
@@ -118,10 +137,35 @@ import {
   plainStage,
   when,
 } from "../lib/format";
+import {
+  errorText,
+  forThisMiss,
+  leaveToast,
+  linkMayHaveGoneClosed,
+  noShowHold,
+  type RoomView,
+  refusalCode,
+  roomsApi,
+  spokeAt,
+  videoJoinedAt,
+  workerDownOf,
+} from "../lib/rooms";
 import { type Fill, groupBlocks, personalise } from "../lib/script";
 import { toast } from "../lib/toast";
 import type { Lead, Me } from "../lib/types";
-import { leadLanguage, type Moment } from "../lib/whatsapp";
+import {
+  gateLine,
+  introCallInWindow,
+  linkPlanLine,
+  missTrigger,
+  NOBODY_SPOKE_VIDEO,
+  PICKER_NONE,
+  providerChoice,
+  type Trigger,
+  videoAppointmentId,
+  videoLinkGate,
+} from "../lib/videoLink";
+import { firstWord, leadLanguage, type Moment } from "../lib/whatsapp";
 
 /**
  * The power dialer, level with the call centre's (mahara-power-dialer): the
@@ -177,6 +221,45 @@ interface Queue {
   saved_work?: SavedWork[];
   /** When this copy was asked for, in the browser. */
   loadedAt: number;
+}
+
+/**
+ * dial.queue's answer, or a thrown error: an answer without its queue, its
+ * counts or its day is no answer, and the last good queue stays on screen
+ * (a garbled 200 must not take the dialer, and an open video room, down).
+ */
+function readQueue(v: unknown): Omit<Queue, "loadedAt"> {
+  const o =
+    typeof v === "object" && v !== null && !Array.isArray(v)
+      ? (v as Record<string, unknown>)
+      : null;
+  const today = o?.today;
+  if (
+    !o ||
+    !Array.isArray(o.queue) ||
+    !Array.isArray(o.counts) ||
+    !o.counts.every(n => typeof n === "number" && Number.isFinite(n)) ||
+    typeof today !== "object" ||
+    today === null
+  )
+    // Said after "The queue could not be read:".
+    throw new Error(
+      "the answer was not one, and the dialer tries again by itself",
+    );
+  const out = o as unknown as Omit<Queue, "loadedAt">;
+  return {
+    ...out,
+    queue: (o.queue as unknown[]).filter(
+      (i): i is DialItem =>
+        typeof i === "object" &&
+        i !== null &&
+        typeof (i as DialItem).contact_id === "string",
+    ),
+    open:
+      typeof o.open === "object" && o.open !== null
+        ? (o.open as Attempt)
+        : null,
+  };
 }
 
 interface CallInfo {
@@ -312,6 +395,12 @@ const OUTCOMES: Record<ItemKind, OutcomeDef[]> = {
       label: "Confirmed",
       needsNote: false,
       hint: "They will be there. Kept in the cockpit; the call stays as booked.",
+    },
+    {
+      key: "showed",
+      label: "Held the intro",
+      needsNote: true,
+      hint: "You had the intro with them now (on video): marks it showed (in HighLevel too).",
     },
     {
       key: "no_answer",
@@ -499,6 +588,22 @@ export default function DialerPage({ me }: { me: Me }) {
   const [spent, setSpent] = useState<ReadonlySet<string>>(() => new Set());
   const [savedAt, setSavedAt] = useState<Record<string, number>>({});
   const [picked, setPicked] = useState<string | null>(null);
+  // The lead page's "Open in the dialer", and its room panel's next step
+  // after a join (stress2 round 4): that lead on screen, as a search pick.
+  const [params, setParams] = useSearchParams();
+  const askedLead = params.get("lead");
+  useEffect(() => {
+    if (!askedLead || !/^[A-Za-z0-9_-]{1,80}$/.test(askedLead)) return;
+    setPicked(askedLead);
+    setParams(
+      p => {
+        const next = new URLSearchParams(p);
+        next.delete("lead");
+        return next;
+      },
+      { replace: true },
+    );
+  }, [askedLead, setParams]);
   const [tier, setTier] = useState<TierFilter>("all");
   const [term, setTerm] = useState("");
   const [alertsOn, setAlertsOn] = useState(alertsWanted);
@@ -512,6 +617,8 @@ export default function DialerPage({ me }: { me: Me }) {
   const [resent, setResent] = useState<ReadonlySet<string>>(() => new Set());
   const maqsam = useAgent();
   const wa = useWaKit();
+  // The video room switches, read once for every lead the page shows.
+  const roomsSetup = useRoomsSetup();
   // The call this page placed, and when: a read of the queue asked before
   // it cannot know it, so that read must not end it on screen.
   const placed = useRef<{ attempt: Attempt; at: number } | null>(null);
@@ -533,10 +640,12 @@ export default function DialerPage({ me }: { me: Me }) {
         const asked = asRef.current;
         const loadedAt = Date.now();
         try {
-          const out = await api<Omit<Queue, "loadedAt">>("dial.queue", {
-            as: asked,
-            limit: 80,
-          });
+          const out = readQueue(
+            await api<unknown>("dial.queue", {
+              as: asked,
+              limit: 80,
+            }),
+          );
           if (asked === asRef.current) {
             setQ({
               ...out,
@@ -862,6 +971,7 @@ export default function DialerPage({ me }: { me: Me }) {
             callRef={callRef}
             nextRef={nextRef}
             wa={wa}
+            roomsSetup={roomsSetup}
             talk={talk}
             onCalled={a => {
               placed.current = { attempt: a, at: Date.now() };
@@ -922,6 +1032,7 @@ function LeadWork({
   callRef,
   nextRef,
   wa,
+  roomsSetup,
   talk,
   onCalled,
   onFinished,
@@ -942,6 +1053,7 @@ function LeadWork({
   /** Next lead, for Alt+→, while it shows. */
   nextRef: MutableRefObject<(() => void) | null>;
   wa: WaKit;
+  roomsSetup: RoomsSetup;
   talk: { n: number; moment: Moment | null };
   onCalled: (a: Attempt) => void;
   onFinished: (
@@ -973,6 +1085,7 @@ function LeadWork({
         nextRef={nextRef}
         convo={convo}
         wa={wa}
+        roomsSetup={roomsSetup}
         onCalled={onCalled}
         onFinished={onFinished}
         onStay={onStay}
@@ -1469,6 +1582,11 @@ function missStep(
   moment: MissMoment,
   convo: ReturnType<typeof useConversation>,
   wa: WaKit,
+  video: RoomView | null = null,
+  workerDown = false,
+  videoPending: number | null = null,
+  otherOk?: boolean,
+  offset = 0,
 ): AfterMiss {
   const channels = convo.data?.channels;
   return afterMiss({
@@ -1477,6 +1595,17 @@ function missStep(
     email: channels?.email ?? null,
     templatesLive: wa.templatesLive,
     messageReady: wa.moments ? wa.moments.has(moment) : null,
+    video,
+    // A Send a video link press on its way (room.create waits up to the
+    // worker's 15 s): a room on its way, so no missed-call message beside
+    // it (m1 round 4).
+    videoPending,
+    // The panel's clock (the server's, m1 round 4) and health line, so the
+    // step never says "on its way" under a panel that says the room will
+    // not be made (m1 round 2).
+    now: Date.now() + offset,
+    workerDown,
+    otherOk,
   });
 }
 
@@ -1487,6 +1616,9 @@ type PaneMode = "outcomes" | "book" | "move" | "held" | "unanswered";
 const fine = () =>
   typeof window !== "undefined" &&
   window.matchMedia?.("(pointer: fine)").matches;
+
+/** How long after a missed call its video link is offered (sales-api says "just now" only inside it). */
+const MISS_FRESH_MS = 15 * 60_000;
 
 function CallPane({
   className,
@@ -1501,6 +1633,7 @@ function CallPane({
   nextRef,
   convo,
   wa,
+  roomsSetup,
   onCalled,
   onFinished,
   onStay,
@@ -1520,6 +1653,7 @@ function CallPane({
   nextRef: MutableRefObject<(() => void) | null>;
   convo: ReturnType<typeof useConversation>;
   wa: WaKit;
+  roomsSetup: RoomsSetup;
   onCalled: (a: Attempt) => void;
   onFinished: (
     contactId: string,
@@ -1583,21 +1717,295 @@ function CallPane({
   // lands. Another lead is another pane, so another id.
   const saveId = useRef<string | null>(null);
   const missMoment: MissMoment = kind === "confirm" ? "confirm" : "missed_call";
-  const miss = missStep(missMoment, convo, wa);
   const noteRef = useRef<HTMLTextAreaElement>(null);
   const saveRef = useRef<HTMLButtonElement>(null);
+  // The video link after a call that did not connect (P1): how it missed,
+  // and for which call, kept after the call is saved; the picker; and
+  // automatic mode's ten seconds.
+  const [missed, setMissed] = useState<{
+    trigger: Trigger;
+    attemptId: string | null;
+    /** When the miss was seen: a video link is offered for MISS_FRESH_MS after it (m1 round 1). */
+    at: number;
+    /** When the missed call was placed: an intro's window is read by it, as sales-api does (m1 round 5). */
+    startedAt?: number | null;
+  } | null>(null);
+  // The after-miss step left open (the laptop asleep over lunch) no longer
+  // offers a video link that would tell the lead "I tried to call you just
+  // now" about a call hours old (m1 round 1, stale-miss-just-now).
+  const missNow = useNow(30_000);
+  const missFresh = missed !== null && missNow - missed.at <= MISS_FRESH_MS;
+  const [picking, setPicking] = useState(false);
+  const [autoAt, setAutoAt] = useState<number | null>(null);
+  const [autoError, setAutoError] = useState<string | null>(null);
+  const [autoErrorCode, setAutoErrorCode] = useState<string | null>(null);
+  // Automatic mode runs once for each call that missed, Stop or not.
+  const autoRan = useRef(new Set<string>());
+  const video = useLeadRoom(contactId);
+  // A Send a video link press whose room.create has not answered yet.
+  const [videoPending, setVideoPending] = useState<number | null>(null);
+  // What the room panel reads beside the room: the other provider usable,
+  // and the server's clock (the step counts as the panel does).
+  const [panelFeed, setPanelFeed] = useState<{
+    otherOk: boolean | null;
+    offset: number;
+  }>({ otherOk: null, offset: 0 });
+  // While the lead's room has its link out (or on its way), the step after
+  // the miss says so and offers no missed-call message (stress2, round 2).
+  const miss = missStep(
+    missMoment,
+    convo,
+    wa,
+    video.room ?? null,
+    workerDownOf(video.live?.health),
+    videoPending,
+    panelFeed.otherOk ?? undefined,
+    panelFeed.offset,
+  );
   const status = useCallStatus(open, () => {
     // Maqsam's record saved it as No answer. A save of the rep's own on its
     // way decides what shows (only one of the two can land); otherwise the
     // lead stays with Next lead ready for Enter.
     if (busyRef.current) return;
+    setMissed(
+      m =>
+        m ?? {
+          trigger: "no_answer",
+          attemptId: open?.id ?? null,
+          at: Date.now(),
+          startedAt: open?.started_at ? Date.parse(open.started_at) : null,
+        },
+    );
     onStay(contactId);
     setSaved("Saved from Maqsam's record: No answer");
     setMissBy("auto");
     setMode(m => (m === "outcomes" ? "unanswered" : m));
     toast.success("No answer, saved from Maqsam's record.");
   });
-  const outcomes = OUTCOMES[kind];
+  const liveMiss = missTrigger({
+    attemptFailed: open?.state === "failed",
+    call: status.call,
+  });
+  const openId = open?.id ?? null;
+  const openStarted = open?.started_at ?? null;
+  useEffect(() => {
+    if (liveMiss)
+      setMissed({
+        trigger: liveMiss,
+        attemptId: openId,
+        at: Date.now(),
+        startedAt: openStarted ? Date.parse(openStarted) : null,
+      });
+  }, [liveMiss, openId, openStarted]);
+  const bookedIntro =
+    (kind === "intro" || kind === "confirm") && appt?.type === "intro";
+  // The intro itself, not its confirmation call (the evening before, or that
+  // morning): only the intro's own room carries it, so an empty confirmation
+  // room never settles the intro and a join there never marks it shown.
+  const introCall = kind === "intro" && appt?.type === "intro";
+  // Its own hour clears the night rule only for a call inside the intro's
+  // window, as room.create reads it (m1 round 5): a late or early call at
+  // night gets the night line, never a button sales-api refuses.
+  const introNow =
+    introCall &&
+    introCallInWindow(
+      missed?.startedAt ?? missed?.at ?? Date.now(),
+      appt?.start_at,
+      roomsSetup.rooms?.settle_s ?? 1200,
+    );
+  const gate = videoLinkGate({
+    setting: roomsSetup.rooms,
+    contactId,
+    seatEmail: me.email,
+    purpose: "fallback",
+    bookedIntro,
+    bookedDemo: appt?.type === "demo",
+    client: isClient(l),
+    dnd: Boolean(l?.dnd),
+    // The lead's clock (stress2 round 6): no link, and no countdown, at
+    // night where they are, unless it is their own booked intro's time.
+    country: l?.country ?? null,
+    phone: l?.phone ?? null,
+    now: Date.now(),
+    introNow,
+  });
+  // A closer's video call is a demo (stress2 round 4): its length, its Zoom
+  // rule, and never booked as an intro in a setter's place.
+  const roomKind: "intro" | "demo" = as === "closer" ? "demo" : "intro";
+  // What the steps after a video join (or a move to the phone) ask about:
+  // the call this seat's item is for. A closer's call is a demo, so it never
+  // asks how "the intro" went nor leads with Book the demo (stress2 round 5).
+  const callAsk =
+    kind === "confirm"
+      ? `Are they coming to the ${roomKind}?`
+      : `How did the ${kind === "intro" ? "intro" : roomKind} go?`;
+  // A closer's demo call: Save how it went is the step's teal button.
+  const demoSaves =
+    roomKind === "demo" && kind !== "confirm" && kind !== "intro";
+  const choice = roomsSetup.rooms
+    ? providerChoice({
+        setting: roomsSetup.rooms,
+        role: as,
+        me: video.presence,
+        kind: roomKind,
+      })
+    : null;
+  const videoAsk = {
+    contactId,
+    purpose: "fallback" as const,
+    callKind: roomKind,
+    attemptId: missed?.attemptId ?? null,
+    // The intro on its confirmation call too: sales-api keeps a room made
+    // outside the intro's window off it (stress2, round 1), and a
+    // confirmation call's room off it always (round 2: the item kind).
+    appointmentId: videoAppointmentId(kind, appt),
+    itemKind:
+      kind === "intro" || kind === "confirm" || kind === "lead" ? kind : null,
+  };
+  // "Send a video link" shows on every outcome but Answered, never for a
+  // client, while no room is open for the lead (P1). A room that failed
+  // on screen offers its own next step (Try Zoom, or the phone), so the
+  // button waits until the rep puts it away.
+  const failedOnScreen = video.room?.state === "failed";
+  // The lead joined the video room after the missed call: the intro
+  // happened, so the step after the miss becomes "How did the intro go?",
+  // and neither the missed-call WhatsApp nor another video link is offered
+  // (final review).
+  // Only this miss's call (m1 round 3b): a room the lead joined for an
+  // earlier call, left open on Meet, never turns a call-back's miss into
+  // "How did the intro go?".
+  const joinedAt = forThisMiss(videoJoinedAt(video.room), video.room, missed);
+  // We are on the phone: the room closed as moved to the phone, or the rep
+  // marked the intro from the panel (stress2, round 2). Neither the
+  // missed-call WhatsApp nor another video link is offered after it.
+  const spoke = forThisMiss(spokeAt(video.room), video.room, missed);
+  const [introMarked, setIntroMarked] = useState(false);
+  const offerVideo =
+    gate.show &&
+    missed !== null &&
+    missFresh &&
+    choice !== null &&
+    !video.open &&
+    !failedOnScreen &&
+    !joinedAt &&
+    // The closed room's link may have reached the lead (m1 round 4): no
+    // second link for this call until the conversation says otherwise.
+    !linkMayHaveGoneClosed(video.room) &&
+    !spoke &&
+    !introMarked &&
+    // The missed-call message went already (m1 round 6): one "I tried to
+    // call you" for one missed call.
+    !messagedSinceMiss(
+      convo.data?.sends,
+      missed?.startedAt ?? missed?.at ?? null,
+    );
+  // Where the link would go, said in the picker; when nothing can reach the
+  // lead, automatic mode does not send blind: the picker says so instead.
+  const planLine = roomsSetup.rooms
+    ? linkPlanLine({
+        setting: roomsSetup.rooms,
+        whatsapp: convo.data?.channels.whatsapp,
+        email: convo.data?.channels.email,
+        guardOpen: roomsSetup.guard,
+        templateLive: roomsSetup.templateLive,
+      })
+    : null;
+  const autoKey = missed ? `${contactId}:${missed.attemptId ?? "save"}` : "";
+  useEffect(() => {
+    if (
+      !offerVideo ||
+      !roomsSetup.rooms?.fallback.auto_on_miss ||
+      autoRan.current.has(autoKey)
+    )
+      return;
+    autoRan.current.add(autoKey);
+    if (planLine === PICKER_NONE) setPicking(true);
+    else setAutoAt(Date.now());
+  }, [offerVideo, autoKey, roomsSetup.rooms?.fallback.auto_on_miss, planLine]);
+  async function autoSend() {
+    setAutoAt(null);
+    if (!choice || video.open) return;
+    // Nothing can reach the lead now (the conversation was read during the
+    // ten seconds): the rep decides in the picker.
+    if (planLine === PICKER_NONE) {
+      setPicking(true);
+      return;
+    }
+    const ask = createAsk({ ...videoAsk, trigger: "auto" }, choice.first);
+    setVideoPending(Date.now());
+    try {
+      const out = await roomsApi.create(ask);
+      video.setRoom(out.room, ask);
+    } catch (e) {
+      // Said in the picker, which stays for a press of the rep's own (and
+      // offers none after the night refusal, stress2 round 6).
+      setAutoError(errorText(e));
+      setAutoErrorCode(refusalCode(e));
+      setPicking(true);
+    } finally {
+      setVideoPending(null);
+    }
+  }
+  /**
+   * Leaving the lead while automatic mode counts down sends the link now,
+   * as an Undo strip does when the rep moves on inside its window (final
+   * review): Next lead, Alt+→ or another lead never cancels it silently.
+   * The room is made on the server and its link goes from there, so it
+   * needs nothing more from this pane; a refusal is said in a toast.
+   */
+  const leftWithAuto = useRef<string | null>(null);
+  function sendOnLeave() {
+    if (autoAt === null || !choice || video.open || planLine === PICKER_NONE)
+      return;
+    if (leftWithAuto.current === autoKey) return;
+    leftWithAuto.current = autoKey;
+    setAutoAt(null);
+    const ask = createAsk({ ...videoAsk, trigger: "auto" }, choice.first);
+    const name = firstWord(l?.name ?? null) ?? "the lead";
+    roomsApi.create(ask).then(
+      out => {
+        if (mounted.current) video.setRoom(out.room, ask);
+        // A room that failed while room.create waited is said as such, never
+        // "on its way" (stress2 round 3); the banner keeps it too.
+        const said = leaveToast(out.room, name);
+        if (said.ok) toast.success(said.text);
+        else toast.error(said.text);
+      },
+      e => toast.error(`The video link to ${name} did not go. ${errorText(e)}`),
+    );
+  }
+  const leaveRef = useRef(sendOnLeave);
+  leaveRef.current = sendOnLeave;
+  useEffect(() => () => leaveRef.current(), []);
+  async function markIntro(status: "noshow" | "showed") {
+    if (!appt) return;
+    await api("mark", {
+      appointment_id: appt.id,
+      status,
+      reason: null,
+    });
+    // Marked from the room panel: the panel stops asking, and "We spoke on
+    // the phone" moves the pane to the held step (stress2, round 2).
+    setIntroMarked(true);
+    if (status === "showed") {
+      setSaved("Intro marked held");
+      setMode("held");
+    }
+  }
+  // No-show is not offered while the lead's video room is open: HighLevel's
+  // no-show automation writes to a lead who may be opening the link now
+  // (m1 round 2; sales-api refuses it too). Nor while the closed room still
+  // holds it (m1 round 5, m1-journeys-r5-dialer-grid-offers-noshow-room-holds):
+  // the wait its link promised, or the lead's knock we could not answer,
+  // as the lead page's Mark this call and sales-api read it.
+  const noShowHeld = video.open ? null : noShowHold(video.room, Date.now());
+  const outcomes = OUTCOMES[kind].filter(
+    o => !(o.key === "noshow" && (video.open || noShowHeld)),
+  );
+  const noShowLine =
+    noShowHeld && OUTCOMES[kind].some(o => o.key === "noshow")
+      ? noShowHeld
+      : null;
   const chosen = outcomes.find(o => o.key === draft.outcome) ?? null;
   const dnd = Boolean(l?.dnd);
 
@@ -1655,6 +2063,12 @@ function CallPane({
       });
       onCalled(out.attempt);
       if (!mounted.current) return;
+      // A new call: whether it connects is this call's question now.
+      setMissed(null);
+      setPicking(false);
+      setAutoAt(null);
+      setAutoError(null);
+      setAutoErrorCode(null);
       // Calling again after a saved call: back to saying how this one went.
       setSaved(null);
       setSaveNote(null);
@@ -1694,15 +2108,21 @@ function CallPane({
     };
   }, [callRef]);
 
-  async function save(e?: FormEvent, then: "next" | "message" = "next") {
+  async function save(
+    e?: FormEvent,
+    then: "next" | "message" = "next",
+    /** An outcome a step's own button saves (the joined step's "Held the intro"). */
+    forced?: Partial<Draft>,
+  ) {
     e?.preventDefault();
-    if (!draft.outcome || busyRef.current) return;
-    if (draft.outcome === "booked") {
+    const d: Draft = forced ? { ...draft, ...forced } : draft;
+    if (!d.outcome || busyRef.current) return;
+    if (d.outcome === "booked") {
       setBookKind(null);
       setMode("book");
       return;
     }
-    if (draft.outcome === "rescheduled") {
+    if (d.outcome === "rescheduled") {
       setMode("move");
       return;
     }
@@ -1712,20 +2132,20 @@ function CallPane({
     if (!attempt) saveId.current ??= crypto.randomUUID();
     try {
       const out = await api<{
-        attempt?: { outcome?: string | null } | null;
+        attempt?: { id?: string | null; outcome?: string | null } | null;
         repeated?: boolean;
       }>("dial.save", {
         ...(attempt
           ? { attempt_id: attempt.id }
           : { contact_id: contactId, request_id: saveId.current }),
-        outcome: draft.outcome,
-        note: draft.note,
+        outcome: d.outcome,
+        note: d.note,
         as,
         item_kind: kind,
         appointment_id: kind === "lead" ? null : (appt?.id ?? null),
         callback_at:
-          draft.outcome === "callback" && draft.callback
-            ? new Date(draft.callback).toISOString()
+          d.outcome === "callback" && d.callback
+            ? new Date(d.callback).toISOString()
             : null,
       });
       // Stored: HighLevel's half (note, tags, stage) may still be on its
@@ -1734,7 +2154,7 @@ function CallPane({
       clearDraft(contactId);
       // Saved already (sent again after no answer came back): what landed
       // the first time is what stands.
-      const outcome = (out.repeated && out.attempt?.outcome) || draft.outcome;
+      const outcome = (out.repeated && out.attempt?.outcome) || d.outcome;
       const label = outcomes.find(o => o.key === outcome)?.label ?? outcome;
       const words = `${out.repeated ? "Already saved" : "Saved"}: ${label}`;
       const next = afterSave(kind, outcome, then === "message");
@@ -1759,6 +2179,21 @@ function CallPane({
         return;
       }
       // A no-answer to message: the box opens with the ready message.
+      // A call saved by hand (none through the dialer) is tied to the
+      // attempt row the save wrote, so its video link is this call's one
+      // link (m1 round 4, hand-saved-miss-second-link).
+      if (outcome === "no_answer")
+        setMissed(
+          m =>
+            m ?? {
+              trigger: "no_answer",
+              attemptId: attempt?.id ?? out.attempt?.id ?? null,
+              at: Date.now(),
+              startedAt: attempt?.started_at
+                ? Date.parse(attempt.started_at)
+                : null,
+            },
+        );
       setSaved(words);
       setMissBy("message");
       setMode("unanswered");
@@ -1805,17 +2240,102 @@ function CallPane({
     }
   }
 
-  // Next lead, and Alt+→ while it shows. The lead was saved already.
-  const toNext = () => onFinished(contactId, "saved");
+  // Next lead, and Alt+→ while it shows. The lead was saved already; a
+  // video link counting down goes first.
+  // After a conversation the step itself asks about (the lead joined the
+  // video call, or the call moved to the phone), Next lead never leaves
+  // Maqsam's automatic No answer standing, which would close the lead as
+  // unreachable or bring them back as "not reached yet" (stress2 round 6,
+  // joined-step-next-lead-keeps-auto-no-answer): the talk is saved first,
+  // as a call-back the next working morning, then the next lead opens.
+  const spokeUnsaved = mode === "unanswered" && Boolean(joinedAt || spoke);
+  const spokeNote = joinedAt
+    ? "Spoke on video. No outcome was saved, so they come back as a call-back."
+    : "Spoke on the phone after the video link. No outcome was saved, so they come back as a call-back.";
+  const spokeSaveId = useRef<string | null>(null);
+  async function saveSpoke() {
+    if (busyRef.current) return;
+    setBusy("save");
+    spokeSaveId.current ??= crypto.randomUUID();
+    try {
+      await api("dial.save", {
+        contact_id: contactId,
+        request_id: spokeSaveId.current,
+        outcome: "callback",
+        note: draft.note.trim() || spokeNote,
+        as,
+        item_kind: "lead",
+        appointment_id: null,
+        callback_at: new Date(spokeCallbackAt(Date.now())).toISOString(),
+      });
+      spokeSaveId.current = null;
+      clearDraft(contactId);
+      onFinished(
+        contactId,
+        "saved",
+        "Saved as a call-back tomorrow morning. Next lead is up.",
+      );
+    } catch (err) {
+      toast.error(`${msg(err)} Press Next lead again, or Save how it went.`);
+    } finally {
+      setBusy(null);
+    }
+  }
+  const toNext = () => {
+    leaveRef.current();
+    if (spokeUnsaved) {
+      void saveSpoke();
+      return;
+    }
+    onFinished(contactId, "saved");
+  };
+  const toNextRef = useRef(toNext);
+  toNextRef.current = toNext;
   const showsNext = mode === "held" || mode === "unanswered";
   useEffect(() => {
     if (!showsNext) return;
-    const go = () => onFinished(contactId, "saved");
+    const go = () => {
+      leaveRef.current();
+      toNextRef.current();
+    };
     nextRef.current = go;
     return () => {
       if (nextRef.current === go) nextRef.current = null;
     };
-  }, [showsNext, nextRef, onFinished, contactId]);
+  }, [showsNext, nextRef]);
+
+  // The picker, said where the rep pressed for it: inside the after-miss
+  // step in place of its button, or here under the call line otherwise.
+  const picker =
+    picking && offerVideo && choice && missed ? (
+      <VideoPicker
+        {...videoAsk}
+        trigger={missed.trigger}
+        choice={choice}
+        planLine={planLine}
+        initialError={autoError}
+        initialErrorCode={autoErrorCode}
+        onPending={setVideoPending}
+        onRoom={(room, ask) => {
+          video.setRoom(room, ask);
+          setPicking(false);
+          setAutoError(null);
+          setAutoErrorCode(null);
+        }}
+        onCancel={() => {
+          setPicking(false);
+          setAutoError(null);
+          setAutoErrorCode(null);
+        }}
+      />
+    ) : null;
+  const pickerInStep = mode === "unanswered";
+  // One teal button at a time: while the room panel holds the primary (an
+  // open room, or a failed one offering the other provider), or a link is
+  // being picked or about to go, Call and Next lead step back.
+  const panelLeads =
+    video.open || (failedOnScreen && !workerDownOf(video.live?.health));
+  const callQuiet = panelLeads || picking || autoAt !== null;
 
   async function copyNumber() {
     if (!l?.phone) return;
@@ -1838,8 +2358,17 @@ function CallPane({
         call={status.call}
         callError={status.error}
         dnd={dnd}
-        saved={saved}
+        saved={
+          joinedAt && mode === "unanswered"
+            ? `Joined on video at ${clock(joinedAt)}`
+            : saved
+        }
         doubt={doubt}
+        onVideo={
+          offerVideo && !picking && autoAt === null
+            ? () => setPicking(true)
+            : null
+        }
       />
       <div className="space-y-4 p-4">
         <div className="flex flex-wrap items-center gap-2">
@@ -1847,7 +2376,7 @@ function CallPane({
             type="button"
             onClick={() => void call()}
             disabled={Boolean(busy) || Boolean(open) || dnd || !l}
-            className={`${buttonPrimary} h-10 px-4 text-[15px]`}
+            className={`${callQuiet ? button : buttonPrimary} h-10 px-4 text-[15px]`}
             title="Alt+D"
           >
             <PhoneCall className="size-4" aria-hidden />
@@ -1891,6 +2420,30 @@ function CallPane({
           onCheck={() => void agent.check()}
         />
 
+        {/* A room still running always shows; a closed one gives way to a
+            new link being asked for. */}
+        {video.room && (video.open || (!picking && autoAt === null)) ? (
+          <RoomPanel
+            room={video.room}
+            request={video.request}
+            onRoomChange={r => video.setRoom(r)}
+            onFeed={setPanelFeed}
+            talkBelow
+            onMarkIntro={
+              introCall && appt && !introMarked ? markIntro : undefined
+            }
+          />
+        ) : autoAt !== null && offerVideo ? (
+          <AutoVideoStrip
+            name={firstWord(l?.name ?? null)}
+            startedAt={autoAt}
+            onStop={() => setAutoAt(null)}
+            onSend={() => void autoSend()}
+          />
+        ) : picker && !pickerInStep ? (
+          picker
+        ) : null}
+
         {mode === "held" ? (
           <NextStep
             title="The intro is marked held. What next?"
@@ -1918,13 +2471,142 @@ function CallPane({
             </button>
             <NextLeadButton onNext={toNext} />
           </NextStep>
+        ) : mode === "unanswered" && joinedAt ? (
+          <NextStep
+            title={`${firstWord(l?.name ?? null) ?? "The lead"} joined the video call. ${callAsk}`}
+            text={
+              kind === "intro"
+                ? "Mark the intro held, then book the demo while they are warm, or save how it went."
+                : kind === "confirm"
+                  ? "Save that they are coming, or that you held the intro with them on video now."
+                  : roomKind === "demo"
+                    ? "Save how it went: the follow-up, or the contract if they are ready."
+                    : "Book the demo while they are warm, or save how it went."
+            }
+          >
+            {kind === "confirm" ? (
+              // A confirmation call (the evening before, or that morning):
+              // the intro is still ahead, so the step saves the lead's
+              // confirmation, never "Book the demo" before it (stress2,
+              // round 2). Its link invites the call now, so the intro may
+              // have been had on video: Held the intro marks it showed
+              // (m1 round 6, m1-journeys-r6-confirm-call-link-invites-call-
+              // now-intro-never-held).
+              <>
+                <button
+                  type="button"
+                  disabled={Boolean(busy)}
+                  onClick={() =>
+                    void save(undefined, "next", { outcome: "confirmed" })
+                  }
+                  className={panelLeads ? button : buttonPrimary}
+                >
+                  <Check className="size-3.5" aria-hidden /> Confirmed the call
+                </button>
+                <button
+                  type="button"
+                  disabled={Boolean(busy)}
+                  onClick={() =>
+                    void save(undefined, "next", { outcome: "showed" })
+                  }
+                  className={button}
+                >
+                  <Check className="size-3.5" aria-hidden /> Held the intro
+                </button>
+              </>
+            ) : kind === "intro" ? (
+              // The intro itself was had on video: it is marked held first
+              // (as the held path does), so it never comes back as "Intro
+              // call now" and B2B counts it once (stress2, round 1). The
+              // held step then offers Book the demo.
+              <button
+                type="button"
+                disabled={Boolean(busy)}
+                onClick={() =>
+                  void save(undefined, "next", { outcome: "showed" })
+                }
+                className={panelLeads ? button : buttonPrimary}
+              >
+                <Check className="size-3.5" aria-hidden /> Held the intro
+              </button>
+            ) : roomKind === "demo" ? null : (
+              <button
+                type="button"
+                onClick={() => {
+                  setBookKind("demo");
+                  setMode("book");
+                }}
+                className={panelLeads ? button : buttonPrimary}
+              >
+                <CalendarPlus className="size-3.5" aria-hidden /> Book the demo
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setMode("outcomes")}
+              className={demoSaves && !panelLeads ? buttonPrimary : button}
+            >
+              Save how it went
+            </button>
+            <NextLeadButton onNext={toNext} />
+          </NextStep>
+        ) : mode === "unanswered" && spoke ? (
+          // We are on the phone (the room closed as moved to the phone): the
+          // rep and the lead are talking, so the step after the miss is the
+          // call's own question, never the missed-call WhatsApp or another
+          // video link (stress2, round 2).
+          <NextStep
+            title={`You moved to the phone with ${firstWord(l?.name ?? null) ?? "the lead"}. ${kind === "confirm" || kind === "intro" ? callAsk : "How did it go?"}`}
+            text={
+              kind === "intro"
+                ? "Mark the intro held, then book the demo while they are warm, or save how it went."
+                : "Save how it went."
+            }
+          >
+            {kind === "intro" ? (
+              <button
+                type="button"
+                disabled={Boolean(busy)}
+                onClick={() =>
+                  void save(undefined, "next", { outcome: "showed" })
+                }
+                className={panelLeads ? button : buttonPrimary}
+              >
+                <Check className="size-3.5" aria-hidden /> Held the intro
+              </button>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => setMode("outcomes")}
+              className={kind === "intro" ? button : buttonPrimary}
+            >
+              Save how it went
+            </button>
+            <NextLeadButton onNext={toNext} />
+          </NextStep>
         ) : mode === "unanswered" ? (
           <AfterMissStep
             step={miss}
             moment={missMoment}
-            focusNext={missBy === "auto"}
+            focusNext={missBy === "auto" && !picking}
             onTalk={onTalk}
+            onSave={() => setMode("outcomes")}
             onNext={toNext}
+            onCall={!busy && !open && !dnd && l ? () => void call() : null}
+            onVideo={
+              offerVideo && !picking && autoAt === null
+                ? () => setPicking(true)
+                : null
+            }
+            picker={pickerInStep ? picker : null}
+            quietNext={panelLeads}
+            videoUnread={
+              roomsSetup.error && missed !== null && !video.room
+                ? ROOMS_UNREAD
+                : missed !== null && !video.room
+                  ? gateLine(gate.why)
+                  : null
+            }
           />
         ) : mode === "book" || mode === "move" ? (
           <BookForm
@@ -1999,6 +2681,11 @@ function CallPane({
               })}
             </div>
             {chosen ? <p className="muted text-xs">{chosen.hint}</p> : null}
+            {noShowLine ? (
+              <p className="muted text-xs" aria-live="polite">
+                {noShowLine}
+              </p>
+            ) : null}
 
             {draft.outcome === "callback" ? (
               <div className="space-y-2">
@@ -2164,16 +2851,20 @@ function NextStep({
   title,
   text,
   children,
+  after = null,
 }: {
   title: string;
   text: string;
   children: ReactNode;
+  /** Under the buttons: what one of them opened (the video picker). */
+  after?: ReactNode;
 }) {
   return (
     <div className="space-y-2 border-t hairline pt-4">
       <p className="text-sm font-medium">{title}</p>
       <p className="muted text-xs">{text}</p>
       <div className="flex flex-wrap gap-2">{children}</div>
+      {after}
     </div>
   );
 }
@@ -2188,28 +2879,79 @@ function AfterMissStep({
   moment,
   focusNext,
   onTalk,
+  onSave,
   onNext,
+  onCall = null,
+  onVideo = null,
+  picker = null,
+  videoUnread = null,
+  quietNext = false,
 }: {
   step: AfterMiss;
   moment: MissMoment;
+  /** Call the lead again: the teal button when the lead was at the door a moment ago (step.callNow). */
+  onCall?: (() => void) | null;
   /** Maqsam's record saved it: Next lead takes the focus, so Enter moves on. */
   focusNext: boolean;
   onTalk: (moment?: Moment) => void;
+  /** Save how it went: offered when the rep may have spoken with the lead on video (step.talk). */
+  onSave: () => void;
   onNext: () => void;
+  /** "Send a video link" (P1), while one can be sent for this lead. */
+  onVideo?: (() => void) | null;
+  /** The video picker, opened from this step: it shows here, under the buttons. */
+  picker?: ReactNode;
+  /** The video setting could not be read: said where its button would be. */
+  videoUnread?: string | null;
+  /** Something else on the card holds the teal button (the room panel). */
+  quietNext?: boolean;
 }) {
   return (
-    <NextStep title={step.title} text={step.text}>
-      <NextLeadButton onNext={onNext} primary focus={focusNext} />
+    <NextStep
+      title={step.title}
+      text={step.text}
+      after={
+        picker ??
+        (videoUnread ? <p className="muted text-xs">{videoUnread}</p> : null)
+      }
+    >
+      {/* The lead was at the door a moment ago: Call first (stress2 round 5). */}
+      {step.callNow && onCall ? (
+        <button
+          type="button"
+          onClick={onCall}
+          className={!picker && !quietNext ? buttonPrimary : button}
+        >
+          <PhoneCall className="size-3.5" aria-hidden /> Call them now
+        </button>
+      ) : null}
+      {/* While the picker is open its button is the teal one. */}
+      <NextLeadButton
+        onNext={onNext}
+        primary={!picker && !quietNext && !(step.callNow && onCall)}
+        focus={focusNext && !(step.callNow && onCall)}
+      />
+      {step.talk ? (
+        <button type="button" onClick={onSave} className={button}>
+          Save how it went
+        </button>
+      ) : null}
       {step.send ? (
         <button
           type="button"
           // Email opens the box as it is; WhatsApp brings the ready message.
-          onClick={() => onTalk(step.send === "whatsapp" ? moment : undefined)}
+          // A lead who was at the door gets no missed-call message (stress2 round 5).
+          onClick={() =>
+            onTalk(
+              step.send === "whatsapp" && !step.callNow ? moment : undefined,
+            )
+          }
           className={button}
         >
           {step.send === "whatsapp" ? "WhatsApp them" : "Email them"}
         </button>
       ) : null}
+      {onVideo ? <VideoLinkButton onPress={onVideo} /> : null}
     </NextStep>
   );
 }
@@ -2228,6 +2970,7 @@ function CallBand({
   dnd,
   saved,
   doubt,
+  onVideo = null,
 }: {
   item: DialItem | null;
   open: Attempt | null;
@@ -2238,6 +2981,8 @@ function CallBand({
   saved: string | null;
   /** A call that may have gone out although no clear answer came back. */
   doubt: string | null;
+  /** "Send a video link" (P1) on the line of a call that did not connect. */
+  onVideo?: (() => void) | null;
 }) {
   const now = useNow(1000);
   const urgent = useMemo(
@@ -2253,6 +2998,8 @@ function CallBand({
   let title: string;
   let detail: string | null = null;
   let big: string | null = null;
+  // The video link sits on the line only while it says the call did not connect.
+  let video = false;
   if (dnd) {
     color = "var(--destructive)";
     title = "Do not disturb is on";
@@ -2264,15 +3011,19 @@ function CallBand({
     detail = open.error
       ? plainError(open.error, 200)
       : "Maqsam did not take it. Call again or save.";
+    video = Boolean(onVideo);
   } else if (open) {
     const since = now - Date.parse(open.started_at);
     if (call?.final) {
       color = call.answered ? "var(--success)" : "var(--muted-foreground)";
       title = `Maqsam: ${call.words}`;
       big = call.answered ? mmss(call.seconds * 1000) : null;
+      video = !call.answered && Boolean(onVideo);
       detail = call.answered
         ? "Save how it went."
-        : "Nobody spoke. Save it as No answer or Call back.";
+        : video
+          ? NOBODY_SPOKE_VIDEO
+          : "Nobody spoke. Save it as No answer or Call back.";
     } else {
       color = "var(--now)";
       title = "Ringing you in Maqsam, then the lead";
@@ -2366,6 +3117,9 @@ function CallBand({
           ) : null}
           {big}
         </div>
+      ) : null}
+      {video && onVideo ? (
+        <VideoLinkButton onPress={onVideo} className="shrink-0" />
       ) : null}
     </div>
   );
@@ -2911,21 +3665,25 @@ function LeadPane({
       <div className="p-4" role="tabpanel">
         {tab === "talk" ? (
           <div className="space-y-5">
-            <Conversation
-              contactId={contactId}
-              convo={convo}
-              compact
-              rep={me.name}
-              // The lead's booked call, for {day} and {time}: the next intro
-              // or demo on any item, else a closer's own demo.
-              callAt={
-                item?.appointment?.start_at ??
-                (as === "closer" ? item?.demo_at : null) ??
-                null
-              }
-              country={l?.country ?? null}
-              prefill={prefill}
-            />
+            {/* Its own boundary: a conversation that cannot be drawn never
+                takes the call column (and an open video room) with it. */}
+            <LiveBoundary fallback={<ConversationFailed />}>
+              <Conversation
+                contactId={contactId}
+                convo={convo}
+                compact
+                rep={me.name}
+                // The lead's booked call, for {day} and {time}: the next intro
+                // or demo on any item, else a closer's own demo.
+                callAt={
+                  item?.appointment?.start_at ??
+                  (as === "closer" ? item?.demo_at : null) ??
+                  null
+                }
+                country={l?.country ?? null}
+                prefill={prefill}
+              />
+            </LiveBoundary>
             <div className="border-t hairline pt-4">
               <p className="mb-2 text-sm font-semibold">Proof to send</p>
               <ProofToSend

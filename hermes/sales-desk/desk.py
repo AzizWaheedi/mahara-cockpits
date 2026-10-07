@@ -2,6 +2,7 @@
 """Sales desk: proposals drafted from demo calls, and the calls indexed per rep.
 
     python3 desk.py doctor [--offline]      every key by name, each service, each blocker in a sentence
+                    [--cron]                the hourly run: a one-token model probe, no render, quiet when ready
     python3 desk.py requests [--limit N]    draft (or rebuild) the proposals the cockpit asked for
     python3 desk.py recordings [--days N]   index Fathom's sales calls and match them to leads
     python3 desk.py calls-vault [--dry]     copy every sales call in the Obsidian vault in, transcripts too
@@ -14,6 +15,14 @@
     python3 desk.py reviews [--limit N]     Vince reviews the newest unreviewed calls
     python3 desk.py research [--limit N]    research the leads a rep asked about (web search, sources kept)
     python3 desk.py followups               draft follow-ups for the leads who need one now, for approval
+                    [--contact ID [--segment KIND]]
+                                            the test path: one contact tagged cockpit-test, nothing else touched
+    python3 desk.py waves [--pools]         backlog waves: enrol, write the day's openers, send approved ones paced
+    python3 desk.py rooms [--for 57]        make the video rooms the cockpit asks for, polling every second,
+                    [--once] [--check-hosts]  and send the Slack replies the door keeps (one tick by hand; or only
+                                            the Zoom and Google check of every seat)
+    python3 desk.py deploy-check            (or: deploy check) is this box ready for live calls and the
+                                            follow-up agent, every switch still off? Changes nothing
     python3 desk.py status                  the queue, the last proposals, the last runs
     python3 desk.py offer-sync              offer.json into the cockpit's proposal form (requests does it too)
     python3 desk.py form-sync               the New Client Form's questions into the cockpit (requests does it too, every 10 minutes)
@@ -33,6 +42,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import tempfile
 from datetime import datetime, timedelta, timezone
@@ -45,6 +55,7 @@ from desk import b2b_fathom as b2b_fathom_mod  # noqa: E402
 from desk import build as build_mod  # noqa: E402
 from desk import calls_vault as calls_vault_mod  # noqa: E402
 from desk import clientform as clientform_mod  # noqa: E402
+from desk import deploycheck as deploycheck_mod  # noqa: E402
 from desk import engine as engine_mod  # noqa: E402
 from desk import fathom as fathom_mod  # noqa: E402
 from desk import http  # noqa: E402
@@ -59,7 +70,9 @@ from desk import references as references_mod  # noqa: E402
 from desk import render as render_mod  # noqa: E402
 from desk import followups as followups_mod  # noqa: E402
 from desk import research as research_mod  # noqa: E402
+from desk import waves as waves_mod  # noqa: E402
 from desk import reviews as reviews_mod  # noqa: E402
+from desk import rooms as rooms_mod  # noqa: E402
 from desk import validate as validate_mod  # noqa: E402
 from desk.config import DEFAULT_MODELS, FALLBACK_JOBS, WORKER, Config, key  # noqa: E402
 from desk.errors import NotNow, Refused  # noqa: E402
@@ -152,11 +165,23 @@ def usage_recorder(sb: Supabase, warn: Callable[[str], None]) -> Callable[[dict[
 
 
 def model_rows(cfg: Config, log: Logger, *, online: bool, primary: Callable[..., Any] = model_mod.provider,
-               fallback: Callable[..., Any] = model_mod.fallback_provider) -> list[dict[str, Any]]:
+               fallback: Callable[..., Any] = model_mod.fallback_provider, cron: bool = False,
+               seen: Optional[dict[str, Any]] = None) -> list[dict[str, Any]]:
     """The doctor's lines for the model: the primary, the fallback, and whether
     anything can draft. With a fallback for proposals, a primary that cannot
-    answer is a warning and the doctor is blocked only when neither can."""
+    answer is a warning and the doctor is blocked only when neither can.
+
+    cron (the hourly doctor): each model is asked one token and nothing more,
+    no model list and no stream test. A primary that only missed (a timeout,
+    an answer that is not JSON) is not known rather than down: one miss is no
+    outage. `seen["probe"]` is left as (answers, sentence, outage) for the
+    model's own status row (_model_status), when the primary was asked."""
     rows: list[dict[str, Any]] = []
+    timeout = 30 if cron else 60
+
+    def probed(ok: bool, detail: str, outage: bool) -> None:
+        if seen is not None:
+            seen["probe"] = (ok, detail, outage)
 
     def add(name: str, ok: Optional[bool], detail: str, required: bool = False) -> None:
         rows.append({"check": name, "ok": ok, "detail": detail, "required": required})
@@ -175,6 +200,9 @@ def model_rows(cfg: Config, log: Logger, *, online: bool, primary: Callable[...,
     except NotNow as e:
         p_err = e if isinstance(e, model_mod.ModelUnreachable) else model_mod.ModelUnreachable(str(e))
         add("model key", False, str(e), not fb_on)
+        # No model can be asked at all: the model's row says so, never an
+        # old "opus answered" left green.
+        probed(False, str(e), True)
 
     f, f_err, fmodel = None, None, ""
     if not fb_any:
@@ -203,16 +231,25 @@ def model_rows(cfg: Config, log: Logger, *, online: bool, primary: Callable[...,
 
     if online and p is not None:
         try:
-            add("model answers", True, p.ping(), not fb_on)
+            answered = p.ping(timeout=timeout)
+            add("model answers", True, answered, not fb_on)
+            probed(True, answered, False)
         except NotNow as e:
+            # An outage: the sign-in lapsed, the proxy is gone, the plan's limit.
             primary_ok = False
             p_err = e if isinstance(e, model_mod.ModelUnreachable) else model_mod.ModelUnreachable(str(e))
             add("model answers", False, str(e), not fb_on)
-        except model_mod.ModelError as e:
+            probed(False, str(e), True)
+        except Exception as e:  # noqa: BLE001 - a 200 with an HTML body, a timeout: one miss, said
+            # One miss is not known, not a blocker; only an outage blocks. A
+            # fallback still takes over for the drafting line.
             primary_ok = False
-            p_err = model_mod.ModelUnreachable(f"{cfg.provider} did not answer a one-token call: {e}",
+            why = http.scrub(str(e))[:200]
+            p_err = model_mod.ModelUnreachable(f"{cfg.provider} did not answer a one-token call: {why}",
                                                cause=f"{cfg.provider} did not answer a one-token call")
-            add("model answers", False, str(p_err), not fb_on)
+            add("model answers", None, str(p_err), not fb_on)
+            probed(False, f"The model did not answer a one-token call: {why}", False)
+    if online and p is not None and not cron:
         try:
             ids = p.models()
             if cfg.model in ids:
@@ -234,16 +271,17 @@ def model_rows(cfg: Config, log: Logger, *, online: bool, primary: Callable[...,
 
     if online and f is not None:
         try:
-            add("fallback answers", True, f.ping())
+            add("fallback answers", True, f.ping(timeout=timeout))
         except NotNow as e:
             fallback_ok = False
             f_err = e if isinstance(e, model_mod.ModelUnreachable) else model_mod.ModelUnreachable(str(e))
             add("fallback answers", False, str(e))
-        except model_mod.ModelError as e:
+        except Exception as e:  # noqa: BLE001 - a timeout or a malformed answer: it did not answer
             fallback_ok = False
-            f_err = model_mod.ModelUnreachable(f"{fname} did not answer a one-token call: {e}",
+            f_err = model_mod.ModelUnreachable(f"{fname} did not answer a one-token call: {http.scrub(str(e))[:200]}",
                                                cause=f"{fname} did not answer a one-token call")
             add("fallback answers", False, str(f_err))
+    if online and f is not None and not cron:
         try:
             ids = f.models()
             if fmodel in ids:
@@ -262,6 +300,8 @@ def model_rows(cfg: Config, log: Logger, *, online: bool, primary: Callable[...,
                                               "drafts ask without streaming and wait for the whole answer instead")
             elif streams:
                 add("fallback streams", True, "streaming works, so a long draft is timed by its silences")
+    if online and f is not None:
+        # Asked on the hourly run too: an account out of credit is an outage.
         credit = f.credit() if fname == "openrouter" and callable(getattr(f, "credit", None)) else None
         if credit is not None:
             if credit > 0:
@@ -332,11 +372,103 @@ def _reference_dom(deal: dict[str, Any]) -> Optional[str]:
         return render_mod.dom(build_mod.build(deal, Path(tmp) / "reference.html"))
 
 
+# How long the desk's model has not answered, kept on its status row: the
+# watchdog's line says since when ("lapsed at {time}"), not only that.
+MODEL_SINCE = re.compile(r"since (\d{4}-\d{2}-\d{2} \d{2}:\d{2}) UTC")
+
+
+def model_probe(p: Any, timeout: float) -> tuple[bool, str, bool]:
+    """One token through the desk's model: (answers, a sentence, an outage).
+    The cheap check the hourly doctor and every follow-up run make, so a
+    lapsed sign-in shows the hour it happens and not when a draft is next
+    tried. An outage is the provider saying it will not answer (NotNow: the
+    sign-in lapsed, the proxy gone, the plan's limit); anything else (a
+    timeout, an answer that is not JSON) is one miss. It never raises: a
+    probe that breaks is a sentence, never a dead doctor."""
+    try:
+        return True, p.ping(timeout=timeout), False
+    except NotNow as e:
+        return False, str(e), True
+    except Exception as e:  # noqa: BLE001 - a 200 with an HTML body, a timeout: one miss, said
+        return False, f"The model did not answer a one-token call: {http.scrub(str(e))[:200]}", False
+
+
+def job_probe(p: Any, timeout: float) -> tuple[bool, str, bool, Optional[str]]:
+    """The follow-ups job's one token, with a fallback behind it or not:
+    (answers, sentence, outage) for the model's own status row, which is
+    always the primary's, so a lapsed sign-in stays said while the fallback
+    drafts; and the sentence that stops the drafting (an outage with nothing
+    to hand over to), else None. A primary that is down hands over here, as
+    a draft's own call would, rather than stopping a job SALES_FALLBACK_JOBS
+    lets fall back. Like model_probe it never raises."""
+    if not isinstance(p, model_mod.Failover):
+        ok, said, outage = model_probe(p, timeout)
+        return ok, said, outage, (said if outage else None)
+    try:
+        p.ready()
+    except NotNow as e:  # neither could be made
+        return False, str(e), True, str(e)
+    if p.on_fallback:
+        # The primary could not even be made: said as down, never pinged.
+        return False, str(p.down or "The primary model cannot be made."), True, None
+    try:
+        return True, p.p.ping(timeout=timeout), False, None
+    except NotNow as e:
+        try:
+            p.hand_over(e)
+        except NotNow as both:
+            return False, str(e), True, str(both)
+        return False, str(e), True, None
+    except Exception as e:  # noqa: BLE001 - a 200 with an HTML body, a timeout: one miss, said
+        return False, f"The model did not answer a one-token call: {http.scrub(str(e))[:200]}", False, None
+
+
+# Said on the model's row after one call that did not answer, and read
+# back: a second one in a row is an outage (the row turns false), one alone
+# is not (the watchdog's Slack line would blame a lapsed sign-in).
+ONE_MISS = "one miss is not an outage"
+
+
+def _model_status(cfg: Config, log: Logger, ok: bool, detail: str, now: Optional[datetime] = None,
+                  outage: bool = True) -> None:
+    """The (sales-desk, model) status row. While it stays down, the time it
+    first went down is kept. A probe that only missed (outage=False) keeps
+    the row as it was the first time and says so; two in a row are down."""
+    now = now or datetime.now(timezone.utc)
+    try:
+        sb = _sb(cfg)
+        if ok:
+            sb.worker_status(WORKER, "model", True, detail)
+            return
+        prev = sb.select("cockpit_sales_worker_status", f"select=ok,detail&worker=eq.{WORKER}&job=eq.model&limit=1")
+        was_down = bool(prev and prev[0].get("ok") is False)
+        if not outage and not was_down and ONE_MISS not in str((prev[0] if prev else {}).get("detail") or ""):
+            sb.worker_status(WORKER, "model", True, f"{detail.rstrip('.')}; {ONE_MISS}, so drafting goes on")
+            return
+        m = MODEL_SINCE.search(str(prev[0].get("detail") or "")) if was_down else None
+        since = m.group(1) if m else now.strftime("%Y-%m-%d %H:%M")
+        sb.worker_status(WORKER, "model", False, f"{detail.rstrip('.')}. Not answering since {since} UTC")
+    except (SupabaseError, http.HttpError) as e:
+        log.warn(f"model status not written: {http.scrub(str(e))[:200]}")
+
+
 def cmd_doctor(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
+    """Every key by name, each service, each blocker in a sentence. With
+    --cron (hourly): the model (and a fallback, when one is set) is asked one
+    token and nothing more, nothing is rendered, every check that breaks is a
+    row rather than a crash, the status rows are written whatever happens,
+    and a ready run prints nothing with --quiet."""
+    cron = bool(getattr(args, "cron", False))
     rows: list[dict[str, Any]] = []
 
     def add(name: str, ok: Optional[bool], detail: str, required: bool = False) -> None:
         rows.append({"check": name, "ok": ok, "detail": detail, "required": required})
+
+    def guarded(name: str, required: bool, fn: Callable[[], None]) -> None:
+        try:
+            fn()
+        except Exception as e:  # noqa: BLE001 - a check that breaks is a row, never a dead doctor
+            add(name, False if required else None, f"the check itself failed: {http.scrub(str(e))[:200]}", required)
 
     add("python", sys.version_info >= (3, 9), sys.version.split()[0], True)
     for label, path in (("SKILL.md", prompt_mod.SKILL_FILE), ("PATTERNS.md", prompt_mod.PATTERNS_FILE),
@@ -345,18 +477,24 @@ def cmd_doctor(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     if build_mod.TEMPLATE.is_file() and not build_mod.DATA_BLOCK.search(build_mod.TEMPLATE.read_text(encoding="utf-8")):
         add("template", False, "the @data-start / @data-end markers are gone, so no deal can be put into it", True)
 
-    offer = None
-    try:
-        offer = offer_mod.load()
-        options = list((offer.get("payment") or {}).get("options") or {})
-        for option in options:
-            offer_mod.resolve(offer, {"payment": option})
-        r = offer_mod.resolve(offer, {})
-        add("offer.json", True, f"{offer_mod.money(r['price'])} over {offer_mod.months_words(r['months'])}, "
-                                f"payment options {', '.join(options)}, guarantee "
-                                f"{'on' if r['guarantee'] else 'off'} unless the closer says otherwise", True)
-    except Refused as e:
-        add("offer.json", False, str(e), True)
+    # Kept for the reference deals below, which are checked against it.
+    offer: Optional[dict[str, Any]] = None
+
+    def offer_check() -> None:
+        nonlocal offer
+        try:
+            loaded = offer_mod.load()
+            options = list((loaded.get("payment") or {}).get("options") or {})
+            for option in options:
+                offer_mod.resolve(loaded, {"payment": option})
+            r = offer_mod.resolve(loaded, {})
+            offer = loaded
+            add("offer.json", True, f"{offer_mod.money(r['price'])} over {offer_mod.months_words(r['months'])}, "
+                                    f"payment options {', '.join(options)}, guarantee "
+                                    f"{'on' if r['guarantee'] else 'off'} unless the closer says otherwise", True)
+        except Refused as e:
+            add("offer.json", False, str(e), True)
+    guarded("offer.json", True, offer_check)
 
     # By name only. A value is never printed, not even its length.
     for name in ("DESK_SUPABASE_URL", "DESK_SUPABASE_KEY", "FATHOM_API_KEY",
@@ -367,33 +505,61 @@ def cmd_doctor(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     # cockpit keeps its last copy.
     add("TYPEFORM_API_TOKEN", True if key("TYPEFORM_API_TOKEN") else None,
         "set" if key("TYPEFORM_API_TOKEN") else "not set: the cockpit's New Client Form list stops following Typeform")
+    # Only the Slack poster needs it (App Home replies, inside the rooms
+    # run), and only once live.slack is switched on.
+    add("SLACK_SALES_BOT_TOKEN", True if key("SLACK_SALES_BOT_TOKEN") else None,
+        "set" if key("SLACK_SALES_BOT_TOKEN") else "not set: Slack replies to App Home presses wait (set it before "
+        "live.slack is switched on)")
     # Only calls-b2b-fathom needs it, once; its absence blocks nothing else.
     add("SALES_B2B_MGMT_TOKEN", True if key("SALES_B2B_MGMT_TOKEN") else None,
         "set" if key("SALES_B2B_MGMT_TOKEN") else "not set: only the one-off calls-b2b-fathom needs it")
+    # The room worker's keys, checked live unless --offline: keys that are
+    # present can still be refused, or (Google) carry no Calendar permission.
+    # Without them the worker's own status row says which video service
+    # cannot be made; nothing else waits on them.
+    # Guarded like every other check: a room check that breaks is a row, never
+    # a dead doctor (the hourly --cron run still writes its status rows).
+    def room_keys() -> None:
+        for name, ok, detail in rooms_mod.doctor_lines(offline=args.offline):
+            add(name, ok, detail)
+    guarded("rooms", False, room_keys)
+
     # The primary, the fallback, and whether anything can draft (model_rows).
-    rows.extend(model_rows(cfg, log, online=not args.offline))
+    # Under --cron each is asked one token and nothing more; the primary's
+    # answer also goes on the model's own status row (_model_status below).
+    seen: dict[str, Any] = {}
+
+    def models() -> None:
+        rows.extend(model_rows(cfg, log, online=not args.offline, cron=cron, seen=seen))
+    guarded("model", True, models)
 
     engine = render_mod.engine()
     add(*_browser_row(engine, render_mod.find_chrome()))
     renders = False
-    if engine != "none" and not args.offline:
+    if engine != "none" and not args.offline and not cron:
         # Measured, never assumed: the browser line only says what was found.
-        found = render_mod.probe()
-        add(*_render_row(found))
-        renders = bool(found.get("dom"))
+        # The hourly run renders nothing.
+        def render_check() -> None:
+            nonlocal renders
+            found = render_mod.probe()
+            add(*_render_row(found))
+            renders = bool(found.get("dom"))
+        guarded("render", False, render_check)
 
     # Each one through the validator against today's offer.json, because the
     # drafter copies its faults as faithfully as its shape (references.py);
     # rendered too when the browser just did, as validate --send would.
-    if offer is None:
-        add("reference deals", None, "not checked: offer.json does not read, and the references are checked "
-                                     "against it. Fix offer.json first")
-    else:
+    def reference_check() -> None:
+        if offer is None:
+            add("reference deals", None, "not checked: offer.json does not read, and the references are checked "
+                                         "against it. Fix offer.json first")
+            return
         try:
             add("reference deals", *references_mod.doctor_row(cfg.reference_dir, offer,
                                                               _reference_dom if renders else None))
         except Refused as e:
             add("reference deals", None, f"not checked, because offer.json gives no default offer: {e}")
+    guarded("reference deals", False, reference_check)
 
     try:
         cfg.ensure_dirs()
@@ -407,81 +573,114 @@ def cmd_doctor(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     if not args.offline:
         if cfg.supabase_configured:
             sb = _sb(cfg)
-            bad = []
-            for table in TABLES:
+
+            def tables() -> None:
+                bad = []
+                for table in TABLES:
+                    try:
+                        sb.select(table, "select=*&limit=1")
+                    except (http.HttpError, SupabaseError) as e:
+                        bad.append(f"{table} ({http.scrub(str(e))[:80]})")
+                add("supabase tables", not bad, f"all {len(TABLES)} answer" if not bad else
+                    "these do not answer, so the migration 20260924a_sales_cockpit.sql is not applied: " + "; ".join(bad), True)
+            guarded("supabase tables", True, tables)
+
+            def db_clock() -> None:
+                # The SQL sweep owns every room timer and compares with the
+                # database's clock; the room worker writes on this one.
+                off = sb.clock_offset
+                if off is None:
+                    add("database clock", None, "not compared: the database's answer carried no Date header")
+                    return
+                n = int(round(abs(off)))
+                way = "behind" if off > 0 else "ahead of"
+                if n > 60:
+                    add("database clock", False, f"this VPS's clock is {n} seconds {way} the database's: the room worker "
+                                                 "makes no room until it is fixed (timedatectl, or chrony)", True)
+                elif n > 10:
+                    # A fault, not a warning: the waves job paces its sends and
+                    # counts the sender ceiling against the database's times,
+                    # and the rooms' times are on that clock too.
+                    add("database clock", False, f"this VPS's clock is {n} seconds {way} the database's: the waves "
+                                                 "job's paced sends and the rooms' times go wrong; fix it "
+                                                 "(timedatectl, or chrony)", True)
+                else:
+                    add("database clock", True, f"within {max(n, 1)} second{'s' if n > 1 else ''} of the database's")
+            guarded("database clock", False, db_clock)
+
+            def bucket() -> None:
                 try:
-                    sb.select(table, "select=*&limit=1")
-                except (http.HttpError, SupabaseError) as e:
-                    bad.append(f"{table} ({http.scrub(str(e))[:80]})")
-            add("supabase tables", not bad, f"all {len(TABLES)} answer" if not bad else
-                "these do not answer, so the migration 20260924a_sales_cockpit.sql is not applied: " + "; ".join(bad), True)
-            try:
-                b = sb.bucket_info()
-                private = b.get("public") is False
-                add("bucket", True if private else None,
-                    f"{cfg.bucket} exists and is private" if private else
-                    f"{cfg.bucket} exists but is PUBLIC: a proposal carries a client's numbers; make it private")
-            except http.HttpError as e:
-                add("bucket", False, f"the {cfg.bucket} bucket does not answer ({e.status}), so no file can be "
-                                     "stored: apply 20260924b_sales_proposal_files.sql", True)
-            try:
+                    b = sb.bucket_info()
+                    private = b.get("public") is False
+                    add("bucket", True if private else None,
+                        f"{cfg.bucket} exists and is private" if private else
+                        f"{cfg.bucket} exists but is PUBLIC: a proposal carries a client's numbers; make it private")
+                except http.HttpError as e:
+                    add("bucket", False, f"the {cfg.bucket} bucket does not answer ({e.status}), so no file can be "
+                                         "stored: apply 20260924b_sales_proposal_files.sql", True)
+            guarded("bucket", True, bucket)
+
+            def fathom_seats() -> None:
                 with_fathom = [x for x in sb.people() if x.get("fathom_email")]
                 add("reps in Fathom", True if with_fathom else None,
                     f"{len(with_fathom)} seat(s) carry a fathom_email and are asked for by name" if with_fathom else
                     "no seat carries a fathom_email yet, so only the key owner's own calls are indexed")
-            except (http.HttpError, SupabaseError):
-                pass
+            guarded("reps in Fathom", False, fathom_seats)
+            guarded("follow-up agent", False, lambda: _agent_checks(sb, add))
         else:
             add("supabase", False, "DESK_SUPABASE_URL and DESK_SUPABASE_KEY are not set, so nothing can be read "
                                    "or written; source ~/.editor-desk/env", True)
 
-        if cfg.fathom_key:
-            try:
-                from datetime import datetime, timedelta, timezone
-                f = fathom_mod.Fathom(cfg.fathom_key, pace=cfg.fathom_pace, log=log.info)
-                d = f.get("/meetings", [("created_after", (datetime.now(timezone.utc) - timedelta(days=7))
-                                         .replace(microsecond=0).isoformat().replace("+00:00", "Z"))])
-                add("fathom", True, f"answers: {len(d.get('items') or [])} calls in the last week on the first page", True)
-            except fathom_mod.FathomError as e:
-                add("fathom", False, f"Fathom did not answer: {e}", True)
-        else:
-            add("fathom", False, "FATHOM_API_KEY is not set, so no call can be read and nothing can be drafted", True)
-
-        try:
-            # The Fathom check above imports these inside this function, which
-            # makes them local names here too; import them for this branch.
-            from datetime import datetime, timedelta, timezone
-            mq = maqsam_mod.Maqsam(key("MAQSAM_ACCESS_KEY"), key("MAQSAM_SECRET"))
-            seats = maqsam_mod.seats(_sb(cfg)) if cfg.supabase_configured else []
-            if seats:
-                end = datetime.now(timezone.utc)
-                page = mq.get("/v3/calls", {"email": seats[0], "start_time": int((end - timedelta(days=1)).timestamp()),
-                                            "end_time": int(end.timestamp()), "page": 1})
-                n = len(page.get("message") or []) if isinstance(page, dict) else 0
-                add("maqsam", True, f"answers: {n} of one seat's calls in the last day on the first page; "
-                                    f"{len(seats)} seat(s) carry a Maqsam address")
+        def fathom_check() -> None:
+            if cfg.fathom_key:
+                try:
+                    f = fathom_mod.Fathom(cfg.fathom_key, pace=cfg.fathom_pace, log=log.info)
+                    d = f.get("/meetings", [("created_after", (datetime.now(timezone.utc) - timedelta(days=7))
+                                             .replace(microsecond=0).isoformat().replace("+00:00", "Z"))])
+                    add("fathom", True, f"answers: {len(d.get('items') or [])} calls in the last week on the first page", True)
+                except fathom_mod.FathomError as e:
+                    add("fathom", False, f"Fathom did not answer: {e}", True)
             else:
-                add("maqsam", None, "no rep or seat carries a maqsam_email, so no phone call is copied")
-        except (maqsam_mod.MaqsamError, http.HttpError, SupabaseError) as e:
-            add("maqsam", None, f"phone calls cannot be copied: {http.scrub(str(e))[:200]}")
+                add("fathom", False, "FATHOM_API_KEY is not set, so no call can be read and nothing can be drafted", True)
+        guarded("fathom", True, fathom_check)
 
-        ghl_token = key("GHL_B2B_API_KEY") or key("SALES_GHL_TOKEN")
-        if ghl_token:
+        def maqsam_check() -> None:
             try:
-                followups_mod.ghl_probe(ghl_token)
-                add("highlevel", True, "answers: the sales sub-account's conversations can be read, as the follow-up "
-                                       "agent and the template check need", True)
-            except http.HttpError as e:
-                add("highlevel", False, f"HighLevel refused the desk's key ({e.status}): set GHL_B2B_API_KEY in "
-                                        "/opt/data/bibi/api-keys.env. Until then follow-ups wait", True)
-        else:
-            add("highlevel", False, "GHL_B2B_API_KEY is not set, so the follow-up agent cannot read a conversation "
-                                    "and writes nothing", True)
+                mq = maqsam_mod.Maqsam(key("MAQSAM_ACCESS_KEY"), key("MAQSAM_SECRET"))
+                seats = maqsam_mod.seats(_sb(cfg)) if cfg.supabase_configured else []
+                if seats:
+                    end = datetime.now(timezone.utc)
+                    page = mq.get("/v3/calls", {"email": seats[0], "start_time": int((end - timedelta(days=1)).timestamp()),
+                                                "end_time": int(end.timestamp()), "page": 1})
+                    n = len(page.get("message") or []) if isinstance(page, dict) else 0
+                    add("maqsam", True, f"answers: {n} of one seat's calls in the last day on the first page; "
+                                        f"{len(seats)} seat(s) carry a Maqsam address")
+                else:
+                    add("maqsam", None, "no rep or seat carries a maqsam_email, so no phone call is copied")
+            except (maqsam_mod.MaqsamError, http.HttpError, SupabaseError) as e:
+                add("maqsam", None, f"phone calls cannot be copied: {http.scrub(str(e))[:200]}")
+        guarded("maqsam", False, maqsam_check)
+
+        def highlevel_check() -> None:
+            ghl_token = key("GHL_B2B_API_KEY") or key("SALES_GHL_TOKEN")
+            if ghl_token:
+                try:
+                    followups_mod.ghl_probe(ghl_token)
+                    add("highlevel", True, "answers: the sales sub-account's conversations can be read, as the follow-up "
+                                           "agent and the template check need", True)
+                except http.HttpError as e:
+                    add("highlevel", False, f"HighLevel refused the desk's key ({e.status}): set GHL_B2B_API_KEY in "
+                                            "/opt/data/bibi/api-keys.env. Until then follow-ups wait", True)
+            else:
+                add("highlevel", False, "GHL_B2B_API_KEY is not set, so the follow-up agent cannot read a conversation "
+                                        "and writes nothing", True)
+        guarded("highlevel", True, highlevel_check)
 
     blockers = [r for r in rows if r["required"] and r["ok"] is False]
+    unknown = [r for r in rows if r["required"] and r["ok"] is None]
     if args.json:
         _print({"checks": rows, "blockers": [b["detail"] for b in blockers]}, True)
-    else:
+    elif not (cron and args.quiet and not blockers):
         for r in rows:
             mark = {True: "OK ", False: "-- ", None: "?? "}[r["ok"]]
             print(f"{mark} {r['check']:<18} {r['detail']}")
@@ -493,9 +692,51 @@ def cmd_doctor(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
         else:
             print("ready")
     if not args.offline:
-        _status(cfg, log, "doctor", not blockers,
-                "ready" if not blockers else "blocked: " + " | ".join(b["detail"] for b in blockers))
+        # Missing is never zero: a check that could not say is named, not
+        # counted as passed.
+        detail = ("ready" if not blockers else "blocked: " + " | ".join(b["detail"] for b in blockers)) + \
+            ("; not known: " + " | ".join(f"{u['check']} ({u['detail']})" for u in unknown) if unknown else "")
+        _status(cfg, log, "doctor", not blockers, detail)
+        probed = seen.get("probe")
+        if probed is not None:
+            _model_status(cfg, log, probed[0], probed[1], outage=probed[2])
     return 1 if blockers else 0
+
+
+def _agent_checks(sb: Supabase, add: Callable[..., None]) -> None:
+    """What the follow-up agent and the waves need beyond the desk's own
+    tables, said plainly; none of it blocks the other jobs."""
+    missing = []
+    for table in (followups_mod.STOPS, waves_mod.WAVES, waves_mod.MEMBERS, waves_mod.META):
+        try:
+            sb.select(table, "select=*&limit=1")
+        except (http.HttpError, SupabaseError):
+            missing.append(table)
+    add("agent tables", None if missing else True,
+        "not there yet (migration 20261003c): " + ", ".join(missing) + ". Stop words still leave leads alone, but "
+        "no rep is asked about them, and no wave can run" if missing else "stops, waves, members and meta answer")
+    try:
+        gate = followups_mod.wa_gate(sb.setting("whatsapp_guard"))
+    except (http.HttpError, SupabaseError):
+        gate = followups_mod.GATE_CLOSED
+    add("whatsapp gate", None if gate else True, gate.rstrip(".") if gate else
+        "open: the WA Connector is off and the single-copy test passed")
+    # The database's kind check must allow `reactivate` (migration 20261003b)
+    # or it refuses every opener. Nothing is written to find out: an opener
+    # already there proves it, and none yet is said as not known.
+    try:
+        seen = sb.select("cockpit_sales_followups", "select=id&segment=eq.reactivate&limit=1")
+        add("reactivate kind", True if seen else None,
+            "accepted: openers are in the database" if seen else
+            "not known yet: no opener has been written. Until migration 20261003b lands, the database refuses "
+            "every opener and the waves row says so")
+    except (http.HttpError, SupabaseError) as e:
+        add("reactivate kind", None, f"could not be read: {http.scrub(str(e))[:120]}")
+    routes = waves_mod._routes(sb)
+    add("opener templates", True if len(routes) == 2 else None,
+        "opener_ar and opener_en are set up" if len(routes) == 2 else
+        "not set up: " + ", ".join(k for lang, k in waves_mod.OPENERS.items() if lang not in routes)
+        + ". Waves write no opener without them")
 
 
 def _resync_stuck(cfg: Config, log: Logger) -> str:
@@ -792,15 +1033,83 @@ def cmd_research(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     return 0
 
 
+def desk_api(cfg: Config, timeout: float = 90) -> Callable[[str, dict[str, Any]], tuple[int, dict[str, Any]]]:
+    """The cockpit's own door, asked by the desk with its service key: the
+    answer's status with its body, a refusal included (409, 429 ...)."""
+    def call(action: str, payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        status, _, raw = http.request(
+            "POST", f"{cfg.supabase_url.rstrip('/')}/functions/v1/sales-api",
+            headers={"Authorization": f"Bearer {cfg.supabase_key}", "Content-Type": "application/json",
+                     "x-region": "eu-west-1"},
+            data=json.dumps({"action": action, **payload}).encode(),
+            timeout=timeout, retries=0, ok_statuses=(200, 400, 403, 404, 409, 429, 500, 502, 503),
+        )
+        try:
+            body = json.loads(raw.decode("utf-8") or "{}")
+        except ValueError:
+            body = {"error": raw.decode("utf-8", "replace")[:300]}
+        return status, body if isinstance(body, dict) else {"result": body}
+    return call
+
+
+def followups_words(out: dict[str, Any]) -> str:
+    """The follow-ups job's status line from a run's counts."""
+    if "skipped" in out:
+        return str(out["skipped"])
+    if out.get("model_down"):
+        due = out.get("picked")
+        return (f"No drafts can be written: {str(out['model_down']).rstrip('.')}. "
+                + (f"{due} leads are due and wait" if due else "No lead is due right now")
+                + (f"; {out['went_stale']} stale drafts closed" if out.get("went_stale") else ""))
+    words = {"whatsapp": "WhatsApp", "whatsapp_template": "WhatsApp template", "email": "email"}
+    channels = ", ".join(f"{n} {words.get(k, k)}" for k, n in (out.get("by_channel") or {}).items())
+    settled = out.get("settled") or {}
+    return (f"{out['written']} drafts written of {out['picked']} leads due"
+            + (f" ({channels})" if channels else "")
+            + (f", {out['sent_by_itself']} sent by themselves" if out.get("sent_by_itself") else "")
+            + (f", {out['kept_for_a_person']} kept for a person to send" if out.get("kept_for_a_person") else "")
+            + (f", {out['held_for_automation']} waiting while a HighLevel automation messages them"
+               if out.get("held_for_automation") else "")
+            + (f", {out['in_a_conversation']} already talking with a rep" if out.get("in_a_conversation") else "")
+            + (f", {out['already_answered']} already answered" if out.get("already_answered") else "")
+            + (f", {out['asked_to_stop']} asked to stop (a rep confirms)" if out.get("asked_to_stop") else "")
+            + (f", {out['paused']} paused for 30 days after a stop word" if out.get("paused") else "")
+            + (", stop words not kept for a rep: the stops table cannot be read" if out.get("stops_unread") else "")
+            + (f", {out['conversation_unreadable']} waiting because HighLevel could not be read"
+               if out.get("conversation_unreadable") else "")
+            + (f", {out['no_open_channel']} with no open channel" if out.get("no_open_channel") else "")
+            + (f", {out['not_sales_leads']} not sales leads (clients, or no pipeline)" if out.get("not_sales_leads") else "")
+            + (f", {out['set_aside']} set aside for a day after failing twice" if out.get("set_aside") else "")
+            + (f", {out['raced']} written meanwhile by another run" if out.get("raced") else "")
+            + (f", {out['replies_marked']} replies to earlier messages" if out.get("replies_marked") else "")
+            + (f", {out['went_stale']} stale drafts closed" if out.get("went_stale") else "")
+            + (f", {out['reason_gone']} drafts closed because their reason is gone" if out.get("reason_gone") else "")
+            + (f", {out['stuck_freed']} sends that stopped halfway freed" if out.get("stuck_freed") else "")
+            + (f", {settled.get('gone', 0) + settled.get('failed', 0)} sends settled"
+               + (f" ({settled['failed']} failed at HighLevel)" if settled.get("failed") else "")
+               if settled.get("gone") or settled.get("failed") else "")
+            + (f", {out['failed']} failed" if out.get("failed") else "")
+            + ("; the agent was switched off during the run, so it stopped there" if out.get("switched_off") else ""))
+
+
 def cmd_followups(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
-    """Write follow-up drafts for the leads who need one now, for their reps to approve."""
+    """Write follow-up drafts for the leads who need one now, for their reps to approve.
+
+    With --contact, the test path: one contact tagged cockpit-test, no other
+    lead's rows touched, nothing sent by itself, no status row written (a
+    test run is no sign the cron is alive)."""
+    test = bool(getattr(args, "contact", None))
+    if getattr(args, "segment", None) and not test:
+        log.error("--segment drafts a kind for a test contact only: give --contact as well.")
+        return 2
     ghl_token = key("GHL_B2B_API_KEY") or key("SALES_GHL_TOKEN")
     if not ghl_token:
         # Without it every conversation reads as empty: no automation's
         # message, no stop, no window. Nothing is written instead.
         detail = ("GHL_B2B_API_KEY is not set, so the follow-up agent cannot read a conversation and writes nothing. "
                   "Set it in /opt/data/bibi/api-keys.env.")
-        _status(cfg, log, "followups", False, detail)
+        if not test:
+            _status(cfg, log, "followups", False, detail)
         log.error(detail)
         return 1
     sb = _sb(cfg)
@@ -812,54 +1121,123 @@ def cmd_followups(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
             cfg.model = model
         p = model_mod.for_job(cfg, "followups", log.info, warn=log.warn)
     except model_mod.ModelUnreachable as e:
-        _status(cfg, log, "followups", False, str(e))
+        if not test:
+            _status(cfg, log, "followups", False, str(e))
+            _model_status(cfg, log, False, str(e))  # no model at all: never an old "answered" left green
         log.error(str(e))
         return 1
+    # One token first: a lapsed sign-in is said on the status row every run,
+    # not only when a draft happens to be tried (it hid for days behind
+    # "0 drafts written").
+    # Only an outage (the sign-in, the proxy gone, the plan's limit) stops
+    # the drafting; a probe that merely timed out is said, and drafting is
+    # still tried, each draft with its own retries.
+    # With followups in SALES_FALLBACK_JOBS, a primary that is down hands
+    # over to the fallback here (job_probe) and drafting goes on; the model's
+    # row still says the primary is down.
+    model_down = None
+    if getattr(args, "segment", None) != "reactivate":
+        ok, said, outage, model_down = job_probe(p, 30)
+        if not ok and not outage:
+            log.warn(f"followups: {said}; drafting is tried all the same")
+        if not test:
+            _model_status(cfg, log, ok, said, outage=outage)
+    try:
+        guard = sb.setting("whatsapp_guard")
+    except (SupabaseError, http.HttpError):
+        guard = None  # unreadable: the gate stays shut
 
     def sales_api(action: str, followup_id: str) -> dict:
-        """The cockpit's own door, asked by the desk with its service key."""
-        _, _, raw = http.request(
-            "POST", f"{cfg.supabase_url.rstrip('/')}/functions/v1/sales-api",
-            headers={"Authorization": f"Bearer {cfg.supabase_key}", "Content-Type": "application/json"},
-            data=json.dumps({"action": action, "id": followup_id}).encode(),
-            timeout=60, retries=0, ok_statuses=(200, 400, 403, 404, 409, 500, 502),
-        )
-        return json.loads(raw.decode("utf-8") or "{}")
+        _, body = desk_api(cfg, timeout=60)(action, {"id": followup_id})
+        return body
 
     out = followups_mod.run(sb, p, log.info, settings=settings, ghl_token=ghl_token, warn=log.warn,
                             autosend=lambda i: sales_api("followup.autosend", i),
-                            settle=lambda i: sales_api("followup.settle", i))
-    if "skipped" in out:
-        detail = out["skipped"]
-    else:
-        words = {"whatsapp": "WhatsApp", "whatsapp_template": "WhatsApp template", "email": "email"}
-        channels = ", ".join(f"{n} {words.get(k, k)}" for k, n in (out.get("by_channel") or {}).items())
-        settled = out.get("settled") or {}
-        detail = (f"{out['written']} drafts written of {out['picked']} leads due"
-                  + (f" ({channels})" if channels else "")
-                  + (f", {out['sent_by_itself']} sent by themselves" if out.get("sent_by_itself") else "")
-                  + (f", {out['held_for_automation']} waiting while a HighLevel automation messages them"
-                     if out.get("held_for_automation") else "")
-                  + (f", {out['in_a_conversation']} already talking with a rep" if out.get("in_a_conversation") else "")
-                  + (f", {out['already_answered']} already answered" if out.get("already_answered") else "")
-                  + (f", {out['asked_to_stop']} asked not to be messaged" if out.get("asked_to_stop") else "")
-                  + (f", {out['conversation_unreadable']} waiting because HighLevel could not be read"
-                     if out.get("conversation_unreadable") else "")
-                  + (f", {out['no_open_channel']} with no open channel" if out["no_open_channel"] else "")
-                  + (f", {out['not_sales_leads']} not sales leads (clients, or no pipeline)" if out.get("not_sales_leads") else "")
-                  + (f", {out['set_aside']} set aside for a day after failing twice" if out.get("set_aside") else "")
-                  + (f", {out['replies_marked']} replies to earlier messages" if out.get("replies_marked") else "")
-                  + (f", {out['went_stale']} stale drafts closed" if out.get("went_stale") else "")
-                  + (f", {out['reason_gone']} drafts closed because their reason is gone" if out.get("reason_gone") else "")
-                  + (f", {out['stuck_freed']} sends that stopped halfway freed" if out.get("stuck_freed") else "")
-                  + (f", {settled.get('gone', 0) + settled.get('failed', 0)} sends settled"
-                     + (f" ({settled['failed']} failed at HighLevel)" if settled.get("failed") else "")
-                     if settled.get("gone") or settled.get("failed") else "")
-                  + (f", {out['failed']} failed" if out["failed"] else ""))
-    _status(cfg, log, "followups", not out.get("failed"), detail)
-    if out.get("written") or out.get("failed") or args.json:
+                            settle=lambda i: sales_api("followup.settle", i),
+                            only_contact=getattr(args, "contact", None), force_segment=getattr(args, "segment", None),
+                            model_down=model_down, guard=guard if isinstance(guard, dict) else {})
+    detail = followups_words(out)
+    if test:
+        _print(out if args.json else ("Test run: " + detail), args.json)
+        return 0 if out.get("written") else 1
+    _status(cfg, log, "followups", not out.get("failed") and not out.get("model_down"), detail)
+    if out.get("written") or out.get("failed") or out.get("model_down") or args.json:
         _print(out if args.json else detail, args.json)
-    return 0
+    return 1 if out.get("model_down") else 0
+
+
+def cmd_waves(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
+    """Backlog waves: enrol, keep members in step, write the day's openers,
+    send what a person approved, paced. --pools only counts the pools."""
+    sb = _sb(cfg)
+    settings = sb.setting("followups") or {}
+    if getattr(args, "pools", False):
+        summary = waves_mod.pools_summary(sb, datetime.now(timezone.utc), waves_mod.settings_of(settings))
+        _print(summary if args.json else "\n".join(
+            f"{waves_mod.POOL_WORDS[k]}: {v['leads']} leads, {v['held_back']} held back, {v['to_message']} to message"
+            for k, v in summary.items()), args.json)
+        return 0
+    try:
+        guard = sb.setting("whatsapp_guard")
+    except (SupabaseError, http.HttpError):
+        guard = None
+    try:
+        out = waves_mod.run(sb, desk_api(cfg), settings=settings, guard=guard if isinstance(guard, dict) else {},
+                            ghl_token=key("GHL_B2B_API_KEY") or key("SALES_GHL_TOKEN"), log=log.info, warn=log.warn,
+                            budget_s=float(getattr(args, "budget", None) or 270))
+    except Exception as e:  # noqa: BLE001 - said on the status row, never a silent death
+        detail = f"The waves job stopped: {http.scrub(str(e))[:300]}"
+        _status(cfg, log, "waves", False, detail)
+        log.error(detail)
+        return 1
+    ok, detail = waves_mod.words(out)
+    _status(cfg, log, "waves", ok, detail)
+    busy = (out.get("enrolled") or (out.get("drafted") or {}).get("drafted") or (out.get("sent") or {}).get("sent")
+            or (out.get("sent") or {}).get("stopped"))
+    if busy or args.json:
+        _print(out if args.json else detail, args.json)
+    return 0 if ok else 1
+
+
+def cmd_rooms(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
+    """Make the video rooms the cockpit asks for: about a minute a run, a tick
+    every second, under a cron line every minute (README, Video rooms)."""
+    sb = rooms_mod.supabase(cfg.supabase_url, cfg.supabase_key)
+    worker = rooms_mod.Worker.from_env(sb, cfg.supabase_url, cfg.supabase_key, log)
+    if args.check_hosts:
+        # Its own cron line every 10 minutes (README), so it never holds a
+        # new room up; its status row is room-hosts.
+        try:
+            out = worker.check_hosts()
+        except (SupabaseError, http.HttpError, rooms_mod.TablesMissing) as e:
+            reason = rooms_mod.db_reason(e) if isinstance(e, http.HttpError) else http.scrub(str(e))[:300]
+            log.error(f"rooms: the host check stopped: {reason}")
+            _status(cfg, log, rooms_mod.HOSTS_JOB, False, f"The host check stopped: {reason}")
+            return 1
+        if args.json or not out["ok"] or not args.quiet:
+            _print(out if args.json else "\n".join(out["lines"]), args.json)
+        return 0 if out["ok"] else 1
+    seconds = 0.0 if args.once else max(0.0, args.for_s)
+    out = worker.run(seconds=seconds, every=max(0.2, args.every), max_claims=max(1, args.max_claims))
+    if args.json or out["made"] or out["failed"] or out.get("blocked"):
+        _print(out, True)
+    return 1 if out.get("blocked") else 0
+
+
+def cmd_deploy_check(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
+    """Is this box ready for live calls and the follow-up agent with every
+    switch still off? Keys by name, the tables, columns, function and
+    settings the code needs, the switches, the status rows and the crontab.
+    It changes nothing: GETs only, no status row, no file."""
+    sb = None
+    if cfg.supabase_configured:
+        sb = Supabase(cfg.supabase_url, cfg.supabase_key, timeout=10)
+    report = deploycheck_mod.run(sb)
+    if args.json:
+        _print({"checks": report.rows, "blockers": [b["detail"] for b in report.blockers]}, True)
+    else:
+        print(deploycheck_mod.words(report))
+    return 1 if report.blockers else 0
 
 
 def notes_provider(cfg: Config, log: Logger, job: str = "notes") -> Any:
@@ -1056,6 +1434,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     ap.add_argument("--quiet", action="store_true", help="only warnings and errors on stderr")
     sub = ap.add_subparsers(dest="cmd", required=True)
     d = sub.add_parser("doctor"); d.add_argument("--offline", action="store_true")
+    d.add_argument("--cron", action="store_true", help="the hourly run: one-token model probe, no render, quiet when ready")
     rq = sub.add_parser("requests"); rq.add_argument("--limit", type=int)
     rc = sub.add_parser("recordings"); rc.add_argument("--days", type=int)
     cv = sub.add_parser("calls-vault"); cv.add_argument("--vault")
@@ -1075,7 +1454,24 @@ def main(argv: Optional[list[str]] = None) -> int:
     rv = sub.add_parser("reviews"); rv.add_argument("--limit", type=int); rv.add_argument("--days", type=int)
     rv.add_argument("--asked", action="store_true", help="only the calls reps asked to have reviewed")
     rs = sub.add_parser("research"); rs.add_argument("--limit", type=int)
-    sub.add_parser("followups")
+    fo = sub.add_parser("followups")
+    fo.add_argument("--contact", help="draft only for this contact, which must be tagged cockpit-test (the test path)")
+    fo.add_argument("--segment", choices=list(followups_mod.SEGMENTS),
+                    help="with --contact: draft this kind's first message whether or not it is due")
+    wv = sub.add_parser("waves"); wv.add_argument("--pools", action="store_true",
+                                                  help="count each backlog pool and its holdout; writes nothing")
+    wv.add_argument("--budget", type=float, help="seconds this run may take (default 270, for a cron every 5 minutes)")
+    ro = sub.add_parser("rooms")
+    ro.add_argument("--for", dest="for_s", type=float, default=rooms_mod.RUN_SECONDS,
+                    help="seconds this run polls for (57 under the every-minute cron line)")
+    ro.add_argument("--every", type=float, default=rooms_mod.EVERY, help="seconds between ticks")
+    ro.add_argument("--max-claims", type=int, default=rooms_mod.MAX_CLAIMS, help="rooms claimed per tick")
+    ro.add_argument("--once", action="store_true", help="one tick, by hand")
+    ro.add_argument("--check-hosts", action="store_true",
+                    help="check every seat's Zoom user and the Google sign-in now, write room_hosts, and stop")
+    sub.add_parser("deploy-check", help="is this box ready, every switch still off? changes nothing")
+    dp = sub.add_parser("deploy", help="deploy check: the same as deploy-check")
+    dp.add_argument("what", choices=["check"])
     nt = sub.add_parser("notes"); nt.add_argument("--limit", type=int); nt.add_argument("--days", type=int)
     dg = sub.add_parser("digest"); dg.add_argument("--days", type=int, choices=(7, 30))
     sub.add_parser("status")
@@ -1095,13 +1491,17 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     args = ap.parse_args(argv)
     cfg = Config.from_env()
-    cfg.ensure_dirs()
+    if args.cmd in ("deploy", "deploy-check"):
+        args.cmd = "deploy-check"  # changes nothing, not even the desk's own folders
+    else:
+        cfg.ensure_dirs()
     log = Logger(quiet=args.quiet)
     handlers: dict[str, Callable[[Config, argparse.Namespace, Logger], int]] = {
         "doctor": cmd_doctor, "requests": cmd_requests, "recordings": cmd_recordings, "status": cmd_status,
         "calls-vault": cmd_calls_vault, "reviews-import": cmd_reviews_import, "reviews": cmd_reviews,
         "maqsam-calls": cmd_maqsam_calls, "calls-b2b-fathom": cmd_calls_b2b_fathom,
-        "research": cmd_research, "followups": cmd_followups, "notes": cmd_notes, "digest": cmd_digest,
+        "research": cmd_research, "followups": cmd_followups, "waves": cmd_waves, "notes": cmd_notes,
+        "digest": cmd_digest, "rooms": cmd_rooms, "deploy-check": cmd_deploy_check,
         "validate": cmd_validate, "build": cmd_build, "draft": cmd_draft, "offer-sync": cmd_offer_sync, "form-sync": cmd_form_sync,
     }
     if args.cmd in METERED and cfg.supabase_configured:
@@ -1110,8 +1510,12 @@ def main(argv: Optional[list[str]] = None) -> int:
         return handlers[args.cmd](cfg, args, log)
     except (SupabaseError, http.HttpError, NotNow, Refused) as e:
         log.error(http.scrub(str(e))[:400])
+        # A dry run and a test run (followups --contact) say nothing on the
+        # status rows: neither is the cron's own run.
         if args.cmd in ("requests", "recordings", "status", "offer-sync", "form-sync", "calls-vault", "reviews", "research",
-                        "followups", "maqsam-calls", "notes", "digest") and not getattr(args, "dry", False):
+                        "followups", "waves", "maqsam-calls", "notes", "digest", "doctor", "rooms") \
+                and not getattr(args, "dry", False) and not getattr(args, "contact", None) \
+                and not getattr(args, "offline", False) and not getattr(args, "pools", False):
             _status(cfg, log, args.cmd, False, http.scrub(str(e))[:400])
         return 1
     except KeyboardInterrupt:

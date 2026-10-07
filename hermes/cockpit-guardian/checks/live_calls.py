@@ -6,10 +6,15 @@ gate the rows, the cron jobs and the settings; the function, the DNS name
 and the VPS worker each gate themselves.
 
 "Not deployed yet" stops being an excuse in two cases:
-- the piece was seen working before (state["seen_deployed"]): gone now is a
-  failure (a deleted function, a lost DNS record);
+- the piece was seen working before (state["seen_deployed"], or DEPLOYED below
+  for the pieces deployed by 2026-10-07): gone now is a failure (a deleted
+  function, a lost DNS record);
 - live calls are switched on: then a missing piece breaks a lead's call, so it
   fails, folded into live-settings, which fails urgent.
+
+live-code reads which source modules sales-api and sales-live were deployed
+with, once per deploy: a deploy from a branch without live calls keeps its
+name and gets a higher version, and only its modules tell.
 """
 from __future__ import annotations
 
@@ -30,8 +35,28 @@ FOLLOWUP_TABLES = ("cockpit_sales_followup_waves", "cockpit_sales_followup_wave_
                    "cockpit_sales_followup_meta", "cockpit_sales_followup_stops")
 CRON_JOBS = ("mahara-sales-rooms-sweep", "mahara-sales-watchdog")
 STATUS_ROWS = {
-    "sales-desk": ("rooms", "room-hosts", "slack", "watch", "waves", "model"),
+    "sales-desk": ("rooms", "room-hosts", "slack", "waves", "model"),
     "sales-live": ("zoom", "slack", "open", "go", "cron"),
+}
+# Parts not built yet in Milestone 1 (the reply watcher of a later project):
+# watched only once their row exists, as the SQL watchdog does (switch_on
+# null), so a part nothing writes is never "not reported yet" (m1 round 2,
+# guardian-waits-for-unbuilt-reply-watcher). A row that says it fails still
+# counts.
+LATER_ROWS = {
+    "sales-desk": ("watch",),
+}
+# How old each status row may be before its part has stopped, in minutes:
+# the SQL watchdog's stale_min (20261004a cockpit_sales_watchdog, part 1).
+# The room worker's own row is run_worker's; the door's rows (sales-live) are
+# failure-only, written only when traffic comes, so they have no age limit
+# (m1 round 4, guardian-stale-host-check-reads-ok).
+STALE_MIN = {
+    ("sales-desk", "room-hosts"): 20,
+    ("sales-desk", "slack"): 10,
+    ("sales-desk", "waves"): 15,
+    ("sales-desk", "model"): 75,
+    ("sales-desk", "watch"): 10,
 }
 CALL_HOST = "call.maharamedia.com"
 ROOMS_RED_S = 90
@@ -40,15 +65,76 @@ WATCHDOG_LATE_MIN = 15
 UNPOSTED_MIN = 15
 PIECES = ("live-function", "live-dns", "live-rooms-worker", "live-status-rows")
 URGENT_WHEN_ON = ("live-function", "live-rooms-worker")
+# The pieces seen working in production, as state["seen_deployed"] on the VPS
+# held them on 2026-10-07. Kept in the code too: a guardian whose state was lost
+# (~/.cockpit-guardian removed, a reinstall) or that reads a new Supabase project
+# says a missing piece is gone, never "not deployed yet".
+DEPLOYED = {
+    "live-tables": "2026-10-03T19:10:02+00:00",
+    "live-cron": "2026-10-03T19:10:02+00:00",
+    "live-alerts": "2026-10-04T15:45:02+00:00",
+    "live-function": "2026-10-07T10:00:01+00:00",
+    "live-rooms-worker": "2026-10-07T10:20:02+00:00",
+}
+# The live-calls modules in each deployed function (sales-api v65 and sales-live
+# v2, 2026-10-07); a deploy from codex/supabase-completion-20261004 has none of them.
+LIVE_MODULES = {
+    "sales-api": ("rooms.ts", "roomlogic.ts", "liveio.ts", "followupAgent.ts", "sendrules.ts"),
+    "sales-live": ("cron.ts", "door.ts", "handler.ts", "sign.ts", "slack.ts", "zoom.ts"),
+}
 
 
-def switched_on(ctx: Context) -> Optional[list[str]]:
-    """Which live switches are on ([] when all off), or None when they cannot be read."""
+def _switches(ctx: Context) -> Optional[dict[str, dict]]:
+    """The rooms and live settings as stored, or None when they cannot be read."""
     try:
         rows = ctx.rows("cockpit_sales_settings", "key,value", where=[("key", "in", ["rooms", "live"])])
     except SourceError:
         return None
-    return sorted(r["key"] for r in rows if isinstance(r.get("value"), dict) and r["value"].get("enabled"))
+    return {r["key"]: r["value"] for r in rows if isinstance(r.get("value"), dict)}
+
+
+def switched_on(ctx: Context) -> Optional[list[str]]:
+    """Which live switches are on ([] when all off), or None when they cannot be read."""
+    sw = _switches(ctx)
+    if sw is None:
+        return None
+    return sorted(k for k, v in sw.items() if v.get("enabled"))
+
+
+def short_link_on(sw: Optional[dict[str, dict]]) -> bool:
+    """The messages carry call.maharamedia.com only with rooms on and rooms.short_link on (m1 round 1)."""
+    rooms = (sw or {}).get("rooms") or {}
+    return rooms.get("enabled") is True and rooms.get("short_link") is True
+
+
+def slack_on(sw: Optional[dict[str, dict]]) -> bool:
+    """Slack presses and posts run only with live.enabled and live.slack both on."""
+    live = (sw or {}).get("live") or {}
+    return live.get("enabled") is True and live.get("slack") is True
+
+
+def agent_on(ctx: Context) -> bool:
+    """Whether the follow-up agent's own work runs (followups.agent true):
+    its waves and the drafting model are live-calls parts only then (m1
+    round 6, m1-numbers-r6-guardian-live-status-rows-fail-on-model-and-waves;
+    the desk's own checks and the SQL watchdog watch them otherwise). A
+    setting that cannot be read counts as on, so nothing goes unwatched."""
+    try:
+        rows = ctx.rows("cockpit_sales_settings", "key,value", where=[("key", "in", ["followups"])])
+    except SourceError:
+        return True
+    value = next((r.get("value") for r in rows if r.get("key") == "followups"), None)
+    return isinstance(value, dict) and value.get("agent") is True
+
+
+def needed(check_id: str, sw: Optional[dict[str, dict]]) -> bool:
+    """Whether a lead's call needs this piece with the switches as they are:
+    the call site only while the short link is on (m1 round 1,
+    guardian-urgent-dns-fail-with-short-link-off: with it off the messages
+    carry the room's own Meet or Zoom link, and nothing lands on the site)."""
+    if check_id == "live-dns":
+        return short_link_on(sw)
+    return True
 
 
 def deployable(check_id: str, label: str, run: Callable[[Context], Result]) -> Callable[[Context], Result]:
@@ -58,14 +144,17 @@ def deployable(check_id: str, label: str, run: Callable[[Context], Result]) -> C
         if res.status == OK:
             seen.setdefault(check_id, ctx.now.isoformat())
             return res
+        first = seen.get(check_id) or DEPLOYED.get(check_id)
         on = switched_on(ctx) if check_id in PIECES else None
+        if on and not needed(check_id, _switches(ctx)):
+            on = []
         if res.status == NOT_DEPLOYED:
             if on:
                 return fail(f"{res.summary.rstrip('.')}, although live calls are switched on ({', '.join(on)}): a lead's "
                             "call has nothing to land on.", caused_by="live-settings", urgent=True,
                             data={"missing": True}, evidence=res.evidence)
-            if check_id in seen:
-                return fail(f"{label} was deployed (first seen working {kuwait(parse_time(seen[check_id]))}) and is "
+            if first:
+                return fail(f"{label} was deployed (first seen working {kuwait(parse_time(first))}) and is "
                             f"missing now: {res.summary}", data={"missing": True}, evidence=res.evidence,
                             urgent=bool(on))
             return res
@@ -127,6 +216,47 @@ def run_function(ctx: Context) -> Result:
     return fail(f"sales-live/health answers {r.status}.", evidence={"status": r.status})
 
 
+def known_deployed(ctx: Context, check_id: str) -> bool:
+    return check_id in (ctx.state.get("seen_deployed") or {}) or check_id in DEPLOYED
+
+
+def run_code(ctx: Context) -> Result:
+    """Each function's modules are read once per deploy (a new version or bundle hash) and kept in the state."""
+    try:
+        listed = ctx.functions()
+    except SourceError as e:
+        if not getattr(e, "gap", False):
+            raise
+        if not known_deployed(ctx, "live-function"):
+            return not_deployed("The live-calls code is not deployed yet (sales-live has never been seen working).")
+        return unknown("Which code sales-api and sales-live run needs SUPABASE_ACCESS_TOKEN.", coverage_gap=True)
+    if not any(x.get("slug") == "sales-live" for x in listed) and not known_deployed(ctx, "live-function"):
+        return not_deployed("The live-calls code is not deployed yet (sales-live is not in the functions list).")
+    known = ctx.state.setdefault("live_code", {})
+    problems, seen = [], []
+    for slug, need in LIVE_MODULES.items():
+        f = next((x for x in listed if x.get("slug") == slug), None)
+        if f is None:
+            problems.append(f"{slug} is not deployed")
+            continue
+        key = f"v{f.get('version')}:{f.get('ezbr_sha256') or ''}"
+        rec = known.get(slug)
+        if not isinstance(rec, dict) or rec.get("key") != key:
+            names = ctx.function_files(slug)
+            rec = {"key": key, "missing": [m for m in need if m not in names], "modules": len(names),
+                   "read_at": ctx.now.isoformat()}
+            known[slug] = rec
+        if rec["missing"]:
+            problems.append(f"{slug} {key.split(':')[0]} was deployed without {', '.join(rec['missing'])}")
+        else:
+            seen.append(f"{slug} {key.split(':')[0]}")
+    ev = {k: {"key": v.get("key"), "missing": v.get("missing")} for k, v in known.items() if isinstance(v, dict)}
+    if problems:
+        return fail("The live-calls code is not what runs: " + "; ".join(problems) + " (deployed from a branch "
+                    "without live calls?).", evidence=ev, items=sorted(LIVE_MODULES), urgent=True)
+    return ok(f"sales-api and sales-live run the live-calls code ({', '.join(seen)}).", evidence=ev)
+
+
 def run_cron(ctx: Context) -> Result:
     if not rooms_deployed(ctx):
         return not_deployed("The live-calls database jobs are not deployed yet (their tables do not exist).")
@@ -174,10 +304,20 @@ def run_worker(ctx: Context) -> Result:
         return not_deployed("The rooms worker's code is on the VPS but the rooms tables are not deployed yet.", evidence=ev)
     age = age_min(rows[0].get("at"), ctx.now)
     ev["age_s"] = None if age is None else int(age * 60)
-    if rows[0].get("ok") is False:
-        return fail(f"The rooms worker reports a failure: {clean(rows[0].get('detail'), 160)}", evidence=ev)
+    # The row's age first (m1 round 4, guardian-dead-worker-read-as-reporting-
+    # failure): an old row is a worker that stopped, whatever its last words
+    # said; only a fresh row that says ok false reports a failure now, as the
+    # SQL watchdog keeps is_failing to rows that are not stale.
     if age is None or age > ROOMS_ALERT_MIN:
-        return fail(f"The rooms worker has not reported for {ago(age)}; live calls are not being handed over.", evidence=ev)
+        return fail(f"The rooms worker has not reported for {ago(age)}; new video rooms cannot be made.", evidence=ev)
+    if rows[0].get("ok") is False:
+        detail = str(rows[0].get("detail") or "")
+        if detail.startswith("Not making rooms:"):
+            return fail(f"The rooms worker reports a failure: {clean(detail, 160)}", evidence=ev)
+        # A run that rode out a problem and kept making rooms (m1 round 4,
+        # guardian-urgent-failure-for-worker-riding-out-blip): said as the
+        # watchdog and the Team page say it, never an urgent failure.
+        return warn(f"The rooms worker reported a problem while making rooms: {clean(detail, 160)}", evidence=ev)
     if age * 60 > ROOMS_RED_S:
         return warn(f"The rooms worker last reported {int(age * 60)} s ago (red after {ROOMS_RED_S} s).", evidence=ev)
     return ok(f"The rooms worker reported {int(age * 60)} s ago.", evidence=ev)
@@ -185,16 +325,43 @@ def run_worker(ctx: Context) -> Result:
 
 def run_status_rows(ctx: Context) -> Result:
     if not rooms_deployed(ctx):
-        return not_deployed("The live-calls status rows are not deployed yet (sales-desk rooms, room-hosts, slack, watch, "
+        return not_deployed("The live-calls status rows are not deployed yet (sales-desk rooms, room-hosts, slack, "
                             "waves, model; sales-live zoom, slack, open, go, cron).")
     rows = ctx.rows("cockpit_sales_worker_status", "worker,job,ok,detail,at", where=[("worker", "in", list(STATUS_ROWS))])
+    # LATER_ROWS' workers are all in STATUS_ROWS, so the one read covers them.
     have = {(r["worker"], r["job"]): r for r in rows}
-    missing = [f"{w}/{j}" for w, jobs in STATUS_ROWS.items() for j in jobs if (w, j) not in have]
-    bad = [f"{w}/{j} ({clean(have[(w, j)].get('detail'), 80)})" for w, jobs in STATUS_ROWS.items() for j in jobs
+    # Only the parts the switches use (m1 round 1): the short link's routes
+    # while rooms.short_link is on, Slack's while live and live.slack are on.
+    # A part switched off gets no traffic, so no row, and a stray request's
+    # row is no failure of anything the pilot runs.
+    sw = _switches(ctx)
+    skip = set()
+    if not short_link_on(sw):
+        skip |= {("sales-live", "open"), ("sales-live", "go")}
+    if not slack_on(sw):
+        skip |= {("sales-live", "slack"), ("sales-desk", "slack")}
+    if not agent_on(ctx):
+        skip |= {("sales-desk", "waves"), ("sales-desk", "model")}
+    watched = {w: tuple(j for j in jobs if (w, j) not in skip) for w, jobs in STATUS_ROWS.items()}
+    missing = [f"{w}/{j}" for w, jobs in watched.items() for j in jobs if (w, j) not in have]
+    bad = [f"{w}/{j} ({clean(have[(w, j)].get('detail'), 80)})" for w, jobs in watched.items() for j in jobs
            if (w, j) in have and have[(w, j)].get("ok") is False]
-    if bad:
-        return fail(f"Live-calls parts report failures: {', '.join(bad)}.", evidence={"failing": bad, "missing": missing})
-    if len(missing) == sum(len(v) for v in STATUS_ROWS.values()):
+    bad += [f"{w}/{j} ({clean(have[(w, j)].get('detail'), 80)})" for w, jobs in LATER_ROWS.items() for j in jobs
+            if (w, j) in have and have[(w, j)].get("ok") is False]
+    # A row older than its part's limit is a part that stopped (m1 round 4):
+    # the room host check's row three hours old is no "reports ok".
+    stale = []
+    for (w, j), limit in STALE_MIN.items():
+        if (w, j) not in have or (j not in watched.get(w, ()) and j not in LATER_ROWS.get(w, ())):
+            continue
+        age = age_min(have[(w, j)].get("at"), ctx.now)
+        if age is None or age > limit:
+            stale.append(f"{w}/{j} has not reported for {ago(age)} (limit {limit} min)")
+    if bad or stale:
+        parts = ([f"Live-calls parts report failures: {', '.join(bad)}."] if bad else []) + \
+                ([f"Live-calls parts have stopped reporting: {'; '.join(stale)}."] if stale else [])
+        return fail(" ".join(parts), evidence={"failing": bad, "stale": stale, "missing": missing})
+    if len(missing) == sum(len(v) for v in watched.values()):
         return not_deployed("The live-calls tables exist but no part has reported yet (not deployed yet).")
     if missing:
         return warn(f"Live-calls parts that have not reported yet: {', '.join(missing)}.", evidence={"missing": missing})
@@ -209,7 +376,7 @@ def run_settings(ctx: Context) -> Result:
     on = [k for k, v in have.items() if isinstance(v, dict) and v.get("enabled")]
     if not on:
         return paused(f"Live calls are built and switched off ({', '.join(sorted(have))} enabled false).")
-    missing = [cid for cid in PIECES if ctx.results.get(cid) is not None and
+    missing = [cid for cid in PIECES if needed(cid, have) and ctx.results.get(cid) is not None and
                (ctx.results[cid].status == NOT_DEPLOYED or (ctx.results[cid].data or {}).get("missing"))]
     if missing:
         return fail(f"Live calls are switched on ({', '.join(sorted(on))}) but {', '.join(missing)} are not deployed: a "
@@ -295,13 +462,19 @@ CHECKS = [
           means="The sales-live Edge Function is ACTIVE with verify_jwt false.", severity="high",
           reads="The functions list, or GET /functions/v1/sales-live/health", threshold="Missing: not deployed yet; anything else wrong: fail.",
           run=deployable("live-function", "sales-live", run_function), action="Redeploy sales-live with verify_jwt false."),
+    Check(id="live-code", area="live-calls", name="Live calls: deployed code",
+          means="sales-api and sales-live were deployed with their live-calls modules.", severity="high",
+          reads="The functions list, and once per deploy the function's source module names (management API)",
+          threshold="A function deployed without its live-calls modules: fail (urgent).", run=run_code,
+          action="Redeploy from main at e166a0b or later: python3 scripts/dev/deploy_fn.py sales-api "
+                 "supabase/functions/sales-api, and sales-live with --no-verify-jwt (a person does this)."),
     Check(id="live-cron", area="live-calls", name="Live calls: database jobs",
           means="The rooms sweep and the sales watchdog are scheduled once the tables exist.", severity="high",
           reads="cron.job through the probe", threshold="Tables missing: not deployed yet; tables there and a job missing: fail.",
           run=deployable("live-cron", "The live-calls database jobs", run_cron), action="Re-run the cron.schedule lines from the rooms migration."),
     Check(id="live-dns", area="live-calls", name="Live calls: call.maharamedia.com",
           means="The short call page answers.", severity="medium", reads="DNS for call.maharamedia.com, then GET /",
-          threshold="No DNS: not deployed yet; resolves but no answer: fail.", run=deployable("live-dns", "call.maharamedia.com", run_dns), confirm=2,
+          threshold="No DNS: not deployed yet (urgent only while rooms.short_link is on); resolves but no answer: fail.", run=deployable("live-dns", "call.maharamedia.com", run_dns), confirm=2,
           action="Check the Vercel project for call.maharamedia.com."),
     Check(id="live-rooms-worker", area="live-calls", name="Live calls: rooms worker",
           means="The rooms worker on the VPS reports every few seconds.", severity="critical",

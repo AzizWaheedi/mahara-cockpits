@@ -9,6 +9,7 @@ import {
   SectionCard,
   StatusChip,
 } from "../components/kit";
+import { RoomsHealthCard } from "../components/RoomsHealth";
 import { TeamSwitch } from "../components/TeamControls";
 import { type GhlUser, TeamSeat } from "../components/TeamSeat";
 import { api } from "../lib/api";
@@ -149,6 +150,7 @@ export default function TeamPage({ me }: { me: Me }) {
 
         <div className="min-w-0 space-y-4 lg:col-span-4 lg:space-y-6">
           <CrmWritesCard />
+          <RoomsHealthCard people={people.data ?? []} />
           <HealthCard now={now} />
         </div>
       </div>
@@ -308,6 +310,8 @@ function countText(v: unknown): string {
 const DESK_LIMITS_MIN: Record<string, number> = {
   requests: 15,
   followups: 75,
+  // The backlog wave run goes every 5 minutes; the watchdog calls it late at 15.
+  waves: 15,
   "maqsam-calls": 75,
   "calls-vault": 75,
   recordings: 75,
@@ -554,9 +558,11 @@ function HealthCard({ now }: { now: number }) {
   const late = run?.finished_at
     ? now - Date.parse(run.finished_at) > 20 * 60_000
     : false;
-  const list = [...(workers.data ?? [])].sort((a, b) =>
-    `${a.worker}${a.job}`.localeCompare(`${b.worker}${b.job}`),
-  );
+  // The waves job's two run leases (waves-draft-lease, waves-send-lease) are
+  // rows the desk keeps to stop two runs working at once, not jobs.
+  const list = [...(workers.data ?? [])]
+    .filter(w => !/-lease$/.test(w.job))
+    .sort((a, b) => `${a.worker}${a.job}`.localeCompare(`${b.worker}${b.job}`));
 
   return (
     <SectionCard title="Health">

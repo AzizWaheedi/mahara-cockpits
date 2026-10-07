@@ -1,4 +1,9 @@
 import { type FormEvent, useState } from "react";
+import {
+  cockpitAuthError,
+  normalizeCockpitCode,
+  requestCockpitCode,
+} from "../auth/supabaseAccess";
 import { FIELD } from "../components/bits";
 import { Wordmark } from "../components/Wordmark";
 import { portalUrl } from "../lib/portal";
@@ -11,8 +16,7 @@ import { supabase } from "../lib/supabase";
  * Almost nobody should reach this. The portal signs people in and sends them
  * straight here, so this is the way in on a day the portal is down. A
  * password gets in with no round trip; the emailed code is the way back when
- * one is forgotten, and it is deliberately second, because this project sends
- * on Supabase's shared mail server, which allows two messages an hour.
+ * one is forgotten, and it is deliberately second, because email codes use the shared Mahara email provider.
  */
 export default function SignInPage() {
   const [email, setEmail] = useState("");
@@ -33,28 +37,24 @@ export default function SignInPage() {
     try {
       if (mode === "password") {
         const { error: err } = await supabase.auth.signInWithPassword({
-          email: email.trim(),
+          email: email.trim().toLowerCase(),
           password,
         });
-        if (err) setError(err.message);
+        if (err) setError(cockpitAuthError(err));
       } else if (mode === "code") {
-        const { error: err } = await supabase.auth.signInWithOtp({
-          email: email.trim(),
-          options: { shouldCreateUser: false },
-        });
-        if (err) setError(err.message);
-        else {
-          setMode("codeSent");
-          setSaid("Check the inbox for a code. It is good for an hour.");
-        }
+        await requestCockpitCode(supabase, email);
+        setMode("codeSent");
+        setSaid("Check the inbox for a code. It is good for an hour.");
       } else {
         const { error: err } = await supabase.auth.verifyOtp({
-          email: email.trim(),
-          token: code.trim(),
+          email: email.trim().toLowerCase(),
+          token: normalizeCockpitCode(code),
           type: "email",
         });
-        if (err) setError(err.message);
+        if (err) setError(cockpitAuthError(err));
       }
+    } catch (err: unknown) {
+      setError(cockpitAuthError(err));
     } finally {
       setBusy(false);
     }
@@ -99,6 +99,7 @@ export default function SignInPage() {
               </label>
               <input
                 id="signin-email"
+                disabled={busy || mode === "codeSent"}
                 type="email"
                 autoComplete="username"
                 required
@@ -119,6 +120,7 @@ export default function SignInPage() {
                 </label>
                 <input
                   id="signin-password"
+                  disabled={busy}
                   type="password"
                   autoComplete="current-password"
                   required
@@ -140,6 +142,7 @@ export default function SignInPage() {
                 </label>
                 <input
                   id="signin-code"
+                  disabled={busy}
                   inputMode="numeric"
                   autoComplete="one-time-code"
                   required
@@ -180,6 +183,7 @@ export default function SignInPage() {
 
             <button
               type="button"
+              disabled={busy}
               onClick={() => {
                 setMode(mode === "password" ? "code" : "password");
                 setError(null);

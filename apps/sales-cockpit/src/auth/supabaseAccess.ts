@@ -41,7 +41,7 @@ export interface SupabaseAccess {
 }
 
 /** The public client exists only when the Supabase login path is enabled. */
-export function createCockpitSupabaseClient(): SupabaseClient {
+export function createCockpitSupabaseClient(temporary = false): SupabaseClient {
   const url = import.meta.env.VITE_SUPABASE_URL;
   const anon = import.meta.env.VITE_SUPABASE_ANON_KEY;
   let origin: string | null = null;
@@ -55,9 +55,12 @@ export function createCockpitSupabaseClient(): SupabaseClient {
   }
   return createClient(url!, anon, {
     auth: {
-      persistSession: true,
-      autoRefreshToken: true,
-      detectSessionInUrl: true,
+      persistSession: !temporary,
+      autoRefreshToken: !temporary,
+      detectSessionInUrl: !temporary,
+      ...(temporary
+        ? { storageKey: `cockpit-verification-${crypto.randomUUID()}` }
+        : {}),
     },
   });
 }
@@ -217,6 +220,133 @@ export function cockpitAccessError(error: unknown): string {
       ? error.message
       : "Cockpit access could not be loaded.";
   return `${message} Try again. If it continues, ask an admin to check the sign-in service.`;
+}
+
+/** Keep the complete token, including when the provider's code length changes. */
+export function normalizeCockpitCode(code: string): string {
+  const token = code.trim().replace(/[\s-]/g, "");
+  if (!/^\d{6,10}$/.test(token)) {
+    throw new Error("Enter the full code from your newest email.");
+  }
+  return token;
+}
+
+export function cockpitAuthError(error: unknown): string {
+  const value =
+    error && typeof error === "object"
+      ? (error as { code?: string; message?: string })
+      : {};
+  const message =
+    typeof value.message === "string"
+      ? value.message
+      : "Sign-in could not be completed. Try again.";
+  if (
+    /rate_limit|over_request_rate_limit/.test(value.code ?? "") ||
+    /rate limit|too many requests|security purposes/i.test(message)
+  ) {
+    return "Please wait before requesting another code. Check your inbox for the newest email.";
+  }
+  if (
+    value.code === "otp_expired" ||
+    /token.*(expired|invalid)/i.test(message)
+  ) {
+    return "That code did not match or expired. Use the newest email or request a fresh code.";
+  }
+  if (/Signups not allowed for otp/i.test(message)) {
+    return "Account setup is unavailable. Ask an admin to check the sign-in service.";
+  }
+  return message;
+}
+
+/** New Auth identities remain unprivileged until confirmed directory adoption. */
+export async function requestCockpitCode(
+  client: SupabaseClient,
+  email: string,
+): Promise<void> {
+  const { error } = await client.auth.signInWithOtp({
+    email: email.trim().toLowerCase(),
+    options: { shouldCreateUser: true },
+  });
+  if (error) throw error;
+}
+
+/** A normal sign-out clears this browser session, not other devices. */
+export async function signOutCockpitSession(
+  client: SupabaseClient,
+): Promise<void> {
+  const { error } = await client.auth.signOut({ scope: "local" });
+  if (error) throw error;
+}
+
+/** React Router destinations must stay on this origin, including encoded paths. */
+export function safeCockpitNext(next: string | null): string {
+  if (!next) return "/";
+  try {
+    const decoded = decodeURIComponent(next);
+    if (
+      !/^\/(?!\/)/.test(next) ||
+      !/^\/(?!\/)/.test(decoded) ||
+      /[\s\\]/.test(next + decoded)
+    )
+      return "/";
+    return next;
+  } catch {
+    return "/";
+  }
+}
+
+export async function requestCockpitPasswordReset(
+  client: SupabaseClient,
+  expected: User,
+): Promise<void> {
+  const user = await assertSupabaseActor(client, expected);
+  const { error } = await client.auth.resetPasswordForEmail(user.email!);
+  if (error) throw error;
+}
+
+export async function completeCockpitPasswordReset(
+  client: SupabaseClient,
+  expected: User,
+  code: string,
+  password: string,
+  isCurrent: () => boolean = () => true,
+): Promise<void> {
+  const guard = () => {
+    if (!isCurrent())
+      throw new Error("The signed-in account changed. Try again.");
+  };
+  guard();
+  const token = normalizeCockpitCode(code);
+  if (password.length < 8)
+    throw new Error("Use a password with at least eight characters.");
+  await assertSupabaseActor(client, expected);
+  guard();
+  // verifyOtp saves its returned session. Keep that side effect out of the main login.
+  const verification = createCockpitSupabaseClient(true);
+  try {
+    const { data, error } = await verification.auth.verifyOtp({
+      email: expected.email!,
+      token,
+      type: "recovery",
+    });
+    if (error) throw error;
+    guard();
+    if (
+      data.user?.id !== expected.id ||
+      data.user.email?.trim().toLowerCase() !==
+        expected.email?.trim().toLowerCase()
+    ) {
+      throw new Error("The signed-in account changed. Try again.");
+    }
+    await assertSupabaseActor(client, expected);
+    guard();
+    const { error: updateError } = await verification.auth.updateUser({
+      password,
+    });
+    if (updateError) throw updateError;
+  } finally {
+    await verification.auth.stopAutoRefresh();
+  }
 }
 
 /** All five providers share cancellation and defer network calls past the Auth lock. */

@@ -24,11 +24,22 @@ export class ApiError extends Error {
   readonly kind: ApiFailure;
   /** The HTTP status, when an answer came back. */
   readonly status: number | null;
-  constructor(message: string, kind: ApiFailure, status: number | null = null) {
+  /**
+   * The refusal's code (`stale`, `confirm_end`, `disabled` and the rest),
+   * when the server sent one: screens read it before they match words.
+   */
+  readonly code: string | null;
+  constructor(
+    message: string,
+    kind: ApiFailure,
+    status: number | null = null,
+    code: string | null = null,
+  ) {
     super(message);
     this.name = "ApiError";
     this.kind = kind;
     this.status = status;
+    this.code = code;
   }
 }
 
@@ -36,6 +47,13 @@ export class ApiError extends Error {
 export interface ApiBody {
   ok?: boolean;
   error?: string;
+  /** A refusal's code (contract v2 section 3), when the server sends one. */
+  code?: string;
+}
+
+/** A code is a short snake_case word; anything else is not one. */
+function codeOf(v: unknown): string | null {
+  return typeof v === "string" && /^[a-z][a-z0-9_]{0,39}$/.test(v) ? v : null;
 }
 
 export const UNREACHED =
@@ -65,16 +83,46 @@ export function readFailure(
     : new ApiError(CUT, "cut", status);
 }
 
+/** A sign-in that ran out, said the same way whatever refused it. */
+export const SIGNED_OUT = "Your sign-in ran out. Sign in again.";
+
+/** Longest server sentence shown as it is; anything longer is cut. */
+const ERROR_MAX = 300;
+
+/**
+ * The server's own sentence, when it sent one a person can read: a string
+ * with words in it, cut to 300 characters. Anything else (an object, a
+ * number, an empty string) is no sentence, so "[object Object]" never shows.
+ */
+function errorWords(v: unknown): string | null {
+  if (typeof v !== "string") return null;
+  const s = v.trim();
+  if (!s) return null;
+  return s.length > ERROR_MAX ? `${s.slice(0, ERROR_MAX - 3).trimEnd()}...` : s;
+}
+
 /** What a whole answer says: nothing when it is a yes, else the server's sentence. */
 export function answerFailure(
   status: number,
   body: ApiBody | null,
 ): ApiError | null {
   if (status >= 200 && status < 300 && body?.ok) return null;
+  const words = errorWords(body?.error);
+  // Any 401 is a sign-in that ran out: sales-api's "Sign in again." and the
+  // gateway's "Invalid JWT" alike, so the screens offer a sign-in, never a
+  // "Try again" that cannot work.
+  if (status === 401)
+    return new ApiError(
+      words && /sign in/i.test(words) ? words : SIGNED_OUT,
+      "signin",
+      status,
+      codeOf(body?.code),
+    );
   return new ApiError(
-    body?.error ?? `The server answered ${status}. Try again.`,
-    status >= 500 || !body?.error ? "server" : "refused",
+    words ?? `The server answered ${status}. Try again.`,
+    status >= 500 || !words ? "server" : "refused",
     status,
+    codeOf(body?.code),
   );
 }
 

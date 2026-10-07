@@ -24,6 +24,7 @@ import {
   select,
   type Tone,
 } from "../components/kit";
+import { WavesCard } from "../components/WavesCard";
 import { useWorkflows, WhatsAppLibrary } from "../components/WhatsAppLibrary";
 import { api } from "../lib/api";
 import { useLeadsById, useQuery, useSetting, useTemplates } from "../lib/data";
@@ -31,6 +32,8 @@ import { ago, clock, day } from "../lib/format";
 import { supabase } from "../lib/supabase";
 import { toast } from "../lib/toast";
 import type { Me } from "../lib/types";
+import { guardOpen } from "../lib/videoLink";
+import { agentOff, agentWorkOff, sourcePause } from "../lib/waves";
 import { firstWord, renderTemplate } from "../lib/whatsapp";
 
 /**
@@ -55,8 +58,10 @@ type Segment =
   | "no_show"
   | "cancelled"
   | "new"
+  | "good_intro"
   | "after_call"
-  | "nurture";
+  | "nurture"
+  | "reactivate";
 type FChannel = "whatsapp" | "whatsapp_template" | "email";
 
 interface Followup {
@@ -104,6 +109,8 @@ interface Followup {
 
 interface Settings {
   enabled: boolean;
+  /** followups.agent: the agent's own sends (waves, openers, sends that need no approval, confirmations). */
+  agent?: boolean;
   autosend: Partial<Record<Segment, boolean>>;
   takeover?: Partial<Record<Segment, boolean>>;
   replaces?: Partial<Record<Segment, string[]>>;
@@ -123,10 +130,20 @@ const SEGMENT: Record<Segment, { label: string; tone: Tone }> = {
   no_show: { label: "Missed their call", tone: "warning" },
   cancelled: { label: "Cancelled", tone: "warning" },
   new: { label: "New lead", tone: "good" },
+  good_intro: { label: "Good intro, no demo", tone: "neutral" },
   after_call: { label: "After the demo", tone: "neutral" },
   nurture: { label: "Long-term", tone: "neutral" },
+  // A backlog wave's opener (desk NOTES section 5): the CEO's fixed words,
+  // approved by the batch on the waves card, never sent by itself.
+  reactivate: { label: "Backlog opener", tone: "neutral" },
 };
-const SEGMENTS = Object.keys(SEGMENT) as Segment[];
+/** A kind this page does not know yet still has a label. */
+const segmentOf = (s: string) =>
+  SEGMENT[s as Segment] ?? { label: "Follow-up", tone: "neutral" as Tone };
+/** The kinds a rep decides one by one; backlog openers go by the batch. */
+const SEGMENTS: Segment[] = (Object.keys(SEGMENT) as Segment[]).filter(
+  s => s !== "reactivate",
+);
 const CHANNEL: Record<FChannel, string> = {
   whatsapp: "WhatsApp",
   whatsapp_template: "WhatsApp template",
@@ -196,12 +213,13 @@ export default function FollowupsPage({ me }: { me: Me }) {
   const templates = useTemplates();
   const all = rows.data ?? [];
   // The most urgent kind first, and within a kind the hottest lead first.
+  const open = (f: Followup) =>
+    f.status === "draft" &&
+    (!f.expires_at || Date.parse(f.expires_at) > Date.now());
+  // Backlog openers are approved together on the waves card.
+  const openers = all.filter(f => f.segment === "reactivate" && open(f));
   const waiting = all
-    .filter(
-      f =>
-        f.status === "draft" &&
-        (!f.expires_at || Date.parse(f.expires_at) > Date.now()),
-    )
+    .filter(f => f.segment !== "reactivate" && open(f))
     .sort(
       (a, b) =>
         SEGMENTS.indexOf(a.segment) - SEGMENTS.indexOf(b.segment) ||
@@ -290,9 +308,26 @@ export default function FollowupsPage({ me }: { me: Me }) {
       </header>
 
       <DeskStatus
-        jobs={[{ job: "followups", what: "The follow-up agent", staleMin: 75 }]}
+        jobs={[
+          { job: "followups", what: "The follow-up agent", staleMin: 75 },
+          ...(me.manager || openers.length
+            ? [{ job: "waves", what: "The backlog wave run", staleMin: 15 }]
+            : []),
+        ]}
       />
-      <WhatsappHealth />
+      <WhatsappHealth manager={Boolean(me.manager)} />
+
+      {tab === "waiting" && (me.manager || openers.length) ? (
+        <WavesCard
+          manager={Boolean(me.manager)}
+          enabled={settings.data ? !agentWorkOff(settings.data) : null}
+          settings={settings.data}
+          openers={openers}
+          written={all.filter(f => f.segment === "reactivate")}
+          nameOf={nameOf}
+          onChanged={rows.reload}
+        />
+      ) : null}
 
       {tab === "library" ? (
         <WhatsAppLibrary manager={Boolean(me.manager)} />
@@ -322,7 +357,7 @@ export default function FollowupsPage({ me }: { me: Me }) {
               icon={Sparkles}
               title="Nothing waiting"
               text={
-                settings.data?.enabled === false
+                settings.data && agentOff(settings.data)
                   ? "The follow-up agent is switched off, so it writes nothing. A manager switches it on under How it works."
                   : `The agent looks every half hour${
                       settings.data?.quiet
@@ -391,7 +426,7 @@ function DraftCard({
   const [settled, setSettled] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [skipping, setSkipping] = useState(false);
-  const seg = SEGMENT[f.segment];
+  const seg = segmentOf(f.segment);
   const template =
     f.channel === "whatsapp_template"
       ? ((templates.data ?? []).find(t => t.key === f.template_key) ?? null)
@@ -722,7 +757,7 @@ function SentList({
                   {nameOf.get(f.contact_id) ?? "A lead"}
                 </Link>{" "}
                 <span className="muted">
-                  · {SEGMENT[f.segment].label} · {CHANNEL[f.channel]}
+                  · {segmentOf(f.segment).label} · {CHANNEL[f.channel]}
                 </span>
               </p>
               <p className="muted truncate text-xs" dir="auto">
@@ -969,19 +1004,30 @@ function Learning({
  * ceiling, and what failed at Meta. Automatic sends pause by themselves
  * when too many fail (sales-api whatsappHealth); this says so.
  */
-function WhatsappHealth() {
+function WhatsappHealth({ manager }: { manager: boolean }) {
   const since = useMemo(
     () => new Date(Date.now() - 86_400_000).toISOString(),
     [],
   );
   const guard = useSetting<Guard>("whatsapp_guard");
+  const roomsSetting = useSetting<{
+    send?: { whatsapp_template?: unknown };
+    short_link?: unknown;
+  }>("rooms");
+  const [clearing, setClearing] = useState(false);
   const sends = useQuery<
-    { state: string; error: string | null; via: string; created_at: string }[]
+    {
+      state: string;
+      error: string | null;
+      via: string;
+      source: string | null;
+      created_at: string;
+    }[]
   >(
     () =>
       supabase
         .from("cockpit_sales_messages")
-        .select("state,error,via,created_at")
+        .select("state,error,via,source,created_at")
         .eq("channel", "whatsapp")
         .gte("created_at", since)
         .limit(2000),
@@ -1016,31 +1062,117 @@ function WhatsappHealth() {
       settled.length >= g.pause_min_sends &&
       failed.length / settled.length >= g.pause_fail_share,
   );
-  if (!settled.length && !templatesToday) return null;
+  // The follow-ups' own pause, the rule that holds the desk's openers.
+  const desk = g ? sourcePause(rows, g, "followup", Date.now()) : null;
+  // The video links' own pause (m1 round 1, room-wa-health-never-recovers):
+  // free-text links wait and go by email meanwhile; with the call_link
+  // template off, only the last hour counts, as sales-api reads it.
+  const templateLaneOff =
+    roomsSetting.data?.send?.whatsapp_template !== true ||
+    roomsSetting.data?.short_link !== true;
+  const roomPause = g
+    ? sourcePause(rows, g, "room", Date.now(), {
+        leadFree: true,
+        ...(templateLaneOff ? { sinceMs: 3_600_000 } : {}),
+      })
+    : null;
+  async function clearPause() {
+    setClearing(true);
+    try {
+      await api("whatsapp.guard", { value: { health_cleared_at: true } });
+      toast.success("Cleared. Openers, follow-ups and video links go again.");
+      guard.reload();
+    } catch (err) {
+      toast.error(String((err as Error).message ?? err));
+    } finally {
+      setClearing(false);
+    }
+  }
+  const deskLine = desk?.paused ? (
+    <div
+      role="alert"
+      className="callout-bad flex flex-wrap items-center gap-2 rounded-[var(--radius-md)] border px-3 py-2 text-xs"
+    >
+      <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">
+        Backlog openers and automatic follow-ups are paused: {desk.failed} of
+        the last {desk.sent} follow-up WhatsApp messages failed
+        {desk.reason ? ` (${desk.reason})` : ""}. They go again once fewer fail
+        {manager ? ", or clear the pause once the cause is fixed" : ""}.
+      </span>
+      {manager ? (
+        <button
+          type="button"
+          disabled={clearing}
+          onClick={() => void clearPause()}
+          className={button}
+        >
+          {clearing ? "Clearing…" : "Clear the pause"}
+        </button>
+      ) : null}
+    </div>
+  ) : null;
+  const roomLine = roomPause?.paused ? (
+    <div
+      role="alert"
+      className="callout-bad flex flex-wrap items-center gap-2 rounded-[var(--radius-md)] border px-3 py-2 text-xs"
+    >
+      <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">
+        Video links on WhatsApp are paused: {roomPause.failed} of the last{" "}
+        {roomPause.sent} video-link WhatsApp messages failed
+        {roomPause.reason ? ` (${roomPause.reason})` : ""}. Links go by email
+        meanwhile, and on WhatsApp again once fewer fail
+        {templateLaneOff ? " in the last hour" : ""}
+        {manager ? ", or clear the pause once the cause is fixed" : ""}.
+      </span>
+      {manager ? (
+        <button
+          type="button"
+          disabled={clearing}
+          onClick={() => void clearPause()}
+          className={button}
+        >
+          {clearing ? "Clearing…" : "Clear the pause"}
+        </button>
+      ) : null}
+    </div>
+  ) : null;
+  if (!settled.length && !templatesToday)
+    return deskLine || roomLine ? (
+      <>
+        {deskLine}
+        {roomLine}
+      </>
+    ) : null;
   const reasons = [...new Set(failed.map(r => r.error).filter(Boolean))].slice(
     0,
     2,
   );
   return (
-    <p className={`flex items-start gap-1.5 text-xs ${paused ? "" : "muted"}`}>
-      {paused ? (
-        <CircleAlert
-          className="mt-px size-3.5 shrink-0"
-          style={{ color: "var(--warning)" }}
-          aria-hidden
-        />
-      ) : null}
-      <span>
-        WhatsApp, last day: {settled.length} sent, {failed.length} failed
-        {reasons.length ? ` (${reasons.join("; ")})` : ""}.{" "}
-        {g
-          ? `${templatesToday} of today's ${g.templates_per_day} templates.`
-          : ""}
-        {paused
-          ? " Automatic sends are paused until fewer fail; people can still send."
-          : ""}
-      </span>
-    </p>
+    <>
+      {deskLine}
+      {roomLine}
+      <p
+        className={`flex items-start gap-1.5 text-xs ${paused ? "" : "muted"}`}
+      >
+        {paused ? (
+          <CircleAlert
+            className="mt-px size-3.5 shrink-0"
+            style={{ color: "var(--warning)" }}
+            aria-hidden
+          />
+        ) : null}
+        <span>
+          WhatsApp, last day: {settled.length} sent, {failed.length} failed
+          {reasons.length ? ` (${reasons.join("; ")})` : ""}.{" "}
+          {g
+            ? `${templatesToday} of today's ${g.templates_per_day} templates.`
+            : ""}
+          {paused
+            ? " Automatic sends are paused until fewer fail; people can still send."
+            : ""}
+        </span>
+      </p>
+    </>
   );
 }
 
@@ -1048,34 +1180,54 @@ interface Guard {
   templates_per_day: number;
   pause_fail_share: number;
   pause_min_sends: number;
+  connector_off?: boolean;
+  single_copy_ok_at?: string | null;
+  dup_paused_at?: string | null;
+  dup_reason?: string | null;
 }
 
 function GuardForm() {
   const guard = useSetting<Guard>("whatsapp_guard");
   const [perDay, setPerDay] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<string | null>(null);
   const g = guard.data;
   if (!g) return null;
   const value = perDay ?? String(g.templates_per_day);
+  // Only what this card changes is sent: sales-api keeps every other key, so
+  // a card opened before the gate moved can never move it back.
+  async function save(
+    key: string,
+    change: Record<string, unknown>,
+    done: string,
+  ) {
+    setBusy(key);
+    try {
+      await api("whatsapp.guard", { value: change });
+      toast.success(done);
+      if (key === "ceiling") setPerDay(null);
+      guard.reload();
+    } catch (err) {
+      toast.error(String((err as Error).message ?? err));
+    } finally {
+      setBusy(null);
+    }
+  }
+  const open = guardOpen(g) === true;
   return (
     <SectionCard title="WhatsApp ceilings">
       <form
         className="flex flex-wrap items-end gap-3"
-        onSubmit={async e => {
+        onSubmit={e => {
           e.preventDefault();
-          setBusy(true);
-          try {
-            await api("whatsapp.guard", {
-              value: { ...g, templates_per_day: Number(value) },
-            });
-            toast.success("Saved.");
-            setPerDay(null);
-            guard.reload();
-          } catch (err) {
-            toast.error(String((err as Error).message ?? err));
-          } finally {
-            setBusy(false);
-          }
+          void save(
+            "ceiling",
+            {
+              templates_per_day: Number(value),
+              pause_fail_share: g.pause_fail_share,
+              pause_min_sends: g.pause_min_sends,
+            },
+            "Saved.",
+          );
         }}
       >
         <label className="block space-y-1 text-sm">
@@ -1089,8 +1241,12 @@ function GuardForm() {
             className={`${field} w-32`}
           />
         </label>
-        <button type="submit" disabled={busy} className={buttonPrimary}>
-          {busy ? "Saving…" : "Save"}
+        <button
+          type="submit"
+          disabled={busy !== null}
+          className={buttonPrimary}
+        >
+          {busy === "ceiling" ? "Saving…" : "Save"}
         </button>
         <p className="muted w-full text-xs">
           Meta limits how many conversations a number may start in a day and
@@ -1101,6 +1257,108 @@ function GuardForm() {
           gone out).
         </p>
       </form>
+
+      <div className="mt-4 space-y-2 border-t hairline pt-3 text-sm">
+        <p className="font-medium">
+          WhatsApp from the desk is {open ? "on" : "off"}
+        </p>
+        {g.dup_paused_at ? (
+          <div
+            role="alert"
+            className="callout-bad flex flex-wrap items-center gap-2 rounded-[var(--radius-md)] border px-3 py-2"
+          >
+            <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">
+              Every WhatsApp send is paused since {clock(g.dup_paused_at)}
+              {g.dup_reason ? `: ${g.dup_reason}` : "."} Clear it once a test
+              message arrives as one copy.
+            </span>
+            <button
+              type="button"
+              disabled={busy !== null}
+              onClick={() =>
+                void save(
+                  "pause",
+                  { dup_paused_at: null },
+                  "Cleared. WhatsApp sends again.",
+                )
+              }
+              className={button}
+            >
+              {busy === "pause" ? "Clearing…" : "Clear the pause"}
+            </button>
+          </div>
+        ) : null}
+        <p className="muted text-xs">
+          The desk sends WhatsApp only once the WA Connector is off and a test
+          message to one lead arrived as a single copy. While the connector is
+          off, two identical messages to one lead within a minute pause every
+          WhatsApp send until you clear it here.
+        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          {g.connector_off === true ? (
+            <>
+              <StatusChip tone="good" label="WA Connector off" />
+              <button
+                type="button"
+                disabled={busy !== null}
+                onClick={() =>
+                  void save(
+                    "connector",
+                    { connector_off: false, single_copy_ok_at: null },
+                    "Saved. The desk sends no WhatsApp until the connector is off again.",
+                  )
+                }
+                className={button}
+              >
+                {busy === "connector" ? "Saving…" : "It is on again"}
+              </button>
+            </>
+          ) : (
+            <>
+              <StatusChip tone="warning" label="WA Connector on" />
+              <button
+                type="button"
+                disabled={busy !== null}
+                onClick={() =>
+                  void save(
+                    "connector",
+                    { connector_off: true },
+                    "Saved. Now send one test message and check it arrives once.",
+                  )
+                }
+                className={button}
+              >
+                {busy === "connector" ? "Saving…" : "The WA Connector is off"}
+              </button>
+            </>
+          )}
+          {g.connector_off === true ? (
+            g.single_copy_ok_at ? (
+              <StatusChip
+                tone="good"
+                label={`One copy arrived, ${day(g.single_copy_ok_at)}`}
+              />
+            ) : (
+              <button
+                type="button"
+                disabled={busy !== null}
+                onClick={() =>
+                  void save(
+                    "single",
+                    { single_copy_ok_at: true },
+                    "Saved. WhatsApp from the desk is on.",
+                  )
+                }
+                className={buttonPrimary}
+              >
+                {busy === "single"
+                  ? "Saving…"
+                  : "The test message arrived once"}
+              </button>
+            )
+          ) : null}
+        </div>
+      </div>
     </SectionCard>
   );
 }
@@ -1152,6 +1410,7 @@ function SettingsForm({
           // themselves, and a stale copy of them here must not undo them.
           onSave({
             enabled: v.enabled,
+            agent: v.agent === true,
             per_run: v.per_run,
             per_day: v.per_day,
             nurture_every_days: v.nurture_every_days,
@@ -1170,6 +1429,15 @@ function SettingsForm({
             onChange={e => setV({ ...v, enabled: e.target.checked })}
           />
           The agent writes drafts
+        </label>
+        <label className="flex items-center gap-2 text-sm sm:col-span-2">
+          <input
+            type="checkbox"
+            checked={v.agent === true}
+            onChange={e => setV({ ...v, agent: e.target.checked })}
+          />
+          The agent sends by itself: backlog waves, confirmations and the kinds
+          you trust
         </label>
         {(
           [

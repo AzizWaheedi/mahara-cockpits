@@ -98,7 +98,14 @@ to clear (`clear`): VPS memory (and only above 1,536 MB), the log checks, the
 CRM syncs. A log check counts only the tracebacks written since the last
 scan. Live calls: "not deployed yet" stops being an excuse once a piece was
 seen working (gone again is a failure) or once live calls are switched on (a
-missing piece then fails, folded into an urgent `live-settings`).
+missing piece then fails, folded into an urgent `live-settings`). The pieces
+deployed by 2026-10-07 (tables, database jobs, the watchdog's alerts,
+sales-live, the rooms worker) are remembered in `checks/live_calls.py` as well
+as in the state file, so a lost state or a new, empty Supabase project reads as
+"gone", not "not deployed yet". `live-code` reads which source modules sales-api
+and sales-live were deployed with, once per deploy: a deploy from a branch
+without live calls keeps the function's name and raises its version, and only
+the missing modules give it away.
 
 ## Alerts
 
@@ -349,7 +356,7 @@ the box.
 | `guardian.py` | The commands |
 | `guard/` | config (keys by name), db (two doors, the probe SQL), host and `vps_snapshot.py` (the read-only VPS look), context (sources and the breaker), engine (scan, dedupe, folding, fixes, alerts), store (state file and Supabase rows), alerts, beat (the dead-man heartbeat), fixes, report, ai, redact |
 | `checks/` | One module per area; each check has an id, what it means, its severity, how it reads, its threshold and its optional safe fix |
-| `crontab.manifest` | The 28 job lines of 2026-10-03, compared with the live crontab (a line commented out there reads paused) |
+| `crontab.manifest` | The 28 job lines of 2026-10-03, the guardian's own and the three live-calls lines of 2026-10-07 (`rooms --for 57`, `rooms --check-hosts`, `doctor --cron`), compared with the live crontab (a line commented out there reads paused) |
 | `PROMPT.md` | The AI fixer prompt for a Claude session or a scheduled routine |
 | `tests/` | Fakes for every source; `python3 -m unittest` |
 
@@ -416,6 +423,7 @@ Generated with `python3 guardian.py checks --json`.
 | `b2b-sources` | W5 | A status that is not success, or older than its cadence: warn. |  |
 | `live-tables` |  | None: not deployed yet; some of a migration but not all: fail. |  |
 | `live-function` |  | Missing: not deployed yet; anything else wrong: fail. |  |
+| `live-code` |  | A function deployed without its live-calls modules: fail (urgent). |  |
 | `live-cron` |  | Tables missing: not deployed yet; tables there and a job missing: fail. |  |
 | `live-dns` |  | No DNS: not deployed yet; resolves but no answer: fail. |  |
 | `live-rooms-worker` |  | Not there: not deployed yet; older than 90 s: warn; 10 min: fail. |  |

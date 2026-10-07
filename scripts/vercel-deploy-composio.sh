@@ -120,13 +120,13 @@ echo "  by hash: $(grep -c '"sha"' "$work/parts.jsonl" || true), inline: $(grep 
 
 framework=$(composio proxy "https://api.vercel.com/v9/projects/$PROJECT?teamId=$TEAM" --toolkit vercel --skip-connection-check -X GET 2>/dev/null </dev/null \
   | python3 -c "import json,sys; d=json.load(sys.stdin); b=d.get('data') if isinstance(d,dict) and 'data' in d else d; print(b.get('framework') or '')" 2>/dev/null || true)
-commit=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)
+commit=$(git rev-parse HEAD)
 python3 - "$work" "$NAME" "$PROJECT" "$framework" "$commit" <<'PY'
 import json, sys
 work, name, project, framework, commit = sys.argv[1:6]
 files = [json.loads(l) for l in open(f"{work}/parts.jsonl") if l.strip()]
 body = {"name": name, "project": project, "target": "production", "files": files,
-        "meta": {"shippedBy": "scripts/vercel-deploy-composio.sh", "commit": commit}}
+        "meta": {"shippedBy": "scripts/vercel-deploy-composio.sh", "commit": commit, "gitCommitSha": commit}}
 if framework:
     body["projectSettings"] = {"framework": framework}
 json.dump(body, open(f"{work}/body.json", "w"))

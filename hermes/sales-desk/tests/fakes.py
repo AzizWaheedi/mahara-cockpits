@@ -8,6 +8,13 @@ test of the queue exercises the real filters rather than a stand-in for them.
 Like the real project it answers at most 1,000 rows a request (max-rows),
 whatever the limit asks, so a read that does not page fails a test. A
 database function answers only when a test stands it up (`rpcs`).
+
+It also keeps the database's own rules the desk leans on, as Postgres
+would answer them (`enforce`, on by default): one open draft per lead
+(cockpit_sales_followups_one_open, a 409), the follow-ups segment check
+(a 400 with 23514), and one open wave membership per lead across every
+wave (the members' partial unique index, a 409). A test of a race then
+meets the real refusal, not a scripted one.
 """
 from __future__ import annotations
 
@@ -50,7 +57,22 @@ PK = {
     "cockpit_sales_hot": ("contact_id",),
     "cockpit_sales_desk_failures": ("job", "item_id"),
     "cockpit_sales_dial_checks": ("day", "agent_email"),
+    # The follow-up agent's own tables (20261003c, as the desk lane's NOTES name them).
+    "cockpit_sales_followup_stops": ("contact_id", "said_at"),
+    "cockpit_sales_followup_waves": ("id",),
+    "cockpit_sales_followup_wave_members": ("wave_id", "contact_id"),
+    "cockpit_sales_followup_meta": ("followup_id",),
+    # The video rooms (20261003a): the desk reads the live calls the count booked.
+    "cockpit_sales_rooms": ("id",),
+    # followup.level's word per kind (20261003c): a kind switched Off gets no opener.
+    "cockpit_sales_followup_levels": ("kind_key",),
 }
+
+
+# The kinds cockpit_sales_followups_segment_check allows once 20261003b lands.
+SEGMENTS_ALLOWED = ("reply", "confirm", "no_show", "cancelled", "new", "after_call", "nurture", "reactivate", "good_intro")
+OPEN_DRAFT = ("draft", "sending")
+OPEN_MEMBER = ("waiting", "held_out", "drafted")
 
 
 def _ts(value: Any) -> Optional[datetime]:
@@ -110,6 +132,13 @@ class FakePostgrest:
         # Database functions a test stands up, by name: body -> result
         # (POST rpc/<name>). One nobody stood up answers 404, as PostgREST does.
         self.rpcs: dict[str, Any] = {}
+        # The database's unique indexes and checks (see the module's note).
+        self.enforce = True
+        self.segments = SEGMENTS_ALLOWED
+        # Column defaults a test stands up, by table: column -> a function
+        # giving the value, applied to a new row that leaves the column out
+        # (as `at timestamptz default now()` on cockpit_sales_room_events).
+        self.defaults: dict[str, dict[str, Any]] = {}
 
     # ---- seeding and reading ----
     def put(self, table: str, row: dict[str, Any]) -> dict[str, Any]:
@@ -198,6 +227,32 @@ class FakePostgrest:
                 rows = rows[: int(v)]
         return rows[: self.max_rows]
 
+    # ---- the database's own rules ----
+    def _violation(self, table: str, key: tuple, row: dict[str, Any], url: str) -> Optional[HttpError]:
+        if not self.enforce:
+            return None
+        others = [r for k, r in self.tables[table].items() if k != key]
+        if table == "cockpit_sales_followups":
+            if row.get("segment") is not None and row.get("segment") not in self.segments:
+                return HttpError(400, '{"code":"23514","message":"new row for relation \\"cockpit_sales_followups\\" '
+                                      'violates check constraint \\"cockpit_sales_followups_segment_check\\""}', b"", url)
+            if row.get("status") in OPEN_DRAFT and any(
+                    r.get("contact_id") == row.get("contact_id") and r.get("status") in OPEN_DRAFT for r in others):
+                return HttpError(409, '{"code":"23505","message":"duplicate key value violates unique constraint '
+                                      '\\"cockpit_sales_followups_one_open\\""}', b"", url)
+        if table == "cockpit_sales_followup_wave_members" and row.get("followup_id") is not None \
+                and (str(row["followup_id"]),) not in self.tables.get("cockpit_sales_followups", {}):
+            # Production's foreign key (20261003c): followup_id references
+            # cockpit_sales_followups(id), not deferrable; PostgREST answers 409.
+            return HttpError(409, '{"code":"23503","message":"insert or update on table '
+                                  '\\"cockpit_sales_followup_wave_members\\" violates foreign key constraint '
+                                  '\\"cockpit_sales_followup_wave_members_followup_id_fkey\\""}', b"", url)
+        if table == "cockpit_sales_followup_wave_members" and row.get("state", "waiting") in OPEN_MEMBER and any(
+                r.get("contact_id") == row.get("contact_id") and r.get("state") in OPEN_MEMBER for r in others):
+            return HttpError(409, '{"code":"23505","message":"duplicate key value violates unique constraint '
+                                  '\\"cockpit_sales_followup_wave_members_one_open\\""}', b"", url)
+        return None
+
     # ---- the HTTP layer ----
     def __call__(self, method: str, url: str, *, headers: Optional[dict[str, str]] = None, data: Optional[bytes] = None,
                  json_body: Any = None, timeout: float = 60, retries: int = 2,
@@ -244,13 +299,23 @@ class FakePostgrest:
                 key = tuple(str(row[k]) for k in PK[table])
                 if "ignore-duplicates" in prefer and key in self.tables[table]:
                     continue  # ON CONFLICT DO NOTHING: the row stays as it was and is not returned
+                if key not in self.tables[table]:
+                    row = {**{c: make() for c, make in self.defaults.get(table, {}).items() if c not in row}, **row}
+                bad = self._violation(table, key, {**self.tables[table].get(key, {}), **row}, url)
+                if bad:
+                    raise bad
                 self.tables[table].setdefault(key, {}).update(row)
                 made.append(self.tables[table][key])
             if "representation" in prefer:
                 return 201, {}, json.dumps(made, default=str).encode()
             return 201, {}, b""
         if method == "PATCH":
-            hit = [r for r in self.rows(table) if self._match(r, params)]
+            hit = [(k, r) for k, r in self.tables[table].items() if self._match(r, params)]
+            for k, r in hit:
+                bad = self._violation(table, k, {**r, **body}, url)
+                if bad:
+                    raise bad
+            hit = [r for _, r in hit]
             for r in hit:
                 r.update(body)
             if "representation" in prefer:

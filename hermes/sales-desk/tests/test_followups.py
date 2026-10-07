@@ -101,7 +101,8 @@ class Pick(unittest.TestCase):
         self.assertEqual(fu.pick(evening, inbox=[], calendar=[call], leads=[], confirmations=done), [])
         wrote = [{"contact_id": "q", "last_direction": "outbound", "last_message_at": ago(hours=1),
                   "inbound_whatsapp_at": ago(days=1)}]
-        self.assertEqual(fu.pick(evening, inbox=wrote, calendar=[call], leads=[]), [])
+        # (Their message is a reply to look at now: the run reads whether a person answered it.)
+        self.assertNotIn(("q", "confirm"), who(fu.pick(evening, inbox=wrote, calendar=[call], leads=[])))
         drafted = [{"contact_id": "q", "segment": "confirm", "status": "skipped", "appointment_id": "c1",
                     "decided_at": ago(days=2)}]
         self.assertEqual(fu.pick(evening, inbox=[], calendar=[call], leads=[], followups=drafted), [])
@@ -296,6 +297,10 @@ class FakeGhl:
         raise AssertionError(url)
 
 
+# The WA Connector is off and the single-copy test passed: WhatsApp may go from the desk.
+GATE_OPEN = {"templates_per_day": 250, "connector_off": True, "single_copy_ok_at": "2026-09-20T09:00:00+00:00"}
+
+
 LINE_AR = {"key": "line_ar", "name": "cockpit_line_ar", "language": "ar", "purpose": "Any",
            "preview": "هلا {{1}}، معاك {{2}} من مهارة ميديا.\n{{3}}\nإذا حاب نكمل، رد علي هني.",
            "variables": ["first_name", "rep_name", "line"], "workflow_id": "wf-1", "active": True, "segments": [], "sort": 10}
@@ -410,10 +415,10 @@ class Run(unittest.TestCase):
         for trusted, expect in ((True, 1), (False, 0)):
             pg.tables["cockpit_sales_followups"].clear()
             asked.clear()
-            settings = {"enabled": True, "per_run": 5, "per_day": 60, "autosend": {"reply": trusted}}
+            settings = {"enabled": True, "agent": True, "per_run": 5, "per_day": 60, "autosend": {"reply": trusted}}
             with mock.patch.object(http, "request", pg):
                 out = fu.run(Supabase("https://example.supabase.co", "k"), FakeProvider([draft]), lambda _m: None,
-                             settings=settings, ghl_token="", now=NOW,
+                             settings=settings, ghl_token="", now=NOW, guard=GATE_OPEN,
                              autosend=lambda i: (asked.append(i) or {"ok": True}))
             self.assertEqual((out["written"], out["sent_by_itself"], len(asked)), (1, expect, expect))
 
@@ -553,7 +558,9 @@ class Channels(unittest.TestCase):
 
 
 def settings_on(**over):
-    return {"enabled": True, "per_run": 5, "per_day": 60, **over}
+    # The agent's own sends on too (followups.agent, Milestone 1 fence), as
+    # these tests were written before it: test_m1_fence.py checks it off.
+    return {"enabled": True, "agent": True, "per_run": 5, "per_day": 60, **over}
 
 
 def run_it(pg, transport=None, provider=None, **kw):
@@ -682,9 +689,25 @@ class RunGuards(unittest.TestCase):
                                        "last_message_at": ago(hours=1), "inbound_whatsapp_at": ago(hours=1)})
         draft = json.dumps({"body": "Hi Omar, here is the link.", "subject": None, "why": "He asked."})
         out, warned = run_it(pg, provider=FakeProvider([draft]), settings=settings_on(autosend={"reply": True}),
-                             autosend=lambda _i: {"ok": False, "error": "It is night where the lead is."})
+                             guard=GATE_OPEN, autosend=lambda _i: {"ok": False, "error": "It is night where the lead is."})
         self.assertEqual((out["written"], out["sent_by_itself"]), (1, 0))
         self.assertEqual(warned, ["followups: a kept for a person: It is night where the lead is."])
+
+    def test_a_send_that_stopped_before_anything_went_is_asked_once_more(self):
+        """Fix round 5 (not-sent-yet-sets-opener-aside): sales-api's 503
+        not_sent_yet (HighLevel or the database did not answer before the
+        message row) is asked again at once, never left to a person."""
+        pg = FakePostgrest()
+        self.seed_new_lead(pg)
+        pg.put("cockpit_sales_inbox", {"conversation_id": "cv1", "contact_id": "a", "last_direction": "inbound",
+                                       "last_message_at": ago(hours=1), "inbound_whatsapp_at": ago(hours=1)})
+        draft = json.dumps({"body": "Hi Omar, here is the link.", "subject": None, "why": "He asked."})
+        answers = [{"ok": False, "code": "not_sent_yet", "error": "Not sent: try again in a minute."}, {"ok": True}]
+        asked: list[str] = []
+        out, warned = run_it(pg, provider=FakeProvider([draft]), settings=settings_on(autosend={"reply": True}),
+                             guard=GATE_OPEN, autosend=lambda i: (asked.append(i) or answers.pop(0)))
+        self.assertEqual((out["written"], out["sent_by_itself"], len(asked)), (1, 1, 2))
+        self.assertEqual(warned, [])
 
 
 class Closing(unittest.TestCase):

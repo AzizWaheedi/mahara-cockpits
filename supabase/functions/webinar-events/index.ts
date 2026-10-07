@@ -172,7 +172,10 @@ Deno.serve(async req => {
     .filter((r): r is Row => r !== null);
   if (!rows.length) return new Response(null, { status: 204, headers });
 
-  const ip = (req.headers.get("x-forwarded-for") ?? "").split(",")[0].trim() || "unknown";
+  // The address the edge saw, never the first X-Forwarded-For entry (the
+  // client writes that one): Cloudflare's header, else the last hop.
+  const hops = (req.headers.get("x-forwarded-for") ?? "").split(",").map(x => x.trim()).filter(Boolean);
+  const ip = req.headers.get("cf-connecting-ip")?.trim() || hops.at(-1) || "unknown";
   if (!allow(ip, rows.length))
     return new Response(null, { status: 429, headers });
 

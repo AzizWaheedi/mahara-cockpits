@@ -138,7 +138,8 @@ def run_hung(ctx: Context) -> Result:
 CHECKS = [
     Check(
         id="vps-crontab", area="vps", name="VPS crontab", catalogue="H4",
-        means="Every job line in the manifest taken on 2026-10-03 is still in hermes's crontab.",
+        means="Every job line in the manifest (2026-10-03, plus the live-calls lines of 2026-10-07) is still in "
+              "hermes's crontab.",
         severity="high", reads="crontab -l compared with hermes/cockpit-guardian/crontab.manifest by the command each line runs",
         threshold="A manifest job missing: fail (urgent); a schedule changed: warn; commented out on purpose: paused.",
         run=run_crontab, fix=fixes.CRONTAB_PROPOSAL, owner="the CEO", urgent=True,

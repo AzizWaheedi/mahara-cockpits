@@ -13,9 +13,6 @@ import {
 } from "../lib/funnel";
 import coverVilla from "./assets/cover-villa.webp";
 import interiorMajlis from "./assets/interior-majlis.webp";
-import meetingTable from "./assets/meeting-table.webp";
-import pageCallcenter from "./assets/page-callcenter.webp";
-import pageFilter from "./assets/page-filter.webp";
 import salesDesk from "./assets/sales-desk.webp";
 import siteDusk from "./assets/site-dusk.webp";
 import skylineNight from "./assets/skyline-night.webp";
@@ -24,32 +21,49 @@ import {
   CAMPAIGNS,
   CASE_STUDY,
   COUNTRIES,
-  EXAMPLE_ADS,
   FIRMS,
   GOOGLE,
   INCLUDED,
   type L,
   type Lang,
   LINKS,
-  MARKETS,
   MILESTONES,
   NEXT_STEPS,
   PILLARS,
   type PillarKey,
-  PLATFORM_NAMES,
   PROBLEMS,
   PROGRAM,
   type ProblemKey,
-  recommend,
-  SERVICES,
   STORIES,
   type Story,
   TIMELINE,
   TRADES,
   t,
 } from "./content";
+import {
+  CaseBox,
+  journeySlide,
+  numberOneSlide,
+  Place,
+  reviewsSlide,
+  tourSlide,
+} from "./journeys";
 import { Out, Rv, Wistia, YouTube } from "./parts";
+import {
+  ADS_TOUR,
+  CALLS_TOUR,
+  CLOSING_TOUR,
+  CONTENT_TOUR,
+  caseUrl,
+  JOURNEY,
+  MORE_STORIES,
+  REVIEW_PAGES,
+  STORY_PROOF,
+} from "./proof";
 import { PORTAL_TOUR } from "./tour";
+
+/** Every partner's story: the eight Wistia masters and the proof page's two more. */
+const ALL_STORIES: Story[] = [...STORIES, ...MORE_STORIES];
 
 /**
  * The deck's slides, in order. Each is a function of what the closer has
@@ -64,10 +78,7 @@ export const DECK_PHOTOS = [
   villaGarden,
   interiorMajlis,
   salesDesk,
-  meetingTable,
   skylineNight,
-  pageFilter,
-  pageCallcenter,
 ];
 
 export interface NumbersState {
@@ -116,6 +127,8 @@ export interface SlideDef {
   faq?: PillarKey;
   /** Steps inside the slide that → and ← walk before leaving it. */
   stops?: number;
+  /** Kept in the code, left out of the deck for now. */
+  hidden?: boolean;
   render: (ctx: DeckCtx, on: boolean) => ReactNode;
 }
 
@@ -396,47 +409,17 @@ function path(ctx: DeckCtx) {
   );
 }
 
+/** A number in Arabic-Indic digits. */
+const arNum = (n: number) =>
+  String(n).replace(/\d/g, d => "٠١٢٣٤٥٦٧٨٩"[Number(d)]);
+
+/**
+ * Every partner at a glance: their logo, their headline number from the
+ * case study, and their country (Aziz, 2026-10-07: "the case studies, the
+ * logos, and the country of each person").
+ */
 function results(ctx: DeckCtx) {
   const { lang } = ctx;
-  const rows: { big: L; what: L; who: L }[] = [
-    {
-      big: { en: "$2M", ar: "٢ مليون دولار" },
-      what: {
-        en: "in signed projects in 60 days",
-        ar: "مشاريع موقّعة خلال ٦٠ يوم",
-      },
-      who: {
-        en: "A contracting firm, the full story on video",
-        ar: "شركة مقاولات، القصة كاملة بالفيديو",
-      },
-    },
-    {
-      big: { en: "15+", ar: "+١٥" },
-      what: { en: "new clients in two weeks", ar: "عميل يديد خلال أسبوعين" },
-      who: { en: "Life Depth Contracting", ar: "عمق الحياة للمقاولات" },
-    },
-    {
-      big: { en: "4 to 5", ar: "٤ لـ٥" },
-      what: {
-        en: "big projects signed in two months",
-        ar: "مشاريع كبيرة موقّعة بشهرين",
-      },
-      who: { en: "Phoenix United, Kuwait", ar: "فينكس المتحدة، الكويت" },
-    },
-    {
-      big: { en: "3 to 4x", ar: "٣ لـ٤ أضعاف" },
-      what: { en: "revenue", ar: "بالدخل" },
-      who: { en: "BAYT 22", ar: "BAYT 22" },
-    },
-    {
-      big: { en: "30 days", ar: "٣٠ يوم" },
-      what: {
-        en: "to a full schedule, in a slow market",
-        ar: "لين الجدول انترس.. والسوق هادي",
-      },
-      who: { en: "The Last Step, UAE", ar: "The Last Step، الإمارات" },
-    },
-  ];
   return (
     <>
       <Header
@@ -452,115 +435,140 @@ function results(ctx: DeckCtx) {
         }
       />
       <div style={{ flex: 1 }} />
-      <div style={{ display: "flex", flexDirection: "column" }}>
-        {rows.map((r, i) => (
-          <Rv key={r.who.en} i={2 + i}>
-            <div
-              className="dk-hair"
-              style={{
-                display: "grid",
-                gridTemplateColumns: ar(lang)
-                  ? "420px 1fr 520px"
-                  : "340px 1fr 560px",
-                alignItems: "baseline",
-                gap: 32,
-                padding: "20px 0",
-              }}
-            >
-              <span
-                className="dk-num"
-                style={{
-                  fontSize: ar(lang) ? 54 : 60,
-                  fontWeight: 600,
-                  color: "var(--dk-teal)",
-                }}
+      <div className="dk-partners">
+        {ALL_STORIES.map((s, i) => {
+          const p = STORY_PROOF[s.id];
+          const m = p.metrics[0];
+          return (
+            <Rv key={s.id} i={2 + Math.floor(i / 5)}>
+              <a
+                className="dk-partner"
+                href={caseUrl(p.slug, lang)}
+                target="_blank"
+                rel="noreferrer noopener"
               >
-                {t(r.big, lang)}
-              </span>
-              <span style={{ fontSize: 34 }}>{t(r.what, lang)}</span>
-              <span className="dk-small" style={{ textAlign: "end" }}>
-                {t(r.who, lang)}
-              </span>
-            </div>
-          </Rv>
-        ))}
-        <Rv i={8}>
-          <div
-            className="dk-hair"
-            style={{
-              paddingTop: 22,
-              display: "flex",
-              gap: 40,
-              alignItems: "center",
-            }}
-          >
-            <Out href={GOOGLE.url}>
-              {ar(lang)
-                ? `${"٤٫٧"} على قوقل، من ${"١٥"} تقييم`
-                : `${GOOGLE.rating} on Google, from ${GOOGLE.reviews} reviews`}
-            </Out>
-            <Out href={LINKS.proof}>
-              {ar(lang) ? "صفحة النتايج كاملة" : "The full results page"}
-            </Out>
-          </div>
-        </Rv>
+                <span className="dk-partner-logo">
+                  {p.logo ? (
+                    <img src={p.logo} alt={t(s.company, "en")} />
+                  ) : (
+                    <span>{t(s.company, lang)}</span>
+                  )}
+                </span>
+                <span className="dk-num dk-partner-value">
+                  {t(m.value, lang)}
+                </span>
+                <span className="dk-small">{t(m.label, lang)}</span>
+                <Place proof={p} lang={lang} />
+              </a>
+            </Rv>
+          );
+        })}
       </div>
+      <Rv i={5}>
+        <div
+          className="dk-hair"
+          style={{
+            marginTop: 22,
+            paddingTop: 20,
+            display: "flex",
+            gap: 40,
+            alignItems: "center",
+          }}
+        >
+          <Out href={GOOGLE.url}>
+            {ar(lang)
+              ? `${"٤٫٧"} على قوقل، من ${"١٥"} تقييم`
+              : `${GOOGLE.rating} on Google, from ${GOOGLE.reviews} reviews`}
+          </Out>
+          <Out href={LINKS.proof}>
+            {ar(lang) ? "صفحة النتايج كاملة" : "The full results page"}
+          </Out>
+        </div>
+      </Rv>
     </>
   );
 }
 
+/**
+ * One partner: the video, who they are and where, what they got, and the
+ * case study's numbers with the link to read it whole.
+ */
 function storySlide(s: Story, n: number) {
   return (ctx: DeckCtx, on: boolean) => {
     const { lang } = ctx;
-    const wide = s.ratio > 1.5;
-    const h = wide ? 1000 / s.ratio : 700;
-    const w = wide ? 1000 : 700 * s.ratio;
+    const p = STORY_PROOF[s.id];
+    const w = s.ratio > 1.5 ? 880 : 640;
+    const h = Math.round(w / s.ratio);
+    const of = ALL_STORIES.length;
     return (
-      <div style={{ display: "flex", gap: 72, alignItems: "center", flex: 1 }}>
-        <Rv i={0} style={{ flex: "none" }}>
-          <div className="dk-video" style={{ width: w, height: h }}>
-            <Wistia
-              id={s.wistia}
-              on={on}
-              title={`${t(s.who, "en")}, ${t(s.company, "en")}`}
-            />
-          </div>
-        </Rv>
-        <div
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            gap: 26,
-            minWidth: 0,
-          }}
-        >
+      <div className="dk-story">
+        <div className="dk-story-media" style={{ width: w }}>
+          <Rv i={0}>
+            <div className="dk-video" style={{ width: w, height: h }}>
+              <Wistia
+                id={s.wistia}
+                on={on}
+                title={`${t(s.who, "en")}, ${t(s.company, "en")}`}
+              />
+            </div>
+          </Rv>
+          <Rv i={1}>
+            <div className="dk-story-id">
+              {p.logo ? (
+                <img className="dk-story-logo" src={p.logo} alt="" />
+              ) : null}
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                <span style={{ fontSize: 32, fontWeight: 600 }}>
+                  {t(s.who, lang)}
+                </span>
+                <span className="dk-body">
+                  {t(s.company, lang)}
+                  <span className="dk-ink3">{ar(lang) ? "، " : ", "}</span>
+                  {t(s.trade, lang)}
+                </span>
+                <Place proof={p} lang={lang} />
+              </div>
+            </div>
+          </Rv>
+        </div>
+        <div className="dk-story-words">
           <Rv i={1}>
             <p className="dk-label">
-              {ar(lang) ? `قصة ${"١٢٣٤٥٦٧٨"[n]} من ٨` : `Story ${n + 1} of 8`}
+              {ar(lang)
+                ? `قصة ${arNum(n + 1)} من ${arNum(of)}`
+                : `Story ${n + 1} of ${of}`}
             </p>
           </Rv>
           <Rv i={2}>
-            <p className="dk-h2" style={{ fontSize: ar(lang) ? 64 : 58 }}>
+            <p className="dk-h2" style={{ fontSize: ar(lang) ? 54 : 50 }}>
               {t(s.result, lang)}
             </p>
           </Rv>
           <Rv i={3}>
-            <div className="dk-hair" style={{ paddingTop: 22 }}>
-              <p style={{ fontSize: 34, fontWeight: 600 }}>{t(s.who, lang)}</p>
-              <p className="dk-body">
-                {t(s.company, lang)}
-                <span className="dk-ink3">{ar(lang) ? "، " : ", "}</span>
-                {t(s.trade, lang)}
-              </p>
-            </div>
+            <p className="dk-body dk-ink2">{t(s.why, lang)}</p>
           </Rv>
           <Rv i={4}>
-            <p className="dk-body">{t(s.why, lang)}</p>
+            <CaseBox proof={p} lang={lang} />
           </Rv>
         </div>
       </div>
     );
   };
+}
+
+/** What ten more points of closing are worth at the prospect's own numbers. */
+function closingGain(ctx: DeckCtx) {
+  const { lang, numbers } = ctx;
+  const plus = closePlusTen(numbers.funnel);
+  if (plus?.moneyYear == null) return null;
+  const money = sayMoney(plus.moneyYear, numbers.currency, lang);
+  return (
+    <p className="dk-gain">
+      {ar(lang)
+        ? `بأرقامك: لو رفعنا الإقفال ١٠ نقاط بس، هذا ${money} زيادة بالسنة.`
+        : `At your numbers, ten more points of closing is worth ${money} a year.`}
+    </p>
+  );
 }
 
 function caseStudy(ctx: DeckCtx, on: boolean) {
@@ -1055,253 +1063,6 @@ function systemSlide(ctx: DeckCtx) {
   );
 }
 
-function adsSlide(ctx: DeckCtx, on: boolean) {
-  const { lang } = ctx;
-  const picks = recommend(ctx.service, ctx.market);
-  return (
-    <>
-      <Bridge ctx={ctx} pillar="ads" />
-      <Header
-        label={pillarLabel("ads", lang)}
-        title={t(PILLARS[0].name, lang)}
-        wide={1700}
-      />
-      <div style={{ flex: 1 }} />
-      <div style={{ display: "flex", gap: 56, alignItems: "flex-end" }}>
-        <Rv i={2} style={{ flex: "none" }}>
-          <div style={{ display: "flex", gap: 22 }}>
-            {EXAMPLE_ADS.map(a => (
-              <div
-                key={a.wistia}
-                style={{ display: "flex", flexDirection: "column", gap: 12 }}
-              >
-                <div className="dk-video" style={{ width: 260, height: 462 }}>
-                  <Wistia id={a.wistia} on={on} title={t(a.label, "en")} />
-                </div>
-                <span className="dk-small" style={{ fontSize: 22 }}>
-                  {t(a.label, lang)}
-                </span>
-              </div>
-            ))}
-          </div>
-        </Rv>
-        <Rv i={3} style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-            <p className="dk-body">
-              {ar(lang)
-                ? "مشاريعك الحقيقية، ووجهك انت.. مو صور ستوك. ونختار المنصات حسب سوقك وخدمتك:"
-                : "Your real projects and your own face, never stock footage. The platforms follow your market and trade:"}
-            </p>
-            <div style={{ display: "flex", gap: 16 }}>
-              <select
-                className="dk-select"
-                value={ctx.market}
-                onChange={e => ctx.setMarket(e.target.value)}
-                aria-label={ar(lang) ? "السوق" : "Market"}
-              >
-                {MARKETS.map(m => (
-                  <option key={m.code} value={m.code}>
-                    {t(m.label, lang)}
-                  </option>
-                ))}
-              </select>
-              <select
-                className="dk-select"
-                value={ctx.service}
-                onChange={e => ctx.setService(e.target.value)}
-                aria-label={ar(lang) ? "الخدمة" : "Trade"}
-              >
-                {SERVICES.map(s => (
-                  <option key={s.key} value={s.key}>
-                    {t(s.label, lang)}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
-              {picks.map((p, i) => (
-                <span
-                  key={p}
-                  className={i === 0 ? "dk-pill dk-glow" : "dk-pill"}
-                  style={{
-                    fontSize: 30,
-                    padding: "14px 28px",
-                    color: "var(--dk-ink)",
-                    background: i === 0 ? "var(--dk-teal-soft)" : undefined,
-                  }}
-                >
-                  {t(PLATFORM_NAMES[p], lang)}
-                  {i === 0 ? (
-                    <span className="dk-label" style={{ fontSize: 20 }}>
-                      {ar(lang) ? "الأساسية" : "Main"}
-                    </span>
-                  ) : null}
-                </span>
-              ))}
-            </div>
-            <div
-              style={{
-                display: "flex",
-                gap: 36,
-                flexWrap: "wrap",
-                marginTop: 8,
-              }}
-            >
-              <Out href={LINKS.exampleAds}>
-                {ar(lang)
-                  ? "إعلانات سويناها لعملائنا"
-                  : "Ads we made for partners"}
-              </Out>
-              <Out href={LINKS.content}>
-                {ar(lang) ? "شلون نصنع المحتوى" : "How we make the content"}
-              </Out>
-            </div>
-          </div>
-        </Rv>
-      </div>
-    </>
-  );
-}
-
-function Browser({
-  src,
-  url,
-  alt,
-  height,
-}: {
-  src: string;
-  url: string;
-  alt: string;
-  height: number;
-}) {
-  return (
-    <div className="dk-browser">
-      <div className="dk-browser-bar">
-        <i />
-        <i />
-        <i />
-        <span>{url}</span>
-      </div>
-      <img
-        src={src}
-        alt={alt}
-        style={{ height, objectFit: "cover", objectPosition: "top center" }}
-      />
-    </div>
-  );
-}
-
-function filterSlide(ctx: DeckCtx) {
-  const { lang } = ctx;
-  const rtl = ar(lang);
-  const flow: L[] = [
-    {
-      en: "The ad reaches the right owner",
-      ar: "الإعلان يوصل لصاحب المشروع الصح",
-    },
-    { en: "A page built around your work", ar: "صفحة مبنية على شغلك" },
-    {
-      en: "A short form: project, budget, timing",
-      ar: "فورم قصير: المشروع، الميزانية، التوقيت",
-    },
-    {
-      en: "Our team calls within five minutes",
-      ar: "فريقنا يتصل خلال ٥ دقايق",
-    },
-    {
-      en: "Only the serious ones reach your calendar",
-      ar: "الجادين بس يوصلون لجدولك",
-    },
-  ];
-  return (
-    <>
-      <Bridge ctx={ctx} pillar="filter" />
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "1fr 900px",
-          gridTemplateRows: "minmax(0, 1fr)",
-          minHeight: 0,
-          gap: 72,
-          flex: 1,
-          alignItems: "stretch",
-        }}
-      >
-        <div style={{ display: "flex", flexDirection: "column" }}>
-          <Header
-            label={pillarLabel("filter", lang)}
-            title={t(PILLARS[1].name, lang)}
-            lead={
-              rtl
-                ? "ثلاث طبقات تفلتر اللي يضيعون وقتك.. قبل لا تقعد مع أحد."
-                : "Three layers take out the time-wasters before you sit down with anyone."
-            }
-          />
-          <div style={{ flex: 1 }} />
-          <Rv i={3}>
-            <ol
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                gap: 16,
-                listStyle: "none",
-                padding: 0,
-              }}
-            >
-              {flow.map((f, i) => (
-                <li
-                  key={f.en}
-                  style={{ display: "flex", gap: 20, alignItems: "baseline" }}
-                >
-                  <span
-                    className="dk-num dk-teal"
-                    style={{ fontSize: 26, width: 36, flex: "none" }}
-                  >
-                    {rtl ? "١٢٣٤٥"[i] : i + 1}
-                  </span>
-                  <span
-                    style={{
-                      fontSize: rtl ? 32 : 30,
-                      lineHeight: 1.35,
-                      color: i === 4 ? "var(--dk-teal)" : undefined,
-                    }}
-                  >
-                    {t(f, lang)}
-                  </span>
-                </li>
-              ))}
-            </ol>
-          </Rv>
-        </div>
-        <Rv
-          i={2}
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            gap: 22,
-            justifyContent: "flex-end",
-          }}
-        >
-          <Browser
-            src={pageFilter}
-            url="funnelfilteration.maharamedia.com"
-            alt="Mahara's page on how leads are filtered"
-            height={460}
-          />
-          <div style={{ display: "flex", gap: 32, flexWrap: "wrap" }}>
-            <Out href={LINKS.filter}>
-              {rtl ? "افتح الصفحة" : "Open the page"}
-            </Out>
-            <Out href={LINKS.landing}>
-              {rtl ? "مثال لاندنق بيج" : "An example landing page"}
-            </Out>
-          </div>
-        </Rv>
-      </div>
-    </>
-  );
-}
-
 function speedSlide(ctx: DeckCtx) {
   const { lang } = ctx;
   const rtl = ar(lang);
@@ -1361,278 +1122,27 @@ function speedSlide(ctx: DeckCtx) {
   );
 }
 
-function salesSlide(ctx: DeckCtx) {
-  const { lang } = ctx;
-  const rtl = ar(lang);
-  const facts: { n: L; what: L }[] = [
-    {
-      n: { en: "5 min", ar: "٥ دقايق" },
-      what: { en: "to the first call", ar: "لأول اتصال" },
-    },
-    {
-      n: { en: "4", ar: "٤" },
-      what: { en: "follow-ups per lead", ar: "متابعات لكل ليد" },
-    },
-    {
-      n: { en: "4", ar: "٤" },
-      what: { en: "trainings a week", ar: "تدريبات بالأسبوع" },
-    },
-    {
-      n: { en: "3+", ar: "+٣" },
-      what: {
-        en: "years of sales experience, at least",
-        ar: "سنين خبرة مبيعات كحد أدنى",
-      },
-    },
-  ];
-  const jobs: L[] = [
-    {
-      en: "Qualify: project, budget, timing, seriousness",
-      ar: "يفلترون: المشروع، الميزانية، التوقيت، والجدية",
-    },
-    {
-      en: "Tell them about your company and your work",
-      ar: "يعرفونهم على شركتك وشغلك",
-    },
-    {
-      en: "Book the qualified ones on your calendar",
-      ar: "يحجزون المؤهلين بجدولك",
-    },
-    {
-      en: "Rebook no-shows and meetings that did not sign",
-      ar: "يرجعون يحجزون اللي ما حضروا واللي ما وقّعوا",
-    },
-  ];
-  return (
-    <>
-      <Bridge ctx={ctx} pillar="sales" />
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "1fr 860px",
-          gridTemplateRows: "minmax(0, 1fr)",
-          minHeight: 0,
-          gap: 72,
-          flex: 1,
-          alignItems: "stretch",
-        }}
-      >
-        <div style={{ display: "flex", flexDirection: "column" }}>
-          <Header
-            label={pillarLabel("sales", lang)}
-            title={t(PILLARS[2].name, lang)}
-          />
-          <div style={{ flex: 1 }} />
-          <Rv i={2}>
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(4, 1fr)",
-                gap: 16,
-              }}
-            >
-              {facts.map(f => (
-                <div
-                  key={f.what.en}
-                  className="dk-card"
-                  style={{
-                    padding: "24px 22px",
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: 6,
-                  }}
-                >
-                  <span
-                    className="dk-num dk-teal"
-                    style={{ fontSize: 40, fontWeight: 600 }}
-                  >
-                    {t(f.n, lang)}
-                  </span>
-                  <span
-                    className="dk-small"
-                    style={{ fontSize: 22, color: "var(--dk-ink-2)" }}
-                  >
-                    {t(f.what, lang)}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </Rv>
-          <Rv i={3}>
-            <div
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                gap: 14,
-                marginTop: 28,
-              }}
-            >
-              {jobs.map(j => (
-                <div
-                  key={j.en}
-                  style={{ display: "flex", gap: 16, alignItems: "flex-start" }}
-                >
-                  <Check />
-                  <span style={{ fontSize: rtl ? 31 : 29, lineHeight: 1.35 }}>
-                    {t(j, lang)}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </Rv>
-        </div>
-        <Rv
-          i={4}
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            gap: 22,
-            justifyContent: "flex-end",
-          }}
-        >
-          <Browser
-            src={pageCallcenter}
-            url="callcenter.maharamedia.com"
-            alt="Mahara's calling team page"
-            height={440}
-          />
-          <p className="dk-body" style={{ fontSize: rtl ? 28 : 26 }}>
-            {rtl
-              ? "كل مكالمة مسجلة.. وتقدر تسمعها ببوابتك."
-              : "Every call is recorded, and you can listen to it in your portal."}
-          </p>
-          <Out href={LINKS.callcenter}>
-            {rtl ? "تعرف على الفريق" : "Meet the calling team"}
-          </Out>
-        </Rv>
-      </div>
-    </>
-  );
-}
-
-function closingSlide(ctx: DeckCtx) {
-  const { lang, numbers } = ctx;
-  const rtl = ar(lang);
-  const plus = closePlusTen(numbers.funnel);
-  const parts: { name: L; line: L }[] = [
-    {
-      name: { en: "Premium Projects Academy", ar: "أكاديمية المشاريع المميزة" },
-      line: {
-        en: "The frameworks and scripts our best partners use to close 40 to 50% of their proposals.",
-        ar: "نفس الطرق والسكربتات اللي أنجح عملائنا يقفلون فيها ٤٠ لـ٥٠٪ من عروضهم.",
-      },
-    },
-    {
-      name: { en: "A weekly consulting call", ar: "مكالمة استشارة أسبوعية" },
-      line: {
-        en: "On your actual deals, not theory.",
-        ar: "على صفقاتك الحقيقية.. مو كلام نظري.",
-      },
-    },
-    {
-      name: {
-        en: "Reviews of your real calls",
-        ar: "مراجعة مكالماتك الحقيقية",
-      },
-      line: {
-        en: "We find where deals slip and give you the exact words for it.",
-        ar: "نطلع وين تطيح الصفقات.. ونعطيك الكلام بالضبط.",
-      },
-    },
-  ];
-  return (
-    <>
-      <Bridge ctx={ctx} pillar="closing" />
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "1fr 820px",
-          gridTemplateRows: "minmax(0, 1fr)",
-          minHeight: 0,
-          gap: 72,
-          flex: 1,
-          alignItems: "stretch",
-        }}
-      >
-        <div style={{ display: "flex", flexDirection: "column" }}>
-          <Header
-            label={pillarLabel("closing", lang)}
-            title={t(PILLARS[3].name, lang)}
-          />
-          <div style={{ flex: 1 }} />
-          <div style={{ display: "flex", flexDirection: "column", gap: 26 }}>
-            {parts.map((p, i) => (
-              <Rv key={p.name.en} i={2 + i}>
-                <div className="dk-hair" style={{ paddingTop: 20 }}>
-                  <p style={{ fontSize: rtl ? 34 : 32, fontWeight: 600 }}>
-                    {t(p.name, lang)}
-                  </p>
-                  <p className="dk-body" style={{ marginTop: 6 }}>
-                    {t(p.line, lang)}
-                  </p>
-                </div>
-              </Rv>
-            ))}
-          </div>
-          {plus?.moneyYear != null ? (
-            <Rv i={6}>
-              <p
-                className="dk-lead"
-                style={{ marginTop: 28, color: "var(--dk-ink)" }}
-              >
-                {rtl
-                  ? `بأرقامك: لو رفعنا الإقفال ١٠ نقاط بس، هذا ${sayMoney(plus.moneyYear, numbers.currency, lang)} زيادة بالسنة.`
-                  : `At your numbers, ten more points of closing is worth ${sayMoney(plus.moneyYear, numbers.currency, lang)} a year.`}
-              </p>
-            </Rv>
-          ) : null}
-        </div>
-        <Rv i={2} style={{ display: "flex", height: "100%", minHeight: 0 }}>
-          <img
-            src={meetingTable}
-            alt=""
-            aria-hidden
-            style={{
-              width: "100%",
-              height: "100%",
-              objectFit: "cover",
-              borderRadius: 28,
-              border: "1px solid var(--dk-line)",
-            }}
-          />
-        </Rv>
-      </div>
-    </>
-  );
-}
-
 function portalSlide(ctx: DeckCtx) {
   const { lang, tour, setTour } = ctx;
   const at = Math.max(0, Math.min(tour, PORTAL_TOUR.length - 1));
   return (
-    <div
-      style={{
-        flex: 1,
-        minHeight: 0,
-        display: "grid",
-        gridTemplateColumns: "480px minmax(0, 1fr)",
-        gap: 56,
-      }}
-    >
-      <div style={{ display: "flex", flexDirection: "column", minHeight: 0 }}>
+    <div className="dk-tour">
+      <div className="dk-tour-side">
         <Rv i={0}>
           <p className="dk-label">{pillarLabel("data", lang)}</p>
         </Rv>
         <Rv i={1}>
-          <h2 className="dk-h2" style={{ marginTop: 18 }}>
-            {ar(lang) ? "بوابتك: Mahara OS" : "Your portal: Mahara OS"}
+          <h2 className="dk-h2 dk-tour-title">
+            {ar(lang)
+              ? "بوابتك: Mahara OS.. كل شي بمكان واحد"
+              : "Your portal, Mahara OS: all in one place"}
           </h2>
         </Rv>
-        <Rv i={2} style={{ marginTop: 32 }}>
+        <Rv i={2} style={{ marginTop: 26 }}>
           <div
             role="tablist"
             aria-label={ar(lang) ? "شاشات البوابة" : "Portal screens"}
-            style={{ display: "flex", flexDirection: "column", gap: 4 }}
+            className="dk-stops"
           >
             {PORTAL_TOUR.map((s, i) => (
               <button
@@ -1646,7 +1156,15 @@ function portalSlide(ctx: DeckCtx) {
               >
                 <span className="dk-stop-name">{t(s.name, lang)}</span>
                 {i === at ? (
-                  <span className="dk-stop-line">{t(s.line, lang)}</span>
+                  <>
+                    <span className="dk-stop-line">{t(s.line, lang)}</span>
+                    <span className="dk-why">
+                      <span className="dk-why-label">
+                        {ar(lang) ? "ليش يهمك" : "Why it matters to you"}
+                      </span>
+                      <span>{t(s.why, lang)}</span>
+                    </span>
+                  </>
                 ) : null}
               </button>
             ))}
@@ -2361,7 +1879,7 @@ function closeSlide(ctx: DeckCtx) {
 // ---------------------------------------------------------- the order
 
 export function deckSlides(): SlideDef[] {
-  return [
+  const all: SlideDef[] = [
     {
       id: "cover",
       section: S.opening,
@@ -2384,7 +1902,7 @@ export function deckSlides(): SlideDef[] {
       title: { en: "Partners' results", ar: "نتايج شركاؤنا" },
       render: c => results(c),
     },
-    ...STORIES.map(
+    ...ALL_STORIES.map(
       (s, i): SlideDef => ({
         id: s.id,
         section: S.proof,
@@ -2394,11 +1912,49 @@ export function deckSlides(): SlideDef[] {
       }),
     ),
     {
+      // Left out for now (Aziz, 2026-10-07); kept so it can come back.
       id: "case",
       section: S.proof,
       title: { en: "$2M in 60 days", ar: "٢ مليون دولار بـ٦٠ يوم" },
       deep: true,
+      hidden: true,
       render: (c, on) => caseStudy(c, on),
+    },
+    ...REVIEW_PAGES.map(
+      (_, i): SlideDef => ({
+        id: `reviews-${i + 1}`,
+        section: S.proof,
+        title: {
+          en: `Google reviews, ${i + 1} of ${REVIEW_PAGES.length}`,
+          ar: `تقييمات قوقل، ${arNum(i + 1)} من ${arNum(REVIEW_PAGES.length)}`,
+        },
+        render: c => reviewsSlide(i)(c),
+      }),
+    ),
+    {
+      id: "number-one",
+      section: S.proof,
+      title: { en: "The #1 partner", ar: "الشريك رقم ١" },
+      deep: true,
+      render: c => numberOneSlide(c),
+    },
+    {
+      id: "content",
+      section: S.proof,
+      title: { en: "We teach the industry", ar: "نعلّم السوق" },
+      stops: CONTENT_TOUR.length,
+      render: (c, on) =>
+        tourSlide({
+          ctx: c,
+          on,
+          label: ar(c.lang)
+            ? "نعطي السوق كله"
+            : "We give to the whole industry",
+          title: ar(c.lang)
+            ? "نفس الأنظمة اللي نشغلها لشركاؤنا.. نشرحها ببلاش."
+            : "The systems we run for partners, explained for free.",
+          stops: CONTENT_TOUR,
+        }),
     },
     {
       id: "problem",
@@ -2431,7 +1987,18 @@ export function deckSlides(): SlideDef[] {
       title: { en: "1. Targeted premium ads", ar: "١. الإعلانات" },
       pillar: "ads",
       faq: "ads",
-      render: (c, on) => adsSlide(c, on),
+      stops: ADS_TOUR.length,
+      render: (c, on) =>
+        tourSlide({
+          ctx: c,
+          on,
+          label: pillarLabel("ads", c.lang),
+          title: ar(c.lang)
+            ? "إعلانات يهندسها الذكاء الاصطناعي.. للمشاريع عالية القيمة"
+            : "Ads engineered by AI, for premium projects",
+          stops: ADS_TOUR,
+          top: <Bridge ctx={c} pillar="ads" />,
+        }),
     },
     {
       id: "filter",
@@ -2439,7 +2006,18 @@ export function deckSlides(): SlideDef[] {
       title: { en: "2. Lead filtration", ar: "٢. الفلترة" },
       pillar: "filter",
       faq: "filter",
-      render: c => filterSlide(c),
+      stops: JOURNEY.length,
+      render: (c, on) =>
+        journeySlide({
+          ctx: c,
+          on,
+          label: pillarLabel("filter", c.lang),
+          title: ar(c.lang)
+            ? "رحلة العميل: من الإعلان لين الموعد"
+            : "The journey: from the ad to a booked meeting",
+          stops: JOURNEY,
+          top: <Bridge ctx={c} pillar="filter" />,
+        }),
     },
     {
       id: "speed",
@@ -2455,7 +2033,16 @@ export function deckSlides(): SlideDef[] {
       title: { en: "3. The project sales team", ar: "٣. فريق المبيعات" },
       pillar: "sales",
       faq: "sales",
-      render: c => salesSlide(c),
+      stops: CALLS_TOUR.length,
+      render: (c, on) =>
+        tourSlide({
+          ctx: c,
+          on,
+          label: pillarLabel("sales", c.lang),
+          title: t(PILLARS[2].name, c.lang),
+          stops: CALLS_TOUR,
+          top: <Bridge ctx={c} pillar="sales" />,
+        }),
     },
     {
       id: "closing",
@@ -2463,7 +2050,19 @@ export function deckSlides(): SlideDef[] {
       title: { en: "4. Closing mastery", ar: "٤. الإقفال" },
       pillar: "closing",
       faq: "closing",
-      render: c => closingSlide(c),
+      stops: CLOSING_TOUR.length,
+      render: (c, on) =>
+        tourSlide({
+          ctx: c,
+          on,
+          label: pillarLabel("closing", c.lang),
+          title: ar(c.lang)
+            ? "إتقان إقفال المشاريع"
+            : "Project Closing Mastery",
+          stops: CLOSING_TOUR,
+          top: <Bridge ctx={c} pillar="closing" />,
+          note: closingGain(c),
+        }),
     },
     {
       id: "portal",
@@ -2526,4 +2125,5 @@ export function deckSlides(): SlideDef[] {
       render: c => closeSlide(c),
     },
   ];
+  return all.filter(slide => !slide.hidden);
 }

@@ -42,12 +42,54 @@
  *
  * `window.harnessLog` lists every sales-api call the page made (action,
  * body, when), to count what a double tap sent.
+ *
+ * Live calls and waves have knobs of their own (src/dev/liveHarness.ts):
+ *
+ *   room     a video room to start on, for the lead on screen: making |
+ *            ready | sent | not_sent | not_sent_zoom | not_confirmed |
+ *            opened | waiting | host_in | joined | joined_marked |
+ *            joined_not_lead | still_on_call | expired | failed |
+ *            failed_handover | down | pending_zoom | booked
+ *   offer    the banner: incoming | taken | lost | missed | expired |
+ *            refresh | standby | making | standby_failed | away |
+ *            available | ready | booked | on_call | down | live_off
+ *   rooms    on | test | off   (on here, so the buttons show)
+ *   live     on | off          (off, as it ships)
+ *   auto     1                 automatic mode after a missed call
+ *   create   ok | refused | failed
+ *   waves    running | paused | none | off   (the Follow-ups page)
+ *   reply    1                 P3's reply alert in the banner
+ *   handover 1                 a stand-in for P2's handover strip
+ *
+ * And the failures every live-call screen must survive:
+ *
+ *   net      down | drop       sales-api unreachable (drop: after 6 s,
+ *                              so "Not updated since" shows)
+ *   answer   garbage           sales-api answers 200 with nonsense
+ *   auth     expired | 401     no session at all, or sales-api says "Sign
+ *                              in again." with a 401
+ *   reads    fail | hang       every table read fails, or never answers
+ *
+ * e.g. /sales/harness.html?path=/dialer&room=sent,
+ * /sales/harness.html?path=/dialer&call=noanswer&auto=1,
+ * /sales/harness.html?path=/lead/lead-1&room=waiting&offer=incoming,
+ * /sales/harness.html?path=/followups&waves=running
  */
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { MemoryRouter } from "react-router";
 import "../index.css";
 import * as F from "./fixtures";
+import {
+  answerWaves,
+  hostRows,
+  Refused as LiveRefused,
+  liveKnobs,
+  liveSettings,
+  RoomStage,
+  roomStatusRows,
+  waveTables,
+} from "./liveHarness";
 
 // The Supabase client keeps the fetch it was created with, so the stand-in
 // below is installed before the client module is loaded (dynamic imports
@@ -80,6 +122,21 @@ for (const k of Object.keys(knobs) as (keyof typeof knobs)[]) {
     typeof knobs[k] === "number" ? Number(v) : v;
 }
 (window as unknown as { harness: typeof knobs }).harness = knobs;
+
+// Live calls and waves: the room for the lead on screen (the lead page's
+// lead, else the dialer's first), the seat's presence, and the waves.
+const live = liveKnobs(params);
+const startPath = params.get("path") ?? "/";
+const roomLead =
+  /^\/lead\/([^/?#]+)/.exec(startPath)?.[1] ??
+  String(F.dialItems("setter", Date.now())[0]?.contact_id ?? "lead-1");
+const stage = new RoomStage(live, Date.now(), roomLead);
+const waves = waveTables(
+  live.waves,
+  Date.now(),
+  F.LEADS as { contact_id: string }[],
+);
+(window as unknown as { harnessRooms: RoomStage }).harnessRooms = stage;
 
 /**
  * A lead comes in (or back) at the top of the queue, as a new lead does
@@ -394,6 +451,11 @@ async function salesApi(b: Row, signal?: AbortSignal | null): Promise<Row> {
   }
   await sleep(knobs.wait, signal);
   const now = Date.now();
+  // Video rooms, live calls and waves keep their own state.
+  const rooms = stage.answer(String(b.action), b, now);
+  if (rooms) return rooms;
+  const wave = answerWaves(String(b.action), b, waves, now);
+  if (wave) return wave;
   switch (b.action) {
     case "dial.agent": {
       const state = knobs.agent;
@@ -1002,11 +1064,30 @@ async function main() {
     cockpit_sales_team: F.TEAM_ROWS,
     cockpit_sales_reps: F.REPS,
     cockpit_sales_links: F.LINKS,
-    cockpit_sales_settings: F.SETTINGS,
+    cockpit_sales_settings: [
+      ...F.SETTINGS.filter(
+        r =>
+          !["rooms", "live", "whatsapp_guard", "followups"].includes(
+            String(r.key),
+          ),
+      ),
+      ...liveSettings(live, roomLead),
+    ],
     cockpit_sales_mirror_runs: [F.MIRROR_RUN],
-    cockpit_sales_worker_status: F.workerStatus(knobs.desk),
+    // The desk's requests job (knobs.desk) beside the room worker's jobs.
+    cockpit_sales_worker_status: [
+      ...F.workerStatus(knobs.desk),
+      ...roomStatusRows(Date.now()),
+    ],
+    cockpit_sales_room_hosts: hostRows(
+      Date.now(),
+      F.PEOPLE.map(p => String(p.email)),
+    ),
+    cockpit_sales_followup_waves: waves.waves,
+    cockpit_sales_followup_wave_members: waves.members,
+    cockpit_sales_followup_meta: waves.meta,
     cockpit_sales_inbox: [...F.INBOX, ...F.HOT_INBOX],
-    cockpit_sales_followups: F.FOLLOWUPS,
+    cockpit_sales_followups: [...F.FOLLOWUPS, ...waves.openers],
     cockpit_sales_contracts: F.CONTRACTS,
     cockpit_sales_hot: F.HOT,
     cockpit_sales_messages: F.MESSAGES,
@@ -1042,14 +1123,29 @@ async function main() {
     const path = url.pathname;
     if (path.endsWith("/rpc/cockpit_sales_whoami")) return json(F.ME);
     if (path.startsWith("/functions/v1/sales-api")) {
+      // The failure knobs: the server gone, a garbled yes, a lapsed sign-in.
+      if (
+        live.net === "down" ||
+        (live.net === "drop" && Date.now() - START > 6000)
+      )
+        throw new TypeError("Failed to fetch");
+      if (live.auth === "401")
+        return json({ ok: false, error: "Sign in again." }, 401);
+      if (live.answer === "garbage")
+        return json({ ok: true, garbage: [1, { x: null }], error: { no: 1 } });
       const body = JSON.parse(String(init?.body ?? "{}"));
       try {
         return json({ ok: true, ...(await salesApi(body, init?.signal)) });
       } catch (e) {
         // The cockpit gave up waiting: the fetch fails as a browser's does.
         if ((e as Error).name === "AbortError") throw e;
-        const status = e instanceof Refusal ? e.status : 500;
-        return json({ ok: false, error: (e as Error).message }, status);
+        const status =
+          e instanceof Refusal || e instanceof LiveRefused ? e.status : 500;
+        const code = e instanceof LiveRefused ? e.code : null;
+        return json(
+          { ok: false, error: (e as Error).message, ...(code ? { code } : {}) },
+          status,
+        );
       }
     }
     if (path.startsWith("/storage/v1/object")) {
@@ -1060,6 +1156,16 @@ async function main() {
     }
     const m = path.match(/\/rest\/v1\/([a-z_]+)$/);
     if (!m) return json([]);
+    // Every table read fails, or never answers (until the page gives up).
+    if (live.reads === "fail")
+      return json(
+        { code: "XX000", message: "The harness refused this read." },
+        500,
+      );
+    if (live.reads === "hang") {
+      await sleep(10 * 60_000, init?.signal);
+      return json([]);
+    }
     let rows = [...(tables[m[1]] ?? [])];
     for (const [k, v] of url.searchParams) {
       if (k === "or") {
@@ -1139,14 +1245,32 @@ async function main() {
   const { supabase } = await import("../lib/supabase");
   // api() asks for a session before calling the function; the harness has one.
   supabase.auth.getSession = (async () => ({
-    data: { session: { access_token: "harness" } },
+    data: {
+      session: live.auth === "expired" ? null : { access_token: "harness" },
+    },
     error: null,
   })) as unknown as typeof supabase.auth.getSession;
+  // No real sign-in here: a refresh finds nothing, as an expired one would.
+  supabase.auth.refreshSession = (async () => ({
+    data: { session: null, user: null },
+    error: null,
+  })) as unknown as typeof supabase.auth.refreshSession;
   const { setApiTimeout } = await import("../lib/api");
   setApiTimeout(knobs.timeout);
 
   const { Seated } = await import("../App");
+  const { SalesBanner } = await import("../components/SalesBanner");
+  const { replyFixture } = await import("./roomFixtures");
   const { useState } = await import("react");
+  // P2's handover strip and P3's reply alert are not built yet: stand-ins,
+  // so their banner slots can be seen.
+  const reply = live.reply ? replyFixture() : null;
+  const handover = live.handover ? (
+    <div className="flex min-h-11 items-center gap-3 text-[13px]">
+      <span className="inline-flex size-2.5 shrink-0 rounded-full bg-[color:var(--now)]" />
+      Finding a closer for Mona. The strip says when one takes it.
+    </div>
+  ) : null;
   function Harness() {
     const [drawer, setDrawer] = useState(false);
     return (
@@ -1156,13 +1280,20 @@ async function main() {
         isAdmin
         drawer={drawer}
         setDrawer={setDrawer}
-        banner={null}
+        banner={
+          <SalesBanner
+            portal={null}
+            replyAlert={reply}
+            handover={handover}
+            handoverActive={Boolean(handover)}
+          />
+        }
       />
     );
   }
   const { Toaster } = await import("../lib/toast");
   const { SessionProvider } = await import("../lib/auth");
-  const start = params.get("path") ?? "/";
+  const start = startPath;
   const root = document.getElementById("root");
   if (!root) throw new Error("no #root");
   createRoot(root).render(

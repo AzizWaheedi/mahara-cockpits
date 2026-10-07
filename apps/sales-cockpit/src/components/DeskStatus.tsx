@@ -6,8 +6,8 @@ import { waitingFor, whatIsWrong } from "../lib/proposals";
 /**
  * When the sales desk last did a job, in one line on the page that depends
  * on it: late or failing says so, instead of the page quietly showing
- * nothing new (Aziz's rule: missing is never zero). The same limits alert
- * Aziz through the portal's sales watch.
+ * nothing new (the CEO's rule: missing is never zero). The same limits alert
+ * the CEO through the portal's sales watch.
  */
 export function DeskStatus({
   jobs,
@@ -50,9 +50,9 @@ export function DeskStatus({
             ) : null}
             <span>
               {!r
-                ? `${j.what} has not run yet. Aziz is alerted if it stays that way.`
+                ? `${j.what} has not run yet. The CEO is alerted if it stays that way.`
                 : late
-                  ? `${j.what} last ran ${ago(r.at)}, later than it should. The sales desk may be down; Aziz is alerted if it stays that way.`
+                  ? `${j.what} last ran ${ago(r.at)}, later than it should. The sales desk may be down; the CEO is alerted if it stays that way.`
                   : !r.ok && waitingFor(r.detail)
                     ? // An outage it waits out, not a failure: it says why.
                       j.waiting

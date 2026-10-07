@@ -1048,6 +1048,17 @@ class Failover:
                      f"({http.scrub(str(e))[:160]}); the draft asks it anyway")
         return self
 
+    def hand_over(self, e: NotNow) -> "Failover":
+        """The primary found unreachable by a probe outside any call (the
+        follow-ups job's one token, which keeps the primary's own status row):
+        hand over now, as check() does. Raises the outage when there is no
+        fallback, or one naming both when neither can answer."""
+        self.ready()
+        if not self.on_fallback:
+            self.checked = True
+            self._switch(e if isinstance(e, ModelUnreachable) else ModelUnreachable(str(e)))
+        return self
+
     def _switch(self, e: ModelUnreachable) -> None:
         if self._make_fallback is None:
             raise e
