@@ -1,4 +1,4 @@
-import {type Row, unwrap, allAdAccounts, callTool, assertNativeFence} from './runtime';
+import {type Row, unwrap, allAdAccounts, callTool, assertNativeFence, retainSheetFailure} from './runtime';
 import {buildSnapshot, CLIENTS_LIST, CS_LIST} from './csmCadence';
 import {adLeadsByClient, adLeadsFor, adsForClient, adsAccess, liveCounts, metaAccountFor, normTight, gapsFor, callsFor, mergeCalls, pool, PROFILE_CF, cfById, drop, isoDate, cleanDosDonts} from './csmProfileCalculations';
 import {payingState, stateOf, rosterDiff, ROSTER_KINDS, rosterEventId} from './csmRoster';
@@ -313,7 +313,16 @@ export async function collectCsm(state: Row, tables: Record<string, Row[]>, seed
     const acct = data?.ghlLocationId && data.ghlToken ? {name:data.clientName,locationId:data.ghlLocationId,token:data.ghlToken,clickupId:data.clickupId} : undefined;
     const old = state.csm.clientProfiles.find((p:Row)=>p.taskId===c.taskId || p.clientName===c.name);
     const isLost = stateOf(String(c.stage ?? '')) === 'lost';
-    const perfSnap = await performanceSnapshot(c.stage, sheetLink, old, day, now);
+    let perfSnap:PerformanceSnapshotResult;
+    let performanceError:string|undefined;
+    try{perfSnap=await performanceSnapshot(c.stage,sheetLink,old,day,now);}
+    catch(error){
+      const status=Number((error as Row)?.status??/\b(403|404)\b/.exec(String(error))?.[1]);
+      if(![403,404].includes(status))throw error;
+      retainSheetFailure(error);
+      perfSnap=await performanceSnapshot('Stopped',sheetLink,old,day,now);
+      performanceError=`Performance sheet unavailable (${status}). Confirm read access before refreshing these values.`;
+    }
     let perf = perfSnap.performance;
     if (perfSnap.performanceRetained && perf) {
       const staleAt = perfSnap.performanceSyncedAt !== undefined
@@ -321,10 +330,11 @@ export async function collectCsm(state: Row, tables: Record<string, Row[]>, seed
         : perf.staleAt;
       perf = {
         ...perf,
-        staleReason: 'Client stopped. Performance history is retained.',
+        staleReason: performanceError??'Client stopped. Performance history is retained.',
         staleAt,
       };
     }
+    if(performanceError&&!perf)perf={error:performanceError,staleReason:performanceError};
     const lost = isLost ? old?.lost : (acct ? await lostLeads(acct) : undefined);
     const provisional = isLost ? old?.provisional : (acct ? await provisionalFor(acct) : undefined);
     const clientCalls = mergeCalls(callsFor(c.name,calls),old?.calls ?? [],c.name);

@@ -63,7 +63,8 @@ export async function run(options:{apply?:boolean;report:string},env:Env=process
   const runContext:NativeRunContext={receipts:reader.receipts,...(fence?{fence}:{})};
   const state=await rpc(env,'cockpit_native_media_state',{});
   const {stillAssets,...plan}=await calculate(state,reader.reads,runContext,env);
-  if(reader.faults.length)throw new Error(`${reader.faults.length} source reads failed; refusing partial publication`);
+  const unhandled=reader.faults.filter(f=>f.retained_history!==true);
+  if(unhandled.length)throw new Error(`${unhandled.length} source reads failed; refusing partial publication`);
   if(options.apply===true){
    if(!fence)throw new Error('Still upload lacks a live lease context');
    const savedStills=await storeStills(stillAssets,plan.tables,env,fence,reader.receipts);

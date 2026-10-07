@@ -2,6 +2,20 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { transport } from './transport';
 
+it('retained Sheet access failures keep health evidence and do not hide other provider faults',async()=>{
+ const reader=transport({},async()=>new Response('{}',{status:403,headers:{'content-type':'application/json'}}));
+ const resource='sheets.googleapis.com/v4/spreadsheets/fixture-sheet/values:batchGet';
+ await reader.reads.fetch('https://'+resource);
+ const sheetFault=reader.faults[0];
+ await reader.reads.fetch('https://api.fathom.ai/external/v1/meetings');
+ reader.reads.retainSheetFailure?.({status:403,resource,nativeFaults:[sheetFault]});
+ assert.equal(sheetFault.retained_history,true);
+ assert.equal(reader.faults[1].retained_history,undefined);
+ assert.equal(reader.receipts.filter(r=>r.phase==='response'&&r.http_status===403).length,2);
+ reader.reads.retainSheetFailure?.({status:403,resource:'api.fathom.ai/external/v1/meetings',nativeFaults:[reader.faults[1]]});
+ assert.equal(reader.faults[1].retained_history,undefined);
+});
+
 it('reads only the latest successful full native publication through the health-recording transport', async () => {
  const env={SUPABASE_URL:'https://bldgtotkfmhoxmlzowdx.supabase.co',SUPABASE_SERVICE_ROLE_KEY:'fixture-service'};
  let requests=0;

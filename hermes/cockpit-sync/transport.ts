@@ -89,7 +89,7 @@ export function transport(env:Env,request:typeof fetch=fetch,wait=(ms:number)=>n
   }
   throw new Error('Read attempts exhausted');
  };
- const json=async(url:string,init?:RequestInit)=>{const response=await fetchRead(url,init);if(!response.ok)throw new Error(`Read rejected (${response.status}) at ${new URL(url).hostname}`);return response.json();};
+ const json=async(url:string,init?:RequestInit)=>{const response=await fetchRead(url,init);if(!response.ok){const u=new URL(url),resource=u.hostname+u.pathname;throw Object.assign(new Error(`Read rejected (${response.status}) at ${u.hostname}`),{status:response.status,resource,nativeFaults:faults.filter(f=>f.resource===resource&&f.status===response.status)});}return response.json();};
  const google=async(expectedEmail?:string)=>{
   if(googleToken){if(expectedEmail&&googleEmail?.toLowerCase()!==expectedEmail.toLowerCase())throw new Error('Google service-account identity differs from verified calendar configuration');return googleToken;}
   const account=z.object({type:z.literal('service_account'),client_email:z.string().email(),private_key:z.string().min(1)}).parse(JSON.parse(await readFile(needed('GOOGLE_APPLICATION_CREDENTIALS'),'utf8')));
@@ -201,9 +201,14 @@ export function transport(env:Env,request:typeof fetch=fetch,wait=(ms:number)=>n
  };
  const reads:Reads={
   graph:async(path,params)=>{try{return await graph(path,params);}catch(error){faults.push({resource:'meta',error:'Provider collection failed'});throw error;}},
-  tool:async(name,args)=>{try{return await tool(name,args);}catch(error){faults.push({resource:name,error:'Provider collection failed'});throw error;}},
+  tool:async(name,args)=>{try{return await tool(name,args);}catch(error){const fault:Row={resource:name,error:'Provider collection failed'};faults.push(fault);if(error&&typeof error==='object'&&Array.isArray((error as Row).nativeFaults))(error as Row).nativeFaults.push(fault);throw error;}},
   fetch:fetchRead,
   log:(level)=>{logs.push({level,message:'Native calculator diagnostic; detailed provider bodies omitted'});if(level==='error')faults.push({resource:'calculator',error:'Calculator reported incomplete source'});},
+  retainSheetFailure:(error)=>{
+   const e=error as Row;
+   if(!e||![403,404].includes(e.status)||!/^sheets\.googleapis\.com\/v4\/spreadsheets\/[A-Za-z0-9_-]+\/values:batchGet$/.test(String(e.resource)))return;
+   if(Array.isArray(e.nativeFaults))for(const fault of e.nativeFaults)if(faults.includes(fault))fault.retained_history=true;
+  },
  };
  return {reads,receipts,faults,logs};
 }

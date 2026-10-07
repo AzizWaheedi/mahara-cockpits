@@ -397,6 +397,23 @@ test('real worker calculations from raw provider fixture publish campaign, CSM a
   const retainedProfile={...p.csm.clientProfiles[0],performance:{sheetId:'verified-fixture-sheet',creativeStats:{booked:2}},performanceRetained:true,performanceSyncedAt:undefined};
   const retainedCreative=await withNativeContext(reads,{receipts:[]},()=>collectCreative(s,structuredClone(p.tables),{...p.csm,clientProfiles:[retainedProfile]}));
   expect(retainedCreative.clients[0].statsScannedAt).toBeUndefined();
+  const inaccessibleState=structuredClone(s);
+  const originalCheck=Date.now()-10*86400000;
+  inaccessibleState.csm.clientProfiles[0].performance={sheetId:'fixture-sheet',allTime:{leads:42}};
+  inaccessibleState.csm.clientProfiles[0].syncedAt=originalCheck;
+  const inaccessibleReads:Reads={...reads,async tool(name,args){
+    const url=args.url?new URL(args.url):undefined;
+    if(name==='pd_google_sheets_proxy_get'&&url?.pathname.endsWith('/values:batchGet'))throw Object.assign(new Error('Read rejected (403) at sheets.googleapis.com'),{status:403,resource:'sheets.googleapis.com'+url.pathname});
+    const value=await reads.tool(name,args);
+    if(name==='pd_clickup_proxy_get'&&Array.isArray(value.tasks))return {...value,tasks:value.tasks.map((t:Row)=>t.id==='cu1'?{...t,custom_fields:[...(t.custom_fields??[]),{id:CF.sheetLink,value:'https://docs.google.com/spreadsheets/d/fixture-performance-sheet-123456789/edit'}]}:t)};
+    return value;
+  }};
+  const recovered=await calculate(inaccessibleState,inaccessibleReads,{receipts:[]},fixtureEnv);
+  const recoveredProfile=recovered.csm.clientProfiles.find((r:Row)=>r.taskId==='cu1');
+  expect(recoveredProfile.performance.allTime.leads).toBe(42);
+  expect(recoveredProfile.performance.staleReason).toContain('403');
+  expect(recoveredProfile.performanceSyncedAt).toBe(originalCheck);
+  expect(recoveredProfile.performanceRetained).toBe(true);
   await publish(db,c,p);
   await owner(db);
   expect((await db.query<{spend:string}>('SELECT spend_7d::text spend FROM cockpit_campaigns')).rows[0].spend).toBe('120');
