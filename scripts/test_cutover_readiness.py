@@ -428,6 +428,25 @@ class TestIndependentReleaseReview(unittest.TestCase):
             with self.subTest(statement=statement):
                 (src / "entry.ts").write_text(statement)
                 self.assertFalse(vcr.check_no_convex_source_imports(self.repo)[0])
+    def test_isolated_tests_can_use_dev_fixtures(self):
+        src = self.repo / "apps" / vcr.APP_NAMES[0] / "src"
+        for name in ("fixture.test.ts", "fixture.test.tsx", "fixture.spec.tsx"):
+            (src / name).write_text('import { fixture } from "./dev/roomFixtures";')
+        self.assertTrue(vcr.check_no_convex_source_imports(self.repo)[0])
+
+    def test_production_cannot_import_test_files(self):
+        src = self.repo / "apps" / vcr.APP_NAMES[0] / "src"
+        for statement in (
+            'import { fixture } from "./fixture.test";',
+            'import { fixture } from "@/fixture.test.tsx";',
+            'import { fixture } from "./fixture.spec.tsx";',
+            'const fixture = import("./fixture.test.ts");',
+            'const fixture = require("./fixture.test");',
+        ):
+            with self.subTest(statement=statement):
+                (src / "entry.ts").write_text(statement)
+                self.assertFalse(vcr.check_no_convex_source_imports(self.repo)[0])
+
     def test_commit_change_or_unknown_postcheck_source_never_releases(self):
         other_sha = "b" * 40
         evidence, _ = create_valid_evidence_bundle(self.repo, other_sha)

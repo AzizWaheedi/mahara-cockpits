@@ -13,6 +13,14 @@ cd "$(dirname "$0")/.."
 py_bin="python"
 command -v python >/dev/null 2>&1 || py_bin="python3"
 
+# Authentication is shared by all five apps. Check live settings before publishing.
+"$py_bin" -m unittest discover -s scripts -p test_check_cockpit_auth_config.py
+"$py_bin" -m unittest discover -s scripts -p test_vercel_project_guard.py
+(cd apps/media-buyer-cockpit && bun test scripts/cockpit-auth-flow.test.ts scripts/cockpit-auth-sql.test.ts)
+(cd apps/media-buyer-cockpit && bun test scripts/cockpit-auth-sdk.test.ts)
+(cd apps/client-success-cockpit && bun test scripts/auth-password-ui.test.tsx)
+"$py_bin" scripts/check-cockpit-auth-config.py
+
 # Nothing ships if the copies of a shared page have drifted apart.
 scripts/check-shared.sh || exit 1
 # The guard that keeps a backend deploy from removing someone else's
@@ -161,28 +169,34 @@ ship() {
   # macOS ships, and set -u would stop the ship here)
   local -a tok=()
   [ -n "${VERCEL_TOKEN:-}" ] && tok=(--token "$VERCEL_TOKEN")
-  # An installed Vercel CLI may be signed in while bunx downloads a newer,
-  # logged-out copy. Use the installed CLI first; bunx remains the fallback.
-  local -a vercel_cli=(bunx vercel)
-  command -v vercel >/dev/null 2>&1 && vercel_cli=(vercel)
+  # Deploy and verify through the same installed CLI. An ephemeral bunx
+  # deployment cannot be verified by the Python guard's installed client.
+  command -v vercel >/dev/null 2>&1 || { echo "Install and sign in to the Vercel CLI before publishing."; exit 1; }
+  local -a vercel_cli=(vercel)
   if (cd "$dir" && "${vercel_cli[@]}" whoami ${tok[@]+"${tok[@]}"} >/dev/null 2>&1); then
     # Without the app's link the CLI makes a new project named after the
     # folder and deploys there; the site keeps the old bundle (2026-10-05, a
     # fresh worktree made client-success-cockpit beside mahara-client-success).
-    # The Composio path refuses the same way.
     [ -f "$dir/.vercel/project.json" ] || { echo "$dir is not linked to a Vercel project (.vercel/project.json missing): copy it from a linked checkout"; exit 1; }
     # An archived upload avoids the per-file fetch failures observed during
     # the native branch preview run. It does not change the deployment target.
     out=$(cd "$dir" && "${vercel_cli[@]}" deploy --prod --yes --force --archive tgz ${build_env[@]+"${build_env[@]}"} ${tok[@]+"${tok[@]}"} 2>&1) || { echo "$out" | tail -20; echo "vercel deploy failed for $app"; exit 1; }
   else
-    # No Vercel login on this Mac (2026-09-20): the same source goes up
-    # through Composio's Vercel connection instead. `bunx vercel login`
-    # in the app folder brings the CLI path back.
-    echo "  no Vercel CLI login; deploying through Composio"
-    out=$(scripts/vercel-deploy-composio.sh "$dir" 2>&1) || { echo "$out" | tail -20; echo "vercel deploy through composio failed for $app"; exit 1; }
+    # Publication needs the same scoped CLI for ownership reads, promotion
+    # and read-back. Stop before uploading when those checks are unavailable.
+    echo "Vercel CLI access is required to publish and verify production. Sign in and rerun scripts/ship.sh."
+    exit 1
   fi
   echo "$out" | grep -E '"url"|readyState|target|Production|Aliased|rror' | head -8
   echo "$out" | grep -Eq '"readyState": *"READY"|Aliased +https|Production +https|"status": *"ok"' || { echo "vercel did not confirm a production deployment for $app:"; echo "$out" | tail -20; exit 1; }
+
+  # READY can still be STAGED when autoAssignCustomDomains is disabled.
+  # Verify the exact build, promote it, and require the actual cockpit route
+  # to serve its entry. A team-suffixed alias alone is not publication.
+  local candidate
+  candidate=$(printf '%s\n' "$out" | grep -E 'Production +https|"readyState": *"READY"' | grep -oE 'https://[a-z0-9-]+\.vercel\.app' | head -1 || true)
+  [ -n "$candidate" ] || { echo "No exact candidate deployment URL returned for $app"; exit 1; }
+  "$py_bin" scripts/check-vercel-project.py "$dir" --deployment "$candidate" --promote
 
   # And then check the site, because every signal above can say yes while
   # the bundle people load is last week's.
