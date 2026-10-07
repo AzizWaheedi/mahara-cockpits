@@ -304,12 +304,14 @@ def check_app_structure(repo_root: Path) -> Tuple[bool, List[str]]:
 
 def check_no_convex_source_imports(repo_root: Path) -> Tuple[bool, List[str]]:
     """
-    Scan production source imports. Isolated src/dev fixtures are excluded;
-    importing those fixtures from other source files is rejected.
+    Scan production source imports. Isolated src/dev fixtures and test files
+    are excluded; importing either from production source is rejected.
     NOTE: Proves absence of static source imports only; does not certify full
     runtime Convex independence.
     """
     import_re = re.compile(r'(?:\bfrom\s*|\bimport\s*(?:\(\s*)?|\brequire\s*\(\s*)["\']([^"\']+)["\']')
+    test_file_re = re.compile(r"\.(?:test|spec)\.(?:ts|tsx|js|jsx)$")
+    test_import_re = re.compile(r"\.(?:test|spec)(?:\.(?:ts|tsx|js|jsx))?$")
     found: List[str] = []
 
     for app in APP_NAMES:
@@ -317,7 +319,7 @@ def check_no_convex_source_imports(repo_root: Path) -> Tuple[bool, List[str]]:
         if not src_dir.is_dir():
             continue
         for p in src_dir.rglob("*"):
-            if not p.is_file() or p.name.endswith(".d.ts"):
+            if not p.is_file() or p.name.endswith(".d.ts") or test_file_re.search(p.name):
                 continue
             if p.suffix not in (".ts", ".tsx", ".js", ".jsx"):
                 continue
@@ -327,7 +329,9 @@ def check_no_convex_source_imports(repo_root: Path) -> Tuple[bool, List[str]]:
                 if relative.parts[0] == "dev":
                     continue
                 for spec in import_re.findall(content):
-                    if "/dev/" in spec or spec.startswith("dev/"):
+                    if test_import_re.search(spec):
+                        found.append(f"{p.relative_to(repo_root).as_posix()} (production import of test code: {spec})")
+                    elif "/dev/" in spec or spec.startswith("dev/"):
                         found.append(f"{p.relative_to(repo_root).as_posix()} (production import of dev fixture: {spec})")
                     elif (spec == "convex" or spec.startswith(("convex/", "@convex-dev/", "_generated/"))
                           or "/_generated/" in spec):
