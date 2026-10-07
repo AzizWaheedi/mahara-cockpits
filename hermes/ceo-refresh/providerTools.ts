@@ -56,6 +56,54 @@ function safeError(value: unknown): string {
     .replace(/[^\s@]+@[^\s@]+/g, "[email]")
     .slice(0, 240);
 }
+
+function extractSafeDbError(body: unknown, status: number): string {
+  if (body && typeof body === "object" && !Array.isArray(body)) {
+    const obj = body as Record<string, unknown>;
+    let code = "";
+    if (typeof obj.code === "string" && /^[0-9A-Z]{5}$/.test(obj.code.trim())) {
+      code = obj.code.trim();
+    }
+
+    const rawMsg = typeof obj.message === "string" ? obj.message : "";
+    let extractedMsg = "";
+
+    if (rawMsg) {
+      // Handle Supabase wrapper format: Failed to run sql query: ERROR:  42501: permission denied for function ...
+      const pgMatch = /ERROR:\s+([0-9A-Z]{5}):\s+([^\r\n]+)/i.exec(rawMsg);
+      if (pgMatch) {
+        if (!code) code = pgMatch[1].toUpperCase();
+        extractedMsg = pgMatch[2].trim();
+      } else {
+        const firstLine = rawMsg.split(/[\r\n]/)[0].trim();
+        // Remove prefixes like "Failed to run sql query: " if present
+        const stripped = firstLine.replace(/^failed to run sql query:\s*/i, "").trim();
+        // If stripped still has ERROR: ...
+        const errMatch = /^ERROR:\s*(?:([0-9A-Z]{5}):\s*)?([^\r\n]+)/i.exec(stripped);
+        if (errMatch) {
+          if (!code && errMatch[1] && /^[0-9A-Z]{5}$/.test(errMatch[1])) code = errMatch[1].toUpperCase();
+          extractedMsg = (errMatch[2] ?? "").trim();
+        } else if (code) {
+          extractedMsg = stripped;
+        }
+      }
+    }
+
+    // Strip any trailing LINE / QUERY / CONTEXT sections or semicolon snippets
+    if (extractedMsg) {
+      extractedMsg = extractedMsg.split(/\b(?:LINE\s+\d+|QUERY:|CONTEXT:)/i)[0].trim();
+      extractedMsg = safeError(extractedMsg).trim();
+    }
+
+    if (code && extractedMsg) {
+      return `Supabase read-only SQL returned HTTP ${status}: [${code}] ${extractedMsg}`.slice(0, 240);
+    }
+    if (code) {
+      return `Supabase read-only SQL returned HTTP ${status}: [${code}]`.slice(0, 240);
+    }
+  }
+  return `Supabase read-only SQL returned HTTP ${status}`;
+}
 function delay(milliseconds: number): Promise<void> {
   const { promise, resolve } = Promise.withResolvers<void>();
   setTimeout(resolve, milliseconds);
@@ -76,11 +124,112 @@ function safePath(path: string, label: string): string {
 
 function queryIsReadOnly(query: string): string {
   const sql = query.trim().replace(/;+\s*$/, "");
-  const statement = sql.replace(/^(?:\s|\/\*[\s\S]*?\*\/|--[^\n]*(?:\n|$))*/, "");
-  if (!/^(select|with)\b/i.test(statement) || sql.includes(";")) {
+  let i = 0;
+  let inSingleQuote = false;
+  let inDoubleQuote = false;
+  let inLineComment = false;
+  let inBlockComment = false;
+  let firstToken = "";
+  let currentToken = "";
+
+  while (i < sql.length) {
+    const char = sql[i];
+    const nextChar = sql[i + 1] ?? "";
+
+    if (inLineComment) {
+      if (char === "\n") inLineComment = false;
+      i++;
+      continue;
+    }
+
+    if (inBlockComment) {
+      if (char === "*" && nextChar === "/") {
+        inBlockComment = false;
+        i += 2;
+        continue;
+      }
+      i++;
+      continue;
+    }
+
+    if (inSingleQuote) {
+      if (char === "'") {
+        if (nextChar === "'") {
+          i += 2;
+          continue;
+        }
+        inSingleQuote = false;
+      }
+      i++;
+      continue;
+    }
+
+    if (inDoubleQuote) {
+      if (char === '"') {
+        if (nextChar === '"') {
+          i += 2;
+          continue;
+        }
+        inDoubleQuote = false;
+      }
+      i++;
+      continue;
+    }
+
+    // Not inside comment or string literal
+    if (char === "-" && nextChar === "-") {
+      inLineComment = true;
+      i += 2;
+      continue;
+    }
+
+    if (char === "/" && nextChar === "*") {
+      inBlockComment = true;
+      i += 2;
+      continue;
+    }
+
+    if (char === "'") {
+      inSingleQuote = true;
+      i++;
+      continue;
+    }
+
+    if (char === '"') {
+      inDoubleQuote = true;
+      i++;
+      continue;
+    }
+
+    if (char === ";") {
+      throw new Error("SQL source accepts one read-only SELECT statement");
+    }
+
+    if (/[a-zA-Z]/.test(char)) {
+      currentToken += char;
+    } else {
+      if (currentToken && !firstToken) {
+        firstToken = currentToken;
+      }
+      currentToken = "";
+    }
+
+    i++;
+  }
+
+  if (currentToken && !firstToken) {
+    firstToken = currentToken;
+  }
+
+  if (inSingleQuote || inDoubleQuote || inBlockComment) {
     throw new Error("SQL source accepts one read-only SELECT statement");
   }
-  return sql;
+
+  if (!firstToken || !/^(select|with)$/i.test(firstToken)) {
+    throw new Error("SQL source accepts one read-only SELECT statement");
+  }
+
+  return query;
 }
 
 function decodeJson(response: Response, resource: string): Promise<unknown> {
@@ -186,13 +335,20 @@ export function createProviderDriver(options: ProviderDriverOptions): {
       }
       saveReceipt({ provider: "supabase-management", method: "POST", resource, phase: "response", http_status: response.status });
       if (response.ok) break;
-      lastError = `Supabase read-only SQL returned HTTP ${response.status}`;
       if (attempt < 2 && (response.status === 429 || response.status >= 500)) {
+        lastError = `Supabase read-only SQL returned HTTP ${response.status}`;
         await response.body?.cancel().catch(() => undefined);
         response = null;
         await delay(500 * (attempt + 1));
         continue;
       }
+      let errPayload: unknown = null;
+      try {
+        errPayload = await response.json();
+      } catch {
+        // Ignore JSON decode failure for error body
+      }
+      lastError = extractSafeDbError(errPayload, response.status);
       await response.body?.cancel().catch(() => undefined);
       saveReceipt({ provider: "supabase-management", method: "POST", resource, phase: "failure", http_status: response.status, error: lastError });
       throw new Error(lastError);

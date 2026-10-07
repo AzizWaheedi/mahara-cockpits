@@ -1,6 +1,5 @@
 import {type Row, graph, allAdAccounts, callTool, unwrap, recordLog} from './runtime';
 import {creativeCopyParts, readCreativeCopy, stillKeyFor} from './metaMedia';
-const LABELS = '10vGT2Jw43eCsSi5UfGY6O35_6pq-rjaEDi-fN86yZ-A';
 const DATABASE = '1_0Nv-IFvzhH4NBNh1dxCUm6Ryp414ctM_8EO5QORBF0';
 const SKIP_ACCOUNTS: Record<string,boolean> = {maharamedia:true};
 const SERVICE_LINE_OVERRIDES: Record<string, string> = {
@@ -91,74 +90,133 @@ async function sheetValues(id: string, range: string): Promise<string[][]> {
   return (res?.values ?? []) as string[][];
 }
 
-/** The label sheet, as the Python did it: header lookup by prefix. */
-async function loadLabelSheet(): Promise<ClientLabel[]> {
-  const values = await sheetValues(LABELS, "A1:Z200");
-  if (values.length === 0) return [];
-  const head = values[0].map(h => String(h).trim().toLowerCase());
-  const cell = (row: string[], name: string) => {
-    const i = head.findIndex(h => h.startsWith(name));
-    return i >= 0 ? String(row[i] ?? "").trim() : "";
-  };
-  const out: ClientLabel[] = [];
-  for (const row of values.slice(1)) {
-    const client = cell(row, "client");
-    const acct = cell(row, "ad account").replace(/^act_/, "");
-    if (!client || !acct || Object.hasOwn(SKIP_ACCOUNTS,normalize(client))) continue;
-    out.push({
-      client,
-      accountId: acct,
-      country: cell(row, "country") || undefined,
-      city: cell(row, "city") || undefined,
-      serviceText: cell(row, "service"),
-    });
-  }
-  return out;
-}
+type RegistryClient = {
+  client: string;
+  country?: string;
+  city?: string;
+  service: string;
+};
 
-/** Fallback: every account the business can reach, labelled from Client Data. */
+/** Load canonical Client Data registry and label reachable Meta accounts. */
 async function loadFromMeta(): Promise<ClientLabel[]> {
   const accounts = await allAdAccounts();
-  const byName = new Map<
-    string,
-    { country?: string; city?: string; service: string }
-  >();
-  try {
-    const rows = await sheetValues(DATABASE, "'Client Data'!A1:S200");
-    const head = rows[0] ?? [];
-    const col = (n: string) => head.indexOf(n);
-    for (const r of rows.slice(1)) {
-      const name = r[col("Client Name")];
-      if (!name) continue;
-      byName.set(normalize(name), {
-        country: r[col("Country")] || undefined,
-        city: r[col("City")] || undefined,
-        service: String(r[col("Service")] ?? ""),
-      });
-    }
-  } catch (e) {
-    recordLog("error",
-      `Client Data unreadable, labelling from account names only: ${String(e).slice(0, 120)}`,
-    );
+  const rows = await sheetValues(DATABASE, "'Client Data'!A1:S200");
+  if (!rows || rows.length === 0) {
+    throw new Error('Client Data registry is empty or unreadable');
   }
-  const out: ClientLabel[] = [];
-  for (const a of accounts) {
-    const name = String(a.name ?? "").trim();
-    if (!name || Object.hasOwn(SKIP_ACCOUNTS,normalize(name))) continue;
-    // Account names rarely equal client names exactly; take the best prefix match.
-    const key = normalize(name);
-    let hit = byName.get(key);
-    if (!hit) {
-      for (const [k, v] of byName) {
-        if (k.length >= 5 && (key.includes(k) || k.includes(key))) {
-          hit = v;
-          break;
+  const head = rows[0] ?? [];
+  const col = (n: string) => head.indexOf(n);
+  const clientNameCol = col("Client Name");
+  if (clientNameCol < 0) {
+    throw new Error('Valid Client Name header required in Client Data registry');
+  }
+  const metaAccountCol = col("Ad Account - Meta");
+  const countryCol = col("Country");
+  const cityCol = col("City");
+  const serviceCol = col("Service");
+
+  const byAccountId = new Map<string, RegistryClient>();
+  const byName = new Map<string, RegistryClient | null>();
+  let realClientCount = 0;
+
+  for (const r of rows.slice(1)) {
+    const rawClient = String(r[clientNameCol] ?? "").trim();
+    if (!rawClient) continue;
+    const norm = normalize(rawClient);
+    if (!norm || Object.hasOwn(SKIP_ACCOUNTS, norm)) continue;
+    realClientCount++;
+
+    const entry: RegistryClient = {
+      client: rawClient,
+      country: countryCol >= 0 ? r[countryCol] || undefined : undefined,
+      city: cityCol >= 0 ? r[cityCol] || undefined : undefined,
+      service: serviceCol >= 0 ? String(r[serviceCol] ?? "") : "",
+    };
+
+    if (metaAccountCol >= 0) {
+      const rawAcct = String(r[metaAccountCol] ?? "").trim();
+      const acctId = rawAcct.replace(/^act_/, "").trim();
+      if (acctId) {
+        const existing = byAccountId.get(acctId);
+        if (existing) {
+          const isIdentical =
+            existing.client === entry.client &&
+            existing.country === entry.country &&
+            existing.city === entry.city &&
+            existing.service === entry.service;
+          if (!isIdentical) {
+            throw new Error(`Conflicting duplicate account-ID mapping in Client Data registry: ${acctId}`);
+          }
+        } else {
+          byAccountId.set(acctId, entry);
         }
       }
     }
+
+    const nameKey = norm;
+    if (byName.has(nameKey)) {
+      byName.set(nameKey, null);
+    } else {
+      byName.set(nameKey, entry);
+    }
+  }
+
+  if (realClientCount === 0) {
+    throw new Error('Client Data registry contains no valid client entries');
+  }
+
+  const out: ClientLabel[] = [];
+  for (const a of accounts) {
+    const name = String(a.name ?? "").trim();
+    if (!name || Object.hasOwn(SKIP_ACCOUNTS, normalize(name))) continue;
+
+    const accountId = String(a.account_id ?? "").replace(/^act_/, "").trim();
+    const exactHit = accountId ? byAccountId.get(accountId) : undefined;
+
+    if (exactHit) {
+      out.push({
+        client: exactHit.client,
+        accountId,
+        country: exactHit.country,
+        city: exactHit.city,
+        serviceText: exactHit.service,
+      });
+      continue;
+    }
+
+    // Old fixtures or entries lacking account-ID header retain existing name matching.
+    const key = normalize(name);
+    let hit: RegistryClient | undefined;
+    if (byName.has(key)) {
+      const direct = byName.get(key);
+      if (direct === null) {
+        recordLog(
+          "warn",
+          `Duplicate normalized client name for account ${name}; retaining explicit provider account identity`,
+        );
+      } else {
+        hit = direct;
+      }
+    } else {
+      const candidates: RegistryClient[] = [];
+      for (const [k, v] of byName) {
+        if (k.length >= 5 && (key.includes(k) || k.includes(key))) {
+          if (v) candidates.push(v);
+        }
+      }
+      if (candidates.length === 1) {
+        hit = candidates[0];
+      } else if (candidates.length > 1) {
+        recordLog(
+          "warn",
+          `Ambiguous name match for account ${name}; retaining explicit provider account identity`,
+        );
+      }
+    }
+
     out.push({
-      client: name,
-      accountId: a.account_id,
+      client: hit ? hit.client : name,
+      accountId,
       country: hit?.country,
       city: hit?.city,
       serviceText: hit?.service ?? "",
@@ -300,12 +358,11 @@ function readPlay(adset: Row) {
   };
 }
 export async function collectMarket(state: Row): Promise<Row[]> {
-  const labels = await loadLabelSheet(), accounts = await loadFromMeta();
-  const labelById = new Map(labels.map(label => [label.accountId, label]));
+  const accounts = await loadFromMeta();
   const prior = new Map<string, Row>((state.media?.marketPlays ?? []).map((row: Row) => [String(row.adsetId), row]));
   const out: Row[] = [];
   for (const account of accounts) {
-    const label = labelById.get(account.accountId) ?? account;
+    const label = account;
     const response = await graph(`act_${account.accountId}/adsets`, {fields: 'id,name,optimization_goal,targeting{flexible_spec,interests,custom_audiences,age_min,age_max},insights.date_preset(last_30d){spend,actions}', limit: 100});
     if (!Array.isArray(response.data)) throw new Error('Market ad sets are unavailable');
     for (const adset of response.data) {

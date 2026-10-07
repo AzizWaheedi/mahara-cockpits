@@ -429,7 +429,7 @@ test('market provider insight math feeds permanent winners and keeps human annot
    throw new Error('Unexpected market provider resource');
   },
   async tool(_name,args){
-   return args.url.includes('10vGT2Jw43eCsSi5UfGY6O35_6pq-rjaEDi-fN86yZ-A')?{values:[['Client','Ad account','Country','City','Service'],['Alpha','222222','Kuwait','Kuwait','Construction']]}:{values:[['Client Name','Country','City','Service'],['Alpha','Kuwait','Kuwait','Construction']]};
+   return {values:[['Client Name','Ad Account - Meta','Country','City','Service'],['Alpha','222222','Kuwait','Kuwait','Construction']]};
   },
   async fetch(){throw new Error('No image request expected');},
   log(level){if(level==='error')throw new Error('Market source failed');},
@@ -443,6 +443,168 @@ test('market provider insight math feeds permanent winners and keeps human annot
  delete insight.data;
  await expect(withNativeContext(reads,{receipts:[]},()=>collectMarket(s))).rejects.toThrow(/insight/i);
 });
+
+test('market provider never calls obsolete labels sheet, prefers exact account-ID over mismatched name, and fails closed on unreadable or ambiguous registry',async()=>{
+ const insight={data:[{spend:'100',actions:[{action_type:'lead',value:'5'}]}]};
+ const mockMeta=(accountName='Meta Name')=>({
+  async graph(path:string){
+   if(path.endsWith('/owned_ad_accounts'))return {data:[{id:'act_999888',name:accountName}]};
+   if(path.endsWith('/client_ad_accounts'))return {data:[]};
+   if(path==='act_999888/adsets')return {data:[{id:'adset_1',name:'Play 1',targeting:{age_min:20},insights:insight}]};
+   if(path==='adset_1/ads')return {data:[{id:'ad_1',name:'Ad 1',creative:{id:'cr_1'},insights:insight}]};
+   throw new Error(`Unexpected graph path ${path}`);
+  },
+  async fetch(){throw new Error('No image fetch');},
+  log(){},
+ });
+
+ // 1. Obsolete sheet is never called, and canonical account-ID mapping wins over mismatched Meta display name
+ {
+  let obsoleteCalled = false;
+  const reads:Reads={
+   ...mockMeta('Confusing Meta Display Name'),
+   async tool(_name,args){
+    if(String(args?.url).includes('10vGT2Jw43eCsSi5UfGY6O35_6pq-rjaEDi-fN86yZ-A')){
+     obsoleteCalled=true;
+     throw new Error('Obsolete labels sheet must not be called');
+    }
+    return {values:[
+     ['Client Name','Ad Account - Meta','Country','City','Service'],
+     ['Authoritative Canonical Client','act_999888','UAE','Dubai','Interior design'],
+    ]};
+   },
+  };
+  const plays=await withNativeContext(reads,{receipts:[]},()=>collectMarket({media:{marketPlays:[]}}));
+  expect(obsoleteCalled).toBe(false);
+  expect(plays).toHaveLength(1);
+  expect(plays[0].client).toBe('Authoritative Canonical Client');
+  expect(plays[0].accountId).toBe('999888');
+  expect(plays[0].country).toBe('UAE');
+  expect(plays[0].city).toBe('Dubai');
+  expect(plays[0].serviceLine).toBe('Interior design');
+ }
+
+ // 2. Old fixtures lacking Ad Account - Meta header retain existing name matching
+ {
+  const reads:Reads={
+   ...mockMeta('Alpha Interior'),
+   async tool(){
+    return {values:[
+     ['Client Name','Country','City','Service'],
+     ['Alpha Interior','Kuwait','Kuwait City','Interior design'],
+    ]};
+   },
+  };
+  const plays=await withNativeContext(reads,{receipts:[]},()=>collectMarket({media:{marketPlays:[]}}));
+  expect(plays).toHaveLength(1);
+  expect(plays[0].client).toBe('Alpha Interior');
+  expect(plays[0].country).toBe('Kuwait');
+  expect(plays[0].city).toBe('Kuwait City');
+  expect(plays[0].serviceLine).toBe('Interior design');
+ }
+
+ // 3. Empty/unreadable registry or missing Client Name header must fail closed
+ {
+  const unreadableReads:Reads={
+   ...mockMeta(),
+   async tool(){throw new Error('Network error loading Client Data');},
+  };
+  await expect(withNativeContext(unreadableReads,{receipts:[]},()=>collectMarket({media:{marketPlays:[]}}))).rejects.toThrow();
+
+  const emptyReads:Reads={
+   ...mockMeta(),
+   async tool(){return {values:[]};},
+  };
+  await expect(withNativeContext(emptyReads,{receipts:[]},()=>collectMarket({media:{marketPlays:[]}}))).rejects.toThrow(/Client Data/i);
+
+  const headerOnlyReads:Reads={
+   ...mockMeta(),
+   async tool(){return {values:[['Client Name','Ad Account - Meta','Country','City','Service']]};},
+  };
+  await expect(withNativeContext(headerOnlyReads,{receipts:[]},()=>collectMarket({media:{marketPlays:[]}}))).rejects.toThrow(/Client Data/i);
+
+  const blankClientReads:Reads={
+   ...mockMeta(),
+   async tool(){return {values:[['Client Name','Ad Account - Meta'],['   ','999888']]};},
+  };
+  await expect(withNativeContext(blankClientReads,{receipts:[]},()=>collectMarket({media:{marketPlays:[]}}))).rejects.toThrow(/Client Data/i);
+
+  const missingHeaderReads:Reads={
+   ...mockMeta(),
+   async tool(){return {values:[['No Client Name Here','Ad Account - Meta']]};},
+  };
+  await expect(withNativeContext(missingHeaderReads,{receipts:[]},()=>collectMarket({media:{marketPlays:[]}}))).rejects.toThrow(/Client Name/i);
+ }
+
+ // 4. Duplicate account-ID mapping must reject or fail closed
+ {
+  const duplicateIdReads:Reads={
+   ...mockMeta(),
+   async tool(){
+    return {values:[
+     ['Client Name','Ad Account - Meta','Country','City','Service'],
+     ['Client First','999888','UAE','Dubai','Interior design'],
+     ['Client Second','act_999888','KSA','Riyadh','Construction and contracting'],
+    ]};
+   },
+  };
+  await expect(withNativeContext(duplicateIdReads,{receipts:[]},()=>collectMarket({media:{marketPlays:[]}}))).rejects.toThrow(/ambiguous|duplicate/i);
+ }
+
+ // 5. Ambiguous name mapping (when no account ID is provided) must reject ambiguous match rather than attaching wrong client
+ {
+  const ambiguousNameReads:Reads={
+   ...mockMeta('Alpha Global Projects'),
+   async tool(){
+    return {values:[
+     ['Client Name','Country','City','Service'],
+     ['Alpha One','Kuwait','Kuwait','Fit-out'],
+     ['Alpha Two','Kuwait','Kuwait','Interior'],
+    ]};
+   },
+  };
+  const plays=await withNativeContext(ambiguousNameReads,{receipts:[]},()=>collectMarket({media:{marketPlays:[]}}));
+  expect(plays[0].client).toBe('Alpha Global Projects');
+  expect(plays[0].country).toBeUndefined();
+  expect(plays[0].city).toBeUndefined();
+  expect(plays[0].serviceLine).toBe('Unknown');
+
+  const duplicateNormalizedNameReads:Reads={
+   ...mockMeta('Beta Group'),
+   async tool(){
+    return {values:[
+     ['Client Name','Country','City','Service'],
+     ['Beta Group','Kuwait','Kuwait','Fit-out'],
+     ['beta group','UAE','Dubai','Interior'],
+    ]};
+   },
+  };
+  const dupPlays=await withNativeContext(duplicateNormalizedNameReads,{receipts:[]},()=>collectMarket({media:{marketPlays:[]}}));
+  expect(dupPlays[0].client).toBe('Beta Group');
+  expect(dupPlays[0].country).toBeUndefined();
+  expect(dupPlays[0].city).toBeUndefined();
+  expect(dupPlays[0].serviceLine).toBe('Unknown');
+ }
+
+ // 6. Identical duplicate account-ID mappings deduplicate safely
+ {
+  const identicalIdReads:Reads={
+   ...mockMeta('Any Meta Name'),
+   async tool(){
+    return {values:[
+     ['Client Name','Ad Account - Meta','Country','City','Service'],
+     ['Exact Client','999888','UAE','Dubai','Interior design'],
+     ['Exact Client','act_999888','UAE','Dubai','Interior design'],
+    ]};
+   },
+  };
+  const plays=await withNativeContext(identicalIdReads,{receipts:[]},()=>collectMarket({media:{marketPlays:[]}}));
+  expect(plays).toHaveLength(1);
+  expect(plays[0].client).toBe('Exact Client');
+  expect(plays[0].country).toBe('UAE');
+ }
+});
+
 
 test('native refresh retains canonical legacy IDs, human fields and completed checklist work',async()=>{
  const db=await fixture();try{

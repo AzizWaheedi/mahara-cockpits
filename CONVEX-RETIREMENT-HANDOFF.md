@@ -134,3 +134,13 @@ Work remains active. [Inventory](docs/CONVEX-RETIREMENT-INVENTORY-20261007.md).
 - Applied the existing `20260927b_eod_delivery_claims.sql` after its nine isolated tests and a live ROLLBACK preview. The queue was empty before and after. Three service-only RPCs, nine missing columns, and both protection/audit triggers are installed. Receipt: `eod-native-contract-receipt.json` under consolidation evidence. No deliveries or schedules ran.
 - Report audience change passed 39 focused tests and the Deno server check. Public editing remains denied by default. An explicit folder-ID match accepts anyone/writer for the user-selected folder. Its configured owner must remain an active admin/CEO/CSM member. Both folder and final-document audiences use the same policy.
 - Deno's frozen check found the pre-existing root lock out of date. The successful server check used `--node-modules-dir=auto --no-lock`; no source lockfile was changed.
+
+### Live preflight corrections, 7 October
+
+- Report settings and `cockpit-csm-api` version 5 are live. Settings digests and unchanged JWT verification were read back. Source: `85d959ee`. No report document or permission change was made.
+- Fresh original exports completed at 16:01 UTC for all three deployments, including files. They are protected under `consolidation-20261007/current-source/`. Writers remain active. These exports are not final-delta certification.
+- Fresh source shows three manual payments and 40 source CEO audit rows. Native currently holds one payment. Preserve and reconcile the late delta before freeze.
+- Applied and verified one original billing-history pilot after a live rollback preview. The 67-record plan has zero conflicts, with 66 remaining after the pilot. Its values and source record were read back exactly. Finance readiness flags remain false.
+- The native market reader now uses the approved live Meta + Client Data registry, avoiding the inaccessible obsolete label sheet. Exact account IDs win. Empty or ambiguous registry data fail safely. Meaningful RED/GREEN plus all 19 native-feed tests passed, with 172 assertions.
+- The native CEO SQL reader now accepts semicolons inside SQL comments and quoted text while denying multiple statements. B2B remains read-only. Sanitized database diagnostics and canonical publish/replay/failure smoke tests pass.
+- Remaining live defects: imported legacy booking grouping, missing finance aliases/billing history readiness, webinar Composio handshake, team SQL schema drift, portal appointment-source acceptance, provider freshness and native activation. Do not equate doctors with these acceptance gates.

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { PGlite } from "@electric-sql/pglite";
 import { cockpitTestDb, migration } from "../../apps/media-buyer-cockpit/scripts/lib/cockpitTestDb";
 import { runRefresh } from "./worker.ts";
+import { createProviderDriver } from "./providerTools.ts";
 
 type TestDb = PGlite;
 type Fetcher = typeof fetch;
@@ -234,6 +235,171 @@ export async function smoke(): Promise<void> {
 
     const claim = await runRefresh({ env, fetcher: localTransport(db), only, apply: false, runId: randomUUID() });
     assert(claim.status === "dry-run", "dry-run changed during fence verification");
+
+    // Regression checks for provider SQL boundary detection and HTTP 400 diagnostics
+    await (async function testProviderRegression() {
+      const baseEnv = {
+        SUPABASE_URL: "https://bldgtotkfmhoxmlzowdx.supabase.co",
+        SUPABASE_SERVICE_ROLE_KEY: "service-role-fixture-only",
+        SUPABASE_ACCESS_TOKEN: "management-token-fixture-only",
+      };
+
+      // 1. Semicolons inside line comments and block comments are accepted
+      let capturedQuery = "";
+      let capturedReadOnly: boolean | undefined = undefined;
+      const driver1 = createProviderDriver({
+        env: baseEnv,
+        apply: false,
+        fetcher: (async (input, init) => {
+          const body = JSON.parse(String(init?.body ?? "{}"));
+          capturedQuery = body.query;
+          capturedReadOnly = body.read_only;
+          return Response.json([{ ok: 1 }]);
+        }) as Fetcher,
+      });
+
+      const commentQuery = `
+        -- comment with semicolon; and another;
+        /* block comment; with semicolon; */
+        SELECT 1 AS ok
+        -- trailing comment;
+      `;
+      const res1 = await driver1.read("flwboeijllbtrufxkhts", commentQuery);
+      assert(Array.isArray(res1) && res1[0]?.ok === 1, "comment query with semicolons failed");
+      assert(capturedReadOnly === true, "read_only:true flag was not sent");
+      assert(capturedQuery === commentQuery, "original query text was modified or not preserved");
+
+      // 2. Genuine second statements are denied before fetch
+      let fetchCalled = false;
+      const driver2 = createProviderDriver({
+        env: baseEnv,
+        apply: false,
+        fetcher: (async () => {
+          fetchCalled = true;
+          return Response.json([{ ok: 1 }]);
+        }) as Fetcher,
+      });
+
+      let err2: Error | null = null;
+      try {
+        await driver2.read("flwboeijllbtrufxkhts", "SELECT 1; DROP TABLE users;");
+      } catch (e) {
+        err2 = e as Error;
+      }
+      assert(err2 !== null, "genuine second statement was not rejected");
+      assert(!fetchCalled, "fetch was called for second statement query");
+
+      // 3. Quoted comment markers do not hide second statements
+      fetchCalled = false;
+      let err3: Error | null = null;
+      try {
+        await driver2.read("flwboeijllbtrufxkhts", "SELECT '--' ; DROP TABLE users;");
+      } catch (e) {
+        err3 = e as Error;
+      }
+      assert(err3 !== null, "quoted comment marker attack was not rejected");
+      assert(!fetchCalled, "fetch was called for quoted comment marker attack query");
+
+      fetchCalled = false;
+      let err4: Error | null = null;
+      try {
+        await driver2.read("flwboeijllbtrufxkhts", "SELECT '/*'; DROP TABLE users;");
+      } catch (e) {
+        err4 = e as Error;
+      }
+      assert(err4 !== null, "quoted block comment attack was not rejected");
+      assert(!fetchCalled, "fetch was called for quoted block comment attack query");
+
+      // 4. Fixed B2B adapter query reaches the read-only request path
+      let b2bCapturedQuery = "";
+      let b2bReadOnly: boolean | undefined = undefined;
+      const driver3 = createProviderDriver({
+        env: baseEnv,
+        apply: false,
+        fetcher: (async (input, init) => {
+          const body = JSON.parse(String(init?.body ?? "{}"));
+          b2bCapturedQuery = body.query;
+          b2bReadOnly = body.read_only;
+          return Response.json([{ campaign_name: "test", adset_name: "adset" }]);
+        }) as Fetcher,
+      });
+
+      // Construct treeSql query resembling b2bAds.js adapter query with comments
+      const sampleTreeSql = `with
+  ident as (
+    select distinct on (ad_id) ad_id, adset_id, campaign_id,
+           ad_name, adset_name, campaign_name, campaign_status, effective_status, thumbnail_url
+    from public.meta_ad_snapshots
+    where date between date '2026-09-01' and date '2026-09-30'
+    order by ad_id, date desc),
+  w7_leads as (
+    -- Leads by the setters' ROAS tags (Aziz, 2026-09-21): qualified plus
+    -- unqualified count; unprepared is "not ready" and is shown apart.
+    select l.ad_id, count(*) as leads
+    from public.leads l
+    where l.ad_id is not null
+    group by 1)
+select ident.* from ident left join w7_leads on w7_leads.ad_id = ident.ad_id;`;
+
+      const b2bRes = await driver3.read("flwboeijllbtrufxkhts", sampleTreeSql);
+      assert(Array.isArray(b2bRes) && b2bRes.length === 1, "B2B adapter query failed to execute");
+      assert(b2bReadOnly === true, "B2B adapter query did not include read_only:true");
+      assert(b2bCapturedQuery === sampleTreeSql, "B2B adapter query text was not preserved");
+
+      // 5. Sanitized HTTP 400 diagnostics in local receipts (actual Supabase wrapper with LINE 1 SQL secret)
+      const driver4 = createProviderDriver({
+        env: baseEnv,
+        apply: false,
+        fetcher: (async () => {
+          return new Response(JSON.stringify({
+            message: "Failed to run sql query: ERROR:  42501: permission denied for function secret_leak\nLINE 1: SELECT secret_token_xyz FROM sensitive_vault WHERE key='sk_live_12345678'\nQUERY:  SELECT secret_token_xyz\nCONTEXT: PL/pgSQL function test() line 1",
+            query: "SELECT * FROM leak_all_data;",
+          }), { status: 400, headers: { "Content-Type": "application/json" } });
+        }) as Fetcher,
+      });
+
+      let err5: Error | null = null;
+      try {
+        await driver4.read("flwboeijllbtrufxkhts", "SELECT 1;");
+      } catch (e) {
+        err5 = e as Error;
+      }
+      assert(err5 !== null, "HTTP 400 error was not thrown");
+      const receipt = driver4.receipts.find(r => r.phase === "failure" && r.http_status === 400);
+      assert(!!receipt, "Failure receipt for HTTP 400 missing");
+      assert(!receipt.error?.includes("secret_token_xyz"), "Receipt leaked LINE 1 secret");
+      assert(!receipt.error?.includes("sensitive_vault"), "Receipt leaked LINE 1 table name");
+      assert(!receipt.error?.includes("sk_live_12345678"), "Receipt leaked raw credentials");
+      assert(!receipt.error?.includes("leak_all_data"), "Receipt leaked raw query property");
+      assert(!receipt.error?.includes("QUERY:"), "Receipt leaked QUERY context");
+      assert(!receipt.error?.includes("CONTEXT:"), "Receipt leaked CONTEXT block");
+      assert(receipt.error?.includes("42501"), "Receipt omitted validated PostgreSQL error code");
+      assert(receipt.error?.includes("permission denied for function"), "Receipt omitted sanitized first error sentence");
+
+      // 6. Unknown error shape falls back to generic HTTP status
+      const driver5 = createProviderDriver({
+        env: baseEnv,
+        apply: false,
+        fetcher: (async () => {
+          return new Response(JSON.stringify({
+            malicious_key: "SELECT secret FROM evil",
+            query: "DROP TABLE users;",
+          }), { status: 400, headers: { "Content-Type": "application/json" } });
+        }) as Fetcher,
+      });
+
+      let err6: Error | null = null;
+      try {
+        await driver5.read("flwboeijllbtrufxkhts", "SELECT 1;");
+      } catch (e) {
+        err6 = e as Error;
+      }
+      assert(err6 !== null, "HTTP 400 error was not thrown for unknown shape");
+      const receipt5 = driver5.receipts.find(r => r.phase === "failure" && r.http_status === 400);
+      assert(!!receipt5, "Failure receipt missing for unknown shape");
+      assert(receipt5.error === "Supabase read-only SQL returned HTTP 400", "Unknown shape did not return generic HTTP status");
+    })();
+
     console.info("CEO refresh smoke: canonical dry-run, atomic publish/readback, repeat, and failure checks passed.");
   } finally {
     await db.close();
