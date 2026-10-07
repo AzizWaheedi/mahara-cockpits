@@ -74,6 +74,10 @@ Review `blockers`, classifications, counts, files, client scope, expected target
 
 ## Dry run and paused deployment
 
+Fathom reads start 24 hours before the last successful full native publication. The worker reads that checkpoint from `cockpit_native_media_runs` through its read-only transport. Failed runs and dry runs cannot advance it. Original CSM `syncRuns` remain unchanged.
+
+Before the first native publication, set `FATHOM_CREATED_AFTER` to a reviewed ISO timestamp covered by the protected source export, with an overlap for recent changes. The worker rejects missing, malformed, and future seeds when no verified checkpoint exists. It never caps a valid older checkpoint after downtime. Keep imported calls and human annotations when recent reads return fewer calls.
+
 ```sh
 bun hermes/cockpit-sync/worker.ts --report /private/cockpit-sync/dry-run.json
 ```

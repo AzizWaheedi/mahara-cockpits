@@ -22,7 +22,7 @@ export async function calculate(state:Row,reads:Reads,runContext:NativeRunContex
   const result=await syncOnce(captured.context);
   archiveWinners(state,captured.tables);
   const stillAssets=await captureStills(state,captured.tables,reads);
-  const csmResult=await collectCsm(state,captured.tables),csm=prepareTables(csmResult.tables,state.csm);
+  const csmResult=await collectCsm(state,captured.tables,env.FATHOM_CREATED_AFTER),csm=prepareTables(csmResult.tables,state.csm);
   const googleCalendars=await collectSharedGoogleCalendars(state,env);
   const creative=prepareTables({...state.creative,...await collectCreative(state,captured.tables,csm)},state.creative);
   const tables={...state.media,...prepareTables(captured.tables,{...state.media,campaigns:state.oldCampaigns,ads:state.oldAds,winnersArchive:state.winners,adStills:state.stills})};

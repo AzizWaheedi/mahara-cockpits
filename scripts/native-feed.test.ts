@@ -337,6 +337,7 @@ test('real worker calculations from raw provider fixture publish campaign, CSM a
     throw new Error(`Unexpected fixture Graph resource ${path}`);
    },
    async tool(name,args){
+    if(name==='native_fathom_checkpoint_get')return [];
     if(name==='mcp_supabase_execute_sql'){
      if(args.query.includes('select distinct s.campaign_name'))return {result:JSON.stringify([{campaign_name:'Alpha campaign',campaign_id:'111111',meta_ad_account_id:'222222'}])};
      if(args.query.includes('thumbnail_url')||args.query.includes('ad_account_activities'))return {result:'[]'};
@@ -373,7 +374,8 @@ test('real worker calculations from raw provider fixture publish campaign, CSM a
    async fetch(){throw new Error('Fixture must not download or call a live provider');},
    log(level){if(level==='error')throw new Error('Fixture calculation reported a source failure');},
   };
-  const {stillAssets,...p}=await calculate(s,reads,{receipts:[]},{});
+  const fixtureEnv = {FATHOM_CREATED_AFTER: new Date(Date.now() - 90 * 86400000).toISOString()};
+  const {stillAssets,...p}=await calculate(s,reads,{receipts:[]},fixtureEnv);
   expect(stillAssets).toEqual([]);
   expect(p.tables.campaigns[0].spend7d).toBe(120);
   expect(p.tables.campaigns[0].leads7d).toBe(10);
@@ -387,6 +389,7 @@ test('real worker calculations from raw provider fixture publish campaign, CSM a
   expect(p.csm.appointments).toHaveLength(1);
   expect(p.csm.appointments[0]).toMatchObject({apptId:'appt1',clientName:'Alpha',kind:'checkin',status:'confirmed'});
   expect(p.csm.clientProfiles[0].callsBrief).toBe('Original recorded overall summary');
+  expect(p.csm.syncRuns).toEqual(s.csm.syncRuns);
   expect(p.csm.clientProfiles[0].calls.find((call:Row)=>call.url==='https://fathom.video/manual-call').brief).toBe('Keep original manual annotation');
   expect(p.csm.clientProfiles[0].calls.find((call:Row)=>call.url==='https://fathom.video/recorded-call').brief).toBe('Original recorded per-call brief');
   expect(p.creative.clients[0].name).toBe('Alpha');

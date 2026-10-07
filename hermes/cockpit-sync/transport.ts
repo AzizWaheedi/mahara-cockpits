@@ -139,6 +139,12 @@ export function transport(env:Env,request:typeof fetch=fetch,wait=(ms:number)=>n
    if(!Array.isArray(data)||(limit&&data.length>=Number(limit)))throw new Error('SQL source missing or reached its coverage limit');
    return {result:JSON.stringify(data)};
   }
+  if(name==='native_fathom_checkpoint_get'){
+   if(Object.keys(args).length||env.SUPABASE_URL?.replace(/\/$/,'')!=='https://bldgtotkfmhoxmlzowdx.supabase.co')throw new Error('Native checkpoint requires Creative Triage and no query overrides');
+   const url=new URL('https://bldgtotkfmhoxmlzowdx.supabase.co/rest/v1/cockpit_native_media_runs');
+   url.search=new URLSearchParams({status:'eq.published','plan->>producer':'eq.media-core',select:'started_at:plan->>begun_at',order:'published_at.desc',limit:'1'}).toString();
+   return json(url.href,{headers:{apikey:needed('SUPABASE_SERVICE_ROLE_KEY'),Authorization:`Bearer ${needed('SUPABASE_SERVICE_ROLE_KEY')}`}});
+  }
   const url=new URL(args.url);
   if(name==='pd_google_sheets_proxy_get'){
    if(url.hostname!=='sheets.googleapis.com')throw new Error('Unexpected Sheets host');

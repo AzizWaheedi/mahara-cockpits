@@ -2,6 +2,29 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { transport } from './transport';
 
+it('reads only the latest successful full native publication through the health-recording transport', async () => {
+ const env={SUPABASE_URL:'https://bldgtotkfmhoxmlzowdx.supabase.co',SUPABASE_SERVICE_ROLE_KEY:'fixture-service'};
+ let requests=0;
+ const reader=transport(env,async(input,init)=>{
+  requests++;
+  const url=new URL(String(input));
+  assert.equal(url.hostname,'bldgtotkfmhoxmlzowdx.supabase.co');
+  assert.equal(url.pathname,'/rest/v1/cockpit_native_media_runs');
+  assert.equal(url.searchParams.get('status'),'eq.published');
+  assert.equal(url.searchParams.get('plan->>producer'),'eq.media-core');
+  assert.equal(url.searchParams.get('select'),'started_at:plan->>begun_at');
+  assert.equal(url.searchParams.get('limit'),'1');
+  assert.equal((init?.method??'GET'),'GET');
+  assert.equal(new Headers(init?.headers).get('Authorization'),'Bearer fixture-service');
+  return new Response(JSON.stringify([{started_at:'2026-10-07T12:00:00Z'}]),{headers:{'content-type':'application/json'}});
+ });
+ assert.deepEqual(await reader.reads.tool('native_fathom_checkpoint_get',{}),[{started_at:'2026-10-07T12:00:00Z'}]);
+ assert.equal(requests,1);
+ assert.ok(reader.receipts.some(r=>r.phase==='response'));
+ await assert.rejects(reader.reads.tool('native_fathom_checkpoint_get',{url:'https://example.com'}));
+ assert.equal(requests,1);
+});
+
 describe('transport', () => {
  const baseEnv = {
   SUPABASE_URL: 'https://bldgtotkfmhoxmlzowdx.supabase.co',

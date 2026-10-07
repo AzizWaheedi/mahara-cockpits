@@ -947,6 +947,15 @@ export const DEFINITIONS: MetricDefinition[] = [
     "cockpit_people",
     "count",
   ),
+  d(
+    "team.actions",
+    "team",
+    "Team actions today",
+    "Count of human actions today: meaningful human Meta edits and real human card comments, with automated machines and Aziz excluded.",
+    "Native Meta event and comment repository",
+    "count",
+    "Does not claim full staff productivity. Excludes Hermes, bots, automated scripts, and leadership edits.",
+  ),
   // --- organic ---
   d(
     "organic.instagram_followers",

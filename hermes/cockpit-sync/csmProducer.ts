@@ -178,11 +178,61 @@ export function reconcileRoster(
   };
 }
 
-export async function collectCsm(state: Row, tables: Record<string, Row[]>): Promise<{ tables: Record<string, Row[]>; calendarWindow: { from: number; to: number; checkedAt: number; calendars: { id: string; name: string }[]; eventIds: string[] } }> {
+export function fathomCheckpoint(at: number): Row {
+  if (typeof at !== 'number' || !Number.isFinite(at)) {
+    throw new Error('fathomCheckpoint requires a finite epoch millisecond timestamp');
+  }
+  return {
+    _id: stableId('syncRuns', ['csm', 'native_fathom', at]),
+    kind: 'native_fathom',
+    ok: true,
+    at,
+  };
+}
+
+export function fathomSince(syncRuns: Row[], now: number, optionalSeed?: string): string {
+  let newestAt: number | undefined;
+
+  for (const run of syncRuns) {
+    if (run.kind === 'native_fathom' || run.kind === 'health') {
+      if (run.ok === true) {
+        const at = run.at;
+        if (typeof at !== 'number' || !Number.isFinite(at) || at > now) {
+          throw new Error('Invalid candidate checkpoint: timestamp must be a finite epoch milliseconds not in future');
+        }
+        if (newestAt === undefined || at > newestAt) {
+          newestAt = at;
+        }
+      }
+    }
+  }
+
+  if (newestAt !== undefined) {
+    return new Date(newestAt - 24 * 60 * 60 * 1000).toISOString();
+  }
+
+  if (optionalSeed !== undefined) {
+    if (typeof optionalSeed === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(optionalSeed)) {
+      const parsed = Date.parse(optionalSeed);
+      if (Number.isFinite(parsed) && parsed <= now) {
+        return optionalSeed;
+      }
+    }
+    throw new Error('Verified checkpoint required: provided seed is invalid');
+  }
+
+  throw new Error('Verified checkpoint required: no successful native_fathom or health record found and no valid seed provided');
+}
+
+export async function collectCsm(state: Row, tables: Record<string, Row[]>, seed?: string): Promise<{ tables: Record<string, Row[]>; calendarWindow: { from: number; to: number; checkedAt: number; calendars: { id: string; name: string }[]; eventIds: string[] } }> {
   await assertNativeFence();
   for (const key of ['clients','csTasks','kpi','appointments','rosterDays','churnEvents','syncRuns','clientProfiles','decisions','reportDocs','outbox'])
     if (!Array.isArray(state.csm?.[key])) throw new Error(`CSM ${key} source is not initialized`);
   const now = Date.now(), today = new Date(now + 10800000).toISOString().slice(0, 10);
+  const checkpoints=unwrap(await callTool('native_fathom_checkpoint_get',{}));
+  if(!Array.isArray(checkpoints)||checkpoints.length>1)throw new Error('Native Fathom publication checkpoint is unverified');
+  const published=checkpoints.length?[fathomCheckpoint(Date.parse(checkpoints[0]?.started_at))]:[];
+  const sinceTimestamp = fathomSince([...state.csm.syncRuns,...published], now, seed);
   const day = {y:Number(today.slice(0,4)),m:Number(today.slice(5,7)),d:Number(today.slice(8,10))};
   const taskRows = async (list: string): Promise<Row[]> => {
     const result = unwrap(await callTool('pd_clickup_proxy_get', {url:`https://api.clickup.com/api/v2/list/${list}/task?include_closed=${list===CLIENTS_LIST}`}));
@@ -219,7 +269,7 @@ export async function collectCsm(state: Row, tables: Record<string, Row[]>): Pro
   const history = mergeDailyStats(state.dailyStats,tables.dailyStats);
   const adLeads = Object.fromEntries(adLeadsByClient(tables.campaigns,history,now).map(r=>[r.key,r]));
   const visibleAccounts = (await allAdAccounts()).map(a=>({name:String(a.name??''),id:String(a.account_id??'')}));
-  const calls = await fathomCalls();
+  const calls = await fathomCalls(sinceTimestamp);
   const clientProfiles = await pool(snapshot.clients,4,async c => {
     const data = parsed.rows.find(r=>r.clickupId===c.taskId) ?? parsed.rows.find(r=>normTight(r.clientName)===normTight(c.name));
     const task = clientTasks.find(t=>t.id===c.taskId), fields = cfById(task ?? {});
@@ -279,6 +329,7 @@ export async function collectCsm(state: Row, tables: Record<string, Row[]>): Pro
     if(!Number.isFinite(start)||start<calendar.from||start>=calendar.to)appointments.set(old.apptId,old);
   }
   for(const row of calendar.rows)appointments.set(row.apptId,row);
+
   // Reports, decisions and delivery history have no replay route and retain their source stamps.
   return { tables: {...state.csm,clients:snapshot.clients,csTasks:snapshot.tasks,checks:snapshot.checks.map((c:Row)=>({...c,role:'csm',day:today})),rosterDays:roster.rosterDays,churnEvents:roster.churnEvents,clientProfiles,kpi:parseKpi(kpiRows,today,now),appointments:[...appointments.values()].sort((a,b)=>String(a.startTime??'').localeCompare(String(b.startTime??'')))}, calendarWindow: {from:calendar.from,to:calendar.to,checkedAt:calendar.checkedAt,calendars:calendar.calendars,eventIds:calendar.rows.map(row=>String(row.apptId))} };
 }
