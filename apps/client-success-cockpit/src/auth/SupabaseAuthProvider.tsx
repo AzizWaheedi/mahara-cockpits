@@ -16,6 +16,7 @@ import {
   type SupabaseAccess,
   type SupabaseAccessObserver,
   type SupabaseAccessState,
+  signOutCockpitSession,
 } from "./supabaseAccess";
 
 export interface CockpitAuthState {
@@ -102,8 +103,7 @@ export function SupabaseAuthProvider({ children }: { children: ReactNode }) {
 
   const signOut = useCallback(async () => {
     if (client) {
-      const { error: signOutError } = await client.auth.signOut();
-      if (signOutError) throw signOutError;
+      await signOutCockpitSession(client);
     }
   }, [client]);
 

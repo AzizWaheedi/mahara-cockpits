@@ -13,6 +13,13 @@ cd "$(dirname "$0")/.."
 py_bin="python"
 command -v python >/dev/null 2>&1 || py_bin="python3"
 
+# Authentication is shared by all five apps. Check live settings before publishing.
+"$py_bin" -m unittest discover -s scripts -p test_check_cockpit_auth_config.py
+(cd apps/media-buyer-cockpit && bun test scripts/cockpit-auth-flow.test.ts scripts/cockpit-auth-sql.test.ts)
+(cd apps/media-buyer-cockpit && bun test scripts/cockpit-auth-sdk.test.ts)
+(cd apps/client-success-cockpit && bun test scripts/auth-password-ui.test.tsx)
+"$py_bin" scripts/check-cockpit-auth-config.py
+
 # Nothing ships if the copies of a shared page have drifted apart.
 scripts/check-shared.sh || exit 1
 # The guard that keeps a backend deploy from removing someone else's

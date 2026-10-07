@@ -1,8 +1,13 @@
+import type { User as AuthUser } from "@supabase/supabase-js";
 import { ChevronRight, Loader2, User } from "lucide-react";
-
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
+import {
+  cockpitAuthError,
+  completeCockpitPasswordReset,
+  requestCockpitPasswordReset,
+} from "@/auth/supabaseAccess";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
@@ -23,7 +28,7 @@ export function SettingsPage() {
   const user = { name: auth.name, email: auth.email };
 
   const [changePasswordOpen, setChangePasswordOpen] = useState(false);
-  const [deleteAccountOpen, setDeleteAccountOpen] = useState(false);
+  const [signOutOpen, setSignOutOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -31,54 +36,113 @@ export function SettingsPage() {
     "request",
   );
 
+  const passwordAttempt = useRef(0);
+  const resetActor = useRef<AuthUser | null>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: actor changes invalidate pending password work.
+  useEffect(() => {
+    ++passwordAttempt.current;
+    resetActor.current = null;
+    setPasswordStep("request");
+    setLoading(false);
+    setError("");
+    setSuccess("");
+    return () => {
+      ++passwordAttempt.current;
+      resetActor.current = null;
+    };
+  }, [auth.session?.user.id, auth.email]);
+
+  useEffect(() => {
+    if (!auth.client) return;
+    const { data } = auth.client.auth.onAuthStateChange((event, next) => {
+      const expected = resetActor.current;
+      if (!expected || event === "INITIAL_SESSION") return;
+      if (
+        next?.user.id === expected.id &&
+        next.user.email?.trim().toLowerCase() ===
+          expected.email?.trim().toLowerCase()
+      )
+        return;
+      // Invalidate immediately under the SDK callback, before React changes context.
+      ++passwordAttempt.current;
+      resetActor.current = null;
+      setPasswordStep("request");
+      setLoading(false);
+      setError("The signed-in account changed. Request a new code.");
+      setSuccess("");
+    });
+    return () => {
+      data.subscription.unsubscribe();
+      ++passwordAttempt.current;
+      resetActor.current = null;
+    };
+  }, [auth.client]);
+
+  const closePasswordDialog = () => {
+    ++passwordAttempt.current;
+    resetActor.current = null;
+    setChangePasswordOpen(false);
+    setPasswordStep("request");
+    setLoading(false);
+    setError("");
+    setSuccess("");
+  };
+
   const handleRequestPasswordReset = async (e: React.FormEvent) => {
     e.preventDefault();
+    const expected = auth.session?.user;
+    const ticket = ++passwordAttempt.current;
     setError("");
+    setSuccess("");
     setLoading(true);
-
+    resetActor.current = expected ?? null;
     try {
-      if (auth.client && auth.email) {
-        const { error: resetErr } =
-          await auth.client.auth.resetPasswordForEmail(auth.email);
-        if (resetErr) throw resetErr;
-        setSuccess("Password reset email sent!");
-      }
-    } catch {
-      setError("Could not send reset code. Please try again.");
+      if (!auth.client || !expected)
+        throw new Error("Sign in again before changing your password.");
+      await requestCockpitPasswordReset(auth.client, expected);
+      if (passwordAttempt.current !== ticket) return;
+      setPasswordStep("verify");
+      setSuccess("Enter the code from your newest email.");
+    } catch (err: unknown) {
+      if (passwordAttempt.current === ticket) setError(cockpitAuthError(err));
     } finally {
-      setLoading(false);
+      if (passwordAttempt.current === ticket) setLoading(false);
     }
   };
 
   const handleResetPassword = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    setError("");
-    setLoading(true);
-
     const formData = new FormData(e.currentTarget);
-    const newPassword = (formData.get("newPassword") as string) || "";
-
+    const expected = resetActor.current;
+    const ticket = ++passwordAttempt.current;
+    const current = () =>
+      passwordAttempt.current === ticket && resetActor.current === expected;
+    setError("");
+    setSuccess("");
+    setLoading(true);
     try {
-      if (auth.client) {
-        const { error: updateErr } = await auth.client.auth.updateUser({
-          password: newPassword,
-        });
-        if (updateErr) throw updateErr;
-        setSuccess("Password changed successfully!");
-        setTimeout(() => {
-          setChangePasswordOpen(false);
-          setPasswordStep("request");
-          setSuccess("");
-        }, 1500);
-      }
-    } catch {
-      setError("That code or password did not work. Try again.");
+      if (!auth.client || !expected)
+        throw new Error("Request a new password reset code.");
+      await completeCockpitPasswordReset(
+        auth.client,
+        expected,
+        String(formData.get("code") ?? ""),
+        String(formData.get("newPassword") ?? ""),
+        current,
+      );
+      if (!current()) return;
+      setSuccess("Password changed successfully.");
+      setTimeout(() => {
+        if (current()) closePasswordDialog();
+      }, 1500);
+    } catch (err: unknown) {
+      if (current()) setError(cockpitAuthError(err));
     } finally {
-      setLoading(false);
+      if (current()) setLoading(false);
     }
   };
 
-  const handleDeleteAccount = async () => {
+  const handleSignOut = async () => {
     setLoading(true);
     setError("");
 
@@ -134,15 +198,13 @@ export function SettingsPage() {
           )}
           <button
             type="button"
-            onClick={() => setDeleteAccountOpen(true)}
+            onClick={() => setSignOutOpen(true)}
             className="flex w-full items-center justify-between gap-3 rounded-b-2xl px-4 py-4 text-left transition-colors hover:bg-destructive/5 sm:px-6"
           >
             <div>
-              <p className="text-sm font-medium text-destructive">
-                Delete account
-              </p>
+              <p className="text-sm font-medium text-destructive">Sign out</p>
               <p className="text-sm text-muted-foreground">
-                Permanently delete your account
+                Sign out of this device
               </p>
             </div>
             <ChevronRight className="size-4 text-destructive" />
@@ -151,7 +213,13 @@ export function SettingsPage() {
       </section>
 
       {emailPasswordAvailable && (
-        <Dialog open={changePasswordOpen} onOpenChange={setChangePasswordOpen}>
+        <Dialog
+          open={changePasswordOpen}
+          onOpenChange={open => {
+            if (open) setChangePasswordOpen(true);
+            else closePasswordDialog();
+          }}
+        >
           <DialogContent>
             <DialogHeader>
               <DialogTitle>Change password</DialogTitle>
@@ -181,7 +249,7 @@ export function SettingsPage() {
                   <Button
                     type="button"
                     variant="outline"
-                    onClick={() => setChangePasswordOpen(false)}
+                    onClick={closePasswordDialog}
                   >
                     Cancel
                   </Button>
@@ -198,6 +266,8 @@ export function SettingsPage() {
                   <Input
                     id="code"
                     name="code"
+                    inputMode="numeric"
+                    disabled={loading}
                     type="text"
                     placeholder="Enter code from email"
                     autoComplete="one-time-code"
@@ -209,9 +279,10 @@ export function SettingsPage() {
                   <Input
                     id="newPassword"
                     name="newPassword"
+                    disabled={loading}
                     type="password"
                     placeholder="••••••••"
-                    minLength={6}
+                    minLength={8}
                     autoComplete="new-password"
                     required
                   />
@@ -231,8 +302,12 @@ export function SettingsPage() {
                     type="button"
                     variant="outline"
                     onClick={() => {
+                      ++passwordAttempt.current;
+                      resetActor.current = null;
+                      setLoading(false);
                       setPasswordStep("request");
                       setError("");
+                      setSuccess("");
                     }}
                   >
                     Back
@@ -248,18 +323,17 @@ export function SettingsPage() {
         </Dialog>
       )}
 
-      <Dialog open={deleteAccountOpen} onOpenChange={setDeleteAccountOpen}>
+      <Dialog open={signOutOpen} onOpenChange={setSignOutOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Delete account</DialogTitle>
+            <DialogTitle>Sign out</DialogTitle>
             <DialogDescription>
-              This action cannot be undone. This will permanently delete your
-              account and remove all your data.
+              You can sign in again with your email.
             </DialogDescription>
           </DialogHeader>
           <div className="py-4">
             <p className="text-sm text-muted-foreground">
-              Are you sure you want to delete your account?
+              Sign out of this device?
             </p>
           </div>
           {error && (
@@ -268,19 +342,16 @@ export function SettingsPage() {
             </p>
           )}
           <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setDeleteAccountOpen(false)}
-            >
+            <Button variant="outline" onClick={() => setSignOutOpen(false)}>
               Cancel
             </Button>
             <Button
               variant="destructive"
-              onClick={handleDeleteAccount}
+              onClick={handleSignOut}
               disabled={loading}
             >
               {loading && <Loader2 className="size-4 animate-spin" />}
-              Delete account
+              Sign out
             </Button>
           </DialogFooter>
         </DialogContent>

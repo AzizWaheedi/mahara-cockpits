@@ -7,8 +7,12 @@ import {
 } from "@/auth/SupabaseAuthProvider";
 import {
   assertSupabaseActor,
-  cockpitAccessError,
+  cockpitAuthError,
+  createCockpitSupabaseClient,
   loadSupabaseAccess,
+  normalizeCockpitCode,
+  requestCockpitCode,
+  signOutCockpitSession,
 } from "@/auth/supabaseAccess";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -20,7 +24,7 @@ type SetupStep = "requestOtp" | "verifyAndSetPassword" | "complete";
 
 export function FirstSignInPage() {
   const navigate = useNavigate();
-  const { refreshAccess } = useCockpitAuth();
+  const { session } = useCockpitAuth();
   const supabase = getCockpitSupabaseClient();
 
   const [email, setEmail] = useState("");
@@ -68,18 +72,14 @@ export function FirstSignInPage() {
     try {
       // Directory seats can predate Auth accounts. Create only an unprivileged
       // Auth identity; the private directory is checked after email confirmation.
-      const { error: otpErr } = await supabase.auth.signInWithOtp({
-        email: cleanEmail,
-        options: { shouldCreateUser: true },
-      });
+      await requestCockpitCode(supabase, cleanEmail);
       if (attempt.current !== pending) return;
-      if (otpErr) throw otpErr;
       setStep("verifyAndSetPassword");
       setStatusMessage(
         `A setup code has been sent to ${cleanEmail}. Enter it below along with your chosen password.`,
       );
     } catch (err: unknown) {
-      if (attempt.current === pending) setError(cockpitAccessError(err));
+      if (attempt.current === pending) setError(cockpitAuthError(err));
     } finally {
       if (attempt.current === pending) setBusy(false);
     }
@@ -88,7 +88,6 @@ export function FirstSignInPage() {
   async function handleVerifyAndSetPassword(e: FormEvent) {
     e.preventDefault();
     const cleanEmail = email.trim().toLowerCase();
-    const cleanCode = code.replace(/\D/g, "").slice(-6);
     const pending: { email: string; userId: string | null } = {
       email: cleanEmail,
       userId: null,
@@ -96,10 +95,13 @@ export function FirstSignInPage() {
     attempt.current = pending;
     setBusy(true);
     setError(null);
+    let verification: ReturnType<typeof createCockpitSupabaseClient> | null =
+      null;
     try {
-      const { data, error: verifyErr } = await supabase.auth.verifyOtp({
+      verification = createCockpitSupabaseClient(true);
+      const { data, error: verifyErr } = await verification.auth.verifyOtp({
         email: cleanEmail,
-        token: cleanCode,
+        token: normalizeCockpitCode(code),
         type: "email",
       });
       if (attempt.current !== pending) return;
@@ -114,7 +116,7 @@ export function FirstSignInPage() {
         );
       }
       pending.userId = verifiedUser.id;
-      const access = await loadSupabaseAccess(supabase, verifiedUser.id);
+      const access = await loadSupabaseAccess(verification, verifiedUser.id);
       if (attempt.current !== pending) return;
       if (!access)
         throw new Error(
@@ -122,18 +124,23 @@ export function FirstSignInPage() {
         );
 
       // Never apply a password to whichever account happens to be current later.
-      await assertSupabaseActor(supabase, verifiedUser);
+      await assertSupabaseActor(verification, verifiedUser);
       if (attempt.current !== pending) return;
-      const { error: pwdErr } = await supabase.auth.updateUser({ password });
+      const { error: pwdErr } = await verification.auth.updateUser({
+        password,
+      });
       if (attempt.current !== pending) return;
       if (pwdErr) throw pwdErr;
-      await refreshAccess();
-      if (attempt.current !== pending) return;
-      await assertSupabaseActor(supabase, verifiedUser);
-      if (attempt.current === pending) setStep("complete");
+      await assertSupabaseActor(verification, verifiedUser);
+      if (attempt.current === pending) {
+        attempt.current = null;
+        setBusy(false);
+        setStep("complete");
+      }
     } catch (err: unknown) {
-      if (attempt.current === pending) setError(cockpitAccessError(err));
+      if (attempt.current === pending) setError(cockpitAuthError(err));
     } finally {
+      await verification?.auth.stopAutoRefresh();
       if (attempt.current === pending) setBusy(false);
     }
   }
@@ -254,7 +261,7 @@ export function FirstSignInPage() {
                       Securing seat...
                     </>
                   ) : (
-                    "Save Password & Open Cockpit"
+                    "Save password"
                   )}
                 </Button>
 
@@ -262,7 +269,12 @@ export function FirstSignInPage() {
                   <button
                     type="button"
                     onClick={() => {
+                      attempt.current = null;
+                      setBusy(false);
                       setStep("requestOtp");
+                      setCode("");
+                      setPassword("");
+                      setStatusMessage(null);
                       setError(null);
                     }}
                     className="text-xs text-muted-foreground hover:text-primary underline underline-offset-4"
@@ -276,16 +288,36 @@ export function FirstSignInPage() {
             {step === "complete" && (
               <div className="space-y-4 text-center py-4">
                 <CheckCircle2 className="mx-auto size-12 text-primary" />
-                <h2 className="text-lg font-semibold">Seat Ready</h2>
+                <h2 className="text-lg font-semibold">Password ready</h2>
+                {error && (
+                  <p className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                    {error}
+                  </p>
+                )}
                 <p className="text-sm text-muted-foreground">
-                  Your password has been saved and your cockpit seat is
-                  verified.
+                  Your password is saved. Sign in to open your cockpit.
                 </p>
                 <Button
-                  onClick={() => navigate("/dashboard", { replace: true })}
+                  disabled={busy}
+                  onClick={async () => {
+                    setBusy(true);
+                    setError(null);
+                    try {
+                      if (
+                        session &&
+                        session.user.email?.trim().toLowerCase() !==
+                          email.trim().toLowerCase()
+                      )
+                        await signOutCockpitSession(supabase);
+                      navigate("/login", { replace: true });
+                    } catch (err: unknown) {
+                      setError(cockpitAuthError(err));
+                      setBusy(false);
+                    }
+                  }}
                   className="w-full h-11"
                 >
-                  Enter Cockpit
+                  Sign in
                 </Button>
               </div>
             )}

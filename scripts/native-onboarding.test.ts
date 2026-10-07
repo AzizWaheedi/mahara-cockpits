@@ -26,17 +26,17 @@ test('ordinary booking scope does not require a renewal date',async()=>{
  expect(result).toMatchObject({actorId:UID,taskId:'cu-alpha',clientName:'Alpha'});
 });
 test('same booking intent is retained and another request cannot create the same slot',async()=>{
- await actor(db,UID);const requestId=crypto.randomUUID(),args={taskId:'cu-alpha',contactId:'contact-alpha',startTime:'2026-10-07T09:00:00Z'};
+ await actor(db,UID);const requestId=crypto.randomUUID(),args={taskId:'cu-alpha',contactId:'contact-alpha',startTime:new Date(Date.now()+86_400_000).toISOString()};
  let claimed:unknown;try{claimed=await call('cockpit_csm_check_in_begin',{p_args:args,p_request_id:requestId,p_apply:true});}catch{claimed=null;}
  expect(claimed).toMatchObject({state:'new',id:requestId});
  expect(await call('cockpit_csm_check_in_begin',{p_args:args,p_request_id:crypto.randomUUID(),p_apply:true})).toMatchObject({state:'sending',id:requestId});
 });
 test('a late real booking receipt stays private after client access is revoked',async()=>{
- await actor(db,UID);const requestId=crypto.randomUUID(),args={taskId:'cu-alpha',contactId:'contact-alpha',startTime:'2026-10-07T09:00:00Z'};
+ await actor(db,UID);const requestId=crypto.randomUUID(),args={taskId:'cu-alpha',contactId:'contact-alpha',startTime:new Date(Date.now()+86_400_000).toISOString()};
  await call('cockpit_csm_check_in_begin',{p_args:args,p_request_id:requestId,p_apply:true});
  await owner(db);await db.query('UPDATE cockpit_members SET active=false WHERE auth_user_id=$1',[UID]);
  await db.exec('SET ROLE service_role');
- await call('cockpit_csm_check_in_capture',{p_id:requestId,p_result:{appointmentId:'real-provider-appointment',startTime:args.startTime,endTime:'2026-10-07T09:30:00Z',contactId:args.contactId,calendarId:'SHjlq0UjeR11maltYNyh',locationId:'wwG426bwruWWv9W3fazQ'}});
+ await call('cockpit_csm_check_in_capture',{p_id:requestId,p_result:{appointmentId:'real-provider-appointment',startTime:args.startTime,endTime:new Date(Date.parse(args.startTime)+30*60_000).toISOString(),contactId:args.contactId,calendarId:'SHjlq0UjeR11maltYNyh',locationId:'wwG426bwruWWv9W3fazQ'}});
  await owner(db);const saved=(await db.query<{state:string;result:{appointmentId:string}}>('SELECT state,result FROM cockpit_csm_actions WHERE id=$1',[requestId])).rows[0];
  expect(saved.state).toBe('reconcile');expect(saved.result.appointmentId).toBe('real-provider-appointment');
  expect((await db.query<{count:number}>('SELECT count(*)::int count FROM cockpit_csm_client_overrides')).rows[0].count).toBe(0);

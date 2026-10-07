@@ -40,6 +40,11 @@ APP_NAMES = [
 # gateway key rejection, NOT application authorization, RLS enforcement, or RPC
 # security logic. It creates an external network dependency and gives false confidence.
 RELEVANT_TEST_FILES = [
+    "apps/media-buyer-cockpit/scripts/cockpit-auth-sdk.test.ts",
+    "apps/media-buyer-cockpit/scripts/cockpit-auth-flow.test.ts",
+    "apps/media-buyer-cockpit/scripts/cockpit-auth-sql.test.ts",
+    "apps/client-success-cockpit/scripts/auth-password-ui.test.tsx",
+    "scripts/test_check_cockpit_auth_config.py",
     "apps/media-buyer-cockpit/scripts/supabase-access.test.ts",
     "apps/media-buyer-cockpit/scripts/cockpit-self-adoption.test.ts",
     "apps/media-buyer-cockpit/scripts/cockpit-editor-identity.test.ts",
