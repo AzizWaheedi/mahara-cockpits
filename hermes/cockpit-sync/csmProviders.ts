@@ -102,18 +102,36 @@ export async function provisionalFor(acct:GhlAccount){
  }
  upcoming.sort((a,b)=>a.at.localeCompare(b.at));return {count:upcoming.length,callbacks,upcoming:upcoming.slice(0,25)};
 }
-export async function fathomCalls():Promise<Call[]>{
- const since=new Date(Date.now()-90*86400000).toISOString().replace(/\.\d{3}Z$/,'Z'),out:Call[]=[];
- let cursor:string|undefined;
- for(let page=0;page<100;page++){
-  const params=new URLSearchParams({created_after:since,include_summary:'true'});if(cursor)params.set('cursor',cursor);
-  const body=unwrap(await callTool('native_fathom_get',{url:`https://api.fathom.ai/external/v1/meetings?${params}`}));
-  if(!Array.isArray(body.items))throw new Error('Fathom meeting collection missing');
-  for(const m of body.items)out.push({title:String(m.title??''),at:String(m.scheduled_start_time??m.created_at??''),host:m.recorded_by?.name,external:(m.calendar_invitees??[]).filter((i:Row)=>i.is_external).map((i:Row)=>String(i.name??i.email??'')),url:m.url??m.share_url,summary:String(m.default_summary?.markdown_formatted??'').slice(0,1500)||undefined});
-  if(!body.next_cursor)return out;
-  if(body.next_cursor===cursor)throw new Error('Fathom pagination did not advance');cursor=body.next_cursor;
- }
- throw new Error('Fathom pagination incomplete');
+export async function fathomCalls(sinceArg?: string): Promise<Call[]> {
+  let since = sinceArg;
+  if (since !== undefined) {
+    const parsed = Date.parse(since);
+    if (!Number.isFinite(parsed)) throw new Error('Invalid Fathom since timestamp');
+  } else {
+    since = new Date(Date.now() - 90 * 86400000).toISOString().replace(/\.\d{3}Z$/, 'Z');
+  }
+  const out: Call[] = [];
+  let cursor: string | undefined;
+  for (let page = 0; page < 100; page++) {
+    const params = new URLSearchParams({ created_after: since, include_summary: 'true' });
+    if (cursor) params.set('cursor', cursor);
+    const body = unwrap(await callTool('native_fathom_get', { url: `https://api.fathom.ai/external/v1/meetings?${params}` }));
+    if (!Array.isArray(body.items)) throw new Error('Fathom meeting collection missing');
+    for (const m of body.items) {
+      out.push({
+        title: String(m.title ?? ''),
+        at: String(m.scheduled_start_time ?? m.created_at ?? ''),
+        host: m.recorded_by?.name,
+        external: (m.calendar_invitees ?? []).filter((i: Row) => i.is_external).map((i: Row) => String(i.name ?? i.email ?? '')),
+        url: m.url ?? m.share_url,
+        summary: String(m.default_summary?.markdown_formatted ?? '').slice(0, 1500) || undefined,
+      });
+    }
+    if (!body.next_cursor) return out;
+    if (body.next_cursor === cursor) throw new Error('Fathom pagination did not advance');
+    cursor = body.next_cursor;
+  }
+  throw new Error('Fathom pagination incomplete');
 }
 
 /** Verified legacy bridge contract: discover tab 01; never guess a Summary tab. */
