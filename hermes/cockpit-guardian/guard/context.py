@@ -164,6 +164,9 @@ class Context:
     def functions(self) -> list[dict[str, Any]]:
         return self._mgmt("functions", lambda: self.need_db().functions())
 
+    def function_files(self, slug: str) -> list[str]:
+        return self._mgmt("function_files:" + slug, lambda: self.need_db().function_files(slug))
+
     def supabase_health(self) -> list[dict[str, Any]]:
         return self._mgmt("health", lambda: self.need_db().health())
 

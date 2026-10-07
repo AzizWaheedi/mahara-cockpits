@@ -23,25 +23,43 @@ It compares docs/preserve/supabase-manifest.json and docs/preserve/vps-manifest.
 - The live sales cockpit bundle: the room screens' and the proposal screens' words are still in it.
 - The private bucket: its SHA256SUMS lists every backed-up object and each object matches its sum.
 
+It also checks what a cutover can break without removing anything: the deployed source files of sales-api,
+sales-live and sales-mirror against the files at the restore tag, CRON_SECRET still pairing with the vault's
+cockpit_sync_secret, function secrets set again after the inventory, row counts against the inventory,
+settings rows put back from an older copy, the status rows of the jobs that run every few minutes, which
+Supabase project the VPS workers and the live cockpit talk to, and that origin/main and the restore tag
+still hold the restore point.
+
 Each line says ok, CHANGED, MISSING or UNKNOWN. A CHANGED line is explained when something accounts for
 it, and the line says what: a migration added to the repo after the inventory redefines that object, the
 VPS still holds the very copy recorded at the inventory while main moved on, the object is not part of the
 preserved work, or a function was redeployed with a higher version. Anything else is not explained.
+"Explained by a later migration" means: read that migration; it is the one that changed the object.
 
 Exit codes: 0 when nothing is MISSING, every CHANGED is explained and nothing is UNKNOWN; 1 when something
 is MISSING or a CHANGED is not explained; 2 when nothing failed but some checks could not be made.
 
+Other modes:
+    --print-cron        the exact text of our crontab lines as recorded, to put back a lost line
+    --project REF       check another Supabase project (after a planned move) against the same records
+    --record FILE       save what every source answered (names, digests, booleans; never a secret or a row)
+    --replay FILE       judge a saved recording instead of the live sources (dry simulations: change the
+                        recording, replay it; scripts/preserve_scenarios.py does this for 22 cutover actions)
+
 It changes nothing anywhere. On the VPS the only write is a scratch folder under /tmp for the doctor's
-write probe, removed at once. Secrets are read from files and never printed: the management token from the
-file named by SUPABASE_MGMT_TOKEN_FILE (default ~/.config/mahara/sb_mgmt_token), the service key used to
-read the bucket from SUPABASE_SERVICE_KEY_FILE (default ~/.config/mahara/sb_service_key). Standard library
-only, Python 3.9 or later.
+write probe, removed at once. SQL goes with read_only true; the one read that needs the owner role (the
+digest of the vault's cockpit_sync_secret, compared in memory with the digest the API gives for CRON_SECRET)
+runs inside a read-only transaction and neither value is printed or saved. Secrets are read from files and
+never printed: the management token from the file named by SUPABASE_MGMT_TOKEN_FILE (default
+~/.config/mahara/sb_mgmt_token), the service key used to read the bucket from SUPABASE_SERVICE_KEY_FILE
+(default ~/.config/mahara/sb_service_key). Standard library only, Python 3.9 or later.
 """
 from __future__ import annotations
 
 import argparse
 import base64
 import hashlib
+import hmac
 import json
 import os
 import re
@@ -63,6 +81,9 @@ UA = "mahara-verify-preserved/1"
 BUCKET = "sales-proposals"
 BACKUP_DIR = "backups/2026-10-07-pre-migration"
 BACKUP_PREFIX = BACKUP_DIR + "/"
+# Added by the adversarial review of 2026-10-07, in both backups, with its own SHA256SUMS: the rows of
+# cockpit_sales_followups and cockpit_sales_references, and a git bundle of the branch that carries the note.
+SUPPLEMENT = "supplement/"
 SITE = "https://cockpit.maharamedia.com/sales/"
 VPS = "hermes@187.77.156.166"
 VPS_KEY = "~/.ssh/faris-key"
@@ -79,6 +100,33 @@ STRICT_EXTENSIONS = ("pg_cron", "pg_net", "supabase_vault", "pgcrypto")
 # (counts, cursors, copies of a form), so only their presence is checked.
 SWITCH_KEYS = ("rooms", "live", "followups", "whatsapp_guard", "messaging", "crm_writes", "contracts", "pipeline")
 GUARDIAN_MAX_AGE_MIN = 10
+TAG = "pre-supabase-migration-2026-10-07"
+
+# The deployed source files of our Edge Functions on 2026-10-07 (sales-api v65, sales-live v2, sales-mirror v17),
+# read back through the management API: each one byte for byte the file of that name at the restore tag. A deploy
+# from a branch without live calls lacks rooms.ts, roomlogic.ts, liveio.ts, followupAgent.ts and sendrules.ts.
+RECORDED_SOURCES = {
+    "sales-api": ("clientforms.ts", "clients.ts", "contracts.ts", "dialer.ts", "followupAgent.ts", "hot.ts",
+                  "index.ts", "lib.ts", "liveio.ts", "proposals.ts", "roomlogic.ts", "rooms.ts", "sendrules.ts"),
+    "sales-live": ("cron.ts", "door.ts", "handler.ts", "index.ts", "sign.ts", "slack.ts", "util.ts", "zoom.ts"),
+    "sales-mirror": ("index.ts", "lib.ts"),
+}
+# Status rows written on every run of a job that runs every few minutes, with how old each may get before
+# the job has stopped (minutes): the rooms worker and its host check, the hourly doctor, the proposal queue,
+# the follow-ups, and the two pg_cron jobs of live calls. Their ok flag is shown, not judged: the sweep's row
+# has said "not taken (404)" since 2026-10-05, from before sales-live was deployed.
+STATUS_ROWS = {
+    ("sales-desk", "rooms"): 10, ("sales-desk", "room-hosts"): 25, ("sales-desk", "doctor"): 75,
+    ("sales-desk", "requests"): 10, ("sales-desk", "followups"): 45,
+    ("sales-api", "sweep"): 5, ("sales-api", "watchdog"): 15,
+}
+# Env keys that name a Supabase project on the VPS. The desk and the guardian use DESK_SUPABASE_URL.
+PROJECT_KEYS = ("DESK_SUPABASE_URL", "GUARDIAN_SUPABASE_URL", "RADAR_SUPABASE_URL", "COCKPIT_SUPABASE_URL",
+                "SUPABASE_URL")
+BIG_TABLE = 200_000          # counted from pg_class.reltuples, and only a fall of more than a tenth counts
+DEPENDENCY_DROP = 0.10       # a dependency table may lose this share of rows (the mirror and dial dedupe delete)
+# Function secrets the platform sets itself; their update time moves without anyone setting them.
+PLATFORM_SECRET = re.compile(r"^SUPABASE_")
 
 ROOM_STRINGS = (
     "Still on the call?", "This room could not be read", "Under a minute left", "What keeps rooms working",
@@ -108,12 +156,71 @@ def sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def parse_utc(text: Any) -> Optional[float]:
+    """Seconds since the epoch for an ISO or Postgres timestamp ('2026-10-07T01:12:34.068Z',
+    '2026-10-07 14:42:00.515+03'); None when it cannot be read."""
+    if not text:
+        return None
+    t = str(text).strip().replace(" ", "T", 1)
+    if t.endswith("Z"):
+        t = t[:-1] + "+00:00"
+    m = re.match(r"^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(\.\d+)?([+-]\d\d(?::?\d\d)?)?$", t)
+    if not m:
+        return None
+    frac = (m.group(2) or ".0")[1:7].ljust(6, "0")
+    tz = m.group(3) or "+00:00"
+    tz = tz + ":00" if len(tz) == 3 else tz if ":" in tz else tz[:3] + ":" + tz[3:]
+    try:
+        return datetime.fromisoformat(f"{m.group(1)}.{frac}{tz}").timestamp()
+    except ValueError:
+        return None
+
+
 def plural(n: int, word: str, many: str = "") -> str:
     return f"{n} {word if n == 1 else many or word + 's'}"
 
 
 class SourceError(Exception):
     pass
+
+
+# ---- the tape: what every source answered, recorded or replayed -------------------------------------------
+
+class Tape:
+    """live: ask the sources. record: ask them and keep the answers (only what the checks judge: names,
+    digests, counts, booleans; never a secret value or a row). replay: answer from a recording, so a cutover
+    action can be simulated by changing the recording (scripts/preserve_scenarios.py)."""
+
+    def __init__(self, mode: str = "live", path: Optional[Path] = None) -> None:
+        self.mode, self.path = mode, path
+        self.data: Dict[str, Any] = {}
+        if mode == "replay":
+            self.data = json.loads(Path(path).read_text(encoding="utf-8"))
+
+    def take(self, key: str, fn: Callable[[], Any]) -> Any:
+        if self.mode == "replay":
+            if key not in self.data:
+                raise SourceError(f"{key} is not in the recording")
+            v = self.data[key]
+            if isinstance(v, dict) and set(v) == {"__error__"}:
+                raise SourceError(v["__error__"])
+            return v
+        try:
+            v = fn()
+        except SourceError as e:
+            if self.mode == "record":
+                self.data[key] = {"__error__": str(e)}
+            raise
+        if self.mode == "record":
+            self.data[key] = v
+        return v
+
+    def save(self) -> None:
+        if self.mode == "record" and self.path:
+            Path(self.path).write_text(json.dumps(self.data, indent=0, sort_keys=True), encoding="utf-8")
+
+
+TAPE = Tape()
 
 
 # ---- the report ----------------------------------------------------------------------------------------
@@ -175,6 +282,8 @@ class Later:
         mig = ROOT / "supabase" / "migrations"
         on_disk = sorted(p for p in mig.glob("*.sql")) if mig.is_dir() else []
         self.files: Dict[str, str] = {}
+        self.baseline = baseline
+        self._base: Optional[Dict[str, str]] = None
         try:
             base = set(git("ls-tree", "-r", "--name-only", baseline, "--", "supabase/migrations/").decode().split("\n"))
             changed = set(git("diff", "--name-only", baseline, "--", "supabase/migrations/").decode().split("\n"))
@@ -196,6 +305,35 @@ class Later:
 
     def function(self, name: str) -> List[str]:
         return self.find(rf"\bfunction\s+(?:public\.)?\"?{re.escape(name)}\"?\s*\(")
+
+    @staticmethod
+    def bodies(text: str, name: str) -> List[str]:
+        """The bodies of every `create or replace function name(...)` in a migration, whitespace folded."""
+        rx = re.compile(rf"create\s+or\s+replace\s+function\s+(?:public\.)?\"?{re.escape(name)}\"?\s*\(.*?"
+                        r"\bas\s+(\$[a-z0-9_]*\$)(.*?)\1", re.I | re.S)
+        return [" ".join(m.group(2).lower().split()) for m in rx.finditer(text)]
+
+    def older_copy(self, name: str, files: List[str]) -> Optional[str]:
+        """A later migration that puts back a definition the baseline's migrations had already replaced (an
+        old file copied into a new one): it explains the change and is the regression itself."""
+        if self._base is None:
+            self._base = {}
+            try:
+                listed = git("ls-tree", "-r", "--name-only", self.baseline, "--", "supabase/migrations/").decode()
+                for path in sorted(l for l in listed.split("\n") if l.endswith(".sql") and "/tests/" not in l):
+                    self._base[path] = git("show", f"{self.baseline}:{path}").decode("utf-8", "replace")
+            except (SourceError, OSError, subprocess.SubprocessError):
+                return None
+        seq = [(path, b) for path, text in sorted(self._base.items()) for b in self.bodies(text, name)]
+        if len(seq) < 2:
+            return None
+        current, older = seq[-1][1], {b: path for path, b in seq[:-1]}
+        for f in files:
+            mine = self.bodies(self.files.get(f, ""), name)
+            if mine and mine[-1] != current and mine[-1] in older:
+                return (f"{Path(f).name} puts back the older definition from {Path(older[mine[-1]]).name}, "
+                        f"which {Path(seq[-1][0]).name} had replaced")
+        return None
 
     def relation(self, name: str) -> List[str]:
         return self.find(r"\b(?:alter\s+table|create\s+(?:unlogged\s+)?table|create\s+(?:or\s+replace\s+)?view|"
@@ -232,36 +370,119 @@ def arr(names: Iterable[str]) -> str:
     return "array[" + ",".join(lit(n) for n in names) + "]::text[]"
 
 
+# The owner role reads the vault; the transaction is read-only, so nothing can be written. Only a digest
+# comes back, and it is compared in memory with the one the API gives for CRON_SECRET, then dropped.
+Q_VAULT_DIGEST = ("set transaction read only; select encode(sha256(convert_to(decrypted_secret, 'utf8')), 'hex') "
+                  "as d from vault.decrypted_secrets where name = 'cockpit_sync_secret'")
+
+
+def parse_multipart(ctype: str, raw: bytes) -> Dict[str, bytes]:
+    m = re.search(r'boundary="?([^";]+)"?', ctype or "")
+    if not m:
+        raise SourceError("the function body did not come back as multipart")
+    out: Dict[str, bytes] = {}
+    for part in raw.split(b"--" + m.group(1).encode())[1:]:
+        if part.startswith(b"--"):
+            break
+        head, _, body = part.lstrip(b"\r\n").partition(b"\r\n\r\n")
+        if body.endswith(b"\r\n"):
+            body = body[:-2]
+        fn = re.search(rb'filename="([^"]+)"', head)
+        if fn:
+            name = fn.group(1).decode("utf-8", "replace")
+            out[name[len("source/"):] if name.startswith("source/") else name] = body
+    return out
+
+
 class Mgmt:
-    def __init__(self, ref: str, token_file: Path) -> None:
+    def __init__(self, ref: str, token_file: Optional[Path]) -> None:
         self.ref = ref
+        self._token = ""
+        if TAPE.mode == "replay":
+            return
         self._token = token_file.read_text(encoding="utf-8").strip()  # never printed
         if not self._token:
             raise SourceError(f"{token_file} is empty")
 
-    def call(self, method: str, path: str, body: Any = None, timeout: int = 120) -> Any:
+    def _request(self, method: str, path: str, body: Any = None, accept: Optional[str] = None,
+                 timeout: int = 120) -> Tuple[Dict[str, str], bytes]:
         data = json.dumps(body).encode() if body is not None else None
         last = ""
         for attempt in range(2):
-            req = urllib.request.Request(f"{API}/projects/{self.ref}{path}", data=data, method=method, headers={
-                "Authorization": "Bearer " + self._token, "Content-Type": "application/json", "User-Agent": UA})
+            headers = {"Authorization": "Bearer " + self._token, "Content-Type": "application/json", "User-Agent": UA}
+            if accept:
+                headers["Accept"] = accept
+            req = urllib.request.Request(f"{API}/projects/{self.ref}{path}", data=data, method=method, headers=headers)
             try:
                 with urllib.request.urlopen(req, timeout=timeout) as r:
-                    return json.loads(r.read() or b"null")
+                    return dict(r.headers), r.read()
             except urllib.error.HTTPError as e:
                 last = f"HTTP {e.code}: {scrub(e.read().decode('utf-8', 'replace'), 160)}"
                 if e.code < 500 and e.code != 429:
                     break
-            except (urllib.error.URLError, OSError, ValueError) as e:
+            except (urllib.error.URLError, OSError) as e:
                 last = scrub(e, 160)
             time.sleep(2)
         raise SourceError(f"{method} {path.split('?')[0]}: {last}")
 
-    def sql(self, query: str) -> List[Dict[str, Any]]:
-        out = self.call("POST", "/database/query", {"query": query, "read_only": True})
-        if not isinstance(out, list):
-            raise SourceError(f"the SQL endpoint answered {type(out).__name__}, not rows")
-        return out
+    def call(self, method: str, path: str, body: Any = None, timeout: int = 120) -> Any:
+        _, raw = self._request(method, path, body, timeout=timeout)
+        try:
+            return json.loads(raw or b"null")
+        except ValueError:
+            raise SourceError(f"{method} {path.split('?')[0]}: the answer was not JSON")
+
+    def sql(self, query: str, label: str) -> List[Dict[str, Any]]:
+        def run() -> List[Dict[str, Any]]:
+            out = self.call("POST", "/database/query", {"query": query, "read_only": True})
+            if not isinstance(out, list):
+                raise SourceError(f"the SQL endpoint answered {type(out).__name__}, not rows")
+            return out
+        return TAPE.take("sql " + label, run)
+
+    def functions(self) -> List[Dict[str, Any]]:
+        def run() -> List[Dict[str, Any]]:
+            listed = self.call("GET", "/functions")
+            if not isinstance(listed, list):
+                raise SourceError("the functions list did not come back as a list")
+            keep = ("slug", "status", "version", "verify_jwt", "ezbr_sha256", "updated_at")
+            return [{k: f.get(k) for k in keep} for f in listed if isinstance(f, dict)]
+        return TAPE.take("api functions", run)
+
+    def secrets(self) -> List[Dict[str, Any]]:
+        """Names and update times; the API's digests are dropped here."""
+        def run() -> List[Dict[str, Any]]:
+            listed = self.call("GET", "/secrets")
+            if not isinstance(listed, list):
+                raise SourceError("the secrets list did not come back as a list")
+            return [{"name": s.get("name"), "updated_at": s.get("updated_at")} for s in listed if isinstance(s, dict)]
+        return TAPE.take("api secrets", run)
+
+    def cron_secret_pair(self) -> Dict[str, Any]:
+        """Whether CRON_SECRET holds the vault's cockpit_sync_secret: two digests compared here, neither kept."""
+        def run() -> Dict[str, Any]:
+            listed = self.call("GET", "/secrets")
+            digest = next((s.get("value") for s in listed or [] if isinstance(s, dict) and s.get("name") == "CRON_SECRET"),
+                          None)
+            listed = None
+            rows = self.call("POST", "/database/query", {"query": Q_VAULT_DIGEST})
+            vault = rows[0].get("d") if isinstance(rows, list) and rows else None
+            rows = None
+            out = {"function_secret": bool(digest), "vault_secret": bool(vault),
+                   "same": hmac.compare_digest(str(digest), str(vault)) if digest and vault else None}
+            digest = vault = None
+            return out
+        return TAPE.take("pair cron_secret", run)
+
+    def function_files(self, slug: str) -> Dict[str, Any]:
+        """sha256 of each deployed source file of an Edge Function (its body read back as multipart)."""
+        def run() -> Dict[str, Any]:
+            headers, raw = self._request("GET", f"/functions/{urllib.parse.quote(slug)}/body",
+                                         accept="multipart/form-data", timeout=180)
+            ctype = next((v for k, v in headers.items() if k.lower() == "content-type"), "")
+            files = parse_multipart(ctype, raw)
+            return {"files": {n: sha256(b) for n, b in sorted(files.items())}, "bytes": len(raw)}
+        return TAPE.take("fnsrc " + slug, run)
 
 
 Q_RELATIONS = """
@@ -337,6 +558,35 @@ Q_OBJECTS = (f"select name, (metadata->>'size')::bigint as size from storage.obj
              f"where bucket_id = {lit(BUCKET)} and name like {lit(BACKUP_PREFIX + '%')}")
 
 
+def q_counts(recs: Iterable[Dict[str, Any]]) -> str:
+    """Row counts of the recorded tables (views left out), in one statement: a table that is gone gives
+    null instead of an error. Tables recorded with more than BIG_TABLE rows are read from reltuples."""
+    vals = ",".join(f"({lit(r['name'])}, {'true' if int(r.get('row_count') or 0) > BIG_TABLE else 'false'})"
+                    for r in recs if r.get("kind", "table") == "table")
+    return f"""
+with r(name, big) as (values {vals})
+select r.name,
+  case when c.oid is null then null
+       when r.big then greatest(c.reltuples, 0)::bigint
+       else (xpath('/row/n/text()', query_to_xml(format('select count(*) as n from %s', c.oid::regclass),
+                                                 false, true, '')))[1]::text::bigint end as n
+from r left join pg_class c on c.relname = r.name and c.relnamespace = 'public'::regnamespace and c.relkind in ('r', 'p')
+"""
+
+
+def q_settings_age(recs: Iterable[Dict[str, Any]]) -> str:
+    """Per recorded settings row: is it older than the copy recorded at the inventory (put back from an
+    older copy, or the database restored to an earlier point)?"""
+    vals = ",".join(f"({lit(s['key'])}, {lit(s['updated_at'])})" for s in recs if s.get("updated_at"))
+    return (f"select s.key, (s.updated_at < r.rec::timestamptz) as older, s.updated_at::text as at "
+            f"from public.cockpit_sales_settings s join (values {vals}) as r(key, rec) on r.key = s.key")
+
+
+Q_STATUS = ("select worker, job, ok, round(extract(epoch from now() - at) / 60)::int as age_min "
+            "from public.cockpit_sales_worker_status where (worker, job) in ("
+            + ",".join(f"({lit(w)}, {lit(j)})" for w, j in STATUS_ROWS) + ")")
+
+
 KIND = {"r": "table", "p": "table", "v": "view", "m": "materialized view", "f": "foreign table"}
 
 
@@ -359,9 +609,32 @@ def grant_diff(rec: Dict[str, Any], live: Dict[str, Any]) -> List[str]:
     return out
 
 
+def count_problem(rec: Dict[str, Any], n_live: Optional[int]) -> Optional[str]:
+    """A table with fewer rows than at the inventory: ours (made or changed by the preserved migrations) may
+    lose none; a table they read may lose a tenth (the mirror and the dial dedupe delete rows)."""
+    n_rec = rec.get("row_count")
+    if n_live is None or n_rec is None or rec.get("kind", "table") != "table":
+        return None
+    n_rec = int(n_rec)
+    if rec.get("role") in ("created", "altered"):
+        if n_live < n_rec:
+            return (f"{n_live:,} rows, fewer than the {n_rec:,} at the inventory (a reload or a restore to an "
+                    "earlier point; the private backups hold the rows of 2026-10-07)")
+    elif n_rec and n_live < n_rec * (1 - DEPENDENCY_DROP):
+        return (f"{n_live:,} rows, more than a tenth fewer than the {n_rec:,} at the inventory (a reload or a "
+                "restore to an earlier point)")
+    return None
+
+
 def check_relations(rep: Report, mg: Mgmt, man: Dict[str, Any], later: Later) -> None:
     recs = man["relations"]
-    live = by(mg.sql(Q_RELATIONS.format(names=arr(r["name"] for r in recs))))
+    live = by(mg.sql(Q_RELATIONS.format(names=arr(r["name"] for r in recs)), "relations"))
+    counts: Optional[Dict[str, Optional[int]]] = None
+    try:
+        counts = {r["name"]: (None if r.get("n") is None else int(r["n"]))
+                  for r in mg.sql(q_counts(recs), "row_counts")}
+    except SourceError as e:
+        rep.add("supabase", "row counts", UNKNOWN, f"could not be read: {e}")
     for rec in recs:
         name, cur = rec["name"], live.get(rec["name"])
         label = f"{rec.get('kind', 'table')} {name} ({rec.get('role')})"
@@ -436,9 +709,17 @@ def check_relations(rep: Report, mg: Mgmt, man: Dict[str, Any], later: Later) ->
         pubs = sorted(cur.get("publications") or [])
         if pubs != sorted(rec.get("realtime_publications") or []):
             diffs.append(f"publications now {pubs or 'none'}")
+        n_live = (counts or {}).get(name)
+        lost = count_problem(rec, n_live)
+        if lost:
+            strict.append(lost)
         ncols = len(cols)
+        rows = ""
+        if n_live is not None:
+            rows = (f", about {n_live:,} rows" if int(rec.get("row_count") or 0) > BIG_TABLE else f", {n_live:,} rows")
+            rows += f" (recorded {int(rec['row_count']):,})" if rec.get("row_count") is not None else ""
         summary = (f"present, {plural(ncols, 'column')}" + (", row security on" if cur.get("rls") else "")
-                   + (f", {plural(len(trig_live), 'trigger')}" if trig_live else ""))
+                   + (f", {plural(len(trig_live), 'trigger')}" if trig_live else "") + rows)
         if strict:
             rep.add("supabase", label, CHANGED, "; ".join(strict + diffs))
         elif diffs:
@@ -453,7 +734,7 @@ def check_functions(rep: Report, mg: Mgmt, man: Dict[str, Any], later: Later) ->
     for group in ("created", "dependencies", "other_sales_and_guardian"):
         for f in man["functions"].get(group) or []:
             recs.setdefault((f["name"], f.get("args", "")), dict(f, group=group))
-    rows = mg.sql(Q_FUNCTIONS.format(names=arr(sorted({n for n, _ in recs}))))
+    rows = mg.sql(Q_FUNCTIONS.format(names=arr(sorted({n for n, _ in recs}))), "functions")
     live = {(r["name"], r["args"]): r for r in rows}
     names_live: Dict[str, List[str]] = {}
     for r in rows:
@@ -480,14 +761,18 @@ def check_functions(rep: Report, mg: Mgmt, man: Dict[str, Any], later: Later) ->
             rep.add("supabase", label, OK, f"definition md5 {cur['md5'][:12]} as recorded")
             continue
         opened = [g for g in ("anon", "PUBLIC") if g in (cur.get("grants") or {}) and g not in (rec.get("grants") or {})]
+        files = later.function(name)
+        regress = later.older_copy(name, files) if files else None
         if opened and rec.get("group") == "created":
             rep.add("supabase", label, CHANGED, "; ".join(diffs) + f"; now executable by {', '.join(opened)}")
+        elif regress:
+            rep.add("supabase", label, CHANGED, "; ".join(diffs) + f"; {regress}")
         else:
-            rep.add("supabase", label, CHANGED, "; ".join(diffs), explained_by(later.function(name)))
+            rep.add("supabase", label, CHANGED, "; ".join(diffs), explained_by(files))
 
 
 def check_cron(rep: Report, mg: Mgmt, man: Dict[str, Any], later: Later) -> None:
-    live = by(mg.sql(Q_CRON), "jobname")
+    live = by(mg.sql(Q_CRON, "cron"), "jobname")
     ours = {j["jobname"]: j for j in man["pg_cron"]["ours"]}
     recs = {j["jobname"]: j for j in man["pg_cron"]["all_jobs"]}
     recs.update({k: dict(recs.get(k, {}), **v) for k, v in ours.items()})
@@ -518,24 +803,39 @@ def check_cron(rep: Report, mg: Mgmt, man: Dict[str, Any], later: Later) -> None
 
 def check_settings(rep: Report, mg: Mgmt, man: Dict[str, Any], later: Later) -> None:
     recs = {s["key"]: s for s in man["cockpit_sales_settings"]}
-    rows = by(mg.sql(Q_SETTINGS_ROWS), "key")
+    rows = by(mg.sql(Q_SETTINGS_ROWS, "settings_rows"), "key")
     keys = [k for k in SWITCH_KEYS if k in recs]
     live_sw: Dict[str, Dict[str, bool]] = {}
-    for r in mg.sql(Q_SWITCHES.format(keys=arr(keys))):
+    for r in mg.sql(Q_SWITCHES.format(keys=arr(keys)), "switches"):
         live_sw.setdefault(r["key"], {})[r["path"]] = bool(r["is_on"])
+    older: Dict[str, str] = {}
+    try:
+        older = {r["key"]: r["at"] for r in mg.sql(q_settings_age(recs.values()), "settings_age") if r.get("older")}
+    except SourceError as e:
+        rep.add("supabase", "settings rows' age", UNKNOWN, f"could not be read: {e}")
     for key in sorted(recs, key=lambda k: (k not in SWITCH_KEYS, k)):
         rec, cur = recs[key], rows.get(key)
         label = f"settings {key}"
         if not cur:
             rep.add("supabase", label, MISSING, "the row is gone from cockpit_sales_settings")
             continue
+        back = (f"last written {older[key]}, before the copy recorded at the inventory ({rec.get('updated_at')}): "
+                "it was put back from an older copy" if key in older else None)
         if key not in SWITCH_KEYS:
-            rep.add("supabase", label, OK, f"present (written by {cur.get('updated_by') or 'unknown'}; values not compared)")
+            if back:
+                rep.add("supabase", label, CHANGED, back + " (values are not compared; the private backups hold the row)")
+            else:
+                rep.add("supabase", label, OK, f"present (written by {cur.get('updated_by') or 'unknown'}; values not compared)")
             continue
         want, have = rec.get("switches") or {}, live_sw.get(key, {})
         flipped = [f"{p} {'on' if have[p] else 'off'}" for p in sorted(want) if p in have and have[p] != want[p]]
         gone = [p for p in sorted(want) if p not in have]
         new_on = [p for p in sorted(set(have) - set(want)) if have[p]]
+        if back:
+            parts = [back] + (["switched: " + ", ".join(flipped)] if flipped else []) + \
+                    (["switches gone: " + ", ".join(gone)] if gone else [])
+            rep.add("supabase", label, CHANGED, "; ".join(parts))
+            continue
         if not (flipped or gone or new_on):
             on = [p for p in sorted(have) if have[p]]
             rep.add("supabase", label, OK, f"{plural(len(want), 'switch', 'switches')} as recorded"
@@ -554,7 +854,7 @@ def check_settings(rep: Report, mg: Mgmt, man: Dict[str, Any], later: Later) -> 
 
 def check_templates(rep: Report, mg: Mgmt, man: Dict[str, Any]) -> None:
     recs = man["cockpit_sales_wa_templates"]["rows"]
-    live = by(mg.sql(Q_TEMPLATES), "key")
+    live = by(mg.sql(Q_TEMPLATES, "templates"), "key")
     gone = [r["key"] for r in recs if r["key"] not in live]
     flipped = [f"{r['key']} {'active' if live[r['key']]['active'] else 'inactive'}" for r in recs
                if r["key"] in live and bool(live[r["key"]]["active"]) != bool(r["active"])]
@@ -568,7 +868,7 @@ def check_templates(rep: Report, mg: Mgmt, man: Dict[str, Any]) -> None:
 
 
 def check_vault(rep: Report, mg: Mgmt, man: Dict[str, Any]) -> None:
-    names = {r["name"] for r in mg.sql(Q_VAULT)}
+    names = {r["name"] for r in mg.sql(Q_VAULT, "vault")}
     for rec in man["vault_secret_names"]:
         n = rec["name"]
         if n in names:
@@ -580,7 +880,7 @@ def check_vault(rep: Report, mg: Mgmt, man: Dict[str, Any]) -> None:
 
 
 def check_extensions(rep: Report, mg: Mgmt, man: Dict[str, Any]) -> None:
-    names = {r["extname"] for r in mg.sql(Q_EXTENSIONS)}
+    names = {r["extname"] for r in mg.sql(Q_EXTENSIONS, "extensions")}
     want = [e["extname"] for e in man.get("extensions") or []]
     gone_strict = [n for n in want if n not in names and n in STRICT_EXTENSIONS]
     gone_other = [n for n in want if n not in names and n not in STRICT_EXTENSIONS]
@@ -593,10 +893,7 @@ def check_extensions(rep: Report, mg: Mgmt, man: Dict[str, Any]) -> None:
 
 
 def check_edge(rep: Report, mg: Mgmt, man: Dict[str, Any]) -> None:
-    listed = mg.call("GET", "/functions")
-    if not isinstance(listed, list):
-        raise SourceError("the functions list did not come back as a list")
-    live = by(listed, "slug")
+    live = by(mg.functions(), "slug")
     for rec in sorted(man["edge_functions"], key=lambda f: (f["slug"] not in STRICT_EDGE, f["slug"])):
         slug, cur = rec["slug"], live.get(rec["slug"])
         strict = slug in STRICT_EDGE
@@ -623,7 +920,8 @@ def check_edge(rep: Report, mg: Mgmt, man: Dict[str, Any]) -> None:
             rep.add("supabase", label, CHANGED, "; ".join(problems), None if strict else NOT_OURS)
         elif notes:
             rep.add("supabase", label, CHANGED, head + "; " + "; ".join(notes),
-                    "a higher version is a redeploy; verify_jwt is as recorded")
+                    "a higher version is a redeploy; verify_jwt is as recorded"
+                    + ("; its source files are judged on their own line" if slug in RECORDED_SOURCES else ""))
         else:
             rep.add("supabase", label, OK, head + " as recorded")
 
@@ -640,12 +938,73 @@ def function_env_names() -> Set[str]:
     return names
 
 
+def check_function_sources(rep: Report, mg: Mgmt, man: Dict[str, Any], ref: str, ref_ok: bool) -> None:
+    """The deployed source of each of our functions against the files at the restore point: a deploy from a
+    branch without live calls lacks their modules or carries older files, whatever its version number says."""
+    base = man["source"]["main_sha"]
+    for slug, want in RECORDED_SOURCES.items():
+        label = f"Edge Function {slug} source"
+        try:
+            live = mg.function_files(slug)["files"]
+            at_base = git_files(base, [f"supabase/functions/{slug}"], flat=True)
+            at_ref = git_files(ref, [f"supabase/functions/{slug}"], flat=True) if ref_ok else {}
+        except (SourceError, OSError, subprocess.SubprocessError, KeyError, TypeError) as e:
+            rep.add("supabase", label, UNKNOWN, f"could not be read: {scrub(e, 160)}")
+            continue
+        gone = [n for n in want if n not in live]
+        same_base = [n for n in live if at_base.get(n) == live[n]]
+        same_ref = [n for n in live if n not in same_base and at_ref.get(n) == live[n]]
+        differ = sorted(set(live) - set(same_base) - set(same_ref))
+        if gone:
+            rep.add("supabase", label, MISSING, f"deployed without {', '.join(gone)}: this is not the code of "
+                    f"{base[:7]} (deployed from an older branch?); {len(differ)} of its {len(live)} files differ too")
+        elif differ:
+            rep.add("supabase", label, CHANGED, f"{len(differ)} of {len(live)} deployed files differ from {base[:7]}"
+                    + (f" and from {ref}" if ref_ok else f" ({ref} does not contain {base[:7]}, so it explains nothing)")
+                    + ": " + ", ".join(differ[:8]))
+        elif same_ref:
+            rep.add("supabase", label, CHANGED, f"{len(same_ref)} of {len(live)} deployed files are as at {ref}, the rest "
+                    f"as at {base[:7]}", f"redeployed from {ref}, which contains the restore point")
+        else:
+            rep.add("supabase", label, OK, f"all {len(live)} deployed source files are byte for byte the ones at "
+                                           f"{base[:7]} ({TAG})")
+
+
+def check_secret_pair(rep: Report, mg: Mgmt) -> None:
+    label = "CRON_SECRET pairs with the vault's cockpit_sync_secret"
+    p = mg.cron_secret_pair()
+    if not p.get("function_secret") or not p.get("vault_secret"):
+        gone = [n for n, k in (("CRON_SECRET", "function_secret"), ("vault cockpit_sync_secret", "vault_secret"))
+                if not p.get(k)]
+        rep.add("supabase", label, MISSING, f"{' and '.join(gone)} not there, so the minute job cannot reach sales-live")
+    elif p.get("same"):
+        rep.add("supabase", label, OK, "same value (two digests compared in memory; neither value read out)")
+    else:
+        rep.add("supabase", label, CHANGED, "they differ: once rooms have work, sales-live refuses the minute job's "
+                                            "calls (401). Set CRON_SECRET to the vault's value (section 4)")
+
+
+def check_status_rows(rep: Report, mg: Mgmt) -> None:
+    rows = {(r["worker"], r["job"]): r for r in mg.sql(Q_STATUS, "status_rows")}
+    for (worker, job), limit in STATUS_ROWS.items():
+        label = f"status row {worker}/{job}"
+        r = rows.get((worker, job))
+        if not r:
+            rep.add("supabase", label, MISSING, "the row is gone from cockpit_sales_worker_status")
+            continue
+        age = r.get("age_min")
+        said = "says ok" if r.get("ok") else "reports a problem" if r.get("ok") is False else "says nothing"
+        if age is None or int(age) > limit:
+            rep.add("supabase", label, CHANGED, f"last written {age} min ago (its job runs every few minutes; "
+                                                f"limit {limit} min): the job has stopped; it {said}")
+        else:
+            rep.add("supabase", label, OK, f"written {age} min ago (limit {limit}); it {said}")
+
+
 def check_secrets(rep: Report, mg: Mgmt, man: Dict[str, Any]) -> None:
-    listed = mg.call("GET", "/secrets")
-    if not isinstance(listed, list):
-        raise SourceError("the secrets list did not come back as a list")
-    names = {s.get("name") for s in listed if isinstance(s, dict)}
-    del listed  # names only from here on
+    listed = mg.secrets()
+    names = {s.get("name") for s in listed}
+    times = {s.get("name"): s.get("updated_at") for s in listed}
     recorded = list(man["edge_function_secret_names"])
     ours = (function_env_names() | {"CRON_SECRET", "IP_SALT"}) & set(recorded)
     gone_ours = sorted(n for n in ours if n not in names)
@@ -659,10 +1018,31 @@ def check_secrets(rep: Report, mg: Mgmt, man: Dict[str, Any]) -> None:
     else:
         rep.add("supabase", label, OK, f"all {len(recorded)} recorded names present, CRON_SECRET and IP_SALT among them"
                                        f" ({len(ours)} read by sales-api or sales-live; values never read)")
+    # A secret set again after the inventory keeps its name; its update time says it changed. The platform's
+    # own SUPABASE_* secrets move by themselves. CRON_SECRET is judged by its pairing with the vault.
+    inv = parse_utc(man.get("generated_at"))
+    label = "function secrets set again after the inventory"
+    if inv is None:
+        rep.add("supabase", label, UNKNOWN, "the manifest has no inventory time")
+        return
+    reset = sorted(n for n in ours if n in names and not PLATFORM_SECRET.match(n) and n != "CRON_SECRET"
+                   and (parse_utc(times.get(n)) or inv) > inv)
+    other = sorted(n for n in recorded if n in names and n not in ours and not PLATFORM_SECRET.match(n)
+                   and (parse_utc(times.get(n)) or inv) > inv)
+    when = lambda ns: ", ".join(f"{n} ({times.get(n)})" for n in ns)
+    if reset:
+        rep.add("supabase", label, CHANGED, f"read by the sales functions and set again: {when(reset)}"
+                + ("; IP_SALT reset means stored join-page IP hashes no longer match" if "IP_SALT" in reset else "")
+                + ". Check each new value is the right one")
+    elif other:
+        rep.add("supabase", label, CHANGED, f"set again: {when(other)}", NOT_OURS + " (neither sales function reads them)")
+    else:
+        rep.add("supabase", label, OK, f"none of the {len(ours)} read by the sales functions was set again after "
+                                       f"{man.get('generated_at')}")
 
 
 def check_bucket_private(rep: Report, mg: Mgmt) -> None:
-    rows = mg.sql(Q_BUCKET)
+    rows = mg.sql(Q_BUCKET, "bucket")
     if not rows:
         rep.add("supabase", f"bucket {BUCKET}", MISSING, "not in storage.buckets")
     elif rows[0].get("public"):
@@ -693,9 +1073,18 @@ class Storage:
             if urllib.parse.urlparse(u).hostname == f"{ref}.supabase.co":
                 url = u
         self.url = url
+        self._key = ""
+        if TAPE.mode == "replay":
+            return
         self._key = key_file.read_text(encoding="utf-8").strip()  # never printed
         if not self._key:
             raise SourceError(f"{key_file} is empty")
+
+    def text(self, obj: str) -> str:
+        return TAPE.take("bucket text " + obj, lambda: unwrap(self.get(obj))[0].decode("utf-8"))
+
+    def inner_sha(self, obj: str) -> str:
+        return TAPE.take("bucket sha " + obj, lambda: sha256(unwrap(self.get(obj))[0]))
 
     def get(self, obj: str) -> bytes:
         q = urllib.parse.quote(obj, safe="/")
@@ -721,24 +1110,33 @@ def parse_sums(text: str) -> Dict[str, str]:
 
 
 def check_bucket_backups(rep: Report, mg: Optional[Mgmt], st: Optional[Storage], deep: bool) -> None:
-    area, l_list, l_match = "backups", "bucket SHA256SUMS lists every file", "bucket objects match SHA256SUMS"
+    """The first set (2026-10-07) and the supplement the review added under supplement/, each against its own
+    SHA256SUMS."""
+    for sub, title in (("", "bucket"), (SUPPLEMENT, "bucket supplement")):
+        check_bucket_set(rep, mg, st, deep, sub, title)
+
+
+def check_bucket_set(rep: Report, mg: Optional[Mgmt], st: Optional[Storage], deep: bool, sub: str, title: str) -> None:
+    area, l_list, l_match = "backups", f"{title} SHA256SUMS lists every file", f"{title} objects match SHA256SUMS"
     if mg is None or st is None:
         why = "no management token" if mg is None else "no service key to read the private bucket"
         rep.unknown_all(area, [l_list] + ([l_match] if deep else []), why)
         return
-    objects = {r["name"]: int(r["size"] or 0) for r in mg.sql(Q_OBJECTS)}
-    sums_obj = BACKUP_PREFIX + "SHA256SUMS.json"
+    prefix = BACKUP_PREFIX + sub
+    every = {r["name"]: int(r["size"] or 0) for r in mg.sql(Q_OBJECTS, "objects")}
+    objects = {n: v for n, v in every.items() if n.startswith(prefix)
+               and (sub or not n.startswith(BACKUP_PREFIX + SUPPLEMENT))}
+    sums_obj = prefix + "SHA256SUMS.json"
     if sums_obj not in objects:
         rep.add(area, l_list, MISSING,
-                f"{sums_obj} is not in the bucket ({plural(len(objects), 'object')} under the prefix)")
+                f"{sums_obj} is not in the bucket ({plural(len(objects), 'object')} under {prefix})")
         if deep:
             rep.add(area, l_match, UNKNOWN, "no SHA256SUMS to compare with")
         return
-    sums_text, _ = unwrap(st.get(sums_obj))
-    sums = parse_sums(sums_text.decode("utf-8"))
-    names = {rel: (BACKUP_PREFIX + rel if BACKUP_PREFIX + rel in objects else BACKUP_PREFIX + rel + ".json") for rel in sums}
+    sums = parse_sums(st.text(sums_obj))
+    names = {rel: (prefix + rel if prefix + rel in objects else prefix + rel + ".json") for rel in sums}
     gone = sorted(rel for rel, obj in names.items() if obj not in objects)
-    extra = sorted(set(objects) - set(names.values()) - {sums_obj, BACKUP_PREFIX + "BUCKET-READBACK.json"})
+    extra = sorted(set(objects) - set(names.values()) - {sums_obj, prefix + "BUCKET-READBACK.json"})
     if gone:
         rep.add(area, l_list, MISSING,
                 f"{len(gone)} of {len(sums)} listed files are not in the bucket: " + ", ".join(gone[:8]))
@@ -746,7 +1144,8 @@ def check_bucket_backups(rep: Report, mg: Optional[Mgmt], st: Optional[Storage],
         rep.add(area, l_list, CHANGED, f"objects not in SHA256SUMS: {', '.join(Path(e).name for e in extra[:8])}")
     else:
         rep.add(area, l_list, OK, f"{len(sums)} files listed, every one in the bucket ({len(objects)} objects, "
-                                  f"{sum(objects.values()):,} bytes, with SHA256SUMS.json and BUCKET-READBACK.json)")
+                                  f"{sum(objects.values()):,} bytes, with SHA256SUMS.json"
+                                  + (" and BUCKET-READBACK.json)" if prefix + "BUCKET-READBACK.json" in objects else ")"))
     if not deep:
         return
     bad: List[str] = []
@@ -755,12 +1154,12 @@ def check_bucket_backups(rep: Report, mg: Optional[Mgmt], st: Optional[Storage],
         if obj not in objects:
             continue
         try:
-            inner, _ = unwrap(st.get(obj))
+            inner_sha = st.inner_sha(obj)
         except SourceError as e:
             bad.append(f"{rel} (could not be read: {e})")
             continue
         read += 1
-        if sha256(inner) != sums[rel]:
+        if inner_sha != sums[rel]:
             bad.append(rel)
     if bad:
         rep.add(area, l_match, CHANGED, f"{len(bad)} of {len(names)} differ from their sum: " + ", ".join(bad[:6]))
@@ -776,45 +1175,66 @@ def http_get(url: str, timeout: int = 60) -> bytes:
         return r.read()
 
 
-def check_bundle(rep: Report, site: str) -> None:
-    labels = ("live sales bundle: the room screens' words", "live sales bundle: the proposal screens' words")
+SB_HOST = re.compile(r"https://([a-z0-9]{20})\.supabase\.co")
+
+
+def scan_bundle(site: str) -> Dict[str, Any]:
+    """Crawl the live bundle from its page; keep which of our phrases it holds and which Supabase projects it
+    names (never the code itself)."""
+    html = http_get(f"{site}?cb={int(time.time())}").decode("utf-8", "replace")
+    entries = re.findall(r'<script[^>]+src="([^"]+\.js)"', html)
+    if not entries:
+        raise SourceError("the page names no script")
+    base = urllib.parse.urljoin(site, entries[0]).rsplit("/", 1)[0] + "/"
+    todo = [urllib.parse.urljoin(site, e).rsplit("/", 1)[1] for e in entries]
+    seen: Dict[str, str] = {}
+    total = 0
+    chunk = re.compile(r"""["'`(/]\.?/?([A-Za-z0-9_-]+-[A-Za-z0-9_-]{8}\.js)""")
+    first = todo[0]
+    unread: Set[str] = set()
+    while todo and len(seen) < 400 and total < 40_000_000:
+        n = todo.pop()
+        if n in seen or n in unread:
+            continue
+        try:
+            text = http_get(base + n).decode("utf-8", "replace")
+        except urllib.error.HTTPError:
+            if n == first:
+                raise
+            unread.add(n)  # a name that only looked like a chunk
+            continue
+        seen[n] = text
+        total += len(text)
+        todo += [m for m in chunk.findall(text) if m not in seen and m not in unread]
+    blob = "\n".join(seen.values()) + "\n" + html
+    return {"entry": entries[0].rsplit("/", 1)[-1], "chunks": len(seen) - 1,
+            "found": {w: w in blob for w in ROOM_STRINGS + PROPOSAL_STRINGS},
+            "projects": sorted(set(SB_HOST.findall(blob)))}
+
+
+def check_bundle(rep: Report, site: str, project: str) -> None:
+    labels = ("live sales bundle: the room screens' words", "live sales bundle: the proposal screens' words",
+              "live sales bundle: its Supabase project")
     try:
-        html = http_get(f"{site}?cb={int(time.time())}").decode("utf-8", "replace")
-        entries = re.findall(r'<script[^>]+src="([^"]+\.js)"', html)
-        if not entries:
-            raise SourceError("the page names no script")
-        base = urllib.parse.urljoin(site, entries[0]).rsplit("/", 1)[0] + "/"
-        todo = [urllib.parse.urljoin(site, e).rsplit("/", 1)[1] for e in entries]
-        seen: Dict[str, str] = {}
-        total = 0
-        chunk = re.compile(r"""["'`(/]\.?/?([A-Za-z0-9_-]+-[A-Za-z0-9_-]{8}\.js)""")
-        first = todo[0]
-        unread: Set[str] = set()
-        while todo and len(seen) < 400 and total < 40_000_000:
-            n = todo.pop()
-            if n in seen or n in unread:
-                continue
-            try:
-                text = http_get(base + n).decode("utf-8", "replace")
-            except urllib.error.HTTPError:
-                if n == first:
-                    raise
-                unread.add(n)  # a name that only looked like a chunk
-                continue
-            seen[n] = text
-            total += len(text)
-            todo += [m for m in chunk.findall(text) if m not in seen and m not in unread]
+        b = TAPE.take("bundle", lambda: scan_bundle(site))
     except (urllib.error.URLError, OSError, SourceError, ValueError) as e:
         rep.unknown_all("cockpit", labels, f"{site} could not be read: {scrub(e, 120)}")
         return
-    blob = "\n".join(seen.values())
-    entry = entries[0].rsplit("/", 1)[-1]
     for label, words in zip(labels, (ROOM_STRINGS, PROPOSAL_STRINGS)):
-        gone = [w for w in words if w not in blob]
+        gone = [w for w in words if not b["found"].get(w)]
         if gone:
-            rep.add("cockpit", label, MISSING, f"not in {entry} or its {len(seen) - 1} chunks: " + "; ".join(gone))
+            rep.add("cockpit", label, MISSING, f"not in {b['entry']} or its {b['chunks']} chunks: " + "; ".join(gone))
         else:
-            rep.add("cockpit", label, OK, f"all {len(words)} found in {entry} and its {len(seen) - 1} chunks")
+            rep.add("cockpit", label, OK, f"all {len(words)} found in {b['entry']} and its {b['chunks']} chunks")
+    refs = b.get("projects") or []
+    if project in refs:
+        rep.add("cockpit", labels[2], OK, f"it talks to {project}" + (f" (it also names {', '.join(r for r in refs if r != project)})"
+                                                                     if len(refs) > 1 else ""))
+    elif refs:
+        rep.add("cockpit", labels[2], CHANGED, f"it talks to {', '.join(refs)}, not {project}: the cockpit moved to "
+                                              f"another project; check that one with --project {refs[0]}")
+    else:
+        rep.add("cockpit", labels[2], UNKNOWN, "it names no supabase.co project")
 
 
 # ---- the VPS --------------------------------------------------------------------------------------------
@@ -908,10 +1328,16 @@ def env():
             out[spec["path"]] = {"exists": False}
             continue
         vals = parse_env(p)
+        projects = {}
+        for k in E["project_keys"]:
+            if vals.get(k):
+                m = re.match(r"^https://([a-z0-9]{20})\.supabase\.co/?$", vals[k].strip())
+                projects[k] = m.group(1) if m else "not a supabase.co project URL"
         out[spec["path"]] = {
             "exists": True, "mode": oct(os.stat(p).st_mode & 0o777), "count": len(vals),
             "names": {n: ("set" if vals.get(n) else "empty" if n in vals else "absent") for n in spec["names"]},
             "equal": {n: vals.get(n) == want for n, want in spec["values"].items()},
+            "projects": projects,
         }
         vals = None
     return out
@@ -964,12 +1390,12 @@ def playwright():
 def guardian():
     p = os.path.join(HOME, ".cockpit-guardian", "state.json")
     if not os.path.isfile(p):
-        return {"exists": False}
+        return {"exists": False, "dir": os.path.isdir(os.path.dirname(p))}
     with open(p, encoding="utf-8") as f:
         d = json.load(f)
     ls = d.get("last_scan") or {}
-    return {"exists": True, "at": ls.get("at"), "mode": ls.get("mode"), "full": ls.get("full"),
-            "mtime": os.stat(p).st_mtime}
+    return {"exists": True, "dir": True, "at": ls.get("at"), "mode": ls.get("mode"), "full": ls.get("full"),
+            "mtime": os.stat(p).st_mtime, "seen_deployed": sorted(d.get("seen_deployed") or {})}
 
 
 def fixer():
@@ -1024,8 +1450,8 @@ def deploy_check():
             "installed": {n: (pick(n) or {}).get("ok") for n in ("rooms", "room-hosts", "doctor", "followups")}}
 
 
-def backup_dir():
-    b = os.path.join(HOME, E["backup_dir"])
+def backup_dir(sub=""):
+    b = os.path.join(HOME, E["backup_dir"], sub)
     sums = os.path.join(b, "SHA256SUMS")
     if not os.path.isfile(sums):
         return {"exists": os.path.isdir(b), "sums": False}
@@ -1047,23 +1473,32 @@ def backup_dir():
 
 for _name, _fn in (("crontab", crontab), ("files", files), ("env", env), ("reference", reference),
                    ("vince", vince), ("playwright", playwright), ("guardian", guardian), ("fixer", fixer),
-                   ("backup_dir", backup_dir), ("doctor", doctor), ("deploy_check", deploy_check)):
+                   ("backup_dir", backup_dir), ("supplement_dir", lambda: backup_dir("supplement")),
+                   ("doctor", doctor), ("deploy_check", deploy_check)):
     section(_name, _fn)
 print(json.dumps(OUT))
 '''
 
 
-def git_files(ref: str) -> Dict[str, str]:
-    """sha256 of every file under our two folders at `ref` (symlinks left out)."""
-    raw = git("ls-tree", "-r", "-z", ref, "--", *OUR_FOLDERS)
+def git_files(ref: str, folders: Iterable[str] = OUR_FOLDERS, flat: bool = False) -> Dict[str, str]:
+    """sha256 of every file under `folders` at `ref` (symlinks left out). flat: only the files directly in
+    each folder, keyed by their name."""
+    folders = list(folders)
+    raw = git("ls-tree", "-r", "-z", ref, "--", *[f.rstrip("/") + "/" for f in folders])
     entries = []
     for item in raw.split(b"\0"):
         if not item:
             continue
         meta, path = item.split(b"\t", 1)
         mode, typ, oid = meta.split()
+        name = path.decode("utf-8", "replace")
+        if flat:
+            rel = next((name[len(f.rstrip("/")) + 1:] for f in folders if name.startswith(f.rstrip("/") + "/")), name)
+            if "/" in rel:
+                continue
+            name = rel
         if typ == b"blob" and mode != b"120000":
-            entries.append((oid.decode(), path.decode("utf-8", "replace")))
+            entries.append((oid.decode(), name))
     if not entries:
         return {}
     out = git("cat-file", "--batch", data=("\n".join(o for o, _ in entries) + "\n").encode(), timeout=120)
@@ -1121,8 +1556,9 @@ def run_remote(target: str, key: str, expect: Dict[str, Any], timeout: int) -> D
         raise SourceError(f"ssh {target} gave no JSON: {scrub(p.stdout.decode('utf-8', 'replace')[-200:], 160)}")
 
 
-VPS_LABELS = ("crontab", "files", "env", "reference deals", "call reviews", "Playwright shell", "doctor --offline",
-              "hourly doctor", "deploy-check", "switches", "guardian last scan", "Hermes fixer entry", "backup folder")
+VPS_LABELS = ("crontab", "files", "env", "Supabase project", "reference deals", "call reviews", "Playwright shell",
+              "doctor --offline", "hourly doctor", "deploy-check", "switches", "guardian last scan", "Hermes fixer entry",
+              "backup folder")
 
 
 def check_vps(rep: Report, vman: Dict[str, Any], args: argparse.Namespace) -> None:
@@ -1145,9 +1581,10 @@ def check_vps(rep: Report, vman: Dict[str, Any], args: argparse.Namespace) -> No
     expect = {
         "files": paths, "env": env_specs, "reference": sorted(vman["reference_deals"]["files"]),
         "backup_dir": BACKUP_DIR, "chrome_path": vman["playwright"]["CHROME_PATH"], "fixer_file": FIXER_FILE,
+        "project_keys": list(PROJECT_KEYS),
     }
     try:
-        R = run_remote(args.ssh, args.ssh_key, expect, args.ssh_timeout)
+        R = TAPE.take("vps", lambda: run_remote(args.ssh, args.ssh_key, expect, args.ssh_timeout))
     except SourceError as e:
         rep.unknown_all(area, VPS_LABELS, str(e))
         return
@@ -1206,7 +1643,9 @@ def check_vps(rep: Report, vman: Dict[str, Any], args: argparse.Namespace) -> No
                     explained.setdefault(("in the ref, not on the VPS", f"added to {args.ref} after the inventory, "
                                           "not copied to the VPS yet"), []).append(p)
                 elif cur is None and want is None:
-                    continue  # recorded on the VPS only, gone with the ref: nothing to compare
+                    if rec.get("vps_sha256") and not Path(p).name.startswith("._"):
+                        missing.append(p)  # on the VPS at the inventory, gone from both the VPS and the ref
+                    continue  # Mac metadata (._*) gone, or never anywhere: nothing to keep
                 elif cur is None:
                     missing.append(p)
                 elif want is None and cur == rec.get("vps_sha256"):
@@ -1263,6 +1702,23 @@ def check_vps(rep: Report, vman: Dict[str, Any], args: argparse.Namespace) -> No
                 empty = f" ({len(spec['names']) - n_set} empty, as recorded)" if n_set < len(spec["names"]) else ""
                 rep.add(area, label, OK, f"{n_set} of {plural(len(spec['names']), 'recorded name')} set{empty}, "
                         f"{len(strict)} read by our workers{vals}; mode {cur.get('mode')}")
+
+    # Which project the desk and the guardian talk to: DESK_SUPABASE_URL as the cron lines source the files
+    # (a later file wins). A cutover to a new project changes it there first.
+    if not broken("env", ["Supabase project"]):
+        order = ("~/.editor-desk/env", "/opt/data/bibi/api-keys.env", "~/.sales-desk/env")
+        found = {k: (path, ref) for path in order for k, ref in ((R["env"].get(path) or {}).get("projects") or {}).items()}
+        desk = found.get("DESK_SUPABASE_URL")
+        label = "VPS workers' Supabase project (DESK_SUPABASE_URL)"
+        others = sorted(f"{k} in {p} names {r}" for k, (p, r) in found.items()
+                        if k != "DESK_SUPABASE_URL" and r != args.project)
+        if desk is None:
+            rep.add(area, label, MISSING, "not set in " + ", ".join(order) + ": the desk and the guardian cannot reach Supabase")
+        elif desk[1] != args.project:
+            rep.add(area, label, CHANGED, f"{desk[0]} names {desk[1]}, not {args.project}: the workers moved to another "
+                                          f"project; check that one with --project {desk[1]}")
+        else:
+            rep.add(area, label, OK, f"{desk[0]} names {args.project}" + (f" (also: {'; '.join(others)})" if others else ""))
 
     if not broken("reference", ["reference deals"]):
         want = vman["reference_deals"]["files"]
@@ -1356,8 +1812,13 @@ def check_vps(rep: Report, vman: Dict[str, Any], args: argparse.Namespace) -> No
 
     if not broken("guardian", ["guardian last scan"]):
         g = R["guardian"]
-        if not g.get("exists"):
-            rep.add(area, "guardian last scan", MISSING, "~/.cockpit-guardian/state.json is gone")
+        if not g.get("exists") and g.get("dir") is False:
+            rep.add(area, "guardian last scan", MISSING, "~/.cockpit-guardian is gone: the guardian's cron line takes "
+                    "its lock and writes its log there, so it cannot start again until the folder is back "
+                    "(mkdir -m 700 ~/.cockpit-guardian, then section 4)")
+        elif not g.get("exists"):
+            rep.add(area, "guardian last scan", MISSING, "~/.cockpit-guardian/state.json is gone (the guardian forgets "
+                    "its open incidents and which live-calls parts it has seen deployed)")
         else:
             try:
                 at = datetime.strptime(g["at"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).timestamp()
@@ -1383,9 +1844,14 @@ def check_vps(rep: Report, vman: Dict[str, Any], args: argparse.Namespace) -> No
             rep.add(area, "Hermes fixer entry cockpit-guardian", OK,
                     f"present (repo {fx.get('repo')}, fix_policy {fx.get('fix_policy')})")
 
-    if not broken("backup_dir", ["backup folder"]):
-        b = R["backup_dir"]
-        label = f"backup folder ~/{BACKUP_DIR}"
+    for part, label in (("backup_dir", f"backup folder ~/{BACKUP_DIR}"),
+                        ("supplement_dir", f"backup folder ~/{BACKUP_DIR}/{SUPPLEMENT.rstrip('/')}")):
+        if part not in R:
+            rep.add(area, label, UNKNOWN, "this recording has no reading of it")
+            continue
+        if broken(part, [label]):
+            continue
+        b = R[part]
         if not b.get("sums"):
             rep.add(area, label, MISSING, "the folder is gone" if not b.get("exists") else "SHA256SUMS is gone")
         elif b["gone"]:
@@ -1398,21 +1864,77 @@ def check_vps(rep: Report, vman: Dict[str, Any], args: argparse.Namespace) -> No
             rep.add(area, label, OK, f"all {b['listed']} files in SHA256SUMS present and equal")
 
 
+# ---- git: the restore point -----------------------------------------------------------------------------
+
+def check_git(rep: Report, sman: Dict[str, Any], args: argparse.Namespace) -> bool:
+    """Whether --ref still holds the restore point (a main moved back or rewritten explains nothing), and the
+    restore tag on origin. Returns whether the ref may explain a newer deployed file."""
+    base = sman["source"]["main_sha"]
+    ref_ok = False
+    label = f"{args.ref} contains the restore point {base[:7]}"
+    try:
+        ref_sha = git("rev-parse", "--verify", f"{args.ref}^{{commit}}").decode().strip()
+        rc = subprocess.run(["git", "-C", str(ROOT), "merge-base", "--is-ancestor", base, ref_sha],
+                            capture_output=True, timeout=60).returncode
+        if rc == 0:
+            ref_ok = True
+            rep.add("git", label, OK, f"{args.ref} is {ref_sha[:7]} (run git fetch origin first so it is current)")
+        elif rc == 1:
+            rep.add("git", label, CHANGED, f"{args.ref} is {ref_sha[:7]}, which does not contain {base[:7]}: main was "
+                                           "moved back or rewritten, and deploying from it removes live calls")
+        else:
+            rep.add("git", label, UNKNOWN, f"git merge-base answered {rc}")
+    except (SourceError, OSError, subprocess.SubprocessError) as e:
+        rep.add("git", label, UNKNOWN, f"could not be read: {scrub(e, 120)}")
+    label = f"tag {TAG} on origin"
+    try:
+        out = TAPE.take("git tag on origin", lambda: git("ls-remote", "origin", f"refs/tags/{TAG}",
+                                                         f"refs/tags/{TAG}^{{}}", timeout=60).decode())
+        refs = dict(reversed(line.split("\t", 1)) for line in out.splitlines() if "\t" in line)
+        peeled = refs.get(f"refs/tags/{TAG}^{{}}") or refs.get(f"refs/tags/{TAG}")
+        if not peeled:
+            rep.add("git", label, MISSING, "the tag is gone from origin; the restore steps in section 4 start from it")
+        elif peeled != base:
+            rep.add("git", label, CHANGED, f"it points at {peeled[:7]} now, not {base[:7]}")
+        else:
+            rep.add("git", label, OK, f"points at {base[:7]}")
+    except (SourceError, OSError, subprocess.SubprocessError) as e:
+        rep.add("git", label, UNKNOWN, f"could not be read: {scrub(e, 120)}")
+    return ref_ok
+
+
 # ---- main -----------------------------------------------------------------------------------------------
 
+def print_cron(vman: Dict[str, Any], every: bool) -> int:
+    """The recorded crontab lines, exactly (they hold no secret: every job sources its env files). 'all' gives
+    the whole recorded crontab byte for byte (its sha256 is crontab.sha256 in the VPS manifest)."""
+    if every:
+        sys.stdout.write("\n".join(l["text"] for l in vman["crontab"]["lines"]))
+    else:
+        for l in our_cron_lines(vman):
+            print(l["text"])
+    return 0
+
+
 def main(argv: Optional[List[str]] = None) -> int:
+    global TAPE
     ap = argparse.ArgumentParser(prog="verify-preserved.py", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--json", action="store_true", help="print the checks and the verdict as JSON")
     ap.add_argument("--problems", action="store_true", help="print only the lines that are not ok")
-    ap.add_argument("--skip", default="", help="comma list of parts to leave out: supabase, vps, cockpit, backups "
+    ap.add_argument("--skip", default="", help="comma list of parts to leave out: supabase, vps, cockpit, backups, git "
                                                "(each left out part is one UNKNOWN line)")
     ap.add_argument("--shallow", action="store_true", help="do not download every bucket object to compare its sum")
     ap.add_argument("--ref", default="origin/main", help="the git ref the VPS files are compared with (origin/main)")
+    ap.add_argument("--project", default=None, help="the Supabase project to check (default: the recorded one)")
     ap.add_argument("--ssh", default=os.environ.get("VERIFY_VPS_SSH", VPS), help=f"the VPS (default {VPS})")
     ap.add_argument("--ssh-key", default=os.environ.get("VERIFY_VPS_SSH_KEY", VPS_KEY), help=f"ssh key (default {VPS_KEY})")
     ap.add_argument("--ssh-timeout", type=int, default=600)
     ap.add_argument("--site", default=SITE)
+    ap.add_argument("--print-cron", nargs="?", const="ours", choices=("ours", "all"),
+                    help="print the recorded text of our crontab lines (or all 65 with 'all') and stop")
+    ap.add_argument("--record", metavar="FILE", help="also save what every source answered to FILE")
+    ap.add_argument("--replay", metavar="FILE", help="judge a saved recording instead of the live sources")
     args = ap.parse_args(argv)
     skip = {s.strip() for s in args.skip.split(",") if s.strip()}
 
@@ -1422,14 +1944,30 @@ def main(argv: Optional[List[str]] = None) -> int:
             return 3
     sman = json.loads(SB_MANIFEST.read_text(encoding="utf-8"))
     vman = json.loads(VPS_MANIFEST.read_text(encoding="utf-8"))
+    if args.print_cron:
+        return print_cron(vman, args.print_cron == "all")
+    if args.record and args.replay:
+        print("--record and --replay do not go together", file=sys.stderr)
+        return 3
+    TAPE = Tape("replay", Path(args.replay)) if args.replay else Tape("record", Path(args.record)) if args.record \
+        else Tape()
+    args.project = args.project or sman["project"]
     rep = Report()
     started = time.time()
+    if args.project != sman["project"]:
+        rep.add("supabase", "project", OK, f"checking {args.project}, not the recorded {sman['project']} (--project)")
+
+    ref_ok = False
+    if "git" in skip:
+        rep.add("git", "the restore point", UNKNOWN, "left out with --skip git")
+    else:
+        ref_ok = check_git(rep, sman, args)
 
     mg: Optional[Mgmt] = None
     token_file = Path(os.path.expanduser(os.environ.get("SUPABASE_MGMT_TOKEN_FILE", "~/.config/mahara/sb_mgmt_token")))
     mg_error = ""
     try:
-        mg = Mgmt(sman["project"], token_file)
+        mg = Mgmt(args.project, token_file)
     except (OSError, SourceError) as e:
         mg_error = f"no management token ({token_file}: {scrub(e, 80)}); set SUPABASE_MGMT_TOKEN_FILE"
 
@@ -1444,11 +1982,14 @@ def main(argv: Optional[List[str]] = None) -> int:
             ("functions", lambda: check_functions(rep, mg, sman, later)),
             ("pg_cron jobs", lambda: check_cron(rep, mg, sman, later)),
             ("settings", lambda: check_settings(rep, mg, sman, later)),
+            ("status rows", lambda: check_status_rows(rep, mg)),
             ("WhatsApp templates", lambda: check_templates(rep, mg, sman)),
             ("vault secret names", lambda: check_vault(rep, mg, sman)),
             ("extensions", lambda: check_extensions(rep, mg, sman)),
             ("Edge Functions", lambda: check_edge(rep, mg, sman)),
+            ("Edge Function sources", lambda: check_function_sources(rep, mg, sman, args.ref, ref_ok)),
             ("function secret names", lambda: check_secrets(rep, mg, sman)),
+            ("CRON_SECRET pairing", lambda: check_secret_pair(rep, mg)),
             ("bucket", lambda: check_bucket_private(rep, mg)),
         ]
         for label, step in steps:
@@ -1465,7 +2006,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     if "cockpit" in skip:
         rep.add("cockpit", "live sales bundle", UNKNOWN, "left out with --skip cockpit")
     else:
-        check_bundle(rep, args.site)
+        check_bundle(rep, args.site, args.project)
 
     if "backups" in skip:
         rep.add("backups", "private bucket", UNKNOWN, "left out with --skip backups")
@@ -1477,20 +2018,24 @@ def main(argv: Optional[List[str]] = None) -> int:
         except (OSError, SourceError):
             st = None
         try:
-            check_bucket_backups(rep, mg, st, deep=not args.shallow)
-        except SourceError as e:
-            rep.add("backups", "private bucket", UNKNOWN, f"could not be read: {e}")
+            # The backups stay in the recorded project's bucket whatever --project says.
+            bucket_mg = mg if mg is None or args.project == sman["project"] else Mgmt(sman["project"], token_file)
+            check_bucket_backups(rep, bucket_mg, st, deep=not args.shallow)
+        except (SourceError, OSError) as e:
+            rep.add("backups", "private bucket", UNKNOWN, f"could not be read: {scrub(e, 160)}")
 
+    TAPE.save()
     verdict, code, tail = rep.verdict()
     try:
         ref_sha = git("rev-parse", "--verify", f"{args.ref}^{{commit}}").decode().strip()
     except (SourceError, OSError, subprocess.SubprocessError):
         ref_sha = None
+    source = f"; replayed from {args.replay}" if args.replay else ""
     if args.json:
         print(json.dumps({
             "verdict": verdict, "exit_code": code, "summary": tail, "counts": rep.counts(),
             "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "seconds": round(time.time() - started, 1),
+            "seconds": round(time.time() - started, 1), "replay": args.replay, "project": args.project,
             "manifests": {"supabase": sha256(SB_MANIFEST.read_bytes()), "vps": sha256(VPS_MANIFEST.read_bytes())},
             "ref": {"name": args.ref, "sha": ref_sha}, "checks": rep.rows,
         }, indent=1))
@@ -1499,7 +2044,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             if not args.problems or r["status"] != OK:
                 print(Report.line(r))
         print(f"verdict: {verdict}: {tail} ({time.time() - started:.0f} s; VPS files against {args.ref}"
-              f"{' ' + ref_sha[:7] if ref_sha else ''})")
+              f"{' ' + ref_sha[:7] if ref_sha else ''}{source})")
     return code
 
 

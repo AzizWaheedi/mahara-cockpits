@@ -13,6 +13,16 @@ what they are, what to leave alone, how to check, and how to put them back.
 
 **Restore point:** git tag `pre-supabase-migration-2026-10-07` (commit
 `e166a0b`). Deploy from main at that commit or later, never from an older branch.
+The tag holds the code. This page, the two records, the verifier and the restore
+helpers came after it: they are on the branch that carries this page
+(`preserve-2026-10-07`), so run them from that checkout.
+
+**Before each step and after it:** run `python3 scripts/verify-preserved.py`
+(section 3). Nothing else will tell you in time: the guardian's dead-man
+heartbeat is off (`GUARDIAN_BEAT=off`) and the sales watchdog has no Slack
+webhook, so a stopped guardian, a stopped rooms worker or a refused minute job
+reaches nobody. Section 7 lists what each likely cutover action would break and
+which line of the verifier shows it.
 
 **Records:** `docs/preserve/supabase-manifest.json` and
 `docs/preserve/vps-manifest.json` describe every object below as it was on
@@ -105,24 +115,50 @@ The plans and specs are in `docs/live-calls/`.
 10. **On the VPS, do not clean, reset or re-clone `~/mahara-cockpits`.** That
     checkout is on a September commit with 84 uncommitted entries;
     `hermes/sales-desk`, `hermes/cockpit-guardian` and several other workers are
-    untracked there. `git clean`, `git reset --hard` or a fresh clone deletes
-    every one of them. A plain `git pull` refuses instead of overwriting.
-11. **On the VPS, keep crontab lines 59 and 62 to 64**, the six
+    untracked there. `git clean` or a fresh clone of that commit deletes every
+    one of them, the guardian included, and nothing alerts. A plain `git pull`
+    refuses instead of overwriting. If the checkout must move, `git reset --hard
+    origin/main` at `e166a0b` or later brings both folders back as main has them
+    (other workers there are not covered by this page).
+11. **On the VPS, keep crontab lines 44 to 53, 59 and 62 to 64**, the six
     `~/.sales-desk/env` lines, `~/.cockpit-guardian/env`, the reference deals,
     `~/.sales-desk/vince`, `~/.cockpit-guardian` and the Playwright shell. The
     guardian's crontab list in git includes lines 62 to 64 since 2026-10-07, but
     the guardian on the VPS reads its own copy, which does not, until its folder
-    is copied there again. Until then only the verifier reports those lines
-    missing.
+    is copied there again. Until then it raises lost lines 44 to 53 at once
+    (urgent), a lost rooms line only when the rooms worker's status row is ten
+    minutes old, and lost lines 63 and 64 not at all. Without line 59 it does not
+    run, so it says nothing.
 12. **If the Supabase keys change**, change the `DESK_`, `COCKPIT_`, `RADAR_` and
     plain `SUPABASE_` keys in the VPS env files together.
 13. **Do not restore Hermes from its git mirror.** The mirror's copy of
     `fixer-projects.json` is from 2026-09-27 and has no `cockpit-guardian` entry.
+14. **Do not put the crontab back from one of the older copies on the VPS.**
+    `~/.crontab.backup` (2026-09-23) has none of our lines; the `~/.crontab.backup.2026092*`
+    and `~/.crontab.bak-teamsync-*` copies and
+    `~/.cockpit-guardian/backups/crontab.20261003T190937Z` have no guardian or
+    live-calls lines; `crontab.20261007T101943Z.before-live-calls` lacks lines 62
+    to 64. Use `python3 scripts/verify-preserved.py --print-cron` (section 4).
+15. **Keep the folder `~/.cockpit-guardian`.** The guardian's cron line takes its
+    lock and writes its log there. Without the folder the line fails before the
+    guardian starts (tested in a scratch home on 2026-10-07), so the guardian
+    never runs again and never makes the folder again.
+16. **A new Supabase project is a move, not a copy.** If the cockpits or the VPS
+    workers are pointed at another project, everything in section 1 must exist
+    there first: the whole migration history, the vault secrets, the jobs, the
+    functions with their JWT settings, the function secrets and the private
+    bucket. The verifier says which project the workers and the live cockpit
+    use; check the new one with `--project <ref>`.
+17. **A database restore to an earlier point takes live calls back with it.**
+    Anything written after that point is gone (definitions from `20261004a` and
+    `20261004p`, settings, rows). Re-apply the seven files of section 4 and put
+    rows back from the private backups (section 5).
 
 ## 3. How to check
 
 Run the verifier from the repository root before the cutover starts, for a
-baseline, and again after the last step:
+baseline, again after each step, and once more after the last one. Run
+`git fetch origin` first, so `origin/main` is current.
 
 ```sh
 python3 scripts/verify-preserved.py              # one line per check, then the verdict
@@ -130,33 +166,68 @@ python3 scripts/verify-preserved.py --problems   # only the lines that are not o
 python3 scripts/verify-preserved.py --json       # for machines
 ```
 
-It compares what is live with the two manifests in `docs/preserve/` and prints
-one line per check: `ok`, `CHANGED`, `MISSING` or `UNKNOWN`. It covers every
-recorded table, view, function, trigger and pg_cron job, the settings switches,
-the Edge Functions (version not lower, `verify_jwt` as recorded), the secret
-names, our VPS crontab lines, worker files, env settings, reference deals, call
-reviews, the doctor, `deploy-check`, the guardian's last scan, the live sales
-bundle and both backups. It changes nothing; SQL goes with `read_only` true and
-the VPS checks only read.
+It compares what is live with the two records in `docs/preserve/` and prints
+one line per check: `ok`, `CHANGED`, `MISSING` or `UNKNOWN`. It covers:
+
+- **Database:** every recorded table, view, function (a digest of its
+  definition), trigger and pg_cron job; row counts (our tables may lose no row; a
+  table they read may lose up to a tenth); the settings switches, and any settings
+  row older than the copy recorded at the inventory (put back from an older
+  copy); the status rows of the jobs that run every few minutes (the rooms worker,
+  its host check, the hourly doctor, the proposal queue, follow-ups, the sweep and
+  the watchdog); the WhatsApp template rows; the vault and extension names.
+- **Edge Functions:** each one present, `ACTIVE`, version not lower, `verify_jwt`
+  as recorded; the deployed source files of `sales-api`, `sales-live` and
+  `sales-mirror` against the files at the tag (a deploy from an older branch gets
+  a higher version, and only its files give it away); the function secret names;
+  `CRON_SECRET` still holding the vault's `cockpit_sync_secret` (two digests
+  compared in memory, inside a read-only transaction); our function secrets set
+  again after the inventory.
+- **VPS:** our crontab lines, byte for byte; the desk and guardian files against
+  `origin/main` and the copy recorded at the inventory; the env setting lines;
+  which Supabase project the workers use; the reference deals; the call reviews;
+  the Playwright shell; `desk.py doctor --offline`; `deploy-check`; the guardian's
+  last scan and its folder; the Hermes fixer entry; the backup folder.
+- **Cockpit:** the room screens' and the proposal screens' words in the live
+  `/sales` bundle, and the Supabase project it talks to.
+- **Git:** `origin/main` still contains the restore point, and the tag on origin
+  still points at `e166a0b`.
+- **Backups:** every file in both private backups against its `SHA256SUMS`
+  (the main set and the supplement of section 5).
+
+It changes nothing. SQL goes with `read_only` true; the one read that needs the
+owner role (the vault digest) runs inside a read-only transaction. It never
+prints or saves a secret.
 
 A `CHANGED` line says whether it is explained: a migration added to the repo
 after `e166a0b` redefines the object, the VPS still has the copy recorded on
-2026-10-07, the object is not part of this work, or an Edge Function was
-redeployed with a higher version and the same JWT setting. Exit code 0 means
-nothing is missing, every change is explained and every check could be made; 1
-means something is missing or a change is not explained; 2 means some checks
-could not be made.
+2026-10-07, the object is not part of this work, or a function was redeployed
+from a ref that contains the restore point. "Explained by a later migration"
+means: read that migration, it is the one that changed the object. A later
+migration that puts back a definition the older migrations had already replaced
+(an old file copied into a new one) is not explained: the line names both files.
+Exit code 0 means nothing is missing, every change is explained and every check
+could be made; 1 means something is missing or a change is not explained; 2 means
+some checks could not be made.
 
 It needs the management API token in a file (`SUPABASE_MGMT_TOKEN_FILE`,
 default `~/.config/mahara/sb_mgmt_token`), the Creative Triage service key in a
 file to read the private bucket (`SUPABASE_SERVICE_KEY_FILE`, default
 `~/.config/mahara/sb_service_key`) and ssh access as `hermes` to the VPS
-(`--ssh`, `--ssh-key`). It never prints a secret. The baseline on 2026-10-07
-passed: 189 checks, no missing, the only changes the explained ones recorded at
-the inventory (two sales-desk import files older on the VPS, two never copied
-there, seven Mac metadata files).
+(`--ssh`, `--ssh-key`).
 
-Without those keys, these read-only checks cover the essentials.
+The baseline on 2026-10-07, after this review: PASS, every check ok but the
+three explained ones recorded at the inventory (two sales-desk import files older
+on the VPS, two never copied there, seven Mac metadata files).
+
+**Dry simulations.** `python3 scripts/preserve_scenarios.py` replays the
+verifier against copies of the records changed the way 22 cutover actions would
+change them (section 7) and says which lines each one fails; with
+`--tape <file>` it starts from a live recording made with
+`python3 scripts/verify-preserved.py --record <file>` (names, digests, counts and
+true/false only). Nothing live is touched.
+
+Without the keys, these read-only checks cover the essentials.
 
 Database (`scripts/dev/sq.py` is read-only unless `--write` is passed):
 
@@ -195,7 +266,8 @@ file.
 
 ## 4. How to put things back
 
-Work from a separate checkout of the tag, never in a shared checkout:
+Make a separate checkout of the tag for the code, never in a shared checkout,
+and run the helpers from the checkout that carries this page:
 
 ```sh
 git worktree add ../restore pre-supabase-migration-2026-10-07
@@ -203,7 +275,9 @@ git worktree add ../restore pre-supabase-migration-2026-10-07
 
 **Database.** Apply these files from the tag, in this order. Each can be re-run
 safely (create or replace, settings seeds that skip existing rows, jobs
-unscheduled and scheduled again):
+unscheduled and scheduled again). Their sha256 values are under
+`source.migrations` in the Supabase record and were checked against the tag on
+2026-10-07.
 
 1. `supabase/migrations/20261003a_sales_rooms.sql` (also schedules the two jobs)
 2. `supabase/migrations/20261003b_sales_hooks.sql`
@@ -217,48 +291,84 @@ Run all seven, in this order. The earlier files replace functions and the
 `cockpit_sales_presence` view with their first versions, and the later files
 bring back the current ones; stopping part way leaves older code live. Do not
 include `20261004a_cockpit_staff_identity_adoption.sql`; it shares the date
-prefix but is a different file. Their sha256 values are under
-`source.migrations` in the Supabase manifest. A missing settings row comes back
-with every switch off; compare it with `cockpit_sales_settings` in the manifest.
-Turning `followups` back on needs a manager, because of the guard.
+prefix but is a different file. In a new project, apply the whole history in
+`supabase/migrations/` first: these seven change tables older files make.
 
-**Edge Functions.** From the restore checkout:
+**Settings rows.** A missing row comes back with every switch off. A row put
+back from an older copy keeps that copy's values: compare it with
+`db/cockpit_sales_settings.json` in the private backups (section 5) and write
+back the values. Turning a switch on needs a sales manager, because of the
+guard: in one transaction, `set local mahara.actor = '<manager email>';` and
+write `updated_by` as that email. Turning switches off needs no one.
+
+**Rows.** Tables reloaded or restored to an earlier point lose rows. The rows of
+2026-10-07 are in `db/*.json` and `supplement/db/*.json` in the private backups
+(each file: `table`, `row_count`, `rows`). Insert them with
+`on conflict do nothing`, so newer rows stay as they are.
+
+**Edge Functions.** From the checkout that carries this page, pointing at the
+restore checkout (the helper is not at the tag):
 
 ```sh
-python3 scripts/dev/deploy_fn.py sales-api supabase/functions/sales-api
-python3 scripts/dev/deploy_fn.py sales-live supabase/functions/sales-live --no-verify-jwt
+python3 scripts/dev/deploy_fn.py sales-api ../restore/supabase/functions/sales-api
+python3 scripts/dev/deploy_fn.py sales-live ../restore/supabase/functions/sales-live --no-verify-jwt
+python3 scripts/dev/deploy_fn.py sales-mirror ../restore/supabase/functions/sales-mirror --no-verify-jwt
 ```
 
-Then run both `--info` checks from section 3.
+The deployed sources of all three were byte for byte the files at the tag on
+2026-10-07. Then run the verifier: the three source lines must read ok.
 
-**Secrets.** Set `CRON_SECRET` to the value of the vault secret
-`cockpit_sync_secret`. If `IP_SALT` is lost, set a new random value; the only
-effect is that stored join-page IP hashes no longer match. Never paste a secret
-into a chat, a file or a commit.
+**Secrets.** `CRON_SECRET` must hold the vault's `cockpit_sync_secret`. In the
+Supabase dashboard, read it in the SQL editor
+(`select decrypted_secret from vault.decrypted_secrets where name = 'cockpit_sync_secret';`)
+and paste it as `CRON_SECRET` under Edge Functions, Secrets. Never paste it
+into a chat, a file or a commit. If `IP_SALT` is lost, set a new random value;
+the only effect is that stored join-page IP hashes no longer match. The verifier's
+pairing line says when they match again.
 
 **The cockpit.** `scripts/ship.sh sales` from main at `e166a0b` or later, then
-open `/sales` and check that the room screens and the deck are there.
+open `/sales` and check that the room screens and the deck are there; the
+verifier's two bundle lines must read ok.
 
-**VPS workers.** The VPS copies of `hermes/sales-desk` and
-`hermes/cockpit-guardian` matched the tag on 2026-10-07; the VPS had nothing
-newer. Copy both folders from the tag into `~/mahara-cockpits/hermes/` by hand,
-the way they were installed.
+**VPS workers.** Either `git reset --hard origin/main` in `~/mahara-cockpits` at
+`e166a0b` or later (both folders are on main; other untracked workers there are
+not), or unpack the exact copies from the backup folder, which were checked to
+restore every recorded file byte for byte (150 and 52 files):
+
+```sh
+cd ~/mahara-cockpits/hermes
+tar xzf ~/backups/2026-10-07-pre-migration/files/code/hermes-sales-desk.tar.gz
+tar xzf ~/backups/2026-10-07-pre-migration/files/code/hermes-cockpit-guardian.tar.gz
+```
 
 **VPS crontab.** Save the current one first
-(`crontab -l > ~/.crontab.backup.$(date +%Y%m%d%H%M%S)`). The exact text of all
-65 lines is under `crontab.lines` in `docs/preserve/vps-manifest.json`, with a
-sha256 for each line and for the whole file. Add back any missing line; lines
-59 and 62 to 64 are the ones this work added. They are also in
-`hermes/sales-desk/README.md` (Cron section).
+(`crontab -l > ~/.crontab.backup.$(date +%Y%m%d%H%M%S)`). Print our lines,
+exactly, and add back the ones the verifier says are missing:
 
-**VPS settings.** Write back the six `~/.sales-desk/env` lines from section 1
-and `GUARDIAN_BEAT=off` in `~/.cockpit-guardian/env`. The other env files hold
-keys and are recorded by name only; re-enter their values from where the keys
-are kept today.
+```sh
+python3 scripts/verify-preserved.py --print-cron         # lines 44 to 53, 59 and 62 to 64
+python3 scripts/verify-preserved.py --print-cron all     # all 65 lines, byte for byte the recorded crontab
+```
+
+Install the whole recorded crontab (`--print-cron all`) only if nothing was
+added to it on purpose since 2026-10-07; its sha256 is `crontab.sha256` in the
+VPS record. The same text is `files/cron/crontab.txt` in the backups.
+
+**VPS settings.** The six `~/.sales-desk/env` lines are exactly
+`files/env-redacted/sales-desk.env` in the backup folder (checked; it holds no
+secret): `install -m 600 ~/backups/2026-10-07-pre-migration/files/env-redacted/sales-desk.env ~/.sales-desk/env`.
+The other env files hold keys and are recorded by name only; re-enter their
+values from where the keys are kept today.
+
+**The guardian's folder.** `mkdir -m 700 ~/.cockpit-guardian` first; without
+it the guardian never starts (section 2, item 15). Then
+`printf 'GUARDIAN_BEAT=off\n' > ~/.cockpit-guardian/env && chmod 600 ~/.cockpit-guardian/env`
+and, to keep its open incidents and what it has seen deployed, unpack
+`files/state/cockpit-guardian-state.tar.gz` from the backup folder into it.
 
 **Reference deals and call reviews.** Copy them back from the private backups
 below into `~/.sales-desk/reference/` (mode 0600) and `~/.sales-desk/vince/`.
-Their sha256 values are in the VPS manifest.
+Their sha256 values are in the VPS record and in both `SHA256SUMS`.
 
 **Playwright.** Nothing to save; reinstall with
 `cd ~/.sales-desk/browser && npm ci && npx playwright install chromium-headless-shell`
@@ -266,7 +376,13 @@ and point `CHROME_PATH` at the new `headless_shell`.
 
 **Hermes fixer entry.** Add `cockpit-guardian` back to
 `fixer-projects.json` with label "Cockpit guardian" and fix policy "pr"; the
-exact entry is under `fixer_projects` in the VPS manifest.
+exact entry is under `fixer_projects` in the VPS record and in
+`files/state/hermes-fixer-projects.json`.
+
+**From the bucket.** If the VPS folder is gone too, every file is in the bucket
+under the same path. Files that are not JSON are stored as `<name>.json`
+wrappers; the `restore` field of each wrapper is the one line that unwraps it
+(checked on 2026-10-07 with the crontab copy: it came back byte for byte).
 
 ## 5. Private backups
 
@@ -277,17 +393,64 @@ Lead and client data never goes into git. Private copies are kept in two places:
 - The VPS, folder `~/backups/2026-10-07-pre-migration/`.
 
 Both were filled on 2026-10-07 and read back: 35 files with a `SHA256SUMS`
-(37 objects in the bucket). The verifier checks every one. If either folder is
-empty or the verifier says a backup file is missing, stop and ask the CEO before
-the cutover. Neither holds secret values: those
-stay in the vault, the Supabase function secrets and the VPS env files. Older
-copies of the worker code are in `~/.sales-desk/backup-*` on the VPS.
+(37 objects in the bucket). The adversarial review added `supplement/` in both
+places, with its own `SHA256SUMS`: the rows of `cockpit_sales_followups` (the
+desk's follow-up drafts, a table the live-calls migrations changed) and
+`cockpit_sales_references` (the reference library the proposal screens read),
+which the first set did not hold, and a git bundle of the branch that carries
+this page (`git clone` it if the branch is lost). The verifier checks every file
+in both sets. If either folder is empty or the verifier says a backup file is
+missing, stop and ask the CEO before the cutover. Neither holds secret values:
+those stay in the vault, the Supabase function secrets and the VPS env files.
+`cockpit_sales_room_secrets` is left out on purpose (it holds Zoom host links).
+Older copies of the worker code are in `~/.sales-desk/backup-*` on the VPS.
 
 ## 6. What else is in the repository
 
 - `docs/live-calls/`: the live-calls plans, specs and reviews (see its README).
 - `scripts/verify-preserved.py`: the verifier in section 3.
+- `scripts/preserve_scenarios.py`: the dry simulations in sections 3 and 7.
 - `scripts/dev/`: `sq.py` (SQL), `deploy_fn.py` (Edge Function deploys and
   `--info`) and `matrix.sh` (the live-calls test matrix).
-- `docs/preserve/`: the two manifests. The Supabase one also has
+- `docs/preserve/`: the two records. The Supabase one also has
   `cutover_findings`, the risks in section 2 with the evidence behind them.
+- `hermes/cockpit-guardian`: since this review it remembers the live-calls
+  pieces deployed by 2026-10-07 (a lost state no longer reads "not deployed
+  yet") and checks the code `sales-api` and `sales-live` were deployed with
+  (`live-code`). The VPS runs its older copy until the folder is copied there.
+
+## 7. What each cutover action would do
+
+Each row was simulated with `scripts/preserve_scenarios.py` (against the records
+and against a live recording of 2026-10-07) or, for the restores, tried on
+copies in a scratch folder. "Verifier" is what its next run says; "guardian now"
+is the copy running on the VPS today; "guardian updated" is this branch's copy
+once its folder is on the VPS. A guardian failure posts to #health (report-only
+mode alerts, it only fixes nothing). A guardian that has stopped posts nothing,
+because its heartbeat is off, and the sales watchdog's own alerts reach no one,
+because the vault has no Slack webhook for it.
+
+| Action | What breaks | Verifier | Guardian now | Guardian updated | Put back with |
+| --- | --- | --- | --- | --- | --- |
+| VPS checkout cleaned or re-cloned at its September commit | The desk (proposals, rooms worker, follow-ups) and the guardian stop | MISSING both folders' files; stale status rows; the doctor and deploy-check cannot run; last scan old | Nothing: it is deleted with its folder | The same | Reset to current `origin/main` (simulated: passes) or the two code tarballs |
+| Crontab put back from the copy taken before live calls | Rooms worker, host check and hourly doctor stop | MISSING lines 62 to 64; stale rooms and host rows | `live-rooms-worker` fails about 10 minutes later; lines 63 and 64 unseen | `vps-crontab` fails urgent on the next scan | `--print-cron` |
+| Crontab put back from `~/.crontab.backup` (2026-09-23) | Every desk job and the guardian stop | MISSING lines 44 to 53, 59, 62 to 64; stale rows; last scan old | Nothing: its own line is gone | The same | `--print-cron` or `--print-cron all` |
+| `sales-api` deployed from `codex/supabase-completion-20261004` | Rooms, follow-up agent and send rules gone from the server; the version goes up | MISSING `sales-api source`: deployed without rooms.ts, roomlogic.ts, liveio.ts, followupAgent.ts, sendrules.ts | Nothing (still ACTIVE, still 401) | `live-code` fails urgent | `deploy_fn.py` from the tag |
+| The sales cockpit shipped from that branch | Room and proposal screens gone from `/sales` | MISSING both bundle lines | Nothing | Nothing | `scripts/ship.sh sales` from main |
+| `sales-live` deployed with a plain `supabase functions deploy` | The minute job's calls are refused (401) | CHANGED `verify_jwt True`; deploy-check not ready | `live-function` fails | `live-function` and `edge-functions` fail | `deploy_fn.py ... --no-verify-jwt` |
+| An old migration re-run (`20260927a`) | `cockpit_sales_setter_deals` goes back to its old version | CHANGED, not explained | Nothing | Nothing | The seven files in order |
+| The same old SQL copied into a new migration of the cutover branch | The same | CHANGED, not explained: names the new file and the old one | Nothing | Nothing | The seven files in order |
+| A migration drops the settings guard trigger | Any writer can turn live calls on | CHANGED: trigger gone | Nothing | Nothing | The seven files in order |
+| `cockpit_sales_settings` reloaded from an older export | Switches and worker settings go back (follow-ups off) | CHANGED: each row older than recorded; switches changed | Nothing while rooms and live stay off | The same | Section 4, settings rows |
+| A table dropped and made again, empty | Its rows are gone (alerts, drafts, usage) | CHANGED: fewer rows than recorded | Nothing | Nothing | Section 4, rows |
+| `CRON_SECRET` and `IP_SALT` set to new values | Once rooms have work, sales-live refuses the minute job | CHANGED: pairing differs; IP_SALT set again | Nothing while rooms are off | The same | Section 4, secrets |
+| Function secrets wiped | sales-api and sales-live fail on their first real call | MISSING names; pairing MISSING | Nothing until a call fails | The same | Re-enter them; section 4, secrets |
+| `~/.sales-desk/env` rewritten from `env.bak-20260927` | Proposals lose their fallback model | MISSING the three fallback lines | Nothing | Nothing | `install` the env-redacted copy |
+| Reference deals deleted | Proposals draft with no reference deal | MISSING reference deals | Nothing | Nothing | The backups |
+| `hermes/cockpit-guardian` removed | The guardian stops | MISSING its files; last scan old | Nothing: it is gone | The same | Tarball or main |
+| `~/.cockpit-guardian` removed | The guardian never starts again | MISSING its env; the last-scan line says to make the folder | Nothing | Nothing | `mkdir -m 700`, env line, state tarball |
+| Cockpits and workers moved to a new project, the old one left | Everything in section 1 is missing in the new one | CHANGED: workers' and cockpit's project differ; `--project <new>` lists what is missing | Its live-calls checks fail there (it remembers them deployed) | The same, even with its state lost | Section 2, item 16 |
+| Database restored to 2026-10-04 | Definitions from `20261004a`, the `provider` column and newer rows go back | CHANGED: functions, columns, older settings rows, fewer rows | Nothing (the tables and jobs still exist) | Nothing | The seven files, then rows |
+| Database restored to 2026-10-02 | Live calls gone from the database | MISSING tables, functions, jobs, settings rows | `live-tables`, `live-cron` fail | The same, even with its state lost | The seven files, then rows |
+| Checkout reset to current `origin/main` | Nothing | Passes | Passes | Passes | Nothing to do |
+| A function changed on purpose by a new migration on the cutover branch | The intended change | CHANGED, explained by that migration | Nothing | Nothing | Read that migration |

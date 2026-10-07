@@ -32,8 +32,10 @@ class FakeDb(Db):
 
     def __init__(self, tables: Optional[dict[str, list[dict]]] = None, *, missing: tuple[str, ...] = (),
                  probe: Any = None, functions: Any = None, health: Any = None, can_write: bool = True,
-                 down: bool = False):
+                 down: bool = False, files: Optional[dict[str, list[str]]] = None):
         super().__init__(None)
+        self.files = files            # slug -> deployed source module names
+        self.file_reads: list[str] = []
         self.tables = tables or {}
         self.missing = set(missing)
         self._probe = probe
@@ -112,6 +114,12 @@ class FakeDb(Db):
         if self._health is None:
             raise Unavailable("SUPABASE_ACCESS_TOKEN is not set")
         return self._health
+
+    def function_files(self, slug):
+        if self.files is None:
+            raise Unavailable("SUPABASE_ACCESS_TOKEN is not set")
+        self.file_reads.append(slug)
+        return list(self.files.get(slug, []))
 
     def ping_seconds(self):
         self._guard()
