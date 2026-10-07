@@ -368,7 +368,42 @@ export function createRepository(read: ReadFunction): Repository {
       const [mediaMembers, chat, manualChanges, comments, adChanges, decisionsFeed, eods, statuses, statusHistory, members] = await Promise.all([
         feed("media", "clickupMembers"), feed("media", "campaignChat"), feed("media", "manualChanges"),
         feed("media", "clientComments"), feed("media", "adChanges"), feed("csm", "decisions"),
-        read(TRIAGE, `SELECT day::text AS day,name,energy,floor(extract(epoch FROM submitted_at)*1000)::bigint AS at,role FROM public.cockpit_eod_reports WHERE day >= (now() AT TIME ZONE 'Asia/Kuwait')::date-40 ORDER BY submitted_at DESC LIMIT 1000`),
+        read(TRIAGE, `SELECT r.day::text AS day,
+                     coalesce(
+                       nullif(btrim(m_id.name), ''),
+                       nullif(btrim(m_em.name), ''),
+                       nullif(btrim(p.name), ''),
+                       nullif(btrim(r.source_row->>'name'), ''),
+                       nullif(btrim(r.source_row->>'person'), '')
+                     ) AS name,
+                     r.energy,
+                     floor(extract(epoch FROM r.submitted_at)*1000)::bigint AS at,
+                     r.role
+              FROM public.cockpit_eod_reports r
+              LEFT JOIN LATERAL (
+                SELECT m.name
+                FROM public.cockpit_members m
+                WHERE r.owner_user_id IS NOT NULL AND m.auth_user_id = r.owner_user_id
+                ORDER BY m.id
+                LIMIT 1
+              ) m_id ON true
+              LEFT JOIN LATERAL (
+                SELECT m.name
+                FROM public.cockpit_members m
+                WHERE r.owner_email IS NOT NULL AND lower(btrim(m.email)) = lower(btrim(r.owner_email))
+                ORDER BY m.id
+                LIMIT 1
+              ) m_em ON true
+              LEFT JOIN LATERAL (
+                SELECT p.name
+                FROM public.cockpit_people p
+                WHERE r.owner_email IS NOT NULL AND lower(btrim(p.email)) = lower(btrim(r.owner_email))
+                ORDER BY p.id
+                LIMIT 1
+              ) p ON true
+              WHERE r.day >= (now() AT TIME ZONE 'Asia/Kuwait')::date-40
+              ORDER BY r.submitted_at DESC
+              LIMIT 1000`),
         read(TRIAGE, `SELECT person_key AS "personKey",status,since::text AS since,note,floor(extract(epoch FROM set_at)*1000)::bigint AS "setAt" FROM public.cockpit_team_status`),
         read(TRIAGE, `SELECT after->>'person_key' AS "personKey",after->>'status' AS status,after->>'since' AS since,floor(extract(epoch FROM created_at)*1000)::bigint AS at FROM public.cockpit_audit_log WHERE entity_type='cockpit_team_status' AND after IS NOT NULL ORDER BY created_at DESC LIMIT 2000`),
         read(TRIAGE, `SELECT p.name,p.role,p.active,p.engagement,floor(extract(epoch FROM p.added_at)*1000)::bigint AS "addedAt",floor(extract(epoch FROM m.last_seen_at)*1000)::bigint AS "lastSeenAt",m.roles FROM public.cockpit_people p LEFT JOIN public.cockpit_members m ON lower(btrim(m.email))=lower(btrim(p.email)) WHERE p.active OR m.active ORDER BY p.name LIMIT 1000`),
