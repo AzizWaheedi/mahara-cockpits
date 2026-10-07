@@ -1,6 +1,6 @@
 ﻿# Convex retirement: current checkpoint
 
-Updated 7 October 2026, 17:50 UTC. Migration remains in progress. Earlier checkpoint history remains in Git.
+Updated 7 October 2026, 19:45 UTC. Migration remains in progress. Earlier checkpoint history remains in Git.
 
 ## Decisions and workspace
 
@@ -61,3 +61,25 @@ Chrome tab `2012789659` is authenticated as Muhammed. Admin recovered after tran
 7. Record verified changes in mahara-context. Its sync stopped on dirty work at `398a4ed`. Preserve it.
 
 No Convex deletion, final freeze, final-delta certification or complete retirement claim has occurred.
+
+## Completion-plan continuation, 7 October 2026, 19:45 UTC
+
+Muhammed confirmed the previous migration session stopped. This session is the sole cutover owner. Worktree HEAD is `40d9e151`; it was clean at takeover. Canonical context sync stopped on dirty work; retained context HEAD is `398a4ed`.
+
+Phase 1 ownership and baseline checks are complete. Existing imports, finance reconciliation, checklist reconciliation, and growth-read receipts remain closed. Required worker, publication, freeze, recovery, and deletion gates remain open. Use `docs/CONVEX-RETIREMENT-INVENTORY-20261007.md` for the finite replacement inventory.
+
+Phase 2 local safeguards are verified. Commit `32bd21f8` preserves cached calls without `clientName`, full call history, same-identity human fields, and distinct no-URL calls. Seven failing regressions became green. The integrated history/provider suite passed 53 tests and 234 assertions.
+
+Commit `c4775129` adds bounded Fathom reads and the team metric repair. An initial attempt to append a checkpoint to protected CSM `syncRuns` was rejected by the actual SQL publication test. That attempt was removed. The worker now reads the latest successful `media-core` publication's `plan.begun_at` from the existing native run ledger. It overlaps 24 hours, preserves original CSM history, and cannot advance on failed publication or dry runs. Missing, malformed, and future initial seeds fail closed. The corrected integrated suite passed 54 tests and 218 assertions. Evidence: `native-publication-checkpoint-integrated-tests.log`.
+
+Review manifest: `C:/Users/20106/.codex/gemini-worker/runs/20261007-220440-3830987f/manifest.json`. Regression/repair manifest: `C:/Users/20106/.codex/gemini-worker/runs/20261007-220803-7e5fe65b/manifest.json`.
+
+Phase 3: the actual `40d9e151` server CEO dry run computed nine sections. Bank statements stop on 21 September, so money/expenses failed safely. Portal appointments are unconfirmed. Delivery needs a fresh native media sync. Team failed because `team_actions` violated its native metric contract and lacked a matching definition. The repair emits defined `team.actions`, preserves historical rows, and passed five adapter regressions and the canonical publication/readback/repeat/failure smoke. Evidence: `completion-dry-runs-40d9e151-ceo.log`, `completion-latest-diagnostics.log`, and `team-metric-integrated-smoke.log`.
+
+Current staged candidate: `/home/hermes/.cockpit-native-releases/c4775129`, with 136 hash-verified files and three successful frozen production dependency installs. Archive SHA256: `f461de2fbb4105c64a78f09329cd0a1d1a96f3017532785d8acc5cfdcddab9fd`. Schedules remain disabled. Host dirty work remains preserved. Staging receipt: `candidate-c4775129-stage.log`. Initial `FATHOM_CREATED_AFTER` is `2026-10-06T16:01:16.602220+00:00`, based on the verified CSM export minus one day. A source and CEO dry run of this candidate is pending. Neither staging nor computation proves successful live publication.
+
+Phase 4 preparation: all three protected exports passed offline checksums, exact table counts, and identity validation across 148 tables and 115,447 source rows. Evidence: `offline-recovery-archive-integrity.json`. This proves archive integrity only. Actual database and storage restore tests remain open.
+
+Final read-only review: `C:/Users/20106/.codex/gemini-worker/runs/20261007-223833-c66e33fb/manifest.json`. Its suggested current-value extraction is unnecessary because `team.actions` intentionally remains a defined daily-series point. SQL accepts defined daily points independently of current-value extraction. Its checkpoint-pagination finding describes the correctly bounded one-row query and identifies no defect.
+
+Next: inspect `c4775129` source/CEO dry-run receipts, verify retained call identities and human annotations in the produced plan, complete staged worker acceptance, and run the integrated release gate. Prepare an exact pilot publication diff before requesting run-specific live automation approval. No freeze, public release, writer activation, or Convex deletion occurred.
