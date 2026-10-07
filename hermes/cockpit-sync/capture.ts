@@ -83,6 +83,12 @@ export function prepareTables(tables:Record<string,Row[]>, prior:Record<string,R
   }
  };
  return Object.fromEntries(Object.entries(tables).map(([table,rows])=>{
+  // Unchanged imported tables retain every original row and identity.
+  if(rows===prior[table]){
+   if(rows.some(r=>typeof r._id!=='string'||!r._id))throw new Error(`Missing source identity in ${table}`);
+   if(new Set(rows.map(r=>r._id)).size!==rows.length)throw new Error(`Duplicate source identity in ${table}`);
+   return [table,rows];
+  }
   const old=new Map<string,string>();
   for(const row of prior[table]??[]){
    const identity=JSON.stringify(key(table,row));

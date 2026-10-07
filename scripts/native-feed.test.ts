@@ -90,6 +90,11 @@ test('atomic rollback, duplicate identity, missing output, wrong counts, stale s
  expect(funnels[1]._id).toBeDefined();
  expect(()=>prepareTables({funnels:[{kind:'Unknown'}]})).toThrow(/Missing logical identity/);
  expect(()=>prepareTables({funnels:[{account:'Alpha',kind:'Unknown'},{account:'Alpha',kind:'Unknown'}]})).toThrow(/Duplicate logical identity/);
+ const retainedLinks=[{_id:'original-link-1',name:'Same client',dosDonts:'Keep first human note'},{_id:'original-link-2',name:'Same client',dosDonts:'Keep second human note'}];
+ expect(prepareTables({clientLinks:retainedLinks},{clientLinks:retainedLinks}).clientLinks).toBe(retainedLinks);
+ expect(()=>prepareTables({clientLinks:[{name:'Same client'}]},{clientLinks:retainedLinks})).toThrow(/Ambiguous prior/);
+ const duplicateIds=[{_id:'same-id',name:'One'},{_id:'same-id',name:'Two'}];
+ expect(()=>prepareTables({clientLinks:duplicateIds},{clientLinks:duplicateIds})).toThrow(/Duplicate/);
  const db=await fixture();try{
   await initialize(db);const s=await state(db),c=await claim(db);
   for(const mutate of [
