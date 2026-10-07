@@ -273,8 +273,21 @@ function leadsOf(insights: Row): { spend: number; leads: number } {
   return { spend, leads };
 }
 
+async function resolveInsights(entityId: string, insights: unknown): Promise<Row> {
+  if (insights !== undefined && insights !== null) {
+    return insights as Row;
+  }
+  const cleanId = String(entityId ?? "").trim();
+  if (!cleanId) throw new Error('Market entity identity missing for insight lookup');
+  const res = await graph(`${cleanId}/insights`, {
+    date_preset: 'last_30d',
+    fields: 'spend,actions',
+  });
+  return res as Row;
+}
+
 // biome-ignore lint/suspicious/noExplicitAny: Meta payload
-function readCreatives(ads: Row[]) {
+async function readCreatives(ads: Row[]) {
   const out: Record<string, unknown>[] = [];
   const formats = new Set<string>();
   const ctas = new Set<string>();
@@ -289,7 +302,8 @@ function readCreatives(ads: Row[]) {
     const full = creativeCopyParts(spec);
     const copy = readCreativeCopy(cr);
     const [t, lang] = copyTraits(full.body, full.headline);
-    const { spend, leads } = leadsOf(ad.insights);
+    const resolvedInsight = await resolveInsights(String(ad.id), ad.insights);
+    const { spend, leads } = leadsOf(resolvedInsight);
     formats.add(copy.format);
     if (copy.cta) ctas.add(copy.cta);
     for (const x of t) traits.add(x);
@@ -331,7 +345,7 @@ function readCreatives(ads: Row[]) {
 
 /** Turn one ad set's targeting into a comparable "play". */
 // biome-ignore lint/suspicious/noExplicitAny: Meta payload
-function readPlay(adset: Row) {
+async function readPlay(adset: Row) {
   const t = adset.targeting ?? {};
   const names = new Set<string>();
   for (const spec of t.flexible_spec ?? [])
@@ -343,7 +357,8 @@ function readPlay(adset: Row) {
     : interests.length
       ? "interests"
       : "broad";
-  const { spend, leads } = leadsOf(adset.insights);
+  const resolvedInsight = await resolveInsights(String(adset.id), adset.insights);
+  const { spend, leads } = leadsOf(resolvedInsight);
   return {
     adsetId: String(adset.id),
     adsetName: String(adset.name ?? ""),
@@ -367,12 +382,12 @@ export async function collectMarket(state: Row): Promise<Row[]> {
     if (!Array.isArray(response.data)) throw new Error('Market ad sets are unavailable');
     for (const adset of response.data) {
       if(!adset.id)throw new Error('Market ad set identity missing');
-      const play = readPlay(adset);
+      const play = await readPlay(adset);
       if (play.spend <= 0) continue;
       // Separate paginated edge avoids truncating nested ads.limit(25).
       const ads = await graph(`${adset.id}/ads`, {fields: 'id,name,creative{id,object_story_spec,thumbnail_url,image_url},insights.date_preset(last_30d){spend,actions}', limit: 100});
       if (!Array.isArray(ads.data)) throw new Error('Market creatives are unavailable');
-      const creative = readCreatives(ads.data);
+      const creative = await readCreatives(ads.data);
       const old = prior.get(play.adsetId);
       const saved = new Map<string, Row>((old?.creatives ?? []).map((row: Row) => [String(row.adId), row]));
       for (const row of creative.creatives) {

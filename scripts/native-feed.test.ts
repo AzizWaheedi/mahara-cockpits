@@ -440,8 +440,176 @@ test('market provider insight math feeds permanent winners and keeps human annot
  const tables:Record<string,Row[]>={marketPlays:market,metaTree:[],dailyStats:[]};archiveWinners(s,tables);
  expect(tables.winnersArchive).toHaveLength(1);
  expect(tables.winnersArchive[0]).toMatchObject({_id:'legacy-winner',note:'Keep my annotation',firstArchivedAt:1,client:'Human label',spend:120,leads:10,cpl:12});
- delete insight.data;
+ (insight as Row).data = undefined;
  await expect(withNativeContext(reads,{receipts:[]},()=>collectMarket(s))).rejects.toThrow(/insight/i);
+});
+
+test('market provider explicit insight fallback handles ad sets and ads, explicit zero, invalid responses and avoids extra requests on complete nested insights',async()=>{
+ const makeInsight=(spend='120',lead='10')=>({data:[{spend,actions:[{action_type:'lead',value:lead}]}]});
+ const baseMeta=(accountName='Alpha')=>({
+  async tool(_name:string,_args:Row){
+   return {values:[['Client Name','Ad Account - Meta','Country','City','Service'],[accountName,'222222','Kuwait','Kuwait','Construction']]};
+  },
+  async fetch(){throw new Error('No fetch allowed');},
+  log(level:string){if(level==='error')throw new Error('Market logged error');},
+ });
+
+ // 1. Complete nested insight fast-path avoids extra requests
+ {
+  let fallbackAdsetCalls = 0;
+  let fallbackAdCalls = 0;
+  const reads:Reads={
+   ...baseMeta(),
+   async graph(path:string){
+    if(path.endsWith('/owned_ad_accounts'))return {data:[{id:'act_222222',name:'Alpha'}]};
+    if(path.endsWith('/client_ad_accounts'))return {data:[]};
+    if(path==='act_222222/adsets')return {data:[{id:'555555',name:'Set 1',targeting:{age_min:20},insights:makeInsight('100','5')}]};
+    if(path==='555555/ads')return {data:[{id:'333333',name:'Ad 1',creative:{id:'444444'},insights:makeInsight('100','5')}]};
+    if(path==='555555/insights'){fallbackAdsetCalls++;return makeInsight('100','5');}
+    if(path==='333333/insights'){fallbackAdCalls++;return makeInsight('100','5');}
+    throw new Error(`Unexpected path ${path}`);
+   },
+  };
+  const plays=await withNativeContext(reads,{receipts:[]},()=>collectMarket({media:{marketPlays:[]}}));
+  expect(plays).toHaveLength(1);
+  expect(fallbackAdsetCalls).toBe(0);
+  expect(fallbackAdCalls).toBe(0);
+ }
+
+ // 2. Explicit fallback when nested insights is missing: ad sets and ads both fetch explicit edge
+ {
+  let fallbackAdsetCalls = 0;
+  let fallbackAdCalls = 0;
+  const requestedParams:Record<string,Row>={};
+  const reads:Reads={
+   ...baseMeta(),
+   async graph(path:string,params?:Row){
+    if(path.endsWith('/owned_ad_accounts'))return {data:[{id:'act_222222',name:'Alpha'}]};
+    if(path.endsWith('/client_ad_accounts'))return {data:[]};
+    if(path==='act_222222/adsets')return {data:[{id:'555555',name:'Set 1',targeting:{age_min:20}}]};
+    if(path==='555555/ads')return {data:[{id:'333333',name:'Ad 1',creative:{id:'444444'}}]};
+    if(path==='555555/insights'){
+     fallbackAdsetCalls++;
+     requestedParams[path]=params??{};
+     return makeInsight('150','10');
+    }
+    if(path==='333333/insights'){
+     fallbackAdCalls++;
+     requestedParams[path]=params??{};
+     return makeInsight('150','10');
+    }
+    throw new Error(`Unexpected path ${path}`);
+   },
+  };
+  const plays=await withNativeContext(reads,{receipts:[]},()=>collectMarket({media:{marketPlays:[]}}));
+  expect(plays).toHaveLength(1);
+  expect(fallbackAdsetCalls).toBe(1);
+  expect(fallbackAdCalls).toBe(1);
+  expect(requestedParams['555555/insights']).toEqual({date_preset:'last_30d',fields:'spend,actions'});
+  expect(requestedParams['333333/insights']).toEqual({date_preset:'last_30d',fields:'spend,actions'});
+  expect(plays[0].spend).toBe(150);
+  expect(plays[0].leads).toBe(10);
+  expect(plays[0].cpl).toBe(15);
+  expect(plays[0].creatives[0].spend).toBe(150);
+  expect(plays[0].creatives[0].leads).toBe(10);
+ }
+
+ // 3. Explicit complete data:[] is verified zero (skips play when ad set spend is 0, or captures 0 spend/leads on ad)
+ {
+  let adsetZeroFallback = 0;
+  let adZeroFallback = 0;
+  const reads:Reads={
+   ...baseMeta(),
+   async graph(path:string){
+    if(path.endsWith('/owned_ad_accounts'))return {data:[{id:'act_222222',name:'Alpha'}]};
+    if(path.endsWith('/client_ad_accounts'))return {data:[]};
+    if(path==='act_222222/adsets')return {data:[{id:'555555',name:'Set 1',targeting:{age_min:20}}]};
+    if(path==='555555/ads')return {data:[{id:'333333',name:'Ad 1',creative:{id:'444444'}}]};
+    if(path==='555555/insights'){adsetZeroFallback++;return {data:[]};}
+    if(path==='333333/insights'){adZeroFallback++;return {data:[]};}
+    throw new Error(`Unexpected path ${path}`);
+   },
+  };
+  const plays=await withNativeContext(reads,{receipts:[]},()=>collectMarket({media:{marketPlays:[]}}));
+  expect(adsetZeroFallback).toBe(1);
+  expect(plays).toEqual([]);
+
+  const readsAdZero:Reads={
+   ...baseMeta(),
+   async graph(path:string){
+    if(path.endsWith('/owned_ad_accounts'))return {data:[{id:'act_222222',name:'Alpha'}]};
+    if(path.endsWith('/client_ad_accounts'))return {data:[]};
+    if(path==='act_222222/adsets')return {data:[{id:'555555',name:'Set 1',targeting:{age_min:20},insights:makeInsight('100','5')}]};
+    if(path==='555555/ads')return {data:[{id:'333333',name:'Ad 1',creative:{id:'444444'}}]};
+    if(path==='333333/insights'){adZeroFallback++;return {data:[]};}
+    throw new Error(`Unexpected path ${path}`);
+   },
+  };
+  const playsWithAdZero=await withNativeContext(readsAdZero,{receipts:[]},()=>collectMarket({media:{marketPlays:[]}}));
+  expect(playsWithAdZero).toHaveLength(1);
+  expect(playsWithAdZero[0].creatives[0].spend).toBe(0);
+  expect(playsWithAdZero[0].creatives[0].leads).toBe(0);
+  expect(playsWithAdZero[0].creatives[0].cpl).toBeUndefined();
+ }
+
+ // 4. Missing / malformed / multiple window responses fail closed and caller preserves prior data
+ {
+  const priorPlays=[{adsetId:'555555',spend:99,leads:9,cpl:11}];
+  const priorState={media:{marketPlays:priorPlays}};
+
+  // Multiple window items in fallback response
+  const multiReads:Reads={
+   ...baseMeta(),
+   async graph(path:string){
+    if(path.endsWith('/owned_ad_accounts'))return {data:[{id:'act_222222',name:'Alpha'}]};
+    if(path.endsWith('/client_ad_accounts'))return {data:[]};
+    if(path==='act_222222/adsets')return {data:[{id:'555555',name:'Set 1',targeting:{age_min:20}}]};
+    if(path==='555555/insights')return {data:[{spend:'100'},{spend:'200'}]};
+    throw new Error(`Unexpected path ${path}`);
+   },
+  };
+  await expect(withNativeContext(multiReads,{receipts:[]},()=>collectMarket(priorState))).rejects.toThrow(/missing or ambiguous/i);
+  expect(priorState.media.marketPlays).toBe(priorPlays);
+
+  // Missing data array in fallback response
+  const missingDataReads:Reads={
+   ...baseMeta(),
+   async graph(path:string){
+    if(path.endsWith('/owned_ad_accounts'))return {data:[{id:'act_222222',name:'Alpha'}]};
+    if(path.endsWith('/client_ad_accounts'))return {data:[]};
+    if(path==='act_222222/adsets')return {data:[{id:'555555',name:'Set 1',targeting:{age_min:20}}]};
+    if(path==='555555/insights')return {};
+    throw new Error(`Unexpected path ${path}`);
+   },
+  };
+  await expect(withNativeContext(missingDataReads,{receipts:[]},()=>collectMarket(priorState))).rejects.toThrow(/missing or ambiguous/i);
+
+  // Malformed spend in fallback response
+  const malformedSpendReads:Reads={
+   ...baseMeta(),
+   async graph(path:string){
+    if(path.endsWith('/owned_ad_accounts'))return {data:[{id:'act_222222',name:'Alpha'}]};
+    if(path.endsWith('/client_ad_accounts'))return {data:[]};
+    if(path==='act_222222/adsets')return {data:[{id:'555555',name:'Set 1',targeting:{age_min:20}}]};
+    if(path==='555555/insights')return {data:[{spend:'invalid-number'}]};
+    throw new Error(`Unexpected path ${path}`);
+   },
+  };
+  await expect(withNativeContext(malformedSpendReads,{receipts:[]},()=>collectMarket(priorState))).rejects.toThrow(/Market spend is unavailable/i);
+
+  // Provider error during fallback read is not swallowed
+  const providerErrorReads:Reads={
+   ...baseMeta(),
+   async graph(path:string){
+    if(path.endsWith('/owned_ad_accounts'))return {data:[{id:'act_222222',name:'Alpha'}]};
+    if(path.endsWith('/client_ad_accounts'))return {data:[]};
+    if(path==='act_222222/adsets')return {data:[{id:'555555',name:'Set 1',targeting:{age_min:20}}]};
+    if(path==='555555/insights')throw new Error('Provider rate limit or auth failure');
+    throw new Error(`Unexpected path ${path}`);
+   },
+  };
+  await expect(withNativeContext(providerErrorReads,{receipts:[]},()=>collectMarket(priorState))).rejects.toThrow('Provider rate limit or auth failure');
+ }
 });
 
 test('market provider never calls obsolete labels sheet, prefers exact account-ID over mismatched name, and fails closed on unreadable or ambiguous registry',async()=>{
