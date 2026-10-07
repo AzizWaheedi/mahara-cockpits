@@ -322,7 +322,8 @@ export function createProviderDriver(options: ProviderDriverOptions): {
           method: "POST",
           headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", Accept: "application/json" },
           body: JSON.stringify({ query: sql, read_only: true }),
-          signal: AbortSignal.timeout(30_000),
+          // The verified growth query takes about 38 seconds on the source database.
+          signal: AbortSignal.timeout(90_000),
         });
       } catch (error) {
         lastError = safeError(error);
