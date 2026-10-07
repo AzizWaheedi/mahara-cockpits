@@ -63,6 +63,20 @@ function asNumber(value: unknown, label: string): number {
   return number;
 }
 
+function parsePositiveTimestamp(value: unknown, label: string): number {
+  if (value === null || value === undefined || typeof value === "boolean") {
+    throw new Error(`${label} has invalid timestamp`);
+  }
+  if (typeof value === "string" && !value.trim()) {
+    throw new Error(`${label} has invalid timestamp`);
+  }
+  const n = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(n) || n <= 0) {
+    throw new Error(`${label} has invalid timestamp`);
+  }
+  return n;
+}
+
 function asJsonRows(value: unknown, label: string): Row[] {
   let parsed = value;
   if (typeof parsed === "string") {
@@ -408,15 +422,89 @@ export function createRepository(read: ReadFunction): Repository {
         read(TRIAGE, `SELECT after->>'person_key' AS "personKey",after->>'status' AS status,after->>'since' AS since,floor(extract(epoch FROM created_at)*1000)::bigint AS at FROM public.cockpit_audit_log WHERE entity_type='cockpit_team_status' AND after IS NOT NULL ORDER BY created_at DESC LIMIT 2000`),
         read(TRIAGE, `SELECT p.name,p.role,p.active,p.engagement,floor(extract(epoch FROM p.added_at)*1000)::bigint AS "addedAt",floor(extract(epoch FROM m.last_seen_at)*1000)::bigint AS "lastSeenAt",m.roles FROM public.cockpit_people p LEFT JOIN public.cockpit_members m ON lower(btrim(m.email))=lower(btrim(p.email)) WHERE p.active OR m.active ORDER BY p.name LIMIT 1000`),
       ]);
-      const today = new Date(Date.now() + 3 * 60 * 60_000).toISOString().slice(0, 10);
-      const commentsToday = comments.rows.filter(row => String(row.at ?? "").slice(0, 10) === today).map(row => ({ ...row, by: row.by ?? row.author ?? null }));
-      const digests = comments.rows.map(row => {
-        const digest = row.digest && typeof row.digest === "object" ? row.digest as Row : {};
-        return { by: row.by ?? row.author ?? null, at: row.at, summary: cleanDigest(digest.summary), campaignName: row.clientName ?? null };
-      }).filter(row => row.summary);
+      const now = Date.now();
+      const today = new Date(now + 3 * 60 * 60_000).toISOString().slice(0, 10);
+      const since = now - 7 * 86_400_000;
+      const todayStart = new Date(`${today}T00:00:00Z`).getTime() - 3 * 3600_000;
+      const tomorrowStart = todayStart + 86_400_000;
+
+      const MEANINGFUL = /budget|targeting|bid strategy|optimisation goal|optimization goal|created|ad updated|campaign status updated|ad set status updated/i;
+      const NOT_A_CHANGE = /name updated|finishes ad review|billed|delivered|balance/i;
+      const firstWord = (s: unknown): string => String(s ?? "").trim().split(/\s+/)[0] ?? "";
+      const authorWord = (s: unknown): string => firstWord(String(s ?? "").split("@")[0]);
+
+      // Every real comment today counts as an action, digested or not.
+      const commentsToday: { by: string | null; at: number }[] = [];
+      for (const r of comments.rows) {
+        if (r.kind === "skip") continue;
+        const at = parsePositiveTimestamp(r.at, "Canonical client comment");
+        if (at >= todayStart && at < tomorrowStart) {
+          const by = r.by ?? r.author ?? null;
+          if (by) {
+            commentsToday.push({ by: authorWord(by) || null, at });
+          }
+        }
+      }
+
+      // Digested client card comments: summary only, bounded to 240 chars.
+      const digests = comments.rows
+        .filter(r => r.status === "done" || (r.status === undefined && r.digest))
+        .map(r => {
+          const digest = r.digest && typeof r.digest === "object" ? (r.digest as Row) : {};
+          const at = parsePositiveTimestamp(r.at, "Canonical client comment digest");
+          const rawSummary = typeof digest.summary === "string" ? digest.summary : (typeof r.summary === "string" ? r.summary : "");
+          const cleaned = cleanDigest(rawSummary);
+          const summary = cleaned ? cleaned.slice(0, 240) : null;
+          return {
+            taskId: r.taskId ?? null,
+            clientName: r.clientName ?? null,
+            at,
+            by: authorWord(r.by ?? r.author) || null,
+            kind: r.kind ?? null,
+            summary,
+          };
+        })
+        .filter(row => row.summary && row.at >= since);
+
+      // Fold adChanges back to one per event across campaigns (capped at 3 campaigns).
+      const adEvents = new Map<string, {
+        at: number;
+        actor: string;
+        eventType: string;
+        objectName: string | null;
+        campaigns: string[];
+      }>();
+
+      for (const r of adChanges.rows) {
+        const at = parsePositiveTimestamp(r.at, "Canonical Meta ad change");
+        if (at < since) continue;
+        const actor = r.actor !== undefined && r.actor !== null ? String(r.actor).trim() : "";
+        if (!actor || actor === "Meta") continue;
+        const eventType = String(r.eventType ?? "");
+        if (!MEANINGFUL.test(eventType) || NOT_A_CHANGE.test(eventType)) continue;
+
+        const activityHash = r.activityHash !== undefined && r.activityHash !== null ? String(r.activityHash).trim() : "";
+        const objectName = r.objectName !== undefined && r.objectName !== null ? String(r.objectName) : null;
+        const key = activityHash || `${at}|${actor}|${eventType}|${objectName ?? ""}`;
+
+        const ev = adEvents.get(key) ?? {
+          at,
+          actor: firstWord(actor),
+          eventType,
+          objectName,
+          campaigns: [],
+        };
+        const campaignName = String(r.campaignName ?? "");
+        if (campaignName && ev.campaigns.length < 3 && !ev.campaigns.includes(campaignName)) {
+          ev.campaigns.push(campaignName);
+        }
+        adEvents.set(key, ev);
+      }
+
       const memberRows = members.map(row => ({ ...row, roles: Array.isArray(row.roles) ? row.roles : [] }));
       const mediaNames = mediaMembers.rows.map(row => ({ id: row.id, name: row.name, username: row.username }));
       const decisionRows = decisionsFeed.rows.map(row => ({ ...row, at: row.at ?? row.createdAt, day: row.day ?? null }));
+
       return {
         members: memberRows.length ? memberRows : mediaNames,
         eods,
@@ -426,7 +514,7 @@ export function createRepository(read: ReadFunction): Repository {
         manualChanges: manualChanges.rows,
         decisions: decisionRows,
         digests,
-        adChanges: adChanges.rows,
+        adChanges: Array.from(adEvents.values()),
         adChangesRows: adChanges.count,
         commentsToday,
       };

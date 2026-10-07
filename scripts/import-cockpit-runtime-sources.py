@@ -373,15 +373,36 @@ def durable_data(snapshot, table, row):
             data[target] = value
         return data
     if table == "ceoAudit":
-        action, entity, actor = row.get("action"), row.get("table"), row.get("by")
-        if any(not isinstance(value, str) or not value for value in (action, entity, actor)):
-            raise ValueError("Original audit action, entity or recorded author is missing")
+        action, actor = row.get("action"), row.get("by")
+        if any(not isinstance(value, str) or not value for value in (action, actor)):
+            raise ValueError("Original audit action or recorded author is missing")
         entity_id = row.get("rowId")
-        if entity_id is not None and not isinstance(entity_id, str):
-            raise ValueError("Original audit entity identity is malformed")
         at = _source_time(row.get("at"), "original audit")
         if at is None:
             raise ValueError("Original audit timestamp is missing")
+        is_manual_payment = row.get("table") == "ceoManualPayments" or (isinstance(action, str) and action.startswith("manualPayment."))
+        if is_manual_payment:
+            if not isinstance(entity_id, str) or not entity_id.strip():
+                raise ValueError("Manual payment audit entity identity is missing or malformed")
+            what = row.get("what")
+            if not isinstance(what, str) or not what.strip():
+                raise ValueError("Manual payment audit summary is missing")
+            payments = snapshot.get("tables", {}).get("ceoManualPayments", [])
+            matches = [p for p in payments if p.get("_id") == entity_id]
+            if len(matches) > 1:
+                raise ValueError("Ambiguous source payment identity for manual payment audit")
+            source_payment = matches[0] if matches else None
+            return {"action": action, "entity_type": "cockpit_manual_payments", "entity_id": entity_id,
+                    "actor_email": actor, "source_app": "ceo", "source_system": "convex",
+                    "before": row.get("before"), "after": row.get("after"), "created_at": at,
+                    "metadata": {"what": what, "source_deployment": deployment,
+                                 "source_table": "ceoAudit", "source_id": source_id,
+                                 "source_record": row, "source_payment": source_payment}}
+        entity = row.get("table")
+        if not isinstance(entity, str) or not entity:
+            raise ValueError("Original audit entity is missing")
+        if entity_id is not None and not isinstance(entity_id, str):
+            raise ValueError("Original audit entity identity is malformed")
         return {"action": action, "entity_type": entity, "entity_id": entity_id, "actor_email": actor,
                 "source_app": app, "source_system": "convex", "before": row.get("before"),
                 "after": row.get("after"), "created_at": at,

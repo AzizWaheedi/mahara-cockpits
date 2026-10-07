@@ -185,6 +185,50 @@ class RuntimeImportTests(unittest.TestCase):
         self.assertEqual(data["metadata"]["source_deployment"], "test")
         self.assertEqual(data["metadata"]["source_id"], "original-audit")
 
+    def test_canonical_manual_payment_audit_adopts_existing_target_and_rejects_ambiguity(self):
+        stamp = datetime.now(timezone.utc).isoformat()
+        original_payment = {"_id": "pay-101", "amount": 1000, "currency": "USD", "clientName": "Acme"}
+        audit_row = {"_id": "audit-1", "action": "manualPayment.create", "table": "ceoManualPayments",
+                     "rowId": "pay-101", "what": "Added manual payment", "by": "founder@tests.invalid",
+                     "at": 1790208000000, "before": None, "after": {"amount": 1000}}
+        snapshot = {"app": "media-buyer", "deployment": "test", "sha256": "a" * 64,
+                    "captured_at": stamp,
+                    "tables": {"ceoAudit": [audit_row], "ceoManualPayments": [original_payment]},
+                    "table_hashes": {"ceoAudit": imp.content_hash([audit_row]),
+                                    "ceoManualPayments": imp.content_hash([original_payment])}}
+        data = imp.durable_data(snapshot, "ceoAudit", audit_row)
+        self.assertEqual(data["entity_type"], "cockpit_manual_payments")
+        self.assertEqual(data["source_app"], "ceo")
+        self.assertEqual(data["entity_id"], "pay-101")
+        self.assertEqual(data["metadata"]["what"], "Added manual payment")
+        self.assertEqual(data["metadata"]["source_payment"], original_payment)
+        self.assertEqual(data["metadata"]["source_record"], audit_row)
+
+        target_row = imp.durable_guard_data("ceoAudit", data)
+        target_tables = {"cockpit_runtime_imports": [], "cockpit_audit_log": [target_row]}
+        inventory = {"project_ref": imp.PROJECT_REF, "captured_at": stamp,
+                     "complete_tables": list(target_tables), "tables": target_tables, "files": {}}
+        plan = imp.build_plan([snapshot], inventory, ["media-buyer/ceoAudit"])
+        self.assertTrue(plan["scope_complete"], plan["blockers"])
+        self.assertEqual(plan["operations"][0]["rows"][0]["action"], "adopt")
+
+        missing_id = {**audit_row, "rowId": ""}
+        with self.assertRaisesRegex(ValueError, "Manual payment audit entity identity is missing"):
+            imp.durable_data(snapshot, "ceoAudit", missing_id)
+
+        missing_summary = {**audit_row, "what": None}
+        with self.assertRaisesRegex(ValueError, "Manual payment audit summary is missing"):
+            imp.durable_data(snapshot, "ceoAudit", missing_summary)
+
+        ambiguous_snapshot = copy.deepcopy(snapshot)
+        ambiguous_snapshot["tables"]["ceoManualPayments"].append({**original_payment})
+        with self.assertRaisesRegex(ValueError, "Ambiguous source payment identity"):
+            imp.durable_data(ambiguous_snapshot, "ceoAudit", audit_row)
+
+        orphan_audit = {**audit_row, "rowId": "pay-999"}
+        orphan_data = imp.durable_data(snapshot, "ceoAudit", orphan_audit)
+        self.assertIsNone(orphan_data["metadata"]["source_payment"])
+
     def test_creative_multi_client_scope_never_drops_unknown_client(self):
         sets = {"clients": [{"_id": "c", "name": "Acme"}]}
         row = {"_id": "t", "clients": ["Acme", "Unresolved"]}

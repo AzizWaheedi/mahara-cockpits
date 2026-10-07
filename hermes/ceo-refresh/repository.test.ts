@@ -423,3 +423,228 @@ describe("CEO Refresh Repository team() canonical EOD query handling with PGlite
   });
 });
 
+describe("CEO Refresh Repository team() adChanges and comments handling", () => {
+  function createTeamTestReader(opts: {
+    adChanges?: Row[];
+    adChangesCount?: number;
+    comments?: Row[];
+  }) {
+    const snapshotDate = new Date().toISOString();
+    const now = Date.now();
+
+    return async (_project: string, query: string): Promise<Row[]> => {
+      if (query.includes("cockpit_media_sources") || query.includes("cockpit_media_source_state")) {
+        let rows: Row[] = [];
+        let count = 0;
+        if (query.includes("adChanges")) {
+          rows = opts.adChanges ?? [];
+          count = opts.adChangesCount ?? rows.length;
+        } else if (query.includes("clientComments")) {
+          rows = opts.comments ?? [];
+          count = rows.length;
+        }
+        return [{
+          ready: true,
+          row_count: count,
+          actual_count: count,
+          source_snapshot_at: snapshotDate,
+          stamp_ms: now,
+          rows: JSON.stringify(rows),
+        }];
+      }
+      if (query.includes("cockpit_csm_sources") || query.includes("cockpit_csm_source_state")) {
+        return [{ ready: true, row_count: 0, actual_count: 0, source_snapshot_at: snapshotDate, stamp_ms: now, rows: "[]" }];
+      }
+      return [];
+    };
+  }
+
+  test("adChanges: repeated copies of one Meta event across campaigns are deduplicated and capped at three campaigns", async () => {
+    const now = Date.now();
+    const eventTime = now - 100_000;
+    const rawAdChanges = [
+      {
+        at: eventTime,
+        actor: "Sarah MediaBuyer",
+        eventType: "budget updated",
+        objectName: "AdSet 1",
+        campaignName: "Campaign Alpha",
+        activityHash: "hash-evt-1",
+      },
+      {
+        at: eventTime,
+        actor: "Sarah MediaBuyer",
+        eventType: "budget updated",
+        objectName: "AdSet 1",
+        campaignName: "Campaign Beta",
+        activityHash: "hash-evt-1",
+      },
+      {
+        at: eventTime,
+        actor: "Sarah MediaBuyer",
+        eventType: "budget updated",
+        objectName: "AdSet 1",
+        campaignName: "Campaign Gamma",
+        activityHash: "hash-evt-1",
+      },
+      {
+        at: eventTime,
+        actor: "Sarah MediaBuyer",
+        eventType: "budget updated",
+        objectName: "AdSet 1",
+        campaignName: "Campaign Delta", // 4th campaign, should be capped at 3
+        activityHash: "hash-evt-1",
+      },
+      // Distinct event
+      {
+        at: eventTime + 1000,
+        actor: "John Specialist",
+        eventType: "targeting changed",
+        objectName: "AdSet 2",
+        campaignName: "Campaign Epsilon",
+        activityHash: "hash-evt-2",
+      },
+    ];
+
+    const repo = createRepository(createTeamTestReader({ adChanges: rawAdChanges, adChangesCount: 5 }));
+    const result = (await repo.team()) as {
+      adChanges: { at: number; actor: string; eventType: string; objectName: string | null; campaigns: string[] }[];
+      adChangesRows: number;
+    };
+
+    expect(result.adChangesRows).toBe(5);
+    expect(result.adChanges).toHaveLength(2);
+
+    const firstEvent = result.adChanges.find(e => e.actor === "Sarah");
+    expect(firstEvent).toBeDefined();
+    expect(firstEvent?.eventType).toBe("budget updated");
+    expect(firstEvent?.objectName).toBe("AdSet 1");
+    expect(firstEvent?.campaigns).toEqual(["Campaign Alpha", "Campaign Beta", "Campaign Gamma"]);
+    expect(firstEvent?.campaigns).toHaveLength(3);
+
+    const secondEvent = result.adChanges.find(e => e.actor === "John");
+    expect(secondEvent).toBeDefined();
+    expect(secondEvent?.actor).toBe("John");
+    expect(secondEvent?.campaigns).toEqual(["Campaign Epsilon"]);
+  });
+
+  test("adChanges: missing activityHash falls back to legacy composite key, and missing actor/Meta events are ignored", async () => {
+    const now = Date.now();
+    const eventTime = now - 200_000;
+    const rawAdChanges = [
+      // Legacy fallback: no activityHash
+      {
+        at: eventTime,
+        actor: "Amr Marketer",
+        eventType: "ad updated",
+        objectName: "Creative 99",
+        campaignName: "Camp 1",
+      },
+      // Duplicate of legacy fallback across campaign
+      {
+        at: eventTime,
+        actor: "Amr Marketer",
+        eventType: "ad updated",
+        objectName: "Creative 99",
+        campaignName: "Camp 2",
+      },
+      // Ignored: actor is Meta
+      {
+        at: eventTime,
+        actor: "Meta",
+        eventType: "ad updated",
+        objectName: "Creative 99",
+        campaignName: "Camp 3",
+      },
+      // Ignored: actor is missing
+      {
+        at: eventTime,
+        actor: "",
+        eventType: "ad updated",
+        objectName: "Creative 99",
+        campaignName: "Camp 4",
+      },
+      // Ignored: non-meaningful event
+      {
+        at: eventTime,
+        actor: "Amr Marketer",
+        eventType: "name updated",
+        objectName: "Creative 99",
+        campaignName: "Camp 5",
+      },
+    ];
+
+    const repo = createRepository(createTeamTestReader({ adChanges: rawAdChanges }));
+    const result = (await repo.team()) as {
+      adChanges: { at: number; actor: string; eventType: string; objectName: string | null; campaigns: string[] }[];
+    };
+
+    expect(result.adChanges).toHaveLength(1);
+    expect(result.adChanges[0].actor).toBe("Amr");
+    expect(result.adChanges[0].campaigns).toEqual(["Camp 1", "Camp 2"]);
+  });
+
+  test("commentsToday: correctly partitions comments immediately either side of Kuwait midnight and excludes tomorrow", async () => {
+    const kuwaitMidnightEpoch = (() => {
+      const today = new Date(Date.now() + 3 * 3600_000).toISOString().slice(0, 10);
+      return new Date(`${today}T00:00:00Z`).getTime() - 3 * 3600_000;
+    })();
+
+    const justBeforeMidnight = kuwaitMidnightEpoch - 1000; // Yesterday in Kuwait
+    const exactlyMidnight = kuwaitMidnightEpoch; // Today start in Kuwait
+    const middayToday = kuwaitMidnightEpoch + 12 * 3600_000; // Today midday
+    const endOfToday = kuwaitMidnightEpoch + 86_400_000 - 1; // 23:59:59.999 today
+    const tomorrowStart = kuwaitMidnightEpoch + 86_400_000; // Tomorrow midnight in Kuwait
+    const justAfterTomorrowStart = kuwaitMidnightEpoch + 86_400_000 + 1000; // Tomorrow in Kuwait
+
+    const comments = [
+      { by: "Yesterday@mahara.co", at: justBeforeMidnight, kind: "note", clientName: "Client A" },
+      { by: "Ahmed@mahara.co", at: exactlyMidnight, kind: "brief", clientName: "Client B" },
+      { by: "Khaled@mahara.co", at: middayToday, kind: "call", clientName: "Client C" },
+      { by: "Zaid@mahara.co", at: endOfToday, kind: "note", clientName: "Client D" },
+      { by: "Skipped@mahara.co", at: middayToday, kind: "skip", clientName: "Client E" },
+      { by: "Tomorrow@mahara.co", at: tomorrowStart, kind: "note", clientName: "Client F" },
+      { by: "Future@mahara.co", at: justAfterTomorrowStart, kind: "note", clientName: "Client G" },
+    ];
+
+    const repo = createRepository(createTeamTestReader({ comments }));
+    const result = (await repo.team()) as {
+      commentsToday: { by: string | null; at: number }[];
+    };
+
+    expect(result.commentsToday).toHaveLength(3);
+    expect(result.commentsToday.map(c => c.by)).toEqual(["Ahmed", "Khaled", "Zaid"]);
+    expect(result.commentsToday.find(c => c.at === justBeforeMidnight)).toBeUndefined();
+    expect(result.commentsToday.find(c => c.at === tomorrowStart)).toBeUndefined();
+    expect(result.commentsToday.find(c => c.at === justAfterTomorrowStart)).toBeUndefined();
+  });
+
+  test("commentsToday: rejects null, undefined, boolean, blank, nonfinite, and nonpositive timestamps", async () => {
+    const invalidCases: unknown[] = [null, undefined, true, false, "", "   ", "abc", NaN, Infinity, -Infinity, 0, -100];
+
+    for (const invalidAt of invalidCases) {
+      const repo = createRepository(createTeamTestReader({
+        comments: [{ by: "Sarah@mahara.co", at: invalidAt as number, kind: "note" }],
+      }));
+      await expect(repo.team()).rejects.toThrow("Canonical client comment has invalid timestamp");
+    }
+  });
+
+  test("adChanges: rejects null, undefined, boolean, blank, nonfinite, and nonpositive timestamps instead of silently skipping", async () => {
+    const invalidCases: unknown[] = [null, undefined, true, false, "", "   ", "invalid", NaN, Infinity, -Infinity, 0, -500];
+
+    for (const invalidAt of invalidCases) {
+      const repo = createRepository(createTeamTestReader({
+        adChanges: [{
+          at: invalidAt as number,
+          actor: "Sarah MediaBuyer",
+          eventType: "budget updated",
+          objectName: "AdSet 1",
+          campaignName: "Campaign Alpha",
+        }],
+      }));
+      await expect(repo.team()).rejects.toThrow("Canonical Meta ad change has invalid timestamp");
+    }
+  });
+});
+
