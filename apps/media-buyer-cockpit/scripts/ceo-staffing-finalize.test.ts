@@ -27,6 +27,7 @@ async function fixture(){
  CREATE UNIQUE INDEX cockpit_original_audit_source_identity ON cockpit_audit_log ((metadata->>'source_deployment'),(metadata->>'source_id')) WHERE source_system='convex' AND metadata->>'source_table'='ceoAudit' AND metadata->>'source_id' IS NOT NULL;`);
  await db.exec(migration('20261008g_cockpit_ceo_staffing_import.sql'));
  await db.exec(migration('20261008i_cockpit_ceo_staffing_finalize.sql'));
+ await db.exec(migration('20261008k_cockpit_ceo_staffing_finalize_pg_fingerprints.sql'));
  await db.exec("SELECT set_config('request.jwt.claim.role','service_role',false)");
  return db;
 }
