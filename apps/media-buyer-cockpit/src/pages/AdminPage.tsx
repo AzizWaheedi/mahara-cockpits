@@ -35,6 +35,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { summarizeFailing } from "@/lib/failingSummary";
 import { useNativeAdminData } from "@/lib/nativeAdminClient";
 import { useNow } from "@/lib/useNow";
 import { COCKPIT_META } from "./PortalHome";
@@ -288,7 +289,7 @@ export function AdminPage() {
               </div>
               <Dot tone={ok === false ? "bad" : ok ? "good" : "idle"}>
                 {ok === false
-                  ? `Needs attention: ${(h.failing ?? []).join(", ")}`
+                  ? `Needs attention: ${summarizeFailing(h.failing ?? [])}`
                   : ok
                     ? `Healthy, checked ${ago(h.at)}`
                     : "No check yet"}
