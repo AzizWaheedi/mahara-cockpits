@@ -35,7 +35,7 @@ export const PORTAL_TOUR: TourStop[] = [
     name: { en: "Your command centre", ar: "غرفة التحكم" },
     line: {
       en: "Where you are in the program, your next appointment, and what needs your answer.",
-      ar: "وين وصلت بالبرنامج، موعدك الجاي، واللي ينتظر ردك.",
+      ar: "وين وصلت بالبرنامج، موعدك الجاي، واللي ينطر ردك.",
     },
     why: {
       en: "You always know where things stand, without having to ask.",
@@ -84,7 +84,7 @@ export const PORTAL_TOUR: TourStop[] = [
     },
     why: {
       en: "The system learns which leads become projects, and finds you more of them.",
-      ar: "النظام يتعلم أي ليد يصير مشروع.. ويجيب لك أكثر منهم.",
+      ar: "النظام يتعلم أي ليد يصير مشروع.. وييب لك أكثر منهم.",
     },
     src: { en: outcomeEn, ar: outcomeAr },
   },

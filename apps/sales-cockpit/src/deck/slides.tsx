@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import logoOnDark from "../assets/mahara-logo-dark.png";
 import {
   CURRENCIES,
@@ -42,13 +42,16 @@ import {
 } from "./content";
 import {
   CaseBox,
+  Fit,
   journeySlide,
   numberOneSlide,
   Place,
   reviewsSlide,
   tourSlide,
 } from "./journeys";
+import { OpenChip } from "./overlay";
 import { Out, Rv, Wistia, YouTube } from "./parts";
+import { Mark } from "./platforms";
 import {
   ADS_TOUR,
   CALLS_TOUR,
@@ -57,6 +60,9 @@ import {
   caseUrl,
   JOURNEY,
   MORE_STORIES,
+  PROFILES,
+  PROFILES_AS_OF,
+  type Profile,
   REVIEW_PAGES,
   STORY_PROOF,
 } from "./proof";
@@ -134,7 +140,7 @@ export interface SlideDef {
 
 const S = {
   opening: { en: "Opening", ar: "البداية" },
-  proof: { en: "Partners' results", ar: "نتايج شركاؤنا" },
+  proof: { en: "Partners' results", ar: "نتايج شركائنا" },
   you: { en: "Your situation", ar: "وضعك" },
   system: { en: "The system", ar: "النظام" },
   program: { en: "The program", ar: "البرنامج" },
@@ -1876,6 +1882,186 @@ function closeSlide(ctx: DeckCtx) {
   );
 }
 
+// --------------------------------------------------------- our channels
+
+/** A count in the deck's digits: 2,855, ٢٬٨٥٥. */
+const sayCount = (n: number, lang: Lang) => {
+  const en = n.toLocaleString("en-US");
+  return ar(lang)
+    ? en.replace(/\d/g, d => "٠١٢٣٤٥٦٧٨٩"[Number(d)]).replace(/,/g, "٬")
+    : en;
+};
+
+const prefersStill = () =>
+  window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+
+/**
+ * A figure that runs up to its value as the slide comes in, at the #1
+ * page's pace (motion.tsx CountUp: 1.5 s, easing out). Its own because a
+ * follower count has a thousands comma, which CountUp's figure() does not
+ * read.
+ */
+function Count({ n, lang, delay }: { n: number; lang: Lang; delay: number }) {
+  const [v, setV] = useState(() => (prefersStill() ? n : 0));
+  useEffect(() => {
+    if (prefersStill()) {
+      setV(n);
+      return;
+    }
+    let raf = 0;
+    const start = performance.now() + delay;
+    const tick = (now: number) => {
+      const k = Math.min(1, Math.max(0, (now - start) / 1500));
+      setV(Math.round(n * (1 - (1 - k) ** 4)));
+      if (k < 1) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [n, delay]);
+  const final = sayCount(n, lang);
+  return (
+    <span className="dk-num dk-channel-value">
+      <span className="sr-only">{final}</span>
+      <span aria-hidden style={{ minWidth: `${final.length}ch` }}>
+        {sayCount(v, lang)}
+      </span>
+    </span>
+  );
+}
+
+const PLATFORM: Record<Profile["key"], L> = {
+  youtube: { en: "YouTube", ar: "يوتيوب" },
+  instagram: { en: "Instagram", ar: "إنستقرام" },
+};
+
+/** A profile page as it showed, a link to it, its counters ringed. */
+function ProfileCard({
+  p,
+  lang,
+  height,
+}: {
+  p: Profile;
+  lang: Lang;
+  height: number;
+}) {
+  const pct = (f: number) => `${(f * 100).toFixed(2)}%`;
+  return (
+    <a
+      className="dk-profile"
+      data-link=""
+      href={p.href}
+      target="_blank"
+      rel="noreferrer noopener"
+      style={{ width: Math.round(height * p.shot.r), height }}
+      aria-label={`${p.shot.alt}. ${t(p.open, lang)}`}
+    >
+      <img src={p.shot.src} alt="" />
+      <i
+        className="dk-profile-ring"
+        aria-hidden
+        style={{
+          left: pct(p.spot.x),
+          top: pct(p.spot.y),
+          width: pct(p.spot.w),
+          height: pct(p.spot.h),
+        }}
+      />
+      <OpenChip>{t(p.open, lang)}</OpenChip>
+    </a>
+  );
+}
+
+/** A profile's figures, set large beside its screenshot. */
+function ProfileFigures({ p, lang, i }: { p: Profile; lang: Lang; i: number }) {
+  return (
+    <div className="dk-channel-figs" data-side={i === 0 ? "start" : "end"}>
+      <span className="dk-channel-name">
+        <Mark mark={p.key} size={44} />
+        <span>{t(PLATFORM[p.key], lang)}</span>
+      </span>
+      {p.figures.map((f, j) => (
+        <div key={f.label.en} className="dk-channel-fig">
+          <Count n={f.n} lang={lang} delay={520 + (i * 2 + j) * 160} />
+          <span className="dk-channel-label">{t(f.label, lang)}</span>
+        </div>
+      ))}
+      {p.note ? (
+        <span className="dk-pill dk-channel-note">
+          <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden>
+            <path
+              d="M6.5 12.5l3.6 3.6L17.5 8.5"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.6"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+          {t(p.note, lang)}
+        </span>
+      ) : null}
+      <bdi className="dk-channel-handle" dir="ltr">
+        {p.handle}
+      </bdi>
+    </div>
+  );
+}
+
+/**
+ * Our own channels at the end of the deck (Aziz, 2026-10-08: "take a
+ * screenshot of our ig and yt profiles with the vids on the grid so it
+ * shows all the stuff and our numbers"). Each profile is its real page,
+ * one click from the live one, its counters ringed on the screenshot and
+ * set large beside it; the two sets of figures meet in the middle.
+ */
+function channelsSlide(ctx: DeckCtx) {
+  const { lang } = ctx;
+  const [yt, ig] = PROFILES;
+  const figs = 270;
+  const near = 44;
+  const middle = 64;
+  return (
+    <>
+      <Rv i={0}>
+        <p className="dk-label">{ar(lang) ? "قنواتنا" : "Our channels"}</p>
+      </Rv>
+      <Rv i={1}>
+        <h2 className="dk-h2" style={{ marginTop: 12 }}>
+          {ar(lang)
+            ? "نعلّم السوق جدام الكل.. تابعنا."
+            : "We teach the industry in public. Follow along."}
+        </h2>
+      </Rv>
+      <Rv i={2} className="dk-channels">
+        <Fit>
+          {box => {
+            const room = box.w - figs * 2 - near * 2 - middle;
+            const h = Math.floor(
+              Math.min(box.h, room / (yt.shot.r + ig.shot.r)),
+            );
+            return (
+              <div className="dk-channels-row" style={{ gap: near }}>
+                <ProfileCard p={yt} lang={lang} height={h} />
+                <div
+                  className="dk-channels-mid"
+                  style={{ width: figs * 2 + middle, gap: middle }}
+                >
+                  <ProfileFigures p={yt} lang={lang} i={0} />
+                  <ProfileFigures p={ig} lang={lang} i={1} />
+                </div>
+                <ProfileCard p={ig} lang={lang} height={h} />
+              </div>
+            );
+          }}
+        </Fit>
+      </Rv>
+      <Rv i={3}>
+        <p className="dk-channels-source">{t(PROFILES_AS_OF, lang)}</p>
+      </Rv>
+    </>
+  );
+}
+
 // ---------------------------------------------------------- the order
 
 export function deckSlides(): SlideDef[] {
@@ -1899,7 +2085,7 @@ export function deckSlides(): SlideDef[] {
     {
       id: "results",
       section: S.proof,
-      title: { en: "Partners' results", ar: "نتايج شركاؤنا" },
+      title: { en: "Partners' results", ar: "نتايج شركائنا" },
       render: c => results(c),
     },
     ...ALL_STORIES.map(
@@ -1951,7 +2137,7 @@ export function deckSlides(): SlideDef[] {
             ? "نعطي السوق كله"
             : "We give to the whole industry",
           title: ar(c.lang)
-            ? "نفس الأنظمة اللي نشغلها لشركاؤنا.. نشرحها ببلاش."
+            ? "نفس الأنظمة اللي نشغلها لشركائنا.. نشرحها ببلاش."
             : "The systems we run for partners, explained for free.",
           stops: CONTENT_TOUR,
         }),
@@ -2115,6 +2301,14 @@ export function deckSlides(): SlideDef[] {
       title: { en: "Next steps", ar: "الخطوات الياية" },
       railAll: true,
       render: c => nextSlide(c),
+    },
+    {
+      // Our own numbers, at the end (Aziz, 2026-10-08).
+      id: "channels",
+      section: S.program,
+      title: { en: "Our channels", ar: "قنواتنا" },
+      railAll: true,
+      render: c => channelsSlide(c),
     },
     {
       id: "close",

@@ -53,6 +53,8 @@ import pcmAcademy from "./assets/proof/pcm-academy.webp";
 import pcmCall from "./assets/proof/pcm-call.webp";
 import pcmLesson from "./assets/proof/pcm-lesson.webp";
 import pcmSheet from "./assets/proof/pcm-sheet.webp";
+import profileInstagram from "./assets/proof/profile-instagram.webp";
+import profileYoutube from "./assets/proof/profile-youtube.webp";
 import rvA1 from "./assets/proof/rv-a1.webp";
 import rvA2 from "./assets/proof/rv-a2.webp";
 import rvA3 from "./assets/proof/rv-a3.webp";
@@ -65,7 +67,7 @@ import rvC1 from "./assets/proof/rv-c1.webp";
 import rvC2 from "./assets/proof/rv-c2.webp";
 import rvC3 from "./assets/proof/rv-c3.webp";
 import rvC4 from "./assets/proof/rv-c4.webp";
-import type { L, Story } from "./content";
+import { type L, LINKS, type Story } from "./content";
 
 /**
  * The proof the deck shows, and the step-by-step tours of the system (Aziz,
@@ -469,10 +471,12 @@ export const YOUTUBE_VIDEOS: { id: string; title: L }[] = [
     },
   },
   {
-    id: "_UKmeA357s4",
+    // In place of the AI video (Aziz, 2026-10-08). The Arabic is the
+    // video's own title on the channel.
+    id: "ko_JcVdHl5k",
     title: {
-      en: "I ran a firm's marketing with AI. The result surprised us.",
-      ar: "سويت تسويق شركة مقاولات بالـذكاء الاصطناعي... النتيجة جنونية",
+      en: "$52M in design and build projects: the best way to win clients",
+      ar: "٥٢ مليون دولار مشاريع مقاولات وتصميم… هذي احسن طريقة تجيب عملاء",
     },
   },
   {
@@ -493,6 +497,77 @@ export const YOUTUBE_VIDEOS: { id: string; title: L }[] = [
 
 /** Mahara on Instagram (linked from the YouTube channel's description). */
 export const INSTAGRAM = "https://www.instagram.com/mahara_media/";
+
+/** Where a profile's counters sit on its screenshot, as fractions of its size. */
+export interface Spot {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/** One of our own channels, as its profile page showed it. */
+export interface Profile {
+  key: "youtube" | "instagram";
+  href: string;
+  handle: string;
+  /** The profile page, with its grid of videos. */
+  shot: Pic;
+  /**
+   * The counters' text on the screenshot (measured from the image), ringed
+   * so the large figures point back to them.
+   */
+  spot: Spot;
+  figures: { n: number; label: L }[];
+  /** A fact beside the figures (Instagram's verified tick). */
+  note?: L;
+  open: L;
+}
+
+/**
+ * Our numbers, as the two profile pages showed them on 2026-10-08 (signed
+ * out, captured for the deck). They are a day's count, not a live feed:
+ * when they move, take new screenshots and change both together.
+ */
+export const PROFILES_AS_OF: L = {
+  en: "From the profile pages, 8 October 2026.",
+  ar: "من صفحات الحسابات، ٨ أكتوبر ٢٠٢٦.",
+};
+
+export const PROFILES: Profile[] = [
+  {
+    key: "youtube",
+    href: CHANNEL,
+    handle: "@MaharaMedia",
+    shot: {
+      src: profileYoutube,
+      alt: "Mahara Media on YouTube: 158 subscribers, 20 videos",
+      r: 1800 / 1736,
+      w: 1800,
+    },
+    spot: { x: 0.2906, y: 0.2339, w: 0.1522, h: 0.0092 },
+    figures: [
+      { n: 158, label: { en: "subscribers", ar: "مشترك" } },
+      { n: 20, label: { en: "videos", ar: "فيديو" } },
+    ],
+    open: { en: "Open the channel", ar: "افتح القناة" },
+  },
+  {
+    key: "instagram",
+    href: INSTAGRAM,
+    handle: "@mahara_media",
+    shot: {
+      src: profileInstagram,
+      alt: "Mahara Media on Instagram: 2,855 followers, verified",
+      r: 1500 / 2043,
+      w: 1500,
+    },
+    spot: { x: 0.342, y: 0.072, w: 0.114, h: 0.0108 },
+    figures: [{ n: 2855, label: { en: "followers", ar: "متابع" } }],
+    note: { en: "Verified account", ar: "حساب موثّق" },
+    open: { en: "Open the profile", ar: "افتح الحساب" },
+  },
+];
 
 /**
  * Three reels from @mahara_media: the funnel's numbers, the filters and
@@ -517,7 +592,7 @@ export const REELS: { code: string; label: L }[] = [
     code: "Db54jJitH1L",
     label: {
       en: "“Let me think about it” is rarely a decision",
-      ar: "«خلني أفكر» نادراً يكون قرار",
+      ar: "خلني أفكر.. نادراً يكون قرار",
     },
   },
 ];
@@ -531,7 +606,28 @@ export interface Pic {
   r: number;
   /** Its width in pixels: a layout never draws it larger, so it stays sharp. */
   w: number;
+  /**
+   * The document the picture is a page of. Set, the picture opens it, and
+   * hovering shows "Open the document"; null, it is a picture only.
+   */
+  doc?: string | null;
 }
+
+/**
+ * The documents behind the ads brief and the call scripts (Aziz, 2026-10-08:
+ * "for the brand dna have a link to the doc if we hover over it and same
+ * thing for the scripts"). The CEO will send the links: paste each one
+ * between the quotes in place of null, e.g.
+ *   export const BRAND_DNA_DOC: string | null = "https://docs.google.com/...";
+ * Until then the pictures show as they are, with no link and no chip.
+ * Share each document as "anyone with the link can view" first, since the
+ * prospect opens it on the call.
+ */
+export const BRAND_DNA_DOC: string | null = null;
+/** The ads' script document (the brief beside the Brand DNA). */
+export const AD_SCRIPT_DOC: string | null = null;
+/** The call centre's script for a partner (the three script pages). */
+export const SCRIPTS_DOC: string | null = null;
 
 /** What one step of a tour shows. */
 export type Media =
@@ -539,8 +635,11 @@ export type Media =
   | { kind: "shots"; items: Pic[]; fan?: boolean }
   /** Phone screens, side by side. */
   | { kind: "phones"; items: Pic[] }
-  /** The same page in a browser and on a phone. */
-  | { kind: "devices"; desktop: Pic; phone: Pic }
+  /**
+   * The same page in a browser and on a phone. With `live`, a click opens
+   * the real page in a pop-up, the pictures standing in until it loads.
+   */
+  | { kind: "devices"; desktop: Pic; phone: Pic; live?: string }
   | { kind: "reels"; ids: { id: string; label: L }[]; marks?: boolean }
   /** A video, with a phone beside it (a page, or a WhatsApp message). */
   | {
@@ -619,7 +718,7 @@ export const ADS_TOUR: Stop[] = [
     },
     what: {
       en: "Your projects and your face, cut for Instagram, TikTok, Snapchat and Google.",
-      ar: "مشاريعك ووجهك انت.. نقصّها لإنستقرام، تيك توك، سناب، وقوقل.",
+      ar: "مشاريعك ووجهك انت.. بإعلانات مفصّلة لإنستقرام، تيك توك، سناب، وقوقل.",
     },
     why: {
       en: "Owners stop for real work. Never for stock footage.",
@@ -711,12 +810,19 @@ export const ADS_TOUR: Stop[] = [
     media: {
       kind: "shots",
       items: [
-        { src: adsDna, alt: "Master Brand DNA template", r: 0.773, w: 1224 },
+        {
+          src: adsDna,
+          alt: "Master Brand DNA template",
+          r: 0.773,
+          w: 1224,
+          doc: BRAND_DNA_DOC,
+        },
         {
           src: adsBrief,
           alt: "A partner's script brief: hooks and triggers",
           r: 0.772,
           w: 1081,
+          doc: AD_SCRIPT_DOC,
         },
       ],
     },
@@ -762,15 +868,15 @@ export const ADS_TOUR: Stop[] = [
 export const JOURNEY: Stop[] = [
   {
     key: "landing",
-    name: { en: "The landing page", ar: "صفحة الهبوط" },
-    short: { en: "Landing page", ar: "صفحة الهبوط" },
+    name: { en: "The landing page", ar: "اللاندنق بيج" },
+    short: { en: "Landing page", ar: "اللاندنق بيج" },
     what: {
       en: "The ad opens a page built to sell, never a WhatsApp chat.",
-      ar: "الإعلان يفتح صفحة مبنية تبيع.. مو محادثة واتساب.",
+      ar: "الإعلان يفتح صفحة مبنية عشان تبيع.. مو محادثة واتساب.",
     },
     why: {
       en: "It educates them before anyone spends a minute on them.",
-      ar: "الصفحة تثقفه قبل لا أحد يصرف عليه دقيقة.",
+      ar: "الصفحة تشرح له كل شي.. قبل لا أحد يعطيه دقيقة من وقته.",
     },
     media: {
       kind: "devices",
@@ -786,6 +892,8 @@ export const JOURNEY: Stop[] = [
         r: 0.462,
         w: 828,
       },
+      // Aziz, 2026-10-08: "if we hover or click it it should make it popup".
+      live: LINKS.landing,
     },
   },
   {
@@ -843,7 +951,7 @@ export const JOURNEY: Stop[] = [
     },
     why: {
       en: "Called within 5 minutes, a lead is 100 times more likely to answer than after 30 (MIT).",
-      ar: "الليد اللي تكلمه خلال ٥ دقايق.. فرصة يرد ١٠٠ مرة أكثر من بعد نص ساعة (دراسة MIT).",
+      ar: "الليد اللي تكلمه خلال ٥ دقايق.. احتمال يرد عليك ١٠٠ مرة أكثر من لو كلمته بعد نص ساعة (دراسة MIT).",
     },
     media: {
       kind: "shots",
@@ -869,7 +977,7 @@ export const JOURNEY: Stop[] = [
     short: { en: "Booked", ar: "انحجز" },
     what: {
       en: "A WhatsApp confirmation, then a second video that sells your firm before the meeting.",
-      ar: "تأكيد على الواتساب، وبعده فيديو ثاني يبيع شركتك قبل الموعد.",
+      ar: "تأكيد على الواتساب، وبعده فيديو ثاني يقنعه فيك قبل الموعد.",
     },
     why: {
       en: "They arrive warm, and they show up.",
@@ -948,25 +1056,28 @@ export const CALLS_TOUR: Stop[] = [
           alt: "Script: the discovery questions",
           r: 0.773,
           w: 1224,
+          doc: SCRIPTS_DOC,
         },
         {
           src: ccScript2,
           alt: "Script: booking and locking the date",
           r: 0.773,
           w: 1224,
+          doc: SCRIPTS_DOC,
         },
         {
           src: ccScript3,
           alt: "Script: every objection, with its answer",
           r: 0.773,
           w: 1224,
+          doc: SCRIPTS_DOC,
         },
       ],
     },
   },
   {
     key: "stages",
-    name: { en: "The call itself is engineered", ar: "المكالمة نفسها مهندسة" },
+    name: { en: "The call itself is engineered", ar: "المكالمة نفسها مدروسة" },
     what: {
       en: "Six stages, from the first hello to a decision that holds.",
       ar: "ست مراحل.. من أول سلام لين قرار ثابت.",
@@ -1003,11 +1114,11 @@ export const CALLS_TOUR: Stop[] = [
       id: "ti2alygqn0",
       said: {
         en: "“If we agree, I'll definitely come and visit you.”",
-        ar: "«لو اتفقنا، أكيد لي زيارة لكم.»",
+        ar: "لو اتفقنا، أكيد لي زيارة لكم.",
       },
       replied: {
         en: "“For years we've been known for our delivery dates. Most of the time we deliver early.”",
-        ar: "«إحنا من سنين معروفين بتاريخ التسليم. أغلب الأحيان نسلم قبل الوقت أصلاً.»",
+        ar: "إحنا من سنين معروفين بتاريخ التسليم. أغلب الأحيان نسلم قبل الوقت أصلاً.",
       },
     },
     more: {
@@ -1176,7 +1287,7 @@ export const CONTENT_TOUR: Stop[] = [
     },
     what: {
       en: "Long videos that give away the systems we run for our partners.",
-      ar: "فيديوهات طويلة نعطي فيها نفس الأنظمة اللي نشغلها لشركاؤنا.",
+      ar: "فيديوهات طويلة نعطي فيها نفس الأنظمة اللي نشغلها لشركائنا.",
     },
     why: {
       en: "Firms across the Gulf learn from us before they ever book a call.",
@@ -1227,6 +1338,7 @@ export const PROOF_PHOTOS: string[] = [
       }),
     ),
     ...REVIEW_PAGES.flat().map(r => r.src),
+    ...PROFILES.map(p => p.shot.src),
     ...LOGO_WALL.map(l => l.src),
     ...Object.values(STORY_PROOF).flatMap(p => (p.logo ? [p.logo] : [])),
   ]),

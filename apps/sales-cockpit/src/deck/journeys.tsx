@@ -17,6 +17,7 @@ import {
 } from "./content";
 import { justify } from "./layout";
 import { CountUp, LogoRiver } from "./motion";
+import { LivePage, OPEN_DOC, OpenChip, TRY_LIVE } from "./overlay";
 import { Out, Rv, Wistia, YouTube } from "./parts";
 import { Logo, MARK_ORDER, Mark, type PlatformMark } from "./platforms";
 import {
@@ -76,7 +77,7 @@ function useBox() {
 }
 
 /** A box that fills its parent and hands its size to what it holds. */
-function Fit({
+export function Fit({
   children,
   className = "",
 }: {
@@ -93,14 +94,53 @@ function Fit({
 
 // ------------------------------------------------------------ the pieces
 
+/**
+ * A picture, or, when it is a page of a document we can share, a link to
+ * that document with a chip that says so on hover (proof.ts BRAND_DNA_DOC,
+ * SCRIPTS_DOC). With no link set it stays a picture: nothing to click.
+ */
+function Shot({
+  pic,
+  lang,
+  className,
+  style,
+}: {
+  pic: Pic;
+  lang: Lang;
+  className: string;
+  style: CSSProperties;
+}) {
+  const img = <img src={pic.src} alt={pic.alt} />;
+  return pic.doc ? (
+    <a
+      className={className}
+      style={style}
+      data-link=""
+      href={pic.doc}
+      target="_blank"
+      rel="noreferrer noopener"
+      aria-label={`${pic.alt}. ${t(OPEN_DOC, lang)}`}
+    >
+      {img}
+      <OpenChip>{t(OPEN_DOC, lang)}</OpenChip>
+    </a>
+  ) : (
+    <figure className={className} style={style}>
+      {img}
+    </figure>
+  );
+}
+
 /** Real screenshots, laid out in rows that fill the box. */
 function Gallery({
   pics,
   box,
+  lang,
   gap = 22,
 }: {
   pics: Pic[];
   box: Box;
+  lang: Lang;
   gap?: number;
 }) {
   const rows = justify(
@@ -119,13 +159,13 @@ function Gallery({
           style={{ gap }}
         >
           {row.map(p => (
-            <figure
+            <Shot
               key={pics[p.i].src}
+              pic={pics[p.i]}
+              lang={lang}
               className="dk-shot"
               style={{ width: p.w, height: p.h }}
-            >
-              <img src={pics[p.i].src} alt={pics[p.i].alt} />
-            </figure>
+            />
           ))}
         </div>
       ))}
@@ -134,7 +174,7 @@ function Gallery({
 }
 
 /** A stack of real documents, fanned out; the last one lies on top. */
-function Fan({ pics, box }: { pics: Pic[]; box: Box }) {
+function Fan({ pics, box, lang }: { pics: Pic[]; box: Box; lang: Lang }) {
   // Room left at the edges for the tilt and the lift.
   const h = Math.round(Math.min(box.h * 0.84, ...pics.map(p => p.w / p.r)));
   const widths = pics.map(p => p.r * h);
@@ -148,8 +188,10 @@ function Fan({ pics, box }: { pics: Pic[]; box: Box }) {
   return (
     <div className="dk-fan" style={{ width: span, height: box.h }}>
       {pics.map((p, i) => (
-        <figure
+        <Shot
           key={p.src}
+          pic={p}
+          lang={lang}
           className="dk-fan-page"
           style={
             {
@@ -161,9 +203,7 @@ function Fan({ pics, box }: { pics: Pic[]; box: Box }) {
               "--lift": `${Math.abs(i - mid) * 10}px`,
             } as CSSProperties
           }
-        >
-          <img src={p.src} alt={p.alt} />
-        </figure>
+        />
       ))}
     </div>
   );
@@ -207,16 +247,27 @@ function phoneHeight(
   return Math.floor(Math.min(box.h, byWidth, cap));
 }
 
-/** The same page in a browser and on a phone, the phone in front. */
+/**
+ * The same page in a browser and on a phone, the phone in front. With a
+ * live address, the pair is one button that opens the real page in a
+ * pop-up (overlay.tsx), and hovering it says so.
+ */
 function Devices({
   desktop,
   phone,
   box,
+  live,
+  lang,
 }: {
   desktop: Pic;
   phone: Pic;
   box: Box;
+  live?: string;
+  lang: Lang;
 }) {
+  const [open, setOpen] = useState(false);
+  // Pointing at the pair starts the live page loading, a head start on the click.
+  const [warm, setWarm] = useState(false);
   const bar = 44;
   // The browser takes the height; the phone overlaps its far corner.
   let bh = box.h - 24;
@@ -231,11 +282,9 @@ function Devices({
     ph = Math.round(ph * k);
     pw *= k;
   }
-  return (
-    <div
-      className="dk-devices"
-      style={{ width: bw + pw * 0.62, height: bh + 24 }}
-    >
+  const size = { width: bw + pw * 0.62, height: bh + 24 };
+  const pair = (
+    <>
       <div className="dk-browser" style={{ width: bw, height: bh }}>
         <div className="dk-browser-bar">
           <i />
@@ -251,7 +300,55 @@ function Devices({
       <Phone height={ph} ratio={phone.r} className="dk-devices-phone">
         <img src={phone.src} alt={phone.alt} />
       </Phone>
-    </div>
+    </>
+  );
+  if (!live)
+    return (
+      <div className="dk-devices" style={size}>
+        {pair}
+      </div>
+    );
+  return (
+    <>
+      <button
+        type="button"
+        className="dk-devices"
+        data-link=""
+        style={size}
+        aria-haspopup="dialog"
+        aria-label={t(TRY_LIVE, lang)}
+        onPointerEnter={() => setWarm(true)}
+        onFocus={() => setWarm(true)}
+        onClick={() => setOpen(true)}
+      >
+        {pair}
+        <OpenChip center expand>
+          {t(TRY_LIVE, lang)}
+        </OpenChip>
+      </button>
+      {/* Out of sight, from the first hover: the page's pictures are large,
+          so they start before the click, never in the background of a call
+          that does not open it (the page is a static demo, no tracking). */}
+      {warm ? (
+        <span className="dk-live-warm" aria-hidden>
+          <iframe
+            src={live}
+            title="The landing page, loading ahead"
+            tabIndex={-1}
+            sandbox="allow-scripts allow-same-origin"
+          />
+        </span>
+      ) : null}
+      {open ? (
+        <LivePage
+          url={live}
+          lang={lang}
+          desktop={desktop}
+          phone={phone}
+          onClose={() => setOpen(false)}
+        />
+      ) : null}
+    </>
   );
 }
 
@@ -330,9 +427,9 @@ function StopMedia({
   switch (media.kind) {
     case "shots":
       return media.fan ? (
-        <Fan pics={media.items} box={box} />
+        <Fan pics={media.items} box={box} lang={lang} />
       ) : (
-        <Gallery pics={media.items} box={box} />
+        <Gallery pics={media.items} box={box} lang={lang} />
       );
     case "phones": {
       const gap = 40;
@@ -348,7 +445,15 @@ function StopMedia({
       );
     }
     case "devices":
-      return <Devices desktop={media.desktop} phone={media.phone} box={box} />;
+      return (
+        <Devices
+          desktop={media.desktop}
+          phone={media.phone}
+          box={box}
+          live={media.live}
+          lang={lang}
+        />
+      );
     case "reels": {
       const gap = 28;
       const marks = media.marks ? 96 : 0;
