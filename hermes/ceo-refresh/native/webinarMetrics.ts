@@ -47,8 +47,16 @@ const entries: Entry[] = [
     "Webinar link clicks",
     "count",
     "Meta snapshots",
-    "Inline link clicks from this round's webinar ads.",
+    "Inline link clicks from this round's webinar ads; null when Meta sent a day without them.",
     r => r.traffic.linkClicks,
+  ],
+  [
+    "link_ctr",
+    "Webinar link CTR",
+    "share",
+    "Meta snapshots",
+    "Link clicks divided by impressions. Not CTR (all).",
+    r => r.traffic.linkCtr,
   ],
   [
     "registrations",

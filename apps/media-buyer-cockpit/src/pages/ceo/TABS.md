@@ -259,6 +259,11 @@ what was collected. Say so in a note on this card, every time both appear.
 Targets whose month is not the current month must say so. `money.targets.items[].actual`
 is null for metrics with no actual: show `n/a`, never 0.
 
+The `ctr` target (and `ctr_link`, if one is filed) is **Link CTR**: label it
+"Link CTR", and its actual is link clicks divided by impressions, never CTR
+(all). The CTR targets on file were set as CTR (all); the money notes carry one
+that names the target and asks for a link CTR figure, and it routes to this card.
+
 ### NO SOURCE YET on Frontend
 
 - **Handoff time from lead to booked call.** Needs a per lead first-booking
@@ -352,9 +357,10 @@ dating rule, the top ad rule, and whether there is an active lead-gen campaign.
 
 ### NO SOURCE YET on Marketing
 
-- **Impressions, clicks, click through rate, cost per click, frequency.** The
-  cockpit reads `meta_ad_snapshots` for spend and leads only. A Meta insights
-  pull with those columns would be needed.
+- Impressions, link clicks, Link CTR, cost per click and frequency are **not**
+  in this list: they are measured, per ad and for the account, on the Ads tab.
+  The only CTR the cockpit shows is Link CTR, link clicks divided by
+  impressions, never CTR (all) (the CEO, 2026-10-08).
 - **Landing page views and landing page conversion rate.** No web analytics
   source is connected to the cockpit at all.
 - **Organic, content, email and social performance.** Nothing in either Supabase

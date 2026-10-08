@@ -67,3 +67,41 @@ test('content window keeps voided deal totals separate and excludes paid and unn
   expect(result.dealsOrganic).toEqual({ deals: 1, contracted: 10, cash: 4 });
   expect(result.voided).toEqual({ deals: 1, contracted: 300, cash: 25 });
 });
+
+// The CEO, 2026-10-08: the Ads tab's CTR is link CTR. Link clicks Meta did not
+// send are not known: never 0, and no rate or cost is worked out over them.
+test('custom ads window shows link CTR, never CTR (all), and keeps unknown link clicks unknown', async () => {
+  const unknown = { ...ad('lead_gen', 'ad-3', 50), w7_link_clicks: null, w30_link_clicks: null };
+  const sqlResults: Record<string, unknown>[][] = [
+    [{ ms: 1790800000000, last_day: '2026-10-03', first_day: '2025-01-01' }],
+    [ad('lead_gen', 'ad-1', 100), unknown],
+    [{ w7_leads: 8, w30_leads: 12, w7_closes: 2, w30_closes: 3, w7_contracted: 500, w30_contracted: 750, w30_voided: 0 }],
+  ];
+  const queries: string[] = [];
+  const result = await readAdsWindow('2026-09-28', '2026-10-04', {
+    readSql: async (_project, query) => { queries.push(query); return sqlResults[queries.length - 1]; },
+    readMeta: async () => ({ account_status: 1, disable_reason: 0, balance: '0', currency: 'USD' }),
+  });
+
+  const known = result.campaigns.find(campaign => campaign.id === 'ad-1-campaign')!.adsets[0].ads[0].w7;
+  expect(known.linkClicks).toBe(80);
+  expect(known.ctrLink).toBe(0.08);
+  expect(known.ctr).toBe(0.1);
+  expect(known.ctrLink).not.toBe(known.ctr);
+  expect(known.cpc).toBe(1.25);
+
+  const missing = result.campaigns.find(campaign => campaign.id === 'ad-3-campaign')!.adsets[0].ads[0].w7;
+  expect(missing.linkClicks).toBeNull();
+  expect(missing.ctrLink).toBeNull();
+  expect(missing.cpc).toBeNull();
+  expect(missing.ctr).toBe(0.1);
+
+  // One ad without a count makes the account's link clicks unknown, not 80.
+  expect(result.account.w7.linkClicks).toBeNull();
+  expect(result.account.w7.ctrLink).toBeNull();
+  expect(result.account.w7.impressions).toBe(2000);
+
+  // The query keeps a delivered day without a count as null instead of summing past it.
+  expect(queries[1]).toContain('case when bool_and(inline_link_clicks is not null) then sum(inline_link_clicks) end as link_clicks');
+  expect(queries[1]).not.toContain('coalesce(w7_ads.link_clicks,0)');
+});

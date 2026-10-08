@@ -1,5 +1,6 @@
 import type { MoneyPayload } from "@/types/ceo/payloads";
 import { count, humanize, isNum, money, pct, pct1 } from "./format";
+import { LINK_CTR } from "./linkCtr";
 import { Meter } from "./Meter";
 import { gateTone } from "./StatusChip";
 
@@ -22,7 +23,10 @@ export const TARGET_LABELS: Record<string, string> = {
   close_rate: "Close rate",
   demo_show_rate: "Demo show rate",
   lead_to_demo: "Lead to demo rate",
-  ctr: "Click-through rate",
+  // Scored as link CTR since 2026-10-08 (the money adapter's targets.ts):
+  // link clicks divided by impressions, not CTR (all).
+  ctr: LINK_CTR,
+  ctr_link: LINK_CTR,
   cost_per_lead: "Cost per lead",
   cost_per_intro: "Cost per intro",
   cac: "Cost per close",
@@ -52,7 +56,7 @@ export function targetKind(metric: string): TargetKind {
   // on the show rate, close rate and intro to demo tiles.
   if (/(show_rate|close_rate|intro_to_demo)$/.test(metric))
     return { format: pct1, judge: "higher" };
-  if (/(_rate$|^ctr$|^lead_to_)/.test(metric))
+  if (/(_rate$|^ctr(_link)?$|^lead_to_)/.test(metric))
     return { format: pct, judge: "higher" };
   if (/(^cost|cost$|^cp[abl]$|^cac$)/.test(metric))
     return { format: money, judge: "lower" };

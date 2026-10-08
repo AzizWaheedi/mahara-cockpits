@@ -47,6 +47,12 @@ import type {
 import { B2B, num, type Row, sql, TRIAGE } from "../sb.ts";
 import { sbWritable, upsertMerge } from "../sbWrite.ts";
 import {
+  linkCtrTargetNote,
+  scoreCtrAsLinkCtr,
+  type TargetRow,
+  targetItems,
+} from "../targets.ts";
+import {
   addDays,
   daysInMonth,
   KUWAIT_OFFSET_MS,
@@ -67,14 +73,6 @@ import { IS_LEAD } from "./growthLead.ts";
 
 /** Whop and the closer form sync every 15 minutes; an hour behind is stale. */
 const STALE_MS = 60 * 60_000;
-
-/** monthly_targets keeps these as percents; the payload wants fractions. */
-const PERCENT_METRICS = new Set([
-  "close_rate",
-  "ctr",
-  "demo_show_rate",
-  "lead_to_demo",
-]);
 
 const MONTH_NAMES = [
   "January",
@@ -503,6 +501,15 @@ export const money: Adapter = {
          order by metric`,
       );
       const targetMonth = rows[0] ? String(rows[0].month) : null;
+      const targetRows: TargetRow[] = rows.map(r => ({
+        month: String(r.month),
+        metric: String(r.metric),
+        projection: num(r.projection),
+        updatedMs:
+          r.updated_ms === null || r.updated_ms === undefined
+            ? null
+            : num(r.updated_ms),
+      }));
       // The B2B dashboard's "revenue" is contracted value and "signed" is deals.
       const actuals: Record<string, number> = {
         revenue: deals.contractedMtd,
@@ -537,6 +544,9 @@ export const money: Adapter = {
               Number.isFinite(value)
             )
               actuals[metric] = value;
+          // CTR is link CTR (the CEO, 2026-10-08): the dashboard's `ctr`
+          // counts every click, so the target is scored on its `ctr_link`.
+          scoreCtrAsLinkCtr(actuals);
           // Leads on this cockpit are the ROAS-tagged contacts (growth.ts),
           // not the dashboard's is_lead flag, so the three lead actuals are
           // recomputed on that rule from the dashboard's own spend and demos.
@@ -564,16 +574,7 @@ export const money: Adapter = {
           });
         }
         targets.month = month;
-        targets.items = rows.map(r => {
-          const metric = String(r.metric);
-          const pct = PERCENT_METRICS.has(metric) || metric.endsWith("_rate");
-          const scale = (x: number) => (pct ? x / 100 : x);
-          return {
-            metric,
-            target: scale(num(r.projection)),
-            actual: metric in actuals ? scale(actuals[metric]) : null,
-          };
-        });
+        targets.items = targetItems(targetRows, actuals);
         if (targets.items.some(i => i.metric === "revenue"))
           notes.push({
             level: "warn",
@@ -587,6 +588,10 @@ export const money: Adapter = {
             : `No targets exist for ${monthName(month)}.`,
         });
       }
+      // A CTR target says it is scored as link CTR, and one set when CTR
+      // counted every click says so, whichever month it belongs to.
+      const ctrNote = linkCtrTargetNote(targetRows, monthName);
+      if (ctrNote) notes.push(ctrNote);
       sources.push({
         name: "Monthly targets",
         freshestAt: newest(rows),
