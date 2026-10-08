@@ -255,6 +255,13 @@ const CALL_CENTER_METRICS: [
 
 export const DEFINITIONS: MetricDefinition[] = [
   ...WEBINAR_DEFINITIONS,
+  // Portal daily snapshots are not reconstructible after sessions expire or
+  // access/CRM records change. The CEO publisher requires each daily metric
+  // to have a matching definition before it accepts the section.
+  d("portal.liveSessions", "portal", "Live client sessions", "Active client sessions in the portal state at the daily capture time.", B2B, "count", "Staff sessions and expired sessions."),
+  d("portal.withAccess", "portal", "Clients with portal access", "Current directory clients with at least one portal access principal at the daily capture time.", B2B, "count", "Cancelled clients with access."),
+  d("portal.seen7d", "portal", "Clients seen in seven days", "Client identities with a portal session last seen in the seven days before the daily capture.", B2B, "count", "Expired session history that the portal no longer retains."),
+  d("portal.crmConnected", "portal", "Clients with connected CRM", "Current directory clients with a connected CRM in portal state at the daily capture time.", B2B, "count", "Cancelled clients and disconnected CRM links."),
   // Historical finance series use the adapter's real reporting period, not today's headline window.
   d("money.failedCharges.count30d", "money", "Failed charges in 30 days", "Number of failed charges reported by the money adapter over its last 30 days.", B2B, "count"),
   d("money.failedCharges.amount30d", "money", "Failed charge amount in 30 days", "Total failed charge amount over the money adapter's last 30 days.", B2B, "usd", "Successful collections."),
