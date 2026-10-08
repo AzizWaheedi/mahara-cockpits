@@ -27,6 +27,7 @@ import {
   useLocalStills,
 } from "@/components/CreativePreview";
 import { PageHeader } from "@/components/PageHeader";
+import { SyncHealth } from "@/components/SyncHealth";
 import { TemplateCard } from "@/components/TemplateCard";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
@@ -194,19 +195,6 @@ export function ClientProfilesView() {
   return <ClientProfiles rows={snap.clients} />;
 }
 
-/**
- * Sync health strip. Silent when everything is fresh, loud when it is not, so
- * you never work off a board that quietly stopped updating. [aziz, 2026-09-07]
- */
-function SyncHealth() {
-  return (
-    <p role="status" className="text-sm text-muted-foreground">
-      Feed freshness is not verified yet. Check the source before using these
-      figures.
-    </p>
-  );
-}
-
 function Creative({ view }: { view: View }) {
   const auth = useCockpitAuth();
   const sb = useCreativeSnapshot(auth.client, auth.clients);
@@ -321,7 +309,7 @@ function Creative({ view }: { view: View }) {
         </nav>
       ) : null}
 
-      <SyncHealth />
+      <SyncHealth source={snap?.source} />
 
       {view === "sod" && (
         <>

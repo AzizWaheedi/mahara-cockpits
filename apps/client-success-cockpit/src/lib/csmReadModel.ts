@@ -5,6 +5,7 @@ import {
   readCsmState,
   visibleLooseEnds,
 } from "./csmStateClient";
+import { newestPublish } from "./freshness";
 
 type Row = Record<string, any>;
 const norm = (x: unknown) =>
@@ -212,14 +213,25 @@ export function buildCsmReadModel(
   const runs = [...t.syncRuns].sort((a, b) => b.at - a.at),
     lastRun = runs.find(r => r.role === "csm"),
     health = runs.find(r => r.kind === "health");
-  const syncHealth = health
+  // The native worker publishes the live tables and writes no syncRuns row.
+  const published = newestPublish(source.source);
+  const nativeNewer =
+    published !== null && published > (health?.at ?? lastRun?.at ?? 0);
+  const syncHealth = nativeNewer
     ? {
-        at: health.at,
-        ok: health.ok,
-        profiles: health.profiles ?? null,
-        errors: health.errors ?? [],
+        at: published,
+        ok: true,
+        profiles: health?.profiles ?? null,
+        errors: [],
       }
-    : null;
+    : health
+      ? {
+          at: health.at,
+          ok: health.ok,
+          profiles: health.profiles ?? null,
+          errors: health.errors ?? [],
+        }
+      : null;
   return {
     day,
     month,
@@ -240,7 +252,7 @@ export function buildCsmReadModel(
     eod: local.eod,
     eodOwner: local.eodOwner,
     eodDay: local.eodDay,
-    lastSyncAt: lastRun?.at ?? null,
+    lastSyncAt: nativeNewer ? published : (lastRun?.at ?? null),
     syncHealth,
     source: source.source,
     totals: {
