@@ -83,6 +83,44 @@ test('publish updates actual consumer rows, preserves human state/history, recon
  }finally{await db.close();}
 },30000);
 
+test('fresh unchanged source snapshots do not duplicate large audits, but real edits remain audited',async()=>{
+ const db=await fixture();try{
+  await initialize(db);
+  const first=plan(await state(db));await publish(db,await claim(db),first);
+  const auditCount=async(entity:string,id?:string)=>{await owner(db);const n=(await db.query<{n:number}>("SELECT count(*)::int n FROM cockpit_audit_log WHERE entity_type=$1 AND action IN ('UPDATE','update','native.publish') AND ($2::text IS NULL OR entity_id=$2)",[entity,id??null])).rows[0].n;await service(db);return n;};
+  const baseline={creative:await auditCount('creative_source','ads:native:ad:1'),media:await auditCount('cockpit_media_sources','tree:1'),csm:await auditCount('csm_source','clients:client:1'),daily:await auditCount('cockpit_media_daily_stats'),mirror:await auditCount('cockpit_ads')};
+  const second=plan(await state(db));
+  second.tables.ads=first.tables.ads;second.tables.campaigns=first.tables.campaigns;second.tables.dailyStats=first.tables.dailyStats;second.tables.metaTree=first.tables.metaTree;
+  second.creative.ads=first.creative.ads;second.creative.campaigns=first.creative.campaigns;second.creative.clients=first.creative.clients;
+  second.csm.clients=first.csm.clients;second.csm.clientProfiles=first.csm.clientProfiles;
+  recount(second);await publish(db,await claim(db),second);
+  expect(await auditCount('creative_source','ads:native:ad:1')).toBe(baseline.creative);
+  expect(await auditCount('cockpit_media_sources','tree:1')).toBe(baseline.media);
+  expect(await auditCount('csm_source','clients:client:1')).toBe(baseline.csm);
+  expect(await auditCount('cockpit_media_daily_stats')).toBe(baseline.daily);
+  expect(await auditCount('cockpit_ads')).toBe(baseline.mirror);
+  await owner(db);
+  const fresh=(await db.query<{at:string}>("SELECT source_snapshot_at::text at FROM cockpit_creative_sources WHERE table_name='ads'")).rows[0].at;
+  expect(new Date(fresh).getTime()).toBe(new Date(second.source_snapshot_at).getTime());
+  await service(db);
+  const edited=plan(await state(db));edited.tables.ads=[{...second.tables.ads[0],spend:125}];
+  edited.tables.metaTree=[{...second.tables.metaTree[0],kind:'campaign'}];
+  edited.csm.clients=[{...second.csm.clients[0],stage:'Paused'}];
+  edited.tables.dailyStats=[{...second.tables.dailyStats[0],spend:125}];
+  edited.creative.ads=edited.tables.ads;recount(edited);
+  await publish(db,await claim(db),edited);
+  expect(await auditCount('creative_source','ads:native:ad:1')).toBeGreaterThan(baseline.creative);
+  expect(await auditCount('cockpit_media_sources','tree:1')).toBeGreaterThan(baseline.media);
+  expect(await auditCount('csm_source','clients:client:1')).toBeGreaterThan(baseline.csm);
+  expect(await auditCount('cockpit_media_daily_stats')).toBeGreaterThan(baseline.daily);
+  expect(await auditCount('cockpit_ads')).toBeGreaterThan(baseline.mirror);
+  await owner(db);
+  const editAudit=(await db.query<{before:{data:{spend:number}};after:{data:{spend:number}}}>("SELECT before,after FROM cockpit_audit_log WHERE entity_type='creative_source' AND entity_id='ads:native:ad:1' AND action='update' ORDER BY created_at DESC LIMIT 1")).rows[0];
+  expect(editAudit.before.data.spend).toBe(120);
+  expect(editAudit.after.data.spend).toBe(125);
+ }finally{await db.close();}
+},60000);
+
 test('atomic rollback, duplicate identity, missing output, wrong counts, stale snapshots and source revision conflicts',async()=>{
  const windowBookings=[{eventId:'old',date:'2026-01-15'},{eventId:'start',date:'2026-09-08'},{eventId:'end',date:'2026-10-08'},{eventId:'future',date:'2026-10-09'}];
  expect(bookingsInWindow(windowBookings,'2026-09-08','2026-10-08').map(r=>r.eventId)).toEqual(['start','end']);
