@@ -1,4 +1,4 @@
-import type { CSSProperties, ReactNode } from "react";
+import { type CSSProperties, type ReactNode, useState } from "react";
 import { type Faq, type Lang, PILLARS, type PillarKey, t } from "./content";
 
 /**
@@ -42,18 +42,30 @@ export function Wistia({
   /** The player's colour; an audio player is all colour, so it takes a quiet one. */
   color?: string;
 }) {
+  // `allow` already grants full screen; allowFullScreen beside it only
+  // earns a console warning.
   return on ? (
     <iframe
       src={`https://fast.wistia.net/embed/iframe/${id}?seo=false&playerColor=${color}&fullscreenButton=true`}
       title={title}
       allow="autoplay; fullscreen"
-      allowFullScreen
     />
   ) : (
     <div className="dk-video-poster" />
   );
 }
 
+/** A YouTube video's own cover picture, the full-size one. */
+export const youtubePoster = (id: string, size = "maxresdefault") =>
+  `https://i.ytimg.com/vi/${id}/${size}.jpg`;
+
+/**
+ * A YouTube video as its cover with the deck's own play mark (the teal of
+ * the Wistia players on every other slide); a click starts the player in
+ * place. The cover is there at once, where a player takes seconds of black
+ * and then lays YouTube's title, channel and "Watch on YouTube" over the
+ * picture, under a caption that already says the title.
+ */
 export function YouTube({
   id,
   on,
@@ -63,15 +75,46 @@ export function YouTube({
   on: boolean;
   title: string;
 }) {
-  return on ? (
-    <iframe
-      src={`https://www.youtube-nocookie.com/embed/${id}?rel=0&modestbranding=1`}
-      title={title}
-      allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
-      allowFullScreen
-    />
-  ) : (
-    <div className="dk-video-poster" />
+  const [playing, setPlaying] = useState(false);
+  if (!on) return <div className="dk-video-poster" />;
+  if (playing)
+    return (
+      <iframe
+        src={`https://www.youtube-nocookie.com/embed/${id}?rel=0&modestbranding=1&autoplay=1`}
+        title={title}
+        allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
+      />
+    );
+  return (
+    <button
+      type="button"
+      className="dk-yt-cover"
+      onClick={() => setPlaying(true)}
+      aria-label={`${title}. Play`}
+    >
+      <img
+        src={youtubePoster(id)}
+        alt=""
+        draggable={false}
+        // An older video may have no full-size cover: YouTube then sends a
+        // 120 px grey stand-in, or nothing; take the smaller cover instead.
+        onLoad={e => {
+          const img = e.currentTarget;
+          if (img.naturalWidth <= 120 && !img.src.includes("hqdefault"))
+            img.src = youtubePoster(id, "hqdefault");
+        }}
+        onError={e => {
+          const img = e.currentTarget;
+          if (!img.src.includes("hqdefault"))
+            img.src = youtubePoster(id, "hqdefault");
+        }}
+      />
+      <span className="dk-play" aria-hidden>
+        <svg width="34" height="34" viewBox="0 0 24 24" aria-hidden>
+          <path d="M8 5.5v13l11-6.5z" fill="currentColor" />
+        </svg>
+      </span>
+    </button>
   );
 }
 
@@ -172,7 +215,7 @@ export function FaqPanel({
           style={{ height: 56, padding: "0 22px" }}
           onClick={onClose}
         >
-          {lang === "ar" ? "إغلاق" : "Close"}
+          {lang === "ar" ? "سكّر" : "Close"}
         </button>
       </div>
       <div

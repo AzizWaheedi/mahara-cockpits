@@ -672,7 +672,9 @@ describe("control: the setter's intro rings out, a Meet link goes by email, Huda
     expect(w.texts.map(t => t.channel)).toEqual(["email"]);
     let p = await panelNow(w, id, { canMarkIntro: true, talkBelow: true });
     expect(p.moment).toBe("sent");
-    expect(stepAfterMiss(p.room, false).title).toBe("The video link went");
+    expect(stepAfterMiss(p.room, false, { now: w.clock.now }).title).toBe(
+      "The video link went",
+    );
     for (let i = 0; i < 10; i++) await w.minute(id);
     // R4: the lead did not join by lead_by (20261004a).
     w.sweepCloses(id, {
@@ -685,7 +687,9 @@ describe("control: the setter's intro rings out, a Meet link goes by email, Huda
     // Meet sends no join signal: never "nobody joined" with a No-show press.
     expect(p.words).toMatch(/Meet cannot say whether Huda came in/);
     expect(p.keys).not.toContain("noshow");
-    expect(stepAfterMiss(p.room, false).title).toBe("Did you speak on video?");
+    expect(stepAfterMiss(p.room, false, { now: w.clock.now }).title).toBe(
+      "Did you speak on video?",
+    );
     expect(w.texts).toHaveLength(1);
   });
 });
@@ -772,7 +776,7 @@ describe("journey: the intro rings out at 10:00, the Meet link's email goes to H
     // email?" with its teal button opening the email box (send: "email").
     // A rep who follows the step sends Huda a second "I tried to call you"
     // beside the link email that most likely reached her.
-    const step = stepAfterMiss(p.room, false);
+    const step = stepAfterMiss(p.room, false, { now: w.clock.now });
     expect({ title: step.title, send: step.send }).not.toMatchObject({
       send: "email",
     });
@@ -957,7 +961,7 @@ describe("journey: the setter's Meet link reached Huda by email; she knocks and 
     // join" screen, likely on her phone.
     expect(w.texts.map(t => t.channel)).toEqual(["email", "email"]);
     const q = await panelNow(w, nid, { canMarkIntro: true, talkBelow: true });
-    const step = stepAfterMiss(q.room, false);
+    const step = stepAfterMiss(q.room, false, { now: w.clock.now });
     const said = `${q.words} ${step.title}. ${step.text}`;
     // What the setter is told: "Link sent by email at 10:03. Waiting for
     // Huda." and, under it, "The video link went by email at 10:03. Wait

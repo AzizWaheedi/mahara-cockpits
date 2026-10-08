@@ -15,7 +15,9 @@
   --dk-grad: linear-gradient(135deg, #2e5bd6 0%, #00cfc8 65%, #00cfc8 100%);
   --dk-ink: #f2f6fa;
   --dk-ink-2: rgba(242, 246, 250, 0.7);
-  --dk-ink-3: rgba(242, 246, 250, 0.46);
+  /* 0.54, not 0.46: small grey text (sources, handles, the rail) reads at
+     5.5:1 on the slide ground, 5.3:1 on a panel; 0.46 was 4.3:1. */
+  --dk-ink-3: rgba(242, 246, 250, 0.54);
   --dk-line: rgba(255, 255, 255, 0.1);
   --dk-leak: #f5b84b;
   --dk-good: #3ed598;
@@ -746,6 +748,29 @@
 [dir="rtl"] .dk-stops .dk-why {
   font-size: 22px;
 }
+/* Seven stops (the ads tour, since the offer joined it): the closed names a
+   size down and closer together, and the Arabic title on two lines, so the
+   open stop, and the challenge line when one is picked, still clear the
+   rail. */
+.dk-tour[data-many] .dk-stops {
+  gap: 0;
+}
+.dk-tour[data-many] .dk-stop:not([data-on]) {
+  padding-block: 5px;
+}
+.dk-tour[data-many] .dk-stop:not([data-on]) .dk-stop-name {
+  font-size: 23px;
+}
+[dir="rtl"] .dk-tour[data-many] .dk-stop:not([data-on]) .dk-stop-name {
+  font-size: 25px;
+  line-height: 1.3;
+}
+.dk-tour[data-many] .dk-stops .dk-why {
+  margin-top: 4px;
+}
+[dir="rtl"] .dk-tour[data-many] .dk-tour-title {
+  font-size: 36px;
+}
 .dk-stage-area {
   display: flex;
   min-width: 0;
@@ -886,6 +911,10 @@
   transform: translateY(calc(-50% + var(--lift, 0px)))
     rotate(calc(var(--rot, 0deg) * -1));
 }
+/* Pages written left to right keep that fan in Arabic (journeys.tsx Fan). */
+[dir="rtl"] .dk-fan[data-ltr] .dk-fan-page:not(:hover) {
+  transform: translateY(calc(-50% + var(--lift, 0px))) rotate(var(--rot, 0deg));
+}
 .dk-fan-page:hover {
   z-index: 20 !important;
   transform: translateY(calc(-50% - 16px)) rotate(0deg) scale(1.03);
@@ -966,13 +995,6 @@
   gap: 18px;
   margin-top: 34px;
 }
-.dk-mark {
-  display: inline-grid;
-  flex: none;
-  place-items: center;
-  border-radius: 28%;
-  box-shadow: 0 14px 30px -14px rgba(0, 0, 0, 0.7);
-}
 
 /* A reel as Instagram shows it, cut below the reel. */
 .dk-ig {
@@ -980,7 +1002,7 @@
   flex: none;
   overflow: hidden;
   border-radius: 18px;
-  background: #fff;
+  background: var(--dk-panel);
   box-shadow:
     0 0 0 1px var(--dk-line),
     0 30px 60px -30px rgba(0, 0, 0, 0.8);
@@ -991,6 +1013,73 @@
   left: 0;
   width: 100%;
   border: 0;
+  opacity: 0;
+  transition: opacity 420ms var(--dk-ease);
+}
+.dk-ig[data-loaded] iframe {
+  opacity: 1;
+}
+/* While the card loads: Instagram's mark, breathing slowly. */
+.dk-ig-wait {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+}
+.dk-ig-wait > img {
+  opacity: 0.5;
+  animation: dk-wait 1800ms ease-in-out infinite;
+}
+.dk-ig[data-loaded] .dk-ig-wait {
+  visibility: hidden;
+}
+@keyframes dk-wait {
+  50% {
+    opacity: 0.9;
+  }
+}
+
+/* A YouTube video before it plays: its cover and the deck's play mark. */
+.dk-yt-cover {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  background: var(--dk-deep);
+  color: inherit;
+  font: inherit;
+}
+.dk-yt-cover > img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  user-select: none;
+}
+.dk-yt-cover:focus-visible {
+  outline: 3px solid var(--dk-teal);
+  outline-offset: -3px;
+}
+.dk-play {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 96px;
+  height: 62px;
+  border-radius: 14px;
+  background: rgba(0, 207, 200, 0.9);
+  color: #fff;
+  box-shadow: 0 14px 34px -12px rgba(0, 0, 0, 0.7);
+  transition:
+    transform var(--dk-hover-ms) var(--dk-ease),
+    background var(--dk-hover-ms) var(--dk-ease);
+}
+.dk-yt-cover:is(:hover, :focus-visible) .dk-play {
+  background: var(--dk-teal);
+  transform: scale(1.08);
 }
 
 /* The same page in a browser and on a phone, the phone in front. */
@@ -1400,27 +1489,6 @@
   font-size: 54px;
   line-height: 1.25;
 }
-.dk-logo-wall {
-  display: grid;
-  grid-template-columns: repeat(10, minmax(0, 1fr));
-  gap: 26px 30px;
-  align-items: center;
-  justify-items: center;
-}
-.dk-logo-wall img {
-  max-width: 100%;
-  max-height: 70px;
-  object-fit: contain;
-  filter: grayscale(1);
-  opacity: 0.72;
-  transition:
-    filter 200ms,
-    opacity 200ms;
-}
-.dk-logo-wall img:hover {
-  filter: none;
-  opacity: 1;
-}
 
 /* A partner: flags and place, their case study's headline and numbers. */
 .dk-place {
@@ -1588,8 +1656,7 @@
   .dk-path-fill,
   .dk-path-dot,
   .dk-fan-page,
-  .dk-partner,
-  .dk-logo-wall img {
+  .dk-partner {
     transition: none;
   }
 }
@@ -1638,6 +1705,25 @@
   outline-offset: 2px;
 }
 
+/* The ← n / N → controls sit in the band under the rail's labels. The
+   canvas scales and they do not, so on a 1280 × 720 or 1366 × 768 screen
+   a fixed 36 px pill 14 px up covered the middle label. Here the band is
+   worked out from the window (one canvas pixel is --dk-u; the labels end
+   60 canvas px above the canvas's foot) and the pill is centred in it,
+   shrinking to 26 px before it would touch a label. */
+.dk-nav {
+  --dk-u: min(100vw / 1920, 100vh / 1080);
+  --dk-room: calc(50vh - 480 * var(--dk-u));
+  --dk-nav-h: clamp(26px, calc(var(--dk-room) - 10px), 36px);
+  left: 50%;
+  bottom: max(4px, calc((var(--dk-room) - var(--dk-nav-h)) / 2));
+  transform: translateX(-50%);
+}
+.dk-nav button {
+  height: var(--dk-nav-h);
+  min-width: var(--dk-nav-h);
+}
+
 .dk-overview {
   position: absolute;
   inset: 0;
@@ -1665,5 +1751,1075 @@
 @media print {
   .dk-chrome {
     display: none !important;
+  }
+}
+
+/* ===================================================================
+   Interactions (2026-10-08), one system for the whole deck.
+   Everything you can point at answers the same way: it lifts a little,
+   its edge turns teal and a teal glow rises under it, in 200 ms, with
+   transform and shadow only so nothing moves the layout. What a click
+   opens gets the pointer and a teal chip that says what it opens. Then
+   the slide of our own channels, and the live page pop-up.
+   =================================================================== */
+
+.dk-root {
+  --dk-ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --dk-hover-ms: 200ms;
+  --dk-edge: rgba(0, 207, 200, 0.72);
+  --dk-halo: 0 34px 80px -34px rgba(0, 207, 200, 0.55);
+  --dk-drop: 0 30px 60px -30px rgba(0, 0, 0, 0.75);
+}
+
+/* What can be clicked shows it. */
+.dk-canvas :is(a[href], button:not(:disabled), select),
+.dk-live :is(a[href], button:not(:disabled)) {
+  cursor: pointer;
+}
+
+/* Media and cards: the shared transition. */
+:is(
+    .dk-shot,
+    .dk-review,
+    .dk-ig,
+    .dk-chat,
+    .dk-profile,
+    .dk-video,
+    .dk-browser,
+    .dk-phone,
+    .dk-partner,
+    .dk-case,
+    .dk-choice,
+    .dk-pick,
+    .dk-quote,
+    .dk-stages li,
+    .dk-card
+  ) {
+  transition:
+    transform var(--dk-hover-ms) var(--dk-ease),
+    box-shadow var(--dk-hover-ms) var(--dk-ease),
+    border-color var(--dk-hover-ms) var(--dk-ease);
+}
+
+/* The lift. The devices pair lifts as one (below), and a fanned page
+   keeps its own lift to the top of the stack. */
+:is(
+    .dk-shot,
+    .dk-review,
+    .dk-ig,
+    .dk-chat,
+    .dk-profile,
+    .dk-video,
+    .dk-browser,
+    .dk-phone,
+    .dk-partner,
+    .dk-case,
+    .dk-choice,
+    .dk-pick,
+    .dk-quote,
+    .dk-stages li,
+    .dk-card
+  ):not(.dk-devices > *):hover {
+  transform: translateY(-4px);
+}
+
+/* Pictures, whose edge is a shadow: the edge turns teal and glows. */
+:is(.dk-shot, .dk-review, .dk-ig, .dk-chat, .dk-profile):hover,
+.dk-fan-page:hover {
+  box-shadow:
+    0 0 0 2px var(--dk-edge),
+    var(--dk-halo),
+    var(--dk-drop);
+}
+
+/* Frames and cards, whose edge is a border: the same teal edge and glow. */
+:is(
+    .dk-video,
+    .dk-browser,
+    .dk-partner,
+    .dk-case,
+    .dk-choice,
+    .dk-pick,
+    .dk-quote,
+    .dk-stages li,
+    .dk-card
+  ):not(.dk-devices > *):hover {
+  border-color: var(--dk-edge);
+  box-shadow:
+    0 0 0 1px var(--dk-edge),
+    var(--dk-halo);
+}
+/* A chosen card keeps its full ring under the mouse. */
+.dk-choice[aria-pressed="true"]:hover,
+.dk-pick[data-main]:hover {
+  border-color: var(--dk-teal);
+  box-shadow:
+    0 0 0 1px var(--dk-teal),
+    var(--dk-halo);
+}
+
+/* A phone keeps its glass edge inside the teal one. */
+.dk-phone:not(.dk-devices > *):hover {
+  box-shadow:
+    0 0 0 2px var(--dk-edge),
+    inset 0 0 0 2px rgba(255, 255, 255, 0.05),
+    var(--dk-halo),
+    var(--dk-drop);
+}
+
+/* A fanned page: its lift and its glow, at the same pace as the rest. */
+.dk-fan-page {
+  transition:
+    transform 280ms var(--dk-ease),
+    box-shadow var(--dk-hover-ms) var(--dk-ease);
+}
+
+/* Links: the line fills, the arrow leans toward where it goes. */
+.dk-link {
+  transition:
+    border-color var(--dk-hover-ms) var(--dk-ease),
+    text-shadow var(--dk-hover-ms) var(--dk-ease);
+}
+.dk-link > .dk-ltr {
+  display: inline-block;
+  transition: transform var(--dk-hover-ms) var(--dk-ease);
+}
+.dk-link:hover {
+  text-shadow: 0 0 22px rgba(0, 207, 200, 0.45);
+}
+.dk-link:hover > .dk-ltr {
+  transform: translate(3px, -3px);
+}
+
+/* Buttons and the stops of a tour. */
+.dk-btn {
+  transition:
+    transform var(--dk-hover-ms) var(--dk-ease),
+    box-shadow var(--dk-hover-ms) var(--dk-ease),
+    border-color var(--dk-hover-ms) var(--dk-ease);
+}
+.dk-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 18px 40px -18px rgba(0, 207, 200, 0.75);
+}
+.dk-btn.dk-quiet:hover {
+  border-color: var(--dk-edge);
+}
+.dk-stop:not([data-on]):hover {
+  background: rgba(14, 26, 66, 0.6);
+  color: var(--dk-ink-2);
+}
+.dk-path-node:hover .dk-path-dot {
+  border-color: var(--dk-teal);
+  box-shadow: 0 0 22px rgba(0, 207, 200, 0.45);
+}
+.dk-chrome :is(button, a) {
+  transition:
+    border-color var(--dk-hover-ms) var(--dk-ease),
+    background var(--dk-hover-ms) var(--dk-ease);
+}
+.dk-chrome :is(button, a):hover:not([aria-pressed="true"]) {
+  border-color: var(--dk-edge);
+}
+
+/* ------------------------------------- what a click opens: the chip */
+
+.dk-open-chip {
+  position: absolute;
+  z-index: 3;
+  inset-inline: 0;
+  bottom: 18px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: max-content;
+  margin-inline: auto;
+  padding: 12px 22px;
+  border-radius: 999px;
+  background: var(--dk-teal);
+  color: #04121d;
+  font-size: 21px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  box-shadow:
+    0 0 0 6px rgba(0, 207, 200, 0.18),
+    0 16px 36px -12px rgba(0, 0, 0, 0.7);
+  opacity: 0;
+  transform: translateY(8px) scale(0.96);
+  transition:
+    opacity var(--dk-hover-ms) var(--dk-ease),
+    transform var(--dk-hover-ms) var(--dk-ease);
+  pointer-events: none;
+}
+[dir="rtl"] .dk-open-chip {
+  font-size: 22px;
+  line-height: 1.2;
+}
+.dk-open-chip[data-center] {
+  top: 50%;
+  bottom: auto;
+  padding: 16px 28px;
+  font-size: 24px;
+  transform: translateY(-50%) scale(0.96);
+}
+[data-link]:is(:hover, :focus-visible) > .dk-open-chip {
+  opacity: 1;
+  transform: none;
+}
+[data-link]:is(:hover, :focus-visible) > .dk-open-chip[data-center] {
+  transform: translateY(-50%);
+}
+[data-link]:focus-visible {
+  outline: 3px solid var(--dk-teal);
+  outline-offset: 4px;
+}
+
+/* A screenshot that is a page of a document: a link, drawn as the picture. */
+a.dk-shot,
+a.dk-fan-page {
+  display: block;
+  color: inherit;
+  text-decoration: none;
+}
+a.dk-shot {
+  position: relative;
+}
+
+/* The landing page pair as one button: it lifts, the phone a little more. */
+button.dk-devices {
+  display: block;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+}
+.dk-devices[data-link] > :is(.dk-browser, .dk-devices-phone) {
+  transition:
+    transform var(--dk-hover-ms) var(--dk-ease),
+    box-shadow var(--dk-hover-ms) var(--dk-ease),
+    border-color var(--dk-hover-ms) var(--dk-ease);
+}
+.dk-devices[data-link]:hover > .dk-browser {
+  transform: translateY(-4px);
+  border-color: var(--dk-edge);
+  box-shadow:
+    0 0 0 1px var(--dk-edge),
+    var(--dk-halo);
+}
+.dk-devices[data-link]:hover > .dk-devices-phone {
+  transform: translateY(-10px);
+  box-shadow:
+    0 0 0 2px var(--dk-edge),
+    var(--dk-halo),
+    var(--dk-drop);
+}
+
+/* ------------------------------------------------- our own channels */
+
+.dk-channels {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  margin-top: 34px;
+}
+.dk-channels-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+/* Both sets start on one line: the platform names side by side, then the
+   two headline figures side by side, read across like a table. */
+.dk-channels-mid {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: start;
+}
+/* The two sets of figures meet at one hairline. */
+.dk-channels-mid::before {
+  content: "";
+  position: absolute;
+  top: 6%;
+  bottom: 6%;
+  left: 50%;
+  width: 1px;
+  background: var(--dk-line);
+}
+.dk-channel-figs {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 22px;
+}
+.dk-channel-figs[data-side="end"] {
+  align-items: flex-end;
+  text-align: end;
+}
+.dk-channel-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 14px;
+  font-size: 26px;
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--dk-ink-2);
+}
+.dk-channel-fig {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.dk-channel-figs[data-side="end"] .dk-channel-fig {
+  align-items: flex-end;
+}
+/* Geist, not the mono: a thousands comma at this size wants its own width. */
+.dk-channel-value {
+  font-family: "Geist", "IBM Plex Sans Arabic", sans-serif;
+  font-size: 108px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 0.95;
+  letter-spacing: -0.045em;
+  color: var(--dk-ink);
+}
+.dk-channel-value > [aria-hidden] {
+  display: inline-block;
+}
+[dir="rtl"] .dk-channel-value {
+  font-size: 92px;
+  line-height: 1.15;
+  letter-spacing: 0;
+}
+.dk-channel-label {
+  font-size: 26px;
+  line-height: 1.2;
+  color: var(--dk-teal);
+}
+[dir="rtl"] .dk-channel-label {
+  font-size: 28px;
+}
+.dk-channel-note {
+  padding: 8px 16px 8px 12px;
+  font-size: 20px;
+  color: var(--dk-ink);
+  border-color: rgba(0, 207, 200, 0.4);
+}
+.dk-channel-note svg {
+  color: var(--dk-teal);
+}
+.dk-channel-handle {
+  font-family: "Geist Mono", ui-monospace, monospace;
+  font-size: 20px;
+  color: var(--dk-ink-3);
+}
+.dk-channels-source {
+  margin-top: 16px;
+  text-align: center;
+  font-size: 19px;
+  color: var(--dk-ink-3);
+}
+[dir="rtl"] .dk-channels-source {
+  font-size: 21px;
+}
+
+/* A profile page as it showed, cut at the foot of its grid. */
+.dk-profile {
+  position: relative;
+  display: block;
+  flex: none;
+  overflow: hidden;
+  border-radius: 18px;
+  background: #fff;
+  box-shadow:
+    0 0 0 1px var(--dk-line),
+    var(--dk-drop);
+}
+.dk-profile > img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top;
+}
+/* The ring over the profile's own counters: the large figures point back
+   to it. It draws in once the slide is up, then breathes twice. */
+.dk-profile-ring {
+  position: absolute;
+  box-sizing: content-box;
+  margin: -7px 0 0 -9px;
+  padding: 5px 7px;
+  border: 2px solid var(--dk-teal);
+  border-radius: 8px;
+  box-shadow:
+    0 0 0 4px rgba(0, 207, 200, 0.18),
+    0 0 26px rgba(0, 207, 200, 0.5);
+  pointer-events: none;
+  animation:
+    dk-ring-in 640ms var(--dk-ease) 820ms both,
+    dk-ring-breathe 2200ms ease-in-out 1500ms 2;
+}
+@keyframes dk-ring-in {
+  from {
+    opacity: 0;
+    transform: scale(1.6);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes dk-ring-breathe {
+  50% {
+    box-shadow:
+      0 0 0 9px rgba(0, 207, 200, 0.1),
+      0 0 40px rgba(0, 207, 200, 0.7);
+  }
+}
+
+/* -------------------------------------------- the live page pop-up */
+
+/* The live page, loading out of sight from the first hover. */
+.dk-live-warm {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+  visibility: hidden;
+  pointer-events: none;
+}
+.dk-live-warm iframe {
+  width: 1280px;
+  height: 800px;
+  border: 0;
+}
+
+.dk-live {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+}
+.dk-live-backdrop {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: rgba(4, 9, 26, 0.78);
+  backdrop-filter: blur(14px);
+  cursor: default !important;
+  animation: dk-live-fade 240ms ease both;
+}
+/* The pop-up is drawn on its own 1920 × 1080 canvas, fitted like the deck's. */
+.dk-live-canvas {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 1920px;
+  height: 1080px;
+  transform-origin: center center;
+  pointer-events: none;
+  font-family: "Geist", "IBM Plex Sans Arabic", ui-sans-serif, sans-serif;
+  font-size: 30px;
+  line-height: 1.45;
+  color: var(--dk-ink);
+}
+.dk-live-canvas[dir="rtl"] {
+  font-family: "IBM Plex Sans Arabic", "Geist", ui-sans-serif, sans-serif;
+}
+.dk-live-dialog {
+  position: absolute;
+  left: 100px;
+  top: 56px;
+  display: flex;
+  flex-direction: column;
+  width: 1720px;
+  height: 968px;
+  border-radius: 28px;
+  background: linear-gradient(180deg, var(--dk-panel) 0%, var(--dk-space) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow:
+    0 0 0 1px rgba(0, 207, 200, 0.12),
+    0 60px 160px -40px rgba(0, 0, 0, 0.85);
+  pointer-events: auto;
+  animation: dk-live-in 280ms var(--dk-ease) both;
+}
+.dk-live-dialog:focus {
+  outline: none;
+}
+.dk-live[data-leaving] .dk-live-backdrop {
+  animation: dk-live-fade-out 220ms ease both;
+}
+.dk-live[data-leaving] .dk-live-dialog {
+  animation: dk-live-out 220ms var(--dk-ease) both;
+}
+@keyframes dk-live-fade {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes dk-live-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+@keyframes dk-live-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.965);
+  }
+}
+@keyframes dk-live-out {
+  to {
+    opacity: 0;
+    transform: translateY(10px) scale(0.975);
+  }
+}
+.dk-live-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 24px;
+  padding: 22px 32px 20px;
+}
+.dk-live-title {
+  font-size: 30px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+[dir="rtl"] .dk-live-title {
+  font-size: 32px;
+  line-height: 1.4;
+}
+.dk-live-state {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 6px;
+  font-size: 19px;
+  line-height: 1.3;
+  color: var(--dk-ink-2);
+}
+[dir="rtl"] .dk-live-state {
+  font-size: 21px;
+}
+.dk-live-state > i {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 99px;
+  background: var(--dk-leak);
+  animation: dk-live-dot 1100ms ease-in-out infinite;
+}
+.dk-live-state[data-status="live"] > i {
+  background: var(--dk-good);
+  box-shadow: 0 0 12px rgba(62, 213, 152, 0.7);
+  animation: none;
+}
+.dk-live-state[data-status="failed"] > i {
+  background: var(--dk-ink-3);
+  animation: none;
+}
+@keyframes dk-live-dot {
+  50% {
+    opacity: 0.35;
+  }
+}
+.dk-live-retry {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--dk-teal);
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+.dk-live-views {
+  display: inline-flex;
+  gap: 4px;
+  min-width: 0;
+  margin: 0;
+  padding: 5px;
+  border: 1px solid var(--dk-line);
+  border-radius: 999px;
+  background: rgba(6, 13, 36, 0.6);
+}
+.dk-live-views button {
+  height: 48px;
+  padding: 0 28px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--dk-ink-2);
+  font: inherit;
+  font-size: 21px;
+  font-weight: 600;
+  line-height: 1;
+  transition:
+    background var(--dk-hover-ms) var(--dk-ease),
+    color var(--dk-hover-ms) var(--dk-ease);
+}
+.dk-live-views button[aria-pressed="true"] {
+  background: var(--dk-teal);
+  color: #04121d;
+}
+.dk-live-views button:not([aria-pressed="true"]):hover {
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--dk-ink);
+}
+.dk-live-views button:focus-visible,
+.dk-live-retry:focus-visible {
+  outline: 3px solid var(--dk-teal);
+  outline-offset: 3px;
+}
+.dk-live-actions {
+  justify-self: end;
+  display: flex;
+  align-items: center;
+  gap: 28px;
+}
+.dk-live-actions .dk-link {
+  font-size: 21px;
+}
+.dk-live-close {
+  height: 52px;
+  padding: 0 20px;
+  font-size: 21px;
+  gap: 10px;
+}
+.dk-live-body {
+  flex: 1;
+  display: flex;
+  justify-content: center;
+  min-height: 0;
+  padding: 0 32px 32px;
+}
+/* One frame: a browser, or a phone, the page inside re-flowing between them. */
+.dk-live-frame {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 1656px;
+  height: 100%;
+  overflow: hidden;
+  padding: 0;
+  border-radius: 20px;
+  background: #0b1638;
+  box-shadow:
+    0 0 0 1px var(--dk-line),
+    0 40px 90px -40px rgba(0, 0, 0, 0.8);
+  transition:
+    width 380ms var(--dk-ease),
+    padding 380ms var(--dk-ease),
+    border-radius 380ms var(--dk-ease),
+    background 380ms var(--dk-ease);
+}
+.dk-live-frame[data-view="phone"] {
+  width: 400px;
+  padding: 12px;
+  border-radius: 46px;
+  background: linear-gradient(160deg, #1d2950 0%, #0a1230 100%);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.16),
+    0 40px 80px -30px rgba(0, 0, 0, 0.85);
+}
+.dk-live-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 44px;
+  overflow: hidden;
+  padding: 0 18px;
+  border-bottom: 1px solid var(--dk-line);
+  transition:
+    height 380ms var(--dk-ease),
+    opacity 200ms ease;
+}
+.dk-live-bar i {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.18);
+}
+.dk-live-bar span {
+  margin-inline-start: 14px;
+  font-family: "Geist Mono", ui-monospace, monospace;
+  font-size: 18px;
+  color: var(--dk-ink-3);
+  direction: ltr;
+}
+.dk-live-frame[data-view="phone"] .dk-live-bar {
+  height: 0;
+  opacity: 0;
+  border-bottom-width: 0;
+}
+.dk-live-screen {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  background: #fff;
+  transition: border-radius 380ms var(--dk-ease);
+}
+.dk-live-frame[data-view="phone"] .dk-live-screen {
+  border-radius: 35px;
+}
+.dk-live-screen > img,
+.dk-live-screen > iframe {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.dk-live-screen > img {
+  object-fit: cover;
+  object-position: top;
+}
+.dk-live-screen > iframe {
+  border: 0;
+  background: #fff;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 320ms ease;
+}
+.dk-live-screen > iframe[data-on] {
+  opacity: 1;
+  pointer-events: auto;
+}
+/* On the phone the page gets an iPhone's 390 px, scaled to the 376 px screen. */
+.dk-live-frame[data-view="phone"] .dk-live-screen > iframe {
+  width: 390px;
+  height: calc(100% / 0.9641);
+  transform: scale(0.9641);
+  transform-origin: top left;
+}
+.dk-live-screen > .dk-phone-notch {
+  top: 10px;
+  opacity: 0;
+  transition: opacity 200ms ease;
+}
+.dk-live-frame[data-view="phone"] .dk-live-screen > .dk-phone-notch {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :is(
+      .dk-shot,
+      .dk-review,
+      .dk-ig,
+      .dk-chat,
+      .dk-profile,
+      .dk-video,
+      .dk-browser,
+      .dk-phone,
+      .dk-partner,
+      .dk-case,
+      .dk-choice,
+      .dk-pick,
+      .dk-quote,
+      .dk-stages li,
+      .dk-card,
+      .dk-btn,
+      .dk-link,
+      .dk-link > .dk-ltr,
+      .dk-open-chip,
+      .dk-live-frame,
+      .dk-live-bar,
+      .dk-live-screen,
+      .dk-live-screen > iframe
+    ),
+  .dk-devices[data-link] > * {
+    transition: none !important;
+  }
+  /* The highlight stays; only the movement goes. */
+  :is(
+      .dk-shot,
+      .dk-review,
+      .dk-ig,
+      .dk-chat,
+      .dk-profile,
+      .dk-video,
+      .dk-browser,
+      .dk-phone,
+      .dk-partner,
+      .dk-case,
+      .dk-choice,
+      .dk-pick,
+      .dk-quote,
+      .dk-stages li,
+      .dk-card,
+      .dk-btn
+    ):hover,
+  .dk-devices[data-link]:hover > *,
+  .dk-link:hover > .dk-ltr {
+    transform: none !important;
+  }
+  .dk-profile-ring,
+  .dk-live-backdrop,
+  .dk-live-dialog,
+  .dk-live-state > i,
+  .dk-ig-wait > img {
+    animation: none !important;
+  }
+  .dk-ig iframe,
+  .dk-play {
+    transition: none !important;
+  }
+  .dk-yt-cover:is(:hover, :focus-visible) .dk-play {
+    transform: none;
+  }
+}
+
+/* ============================================ motion and logos (2026-10-08)
+   The platform marks as app tiles, the #1 page's count-up and the partners'
+   logos drifting in two lanes. Everything that moves stops under the
+   pointer or lifts toward it, and stands still with reduced motion. */
+
+/* A platform's logo as its app tile: the brands whose logo is a tile fill
+   it; the rest sit on white, the ground their logos are drawn for. */
+.dk-mark {
+  position: relative;
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 24%;
+  background: #fff;
+  box-shadow: 0 14px 30px -14px rgba(0, 0, 0, 0.7);
+  transition:
+    transform 320ms cubic-bezier(0.2, 0.7, 0.2, 1),
+    box-shadow 320ms;
+}
+.dk-mark[data-ground="own"] {
+  background: none;
+}
+.dk-mark img {
+  display: block;
+  object-fit: contain;
+  pointer-events: none;
+  user-select: none;
+}
+.dk-mark[data-ground="own"] img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+/* A hairline inside the tile, so TikTok's black reads on the navy. */
+.dk-mark::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14);
+  pointer-events: none;
+}
+.dk-mark:hover {
+  transform: translateY(-4px) scale(1.06);
+  box-shadow:
+    0 0 0 2px rgba(0, 207, 200, 0.55),
+    0 22px 40px -18px rgba(0, 0, 0, 0.8);
+}
+.dk-logo {
+  display: block;
+  flex: none;
+  object-fit: contain;
+}
+
+/* The #1 figures: each counts up once as the page comes on, while a teal
+   line draws across the top of it; the final figure, unseen, holds the
+   width. */
+.dk-tally {
+  display: inline-grid;
+}
+.dk-tally > span {
+  grid-area: 1 / 1;
+}
+.dk-tally-hold {
+  visibility: hidden;
+}
+.dk-n1-stat {
+  position: relative;
+  transition: background 260ms;
+}
+.dk-n1-stat::before {
+  content: "";
+  position: absolute;
+  top: -1px;
+  inset-inline: 0;
+  height: 2px;
+  background: var(--dk-grad);
+  transform: scaleX(0);
+  transform-origin: left center;
+  opacity: 0.55;
+  transition: opacity 260ms;
+}
+[dir="rtl"] .dk-n1-stat::before {
+  transform-origin: right center;
+}
+.dk-slide[data-active] .dk-n1-stat::before {
+  animation: dk-draw 1500ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation-delay: calc(300ms + var(--n, 0) * 140ms);
+}
+@keyframes dk-draw {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+/* "+١٫٣٢ مليون دولار" fits its column on one line at 50px; at 54 it broke
+   in two and pushed the logos into the figures. */
+[dir="rtl"] .dk-n1-stat .dk-n1-value {
+  font-size: 50px;
+}
+.dk-n1-stat:hover {
+  background: linear-gradient(180deg, var(--dk-teal-soft), transparent 75%);
+}
+.dk-n1-stat:hover::before {
+  opacity: 1;
+}
+
+/* The partners: two lanes across the whole canvas, the first drifting
+   toward the reading start and the second the other way, soft at both
+   edges. Each lane is its set twice over, moved by exactly half. */
+.dk-river {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-inline: -136px;
+}
+.dk-lane {
+  display: flex;
+  overflow: hidden;
+  padding-block: 10px;
+  -webkit-mask-image: linear-gradient(
+    90deg,
+    transparent,
+    #000 11%,
+    #000 89%,
+    transparent
+  );
+  mask-image: linear-gradient(90deg, transparent, #000 11%, #000 89%, transparent);
+}
+.dk-lane-track {
+  display: flex;
+  flex: none;
+  width: max-content;
+  animation: dk-drift var(--dk-loop, 48s) linear infinite;
+  will-change: transform;
+}
+[dir="rtl"] .dk-lane-track {
+  animation-name: dk-drift-rtl;
+}
+.dk-lane[data-way="end"] .dk-lane-track {
+  animation-direction: reverse;
+}
+.dk-lane:hover .dk-lane-track {
+  animation-play-state: paused;
+}
+@keyframes dk-drift {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+@keyframes dk-drift-rtl {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(50%);
+  }
+}
+.dk-tile {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 232px;
+  height: 106px;
+  padding: 12px 20px;
+  margin-inline-end: 18px;
+  border-radius: 20px;
+  border: 1px solid var(--dk-line);
+  background: rgba(14, 26, 66, 0.55);
+  transition:
+    transform 360ms cubic-bezier(0.2, 0.7, 0.2, 1),
+    border-color 360ms,
+    background 360ms,
+    box-shadow 360ms;
+}
+.dk-tile img {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  opacity: 0.86;
+  pointer-events: none;
+  user-select: none;
+  transition: opacity 360ms;
+}
+.dk-tile:hover {
+  transform: translateY(-6px) scale(1.06);
+  border-color: rgba(0, 207, 200, 0.5);
+  background: var(--dk-panel-2);
+  box-shadow: 0 22px 44px -22px rgba(0, 207, 200, 0.45);
+}
+.dk-tile:hover img {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dk-mark,
+  .dk-tile,
+  .dk-tile img,
+  .dk-n1-stat,
+  .dk-n1-stat::before {
+    transition: none;
+  }
+  .dk-mark:hover,
+  .dk-tile:hover {
+    transform: none;
+  }
+  .dk-slide[data-active] .dk-n1-stat::before {
+    animation: none;
+    transform: scaleX(1);
+  }
+  /* The logos stand still as a grid, the loop's second copy left out. */
+  .dk-river {
+    gap: 12px;
+    margin-inline: 0;
+  }
+  .dk-lane {
+    padding-block: 0;
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
+  .dk-lane-track {
+    width: 100%;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 12px;
+    animation: none;
+  }
+  .dk-tile {
+    width: 150px;
+    height: 70px;
+    padding: 8px 13px;
+    margin: 0;
+  }
+  .dk-tile[data-copy] {
+    display: none;
   }
 }

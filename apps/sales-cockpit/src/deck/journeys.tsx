@@ -16,8 +16,10 @@ import {
   t,
 } from "./content";
 import { justify } from "./layout";
+import { CountUp, LogoRiver } from "./motion";
+import { LivePage, OPEN_DOC, OpenChip, TRY_LIVE } from "./overlay";
 import { Out, Rv, Wistia, YouTube } from "./parts";
-import { MARK_ORDER, Mark, type PlatformMark } from "./platforms";
+import { Logo, MARK_ORDER, Mark, type PlatformMark } from "./platforms";
 import {
   caseUrl,
   LOGO_WALL,
@@ -75,7 +77,7 @@ function useBox() {
 }
 
 /** A box that fills its parent and hands its size to what it holds. */
-function Fit({
+export function Fit({
   children,
   className = "",
 }: {
@@ -92,14 +94,54 @@ function Fit({
 
 // ------------------------------------------------------------ the pieces
 
+/**
+ * A picture, or, when it is a page of a document we can share, a link to
+ * that document with a chip that says so on hover (proof.ts BRAND_DNA_DOC,
+ * AD_SCRIPT_DOC, OFFER_DOC, OFFER_PACK_DOC, SCRIPTS_DOC). With no link set it
+ * stays a picture: nothing to click.
+ */
+function Shot({
+  pic,
+  lang,
+  className,
+  style,
+}: {
+  pic: Pic;
+  lang: Lang;
+  className: string;
+  style: CSSProperties;
+}) {
+  const img = <img src={pic.src} alt={pic.alt} />;
+  return pic.doc ? (
+    <a
+      className={className}
+      style={style}
+      data-link=""
+      href={pic.doc}
+      target="_blank"
+      rel="noreferrer noopener"
+      aria-label={`${pic.alt}. ${t(OPEN_DOC, lang)}`}
+    >
+      {img}
+      <OpenChip>{t(OPEN_DOC, lang)}</OpenChip>
+    </a>
+  ) : (
+    <figure className={className} style={style}>
+      {img}
+    </figure>
+  );
+}
+
 /** Real screenshots, laid out in rows that fill the box. */
 function Gallery({
   pics,
   box,
+  lang,
   gap = 22,
 }: {
   pics: Pic[];
   box: Box;
+  lang: Lang;
   gap?: number;
 }) {
   const rows = justify(
@@ -118,13 +160,13 @@ function Gallery({
           style={{ gap }}
         >
           {row.map(p => (
-            <figure
+            <Shot
               key={pics[p.i].src}
+              pic={pics[p.i]}
+              lang={lang}
               className="dk-shot"
               style={{ width: p.w, height: p.h }}
-            >
-              <img src={pics[p.i].src} alt={pics[p.i].alt} />
-            </figure>
+            />
           ))}
         </div>
       ))}
@@ -132,8 +174,22 @@ function Gallery({
   );
 }
 
-/** A stack of real documents, fanned out; the last one lies on top. */
-function Fan({ pics, box }: { pics: Pic[]; box: Box }) {
+/**
+ * A stack of real documents, fanned out; the last one lies on top. It runs
+ * with the deck's language unless `ltr` (pages written left to right), when
+ * it runs left to right in Arabic too (proof.ts Media).
+ */
+function Fan({
+  pics,
+  box,
+  lang,
+  ltr = false,
+}: {
+  pics: Pic[];
+  box: Box;
+  lang: Lang;
+  ltr?: boolean;
+}) {
   // Room left at the edges for the tilt and the lift.
   const h = Math.round(Math.min(box.h * 0.84, ...pics.map(p => p.w / p.r)));
   const widths = pics.map(p => p.r * h);
@@ -145,24 +201,29 @@ function Fan({ pics, box }: { pics: Pic[]; box: Box }) {
   const span = step * (pics.length - 1) + last;
   const mid = (pics.length - 1) / 2;
   return (
-    <div className="dk-fan" style={{ width: span, height: box.h }}>
+    <div
+      className="dk-fan"
+      data-ltr={ltr ? "" : undefined}
+      style={{ width: span, height: box.h }}
+    >
       {pics.map((p, i) => (
-        <figure
+        <Shot
           key={p.src}
+          pic={p}
+          lang={lang}
           className="dk-fan-page"
           style={
             {
               width: widths[i],
               height: h,
-              insetInlineStart: step * i,
+              left: ltr ? step * i : undefined,
+              insetInlineStart: ltr ? undefined : step * i,
               zIndex: i + 1,
               "--rot": `${(i - mid) * 3}deg`,
               "--lift": `${Math.abs(i - mid) * 10}px`,
             } as CSSProperties
           }
-        >
-          <img src={p.src} alt={p.alt} />
-        </figure>
+        />
       ))}
     </div>
   );
@@ -206,16 +267,27 @@ function phoneHeight(
   return Math.floor(Math.min(box.h, byWidth, cap));
 }
 
-/** The same page in a browser and on a phone, the phone in front. */
+/**
+ * The same page in a browser and on a phone, the phone in front. With a
+ * live address, the pair is one button that opens the real page in a
+ * pop-up (overlay.tsx), and hovering it says so.
+ */
 function Devices({
   desktop,
   phone,
   box,
+  live,
+  lang,
 }: {
   desktop: Pic;
   phone: Pic;
   box: Box;
+  live?: string;
+  lang: Lang;
 }) {
+  const [open, setOpen] = useState(false);
+  // Pointing at the pair starts the live page loading, a head start on the click.
+  const [warm, setWarm] = useState(false);
   const bar = 44;
   // The browser takes the height; the phone overlaps its far corner.
   let bh = box.h - 24;
@@ -230,11 +302,9 @@ function Devices({
     ph = Math.round(ph * k);
     pw *= k;
   }
-  return (
-    <div
-      className="dk-devices"
-      style={{ width: bw + pw * 0.62, height: bh + 24 }}
-    >
+  const size = { width: bw + pw * 0.62, height: bh + 24 };
+  const pair = (
+    <>
       <div className="dk-browser" style={{ width: bw, height: bh }}>
         <div className="dk-browser-bar">
           <i />
@@ -250,7 +320,55 @@ function Devices({
       <Phone height={ph} ratio={phone.r} className="dk-devices-phone">
         <img src={phone.src} alt={phone.alt} />
       </Phone>
-    </div>
+    </>
+  );
+  if (!live)
+    return (
+      <div className="dk-devices" style={size}>
+        {pair}
+      </div>
+    );
+  return (
+    <>
+      <button
+        type="button"
+        className="dk-devices"
+        data-link=""
+        style={size}
+        aria-haspopup="dialog"
+        aria-label={t(TRY_LIVE, lang)}
+        onPointerEnter={() => setWarm(true)}
+        onFocus={() => setWarm(true)}
+        onClick={() => setOpen(true)}
+      >
+        {pair}
+        <OpenChip center expand>
+          {t(TRY_LIVE, lang)}
+        </OpenChip>
+      </button>
+      {/* Out of sight, from the first hover: the page's pictures are large,
+          so they start before the click, never in the background of a call
+          that does not open it (the page is a static demo, no tracking). */}
+      {warm ? (
+        <span className="dk-live-warm" aria-hidden>
+          <iframe
+            src={live}
+            title="The landing page, loading ahead"
+            tabIndex={-1}
+            sandbox="allow-scripts allow-same-origin"
+          />
+        </span>
+      ) : null}
+      {open ? (
+        <LivePage
+          url={live}
+          lang={lang}
+          desktop={desktop}
+          phone={phone}
+          onClose={() => setOpen(false)}
+        />
+      ) : null}
+    </>
   );
 }
 
@@ -259,20 +377,53 @@ function Chat({ pic, width }: { pic: Pic; width: number }) {
   return (
     <figure className="dk-chat" style={{ width }}>
       <figcaption className="dk-chat-head">
-        <svg width="26" height="26" viewBox="0 0 24 24" aria-hidden>
-          <path
-            fill="#25D366"
-            d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91c0 1.75.46 3.45 1.32 4.95L2.05 22l5.25-1.38c1.45.79 3.08 1.21 4.74 1.21 5.46 0 9.91-4.45 9.91-9.91C21.95 6.45 17.5 2 12.04 2Z"
-          />
-          <path
-            fill="#fff"
-            d="M9.03 7.16c-.2-.45-.41-.46-.6-.47h-.51c-.18 0-.46.07-.71.34-.24.27-.93.91-.93 2.22s.95 2.58 1.09 2.76c.13.18 1.84 2.95 4.55 4.01 2.25.89 2.71.71 3.2.67.49-.04 1.58-.65 1.8-1.27.22-.62.22-1.16.16-1.27-.07-.11-.24-.18-.51-.31-.27-.13-1.58-.78-1.82-.87-.24-.09-.42-.13-.6.13-.18.27-.69.87-.85 1.05-.16.18-.31.2-.58.07-.27-.13-1.13-.42-2.15-1.33-.79-.71-1.33-1.58-1.49-1.85-.16-.27-.02-.41.12-.55.12-.12.27-.31.4-.47.13-.16.18-.27.27-.45.09-.18.04-.33-.02-.47-.07-.13-.59-1.45-.82-1.98Z"
-          />
-        </svg>
+        <Logo mark="whatsapp" size={26} />
         <span>WhatsApp</span>
       </figcaption>
       <img src={pic.src} alt={pic.alt} />
     </figure>
+  );
+}
+
+/**
+ * A reel in Instagram's own post card, cut below the reel. Until the card
+ * has loaded it stands as a quiet tile with Instagram's mark, not a blank
+ * white panel, and the card fades in over it.
+ */
+function Reel({
+  code,
+  title,
+  on,
+  w,
+  h,
+}: {
+  code: string;
+  title: string;
+  on: boolean;
+  w: number;
+  h: number;
+}) {
+  const [loaded, setLoaded] = useState(false);
+  return (
+    <div
+      className="dk-ig"
+      data-loaded={on && loaded ? "" : undefined}
+      style={{ width: w, height: h }}
+    >
+      <span className="dk-ig-wait" aria-hidden>
+        <Logo mark="instagram" size={56} />
+      </span>
+      {on ? (
+        <iframe
+          src={`https://www.instagram.com/reel/${code}/embed/`}
+          title={title}
+          allow="autoplay; encrypted-media; fullscreen"
+          scrolling="no"
+          style={{ height: h + 360 }}
+          onLoad={() => setLoaded(true)}
+        />
+      ) : null}
+    </div>
   );
 }
 
@@ -338,9 +489,9 @@ function StopMedia({
   switch (media.kind) {
     case "shots":
       return media.fan ? (
-        <Fan pics={media.items} box={box} />
+        <Fan pics={media.items} box={box} lang={lang} ltr={media.ltr} />
       ) : (
-        <Gallery pics={media.items} box={box} />
+        <Gallery pics={media.items} box={box} lang={lang} />
       );
     case "phones": {
       const gap = 40;
@@ -356,7 +507,15 @@ function StopMedia({
       );
     }
     case "devices":
-      return <Devices desktop={media.desktop} phone={media.phone} box={box} />;
+      return (
+        <Devices
+          desktop={media.desktop}
+          phone={media.phone}
+          box={box}
+          live={media.live}
+          lang={lang}
+        />
+      );
     case "reels": {
       const gap = 28;
       const marks = media.marks ? 96 : 0;
@@ -443,7 +602,7 @@ function StopMedia({
           {media.items.map((s, i) => (
             <li key={s.en}>
               <span className="dk-num dk-stage-n">
-                {ar(lang) ? `٠${"١٢٣٤٥٦"[i]}` : `0${i + 1}`}
+                {ar(lang) ? "١٢٣٤٥٦"[i] : `0${i + 1}`}
               </span>
               <span className="dk-stage-name">{t(s, lang)}</span>
             </li>
@@ -516,18 +675,13 @@ function StopMedia({
         <div className="dk-row" style={{ gap, alignItems: "flex-start" }}>
           {media.items.map(r => (
             <div key={r.code} className="dk-reel">
-              <div className="dk-ig" style={{ width: w, height: h }}>
-                {on ? (
-                  <iframe
-                    src={`https://www.instagram.com/reel/${r.code}/embed/`}
-                    title={t(r.label, "en")}
-                    allow="autoplay; encrypted-media; fullscreen"
-                    loading="lazy"
-                    scrolling="no"
-                    style={{ height: h + 360 }}
-                  />
-                ) : null}
-              </div>
+              <Reel
+                code={r.code}
+                title={t(r.label, "en")}
+                on={on}
+                w={w}
+                h={h}
+              />
               <span className="dk-small dk-ink2">{t(r.label, lang)}</span>
             </div>
           ))}
@@ -673,10 +827,12 @@ export function tourSlide({
 }) {
   const { lang, tour, setTour } = ctx;
   const at = Math.max(0, Math.min(tour, stops.length - 1));
+  // Past six stops the side is set closer (deck.css, .dk-tour[data-many]).
+  const many = stops.length > 6;
   return (
     <>
       {top}
-      <div className="dk-tour">
+      <div className="dk-tour" data-many={many ? "" : undefined}>
         <div className="dk-tour-side">
           <Rv i={0}>
             <p className="dk-label">{label}</p>
@@ -684,7 +840,7 @@ export function tourSlide({
           <Rv i={1}>
             <h2 className="dk-h2 dk-tour-title">{title}</h2>
           </Rv>
-          <Rv i={2} style={{ marginTop: 26 }}>
+          <Rv i={2} style={{ marginTop: many ? 18 : 26 }}>
             <StopList
               stops={stops}
               at={at}
@@ -843,7 +999,7 @@ export function reviewsSlide(page: number) {
         <Rv i={1}>
           <h2 className="dk-h2" style={{ marginTop: 18 }}>
             {ar(lang)
-              ? "من حساب قوقل.. بدون أي تعديل."
+              ? "من صفحتنا على قوقل.. بدون أي تعديل."
               : "Straight from our Google profile, untouched."}
           </h2>
         </Rv>
@@ -921,9 +1077,15 @@ export function numberOneSlide(ctx: DeckCtx) {
       </Rv>
       <Rv i={2}>
         <div className="dk-n1-stats">
-          {NUMBER_ONE.map(m => (
-            <div key={m.label.en}>
-              <span className="dk-num dk-n1-value">{t(m.value, lang)}</span>
+          {NUMBER_ONE.map((m, i) => (
+            <div
+              key={m.label.en}
+              className="dk-n1-stat"
+              style={{ "--n": i } as CSSProperties}
+            >
+              <span className="dk-num dk-n1-value">
+                <CountUp value={t(m.value, lang)} delay={300 + i * 140} />
+              </span>
               <span className="dk-small">{t(m.label, lang)}</span>
             </div>
           ))}
@@ -931,11 +1093,7 @@ export function numberOneSlide(ctx: DeckCtx) {
       </Rv>
       <div style={{ flex: 1 }} />
       <Rv i={3}>
-        <div className="dk-logo-wall">
-          {LOGO_WALL.map(l => (
-            <img key={l.name} src={l.src} alt={l.name} title={l.name} />
-          ))}
-        </div>
+        <LogoRiver logos={LOGO_WALL} />
       </Rv>
     </>
   );

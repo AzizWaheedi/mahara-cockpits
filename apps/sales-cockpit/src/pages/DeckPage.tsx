@@ -16,8 +16,8 @@ import {
   type ProblemKey,
   t,
 } from "../deck/content";
-import { FaqPanel, Rail } from "../deck/parts";
-import { PROOF_PHOTOS } from "../deck/proof";
+import { FaqPanel, Rail, youtubePoster } from "../deck/parts";
+import { PROOF_PHOTOS, YOUTUBE_VIDEOS } from "../deck/proof";
 import { DECK_PHOTOS, type DeckCtx, deckSlides } from "../deck/slides";
 import { PORTAL_TOUR } from "../deck/tour";
 import { useLead, useQuery } from "../lib/data";
@@ -202,14 +202,15 @@ export default function DeckPage({ me }: { me: Me }) {
     return () => window.removeEventListener("resize", fit);
   }, []);
 
-  // Every photo and portal screen loads in the background once the deck is
-  // up, so no slide waits on its picture in front of the prospect.
+  // Every photo, portal screen and YouTube cover loads in the background once
+  // the deck is up, so no slide waits on its picture in front of the prospect.
   useEffect(() => {
     const timer = window.setTimeout(() => {
       for (const src of [
         ...DECK_PHOTOS,
         ...PROOF_PHOTOS,
         ...PORTAL_TOUR.flatMap(s => [s.src.en, s.src.ar]),
+        ...YOUTUBE_VIDEOS.map(v => youtubePoster(v.id)),
       ]) {
         const img = new Image();
         img.decoding = "async";
@@ -446,10 +447,7 @@ export default function DeckPage({ me }: { me: Me }) {
           Full screen
         </button>
       </div>
-      <div
-        className="dk-chrome"
-        style={{ bottom: 14, left: "50%", transform: "translateX(-50%)" }}
-      >
+      <div className="dk-chrome dk-nav">
         <button
           type="button"
           onClick={() => step(-1)}

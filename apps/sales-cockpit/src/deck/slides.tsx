@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import logoOnDark from "../assets/mahara-logo-dark.png";
 import {
   CURRENCIES,
@@ -42,13 +42,16 @@ import {
 } from "./content";
 import {
   CaseBox,
+  Fit,
   journeySlide,
   numberOneSlide,
   Place,
   reviewsSlide,
   tourSlide,
 } from "./journeys";
+import { OpenChip } from "./overlay";
 import { Out, Rv, Wistia, YouTube } from "./parts";
+import { Mark } from "./platforms";
 import {
   ADS_TOUR,
   CALLS_TOUR,
@@ -57,6 +60,9 @@ import {
   caseUrl,
   JOURNEY,
   MORE_STORIES,
+  PROFILES,
+  PROFILES_AS_OF,
+  type Profile,
   REVIEW_PAGES,
   STORY_PROOF,
 } from "./proof";
@@ -134,7 +140,7 @@ export interface SlideDef {
 
 const S = {
   opening: { en: "Opening", ar: "البداية" },
-  proof: { en: "Partners' results", ar: "نتايج شركاؤنا" },
+  proof: { en: "Partners' results", ar: "نتايج شركائنا" },
   you: { en: "Your situation", ar: "وضعك" },
   system: { en: "The system", ar: "النظام" },
   program: { en: "The program", ar: "البرنامج" },
@@ -302,7 +308,7 @@ function cover(ctx: DeckCtx) {
             style={{ maxWidth: 1000, color: "rgba(242,246,250,.82)" }}
           >
             {rtl
-              ? "إعلانات، فريق اتصال، ونظام إقفال.. نشغلها لك بكل الخليج."
+              ? "إعلانات، فريق اتصال، ونظام لإقفال الصفقات.. نشغلها لك بكل الخليج."
               : "Ads, a calling team and a closing system, run for you across the Gulf."}
           </p>
         </Rv>
@@ -363,7 +369,7 @@ function path(ctx: DeckCtx) {
       <Header
         title={
           rtl
-            ? "من أول إعلان.. لين المشروع الموقّع. نشغل كل الطريق."
+            ? "من أول إعلان.. لين المشروع الموقّع. واحنا نشغل كل شي بينهم."
             : "From the first ad to the signed project. We run all of it."
         }
         lead={
@@ -394,7 +400,8 @@ function path(ctx: DeckCtx) {
                   }}
                 >
                   <span className="dk-num dk-teal" style={{ fontSize: 26 }}>
-                    {rtl ? `٠${"١٢٣٤٥"[i]}` : `0${i + 1}`}
+                    {/* No leading zero in Arabic: ٠ is a dot, so ٠١ reads as ·١. */}
+                    {rtl ? "١٢٣٤٥"[i] : `0${i + 1}`}
                   </span>
                   <span className="dk-h3" style={{ fontSize: rtl ? 36 : 34 }}>
                     {t(p.name, lang)}
@@ -565,7 +572,7 @@ function closingGain(ctx: DeckCtx) {
   return (
     <p className="dk-gain">
       {ar(lang)
-        ? `بأرقامك: لو رفعنا الإقفال ١٠ نقاط بس، هذا ${money} زيادة بالسنة.`
+        ? `بأرقامك: لو نسبة إقفالك زادت ١٠ نقاط بس، هذا ${money} زيادة بالسنة.`
         : `At your numbers, ten more points of closing is worth ${money} a year.`}
     </p>
   );
@@ -705,7 +712,7 @@ function numbersSlide(ctx: DeckCtx) {
   const names: Record<string, L> = {
     booking: { en: "Inquiry to meeting", ar: "من استفسار لموعد" },
     show: { en: "Meeting that happens", ar: "الموعد يصير فعلاً" },
-    close: { en: "Meeting to signature", ar: "من اجتماع لتوقيع" },
+    close: { en: "Meeting to signature", ar: "من موعد لتوقيع" },
   };
   return (
     <>
@@ -851,7 +858,7 @@ function numbersSlide(ctx: DeckCtx) {
             gap.projectsYear >= 0.5 ? (
               <>
                 <p className="dk-label">
-                  {ar(lang) ? "الشي الواحد" : "The one thing"}
+                  {ar(lang) ? "أهم شغلة" : "The one thing"}
                 </p>
                 <p style={{ fontSize: 36, fontWeight: 600, lineHeight: 1.3 }}>
                   {ar(lang) ? "لو صلحنا بس " : "Fix only "}
@@ -870,18 +877,18 @@ function numbersSlide(ctx: DeckCtx) {
                 </p>
                 <p className="dk-body">
                   {ar(lang)
-                    ? `${tok["EXTRA PROJECTS A YEAR"] ?? ""} بالسنة${tok["GAP YEAR"] ? "، بمتوسطك" : ""}. بدون ما تصرف ولا فلس زيادة على الإعلانات.`
+                    ? `${tok["EXTRA PROJECTS A YEAR"] ?? ""} بالسنة${tok["GAP YEAR"] ? "، بمتوسط مشروعك" : ""}. بدون ما تصرف ولا فلس زيادة على الإعلانات.`
                     : `${tok["EXTRA PROJECTS A YEAR"] ?? ""} a year${tok["GAP YEAR"] ? " at your average project" : ""}. Without spending a dollar more on ads.`}
                 </p>
               </>
             ) : (
               <>
                 <p className="dk-label">
-                  {ar(lang) ? "الشي الواحد" : "The one thing"}
+                  {ar(lang) ? "أهم شغلة" : "The one thing"}
                 </p>
                 <p className="dk-body">
                   {ar(lang)
-                    ? "نعبي الاستفسارات، المواعيد، اللي حضروا، واللي وقّعوا.. ونشوف وين أكبر تسريب."
+                    ? "نعبي الاستفسارات، المواعيد، اللي حضروا، واللي وقّعوا.. ونشوف وين تضيع أكثر فرص."
                     : "Fill in inquiries, meetings, show-ups and signatures, and the biggest leak shows here."}
                 </p>
               </>
@@ -1029,7 +1036,7 @@ function systemSlide(ctx: DeckCtx) {
                 }}
               >
                 <span className="dk-num dk-teal" style={{ fontSize: 26 }}>
-                  {ar(lang) ? `٠${"١٢٣٤٥"[i]}` : `0${i + 1}`}
+                  {ar(lang) ? "١٢٣٤٥"[i] : `0${i + 1}`}
                 </span>
                 <span
                   style={{
@@ -1082,7 +1089,7 @@ function speedSlide(ctx: DeckCtx) {
         label={rtl ? "ليش السرعة" : "Why speed"}
         title={
           rtl
-            ? "أول خمس دقايق.. تقرر الليد."
+            ? "أول خمس دقايق.. تحدد مصير الليد."
             : "The first five minutes decide the lead."
         }
         wide={1100}
@@ -1109,7 +1116,7 @@ function speedSlide(ctx: DeckCtx) {
           }}
         >
           {rtl
-            ? "احتمال تأهّل الليد لو اتصلت خلال ٥ دقايق.. مقارنة بـ٣٠ دقيقة."
+            ? "احتمال أعلى إن الليد يتأهل لو اتصلت خلال ٥ دقايق.. بدال ٣٠ دقيقة."
             : "more likely to qualify a lead when you call within 5 minutes instead of 30."}
         </p>
         <p className="dk-small" style={{ marginTop: 18 }}>
@@ -1223,7 +1230,7 @@ function phoneSlide(ctx: DeckCtx, on: boolean) {
     },
     {
       en: "Your results and what needs you, at a glance",
-      ar: "نتايجك واللي يبيك.. بنظرة وحدة",
+      ar: "نتايجك واللي ناطرك.. بنظرة وحدة",
     },
     {
       en: "Reminders when a meeting still needs an outcome",
@@ -1511,7 +1518,7 @@ function budgetSlide(ctx: DeckCtx) {
     <>
       <Header
         label={ar(lang) ? "ميزانية الإعلانات" : "The ad budget"}
-        title={ar(lang) ? "شنو تجيب ميزانيتك." : "What your ad budget buys."}
+        title={ar(lang) ? "شنو تييب لك ميزانيتك." : "What your ad budget buys."}
         lead={
           ar(lang)
             ? "الميزانية تروح للمنصات مباشرة. احنا ما نلمسها."
@@ -1557,7 +1564,7 @@ function budgetSlide(ctx: DeckCtx) {
             </span>
             <span className="dk-body">
               {ar(lang)
-                ? `على ${usd(CAMPAIGNS.perLead, lang)} للاستفسار`
+                ? `بمعدل ${usd(CAMPAIGNS.perLead, lang)} للاستفسار`
                 : `at ${usd(CAMPAIGNS.perLead, lang)} an inquiry`}
             </span>
           </div>
@@ -1578,7 +1585,7 @@ function budgetSlide(ctx: DeckCtx) {
             </span>
             <span className="dk-body">
               {ar(lang)
-                ? `على ${usd(CAMPAIGNS.perBooking, lang)} للموعد`
+                ? `بمعدل ${usd(CAMPAIGNS.perBooking, lang)} للموعد`
                 : `at ${usd(CAMPAIGNS.perBooking, lang)} a booking`}
             </span>
           </div>
@@ -1876,6 +1883,186 @@ function closeSlide(ctx: DeckCtx) {
   );
 }
 
+// --------------------------------------------------------- our channels
+
+/** A count in the deck's digits: 2,855, ٢٬٨٥٥. */
+const sayCount = (n: number, lang: Lang) => {
+  const en = n.toLocaleString("en-US");
+  return ar(lang)
+    ? en.replace(/\d/g, d => "٠١٢٣٤٥٦٧٨٩"[Number(d)]).replace(/,/g, "٬")
+    : en;
+};
+
+const prefersStill = () =>
+  window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+
+/**
+ * A figure that runs up to its value as the slide comes in, at the #1
+ * page's pace (motion.tsx CountUp: 1.5 s, easing out). Its own because a
+ * follower count has a thousands comma, which CountUp's figure() does not
+ * read.
+ */
+function Count({ n, lang, delay }: { n: number; lang: Lang; delay: number }) {
+  const [v, setV] = useState(() => (prefersStill() ? n : 0));
+  useEffect(() => {
+    if (prefersStill()) {
+      setV(n);
+      return;
+    }
+    let raf = 0;
+    const start = performance.now() + delay;
+    const tick = (now: number) => {
+      const k = Math.min(1, Math.max(0, (now - start) / 1500));
+      setV(Math.round(n * (1 - (1 - k) ** 4)));
+      if (k < 1) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [n, delay]);
+  const final = sayCount(n, lang);
+  return (
+    <span className="dk-num dk-channel-value">
+      <span className="sr-only">{final}</span>
+      <span aria-hidden style={{ minWidth: `${final.length}ch` }}>
+        {sayCount(v, lang)}
+      </span>
+    </span>
+  );
+}
+
+const PLATFORM: Record<Profile["key"], L> = {
+  youtube: { en: "YouTube", ar: "يوتيوب" },
+  instagram: { en: "Instagram", ar: "إنستقرام" },
+};
+
+/** A profile page as it showed, a link to it, its counters ringed. */
+function ProfileCard({
+  p,
+  lang,
+  height,
+}: {
+  p: Profile;
+  lang: Lang;
+  height: number;
+}) {
+  const pct = (f: number) => `${(f * 100).toFixed(2)}%`;
+  return (
+    <a
+      className="dk-profile"
+      data-link=""
+      href={p.href}
+      target="_blank"
+      rel="noreferrer noopener"
+      style={{ width: Math.round(height * p.shot.r), height }}
+      aria-label={`${p.shot.alt}. ${t(p.open, lang)}`}
+    >
+      <img src={p.shot.src} alt="" />
+      <i
+        className="dk-profile-ring"
+        aria-hidden
+        style={{
+          left: pct(p.spot.x),
+          top: pct(p.spot.y),
+          width: pct(p.spot.w),
+          height: pct(p.spot.h),
+        }}
+      />
+      <OpenChip>{t(p.open, lang)}</OpenChip>
+    </a>
+  );
+}
+
+/** A profile's figures, set large beside its screenshot. */
+function ProfileFigures({ p, lang, i }: { p: Profile; lang: Lang; i: number }) {
+  return (
+    <div className="dk-channel-figs" data-side={i === 0 ? "start" : "end"}>
+      <span className="dk-channel-name">
+        <Mark mark={p.key} size={44} />
+        <span>{t(PLATFORM[p.key], lang)}</span>
+      </span>
+      {p.figures.map((f, j) => (
+        <div key={f.label.en} className="dk-channel-fig">
+          <Count n={f.n} lang={lang} delay={520 + (i * 2 + j) * 160} />
+          <span className="dk-channel-label">{t(f.label, lang)}</span>
+        </div>
+      ))}
+      {p.note ? (
+        <span className="dk-pill dk-channel-note">
+          <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden>
+            <path
+              d="M6.5 12.5l3.6 3.6L17.5 8.5"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.6"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+          {t(p.note, lang)}
+        </span>
+      ) : null}
+      <bdi className="dk-channel-handle" dir="ltr">
+        {p.handle}
+      </bdi>
+    </div>
+  );
+}
+
+/**
+ * Our own channels at the end of the deck (Aziz, 2026-10-08: "take a
+ * screenshot of our ig and yt profiles with the vids on the grid so it
+ * shows all the stuff and our numbers"). Each profile is its real page,
+ * one click from the live one, its counters ringed on the screenshot and
+ * set large beside it; the two sets of figures meet in the middle.
+ */
+function channelsSlide(ctx: DeckCtx) {
+  const { lang } = ctx;
+  const [yt, ig] = PROFILES;
+  const figs = 270;
+  const near = 44;
+  const middle = 64;
+  return (
+    <>
+      <Rv i={0}>
+        <p className="dk-label">{ar(lang) ? "قنواتنا" : "Our channels"}</p>
+      </Rv>
+      <Rv i={1}>
+        <h2 className="dk-h2" style={{ marginTop: 12 }}>
+          {ar(lang)
+            ? "نعلّم السوق جدام الكل.. تابعنا."
+            : "We teach the industry in public. Follow along."}
+        </h2>
+      </Rv>
+      <Rv i={2} className="dk-channels">
+        <Fit>
+          {box => {
+            const room = box.w - figs * 2 - near * 2 - middle;
+            const h = Math.floor(
+              Math.min(box.h, room / (yt.shot.r + ig.shot.r)),
+            );
+            return (
+              <div className="dk-channels-row" style={{ gap: near }}>
+                <ProfileCard p={yt} lang={lang} height={h} />
+                <div
+                  className="dk-channels-mid"
+                  style={{ width: figs * 2 + middle, gap: middle }}
+                >
+                  <ProfileFigures p={yt} lang={lang} i={0} />
+                  <ProfileFigures p={ig} lang={lang} i={1} />
+                </div>
+                <ProfileCard p={ig} lang={lang} height={h} />
+              </div>
+            );
+          }}
+        </Fit>
+      </Rv>
+      <Rv i={3}>
+        <p className="dk-channels-source">{t(PROFILES_AS_OF, lang)}</p>
+      </Rv>
+    </>
+  );
+}
+
 // ---------------------------------------------------------- the order
 
 export function deckSlides(): SlideDef[] {
@@ -1899,7 +2086,7 @@ export function deckSlides(): SlideDef[] {
     {
       id: "results",
       section: S.proof,
-      title: { en: "Partners' results", ar: "نتايج شركاؤنا" },
+      title: { en: "Partners' results", ar: "نتايج شركائنا" },
       render: c => results(c),
     },
     ...ALL_STORIES.map(
@@ -1948,10 +2135,10 @@ export function deckSlides(): SlideDef[] {
           ctx: c,
           on,
           label: ar(c.lang)
-            ? "نعطي السوق كله"
+            ? "نعطي للسوق كله"
             : "We give to the whole industry",
           title: ar(c.lang)
-            ? "نفس الأنظمة اللي نشغلها لشركاؤنا.. نشرحها ببلاش."
+            ? "نفس الأنظمة اللي نشغلها لشركائنا.. نشرحها ببلاش."
             : "The systems we run for partners, explained for free.",
           stops: CONTENT_TOUR,
         }),
@@ -1994,7 +2181,7 @@ export function deckSlides(): SlideDef[] {
           on,
           label: pillarLabel("ads", c.lang),
           title: ar(c.lang)
-            ? "إعلانات يهندسها الذكاء الاصطناعي.. للمشاريع عالية القيمة"
+            ? "إعلانات يبنيها الذكاء الاصطناعي.. للمشاريع عالية القيمة"
             : "Ads engineered by AI, for premium projects",
           stops: ADS_TOUR,
           top: <Bridge ctx={c} pillar="ads" />,
@@ -2047,7 +2234,7 @@ export function deckSlides(): SlideDef[] {
     {
       id: "closing",
       section: S.system,
-      title: { en: "4. Closing mastery", ar: "٤. الإقفال" },
+      title: { en: "4. Closing mastery", ar: "٤. إقفال الصفقات" },
       pillar: "closing",
       faq: "closing",
       stops: CLOSING_TOUR.length,
@@ -2057,7 +2244,7 @@ export function deckSlides(): SlideDef[] {
           on,
           label: pillarLabel("closing", c.lang),
           title: ar(c.lang)
-            ? "إتقان إقفال المشاريع"
+            ? "إتقان توقيع المشاريع"
             : "Project Closing Mastery",
           stops: CLOSING_TOUR,
           top: <Bridge ctx={c} pillar="closing" />,
@@ -2115,6 +2302,14 @@ export function deckSlides(): SlideDef[] {
       title: { en: "Next steps", ar: "الخطوات الياية" },
       railAll: true,
       render: c => nextSlide(c),
+    },
+    {
+      // Our own numbers, at the end (Aziz, 2026-10-08).
+      id: "channels",
+      section: S.program,
+      title: { en: "Our channels", ar: "قنواتنا" },
+      railAll: true,
+      render: c => channelsSlide(c),
     },
     {
       id: "close",

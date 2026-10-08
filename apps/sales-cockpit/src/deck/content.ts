@@ -57,7 +57,7 @@ export const PILLARS: Pillar[] = [
     name: { en: "Targeted premium ads", ar: "إعلانات للمشاريع عالية القيمة" },
     line: {
       en: "Ads that reach owners with real projects and real budgets.",
-      ar: "إعلانات توصل لأصحاب المشاريع الحقيقية والميزانيات الحقيقية.",
+      ar: "إعلانات توصل لأصحاب مشاريع حقيقية.. وعندهم ميزانية حقيقية.",
     },
   },
   {
@@ -80,11 +80,11 @@ export const PILLARS: Pillar[] = [
   },
   {
     key: "closing",
-    short: { en: "Closing", ar: "الإقفال" },
-    name: { en: "Project closing mastery", ar: "إتقان إقفال المشاريع" },
+    short: { en: "Closing", ar: "إقفال الصفقات" },
+    name: { en: "Project closing mastery", ar: "إتقان توقيع المشاريع" },
     line: {
       en: "Training and reviews of your real calls, so you sign more of the people you meet.",
-      ar: "تدريب ومراجعة لمكالماتك الحقيقية.. عشان توقّع مع أكثر ناس تقابلهم.",
+      ar: "تدريب ومراجعة لمكالماتك الحقيقية.. عشان توقّع مع عدد أكبر من اللي تقابلهم.",
     },
   },
   {
@@ -126,12 +126,12 @@ export const PROBLEMS: Problem[] = [
     },
     sub: {
       en: "Good months are random. Slow months are scary.",
-      ar: "الشهر الزين صدفة.. والشهر البطيء يخرعك.",
+      ar: "الشهر الزين صدفة.. والشهر الهادي يخرعك.",
     },
     pillars: ["ads"],
     bridge: {
       en: "You said you depend on referrals. This is how you take control of your pipeline.",
-      ar: "قلت إن شغلك على التوصيات.. هذا اللي يعطيك تحكم بالبايبلاين مالك.",
+      ar: "قلت إن شغلك على التوصيات.. وهذا اللي يخلي المشاريع الياية بإيدك انت.",
     },
   },
   {
@@ -147,14 +147,14 @@ export const PROBLEMS: Problem[] = [
     pillars: ["ads", "filter"],
     bridge: {
       en: "You've been burned before. Here is what is different this time.",
-      ar: "جربت قبل وما نفع.. هذا الفرق هالمرة.",
+      ar: "جربت قبل وما نفع.. وهذا اللي مختلف هالمرة.",
     },
   },
   {
     key: "social",
     says: {
       en: "We post on social media, but no real inquiries come.",
-      ar: "ننزل بالسوشال ميديا.. بس ماكو استفسارات حقيقية.",
+      ar: "ننزل محتوى بالسوشال ميديا.. بس ماكو استفسارات حقيقية.",
     },
     sub: {
       en: "Likes don't sign contracts.",
@@ -170,7 +170,7 @@ export const PROBLEMS: Problem[] = [
     key: "quality",
     says: {
       en: "We get inquiries, but they're not serious.",
-      ar: "يينا استفسارات.. بس مو جادين.",
+      ar: "يينا استفسارات.. بس أصحابها مو جادين.",
     },
     sub: {
       en: "Wrong budget, wrong project, not ready. And they eat your week.",
@@ -179,14 +179,14 @@ export const PROBLEMS: Problem[] = [
     pillars: ["filter", "sales"],
     bridge: {
       en: "Your inquiries aren't serious. This filters them before they reach you.",
-      ar: "استفساراتك مو جادة.. هذا يفلترهم قبل لا يوصلون لك.",
+      ar: "اللي يستفسرون عندك مو جادين.. وهذا يفلترهم قبل لا يوصلون لك.",
     },
   },
   {
     key: "volume",
     says: {
       en: "We close well. We need more of the right projects.",
-      ar: "نقفل زين.. بس نبي فرص أكثر.",
+      ar: "نقفل زين.. بس نبي مشاريع مناسبة أكثر.",
     },
     sub: {
       en: "The pipeline is the bottleneck, not your selling.",
@@ -266,7 +266,7 @@ export const STORIES: Story[] = [
     trade: { en: "Design and build", ar: "تصميم وتنفيذ" },
     result: {
       en: "Revenue tripled in three months.",
-      ar: "الدخل تضاعف ٣ مرات بثلاث شهور.",
+      ar: "الدخل صار ٣ أضعاف خلال ٣ شهور.",
     },
     why: {
       en: "A design-and-build office owner, named and on camera.",
@@ -334,7 +334,7 @@ export const STORIES: Story[] = [
     trade: { en: "Contracting", ar: "مقاولات" },
     result: {
       en: "15+ new clients in two weeks.",
-      ar: "١٥ عميل يديد وأكثر خلال أسبوعين.",
+      ar: "أكثر من ١٥ عميل يديد خلال أسبوعين.",
     },
     why: {
       en: "Eight months of a quiet phone before. He bought a second phone just for the new clients.",
@@ -471,7 +471,7 @@ export const FAQS: Record<PillarKey, Faq[]> = {
       },
       a: {
         en: "Most partners start at $30 to $50 a day. It goes straight to Instagram, Snapchat, TikTok or Google. We never touch it.",
-        ar: "أغلب شركاؤنا يبدون من ٣٠ لـ٥٠ دولار باليوم. تروح مباشرة لإنستقرام وسناب وتيك توك وقوقل.. احنا ما نلمسها.",
+        ar: "أغلب شركائنا يبدون من ٣٠ لـ٥٠ دولار باليوم. تروح مباشرة لإنستقرام أو سناب أو تيك توك أو قوقل.. واحنا ما نلمسها.",
       },
     },
     {
@@ -648,8 +648,8 @@ export const TIMELINE: { when: L; what: L }[] = [
   {
     when: { en: "Month 2", ar: "الشهر الثاني" },
     what: {
-      en: "The platforms learn who your client is. Cost per lead comes down, show-up goes up.",
-      ar: "المنصات تتعلم منو عميلك. تكلفة الليد تنزل، والحضور يرتفع.",
+      en: "The platforms learn who your client is. Cost per lead usually comes down, and show-up goes up.",
+      ar: "المنصات تتعلم منو عميلك. وعادةً تكلفة الليد تنزل، والحضور يرتفع.",
     },
   },
   {
@@ -665,7 +665,7 @@ export const TIMELINE: { when: L; what: L }[] = [
 export const MILESTONES: L[] = [
   { en: "Launch", ar: "الإطلاق" },
   { en: "First booking", ar: "أول موعد" },
-  { en: "First attended appointment", ar: "أول موعد حضر" },
+  { en: "First attended appointment", ar: "أول عميل حضر" },
   { en: "First won project", ar: "أول مشروع موقّع" },
 ];
 

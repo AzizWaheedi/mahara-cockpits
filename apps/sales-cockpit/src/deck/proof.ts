@@ -49,10 +49,15 @@ import logoPidco from "./assets/proof/logo-pidco.webp";
 import logoRm from "./assets/proof/logo-rm.webp";
 import logoSafad from "./assets/proof/logo-safad.webp";
 import logoTheline from "./assets/proof/logo-theline.webp";
+import offerPack2 from "./assets/proof/offer-pack-2.webp";
+import offerSheet1 from "./assets/proof/offer-sheet-1.webp";
+import offerSheet2 from "./assets/proof/offer-sheet-2.webp";
 import pcmAcademy from "./assets/proof/pcm-academy.webp";
 import pcmCall from "./assets/proof/pcm-call.webp";
 import pcmLesson from "./assets/proof/pcm-lesson.webp";
 import pcmSheet from "./assets/proof/pcm-sheet.webp";
+import profileInstagram from "./assets/proof/profile-instagram.webp";
+import profileYoutube from "./assets/proof/profile-youtube.webp";
 import rvA1 from "./assets/proof/rv-a1.webp";
 import rvA2 from "./assets/proof/rv-a2.webp";
 import rvA3 from "./assets/proof/rv-a3.webp";
@@ -65,7 +70,7 @@ import rvC1 from "./assets/proof/rv-c1.webp";
 import rvC2 from "./assets/proof/rv-c2.webp";
 import rvC3 from "./assets/proof/rv-c3.webp";
 import rvC4 from "./assets/proof/rv-c4.webp";
-import type { L, Story } from "./content";
+import { type L, LINKS, type Story } from "./content";
 
 /**
  * The proof the deck shows, and the step-by-step tours of the system (Aziz,
@@ -134,7 +139,7 @@ export const STORY_PROOF: Record<string, StoryProof> = {
       },
       {
         value: { en: "2", ar: "٢" },
-        label: { en: "markets served", ar: "سوقين" },
+        label: { en: "markets served", ar: "سوق يخدمونه" },
       },
     ],
   },
@@ -181,7 +186,7 @@ export const STORY_PROOF: Record<string, StoryProof> = {
     slug: "joe-and-sera",
     head: {
       en: "From marketing skeptic to a $12.4M-a-year design business.",
-      ar: "ما كان يصدّق بالتسويق.. والحين شركته ماشية على ١٢٫٤ مليون دولار بالسنة.",
+      ar: "ما كان مقتنع بالتسويق.. والحين شركته ماشية على ١٢٫٤ مليون دولار بالسنة.",
     },
     metrics: [
       {
@@ -393,6 +398,20 @@ export const REVIEW_PAGES: Review[][] = [
 
 // ---------------------------------------------------------- the logo wall
 
+/**
+ * Every partner's logo, as maharamedia.com/proof-page shows it on its dark
+ * ground: trimmed to the mark and kept at the page's full size (2026-10-08).
+ * Sources, all under https://maharamedia.com/brand/:
+ *   logos-display/01_BAYT-22.png, 02_SAFAD.png, 03_The-Line.png,
+ *   04_Inverse-Group.png, 05_PG.png, 06_Al-Husseini-Engineering.png (AMHECO),
+ *   07_Elite-Excellence.png, 08_PIDCO-Group.png, 09_Joe-Sera.png;
+ *   logos-funnel/AIVE.png, ARCWANI-Architects.png, CAtech.png, MOFAGE.png,
+ *   Olivar-Design.png, RM-Architectural-Contracting.png;
+ *   logos-clients/kesan.png, life-depth.png, mass-design.png,
+ *   phoenix-united.png.
+ * The four from logos-clients are the page's own small cut-outs (under 220
+ * px); a sharper file has to come from the partner.
+ */
 export const LOGO_WALL: { src: string; name: string }[] = [
   { src: logoBayt22, name: "BAYT 22" },
   { src: logoSafad, name: "SAFAD" },
@@ -455,10 +474,12 @@ export const YOUTUBE_VIDEOS: { id: string; title: L }[] = [
     },
   },
   {
-    id: "_UKmeA357s4",
+    // In place of the AI video (Aziz, 2026-10-08). The Arabic is the
+    // video's own title on the channel.
+    id: "ko_JcVdHl5k",
     title: {
-      en: "I ran a firm's marketing with AI. The result surprised us.",
-      ar: "سويت تسويق شركة مقاولات بالـذكاء الاصطناعي... النتيجة جنونية",
+      en: "$52M in design and build projects: the best way to win clients",
+      ar: "٥٢ مليون دولار مشاريع مقاولات وتصميم… هذي احسن طريقة تجيب عملاء",
     },
   },
   {
@@ -479,6 +500,77 @@ export const YOUTUBE_VIDEOS: { id: string; title: L }[] = [
 
 /** Mahara on Instagram (linked from the YouTube channel's description). */
 export const INSTAGRAM = "https://www.instagram.com/mahara_media/";
+
+/** Where a profile's counters sit on its screenshot, as fractions of its size. */
+export interface Spot {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/** One of our own channels, as its profile page showed it. */
+export interface Profile {
+  key: "youtube" | "instagram";
+  href: string;
+  handle: string;
+  /** The profile page, with its grid of videos. */
+  shot: Pic;
+  /**
+   * The counters' text on the screenshot (measured from the image), ringed
+   * so the large figures point back to them.
+   */
+  spot: Spot;
+  figures: { n: number; label: L }[];
+  /** A fact beside the figures (Instagram's verified tick). */
+  note?: L;
+  open: L;
+}
+
+/**
+ * Our numbers, as the two profile pages showed them on 2026-10-08 (signed
+ * out, captured for the deck). They are a day's count, not a live feed:
+ * when they move, take new screenshots and change both together.
+ */
+export const PROFILES_AS_OF: L = {
+  en: "From the profile pages, 8 October 2026.",
+  ar: "من صفحات الحسابات، ٨ أكتوبر ٢٠٢٦.",
+};
+
+export const PROFILES: Profile[] = [
+  {
+    key: "youtube",
+    href: CHANNEL,
+    handle: "@MaharaMedia",
+    shot: {
+      src: profileYoutube,
+      alt: "Mahara Media on YouTube: 158 subscribers, 20 videos",
+      r: 1800 / 1736,
+      w: 1800,
+    },
+    spot: { x: 0.2906, y: 0.2339, w: 0.1522, h: 0.0092 },
+    figures: [
+      { n: 158, label: { en: "subscribers", ar: "مشترك" } },
+      { n: 20, label: { en: "videos", ar: "فيديو" } },
+    ],
+    open: { en: "Open the channel", ar: "افتح القناة" },
+  },
+  {
+    key: "instagram",
+    href: INSTAGRAM,
+    handle: "@mahara_media",
+    shot: {
+      src: profileInstagram,
+      alt: "Mahara Media on Instagram: 2,855 followers, verified",
+      r: 1500 / 2043,
+      w: 1500,
+    },
+    spot: { x: 0.342, y: 0.072, w: 0.114, h: 0.0108 },
+    figures: [{ n: 2855, label: { en: "followers", ar: "متابع" } }],
+    note: { en: "Verified account", ar: "حساب موثّق" },
+    open: { en: "Open the profile", ar: "افتح الحساب" },
+  },
+];
 
 /**
  * Three reels from @mahara_media: the funnel's numbers, the filters and
@@ -503,7 +595,7 @@ export const REELS: { code: string; label: L }[] = [
     code: "Db54jJitH1L",
     label: {
       en: "“Let me think about it” is rarely a decision",
-      ar: "«خلني أفكر» نادراً يكون قرار",
+      ar: "خلني أفكر.. نادراً يكون قرار",
     },
   },
 ];
@@ -517,16 +609,68 @@ export interface Pic {
   r: number;
   /** Its width in pixels: a layout never draws it larger, so it stays sharp. */
   w: number;
+  /**
+   * The document the picture is a page of. Set, the picture opens it, and
+   * hovering shows "Open the document"; null, it is a picture only.
+   */
+  doc?: string | null;
 }
+
+/**
+ * The documents behind the ads brief, the offer and the call scripts (Aziz,
+ * 2026-10-08: "for the brand dna have a link to the doc if we hover over it
+ * and same thing for the scripts"). A link set, the picture opens it and
+ * hovering shows "Open the document"; null, the picture shows as it is, with
+ * no link and no chip. Every link set here is shared as "anyone with the
+ * link can view", since the prospect opens it on the call: share a document
+ * that way first, then paste its link between the quotes in place of null.
+ */
+/** The Master Brand DNA template (content.maharamedia.com links the same). */
+export const BRAND_DNA_DOC: string | null =
+  "https://docs.google.com/document/d/18e3EmAlNoM6YR6kpoxy0eRpyl-oPIkWRxzEyjC2haqM/view";
+/**
+ * The campaign script file: 24 pages, 11 scripts (the brief beside the Brand
+ * DNA; content.maharamedia.com links the same).
+ */
+export const AD_SCRIPT_DOC: string | null =
+  "https://docs.google.com/document/d/1rXuV43eRLHfoKfbUUe8il8e6U5BcuS40VCrIaiJAKu8/view";
+/**
+ * The offer creation cheat sheet ("One Front-End Session, Five Project
+ * Paths"). It was private when the CEO sent it, so it was to stay off until
+ * shared by link; on 2026-10-08 it opened signed out (the whole document,
+ * not Google's access page), so it is on. If it goes private again, set
+ * null: a prospect would land on the access page.
+ */
+export const OFFER_DOC: string | null =
+  "https://docs.google.com/document/d/1A7e6rECvv-6V6jsxqxP-IRaZujm3zbz9A9D0NJlYdKs/view";
+/** The full acquisition pack: ads, landing page, VSL and booking funnel. */
+export const OFFER_PACK_DOC: string | null =
+  "https://docs.google.com/document/d/1nU6gcpMm3v_pymu9VbQLALiKssbIOkOjo7UPba5n-qc/view";
+/** The call centre's script for a partner (the three script pages): none yet. */
+export const SCRIPTS_DOC: string | null = null;
+
+/**
+ * The content library: how we think about ads, the Brand DNA and the
+ * campaign script file, then every ad format with real examples.
+ */
+export const CONTENT_LIBRARY = "https://content.maharamedia.com/";
 
 /** What one step of a tour shows. */
 export type Media =
-  /** Screenshots laid out to fill the stage; a fan for a stack of documents. */
-  | { kind: "shots"; items: Pic[]; fan?: boolean }
+  /**
+   * Screenshots laid out to fill the stage; a fan for a stack of documents.
+   * With `ltr`, a fan of pages written left to right keeps that order in
+   * Arabic too: the strip of a page that shows under the next one is then
+   * the start of its lines, not their cut-off ends.
+   */
+  | { kind: "shots"; items: Pic[]; fan?: boolean; ltr?: boolean }
   /** Phone screens, side by side. */
   | { kind: "phones"; items: Pic[] }
-  /** The same page in a browser and on a phone. */
-  | { kind: "devices"; desktop: Pic; phone: Pic }
+  /**
+   * The same page in a browser and on a phone. With `live`, a click opens
+   * the real page in a pop-up, the pictures standing in until it loads.
+   */
+  | { kind: "devices"; desktop: Pic; phone: Pic; live?: string }
   | { kind: "reels"; ids: { id: string; label: L }[]; marks?: boolean }
   /** A video, with a phone beside it (a page, or a WhatsApp message). */
   | {
@@ -605,11 +749,11 @@ export const ADS_TOUR: Stop[] = [
     },
     what: {
       en: "Your projects and your face, cut for Instagram, TikTok, Snapchat and Google.",
-      ar: "مشاريعك ووجهك انت.. نقصّها لإنستقرام، تيك توك، سناب، وقوقل.",
+      ar: "مشاريعك ووجهك انت.. بإعلانات مفصّلة لإنستقرام، تيك توك، سناب، وقوقل.",
     },
     why: {
       en: "Owners stop for real work. Never for stock footage.",
-      ar: "صاحب المشروع يوقف عند شغل حقيقي.. مو صور ستوك.",
+      ar: "صاحب المشروع يوقف عند شغل حقيقي.. مو لقطات ستوك.",
     },
     media: {
       kind: "reels",
@@ -676,7 +820,7 @@ export const ADS_TOUR: Stop[] = [
       ],
     },
     more: {
-      href: "https://content.maharamedia.com/",
+      href: CONTENT_LIBRARY,
       label: {
         en: "Every ad format, with real examples",
         ar: "كل صيغ الإعلانات.. بأمثلة حقيقية",
@@ -697,12 +841,72 @@ export const ADS_TOUR: Stop[] = [
     media: {
       kind: "shots",
       items: [
-        { src: adsDna, alt: "Master Brand DNA template", r: 0.773, w: 1224 },
+        {
+          src: adsDna,
+          alt: "Master Brand DNA template",
+          r: 0.773,
+          w: 1224,
+          doc: BRAND_DNA_DOC,
+        },
         {
           src: adsBrief,
           alt: "A partner's script brief: hooks and triggers",
           r: 0.772,
           w: 1081,
+          doc: AD_SCRIPT_DOC,
+        },
+      ],
+    },
+    // The library walks the same two documents, then every ad format.
+    more: {
+      href: CONTENT_LIBRARY,
+      label: { en: "The content library", ar: "مكتبة المحتوى" },
+    },
+  },
+  {
+    // The offer creation cheat sheet (the CEO, 2026-10-08: "use this as an
+    // example offer creation cheat sheet"): a real partner's offer, then an
+    // ad script written from it (the acquisition pack's UGC 01) on top. The
+    // pack's cover is left out: its title sits mid-page, under the top page,
+    // so in the fan it read as a blank sheet. The step follows the brief and
+    // says "before the ads", not "first": it is the sixth name in the list.
+    key: "offer",
+    name: { en: "The offer comes before the ads", ar: "العرض قبل الإعلانات" },
+    what: {
+      en: "One first session with bonuses, then the path that suits each project. Every ad, page and script comes from it.",
+      ar: "جلسة وحدة يدخل منها عميلك، معاها بونصات، ووراها المسار اللي يناسب مشروعه.. وكل إعلان وصفحة وسكربت يطلع من هالعرض.",
+    },
+    why: {
+      en: "Your buyer knows exactly what the first meeting gives him. Not just a free consultation.",
+      ar: "عميلك يدري بالضبط شنو بياخذ من أول جلسة.. مو بس استشارة ببلاش.",
+    },
+    media: {
+      kind: "shots",
+      fan: true,
+      // The two cheat sheet pages are English: in Arabic too the fan runs
+      // left to right, so what shows of each is where its lines start.
+      ltr: true,
+      items: [
+        {
+          src: offerSheet1,
+          alt: "Offer cheat sheet: one front-end session, five project paths",
+          r: 1224 / 1584,
+          w: 1224,
+          doc: OFFER_DOC,
+        },
+        {
+          src: offerSheet2,
+          alt: "Offer cheat sheet: the front-end session and its bonus stack",
+          r: 1224 / 1584,
+          w: 1224,
+          doc: OFFER_DOC,
+        },
+        {
+          src: offerPack2,
+          alt: "The acquisition pack: a UGC script, three hooks and the voice-over",
+          r: 1224 / 1584,
+          w: 1224,
+          doc: OFFER_PACK_DOC,
         },
       ],
     },
@@ -712,7 +916,7 @@ export const ADS_TOUR: Stop[] = [
     name: { en: "From inside our ad account", ar: "من داخل حساب الإعلانات" },
     what: {
       en: "Over $1.32M managed in this industry. Twenty ads in one campaign, and the winners stay on.",
-      ar: "أكثر من ١٫٣٢ مليون دولار صرف أدرناه بهالمجال.. وعشرين إعلان بحملة وحدة، والفايز يكمل.",
+      ar: "أكثر من ١٫٣٢ مليون دولار صرف إعلاني أدرناه بهالمجال.. و٢٠ إعلان بحملة وحدة، واللي ينجح منها يكمل.",
     },
     why: {
       en: "We test until the cost of a qualified lead comes down.",
@@ -748,15 +952,15 @@ export const ADS_TOUR: Stop[] = [
 export const JOURNEY: Stop[] = [
   {
     key: "landing",
-    name: { en: "The landing page", ar: "صفحة الهبوط" },
-    short: { en: "Landing page", ar: "صفحة الهبوط" },
+    name: { en: "The landing page", ar: "اللاندنق بيج" },
+    short: { en: "Landing page", ar: "اللاندنق بيج" },
     what: {
       en: "The ad opens a page built to sell, never a WhatsApp chat.",
-      ar: "الإعلان يفتح صفحة مبنية تبيع.. مو محادثة واتساب.",
+      ar: "الإعلان يفتح صفحة مبنية عشان تبيع خدمتك.. مو محادثة واتساب.",
     },
     why: {
       en: "It educates them before anyone spends a minute on them.",
-      ar: "الصفحة تثقفه قبل لا أحد يصرف عليه دقيقة.",
+      ar: "الصفحة تشرح له كل شي.. قبل لا أحد يعطيه دقيقة من وقته.",
     },
     media: {
       kind: "devices",
@@ -772,6 +976,8 @@ export const JOURNEY: Stop[] = [
         r: 0.462,
         w: 828,
       },
+      // Aziz, 2026-10-08: "if we hover or click it it should make it popup".
+      live: LINKS.landing,
     },
   },
   {
@@ -829,7 +1035,7 @@ export const JOURNEY: Stop[] = [
     },
     why: {
       en: "Called within 5 minutes, a lead is 100 times more likely to answer than after 30 (MIT).",
-      ar: "الليد اللي تكلمه خلال ٥ دقايق.. فرصة يرد ١٠٠ مرة أكثر من بعد نص ساعة (دراسة MIT).",
+      ar: "الليد اللي تكلمه خلال ٥ دقايق.. احتمال يرد عليك ١٠٠ مرة أكثر من لو كلمته بعد نص ساعة (دراسة MIT).",
     },
     media: {
       kind: "shots",
@@ -854,12 +1060,12 @@ export const JOURNEY: Stop[] = [
     name: { en: "Booked: a WhatsApp and a video", ar: "انحجز: واتساب وفيديو" },
     short: { en: "Booked", ar: "انحجز" },
     what: {
-      en: "A WhatsApp confirmation, then a second video that sells your firm before the meeting.",
-      ar: "تأكيد على الواتساب، وبعده فيديو ثاني يبيع شركتك قبل الموعد.",
+      en: "A WhatsApp confirmation, then a second video that introduces your firm and builds trust before the meeting.",
+      ar: "تأكيد على الواتساب، وبعده فيديو ثاني يعرّف العميل على شركتك ويقنعه فيك قبل الموعد.",
     },
     why: {
-      en: "They arrive warm, and they show up.",
-      ar: "يوصلك متحمس.. ويحضر.",
+      en: "They arrive warm, and more likely to show up.",
+      ar: "يوصلك متحمس.. وفرصة إنه يحضر أعلى.",
     },
     media: {
       kind: "video",
@@ -918,7 +1124,7 @@ export const CALLS_TOUR: Stop[] = [
     },
     what: {
       en: "A script written for your firm, and a knowledge base of your services and offers.",
-      ar: "سكربت مكتوب لشركتك، وقاعدة معرفة فيها خدماتك وعروضك.",
+      ar: "سكربت مكتوب لشركتك، وملف معلومات فيه كل خدماتك وعروضك.",
     },
     why: {
       en: "Every call sounds like your own team.",
@@ -934,25 +1140,28 @@ export const CALLS_TOUR: Stop[] = [
           alt: "Script: the discovery questions",
           r: 0.773,
           w: 1224,
+          doc: SCRIPTS_DOC,
         },
         {
           src: ccScript2,
           alt: "Script: booking and locking the date",
           r: 0.773,
           w: 1224,
+          doc: SCRIPTS_DOC,
         },
         {
           src: ccScript3,
           alt: "Script: every objection, with its answer",
           r: 0.773,
           w: 1224,
+          doc: SCRIPTS_DOC,
         },
       ],
     },
   },
   {
     key: "stages",
-    name: { en: "The call itself is engineered", ar: "المكالمة نفسها مهندسة" },
+    name: { en: "The call itself is engineered", ar: "المكالمة نفسها مدروسة" },
     what: {
       en: "Six stages, from the first hello to a decision that holds.",
       ar: "ست مراحل.. من أول سلام لين قرار ثابت.",
@@ -978,7 +1187,7 @@ export const CALLS_TOUR: Stop[] = [
     name: { en: "Hear a real call", ar: "اسمع مكالمة حقيقية" },
     what: {
       en: "He was worried about delivery. Our team turned it into his first reason to buy.",
-      ar: "كان شايل هم التسليم.. والفريق قلبها لأول سبب يشتري.",
+      ar: "كان شايل هم التسليم.. والفريق قلبها لأول سبب يخليه يشتري.",
     },
     why: {
       en: "Hundreds of calls like this every week.",
@@ -989,11 +1198,11 @@ export const CALLS_TOUR: Stop[] = [
       id: "ti2alygqn0",
       said: {
         en: "“If we agree, I'll definitely come and visit you.”",
-        ar: "«لو اتفقنا، أكيد لي زيارة لكم.»",
+        ar: "لو اتفقنا، أكيد لي زيارة لكم.",
       },
       replied: {
         en: "“For years we've been known for our delivery dates. Most of the time we deliver early.”",
-        ar: "«إحنا من سنين معروفين بتاريخ التسليم. أغلب الأحيان نسلم قبل الوقت أصلاً.»",
+        ar: "إحنا من سنين معروفين بتاريخ التسليم. أغلب الأحيان نسلم قبل الوقت أصلاً.",
       },
     },
     more: {
@@ -1060,8 +1269,8 @@ export const CLOSING_TOUR: Stop[] = [
     key: "academy",
     name: { en: "Premium Projects Academy", ar: "أكاديمية المشاريع المميزة" },
     what: {
-      en: "Six courses: the start, Google optimisation, the offer, Project Closing Mastery, and your team.",
-      ar: "٦ كورسات: البداية، تحسين قوقل، صناعة العرض، إتقان إقفال المشاريع، والفريق والتشغيل.",
+      en: "Six courses: the start, onboarding, Google optimisation, the offer, Project Closing Mastery, and team and operations.",
+      ar: "٦ كورسات: البداية، الأونبوردنق، تحسين قوقل، صناعة العرض، إتقان توقيع المشاريع، والفريق والتشغيل.",
     },
     why: {
       en: "The frameworks and scripts our best partners use to close 40 to 50% of their proposals.",
@@ -1081,14 +1290,14 @@ export const CLOSING_TOUR: Stop[] = [
   },
   {
     key: "mastery",
-    name: { en: "Project Closing Mastery", ar: "إتقان إقفال المشاريع" },
+    name: { en: "Project Closing Mastery", ar: "إتقان توقيع المشاريع" },
     what: {
       en: "Step by step: the consultation, the proposal, the objections and the close.",
       ar: "خطوة خطوة: الاستشارة، العرض، الاعتراضات، والإقفال.",
     },
     why: {
-      en: "You sign more of the people you meet.",
-      ar: "توقّع مع أكثر ناس تقابلهم.",
+      en: "So you sign more of the people you meet.",
+      ar: "عشان توقّع مع عدد أكبر من اللي تقابلهم.",
     },
     media: {
       kind: "shots",
@@ -1107,7 +1316,7 @@ export const CLOSING_TOUR: Stop[] = [
     name: { en: "Weekly 1:1 check-in calls", ar: "مكالمات أسبوعية ١:١" },
     what: {
       en: "Every week with your success manager: the numbers, the calls, the next move.",
-      ar: "كل أسبوع مع مدير نجاحك: الأرقام، المكالمات، والخطوة الياية.",
+      ar: "كل أسبوع مع مدير حسابك: الأرقام، المكالمات، والخطوة الياية.",
     },
     why: {
       en: "You never work it out alone.",
@@ -1135,8 +1344,8 @@ export const CLOSING_TOUR: Stop[] = [
       ar: "بعد كل موعد نكتب شنو صار وليش.. نطلع وين تطيح الصفقات، ونعطيك الكلام بالضبط.",
     },
     why: {
-      en: "Your close rate rises from your own numbers.",
-      ar: "نسبة إقفالك ترتفع من أرقامك انت.",
+      en: "We work on your close rate from your own numbers.",
+      ar: "نشتغل على نسبة إقفالك.. من أرقامك انت.",
     },
     media: {
       kind: "shots",
@@ -1162,13 +1371,17 @@ export const CONTENT_TOUR: Stop[] = [
     },
     what: {
       en: "Long videos that give away the systems we run for our partners.",
-      ar: "فيديوهات طويلة نعطي فيها نفس الأنظمة اللي نشغلها لشركاؤنا.",
+      ar: "فيديوهات طويلة نعطي فيها نفس الأنظمة اللي نشغلها لشركائنا.",
     },
     why: {
       en: "Firms across the Gulf learn from us before they ever book a call.",
       ar: "الشركات بالخليج تتعلم منا قبل لا تحجز أي مكالمة.",
     },
     media: { kind: "youtube", items: YOUTUBE_VIDEOS },
+    // The channel, not the content library, on both content steps: the
+    // library is the paid ads we make for partners ("Paid ads. Not page
+    // content."), and the ads tour links it twice; here the next click is
+    // the rest of what we teach in public.
     more: {
       href: CHANNEL,
       label: { en: "Mahara on YouTube", ar: "قناة مهارة على يوتيوب" },
@@ -1213,6 +1426,7 @@ export const PROOF_PHOTOS: string[] = [
       }),
     ),
     ...REVIEW_PAGES.flat().map(r => r.src),
+    ...PROFILES.map(p => p.shot.src),
     ...LOGO_WALL.map(l => l.src),
     ...Object.values(STORY_PROOF).flatMap(p => (p.logo ? [p.logo] : [])),
   ]),
