@@ -301,7 +301,7 @@ def scan(sb: Store, token: str, location: str, since: str) -> tuple[int, int]:
 def messages_since(sb: Store, token: str, cid: str, cutoff) -> list[dict]:
     result, seen, cursor = [], set(), None
     for _ in range(20):
-        path = f"/conversations/{urllib.parse.quote(cid)}/messages?limit=50&type=TYPE_CUSTOM_SMS"
+        path = f"/conversations/{urllib.parse.quote(cid)}/messages?limit=50"
         if cursor:
             path += "&lastMessageId=" + urllib.parse.quote(cursor)
         data = ghl(path, token, store=sb)
@@ -311,13 +311,15 @@ def messages_since(sb: Store, token: str, cid: str, cutoff) -> list[dict]:
             raise ValueError("The provider message page is missing")
         crossed_watermark = False
         for message in page:
+            if not isinstance(message, dict) or not isinstance(message.get("messageType"), str) or not message["messageType"]:
+                raise ValueError("The provider message type is missing or invalid")
             mid, at = message.get("id"), iso(message.get("dateAdded"))
             if not isinstance(mid, str) or not mid or mid in seen or at is None:
                 raise ValueError("The provider page contains a missing or repeated message identity")
             seen.add(mid)
             if datetime.fromisoformat(at) < cutoff:
                 crossed_watermark = True
-            else:
+            elif message["messageType"] == "TYPE_CUSTOM_SMS":
                 result.append(message)
         more = raw.get("nextPage") if isinstance(raw, dict) else None
         if crossed_watermark or more is False or (more is not True and len(page) < 50):

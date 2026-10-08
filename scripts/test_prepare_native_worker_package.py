@@ -74,3 +74,26 @@ class PackageTests(unittest.TestCase):
         try:required.symlink_to(target)
         except OSError:self.skipTest('Windows symlink privilege unavailable')
         with self.assertRaises(ValueError):module.build_plan(self.root)
+
+    def test_native_csm_inbox_files_and_doctor_included_and_verified(self):
+        inbox_files = ['hermes/inbox/inbox.py', 'hermes/inbox/tools.py']
+        plan = module.build_plan(self.root)
+        paths = {row['path'] for row in plan['files']}
+        for f in inbox_files:
+            self.assertIn(f, paths)
+        self.assertIn('python3 hermes/inbox/inbox.py --source-only --doctor', plan['doctors'])
+        self.assertIn('GHL_MAHARA_PIT', plan['configuration_names'])
+        self.assertIn('GHL_MAHARA_LOCATION', plan['configuration_names'])
+        self.assertIn('DEEPSEEK_API_KEY', plan['configuration_names'])
+
+        # Missing inbox files fail build_plan
+        (self.root / 'hermes/inbox/inbox.py').unlink()
+        with self.assertRaises(ValueError):
+            module.build_plan(self.root)
+        (self.root / 'hermes/inbox/inbox.py').write_text('// fixture\n')
+
+        # Credentials remain excluded
+        inbox_secret = self.root / 'hermes/inbox/.env'
+        inbox_secret.write_text('GHL_MAHARA_PIT=secret_token\nDEEPSEEK_API_KEY=secret_key\n')
+        plan_with_secret = module.build_plan(self.root)
+        self.assertNotIn('hermes/inbox/.env', {r['path'] for r in plan_with_secret['files']})

@@ -76,7 +76,7 @@ class ObserveStore:
 class InboxDeliveryTests(unittest.TestCase):
     def pull(self, status, direction='outbound', at='2026-10-01T11:00:00Z'):
         store = MemoryStore()
-        message = {'id': 'real-message', 'dateAdded': at, 'direction': direction, 'body': 'Actual provider text', 'status': status}
+        message = {'id': 'real-message', 'dateAdded': at, 'direction': direction, 'body': 'Actual provider text', 'status': status, 'messageType':'TYPE_CUSTOM_SMS'}
         with patch.object(inbox, 'ghl', return_value={'messages': {'messages': [message]}}):
             inbox.pull_thread(store, 'private-fixture-token', 'location', {'id': 'thread', 'contactId': 'contact', 'fullName': 'Group', 'phone': '+86123'}, datetime(2026, 9, 20, tzinfo=timezone.utc))
         return store
@@ -110,10 +110,49 @@ class InboxDeliveryTests(unittest.TestCase):
         self.assertEqual(store.planned_writes, 2)
     def test_invalid_provider_identity_fails_before_write(self):
         store = MemoryStore()
-        with patch.object(inbox, 'ghl', return_value={'messages': [{'dateAdded': '2026-10-01T11:00:00Z', 'direction': 'outbound', 'body': 'text', 'status': 'delivered'}]}):
+        with patch.object(inbox, 'ghl', return_value={'messages': [{'dateAdded': '2026-10-01T11:00:00Z', 'direction': 'outbound', 'body': 'text', 'status': 'delivered', 'messageType':'TYPE_CUSTOM_SMS'}]}):
             with self.assertRaises(ValueError):
                 inbox.pull_thread(store, 'fixture', 'location', {'id': 'thread', 'contactId': 'contact'}, datetime(2026, 9, 20, tzinfo=timezone.utc))
         self.assertEqual(store.tables['wa_messages'], [])
+
+class InboxMessageTypeTests(unittest.TestCase):
+    def test_unfiltered_pages_are_locally_filtered_and_cursor_uses_raw_page(self):
+        pages=[
+            {'messages':[{'id':'wa-1','dateAdded':'2026-10-01T10:00:00Z','messageType':'TYPE_CUSTOM_SMS'},
+                         {'id':'email-raw-last','dateAdded':'2026-10-01T10:01:00Z','messageType':'TYPE_EMAIL'}],'nextPage':True},
+            {'messages':[{'id':'wa-2','dateAdded':'2026-10-01T10:02:00Z','messageType':'TYPE_CUSTOM_SMS'}],'nextPage':False},
+        ]
+        requests=[]
+        def provider(path,*args,**kwargs):
+            requests.append(path)
+            return {'messages':pages.pop(0)}
+        with patch.object(inbox,'ghl',side_effect=provider):
+            result=inbox.messages_since(MemoryStore(),'fixture','thread',datetime(2026,9,20,tzinfo=timezone.utc))
+        self.assertEqual([row['id'] for row in result],['wa-1','wa-2'])
+        self.assertTrue(all('type=' not in path for path in requests))
+        self.assertIn('lastMessageId=email-raw-last',requests[1])
+
+    def test_pull_thread_never_publishes_sms_or_email_messages(self):
+        store=MemoryStore()
+        messages=[
+            {'id':'wa','dateAdded':'2026-10-01T11:00:00Z','direction':'inbound','body':'WhatsApp','messageType':'TYPE_CUSTOM_SMS'},
+            {'id':'sms','dateAdded':'2026-10-01T11:01:00Z','direction':'inbound','body':'SMS','messageType':'TYPE_SMS'},
+            {'id':'email','dateAdded':'2026-10-01T11:02:00Z','direction':'inbound','body':'Email','messageType':'TYPE_EMAIL'},
+        ]
+        with patch.object(inbox,'ghl',return_value={'messages':{'messages':messages,'nextPage':False}}):
+            inbox.pull_thread(store,'fixture','location',{'id':'thread','contactId':'contact'},datetime(2026,9,20,tzinfo=timezone.utc))
+        self.assertEqual([row['id'] for row in store.tables['wa_messages']],['wa'])
+
+    def test_missing_or_invalid_message_type_fails_before_publication(self):
+        for value in (None, '', 7):
+            with self.subTest(message_type=value):
+                store=MemoryStore()
+                message={'id':'unknown','dateAdded':'2026-10-01T11:00:00Z','direction':'inbound','body':'Unknown type'}
+                if value is not None: message['messageType']=value
+                with patch.object(inbox,'ghl',return_value={'messages':{'messages':[message],'nextPage':False}}):
+                    with self.assertRaises(ValueError):
+                        inbox.pull_thread(store,'fixture','location',{'id':'thread','contactId':'contact'},datetime(2026,9,20,tzinfo=timezone.utc))
+                self.assertEqual(store.tables['wa_messages'],[])
 
 class InboxActivationTests(unittest.TestCase):
     def run_main(self, argv, scan_side_effect=None, store=None, draft_side_effect=None):
