@@ -255,6 +255,13 @@ const CALL_CENTER_METRICS: [
 
 export const DEFINITIONS: MetricDefinition[] = [
   ...WEBINAR_DEFINITIONS,
+  // Portal daily snapshots are not reconstructible after sessions expire or
+  // access/CRM records change. The CEO publisher requires each daily metric
+  // to have a matching definition before it accepts the section.
+  d("portal.liveSessions", "portal", "Live client sessions", "Active client sessions in the portal state at the daily capture time.", B2B, "count", "Staff sessions and expired sessions."),
+  d("portal.withAccess", "portal", "Clients with portal access", "Current directory clients with at least one portal access principal at the daily capture time.", B2B, "count", "Cancelled clients with access."),
+  d("portal.seen7d", "portal", "Clients seen in seven days", "Client identities with a portal session last seen in the seven days before the daily capture.", B2B, "count", "Expired session history that the portal no longer retains."),
+  d("portal.crmConnected", "portal", "Clients with connected CRM", "Current directory clients with a connected CRM in portal state at the daily capture time.", B2B, "count", "Cancelled clients and disconnected CRM links."),
   // Historical finance series use the adapter's real reporting period, not today's headline window.
   d("money.failedCharges.count30d", "money", "Failed charges in 30 days", "Number of failed charges reported by the money adapter over its last 30 days.", B2B, "count"),
   d("money.failedCharges.amount30d", "money", "Failed charge amount in 30 days", "Total failed charge amount over the money adapter's last 30 days.", B2B, "usd", "Successful collections."),
@@ -947,6 +954,15 @@ export const DEFINITIONS: MetricDefinition[] = [
     "cockpit_people",
     "count",
   ),
+  d(
+    "team.actions",
+    "team",
+    "Team actions today",
+    "Count of human actions today: meaningful human Meta edits and real human card comments, with automated machines and Aziz excluded.",
+    "Native Meta event and comment repository",
+    "count",
+    "Does not claim full staff productivity. Excludes Hermes, bots, automated scripts, and leadership edits.",
+  ),
   // --- organic ---
   d(
     "organic.instagram_followers",
@@ -982,6 +998,47 @@ export const DEFINITIONS: MetricDefinition[] = [
     "count",
   ),
 ];
+
+// Keep original daily-series names. Their definitions belong to the same
+// catalogue as current values; publication requires both to be registered.
+DEFINITIONS.push(
+  d('b2bAds.running','b2bAds','Running ads','Number of running ads in the prepared account payload.','Meta ad delivery','count'),
+  d('b2bAds.spend7','b2bAds','Seven-day spend','Account spend over the prepared seven-day window.','Meta account insights','usd'),
+  d('b2bAds.leads7','b2bAds','Seven-day leads','Attributed CRM leads over the prepared seven-day window.','B2B CRM attribution','count'),
+  d('b2bAds.metaLeads7','b2bAds','Seven-day Meta leads','Meta-reported leads over the prepared seven-day window.','Meta account insights','count'),
+  d('b2bAds.campaign.spend7','b2bAds','Campaign seven-day spend','Campaign spend over the prepared seven-day window.','Meta campaign insights','usd'),
+  d('clients.highRisk','clients','High-risk clients','Live clients whose prepared risk level is high.','ClickUp client roster and verified client signals','count'),
+  d('clients.term.noRenewal','clients','Ended terms without renewal','Client terms classified as ended without renewal.','ClickUp client terms','count'),
+  d('clients.term.dueSoon','clients','Renewals due soon','Client terms classified as due for renewal soon.','ClickUp client terms','count'),
+  d('clients.churn.launchedMtd','clients','Launched clients churned this month','Launched clients recorded as churned during the complete month-to-date history.','Canonical client churn history','count'),
+  d('clients.churn.lostBeforeLaunchMtd','clients','Clients lost before launch this month','Clients recorded as lost before launch during complete month-to-date history.','Canonical client churn history','count'),
+  d('clients.churn.rateMtd','clients','Month-to-date churn rate','Prepared churn rate published only when the month history is complete.','Canonical client churn history','share'),
+  d('clients.extensions.weeksMtd','clients','Extension weeks this month','Total extension weeks in the prepared month-to-date client records.','Canonical client extensions','count'),
+  d('clients.extensions.live','clients','Live extensions','Clients whose prepared extension is currently live.','Canonical client extensions','count'),
+  d('clients.launch.averageDays','clients','Average days to launch','Prepared average time from client card creation to launch.','ClickUp client creation and launch dates','days'),
+  d('clients.retainer.averageUsd','clients','Average client retainer','Prepared average retainer converted to USD.','ClickUp client retainers','usd'),
+  d('clients.bucket','clients','Client status bucket','Numeric status code: active 0, onboarding 1, paused 2, churned 3.','ClickUp client roster','count','A category code, not a client count.'),
+  d('clients.launchDay','clients','Client launch day','Client launch date encoded as days since the Unix epoch.','ClickUp client Launch Date','days','A date encoding, not elapsed time.'),
+  d('delivery.accountIssues','delivery','Account issues','Number of prepared account issues from verified delivery inputs.','Canonical media buyer delivery feeds','count'),
+  d('delivery.campaigns.running','delivery','Running campaigns','Number of campaigns classified as currently running.','Canonical Meta delivery tree','count'),
+  d('delivery.campaigns.kill','delivery','Campaigns marked to stop','Running campaigns whose prepared verdict is kill.','Canonical Meta delivery tree','count'),
+  d('delivery.campaigns.boardOffButRunning','delivery','Off-board campaigns running','Running campaigns whose board state is off.','Canonical Meta delivery tree and campaign board','count'),
+  d('delivery.campaigns.spendingNotOnBoard','delivery','Spending campaigns outside the board','Number of prepared off-board spending campaigns.','Canonical off-board campaign feed','count'),
+  d('delivery.launches.stuck','delivery','Stuck launches','Number of prepared launches classified as stuck.','Canonical onboarding and launch feeds','count'),
+  d('growth.demoShowRate.mtd','growth','Month-to-date demo show rate','Prepared month-to-date demo show rate.','B2B CRM appointment outcomes','share'),
+  d('growth.demosUnmarked.mtd','growth','Past demos still confirmed','Prepared month-to-date count of past demos still marked confirmed.','B2B CRM appointment outcomes','count','The original series name is retained.'),
+  d('hiring.in_funnel','hiring','Candidates in the funnel','Number of live candidates in the prepared hiring funnel.','Canonical hiring records and GHL hiring inputs','count'),
+  d('machine.failingFeeds','machine','Failing feeds','Number of feeds classified as failing by the prepared health checks.','Canonical source health ledger','count'),
+  d('machine.failingJobs','machine','Failing jobs','Number of scheduled jobs classified as failing by the prepared health checks.','Canonical scheduled-job health ledger','count'),
+  d('organic.facebook.followers','organic','Facebook followers','Latest verified Facebook follower count.','Meta Facebook insights','count'),
+  d('organic.instagram.followers','organic','Instagram followers','Latest verified Instagram follower count.','Meta Instagram insights','count'),
+  d('organic.instagram.reach28','organic','Instagram reach over 28 days','Verified Instagram reach over the prepared 28-day window.','Meta Instagram insights','count'),
+  d('organic.youtube.subscribers','organic','YouTube subscribers','Latest verified YouTube subscriber count.','YouTube channel statistics','count'),
+  d('portal.liveSessions','portal','Live portal sessions','Verified active portal session count.','Canonical portal session records','count'),
+  d('portal.withAccess','portal','Clients with portal access','Verified client access-grant count.','Canonical portal access records','count'),
+  d('portal.seen7d','portal','Clients seen in seven days','Verified clients seen over the prepared seven-day window.','Canonical portal access history','count'),
+  d('portal.crmConnected','portal','CRM connections','Verified connected CRM record count.','Canonical portal CRM connection records','count'),
+);
 
 const r = (x: unknown): number | null =>
   typeof x === "number" && Number.isFinite(x) ? x : null;

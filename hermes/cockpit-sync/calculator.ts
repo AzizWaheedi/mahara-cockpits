@@ -118,15 +118,44 @@ export function normalize(s: string): string {
  * from the grain, and with them every per-ad cost per booking. Only the
  * days after the sheet's last one are taken, so no day is counted twice.
  */
+/** The keys one ad-day row is known by: its ad id, and its names. */
+export function rowKeys(r: {
+  date: string;
+  adId?: string;
+  campaign?: string;
+  adSet?: string;
+  adName?: string;
+}): string[] {
+  const keys: string[] = [];
+  if (r.adId) keys.push(`${r.date}|id:${r.adId}`);
+  if (r.campaign && r.adName)
+    keys.push(
+      `${r.date}|${normalize(r.campaign)}|${normalize(r.adSet ?? "")}|${normalize(r.adName)}`,
+    );
+  return keys;
+}
+
 export async function metaRowsForMissingAccounts(
   sheetRows: string[][],
   since: string,
 ): Promise<{ rows: string[][]; accounts: string[] }> {
   const lastInSheet = new Map<string, string>();
+  // Every ad-day the sheet already has. A Meta row matching one is the same
+  // row, whatever either source calls the account: Ardon's spend and leads
+  // were counted twice here until 2026-10-08 (ported from sync.ts e4229c5f).
+  const inSheet = new Set<string>();
   for (const r of sheetRows)
     if (r[C.date] >= since && r[C.account]) {
       const k = normalize(r[C.account]);
       if ((lastInSheet.get(k) ?? "") < r[C.date]) lastInSheet.set(k, r[C.date]);
+      for (const key of rowKeys({
+        date: r[C.date],
+        adId: r[C.adId],
+        campaign: r[C.campaign],
+        adSet: r[C.adSet],
+        adName: r[C.adName],
+      }))
+        inSheet.add(key);
     }
   // A day of slack: the connector fills yesterday some time today, and a
   // sheet one day behind is on schedule, not broken.
@@ -174,6 +203,16 @@ export async function metaRowsForMissingAccounts(
     let guard = 0;
     while (page && guard++ < 10) {
       for (const d of page.data ?? []) {
+        if (
+          rowKeys({
+            date: String(d.date_start ?? ""),
+            adId: String(d.ad_id ?? ""),
+            campaign: String(d.campaign_name ?? ""),
+            adSet: String(d.adset_name ?? ""),
+            adName: String(d.ad_name ?? ""),
+          }).some(k => inSheet.has(k))
+        )
+          continue;
         const leads = num(
           // biome-ignore lint/suspicious/noExplicitAny: Graph rows
           (d.actions ?? []).find((x: any) => x.action_type === "lead")?.value,

@@ -6,7 +6,7 @@ import {
 } from '../../../apps/client-success-cockpit/src/lib/portalTasksCore.ts';
 
 type RpcClient = {
-  rpc: (name: string, args: Record<string, unknown>) => Promise<{data: unknown; error: {message: string} | null}>;
+  rpc: (name: string, args: Record<string, unknown>) => PromiseLike<{data: unknown; error: {message: string} | null}>;
 };
 type Admin = {
   from: (table: string) => {

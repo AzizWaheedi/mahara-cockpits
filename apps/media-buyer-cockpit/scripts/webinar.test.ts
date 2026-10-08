@@ -3,7 +3,7 @@ import { withoutWebinar } from "../convex/ceo/webinarAttribution";
 import { DEFINITIONS, extract } from "../convex/ceo/metricRegistry";
 import { objectionStats, reminderStats } from "../convex/ceo/webinarFollowUp";
 import { type PageVisitor, pageStats } from "../convex/ceo/webinarPage";
-import { webinarReadiness } from "../convex/ceo/webinarReadiness";
+import { webinarReadiness } from "../src/types/ceo/webinarReadiness";
 import {
   merge,
   onesBurst,
@@ -12,7 +12,7 @@ import {
   type ZoomAttendance,
   type ZoomEngagement,
   type ZoomSession,
-} from "../convex/ceo/webinarRoom";
+} from "../src/types/ceo/webinarRoom";
 import { webinarRoundFixture } from "./fixtures/webinarRound";
 
 // The webinar room (convex/ceo/webinarRoom.ts): what Zoom's join and leave

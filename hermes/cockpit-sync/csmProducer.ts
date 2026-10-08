@@ -1,4 +1,4 @@
-import {type Row, unwrap, allAdAccounts, callTool, assertNativeFence} from './runtime';
+import {type Row, unwrap, allAdAccounts, callTool, assertNativeFence, retainSheetFailure} from './runtime';
 import {buildSnapshot, CLIENTS_LIST, CS_LIST} from './csmCadence';
 import {adLeadsByClient, adLeadsFor, adsForClient, adsAccess, liveCounts, metaAccountFor, normTight, gapsFor, callsFor, mergeCalls, pool, PROFILE_CF, cfById, drop, isoDate, cleanDosDonts} from './csmProfileCalculations';
 import {payingState, stateOf, rosterDiff, ROSTER_KINDS, rosterEventId} from './csmRoster';
@@ -178,11 +178,95 @@ export function reconcileRoster(
   };
 }
 
-export async function collectCsm(state: Row, tables: Record<string, Row[]>): Promise<{ tables: Record<string, Row[]>; calendarWindow: { from: number; to: number; checkedAt: number; calendars: { id: string; name: string }[]; eventIds: string[] } }> {
+export function fathomCheckpoint(at: number): Row {
+  if (typeof at !== 'number' || !Number.isFinite(at)) {
+    throw new Error('fathomCheckpoint requires a finite epoch millisecond timestamp');
+  }
+  return {
+    _id: stableId('syncRuns', ['csm', 'native_fathom', at]),
+    kind: 'native_fathom',
+    ok: true,
+    at,
+  };
+}
+
+export function fathomSince(syncRuns: Row[], now: number, optionalSeed?: string): string {
+  let newestAt: number | undefined;
+
+  for (const run of syncRuns) {
+    if (run.kind === 'native_fathom' || run.kind === 'health') {
+      if (run.ok === true) {
+        const at = run.at;
+        if (typeof at !== 'number' || !Number.isFinite(at) || at > now) {
+          throw new Error('Invalid candidate checkpoint: timestamp must be a finite epoch milliseconds not in future');
+        }
+        if (newestAt === undefined || at > newestAt) {
+          newestAt = at;
+        }
+      }
+    }
+  }
+
+  if (newestAt !== undefined) {
+    return new Date(newestAt - 24 * 60 * 60 * 1000).toISOString();
+  }
+
+  if (optionalSeed !== undefined) {
+    if (typeof optionalSeed === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(optionalSeed)) {
+      const parsed = Date.parse(optionalSeed);
+      if (Number.isFinite(parsed) && parsed <= now) {
+        return optionalSeed;
+      }
+    }
+    throw new Error('Verified checkpoint required: provided seed is invalid');
+  }
+
+  throw new Error('Verified checkpoint required: no successful native_fathom or health record found and no valid seed provided');
+}
+
+export interface PerformanceSnapshotResult {
+  performance: Row | undefined;
+  performanceSyncedAt: number | undefined;
+  performanceRetained: boolean;
+}
+
+export async function performanceSnapshot(
+  stage: string | undefined,
+  link: unknown,
+  oldProfile: Row | undefined,
+  today: string | { y: number; m: number; d: number },
+  now: number,
+): Promise<PerformanceSnapshotResult> {
+  const day = typeof today === 'string'
+    ? { y: Number(today.slice(0, 4)), m: Number(today.slice(5, 7)), d: Number(today.slice(8, 10)) }
+    : today;
+
+  if (stateOf(String(stage ?? '')) === 'lost') {
+    const retainedAt = (typeof oldProfile?.performanceSyncedAt === 'number' && Number.isFinite(oldProfile.performanceSyncedAt) && oldProfile.performanceSyncedAt>0)
+      ? oldProfile.performanceSyncedAt
+      : (oldProfile?.performanceRetained!==true && typeof oldProfile?.syncedAt === 'number' && Number.isFinite(oldProfile.syncedAt) && oldProfile.syncedAt>0)
+        ? oldProfile.syncedAt
+        : undefined;
+
+    return {
+      performance: oldProfile?.performance,
+      performanceSyncedAt: oldProfile?.performance ? retainedAt : undefined,
+      performanceRetained: true,
+    };
+  }
+
+  const perf = await sheetPerformance(link, day);
+  return {performance:perf,performanceSyncedAt:perf ? now : undefined,performanceRetained:false};
+}
+export async function collectCsm(state: Row, tables: Record<string, Row[]>, seed?: string): Promise<{ tables: Record<string, Row[]>; calendarWindow: { from: number; to: number; checkedAt: number; calendars: { id: string; name: string }[]; eventIds: string[] } }> {
   await assertNativeFence();
   for (const key of ['clients','csTasks','kpi','appointments','rosterDays','churnEvents','syncRuns','clientProfiles','decisions','reportDocs','outbox'])
     if (!Array.isArray(state.csm?.[key])) throw new Error(`CSM ${key} source is not initialized`);
   const now = Date.now(), today = new Date(now + 10800000).toISOString().slice(0, 10);
+  const checkpoints=unwrap(await callTool('native_fathom_checkpoint_get',{}));
+  if(!Array.isArray(checkpoints)||checkpoints.length>1)throw new Error('Native Fathom publication checkpoint is unverified');
+  const published=checkpoints.length?[fathomCheckpoint(Date.parse(checkpoints[0]?.started_at))]:[];
+  const sinceTimestamp = fathomSince([...state.csm.syncRuns,...published], now, seed);
   const day = {y:Number(today.slice(0,4)),m:Number(today.slice(5,7)),d:Number(today.slice(8,10))};
   const taskRows = async (list: string): Promise<Row[]> => {
     const result = unwrap(await callTool('pd_clickup_proxy_get', {url:`https://api.clickup.com/api/v2/list/${list}/task?include_closed=${list===CLIENTS_LIST}`}));
@@ -219,7 +303,7 @@ export async function collectCsm(state: Row, tables: Record<string, Row[]>): Pro
   const history = mergeDailyStats(state.dailyStats,tables.dailyStats);
   const adLeads = Object.fromEntries(adLeadsByClient(tables.campaigns,history,now).map(r=>[r.key,r]));
   const visibleAccounts = (await allAdAccounts()).map(a=>({name:String(a.name??''),id:String(a.account_id??'')}));
-  const calls = await fathomCalls();
+  const calls = await fathomCalls(sinceTimestamp);
   const clientProfiles = await pool(snapshot.clients,4,async c => {
     const data = parsed.rows.find(r=>r.clickupId===c.taskId) ?? parsed.rows.find(r=>normTight(r.clientName)===normTight(c.name));
     const task = clientTasks.find(t=>t.id===c.taskId), fields = cfById(task ?? {});
@@ -227,10 +311,32 @@ export async function collectCsm(state: Row, tables: Record<string, Row[]>): Pro
     const ads = adsForClient(c.name,tables.campaigns,tables.metaTree);
     const meta = metaAccountFor(c.name,data,ads.find(a=>a.accountId)?.accountId,visibleAccounts);
     const acct = data?.ghlLocationId && data.ghlToken ? {name:data.clientName,locationId:data.ghlLocationId,token:data.ghlToken,clickupId:data.clickupId} : undefined;
-    const perf = await sheetPerformance(sheetLink,day);
-    const lost = acct ? await lostLeads(acct) : undefined;
-    const provisional = acct ? await provisionalFor(acct) : undefined;
     const old = state.csm.clientProfiles.find((p:Row)=>p.taskId===c.taskId || p.clientName===c.name);
+    const isLost = stateOf(String(c.stage ?? '')) === 'lost';
+    let perfSnap:PerformanceSnapshotResult;
+    let performanceError:string|undefined;
+    try{perfSnap=await performanceSnapshot(c.stage,sheetLink,old,day,now);}
+    catch(error){
+      const status=Number((error as Row)?.status??/\b(403|404)\b/.exec(String(error))?.[1]);
+      if(![403,404].includes(status))throw error;
+      retainSheetFailure(error);
+      perfSnap=await performanceSnapshot('Stopped',sheetLink,old,day,now);
+      performanceError=`Performance sheet unavailable (${status}). Confirm read access before refreshing these values.`;
+    }
+    let perf = perfSnap.performance;
+    if (perfSnap.performanceRetained && perf) {
+      const staleAt = perfSnap.performanceSyncedAt !== undefined
+        ? new Date(perfSnap.performanceSyncedAt).toISOString().slice(0, 10)
+        : perf.staleAt;
+      perf = {
+        ...perf,
+        staleReason: performanceError??'Client stopped. Performance history is retained.',
+        staleAt,
+      };
+    }
+    if(performanceError&&!perf)perf={error:performanceError,staleReason:performanceError};
+    const lost = isLost ? old?.lost : (acct ? await lostLeads(acct) : undefined);
+    const provisional = isLost ? old?.provisional : (acct ? await provisionalFor(acct) : undefined);
     const clientCalls = mergeCalls(callsFor(c.name,calls),old?.calls ?? [],c.name);
     const matchingBriefs = (state.callBriefs ?? [])
       .filter((b:Row) => b.clientName === c.name && b.status === 'done')
@@ -264,7 +370,7 @@ export async function collectCsm(state: Row, tables: Record<string, Row[]>): Pro
       launchDate:isoDate(fields[PROFILE_CF.launch]),adsPlatform:drop(fields[PROFILE_CF.platform]),
       profileText:fields[PROFILE_CF.profile]?.value,dosDonts:cleanDosDonts(String(fields[PROFILE_CF.dosDonts]?.value??'')).text,
       links:{clickup:c.taskUrl,sheet:sheetLink,drive:driveLink,ghl:acct?`https://app.maharamedia.com/v2/location/${acct.locationId}/dashboard`:undefined,adAccount:meta?`https://adsmanager.facebook.com/adsmanager/manage/campaigns?act=${meta.id}`:undefined,contract:fields[PROFILE_CF.contract]?.value},
-      performance:perf,ads,live:liveCounts(ads),adsAccess:adsAccess(ads),lost,provisional,
+      performance:perf,performanceSyncedAt:perfSnap.performanceSyncedAt,performanceRetained:perfSnap.performanceRetained,ads,live:liveCounts(ads),adsAccess:adsAccess(ads),lost,provisional,
       adLeads:adLeadsFor(c.name,adLeads),calls:clientCalls,callsBrief,
       updates:state.media.clientComments.filter((r:Row)=>r.taskId===c.taskId),
       gaps:gapsFor({client:{...c,sheetLink,driveLink},row:data,perf,acct,lost,accountId:meta?.visible?meta.id:undefined,onBoard:tables.campaigns.some(k=>normTight(k.clientName)===normTight(c.name)),visibleAccounts,calls:clientCalls.length,clientDataOk:true}),
@@ -272,13 +378,21 @@ export async function collectCsm(state: Row, tables: Record<string, Row[]>): Pro
     };
     return profile;
   });
-  const [kpiRows,calendar]=await Promise.all([churnValues(),staffAppointments(snapshot.clients.map(c=>String(c.name)),today)]);
+  const kpiRead=churnValues().then(rows=>parseKpi(rows,today,now)).catch(error=>{
+    const status=Number((error as Row)?.status??/\b(403|404)\b/.exec(String(error))?.[1]);
+    if(![403,404].includes(status))throw error;
+    retainSheetFailure(error);
+    const id=stableId('kpi',['native-churn-access',today.slice(0,7)]);
+    return [...state.csm.kpi.filter((r:Row)=>r._id!==id),{_id:id,key:'churn_source_unavailable',label:'Churn update unavailable',value:'unfilled',month:today.slice(0,7),source:'Churn tracker',note:`Sheet read failed (${status}). Existing values retain their original dates. Confirm read access before refreshing.`,at:now}];
+  });
+  const [kpi,calendar]=await Promise.all([kpiRead,staffAppointments(snapshot.clients.map(c=>String(c.name)),today)]);
   const appointments=new Map<string,Row>();
   for(const old of state.csm.appointments){
     const start=Date.parse(old.startTime);
     if(!Number.isFinite(start)||start<calendar.from||start>=calendar.to)appointments.set(old.apptId,old);
   }
   for(const row of calendar.rows)appointments.set(row.apptId,row);
+
   // Reports, decisions and delivery history have no replay route and retain their source stamps.
-  return { tables: {...state.csm,clients:snapshot.clients,csTasks:snapshot.tasks,checks:snapshot.checks.map((c:Row)=>({...c,role:'csm',day:today})),rosterDays:roster.rosterDays,churnEvents:roster.churnEvents,clientProfiles,kpi:parseKpi(kpiRows,today,now),appointments:[...appointments.values()].sort((a,b)=>String(a.startTime??'').localeCompare(String(b.startTime??'')))}, calendarWindow: {from:calendar.from,to:calendar.to,checkedAt:calendar.checkedAt,calendars:calendar.calendars,eventIds:calendar.rows.map(row=>String(row.apptId))} };
+  return { tables: {...state.csm,clients:snapshot.clients,csTasks:snapshot.tasks,checks:snapshot.checks.map((c:Row)=>({...c,role:'csm',day:today})),rosterDays:roster.rosterDays,churnEvents:roster.churnEvents,clientProfiles,kpi,appointments:[...appointments.values()].sort((a,b)=>String(a.startTime??'').localeCompare(String(b.startTime??'')))}, calendarWindow: {from:calendar.from,to:calendar.to,checkedAt:calendar.checkedAt,calendars:calendar.calendars,eventIds:calendar.rows.map(row=>String(row.apptId))} };
 }

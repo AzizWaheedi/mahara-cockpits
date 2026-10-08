@@ -2,7 +2,7 @@ import {mkdir,writeFile} from 'node:fs/promises';
 import {resolve,relative,dirname} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createHash,randomUUID} from 'node:crypto';
-import {syncOnce,kuwaitToday} from './calculator';
+import {syncOnce,kuwaitToday,daysAgo} from './calculator';
 import {capture,prepareTables} from './capture';
 import {withNativeContext,assertNativeFence,type NativeRunContext,type Reads,type Row} from './runtime';
 import {doctor,transport,type Env} from './transport';
@@ -14,6 +14,10 @@ import {collectCreative} from './creativeProducer';
 import {collectSharedGoogleCalendars} from './clientCalendars';
 
 export const DRY_RUN=true;
+export function bookingsInWindow(rows:Row[],from:string,to:string){
+ for(const row of rows)if(typeof row.date!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(row.date)||!Number.isFinite(Date.parse(row.date)))throw new Error('Booking date is unverified; no feed published');
+ return rows.filter(row=>row.date>=from&&row.date<=to);
+}
 export async function calculate(state:Row,reads:Reads,runContext:NativeRunContext,env:Env){
  return withNativeContext(reads,runContext,async()=>{
   await assertNativeFence();
@@ -22,18 +26,21 @@ export async function calculate(state:Row,reads:Reads,runContext:NativeRunContex
   const result=await syncOnce(captured.context);
   archiveWinners(state,captured.tables);
   const stillAssets=await captureStills(state,captured.tables,reads);
-  const csmResult=await collectCsm(state,captured.tables),csm=prepareTables(csmResult.tables,state.csm);
+  const csmResult=await collectCsm(state,captured.tables,env.FATHOM_CREATED_AFTER),csm=prepareTables(csmResult.tables,state.csm);
   const googleCalendars=await collectSharedGoogleCalendars(state,env);
   const creative=prepareTables({...state.creative,...await collectCreative(state,captured.tables,csm)},state.creative);
   const tables={...state.media,...prepareTables(captured.tables,{...state.media,campaigns:state.oldCampaigns,ads:state.oldAds,winnersArchive:state.winners,adStills:state.stills})};
+  const workingDay=kuwaitToday(),windowSince=daysAgo(30);
   // Each consumer retains its imported IDs; uploads attach by provider creative identity.
   for(const table of ['campaigns','ads','metaTree','adChanges','inbox','boardCards','offBoardCampaigns','onboardings','launchWatch','dailyStats','bookingEvents','checkProposals','marketPlays','winnersArchive','adStills','clientLinks'])if(!Array.isArray(tables[table]))throw new Error(`Incomplete producer output: ${table}`);
   for(const b of tables.bookingEvents)if(!b.eventId&&!(b.contactId&&b.startTime))throw new Error('Booking event lacks stable provider identity; no publication');
+  // Only refresh the declared complete window. SQL retains earlier imported history.
+  tables.bookingEvents=bookingsInWindow(tables.bookingEvents,windowSince,workingDay);
   const unavailable=tables.campaigns.filter((c:Row)=>!c.internal&&c.serviceMode==='DFY'&&!c.hasGhl);
   if(unavailable.length)throw new Error(`${unavailable.length} DFY campaigns lack verified GHL source; preserve prior bookings`);
   const counts:Record<string,number>={};
   for(const [family,rows]of Object.entries({tables,csm,creative}))for(const [key,value]of Object.entries(rows) as [string,Row[]][])counts[(family==='tables'?'':family+'_')+key]=value.length;
-  return {producer:'media-core',version:1,begun_at:begun,source_snapshot_at:new Date().toISOString(),working_day:kuwaitToday(),window_since:new Date(Date.now()+10800000-30*86400000).toISOString().slice(0,10),tables,csm,creative,csmCalendar:csmResult.calendarWindow,googleCalendars,counts,result,expected:state.expected,stillAssets};
+  return {producer:'media-core',version:1,begun_at:begun,source_snapshot_at:new Date().toISOString(),working_day:workingDay,window_since:windowSince,tables,csm,creative,csmCalendar:csmResult.calendarWindow,googleCalendars,counts,result,expected:state.expected,stillAssets};
  });
 }
 
@@ -41,7 +48,15 @@ export async function rpc(env:Env,name:string,args:Row,request:typeof fetch=fetc
  const allowed:Record<string,true>={cockpit_native_media_state:true,cockpit_native_media_claim:true,cockpit_native_media_fence:true,cockpit_native_media_publish:true,cockpit_native_media_release:true,cockpit_native_media_doctor:true,cockpit_native_media_record_receipts:true};
  if(!Object.hasOwn(allowed,name))throw new Error('Unapproved repository operation');
  if(env.SUPABASE_URL?.replace(/\/$/,'')!=='https://bldgtotkfmhoxmlzowdx.supabase.co'||!env.SUPABASE_SERVICE_ROLE_KEY)throw new Error('Creative Triage service connection required');
- const response=await request(`${env.SUPABASE_URL.replace(/\/$/,'')}/rest/v1/rpc/${name}`,{method:'POST',headers:{apikey:env.SUPABASE_SERVICE_ROLE_KEY,Authorization:`Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,'Content-Type':'application/json'},body:JSON.stringify(args),signal:AbortSignal.timeout(60000)});
+ const send=()=>request(`${env.SUPABASE_URL.replace(/\/$/,'')}/rest/v1/rpc/${name}`,{method:'POST',headers:{apikey:env.SUPABASE_SERVICE_ROLE_KEY,Authorization:`Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,'Content-Type':'application/json'},body:JSON.stringify(args),signal:AbortSignal.timeout(60000)});
+ // A dropped pooled connection never reaches the repository. Reads and the
+ // lease release are safe to resend; claims and publications never are.
+ const resendable=name==='cockpit_native_media_state'||name==='cockpit_native_media_fence'||name==='cockpit_native_media_release'||name==='cockpit_native_media_doctor';
+ let response:Response;
+ for(let attempt=1;;attempt++){
+  try{response=await send();break;}
+  catch(error){if(!resendable||attempt>=3||(error as Error)?.name==='TimeoutError')throw error;await new Promise(r=>setTimeout(r,250*attempt));}
+ }
  if(!response.ok)throw new Error(`Repository ${name} failed (${response.status}); no automatic write retry`);
  return response.json();
 }
@@ -63,7 +78,8 @@ export async function run(options:{apply?:boolean;report:string},env:Env=process
   const runContext:NativeRunContext={receipts:reader.receipts,...(fence?{fence}:{})};
   const state=await rpc(env,'cockpit_native_media_state',{});
   const {stillAssets,...plan}=await calculate(state,reader.reads,runContext,env);
-  if(reader.faults.length)throw new Error(`${reader.faults.length} source reads failed; refusing partial publication`);
+  const unhandled=reader.faults.filter(f=>f.retained_history!==true);
+  if(unhandled.length)throw new Error(`${unhandled.length} source reads failed; refusing partial publication`);
   if(options.apply===true){
    if(!fence)throw new Error('Still upload lacks a live lease context');
    const savedStills=await storeStills(stillAssets,plan.tables,env,fence,reader.receipts);
@@ -103,6 +119,6 @@ if(import.meta.main){
   process.stdout.write(JSON.stringify(result)+'\n');process.exitCode=result.ok&&(!('repository'in result)||result.repository.ok)?0:1;
  }else{
   const index=args.indexOf('--report');if(index<0||!args[index+1])throw new Error('--report outside-repository-path is required');
-  run({apply:args.includes('--apply'),report:args[index+1]}).then(r=>process.stdout.write(JSON.stringify(r)+'\n')).catch(()=>{process.stderr.write('Native feed failed; inspect private report and provider health ledger.\n');process.exitCode=1;});
+  run({apply:args.includes('--apply'),report:args[index+1]}).then(r=>process.stdout.write(JSON.stringify(r)+'\n')).catch(error=>{process.stderr.write(`Native feed failed; inspect private report and provider health ledger. Cause: ${String((error as Error)?.name??'Error')}: ${String((error as Error)?.message??error).replace(/eyJ[\w.-]+|sb_secret_\w+/g,'[redacted]').slice(0,300)}\n`);process.exitCode=1;});
  }
 }

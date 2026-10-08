@@ -635,22 +635,47 @@ export function adLeadsFor(client: string, all: Record<string, Row>): Row | unde
   return hit ? all[hit] : undefined;
 }
 
-/** API matches first, then remembered calls for this client, no duplicate links, newest first, 8 at most. */
+/** API matches merged with cached profile calls, deduplicated by url or title+timestamp, newest first. */
 export function mergeCalls(fresh: Call[], cached: Row[], client: string): Row[] {
-  const seen = new Set<string>();
-  const out: Row[] = [];
-  const rows = [
-    ...fresh.map(c => ({ ...c, kind: "client" })),
-    ...cached.filter(r => r.clientName === client),
-  ];
-  rows.sort((a, b) => (String(a.at) < String(b.at) ? 1 : -1));
-  for (const r of rows) {
-    const key = String(r.url ?? r.title);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(r);
+  const callKey = (r: Row): string => {
+    const u = typeof r.url === "string" ? r.url.trim() : "";
+    if (u) return `url:${u}`;
+    return `json:${JSON.stringify([String(r.title ?? "").trim(), String(r.at ?? "").trim()])}`;
+  };
+
+  const validCached = cached.filter(r => !r.clientName || r.clientName === client);
+
+  const mergedMap = new Map<string, Row>();
+
+  for (const c of validCached) {
+    const k = callKey(c);
+    mergedMap.set(k, { ...c, clientName: client });
   }
-  return out.slice(0, 8);
+
+  for (const f of fresh) {
+    const fRow: Row = { ...f, kind: "client" };
+    if (fRow.clientName && fRow.clientName !== client) {
+      continue;
+    }
+    const k = callKey(fRow);
+    const existing = mergedMap.get(k);
+    if (existing) {
+      const refreshed: Row = { ...existing };
+      for (const field of ["title", "at", "host", "external", "url", "summary", "kind"] as const) {
+        if (fRow[field] !== undefined) {
+          refreshed[field] = fRow[field];
+        }
+      }
+      refreshed.clientName = client;
+      mergedMap.set(k, refreshed);
+    } else {
+      mergedMap.set(k, { ...fRow, clientName: client });
+    }
+  }
+
+  const out = Array.from(mergedMap.values());
+  out.sort((a, b) => (String(a.at) < String(b.at) ? 1 : -1));
+  return out;
 }
 
 // --- Inputs: the client rows off Clickup ------------------------------------------

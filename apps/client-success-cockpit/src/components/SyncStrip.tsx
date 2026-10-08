@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { readCsmSources } from "@/lib/csmReadModel";
+import { newestPublish } from "@/lib/freshness";
 
 /** Minutes after which a feed counts as stale during Kuwait working hours. */
 const STALE_MINUTES = 50;
@@ -28,18 +29,25 @@ export function SyncStrip({ only }: { only?: "stale" | "feed" } = {}) {
     let cancelled = false;
     const fetchLatest = async () => {
       try {
-        const { tables } = await readCsmSources(auth.client!);
+        const { tables, source } = await readCsmSources(auth.client!);
         if (cancelled) return;
         const runs = [...tables.syncRuns].sort((a, b) => b.at - a.at);
         const health = runs.find(run => run.kind === "health");
         const feed = runs.find(
           run => run.role === "csm" && run.kind !== "health",
         );
-        setS({
-          ok: health?.ok ?? true,
-          at: health?.at ?? feed?.at ?? 0,
-          errors: health?.errors ?? [],
-        });
+        const legacyAt = health?.at ?? feed?.at ?? 0;
+        // The native worker publishes the live tables and writes no syncRuns row.
+        const published = newestPublish(source);
+        setS(
+          published !== null && published > legacyAt
+            ? { ok: true, at: published, errors: [] }
+            : {
+                ok: health?.ok ?? true,
+                at: legacyAt,
+                errors: health?.errors ?? [],
+              },
+        );
       } catch (error) {
         if (!cancelled)
           setS({

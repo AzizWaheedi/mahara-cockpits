@@ -63,6 +63,20 @@ function asNumber(value: unknown, label: string): number {
   return number;
 }
 
+function parsePositiveTimestamp(value: unknown, label: string): number {
+  if (value === null || value === undefined || typeof value === "boolean") {
+    throw new Error(`${label} has invalid timestamp`);
+  }
+  if (typeof value === "string" && !value.trim()) {
+    throw new Error(`${label} has invalid timestamp`);
+  }
+  const n = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(n) || n <= 0) {
+    throw new Error(`${label} has invalid timestamp`);
+  }
+  return n;
+}
+
 function asJsonRows(value: unknown, label: string): Row[] {
   let parsed = value;
   if (typeof parsed === "string") {
@@ -227,23 +241,119 @@ export function createRepository(read: ReadFunction): Repository {
       const campaigns = campaignData.rows.filter(row => row.onBoard === true && row.internal !== true)
         .map(row => ({ ...row, syncedAt: row.syncedAt ?? campaignData.stamp }));
       const daily = dailyRows.map(row => typeof row.data === "string" ? JSON.parse(row.data) as Row : row.data as Row);
-      const bookingMap = new Map<string, Row>();
+      const bookings: Row[] = [];
+      let bookingsSyncedAt = 0;
+      // Legacy groups: campaignName -> groupKey -> syncedAt -> count
+      const legacyGroups = new Map<string, Map<string, Map<number, number>>>();
+      const modernMap = new Map<string, Row>();
+
       for (const row of bookingRows) {
         const data = (typeof row.data === "string" ? JSON.parse(row.data) : row.data) as Row;
         const date = String(data.date ?? "");
         const campaignName = String(data.campaignName ?? "");
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !campaignName) {
+          throw new Error("Canonical booking event has no stable campaign, date, or event identity");
+        }
+
         const eventId = String(data.eventId ?? data.id ?? data.contactId ?? "");
+        const hasLegacyGroupFields = data.appointmentDate !== undefined || (data.status !== undefined && data.eventId === undefined && data.contactId === undefined);
+
+        if (!eventId && hasLegacyGroupFields) {
+          if (data.status === undefined || data.status === null) {
+            throw new Error("Canonical booking event has no verified calendar classification");
+          }
+          const rawStatus = String(data.status).trim().toLowerCase();
+          let kind: "provisional" | "confirmed" | null = null;
+          if (rawStatus === "provisional" || rawStatus === "not confirmed") {
+            kind = "provisional";
+          } else if (rawStatus === "confirmed" || rawStatus === "showed" || rawStatus === "noshow") {
+            kind = "confirmed";
+          }
+          if (!kind) throw new Error("Canonical booking event has no verified calendar classification");
+
+          if (data.syncedAt === undefined || data.syncedAt === null) {
+            throw new Error("Canonical legacy booking event has no verified syncedAt timestamp");
+          }
+          const syncStamp = asNumber(data.syncedAt, "legacy booking syncedAt");
+          if (!Number.isFinite(syncStamp) || syncStamp <= 0) {
+            throw new Error("Canonical legacy booking event has no verified syncedAt timestamp");
+          }
+          bookingsSyncedAt = Math.max(bookingsSyncedAt, syncStamp);
+
+          const groupKey = [
+            date,
+            kind,
+            String(data.client ?? ""),
+            String(data.appointmentDate ?? ""),
+            String(data.status),
+            String(data.adId ?? ""),
+          ].join("|");
+
+          let campaignMap = legacyGroups.get(campaignName);
+          if (!campaignMap) {
+            campaignMap = new Map<string, Map<number, number>>();
+            legacyGroups.set(campaignName, campaignMap);
+          }
+          const bySync = campaignMap.get(groupKey) ?? new Map<number, number>();
+          bySync.set(syncStamp, (bySync.get(syncStamp) ?? 0) + 1);
+          campaignMap.set(groupKey, bySync);
+          continue;
+        }
+
         const eventTime = String(data.startTime ?? data.date ?? "");
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !campaignName || !eventId || !eventTime) throw new Error("Canonical booking event has no stable campaign, date, or event identity");
+        if (!eventId || !eventTime) {
+          throw new Error("Canonical booking event has no stable campaign, date, or event identity");
+        }
         const calendar = String(data.kind ?? data.calendarType ?? data.calendar ?? data.calendarName ?? data.status ?? "").toLowerCase();
-        const kind = /provisional|not confirmed/.test(calendar) ? "provisional" : /confirmed|main|online/.test(calendar) ? "confirmed" : null;
+        const kind = /provisional|not confirmed/.test(calendar) ? "provisional" : /confirmed|main|online|^(showed|noshow)$/.test(calendar) ? "confirmed" : null;
         if (!kind) throw new Error("Canonical booking event has no verified calendar classification");
+
         const identity = JSON.stringify([campaignName, String(data.locationId ?? ""), eventId, eventTime]);
-        const existing = bookingMap.get(identity);
-        if (existing) existing.copies = Number(existing.copies ?? 0) + 1;
-        else bookingMap.set(identity, { ...data, date, kind, count: typeof data.count === "number" ? data.count : 1, future: date > today ? (typeof data.count === "number" ? data.count : 1) : 0, copies: Number(data.copies ?? 0) });
+        const existing = modernMap.get(identity);
+        if (existing) {
+          existing.copies = Number(existing.copies ?? 0) + 1;
+        } else {
+          modernMap.set(identity, {
+            ...data,
+            campaignName,
+            date,
+            kind,
+            count: typeof data.count === "number" ? data.count : 1,
+            future: date > today ? (typeof data.count === "number" ? data.count : 1) : 0,
+            copies: Number(data.copies ?? 0),
+          });
+        }
       }
-      const bookings = [...bookingMap.values()];
+
+      for (const [campaignName, campaignMap] of legacyGroups) {
+        // (date, kind) -> { count, copies }
+        const bookedByDateAndKind = new Map<string, { count: number; copies: number; date: string; kind: "provisional" | "confirmed" }>();
+        for (const [groupKey, bySync] of campaignMap) {
+          const kept = Math.max(...bySync.values());
+          let all = 0;
+          for (const n of bySync.values()) all += n;
+          const [groupDate, groupKind] = groupKey.split("|");
+          const dateKindKey = `${groupDate}|${groupKind}`;
+          const b = bookedByDateAndKind.get(dateKindKey) ?? { count: 0, copies: 0, date: groupDate, kind: groupKind as "provisional" | "confirmed" };
+          b.count += kept;
+          b.copies += all - kept;
+          bookedByDateAndKind.set(dateKindKey, b);
+        }
+        for (const b of bookedByDateAndKind.values()) {
+          bookings.push({
+            campaignName,
+            date: b.date,
+            count: b.count,
+            copies: b.copies,
+            kind: b.kind,
+            future: b.date > today ? b.count : 0,
+          });
+        }
+      }
+
+      for (const row of modernMap.values()) {
+        bookings.push(row);
+      }
       const latestRun = syncRuns.rows.slice().sort((a, b) => asNumber(b.at, "media sync timestamp") - asNumber(a.at, "media sync timestamp"))[0];
       const health = (latestRun?.health && typeof latestRun.health === "object" ? latestRun.health : {}) as Row;
       const dates = daily.map(row => String(row.date ?? "")).filter(Boolean).sort();
@@ -264,7 +374,7 @@ export function createRepository(read: ReadFunction): Repository {
         firstDate: dates[0] ?? null,
         lastDate: dates.at(-1) ?? null,
         
-        bookingsSyncedAt: stateStamp(bookingState[0]),
+        bookingsSyncedAt: stateStamp(bookingState[0]) ?? (bookingsSyncedAt > 0 ? bookingsSyncedAt : undefined),
       };
     },
 
@@ -272,20 +382,129 @@ export function createRepository(read: ReadFunction): Repository {
       const [mediaMembers, chat, manualChanges, comments, adChanges, decisionsFeed, eods, statuses, statusHistory, members] = await Promise.all([
         feed("media", "clickupMembers"), feed("media", "campaignChat"), feed("media", "manualChanges"),
         feed("media", "clientComments"), feed("media", "adChanges"), feed("csm", "decisions"),
-        read(TRIAGE, `SELECT day::text AS day,name,energy,floor(extract(epoch FROM submitted_at)*1000)::bigint AS at,role FROM public.cockpit_eod_reports WHERE day >= (now() AT TIME ZONE 'Asia/Kuwait')::date-40 ORDER BY submitted_at DESC LIMIT 1000`),
+        read(TRIAGE, `SELECT r.day::text AS day,
+                     coalesce(
+                       nullif(btrim(m_id.name), ''),
+                       nullif(btrim(m_em.name), ''),
+                       nullif(btrim(p.name), ''),
+                       nullif(btrim(r.source_row->>'name'), ''),
+                       nullif(btrim(r.source_row->>'person'), '')
+                     ) AS name,
+                     r.energy,
+                     floor(extract(epoch FROM r.submitted_at)*1000)::bigint AS at,
+                     r.role
+              FROM public.cockpit_eod_reports r
+              LEFT JOIN LATERAL (
+                SELECT m.name
+                FROM public.cockpit_members m
+                WHERE r.owner_user_id IS NOT NULL AND m.auth_user_id = r.owner_user_id
+                ORDER BY m.id
+                LIMIT 1
+              ) m_id ON true
+              LEFT JOIN LATERAL (
+                SELECT m.name
+                FROM public.cockpit_members m
+                WHERE r.owner_email IS NOT NULL AND lower(btrim(m.email)) = lower(btrim(r.owner_email))
+                ORDER BY m.id
+                LIMIT 1
+              ) m_em ON true
+              LEFT JOIN LATERAL (
+                SELECT p.name
+                FROM public.cockpit_people p
+                WHERE r.owner_email IS NOT NULL AND lower(btrim(p.email)) = lower(btrim(r.owner_email))
+                ORDER BY p.id
+                LIMIT 1
+              ) p ON true
+              WHERE r.day >= (now() AT TIME ZONE 'Asia/Kuwait')::date-40
+              ORDER BY r.submitted_at DESC
+              LIMIT 1000`),
         read(TRIAGE, `SELECT person_key AS "personKey",status,since::text AS since,note,floor(extract(epoch FROM set_at)*1000)::bigint AS "setAt" FROM public.cockpit_team_status`),
         read(TRIAGE, `SELECT after->>'person_key' AS "personKey",after->>'status' AS status,after->>'since' AS since,floor(extract(epoch FROM created_at)*1000)::bigint AS at FROM public.cockpit_audit_log WHERE entity_type='cockpit_team_status' AND after IS NOT NULL ORDER BY created_at DESC LIMIT 2000`),
         read(TRIAGE, `SELECT p.name,p.role,p.active,p.engagement,floor(extract(epoch FROM p.added_at)*1000)::bigint AS "addedAt",floor(extract(epoch FROM m.last_seen_at)*1000)::bigint AS "lastSeenAt",m.roles FROM public.cockpit_people p LEFT JOIN public.cockpit_members m ON lower(btrim(m.email))=lower(btrim(p.email)) WHERE p.active OR m.active ORDER BY p.name LIMIT 1000`),
       ]);
-      const today = new Date(Date.now() + 3 * 60 * 60_000).toISOString().slice(0, 10);
-      const commentsToday = comments.rows.filter(row => String(row.at ?? "").slice(0, 10) === today).map(row => ({ ...row, by: row.by ?? row.author ?? null }));
-      const digests = comments.rows.map(row => {
-        const digest = row.digest && typeof row.digest === "object" ? row.digest as Row : {};
-        return { by: row.by ?? row.author ?? null, at: row.at, summary: cleanDigest(digest.summary), campaignName: row.clientName ?? null };
-      }).filter(row => row.summary);
+      const now = Date.now();
+      const today = new Date(now + 3 * 60 * 60_000).toISOString().slice(0, 10);
+      const since = now - 7 * 86_400_000;
+      const todayStart = new Date(`${today}T00:00:00Z`).getTime() - 3 * 3600_000;
+      const tomorrowStart = todayStart + 86_400_000;
+
+      const MEANINGFUL = /budget|targeting|bid strategy|optimisation goal|optimization goal|created|ad updated|campaign status updated|ad set status updated/i;
+      const NOT_A_CHANGE = /name updated|finishes ad review|billed|delivered|balance/i;
+      const firstWord = (s: unknown): string => String(s ?? "").trim().split(/\s+/)[0] ?? "";
+      const authorWord = (s: unknown): string => firstWord(String(s ?? "").split("@")[0]);
+
+      // Every real comment today counts as an action, digested or not.
+      const commentsToday: { by: string | null; at: number }[] = [];
+      for (const r of comments.rows) {
+        if (r.kind === "skip") continue;
+        const at = parsePositiveTimestamp(r.at, "Canonical client comment");
+        if (at >= todayStart && at < tomorrowStart) {
+          const by = r.by ?? r.author ?? null;
+          if (by) {
+            commentsToday.push({ by: authorWord(by) || null, at });
+          }
+        }
+      }
+
+      // Digested client card comments: summary only, bounded to 240 chars.
+      const digests = comments.rows
+        .filter(r => r.status === "done" || (r.status === undefined && r.digest))
+        .map(r => {
+          const digest = r.digest && typeof r.digest === "object" ? (r.digest as Row) : {};
+          const at = parsePositiveTimestamp(r.at, "Canonical client comment digest");
+          const rawSummary = typeof digest.summary === "string" ? digest.summary : (typeof r.summary === "string" ? r.summary : "");
+          const cleaned = cleanDigest(rawSummary);
+          const summary = cleaned ? cleaned.slice(0, 240) : null;
+          return {
+            taskId: r.taskId ?? null,
+            clientName: r.clientName ?? null,
+            at,
+            by: authorWord(r.by ?? r.author) || null,
+            kind: r.kind ?? null,
+            summary,
+          };
+        })
+        .filter(row => row.summary && row.at >= since);
+
+      // Fold adChanges back to one per event across campaigns (capped at 3 campaigns).
+      const adEvents = new Map<string, {
+        at: number;
+        actor: string;
+        eventType: string;
+        objectName: string | null;
+        campaigns: string[];
+      }>();
+
+      for (const r of adChanges.rows) {
+        const at = parsePositiveTimestamp(r.at, "Canonical Meta ad change");
+        if (at < since) continue;
+        const actor = r.actor !== undefined && r.actor !== null ? String(r.actor).trim() : "";
+        if (!actor || actor === "Meta") continue;
+        const eventType = String(r.eventType ?? "");
+        if (!MEANINGFUL.test(eventType) || NOT_A_CHANGE.test(eventType)) continue;
+
+        const activityHash = r.activityHash !== undefined && r.activityHash !== null ? String(r.activityHash).trim() : "";
+        const objectName = r.objectName !== undefined && r.objectName !== null ? String(r.objectName) : null;
+        const key = activityHash || `${at}|${actor}|${eventType}|${objectName ?? ""}`;
+
+        const ev = adEvents.get(key) ?? {
+          at,
+          actor: firstWord(actor),
+          eventType,
+          objectName,
+          campaigns: [],
+        };
+        const campaignName = String(r.campaignName ?? "");
+        if (campaignName && ev.campaigns.length < 3 && !ev.campaigns.includes(campaignName)) {
+          ev.campaigns.push(campaignName);
+        }
+        adEvents.set(key, ev);
+      }
+
       const memberRows = members.map(row => ({ ...row, roles: Array.isArray(row.roles) ? row.roles : [] }));
       const mediaNames = mediaMembers.rows.map(row => ({ id: row.id, name: row.name, username: row.username }));
       const decisionRows = decisionsFeed.rows.map(row => ({ ...row, at: row.at ?? row.createdAt, day: row.day ?? null }));
+
       return {
         members: memberRows.length ? memberRows : mediaNames,
         eods,
@@ -295,7 +514,7 @@ export function createRepository(read: ReadFunction): Repository {
         manualChanges: manualChanges.rows,
         decisions: decisionRows,
         digests,
-        adChanges: adChanges.rows,
+        adChanges: Array.from(adEvents.values()),
         adChangesRows: adChanges.count,
         commentsToday,
       };

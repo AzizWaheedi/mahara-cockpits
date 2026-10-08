@@ -14,6 +14,24 @@ export function doctor(env:Env){
 export function transport(env:Env,request:typeof fetch=fetch,wait=(ms:number)=>new Promise(r=>setTimeout(r,ms))){
  const receipts:Row[]=[],faults:Row[]=[],logs:Row[]=[];const cache=new Map<string,Response>();let requests=0;let googleToken:string|undefined;let googleEmail:string|undefined;
  const needed=(name:string)=>{if(!env[name])throw new Error(`Missing named key: ${name}`);return env[name]!;};
+ let fathomQueue: Promise<void> = Promise.resolve();
+ const HTTP_DATE_REGEX=/^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun),\s\d{2}\s(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s\d{4}\s\d{2}:\d{2}:\d{2}\sGMT$/;
+ const parseRetryAfter=(header:string|null):number|undefined=>{
+  if(!header)return undefined;
+  const trimmed=header.trim();
+  if(/^\d+$/.test(trimmed)){
+   const sec=parseInt(trimmed,10);
+   return Number.isFinite(sec)&&sec>=0?sec*1000:undefined;
+  }
+  if(HTTP_DATE_REGEX.test(trimmed)){
+   const parsedDate=Date.parse(trimmed);
+   if(!Number.isNaN(parsedDate)){
+    const diff=parsedDate-Date.now();
+    return Math.max(0,diff);
+   }
+  }
+  return undefined;
+ };
  const fetchRead:typeof fetch=async(input,init={})=>{
   const url=new URL(typeof input==='string'?input:input instanceof URL?input.href:input.url),method=(init.method??'GET').toUpperCase();
   if(url.protocol!=='https:'||(!Object.hasOwn(HOSTS,url.hostname)&&!/(^|\.)(fbcdn\.net|fbsbx\.com|facebook\.com)$/.test(url.hostname))||url.username||url.password||url.port)throw new Error('Unapproved provider URL');
@@ -25,19 +43,53 @@ export function transport(env:Env,request:typeof fetch=fetch,wait=(ms:number)=>n
   const held=cache.get(key);if(held)return held.clone();
   if(++requests>2000)throw new Error('Read budget exhausted; refusing partial publication');
   const resource=`${url.hostname}${url.pathname}`;
+  const isFathom=url.hostname==='api.fathom.ai';
   for(let attempt=1;attempt<=3;attempt++){
    receipts.push({resource,method,phase:'intent',attempt,at:new Date().toISOString()});
+   let releaseFathom: (()=>void)|undefined;
    try{
+    if(isFathom){
+     const current=fathomQueue;
+     fathomQueue=new Promise<void>(resolve=>{releaseFathom=resolve;});
+     await current;
+     const cachedAfterLock=cache.get(key);
+     if(cachedAfterLock){
+      return cachedAfterLock.clone();
+     }
+     await wait(1500);
+    }
     const response=await request(url.href,{...init,headers,redirect:'error',signal:AbortSignal.timeout(30000)});
     receipts.push({resource,method,phase:'response',http_status:response.status,attempt,at:new Date().toISOString()});
-    if((response.status===429||response.status>=500)&&attempt<3){await wait(attempt*1000);continue;}
+    if(response.status===429||response.status===503||response.status>=500){
+     const retryMs=parseRetryAfter(response.headers.get('retry-after'));
+     if(retryMs!==undefined&&retryMs>60000){
+      try{await response.body?.cancel();}catch{}
+      faults.push({resource,status:response.status});
+      return response;
+     }
+     if(attempt<3){
+      try{await response.body?.cancel();}catch{}
+      await wait(retryMs!==undefined?retryMs:attempt*1000);
+      continue;
+     }
+    }
     if(!response.ok){faults.push({resource,status:response.status});return response;}
     if(!response.headers.get('content-type')?.startsWith('image/'))cache.set(key,response.clone());return response;
-   }catch(error){receipts.push({resource,method,phase:'unknown',attempt});if(attempt<3){await wait(attempt*1000);continue;}faults.push({resource,error:'Transport unavailable'});throw new Error(`Read unavailable: ${resource}`);}
+   }catch(error){
+    receipts.push({resource,method,phase:'unknown',attempt});
+    if(attempt<3){
+     await wait(attempt*1000);
+     continue;
+    }
+    faults.push({resource,error:'Transport unavailable'});
+    throw new Error(`Read unavailable: ${resource}`);
+   }finally{
+    releaseFathom?.();
+   }
   }
   throw new Error('Read attempts exhausted');
  };
- const json=async(url:string,init?:RequestInit)=>{const response=await fetchRead(url,init);if(!response.ok)throw new Error(`Read rejected (${response.status}) at ${new URL(url).hostname}`);return response.json();};
+ const json=async(url:string,init?:RequestInit)=>{const response=await fetchRead(url,init);if(!response.ok){const u=new URL(url),resource=u.hostname+u.pathname;throw Object.assign(new Error(`Read rejected (${response.status}) at ${u.hostname}`),{status:response.status,resource,nativeFaults:faults.filter(f=>f.resource===resource&&f.status===response.status)});}return response.json();};
  const google=async(expectedEmail?:string)=>{
   if(googleToken){if(expectedEmail&&googleEmail?.toLowerCase()!==expectedEmail.toLowerCase())throw new Error('Google service-account identity differs from verified calendar configuration');return googleToken;}
   const account=z.object({type:z.literal('service_account'),client_email:z.string().email(),private_key:z.string().min(1)}).parse(JSON.parse(await readFile(needed('GOOGLE_APPLICATION_CREDENTIALS'),'utf8')));
@@ -50,12 +102,28 @@ export function transport(env:Env,request:typeof fetch=fetch,wait=(ms:number)=>n
   return googleToken=token.access_token;
  };
  const graph=async(path:string,params:Row={})=>{
+  const formMetadata=params.nativeFormMetadata===true;
+  if(formMetadata){
+   if(path||!/^\d+(?:,\d+)*$/.test(String(params.ids??''))||params.fields!=='name,status,leads_count,questions,question_page_custom_headline,follow_up_action_url')throw new Error('Invalid retained-form metadata request');
+   params={...params};delete params.nativeFormMetadata;
+  }
   if(path.includes('://')||path.startsWith('/')||path.includes('..'))throw new Error('Invalid Meta resource');
   const url=new URL(`https://graph.facebook.com/${env.META_GRAPH_VERSION??'v21.0'}/${path}`);for(const [k,v]of Object.entries(params))url.searchParams.set(k,String(v));
   let page=await json(url.href,{headers:{Authorization:`Bearer ${needed('META_SYSTEM_TOKEN')}`}});if(page.error){faults.push({resource:'graph.facebook.com',error:'Meta response error'});throw new Error('Meta refused a source read');}
   if(/\/(owned_ad_accounts|client_ad_accounts|campaigns|adsets|ads|insights)$/.test(path)&&!Array.isArray(page.data))throw new Error('Meta collection is unavailable');
   if(String(params.fields??'').includes('adsets.')&&!Array.isArray(page.adsets?.data))throw new Error('Meta ad set expansion is unavailable');
-  if(params.ids)for(const id of String(params.ids).split(','))if(!page[id]||page[id].error)throw new Error('Meta batch is incomplete');
+  if(params.ids)for(const id of String(params.ids).split(','))if(!page[id]||page[id].error||(formMetadata&&page[id].id!==id)){
+   if(!formMetadata)throw new Error('Meta batch is incomplete');
+   const single=new URL(`https://graph.facebook.com/${env.META_GRAPH_VERSION??'v21.0'}/${id}`);single.searchParams.set('fields',String(params.fields));
+   const response=await fetchRead(single.href,{headers:{Authorization:`Bearer ${needed('META_SYSTEM_TOKEN')}`}}),node=await response.json();
+   if(response.ok&&node.id===id&&!node.error){page[id]=node;continue;}
+   if(!response.ok&&node.error?.code===100&&node.error?.error_subcode===33){
+    const resource=single.hostname+single.pathname;
+    for(const fault of faults)if(fault.resource===resource&&fault.status===response.status)fault.retained_history=true;
+    page[id]={id,nativeMetadataUnavailable:true};continue;
+   }
+   throw new Error('Form metadata read failed without a confirmed unavailable-object response');
+  }
   // All outer pages; truncation is a publication failure rather than a plausible zero.
   const edge=Array.isArray(page.data)?page:page.adsets;
   if(edge){
@@ -86,6 +154,12 @@ export function transport(env:Env,request:typeof fetch=fetch,wait=(ms:number)=>n
    const limit=/\blimit\s+(\d+)/i.exec(args.query)?.[1];
    if(!Array.isArray(data)||(limit&&data.length>=Number(limit)))throw new Error('SQL source missing or reached its coverage limit');
    return {result:JSON.stringify(data)};
+  }
+  if(name==='native_fathom_checkpoint_get'){
+   if(Object.keys(args).length||env.SUPABASE_URL?.replace(/\/$/,'')!=='https://bldgtotkfmhoxmlzowdx.supabase.co')throw new Error('Native checkpoint requires Creative Triage and no query overrides');
+   const url=new URL('https://bldgtotkfmhoxmlzowdx.supabase.co/rest/v1/cockpit_native_media_runs');
+   url.search=new URLSearchParams({status:'eq.published','plan->>producer':'eq.media-core',select:'started_at:plan->>begun_at',order:'published_at.desc',limit:'1'}).toString();
+   return json(url.href,{headers:{apikey:needed('SUPABASE_SERVICE_ROLE_KEY'),Authorization:`Bearer ${needed('SUPABASE_SERVICE_ROLE_KEY')}`}});
   }
   const url=new URL(args.url);
   if(name==='pd_google_sheets_proxy_get'){
@@ -143,9 +217,16 @@ export function transport(env:Env,request:typeof fetch=fetch,wait=(ms:number)=>n
  };
  const reads:Reads={
   graph:async(path,params)=>{try{return await graph(path,params);}catch(error){faults.push({resource:'meta',error:'Provider collection failed'});throw error;}},
-  tool:async(name,args)=>{try{return await tool(name,args);}catch(error){faults.push({resource:name,error:'Provider collection failed'});throw error;}},
+  tool:async(name,args)=>{try{return await tool(name,args);}catch(error){const fault:Row={resource:name,error:'Provider collection failed'};faults.push(fault);if(error&&typeof error==='object'&&Array.isArray((error as Row).nativeFaults))(error as Row).nativeFaults.push(fault);throw error;}},
   fetch:fetchRead,
   log:(level)=>{logs.push({level,message:'Native calculator diagnostic; detailed provider bodies omitted'});if(level==='error')faults.push({resource:'calculator',error:'Calculator reported incomplete source'});},
+  retainSheetFailure:(error)=>{
+   const e=error as Row;
+   const performance=/^sheets\.googleapis\.com\/v4\/spreadsheets\/[A-Za-z0-9_-]+\/values:batchGet$/.test(String(e?.resource));
+   const churn=/^sheets\.googleapis\.com\/v4\/spreadsheets\/1p8CAd5pL9zKjc1mZ73Gc_hoj4NSWHfFPs4FoC_WuBUU(?:\/.*)?$/.test(String(e?.resource));
+   if(!e||![403,404].includes(e.status)||(!performance&&!churn))return;
+   if(Array.isArray(e.nativeFaults))for(const fault of e.nativeFaults)if(faults.includes(fault))fault.retained_history=true;
+  },
  };
  return {reads,receipts,faults,logs};
 }

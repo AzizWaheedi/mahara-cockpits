@@ -255,6 +255,161 @@ class Zoom(unittest.TestCase):
         self.assertEqual(pull.Composio.sse(body)["id"], 2)
 
 
+class ComposioMCP(unittest.TestCase):
+    def test_sse_finds_expected_id_across_notifications(self):
+        body = (
+            b'data: {"jsonrpc":"2.0","method":"notifications/progress","params":{"progress":50}}\n\n'
+            b'data: {"jsonrpc":"2.0","id":2,"result":{"content":[{"text":"{\\"data\\":{\\"results\\":[{\\"response\\":{\\"successful\\":true,\\"data\\":{\\"ok\\":true}}}]}}"}]}}\n\n'
+        )
+        ans = pull.Composio.sse(body, expected_id=2)
+        self.assertEqual(ans.get("id"), 2)
+
+    def test_stateful_init_stores_session_and_reuses_headers(self):
+        c = pull.Composio("test_key")
+        init_body = b'data: {"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18","capabilities":{},"serverInfo":{"name":"srv"}}}\n\n'
+        call_body = b'data: {"jsonrpc":"2.0","id":2,"result":{"content":[{"text":"{\\"data\\":{\\"results\\":[{\\"response\\":{\\"successful\\":true,\\"data\\":{\\"done\\":1}}}]}}"}]}}\n\n'
+        calls = []
+
+        def fake_call(method, url, headers=None, body=None, **kw):
+            calls.append((method, url, dict(headers or {}), body))
+            if body.get("method") == "initialize":
+                return 200, {"mcp-session-id": "sess_123"}, init_body
+            if body.get("method") == "notifications/initialized":
+                return 200, {}, b""
+            if body.get("method") == "tools/call":
+                return 200, {}, call_body
+            return 200, {}, b""
+
+        with patch.object(pull, "call", side_effect=fake_call):
+            res1 = c.run("ZOOM_GET_MEETING", {"id": "123"})
+            self.assertEqual(res1, {"done": 1})
+            self.assertEqual(c.session, "sess_123")
+            self.assertTrue(c.initialized)
+            self.assertEqual(len(calls), 3)  # init, notify, tools/call
+
+            # Second run reuses initialized session without re-opening
+            res2 = c.run("ZOOM_GET_MEETING", {"id": "123"})
+            self.assertEqual(res2, {"done": 1})
+            self.assertEqual(len(calls), 4)  # tools/call only
+            tools_call_headers = calls[3][2]
+            self.assertEqual(tools_call_headers["mcp-session-id"], "sess_123")
+            self.assertEqual(tools_call_headers["mcp-protocol-version"], "2025-06-18")
+
+    def test_stateless_init_succeeds_without_session_id(self):
+        c = pull.Composio("test_key")
+        init_body = b'data: {"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18","capabilities":{},"serverInfo":{"name":"srv"}}}\n\n'
+        call_body = b'data: {"jsonrpc":"2.0","id":2,"result":{"content":[{"text":"{\\"data\\":{\\"results\\":[{\\"response\\":{\\"successful\\":true,\\"data\\":{\\"stateless\\":true}}}]}}"}]}}\n\n'
+        calls = []
+
+        def fake_call(method, url, headers=None, body=None, **kw):
+            calls.append((method, url, dict(headers or {}), body))
+            if body.get("method") == "initialize":
+                return 200, {}, init_body  # No mcp-session-id header
+            if body.get("method") == "notifications/initialized":
+                return 200, {}, b""
+            if body.get("method") == "tools/call":
+                return 200, {}, call_body
+            return 200, {}, b""
+
+        with patch.object(pull, "call", side_effect=fake_call):
+            res = c.run("ZOOM_GET_MEETING", {"id": "123"})
+            self.assertEqual(res, {"stateless": True})
+            self.assertEqual(c.session, "")
+            self.assertTrue(c.initialized)
+            tools_call_headers = calls[2][2]
+            self.assertNotIn("mcp-session-id", tools_call_headers)
+            self.assertEqual(tools_call_headers["mcp-protocol-version"], "2025-06-18")
+
+            # Second call also reuses initialized state without re-running initialize
+            c.run("ZOOM_GET_MEETING", {"id": "123"})
+            self.assertEqual(len(calls), 4)  # init, notify, call1, call2
+
+    def test_init_fails_on_http_error_or_malformed_body(self):
+        c = pull.Composio("test_key")
+        # Case 1: HTTP error
+        with patch.object(pull, "call", return_value=(500, {}, b"Internal error")):
+            with self.assertRaisesRegex(pull.Failure, "initialize failed"):
+                c.open()
+
+        # Case 2: HTTP 200 with error payload
+        err_body = b'data: {"jsonrpc":"2.0","id":1,"error":{"code":-32600,"message":"Invalid request"}}\n\n'
+        with patch.object(pull, "call", return_value=(200, {}, err_body)):
+            with self.assertRaisesRegex(pull.Failure, "initialize error"):
+                c.open()
+
+        # Case 3: HTTP 200 missing jsonrpc 2.0
+        no_rpc = b'data: {"id":1,"result":{"protocolVersion":"2025-06-18","capabilities":{}}}\n\n'
+        with patch.object(pull, "call", return_value=(200, {}, no_rpc)):
+            with self.assertRaisesRegex(pull.Failure, "missing jsonrpc 2.0"):
+                c.open()
+
+        # Case 4: Unsupported protocol version
+        bad_ver = b'data: {"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"1999-01-01","capabilities":{}}}\n\n'
+        with patch.object(pull, "call", return_value=(200, {}, bad_ver)):
+            with self.assertRaisesRegex(pull.Failure, "unsupported protocolVersion"):
+                c.open()
+
+        # Case 5: Missing or non-dict capabilities
+        bad_caps = b'data: {"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18","capabilities":"none"}}\n\n'
+        with patch.object(pull, "call", return_value=(200, {}, bad_caps)):
+            with self.assertRaisesRegex(pull.Failure, "missing capabilities object"):
+                c.open()
+
+        # Case 6: Mismatched ID
+        wrong_id = b'data: {"jsonrpc":"2.0","id":99,"result":{"protocolVersion":"2025-06-18","capabilities":{}}}\n\n'
+        with patch.object(pull, "call", return_value=(200, {}, wrong_id)):
+            with self.assertRaisesRegex(pull.Failure, "missing id 1"):
+                c.open()
+
+    def test_bounded_session_expiry_retry(self):
+        c = pull.Composio("test_key")
+        c.session = "expired_sid"
+        c.initialized = True
+        c.protocol_version = "2025-06-18"
+        calls = []
+
+        init_body = b'data: {"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18","capabilities":{}}}\n\n'
+        call_body = b'data: {"jsonrpc":"2.0","id":2,"result":{"content":[{"text":"{\\"data\\":{\\"results\\":[{\\"response\\":{\\"successful\\":true,\\"data\\":{\\"recovered\\":true}}}]}}"}]}}\n\n'
+
+        def fake_call(method, url, headers=None, body=None, **kw):
+            calls.append((method, url, dict(headers or {}), body))
+            if body.get("method") == "tools/call" and len(calls) == 1:
+                return 400, {}, b'{"error":"invalid session"}'
+            if body.get("method") == "initialize":
+                # During re-initialize, verify protocol_version and session were cleared from headers
+                self.assertNotIn("mcp-protocol-version", headers)
+                self.assertNotIn("mcp-session-id", headers)
+                return 200, {"mcp-session-id": "new_sid"}, init_body
+            if body.get("method") == "notifications/initialized":
+                return 200, {}, b""
+            if body.get("method") == "tools/call":
+                return 200, {}, call_body
+            return 200, {}, b""
+
+        with patch.object(pull, "call", side_effect=fake_call):
+            res = c.run("ZOOM_GET_RECORDINGS", {}, retry=True)
+            self.assertEqual(res, {"recovered": True})
+            self.assertEqual(c.session, "new_sid")
+            self.assertEqual(c.protocol_version, "2025-06-18")
+            self.assertTrue(c.initialized)
+
+        # Confirm it fails if second attempt also has session error (only 1 retry)
+        c2 = pull.Composio("test_key")
+        c2.session = "expired_sid"
+        c2.initialized = True
+        c2.protocol_version = "2025-06-18"
+        def fake_always_fail(method, url, headers=None, body=None, **kw):
+            if body.get("method") == "initialize":
+                return 200, {}, init_body
+            if body.get("method") == "tools/call":
+                return 404, {}, b'{"error":"session not found"}'
+            return 200, {}, b""
+
+        with patch.object(pull, "call", side_effect=fake_always_fail):
+            with self.assertRaisesRegex(pull.Failure, "Composio returned nothing"):
+                c2.run("ZOOM_GET_RECORDINGS", {}, retry=True)
+
+
 class SessionTime(unittest.TestCase):
     def test_date_and_midnight_epochs_agree(self):
         expected = dt.datetime(2026, 9, 30, 17, tzinfo=dt.timezone.utc)

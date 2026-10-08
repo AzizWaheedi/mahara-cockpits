@@ -1,3 +1,4 @@
+import {type AdDay,type Appt,type Period,periodOf,periodNumbers,byAdIn} from './reportPeriod.ts';
 // biome-ignore lint/suspicious/noExplicitAny: profile and Docs payloads
 type Any = any;
 
@@ -67,7 +68,7 @@ const LABELS: Record<Lang, Any> = {
       `${n} appointments on the sheet have no outcome filled in. Until they are marked attended or closed they count as nothing happened, both in this report and in how we optimise your budget.`,
     nothingUnfilled:
       "Every appointment on the sheet has an outcome. Thank you, this is what lets us optimise properly.",
-    vs: (a: number, b: number) => `${a} vs ${b} last month`,
+    vs: (a: number, b: number, label: string) => `${a} vs ${b} (${label})`,
   },
   ar: {
     s1: "ملخص الأداء",
@@ -106,7 +107,7 @@ const LABELS: Record<Lang, Any> = {
       `${n} موعد بالشيت ما فيهم نتيجة. طالما ما تحددون: حضر ولا لا، وتقفل ولا لا، تُحسب كأن ما صار فيها شي، بهذا التقرير وبطريقة تحسيننا لميزانيتك.`,
     nothingUnfilled:
       "كل المواعيد بالشيت فيها نتيجة. شكراً لك، هذا اللي يخلينا نحسّن بشكل صحيح.",
-    vs: (a: number, b: number) => `${a} مقابل ${b} الشهر الماضي`,
+    vs: (a: number, b: number, label: string) => `${a} مقابل ${b} (${label})`,
   },
 };
 
@@ -175,6 +176,7 @@ function reportingPeriod(
   const m = nums(perf?.month);
   const l = nums(perf?.lastMonth);
   const a = nums(perf?.allTime);
+  if (perf?.period) return [m, l, String(perf.monthLabel ?? '')];
   if (!(m.leads ?? 0) && !(m.booked ?? 0) && (l.leads ?? 0) > 0)
     return [l, {}, String(perf?.lastMonthLabel ?? "")];
   if (!(m.leads ?? 0) && !(l.leads ?? 0) && (a.leads ?? 0) > 0)
@@ -230,11 +232,12 @@ function plainStory(
   const perf = profile?.performance ?? {};
   const [m, l, label] = reportingPeriod(perf);
   const cons = constraintsFor(profile);
+  const comparison=perf.comparison?.label??perf.lastMonthLabel??'';
   if (language === "ar") {
-    const means = `هذا التقرير يغطي ${label}: ${m.leads ?? 0} استفسار، ${m.booked ?? 0} موعد محجوز، ${m.shows ?? 0} حضروا، ${m.closes ?? 0} تقفلت${(l.leads ?? 0) > 0 ? ` (الشهر الماضي: ${l.leads ?? 0} استفسار، ${l.booked ?? 0} موعد)` : ""}.`;
+    const means = `هذا التقرير يغطي ${label}: ${m.leads ?? 0} استفسار، ${m.booked ?? 0} موعد محجوز، ${m.shows ?? 0} حضروا، ${m.closes ?? 0} تقفلت${(l.leads ?? 0) > 0 ? ` (${comparison}: ${l.leads ?? 0} استفسار، ${l.booked ?? 0} موعد)` : ""}.`;
     return { means, next: cons.map(c => c) };
   }
-  const means = `This report covers ${label}: ${m.leads ?? 0} enquiries, ${m.booked ?? 0} appointments booked, ${m.shows ?? 0} attended, ${m.closes ?? 0} closed${(l.leads ?? 0) > 0 ? ` (last month: ${l.leads ?? 0} enquiries, ${l.booked ?? 0} booked)` : ""}. The main constraint right now: ${cons[0]}.`;
+  const means = `This report covers ${label}: ${m.leads ?? 0} enquiries, ${m.booked ?? 0} appointments booked, ${m.shows ?? 0} attended, ${m.closes ?? 0} closed${(l.leads ?? 0) > 0 ? ` (${comparison}: ${l.leads ?? 0} enquiries, ${l.booked ?? 0} booked)` : ""}. The main constraint right now: ${cons[0]}.`;
   return { means, next: cons.map(c => c.charAt(0).toUpperCase() + c.slice(1)) };
 }
 
@@ -285,7 +288,7 @@ function blocksFor(
   const snap: string[][] = [L.snapcols];
   for (const [label, key] of L.rows as [string, string][]) {
     const noteCell = Object.keys(l).length
-      ? Object.hasOwn(m,key)&&Object.hasOwn(l,key)?L.vs(m[key],l[key]):""
+      ? Object.hasOwn(m,key)&&Object.hasOwn(l,key)?L.vs(m[key],l[key],perf.comparison?.label??perf.lastMonthLabel??''):""
       : "";
     snap.push([label, Object.hasOwn(m,key)?String(m[key]):"", noteCell]);
   }
@@ -407,8 +410,8 @@ function narrativePrompt(profile: Any, language: Lang, note?: string): string {
     JSON.stringify({
       client: profile?.clientName,
       month: label,
-      thisMonth: period,
-      lastMonth: previous,
+      currentPeriod: {label,range:perf.reportPeriod,values:period},
+      previousPeriod: {...perf.comparison,values:previous},
       allTime: nums(perf.allTime),
       appointmentsWithNoOutcome: perf.staleCount,
       constraints: constraintsFor(profile),
@@ -433,7 +436,17 @@ function storyFromResult(
 
 export {NARRATIVE_SCHEMA,narrativePrompt,storyFromResult};
 
+export function profileForReport(profile:Any,args:Any):Any{
+ const validDay=(s:unknown)=>typeof s==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(s)&&Number.isFinite(Date.parse(s+'T00:00:00Z'))&&new Date(s+'T00:00:00Z').toISOString().slice(0,10)===s;
+ if(!validDay(args.from)||!validDay(args.to)||args.from>args.to)throw Error('Choose a valid report date range');
+ const appts=profile?.performance?.appointments,days=profile?.adLeads?.daily;
+ if(!Array.isArray(appts)||!Array.isArray(days))throw Error('Original report daily series are unavailable');
+ if(days.some((d:Any)=>!validDay(d.date)||typeof d.leads!=='number'||!Number.isFinite(d.leads)||d.leads<0||typeof d.spend!=='number'||!Number.isFinite(d.spend)||d.spend<0))throw Error('Report daily values are incomplete');
+ const per=requestedPeriod(args);if(!per)throw Error('Choose a valid report date range');
+ return profileForPeriod(profile,per,args.language==='ar'?'ar':'en');
+}
 export function prepareReport(profile:Any,args:Any,story?:{means:string;next:string[]}){
+ profile=profileForReport(profile,args);
  const language:Lang=args.language==='ar'?'ar':'en';const period=reportingPeriod(profile.performance??{})[2];
  const facts=nums(profile.performance?.month);const hasFacts=Object.keys(facts).length>0||Object.keys(nums(profile.performance?.lastMonth)).length>0;
  const narrative=story??(hasFacts?plainStory(profile,language):{means:LABELS[language].nosheet,next:[]});
@@ -677,4 +690,84 @@ async function setDocumentStyle(docId: string) {
  walk(saved.body?.content??[]);const text=strings.join('');
  if(!plan.expected.every(part=>text.includes(part)))throw Error('Report document text read-back did not match. Reconcile the existing document.');
  return {characters:text.length,title:saved.title??plan.title};
+}
+
+// Period labels and shaping preserved verbatim from the released report owner.
+const AR_MONTHS = [
+  "يناير",
+  "فبراير",
+  "مارس",
+  "أبريل",
+  "مايو",
+  "يونيو",
+  "يوليو",
+  "أغسطس",
+  "سبتمبر",
+  "أكتوبر",
+  "نوفمبر",
+  "ديسمبر",
+];
+
+/** The period a request asked for, or none for a request made before periods. */
+export function requestedPeriod(r: Any): Period | undefined {
+  const iso = /^\d{4}-\d{2}-\d{2}$/;
+  const from = String(r?.from ?? "");
+  const to = String(r?.to ?? "");
+  if (!iso.test(from) || !iso.test(to) || from > to) return undefined;
+  const label = String(r?.label ?? "").trim();
+  if (/^all time$/i.test(label))
+    return { key: "all", from, to, label: "all time" };
+  const month=from.slice(0,7),calendar=periodOf(month);
+  if (from===calendar.from && (r.month===month || (!label && to===calendar.to)))
+    return { ...calendar, to };
+  const span = periodOf(`custom:${from}:${to}`);
+  return { ...span, label: label || span.label };
+}
+
+/** The period's name in the report's language. */
+function periodName(per: Period, language: Lang): string {
+  const cap = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);
+  if (language !== "ar") return cap(per.label);
+  if (per.month) {
+    const [y, m] = per.month.split("-").map(Number);
+    return `${AR_MONTHS[m - 1]} ${y}`;
+  }
+  return `من ${per.from} لين ${per.to}`;
+}
+
+/** The profile as of the period: its numbers where the report reads the month's. */
+export function profileForPeriod(
+  profile: Any,
+  per: Period,
+  language: Lang,
+): Any {
+  const perf = profile?.performance ?? {};
+  const appts = (perf.appointments ?? []) as Appt[];
+  const days = (profile?.adLeads?.daily ?? []) as AdDay[];
+  const figures=periodNumbers(appts,days,per.from,per.to);
+  const comparison=per.prevFrom&&per.prevTo?{from:per.prevFrom,to:per.prevTo,label:language==='ar'?periodName({key:'comparison',from:per.prevFrom,to:per.prevTo,label:per.prevLabel??'',month:per.month?per.prevFrom.slice(0,7):undefined},language):(per.month?per.prevLabel:`${per.prevFrom} to ${per.prevTo}`)}:undefined;
+  const inside = (d: unknown) => {
+    const day = String(d ?? "").slice(0, 10);
+    return day >= per.from && day <= per.to;
+  };
+  return {
+    ...profile,
+    performance: {
+      ...perf,
+      period: true,
+      periodMonthly: Boolean(per.month),
+      reportPeriod: {from:per.from,to:per.to},
+      comparison,
+      month: figures,
+      staleCount: figures.unknownOutcome,
+      lastMonth:
+        per.prevFrom && per.prevTo
+          ? periodNumbers(appts, days, per.prevFrom, per.prevTo)
+          : {},
+      monthLabel: periodName(per, language),
+      lastMonthLabel: comparison?.label,
+      byAd: byAdIn(appts, per.from, per.to),
+      recent: ((perf.recent ?? []) as Any[]).filter(r => inside(r.added)),
+    },
+  };
 }

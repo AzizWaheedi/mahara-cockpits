@@ -83,6 +83,12 @@ export function FunnelRow({ r }: { r: any }) {
         </span>
       </button>
 
+      {r.staleReason && (
+        <p role="status" className="px-4 pb-3 text-xs text-muted-foreground">
+          {r.staleReason}
+        </p>
+      )}
+
       {open && (
         <div className="space-y-4 border-t px-4 py-4 text-sm">
           {r.headline && (
@@ -97,10 +103,11 @@ export function FunnelRow({ r }: { r: any }) {
               <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                 <Filter className="size-3.5 text-muted-foreground" />
                 <span className="font-semibold">
-                  {gates.length} filtering question
-                  {gates.length === 1 ? "" : "s"}
+                  {r.staleReason && !r.questions.length
+                    ? "Form questions unavailable"
+                    : `${gates.length} filtering question${gates.length === 1 ? "" : "s"}${r.staleReason ? " (last stored)" : ""}`}
                 </span>
-                {gates.length === 0 && (
+                {gates.length === 0 && !r.staleReason && (
                   <span className="txt-bad font-medium">
                     nothing filters this form, every click becomes a lead
                   </span>
@@ -245,6 +252,13 @@ export function FunnelsPage() {
             qualified is not in Meta, so this tells you the price of a filter,
             not the quality of the lead.
           </p>
+          {data.counts.metadataUnavailable > 0 && (
+            <p className="mt-2 text-xs text-muted-foreground">
+              This comparison excludes {data.counts.metadataUnavailable} form
+              {data.counts.metadataUnavailable === 1 ? "" : "s"} with unverified
+              questions. Check Meta access.
+            </p>
+          )}
           <div className="@container mt-4">
             <div className="grid grid-cols-2 gap-4 @2xl:grid-cols-4">
               {data.byGates.map(

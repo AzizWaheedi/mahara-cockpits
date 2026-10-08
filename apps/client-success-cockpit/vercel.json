@@ -27,5 +27,16 @@
       "source": "/((?!assets/|__viktor_meta\\.json).*)",
       "destination": "/index.html"
     }
+  ],
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        {
+          "key": "Content-Security-Policy",
+          "value": "connect-src 'self' https://bldgtotkfmhoxmlzowdx.supabase.co wss://bldgtotkfmhoxmlzowdx.supabase.co"
+        }
+      ]
+    }
   ]
 }

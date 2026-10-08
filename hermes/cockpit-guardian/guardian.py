@@ -163,8 +163,9 @@ def _say_unwritable(cfg: Any, err: str, log: "Log", now: Any) -> None:
             pass
 
 
-def _checks(args: argparse.Namespace) -> list:
-    all_checks = checks_mod.all_checks()
+def _checks(args: argparse.Namespace, cfg: Any = None) -> list:
+    backend=cfg.keys.get('COCKPIT_MONITOR_BACKEND','hybrid') if cfg else None
+    all_checks = checks_mod.all_checks(backend) if backend is not None else checks_mod.all_checks()
     if args.only:
         want = {x.strip() for x in args.only.split(",") if x.strip()}
         unknown_ids = want - {c.id for c in all_checks}
@@ -250,7 +251,7 @@ def cmd_scan(args: argparse.Namespace, *, fix: bool) -> int:
             cfg.mode = "report-only"
             outbox = alerts_mod.Outbox(None, dry_run=True)
             _say_unwritable(cfg, err, log, ctx.now)
-        checks = _checks(args)
+        checks = _checks(args,cfg)
         try:
             out = engine.scan(ctx, store, checks, outbox, fix=fix, log=log)
             if not err:

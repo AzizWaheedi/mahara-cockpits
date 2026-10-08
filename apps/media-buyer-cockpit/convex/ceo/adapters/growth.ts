@@ -27,7 +27,7 @@ import {
   webbyCampaign,
   webbyDeal,
   webbyNewLead,
-} from "../webinarSql";
+} from "../../../src/types/ceo/webinarSql";
 import { describeWorkingHours, workingMinutesSql } from "../workingHours";
 
 // biome-ignore lint/suspicious/noExplicitAny: the B2B functions return jsonb

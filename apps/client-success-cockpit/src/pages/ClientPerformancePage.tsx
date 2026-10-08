@@ -710,6 +710,7 @@ function ReportSection({ p, per, fig }: { p: Any; per: Period; fig: Figures }) {
             try {
               await requestReportDoc(auth.client, {
                 clientName: p.clientName,
+                month: per.month,
                 from: per.from,
                 to: upTo(per),
                 label: capital(per.label),
@@ -717,9 +718,7 @@ function ReportSection({ p, per, fig }: { p: Any; per: Period; fig: Figures }) {
                 note: note.trim() || undefined,
                 extras,
               });
-              toast.success(
-                "Asked for it, the link appears here within about 15 minutes",
-              );
+              toast.success("Report created. Refresh to see its link.");
               setNote("");
             } catch (e) {
               toast.error(String(e));
@@ -2051,9 +2050,15 @@ export function ClientProfile({
               )}
               {perf.staleReason ? (
                 <p className="callout-warn rounded-2xl border px-4 py-3 text-xs">
-                  These numbers were last read on {shortDay(perf.staleAt)}.
-                  Today's read failed, so you are looking at the last good copy
-                  rather than a partial one. Reason: {perf.staleReason}
+                  {perf.staleAt ? (
+                    <>
+                      These numbers were last read on {shortDay(perf.staleAt)}.
+                    </>
+                  ) : (
+                    "The last confirmed read date is unknown."
+                  )}{" "}
+                  The last verified values are retained. Reason:{" "}
+                  {perf.staleReason}
                 </p>
               ) : null}
             </section>

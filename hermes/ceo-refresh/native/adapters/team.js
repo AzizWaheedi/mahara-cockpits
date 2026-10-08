@@ -665,7 +665,7 @@ export const team = {
         const daily = [
             {
                 date: today,
-                metric: "team_actions",
+                metric: "team.actions",
                 scope: "company",
                 value: companyActionsToday,
             },

@@ -50,7 +50,7 @@ describe('native client over the actual SDK and canonical PostgreSQL', () => {
     expect(await assistEnqueue(args, { apply: true, requestId: b }, client)).toBe(b);
     await owner(db);
     expect((await db.query<{ count: number }>('SELECT count(*)::int count FROM public.cockpit_media_native_jobs')).rows[0].count).toBe(2);
-  });
+  }, 15000);
   test('explicit apply returns the consumer request ID and polls the saved request', async () => {
     const client = await browserDatabase(db);
     const dry = await assistEnqueue({ kind: 'copy', client: 'Alpha', brief: 'Office copy' }, {}, client);

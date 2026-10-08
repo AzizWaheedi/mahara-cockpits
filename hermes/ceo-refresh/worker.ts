@@ -140,6 +140,9 @@ function validateDaily(value: unknown, key: SectionKey): DailyPoint[] {
     if (typeof row.date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(row.date) || typeof row.metric !== "string" || !row.metric.startsWith(`${key}.`) || typeof row.scope !== "string" || !row.scope || typeof row.value !== "number" || !Number.isFinite(row.value)) {
       throw new Error(`${key} daily row ${index + 1} is not a confirmed metric point`);
     }
+    if (!DEFINITIONS.some(definition => definition.metric === row.metric && definition.section === key)) {
+      throw new Error(`${key} daily metric ${row.metric} has no registered definition`);
+    }
     return { date: row.date, metric: row.metric, scope: row.scope.slice(0, 120), value: row.value };
   });
 }
@@ -176,6 +179,14 @@ function extractCurrentValues(key: SectionKey, payload: Row): Row[] {
 
 function asFailure(key: SectionKey, error: unknown): Failure {
   return { key, error: errorText(error) };
+}
+
+// PostgreSQL `jsonb -> 'output'` returns JSON null (not SQL NULL) when a
+// serialized null is present. Omit absent finance fields so Portal-only and
+// partial CEO refreshes do not masquerade as incomplete finance output.
+export function financePublication(id: string | null, output: unknown, error: string | null) {
+  if (!id) return undefined;
+  return { id, ...(output === null ? {} : { output }), ...(error === null ? {} : { error }) };
 }
 
 async function callRpc(tools: { rest(resource: string, body?: unknown): Promise<unknown> }, name: string, body?: unknown): Promise<Row> {
@@ -391,7 +402,7 @@ export async function runRefresh(options: RefreshOptions): Promise<RefreshReport
     daily,
     failures: failures.map(item => ({ key: item.key, error: item.error.slice(0, 1000) })),
     receipts: driver.receipts,
-    finance: { id: financeId, output: financePayload, error: financeError },
+    finance: financePublication(financeId, financePayload, financeError),
   };
   const planSha = sha256(publication);
   try {

@@ -5,9 +5,10 @@ import {fileURLToPath} from 'node:url';
 import {z} from '../apps/media-buyer-cockpit/node_modules/zod';
 import {migration, actor, member, owner} from '../apps/media-buyer-cockpit/scripts/lib/cockpitTestDb';
 import type {Row} from '../hermes/cockpit-sync/runtime';
-import {calculate} from '../hermes/cockpit-sync/worker';
+import {calculate,bookingsInWindow} from '../hermes/cockpit-sync/worker';
+import {prepareTables} from '../hermes/cockpit-sync/capture';
 import {collectCsm} from '../hermes/cockpit-sync/csmProducer';
-import {collectCreative} from '../hermes/cockpit-sync/creativeProducer';
+import {collectCreative,gatherFunnels} from '../hermes/cockpit-sync/creativeProducer';
 import {CF} from '../hermes/cockpit-sync/csmCadence';
 import {storeStills} from '../hermes/cockpit-sync/stills';
 import type {Reads} from '../hermes/cockpit-sync/runtime';
@@ -82,7 +83,69 @@ test('publish updates actual consumer rows, preserves human state/history, recon
  }finally{await db.close();}
 },30000);
 
+test('fresh unchanged source snapshots do not duplicate large audits, but real edits remain audited',async()=>{
+ const db=await fixture();try{
+  await initialize(db);
+  const first=plan(await state(db));await publish(db,await claim(db),first);
+  const auditCount=async(entity:string,id?:string)=>{await owner(db);const n=(await db.query<{n:number}>("SELECT count(*)::int n FROM cockpit_audit_log WHERE entity_type=$1 AND action IN ('UPDATE','update','native.publish') AND ($2::text IS NULL OR entity_id=$2)",[entity,id??null])).rows[0].n;await service(db);return n;};
+  const baseline={creative:await auditCount('creative_source','ads:native:ad:1'),media:await auditCount('cockpit_media_sources','tree:1'),csm:await auditCount('csm_source','clients:client:1'),daily:await auditCount('cockpit_media_daily_stats'),mirror:await auditCount('cockpit_ads')};
+  const second=plan(await state(db));
+  second.tables.ads=first.tables.ads;second.tables.campaigns=first.tables.campaigns;second.tables.dailyStats=first.tables.dailyStats;second.tables.metaTree=first.tables.metaTree;
+  second.creative.ads=first.creative.ads;second.creative.campaigns=first.creative.campaigns;second.creative.clients=first.creative.clients;
+  second.csm.clients=first.csm.clients;second.csm.clientProfiles=first.csm.clientProfiles;
+  recount(second);await publish(db,await claim(db),second);
+  expect(await auditCount('creative_source','ads:native:ad:1')).toBe(baseline.creative);
+  expect(await auditCount('cockpit_media_sources','tree:1')).toBe(baseline.media);
+  expect(await auditCount('csm_source','clients:client:1')).toBe(baseline.csm);
+  expect(await auditCount('cockpit_media_daily_stats')).toBe(baseline.daily);
+  expect(await auditCount('cockpit_ads')).toBe(baseline.mirror);
+  await owner(db);
+  const fresh=(await db.query<{at:string}>("SELECT source_snapshot_at::text at FROM cockpit_creative_sources WHERE table_name='ads'")).rows[0].at;
+  expect(new Date(fresh).getTime()).toBe(new Date(second.source_snapshot_at).getTime());
+  await service(db);
+  const edited=plan(await state(db));edited.tables.ads=[{...second.tables.ads[0],spend:125}];
+  edited.tables.metaTree=[{...second.tables.metaTree[0],kind:'campaign'}];
+  edited.csm.clients=[{...second.csm.clients[0],stage:'Paused'}];
+  edited.tables.dailyStats=[{...second.tables.dailyStats[0],spend:125}];
+  edited.creative.ads=edited.tables.ads;recount(edited);
+  await publish(db,await claim(db),edited);
+  expect(await auditCount('creative_source','ads:native:ad:1')).toBeGreaterThan(baseline.creative);
+  expect(await auditCount('cockpit_media_sources','tree:1')).toBeGreaterThan(baseline.media);
+  expect(await auditCount('csm_source','clients:client:1')).toBeGreaterThan(baseline.csm);
+  expect(await auditCount('cockpit_media_daily_stats')).toBeGreaterThan(baseline.daily);
+  expect(await auditCount('cockpit_ads')).toBeGreaterThan(baseline.mirror);
+  await owner(db);
+  const editAudit=(await db.query<{before:{data:{spend:number}};after:{data:{spend:number}}}>("SELECT before,after FROM cockpit_audit_log WHERE entity_type='creative_source' AND entity_id='ads:native:ad:1' AND action='update' ORDER BY created_at DESC LIMIT 1")).rows[0];
+  expect(editAudit.before.data.spend).toBe(120);
+  expect(editAudit.after.data.spend).toBe(125);
+ }finally{await db.close();}
+},60000);
+
 test('atomic rollback, duplicate identity, missing output, wrong counts, stale snapshots and source revision conflicts',async()=>{
+ const windowBookings=[{eventId:'old',date:'2026-01-15'},{eventId:'start',date:'2026-09-08'},{eventId:'end',date:'2026-10-08'},{eventId:'future',date:'2026-10-09'}];
+ expect(bookingsInWindow(windowBookings,'2026-09-08','2026-10-08').map(r=>r.eventId)).toEqual(['start','end']);
+ expect(windowBookings).toHaveLength(4);expect(()=>bookingsInWindow([{eventId:'unknown'}],'2026-09-08','2026-10-08')).toThrow(/unverified/);
+ const prior={funnels:[{_id:'original-post-funnel',account:'Alpha',kind:'Stays on the post',spend:1}]};
+ const funnels=prepareTables({funnels:[{account:'Alpha',kind:'Stays on the post',spend:2},{account:'Alpha',kind:'Unknown'}]},prior).funnels;
+ expect(funnels[0]._id).toBe('original-post-funnel');
+ expect(funnels[1]._id).toBeDefined();
+ expect(()=>prepareTables({funnels:[{kind:'Unknown'}]})).toThrow(/Missing logical identity/);
+ expect(()=>prepareTables({funnels:[{account:'Alpha',kind:'Unknown'},{account:'Alpha',kind:'Unknown'}]})).toThrow(/Duplicate logical identity/);
+ const retainedLinks=[{_id:'original-link-1',name:'Same client',dosDonts:'Keep first human note'},{_id:'original-link-2',name:'Same client',dosDonts:'Keep second human note'}];
+ expect(prepareTables({clientLinks:retainedLinks},{clientLinks:retainedLinks}).clientLinks).toBe(retainedLinks);
+ expect(()=>prepareTables({clientLinks:[{name:'Same client'}]},{clientLinks:retainedLinks})).toThrow(/Ambiguous prior/);
+ const linkedPrior=retainedLinks.map((r,i)=>({...r,url:`https://app.clickup.com/t/task-${i}`}));
+ const linkedFresh=linkedPrior.map((r,i)=>({name:r.name,taskId:`task-${i}`,dosDonts:r.dosDonts}));
+ expect(prepareTables({clientLinks:linkedFresh},{clientLinks:linkedPrior}).clientLinks.map(r=>r._id)).toEqual(retainedLinks.map(r=>r._id));
+ const duplicateIds=[{_id:'same-id',name:'One'},{_id:'same-id',name:'Two'}];
+ expect(()=>prepareTables({clientLinks:duplicateIds},{clientLinks:duplicateIds})).toThrow(/Duplicate/);
+ const day=new Date().toISOString().slice(0,10),raw=(ad:string)=>{const r=Array(25).fill('');Object.assign(r,{0:day,1:'Alpha',4:'10',5:'2',16:ad,17:'Ad',18:'ACTIVE'});return r;};
+ const previousForm={account:'Alpha',kind:'Instant form',formId:'22',formName:'Stored name',questions:[{label:'Project type',type:'CUSTOM',isGate:true,options:['One']}],gates:1,formCheckedAt:100};
+ const formReads:Reads={async tool(){return {values:[raw('10'),raw('20')]};},async graph(_path,params){return String(params?.fields).startsWith('name,effective_status')?{'10':{creative:{lead_gen_form_id:'11'},effective_status:'ACTIVE'},'20':{creative:{lead_gen_form_id:'22'},effective_status:'ACTIVE'}}:{'11':{id:'11',name:'Live name',questions:[]},'22':{id:'22',nativeMetadataUnavailable:true}};},async fetch(){throw new Error('Unexpected raw read');},log(){}};
+ const formRows=await withNativeContext(formReads,{receipts:[]},()=>gatherFunnels([previousForm]));
+ const retainedForm=formRows.find(r=>r.formId==='22')!;
+ expect(retainedForm.questions).toEqual(previousForm.questions);expect(retainedForm.formCheckedAt).toBe(100);expect(retainedForm.staleReason).toContain('unavailable');
+ expect(formRows.find(r=>r.formId==='11')!.formName).toBe('Live name');
  const db=await fixture();try{
   await initialize(db);const s=await state(db),c=await claim(db);
   for(const mutate of [
@@ -288,6 +351,22 @@ test('still uploader checks live SQL fence before provider writes',async()=>{
   const request:typeof fetch=async()=>{uploads++;return new Response('',{status:200});};
   await expect(storeStills(assets,{adStills:[],ads:[],metaTree:[],winnersArchive:[]},{SUPABASE_URL:'https://bldgtotkfmhoxmlzowdx.supabase.co',SUPABASE_SERVICE_ROLE_KEY:'fixture'},fence,receipts,request)).rejects.toThrow(/expired/i);
   expect(uploads).toBe(0);expect(receipts).toEqual([]);
+  const live=await claim(db),liveFence=async()=>{await db.query('SELECT cockpit_native_media_fence($1,$2)',[live.run_id,live.lease_token]);};
+  const image=new Uint8Array([1]),asset={...assets[0],sha256:createHash('sha256').update(image).digest('hex')};
+  for(const status of [400,409]){
+   const output={adStills:[{key:asset.key,status:'captured'}],ads:[],metaTree:[],winnersArchive:[]};let reads=0;
+   const duplicate:typeof fetch=async(_url,init)=>{
+    if(init?.method==='POST'){expect(new Headers(init.headers).get('x-upsert')).toBe('false');return new Response(JSON.stringify({statusCode:'409',error:'Duplicate',message:'The resource already exists'}),{status});}
+    reads++;return new Response(image);
+   };
+   await storeStills([asset],output,{SUPABASE_URL:'https://bldgtotkfmhoxmlzowdx.supabase.co',SUPABASE_SERVICE_ROLE_KEY:'fixture'},liveFence,[],duplicate);
+   expect(reads).toBe(1);expect(output.adStills[0].status).toBe('saved');
+  }
+  const wrongBytes:typeof fetch=async(_url,init)=>init?.method==='POST'?new Response(JSON.stringify({error:'Duplicate'}),{status:400}):new Response(new Uint8Array([2]));
+  await expect(storeStills([asset],{adStills:[]},{SUPABASE_URL:'https://bldgtotkfmhoxmlzowdx.supabase.co',SUPABASE_SERVICE_ROLE_KEY:'fixture'},liveFence,[],wrongBytes)).rejects.toThrow(/not verified/);
+  let unexpectedReads=0;
+  const invalidMime:typeof fetch=async(_url,init)=>{if(init?.method!=='POST')unexpectedReads++;return new Response(JSON.stringify({error:'InvalidMimeType'}),{status:400});};
+  await expect(storeStills([asset],{adStills:[]},{SUPABASE_URL:'https://bldgtotkfmhoxmlzowdx.supabase.co',SUPABASE_SERVICE_ROLE_KEY:'fixture'},liveFence,[],invalidMime)).rejects.toThrow(/storage upload failed/);expect(unexpectedReads).toBe(0);
  }finally{await db.close();}
 },30000);
 
@@ -337,6 +416,7 @@ test('real worker calculations from raw provider fixture publish campaign, CSM a
     throw new Error(`Unexpected fixture Graph resource ${path}`);
    },
    async tool(name,args){
+    if(name==='native_fathom_checkpoint_get')return [];
     if(name==='mcp_supabase_execute_sql'){
      if(args.query.includes('select distinct s.campaign_name'))return {result:JSON.stringify([{campaign_name:'Alpha campaign',campaign_id:'111111',meta_ad_account_id:'222222'}])};
      if(args.query.includes('thumbnail_url')||args.query.includes('ad_account_activities'))return {result:'[]'};
@@ -373,7 +453,8 @@ test('real worker calculations from raw provider fixture publish campaign, CSM a
    async fetch(){throw new Error('Fixture must not download or call a live provider');},
    log(level){if(level==='error')throw new Error('Fixture calculation reported a source failure');},
   };
-  const {stillAssets,...p}=await calculate(s,reads,{receipts:[]},{});
+  const fixtureEnv = {FATHOM_CREATED_AFTER: new Date(Date.now() - 90 * 86400000).toISOString()};
+  const {stillAssets,...p}=await calculate(s,reads,{receipts:[]},fixtureEnv);
   expect(stillAssets).toEqual([]);
   expect(p.tables.campaigns[0].spend7d).toBe(120);
   expect(p.tables.campaigns[0].leads7d).toBe(10);
@@ -387,10 +468,40 @@ test('real worker calculations from raw provider fixture publish campaign, CSM a
   expect(p.csm.appointments).toHaveLength(1);
   expect(p.csm.appointments[0]).toMatchObject({apptId:'appt1',clientName:'Alpha',kind:'checkin',status:'confirmed'});
   expect(p.csm.clientProfiles[0].callsBrief).toBe('Original recorded overall summary');
+  expect(p.csm.syncRuns).toEqual(s.csm.syncRuns);
   expect(p.csm.clientProfiles[0].calls.find((call:Row)=>call.url==='https://fathom.video/manual-call').brief).toBe('Keep original manual annotation');
   expect(p.csm.clientProfiles[0].calls.find((call:Row)=>call.url==='https://fathom.video/recorded-call').brief).toBe('Original recorded per-call brief');
   expect(p.creative.clients[0].name).toBe('Alpha');
   expect(p.creative.clients[0].daily[0].leads).toBe(10);
+  const retainedProfile={...p.csm.clientProfiles[0],performance:{sheetId:'verified-fixture-sheet',creativeStats:{booked:2}},performanceRetained:true,performanceSyncedAt:undefined};
+  const retainedCreative=await withNativeContext(reads,{receipts:[]},()=>collectCreative(s,structuredClone(p.tables),{...p.csm,clientProfiles:[retainedProfile]}));
+  expect(retainedCreative.clients[0].statsScannedAt).toBeUndefined();
+  const inaccessibleState=structuredClone(s);
+  const originalCheck=Date.now()-10*86400000;
+  inaccessibleState.csm.clientProfiles[0].performance={sheetId:'fixture-sheet',allTime:{leads:42}};
+  inaccessibleState.csm.clientProfiles[0].syncedAt=originalCheck;
+  const inaccessibleReads:Reads={...reads,async tool(name,args){
+    const url=args.url?new URL(args.url):undefined;
+    if(name==='pd_google_sheets_proxy_get'&&url?.pathname.endsWith('/values:batchGet'))throw Object.assign(new Error('Read rejected (403) at sheets.googleapis.com'),{status:403,resource:'sheets.googleapis.com'+url.pathname});
+    const value=await reads.tool(name,args);
+    if(name==='pd_clickup_proxy_get'&&Array.isArray(value.tasks))return {...value,tasks:value.tasks.map((t:Row)=>t.id==='cu1'?{...t,custom_fields:[...(t.custom_fields??[]),{id:CF.sheetLink,value:'https://docs.google.com/spreadsheets/d/fixture-performance-sheet-123456789/edit'}]}:t)};
+    return value;
+  }};
+  const recovered=await calculate(inaccessibleState,inaccessibleReads,{receipts:[]},fixtureEnv);
+  const recoveredProfile=recovered.csm.clientProfiles.find((r:Row)=>r.taskId==='cu1');
+  expect(recoveredProfile.performance.allTime.leads).toBe(42);
+  expect(recoveredProfile.performance.staleReason).toContain('403');
+  expect(recoveredProfile.performanceSyncedAt).toBe(originalCheck);
+  expect(recoveredProfile.performanceRetained).toBe(true);
+  const churnState=structuredClone(s);
+  churnState.csm.kpi=[{_id:'original-churn',key:'churn',numeric:25,month:'2026-09',at:originalCheck,note:'Preserve original human context'}];
+  const churnDenied:Reads={...reads,async tool(name,args){
+    if(name==='pd_google_sheets_proxy_get'&&String(args.url).includes('1p8CAd5pL9zKjc1mZ73Gc_hoj4NSWHfFPs4FoC_WuBUU'))throw Object.assign(new Error('Read rejected (403) at sheets.googleapis.com'),{status:403,resource:'sheets.googleapis.com'+new URL(args.url).pathname});
+    return reads.tool(name,args);
+  }};
+  const churnRetained=await calculate(churnState,churnDenied,{receipts:[]},fixtureEnv);
+  expect(churnRetained.csm.kpi.find((r:Row)=>r._id==='original-churn')).toEqual(churnState.csm.kpi[0]);
+  expect(churnRetained.csm.kpi.find((r:Row)=>r.key==='churn_source_unavailable').numeric).toBeUndefined();
   await publish(db,c,p);
   await owner(db);
   expect((await db.query<{spend:string}>('SELECT spend_7d::text spend FROM cockpit_campaigns')).rows[0].spend).toBe('120');
@@ -429,7 +540,7 @@ test('market provider insight math feeds permanent winners and keeps human annot
    throw new Error('Unexpected market provider resource');
   },
   async tool(_name,args){
-   return args.url.includes('10vGT2Jw43eCsSi5UfGY6O35_6pq-rjaEDi-fN86yZ-A')?{values:[['Client','Ad account','Country','City','Service'],['Alpha','222222','Kuwait','Kuwait','Construction']]}:{values:[['Client Name','Country','City','Service'],['Alpha','Kuwait','Kuwait','Construction']]};
+   return {values:[['Client Name','Ad Account - Meta','Country','City','Service'],['Alpha','222222','Kuwait','Kuwait','Construction']]};
   },
   async fetch(){throw new Error('No image request expected');},
   log(level){if(level==='error')throw new Error('Market source failed');},
@@ -440,9 +551,339 @@ test('market provider insight math feeds permanent winners and keeps human annot
  const tables:Record<string,Row[]>={marketPlays:market,metaTree:[],dailyStats:[]};archiveWinners(s,tables);
  expect(tables.winnersArchive).toHaveLength(1);
  expect(tables.winnersArchive[0]).toMatchObject({_id:'legacy-winner',note:'Keep my annotation',firstArchivedAt:1,client:'Human label',spend:120,leads:10,cpl:12});
- delete insight.data;
+ (insight as Row).data = undefined;
  await expect(withNativeContext(reads,{receipts:[]},()=>collectMarket(s))).rejects.toThrow(/insight/i);
 });
+
+test('market provider explicit insight fallback handles ad sets and ads, explicit zero, invalid responses and avoids extra requests on complete nested insights',async()=>{
+ const makeInsight=(spend='120',lead='10')=>({data:[{spend,actions:[{action_type:'lead',value:lead}]}]});
+ const baseMeta=(accountName='Alpha')=>({
+  async tool(_name:string,_args:Row){
+   return {values:[['Client Name','Ad Account - Meta','Country','City','Service'],[accountName,'222222','Kuwait','Kuwait','Construction']]};
+  },
+  async fetch(){throw new Error('No fetch allowed');},
+  log(level:string){if(level==='error')throw new Error('Market logged error');},
+ });
+
+ // 1. Complete nested insight fast-path avoids extra requests
+ {
+  let fallbackAdsetCalls = 0;
+  let fallbackAdCalls = 0;
+  const reads:Reads={
+   ...baseMeta(),
+   async graph(path:string){
+    if(path.endsWith('/owned_ad_accounts'))return {data:[{id:'act_222222',name:'Alpha'}]};
+    if(path.endsWith('/client_ad_accounts'))return {data:[]};
+    if(path==='act_222222/adsets')return {data:[{id:'555555',name:'Set 1',targeting:{age_min:20},insights:makeInsight('100','5')}]};
+    if(path==='555555/ads')return {data:[{id:'333333',name:'Ad 1',creative:{id:'444444'},insights:makeInsight('100','5')}]};
+    if(path==='555555/insights'){fallbackAdsetCalls++;return makeInsight('100','5');}
+    if(path==='333333/insights'){fallbackAdCalls++;return makeInsight('100','5');}
+    throw new Error(`Unexpected path ${path}`);
+   },
+  };
+  const plays=await withNativeContext(reads,{receipts:[]},()=>collectMarket({media:{marketPlays:[]}}));
+  expect(plays).toHaveLength(1);
+  expect(fallbackAdsetCalls).toBe(0);
+  expect(fallbackAdCalls).toBe(0);
+ }
+
+ // 2. Explicit fallback when nested insights is missing: ad sets and ads both fetch explicit edge
+ {
+  let fallbackAdsetCalls = 0;
+  let fallbackAdCalls = 0;
+  const requestedParams:Record<string,Row>={};
+  const reads:Reads={
+   ...baseMeta(),
+   async graph(path:string,params?:Row){
+    if(path.endsWith('/owned_ad_accounts'))return {data:[{id:'act_222222',name:'Alpha'}]};
+    if(path.endsWith('/client_ad_accounts'))return {data:[]};
+    if(path==='act_222222/adsets')return {data:[{id:'555555',name:'Set 1',targeting:{age_min:20}}]};
+    if(path==='555555/ads')return {data:[{id:'333333',name:'Ad 1',creative:{id:'444444'}}]};
+    if(path==='555555/insights'){
+     fallbackAdsetCalls++;
+     requestedParams[path]=params??{};
+     return makeInsight('150','10');
+    }
+    if(path==='333333/insights'){
+     fallbackAdCalls++;
+     requestedParams[path]=params??{};
+     return makeInsight('150','10');
+    }
+    throw new Error(`Unexpected path ${path}`);
+   },
+  };
+  const plays=await withNativeContext(reads,{receipts:[]},()=>collectMarket({media:{marketPlays:[]}}));
+  expect(plays).toHaveLength(1);
+  expect(fallbackAdsetCalls).toBe(1);
+  expect(fallbackAdCalls).toBe(1);
+  expect(requestedParams['555555/insights']).toEqual({date_preset:'last_30d',fields:'spend,actions'});
+  expect(requestedParams['333333/insights']).toEqual({date_preset:'last_30d',fields:'spend,actions'});
+  expect(plays[0].spend).toBe(150);
+  expect(plays[0].leads).toBe(10);
+  expect(plays[0].cpl).toBe(15);
+  expect(plays[0].creatives[0].spend).toBe(150);
+  expect(plays[0].creatives[0].leads).toBe(10);
+ }
+
+ // 3. Explicit complete data:[] is verified zero (skips play when ad set spend is 0, or captures 0 spend/leads on ad)
+ {
+  let adsetZeroFallback = 0;
+  let adZeroFallback = 0;
+  const reads:Reads={
+   ...baseMeta(),
+   async graph(path:string){
+    if(path.endsWith('/owned_ad_accounts'))return {data:[{id:'act_222222',name:'Alpha'}]};
+    if(path.endsWith('/client_ad_accounts'))return {data:[]};
+    if(path==='act_222222/adsets')return {data:[{id:'555555',name:'Set 1',targeting:{age_min:20}}]};
+    if(path==='555555/ads')return {data:[{id:'333333',name:'Ad 1',creative:{id:'444444'}}]};
+    if(path==='555555/insights'){adsetZeroFallback++;return {data:[]};}
+    if(path==='333333/insights'){adZeroFallback++;return {data:[]};}
+    throw new Error(`Unexpected path ${path}`);
+   },
+  };
+  const plays=await withNativeContext(reads,{receipts:[]},()=>collectMarket({media:{marketPlays:[]}}));
+  expect(adsetZeroFallback).toBe(1);
+  expect(plays).toEqual([]);
+
+  const readsAdZero:Reads={
+   ...baseMeta(),
+   async graph(path:string){
+    if(path.endsWith('/owned_ad_accounts'))return {data:[{id:'act_222222',name:'Alpha'}]};
+    if(path.endsWith('/client_ad_accounts'))return {data:[]};
+    if(path==='act_222222/adsets')return {data:[{id:'555555',name:'Set 1',targeting:{age_min:20},insights:makeInsight('100','5')}]};
+    if(path==='555555/ads')return {data:[{id:'333333',name:'Ad 1',creative:{id:'444444'}}]};
+    if(path==='333333/insights'){adZeroFallback++;return {data:[]};}
+    throw new Error(`Unexpected path ${path}`);
+   },
+  };
+  const playsWithAdZero=await withNativeContext(readsAdZero,{receipts:[]},()=>collectMarket({media:{marketPlays:[]}}));
+  expect(playsWithAdZero).toHaveLength(1);
+  expect(playsWithAdZero[0].creatives[0].spend).toBe(0);
+  expect(playsWithAdZero[0].creatives[0].leads).toBe(0);
+  expect(playsWithAdZero[0].creatives[0].cpl).toBeUndefined();
+ }
+
+ // 4. Missing / malformed / multiple window responses fail closed and caller preserves prior data
+ {
+  const priorPlays=[{adsetId:'555555',spend:99,leads:9,cpl:11}];
+  const priorState={media:{marketPlays:priorPlays}};
+
+  // Multiple window items in fallback response
+  const multiReads:Reads={
+   ...baseMeta(),
+   async graph(path:string){
+    if(path.endsWith('/owned_ad_accounts'))return {data:[{id:'act_222222',name:'Alpha'}]};
+    if(path.endsWith('/client_ad_accounts'))return {data:[]};
+    if(path==='act_222222/adsets')return {data:[{id:'555555',name:'Set 1',targeting:{age_min:20}}]};
+    if(path==='555555/insights')return {data:[{spend:'100'},{spend:'200'}]};
+    throw new Error(`Unexpected path ${path}`);
+   },
+  };
+  await expect(withNativeContext(multiReads,{receipts:[]},()=>collectMarket(priorState))).rejects.toThrow(/missing or ambiguous/i);
+  expect(priorState.media.marketPlays).toBe(priorPlays);
+
+  // Missing data array in fallback response
+  const missingDataReads:Reads={
+   ...baseMeta(),
+   async graph(path:string){
+    if(path.endsWith('/owned_ad_accounts'))return {data:[{id:'act_222222',name:'Alpha'}]};
+    if(path.endsWith('/client_ad_accounts'))return {data:[]};
+    if(path==='act_222222/adsets')return {data:[{id:'555555',name:'Set 1',targeting:{age_min:20}}]};
+    if(path==='555555/insights')return {};
+    throw new Error(`Unexpected path ${path}`);
+   },
+  };
+  await expect(withNativeContext(missingDataReads,{receipts:[]},()=>collectMarket(priorState))).rejects.toThrow(/missing or ambiguous/i);
+
+  // Malformed spend in fallback response
+  const malformedSpendReads:Reads={
+   ...baseMeta(),
+   async graph(path:string){
+    if(path.endsWith('/owned_ad_accounts'))return {data:[{id:'act_222222',name:'Alpha'}]};
+    if(path.endsWith('/client_ad_accounts'))return {data:[]};
+    if(path==='act_222222/adsets')return {data:[{id:'555555',name:'Set 1',targeting:{age_min:20}}]};
+    if(path==='555555/insights')return {data:[{spend:'invalid-number'}]};
+    throw new Error(`Unexpected path ${path}`);
+   },
+  };
+  await expect(withNativeContext(malformedSpendReads,{receipts:[]},()=>collectMarket(priorState))).rejects.toThrow(/Market spend is unavailable/i);
+
+  // Provider error during fallback read is not swallowed
+  const providerErrorReads:Reads={
+   ...baseMeta(),
+   async graph(path:string){
+    if(path.endsWith('/owned_ad_accounts'))return {data:[{id:'act_222222',name:'Alpha'}]};
+    if(path.endsWith('/client_ad_accounts'))return {data:[]};
+    if(path==='act_222222/adsets')return {data:[{id:'555555',name:'Set 1',targeting:{age_min:20}}]};
+    if(path==='555555/insights')throw new Error('Provider rate limit or auth failure');
+    throw new Error(`Unexpected path ${path}`);
+   },
+  };
+  await expect(withNativeContext(providerErrorReads,{receipts:[]},()=>collectMarket(priorState))).rejects.toThrow('Provider rate limit or auth failure');
+ }
+});
+
+test('market provider never calls obsolete labels sheet, prefers exact account-ID over mismatched name, and fails closed on unreadable or ambiguous registry',async()=>{
+ const insight={data:[{spend:'100',actions:[{action_type:'lead',value:'5'}]}]};
+ const mockMeta=(accountName='Meta Name')=>({
+  async graph(path:string){
+   if(path.endsWith('/owned_ad_accounts'))return {data:[{id:'act_999888',name:accountName}]};
+   if(path.endsWith('/client_ad_accounts'))return {data:[]};
+   if(path==='act_999888/adsets')return {data:[{id:'adset_1',name:'Play 1',targeting:{age_min:20},insights:insight}]};
+   if(path==='adset_1/ads')return {data:[{id:'ad_1',name:'Ad 1',creative:{id:'cr_1'},insights:insight}]};
+   throw new Error(`Unexpected graph path ${path}`);
+  },
+  async fetch(){throw new Error('No image fetch');},
+  log(){},
+ });
+
+ // 1. Obsolete sheet is never called, and canonical account-ID mapping wins over mismatched Meta display name
+ {
+  let obsoleteCalled = false;
+  const reads:Reads={
+   ...mockMeta('Confusing Meta Display Name'),
+   async tool(_name,args){
+    if(String(args?.url).includes('10vGT2Jw43eCsSi5UfGY6O35_6pq-rjaEDi-fN86yZ-A')){
+     obsoleteCalled=true;
+     throw new Error('Obsolete labels sheet must not be called');
+    }
+    return {values:[
+     ['Client Name','Ad Account - Meta','Country','City','Service'],
+     ['Authoritative Canonical Client','act_999888','UAE','Dubai','Interior design'],
+    ]};
+   },
+  };
+  const plays=await withNativeContext(reads,{receipts:[]},()=>collectMarket({media:{marketPlays:[]}}));
+  expect(obsoleteCalled).toBe(false);
+  expect(plays).toHaveLength(1);
+  expect(plays[0].client).toBe('Authoritative Canonical Client');
+  expect(plays[0].accountId).toBe('999888');
+  expect(plays[0].country).toBe('UAE');
+  expect(plays[0].city).toBe('Dubai');
+  expect(plays[0].serviceLine).toBe('Interior design');
+ }
+
+ // 2. Old fixtures lacking Ad Account - Meta header retain existing name matching
+ {
+  const reads:Reads={
+   ...mockMeta('Alpha Interior'),
+   async tool(){
+    return {values:[
+     ['Client Name','Country','City','Service'],
+     ['Alpha Interior','Kuwait','Kuwait City','Interior design'],
+    ]};
+   },
+  };
+  const plays=await withNativeContext(reads,{receipts:[]},()=>collectMarket({media:{marketPlays:[]}}));
+  expect(plays).toHaveLength(1);
+  expect(plays[0].client).toBe('Alpha Interior');
+  expect(plays[0].country).toBe('Kuwait');
+  expect(plays[0].city).toBe('Kuwait City');
+  expect(plays[0].serviceLine).toBe('Interior design');
+ }
+
+ // 3. Empty/unreadable registry or missing Client Name header must fail closed
+ {
+  const unreadableReads:Reads={
+   ...mockMeta(),
+   async tool(){throw new Error('Network error loading Client Data');},
+  };
+  await expect(withNativeContext(unreadableReads,{receipts:[]},()=>collectMarket({media:{marketPlays:[]}}))).rejects.toThrow();
+
+  const emptyReads:Reads={
+   ...mockMeta(),
+   async tool(){return {values:[]};},
+  };
+  await expect(withNativeContext(emptyReads,{receipts:[]},()=>collectMarket({media:{marketPlays:[]}}))).rejects.toThrow(/Client Data/i);
+
+  const headerOnlyReads:Reads={
+   ...mockMeta(),
+   async tool(){return {values:[['Client Name','Ad Account - Meta','Country','City','Service']]};},
+  };
+  await expect(withNativeContext(headerOnlyReads,{receipts:[]},()=>collectMarket({media:{marketPlays:[]}}))).rejects.toThrow(/Client Data/i);
+
+  const blankClientReads:Reads={
+   ...mockMeta(),
+   async tool(){return {values:[['Client Name','Ad Account - Meta'],['   ','999888']]};},
+  };
+  await expect(withNativeContext(blankClientReads,{receipts:[]},()=>collectMarket({media:{marketPlays:[]}}))).rejects.toThrow(/Client Data/i);
+
+  const missingHeaderReads:Reads={
+   ...mockMeta(),
+   async tool(){return {values:[['No Client Name Here','Ad Account - Meta']]};},
+  };
+  await expect(withNativeContext(missingHeaderReads,{receipts:[]},()=>collectMarket({media:{marketPlays:[]}}))).rejects.toThrow(/Client Name/i);
+ }
+
+ // 4. Duplicate account-ID mapping must reject or fail closed
+ {
+  const duplicateIdReads:Reads={
+   ...mockMeta(),
+   async tool(){
+    return {values:[
+     ['Client Name','Ad Account - Meta','Country','City','Service'],
+     ['Client First','999888','UAE','Dubai','Interior design'],
+     ['Client Second','act_999888','KSA','Riyadh','Construction and contracting'],
+    ]};
+   },
+  };
+  await expect(withNativeContext(duplicateIdReads,{receipts:[]},()=>collectMarket({media:{marketPlays:[]}}))).rejects.toThrow(/ambiguous|duplicate/i);
+ }
+
+ // 5. Ambiguous name mapping (when no account ID is provided) must reject ambiguous match rather than attaching wrong client
+ {
+  const ambiguousNameReads:Reads={
+   ...mockMeta('Alpha Global Projects'),
+   async tool(){
+    return {values:[
+     ['Client Name','Country','City','Service'],
+     ['Alpha One','Kuwait','Kuwait','Fit-out'],
+     ['Alpha Two','Kuwait','Kuwait','Interior'],
+    ]};
+   },
+  };
+  const plays=await withNativeContext(ambiguousNameReads,{receipts:[]},()=>collectMarket({media:{marketPlays:[]}}));
+  expect(plays[0].client).toBe('Alpha Global Projects');
+  expect(plays[0].country).toBeUndefined();
+  expect(plays[0].city).toBeUndefined();
+  expect(plays[0].serviceLine).toBe('Unknown');
+
+  const duplicateNormalizedNameReads:Reads={
+   ...mockMeta('Beta Group'),
+   async tool(){
+    return {values:[
+     ['Client Name','Country','City','Service'],
+     ['Beta Group','Kuwait','Kuwait','Fit-out'],
+     ['beta group','UAE','Dubai','Interior'],
+    ]};
+   },
+  };
+  const dupPlays=await withNativeContext(duplicateNormalizedNameReads,{receipts:[]},()=>collectMarket({media:{marketPlays:[]}}));
+  expect(dupPlays[0].client).toBe('Beta Group');
+  expect(dupPlays[0].country).toBeUndefined();
+  expect(dupPlays[0].city).toBeUndefined();
+  expect(dupPlays[0].serviceLine).toBe('Unknown');
+ }
+
+ // 6. Identical duplicate account-ID mappings deduplicate safely
+ {
+  const identicalIdReads:Reads={
+   ...mockMeta('Any Meta Name'),
+   async tool(){
+    return {values:[
+     ['Client Name','Ad Account - Meta','Country','City','Service'],
+     ['Exact Client','999888','UAE','Dubai','Interior design'],
+     ['Exact Client','act_999888','UAE','Dubai','Interior design'],
+    ]};
+   },
+  };
+  const plays=await withNativeContext(identicalIdReads,{receipts:[]},()=>collectMarket({media:{marketPlays:[]}}));
+  expect(plays).toHaveLength(1);
+  expect(plays[0].client).toBe('Exact Client');
+  expect(plays[0].country).toBe('UAE');
+ }
+});
+
 
 test('native refresh retains canonical legacy IDs, human fields and completed checklist work',async()=>{
  const db=await fixture();try{

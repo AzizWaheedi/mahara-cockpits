@@ -10,7 +10,7 @@ import {
   type TargetEditorState,
   type TargetVersion,
   webinarTargetsSchema,
-} from "./webinarTargetsModel";
+} from "../../src/types/ceo/webinarTargetsModel";
 
 async function scopeStart(scope: string): Promise<number | null> {
   if (scope === "defaults") return null;

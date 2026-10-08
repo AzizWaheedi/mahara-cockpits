@@ -71,10 +71,11 @@ export function prepareTables(tables:Record<string,Row[]>, prior:Record<string,R
    case 'marketPlays':return [r.adsetId??r.id??r.name];
    case 'winnersArchive':return [r.adId??r.metaAdId??r.id];
    case 'adStills':return [r.key??r.adId??r.id];
-   case 'clientLinks':case 'clients':return [r.taskId??r.name??r.id];
+   case 'clientLinks':return [r.taskId??/^https:\/\/app\.clickup\.com\/t\/([A-Za-z0-9_-]+)(?:[/?#]|$)/.exec(String(r.url??''))?.[1]??r.name??r.id];
+   case 'clients':return [r.taskId??r.name??r.id];
    case 'clientProfiles':return [r.taskId??r.clientName];
    case 'csTasks':case 'creativeTasks':case 'videoJobs':case 'contentPosts':return [r.taskId??r.id];
-   case 'funnels':return [r.account,r.kind,r.formId??r.url];
+   case 'funnels':return [r.account,r.kind,r.formId??r.url??r.kind];
    case 'rosterDays':return [r.day];
    case 'churnEvents':return r._id?[r._id]:[r.day,r.key,r.from,r.to,r.kind];
    case 'appointments':return [r.apptId];
@@ -83,6 +84,12 @@ export function prepareTables(tables:Record<string,Row[]>, prior:Record<string,R
   }
  };
  return Object.fromEntries(Object.entries(tables).map(([table,rows])=>{
+  // Unchanged imported tables retain every original row and identity.
+  if(rows===prior[table]){
+   if(rows.some(r=>typeof r._id!=='string'||!r._id))throw new Error(`Missing source identity in ${table}`);
+   if(new Set(rows.map(r=>r._id)).size!==rows.length)throw new Error(`Duplicate source identity in ${table}`);
+   return [table,rows];
+  }
   const old=new Map<string,string>();
   for(const row of prior[table]??[]){
    const identity=JSON.stringify(key(table,row));

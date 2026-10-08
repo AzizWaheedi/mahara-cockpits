@@ -1,7 +1,7 @@
 import {AsyncLocalStorage} from 'node:async_hooks';
 export type Row=Record<string,any>;
 export interface ActionCtx{runQuery:(name:string,args:Row)=>Promise<any>;runMutation:(name:string,args:Row)=>Promise<any>;scheduler:{runAfter:(delay:number,name:string,args:Row)=>Promise<any>}}
-export interface Reads{graph:(path:string,params?:Row)=>Promise<any>;tool:(name:string,args:Row)=>Promise<any>;fetch:(url:string,init?:RequestInit)=>Promise<Response>;log:(level:string,args:unknown[])=>void}
+export interface Reads{graph:(path:string,params?:Row)=>Promise<any>;tool:(name:string,args:Row)=>Promise<any>;fetch:(url:string,init?:RequestInit)=>Promise<Response>;log:(level:string,args:unknown[])=>void;retainSheetFailure?:(error:unknown)=>void}
 export interface NativeRunContext{receipts:Row[];fence?:()=>Promise<unknown>}
 interface ActiveContext extends NativeRunContext{reads:Reads}
 const context=new AsyncLocalStorage<ActiveContext>();
@@ -11,6 +11,7 @@ export const withNativeContext=<T>(r:Reads,run:NativeRunContext,fn:()=>Promise<T
 export const assertNativeFence=async()=>{const run=active();if(run.fence)await run.fence();};
 export const graph=<T=any>(path:string,params:Row={}):Promise<T>=>reads().graph(path,params);
 export const callTool=<T=any>(name:string,args:Row):Promise<T>=>reads().tool(name,args);
+export const retainSheetFailure=(error:unknown)=>reads().retainSheetFailure?.(error);
 export const providerFetch=(url:string,init?:RequestInit)=>reads().fetch(url,init);
 export const recordLog=(level:string,...args:unknown[])=>reads().log(level,args);
 export const MAHARA_BUSINESS_ID='767701513092162';

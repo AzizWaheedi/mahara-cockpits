@@ -17,6 +17,7 @@ DECLARE
  checks jsonb := '[]'::jsonb; item jsonb; last_good jsonb; row_data jsonb;
  name text; table_name text; key_name text; time_column text; good_column text; good_value text;
  limit_min integer; n bigint; pending bigint; failed bigint; oldest timestamptz;
+ queue_ready boolean; queue_columns text[];
  missing text[] := '{}'; required_name text;
 BEGIN
  -- Dynamic reads let a missing prerequisite report a failure instead of making
@@ -74,7 +75,12 @@ BEGIN
  FOREACH table_name IN ARRAY ARRAY['cockpit_ask_ai_jobs','eod_outbox'] LOOP
   pending := 0; failed := 0; oldest := NULL;
   key_name := CASE WHEN table_name='eod_outbox' THEN 'eod' ELSE 'ask-ai' END;
-  IF to_regclass('public.'||table_name) IS NOT NULL THEN
+  queue_columns := CASE WHEN key_name='ask-ai' THEN ARRAY['status','created_at','updated_at','hidden']
+    ELSE ARRAY['status','created_at','reconciliation_needed'] END;
+  SELECT count(*)=cardinality(queue_columns) INTO queue_ready FROM pg_catalog.pg_attribute
+   WHERE attrelid=to_regclass('public.'||table_name) AND attnum>0 AND NOT attisdropped
+    AND attname=ANY(queue_columns);
+  IF queue_ready THEN
    IF key_name='ask-ai' THEN
     EXECUTE 'SELECT count(*) FILTER(WHERE status IN (''queued'',''claimed'') AND NOT hidden),
      min(created_at) FILTER(WHERE status IN (''queued'',''claimed'') AND NOT hidden),
@@ -88,8 +94,9 @@ BEGIN
    END IF;
   END IF;
   checks := checks || jsonb_build_array(jsonb_build_object('key','queue:'||key_name,'name','Native queue '||key_name,
-   'ok',to_regclass('public.'||table_name) IS NOT NULL AND failed < CASE WHEN key_name='ask-ai' THEN 10 ELSE 1 END,
+   'ok',queue_ready AND failed < CASE WHEN key_name='ask-ai' THEN 10 ELSE 1 END,
    'error',CASE WHEN to_regclass('public.'||table_name) IS NULL THEN 'Required queue table missing'
+    WHEN NOT queue_ready THEN 'Required queue columns missing; native delivery is unavailable'
     WHEN failed>0 THEN failed::text||' failed or reconciliation-required jobs' END,
    'at',oldest,'max_age_min',CASE WHEN pending>0 THEN 20 END));
  END LOOP;
