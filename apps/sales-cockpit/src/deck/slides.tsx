@@ -308,7 +308,7 @@ function cover(ctx: DeckCtx) {
             style={{ maxWidth: 1000, color: "rgba(242,246,250,.82)" }}
           >
             {rtl
-              ? "إعلانات، فريق اتصال، ونظام إقفال.. نشغلها لك بكل الخليج."
+              ? "إعلانات، فريق اتصال، ونظام لإقفال الصفقات.. نشغلها لك بكل الخليج."
               : "Ads, a calling team and a closing system, run for you across the Gulf."}
           </p>
         </Rv>
@@ -369,7 +369,7 @@ function path(ctx: DeckCtx) {
       <Header
         title={
           rtl
-            ? "من أول إعلان.. لين المشروع الموقّع. نشغل كل الطريق."
+            ? "من أول إعلان.. لين المشروع الموقّع. واحنا نشغل كل شي بينهم."
             : "From the first ad to the signed project. We run all of it."
         }
         lead={
@@ -571,7 +571,7 @@ function closingGain(ctx: DeckCtx) {
   return (
     <p className="dk-gain">
       {ar(lang)
-        ? `بأرقامك: لو رفعنا الإقفال ١٠ نقاط بس، هذا ${money} زيادة بالسنة.`
+        ? `بأرقامك: لو نسبة إقفالك زادت ١٠ نقاط بس، هذا ${money} زيادة بالسنة.`
         : `At your numbers, ten more points of closing is worth ${money} a year.`}
     </p>
   );
@@ -711,7 +711,7 @@ function numbersSlide(ctx: DeckCtx) {
   const names: Record<string, L> = {
     booking: { en: "Inquiry to meeting", ar: "من استفسار لموعد" },
     show: { en: "Meeting that happens", ar: "الموعد يصير فعلاً" },
-    close: { en: "Meeting to signature", ar: "من اجتماع لتوقيع" },
+    close: { en: "Meeting to signature", ar: "من موعد لتوقيع" },
   };
   return (
     <>
@@ -876,7 +876,7 @@ function numbersSlide(ctx: DeckCtx) {
                 </p>
                 <p className="dk-body">
                   {ar(lang)
-                    ? `${tok["EXTRA PROJECTS A YEAR"] ?? ""} بالسنة${tok["GAP YEAR"] ? "، بمتوسطك" : ""}. بدون ما تصرف ولا فلس زيادة على الإعلانات.`
+                    ? `${tok["EXTRA PROJECTS A YEAR"] ?? ""} بالسنة${tok["GAP YEAR"] ? "، بمتوسط مشروعك" : ""}. بدون ما تصرف ولا فلس زيادة على الإعلانات.`
                     : `${tok["EXTRA PROJECTS A YEAR"] ?? ""} a year${tok["GAP YEAR"] ? " at your average project" : ""}. Without spending a dollar more on ads.`}
                 </p>
               </>
@@ -887,7 +887,7 @@ function numbersSlide(ctx: DeckCtx) {
                 </p>
                 <p className="dk-body">
                   {ar(lang)
-                    ? "نعبي الاستفسارات، المواعيد، اللي حضروا، واللي وقّعوا.. ونشوف وين أكبر تسريب."
+                    ? "نعبي الاستفسارات، المواعيد، اللي حضروا، واللي وقّعوا.. ونشوف وين تضيع أكثر فرص."
                     : "Fill in inquiries, meetings, show-ups and signatures, and the biggest leak shows here."}
                 </p>
               </>
@@ -1088,7 +1088,7 @@ function speedSlide(ctx: DeckCtx) {
         label={rtl ? "ليش السرعة" : "Why speed"}
         title={
           rtl
-            ? "أول خمس دقايق.. تقرر الليد."
+            ? "أول خمس دقايق.. تحدد مصير الليد."
             : "The first five minutes decide the lead."
         }
         wide={1100}
@@ -1115,7 +1115,7 @@ function speedSlide(ctx: DeckCtx) {
           }}
         >
           {rtl
-            ? "احتمال تأهّل الليد لو اتصلت خلال ٥ دقايق.. مقارنة بـ٣٠ دقيقة."
+            ? "احتمال أعلى إن الليد يتأهل لو اتصلت خلال ٥ دقايق.. بدال ٣٠ دقيقة."
             : "more likely to qualify a lead when you call within 5 minutes instead of 30."}
         </p>
         <p className="dk-small" style={{ marginTop: 18 }}>
@@ -1229,7 +1229,7 @@ function phoneSlide(ctx: DeckCtx, on: boolean) {
     },
     {
       en: "Your results and what needs you, at a glance",
-      ar: "نتايجك واللي يبيك.. بنظرة وحدة",
+      ar: "نتايجك واللي ناطرك.. بنظرة وحدة",
     },
     {
       en: "Reminders when a meeting still needs an outcome",
@@ -1517,7 +1517,7 @@ function budgetSlide(ctx: DeckCtx) {
     <>
       <Header
         label={ar(lang) ? "ميزانية الإعلانات" : "The ad budget"}
-        title={ar(lang) ? "شنو تجيب ميزانيتك." : "What your ad budget buys."}
+        title={ar(lang) ? "شنو تييب لك ميزانيتك." : "What your ad budget buys."}
         lead={
           ar(lang)
             ? "الميزانية تروح للمنصات مباشرة. احنا ما نلمسها."
@@ -1563,7 +1563,7 @@ function budgetSlide(ctx: DeckCtx) {
             </span>
             <span className="dk-body">
               {ar(lang)
-                ? `على ${usd(CAMPAIGNS.perLead, lang)} للاستفسار`
+                ? `بمعدل ${usd(CAMPAIGNS.perLead, lang)} للاستفسار`
                 : `at ${usd(CAMPAIGNS.perLead, lang)} an inquiry`}
             </span>
           </div>
@@ -1584,7 +1584,7 @@ function budgetSlide(ctx: DeckCtx) {
             </span>
             <span className="dk-body">
               {ar(lang)
-                ? `على ${usd(CAMPAIGNS.perBooking, lang)} للموعد`
+                ? `بمعدل ${usd(CAMPAIGNS.perBooking, lang)} للموعد`
                 : `at ${usd(CAMPAIGNS.perBooking, lang)} a booking`}
             </span>
           </div>
@@ -2134,7 +2134,7 @@ export function deckSlides(): SlideDef[] {
           ctx: c,
           on,
           label: ar(c.lang)
-            ? "نعطي السوق كله"
+            ? "نعطي للسوق كله"
             : "We give to the whole industry",
           title: ar(c.lang)
             ? "نفس الأنظمة اللي نشغلها لشركائنا.. نشرحها ببلاش."
@@ -2180,7 +2180,7 @@ export function deckSlides(): SlideDef[] {
           on,
           label: pillarLabel("ads", c.lang),
           title: ar(c.lang)
-            ? "إعلانات يهندسها الذكاء الاصطناعي.. للمشاريع عالية القيمة"
+            ? "إعلانات يبنيها الذكاء الاصطناعي.. للمشاريع عالية القيمة"
             : "Ads engineered by AI, for premium projects",
           stops: ADS_TOUR,
           top: <Bridge ctx={c} pillar="ads" />,
@@ -2233,7 +2233,7 @@ export function deckSlides(): SlideDef[] {
     {
       id: "closing",
       section: S.system,
-      title: { en: "4. Closing mastery", ar: "٤. الإقفال" },
+      title: { en: "4. Closing mastery", ar: "٤. إقفال الصفقات" },
       pillar: "closing",
       faq: "closing",
       stops: CLOSING_TOUR.length,
@@ -2243,7 +2243,7 @@ export function deckSlides(): SlideDef[] {
           on,
           label: pillarLabel("closing", c.lang),
           title: ar(c.lang)
-            ? "إتقان إقفال المشاريع"
+            ? "إتقان توقيع المشاريع"
             : "Project Closing Mastery",
           stops: CLOSING_TOUR,
           top: <Bridge ctx={c} pillar="closing" />,

@@ -940,7 +940,7 @@ export function reviewsSlide(page: number) {
         <Rv i={1}>
           <h2 className="dk-h2" style={{ marginTop: 18 }}>
             {ar(lang)
-              ? "من حساب قوقل.. بدون أي تعديل."
+              ? "من صفحتنا على قوقل.. بدون أي تعديل."
               : "Straight from our Google profile, untouched."}
           </h2>
         </Rv>

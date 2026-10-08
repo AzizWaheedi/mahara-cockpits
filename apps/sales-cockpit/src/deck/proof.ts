@@ -136,7 +136,7 @@ export const STORY_PROOF: Record<string, StoryProof> = {
       },
       {
         value: { en: "2", ar: "٢" },
-        label: { en: "markets served", ar: "سوقين" },
+        label: { en: "markets served", ar: "سوق يخدمونه" },
       },
     ],
   },
@@ -183,7 +183,7 @@ export const STORY_PROOF: Record<string, StoryProof> = {
     slug: "joe-and-sera",
     head: {
       en: "From marketing skeptic to a $12.4M-a-year design business.",
-      ar: "ما كان يصدّق بالتسويق.. والحين شركته ماشية على ١٢٫٤ مليون دولار بالسنة.",
+      ar: "ما كان مقتنع بالتسويق.. والحين شركته ماشية على ١٢٫٤ مليون دولار بالسنة.",
     },
     metrics: [
       {
@@ -722,7 +722,7 @@ export const ADS_TOUR: Stop[] = [
     },
     why: {
       en: "Owners stop for real work. Never for stock footage.",
-      ar: "صاحب المشروع يوقف عند شغل حقيقي.. مو صور ستوك.",
+      ar: "صاحب المشروع يوقف عند شغل حقيقي.. مو لقطات ستوك.",
     },
     media: {
       kind: "reels",
@@ -832,7 +832,7 @@ export const ADS_TOUR: Stop[] = [
     name: { en: "From inside our ad account", ar: "من داخل حساب الإعلانات" },
     what: {
       en: "Over $1.32M managed in this industry. Twenty ads in one campaign, and the winners stay on.",
-      ar: "أكثر من ١٫٣٢ مليون دولار صرف أدرناه بهالمجال.. وعشرين إعلان بحملة وحدة، والفايز يكمل.",
+      ar: "أكثر من ١٫٣٢ مليون دولار صرف إعلاني أدرناه بهالمجال.. و٢٠ إعلان بحملة وحدة، واللي ينجح منها يكمل.",
     },
     why: {
       en: "We test until the cost of a qualified lead comes down.",
@@ -872,7 +872,7 @@ export const JOURNEY: Stop[] = [
     short: { en: "Landing page", ar: "اللاندنق بيج" },
     what: {
       en: "The ad opens a page built to sell, never a WhatsApp chat.",
-      ar: "الإعلان يفتح صفحة مبنية عشان تبيع.. مو محادثة واتساب.",
+      ar: "الإعلان يفتح صفحة مبنية عشان تبيع خدمتك.. مو محادثة واتساب.",
     },
     why: {
       en: "It educates them before anyone spends a minute on them.",
@@ -976,12 +976,12 @@ export const JOURNEY: Stop[] = [
     name: { en: "Booked: a WhatsApp and a video", ar: "انحجز: واتساب وفيديو" },
     short: { en: "Booked", ar: "انحجز" },
     what: {
-      en: "A WhatsApp confirmation, then a second video that sells your firm before the meeting.",
-      ar: "تأكيد على الواتساب، وبعده فيديو ثاني يقنعه فيك قبل الموعد.",
+      en: "A WhatsApp confirmation, then a second video that introduces your firm and builds trust before the meeting.",
+      ar: "تأكيد على الواتساب، وبعده فيديو ثاني يعرّف العميل على شركتك ويقنعه فيك قبل الموعد.",
     },
     why: {
-      en: "They arrive warm, and they show up.",
-      ar: "يوصلك متحمس.. ويحضر.",
+      en: "They arrive warm, and more likely to show up.",
+      ar: "يوصلك متحمس.. وفرصة إنه يحضر أعلى.",
     },
     media: {
       kind: "video",
@@ -1040,7 +1040,7 @@ export const CALLS_TOUR: Stop[] = [
     },
     what: {
       en: "A script written for your firm, and a knowledge base of your services and offers.",
-      ar: "سكربت مكتوب لشركتك، وقاعدة معرفة فيها خدماتك وعروضك.",
+      ar: "سكربت مكتوب لشركتك، وملف معلومات فيه كل خدماتك وعروضك.",
     },
     why: {
       en: "Every call sounds like your own team.",
@@ -1103,7 +1103,7 @@ export const CALLS_TOUR: Stop[] = [
     name: { en: "Hear a real call", ar: "اسمع مكالمة حقيقية" },
     what: {
       en: "He was worried about delivery. Our team turned it into his first reason to buy.",
-      ar: "كان شايل هم التسليم.. والفريق قلبها لأول سبب يشتري.",
+      ar: "كان شايل هم التسليم.. والفريق قلبها لأول سبب يخليه يشتري.",
     },
     why: {
       en: "Hundreds of calls like this every week.",
@@ -1186,7 +1186,7 @@ export const CLOSING_TOUR: Stop[] = [
     name: { en: "Premium Projects Academy", ar: "أكاديمية المشاريع المميزة" },
     what: {
       en: "Six courses: the start, Google optimisation, the offer, Project Closing Mastery, and your team.",
-      ar: "٦ كورسات: البداية، تحسين قوقل، صناعة العرض، إتقان إقفال المشاريع، والفريق والتشغيل.",
+      ar: "٦ كورسات: البداية، تحسين قوقل، صناعة العرض، إتقان توقيع المشاريع، والفريق والتشغيل.",
     },
     why: {
       en: "The frameworks and scripts our best partners use to close 40 to 50% of their proposals.",
@@ -1206,14 +1206,14 @@ export const CLOSING_TOUR: Stop[] = [
   },
   {
     key: "mastery",
-    name: { en: "Project Closing Mastery", ar: "إتقان إقفال المشاريع" },
+    name: { en: "Project Closing Mastery", ar: "إتقان توقيع المشاريع" },
     what: {
       en: "Step by step: the consultation, the proposal, the objections and the close.",
       ar: "خطوة خطوة: الاستشارة، العرض، الاعتراضات، والإقفال.",
     },
     why: {
-      en: "You sign more of the people you meet.",
-      ar: "توقّع مع أكثر ناس تقابلهم.",
+      en: "So you sign more of the people you meet.",
+      ar: "عشان توقّع مع عدد أكبر من اللي تقابلهم.",
     },
     media: {
       kind: "shots",
@@ -1232,7 +1232,7 @@ export const CLOSING_TOUR: Stop[] = [
     name: { en: "Weekly 1:1 check-in calls", ar: "مكالمات أسبوعية ١:١" },
     what: {
       en: "Every week with your success manager: the numbers, the calls, the next move.",
-      ar: "كل أسبوع مع مدير نجاحك: الأرقام، المكالمات، والخطوة الياية.",
+      ar: "كل أسبوع مع مدير حسابك: الأرقام، المكالمات، والخطوة الياية.",
     },
     why: {
       en: "You never work it out alone.",
@@ -1260,8 +1260,8 @@ export const CLOSING_TOUR: Stop[] = [
       ar: "بعد كل موعد نكتب شنو صار وليش.. نطلع وين تطيح الصفقات، ونعطيك الكلام بالضبط.",
     },
     why: {
-      en: "Your close rate rises from your own numbers.",
-      ar: "نسبة إقفالك ترتفع من أرقامك انت.",
+      en: "We work on your close rate from your own numbers.",
+      ar: "نشتغل على نسبة إقفالك.. من أرقامك انت.",
     },
     media: {
       kind: "shots",

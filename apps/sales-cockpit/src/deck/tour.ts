@@ -35,7 +35,7 @@ export const PORTAL_TOUR: TourStop[] = [
     name: { en: "Your command centre", ar: "غرفة التحكم" },
     line: {
       en: "Where you are in the program, your next appointment, and what needs your answer.",
-      ar: "وين وصلت بالبرنامج، موعدك الجاي، واللي ينطر ردك.",
+      ar: "وين وصلت بالبرنامج، موعدك الياي، واللي ينطر ردك.",
     },
     why: {
       en: "You always know where things stand, without having to ask.",
@@ -47,7 +47,7 @@ export const PORTAL_TOUR: TourStop[] = [
     key: "leads",
     name: {
       en: "Every lead, and the ad that brought it",
-      ar: "كل ليد.. والإعلان اللي جابه",
+      ar: "كل ليد.. والإعلان اللي يابه",
     },
     line: {
       en: "The ad, the campaign, the calls and the WhatsApp messages behind each lead.",
@@ -83,8 +83,8 @@ export const PORTAL_TOUR: TourStop[] = [
       ar: "حضر ولا لا، عرض سعر، انقفل ولا لا، وقيمة المشروع.. بكم ضغطة.",
     },
     why: {
-      en: "The system learns which leads become projects, and finds you more of them.",
-      ar: "النظام يتعلم أي ليد يصير مشروع.. وييب لك أكثر منهم.",
+      en: "The system learns which leads become projects, and looks for more of them.",
+      ar: "النظام يتعلم أي ليد يصير مشروع.. ويدور لك على أكثر منهم.",
     },
     src: { en: outcomeEn, ar: outcomeAr },
   },
@@ -103,7 +103,7 @@ export const PORTAL_TOUR: TourStop[] = [
   },
   {
     key: "ads",
-    name: { en: "Every ad, and what it brought in", ar: "كل إعلان.. وشنو جاب" },
+    name: { en: "Every ad, and what it brought in", ar: "كل إعلان.. وشنو ياب" },
     line: {
       en: "Live and past ads with their creative and copy, and how each one performed.",
       ar: "الإعلانات الشغالة والقديمة، بتصاميمها ونصوصها، وأداء كل واحد.",
