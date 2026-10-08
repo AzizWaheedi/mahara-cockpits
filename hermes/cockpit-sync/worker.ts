@@ -2,7 +2,7 @@ import {mkdir,writeFile} from 'node:fs/promises';
 import {resolve,relative,dirname} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createHash,randomUUID} from 'node:crypto';
-import {syncOnce,kuwaitToday} from './calculator';
+import {syncOnce,kuwaitToday,daysAgo} from './calculator';
 import {capture,prepareTables} from './capture';
 import {withNativeContext,assertNativeFence,type NativeRunContext,type Reads,type Row} from './runtime';
 import {doctor,transport,type Env} from './transport';
@@ -14,6 +14,10 @@ import {collectCreative} from './creativeProducer';
 import {collectSharedGoogleCalendars} from './clientCalendars';
 
 export const DRY_RUN=true;
+export function bookingsInWindow(rows:Row[],from:string,to:string){
+ for(const row of rows)if(typeof row.date!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(row.date)||!Number.isFinite(Date.parse(row.date)))throw new Error('Booking date is unverified; no feed published');
+ return rows.filter(row=>row.date>=from&&row.date<=to);
+}
 export async function calculate(state:Row,reads:Reads,runContext:NativeRunContext,env:Env){
  return withNativeContext(reads,runContext,async()=>{
   await assertNativeFence();
@@ -26,14 +30,17 @@ export async function calculate(state:Row,reads:Reads,runContext:NativeRunContex
   const googleCalendars=await collectSharedGoogleCalendars(state,env);
   const creative=prepareTables({...state.creative,...await collectCreative(state,captured.tables,csm)},state.creative);
   const tables={...state.media,...prepareTables(captured.tables,{...state.media,campaigns:state.oldCampaigns,ads:state.oldAds,winnersArchive:state.winners,adStills:state.stills})};
+  const workingDay=kuwaitToday(),windowSince=daysAgo(30);
   // Each consumer retains its imported IDs; uploads attach by provider creative identity.
   for(const table of ['campaigns','ads','metaTree','adChanges','inbox','boardCards','offBoardCampaigns','onboardings','launchWatch','dailyStats','bookingEvents','checkProposals','marketPlays','winnersArchive','adStills','clientLinks'])if(!Array.isArray(tables[table]))throw new Error(`Incomplete producer output: ${table}`);
   for(const b of tables.bookingEvents)if(!b.eventId&&!(b.contactId&&b.startTime))throw new Error('Booking event lacks stable provider identity; no publication');
+  // Only refresh the declared complete window. SQL retains earlier imported history.
+  tables.bookingEvents=bookingsInWindow(tables.bookingEvents,windowSince,workingDay);
   const unavailable=tables.campaigns.filter((c:Row)=>!c.internal&&c.serviceMode==='DFY'&&!c.hasGhl);
   if(unavailable.length)throw new Error(`${unavailable.length} DFY campaigns lack verified GHL source; preserve prior bookings`);
   const counts:Record<string,number>={};
   for(const [family,rows]of Object.entries({tables,csm,creative}))for(const [key,value]of Object.entries(rows) as [string,Row[]][])counts[(family==='tables'?'':family+'_')+key]=value.length;
-  return {producer:'media-core',version:1,begun_at:begun,source_snapshot_at:new Date().toISOString(),working_day:kuwaitToday(),window_since:new Date(Date.now()+10800000-30*86400000).toISOString().slice(0,10),tables,csm,creative,csmCalendar:csmResult.calendarWindow,googleCalendars,counts,result,expected:state.expected,stillAssets};
+  return {producer:'media-core',version:1,begun_at:begun,source_snapshot_at:new Date().toISOString(),working_day:workingDay,window_since:windowSince,tables,csm,creative,csmCalendar:csmResult.calendarWindow,googleCalendars,counts,result,expected:state.expected,stillAssets};
  });
 }
 

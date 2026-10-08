@@ -5,7 +5,7 @@ import {fileURLToPath} from 'node:url';
 import {z} from '../apps/media-buyer-cockpit/node_modules/zod';
 import {migration, actor, member, owner} from '../apps/media-buyer-cockpit/scripts/lib/cockpitTestDb';
 import type {Row} from '../hermes/cockpit-sync/runtime';
-import {calculate} from '../hermes/cockpit-sync/worker';
+import {calculate,bookingsInWindow} from '../hermes/cockpit-sync/worker';
 import {prepareTables} from '../hermes/cockpit-sync/capture';
 import {collectCsm} from '../hermes/cockpit-sync/csmProducer';
 import {collectCreative,gatherFunnels} from '../hermes/cockpit-sync/creativeProducer';
@@ -84,6 +84,9 @@ test('publish updates actual consumer rows, preserves human state/history, recon
 },30000);
 
 test('atomic rollback, duplicate identity, missing output, wrong counts, stale snapshots and source revision conflicts',async()=>{
+ const windowBookings=[{eventId:'old',date:'2026-01-15'},{eventId:'start',date:'2026-09-08'},{eventId:'end',date:'2026-10-08'},{eventId:'future',date:'2026-10-09'}];
+ expect(bookingsInWindow(windowBookings,'2026-09-08','2026-10-08').map(r=>r.eventId)).toEqual(['start','end']);
+ expect(windowBookings).toHaveLength(4);expect(()=>bookingsInWindow([{eventId:'unknown'}],'2026-09-08','2026-10-08')).toThrow(/unverified/);
  const prior={funnels:[{_id:'original-post-funnel',account:'Alpha',kind:'Stays on the post',spend:1}]};
  const funnels=prepareTables({funnels:[{account:'Alpha',kind:'Stays on the post',spend:2},{account:'Alpha',kind:'Unknown'}]},prior).funnels;
  expect(funnels[0]._id).toBe('original-post-funnel');
