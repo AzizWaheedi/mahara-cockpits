@@ -174,8 +174,22 @@ function Gallery({
   );
 }
 
-/** A stack of real documents, fanned out; the last one lies on top. */
-function Fan({ pics, box, lang }: { pics: Pic[]; box: Box; lang: Lang }) {
+/**
+ * A stack of real documents, fanned out; the last one lies on top. It runs
+ * with the deck's language unless `ltr` (pages written left to right), when
+ * it runs left to right in Arabic too (proof.ts Media).
+ */
+function Fan({
+  pics,
+  box,
+  lang,
+  ltr = false,
+}: {
+  pics: Pic[];
+  box: Box;
+  lang: Lang;
+  ltr?: boolean;
+}) {
   // Room left at the edges for the tilt and the lift.
   const h = Math.round(Math.min(box.h * 0.84, ...pics.map(p => p.w / p.r)));
   const widths = pics.map(p => p.r * h);
@@ -187,7 +201,11 @@ function Fan({ pics, box, lang }: { pics: Pic[]; box: Box; lang: Lang }) {
   const span = step * (pics.length - 1) + last;
   const mid = (pics.length - 1) / 2;
   return (
-    <div className="dk-fan" style={{ width: span, height: box.h }}>
+    <div
+      className="dk-fan"
+      data-ltr={ltr ? "" : undefined}
+      style={{ width: span, height: box.h }}
+    >
       {pics.map((p, i) => (
         <Shot
           key={p.src}
@@ -198,7 +216,8 @@ function Fan({ pics, box, lang }: { pics: Pic[]; box: Box; lang: Lang }) {
             {
               width: widths[i],
               height: h,
-              insetInlineStart: step * i,
+              left: ltr ? step * i : undefined,
+              insetInlineStart: ltr ? undefined : step * i,
               zIndex: i + 1,
               "--rot": `${(i - mid) * 3}deg`,
               "--lift": `${Math.abs(i - mid) * 10}px`,
@@ -470,7 +489,7 @@ function StopMedia({
   switch (media.kind) {
     case "shots":
       return media.fan ? (
-        <Fan pics={media.items} box={box} lang={lang} />
+        <Fan pics={media.items} box={box} lang={lang} ltr={media.ltr} />
       ) : (
         <Gallery pics={media.items} box={box} lang={lang} />
       );

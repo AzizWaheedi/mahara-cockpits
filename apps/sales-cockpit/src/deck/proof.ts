@@ -49,7 +49,6 @@ import logoPidco from "./assets/proof/logo-pidco.webp";
 import logoRm from "./assets/proof/logo-rm.webp";
 import logoSafad from "./assets/proof/logo-safad.webp";
 import logoTheline from "./assets/proof/logo-theline.webp";
-import offerPack1 from "./assets/proof/offer-pack-1.webp";
 import offerPack2 from "./assets/proof/offer-pack-2.webp";
 import offerSheet1 from "./assets/proof/offer-sheet-1.webp";
 import offerSheet2 from "./assets/proof/offer-sheet-2.webp";
@@ -658,8 +657,13 @@ export const CONTENT_LIBRARY = "https://content.maharamedia.com/";
 
 /** What one step of a tour shows. */
 export type Media =
-  /** Screenshots laid out to fill the stage; a fan for a stack of documents. */
-  | { kind: "shots"; items: Pic[]; fan?: boolean }
+  /**
+   * Screenshots laid out to fill the stage; a fan for a stack of documents.
+   * With `ltr`, a fan of pages written left to right keeps that order in
+   * Arabic too: the strip of a page that shows under the next one is then
+   * the start of its lines, not their cut-off ends.
+   */
+  | { kind: "shots"; items: Pic[]; fan?: boolean; ltr?: boolean }
   /** Phone screens, side by side. */
   | { kind: "phones"; items: Pic[] }
   /**
@@ -861,21 +865,27 @@ export const ADS_TOUR: Stop[] = [
   },
   {
     // The offer creation cheat sheet (the CEO, 2026-10-08: "use this as an
-    // example offer creation cheat sheet"): a real partner's offer, then the
-    // acquisition pack written from it. Read in order, the last page on top.
+    // example offer creation cheat sheet"): a real partner's offer, then an
+    // ad script written from it (the acquisition pack's UGC 01) on top. The
+    // pack's cover is left out: its title sits mid-page, under the top page,
+    // so in the fan it read as a blank sheet. The step follows the brief and
+    // says "before the ads", not "first": it is the sixth name in the list.
     key: "offer",
-    name: { en: "The offer comes first", ar: "العرض أول شي" },
+    name: { en: "The offer comes before the ads", ar: "العرض قبل الإعلانات" },
     what: {
-      en: "One front-end session, a bonus stack, and the paths behind it. Every ad, page and script follows from it.",
-      ar: "جلسة وحدة يدخل منها العميل، معاها بونصات، ووراها المسارات اللي تناسب مشروعه.. وكل إعلان وصفحة وسكربت يطلع من هالعرض.",
+      en: "One first session with bonuses, then the path that suits each project. Every ad, page and script comes from it.",
+      ar: "جلسة وحدة يدخل منها عميلك، معاها بونصات، ووراها المسار اللي يناسب مشروعه.. وكل إعلان وصفحة وسكربت يطلع من هالعرض.",
     },
     why: {
-      en: "The owner knows exactly what the first meeting gives him. Not just a free consultation.",
-      ar: "العميل يدري بالضبط شنو بياخذ من أول جلسة.. مو بس استشارة ببلاش.",
+      en: "Your buyer knows exactly what the first meeting gives him. Not just a free consultation.",
+      ar: "عميلك يدري بالضبط شنو بياخذ من أول جلسة.. مو بس استشارة ببلاش.",
     },
     media: {
       kind: "shots",
       fan: true,
+      // The two cheat sheet pages are English: in Arabic too the fan runs
+      // left to right, so what shows of each is where its lines start.
+      ltr: true,
       items: [
         {
           src: offerSheet1,
@@ -890,13 +900,6 @@ export const ADS_TOUR: Stop[] = [
           r: 1224 / 1584,
           w: 1224,
           doc: OFFER_DOC,
-        },
-        {
-          src: offerPack1,
-          alt: "The acquisition pack: paid ads, landing page, VSL, booking",
-          r: 1224 / 1584,
-          w: 1224,
-          doc: OFFER_PACK_DOC,
         },
         {
           src: offerPack2,

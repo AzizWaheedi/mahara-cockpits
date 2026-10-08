@@ -911,6 +911,10 @@
   transform: translateY(calc(-50% + var(--lift, 0px)))
     rotate(calc(var(--rot, 0deg) * -1));
 }
+/* Pages written left to right keep that fan in Arabic (journeys.tsx Fan). */
+[dir="rtl"] .dk-fan[data-ltr] .dk-fan-page:not(:hover) {
+  transform: translateY(calc(-50% + var(--lift, 0px))) rotate(var(--rot, 0deg));
+}
 .dk-fan-page:hover {
   z-index: 20 !important;
   transform: translateY(calc(-50% - 16px)) rotate(0deg) scale(1.03);
