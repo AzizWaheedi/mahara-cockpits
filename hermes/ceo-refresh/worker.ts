@@ -181,6 +181,14 @@ function asFailure(key: SectionKey, error: unknown): Failure {
   return { key, error: errorText(error) };
 }
 
+// PostgreSQL `jsonb -> 'output'` returns JSON null (not SQL NULL) when a
+// serialized null is present. Omit absent finance fields so Portal-only and
+// partial CEO refreshes do not masquerade as incomplete finance output.
+export function financePublication(id: string | null, output: unknown, error: string | null) {
+  if (!id) return undefined;
+  return { id, ...(output === null ? {} : { output }), ...(error === null ? {} : { error }) };
+}
+
 async function callRpc(tools: { rest(resource: string, body?: unknown): Promise<unknown> }, name: string, body?: unknown): Promise<Row> {
   return object(await tools.rest(`rpc/${name}`, body), `${name} RPC`);
 }
@@ -394,7 +402,7 @@ export async function runRefresh(options: RefreshOptions): Promise<RefreshReport
     daily,
     failures: failures.map(item => ({ key: item.key, error: item.error.slice(0, 1000) })),
     receipts: driver.receipts,
-    finance: { id: financeId, ...(financePayload ? { output: financePayload } : {}), error: financeError },
+    finance: financePublication(financeId, financePayload, financeError),
   };
   const planSha = sha256(publication);
   try {
