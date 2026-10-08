@@ -36,6 +36,10 @@ from datetime import datetime, timezone
 from tools import provider_json
 
 DRY_RUN = True
+OBSERVE_LIMIT = 200
+WAITING_PAGE_SIZE = 100
+WAITING_PAGE_LIMIT = 20
+MAX_DRAFTS_PER_RUN = 40
 
 GHL = "https://services.leadconnectorhq.com"
 # Higgsfield and GoHighLevel both sit behind a Cloudflare bot rule that
@@ -384,7 +388,14 @@ def later(left: str | None, right: str) -> str:
 
 
 def observe_submitted(sb: Store, token: str, location: str) -> int:
-    intents = sb.get("cockpit_wa_reply_intents?select=id,thread_id,provider_message_id,context&state=eq.accepted&order=accepted_at.asc")
+    location_key = urllib.parse.quote("context->>locationId", safe="")
+    intents = sb.get(
+        "cockpit_wa_reply_intents?select=id,thread_id,provider_message_id,context"
+        f"&state=eq.accepted&{location_key}=eq.{urllib.parse.quote(location)}"
+        f"&order=accepted_at.asc&limit={OBSERVE_LIMIT + 1}"
+    )
+    if len(intents) > OBSERVE_LIMIT:
+        raise ValueError("The submitted-message observation reached its safety bound")
     observed = 0
     for intent in intents:
         context = intent["context"]
@@ -400,7 +411,25 @@ def observe_submitted(sb: Store, token: str, location: str) -> int:
         status = message.get("status")
         if status not in ("pending", "sent", "delivered", "read", "failed"):
             continue
-        sb.patch(f"wa_messages?id=eq.{urllib.parse.quote(mid)}&thread_id=eq.{urllib.parse.quote(intent['thread_id'])}", {"delivery_status": status})
+        thread_id = urllib.parse.quote(intent["thread_id"])
+        message_id = urllib.parse.quote(mid)
+        current_rows = sb.get(
+            f"wa_messages?select=delivery_status&id=eq.{message_id}"
+            f"&thread_id=eq.{thread_id}&limit=1"
+        )
+        if len(current_rows) != 1:
+            raise ValueError("The mirrored outbound message is missing or ambiguous")
+        current = current_rows[0].get("delivery_status")
+        if current not in (None, "pending", "sent", "delivered", "read", "failed"):
+            raise ValueError("The mirrored outbound delivery status is invalid")
+        if current == status or current == "read" or (current == "delivered" and status != "read"):
+            continue
+        current_filter = "is.null" if current is None else f"eq.{urllib.parse.quote(current)}"
+        sb.patch(
+            f"wa_messages?id=eq.{message_id}&thread_id=eq.{thread_id}"
+            f"&delivery_status={current_filter}",
+            {"delivery_status": status},
+        )
         observed += 1
     return observed
 
@@ -477,10 +506,11 @@ def draft_for(sb: Store, thread: dict) -> bool:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Native CSM inbox. Dry-run by default. Never sends messages.")
     parser.add_argument("--apply", action="store_true", default=not DRY_RUN, help="Apply source writes and generate drafts. Requires approval for this run.")
+    parser.add_argument("--source-only", action="store_true", help="Mirror provider changes and advance the watermark; skip delivery observations and drafts.")
     parser.add_argument("--doctor", action="store_true")
     args = parser.parse_args()
     required = ["GHL_MAHARA_PIT", "GHL_MAHARA_LOCATION", "DESK_SUPABASE_URL", "DESK_SUPABASE_KEY"]
-    if args.apply:
+    if args.apply and not args.source_only:
         required.append("DEEPSEEK_API_KEY")
     missing = [name for name in required if not os.environ.get(name)]
     if missing:
@@ -508,36 +538,67 @@ def main() -> int:
     begun_at = now()
     threads, messages = scan(sb, token, location, state[0]["scan_since"])
     note(f"scanned: {threads} thread(s) moved, {messages} new message(s)")
-    observed = observe_submitted(sb, token, location)
-    note(f"Delivery observations: {observed}. Only delivered/read confirms delivery.")
+    if not args.source_only:
+        observed = observe_submitted(sb, token, location)
+        note(f"Delivery observations: {observed}. Only delivered/read confirms delivery.")
     if not sb.apply:
         note(f"DRY_RUN complete: {sb.planned_writes} planned writes. No drafts, heartbeat, or model call was applied.")
         return 0
 
-    waiting = sb.get(
-        "wa_threads?select=id,contact_name,is_group,last_inbound_at"
-        f"&location_id=eq.{urllib.parse.quote(location)}&desk=eq.csm&awaiting_us=is.true&archived=is.false&order=last_inbound_at.desc&limit=40"
-    )
     drafted = failed = 0
-    for t in waiting:
-        existing = sb.get(
-            f"wa_drafts?select=drafted_at&thread_id=eq.{urllib.parse.quote(t['id'])}"
+    waiting_count = 0
+    eligible_attempts = 0
+    eligible_remainder = page_cap = False
+    if not args.source_only:
+        base = (
+            "wa_threads?select=id,contact_name,is_group,last_inbound_at"
+            f"&location_id=eq.{urllib.parse.quote(location)}&desk=eq.csm&awaiting_us=is.true&archived=is.false"
+            f"&last_inbound_at=gte.{urllib.parse.quote(state[0]['scan_since'])}&order=last_inbound_at.desc,id.desc"
         )
-        # Redraft only when they have said something since the last draft.
-        if existing and datetime.fromisoformat(existing[0]["drafted_at"]) >= datetime.fromisoformat(t["last_inbound_at"]):
-            continue
-        try:
-            if draft_for(sb, t):
-                drafted += 1
-        except Exception as e:  # one bad thread must not stop the desk
-            failed += 1
-            note(f"Draft unavailable: {type(e).__name__}. Check the provider health ledger.")
+        for page in range(WAITING_PAGE_LIMIT):
+            waiting = sb.get(f"{base}&limit={WAITING_PAGE_SIZE}&offset={page * WAITING_PAGE_SIZE}")
+            if not waiting:
+                break
+            waiting_count += len(waiting)
+            for t in waiting:
+                existing = sb.get(
+                    f"wa_drafts?select=drafted_at&thread_id=eq.{urllib.parse.quote(t['id'])}"
+                )
+                # Redraft only when they have said something since the last draft.
+                if existing and datetime.fromisoformat(existing[0]["drafted_at"]) >= datetime.fromisoformat(t["last_inbound_at"]):
+                    continue
+                if eligible_attempts >= MAX_DRAFTS_PER_RUN:
+                    eligible_remainder = True
+                    break
+                eligible_attempts += 1
+                try:
+                    if draft_for(sb, t):
+                        drafted += 1
+                except Exception as e:  # one bad thread must not stop the desk
+                    failed += 1
+                    note(f"Draft unavailable: {type(e).__name__}. Check the provider health ledger.")
+            if eligible_remainder or len(waiting) < WAITING_PAGE_SIZE:
+                break
+        else:
+            page_cap = True
+
+    if failed or eligible_remainder or page_cap:
+        if failed:
+            note(f"{failed} draft(s) failed. The scan watermark was not advanced, so the next run can retry them.")
+        if eligible_remainder:
+            note("More eligible threads remain. The scan watermark was not advanced so the next run can continue.")
+        if page_cap:
+            note("Waiting-thread pagination reached its safety bound. The scan watermark was not advanced.")
+        return 1
 
     sb.patch(
         f"wa_state?location_id=eq.{urllib.parse.quote(location)}",
         {"last_scan": now(), "scan_since": begun_at},
     )
-    note(f"{len(waiting)} waiting on us, {drafted} drafted, {failed} failed")
+    if args.source_only:
+        note("Source-only run complete. Delivery observations and drafts were skipped.")
+    else:
+        note(f"{waiting_count} waiting on us, {drafted} drafted, {failed} failed")
     return 0
 
 
