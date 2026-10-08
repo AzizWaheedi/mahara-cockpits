@@ -17,7 +17,7 @@ command -v python >/dev/null 2>&1 || py_bin="python3"
 "$py_bin" -m unittest discover -s scripts -p test_check_cockpit_auth_config.py
 "$py_bin" -m unittest discover -s scripts -p test_vercel_project_guard.py
 (cd apps/media-buyer-cockpit && bun test scripts/cockpit-auth-flow.test.ts scripts/cockpit-auth-sql.test.ts)
-(cd apps/media-buyer-cockpit && bun test scripts/cockpit-rpc-restore.test.ts)
+(cd apps/media-buyer-cockpit && bun test scripts/cockpit-rpc-restore.test.ts scripts/creative-check.test.ts)
 (cd apps/media-buyer-cockpit && bun test scripts/cockpit-auth-sdk.test.ts)
 (cd apps/client-success-cockpit && bun test scripts/auth-password-ui.test.tsx)
 "$py_bin" scripts/check-cockpit-auth-config.py
@@ -112,6 +112,19 @@ ship() {
     *) echo "unknown app: $app"; exit 2 ;;
   esac
 
+
+  # A cockpit that reads Supabase in the browser needs its public address
+  # and anon key at build time, and the Vercel projects for client success,
+  # creative and media buyer do not hold them. Without them in the
+  # environment the build passes and the page cannot sign in (2026-10-08:
+  # creative went out that way and was rolled back four minutes later).
+  # Sales checks this itself in vite.config.ts.
+  if grep -rq "VITE_SUPABASE_URL" "$dir/src" \
+     && ! grep -q "supabaseEnvProblem" "$dir/vite.config.ts" 2>/dev/null \
+     && { [ -z "${VITE_SUPABASE_URL:-}" ] || [ -z "${VITE_SUPABASE_ANON_KEY:-}" ]; }; then
+    echo "$app reads Supabase in the browser: set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY (the anon key, never the service key) and ship again"
+    exit 1
+  fi
 
   # The CLI upload stamps local HEAD and does not check GitHub. Refuse a
   # commit main does not have, a dirty app directory, or a production SHA

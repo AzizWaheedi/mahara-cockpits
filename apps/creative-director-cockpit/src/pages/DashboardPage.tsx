@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link, useLocation } from "react-router";
+import { toast } from "sonner";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import {
   CreativePreview,
@@ -797,7 +798,13 @@ function Checklist({
             <button
               type="button"
               aria-pressed={Boolean(c.done)}
-              onClick={() => void toggle({ key: c.key, done: !c.done })}
+              onClick={() =>
+                void toggle({ key: c.key, done: !c.done }).catch(() =>
+                  toast.error(
+                    "That tick did not save. Reload the page and try again.",
+                  ),
+                )
+              }
               className={`${ROW} flex w-full items-start gap-3 text-left transition hover:bg-muted/40 ${
                 c.done ? "opacity-55" : ""
               }`}

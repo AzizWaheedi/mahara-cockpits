@@ -9,7 +9,7 @@
  * (the simplification audit, approved 2026-10-06).
  */
 
-import { COCKPIT_SOP } from "./cockpits";
+import { COCKPIT_GUIDES, COCKPIT_SOP } from "./cockpits";
 
 export type LinkRow = { label: string; url: string; note?: string };
 export type LinkGroup = { title: string; blurb: string; rows: LinkRow[] };
@@ -18,8 +18,23 @@ export const LINK_GROUPS: LinkGroup[] = [
   {
     title: "How this cockpit works",
     blurb:
-      "Read this once: the five places, the search box and your day in ten steps.",
+      "Watch the demo once, then keep the simple SOP open beside you while you learn the day.",
     rows: [
+      {
+        label: "Watch the demo",
+        url: COCKPIT_GUIDES.csm.video,
+        note: "Two minutes on the real cockpit, step by step",
+      },
+      {
+        label: "The simple SOP",
+        url: COCKPIT_GUIDES.csm.simple,
+        note: "Your day step by step, with a picture of every step",
+      },
+      {
+        label: "The in-depth SOP",
+        url: COCKPIT_GUIDES.csm.deep,
+        note: "Every screen, and how to use it",
+      },
       {
         label: "Client success cockpit, how to use it",
         url: COCKPIT_SOP.csm,

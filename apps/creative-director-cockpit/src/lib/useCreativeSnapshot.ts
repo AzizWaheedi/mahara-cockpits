@@ -116,15 +116,14 @@ export function useCreativeSnapshot(
     try {
       setLoading(true);
 
-      // 1. Fetch daily checks
-      const { data: checkRows, error: chErr } = await client
-        .from("cockpit_daily_checks")
-        .select("*")
-        .eq("role", "creative")
-        .eq("day", day)
-        .eq("source_deleted", false)
-        .order("display_order", { ascending: true });
+      // 1. Fetch daily checks. The browser has no access to the table itself
+      // (20260923l): the checklist function reads it for the signed-in role.
+      const { data: checkData, error: chErr } = await client.rpc(
+        "cockpit_get_daily_checks",
+        { p_role: "creative", p_day: day },
+      );
       if (chErr) throw chErr;
+      const checkRows = (checkData ?? []) as Any[];
 
       // 2. Fetch decisions
       const { data: decisionRows, error: dErr } = await client
@@ -246,44 +245,13 @@ export function useCreativeSnapshot(
   const toggleCheck = useCallback(
     async (args: { key: string; done: boolean }) => {
       if (!client) return;
-      const day = kuwaitToday();
-      // Ensure check row exists in cockpit_daily_checks
-      const { data: existing, error: existingError } = await client
-        .from("cockpit_daily_checks")
-        .select("id")
-        .eq("role", "creative")
-        .eq("day", day)
-        .eq("check_key", args.key)
-        .maybeSingle();
-
-      if (existingError) throw existingError;
-      if (existing) {
-        const { error: writeError } = await client.rpc(
-          "cockpit_set_daily_check",
-          {
-            p_id: existing.id,
-            p_expected_done: !args.done,
-            p_done: args.done,
-          },
-        );
-        if (writeError) throw writeError;
-      } else {
-        const def = DEFAULT_CREATIVE_CHECKS.find(c => c.key === args.key);
-        const { error: writeError } = await client
-          .from("cockpit_daily_checks")
-          .insert({
-            role: "creative",
-            day,
-            check_key: args.key,
-            label: def?.label ?? args.key,
-            detail: def?.detail,
-            phase: def?.phase ?? "sod",
-            done: args.done,
-            done_at: args.done ? new Date().toISOString() : null,
-            source_system: "supabase",
-          });
-        if (writeError) throw writeError;
-      }
+      // Nothing else makes creative checks, so the server function creates
+      // today's row on the first tick and sets it after that (20261008a).
+      const { error: writeError } = await client.rpc(
+        "cockpit_set_creative_check",
+        { p_day: kuwaitToday(), p_key: args.key, p_done: args.done },
+      );
+      if (writeError) throw writeError;
       await fetchSnapshot();
     },
     [client, fetchSnapshot],
