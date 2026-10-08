@@ -5,7 +5,9 @@ import {
   useRef,
   useState,
 } from "react";
+import { sayCount } from "../lib/funnel";
 import {
+  GOOGLE,
   type L,
   type Lang,
   MARKETS,
@@ -15,8 +17,9 @@ import {
   SERVICES,
   t,
 } from "./content";
+import { Fig } from "./fig";
 import { justify } from "./layout";
-import { CountUp, LogoRiver } from "./motion";
+import { LogoRiver } from "./motion";
 import { LivePage, OPEN_DOC, OpenChip, TRY_LIVE } from "./overlay";
 import { Out, Rv, Wistia, YouTube } from "./parts";
 import { Logo, MARK_ORDER, Mark, type PlatformMark } from "./platforms";
@@ -455,7 +458,7 @@ export function CaseBox({ proof, lang }: { proof: StoryProof; lang: Lang }) {
       <div className="dk-case-metrics">
         {proof.metrics.map(m => (
           <div key={m.label.en}>
-            <span className="dk-num dk-case-value">{t(m.value, lang)}</span>
+            <Fig f={46} text={t(m.value, lang)} lang={lang} tone="teal" />
             <span className="dk-small">{t(m.label, lang)}</span>
           </div>
         ))}
@@ -985,14 +988,12 @@ export function reviewsSlide(page: number) {
         <Rv i={0}>
           <div className="dk-google-head">
             <Mark mark="google" size={48} />
-            <span className="dk-num dk-google-score">
-              {ar(lang) ? "٤٫٧" : "4.7"}
-            </span>
+            <Fig f={44} text={sayCount(GOOGLE.rating, lang)} lang={lang} />
             <Stars />
             <span className="dk-small">
               {ar(lang)
-                ? `من ١٥ تقييم على قوقل · صفحة ${"١٢٣"[page]} من ٣`
-                : `from 15 Google reviews · page ${page + 1} of 3`}
+                ? `من ${sayCount(GOOGLE.reviews, lang)} تقييم على قوقل · صفحة ${sayCount(page + 1, lang)} من ${sayCount(REVIEW_PAGES.length, lang)}`
+                : `from ${GOOGLE.reviews} Google reviews · page ${page + 1} of ${REVIEW_PAGES.length}`}
             </span>
           </div>
         </Rv>
@@ -1083,9 +1084,12 @@ export function numberOneSlide(ctx: DeckCtx) {
               className="dk-n1-stat"
               style={{ "--n": i } as CSSProperties}
             >
-              <span className="dk-num dk-n1-value">
-                <CountUp value={t(m.value, lang)} delay={300 + i * 140} />
-              </span>
+              <Fig
+                f={64}
+                text={t(m.value, lang)}
+                lang={lang}
+                count={{ delay: 300 + i * 140 }}
+              />
               <span className="dk-small">{t(m.label, lang)}</span>
             </div>
           ))}
@@ -1093,7 +1097,12 @@ export function numberOneSlide(ctx: DeckCtx) {
       </Rv>
       <div style={{ flex: 1 }} />
       <Rv i={3}>
-        <LogoRiver logos={LOGO_WALL} />
+        <LogoRiver
+          logos={LOGO_WALL.map(l => ({
+            src: l.src,
+            name: ar(lang) ? (l.ar ?? l.name) : l.name,
+          }))}
+        />
       </Rv>
     </>
   );

@@ -1,62 +1,12 @@
-import { type CSSProperties, useEffect, useState } from "react";
-import { figure } from "./figure";
+import type { CSSProperties } from "react";
 
 /**
  * The #1 page's motion (Aziz, 2026-10-08: "have the logos move and add some
- * smooth animations"): the four figures count up once as the page comes on,
- * and the partners' logos drift past in two lanes, one each way. With
- * reduced motion the figures stand at their values and the logos stand
+ * smooth animations"): the four figures count up once as the page comes on
+ * (fig.tsx), and the partners' logos drift past in two lanes, one each way.
+ * With reduced motion the figures stand at their values and the logos stand
  * still as a grid.
  */
-
-const reduced = () =>
-  typeof window !== "undefined" &&
-  window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-
-/** How long one figure takes to count up, in ms. */
-const COUNT_MS = 1500;
-
-/**
- * A figure that counts up from zero once, `delay` ms after its page comes
- * on (only the page on screen is mounted). The final figure, unseen, holds
- * the width so nothing beside it moves while it counts.
- */
-export function CountUp({ value, delay }: { value: string; delay: number }) {
-  const [shown, setShown] = useState(() =>
-    reduced() ? value : (figure(value)?.at(0) ?? value),
-  );
-  useEffect(() => {
-    const f = figure(value);
-    if (!f || reduced()) {
-      setShown(value);
-      return;
-    }
-    let raf = 0;
-    let start = 0;
-    const tick = (now: number) => {
-      start ||= now;
-      const p = Math.min(1, (now - start) / COUNT_MS);
-      // Fast, then settling into the figure (ease-out quart).
-      setShown(f.at(p >= 1 ? 1 : 1 - (1 - p) ** 4));
-      if (p < 1) raf = requestAnimationFrame(tick);
-    };
-    const wait = window.setTimeout(() => {
-      raf = requestAnimationFrame(tick);
-    }, delay);
-    return () => {
-      window.clearTimeout(wait);
-      cancelAnimationFrame(raf);
-    };
-  }, [value, delay]);
-  return (
-    <span className="dk-tally">
-      <span className="dk-tally-hold" aria-hidden>
-        {value}
-      </span>
-      <span className="dk-tally-live">{shown}</span>
-    </span>
-  );
-}
 
 export interface PartnerLogo {
   src: string;

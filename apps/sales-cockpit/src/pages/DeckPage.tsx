@@ -27,6 +27,7 @@ import {
   funnel,
   isCurrency,
   readGiven,
+  sayCount,
 } from "../lib/funnel";
 import { supabase } from "../lib/supabase";
 import type { Me, Note } from "../lib/types";
@@ -387,10 +388,7 @@ export default function DeckPage({ me }: { me: Me }) {
               />
               <span className="dk-count" aria-hidden>
                 {lang === "ar"
-                  ? `${index + 1} / ${slides.length}`.replace(
-                      /\d/g,
-                      d => "٠١٢٣٤٥٦٧٨٩"[Number(d)],
-                    )
+                  ? `${sayCount(index + 1, lang)} / ${sayCount(slides.length, lang)}`
                   : `${String(index + 1).padStart(2, "0")} / ${slides.length}`}
               </span>
             </>
@@ -464,7 +462,7 @@ export default function DeckPage({ me }: { me: Me }) {
             fontVariantNumeric: "tabular-nums",
           }}
         >
-          {index + 1} / {slides.length}
+          {sayCount(index + 1, lang)} / {sayCount(slides.length, lang)}
         </span>
         <button
           type="button"
@@ -522,13 +520,8 @@ export default function DeckPage({ me }: { me: Me }) {
                         onClick={() => go(i)}
                         dir={dir}
                       >
-                        <span
-                          style={{
-                            color: "rgba(242,246,250,.5)",
-                            marginInlineEnd: 8,
-                          }}
-                        >
-                          {i + 1}
+                        <span className="dk-overview-n">
+                          {sayCount(i + 1, lang)}
                         </span>
                         {t(s.title, lang)}
                       </button>

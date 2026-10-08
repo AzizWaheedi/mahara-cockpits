@@ -166,11 +166,11 @@ export const STORY_PROOF: Record<string, StoryProof> = {
     slug: "safad",
     head: {
       en: "A 5,000 m² developer project, at about $400 a client.",
-      ar: "مشروع مطوّر عقاري ٥٬٠٠٠ م².. بتكلفة تقريباً ٤٠٠ دولار للعميل.",
+      ar: "مشروع مطوّر عقاري ٥٠٠٠ م٢.. بتكلفة تقريباً ٤٠٠ دولار للعميل.",
     },
     metrics: [
       {
-        value: { en: "5,000 m²", ar: "٥٬٠٠٠ م²" },
+        value: { en: "5,000 m²", ar: "٥٠٠٠ م٢" },
         label: { en: "developer project", ar: "مشروع مطوّر عقاري" },
       },
       {
@@ -412,9 +412,10 @@ export const REVIEW_PAGES: Review[][] = [
  * The four from logos-clients are the page's own small cut-outs (under 220
  * px); a sharper file has to come from the partner.
  */
-export const LOGO_WALL: { src: string; name: string }[] = [
+export const LOGO_WALL: { src: string; name: string; ar?: string }[] = [
   { src: logoBayt22, name: "BAYT 22" },
-  { src: logoSafad, name: "SAFAD" },
+  // سافاد in Arabic, everywhere (the CEO, 2026-10-08).
+  { src: logoSafad, name: "SAFAD", ar: "سافاد" },
   { src: logoJoesera, name: "Joe & Sera" },
   { src: logoAmheco, name: "AMHECO" },
   { src: logoPhoenix, name: "Phoenix United" },

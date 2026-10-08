@@ -22,13 +22,16 @@
  *   "It's an objection handle. It's a tool you use.").
  */
 
+import { hold } from "./figure";
+
 export type Lang = "en" | "ar";
 export interface L {
   en: string;
   ar: string;
 }
 
-export const t = (l: L, lang: Lang) => l[lang];
+/** A line in the language on screen, its numbers held to what they count. */
+export const t = (l: L, lang: Lang) => hold(l[lang]);
 
 export const COUNTRIES: L[] = [
   { en: "Kuwait", ar: "الكويت" },

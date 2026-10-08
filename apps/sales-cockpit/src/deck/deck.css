@@ -1,7 +1,8 @@
 /* The pitch deck: Mahara Media Brand Guidelines v1.0 on a 1920x1080 canvas.
    Deep Space is the ground, Mahara Teal the one accent, Royal Blue only
-   inside the Mahara gradient. Geist for words, Geist Mono for figures,
-   IBM Plex Sans Arabic for Arabic (Geist has no Arabic glyphs). */
+   inside the Mahara gradient. Geist for words and figures, Geist Mono for
+   eyebrows and sources, IBM Plex Sans Arabic for Arabic (Geist has no
+   Arabic glyphs). */
 @import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@500;600;700&display=swap");
 
 .dk-root {
@@ -302,15 +303,130 @@
   line-height: 1.4;
   color: var(--dk-ink-3);
 }
+/* Step numerals and any number outside a figure: Geist with proportional
+   lining figures (no slashed zero, no full-cell comma), Plex 600 in Arabic
+   so ١ is not a hairline. Geist Mono is for eyebrows, handles and sources. */
 .dk-num {
-  font-family: "Geist Mono", ui-monospace, monospace;
-  font-variant-numeric: tabular-nums;
+  font-family: "Geist", "IBM Plex Sans Arabic", sans-serif;
+  font-feature-settings: normal;
+  font-variant-numeric: lining-nums proportional-nums;
   letter-spacing: -0.02em;
 }
-/* Geist Mono has no Arabic: without Plex first, an Arabic figure ("٦ آلاف
-   دولار") falls to the system monospace and its letters come apart. */
 [dir="rtl"] .dk-num {
-  font-family: "IBM Plex Sans Arabic", "Geist Mono", sans-serif;
+  font-family: "IBM Plex Sans Arabic", "Geist", sans-serif;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+/* ------------------------------------------------------------ figures
+
+   Every figure (fig.tsx), one rule in both languages (CEO, 2026-10-08:
+   "make the numbers look better"). --f is the English figure size in px.
+   The box is the Geist strut at line-height 1 in both languages (the parts
+   add no height), so a figure and its translation sit on one baseline;
+   Plex 700 digits at 1.17x then stand as tall as Geist 600's (0.61 em
+   against 0.72). Units are half the figure, on the baseline, in teal on ink
+   figures and in the figure's own colour on teal or amber ones. */
+.dk-fig {
+  --f: 64;
+  --fig-accent: var(--dk-teal);
+  position: relative;
+  display: inline-block;
+  font-family: "Geist", "IBM Plex Sans Arabic", sans-serif;
+  font-size: calc(var(--f) * 1px);
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  color: var(--dk-ink);
+}
+.dk-fig[data-tone="teal"] {
+  --fig-accent: currentColor;
+  color: var(--dk-teal);
+}
+.dk-fig[data-tone="leak"] {
+  --fig-accent: currentColor;
+  color: var(--dk-leak);
+}
+.dk-fig-draw > * {
+  line-height: 0;
+}
+/* The number, always left to right, in proportional figures: a count holds
+   each digit in its final glyph's slot instead of using tabular figures
+   (Geist's open a gap round its 1; Plex has none for Arabic digits). */
+.dk-fig-n {
+  unicode-bidi: isolate;
+  direction: ltr;
+  font-family: "Geist", sans-serif;
+  font-feature-settings: normal;
+  font-variant-numeric: lining-nums proportional-nums;
+  letter-spacing: -0.03em;
+}
+.dk-fig[data-big] .dk-fig-n {
+  letter-spacing: -0.045em;
+}
+[dir="rtl"] .dk-fig-n {
+  font-family: "IBM Plex Sans Arabic", "Geist", sans-serif;
+  font-size: 1.17em;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+.dk-fig-n > i {
+  font-style: normal;
+}
+.dk-fig-u,
+.dk-fig-l {
+  font-family: "Geist", "IBM Plex Sans Arabic", sans-serif;
+  font-size: 0.5em;
+  font-weight: 600;
+  letter-spacing: 0;
+  color: var(--fig-accent);
+}
+[dir="rtl"] .dk-fig-u,
+[dir="rtl"] .dk-fig-l {
+  font-family: "IBM Plex Sans Arabic", "Geist", sans-serif;
+}
+.dk-fig-u[data-start="t"] {
+  margin-inline-start: calc(var(--f) * 0.04px);
+}
+.dk-fig-u[data-start="w"] {
+  margin-inline-start: calc(var(--f) * 0.16px);
+}
+.dk-fig-u[data-end="t"] {
+  margin-inline-end: calc(var(--f) * 0.04px);
+}
+.dk-fig-u[data-end="w"] {
+  margin-inline-end: calc(var(--f) * 0.16px);
+}
+/* "to" and لـ between the two ends of a range; لـ joins the next number. */
+.dk-fig-l {
+  margin-inline: calc(var(--f) * 0.16px);
+}
+[dir="rtl"] .dk-fig-l {
+  margin-inline-end: 0;
+}
+/* + × ~ are signs, not units: smaller, centred on the digits' middle (the
+   glyph's middle, 0.29 of its size, lifted to the digits' 0.36 f). */
+.dk-fig-s {
+  position: relative;
+  top: calc(var(--f) * -0.2px);
+  margin-inline: calc(var(--f) * 0.03px);
+  font-family: "Geist", sans-serif;
+  font-size: 0.55em;
+  font-weight: 600;
+  color: var(--fig-accent);
+}
+/* The ٢ of م٢, raised. */
+.dk-fig-sup {
+  position: relative;
+  top: -0.45em;
+  margin-inline-start: 0.03em;
+  font-size: 0.7em;
+  line-height: 0;
+}
+/* A value that is a word (الضعف): Plex 600 at the figure's size, its alef
+   as tall as the digits. */
+.dk-fig-w {
+  font-family: "IBM Plex Sans Arabic", "Geist", sans-serif;
   letter-spacing: 0;
 }
 [dir="rtl"] .dk-display {
@@ -1157,6 +1273,10 @@
   line-height: 1;
   color: var(--dk-teal);
 }
+/* Arabic step numerals at 1.17x, as tall as the English ones. */
+[dir="rtl"] .dk-stage-n {
+  font-size: 52px;
+}
 .dk-stage-name {
   font-size: 32px;
   font-weight: 600;
@@ -1310,6 +1430,9 @@
     box-shadow 300ms,
     color 300ms;
 }
+[dir="rtl"] .dk-path-dot {
+  font-size: 28px;
+}
 .dk-path-node[data-state="past"] .dk-path-dot {
   border-color: var(--dk-teal);
   color: var(--dk-teal);
@@ -1377,11 +1500,6 @@
   display: flex;
   align-items: center;
   gap: 18px;
-}
-.dk-google-score {
-  font-size: 44px;
-  font-weight: 600;
-  line-height: 1;
 }
 .dk-stars {
   color: #fbbc04;
@@ -1479,16 +1597,6 @@
 [dir="rtl"] .dk-n1-stats > div + div {
   padding-inline-start: 28px;
 }
-.dk-n1-value {
-  font-size: 64px;
-  font-weight: 600;
-  line-height: 1;
-  color: var(--dk-ink);
-}
-[dir="rtl"] .dk-n1-value {
-  font-size: 54px;
-  line-height: 1.25;
-}
 
 /* A partner: flags and place, their case study's headline and numbers. */
 .dk-place {
@@ -1538,16 +1646,6 @@
   flex-direction: column;
   gap: 2px;
 }
-.dk-case-value {
-  font-size: 46px;
-  font-weight: 600;
-  line-height: 1.1;
-  color: var(--dk-teal);
-}
-[dir="rtl"] .dk-case-value {
-  font-size: 40px;
-  line-height: 1.4;
-}
 
 /* Partners' results: one tile each, the logo, the number, the country. */
 .dk-partners {
@@ -1593,16 +1691,6 @@
   max-width: 190px;
   max-height: 56px;
   object-fit: contain;
-}
-.dk-partner-value {
-  font-size: 40px;
-  font-weight: 600;
-  line-height: 1.05;
-  color: var(--dk-teal);
-}
-[dir="rtl"] .dk-partner-value {
-  font-size: 36px;
-  line-height: 1.4;
 }
 .dk-partner .dk-small {
   flex: 1;
@@ -1743,6 +1831,14 @@
   color: var(--dk-ink);
   font-size: 15px;
   cursor: pointer;
+}
+/* The slide's number in its own box, so "23" does not run into "١." */
+.dk-overview-n {
+  display: inline-block;
+  min-width: 2.2em;
+  margin-inline-end: 0.6em;
+  color: rgba(242, 246, 250, 0.5);
+  font-variant-numeric: tabular-nums;
 }
 .dk-overview button[aria-current="true"] {
   border-color: var(--dk-teal);
@@ -2074,24 +2170,6 @@ button.dk-devices {
 }
 .dk-channel-figs[data-side="end"] .dk-channel-fig {
   align-items: flex-end;
-}
-/* Geist, not the mono: a thousands comma at this size wants its own width. */
-.dk-channel-value {
-  font-family: "Geist", "IBM Plex Sans Arabic", sans-serif;
-  font-size: 108px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  line-height: 0.95;
-  letter-spacing: -0.045em;
-  color: var(--dk-ink);
-}
-.dk-channel-value > [aria-hidden] {
-  display: inline-block;
-}
-[dir="rtl"] .dk-channel-value {
-  font-size: 92px;
-  line-height: 1.15;
-  letter-spacing: 0;
 }
 .dk-channel-label {
   font-size: 26px;
@@ -2632,18 +2710,8 @@ button.dk-devices {
   object-fit: contain;
 }
 
-/* The #1 figures: each counts up once as the page comes on, while a teal
-   line draws across the top of it; the final figure, unseen, holds the
-   width. */
-.dk-tally {
-  display: inline-grid;
-}
-.dk-tally > span {
-  grid-area: 1 / 1;
-}
-.dk-tally-hold {
-  visibility: hidden;
-}
+/* The #1 figures: each counts up once as the page comes on (fig.tsx),
+   while a teal line draws across the top of it. */
 .dk-n1-stat {
   position: relative;
   transition: background 260ms;
@@ -2674,11 +2742,6 @@ button.dk-devices {
   to {
     transform: scaleX(1);
   }
-}
-/* "+١٫٣٢ مليون دولار" fits its column on one line at 50px; at 54 it broke
-   in two and pushed the logos into the figures. */
-[dir="rtl"] .dk-n1-stat .dk-n1-value {
-  font-size: 50px;
 }
 .dk-n1-stat:hover {
   background: linear-gradient(180deg, var(--dk-teal-soft), transparent 75%);

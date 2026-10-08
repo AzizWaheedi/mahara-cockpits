@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   closePlusTen,
+  digits,
   funnel,
   funnelTokens,
   type Given,
@@ -8,8 +9,10 @@ import {
   payback,
   readGiven,
   readNumber,
+  sayCount,
   sayMany,
   sayMoney,
+  sayMoneyRange,
   sayPct,
   strengths,
   wholeFunnel,
@@ -297,13 +300,57 @@ describe("saying numbers", () => {
     expect(sayMoney(85_432, "KWD", "en")).toBe("85,000 KWD");
     expect(sayMoney(1_190_000, "AED", "en")).toBe("1.2 million AED");
     expect(sayMoney(85_000, "KWD", "ar")).toBe("٨٥ ألف دينار");
-    expect(sayMoney(2_500, "SAR", "ar")).toBe("٢٫٥ ألف ريال");
-    expect(sayMoney(1_000, "USD", "ar")).toBe("ألف دولار");
+    // 1,000 to 9,999 in Arabic: digits and the currency word (2026-10-08).
+    expect(sayMoney(2_500, "SAR", "ar")).toBe("٢٥٠٠ ريال");
+    expect(sayMoney(1_000, "USD", "ar")).toBe("١٠٠٠ دولار");
+    expect(sayMoney(1_200, "USD", "ar")).toBe("١٢٠٠ دولار");
     expect(sayMoney(450, "BHD", "ar")).toBe("٤٥٠ دينار");
-    expect(sayMoney(6_000, "USD", "ar")).toBe("٦ آلاف دولار");
+    expect(sayMoney(6_000, "USD", "ar")).toBe("٦٠٠٠ دولار");
+    expect(sayMoney(9_999.7, "USD", "ar")).toBe("١٠ آلاف دولار");
+    expect(sayMoney(75_000, "USD", "ar")).toBe("٧٥ ألف دولار");
+    expect(sayMoney(120_000, "USD", "ar")).toBe("١٢٠ ألف دولار");
     expect(sayMoney(3_000_000, "SAR", "ar")).toBe("٣ ملايين ريال");
     expect(sayMoney(999_700, "KWD", "ar")).toBe("مليون دينار");
     expect(sayMoney(1_190_000, "KWD", "ar")).toBe("١٫٢ مليون دينار");
+  });
+
+  test("a range says its currency once in Arabic", () => {
+    expect(sayMoneyRange(30, 50, "USD", "en")).toBe("$30 to $50");
+    expect(sayMoneyRange(30, 50, "USD", "ar")).toBe("٣٠ لـ٥٠ دولار");
+    expect(sayMoneyRange(900, 1_500, "USD", "ar")).toBe("٩٠٠ لـ١٥٠٠ دولار");
+    expect(sayMoneyRange(900, 1_500, "USD", "en")).toBe("$900 to $1,500");
+  });
+
+  test("Arabic digits never carry the thousands mark ٬", () => {
+    expect(digits("2,855", "ar")).toBe("٢٨٥٥");
+    expect(digits(62_346, "ar")).toBe("٦٢\u202F٣٤٦");
+    expect(digits("1,234,567", "ar")).toBe("١\u202F٢٣٤\u202F٥٦٧");
+    expect(digits("12.4", "ar")).toBe("١٢٫٤");
+    expect(digits("2,855", "en")).toBe("2,855");
+    expect(sayCount(2_855, "en")).toBe("2,855");
+    expect(sayCount(2_855, "ar")).toBe("٢٨٥٥");
+    expect(sayCount(4.7, "ar")).toBe("٤٫٧");
+    expect(sayCount(0, "ar")).toBe("٠");
+    expect(sayCount(999, "ar")).toBe("٩٩٩");
+    expect(sayCount(1_000, "ar")).toBe("١٠٠٠");
+    // Every helper over a sample from 0 to 10^7.
+    for (let n = 0; n <= 10_000_000; n = Math.floor(n * 1.37) + 1) {
+      for (const said of [
+        digits(n.toLocaleString("en-US"), "ar"),
+        sayCount(n, "ar"),
+        sayMoney(n, "USD", "ar"),
+        sayMoney(n + 0.37, "KWD", "ar"),
+        sayMoneyRange(n, n * 2, "USD", "ar"),
+        sayPct(n / 1_000, "ar"),
+      ])
+        expect(said).not.toContain("٬");
+    }
+  });
+
+  test("a grouped Arabic number reads back", () => {
+    expect(readNumber("٦٢\u202F٣٤٦")).toBe(62_346);
+    expect(readNumber("٢٬٨٥٥")).toBe(2_855);
+    expect(readNumber("٢٨٥٥")).toBe(2_855);
   });
 
   test("rates", () => {

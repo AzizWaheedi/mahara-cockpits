@@ -120,7 +120,8 @@ export function readNumber(raw: unknown): number | null {
   s = s
     .replace(/[٠-٩۰-۹]/g, d => EASTERN[d] ?? d)
     .replace(/٫/g, ".")
-    .replace(/٬/g, ",")
+    // Digit groups, as the deck writes them: ٢٬٨٥٥ (old) and ٦٢ ٣٤٦.
+    .replace(/[٬\u202F]/g, "")
     .replace(/،/g, " ")
     .toLowerCase();
   const found: {
@@ -571,12 +572,26 @@ export function closePlusTen(
 
 const AR_DIGITS = "٠١٢٣٤٥٦٧٨٩";
 
-function digits(s: string, lang: Lang): string {
-  if (lang === "en") return s;
-  return s
+/**
+ * A number in the language's digits. Arabic gets Arabic-Indic digits and
+ * the decimal mark ٫, and never the thousands mark ٬: IBM Plex draws it
+ * like a Latin comma, so ٢٬٨٥٥ read as 2,855 (CEO, 2026-10-08). Up to four
+ * whole digits there is no mark (٢٨٥٥); from five, a narrow no-break space
+ * groups them (٦٢ ٣٤٦). English is left as written.
+ */
+export function digits(s: string | number, lang: Lang): string {
+  const text = String(s);
+  if (lang === "en") return text;
+  return text
+    .replace(/\d+(?:,\d{3})*(?:\.\d+)?/g, n => {
+      const [whole, frac] = n.split(".");
+      const plain = whole.replace(/,/g, "");
+      const grouped =
+        plain.length <= 4 ? plain : plain.replace(/\B(?=(\d{3})+$)/g, "\u202F");
+      return frac == null ? grouped : `${grouped}.${frac}`;
+    })
     .replace(/\d/g, d => AR_DIGITS[Number(d)])
-    .replace(/\./g, "٫")
-    .replace(/,/g, "٬");
+    .replace(/\./g, "٫");
 }
 
 function trim(n: number, places: number): string {
@@ -600,21 +615,32 @@ const CURRENCY_WORD: Record<Currency, { en: string; ar: string }> = {
   OMR: { en: "OMR", ar: "ريال" },
 };
 
-/** An amount the way it is said on a call: 4.6 KWD, 85,000 KWD, 1.2 million KWD. */
+/**
+ * An amount the way it is said on a call: 4.6 KWD, 85,000 KWD, 1.2 million
+ * KWD. In Arabic, up to 9,999 it is digits and the currency word (١٢٠٠
+ * دولار, the voice's own "٥٠٠–١٠٠٠ دولار"); from 10,000 the thousands and
+ * millions are words (٧٥ ألف دينار، ١٫٢ مليون دينار).
+ */
 export function sayMoney(n: number, currency: Currency, lang: Lang): string {
   const word = CURRENCY_WORD[currency][lang];
-  const a = Math.abs(n);
   if (lang === "en") {
-    let body: string;
-    if (a < 100) body = trim(a, 1);
-    else if (a < 10_000) body = grouped(a);
-    else if (a < 1_000_000) body = grouped(Math.round(a / 1_000) * 1_000);
-    else body = `${trim(a / 1_000_000, 1)} million`;
+    const body = moneyBody(n, lang);
     return currency === "USD" ? `$${body}` : `${body} ${word}`;
   }
-  let body: string;
-  // Three to ten take the plural (٦ آلاف، ٣ ملايين); a fraction, and eleven
-  // and up, the singular (٢٫٥ ألف، ٨٥ ألف).
+  return `${moneyBody(n, lang)} ${word}`;
+}
+
+/** The amount without its currency. */
+function moneyBody(n: number, lang: Lang): string {
+  const a = Math.abs(n);
+  if (lang === "en") {
+    if (a < 100) return trim(a, 1);
+    if (a < 10_000) return grouped(a);
+    if (a < 1_000_000) return grouped(Math.round(a / 1_000) * 1_000);
+    return `${trim(a / 1_000_000, 1)} million`;
+  }
+  // Three to ten take the plural (٣ ملايين); a fraction, and eleven and up,
+  // the singular (٨٥ ألف، ١٫٢ مليون).
   const unit = (
     n: number,
     one: string,
@@ -627,16 +653,27 @@ export function sayMoney(n: number, currency: Currency, lang: Lang): string {
       : n === 2
         ? two
         : `${digits(String(n), lang)} ${Number.isInteger(n) && n >= 3 && n <= 10 ? few : many}`;
-  if (a < 100) body = digits(trim(a, 1), lang);
-  else if (a < 1_000) body = digits(grouped(a), lang);
-  else if (a < 999_500) {
-    const k = a < 10_000 ? Number(trim(a / 1_000, 1)) : Math.round(a / 1_000);
-    body = unit(k, "ألف", "ألفين", "آلاف", "ألف");
-  } else {
-    const m = Number(trim(a / 1_000_000, 1));
-    body = unit(m, "مليون", "مليونين", "ملايين", "مليون");
-  }
-  return `${body} ${word}`;
+  if (a < 100) return digits(trim(a, 1), lang);
+  if (a < 9_999.5) return digits(grouped(a), lang);
+  if (a < 999_500)
+    return unit(Math.round(a / 1_000), "ألف", "ألفين", "آلاف", "ألف");
+  const m = Number(trim(a / 1_000_000, 1));
+  return unit(m, "مليون", "مليونين", "ملايين", "مليون");
+}
+
+/**
+ * A range of amounts: "$30 to $50"; in Arabic the currency is said once,
+ * the voice's own range form: "٣٠ لـ٥٠ دولار", "٩٠٠ لـ١٥٠٠ دولار".
+ */
+export function sayMoneyRange(
+  lo: number,
+  hi: number,
+  currency: Currency,
+  lang: Lang,
+): string {
+  if (lang === "en")
+    return `${sayMoney(lo, currency, lang)} to ${sayMoney(hi, currency, lang)}`;
+  return `${moneyBody(lo, lang)} لـ${sayMoney(hi, currency, lang)}`;
 }
 
 export function sayPct(r: number, lang: Lang): string {
@@ -645,9 +682,9 @@ export function sayPct(r: number, lang: Lang): string {
   return lang === "en" ? `${s}%` : `${digits(s, lang)}٪`;
 }
 
-/** A count on its own: 12, 1.5. */
+/** A count on its own: 12, 1.5, 2,855 (٢٨٥٥ in Arabic). */
 export function sayCount(n: number, lang: Lang): string {
-  return digits(Number.isInteger(n) ? String(n) : trim(n, 1), lang);
+  return digits(Number.isInteger(n) ? grouped(n) : trim(n, 1), lang);
 }
 
 type Noun = {

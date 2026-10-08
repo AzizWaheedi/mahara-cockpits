@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useState } from "react";
+import type { ReactNode } from "react";
 import logoOnDark from "../assets/mahara-logo-dark.png";
 import {
   CURRENCIES,
@@ -7,7 +7,9 @@ import {
   type Funnel,
   funnelTokens,
   gapFor,
+  sayCount,
   sayMoney,
+  sayMoneyRange,
   sayPct,
   stepWords,
 } from "../lib/funnel";
@@ -40,6 +42,7 @@ import {
   TRADES,
   t,
 } from "./content";
+import { Fig } from "./fig";
 import {
   CaseBox,
   Fit,
@@ -148,7 +151,7 @@ const S = {
 
 const ar = (lang: Lang) => lang === "ar";
 
-/** A money figure in the deck's own voice: $6,000, ٦ آلاف دولار. */
+/** A money figure in the deck's own voice: $6,000, ٦٠٠٠ دولار. */
 const usd = (n: number, lang: Lang) => sayMoney(n, "USD", lang);
 
 function Header({
@@ -399,7 +402,10 @@ function path(ctx: DeckCtx) {
                     textAlign: "center",
                   }}
                 >
-                  <span className="dk-num dk-teal" style={{ fontSize: 26 }}>
+                  <span
+                    className="dk-num dk-teal"
+                    style={{ fontSize: rtl ? 30 : 26 }}
+                  >
                     {/* No leading zero in Arabic: ٠ is a dot, so ٠١ reads as ·١. */}
                     {rtl ? "١٢٣٤٥"[i] : `0${i + 1}`}
                   </span>
@@ -415,10 +421,6 @@ function path(ctx: DeckCtx) {
     </>
   );
 }
-
-/** A number in Arabic-Indic digits. */
-const arNum = (n: number) =>
-  String(n).replace(/\d/g, d => "٠١٢٣٤٥٦٧٨٩"[Number(d)]);
 
 /**
  * Every partner at a glance: their logo, their headline number from the
@@ -456,14 +458,12 @@ function results(ctx: DeckCtx) {
               >
                 <span className="dk-partner-logo">
                   {p.logo ? (
-                    <img src={p.logo} alt={t(s.company, "en")} />
+                    <img src={p.logo} alt={t(s.company, lang)} />
                   ) : (
                     <span>{t(s.company, lang)}</span>
                   )}
                 </span>
-                <span className="dk-num dk-partner-value">
-                  {t(m.value, lang)}
-                </span>
+                <Fig f={40} text={t(m.value, lang)} lang={lang} tone="teal" />
                 <span className="dk-small">{t(m.label, lang)}</span>
                 <Place proof={p} lang={lang} />
               </a>
@@ -484,8 +484,8 @@ function results(ctx: DeckCtx) {
         >
           <Out href={GOOGLE.url}>
             {ar(lang)
-              ? `${"٤٫٧"} على قوقل، من ${"١٥"} تقييم`
-              : `${GOOGLE.rating} on Google, from ${GOOGLE.reviews} reviews`}
+              ? `${sayCount(GOOGLE.rating, lang)} على قوقل، من ${sayCount(GOOGLE.reviews, lang)} تقييم`
+              : `${sayCount(GOOGLE.rating, lang)} on Google, from ${sayCount(GOOGLE.reviews, lang)} reviews`}
           </Out>
           <Out href={LINKS.proof}>
             {ar(lang) ? "صفحة النتايج كاملة" : "The full results page"}
@@ -515,7 +515,7 @@ function storySlide(s: Story, n: number) {
               <Wistia
                 id={s.wistia}
                 on={on}
-                title={`${t(s.who, "en")}, ${t(s.company, "en")}`}
+                title={`${t(s.who, lang)}${ar(lang) ? "، " : ", "}${t(s.company, lang)}`}
               />
             </div>
           </Rv>
@@ -542,7 +542,7 @@ function storySlide(s: Story, n: number) {
           <Rv i={1}>
             <p className="dk-label">
               {ar(lang)
-                ? `قصة ${arNum(n + 1)} من ${arNum(of)}`
+                ? `قصة ${sayCount(n + 1, lang)} من ${sayCount(of, lang)}`
                 : `Story ${n + 1} of ${of}`}
             </p>
           </Rv>
@@ -756,16 +756,12 @@ function numbersSlide(ctx: DeckCtx) {
                     <span style={{ fontSize: 32, flex: 1 }}>
                       {t(names[st.key], lang)}
                     </span>
-                    <span
-                      className="dk-num"
-                      style={{
-                        fontSize: 40,
-                        fontWeight: 600,
-                        color: leak ? "var(--dk-leak)" : "var(--dk-ink)",
-                      }}
-                    >
-                      {theirs == null ? "—" : sayPct(theirs, lang)}
-                    </span>
+                    <Fig
+                      f={40}
+                      text={theirs == null ? "—" : sayPct(theirs, lang)}
+                      lang={lang}
+                      tone={leak ? "leak" : "ink"}
+                    />
                     <span className="dk-small">
                       {ar(lang) ? "رقمنا" : "ours"} {sayPct(st.ours, lang)}
                     </span>
@@ -864,17 +860,13 @@ function numbersSlide(ctx: DeckCtx) {
                   {ar(lang) ? "لو صلحنا بس " : "Fix only "}
                   {stepWords(f.leak, lang)}
                 </p>
-                <p
-                  className="dk-num"
-                  style={{
-                    fontSize: 76,
-                    fontWeight: 600,
-                    color: "var(--dk-teal)",
-                    lineHeight: 1.05,
-                  }}
-                >
-                  {tok["GAP YEAR"] ?? tok["EXTRA PROJECTS A YEAR"]}
-                </p>
+                <Fig
+                  f={76}
+                  text={tok["GAP YEAR"] ?? tok["EXTRA PROJECTS A YEAR"] ?? ""}
+                  lang={lang}
+                  tone="teal"
+                  style={{ margin: "6px 0" }}
+                />
                 <p className="dk-body">
                   {ar(lang)
                     ? `${tok["EXTRA PROJECTS A YEAR"] ?? ""} بالسنة${tok["GAP YEAR"] ? "، بمتوسط مشروعك" : ""}. بدون ما تصرف ولا فلس زيادة على الإعلانات.`
@@ -1035,7 +1027,10 @@ function systemSlide(ctx: DeckCtx) {
                   padding: "34px 32px",
                 }}
               >
-                <span className="dk-num dk-teal" style={{ fontSize: 26 }}>
+                <span
+                  className="dk-num dk-teal"
+                  style={{ fontSize: ar(lang) ? 30 : 26 }}
+                >
                   {ar(lang) ? "١٢٣٤٥"[i] : `0${i + 1}`}
                 </span>
                 <span
@@ -1096,17 +1091,7 @@ function speedSlide(ctx: DeckCtx) {
       />
       <div style={{ flex: 1 }} />
       <Rv i={2} style={{ maxWidth: 1000 }}>
-        <p
-          className="dk-num"
-          style={{
-            fontSize: 210,
-            lineHeight: 0.9,
-            fontWeight: 600,
-            color: "var(--dk-teal)",
-          }}
-        >
-          {rtl ? "٢١×" : "21×"}
-        </p>
+        <Fig f={210} text={`${sayCount(21, lang)}×`} lang={lang} tone="teal" />
         <p
           style={{
             fontSize: rtl ? 42 : 40,
@@ -1510,10 +1495,6 @@ function budgetSlide(ctx: DeckCtx) {
   const leads = Math.round(budget / CAMPAIGNS.perLead);
   const booked = Math.round(budget / CAMPAIGNS.perBooking);
   const perDay = Math.round(budget / 30);
-  const n = (x: number) =>
-    ar(lang)
-      ? String(x).replace(/\d/g, d => "٠١٢٣٤٥٦٧٨٩"[Number(d)])
-      : x.toLocaleString("en-US");
   return (
     <>
       <Header
@@ -1540,9 +1521,7 @@ function budgetSlide(ctx: DeckCtx) {
             style={{ display: "flex", flexDirection: "column", gap: 10 }}
           >
             <span className="dk-small">{ar(lang) ? "بالشهر" : "A month"}</span>
-            <span className="dk-num" style={{ fontSize: 72, fontWeight: 600 }}>
-              {usd(budget, lang)}
-            </span>
+            <Fig f={72} text={usd(budget, lang)} lang={lang} />
             <span className="dk-body">
               {ar(lang)
                 ? `يعني ${usd(perDay, lang)} باليوم`
@@ -1556,12 +1535,7 @@ function budgetSlide(ctx: DeckCtx) {
             <span className="dk-small">
               {ar(lang) ? "استفسارات، تقريباً" : "Inquiries, about"}
             </span>
-            <span
-              className="dk-num dk-teal"
-              style={{ fontSize: 72, fontWeight: 600 }}
-            >
-              {n(leads)}
-            </span>
+            <Fig f={72} text={sayCount(leads, lang)} lang={lang} tone="teal" />
             <span className="dk-body">
               {ar(lang)
                 ? `بمعدل ${usd(CAMPAIGNS.perLead, lang)} للاستفسار`
@@ -1577,12 +1551,7 @@ function budgetSlide(ctx: DeckCtx) {
                 ? "مواعيد محجوزة، تقريباً"
                 : "Booked appointments, about"}
             </span>
-            <span
-              className="dk-num dk-teal"
-              style={{ fontSize: 72, fontWeight: 600 }}
-            >
-              {n(booked)}
-            </span>
+            <Fig f={72} text={sayCount(booked, lang)} lang={lang} tone="teal" />
             <span className="dk-body">
               {ar(lang)
                 ? `بمعدل ${usd(CAMPAIGNS.perBooking, lang)} للموعد`
@@ -1655,19 +1624,12 @@ function investmentSlide(ctx: DeckCtx) {
             <span className="dk-small">
               {ar(lang) ? "١. ميزانية الإعلانات" : "1. The ad budget"}
             </span>
-            <span
-              className="dk-num"
-              style={{
-                fontSize: ar(lang) ? 76 : 96,
-                fontWeight: 600,
-                lineHeight: 1.1,
-                whiteSpace: "nowrap",
-              }}
-            >
-              {ar(lang)
-                ? `${usd(lo, lang)} لـ${usd(hi, lang)}`
-                : `${usd(lo, lang)} to ${usd(hi, lang)}`}
-            </span>
+            <Fig
+              f={96}
+              text={sayMoneyRange(lo, hi, "USD", lang)}
+              lang={lang}
+              style={{ margin: "4px 0" }}
+            />
             <span className="dk-body">
               {ar(lang)
                 ? "باليوم، تدفعها للمنصات مباشرة.. مو لنا."
@@ -1675,8 +1637,8 @@ function investmentSlide(ctx: DeckCtx) {
             </span>
             <span className="dk-small" style={{ marginTop: "auto" }}>
               {ar(lang)
-                ? `يعني تقريباً ${usd(lo * 30, lang)} لـ${usd(hi * 30, lang)} بالشهر.`
-                : `About ${usd(lo * 30, lang)} to ${usd(hi * 30, lang)} a month.`}
+                ? `يعني تقريباً ${sayMoneyRange(lo * 30, hi * 30, "USD", lang)} بالشهر.`
+                : `About ${sayMoneyRange(lo * 30, hi * 30, "USD", lang)} a month.`}
             </span>
           </div>
         </Rv>
@@ -1703,17 +1665,13 @@ function investmentSlide(ctx: DeckCtx) {
                 ? `٢. ${t(PROGRAM.name, lang)}`
                 : `2. The ${t(PROGRAM.name, lang)}`}
             </span>
-            <span
-              className="dk-num dk-teal"
-              style={{
-                fontSize: ar(lang) ? 100 : 120,
-                fontWeight: 600,
-                lineHeight: 1.1,
-                whiteSpace: "nowrap",
-              }}
-            >
-              {usd(PROGRAM.usd, lang)}
-            </span>
+            <Fig
+              f={120}
+              text={usd(PROGRAM.usd, lang)}
+              lang={lang}
+              tone="teal"
+              style={{ margin: "4px 0" }}
+            />
             <span className="dk-body">
               {ar(lang)
                 ? `لـ٩٠ يوم. العربون ${usd(PROGRAM.deposit, lang)} اليوم، وينخصم من المبلغ.`
@@ -1811,11 +1769,11 @@ function nextSlide(ctx: DeckCtx) {
                     background: "var(--dk-space)",
                     border: "3px solid var(--dk-teal)",
                     color: "var(--dk-teal)",
-                    fontSize: 40,
+                    fontSize: ar(lang) ? 47 : 40,
                     fontWeight: 600,
                   }}
                 >
-                  {ar(lang) ? "١٢٣٤"[i] : i + 1}
+                  {sayCount(i + 1, lang)}
                 </span>
                 <span
                   style={{
@@ -1885,51 +1843,6 @@ function closeSlide(ctx: DeckCtx) {
 
 // --------------------------------------------------------- our channels
 
-/** A count in the deck's digits: 2,855, ٢٬٨٥٥. */
-const sayCount = (n: number, lang: Lang) => {
-  const en = n.toLocaleString("en-US");
-  return ar(lang)
-    ? en.replace(/\d/g, d => "٠١٢٣٤٥٦٧٨٩"[Number(d)]).replace(/,/g, "٬")
-    : en;
-};
-
-const prefersStill = () =>
-  window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
-
-/**
- * A figure that runs up to its value as the slide comes in, at the #1
- * page's pace (motion.tsx CountUp: 1.5 s, easing out). Its own because a
- * follower count has a thousands comma, which CountUp's figure() does not
- * read.
- */
-function Count({ n, lang, delay }: { n: number; lang: Lang; delay: number }) {
-  const [v, setV] = useState(() => (prefersStill() ? n : 0));
-  useEffect(() => {
-    if (prefersStill()) {
-      setV(n);
-      return;
-    }
-    let raf = 0;
-    const start = performance.now() + delay;
-    const tick = (now: number) => {
-      const k = Math.min(1, Math.max(0, (now - start) / 1500));
-      setV(Math.round(n * (1 - (1 - k) ** 4)));
-      if (k < 1) raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [n, delay]);
-  const final = sayCount(n, lang);
-  return (
-    <span className="dk-num dk-channel-value">
-      <span className="sr-only">{final}</span>
-      <span aria-hidden style={{ minWidth: `${final.length}ch` }}>
-        {sayCount(v, lang)}
-      </span>
-    </span>
-  );
-}
-
 const PLATFORM: Record<Profile["key"], L> = {
   youtube: { en: "YouTube", ar: "يوتيوب" },
   instagram: { en: "Instagram", ar: "إنستقرام" },
@@ -1982,7 +1895,12 @@ function ProfileFigures({ p, lang, i }: { p: Profile; lang: Lang; i: number }) {
       </span>
       {p.figures.map((f, j) => (
         <div key={f.label.en} className="dk-channel-fig">
-          <Count n={f.n} lang={lang} delay={520 + (i * 2 + j) * 160} />
+          <Fig
+            f={108}
+            text={sayCount(f.n, lang)}
+            lang={lang}
+            count={{ delay: 520 + (i * 2 + j) * 160 }}
+          />
           <span className="dk-channel-label">{t(f.label, lang)}</span>
         </div>
       ))}
@@ -2113,7 +2031,7 @@ export function deckSlides(): SlideDef[] {
         section: S.proof,
         title: {
           en: `Google reviews, ${i + 1} of ${REVIEW_PAGES.length}`,
-          ar: `تقييمات قوقل، ${arNum(i + 1)} من ${arNum(REVIEW_PAGES.length)}`,
+          ar: `تقييمات قوقل، ${sayCount(i + 1, "ar")} من ${sayCount(REVIEW_PAGES.length, "ar")}`,
         },
         render: c => reviewsSlide(i)(c),
       }),
