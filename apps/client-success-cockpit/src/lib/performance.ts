@@ -1,12 +1,12 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { executeCsmAction } from "./csmActionClient";
-import {requestNativeReport,type ReportRequest} from './reportClient';
 import {
   currentCsmProfiles,
   readCsmClientProfile,
   readCsmPerformance,
   readCsmSources,
 } from "./csmReadModel";
+import { type ReportRequest, requestNativeReport } from "./reportClient";
 import { periodNumbers } from "./reportPeriod";
 export async function fetchPerformanceOverview(
   client: SupabaseClient,
@@ -82,5 +82,5 @@ export async function requestReportDoc(
     typeof userEmailOrArgs === "object"
       ? userEmailOrArgs
       : (maybeArgs ?? { clientName: "" });
-  return requestNativeReport(client,args);
+  return requestNativeReport(client, args);
 }

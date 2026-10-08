@@ -26,7 +26,11 @@ export async function probeCockpitBackend(
   }
 
   let parsed: URL;
-  try { parsed = new URL(trimmedUrl); } catch { return "down"; }
+  try {
+    parsed = new URL(trimmedUrl);
+  } catch {
+    return "down";
+  }
   if (parsed.origin !== CREATIVE_TRIAGE_ORIGIN) return "down";
   try {
     const endpoint = `${parsed.origin}/functions/v1/cockpit-media-api`;

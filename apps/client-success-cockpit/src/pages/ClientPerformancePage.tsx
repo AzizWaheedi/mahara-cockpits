@@ -718,9 +718,7 @@ function ReportSection({ p, per, fig }: { p: Any; per: Period; fig: Figures }) {
                 note: note.trim() || undefined,
                 extras,
               });
-              toast.success(
-                "Report created. Refresh to see its link.",
-              );
+              toast.success("Report created. Refresh to see its link.");
               setNote("");
             } catch (e) {
               toast.error(String(e));
@@ -2053,11 +2051,14 @@ export function ClientProfile({
               {perf.staleReason ? (
                 <p className="callout-warn rounded-2xl border px-4 py-3 text-xs">
                   {perf.staleAt ? (
-                    <>These numbers were last read on {shortDay(perf.staleAt)}.</>
+                    <>
+                      These numbers were last read on {shortDay(perf.staleAt)}.
+                    </>
                   ) : (
                     "The last confirmed read date is unknown."
                   )}{" "}
-                  The last verified values are retained. Reason: {perf.staleReason}
+                  The last verified values are retained. Reason:{" "}
+                  {perf.staleReason}
                 </p>
               ) : null}
             </section>
