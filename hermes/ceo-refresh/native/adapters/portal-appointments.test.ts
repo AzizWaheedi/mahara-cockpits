@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { withRuntime } from '../../runtime.ts';
 import { portal } from './portal.js';
+import { DEFINITIONS } from '../metrics.ts';
 
 test('appointment mirror reads the current business capture, not the retired B2B document', async () => {
   const queries: { project: string; query: string }[] = [];
@@ -22,6 +23,9 @@ test('appointment mirror reads the current business capture, not the retired B2B
   assert.doesNotMatch(sheet.query, /public\.mahara_portal_documents/);
   assert.equal(result.payload.appointmentRows, 796);
   assert.equal(result.sources.find((s: any) => s.name === 'Portal appointments mirror')?.ok, true);
+  for (const point of result.daily) {
+    assert.ok(DEFINITIONS.some(d => d.metric === point.metric && d.section === 'portal'), `Missing definition for ${point.metric}`);
+  }
 });
 
 test('a recently published capture without a source sync time is not confirmed fresh', async () => {
