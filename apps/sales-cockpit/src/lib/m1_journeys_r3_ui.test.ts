@@ -703,7 +703,9 @@ describe("control r3: the setter's intro rings out at 10:00, a Meet link goes by
     let p = await panelNow(w, id, { canMarkIntro: true, talkBelow: true });
     expect(p.words).toMatch(/^Link sent by email at /);
     expect(p.primary).toBe("open");
-    expect(stepAfterMiss(p.room, false).title).toBe("The video link went");
+    expect(stepAfterMiss(p.room, false, { now: w.clock.now }).title).toBe(
+      "The video link went",
+    );
     w.clock.now += 60 * S;
     await R.roomsApi.mark(p.room, "host_in");
     p = await panelNow(w, id, { canMarkIntro: true, talkBelow: true });
