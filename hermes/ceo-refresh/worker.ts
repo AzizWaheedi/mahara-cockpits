@@ -140,6 +140,9 @@ function validateDaily(value: unknown, key: SectionKey): DailyPoint[] {
     if (typeof row.date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(row.date) || typeof row.metric !== "string" || !row.metric.startsWith(`${key}.`) || typeof row.scope !== "string" || !row.scope || typeof row.value !== "number" || !Number.isFinite(row.value)) {
       throw new Error(`${key} daily row ${index + 1} is not a confirmed metric point`);
     }
+    if (!DEFINITIONS.some(definition => definition.metric === row.metric && definition.section === key)) {
+      throw new Error(`${key} daily metric ${row.metric} has no registered definition`);
+    }
     return { date: row.date, metric: row.metric, scope: row.scope.slice(0, 120), value: row.value };
   });
 }
