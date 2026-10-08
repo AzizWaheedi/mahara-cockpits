@@ -48,7 +48,15 @@ export async function rpc(env:Env,name:string,args:Row,request:typeof fetch=fetc
  const allowed:Record<string,true>={cockpit_native_media_state:true,cockpit_native_media_claim:true,cockpit_native_media_fence:true,cockpit_native_media_publish:true,cockpit_native_media_release:true,cockpit_native_media_doctor:true,cockpit_native_media_record_receipts:true};
  if(!Object.hasOwn(allowed,name))throw new Error('Unapproved repository operation');
  if(env.SUPABASE_URL?.replace(/\/$/,'')!=='https://bldgtotkfmhoxmlzowdx.supabase.co'||!env.SUPABASE_SERVICE_ROLE_KEY)throw new Error('Creative Triage service connection required');
- const response=await request(`${env.SUPABASE_URL.replace(/\/$/,'')}/rest/v1/rpc/${name}`,{method:'POST',headers:{apikey:env.SUPABASE_SERVICE_ROLE_KEY,Authorization:`Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,'Content-Type':'application/json'},body:JSON.stringify(args),signal:AbortSignal.timeout(60000)});
+ const send=()=>request(`${env.SUPABASE_URL.replace(/\/$/,'')}/rest/v1/rpc/${name}`,{method:'POST',headers:{apikey:env.SUPABASE_SERVICE_ROLE_KEY,Authorization:`Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,'Content-Type':'application/json'},body:JSON.stringify(args),signal:AbortSignal.timeout(60000)});
+ // A dropped pooled connection never reaches the repository. Reads and the
+ // lease release are safe to resend; claims and publications never are.
+ const resendable=name==='cockpit_native_media_state'||name==='cockpit_native_media_fence'||name==='cockpit_native_media_release'||name==='cockpit_native_media_doctor';
+ let response:Response;
+ for(let attempt=1;;attempt++){
+  try{response=await send();break;}
+  catch(error){if(!resendable||attempt>=3||(error as Error)?.name==='TimeoutError')throw error;await new Promise(r=>setTimeout(r,250*attempt));}
+ }
  if(!response.ok)throw new Error(`Repository ${name} failed (${response.status}); no automatic write retry`);
  return response.json();
 }
@@ -111,6 +119,6 @@ if(import.meta.main){
   process.stdout.write(JSON.stringify(result)+'\n');process.exitCode=result.ok&&(!('repository'in result)||result.repository.ok)?0:1;
  }else{
   const index=args.indexOf('--report');if(index<0||!args[index+1])throw new Error('--report outside-repository-path is required');
-  run({apply:args.includes('--apply'),report:args[index+1]}).then(r=>process.stdout.write(JSON.stringify(r)+'\n')).catch(()=>{process.stderr.write('Native feed failed; inspect private report and provider health ledger.\n');process.exitCode=1;});
+  run({apply:args.includes('--apply'),report:args[index+1]}).then(r=>process.stdout.write(JSON.stringify(r)+'\n')).catch(error=>{process.stderr.write(`Native feed failed; inspect private report and provider health ledger. Cause: ${String((error as Error)?.name??'Error')}: ${String((error as Error)?.message??error).replace(/eyJ[\w.-]+|sb_secret_\w+/g,'[redacted]').slice(0,300)}\n`);process.exitCode=1;});
  }
 }
