@@ -391,7 +391,7 @@ export async function runRefresh(options: RefreshOptions): Promise<RefreshReport
     daily,
     failures: failures.map(item => ({ key: item.key, error: item.error.slice(0, 1000) })),
     receipts: driver.receipts,
-    finance: { id: financeId, output: financePayload, error: financeError },
+    finance: { id: financeId, ...(financePayload ? { output: financePayload } : {}), error: financeError },
   };
   const planSha = sha256(publication);
   try {

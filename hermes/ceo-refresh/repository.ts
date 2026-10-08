@@ -305,7 +305,7 @@ export function createRepository(read: ReadFunction): Repository {
           throw new Error("Canonical booking event has no stable campaign, date, or event identity");
         }
         const calendar = String(data.kind ?? data.calendarType ?? data.calendar ?? data.calendarName ?? data.status ?? "").toLowerCase();
-        const kind = /provisional|not confirmed/.test(calendar) ? "provisional" : /confirmed|main|online/.test(calendar) ? "confirmed" : null;
+        const kind = /provisional|not confirmed/.test(calendar) ? "provisional" : /confirmed|main|online|^(showed|noshow)$/.test(calendar) ? "confirmed" : null;
         if (!kind) throw new Error("Canonical booking event has no verified calendar classification");
 
         const identity = JSON.stringify([campaignName, String(data.locationId ?? ""), eventId, eventTime]);

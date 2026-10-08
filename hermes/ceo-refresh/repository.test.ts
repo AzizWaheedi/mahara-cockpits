@@ -248,6 +248,17 @@ describe("CEO Refresh Repository delivery() canonical booking handling", () => {
     }
   });
 
+  test("modern bookings preserve verified showed and noshow classification", async () => {
+    const rawEvents = ["showed", "noshow"].map((status, index) => ({
+      campaignName: "Camp A", date: "2026-09-10", eventId: `event_${index}`,
+      startTime: "2026-09-10T10:00:00Z", locationId: "loc_1", status,
+    }));
+    const result = await createRepository(createFakeReader(rawEvents)).delivery() as { bookings: Row[] };
+    expect(result.bookings).toHaveLength(2);
+    expect(result.bookings.every(row => row.kind === "confirmed")).toBe(true);
+    expect(rawEvents.map(row => row.status)).toEqual(["showed", "noshow"]);
+  });
+
   test("invalid or missing shapes are denied", async () => {
     // Missing date
     const repoMissingDate = createRepository(createFakeReader([
