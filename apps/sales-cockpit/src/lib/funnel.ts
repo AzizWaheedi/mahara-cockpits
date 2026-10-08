@@ -616,6 +616,14 @@ const CURRENCY_WORD: Record<Currency, { en: string; ar: string }> = {
 };
 
 /**
+ * What a money field is in, as a label says it: "USD" in English, and in
+ * Arabic the currency's word ("بالدولار"), never a Latin code.
+ */
+export function currencyIn(currency: Currency, lang: Lang): string {
+  return lang === "en" ? currency : `بال${CURRENCY_WORD[currency].ar}`;
+}
+
+/**
  * An amount the way it is said on a call: 4.6 KWD, 85,000 KWD, 1.2 million
  * KWD. In Arabic, up to 9,999 it is digits and the currency word (١٢٠٠
  * دولار, the voice's own "٥٠٠–١٠٠٠ دولار"); from 10,000 the thousands and

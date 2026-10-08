@@ -1,6 +1,22 @@
 import { describe, expect, test } from "bun:test";
-import { digits, sayCount, sayMoney, sayMoneyRange } from "../lib/funnel";
-import { figureAt, GROUP, hold, type Part, parse, tally } from "./figure";
+import {
+  currencyIn,
+  digits,
+  readNumber,
+  sayCount,
+  sayMoney,
+  sayMoneyRange,
+} from "../lib/funnel";
+import {
+  fieldShown,
+  fieldTyped,
+  figureAt,
+  GROUP,
+  hold,
+  type Part,
+  parse,
+  tally,
+} from "./figure";
 
 /** A figure's parts as "kind:text", a space before a part as "_". */
 const said = (text: string) =>
@@ -241,5 +257,37 @@ describe("hold: a number stays on the line of what it counts", () => {
   test("a word before the number may still break", () => {
     expect(hold("خلال ٥ دقايق")).toBe(`خلال ٥${NB}دقايق`);
     expect(hold("no numbers here")).toBe("no numbers here");
+  });
+});
+
+describe("number fields on the Arabic deck", () => {
+  test("shown in Arabic-Indic digits, kept in Latin underneath", () => {
+    expect(fieldShown("180000", "ar")).toBe("١٨٠٠٠٠");
+    expect(fieldShown("2.5", "ar")).toBe("٢٫٥");
+    expect(fieldShown("25,000", "ar")).toBe("٢٥٠٠٠");
+    expect(fieldShown("25,000", "en")).toBe("25,000");
+    expect(fieldTyped("١٨٠٠٠٠", "ar")).toBe("180000");
+    expect(fieldTyped("٢٫٥", "ar")).toBe("2.5");
+    expect(fieldTyped("١٨٠٠٠٠5", "ar")).toBe("1800005");
+    expect(fieldTyped("٢٥٬٠٠٠", "ar")).toBe("25000");
+    expect(fieldTyped("2.5", "en")).toBe("2.5");
+  });
+
+  test("one character for one, so the caret keeps its place", () => {
+    for (const v of ["40", "8", "4", "1", "180000", "2.5", "0.75"])
+      expect([...fieldShown(v, "ar")].length).toBe(v.length);
+  });
+
+  test("what a field holds reads back as the same number", () => {
+    for (const v of ["40", "180000", "2.5"])
+      expect(readNumber(fieldTyped(fieldShown(v, "ar"), "ar"))).toBe(Number(v));
+  });
+
+  test("a money field says its currency in words in Arabic", () => {
+    expect(currencyIn("USD", "ar")).toBe("بالدولار");
+    expect(currencyIn("KWD", "ar")).toBe("بالدينار");
+    expect(currencyIn("USD", "en")).toBe("USD");
+    for (const c of ["USD", "KWD", "SAR", "AED", "QAR", "BHD", "OMR"] as const)
+      expect(currencyIn(c, "ar")).not.toMatch(/[A-Za-z$]/);
   });
 });

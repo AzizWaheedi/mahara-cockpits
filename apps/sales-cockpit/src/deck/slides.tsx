@@ -1,9 +1,10 @@
-import type { ReactNode } from "react";
+import { type ReactNode, useLayoutEffect, useRef } from "react";
 import logoOnDark from "../assets/mahara-logo-dark.png";
 import {
   CURRENCIES,
   type Currency,
   closePlusTen,
+  currencyIn,
   type Funnel,
   funnelTokens,
   gapFor,
@@ -43,6 +44,7 @@ import {
   t,
 } from "./content";
 import { Fig } from "./fig";
+import { fieldShown, fieldTyped } from "./figure";
 import {
   CaseBox,
   Fit,
@@ -703,6 +705,50 @@ const FIELD_LABELS: { key: string; label: L; money?: boolean }[] = [
   },
 ];
 
+/**
+ * A field the presenter types a number into. On the Arabic deck it shows
+ * Arabic-Indic digits while the value stays in Latin digits; the shown text
+ * differs from what was typed, so the caret is put back where it was.
+ */
+function NumberField({
+  id,
+  value,
+  lang,
+  onValue,
+}: {
+  id: string;
+  value: string;
+  lang: Lang;
+  onValue: (v: string) => void;
+}) {
+  const ref = useRef<HTMLInputElement>(null);
+  const caret = useRef<[number, number] | null>(null);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    const at = caret.current;
+    caret.current = null;
+    if (el && at && document.activeElement === el)
+      el.setSelectionRange(at[0], at[1]);
+  });
+  return (
+    <input
+      ref={ref}
+      id={id}
+      className="dk-input"
+      inputMode="decimal"
+      value={fieldShown(value, lang)}
+      onChange={e => {
+        caret.current = [
+          e.target.selectionStart ?? e.target.value.length,
+          e.target.selectionEnd ?? e.target.value.length,
+        ];
+        onValue(fieldTyped(e.target.value, lang));
+      }}
+      dir="ltr"
+    />
+  );
+}
+
 function numbersSlide(ctx: DeckCtx) {
   const { lang, numbers } = ctx;
   const f = numbers.funnel;
@@ -819,6 +865,7 @@ function numbersSlide(ctx: DeckCtx) {
                 {FIELD_LABELS.map(fl => (
                   <label
                     key={fl.key}
+                    htmlFor={`dk-field-${fl.key}`}
                     style={{
                       display: "flex",
                       flexDirection: "column",
@@ -828,14 +875,15 @@ function numbersSlide(ctx: DeckCtx) {
                   >
                     <span className="dk-small" style={{ fontSize: 22 }}>
                       {t(fl.label, lang)}
-                      {fl.money ? ` (${numbers.currency})` : ""}
+                      {fl.money
+                        ? ` (${currencyIn(numbers.currency, lang)})`
+                        : ""}
                     </span>
-                    <input
-                      className="dk-input"
-                      inputMode="decimal"
+                    <NumberField
+                      id={`dk-field-${fl.key}`}
                       value={numbers.values[fl.key] ?? ""}
-                      onChange={e => numbers.set(fl.key, e.target.value)}
-                      dir="ltr"
+                      lang={lang}
+                      onValue={v => numbers.set(fl.key, v)}
                     />
                   </label>
                 ))}

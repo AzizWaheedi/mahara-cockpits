@@ -245,6 +245,14 @@
   flex-direction: column;
   gap: 10px;
 }
+/* An Arabic name on two lines (عالية القيمة، المشاريع) ran 15px into its
+   node; set from the top of the rail, it ends clear of the node's glow. */
+[dir="rtl"] .dk-biglabel {
+  top: 0;
+}
+[dir="rtl"] .dk-biglabel .dk-h3 {
+  line-height: 1.3;
+}
 
 /* ------------------------------------------------------------- type */
 
@@ -401,8 +409,12 @@
 .dk-fig-l {
   margin-inline: calc(var(--f) * 0.16px);
 }
+/* At half size the lam of لـ stood no taller than the bowl of the digits
+   beside it, so "٣ لـ٤" and "٣٠ لـ٥٠" read as ٣ ر٤ and ٣٠ ر٥٠. At 0.7 its
+   stem clears the digits' middle and it reads as the word it is. */
 [dir="rtl"] .dk-fig-l {
   margin-inline-end: 0;
+  font-size: 0.7em;
 }
 /* + × ~ are signs, not units: smaller, centred on the digits' middle (the
    glyph's middle, 0.29 of its size, lifted to the digits' 0.36 f). */
@@ -745,6 +757,14 @@
   background: var(--dk-deep);
   color: var(--dk-ink);
   border: 1px solid var(--dk-line);
+}
+/* The Arabic deck types into its fields in Arabic-Indic digits (figure.ts
+   fieldShown); Geist Mono has none, and the system fallback spaced them
+   out like a ticker. Plex 600 at 1.17x, as the figures are. */
+[dir="rtl"] .dk-input {
+  font-family: "IBM Plex Sans Arabic", "Geist", sans-serif;
+  font-size: 37px;
+  font-weight: 600;
 }
 .dk-input:focus,
 .dk-select:focus {

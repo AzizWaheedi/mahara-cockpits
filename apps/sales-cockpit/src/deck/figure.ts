@@ -16,6 +16,8 @@
  *   the same places and no frame shows a lone zero (in Arabic, a lone dot).
  */
 
+import type { Lang } from "./content";
+
 export type PartKind = "num" | "sign" | "link" | "unit" | "word";
 
 export interface Part {
@@ -181,4 +183,27 @@ export function hold(s: string): string {
       new RegExp(`([0-9٠-٩]${NBSP}(?:ألف|آلاف|مليون|ملايين)) (?=\\S)`, "g"),
       `$1${NBSP}`,
     );
+}
+
+/**
+ * A number field on the Arabic deck: it shows Arabic-Indic digits and ٫,
+ * while the value underneath stays in Latin digits as typed, one character
+ * for one so the caret keeps its place. A grouping comma is left out in
+ * Arabic, the Latin comma being the mark the deck no longer shows.
+ */
+export function fieldShown(value: string, lang: Lang): string {
+  if (lang !== "ar") return value;
+  return value
+    .replace(/,/g, "")
+    .replace(/[0-9]/g, d => AR_DIGITS[Number(d)])
+    .replace(/\./g, "٫");
+}
+
+/** What a field on the Arabic deck holds: Latin digits, "." for ٫, no groups. */
+export function fieldTyped(value: string, lang: Lang): string {
+  if (lang !== "ar") return value;
+  return value
+    .replace(/[,٬]/g, "")
+    .replace(/[٠-٩]/g, d => String(AR_DIGITS.indexOf(d)))
+    .replace(/٫/g, ".");
 }
