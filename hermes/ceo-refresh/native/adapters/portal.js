@@ -1,4 +1,4 @@
-import { B2B, ms, num, sql } from "../sb.js";
+import { B2B, TRIAGE, ms, num, sql } from "../sb.js";
 import { kuwaitDay } from "../time.js";
 /**
  * The portal's own refresh jobs rewrite __state__ about every half hour, as
@@ -118,13 +118,14 @@ where seen.last_seen_ms >= extract(epoch from now() - interval '7 days') * 1000
 order by seen.last_seen_ms desc
 limit 100`;
 /**
- * Appointment rows in the DB Appointments sheet mirror, and how many carry a
- * portal outcome. Rows drop trailing empty cells, so the column is found by
- * its header name, never by position.
+ * Appointment rows in the DB Appointments sheet capture, and how many carry a
+ * portal outcome. Since the September business-storage cutover this document
+ * is published to Creative Triage, not the retired B2B document store. Rows
+ * drop trailing empty cells, so find the column by header, never position.
  */
 const SHEET_SQL = `with doc as (
-  select body->'values' as v, body->>'syncedAt' as synced_at, updated_at
-  from public.mahara_portal_documents where key = 'appointments.json'
+  select body->'values' as v, body->>'syncedAt' as synced_at, source_updated_at
+  from portal_migration.business_documents where key = 'appointments.json'
 ),
 hdr as (
   select h.name, (h.ord - 1)::int as idx
@@ -138,10 +139,11 @@ r as (
 )
 select
   (select count(*) from doc) as found,
+  (select pua is not null from c) as header_present,
   (select count(*) from r) as appointment_rows,
   (select count(*) from r, c where c.pua is not null and nullif(trim(r.row->>c.pua), '') is not null) as sheet_outcomes,
   (select synced_at from doc) as synced_at,
-  (select floor(extract(epoch from updated_at) * 1000) from doc) as updated_ms`;
+  (select floor(extract(epoch from source_updated_at) * 1000) from doc) as updated_ms`;
 /**
  * Client portal (Mahara OS): who has access, who is signed in, CRM links,
  * client-submitted outcomes and the portal's own health and backup, all read
@@ -222,14 +224,18 @@ export const portal = {
         let sheetOutcomes = null;
         let sheetOk = false;
         try {
-            const [a] = await sql(B2B, SHEET_SQL);
+            const [a] = await sql(TRIAGE, SHEET_SQL);
             if (!a || num(a.found) === 0)
                 throw new Error("the appointments.json document is missing");
+            if (String(a.header_present) !== "true")
+                throw new Error("the appointments.json Portal Updated At header is missing");
             appointmentRows = num(a.appointment_rows);
             sheetOutcomes = num(a.sheet_outcomes);
             sheetOk = true;
-            const sheetAt = ms(a.synced_at) ?? (num(a.updated_ms) || undefined);
-            const fresh = sheetAt !== undefined && now - sheetAt < SHEET_STALE_MS;
+            // Publication time is not a source-coverage watermark: a re-published
+            // old capture must not certify appointment data as fresh.
+            const sheetAt = ms(a.synced_at);
+            const fresh = sheetAt !== undefined && sheetAt <= now && now - sheetAt < SHEET_STALE_MS;
             sources.push({
                 name: "Portal appointments mirror",
                 freshestAt: sheetAt,
