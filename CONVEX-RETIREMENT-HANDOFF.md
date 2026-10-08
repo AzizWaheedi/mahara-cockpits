@@ -1,85 +1,103 @@
-﻿# Convex retirement: current checkpoint
+# Convex retirement: verified checkpoint
 
-Updated 7 October 2026, 19:45 UTC. Migration remains in progress. Earlier checkpoint history remains in Git.
+Updated 8 October 2026, 02:34 UTC. All five requested worker-cutover gates passed. Source and CEO operate through Supabase. The steady native schedule is enabled. Convex deletion and full retirement remain open. Earlier checkpoint detail remains in Git and protected receipts.
 
-## Decisions and workspace
+## Ownership and active release
 
-Muhammed authorized finishing the migration and choosing the better implementation without further questions. Native labels use live Meta accounts and the verified Client Data registry. The inaccessible label sheet is no longer required.
+Muhammed authorized this five-gate cutover. The previous migration session stopped. This session owns production writes.
 
-Report folder: `1YolkzE6ycBQT69hFa_iGUnDMiEMUCQ09`. Keep anyone/writer access, as Muhammed instructed. The server exception is folder-bound and preserves private defaults elsewhere.
+Workspace: `D:/MaharaMedia/worktrees/mahara-cockpits-supabase-completion`. Branch: `codex/supabase-completion-20261004`.
 
-Use `D:/MaharaMedia/worktrees/mahara-cockpits-supabase-completion`, branch `codex/supabase-completion-20261004`. Preserve the unrelated dirty root checkout. Source preservation commit: `6a5d16f1`. Repair merge: `b35e8a9b`. Runtime package commit: `7f9b56ba`.
+Active worker commit: `5da4c4c12321266446f1efa1836bfaca7a821540`.
+Release: `/home/hermes/.cockpit-native-releases/5da4c4c1`.
+Current link: `/home/hermes/cockpit-native-current`.
+Archive SHA256: `34f0cef327abff5b468c654770930064f42d9484492c73611bf7de59fb59a161`.
 
-Cockpit writes target Creative Triage `bldgtotkfmhoxmlzowdx`. B2B `flwboeijllbtrufxkhts` remains read-only. Protected evidence lives under `D:/secure/cockpit-retirement-prep-20261007/consolidation-20261007/`.
+Write only Creative Triage `bldgtotkfmhoxmlzowdx`. B2B `flwboeijllbtrufxkhts` remains read-only. Preserve unrelated root edits and 84 dirty host paths. Do not replay historical messages, notifications, reports, or invitations.
 
-## Verified backend and source
+Evidence root: `D:/secure/cockpit-retirement-prep-20261007/consolidation-20261007/`.
+Host state: `/home/hermes/.cockpit-native-state`.
 
-- Original 7,091 imports plus approved 4,738 imports were already applied. Do not replay them blindly.
-- Final twelve cost/goal definitions were applied at 15:06:58 UTC. Business values remained unchanged.
-- Combined baseline passed 66 suites, ten typechecks, five builds and source/shared checks. Evidence: `integrated-local-verification.json`.
-- Existing EOD claim/start/receipt migration is live. Nine columns and protection/audit triggers were installed. Queue remained empty. Evidence: `eod-native-contract-receipt.json`.
-- Report settings and `cockpit-csm-api` version 5 are live. JWT verification remains enabled. Folder owner is active staff. No permissions changed and no report document was created. Evidence: `csm-report-config-deploy-receipt.json`.
-- Report tests: 39 passed. Deno check passed with `--node-modules-dir=auto --no-lock`. Pre-existing frozen-lock inconsistency remains unchanged.
-- Native market source prioritizes exact account IDs. Conflicting mappings fail. Ambiguous names retain provider identity and a warning. Human annotations survive. Native-feed tests: 19 passed, 172 assertions.
-- SQL reader accepts semicolons inside comments and rejects actual multiple statements. Errors exclude raw query text. CEO lifecycle smoke passes.
-- Native delivery preserves old booking snapshot multiplicity without invented provider IDs. Booking regressions pass.
-- EOD team query uses actual schema and verified owner identity. Unknown identity remains missing. Eleven repository tests passed, with 106 assertions. Live query read four EOD rows successfully.
-- Webinar reader supports valid stateless MCP connections. Fifty-two tests passed. Live initialize and survey read passed. Host class replacement preserved 84 unrelated dirty paths. Survey raw refresh completed. No customer message or provider write occurred.
+## Gates and receipts
 
-## Verified finance history
+1. **Local fixes passed.** All 27 required tests pass with 228 assertions. Both CEO regressions failed before their fixes. All 18 targeted CEO tests pass with 157 assertions. Earlier transport, creative render, and creative build checks also passed. Receipts: `gate1-ceo-contract-candidate-tests.log`, `ceo-live-contract-fixes-tests.log`.
+2. **Candidate staged.** All 136 files passed hash verification. Three frozen dependency installs passed. Receipt: `candidate-5da4c4c1-stage.log`.
+3. **Server dry runs passed.** Source exited 0. CEO computed eleven sections, including delivery and validated daily metric definitions. Its exit 1 reflects only expected stale bank and portal inputs. No crash or unhandled rejection occurred. Receipts: `completion-dry-runs-5da4c4c1-sync.log`, `completion-dry-runs-5da4c4c1-ceo.log`.
+4. **Controlled cutover passed.** Actual Hermes cron dispatched cycle `25d69f59-d6c3-4438-aed7-fa5917e902ec` at 02:23:01 UTC. Source published at 02:32:03 UTC. CEO finished at 02:33:04 UTC. Source has one clean published audit row. CEO published eleven sections with only three expected stale sections. Both ledgers have no error. Receipt: `native-cutover-audit-verification.json`.
+5. **Completion recorded.** The steady schedule was enabled and read back at 02:33:49 UTC. The active link resolves to the verified release. All three legacy production deployments remain paused. Receipts: `activation-5da4c4c1-steady.log`, `convex-freeze-hold-verification.json`.
 
-All 67 original billing snapshots are present and individually verified. One pilot was preserved and 66 rows inserted. Compact publication retains original guards and locks. Its 37-table SHA256 helper is service-only. Eight tests passed, with 135 assertions. Live rollback preview and grants passed.
+Final source run: `fb7fa077-cbec-4ca1-8947-f5af5a9df2f0`, status `published`, 3,134 provider receipts.
+Final CEO run: `d92e3516-c784-4223-b2e6-ba6dd35fec5a`, status `partial`, 124 provider receipts. Published sections: growth, webinar, b2bAds, delivery, calls, clients, team, hiring, assets, organic, machine. Money and expenses retain stale bank warnings. Portal retains its unconfirmed-input warning.
 
-Billing run: `5435aca9-4e95-4ae4-9028-30f40d8f84f0`. Plan SHA: `b2a16715786f11085d2505b69b77d947436d3cd8888c9ea90d758910f7ecc06e`. Unrelated fingerprinted tables remained unchanged.
+Host cycle receipt: `/home/hermes/.cockpit-native-state/cycle-25d69f59-d6c3-4438-aed7-fa5917e902ec/receipt.json`. Cron dispatch is verified from the actual CRON journal, not a manual launcher call.
 
-All three original manual payments, their original audits, and 118 aliases are reconciled. Existing amounts, rates, notes and attribution were preserved. One-row pilots preceded expansion. Source and target totals match. History readiness flags are true. This certifies imported history only, without claiming bank coverage or a successful native finance refresh.
+Earlier scheduled source run `578bffda-bacd-4d48-abae-a3f5090f328f` published at 01:35:43 UTC. Its ledger has no error and one matching published audit row. Receipt: `sixth-canary-source-audit-verification.json`. Its CEO run failed before acceptance. The successful source publication remains intact.
 
-Evidence: `billing-history-compact-publication-receipt.json`, `finance-history-pilot-receipt.json`, `finance-history-remaining-receipt.json`, `finance-history-reconciliation-receipt.json`.
+## Legacy freeze and native schedule
 
-Earlier oversized staging timed out before saving a plan. Run `7949c2cf-1b15-422f-887c-e7a822e9f00f` was read back and released. Do not resume it.
+These verified production deployments were paused at 22:46:58 to 22:47:02 UTC on 7 October:
 
-## Server and production
+| Cockpit | Deployment | Project ID |
+| --- | --- | --- |
+| Media buyer | `adorable-seahorse-418` | `2961454` |
+| Client success | `impressive-dinosaur-375` | `2961475` |
+| Creative director | `colorful-wombat-644` | `2961477` |
 
-Use WSL SSH with existing trusted host checks: `wsl -d Ubuntu -- ssh -o BatchMode=yes root@187.77.156.166`.
+Normal function probes confirm the freeze. Pausing stops their normal functions and cron writers. Other deployments remain untouched. Receipts: `convex-freeze-receipt.json`, `convex-freeze-hold-verification.json`.
 
-Host checkout `/home/hermes/mahara-cockpits` is at `754585045c0c67989ac0728305fb4119d2aac7f7`, with 84 dirty paths. Do not reset or replace it wholesale. Initial paused package `/opt/data/mahara-native-staging/b35e8a9b` is immutable evidence.
+Active Hermes job:
 
-Updated artifact: `native-worker-completion-7f9b56ba.zip`, with 136 files. SHA256: `48ccba7bd484a692bb715038e6cefccb5f94153d43a2bd16bb4ce987d1d73596`. Updated staging: `/home/hermes/.cockpit-native-releases/7f9b56ba`. State: `/home/hermes/.cockpit-native-state`. Installation is being verified. No native cron was activated at this checkpoint.
+```cron
+*/15 * * * * /usr/bin/flock -n /home/hermes/.cockpit-native-state/native-source-ceo.lock /usr/bin/python3 /home/hermes/.cockpit-native-state/run-source-ceo-cycle.py >> /home/hermes/.cockpit-native-state/native-cron.log 2>&1
+```
 
-Bun 1.4.2 SHA256: `a83d263767d839e4d2649ca8e35d07159c7afc99afdc96d731ced29e056dda0c`. Use frozen installs with `--ignore-scripts`. Credentials come from named approved configuration. Never print values. Native Google identity is `claude@studied-handler-508106-m5.iam.gserviceaccount.com`.
+The launcher runs source publication first and CEO refresh second. One shared lock prevents overlapping cycles. The cron runs as `hermes`. The scheduled canary passed before steady activation. Its protected marker and receipt remain as evidence.
 
-Chrome tab `2012789659` is authenticated as Muhammed. Admin recovered after transient network failures. It reports stale native feeds and worker attention. This is not cutover acceptance. Public URL: `https://cockpit.maharamedia.com`.
+The source worker replaces media `health.runJob {job: "sync"}` and its downstream cockpit feeds. Legacy names: `refresh every 10 minutes through the working day`, `refresh hourly overnight`. The CEO worker replaces `refresh the CEO cockpit`, `health.runJob {job: "ceo refresh"}`. These names come from `apps/media-buyer-cockpit/convex/crons.ts`. The deployment freeze also stops its remaining legacy crons. Those other jobs were not claimed as replaced by this source/CEO pipeline.
 
-## Next actions
+The unrelated 64-line Hermes crontab has SHA256 `16970f8e50d1eebabf042de29c97ed7f3796586247eb46df4c4c2e1805d9c331`. Root crontab stayed unchanged. Editor, sales, and personal jobs were preserved. Message, report, and invitation workers were not activated.
 
-1. Finish updated server doctors and source/CEO dry runs. Preserve real provider gaps as missing data.
-2. Resolve historical checklist/source-audit conflicts conservatively. Preserve human edits and original evidence.
-3. Verify files, source identities, statistics and replaced workers. Preserve independent personal, editor and sales systems.
-4. Freeze confirmed legacy writers and reconcile final exports/deltas. The 16:01 UTC exports under `current-source/` are not final-delta certification.
-5. Ship verified source. Activate one native writer per provider under leases and flock.
-6. Prove production permissions, durable saves, files, worker updates, Convex-blocked operation and recovery.
-7. Record verified changes in mahara-context. Its sync stopped on dirty work at `398a4ed`. Preserve it.
+Paused scheduled functions can queue. Do not resume legacy deployments blindly. Reconcile pending outward jobs before rollback.
 
-No Convex deletion, final freeze, final-delta certification or complete retirement claim has occurred.
+## Preserved history and bounded updates
 
-## Completion-plan continuation, 7 October 2026, 19:45 UTC
+The final candidate plan preserves 52 profiles, 30 original calls, 59 human call fields, and 17 unchanged history tables. Receipt: `dry-plan-history-5da4c4c1.json`.
 
-Muhammed confirmed the previous migration session stopped. This session is the sole cutover owner. Worktree HEAD is `40d9e151`; it was clean at takeover. Canonical context sync stopped on dirty work; retained context HEAD is `398a4ed`.
+Retained performance never borrows the current profile refresh date. Zero or negative timestamps remain unknown. Stopped clients retain original performance and dates. Sheet 403/404 failures retain old values or show an error. Creative stats follow the same date rule.
 
-Phase 1 ownership and baseline checks are complete. Existing imports, finance reconciliation, checklist reconciliation, and growth-read receipts remain closed. Required worker, publication, freeze, recovery, and deletion gates remain open. Use `docs/CONVEX-RETIREMENT-INVENTORY-20261007.md` for the finite replacement inventory.
+Unavailable churn and Meta form inputs retain original history with explicit stale warnings. Unknown provider failures remain fatal. All 66 original client links retain their verified ClickUp identities.
 
-Phase 2 local safeguards are verified. Commit `32bd21f8` preserves cached calls without `clientName`, full call history, same-identity human fields, and distinct no-URL calls. Seven failing regressions became green. The integrated history/provider suite passed 53 tests and 234 assertions.
+Fathom uses a 24-hour overlap from the latest successful native publication. Failed publication and dry runs cannot advance its checkpoint. Initial protected seed: `2026-10-06T16:01:16.602220+00:00`.
 
-Commit `c4775129` adds bounded Fathom reads and the team metric repair. An initial attempt to append a checkpoint to protected CSM `syncRuns` was rejected by the actual SQL publication test. That attempt was removed. The worker now reads the latest successful `media-core` publication's `plan.begun_at` from the existing native run ledger. It overlaps 24 hours, preserves original CSM history, and cannot advance on failed publication or dry runs. Missing, malformed, and future initial seeds fail closed. The corrected integrated suite passed 54 tests and 218 assertions. Evidence: `native-publication-checkpoint-integrated-tests.log`.
+Booking publication is limited to the declared inclusive complete window. Earlier imported bookings remain intact. No narrow source read replaces full history.
 
-Review manifest: `C:/Users/20106/.codex/gemini-worker/runs/20261007-220440-3830987f/manifest.json`. Regression/repair manifest: `C:/Users/20106/.codex/gemini-worker/runs/20261007-220803-7e5fe65b/manifest.json`.
+Protected final exports contain 148 tables and 116,842 rows, including storage exports. ZIP integrity and SHA256 are recorded in `frozen-final-exports-receipt.json`. Archives reside under `frozen-final-source/`. This proves preservation, not full restore.
 
-Phase 3: the actual `40d9e151` server CEO dry run computed nine sections. Bank statements stop on 21 September, so money/expenses failed safely. Portal appointments are unconfirmed. Delivery needs a fresh native media sync. Team failed because `team_actions` violated its native metric contract and lacked a matching definition. The repair emits defined `team.actions`, preserves historical rows, and passed five adapter regressions and the canonical publication/readback/repeat/failure smoke. Evidence: `completion-dry-runs-40d9e151-ceo.log`, `completion-latest-diagnostics.log`, and `team-metric-integrated-smoke.log`.
+Fourteen selected history tables had no changed or removed rows. Thirty-one added open checklist records represent 21 current-day duties matching native proposals. Eleven carry archived shadow metadata. No human completion needed importing. Receipts: `final-human-history-deltas.json`, `final-checklist-native-matches.json`, `final-checklist-delta-verification.json`.
 
-Current staged candidate: `/home/hermes/.cockpit-native-releases/c4775129`, with 136 hash-verified files and three successful frozen production dependency installs. Archive SHA256: `f461de2fbb4105c64a78f09329cd0a1d1a96f3017532785d8acc5cfdcddab9fd`. Schedules remain disabled. Host dirty work remains preserved. Staging receipt: `candidate-c4775129-stage.log`. Initial `FATHOM_CREATED_AFTER` is `2026-10-06T16:01:16.602220+00:00`, based on the verified CSM export minus one day. A source and CEO dry run of this candidate is pending. Neither staging nor computation proves successful live publication.
+Completed imports stay closed: 11,829 reviewed records, 67 billing snapshots, three manual payments, 118 aliases, and 803 original checklist versions reconciled into 561 canonical rows. All 224 earlier unique file objects matched original bytes. Do not repeat those imports. The integrated baseline passed 66 suites, ten typechecks, and five builds.
 
-Phase 4 preparation: all three protected exports passed offline checksums, exact table counts, and identity validation across 148 tables and 115,447 source rows. Evidence: `offline-recovery-archive-integrity.json`. This proves archive integrity only. Actual database and storage restore tests remain open.
+## Live defects corrected
 
-Final read-only review: `C:/Users/20106/.codex/gemini-worker/runs/20261007-223833-c66e33fb/manifest.json`. Its suggested current-value extraction is unnecessary because `team.actions` intentionally remains a defined daily-series point. SQL accepts defined daily points independently of current-value extraction. Its checkpoint-pagination finding describes the correctly bounded one-row query and identifies no defect.
+Failed canaries preserved their ledgers and protected reports. Failed source attempts published no feed data. Their schedules were removed before retry.
 
-Next: inspect `c4775129` source/CEO dry-run receipts, verify retained call identities and human annotations in the produced plan, complete staged worker acceptance, and run the integrated release gate. Prepare an exact pilot publication diff before requesting run-specific live automation approval. No freeze, public release, writer activation, or Convex deletion occurred.
+- Duplicate still uploads returned HTTP 400 with duplicate status 409. The uploader now verifies exact existing bytes before reuse. It never overwrites mismatched content. Receipt: `still-idempotency-71271f15-verification.log`.
+- Source publication and state reads inherited an eight-second timeout. Commits `93e17272` and `eae00611` apply scoped 50-second function limits. Bodies, grants, role limits, and business data stayed unchanged. Receipts: `native-publisher-timeout-receipt.json`, `native-state-timeout-receipt.json`.
+- Older bookings fell outside the declared complete window. Commit `98ab6b92` filters publication rows to that window. SQL history guards remain unchanged. Receipt: `canary-statistics-window-diagnostic.json`.
+- Booking lookups repeatedly scanned 43,158 retained rows. Commit `fc4e14e3` adds exact booking and daily-stat grain indexes. Verified lookups take approximately 3 ms and 2 ms. Planned rows have no ambiguous grains. Receipt: `native-grain-index-receipt.json`.
+- Modern showed/noshow bookings needed the same classification as legacy events. Failed finance needed an actionable error without JSON null output. Commit `6989dfcc` fixes both contracts without weakening publication rules.
+- Original daily-series names lacked catalogue definitions. Commit `5da4c4c1` registers their existing semantics without changing historical keys or values. Dry runs now reject unregistered daily metrics. All 51 checked names have definitions. Receipt: `ceo-daily-definition-contract-verification.json`.
+
+## Remaining retirement gates
+
+Bank statements end on 21 September. Portal appointments remain unconfirmed. One Meta form and the churn Sheet remain inaccessible. Preserve these source gaps as warnings.
+
+The creative stale-warning UI is committed and builds but is not published. The normal ship guard refused the candidate outside `origin/main`. No guard was overridden or main branch changed. Receipt: `creative-release-main-preflight.log`.
+
+Public entry bundles contain Supabase addresses and no targeted legacy addresses. This does not prove complete browser, save, or file journeys. Receipt: `public-backend-bindings.json`.
+
+Full restore, browser journeys, late-file reconciliation, hidden callers, and deletion gates remain open. `healthy-cobra-488` is not an approved deletion target. No Convex deletion occurred.
+
+Canonical context sync stopped on dirty work at `398a4ed`. Preserve it. Update the existing session note locally. Do not claim remote synchronization.
+
+The requested source/CEO cutover is complete. Next retirement work requires the remaining browser, recovery, caller, file, and deletion gates. Keep existing history imports closed. Do not resume legacy writers or activate historical outward jobs.
