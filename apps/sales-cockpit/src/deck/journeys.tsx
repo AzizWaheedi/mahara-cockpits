@@ -16,8 +16,9 @@ import {
   t,
 } from "./content";
 import { justify } from "./layout";
+import { CountUp, LogoRiver } from "./motion";
 import { Out, Rv, Wistia, YouTube } from "./parts";
-import { MARK_ORDER, Mark, type PlatformMark } from "./platforms";
+import { Logo, MARK_ORDER, Mark, type PlatformMark } from "./platforms";
 import {
   caseUrl,
   LOGO_WALL,
@@ -259,16 +260,7 @@ function Chat({ pic, width }: { pic: Pic; width: number }) {
   return (
     <figure className="dk-chat" style={{ width }}>
       <figcaption className="dk-chat-head">
-        <svg width="26" height="26" viewBox="0 0 24 24" aria-hidden>
-          <path
-            fill="#25D366"
-            d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91c0 1.75.46 3.45 1.32 4.95L2.05 22l5.25-1.38c1.45.79 3.08 1.21 4.74 1.21 5.46 0 9.91-4.45 9.91-9.91C21.95 6.45 17.5 2 12.04 2Z"
-          />
-          <path
-            fill="#fff"
-            d="M9.03 7.16c-.2-.45-.41-.46-.6-.47h-.51c-.18 0-.46.07-.71.34-.24.27-.93.91-.93 2.22s.95 2.58 1.09 2.76c.13.18 1.84 2.95 4.55 4.01 2.25.89 2.71.71 3.2.67.49-.04 1.58-.65 1.8-1.27.22-.62.22-1.16.16-1.27-.07-.11-.24-.18-.51-.31-.27-.13-1.58-.78-1.82-.87-.24-.09-.42-.13-.6.13-.18.27-.69.87-.85 1.05-.16.18-.31.2-.58.07-.27-.13-1.13-.42-2.15-1.33-.79-.71-1.33-1.58-1.49-1.85-.16-.27-.02-.41.12-.55.12-.12.27-.31.4-.47.13-.16.18-.27.27-.45.09-.18.04-.33-.02-.47-.07-.13-.59-1.45-.82-1.98Z"
-          />
-        </svg>
+        <Logo mark="whatsapp" size={26} />
         <span>WhatsApp</span>
       </figcaption>
       <img src={pic.src} alt={pic.alt} />
@@ -921,9 +913,15 @@ export function numberOneSlide(ctx: DeckCtx) {
       </Rv>
       <Rv i={2}>
         <div className="dk-n1-stats">
-          {NUMBER_ONE.map(m => (
-            <div key={m.label.en}>
-              <span className="dk-num dk-n1-value">{t(m.value, lang)}</span>
+          {NUMBER_ONE.map((m, i) => (
+            <div
+              key={m.label.en}
+              className="dk-n1-stat"
+              style={{ "--n": i } as CSSProperties}
+            >
+              <span className="dk-num dk-n1-value">
+                <CountUp value={t(m.value, lang)} delay={300 + i * 140} />
+              </span>
               <span className="dk-small">{t(m.label, lang)}</span>
             </div>
           ))}
@@ -931,11 +929,7 @@ export function numberOneSlide(ctx: DeckCtx) {
       </Rv>
       <div style={{ flex: 1 }} />
       <Rv i={3}>
-        <div className="dk-logo-wall">
-          {LOGO_WALL.map(l => (
-            <img key={l.name} src={l.src} alt={l.name} title={l.name} />
-          ))}
-        </div>
+        <LogoRiver logos={LOGO_WALL} />
       </Rv>
     </>
   );

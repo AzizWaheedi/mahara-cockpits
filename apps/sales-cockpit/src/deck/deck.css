@@ -966,13 +966,6 @@
   gap: 18px;
   margin-top: 34px;
 }
-.dk-mark {
-  display: inline-grid;
-  flex: none;
-  place-items: center;
-  border-radius: 28%;
-  box-shadow: 0 14px 30px -14px rgba(0, 0, 0, 0.7);
-}
 
 /* A reel as Instagram shows it, cut below the reel. */
 .dk-ig {
@@ -1400,27 +1393,6 @@
   font-size: 54px;
   line-height: 1.25;
 }
-.dk-logo-wall {
-  display: grid;
-  grid-template-columns: repeat(10, minmax(0, 1fr));
-  gap: 26px 30px;
-  align-items: center;
-  justify-items: center;
-}
-.dk-logo-wall img {
-  max-width: 100%;
-  max-height: 70px;
-  object-fit: contain;
-  filter: grayscale(1);
-  opacity: 0.72;
-  transition:
-    filter 200ms,
-    opacity 200ms;
-}
-.dk-logo-wall img:hover {
-  filter: none;
-  opacity: 1;
-}
 
 /* A partner: flags and place, their case study's headline and numbers. */
 .dk-place {
@@ -1588,8 +1560,7 @@
   .dk-path-fill,
   .dk-path-dot,
   .dk-fan-page,
-  .dk-partner,
-  .dk-logo-wall img {
+  .dk-partner {
     transition: none;
   }
 }
@@ -1665,5 +1636,252 @@
 @media print {
   .dk-chrome {
     display: none !important;
+  }
+}
+
+/* ============================================ motion and logos (2026-10-08)
+   The platform marks as app tiles, the #1 page's count-up and the partners'
+   logos drifting in two lanes. Everything that moves stops under the
+   pointer or lifts toward it, and stands still with reduced motion. */
+
+/* A platform's logo as its app tile: the brands whose logo is a tile fill
+   it; the rest sit on white, the ground their logos are drawn for. */
+.dk-mark {
+  position: relative;
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 24%;
+  background: #fff;
+  box-shadow: 0 14px 30px -14px rgba(0, 0, 0, 0.7);
+  transition:
+    transform 320ms cubic-bezier(0.2, 0.7, 0.2, 1),
+    box-shadow 320ms;
+}
+.dk-mark[data-ground="own"] {
+  background: none;
+}
+.dk-mark img {
+  display: block;
+  object-fit: contain;
+  pointer-events: none;
+  user-select: none;
+}
+.dk-mark[data-ground="own"] img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+/* A hairline inside the tile, so TikTok's black reads on the navy. */
+.dk-mark::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14);
+  pointer-events: none;
+}
+.dk-mark:hover {
+  transform: translateY(-4px) scale(1.06);
+  box-shadow:
+    0 0 0 2px rgba(0, 207, 200, 0.55),
+    0 22px 40px -18px rgba(0, 0, 0, 0.8);
+}
+.dk-logo {
+  display: block;
+  flex: none;
+  object-fit: contain;
+}
+
+/* The #1 figures: each counts up once as the page comes on, while a teal
+   line draws across the top of it; the final figure, unseen, holds the
+   width. */
+.dk-tally {
+  display: inline-grid;
+}
+.dk-tally > span {
+  grid-area: 1 / 1;
+}
+.dk-tally-hold {
+  visibility: hidden;
+}
+.dk-n1-stat {
+  position: relative;
+  transition: background 260ms;
+}
+.dk-n1-stat::before {
+  content: "";
+  position: absolute;
+  top: -1px;
+  inset-inline: 0;
+  height: 2px;
+  background: var(--dk-grad);
+  transform: scaleX(0);
+  transform-origin: left center;
+  opacity: 0.55;
+  transition: opacity 260ms;
+}
+[dir="rtl"] .dk-n1-stat::before {
+  transform-origin: right center;
+}
+.dk-slide[data-active] .dk-n1-stat::before {
+  animation: dk-draw 1500ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation-delay: calc(300ms + var(--n, 0) * 140ms);
+}
+@keyframes dk-draw {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+/* "+١٫٣٢ مليون دولار" fits its column on one line at 50px; at 54 it broke
+   in two and pushed the logos into the figures. */
+[dir="rtl"] .dk-n1-stat .dk-n1-value {
+  font-size: 50px;
+}
+.dk-n1-stat:hover {
+  background: linear-gradient(180deg, var(--dk-teal-soft), transparent 75%);
+}
+.dk-n1-stat:hover::before {
+  opacity: 1;
+}
+
+/* The partners: two lanes across the whole canvas, the first drifting
+   toward the reading start and the second the other way, soft at both
+   edges. Each lane is its set twice over, moved by exactly half. */
+.dk-river {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-inline: -136px;
+}
+.dk-lane {
+  display: flex;
+  overflow: hidden;
+  padding-block: 10px;
+  -webkit-mask-image: linear-gradient(
+    90deg,
+    transparent,
+    #000 11%,
+    #000 89%,
+    transparent
+  );
+  mask-image: linear-gradient(90deg, transparent, #000 11%, #000 89%, transparent);
+}
+.dk-lane-track {
+  display: flex;
+  flex: none;
+  width: max-content;
+  animation: dk-drift var(--dk-loop, 48s) linear infinite;
+  will-change: transform;
+}
+[dir="rtl"] .dk-lane-track {
+  animation-name: dk-drift-rtl;
+}
+.dk-lane[data-way="end"] .dk-lane-track {
+  animation-direction: reverse;
+}
+.dk-lane:hover .dk-lane-track {
+  animation-play-state: paused;
+}
+@keyframes dk-drift {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+@keyframes dk-drift-rtl {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(50%);
+  }
+}
+.dk-tile {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 232px;
+  height: 106px;
+  padding: 12px 20px;
+  margin-inline-end: 18px;
+  border-radius: 20px;
+  border: 1px solid var(--dk-line);
+  background: rgba(14, 26, 66, 0.55);
+  transition:
+    transform 360ms cubic-bezier(0.2, 0.7, 0.2, 1),
+    border-color 360ms,
+    background 360ms,
+    box-shadow 360ms;
+}
+.dk-tile img {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  opacity: 0.86;
+  pointer-events: none;
+  user-select: none;
+  transition: opacity 360ms;
+}
+.dk-tile:hover {
+  transform: translateY(-6px) scale(1.06);
+  border-color: rgba(0, 207, 200, 0.5);
+  background: var(--dk-panel-2);
+  box-shadow: 0 22px 44px -22px rgba(0, 207, 200, 0.45);
+}
+.dk-tile:hover img {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dk-mark,
+  .dk-tile,
+  .dk-tile img,
+  .dk-n1-stat,
+  .dk-n1-stat::before {
+    transition: none;
+  }
+  .dk-mark:hover,
+  .dk-tile:hover {
+    transform: none;
+  }
+  .dk-slide[data-active] .dk-n1-stat::before {
+    animation: none;
+    transform: scaleX(1);
+  }
+  /* The logos stand still as a grid, the loop's second copy left out. */
+  .dk-river {
+    gap: 12px;
+    margin-inline: 0;
+  }
+  .dk-lane {
+    padding-block: 0;
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
+  .dk-lane-track {
+    width: 100%;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 12px;
+    animation: none;
+  }
+  .dk-tile {
+    width: 150px;
+    height: 70px;
+    padding: 8px 13px;
+    margin: 0;
+  }
+  .dk-tile[data-copy] {
+    display: none;
   }
 }

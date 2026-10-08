@@ -393,6 +393,20 @@ export const REVIEW_PAGES: Review[][] = [
 
 // ---------------------------------------------------------- the logo wall
 
+/**
+ * Every partner's logo, as maharamedia.com/proof-page shows it on its dark
+ * ground: trimmed to the mark and kept at the page's full size (2026-10-08).
+ * Sources, all under https://maharamedia.com/brand/:
+ *   logos-display/01_BAYT-22.png, 02_SAFAD.png, 03_The-Line.png,
+ *   04_Inverse-Group.png, 05_PG.png, 06_Al-Husseini-Engineering.png (AMHECO),
+ *   07_Elite-Excellence.png, 08_PIDCO-Group.png, 09_Joe-Sera.png;
+ *   logos-funnel/AIVE.png, ARCWANI-Architects.png, CAtech.png, MOFAGE.png,
+ *   Olivar-Design.png, RM-Architectural-Contracting.png;
+ *   logos-clients/kesan.png, life-depth.png, mass-design.png,
+ *   phoenix-united.png.
+ * The four from logos-clients are the page's own small cut-outs (under 220
+ * px); a sharper file has to come from the partner.
+ */
 export const LOGO_WALL: { src: string; name: string }[] = [
   { src: logoBayt22, name: "BAYT 22" },
   { src: logoSafad, name: "SAFAD" },
