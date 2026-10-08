@@ -365,6 +365,48 @@ function Chat({ pic, width }: { pic: Pic; width: number }) {
   );
 }
 
+/**
+ * A reel in Instagram's own post card, cut below the reel. Until the card
+ * has loaded it stands as a quiet tile with Instagram's mark, not a blank
+ * white panel, and the card fades in over it.
+ */
+function Reel({
+  code,
+  title,
+  on,
+  w,
+  h,
+}: {
+  code: string;
+  title: string;
+  on: boolean;
+  w: number;
+  h: number;
+}) {
+  const [loaded, setLoaded] = useState(false);
+  return (
+    <div
+      className="dk-ig"
+      data-loaded={on && loaded ? "" : undefined}
+      style={{ width: w, height: h }}
+    >
+      <span className="dk-ig-wait" aria-hidden>
+        <Logo mark="instagram" size={56} />
+      </span>
+      {on ? (
+        <iframe
+          src={`https://www.instagram.com/reel/${code}/embed/`}
+          title={title}
+          allow="autoplay; encrypted-media; fullscreen"
+          scrolling="no"
+          style={{ height: h + 360 }}
+          onLoad={() => setLoaded(true)}
+        />
+      ) : null}
+    </div>
+  );
+}
+
 /** A partner's flags and place, the way the proof page shows them. */
 export function Place({ proof, lang }: { proof: StoryProof; lang: Lang }) {
   return (
@@ -540,7 +582,7 @@ function StopMedia({
           {media.items.map((s, i) => (
             <li key={s.en}>
               <span className="dk-num dk-stage-n">
-                {ar(lang) ? `٠${"١٢٣٤٥٦"[i]}` : `0${i + 1}`}
+                {ar(lang) ? "١٢٣٤٥٦"[i] : `0${i + 1}`}
               </span>
               <span className="dk-stage-name">{t(s, lang)}</span>
             </li>
@@ -613,18 +655,13 @@ function StopMedia({
         <div className="dk-row" style={{ gap, alignItems: "flex-start" }}>
           {media.items.map(r => (
             <div key={r.code} className="dk-reel">
-              <div className="dk-ig" style={{ width: w, height: h }}>
-                {on ? (
-                  <iframe
-                    src={`https://www.instagram.com/reel/${r.code}/embed/`}
-                    title={t(r.label, "en")}
-                    allow="autoplay; encrypted-media; fullscreen"
-                    loading="lazy"
-                    scrolling="no"
-                    style={{ height: h + 360 }}
-                  />
-                ) : null}
-              </div>
+              <Reel
+                code={r.code}
+                title={t(r.label, "en")}
+                on={on}
+                w={w}
+                h={h}
+              />
               <span className="dk-small dk-ink2">{t(r.label, lang)}</span>
             </div>
           ))}

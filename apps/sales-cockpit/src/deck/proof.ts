@@ -1185,8 +1185,8 @@ export const CLOSING_TOUR: Stop[] = [
     key: "academy",
     name: { en: "Premium Projects Academy", ar: "أكاديمية المشاريع المميزة" },
     what: {
-      en: "Six courses: the start, Google optimisation, the offer, Project Closing Mastery, and your team.",
-      ar: "٦ كورسات: البداية، تحسين قوقل، صناعة العرض، إتقان توقيع المشاريع، والفريق والتشغيل.",
+      en: "Six courses: the start, onboarding, Google optimisation, the offer, Project Closing Mastery, and team and operations.",
+      ar: "٦ كورسات: البداية، الأونبوردنق، تحسين قوقل، صناعة العرض، إتقان توقيع المشاريع، والفريق والتشغيل.",
     },
     why: {
       en: "The frameworks and scripts our best partners use to close 40 to 50% of their proposals.",

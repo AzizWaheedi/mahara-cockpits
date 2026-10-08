@@ -15,7 +15,9 @@
   --dk-grad: linear-gradient(135deg, #2e5bd6 0%, #00cfc8 65%, #00cfc8 100%);
   --dk-ink: #f2f6fa;
   --dk-ink-2: rgba(242, 246, 250, 0.7);
-  --dk-ink-3: rgba(242, 246, 250, 0.46);
+  /* 0.54, not 0.46: small grey text (sources, handles, the rail) reads at
+     5.5:1 on the slide ground, 5.3:1 on a panel; 0.46 was 4.3:1. */
+  --dk-ink-3: rgba(242, 246, 250, 0.54);
   --dk-line: rgba(255, 255, 255, 0.1);
   --dk-leak: #f5b84b;
   --dk-good: #3ed598;
@@ -973,7 +975,7 @@
   flex: none;
   overflow: hidden;
   border-radius: 18px;
-  background: #fff;
+  background: var(--dk-panel);
   box-shadow:
     0 0 0 1px var(--dk-line),
     0 30px 60px -30px rgba(0, 0, 0, 0.8);
@@ -984,6 +986,73 @@
   left: 0;
   width: 100%;
   border: 0;
+  opacity: 0;
+  transition: opacity 420ms var(--dk-ease);
+}
+.dk-ig[data-loaded] iframe {
+  opacity: 1;
+}
+/* While the card loads: Instagram's mark, breathing slowly. */
+.dk-ig-wait {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+}
+.dk-ig-wait > img {
+  opacity: 0.5;
+  animation: dk-wait 1800ms ease-in-out infinite;
+}
+.dk-ig[data-loaded] .dk-ig-wait {
+  visibility: hidden;
+}
+@keyframes dk-wait {
+  50% {
+    opacity: 0.9;
+  }
+}
+
+/* A YouTube video before it plays: its cover and the deck's play mark. */
+.dk-yt-cover {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  background: var(--dk-deep);
+  color: inherit;
+  font: inherit;
+}
+.dk-yt-cover > img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  user-select: none;
+}
+.dk-yt-cover:focus-visible {
+  outline: 3px solid var(--dk-teal);
+  outline-offset: -3px;
+}
+.dk-play {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 96px;
+  height: 62px;
+  border-radius: 14px;
+  background: rgba(0, 207, 200, 0.9);
+  color: #fff;
+  box-shadow: 0 14px 34px -12px rgba(0, 0, 0, 0.7);
+  transition:
+    transform var(--dk-hover-ms) var(--dk-ease),
+    background var(--dk-hover-ms) var(--dk-ease);
+}
+.dk-yt-cover:is(:hover, :focus-visible) .dk-play {
+  background: var(--dk-teal);
+  transform: scale(1.08);
 }
 
 /* The same page in a browser and on a phone, the phone in front. */
@@ -1609,6 +1678,25 @@
   outline-offset: 2px;
 }
 
+/* The ← n / N → controls sit in the band under the rail's labels. The
+   canvas scales and they do not, so on a 1280 × 720 or 1366 × 768 screen
+   a fixed 36 px pill 14 px up covered the middle label. Here the band is
+   worked out from the window (one canvas pixel is --dk-u; the labels end
+   60 canvas px above the canvas's foot) and the pill is centred in it,
+   shrinking to 26 px before it would touch a label. */
+.dk-nav {
+  --dk-u: min(100vw / 1920, 100vh / 1080);
+  --dk-room: calc(50vh - 480 * var(--dk-u));
+  --dk-nav-h: clamp(26px, calc(var(--dk-room) - 10px), 36px);
+  left: 50%;
+  bottom: max(4px, calc((var(--dk-room) - var(--dk-nav-h)) / 2));
+  transform: translateX(-50%);
+}
+.dk-nav button {
+  height: var(--dk-nav-h);
+  min-width: var(--dk-nav-h);
+}
+
 .dk-overview {
   position: absolute;
   inset: 0;
@@ -1915,11 +2003,13 @@ button.dk-devices {
   align-items: center;
   justify-content: center;
 }
+/* Both sets start on one line: the platform names side by side, then the
+   two headline figures side by side, read across like a table. */
 .dk-channels-mid {
   position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  align-items: center;
+  align-items: start;
 }
 /* The two sets of figures meet at one hairline. */
 .dk-channels-mid::before {
@@ -2447,8 +2537,16 @@ button.dk-devices {
   .dk-profile-ring,
   .dk-live-backdrop,
   .dk-live-dialog,
-  .dk-live-state > i {
+  .dk-live-state > i,
+  .dk-ig-wait > img {
     animation: none !important;
+  }
+  .dk-ig iframe,
+  .dk-play {
+    transition: none !important;
+  }
+  .dk-yt-cover:is(:hover, :focus-visible) .dk-play {
+    transform: none;
   }
 }
 

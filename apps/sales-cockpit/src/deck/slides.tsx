@@ -400,7 +400,8 @@ function path(ctx: DeckCtx) {
                   }}
                 >
                   <span className="dk-num dk-teal" style={{ fontSize: 26 }}>
-                    {rtl ? `٠${"١٢٣٤٥"[i]}` : `0${i + 1}`}
+                    {/* No leading zero in Arabic: ٠ is a dot, so ٠١ reads as ·١. */}
+                    {rtl ? "١٢٣٤٥"[i] : `0${i + 1}`}
                   </span>
                   <span className="dk-h3" style={{ fontSize: rtl ? 36 : 34 }}>
                     {t(p.name, lang)}
@@ -857,7 +858,7 @@ function numbersSlide(ctx: DeckCtx) {
             gap.projectsYear >= 0.5 ? (
               <>
                 <p className="dk-label">
-                  {ar(lang) ? "الشي الواحد" : "The one thing"}
+                  {ar(lang) ? "أهم شغلة" : "The one thing"}
                 </p>
                 <p style={{ fontSize: 36, fontWeight: 600, lineHeight: 1.3 }}>
                   {ar(lang) ? "لو صلحنا بس " : "Fix only "}
@@ -883,7 +884,7 @@ function numbersSlide(ctx: DeckCtx) {
             ) : (
               <>
                 <p className="dk-label">
-                  {ar(lang) ? "الشي الواحد" : "The one thing"}
+                  {ar(lang) ? "أهم شغلة" : "The one thing"}
                 </p>
                 <p className="dk-body">
                   {ar(lang)
@@ -1035,7 +1036,7 @@ function systemSlide(ctx: DeckCtx) {
                 }}
               >
                 <span className="dk-num dk-teal" style={{ fontSize: 26 }}>
-                  {ar(lang) ? `٠${"١٢٣٤٥"[i]}` : `0${i + 1}`}
+                  {ar(lang) ? "١٢٣٤٥"[i] : `0${i + 1}`}
                 </span>
                 <span
                   style={{

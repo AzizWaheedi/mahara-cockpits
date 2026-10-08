@@ -67,7 +67,7 @@ const COPY = {
   desktop: { en: "Desktop", ar: "كمبيوتر" },
   phone: { en: "Phone", ar: "تلفون" },
   newTab: { en: "Open in a new tab", ar: "افتحها بتاب يديد" },
-  close: { en: "Close", ar: "إغلاق" },
+  close: { en: "Close", ar: "سكّر" },
   loading: { en: "Loading the live page", ar: "الصفحة قاعدة تحمّل" },
   live: { en: "The real page, live", ar: "الصفحة الحقيقية.. لايف" },
   failed: {

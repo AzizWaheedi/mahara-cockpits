@@ -729,7 +729,7 @@ const STEP_WORDS: Record<LeakKey, { en: string; ar: string }> = {
   },
   close: {
     en: "the step from meeting to signature",
-    ar: "الخطوة من الاجتماع للتوقيع",
+    ar: "الخطوة من الموعد للتوقيع",
   },
   volume: {
     en: "the number of inquiries coming in",
