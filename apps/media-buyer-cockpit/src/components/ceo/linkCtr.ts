@@ -9,3 +9,11 @@
 export const LINK_CTR = "Link CTR";
 export const LINK_CTR_HINT =
   "Link clicks divided by impressions. Not CTR (all).";
+
+/**
+ * The money notes about the CTR target (cockpit-ceo-api finance/targets.ts,
+ * linkCtrTargetNote). They belong beside the Link CTR meter, on the Money and
+ * Frontend targets cards; a tab whose targets card leaves CTR out (Sales)
+ * points at them instead.
+ */
+export const CTR_TARGET_NOTE = /\bCTR targets?\b/;

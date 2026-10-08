@@ -23,6 +23,7 @@ import {
 } from "@/components/ceo/format";
 import { DERIVED_NOTE, useGrowthWindow } from "@/components/ceo/growthWindow";
 import { Kicker } from "@/components/ceo/Kicker";
+import { CTR_TARGET_NOTE } from "@/components/ceo/linkCtr";
 import {
   CANCEL_RATE,
   CLOSE_RATE,
@@ -93,11 +94,14 @@ const GROWTH_NOTE_ROUTES: readonly (readonly [RegExp, GrowthCard])[] = [
   ],
 ];
 
-type MoneyCard = "deals" | "targets" | "money";
+type MoneyCard = "deals" | "targets" | "otherTargets" | "money";
 
 // Anything this tab does not show (Whop cash, refunds, failed checkouts,
 // expenses) lands on "money" and is pointed at rather than repeated here.
+// The CTR target's notes ("otherTargets") are about a meter the sales
+// targets card leaves out, so that card points at them on Money.
 const MONEY_NOTE_ROUTES: readonly (readonly [RegExp, MoneyCard])[] = [
+  [CTR_TARGET_NOTE, "otherTargets"],
   [/target|actuals/i, "targets"],
   [/deal|closer form|contracted value/i, "deals"],
 ];
@@ -292,7 +296,14 @@ export function SalesTab({ sections, now, day, goTab }: CeoTabProps) {
         kicker={month(m?.targets.month ?? monthKey, { long: true, year: true })}
         title="Targets that belong to sales"
         section={moneySection}
-        notes={mNotes.targets}
+        notes={join(
+          mNotes.targets,
+          notesElsewhere(
+            mNotes.otherTargets,
+            "targets this card leaves out",
+            "Money",
+          ),
+        )}
         actions={<TabLink tab="money" label="Money" goTab={goTab} />}
         order={6}
       >

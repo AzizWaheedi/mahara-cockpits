@@ -262,7 +262,11 @@ is null for metrics with no actual: show `n/a`, never 0.
 The `ctr` target (and `ctr_link`, if one is filed) is **Link CTR**: label it
 "Link CTR", and its actual is link clicks divided by impressions, never CTR
 (all). The CTR targets on file were set as CTR (all); the money notes carry one
-that names the target and asks for a link CTR figure, and it routes to this card.
+that names the target and asks for a link CTR figure, and it routes to this card
+(here and on Frontend). When a `ctr_link` target is filed beside an old `ctr`
+one, only `ctr_link` is shown and the note just says how CTR is scored. The
+Sales tab's targets card leaves CTR out, so it points at the note on Money
+instead of showing it (`CTR_TARGET_NOTE` in `components/ceo/linkCtr.ts`).
 
 ### NO SOURCE YET on Frontend
 

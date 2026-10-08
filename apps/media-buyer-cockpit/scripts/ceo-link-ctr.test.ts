@@ -22,7 +22,12 @@ import {
   linkCtr,
   marketingAdLink,
 } from "../../../hermes/ceo-refresh/native/linkCtr.js";
-import { LINK_CTR, LINK_CTR_HINT } from "../src/components/ceo/linkCtr";
+import { linkCtrTargetNote } from "../../../supabase/functions/cockpit-ceo-api/finance/targets.ts";
+import {
+  CTR_TARGET_NOTE,
+  LINK_CTR,
+  LINK_CTR_HINT,
+} from "../src/components/ceo/linkCtr";
 import {
   TARGET_LABELS,
   TargetMeter,
@@ -110,6 +115,85 @@ describe("the CEO screens", () => {
     );
     expect(webinar).toContain("{pct(a.linkCtr)}");
     expect(webinar).toContain("{LINK_CTR}");
+  });
+});
+
+describe("the CTR target's note", () => {
+  /** A tab's [pattern, card] note routes, in order, read from its source. */
+  function routesOf(file: string, table: string): [RegExp, string][] {
+    const src = read(join(APP, "src/pages/ceo", file));
+    const start = src.indexOf(`const ${table}`);
+    expect(start).toBeGreaterThan(-1);
+    const body = src.slice(start, src.indexOf("\n];", start));
+    return [
+      ...body.matchAll(
+        /\[\s*(CTR_TARGET_NOTE|\/((?:\\.|[^/\\\n])+)\/([a-z]*)),\s*"(\w+)",?\s*\]/g,
+      ),
+    ].map(m => [
+      m[1] === "CTR_TARGET_NOTE" ? CTR_TARGET_NOTE : new RegExp(m[2], m[3]),
+      m[4],
+    ]);
+  }
+  const card = (routes: [RegExp, string][], text: string) =>
+    routes.find(([re]) => re.test(text))?.[1];
+
+  const monthName = (m: string) => (m === "2026-08" ? "August 2026" : m);
+  const old = linkCtrTargetNote(
+    [
+      {
+        month: "2026-08",
+        metric: "ctr",
+        projection: 1.8,
+        updatedMs: Date.parse("2026-08-25T12:10:43Z"),
+      },
+    ],
+    monthName,
+  );
+  const fresh = linkCtrTargetNote(
+    [
+      {
+        month: "2026-10",
+        metric: "ctr",
+        projection: 1.2,
+        updatedMs: Date.parse("2026-10-09T09:00:00Z"),
+      },
+    ],
+    monthName,
+  );
+  const texts = [old?.text, fresh?.text].filter(
+    (t): t is string => typeof t === "string",
+  );
+  // Other target notes the money adapter writes, which stay where they are.
+  const others = [
+    "The revenue target is compared with closer form contracted value, as the B2B dashboard does, so deal values logged by hand are not in its pace. Its definition is still pending, so read that pace with care.",
+    "No targets exist for October 2026. The latest targets are for August 2026.",
+  ];
+
+  test("both notes are recognised as the CTR target's, and no other target note is", () => {
+    expect(old?.level).toBe("warn");
+    expect(fresh?.level).toBe("info");
+    expect(texts).toHaveLength(2);
+    for (const text of texts) expect(CTR_TARGET_NOTE.test(text)).toBe(true);
+    for (const text of others) expect(CTR_TARGET_NOTE.test(text)).toBe(false);
+  });
+
+  test("it sits beside the Link CTR meter on Money and Frontend, and Sales points at it", () => {
+    const money = routesOf("MoneyTab.tsx", "NOTE_ROUTES");
+    const frontend = routesOf("FrontendTab.tsx", "MONEY_ROUTES");
+    const sales = routesOf("SalesTab.tsx", "MONEY_NOTE_ROUTES");
+    for (const routes of [money, frontend, sales])
+      expect(routes.length).toBeGreaterThan(1);
+    for (const text of texts) {
+      expect(card(money, text)).toBe("targets");
+      expect(card(frontend, text)).toBe("targets");
+      // The sales targets card leaves CTR out: the note is pointed at.
+      expect(card(sales, text)).toBe("otherTargets");
+    }
+    for (const text of others) expect(card(sales, text)).toBe("targets");
+    const salesTab = code(join(APP, "src/pages/ceo/SalesTab.tsx"));
+    expect(salesTab).toMatch(
+      /notesElsewhere\(\s*mNotes\.otherTargets,\s*"targets this card leaves out",\s*"Money",?\s*\)/,
+    );
   });
 });
 

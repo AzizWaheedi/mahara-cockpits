@@ -73,6 +73,19 @@ test('a CTR target set before link CTR is named so the CEO can reset it', () => 
   expect(linkCtrTargetNote([august[0]], monthName)).toBeNull();
 });
 
+test('an old ctr target filed beside a ctr_link one is not shown, so it is not called out for a reset', () => {
+  const rows: TargetRow[] = [
+    { month: '2026-08', metric: 'ctr', projection: 1.8, updatedMs: Date.parse('2026-08-25T12:10:43Z') },
+    { month: '2026-08', metric: 'ctr_link', projection: 1.2, updatedMs: Date.parse('2026-08-25T12:10:43Z') },
+  ];
+  // The card shows the ctr_link meter only.
+  expect(targetItems(rows, scoreCtrAsLinkCtr({ ...WINDOW })).map(item => item.metric)).toEqual(['ctr_link']);
+  const note = linkCtrTargetNote(rows, monthName);
+  expect(note).toEqual({ level: 'info', text: 'CTR targets are scored as link CTR: link clicks divided by impressions. Not CTR (all).' });
+  // A ctr_link target alone still says how it is scored.
+  expect(linkCtrTargetNote([rows[1]], monthName)?.level).toBe('info');
+});
+
 test('the money adapter scores its targets through these rules', () => {
   const money = readFileSync(new URL('./adapters/money.ts', import.meta.url), 'utf8');
   expect(money).toContain('scoreCtrAsLinkCtr(actuals);');

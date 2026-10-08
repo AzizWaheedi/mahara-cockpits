@@ -74,17 +74,20 @@ export function targetItems(
  * What the targets card says about a CTR target: that it is scored as link
  * CTR, and, for a target filed before that, that it was set when CTR counted
  * every click, so the CEO resets it. Link CTR reads well under CTR (all):
- * 1.06% against 1.79% on lead-gen campaigns in August 2026.
+ * 1.06% against 1.79% on lead-gen campaigns in August 2026. A `ctr` target
+ * filed beside a `ctr_link` one is not shown (targetItems keeps `ctr_link`),
+ * so it gets no reset warning.
  */
 export function linkCtrTargetNote(
   rows: TargetRow[],
   monthName: (month: string) => string,
 ): Note | null {
   const ctr = rows.find(r => r.metric === "ctr");
-  if (!ctr) return null;
+  const link = rows.some(r => r.metric === "ctr_link");
+  if (!ctr && !link) return null;
   const scored =
     "CTR targets are scored as link CTR: link clicks divided by impressions. Not CTR (all).";
-  if (ctr.updatedMs !== null && ctr.updatedMs >= LINK_CTR_SINCE_MS)
+  if (!ctr || link || (ctr.updatedMs !== null && ctr.updatedMs >= LINK_CTR_SINCE_MS))
     return { level: "info", text: scored };
   return {
     level: "warn",
