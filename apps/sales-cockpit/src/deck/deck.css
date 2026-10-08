@@ -748,6 +748,29 @@
 [dir="rtl"] .dk-stops .dk-why {
   font-size: 22px;
 }
+/* Seven stops (the ads tour, since the offer joined it): the closed names a
+   size down and closer together, and the Arabic title on two lines, so the
+   open stop, and the challenge line when one is picked, still clear the
+   rail. */
+.dk-tour[data-many] .dk-stops {
+  gap: 0;
+}
+.dk-tour[data-many] .dk-stop:not([data-on]) {
+  padding-block: 5px;
+}
+.dk-tour[data-many] .dk-stop:not([data-on]) .dk-stop-name {
+  font-size: 23px;
+}
+[dir="rtl"] .dk-tour[data-many] .dk-stop:not([data-on]) .dk-stop-name {
+  font-size: 25px;
+  line-height: 1.3;
+}
+.dk-tour[data-many] .dk-stops .dk-why {
+  margin-top: 4px;
+}
+[dir="rtl"] .dk-tour[data-many] .dk-tour-title {
+  font-size: 36px;
+}
 .dk-stage-area {
   display: flex;
   min-width: 0;

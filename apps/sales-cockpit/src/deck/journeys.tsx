@@ -97,7 +97,8 @@ export function Fit({
 /**
  * A picture, or, when it is a page of a document we can share, a link to
  * that document with a chip that says so on hover (proof.ts BRAND_DNA_DOC,
- * SCRIPTS_DOC). With no link set it stays a picture: nothing to click.
+ * AD_SCRIPT_DOC, OFFER_DOC, OFFER_PACK_DOC, SCRIPTS_DOC). With no link set it
+ * stays a picture: nothing to click.
  */
 function Shot({
   pic,
@@ -807,10 +808,12 @@ export function tourSlide({
 }) {
   const { lang, tour, setTour } = ctx;
   const at = Math.max(0, Math.min(tour, stops.length - 1));
+  // Past six stops the side is set closer (deck.css, .dk-tour[data-many]).
+  const many = stops.length > 6;
   return (
     <>
       {top}
-      <div className="dk-tour">
+      <div className="dk-tour" data-many={many ? "" : undefined}>
         <div className="dk-tour-side">
           <Rv i={0}>
             <p className="dk-label">{label}</p>
@@ -818,7 +821,7 @@ export function tourSlide({
           <Rv i={1}>
             <h2 className="dk-h2 dk-tour-title">{title}</h2>
           </Rv>
-          <Rv i={2} style={{ marginTop: 26 }}>
+          <Rv i={2} style={{ marginTop: many ? 18 : 26 }}>
             <StopList
               stops={stops}
               at={at}

@@ -49,6 +49,10 @@ import logoPidco from "./assets/proof/logo-pidco.webp";
 import logoRm from "./assets/proof/logo-rm.webp";
 import logoSafad from "./assets/proof/logo-safad.webp";
 import logoTheline from "./assets/proof/logo-theline.webp";
+import offerPack1 from "./assets/proof/offer-pack-1.webp";
+import offerPack2 from "./assets/proof/offer-pack-2.webp";
+import offerSheet1 from "./assets/proof/offer-sheet-1.webp";
+import offerSheet2 from "./assets/proof/offer-sheet-2.webp";
 import pcmAcademy from "./assets/proof/pcm-academy.webp";
 import pcmCall from "./assets/proof/pcm-call.webp";
 import pcmLesson from "./assets/proof/pcm-lesson.webp";
@@ -614,20 +618,43 @@ export interface Pic {
 }
 
 /**
- * The documents behind the ads brief and the call scripts (Aziz, 2026-10-08:
- * "for the brand dna have a link to the doc if we hover over it and same
- * thing for the scripts"). The CEO will send the links: paste each one
- * between the quotes in place of null, e.g.
- *   export const BRAND_DNA_DOC: string | null = "https://docs.google.com/...";
- * Until then the pictures show as they are, with no link and no chip.
- * Share each document as "anyone with the link can view" first, since the
- * prospect opens it on the call.
+ * The documents behind the ads brief, the offer and the call scripts (Aziz,
+ * 2026-10-08: "for the brand dna have a link to the doc if we hover over it
+ * and same thing for the scripts"). A link set, the picture opens it and
+ * hovering shows "Open the document"; null, the picture shows as it is, with
+ * no link and no chip. Every link set here is shared as "anyone with the
+ * link can view", since the prospect opens it on the call: share a document
+ * that way first, then paste its link between the quotes in place of null.
  */
-export const BRAND_DNA_DOC: string | null = null;
-/** The ads' script document (the brief beside the Brand DNA). */
-export const AD_SCRIPT_DOC: string | null = null;
-/** The call centre's script for a partner (the three script pages). */
+/** The Master Brand DNA template (content.maharamedia.com links the same). */
+export const BRAND_DNA_DOC: string | null =
+  "https://docs.google.com/document/d/18e3EmAlNoM6YR6kpoxy0eRpyl-oPIkWRxzEyjC2haqM/view";
+/**
+ * The campaign script file: 24 pages, 11 scripts (the brief beside the Brand
+ * DNA; content.maharamedia.com links the same).
+ */
+export const AD_SCRIPT_DOC: string | null =
+  "https://docs.google.com/document/d/1rXuV43eRLHfoKfbUUe8il8e6U5BcuS40VCrIaiJAKu8/view";
+/**
+ * The offer creation cheat sheet ("One Front-End Session, Five Project
+ * Paths"). It was private when the CEO sent it, so it was to stay off until
+ * shared by link; on 2026-10-08 it opened signed out (the whole document,
+ * not Google's access page), so it is on. If it goes private again, set
+ * null: a prospect would land on the access page.
+ */
+export const OFFER_DOC: string | null =
+  "https://docs.google.com/document/d/1A7e6rECvv-6V6jsxqxP-IRaZujm3zbz9A9D0NJlYdKs/view";
+/** The full acquisition pack: ads, landing page, VSL and booking funnel. */
+export const OFFER_PACK_DOC: string | null =
+  "https://docs.google.com/document/d/1nU6gcpMm3v_pymu9VbQLALiKssbIOkOjo7UPba5n-qc/view";
+/** The call centre's script for a partner (the three script pages): none yet. */
 export const SCRIPTS_DOC: string | null = null;
+
+/**
+ * The content library: how we think about ads, the Brand DNA and the
+ * campaign script file, then every ad format with real examples.
+ */
+export const CONTENT_LIBRARY = "https://content.maharamedia.com/";
 
 /** What one step of a tour shows. */
 export type Media =
@@ -789,7 +816,7 @@ export const ADS_TOUR: Stop[] = [
       ],
     },
     more: {
-      href: "https://content.maharamedia.com/",
+      href: CONTENT_LIBRARY,
       label: {
         en: "Every ad format, with real examples",
         ar: "كل صيغ الإعلانات.. بأمثلة حقيقية",
@@ -823,6 +850,60 @@ export const ADS_TOUR: Stop[] = [
           r: 0.772,
           w: 1081,
           doc: AD_SCRIPT_DOC,
+        },
+      ],
+    },
+    // The library walks the same two documents, then every ad format.
+    more: {
+      href: CONTENT_LIBRARY,
+      label: { en: "The content library", ar: "مكتبة المحتوى" },
+    },
+  },
+  {
+    // The offer creation cheat sheet (the CEO, 2026-10-08: "use this as an
+    // example offer creation cheat sheet"): a real partner's offer, then the
+    // acquisition pack written from it. Read in order, the last page on top.
+    key: "offer",
+    name: { en: "The offer comes first", ar: "العرض أول شي" },
+    what: {
+      en: "One front-end session, a bonus stack, and the paths behind it. Every ad, page and script follows from it.",
+      ar: "جلسة وحدة يدخل منها العميل، معاها بونصات، ووراها المسارات اللي تناسب مشروعه.. وكل إعلان وصفحة وسكربت يطلع من هالعرض.",
+    },
+    why: {
+      en: "The owner knows exactly what the first meeting gives him. Not just a free consultation.",
+      ar: "العميل يدري بالضبط شنو بياخذ من أول جلسة.. مو بس استشارة ببلاش.",
+    },
+    media: {
+      kind: "shots",
+      fan: true,
+      items: [
+        {
+          src: offerSheet1,
+          alt: "Offer cheat sheet: one front-end session, five project paths",
+          r: 1224 / 1584,
+          w: 1224,
+          doc: OFFER_DOC,
+        },
+        {
+          src: offerSheet2,
+          alt: "Offer cheat sheet: the front-end session and its bonus stack",
+          r: 1224 / 1584,
+          w: 1224,
+          doc: OFFER_DOC,
+        },
+        {
+          src: offerPack1,
+          alt: "The acquisition pack: paid ads, landing page, VSL, booking",
+          r: 1224 / 1584,
+          w: 1224,
+          doc: OFFER_PACK_DOC,
+        },
+        {
+          src: offerPack2,
+          alt: "The acquisition pack: a UGC script, three hooks and the voice-over",
+          r: 1224 / 1584,
+          w: 1224,
+          doc: OFFER_PACK_DOC,
         },
       ],
     },
@@ -1294,6 +1375,10 @@ export const CONTENT_TOUR: Stop[] = [
       ar: "الشركات بالخليج تتعلم منا قبل لا تحجز أي مكالمة.",
     },
     media: { kind: "youtube", items: YOUTUBE_VIDEOS },
+    // The channel, not the content library, on both content steps: the
+    // library is the paid ads we make for partners ("Paid ads. Not page
+    // content."), and the ads tour links it twice; here the next click is
+    // the rest of what we teach in public.
     more: {
       href: CHANNEL,
       label: { en: "Mahara on YouTube", ar: "قناة مهارة على يوتيوب" },
