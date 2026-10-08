@@ -2,6 +2,7 @@ import { B2B, TRIAGE, num, sql } from "../sb.js";
 import { addDays, daysInMonth, KUWAIT_OFFSET_MS, kuwaitDay, monthStart } from "../time.js";
 import { bankCanBe, amountGap, coverWithTap, cashDuplicates, dealDuplicates, MATCH_DAYS, MATCH_GAP, nameBook } from "../manualMatch.js";
 import { groupOf, isOneOffPlan, summariseBilling } from "../billing.js";
+import { linkCtrTargetNote, targetItems } from "../../../../supabase/functions/cockpit-ceo-api/finance/targets.ts";
 
 const STALE_MS = 60 * 60_000;
 const TAP_STALE_MS = 3 * 60 * 60_000;
@@ -713,8 +714,12 @@ export function createMoneyAdapter(snapshot) {
       };
       const targets = {
         month: targetRows[0]?.month === dates.month ? dates.month : null,
-        items: targetRows.map(row => ({ metric: String(row.metric), target: num(row.projection), actual: row.metric === "revenue" ? dealsPayload.contractedMtd : row.metric === "signed" ? dealsPayload.mtd : null })),
+        // The Edge Function's rules (finance/targets.ts): percent targets as fractions, CTR as link CTR. Only revenue and signed have actuals here.
+        items: targetItems(targetRows.map(row => ({ metric: String(row.metric), projection: num(row.projection) })),
+          Object.fromEntries([["revenue", dealsPayload.contractedMtd], ["signed", dealsPayload.mtd]].filter(([, value]) => typeof value === "number"))),
       };
+      const ctrTargetNote = linkCtrTargetNote(targetRows.map(row => ({ month: String(row.month), metric: String(row.metric), projection: num(row.projection), updatedMs: epoch(row.updated_ms) })),
+        month => new Date(`${month}-01T00:00:00Z`).toLocaleString("en-US", { month: "long", year: "numeric", timeZone: "UTC" }));
       const billingRows = bankInput.billing.map(row => ({
         taskId: String(field(row, "clickup_task_id", "clickupTaskId") ?? ""), name: String(field(row, "client_name", "name") ?? ""),
         stage: field(row, "stage") ?? null, mrrUsd: field(row, "mrr_usd", "mrrUsd") == null ? undefined : num(field(row, "mrr_usd", "mrrUsd")),
@@ -777,6 +782,7 @@ export function createMoneyAdapter(snapshot) {
           { level: "warn", text: `The newest bank statement ends ${bankFacts.latestStatementDay}; its classification revision is checked again before publication.` },
           ...(tapCovered.size ? [{ level: "info", text: `${tapCovered.size} Tap charges are covered by bank settlement lines and were counted once.` }] : []),
           ...(manualCoveredByBank ? [{ level: "info", text: `${manualCoveredByBank} manual payments match bank client-payment lines and were counted once.` }] : []),
+          ...(ctrTargetNote ? [ctrTargetNote] : []),
         ],
       };
       const liveManualStamp = epoch(field(snapshot, "newestManualChange", "newest_manual_change"));

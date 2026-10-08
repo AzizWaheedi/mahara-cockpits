@@ -855,7 +855,14 @@ export type GrowthPayload = {
       spend: number;
       impressions: number;
       clicks: number;
-      ctr: number | null;
+      /**
+       * Link clicks and link CTR (link clicks divided by impressions, a
+       * fraction; not CTR (all)). Null when Meta has no snapshot of the ad or
+       * gave no link-click count. A payload stored before 2026-10-08 has
+       * neither, and carried the dashboard's CTR (all) as `ctr` instead.
+       */
+      linkClicks?: number | null;
+      linkCtr?: number | null;
       leads: number;
       cpl: number | null;
       qualified: number;
@@ -1552,9 +1559,13 @@ export type AssetsPayload = {
 export type B2bAdWindow = {
   spend: number;
   impressions: number;
-  /** Every click Meta counts, and the link clicks alone. */
+  /**
+   * Every click Meta counts, and the link clicks alone. `linkClicks` is null
+   * when Meta sent a delivered day without a link-click count: not known,
+   * never 0, and every rate and cost over it is null too.
+   */
   clicks: number;
-  linkClicks: number;
+  linkClicks: number | null;
   /** What Meta says the ad produced. */
   /** What Meta counts for the ad; `leads` is what the CRM holds with a ROAS tag. */
   metaLeads: number;
@@ -1586,8 +1597,11 @@ export type B2bAdWindow = {
   frequency: number | null;
   // Derived; null when the denominator is zero. Rates are fractions.
   cpm: number | null;
+  /** CTR (all): every click over impressions. Never shown; the CEO wants link CTR (2026-10-08). */
   ctr: number | null;
+  /** Link CTR: link clicks / impressions. The CTR the Ads tab shows, labelled "Link CTR". */
   ctrLink: number | null;
+  /** spend / link clicks. */
   cpc: number | null;
   /** spend / CRM leads. */
   cpl: number | null;
@@ -2002,8 +2016,11 @@ export type WebinarRound = {
     reach: number | null;
     frequency: number | null;
     clicks: number;
-    linkClicks: number;
+    /** Null when Meta sent a delivered day without a link-click count: not known, never 0. */
+    linkClicks: number | null;
+    /** CTR (all): every click over impressions. Never shown. */
     ctr: number | null;
+    /** Link CTR: link clicks / impressions. The CTR the funnel shows. */
     linkCtr: number | null;
   };
   /** Stage 1, HighLevel. */
@@ -2128,7 +2145,12 @@ export type WebinarPayload = {
     spend: number;
     impressions: number;
     clicks: number;
-    ctr: number | null;
+    /**
+     * Link clicks and link CTR (link clicks / impressions; not CTR (all)),
+     * null when not known. A payload stored before 2026-10-08 has neither.
+     */
+    linkClicks?: number | null;
+    linkCtr?: number | null;
     registrations: number;
     /** Landing page visitors whose utm_content is this ad; null before the page sent anything. */
     visitors: number | null;

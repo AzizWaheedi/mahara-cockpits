@@ -21,14 +21,16 @@ const DISABLE_REASON: Record<number, string> = {
   12: 'misrepresented ad account', 13: 'AOAB desmotivate unused account', 14: 'CTA review',
   15: 'AWS account review', 16: 'AB review',
 };
+// Link clicks are kept out of COUNTS: a day Meta sent without them makes them
+// not known (null), and the sums and rates over them have to carry that.
 const COUNTS = [
-  'impressions', 'clicks', 'linkClicks', 'metaLeads', 'leads', 'qualifiedLeads', 'notReadyLeads',
+  'impressions', 'clicks', 'metaLeads', 'leads', 'qualifiedLeads', 'notReadyLeads',
   'introsBooked', 'introsDue', 'introsShown', 'introsQualified', 'introsCancelled', 'introsAdvanced',
   'demosBooked', 'demosDue', 'demosShown', 'demosQualified', 'demosCancelled', 'closes',
 ] as const;
 type CountKey = (typeof COUNTS)[number];
 const COLUMN: Record<CountKey, string> = {
-  impressions: 'impressions', clicks: 'clicks', linkClicks: 'link_clicks', metaLeads: 'meta_leads',
+  impressions: 'impressions', clicks: 'clicks', metaLeads: 'meta_leads',
   leads: 'leads', qualifiedLeads: 'qualified_leads', notReadyLeads: 'not_ready_leads',
   introsBooked: 'intros_booked', introsDue: 'intros_due', introsShown: 'intros_shown',
   introsQualified: 'intros_qualified', introsCancelled: 'intros_cancelled', introsAdvanced: 'intros_advanced',
@@ -37,10 +39,12 @@ const COLUMN: Record<CountKey, string> = {
 };
 
 export type B2bAdWindow = {
-  spend: number; impressions: number; clicks: number; linkClicks: number; metaLeads: number; leads: number;
+  /** `linkClicks` is null when Meta sent a delivered day without a link-click count: not known, never 0. */
+  spend: number; impressions: number; clicks: number; linkClicks: number | null; metaLeads: number; leads: number;
   qualifiedLeads: number; notReadyLeads: number; introsBooked: number; introsDue: number; introsShown: number;
   introsQualified: number; introsCancelled: number; introsAdvanced: number; demosBooked: number; demosDue: number;
   demosShown: number; demosQualified: number; demosCancelled: number; closes: number; contracted: number; cash: number;
+  /** `ctr` is CTR (all), every click, never shown. `ctrLink` is the Link CTR the screen shows (the CEO, 2026-10-08). */
   frequency: number | null; cpm: number | null; ctr: number | null; ctrLink: number | null; cpc: number | null;
   cpl: number | null; qualifiedPct: number | null; costPerQualified: number | null; bookRate: number | null;
   costPerIntroBooked: number | null; introShowRate: number | null; costPerIntroShown: number | null;
@@ -125,12 +129,14 @@ function sqlRow(rows: Row[], field: string): Row {
   return record(rows[0], field);
 }
 
-const ratio = (numerator: number, denominator: number): number | null => denominator > 0 ? Math.round((numerator / denominator) * 10_000) / 10_000 : null;
-const per = (numerator: number, denominator: number): number | null => denominator > 0 ? roundUsd(numerator / denominator) : null;
-const rate = (numerator: number, denominator: number): number | null => denominator > 0 ? numerator / denominator : null;
+// A count that is not known (null link clicks) gives no rate and no cost, never 0.
+const ratio = (numerator: number | null, denominator: number | null): number | null => numerator !== null && denominator !== null && denominator > 0 ? Math.round((numerator / denominator) * 10_000) / 10_000 : null;
+const per = (numerator: number, denominator: number | null): number | null => denominator !== null && denominator > 0 ? roundUsd(numerator / denominator) : null;
+const rate = (numerator: number | null, denominator: number | null): number | null => numerator !== null && denominator !== null && denominator > 0 ? numerator / denominator : null;
 
 function finish(window: B2bAdWindow): B2bAdWindow {
   window.cpm = window.impressions > 0 ? roundUsd((window.spend / window.impressions) * 1000) : null;
+  // CTR (all), kept in the payload and never shown; Link CTR is what the Ads tab shows.
   window.ctr = ratio(window.clicks, window.impressions);
   window.ctrLink = ratio(window.linkClicks, window.impressions);
   window.cpc = per(window.spend, window.linkClicks);
@@ -172,7 +178,8 @@ function windowOf(row: Row, prefix: 'w7' | 'w30'): B2bAdWindow {
   const frequency = optionalNumber(row[`${prefix}_freq`], `${prefix} frequency`);
   const window = {
     spend: roundUsd(get('spend')),
-    impressions: get('impressions'), clicks: get('clicks'), linkClicks: get('link_clicks'), metaLeads: get('meta_leads'),
+    impressions: get('impressions'), clicks: get('clicks'),
+    linkClicks: optionalNumber(row[`${prefix}_link_clicks`], `${prefix} link clicks`), metaLeads: get('meta_leads'),
     leads: get('leads'), qualifiedLeads: get('qualified_leads'), notReadyLeads: get('not_ready_leads'),
     introsBooked: get('intros_booked'), introsDue: get('intros_due'), introsShown: get('intros_shown'),
     introsQualified: get('intros_qualified'), introsCancelled: get('intros_cancelled'), introsAdvanced: get('intros_advanced'),
@@ -193,6 +200,7 @@ function addWindow(target: B2bAdWindow, source: B2bAdWindow): void {
   target.contracted = roundUsd(target.contracted + source.contracted);
   target.cash = roundUsd(target.cash + source.cash);
   for (const key of COUNTS) target[key] += source[key];
+  target.linkClicks = target.linkClicks === null || source.linkClicks === null ? null : target.linkClicks + source.linkClicks;
   if (source.frequency !== null) target.frequency = target.frequency === null ? source.frequency : Math.max(target.frequency, source.frequency);
 }
 
@@ -202,7 +210,7 @@ function treeSql(from7: string, from30: string, to: string): string {
     select campaign_id, adset_id, ad_id,
            sum(spend) as spend, sum(impressions) as impressions,
            sum(clicks) as clicks,
-           sum(inline_link_clicks) as link_clicks, sum(leads) as meta_leads,
+           case when bool_and(inline_link_clicks is not null) then sum(inline_link_clicks) end as link_clicks, sum(leads) as meta_leads,
            max(frequency) as freq
     from public.meta_ad_snapshots
     where date between ${dateLiteral(from)} and ${dateLiteral(to)}
@@ -248,7 +256,7 @@ function treeSql(from7: string, from30: string, to: string): string {
     coalesce(${prefix}_ads.spend,0) as ${prefix}_spend,
     coalesce(${prefix}_ads.impressions,0) as ${prefix}_impressions,
     coalesce(${prefix}_ads.clicks,0) as ${prefix}_clicks,
-    coalesce(${prefix}_ads.link_clicks,0) as ${prefix}_link_clicks,
+    case when ${prefix}_ads.ad_id is null then 0 else ${prefix}_ads.link_clicks end as ${prefix}_link_clicks,
     coalesce(${prefix}_ads.meta_leads,0) as ${prefix}_meta_leads,
     ${prefix}_ads.freq as ${prefix}_freq,
     coalesce(${prefix}_leads.leads,0) as ${prefix}_leads,
@@ -381,14 +389,14 @@ function constraintOf(window: B2bAdWindow, account: B2bAdWindow): B2bAdsPayload[
     { key: 'demo', label: 'intros shown to demos booked', owner: 'setter', mine: rate(window.demosBooked, window.introsShown), all: rate(account.demosBooked, account.introsShown), floor: 5 },
     { key: 'close', label: 'demos shown to closes', owner: 'closer', mine: rate(window.closes, window.demosShown), all: rate(account.closes, account.demosShown), floor: 3 },
   ];
-  const denominator: Record<string, number> = {
+  const denominator: Record<string, number | null> = {
     click: window.impressions, optin: window.linkClicks, book: window.leads, show: window.introsBooked, demo: window.introsShown, close: window.demosShown,
   };
   const leadsUnderCounted = window.introsBooked > window.leads;
   let worst: (typeof stages)[number] | null = null;
   let worstGap = 0;
   for (const stage of stages) {
-    if (stage.mine === null || stage.all === null || stage.all === 0 || denominator[stage.key] < stage.floor) continue;
+    if (stage.mine === null || stage.all === null || stage.all === 0 || (denominator[stage.key] ?? 0) < stage.floor) continue;
     if (leadsUnderCounted && (stage.key === 'optin' || stage.key === 'book')) continue;
     const gap = (stage.all - stage.mine) / stage.all;
     if (gap > worstGap) { worstGap = gap; worst = stage; }

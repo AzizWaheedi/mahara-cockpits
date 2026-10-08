@@ -27,6 +27,7 @@ import {
   seconds,
   shortDate,
 } from "@/components/ceo/format";
+import { LINK_CTR, LINK_CTR_HINT } from "@/components/ceo/linkCtr";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatTile } from "@/components/ceo/StatTile";
 import { StatusChip } from "@/components/ceo/StatusChip";
@@ -263,9 +264,9 @@ function stages(p: WebinarPayload, r: WebinarRound): StageDef[] {
           status: s.reach,
         },
         {
-          label: "Clicks and CTR",
-          value: `${count(r.traffic.clicks)} at ${pct(r.traffic.ctr)}`,
-          source: `Link clicks ${count(r.traffic.linkClicks)} at ${pct(r.traffic.linkCtr)}`,
+          label: `Link clicks and ${LINK_CTR}`,
+          value: `${count(r.traffic.linkClicks)} at ${pct(r.traffic.linkCtr)}`,
+          source: LINK_CTR_HINT,
           status: s.spend,
         },
         {
@@ -1086,7 +1087,12 @@ function Ads({
                 <tr className="border-b text-left text-xs text-muted-foreground">
                   <th className="py-2 pr-3 font-normal">Ad</th>
                   <th className="py-2 pr-3 text-right font-normal">Spend</th>
-                  <th className="py-2 pr-3 text-right font-normal">CTR</th>
+                  <th
+                    className="py-2 pr-3 text-right font-normal"
+                    title={LINK_CTR_HINT}
+                  >
+                    {LINK_CTR}
+                  </th>
                   <th className="py-2 pr-3 text-right font-normal">Visitors</th>
                   <th className="py-2 pr-3 text-right font-normal">
                     Registered
@@ -1115,8 +1121,15 @@ function Ads({
                     <td className="py-2 pr-3 text-right tabular-nums">
                       {money(a.spend)}
                     </td>
-                    <td className="py-2 pr-3 text-right tabular-nums">
-                      {pct(a.ctr)}
+                    <td
+                      className="py-2 pr-3 text-right tabular-nums"
+                      title={
+                        a.linkClicks == null
+                          ? "Link clicks not known"
+                          : `${count(a.linkClicks)} link clicks`
+                      }
+                    >
+                      {pct(a.linkCtr)}
                     </td>
                     <td className="py-2 pr-3 text-right tabular-nums">
                       {count(a.visitors)}

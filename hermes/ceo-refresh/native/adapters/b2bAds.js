@@ -1,4 +1,5 @@
 import { CPL_GATE } from "../constants.js";
+import { addKnown, knownCount, LINK_CLICKS_SQL, linkCtr } from "../linkCtr.js";
 import { graph } from "../tools.js";
 import { B2B, num, sql } from "../sb.js";
 import { addDays, kuwaitDay } from "../time.js";
@@ -70,7 +71,8 @@ function day(d) {
     return `date '${d}'`;
 }
 const usd = (x) => Math.round(x * 100) / 100;
-const rate = (a, b) => (b > 0 ? a / b : null);
+// A count that is not known (null link clicks) gives no rate, never 0.
+const rate = (a, b) => (a !== null && b > 0 ? a / b : null);
 /**
  * One row per ad with both windows side by side. Ads are the grain; ad sets
  * and campaigns are sums of their ads, so a number never disagrees with the
@@ -82,7 +84,7 @@ function treeSql(from7, from30, to) {
     select campaign_id, adset_id, ad_id,
            sum(spend) as spend, sum(impressions) as impressions,
            sum(clicks) as clicks,
-           sum(inline_link_clicks) as link_clicks, sum(leads) as meta_leads,
+           ${LINK_CLICKS_SQL()} as link_clicks, sum(leads) as meta_leads,
            max(frequency) as freq
     from public.meta_ad_snapshots
     where date between ${day(from)} and ${day(to)}
@@ -134,7 +136,8 @@ function treeSql(from7, from30, to) {
     coalesce(${a}_ads.spend,0) as ${a}_spend,
     coalesce(${a}_ads.impressions,0) as ${a}_impressions,
     coalesce(${a}_ads.clicks,0) as ${a}_clicks,
-    coalesce(${a}_ads.link_clicks,0) as ${a}_link_clicks,
+    -- No delivery is 0 link clicks; delivery without a count stays null.
+    case when ${a}_ads.ad_id is null then 0 else ${a}_ads.link_clicks end as ${a}_link_clicks,
     coalesce(${a}_ads.meta_leads,0) as ${a}_meta_leads,
     ${a}_ads.freq as ${a}_freq,
     coalesce(${a}_leads.leads,0) as ${a}_leads,
@@ -200,11 +203,14 @@ left join setters on setters.ad_id = ident.ad_id
 left join closers on closers.ad_id = ident.ad_id
 order by ident.campaign_name, ident.adset_name, w30_ads.spend desc nulls last`;
 }
-/** Every count on a window, in one place, so the builders never drift apart. */
+/**
+ * Every count on a window, in one place, so the builders never drift apart.
+ * Link clicks are kept apart: a day Meta sent without them makes them not
+ * known (null), and the sums and rates over them have to carry that.
+ */
 const COUNTS = [
     "impressions",
     "clicks",
-    "linkClicks",
     "metaLeads",
     "leads",
     "qualifiedLeads",
@@ -225,7 +231,6 @@ const COUNTS = [
 const COLUMN = {
     impressions: "impressions",
     clicks: "clicks",
-    linkClicks: "link_clicks",
     metaLeads: "meta_leads",
     leads: "leads",
     qualifiedLeads: "qualified_leads",
@@ -249,6 +254,7 @@ const emptyWin = () => {
         contracted: 0,
         cash: 0,
         frequency: null,
+        linkClicks: 0,
     };
     for (const k of COUNTS)
         w[k] = 0;
@@ -263,6 +269,7 @@ function winOf(r, a) {
         frequency: r[`${a}_freq`] === null || r[`${a}_freq`] === undefined
             ? null
             : Math.round(num(r[`${a}_freq`]) * 100) / 100,
+        linkClicks: knownCount(r[`${a}_link_clicks`]),
     };
     for (const k of COUNTS)
         w[k] = g(COLUMN[k]);
@@ -274,6 +281,7 @@ function addWin(into, w) {
     into.cash = usd(into.cash + w.cash);
     for (const k of COUNTS)
         into[k] += w[k];
+    into.linkClicks = addKnown(into.linkClicks, w.linkClicks);
     // Frequency does not sum: a person reached by two ads is one person. The
     // parent shows the highest of its children, which is the ad most at risk.
     if (w.frequency !== null)
@@ -287,8 +295,11 @@ const ratio = (a, b) => b > 0 ? Math.round((a / b) * 10000) / 10000 : null;
 /** The derived numbers, exactly as the B2B dashboard defines them. */
 function finish(w) {
     w.cpm = w.impressions > 0 ? usd((w.spend / w.impressions) * 1000) : null;
+    // CTR (all), every click; kept in the payload, never shown.
     w.ctr = ratio(w.clicks, w.impressions);
-    w.ctrLink = ratio(w.linkClicks, w.impressions);
+    // Link CTR, the CTR the screen shows (the CEO, 2026-10-08); null when
+    // the link clicks are not known.
+    w.ctrLink = linkCtr(w.linkClicks, w.impressions);
     w.cpc = per(w.spend, w.linkClicks);
     w.cpl = per(w.spend, w.leads);
     w.qualifiedPct = ratio(w.qualifiedLeads, w.leads);

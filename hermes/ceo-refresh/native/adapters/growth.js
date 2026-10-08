@@ -1,5 +1,6 @@
 import { withoutWebinar } from "../webinarAttribution.js";
 import { B2B, num, sql } from "../sb.js";
+import { marketingAdLink } from "../linkCtr.js";
 import { workingHoursForAdapters } from "../settings.js";
 import { addDays, daysInMonth, kuwaitDay, monthStart } from "../time.js";
 import { dollars, NOT_VOIDED, VOIDED, voidedByDaySql, voidedDayOf, voidedDaysText, voidedDeals, voidedPartOf, voidedSums, withoutVoids, } from "../voids.js";
@@ -522,7 +523,7 @@ select
   r.v->>'spend' as spend,
   r.v->>'impressions' as impressions,
   r.v->>'clicks' as clicks,
-  r.v->>'ctr' as ctr,
+  r.v->>'link_clicks' as link_clicks,
   r.v->>'leads' as leads,
   r.v->>'cpl' as cpl,
   r.v->>'qualified_leads' as qualified,
@@ -1098,7 +1099,9 @@ export const growth = {
                     spend: num(r.spend),
                     impressions: num(r.impressions),
                     clicks: num(r.clicks),
-                    ctr: opt(r.ctr),
+                    // Link clicks and link CTR (../linkCtr.js), never the
+                    // dashboard's ctr, which is CTR (all) in percent.
+                    ...marketingAdLink(r),
                     leads: num(r.leads),
                     cpl: opt(r.cpl),
                     qualified: num(r.qualified),
