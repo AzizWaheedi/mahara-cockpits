@@ -1,4 +1,6 @@
 > Follow-up implementation, 25 September: [metrics and readiness checkpoint](docs/WEBINAR-METRICS-2026-09-25.md). It records tested changes, fresh provider evidence and remaining launch gates. The inventory below is preserved as the original handover.
+>
+> Changed 8 October: every CTR the funnel shows is link CTR (link clicks divided by impressions, not CTR (all)), per round and per ad. Row 1 of §5a and rows 3 and 58 of §5b describe the earlier CTR (all). See "Changed on 2026-10-08" in [the CEO cockpit's SOURCES.md](apps/media-buyer-cockpit/src/pages/ceo/SOURCES.md).
 
 # Handover: Mahara's webinar funnel metrics
 

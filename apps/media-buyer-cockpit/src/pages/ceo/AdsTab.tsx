@@ -21,6 +21,7 @@ import {
   pct,
   plural,
 } from "@/components/ceo/format";
+import { LINK_CTR, LINK_CTR_HINT } from "@/components/ceo/linkCtr";
 import { Na } from "@/components/ceo/Na";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatTile } from "@/components/ceo/StatTile";
@@ -171,10 +172,10 @@ function stagesOf(w: B2bAdWindow): Stage[] {
       label: "Link clicks",
       value: countCompact(w.linkClicks),
       facts: [
-        { label: "CTR", v: w.ctrLink, f: pct },
+        { label: LINK_CTR, v: w.ctrLink, f: pct },
         { label: "CPC", v: w.cpc, f: money },
       ],
-      hint: "CTR is link clicks over impressions.",
+      hint: LINK_CTR_HINT,
     },
     {
       key: "leads",
@@ -183,7 +184,10 @@ function stagesOf(w: B2bAdWindow): Stage[] {
       facts: [
         {
           label: "Click to lead",
-          v: w.linkClicks > 0 ? w.leads / w.linkClicks : null,
+          v:
+            w.linkClicks !== null && w.linkClicks > 0
+              ? w.leads / w.linkClicks
+              : null,
           f: pct,
         },
         { label: "CPL", v: w.cpl, f: money },
@@ -744,8 +748,8 @@ const COLS: Col[] = [
   { key: "cpm", label: "CPM", get: w => w.cpm, fmt: money, low: true },
   {
     key: "ctrLink",
-    label: "CTR",
-    title: "Link clicks over impressions",
+    label: LINK_CTR,
+    title: LINK_CTR_HINT,
     get: w => w.ctrLink,
     fmt: pct,
   },

@@ -26,6 +26,7 @@ import {
 } from "@/components/ceo/format";
 import { DERIVED_NOTE, useGrowthWindow } from "@/components/ceo/growthWindow";
 import { Kicker } from "@/components/ceo/Kicker";
+import { LINK_CTR, LINK_CTR_HINT } from "@/components/ceo/linkCtr";
 import { Na, Value } from "@/components/ceo/Na";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatTile } from "@/components/ceo/StatTile";
@@ -177,16 +178,12 @@ function cardNotes(
 
 // --- What marketing has no source for at all ---
 
-const META_ONLY =
-  "The cockpit reads the Meta ad snapshots for spend and leads only. A Meta insights pull carrying this column would be needed.";
 const NO_ANALYTICS =
   "No web analytics source is connected to the cockpit at all.";
 
+// Impressions, link clicks, Link CTR and cost per click are measured: they
+// are on the Ads tab, per ad and for the account (NOT_MEASURED_NOTES says so).
 const NOT_MEASURED: { label: string; why: string }[] = [
-  { label: "Impressions", why: META_ONLY },
-  { label: "Clicks", why: META_ONLY },
-  { label: "Click through rate", why: META_ONLY },
-  { label: "Cost per click", why: META_ONLY },
   { label: "Landing page views", why: NO_ANALYTICS },
   { label: "Landing page conversion rate", why: NO_ANALYTICS },
   {
@@ -203,6 +200,10 @@ const NOT_MEASURED_NOTES: Note[] = [
   {
     level: "info",
     text: "These are the marketing numbers a CEO would normally ask for that no source the cockpit reads can give. They are named here rather than left off, so nobody hunts for a number that does not exist. Each n/a says what is missing.",
+  },
+  {
+    level: "info",
+    text: `Impressions, link clicks, ${LINK_CTR} and cost per click are on the Ads tab, per ad and for the account. ${LINK_CTR_HINT}`,
   },
 ];
 

@@ -1,6 +1,7 @@
 import { readInsights } from "../../../../supabase/functions/cockpit-ceo-api/frequency.ts";
 import { graph } from "../tools.js";
 import { B2B, ms, num, sql, TRIAGE } from "../sb.js";
+import { knownCount, knownSum, LINK_CLICKS_SQL, linkCtr } from "../linkCtr.js";
 import { kuwaitDay } from "../time.js";
 import { NOT_VOIDED } from "../voids.js";
 import { objectionStats, reminderStats, } from "../webinarFollowUp.js";
@@ -70,11 +71,14 @@ const JOURNEY_SQL = `select
 from public.leads l
 where ${webbyLead("l")}
 order by l.lead_created_at`;
-/** Every day of webinar-campaign delivery, per ad. */
+/**
+ * Every day of webinar-campaign delivery, per ad. Link clicks stay null when
+ * Meta sent a day without them (../linkCtr.js), so link CTR reads n/a, not 0.
+ */
 const SPEND_SQL = `select s.date::text as day, s.campaign_id, max(s.campaign_name) as campaign_name,
   s.ad_id, max(s.ad_name) as ad_name,
   sum(s.spend) as spend, sum(s.impressions) as impressions,
-  sum(s.clicks) as clicks, sum(s.inline_link_clicks) as link_clicks
+  sum(s.clicks) as clicks, ${LINK_CLICKS_SQL("s.")} as link_clicks
 from public.meta_ad_snapshots s
 where ${webbyCampaign("s")}
 group by 1, 2, 4
@@ -302,7 +306,7 @@ export const webinar = {
             spend: num(r.spend),
             impressions: num(r.impressions),
             clicks: num(r.clicks),
-            linkClicks: num(r.link_clicks),
+            linkClicks: knownCount(r.link_clicks),
         }));
         const lt = ltRows[0] ?? {};
         // What hermes/webinar-pull has collected.
@@ -549,7 +553,7 @@ export const webinar = {
             const totalSpend = money2(sp.reduce((t, s) => t + s.spend, 0));
             const impressions = sp.reduce((t, s) => t + s.impressions, 0);
             const clicks = sp.reduce((t, s) => t + s.clicks, 0);
-            const linkClicks = sp.reduce((t, s) => t + s.linkClicks, 0);
+            const linkClicks = knownSum(sp.map(s => s.linkClicks));
             const campaignIds = [...new Set(sp.map(s => s.campaignId))];
             const days = sp.map(s => s.day).sort();
             // Reach and frequency for the round's window, deduplicated by Meta.
@@ -683,8 +687,10 @@ export const webinar = {
                     frequency,
                     clicks,
                     linkClicks,
+                    // CTR (all), every click; kept in the payload, never shown.
                     ctr: ratio(clicks, impressions),
-                    linkCtr: ratio(linkClicks, impressions),
+                    // The CTR the screen shows (the CEO, 2026-10-08).
+                    linkCtr: linkCtr(linkClicks, impressions),
                 },
                 registration: {
                     registrations,
@@ -828,6 +834,8 @@ export const webinar = {
                 const adSpend = money2(rows.reduce((t, s) => t + s.spend, 0));
                 const impressions = rows.reduce((t, s) => t + s.impressions, 0);
                 const clicks = rows.reduce((t, s) => t + s.clicks, 0);
+                // Link CTR, never CTR (all): the CEO, 2026-10-08.
+                const linkClicks = knownSum(rows.map(s => s.linkClicks));
                 ads.push({
                     roundKey: r.key,
                     adId,
@@ -836,7 +844,8 @@ export const webinar = {
                     spend: adSpend,
                     impressions,
                     clicks,
-                    ctr: ratio(clicks, impressions),
+                    linkClicks,
+                    linkCtr: linkCtr(linkClicks, impressions),
                     registrations: regs.length,
                     visitors: pageVisitors.length ? (pageByAd.get(adId) ?? 0) : null,
                     pageConversion: pageByAd.get(adId)
@@ -927,7 +936,7 @@ export const webinar = {
         const tracking = [
             {
                 stage: 1,
-                metric: "Spend, impressions, clicks, link clicks, CTR",
+                metric: "Spend, impressions, link clicks, link CTR",
                 source: "Meta Ads API, ad level (B2B snapshots)",
                 status: anySpend ? "live" : "waiting",
                 note: anySpend
