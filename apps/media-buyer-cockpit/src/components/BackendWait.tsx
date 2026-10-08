@@ -18,8 +18,13 @@ function useBackendState(): State {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const run = async () => {
       const url = import.meta.env.VITE_SUPABASE_URL as string | undefined;
-      const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
-      const answer: BackendAvailability = await probeCockpitBackend(url, anonKey);
+      const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as
+        | string
+        | undefined;
+      const answer: BackendAvailability = await probeCockpitBackend(
+        url,
+        anonKey,
+      );
       if (stopped) return;
       if (answer === "up") {
         if (wasDown) window.location.reload();
