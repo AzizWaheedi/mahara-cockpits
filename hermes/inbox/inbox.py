@@ -264,8 +264,13 @@ def only_json(text: str):
 
 def scan(sb: Store, token: str, location: str, since: str) -> tuple[int, int]:
     """Pull conversations that moved since the watermark. Returns (threads, messages)."""
-    found = sb.get(f"wa_state?select=scan_since&location_id=eq.{urllib.parse.quote(location)}")
-    cutoff = datetime.fromisoformat(str(found[0]["scan_since"])) if found else datetime.fromisoformat(since)
+    try:
+        cutoff = datetime.fromisoformat(since)
+    except (TypeError, ValueError) as error:
+        raise ValueError("The explicit scan cutoff is invalid") from error
+    floor = datetime(2026, 9, 20, tzinfo=timezone.utc)
+    if cutoff.tzinfo is None or cutoff < floor or cutoff > datetime.now(timezone.utc):
+        raise ValueError("The explicit scan cutoff must be aware, post-switch-on, and not future-dated")
 
     page, threads, messages = 0, 0, 0
     while page < 20:

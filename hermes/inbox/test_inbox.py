@@ -154,6 +154,24 @@ class InboxMessageTypeTests(unittest.TestCase):
                         inbox.pull_thread(store,'fixture','location',{'id':'thread','contactId':'contact'},datetime(2026,9,20,tzinfo=timezone.utc))
                 self.assertEqual(store.tables['wa_messages'],[])
 
+class InboxScanTests(unittest.TestCase):
+    def test_explicit_recent_cutoff_overrides_stale_database_watermark(self):
+        class Store:
+            def get(self,path): return [{'scan_since':'2026-09-20T00:00:00+00:00'}]
+        with patch.object(inbox,'ghl',return_value={'conversations':[{'id':'old','lastMessageDate':'2026-09-25T10:00:00Z'}]}), \
+             patch.object(inbox,'pull_thread') as pull:
+            result=inbox.scan(Store(),'fixture','location','2026-10-07T00:00:00+00:00')
+        self.assertEqual(result,(0,0))
+        pull.assert_not_called()
+
+    def test_scan_rejects_naive_pre_switch_and_future_cutoffs_before_provider_read(self):
+        class Store:
+            def get(self,path): raise AssertionError('scan must use its explicit cutoff')
+        for cutoff in ('2026-10-07T00:00:00','2026-09-19T23:59:59+00:00','2099-01-01T00:00:00+00:00'):
+            with self.subTest(cutoff=cutoff), patch.object(inbox,'ghl') as provider:
+                with self.assertRaises(ValueError): inbox.scan(Store(),'fixture','location',cutoff)
+                provider.assert_not_called()
+
 class InboxActivationTests(unittest.TestCase):
     def run_main(self, argv, scan_side_effect=None, store=None, draft_side_effect=None):
         store=store or MainStore()
