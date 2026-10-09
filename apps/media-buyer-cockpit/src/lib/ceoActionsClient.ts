@@ -210,6 +210,23 @@ export async function ceoAction(
       throw new Error(error?.message ?? "The file link was not confirmed.");
     return { url: data.signedUrl };
   }
+  // The onboarding form on a person's file: its own CEO-only function, so the
+  // shared action dispatcher above stays as it is.
+  const onboarding: Record<string, string> = {
+    "profiles.onboarding.read": "person",
+    "profiles.onboarding.link": "link",
+    "profiles.onboarding.copyGoals": "copyGoals",
+  };
+  if (onboarding[action]) {
+    const { data, error } = await client.rpc("cockpit_ceo_onboarding", {
+      p_action: onboarding[action],
+      p_args: args,
+    });
+    if (error) throw new Error(error.message);
+    if (data === null || data === undefined)
+      throw new Error("The server did not confirm this action.");
+    return data;
+  }
   if (action === "settings.setWorkingHours")
     args = normalizeWorkingHours(args as any, "settings");
   const { data, error } = await client.rpc("cockpit_ceo_action", {
