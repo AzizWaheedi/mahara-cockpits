@@ -1,0 +1,15 @@
+{
+ "_source": "shape from https://developer.hubstaff.com/docs/hubstaff_v2 GET /v2/organizations, 2026-10-09; values invented",
+ "body": {
+  "organizations": [
+   {
+    "id": 900001,
+    "name": "Made-up Org",
+    "status": "active",
+    "created_at": "2025-01-10T08:00:00Z",
+    "updated_at": "2026-09-01T08:00:00Z"
+   }
+  ],
+  "pagination": {}
+ }
+}

@@ -5,6 +5,13 @@
  * /harness.html?tab=ads (or any CEO tab key), or /harness.html?path=/team
  * for any other page the routes below carry.
  *
+ * Team & payroll (hours, leave and pay) and Costs read made-up fixtures
+ * through hoursHarness.ts; `?hours=none|never|keys|blocked|firewall|stale`
+ * switches the connection scenario, and `#team/hours/2026-09/month` opens a
+ * month. `?hours=e2e` renders real backend output with the real rule: run
+ * `bun scripts/hours-harness-data.ts` first (made-up people, PGlite, the fake
+ * Hubstaff and Timetastic).
+ *
  * Fixtures live in tmp/harness/ (ignored by git and Vercel):
  *   today.json    - the result of ceo/queries:today
  *   people.json   - the result of ceo/people:list
@@ -30,7 +37,9 @@ import { SettingsPage } from "@/pages/SettingsPage";
 import { MeetingPage } from "@/pages/team/MeetingPage";
 import { TeamPage } from "@/pages/team/TeamPage";
 import "@/index.css";
+import { getCockpitSupabaseClient } from "@/auth/SupabaseAuthProvider";
 import { setFixtures } from "./convexStub";
+import { installHoursHarness } from "./hoursHarness";
 import { portalFixtures } from "./portalFixtures";
 import { webinarTargetsFixtures } from "./webinarTargetsFixture";
 
@@ -41,9 +50,14 @@ async function load(path: string): Promise<unknown> {
 }
 
 async function main() {
+  // Team & payroll and Costs read through Supabase since the cutover: the
+  // client's rpc answers from made-up fixtures (?hours= picks the scenario).
+  installHoursHarness(getCockpitSupabaseClient());
   const [today, people, more] = await Promise.all([
-    load("/tmp/harness/today.json"),
-    load("/tmp/harness/people.json"),
+    // Optional since the cutover: the CEO tabs that still read them show
+    // their empty states without.
+    load("/tmp/harness/today.json").catch(() => ({})),
+    load("/tmp/harness/people.json").catch(() => ({ people: [] })),
     // Any other function, keyed by its Convex name; optional.
     load("/tmp/harness/fixtures.json").catch(() => ({})),
   ]);
@@ -67,7 +81,9 @@ async function main() {
   const search = window.location.search;
   // ?path=/team opens that page; anything else is a CEO tab.
   const path = new URLSearchParams(search).get("path");
-  const start = path?.startsWith("/") ? path : `/ceo${search}`;
+  const start = path?.startsWith("/")
+    ? path
+    : `/ceo${search}${window.location.hash}`;
   createRoot(document.getElementById("root") as HTMLElement).render(
     <StrictMode>
       <LibThemeProvider>

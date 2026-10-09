@@ -102,6 +102,7 @@ def perfect_tape(sman: Dict[str, Any], vman: Dict[str, Any], ref: str = "origin/
     t["sql vault"] = [{"name": v["name"]} for v in sman["vault_secret_names"]]
     t["sql extensions"] = [{"extname": e["extname"]} for e in sman["extensions"]]
     t["sql bucket"] = [{"id": VP.BUCKET, "public": False}]
+    t["sql team_hours"] = []   # recorded before the team-hours build was deployed
     t["api functions"] = [{k: f.get(k) for k in ("slug", "status", "version", "verify_jwt", "ezbr_sha256", "updated_at")}
                           for f in sman["edge_functions"]]
     t["api secrets"] = [{"name": n, "updated_at": "2026-10-07T01:12:34.068Z"} for n in sman["edge_function_secret_names"]]

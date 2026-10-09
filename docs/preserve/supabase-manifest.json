@@ -10098,5 +10098,189 @@
    "finding": "The rooms read cockpit_sales_appointments, cockpit_sales_leads and cockpit_sales_people, fed by the Supabase cron jobs mahara-sales-mirror (*/3) and mahara-ghl-appointments (20 * * * *).",
    "breaks": "Retiring 'legacy writers' must mean Convex only; unscheduling these Supabase jobs would leave the rooms on stale appointments."
   }
- ]
+ ],
+ "team_hours": {
+  "note": "Hours, leave and pay (branch team-hours, design 2026-10-09). Added after the 2026-10-07 inventory. state pending_deploy: absent objects are reported ok as not deployed yet. After the lead session applies 20261009a, deploys both functions and applies 20261009b, set state to deployed: from then on a missing object is MISSING, and a JWT check, row security or grant that drifts is CHANGED.",
+  "state": "pending_deploy",
+  "migrations": [
+   "supabase/migrations/20261009a_cockpit_team_hours.sql",
+   "supabase/migrations/20261009b_cockpit_team_hours_jobs.sql"
+  ],
+  "tables": [
+   "cockpit_employment_periods",
+   "cockpit_hours_coverage",
+   "cockpit_hours_holiday_overrides",
+   "cockpit_hours_keys",
+   "cockpit_hours_pay_months",
+   "cockpit_hours_provider_health",
+   "cockpit_hours_rules",
+   "cockpit_hours_sync_runs",
+   "cockpit_hours_terms",
+   "cockpit_hubstaff_days",
+   "cockpit_leave_type_rules",
+   "cockpit_leave_types",
+   "cockpit_pay_history",
+   "cockpit_schedule_history",
+   "cockpit_time_accounts",
+   "cockpit_time_adjustments",
+   "cockpit_timetastic_bookings",
+   "cockpit_timetastic_days"
+  ],
+  "no_grant_tables": [
+   "cockpit_hours_keys"
+  ],
+  "guarded_tables": [
+   "cockpit_hours_pay_months",
+   "cockpit_time_adjustments",
+   "cockpit_pay_history",
+   "cockpit_schedule_history",
+   "cockpit_employment_periods",
+   "cockpit_hours_terms"
+  ],
+  "functions": [
+   "cockpit_ceo_hours_adjust",
+   "cockpit_ceo_hours_adjust_withdraw",
+   "cockpit_ceo_hours_costs",
+   "cockpit_ceo_hours_employment",
+   "cockpit_ceo_hours_holiday_override",
+   "cockpit_ceo_hours_inputs",
+   "cockpit_ceo_hours_key_expiry",
+   "cockpit_ceo_hours_leave_type_save",
+   "cockpit_ceo_hours_link",
+   "cockpit_ceo_hours_mark_paid",
+   "cockpit_ceo_hours_rules_save",
+   "cockpit_ceo_hours_schedule_save",
+   "cockpit_ceo_hours_set_pay",
+   "cockpit_ceo_hours_status",
+   "cockpit_ceo_hours_terms_save",
+   "cockpit_ceo_hours_withdraw_approval",
+   "cockpit_hours_account_id",
+   "cockpit_hours_account_links",
+   "cockpit_hours_actor",
+   "cockpit_hours_adjustments_json",
+   "cockpit_hours_approval_json",
+   "cockpit_hours_audit",
+   "cockpit_hours_autolink",
+   "cockpit_hours_bookings_json",
+   "cockpit_hours_ceo_email",
+   "cockpit_hours_ceo_tt_user",
+   "cockpit_hours_coverage_json",
+   "cockpit_hours_day",
+   "cockpit_hours_day_snapshot",
+   "cockpit_hours_holidays_json",
+   "cockpit_hours_hub_days_json",
+   "cockpit_hours_inputs",
+   "cockpit_hours_inputs_body",
+   "cockpit_hours_key_exchange_begin",
+   "cockpit_hours_key_get",
+   "cockpit_hours_key_put",
+   "cockpit_hours_key_rotate",
+   "cockpit_hours_key_state",
+   "cockpit_hours_kick",
+   "cockpit_hours_kw_today",
+   "cockpit_hours_last_approved",
+   "cockpit_hours_lease_claim",
+   "cockpit_hours_lease_renew",
+   "cockpit_hours_member_email",
+   "cockpit_hours_month",
+   "cockpit_hours_month_currency",
+   "cockpit_hours_month_name",
+   "cockpit_hours_pay_month_approve",
+   "cockpit_hours_pay_months_lock",
+   "cockpit_hours_people_employment",
+   "cockpit_hours_people_pay",
+   "cockpit_hours_people_schedule",
+   "cockpit_hours_person",
+   "cockpit_hours_prune",
+   "cockpit_hours_refuse_delete",
+   "cockpit_hours_require_service",
+   "cockpit_hours_role_default",
+   "cockpit_hours_run_finish",
+   "cockpit_hours_schedule_mismatch",
+   "cockpit_hours_sources",
+   "cockpit_hours_sync_apply",
+   "cockpit_hours_tt_days_json"
+  ],
+  "ceo_functions": [
+   "cockpit_ceo_hours_adjust",
+   "cockpit_ceo_hours_adjust_withdraw",
+   "cockpit_ceo_hours_costs",
+   "cockpit_ceo_hours_employment",
+   "cockpit_ceo_hours_holiday_override",
+   "cockpit_ceo_hours_inputs",
+   "cockpit_ceo_hours_key_expiry",
+   "cockpit_ceo_hours_leave_type_save",
+   "cockpit_ceo_hours_link",
+   "cockpit_ceo_hours_mark_paid",
+   "cockpit_ceo_hours_rules_save",
+   "cockpit_ceo_hours_schedule_save",
+   "cockpit_ceo_hours_set_pay",
+   "cockpit_ceo_hours_status",
+   "cockpit_ceo_hours_terms_save",
+   "cockpit_ceo_hours_withdraw_approval"
+  ],
+  "service_functions": [
+   "cockpit_hours_inputs",
+   "cockpit_hours_actor",
+   "cockpit_hours_lease_claim",
+   "cockpit_hours_lease_renew",
+   "cockpit_hours_run_finish",
+   "cockpit_hours_sync_apply",
+   "cockpit_hours_key_get",
+   "cockpit_hours_key_put",
+   "cockpit_hours_key_exchange_begin",
+   "cockpit_hours_key_rotate",
+   "cockpit_hours_key_state",
+   "cockpit_hours_pay_month_approve",
+   "cockpit_hours_prune",
+   "cockpit_hours_account_links"
+  ],
+  "triggers": [
+   "cockpit_employment_periods_guard_delete",
+   "cockpit_employment_periods_guard_truncate",
+   "cockpit_hours_pay_months_guard_delete",
+   "cockpit_hours_pay_months_guard_truncate",
+   "cockpit_hours_pay_months_lock",
+   "cockpit_hours_people_employment_insert",
+   "cockpit_hours_people_employment_update",
+   "cockpit_hours_people_pay_insert",
+   "cockpit_hours_people_pay_update",
+   "cockpit_hours_people_schedule_insert",
+   "cockpit_hours_people_schedule_update",
+   "cockpit_hours_terms_guard_delete",
+   "cockpit_hours_terms_guard_truncate",
+   "cockpit_pay_history_guard_delete",
+   "cockpit_pay_history_guard_truncate",
+   "cockpit_schedule_history_guard_delete",
+   "cockpit_schedule_history_guard_truncate",
+   "cockpit_time_adjustments_guard_delete",
+   "cockpit_time_adjustments_guard_truncate"
+  ],
+  "pg_cron": [
+   {
+    "jobname": "mahara-hours-sync",
+    "schedule": "17 * * * *"
+   },
+   {
+    "jobname": "mahara-hours-deep",
+    "schedule": "40 23 * * *"
+   }
+  ],
+  "edge_functions": [
+   {
+    "slug": "cockpit-hours-sync",
+    "verify_jwt": false
+   },
+   {
+    "slug": "cockpit-hours-api",
+    "verify_jwt": true
+   }
+  ],
+  "vault_secret_names": [
+   "cockpit_sync_secret"
+  ],
+  "function_secret_names": [
+   "CRON_SECRET"
+  ]
+ }
 }

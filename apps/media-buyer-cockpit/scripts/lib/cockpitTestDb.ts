@@ -12,14 +12,25 @@ function definition(sql: string, pattern: RegExp): string {
   return hit[0];
 }
 
-/** An isolated PostgreSQL engine. No connection URL or live credentials accepted. */
-export async function cockpitTestDb(): Promise<PGlite> {
+/**
+ * An isolated PostgreSQL engine. No connection URL or live credentials accepted.
+ * `supabaseDefaultPrivileges` (opt-in) emulates Supabase's default privileges:
+ * every new table, sequence and function in public is granted to anon,
+ * authenticated and service_role, so a migration that forgets a REVOKE fails
+ * its tests the way it would open the object in production.
+ */
+export async function cockpitTestDb(opts: { supabaseDefaultPrivileges?: boolean } = {}): Promise<PGlite> {
   const db = new PGlite();
   try {
     await db.exec(`
       CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role BYPASSRLS;
       CREATE SCHEMA auth;
-      GRANT USAGE ON SCHEMA public, auth TO anon, authenticated, service_role;
+      GRANT USAGE ON SCHEMA public, auth TO anon, authenticated, service_role;`);
+    if (opts.supabaseDefaultPrivileges) await db.exec(`
+      ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO anon, authenticated, service_role;
+      ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO anon, authenticated, service_role;
+      ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON FUNCTIONS TO anon, authenticated, service_role;`);
+    await db.exec(`
       CREATE TABLE auth.users (id uuid PRIMARY KEY, email text, email_confirmed_at timestamptz);
       CREATE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS
         $$ SELECT nullif(current_setting('request.jwt.claim.sub', true), '')::uuid $$;

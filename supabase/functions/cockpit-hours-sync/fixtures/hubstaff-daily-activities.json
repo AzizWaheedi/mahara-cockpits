@@ -1,0 +1,46 @@
+{
+ "_source": "shape from https://developer.hubstaff.com/docs/hubstaff_v2 GET /v2/organizations/{organization_id}/activities/daily, 2026-10-09; values invented",
+ "body": {
+  "daily_activities": [
+   {
+    "id": 7001,
+    "date": "2026-10-07",
+    "user_id": 5002,
+    "project_id": 31,
+    "task_id": null,
+    "keyboard": 8400,
+    "mouse": 6300,
+    "overall": 17640,
+    "tracked": 25200,
+    "input_tracked": 25200,
+    "manual": 1800,
+    "idle": 600,
+    "resumed": 0,
+    "billable": 25200,
+    "work_break": 0,
+    "created_at": "2026-10-07T07:00:30Z",
+    "updated_at": "2026-10-07T14:00:30Z"
+   },
+   {
+    "id": 7002,
+    "date": "2026-10-08",
+    "user_id": 5002,
+    "project_id": 31,
+    "task_id": null,
+    "keyboard": 8000,
+    "mouse": 6000,
+    "overall": 16800,
+    "tracked": 24000,
+    "input_tracked": 24000,
+    "manual": 0,
+    "idle": 0,
+    "resumed": 0,
+    "billable": 24000,
+    "work_break": 1200,
+    "created_at": "2026-10-08T07:00:30Z",
+    "updated_at": "2026-10-08T13:40:30Z"
+   }
+  ],
+  "pagination": {}
+ }
+}

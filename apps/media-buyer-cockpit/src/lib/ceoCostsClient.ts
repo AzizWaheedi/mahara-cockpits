@@ -1,8 +1,14 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import type { CostsSummary, Sheet } from "../types/ceo/costs";
-import { type CostLine, totalOf } from "../types/ceo/costsModel";
+import {
+  type ClosedMonthPay,
+  type CostLine,
+  closedMonthPay,
+  totalOf,
+} from "../types/ceo/costsModel";
 import { addDays } from "../types/ceo/time";
+import { type CostsApproval, readHoursCosts } from "./ceoHoursClient";
 import { peopleRoster } from "./ceoPeopleModel";
 
 // The cockpit's fixed planning rates, not settlement or live FX quotes.
@@ -144,7 +150,43 @@ export async function getCostsContext(
     await rpc(client, "cockpit_ceo_costs_context", {}),
   );
 }
-export function buildCostsSheet(context: CostContext, planId?: number): Sheet {
+/**
+ * Last calendar month's base pay: each person's approved figure from Hours
+ * and pay where one exists, the roster's pay for the rest. People approved
+ * for that month who have left since still count; nobody is counted twice.
+ */
+export function lastMonthPay(
+  context: CostContext,
+  approvals: CostsApproval[],
+  month: string,
+): ClosedMonthPay {
+  const roster = peopleRoster(context.people).people;
+  const byId = new Map(
+    approvals.filter(a => a.month === month).map(a => [a.personId, a]),
+  );
+  const paid = roster.filter(p => p.working || byId.has(p.id));
+  return closedMonthPay(
+    paid.map(p => {
+      const a = byId.get(p.id);
+      return {
+        id: p.id,
+        name: p.name,
+        monthlyUsd: p.working ? p.monthlyUsd : null,
+        approved: a
+          ? { month, amountUsd: a.amountUsd, shadow: a.shadow }
+          : null,
+      };
+    }),
+    month,
+  );
+}
+
+export function buildCostsSheet(
+  context: CostContext,
+  planId?: number,
+  /** Approved months from Hours and pay; null when they could not be read. */
+  approvals: CostsApproval[] | null = null,
+): Sheet {
   const lines = context.lines.map(costLine);
   const plans: Sheet["plans"] = context.plans.map(r => ({
     id: Number(r.id),
@@ -172,6 +214,7 @@ export function buildCostsSheet(context: CostContext, planId?: number): Sheet {
       t[String(row.metric_key)] = num(row.target);
   const lastTo = addDays(`${context.today.slice(0, 7)}-01`, -1);
   const lastFrom = `${lastTo.slice(0, 7)}-01`;
+  const closed = lastFrom.slice(0, 7);
   const bank = context.bank;
   let statements: Sheet["statements"] = null;
   if (bank !== null) {
@@ -206,10 +249,22 @@ export function buildCostsSheet(context: CostContext, planId?: number): Sheet {
     lastCharge[line.id] =
       hit && usd !== null ? { day: String(hit.day), usd: Math.abs(usd) } : null;
   }
+  const approvedLast = new Map(
+    (approvals ?? []).filter(a => a.month === closed).map(a => [a.personId, a]),
+  );
   return {
     ready: true,
     lines,
-    people: workingPeople(context),
+    people: workingPeople(context).map(p => {
+      const a = approvedLast.get(p.id);
+      return {
+        ...p,
+        approved: a
+          ? { month: closed, amountUsd: a.amountUsd, shadow: a.shadow }
+          : null,
+      };
+    }),
+    lastMonthPay: approvals ? lastMonthPay(context, approvals, closed) : null,
     plans,
     plan,
     lastCharge,
@@ -235,12 +290,27 @@ export function buildCostsSheet(context: CostContext, planId?: number): Sheet {
     usdPer: USD_PER,
   };
 }
+/** Approved pay never holds the Costs page back: unreadable is null, and the page says so. */
+async function approvalsOrNull(
+  client: SupabaseClient | null,
+): Promise<CostsApproval[] | null> {
+  try {
+    return await readHoursCosts(client);
+  } catch {
+    return null;
+  }
+}
+
 export async function readCostsSheet(
   client: SupabaseClient | null,
   args: { planId?: number } = {},
 ) {
   if (args.planId !== undefined) positiveId(args.planId);
-  return buildCostsSheet(await getCostsContext(client), args.planId);
+  const [context, approvals] = await Promise.all([
+    getCostsContext(client),
+    approvalsOrNull(client),
+  ]);
+  return buildCostsSheet(context, args.planId, approvals);
 }
 export async function saveCostLine(
   client: SupabaseClient | null,

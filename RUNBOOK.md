@@ -418,6 +418,48 @@ The room worker (`desk.py rooms`, every minute) makes the video rooms the cockpi
 | An opener says "The send may have gone; read the conversation in HighLevel before writing to the lead again" | HighLevel's answer was lost after the template may have gone. It is kept as sent, so no second opener is written; a person checks the conversation | The setter or the closer |
 | A lead outside the Gulf gets no opener | A first message goes 9 to 18 on the lead's own zone (every zone of a country that spans several); a country the desk does not know (`LEAD_ZONES` in sendrules.ts and followups.py) waits for a person | The setter or the closer |
 
+## Hours, leave and pay
+
+CEO cockpit, Team & payroll: Connections, then Hours and pay. Hubstaff (hours,
+for people whose tracking is required) and Timetastic (leave and public
+holidays, for everyone) are read by the Edge Function `cockpit-hours-sync` on
+two pg_cron jobs, `mahara-hours-sync` (every hour at :17) and
+`mahara-hours-deep` (02:40 Kuwait; Saturdays re-read 6 months). Each run is a
+row in `cockpit_hours_sync_runs`; every provider call leaves receipts in
+`cockpit_hours_provider_health` (its own ledger, so the guardian's urgent check
+never turns red on it). Keys are pasted by the CEO in Connections and kept in
+`cockpit_hours_keys`, which no role can read. Nothing here moves money, sends
+a message or invites anyone.
+
+| Symptom | Fix | Who |
+| --- | --- | --- |
+| Hours show "no data" | The day has no complete Hubstaff read, the person isn't linked, or Hubstaff isn't connected. Connections says which. Press Sync now; if a person is "Not linked", link them in Link accounts. No data is never counted as 0. | CEO |
+| A key was refused, or expires soon | Make a new key (Hubstaff: Settings, Organization, API tokens; Timetastic: app.timetastic.co.uk/api as an admin) and paste it in Connections. The old key keeps working until the new one passes its test call. An organisation token (`hsoat_`) has no expiry unless one was set in Hubstaff; "Add an expiry date" on the card records one, and the card warns two weeks before. | CEO |
+| Connections says "Firewall blocked" (Hubstaff, error 1010) | Cloudflare in front of Hubstaff stopped the request before Hubstaff saw it, so nothing new was read; the key is fine and is never marked refused for it. Cloudflare refuses requests without a User-Agent: every Hubstaff call sends `User-Agent: mahara-cockpit/1.0` (`HUBSTAFF_USER_AGENT` in `cockpit-ceo-api/tools.ts`). If it persists, check the deployed functions carry that `tools.ts` and redeploy both hours functions. The next good read marks the key connected again. | Systems manager |
+| Hubstaff's personal key needs replacing ("needs a new key") | A personal token's exchange did not finish, so it may be spent. Make a new personal token in Hubstaff and paste it. An organisation token (`hsoat_`) avoids this. | CEO |
+| After a database restore or a project move | Paste both keys again in Connections (a stored refresh token may already be used) and switch the old project's `mahara-hours-*` jobs off. | Systems manager, then CEO |
+| Days are unverified | Hubstaff's daily totals and its 10-minute records differ by more than a minute. The next read usually settles it; approval of people paid by hours waits for it. If it persists, compare the day in Hubstaff's Time & Activity report. | CEO |
+| A leave type has no pay rule | Leave types view: pick Paid, Unpaid, Part paid or Not time off. The suggestion is pre-selected; one click saves it. | CEO |
+| A person is "Not linked" | Link accounts view: pick the person, or "Not on the roster". Timetastic links itself by payroll id (the roster id) and both link by email. | CEO |
+| Hours changed after a month was approved | Nothing to do: the difference is carried into the next approval automatically and listed in the approve dialog. | nobody |
+| The hourly read stopped | Check `cockpit_hours_sync_runs` (latest `started_at`) and that the jobs `mahara-hours-sync` and `mahara-hours-deep` are in `cron.job`. The kick needs the vault secret `cockpit_sync_secret` (state row `hours-kick` in `cockpit_sync_state` says when it is missing) and `cockpit-hours-sync` must be deployed with the JWT check OFF. | Systems manager |
+
+Deploying (the lead session, never a builder): apply
+`20261009a_cockpit_team_hours.sql`; deploy `cockpit-hours-sync` with the JWT
+check off and `cockpit-hours-api` with it on, each with the shared files:
+`python3 scripts/dev/deploy_tree.py . cockpit-hours-sync supabase/functions/cockpit-ceo-api/tools.ts`
+and `python3 scripts/dev/deploy_tree.py . cockpit-hours-api supabase/functions/cockpit-ceo-api/tools.ts
+supabase/functions/cockpit-hours-sync/db.ts supabase/functions/cockpit-hours-sync/keys.ts
+supabase/functions/cockpit-hours-sync/lease.ts supabase/functions/cockpit-hours-sync/normalise.ts
+supabase/functions/cockpit-hours-sync/sync.ts apps/media-buyer-cockpit/src/types/ceo/hoursContract.ts
+apps/media-buyer-cockpit/src/types/ceo/hoursModel.ts apps/media-buyer-cockpit/src/types/ceo/schedule.ts`
+(deploy_tree keeps an existing function's JWT setting; a first deploy needs it
+set explicitly). Then apply `20261009b_cockpit_team_hours_jobs.sql`, seed the
+Timetastic key with `cockpit_hours_key_put` from the file on the CEO's Mac
+without printing it, and set `team_hours.state` to `deployed` in
+`docs/preserve/supabase-manifest.json` so `scripts/verify-preserved.py` treats
+a lost object as MISSING.
+
 ## What never needs a person
 
 - Rate limits: every Google, ClickUp and Meta call waits and retries.

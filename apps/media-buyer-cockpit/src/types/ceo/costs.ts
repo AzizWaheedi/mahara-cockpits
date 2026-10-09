@@ -1,4 +1,4 @@
-import type { CostLine, Payee, Projection } from "./costsModel";
+import type { ClosedMonthPay, CostLine, Payee, Projection } from "./costsModel";
 
 export type Sheet = {
   ready: boolean;
@@ -36,6 +36,11 @@ export type Sheet = {
     byCategory: Record<string, number>;
   } | null;
   usdPer: Record<string, number>;
+  /**
+   * Last calendar month's base pay, approved figures first (Hours and pay).
+   * Null when approved pay could not be read; the page then says so.
+   */
+  lastMonthPay?: ClosedMonthPay | null;
 };
 
 export type CostsSummary = {

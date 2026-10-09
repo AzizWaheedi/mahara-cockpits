@@ -1,0 +1,150 @@
+/*
+ * The month ribbon: one slim cell per day. No new palette: counted work is
+ * the cockpit's teal (--ceo-emphasis, which is Mahara Teal on Deep Space and
+ * its darker validated step on light cards), and meaning is carried by
+ * pattern, so colour is never the only signal.
+ */
+
+.ceo-root .hours-cell {
+  position: relative;
+  display: flex;
+  flex-direction: column-reverse;
+  overflow: visible;
+  border-radius: 3px;
+  background: var(--ceo-emphasis-track);
+}
+
+/* Fixed pay: tracked time is information only, so the track is neutral and
+   never reads as an empty teal day. */
+.ceo-root .hours-cell[data-fixed="true"] {
+  background: var(--ceo-grid);
+}
+
+/* A day that is not a working day: no track, a short baseline. */
+.ceo-root .hours-cell[data-off="true"] {
+  background: transparent;
+}
+.ceo-root .hours-cell[data-off="true"]::after {
+  content: "";
+  position: absolute;
+  inset: auto 20% 0 20%;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--ceo-deemphasis);
+}
+.ceo-root .hours-cell[data-off="true"][data-has-work="true"]::after {
+  display: none;
+}
+
+/* Days still ahead: the track, quieter. */
+.ceo-root .hours-cell[data-future="true"] {
+  opacity: 0.45;
+}
+
+/* Not on the team that day. */
+.ceo-root .hours-cell[data-gone="true"] {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--ceo-grid);
+}
+
+.ceo-root .hours-seg {
+  width: 100%;
+  flex-shrink: 0;
+}
+.ceo-root .hours-seg:first-child {
+  border-radius: 0 0 3px 3px;
+}
+
+.ceo-root .hours-work {
+  background: var(--ceo-emphasis);
+}
+.ceo-root .hours-excused {
+  background: color-mix(in srgb, var(--ceo-emphasis) 60%, transparent);
+}
+.ceo-root .hours-paid {
+  background-image: repeating-linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--ceo-emphasis) 45%, transparent) 0 2px,
+    transparent 2px 4px
+  );
+}
+/* Unpaid runs the other way, so paid and unpaid differ in pattern, not only in colour. */
+.ceo-root .hours-unpaid {
+  background-image: repeating-linear-gradient(
+    45deg,
+    color-mix(in srgb, var(--muted-foreground) 35%, transparent) 0 2px,
+    transparent 2px 4px
+  );
+}
+
+/* Public holiday: a dotted outline in the info blue. */
+.ceo-root .hours-cell[data-holiday="true"] {
+  background: transparent;
+  outline: 1.5px dotted var(--info);
+  outline-offset: -1.5px;
+}
+
+/* No data or unverified: a hollow dashed cell, never a solid empty one. */
+.ceo-root .hours-cell[data-unknown="true"] {
+  background: transparent;
+  outline: 1px dashed var(--ceo-crosshair);
+  outline-offset: -1px;
+}
+.ceo-root .hours-q {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  line-height: 1;
+  color: var(--muted-foreground);
+}
+
+/* Needs a decision. */
+.ceo-root .hours-cell[data-decide="true"] {
+  outline: 1.5px solid var(--ceo-warning);
+  outline-offset: -1.5px;
+}
+
+/* Today: a teal ring outside the cell. */
+.ceo-root .hours-cell[data-today="true"] {
+  box-shadow: 0 0 0 1.5px var(--ceo-surface), 0 0 0 3px var(--ceo-emphasis);
+}
+
+/* Extra time above the day: a 2px notch over the cell. */
+.ceo-root .hours-notch {
+  position: absolute;
+  inset: -4px 0 auto 0;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--ceo-emphasis);
+}
+
+/* The one motion: the fills rise once, 160ms, on first render. */
+@keyframes hours-rise {
+  from {
+    transform: scaleY(0);
+  }
+  to {
+    transform: scaleY(1);
+  }
+}
+.ceo-root .hours-rise .hours-seg {
+  transform-origin: bottom;
+  animation: hours-rise 160ms ease-out both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ceo-root .hours-rise .hours-seg {
+    animation: none;
+  }
+}
+
+/* The legend's swatches reuse the cells at a fixed size. */
+.ceo-root .hours-swatch {
+  display: inline-flex;
+  width: 10px;
+  height: 14px;
+  vertical-align: -2px;
+}
