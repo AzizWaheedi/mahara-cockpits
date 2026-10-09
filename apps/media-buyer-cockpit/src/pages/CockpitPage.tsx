@@ -3041,6 +3041,7 @@ function Cockpit({ view }: { view: View }) {
               />
             )}
             <BuildPanel
+              key={`${c.clientTag ?? c.accountName}:${c.metaAccountId}`}
               clientTag={c.clientTag ?? c.accountName}
               clientName={c.clientName ?? c.accountName}
               accountId={c.metaAccountId}

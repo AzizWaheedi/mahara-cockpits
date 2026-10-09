@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import {
@@ -9,6 +9,8 @@ import {
   type ServiceLine,
 } from "@/lib/audiences";
 import { api, useMutation, useQuery } from "@/lib/cockpitApi";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
+import { loadOptionalWinners } from "@/lib/optionalWinners";
 import { CreativePreview } from "./CreativePreview";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -47,7 +49,13 @@ export function BuildPanel({
   serviceType?: string;
 }) {
   const builds = useQuery(api.cockpit.buildsFor, { clientTag });
-  const winners = useQuery(api.cockpit.winners, { serviceType });
+  const { session } = useCockpitAuth();
+  const winnerKey = `${session?.user?.id ?? "signed-out"}:${clientTag}:${serviceType ?? ""}`;
+  const [winnerResult, setWinnerResult] = useState<{ key: string; rows: { sameLine: Winner[]; rest: Winner[] } }>();
+  const [winnerFailureKey, setWinnerFailureKey] = useState<string>();
+  const winners = winnerResult?.key === winnerKey ? winnerResult.rows : undefined;
+  const winnersUnavailable = winnerFailureKey === winnerKey;
+  const [winnersRetry, setWinnersRetry] = useState(0);
   const requestBuild = useMutation(api.cockpit.requestBuild);
   const saveVariants = useMutation(api.cockpit.saveVariants);
   const launchBuild = useMutation(api.cockpit.launchBuild);
@@ -62,6 +70,22 @@ export function BuildPanel({
   const [otherService, setOtherService] = useState("");
   const [contextDocs, setContextDocs] = useState("");
   const [targeting, setTargeting] = useState("");
+
+  // An optional recommendations read must never crash the client page.
+  useEffect(() => {
+    if (!open || !session?.user?.id) return;
+    let active = true;
+    setWinnerResult(undefined);
+    setWinnerFailureKey(undefined);
+    void loadOptionalWinners<{ sameLine: Winner[]; rest: Winner[] }>(
+      () => api.cockpit.winners({ serviceType }) as Promise<{ sameLine: Winner[]; rest: Winner[] }>,
+    ).then(result => {
+      if (!active) return;
+      if (result.status === "ready") setWinnerResult({ key: winnerKey, rows: result.rows });
+      else setWinnerFailureKey(winnerKey);
+    });
+    return () => { active = false; };
+  }, [open, serviceType, clientTag, winnerKey, winnersRetry, session?.user?.id]);
 
   // Whether Mahara can write to the account is decided on the server at launch
   // (builder.ts canWriteLive, against Meta's live list) and comes back as a
@@ -106,6 +130,16 @@ export function BuildPanel({
             )
           }
         />
+      )}
+      {open && winnersUnavailable && (
+        <div role="status" className="mb-3 rounded-lg border callout-warn p-2.5 text-xs">
+          Verified winning ads are temporarily unavailable. You can still build
+          a campaign without copying a winner. No ad was assigned to a client
+          without a verified owner.{" "}
+          <button type="button" className="font-semibold underline" onClick={() => setWinnersRetry(n => n + 1)}>
+            Retry winners
+          </button>
+        </div>
       )}
 
       {open && (
