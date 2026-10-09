@@ -136,12 +136,23 @@ describe('native client over the actual SDK and canonical PostgreSQL', () => {
   test('winner catalog joins refreshed native mirrors to verified owners by unique Meta IDs', async () => {
     await owner(db);
     await db.exec("UPDATE public.cockpit_creative_source_state SET ready=true,row_count=0,source_snapshot_at='2026-10-04T00:00:00Z' WHERE table_name IN('campaigns','ads')");
-    await db.exec("UPDATE public.cockpit_campaigns SET meta_campaign_id='555',raw_data=jsonb_set(raw_data,'{_id}','\"native:campaigns:alpha\"') WHERE client_name='Alpha'");
-    await db.query('INSERT INTO public.cockpit_ads(campaign_name,ad_name,meta_ad_id,spend,leads,raw_data) VALUES($1,$2,$3,100,10,$4)', ['Alpha-Campaign', 'Native ad', '777', JSON.stringify({ _id: 'native:ads:alpha', cpl: 10 })]);
-    await db.exec("INSERT INTO public.cockpit_creative_sources(table_name,source_id,client_names,data,source_snapshot_at) VALUES('campaigns','legacy-campaign',ARRAY['Alpha'],'{\"_id\":\"legacy-campaign\",\"metaCampaignId\":\"555\",\"campaignName\":\"Alpha-Campaign\"}','2026-10-04T00:00:00Z'),('ads','legacy-ad',ARRAY['Alpha'],'{\"_id\":\"legacy-ad\",\"metaAdId\":\"777\",\"campaignName\":\"Alpha-Campaign\"}','2026-10-04T00:00:00Z')");
+    await db.exec("UPDATE public.cockpit_campaigns SET meta_campaign_id='555',raw_data=jsonb_set(jsonb_set(raw_data,'{_id}','\"native:campaigns:alpha\"'),'{syncedAt}','123') WHERE client_name='Alpha'");
+    await db.query('INSERT INTO public.cockpit_ads(campaign_name,ad_name,meta_ad_id,spend,leads,raw_data) VALUES($1,$2,$3,100,10,$4)', ['Alpha-Campaign', 'Native ad', '777', JSON.stringify({ _id: 'native:ads:alpha', cpl: 10, syncedAt: 123 })]);
+    await db.exec("INSERT INTO public.cockpit_creative_sources(table_name,source_id,client_names,data,source_snapshot_at) VALUES('campaigns','legacy-campaign',ARRAY['Alpha'],'{\"_id\":\"legacy-campaign\",\"metaCampaignId\":\"555\",\"metaAccountId\":\"123\",\"syncedAt\":123,\"campaignName\":\"Alpha-Campaign\"}','2026-10-04T00:00:00Z'),('ads','legacy-ad',ARRAY['Alpha'],'{\"_id\":\"legacy-ad\",\"metaAdId\":\"777\",\"syncedAt\":123,\"campaignName\":\"Alpha-Campaign\"}','2026-10-04T00:00:00Z')");
     await db.exec("UPDATE public.cockpit_creative_source_state f SET row_count=(SELECT count(*) FROM public.cockpit_creative_sources s WHERE s.table_name=f.table_name) WHERE table_name IN('campaigns','ads')");
     const client = await browserDatabase(db);
     expect((await winners({ serviceType: 'Offices' }, client)).sameLine.map(item => item.adName)).toEqual(['Native ad']);
+    await owner(db);
+    await db.exec("UPDATE public.cockpit_creative_sources SET data=jsonb_set(data,'{syncedAt}','999') WHERE source_id='legacy-ad'");
+    await expect(winners({ serviceType: 'Offices' }, client)).rejects.toThrow('mapping');
+    await owner(db);
+    await db.exec("UPDATE public.cockpit_creative_sources SET data=jsonb_set(data,'{syncedAt}','123') WHERE source_id='legacy-ad'");
+    await db.exec("UPDATE public.cockpit_creative_sources SET source_snapshot_at='2026-10-05T00:00:00Z' WHERE table_name='ads'");
+    await db.exec("UPDATE public.cockpit_creative_source_state SET source_snapshot_at='2026-10-05T00:00:00Z' WHERE table_name='ads'");
+    await expect(winners({ serviceType: 'Offices' }, client)).rejects.toThrow('snapshots differ');
+    await owner(db);
+    await db.exec("UPDATE public.cockpit_creative_sources SET source_snapshot_at='2026-10-04T00:00:00Z' WHERE table_name='ads'");
+    await db.exec("UPDATE public.cockpit_creative_source_state SET source_snapshot_at='2026-10-04T00:00:00Z' WHERE table_name='ads'");
     // A matching legacy row ID must not override a contradictory stable Meta ID.
     await owner(db);
     await db.exec("UPDATE public.cockpit_creative_sources SET source_id='native:ads:alpha',data=jsonb_set(jsonb_set(data,'{_id}','\"native:ads:alpha\"'),'{metaAdId}','\"wrong-ad\"') WHERE source_id='legacy-ad'");

@@ -9,6 +9,7 @@ import {
   type ServiceLine,
 } from "@/lib/audiences";
 import { api, useMutation, useQuery } from "@/lib/cockpitApi";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { loadOptionalWinners } from "@/lib/optionalWinners";
 import { CreativePreview } from "./CreativePreview";
 import { Button } from "./ui/button";
@@ -48,8 +49,12 @@ export function BuildPanel({
   serviceType?: string;
 }) {
   const builds = useQuery(api.cockpit.buildsFor, { clientTag });
-  const [winners, setWinners] = useState<{ sameLine: Winner[]; rest: Winner[] }>();
-  const [winnersUnavailable, setWinnersUnavailable] = useState(false);
+  const { session } = useCockpitAuth();
+  const winnerKey = `${session?.user?.id ?? "signed-out"}:${clientTag}:${serviceType ?? ""}`;
+  const [winnerResult, setWinnerResult] = useState<{ key: string; rows: { sameLine: Winner[]; rest: Winner[] } }>();
+  const [winnerFailureKey, setWinnerFailureKey] = useState<string>();
+  const winners = winnerResult?.key === winnerKey ? winnerResult.rows : undefined;
+  const winnersUnavailable = winnerFailureKey === winnerKey;
   const [winnersRetry, setWinnersRetry] = useState(0);
   const requestBuild = useMutation(api.cockpit.requestBuild);
   const saveVariants = useMutation(api.cockpit.saveVariants);
@@ -68,19 +73,19 @@ export function BuildPanel({
 
   // An optional recommendations read must never crash the client page.
   useEffect(() => {
-    if (!open) return;
+    if (!open || !session?.user?.id) return;
     let active = true;
-    setWinners(undefined);
-    setWinnersUnavailable(false);
+    setWinnerResult(undefined);
+    setWinnerFailureKey(undefined);
     void loadOptionalWinners<{ sameLine: Winner[]; rest: Winner[] }>(
       () => api.cockpit.winners({ serviceType }) as Promise<{ sameLine: Winner[]; rest: Winner[] }>,
     ).then(result => {
       if (!active) return;
-      if (result.status === "ready") setWinners(result.rows);
-      else setWinnersUnavailable(true);
+      if (result.status === "ready") setWinnerResult({ key: winnerKey, rows: result.rows });
+      else setWinnerFailureKey(winnerKey);
     });
     return () => { active = false; };
-  }, [open, serviceType, clientTag, winnersRetry]);
+  }, [open, serviceType, clientTag, winnerKey, winnersRetry, session?.user?.id]);
 
   // Whether Mahara can write to the account is decided on the server at launch
   // (builder.ts canWriteLive, against Meta's live list) and comes back as a

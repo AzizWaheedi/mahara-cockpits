@@ -41,6 +41,7 @@ export async function database() {
     await db.exec(sql('20261004d_media_native_surface.sql'));
     await db.exec(sql('20261004e_media_native_worker_contracts.sql'));
     await db.exec(sql('20261009a_media_winner_native_identity.sql'));
+    await db.exec(sql('20261009b_media_winner_source_generation.sql'));
     await member(db, BUYER, 'buyer@example.com', ['media_buyer']);
     await member(db, OTHER, 'other@example.com', ['media_buyer']);
     await member(db, WRONG_ROLE, 'sales@example.com', ['sales']);
