@@ -23,7 +23,7 @@ import {
   withOurBlock,
   withRrule,
   zonedToUtc,
-} from "./teamCore";
+} from "./teamCore.js";
 
 const rowSchema = z
   .object({
@@ -1140,7 +1140,12 @@ export function createTeamCalendarWorker(runtime: TeamCalendarRuntime) {
       if (!op) break;
       claim = { id: op.id, claim_token: op.claim_token };
       try {
-        await runOp(op);
+        await runOp({
+          ...op,
+          sitting_id: op.sitting_id ?? null,
+          payload: op.payload ?? null,
+          requested_by: op.requested_by ?? null,
+        });
         await readBack(op.meeting_id);
         const accepted = await runtime.rpc("cockpit_team_calendar_finish", {
           p_id: op.id,
