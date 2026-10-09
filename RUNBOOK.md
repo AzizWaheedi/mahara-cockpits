@@ -84,6 +84,19 @@ cockpit comments, sales handoffs and research reports are skipped. To check:
 claim the new kinds (copy the current `askai.py`, see the Hermes row above) or
 a native feed run holds its lease.
 
+The CEO automatic extension pass (Convex `ceoExtensions.applyAuto`) runs
+natively through the Edge Function `ceo-extensions-sync`, pg_cron
+`mahara-ceo-extensions-auto` at minute 47 (migration
+`20261009k_ceo_extensions_auto_cron.sql`). It keeps the ClickUp field "Current
+extension (weeks)" in line with the Client Extension Form. It is a cron-only
+door, deployed with `--verify-jwt=false`, so `cockpit-ceo-api` keeps the
+gateway check. ClickUp is written only when the function secret
+`CEO_EXTENSIONS_APPLY` is exactly `true`; otherwise the plan is in the
+`ceo-extensions-auto` row of `cockpit_sync_state`. Keys by name:
+`CRON_SECRET` (same value as vault `cockpit_sync_secret`), `CLICKUP_API_TOKEN`,
+`TYPEFORM_TOKEN`. To check: POST `{"doctor":true}` with `x-cron-secret`, then
+read that row.
+
 ## Previews
 
 Ad previews and pictures in all three cockpits (health row "Ad previews and
