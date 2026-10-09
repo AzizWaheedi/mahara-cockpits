@@ -124,3 +124,29 @@ test("cockpit-hours-api approves September on the server and refuses a stale fig
   const view = computeMonth((await db.query<{ r: HoursInputs }>("select public.cockpit_ceo_hours_inputs('2026-09-01') r")).rows[0].r);
   expect(view.people.find(x => x.personId === two)?.status.kind).toBe("approved");
 });
+
+test("a key pasted while a read is running keeps its own state when the old key is refused", async () => {
+  // Made-up keys. The read starts with version N; the CEO pastes a new key mid-read; Hubstaff then refuses the old one.
+  const clock = fakeClock("2026-10-08T20:00:00Z");
+  const base = fakeProviders({ now: clock.nowMs });
+  let pasted = false;
+  const request = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = new URL(String(input));
+    if (url.host === "api.hubstaff.com") {
+      if (!pasted) {
+        pasted = true;
+        await rpc("cockpit_hours_key_put", { p: { provider: "hubstaff", kind: "hubstaff_org", secret: "hsoat_fixtureTokenNotReal0009", savedBy: "ceo@example.test", accountId: "900001", state: "unchecked" } });
+      }
+      return new Response('{"error":"invalid_token"}', { status: 401 });
+    }
+    return base.request(input, init);
+  }) as typeof fetch;
+  const claim = await claimLease(rpc, { mode: "recent", requestedBy: "cron" });
+  if (!claim.ok) throw new Error("lease busy");
+  const result = await runSync({ rpc, insertReceipt: pgReceipts(db) as never, fetch: request, sleep: clock.sleep, now: clock.now },
+    { runId: claim.runId, leaseToken: claim.leaseToken, mode: "recent" });
+  expect(result.hubstaff.state).toBe("refused");
+  await owner(db);
+  const key = (await db.query<{ state: string; last4: string }>("select state, last4 from cockpit_hours_keys where provider='hubstaff'")).rows[0];
+  expect(key).toEqual({ state: "unchecked", last4: "0009" });
+});

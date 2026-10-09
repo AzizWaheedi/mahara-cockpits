@@ -102,6 +102,13 @@ describe("keys", () => {
     expect(await call(db, "cockpit_hours_key_exchange_begin", { provider: "hubstaff", version: 2 })).toMatchObject({ ok: false, reason: "in_flight" });
     expect(await call(db, "cockpit_hours_key_rotate", { provider: "hubstaff", version: 1, secret: "refreshFixture0002", accessToken: "accessFixture" })).toMatchObject({ ok: false });
     expect(await call(db, "cockpit_hours_key_rotate", { provider: "hubstaff", version: 2, secret: "refreshFixture0002", accessToken: "accessFixture" })).toMatchObject({ ok: true, version: 3 });
+    // The stored secret changed, so it leaves one audit row: the provider and version, never a token. A refused rotate leaves none.
+    expect(await auditCount("hours.keyRotated")).toBe(1);
+    await owner(db);
+    const rotated = JSON.stringify((await db.query("select entity_id, actor_email, after from cockpit_audit_log where action='hours.keyRotated'")).rows);
+    expect(rotated).toContain('"version":3');
+    for (const bad of ["refreshFixture", "accessFixture"]) expect(rotated).not.toContain(bad);
+    await service(db);
     // Back to the organisation token for the rest of the tests.
     await call(db, "cockpit_hours_key_put", { provider: "hubstaff", kind: "hubstaff_org", secret: "hsoat_madeUpFixtureKey7Qx2", savedBy: "aziz@maharamedia.com", accountId: "705266", state: "connected" });
     await call(db, "cockpit_hours_key_put", { provider: "timetastic", kind: "timetastic", secret: "ttFixtureToken0000ABCD", savedBy: "aziz@maharamedia.com", accountId: "101643", state: "connected" });
@@ -175,6 +182,8 @@ describe("history triggers", () => {
     const id = await person("Person L", { role: "Video editor", monthlyCost: 500, currency: "USD" });
     await actor(db, CEO);
     await call(db, "cockpit_ceo_hours_employment", { personId: id, event: "paused", on: "2026-09-10", why: "Made-up pause" });
+    // A request with no event is refused: it never falls through to "resumed".
+    await expect(call(db, "cockpit_ceo_hours_employment", { personId: id, on: "2026-09-15" })).rejects.toMatchObject({ code: "22023" });
     await call(db, "cockpit_ceo_hours_employment", { personId: id, event: "resumed", on: "2026-09-20" });
     await call(db, "cockpit_ceo_hours_employment", { personId: id, event: "left", on: "2026-09-30" });
     await call(db, "cockpit_ceo_hours_employment", { personId: id, event: "rehired", on: "2026-10-12" });
@@ -419,6 +428,20 @@ describe("CEO writes, inputs, approval", () => {
     expect(rows.length).toBeGreaterThan(10);
     const text = JSON.stringify(rows);
     for (const bad of ["\"amount\"", "monthly_cost", "monthlyCost", "\"secret\"", "hsoat_", "ttFixtureToken", "refreshFixture", "accessFixture"]) expect(text).not.toContain(bad);
+  });
+
+  test("prune deletes only receipts and finished runs older than 90 days, and says so in one audit row", async () => {
+    await owner(db);
+    await db.query("insert into cockpit_hours_provider_health(provider,method,resource,phase,created_at) values('timetastic','GET','app.timetastic.co.uk/api/users','intent',now()-interval '91 days'),('timetastic','GET','app.timetastic.co.uk/api/users','intent',now())");
+    const before = Number((await db.query<{ n: number }>("select count(*)::int n from cockpit_hours_provider_health")).rows[0].n);
+    await service(db);
+    expect((await db.query<{ r: Record<string, unknown> }>("select public.cockpit_hours_prune() r")).rows[0].r).toMatchObject({ ok: true, receipts: 1, runs: 0 });
+    await owner(db);
+    expect(Number((await db.query<{ n: number }>("select count(*)::int n from cockpit_hours_provider_health")).rows[0].n)).toBe(before - 1);
+    expect(await auditCount("hours.prune")).toBe(1);
+    await service(db);
+    await db.query("select public.cockpit_hours_prune()");
+    expect(await auditCount("hours.prune")).toBe(1);
   });
 
   test("DELETE and TRUNCATE are refused on the guarded tables", async () => {

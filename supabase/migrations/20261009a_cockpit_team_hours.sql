@@ -1416,7 +1416,7 @@ BEGIN
   v_person:=public.cockpit_hours_person(p);
   v_event:=p->>'event';
   v_on:=public.cockpit_hours_day(p->>'on');
-  IF v_event NOT IN ('left','rehired','paused','resumed') THEN RAISE EXCEPTION 'Choose left, back, paused or resumed' USING ERRCODE='22023'; END IF;
+  IF v_event IS NULL OR v_event NOT IN ('left','rehired','paused','resumed') THEN RAISE EXCEPTION 'Choose left, back, paused or resumed' USING ERRCODE='22023'; END IF;
   PERFORM set_config('cockpit.employment_on',to_char(v_on,'YYYY-MM-DD'),true);
   IF v_event='left' THEN
     IF NOT v_person.active AND v_person.ended_on IS NOT NULL THEN RAISE EXCEPTION 'They are already marked as left' USING ERRCODE='22023'; END IF;
@@ -1843,6 +1843,8 @@ BEGIN
   WHERE provider=coalesce(p->>'provider','hubstaff') AND kind='hubstaff_personal' AND version=(p->>'version')::integer
   RETURNING version INTO v_new;
   IF v_new IS NULL THEN RETURN jsonb_build_object('ok',false,'reason','version_changed'); END IF;
+  PERFORM public.cockpit_hours_audit('hours.keyRotated','cockpit_hours_keys',coalesce(p->>'provider','hubstaff'),
+    jsonb_build_object('provider',coalesce(p->>'provider','hubstaff'),'version',v_new),'sync');
   RETURN jsonb_build_object('ok',true,'version',v_new);
 END;
 $$;
@@ -1911,6 +1913,10 @@ BEGIN
   PERFORM public.cockpit_hours_require_service();
   WITH d AS (DELETE FROM public.cockpit_hours_provider_health WHERE created_at<now()-interval '90 days' RETURNING 1) SELECT count(*) INTO n_receipts FROM d;
   WITH d AS (DELETE FROM public.cockpit_hours_sync_runs WHERE state<>'running' AND coalesce(finished_at,started_at)<now()-interval '90 days' RETURNING 1) SELECT count(*) INTO n_runs FROM d;
+  IF n_receipts+n_runs>0 THEN
+    PERFORM public.cockpit_hours_audit('hours.prune','cockpit_hours_provider_health',NULL,
+      jsonb_build_object('receipts',n_receipts,'runs',n_runs,'olderThanDays',90),'sync');
+  END IF;
   RETURN jsonb_build_object('ok',true,'receipts',n_receipts,'runs',n_runs);
 END;
 $$;

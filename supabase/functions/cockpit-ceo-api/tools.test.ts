@@ -115,6 +115,13 @@ test('401, 403 plan (10006), 429 with Retry-After, and unreadable JSON', async (
   await expect(hubstaffGet(HS_TOKEN, health, async () => { calls++; return new Response('{}', { status: 429, headers: { 'Retry-After': '120' } }); }, 'organizations', {}, { sleep: async () => {} }))
     .rejects.toMatchObject({ kind: 'rate_limited' });
   expect(calls).toBe(1);
+  // A 429 without Retry-After waits 2 seconds before its one retry, rather than asking again at once.
+  calls = 0;
+  const bare: number[] = [];
+  await expect(hubstaffGet(HS_TOKEN, health, async () => { calls++; return new Response('{}', { status: 429 }); }, 'organizations', {}, { sleep: async ms => { bare.push(ms); } }))
+    .rejects.toMatchObject({ kind: 'rate_limited' });
+  expect(calls).toBe(2);
+  expect(bare).toEqual([2000]);
   await expect(hubstaffGet(HS_TOKEN, health, async () => new Response('<html>', { status: 200 }), 'organizations')).rejects.toMatchObject({ kind: 'unreadable' });
 });
 

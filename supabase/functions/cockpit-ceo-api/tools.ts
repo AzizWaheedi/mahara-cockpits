@@ -276,7 +276,9 @@ export async function hubstaffCall(
   }
   await health({...receipt,phase:'response',http_status:response.status});
   if(response.status===429&&attempt===0){
-   const wait=Number(response.headers.get('retry-after'));
+   // No Retry-After: wait 2 seconds rather than asking again at once.
+   const header=response.headers.get('retry-after');
+   const wait=header===null||header.trim()===''?2:Number(header);
    if(Number.isFinite(wait)&&wait>=0&&wait<=30){await sleep(wait*1000);continue;}
   }
   let parsed:unknown=null;

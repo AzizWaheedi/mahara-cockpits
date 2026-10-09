@@ -424,7 +424,9 @@ CEO cockpit, Team & payroll: Connections, then Hours and pay. Hubstaff (hours,
 for people whose tracking is required) and Timetastic (leave and public
 holidays, for everyone) are read by the Edge Function `cockpit-hours-sync` on
 two pg_cron jobs, `mahara-hours-sync` (every hour at :17) and
-`mahara-hours-deep` (02:40 Kuwait; Saturdays re-read 6 months). Each run is a
+`mahara-hours-deep` (02:40 Kuwait; Saturdays re-read back to Hubstaff's
+earliest 10-minute records, 175 days: it never asks for older ones, so those
+days are never swept or re-stamped). Each run is a
 row in `cockpit_hours_sync_runs`; every provider call leaves receipts in
 `cockpit_hours_provider_health` (its own ledger, so the guardian's urgent check
 never turns red on it). Keys are pasted by the CEO in Connections and kept in

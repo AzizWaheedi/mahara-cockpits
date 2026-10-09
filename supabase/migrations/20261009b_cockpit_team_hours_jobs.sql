@@ -11,7 +11,7 @@
 -- nothing is posted and cockpit_sync_state row 'hours-kick' says so.
 --
 --   mahara-hours-sync  every hour at :17         recent
---   mahara-hours-deep  23:40 UTC (02:40 Kuwait)  deep (Saturdays re-read 6 months)
+--   mahara-hours-deep  23:40 UTC (02:40 Kuwait)  deep (Saturdays re-read back 175 days, Hubstaff's limit)
 
 BEGIN;
 

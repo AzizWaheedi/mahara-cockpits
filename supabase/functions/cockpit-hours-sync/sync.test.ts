@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { fakeClock, fakeProviders } from "../../../apps/media-buyer-cockpit/scripts/lib/hoursProviders.ts";
 import type { ReceiptRow } from "./db.ts";
 import { makeSyncDoor, sameSecret } from "./door.ts";
-import { hubstaffWindows, runSync } from "./sync.ts";
+import { hubstaffEarliest, hubstaffWindows, runSync } from "./sync.ts";
 
 type Rec = { name: string; args: Record<string, unknown> };
 function fakeDb(keys: Record<string, unknown> = {}, extra: Partial<Record<string, (args: Record<string, unknown>) => unknown>> = {}) {
@@ -99,8 +99,18 @@ describe("complete or nothing", () => {
     const providers = fakeProviders({ override: url => (url.host === "api.hubstaff.com" ? new Response('{"error":"invalid_token"}', { status: 401 }) : null) });
     const result = await runSync({ rpc: db.rpc, insertReceipt: db.insertReceipt, fetch: providers.request, sleep: clock.sleep, now: clock.now }, { ...run, mode: "recent" });
     expect(result.hubstaff.state).toBe("refused");
-    expect(db.calls.find(c => c.name === "cockpit_hours_key_state")?.args.p).toMatchObject({ provider: "hubstaff", state: "refused" });
+    // Only the key version this read used is marked refused: a key pasted meanwhile keeps its own state.
+    expect(db.calls.find(c => c.name === "cockpit_hours_key_state")?.args.p).toMatchObject({ provider: "hubstaff", state: "refused", version: 1 });
     expect(db.applies().map(a => a.provider)).toEqual(["timetastic"]);
+  });
+
+  test("a refused Timetastic key is marked refused for the version read, never for a newer one", async () => {
+    const clock = fakeClock("2026-10-08T12:00:00Z");
+    const db = fakeDb({ timetastic: { provider: "timetastic", kind: "timetastic", secret: "ttFixtureTokenNotReal0002", version: 3, accountId: "4242", accessToken: null, accessExpiresAt: null, exchangeStartedAt: null, state: "connected", expiresOn: null } });
+    const providers = fakeProviders({ override: url => (url.host === "app.timetastic.co.uk" ? new Response('{"title":"Unauthorized"}', { status: 401 }) : null) });
+    const result = await runSync({ rpc: db.rpc, insertReceipt: db.insertReceipt, fetch: providers.request, sleep: clock.sleep, now: clock.now }, { ...run, mode: "recent" });
+    expect(result.timetastic.state).toBe("refused");
+    expect(db.calls.filter(c => c.name === "cockpit_hours_key_state").map(c => c.args.p)).toContainEqual(expect.objectContaining({ provider: "timetastic", state: "refused", version: 3 }));
   });
 
   test("Hubstaff's firewall (403, 1010) is recorded as a firewall block, never a refused key; Timetastic is still written", async () => {
@@ -160,13 +170,39 @@ describe("pacing and windows", () => {
     expect(ttApply.accounts.find(a => a.externalId === "7002")?.extra?.workDays).toBeTruthy();
   });
 
-  test("deep reads last month and this month; on Saturdays the six months before as well", () => {
+  test("deep reads last month and this month; on Saturdays the months before as well, back to Hubstaff's earliest records", () => {
     expect(hubstaffWindows("deep", "2026-10-08")).toEqual([{ from: "2026-09-01", to: "2026-09-30" }, { from: "2026-10-01", to: "2026-10-08" }]);
     const saturday = hubstaffWindows("deep", "2026-10-10");
-    expect(saturday.length).toBe(8);
-    expect(saturday[0]).toEqual({ from: "2026-03-01", to: "2026-03-31" });
+    // March is past Hubstaff's 6 months and isn't asked for; April starts at the floor (175 days back).
+    expect(hubstaffEarliest("2026-10-10")).toBe("2026-04-18");
+    expect(saturday.length).toBe(7);
+    expect(saturday[0]).toEqual({ from: "2026-04-18", to: "2026-04-30" });
+    expect(saturday.at(-1)).toEqual({ from: "2026-10-01", to: "2026-10-10" });
     expect(hubstaffWindows("recent", "2026-10-08")).toEqual([{ from: "2026-10-07", to: "2026-10-08" }]);
     expect(hubstaffWindows("month", "2026-10-08", "2026-10")).toEqual([{ from: "2026-10-01", to: "2026-10-08" }]);
+    expect(hubstaffWindows("month", "2026-10-31", "2026-04")).toEqual([]);
+    expect(hubstaffWindows("month", "2026-10-31", "2026-05")).toEqual([{ from: "2026-05-09", to: "2026-05-31" }]);
+  });
+
+  test("a Saturday read never asks Hubstaff for records older than 6 months, so it neither fails nor sweeps or stamps those days", async () => {
+    // Hubstaff: "Earliest date is 6 months ago". The fake refuses an older start the way a validation error would.
+    const clock = fakeClock("2026-10-09T23:40:00Z"); // 02:40 Kuwait, Saturday 10 October
+    const db = fakeDb();
+    const sixMonthsAgo = Date.parse("2026-04-10T00:00:00Z");
+    const providers = fakeProviders({ now: clock.nowMs, override: url =>
+      url.pathname.endsWith("/activities") && Date.parse(url.searchParams.get("time_slot[start]") ?? "") < sixMonthsAgo
+        ? new Response('{"code":11001,"error":"time_slot[start] is too far in the past"}', { status: 400 })
+        : null });
+    const result = await runSync({ rpc: db.rpc, insertReceipt: db.insertReceipt, fetch: providers.request, sleep: clock.sleep, now: clock.now }, { ...run, mode: "deep" });
+    expect(result.hubstaff.state).toBe("ok");
+    const starts = providers.calls.filter(c => c.url.pathname.endsWith("/activities")).map(c => c.url.searchParams.get("time_slot[start]") ?? "");
+    expect(starts.length).toBeGreaterThan(0);
+    for (const s of starts) expect(Date.parse(s)).toBeGreaterThanOrEqual(sixMonthsAgo);
+    const hubstaffApplies = db.applies().filter(a => a.provider === "hubstaff");
+    for (const a of hubstaffApplies) {
+      expect((a.window as { from: string }).from >= "2026-04-18").toBe(true);
+      for (const d of a.coverageDays as string[]) expect(d >= "2026-04-18").toBe(true);
+    }
   });
 
   test("a deep read of a 31-day month uses 7-day chunks for records and 31-day chunks for totals", async () => {
@@ -204,7 +240,7 @@ describe("personal tokens (Mode B)", () => {
     const providers = fakeProviders({ override: url => { if (url.host === "account.hubstaff.com") throw new Error("timeout"); return null; } });
     const result = await runSync({ rpc: db.rpc, insertReceipt: db.insertReceipt, fetch: providers.request, sleep: clock.sleep, now: clock.now }, { ...run, mode: "recent" });
     expect(result.hubstaff.state).toBe("needs_new_key");
-    expect(db.calls.find(c => c.name === "cockpit_hours_key_state")?.args.p).toMatchObject({ state: "needs_new_key" });
+    expect(db.calls.find(c => c.name === "cockpit_hours_key_state")?.args.p).toMatchObject({ state: "needs_new_key", version: 4 });
     expect(providers.calls.filter(c => c.url.host === "api.hubstaff.com")).toEqual([]);
     const again = fakeDb({ hubstaff: { provider: "hubstaff", kind: "hubstaff_personal", secret: "refreshFixture0001", version: 4, accountId: "900001", accessToken: null, accessExpiresAt: null, exchangeStartedAt: "2026-10-08T11:00:00Z", state: "connected", expiresOn: null } });
     const p2 = fakeProviders();

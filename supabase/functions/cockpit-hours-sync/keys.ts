@@ -51,7 +51,7 @@ export async function hubstaffAccess(rpc: Rpc, health: HoursHealth, request: typ
     const fresh = key.accessToken && key.accessExpiresAt && Date.parse(key.accessExpiresAt) > now().getTime() + 5 * 60_000;
     if (fresh && key.accessToken) return { ok: true, token: key.accessToken, accountId: org, kind: key.kind, state: key.state, version: key.version };
     if (key.exchangeStartedAt) {
-      await rpc("cockpit_hours_key_state", { p: { provider: "hubstaff", state: "needs_new_key", note: "An earlier exchange did not finish" } });
+      await rpc("cockpit_hours_key_state", { p: { provider: "hubstaff", state: "needs_new_key", note: "An earlier exchange did not finish", version: key.version } });
       return BLOCKED.needs_new_key;
     }
     const begin = (await rpc("cockpit_hours_key_exchange_begin", { p: { provider: "hubstaff", version: key.version } })) as Record<string, unknown>;
@@ -64,7 +64,7 @@ export async function hubstaffAccess(rpc: Rpc, health: HoursHealth, request: typ
       swapped = await hubstaffExchange(key.secret, health, request);
     } catch (e) {
       if (e instanceof HoursProviderError && e.kind === "refused") {
-        await rpc("cockpit_hours_key_state", { p: { provider: "hubstaff", state: "refused", note: e.message } });
+        await rpc("cockpit_hours_key_state", { p: { provider: "hubstaff", state: "refused", note: e.message, version: key.version } });
         return BLOCKED.refused;
       }
       if (e instanceof HoursProviderError && e.kind === "firewall_blocked") {
@@ -73,7 +73,7 @@ export async function hubstaffAccess(rpc: Rpc, health: HoursHealth, request: typ
         return { ok: false, state: "firewall_blocked", note: e.message };
       }
       // Unknown outcome: the refresh token may already be spent. exchange_started_at stays set.
-      await rpc("cockpit_hours_key_state", { p: { provider: "hubstaff", state: "needs_new_key", note: "The exchange's outcome is unknown" } });
+      await rpc("cockpit_hours_key_state", { p: { provider: "hubstaff", state: "needs_new_key", note: "The exchange's outcome is unknown", version: key.version } });
       return BLOCKED.needs_new_key;
     }
     const accessExpiresAt = new Date(now().getTime() + Math.min(swapped.expiresIn, 23 * 3600) * 1000).toISOString();
@@ -152,6 +152,8 @@ export async function testAndSaveKey(
 
   let token = key;
   let stored: Record<string, unknown>;
+  // The version the personal token's save got: later verdicts apply to it alone, never to a key pasted meanwhile.
+  let savedVersion: { version: number } | Record<string, never> = {};
   // An organisation token doesn't expire unless the CEO gave it a date in
   // Hubstaff (CEO decision, 2026-10-09: the hsoat_ token never expires); the
   // card's "Add an expiry date" records one. A personal token rotates.
@@ -169,7 +171,8 @@ export async function testAndSaveKey(
     token = swapped.accessToken;
     stored = { kind: "hubstaff_personal", secret: swapped.refreshToken, accessToken: swapped.accessToken,
       accessExpiresAt: new Date(deps.now().getTime() + Math.min(swapped.expiresIn, 23 * 3600) * 1000).toISOString() };
-    await put({ ...stored, state: "unchecked" });
+    const saved = (await put({ ...stored, state: "unchecked" })) as Record<string, unknown> | null;
+    if (typeof saved?.version === "number" && Number.isSafeInteger(saved.version)) savedVersion = { version: saved.version };
   }
   let orgId = DEFAULT_HUBSTAFF_ORG;
   let people: number | null = null;
@@ -182,19 +185,19 @@ export async function testAndSaveKey(
   } catch (e) {
     const f = fail(e);
     if (f) {
-      if (stored.kind === "hubstaff_personal") await deps.rpc("cockpit_hours_key_state", { p: { provider: "hubstaff", state: f.state === "plan_blocked" ? "plan_blocked" : "refused" } });
+      if (stored.kind === "hubstaff_personal") await deps.rpc("cockpit_hours_key_state", { p: { provider: "hubstaff", state: f.state === "plan_blocked" ? "plan_blocked" : "refused", ...savedVersion } });
       return f;
     }
     if (isFirewall(e)) {
       if (stored.kind === "hubstaff_org") return firewalled(stored);
-      await deps.rpc("cockpit_hours_key_state", { p: { provider: "hubstaff", state: "firewall_blocked", note: (e as Error).message } });
+      await deps.rpc("cockpit_hours_key_state", { p: { provider: "hubstaff", state: "firewall_blocked", note: (e as Error).message, ...savedVersion } });
       return { ok: true, state: "firewall_blocked", text: firewallText, last4: String(stored.secret).slice(-4), people: null };
     }
     if (stored.kind === "hubstaff_org") return unchecked(stored);
     return { ok: true, state: "unchecked", text: "The key is saved, but Hubstaff couldn't be reached to check it. The next hourly read tries again.", last4: String(stored.secret).slice(-4), people: null };
   }
   if (stored.kind === "hubstaff_org") await put({ ...stored, accountId: orgId, state: "connected" });
-  else await deps.rpc("cockpit_hours_key_state", { p: { provider: "hubstaff", state: "connected", accountId: orgId } });
+  else await deps.rpc("cockpit_hours_key_state", { p: { provider: "hubstaff", state: "connected", accountId: orgId, ...savedVersion } });
   // A personal token is stored as its rotated refresh token: the card shows that one's last 4.
   const last4 = String(stored.secret).slice(-4);
   return { ok: true, state: "connected", text: `Connected. Hubstaff shows ${people} ${people === 1 ? "person" : "people"}. The first read is running.`, last4, people };

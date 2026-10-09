@@ -5,8 +5,9 @@
  *         activities; Timetastic bookings (from the lookback) and this
  *         month's day list.
  * deep    02:40 Kuwait: Hubstaff from the 1st of last month (on Saturdays
- *         the 6 months before as well, so late edits to approved months show
- *         up); Timetastic users, schedules, payroll ids of unlinked users,
+ *         the months before as well, back to Hubstaff's earliest records,
+ *         175 days, so late edits to approved months show up); Timetastic
+ *         users, schedules, payroll ids of unlinked users,
  *         leave types, bookings and last and this month's day lists.
  * month   the CEO's "Load {month}": both providers for that month.
  * doctor  the key checks: one call of each kind, nothing written but state.
@@ -55,20 +56,35 @@ export function makePacer(sleep: (ms: number) => Promise<void>, nowMs: () => num
   };
 }
 
-/** The Hubstaff windows a mode reads, in Kuwait days, never past today. */
+/**
+ * Hubstaff's 10-minute records start "6 months ago" (its docs for
+ * /activities). A window starts no earlier than this many days back, so the
+ * day read either side, Kuwait's offset and the shortest reading of "6
+ * months" (180 days; six calendar months are 181 to 184) all stay inside
+ * it. Days before it are never asked for, so they are never swept and never
+ * stamped as covered: their earlier rows stand as they are.
+ */
+export const HUBSTAFF_RECORD_DAYS = 175;
+export function hubstaffEarliest(today: string): string {
+  return addDays(today, -HUBSTAFF_RECORD_DAYS);
+}
+
+/** The Hubstaff windows a mode reads, in Kuwait days, never past today and never before Hubstaff's earliest records. */
 export function hubstaffWindows(mode: Mode, today: string, month?: string | null): { from: string; to: string }[] {
-  const clamp = (w: { from: string; to: string }) => ({ from: w.from, to: w.to > today ? today : w.to });
-  if (mode === "recent") return [{ from: addDays(today, -1), to: today }];
-  if (mode === "month" && month) return [clamp({ from: `${month}-01`, to: monthEnd(`${month}-01`) })];
+  const earliest = hubstaffEarliest(today);
+  const clamp = (w: { from: string; to: string }) => ({ from: w.from < earliest ? earliest : w.from, to: w.to > today ? today : w.to });
+  const keep = (ws: { from: string; to: string }[]) => ws.map(clamp).filter(w => w.from <= w.to);
+  if (mode === "recent") return keep([{ from: addDays(today, -1), to: today }]);
+  if (mode === "month" && month) return keep([{ from: `${month}-01`, to: monthEnd(`${month}-01`) }]);
   if (mode !== "deep") return [];
   const out: { from: string; to: string }[] = [];
   const saturday = new Date(`${today}T00:00:00Z`).getUTCDay() === 6;
   const back = saturday ? 7 : 1;
   for (let i = back; i >= 0; i--) {
     const start = addMonths(monthStart(today), -i);
-    out.push(clamp({ from: start, to: monthEnd(start) }));
+    out.push({ from: start, to: monthEnd(start) });
   }
-  return out;
+  return keep(out);
 }
 
 export async function runSync(deps: SyncDeps, run: RunInput): Promise<RunResult> {
@@ -83,12 +99,15 @@ export async function runSync(deps: SyncDeps, run: RunInput): Promise<RunResult>
   // ------------------------------------------------------------------ Hubstaff
   const hubstaff: ProviderSummary = { state: "ok", calls: 0, rows: 0, accounts: 0, note: null };
   const hsStart = count();
+  // The key version this read used: a verdict on it never lands on a key pasted meanwhile.
+  let hsVersion: { version: number } | Record<string, never> = {};
   try {
     const access = await hubstaffAccess(deps.rpc, health, deps.fetch, deps.now);
     if (!access.ok) {
       hubstaff.state = access.state;
       hubstaff.note = access.note;
     } else {
+      hsVersion = { version: access.version };
       const get = (path: string, params: Record<string, string | number>) => hubstaffGet(access.token, health, deps.fetch, path, params, { sleep: deps.sleep });
       const org = `organizations/${access.accountId}`;
       const pages = async (path: string, params: Record<string, string | number>) => {
@@ -172,7 +191,7 @@ export async function runSync(deps: SyncDeps, run: RunInput): Promise<RunResult>
     // The firewall (Cloudflare, 403 error 1010) is not the key's fault: its own state, never "refused".
     if (e instanceof HoursProviderError && (e.kind === "refused" || e.kind === "plan_blocked" || e.kind === "firewall_blocked")) {
       hubstaff.state = e.kind;
-      if (!dry) await deps.rpc("cockpit_hours_key_state", { p: { provider: "hubstaff", state: e.kind, note: e.message } }).catch(() => undefined);
+      if (!dry) await deps.rpc("cockpit_hours_key_state", { p: { provider: "hubstaff", state: e.kind, note: e.message, ...hsVersion } }).catch(() => undefined);
     } else hubstaff.state = "failed";
     hubstaff.note = noteOf(e);
   }
@@ -181,12 +200,14 @@ export async function runSync(deps: SyncDeps, run: RunInput): Promise<RunResult>
   // ---------------------------------------------------------------- Timetastic
   const timetastic: ProviderSummary = { state: "ok", calls: 0, rows: 0, accounts: 0, note: null };
   const ttStart = count();
+  let ttVersion: { version: number } | Record<string, never> = {};
   try {
     const access = await timetasticAccess(deps.rpc);
     if (!access.ok) {
       timetastic.state = access.state;
       timetastic.note = access.note;
     } else {
+      ttVersion = { version: access.version };
       const pace = makePacer(deps.sleep, () => deps.now().getTime());
       const tt = async (path: string, params: Record<string, string | number | boolean> = {}, gap = 250) => {
         await pace(gap);
@@ -265,7 +286,7 @@ export async function runSync(deps: SyncDeps, run: RunInput): Promise<RunResult>
   } catch (e) {
     if (e instanceof HoursProviderError && e.kind === "refused") {
       timetastic.state = "refused";
-      if (!dry) await deps.rpc("cockpit_hours_key_state", { p: { provider: "timetastic", state: "refused", note: e.message } }).catch(() => undefined);
+      if (!dry) await deps.rpc("cockpit_hours_key_state", { p: { provider: "timetastic", state: "refused", note: e.message, ...ttVersion } }).catch(() => undefined);
     } else timetastic.state = "failed";
     timetastic.note = noteOf(e);
   }
