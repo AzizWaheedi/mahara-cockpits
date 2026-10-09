@@ -162,13 +162,17 @@ export async function queueGap(
   },
 ): Promise<void> {
   const day = kuwaitToday();
-  const { error } = await client.from("cockpit_plan_items").insert({
-    role: "csm",
-    day,
-    text: `Fix: ${args.label}`.slice(0, 140),
-    reason: `Backlog gap: ${args.label} - ${args.fix} (task: ${args.taskId || ""})`,
-    client_name: args.clientName,
-    list_name: "csm",
+  // Signed-in people may only read cockpit_plan_items (20260923p). The
+  // server adds the row, checks the CSM role, and the plan trigger writes
+  // the audit row (20261007f).
+  const { error } = await client.rpc("cockpit_add_plan_item", {
+    p_role: "csm",
+    p_day: day,
+    p_text: `Fix: ${args.label}`.slice(0, 140),
+    p_reason: `Backlog gap: ${args.label} - ${args.fix} (task: ${args.taskId || ""})`,
+    p_client_name: args.clientName,
+    p_list_name: "csm",
+    p_due_date: null,
   });
-  if (error) throw error;
+  if (error) throw new Error(error.message);
 }

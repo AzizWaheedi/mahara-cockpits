@@ -79,7 +79,7 @@ REQUEST_TYPE = {
 
 
 
-BRIDGE_TOKEN = "mahara-csm-bridge-8f4c1d92a7be4c05b1e6"
+BRIDGE_TOKEN = os.environ.get("BRIDGE_TOKEN", "")  # Was hard-coded until 2026-10-09; treat the old value as exposed.
 # The app's production Convex deployment. `convex run --prod` cannot reach it (the CLI
 # only holds a dev key), and the platform's database tool runs queries only, so the sync
 # goes through the token-guarded HTTP route in convex/http.ts.

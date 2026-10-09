@@ -78,7 +78,7 @@ class Check:
     confirm: int = 1                     # bad readings in a row before an incident opens
     confirm_minutes: Optional[int] = None  # and bad for at least this long (time, not scans: scans can be skipped)
     clear: int = 1                       # ok readings in a row before an open incident resolves
-    quiet_because: Optional[str] = None  # convex | hermes | sales-watchdog: someone else already alerts
+    quiet_because: Optional[str] = None  # hermes | sales-watchdog: someone else already alerts
     alert: bool = True                   # False: the daily summary carries it, never its own message
 
     def __post_init__(self) -> None:

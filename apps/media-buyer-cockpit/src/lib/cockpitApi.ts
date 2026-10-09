@@ -9,6 +9,11 @@ import { campaignBuildAction } from "./campaignBuildsClient";
 import { ceoAction } from "./ceoActionsClient";
 import { readCostsSheet, removeCostLine, saveCostLine } from "./ceoCostsClient";
 import {
+  applyExtensionsToClickUp,
+  postingAction,
+  setWebinarPitches,
+} from "./ceoEndpointsClient";
+import {
   copyGoalPlan,
   goalCatalogue,
   readGoalsBoard,
@@ -45,6 +50,7 @@ import {
   listCreativeRequests,
   reviewCreativeRequest,
 } from "./creativeActionsClient";
+import { hiringAction } from "./hiringActionsClient";
 import { api as ideationApi } from "./ideation";
 import { mediaAction } from "./mediaActionsClient";
 import {
@@ -515,6 +521,11 @@ async function handleApiCall(endpoint: string, args: any = {}): Promise<any> {
       if (rest[0] === "content") return readContentWindow(supabase, args);
       throw new Error(`Unknown CEO window: ${rest[0]}`);
     }
+    if (sub === "webinarPitch" && rest.join(".") === "set")
+      return setWebinarPitches(supabase, args ?? {});
+    if (sub === "extensions" && rest.join(".") === "applyToClickUp")
+      return applyExtensionsToClickUp(supabase);
+    if (sub === "posting") return postingAction(supabase, rest.join("."), args);
     return unavailable();
   }
   // 7. Team & TeamCalendar
@@ -618,6 +629,10 @@ async function handleApiCall(endpoint: string, args: any = {}): Promise<any> {
         throw new Error(`Unknown team projections operation: ${sub}`);
     }
   }
+
+  // 8. Hiring: the CEO Hiring tab's actions, served by Edge Function hiring-api.
+  if (domain === "hiring" && sub === "actions")
+    return hiringAction(supabase, rest.join("."), args ?? {});
 
   // Default fallback
   return unavailable();

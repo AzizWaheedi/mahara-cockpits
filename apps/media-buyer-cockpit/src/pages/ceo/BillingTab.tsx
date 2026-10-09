@@ -65,6 +65,7 @@ export function BillingTab(_: CeoTabProps) {
             evidenceUrl: p.evidenceUrl ?? undefined,
             note: p.note ?? undefined,
             nextDate: p.nextDate ?? undefined,
+            allowRepeat: p.allowRepeat === true,
           },
           "ceo",
         );

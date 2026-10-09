@@ -10,10 +10,10 @@ Rules (catalogue G1):
   digest line, so an outage never floods the channel;
 - non-urgent messages go out Saturday to Thursday, 09:00 to 21:00 Kuwait
   time; outside that they wait for the next scan inside it. Urgent ones
-  (Convex down, the VPS or Supabase down, WhatsApp double sends) go any time;
-- an incident someone else already alerts on (Convex's salesWatch, the
-  Hermes monitors, the sales watchdog) is recorded but not posted while that
-  system is healthy;
+  (the CEO sections stale, the VPS or Supabase down, WhatsApp double sends)
+  go any time;
+- an incident someone else already alerts on (the Hermes monitors, the sales
+  watchdog) is recorded but not posted while that system is healthy;
 - never a secret, a phone number, an email or a lead's name: every sentence
   goes through redact.clean and evidence is never posted.
 """

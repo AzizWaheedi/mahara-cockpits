@@ -1,10 +1,8 @@
 """The workers' own status rows in Creative Triage (catalogue H5, W2, W9 to W14).
 
-Age limits for the sales desk come from apps/media-buyer-cockpit/convex/salesWatch.ts. Convex's
-salesWatch alerts on the desk rows, but only ONCE, when its failure streak
-reaches 3 (health.ts), and never again while it keeps failing. So a desk
-incident is quiet only when Convex's one message already covered it
-(quiet_because="convex-sales-watch"; engine.covered says exactly when).
+Age limits for the sales desk come from apps/media-buyer-cockpit/convex/salesWatch.ts. That
+Convex job used to post a desk failure once; Convex is paused, so the guardian
+alerts on the desk rows itself and no desk incident is muted on its account.
 Rows that write only when there is work (research, status, doctor) are not
 watched by age.
 """
@@ -375,7 +373,7 @@ for _job, (_limit, _kind, _label) in DESK_LIMITS.items():
         severity="medium" if _kind == "copy" else "high",
         reads=f"cockpit_sales_worker_status (sales-desk, {_job})",
         threshold=f"ok false, or older than {ago(_limit)}: fail. A missing row: unknown.",
-        run=desk_check(_job), quiet_because="convex-sales-watch", owner="Hermes",
+        run=desk_check(_job), owner="Hermes",
         fix=fixes.catch_up(f"desk-{_job}") if _kind == "copy" else None,
         action="Read ~/.sales-desk.log on the VPS; the row's detail names the blocker.",
     ))

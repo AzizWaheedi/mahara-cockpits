@@ -274,7 +274,7 @@ class Alerts(unittest.TestCase):
     def test_urgent_goes_at_night(self):
         b = Box(urgent=True)
         h = Harness([b.check])
-        b.result = fail("Convex is off")
+        b.result = fail("No CEO section refreshed for 50 min")
         h.scan(KUWAIT_NIGHT)
         self.assertEqual(len(h.posted), 1)
 
@@ -304,18 +304,16 @@ class Alerts(unittest.TestCase):
         h.scan(KUWAIT_NIGHT + timedelta(hours=9))
         self.assertEqual(h.posted, [])
 
-    def test_quiet_while_convex_alerts_and_loud_when_convex_is_down(self):
-        sections, desk = Box("convex-ceo-sections", fixable=False, urgent=True), Box("desk-recordings", fixable=False, quiet="convex")
-        h = Harness([sections.check, desk.check])
+    def test_a_failure_is_loud_even_where_convex_once_alerted(self):
+        sections = Box("ceo-sections", fixable=False, urgent=True)
+        desk = Box("desk-recordings", fixable=False, quiet="convex")
+        mirror = Box("sales-mirror", fixable=False, quiet="convex-sales-watch")
+        h = Harness([sections.check, desk.check, mirror.check])
         desk.result = fail("recordings late")
+        mirror.result = fail("mirror stale")
         h.scan()
-        self.assertEqual(h.posted, [])
-        self.assertIn("Convex already alerts", h.store.open["desk-recordings"]["alert_note"])
-        sections.result = fail("no section refreshed for 50 min")
-        h.scan(fakes.NOW + timedelta(minutes=5))
-        titles = [t.splitlines()[0] for t in h.posted]
-        self.assertIn("[guardian] Broken: Demo job", titles)
         self.assertEqual(len(h.posted), 2)
+        self.assertIsNone(engine.covered(desk.check, {"ceo-sections": ok("fine"), "convex-ceo-sections": ok("fine")}))
 
     def test_summary_only_checks_never_post(self):
         b = Box(alert=False)
@@ -385,6 +383,36 @@ class StateFallback(unittest.TestCase):
         h.scan(fakes.NOW + timedelta(minutes=5))
         statuses = [w[1]["status"] for w in db.writes]
         self.assertEqual(statuses[-1], "resolved")
+
+
+class Retired(unittest.TestCase):
+    def test_an_incident_under_a_retired_id_closes_once_without_a_message(self):
+        old, new = Box("convex-deployments", fixable=False), Box("ceo-sections", fixable=False)
+        db = fakes.FakeDb({"cockpit_guardian_incidents": []})
+        h = Harness([old.check], db=db)
+        old.result = fail("adorable-seahorse-418 answers 503")
+        h.scan()
+        self.assertEqual(len(h.posted), 1)
+        h.store.state["streaks"]["hermes-ask-ai"] = {"bad": 2, "unknown": 0, "ok": 0}
+        h.checks = [new.check]
+        out = h.scan(fakes.NOW + timedelta(minutes=5))
+        self.assertEqual(h.store.open, {})
+        self.assertEqual([(i["check_id"], i["folded_into"]) for i in out.resolved], [("convex-deployments", "retired")])
+        self.assertIn("Convex is paused", out.resolved[0]["resolved_by"])
+        self.assertEqual(len(h.posted), 1)
+        self.assertNotIn("hermes-ask-ai", h.store.state["streaks"])
+        self.assertEqual(db.writes[-1][1]["check_id"], "convex-deployments")
+        self.assertEqual(db.writes[-1][1]["status"], "resolved")
+        again = h.scan(fakes.NOW + timedelta(minutes=10))
+        self.assertEqual(again.resolved, [])
+
+    def test_a_registered_check_is_never_retired(self):
+        b = Box("hermes-ask-ai", fixable=False)
+        h = Harness([b.check])
+        b.result = fail("stuck")
+        h.scan()
+        h.scan(fakes.NOW + timedelta(minutes=5))
+        self.assertIn("hermes-ask-ai", h.store.open)
 
 
 if __name__ == "__main__":

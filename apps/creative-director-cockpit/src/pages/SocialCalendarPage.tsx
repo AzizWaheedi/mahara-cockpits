@@ -297,25 +297,40 @@ export function SocialCalendarPage() {
   const [picked, setPicked] = useState<string | null>(null);
   const agenda = useRef<HTMLElement>(null);
 
+  const [loadError, setLoadError] = useState<string | null>(null);
+
   const loadClients = useCallback(async () => {
-    const out = (await roster({})) as { clients: Client[] };
-    const list = out.clients ?? [];
-    setClients(list);
-    setClientId(cur => {
-      if (cur && list.some(c => c.taskId === cur && c.active)) return cur;
-      return list.find(c => c.active)?.taskId ?? "";
-    });
+    try {
+      const out = (await roster({})) as { clients: Client[] };
+      const list = out.clients ?? [];
+      setLoadError(null);
+      setClients(list);
+      setClientId(cur => {
+        if (cur && list.some(c => c.taskId === cur && c.active)) return cur;
+        return list.find(c => c.active)?.taskId ?? "";
+      });
+    } catch (e) {
+      // Said, never shown as an empty list of clients.
+      setLoadError(message(e));
+    }
   }, [roster]);
 
   const loadMonth = useCallback(async () => {
     if (!clientId) return;
-    const out = (await batch({
-      clientTaskId: clientId,
-      month,
-    })) as unknown as { posts: Post[]; jobs?: Job[]; health?: Health[] };
-    setPosts(out.posts ?? []);
-    setJobs(out.jobs ?? []);
-    setHealth(out.health ?? []);
+    try {
+      const out = (await batch({
+        clientTaskId: clientId,
+        month,
+      })) as unknown as { posts: Post[]; jobs?: Job[]; health?: Health[] };
+      setPosts(out.posts ?? []);
+      setJobs(out.jobs ?? []);
+      setHealth(out.health ?? []);
+    } catch (e) {
+      // One toast, replaced while the ten-second look keeps failing.
+      toast.error(`The month did not load: ${message(e)}`, {
+        id: "social-month-load",
+      });
+    }
   }, [batch, clientId, month]);
 
   useEffect(() => {
@@ -419,6 +434,13 @@ export function SocialCalendarPage() {
       await loadMonth();
     }
   }
+
+  if (clients === null && loadError)
+    return (
+      <p role="alert" className="py-8 text-sm txt-bad">
+        The client list did not load: {loadError} Reload the page to try again.
+      </p>
+    );
 
   if (clients === null)
     return (

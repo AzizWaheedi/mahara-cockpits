@@ -200,7 +200,7 @@ CHECKS = [
         means="The sales cockpit's copy of the CRM refreshes every 3 minutes.",
         severity="high", reads="cockpit_sales_mirror_runs (newest 10)",
         threshold="Newest run older than 15 min (urgent), or 3 failures in a row: fail.", run=run_mirror,
-        quiet_because="convex-sales-watch", owner="Hermes",
+        owner="Hermes",
         action="Read the failing step in the run's error; a 401 means a secret changed (B2B, HighLevel or the vault).",
     ),
     Check(

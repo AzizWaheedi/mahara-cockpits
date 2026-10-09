@@ -58,7 +58,8 @@ function message(e: unknown): string {
 }
 
 function when(iso: string | null): string {
-  if (!iso) return "never";
+  // Null means no Page carries a time Salma wrote, so nobody knows.
+  if (!iso) return "not known";
   return new Date(iso).toLocaleString("en-GB", {
     day: "numeric",
     month: "short",

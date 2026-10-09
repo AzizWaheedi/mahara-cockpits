@@ -1591,7 +1591,9 @@ function PitchTimes({ room }: { room: Room }) {
             pitch1Min: minute(one),
             pitch2Min: minute(two),
           });
-          setSaid("Pitch times saved. The numbers update within a minute.");
+          setSaid(
+            "Pitch times saved. The numbers use them from the next CEO refresh.",
+          );
         } catch (err) {
           setError(errorText(err));
         } finally {

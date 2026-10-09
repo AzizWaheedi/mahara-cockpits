@@ -59,7 +59,9 @@ FILES_BY_CHECK = (
     (r"^site-editor", ["apps/video-editor-cockpit/"]),
     (r"^site-client", ["apps/client-success-cockpit/"]),
     (r"^site-creative$", ["apps/creative-director-cockpit/"]),
-    (r"^site-(cockpit|ceo|media)|^convex-|^hermes-ask", ["apps/media-buyer-cockpit/convex/", "apps/media-buyer-cockpit/src/"]),
+    (r"^site-(cockpit|ceo|media)", ["apps/media-buyer-cockpit/src/"]),
+    (r"^ceo-sections|^native-jobs|^native-sources", ["hermes/ceo-refresh/", "hermes/media-native/"]),
+    (r"^ask-ai-queue", ["hermes/cockpit-ask-ai/"]),
     (r"^site-webinar", ["sites/webinar/"]),
     (r"^live-", ["supabase/migrations/20261003a_sales_rooms.sql (live-calls branch)", "hermes/sales-desk/desk/rooms.py (live-calls branch)"]),
     (r"^vps-|^log-|^keys-|^key-", ["hermes/cockpit-guardian/", "RUNBOOK.md"]),
@@ -67,7 +69,7 @@ FILES_BY_CHECK = (
 )
 RUNBOOK_WORDS = {
     "claude-": "Sales desk", "desk-": "Sales desk", "salma": "Salma", "webinar": "Webinar pull", "editor": "Editor desk", "radar": "Ideation radar",
-    "team-": "Team meetings", "sales-": "Sales cockpit", "convex": "Watchdog", "site-": "Shipping a fix",
+    "team-": "Team meetings", "sales-": "Sales cockpit", "ceo-sections": "What to do, by system", "native-": "What to do, by system", "ask-ai": "What to do, by system", "site-": "Shipping a fix",
     "queue-": "Scheduled jobs", "vps-": "How you find out",
 }
 

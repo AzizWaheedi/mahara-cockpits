@@ -17,7 +17,8 @@ test('refuses unauthenticated calls before any network or worker execution', asy
 });
 
 test('doctor reports disabled, never claims or calls Google, and gives explicit dependency', async () => {
-  config(); delete process.env.TEAM_CALENDAR_WRITES_ENABLED;
+  config(); process.env.GOOGLE_CLIENT_ID='id'; process.env.GOOGLE_CLIENT_SECRET='secret'; process.env.GOOGLE_REFRESH_TOKEN='refresh';
+  delete process.env.TEAM_CALENDAR_WRITES_ENABLED;
   const calls: string[] = [];
   globalThis.fetch = async (input, init) => {const url = String(input); calls.push(url); assert.match(url, /cockpit_team_calendar_report$/); assert.equal(init?.method, 'POST'); return new Response(null, {status:204});};
   const response = await handler(request('?mode=doctor'));
@@ -36,9 +37,13 @@ test('cron remains inert without explicit reviewed enablement', async () => {
   assert.equal(response.status, 503); assert.equal(calls, 1);
 });
 
-test('no Vercel sender cron is activated before its production secrets are configured', () => {
+// Convex's teamCalendar.drain ran every minute. The cron only reports readiness
+// until a person sets TEAM_CALENDAR_WRITES_ENABLED=true (see the inert test above).
+test('the Vercel cron calls the sender every minute with room for one Google round trip', () => {
   const config=JSON.parse(readFileSync(new URL('../vercel.json', import.meta.url),'utf8'));
-  assert.ok(!config.crons.some((c: {path:string}) => c.path.startsWith('/api/team-calendar')));
+  const crons=config.crons.filter((c: {path:string}) => c.path.startsWith('/api/team-calendar'));
+  assert.deepEqual(crons, [{path:'/api/team-calendar', schedule:'* * * * *'}]);
+  assert.equal(config.functions['api/team-calendar.ts'].maxDuration, 60);
 });
 
 test('runtime permits recurrence read-back instances', async () => {
