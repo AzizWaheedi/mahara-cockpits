@@ -19,6 +19,7 @@ import {
   type Campaign,
   cardFor,
   changeComment,
+  CLIENTS_LIST,
   decisionComment,
   DEPARTMENT_LIST,
   FIELD,
@@ -29,6 +30,7 @@ import {
   TECH_REQUEST_TYPE,
 } from "./rules.ts";
 import { dropdownLabel, optionId } from "./kpi.ts";
+import { billingRequest, billingSteps, billingVerdict, cardValue, VERDICT_NOTE } from "./billing.ts";
 
 export interface Provider {
   call(provider: "meta" | "clickup", method: string, path: string, body?: Row): Promise<Row>;
@@ -38,11 +40,14 @@ export type Step =
   | { key: string; type: "comment"; taskId: string; text: string }
   | { key: string; type: "create_task"; listId: string; body: Row; marker: string }
   | { key: string; type: "field"; taskId: string; fieldId: string; field: string; value: unknown }
-  | { key: string; type: "ad_status"; taskId: string; metaCampaignId: string };
+  | { key: string; type: "ad_status"; taskId: string; metaCampaignId: string }
+  // A cockpit billing edit on a Clients - Mahara card (billing.ts). value null clears the field;
+  // old is the mirror's value before the edit, when the event recorded it; at is the edit time (ms).
+  | { key: string; type: "billing_field"; taskId: string; fieldId: string; field: string; format: "dropdown" | "date" | "number"; value: string | number | null; old?: string | number | null; at: number };
 
 export type QueueItem = {
   id: string;
-  kind: "decision" | "manual_change" | "provider_action" | "tracking_backlog";
+  kind: "decision" | "manual_change" | "provider_action" | "tracking_backlog" | "billing";
   payload: Row;
   attempts: number;
   created_at: string;
@@ -94,6 +99,7 @@ export function buildSteps(item: QueueItem, campaigns: Campaign[], now: number):
       }],
     };
   }
+  if (item.kind === "billing") return billingSteps(item);
   if (item.source_exists === false) return { skip: "The cockpit entry was removed before it reached ClickUp, so nothing was posted." };
   if (item.kind === "decision") {
     const subject = String(p.subject ?? "");
@@ -134,7 +140,7 @@ export function buildSteps(item: QueueItem, campaigns: Campaign[], now: number):
         listId: dest.id,
         marker,
         body: {
-          name: `${card.campaign?.clientName ?? subject} — ${p.action}`,
+          name: `${card.campaign?.clientName ?? subject} - ${p.action}`,
           markdown_description: `${description}\n\n${marker}`,
           status: "to do",
           tags: tag ? [tag] : [],
@@ -195,16 +201,54 @@ async function adStatusMove(step: Extract<Step, { type: "ad_status" }>, provider
   return { current, target, option, metaStatus: live.status };
 }
 
+/** One read of a card per item: the billing steps all check the same card. */
+function cardReader(provider: Provider) {
+  const cards = new Map<string, Promise<Row>>();
+  return (taskId: string) => {
+    let card = cards.get(taskId);
+    if (!card) cards.set(taskId, (card = provider.call("clickup", "GET", `task/${taskId}`)));
+    return card;
+  };
+}
+const NOT_ON_CLIENTS = "That card is not on the Clients - Mahara list.";
+
 /** What the item would write, for the dry-run review. Reads only. */
-export async function planItem(item: QueueItem, steps: Step[], provider: Provider, boardFields: () => Promise<Row[]>): Promise<Planned[]> {
+export async function planItem(
+  item: QueueItem,
+  steps: Step[],
+  provider: Provider,
+  boardFields: () => Promise<Row[]>,
+  clientFields: () => Promise<Row[]> = listFieldsLoader(provider, CLIENTS_LIST),
+): Promise<Planned[]> {
   const out: Planned[] = [];
+  const readCard = cardReader(provider);
   for (const step of steps) {
     const base = { queueId: item.id, kind: item.kind };
     if (step.type === "comment") out.push({ ...base, taskId: step.taskId, field: "comment", old: null, new: step.text });
     else if (step.type === "create_task")
       out.push({ ...base, taskId: null, field: `new task on list ${step.listId}`, old: null, new: { name: step.body.name, description: step.body.markdown_description ?? step.body.description, tags: step.body.tags } });
     else if (step.type === "field") out.push({ ...base, taskId: step.taskId, field: step.field, fieldId: step.fieldId, old: null, new: step.value });
-    else {
+    else if (step.type === "billing_field") {
+      const entry = { ...base, taskId: step.taskId, field: step.field, fieldId: step.fieldId, new: step.value };
+      try {
+        const card = await readCard(step.taskId);
+        const fields = await clientFields();
+        const now = cardValue(card, step.fieldId, step.format, fields);
+        const verdict = billingVerdict(step, card, now, false);
+        let note: string | undefined = verdict === "write" ? undefined : VERDICT_NOTE[verdict];
+        if (String(card.list?.id ?? "") !== CLIENTS_LIST) note = NOT_ON_CLIENTS;
+        else if (verdict === "write") {
+          try {
+            billingRequest(step, fields);
+          } catch (e) {
+            note = String(e instanceof Error ? e.message : e);
+          }
+        }
+        out.push({ ...entry, old: now, ...(note ? { note } : {}) });
+      } catch (e) {
+        out.push({ ...entry, old: null, note: `Could not read the card: ${String(e instanceof Error ? e.message : e).slice(0, 160)}` });
+      }
+    } else {
       try {
         const move = await adStatusMove(step, provider, boardFields);
         out.push({ ...base, taskId: step.taskId, field: "Ad Status", fieldId: FIELD.adStatus, old: move.current ?? null, new: move.target ?? move.current ?? null, note: move.target ? (move.option ? `Meta says ${move.metaStatus}.` : `No "${move.target}" option on the Ad Status column.`) : `Meta says ${move.metaStatus}; the card already agrees.` });
@@ -217,7 +261,8 @@ export async function planItem(item: QueueItem, steps: Step[], provider: Provide
 }
 
 export type Outcome = {
-  state: "delivered" | "retry" | "unknown" | "failed";
+  /** skipped: every billing field had changed in ClickUp after the cockpit edit, so nothing was written. */
+  state: "delivered" | "skipped" | "retry" | "unknown" | "failed";
   progress: Record<string, Row>;
   error?: string;
   /** Whether the failure means the whole run should stop (a missing secret). */
@@ -235,8 +280,12 @@ export async function executeItem(
   provider: Provider,
   save: (progress: Record<string, Row>) => Promise<void>,
   boardFields: () => Promise<Row[]>,
+  clientFields: () => Promise<Row[]> = listFieldsLoader(provider, CLIENTS_LIST),
 ): Promise<Outcome> {
   const progress: Record<string, Row> = { ...(item.progress ?? {}) };
+  const readCard = cardReader(provider);
+  // An earlier attempt already wrote to the card, so its newer date_updated is ours, not a person's.
+  const ownWrites = Object.values(progress).some(p => p?.started || p?.written);
   for (const step of steps) {
     if (progress[step.key]?.done) continue;
     const resumed = Boolean(progress[step.key]?.started);
@@ -277,6 +326,22 @@ export async function executeItem(
         const taskId = resolveTask(step.taskId, progress);
         await provider.call("clickup", "POST", `task/${taskId}/field/${step.fieldId}`, { value: step.value });
         progress[step.key] = { done: true };
+      } else if (step.type === "billing_field") {
+        // Read the card before writing: setting a value twice is harmless, but a newer ClickUp value wins.
+        const card = await readCard(step.taskId);
+        if (String(card.list?.id ?? "") !== CLIENTS_LIST) throw new Error(NOT_ON_CLIENTS);
+        const fields = await clientFields();
+        const now = cardValue(card, step.fieldId, step.format, fields);
+        const verdict = billingVerdict(step, card, now, ownWrites);
+        if (verdict === "write") {
+          const request = billingRequest(step, fields);
+          progress[step.key] = { started: true };
+          await save(progress);
+          await provider.call("clickup", request.method, `task/${step.taskId}/field/${step.fieldId}`, request.body);
+          progress[step.key] = { done: true, written: true, from: now, to: step.value };
+        } else {
+          progress[step.key] = { done: true, [verdict]: true, current: now, note: VERDICT_NOTE[verdict] };
+        }
       } else {
         const move = await adStatusMove(step, provider, boardFields);
         if (move.target && move.option) {
@@ -307,7 +372,21 @@ export async function executeItem(
       return { state: "failed", progress, error };
     }
   }
+  if (item.kind === "billing" && steps.every(s => progress[s.key]?.stale))
+    return { state: "skipped", progress, error: "ClickUp changed this card after the cockpit edit, so nothing was written and ClickUp's values stay." };
   return { state: "delivered", progress };
+}
+
+/** A list's field definitions, read once per run when a step needs an option id. */
+export function listFieldsLoader(provider: Provider, listId: string) {
+  let cached: Promise<Row[]> | undefined;
+  return () => {
+    cached ??= provider.call("clickup", "GET", `list/${listId}/field`).then(r => {
+      if (!Array.isArray(r.fields)) throw new Error(`ClickUp did not return the fields of list ${listId}`);
+      return r.fields as Row[];
+    });
+    return cached;
+  };
 }
 
 /** The board's field definitions, read once per run when a step needs an option id. */

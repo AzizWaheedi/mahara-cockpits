@@ -4,7 +4,8 @@
 // Jobs (POST body {"job": ...}), each started by pg_cron with the shared
 // secret from the vault (migration 20261009f_clickup_writeback_native.sql):
 //   kpi       hourly at :05, 03-18 UTC  board KPI columns (convex writeback.pushMetrics)
-//   log       every 2 minutes           decision / change comments and Ad Status moves
+//   log       every 2 minutes           decision / change comments, Ad Status moves and
+//                                       cockpit billing edits on Clients - Mahara cards (billing.ts, 20261009j)
 //   dosdonts  hourly at :35, 03-18 UTC  Do's & Don'ts clean format (convex dosDonts.tidyClient)
 //   doctor    on demand                 secrets present (names only) and queue health
 //

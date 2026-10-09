@@ -166,16 +166,22 @@ Deno.serve(async (req: Request) => {
     seen = tasks.length;
 
     const since = new Date(now.getTime() - EVENT_LOOKBACK_DAYS * 86_400_000).toISOString();
-    const [existing, events] = (await Promise.all([
+    const [existing, events, waitingItems] = (await Promise.all([
       db("cockpit_billing_accounts?select=*"),
       db(
-        "cockpit_billing_events?select=clickup_task_id,kind,from_value,to_value,detail,source,at" +
+        "cockpit_billing_events?select=id,clickup_task_id,kind,from_value,to_value,detail,source,at" +
           "&source=in.(ceo,csm,maher)&kind=in.(method,plan,amount,date,extension,pause,resume,payment)" +
           `&at=gte.${encodeURIComponent(since)}&order=at.desc&limit=5000`,
       ),
-    ])) as [Row[], Row[]];
+      // Edits whose ClickUp write-back (clickup-writeback, 20261009j) has not landed: held whatever the card's clock says.
+      db(
+        "cockpit_clickup_writeback_queue?select=source_id&kind=eq.billing" +
+          "&state=in.(queued,sending,retry,unknown,dry_run)&limit=5000",
+      ),
+    ])) as [Row[], Row[], Row[]];
+    const waiting = new Set((waitingItems ?? []).map(r => String(r.source_id)));
 
-    const plan = planMirror(tasks, options, existing ?? [], events ?? [], nowIso);
+    const plan = planMirror(tasks, options, existing ?? [], events ?? [], nowIso, waiting);
     const days = billingDays(tasks, options, now.getTime());
     const missing = missingFields(options);
     const problem = readProblem({
@@ -192,6 +198,7 @@ Deno.serve(async (req: Request) => {
       cards: plan.rows.length,
       changed: plan.changed.slice(0, 200),
       held: plan.held.slice(0, 200),
+      waitingWriteBacks: waiting.size,
       kept: plan.kept.slice(0, 200),
       notOnList: plan.notOnList.slice(0, 200),
       unread: plan.unread,

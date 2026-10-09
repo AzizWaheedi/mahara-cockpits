@@ -11,7 +11,11 @@
 //      - A value is never blanked because ClickUp returned nothing for it.
 //      - A field a person changed in a cockpit (a cockpit_billing_events row
 //        from ceo, csm or maher) is kept until the card itself changes after
-//        that edit. ClickUp's date_updated is the only clock it has.
+//        that edit. ClickUp's date_updated is the only clock it has. While
+//        the edit's ClickUp write-back (clickup-writeback, migration
+//        20261009j) is queued, in flight, retrying or a dry run, the edit is
+//        kept whatever the clock says; once it is delivered, the clock rule
+//        applies again.
 //      - A card the read did not return is left alone, never deleted.
 //
 // 2. ceoClientBilling (apps/media-buyer-cockpit/convex/ceo/billing.ts
@@ -271,19 +275,26 @@ export function columnsOf(e: Any): Column[] {
   }
 }
 
-export type Edits = Map<Column, { at: number; source: Source }>;
+/** waiting: an edit to this column still has its ClickUp write-back pending or held as a dry run. */
+export type Edits = Map<Column, { at: number; source: Source; waiting?: true }>;
 
-/** The newest cockpit edit per card and column: when (epoch ms) and from which cockpit. */
-export function humanEdits(events: Any[]): Map<string, Edits> {
+/**
+ * The newest cockpit edit per card and column: when (epoch ms) and from which
+ * cockpit. `waiting` holds the ids of events whose ClickUp write-back is not
+ * delivered yet (queue states queued, sending, retry, unknown, dry_run).
+ */
+export function humanEdits(events: Any[], waiting?: Set<string>): Map<string, Edits> {
   const out = new Map<string, Edits>();
   for (const e of events) {
     const at = Date.parse(String(e?.at ?? ""));
     const task = String(e?.clickup_task_id ?? "");
     if (!task || !Number.isFinite(at)) continue;
+    const pending = waiting?.has(String(e?.id)) === true;
     for (const c of columnsOf(e)) {
       const m: Edits = out.get(task) ?? new Map();
       const prev = m.get(c);
-      if (!prev || at > prev.at) m.set(c, { at, source: e.source as Source });
+      const next = !prev || at > prev.at ? { at, source: e.source as Source } : { at: prev.at, source: prev.source };
+      m.set(c, pending || prev?.waiting ? { ...next, waiting: true } : next);
       out.set(task, m);
     }
   }
@@ -315,8 +326,8 @@ export type Merge = {
  *
  * `edits` is this card's newest cockpit edit per column; `cardUpdatedMs` is
  * the card's date_updated. A column edited in a cockpit at or after the
- * card's last change keeps the mirror's value (nothing has written that edit
- * to ClickUp since Convex stopped).
+ * card's last change keeps the mirror's value, and so does a column whose
+ * edit is still waiting for its ClickUp write-back (`edits` marks it waiting).
  *
  * Paused On is read with the status, not on its own: when ClickUp's status
  * was read, an empty Paused On is a real reading. Keeping an old pause date
@@ -336,9 +347,10 @@ export function mergeAccount(
   const kept: string[] = [];
   const held: Merge["held"] = [];
   // No card clock is no evidence the card moved on: keep the person's edit.
+  // Nor is a clock that moved while the edit's ClickUp write still waits.
   const isHeld = (c: Column) => {
     const e = edits?.get(c);
-    return e !== undefined && (cardUpdatedMs === null || e.at >= cardUpdatedMs);
+    return e !== undefined && (e.waiting === true || cardUpdatedMs === null || e.at >= cardUpdatedMs);
   };
   const hold = (c: Column, mirror: unknown, card: unknown) => {
     if (!same(mirror, card)) held.push({ column: c, mirror: mirror ?? null, card });
@@ -395,9 +407,10 @@ export function planMirror(
   existing: Any[],
   events: Any[],
   nowIso: string,
+  waiting?: Set<string>,
 ): MirrorPlan {
   const byId = new Map(existing.map(r => [String(r.clickup_task_id), r]));
-  const edits = humanEdits(events);
+  const edits = humanEdits(events, waiting);
   const plan: MirrorPlan = { rows: [], changed: [], kept: [], held: [], notOnList: [], unread: [], internal: 0 };
   const seen = new Set<string>();
   for (const t of tasks) {

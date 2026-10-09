@@ -12,6 +12,7 @@ import {
   isChange,
   kpiBand,
   money,
+  plain,
   refLine,
 } from "./rules";
 
@@ -23,15 +24,23 @@ describe("parity with the paused Convex code", () => {
     for (const [v, label] of GOLDEN.kpiBandCpl) expect(kpiBand(v, CPL_GATE)).toBe(label);
     for (const [v, label] of GOLDEN.kpiBandCpb) expect(kpiBand(v, CPB_GATE)).toBe(label);
   });
+  // The only intended difference: em dashes become hyphens (plain), per the house style.
   it("formats money the same way", () => {
-    for (const [v, s] of GOLDEN.money) expect(money(v ?? undefined)).toBe(s);
+    for (const [v, s] of GOLDEN.money) expect(money(v ?? undefined)).toBe(plain(s));
   });
-  it("writes the decision comment byte for byte", () => {
-    for (const [d, text] of GOLDEN.decisionComment) expect(decisionComment(d as any)).toBe(text);
+  it("writes the decision comment byte for byte, em dashes aside", () => {
+    for (const [d, text] of GOLDEN.decisionComment) expect(decisionComment(d as any)).toBe(plain(text));
   });
-  it("writes the change comment byte for byte, including the late-post rule", () => {
+  it("writes the change comment byte for byte, including the late-post rule, em dashes aside", () => {
     const now = Date.parse("2026-10-09T09:00:00Z");
-    for (const [m, text] of GOLDEN.changeComment) expect(changeComment(m as any, now)).toBe(text);
+    for (const [m, text] of GOLDEN.changeComment) expect(changeComment(m as any, now)).toBe(plain(text));
+  });
+  it("never writes an em dash and keeps the cockpit marker", () => {
+    for (const [d] of GOLDEN.decisionComment) {
+      const text = decisionComment(d as any);
+      expect(text.includes("—")).toBe(false);
+      expect(text.startsWith("🎯 Cockpit · ")).toBe(true);
+    }
   });
   it("treats questions and requests as not changes", () => {
     for (const [t, v] of GOLDEN.isChange) expect(isChange(t)).toBe(v);

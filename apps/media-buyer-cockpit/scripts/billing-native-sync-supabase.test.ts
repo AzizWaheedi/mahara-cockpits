@@ -40,6 +40,23 @@ function extract(file: string, pattern: RegExp): string {
   return hit[0];
 }
 
+/**
+ * The ClickUp writeback queue as 20261009f made it (its other tables, triggers and
+ * schedules need the media tables and pg_cron), then 20261009j's billing write-back.
+ */
+function billingWriteback(): string {
+  const f = "20261009f_clickup_writeback_native.sql";
+  return [
+    extract(f, /CREATE TABLE IF NOT EXISTS public\.cockpit_clickup_writeback_queue\([\s\S]*?\n\);/),
+    "ALTER TABLE public.cockpit_clickup_writeback_queue ENABLE ROW LEVEL SECURITY;",
+    "REVOKE ALL ON public.cockpit_clickup_writeback_queue FROM PUBLIC,anon,authenticated;",
+    "GRANT SELECT,INSERT,UPDATE ON public.cockpit_clickup_writeback_queue TO service_role;",
+    extract(f, /CREATE OR REPLACE FUNCTION public\.cockpit_clickup_writeback_audit\(\)[\s\S]*?END \$\$;/),
+    extract(f, /DROP TRIGGER IF EXISTS cockpit_clickup_writeback_queue_audit_insert[\s\S]*?EXECUTE FUNCTION public\.cockpit_clickup_writeback_audit\(\);/),
+    migration("20261009j_billing_clickup_writeback.sql"),
+  ].join("\n");
+}
+
 async function fixture(historyReady = true) {
   const db = await cockpitTestDb();
   await db.exec(
@@ -69,6 +86,7 @@ async function fixture(historyReady = true) {
   await db.exec(migration("20260927d_cockpit_manual_payments_access.sql"));
   await db.exec(migration("20260927h_cockpit_ceo_actions.sql"));
   await db.exec(nativeSync());
+  await db.exec(billingWriteback());
 
   await member(db, CEO, "aziz@maharamedia.com", []);
   await member(db, CSM, "sara@tests.invalid", ["csm"]);
@@ -469,6 +487,134 @@ test("the inbox waits while the manual payment history is not reconciled", async
       pending: 1,
     });
     expect((await rows(db, "SELECT status FROM cockpit_billing_inbox"))[0].status).toBe("pending");
+  } finally {
+    await db.close();
+  }
+});
+
+// 20261009j: the ClickUp write-back of every cockpit billing change.
+const QUEUED = `SELECT e.kind AS event, e.source, q.kind, q.state, q.dedupe_key = 'billing:' || e.id AS keyed, q.source_table, q.task_id, q.payload
+  FROM cockpit_clickup_writeback_queue q JOIN cockpit_billing_events e ON e.id::text = q.source_id ORDER BY e.id`;
+/** billing-sync's read of the write-backs that have not landed (supabase/functions/billing-sync/index.ts). */
+const WAITING = "SELECT source_id FROM cockpit_clickup_writeback_queue WHERE kind='billing' AND state IN ('queued','sending','retry','unknown','dry_run')";
+
+test("each card change queues its ClickUp write-back with billingCore's writes, in the same transaction", async () => {
+  const { db, client, today } = await fixture();
+  try {
+    // The migration can be applied twice.
+    await owner(db);
+    await db.exec(migration("20261009j_billing_clickup_writeback.sql"));
+    const before = addDays(today, 10);
+    await actor(db, CSM);
+    const edit = (e: Record<string, unknown>) => csm.editBillingAccount(client, "", { taskId: "task_a", edit: e as never });
+    await edit({ kind: "method", value: "Tap link" });
+    await edit({ kind: "amount", value: 1750.5 });
+    await edit({ kind: "extension", weeks: 2, reason: "Bank holiday delay", ours: true, moveDate: true });
+    await edit({ kind: "extension", weeks: 1, reason: "Short delay", ours: false, moveDate: false });
+    await edit({ kind: "pause", reason: "Client asked to pause" });
+    await edit({ kind: "resume", nextDate: addDays(today, 30) });
+    await edit({ kind: "note", text: "Called, all fine" });
+    // A refused edit saves nothing and queues nothing.
+    await refusal(edit({ kind: "method", value: "Cash" }));
+
+    const queued = await rows(db, QUEUED);
+    expect(queued.map(q => [q.event, q.kind, q.state, q.keyed, q.source_table, q.task_id])).toEqual(
+      ["method", "amount", "extension", "extension", "pause", "resume", "note"].map(e => [e, "billing", "queued", true, "cockpit_billing_events", "task_a"]),
+    );
+    expect(queued.map(q => (q.payload as { writes: unknown }).writes)).toEqual([
+      [{ field: "method", value: "Tap link", old: "Bank transfer" }],
+      [{ field: "nextAmount", value: 1750.5, old: 1500 }],
+      [{ field: "extension", value: 2 }, { field: "nextDate", value: addDays(before, 14), old: before }],
+      [{ field: "extension", value: 1 }],
+      [{ field: "status", value: "Paused", old: "Active" }, { field: "pausedOn", value: today }],
+      [{ field: "status", value: "Active", old: "Paused" }, { field: "pausedOn", value: null }, { field: "nextDate", value: addDays(today, 30) }],
+      [],
+    ]);
+    expect(queued[6].payload).toMatchObject({ kind: "note", note: "Called, all fine", by: "sara@tests.invalid", source: "csm", taskId: "task_a", clientName: "Acme" });
+    expect(typeof (queued[0].payload as { at: unknown }).at).toBe("number");
+    // Each queued item leaves an audit row, as every other writeback item does.
+    expect((await rows(db, "SELECT count(*)::int AS n FROM cockpit_audit_log WHERE entity_type='cockpit_clickup_writeback_queue' AND action='insert:queued'"))[0].n).toBe(7);
+    // The browser never reads or writes the queue.
+    await actor(db, CSM);
+    await expect(db.query("SELECT id FROM cockpit_clickup_writeback_queue")).rejects.toThrow(/permission denied/);
+    await expect(db.query("SELECT cockpit_billing_writeback_writes('method',NULL,'Check','{}')")).rejects.toThrow(/permission denied/);
+  } finally {
+    await db.close();
+  }
+});
+
+test("a payment queues a write only when it moves the next date; the inbox and a payer tie queue nothing", async () => {
+  const { db, client, today } = await fixture();
+  try {
+    await actor(db, CEO);
+    await logBillingPayment(client, "", { account: acme(), day: today, amount: 100, currency: "USD", rail: "cash" }, "ceo");
+    await logBillingPayment(client, "", { account: acme(), day: today, amount: 200, currency: "USD", rail: "cash", nextDate: addDays(today, 40) }, "ceo");
+    await assignBillingPayer(client, "", { payer: "Abdullah Al-Hussaini", taskId: "task_a", clientName: "Acme", usd: 10, count: 1 });
+    await actor(db, CSM);
+    await csm.logBillingPayment(client, "", { account: acme(), day: today, amount: 50, currency: "USD", rail: "cash", nextDate: addDays(today, 70) });
+    await serviceRole(db);
+    expect((await db.query<{ r: Record<string, unknown> }>("SELECT cockpit_billing_ingest_inbox(true) AS r")).rows[0].r).toMatchObject({ ingested: 1 });
+
+    expect((await rows(db, QUEUED)).map(q => [q.event, q.source, (q.payload as { writes: unknown }).writes])).toEqual([
+      ["payment", "ceo", [{ field: "nextDate", value: addDays(today, 40), old: addDays(today, 10) }]],
+      ["date", "csm", [{ field: "nextDate", value: addDays(today, 70), old: addDays(today, 40) }]],
+    ]);
+    expect((await rows(db, "SELECT kind, count(*)::int AS n FROM cockpit_billing_events GROUP BY kind ORDER BY kind"))).toEqual([
+      { kind: "assign", n: 1 },
+      { kind: "date", n: 1 },
+      { kind: "payment", n: 3 },
+    ]);
+  } finally {
+    await db.close();
+  }
+});
+
+test("an edit that cannot be queued for ClickUp is not saved either", async () => {
+  const { db, client } = await fixture();
+  try {
+    await owner(db);
+    await db.exec("ALTER TABLE cockpit_clickup_writeback_queue ADD CONSTRAINT test_refuses_billing CHECK (kind <> 'billing')");
+    await actor(db, CSM);
+    const refused = await refusal(csm.editBillingAccount(client, "", { taskId: "task_a", edit: { kind: "method", value: "Tap link" } }));
+    expect(JSON.stringify({ message: refused.message, data: refused.data })).toContain("test_refuses_billing");
+    expect((await rows(db, "SELECT payment_method FROM cockpit_billing_accounts WHERE clickup_task_id='task_a'"))[0].payment_method).toBe("Bank transfer");
+    expect((await rows(db, "SELECT count(*)::int AS n FROM cockpit_billing_events"))[0].n).toBe(0);
+    expect((await rows(db, "SELECT count(*)::int AS n FROM cockpit_audit_log WHERE action LIKE 'billing.%'"))[0].n).toBe(0);
+  } finally {
+    await db.close();
+  }
+});
+
+test("billing-sync holds a cockpit edit while its write-back waits, and lets ClickUp back in once it is delivered", async () => {
+  const { db, client } = await fixture();
+  try {
+    await actor(db, CSM);
+    await csm.editBillingAccount(client, "", { taskId: "task_a", edit: { kind: "method", value: "Tap link" } });
+    const methodAfterSync = async () => {
+      await serviceRole(db);
+      const waiting = new Set((await db.query<{ source_id: string }>(WAITING)).rows.map(r => String(r.source_id)));
+      await owner(db);
+      const existing = (await db.query<Record<string, unknown>>("SELECT * FROM cockpit_billing_accounts")).rows;
+      const events = (await db.query<Record<string, unknown>>("SELECT id,clickup_task_id,kind,from_value,to_value,detail,source,at FROM cockpit_billing_events")).rows;
+      // Somebody touched the card in ClickUp a minute after the edit; its method there is still Bank transfer.
+      const card = { ...task("task_a", "Acme", 1), date_updated: String(Date.now() + 60_000) };
+      const plan = planMirror(
+        [card],
+        OPTIONS,
+        existing.map(r => ({ ...r, synced_at: new Date(r.synced_at as Date).toISOString() })),
+        events.map(e => ({ ...e, at: new Date(e.at as Date).toISOString() })),
+        new Date().toISOString(),
+        waiting,
+      );
+      return plan.rows[0].row.payment_method;
+    };
+    expect(await methodAfterSync()).toBe("Tap link");
+    await owner(db);
+    await db.exec("UPDATE cockpit_clickup_writeback_queue SET state='dry_run'");
+    expect(await methodAfterSync()).toBe("Tap link");
+    await owner(db);
+    await db.exec("UPDATE cockpit_clickup_writeback_queue SET state='delivered', delivered_at=now()");
+    expect(await methodAfterSync()).toBe("Bank transfer");
   } finally {
     await db.close();
   }

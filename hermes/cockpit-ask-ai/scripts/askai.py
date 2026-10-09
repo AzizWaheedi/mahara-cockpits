@@ -6,13 +6,21 @@ Dedicated queue: public.cockpit_ask_ai_jobs (never creative requests).
 Lifecycle & safety:
   Default mode: DRY_RUN = True. Queue reads are allowed; no database writes or model execution occur without explicit --apply.
 
+Job kinds:
+  chat            a cockpit chat question; answer {"reply": "..."}.
+  comment_digest  one ClickUp client-card comment (comment watch); answer the digest object.
+  call_brief      one client's recorded calls (call briefs); answer {"overall", "perCall"}.
+  Background kinds are claimed only through the kind-aware claim, and only by this worker.
+
 Commands:
   askai.py pending [--limit N] [--apply]
     -> List open Ask AI jobs. If --apply, atomically claims them with lease tokens.
   askai.py claim [--limit N] [--lease-seconds S] [--worker-id W] [--apply]
     -> Atomically claim a batch of open jobs with lease tokens.
-  askai.py result <id> <file> --lease <token> [--worker-id W] [--apply]
+  askai.py result <id> <file> --lease <token> [--kind K] [--worker-id W] [--apply]
     -> Post JSON answer for job <id>. Rejects stale completion if lease expired or token mismatch.
+       --kind comment_digest | call_brief checks the answer against its contract before
+       anything is sent (claim output names the kind and the exact command per job).
   askai.py fail <id> "<reason>" --lease <token> [--worker-id W] [--apply]
     -> Mark job as failed. Rejects stale update if lease expired or token mismatch.
   askai.py health
@@ -34,6 +42,129 @@ import urllib.request
 from typing import Any
 
 KEYS = "/opt/data/bibi/api-keys.env"
+
+CHAT_KIND = "chat"
+SYSTEM_KINDS = ("comment_digest", "call_brief")
+SUPPORTED_KINDS = (CHAT_KIND,) + SYSTEM_KINDS
+DIGEST_LISTS = ("nextSteps", "clientRequests", "risks", "forAds", "forCreative", "dos", "donts")
+
+_LINES = {"type": "array", "items": {"type": "string"}}
+KIND_CONTRACTS: dict[str, dict[str, Any]] = {
+    "comment_digest": {
+        "instruction": (
+            "The prompt holds one comment from a client's ClickUp card and the client's current Do's & Don'ts. "
+            "Write one JSON object with exactly the schema keys: summary (text, empty if nothing useful) and "
+            "nextSteps, clientRequests, risks, forAds, forCreative, dos, donts (lists of short lines, empty when "
+            "there is nothing). Use only what the comment says. Do not post to ClickUp: the cockpit adds the rules."
+        ),
+        "schema": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["summary", *DIGEST_LISTS],
+            "properties": {"summary": {"type": "string"}, **{k: _LINES for k in DIGEST_LISTS}},
+        },
+    },
+    "call_brief": {
+        "instruction": (
+            "The prompt holds the recorded calls one client appears in. Write one JSON object with exactly "
+            "overall (one paragraph, never empty) and perCall (a list of {\"url\", \"brief\"}, one per call that "
+            "says something about this client, each url copied exactly from the prompt). Use only what the summaries say."
+        ),
+        "schema": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["overall", "perCall"],
+            "properties": {
+                "overall": {"type": "string"},
+                "perCall": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": ["url", "brief"],
+                        "properties": {"url": {"type": "string"}, "brief": {"type": "string"}},
+                    },
+                },
+            },
+        },
+    },
+}
+
+
+def _text(value: Any, name: str, low: int, high: int) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{name} must be text")
+    value = value.strip()
+    if not low <= len(value) <= high:
+        raise ValueError(f"{name} must be {low} to {high} characters")
+    return value
+
+
+def _exact_keys(data: Any, keys: tuple[str, ...], name: str) -> dict[str, Any]:
+    if not isinstance(data, dict):
+        raise ValueError(f"{name} must be one JSON object")
+    if set(data) != set(keys):
+        missing = sorted(set(keys) - set(data))
+        extra = sorted(set(data) - set(keys))
+        raise ValueError(
+            f"{name} must have exactly the keys {', '.join(keys)} "
+            f"(missing: {', '.join(missing) or 'none'}; unknown: {', '.join(extra) or 'none'})"
+        )
+    return data
+
+
+def validate_result(kind: str, data: Any) -> dict[str, Any]:
+    """Check a background answer against its contract.
+
+    Returns the answer with whitespace trimmed and blank lines dropped; raises
+    ValueError otherwise. The database checks the same contract again before
+    it accepts the answer.
+    """
+    if kind == "comment_digest":
+        data = _exact_keys(data, ("summary", *DIGEST_LISTS), "A comment digest")
+        out: dict[str, Any] = {"summary": _text(data["summary"], "summary", 0, 2000)}
+        for key in DIGEST_LISTS:
+            items = data[key]
+            if not isinstance(items, list) or any(not isinstance(x, str) for x in items):
+                raise ValueError(f"{key} must be a list of text lines")
+            lines = [x.strip() for x in items if x.strip()]
+            if len(lines) > 20 or any(len(x) > 600 for x in lines):
+                raise ValueError(f"{key} must hold at most 20 lines of at most 600 characters")
+            out[key] = lines
+        return out
+    if kind == "call_brief":
+        data = _exact_keys(data, ("overall", "perCall"), "A call brief")
+        per_call = data["perCall"]
+        if not isinstance(per_call, list) or len(per_call) > 20:
+            raise ValueError("perCall must be a list of at most 20 calls")
+        briefs = []
+        for item in per_call:
+            item = _exact_keys(item, ("url", "brief"), "Each perCall item")
+            briefs.append({"url": _text(item["url"], "url", 1, 2000), "brief": _text(item["brief"], "brief", 1, 2000)})
+        if len({b["url"] for b in briefs}) != len(briefs):
+            raise ValueError("perCall names the same call twice")
+        return {"overall": _text(data["overall"], "overall", 1, 4000), "perCall": briefs}
+    raise ValueError(f"Unknown job kind: {kind}")
+
+
+def answer_with(job: dict[str, Any]) -> dict[str, Any]:
+    """How the model answers one claimed background job, and the exact command that posts it."""
+    kind = str(job.get("kind"))
+    contract = KIND_CONTRACTS[kind]
+    return {
+        "kind": kind,
+        "instruction": contract["instruction"],
+        "schema": contract["schema"],
+        "command": (
+            f"python3 scripts/askai.py result {job.get('id')} <answer.json> --kind {kind} "
+            f"--worker-id <worker-id> --lease <lease_token> --apply"
+        ),
+    }
+
+
+def with_contracts(jobs: list[Any]) -> list[Any]:
+    """Claimed background jobs carry their answer contract; chat jobs are unchanged."""
+    return [{**j, "answer_with": answer_with(j)} if isinstance(j, dict) and j.get("kind") in SYSTEM_KINDS else j for j in jobs]
 
 
 def env() -> dict[str, str]:
@@ -105,10 +236,10 @@ def filter_flags(args: list[str]) -> list[str]:
             continue
         if a in ("--apply", "--dry-run"):
             continue
-        if a in ("--lease", "--worker-id", "--limit", "--lease-seconds"):
+        if a in ("--lease", "--worker-id", "--limit", "--lease-seconds", "--kind"):
             skip_next = True
             continue
-        if any(a.startswith(f"{f}=") for f in ("--lease", "--worker-id", "--limit", "--lease-seconds")):
+        if any(a.startswith(f"{f}=") for f in ("--lease", "--worker-id", "--limit", "--lease-seconds", "--kind")):
             continue
         pos.append(a)
     return pos
@@ -149,6 +280,7 @@ def run_doctor(e: dict[str, str]) -> int:
             "exists": os.path.exists(KEYS),
         },
         "queue_table": "public.cockpit_ask_ai_jobs",
+        "supported_kinds": list(SUPPORTED_KINDS),
         "convex_fallback": "disabled (fail-closed)",
         "default_mode": "dry-run (apply requires --apply)",
     }
@@ -226,7 +358,7 @@ def main(argv: list[str] | None = None) -> int:
             result_payload = {
                 "mode": "dry-run",
                 "notice": "No database modifications performed. Pass --apply to atomically claim jobs.",
-                "candidate_jobs": out if isinstance(out, list) else [],
+                "candidate_jobs": with_contracts(out) if isinstance(out, list) else [],
             }
             print(json.dumps(result_payload, ensure_ascii=False, indent=2))
             return 0
@@ -234,14 +366,20 @@ def main(argv: list[str] | None = None) -> int:
         # Apply mode: call atomic claim RPC
         claim_body = {
             "p_worker_id": worker_id,
+            "p_kinds": list(SUPPORTED_KINDS),
             "p_limit": limit,
             "p_lease_seconds": lease_sec,
         }
         out = call(f"{rest}/rpc/cockpit_claim_ask_ai_jobs", sb_key, claim_body, method="POST")
+        if isinstance(out, dict) and out.get("http") == 404:
+            # The kind-aware claim (migration 20261009i) is not installed yet.
+            # The original claim still answers chat, the only kind it knows.
+            claim_body.pop("p_kinds")
+            out = call(f"{rest}/rpc/cockpit_claim_ask_ai_jobs", sb_key, claim_body, method="POST")
         if not isinstance(out, list) or any(not isinstance(j, dict) or not j.get("id") or not j.get("lease_token") for j in out):
             print(json.dumps({"ok": False, "error": "Claim not confirmed", "detail": out}), file=sys.stderr)
             return 1
-        print(json.dumps(out, ensure_ascii=False, indent=2))
+        print(json.dumps(with_contracts(out), ensure_ascii=False, indent=2))
         return 0
 
     # --- RESULT -----------------------------------------------------------------
@@ -268,6 +406,21 @@ def main(argv: list[str] | None = None) -> int:
         if result_data is None or (isinstance(result_data, (dict, list)) and len(result_data) == 0):
             print(json.dumps({"ok": False, "error": "Result data cannot be empty"}), file=sys.stderr)
             return 2
+
+        kind = parse_flag_value(args, "--kind")
+        if kind is not None and kind not in SUPPORTED_KINDS:
+            print(json.dumps({"ok": False, "error": f"Unknown --kind {kind}. Use one of: {', '.join(SUPPORTED_KINDS)}."}), file=sys.stderr)
+            return 2
+        if kind in SYSTEM_KINDS:
+            try:
+                result_data = validate_result(kind, result_data)
+            except ValueError as exc:
+                print(json.dumps({
+                    "ok": False,
+                    "job_id": job_id,
+                    "error": f"The {kind} answer does not match its contract: {exc}. Fix the answer, or record the failure with the fail command.",
+                }), file=sys.stderr)
+                return 2
 
         if dry_run:
             payload = {

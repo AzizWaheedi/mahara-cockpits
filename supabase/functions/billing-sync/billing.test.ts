@@ -344,3 +344,31 @@ test("the run note says what a dry run would do and how to turn it on", () => {
     /^1 card mirrored, 1 changed; 1 day snapshot; no rate for EUR; inbox waits: manual payment history is not reconciled \(3 payments pending\)$/,
   );
 });
+
+test("an edit whose ClickUp write-back is still waiting stays held; once delivered, the card's clock decides", () => {
+  // The cockpit set Tap link at 07:00; somebody touched the card at 07:30 (a comment, another field).
+  const edit = { id: 41, clickup_task_id: "t1", kind: "method", from_value: "Bank transfer", to_value: "Tap link", source: "csm", at: "2026-10-09T07:00:00Z" };
+  const existing = [mirror({ payment_method: "Tap link", source: "csm" })];
+  const touched = [acme({}, { date_updated: String(Date.parse("2026-10-09T07:30:00Z")) })];
+  // Queued, retrying or a dry run: the write has not reached ClickUp, so the mirror keeps the edit.
+  const waiting = planMirror(touched, options, existing, [edit], NOW_ISO, new Set(["41"]));
+  assert.equal(waiting.rows[0].row.payment_method, "Tap link");
+  assert.equal(waiting.rows[0].row.source, "csm");
+  assert.deepEqual(waiting.held, [{ taskId: "t1", name: "Acme", column: "payment_method", mirror: "Tap link", card: "Bank transfer" }]);
+  // Delivered (no longer waiting) and the card changed after the edit: ClickUp's value is the record again.
+  const delivered = planMirror(touched, options, existing, [edit], NOW_ISO, new Set(["99"]));
+  assert.equal(delivered.rows[0].row.payment_method, "Bank transfer");
+  assert.equal(delivered.rows[0].row.source, "sync");
+  // Delivered, but the card has not changed since the edit: still held by the clock, as before.
+  assert.equal(planMirror([acme()], options, existing, [edit], NOW_ISO, new Set()).rows[0].row.payment_method, "Tap link");
+});
+
+test("a waiting write-back holds the column even when a newer delivered edit is on it", () => {
+  const older = { id: 1, clickup_task_id: "t1", kind: "date", source: "csm", to_value: "2026-10-25", at: "2026-10-09T06:00:00Z" };
+  const newer = { id: 2, clickup_task_id: "t1", kind: "date", source: "ceo", to_value: "2026-10-27", at: "2026-10-09T07:00:00Z" };
+  for (const events of [[older, newer], [newer, older]]) {
+    const edits = humanEdits(events, new Set(["1"]));
+    assert.deepEqual(edits.get("t1")?.get("next_payment_date"), { at: Date.parse("2026-10-09T07:00:00Z"), source: "ceo", waiting: true });
+  }
+  assert.deepEqual(humanEdits([older, newer]).get("t1")?.get("next_payment_date"), { at: Date.parse("2026-10-09T07:00:00Z"), source: "ceo" });
+});

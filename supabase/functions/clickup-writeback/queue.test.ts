@@ -43,7 +43,7 @@ describe("what each log entry writes", () => {
       key: "comment",
       type: "comment",
       taskId: "t1",
-      text: `🎯 Cockpit · CHANGE MADE — Raised budget to $40\n\nCastello Leads\n\nMade by nada@maharamedia.com in the Media Buyer Cockpit on 9 Oct 2026. Three days before this is judged.\n\n${refLine("0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0")}`,
+      text: `🎯 Cockpit · CHANGE MADE - Raised budget to $40\n\nCastello Leads\n\nMade by nada@maharamedia.com in the Media Buyer Cockpit on 9 Oct 2026. Three days before this is judged.\n\n${refLine("0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0")}`,
     }]);
   });
   it("a campaign without its own card logs on the client's card, without moving Ad Status", () => {
@@ -66,11 +66,11 @@ describe("what each log entry writes", () => {
     expect(built.steps.map(s => s.key)).toEqual(["comment", "ticket", "ticket_type", "ticket_notes", "ticket_questions", "ticket_link"]);
     const ticket = built.steps[1] as Extract<Step, { type: "create_task" }>;
     expect(ticket.listId).toBe(DEPARTMENT_LIST.tech.id);
-    expect(ticket.body.name).toBe("Castello Industries — Add qualification questions to the lead form");
+    expect(ticket.body.name).toBe("Castello Industries - Add qualification questions to the lead form");
     expect(ticket.body.markdown_description).toBe(`Requested from the Media Buyer Cockpit.\nCampaign: Castello Leads\nWhy: Junk leads\nNote: Ask budget and timeline\nCampaign task: https://app.clickup.com/t/t1\n\n${ticket.marker}`);
     expect(ticket.body.tags).toEqual(["castello industries"]);
     expect((built.steps[3] as any)).toMatchObject({ taskId: "$ticket", fieldId: TECH_FIELD.additionalNotes, value: "Ask budget and timeline" });
-    expect((built.steps[0] as any).text.startsWith("🎯 Cockpit · SENT TO TECH — Add qualification questions to the lead form")).toBe(true);
+    expect((built.steps[0] as any).text.startsWith("🎯 Cockpit · SENT TO TECH - Add qualification questions to the lead form")).toBe(true);
   });
 });
 

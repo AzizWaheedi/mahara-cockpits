@@ -65,14 +65,24 @@ times its interval is flagged by the smoke check. "Not running" for every job
 at once means the media buyer deployment itself is down: check the Convex
 dashboard, then `scripts/ship.sh media-buyer`.
 
-The client comment watch (every 15 minutes, `commentWatch.scan`) reads the
-comments on current client cards in Clients - Mahara. Call summaries, kickoff
-handoffs, briefs and typed notes go to Hermes as `comment_digest` jobs; the
-digest shows as "Latest from the ClickUp card" in all three cockpits and new
-rules are added to the card's Do's & Don'ts. Billing and touchpoint logs,
-ClickBot, sales handoffs and research reports are skipped. Every sync also puts
-Do's & Don'ts into the clean DO / DON'T format and moves notes to a comment.
-No digests appearing means Hermes is not polling (see the Hermes row above).
+The client comment watch runs natively since the Convex pause (migration
+`20261009i_ai_comment_watch_call_briefs.sql`). The Edge Function
+`comment-watch` (pg_cron at minute 7, 22, 37 and 52) reads the comments on
+current client cards in Clients - Mahara. Call summaries, kickoff handoffs,
+briefs and typed notes go to Hermes as `comment_digest` jobs. The tick
+(`cockpit_ai_watch_tick`, every 5 minutes) puts each digest in the
+clientComments feed, so it shows as "Latest from the ClickUp card" in all three
+cockpits. The same tick queues `call_brief` jobs from the calls on each
+published CSM profile and writes the briefs to `cockpit_media_call_briefs`.
+New rules reach the card's Do's & Don'ts only when the function secret
+`COMMENT_WATCH_APPLY` is exactly `true`; otherwise each planned write is kept
+in `cockpit_comment_watch_runs.planned`. At most 5 background jobs are open at
+a time; the rest wait for a later run. Billing and touchpoint logs, ClickBot,
+cockpit comments, sales handoffs and research reports are skipped. To check:
+`select public.cockpit_ai_watch_doctor();` and the `comment-watch` and
+`ai-watch-tick` rows in `cockpit_sync_state`. No digests means Hermes does not
+claim the new kinds (copy the current `askai.py`, see the Hermes row above) or
+a native feed run holds its lease.
 
 ## Previews
 

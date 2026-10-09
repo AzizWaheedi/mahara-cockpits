@@ -68,8 +68,17 @@ export function kpiBand(value: number, gate: number): string {
   return "911";
 }
 
+/**
+ * Mahara copy uses no em dashes (Muhammed, 2026-10-09). The Convex text had
+ * them; every line the cockpit writes to ClickUp passes through this. The 🎯
+ * marker stays: comment watch uses it to skip the cockpit's own comments.
+ */
+export function plain(s: string): string {
+  return s.replace(/\s—\s/g, " - ").replace(/—/g, "-");
+}
+
 export function money(n: number | undefined): string {
-  return n === undefined ? "—" : `$${n.toFixed(2)}`;
+  return n === undefined ? "-" : `$${n.toFixed(2)}`;
 }
 
 /** The comment the CSM reads before a check-in call (convex/writeback.ts). */
@@ -98,7 +107,7 @@ export function decisionComment(d: {
       ? "Sent by the media buyer via the Media Buyer Cockpit. Proactive touchpoint — the client has been told."
       : `Logged by: ${d.byEmail ?? "media buyer"} via the Media Buyer Cockpit. Checked again in 7 days.`,
   );
-  return lines.join("\n");
+  return plain(lines.join("\n"));
 }
 
 /** Notes that are not changes: a question to Aziz, anything asked. */
@@ -151,13 +160,15 @@ export function changeComment(
   });
   // A change posted late says so by its date, and is not given a judging clock that has already run.
   const fresh = now - m.at < 86_400_000;
-  return [
-    `🎯 Cockpit · CHANGE MADE — ${m.what}`,
-    "",
-    m.adName ? `${m.campaignName} · ${m.adName}` : m.campaignName,
-    "",
-    `Made by ${who} in the Media Buyer Cockpit on ${day}.${fresh ? " Three days before this is judged." : ""}`,
-  ].join("\n");
+  return plain(
+    [
+      `🎯 Cockpit · CHANGE MADE — ${m.what}`,
+      "",
+      m.adName ? `${m.campaignName} · ${m.adName}` : m.campaignName,
+      "",
+      `Made by ${who} in the Media Buyer Cockpit on ${day}.${fresh ? " Three days before this is judged." : ""}`,
+    ].join("\n"),
+  );
 }
 
 /** The board's Ad Status after a campaign is switched in Meta; undefined when the board already agrees. */

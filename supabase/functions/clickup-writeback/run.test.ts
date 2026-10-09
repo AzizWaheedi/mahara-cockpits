@@ -148,7 +148,7 @@ describe("log job", () => {
     expect(saved).toHaveLength(1);
     expect(saved[0]).toMatchObject({ state: "dry_run", task_id: "t1" });
     expect(saved[0].planned[0]).toMatchObject({ taskId: "t1", field: "comment", old: null });
-    expect(saved[0].planned[0].new).toContain("🎯 Cockpit · CHANGE MADE — Raised budget to $40");
+    expect(saved[0].planned[0].new).toContain("🎯 Cockpit · CHANGE MADE - Raised budget to $40");
     expect(h.finish().p_planned).toHaveLength(1);
   });
 

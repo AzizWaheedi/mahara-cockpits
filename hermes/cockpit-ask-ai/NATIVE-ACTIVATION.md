@@ -44,7 +44,10 @@ python3 hermes/cockpit-ask-ai/scripts/askai.py fail <job_id> "<reason>" --lease 
 - Legacy commands `profile` and `asks` fail explicitly with exit code 2 (`askai.py:368-370`).
 
 ## Unsupported Producers & Callbacks
-- `comment_digest`: ClickUp comment webhook processor unmigrated (`SKILL.md:79`).
-- `call_brief`: CSM call recording processor unmigrated (`SKILL.md:80`).
+- `comment_digest` and `call_brief` are migrated (migration `20261009i_ai_comment_watch_call_briefs.sql`,
+  Edge Function `supabase/functions/comment-watch`). The worker claims them with
+  `p_kinds`; the three-argument claim still hands out chat only. Answers post with
+  `result <id> <file> --kind <kind>`. Tests: `python -m unittest test_askai test_askai_kinds`
+  in `scripts/`. Deploy order: migration, then this worker, then the Edge Function.
 - `assist_copy`, `draft_copy`, and campaign chat relays unmigrated (`SKILL.md:81`).
 - Autonomous third-party provider mutations remain disabled (`SKILL.md:82`, `100`).

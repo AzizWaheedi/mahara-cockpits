@@ -66,6 +66,31 @@ For client-success answers, retain Sadiq's approved policy discipline: read the 
 
 Pending jobs from the cockpit chat have `kind: "chat"` and expect `{"reply": "<text>"}`.
 The answer is delivered back to the cockpit user through the Supabase persistence queue.
+Chat jobs are claimed before background jobs, so answer them first.
+
+## Background jobs (kinds "comment_digest" and "call_brief")
+
+These come from the comment watch and the call briefs (migration
+`20261009i_ai_comment_watch_call_briefs.sql`), not from a person. Each claimed
+job carries `answer_with`: an instruction, the exact JSON schema, and the exact
+command that posts the answer.
+
+- Read only the job's `prompt`. It holds everything you may use. Do not look
+  anything up and do not act outside the cockpit: the cockpit itself adds new
+  rules to ClickUp, behind its own approval switch.
+- Write one JSON object with exactly the schema keys, nothing else, into a file.
+- `comment_digest`: `summary` (text, empty when nothing useful) and the lists
+  `nextSteps`, `clientRequests`, `risks`, `forAds`, `forCreative`, `dos`,
+  `donts` (short lines, empty lists when there is nothing). Follow the rules
+  written in the prompt: only what the comment says, no money lines in
+  `forAds` or `forCreative`, no names or numbers of leads, no em dashes.
+- `call_brief`: `overall` (one paragraph, never empty) and `perCall` (one
+  `{"url", "brief"}` per call that says something about this client; copy each
+  url exactly from the prompt).
+- Post it with the command in `answer_with`, which includes
+  `--kind <kind>`. The worker checks the answer before it sends anything, and
+  the database checks it again. If the answer is rejected, fix it and post
+  again, or record the failure with `fail` and a plain reason.
 
 ## Producer Migration Status & Remaining Gaps
 
@@ -76,8 +101,9 @@ The answer is delivered back to the cockpit user through the Supabase persistenc
 
 > [!WARNING]
 > **Unmigrated Producer Gaps**:
-> - Legacy `comment_digest` (ClickUp comment webhook watcher) is **NOT** wired to the Supabase queue.
-> - Legacy `call_brief` (CSM call recording batch processor) is **NOT** wired to the Supabase queue.
+> - `comment_digest` (comment watch) and `call_brief` (call briefs) are wired natively by
+>   `20261009i_ai_comment_watch_call_briefs.sql` and the `comment-watch` Edge Function. Locally
+>   tested only until the migration, the function and this worker are deployed and one run is verified.
 > - `assist_copy`, `draft_copy`, campaign chat relays and their write-back callbacks are not migrated by this chat packet. The browser submission endpoint accepts `chat` only.
 > - Model-triggered provider actions remain disabled here. They need their own authorization, audit and provider implementation before migration acceptance.
 > - Convex fallback is disabled (fail-closed).

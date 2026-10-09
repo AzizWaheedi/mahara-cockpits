@@ -9,12 +9,13 @@
 // live run to those cards, for the first one-card verification.
 
 import { type KpiInputs, planKpi } from "./kpi.ts";
-import { ADS_LIST, FIELD, type Row } from "./rules.ts";
+import { ADS_LIST, CLIENTS_LIST, FIELD, type Row } from "./rules.ts";
 import {
   boardFieldsLoader,
   buildSteps,
   classify,
   executeItem,
+  listFieldsLoader,
   type Planned,
   planItem,
   type Provider,
@@ -183,6 +184,8 @@ export async function runLog(deps: Deps, limit = 15): Promise<JobResult> {
     const campaigns = ((inputs?.campaigns ?? []) as Row[]).filter(c => !c.internal) as any[];
     const runProvider = paced(deps.providerFor(run.id), deps.pace);
     const boardFields = boardFieldsLoader(runProvider);
+    // Billing edits write on Clients - Mahara cards; its dropdown options are read once per run.
+    const clientFields = listFieldsLoader(runProvider, CLIENTS_LIST);
     for (const item of items) {
       if (stop) {
         await save(item.id, { state: "retry", next_attempt_at: new Date(deps.now()).toISOString(), error: stop });
@@ -200,7 +203,7 @@ export async function runLog(deps: Deps, limit = 15): Promise<JobResult> {
         const createsTask = built.steps.some(s => s.type === "create_task");
         const live = g.apply && tasks.every(t => g.live(t)) && (!createsTask || g.only.size === 0 || tasks.length > 0);
         if (!live) {
-          const plan = await planItem(item, built.steps, provider, boardFields);
+          const plan = await planItem(item, built.steps, provider, boardFields, clientFields);
           planned.push(...plan);
           counts.dryRun += 1;
           await save(item.id, { state: "dry_run", planned: plan, task_id: tasks[0] ?? null });
@@ -208,11 +211,14 @@ export async function runLog(deps: Deps, limit = 15): Promise<JobResult> {
         }
         // Freeze the text before the first write, so a retry posts exactly the same comment.
         if (!item.steps?.length) await save(item.id, { steps: built.steps, task_id: tasks[0] ?? null });
-        const outcome = await executeItem(item, built.steps, provider, progress => save(item.id, { progress }), boardFields);
+        const outcome = await executeItem(item, built.steps, provider, progress => save(item.id, { progress }), boardFields, clientFields);
         const now = deps.now();
         if (outcome.state === "delivered") {
           counts.delivered += 1;
           await save(item.id, { state: "delivered", progress: outcome.progress, delivered_at: new Date(now).toISOString(), error: null });
+        } else if (outcome.state === "skipped") {
+          counts.skipped += 1;
+          await save(item.id, { state: "skipped", progress: outcome.progress, error: outcome.error ?? null });
         } else if (outcome.state === "failed" || item.attempts > RETRY_MINUTES.length) {
           counts.failed += 1;
           await save(item.id, { state: "failed", progress: outcome.progress, error: outcome.error ?? "Gave up after the retry ladder." });
