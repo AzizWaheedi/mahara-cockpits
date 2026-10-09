@@ -115,6 +115,7 @@ REQUIRED=(
  'hermes/cockpit-sync/calculator.ts',
  'hermes/cockpit-sync/capture.ts',
  'hermes/cockpit-sync/clientCalendars.ts',
+ 'hermes/cockpit-sync/clientUpdates.ts',
  'hermes/cockpit-sync/constants.ts',
  'hermes/cockpit-sync/creativeProducer.ts',
  'hermes/cockpit-sync/csmCadence.ts',
