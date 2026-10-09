@@ -19,6 +19,7 @@ import type {
   Scorecard,
 } from "@/types/ceo/profiles";
 import { Dial } from "./goalsKit";
+import { OnboardingPanel } from "./personOnboarding";
 import { ScorecardPanel } from "./personScorecard";
 
 /**
@@ -45,7 +46,13 @@ const field =
   "w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-[var(--ceo-emphasis)]";
 const label = "text-xs font-medium text-muted-foreground";
 
-const PANELS = ["Who they are", "This month", "Every month", "Files"] as const;
+const PANELS = [
+  "Who they are",
+  "Onboarding",
+  "This month",
+  "Every month",
+  "Files",
+] as const;
 type Panel = (typeof PANELS)[number];
 
 /** The person in the address bar, so back works and a link can be shared. */
@@ -522,6 +529,14 @@ export function PersonPage({
             </div>
           </div>
         </SectionCard>
+      ) : null}
+
+      {panel === "Onboarding" ? (
+        <OnboardingPanel
+          personId={personId}
+          personName={name}
+          onProfileChanged={() => void load()}
+        />
       ) : null}
 
       {panel === "This month" ? (
