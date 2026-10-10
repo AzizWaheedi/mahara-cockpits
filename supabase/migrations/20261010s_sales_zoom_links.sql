@@ -62,9 +62,10 @@ comment on column public.cockpit_sales_zoom_links.host_kind is
 comment on column public.cockpit_sales_zoom_links.host_email is 'The Zoom user the meeting was made on.';
 comment on column public.cockpit_sales_zoom_links.join_url is 'The join link, with the passcode in it (pwd=), as the lead gets it.';
 comment on column public.cockpit_sales_zoom_links.shared_how is 'How the rep last shared it from the cockpit: whatsapp (their own WhatsApp opened), copy_message or copy_link.';
-comment on column public.cockpit_sales_zoom_links.started_at is 'When the rep first asked for the start link (own host only).';
+comment on column public.cockpit_sales_zoom_links.started_at is
+  'When the meeting first started: the rep asked for the start link (own host), or the tidy found Zoom had held it (its past-meeting start). A started meeting is never tidied.';
 comment on column public.cockpit_sales_zoom_links.deleted_at is
-  'When the meeting left Zoom: tidied (never started, older than tidy_after_h) or found gone.';
+  'When the meeting left Zoom: tidied (never held: Zoom has no past meeting for it, older than tidy_after_h) or found gone.';
 
 -- 2. The WhatsApp groups ------------------------------------------------------
 

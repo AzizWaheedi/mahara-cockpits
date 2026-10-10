@@ -62,11 +62,13 @@ let audits: { action: string; id: string | null; before: unknown; after: unknown
 let envs: Record<string, string>;
 let bg: Promise<unknown>[];
 /** Overrides for one URL pattern: answer with a status and body, or throw. */
-let routes: { re: RegExp; method?: string; reply: (c: Call) => { status: number; body?: unknown } | "timeout" }[];
+let routes: { re: RegExp; method?: string; reply: (c: Call) => { status: number; body?: unknown } | "timeout" | "network" }[];
 let meetingSeq: number;
 let liveMeetings: Row[];
 let tokenAsks: number;
 let meetings: Map<string, Row>;
+/** Zoom's past-meeting records: a meeting held at least once (GET /past_meetings/{id}). */
+let pastMeetings: Map<string, Row>;
 
 function zoomFetch(url: string, init: RequestInit): Response {
   const method = String(init.method ?? "GET");
@@ -77,6 +79,8 @@ function zoomFetch(url: string, init: RequestInit): Response {
     if (r.re.test(url) && (!r.method || r.method === method)) {
       const out = r.reply(c);
       if (out === "timeout") throw Object.assign(new Error("Zoom did not answer within 25 seconds"), { status: 0 });
+      // Deno's own words for a request that never reached the server: the URL is in them.
+      if (out === "network") throw new TypeError(`error sending request for url (${url}): client error (Connect): dns error`);
       return new Response(out.body === undefined ? "" : JSON.stringify(out.body), { status: out.status });
     }
   }
@@ -98,6 +102,11 @@ function zoomFetch(url: string, init: RequestInit): Response {
     const made = MEETING(id, { topic: body?.topic, host_id: decodeURIComponent(m[1]) });
     meetings.set(String(id), made);
     return Response.json(made, { status: 201 });
+  }
+  m = /^\/past_meetings\/(\d+)$/.exec(path);
+  if (m && method === "GET") {
+    const past = pastMeetings.get(m[1]);
+    return past ? Response.json(past) : Response.json({ code: 3001, message: `Meeting does not exist: ${m[1]}.` }, { status: 404 });
   }
   m = /^\/meetings\/(\d+)$/.exec(path);
   if (m && method === "GET") {
@@ -168,6 +177,7 @@ beforeEach(() => {
   liveMeetings = [];
   tokenAsks = 0;
   meetings = new Map();
+  pastMeetings = new Map();
   envs = { ZOOM_ACCOUNT_ID: "acct", ZOOM_CLIENT_ID: "cid", ZOOM_CLIENT_SECRET: "sec" };
   setting(ON);
   db.tables.cockpit_sales_leads = [
@@ -483,6 +493,59 @@ describe("the tidy", () => {
     expect(row("101")?.deleted_why).toBe("gone in Zoom");
     expect(row("100")?.deleted_at).toBeNull();
     expect(calls.filter(c => c.method === "DELETE").map(c => c.url)).toEqual([]);
+  });
+
+  test("a meeting that was held and ended reads waiting again: kept in Zoom, marked started, out of the queue", async () => {
+    // Zoom's answer for a held, ended meeting (checked on Mahara's Zoom,
+    // 2026-10-10): GET /meetings says waiting, and only the past-meeting
+    // record tells it from one never held.
+    seed("00000000-0000-4000-8000-000000000400", "400", 30);
+    meetings.set("400", MEETING(400));
+    pastMeetings.set("400", { id: 400, start_time: "2026-10-09T05:10:00Z", end_time: "2026-10-09T05:40:00Z", duration: 30 });
+    seed("00000000-0000-4000-8000-000000000401", "401", 29);
+    meetings.set("401", MEETING(401));
+    const done = await z.tidy(SETTER, "aziz@maharamedia.com", 24);
+    expect(done).toBe(1);
+    expect(meetings.has("400")).toBe(true);
+    expect(meetings.has("401")).toBe(false);
+    const row = (id: string) => links().find(r => r.meeting_id === id);
+    expect(row("400")).toMatchObject({ deleted_at: null, started_at: "2026-10-09T05:10:00.000Z" });
+    expect(row("401")?.deleted_why).toBe("tidied: never started");
+    expect(audits.find(a => a.action === "zoom.link.held")).toMatchObject({
+      id: "00000000-0000-4000-8000-000000000400",
+      before: { started_at: null },
+      after: { started_at: "2026-10-09T05:10:00.000Z" },
+    });
+    calls = [];
+    await z.tidy(SETTER, "aziz@maharamedia.com", 24);
+    expect(calls.filter(c => c.url.includes("/400"))).toEqual([]);
+  });
+
+  test("Zoom not saying whether it was held: nothing is deleted or marked", async () => {
+    seed("00000000-0000-4000-8000-000000000500", "500", 30);
+    meetings.set("500", MEETING(500));
+    routes.push({ re: /\/past_meetings\//, reply: () => ({ status: 500, body: { message: "oops" } }) });
+    expect(await z.tidy(SETTER, "aziz@maharamedia.com", 24)).toBe(0);
+    expect(meetings.has("500")).toBe(true);
+    expect(links()[0]).toMatchObject({ deleted_at: null, started_at: null });
+    expect(calls.filter(c => c.method === "DELETE")).toEqual([]);
+    expect(audits).toEqual([]);
+  });
+});
+
+describe("Zoom's keys stay on the server", () => {
+  test("a network failure on the token request never puts the account id in the sentence or the health row", async () => {
+    envs.ZOOM_ACCOUNT_ID = "AcCtId-9x8y7z";
+    envs.ZOOM_CLIENT_SECRET = "S3cr3t-Value";
+    routes.push({ re: /^https:\/\/zoom\.us\/oauth\/token/, reply: () => "network" });
+    const r = await refusal(z.actions["zoom.link"](SETTER, { contact_id: "c-sara", kind: "intro" }));
+    expect(r.status).toBe(502);
+    expect(r.message).toContain("account_id=[key]");
+    for (const text of [r.message, String(health()?.detail), JSON.stringify(audits)]) {
+      expect(text).not.toContain("AcCtId-9x8y7z");
+      expect(text).not.toContain("S3cr3t-Value");
+      expect(text).not.toContain(btoa("cid:S3cr3t-Value"));
+    }
   });
 });
 

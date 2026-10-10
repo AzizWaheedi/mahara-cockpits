@@ -190,7 +190,10 @@ export function makeZoomLinks(d: ZoomLinksDeps) {
       return await d.fetchWithin(url, init, ZOOM_MS, "Zoom");
     } catch (e) {
       const status = (e as { status?: unknown })?.status;
-      throw new ZoomError(redact(String((e as Error)?.message ?? e)), typeof status === "number" ? status : 0);
+      // A network failure's message carries the URL, and the token URL
+      // carries the account id: never into a sentence, a log or the health row.
+      const msg = redact(String((e as Error)?.message ?? e).replace(/(account_id=)[^&\s)"']+/gi, "$1[key]"));
+      throw new ZoomError(msg, typeof status === "number" ? status : 0);
     }
   }
 
@@ -332,7 +335,32 @@ export function makeZoomLinks(d: ZoomLinksDeps) {
     };
   }
 
-  /** D1.10: up to five of this host's cockpit meetings, never started and older than the setting says, deleted in Zoom. */
+  /**
+   * When Zoom held the meeting (its past-meeting record's start), or null
+   * when Zoom has no past meeting for it (404): never held. Anything else
+   * throws, so the tidy leaves the meeting alone.
+   */
+  async function heldAt(meetingId: string): Promise<string | null> {
+    let past: Row | null;
+    try {
+      past = await zoomCall("GET", `/past_meetings/${enc(meetingId)}`);
+    } catch (e) {
+      if (e instanceof ZoomError && e.status === 404) return null;
+      throw e;
+    }
+    if (!past) throw new ZoomError("Zoom's past-meeting answer was empty", 0);
+    const at = Date.parse(String(past.start_time ?? ""));
+    return new Date(Number.isFinite(at) ? at : now()).toISOString();
+  }
+
+  /**
+   * D1.10: up to five of this host's cockpit meetings, never started and
+   * older than the setting says, deleted in Zoom. A meeting that was held
+   * and has ended reads "waiting" again on GET /meetings (checked on
+   * Mahara's Zoom, 2026-10-10), so "waiting" alone never deletes it: Zoom's
+   * past-meeting record must say it was never held (404). One that was held
+   * is marked started and left in Zoom.
+   */
   async function tidy(who: Who, hostEmail: string, afterH: number): Promise<number> {
     const before = new Date(now() - afterH * 3_600_000).toISOString();
     const rows = await d.svc(
@@ -344,6 +372,17 @@ export function makeZoomLinks(d: ZoomLinksDeps) {
       try {
         const m = await zoomCall("GET", `/meetings/${enc(String(r.meeting_id))}`);
         if (String(m?.status ?? "") !== "waiting") continue;
+        const held = await heldAt(String(r.meeting_id));
+        if (held) {
+          // Held and ended: kept in Zoom, and out of the tidy's queue.
+          await d.svc(`${LINKS}?id=eq.${enc(String(r.id))}&started_at=is.null`, {
+            method: "PATCH",
+            body: { started_at: held },
+            prefer: "return=minimal",
+          });
+          await d.audit(who, "zoom.link.held", LINKS, String(r.id), { started_at: null }, { started_at: held }, { meeting_id: String(r.meeting_id) });
+          continue;
+        }
         await zoomCall("DELETE", `/meetings/${enc(String(r.meeting_id))}?schedule_for_reminder=false&cancel_meeting_reminder=false`);
         why = "tidied: never started";
       } catch (e) {
