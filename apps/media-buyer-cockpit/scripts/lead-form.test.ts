@@ -166,6 +166,8 @@ test("a new version is created with the same keys and every extra spelled out", 
   expect(body.is_optimized_for_quality).toBe("true");
   expect(body.is_phone_sms_verify_enabled).toBe("true");
   expect(body.block_display_for_non_targeted_viewer).toBe("true");
+  expect(body.locale).toBe("AR_AR");
+  expect(toMetaCreate({ ...spec, locale: "en_US" }).locale).toBe("EN_US");
   expect(JSON.parse(body.questions!)).toEqual([
     {
       type: "CUSTOM",

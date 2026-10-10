@@ -385,7 +385,8 @@ export function toMetaCreate(spec: LeadFormSpec): Record<string, string> {
     block_display_for_non_targeted_viewer: "true",
   };
   if (spec.smsVerify) body.is_phone_sms_verify_enabled = "true";
-  if (spec.locale) body.locale = spec.locale;
+  // Meta reads a locale back as "en_US" but takes it on a create as "EN_US".
+  if (spec.locale) body.locale = spec.locale.toUpperCase();
   if (spec.headline?.trim())
     body.question_page_custom_headline = spec.headline.trim();
   if (spec.privacy?.url?.trim())
