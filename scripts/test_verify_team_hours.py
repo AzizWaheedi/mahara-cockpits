@@ -44,7 +44,9 @@ def run(man, mg):
 
 class TeamHours(unittest.TestCase):
     def test_pending_is_green_when_nothing_is_there(self):
-        rep = run(SMAN, FakeMgmt([], [], []))
+        man = copy.deepcopy(SMAN)
+        man["team_hours"]["state"] = "pending_deploy"
+        rep = run(man, FakeMgmt([], [], []))
         self.assertTrue(rep.rows)
         self.assertEqual({r["status"] for r in rep.rows}, {VP.OK})
         self.assertTrue(all("not deployed yet" in r["detail"] for r in rep.rows))
