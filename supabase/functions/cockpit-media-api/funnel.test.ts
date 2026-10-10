@@ -147,3 +147,26 @@ test('a Page step is written and read back with a Page token fetched at run time
  expect(p.calls.find(c=>c.path==='act_123456/adcreatives')?.body?.object_story_spec.video_data.call_to_action.value.lead_gen_form_id).toBe('141414');
  expect(JSON.stringify(done)).not.toContain(PAGE_TOKEN);
 });
+
+test('an ad built on an existing post shows its form, and the check says it cannot be switched here',async()=>{
+ const postAd={id:'300309',name:'Post ad',account_id:'123456',campaign_id:'222222',effective_status:'ACTIVE',creative:{id:'900009',object_story_id:`${PAGE}_555555`}};
+ const routes:[RegExp,(m:string,p:string,b?:Row)=>Row][]=[
+  [/^GET 222222\/ads/,()=>({data:[ad('300301'),postAd]})],
+  [/^GET 777777_555555\?fields=call_to_action/,()=>({call_to_action:{type:'SIGN_UP',value:{lead_gen_form_id:'111111',link:'http://fb.me/'}}})],
+  [/^GET 777777\?fields=id,name,access_token/,()=>({id:PAGE,name:'Villa Builders',access_token:PAGE_TOKEN})],
+  [/^GET 111111\?fields=/,()=>FORM],
+  [/^GET 777777\/leadgen_forms/,()=>({data:[]})],
+  [/^POST act_123456\/adcreatives/,()=>({success:true})],
+  [/^POST 300301$/,()=>({success:true})],
+ ];
+ const read=await readFunnel(scope,meta(routes) as any);
+ expect(read.destinations.map((d:Row)=>[d.kind,d.ads.map((a:Row)=>a.id)])).toEqual([['form',['300301','300309']]]);
+ expect(read.destinations[0].ads[1].fromPost).toBe(true);
+ const plan=await preparePublish({campaignName:scope.campaignName,fromFormId:'111111',spec},scope,meta(routes) as any);
+ expect(plan.check?.ready).toBe(false);
+ expect(plan.check?.ads.map((a:Row)=>[a.adId,a.ok])).toEqual([['300301',true],['300309',false]]);
+ expect(plan.check?.ads[1].why).toContain('existing post');
+ const narrowed=await preparePublish({campaignName:scope.campaignName,fromFormId:'111111',spec,adIds:['300301']},scope,meta(routes) as any);
+ expect(narrowed.check?.ready).toBe(true);
+ expect(narrowed.steps.map(s=>s.path)).toEqual(['777777/leadgen_forms','act_123456/adcreatives','300301']);
+});

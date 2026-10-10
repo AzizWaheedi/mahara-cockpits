@@ -17,10 +17,14 @@ import {fromMeta,problems,toMetaCreate,versionName,type LeadFormSpec} from '../.
  */
 export const FUNNEL_OPERATIONS=['funnel.read','forms.publish','forms.switch'];
 const id=(x:unknown)=>{if(!/^\d{5,}$/.test(String(x??'')))throw new Error('A valid Meta id is required');return String(x);};
-const AD_FIELDS='id,name,account_id,campaign_id,effective_status,adset{destination_type},creative{id,name,object_story_spec,asset_feed_spec,link_url,url_tags,degrees_of_freedom_spec,object_type}';
-// The full read first; a Graph version that lacks a field falls back to the fields every version has.
-const FULL_FORM='id,name,status,locale,created_time,leads_count,questions,context_card,thank_you_page,legal_content,privacy_policy_url,is_optimized_for_quality,question_page_custom_headline,follow_up_action_url';
-const BASIC_FORM='id,name,status,locale,created_time,leads_count,questions,privacy_policy_url,question_page_custom_headline,follow_up_action_url';
+const AD_FIELDS='id,name,account_id,campaign_id,effective_status,adset{destination_type},creative{id,name,object_story_spec,asset_feed_spec,link_url,url_tags,degrees_of_freedom_spec,object_type,object_story_id,effective_object_story_id}';
+// The full read first. legal_content names its parts or Meta returns only its id (2026-10-10:
+// every privacy link read back empty). A Graph version that lacks a field falls back a step.
+const FORM_READS=[
+ 'id,name,status,locale,created_time,leads_count,questions,context_card,thank_you_page,legal_content{privacy_policy{url,link_text}},privacy_policy_url,is_optimized_for_quality,question_page_custom_headline,follow_up_action_url',
+ 'id,name,status,locale,created_time,leads_count,questions,context_card,thank_you_page,privacy_policy_url,is_optimized_for_quality,question_page_custom_headline,follow_up_action_url',
+ 'id,name,status,locale,created_time,leads_count,questions,privacy_policy_url,question_page_custom_headline,follow_up_action_url',
+];
 const VALIDATE='["validate_only"]';
 const GONE=new Set(['DELETED','ARCHIVED']);
 
@@ -53,12 +57,18 @@ export function formIdOf(creative:Row|undefined):string|null{
 }
 
 export type Destination={kind:'form'|'website'|'whatsapp'|'messenger'|'instagram'|'call'|'unknown';formId?:string;url?:string};
+/** The form an ad sends people to, whether its creative or its existing post holds the button. */
+export function adForm(ad:Row):string|null{
+ const fromPost=ad.postCta?.value?.lead_gen_form_id;
+ return formIdOf(ad.creative)??(fromPost?String(fromPost):null);
+}
+
 /** What kind of place an ad leads to. A form wins over its placeholder link. */
 export function destinationOf(ad:Row):Destination{
- const creative=ad.creative,formId=formIdOf(creative);
+ const creative=ad.creative,formId=adForm(ad);
  if(formId)return {kind:'form',formId};
- const link=destinationLink(creative)??undefined,type=String(ad.adset?.destination_type??'').toUpperCase();
- const ctaType=String(storyOf(creative?.object_story_spec)?.data?.call_to_action?.type??'');
+ const link=destinationLink(creative)??(typeof ad.postCta?.value?.link==='string'?ad.postCta.value.link:undefined),type=String(ad.adset?.destination_type??'').toUpperCase();
+ const ctaType=String(storyOf(creative?.object_story_spec)?.data?.call_to_action?.type??ad.postCta?.type??'');
  if(type.includes('WHATSAPP')||/(wa\.me|whatsapp\.com)/i.test(link??''))return {kind:'whatsapp',url:link};
  if(type.includes('MESSENGER')||/\bm\.me\//i.test(link??''))return {kind:'messenger',url:link};
  if(type.includes('INSTAGRAM'))return {kind:'instagram',url:link};
@@ -67,14 +77,30 @@ export function destinationOf(ad:Row):Destination{
  return {kind:'unknown'};
 }
 
-/** The Page that runs an ad. */
+/** The Page that runs an ad: from the story spec, or the Page half of an existing post's id. */
 function pageOf(creative:Row|undefined):string|null{
- const page=creative?.object_story_spec?.page_id;
+ const page=creative?.object_story_spec?.page_id??String(creative?.object_story_id??creative?.effective_object_story_id??'').split('_')[0];
  return /^\d{5,}$/.test(String(page??''))?String(page):null;
+}
+
+/** An ad built on an existing post keeps its destination on the post's button. */
+async function postDestination(ad:Row,p:Provider,page:(id:string)=>Promise<Page>):Promise<Row|null>{
+ const post=String(ad.creative?.object_story_id??ad.creative?.effective_object_story_id??'');
+ if(ad.creative?.object_story_spec||!/^\d{5,}_\d{5,}$/.test(post))return null;
+ const pageId=post.split('_')[0];
+ for(const as of ['system','page'] as const){
+  try{
+   const token=as==='page'?{token:(await page(pageId)).token}:undefined;
+   const read=await p.call('meta','GET',`${post}?fields=call_to_action`,undefined,token);
+   return {...ad,postCta:read.call_to_action??{}};
+  }catch{/* try the Page token, then give up and call it unknown */}
+ }
+ return null;
 }
 
 /** A creative body for the same ad, everything kept, sending people to another form. */
 export function withForm(creative:Row,formId:string,name:string):{ok:true;body:Row}|{ok:false;why:string}{
+ if(!creative?.object_story_spec&&(creative?.object_story_id||creative?.effective_object_story_id))return {ok:false,why:'That ad runs an existing post, and a post keeps its form for good. Switch it in Ads Manager by making the ad from a new post.'};
  if(!formIdOf(creative))return {ok:false,why:'That ad does not send people to an instant form.'};
  const spec=structuredClone(creative.object_story_spec??{}),feed=creative.asset_feed_spec?structuredClone(creative.asset_feed_spec):null;
  const story=storyOf(spec);
@@ -82,6 +108,12 @@ export function withForm(creative:Row,formId:string,name:string):{ok:true;body:R
  for(const cta of feed?.call_to_actions??[])if(cta?.value?.lead_gen_form_id)cta.value.lead_gen_form_id=formId;
  dropRedundant(spec);
  return {ok:true,body:{name:name.slice(0,200),object_story_spec:spec,...(feed?{asset_feed_spec:feed}:{}),...(creative.url_tags?{url_tags:creative.url_tags}:{}),...(creative.degrees_of_freedom_spec?{degrees_of_freedom_spec:creative.degrees_of_freedom_spec}:{})}};
+}
+
+/** The campaign's ads with every post-based ad's button read, for picking what to switch. */
+async function adsWithButtons(s:Row,p:Provider,page:(id:string)=>Promise<Page>):Promise<Row[]>{
+ const out:Row[]=[];for(const ad of await campaignAds(s,p))out.push((await postDestination(ad,p,page))??ad);
+ return out;
 }
 
 async function campaignAds(s:Row,p:Provider):Promise<Row[]>{
@@ -99,8 +131,8 @@ async function readForm(p:Provider,page:(id:string)=>Promise<Page>,formId:string
  for(const as of ['system','page'] as const){
   let token:{token:string}|undefined;
   if(as==='page'){if(!pageId)break;try{token={token:(await page(pageId)).token};}catch(error){last=error instanceof Error?error.message:last;break;}}
-  for(const fields of [FULL_FORM,BASIC_FORM]){
-   try{return {raw:await p.call('meta','GET',`${id(formId)}?fields=${fields}`,undefined,token),full:fields===FULL_FORM};}
+  for(const fields of FORM_READS){
+   try{return {raw:await p.call('meta','GET',`${id(formId)}?fields=${fields}`,undefined,token),full:fields!==FORM_READS[2]};}
    catch(error){last=error instanceof Error?error.message:'Meta did not return the form';if(!/nonexisting field|Tried accessing/i.test(last))break;}
   }
  }
@@ -125,10 +157,11 @@ const versionOf=(name:string)=>Number(/·\s+v(\d+)/.exec(name)?.[1]??1);
 export async function readFunnel(s:Row,p:Provider){
  const page=pages(p),ads=await campaignAds(s,p);
  const groups=new Map<string,Row>();
- for(const ad of ads){
+ for(const listed of ads){
+  const ad=(await postDestination(listed,p,page))??listed;
   const d=destinationOf(ad),key=`${d.kind}:${d.formId??d.url??''}`;
   const g=groups.get(key)??{...d,pageId:pageOf(ad.creative),ads:[]};
-  g.ads.push({id:String(ad.id),name:String(ad.name??ad.id),status:String(ad.effective_status??''),creativeId:ad.creative?.id?String(ad.creative.id):null});
+  g.ads.push({id:String(ad.id),name:String(ad.name??ad.id),status:String(ad.effective_status??''),creativeId:ad.creative?.id?String(ad.creative.id):null,...(ad.postCta?{fromPost:true}:{})});
   groups.set(key,g);
  }
  const destinations:Row[]=[];
@@ -146,15 +179,19 @@ export async function readFunnel(s:Row,p:Provider){
 }
 
 type Swap={ad:Row;body:Row};
+type Built={ad:Row;made:ReturnType<typeof withForm>};
+const refusal=(ad:Row,why:string)=>({adId:String(ad.id),name:String(ad.name??ad.id),status:String(ad.effective_status??''),ok:false,why});
 /** Validate each creative copy and each swap with Meta. Nothing is created. */
-async function rehearse(swaps:Swap[],act:string,p:Provider){
+async function rehearse(built:Built[],act:string,p:Provider){
  const out:Row[]=[];
- for(const {ad,body} of swaps){
+ for(const {ad,made} of built){
+  if(!made.ok){out.push(refusal(ad,made.why));continue;}
+  const body=made.body;
   try{
    await p.call('meta','POST',`${act}/adcreatives`,{...body,execution_options:VALIDATE});
    await p.call('meta','POST',String(ad.id),{creative:{creative_id:String(ad.creative.id)},execution_options:VALIDATE});
    out.push({adId:String(ad.id),name:String(ad.name??ad.id),status:String(ad.effective_status??''),ok:true});
-  }catch(error){out.push({adId:String(ad.id),name:String(ad.name??ad.id),status:String(ad.effective_status??''),ok:false,why:explainMeta(error instanceof Error?error.message:'Meta refused the change')});}
+  }catch(error){out.push(refusal(ad,explainMeta(error instanceof Error?error.message:'Meta refused the change')));}
  }
  return out;
 }
@@ -163,7 +200,7 @@ async function rehearse(swaps:Swap[],act:string,p:Provider){
 function chosen(ads:Row[],from:string|null,adIds:unknown):Row[]{
  if(adIds!==undefined&&(!Array.isArray(adIds)||adIds.some(x=>!/^\d{5,}$/.test(String(x)))))throw new Error('Choose the ads to switch');
  const wanted=Array.isArray(adIds)?new Set(adIds.map(String)):null;
- const picked=ads.filter(ad=>{const f=formIdOf(ad.creative);return f&&(!from||f===from)&&(!wanted||wanted.has(String(ad.id)));});
+ const picked=ads.filter(ad=>{const f=adForm(ad);return f&&(!from||f===from)&&(!wanted||wanted.has(String(ad.id)));});
  if(wanted&&picked.length!==wanted.size)throw new Error('An ad you chose no longer uses that form. Refresh the funnel and try again.');
  if(!picked.length)throw new Error('No ad in this campaign uses that form any more. Refresh the funnel.');
  if(picked.length>25)throw new Error('Switch at most 25 ads at a time.');
@@ -195,13 +232,13 @@ export async function preparePublish(a:Row,s:Row,p:Provider):Promise<MultiPlan>{
  const spec=a.spec as LeadFormSpec;
  if(!spec||typeof spec!=='object'||!Array.isArray(spec.questions))throw new Error('Send the form you want to publish');
  const wrong=problems(spec);if(wrong.length)throw new Error(wrong[0].message);
- const page=pages(p),from=id(a.fromFormId),ads=chosen(await campaignAds(s,p),from,a.adIds),pageId=samePage(ads),act=`act_${id(s.account)}`;
+ const page=pages(p),from=id(a.fromFormId),ads=chosen(await adsWithButtons(s,p,page),from,a.adIds),pageId=samePage(ads),act=`act_${id(s.account)}`;
  const {name:pageName}=await page(pageId);
  const version=Math.max(1,...(await pageForms(p,page,pageId)).filter(f=>stem(f.name)===stem(spec.name)).map(f=>versionOf(f.name)))+1;
  const name=versionName(spec.name,new Date(),version);
  const label=(ad:Row)=>`${ad.creative?.name??ad.name} · form v${version}`;
  // Rehearse with the form the ads use now: the copy has the same shape whichever form it names.
- const rehearsal=await rehearse(ads.map(ad=>{const made=withForm(ad.creative,from,label(ad));if(!made.ok)throw new Error(made.why);return {ad,body:made.body};}),act,p);
+ const rehearsal=await rehearse(ads.map(ad=>({ad,made:withForm(ad.creative,from,label(ad))})),act,p);
  const check={ready:rehearsal.every(r=>r.ok),pageId,pageName,name,version,ads:rehearsal};
  if(!check.ready)return {steps:[],result:{},check};
  const steps:Plan[]=[{provider:'meta',method:'POST',path:`${pageId}/leadgen_forms`,body:toMetaCreate({...spec,name}),verifyPath:'$id?fields=id,name',expected:{name},asPage:pageId}];
@@ -212,14 +249,15 @@ export async function preparePublish(a:Row,s:Row,p:Provider):Promise<MultiPlan>{
 /** forms.switch: move ads onto another form already on the same Page (switch back, or finish a switch). */
 export async function prepareSwitch(a:Row,s:Row,p:Provider):Promise<MultiPlan>{
  const page=pages(p),to=id(a.toFormId);
- const ads=chosen(await campaignAds(s,p),a.fromFormId?id(a.fromFormId):null,a.adIds).filter(ad=>formIdOf(ad.creative)!==to);
+ const ads=chosen(await adsWithButtons(s,p,page),a.fromFormId?id(a.fromFormId):null,a.adIds).filter(ad=>adForm(ad)!==to);
  if(!ads.length)throw new Error('Those ads already use that form.');
  const pageId=samePage(ads),act=`act_${id(s.account)}`;
  const {raw:target}=await readForm(p,page,to,pageId);
  if(String(target.status??'').toUpperCase()!=='ACTIVE')throw new Error('That form is archived on the Page. Restore it in Meta first, or publish a new version.');
  const formName=String(target.name??to);
- const swaps=ads.map(ad=>{const made=withForm(ad.creative,to,`${ad.creative?.name??ad.name} · ${formName}`);if(!made.ok)throw new Error(made.why);return {ad,body:made.body};});
- const rehearsal=await rehearse(swaps,act,p);
+ const built=ads.map(ad=>({ad,made:withForm(ad.creative,to,`${ad.creative?.name??ad.name} · ${formName}`)}));
+ const rehearsal=await rehearse(built,act,p);
+ const swaps=built.flatMap(b=>b.made.ok?[{ad:b.ad,body:b.made.body}]:[]);
  const check={ready:rehearsal.every(r=>r.ok),pageId,pageName:await page(pageId).then(x=>x.name,()=>null),name:formName,ads:rehearsal};
  if(!check.ready)return {steps:[],result:{},check};
  const steps:Plan[]=[];swapSteps(steps,swaps,act);
