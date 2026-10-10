@@ -4,7 +4,7 @@
  * verified JWT; cockpit_hours_actor (the verified-CEO check, service only)
  * turns it into the CEO's email or refuses with 403.
  *
- *   saveKey     {provider, key}             test, then store; start the first reads
+ *   saveKey     {provider, key}             test, then store; start doctor and a deep read
  *   syncNow     {mode, month?, dryRun?}     claim the lease and read in the background
  *   approveMany {month, items}              recompute each person on the server and store
  *
@@ -84,13 +84,15 @@ async function saveKey(deps: ApiDeps, email: string, body: Record<string, unknow
   const { health } = runHealth(deps.insertReceipt, null);
   const result = await testAndSaveKey({ rpc: deps.rpc, health, request: deps.fetch, now: deps.now }, { provider, key: body.key, savedBy: email });
   if (result.ok) {
-    // Doctor, then this month's read, in the background, each under the lease.
-    const month = kuwaitToday(deps.now()).slice(0, 7);
+    // Doctor, then a deep read, in the background, each under the lease. Deep,
+    // not this month alone: only a deep read loads Timetastic's people (and so
+    // the payroll-id links) and its leave types, which a first key needs before
+    // anything can be matched. It covers this month and last.
     deps.waitUntil((async () => {
-      for (const mode of ["doctor", "month"] as Mode[]) {
-        const claim = await claimLease(deps.rpc, { mode, requestedBy: email, windowFrom: mode === "month" ? `${month}-01` : null, dryRun: false });
+      for (const mode of ["doctor", "deep"] as Mode[]) {
+        const claim = await claimLease(deps.rpc, { mode, requestedBy: email, windowFrom: null, dryRun: false });
         if (!claim.ok) return;
-        await runSync(deps, { runId: claim.runId, leaseToken: claim.leaseToken, mode, month: mode === "month" ? month : null });
+        await runSync(deps, { runId: claim.runId, leaseToken: claim.leaseToken, mode, month: null });
       }
     })().catch(() => undefined));
     return { ok: true, state: result.state, text: result.text, last4: result.last4 };

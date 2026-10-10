@@ -141,7 +141,9 @@ function KeyRow({
             ) : k.kind === "hubstaff_org" ? (
               <span>· no expiry date</span>
             ) : null}
-            {source.provider === "hubstaff" ? (
+            {/* A personal token renews itself on every read: no end date to record. */}
+            {source.provider === "hubstaff" &&
+            k.kind !== "hubstaff_personal" ? (
               <button
                 type="button"
                 onClick={() => setDateOpen(v => !v)}
@@ -175,7 +177,7 @@ function KeyRow({
         {sentence && source.state !== "connected" ? (
           <p className="max-w-prose text-sm leading-6">{sentence}</p>
         ) : null}
-        {dateOpen ? (
+        {dateOpen && k?.kind !== "hubstaff_personal" ? (
           <div className="flex flex-wrap items-center gap-2">
             <DateInput
               value={expires}

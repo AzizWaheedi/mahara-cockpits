@@ -299,4 +299,26 @@ describe("doctor", () => {
     expect(member.calls.find(c => c.name === "cockpit_hours_key_state")?.args.p).toMatchObject({ provider: "hubstaff", state: "refused", note: "role_not_manager" });
     expect(providers.calls.some(c => c.url.pathname.endsWith("/activities"))).toBe(false);
   });
+  test("an organisation token whose users/me names no member, or isn't answered, is never refused for it", async () => {
+    const clock = fakeClock("2026-10-08T12:00:00Z");
+    for (const me of [new Response('{"error":"forbidden"}', { status: 403 }), new Response('{"user":{"id":999999}}', { status: 200 }), new Response('{"error":"not_found"}', { status: 404 })]) {
+      const db = fakeDb();
+      const providers = fakeProviders({ override: url => (url.pathname === "/v2/users/me" ? me.clone() : null) });
+      const result = await runSync({ rpc: db.rpc, insertReceipt: db.insertReceipt, fetch: providers.request, sleep: clock.sleep, now: clock.now }, { ...run, mode: "doctor" });
+      expect(result.hubstaff).toMatchObject({ state: "ok", accounts: 3 });
+      expect(result.hubstaff.note).toContain("organisation token can read");
+      const states = db.calls.filter(c => c.name === "cockpit_hours_key_state").map(c => c.args.p as Record<string, unknown>);
+      expect(states).toContainEqual(expect.objectContaining({ provider: "hubstaff", state: "connected", version: 1 }));
+      expect(states.some(p => p.provider === "hubstaff" && p.state === "refused")).toBe(false);
+      expect(providers.calls.some(c => c.url.pathname.endsWith("/activities"))).toBe(true);
+    }
+  });
+  test("a personal token's users/me that names no member is still refused (it reads only its own time)", async () => {
+    const clock = fakeClock("2026-10-08T12:00:00Z");
+    const db = fakeDb({ hubstaff: { provider: "hubstaff", kind: "hubstaff_personal", secret: "refreshFixture0001", version: 4, accountId: "900001", accessToken: "accessFixtureFresh", accessExpiresAt: "2026-10-09T12:00:00Z", exchangeStartedAt: null, state: "connected", expiresOn: null } });
+    const providers = fakeProviders({ override: url => (url.pathname === "/v2/users/me" ? new Response('{"user":{"id":999999}}', { status: 200 }) : null) });
+    const result = await runSync({ rpc: db.rpc, insertReceipt: db.insertReceipt, fetch: providers.request, sleep: clock.sleep, now: clock.now }, { ...run, mode: "doctor" });
+    expect(result.hubstaff.state).toBe("refused");
+    expect(db.calls.find(c => c.name === "cockpit_hours_key_state")?.args.p).toMatchObject({ provider: "hubstaff", state: "refused", note: "role_not_manager", version: 4 });
+  });
 });

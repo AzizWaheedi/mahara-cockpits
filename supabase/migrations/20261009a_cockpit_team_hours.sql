@@ -551,8 +551,13 @@ BEGIN
     SELECT id,from_day INTO v_id,v_start FROM public.cockpit_employment_periods
       WHERE person_id=NEW.id AND kind='employed' AND to_day IS NULL ORDER BY from_day DESC LIMIT 1;
     IF v_id IS NOT NULL THEN
-      IF NEW.ended_on<v_start THEN RAISE EXCEPTION 'The last working day is before they started (%)', to_char(v_start,'DD Mon YYYY') USING ERRCODE='22023'; END IF;
-      UPDATE public.cockpit_employment_periods SET to_day=NEW.ended_on WHERE id=v_id;
+      -- Refused only against a real start (a start date, or a return): with no start date the
+      -- period starts on the day they were added to the roster, a guess, and the roster's own
+      -- save of an earlier last day must never fail here. That period then holds no days.
+      IF NEW.ended_on<v_start AND NEW.started_on IS NOT NULL THEN
+        RAISE EXCEPTION 'The last working day is before they started (%)', to_char(v_start,'DD Mon YYYY') USING ERRCODE='22023';
+      END IF;
+      UPDATE public.cockpit_employment_periods SET to_day=greatest(NEW.ended_on,v_start-1) WHERE id=v_id;
     END IF;
   ELSIF NEW.ended_on IS NOT NULL AND OLD.ended_on IS NOT NULL AND NEW.ended_on<>OLD.ended_on THEN
     UPDATE public.cockpit_employment_periods SET to_day=greatest(NEW.ended_on,from_day-1)
@@ -625,10 +630,29 @@ WHERE p.paused_on IS NOT NULL AND NOT EXISTS (SELECT 1 FROM public.cockpit_emplo
 -- ---------------------------------------------------------------------------
 -- 5. Reading: sources, provider rows, the month's inputs
 
+/**
+ * Both scheduled reads exist and are on (20261009b applied): true or false;
+ * null where cron.job can't be read (PGlite, no pg_cron). Until it is true no
+ * sentence promises an hourly read.
+ */
+CREATE OR REPLACE FUNCTION public.cockpit_hours_cron_on()
+RETURNS boolean LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path='' AS $$
+DECLARE v boolean:=NULL;
+BEGIN
+  IF to_regclass('cron.job') IS NOT NULL THEN
+    BEGIN
+      EXECUTE 'SELECT count(*)=2 FROM cron.job WHERE jobname IN (''mahara-hours-sync'',''mahara-hours-deep'') AND active' INTO v;
+    EXCEPTION WHEN others THEN v:=NULL;
+    END;
+  END IF;
+  RETURN v;
+END;
+$$;
+
 CREATE OR REPLACE FUNCTION public.cockpit_hours_sources()
 RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path='' AS $$
 DECLARE out jsonb:='[]'::jsonb; pv text; k public.cockpit_hours_keys; s record; st text; note text; label text;
-  zone integer; acc record; hours_ago numeric;
+  zone integer; acc record; hours_ago numeric; v_cron boolean:=public.cockpit_hours_cron_on();
 BEGIN
   FOREACH pv IN ARRAY ARRAY['hubstaff','timetastic'] LOOP
     label:=CASE pv WHEN 'hubstaff' THEN 'Hubstaff' ELSE 'Timetastic' END;
@@ -644,7 +668,7 @@ BEGIN
     ELSE st:='connected'; END IF;
     hours_ago:=floor(extract(epoch FROM now()-s.last_ok_at)/3600);
     note:=CASE
-      WHEN st='missing_key' AND pv='hubstaff' THEN 'Hubstaff isn''t connected, so hours show as no data. In Hubstaff, open Settings, Organization, API tokens, make a token for your own account, and paste it here.'
+      WHEN st='missing_key' AND pv='hubstaff' THEN 'Hubstaff isn''t connected, so hours show as no data. As the Hubstaff owner, open Settings, Organization, API tokens, make an organisation token (it starts hsoat_), and paste it here.'
       WHEN st='missing_key' THEN 'Timetastic isn''t connected, so the cockpit doesn''t know about leave or public holidays. As a Timetastic admin, copy the token from app.timetastic.co.uk/api and paste it here.'
       WHEN st='unchecked' THEN format('The key is saved, but %s couldn''t be reached to check it. The next hourly read tries again.', label)
       WHEN st='refused' AND pv='hubstaff' AND k.state_note='role_not_manager' THEN 'This Hubstaff key belongs to an account that can''t read everyone''s time. Make the token as the organisation owner or a manager, and paste it here.'
@@ -655,7 +679,9 @@ BEGIN
       WHEN st='needs_new_key' THEN 'Hubstaff''s personal key was used up and can''t be renewed. Make a new personal token in Hubstaff and paste it here.'
       WHEN st='expiring' THEN format('The Hubstaff key expires about %s. Make a new one in Hubstaff and paste it here before then.', to_char(k.expires_on,'FMDD Mon'))
       WHEN st='stale' THEN format('%s was last read %s h ago. Press Sync now. If it fails, this card says why.', label, hours_ago)
-      WHEN st='never_run' THEN 'Nothing has been read yet. The hourly read runs at 17 minutes past the hour, or press Sync now.'
+      -- The hourly read is promised only once its job exists (20261009b), never before.
+      WHEN st='never_run' AND v_cron IS TRUE THEN 'Nothing has been read yet. The hourly read runs at 17 minutes past the hour, or press Sync now.'
+      WHEN st='never_run' THEN 'Nothing has been read yet. Press Sync now to read it.'
       WHEN st='failing' THEN format('The last %s read failed%s. The next hourly read tries again, or press Sync now.', label, CASE WHEN s.note IS NULL THEN '' ELSE ' ('||left(s.note,160)||')' END)
       ELSE NULL END;
     SELECT count(*) FILTER (WHERE NOT a.ignored) AS accounts,
@@ -924,17 +950,11 @@ $$;
 
 CREATE OR REPLACE FUNCTION public.cockpit_ceo_hours_status()
 RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path='' AS $$
-DECLARE v_run jsonb; v_cron boolean:=NULL; v_accounts jsonb;
+DECLARE v_run jsonb; v_cron boolean:=public.cockpit_hours_cron_on(); v_accounts jsonb;
 BEGIN
   IF public.cockpit_is_ceo() IS NOT TRUE THEN RAISE EXCEPTION 'Verified founder access required' USING ERRCODE='42501'; END IF;
   SELECT jsonb_build_object('id',r.id,'mode',r.mode,'state',r.state,'finishedAt',r.finished_at) INTO v_run
     FROM public.cockpit_hours_sync_runs r ORDER BY r.started_at DESC, r.id DESC LIMIT 1;
-  IF to_regclass('cron.job') IS NOT NULL THEN
-    BEGIN
-      EXECUTE 'SELECT count(*)=2 FROM cron.job WHERE jobname IN (''mahara-hours-sync'',''mahara-hours-deep'') AND active' INTO v_cron;
-    EXCEPTION WHEN others THEN v_cron:=NULL;
-    END;
-  END IF;
   SELECT coalesce(jsonb_agg(jsonb_build_object('provider',a.provider,'externalId',a.external_id,'email',a.email,'name',a.name,'status',a.status,
       'membershipRole',a.membership_role,'personId',a.person_id,'linkMethod',a.link_method,'ignored',a.ignored,
       'emailDiffers',coalesce(a.email IS NOT NULL AND p.email IS NOT NULL AND lower(btrim(a.email))<>lower(btrim(p.email)),false))
@@ -1031,6 +1051,11 @@ BEGIN
     IF t.contract_country IS NULL THEN RAISE EXCEPTION 'Choose the contract country first' USING ERRCODE='22023'; END IF;
     IF t.contract_country='KW' AND t.kw_clause_reviewed_at IS NULL THEN
       RAISE EXCEPTION 'A Kuwaiti lawyer has to review the pay-follows-hours clause first' USING ERRCODE='22023';
+    END IF;
+    -- Switching pay to hours from a month already under way would cut pay already earned (design 4.1, decision 13).
+    IF t.contract_country='KW' AND (p ? 'hoursPayFrom')
+       AND t.hours_pay_from<=date_trunc('month',public.cockpit_hours_kw_today())::date THEN
+      RAISE EXCEPTION 'Kuwait law doesn''t allow a backdated pay cut. Choose next month or later' USING ERRCODE='22023';
     END IF;
     v_from:=public.cockpit_hours_last_approved(v_person.id);
     IF v_from IS NOT NULL AND t.hours_pay_from<=v_from AND (p ? 'hoursPayFrom') THEN
@@ -1452,6 +1477,10 @@ DECLARE v_actor text:=public.cockpit_hours_ceo_email(); v_day date;
 BEGIN
   IF (p->>'provider') NOT IN ('hubstaff','timetastic') THEN RAISE EXCEPTION 'Choose Hubstaff or Timetastic' USING ERRCODE='22023'; END IF;
   v_day:=CASE WHEN p->'expiresOn'='null'::jsonb THEN NULL ELSE public.cockpit_hours_day(p->>'expiresOn') END;
+  -- A personal token renews itself on every read, so it has no end date to record.
+  IF EXISTS (SELECT 1 FROM public.cockpit_hours_keys WHERE provider=p->>'provider' AND kind='hubstaff_personal') AND v_day IS NOT NULL THEN
+    RAISE EXCEPTION 'A personal token renews itself, so it has no expiry date' USING ERRCODE='22023';
+  END IF;
   UPDATE public.cockpit_hours_keys SET expires_on=v_day WHERE provider=p->>'provider';
   IF NOT FOUND THEN RAISE EXCEPTION 'There is no saved key yet' USING ERRCODE='22023'; END IF;
   PERFORM public.cockpit_hours_audit('hours.keyExpiry','cockpit_hours_keys',p->>'provider',
@@ -1937,7 +1966,7 @@ BEGIN
     'cockpit_hours_holidays_json(bigint,date,date)','cockpit_hours_coverage_json(date,date)','cockpit_hours_approval_json(public.cockpit_hours_pay_months)',
     'cockpit_hours_adjustments_json(bigint,date)','cockpit_hours_inputs_body(date,bigint)','cockpit_hours_schedule_mismatch(jsonb,jsonb)',
     'cockpit_hours_person(jsonb)','cockpit_hours_last_approved(bigint)','cockpit_hours_day_snapshot(bigint,date)','cockpit_hours_month_currency(bigint,date)',
-    'cockpit_hours_autolink(text)'] LOOP
+    'cockpit_hours_autolink(text)','cockpit_hours_cron_on()'] LOOP
     EXECUTE format('REVOKE ALL ON FUNCTION public.%s FROM PUBLIC, anon, authenticated, service_role', f);
   END LOOP;
   -- CEO RPCs, called from the browser.

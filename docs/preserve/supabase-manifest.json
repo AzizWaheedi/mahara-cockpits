@@ -10165,6 +10165,7 @@
    "cockpit_hours_ceo_email",
    "cockpit_hours_ceo_tt_user",
    "cockpit_hours_coverage_json",
+   "cockpit_hours_cron_on",
    "cockpit_hours_day",
    "cockpit_hours_day_snapshot",
    "cockpit_hours_holidays_json",

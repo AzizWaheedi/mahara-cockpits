@@ -254,7 +254,7 @@ describe("connections say what to do next", () => {
         note: null,
       }),
     ).toBe(
-      "Hubstaff isn't connected, so hours show as no data. In Hubstaff, open Settings, Organization, API tokens, make a token for your own account, and paste it here.",
+      "Hubstaff isn't connected, so hours show as no data. As the Hubstaff owner, open Settings, Organization, API tokens, make an organisation token (it starts hsoat_), and paste it here.",
     );
     expect(
       sourceSentence({ provider: "timetastic", state: "refused", note: null }),

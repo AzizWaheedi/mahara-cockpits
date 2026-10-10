@@ -220,10 +220,19 @@ export const HUBSTAFF_USER_AGENT='mahara-cockpit/1.0';
 /**
  * A 403 from Cloudflare rather than from Hubstaff: a body that is not JSON
  * and carries a Cloudflare error code (1010: no or refused User-Agent), or a
- * Cloudflare server header. Not the key's fault, so never "refused".
+ * Cloudflare server header. Cloudflare can also answer an API client in JSON:
+ * then a 4-digit 1xxx code in `error_code` or `code` marks it (Hubstaff's own
+ * codes have 5 digits, like 10006). Every Hubstaff answer passes Cloudflare,
+ * so its headers alone never mark a JSON body. Not the key's fault, so never
+ * "refused".
  */
-function firewallCode(status:number,raw:string,headers:Headers,readable:boolean):string|null{
- if(status!==403||readable)return null;
+function firewallCode(status:number,raw:string,headers:Headers,readable:boolean,parsed:unknown=null):string|null{
+ if(status!==403)return null;
+ if(readable){
+  const body=isJsonObject(parsed)?parsed:{};
+  for(const v of [body.error_code,body.code])if(/^1\d{3}$/.test(String(v??'')))return String(v);
+  return null;
+ }
  const hit=raw.match(/error(?:\s+code)?:?\s*(1\d{3})\b/i)??raw.match(/\b(1010)\b/);
  if(hit)return hit[1];
  return /cloudflare/i.test(headers.get('server')??'')||headers.has('cf-ray')?'cloudflare':null;
@@ -286,7 +295,7 @@ export async function hubstaffCall(
   const raw=await response.text().catch(()=>'');
   try{parsed=JSON.parse(raw);}catch{readable=false;}
   if(!response.ok){
-   const blocked=firewallCode(response.status,raw,response.headers,readable);
+   const blocked=firewallCode(response.status,raw,response.headers,readable,parsed);
    if(blocked)throw firewallError(blocked);
    const body=isJsonObject(parsed)?parsed:{};
    const code=safeCode(body.code??body.error_code??(isJsonObject(body.error)?body.error.code:undefined),token);
@@ -334,7 +343,7 @@ export async function hubstaffExchange(refreshToken:string,health:HoursHealth,re
  const body=isJsonObject(parsed)?parsed:{};
  if(!response.ok){
   // Stopped by Cloudflare before Hubstaff saw it: the token was not used.
-  const blocked=firewallCode(response.status,raw,response.headers,readable);
+  const blocked=firewallCode(response.status,raw,response.headers,readable,parsed);
   if(blocked)throw firewallError(blocked);
   const code=safeCode(body.error,refreshToken);
   throw new HoursProviderError(response.status===400||response.status===401?'refused':'http',`Hubstaff refused the personal token (${response.status}${code?` ${code}`:''}).`,response.status,code);

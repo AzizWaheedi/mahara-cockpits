@@ -7,7 +7,7 @@ import { checkMonth, makeHoursApi } from "./handler.ts";
 
 const CEO_ID = "00000000-0000-4000-8000-0000000000c1";
 type Rec = { name: string; args: Record<string, unknown> };
-function setup(opts: { key?: unknown; fetch?: typeof fetch; now?: string; inputs?: unknown; actor?: string | null } = {}) {
+function setup(opts: { key?: unknown; fetch?: typeof fetch; now?: string; inputs?: unknown; actor?: string | null; claim?: (mode: string) => boolean } = {}) {
   const calls: Rec[] = [];
   const receipts: ReceiptRow[] = [];
   const works: Promise<unknown>[] = [];
@@ -16,7 +16,8 @@ function setup(opts: { key?: unknown; fetch?: typeof fetch; now?: string; inputs
     if (name === "cockpit_hours_actor") return opts.actor === undefined ? "ceo@example.test" : opts.actor;
     if (name === "cockpit_hours_key_get") return opts.key ?? null;
     if (name === "cockpit_hours_key_put") return { ok: true, version: 2, last4: "x" };
-    if (name === "cockpit_hours_lease_claim") return { ok: false, busy: true, since: null };
+    if (name === "cockpit_hours_lease_claim")
+      return opts.claim?.(String((args.p as Record<string, unknown>)?.mode)) ? { ok: true, runId: 9, leaseToken: "lease-token" } : { ok: false, busy: true, since: null };
     if (name === "cockpit_hours_inputs") return opts.inputs ?? null;
     if (name === "cockpit_hours_pay_month_approve") return { ok: true, existing: false, approvedAt: "2026-11-05T09:00:00Z" };
     return { ok: true };
@@ -83,6 +84,14 @@ describe("saveKey", () => {
     expect(put).toMatchObject({ provider: "hubstaff", kind: "hubstaff_org", secret: "hsoat_newPastedKey7Qx2", accountId: "900001", state: "connected", expectVersion: 1, savedBy: "ceo@example.test", expiresOn: null });
     expect(s.works.length).toBe(1);
     expect(JSON.stringify(s.receipts)).not.toContain("hsoat_");
+  });
+  test("a saved key starts a doctor, then a deep read: the one that loads Timetastic's people and leave types", async () => {
+    const s = setup({ key: working, claim: mode => mode === "doctor" });
+    await s.send({ op: "saveKey", provider: "hubstaff", key: "hsoat_newPastedKey7Qx2" });
+    await Promise.all(s.works);
+    const claims = s.calls.filter(c => c.name === "cockpit_hours_lease_claim").map(c => c.args.p as Record<string, unknown>);
+    expect(claims.map(c => c.mode)).toEqual(["doctor", "deep"]);
+    expect(claims[1]).toMatchObject({ requestedBy: "ceo@example.test", windowFrom: null, dryRun: false });
   });
   test("a personal token: the exchange is the test and its new refresh token is stored at once", async () => {
     const s = setup();

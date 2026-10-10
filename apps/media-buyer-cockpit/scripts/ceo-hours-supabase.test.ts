@@ -108,6 +108,9 @@ describe("keys", () => {
     const rotated = JSON.stringify((await db.query("select entity_id, actor_email, after from cockpit_audit_log where action='hours.keyRotated'")).rows);
     expect(rotated).toContain('"version":3');
     for (const bad of ["refreshFixture", "accessFixture"]) expect(rotated).not.toContain(bad);
+    // A personal token renews itself: the card offers no expiry date and the server refuses one.
+    await actor(db, CEO);
+    await expect(call(db, "cockpit_ceo_hours_key_expiry", { provider: "hubstaff", expiresOn: "2027-01-07" })).rejects.toMatchObject({ code: "22023" });
     await service(db);
     // Back to the organisation token for the rest of the tests.
     await call(db, "cockpit_hours_key_put", { provider: "hubstaff", kind: "hubstaff_org", secret: "hsoat_madeUpFixtureKey7Qx2", savedBy: "aziz@maharamedia.com", accountId: "705266", state: "connected" });
@@ -505,6 +508,48 @@ describe("20261009b: the scheduled reads, against stub vault, net and cron schem
     expect(call).toEqual({ url: "https://bldgtotkfmhoxmlzowdx.supabase.co/functions/v1/cockpit-hours-sync", body: { mode: "deep" },
       headers: { "Content-Type": "application/json", "x-cron-secret": "cron-secret-fixture" }, timeout_milliseconds: 5000 });
     await expect(jobs.query("select public.cockpit_hours_kick('month')")).rejects.toMatchObject({ code: "22023" });
+  });
+  test("Not connected asks for an organisation token; never read promises the hourly read only while its job is on", async () => {
+    type Src = { provider: string; state: string; note: string | null };
+    const sources = async () => {
+      await actor(jobs, CEO);
+      const r = (await jobs.query<{ r: { sources: Src[]; cronScheduled: boolean | null } }>("select public.cockpit_ceo_hours_status() r")).rows[0].r;
+      return { ...r, hub: r.sources.find(x => x.provider === "hubstaff"), tt: r.sources.find(x => x.provider === "timetastic") };
+    };
+    const none = await sources();
+    expect(none.hub?.state).toBe("missing_key");
+    expect(none.hub?.note).toContain("make an organisation token (it starts hsoat_)");
+    expect(none.hub?.note).not.toContain("your own account");
+    await service(jobs);
+    await call(jobs, "cockpit_hours_key_put", { provider: "timetastic", kind: "timetastic", secret: "ttFixtureToken0000WXYZ", savedBy: "aziz@maharamedia.com", state: "connected" });
+    const on = await sources();
+    expect(on.cronScheduled).toBe(true);
+    expect(on.tt?.state).toBe("never_run");
+    expect(on.tt?.note).toContain("17 minutes past the hour");
+    await owner(jobs);
+    await jobs.query("update cron.job set active=false where jobname='mahara-hours-sync'");
+    const off = await sources();
+    expect(off.cronScheduled).toBe(false);
+    expect(off.tt?.note).toBe("Nothing has been read yet. Press Sync now to read it.");
+    await owner(jobs);
+    await jobs.query("update cron.job set active=true where jobname='mahara-hours-sync'");
+    // The helper is internal: no role calls it directly.
+    for (const who of [null, CEO]) {
+      await actor(jobs, who);
+      await expect(jobs.query("select public.cockpit_hours_cron_on()")).rejects.toMatchObject({ code: "42501" });
+    }
+    await service(jobs);
+    await expect(jobs.query("select public.cockpit_hours_cron_on()")).rejects.toMatchObject({ code: "42501" });
+  });
+  test("the roster's own save of a last day before the roster date never fails when there is no start date", async () => {
+    await actor(jobs, CEO);
+    const made = await call(jobs, "cockpit_ceo_people_save", { name: "Person N", role: "Video editor" });
+    const id = Number(made.id);
+    await call(jobs, "cockpit_ceo_people_save", { id, active: false, endedOn: "2026-01-15" });
+    await owner(jobs);
+    const row = (await jobs.query<{ f: string; t: string }>("select from_day::text f, to_day::text t from cockpit_employment_periods where person_id=$1 and kind='employed'", [id])).rows[0];
+    // The period starts on the day they were added, a guess; it ends the day before, so it holds no days.
+    expect(Date.parse(row.t) - Date.parse(row.f)).toBe(-86_400_000);
   });
   test("nobody but the owner can run the kick", async () => {
     for (const who of [null, CEO]) {

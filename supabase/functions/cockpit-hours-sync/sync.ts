@@ -126,18 +126,31 @@ export async function runSync(deps: SyncDeps, run: RunInput): Promise<RunResult>
         await get("organizations", {});
         const members = normaliseMembers(await pages(`${org}/members`, { include: "users", include_removed: "true" }));
         // The token holder's role: only an owner or a manager can read everyone's time.
-        const me = await get("users/me", {});
-        const myId = String(((me.user ?? me) as Record<string, unknown>).id ?? "");
-        const role = members.find(m => m.externalId === myId)?.membershipRole ?? null;
+        // An organisation token belongs to the organisation, not to a person: when
+        // users/me doesn't name a member (or isn't answered for it), its role is
+        // unknown, never "not a manager". It has just read the organisation and its
+        // members, so it is not refused for that; the activities read below decides.
+        let role: string | null | undefined;
+        try {
+          const me = await get("users/me", {});
+          const myId = String(((me.user ?? me) as Record<string, unknown> | null)?.id ?? "");
+          const holder = members.find(m => m.externalId === myId);
+          role = holder ? (holder.membershipRole ?? null) : access.kind === "hubstaff_org" ? undefined : null;
+        } catch (e) {
+          if (access.kind !== "hubstaff_org" || (e instanceof HoursProviderError && e.kind === "firewall_blocked")) throw e;
+          role = undefined;
+        }
         hubstaff.accounts = members.filter(m => m.status === "active").length;
-        if (role !== "owner" && role !== "manager") {
+        if (role !== undefined && role !== "owner" && role !== "manager") {
           hubstaff.state = "refused";
           hubstaff.note = "This Hubstaff key belongs to an account that can't read everyone's time.";
           if (!dry) await deps.rpc("cockpit_hours_key_state", { p: { provider: "hubstaff", state: "refused", note: "role_not_manager", version: access.version } });
         } else {
           const y = addDays(today, -1);
           await get(`${org}/activities`, { "time_slot[start]": kuwaitStartUtc(y), "time_slot[stop]": kuwaitStartUtc(today), page_limit: 1 });
-          hubstaff.note = `Hubstaff answered: ${hubstaff.accounts} active members; the key is the ${role}'s and can read their time.`;
+          hubstaff.note = role === undefined
+            ? `Hubstaff answered: ${hubstaff.accounts} active members; the organisation token can read their time.`
+            : `Hubstaff answered: ${hubstaff.accounts} active members; the key is the ${role}'s and can read their time.`;
           if (!dry) await deps.rpc("cockpit_hours_key_state", { p: { provider: "hubstaff", state: "connected", accountId: access.accountId, version: access.version } });
         }
       } else {

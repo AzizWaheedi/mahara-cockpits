@@ -53,7 +53,7 @@ export function sourceSentence(
   switch (s.state) {
     case "missing_key":
       return hub
-        ? "Hubstaff isn't connected, so hours show as no data. In Hubstaff, open Settings, Organization, API tokens, make a token for your own account, and paste it here."
+        ? "Hubstaff isn't connected, so hours show as no data. As the Hubstaff owner, open Settings, Organization, API tokens, make an organisation token (it starts hsoat_), and paste it here."
         : "Timetastic isn't connected, so the cockpit doesn't know about leave or public holidays. As a Timetastic admin, copy the token from app.timetastic.co.uk/api and paste it here.";
     case "unchecked":
       return `The key is saved, but ${hub ? "Hubstaff" : "Timetastic"} couldn't be reached to check it. The next hourly read tries again.`;
@@ -72,7 +72,8 @@ export function sourceSentence(
     case "stale":
       return `${hub ? "Hubstaff" : "Timetastic"} was last read ${words.ago ?? "a while ago"}. Press Sync now. If it fails, this card says why.`;
     case "never_run":
-      return "Nothing has been read yet. The hourly read runs at 17 minutes past the hour, or press Sync now.";
+      // The server names the hourly read once its job exists; this fallback can't know that.
+      return "Nothing has been read yet. Press Sync now to read it.";
     case "failing":
       return `The last ${hub ? "Hubstaff" : "Timetastic"} read failed. Press Sync now; if it fails again, this card says why.`;
     default:

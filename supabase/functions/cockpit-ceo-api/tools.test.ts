@@ -213,4 +213,12 @@ test("a 403 from Hubstaff's firewall is its own kind, never a refused key; Hubst
   await expect(hubstaffExchange('refreshFixture0001', health, async () => new Response('error code: 1010', { status: 403 })))
     .rejects.toMatchObject({ kind: 'firewall_blocked' });
   await expect(hubstaffGet(HS_TOKEN, health, async () => new Response('{"error":"forbidden"}', { status: 403 }), 'organizations')).rejects.toMatchObject({ kind: 'refused', status: 403 });
+  // Cloudflare answering in JSON: its 4-digit 1xxx code marks it, on the API and on the token exchange.
+  const cfJson = () => new Response('{"title":"Access denied","status":403,"error_code":1010}', { status: 403, headers: { 'Content-Type': 'application/json', 'CF-RAY': '0000000000000000-KWI' } });
+  await expect(hubstaffGet(HS_TOKEN, health, async () => cfJson(), 'organizations')).rejects.toMatchObject({ kind: 'firewall_blocked', code: '1010' });
+  await expect(hubstaffExchange('refreshFixture0001', health, async () => cfJson())).rejects.toMatchObject({ kind: 'firewall_blocked' });
+  // Hubstaff's own JSON 403s pass Cloudflare too (its headers on them): still a refused key, or no API plan.
+  const viaCf = { 'Content-Type': 'application/json', 'CF-RAY': '0000000000000000-KWI', Server: 'cloudflare' };
+  await expect(hubstaffGet(HS_TOKEN, health, async () => new Response('{"error":"forbidden"}', { status: 403, headers: viaCf }), 'organizations')).rejects.toMatchObject({ kind: 'refused' });
+  await expect(hubstaffGet(HS_TOKEN, health, async () => new Response('{"code":10006,"error":"Organization does not have an active plan with API access"}', { status: 403, headers: viaCf }), 'organizations')).rejects.toMatchObject({ kind: 'plan_blocked' });
 });
