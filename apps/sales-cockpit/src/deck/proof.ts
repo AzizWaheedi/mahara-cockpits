@@ -502,42 +502,27 @@ export const YOUTUBE_VIDEOS: { id: string; title: L }[] = [
 /** Mahara on Instagram (linked from the YouTube channel's description). */
 export const INSTAGRAM = "https://www.instagram.com/mahara_media/";
 
-/** Where a profile's counters sit on its screenshot, as fractions of its size. */
-export interface Spot {
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-}
-
-/** One of our own channels, as its profile page showed it. */
+/** One of our own channels, as its profile page shows it. */
 export interface Profile {
   key: "youtube" | "instagram";
   href: string;
   handle: string;
-  /** The profile page, with its grid of videos. */
+  /** The profile page in dark mode, with its grid of videos, no counts on it. */
   shot: Pic;
-  /**
-   * The counters' text on the screenshot (measured from the image), ringed
-   * so the large figures point back to them.
-   */
-  spot: Spot;
-  figures: { n: number; label: L }[];
-  /** A fact beside the figures (Instagram's verified tick). */
-  note?: L;
+  /** The page's own colour, under the picture, so no other colour shows at its corners. */
+  bg: string;
   open: L;
 }
 
 /**
- * Our numbers, as the two profile pages showed them on 2026-10-08 (signed
- * out, captured for the deck). They are a day's count, not a live feed:
- * when they move, take new screenshots and change both together.
+ * Our two channels as pages, not as numbers (the CEO, 2026-10-10: "don't put
+ * the number of subscribers or videos ... Don't highlight them. Just put a
+ * screenshot of our Instagram and YouTube just to show the videos and our
+ * page"). Captured on 2026-10-10 by scripts/capture-profiles.mjs, signed out
+ * and in dark mode, with the subscriber, video, view, post and follower
+ * counts hidden before the capture. Run it again to refresh both pictures,
+ * then set `r` and `w` from what it prints.
  */
-export const PROFILES_AS_OF: L = {
-  en: "From the profile pages, 8 October 2026.",
-  ar: "من صفحات الحسابات، ٨ أكتوبر ٢٠٢٦.",
-};
-
 export const PROFILES: Profile[] = [
   {
     key: "youtube",
@@ -545,15 +530,11 @@ export const PROFILES: Profile[] = [
     handle: "@MaharaMedia",
     shot: {
       src: profileYoutube,
-      alt: "Mahara Media on YouTube: 158 subscribers, 20 videos",
-      r: 1800 / 1736,
+      alt: "Mahara Media's YouTube channel: the banner, the header and the latest videos",
+      r: 1800 / 1702,
       w: 1800,
     },
-    spot: { x: 0.2906, y: 0.2339, w: 0.1522, h: 0.0092 },
-    figures: [
-      { n: 158, label: { en: "subscribers", ar: "مشترك" } },
-      { n: 20, label: { en: "videos", ar: "فيديو" } },
-    ],
+    bg: "#0f0f0f",
     open: { en: "Open the channel", ar: "افتح القناة" },
   },
   {
@@ -562,13 +543,11 @@ export const PROFILES: Profile[] = [
     handle: "@mahara_media",
     shot: {
       src: profileInstagram,
-      alt: "Mahara Media on Instagram: 2,855 followers, verified",
-      r: 1500 / 2043,
+      alt: "Mahara Media's Instagram profile: the bio, the highlights and the post grid",
+      r: 1500 / 2078,
       w: 1500,
     },
-    spot: { x: 0.342, y: 0.072, w: 0.114, h: 0.0108 },
-    figures: [{ n: 2855, label: { en: "followers", ar: "متابع" } }],
-    note: { en: "Verified account", ar: "حساب موثّق" },
+    bg: "#0c1014",
     open: { en: "Open the profile", ar: "افتح الحساب" },
   },
 ];

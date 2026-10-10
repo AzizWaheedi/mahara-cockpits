@@ -10,6 +10,10 @@ that has changed under a revision stops the import and names the words.
 A script whose text is unchanged since the newest version is skipped; a
 changed one becomes the next version and the older versions are switched
 off, never deleted.
+
+Each language gets its own captures (captures_for): a field's anchor, the
+line it sits under in the cockpit, is kept only where that line is in the
+language's stage, and an anchor dropped is printed.
 """
 from __future__ import annotations
 
@@ -42,6 +46,33 @@ def rest(method: str, path: str, body=None, prefer: str | None = None):
         return json.loads(text) if text.strip() else None
 
 
+def captures_for(doc: dict, captures: list[dict]) -> tuple[list[dict], list[str]]:
+    """This language's own captures, and the anchors it dropped.
+
+    A capture's `after` is the block in its stage the field sits under in the
+    cockpit (the line that asks for it). It is kept only when that block is in
+    this language's stage and is not a step heading; otherwise the field goes
+    to the end of the stage, under "Answers for this part", and the dropped
+    anchor is named so the import says so.
+    """
+    stages = {s.get("no"): s for s in doc.get("stages", [])}
+    out: list[dict] = []
+    dropped: list[str] = []
+    for c in captures:
+        c = dict(c)
+        after = c.get("after")
+        if after is not None:
+            blocks = (stages.get(c.get("stage")) or {}).get("blocks") or []
+            ok = isinstance(after, int) and not isinstance(after, bool) and 0 <= after < len(blocks)
+            if ok and blocks[after].get("type") == "step":
+                ok = False
+            if not ok:
+                dropped.append(f"{c['key']} (stage {c.get('stage')}, block {after})")
+                c.pop("after")
+        out.append(c)
+    return out, dropped
+
+
 def main() -> None:
     src = Path(sys.argv[1])
     by = sys.argv[sys.argv.index("--by") + 1] if "--by" in sys.argv else "scripts_import"
@@ -60,7 +91,9 @@ def main() -> None:
                 doc = revise.apply(doc)
             except revise.Drift as e:
                 sys.exit(f"{key}.{lang}: {e}. Nothing was loaded; bring revise.py in line with the doc first.")
-            doc["captures"] = captures.get(key, [])
+            doc["captures"], dropped = captures_for(doc, captures.get(key, []))
+            if dropped:
+                print(f"{key}.{lang}: anchors dropped, these fields go to the end of their stage: {', '.join(dropped)}")
             docs.append((key, lang, doc))
     for key, lang, doc in docs:
         digest = hashlib.sha256(json.dumps(doc, sort_keys=True, ensure_ascii=False).encode()).hexdigest()

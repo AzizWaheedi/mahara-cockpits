@@ -320,6 +320,40 @@ copy run and the writer's status.
 | The demo's gap looks too big | The ladder says so when it is more than twice what they sign a year now; the one thing is always a step inside their funnel (booking, show-up, closing) worked out from their own numbers. A step they gave no number for is counted at ours, and the ladder says that too | Closer |
 | An intro that rang out does not come back at once | By design since 2026-09-27: it waits five minutes and returns while its twenty-minute window is open, so Next lead moves on | Aziz |
 
+### Zoom links and WhatsApp groups (2026-10-10)
+
+"Zoom link" (the dialer's action row, the step after a missed call, the lead
+page's and the guided call's headers) makes a Zoom meeting at once through
+sales-api (`zoom.link`), with no rooms machine behind it: no worker, sweep,
+wait, webhook or automatic send. The rep sends the link from their own
+WhatsApp or copies it. A licensed rep hosts on their own Zoom user (they
+press Start the meeting); anyone else is hosted on the shared host
+`zoom_links.fallback_host` (the CEO's licensed user) with join before host
+on, so both sides just join. The switch is the setting `zoom_links`
+(`enabled`), shipped off; its guard (20261010s) lets only a sales manager
+named in the same transaction turn it on or change the shared host, and
+audits every change. The health line is `cockpit_sales_worker_status`
+`sales-api` / `zoom-links`, written on every press (a quiet day is not an
+outage, so the watchdog does not watch it). The WhatsApp group for a booked
+demo is made from the setter's own phone; the cockpit keeps one row per lead
+in `cockpit_sales_groups` (`group.made`) and writes a HighLevel note without
+the link. Neither ever sends anything by itself.
+
+| Symptom | Fix | Who |
+| --- | --- | --- |
+| Turn Zoom links on (after the three Zoom secrets are set on sales-api) | One SQL call as postgres: `begin; set local mahara.actor = 'aziz@maharamedia.com'; update public.cockpit_sales_settings set value = value \|\| '{"enabled": true}'::jsonb, updated_by = 'aziz@maharamedia.com', updated_at = now() where key = 'zoom_links'; commit;` Then the newest `cockpit_audit_log` row for `entity_id = 'zoom_links'` says `settings.switch` by that manager. Turning it off needs no one: the same update with `false`, or delete the row | Aziz |
+| No "Zoom link" button anywhere | The switch is off, or the setting could not be read (the button hides either way, as the room menu does). Read `cockpit_sales_settings` where `key = 'zoom_links'` | Aziz |
+| "Zoom is not connected on the server yet (its keys are missing)", and `zoom-links` is red with "Zoom keys are missing on sales-api" | Set `ZOOM_ACCOUNT_ID`, `ZOOM_CLIENT_ID` and `ZOOM_CLIENT_SECRET` as sales-api secrets, copied from `/opt/data/bibi/api-keys.env` on the VPS (the same server-to-server app the room worker uses; it needs `meeting:write:meeting:admin` and the user and meeting reads). Never paste them in chat | Aziz or Hermes |
+| "The shared Zoom account is not available. Ask Aziz." | Zoom no longer says the shared host is licensed and active (its licence moved, or `fallback_host` names someone else). Licence that user again, or a manager points `fallback_host` at a licensed user (guarded like turning it on) | Aziz |
+| "Zoom did not make the meeting: ..." | Zoom's own words follow. A token refused means the app's keys changed (set the three secrets again); a scope message means the app lost `meeting:write:meeting:admin`. Nothing was saved, so pressing again is safe | Aziz |
+| "Zoom did not answer within 25 seconds" | Zoom was slow; no link was saved. Press again | The rep |
+| The card warns that the shared Zoom is in another meeting | The shared host is in a meeting now and Zoom lets one user host one meeting at a time, so the lead may see "waiting for the host" until it ends. A Zoom licence for that rep moves their links to their own user with no change in the cockpit (accepting a Basic invite does not) | Aziz |
+| The lead waits for the host on a rep's own link | The rep hosts it: press Start the meeting on the card (a fresh start link from Zoom each time; it is never stored) | The rep |
+| "You made 20 Zoom links in the last hour" | The per-seat cap (`per_seat_hour`). Pressing again for the same lead gives the same link for 12 hours, so the cap only stops runaway presses | The rep |
+| Old cockpit meetings pile up in a host's Zoom list | After each new link, sales-api deletes up to five of that host's cockpit meetings older than a day that were never started (Zoom says `waiting`); `deleted_why` on the row says what happened. A meeting someone started stays | Nobody |
+| The group's invite link is refused | It must be the link WhatsApp's Invite via link copies: `https://chat.whatsapp.com/...` (a tracking `?mode=...` on the end is removed by itself) | The setter |
+| A group row says `crm_note` failed | HighLevel did not take the note that the group was made (the row and the audit row stand). The next press on the group (Send the invite again) tries the note once more | The setter |
+
 ## Sales desk
 
 The worker on the VPS (`hermes/sales-desk`) that drafts the sales cockpit's proposals from the lead's demo call in Fathom, rebuilds them after the closer fills the gaps, indexes every rep's sales calls, copies the Obsidian vault's sales calls and every answered Maqsam phone call in, writes Vince's call reviews, researches leads, drafts follow-ups, runs the backlog waves, makes the live-call video rooms and sends the Slack replies the door keeps. Cron as `hermes`, each job under its own lock: requests and research every two minutes, recordings at :11 and :41, calls-vault at :26 and :56, maqsam-calls at :16 and :46, reviews at :03 and :33 and asked reviews every two minutes, followups at :07 and :37, call notes at :19 and :49, the digest at 03:15 UTC, the room worker every minute (`flock -w 10`, a 57 s run that also sends Slack replies), the room host check every 10 minutes, the doctor hourly at :05, waves every 5 minutes (the exact lines are in `hermes/sales-desk/README.md`, Cron); log `~/.sales-desk.log`. `calls-b2b-fathom --once` (Ahmed's private Fathom calls, which only B2B holds) is a one-off, never on cron. `python3 desk.py doctor` names what is wrong; `python3 desk.py status` shows the queue; `python3 desk.py deploy-check` says whether the box is ready for live calls with every switch off, and changes nothing.

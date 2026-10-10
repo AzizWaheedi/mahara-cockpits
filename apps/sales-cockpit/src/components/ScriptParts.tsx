@@ -4,6 +4,7 @@ import { useQuery } from "../lib/data";
 import { isArabic } from "../lib/format";
 import { TOKEN_LABELS } from "../lib/funnel";
 import {
+  BLANK_LABELS,
   type Block,
   type Fill,
   firstSentence,
@@ -108,11 +109,18 @@ export function Segmented({
  * prospect's own numbers) and each number the notes still need shown as a
  * dashed blank with what to ask for, so a rep never reads out a bracket.
  */
-export function Line({ text }: { text: string }) {
+export function Line({
+  text,
+  lang: given,
+}: {
+  text: string;
+  /** The script's language; left out, the line's own letters decide. */
+  lang?: "en" | "ar";
+}) {
   const parts = lineParts(text);
   if (parts.length === 1 && parts[0].kind === "text")
     return <>{parts[0].text}</>;
-  const lang = isArabic(text) ? "ar" : "en";
+  const lang = given ?? (isArabic(text) ? "ar" : "en");
   return (
     <>
       {parts.map((p, i) =>
@@ -133,11 +141,19 @@ export function Line({ text }: { text: string }) {
         ) : (
           <span
             key={i}
-            title="Not in the notes yet. Ask for it before you say this line."
+            title={
+              p.token in TOKEN_LABELS
+                ? "Not in the notes yet. Ask for it before you say this line."
+                : p.token === "TWO TIMES"
+                  ? "The booking below reads the two soonest free times."
+                  : "Fill this in from what they told you."
+            }
             className="muted mx-[0.1em] inline-block rounded-[3px] border border-dashed px-[0.35em] align-baseline text-[0.8em] leading-snug"
             style={{ borderColor: "var(--muted-foreground)" }}
           >
-            {TOKEN_LABELS[p.token]?.[lang] ?? p.token}
+            {TOKEN_LABELS[p.token]?.[lang] ??
+              BLANK_LABELS[p.token]?.[lang] ??
+              p.token}
           </span>
         ),
       )}
@@ -149,71 +165,107 @@ export function Blocks({
   blocks,
   fill,
   mode,
+  lang,
+  start = 0,
+  after,
 }: {
   blocks: Block[];
   fill: Fill;
   mode: Mode;
+  /**
+   * The script's language sets the reading direction of its lines, so a line
+   * that opens on the lead's Arabic name never shows English back to front.
+   * Left out (the playbook), each line reads its own.
+   */
+  lang?: "en" | "ar";
+  /** Where these blocks start in their stage (groupBlocks' start). */
+  start?: number;
+  /** What sits under a block: the fields its line asks for. */
+  after?: (index: number) => ReactNode;
 }) {
+  const dir = lang ? (lang === "ar" ? "rtl" : "ltr") : "auto";
   return (
     <div className="space-y-2.5">
       {blocks.map((b, i) => {
-        const text = b.text ? personaliseMarked(b.text, fill) : "";
-        const shown = mode === "bullets" ? firstSentence(text) : text;
-        if (b.type === "say")
-          return (
-            <p
-              key={i}
-              dir="auto"
-              className={`border-s-2 py-1 ps-3 leading-relaxed ${
-                mode === "bullets" ? "text-[15px]" : "text-[17px]"
-              }`}
-              style={{ borderColor: "var(--primary)" }}
-            >
-              <Line text={shown} />
-            </p>
-          );
-        if (b.type === "adapt")
-          return (
-            <p
-              key={i}
-              dir="auto"
-              className={`leading-relaxed ${mode === "bullets" ? "text-sm" : "text-[15px]"}`}
-            >
-              <Line text={shown} />
-            </p>
-          );
-        if (b.type === "step")
-          return (
-            <p
-              key={i}
-              className="pt-1 text-[13px] font-semibold"
-              style={{ color: "var(--primary)" }}
-            >
-              <Line text={text} />
-            </p>
-          );
-        if (b.type === "list")
-          return (
-            <ul key={i} className="list-disc space-y-1 pl-5 text-sm" dir="auto">
-              {(b.items ?? []).map((it, j) => (
-                <li key={j}>
-                  <Line text={personaliseMarked(it, fill)} />
-                </li>
-              ))}
-            </ul>
-          );
-        if (mode === "bullets") return null;
+        const under = after?.(start + i) ?? null;
+        const line = drawBlock(b, i, fill, mode, dir);
+        if (!under) return line;
         return (
-          <p
-            key={i}
-            dir="auto"
-            className="muted text-[13px] italic leading-relaxed"
-          >
-            <Line text={text} />
-          </p>
+          <div key={i} className="space-y-2.5">
+            {line}
+            {under}
+          </div>
         );
       })}
     </div>
+  );
+}
+
+function drawBlock(
+  b: Block,
+  i: number,
+  fill: Fill,
+  mode: Mode,
+  dir: "rtl" | "ltr" | "auto",
+): ReactNode {
+  const text = b.text ? personaliseMarked(b.text, fill) : "";
+  const shown = mode === "bullets" ? firstSentence(text) : text;
+  // The script's language names the blanks; a line read on its own (the
+  // playbook) goes by its letters.
+  const lang = dir === "rtl" ? "ar" : dir === "ltr" ? "en" : undefined;
+  if (b.type === "say")
+    return (
+      <p
+        key={i}
+        dir={dir}
+        className={`border-s-2 py-1 ps-3 leading-relaxed ${
+          mode === "bullets" ? "text-[15px]" : "text-[17px]"
+        }`}
+        style={{ borderColor: "var(--primary)" }}
+      >
+        <Line text={shown} lang={lang} />
+      </p>
+    );
+  if (b.type === "adapt")
+    return (
+      <p
+        key={i}
+        dir={dir}
+        className={`leading-relaxed ${mode === "bullets" ? "text-sm" : "text-[15px]"}`}
+      >
+        <Line text={shown} lang={lang} />
+      </p>
+    );
+  if (b.type === "step")
+    return (
+      <p
+        key={i}
+        className="pt-1 text-[13px] font-semibold"
+        style={{ color: "var(--primary)" }}
+      >
+        <Line text={text} lang={lang} />
+      </p>
+    );
+  if (b.type === "list")
+    return (
+      <ul key={i} className="list-disc space-y-1 ps-5 text-sm" dir={dir}>
+        {(b.items ?? []).map((it, j) => (
+          <li key={j}>
+            <Line text={personaliseMarked(it, fill)} lang={lang} />
+          </li>
+        ))}
+      </ul>
+    );
+  if (mode === "bullets") return null;
+  return (
+    <p
+      key={i}
+      dir={dir === "auto" ? "auto" : isArabic(b.text) ? "rtl" : "ltr"}
+      className="muted text-[13px] italic leading-relaxed"
+    >
+      {/* A note is for the rep, in whichever language the doc wrote it. */}
+      <Line text={text} />
+    </p>
   );
 }
 

@@ -2133,104 +2133,60 @@ button.dk-devices {
     var(--dk-drop);
 }
 
-/* ------------------------------------------------- our own channels */
+/* ------------------------------------------------- our own channels
+   The two pages side by side, as tall as the room allows, each with its
+   platform and handle under it. No counts and nothing ringed (the CEO,
+   2026-10-10): the pages and their videos are the proof. */
 
 .dk-channels {
   flex: 1;
   display: flex;
   min-height: 0;
-  margin-top: 34px;
+  margin-top: 40px;
 }
 .dk-channels-row {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   justify-content: center;
 }
-/* Both sets start on one line: the platform names side by side, then the
-   two headline figures side by side, read across like a table. */
-.dk-channels-mid {
-  position: relative;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  align-items: start;
-}
-/* The two sets of figures meet at one hairline. */
-.dk-channels-mid::before {
-  content: "";
-  position: absolute;
-  top: 6%;
-  bottom: 6%;
-  left: 50%;
-  width: 1px;
-  background: var(--dk-line);
-}
-.dk-channel-figs {
+.dk-channel {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  gap: 22px;
+  gap: 20px;
 }
-.dk-channel-figs[data-side="end"] {
-  align-items: flex-end;
-  text-align: end;
-}
-.dk-channel-name {
-  display: inline-flex;
+.dk-channel-cap {
+  display: flex;
   align-items: center;
   gap: 14px;
+  min-width: 0;
+}
+.dk-channel-mark {
+  display: inline-flex;
+  flex: none;
+}
+.dk-channel-name {
   font-size: 26px;
   font-weight: 600;
   line-height: 1.2;
-  color: var(--dk-ink-2);
-}
-.dk-channel-fig {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.dk-channel-figs[data-side="end"] .dk-channel-fig {
-  align-items: flex-end;
-}
-.dk-channel-label {
-  font-size: 26px;
-  line-height: 1.2;
-  color: var(--dk-teal);
-}
-[dir="rtl"] .dk-channel-label {
-  font-size: 28px;
-}
-.dk-channel-note {
-  padding: 8px 16px 8px 12px;
-  font-size: 20px;
   color: var(--dk-ink);
-  border-color: rgba(0, 207, 200, 0.4);
 }
-.dk-channel-note svg {
-  color: var(--dk-teal);
+[dir="rtl"] .dk-channel-name {
+  font-size: 28px;
 }
 .dk-channel-handle {
   font-family: "Geist Mono", ui-monospace, monospace;
   font-size: 20px;
   color: var(--dk-ink-3);
 }
-.dk-channels-source {
-  margin-top: 16px;
-  text-align: center;
-  font-size: 19px;
-  color: var(--dk-ink-3);
-}
-[dir="rtl"] .dk-channels-source {
-  font-size: 21px;
-}
 
-/* A profile page as it showed, cut at the foot of its grid. */
+/* A profile page as it shows, cut at the foot of its grid. Its ground is the
+   page's own colour (set inline), so only the page shows at the corners. */
 .dk-profile {
   position: relative;
   display: block;
   flex: none;
   overflow: hidden;
   border-radius: 18px;
-  background: #fff;
   box-shadow:
     0 0 0 1px var(--dk-line),
     var(--dk-drop);
@@ -2241,40 +2197,6 @@ button.dk-devices {
   height: 100%;
   object-fit: cover;
   object-position: top;
-}
-/* The ring over the profile's own counters: the large figures point back
-   to it. It draws in once the slide is up, then breathes twice. */
-.dk-profile-ring {
-  position: absolute;
-  box-sizing: content-box;
-  margin: -7px 0 0 -9px;
-  padding: 5px 7px;
-  border: 2px solid var(--dk-teal);
-  border-radius: 8px;
-  box-shadow:
-    0 0 0 4px rgba(0, 207, 200, 0.18),
-    0 0 26px rgba(0, 207, 200, 0.5);
-  pointer-events: none;
-  animation:
-    dk-ring-in 640ms var(--dk-ease) 820ms both,
-    dk-ring-breathe 2200ms ease-in-out 1500ms 2;
-}
-@keyframes dk-ring-in {
-  from {
-    opacity: 0;
-    transform: scale(1.6);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-@keyframes dk-ring-breathe {
-  50% {
-    box-shadow:
-      0 0 0 9px rgba(0, 207, 200, 0.1),
-      0 0 40px rgba(0, 207, 200, 0.7);
-  }
 }
 
 /* -------------------------------------------- the live page pop-up */
@@ -2659,7 +2581,6 @@ button.dk-devices {
   .dk-link:hover > .dk-ltr {
     transform: none !important;
   }
-  .dk-profile-ring,
   .dk-live-backdrop,
   .dk-live-dialog,
   .dk-live-state > i,

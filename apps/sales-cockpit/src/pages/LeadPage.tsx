@@ -26,6 +26,7 @@ import {
   ConversationFailed,
   useConversation,
 } from "../components/Conversation";
+import { GroupKit } from "../components/GroupKit";
 import { HotControl } from "../components/HotList";
 import {
   button,
@@ -57,6 +58,7 @@ import {
   VideoCallMenu,
   VideoPicker,
 } from "../components/VideoLink";
+import { ZoomLinkButton } from "../components/ZoomLink";
 import { assetStage, objectionsFrom } from "../lib/assets";
 import {
   type ClientFormSent,
@@ -231,6 +233,16 @@ export default function LeadPage({ me }: { me: Me }) {
       })
     : null;
   const linkShown = gate.show && choice !== null && !video.open;
+  // The language of the lead's own messages, for the Zoom link's and the
+  // group's words (Arabic until they have written in English).
+  const leadLang = leadLanguage(
+    convo.thread.filter(m => m.direction === "inbound").map(m => m.body),
+  );
+  // A demo booked and still ahead: the setter's WhatsApp group goes with it.
+  const groupDemo = upcomingDemo(appointments, Date.now());
+  // HighLevel's do-not-disturb as this page read it, over the copy's: no
+  // WhatsApp button for a lead who asked for none.
+  const leadNow = { ...l, dnd: Boolean(live?.contact.dnd || l.dnd) };
 
   return (
     <Page>
@@ -316,6 +328,16 @@ export default function LeadPage({ me }: { me: Me }) {
                 ? "Open the demo script"
                 : "Open the intro script"}
             </Link>
+          )}
+          {/* One press makes the Zoom meeting (zoom.link); nothing while
+              its switch is off. Not for an active client. */}
+          {isClient(l) ? null : (
+            <ZoomLinkButton
+              lead={leadNow}
+              me={me}
+              kind={callScript(me, appointments)}
+              lang={leadLang}
+            />
           )}
           {l.phone ? (
             <CopyChip icon={Phone} text={l.phone} label="Copy the number" />
@@ -422,6 +444,10 @@ export default function LeadPage({ me }: { me: Me }) {
         >
           {videoSaid}
         </p>
+      ) : null}
+
+      {groupDemo && !isClient(l) ? (
+        <GroupKit lead={leadNow} me={me} demo={groupDemo} lang={leadLang} />
       ) : null}
 
       {owed.length ? (
@@ -687,6 +713,27 @@ function alreadySent(
   if (mine) return { at: mine.sent_at, by: mine.sent_by_name };
   const deal = deals.find(d => !d.voided && d.submitted_at);
   return deal?.submitted_at ? { at: deal.submitted_at, by: deal.closer } : null;
+}
+
+/** The soonest demo still ahead that was not called off, for the WhatsApp group. */
+function upcomingDemo(
+  appointments: CalendarRow[],
+  now: number,
+): CalendarRow | null {
+  return (
+    appointments
+      .filter(
+        a =>
+          a.call_type === "demo" &&
+          a.start_at &&
+          Date.parse(a.start_at) > now &&
+          !["cancelled", "invalid", "noshow"].includes(String(a.status ?? "")),
+      )
+      .sort(
+        (x, y) =>
+          Date.parse(String(x.start_at)) - Date.parse(String(y.start_at)),
+      )[0] ?? null
+  );
 }
 
 /** Which script this lead's next call needs: the demo once one is booked or held. */

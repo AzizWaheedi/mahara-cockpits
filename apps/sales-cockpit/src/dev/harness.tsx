@@ -70,6 +70,19 @@
  *                              in again." with a 401
  *   reads    fail | hang       every table read fails, or never answers
  *
+ * The script screen (sales simplify, 2026-10-10):
+ *
+ *   notes    ok | fail | slow   script.save: stored, refused with a 503
+ *                              ("Not saved, kept on this device"), or
+ *                              stored and answered after 8 seconds
+ *   booking  on | off          book.slots' booking_url: the demo
+ *                              calendar's page, or none (switched off)
+ *
+ * The Zoom link and the WhatsApp group (src/dev/zoomHarness.ts):
+ *
+ *   zoom     own | shared | busy | off | nokeys | fail   (shared)
+ *   group    none | made
+ *
  * e.g. /sales/harness.html?path=/dialer&room=sent,
  * /sales/harness.html?path=/dialer&call=noanswer&auto=1,
  * /sales/harness.html?path=/lead/lead-1&room=waiting&offer=incoming,
@@ -90,6 +103,7 @@ import {
   roomStatusRows,
   waveTables,
 } from "./liveHarness";
+import { zoomAnswer, zoomKnobs, zoomSettings, zoomTables } from "./zoomHarness";
 
 // The Supabase client keeps the fetch it was created with, so the stand-in
 // below is installed before the client module is loaded (dynamic imports
@@ -126,6 +140,14 @@ for (const k of Object.keys(knobs) as (keyof typeof knobs)[]) {
 // Live calls and waves: the room for the lead on screen (the lead page's
 // lead, else the dialer's first), the seat's presence, and the waves.
 const live = liveKnobs(params);
+const zoomK = zoomKnobs(params);
+// The script screen's own knobs (see the header).
+const scriptKnobs = {
+  notes: params.get("notes") ?? "ok",
+  booking: params.get("booking") ?? "on",
+};
+/** script.save's rows: the lead page and the closer read them as the call goes. */
+const scriptNotes: Row[] = [];
 const startPath = params.get("path") ?? "/";
 const roomLead =
   /^\/lead\/([^/?#]+)/.exec(startPath)?.[1] ??
@@ -442,6 +464,62 @@ function hotSave(b: Row, now: number): Row {
   return { hot: { ...row } };
 }
 
+/**
+ * sales-api script.save as scriptnotes.ts keeps it: one row per call (by the
+ * device's call id), updated in place, only by its author or a manager.
+ */
+async function scriptSave(
+  b: Row,
+  now: number,
+  signal?: AbortSignal | null,
+): Promise<Row> {
+  const callId = String(b.call_id ?? "");
+  if (
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+      callId,
+    )
+  )
+    throw new Refusal("This call has no id. Open the script again.");
+  if (!leadOf(String(b.contact_id ?? "")))
+    throw new Refusal("That lead is not in the cockpit.", 404);
+  if (String(b.body ?? "").length > 20_000)
+    throw new Refusal(
+      "These notes are too long to save. Shorten the longest part's notes.",
+    );
+  if (scriptKnobs.notes === "fail")
+    throw new Refusal(
+      "The database did not answer (harness knob notes=fail). Try again.",
+      503,
+    );
+  const at = new Date(now).toISOString();
+  let row = scriptNotes.find(
+    n => n.call_id === callId && n.contact_id === b.contact_id,
+  );
+  if (row) {
+    row.body = b.body;
+    row.fields = b.fields;
+    row.updated_at = at;
+    if (b.appointment_id) row.appointment_id = b.appointment_id;
+  } else {
+    row = {
+      id: `sn-${scriptNotes.length + 1}`,
+      contact_id: b.contact_id,
+      appointment_id: b.appointment_id ?? null,
+      kind: "script",
+      call_id: callId,
+      body: b.body,
+      fields: b.fields,
+      author: F.ME.email,
+      created_at: at,
+      updated_at: at,
+      deleted_at: null,
+    };
+    scriptNotes.unshift(row);
+  }
+  if (scriptKnobs.notes === "slow") await sleep(8_000, signal);
+  return { note: { id: row.id, updated_at: row.updated_at } };
+}
+
 async function salesApi(b: Row, signal?: AbortSignal | null): Promise<Row> {
   log.push({ at: Date.now(), action: String(b.action), body: b });
   if (b.action === "dial.queue") {
@@ -456,7 +534,27 @@ async function salesApi(b: Row, signal?: AbortSignal | null): Promise<Row> {
   if (rooms) return rooms;
   const wave = answerWaves(String(b.action), b, waves, now);
   if (wave) return wave;
+  const zoom = zoomAnswer(String(b.action), b, zoomK, now);
+  if (zoom) return zoom;
   switch (b.action) {
+    case "script.save":
+      return await scriptSave(b, now, signal);
+    case "mark": {
+      // The mark lands on the calendar row the lead page reads.
+      const row = F.APPOINTMENTS.find(
+        a => a.appointment_id === String(b.appointment_id ?? ""),
+      );
+      if (row && b.status) {
+        row.marked_status = String(b.status);
+        row.status = String(b.status);
+        row.marked_by = F.ME.email;
+        row.marked_at = new Date(now).toISOString();
+        row.needs_mark = false;
+      }
+      return {
+        mark: { crm: "written", crm_error: null, status: b.status },
+      };
+    }
     case "dial.agent": {
       const state = knobs.agent;
       return {
@@ -673,7 +771,17 @@ async function salesApi(b: Row, signal?: AbortSignal | null): Promise<Row> {
         return { day, slots };
       });
       const kind = b.appointment_id ? "intro" : String(b.kind ?? "intro");
-      const had = dial.booked.get(String(b.contact_id ?? ""));
+      const contact = String(b.contact_id ?? "");
+      const fixed = F.APPOINTMENTS.find(
+        a =>
+          a.contact_id === contact &&
+          a.call_type === kind &&
+          Date.parse(String(a.start_at)) > now &&
+          !["cancelled", "noshow", "showed"].includes(String(a.status)),
+      );
+      const had =
+        dial.booked.get(contact) ??
+        (fixed ? { kind, start: String(fixed.start_at) } : undefined);
       return {
         kind,
         calendar_id: "cal",
@@ -684,6 +792,10 @@ async function salesApi(b: Row, signal?: AbortSignal | null): Promise<Row> {
         on_team: true,
         notice:
           "An intro can be booked from 2 hours ahead, up to 3 days out, as the HighLevel calendar allows.",
+        booking_url:
+          scriptKnobs.booking === "off"
+            ? null
+            : `https://api.leadconnectorhq.com/widget/booking/${kind === "demo" ? "jQqXS1YuFnmGZKLkrE62" : "dsqmJ393Dwl9fDSbIVOI"}`,
         existing:
           had && had.kind === kind
             ? { id: "bk-1", start: had.start, words: kuwaitWords(had.start) }
@@ -723,6 +835,35 @@ async function salesApi(b: Row, signal?: AbortSignal | null): Promise<Row> {
         );
       const start = String(b.start);
       if (!moving) dial.booked.set(contact, { kind, start });
+      if (!moving && knobs.book !== "unverified") {
+        const lead = leadOf(contact);
+        F.APPOINTMENTS.push({
+          appointment_id: `bk-${now}`,
+          contact_id: contact,
+          contact_name: lead?.name ?? null,
+          calendar_id:
+            kind === "demo" ? "jQqXS1YuFnmGZKLkrE62" : "dsqmJ393Dwl9fDSbIVOI",
+          call_type: kind,
+          start_at: new Date(Date.parse(start)).toISOString(),
+          booked_at: new Date(now).toISOString(),
+          crm_status: "confirmed",
+          assigned_user_id: kind === "demo" ? "u-omar" : "u-sara",
+          assigned_user_name: kind === "demo" ? "Omar Haddad" : "Sara Khalil",
+          ad_id: null,
+          origin: "ghl",
+          mirrored_at: new Date(now).toISOString(),
+          mark_id: null,
+          marked_status: null,
+          mark_reason: null,
+          mark_note: null,
+          marked_by: null,
+          marked_at: null,
+          mark_crm: null,
+          mark_crm_error: null,
+          status: "confirmed",
+          needs_mark: false,
+        });
+      }
       const a = b.attempt_id ? dial.attempts.get(String(b.attempt_id)) : null;
       if (a)
         saveAttempt(a, {
@@ -1053,7 +1194,7 @@ async function main() {
     cockpit_sales_calendar: F.APPOINTMENTS,
     cockpit_sales_dials: [...F.DIALS, ...F.HOT_DIALS],
     cockpit_sales_deals: F.DEALS,
-    cockpit_sales_notes: [],
+    cockpit_sales_notes: scriptNotes,
     cockpit_sales_proposals: F.PROPOSALS,
     cockpit_sales_requests: F.REQUESTS,
     cockpit_sales_recordings: F.RECORDINGS,
@@ -1067,11 +1208,16 @@ async function main() {
     cockpit_sales_settings: [
       ...F.SETTINGS.filter(
         r =>
-          !["rooms", "live", "whatsapp_guard", "followups"].includes(
-            String(r.key),
-          ),
+          ![
+            "rooms",
+            "live",
+            "whatsapp_guard",
+            "followups",
+            "zoom_links",
+          ].includes(String(r.key)),
       ),
       ...liveSettings(live, roomLead),
+      ...zoomSettings(zoomK),
     ],
     cockpit_sales_mirror_runs: [F.MIRROR_RUN],
     // The desk's requests job (knobs.desk) beside the room worker's jobs.
@@ -1093,6 +1239,7 @@ async function main() {
     cockpit_sales_messages: F.MESSAGES,
     cockpit_sales_snippets: F.SNIPPETS,
     cockpit_sales_wa_templates: F.WA_TEMPLATES,
+    ...zoomTables(zoomK),
     cockpit_sales_scripts: Object.values(scripts).map((doc, i) => ({
       id: `s${i}`,
       key: doc.key,

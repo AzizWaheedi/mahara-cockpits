@@ -119,6 +119,9 @@ import { ApiRefusal, makeLiveIO, uuidFrom } from "./liveio.ts";
 import { makeRooms } from "./rooms.ts";
 import { holdUntil, kuwaitClock, leadJoined, roomCtx, type RoomRow, roomsSetting } from "./roomlogic.ts";
 import { makeFollowupAgent } from "./followupAgent.ts";
+import { bookingUrl, makeScriptNotes } from "./scriptnotes.ts";
+import { makeZoomLinks } from "./zoomlinks.ts";
+import { makeGroups } from "./groups.ts";
 import {
   clockCountry,
   budgetCap,
@@ -5065,6 +5068,7 @@ async function bookSlots(who: Who, b: Row) {
       on_team: false,
       moving: { id: String(m.appt.appointment_id), start: m.appt.start_at, words: kuwaitWords(Date.parse(String(m.appt.start_at))) },
       notice: noticeWords(m.kind, m.cal),
+      booking_url: bookingUrl(m.calendarId, m.cal),
       existing: null,
       days,
     };
@@ -5088,6 +5092,7 @@ async function bookSlots(who: Who, b: Row) {
     fallback,
     on_team: p.onTeam,
     notice: noticeWords(p.kind, p.cal),
+    booking_url: bookingUrl(p.calendarId, p.cal),
     existing: existing ? { id: existing.id, start: new Date(existing.start).toISOString(), words: kuwaitWords(existing.start) } : null,
     days,
   };
@@ -6584,10 +6589,18 @@ const followupAgent = makeFollowupAgent({
   sendFollowup: (who, f, b, auto, opts) => sendFollowup(who, f, b, auto, opts),
   whatsappHealth: source => whatsappHealth({ source }),
 });
+const scriptNotes = makeScriptNotes({ svc, audit, cockpitLead });
+// The instant Zoom link and the setter's WhatsApp group (2026-10-10): apart
+// from the rooms machine, whose switches stay off.
+const zoomLinks = makeZoomLinks({ svc, audit, fetchWithin, env, background });
+const groups = makeGroups({ svc, audit, ghl });
 
 const ACTIONS: Record<string, (who: Who, b: Row) => Promise<Row>> = {
   ...rooms.actions,
   ...followupAgent.actions,
+  ...scriptNotes.actions,
+  ...zoomLinks.actions,
+  ...groups.actions,
   mark,
   "mark.retry": markRetry,
   "note.add": noteAdd,

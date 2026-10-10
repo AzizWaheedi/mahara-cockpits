@@ -19,6 +19,7 @@ italic, `<HEADING_n>` for headings, `TAB <name>` between tabs), made by
 objection and FAQ playbooks.
 
 Usage: parse.py <annotated.txt> <key: intro|demo> <out_dir>
+       parse.py rejoin <doc.json> <section title> <stage no>   (see rejoin)
 """
 from __future__ import annotations
 
@@ -126,9 +127,18 @@ def parse_framework(lines: list[str], style: str) -> dict:
                 doc["title"] = doc["title"] or words
                 continue
             if level == 2:
+                m = STAGE.match(words)
+                if not m and stage is not None and words.endswith(":"):
+                    # A label set as a heading inside a stage ("Examples:" in
+                    # the Arabic intro's Transition to Demo) is a line of that
+                    # stage, as the English doc writes it. Taken as a section,
+                    # it cut the stage off there and carried the rest of the
+                    # stage, its checklist too, into a section of its own.
+                    branch = None
+                    add({"type": "note", "text": words})
+                    continue
                 flush_bullets(True)
                 branch = None
-                m = STAGE.match(words)
                 if m:
                     stage = {"no": int(m.group(1)), "title": m.group(2).strip(), "goal": None,
                              "minutes": None, "blocks": [], "checklist": []}
@@ -279,7 +289,46 @@ def parse_playbook(lines: list[str]) -> dict:
     return out
 
 
+def rejoin(doc: dict, title: str, stage_no: int) -> dict:
+    """A doc parsed before the heading-label fix, put right without the export.
+
+    The old rule took a label set as a heading ("Examples:") for a section and
+    moved the rest of the stage into it; the stage's checklist, flushed with
+    no stage open, ended up as the section's last list. This puts the label
+    back as a note, the section's blocks after it, and that last list back as
+    the checklist, and drops the section. A doc without that section, or a
+    stage that already has blocks after the cut, is refused.
+    """
+    import copy
+
+    out = copy.deepcopy(doc)
+    sections = out.get("sections") or []
+    hit = [s for s in sections if s.get("title") == title]
+    if len(hit) != 1:
+        raise ValueError(f"{out.get('key')}.{out.get('lang')}: no single section titled {title!r}")
+    stage = next((s for s in out.get("stages", []) if s.get("no") == stage_no), None)
+    if stage is None:
+        raise ValueError(f"{out.get('key')}.{out.get('lang')}: no stage {stage_no}")
+    blocks = list(hit[0].get("blocks") or [])
+    if blocks and blocks[-1].get("type") == "list" and not stage.get("checklist"):
+        stage["checklist"] = list(blocks[-1].get("items") or [])
+        blocks = blocks[:-1]
+    stage["blocks"] = list(stage.get("blocks") or []) + [{"type": "note", "text": title}] + blocks
+    out["sections"] = [s for s in sections if s is not hit[0]]
+    if not out["sections"]:
+        out.pop("sections")
+    return out
+
+
 def main() -> None:
+    if len(sys.argv) == 5 and sys.argv[1] == "rejoin":
+        # parse.py rejoin <doc.json> <section title> <stage no>: rewrites the file.
+        f = Path(sys.argv[2])
+        doc = rejoin(json.loads(f.read_text()), sys.argv[3], int(sys.argv[4]))
+        f.write_text(json.dumps(doc, ensure_ascii=False, indent=1))
+        s = next(s for s in doc["stages"] if s["no"] == int(sys.argv[4]))
+        print(f"{f.name}: stage {s['no']} now has {len(s['blocks'])} blocks and {len(s['checklist'])} checklist items")
+        return
     src, key, out_dir = sys.argv[1], sys.argv[2], Path(sys.argv[3])
     tabs = split_tabs(Path(src).read_text())
     out_dir.mkdir(parents=True, exist_ok=True)

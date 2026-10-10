@@ -1,5 +1,4 @@
 import {
-  ArrowLeft,
   Bell,
   BellRing,
   CalendarClock,
@@ -28,6 +27,7 @@ import {
 import { Link, useSearchParams } from "react-router";
 import { AdOrigin } from "../components/AdOrigin";
 import { ProofToSend } from "../components/AssetPicker";
+import { BookForm } from "../components/BookForm";
 import { CallNotesList, useCallNotes } from "../components/CallNotes";
 import {
   Conversation,
@@ -52,18 +52,8 @@ import { LeadTimeline, type LiveMessage } from "../components/LeadTimeline";
 import { ResearchPanel } from "../components/ResearchPanel";
 import { LiveBoundary } from "../components/RoomLine";
 import { RoomPanel } from "../components/RoomPanel";
-import {
-  Blocks,
-  BranchGroup,
-  countryName,
-  type Key,
-  type Mode,
-  Playbook,
-  readPrefs,
-  Segmented,
-  useScript,
-  writePrefs,
-} from "../components/ScriptParts";
+import { countryName, type Key, Segmented } from "../components/ScriptParts";
+import { ScriptRunner } from "../components/ScriptRunner";
 import {
   AutoVideoStrip,
   createAsk,
@@ -74,6 +64,7 @@ import {
   VideoLinkButton,
   VideoPicker,
 } from "../components/VideoLink";
+import { ZoomLinkButton } from "../components/ZoomLink";
 import { ApiError, api, uncertain } from "../lib/api";
 import { assetStage, objectionsFrom } from "../lib/assets";
 import { CLIENT_NOTE, isClient } from "../lib/clients";
@@ -131,7 +122,6 @@ import {
   ago,
   classLabel,
   clock,
-  dayLabel,
   duration,
   isArabic,
   plainStage,
@@ -150,9 +140,8 @@ import {
   videoJoinedAt,
   workerDownOf,
 } from "../lib/rooms";
-import { type Fill, groupBlocks, personalise } from "../lib/script";
 import { toast } from "../lib/toast";
-import type { Lead, Me } from "../lib/types";
+import type { CalendarRow, Lead, Me, Note } from "../lib/types";
 import {
   gateLine,
   introCallInWindow,
@@ -267,22 +256,6 @@ interface CallInfo {
   answered: boolean;
   seconds: number;
   words: string;
-}
-
-interface Slots {
-  kind: "intro" | "demo";
-  calendar_id: string;
-  calendar: string;
-  minutes: number;
-  with: "me" | "anyone";
-  /** Asked for the rep's own times, found none, so these are the team's. */
-  fallback: boolean;
-  on_team: boolean;
-  notice: string;
-  existing: { id: string; start: string; words: string } | null;
-  /** When moving a booked call: the call as it stands. */
-  moving?: { id: string; start: string; words: string } | null;
-  days: { day: string; slots: string[] }[];
 }
 
 type As = "setter" | "closer";
@@ -1101,6 +1074,8 @@ function LeadWork({
         item={item}
         talk={talk}
         convo={convo}
+        attemptId={open?.id ?? null}
+        onStay={onStay}
         // Writing to the lead (a WhatsApp, research) keeps them on screen,
         // as a note in the call pane does.
         onTyping={() => {
@@ -2395,6 +2370,13 @@ function CallPane({
               </span>
             </button>
           ) : null}
+          {l && !isClient(l) ? (
+            <ZoomLinkButton
+              lead={l}
+              me={me}
+              kind={as === "closer" ? "demo" : "intro"}
+            />
+          ) : null}
           <button
             type="button"
             onClick={skip}
@@ -2586,6 +2568,16 @@ function CallPane({
           </NextStep>
         ) : mode === "unanswered" ? (
           <AfterMissStep
+            zoom={
+              l && !isClient(l) ? (
+                <ZoomLinkButton
+                  lead={l}
+                  me={me}
+                  kind={as === "closer" ? "demo" : "intro"}
+                  label="Send a Zoom link"
+                />
+              ) : null
+            }
             step={miss}
             moment={missMoment}
             focusNext={missBy === "auto" && !picking}
@@ -2886,6 +2878,7 @@ function AfterMissStep({
   picker = null,
   videoUnread = null,
   quietNext = false,
+  zoom = null,
 }: {
   step: AfterMiss;
   moment: MissMoment;
@@ -2905,6 +2898,8 @@ function AfterMissStep({
   videoUnread?: string | null;
   /** Something else on the card holds the teal button (the room panel). */
   quietNext?: boolean;
+  /** The Zoom link button (zoom.link), offered after any miss. */
+  zoom?: ReactNode;
 }) {
   return (
     <NextStep
@@ -2952,6 +2947,7 @@ function AfterMissStep({
         </button>
       ) : null}
       {onVideo ? <VideoLinkButton onPress={onVideo} /> : null}
+      {zoom}
     </NextStep>
   );
 }
@@ -3126,329 +3122,6 @@ function CallBand({
 }
 
 // ---------------------------------------------------------------------------
-// Booking on the calendar
-// ---------------------------------------------------------------------------
-
-function dayWords(day: string): string {
-  const d = new Date(`${day}T12:00:00+03:00`);
-  return dayLabel(d.toISOString());
-}
-
-function BookForm({
-  me,
-  as,
-  contactId,
-  attemptId,
-  kindFirst,
-  moving,
-  note,
-  onNote,
-  onClose,
-  onBooked,
-}: {
-  me: Me;
-  as: As;
-  contactId: string;
-  attemptId: string | null;
-  /** Which call to book first (the demo, right after an intro was held). */
-  kindFirst?: "intro" | "demo" | null;
-  /** Move this booked call instead of booking a new one. */
-  moving?: { id: string; itemKind: ItemKind } | null;
-  note: string;
-  onNote: (note: string) => void;
-  onClose: () => void;
-  onBooked: (words: string) => void;
-}) {
-  const [kind, setKind] = useState<"intro" | "demo">(
-    kindFirst ?? (as === "closer" ? "demo" : "intro"),
-  );
-  const [withWho, setWithWho] = useState<"me" | "anyone">("me");
-  const [slots, setSlots] = useState<Slots | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [day, setDay] = useState<string | null>(null);
-  const [start, setStart] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  // At once, so a double tap never books twice.
-  const booking = useRef(false);
-  // A booking that got no clear answer: said until the calendar is read again.
-  const [unsure, setUnsure] = useState<string | null>(null);
-  const [tick, setTick] = useState(0);
-
-  // A booking sent without a clear answer: the time it asked for, so the
-  // calendar read after it can tell whether it landed.
-  const tried = useRef<string | null>(null);
-  const bookedRef = useRef(onBooked);
-  bookedRef.current = onBooked;
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies: tick asks again after a time was taken
-  useEffect(() => {
-    let alive = true;
-    setSlots(null);
-    setError(null);
-    setStart(null);
-    api<Slots>(
-      "book.slots",
-      moving
-        ? { appointment_id: moving.id }
-        : { contact_id: contactId, kind, with: withWho },
-    )
-      .then(s => {
-        if (!alive) return;
-        const asked = tried.current;
-        tried.current = null;
-        if (asked) {
-          const there = moving ? s.moving : s.existing;
-          if (there && Date.parse(there.start) === Date.parse(asked)) {
-            bookedRef.current(
-              moving
-                ? `Moved to ${there.words} (Kuwait time)`
-                : `${s.kind === "demo" ? "Demo" : "Intro"} booked for ${there.words} (Kuwait time)`,
-            );
-            return;
-          }
-          setUnsure(
-            "The calendar does not show it yet. Pick the time and book again: a booking already on its way is refused, never made twice.",
-          );
-        }
-        setSlots(s);
-        setDay(s.days[0]?.day ?? null);
-      })
-      .catch(e => alive && setError(msg(e)));
-    return () => {
-      alive = false;
-    };
-  }, [contactId, kind, withWho, tick, moving?.id]);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
-  async function book(e: FormEvent) {
-    e.preventDefault();
-    if (!start || booking.current) return;
-    booking.current = true;
-    setBusy(true);
-    setUnsure(null);
-    try {
-      const out = await api<{ verified: boolean; words: string }>(
-        moving ? "book.move" : "book.create",
-        moving
-          ? {
-              appointment_id: moving.id,
-              start,
-              note,
-              as,
-              attempt_id: attemptId,
-              item_kind: moving.itemKind,
-            }
-          : {
-              contact_id: contactId,
-              kind,
-              with: slots?.with ?? withWho,
-              start,
-              note,
-              as,
-              attempt_id: attemptId,
-            },
-      );
-      if (!out.verified)
-        toast.error(
-          "HighLevel took the booking, but reading it back did not match. Open the lead in HighLevel and check the time.",
-        );
-      onBooked(out.words);
-    } catch (err) {
-      if (uncertain(err)) {
-        // It may have landed: the calendar is read again, and a booking
-        // that did land at this time moves on to the next lead.
-        tried.current = start;
-        setUnsure(
-          "No answer came back about the booking, so it may have gone through. Checking the calendar…",
-        );
-        setTick(n => n + 1);
-      } else {
-        toast.error(msg(err));
-        // A time someone else just took: show what is free now.
-        if (/taken|already have/i.test(msg(err))) setTick(n => n + 1);
-      }
-    } finally {
-      booking.current = false;
-      setBusy(false);
-    }
-  }
-
-  const shown = slots?.days.find(d => d.day === day) ?? null;
-  return (
-    <form onSubmit={book} className="space-y-3 border-t hairline pt-4">
-      <div className="flex items-center justify-between gap-2">
-        <p className="text-sm font-medium">
-          {moving ? "Move the call" : "Book a time"}
-        </p>
-        <button
-          type="button"
-          onClick={onClose}
-          className="muted inline-flex items-center gap-1 text-xs hover:underline"
-          title="Esc"
-        >
-          <ArrowLeft className="size-3.5" aria-hidden /> Back to outcomes
-        </button>
-      </div>
-      {moving ? (
-        <p className="muted text-sm">
-          {slots?.moving
-            ? `Now: ${slots.moving.words} (Kuwait time), with the same person. Pick the new time.`
-            : "Reading the call…"}
-        </p>
-      ) : null}
-      <div
-        className={`flex flex-wrap items-center gap-2 ${moving ? "hidden" : ""}`}
-      >
-        <Segmented
-          label="Which call"
-          value={kind}
-          options={[
-            ["intro", "Intro, 15 min"],
-            ["demo", "Demo, 45 min"],
-          ]}
-          onChange={v => setKind(v as "intro" | "demo")}
-        />
-        {slots?.on_team && !slots.fallback ? (
-          <Segmented
-            label="With whom"
-            value={withWho}
-            options={[
-              ["me", `With ${(me.name ?? "me").split(/\s+/)[0]}`],
-              ["anyone", "Anyone free"],
-            ]}
-            onChange={v => setWithWho(v as "me" | "anyone")}
-          />
-        ) : null}
-      </div>
-      {error ? (
-        <p className="callout-bad rounded-[var(--radius-md)] border px-3 py-2 text-sm">
-          The calendar could not be read: {error}
-        </p>
-      ) : !slots ? (
-        <p className="muted text-sm">Reading the calendar's free times…</p>
-      ) : slots.existing ? (
-        <p className="callout-warn rounded-[var(--radius-md)] border px-3 py-2 text-sm">
-          They already have {kind === "intro" ? "an intro" : "a demo"} on{" "}
-          {slots.existing.words} (Kuwait time). Move that one in HighLevel
-          instead of booking a second; if it was booked from here or by the
-          lead, save the call as Handled.
-        </p>
-      ) : !slots.days.length ? (
-        <p className="callout-warn rounded-[var(--radius-md)] border px-3 py-2 text-sm">
-          No free times on this calendar in the next few days.{" "}
-          {slots.with === "me" && slots.on_team
-            ? "Try Anyone free, or book in HighLevel."
-            : "Book in HighLevel, or set a call-back instead."}
-        </p>
-      ) : (
-        <div className="space-y-2">
-          <div className="flex flex-wrap gap-1" role="group" aria-label="Day">
-            {slots.days.map(d => (
-              <button
-                key={d.day}
-                type="button"
-                aria-pressed={day === d.day}
-                onClick={() => {
-                  setDay(d.day);
-                  setStart(null);
-                }}
-                className={`rounded-full border px-2.5 py-0.5 text-xs ${
-                  day === d.day
-                    ? "border-[color:var(--primary)] font-semibold"
-                    : "hairline"
-                }`}
-              >
-                {dayWords(d.day)}{" "}
-                <span className="muted tabular-nums">{d.slots.length}</span>
-              </button>
-            ))}
-          </div>
-          <div
-            className="grid grid-cols-4 gap-1 sm:grid-cols-6 xl:grid-cols-4"
-            role="group"
-            aria-label="Time"
-          >
-            {(shown?.slots ?? []).map(s => (
-              <button
-                key={s}
-                type="button"
-                aria-pressed={start === s}
-                onClick={() => setStart(s)}
-                className={`rounded-[var(--radius-sm)] border px-1 py-1 text-xs tabular-nums ${
-                  start === s
-                    ? "border-[color:var(--primary)] bg-[color:color-mix(in_oklch,var(--primary)_14%,transparent)] font-semibold"
-                    : "hairline hover:bg-[color:var(--secondary)]"
-                }`}
-              >
-                {clock(s)}
-              </button>
-            ))}
-          </div>
-          {slots.fallback ? (
-            <p className="muted text-xs">
-              You have no free time of your own on this calendar in the next few
-              days, so these are the team's; HighLevel's round robin picks who
-              takes the call.
-            </p>
-          ) : null}
-          <p className="muted text-xs">
-            Kuwait time, {slots.minutes} minutes. {slots.notice}
-          </p>
-        </div>
-      )}
-      <label className="block space-y-1">
-        <span className="muted block text-xs">
-          A line on the call, for whoever takes it (goes on the lead in
-          HighLevel too)
-        </span>
-        <textarea
-          id="dial-note"
-          value={note}
-          onChange={e => onNote(e.target.value)}
-          rows={2}
-          dir="auto"
-          required
-          className="w-full rounded-[var(--radius-md)] border hairline bg-[color:var(--background)] px-3 py-2 text-sm"
-        />
-      </label>
-      <button
-        type="submit"
-        disabled={
-          busy || !start || Boolean(slots?.existing) || note.trim().length < 3
-        }
-        className={buttonPrimary}
-      >
-        <CalendarPlus className="size-3.5" aria-hidden />
-        {busy
-          ? moving
-            ? "Moving…"
-            : "Booking…"
-          : !start
-            ? "Pick a time"
-            : note.trim().length < 3
-              ? "Write a line on the call first"
-              : `${moving ? "Move to" : "Book"} ${dayLabel(start)} ${clock(start)}`}
-      </button>
-      {unsure ? (
-        <p
-          role="status"
-          className="callout-warn rounded-[var(--radius-md)] border px-3 py-2 text-xs leading-relaxed"
-        >
-          {unsure}
-        </p>
-      ) : null}
-    </form>
-  );
-}
-
-// ---------------------------------------------------------------------------
 // The lead, beside the call
 // ---------------------------------------------------------------------------
 
@@ -3463,12 +3136,18 @@ function LeadPane({
   talk,
   convo,
   onTyping,
+  attemptId,
+  onStay,
 }: {
   className: string;
   me: Me;
   as: As;
   contactId: string;
   item: DialItem | null;
+  /** The open call with this lead: a demo booked from the script saves it. */
+  attemptId: string | null;
+  /** Booked from the script: keep the lead on screen, as a save with a next step does. */
+  onStay: (contactId: string) => void;
   /** Changes when the call pane asks for the conversation. */
   talk: { n: number; moment: Moment | null };
   /** The lead's conversation, read once for both panes. */
@@ -3554,7 +3233,9 @@ function LeadPane({
     <section
       ref={paneRef}
       aria-label="The lead"
-      className={`panel min-w-0 overflow-hidden ${className}`}
+      // clip, not hidden: hidden makes the pane its own scroller, and the
+      // script's number strip could not stick to the page's.
+      className={`panel min-w-0 overflow-clip ${className}`}
       onInput={onTyping}
     >
       <header className="space-y-1.5 border-b hairline px-4 py-3">
@@ -3716,7 +3397,15 @@ function LeadPane({
             me={me}
             as={as}
             lead={l}
-            demo={appointments.find(a => a.call_type === "demo") ?? null}
+            appointments={appointments}
+            notes={activity.data?.notes ?? []}
+            notesLoaded={Boolean(activity.data) || Boolean(activity.error)}
+            reload={activity.reload}
+            attemptId={attemptId}
+            onBooked={() => {
+              onTyping();
+              onStay(contactId);
+            }}
           />
         ) : tab === "lead" ? (
           <div className="grid gap-5 xl:grid-cols-2">
@@ -3769,143 +3458,49 @@ function LeadPane({
   );
 }
 
-/** The script beside the call: one stage at a time, the playbook under it. */
+/**
+ * The script beside the call (sales simplify, 2026-10-10): the same script
+ * screen as the guided call, in one column, with the numbers strip, a field
+ * under each line that asks, notes on every part and the demo booked from
+ * the intro's last part, all saved to the lead as the call goes.
+ */
 function ScriptTab({
   me,
   as,
   lead,
-  demo,
+  appointments,
+  notes,
+  notesLoaded,
+  reload,
+  attemptId,
+  onBooked,
 }: {
   me: Me;
   as: As;
   lead: Lead;
-  demo: { assigned_user_name: string | null; start_at: string | null } | null;
+  appointments: CalendarRow[];
+  notes: Note[];
+  notesLoaded: boolean;
+  reload: () => void;
+  attemptId: string | null;
+  onBooked: () => void;
 }) {
   const [key, setKey] = useState<Key>(as === "closer" ? "demo" : "intro");
-  const [prefs, setPrefs] = useState(readPrefs);
-  const script = useScript(key, prefs.lang);
-  const [stageIdx, setStageIdx] = useState(0);
-  const doc = script.data?.doc;
-  const fill: Fill = useMemo(
-    () => ({
-      name: lead.name?.split(/\s+/)[0] ?? null,
-      yourName: (me.name ?? "").split(/\s+/)[0] || null,
-      city: countryName(lead.country, prefs.lang),
-      closer: demo?.assigned_user_name ?? null,
-      date: demo?.start_at ? when(demo.start_at) : null,
-    }),
-    [lead, me.name, demo, prefs.lang],
-  );
-  function setPref(p: Partial<{ lang: "en" | "ar"; mode: Mode }>) {
-    const next = { ...prefs, ...p };
-    setPrefs(next);
-    writePrefs(next);
-  }
-  const stages = doc?.stages ?? [];
-  const stage = stages[Math.min(stageIdx, Math.max(stages.length - 1, 0))];
   return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <Segmented
-          label="Script"
-          value={key}
-          options={[
-            ["intro", "Intro"],
-            ["demo", "Demo"],
-          ]}
-          onChange={v => {
-            setKey(v as Key);
-            setStageIdx(0);
-          }}
-        />
-        <Segmented
-          label="Language"
-          value={prefs.lang}
-          options={[
-            ["ar", "العربية"],
-            ["en", "English"],
-          ]}
-          onChange={v => setPref({ lang: v as "en" | "ar" })}
-        />
-        <Segmented
-          label="How much to show"
-          value={prefs.mode}
-          options={[
-            ["words", "Word for word"],
-            ["bullets", "Bullets"],
-          ]}
-          onChange={v => setPref({ mode: v as Mode })}
-        />
-        <Link
-          to={`/call/${lead.contact_id}?script=${key}`}
-          className="muted ms-auto text-xs underline underline-offset-2"
-        >
-          Open the guided call, with answers to capture
-        </Link>
-      </div>
-      {script.error ? (
-        <Failed what="The script" error={script.error} retry={script.reload} />
-      ) : !doc || !stage ? (
-        <p className="muted text-sm">
-          {script.loading
-            ? "Reading the script…"
-            : "This script has not been imported yet."}
-        </p>
-      ) : (
-        <>
-          <div
-            className="flex gap-1 overflow-x-auto pb-1"
-            role="group"
-            aria-label="Stage"
-          >
-            {stages.map((s, i) => (
-              <button
-                key={s.no}
-                type="button"
-                aria-pressed={i === stageIdx}
-                onClick={() => setStageIdx(i)}
-                className={`shrink-0 rounded-full border px-2.5 py-0.5 text-xs ${
-                  i === stageIdx
-                    ? "border-[color:var(--primary)] font-semibold"
-                    : "hairline muted"
-                }`}
-              >
-                {s.title}
-              </button>
-            ))}
-          </div>
-          <div className="space-y-3">
-            {stage.goal ? <p className="muted text-sm">{stage.goal}</p> : null}
-            {groupBlocks(stage.blocks).map((g, gi) =>
-              g.branch ? (
-                <BranchGroup
-                  key={`${stage.no}-${gi}`}
-                  label={personalise(g.branch, fill)}
-                >
-                  <Blocks blocks={g.blocks} fill={fill} mode={prefs.mode} />
-                </BranchGroup>
-              ) : (
-                <Blocks
-                  key={`${stage.no}-${gi}`}
-                  blocks={g.blocks}
-                  fill={fill}
-                  mode={prefs.mode}
-                />
-              ),
-            )}
-            {stageIdx < stages.length - 1 ? (
-              <button
-                type="button"
-                className={button}
-                onClick={() => setStageIdx(stageIdx + 1)}
-              >
-                Next: {stages[stageIdx + 1].title}
-              </button>
-            ) : null}
-          </div>
-          <Playbook objections={doc.objections} faqs={doc.faqs} fill={fill} />
-        </>
-      )}
-    </div>
+    <ScriptRunner
+      key={`${lead.contact_id}:${key}`}
+      me={me}
+      as={as}
+      lead={lead}
+      scriptKey={key}
+      onScriptKey={setKey}
+      layout="pane"
+      appointments={appointments}
+      notes={notes}
+      notesLoaded={notesLoaded}
+      reload={reload}
+      attemptId={attemptId}
+      onBooked={onBooked}
+    />
   );
 }

@@ -66,7 +66,6 @@ import {
   JOURNEY,
   MORE_STORIES,
   PROFILES,
-  PROFILES_AS_OF,
   type Profile,
   REVIEW_PAGES,
   STORY_PROOF,
@@ -1896,97 +1895,66 @@ const PLATFORM: Record<Profile["key"], L> = {
   instagram: { en: "Instagram", ar: "إنستقرام" },
 };
 
-/** A profile page as it showed, a link to it, its counters ringed. */
+/** A caption's height under a profile page, the gap above it included. */
+const CAPTION = 72;
+
+/**
+ * A profile page as it shows, one click from the live one, its platform
+ * and handle under it.
+ */
 function ProfileCard({
   p,
   lang,
   height,
+  i,
 }: {
   p: Profile;
   lang: Lang;
   height: number;
+  i: number;
 }) {
-  const pct = (f: number) => `${(f * 100).toFixed(2)}%`;
   return (
-    <a
-      className="dk-profile"
-      data-link=""
-      href={p.href}
-      target="_blank"
-      rel="noreferrer noopener"
-      style={{ width: Math.round(height * p.shot.r), height }}
-      aria-label={`${p.shot.alt}. ${t(p.open, lang)}`}
-    >
-      <img src={p.shot.src} alt="" />
-      <i
-        className="dk-profile-ring"
-        aria-hidden
+    <Rv i={i} className="dk-channel">
+      <a
+        className="dk-profile"
+        data-link=""
+        href={p.href}
+        target="_blank"
+        rel="noreferrer noopener"
         style={{
-          left: pct(p.spot.x),
-          top: pct(p.spot.y),
-          width: pct(p.spot.w),
-          height: pct(p.spot.h),
+          width: Math.round(height * p.shot.r),
+          height,
+          background: p.bg,
         }}
-      />
-      <OpenChip>{t(p.open, lang)}</OpenChip>
-    </a>
-  );
-}
-
-/** A profile's figures, set large beside its screenshot. */
-function ProfileFigures({ p, lang, i }: { p: Profile; lang: Lang; i: number }) {
-  return (
-    <div className="dk-channel-figs" data-side={i === 0 ? "start" : "end"}>
-      <span className="dk-channel-name">
-        <Mark mark={p.key} size={44} />
-        <span>{t(PLATFORM[p.key], lang)}</span>
-      </span>
-      {p.figures.map((f, j) => (
-        <div key={f.label.en} className="dk-channel-fig">
-          <Fig
-            f={108}
-            text={sayCount(f.n, lang)}
-            lang={lang}
-            count={{ delay: 520 + (i * 2 + j) * 160 }}
-          />
-          <span className="dk-channel-label">{t(f.label, lang)}</span>
-        </div>
-      ))}
-      {p.note ? (
-        <span className="dk-pill dk-channel-note">
-          <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden>
-            <path
-              d="M6.5 12.5l3.6 3.6L17.5 8.5"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2.6"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
-          {t(p.note, lang)}
+        aria-label={`${p.shot.alt}. ${t(p.open, lang)}`}
+      >
+        <img src={p.shot.src} alt="" />
+        <OpenChip>{t(p.open, lang)}</OpenChip>
+      </a>
+      <p className="dk-channel-cap" style={{ height: CAPTION - 20 }}>
+        <span className="dk-channel-mark" aria-hidden>
+          <Mark mark={p.key} size={40} />
         </span>
-      ) : null}
-      <bdi className="dk-channel-handle" dir="ltr">
-        {p.handle}
-      </bdi>
-    </div>
+        <span className="dk-channel-name">{t(PLATFORM[p.key], lang)}</span>
+        <bdi className="dk-channel-handle" dir="ltr">
+          {p.handle}
+        </bdi>
+      </p>
+    </Rv>
   );
 }
 
 /**
- * Our own channels at the end of the deck (Aziz, 2026-10-08: "take a
- * screenshot of our ig and yt profiles with the vids on the grid so it
- * shows all the stuff and our numbers"). Each profile is its real page,
- * one click from the live one, its counters ringed on the screenshot and
- * set large beside it; the two sets of figures meet in the middle.
+ * Our own channels, inside the proof right after the slide on what they
+ * teach (the CEO, 2026-10-10: "put it at the start where we're showing the
+ * proof, so the proof can be in one section"). Each is its real page in
+ * dark mode, with no counts on it and nothing ringed, one click from the
+ * live one. Both are as tall as the room allows.
  */
 function channelsSlide(ctx: DeckCtx) {
   const { lang } = ctx;
-  const [yt, ig] = PROFILES;
-  const figs = 270;
-  const near = 44;
-  const middle = 64;
+  const gap = 56;
+  const across = PROFILES.reduce((sum, p) => sum + p.shot.r, 0);
   return (
     <>
       <Rv i={0}>
@@ -1999,32 +1967,34 @@ function channelsSlide(ctx: DeckCtx) {
             : "We teach the industry in public. Follow along."}
         </h2>
       </Rv>
-      <Rv i={2} className="dk-channels">
+      <div className="dk-channels">
         <Fit>
           {box => {
-            const room = box.w - figs * 2 - near * 2 - middle;
-            const h = Math.floor(
-              Math.min(box.h, room / (yt.shot.r + ig.shot.r)),
+            const h = Math.max(
+              0,
+              Math.floor(
+                Math.min(
+                  box.h - CAPTION,
+                  (box.w - gap * (PROFILES.length - 1)) / across,
+                ),
+              ),
             );
             return (
-              <div className="dk-channels-row" style={{ gap: near }}>
-                <ProfileCard p={yt} lang={lang} height={h} />
-                <div
-                  className="dk-channels-mid"
-                  style={{ width: figs * 2 + middle, gap: middle }}
-                >
-                  <ProfileFigures p={yt} lang={lang} i={0} />
-                  <ProfileFigures p={ig} lang={lang} i={1} />
-                </div>
-                <ProfileCard p={ig} lang={lang} height={h} />
+              <div className="dk-channels-row" style={{ gap }}>
+                {PROFILES.map((p, i) => (
+                  <ProfileCard
+                    key={p.key}
+                    p={p}
+                    lang={lang}
+                    height={h}
+                    i={2 + i}
+                  />
+                ))}
               </div>
             );
           }}
         </Fit>
-      </Rv>
-      <Rv i={3}>
-        <p className="dk-channels-source">{t(PROFILES_AS_OF, lang)}</p>
-      </Rv>
+      </div>
     </>
   );
 }
@@ -2110,16 +2080,17 @@ export function deckSlides(): SlideDef[] {
         }),
     },
     {
+      // Our channels, with the rest of the proof (the CEO, 2026-10-10).
+      id: "channels",
+      section: S.proof,
+      title: { en: "Our channels", ar: "قنواتنا" },
+      render: c => channelsSlide(c),
+    },
+    {
       id: "problem",
       section: S.you,
       title: { en: "Your biggest challenge", ar: "أكبر تحدي" },
       render: c => problemSlide(c),
-    },
-    {
-      id: "numbers",
-      section: S.you,
-      title: { en: "Your numbers", ar: "أرقامك" },
-      render: c => numbersSlide(c),
     },
     {
       id: "who",
@@ -2256,6 +2227,16 @@ export function deckSlides(): SlideDef[] {
       render: c => budgetSlide(c),
     },
     {
+      // Their numbers, at the end, right before the price (the CEO,
+      // 2026-10-10: "move their numbers to the end"): "fix only this one
+      // step" lands just before what the program costs.
+      id: "numbers",
+      section: S.program,
+      title: { en: "Your numbers", ar: "أرقامك" },
+      railAll: true,
+      render: c => numbersSlide(c),
+    },
+    {
       id: "investment",
       section: S.program,
       title: { en: "The investment", ar: "الاستثمار" },
@@ -2268,14 +2249,6 @@ export function deckSlides(): SlideDef[] {
       title: { en: "Next steps", ar: "الخطوات الياية" },
       railAll: true,
       render: c => nextSlide(c),
-    },
-    {
-      // Our own numbers, at the end (Aziz, 2026-10-08).
-      id: "channels",
-      section: S.program,
-      title: { en: "Our channels", ar: "قنواتنا" },
-      railAll: true,
-      render: c => channelsSlide(c),
     },
     {
       id: "close",
