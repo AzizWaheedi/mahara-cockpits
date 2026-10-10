@@ -4,6 +4,9 @@ import json
 import os
 import pathlib
 import re
+import shutil
+import subprocess
+import urllib.error
 import urllib.request
 
 PROJECT = "bldgtotkfmhoxmlzowdx"
@@ -99,6 +102,51 @@ def request(token, path, payload=None):
         return json.load(response)
 
 
+def composio_request(path, payload=None):
+    """The same read through Aziz's Composio Supabase connection. Queries run
+    read-only; the answers stay in memory and are never printed."""
+    if path == "database/query":
+        argv = ["composio", "execute", "SUPABASE_BETA_RUN_SQL_QUERY", "-d",
+                json.dumps({"ref": PROJECT, "query": payload["query"], "read_only": True})]
+    else:
+        argv = ["composio", "proxy", f"https://api.supabase.com/v1/projects/{PROJECT}/{path}", "--toolkit", "supabase"]
+    done = subprocess.run(argv, capture_output=True, text=True, timeout=120, stdin=subprocess.DEVNULL)
+    if done.returncode != 0:
+        raise ValueError("Composio could not read the project")
+    answer = json.loads(done.stdout)
+    if path != "database/query":
+        return answer
+    if not answer.get("successful") or not isinstance((answer.get("data") or {}).get("result"), list):
+        raise ValueError("Composio query failed")
+    return answer["data"]["result"]
+
+
+class Reader:
+    """The management API with the named token, or Composio's Supabase
+    connection when there is no token or the API refuses it. The Mac's token
+    died on 2026-10-09 and Aziz said to use Composio; the checks are the same
+    either way."""
+
+    def __init__(self, env_file, fallback=composio_request):
+        try:
+            self.token = token_from_env(env_file)
+        except ValueError:
+            if not shutil.which("composio"):
+                raise
+            self.token = None
+        self.fallback = fallback
+
+    def __call__(self, path, payload=None):
+        if self.token:
+            try:
+                return request(self.token, path, payload)
+            except urllib.error.HTTPError as error:
+                if error.code not in (401, 403) or not shutil.which("composio"):
+                    raise
+                self.token = None
+        return self.fallback(path, payload)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--env-file", help="Read named management token locally; never printed")
@@ -108,23 +156,23 @@ def main():
         if args.config_file:
             failures = check_config(json.loads(pathlib.Path(args.config_file).read_text(encoding="utf-8-sig")))
         else:
-            token = token_from_env(args.env_file)
-            failures = check_config(request(token, "config/auth"))
-            rows = request(token, "database/query", {"read_only": True, "query": "select pg_get_functiondef(p.oid) as definition,p.prosecdef as secure,has_function_privilege('anon',p.oid,'EXECUTE') as anon_allowed,has_function_privilege('authenticated',p.oid,'EXECUTE') as authenticated_allowed,(select relrowsecurity from pg_class where oid='public.cockpit_members'::regclass) as directory_rls from pg_proc p where p.oid='public.cockpit_get_my_access()'::regprocedure"})
+            read = Reader(args.env_file)
+            failures = check_config(read("config/auth"))
+            rows = read("database/query", {"read_only": True, "query": "select pg_get_functiondef(p.oid) as definition,p.prosecdef as secure,has_function_privilege('anon',p.oid,'EXECUTE') as anon_allowed,has_function_privilege('authenticated',p.oid,'EXECUTE') as authenticated_allowed,(select relrowsecurity from pg_class where oid='public.cockpit_members'::regclass) as directory_rls from pg_proc p where p.oid='public.cockpit_get_my_access()'::regprocedure"})
             expected = pathlib.Path(__file__).resolve().parents[1] / "supabase/migrations/20261007b_cockpit_auth_contract.sql"
             if len(rows) != 1 or body(rows[0]["definition"]) != body(expected.read_text(encoding="utf-8")):
                 failures.append("Live directory access function differs from the tested five-cockpit contract")
             if rows and (not rows[0]["secure"] or rows[0]["anon_allowed"] or not rows[0]["authenticated_allowed"] or not rows[0]["directory_rls"]):
                 failures.append("Directory access security or grants changed")
             root = pathlib.Path(__file__).resolve().parents[1]
-            catalog = request(token, "database/query", {"read_only": True, "query": "select coalesce(jsonb_agg(distinct p.proname),'[]'::jsonb) as functions from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname like 'cockpit_%'"})
+            catalog = read("database/query", {"read_only": True, "query": "select coalesce(jsonb_agg(distinct p.proname),'[]'::jsonb) as functions from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname like 'cockpit_%'"})
             if len(catalog) != 1:
                 raise ValueError("Backend function catalog missing")
             missing = missing_backend_rpcs(production_rpc_names(root), catalog[0]["functions"])
             if missing:
                 failures.append("Missing production cockpit RPCs: " + ", ".join(missing))
             if not missing:
-                contracts = request(token, "database/query", {"read_only": True, "query": "select p.proname,pg_get_functiondef(p.oid) as definition,has_function_privilege('anon',p.oid,'EXECUTE') as anon_allowed from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname in ('cockpit_has_active_seat','cockpit_team_guard_write','cockpit_log_decision')"})
+                contracts = read("database/query", {"read_only": True, "query": "select p.proname,pg_get_functiondef(p.oid) as definition,has_function_privilege('anon',p.oid,'EXECUTE') as anon_allowed from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname in ('cockpit_has_active_seat','cockpit_team_guard_write','cockpit_log_decision')"})
                 expected_files = {"cockpit_has_active_seat": "20261007d_cockpit_team_rpc_restore.sql", "cockpit_team_guard_write": "20261007g_cockpit_team_role_guard.sql", "cockpit_log_decision": "20261007f_cockpit_write_contract.sql"}
                 for name, file in expected_files.items():
                     actual = [row for row in contracts if row["proname"] == name]

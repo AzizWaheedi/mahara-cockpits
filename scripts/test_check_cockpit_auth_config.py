@@ -1,7 +1,10 @@
 import importlib.util
+import os
 import pathlib
 import tempfile
 import unittest
+import urllib.error
+from unittest import mock
 
 SCRIPT = pathlib.Path(__file__).with_name("check-cockpit-auth-config.py")
 SPEC = importlib.util.spec_from_file_location("auth_config", SCRIPT)
@@ -79,6 +82,32 @@ class AuthConfigurationTests(unittest.TestCase):
         message = " ".join(MODULE.check_config(config))
         self.assertNotIn("secret-value", message)
         self.assertNotIn("private-value", message)
+
+    def test_a_refused_token_reads_through_composio(self):
+        refused = urllib.error.HTTPError("https://api.supabase.com", 401, "Unauthorized", {}, None)
+        seen = []
+        with mock.patch.dict(os.environ, {"COCKPIT_MANAGEMENT_TOKEN": "expired"}), \
+                mock.patch.object(MODULE, "request", side_effect=refused), \
+                mock.patch.object(MODULE.shutil, "which", return_value="/bin/composio"):
+            read = MODULE.Reader(None, fallback=lambda path, payload=None: seen.append(path) or [])
+            self.assertEqual(read("database/query", {"query": "select 1"}), [])
+            self.assertEqual(read("config/auth"), [])
+        self.assertEqual(seen, ["database/query", "config/auth"])
+
+    def test_a_server_error_is_not_hidden_by_the_fallback(self):
+        broken = urllib.error.HTTPError("https://api.supabase.com", 500, "Server error", {}, None)
+        with mock.patch.dict(os.environ, {"COCKPIT_MANAGEMENT_TOKEN": "working"}), \
+                mock.patch.object(MODULE, "request", side_effect=broken), \
+                mock.patch.object(MODULE.shutil, "which", return_value="/bin/composio"):
+            read = MODULE.Reader(None, fallback=lambda path, payload=None: self.fail("fallback used"))
+            with self.assertRaises(urllib.error.HTTPError):
+                read("config/auth")
+
+    def test_no_token_and_no_composio_still_fails(self):
+        with mock.patch.dict(os.environ, {}, clear=True), \
+                mock.patch.object(MODULE.shutil, "which", return_value=None):
+            with self.assertRaises(ValueError):
+                MODULE.Reader(None)
 
 
 if __name__ == "__main__":
