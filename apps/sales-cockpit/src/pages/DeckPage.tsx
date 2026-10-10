@@ -8,6 +8,7 @@ import {
 } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 import { readPrefs } from "../components/ScriptParts";
+import { numbersFromCall, USES_CALL_NUMBERS } from "../deck/callNumbers";
 import {
   FAQS,
   type Lang,
@@ -81,13 +82,6 @@ function useCallValues(contactId: string) {
   }, [contactId]);
 }
 
-const FUNNEL_FIELDS = [
-  "leads_month",
-  "booked_month",
-  "showed_month",
-  "closed_month",
-];
-
 export default function DeckPage({ me }: { me: Me }) {
   const navigate = useNavigate();
   const [params] = useSearchParams();
@@ -121,10 +115,35 @@ export default function DeckPage({ me }: { me: Me }) {
 
   const slide = slides[Math.min(index, slides.length - 1)];
 
+  // The call's notes, read again (see callNumbers.ts): when the deck comes
+  // back into view, once more a moment later since the script saves as its
+  // tab is left, and when a slide that uses the numbers comes up.
+  const rereadCall = callValues.reload;
+  useEffect(() => {
+    if (!leadId) return;
+    let later = 0;
+    const back = () => {
+      if (document.visibilityState !== "visible") return;
+      rereadCall();
+      window.clearTimeout(later);
+      later = window.setTimeout(rereadCall, 2500);
+    };
+    document.addEventListener("visibilitychange", back);
+    return () => {
+      document.removeEventListener("visibilitychange", back);
+      window.clearTimeout(later);
+    };
+  }, [leadId, rereadCall]);
+  const usesNumbers = (USES_CALL_NUMBERS as readonly string[]).includes(
+    slide.id,
+  );
+  useEffect(() => {
+    if (leadId && usesNumbers) rereadCall();
+  }, [leadId, usesNumbers, rereadCall]);
+
   // The prospect's numbers: from the call when it saved them, else typed here.
   const saved = callValues.data ?? {};
-  const fromCall =
-    FUNNEL_FIELDS.filter(k => (saved[k] ?? "").trim()).length >= 2;
+  const fromCall = numbersFromCall(saved, typed);
   const values = fromCall ? saved : { ...saved, ...typed };
   const currency: Currency =
     typedCurrency ??
