@@ -40,7 +40,7 @@ function Demo({ fixture }: { fixture: Fixture }) {
           loading: false,
           reload: () => {},
         }}
-        statsOverride={{
+        stats={{
           data: fixture.stats,
           error: null,
           loading: false,

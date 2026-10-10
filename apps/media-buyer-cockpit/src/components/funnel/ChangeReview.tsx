@@ -167,6 +167,16 @@ export function ChangeReview({
             Check again
           </Button>
         )}
+        {state.at === "checking" && (
+          <span className="text-xs text-muted-foreground">
+            Meta rehearses the change on every ad. This can take up to a minute.
+          </span>
+        )}
+        {state.at === "applying" && (
+          <span className="text-xs text-muted-foreground">
+            Meta is changing each ad. Keep this open until it says done.
+          </span>
+        )}
         {disabled && disabledReason && (
           <span className={cn("text-xs text-muted-foreground")}>
             {disabledReason}

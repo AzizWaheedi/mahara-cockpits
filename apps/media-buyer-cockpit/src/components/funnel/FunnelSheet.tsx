@@ -145,7 +145,10 @@ export function FunnelLine({
 }) {
   const [open, setOpen] = useState(false);
   const funnel = useFunnel(campaignName);
-  const d = ordered(funnel.data?.destinations ?? []);
+  // Read once here and handed to the sheet, so the line and the sheet put
+  // the same destination first.
+  const stats = useFunnelStats(campaignName, range);
+  const d = ordered(funnel.data?.destinations ?? [], stats.data);
   return (
     <div className="ceo-root mb-4 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border px-3 py-2.5 text-sm sm:px-4">
       <Route className="size-4 shrink-0 text-muted-foreground" aria-hidden />
@@ -190,6 +193,7 @@ export function FunnelLine({
         campaignName={campaignName}
         range={range}
         funnel={funnel}
+        stats={stats}
       />
     </div>
   );
@@ -201,21 +205,18 @@ export function FunnelSheet({
   campaignName,
   range,
   funnel,
-  statsOverride,
+  stats: given,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   campaignName: string;
   range: Range;
   funnel: Loaded;
-  /** Stored numbers instead of a read (the dev harness). */
-  statsOverride?: ReturnType<typeof useFunnelStats>;
+  /** Numbers already read by the campaign line, or stored ones (the dev harness). */
+  stats?: ReturnType<typeof useFunnelStats>;
 }) {
-  const own = useFunnelStats(
-    open && !statsOverride ? campaignName : null,
-    range,
-  );
-  const stats = statsOverride ?? own;
+  const own = useFunnelStats(open && !given ? campaignName : null, range);
+  const stats = given ?? own;
   const read: FunnelRead | undefined = funnel.data;
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -312,20 +313,22 @@ function LeftOut({
   ads: { id: string }[];
 }) {
   const out = leftOut(stats, ads);
+  const spent = out.spend >= 0.5 || out.leads > 0;
   const parts: string[] = [];
-  if (out.spend >= 0.5 || out.leads > 0)
+  if (spent)
     parts.push(
-      `${money(out.spend)} of spend and ${count(out.leads)} lead${out.leads === 1 ? "" : "s"} came from ads that no longer run`,
+      `${money(out.spend)} of spend${out.leads ? ` and ${count(out.leads)} lead${out.leads === 1 ? "" : "s"}` : ""} came from ads that no longer run`,
     );
   if (out.calls > 0)
     parts.push(
       `${count(out.calls)} booked call${out.calls === 1 ? "" : "s"} could not be tied to one of these ads`,
     );
   if (!parts.length) return null;
+  const one = spent ? !out.leads && !out.calls : out.calls === 1;
   return (
     <p className="text-xs leading-relaxed text-muted-foreground">
       In these dates, {parts.join(", and ")}. The paths below leave{" "}
-      {parts.length === 1 && out.calls > 0 ? "it" : "them"} out.
+      {one ? "it" : "them"} out.
     </p>
   );
 }
