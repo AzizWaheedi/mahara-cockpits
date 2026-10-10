@@ -1146,7 +1146,7 @@ const NOT_MEASURED: { label: string; why: string }[] = [
   },
   {
     label: "Delivery cost per client",
-    why: "Hubstaff is a vendor line in the expense import only, so no time spent on an account reaches the cockpit.",
+    why: "Hubstaff time reaches Team & payroll per person and day, not per client, so no time spent on an account reaches the cockpit.",
   },
   {
     label: "Retention and churn rate over time",

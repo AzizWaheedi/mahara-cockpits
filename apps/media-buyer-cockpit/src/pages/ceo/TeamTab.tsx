@@ -50,8 +50,23 @@ import {
   WEEK_ORDER,
 } from "@/types/ceo/schedule";
 
+import { HoursAndPay } from "./hours/HoursCard";
+import {
+  DayDialog,
+  firstOfThisMonth,
+  PayFrom,
+  ScheduleFrom,
+} from "./hours/RosterDialogs";
 import { usePersonParam } from "./personPage";
 import type { CeoTabProps } from "./types";
+
+/** The day after a Kuwait date: the server wants a first day back after the last day, and Back on after the pause began. */
+function dayAfter(day: string | null): string | undefined {
+  if (!day) return undefined;
+  return new Date(Date.parse(`${day.slice(0, 10)}T00:00:00Z`) + 86_400_000)
+    .toISOString()
+    .slice(0, 10);
+}
 
 /**
  * The team and what it costs, on one screen and nothing else.
@@ -306,12 +321,14 @@ function HoursEditor({
 }: {
   person: Person;
   busy: boolean;
-  /** Saves the row with these hours; null clears them. Throws the server's sentence. */
-  onSave: (schedule: Schedule | null) => Promise<void>;
+  /** Saves these hours from a day; null clears them. Throws the server's sentence. */
+  onSave: (schedule: Schedule | null, effectiveFrom: string) => Promise<void>;
   onClose: () => void;
 }) {
   const [h, setH] = useState<HoursDraft>(() => hoursDraftOf(person.schedule));
   const [msg, setMsg] = useState<string | null>(null);
+  // Hours have a history now: a change applies from a day, today unless said.
+  const [from, setFrom] = useState(() => kuwaitDay());
   const timezone = person.schedule?.timezone ?? DEFAULT_TIMEZONE;
   const checked = useMemo<{
     schedule: Schedule | null;
@@ -359,7 +376,7 @@ function HoursEditor({
   const submit = async (schedule: Schedule | null) => {
     setMsg(null);
     try {
-      await onSave(schedule);
+      await onSave(schedule, from);
     } catch (e) {
       setMsg(serverMessage(e));
     }
@@ -500,6 +517,7 @@ function HoursEditor({
             ? scheduleSummary(checked.schedule)
             : checked.problem}
         </p>
+        <ScheduleFrom value={from} onChange={setFrom} disabled={busy} />
         <Button
           type="button"
           size="sm"
@@ -553,20 +571,32 @@ function Row({
 }) {
   const save = useAction(api.ceo.people.save);
   const setActive = useAction(api.ceo.people.setActive);
+  const setPay = useAction(api.ceo.hours.setPay);
+  const setSchedule = useAction(api.ceo.hours.setSchedule);
+  const employment = useAction(api.ceo.hours.employment);
   const [d, setD] = useState<Draft>(() => draftOf(p));
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [hoursOpen, setHoursOpen] = useState(false);
   const [pausing, setPausing] = useState(false);
   const [why, setWhy] = useState("");
+  const [pauseFrom, setPauseFrom] = useState(() => kuwaitDay());
+  // Pay has a history: a change applies from the 1st unless said otherwise,
+  // and a typo is fixed in place instead of starting a new figure.
+  const [payFrom, setPayFrom] = useState(() => firstOfThisMonth());
+  const [payTypo, setPayTypo] = useState(false);
+  const [asking, setAsking] = useState<"left" | "back" | "unpause" | null>(
+    null,
+  );
   const base = draftOf(p);
-  const dirty =
-    d.monthlyCost !== base.monthlyCost ||
-    d.currency !== base.currency ||
+  const payDirty =
+    d.monthlyCost !== base.monthlyCost || d.currency !== base.currency;
+  const otherDirty =
     d.basis !== base.basis ||
     d.rate !== base.rate ||
     d.note !== base.note ||
     d.role !== base.role;
+  const dirty = payDirty || otherDirty;
 
   const act = async (fn: () => Promise<unknown>) => {
     setBusy(true);
@@ -581,16 +611,17 @@ function Row({
     }
   };
 
-  /** Everything save() overwrites, from the draft, so hours never wipe the pay typed beside them. */
+  /**
+   * The roster fields save() writes, from the draft. Pay and currency are
+   * left out: they go through setPay with the day they apply from, so a role
+   * or commission edit never splits a month's pay.
+   */
   const argsOf = (draft: Draft) => ({
     id: p.id,
     name: p.name,
     email: p.email ?? undefined,
     role: draft.role.trim() || undefined,
     engagement: p.engagement,
-    monthlyCost:
-      draft.monthlyCost.trim() === "" ? undefined : Number(draft.monthlyCost),
-    currency: draft.currency,
     commissionBasis: draft.basis,
     commissionRate:
       !takesRate(draft.basis) || draft.rate.trim() === ""
@@ -603,11 +634,14 @@ function Row({
     startedOn: p.startedOn ?? undefined,
   });
 
-  /** The hours editor's save: the row as drafted plus the hours. Throws so the editor can show why. */
-  const saveHours = async (schedule: Schedule | null) => {
+  /** The hours editor's save: the hours alone, from the day chosen. Throws so the editor can show why. */
+  const saveHours = async (
+    schedule: Schedule | null,
+    effectiveFrom: string,
+  ) => {
     setBusy(true);
     try {
-      await save({ ...argsOf(d), schedule });
+      await setSchedule({ personId: p.id, schedule, effectiveFrom });
       await onChanged();
       setHoursOpen(false);
     } finally {
@@ -615,19 +649,45 @@ function Row({
     }
   };
 
-  /** Pausing and unpausing are the same save the row already does. */
+  /** Pay through its history, the rest of the row through the roster save. */
+  const saveRow = () =>
+    act(async () => {
+      if (payDirty) {
+        if (d.monthlyCost.trim() === "")
+          await save({ id: p.id, name: p.name, monthlyCost: null });
+        else
+          await setPay({
+            personId: p.id,
+            monthlyCost: Number(d.monthlyCost),
+            currency: d.currency,
+            effectiveFrom: payTypo ? kuwaitDay() : payFrom,
+            mode: payTypo ? "replace" : "dated",
+          });
+      }
+      if (otherDirty) await save(argsOf(d));
+      setPayTypo(false);
+      setPayFrom(firstOfThisMonth());
+    });
+
+  /** Pausing, unpausing, leaving and coming back each record the day it happened. */
   const pause = () =>
     act(async () => {
-      await save({
-        ...argsOf(d),
-        pausedOn: kuwaitDay(),
-        pausedWhy: why.trim(),
+      await employment({
+        personId: p.id,
+        event: "paused",
+        on: pauseFrom,
+        why: why.trim(),
       });
       setPausing(false);
       setWhy("");
     });
-  const unpause = () =>
-    act(() => save({ ...argsOf(d), pausedOn: null, pausedWhy: null }));
+  const changeEmployment = async (
+    event: "left" | "rehired" | "resumed",
+    on: string,
+  ) => {
+    await employment({ personId: p.id, event, on });
+    await onChanged();
+  };
 
   const initial = (p.name || p.email || "?").trim().charAt(0).toUpperCase();
   // A shared account is not a colleague: no pay, no commission, no hours.
@@ -743,6 +803,17 @@ function Row({
             {p.monthlyUsd !== null && d.currency !== "USD" ? (
               <span className="text-xs text-muted-foreground">{`≈ ${money(p.monthlyUsd)}`}</span>
             ) : null}
+            {payDirty && d.monthlyCost.trim() !== "" ? (
+              <span className="basis-full">
+                <PayFrom
+                  value={payFrom}
+                  replace={payTypo}
+                  onChange={setPayFrom}
+                  onReplace={setPayTypo}
+                  disabled={busy}
+                />
+              </span>
+            ) : null}
           </div>
           <div className="flex flex-wrap items-center gap-1.5 text-sm">
             <AnimatedSelect
@@ -790,12 +861,7 @@ function Row({
       )}
       <div className="flex flex-wrap items-center justify-end gap-2">
         {dirty ? (
-          <Button
-            type="button"
-            size="sm"
-            disabled={busy}
-            onClick={() => act(() => save(argsOf(d)))}
-          >
+          <Button type="button" size="sm" disabled={busy} onClick={saveRow}>
             <Check aria-hidden /> Save
           </Button>
         ) : null}
@@ -805,7 +871,7 @@ function Row({
             variant="outline"
             size="sm"
             disabled={busy}
-            onClick={unpause}
+            onClick={() => setAsking("unpause")}
           >
             <Play aria-hidden /> Unpause
           </Button>
@@ -838,15 +904,16 @@ function Row({
             aria-label={`${p.name} is ${p.active ? onWord : offWord}`}
             disabled={busy}
             onCheckedChange={() =>
-              act(() =>
-                setActive({
-                  id: p.id,
-                  active: !p.active,
-                  endedOn: p.active
-                    ? new Date().toISOString().slice(0, 10)
-                    : undefined,
-                }),
-              )
+              account
+                ? // A shared account is not employed: no history, just in use or retired.
+                  act(() =>
+                    setActive({
+                      id: p.id,
+                      active: !p.active,
+                      endedOn: p.active ? kuwaitDay() : undefined,
+                    }),
+                  )
+                : setAsking(p.active ? "left" : "back")
             }
             className="relative after:absolute after:-inset-2 after:content-['']"
           />
@@ -854,7 +921,14 @@ function Row({
       </div>
       {pausing ? (
         <div className="flex flex-wrap items-center gap-2 text-xs @5xl:col-span-4">
-          <span className="text-muted-foreground">Paused because</span>
+          <span className="text-muted-foreground">Paused from</span>
+          <DateInput
+            value={pauseFrom}
+            onChange={e => setPauseFrom(e.target.value)}
+            aria-label={`${p.name} is paused from`}
+            className={`${field} w-36`}
+          />
+          <span className="text-muted-foreground">because</span>
           <input
             value={why}
             onChange={e => setWhy(e.target.value)}
@@ -865,7 +939,7 @@ function Row({
           <Button
             type="button"
             size="sm"
-            disabled={busy || !why.trim()}
+            disabled={busy || !why.trim() || !pauseFrom}
             onClick={pause}
           >
             <Pause aria-hidden /> Pause
@@ -897,6 +971,41 @@ function Row({
           onClose={() => setHoursOpen(false)}
         />
       ) : null}
+      {account ? null : (
+        <>
+          <DayDialog
+            open={asking === "left"}
+            title={`${p.name} leaves the team`}
+            description="They stay on the roster for the months they were paid. Days after this one are not employed, so they are never paid or asked about."
+            label="Last working day"
+            help="Today in Kuwait, unless you change it."
+            confirm="Take off the team"
+            max={kuwaitDay()}
+            onClose={() => setAsking(null)}
+            onConfirm={day => changeEmployment("left", day)}
+          />
+          <DayDialog
+            open={asking === "back"}
+            title={`${p.name} comes back`}
+            description="The gap stays: days between leaving and coming back are not employed."
+            label="First day back"
+            confirm="Put back on the team"
+            min={dayAfter(p.endedOn)}
+            onClose={() => setAsking(null)}
+            onConfirm={day => changeEmployment("rehired", day)}
+          />
+          <DayDialog
+            open={asking === "unpause"}
+            title={`${p.name} is back from the pause`}
+            description="The paused days stay unpaid; pay starts again on this day."
+            label="Back on"
+            confirm="Unpause"
+            min={dayAfter(p.pausedOn)}
+            onClose={() => setAsking(null)}
+            onConfirm={day => changeEmployment("resumed", day)}
+          />
+        </>
+      )}
     </div>
   );
 }
@@ -1193,10 +1302,12 @@ export function TeamTab({ goTab }: CeoTabProps) {
         )}
       </SectionCard>
 
+      <HoursAndPay order={1} />
+
       <SectionCard
         title="On the team"
         description="Pay, commission and hours edit in place. Pause somebody without taking them off."
-        order={1}
+        order={3}
       >
         {() =>
           data === null ? null : (
@@ -1252,7 +1363,7 @@ export function TeamTab({ goTab }: CeoTabProps) {
         <SectionCard
           title="Off the team"
           kicker={`${plural(gone.length, "person", "people")}`}
-          order={2}
+          order={4}
           actions={
             <Button
               type="button"

@@ -23,3 +23,6 @@ supabase/.temp/
 
 # Acceptance reports bind HEAD after commit and expire; never embed them in that commit.
 evidence/cutover-acceptance.json
+
+# Hours: shapes recorded from the live APIs (values replaced), never committed.
+supabase/functions/cockpit-hours-sync/fixtures/recorded/

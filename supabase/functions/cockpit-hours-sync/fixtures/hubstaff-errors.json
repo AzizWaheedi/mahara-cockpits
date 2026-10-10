@@ -1,0 +1,37 @@
+{
+ "_source": "shape from https://developer.hubstaff.com/docs/hubstaff_v2 error responses, 2026-10-09; values invented",
+ "body": {
+  "unauthorized": {
+   "status": 401,
+   "body": {
+    "error": "invalid_token",
+    "error_description": "The access token is invalid"
+   }
+  },
+  "plan": {
+   "status": 403,
+   "body": {
+    "code": 10006,
+    "error": "Organization does not have an active plan with API access"
+   }
+  },
+  "rateLimited": {
+   "status": 429,
+   "headers": {
+    "Retry-After": "2"
+   },
+   "body": {
+    "error": "rate_limited"
+   }
+  },
+  "tokenExchange": {
+   "status": 200,
+   "body": {
+    "access_token": "accessTokenInventedValue",
+    "refresh_token": "refreshTokenInventedValue",
+    "expires_in": 86400,
+    "token_type": "bearer"
+   }
+  }
+ }
+}

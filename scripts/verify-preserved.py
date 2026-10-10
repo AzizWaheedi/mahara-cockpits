@@ -10,7 +10,9 @@ Run from the repository root before the cutover starts (the baseline) and again 
 It compares docs/preserve/supabase-manifest.json and docs/preserve/vps-manifest.json with what is live:
 
 - Creative Triage, through the Supabase management API (SQL sent with read_only true; the functions and
-  secrets lists, secret names only): every recorded table and view (columns, row security, grants,
+  secrets lists, secret names only): the team-hours objects of 2026-10-09 (present once deployed, row
+  security on, browser roles shut out, the keys table with no grant, both jobs, cockpit-hours-sync with the
+  JWT check off and cockpit-hours-api with it on), every recorded table and view (columns, row security, grants,
   triggers, policies, indexes, constraints), every recorded function (md5 of its definition), every
   recorded pg_cron job, the settings switches, the WhatsApp template rows, the vault secret names, the
   extensions, every Edge Function (slug present, version not lower, verify_jwt as recorded), the function
@@ -539,6 +541,24 @@ where p.pronamespace = 'public'::regnamespace and p.prokind in ('f', 'p') and p.
 
 Q_CRON = "select jobname, schedule, active, md5(command) as command_md5 from cron.job"
 
+# Hours, leave and pay (team-hours, 2026-10-09): only names and booleans leave the database. Row security on;
+# no browser role may read a table or run a service function; cockpit_hours_keys has no grant at all.
+Q_TEAM_HOURS = """
+select 'table' as kind, c.relname as name, c.relrowsecurity as rls,
+  (has_table_privilege('anon', c.oid, 'SELECT') or has_table_privilege('authenticated', c.oid, 'SELECT')) as browser,
+  has_table_privilege('service_role', c.oid, 'SELECT') as service
+from pg_class c join pg_namespace n on n.oid = c.relnamespace
+where n.nspname = 'public' and c.relkind = 'r' and c.relname = any({tables})
+union all
+select 'function', p.proname, null,
+  bool_or(has_function_privilege('anon', p.oid, 'EXECUTE') or has_function_privilege('authenticated', p.oid, 'EXECUTE')),
+  bool_or(has_function_privilege('service_role', p.oid, 'EXECUTE'))
+from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+where n.nspname = 'public' and p.proname = any({functions}) group by p.proname
+union all
+select 'trigger', t.tgname, null, null, null from pg_trigger t where not t.tgisinternal and t.tgname = any({triggers})
+"""
+
 # Only booleans leave the database: the switches, flattened the way the manifest wrote them
 # (a.b for objects, a[0] for arrays). No string value is read.
 Q_SWITCHES = """
@@ -948,6 +968,74 @@ def check_edge(rep: Report, mg: Mgmt, man: Dict[str, Any]) -> None:
                     + ("; its source files are judged on their own line" if slug in RECORDED_SOURCES else ""))
         else:
             rep.add("supabase", label, OK, head + " as recorded")
+
+
+def check_team_hours(rep: Report, mg: Mgmt, man: Dict[str, Any]) -> None:
+    """Hours, leave and pay. Before its first deploy (state pending_deploy) an absent object is ok, not deployed
+    yet; once deployed it is MISSING. A JWT check, row security or grant that drifts is CHANGED either way."""
+    th = man.get("team_hours")
+    if not th:
+        return
+    pending = th.get("state") != "deployed"
+    absent = (OK, "not deployed yet (team-hours is pending its first deploy)") if pending else (MISSING, "")
+    area = "supabase"
+    rows = mg.sql(Q_TEAM_HOURS.format(tables=arr(th["tables"]), functions=arr(th["functions"]), triggers=arr(th["triggers"])),
+                  "team_hours")
+    live = {(r["kind"], r["name"]): r for r in rows}
+    no_grant = set(th.get("no_grant_tables") or [])
+    for name in th["tables"]:
+        cur = live.get(("table", name))
+        label = f"team-hours table {name}"
+        if not cur:
+            rep.add(area, label, absent[0], absent[1] or "the table is gone")
+            continue
+        problems = []
+        if not cur["rls"]:
+            problems.append("row security is off")
+        if cur["browser"]:
+            problems.append("a browser role can read it")
+        if name in no_grant and cur["service"]:
+            problems.append("service_role can read it (it must have no grant)")
+        if name not in no_grant and not cur["service"]:
+            problems.append("service_role cannot read it")
+        rep.add(area, label, CHANGED if problems else OK, "; ".join(problems) or "row security on, browser roles shut out")
+    ceo = set(th.get("ceo_functions") or [])
+    for name in th["functions"]:
+        cur = live.get(("function", name))
+        label = f"team-hours function {name}"
+        if not cur:
+            rep.add(area, label, absent[0], absent[1] or "the function is gone")
+            continue
+        if cur["browser"] and name not in ceo:
+            rep.add(area, label, CHANGED, "a browser role can run it")
+        else:
+            rep.add(area, label, OK, "present" + (", CEO-gated" if name in ceo else ""))
+    present_triggers = {n for (k, n) in live if k == "trigger"}
+    gone = [t for t in th["triggers"] if t not in present_triggers]
+    if gone:
+        rep.add(area, "team-hours triggers", absent[0], absent[1] or ("gone: " + ", ".join(gone)))
+    else:
+        rep.add(area, "team-hours triggers", OK, f"{len(th['triggers'])} present (history and delete guards)")
+    jobs = by(mg.sql(Q_CRON, "cron"), "jobname")
+    for j in th["pg_cron"]:
+        cur = jobs.get(j["jobname"])
+        label = f"team-hours pg_cron {j['jobname']}"
+        if not cur:
+            rep.add(area, label, absent[0], absent[1] or "the job is gone from cron.job")
+        elif cur["schedule"] != j["schedule"] or not cur["active"]:
+            rep.add(area, label, CHANGED, f"schedule {cur['schedule']}, active {cur['active']} (expected {j['schedule']}, active)")
+        else:
+            rep.add(area, label, OK, f"{j['schedule']}, active")
+    fns = by(mg.functions(), "slug")
+    for e in th["edge_functions"]:
+        cur = fns.get(e["slug"])
+        label = f"team-hours Edge Function {e['slug']}"
+        if not cur:
+            rep.add(area, label, absent[0], absent[1] or "not in the functions list")
+        elif bool(cur.get("verify_jwt")) != bool(e["verify_jwt"]) or cur.get("status") != "ACTIVE":
+            rep.add(area, label, CHANGED, f"status {cur.get('status')}, verify_jwt {cur.get('verify_jwt')} (must be {e['verify_jwt']})")
+        else:
+            rep.add(area, label, OK, f"ACTIVE v{cur.get('version')}, verify_jwt {cur.get('verify_jwt')} as required")
 
 
 def function_env_names() -> Set[str]:
@@ -2011,6 +2099,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             ("vault secret names", lambda: check_vault(rep, mg, sman)),
             ("extensions", lambda: check_extensions(rep, mg, sman)),
             ("Edge Functions", lambda: check_edge(rep, mg, sman)),
+            ("team-hours", lambda: check_team_hours(rep, mg, sman)),
             ("Edge Function sources", lambda: check_function_sources(rep, mg, sman, args.ref, ref_ok)),
             ("function secret names", lambda: check_secrets(rep, mg, sman)),
             ("CRON_SECRET pairing", lambda: check_secret_pair(rep, mg)),

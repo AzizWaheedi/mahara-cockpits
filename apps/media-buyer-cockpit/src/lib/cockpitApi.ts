@@ -21,6 +21,7 @@ import {
   saveGoalPlan,
   saveGoalTargets,
 } from "./ceoGoalsClient";
+import { ceoHoursAction } from "./ceoHoursClient";
 import {
   addManualPayment,
   changeManualPayment,
@@ -175,6 +176,10 @@ const READ_VERBS: Record<string, true> = {
   requestsList: true,
   watchlistList: true,
   projections: true,
+  // api.ceo.hours: reading a month, the connections and approved pay.
+  month: true,
+  status: true,
+  costs: true,
 };
 function refreshAfter<T extends (...args: any[]) => any>(fn: T): T {
   const prior = refreshWrappers.get(fn);
@@ -412,6 +417,7 @@ async function handleApiCall(endpoint: string, args: any = {}): Promise<any> {
 
   // 6. CEO Features
   if (domain === "ceo") {
+    if (sub === "hours") return ceoHoursAction(supabase, rest.join("."), args);
     if (sub === "costs") {
       switch (rest.join(".")) {
         case "sheet":

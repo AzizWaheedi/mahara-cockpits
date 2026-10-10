@@ -1,0 +1,107 @@
+{
+ "_source": "shape from https://developer.hubstaff.com/docs/hubstaff_v2 GET /v2/organizations/{organization_id}/members?include=users&include_removed=true, 2026-10-09; values invented",
+ "body": {
+  "members": [
+   {
+    "user_id": 5001,
+    "membership_status": "active",
+    "membership_role": "owner",
+    "effective_role": "owner",
+    "trackable": true,
+    "created_at": "2025-01-10T08:00:00Z",
+    "updated_at": "2026-09-01T08:00:00Z",
+    "last_client_activity": "2026-06-01T09:00:00Z",
+    "pay_rate": 0,
+    "bill_rate": 0,
+    "fixed_pay_rate": 0,
+    "profile": {
+     "phone": "+000 0000 0000",
+     "address": "1 Made-up Street",
+     "job_title": "Agent",
+     "birthday": "1990-01-01"
+    },
+    "ip_address": "192.0.2.1",
+    "project_members": []
+   },
+   {
+    "user_id": 5002,
+    "membership_status": "active",
+    "membership_role": "user",
+    "effective_role": "user",
+    "trackable": true,
+    "created_at": "2026-05-01T09:00:00Z",
+    "updated_at": "2026-09-01T08:00:00Z",
+    "last_client_activity": "2026-10-08T15:00:00Z",
+    "pay_rate": 0,
+    "bill_rate": 0,
+    "profile": {
+     "phone": "+000 0000 0000",
+     "address": "1 Made-up Street",
+     "job_title": "Agent",
+     "birthday": "1990-01-01"
+    }
+   },
+   {
+    "user_id": 5003,
+    "membership_status": "active",
+    "membership_role": "user",
+    "effective_role": "user",
+    "trackable": true,
+    "created_at": "2026-05-01T09:00:00Z",
+    "updated_at": "2026-09-01T08:00:00Z",
+    "last_client_activity": null,
+    "pay_rate": 0,
+    "bill_rate": 0
+   },
+   {
+    "user_id": 5004,
+    "membership_status": "removed",
+    "membership_role": "user",
+    "effective_role": "user",
+    "trackable": false,
+    "created_at": "2026-02-01T09:00:00Z",
+    "updated_at": "2026-10-03T09:00:00Z",
+    "removed_at": "2026-10-03T09:00:00Z",
+    "pay_rate": 0
+   }
+  ],
+  "users": [
+   {
+    "id": 5001,
+    "name": "Owner Person",
+    "email": "owner@example.test",
+    "time_zone": "Asia/Kuwait",
+    "status": "active",
+    "profile": {
+     "phone": "+000 0000 0000",
+     "address": "1 Made-up Street",
+     "job_title": "Agent",
+     "birthday": "1990-01-01"
+    },
+    "ip_address": "192.0.2.1"
+   },
+   {
+    "id": 5002,
+    "name": "Person One",
+    "email": "person1@example.test",
+    "time_zone": "Asia/Kuwait",
+    "status": "active"
+   },
+   {
+    "id": 5003,
+    "name": "Person Two",
+    "email": "person2@example.test",
+    "time_zone": "Africa/Cairo",
+    "status": "active"
+   },
+   {
+    "id": 5004,
+    "name": "Leaver Person",
+    "email": "leaver@example.test",
+    "time_zone": "Asia/Kuwait",
+    "status": "active"
+   }
+  ],
+  "pagination": {}
+ }
+}

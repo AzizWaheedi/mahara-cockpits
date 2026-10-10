@@ -1,7 +1,7 @@
 import { Loader2, Plus, Receipt, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { EmptyState } from "@/components/ceo/EmptyState";
-import { count, money, shortDate } from "@/components/ceo/format";
+import { count, money, plural, shortDate } from "@/components/ceo/format";
 import { KICKER } from "@/components/ceo/Kicker";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatTile } from "@/components/ceo/StatTile";
@@ -17,6 +17,7 @@ import {
 } from "@/types/ceo/commission";
 import type { Sheet } from "@/types/ceo/costs";
 import {
+  type ClosedMonthPay,
   type CostKind,
   type CostLine,
   monthlyUsd,
@@ -328,6 +329,9 @@ export function CostsTab({ goTab }: CeoTabProps) {
             <span className="text-xs">{`software ${money(spent("software"))}`}</span>
             <span className="text-xs">{`ads ${money(spent("ads"))}`}</span>
             <span className="text-xs">{`labour ${money(spent("labour"))}`}</span>
+            {sheet.lastMonthPay ? (
+              <span className="text-xs">{`base pay ${money(sheet.lastMonthPay.total)}`}</span>
+            ) : null}
             <span className="text-xs">{`other ${money(spent("other") + spent("bank") + spent("courses"))}`}</span>
           </div>
         ) : (
@@ -513,6 +517,10 @@ export function CostsTab({ goTab }: CeoTabProps) {
           {sheet.planned.labour !== null ? (
             <p>{`The plan typed ${money(sheet.planned.labour)} of payroll.`}</p>
           ) : null}
+          <ClosedMonthLine
+            pay={sheet.lastMonthPay ?? null}
+            month={lastMonthName(sheet)}
+          />
         </div>
       </SectionCard>
 
@@ -562,6 +570,60 @@ export function CostsTab({ goTab }: CeoTabProps) {
         />
       ))}
     </div>
+  );
+}
+
+/** "September", the calendar month before the sheet's today. */
+function lastMonthName(sheet: Sheet): string {
+  const m = sheet.lastMonthPay?.month ?? sheet.statements?.month ?? null;
+  return m
+    ? new Date(`${m}-01T00:00:00Z`).toLocaleString("en", {
+        month: "long",
+        timeZone: "UTC",
+      })
+    : "Last month";
+}
+
+/**
+ * Last month's base pay as it was approved on Hours and pay, the roster for
+ * anyone not approved. The month above stays on roster pay: one unusual
+ * month never sets what the next one costs.
+ */
+function ClosedMonthLine({
+  pay,
+  month,
+}: {
+  pay: ClosedMonthPay | null;
+  month: string;
+}) {
+  if (!pay)
+    return (
+      <p>
+        {`${month}'s approved pay could not be read, so it is not compared here. The payroll above is roster pay.`}
+      </p>
+    );
+  const parts = [
+    pay.approved
+      ? `${month}'s approved pay for ${plural(pay.approved, "person", "people")}`
+      : null,
+    pay.roster
+      ? `roster pay for ${plural(pay.roster, "person", "people")}`
+      : null,
+  ].filter(Boolean);
+  // Nobody counted is "not known", never a $0 month.
+  const total = parts.length
+    ? `Base pay for ${month}: ${money(pay.total)}, from ${parts.join(" and ")}.`
+    : `No base pay for ${month} yet: nobody is approved on Hours and pay or has pay on the roster.`;
+  const left = pay.noPay.length
+    ? ` It leaves out ${pay.noPay.join(", ")}, with no pay in dollars on the roster, so it is a floor.`
+    : "";
+  return (
+    <>
+      <p>{`${total}${left} The month above stays on roster pay.`}</p>
+      {pay.noRate.length ? (
+        <p>{`No dollar rate for ${pay.noRate.join(", ")}'s approved currency: counted at roster pay.`}</p>
+      ) : null}
+    </>
   );
 }
 

@@ -1,0 +1,24 @@
+{
+ "_source": "shape from https://developer.hubstaff.com/docs/hubstaff_v2 GET /v2/organizations/{organization_id}/last_activities, 2026-10-09; values invented",
+ "body": {
+  "last_activities": [
+   {
+    "user_id": 5002,
+    "online": false,
+    "last_client_activity": "2026-10-08T15:00:00Z",
+    "project_id": 31,
+    "task_id": null,
+    "updated_at": "2026-10-08T15:00:00Z"
+   },
+   {
+    "user_id": 5003,
+    "online": true,
+    "last_client_activity": "2026-10-09T07:50:00Z",
+    "project_id": 31,
+    "task_id": null,
+    "updated_at": "2026-10-09T07:50:00Z"
+   }
+  ],
+  "pagination": {}
+ }
+}

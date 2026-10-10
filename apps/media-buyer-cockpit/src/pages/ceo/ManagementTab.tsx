@@ -2041,9 +2041,9 @@ const GAPS: { label: string; hint: string; sub: string }[] = [
     sub: "Not in either Supabase project, not in ClickUp and not in any sheet the cockpit reads.",
   },
   {
-    label: "Hours worked and utilisation",
-    hint: "No time tracking data reaches the cockpit",
-    sub: "Hubstaff appears in the expense import as a vendor line only.",
+    label: "Utilisation by client",
+    hint: "Hubstaff time is not tagged to a client",
+    sub: "Hours worked per person are on Team & payroll, from Hubstaff for the roles that track.",
   },
   {
     label: "Public holidays",

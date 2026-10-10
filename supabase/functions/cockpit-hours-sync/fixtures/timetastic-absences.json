@@ -1,0 +1,64 @@
+{
+ "_source": "shape from https://app.timetastic.co.uk/api (swagger in timetastic-swagger.json) GET /api/absences?AbsenceQueryType=1 (AbsenceDay[]), 2026-10-09; values invented",
+ "body": [
+  {
+   "date": "2026-10-09T00:00:00",
+   "absences": [
+    {
+     "absenceType": "NonWorkingDay",
+     "start": "2026-10-09T00:00:00",
+     "end": "2026-10-09T23:59:59",
+     "detail": null,
+     "entityId": null,
+     "userId": 7002,
+     "userName": "Person One",
+     "startUtc": null,
+     "endUtc": null
+    }
+   ]
+  },
+  {
+   "date": "2026-10-14T00:00:00",
+   "absences": [
+    {
+     "absenceType": "Booking",
+     "start": "2026-10-14T09:00:00",
+     "end": "2026-10-14T18:00:00",
+     "detail": "Made-up private reason: doctor",
+     "entityId": 9001,
+     "userId": 7002,
+     "userName": "Person One",
+     "startUtc": "2026-10-14T06:00:00Z",
+     "endUtc": "2026-10-14T15:00:00Z"
+    },
+    {
+     "absenceType": "Birthday",
+     "start": "2026-10-14T00:00:00",
+     "end": "2026-10-14T23:59:59",
+     "detail": "Birthday",
+     "entityId": null,
+     "userId": 7003,
+     "userName": "Person Two",
+     "startUtc": null,
+     "endUtc": null
+    }
+   ]
+  },
+  {
+   "date": "2026-10-22T00:00:00",
+   "absences": [
+    {
+     "absenceType": "PublicHoliday",
+     "start": "2026-10-22T00:00:00",
+     "end": "2026-10-22T23:59:59",
+     "detail": "Made-up holiday",
+     "entityId": 31,
+     "userId": 7002,
+     "userName": "Person One",
+     "startUtc": null,
+     "endUtc": null
+    }
+   ]
+  }
+ ]
+}

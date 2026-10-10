@@ -1,0 +1,189 @@
+{
+ "_source": "shape from https://app.timetastic.co.uk/api (swagger in timetastic-swagger.json) GET /api/users/contact/{id} (UserWithContact), 2026-10-09; values invented",
+ "body": {
+  "id": 7002,
+  "firstname": "Person",
+  "surname": "One",
+  "email": "person1@example.test",
+  "admin": false,
+  "director": false,
+  "accountOwner": false,
+  "organisationId": 4242,
+  "departmentId": 11,
+  "allowanceUnit": "Days",
+  "managerOfDepartments": [],
+  "bossOfDepartments": [],
+  "endDate": null,
+  "departmentName": "Call centre",
+  "gravatar": "https://www.gravatar.com/avatar/00000000000000000000000000000000",
+  "allowanceRemaining": 12.5,
+  "hasLoggedOn": true,
+  "isArchived": false,
+  "approverId": 7001,
+  "isApprover": false,
+  "deptManagerId": 7001,
+  "deptBossId": 7001,
+  "birthday": "1990-01-01T00:00:00",
+  "startDate": "2026-01-01T00:00:00",
+  "hasPublicHolidays": true,
+  "userInitials": "PO",
+  "countryCode": "KW",
+  "currentYearAllowance": 21,
+  "nextYearAllowance": 21,
+  "userLinkedWithGoogle": false,
+  "userManagedExternally": false,
+  "mfaEnabled": false,
+  "inviteSentTimeUtc": null,
+  "inviteSentTimeHumanised": null,
+  "yearStart": 1,
+  "accrualSystem": false,
+  "isEmailConfirmed": true,
+  "workingDays": [
+   {
+    "dayOfWeek": "Sunday",
+    "fromTimeAm": 540,
+    "toTimeAm": 780,
+    "fromTimePm": 780,
+    "toTimePm": 1080,
+    "workingAm": true,
+    "workingPm": true
+   },
+   {
+    "dayOfWeek": "Monday",
+    "fromTimeAm": 540,
+    "toTimeAm": 780,
+    "fromTimePm": 780,
+    "toTimePm": 1080,
+    "workingAm": true,
+    "workingPm": true
+   },
+   {
+    "dayOfWeek": "Tuesday",
+    "fromTimeAm": 540,
+    "toTimeAm": 780,
+    "fromTimePm": 780,
+    "toTimePm": 1080,
+    "workingAm": true,
+    "workingPm": true
+   },
+   {
+    "dayOfWeek": "Wednesday",
+    "fromTimeAm": 540,
+    "toTimeAm": 780,
+    "fromTimePm": 780,
+    "toTimePm": 1080,
+    "workingAm": true,
+    "workingPm": true
+   },
+   {
+    "dayOfWeek": "Thursday",
+    "fromTimeAm": 540,
+    "toTimeAm": 780,
+    "fromTimePm": 780,
+    "toTimePm": 1080,
+    "workingAm": true,
+    "workingPm": true
+   },
+   {
+    "dayOfWeek": "Friday",
+    "fromTimeAm": 540,
+    "toTimeAm": 780,
+    "fromTimePm": 780,
+    "toTimePm": 1080,
+    "workingAm": false,
+    "workingPm": false
+   },
+   {
+    "dayOfWeek": "Saturday",
+    "fromTimeAm": 540,
+    "toTimeAm": 780,
+    "fromTimePm": 780,
+    "toTimePm": 1080,
+    "workingAm": true,
+    "workingPm": true
+   }
+  ],
+  "workSchedules": [
+   {
+    "start": "2026-01-01T00:00:00",
+    "days": [
+     {
+      "dayOfWeek": "Sunday",
+      "fromTimeAm": 540,
+      "toTimeAm": 780,
+      "fromTimePm": 780,
+      "toTimePm": 1080,
+      "workingAm": true,
+      "workingPm": true
+     },
+     {
+      "dayOfWeek": "Monday",
+      "fromTimeAm": 540,
+      "toTimeAm": 780,
+      "fromTimePm": 780,
+      "toTimePm": 1080,
+      "workingAm": true,
+      "workingPm": true
+     },
+     {
+      "dayOfWeek": "Tuesday",
+      "fromTimeAm": 540,
+      "toTimeAm": 780,
+      "fromTimePm": 780,
+      "toTimePm": 1080,
+      "workingAm": true,
+      "workingPm": true
+     },
+     {
+      "dayOfWeek": "Wednesday",
+      "fromTimeAm": 540,
+      "toTimeAm": 780,
+      "fromTimePm": 780,
+      "toTimePm": 1080,
+      "workingAm": true,
+      "workingPm": true
+     },
+     {
+      "dayOfWeek": "Thursday",
+      "fromTimeAm": 540,
+      "toTimeAm": 780,
+      "fromTimePm": 780,
+      "toTimePm": 1080,
+      "workingAm": true,
+      "workingPm": true
+     },
+     {
+      "dayOfWeek": "Friday",
+      "fromTimeAm": 540,
+      "toTimeAm": 780,
+      "fromTimePm": 780,
+      "toTimePm": 1080,
+      "workingAm": false,
+      "workingPm": false
+     },
+     {
+      "dayOfWeek": "Saturday",
+      "fromTimeAm": 540,
+      "toTimeAm": 780,
+      "fromTimePm": 780,
+      "toTimePm": 1080,
+      "workingAm": true,
+      "workingPm": true
+     }
+    ]
+   }
+  ],
+  "allowances": [],
+  "jobTitle": "Call centre agent",
+  "payrollId": "1",
+  "address1": "1 Made-up Street",
+  "address2": "Flat 0",
+  "city": "Nowhere",
+  "postCode": "00000",
+  "telephone1": "+000 0000 0000",
+  "telephone2": null,
+  "country": "Nowhere",
+  "emergencyContactName": "Made-up Contact",
+  "emergencyContactPhone": "+000 1111 1111"
+ }
+}

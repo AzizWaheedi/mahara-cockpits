@@ -568,8 +568,9 @@ so the badge, the sentence and this card never disagree.
   any source the cockpit reads. The Creative Triage project holds leads,
   appointments, ad spend and rosters, not creative output.
 - **Service level on a client request.** No ticket or request table exists.
-- **Delivery cost per client (labour time on an account).** Hubstaff appears in
-  the expense import as a vendor line only. No time data reaches the cockpit.
+- **Delivery cost per client (labour time on an account).** Hubstaff time
+  reaches Team & payroll per person and day only. It is not tagged to a client,
+  so no time spent on an account reaches the cockpit.
 - **Retention and churn rate over time.** `clients.counts.churned` is a snapshot
   of the roster today, not a churn rate. A dated churn event would be needed.
 
@@ -688,8 +689,9 @@ role, not from a department field.
   signal and some people have none.
 - **Head count, start date, contract type, pay.** Nothing in either Supabase
   project, in ClickUp or in any sheet the cockpit reads carries them.
-- **Hours worked or utilisation.** Hubstaff is a vendor line in the expense
-  import only. No time data reaches the cockpit.
+- **Utilisation.** Hours worked per person come from Hubstaff on Team &
+  payroll (Hours and pay) for the roles that track; time is not tagged to a
+  client, so utilisation by account is still not recorded.
 - **Holidays.** The EOD rule treats Friday as off and knows no public holidays,
   so a holiday reads as a missed EOD. That caveat is already in `team.notes[]`
   and must stay on screen.

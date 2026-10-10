@@ -333,7 +333,7 @@ export function NextMonth({
           costs && pay && t.key === "labour"
             ? {
                 ...t,
-                how: `From the Costs page: ${money(pay.base)} pay and ${money(pay.commission)} commission on this plan.`,
+                how: `From the Costs page: ${money(pay.base)} roster pay and ${money(pay.commission)} commission on this plan. Roster pay, not a month's approved figure, so a part month or unpaid leave never sets next month's cost.`,
               }
             : costs && t.key === "overhead"
               ? {

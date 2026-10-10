@@ -1,0 +1,14 @@
+{
+ "_source": "shape from https://developer.hubstaff.com/docs/hubstaff_v2 GET /v2/users/me, 2026-10-09; values invented",
+ "body": {
+  "user": {
+   "id": 5001,
+   "name": "Owner Person",
+   "email": "owner@example.test",
+   "time_zone": "Asia/Kuwait",
+   "status": "active",
+   "created_at": "2025-01-10T08:00:00Z",
+   "updated_at": "2026-09-01T08:00:00Z"
+  }
+ }
+}

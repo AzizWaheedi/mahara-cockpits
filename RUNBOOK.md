@@ -475,6 +475,92 @@ The room worker (`desk.py rooms`, every minute) makes the video rooms the cockpi
 | An opener says "The send may have gone; read the conversation in HighLevel before writing to the lead again" | HighLevel's answer was lost after the template may have gone. It is kept as sent, so no second opener is written; a person checks the conversation | The setter or the closer |
 | A lead outside the Gulf gets no opener | A first message goes 9 to 18 on the lead's own zone (every zone of a country that spans several); a country the desk does not know (`LEAD_ZONES` in sendrules.ts and followups.py) waits for a person | The setter or the closer |
 
+## Hours, leave and pay
+
+CEO cockpit, Team & payroll: Connections, then Hours and pay. Hubstaff (hours,
+for people whose tracking is required) and Timetastic (leave and public
+holidays, for everyone) are read by the Edge Function `cockpit-hours-sync` on
+two pg_cron jobs, `mahara-hours-sync` (every hour at :17) and
+`mahara-hours-deep` (02:40 Kuwait; Saturdays re-read back to Hubstaff's
+earliest 10-minute records, 175 days: it never asks for older ones, so those
+days are never swept or re-stamped). Each run is a
+row in `cockpit_hours_sync_runs`; every provider call leaves receipts in
+`cockpit_hours_provider_health` (its own ledger, so the guardian's urgent check
+never turns red on it). Keys are pasted by the CEO in Connections and kept in
+`cockpit_hours_keys`, which no role can read. Nothing here moves money, sends
+a message or invites anyone.
+
+| Symptom | Fix | Who |
+| --- | --- | --- |
+| Hours show "no data" | The day has no complete Hubstaff read, the person isn't linked, or Hubstaff isn't connected. Connections says which. Press Sync now; if a person is "Not linked", link them in Link accounts. No data is never counted as 0. | CEO |
+| A key was refused, or expires soon | Make a new key (Hubstaff: Settings, Organization, API tokens; Timetastic: app.timetastic.co.uk/api as an admin) and paste it in Connections. The old key keeps working until the new one passes its test call. An organisation token (`hsoat_`) has no expiry unless one was set in Hubstaff; "Add an expiry date" on the card records one, and the card warns two weeks before. A personal token renews itself on every read, so the card offers no date for it. | CEO |
+| Connections says "Firewall blocked" (Hubstaff, error 1010) | Cloudflare in front of Hubstaff stopped the request before Hubstaff saw it, so nothing new was read; the key is fine and is never marked refused for it. Cloudflare refuses requests without a User-Agent: every Hubstaff call sends `User-Agent: mahara-cockpit/1.0` (`HUBSTAFF_USER_AGENT` in `cockpit-ceo-api/tools.ts`). If it persists, check the deployed functions carry that `tools.ts` and redeploy both hours functions. The next good read marks the key connected again. | Systems manager |
+| Hubstaff's personal key needs replacing ("needs a new key") | A personal token's exchange did not finish, so it may be spent. Make a new personal token in Hubstaff and paste it. An organisation token (`hsoat_`) avoids this. | CEO |
+| After a database restore or a project move | Paste both keys again in Connections (a stored refresh token may already be used) and switch the old project's `mahara-hours-*` jobs off. | Systems manager, then CEO |
+| Days are unverified | Hubstaff's daily totals and its 10-minute records differ by more than a minute. The next read usually settles it; approval of people paid by hours waits for it. If it persists, compare the day in Hubstaff's Time & Activity report. | CEO |
+| A leave type has no pay rule | Leave types view: pick Paid, Unpaid, Part paid or Not time off. The suggestion is pre-selected; one click saves it. | CEO |
+| A person is "Not linked" | Link accounts view: pick the person, or "Not on the roster". Timetastic links itself by payroll id (the roster id) and both link by email. | CEO |
+| Hours changed after a month was approved | Nothing to do: the difference is carried into the next approval automatically and listed in the approve dialog. | nobody |
+| The hourly read stopped | Check `cockpit_hours_sync_runs` (latest `started_at`) and that the jobs `mahara-hours-sync` and `mahara-hours-deep` are in `cron.job`. The kick needs the vault secret `cockpit_sync_secret` (state row `hours-kick` in `cockpit_sync_state` says when it is missing) and `cockpit-hours-sync` must be deployed with the JWT check OFF. | Systems manager |
+
+Deploying (the lead session, never a builder). The Mac's management token is
+dead since 2026-10-09, so `deploy_tree.py`, `sq.py`, `verify-preserved.py`
+and ship.sh's auth preflight can't run as they are: SQL goes through the CEO's
+Composio Supabase connection (`SUPABASE_BETA_RUN_SQL_QUERY`, as `postgres`),
+and each function goes as one bun-built file (`SUPABASE_DEPLOY_FUNCTION` with
+`file_content`; `bundleOnly` is the dry run). Build the web app and both
+functions from the same commit: approval recomputes pay on the server with the
+browser's rule (`hours-1`), and a different `hoursModel.ts` refuses every
+approval as changed. In order:
+
+1. Preflight, read only: `cockpit_people`, `cockpit_audit_log`,
+   `cockpit_members`, `cockpit_sync_state` (with `rows_seen`),
+   `cockpit_is_ceo()`, `cockpit_ceo_verified_actor_email(uuid)`,
+   `cockpit_ceo_people_save(jsonb)`, `cockpit_ceo_people_set_pay(jsonb)` and
+   `cockpit_people_schedule_check(jsonb)` exist; pg_cron, pg_net and the vault
+   are on; the vault holds `cockpit_sync_secret` and the function secrets
+   include `CRON_SECRET` (names only, never values). None of the 18 hours
+   tables exists yet: `CREATE TABLE IF NOT EXISTS` would keep another table of
+   the same name as it is.
+2. Apply `20261009a_cockpit_team_hours.sql` (it carries its own BEGIN and
+   COMMIT). Check: 18 tables with row security, `cockpit_hours_keys` with no
+   grant at all, `cockpit_ceo_hours_*` granted to authenticated only.
+3. Deploy `cockpit-hours-sync` with the JWT check OFF: the bundle of
+   `supabase/functions/cockpit-hours-sync` plus
+   `supabase/functions/cockpit-ceo-api/tools.ts`. A new function gets the
+   platform's JWT default, so set `verify_jwt` false with a PATCH on the
+   function and read it back. A POST with no `x-cron-secret` must answer 401.
+4. Deploy `cockpit-hours-api` with the JWT check ON: the bundle of
+   `supabase/functions/cockpit-hours-api` plus `cockpit-ceo-api/tools.ts`,
+   `supabase/functions/cockpit-hours-sync` and, from
+   `apps/media-buyer-cockpit/src/types/ceo/`, `hoursContract.ts`,
+   `hoursModel.ts` and `schedule.ts`. Read `verify_jwt` back as true.
+5. Seed both keys with `cockpit_hours_key_put`, from a script that reads
+   `~/.config/mahara/hubstaff_token` and `timetastic_token` and prints neither
+   the token nor the request: one `DO` block that first runs
+   `set_config('request.jwt.claims','{"role":"service_role"}',true)` (the
+   function refuses anyone but the service role), then puts
+   `{provider:'hubstaff', kind:'hubstaff_org', accountId:'705266'}` and
+   `{provider:'timetastic', kind:'timetastic', accountId:'101643'}`, each with
+   `savedBy:'aziz@maharamedia.com'` and `state:'connected'` (both were checked
+   read-only on 2026-10-09; `unchecked` would tell the CEO the provider
+   couldn't be reached). Each put leaves one `hours.keySaved` audit row.
+6. Apply `20261009b_cockpit_team_hours_jobs.sql`; `cron.job` then holds
+   `mahara-hours-sync` and `mahara-hours-deep`, both active.
+7. Start the first read: `SELECT public.cockpit_hours_kick('deep');`. Deep,
+   not recent: only a deep read loads Timetastic's people (so the payroll-id
+   links) and its leave types. Within a few minutes the newest
+   `cockpit_hours_sync_runs` row is `ok`, `cockpit_sync_state` rows
+   `hubstaff-sync` and `timetastic-sync` are ok, and Timetastic accounts are
+   linked in `cockpit_time_accounts`.
+8. Set `team_hours.state` to `deployed` in
+   `docs/preserve/supabase-manifest.json`, and run
+   `scripts/verify-preserved.py` with its management calls sent through
+   Composio, so a lost object is MISSING from then on.
+9. Ship the cockpit (`scripts/ship.sh media-buyer`, its auth preflight
+   through Composio too), then open Team & payroll on production as the CEO:
+   both connections say Connected.
+
 ## What never needs a person
 
 - Rate limits: every Google, ClickUp and Meta call waits and retries.

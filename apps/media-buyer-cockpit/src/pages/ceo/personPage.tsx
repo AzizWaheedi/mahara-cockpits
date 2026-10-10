@@ -19,6 +19,7 @@ import type {
   Scorecard,
 } from "@/types/ceo/profiles";
 import { Dial } from "./goalsKit";
+import { PersonHoursStrip } from "./hours/PersonHoursStrip";
 import { OnboardingPanel } from "./personOnboarding";
 import { ScorecardPanel } from "./personScorecard";
 
@@ -461,6 +462,8 @@ export function PersonPage({
           </div>
         </div>
       </SectionCard>
+
+      <PersonHoursStrip personId={personId} />
 
       <CeoTabs
         tabs={PANELS.map(p => ({ key: p, label: p }))}

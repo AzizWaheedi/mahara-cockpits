@@ -114,7 +114,69 @@ export type Payee = {
   basis: CommissionBasis;
   /** A fraction for the share bases; an amount in `currency` per unit otherwise. */
   rate: number | null;
+  /**
+   * Last month's approved pay from Hours and pay, when there is one. Only a
+   * closed month reads it; next month's plan stays on roster pay, so a
+   * joiner's half month or a month of unpaid leave never sets next month's cost.
+   */
+  approved?: {
+    month: string;
+    amountUsd: number | null;
+    shadow: boolean;
+  } | null;
 };
+
+/** A closed month's base pay: the approved figure where one exists, the roster's for the rest. */
+export type ClosedMonthPay = {
+  month: string;
+  /** Base pay in USD, approved where approved, roster otherwise. */
+  total: number;
+  /** People counted at their approved figure. */
+  approved: number;
+  /** People counted at their roster pay. */
+  roster: number;
+  /** Approved in a currency with no dollar rate: counted at roster pay, and named. */
+  noRate: string[];
+  /** Neither approved nor a roster figure: left out, and named. */
+  noPay: string[];
+};
+
+/**
+ * Base pay for a closed month. `people` is everyone paid that month: the
+ * working roster, plus anyone approved for it who has left since.
+ */
+export function closedMonthPay(
+  people: Pick<Payee, "id" | "name" | "monthlyUsd" | "approved">[],
+  month: string,
+): ClosedMonthPay {
+  let total = 0;
+  let approved = 0;
+  let roster = 0;
+  const noRate: string[] = [];
+  const noPay: string[] = [];
+  for (const p of people) {
+    const a = p.approved?.month === month ? p.approved : null;
+    if (a && a.amountUsd !== null) {
+      total += a.amountUsd;
+      approved += 1;
+      continue;
+    }
+    if (p.monthlyUsd !== null) {
+      // Approved in a currency with no dollar rate: roster pay stands in.
+      if (a) noRate.push(p.name);
+      total += p.monthlyUsd;
+      roster += 1;
+    } else noPay.push(p.name);
+  }
+  return {
+    month,
+    total: Math.round(total * 100) / 100,
+    approved,
+    roster,
+    noRate,
+    noPay,
+  };
+}
 
 export type PayLine = {
   id: number;
