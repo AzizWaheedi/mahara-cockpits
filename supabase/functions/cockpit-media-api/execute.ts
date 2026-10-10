@@ -1,4 +1,5 @@
 import {assertObjectScope,confirmed,type Plan,type MultiPlan,type Provider,type Row} from './core.ts';
+import {pages} from './funnel.ts';
 export function resolveRefs(value:any,receipts:Row[]):any {
  if(typeof value==='string')return value.replace(/\$step(\d+)\.id/g,(_,n)=>{const id=receipts[Number(n)]?.id;if(!/^[a-zA-Z0-9_-]+$/.test(String(id??'')))throw new Error('Missing verified intermediate receipt');return String(id);});
  if(Array.isArray(value))return value.map(v=>resolveRefs(v,receipts));
@@ -6,17 +7,19 @@ export function resolveRefs(value:any,receipts:Row[]):any {
  return value;
 }
 export async function executePlan(plan:Plan|MultiPlan,provider:Provider) {
- const receipts:Row[]=[];let actual:Row={},made:Row={};
+ const receipts:Row[]=[];let actual:Row={},made:Row={};const page=pages(provider);
  for(const step of 'steps' in plan?plan.steps:[plan]){
   const resolved=resolveRefs(step,receipts) as Plan;
+  // A Page object (a lead form) is written and read back as the Page; the token is fetched now and kept only in memory.
+  const as=resolved.asPage?{token:(await page(resolved.asPage)).token}:undefined;
   if(resolved.liveAdsGuard){const list=await provider.call('meta','GET',resolved.liveAdsGuard.path);if(list.paging?.next)throw new Error('The live-ad set changed; inspect Ads Manager');const live=(list.data??[]).filter((a:Row)=>a.effective_status==='ACTIVE');if(live.length<=1||!live.some((a:Row)=>String(a.id)===resolved.liveAdsGuard!.target))throw new Error('Refusing to cut the last live ad or an ad that changed since preview');}
   if(resolved.precondition){const before=await provider.call(resolved.provider,'GET',resolved.verifyPath);if(!confirmed(before,resolved.precondition))throw new Error('The provider field changed since preview. Refresh and reconcile before overwriting human edits.');}
-  made=await provider.call(resolved.provider,resolved.method,resolved.path,resolved.body);
+  made=await provider.call(resolved.provider,resolved.method,resolved.path,resolved.body,as);
   if(resolved.slackMessage){if(!made.ok||!/^\d+\.\d+$/.test(String(made.ts))||!/^[CDG][A-Z0-9]+$/.test(String(made.channel)))throw new Error('Slack did not return a verifiable message receipt');const history=await provider.call('slack','GET',`conversations.history?channel=${made.channel}&latest=${made.ts}&oldest=${made.ts}&inclusive=true&limit=1`);actual=history.messages?.find((m:Row)=>m.ts===made.ts)??{};if(actual.text!==resolved.expected.text)throw new Error('Slack message read-back could not be confirmed; reconcile before sending again');receipts.push({id:made.ts,channel:made.channel});continue;}
   if(resolved.clickupComment){if(!made.id)throw new Error('ClickUp returned no comment receipt');const comments=await provider.call('clickup','GET',resolved.verifyPath);actual=comments.comments?.find((c:Row)=>String(c.id)===String(made.id))??{};const text=actual.comment_text??(actual.comment??[]).map((x:Row)=>x.text??'').join('');if(text!==resolved.expected.comment_text)throw new Error('ClickUp comment read-back did not confirm delivery');receipts.push({id:made.id});continue;}
   if(resolved.imageUpload){const images=Object.values(made.images??{}) as Row[];if(images.length!==1||!images[0]?.hash)throw new Error('Meta did not return exactly one image hash; reconcile the upload');made={...made,id:images[0].hash};}
   if(resolved.verifyPath.includes('$id')&&!/^[a-zA-Z0-9_-]+$/.test(String(made.id??'')))throw new Error('Provider returned no verifiable object id; reconcile this request');
-  actual=await provider.call(resolved.provider,'GET',resolved.verifyPath.replace('$id',String(made.id)));
+  actual=await provider.call(resolved.provider,'GET',resolved.verifyPath.replace('$id',String(made.id)),undefined,as);
   if(resolved.imageUpload){const image=actual.data?.find((x:Row)=>String(x.hash)===String(made.id));if(!image)throw new Error('Read-back did not confirm the uploaded image hash');actual={...image,id:made.id};}
   if(resolved.verifyPath.includes('$id')&&String(actual.id)!==String(made.id))throw new Error('Read-back returned a different object; reconcile this request');
   if(!confirmed(actual,resolved.expected))throw new Error('Provider read-back did not confirm the requested change; reconcile this request');

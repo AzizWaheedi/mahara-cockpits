@@ -73,7 +73,7 @@ export function destinationLink(creative: Any | undefined): string | null {
  * failed on it. The hash is kept, because it is the asset already in the ad
  * account; the url is a signed CDN link that expires.
  */
-function dropRedundant(spec: Any): void {
+export function dropRedundant(spec: Any): void {
   const story = storyOf(spec);
   if (!story) return;
   const d = story.data;

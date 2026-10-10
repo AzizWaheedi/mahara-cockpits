@@ -93,6 +93,8 @@ Deno.serve(async(req:Request)=>{
   const plan=launchDraft?await prepareLaunch(launchDraft,provider):operation==='execute.runAction'?await prepareRecommendation(args,scope,provider):operation==='edit.askViktorFor'?prepareSlack(args,scope,auth.user.email??'the signed-in media buyer',env):operation==='cockpit.askForDetail'?await prepareDetail(args,scope,auth.user.email??'the signed-in media buyer',provider):serverPreview?await prepareLtv(args,serverPreview,provider):await prepare(operation,args,scope,provider);
   if('read' in plan) return json(plan.read);
   if(input.apply!==true) return json({ok:false,dryRun:true,plan,message:'Preview only; no provider change was made'});
+  // A rehearsal Meta refused is never applied, whatever the browser sends.
+  if('check' in plan&&plan.check&&plan.check.ready!==true) throw new Error('Meta refused part of this change in the rehearsal. Check again and leave out the ads it refused.');
   if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(input.requestId??'')) throw new Error('A request id is required');
   const {data:latest,error:latestError}=await scopeCall();
   if(latestError||canonical(latest)!==canonical(scope)) throw new Error('Access or campaign mapping changed. Refresh before applying.');

@@ -23,6 +23,7 @@ import { CockpitSelect } from "@/components/CockpitSelect";
 import { CreativePreview } from "@/components/CreativePreview";
 import { DosDontsList, parseDosDonts } from "@/components/DosDonts";
 import { EditPanel } from "@/components/EditPanel";
+import { FunnelLine } from "@/components/funnel/FunnelSheet";
 import { LostLeads } from "@/components/LostLeads";
 import { Onboardings } from "@/components/Onboardings";
 import { RangePicker } from "@/components/RangePicker";
@@ -2795,6 +2796,7 @@ function Cockpit({ view }: { view: View }) {
             hasCard={Boolean(c.taskId)}
           />
         </div>
+        <FunnelLine campaignName={c.campaignName} range={where.range} />
         <ClientRules name={clientOf(c)} links={links} updates={updates} />
         <div
           className="mb-4 flex gap-1 overflow-x-auto border-b [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
