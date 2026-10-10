@@ -14,7 +14,7 @@ from tests import fakes
 from tests.test_engine import Box, Harness, KUWAIT_NIGHT
 import checks as checks_mod
 import guardian
-from checks import (convex, guardian_self, hermes_monitors, pg_cron, queues, syncs, vps_cron, vps_resources,
+from checks import (guardian_self, hermes_monitors, pg_cron, queues, sections, syncs, vps_cron, vps_resources,
                     worker_status)
 from guard import alerts, beat, engine, report, vps_snapshot
 from guard.config import MONITOR_ENV, Keys, _default_key_files
@@ -107,7 +107,7 @@ class C2WorseIsAlertedAgain(unittest.TestCase):
         h = Harness([b.check])
         b.result = warn("some sections are old")
         h.scan()
-        b.result = fail("every section is old: Convex is off")
+        b.result = fail("every section is old: the CEO refresh worker stopped")
         h.scan(KUWAIT_NIGHT)
         self.assertEqual(len(h.posted), 2)
         self.assertTrue(h.posted[1].startswith("[guardian] Worse: Demo job"))
@@ -150,44 +150,33 @@ class C3SupabaseByTheClock(unittest.TestCase):
         self.assertIn("supabase-health", h.store.open)
 
 
-class C4ConvexSalesWatch(unittest.TestCase):
-    def results(self, *, streak=10, ok_=False, slack=True, error='sales desk "recordings" last ran 200 min ago'):
-        jobs = Result(FAIL if not ok_ else OK, "x", data={"sales_watch": {"ok": ok_, "streak": streak, "everyMin": 15,
-                                                                           "error": error}, "slack_ok": slack})
-        return {"convex-ceo-sections": Result(OK, "fine"), "convex-jobs": jobs}
+class C4NoConvexSalesWatch(unittest.TestCase):
+    """Convex's sales watch is paused with Convex, so it covers nothing any more."""
 
-    def inc(self, minutes_ago):
-        return {"first_seen_at": iso(fakes.NOW - timedelta(minutes=minutes_ago))}
-
-    def check(self):
-        return checks_mod.by_id()["desk-recordings"]
-
-    def test_covered_only_when_its_one_message_covered_this(self):
-        c = self.check()
-        # streak 10 x 15 min: Convex posted 105 min ago, once.
-        self.assertIsNotNone(engine.covered(c, self.results(), self.inc(200), fakes.NOW))
-        self.assertIsNone(engine.covered(c, self.results(), self.inc(30), fakes.NOW))           # newer than that post
-        self.assertIsNone(engine.covered(c, self.results(slack=False), self.inc(200), fakes.NOW))
-        self.assertIsNone(engine.covered(c, self.results(streak=2), self.inc(200), fakes.NOW))
-        self.assertIsNone(engine.covered(c, self.results(ok_=True), self.inc(200), fakes.NOW))
-        self.assertIsNone(engine.covered(c, self.results(error='sales desk "reviews" failed'), self.inc(200), fakes.NOW))
+    def test_desk_and_mirror_incidents_are_never_covered_by_convex(self):
+        jobs = Result(FAIL, "x", data={"sales_watch": {"ok": False, "streak": 10, "everyMin": 15,
+                                                       "error": 'sales desk "recordings" last ran 200 min ago'},
+                                       "slack_ok": True})
+        results = {"convex-ceo-sections": Result(OK, "fine"), "convex-jobs": jobs, "ceo-sections": Result(OK, "fine"),
+                   "native-jobs": jobs}
+        inc = {"first_seen_at": iso(fakes.NOW - timedelta(minutes=200))}
+        for cid in ("desk-recordings", "sales-mirror"):
+            self.assertIsNone(engine.covered(checks_mod.by_id()[cid], results, inc, fakes.NOW))
 
     def test_the_sign_in_is_blamed_only_when_every_problem_is_the_sign_in(self):
         signin = 'sales desk "reviews" failed: The Claude sign-in on the VPS has lapsed (run claude, then /login); drafting resumes'
-        self.assertTrue(convex.only_signin("Error: Uncaught Error: " + signin))
+        self.assertTrue(sections.only_signin("Error: Uncaught Error: " + signin))
         mixed = ('sales desk "requests" last ran 47 min ago (the VPS or its cron is down); ' + signin +
                  '; the sales mirror failed three runs in a row: 503')
-        self.assertFalse(convex.only_signin(mixed))
+        self.assertFalse(sections.only_signin(mixed))
         now_ms = fakes.NOW.timestamp() * 1000
         t = {"cockpit_sections": [{"key": "machine", "ok": True, "computed_at": fakes.ago(3), "error": None,
                                    "payload": {"jobs": [{"job": "sales watch", "ok": False, "at": now_ms, "everyMin": 15,
                                                          "streak": 4, "error": mixed}],
                                                "sources": [{"source": "slack", "ok": True}]}}]}
-        r = convex.run_jobs(make(t))
+        r = sections.run_jobs(make(t))
         self.assertEqual(r.status, FAIL)
         self.assertIsNone(r.caused_by)
-        self.assertEqual(r.data["sales_watch"]["streak"], 4)
-        self.assertTrue(r.data["slack_ok"])
 
 
 class C6HermesOwnedReachTheFixer(unittest.TestCase):
@@ -445,17 +434,20 @@ class C16SummaryFromTheScan(unittest.TestCase):
         self.assertTrue(sent[0].startswith("Cockpit guardian"))
 
 
-class C17OtherConvexDeployments(unittest.TestCase):
-    def test_a_deployment_that_answers_but_runs_no_code_fails(self):
-        pages = {}
-        for dep in ("adorable-seahorse-418", "impressive-dinosaur-375", "colorful-wombat-644"):
-            pages[f"https://{dep}.convex.cloud/version"] = fakes.resp(200, "1.2")
-            pages[f"https://{dep}.convex.site/.well-known/openid-configuration"] = fakes.resp(200, {"issuer": "x"})
-        self.assertEqual(convex.run_deployments(make(web=fakes.FakeWeb(dict(pages)))).status, OK)
-        pages["https://impressive-dinosaur-375.convex.site/.well-known/openid-configuration"] = fakes.resp(503, "disabled")
-        r = convex.run_deployments(make(web=fakes.FakeWeb(pages)))
-        self.assertEqual(r.status, FAIL)
-        self.assertEqual(r.items, ["impressive-dinosaur-375"])
+class C17ConvexIsNotProbed(unittest.TestCase):
+    """Convex is paused: probing it only raised false "Convex down" alerts."""
+
+    def test_no_check_reads_a_convex_deployment_and_old_ids_are_retired(self):
+        ids = {c.id for c in checks_mod.all_checks()}
+        self.assertFalse(any(cid.startswith("convex-") for cid in ids))
+        self.assertTrue({"ceo-sections", "native-jobs", "native-sources", "ask-ai-queue"} <= ids)
+        self.assertEqual(set(engine.RETIRED_CHECKS), {"convex-deployments", "convex-ceo-sections", "convex-jobs",
+                                                      "convex-sources", "hermes-ask-ai"})
+        self.assertFalse(set(engine.RETIRED_CHECKS) & ids)
+        from guard import config
+        self.assertFalse(hasattr(config, "CONVEX_DEPLOYMENTS"))
+        sources = [p for p in (config.ROOT / "checks").glob("*.py") if "convex.cloud" in p.read_text(encoding="utf-8")]
+        self.assertEqual(sources, [])
 
 
 class C18Wording(unittest.TestCase):

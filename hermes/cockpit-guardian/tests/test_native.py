@@ -132,8 +132,9 @@ class NativeTests(unittest.TestCase):
         tables={'cockpit_native_media_runs':[dict(status='published',published_at=(fakes.NOW-timedelta(minutes=80)).isoformat())]}
         self.assertEqual(native.run_producer(self.context(tables=tables)).status,OK)
 
-    def test_native_mode_omits_only_convex_checks(self):
-        hybrid={c.id for c in all_checks()};selected={c.id for c in all_checks('native')}
+    def test_native_and_hybrid_run_the_same_checks_with_the_supabase_readings_kept(self):
+        hybrid={c.id for c in all_checks('hybrid')};selected={c.id for c in all_checks('native')}
         self.assertIn('native-source-readiness',selected);self.assertIn('native-source-producer',selected)
-        self.assertEqual(hybrid-selected,{c.id for c in __import__('checks.convex',fromlist=['CHECKS']).CHECKS})
+        self.assertEqual(hybrid,selected)
+        self.assertTrue({'ceo-sections','native-jobs','native-sources','ask-ai-queue'}<=selected)
         with self.assertRaises(ValueError):all_checks('typo')

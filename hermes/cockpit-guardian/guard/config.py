@@ -19,7 +19,6 @@ WORKER = "cockpit-guardian"
 REF = "bldgtotkfmhoxmlzowdx"                    # Creative Triage
 SUPABASE_URL = f"https://{REF}.supabase.co"
 MGMT_API = "https://api.supabase.com"
-CONVEX_DEPLOYMENTS = ("adorable-seahorse-418", "impressive-dinosaur-375", "colorful-wombat-644")
 VPS_PUBLIC = "187.77.156.166"
 INCIDENTS_TABLE = "cockpit_guardian_incidents"
 PROBE_FN = "cockpit_guardian_probe"

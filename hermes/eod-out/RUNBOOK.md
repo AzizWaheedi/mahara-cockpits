@@ -37,6 +37,11 @@ Required variables:
 - `GOOGLE_APPLICATION_CREDENTIALS`: path to the service-account JSON on the host. Share the EOD sheet with that service account. Personal OAuth refresh tokens are not used.
 - Python dependencies: `google-auth` 2.48.0 and `requests` 2.32.5 were used for local verification. The production environment must supply compatible packages before activation.
 
+### Producers
+- Native media buyer, CSM and creative director EODs: a submit through `cockpit_save_personal_eod` queues exactly one row, linked by `eod_outbox.report_id` (migration `20261009g_eod_outbox_native.sql`, which needs `20260927b` first). A draft queues nothing. A repeated submit returns the same row.
+- Sales EODs: `supabase/functions/sales-api` (`sales_setter`, `sales_closer`). Client success wins: `csm-win` rows from `20261004a_csm_churn_projections.sql`.
+- Reports submitted before `20261009g` were never queued. Queue one only after approval: `select public.cockpit_enqueue_personal_eod(<report id>);` as the service role.
+
 ## 2. Safety, Claims & Fencing Architecture
 
 1. **Atomic Claims**: Worker calls `cockpit_claim_eod_outbox(worker_id, lease_seconds, limit)`. It uses `FOR UPDATE SKIP LOCKED` and generates a unique `claim_token`. Simultaneous workers never claim the same row.

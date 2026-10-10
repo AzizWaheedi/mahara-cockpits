@@ -4,6 +4,7 @@ import {adLeadsByClient, adLeadsFor, adsForClient, adsAccess, liveCounts, metaAc
 import {payingState, stateOf, rosterDiff, ROSTER_KINDS, rosterEventId} from './csmRoster';
 import {cadenceInputs, sheetPerformance, lostLeads, provisionalFor, fathomCalls, churnValues, staffAppointments} from './csmProviders';
 import {stableId} from './capture';
+import {latestUpdates} from './clientUpdates';
 
 export interface ClientDataRow {
   clientName: string;
@@ -372,7 +373,7 @@ export async function collectCsm(state: Row, tables: Record<string, Row[]>, seed
       links:{clickup:c.taskUrl,sheet:sheetLink,drive:driveLink,ghl:acct?`https://app.maharamedia.com/v2/location/${acct.locationId}/dashboard`:undefined,adAccount:meta?`https://adsmanager.facebook.com/adsmanager/manage/campaigns?act=${meta.id}`:undefined,contract:fields[PROFILE_CF.contract]?.value},
       performance:perf,performanceSyncedAt:perfSnap.performanceSyncedAt,performanceRetained:perfSnap.performanceRetained,ads,live:liveCounts(ads),adsAccess:adsAccess(ads),lost,provisional,
       adLeads:adLeadsFor(c.name,adLeads),calls:clientCalls,callsBrief,
-      updates:state.media.clientComments.filter((r:Row)=>r.taskId===c.taskId),
+      updates:latestUpdates(state.media.clientComments,c.taskId,now),
       gaps:gapsFor({client:{...c,sheetLink,driveLink},row:data,perf,acct,lost,accountId:meta?.visible?meta.id:undefined,onBoard:tables.campaigns.some(k=>normTight(k.clientName)===normTight(c.name)),visibleAccounts,calls:clientCalls.length,clientDataOk:true}),
       syncedAt:now,
     };

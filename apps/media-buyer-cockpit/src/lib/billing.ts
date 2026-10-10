@@ -3,12 +3,8 @@ import type { BillingPayload } from "@/components/billing/BillingSheet";
 import {
   type Account,
   accountFrom,
-  accountRow,
-  addDays,
   buildSheet,
   type Edit,
-  type EventRow,
-  kuwaitToday,
 } from "./billingCore";
 
 // biome-ignore lint/suspicious/noExplicitAny: generic billing payload
@@ -109,165 +105,66 @@ export async function fetchBillingSheet(
   };
 }
 
+/**
+ * A refusal the sheet can show. Every billing write goes through the
+ * cockpit_billing_write RPC (supabase/migrations/20261009a_billing_native_sync.sql):
+ * the server checks the seat and the client, writes the billing log and the
+ * audit row, and sends back the sentence to show. `data` is what
+ * BillingSheet's errorText and isRepeat read.
+ */
+export class BillingWriteError extends Error {
+  data: { code: "repeat" | "refused"; message: string };
+  constructor(message: string, code: "repeat" | "refused" = "refused") {
+    super(message);
+    this.name = "BillingWriteError";
+    this.data = { code, message };
+  }
+}
+
+async function billingWrite(
+  client: SupabaseClient,
+  action: "edit" | "payment" | "assign",
+  args: Record<string, unknown>,
+): Promise<Any> {
+  const { data, error } = await client.rpc("cockpit_billing_write", {
+    p_action: action,
+    p_args: args,
+  });
+  if (error) {
+    let code: "repeat" | "refused" = "refused";
+    try {
+      if (JSON.parse(String(error.details ?? ""))?.code === "repeat")
+        code = "repeat";
+    } catch {}
+    throw new BillingWriteError(
+      error.message ||
+        "That did not save, so nothing changed. Try again in a minute.",
+      code,
+    );
+  }
+  if (data === null || data === undefined)
+    throw new BillingWriteError(
+      "The server did not confirm the change. Refresh the sheet before you try again.",
+    );
+  return data;
+}
+
 export async function editBillingAccount(
   client: SupabaseClient,
-  userEmail: string,
+  _userEmail: string,
   args: { taskId: string; edit: Edit } | Any,
   source: "ceo" | "csm" = "ceo",
 ): Promise<Account> {
   const taskId: string = args.taskId ?? args.account?.taskId ?? "";
   const edit: Edit = args.edit ?? args;
-
-  const { data: row, error: fetchErr } = await client
-    .from("cockpit_billing_accounts")
-    .select("*")
-    .eq("clickup_task_id", taskId)
-    .single();
-
-  if (fetchErr) throw fetchErr;
-  const current = accountFrom(row);
-
-  const next: Account = {
-    ...current,
-    source,
-    syncedAt: new Date().toISOString(),
-  };
-
-  const baseEvent: Omit<EventRow, "kind"> = {
-    clickup_task_id: current.taskId,
-    client_name: current.name,
-    source,
-    by_whom: userEmail || source,
-    detail: null,
-    reason: null,
-    from_value: null,
-    to_value: null,
-  };
-
-  let event: EventRow;
-  const today = kuwaitToday();
-
-  switch (edit.kind) {
-    case "method": {
-      next.method = edit.value;
-      event = {
-        ...baseEvent,
-        kind: "method",
-        from_value: current.method,
-        to_value: edit.value,
-      };
-      break;
-    }
-    case "plan": {
-      next.plan = edit.value;
-      event = {
-        ...baseEvent,
-        kind: "plan",
-        from_value: current.plan,
-        to_value: edit.value,
-      };
-      break;
-    }
-    case "amount": {
-      next.nextUsd = edit.value;
-      event = {
-        ...baseEvent,
-        kind: "amount",
-        from_value: current.nextUsd !== null ? String(current.nextUsd) : null,
-        to_value: String(edit.value),
-      };
-      break;
-    }
-    case "date": {
-      next.nextDate = edit.value;
-      event = {
-        ...baseEvent,
-        kind: "date",
-        from_value: current.nextDate,
-        to_value: edit.value,
-        reason: edit.reason || null,
-      };
-      break;
-    }
-    case "extension": {
-      const prevWeeks = current.extensionWeeks ?? 0;
-      next.extensionWeeks = prevWeeks + edit.weeks;
-      if (edit.moveDate && current.nextDate) {
-        next.nextDate = addDays(current.nextDate, edit.weeks * 7);
-      }
-      event = {
-        ...baseEvent,
-        kind: "extension",
-        from_value: String(prevWeeks),
-        to_value: String(next.extensionWeeks),
-        reason: edit.reason,
-        detail: {
-          weeksAdded: edit.weeks,
-          ours: edit.ours,
-          movedDateTo: edit.moveDate ? next.nextDate : null,
-        },
-      };
-      break;
-    }
-    case "pause": {
-      next.group = "paused";
-      next.status = "Paused";
-      next.pausedOn = edit.on ?? today;
-      event = {
-        ...baseEvent,
-        kind: "pause",
-        from_value: current.status,
-        to_value: "Paused",
-        reason: edit.reason,
-        detail: { on: next.pausedOn },
-      };
-      break;
-    }
-    case "resume": {
-      next.group = "active";
-      next.status = "Active";
-      next.pausedOn = null;
-      if (edit.nextDate) {
-        next.nextDate = edit.nextDate;
-      }
-      event = {
-        ...baseEvent,
-        kind: "resume",
-        from_value: "Paused",
-        to_value: "Active",
-        detail: { nextDate: next.nextDate },
-      };
-      break;
-    }
-    case "note": {
-      event = {
-        ...baseEvent,
-        kind: "note",
-        reason: edit.text,
-      };
-      break;
-    }
-  }
-
-  // Update Supabase
-  const rowUpdated = accountRow(next);
-  const { error: accErr } = await client
-    .from("cockpit_billing_accounts")
-    .update(rowUpdated)
-    .eq("clickup_task_id", current.taskId);
-  if (accErr) throw accErr;
-
-  const { error: evErr } = await client
-    .from("cockpit_billing_events")
-    .insert(event);
-  if (evErr) throw evErr;
-
-  return next;
+  return accountFrom(
+    await billingWrite(client, "edit", { taskId, edit, source }),
+  );
 }
 
 export async function logBillingPayment(
   client: SupabaseClient,
-  userEmail: string,
+  _userEmail: string,
   p: {
     account: Account;
     day: string;
@@ -278,58 +175,38 @@ export async function logBillingPayment(
     evidenceUrl?: string;
     note?: string;
     nextDate?: string;
+    allowRepeat?: boolean;
   },
   source: "ceo" | "csm" = "ceo",
 ): Promise<string> {
-  const { error: inErr } = await client.from("cockpit_billing_inbox").insert({
-    clickup_task_id: p.account.taskId,
-    client_name: p.account.name,
-    paid_on: p.day,
+  const out = await billingWrite(client, "payment", {
+    taskId: p.account.taskId,
+    day: p.day,
     amount: p.amount,
     currency: p.currency,
-    method: p.rail,
+    rail: p.rail,
     reference: p.reference || null,
-    evidence_url: p.evidenceUrl || null,
+    evidenceUrl: p.evidenceUrl || null,
     note: p.note || null,
+    nextDate: p.nextDate || null,
+    allowRepeat: p.allowRepeat === true,
     source,
-    logged_by: userEmail || source,
-    status: "pending",
   });
-
-  if (inErr) throw inErr;
-
-  // If nextDate was specified, move it
-  if (p.nextDate) {
-    await client
-      .from("cockpit_billing_accounts")
-      .update({ next_payment_date: p.nextDate })
-      .eq("clickup_task_id", p.account.taskId);
-
-    await client.from("cockpit_billing_events").insert({
-      clickup_task_id: p.account.taskId,
-      client_name: p.account.name,
-      kind: "payment",
-      from_value: p.account.nextDate,
-      to_value: p.nextDate,
-      reason: `Payment logged: ${p.amount} ${p.currency} via ${p.rail}`,
-      source,
-      by_whom: userEmail || source,
-    });
-  }
 
   const paid =
     p.currency === "KWD"
       ? `${p.amount.toLocaleString("en-US")} KWD`
       : `$${p.amount.toLocaleString("en-US")}`;
+  const moved = out.moved ? `, and next date is now ${out.nextDate}` : "";
 
-  return `Logged ${paid} from ${p.account.name}. It waits in the billing inbox for CEO refresh${
-    p.nextDate ? `, and next date is now ${p.nextDate}` : ""
-  }.`;
+  return out.route === "ledger"
+    ? `Logged ${paid} from ${p.account.name} in the ledger. It counts toward cash and LTV at the next refresh${moved}.`
+    : `Logged ${paid} from ${p.account.name}. It waits in the billing inbox until the next billing sync takes it into the ledger${moved}.`;
 }
 
 export async function assignBillingPayer(
   client: SupabaseClient,
-  userEmail: string,
+  _userEmail: string,
   p: {
     payer: string;
     taskId: string;
@@ -338,16 +215,14 @@ export async function assignBillingPayer(
     count: number;
   },
 ): Promise<string> {
-  await client.from("cockpit_billing_events").insert({
-    clickup_task_id: p.taskId,
-    client_name: p.clientName,
-    kind: "assign",
-    from_value: p.payer,
-    to_value: p.clientName,
-    reason: `Assigned payer ${p.payer} (${p.count} payments, $${p.usd})`,
+  const out = await billingWrite(client, "assign", {
+    payer: p.payer,
+    taskId: p.taskId,
+    clientName: p.clientName,
+    usd: p.usd,
+    count: p.count,
     source: "ceo",
-    by_whom: userEmail || "ceo",
   });
-
-  return `Tied ${p.payer} to ${p.clientName}.`;
+  const name = String(out.client ?? p.clientName);
+  return `Tied ${p.payer} to ${name}. Their payments count as ${name}'s money from the next refresh.`;
 }

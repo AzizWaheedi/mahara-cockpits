@@ -23,7 +23,7 @@
     "check:phi-functions": "bun run --bun scripts/check-phi-authenticated-functions.ts",
     "generate:phi-statics": "bun run --bun scripts/generate-phi-console-statics.ts",
     "screenshot": "bun run --bun /work/.viktor-spaces-internal/creative-e94cd85de6ab-fd0e67b25a286080/screenshot.ts",
-    "test:social": "bun test scripts/social.test.ts"
+    "test:social": "bun test scripts/social.test.ts scripts/social-native.test.ts"
   },
   "dependencies": {
     "@convex-dev/auth": "^0.0.94",

@@ -2,12 +2,19 @@
   "functions": {
     "api/watchdog.ts": {
       "maxDuration": 60
+    },
+    "api/team-calendar.ts": {
+      "maxDuration": 60
     }
   },
   "crons": [
     {
       "path": "/api/watchdog",
       "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/team-calendar",
+      "schedule": "* * * * *"
     }
   ],
   "rewrites": [

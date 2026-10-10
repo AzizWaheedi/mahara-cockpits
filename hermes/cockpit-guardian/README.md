@@ -1,7 +1,8 @@
 # Cockpit guardian
 
 Watches every Mahara cockpit and the machinery behind it, every five
-minutes, from the VPS: the pages, Convex (through its Supabase mirror),
+minutes, from the VPS: the pages, the CEO and machine sections the native
+workers write (Convex is paused and no longer probed),
 Creative Triage (tables, Edge Functions, pg_cron and what pg_net got back),
 every hermes worker (crontab, logs, locks, status rows), the VPS itself
 (memory, disk, tunnels, the Claude proxy), the keys by name, the WhatsApp
@@ -124,20 +125,21 @@ posted, and the guardian never reads a name column.
 - At most 3 new incidents posted one by one per run; the rest go in one
   digest line. Resolved messages likewise.
 - Saturday to Thursday, 09:00 to 21:00 Kuwait time; outside that a message
-  waits for the next scan inside it. Urgent ones go at any hour: Convex down,
-  Supabase down, the VPS not answering, the crontab losing lines, memory
+  waits for the next scan inside it. Urgent ones go at any hour: the CEO
+  sections stale, Supabase down, the VPS not answering, the crontab losing lines, memory
   under 700 MB with no swap, the disk over 90%, the sales mirror stale, and
   the rooms worker or sales-live failing while live calls are switched on.
-- Quiet only while someone else is shown to deliver: Convex's sales watch
-  posts once, when its failure streak reaches 3, so a desk row or the mirror
-  is quiet only when that one message already covered it (failing, streak 3
-  or more, the incident older than that message, the job named in it, Slack
-  up in Convex's ledger); Convex's own jobs and sources while Convex runs;
-  the Hermes monitors' own incidents while they tick and their outbox is not
+- Quiet only while someone else is shown to deliver: the Hermes monitors'
+  own incidents while they tick and their outbox is not
   stuck for 30 minutes; the SQL sales watchdog only while its job is
   scheduled, it ran in the last 15 minutes, the vault has its webhook, and no
   alert waited 15 minutes unposted in working hours. The incident is still
   recorded and listed.
+- Retired check ids (2026-10-09: `convex-deployments` dropped; `convex-ceo-sections`,
+  `convex-jobs`, `convex-sources` and `hermes-ask-ai` renamed `ceo-sections`, `native-jobs`,
+  `native-sources` and `ask-ai-queue`): an incident still open under one is closed on the
+  next scan, in state.json and cockpit_guardian_incidents, with no Resolved message
+  (`RETIRED_CHECKS` in guard/engine.py).
 - The 09:00 Kuwait summary is posted by the first scan at or after 09:00:
   what is broken, what is watched, what could not be checked, what is not
   deployed yet or paused, what cleared. `report --post` sends it by hand.
@@ -339,7 +341,7 @@ the box.
 | Tap payments sync | No good run for over an hour; 1249 "Charges not found" is an empty window that `listPage` throws on (a code fault, no payment lost) | Hermes | A candidate for `guardian.py ai-fix`; then a person deploys tap-charges-sync |
 | VPS backup | The nightly backup is old or failed | Hermes | Run the Nightly Backup job by hand and read why it exits with 1 |
 | WhatsApp double sends | The WA Connector is not recorded off with a single-copy test | the CEO | Switch it off in HighLevel, test one message, set `connector_off` and `single_copy_ok_at` |
-| Convex runs (CEO sections) | No section refreshed for 45 min: Convex is off or its jobs stopped | the CEO | dashboard.convex.dev; if switched off for usage, move the team to Pro |
+| CEO sections refresh | No section refreshed for 45 min: the native CEO refresh worker stopped or every run fails | Hermes | `bun run doctor` in hermes/ceo-refresh on the VPS; read the newest `cockpit_ceo_refresh_runs` row |
 | Creative Triage (Supabase) | No answer, or a service not healthy, for 15 min | the CEO | status.supabase.com; the cockpits show their last good numbers |
 | Live calls: ... not deployed yet | That piece does not exist yet | none | Nothing; it becomes a real check once deployed |
 | Could not be checked | The guardian's source did not answer three scans running | Hermes | `python3 guardian.py doctor` on the VPS |
@@ -373,11 +375,10 @@ Generated with `python3 guardian.py checks --json`.
 | `claude-signin` | H1 | Any of them says the sign-in lapsed or signed out: fail. |  |
 | `claude-proxy-up` | H2 | No answer, or a status other than ok: fail. |  |
 | `claude-proxy-exposed` | H3 | Listening on 0.0.0.0 or [::], or an outside GET answers 200: fail. |  |
-| `convex-ceo-sections` | C1, C3 | All older than 45 min: fail (urgent); some old or failing: warn. |  |
-| `convex-deployments` |  | Either answer not 200, or no issuer in the second: fail. |  |
-| `convex-jobs` | C3 | ok false, or older than 3 times its interval (45 min at least): fail. |  |
-| `convex-sources` | C7 | Any ok false: fail. |  |
-| `hermes-ask-ai` | H12 | Jobs waiting while nothing finished for 20 min: fail; 10 or more new failures in an hour: warn. |  |
+| `ceo-sections` | C1, C3 | All older than 45 min: fail (urgent); some old or failing: warn. |  |
+| `native-jobs` | C3 | ok false, or older than 3 times its interval (45 min at least): fail. |  |
+| `native-sources` | C7 | Any ok false: fail. |  |
+| `ask-ai-queue` | H12 | Jobs waiting while nothing finished for 20 min: fail; 10 or more new failures in an hour: warn. |  |
 | `vps-memory` | H7 | Under 1024 MB available: warn; under 700 MB: fail (urgent with no swap); 3 scans in a row; clears only above 1536 MB, two scans in a row. |  |
 | `vps-tunnels` |  | More than 50: warn. |  |
 | `vps-disk` | H8 | Over 85%: warn; over 90%: fail (urgent). | gzip hermes's own logs over 50 MB (every line kept) |

@@ -37,8 +37,19 @@ ON_RESOLVE_MIN_OPEN = timedelta(minutes=5)
 FIX_DAY_CAP = 3                        # fixes per check per 24 h, across incidents
 FIX_DAY = timedelta(hours=24)
 HOOK_TRIES = 3                         # a follow-up that could not run (a lock held) is tried again, 3 times at most
-CONVEX_ALERT_AFTER = 3                 # health.ts ALERT_AFTER: Convex posts once, when a job's streak reaches 3
 SEVERITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+
+# Check ids that no longer exist, and why. An incident still open under one is
+# closed on the next scan without a "Resolved" message (nothing recovered: the
+# reading moved or was dropped); a renamed check opens its own incident if the
+# problem is still there.
+RETIRED_CHECKS = {
+    "convex-deployments": "retired: Convex is paused, so the guardian no longer probes its deployments",
+    "convex-ceo-sections": "renamed ceo-sections (the native CEO refresh worker writes the sections)",
+    "convex-jobs": "renamed native-jobs",
+    "convex-sources": "renamed native-sources",
+    "hermes-ask-ai": "renamed ask-ai-queue",
+}
 
 
 @dataclass
@@ -80,48 +91,15 @@ def run_checks(ctx: Context, checks: Iterable[Check]) -> list[Finding]:
     return out
 
 
-def _convex_sales_watch(check: Check, results: dict[str, Result], inc: Optional[dict[str, Any]],
-                        now: Optional[datetime]) -> Optional[str]:
-    """Convex's sales watch posts ONCE, when its failure streak reaches 3, and never
-    again while it keeps failing. So it covers an incident only when the job is
-    failing, its streak is at least 3, the incident was already there when that
-    one message went out, the message named this job, and Slack itself is up."""
-    sections = results.get("convex-ceo-sections")
-    if sections is None or sections.status not in (OK, WARN) or inc is None or now is None:
-        return None
-    jobs = results.get("convex-jobs")
-    data = (jobs.data if jobs is not None else None) or {}
-    watch = data.get("sales_watch") or {}
-    if watch.get("ok") is not False or data.get("slack_ok") is not True:
-        return None
-    streak, every = int(watch.get("streak") or 0), int(watch.get("everyMin") or 15)
-    if streak < CONVEX_ALERT_AFTER:
-        return None
-    alerted = now - timedelta(minutes=(streak - CONVEX_ALERT_AFTER) * every)
-    first = parse_time(inc.get("first_seen_at"))
-    if first is None or first > alerted + timedelta(minutes=every):
-        return None
-    word = "mirror" if check.id == "sales-mirror" else check.id.replace("desk-", "", 1)
-    if word and word not in str(watch.get("error") or ""):
-        return None
-    return (f"Convex's sales watch already posted this when it failed its third run in a row "
-            f"(it has failed {streak} in a row and Slack is up)")
-
-
 def covered(check: Check, results: dict[str, Result], inc: Optional[dict[str, Any]] = None,
             now: Optional[datetime] = None) -> Optional[str]:
     """Whether someone else already alerts on this, so the guardian stays quiet.
-    "Someone else" must be shown to be delivering, not only to exist."""
+    "Someone else" must be shown to be delivering, not only to exist. Convex is
+    paused and alerts on nothing, so no rule trusts it; an unknown rule is loud."""
     q = check.quiet_because
     if not q:
         return None
-    if q == "convex":
-        r = results.get("convex-ceo-sections")
-        if r is not None and r.status in (OK, WARN):
-            return "Convex already alerts on this and Convex is running"
-    elif q == "convex-sales-watch":
-        return _convex_sales_watch(check, results, inc, now)
-    elif q == "hermes":
+    if q == "hermes":
         def delivering(r: Optional[Result]) -> bool:
             return r is not None and r.status in (OK, WARN) and (r.data or {}).get("delivering", True) is not False
         if check.id.startswith("hermes-monitor-"):
@@ -668,6 +646,18 @@ def hermes_incidents(store: Store, checks: dict[str, Check]) -> dict[str, Any]:
     return out
 
 
+def retire_incidents(store: Store, now: datetime, out: Outcome, registered: Iterable[str]) -> None:
+    """Close what is still open under a retired check id (RETIRED_CHECKS), in the state
+    file and, through the usual queue, in cockpit_guardian_incidents."""
+    live = set(registered)
+    for check_id, why in RETIRED_CHECKS.items():
+        if check_id in live:
+            continue
+        store.state.setdefault("streaks", {}).pop(check_id, None)
+        if check_id in store.open:
+            out.resolved.append(store.resolve(check_id, now, why, folded_into="retired"))
+
+
 def scan(ctx: Context, store: Store, checks: list[Check], outbox: alerts_mod.Outbox, *, fix: bool,
          log: Any = None) -> Outcome:
     out = Outcome()
@@ -675,6 +665,7 @@ def scan(ctx: Context, store: Store, checks: list[Check], outbox: alerts_mod.Out
     by_id = {c.id: c for c in checks}
     out.findings = run_checks(ctx, checks)
     remember_log_offsets(ctx)
+    retire_incidents(store, now, out, by_id)
     apply_findings(store, out.findings, now, ctx.cfg.mode, out)
     if fix:
         run_fixes(ctx, store, by_id, now, out, log)
@@ -697,5 +688,5 @@ def scan(ctx: Context, store: Store, checks: list[Check], outbox: alerts_mod.Out
     return out
 
 
-__all__ = ["scan", "run_checks", "apply_findings", "post_alerts", "run_fixes", "covered", "fix_allowed", "day_cap",
+__all__ = ["scan", "run_checks", "apply_findings", "retire_incidents", "post_alerts", "run_fixes", "covered", "fix_allowed", "day_cap",
            "FixLock", "Outcome", "Finding", "hermes_incidents", "NOT_DEPLOYED", "UNKNOWN", "WARN"]

@@ -2,6 +2,7 @@
 // Regenerate with node hermes/cockpit-sync/extract.cjs; no service runtime dependency.
 import {type ActionCtx,internal,graph,allAdAccounts,callTool,supabaseQuery,unwrap,providerFetch,recordLog,MAHARA_BUSINESS_ID} from './runtime';
 import {CPL_GATE,CPB_GATE,NEW_CAMPAIGN_FORM_URL} from './constants';
+import {withoutExcludedAds} from './excludedAds';
 import {hasPicture,isMetaId,metaImageExpiry,metaImageUsable,sameStoredRow,stillCaptureDue,stillKeyFor} from './metaMedia';
 const TRACKER = "1pBEyClUxPLc4-RdXR8gZ0MxsLkLLFkWJwkiVqVf2rro";
 
@@ -818,6 +819,8 @@ export async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
   } catch (e) {
     recordLog("error",`meta fallback: ${String(e).slice(0, 200)}`);
   }
+  // Unauthorized ads from the October 2026 account compromise never count.
+  rows = withoutExcludedAds(rows);
 
   // Client Data → account name to client name.
   const head = clientRows[0] ?? [];

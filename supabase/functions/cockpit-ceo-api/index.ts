@@ -7,6 +7,7 @@ import {financeSources} from './finance/tools.ts';
 import {parseFrequencyRead,readFrequencyWindow} from './frequency.ts';
 import {readAdsWindow,readContentWindow} from './windows.ts';
 import {readDirectoryPages,workspaceSourceHash,type WorkspaceUser} from './workspace.ts';
+import {ceoEndpoint,extensionsAuto} from './endpoints.ts';
 const cors={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'authorization,apikey,content-type,x-client-info','Access-Control-Allow-Methods':'POST,OPTIONS'};
 const json=(body:unknown,status=200)=>new Response(JSON.stringify(body),{status,headers:{...cors,'Content-Type':'application/json'}});
 type ProviderRow=Record<string,unknown>;
@@ -33,6 +34,21 @@ Deno.serve(async(req:Request)=>{
  if(req.method==='OPTIONS')return new Response('',{headers:cors});
  if(req.method!=='POST')return json({error:'POST required'},405);
  try{
+  // The cron door (the vault's shared secret, as tap-charges-sync uses it) runs
+  // only the automatic extension pass, which stays a dry run unless
+  // CEO_EXTENSIONS_APPLY is 'true'. No founder session exists on this path.
+  const cronSecret=req.headers.get('x-cron-secret');
+  if(cronSecret!==null){
+   const expected=(Deno.env.get('CRON_SECRET')??'').trim();
+   if(!expected||cronSecret.trim()!==expected)return json({error:'not allowed'},401);
+   const cronInput=await req.json();
+   if(cronInput?.operation!=='ceo.extensions.applyAuto')return json({error:'The cron door runs only ceo.extensions.applyAuto.'},403);
+   const supabaseUrl=Deno.env.get('SUPABASE_URL'),serviceKey=Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+   if(!supabaseUrl||!serviceKey)throw Error('SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required for the automatic extension pass.');
+   const admin=createClient(supabaseUrl,serviceKey,{auth:{persistSession:false}});
+   const health=async(row:ProviderRow)=>{const {error}=await admin.from('cockpit_ceo_provider_health').insert(row);if(error)throw Error('CEO provider health receipt could not be saved.');};
+   return json(await extensionsAuto(admin,name=>Deno.env.get(name)??undefined,health));
+  }
   const authorization=req.headers.get('Authorization')??'';
   if(!authorization.startsWith('Bearer '))return json({error:'Sign in first'},401);
   const client=createClient(Deno.env.get('SUPABASE_URL')!,Deno.env.get('SUPABASE_ANON_KEY')!,{global:{headers:{Authorization:authorization}},auth:{persistSession:false}});
@@ -111,6 +127,8 @@ Deno.serve(async(req:Request)=>{
       ||imported.dryRun!==!apply)throw Error('Workspace import was not confirmed.');
     return json(imported);
    }
+   const handled=await ceoEndpoint(operation,rawArgs,{admin,env,health:recordHealth,actorId:identity.user.id,apply:input.apply===true});
+   if(handled!==undefined)return json(handled);
    throw Error(`Unsupported CEO provider operation: ${operation}`);
   }
   if(input.operation==='queries.refreshNow'){

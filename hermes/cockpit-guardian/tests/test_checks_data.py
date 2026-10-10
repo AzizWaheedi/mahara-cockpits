@@ -1,10 +1,10 @@
-"""Thresholds of the checks that read Creative Triage and Convex's mirror."""
+"""Thresholds of the checks that read Creative Triage, the CEO sections included."""
 import tempfile
 import unittest
 from pathlib import Path
 
 from tests import fakes
-from checks import convex, edge_functions, pg_cron, queues, supabase, syncs, whatsapp, worker_status
+from checks import edge_functions, pg_cron, queues, sections, supabase, syncs, whatsapp, worker_status
 from guard.context import SourceError
 from guard.model import FAIL, NOT_DEPLOYED, OK, PAUSED, UNKNOWN, WARN, Result
 
@@ -41,11 +41,12 @@ class SalesDesk(unittest.TestCase):
     def test_missing_row_is_unknown_never_ok(self):
         self.assertEqual(worker_status.desk_check("notes")(make({"cockpit_sales_worker_status": []})).status, UNKNOWN)
 
-    def test_desk_rows_are_quiet_only_when_convex_sales_watch_posted(self):
+    def test_desk_rows_and_the_mirror_are_never_muted_for_convex(self):
         ids = [c for c in worker_status.CHECKS if c.id.startswith("desk-") and c.id in
                {f"desk-{j}" for j in worker_status.DESK_LIMITS}]
         self.assertEqual(len(ids), len(worker_status.DESK_LIMITS))
-        self.assertTrue(all(c.quiet_because == "convex-sales-watch" for c in ids))
+        mirror = next(c for c in syncs.CHECKS if c.id == "sales-mirror")
+        self.assertTrue(all(c.quiet_because is None for c in ids + [mirror]))
 
     def test_only_copy_jobs_have_a_catch_up_fix(self):
         fixed = {c.id for c in worker_status.CHECKS if c.fix and c.id.startswith("desk-") and c.id != "desk-doctor"}
@@ -170,19 +171,26 @@ class B2B(unittest.TestCase):
         self.assertEqual(syncs.run_b2b(make({"cockpit_sales_settings": [{"key": "b2b_sources", "value": v}]})).status, WARN)
 
 
-class Convex(unittest.TestCase):
+class Sections(unittest.TestCase):
     def sections(self, minutes, n=14, broken=()):
         return {"cockpit_sections": [{"key": f"s{i}", "ok": f"s{i}" not in broken, "error": "x" if f"s{i}" in broken else None,
                                       "computed_at": fakes.ago(minutes)} for i in range(n)]}
 
     def test_sections(self):
-        self.assertEqual(convex.run_sections(make(self.sections(3))).status, OK)
-        self.assertEqual(convex.run_sections(make(self.sections(50))).status, FAIL)
-        self.assertEqual(convex.run_sections(make(self.sections(3, broken=("s2",)))).status, WARN)
-        self.assertEqual(convex.run_sections(make(self.sections(3, n=12))).status, WARN)
+        self.assertEqual(sections.run_sections(make(self.sections(3))).status, OK)
+        stale = sections.run_sections(make(self.sections(50)))
+        self.assertEqual(stale.status, FAIL)
+        self.assertIn("CEO refresh worker", stale.summary)
+        self.assertNotIn("convex", (stale.summary + stale.action).lower())
+        self.assertEqual(sections.run_sections(make(self.sections(3, broken=("s2",)))).status, WARN)
+        self.assertEqual(sections.run_sections(make(self.sections(3, n=12))).status, WARN)
 
-    def test_convex_down_is_urgent(self):
-        self.assertTrue(next(c for c in convex.CHECKS if c.id == "convex-ceo-sections").urgent)
+    def test_stale_sections_are_urgent_and_no_check_mentions_convex(self):
+        self.assertTrue(next(c for c in sections.CHECKS if c.id == "ceo-sections").urgent)
+        self.assertEqual([c.id for c in sections.CHECKS], ["ceo-sections", "native-jobs", "native-sources", "ask-ai-queue"])
+        for c in sections.CHECKS:
+            self.assertIsNone(c.quiet_because)
+            self.assertNotIn("convex", " ".join([c.name, c.means, c.reads, c.action, c.owner]).lower())
 
     def machine(self, **payload):
         return {"cockpit_sections": [{"key": "machine", "ok": True, "error": None, "computed_at": fakes.ago(3), "payload": payload}]}
@@ -190,34 +198,30 @@ class Convex(unittest.TestCase):
     def test_jobs(self):
         now_ms = fakes.NOW.timestamp() * 1000
         ok_job = {"job": "sync", "ok": True, "at": now_ms - 60_000, "everyMin": 10}
-        self.assertEqual(convex.run_jobs(make(self.machine(jobs=[ok_job]))).status, OK)
+        self.assertEqual(sections.run_jobs(make(self.machine(jobs=[ok_job]))).status, OK)
         late = dict(ok_job, at=now_ms - 50 * 60_000)
-        self.assertEqual(convex.run_jobs(make(self.machine(jobs=[late]))).status, FAIL)
+        self.assertEqual(sections.run_jobs(make(self.machine(jobs=[late]))).status, FAIL)
         watch = {"job": "sales watch", "ok": False, "at": now_ms, "everyMin": 15, "error": SIGNED_OUT}
-        r = convex.run_jobs(make(self.machine(jobs=[ok_job, watch])))
+        r = sections.run_jobs(make(self.machine(jobs=[ok_job, watch])))
         self.assertEqual(r.caused_by, "claude-signin")
 
     def test_old_machine_section_cannot_vouch(self):
         t = {"cockpit_sections": [{"key": "machine", "computed_at": fakes.ago(90), "payload": {"jobs": []}}]}
         with self.assertRaises(SourceError):
-            convex.run_jobs(make(t))
+            sections.run_jobs(make(t))
 
     def test_sources(self):
         p = self.machine(sources=[{"source": "sheets", "ok": False, "lastError": "HTTP 404"}, {"source": "meta", "ok": True}])
-        r = convex.run_sources(make(p))
+        r = sections.run_sources(make(p))
         self.assertEqual(r.status, FAIL)
         self.assertIn("sheets", r.summary)
 
     def test_hermes_failures_rising(self):
         state = {"history": {"hermes_failed": [[fakes.ago(65), 2300]]}}
-        r = convex.run_hermes_queue(make(self.machine(hermes={"queued": 0, "failed": 2312, "lastDoneAt": fakes.NOW.timestamp() * 1000}), state=state))
+        r = sections.run_ask_ai_queue(make(self.machine(hermes={"queued": 0, "failed": 2312, "lastDoneAt": fakes.NOW.timestamp() * 1000}), state=state))
         self.assertEqual(r.status, WARN)
         stuck = self.machine(hermes={"queued": 3, "failed": 1, "lastDoneAt": fakes.NOW.timestamp() * 1000 - 30 * 60_000})
-        self.assertEqual(convex.run_hermes_queue(make(stuck, state={})).status, FAIL)
-
-    def test_deployments(self):
-        web = fakes.FakeWeb({"https://adorable": fakes.resp(200), "https://impressive": fakes.resp(200), "https://colorful": fakes.resp(503)})
-        self.assertEqual(convex.run_deployments(make(web=web)).status, FAIL)
+        self.assertEqual(sections.run_ask_ai_queue(make(stuck, state={})).status, FAIL)
 
 
 class PgCron(unittest.TestCase):

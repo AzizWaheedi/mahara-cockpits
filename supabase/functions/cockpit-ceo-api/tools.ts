@@ -56,14 +56,20 @@ function isJsonObject(value: unknown): value is JsonObject {
  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
+/**
+ * A Graph read. `label` replaces the path in the health ledger when the path
+ * carries a one-off object ID (an Instagram container), so one failed object
+ * does not stay the latest receipt for a resource nobody reads again.
+ */
 export async function metaGraph(
  env:(name:string)=>string|undefined,
  health:ProviderHealth,
  request:typeof fetch,
  path:string,
  params:Record<string,string|number>,
+ label?:string,
 ):Promise<JsonObject> {
- const resource=path.split('?')[0];
+ const resource=label??path.split('?')[0];
  const receipt={provider:'meta',method:'GET',resource};
  const token=env('META_SYSTEM_TOKEN');
  if(!token){await health({...receipt,phase:'failed'});throw Error('META_SYSTEM_TOKEN is not configured. Configure Mahara’s Meta system-user access before reading ad metrics.');}
@@ -93,6 +99,114 @@ export async function metaGraph(
   const message=typeof providerError.message==='string'?providerError.message.replaceAll(token,'[redacted]').replace(/Bearer\s+\S+/gi,'Bearer [redacted]').slice(0,180):'';
   throw Error(`Meta rejected the request (${response.status}${code})${message?`: ${message}`:''}. Check the META_SYSTEM_TOKEN scopes and account access.`);
  }
+ return parsed;
+}
+
+/**
+ * A Graph write with the same system token. Never retried: a POST that Meta
+ * may have taken is reconciled from its receipt, not sent twice.
+ */
+export async function metaGraphPost(
+ env:(name:string)=>string|undefined,
+ health:ProviderHealth,
+ request:typeof fetch,
+ path:string,
+ params:Record<string,string|number>,
+ label?:string,
+):Promise<JsonObject> {
+ const receipt={provider:'meta',method:'POST',resource:label??path.split('?')[0]};
+ const token=env('META_SYSTEM_TOKEN');
+ if(!token){await health({...receipt,phase:'failed'});throw Error('META_SYSTEM_TOKEN is not configured. Add the Meta system-user token to the cockpit-ceo-api secrets before publishing.');}
+ const version=env('META_GRAPH_VERSION')??'v21.0';
+ if(!/^v\d+(?:\.\d+)?$/.test(version)||!path||path.includes('..')||path.startsWith('/')||path.includes('://')||path.includes('?')){
+  await health({...receipt,phase:'failed'});
+  throw Error('Invalid Meta Graph resource.');
+ }
+ const body=new URLSearchParams();
+ for(const [key,value] of Object.entries(params))body.set(key,String(value));
+ body.set('access_token',token);
+ await health({...receipt,phase:'intent'});
+ let response:Response;
+ try{
+  response=await request(`https://graph.facebook.com/${version}/${path}`,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body,redirect:'error',signal:AbortSignal.timeout(25000)});
+ }catch{
+  await health({...receipt,phase:'unknown'});
+  throw Error('Meta did not confirm the write. Check the provider receipt before trying again.');
+ }
+ await health({...receipt,phase:'response',http_status:response.status});
+ let parsed:unknown;
+ try{parsed=JSON.parse(await response.text());}catch{throw Error(`Meta returned an unreadable response (${response.status}).`);}
+ if(!isJsonObject(parsed))throw Error(`Meta returned an invalid response (${response.status}).`);
+ if(!response.ok||isJsonObject(parsed.error)){
+  const providerError=isJsonObject(parsed.error)?parsed.error:{};
+  const code=providerError.code===undefined?'':` code ${String(providerError.code).replaceAll(token,'[redacted]').slice(0,40)}`;
+  const message=typeof providerError.message==='string'?providerError.message.replaceAll(token,'[redacted]').replace(/Bearer\s+\S+/gi,'Bearer [redacted]').slice(0,180):'';
+  throw Error(`Meta refused the write (${response.status}${code})${message?`: ${message}`:''}.`);
+ }
+ return parsed;
+}
+
+/**
+ * ClickUp through CLICKUP_API_TOKEN. `label` names the resource in the health
+ * ledger when the path carries a task ID. No automatic retry after a response.
+ */
+export async function clickupRequest(
+ env:(name:string)=>string|undefined,
+ health:ProviderHealth,
+ request:typeof fetch,
+ method:'GET'|'POST',
+ path:string,
+ body?:JsonObject,
+ label?:string,
+):Promise<JsonObject> {
+ const receipt={provider:'clickup',method,resource:label??path.split('?')[0]};
+ const token=env('CLICKUP_API_TOKEN');
+ if(!token){await health({...receipt,phase:'failed'});throw Error('CLICKUP_API_TOKEN is not configured. Add it to the cockpit-ceo-api secrets.');}
+ if(!path||path.includes('://')||path.includes('..')||path.startsWith('/')){await health({...receipt,phase:'failed'});throw Error('Invalid ClickUp resource.');}
+ await health({...receipt,phase:'intent'});
+ let response:Response;
+ try{
+  response=await request(`https://api.clickup.com/api/v2/${path}`,{method,headers:{Authorization:token,'Content-Type':'application/json',Accept:'application/json'},body:body===undefined?undefined:JSON.stringify(body),redirect:'error',signal:AbortSignal.timeout(25000)});
+ }catch{
+  await health({...receipt,phase:'unknown'});
+  throw Error(method==='GET'?'ClickUp could not be reached.':'ClickUp did not confirm the write. Check the card before trying again.');
+ }
+ await health({...receipt,phase:'response',http_status:response.status});
+ const text=await response.text();
+ let parsed:unknown={};
+ if(text){try{parsed=JSON.parse(text);}catch{throw Error(`ClickUp returned an unreadable response (${response.status}).`);}}
+ if(!isJsonObject(parsed))throw Error(`ClickUp returned an invalid response (${response.status}).`);
+ if(!response.ok||parsed.err!==undefined){
+  const reason=typeof parsed.err==='string'?`: ${parsed.err.replaceAll(token,'[redacted]').slice(0,140)}`:'';
+  throw Error(`ClickUp refused the request (${response.status})${reason}.`);
+ }
+ return parsed;
+}
+
+/** A Typeform read through TYPEFORM_TOKEN; forms and their responses only. */
+export async function typeformRead(
+ env:(name:string)=>string|undefined,
+ health:ProviderHealth,
+ request:typeof fetch,
+ path:string,
+):Promise<JsonObject> {
+ const receipt={provider:'typeform',method:'GET',resource:path.split('?')[0]};
+ const token=env('TYPEFORM_TOKEN');
+ if(!token){await health({...receipt,phase:'failed'});throw Error('TYPEFORM_TOKEN is not configured. Add it to the cockpit-ceo-api secrets.');}
+ if(!/^forms\/[A-Za-z0-9_-]+\/responses(?:\?[A-Za-z0-9_=&-]*)?$/.test(path)){await health({...receipt,phase:'failed'});throw Error('Invalid Typeform resource.');}
+ await health({...receipt,phase:'intent'});
+ let response:Response;
+ try{
+  response=await request(`https://api.typeform.com/${path}`,{method:'GET',headers:{Authorization:`Bearer ${token}`,Accept:'application/json'},redirect:'error',signal:AbortSignal.timeout(25000)});
+ }catch{
+  await health({...receipt,phase:'unknown'});
+  throw Error('Typeform could not be reached.');
+ }
+ await health({...receipt,phase:'response',http_status:response.status});
+ if(!response.ok)throw Error(`Typeform refused the read (${response.status}).`);
+ let parsed:unknown;
+ try{parsed=await response.json();}catch{throw Error('Typeform returned an unreadable response.');}
+ if(!isJsonObject(parsed))throw Error('Typeform returned an invalid response.');
  return parsed;
 }
 
