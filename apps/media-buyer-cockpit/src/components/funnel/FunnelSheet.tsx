@@ -29,6 +29,7 @@ import {
   type FunnelKind,
   type FunnelRead,
   type FunnelStats,
+  leftOut,
   type PageForm,
   switchForms,
   totalsFor,
@@ -91,6 +92,36 @@ function summary(d: FunnelDestination): string {
   ].join(" · ");
 }
 
+/**
+ * The destination doing the work first: the most spend in this range, then
+ * the most live ads, then the most ads. Without numbers, live ads lead.
+ */
+function ordered(
+  list: FunnelDestination[],
+  stats?: FunnelStats,
+): FunnelDestination[] {
+  const live = (d: FunnelDestination) =>
+    d.ads.filter(a => a.status === "ACTIVE").length;
+  const spend = (d: FunnelDestination) => totalsFor(stats, d.ads)?.spend ?? -1;
+  return [...list].sort(
+    (a, b) =>
+      spend(b) - spend(a) || live(b) - live(a) || b.ads.length - a.ads.length,
+  );
+}
+
+/** The window in words: "4–10 Oct", or "28 Sep – 4 Oct" across a month. */
+function span(range: Range): string {
+  const at = (iso: string) => new Date(`${iso}T12:00:00Z`);
+  const a = at(range.start);
+  const b = at(range.end);
+  const month = (x: Date) =>
+    x.toLocaleDateString("en-GB", { month: "short", timeZone: "UTC" });
+  if (range.start === range.end) return `${b.getUTCDate()} ${month(b)}`;
+  return month(a) === month(b)
+    ? `${a.getUTCDate()}–${b.getUTCDate()} ${month(b)}`
+    : `${a.getUTCDate()} ${month(a)} – ${b.getUTCDate()} ${month(b)}`;
+}
+
 function shortUrl(url: string): string {
   try {
     const u = new URL(url);
@@ -114,7 +145,7 @@ export function FunnelLine({
 }) {
   const [open, setOpen] = useState(false);
   const funnel = useFunnel(campaignName);
-  const d = funnel.data?.destinations ?? [];
+  const d = ordered(funnel.data?.destinations ?? []);
   return (
     <div className="ceo-root mb-4 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border px-3 py-2.5 text-sm sm:px-4">
       <Route className="size-4 shrink-0 text-muted-foreground" aria-hidden />
@@ -204,7 +235,7 @@ export function FunnelSheet({
             <span>
               Where its ads lead, read from Meta{" "}
               {read ? relative(Date.parse(read.readAt)) : "now"}. The numbers
-              are {range.label.toLowerCase()}.
+              cover {span(range)}.
             </span>
             <button
               type="button"
@@ -246,7 +277,13 @@ export function FunnelSheet({
               to yet.
             </p>
           )}
-          {read?.destinations.map(d => (
+          {read && stats.data && (
+            <LeftOut
+              stats={stats.data}
+              ads={read.destinations.flatMap(d => d.ads)}
+            />
+          )}
+          {ordered(read?.destinations ?? [], stats.data).map(d => (
             <Destination
               key={`${d.kind}:${d.formId ?? d.url ?? ""}`}
               d={d}
@@ -263,6 +300,33 @@ export function FunnelSheet({
         </div>
       </SheetContent>
     </Sheet>
+  );
+}
+
+/** One quiet line for what the paths below cannot include. */
+function LeftOut({
+  stats,
+  ads,
+}: {
+  stats: FunnelStats;
+  ads: { id: string }[];
+}) {
+  const out = leftOut(stats, ads);
+  const parts: string[] = [];
+  if (out.spend >= 0.5 || out.leads > 0)
+    parts.push(
+      `${money(out.spend)} of spend and ${count(out.leads)} lead${out.leads === 1 ? "" : "s"} came from ads that no longer run`,
+    );
+  if (out.calls > 0)
+    parts.push(
+      `${count(out.calls)} booked call${out.calls === 1 ? "" : "s"} could not be tied to one of these ads`,
+    );
+  if (!parts.length) return null;
+  return (
+    <p className="text-xs leading-relaxed text-muted-foreground">
+      In these dates, {parts.join(", and ")}. The paths below leave{" "}
+      {parts.length === 1 && out.calls > 0 ? "it" : "them"} out.
+    </p>
   );
 }
 
@@ -307,8 +371,12 @@ function Destination({
           label: d.kind === "form" ? "Sent the form" : "Became a lead",
           value: t.leads,
         },
-        { label: "Booked a call", value: t.bookings },
-        { label: "Showed up", value: t.showed },
+        { label: "Booked a call", value: t.booked },
+        {
+          label: "Showed up",
+          value: t.shown,
+          rateFromPrevious: t.due ? t.shown / t.due : null,
+        },
       ]
     : [];
   const live = d.ads.filter(a => a.status === "ACTIVE").length;
@@ -358,41 +426,51 @@ function Destination({
 
       <div className="space-y-6 px-4 py-4 sm:px-5">
         <div>
-          <Kicker className="mb-3">
-            The path, {range.label.toLowerCase()}
-          </Kicker>
+          <Kicker className="mb-3">The path, {span(range)}</Kicker>
           {t ? (
-            <FunnelStrip
-              steps={steps}
-              rateNoun="went on"
-              ariaLabel={`From the click to showing up, ${range.label}`}
-              context={[
-                { label: "Spend", value: money(t.spend) },
-                { label: "Saw the ad", value: count(t.impressions) },
-                {
-                  label: "Clicked",
-                  value: t.impressions
-                    ? `${((t.linkClicks / t.impressions) * 100).toFixed(1)}%`
-                    : "No views",
-                },
-                {
-                  label: "Cost per lead",
-                  value: t.leads ? money(t.spend / t.leads) : "No leads",
-                },
-                {
-                  label: "Cost per booking",
-                  value: t.bookings
-                    ? money(t.spend / t.bookings)
-                    : "No bookings",
-                },
-              ]}
-            />
+            <>
+              <FunnelStrip
+                steps={steps}
+                rateNoun="went on"
+                ariaLabel={`From the click to showing up, ${range.label}`}
+                context={[
+                  { label: "Spend", value: money(t.spend) },
+                  { label: "Saw the ad", value: count(t.impressions) },
+                  {
+                    label: "Clicked",
+                    value: t.impressions
+                      ? `${((t.linkClicks / t.impressions) * 100).toFixed(1)}%`
+                      : "No views",
+                  },
+                  {
+                    label: "Cost per lead",
+                    value: t.leads ? money(t.spend / t.leads) : "No leads",
+                  },
+                  {
+                    label: "Cost per booking",
+                    value: t.booked ? money(t.spend / t.booked) : "No bookings",
+                  },
+                ]}
+              />
+              {t.booked > 0 && (
+                <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
+                  Showed up counts calls marked showed, and calls still marked
+                  confirmed once their time has passed. Its rate is{" "}
+                  {count(t.shown)} of the {count(t.due)} call
+                  {t.due === 1 ? "" : "s"} whose time has passed
+                  {t.booked > t.due
+                    ? `; ${count(t.booked - t.due)} more ${t.booked - t.due === 1 ? "is" : "are"} still to come`
+                    : ""}
+                  .
+                </p>
+              )}
+            </>
           ) : (
             <p className="text-sm text-muted-foreground">
               {statsError
                 ? `The numbers did not load: ${statsError}`
                 : stats
-                  ? `None of these ads spent ${range.label.toLowerCase()}.`
+                  ? `None of these ads spent or booked a call in ${span(range)}.`
                   : "Loading the numbers…"}
             </p>
           )}

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { type FunnelStats, parseStats } from "./funnelStats";
 import type { LeadFormSpec } from "./leadForm";
 import { mediaAction } from "./mediaActionsClient";
-import { readMediaStats } from "./mediaStatsClient";
 import { supabase } from "./supabase";
 
 /**
@@ -191,32 +191,13 @@ export function useFunnel(campaignName: string | null): Loaded<FunnelRead> {
   return useOnce(campaignName, () => readFunnel(campaignName ?? ""));
 }
 
-export type RangeTotals = {
-  spend: number;
-  impressions: number;
-  linkClicks: number;
-  leads: number;
-  bookings: number;
-  showed: number;
-};
+export type { FunnelStats, RangeTotals } from "./funnelStats";
+export { leftOut, totalsFor } from "./funnelStats";
 
-export type FunnelStats = {
-  total: RangeTotals;
-  /** The range table's rows: one per ad name, with every Meta ad id that name covers. */
-  rows: { ids: string[]; totals: RangeTotals }[];
-  hasData: boolean;
-};
-
-const ZERO: RangeTotals = {
-  spend: 0,
-  impressions: 0,
-  linkClicks: 0,
-  leads: 0,
-  bookings: 0,
-  showed: 0,
-};
-
-/** The campaign's range numbers, the same read the panel's ads table uses. */
+/**
+ * The campaign's daily numbers and booked calls for these dates, the same
+ * read as the panel's range table, counted by Meta ad id in funnelStats.ts.
+ */
 export function useFunnelStats(
   campaignName: string | null,
   range: { start: string; end: string },
@@ -224,49 +205,14 @@ export function useFunnelStats(
   return useOnce(
     campaignName ? `${campaignName}|${range.start}|${range.end}` : null,
     async () => {
-      const data: any = await readMediaStats(supabase, "range", {
-        campaignName,
-        start: range.start,
-        end: range.end,
+      const { data, error } = await supabase.rpc("cockpit_media_statistics", {
+        p_kind: "range",
+        p_campaign: campaignName,
+        p_start: range.start,
+        p_end: range.end,
       });
-      const pick = (r: Record<string, unknown> | undefined): RangeTotals => ({
-        spend: Number(r?.spend ?? 0),
-        impressions: Number(r?.impressions ?? 0),
-        linkClicks: Number(r?.linkClicks ?? 0),
-        leads: Number(r?.leads ?? 0),
-        bookings: Number(r?.bookings ?? 0),
-        showed: Number(r?.showed ?? 0),
-      });
-      const rows = ((data?.ads ?? []) as Record<string, unknown>[]).map(
-        row => ({
-          ids: ((row.adIds ?? []) as unknown[]).map(String),
-          totals: pick(row),
-        }),
-      );
-      return {
-        total: pick(data?.total),
-        rows,
-        hasData: Boolean(data?.hasData),
-      };
+      if (error) throw new Error(error.message);
+      return parseStats(data);
     },
   );
-}
-
-/** The sum of the ads in one destination, or null when none of them has numbers. */
-export function totalsFor(
-  stats: FunnelStats | undefined,
-  ads: FunnelAd[],
-): RangeTotals | null {
-  if (!stats) return null;
-  const mine = new Set(ads.map(a => a.id));
-  let found = false;
-  const sum = { ...ZERO };
-  // A row covers every ad sharing a name; it counts once if any of them is here.
-  for (const row of stats.rows) {
-    if (!row.ids.some(id => mine.has(id))) continue;
-    found = true;
-    for (const k of Object.keys(sum) as (keyof RangeTotals)[])
-      sum[k] += row.totals[k];
-  }
-  return found ? sum : null;
 }
