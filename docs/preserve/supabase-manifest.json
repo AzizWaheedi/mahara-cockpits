@@ -10101,7 +10101,7 @@
  ],
  "team_hours": {
   "note": "Hours, leave and pay (branch team-hours, design 2026-10-09). Added after the 2026-10-07 inventory. state pending_deploy: absent objects are reported ok as not deployed yet. After the lead session applies 20261009a, deploys both functions and applies 20261009b, set state to deployed: from then on a missing object is MISSING, and a JWT check, row security or grant that drifts is CHANGED.",
-  "state": "pending_deploy",
+  "state": "deployed",
   "migrations": [
    "supabase/migrations/20261009a_cockpit_team_hours.sql",
    "supabase/migrations/20261009b_cockpit_team_hours_jobs.sql"
