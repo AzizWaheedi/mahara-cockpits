@@ -3,7 +3,7 @@ import { type ReactNode, useEffect, useRef, useState } from "react";
 import { api, uncertain } from "../lib/api";
 import {
   bookedDemo,
-  closerLine,
+  bookingLine,
   introToMark,
   nextSlots,
   slotWords,
@@ -34,6 +34,7 @@ export function BookDemoBlock({
   appointments,
   values,
   attemptId,
+  since,
   onSlots,
   onBooked,
 }: {
@@ -45,6 +46,8 @@ export function BookDemoBlock({
   values: Record<string, string>;
   /** The dialer's open call with this lead, saved as booked. */
   attemptId: string | null;
+  /** When this call's screen opened (ms, kept over a reload): a demo booked since is this call's. */
+  since: number;
   /** The first free times, for the script's "__ or __". */
   onSlots: (isos: string[]) => void;
   /** Booked: the server's words, and the time when this block knows it. */
@@ -64,7 +67,8 @@ export function BookDemoBlock({
     verified?: boolean;
   } | null>(null);
   const [more, setMore] = useState(false);
-  const suggested = closerLine(values);
+  // Never empty, so the time they pick books in one press; it can be edited.
+  const suggested = bookingLine(values, me.name);
   const [note, setNote] = useState<string | null>(null);
   const line = note ?? suggested;
   const marked = useRef(new Set<string>());
@@ -185,6 +189,14 @@ export function BookDemoBlock({
   }
 
   const doneStart = booked?.start ?? demo?.start_at ?? null;
+  // Booked on this call: here, or (after a reload) by HighLevel's booking
+  // time. Only a demo booked before the call says so; an unknown time says
+  // neither.
+  const bookedMs = demo?.booked_at ? Date.parse(demo.booked_at) : Number.NaN;
+  const onThisCall =
+    Boolean(booked) ||
+    (Number.isFinite(bookedMs) && bookedMs >= since - 120_000);
+  const before = !onThisCall && Number.isFinite(bookedMs);
   const closer = demo?.assigned_user_name?.split(/\s+/)[0] ?? null;
   // HighLevel took it, but reading it back did not match: said on the
   // block, not only in a toast that goes away.
@@ -205,7 +217,7 @@ export function BookDemoBlock({
                 <>
                   {unread
                     ? "Sent to HighLevel for "
-                    : booked
+                    : onThisCall
                       ? "Demo booked for "
                       : "Their demo is on "}
                   <span className="font-mono">
@@ -228,9 +240,11 @@ export function BookDemoBlock({
               </p>
             ) : (
               <p className="muted text-sm">
-                {booked
+                {onThisCall
                   ? "HighLevel sends them the confirmation. Do the tie-downs and the show-rate lock now."
-                  : "Booked before this call. Move it in HighLevel if they want another time."}
+                  : before
+                    ? "Booked before this call. Move it in HighLevel if they want another time."
+                    : "Move it in HighLevel if they want another time."}
               </p>
             )}
           </div>
@@ -411,7 +425,7 @@ function BlockFrame({ children }: { children: ReactNode }) {
     <section
       id="book-demo"
       aria-label="Book the demo"
-      className="scroll-mt-40 space-y-3 rounded-[18px] border border-[color:color-mix(in_oklch,var(--primary)_35%,transparent)] bg-[color:var(--card)] p-4"
+      className="scroll-mt-52 space-y-3 rounded-[18px] border border-[color:color-mix(in_oklch,var(--primary)_35%,transparent)] bg-[color:var(--card)] p-4 lg:scroll-mt-40"
     >
       {children}
     </section>

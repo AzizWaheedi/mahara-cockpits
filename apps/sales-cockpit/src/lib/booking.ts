@@ -119,6 +119,26 @@ export function closerLine(values: Record<string, string | undefined>): string {
   return line.length > 600 ? `${line.slice(0, 599).trimEnd()}…` : line;
 }
 
+/**
+ * The line that goes on the lead with a booking from the intro: the
+ * setter's own words for the closer (closerLine), else a plain one saying
+ * who booked it, so the time the lead picks books in one press (book.create
+ * wants 3 characters at least). What the setter captured reaches the closer
+ * on the demo screen either way ("From the intro call").
+ */
+export function bookingLine(
+  values: Record<string, string | undefined>,
+  setter: string | null | undefined,
+): string {
+  const first = String(setter ?? "")
+    .trim()
+    .split(/\s+/)[0];
+  return (
+    closerLine(values) ||
+    `Booked on the intro call by ${first || "the setter"}.`
+  );
+}
+
 // ------------------------------------------------------------------ times
 
 const EN_DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];

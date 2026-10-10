@@ -56,6 +56,7 @@ import {
 import { supabase } from "../lib/supabase";
 import { toast } from "../lib/toast";
 import type { CalendarRow, Lead, Me, Note } from "../lib/types";
+import { greetName } from "../lib/zoomLink";
 import { BookDemoBlock } from "./BookDemoBlock";
 import type { As } from "./BookForm";
 import { FunnelLadder } from "./FunnelLadder";
@@ -151,7 +152,6 @@ export function ScriptRunner({
   const contactId = lead.contact_id;
   const page = layout === "page";
   const now = useNow(1000);
-  const [startedAt] = useState(() => Date.now());
   const [prefs, setPrefs] = useState(readPrefs);
   const script = useScript(key, prefs.lang);
   const doc = script.data?.doc;
@@ -159,6 +159,9 @@ export function ScriptRunner({
 
   // ------------------------------------------------------------ the call
   const [draft] = useState(() => readCallDraft(contactId, key));
+  // A reload mid-call keeps the clock going and opens the part the rep was on.
+  const [startedAt] = useState(() => draft.startedAt ?? Date.now());
+  const stageNo = useRef<number | undefined>(draft.stage);
   const callId = useRef(draft.callId);
   const touched = useRef(draft.touched);
   const [values, setValues] = useState<Record<string, string>>(draft.values);
@@ -169,7 +172,7 @@ export function ScriptRunner({
     draft.notes,
   );
   const [stageIdx, setStageIdx] = useState(0);
-  const [reached, setReached] = useState(1);
+  const [reached, setReached] = useState(draft.reached ?? 1);
   const [stageStart, setStageStart] = useState(() => Date.now());
   const [tab, setTab] = useState<"script" | "objections">("script");
   const [drawer, setDrawer] = useState<null | "answers" | "funnel">(null);
@@ -218,18 +221,43 @@ export function ScriptRunner({
     setValues(v => ({ ...seed, ...draft.values, ...v }));
   }, [notesLoaded]);
 
-  // Kept on this device as it is typed: a refresh mid-call loses nothing.
+  // Kept on this device as it is typed, and as the rep moves through the
+  // parts: a refresh mid-call loses nothing and opens the same part.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: stageIdx and reached say the part moved (stageNo holds it)
   useEffect(() => {
-    if (!touched.current) return;
+    if (!touched.current && !stageNo.current) return;
     writeCallDraft(contactId, key, {
       callId: callId.current,
       at: Date.now(),
       values,
       checked,
       notes: partNotes,
-      touched: true,
+      touched: touched.current,
+      stage: stageNo.current,
+      reached,
+      startedAt,
     });
-  }, [contactId, key, values, checked, partNotes]);
+  }, [
+    contactId,
+    key,
+    values,
+    checked,
+    partNotes,
+    stageIdx,
+    reached,
+    startedAt,
+  ]);
+
+  // Back on the part the rep was on before a reload, once the script is read.
+  const restored = useRef(false);
+  useEffect(() => {
+    if (restored.current || !doc) return;
+    restored.current = true;
+    const i = stageNo.current
+      ? doc.stages.findIndex(s => s.no === stageNo.current)
+      : -1;
+    if (i > 0) setStageIdx(i);
+  }, [doc]);
 
   const currency: Currency = isCurrency(values.currency)
     ? values.currency
@@ -246,7 +274,8 @@ export function ScriptRunner({
   const bookedStart = bookedHere?.start ?? demoAppt?.start_at ?? null;
   const fill: Fill = useMemo(
     () => ({
-      name: lead.name?.split(/\s+/)[0] ?? null,
+      // A business-named lead leaves [Name] for the rep: never "Hi شركة".
+      name: greetName(lead) || null,
       yourName: (me.name ?? "").split(/\s+/)[0] || null,
       city: countryName(lead.country, lang),
       closer: demoAppt?.assigned_user_name ?? null,
@@ -568,6 +597,7 @@ export function ScriptRunner({
   function go(i: number, then?: () => void) {
     void saver.current?.flush();
     const next = Math.max(0, Math.min(stages.length - 1, i));
+    stageNo.current = stages[next].no;
     setStageIdx(next);
     setReached(r => Math.max(r, stages[next].no));
     setStageStart(Date.now());
@@ -640,6 +670,7 @@ export function ScriptRunner({
         appointments={appointments}
         values={values}
         attemptId={attemptId}
+        since={startedAt}
         onSlots={setSlotIsos}
         onBooked={booked}
       />
@@ -743,6 +774,27 @@ export function ScriptRunner({
     </div>
   );
 
+  // The part's open notes: at the part's end, and in the strip at any line.
+  const partNote = {
+    id: `part-notes-${key}-${stage.no}`,
+    label: closerPart ? "For the closer" : "Notes on this part",
+    short: closerPart ? "For the closer" : "Notes",
+    hint: closerPart
+      ? "What the closer needs before the demo: who decides, what they care about, anything to avoid."
+      : "Anything they said that no field asks for.",
+    value: closerPart
+      ? (values[CLOSER_KEY] ?? "")
+      : (partNotes[String(stage.no)] ?? ""),
+    onChange: (v: string) => {
+      if (closerPart) setValue(CLOSER_KEY, v);
+      else {
+        setPartNotes(n => ({ ...n, [String(stage.no)]: v }));
+        touch();
+      }
+    },
+    state: saveState,
+  };
+
   const ledger = (
     <NumberLedger
       slots={LEDGER_SLOTS[key]}
@@ -770,6 +822,7 @@ export function ScriptRunner({
       onFunnel={() => setDrawer(d => (d === "funnel" ? null : "funnel"))}
       fromIntro={fromIntro}
       head={page ? stepper : undefined}
+      note={partNote}
     />
   );
 
@@ -924,26 +977,12 @@ export function ScriptRunner({
 
       <div className="mt-5 border-t hairline pt-4">
         <PartNotes
-          id={`part-notes-${key}-${stage.no}`}
-          label={closerPart ? "For the closer" : "Notes on this part"}
-          hint={
-            closerPart
-              ? "What the closer needs before the demo: who decides, what they care about, anything to avoid."
-              : "Anything they said that no field asks for."
-          }
-          value={
-            closerPart
-              ? (values[CLOSER_KEY] ?? "")
-              : (partNotes[String(stage.no)] ?? "")
-          }
-          onChange={v => {
-            if (closerPart) setValue(CLOSER_KEY, v);
-            else {
-              setPartNotes(n => ({ ...n, [String(stage.no)]: v }));
-              touch();
-            }
-          }}
-          state={saveState}
+          id={partNote.id}
+          label={partNote.label}
+          hint={partNote.hint}
+          value={partNote.value}
+          onChange={partNote.onChange}
+          state={partNote.state}
         />
       </div>
 

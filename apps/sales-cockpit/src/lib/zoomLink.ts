@@ -55,6 +55,30 @@ export function firstName(name: string | null | undefined): string {
   );
 }
 
+/**
+ * The words that start a business's name, not a person's: a lead whose
+ * name is "شركة الريم للتصميم" is greeted without one, never "هلا شركة".
+ */
+const BUSINESS_WORD =
+  /^(شركة|شركه|مؤسسة|مؤسسه|مكتب|مجموعة|مجموعه|مصنع|معرض|ورشة|ورشه|استوديو|ستوديو|مركز|دار|company|co\.?|corp\.?|group|studio|office|est\.?|establishment|the)$/i;
+
+/**
+ * The name a message greets the lead by: their first name, or nothing when
+ * the lead's name is their business's (the same as the company, or one
+ * starting with a business word). Nothing gives "Hi," and "هلا،".
+ */
+export function greetName(lead: {
+  name?: string | null;
+  company?: string | null;
+}): string {
+  const name = String(lead.name ?? "").trim();
+  if (!name) return "";
+  const company = String(lead.company ?? "").trim();
+  if (company && name.toLowerCase() === company.toLowerCase()) return "";
+  const first = firstName(name);
+  return BUSINESS_WORD.test(first) ? "" : first;
+}
+
 /** The Gulf clocks by country, with how a message names them. */
 const ZONE_WORDS: Record<string, { zone: string; en: string; ar: string }> = {
   KW: { zone: "Asia/Kuwait", en: "Kuwait", ar: "الكويت" },

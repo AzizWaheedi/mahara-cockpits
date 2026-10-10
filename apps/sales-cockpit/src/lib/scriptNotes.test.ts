@@ -177,6 +177,52 @@ describe("the device draft", () => {
     expect(d.touched).toBe(true);
   });
 
+  test("a reload opens the part the rep was on, with the call's clock going on", () => {
+    const s = memStore();
+    writeCallDraft(
+      "lead-1",
+      "intro",
+      {
+        callId: "3f0c9a52-6a1b-4c1e-9d55-0d6a2f1b7c11",
+        at: 9_000,
+        values: {},
+        checked: {},
+        notes: {},
+        // Moving through the parts with nothing typed is kept, unsent.
+        touched: false,
+        stage: 4,
+        reached: 5,
+        startedAt: 1_000,
+      },
+      s,
+    );
+    const d = readCallDraft("lead-1", "intro", 10_000, s);
+    expect(d.fresh).toBe(false);
+    expect(d.touched).toBe(false);
+    expect(d.stage).toBe(4);
+    expect(d.reached).toBe(5);
+    expect(d.startedAt).toBe(1_000);
+  });
+
+  test("a part or a start that cannot be right is left out", () => {
+    const s = memStore();
+    s.setItem(
+      draftKey("lead-1", "demo"),
+      JSON.stringify({
+        callId: "3f0c9a52-6a1b-4c1e-9d55-0d6a2f1b7c11",
+        at: 9_000,
+        stage: "3",
+        reached: -1,
+        startedAt: 20_000,
+      }),
+    );
+    const d = readCallDraft("lead-1", "demo", 10_000, s);
+    expect(d.stage).toBeUndefined();
+    expect(d.reached).toBeUndefined();
+    // A start after now is not a start.
+    expect(d.startedAt).toBeUndefined();
+  });
+
   test("garbage, or no storage at all, is a new call", () => {
     const s = memStore();
     s.setItem(draftKey("lead-1", "intro"), "{not json");

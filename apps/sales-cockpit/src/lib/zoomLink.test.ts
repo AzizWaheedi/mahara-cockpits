@@ -3,6 +3,7 @@ import {
   arDigits,
   callWhen,
   cleanInvite,
+  greetName,
   groupInvite,
   groupName,
   groupWelcome,
@@ -242,5 +243,36 @@ describe("the invite link, as sales-api cleans it", () => {
     expect(
       cleanInvite("https://chat.whatsapp.com.evil.io/AbCdEfGhIjKlMnOp"),
     ).toBeUndefined();
+  });
+});
+
+describe("greetName", () => {
+  test("a person's first name", () => {
+    expect(
+      greetName({ name: "Sara Al Ali", company: "Al Ali Interiors" }),
+    ).toBe("Sara");
+    expect(greetName({ name: "  فيصل المطيري " })).toBe("فيصل");
+  });
+
+  test('a business\'s name greets no one by name, never "هلا شركة"', () => {
+    expect(greetName({ name: "شركة الريم للتصميم الداخلي" })).toBe("");
+    expect(greetName({ name: "مؤسسة البناء الحديث" })).toBe("");
+    expect(greetName({ name: "Studio Nine", company: null })).toBe("");
+    expect(
+      greetName({
+        name: "Al Mutairi Contracting",
+        company: "al mutairi contracting",
+      }),
+    ).toBe("");
+    expect(greetName({ name: null })).toBe("");
+  });
+
+  test("the messages read well without a name", () => {
+    expect(
+      zoomMessage("ar", { first: "", rep: "تحرير", link: LINK }),
+    ).toStartWith("هلا، مكالمتك");
+    expect(
+      groupWelcome("en", { first: "", closer: "Omar", when: null }),
+    ).toStartWith("Welcome. Omar is here too");
   });
 });

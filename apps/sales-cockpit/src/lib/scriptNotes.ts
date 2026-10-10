@@ -23,6 +23,12 @@ export interface CallDraft {
   notes: Record<string, string>;
   /** Something was typed on this call (a seeded answer is not). */
   touched: boolean;
+  /** The part on screen (its number), so a reload opens where the rep was. */
+  stage?: number;
+  /** The furthest part reached (its number). */
+  reached?: number;
+  /** When the call's screen was first opened (ms): the timer goes on from it. */
+  startedAt?: number;
 }
 
 /** A draft untouched this long is an old call: the next open starts a new one. */
@@ -102,6 +108,17 @@ export function readCallDraft(
     for (const [k, v] of Object.entries(d.checked)) checked[k] = v === true;
   const values = asStrings(d.values);
   const notes = asStrings(d.notes);
+  const part = (v: unknown) =>
+    typeof v === "number" && Number.isInteger(v) && v > 0 && v < 100
+      ? v
+      : undefined;
+  const startedAt =
+    typeof d.startedAt === "number" &&
+    Number.isFinite(d.startedAt) &&
+    d.startedAt <= now &&
+    now - d.startedAt <= 2 * DRAFT_TTL_MS
+      ? d.startedAt
+      : undefined;
   return {
     callId:
       typeof d.callId === "string" && UUID.test(d.callId)
@@ -116,6 +133,9 @@ export function readCallDraft(
       d.touched === true ||
       (d.touched === undefined &&
         (Object.keys(values).length > 0 || Object.keys(checked).length > 0)),
+    stage: part(d.stage),
+    reached: part(d.reached),
+    startedAt,
     fresh: false,
   };
 }

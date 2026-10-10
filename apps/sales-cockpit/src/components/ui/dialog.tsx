@@ -1,5 +1,6 @@
 import { X } from "lucide-react";
 import { type ReactNode, useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 
 /**
  * A modal with the shadcn Dialog's API and none of its machinery.
@@ -67,8 +68,12 @@ export function Dialog({
 
   if (!open) return null;
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 pt-[max(1rem,env(safe-area-inset-top))] pb-[max(1rem,env(safe-area-inset-bottom))]">
+  // On the page body, as the client form sheet is: inside a card or a
+  // column (the dialer's call pane draws with a backdrop blur) "fixed" is
+  // that column's box, so the dialog was squeezed into it and cut off, and
+  // the phone's tab bar sat over it.
+  return createPortal(
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 pt-[max(1rem,env(safe-area-inset-top))] pb-[max(1rem,env(safe-area-inset-bottom))]">
       <button
         type="button"
         aria-label="Close"
@@ -79,7 +84,8 @@ export function Dialog({
       <div ref={box} className="relative w-full max-w-lg">
         {children}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

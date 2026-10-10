@@ -7,7 +7,7 @@ import { supabase } from "../lib/supabase";
 import type { Lead, Me } from "../lib/types";
 import {
   clockTime,
-  firstName,
+  greetName,
   type Lang,
   REUSE_MS,
   repName,
@@ -214,7 +214,9 @@ export function ZoomLinkCard({
   onFresh,
   onRetry,
 }: {
-  lead: Pick<Lead, "name" | "phone" | "dnd">;
+  lead: Pick<Lead, "name" | "phone" | "dnd"> & {
+    company?: string | null;
+  };
   phase: Phase;
   initialLang: Lang;
   onFresh: () => void;
@@ -226,7 +228,7 @@ export function ZoomLinkCard({
   const { copied, copy } = useCopied();
   const [starting, setStarting] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
-  const first = firstName(lead.name);
+  const first = greetName(lead);
   const them = first || "them";
   const answer = phase.at === "ready" ? phase.answer : null;
   const link = answer?.link ?? null;
@@ -360,7 +362,7 @@ export function ZoomLinkCard({
               <p
                 dir={lang === "ar" ? "rtl" : "ltr"}
                 lang={lang}
-                className={`max-w-[34rem] whitespace-pre-wrap break-words rounded-2xl rounded-tr-md border border-teal-500/25 bg-[color:color-mix(in_oklch,var(--primary)_10%,var(--card))] px-3.5 py-2.5 text-[15px] leading-relaxed ${
+                className={`min-w-0 max-w-[34rem] whitespace-pre-wrap break-words [overflow-wrap:anywhere] rounded-2xl rounded-tr-md border border-teal-500/25 bg-[color:color-mix(in_oklch,var(--primary)_10%,var(--card))] px-3.5 py-2.5 text-[15px] leading-relaxed ${
                   lang === "ar" ? "ar" : ""
                 }`}
               >

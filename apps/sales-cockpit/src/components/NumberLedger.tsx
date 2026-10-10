@@ -3,12 +3,18 @@ import {
   CalendarPlus,
   ChevronDown,
   ChevronRight,
+  NotebookPen,
   X,
 } from "lucide-react";
 import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { type Currency, readNumber, sayMoney } from "../lib/funnel";
 import { type Capture, LEDGER_FUNNEL, LEDGER_LABELS } from "../lib/script";
+import type { SaveState } from "../lib/scriptNotes";
 import { FilterChip, field } from "./kit";
+import { PartNotes } from "./PartNotes";
+
+/** The strip's own key for the part's notes (never a capture's). */
+const NOTE = "__part_note";
 
 /**
  * The number ledger (sales simplify, 2026-10-10): the prospect's numbers as
@@ -54,6 +60,7 @@ export function NumberLedger({
   onFunnel,
   fromIntro,
   head,
+  note = null,
   className = "",
 }: {
   slots: string[];
@@ -72,6 +79,20 @@ export function NumberLedger({
   fromIntro: (key: string) => boolean;
   /** A row above the slots (the phone's part stepper). */
   head?: ReactNode;
+  /**
+   * The part's open notes, the same as at the part's end: written from the
+   * strip at any line, so the rep never scrolls down to the end to keep one.
+   */
+  note?: {
+    id: string;
+    label: string;
+    /** The strip button's words. */
+    short: string;
+    hint: string;
+    value: string;
+    onChange: (v: string) => void;
+    state: SaveState;
+  } | null;
   className?: string;
 }) {
   const [editing, setEditing] = useState<string | null>(null);
@@ -108,6 +129,18 @@ export function NumberLedger({
     );
   };
 
+  const toggleNote = () => setEditing(e => (e === NOTE ? null : NOTE));
+  const written = note?.value.trim() ? (
+    <>
+      <span
+        className="size-1.5 shrink-0 rounded-full"
+        style={{ background: "var(--primary)" }}
+        aria-hidden
+      />
+      <span className="sr-only">(written)</span>
+    </>
+  ) : null;
+
   // The count and the two drawers: under the slots on a phone, at the end
   // of their row from a tablet up, where the slots wrap instead of scroll.
   const controls = (
@@ -138,6 +171,20 @@ export function NumberLedger({
           aria-hidden
         />
       </button>
+      {note ? (
+        // From a tablet up; a phone has the tile at the strip's start.
+        <button
+          type="button"
+          onClick={toggleNote}
+          aria-expanded={editing === NOTE}
+          title={`${note.label}: write it here at any line`}
+          className="hidden h-7 items-center gap-1.5 rounded-full border border-white/10 px-2.5 font-medium hover:bg-white/[0.06] sm:inline-flex"
+        >
+          <NotebookPen className="size-3.5" aria-hidden />
+          {note.short}
+          {written}
+        </button>
+      ) : null}
     </>
   );
 
@@ -202,6 +249,36 @@ export function NumberLedger({
               </span>
             </button>
           ) : null}
+          {note ? (
+            // On a phone, at the start with Book the demo: the strip scrolls
+            // sideways there, and the row under it has no room for a button.
+            <button
+              type="button"
+              onClick={toggleNote}
+              aria-expanded={editing === NOTE}
+              aria-label={`${note.label}${note.value.trim() ? ", written" : ""}`}
+              className={`order-first flex h-11 shrink-0 items-center gap-2 rounded-[12px] border px-3 text-left text-xs sm:hidden ${
+                editing === NOTE
+                  ? "border-[color:var(--ring)]"
+                  : "border-white/10 hover:bg-white/[0.04]"
+              }`}
+            >
+              <NotebookPen
+                className="size-4 shrink-0"
+                style={{ color: "var(--primary)" }}
+                aria-hidden
+              />
+              <span className="flex flex-col leading-tight">
+                <span className="muted text-[10px] font-medium">
+                  {note.value.trim() ? "Written" : "This part"}
+                </span>
+                <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-[13px] font-semibold">
+                  {note.short}
+                  {written}
+                </span>
+              </span>
+            </button>
+          ) : null}
           <div className="hidden items-center gap-x-3 self-center px-1.5 text-xs sm:flex">
             {controls}
           </div>
@@ -209,6 +286,32 @@ export function NumberLedger({
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-white/5 px-3 py-1.5 text-xs sm:hidden">
           {controls}
         </div>
+        {editing === NOTE && note ? (
+          <div className="border-t border-white/5 px-3 py-2.5">
+            <div className="flex items-start gap-2">
+              <div className="min-w-0 flex-1">
+                <PartNotes
+                  id={`${note.id}-strip`}
+                  label={note.label}
+                  hint={note.hint}
+                  value={note.value}
+                  onChange={note.onChange}
+                  state={note.state}
+                  compact
+                  autoFocus
+                />
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditing(null)}
+                className="muted -me-1 mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-[10px] hover:bg-white/[0.06]"
+                aria-label="Done"
+              >
+                <X className="size-4" aria-hidden />
+              </button>
+            </div>
+          </div>
+        ) : null}
         {editCap ? (
           <div className="border-t border-white/5 px-3 py-2.5">
             <div className="flex items-start gap-2">

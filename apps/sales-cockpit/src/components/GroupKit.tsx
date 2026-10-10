@@ -10,6 +10,7 @@ import {
   cleanInvite,
   clockTime,
   firstName,
+  greetName,
   groupInvite,
   groupName,
   groupWelcome,
@@ -210,7 +211,7 @@ export function GroupKit({
 
   if (!on || !demo) return null;
 
-  const first = firstName(lead.name);
+  const first = greetName(lead);
   const them = first || "the lead";
   const closerEn = firstName(demo.assigned_user_name) || "our team";
   const closer =
@@ -299,7 +300,7 @@ export function GroupKit({
       <p
         dir={lang === "ar" ? "rtl" : "ltr"}
         lang={lang}
-        className={`min-w-0 flex-1 whitespace-pre-wrap break-words rounded-2xl rounded-tr-md border border-teal-500/25 bg-[color:color-mix(in_oklch,var(--primary)_10%,var(--card))] px-3.5 py-2.5 text-[15px] leading-relaxed ${lang === "ar" ? "ar" : ""}`}
+        className={`min-w-0 flex-1 whitespace-pre-wrap break-words [overflow-wrap:anywhere] rounded-2xl rounded-tr-md border border-teal-500/25 bg-[color:color-mix(in_oklch,var(--primary)_10%,var(--card))] px-3.5 py-2.5 text-[15px] leading-relaxed ${lang === "ar" ? "ar" : ""}`}
       >
         {welcome}
       </p>

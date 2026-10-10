@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   arDigits,
   bookedDemo,
+  bookingLine,
   closerLine,
   introToMark,
   leadZone,
@@ -154,6 +155,25 @@ describe("closerLine", () => {
   });
   test("long lines are cut", () => {
     expect(closerLine({ for_the_closer: "x".repeat(900) }).length).toBe(600);
+  });
+});
+
+describe("bookingLine", () => {
+  test("the setter's own line for the closer when there is one", () => {
+    expect(
+      bookingLine({ for_the_closer: "Partner decides money" }, "Sara Ali"),
+    ).toBe("Partner decides money.");
+  });
+
+  test("nothing captured still books in one press: who booked it", () => {
+    expect(bookingLine({}, "Sara Ali")).toBe(
+      "Booked on the intro call by Sara.",
+    );
+    expect(bookingLine({ pain: "  " }, null)).toBe(
+      "Booked on the intro call by the setter.",
+    );
+    // book.create wants 3 characters at least.
+    expect(bookingLine({}, "").length).toBeGreaterThanOrEqual(3);
   });
 });
 

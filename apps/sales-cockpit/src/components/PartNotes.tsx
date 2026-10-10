@@ -18,6 +18,8 @@ export function PartNotes({
   value,
   onChange,
   state,
+  compact = false,
+  autoFocus = false,
 }: {
   id: string;
   label: string;
@@ -25,6 +27,9 @@ export function PartNotes({
   value: string;
   onChange: (v: string) => void;
   state: SaveState;
+  /** In the pinned strip: shorter, so the line being read stays in view. */
+  compact?: boolean;
+  autoFocus?: boolean;
 }) {
   const ref = useRef<HTMLTextAreaElement>(null);
   // biome-ignore lint/correctness/useExhaustiveDependencies: grows with what is typed
@@ -32,8 +37,15 @@ export function PartNotes({
     const el = ref.current;
     if (!el) return;
     el.style.height = "auto";
-    el.style.height = `${Math.min(Math.max(el.scrollHeight, 76), 420)}px`;
+    el.style.height = `${Math.min(Math.max(el.scrollHeight, compact ? 60 : 76), compact ? 150 : 420)}px`;
   }, [value]);
+  useEffect(() => {
+    if (!autoFocus) return;
+    const el = ref.current;
+    if (!el) return;
+    el.focus({ preventScroll: true });
+    el.setSelectionRange(el.value.length, el.value.length);
+  }, [autoFocus]);
   const words = saveWords(state, ms => clock(new Date(ms).toISOString()));
   const bad = state.kind === "failed";
   const left = PART_NOTE_MAX - value.length;
@@ -61,7 +73,7 @@ export function PartNotes({
         onChange={e => onChange(e.target.value.slice(0, PART_NOTE_MAX))}
         maxLength={PART_NOTE_MAX}
         dir="auto"
-        rows={3}
+        rows={compact ? 2 : 3}
         placeholder={hint}
         className="block w-full resize-none rounded-[14px] border border-white/10 bg-[color:var(--background)] px-3.5 py-2.5 text-sm leading-relaxed placeholder:text-[color:var(--muted-foreground)] focus:border-[color:var(--ring)] focus:outline-none focus:ring-1 focus:ring-[color:var(--ring)]"
       />
