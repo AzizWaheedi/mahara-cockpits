@@ -88,7 +88,7 @@ test("a Meta form reads back into the cockpit's shape, Arabic intact", () => {
   expect(problems(spec)).toEqual([]);
 });
 
-test("a bare form reads as every extra switched off, and asks for a privacy link", () => {
+test("a bare form reads as every extra switched off, and needs no privacy link", () => {
   const spec = fromMeta({
     name: "x",
     questions: [{ key: "phone", type: "PHONE" }],
@@ -97,7 +97,15 @@ test("a bare form reads as every extra switched off, and asks for a privacy link
   expect(spec.intro).toBeNull();
   expect(spec.thankYou).toBeNull();
   expect(frictionSteps(spec)).toEqual([]);
-  expect(problems(spec).map(p => p.where)).toEqual(["privacy"]);
+  expect(problems(spec)).toEqual([]);
+  expect(
+    problems({ ...spec, privacy: { url: "villa.example/privacy" } }).map(
+      p => p.where,
+    ),
+  ).toEqual(["privacy"]);
+  expect(
+    toMetaCreate({ ...spec, privacy: { url: "" } }).privacy_policy,
+  ).toBeUndefined();
 });
 
 test("the older privacy field still reads, and a phone code question means SMS verification", () => {

@@ -104,7 +104,7 @@ test('a refused rehearsal returns no steps and says which ad and why',async()=>{
 
 test('publishing refuses a broken draft and a form the ads have left',async()=>{
  const p=meta([[/^GET 222222\/ads/,()=>({data:[ad('300301','999999')]})]]);
- await expect(preparePublish({campaignName:'x',fromFormId:'111111',spec:{...spec,privacy:null}},scope,p as any)).rejects.toThrow('privacy policy');
+ await expect(preparePublish({campaignName:'x',fromFormId:'111111',spec:{...spec,privacy:{url:'villa.example'}}},scope,p as any)).rejects.toThrow('privacy policy link');
  await expect(preparePublish({campaignName:'x',fromFormId:'111111',spec},scope,p as any)).rejects.toThrow('No ad in this campaign uses that form');
  await expect(preparePublish({campaignName:'x',fromFormId:'111111',spec,adIds:['300301']},scope,p as any)).rejects.toThrow('no longer uses that form');
 });

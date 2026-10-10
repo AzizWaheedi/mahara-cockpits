@@ -319,11 +319,12 @@ export function problems(spec: LeadFormSpec): Problem[] {
     if (!spec.intro.content.some(c => c.trim()))
       out.push({ where: "intro", message: "Write at least one line." });
   }
-  if (!spec.privacy?.url || !URL_RE.test(spec.privacy.url))
+  // Optional: the team's forms were made without one and Meta took them.
+  // A link that is there must work, because Meta shows it on every form.
+  if (spec.privacy?.url?.trim() && !URL_RE.test(spec.privacy.url.trim()))
     out.push({
       where: "privacy",
-      message:
-        "Meta needs the client's privacy policy link, starting with https://.",
+      message: "The privacy policy link has to start with https://.",
     });
   if (spec.thankYou) {
     const t = spec.thankYou;
@@ -387,7 +388,7 @@ export function toMetaCreate(spec: LeadFormSpec): Record<string, string> {
   if (spec.locale) body.locale = spec.locale;
   if (spec.headline?.trim())
     body.question_page_custom_headline = spec.headline.trim();
-  if (spec.privacy)
+  if (spec.privacy?.url?.trim())
     body.privacy_policy = JSON.stringify({
       url: spec.privacy.url.trim(),
       ...(spec.privacy.linkText?.trim()
