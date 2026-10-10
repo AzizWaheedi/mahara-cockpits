@@ -462,7 +462,9 @@ approval as changed. In order:
    `cockpit_ceo_people_save(jsonb)`, `cockpit_ceo_people_set_pay(jsonb)` and
    `cockpit_people_schedule_check(jsonb)` exist; pg_cron, pg_net and the vault
    are on; the vault holds `cockpit_sync_secret` and the function secrets
-   include `CRON_SECRET` (names only, never values).
+   include `CRON_SECRET` (names only, never values). None of the 18 hours
+   tables exists yet: `CREATE TABLE IF NOT EXISTS` would keep another table of
+   the same name as it is.
 2. Apply `20261009a_cockpit_team_hours.sql` (it carries its own BEGIN and
    COMMIT). Check: 18 tables with row security, `cockpit_hours_keys` with no
    grant at all, `cockpit_ceo_hours_*` granted to authenticated only.
