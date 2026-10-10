@@ -226,7 +226,7 @@ export const TERMS_TICK =
   "Their signed contract says pay follows tracked hours, and they agreed to Hubstaff tracking";
 export const KW_TICK = "A Kuwaiti lawyer has reviewed the clause";
 export const EGYPT_NOTE =
-  "Egypt's labour law (14/2025) gives remote workers the same rights and limits deductions. Keep the contract in step.";
+  "Egypt's Labour Law (No. 14 of 2025) covers remote work and limits deductions from pay. Have an Egyptian lawyer check the contract before pay follows hours.";
 
 /** Pre-filled reasons, so every decision is one click. */
 export const DECISION_REASON = {

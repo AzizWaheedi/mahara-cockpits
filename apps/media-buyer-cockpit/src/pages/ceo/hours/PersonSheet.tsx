@@ -856,7 +856,8 @@ function PersonBody({
               >
                 <span>{r.text}</span>
                 {(r.code === "over_day_limit" ||
-                  r.code === "idle_not_counted") &&
+                  r.code === "idle_not_counted" ||
+                  r.code === "day_off_not_counted") &&
                 r.days?.length === 1 &&
                 r.seconds ? (
                   <button

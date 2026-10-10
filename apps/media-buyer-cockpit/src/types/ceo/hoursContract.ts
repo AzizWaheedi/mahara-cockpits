@@ -332,6 +332,7 @@ export type ReasonCode =
   | "entered_vs_hubstaff"
   // notes
   | "worked_day_off"
+  | "day_off_not_counted"
   | "worked_during_leave"
   | "over_day_limit"
   | "idle_not_counted"
@@ -406,10 +407,12 @@ export type DayView = {
 export type Segment = {
   from: Ymd;
   to: Ymd;
-  base: number;
+  /** Null when no pay is set for these days: never shown as a zero. */
+  base: number | null;
   target: Seconds;
   payable: Seconds;
-  amount: number;
+  /** Null when the base is unknown. */
+  amount: number | null;
 };
 
 export type PersonMonth = {
@@ -441,6 +444,7 @@ export type PersonMonth = {
     overDayLimit: Seconds;
     idleNotCounted: Seconds;
     overtimePaid: Seconds;
+    /** Seconds of no-data days inside `counted` (counted as worked until read). */
     noData: Seconds;
   };
   segments: Segment[];
@@ -449,6 +453,7 @@ export type PersonMonth = {
     overtime: number;
     corrections: {
       applied: number;
+      /** The rest of a capped negative correction, carried into next month (0 for someone who has left). */
       carriedOut: number;
       lines: {
         fromMonth: Ym | null;

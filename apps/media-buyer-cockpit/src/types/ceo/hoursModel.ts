@@ -828,7 +828,15 @@ function runPass(x: Prepared, opts: PassOpts): Pass {
         if (snap && (snap.trackedS ?? 0) < (tracked ?? 0) && Win > 0)
           decisionOvertaken = true;
       } else if (rem > 0) {
-        if (dataKnown && past && w === 0 && hub === "covered") {
+        // Entering hours answers the day too, 0 h included: the rest is a
+        // short day, like any other.
+        if (
+          dataKnown &&
+          past &&
+          w === 0 &&
+          hub === "covered" &&
+          !find("hours")
+        ) {
           question = true;
           if (opts.undecidedAbsent) undecided = rem;
         } else if (!dataKnown) noData = rem;
@@ -990,7 +998,14 @@ function figureOf(
         target,
       });
   }
-  const currency = segs.length ? segs[segs.length - 1].currency : "USD";
+  // The month's currency is the one its paid days are in: a pay row changed
+  // after someone's last day (target 0) never relabels the month.
+  const worked = segs.filter(z => z.target > 0);
+  const currency = worked.length
+    ? worked[worked.length - 1].currency
+    : segs.length
+      ? segs[segs.length - 1].currency
+      : "USD";
   const shares = shareBySegments(
     P,
     segs.map(z => z.target),
@@ -1008,10 +1023,10 @@ function figureOf(
     return {
       from: z.from,
       to: z.to,
-      base: z.base ?? 0,
+      base: z.base,
       target: z.target,
       payable: shares[i],
-      amount: value ?? 0,
+      amount: value,
     };
   });
   if (amount !== null) amount = roundMinor(amount, currency);
@@ -1112,7 +1127,8 @@ function carryLines(
   for (const prior of p.priorApprovals ?? []) {
     if (!prior?.approval || prior.month >= ctx.month) continue;
     const rec = recomputeApproved(prior, ctx);
-    if (rec.hours.noData > 0 || rec.pay.total === null) {
+    // Provisional here means pay by hours with days Hubstaff hasn't read.
+    if (rec.pay.provisional || rec.pay.total === null) {
       notes.push({
         code: "changed_since_approved",
         severity: "note",
@@ -1173,8 +1189,11 @@ function approvedView(p: PersonInputs, ctx: MonthCtx): PersonMonth {
     rec.pay.total === null
       ? 0
       : roundMinor(rec.pay.total - approval.amount, approval.currency);
+  // Only a recompute with a figure and every day read says what changed.
   const changed =
-    (seconds !== 0 || amount !== 0) && rec.hours.noData === 0
+    (seconds !== 0 || amount !== 0) &&
+    rec.pay.total !== null &&
+    !rec.pay.provisional
       ? { seconds, amount, alreadyCarried: approval.carriedSoFar ?? 0 }
       : null;
   const reasons: Reason[] = [];
@@ -1265,9 +1284,11 @@ function computeCore(p: PersonInputs, ctx: MonthCtx): PersonMonth {
   const missingBase = payPass.days.some(
     c => c.e > 0 && bases.get(c.day)?.base === null,
   );
-  if (!owedOnly && (missingBase || !(p.payHistory ?? []).length))
-    block("no_pay", "No pay is set. Add it in the roster.");
-  if (!owedOnly && (x.F <= 0 || (payBasis === "hours" && x.noSchedule)))
+  const payUnknown = !owedOnly && (missingBase || !(p.payHistory ?? []).length);
+  const scheduleUnknown =
+    !owedOnly && (x.F <= 0 || (payBasis === "hours" && x.noSchedule));
+  if (payUnknown) block("no_pay", "No pay is set. Add it in the roster.");
+  if (scheduleUnknown)
     block(
       "no_schedule",
       "No working hours are set for this month. Add them in the roster.",
@@ -1396,11 +1417,22 @@ function computeCore(p: PersonInputs, ctx: MonthCtx): PersonMonth {
   const view = viewPass.days;
   const dayOff = view.filter(c => c.offDay && c.Wx > 0 && c.employed);
   const dayOffS = dayOff.reduce((a, c) => a + c.WxCounted, 0);
-  if (dayOff.length)
+  // With "needs your OK", work on a day off counts only once counted: each
+  // such day says so, with the time to count.
+  const waiting =
+    paysOnHours || shadow ? dayOff.filter(c => c.WxCounted < c.Wx) : [];
+  const countedOff = dayOff.filter(c => c.WxCounted > 0);
+  if (countedOff.length)
     note(
       "worked_day_off",
-      `Worked on a day off: ${hoursText(dayOff.reduce((a, c) => a + c.Wx, 0))}, counted toward the month (never above base).`,
-      { days: dayOff.map(c => c.day), seconds: dayOffS },
+      `Worked on a day off: ${hoursText(dayOffS)}, counted toward the month (never above base).`,
+      { days: countedOff.map(c => c.day), seconds: dayOffS },
+    );
+  for (const c of waiting)
+    note(
+      "day_off_not_counted",
+      `Worked ${hoursText(c.Wx - c.WxCounted)} on ${shortDay(c.day)}, a day off: not counted unless you count it.`,
+      { days: [c.day], seconds: c.Wx },
     );
   const duringLeave = view.filter(c => c.leaveSeconds > 0 && c.Win > 0);
   for (const c of duringLeave)
@@ -1449,7 +1481,10 @@ function computeCore(p: PersonInputs, ctx: MonthCtx): PersonMonth {
       text: `${p.name}: no start date, so pay counts from ${shortDay(p.addedOn)}, the day they were added.`,
     });
   }
-  if (payPass.days.some(c => c.e > 0 && bases.get(c.day)?.assumed))
+  if (
+    (p.payHistory ?? []).length &&
+    payPass.days.some(c => c.e > 0 && bases.get(c.day)?.assumed)
+  )
     note(
       "pay_history_assumed",
       "Pay before the first recorded change is assumed to be the earliest recorded figure.",
@@ -1505,7 +1540,7 @@ function computeCore(p: PersonInputs, ctx: MonthCtx): PersonMonth {
   if (kw && dayOff.length)
     note(
       "kw_rest_day_work",
-      "Kuwait law pays extra for rest-day and holiday work (Art. 67, 68). Add it as overtime if it applies.",
+      "Kuwait law pays extra for work on the weekly rest day or a public holiday (Art. 67, 68). This figure doesn't include it: check with the accountant whether it applies.",
     );
 
   // Activity
@@ -1630,7 +1665,16 @@ function computeCore(p: PersonInputs, ctx: MonthCtx): PersonMonth {
     fig.currency,
   );
   const negApplied = Math.max(negative, -capMoney);
-  const carriedOut = roundMinor(negative - negApplied, fig.currency);
+  const rest = roundMinor(negative - negApplied, fig.currency);
+  // Someone with no employed day after this month has no later pay to take
+  // it from: it is not recovered, and nothing is carried (a carry would open
+  // a new month for them every month). A pause still carries (they come
+  // back), and so does a month before a leaver's last one.
+  const monthEnd = lastDay(ctx.month);
+  const leaver = !x.periods.some(
+    per => per.kind === "employed" && (per.to === null || per.to > monthEnd),
+  );
+  const carriedOut = leaver ? 0 : rest;
   for (const l of good) if (l.amount > 0) l.applied = l.amount;
   let negLeft = negApplied;
   for (const l of good
@@ -1641,26 +1685,29 @@ function computeCore(p: PersonInputs, ctx: MonthCtx): PersonMonth {
     negLeft = roundMinor(negLeft - take, fig.currency);
   }
   const applied = roundMinor(positive + negApplied, fig.currency);
-  if (carriedOut < 0) {
-    const leaver = !p.active || owedOnly;
+  if (rest < 0) {
     const text = leaver
-      ? `Not recovered: ${moneyText(-carriedOut, fig.currency)}. Negative corrections take at most ${Math.round(s.correctionCapShare * 100)}% of a month's pay.`
-      : `Only ${moneyText(-negApplied, fig.currency)} of ${moneyText(-negative, fig.currency)} is taken this month (${Math.round(s.correctionCapShare * 100)}% of pay); ${moneyText(-carriedOut, fig.currency)} is carried into ${monthName(nextMonth(ctx.month))}.`;
+      ? `Not recovered: ${moneyText(-rest, fig.currency)}. Negative corrections take at most ${Math.round(s.correctionCapShare * 100)}% of a month's pay.`
+      : `Only ${moneyText(-negApplied, fig.currency)} of ${moneyText(-negative, fig.currency)} is taken this month (${Math.round(s.correctionCapShare * 100)}% of pay); ${moneyText(-rest, fig.currency)} is carried into ${monthName(nextMonth(ctx.month))}.`;
     lookAt.push({
       code: "correction_capped",
       text: `${p.name}: ${text}`,
-      amount: carriedOut,
+      amount: rest,
     });
   }
 
-  const amount = rd.noRole ? null : fig.amount;
+  // No figure rather than a wrong one: with no pay, no working hours or two
+  // currencies in the month, the sum would be $0 or a mix of currencies.
+  const amount =
+    rd.noRole || payUnknown || scheduleUnknown || currencies.size > 1
+      ? null
+      : fig.amount;
   const total =
     amount === null
       ? null
       : roundMinor(amount + fig.overtime + applied, fig.currency);
-  const lastBase = fig.segments.length
-    ? fig.segments[fig.segments.length - 1].base
-    : null;
+  const lastBase =
+    [...fig.segments].reverse().find(z => z.base !== null)?.base ?? null;
   const valuePerHour =
     lastBase !== null && x.F > 0 && amount !== null
       ? roundMinor(lastBase / (x.F / 3600), fig.currency)
@@ -1705,8 +1752,12 @@ function computeCore(p: PersonInputs, ctx: MonthCtx): PersonMonth {
   );
 
   // --- Hours
+  // Null unless Hubstaff has at least one day of this person: a link with
+  // no day read (not a member yet, removed, not covered) is no data, not 0 h.
   const tracked =
-    x.hubAccount && ctx.coverage.hubstaff.length
+    x.hubAccount &&
+    ctx.coverage.hubstaff.length &&
+    view.some(c => c.tracked !== null)
       ? view.reduce((a, c) => a + (c.tracked ?? 0), 0)
       : null;
   const manualTotal = viewPass.manualTotal;
@@ -1741,7 +1792,9 @@ function computeCore(p: PersonInputs, ctx: MonthCtx): PersonMonth {
     overDayLimit: view.reduce((a, c) => a + c.overLimit, 0),
     idleNotCounted: view.reduce((a, c) => a + c.idleNC, 0),
     overtimePaid: fig.OT,
-    noData: payPass.noData,
+    // The no-data time inside `counted`: the pay pass's for pay by hours, the
+    // shown pass's (shadow or optional) otherwise.
+    noData: paysOnHours ? payPass.noData : viewPass.noData,
   };
 
   const shadowUndecidedDays = shadowPass
@@ -1779,7 +1832,12 @@ function computeCore(p: PersonInputs, ctx: MonthCtx): PersonMonth {
       },
       total,
       provisional,
-      shadowAmount: shadowFig ? shadowFig.amount : null,
+      // No comparison without data: a shadow figure resting on no Hubstaff
+      // day at all would just be the base again.
+      shadowAmount:
+        shadowFig && amount !== null && tracked !== null
+          ? shadowFig.amount
+          : null,
       shadowUndecidedDays,
       totalUsd,
       valuePerHour,
@@ -2078,7 +2136,15 @@ export function computeMonth(inputs: HoursInputs): HoursMonth {
   for (const pm of people) {
     byStatus[pm.status.kind]++;
     expected += pm.hours.expected;
-    if (pm.hours.counted !== null) counted = (counted ?? 0) + pm.hours.counted;
+    // Counted from real data, for the people whose pay follows hours or is in
+    // shadow: no-data days are left out, and nobody with no data adds hours.
+    if (
+      (pm.paysOnHours || pm.shadow) &&
+      pm.hours.counted !== null &&
+      pm.hours.tracked !== null
+    )
+      counted =
+        (counted ?? 0) + Math.max(0, pm.hours.counted - pm.hours.noData);
     paidLeave += pm.hours.paidLeave;
     holidays += pm.hours.holidays;
     if (pm.pay.totalUsd === null) payMissing.push(pm.name);

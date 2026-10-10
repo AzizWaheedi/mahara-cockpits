@@ -173,6 +173,9 @@ describe("the CEO's writes, as the screens send them", () => {
     // Pay follows hours for a person whose role already does: the dialog's one tick.
     const next = new Date(Date.parse(`${kwToday().slice(0, 7)}-01T00:00:00Z`) + 40 * 86_400_000).toISOString().slice(0, 7);
     await expect(terms(ids.one, { hoursPayFrom: next, termsConfirmed: true, contractCountry: "KW" })).rejects.toThrow("Kuwaiti lawyer");
+    // A Kuwait contract never switches from a month already under way: that cuts pay already earned.
+    await expect(terms(ids.one, { hoursPayFrom: kwToday().slice(0, 7), termsConfirmed: true, contractCountry: "KW", kwClauseReviewed: true }))
+      .rejects.toThrow("backdated pay cut");
     await expect(terms(ids.one, { hoursPayFrom: next, termsConfirmed: true, contractCountry: "KW", kwClauseReviewed: true })).resolves.toEqual({ ok: true });
     let v = await hours<HoursView>("month", { month: "2026-10" });
     expect(v.inputs.people.find(p => p.personId === ids.one)?.terms).toMatchObject({ hoursPayFrom: next, contractCountry: "KW" });

@@ -7,7 +7,7 @@ import {
   closedMonthPay,
   totalOf,
 } from "../types/ceo/costsModel";
-import { addDays } from "../types/ceo/time";
+import { addDays, daysInMonth } from "../types/ceo/time";
 import { type CostsApproval, readHoursCosts } from "./ceoHoursClient";
 import { peopleRoster } from "./ceoPeopleModel";
 
@@ -152,8 +152,10 @@ export async function getCostsContext(
 }
 /**
  * Last calendar month's base pay: each person's approved figure from Hours
- * and pay where one exists, the roster's pay for the rest. People approved
- * for that month who have left since still count; nobody is counted twice.
+ * and pay where one exists, the roster's pay for the rest. "The rest" is who
+ * was on the roster that month: not someone who started after it, and still
+ * someone who left during or after it. People approved for that month count
+ * whatever they are now; nobody is counted twice.
  */
 export function lastMonthPay(
   context: CostContext,
@@ -164,14 +166,22 @@ export function lastMonthPay(
   const byId = new Map(
     approvals.filter(a => a.month === month).map(a => [a.personId, a]),
   );
-  const paid = roster.filter(p => p.working || byId.has(p.id));
+  const from = `${month}-01`;
+  const to = `${month}-${String(daysInMonth(from)).padStart(2, "0")}`;
+  const onRosterThen = (p: (typeof roster)[number]) =>
+    p.engagement !== "bot" &&
+    (!p.startedOn || p.startedOn <= to) &&
+    (p.active
+      ? !(p.pausedOn && p.pausedOn <= from)
+      : p.endedOn !== null && p.endedOn >= from);
+  const paid = roster.filter(p => onRosterThen(p) || byId.has(p.id));
   return closedMonthPay(
     paid.map(p => {
       const a = byId.get(p.id);
       return {
         id: p.id,
         name: p.name,
-        monthlyUsd: p.working ? p.monthlyUsd : null,
+        monthlyUsd: onRosterThen(p) ? p.monthlyUsd : null,
         approved: a
           ? { month, amountUsd: a.amountUsd, shadow: a.shadow }
           : null,

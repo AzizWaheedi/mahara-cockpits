@@ -161,8 +161,9 @@ export function closedMonthPay(
       approved += 1;
       continue;
     }
-    if (a) noRate.push(p.name);
     if (p.monthlyUsd !== null) {
+      // Approved in a currency with no dollar rate: roster pay stands in.
+      if (a) noRate.push(p.name);
       total += p.monthlyUsd;
       roster += 1;
     } else noPay.push(p.name);

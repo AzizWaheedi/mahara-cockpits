@@ -7,6 +7,11 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import {
+  buildCostsSheet,
+  type CostContext,
+  lastMonthPay,
+} from "../src/lib/ceoCostsClient";
 import { ceoHoursAction, parseStatus } from "../src/lib/ceoHoursClient";
 import {
   approveItems,
@@ -28,7 +33,7 @@ import {
   signedPay,
 } from "../src/pages/ceo/hours/hoursFormat";
 import { hoursHash, parseHoursHash } from "../src/pages/ceo/hours/useHoursHash";
-import { closedMonthPay } from "../src/types/ceo/costsModel";
+import { closedMonthPay, payroll } from "../src/types/ceo/costsModel";
 import type {
   DayView,
   PersonMonth,
@@ -575,5 +580,114 @@ describe("a figure that rests on undecided days says so", () => {
         }),
       ).days,
     ).toBe(0);
+  });
+});
+
+describe("Costs: who counts in a closed month, and what the plan uses", () => {
+  // Made-up roster on 10 Oct 2026; September is the closed month.
+  const row = (id: number, over: Record<string, unknown>) => ({
+    id,
+    name: `P${id}`,
+    role: "Call centre agent",
+    engagement: "staff",
+    active: true,
+    monthly_cost: 1000,
+    currency: "USD",
+    paused_on: null,
+    started_on: "2026-01-01",
+    ended_on: null,
+    commission_basis: "none",
+    ...over,
+  });
+  const context: CostContext = {
+    lines: [],
+    plans: [],
+    targets: [],
+    bank: null,
+    today: "2026-10-10",
+    people: [
+      row(1, { monthly_cost: 910 }),
+      row(2, { started_on: "2026-10-05" }),
+      row(3, { active: false, ended_on: "2026-09-20" }),
+      row(4, { active: false, ended_on: "2026-08-31" }),
+      row(5, { paused_on: "2026-08-15" }),
+      row(6, { monthly_cost: 700, paused_on: "2026-09-10" }),
+      row(7, { engagement: "bot", role: "Bot" }),
+      row(8, { active: false, ended_on: "2026-07-01", monthly_cost: 500 }),
+      row(9, { monthly_cost: null }),
+    ] as CostContext["people"],
+  };
+  const approvals = [
+    {
+      personId: 1,
+      month: "2026-09",
+      status: "approved" as const,
+      amount: 853.2,
+      currency: "USD",
+      amountUsd: 853.2,
+      shadow: false,
+    },
+    {
+      personId: 8,
+      month: "2026-09",
+      status: "paid" as const,
+      amount: 40,
+      currency: "USD",
+      amountUsd: 40,
+      shadow: false,
+    },
+    {
+      personId: 6,
+      month: "2026-08",
+      status: "paid" as const,
+      amount: 650,
+      currency: "USD",
+      amountUsd: 650,
+      shadow: false,
+    },
+  ];
+
+  test("approved where approved; roster pay for who was on the roster that month; nobody twice", () => {
+    expect(lastMonthPay(context, approvals, "2026-09")).toEqual({
+      month: "2026-09",
+      // P1 approved 853.20; P3 left on 20 Sep (1,000); P6 paused on 10 Sep (700); P8 owed after leaving, approved 40.
+      total: 853.2 + 1000 + 700 + 40,
+      approved: 2,
+      roster: 2,
+      noRate: [],
+      // On the roster in September with no pay: named, never a $0 line.
+      noPay: ["P9"],
+    });
+  });
+
+  test("the sheet carries September's approved figure beside roster pay, and next month's plan prices roster pay", () => {
+    const sheet = buildCostsSheet(context, undefined, approvals);
+    expect(sheet.lastMonthPay?.total).toBe(2593.2);
+    const p1 = sheet.people.find(p => p.id === 1);
+    expect(p1?.monthlyUsd).toBe(910);
+    expect(p1?.approved).toEqual({
+      month: "2026-09",
+      amountUsd: 853.2,
+      shadow: false,
+    });
+    const none = {
+      newCash: null,
+      contracted: null,
+      introsShown: null,
+      demosShown: null,
+      closes: null,
+      mrrDue: null,
+    };
+    const plan = payroll(sheet.people, none, sheet.usdPer, {
+      money: String,
+      count: String,
+    });
+    // Working today: P1 910, P2 1,000, P6 is paused (out), P9 has no pay.
+    expect(plan.base).toBe(1910);
+    expect(plan.noPay).toEqual(["P9"]);
+  });
+
+  test("approved pay that could not be read leaves the closed month unknown, never $0", () => {
+    expect(buildCostsSheet(context, undefined, null).lastMonthPay).toBeNull();
   });
 });

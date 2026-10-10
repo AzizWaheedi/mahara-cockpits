@@ -596,3 +596,177 @@ describe("not tracking now (4.7)", () => {
     expect(now(12 * 60, { role: "Closer" })).toBeNull();
   });
 });
+
+describe("payroll review: joiners, leavers, corrections, missing data and decisions (made-up figures)", () => {
+  const leftOn = (day: string, over: Partial<PersonInputs> = {}) =>
+    person({ active: false, endedOn: day, employment: [{ kind: "employed", from: "2026-01-01", to: day }], ...over });
+
+  test("a leaver whose last day is this month: the rest of a capped correction is not recovered, never carried", () => {
+    const pm = one(leftOn("2026-10-20", { hubstaffDays: fullDays().filter(d => d.day <= "2026-10-20"),
+      adjustments: [adj("correction", { amount: -500, currency: "USD" })] }));
+    expect(pm.pay.amount).toBe(595);
+    expect(pm.pay.corrections.applied).toBe(-59.5);
+    expect(pm.pay.corrections.carriedOut).toBe(0);
+    expect(pm.pay.total).toBe(535.5);
+    expect(pm.lookAt.find(l => l.code === "correction_capped")?.text).toContain("Not recovered: $440.50");
+  });
+
+  test("a month before a leaver's last one still carries the rest into the next month", () => {
+    const pm = one(leftOn("2026-11-20", { hubstaffDays: fullDays(), adjustments: [adj("correction", { amount: -500, currency: "USD" })] }));
+    expect(pm.pay.corrections.applied).toBe(-91);
+    expect(pm.pay.corrections.carriedOut).toBe(-409);
+    expect(pm.lookAt.find(l => l.code === "correction_capped")?.text).toContain("carried into November");
+  });
+
+  test("a pause carries: a paused month with only a carried correction pays 0 and moves the rest on", () => {
+    const pm = one(person({ employment: [{ kind: "employed", from: "2026-01-01", to: null }, { kind: "paused", from: "2026-09-25", to: null }],
+      adjustments: [adj("correction", { amount: -100, currency: "USD", fromMonth: "2026-09", carried: true })] }));
+    expect(pm.pay.total).toBe(0);
+    expect(pm.pay.corrections.carriedOut).toBe(-100);
+  });
+
+  test("a leaver with pay cleared after the last day pays the worked share, in the currency they were paid in", () => {
+    const pm = one(leftOn("2026-10-20", { hubstaffDays: fullDays().filter(d => d.day <= "2026-10-20"), payHistory: [
+      { effectiveFrom: "2026-01-01", monthlyCost: 910, currency: "USD", source: "seed" },
+      { effectiveFrom: "2026-10-25", monthlyCost: 300, currency: "KWD", source: "roster" },
+    ] }));
+    expect(pm.currency).toBe("USD");
+    expect(pm.pay.total).toBe(595);
+    expect(codes(pm)).not.toContain("currency_changed");
+    expect(pm.status.kind).toBe("ready");
+  });
+
+  test("no pay, no working hours or two currencies in the month is no figure, never $0", () => {
+    const noSchedule = one(person({ hubstaffDays: fullDays(), schedules: [] }));
+    expect(codes(noSchedule)).toContain("no_schedule");
+    expect(noSchedule.pay.total).toBeNull();
+    const shadowNoSchedule = one(person({ terms: { ...person().terms, hoursPayFrom: null }, hubstaffDays: fullDays(), schedules: [] }));
+    expect(shadowNoSchedule.pay.total).toBeNull();
+    expect(shadowNoSchedule.pay.shadowAmount).toBeNull();
+    const all = booking(OCT[0], OCT[OCT.length - 1], { leaveTypeId: "unpaid", leaveTypeName: "Unpaid leave" });
+    const noPay = one(person({ role: "Closer", payHistory: [], bookings: [all], ttDays: ttDaysFor(all) }));
+    expect(noPay.hours.target).toBe(0);
+    expect(codes(noPay)).toContain("no_pay");
+    expect(noPay.pay.total).toBeNull();
+    const twoCurrencies = one(person({ hubstaffDays: fullDays(), payHistory: [
+      { effectiveFrom: "2026-01-01", monthlyCost: 910, currency: "USD", source: "seed" },
+      { effectiveFrom: "2026-10-16", monthlyCost: 300, currency: "KWD", source: "roster" },
+    ] }));
+    expect(codes(twoCurrencies)).toContain("currency_changed");
+    expect(twoCurrencies.pay.total).toBeNull();
+    const month = computeMonth(inputs([person({ hubstaffDays: fullDays() }), person({ personId: 2, name: "Person B", role: "Closer", payHistory: [] })]));
+    expect(month.totals.payUsd).toBeNull();
+    expect(month.totals.payMissing).toEqual(["Person B"]);
+  });
+
+  test("a Hubstaff link with no day read (not a member yet) is no data, not 0 h", () => {
+    const p = person({ hubstaffDays: [] });
+    p.accounts[0] = { ...p.accounts[0], memberSince: "2026-11-01" };
+    const pm = one(p);
+    expect(pm.hours.tracked).toBeNull();
+    expect(pm.hours.manual).toBeNull();
+    expect(codes(pm)).toContain("no_data_days");
+    expect(pm.pay.total).toBe(910);
+    expect(pm.pay.provisional).toBe(true);
+    const month = computeMonth(inputs([p]));
+    expect(month.totals.counted).toBeNull();
+  });
+
+  test("shadow with no Hubstaff day at all shows no comparison; the fixed figure stands", () => {
+    const pm = one(person({ terms: { ...person().terms, hoursPayFrom: null }, accounts: person().accounts.filter(a => a.provider === "timetastic") }));
+    expect(pm.shadow).toBe(true);
+    expect(pm.pay.total).toBe(910);
+    expect(pm.pay.shadowAmount).toBeNull();
+    expect(pm.status.kind).toBe("ready");
+  });
+
+  test("undecided days count as absent until decided, and the month waits for the CEO", () => {
+    const blank = [OCT[3], OCT[4], OCT[5]];
+    const pm = one(person({ hubstaffDays: fullDays(blank) }));
+    expect(pm.status.kind).toBe("needs_review");
+    expect(pm.status.reasons.filter(r => r.code === "absent_no_leave").length).toBe(3);
+    expect(pm.pay.total).toBe(805);
+  });
+
+  test("entering 0 h answers a day with nothing tracked: the rest is a short day, inside grace", () => {
+    const pm = one(person({ hubstaffDays: fullDays([OCT[3]]), adjustments: [adj("hours", { day: OCT[3], seconds: 0, mode: "replace" })] }));
+    expect(codes(pm)).not.toContain("absent_no_leave");
+    expect(pm.status.kind).toBe("ready");
+    expect(pm.hours.counted).toBe(175 * H);
+    expect(pm.pay.total).toBe(893.2);
+  });
+
+  test("day-off work under \"needs your OK\" says it isn't counted until counted, and Count it counts it", () => {
+    const rules = { rules: { fromMonth: "2026-10", settings: { dayOffWork: "needs_ok" as const }, savedBy: "x", savedAt: "x" } };
+    const days = OCT.map((d, i) => hub(d, i === 0 ? 2 : 7)).concat([hub("2026-10-09", 5)]);
+    const waiting = one(person({ hubstaffDays: days }), rules);
+    const r = waiting.status.reasons.find(x => x.code === "day_off_not_counted");
+    expect(r?.text).toBe("Worked 5 h on Fri 9 Oct, a day off: not counted unless you count it.");
+    expect(r?.days).toEqual(["2026-10-09"]);
+    expect(r?.seconds).toBe(5 * H);
+    expect(codes(waiting)).not.toContain("worked_day_off");
+    expect(waiting.pay.total).toBe(903.2);
+    const counted = one(person({ hubstaffDays: days, adjustments: [adj("count_work", { day: "2026-10-09", seconds: 5 * H })] }), rules);
+    expect(codes(counted)).not.toContain("day_off_not_counted");
+    expect(counted.status.reasons.find(x => x.code === "worked_day_off")?.text).toContain("5 h, counted");
+    expect(counted.pay.total).toBe(910);
+    // Fixed pay never asks to count it.
+    const fixed = one(person({ role: "Closer", terms: { ...person().terms, hoursPayFrom: null }, hubstaffDays: days }), rules);
+    expect(codes(fixed)).not.toContain("day_off_not_counted");
+  });
+
+  test("overtime approved while overtime is off pays nothing; pay stays at base", () => {
+    const pm = one(person({ hubstaffDays: OCT.map(d => hub(d, 8)), adjustments: [adj("overtime", { day: OCT[0], seconds: 3 * H })] }));
+    expect(pm.hours.overtimePaid).toBe(0);
+    expect(pm.pay.overtime).toBe(0);
+    expect(pm.pay.total).toBe(910);
+  });
+
+  test("a joiner with a raise and a public holiday: pro-rated by target, the holiday paid", () => {
+    const from = "2026-10-15";
+    const days = fullDays().filter(d => d.day >= from && d.day !== "2026-10-22");
+    const pm = one(person({ startedOn: from, addedOn: from, employment: [{ kind: "employed", from, to: null }], hubstaffDays: days,
+      holidays: [{ day: "2026-10-22", name: "Made-up holiday" }],
+      payHistory: [{ effectiveFrom: from, monthlyCost: 910, currency: "USD", source: "seed" }, { effectiveFrom: "2026-10-25", monthlyCost: 1092, currency: "USD", source: "roster" }] }));
+    // 15 Oct to 31 Oct: 14 working days, 98 h, one of them the holiday.
+    expect(pm.hours.target).toBe(98 * H);
+    expect(pm.hours.holidays).toBe(7 * H);
+    expect(pm.hours.counted).toBe(98 * H);
+    // 15 to 24 Oct: 8 working days (56 h) at 910; 25 to 31 Oct: 6 working days (42 h) at 1,092.
+    expect(pm.segments.map(s => [s.base, s.payable / H, s.amount])).toEqual([[910, 56, 280], [1092, 42, 252]]);
+    expect(pm.pay.total).toBe(532);
+  });
+
+  test("the Kuwait rest-day note sends the CEO to the accountant, not to an overtime control", () => {
+    const pm = one(person({ terms: { ...person().terms, contractCountry: "KW", kwClauseReviewedAt: "2026-08-20T08:00:00Z" },
+      hubstaffDays: fullDays().concat([hub("2026-10-09", 3)]) }));
+    const text = pm.status.reasons.find(r => r.code === "kw_rest_day_work")?.text ?? "";
+    expect(text).toContain("Art. 67, 68");
+    expect(text).toContain("accountant");
+    expect(text).not.toContain("overtime");
+  });
+
+  test("an approval whose recompute has no figure reports no change, never +$0.00", async () => {
+    const p = person({ hubstaffDays: fullDays(OCT.slice(0, 3)).concat(OCT.slice(0, 3).map(d => hub(d, 4))) });
+    const ctx = contextOf(inputs([p]));
+    const pm = computePersonMonth(p, ctx);
+    const approval = { status: "approved" as const, ruleVersion: HOURS_RULE_VERSION, inputsHash: await hashPerson(p, ctx), shadow: false,
+      amount: pm.pay.total ?? 0, currency: "USD", amountUsd: null, payableS: pm.hours.payable ?? 0, approvedAt: "2026-11-04T08:00:00Z",
+      approvedBy: "ceo@example.test", paidAt: null, paidNote: null, inputs: approvalSnapshot({ ...p, payHistory: [] }, ctx, []), result: pm };
+    const view = one({ ...p, hubstaffDays: fullDays(), approval });
+    expect(view.status.kind).toBe("approved");
+    expect(view.changedSinceApproval).toBeNull();
+  });
+
+  test("role defaults (CEO decision): call centre and media buyer required by hours, editors optional and never flagged", () => {
+    expect(roleDefaults("Call center agent", "staff")).toMatchObject({ tracking: "required", payBasis: "hours" });
+    expect(roleDefaults("Media buyer", "intern")).toMatchObject({ tracking: "required", payBasis: "hours" });
+    expect(roleDefaults("Video editor", "staff")).toMatchObject({ tracking: "optional", payBasis: "fixed" });
+    const editor = one(person({ role: "Video editor", terms: { ...person().terms, hoursPayFrom: null }, hubstaffDays: fullDays().filter(d => d.day < "2026-10-14") }),
+      { today: "2026-10-14", nowMinute: 12 * 60, sources: [{ ...inputs([]).sources[0], lastOkAt: "2026-10-14T08:45:00Z" }, inputs([]).sources[1]] });
+    expect(editor.paysOnHours).toBe(false);
+    expect(editor.shadow).toBe(false);
+    expect(editor.now).toBeNull();
+    expect(codes(editor)).not.toContain("hubstaff_not_linked");
+  });
+});
