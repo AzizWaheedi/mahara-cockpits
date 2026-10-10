@@ -102,9 +102,23 @@ def perfect_tape(sman: Dict[str, Any], vman: Dict[str, Any], ref: str = "origin/
     t["sql vault"] = [{"name": v["name"]} for v in sman["vault_secret_names"]]
     t["sql extensions"] = [{"extname": e["extname"]} for e in sman["extensions"]]
     t["sql bucket"] = [{"id": VP.BUCKET, "public": False}]
-    t["sql team_hours"] = []   # recorded before the team-hours build was deployed
     t["api functions"] = [{k: f.get(k) for k in ("slug", "status", "version", "verify_jwt", "ezbr_sha256", "updated_at")}
                           for f in sman["edge_functions"]]
+    # Team hours: absent before its deploy, then present exactly as the manifest's team_hours block says (2026-10-10).
+    th = sman.get("team_hours") or {}
+    if th.get("state") == "deployed":
+        rows = [{"kind": "table", "name": n, "rls": True, "browser": False, "service": n not in th.get("no_grant_tables", [])}
+                for n in th["tables"]]
+        rows += [{"kind": "function", "name": n, "rls": None, "browser": n in th.get("ceo_functions", []), "service": True}
+                 for n in th["functions"]]
+        rows += [{"kind": "trigger", "name": n, "rls": None, "browser": None, "service": None} for n in th["triggers"]]
+        t["sql team_hours"] = rows
+        t["sql cron"] = t["sql cron"] + [{"jobname": j["jobname"], "schedule": j["schedule"], "active": True, "command_md5": "recorded"}
+                                         for j in th.get("pg_cron", [])]
+        t["api functions"] = t["api functions"] + [{"slug": e["slug"], "status": "ACTIVE", "version": 1, "verify_jwt": e["verify_jwt"],
+                                                    "ezbr_sha256": None, "updated_at": None} for e in th.get("edge_functions", [])]
+    else:
+        t["sql team_hours"] = []
     t["api secrets"] = [{"name": n, "updated_at": "2026-10-07T01:12:34.068Z"} for n in sman["edge_function_secret_names"]]
     t["pair cron_secret"] = {"function_secret": True, "vault_secret": True, "same": True}
     for slug, names in VP.RECORDED_SOURCES.items():
