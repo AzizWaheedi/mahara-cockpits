@@ -1,4 +1,5 @@
 import type { LucideIcon } from "lucide-react";
+import { useEffect, useRef } from "react";
 import { cn } from "@/lib/utils";
 import { count } from "./format";
 import { Hint } from "./Hint";
@@ -22,7 +23,8 @@ export type FilterOption<K extends string> = {
  * One row of toggle chips that scope the list below them. On a phone the row
  * scrolls sideways instead of wrapping, so it stays one row. The active chip
  * is the teal pill; a chip that would show nothing ("All 0") is left out
- * unless it is the one selected.
+ * unless it is the one selected. The row scrolls itself (sideways only) so
+ * the active chip is never cut off, e.g. after a link lands on the last one.
  */
 export function FilterChips<K extends string>({
   options,
@@ -41,8 +43,22 @@ export function FilterChips<K extends string>({
   ariaLabel: string;
   className?: string;
 }) {
+  const row = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const box = row.current;
+    const chip = Array.from(
+      box?.querySelectorAll<HTMLElement>("[data-chip]") ?? [],
+    ).find(el => el.dataset.chip === value);
+    if (!box || !chip || box.scrollWidth <= box.clientWidth) return;
+    const b = box.getBoundingClientRect();
+    const c = chip.getBoundingClientRect();
+    // scrollLeft only: never moves the page up or down.
+    if (c.left < b.left) box.scrollLeft -= b.left - c.left + 8;
+    else if (c.right > b.right) box.scrollLeft += c.right - b.right + 8;
+  }, [value]);
   return (
     <div
+      ref={row}
       role="group"
       aria-label={ariaLabel}
       // The 4px of padding lets each chip's invisible tap margin reach past
@@ -61,6 +77,7 @@ export function FilterChips<K extends string>({
             <button
               key={o.key}
               type="button"
+              data-chip={o.key}
               aria-pressed={active}
               onClick={() => onChange(o.key)}
               className={cn(

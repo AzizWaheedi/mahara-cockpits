@@ -557,9 +557,9 @@ function PersonBody({
   const hubAt = hub?.lastOkAt ? Date.parse(hub.lastOkAt) : null;
   const ttAt = tt?.lastOkAt ? Date.parse(tt.lastOkAt) : null;
   const unverified = p.days.filter(d => d.kind === "unverified").length;
-  const base = p.segments.length
-    ? p.segments[p.segments.length - 1].base
-    : null;
+  // The latest base on record, as the rule's value per hour uses it.
+  const base =
+    [...p.segments].reverse().find(s => s.base !== null)?.base ?? null;
   const terms = person?.terms;
   const pf = terms?.hoursPayFrom;
 
@@ -730,7 +730,11 @@ function PersonBody({
               ) : null}
               {h.noData ? (
                 <Line
-                  label="Days with no data, paid as worked for now"
+                  label={
+                    p.paysOnHours
+                      ? "Days with no data, paid as worked for now"
+                      : "Days with no data, counted as worked for now"
+                  }
                   value={hm(h.noData)}
                 />
               ) : null}
@@ -774,7 +778,7 @@ function PersonBody({
                 <Line
                   key={s.from}
                   label={`${shortDate(s.from)} to ${shortDate(s.to)}`}
-                  note={`Base ${pay(s.base, p.currency)}, ${hm(s.payable)} of ${hm(s.target)}`}
+                  note={`${s.base === null ? "No pay set" : `Base ${pay(s.base, p.currency)}`}, ${hm(s.payable)} of ${hm(s.target)}`}
                   value={pay(s.amount, p.currency)}
                 />
               ))
@@ -796,9 +800,11 @@ function PersonBody({
               }
               value={signedPay(c.applied, p.currency)}
               note={
-                c.applied !== c.amount
-                  ? `${signedPay(c.amount - c.applied, p.currency)} carried into next month (at most ${pct(view.settings.correctionCapShare)} of a month's pay)`
-                  : undefined
+                c.applied === c.amount
+                  ? undefined
+                  : p.pay.corrections.carriedOut < 0
+                    ? `${signedPay(c.amount - c.applied, p.currency)} carried into next month (at most ${pct(view.settings.correctionCapShare)} of a month's pay)`
+                    : `Not recovered: ${pay(c.applied - c.amount, p.currency)}. They have left, and at most ${pct(view.settings.correctionCapShare)} of a month's pay is taken`
               }
             />
           ))}
@@ -811,7 +817,7 @@ function PersonBody({
                 : p.pay.total === null
                   ? (blocks[0]?.text ?? "Not worked out yet")
                   : undecided.days
-                    ? `Not final: ${count(undecided.days)} undecided day${undecided.days === 1 ? "" : "s"} count as absent until you decide`
+                    ? `Not final: ${undecided.days === 1 ? "1 undecided day counts" : `${count(undecided.days)} undecided days count`} as absent until you decide`
                     : undefined
             }
             strong
@@ -820,11 +826,19 @@ function PersonBody({
             <Line
               label="If pay followed hours"
               value={pay(p.pay.shadowAmount, p.currency)}
-              note={
+              note={[
                 p.pay.shadowUndecidedDays
-                  ? `${count(p.pay.shadowUndecidedDays)} day${p.pay.shadowUndecidedDays === 1 ? "" : "s"} undecided, counted as absent. Shadow: nothing waits on it.`
-                  : "Shadow: shown for comparison, never paid"
-              }
+                  ? `${count(p.pay.shadowUndecidedDays)} day${p.pay.shadowUndecidedDays === 1 ? "" : "s"} undecided, counted as absent.`
+                  : null,
+                h.noData
+                  ? `${hm(h.noData)} with no data, counted as worked.`
+                  : null,
+                p.pay.shadowUndecidedDays || h.noData
+                  ? "Shadow: nothing waits on it."
+                  : "Shadow: shown for comparison, never paid",
+              ]
+                .filter(Boolean)
+                .join(" ")}
             />
           ) : null}
         </dl>

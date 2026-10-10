@@ -1,4 +1,5 @@
 import {
+  ArrowUp,
   ChevronLeft,
   ChevronRight,
   CircleDashed,
@@ -26,7 +27,12 @@ import type { PersonMonth, SourceStatus, Ym } from "@/types/ceo/hoursContract";
 import { ApproveDialog } from "./ApproveDialog";
 import { ConnectionsCard } from "./ConnectionsCard";
 import { HoursMonthView } from "./HoursMonthView";
-import { PROVIDER_NAME, sourceSentence } from "./hoursCopy";
+import {
+  goToConnections,
+  PROVIDER_NAME,
+  sentenceAway,
+  sourceSentence,
+} from "./hoursCopy";
 import { monthLabel } from "./hoursFormat";
 import { LeaveTypes } from "./LeaveTypes";
 import { LinkAccounts } from "./LinkAccounts";
@@ -67,7 +73,8 @@ function freshness(sources: SourceStatus[], rule: string, now: number): string {
       ? `${PROVIDER_NAME[p]} read ${relative(at, now)}`
       : `${PROVIDER_NAME[p]} not read yet`;
   });
-  return [...parts, `Rule ${rule}`].join(" · ");
+  // A non-breaking hyphen: "hours-1" never wraps after "hours-".
+  return [...parts, `Rule ${rule.replace(/-/g, "\u2011")}`].join(" · ");
 }
 
 /** Which empty state the month shows, if any (design 5.9). */
@@ -252,14 +259,26 @@ export function HoursAndPay({ order = 1 }: { order?: number }) {
         icon={KeyRound}
         title="Paste the Hubstaff and Timetastic keys in Connections to see hours and leave."
         text="Until then, hours show as no data and nobody's pay is worked out from them."
+        action={
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={goToConnections}
+          >
+            <ArrowUp aria-hidden />
+            Open Connections
+          </Button>
+        }
         compact
       />
     );
   else if (empty === "never_read" && place.view === "month")
     body = (
       <EmptyState
-        icon={Loader2}
-        title="The first read is running. It takes about a minute."
+        icon={CircleDashed}
+        title="Nothing has been read yet."
+        text="The first read starts when a key is saved and takes about a minute. If the month is still empty after that, press Sync now."
         action={
           <Button
             type="button"
@@ -355,21 +374,29 @@ export function HoursAndPay({ order = 1 }: { order?: number }) {
             ariaLabel="What to show"
           />
           {problems.length ? (
-            <ul className="grid gap-1">
-              {problems.map(s => {
-                const at = s.lastOkAt ? Date.parse(s.lastOkAt) : null;
-                return (
-                  <li
-                    key={s.provider}
-                    className="ceo-stale rounded-lg border px-3 py-2 text-sm"
-                  >
-                    {sourceSentence(s, {
-                      ago: at ? relative(at, now) : undefined,
-                    })}
-                  </li>
-                );
-              })}
-            </ul>
+            <div className="ceo-stale flex flex-wrap items-center justify-between gap-x-3 gap-y-2 rounded-lg border px-3 py-2 text-sm">
+              <ul className="grid min-w-0 flex-1 basis-64 gap-1">
+                {problems.map(s => {
+                  const at = s.lastOkAt ? Date.parse(s.lastOkAt) : null;
+                  const text = sourceSentence(s, {
+                    ago: at ? relative(at, now) : undefined,
+                  });
+                  return (
+                    <li key={s.provider}>{text ? sentenceAway(text) : null}</li>
+                  );
+                })}
+              </ul>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="shrink-0"
+                onClick={goToConnections}
+              >
+                <ArrowUp aria-hidden />
+                Open Connections
+              </Button>
+            </div>
           ) : null}
           {error && shown ? (
             <p className="text-sm text-[var(--ceo-critical)]">{error}</p>

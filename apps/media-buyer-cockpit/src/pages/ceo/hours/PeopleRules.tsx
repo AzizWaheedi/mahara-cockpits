@@ -58,6 +58,8 @@ const COUNTRIES = [
 ];
 
 const field = "h-8 rounded-md border bg-background px-2 text-sm";
+/** A control's name above it on a phone, where the column headings are hidden. */
+const FIELD = "text-[11px] text-muted-foreground @4xl:hidden";
 
 function errorText(e: unknown, fallback: string): string {
   const raw = e instanceof Error ? e.message : String(e ?? "");
@@ -243,17 +245,20 @@ function PersonTerms({
     <div
       id={`hours-person-${p.personId}`}
       className={cn(
-        "grid gap-2 py-3 @4xl:grid-cols-[minmax(9rem,1.2fr)_9.5rem_10rem_minmax(10rem,1fr)_5.5rem_5.5rem] @4xl:items-center @4xl:gap-x-3",
+        "grid grid-cols-2 gap-x-2 gap-y-2 py-3 @4xl:grid-cols-[minmax(9rem,1.2fr)_9.5rem_10rem_minmax(10rem,1fr)_5.5rem_5.5rem] @4xl:items-center @4xl:gap-x-3",
         focused && "rounded-lg bg-[var(--ceo-emphasis-wash)] px-2",
       )}
     >
-      <div className="min-w-0">
+      <div className="col-span-2 min-w-0 @4xl:col-span-1">
         <p className="truncate text-sm font-semibold">{p.name}</p>
         <p className="truncate text-xs text-muted-foreground">
           {p.role ?? "No role set"}
         </p>
       </div>
-      <div className="flex items-center gap-1.5">
+      <div className="grid min-w-0 gap-1">
+        <span className={FIELD} aria-hidden>
+          Tracking
+        </span>
         <AnimatedSelect
           aria-label={`${p.name}: tracking`}
           value={t?.tracking ?? ""}
@@ -264,7 +269,7 @@ function PersonTerms({
               "tracking saved.",
             )
           }
-          className="ceo-select-sm min-w-0 flex-1"
+          className="ceo-select-sm min-w-0"
         >
           <option value="">{`${TRACKING_LABEL[p.tracking.value]} · role`}</option>
           {(["required", "optional", "exempt"] as Tracking[]).map(x => (
@@ -274,7 +279,10 @@ function PersonTerms({
           ))}
         </AnimatedSelect>
       </div>
-      <div className="flex items-center gap-1.5">
+      <div className="grid min-w-0 gap-1">
+        <span className={FIELD} aria-hidden>
+          Pay
+        </span>
         <AnimatedSelect
           aria-label={`${p.name}: pay`}
           value={t?.payBasis ?? ""}
@@ -290,7 +298,7 @@ function PersonTerms({
                 : "pay saved.",
             );
           }}
-          className="ceo-select-sm min-w-0 flex-1"
+          className="ceo-select-sm min-w-0"
         >
           <option value="">{`${BASIS_LABEL[p.payBasis.value]} · role`}</option>
           {(["hours", "fixed"] as PayBasis[]).map(x => (
@@ -300,9 +308,12 @@ function PersonTerms({
           ))}
         </AnimatedSelect>
       </div>
-      <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+      <div className="col-span-2 flex min-w-0 flex-wrap items-center gap-1.5 @4xl:col-span-1">
         {p.payBasis.value === "hours" ? (
           <>
+            <span className={cn(FIELD, "basis-full")} aria-hidden>
+              Pay follows hours from
+            </span>
             <AnimatedSelect
               aria-label={`${p.name}: pay follows hours from`}
               value={t?.hoursPayFrom ?? ""}
@@ -337,41 +348,53 @@ function PersonTerms({
           </span>
         )}
       </div>
-      <AnimatedSelect
-        aria-label={`${p.name}: contract country`}
-        value={t?.contractCountry ?? ""}
-        disabled={busy}
-        onChange={e =>
-          void save(
-            { contractCountry: e.target.value || null },
-            "contract country saved.",
-          )
-        }
-        className="ceo-select-sm"
-      >
-        <option value="">—</option>
-        {COUNTRIES.map(x => (
-          <option key={x} value={x}>
-            {x}
-          </option>
-        ))}
-      </AnimatedSelect>
-      <AnimatedSelect
-        aria-label={`${p.name}: works in`}
-        value={t?.worksIn ?? ""}
-        disabled={busy}
-        onChange={e => void save({ worksIn: e.target.value || null }, "saved.")}
-        className="ceo-select-sm"
-      >
-        <option value="">—</option>
-        {COUNTRIES.map(x => (
-          <option key={x} value={x}>
-            {x}
-          </option>
-        ))}
-      </AnimatedSelect>
+      <div className="grid min-w-0 gap-1">
+        <span className={FIELD} aria-hidden>
+          Contract
+        </span>
+        <AnimatedSelect
+          aria-label={`${p.name}: contract country`}
+          value={t?.contractCountry ?? ""}
+          disabled={busy}
+          onChange={e =>
+            void save(
+              { contractCountry: e.target.value || null },
+              "contract country saved.",
+            )
+          }
+          className="ceo-select-sm"
+        >
+          <option value="">—</option>
+          {COUNTRIES.map(x => (
+            <option key={x} value={x}>
+              {x}
+            </option>
+          ))}
+        </AnimatedSelect>
+      </div>
+      <div className="grid min-w-0 gap-1">
+        <span className={FIELD} aria-hidden>
+          Works in
+        </span>
+        <AnimatedSelect
+          aria-label={`${p.name}: works in`}
+          value={t?.worksIn ?? ""}
+          disabled={busy}
+          onChange={e =>
+            void save({ worksIn: e.target.value || null }, "saved.")
+          }
+          className="ceo-select-sm"
+        >
+          <option value="">—</option>
+          {COUNTRIES.map(x => (
+            <option key={x} value={x}>
+              {x}
+            </option>
+          ))}
+        </AnimatedSelect>
+      </div>
       {t?.worksIn === "EG" ? (
-        <p className="text-xs text-muted-foreground @4xl:col-span-6">
+        <p className="col-span-2 text-xs text-muted-foreground @4xl:col-span-6">
           {EGYPT_NOTE}
         </p>
       ) : null}
@@ -886,7 +909,7 @@ function Holidays({
                 <span className="w-24 font-mono text-xs tabular-nums text-muted-foreground">
                   {dayLabel(h.day)}
                 </span>
-                <span className="min-w-0 flex-1">{h.name}</span>
+                <span className="min-w-[8rem] flex-1">{h.name}</span>
                 <span className="text-xs text-muted-foreground">
                   {h.source === "timetastic" ? "Timetastic" : "Yours"}
                 </span>

@@ -31,7 +31,7 @@ export const SOURCE_CHIP: Record<
   unchecked: { tone: "warning", label: "Not checked yet" },
   missing_key: { tone: "neutral", label: "Not connected" },
   refused: { tone: "serious", label: "Key refused" },
-  plan_blocked: { tone: "serious", label: "Plan has no API access" },
+  plan_blocked: { tone: "serious", label: "No API access" },
   needs_new_key: { tone: "serious", label: "Needs a new key" },
   firewall_blocked: { tone: "serious", label: "Firewall blocked" },
   failing: { tone: "serious", label: "Reads failing" },
@@ -84,7 +84,31 @@ export const ZONE_NOTE =
   "Hubstaff's time zone isn't Kuwait. The cockpit sorts time into Kuwait days itself, so pay is right. Hubstaff's own reports will show different days.";
 
 export const CRON_MISSING =
-  "The hourly read isn't scheduled yet. It is switched on when this build is deployed.";
+  "The hourly read isn't switched on yet, so nothing updates by itself. Press Sync now to read.";
+
+/**
+ * A connection sentence shown away from the Connections card (the line above
+ * the month's tiles): "here" and "this card" there mean Connections. Works on
+ * the server's sentences too, which use the same words.
+ */
+export function sentenceAway(text: string): string {
+  return text
+    .replace(
+      /\b([Pp]aste (?:it|a new one|the new one)) here\b/g,
+      "$1 in Connections",
+    )
+    .replace(/\bthis card says why\b/g, "Connections says why");
+}
+
+/** Scrolls the Connections card into view (it sits above Hours and pay). */
+export function goToConnections(): void {
+  document
+    .getElementById(CONNECTIONS_ID)
+    ?.scrollIntoView({ block: "start", behavior: "smooth" });
+}
+
+/** The Connections card's anchor. */
+export const CONNECTIONS_ID = "team-hours-connections";
 
 /** States where the key field shows without pressing Replace key. */
 export const NEEDS_KEY = new Set<SourceState>([
@@ -221,7 +245,17 @@ export function daySentence(day: string, label?: string): string {
   return label || dayLabel(day);
 }
 
-/** What the browser sends: the figure it showed, so the server can refuse a different one. */
+/**
+ * The hours counted from real data, for a row or a summary line: days with
+ * no data are left out (the rule pays them as worked only until they are
+ * read, and the pay figure says "provisional"), and someone with no Hubstaff
+ * data at all reads "no data" (null), never 0 h and never a full month.
+ */
+export function countedSoFar(p: PersonMonth): number | null {
+  if (p.hours.counted === null || p.hours.tracked === null) return null;
+  return Math.max(0, p.hours.counted - p.hours.noData);
+}
+
 /**
  * Days whose pay follows hours, with nothing tracked and nothing decided yet.
  * Until the CEO decides them the rule counts them as absent (the cautious
@@ -243,6 +277,7 @@ export function undecidedDays(p: PersonMonth): {
   return { days, seconds };
 }
 
+/** What the browser sends: the figure it showed, so the server can refuse a different one. */
 export function approveItems(
   people: PersonMonth[],
   ruleVersion: string,

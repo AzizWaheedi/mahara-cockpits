@@ -607,14 +607,19 @@ function ClosedMonthLine({
       ? `${month}'s approved pay for ${plural(pay.approved, "person", "people")}`
       : null,
     pay.roster
-      ? `the roster for ${plural(pay.roster, "person", "people")}`
+      ? `roster pay for ${plural(pay.roster, "person", "people")}`
       : null,
   ].filter(Boolean);
+  // Nobody counted is "not known", never a $0 month.
+  const total = parts.length
+    ? `Base pay for ${month}: ${money(pay.total)}, from ${parts.join(" and ")}.`
+    : `No base pay for ${month} yet: nobody is approved on Hours and pay or has pay on the roster.`;
+  const left = pay.noPay.length
+    ? ` It leaves out ${pay.noPay.join(", ")}, with no pay in dollars on the roster, so it is a floor.`
+    : "";
   return (
     <>
-      <p>
-        {`Base pay for ${month}: ${money(pay.total)}, from ${parts.length ? parts.join(", ") : "nobody yet"}. The month above stays on roster pay.`}
-      </p>
+      <p>{`${total}${left} The month above stays on roster pay.`}</p>
       {pay.noRate.length ? (
         <p>{`No dollar rate for ${pay.noRate.join(", ")}'s approved currency: counted at roster pay.`}</p>
       ) : null}

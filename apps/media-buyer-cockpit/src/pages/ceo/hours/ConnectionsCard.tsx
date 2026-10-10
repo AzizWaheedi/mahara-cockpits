@@ -14,6 +14,7 @@ import type {
 import { api, useAction } from "@/lib/cockpitApi";
 import type { Provider, SourceStatus } from "@/types/ceo/hoursContract";
 import {
+  CONNECTIONS_ID,
   CRON_MISSING,
   NEEDS_KEY,
   PROVIDER_NAME,
@@ -403,6 +404,7 @@ export function ConnectionsCard({
 
   return (
     <SectionCard
+      id={CONNECTIONS_ID}
       title="Connections"
       description={
         folded
@@ -416,7 +418,18 @@ export function ConnectionsCard({
       {folded ? null : (
         <div className="grid gap-1">
           {error ? (
-            <p className="text-sm text-[var(--ceo-critical)]">{error}</p>
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+              <p className="text-sm text-[var(--ceo-critical)]">{error}</p>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => void onChanged()}
+              >
+                <RefreshCw aria-hidden />
+                Try again
+              </Button>
+            </div>
           ) : !status ? (
             <p className="flex items-center gap-2 text-sm text-muted-foreground">
               <Loader2 className="size-4 animate-spin" aria-hidden />
@@ -437,7 +450,7 @@ export function ConnectionsCard({
               )}
             </div>
           )}
-          {status?.cronScheduled === false ? (
+          {status?.cronScheduled === false && !noKeys ? (
             <p className="text-xs text-muted-foreground">{CRON_MISSING}</p>
           ) : null}
           {msg ? (

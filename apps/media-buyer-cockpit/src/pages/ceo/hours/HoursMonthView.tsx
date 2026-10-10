@@ -7,7 +7,12 @@ import { Button } from "@/components/ui/button";
 import type { HoursView } from "@/lib/ceoHoursClient";
 import { cn } from "@/lib/utils";
 import type { NowFlag, PersonMonth } from "@/types/ceo/hoursContract";
-import { sortPeople, statusChip, undecidedDays } from "./hoursCopy";
+import {
+  countedSoFar,
+  sortPeople,
+  statusChip,
+  undecidedDays,
+} from "./hoursCopy";
 import { hm, hours, hoursDec, monthLabel, pay } from "./hoursFormat";
 import { decideDaysOf, MonthRibbon } from "./MonthRibbon";
 
@@ -52,13 +57,11 @@ function counts(p: PersonMonth) {
   const fixed =
     (!p.paysOnHours && !p.shadow) ||
     (p.hours.expected === 0 && p.hours.target === 0);
+  // Real data only: days not read yet never show as hours counted.
+  const soFar = countedSoFar(p);
   return {
     fixed,
-    counted: fixed
-      ? "—"
-      : p.hours.counted === null
-        ? "no data"
-        : hoursDec(p.hours.counted),
+    counted: fixed ? "—" : soFar === null ? "no data" : hoursDec(soFar),
     target: hoursDec(p.hours.target),
   };
 }
@@ -191,6 +194,16 @@ export function HoursMonthView({
   const ceo = nc("ceo").length;
   const bots = nc("bot").length;
   const noRole = nc("no_role");
+  const notCountedLine = [
+    ceo || bots
+      ? `Not counted: ${[ceo ? "the CEO" : null, bots ? plural(bots, "shared account") : null].filter(Boolean).join(", ")}.`
+      : null,
+    noRole.length
+      ? `No role: ${noRole.map(x => x.name).join(", ")}. Set a role in On the team to work out pay.`
+      : null,
+  ]
+    .filter(Boolean)
+    .join(" ");
   const monthName = monthLabel(view.month);
 
   return (
@@ -206,8 +219,8 @@ export function HoursMonthView({
           variant="plain"
           label="Counted"
           value={t.counted === null ? null : hours(t.counted)}
-          naHint="Some days have no Hubstaff data yet, so the month can't be totalled."
-          hint="Tracked time, paid leave, public holidays and days you counted as worked, for the people whose pay follows hours or is in shadow."
+          naHint="No Hubstaff data yet for the people whose pay follows hours."
+          hint="Tracked time, paid leave, public holidays and days you counted as worked, for the people whose pay follows hours or is in shadow. Days not read yet are left out."
         />
         <StatTile
           variant="plain"
@@ -225,7 +238,7 @@ export function HoursMonthView({
               : "Pay isn't worked out for everyone yet. The rows say why."
           }
           status={
-            t.payProvisional ? (
+            t.payProvisional && t.payUsd !== null ? (
               <StatusChip
                 tone="neutral"
                 label="provisional"
@@ -333,19 +346,8 @@ export function HoursMonthView({
         </div>
       ) : null}
 
-      {ceo || bots || noRole.length || nc("not_employed").length ? (
-        <p className="text-xs text-muted-foreground">
-          {[
-            ceo || bots
-              ? `Not counted: ${[ceo ? "the CEO" : null, bots ? plural(bots, "shared account") : null].filter(Boolean).join(", ")}.`
-              : null,
-            noRole.length
-              ? `No role: ${noRole.map(x => x.name).join(", ")}. Set a role in On the team to work out pay.`
-              : null,
-          ]
-            .filter(Boolean)
-            .join(" ")}
-        </p>
+      {notCountedLine ? (
+        <p className="text-xs text-muted-foreground">{notCountedLine}</p>
       ) : null}
 
       {ready.length || decide.length || blocked.length ? (

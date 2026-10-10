@@ -8,7 +8,7 @@ import { useNow } from "@/components/ceo/useCeo";
 import type { HoursView } from "@/lib/ceoHoursClient";
 import { api, useAction } from "@/lib/cockpitApi";
 import { nowSentence } from "./HoursMonthView";
-import { statusChip } from "./hoursCopy";
+import { countedSoFar, statusChip } from "./hoursCopy";
 import { hoursDec, monthLabel, pay } from "./hoursFormat";
 import { decideDaysOf, MonthRibbon } from "./MonthRibbon";
 import { hoursHash } from "./useHoursHash";
@@ -49,6 +49,7 @@ export function PersonHoursStrip({ personId }: { personId: number }) {
   if (failed || !view || !p) return null;
 
   const fixed = !p.paysOnHours && !p.shadow;
+  const soFar = countedSoFar(p);
   const chip = statusChip(p);
   const flag = p.now ? nowSentence(p.now, now) : null;
   const open = () =>
@@ -63,7 +64,7 @@ export function PersonHoursStrip({ personId }: { personId: number }) {
       description={
         fixed
           ? "Fixed pay: tracked time is shown for information."
-          : `${p.hours.counted === null ? "No data yet" : hoursDec(p.hours.counted)} counted of ${hoursDec(p.hours.target)}${p.pay.total === null ? "" : ` · ${pay(p.pay.total, p.currency)}${p.pay.provisional ? " provisional" : ""}`}`
+          : `${soFar === null ? "No data yet" : hoursDec(soFar)} counted of ${hoursDec(p.hours.target)}${p.pay.total === null ? "" : ` · ${pay(p.pay.total, p.currency)}${p.pay.provisional ? " provisional" : ""}`}`
       }
       actions={<StatusChip tone={chip.tone} label={chip.label} />}
       order={1}

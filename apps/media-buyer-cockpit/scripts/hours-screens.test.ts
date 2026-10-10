@@ -12,6 +12,7 @@ import {
   approveItems,
   chipReason,
   SOURCE_CHIP,
+  sentenceAway,
   sortPeople,
   sourceSentence,
   statusChip,
@@ -27,19 +28,19 @@ import {
   signedPay,
 } from "../src/pages/ceo/hours/hoursFormat";
 import { hoursHash, parseHoursHash } from "../src/pages/ceo/hours/useHoursHash";
-import { computeMonth } from "../src/types/ceo/hoursModel";
-import {
-  adj as fxAdj,
-  fullDays,
-  inputs as fxInputs,
-  person as fxPerson,
-} from "./lib/hoursFixtures";
 import { closedMonthPay } from "../src/types/ceo/costsModel";
 import type {
   DayView,
   PersonMonth,
   StatusKind,
 } from "../src/types/ceo/hoursContract";
+import { computeMonth } from "../src/types/ceo/hoursModel";
+import {
+  fullDays,
+  adj as fxAdj,
+  inputs as fxInputs,
+  person as fxPerson,
+} from "./lib/hoursFixtures";
 
 const H = 3600;
 
@@ -284,6 +285,47 @@ describe("connections say what to do next", () => {
     for (const s of Object.values(SOURCE_CHIP))
       expect(s.label.length).toBeGreaterThan(0);
   });
+  test("above the month, a sentence points to Connections, not 'here'", () => {
+    // The browser's sentences for every state, and the server's own (the
+    // note CASE in the migration), as the line above the tiles shows them.
+    const client = (Object.keys(SOURCE_CHIP) as (keyof typeof SOURCE_CHIP)[])
+      .flatMap(state =>
+        (["hubstaff", "timetastic"] as const).map(provider =>
+          sourceSentence(
+            { provider, state, note: null },
+            { ago: "3 h ago", expires: "7 Jan" },
+          ),
+        ),
+      )
+      .filter((t): t is string => Boolean(t));
+    const sql = readFileSync(
+      new URL(
+        "../../../supabase/migrations/20261009a_cockpit_team_hours.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    );
+    const block = sql.slice(
+      sql.indexOf("note:=CASE"),
+      sql.indexOf("ELSE NULL END;", sql.indexOf("note:=CASE")),
+    );
+    const server = [...block.matchAll(/'((?:[^']|'')+)'/g)]
+      .map(m => m[1].replace(/''/g, "'"))
+      .filter(t => t.length > 40);
+    expect(server.length).toBeGreaterThan(8);
+    for (const text of [...client, ...server]) {
+      const away = sentenceAway(text);
+      expect(away).not.toMatch(/\bhere\b/);
+      expect(away).not.toContain("this card");
+    }
+    expect(
+      sentenceAway(
+        "Hubstaff refused the saved key. It may have expired or been revoked. Paste a new one here.",
+      ),
+    ).toBe(
+      "Hubstaff refused the saved key. It may have expired or been revoked. Paste a new one in Connections.",
+    );
+  });
 });
 
 /** A client that records what it was asked, for the routing tests. */
@@ -505,7 +547,9 @@ describe("a figure that rests on undecided days says so", () => {
   // The real rule over made-up inputs: three October days with nothing tracked.
   const blank = ["2026-10-10", "2026-10-11", "2026-10-12"];
   const one = (over: Parameters<typeof fxPerson>[0] = {}) => {
-    const p = computeMonth(fxInputs([fxPerson({ hubstaffDays: fullDays(blank), ...over })])).people[0];
+    const p = computeMonth(
+      fxInputs([fxPerson({ hubstaffDays: fullDays(blank), ...over })]),
+    ).people[0];
     if (!p) throw new Error("missing person");
     return p;
   };
@@ -513,11 +557,23 @@ describe("a figure that rests on undecided days says so", () => {
     const asked = one();
     expect(asked.status.kind).toBe("needs_review");
     expect(undecidedDays(asked)).toEqual({ days: 3, seconds: 21 * H });
-    const decided = one({ adjustments: blank.map(day => fxAdj("absent_unpaid", { day })) });
+    const decided = one({
+      adjustments: blank.map(day => fxAdj("absent_unpaid", { day })),
+    });
     expect(undecidedDays(decided)).toEqual({ days: 0, seconds: 0 });
   });
   test("fixed pay and shadow months never show it", () => {
-    expect(undecidedDays(one({ terms: { ...fxPerson().terms, hoursPayFrom: null } })).days).toBe(0);
-    expect(undecidedDays(one({ role: "Closer", terms: { ...fxPerson().terms, hoursPayFrom: null } })).days).toBe(0);
+    expect(
+      undecidedDays(one({ terms: { ...fxPerson().terms, hoursPayFrom: null } }))
+        .days,
+    ).toBe(0);
+    expect(
+      undecidedDays(
+        one({
+          role: "Closer",
+          terms: { ...fxPerson().terms, hoursPayFrom: null },
+        }),
+      ).days,
+    ).toBe(0);
   });
 });
