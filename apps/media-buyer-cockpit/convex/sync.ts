@@ -7,6 +7,7 @@ import {
   internalQuery,
 } from "./_generated/server";
 import { CPB_GATE, CPL_GATE, NEW_CAMPAIGN_FORM_URL } from "./constants";
+import { withoutExcludedAds } from "./excludedAds";
 import {
   accountIndex,
   budgetToUsd,
@@ -1316,6 +1317,8 @@ async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
   } catch (e) {
     console.error(`meta fallback: ${String(e).slice(0, 200)}`);
   }
+  // Unauthorized ads from the October 2026 account compromise never count.
+  rows = withoutExcludedAds(rows);
 
   // Client Data → account name to client name.
   const head = clientRows[0] ?? [];

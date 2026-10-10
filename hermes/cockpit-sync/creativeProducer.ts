@@ -2,6 +2,7 @@
 import {type Row, callTool, graph, unwrap, recordLog, assertNativeFence} from './runtime';
 import {CLIENTS_LIST, CREATIVE_LIST, VIDEO_LIST, CONTENT_LIST} from './calculator';
 import {latestUpdates} from './clientUpdates';
+import {withoutExcludedAds} from './excludedAds';
 const TRACKER = '1pBEyClUxPLc4-RdXR8gZ0MxsLkLLFkWJwkiVqVf2rro';
 async function clickup(path: string): Promise<Row> { const data = unwrap(await callTool('pd_clickup_proxy_get', {url: `https://api.clickup.com/api/v2/${path}`})); if (!Array.isArray(data.tasks)) throw new Error('ClickUp did not return a complete task collection'); return data; }
 async function sheet(id: string, range: string): Promise<string[][]> { const data = unwrap(await callTool('pd_google_sheets_proxy_get', {url: `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(range)}`})); if (!Array.isArray(data.values)) throw new Error('Tracker sheet is unavailable'); return data.values; }
@@ -386,7 +387,7 @@ function destination(ad: Row) {
 }
 
 export async function gatherFunnels(prior:Row[]=[]): Promise<Row[]> {
-  const rows = await sheet(TRACKER, "'data_fb'!A3:Y11005");
+  const rows = withoutExcludedAds(await sheet(TRACKER, "'data_fb'!A3:Y11005"));
   const since = new Date(Date.now() - 30 * 86400_000)
     .toISOString()
     .slice(0, 10);

@@ -123,6 +123,7 @@ REQUIRED=(
  'hermes/cockpit-sync/csmProfileCalculations.ts',
  'hermes/cockpit-sync/csmProviders.ts',
  'hermes/cockpit-sync/csmRoster.ts',
+ 'hermes/cockpit-sync/excludedAds.ts',
  'hermes/cockpit-sync/marketProducer.ts',
  'hermes/cockpit-sync/metaMedia.ts',
  'hermes/cockpit-sync/RUNBOOK.md',
