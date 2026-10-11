@@ -316,11 +316,13 @@ async function intakeRole(ctx: Ctx, role: Role, m: Meta): Promise<RoleResult> {
         at: ctx.now().toISOString(),
       });
       // A contact with a card on this board keeps it, so a cursor reset
-      // re-reads the form without doubling anyone.
-      const existing = await ghl.read(
+      // re-reads the form without doubling anyone. A search that fails stops
+      // here, like the notes read: a card filed without knowing whether one
+      // is there could put the same person on the board twice.
+      const existing = await ghl.readOk(
         `/opportunities/search?location_id=${loc}&pipeline_id=${encodeURIComponent(pipelineId)}&contact_id=${encodeURIComponent(contactId)}&limit=1`,
       );
-      if (existing.status === 200 && (existing.body?.opportunities ?? []).length) {
+      if ((existing?.opportunities ?? []).length) {
         out.skipped += 1;
         seen.add(token);
         continue;

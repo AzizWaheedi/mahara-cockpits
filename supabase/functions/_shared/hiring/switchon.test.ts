@@ -152,6 +152,24 @@ test("a notes read that fails stops the application, so the next run tries it ag
   assert.deepEqual((store.meta.get("intake:zo1Zm6u6") as { seen: string[] }).seen, [], "still unseen");
 });
 
+test("a card search that fails files no card, so the next run tries it again", async () => {
+  const store = new FakeStore();
+  const { fetch, calls } = fakeFetch([
+    ...ghlReads,
+    ...typeform,
+    ["POST", /\/contacts\/upsert$/, () => ({ body: { contact: { id: "c-9" } } })],
+    ["GET", /\/contacts\/c-9\/notes$/, () => ({ body: { notes: [] } })],
+    ["POST", /\/contacts\/c-9\/notes$/, () => ({ body: {} })],
+    ["GET", /\/opportunities\/search\?/, () => ({ status: 422, body: { message: "bad search" } })],
+    ["POST", /\/opportunities\/$/, () => ({ body: { opportunity: { id: "opp-9" } } })],
+  ]);
+  const out = await runIntake(ctxFor(store, fetch, { HIRING_APPLY: "true" }), ["media-buyer"]);
+  assert.equal(out.ok, false);
+  assert.equal(out.added, 0);
+  assert.ok(!calls.some(c => c.method === "POST" && c.url.endsWith("/opportunities/")), "no card without the search");
+  assert.deepEqual((store.meta.get("intake:zo1Zm6u6") as { seen: string[] }).seen, [], "still unseen");
+});
+
 const answers: Answer[] = [
   { ref: "n", title: "Your full name", type: "short_text", shape: "text", text: "Sara Ali" },
   { ref: "w", title: "Why this role", type: "long_text", shape: "text", text: "I ran GCC accounts for three years." },
