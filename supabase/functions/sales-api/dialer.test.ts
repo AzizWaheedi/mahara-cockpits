@@ -543,3 +543,30 @@ describe("the call centre's rules: missed calls and early call-backs (2026-09-27
     expect(tooEarly).toEqual([]);
   });
 });
+
+describe("reschedule and book from the lead (2026-10-11)", () => {
+  const CAL = {
+    JTNg1Wd62qxuT8W8sroh: { type: "follow_up" },
+    NDBNz6Og4yfpdpWmHrue: { type: "demo" },
+    Vo8Jh1EJQE3pzwsKebxK: { type: "callback" },
+  };
+  test("a follow-up call goes on the one Follow up call calendar, or nowhere", () => {
+    expect(calendarFor("follow_up", "qualified", CAL)).toBe("JTNg1Wd62qxuT8W8sroh");
+    expect(calendarFor("follow_up", null, {})).toBe("");
+    expect(calendarFor("follow_up", null)).toBe("");
+    // New demos keep booking on Demo, never Demo 2.
+    expect(calendarFor("demo", null, CAL)).toBe(BOOKING_CALENDARS.demo);
+  });
+  test("a follow-up call booked moves no stage; a moved call says Rescheduled", () => {
+    expect(targetRoles("lead", "booked", "booked", "follow_up")).toEqual([]);
+    expect(targetRoles("lead", "booked", "booked", "demo")).toEqual(["demo_booked"]);
+    expect(targetRoles("lead", "booked", "booked", "intro")).toEqual(["intro_booked"]);
+    expect(appointmentEffect("confirm", "rescheduled")).toEqual({ mark: null, confirmation: null, ladder: false, rebook: false });
+  });
+  test("a signed client or a won stage never comes up for a setter, even when they write", () => {
+    const wrote = { inbound_at: NOW - 60_000, last_dial_at: NOW - 86_400_000, reached: true };
+    expect(rankForSetter([lead({ contact_id: "s", signed: true, ...wrote })], "me", NOW)).toEqual([]);
+    expect(rankForSetter([lead({ contact_id: "w", stage_role: "won", ...wrote })], "me", NOW)).toEqual([]);
+    expect(rankForSetter([lead({ contact_id: "o", ...wrote })], "me", NOW).map(r => r.contact_id)).toEqual(["o"]);
+  });
+});

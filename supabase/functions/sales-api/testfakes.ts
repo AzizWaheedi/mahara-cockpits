@@ -44,6 +44,16 @@ const UNIQUES: Record<string, Unique[]> = {
   ],
   cockpit_sales_followup_stops: [{ name: "cockpit_sales_followup_stops_pkey", cols: ["contact_id", "said_at"] }],
   cockpit_sales_alerts: [{ name: "cockpit_sales_alerts_dedupe_key_key", cols: ["dedupe_key"] }],
+  // 20261011a: the reschedule's press is one press; one move at a time per call.
+  cockpit_sales_reschedules: [
+    { name: "cockpit_sales_reschedules_pkey", cols: ["id"] },
+    { name: "cockpit_sales_reschedules_request_id_key", cols: ["request_id"] },
+    { name: "cockpit_sales_reschedules_one_moving", cols: ["appointment_id"], where: r => r.state === "moving" },
+  ],
+  cockpit_sales_bookings: [
+    { name: "cockpit_sales_bookings_pkey", cols: ["id"] },
+    { name: "cockpit_sales_bookings_one_in_flight", cols: ["contact_id"], where: r => r.state === "creating" },
+  ],
   cockpit_sales_live: [
     { name: "cockpit_sales_live_pkey", cols: ["id"] },
     { name: "cockpit_sales_live_one_claim_per_closer", cols: ["claimed_by"], where: r => ["claimed", "room_ready", "lead_joined"].includes(String(r.state)) },
@@ -133,6 +143,44 @@ function match(row: Row, col: string, expr: string): boolean {
       throw new Error(`fake db: unknown operator ${op}`);
   }
   return neg ? !ok : ok;
+}
+
+/** The items of a PostgREST or=(...) list, split at its top-level commas. */
+function orItems(expr: string): string[] {
+  const inner = expr.trim().replace(/^\(/, "").replace(/\)$/, "");
+  const out: string[] = [];
+  let depth = 0;
+  let quoted = false;
+  let cur = "";
+  for (const ch of inner) {
+    if (ch === '"') quoted = !quoted;
+    if (!quoted && ch === "(") depth++;
+    if (!quoted && ch === ")") depth--;
+    if (!quoted && depth === 0 && ch === ",") {
+      out.push(cur);
+      cur = "";
+      continue;
+    }
+    cur += ch;
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+
+/** One row against a PostgREST or=(col.op.value,...) filter (flat lists only, as the modules write them). */
+function matchOr(row: Row, expr: string): boolean {
+  return orItems(expr).some(item => {
+    if (/^(and|or)\(/.test(item)) throw new Error(`fake db: nested ${item.slice(0, 4)} in or= is not faked`);
+    const dot = item.indexOf(".");
+    const col = item.slice(0, dot);
+    const rest = item.slice(dot + 1).replace(/^((?:not\.)?[a-z]+\.)"(.*)"$/, "$1$2");
+    return match(row, col, rest);
+  });
+}
+
+/** A row against every filter of a request. */
+function matchAll(row: Row, filters: [string, string][]): boolean {
+  return filters.every(([c, e]) => (c === "or" ? matchOr(row, e) : match(row, c, e)));
 }
 
 export class FakeDb {
@@ -330,6 +378,17 @@ export class FakeDb {
       if (r.state === "running") r.started_at ??= now;
     }
     if (table === "cockpit_sales_availability") r.updated_at = now;
+    if (table === "cockpit_sales_reschedules") {
+      r.created_at ??= now;
+      r.state ??= "moving";
+      r.after_start ??= false;
+    }
+    if (table === "cockpit_sales_bookings") {
+      r.created_at ??= now;
+      r.state ??= "creating";
+    }
+    if (table === "cockpit_sales_confirmations") r.at ??= now;
+    if (table === "cockpit_audit_log") r.created_at ??= now;
     return r;
   }
 
@@ -443,7 +502,7 @@ export class FakeDb {
   }
 
   private pick(table: string, filters: [string, string][]): Row[] {
-    return this.t(table).filter(r => filters.every(([c, e]) => match(r, c, e)));
+    return this.t(table).filter(r => matchAll(r, filters));
   }
 
   async db(path: string, init: DbInit = {}): Promise<Row[]> {
@@ -460,7 +519,7 @@ export class FakeDb {
         !this.t(table).some(r => r.worker === "sales-desk" && r.job === "rooms")
       ) {
         const alive: Row = { worker: "sales-desk", job: "rooms", ok: true, detail: "Working. No rooms were asked for in the last 60 seconds.", at: this.iso() };
-        if (filters.every(([c, e]) => match(alive, c, e))) rows.push(alive);
+        if (matchAll(alive, filters)) rows.push(alive);
       }
       if (params.order) {
         const [col, dir] = params.order.split(".");
@@ -495,7 +554,7 @@ export class FakeDb {
         this.beforePatch = null;
         hook(table, rows);
       }
-      const still = rows.filter(r => filters.every(([c, e]) => match(r, c, e)));
+      const still = rows.filter(r => matchAll(r, filters));
       const out: Row[] = [];
       for (const r of still) {
         const next = { ...r, ...structuredClone(init.body as Row) };
@@ -766,4 +825,292 @@ export function seedLeadZoomJoin(db: FakeDb, roomId: string, o: { at?: string; n
     },
   ]);
   return meeting;
+}
+
+// ---------------------------------------------------------------------------
+// HighLevel's calendars (2026-10-11): the shapes the booking and reschedule
+// path reads, recorded with read-only GETs on the test contact
+// VjPfR4Cc1Y0OFvaqeor5 ("cockpit test (ignore)") and the sales calendars'
+// settings. The field names, the time formats and the calendars' limits are
+// HighLevel's; the ids of people and the times a test uses are invented.
+// ---------------------------------------------------------------------------
+
+/** GET /calendars/events/appointments/{id}: times with their offset, dateAdded in UTC, the Zoom link in address. */
+export const RECORDED_APPOINTMENT: Row = {
+  appointment: {
+    appointmentStatus: "cancelled",
+    appoinmentStatus: "cancelled",
+    statusId: "mKe9seUW3UlksrqzQgON",
+    state: "cancelled",
+    address: " ",
+    calendarId: "cFeDl0FY8iaXll61lus8",
+    contactId: "VjPfR4Cc1Y0OFvaqeor5",
+    dateAdded: "2026-09-27T07:24:51.000Z",
+    dateUpdated: "2026-10-08T11:36:03.000Z",
+    endTime: "2026-09-27T12:55:00+03:00",
+    groupId: "0ozKzZArYfdQ566C9ESq",
+    id: "qc0NoswOsLN1JHxLIssu",
+    locationId: "7NI8yyJtwsh2OOWA5Icr",
+    startTime: "2026-09-27T12:40:00+03:00",
+    title: "cockpit test (ignore)",
+    assignedResources: [],
+    isRecurring: false,
+    createdBy: { source: "third_party", userId: null },
+    appointmentMeta: { slotType: "default", bookedDuration: 15, isDefaultDuration: true },
+    deleted: false,
+  },
+  traceId: "75907367-398d-4ce9-963b-8baba05845d2",
+};
+
+/** GET /contacts/{id}/appointments (Version 2021-07-28): Kuwait wall time with no zone. */
+export const RECORDED_CONTACT_APPOINTMENTS: Row = {
+  events: [
+    {
+      appointmentStatus: "cancelled",
+      appoinmentStatus: "cancelled",
+      address: " ",
+      calendarId: "cFeDl0FY8iaXll61lus8",
+      contactId: "VjPfR4Cc1Y0OFvaqeor5",
+      dateAdded: "2026-09-27 10:24:51",
+      dateUpdated: "2026-10-08 14:36:03",
+      endTime: "2026-09-27 12:55:00",
+      groupId: "0ozKzZArYfdQ566C9ESq",
+      id: "qc0NoswOsLN1JHxLIssu",
+      locationId: "7NI8yyJtwsh2OOWA5Icr",
+      startTime: "2026-09-27 12:40:00",
+      title: "cockpit test (ignore)",
+      assignedResources: [],
+      appointmentMeta: { slotType: "default", bookedDuration: 15, isDefaultDuration: true },
+      deleted: false,
+    },
+  ],
+  traceId: "dfe58622-5781-4ecc-8fe6-c14a69851393",
+};
+
+/** GET /calendars/{id} → calendar, for the sales calendars (limits as read; team ids invented). */
+export function recordedCalendar(id: string, team: string[]): Row {
+  const base: Row = {
+    id,
+    locationId: "7NI8yyJtwsh2OOWA5Icr",
+    calendarType: "round_robin",
+    eventType: "RoundRobin_OptimizeForAvailability",
+    widgetType: "default",
+    isActive: true,
+    autoConfirm: true,
+    allowCancellation: true,
+    teamMembers: team.map(userId => ({ userId, priority: 0.5, selected: true, isZoomAdded: "true", meetingLocation: "" })),
+  };
+  if (id === "cFeDl0FY8iaXll61lus8" || id === "dsqmJ393Dwl9fDSbIVOI")
+    return { ...base, name: "مكالمة تعريفية", widgetSlug: "calendar-w8ek", allowReschedule: true, slotDuration: 15, slotDurationUnit: "mins", slotInterval: 20, allowBookingAfter: 2, allowBookingAfterUnit: "hours", allowBookingFor: 2, allowBookingForUnit: "days" };
+  if (id === "jQqXS1YuFnmGZKLkrE62" || id === "NDBNz6Og4yfpdpWmHrue")
+    return { ...base, name: id === "NDBNz6Og4yfpdpWmHrue" ? ".مكالمة حصول المشاريع" : "مكالمة حصول المشاريع", allowReschedule: false, slotDuration: 45, slotDurationUnit: "mins", slotInterval: 1, allowBookingAfter: 1, allowBookingAfterUnit: "hours", allowBookingFor: 3, allowBookingForUnit: "days" };
+  if (id === "JTNg1Wd62qxuT8W8sroh")
+    return { ...base, name: "Follow Up Call", allowReschedule: true, slotDuration: 15, slotDurationUnit: "mins", slotInterval: 15, allowBookingAfter: 0, allowBookingAfterUnit: "days", allowBookingForUnit: "days" };
+  return { ...base, name: "Callback request", slotDuration: 15, slotDurationUnit: "mins" };
+}
+
+/** The calendars setting as it stands (cockpit_sales_settings.calendars, read 2026-10-11). */
+export const CALENDARS_SETTING: Row = {
+  JTNg1Wd62qxuT8W8sroh: { label: "Follow up call", type: "follow_up" },
+  NDBNz6Og4yfpdpWmHrue: { label: "Demo 2", type: "demo" },
+  Vo8Jh1EJQE3pzwsKebxK: { label: "Callback request", type: "callback" },
+  cFeDl0FY8iaXll61lus8: { label: "Intro (unqualified page)", type: "intro" },
+  dsqmJ393Dwl9fDSbIVOI: { label: "Intro (qualified page)", type: "intro" },
+  jQqXS1YuFnmGZKLkrE62: { label: "Demo", type: "demo" },
+};
+
+const KW_MS = 3 * 3_600_000;
+/** HighLevel's two time formats. */
+const withOffset = (t: number) => `${new Date(t + KW_MS).toISOString().slice(0, 19)}+03:00`;
+const wallTime = (t: number) => new Date(t + KW_MS).toISOString().slice(0, 19).replace("T", " ");
+
+export interface FakeAppt {
+  id: string;
+  contactId: string;
+  calendarId: string;
+  start: number;
+  end: number;
+  assignedUserId: string | null;
+  status: string;
+  address?: string;
+  dateAdded?: number;
+}
+
+/**
+ * The next PUT on an appointment: ok (moves), refuse (an HTTP 422, nothing
+ * moves), landed_no_answer (moves, then no answer), no_answer (nothing
+ * moves, no answer), ok_unreadable (moves, then the read-back cannot be read).
+ */
+export type PutMode = "ok" | "refuse" | "landed_no_answer" | "no_answer" | "ok_unreadable";
+
+/**
+ * HighLevel's calendars for a test: appointments, each calendar's team, each
+ * person's free times, and the PUT's behaviour. answer() returns the HTTP
+ * status and body for a request, or "no_answer" (the caller throws a timeout).
+ * Busy times are HighLevel's: a person's live appointment takes their slot.
+ */
+export class FakeHighLevel {
+  appts = new Map<string, FakeAppt>();
+  calendars = new Map<string, Row>();
+  /** Free starts per person (a HighLevel user id), epoch ms. */
+  free = new Map<string, number[]>();
+  calls: { method: string; path: string; body: unknown }[] = [];
+  notes: { contactId: string; body: string }[] = [];
+  puts: { id: string; body: Row }[] = [];
+  putMode: PutMode = "ok";
+  /** The next n reads of an appointment have no answer. */
+  unreadable = 0;
+  private n = 0;
+
+  constructor(public now: () => number) {}
+
+  calendar(id: string, team: string[]): void {
+    this.calendars.set(id, recordedCalendar(id, team));
+  }
+
+  add(a: Omit<FakeAppt, "status" | "end"> & { status?: string; end?: number; minutes?: number }): FakeAppt {
+    const cal = this.calendars.get(a.calendarId);
+    const minutes = a.minutes ?? Number(cal?.slotDuration ?? 15);
+    const full: FakeAppt = { status: "confirmed", end: a.start + minutes * 60_000, dateAdded: this.now() - 86_400_000, ...a };
+    this.appts.set(full.id, full);
+    return full;
+  }
+
+  private minutes(calendarId: string): number {
+    return Number(this.calendars.get(calendarId)?.slotDuration ?? 15);
+  }
+
+  private busy(userId: string, start: number, end: number, except: string | null = null): boolean {
+    return [...this.appts.values()].some(
+      a => a.id !== except && a.assignedUserId === userId && !["cancelled", "noshow", "invalid"].includes(a.status) && start < a.end && a.start < end,
+    );
+  }
+
+  /** A person's free starts on a calendar between two times. */
+  freeFor(calendarId: string, userId: string, from: number, to: number, except: string | null = null): number[] {
+    const len = this.minutes(calendarId) * 60_000;
+    return (this.free.get(userId) ?? []).filter(t => t >= from && t < to && t > this.now() && !this.busy(userId, t, t + len, except));
+  }
+
+  private team(calendarId: string): string[] {
+    return ((this.calendars.get(calendarId)?.teamMembers ?? []) as Row[]).map(t => String(t.userId));
+  }
+
+  private apptBody(a: FakeAppt): Row {
+    return {
+      appointment: {
+        ...(RECORDED_APPOINTMENT.appointment as Row),
+        id: a.id,
+        contactId: a.contactId,
+        calendarId: a.calendarId,
+        appointmentStatus: a.status,
+        appoinmentStatus: a.status,
+        state: a.status,
+        startTime: withOffset(a.start),
+        endTime: withOffset(a.end),
+        assignedUserId: a.assignedUserId ?? undefined,
+        address: a.address ?? " ",
+        title: "Invented lead",
+        dateAdded: new Date(a.dateAdded ?? this.now()).toISOString(),
+      },
+      traceId: "fake",
+    };
+  }
+
+  answer(method: string, path: string, body: unknown): { status: number; body: unknown } | "no_answer" {
+    this.calls.push({ method, path, body });
+    const [p, qs] = path.split("?") as [string, string | undefined];
+    const q = new URLSearchParams(qs ?? "");
+    let m = /^\/calendars\/([^/]+)\/free-slots$/.exec(p);
+    if (method === "GET" && m) {
+      const id = decodeURIComponent(m[1] as string);
+      const from = Number(q.get("startDate"));
+      const to = Number(q.get("endDate"));
+      const user = q.get("userId");
+      const people = user ? [user] : this.team(id);
+      const starts = [...new Set(people.flatMap(u => this.freeFor(id, u, from, to)))].sort((a, b) => a - b);
+      const out: Row = { traceId: "fake" };
+      for (const t of starts) {
+        const day = new Date(t + KW_MS).toISOString().slice(0, 10);
+        const d = (out[day] ?? { slots: [] }) as { slots: string[] };
+        d.slots.push(withOffset(t));
+        out[day] = d;
+      }
+      return { status: 200, body: out };
+    }
+    m = /^\/calendars\/events\/appointments\/([^/]+)$/.exec(p);
+    if (m) {
+      const a = this.appts.get(decodeURIComponent(m[1] as string));
+      if (method === "GET") {
+        if (this.unreadable > 0) {
+          this.unreadable--;
+          return "no_answer";
+        }
+        return a ? { status: 200, body: this.apptBody(a) } : { status: 404, body: { message: "Appointment not found" } };
+      }
+      if (method === "PUT") {
+        if (!a) return { status: 404, body: { message: "Appointment not found" } };
+        const b = body as Row;
+        this.puts.push({ id: a.id, body: b });
+        const start = Date.parse(String(b.startTime));
+        const end = Date.parse(String(b.endTime));
+        const user = (b.assignedUserId as string | undefined) ?? a.assignedUserId;
+        const mode = this.putMode;
+        this.putMode = "ok";
+        if (mode === "refuse" || (b.ignoreFreeSlotValidation === false && user && this.busy(user, start, end, a.id)))
+          return { status: 422, body: { message: "The slot you have selected is no longer available." } };
+        if (mode === "no_answer") return "no_answer";
+        a.start = start;
+        a.end = end;
+        a.assignedUserId = user ?? null;
+        if (mode === "landed_no_answer") return "no_answer";
+        if (mode === "ok_unreadable") this.unreadable = 1;
+        return { status: 200, body: { id: a.id, calendarId: a.calendarId, startTime: b.startTime, endTime: b.endTime } };
+      }
+    }
+    if (method === "POST" && p === "/calendars/events/appointments") {
+      const b = body as Row;
+      const id = `fake-appt-${++this.n}`;
+      const start = Date.parse(String(b.startTime));
+      const end = Date.parse(String(b.endTime));
+      const user = (b.assignedUserId as string | undefined) ?? this.team(String(b.calendarId))[0] ?? null;
+      if (user && this.busy(user, start, end)) return { status: 422, body: { message: "The slot you have selected is no longer available." } };
+      this.add({ id, contactId: String(b.contactId), calendarId: String(b.calendarId), start, end, assignedUserId: user, dateAdded: this.now() });
+      return { status: 201, body: { id, calendarId: b.calendarId, contactId: b.contactId, startTime: b.startTime } };
+    }
+    m = /^\/contacts\/([^/]+)\/appointments$/.exec(p);
+    if (method === "GET" && m) {
+      const contact = decodeURIComponent(m[1] as string);
+      const events = [...this.appts.values()]
+        .filter(a => a.contactId === contact)
+        .map(a => ({
+          ...((RECORDED_CONTACT_APPOINTMENTS.events as Row[])[0] as Row),
+          id: a.id,
+          contactId: a.contactId,
+          calendarId: a.calendarId,
+          appointmentStatus: a.status,
+          appoinmentStatus: a.status,
+          startTime: wallTime(a.start),
+          endTime: wallTime(a.end),
+          dateAdded: wallTime(a.dateAdded ?? this.now()),
+          assignedUserId: a.assignedUserId ?? undefined,
+          title: "Invented lead",
+        }));
+      return { status: 200, body: { events, traceId: "fake" } };
+    }
+    m = /^\/contacts\/([^/]+)\/notes$/.exec(p);
+    if (method === "POST" && m) {
+      this.notes.push({ contactId: decodeURIComponent(m[1] as string), body: String((body as Row)?.body ?? "") });
+      return { status: 201, body: { note: { id: `note-${this.notes.length}` } } };
+    }
+    m = /^\/calendars\/([^/]+)$/.exec(p);
+    if (method === "GET" && m) {
+      const cal = this.calendars.get(decodeURIComponent(m[1] as string));
+      return cal ? { status: 200, body: { calendar: cal } } : { status: 404, body: { message: "Calendar not found" } };
+    }
+    if (method === "PUT" && /^\/contacts\/[^/]+$/.test(p)) return { status: 200, body: { contact: { id: p.split("/")[2] } } };
+    if (/^\/contacts\/[^/]+\/tags$/.test(p)) return { status: 200, body: { tags: [] } };
+    if (method === "GET" && p.startsWith("/opportunities")) return { status: 200, body: { opportunities: [] } };
+    return { status: 404, body: { message: `no fake for ${method} ${p}` } };
+  }
 }

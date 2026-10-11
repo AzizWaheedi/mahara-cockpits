@@ -19,7 +19,7 @@
 
 import { cleanText, redact, type Who } from "./lib.ts";
 import { ApiRefusal } from "./liveio.ts";
-import { CLIENT_REFUSAL, isClient } from "./clients.ts";
+import { clientRefusal, readClient } from "./clients.ts";
 
 type Row = Record<string, unknown>;
 
@@ -296,7 +296,9 @@ export function makeZoomLinks(d: ZoomLinksDeps) {
   async function lead(contactId: string): Promise<Row> {
     const row = (await read(`cockpit_sales_leads?contact_id=eq.${enc(contactId)}&select=contact_id,name,company,phone,tags`, "the lead"))[0];
     if (!row) throw refuse("That lead is not in the cockpit.", 404);
-    if (isClient(row)) throw refuse(CLIENT_REFUSAL, 409, "client");
+    // Tagged client, or a live deal (clients.ts, 2026-10-11).
+    const client = await readClient(path => read(path, "the lead's deals"), contactId, row);
+    if (client.client) throw refuse(clientRefusal(client), 409, "client");
     return row;
   }
 
@@ -363,8 +365,11 @@ export function makeZoomLinks(d: ZoomLinksDeps) {
    */
   async function tidy(who: Who, hostEmail: string, afterH: number): Promise<number> {
     const before = new Date(now() - afterH * 3_600_000).toISOString();
+    // A link kept for a rescheduled call (keep_until, 2026-10-11) waits
+    // until the new start plus three hours.
+    const kept = enc(`(keep_until.is.null,keep_until.lt."${new Date(now()).toISOString()}")`);
     const rows = await d.svc(
-      `${LINKS}?host_email=eq.${enc(hostEmail)}&deleted_at=is.null&started_at=is.null&made_at=lt.${enc(before)}&order=made_at.asc&limit=${TIDY_MAX}&select=id,meeting_id,made_at`,
+      `${LINKS}?host_email=eq.${enc(hostEmail)}&deleted_at=is.null&started_at=is.null&made_at=lt.${enc(before)}&or=${kept}&order=made_at.asc&limit=${TIDY_MAX}&select=id,meeting_id,made_at`,
     );
     let done = 0;
     for (const r of rows.slice(0, TIDY_MAX)) {

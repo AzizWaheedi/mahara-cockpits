@@ -4,8 +4,9 @@ import {
   History,
   type LucideIcon,
 } from "lucide-react";
-import { type ReactNode, useMemo } from "react";
+import { type ReactNode, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router";
+import { RowButtons, RowPanel } from "../components/CallsCard";
 import {
   EmptyState,
   Failed,
@@ -37,6 +38,7 @@ import {
   kuwaitMidnight,
   statusLabel,
 } from "../lib/format";
+import { liveChip } from "../lib/reschedule";
 import { supabase } from "../lib/supabase";
 import type { CalendarRow, Me } from "../lib/types";
 
@@ -171,6 +173,7 @@ export default function CalendarPage({ me }: { me: Me }) {
         </div>
       ) : view === "owed" ? (
         <OwedView
+          me={me}
           owed={owed}
           mine={mine}
           team={team}
@@ -182,6 +185,7 @@ export default function CalendarPage({ me }: { me: Me }) {
         // A new view or scope starts from its own read, never from the rows
         // of the one before, which would flash as an empty or wrong list.
         <SpanView
+          me={me}
           key={`${view}:${scope}`}
           upcoming={view === "upcoming"}
           mine={mine}
@@ -319,6 +323,7 @@ function TypeChips({
 
 /** Upcoming (the next two weeks) or Past (the last two weeks). */
 function SpanView({
+  me,
   upcoming,
   mine,
   team,
@@ -327,6 +332,7 @@ function SpanView({
   onType,
   onMarked,
 }: {
+  me: Me;
   upcoming: boolean;
   mine: string | null;
   team: boolean;
@@ -361,7 +367,9 @@ function SpanView({
   else if (!cal.data)
     body = <p className="muted text-sm">Reading the calendar…</p>;
   else if (shown.length)
-    body = <Days rows={shown} now={now} team={team} reload={reload} tally />;
+    body = (
+      <Days me={me} rows={shown} now={now} team={team} reload={reload} tally />
+    );
   else if (upcoming)
     body = (
       <Empty
@@ -424,6 +432,7 @@ function useBacklog(mine: string | null, type: string): Loaded<number> {
 }
 
 function OwedView({
+  me,
   owed,
   mine,
   team,
@@ -431,6 +440,7 @@ function OwedView({
   now,
   onType,
 }: {
+  me: Me;
   owed: Loaded<CalendarRow[]>;
   mine: string | null;
   team: boolean;
@@ -453,7 +463,9 @@ function OwedView({
   else if (!owed.data)
     body = <p className="muted text-sm">Reading the calls to mark…</p>;
   else if (shown.length)
-    body = <Days rows={shown} now={now} team={team} reload={owed.reload} />;
+    body = (
+      <Days me={me} rows={shown} now={now} team={team} reload={owed.reload} />
+    );
   else
     body = (
       <Empty
@@ -523,12 +535,14 @@ function Empty({
 
 /** Rows under one card per Kuwait day, in the order they came. */
 function Days({
+  me,
   rows,
   now,
   team,
   reload,
   tally = false,
 }: {
+  me: Me;
   rows: CalendarRow[];
   now: number;
   team: boolean;
@@ -575,6 +589,7 @@ function Days({
             <ul className="divide-y hairline">
               {list.map(r => (
                 <CallRow
+                  me={me}
                   key={r.appointment_id}
                   r={r}
                   now={now}
@@ -591,70 +606,110 @@ function Days({
 }
 
 function CallRow({
+  me,
   r,
   now,
   team,
   reload,
 }: {
+  me: Me;
   r: CalendarRow;
   now: number;
   team: boolean;
   reload: () => void;
 }) {
-  const chip = chipFor(r, now);
+  const [open, setOpen] = useState<"reschedule" | "tell" | "again" | null>(
+    null,
+  );
+  const live = liveChip(r, now);
+  const chip =
+    live.label === "Rescheduled" && startOf(r) > now
+      ? { tone: "good" as Tone, label: "Rescheduled" }
+      : chipFor(r, now);
   const name = r.contact_name?.trim() || "A lead";
   return (
-    <li className="flex gap-3 px-4 py-3">
-      <p className="w-12 shrink-0 pt-px text-right text-sm font-semibold tabular-nums">
-        {clock(r.start_at)}
-      </p>
-      <div className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row sm:items-center sm:gap-4">
-        <div className="min-w-0 flex-1">
-          <div className="flex min-w-0 items-center gap-2">
-            {r.contact_id ? (
-              <Link
-                to={`/lead/${encodeURIComponent(r.contact_id)}`}
-                className="min-w-0 truncate text-sm font-medium hover:underline"
-                dir="auto"
-              >
-                {name}
-              </Link>
-            ) : (
-              <span className="min-w-0 truncate text-sm font-medium" dir="auto">
-                {name}
-              </span>
-            )}
-            <StatusChip
-              tone={chip.tone}
-              label={chip.label}
-              title={r.mark_reason ?? undefined}
-            />
-          </div>
-          <p className="muted text-xs">
-            {callType(r.call_type)}
-            {team ? (
-              <>
-                {" · "}
-                <bdi>{r.assigned_user_name?.trim() || "rep not known"}</bdi>
-              </>
-            ) : null}
-            {r.mark_reason ? (
-              <>
-                {" · "}
-                <bdi>{r.mark_reason}</bdi>
-              </>
-            ) : null}
-          </p>
-          {r.marked_status ? (
-            <div className="mt-0.5 [overflow-wrap:anywhere]">
-              <CrmLine row={r} onRetried={reload} />
+    <li>
+      <div className="flex gap-3 px-4 py-3">
+        <p className="w-12 shrink-0 pt-px text-right text-sm font-semibold tabular-nums">
+          {clock(r.start_at)}
+        </p>
+        <div className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row sm:items-center sm:gap-4">
+          <div className="min-w-0 flex-1">
+            <div className="flex min-w-0 items-center gap-2">
+              {r.contact_id ? (
+                <Link
+                  to={`/lead/${encodeURIComponent(r.contact_id)}`}
+                  className="min-w-0 truncate text-sm font-medium hover:underline"
+                  dir="auto"
+                >
+                  {name}
+                </Link>
+              ) : (
+                <span
+                  className="min-w-0 truncate text-sm font-medium"
+                  dir="auto"
+                >
+                  {name}
+                </span>
+              )}
+              <StatusChip
+                tone={chip.tone}
+                label={chip.label}
+                title={r.mark_reason ?? undefined}
+              />
             </div>
+            <p className="muted text-xs">
+              {callType(r.call_type)}
+              {team ? (
+                <>
+                  {" · "}
+                  <bdi>{r.assigned_user_name?.trim() || "rep not known"}</bdi>
+                </>
+              ) : null}
+              {r.mark_reason ? (
+                <>
+                  {" · "}
+                  <bdi>{r.mark_reason}</bdi>
+                </>
+              ) : null}
+            </p>
+            {r.marked_status ? (
+              <div className="mt-0.5 [overflow-wrap:anywhere]">
+                <CrmLine row={r} onRetried={reload} />
+              </div>
+            ) : null}
+          </div>
+          {markable(r, now) ? (
+            <MarkControls
+              row={r}
+              variant="row"
+              onDone={() => reload()}
+              onMarked={status => {
+                if (
+                  (status === "noshow" || status === "cancelled") &&
+                  r.contact_id
+                )
+                  setOpen("again");
+              }}
+              compact
+            />
+          ) : r.contact_id && open !== "again" ? (
+            <RowButtons row={r} open={open} onOpen={setOpen} now={now} />
           ) : null}
         </div>
-        {markable(r, now) ? (
-          <MarkControls row={r} onDone={() => reload()} compact />
-        ) : null}
       </div>
+      {open && r.contact_id ? (
+        <div className="px-3 pb-3 sm:ps-[4.75rem] sm:pe-4">
+          <RowPanel
+            me={me}
+            row={r}
+            what={open}
+            source="calendar"
+            onClose={() => setOpen(null)}
+            onDone={() => reload()}
+          />
+        </div>
+      ) : null}
     </li>
   );
 }

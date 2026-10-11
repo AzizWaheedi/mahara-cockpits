@@ -18,6 +18,7 @@ export type Moment =
   | "cancelled"
   | "confirm"
   | "booked"
+  | "rescheduled"
   | "after_intro"
   | "after_demo"
   | "no_reply"
@@ -31,6 +32,7 @@ export const MOMENTS: [Moment, string][] = [
   ["missed_call", "We called, no answer"],
   ["confirm", "Confirm the call"],
   ["booked", "Just booked"],
+  ["rescheduled", "Rescheduled"],
   ["no_show", "Missed their booked call"],
   ["cancelled", "Cancelled"],
   ["after_intro", "After the intro"],

@@ -15,6 +15,7 @@
 //
 //   bun test supabase/functions/sales-api
 
+import { markSigned, readClient } from "./clients.ts";
 import { ghlTime } from "./dialer.ts";
 import { clockCountry, healthSince, hoursRefusal, queuedTemplatesQuery, templateMayBeQueued } from "./sendrules.ts";
 import { cleanText, errorOf, failedStatus, greetingName, leadFirstName, redact, slackSafe, stateOf, type Who } from "./lib.ts";
@@ -1139,14 +1140,25 @@ export function makeRooms(deps: RoomDeps): Rooms {
    * says nothing about the contact: unread, asked again (stress2, round 2).
    */
   async function readContactOrGone(contactId: string): Promise<Row | null | "gone"> {
+    let c: Row;
     try {
       const out = await io.ghl("GET", `/contacts/${enc(contactId)}`, undefined, "2021-07-28");
-      const c = obj(out.contact);
-      return Object.keys(c).length ? c : null;
+      c = obj(out.contact);
+      if (!Object.keys(c).length) return null;
     } catch (e) {
       if (e instanceof GhlError && contactGoneAnswer(e.status, e.message, e.json)) return "gone";
       io.log(`rooms: the contact could not be read: ${redact(String((e as Error)?.message ?? e))}`);
       return null;
+    }
+    // HighLevel's contact carries the client tag but not a signed deal, so a
+    // live deal is marked on it here and roomlogic's client gates read the
+    // mark (clients.ts markSigned, 2026-10-11). Deals unread: the tag still
+    // keeps a client out, as before the deals counted.
+    try {
+      return markSigned(c, await readClient(path => io.db(path), contactId, c));
+    } catch (e) {
+      io.log(`rooms: the contact's deals could not be read: ${redact(String((e as Error)?.message ?? e))}`);
+      return c;
     }
   }
   async function hostFacts(email: string, now: number): Promise<{ facts: HostFacts | null; row: Row | null }> {

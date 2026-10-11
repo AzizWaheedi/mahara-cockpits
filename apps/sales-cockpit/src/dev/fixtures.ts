@@ -99,7 +99,15 @@ export const LEADS: Row[] = Array.from({ length: 24 }, (_, i) => {
     contact_id: `lead-${i + 1}`,
     name: i < NAMES.length ? name : `${name.split(" ")[0]} ${i}`,
     email: `lead${i + 1}@example.com`,
-    phone: `+9665${String(50000000 + i * 7919).slice(0, 8)}`,
+    // A UAE lead has a UAE number, so the lead's own clock shows (an hour
+    // ahead of Kuwait), and a Kuwaiti lead a Kuwaiti one, so no other
+    // country's clock is named for them; the rest keep their Saudi numbers.
+    phone:
+      country === "AE"
+        ? `+97150${String(1000000 + i * 7919).slice(0, 7)}`
+        : country === "KW"
+          ? `+965${String(50000000 + i * 7919).slice(0, 8)}`
+          : `+9665${String(50000000 + i * 7919).slice(0, 8)}`,
     phone8: String(50000000 + i * 7919).slice(0, 8),
     company,
     country,
@@ -207,16 +215,36 @@ function appt(
   };
 }
 
+/** A time this many hours from now, on a whole half hour, as ISO. */
+function rel(hours: number): string {
+  const half = 30 * 60_000;
+  return new Date(
+    Math.round((Date.now() + hours * H) / half) * half,
+  ).toISOString();
+}
+
 export const APPOINTMENTS: Row[] = [
-  appt("a1", 0, "intro", kw(11, 30), "u-sara", "showed"),
+  // Faisal's intro two hours ago: nobody marked it, and nothing is booked
+  // after it (the "Didn't happen" story).
+  appt("a1", 0, "intro", rel(-2), "u-sara", "confirmed"),
   appt("a2", 1, "intro", kw(13, 0), "u-sara", "confirmed"),
   appt("a3", 2, "demo", kw(14, 0), "u-omar", "confirmed", {
     status: "showed",
     crm: "written",
     by: "omar@example.com",
   }),
-  appt("a4", 3, "intro", kw(16, 15), "u-noor", "confirmed"),
-  appt("a5", 4, "demo", kw(18, 0), "u-omar", "confirmed"),
+  // Mona's intro, three minutes from now: the dialer's "Intro call now"
+  // item is this call (2026-10-11: the header and the queue agree).
+  appt(
+    "a4",
+    3,
+    "intro",
+    new Date(Date.now() + 3 * 60_000).toISOString(),
+    "u-sara",
+    "confirmed",
+  ),
+  // The demo the setter's queue asks to confirm, tomorrow afternoon.
+  appt("a5", 4, "demo", kw(16, 30, 1), "u-omar", "confirmed"),
   appt("a6", 5, "intro", kw(19, 30), "u-sara", "confirmed"),
   appt("a7", 6, "demo", kw(20, 45), "u-omar", "confirmed"),
   appt("a8", 7, "intro", kw(21, 0, -1), "u-noor", "confirmed"),
@@ -226,8 +254,26 @@ export const APPOINTMENTS: Row[] = [
     by: "omar@example.com",
   }),
   appt("a10", 9, "intro", kw(12, 0, 1), "u-sara", "confirmed"),
-  appt("a11", 10, "demo", kw(17, 30, 1), "u-omar", "confirmed"),
+  // Rescheduled from the cockpit two hours ago (20261011a's columns), with
+  // HighLevel's Zoom address.
+  {
+    ...appt("a11", 10, "demo", kw(17, 30, 1), "u-omar", "confirmed"),
+    meet_url: "https://us06web.zoom.us/j/81234567890",
+    crm_rescheduled_at: rel(-2),
+    rescheduled_at: rel(-2),
+    rescheduled_from: kw(15, 0, 1),
+    rescheduled_by: "sara@example.com",
+  },
   appt("a12", 11, "callback", kw(15, 0), "u-sara", "confirmed"),
+  // Tariq (the UAE): the demo he missed yesterday was booked again for
+  // tomorrow at 4:30 pm, after the intro he held three days ago.
+  {
+    ...appt("a13", 8, "demo", kw(16, 30, 1), "u-omar", "confirmed"),
+    meet_url: "https://us06web.zoom.us/j/84455667788",
+  },
+  appt("a14", 8, "intro", kw(11, 0, -3), "u-sara", "showed"),
+  // An active client's demo, long held: listed, never moved.
+  appt("a15", 23, "demo", kw(15, 0, -5), "u-omar", "showed"),
 ];
 
 export const DIALS: Row[] = [
@@ -771,8 +817,17 @@ export const MIRROR_RUN: Row = {
   error: null,
 };
 
+/** How each name reads in an Arabic message (cockpit_sales_team.name_ar, 20261010s). */
+const NAME_AR: Record<string, string> = {
+  "aziz@maharamedia.com": "عبدالعزيز",
+  "sara@example.com": "سارة",
+  "omar@example.com": "عمر",
+  "noor@example.com": "نور",
+};
+
 export const TEAM_ROWS = TEAM.map(t => ({
   ...t,
+  name_ar: NAME_AR[t.email] ?? null,
   active: true,
   via_portal: true,
 }));
@@ -789,6 +844,13 @@ const iso = (ms: number) => new Date(ms).toISOString();
 /** "14:30" on the Kuwait clock. */
 function kwClock(ms: number): string {
   return new Date(ms + 3 * H).toISOString().slice(11, 16);
+}
+
+/** When a calendar row starts (ms), so a queue item and its call agree. */
+function startOf(id: string): number {
+  return Date.parse(
+    String(APPOINTMENTS.find(a => a.appointment_id === id)?.start_at ?? ""),
+  );
 }
 
 /** One queue item for LEADS[i], as sales-api shapes it. */
@@ -835,13 +897,13 @@ export function dialItems(as: "setter" | "closer", start: number): Row[] {
       queueItem(10, {
         tier: 0,
         kind: "confirm",
-        why: `Confirm the demo today at ${kwClock(now + 2 * H)}`,
+        why: `Confirm the demo tomorrow at ${kwClock(startOf("a11"))}`,
         appointment: {
-          id: "a-demo-1",
+          id: "a11",
           type: "demo",
-          start_at: iso(now + 2 * H),
+          start_at: iso(startOf("a11")),
           booked_at: iso(now - 2 * D),
-          assigned_user_id: "u-aziz",
+          assigned_user_id: "u-omar",
           confirmed: false,
         },
       }),
@@ -897,24 +959,24 @@ export function dialItems(as: "setter" | "closer", start: number): Row[] {
     queueItem(3, {
       tier: 0,
       kind: "intro",
-      why: `Intro call now, booked for ${kwClock(now + 3 * MIN)}`,
+      why: `Intro call now, booked for ${kwClock(startOf("a4"))}`,
       appointment: {
-        id: "a-intro-1",
+        id: "a4",
         type: "intro",
-        start_at: iso(now + 3 * MIN),
+        start_at: iso(startOf("a4")),
         booked_at: iso(now - 2 * D),
-        assigned_user_id: "u-aziz",
+        assigned_user_id: "u-sara",
         confirmed: true,
       },
     }),
     queueItem(4, {
       tier: 1,
       kind: "confirm",
-      why: `Confirm the demo tomorrow at ${kwClock(now + D + 2 * H)}`,
+      why: `Confirm the demo tomorrow at ${kwClock(startOf("a5"))}`,
       appointment: {
-        id: "a-demo-2",
+        id: "a5",
         type: "demo",
-        start_at: iso(now + D + 2 * H),
+        start_at: iso(startOf("a5")),
         booked_at: iso(now - 3 * D),
         assigned_user_id: "u-omar",
         confirmed: false,

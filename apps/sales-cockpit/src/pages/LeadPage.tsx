@@ -12,6 +12,7 @@ import { Link, useParams } from "react-router";
 import { AdOrigin } from "../components/AdOrigin";
 import { ProofToSend } from "../components/AssetPicker";
 import { CallNotesList, useCallNotes } from "../components/CallNotes";
+import { CallsCard } from "../components/CallsCard";
 import {
   ClientFormSheet,
   ClientFormStatus,
@@ -35,7 +36,6 @@ import {
   Failed,
   Parts,
   pageWide,
-  Reading,
   SectionCard,
   StatusChip,
   type Tone,
@@ -43,7 +43,6 @@ import {
 import { Answers } from "../components/LeadAnswers";
 import { LeadRecordings } from "../components/LeadRecordings";
 import { LeadTimeline, type LiveMessage } from "../components/LeadTimeline";
-import { CrmLine, MarkControls } from "../components/MarkControls";
 import { NotesPanel } from "../components/NotesPanel";
 import { ProposalPanel } from "../components/ProposalPanel";
 import { AskReference } from "../components/References";
@@ -65,7 +64,7 @@ import {
   type ClientFormSetting,
   hiddenFields,
 } from "../lib/clientForm";
-import { CLIENT_NOTE, isClient } from "../lib/clients";
+import { CLIENT_NOTE, isSignedClient } from "../lib/clients";
 import {
   useClientForms,
   useLead,
@@ -73,15 +72,7 @@ import {
   useSetting,
   useTeam,
 } from "../lib/data";
-import {
-  ago,
-  callType,
-  classLabel,
-  isArabic,
-  plainStage,
-  statusLabel,
-  when,
-} from "../lib/format";
+import { ago, classLabel, isArabic, plainStage } from "../lib/format";
 import { ghlContactUrl } from "../lib/highlevel";
 import { roomHoldsNoShow } from "../lib/rooms";
 import { toast } from "../lib/toast";
@@ -208,13 +199,16 @@ export default function LeadPage({ me }: { me: Me }) {
     )[0];
   const lastDemo = appointments.find(r => r.call_type === "demo");
   const people = formPeople(l, appointments, me);
-  const owed = appointments.filter(r => r.needs_mark);
+  // Tagged client, or signed (a deal that was not voided): labelled, their
+  // calls are listed, and nothing is booked, rescheduled, scripted, linked or
+  // called from here (sales-api refuses every one of them too).
+  const signed = isSignedClient(l, a?.deals ?? []);
   const gate = videoLinkGate({
     setting: roomsSetup.rooms,
     contactId: l.contact_id,
     seatEmail: me.email,
     purpose: "manual",
-    client: isClient(l),
+    client: signed,
     dnd: Boolean(live?.contact.dnd || l.dnd),
     // A demo still on counts until it ends, as room.create counts it (m1
     // round 2): a closer whose demo started gets no press refused every time.
@@ -273,7 +267,7 @@ export default function LeadPage({ me }: { me: Me }) {
               label={plainStage(l.stage_name)}
             />
           ) : null}
-          {isClient(l) ? (
+          {signed ? (
             <StatusChip
               size="md"
               tone="good"
@@ -299,13 +293,10 @@ export default function LeadPage({ me }: { me: Me }) {
                 ? `came in ${ago(l.lead_created_at)}`
                 : "not known when it came in",
               owner,
-              nextAppt
-                ? `${callType(nextAppt.call_type)} booked ${when(nextAppt.start_at)}`
-                : null,
             ]}
           />
         </p>
-        {isClient(l) ? (
+        {signed ? (
           <p className="muted text-sm">{CLIENT_NOTE}</p>
         ) : (
           <HotControl
@@ -317,7 +308,7 @@ export default function LeadPage({ me }: { me: Me }) {
         )}
         <div className="flex flex-wrap gap-2">
           {/* No sales call script for an active client. */}
-          {isClient(l) ? null : (
+          {signed ? null : (
             <Link
               to={`/call/${l.contact_id}?script=${callScript(me, appointments)}`}
               // While a video room is open its panel holds the teal button.
@@ -331,7 +322,7 @@ export default function LeadPage({ me }: { me: Me }) {
           )}
           {/* One press makes the Zoom meeting (zoom.link); nothing while
               its switch is off. Not for an active client. */}
-          {isClient(l) ? null : (
+          {signed ? null : (
             <ZoomLinkButton
               lead={leadNow}
               me={me}
@@ -345,15 +336,15 @@ export default function LeadPage({ me }: { me: Me }) {
           {l.email ? <CopyChip text={l.email} label="Copy the email" /> : null}
           <VideoCallMenu
             linkShown={linkShown}
-            liveOn={roomsSetup.liveOn && !isClient(l)}
+            liveOn={roomsSetup.liveOn && !signed}
             onPick={key => {
               setVideoSaid(null);
               setVideoOpen(key);
             }}
           />
-          {roomsSetup.error && !isClient(l) ? (
+          {roomsSetup.error && !signed ? (
             <span className="muted self-center text-xs">{ROOMS_UNREAD}</span>
-          ) : gate.why === "booked_demo" && !isClient(l) && !video.open ? (
+          ) : gate.why === "booked_demo" && !signed && !video.open ? (
             // The menu is gone while the demo is on: say where its link is (m1 round 3).
             <span className="muted self-center text-xs">{DEMO_LINK_LINE}</span>
           ) : null}
@@ -368,7 +359,7 @@ export default function LeadPage({ me }: { me: Me }) {
               New client form
             </button>
           ) : null}
-          {isClient(l) ? null : (
+          {signed ? null : (
             // The dialer's pane for this lead: book the next call, or save
             // how a call went (stress2 round 4: the lead page has neither).
             <Link
@@ -446,40 +437,23 @@ export default function LeadPage({ me }: { me: Me }) {
         </p>
       ) : null}
 
-      {groupDemo && !isClient(l) ? (
-        <GroupKit lead={leadNow} me={me} demo={groupDemo} lang={leadLang} />
-      ) : null}
+      {/* The lead's calls (2026-10-11): book an intro, a demo or a
+          follow-up call, and reschedule, tell or mark any of them, right
+          under the header; the first card on a phone. */}
+      <CallsCard
+        me={me}
+        lead={leadNow}
+        rows={a ? appointments : null}
+        error={activity.error}
+        reload={activity.reload}
+        client={signed}
+        dnd={leadNow.dnd}
+        lang={leadLang}
+        noShowHeld={roomHoldsNoShow(video.room, Date.now())}
+      />
 
-      {owed.length ? (
-        <SectionCard title="Mark this call">
-          <ul className="space-y-3">
-            {owed.map(r => (
-              <li
-                key={r.appointment_id}
-                className="flex flex-col gap-2 sm:flex-row sm:items-center"
-              >
-                <p className="min-w-0 flex-1 text-sm">
-                  {callType(r.call_type)} · {when(r.start_at)}
-                  {r.assigned_user_name ? (
-                    <span className="muted">
-                      {" · "}
-                      <bdi>{r.assigned_user_name}</bdi>
-                    </span>
-                  ) : null}
-                </p>
-                <MarkControls
-                  row={r}
-                  onDone={() => activity.reload()}
-                  // Every call's No-show waits while the lead's video room
-                  // is open, as sales-api holds it (index.ts
-                  // videoLinkHoldsNoShow; m1 round 4, journey r4-r), and
-                  // after a knock or inside the wait the link promised.
-                  noShowHeld={roomHoldsNoShow(video.room, Date.now())}
-                />
-              </li>
-            ))}
-          </ul>
-        </SectionCard>
+      {groupDemo && !signed ? (
+        <GroupKit lead={leadNow} me={me} demo={groupDemo} lang={leadLang} />
       ) : null}
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-12 xl:gap-6">
@@ -489,13 +463,6 @@ export default function LeadPage({ me }: { me: Me }) {
           </SectionCard>
           <SectionCard title="Where they came from">
             <AdOrigin lead={l} />
-          </SectionCard>
-          <SectionCard title="Calls on the calendar" flush>
-            <Appointments
-              rows={a ? appointments : null}
-              error={activity.error}
-              reload={activity.reload}
-            />
           </SectionCard>
         </div>
 
@@ -745,64 +712,6 @@ function callScript(me: Me, appointments: CalendarRow[]): "intro" | "demo" {
 
 function Page({ children }: { children: ReactNode }) {
   return <main className={pageWide}>{children}</main>;
-}
-
-function Appointments({
-  rows,
-  error,
-  reload,
-}: {
-  /** Null until the lead's calls have been read. */
-  rows: CalendarRow[] | null;
-  error: string | null;
-  reload: () => void;
-}) {
-  if (error)
-    return (
-      <div className="p-4">
-        <Failed what="This lead's calls" error={error} retry={reload} />
-      </div>
-    );
-  if (!rows) return <Reading what="the calls" className="px-4 py-3 text-sm" />;
-  if (!rows.length)
-    return (
-      <p className="muted px-4 py-3 text-sm">
-        No calls booked. A setter books the intro from the dialer or HighLevel.
-      </p>
-    );
-  return (
-    <ul className="divide-y hairline">
-      {rows.map(r => (
-        <li key={r.appointment_id} className="space-y-1 px-4 py-2.5">
-          <div className="flex items-center justify-between gap-2">
-            <p className="text-sm font-medium">
-              {callType(r.call_type)} · {when(r.start_at)}
-            </p>
-            {r.needs_mark ? (
-              <StatusChip tone="warning" label="Not marked" />
-            ) : (
-              <StatusChip
-                tone={
-                  r.status === "showed"
-                    ? "good"
-                    : r.status === "noshow"
-                      ? "critical"
-                      : r.status === "invalid"
-                        ? "serious"
-                        : "neutral"
-                }
-                label={statusLabel(r.status)}
-              />
-            )}
-          </div>
-          <p className="muted text-xs">
-            {r.assigned_user_name ?? "No rep assigned"}
-          </p>
-          <CrmLine row={r} onRetried={reload} />
-        </li>
-      ))}
-    </ul>
-  );
 }
 
 function CopyChip({

@@ -37,6 +37,8 @@
 // failed step is written there and the other steps still run.
 
 import {
+  applyHolds,
+  holdsByCall,
   assetsSql,
   assetVocabSql,
   B2B_REF,
@@ -324,21 +326,96 @@ async function mirrorLeads(
   return { n, pass, dropped };
 }
 
+/**
+ * The calls the cockpit rescheduled that B2B has not carried yet (sales-api
+ * book.move, 2026-10-11): B2B copies HighLevel every quarter hour or so, and
+ * until it shows the new time its row would put the old one back, and a rep
+ * could mark the moved call a no-show. Unread: none held, said in the run.
+ */
+async function openHolds(): Promise<{ holds: ReturnType<typeof holdsByCall>; unread?: string }> {
+  try {
+    const rows = JSON.parse(
+      await rest(
+        "cockpit_sales_reschedules?state=eq.moved&b2b_caught_at=is.null&released_at=is.null&select=id,appointment_id,from_start,to_start,from_user_id,to_user_id,created_at&order=created_at.asc&limit=2000",
+      ),
+    ) as Row[];
+    return { holds: holdsByCall(rows) };
+  } catch (e) {
+    return { holds: new Map(), unread: redact(String((e as Error).message ?? e)).slice(0, 200) };
+  }
+}
+
+/**
+ * The rows through the holds (applyHolds), and how to stamp the holds once
+ * those rows are written: caught when the copy shows the new time, released
+ * when it shows a third (moved again in HighLevel) or the hold lapsed. With
+ * `lapseUnseen`, a hold whose call this read did not see is released once
+ * past its lapse, so none stays open for ever.
+ */
+function holdRows(
+  rows: Row[],
+  holds: ReturnType<typeof holdsByCall>,
+  at: string,
+  now: number,
+  lapseUnseen: boolean,
+): { rows: Row[]; held: number; caught: number; released: number; warnings: string[]; stamp: () => Promise<void> } {
+  if (!holds.size) return { rows, held: 0, caught: 0, released: 0, warnings: [], stamp: async () => {} };
+  const out = applyHolds(rows, holds, now);
+  const released = [...out.released];
+  if (lapseUnseen) {
+    const seen = new Set(rows.map(r => String(r.appointment_id ?? "")));
+    for (const [id, list] of holds) {
+      if (seen.has(id)) continue;
+      const v = applyHolds([{ appointment_id: id, start_at: null }], new Map([[id, list]]), now);
+      released.push(...v.released.filter(x => x.why.startsWith("lapsed")));
+    }
+  }
+  const patch = async (ids: string[], body: Row) => {
+    for (let i = 0; i < ids.length; i += 100)
+      await rest(
+        `cockpit_sales_reschedules?id=in.(${ids.slice(i, i + 100).map(encodeURIComponent).join(",")})&b2b_caught_at=is.null&released_at=is.null`,
+        { method: "PATCH", body, prefer: "return=minimal" },
+      );
+  };
+  return {
+    rows: out.rows,
+    held: out.held,
+    caught: out.caught.length,
+    released: released.reduce((n, r) => n + r.ids.length, 0),
+    warnings: out.warnings,
+    stamp: async () => {
+      if (out.caught.length) await patch(out.caught, { b2b_caught_at: at });
+      for (const r of released) await patch(r.ids, { released_at: at, released_why: r.why });
+    },
+  };
+}
+
 async function mirrorCalls(
   state: State,
   at: string,
   now: number,
-): Promise<{ n: number; full: boolean; archive: boolean; dropped: number }> {
+): Promise<{
+  n: number;
+  full: boolean;
+  archive: boolean;
+  dropped: number;
+  holds?: { held: number; caught: number; released: number; unread?: string };
+  warnings?: string[];
+}> {
   const full = older(state.calls_full_at, FULL_CALLS_EVERY, now);
   const archive = full && older(state.calls_archive_at, ARCHIVE_EVERY, now);
   const from = new Date(now - (archive ? 730 : full ? 180 : 3) * DAY).toISOString();
   const to = new Date(now + (full ? 60 : 30) * DAY).toISOString();
-  const rows = (await b2b(callsSql(from, to))).map(r => ({
+  const read = (await b2b(callsSql(from, to))).map(r => ({
     ...r,
     origin: "b2b",
     mirrored_at: at,
   }));
+  const open = await openHolds();
+  const h = holdRows(read, open.holds, at, now, true);
+  const rows = h.rows;
   const n = await upsert("cockpit_sales_appointments", "appointment_id", rows);
+  await h.stamp();
   let dropped = 0;
   if (full) {
     // Appointments B2B no longer has inside the window it just read in full
@@ -352,7 +429,8 @@ async function mirrorCalls(
     state.calls_full_at = at;
     if (archive) state.calls_archive_at = at;
   }
-  return { n, full, archive, dropped };
+  const held = open.holds.size || open.unread ? { held: h.held, caught: h.caught, released: h.released, ...(open.unread ? { unread: open.unread } : {}) } : undefined;
+  return { n, full, archive, dropped, ...(held ? { holds: held } : {}), ...(h.warnings.length ? { warnings: h.warnings } : {}) };
 }
 
 /** The Follow Up and Callback calendars, straight from HighLevel. */
@@ -387,10 +465,14 @@ async function mirrorGhlCalendars(
     const text = await res.text();
     if (!res.ok) throw new Error(`HighLevel ${res.status} on calendar ${id}: ${redact(text)}`);
     const events = (JSON.parse(text)?.events ?? []) as Row[];
-    const rows = events
+    const read = events
       .map(e => ghlEventRow(e, calendars, at))
       .filter((r): r is Row => r !== null);
-    n += await upsert("cockpit_sales_appointments", "appointment_id", rows);
+    // HighLevel itself is read here, so a follow-up call the cockpit moved
+    // shows its new time at once and its hold is caught (2026-10-11).
+    const h = holdRows(read, (await openHolds()).holds, at, now, false);
+    n += await upsert("cockpit_sales_appointments", "appointment_id", h.rows);
+    await h.stamp();
     // Events gone from the calendar in the window just read.
     await rest(
       `cockpit_sales_appointments?origin=eq.ghl&calendar_id=eq.${id}&start_at=gte.${encodeURIComponent(new Date(start).toISOString())}&start_at=lt.${encodeURIComponent(new Date(end).toISOString())}&mirrored_at=lt.${encodeURIComponent(at)}`,

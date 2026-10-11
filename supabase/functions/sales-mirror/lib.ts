@@ -132,7 +132,13 @@ order by l.contact_id
 limit ${Math.max(1, Math.min(2000, Math.floor(opts.limit)))}`;
 }
 
-/** Intro and demo appointments that start inside a window. */
+/**
+ * Intro and demo appointments that start inside a window. Since 2026-10-11
+ * also the call's Zoom link (HighLevel's address, only a zoom.us link: an
+ * intro's address is often the lead's phone) and HighLevel's own reschedule
+ * stamp (the closer's end of day counts it). Both come out of raw_payload
+ * guarded, so an odd value is null and never fails the read.
+ */
 export function callsSql(fromIso: string, toIso: string): string {
   return `select
   c.ghl_appointment_id as appointment_id,
@@ -145,7 +151,11 @@ export function callsSql(fromIso: string, toIso: string): string {
   c.status,
   c.assigned_user_id,
   c.assigned_user_name,
-  c.ad_id
+  c.ad_id,
+  case when btrim(c.raw_payload->>'address') ~* '^https://[a-z0-9.-]*zoom\\.us/'
+       then left(btrim(c.raw_payload->>'address'), 500) end as meet_url,
+  case when c.raw_payload->>'rescheduledAt' ~ '^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:?\\d{2})$'
+       then (c.raw_payload->>'rescheduledAt')::timestamptz end as crm_rescheduled_at
 from public.calls as c
 where c.start_at >= ${ts(fromIso)} and c.start_at < ${ts(toIso)}
   and c.ghl_appointment_id is not null`;
@@ -488,6 +498,7 @@ export function ghlEventRow(
     assigned_user_id: e.assignedUserId ? String(e.assignedUserId) : null,
     assigned_user_name: null,
     ad_id: null,
+    meet_url: meetUrl(e.address),
     origin: "ghl",
     mirrored_at: at,
   };
@@ -598,4 +609,147 @@ export function ghlContactRow(c: Record<string, unknown>, at: string): Record<st
     lead_updated_at: updated && !Number.isNaN(updated.getTime()) ? updated.toISOString() : null,
     mirrored_at: at,
   };
+}
+
+// ---------------------------------------------------------------------------
+// A call rescheduled in the cockpit (2026-10-11). A copy of sales-api's
+// reschedule.ts holdStart and meetUrl (an Edge Function cannot import from
+// another), with the same tests in lib.test.ts: change both together.
+// ---------------------------------------------------------------------------
+
+const MINUTE = 60_000;
+
+/** The Zoom join link in a HighLevel address, or null (an intro's address is often the lead's phone). */
+export function meetUrl(address: unknown): string | null {
+  const a = String(address ?? "").trim();
+  return /^https:\/\/[a-z0-9.-]*zoom\.us\//i.test(a) ? a.slice(0, 500) : null;
+}
+
+function instant(v: unknown): number | null {
+  if (v === null || v === undefined || v === "") return null;
+  if (typeof v === "number") return Number.isFinite(v) ? v : null;
+  const t = Date.parse(String(v));
+  return Number.isFinite(t) ? t : null;
+}
+
+function sameTime(a: number | null, b: number | null): boolean {
+  return a !== null && b !== null && Math.abs(a - b) < MINUTE;
+}
+
+/** An open reschedule of a call (cockpit_sales_reschedules in state moved, neither caught nor released). */
+export interface Hold {
+  id: string;
+  appointment_id: string;
+  from_start: string;
+  to_start: string;
+  from_user_id?: string | null;
+  to_user_id?: string | null;
+  created_at: string;
+}
+
+export type HoldVerdict =
+  | { kind: "none" }
+  | { kind: "hold"; start_at: string; assigned_user_id: string | null; ids: string[]; since: number }
+  | { kind: "caught"; ids: string[] }
+  | { kind: "released"; ids: string[]; why: string };
+
+/** When a hold lapses: the later of a day after the move or an hour after the new start. */
+export function holdLapse(h: Hold): number {
+  return Math.max((instant(h.created_at) ?? 0) + DAY_MS, (instant(h.to_start) ?? 0) + 60 * MINUTE);
+}
+
+/**
+ * What the mirror does with B2B's row for a call the cockpit moved (D34):
+ * while B2B shows a time the cockpit moved it away from, the cockpit's
+ * newest time is kept (and its host, when the move changed it); B2B showing
+ * the new time ends the hold (caught); any third time means someone moved it
+ * again in HighLevel (released); a hold B2B never catches lapses at the later
+ * of a day or an hour after the new start.
+ */
+export function holdStart(
+  row: { start_at?: unknown; assigned_user_id?: unknown },
+  holds: Hold[],
+  now: number,
+): HoldVerdict {
+  if (!holds.length) return { kind: "none" };
+  const ordered = [...holds].sort((a, b) => (instant(a.created_at) ?? 0) - (instant(b.created_at) ?? 0));
+  const newest = ordered[ordered.length - 1] as Hold;
+  const ids = ordered.map(h => h.id);
+  const shown = instant(row.start_at);
+  const to = instant(newest.to_start);
+  if (sameTime(shown, to)) return { kind: "caught", ids };
+  if (now > holdLapse(newest)) return { kind: "released", ids, why: "lapsed: B2B never showed the new time" };
+  const old = ordered.some(h => sameTime(shown, instant(h.from_start)));
+  if (!old) return { kind: "released", ids, why: "moved again in HighLevel" };
+  const fromUser = newest.from_user_id ? String(newest.from_user_id) : null;
+  const toUser = newest.to_user_id ? String(newest.to_user_id) : null;
+  const hostMoved = toUser !== null && toUser !== fromUser;
+  const shownUser = row.assigned_user_id ? String(row.assigned_user_id) : null;
+  return {
+    kind: "hold",
+    start_at: new Date(to as number).toISOString(),
+    assigned_user_id: hostMoved && (shownUser === null || shownUser === fromUser) ? toUser : null,
+    ids,
+    since: instant(newest.created_at) ?? now,
+  };
+}
+
+/** Holds grouped by call. */
+export function holdsByCall(rows: Record<string, unknown>[]): Map<string, Hold[]> {
+  const out = new Map<string, Hold[]>();
+  for (const r of rows) {
+    const id = String(r.appointment_id ?? "");
+    if (!id || !r.from_start || !r.to_start) continue;
+    out.set(id, [
+      ...(out.get(id) ?? []),
+      {
+        id: String(r.id),
+        appointment_id: id,
+        from_start: String(r.from_start),
+        to_start: String(r.to_start),
+        from_user_id: (r.from_user_id as string | null) ?? null,
+        to_user_id: (r.to_user_id as string | null) ?? null,
+        created_at: String(r.created_at ?? ""),
+      },
+    ]);
+  }
+  return out;
+}
+
+/** A hold older than this is said in the run's row: B2B is slow to carry a cockpit reschedule. */
+export const HOLD_WARN_MS = 60 * MINUTE;
+
+/**
+ * Every row of a read through the holds: the rows to write (a held row with
+ * the cockpit's time), the holds B2B caught, the ones released (and why),
+ * and a warning for each hold still held after an hour.
+ */
+export function applyHolds(
+  rows: Record<string, unknown>[],
+  holds: Map<string, Hold[]>,
+  now: number,
+): {
+  rows: Record<string, unknown>[];
+  held: number;
+  caught: string[];
+  released: { ids: string[]; why: string }[];
+  warnings: string[];
+} {
+  const caught: string[] = [];
+  const released: { ids: string[]; why: string }[] = [];
+  const warnings: string[] = [];
+  let held = 0;
+  const out = rows.map(r => {
+    const id = String(r.appointment_id ?? "");
+    const v = holdStart(r, holds.get(id) ?? [], now);
+    if (v.kind === "caught") caught.push(...v.ids);
+    else if (v.kind === "released") released.push({ ids: v.ids, why: v.why });
+    else if (v.kind === "hold") {
+      held++;
+      if (now - v.since > HOLD_WARN_MS) warnings.push(`B2B has not carried the reschedule of ${id} yet`);
+      return { ...r, start_at: v.start_at, ...(v.assigned_user_id ? { assigned_user_id: v.assigned_user_id } : {}) };
+    }
+    return r;
+  });
+  return { rows: out, held, caught, released, warnings };
 }

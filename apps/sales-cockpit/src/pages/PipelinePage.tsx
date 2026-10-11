@@ -18,8 +18,17 @@ import {
 } from "../components/kit";
 import { Segmented } from "../components/ScriptParts";
 import { api } from "../lib/api";
+import { CLIENT_NOTE } from "../lib/clients";
 import { useLatest, useNow } from "../lib/data";
-import { ago, classLabel, isArabic, plainStage, when } from "../lib/format";
+import {
+  ago,
+  classLabel,
+  day,
+  isArabic,
+  money,
+  plainStage,
+  when,
+} from "../lib/format";
 import { toast } from "../lib/toast";
 import type { Me } from "../lib/types";
 
@@ -30,16 +39,23 @@ import type { Me } from "../lib/types";
  * dialer moves leads by itself after each outcome. A lead with nothing in 60
  * days is quiet: counted under its stage, shown only when asked, so the
  * board stays about the leads being worked.
+ *
+ * Signed clients stay on it (the CEO, 2026-10-11): an active client (tagged
+ * client, or a signed deal) sits in the pipeline's Closed column with the
+ * date they signed, the value and who closed them, newest first. Their card
+ * cannot be dragged or moved, because a HighLevel stage's workflows could
+ * message a client; it opens the lead page. The column's header counts
+ * signed clients apart from open leads.
  */
 
-interface Stage {
+export interface Stage {
   id: string;
   name: string;
   position: number;
   role: string | null;
 }
 
-interface Card {
+export interface Card {
   contact_id: string;
   name: string | null;
   lead_class: string | null;
@@ -55,14 +71,73 @@ interface Card {
   owner: string | null;
   dnd: boolean;
   quiet: boolean;
+  /** An active client: tagged client, or a signed deal. Never moved. */
+  client?: boolean;
+  /** Placed in the Closed column (a client, a won opportunity, a won stage). */
+  closed?: boolean;
+  /** The newest live deal's date, value, closer and setter; null when unknown. */
+  signed_at?: string | null;
+  value?: number | null;
+  closer?: string | null;
+  setter?: string | null;
+  /** HighLevel's real stage, when the card sits in Closed. */
+  crm_stage?: string | null;
 }
 
-interface Board {
+export interface Board {
   pipeline: { id: string; name: string; stages: Stage[] };
   pipelines: { id: string; name: string }[];
   cards: Card[];
   quiet: Record<string, number>;
   loose: number;
+  /** Where signed and closed leads sit; synthetic when the pipeline has no won stage. */
+  closed_stage?: { id: string; name: string; synthetic: boolean } | null;
+  /** The Closed column's header: open leads apart from signed clients. */
+  counts?: { open: number; signed: number };
+}
+
+/**
+ * The answer, checked before it is drawn: a board without its pipeline's
+ * stages or its cards is a failed read, said as one, never a blank page.
+ */
+export function boardProblem(out: unknown): string | null {
+  const b = out as Partial<Board> | null;
+  if (!b || typeof b !== "object") return "the answer was empty";
+  if (!b.pipeline || !Array.isArray(b.pipeline.stages))
+    return "the answer had no pipeline stages in it";
+  if (!Array.isArray(b.cards)) return "the answer had no cards in it";
+  if (!Array.isArray(b.pipelines)) return "the answer had no pipelines in it";
+  return null;
+}
+
+/** "6 open · 69 signed": the Closed column's header, the zeros left out. */
+export function closedHeader(counts: { open: number; signed: number }): string {
+  const parts = [
+    counts.open ? `${counts.open} open` : null,
+    counts.signed ? `${counts.signed} signed` : null,
+  ].filter(Boolean);
+  return parts.length ? parts.join(" · ") : "0";
+}
+
+/** The Closed column keeps the server's order (newest signing first); the rest go by next step, then heat. */
+export function columnOrder(cards: readonly Card[]): Card[] {
+  return [...cards].sort((a, b) => {
+    const closed = Number(Boolean(b.closed)) - Number(Boolean(a.closed));
+    if (closed || (a.closed && b.closed)) return closed;
+    return (
+      (a.next_at ? Date.parse(a.next_at) : Number.POSITIVE_INFINITY) -
+        (b.next_at ? Date.parse(b.next_at) : Number.POSITIVE_INFINITY) ||
+      b.heat - a.heat
+    );
+  });
+}
+
+/** A card that cannot be moved from the board: an active client. */
+export const fixed = (c: Pick<Card, "client">) => c.client === true;
+
+/** The chip on a client's card: the day they signed, or the tag alone. */
+export function signedLabel(c: Pick<Card, "signed_at">): string {
+  return c.signed_at ? `Signed ${day(c.signed_at)}` : "Active client";
 }
 
 const ROLE_TONE: Record<string, Tone> = {
@@ -129,6 +204,8 @@ export default function PipelinePage({ me }: { me: Me }) {
       // A slow read for a choice no longer on screen (the team's board
       // landing after "Mine" was picked) is dropped, not drawn.
       if (chosen.current !== asked) return;
+      const problem = boardProblem(out);
+      if (problem) throw new Error(problem);
       setBoard(out);
       // With no pipeline picked yet, the server's pick becomes the choice.
       setBoardFor(pipelineId ? asked : `${out.pipeline.id}|${scope}|${all}`);
@@ -157,6 +234,13 @@ export default function PipelinePage({ me }: { me: Me }) {
     const card = board.cards.find(c => c.contact_id === contactId);
     // Dropped back on its own column: nothing to move.
     if (!card || card.stage_id === stageId) return;
+    // A client stays in Closed; the server refuses it too.
+    if (fixed(card)) {
+      toast.error(
+        "This client is signed, so they stay in Closed. Client success looks after them.",
+      );
+      return;
+    }
     const from = card.stage_id;
     const put = (at: string | null, only?: string | null) =>
       setBoard(b =>
@@ -197,6 +281,7 @@ export default function PipelinePage({ me }: { me: Me }) {
 
   const stages = board?.pipeline.stages ?? [];
   const hasLoose = (board?.cards ?? []).some(c => !c.stage_id);
+  const closedStage = board?.closed_stage ?? null;
   const columns = useMemo(
     () => [
       ...(hasLoose
@@ -210,8 +295,19 @@ export default function PipelinePage({ me }: { me: Me }) {
           ]
         : []),
       ...stages,
+      // A pipeline with no won stage: the cockpit's own column for its clients.
+      ...(closedStage?.synthetic
+        ? [
+            {
+              id: closedStage.id,
+              name: closedStage.name,
+              position: Number.MAX_SAFE_INTEGER,
+              role: "won",
+            } as Stage,
+          ]
+        : []),
     ],
-    [stages, hasLoose],
+    [stages, hasLoose, closedStage],
   );
   const byStage = useMemo(() => {
     const m = new Map<string, Card[]>();
@@ -219,15 +315,11 @@ export default function PipelinePage({ me }: { me: Me }) {
       const k = c.stage_id ?? NO_STAGE;
       m.set(k, [...(m.get(k) ?? []), c]);
     }
-    for (const list of m.values())
-      list.sort(
-        (a, b) =>
-          (a.next_at ? Date.parse(a.next_at) : Number.POSITIVE_INFINITY) -
-            (b.next_at ? Date.parse(b.next_at) : Number.POSITIVE_INFINITY) ||
-          b.heat - a.heat,
-      );
+    for (const [k, list] of m) m.set(k, columnOrder(list));
     return m;
   }, [board]);
+  // Leads being worked: the cards that are not clients.
+  const working = (board?.cards ?? []).filter(c => !c.client).length;
   const quietTotal = Object.values(board?.quiet ?? {}).reduce(
     (a, b) => a + b,
     0,
@@ -248,9 +340,13 @@ export default function PipelinePage({ me }: { me: Me }) {
             {view === "hot"
               ? "The leads closest to signing. Click a cell to change it; it saves when you press Enter or click away."
               : board && fresh
-                ? `${board.cards.length} ${all ? "" : "active "}lead${board.cards.length === 1 ? "" : "s"}${
+                ? `${working} ${all ? "" : "active "}lead${working === 1 ? "" : "s"}${
                     !all && quietTotal
                       ? ` · ${quietTotal} quiet for 60 days`
+                      : ""
+                  }${
+                    board.counts?.signed
+                      ? ` · ${board.counts.signed} signed${closedStage && !closedStage.synthetic ? ` in ${plainStage(closedStage.name)}` : ""}`
                       : ""
                   }. Drag a card to move it in HighLevel.`
                 : error
@@ -354,6 +450,15 @@ export default function PipelinePage({ me }: { me: Me }) {
                 stages={stages}
                 cards={byStage.get(col.id) ?? []}
                 quiet={all ? 0 : (board.quiet[col.id] ?? 0)}
+                counts={
+                  closedStage && col.id === closedStage.id
+                    ? (board.counts ?? null)
+                    : null
+                }
+                droppable={
+                  col.id !== NO_STAGE &&
+                  !(closedStage?.synthetic && col.id === closedStage.id)
+                }
                 onMove={move}
                 onShowQuiet={() => setAll(true)}
               />
@@ -370,6 +475,8 @@ function Column({
   stages,
   cards,
   quiet,
+  counts,
+  droppable,
   onMove,
   onShowQuiet,
 }: {
@@ -377,11 +484,13 @@ function Column({
   stages: Stage[];
   cards: Card[];
   quiet: number;
+  /** The Closed column's own header counts; null for any other column. */
+  counts: { open: number; signed: number } | null;
+  droppable: boolean;
   onMove: (contactId: string, stageId: string) => void;
   onShowQuiet: () => void;
 }) {
   const [over, setOver] = useState(false);
-  const droppable = stage.id !== NO_STAGE;
   return (
     <section
       aria-label={plainStage(stage.name)}
@@ -403,8 +512,15 @@ function Column({
           tone={ROLE_TONE[stage.role ?? ""] ?? "neutral"}
           label={plainStage(stage.name)}
         />
-        <span className="muted ms-auto text-xs tabular-nums">
-          {cards.length}
+        <span
+          className="muted ms-auto shrink-0 text-xs tabular-nums"
+          title={
+            counts
+              ? "Signed clients (tagged client, or a signed deal) apart from leads still open in this stage."
+              : undefined
+          }
+        >
+          {counts ? closedHeader(counts) : cards.length}
         </span>
       </header>
       <ul className="max-h-[calc(100dvh-12.5rem)] min-h-16 space-y-2 overflow-y-auto p-2">
@@ -439,6 +555,7 @@ function CardItem({
 }) {
   const navigate = useNavigate();
   const now = useNow(60_000);
+  if (fixed(c)) return <ClientCard c={c} stages={stages} />;
   return (
     <li
       draggable
@@ -514,6 +631,64 @@ function CardItem({
             ))}
         </select>
       </div>
+    </li>
+  );
+}
+
+/**
+ * A signed client's card in Closed: when they signed (or "Active client"
+ * for the tag alone), the value and who closed it, and HighLevel's own
+ * stage when it differs. Not draggable and no "Move to…": it opens the
+ * lead page.
+ */
+export function ClientCard({ c, stages }: { c: Card; stages: Stage[] }) {
+  const navigate = useNavigate();
+  const crm = plainStage(c.crm_stage);
+  const column = plainStage(stages.find(s => s.id === c.stage_id)?.name);
+  const first = (n: string | null | undefined) =>
+    n ? (n.trim().split(/\s+/)[0] ?? null) : null;
+  return (
+    <li className="rounded-[var(--radius-md)] border hairline bg-[color:var(--background)] p-2.5 text-sm">
+      <button
+        type="button"
+        onClick={() => navigate(`/lead/${c.contact_id}`)}
+        className="block w-full min-w-0 text-left"
+        title={CLIENT_NOTE}
+      >
+        <span className="flex items-start gap-1.5">
+          <span
+            className={`min-w-0 flex-1 truncate font-medium ${isArabic(c.name) ? "ar" : ""}`}
+            dir="auto"
+          >
+            {c.name ?? "Unnamed lead"}
+          </span>
+          <StatusChip tone="good" label={signedLabel(c)} />
+        </span>
+        {(c.value !== null && c.value !== undefined) || c.closer ? (
+          <span className="muted mt-1 block truncate text-xs">
+            <Parts
+              items={[
+                c.value !== null && c.value !== undefined
+                  ? money(c.value)
+                  : null,
+                c.closer ? `closed by ${first(c.closer)}` : null,
+              ]}
+            />
+          </span>
+        ) : null}
+        {crm && crm !== column ? (
+          <span className="muted mt-0.5 block truncate text-[11px]">
+            In HighLevel: {crm}
+          </span>
+        ) : null}
+      </button>
+      {c.owner ? (
+        <div className="mt-1.5">
+          <span className="muted truncate text-[11px]">
+            {c.owner.split(/\s+/)[0]}
+          </span>
+        </div>
+      ) : null}
     </li>
   );
 }

@@ -707,6 +707,8 @@ export type TemplateVariable = (typeof TEMPLATE_VARIABLES)[number];
 
 export const SNIPPET_MOMENTS = [
   "first_touch", "missed_call", "no_show", "cancelled", "confirm", "booked",
+  // A call moved to a new time (2026-10-11, 20261011a widens the table's check).
+  "rescheduled",
   "after_intro", "after_demo", "no_reply", "nurture", "proof", "reactivate", "other",
 ] as const;
 

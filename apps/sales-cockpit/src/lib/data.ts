@@ -214,6 +214,59 @@ export function useCalendar(
   );
 }
 
+/** One lead's calls, newest first: the dialer's pane reschedules and books from them. */
+export function useLeadCalls(contactId: string | null): Loaded<CalendarRow[]> {
+  return useQuery<CalendarRow[]>(
+    () =>
+      contactId
+        ? supabase
+            .from("cockpit_sales_calendar")
+            .select("*")
+            .eq("contact_id", contactId)
+            .order("start_at", { ascending: false })
+            .limit(50)
+        : none<CalendarRow[]>(),
+    [contactId],
+  );
+}
+
+/** A reschedule HighLevel never confirmed (20261011a), for the lead page's warning line. */
+export interface UnverifiedMove {
+  id: string;
+  appointment_id: string;
+  call_type: string | null;
+  from_start: string;
+  to_start: string;
+  created_at: string;
+  rep_email: string;
+}
+
+/**
+ * The lead's reschedules left "unverified" in the last two days. Before the
+ * migration the table is not there: the read then says nothing, because
+ * the line only warns and its absence hides no number.
+ */
+export function useUnverifiedMoves(
+  contactId: string,
+): Loaded<UnverifiedMove[]> {
+  return useQuery<UnverifiedMove[]>(async () => {
+    const { data, error } = await supabase
+      .from("cockpit_sales_reschedules")
+      .select(
+        "id,appointment_id,call_type,from_start,to_start,created_at,rep_email",
+      )
+      .eq("contact_id", contactId)
+      .eq("state", "unverified")
+      .gte("created_at", new Date(Date.now() - 2 * 86_400_000).toISOString())
+      .order("created_at", { ascending: false })
+      .limit(5);
+    return {
+      data: error ? [] : ((data ?? []) as UnverifiedMove[]),
+      error: null,
+    };
+  }, [contactId]);
+}
+
 /** Past calls still owed a mark, newest first (30 days; older is backlog). */
 export function useOwed(
   ghlUserId: string | null,

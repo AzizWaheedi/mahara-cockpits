@@ -92,6 +92,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { MemoryRouter } from "react-router";
 import "../index.css";
+import { BookRefusal, bookAnswer } from "./bookingFake";
 import * as F from "./fixtures";
 import {
   answerWaves,
@@ -241,8 +242,6 @@ const dial = {
   lastCallAt: 0,
   /** Leads that left the queue after a save, until when. */
   gone: new Map<string, number>(),
-  /** Bookings made here, so a second one is refused as HighLevel's would be. */
-  booked: new Map<string, { kind: string; start: string }>(),
   savedWork: F.savedWork(START),
   /** Leads that came in (or came back) while the page is open, first in line. */
   arrivals: new Map<string, Row>(),
@@ -264,9 +263,6 @@ const openCall = () =>
   ) ?? null;
 
 const leadOf = (id: string) => F.LEADS.find(l => l.contact_id === id) ?? null;
-
-const kuwaitWords = (s: string) =>
-  `${new Date(s).toLocaleDateString("en-GB", { timeZone: "Asia/Kuwait", weekday: "short", day: "numeric", month: "short" })}, ${new Date(s).toLocaleTimeString("en-GB", { timeZone: "Asia/Kuwait", hour: "2-digit", minute: "2-digit" })}`;
 
 /** Where a saved lead goes: most leave the queue; an intro nobody answered stays for its twenty minutes. */
 function leave(contactId: string, kind: string, outcome: string) {
@@ -329,22 +325,6 @@ function newAttempt(contactId: string, over: Partial<Attempt>): Attempt {
   };
   dial.attempts.set(a.id, a);
   return a;
-}
-
-/** Whose appointment this is, from what the queue holds. */
-function contactOfAppointment(id: string): string {
-  const all = [
-    ...dial.arrivals.values(),
-    ...F.dialItems("setter", START),
-    ...F.dialItems("closer", START),
-  ];
-  const hit = all.find(
-    i => (i.appointment as { id?: string } | null)?.id === id,
-  );
-  if (hit?.contact_id) return String(hit.contact_id);
-  for (const [cid, over] of dial.arrivals)
-    if ((over.appointment as { id?: string } | null)?.id === id) return cid;
-  return "";
 }
 
 /** The queue as it stands now: a copy, so a late answer shows the moment it was read. */
@@ -758,131 +738,42 @@ async function salesApi(b: Row, signal?: AbortSignal | null): Promise<Row> {
         throw new Refusal("It is already in HighLevel.", 409);
       return { attempt: { id, crm_note: "written" } };
     }
-    case "book.slots": {
-      const days = [1, 2, 3].map(d => {
-        const day = new Date(now + d * 86_400_000 + 3 * 3_600_000)
-          .toISOString()
-          .slice(0, 10);
-        const slots: string[] = [];
-        for (let m = 600; m <= 1060; m += 20)
-          slots.push(
-            `${day}T${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}:00+03:00`,
-          );
-        return { day, slots };
-      });
-      const kind = b.appointment_id ? "intro" : String(b.kind ?? "intro");
-      const contact = String(b.contact_id ?? "");
-      const fixed = F.APPOINTMENTS.find(
-        a =>
-          a.contact_id === contact &&
-          a.call_type === kind &&
-          Date.parse(String(a.start_at)) > now &&
-          !["cancelled", "noshow", "showed"].includes(String(a.status)),
-      );
-      const had =
-        dial.booked.get(contact) ??
-        (fixed ? { kind, start: String(fixed.start_at) } : undefined);
-      return {
-        kind,
-        calendar_id: "cal",
-        calendar: kind === "demo" ? "Demo" : "Intro",
-        minutes: kind === "demo" ? 45 : 15,
-        with: b.with ?? "me",
-        fallback: false,
-        on_team: true,
-        notice:
-          "An intro can be booked from 2 hours ahead, up to 3 days out, as the HighLevel calendar allows.",
-        booking_url:
-          scriptKnobs.booking === "off"
-            ? null
-            : `https://api.leadconnectorhq.com/widget/booking/${kind === "demo" ? "jQqXS1YuFnmGZKLkrE62" : "dsqmJ393Dwl9fDSbIVOI"}`,
-        existing:
-          had && had.kind === kind
-            ? { id: "bk-1", start: had.start, words: kuwaitWords(had.start) }
-            : null,
-        ...(b.appointment_id
-          ? {
-              moving: {
-                id: String(b.appointment_id),
-                start: new Date(now + 2 * 3_600_000).toISOString(),
-                words: kuwaitWords(new Date(now + 2 * 3_600_000).toISOString()),
-              },
-            }
-          : {}),
-        days,
-      };
-    }
+    case "book.slots":
+    case "book.move.check":
+    case "book.told":
+      // The booking actions keep their own state (bookingFake.ts).
+      return bookAnswer(String(b.action), b, now) as Row;
     case "book.create":
     case "book.move": {
       const moving = b.action === "book.move";
-      // A move names the appointment; its lead is the one it belongs to.
-      const contact = moving
-        ? contactOfAppointment(String(b.appointment_id ?? ""))
-        : String(b.contact_id ?? "");
-      const note = String(b.note ?? "").trim();
-      if (note.length < 3)
-        throw new Refusal(
-          "Write a line on the call, so whoever takes it knows what was said.",
-        );
-      if (knobs.book === "taken")
-        throw new Refusal("That time was just taken. Pick another.", 409);
-      const had = dial.booked.get(contact);
-      const kind = String(b.kind ?? "intro");
-      if (!moving && had && had.kind === kind)
-        throw new Refusal(
-          `They already have ${kind === "intro" ? "an intro" : "a demo"} on ${kuwaitWords(had.start)} (Kuwait time). Move that one in HighLevel instead of booking a second.`,
-          409,
-        );
-      const start = String(b.start);
-      if (!moving) dial.booked.set(contact, { kind, start });
-      if (!moving && knobs.book !== "unverified") {
-        const lead = leadOf(contact);
-        F.APPOINTMENTS.push({
-          appointment_id: `bk-${now}`,
-          contact_id: contact,
-          contact_name: lead?.name ?? null,
-          calendar_id:
-            kind === "demo" ? "jQqXS1YuFnmGZKLkrE62" : "dsqmJ393Dwl9fDSbIVOI",
-          call_type: kind,
-          start_at: new Date(Date.parse(start)).toISOString(),
-          booked_at: new Date(now).toISOString(),
-          crm_status: "confirmed",
-          assigned_user_id: kind === "demo" ? "u-omar" : "u-sara",
-          assigned_user_name: kind === "demo" ? "Omar Haddad" : "Sara Khalil",
-          ad_id: null,
-          origin: "ghl",
-          mirrored_at: new Date(now).toISOString(),
-          mark_id: null,
-          marked_status: null,
-          mark_reason: null,
-          mark_note: null,
-          marked_by: null,
-          marked_at: null,
-          mark_crm: null,
-          mark_crm_error: null,
-          status: "confirmed",
-          needs_mark: false,
-        });
-      }
+      const out = bookAnswer(String(b.action), b, now) as Row;
+      // The dialer's half: a booking or a move made with the dialer's open
+      // call saves that call; from the lead page, Today, the Calendar or a
+      // script it is no dialer save (plan D19).
       const a = b.attempt_id ? dial.attempts.get(String(b.attempt_id)) : null;
       if (a)
         saveAttempt(a, {
           outcome: moving ? "rescheduled" : "booked",
-          note,
+          note: String(b.note ?? "") || "Rescheduled in the cockpit",
           item_kind: b.item_kind ?? "lead",
         });
-      else {
+      else if (!moving && b.source === "dialer") {
         dial.today.saved += 1;
-        leave(contact || "", "lead", "booked");
+        leave(String(b.contact_id ?? ""), "lead", "booked");
       }
       if (!moving) dial.today.booked += 1;
       if (knobs.book === "slow" && !dial.slowUsed.book) {
         dial.slowUsed.book = true;
         await sleep(60_000, signal);
       }
-      const words = `${moving ? "Moved to" : kind === "demo" ? "Demo booked for" : "Intro booked for"} ${kuwaitWords(start)} (Kuwait time)`;
-      return { verified: knobs.book !== "unverified", words };
+      if (!moving && knobs.book === "unverified")
+        return { ...out, verified: false };
+      return out;
     }
+    case "pipeline.board":
+      return (await import("./pipelineFake")).pipelineBoardFake(b);
+    case "pipeline.move":
+      return (await import("./pipelineFake")).pipelineMoveFake(b);
     case "convo.read":
       return F.conversation(String(b.contact_id), now);
     case "convo.send":
@@ -1287,8 +1178,13 @@ async function main() {
         // The cockpit gave up waiting: the fetch fails as a browser's does.
         if ((e as Error).name === "AbortError") throw e;
         const status =
-          e instanceof Refusal || e instanceof LiveRefused ? e.status : 500;
-        const code = e instanceof LiveRefused ? e.code : null;
+          e instanceof Refusal ||
+          e instanceof LiveRefused ||
+          e instanceof BookRefusal
+            ? e.status
+            : 500;
+        const code =
+          e instanceof LiveRefused || e instanceof BookRefusal ? e.code : null;
         return json(
           { ok: false, error: (e as Error).message, ...(code ? { code } : {}) },
           status,

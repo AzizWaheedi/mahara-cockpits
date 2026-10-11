@@ -29,6 +29,7 @@ import {
   type LeakKey,
   readGiven,
 } from "../lib/funnel";
+import type { As } from "../lib/reschedule";
 import {
   CARRY_OVER,
   type Capture,
@@ -57,8 +58,7 @@ import { supabase } from "../lib/supabase";
 import { toast } from "../lib/toast";
 import type { CalendarRow, Lead, Me, Note } from "../lib/types";
 import { greetName } from "../lib/zoomLink";
-import { BookDemoBlock } from "./BookDemoBlock";
-import type { As } from "./BookForm";
+import { BookDemoBlock, FollowUpBlock } from "./BookDemoBlock";
 import { FunnelLadder } from "./FunnelLadder";
 import { GroupKit } from "./GroupKit";
 import {
@@ -966,6 +966,21 @@ export function ScriptRunner({
           );
         })}
         {bookHere && bookAt < 0 ? bookingBlock : null}
+        {/* The demo script ends with the next talk booked (2026-10-11). */}
+        {key === "demo" && stageIdx === stages.length - 1 ? (
+          <FollowUpBlock
+            me={me}
+            as={as}
+            lead={lead}
+            appointments={appointments}
+            attemptId={attemptId}
+            onBooked={words => {
+              touch();
+              reload();
+              onBooked?.(words);
+            }}
+          />
+        ) : null}
       </div>
 
       {rest.length ? (

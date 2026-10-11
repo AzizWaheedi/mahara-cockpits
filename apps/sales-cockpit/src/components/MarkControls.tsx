@@ -95,6 +95,9 @@ export function MarkControls({
   onDone,
   compact = false,
   noShowHeld = false,
+  variant = "full",
+  disqualify = true,
+  onMarked,
 }: {
   row: CalendarRow;
   onDone: (r: MarkResult) => void;
@@ -105,6 +108,17 @@ export function MarkControls({
    * link now (m1 round 2; sales-api refuses it too).
    */
   noShowHeld?: boolean;
+  /**
+   * "row" (2026-10-11): the call row's three buttons, Showed, Didn't happen
+   * and a quiet Disqualify. Didn't happen marks a no-show through the same
+   * hold, whose strip carries "They cancelled instead" (a correction inside
+   * the hold, no extra write), so the common case is one press.
+   */
+  variant?: "full" | "row";
+  /** The row variant offers Disqualify (past the call's window only). */
+  disqualify?: boolean;
+  /** The mark went to the server: the parent opens the picker to book again. */
+  onMarked?: (status: MarkStatus) => void;
 }) {
   const [asking, setAsking] = useState(false);
   const [pending, setPending] = useState<{
@@ -124,6 +138,8 @@ export function MarkControls({
   );
   const done = useRef(onDone);
   done.current = onDone;
+  const marked = useRef(onMarked);
+  marked.current = onMarked;
 
   async function send(p: { status: MarkStatus; reason: string | null }) {
     toSend.current = null;
@@ -149,6 +165,7 @@ export function MarkControls({
       });
       setPending(null);
       done.current(out.mark);
+      marked.current?.(p.status);
     } catch (e) {
       toast.error(String((e as Error).message ?? e));
       setPending(null);
@@ -176,6 +193,11 @@ export function MarkControls({
     setPending(null);
   }
 
+  /** Inside Didn't happen's hold: it was a cancellation, not a no-show. The hold starts again. */
+  function cancelledInstead() {
+    choose("cancelled");
+  }
+
   // Leaving the page inside the undo window still sends the mark.
   // biome-ignore lint/correctness/useExhaustiveDependencies: runs once on unmount
   useEffect(
@@ -185,6 +207,51 @@ export function MarkControls({
     },
     [],
   );
+
+  if (pending && variant === "row")
+    return (
+      <div
+        role="status"
+        className="relative grid min-w-0 max-w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2 overflow-hidden rounded-2xl border border-teal-500/30 bg-teal-500/10 py-1 ps-3.5 pe-1 text-sm shadow-sm sm:flex sm:rounded-full"
+      >
+        {!sending ? (
+          <span
+            aria-hidden
+            className="drain absolute inset-x-0 bottom-0 h-0.5"
+            style={
+              {
+                background: "var(--now)",
+                "--undo-ms": `${UNDO_MS}ms`,
+              } as CSSProperties
+            }
+          />
+        ) : null}
+        <span className="min-w-0 truncate text-xs font-medium">
+          {sending
+            ? "Sending…"
+            : `Marking ${statusLabel(pending.status).toLowerCase()}`}
+        </span>
+        {!sending && pending.status === "noshow" ? (
+          <button
+            type="button"
+            onClick={cancelledInstead}
+            className="col-start-1 row-start-2 justify-self-start text-xs underline underline-offset-2 sm:ms-1"
+          >
+            They cancelled instead
+          </button>
+        ) : null}
+        {!sending ? (
+          <button
+            type="button"
+            onClick={undo}
+            className="col-start-2 row-span-2 row-start-1 inline-flex h-8 shrink-0 items-center gap-1 rounded-full px-2.5 text-xs font-semibold text-teal-300 hover:bg-teal-500/15 sm:ms-auto"
+          >
+            <RotateCcw className="size-3" aria-hidden />
+            Undo
+          </button>
+        ) : null}
+      </div>
+    );
 
   if (pending)
     return (
@@ -260,6 +327,44 @@ export function MarkControls({
         >
           Back
         </button>
+      </div>
+    );
+
+  if (variant === "row")
+    return (
+      <div className="flex flex-wrap items-center gap-1.5">
+        <button
+          type="button"
+          onClick={() => choose("showed")}
+          className={`inline-flex items-center gap-1.5 rounded-full border px-3 text-xs font-medium shadow-sm transition-all pointer-coarse:min-h-10 ${OPTIONS[0].toneStyle} ${compact ? "h-8" : "h-9"}`}
+        >
+          <Check className="size-3.5" aria-hidden />
+          Showed
+        </button>
+        {noShowHeld ? (
+          <span className="muted text-xs">
+            Didn't happen waits while their video room is open.
+          </span>
+        ) : (
+          <button
+            type="button"
+            onClick={() => choose("noshow")}
+            title="Marks a no-show (HighLevel's no-show message goes). Inside the five seconds: They cancelled instead, or Undo."
+            className={`inline-flex items-center gap-1.5 rounded-full border px-3 text-xs font-medium shadow-sm transition-all pointer-coarse:min-h-10 ${OPTIONS[1].toneStyle} ${compact ? "h-8" : "h-9"}`}
+          >
+            <X className="size-3.5" aria-hidden />
+            Didn't happen
+          </button>
+        )}
+        {disqualify ? (
+          <button
+            type="button"
+            onClick={() => setAsking(true)}
+            className="muted px-1 text-xs underline underline-offset-2 hover:text-[color:var(--foreground)] pointer-coarse:min-h-10"
+          >
+            Disqualify
+          </button>
+        ) : null}
       </div>
     );
 

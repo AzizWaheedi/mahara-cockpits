@@ -1,31 +1,34 @@
-import { CalendarCheck, CalendarPlus, Copy, ExternalLink } from "lucide-react";
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { CalendarCheck, CalendarClock, Copy, ExternalLink } from "lucide-react";
+import { type ReactNode, useRef, useState } from "react";
 import { api, uncertain } from "../lib/api";
-import {
-  bookedDemo,
-  bookingLine,
-  introToMark,
-  nextSlots,
-  slotWords,
-} from "../lib/booking";
+import { bookedDemo, bookingLine, introToMark } from "../lib/booking";
 import { CLIENT_NOTE, isClient } from "../lib/clients";
-import { clock } from "../lib/format";
+import {
+  type As,
+  firstOf,
+  isWhen,
+  type Slots,
+  time12,
+  whenWords,
+} from "../lib/reschedule";
 import { toast } from "../lib/toast";
 import type { CalendarRow, Lead, Me } from "../lib/types";
-import { type As, BookForm, type Slots } from "./BookForm";
+import { CallPicker, type PickerDone, pickedWords } from "./CallPicker";
 import { button } from "./kit";
 
 const msg = (e: unknown) => String((e as Error)?.message ?? e);
 
 /**
- * Book the demo, at the end of the intro (sales simplify, 2026-10-10): the
- * demo calendar's four soonest free times as large buttons, and one press
- * books the time the lead picked through the same path as the dialer
+ * Book the demo, at the end of the intro (sales simplify, 2026-10-10; the
+ * one picker since 2026-10-11): the demo calendar's four soonest free times
+ * as the picker's tiles, and one press books the time the lead picked after
+ * the four-second hold with Undo, through the same path as everywhere
  * (book.create: HighLevel's own free-time check, the read-back, the closer
- * as owner, the stage move, the audit row, HighLevel's confirmations). The
- * cockpit sends the lead nothing. When the setter's intro is plainly
- * happening it is marked held first, and the block says so before the
- * press. The calendar's booking page is always under it, to send instead.
+ * as owner, the stage move, the audit row, HighLevel's confirmations). When
+ * the setter's intro is plainly happening it is marked held first, and the
+ * block says so before the press. Once a demo is booked the block shows it
+ * with Reschedule, never "move it in HighLevel". The calendar's booking
+ * page is always under it, to send instead.
  */
 export function BookDemoBlock({
   me,
@@ -53,66 +56,13 @@ export function BookDemoBlock({
   /** Booked: the server's words, and the time when this block knows it. */
   onBooked: (words: string, start: string | null) => void;
 }) {
+  // Booked from this block: its picker stays on its done state, with Tell
+  // them, while the lead's calls are read again behind it.
+  const [bookedHere, setBookedHere] = useState(false);
+  const [moving, setMoving] = useState(false);
   const [slots, setSlots] = useState<Slots | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [tick, setTick] = useState(0);
-  const [busyAt, setBusyAt] = useState<string | null>(null);
-  const busy = useRef(false);
-  const [unsure, setUnsure] = useState<string | null>(null);
-  const tried = useRef<string | null>(null);
-  const [booked, setBooked] = useState<{
-    words: string;
-    start: string | null;
-    /** False: HighLevel took it, but reading it back did not match. */
-    verified?: boolean;
-  } | null>(null);
-  const [more, setMore] = useState(false);
-  // Never empty, so the time they pick books in one press; it can be edited.
-  const suggested = bookingLine(values, me.name);
-  const [note, setNote] = useState<string | null>(null);
-  const line = note ?? suggested;
-  const marked = useRef(new Set<string>());
   const [copied, setCopied] = useState(false);
-  const slotsRef = useRef(onSlots);
-  slotsRef.current = onSlots;
-  const bookedRef = useRef(onBooked);
-  bookedRef.current = onBooked;
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies: tick reads the calendar again
-  useEffect(() => {
-    let alive = true;
-    setError(null);
-    api<Slots>("book.slots", {
-      contact_id: lead.contact_id,
-      kind: "demo",
-      with: "anyone",
-    })
-      .then(s => {
-        if (!alive) return;
-        const asked = tried.current;
-        tried.current = null;
-        if (asked) {
-          if (
-            s.existing &&
-            Date.parse(s.existing.start) === Date.parse(asked)
-          ) {
-            const words = `Demo booked for ${s.existing.words} (Kuwait time)`;
-            setBooked({ words, start: s.existing.start });
-            setUnsure(null);
-            bookedRef.current(words, s.existing.start);
-          } else
-            setUnsure(
-              "The calendar does not show it yet. Press the time again: a booking already on its way is refused, never made twice.",
-            );
-        }
-        setSlots(s);
-        slotsRef.current(nextSlots(s.days, 2));
-      })
-      .catch(e => alive && setError(msg(e)));
-    return () => {
-      alive = false;
-    };
-  }, [lead.contact_id, tick]);
+  const marked = useRef(new Set<string>());
 
   if (isClient(lead))
     return (
@@ -123,299 +73,151 @@ export function BookDemoBlock({
 
   const demo = bookedDemo(appointments);
   const intro = introToMark(appointments, me);
-  const times = nextSlots(slots?.days, 4);
+  const suggested = bookingLine(values, me.name);
 
-  async function book(start: string) {
-    if (busy.current) return;
-    if (line.trim().length < 3) {
-      toast.error(
-        "Write a line for the closer first, so they know what was said.",
-      );
-      return;
-    }
-    busy.current = true;
-    setBusyAt(start);
-    setUnsure(null);
+  /** Today's intro is marked held first; the booking matters more, so a refusal only says so. */
+  async function markIntro() {
+    if (!intro || marked.current.has(intro.appointment_id)) return;
     try {
-      if (intro && !marked.current.has(intro.appointment_id)) {
-        try {
-          await api("mark", {
-            appointment_id: intro.appointment_id,
-            status: "showed",
-          });
-          marked.current.add(intro.appointment_id);
-        } catch (e) {
-          // The booking matters more: it goes ahead, and the mark is said.
-          if (!uncertain(e))
-            toast.error(
-              `Today's intro was not marked held: ${msg(e)} Mark it on the lead page.`,
-            );
-          else marked.current.add(intro.appointment_id);
-        }
-      }
-      const out = await api<{ verified: boolean; words: string }>(
-        "book.create",
-        {
-          contact_id: lead.contact_id,
-          kind: "demo",
-          with: slots?.with ?? "anyone",
-          start,
-          note: line.trim(),
-          as,
-          attempt_id: attemptId,
-        },
-      );
-      if (!out.verified)
+      await api("mark", {
+        appointment_id: intro.appointment_id,
+        status: "showed",
+      });
+      marked.current.add(intro.appointment_id);
+    } catch (e) {
+      if (!uncertain(e))
         toast.error(
-          "HighLevel took the booking, but reading it back did not match. Open the lead in HighLevel and check the time.",
+          `Today's intro was not marked held: ${msg(e)} Mark it on the lead page.`,
         );
-      setBooked({ words: out.words, start, verified: out.verified });
-      onBooked(out.words, start);
-    } catch (err) {
-      if (uncertain(err)) {
-        tried.current = start;
-        setUnsure(
-          "No answer came back about the booking, so it may have gone through. Checking the calendar…",
-        );
-        setTick(n => n + 1);
-      } else {
-        toast.error(msg(err));
-        if (/taken|already have/i.test(msg(err))) setTick(n => n + 1);
-      }
-    } finally {
-      busy.current = false;
-      setBusyAt(null);
+      else marked.current.add(intro.appointment_id);
     }
   }
 
-  const doneStart = booked?.start ?? demo?.start_at ?? null;
-  // Booked on this call: here, or (after a reload) by HighLevel's booking
-  // time. Only a demo booked before the call says so; an unknown time says
-  // neither.
-  const bookedMs = demo?.booked_at ? Date.parse(demo.booked_at) : Number.NaN;
-  const onThisCall =
-    Boolean(booked) ||
-    (Number.isFinite(bookedMs) && bookedMs >= since - 120_000);
-  const before = !onThisCall && Number.isFinite(bookedMs);
-  const closer = demo?.assigned_user_name?.split(/\s+/)[0] ?? null;
-  // HighLevel took it, but reading it back did not match: said on the
-  // block, not only in a toast that goes away.
-  const unread = booked?.verified === false;
+  const done = (d: PickerDone) => {
+    if (d.mode === "book") setBookedHere(true);
+    onBooked(pickedWords(d), d.start);
+  };
 
-  return (
-    <BlockFrame>
-      {booked || doneStart ? (
-        <div className="flex items-start gap-3">
-          <CalendarCheck
-            className="mt-0.5 size-5 shrink-0"
-            style={{ color: unread ? "var(--warning)" : "var(--success)" }}
-            aria-hidden
-          />
-          <div className="min-w-0 space-y-1">
-            <p className="text-[15px] font-semibold">
-              {doneStart ? (
-                <>
-                  {unread
-                    ? "Sent to HighLevel for "
-                    : onThisCall
-                      ? "Demo booked for "
-                      : "Their demo is on "}
-                  <span className="font-mono">
-                    {slotWords(doneStart, lead.country, lead.phone).kuwait}
-                  </span>{" "}
-                  (Kuwait time){closer ? `, with ${closer}` : ""}.
-                </>
-              ) : (
-                `${booked?.words ?? ""}.`
-              )}
-            </p>
-            {unread ? (
-              <p
-                role="status"
-                className="callout-warn rounded-[var(--radius-md)] border px-3 py-2 text-sm"
-              >
-                HighLevel took the booking, but reading it back did not match.
-                Open the lead in HighLevel and check the time before the
-                tie-downs.
+  const booking = (
+    <BookingLink
+      url={slots?.booking_url ?? null}
+      // Only an answer that carries the field says the page is off: a
+      // sales-api from before 2026-10-10 sends none, and is not asked.
+      known={Boolean(slots && "booking_url" in slots)}
+      copied={copied}
+      onCopy={async () => {
+        if (!slots?.booking_url) return;
+        try {
+          await navigator.clipboard.writeText(slots.booking_url);
+          setCopied(true);
+          window.setTimeout(() => setCopied(false), 2000);
+        } catch {
+          toast.error(
+            "The link could not be copied. Open it and copy it from the address bar.",
+          );
+        }
+      }}
+    />
+  );
+
+  if (demo && !bookedHere && !moving) {
+    // Booked before this screen, or by HighLevel since: what it is, and
+    // Reschedule right here.
+    const bookedMs = demo.booked_at ? Date.parse(demo.booked_at) : Number.NaN;
+    const onThisCall = Number.isFinite(bookedMs) && bookedMs >= since - 120_000;
+    const closer = firstOf(demo.assigned_user_name);
+    return (
+      <BlockFrame>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+          <div className="flex min-w-0 flex-1 items-start gap-3">
+            <CalendarCheck
+              className="mt-0.5 size-5 shrink-0"
+              style={{ color: "var(--success)" }}
+              aria-hidden
+            />
+            <div className="min-w-0 space-y-1">
+              <p className="text-[15px] font-semibold">
+                {demo.start_at
+                  ? onThisCall
+                    ? `Demo booked for ${whenWords(demo.start_at)}`
+                    : `Their demo is ${isWhen(demo.start_at)}`
+                  : "Their demo's time is not known"}{" "}
+                (Kuwait time){closer ? `, with ${closer}` : ""}.
               </p>
-            ) : (
               <p className="muted text-sm">
                 {onThisCall
                   ? "HighLevel sends them the confirmation. Do the tie-downs and the show-rate lock now."
-                  : before
-                    ? "Booked before this call. Move it in HighLevel if they want another time."
-                    : "Move it in HighLevel if they want another time."}
+                  : "Booked before this call. Reschedule it here if they want another time."}
               </p>
-            )}
+            </div>
           </div>
+          <button
+            type="button"
+            className={`${button} pointer-coarse:min-h-11 shrink-0`}
+            onClick={() => setMoving(true)}
+          >
+            <CalendarClock className="size-3.5" aria-hidden />
+            Reschedule
+          </button>
         </div>
-      ) : (
-        <>
-          <div className="flex flex-wrap items-baseline justify-between gap-2">
-            <p className="flex items-center gap-2 text-[15px] font-semibold">
-              <CalendarPlus
-                className="size-4"
-                style={{ color: "var(--primary)" }}
-                aria-hidden
-              />
-              Book the demo
-            </p>
-            {slots && !slots.existing && times.length ? (
-              <button
-                type="button"
-                onClick={() => setMore(m => !m)}
-                aria-expanded={more}
-                className="muted text-xs underline-offset-2 hover:underline"
-              >
-                {more ? "Hide the other times" : "More times"}
-              </button>
-            ) : null}
-          </div>
+      </BlockFrame>
+    );
+  }
 
-          {error ? (
-            <p className="callout-bad rounded-[var(--radius-md)] border px-3 py-2 text-sm">
-              The calendar could not be read: {error}{" "}
-              <button
-                type="button"
-                onClick={() => setTick(n => n + 1)}
-                className="underline underline-offset-2"
-              >
-                Read it again
-              </button>
-            </p>
-          ) : !slots ? (
-            <p className="muted text-sm">
-              Reading the demo calendar's free times…
-            </p>
-          ) : slots.existing ? (
-            <p className="callout-warn rounded-[var(--radius-md)] border px-3 py-2 text-sm">
-              They already have a demo on {slots.existing.words} (Kuwait time).
-              Move that one in HighLevel instead of booking a second.
-            </p>
-          ) : !times.length ? (
-            <p className="callout-warn rounded-[var(--radius-md)] border px-3 py-2 text-sm">
-              No free demo times in the next few days. Send them the booking
-              page below, or book in HighLevel.
-            </p>
-          ) : (
-            <>
-              <p className="muted text-xs">
-                Kuwait time, {slots.minutes} minutes, with the closer who is
-                free. One press books the time they pick.
-                {intro
-                  ? ` Booking also marks today's intro (${clock(intro.start_at)}) as held.`
-                  : ""}
-              </p>
-              <div
-                className="grid grid-cols-2 gap-2 sm:grid-cols-4"
-                role="group"
-                aria-label="The soonest free times"
-              >
-                {times.map(t => {
-                  const w = slotWords(t, lead.country, lead.phone);
-                  const pressing = busyAt === t;
-                  return (
-                    <button
-                      key={t}
-                      type="button"
-                      disabled={busyAt !== null || line.trim().length < 3}
-                      onClick={() => void book(t)}
-                      aria-label={`Book ${w.kuwait}${intro ? " and mark today's intro as held" : ""}`}
-                      className={`flex min-h-[4.25rem] flex-col items-start justify-center rounded-[14px] border px-3 py-2 text-left transition-colors disabled:opacity-50 ${
-                        pressing
-                          ? "border-[color:var(--primary)] bg-[color:color-mix(in_oklch,var(--primary)_16%,transparent)]"
-                          : "border-white/10 bg-white/[0.03] hover:border-[color:color-mix(in_oklch,var(--primary)_60%,transparent)] hover:bg-[color:color-mix(in_oklch,var(--primary)_8%,transparent)]"
-                      }`}
-                    >
-                      <span className="muted text-[11px] font-medium">
-                        {pressing ? "Booking…" : w.day}
-                      </span>
-                      <span className="font-mono text-[17px] font-semibold tabular-nums">
-                        {w.time}
-                      </span>
-                      {w.theirs ? (
-                        <span className="muted text-[11px]">{w.theirs}</span>
-                      ) : null}
-                    </button>
-                  );
-                })}
-              </div>
-            </>
-          )}
+  if (moving && demo)
+    return (
+      <BlockFrame>
+        <CallPicker
+          key={`move:${demo.appointment_id}`}
+          me={me}
+          as={as}
+          lead={lead}
+          mode="reschedule"
+          kind="demo"
+          appointmentId={demo.appointment_id}
+          current={{ start: demo.start_at, host: demo.assigned_user_name }}
+          source="script"
+          attemptId={attemptId}
+          frame={false}
+          onClose={() => setMoving(false)}
+          onDone={done}
+        />
+      </BlockFrame>
+    );
 
-          <label className="block space-y-1">
-            <span className="muted block text-xs">
-              A line for the closer (goes on the lead in HighLevel with the
-              booking)
-            </span>
-            <textarea
-              value={line}
-              onChange={e => setNote(e.target.value)}
-              rows={2}
-              dir="auto"
-              className="w-full rounded-[14px] border border-white/10 bg-[color:var(--background)] px-3 py-2 text-sm focus:border-[color:var(--ring)] focus:outline-none focus:ring-1 focus:ring-[color:var(--ring)]"
-            />
-            {line.trim().length < 3 ? (
-              <span
-                className="block text-xs"
-                style={{ color: "var(--warning)" }}
-              >
-                Write a line for the closer first: what they need to know before
-                the demo.
-              </span>
-            ) : null}
-          </label>
-
-          {unsure ? (
-            <p
-              role="status"
-              className="callout-warn rounded-[var(--radius-md)] border px-3 py-2 text-xs leading-relaxed"
-            >
-              {unsure}
-            </p>
-          ) : null}
-
-          {more && slots ? (
-            <BookForm
-              me={me}
-              as={as}
-              contactId={lead.contact_id}
-              attemptId={attemptId}
-              kindFirst="demo"
-              note={line}
-              onNote={setNote}
-              onClose={() => setMore(false)}
-              closeLabel="Back to the soonest times"
-              onBooked={words => {
-                setMore(false);
-                setBooked({ words, start: null });
-                onBooked(words, null);
-                setTick(n => n + 1);
-              }}
-            />
-          ) : null}
-        </>
-      )}
-
-      <BookingLink
-        url={slots?.booking_url ?? null}
-        // Only an answer that carries the field says the page is off: a
-        // sales-api from before 2026-10-10 sends none, and is not asked.
-        known={Boolean(slots && "booking_url" in slots)}
-        copied={copied}
-        onCopy={async () => {
-          if (!slots?.booking_url) return;
-          try {
-            await navigator.clipboard.writeText(slots.booking_url);
-            setCopied(true);
-            window.setTimeout(() => setCopied(false), 2000);
-          } catch {
-            toast.error(
-              "The link could not be copied. Open it and copy it from the address bar.",
-            );
-          }
-        }}
+  return (
+    <BlockFrame>
+      {intro && !bookedHere ? (
+        <p className="muted text-xs">
+          Booking also marks today's intro (
+          {intro.start_at ? time12(intro.start_at) : "its time"}) as held.
+        </p>
+      ) : null}
+      <CallPicker
+        key="book"
+        me={me}
+        as={as}
+        lead={lead}
+        mode="book"
+        kind="demo"
+        title="Book the demo"
+        withDefault="anyone"
+        source="script"
+        attemptId={attemptId}
+        line={suggested}
+        lineLabel="A line for the closer (goes on the lead in HighLevel with the booking)"
+        beforeBook={intro ? markIntro : undefined}
+        onSlots={onSlots}
+        onRead={setSlots}
+        frame={false}
+        onDone={done}
+        footer={bookedHere ? null : booking}
       />
+      {bookedHere ? (
+        <p className="muted text-xs">
+          Do the tie-downs and the show-rate lock now.
+        </p>
+      ) : null}
     </BlockFrame>
   );
 }
@@ -470,5 +272,125 @@ function BookingLink({
         </span>
       )}
     </div>
+  );
+}
+
+/**
+ * Book a follow-up call, at the end of the demo script (2026-10-11): the
+ * closer books the next talk with the lead on the line, on the Follow up
+ * call calendar, with themself as the host by default. A follow-up call
+ * already ahead shows with Reschedule instead.
+ */
+export function FollowUpBlock({
+  me,
+  as,
+  lead,
+  appointments,
+  attemptId,
+  onBooked,
+}: {
+  me: Me;
+  as: As;
+  lead: Lead;
+  appointments: CalendarRow[];
+  attemptId: string | null;
+  onBooked?: (words: string, start: string | null) => void;
+}) {
+  const [bookedHere, setBookedHere] = useState(false);
+  const [moving, setMoving] = useState(false);
+  if (isClient(lead)) return null;
+  const now = Date.now();
+  const next = appointments
+    .filter(
+      a =>
+        // A callback request is moved in HighLevel (sales-api reschedules
+        // intro, demo and follow-up calls only), so it is not this block's.
+        a.call_type === "follow_up" &&
+        a.start_at &&
+        Date.parse(a.start_at) > now - 20 * 60_000 &&
+        !["cancelled", "noshow", "showed", "invalid"].includes(
+          String(a.marked_status ?? a.status ?? ""),
+        ),
+    )
+    .sort(
+      (a, b) => Date.parse(String(a.start_at)) - Date.parse(String(b.start_at)),
+    )[0];
+  const done = (d: PickerDone) => {
+    if (d.mode === "book") setBookedHere(true);
+    onBooked?.(pickedWords(d), d.start);
+  };
+  const frame = (children: ReactNode) => (
+    <section
+      id="book-follow-up"
+      aria-label="Book a follow-up call"
+      className="scroll-mt-52 space-y-3 rounded-[18px] border border-[color:color-mix(in_oklch,var(--primary)_35%,transparent)] bg-[color:var(--card)] p-4 lg:scroll-mt-40"
+    >
+      {children}
+    </section>
+  );
+  if (next && !bookedHere && !moving)
+    return frame(
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+        <div className="flex min-w-0 flex-1 items-start gap-3">
+          <CalendarCheck
+            className="mt-0.5 size-5 shrink-0"
+            style={{ color: "var(--success)" }}
+            aria-hidden
+          />
+          <p className="min-w-0 text-[15px] font-semibold">
+            {next.start_at
+              ? `Their follow-up call is ${isWhen(next.start_at)}`
+              : "Their follow-up call's time is not known"}{" "}
+            (Kuwait time)
+            {firstOf(next.assigned_user_name)
+              ? `, with ${firstOf(next.assigned_user_name)}`
+              : ""}
+            .
+          </p>
+        </div>
+        <button
+          type="button"
+          className={`${button} pointer-coarse:min-h-11 shrink-0`}
+          onClick={() => setMoving(true)}
+        >
+          <CalendarClock className="size-3.5" aria-hidden />
+          Reschedule
+        </button>
+      </div>,
+    );
+  if (moving && next)
+    return frame(
+      <CallPicker
+        key={`move:${next.appointment_id}`}
+        me={me}
+        as={as}
+        lead={lead}
+        mode="reschedule"
+        kind="follow_up"
+        appointmentId={next.appointment_id}
+        current={{ start: next.start_at, host: next.assigned_user_name }}
+        source="script"
+        attemptId={attemptId}
+        frame={false}
+        onClose={() => setMoving(false)}
+        onDone={done}
+      />,
+    );
+  return frame(
+    <CallPicker
+      key="book"
+      me={me}
+      as={as}
+      lead={lead}
+      mode="book"
+      kind="follow_up"
+      title="Book a follow-up call"
+      withDefault="me"
+      source="script"
+      attemptId={attemptId}
+      line={`Follow-up after the demo, booked on the call by ${firstOf(me.name) || "the closer"}.`}
+      frame={false}
+      onDone={done}
+    />,
   );
 }

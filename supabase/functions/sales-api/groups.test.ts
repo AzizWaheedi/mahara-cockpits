@@ -154,6 +154,31 @@ describe("group.made", () => {
     expect(rows()).toHaveLength(0);
   });
 
+  test("a signed deal without the tag is an active client too: refused, saying the form", async () => {
+    db.tables.cockpit_sales_deals = [
+      { response_id: "r-1", contact_id: "c-sara", submitted_at: "2026-10-09T18:46:19Z", closer: "Ahmed", contracted_revenue: 6000, voided: false },
+    ];
+    const r = await refusal(g.actions["group.made"](SETTER, { contact_id: "c-sara", invite_link: INVITE }));
+    expect([r.status, r.extra.code]).toEqual([409, "client"]);
+    expect(r.message).toContain("signed on the New Client Form");
+    expect(rows()).toHaveLength(0);
+    expect(audits).toHaveLength(0);
+    expect(notes).toHaveLength(0);
+  });
+
+  test("a voided deal is not a client: the group is saved", async () => {
+    db.tables.cockpit_sales_deals = [{ response_id: "r-1", contact_id: "c-sara", submitted_at: "2026-10-09T18:46:19Z", voided: true }];
+    await g.actions["group.made"](SETTER, { contact_id: "c-sara", invite_link: INVITE });
+    expect(rows()).toHaveLength(1);
+  });
+
+  test("deals that cannot be read: 503, never taken for 'not a client'", async () => {
+    db.faults.push({ prefix: "cockpit_sales_deals", error: new Error("database 503: unavailable"), times: 1 });
+    const r = await refusal(g.actions["group.made"](SETTER, { contact_id: "c-sara", invite_link: INVITE }));
+    expect(r.status).toBe(503);
+    expect(rows()).toHaveLength(0);
+  });
+
   test("the note's words", () => {
     expect(groupNote("Tahreer", T0)).toBe("WhatsApp group made by Tahreer on Sat 10 Oct, 14:10 (Kuwait time).");
   });

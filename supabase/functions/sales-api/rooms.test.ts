@@ -232,6 +232,15 @@ describe("room.create", () => {
     expect((await refused(tagged.make(setter, { contact_id: OTHER_LEAD }))).extra.code).toBe("test_only");
     const client = setup({ rooms: { test_only: false }, contact: { firstName: "Ali", tags: ["client"] } });
     expect((await refused(client.make())).extra.code).toBe("client");
+    // Signed on the New Client Form, no tag in HighLevel yet: a client too
+    // (2026-10-11, clients.ts markSigned on the contact the rooms read).
+    const signed = setup({ rooms: { test_only: false }, contact: { firstName: "Ali", tags: ["roas-qualified"] } });
+    signed.db.t("cockpit_sales_deals").push({ contact_id: LEAD, submitted_at: "2026-10-09T10:00:00Z", closer: "Omar", voided: false });
+    expect((await refused(signed.make())).extra.code).toBe("client");
+    // A voided deal is no client: the room is made.
+    const voided = setup({ rooms: { test_only: false }, contact: { firstName: "Ali", tags: ["roas-qualified"] } });
+    voided.db.t("cockpit_sales_deals").push({ contact_id: LEAD, submitted_at: "2026-10-09T10:00:00Z", voided: true });
+    expect((await voided.make()).state).toBe("requested");
     const unread = setup({ contact: null });
     const r = await refused(unread.make());
     expect([r.status, r.extra.code, r.extra.retry]).toEqual([503, "contact_unread", true]);

@@ -268,6 +268,17 @@ describe("zoom.link: before Zoom is asked", () => {
     expect(r.status).toBe(400);
     expect(creates()).toHaveLength(0);
   });
+
+  test("a client signed on the New Client Form with no tag is refused too (2026-10-11)", async () => {
+    db.t("cockpit_sales_deals").push({ response_id: "r-1", contact_id: "c-sara", submitted_at: "2026-10-09T08:00:00Z", voided: false });
+    const r = await refusal(z.actions["zoom.link"](SETTER, { contact_id: "c-sara", kind: "intro" }));
+    expect([r.status, r.extra.code]).toEqual([409, "client"]);
+    expect(r.message).toContain("signed on the New Client Form");
+    // A voided deal makes no client.
+    (db.t("cockpit_sales_deals")[0] as Row).voided = true;
+    await z.actions["zoom.link"](SETTER, { contact_id: "c-sara", kind: "intro" });
+    expect(creates()).toHaveLength(1);
+  });
 });
 
 describe("zoom.link: who hosts it", () => {
@@ -519,6 +530,19 @@ describe("the tidy", () => {
     calls = [];
     await z.tidy(SETTER, "aziz@maharamedia.com", 24);
     expect(calls.filter(c => c.url.includes("/400"))).toEqual([]);
+  });
+
+  test("a link kept for a rescheduled call waits until its keep_until, then goes as usual (2026-10-11)", async () => {
+    seed("00000000-0000-4000-8000-000000000600", "600", 30, { keep_until: new Date(T0 + 2 * 3_600_000).toISOString() });
+    meetings.set("600", MEETING(600));
+    seed("00000000-0000-4000-8000-000000000601", "601", 31, { keep_until: new Date(T0 - 60_000).toISOString() });
+    meetings.set("601", MEETING(601));
+    expect(await z.tidy(SETTER, "aziz@maharamedia.com", 24)).toBe(1);
+    expect(meetings.has("600")).toBe(true);
+    expect(meetings.has("601")).toBe(false);
+    clock.now = T0 + 3 * 3_600_000;
+    expect(await z.tidy(SETTER, "aziz@maharamedia.com", 24)).toBe(1);
+    expect(meetings.has("600")).toBe(false);
   });
 
   test("Zoom not saying whether it was held: nothing is deleted or marked", async () => {

@@ -832,12 +832,12 @@ describe("journey: a missed call to a new lead, a Meet link, Next lead; Huda joi
     await R.roomsApi.end(p.room, "finished", true);
     p = await panelNow(w, id);
     // The lead page's panel (no canMarkIntro, no talkBelow): "Finished at
-    // 10:24." and no button. The page itself has no booking and no outcome
-    // save (LeadPage.tsx draws neither BookForm nor dial.save; its calendar
-    // card says "A setter books the intro from the dialer or HighLevel"), and
-    // nothing on it leads to this lead in the dialer, whose joined step
-    // ("Huda joined the video call. How did the intro go?" [Book the demo])
-    // was only ever on the pane the setter left.
+    // 10:24." and no button. Since round 4 the page links to this lead in
+    // the dialer ("Open in the dialer"), whose joined step ("Huda joined the
+    // video call. How did the intro go?" [Book the demo]) was only ever on
+    // the pane the setter left; since 2026-10-11 the page's Calls card also
+    // books the demo itself (CallsCard, the one picker), and the outcome
+    // save stays the dialer's.
     const leadPage = await Bun.file(
       new URL("../pages/LeadPage.tsx", import.meta.url),
     ).text();

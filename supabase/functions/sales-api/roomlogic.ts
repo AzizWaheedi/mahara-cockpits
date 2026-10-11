@@ -28,7 +28,7 @@
 // - a join is counted once, and an undo always lands, even after a crash:
 //   the sweep asks again for a count or an undo that never finished.
 
-import { isClient } from "./clients.ts";
+import { isActiveClient } from "./clients.ts";
 import { BOOKING_CALENDARS } from "./dialer.ts";
 import { dndFor, greetingName, redact, slackSafe, whatsappWindow } from "./lib.ts";
 
@@ -3269,7 +3269,8 @@ export function channelPlan(i: ChannelInput): ChannelPlan {
     not_sent_reason: null,
     line: ROOM_COPY.dialer.picker_none,
   });
-  if (c && isClient(c)) return none("client");
+  // An active client: the tag, or a signed deal its caller marked (clients.ts markSigned).
+  if (c && isActiveClient(c)) return none("client");
   const waDnd = c ? dndFor(c, "whatsapp") : false;
   const emailDnd = c ? dndFor(c, "email") : false;
   if (waDnd && emailDnd) return none("dnd");
@@ -3873,7 +3874,7 @@ export function countLive(i: CountInput): CountPlan {
   if (!countClaimable(room, i.confirmed === true)) return none("claimed", false);
   if (room.purpose === "booked") return none("booked_room", false);
   const c = i.contact ?? {};
-  if (isClient(c)) return none("client", true, "not_a_lead");
+  if (isActiveClient(c)) return none("client", true, "not_a_lead");
   const test = isTestContact(room.contact_id, c.tags, setting);
   if (test && !setting.test_calendar_id) return none("test_calendar_missing", true, "not_a_lead");
   if (test && official.has(setting.test_calendar_id as string)) return none("test_calendar_official", true, "not_a_lead");
@@ -4702,7 +4703,7 @@ export interface CreateInput {
 function contactRefusal(s: RoomsSetting, contactId: string, contact: Row | null): Refused | null {
   if (!contact) return refuse("contact_unread");
   if (s.test_only && !isListedTestContact(contactId, s)) return refuse("test_only");
-  if (isClient(contact)) return refuse("client");
+  if (isActiveClient(contact)) return refuse("client");
   if (dndEveryChannel(contact)) return refuse("dnd");
   return null;
 }

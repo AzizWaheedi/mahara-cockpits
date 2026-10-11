@@ -107,6 +107,18 @@ export interface CalendarRow {
   /** The mark when there is one, else HighLevel's status. */
   status: string | null;
   needs_mark: boolean;
+  /**
+   * 20261011a_sales_reschedule.sql appends these; a page served before the
+   * migration reads none of them, so each is optional.
+   */
+  /** The call's own video link (HighLevel's demo address). */
+  meet_url?: string | null;
+  /** HighLevel's own reschedule stamp, moves made there too. */
+  crm_rescheduled_at?: string | null;
+  /** The call's newest reschedule from the cockpit: when, from what time, by whom. */
+  rescheduled_at?: string | null;
+  rescheduled_from?: string | null;
+  rescheduled_by?: string | null;
 }
 
 export interface Dial {

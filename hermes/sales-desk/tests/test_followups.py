@@ -99,6 +99,12 @@ class Pick(unittest.TestCase):
         # Already confirmed, or they wrote since booking, or a draft exists: nothing.
         done = [{"appointment_id": "c1", "result": "confirmed"}]
         self.assertEqual(fu.pick(evening, inbox=[], calendar=[call], leads=[], confirmations=done), [])
+        # A confirmation of the call's own time counts; one of the time it
+        # had before it was moved does not (D37, 2026-10-11).
+        same = [{"appointment_id": "c1", "result": "confirmed", "start_at": "2026-09-25 08:00:00+00"}]
+        self.assertEqual(fu.pick(evening, inbox=[], calendar=[call], leads=[], confirmations=same), [])
+        moved = [{"appointment_id": "c1", "result": "reschedule", "start_at": "2026-09-24T19:30:00+00:00"}]
+        self.assertEqual(who(fu.pick(evening, inbox=[], calendar=[call], leads=[], confirmations=moved)), [("q", "confirm")])
         wrote = [{"contact_id": "q", "last_direction": "outbound", "last_message_at": ago(hours=1),
                   "inbound_whatsapp_at": ago(days=1)}]
         # (Their message is a reply to look at now: the run reads whether a person answered it.)

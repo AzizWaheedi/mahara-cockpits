@@ -868,8 +868,17 @@ def pick(now: datetime, *, inbox: list[dict[str, Any]], calendar: list[dict[str,
     calls_of: dict[str, list[dict[str, Any]]] = {}
     for a in calls:
         calls_of.setdefault(str(a.get("contact_id") or ""), []).append(a)
-    confirmed = {str(x.get("appointment_id")) for x in confirmations
-                 if x.get("result") in ("confirmed", "message_sent", "reschedule", "cancelled")}
+    # A confirmation counts for the time it was made for (D37, 2026-10-11): a
+    # call moved since, in HighLevel or the cockpit, is confirmed again. A
+    # row that names no time keeps counting, as before.
+    confirmed: dict[str, list[Optional[datetime]]] = {}
+    for x in confirmations:
+        if x.get("result") in ("confirmed", "message_sent", "reschedule", "cancelled"):
+            confirmed.setdefault(str(x.get("appointment_id")), []).append(_ts(x.get("start_at")))
+
+    def confirmed_for(aid: str, start: Optional[datetime]) -> bool:
+        return any(t is None or (start is not None and abs((t - start).total_seconds()) < 60)
+                   for t in confirmed.get(aid, []))
 
     # A call booked more than a day ahead, due for its confirmation.
     for a in sorted(calls, key=lambda a: str(a.get("start_at"))):
@@ -882,7 +891,7 @@ def pick(now: datetime, *, inbox: list[dict[str, Any]], calendar: list[dict[str,
         due_from = confirm_from(start, (by_lead.get(c) or {}).get("country"))
         if due_from is None or now < due_from:
             continue
-        if aid in confirmed or aid in drafted_appts or (inbound.get(c) and inbound[c] > booked):
+        if confirmed_for(aid, start) or aid in drafted_appts or (inbound.get(c) and inbound[c] > booked):
             continue
         add(c, "confirm", 1, 0 if start - now <= timedelta(hours=3) else 1, appointment_id=aid, start_at=start)
 
@@ -2394,7 +2403,7 @@ def run(sb: Any, provider: Any, log: Callable[[str], None], *, settings: dict[st
         "cockpit_sales_dials", f"select=contact_id&state=eq.completed"
                                f"&occurred_at=gte.{_q((now - REACHED_FOR).isoformat())}{only}", order="call_id")
         if d.get("contact_id")}
-    confirmations = sb.select_all("cockpit_sales_confirmations", "select=appointment_id,result"
+    confirmations = sb.select_all("cockpit_sales_confirmations", "select=appointment_id,result,start_at"
                                                                  f"&start_at=gte.{_q((now - timedelta(hours=1)).isoformat())}",
                                   order="id")
     # Only a row still being worked is hot: a closed or lost one stays on the

@@ -43,13 +43,15 @@ export const toast = {
   error: (text: unknown) => push("error", text),
 };
 
+// Mixed in oklab, which has no hue: the light card is oklch(1 0 0), whose
+// hue 0 pulled an oklch mix of green toward pink.
 const TONE: Record<Kind, { background: string; borderColor: string }> = {
   success: {
-    background: "color-mix(in oklch, var(--success) 12%, var(--card))",
+    background: "color-mix(in oklab, var(--success) 12%, var(--card))",
     borderColor: "color-mix(in oklch, var(--success) 45%, transparent)",
   },
   error: {
-    background: "color-mix(in oklch, var(--destructive) 12%, var(--card))",
+    background: "color-mix(in oklab, var(--destructive) 12%, var(--card))",
     borderColor: "color-mix(in oklch, var(--destructive) 45%, transparent)",
   },
 };

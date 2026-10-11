@@ -367,6 +367,8 @@ export interface Candidate {
   owner?: string | null;
   /** The lead's latest call to us in the last day that nobody answered. */
   inbound_call_at?: number | null;
+  /** The lead signed (a deal that is not voided): out of the setter's queue too. */
+  signed?: boolean;
 }
 
 /** "14:30", Kuwait time. */
@@ -609,10 +611,11 @@ function order(out: Ranked[]): Ranked[] {
  * A lead called from the softphone counts: Maqsam's unanswered calls move
  * it down the same retry ladder as the dialer's own No answer.
  *
- * Out: do-not-disturb, closed (booked, unreachable, not interested,
- * disqualified, wrong number, handled), claimed by another rep, and resting
- * stages (disqualified, paused, long-term nurture, won, lost), unless the
- * lead wrote or a call-back is due.
+ * Out: do-not-disturb, a signed client or a won stage (always),
+ * closed (booked, unreachable, not interested, disqualified, wrong number,
+ * handled), claimed by another rep, and resting stages (disqualified,
+ * paused, long-term nurture, lost), unless the lead wrote or a call-back is
+ * due.
  */
 export function rankForSetter(
   items: Candidate[],
@@ -623,7 +626,10 @@ export function rankForSetter(
 ): Ranked[] {
   const out: Ranked[] = [];
   for (const c of items) {
-    if (c.dnd) continue;
+    // A signed client, or a lead in a won stage, is client success's (the
+    // CEO, 2026-10-11: a signed client stays in Closed on the pipeline and
+    // out of every sales list).
+    if (c.dnd || c.signed || c.stage_role === "won") continue;
     // A number the dialer cannot call is left for the Maqsam softphone.
     if (!routePhone(c.phone).ok) continue;
     if (c.claimed_by && c.claimed_by !== me) continue;
@@ -892,10 +898,26 @@ export const BOOKING_CALENDARS = {
   demo: "jQqXS1YuFnmGZKLkrE62",
 } as const;
 
-export type BookingKind = "intro" | "demo";
+/** What can be booked: an intro, a demo, or a follow-up call (2026-10-11, the lead page and the demo script). */
+export type BookingKind = "intro" | "demo" | "follow_up";
 
-export function calendarFor(kind: BookingKind, leadClass: string | null): string {
+/**
+ * The calendar a new booking goes on. A follow-up call goes on the one
+ * calendar the calendars setting names follow_up ("Follow up call"); with
+ * no such calendar in the setting it is "", and the booking is refused.
+ */
+export function calendarFor(
+  kind: BookingKind,
+  leadClass: string | null,
+  calendars?: Record<string, { type?: string } | undefined> | null,
+): string {
   if (kind === "demo") return BOOKING_CALENDARS.demo;
+  if (kind === "follow_up") {
+    const ids = Object.entries(calendars ?? {})
+      .filter(([, c]) => c?.type === "follow_up")
+      .map(([id]) => id);
+    return ids.length === 1 ? (ids[0] as string) : "";
+  }
   return leadClass === "qualified" ? BOOKING_CALENDARS.intro_qualified : BOOKING_CALENDARS.intro_unqualified;
 }
 
@@ -992,7 +1014,7 @@ export type AnyOutcome = Outcome | (typeof APPOINTMENT_OUTCOMES)[number];
 export const ANY_OUTCOME_WORDS: Record<AnyOutcome, string> = {
   ...OUTCOME_WORDS,
   confirmed: "Confirmed the call",
-  rescheduled: "Moved the call",
+  rescheduled: "Rescheduled the call",
   cancelled: "Cancelled the call",
   showed: "Held the intro",
   noshow: "No-show",
@@ -1072,7 +1094,8 @@ export function targetRoles(
   call: "intro" | "demo" | null = null,
   current: StageRole | null = null,
 ): StageRole[] {
-  if (outcome === "booked") return booked === "demo" ? ["demo_booked"] : ["intro_booked"];
+  // A follow-up call moves no stage (2026-10-11): the lead stays where the demo left them.
+  if (outcome === "booked") return booked === "follow_up" ? [] : booked === "demo" ? ["demo_booked"] : ["intro_booked"];
   if (outcome === "confirmed") return call === "intro" ? ["intro_confirmed"] : [];
   if (outcome === "cancelled") return call === "demo" ? ["demo_cancelled"] : ["intro_cancelled"];
   if (outcome === "noshow") return [];

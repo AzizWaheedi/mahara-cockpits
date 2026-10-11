@@ -5,8 +5,9 @@ import {
   PhoneIncoming,
   TriangleAlert,
 } from "lucide-react";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Link } from "react-router";
+import { RowButtons, RowPanel } from "../components/CallsCard";
 import { DayLine } from "../components/DayLine";
 import {
   EmptyState,
@@ -44,6 +45,7 @@ import {
   money,
   when,
 } from "../lib/format";
+import { liveChip } from "../lib/reschedule";
 import type { CalendarRow, InboxRow, Lead, Me } from "../lib/types";
 
 /** The rep's day: where they are, what they owe, what comes next. */
@@ -75,6 +77,18 @@ export default function TodayPage({ me }: { me: Me }) {
     () => new Map((briefs.data ?? []).map(l => [l.contact_id, l])),
     [briefs.data],
   );
+
+  // One panel open at a time: a Coming up row's picker or Tell them, or an
+  // owed call's "book it again" after Didn't happen.
+  const [open, setOpen] = useState<{
+    id: string;
+    what: "reschedule" | "tell" | "again";
+  } | null>(null);
+  const reloadCalls = () => {
+    coming.reload();
+    todays.reload();
+    owed.reload();
+  };
 
   const unlinked = view.kind === "mine" && !me.ghl_user_id;
   const dateLine = new Date(now).toLocaleDateString("en-GB", {
@@ -131,10 +145,13 @@ export default function TodayPage({ me }: { me: Me }) {
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-12 lg:gap-6">
         <div className="min-w-0 space-y-4 lg:col-span-7 lg:space-y-6">
           <OwedCard
+            me={me}
             rows={owed.data}
             error={owed.error}
-            reload={owed.reload}
+            reload={reloadCalls}
             team={scope === "team"}
+            open={open}
+            setOpen={setOpen}
           />
           <WeekCard me={me} view={view} />
         </div>
@@ -159,9 +176,20 @@ export default function TodayPage({ me }: { me: Me }) {
                 {upcoming.map(r => (
                   <UpcomingRow
                     key={r.appointment_id}
+                    me={me}
                     r={r}
                     lead={byId.get(r.contact_id ?? "")}
                     team={scope === "team"}
+                    now={now}
+                    open={
+                      open?.id === r.appointment_id && open.what !== "again"
+                        ? open.what
+                        : null
+                    }
+                    onOpen={what =>
+                      setOpen(what ? { id: r.appointment_id, what } : null)
+                    }
+                    reload={reloadCalls}
                   />
                 ))}
               </ul>
@@ -244,15 +272,23 @@ function MirrorLine({
 }
 
 function OwedCard({
+  me,
   rows,
   error,
   reload,
   team,
+  open,
+  setOpen,
 }: {
+  me: Me;
   rows: CalendarRow[] | null;
   error: string | null;
   reload: () => void;
   team: boolean;
+  open: { id: string; what: "reschedule" | "tell" | "again" } | null;
+  setOpen: (
+    o: { id: string; what: "reschedule" | "tell" | "again" } | null,
+  ) => void;
 }) {
   const list = rows ?? [];
   return (
@@ -297,29 +333,49 @@ function OwedCard({
           </p>
           <ul className="divide-y hairline">
             {list.slice(0, 15).map(r => (
-              <li
-                key={r.appointment_id}
-                className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center hover:bg-white/[0.02] transition-colors"
-              >
-                <div className="min-w-0 flex-1">
-                  <Link
-                    to={`/lead/${r.contact_id ?? ""}`}
-                    className="block truncate text-sm font-semibold hover:underline hover:text-[color:var(--primary)] transition-colors"
-                    dir="auto"
-                  >
-                    {r.contact_name ?? "A lead"}
-                  </Link>
-                  <p className="muted text-xs mt-0.5">
-                    <Parts
-                      items={[
-                        callType(r.call_type),
-                        when(r.start_at),
-                        team ? r.assigned_user_name : null,
-                      ]}
-                    />
-                  </p>
+              <li key={r.appointment_id}>
+                <div className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center hover:bg-white/[0.02] transition-colors">
+                  <div className="min-w-0 flex-1">
+                    <Link
+                      to={`/lead/${r.contact_id ?? ""}`}
+                      className="block truncate text-sm font-semibold hover:underline hover:text-[color:var(--primary)] transition-colors"
+                      dir="auto"
+                    >
+                      {r.contact_name ?? "A lead"}
+                    </Link>
+                    <p className="muted text-xs mt-0.5">
+                      <Parts
+                        items={[
+                          callType(r.call_type),
+                          when(r.start_at),
+                          team ? r.assigned_user_name : null,
+                        ]}
+                      />
+                    </p>
+                  </div>
+                  <MarkControls
+                    row={r}
+                    variant="row"
+                    onDone={() => reload()}
+                    onMarked={status => {
+                      if (status === "noshow" || status === "cancelled")
+                        setOpen({ id: r.appointment_id, what: "again" });
+                    }}
+                    compact
+                  />
                 </div>
-                <MarkControls row={r} onDone={() => reload()} compact />
+                {open?.id === r.appointment_id && open.what === "again" ? (
+                  <div className="px-3 pb-3 sm:px-4">
+                    <RowPanel
+                      me={me}
+                      row={r}
+                      what="again"
+                      source="today"
+                      onClose={() => setOpen(null)}
+                      onDone={() => reload()}
+                    />
+                  </div>
+                ) : null}
               </li>
             ))}
           </ul>
@@ -342,20 +398,31 @@ function OwedCard({
 }
 
 function UpcomingRow({
+  me,
   r,
   lead,
   team,
+  now,
+  open,
+  onOpen,
+  reload,
 }: {
+  me: Me;
   r: CalendarRow;
   lead?: Lead;
   team: boolean;
+  now: number;
+  open: "reschedule" | "tell" | null;
+  onOpen: (what: "reschedule" | "tell" | null) => void;
+  reload: () => void;
 }) {
   const brief = lead ? [lead.revenue, lead.readiness, lead.challenge] : [];
+  const chip = liveChip(r, now);
   return (
     <li>
       <Link
         to={`/lead/${r.contact_id ?? ""}`}
-        className="flex gap-3 px-4 py-3 hover:bg-[color:var(--secondary)]"
+        className="flex gap-3 px-4 pt-3 pb-2 hover:bg-[color:var(--secondary)]"
       >
         <div className="w-14 shrink-0 text-right">
           <p className="tabular-nums text-sm font-semibold">
@@ -364,8 +431,13 @@ function UpcomingRow({
           <p className="muted text-xs">{dayLabel(r.start_at)}</p>
         </div>
         <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-medium" dir="auto">
-            {r.contact_name ?? "A lead"}
+          <p className="flex min-w-0 items-center gap-2 text-sm font-medium">
+            <span className="truncate" dir="auto">
+              {r.contact_name ?? "A lead"}
+            </span>
+            {chip.label === "Rescheduled" ? (
+              <StatusChip tone="good" label="Rescheduled" />
+            ) : null}
           </p>
           <p className="muted text-xs">
             <Parts
@@ -383,6 +455,22 @@ function UpcomingRow({
           ) : null}
         </div>
       </Link>
+      <div className="ps-[5.25rem] pe-4 pb-3">
+        <RowButtons row={r} lead={lead} open={open} onOpen={onOpen} now={now} />
+      </div>
+      {open ? (
+        <div className="px-3 pb-3">
+          <RowPanel
+            me={me}
+            row={r}
+            lead={lead}
+            what={open}
+            source="today"
+            onClose={() => onOpen(null)}
+            onDone={() => reload()}
+          />
+        </div>
+      ) : null}
     </li>
   );
 }

@@ -94,7 +94,42 @@ import {
   slotOffered,
 } from "./dialer.ts";
 import { hotFresh, hotPatch, stillHot } from "./hot.ts";
-import { CLIENT_DRAFT_CLOSED, CLIENT_REFUSAL, isClient } from "./clients.ts";
+import {
+  alreadyBookedMessage,
+  bookedWords,
+  type CalendarsSetting,
+  type CallKind,
+  canReschedule,
+  clash,
+  clashMessage,
+  classifyGhl,
+  confirmationCounts,
+  ghlReason,
+  holdLapse,
+  kindOfCalendar,
+  kuwaitWords12,
+  type LiveCall,
+  MARK_EARLY_MS,
+  meetUrl,
+  mergeTeamSlots,
+  MOVE_REASONS,
+  MOVE_SOURCES,
+  type MoveReason,
+  type MoveSource,
+  moveNoteText,
+  moveVerdict,
+  notMovedMessage,
+  openUntil,
+  PUT_MAY_LAND_MS,
+  PUT_OK_NOTE,
+  rescheduledMarkMessage,
+  sameTime,
+  SLOT_DAYS,
+  STALE_MOVING_MS,
+  TOLD_HOW,
+} from "./reschedule.ts";
+import { clientDraftClosed, clientFacts, clientRefusal, DEAL_COLS, isClient, readClient } from "./clients.ts";
+import { CLIENT_MOVE_REFUSAL, closedCard, closedColumn, closedCounts, closedIsMine, myNames, OPEN_FIELDS, placeLead, sortClosed } from "./board.ts";
 import {
   type ContractSetting,
   type ContractTerms,
@@ -544,6 +579,10 @@ async function markAppointment(
       404,
     );
   const now = Date.now();
+  // A call rescheduled in the cockpit is never marked against its old time,
+  // even while B2B's copy still shows it (D35), nor while a move is under way.
+  const moving = await moveHoldsMark(id, status, now);
+  if (moving) throw moving;
   // Held on video before its booked time (m1 round 6): the early-mark rule
   // judges the moment the lead joined the room asked for it, not now.
   const early = status === "showed" && opts.heldEarly ? await joinedForCall(String(appt.contact_id ?? ""), String(appt.appointment_id ?? id), now) : null;
@@ -2880,6 +2919,18 @@ async function eodCount(who: Who, role: EodRole, day: string): Promise<EodCounte
       notes.no_shows = "Of those, marked no-show.";
       notes.cancels = "Of those, cancelled.";
       prefill.push("demos_scheduled", "demos_showed", "no_shows", "cancels");
+      // Rescheduled is shown beside the question, never typed in (D38):
+      // HighLevel stamps the call when it moves, wherever it was moved.
+      try {
+        const moved = await svc(
+          `cockpit_sales_appointments?assigned_user_id=eq.${enc(ghlUser)}&${between("crm_rescheduled_at")}&select=appointment_id&limit=2000`,
+        );
+        out.rescheduled = moved.length;
+        notes.rescheduled =
+          "From HighLevel's reschedule stamp: moves made in HighLevel and in the cockpit. A call moved twice in a day counts once.";
+      } catch {
+        notes.rescheduled = "HighLevel's reschedule stamps are not in the cockpit yet, so it cannot count your reschedules.";
+      }
     }
     const closed = deals.filter(d => names.includes(String(d.closer ?? "").trim().toLowerCase()));
     out.closed = closed.length;
@@ -3052,16 +3103,19 @@ async function followupRow(id: string): Promise<Row> {
 async function sendFollowup(who: Who, f: Row, b: Row, auto: boolean, opts: { decidedBy?: string | null } = {}) {
   if (f.status !== "draft") throw new Refusal(`This draft was already ${f.status}.`, 409);
   const lead = (await svc(`cockpit_sales_leads?contact_id=eq.${enc(String(f.contact_id))}&select=country,tags`))[0];
-  // An active client gets no sales follow-up: the draft closes, saying why.
-  if (isClient(lead)) {
+  // An active client (tagged client, or a signed deal) gets no sales
+  // follow-up: the draft closes, saying why (clients.ts).
+  const client = await readClient(svc, String(f.contact_id), lead ?? null);
+  if (client.client) {
+    const closed = clientDraftClosed(client);
     await svc(`cockpit_sales_followups?id=eq.${enc(String(f.id))}&status=eq.draft`, {
       method: "PATCH",
-      body: { status: "expired", decided_at: new Date().toISOString(), error: CLIENT_DRAFT_CLOSED },
+      body: { status: "expired", decided_at: new Date().toISOString(), error: closed },
       prefer: "return=minimal",
     });
     await audit(who, auto ? "followup.autosend" : "followup.approve", "cockpit_sales_followups", String(f.id), f,
-      { status: "expired", error: CLIENT_DRAFT_CLOSED });
-    throw new Refusal(CLIENT_REFUSAL, 409);
+      { status: "expired", error: closed });
+    throw new Refusal(clientRefusal(client), 409, { code: "client" });
   }
   // A follow-up does not arrive at night: an answer to a lead who just wrote
   // may; a first message goes within followups.first_hours (9 to 18), and
@@ -3777,7 +3831,7 @@ async function candidates(now: number): Promise<{ list: QueueCandidate[] }> {
     svc(`cockpit_sales_inbox?select=contact_id,last_message_at,last_direction&last_direction=eq.inbound&last_message_at=gte.${enc(new Date(now - 86_400_000).toISOString())}`),
     svc("cockpit_sales_attempts?select=contact_id,rep_email,started_at,call_checked_at&state=in.(dialing,placed)"),
     heavyReads(now),
-    svc(`cockpit_sales_confirmations?select=appointment_id,result,at&start_at=gte.${soon}&order=at.desc&limit=2000`),
+    svc(`cockpit_sales_confirmations?select=appointment_id,result,at,start_at&start_at=gte.${soon}&order=at.desc&limit=2000`),
     // Every column, and the status filtered here (hot.ts stillHot): naming
     // the status column in the read would fail the whole queue until the
     // 2026-09-27 migration is in.
@@ -3902,12 +3956,17 @@ async function candidates(now: number): Promise<{ list: QueueCandidate[] }> {
       tries: answered ? cur.tries : [...cur.tries, t],
     });
   }
-  // A lead's own confirmation, and the last try that reached no one, per appointment.
-  const confirmedAppt = new Set<string>();
+  // A lead's own confirmation, and the last try that reached no one, per
+  // appointment. A confirmation counts for the time it was made for (D37,
+  // 2026-10-11): a call moved since, in HighLevel or the cockpit, is
+  // confirmed again (reschedule.ts confirmationCounts).
+  const confirmsBy = new Map<string, Row[]>();
+  const confirmedAt = (id: string, start: unknown): boolean =>
+    (confirmsBy.get(id) ?? []).some(c => confirmationCounts(c, { start_at: start }));
   const lastTry = new Map<string, number>();
   for (const c of confirmations) {
     const id = String(c.appointment_id);
-    if (c.result === "confirmed" || c.result === "reschedule") confirmedAppt.add(id);
+    if (c.result === "confirmed" || c.result === "reschedule") confirmsBy.set(id, [...(confirmsBy.get(id) ?? []), c]);
     const t = ms(c.at);
     if ((c.result === "no_answer" || c.result === "message_sent") && t && (lastTry.get(id) ?? 0) < t) lastTry.set(id, t);
   }
@@ -3944,7 +4003,7 @@ async function candidates(now: number): Promise<{ list: QueueCandidate[] }> {
       booked: ms(intro.booked_at),
       status: (intro.status as string) ?? null,
       assigned: (intro.assigned_user_id as string) ?? null,
-      confirmed: confirmedAppt.has(String(intro.appointment_id)),
+      confirmed: confirmedAt(String(intro.appointment_id), intro.start_at),
       last_try: lastTry.get(String(intro.appointment_id)) ?? null,
       room_joined: roomJoinedFor(joinsByAppt.get(String(intro.appointment_id)) ?? [], {
         id: String(intro.appointment_id),
@@ -4086,7 +4145,7 @@ async function candidates(now: number): Promise<{ list: QueueCandidate[] }> {
             booked: ms(current.booked_at),
             status: (current.status as string) ?? null,
             assigned: (current.assigned_user_id as string) ?? null,
-            confirmed: confirmedAppt.has(String(current.appointment_id)),
+            confirmed: confirmedAt(String(current.appointment_id), current.start_at),
             last_try: lastTry.get(String(current.appointment_id)) ?? null,
             room_joined: roomJoinedFor(joinsByAppt.get(String(current.appointment_id)) ?? [], {
               id: String(current.appointment_id),
@@ -4596,8 +4655,12 @@ function crmNoteText(o: {
   note: string;
   callbackAt: number | null;
 }): string {
+  // A move's own line (book.move, reschedule.ts moveNoteText) already names
+  // the call, both times, the host, who and why: it is the whole note, so the
+  // new time is said once (D18).
+  if (o.outcome === "rescheduled" && /^Rescheduled the /.test(o.note)) return o.note;
   const call = o.appt
-    ? ` (the ${o.appt.call_type === "demo" ? "demo" : "intro"} on ${kuwaitWords(Date.parse(String(o.appt.start_at)))})`
+    ? ` (the ${o.appt.call_type === "demo" ? "demo" : o.appt.call_type === "follow_up" ? "follow-up call" : "intro"} on ${kuwaitWords(Date.parse(String(o.appt.start_at)))})`
     : "";
   return `${ANY_OUTCOME_WORDS[o.outcome]}${call} (${o.viaCall ? "call" : "saved"} from the sales cockpit by ${o.repName})${
     o.note ? `: ${o.note}` : ""
@@ -4909,9 +4972,12 @@ async function dialRelease(who: Who, b: Row) {
 }
 
 // ---------------------------------------------------------------------------
-// Booking from the dialer (mahara-power-dialer's booking path: slots from the
-// calendar, the booking written down first, created with HighLevel's own
-// free-slot check on, read back before the outcome is saved)
+// Booking and rescheduling (mahara-power-dialer's booking path: slots from
+// the calendar, the booking written down first, created with HighLevel's own
+// free-slot check on, read back before the outcome is saved). Since
+// 2026-10-11 the lead page, Today, the Calendar and the scripts book here
+// too, a follow-up call can be booked, and any call is rescheduled in place
+// (book.move, book.move.check, book.told; the rules are in reschedule.ts).
 // ---------------------------------------------------------------------------
 
 const calendarCache = new Map<string, { at: number; cal: Row }>();
@@ -4937,7 +5003,7 @@ function noticeWords(kind: BookingKind, cal: Row): string {
   const afterUnit = String(cal.allowBookingAfterUnit ?? "hours");
   const ahead = Number(cal.allowBookingFor);
   const aheadUnit = String(cal.allowBookingForUnit ?? "days");
-  const what = kind === "intro" ? "An intro" : "A demo";
+  const what = kind === "intro" ? "An intro" : kind === "demo" ? "A demo" : "A follow-up call";
   const parts = [
     after > 0 ? `from ${after} ${after === 1 ? afterUnit.replace(/s$/, "") : afterUnit} ahead` : null,
     ahead > 0 ? `up to ${ahead} ${ahead === 1 ? aheadUnit.replace(/s$/, "") : aheadUnit} out` : null,
@@ -4945,22 +5011,68 @@ function noticeWords(kind: BookingKind, cal: Row): string {
   return parts.length ? `${what} can be booked ${parts.join(", ")}, as the HighLevel calendar allows.` : "";
 }
 
+/** The calendars setting (calendar id → its type); an unread one is never "no calendars". */
+async function calendarsSetting(): Promise<CalendarsSetting> {
+  const v = await setting<CalendarsSetting>("calendars");
+  if (!v || typeof v !== "object")
+    throw new Refusal("The cockpit's calendars setting could not be read. Try again in a minute.", 503, { code: "unread" });
+  return v;
+}
+
+/** The HighLevel users on a calendar's team. */
+function teamOf(cal: Row): string[] {
+  return ((cal.teamMembers ?? []) as Row[]).map(t => String(t.userId ?? "")).filter(Boolean);
+}
+
+/** People's names by HighLevel user id (a working seat's first); a name is a courtesy, so a failed read is no names. */
+async function namesByUser(ids: (string | null | undefined)[]): Promise<Map<string, string>> {
+  const list = [...new Set(ids.filter((x): x is string => Boolean(x)))];
+  const out = new Map<string, string>();
+  if (!list.length) return out;
+  try {
+    const rows = await svc(
+      `cockpit_sales_people?ghl_user_id=in.(${list.map(i => `"${i}"`).map(enc).join(",")})&select=ghl_user_id,name,active&limit=200`,
+    );
+    for (const r of [...rows].sort((a, b) => Number(Boolean(b.active)) - Number(Boolean(a.active))))
+      if (r.name && !out.has(String(r.ghl_user_id))) out.set(String(r.ghl_user_id), String(r.name));
+  } catch (e) {
+    console.error("names unread", redact(String((e as Error)?.message ?? e)));
+  }
+  return out;
+}
+
+const isoAt = (t: number) => new Date(t).toISOString();
+
 async function bookingPlan(who: Who, b: Row) {
   const contact = cleanText(b.contact_id, 80);
   if (!contact) throw new Refusal("Which lead?");
-  const kind: BookingKind = b.kind === "demo" ? "demo" : "intro";
-  const lead = (await svc(`cockpit_sales_leads?contact_id=eq.${enc(contact)}&select=contact_id,name,lead_class`))[0];
+  const kind: BookingKind = b.kind === "demo" ? "demo" : b.kind === "follow_up" ? "follow_up" : "intro";
+  const [lead, calendars] = await Promise.all([
+    svc(`cockpit_sales_leads?contact_id=eq.${enc(contact)}&select=contact_id,name,lead_class,tags`).then(r => r[0]),
+    calendarsSetting(),
+  ]);
   if (!lead) throw new Refusal("That lead is not in the cockpit.", 404);
-  const calendarId = calendarFor(kind, (lead.lead_class as string) ?? null);
+  // An active client (tagged client, or a live deal) is booked by client
+  // success, never from the sales cockpit (D42).
+  const client = await readClient(svc, contact, lead);
+  if (client.client) throw new Refusal(clientRefusal(client), 409, { code: "client" });
+  const calendarId = calendarFor(kind, (lead.lead_class as string) ?? null, calendars);
+  if (!calendarId)
+    throw new Refusal(
+      "The cockpit's calendars setting names no Follow up call calendar, so a follow-up call can't be booked here. Ask Aziz.",
+      409,
+      { code: "calendar" },
+    );
   const cal = await calendarInfo(calendarId);
   if (cal.isActive === false) throw new Refusal("That calendar is switched off in HighLevel. Ask Aziz.", 409);
-  const team = ((cal.teamMembers ?? []) as Row[]).map(t => String(t.userId ?? "")).filter(Boolean);
+  const team = teamOf(cal);
   const onTeam = Boolean(who.ghl_user_id && team.includes(String(who.ghl_user_id)));
   const withMe = onTeam && b.with !== "anyone";
   return {
     contact,
     kind,
     lead,
+    calendars,
     calendarId,
     cal,
     minutes: slotMinutes(cal),
@@ -4983,11 +5095,14 @@ async function freeSlots(calendarId: string, from: number, to: number, userId: s
  * booked (dateAdded) before then, so the live count reads the lead's calls
  * as they stood at the join (a call booked during the conversation is its
  * outcome, never the call itself). A call with no dateAdded is kept.
+ * `unmarked` (booking, D40): a call the cockpit already marked cancelled,
+ * no-show, held or disqualified is not "booked", even while HighLevel's copy
+ * has not caught up, so a call marked seconds ago never blocks booking again.
  */
 async function upcoming(
   contactId: string,
   kind: BookingKind,
-  opts: { booked_before?: number | null; after?: number | null } = {},
+  opts: { booked_before?: number | null; after?: number | null; unmarked?: boolean } = {},
 ): Promise<{
   id: string;
   start: number;
@@ -5001,10 +5116,16 @@ async function upcoming(
   // calls as of (rooms.ts upcomingWhole), so a manager's confirm after the
   // intro's time still finds the intro the join was (stress2, round 1).
   const after = typeof opts.after === "number" && Number.isFinite(opts.after) ? Math.min(opts.after, Date.now()) : Date.now();
-  const [d, types] = await Promise.all([
+  const [d, types, marks] = await Promise.all([
     ghl("GET", `/contacts/${enc(contactId)}/appointments`, undefined, "2021-07-28"),
     setting<Record<string, { type: string }>>("calendars"),
+    opts.unmarked
+      ? svc(`cockpit_sales_dispositions?contact_id=eq.${enc(contactId)}&superseded_at=is.null&select=appointment_id,status&limit=500`)
+      : Promise.resolve([] as Row[]),
   ]);
+  const marked = new Set(
+    marks.filter(r => ["cancelled", "noshow", "showed", "invalid"].includes(String(r.status))).map(r => String(r.appointment_id)),
+  );
   // An answer with no list of calls in it, or no calendars to tell an intro
   // from a demo, is unread, never "nothing booked" (stress2 round 5,
   // upcoming-garbage-read-as-nothing-booked): the count waits for the
@@ -5029,82 +5150,234 @@ async function upcoming(
     })
     .filter(e => e.id && Number.isFinite(e.start) && e.start > after)
     .filter(e => bound === null || e.booked_at === null || e.booked_at < bound)
+    .filter(e => !marked.has(e.id))
     .sort((x, y) => x.start - y.start);
   return events[0] ?? null;
 }
 
-/** The plan for moving an existing appointment: its own calendar, and the person it is with. */
-async function movePlan(b: Row) {
-  const id = cleanText(b.appointment_id, 80);
-  const appt = (await svc(`cockpit_sales_appointments?appointment_id=eq.${enc(id)}&select=*`))[0];
-  if (!appt) throw new Refusal("That appointment is not in the cockpit. It may have been deleted in HighLevel.", 404);
-  if (["cancelled", "noshow", "showed", "invalid"].includes(String(appt.status ?? "")))
-    throw new Refusal("This call is already over or cancelled. Book a new one instead.", 409);
-  // The cockpit's own mark counts before HighLevel's copy catches up.
-  const marked = (await svc(
-    `cockpit_sales_dispositions?appointment_id=eq.${enc(id)}&superseded_at=is.null&select=status`,
-  ))[0];
-  if (marked && ["cancelled", "noshow", "showed", "invalid"].includes(String(marked.status)))
-    throw new Refusal("This call is already marked as over or cancelled. Book a new one instead.", 409);
-  const calendarId = String(appt.calendar_id ?? "");
-  if (!calendarId) throw new Refusal("This appointment has no calendar in the cockpit.", 409);
-  const cal = await calendarInfo(calendarId);
-  const kind: BookingKind = appt.call_type === "demo" ? "demo" : "intro";
-  return { appt, calendarId, cal, kind, minutes: slotMinutes(cal), userId: (appt.assigned_user_id as string) || null };
+/** HighLevel's own copy of one appointment, or null when it could not be read. */
+async function readAppointment(id: string): Promise<Row | null> {
+  try {
+    const r = await ghl("GET", `/calendars/events/appointments/${enc(id)}`);
+    const a = (r.appointment ?? r.event ?? r) as Row;
+    return a && typeof a === "object" && a.startTime ? a : null;
+  } catch {
+    return null;
+  }
 }
 
+const OVER_STATUSES = ["cancelled", "noshow", "showed", "invalid"];
+
+/**
+ * The lead's other calls a new time must not overlap (D44): HighLevel's own
+ * list (with each call's end), or, when that cannot be read, the cockpit's
+ * copy with each call taken as 45 minutes. Calls over or cancelled are left out.
+ */
+async function otherCalls(contactId: string, exceptId: string | null, calendars: CalendarsSetting, now: number): Promise<LiveCall[]> {
+  let list: Row[] | null = null;
+  try {
+    const d = await ghl("GET", `/contacts/${enc(contactId)}/appointments`, undefined, "2021-07-28");
+    list = Array.isArray(d.events) ? (d.events as Row[]) : Array.isArray(d.appointments) ? (d.appointments as Row[]) : null;
+  } catch {
+    list = null;
+  }
+  if (list)
+    return list
+      .filter(e => !e.deleted && String(e.id ?? "") !== exceptId)
+      .filter(e => !OVER_STATUSES.includes(String(e.appointmentStatus ?? e.appoinmentStatus ?? "")))
+      .map(e => {
+        const end = ghlTime(e.endTime);
+        return { id: String(e.id ?? ""), start: ghlTime(e.startTime), end: Number.isFinite(end) ? end : null, kind: kindOfCalendar(e.calendarId, calendars) };
+      })
+      .filter(c => c.id && Number.isFinite(c.start) && (c.end ?? c.start) > now - 86_400_000);
+  const rows = await svc(
+    `cockpit_sales_calendar?contact_id=eq.${enc(contactId)}&start_at=gte.${enc(isoAt(now - 86_400_000))}&select=appointment_id,start_at,status,calendar_id&limit=200`,
+  );
+  return rows
+    .filter(r => String(r.appointment_id ?? "") !== exceptId && !OVER_STATUSES.includes(String(r.status ?? "")))
+    .map(r => ({ id: String(r.appointment_id), start: ms(r.start_at) ?? Number.NaN, end: null, kind: kindOfCalendar(r.calendar_id, calendars) }))
+    .filter(c => Number.isFinite(c.start));
+}
+
+/**
+ * The plan for rescheduling a call: the cockpit's copy of it, its own
+ * calendar (a call on Demo 2 stays on Demo 2), what kind of call that
+ * calendar holds (from the calendars setting, never "not a demo, so an
+ * intro"), and the person it is with.
+ */
+async function movePlan(b: Row) {
+  const id = cleanText(b.appointment_id, 80);
+  if (!id) throw new Refusal("Which call?");
+  const [appt, calendars] = await Promise.all([
+    svc(`cockpit_sales_appointments?appointment_id=eq.${enc(id)}&select=*`).then(r => r[0]),
+    calendarsSetting(),
+  ]);
+  if (!appt) throw new Refusal("That call is not in the cockpit. It may have been deleted in HighLevel.", 404);
+  const calendarId = String(appt.calendar_id ?? "");
+  const kind = kindOfCalendar(calendarId, calendars);
+  if (!kind)
+    throw new Refusal("This call is not on an intro, demo or follow-up call calendar, so reschedule it in HighLevel.", 409, {
+      code: "calendar",
+    });
+  const start = ms(appt.start_at);
+  if (start === null) throw new Refusal("This call has no start time in the cockpit. Reschedule it in HighLevel.", 409, { code: "calendar" });
+  const cal = await calendarInfo(calendarId);
+  return {
+    id,
+    appt,
+    calendars,
+    calendarId,
+    cal,
+    kind,
+    start,
+    minutes: slotMinutes(cal),
+    userId: (appt.assigned_user_id as string) || null,
+    contact: String(appt.contact_id ?? ""),
+  };
+}
+
+type MovePlan = Awaited<ReturnType<typeof movePlan>>;
+
+/**
+ * Whether this seat may reschedule this call now (D41 to D43, reschedule.ts
+ * canReschedule), read before any HighLevel read so the row's button can turn
+ * into the right line. Throws the refusal with its code.
+ */
+async function moveGate(who: Who, m: MovePlan, now: number): Promise<{ lead: Row | null; hostName: string | null }> {
+  const [mark, lead, booker, joined, names] = await Promise.all([
+    svc(`cockpit_sales_dispositions?appointment_id=eq.${enc(m.id)}&superseded_at=is.null&select=status`).then(r => r[0] ?? null),
+    svc(`cockpit_sales_leads?contact_id=eq.${enc(m.contact)}&select=contact_id,name,tags,assigned_to,dnd`).then(r => r[0] ?? null),
+    svc(`cockpit_sales_bookings?appointment_id=eq.${enc(m.id)}&select=rep_email&order=created_at.desc&limit=1`).then(r => r[0] ?? null),
+    joinedForCall(m.contact, m.id, now),
+    namesByUser([m.userId]),
+  ]);
+  const client = await readClient(svc, m.contact, lead);
+  const hostName = (m.userId ? names.get(m.userId) : null) ?? ((m.appt.assigned_user_name as string) || null);
+  const no = canReschedule({
+    appt: m.appt,
+    mark: mark ? String(mark.status ?? "") : null,
+    joined: joined !== null,
+    who,
+    owner: lead?.assigned_to ? String(lead.assigned_to) : null,
+    bookerEmail: booker ? String(booker.rep_email ?? "") : null,
+    client: client.client,
+    clientMessage: clientRefusal(client),
+    now,
+    hostName,
+    leadName: (lead?.name as string) ?? (m.appt.contact_name as string) ?? null,
+  });
+  if (no) throw new Refusal(no.message, no.status, { code: no.code });
+  return { lead, hostName };
+}
+
+/**
+ * The free times to book or reschedule a call, 14 days asked (HighLevel
+ * still returns only what each calendar opens: D10).
+ *
+ * Booking ({contact_id, kind, with: "me" | "anyone"}): the rep's own times
+ * when they are on the calendar, else the team's (the calendar's round robin
+ * picks who takes it), and the lead's call of that kind already ahead.
+ *
+ * Rescheduling ({appointment_id, with: "same" | "anyone"}): judged first
+ * (not_yours, client, over, held, late), then the same host's times on the
+ * call's own calendar (D7). A host with no free time, or "anyone" asked,
+ * gives each teammate's times with who takes each (slot_hosts).
+ */
 async function bookSlots(who: Who, b: Row) {
+  const now = Date.now();
+  const to = now + SLOT_DAYS * 86_400_000;
   if (b.appointment_id) {
     const m = await movePlan(b);
-    const now = Date.now();
-    const days = await freeSlots(m.calendarId, now, now + 4 * 86_400_000, m.userId);
+    const g = await moveGate(who, m, now);
+    const team = teamOf(m.cal);
+    const anyone = b.with === "anyone" || !m.userId;
+    let days: { day: string; slots: string[] }[] = anyone ? [] : await freeSlots(m.calendarId, now, to, m.userId);
+    const fallback = !anyone && !days.length;
+    let slotHosts: Record<string, { user_id: string; name: string | null }> | undefined;
+    if (anyone || fallback) {
+      // The host first when anyone is asked; a host with no time is left out.
+      const ids = [...(anyone && m.userId ? [m.userId] : []), ...team.filter(u => u !== m.userId)];
+      if (ids.length) {
+        const names = await namesByUser(ids);
+        const per = await Promise.all(
+          ids.map(async u => ({ user_id: u, name: names.get(u) ?? null, days: await freeSlots(m.calendarId, now, to, u) })),
+        );
+        ({ days, slot_hosts: slotHosts } = mergeTeamSlots(per));
+      } else days = await freeSlots(m.calendarId, now, to, null);
+    }
     return {
       kind: m.kind,
       calendar_id: m.calendarId,
       calendar: String(m.cal.name ?? ""),
       minutes: m.minutes,
-      with: m.userId ? "me" : "anyone",
-      fallback: false,
-      on_team: false,
-      moving: { id: String(m.appt.appointment_id), start: m.appt.start_at, words: kuwaitWords(Date.parse(String(m.appt.start_at))) },
+      with: anyone || fallback ? "anyone" : "same",
+      fallback,
+      on_team: Boolean(who.ghl_user_id && team.includes(String(who.ghl_user_id))),
+      host: { user_id: m.userId, name: g.hostName },
       notice: noticeWords(m.kind, m.cal),
-      booking_url: bookingUrl(m.calendarId, m.cal),
-      existing: null,
+      until: openUntil(m.cal, days, now),
       days,
+      ...(slotHosts ? { slot_hosts: slotHosts } : {}),
+      existing: null,
+      moving: {
+        id: m.id,
+        start: isoAt(m.start),
+        words: kuwaitWords12(m.start),
+        kind: m.kind,
+        host_name: g.hostName,
+        after_start: now > m.start,
+      },
+      booking_url: bookingUrl(m.calendarId, m.cal),
+      // D17: HighLevel's per-call reschedule link is not confirmed, so none
+      // is offered (a booking page's link would make a second call).
+      reschedule_link: null,
     };
   }
   const p = await bookingPlan(who, b);
-  const now = Date.now();
   const [mine, existing] = await Promise.all([
-    freeSlots(p.calendarId, now, now + 4 * 86_400_000, p.userId),
-    upcoming(p.contact, p.kind),
+    freeSlots(p.calendarId, now, to, p.userId),
+    upcoming(p.contact, p.kind, { unmarked: true }),
   ]);
   // A rep on the calendar with no free time of their own sees the team's
   // times; the calendar's round robin then picks who takes the call.
   const fallback = p.withMe && !mine.length;
-  const days = fallback ? await freeSlots(p.calendarId, now, now + 4 * 86_400_000, null) : mine;
+  const days = fallback ? await freeSlots(p.calendarId, now, to, null) : mine;
+  const withMe = p.withMe && !fallback;
   return {
     kind: p.kind,
     calendar_id: p.calendarId,
     calendar: String(p.cal.name ?? ""),
     minutes: p.minutes,
-    with: p.withMe && !fallback ? "me" : "anyone",
+    with: withMe ? "me" : "anyone",
     fallback,
     on_team: p.onTeam,
+    host: { user_id: withMe ? p.userId : null, name: withMe ? ((who.name as string) ?? null) : null },
     notice: noticeWords(p.kind, p.cal),
-    booking_url: bookingUrl(p.calendarId, p.cal),
-    existing: existing ? { id: existing.id, start: new Date(existing.start).toISOString(), words: kuwaitWords(existing.start) } : null,
+    until: openUntil(p.cal, days, now),
     days,
+    existing: existing
+      ? { id: existing.id, start: isoAt(existing.start), words: kuwaitWords12(existing.start), kind: p.kind }
+      : null,
+    moving: null,
+    booking_url: bookingUrl(p.calendarId, p.cal),
+    reschedule_link: null,
   };
 }
 
 async function bookCreate(who: Who, b: Row) {
   const p = await bookingPlan(who, b);
   const start = Date.parse(String(b.start ?? ""));
-  if (!Number.isFinite(start)) throw new Refusal("Pick a time from the list.");
-  if (start <= Date.now()) throw new Refusal("That time has passed. Pick another.");
+  if (!Number.isFinite(start)) throw new Refusal("Pick a time from the list.", 400, { code: "time" });
+  if (start <= Date.now()) throw new Refusal("That time has passed. Pick another.", 400, { code: "past" });
   const note = cleanText(b.note, 4000);
-  if (note.length < 3) throw new Refusal("Write a line on the call, so whoever takes it knows what was said.");
+  if (note.length < 3)
+    throw new Refusal("Write a line on the call, so whoever takes it knows what was said.", 400, { code: "note_needed" });
+  // Where it was pressed (the lead page, Today, the Calendar, the dialer, a script).
+  const source: MoveSource | null = (MOVE_SOURCES as readonly string[]).includes(String(b.source))
+    ? (String(b.source) as MoveSource)
+    : b.attempt_id
+      ? "dialer"
+      : null;
 
   // The rep's open call with this lead, if there is one, is the call saved as booked.
   let attempt: Row | null = null;
@@ -5138,17 +5411,23 @@ async function bookCreate(who: Who, b: Row) {
     );
   }
 
-  const existing = await upcoming(p.contact, p.kind);
+  // A call of this kind already ahead (a call the cockpit marked over does
+  // not count, D40): the page offers "Reschedule that one" with it.
+  const existing = await upcoming(p.contact, p.kind, { unmarked: true });
   if (existing)
-    throw new Refusal(
-      `They already have ${p.kind === "intro" ? "an intro" : "a demo"} on ${kuwaitWords(existing.start)} (Kuwait time). Move that one in HighLevel instead of booking a second.`,
-      409,
-    );
+    throw new Refusal(alreadyBookedMessage(p.kind, existing.start), 409, {
+      code: "already_booked",
+      existing: { id: existing.id, start: isoAt(existing.start), words: kuwaitWords12(existing.start), kind: p.kind },
+    });
   const dayStart = kuwaitAt(start, 0);
   const days = await freeSlots(p.calendarId, Math.max(Date.now(), dayStart), dayStart + 86_400_000, p.userId);
-  if (!slotOffered(new Date(start).toISOString(), days)) throw new Refusal("That time was just taken. Pick another.", 409);
+  if (!slotOffered(new Date(start).toISOString(), days))
+    throw new Refusal("That time was just taken. Pick another.", 409, { code: "taken" });
 
   const end = start + p.minutes * 60_000;
+  // Never on top of another live call of the same lead (D44).
+  const hit = clash(start, end, await otherCalls(p.contact, null, p.calendars, Date.now()));
+  if (hit) throw new Refusal(clashMessage(hit), 409, { code: "clash" });
   let booking: Row;
   try {
     booking = (await svc("cockpit_sales_bookings", {
@@ -5163,12 +5442,13 @@ async function bookCreate(who: Who, b: Row) {
         assigned_user_id: p.userId,
         rep_email: who.email,
         note,
+        source,
       },
       prefer: "return=representation",
     }))[0];
   } catch (e) {
     if (/23505|duplicate/.test(String((e as Error).message ?? e)))
-      throw new Refusal("This lead is being booked right now. Give it a few seconds.", 409);
+      throw new Refusal("This lead is being booked right now. Give it a few seconds.", 409, { code: "busy" });
     throw e;
   }
   const finish = (body: Row) =>
@@ -5206,6 +5486,7 @@ async function bookCreate(who: Who, b: Row) {
         ? `HighLevel did not book it: ${err}`
         : "HighLevel did not answer. Open the lead in HighLevel and check the calendar before booking again.",
       502,
+      { code: refused ? "refused" : "unverified" },
     );
   }
 
@@ -5249,12 +5530,15 @@ async function bookCreate(who: Who, b: Row) {
       },
       prefer: "resolution=ignore-duplicates,return=minimal",
     });
+    await keepMeetUrl(apptId, meetUrl(back?.address));
   }
   heavy = null;
   // The lead becomes the setter's with the intro they booked, and the
-  // closer's with the demo they host (Aziz, 2026-09-27).
-  const ownerId = verified ? (p.kind === "demo" ? assigned : (who.ghl_user_id as string) || assigned) || null : null;
-  const words = `${p.kind === "intro" ? "Intro" : "Demo"} booked for ${kuwaitWords(start)} (Kuwait time)`;
+  // closer's with the demo they host (Aziz, 2026-09-27). A follow-up call
+  // changes no owner and moves no stage.
+  const ownerId =
+    verified && p.kind !== "follow_up" ? (p.kind === "demo" ? assigned : (who.ghl_user_id as string) || assigned) || null : null;
+  const words = `${bookedWords(p.kind)} for ${kuwaitWords12(start)} (Kuwait time)`;
   // A booking HighLevel took but that did not read back is not in the
   // cockpit's copy yet: the lead is saved as booked without naming it.
   const out = await saveOutcome(who, attempt, p.contact, "booked", `${words}. ${note}`, null, {
@@ -5263,21 +5547,79 @@ async function bookCreate(who: Who, b: Row) {
   });
   // The owner and the stage follow in the background: the booking itself is
   // verified above, and the rep moves on as soon as it is.
-  background(
-    (async () => {
-      if (ownerId) await setOwner(p.contact, ownerId);
-      await autoMove(who, p.contact, () => targetRoles("lead", "booked", "booked", p.kind), {
-        source: "booking",
-        outcome: "booked",
-        attemptId: out?.attempt ? String(out.attempt.id) : null,
-      });
-    })(),
-  );
+  const moves = p.kind !== "follow_up";
+  if (ownerId || moves)
+    background(
+      (async () => {
+        if (ownerId) await setOwner(p.contact, ownerId);
+        if (moves)
+          await autoMove(who, p.contact, () => targetRoles("lead", "booked", "booked", p.kind), {
+            source: "booking",
+            outcome: "booked",
+            attemptId: out?.attempt ? String(out.attempt.id) : null,
+          });
+      })(),
+    );
   await audit(who, "book.create", "cockpit_sales_bookings", String(booking.id), null, row, {
     verified,
     owner: ownerId,
+    kind: p.kind,
+    source,
   });
-  return { ...(out ?? {}), booking: row, verified, words, stage_move: { state: "pending" }, owner: ownerId };
+  const names = verified ? await namesByUser([assigned]) : new Map<string, string>();
+  return {
+    ...(out ?? {}),
+    booking: row,
+    verified,
+    words,
+    stage_move: { state: moves ? "pending" : "none" },
+    owner: ownerId,
+    appointment: verified
+      ? apptOut({ id: apptId, kind: p.kind, start, host: assigned, meet: meetUrl(back?.address) }, names)
+      : null,
+  };
+}
+
+/** A call as the screens get it back from a book or a move. */
+interface ApptOut {
+  id: string;
+  kind: CallKind;
+  start: string;
+  host_user_id: string | null;
+  host_name: string | null;
+  meet_url: string | null;
+}
+
+function apptOut(
+  a: { id: string; kind: CallKind; start: number; host: string | null; meet: string | null },
+  names: Map<string, string>,
+): ApptOut {
+  return {
+    id: a.id,
+    kind: a.kind,
+    start: isoAt(a.start),
+    host_user_id: a.host,
+    host_name: a.host ? (names.get(a.host) ?? null) : null,
+    meet_url: a.meet,
+  };
+}
+
+/**
+ * The call's Zoom address on the cockpit's copy (D27), when HighLevel's
+ * read-back has one. Its own write, so a copy without the column (before
+ * 20261011a) never fails the booking or the move it follows.
+ */
+async function keepMeetUrl(appointmentId: string, url: string | null): Promise<void> {
+  if (!url) return;
+  try {
+    await svc(`cockpit_sales_appointments?appointment_id=eq.${enc(appointmentId)}`, {
+      method: "PATCH",
+      body: { meet_url: url },
+      prefer: "return=minimal",
+    });
+  } catch (e) {
+    console.error("meet_url not kept", redact(String((e as Error)?.message ?? e)));
+  }
 }
 
 /**
@@ -5302,83 +5644,565 @@ async function setOwner(contactId: string, userId: string | null): Promise<strin
   }
 }
 
+const REQUEST_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** A reschedule row by its id or by the press that made it, or null. */
+async function rescheduleRow(by: { id?: string; request_id?: string }): Promise<Row | null> {
+  const q = by.id ? `id=eq.${enc(by.id)}` : `request_id=eq.${enc(String(by.request_id ?? ""))}`;
+  return (await svc(`cockpit_sales_reschedules?${q}&select=*`))[0] ?? null;
+}
+
+/** What a move knew when it was pressed, for settling it. */
+interface MoveCtx {
+  /** The cockpit's copy of the call before the move (the audit's before). */
+  before: Row | null;
+  /** The rep's open dialer call with the lead, saved as rescheduled (D19). */
+  attempt: Row | null;
+  item_kind: string | null;
+  as: string | null;
+  /** HighLevel already showed the call at the asked time before any PUT (D46). */
+  landed: boolean;
+  /** HighLevel answered the PUT with a yes. */
+  putOk: boolean;
+  /** The seat settling it is the one who pressed (only then is the dialer's call saved). */
+  mine: boolean;
+}
+
+/** The audit's metadata for a move. */
+function moveMeta(r: Row): Row {
+  return {
+    reschedule_id: r.id ?? null,
+    request_id: r.request_id ?? null,
+    reason: r.reason ?? null,
+    source: r.source ?? null,
+    after_start: Boolean(r.after_start),
+    from_start: r.from_start ?? null,
+    to_start: r.to_start ?? null,
+  };
+}
+
+/** A "moving" row settled, only while it is still moving (two settles at once: one wins). */
+async function moveSettled(r: Row, body: Row): Promise<Row | null> {
+  return (
+    (
+      await svc(`cockpit_sales_reschedules?id=eq.${enc(String(r.id))}&state=eq.moving`, {
+        method: "PATCH",
+        body: { ...body, finished_at: isoAt(Date.now()) },
+        prefer: "return=representation",
+      })
+    )[0] ?? null
+  );
+}
+
 /**
- * Move an intro or demo to another free time with the same person: checked
- * against HighLevel's free slots, moved, read back. The lead agreed the new
- * time with the rep, so it counts as their confirmation.
+ * Reschedule a call (book.move, 2026-10-11): pressing a free time moves the
+ * call in place in HighLevel (the same appointment, toNotify on, HighLevel's
+ * own free-slot check on), never a cancel and a new booking (D15). In order:
+ * the same press again answers as the first did; a move cut off more than
+ * two minutes ago is settled from HighLevel first; who, client, over, held
+ * and late (D41 to D43); the time is ahead, free for the host that day and
+ * clear of the lead's other calls (D44); the move is written down as moving,
+ * one at a time per call (D45); HighLevel is asked, and its own copy read
+ * back (D46, D47). Moved: the cockpit's copy at once, the lead's
+ * confirmation when they asked (D20), the dialer's save or one HighLevel
+ * note (D18, D19), the Zoom link kept (D22), a demo's new host as its owner
+ * (D23), and the audit row.
+ *
+ * A page from before 2026-10-11 (no request_id, reason or source) still
+ * works: the press gets its own id, the lead agreed the time, from the dialer.
  */
 async function bookMove(who: Who, b: Row) {
+  const now = Date.now();
+  const requestId = REQUEST_ID.test(String(b.request_id ?? "")) ? String(b.request_id).toLowerCase() : crypto.randomUUID();
+  const prior = await rescheduleRow({ request_id: requestId });
+  if (prior) return await moveAnswer(prior, true);
   const m = await movePlan(b);
-  const contact = String(m.appt.contact_id ?? "");
+  await settleStaleMoves(who, m.id, now);
+  const g = await moveGate(who, m, now);
   const start = Date.parse(String(b.start ?? ""));
-  if (!Number.isFinite(start)) throw new Refusal("Pick a time from the list.");
-  if (start <= Date.now()) throw new Refusal("That time has passed. Pick another.");
-  const note = cleanText(b.note, 4000);
-  if (note.length < 3) throw new Refusal("Write a line on why it moved, so whoever takes it knows.");
-  const dayStart = kuwaitAt(start, 0);
-  const days = await freeSlots(m.calendarId, Math.max(Date.now(), dayStart), dayStart + 86_400_000, m.userId);
-  if (!slotOffered(new Date(start).toISOString(), days)) throw new Refusal("That time was just taken. Pick another.", 409);
+  if (!Number.isFinite(start)) throw new Refusal("Pick a time from the list.", 400, { code: "time" });
+  if (start <= now) throw new Refusal("That time has passed. Pick another.", 400, { code: "past" });
+  const reason: MoveReason = (MOVE_REASONS as readonly string[]).includes(String(b.reason)) ? (String(b.reason) as MoveReason) : "they_asked";
+  const note = cleanText(b.note, 1000) || null;
+  if (reason === "other" && (note?.length ?? 0) < 3)
+    throw new Refusal("Say in a few words why it is moving.", 400, { code: "note_needed" });
+  const source: MoveSource = (MOVE_SOURCES as readonly string[]).includes(String(b.source))
+    ? (String(b.source) as MoveSource)
+    : b.attempt_id || b.item_kind
+      ? "dialer"
+      : "lead";
+  // The host: the same person, unless the rep pressed a "Show anyone free"
+  // time that names someone else on the calendar (D7).
+  const asked = cleanText(b.user_id, 80) || null;
+  if (asked && asked !== m.userId && !teamOf(m.cal).includes(asked))
+    throw new Refusal("That person is not on this call's calendar. Pick a time from the list.", 400, { code: "host" });
+  const toUser = asked || m.userId;
   const end = start + m.minutes * 60_000;
-  const before = m.appt;
-  try {
-    await ghl("PUT", `/calendars/events/appointments/${enc(String(m.appt.appointment_id))}`, {
-      calendarId: m.calendarId,
-      startTime: new Date(start).toISOString(),
-      endTime: new Date(end).toISOString(),
-      ...(m.userId ? { assignedUserId: m.userId } : {}),
-      ignoreFreeSlotValidation: false,
-      toNotify: true,
-    });
-  } catch (e) {
-    throw new Refusal(`HighLevel did not move it: ${redact(String((e as Error).message ?? e))}`, 502);
+  // One of HighLevel's free times for the host that day (D44). A move that
+  // already landed, its answer lost, makes its own time look taken, so
+  // HighLevel's own copy is read before saying so (D46).
+  const dayStart = kuwaitAt(start, 0);
+  const days = await freeSlots(m.calendarId, Math.max(now, dayStart), dayStart + 86_400_000, toUser);
+  let landed = false;
+  if (!slotOffered(isoAt(start), days)) {
+    const live = await readAppointment(m.id);
+    if (live && sameTime(ghlTime(live.startTime), start)) landed = true;
+    else throw new Refusal("That time was just taken. Pick another.", 409, { code: "taken" });
   }
-  let back: Row | null = null;
-  try {
-    const r = await ghl("GET", `/calendars/events/appointments/${enc(String(m.appt.appointment_id))}`);
-    back = ((r.appointment ?? r.event ?? r) as Row) ?? null;
-  } catch {
-    back = null;
-  }
-  const verified = Boolean(back && ghlTime(back.startTime) === start);
-  if (verified)
-    await svc(`cockpit_sales_appointments?appointment_id=eq.${enc(String(m.appt.appointment_id))}`, {
-      method: "PATCH",
-      body: { start_at: new Date(start).toISOString(), mirrored_at: new Date().toISOString() },
-      prefer: "return=minimal",
-    });
-  const words = `${m.kind === "intro" ? "Intro" : "Demo"} moved to ${kuwaitWords(start)} (Kuwait time)`;
-  await svc("cockpit_sales_confirmations", {
-    method: "POST",
-    body: {
-      appointment_id: String(m.appt.appointment_id),
-      contact_id: contact,
-      call_type: m.kind,
-      start_at: new Date(start).toISOString(),
-      result: "reschedule",
-      via: "call",
-      note,
-      by_email: who.email,
-    },
-    prefer: "return=minimal",
-  });
+  const hit = clash(start, end, await otherCalls(m.contact, m.id, m.calendars, now));
+  if (hit) throw new Refusal(clashMessage(hit), 409, { code: "clash" });
+  // The rep's open call with this lead in the dialer (D19).
   let attempt: Row | null = null;
-  if (b.attempt_id) {
+  if (source === "dialer" && b.attempt_id) {
     attempt = (await svc(`cockpit_sales_attempts?id=eq.${enc(cleanText(b.attempt_id, 40))}&select=*`))[0] ?? null;
     if (attempt && !who.manager && attempt.rep_email !== who.email) attempt = null; // another rep's call stays theirs
-    if (attempt && (attempt.contact_id !== contact || !["dialing", "placed", "failed"].includes(String(attempt.state))))
+    if (attempt && (attempt.contact_id !== m.contact || !["dialing", "placed", "failed"].includes(String(attempt.state))))
       attempt = null;
   }
-  const kind = (["intro", "confirm"].includes(String(b.item_kind)) ? String(b.item_kind) : "confirm") as ItemKind;
-  const out = await saveOutcome(who, attempt, contact, "rescheduled", `${words}. ${note}`, null, {
+  // Written down first: the record, and the lock (one move at a time per call).
+  let row: Row;
+  try {
+    row = (
+      await svc("cockpit_sales_reschedules", {
+        method: "POST",
+        body: {
+          request_id: requestId,
+          appointment_id: m.id,
+          contact_id: m.contact,
+          call_type: m.kind,
+          calendar_id: m.calendarId,
+          from_start: isoAt(m.start),
+          to_start: isoAt(start),
+          from_user_id: m.userId,
+          to_user_id: toUser,
+          reason,
+          note,
+          source,
+          after_start: now > m.start,
+          rep_email: who.email,
+          attempt_id: attempt?.id ?? null,
+          state: "moving",
+        },
+        prefer: "return=representation",
+      })
+    )[0] as Row;
+  } catch (e) {
+    const msg = String((e as Error).message ?? e);
+    if (/request_id/.test(msg)) {
+      const twin = await rescheduleRow({ request_id: requestId });
+      if (twin) return await moveAnswer(twin, true);
+    }
+    if (/23505|duplicate/.test(msg))
+      throw new Refusal("Someone is rescheduling this call right now. Give it a few seconds, then look again.", 409, { code: "busy" });
+    throw e;
+  }
+  const ctx: MoveCtx = {
+    before: m.appt,
+    attempt,
+    item_kind: cleanText(b.item_kind, 10) || null,
+    as: cleanText(b.as, 10) || null,
+    landed,
+    putOk: landed,
+    mine: true,
+  };
+  if (!landed) {
+    try {
+      await ghl("PUT", `/calendars/events/appointments/${enc(m.id)}`, {
+        calendarId: m.calendarId,
+        startTime: isoAt(start),
+        endTime: isoAt(end),
+        ...(toUser ? { assignedUserId: toUser } : {}),
+        ignoreFreeSlotValidation: false,
+        toNotify: true,
+      });
+      ctx.putOk = true;
+    } catch (e) {
+      if (classifyGhl(e) === "refused") {
+        // An HTTP answer: HighLevel said no, and nothing moved.
+        const why = redact(ghlReason(e));
+        const failed = (await moveSettled(row, { state: "failed", error: why.slice(0, 300) })) ?? row;
+        await audit(who, "book.move", "cockpit_sales_appointments", m.id, m.appt, { state: "failed" }, { ...moveMeta(failed), error: why });
+        throw new Refusal(`HighLevel did not reschedule it: ${why}. It is still at ${kuwaitWords12(m.start)}.`, 409, {
+          code: "refused",
+          reschedule_id: row.id,
+        });
+      }
+      // No answer: it may have landed, so HighLevel's own copy says (below).
+    }
+  }
+  const back = await readAppointment(m.id);
+  const v = moveVerdict({
+    readBack: back ? ghlTime(back.startTime) : null,
+    from: m.start,
+    to: start,
+    putOk: ctx.putOk,
+    age: 0,
+    inFlight: false,
+  });
+  if (v.state === "moved") return await moveDone(who, row, back, ctx, "book.move");
+  if (v.state === "moving") {
+    // HighLevel's answer is not in yet: the page asks book.move.check.
+    if (v.why)
+      await svc(`cockpit_sales_reschedules?id=eq.${enc(String(row.id))}&state=eq.moving`, {
+        method: "PATCH",
+        body: { error: v.why },
+        prefer: "return=minimal",
+      });
+    await audit(who, "book.move", "cockpit_sales_appointments", m.id, m.appt, { state: "moving" }, { ...moveMeta(row), put_ok: ctx.putOk });
+    return await moveAnswer({ ...row, error: v.why }, false);
+  }
+  const settled = (await moveSettled(row, { state: v.state, error: v.why })) ?? row;
+  await audit(who, "book.move", "cockpit_sales_appointments", m.id, m.appt, { state: v.state }, { ...moveMeta(settled), error: v.why });
+  if (v.state === "not_moved") throw new Refusal(notMovedMessage(m.start), 409, { code: "not_moved", reschedule_id: row.id });
+  // A third time in HighLevel: the page asks book.move.check, which says so.
+  return await moveAnswer(settled, false);
+}
+
+/**
+ * A move HighLevel shows at the new time: settled moved (only once, if two
+ * settle it at once), then everything that follows a move (see bookMove).
+ */
+async function moveDone(who: Who, row: Row, back: Row | null, ctx: MoveCtx, action: string): Promise<Row> {
+  const now = Date.now();
+  const readHost = back?.assignedUserId ? String(back.assignedUserId) : null;
+  const toUser = readHost ?? ((row.to_user_id as string) || null);
+  const r = await moveSettled(row, { state: "moved", to_user_id: toUser, error: null });
+  if (!r) {
+    // Settled a moment ago by another press or check: its answer stands.
+    return await moveAnswer((await rescheduleRow({ id: String(row.id) })) ?? row, true);
+  }
+  const id = String(r.appointment_id);
+  const contact = String(r.contact_id);
+  const kind = (r.call_type as CallKind) || "intro";
+  const from = ms(r.from_start) as number;
+  const to = ms(r.to_start) as number;
+  const fromUser = (r.from_user_id as string) || null;
+  const hostChanged = Boolean(toUser && toUser !== fromUser);
+  // The cockpit's copy at once (D21); the mirror keeps it until B2B carries it (D34).
+  await svc(`cockpit_sales_appointments?appointment_id=eq.${enc(id)}`, {
+    method: "PATCH",
+    body: { start_at: isoAt(to), ...(hostChanged ? { assigned_user_id: toUser } : {}), mirrored_at: isoAt(now) },
+    prefer: "return=minimal",
+  });
+  const meet = meetUrl(back?.address);
+  await keepMeetUrl(id, meet);
+  const names = await namesByUser([toUser, fromUser]);
+  const line = moveNoteText({
     kind,
-    appointmentId: String(m.appt.appointment_id),
-    asRole: cleanText(b.as, 10) || null,
+    from,
+    to,
+    hostName: toUser ? (names.get(toUser) ?? null) : null,
+    previousHostName: fromUser ? (names.get(fromUser) ?? null) : null,
+    hostChanged,
+    repName: String((String(who.email ?? "").toLowerCase() === String(r.rep_email ?? "").toLowerCase() ? who.name : null) ?? r.rep_email),
+    reason: r.reason as MoveReason,
+    note: (r.note as string) ?? null,
+    afterStart: Boolean(r.after_start),
   });
-  await audit(who, "book.move", "cockpit_sales_appointments", String(m.appt.appointment_id), before, {
-    start_at: new Date(start).toISOString(),
-    verified,
+  // D19: a move from the dialer saves the rep's call as rescheduled, and that
+  // save's HighLevel note is this line; anywhere else it is one note alone (D18).
+  let out: Awaited<ReturnType<typeof saveOutcome>> = null;
+  if (r.source === "dialer" && ctx.mine) {
+    const itemKind = (["intro", "confirm"].includes(String(ctx.item_kind)) ? String(ctx.item_kind) : "confirm") as ItemKind;
+    try {
+      out = await saveOutcome(who, ctx.attempt, contact, "rescheduled", line, null, {
+        kind: itemKind,
+        appointmentId: id,
+        asRole: ctx.as,
+      });
+    } catch (e) {
+      // The move stands (HighLevel shows it); a call already saved, or a
+      // save that failed, still leaves the move's one note.
+      console.error("reschedule's dialer save", redact(String((e as Error)?.message ?? e)));
+    }
+  }
+  if (!out) background(moveNote(who, contact, id, line, String(r.id)));
+  // D20: the lead asked for this time, so it is their confirmation of it. A
+  // time the host changed has not been agreed by the lead.
+  if (r.reason === "they_asked") {
+    const saved = out?.attempt ?? ctx.attempt;
+    await svc("cockpit_sales_confirmations", {
+      method: "POST",
+      body: {
+        appointment_id: id,
+        contact_id: contact,
+        call_type: kind,
+        start_at: isoAt(to),
+        result: "reschedule",
+        via: ctx.attempt && !ctx.attempt.manual ? "call" : "cockpit",
+        note: (r.note as string) ?? null,
+        by_email: r.rep_email,
+        attempt_id: saved?.id ?? null,
+      },
+      prefer: "return=minimal",
+    });
+  }
+  // D22: the lead's instant Zoom link lives past the tidy until the new time.
+  const zoom = await keepZoomLink(contact, kind, to);
+  // D23: a demo's new host owns the lead, as booking a demo does.
+  if (kind === "demo" && hostChanged && toUser) background(setOwner(contact, toUser));
+  heavy = null;
+  await audit(
+    who,
+    action,
+    "cockpit_sales_appointments",
+    id,
+    ctx.before,
+    { start_at: isoAt(to), assigned_user_id: toUser, state: "moved" },
+    { ...moveMeta(r), host_changed: hostChanged, verified: true, landed: ctx.landed, zoom_kept: zoom },
+  );
+  return {
+    result: "moved",
+    reschedule_id: r.id,
+    from_start: isoAt(from),
+    start: isoAt(to),
+    host_changed: hostChanged,
+    appointment: apptOut({ id, kind, start: to, host: toUser, meet }, names),
+    words: `Rescheduled to ${kuwaitWords12(to)}`,
+    ...(out ? { attempt: out.attempt, state: out.state } : {}),
+  };
+}
+
+/**
+ * The answer for a move as its row stands: moved, or still being checked
+ * (moving, or a third time for book.move.check to say). A refused or not
+ * moved row answers with its refusal, as the first press did.
+ */
+async function moveAnswer(r: Row, repeated: boolean): Promise<Row> {
+  const state = String(r.state);
+  const from = ms(r.from_start) as number;
+  const to = ms(r.to_start) as number;
+  if (state === "failed")
+    throw new Refusal(`HighLevel did not reschedule it: ${r.error ?? "no reason given"}. It is still at ${kuwaitWords12(from)}.`, 409, {
+      code: "refused",
+      reschedule_id: r.id,
+    });
+  if (state === "not_moved") throw new Refusal(notMovedMessage(from), 409, { code: "not_moved", reschedule_id: r.id });
+  const id = String(r.appointment_id);
+  const moved = state === "moved";
+  const copy = (await svc(`cockpit_sales_appointments?appointment_id=eq.${enc(id)}&select=*`))[0] ?? null;
+  const host = moved ? ((r.to_user_id as string) || null) : ((copy?.assigned_user_id as string) || (r.from_user_id as string) || null);
+  const names = await namesByUser([host]);
+  return {
+    result: moved ? "moved" : "checking",
+    reschedule_id: r.id,
+    from_start: isoAt(from),
+    start: isoAt(to),
+    host_changed: Boolean(r.to_user_id && r.to_user_id !== r.from_user_id),
+    appointment: apptOut(
+      {
+        id,
+        kind: (r.call_type as CallKind) || "intro",
+        start: moved ? to : (ms(copy?.start_at) ?? from),
+        host,
+        meet: (copy?.meet_url as string) ?? null,
+      },
+      names,
+    ),
+    words: `Rescheduled to ${kuwaitWords12(to)}`,
+    ...(repeated ? { repeated: true } : {}),
+  };
+}
+
+/**
+ * A move still "moving", judged again from HighLevel's own copy (book.move.check,
+ * and a stale move settled before the next one). `mine`: the seat that
+ * pressed it, whose dialer call (if any) is saved when it turns out moved.
+ */
+async function recheck(who: Who, r: Row, opts: { mine: boolean; action: string }): Promise<Row> {
+  const back = await readAppointment(String(r.appointment_id));
+  const age = Date.now() - (ms(r.created_at) ?? Date.now());
+  const v = moveVerdict({
+    readBack: back ? ghlTime(back.startTime) : null,
+    from: ms(r.from_start) as number,
+    to: ms(r.to_start) as number,
+    putOk: r.error === PUT_OK_NOTE,
+    age,
+    inFlight: age < PUT_MAY_LAND_MS,
   });
-  return { verified, words, ...(out ?? {}) };
+  if (v.state === "moving") return r;
+  if (v.state === "moved") {
+    const before = (await svc(`cockpit_sales_appointments?appointment_id=eq.${enc(String(r.appointment_id))}&select=*`))[0] ?? null;
+    let attempt: Row | null = null;
+    if (opts.mine && r.attempt_id) {
+      attempt = (await svc(`cockpit_sales_attempts?id=eq.${enc(String(r.attempt_id))}&select=*`))[0] ?? null;
+      if (attempt && !["dialing", "placed", "failed"].includes(String(attempt.state))) attempt = null;
+    }
+    await moveDone(who, r, back, { before, attempt, item_kind: null, as: null, landed: false, putOk: false, mine: opts.mine }, opts.action);
+    return (await rescheduleRow({ id: String(r.id) })) ?? r;
+  }
+  const settled = await moveSettled(r, { state: v.state, error: v.why });
+  if (settled)
+    await audit(who, opts.action, "cockpit_sales_appointments", String(r.appointment_id), { state: "moving" }, { state: v.state }, {
+      ...moveMeta(settled),
+      error: v.why,
+    });
+  return settled ?? (await rescheduleRow({ id: String(r.id) })) ?? r;
+}
+
+/** Moves of this call cut off more than two minutes ago, settled from HighLevel before the next one (D45). */
+async function settleStaleMoves(who: Who, appointmentId: string, now: number): Promise<void> {
+  const stale = await svc(
+    `cockpit_sales_reschedules?appointment_id=eq.${enc(appointmentId)}&state=eq.moving&created_at=lt.${enc(isoAt(now - STALE_MOVING_MS))}&select=*&limit=5`,
+  );
+  for (const r of stale) await recheck(who, r, { mine: false, action: "book.move.check" });
+}
+
+/**
+ * Where a move stands (the page asks every few seconds while HighLevel's
+ * answer is not in, up to a minute): moved, not_moved, checking, or
+ * unverified (left for a person: "Open it in HighLevel and check").
+ */
+async function bookMoveCheck(who: Who, b: Row) {
+  const id = cleanText(b.reschedule_id, 40);
+  const rid = cleanText(b.request_id, 40);
+  if (!REQUEST_ID.test(id) && !REQUEST_ID.test(rid)) throw new Refusal("Which reschedule?");
+  let r = await rescheduleRow(REQUEST_ID.test(id) ? { id } : { request_id: rid.toLowerCase() });
+  if (!r) throw new Refusal("That reschedule is not in the cockpit.", 404);
+  const mine = String(r.rep_email ?? "").toLowerCase() === String(who.email ?? "").toLowerCase();
+  if (!who.manager && !mine) throw new Refusal("That is another rep's reschedule.", 403, { code: "not_yours" });
+  if (r.state === "moving") r = await recheck(who, r, { mine, action: "book.move.check" });
+  const state = String(r.state);
+  const copy = (await svc(`cockpit_sales_appointments?appointment_id=eq.${enc(String(r.appointment_id))}&select=*`))[0] ?? null;
+  const host = (copy?.assigned_user_id as string) || null;
+  const names = await namesByUser([host]);
+  const start = state === "moved" ? (ms(r.to_start) as number) : (ms(copy?.start_at) ?? (ms(r.from_start) as number));
+  return {
+    result: state === "moved" ? "moved" : state === "moving" ? "checking" : state === "unverified" ? "unverified" : "not_moved",
+    reschedule_id: r.id,
+    start: isoAt(start),
+    error: (r.error as string) ?? null,
+    appointment: copy
+      ? apptOut({ id: String(r.appointment_id), kind: (r.call_type as CallKind) || "intro", start, host, meet: (copy.meet_url as string) ?? null }, names)
+      : null,
+  };
+}
+
+/**
+ * The one HighLevel note a move made outside the dialer leaves (D18), in the
+ * background; whether it was written is kept in the audit.
+ */
+async function moveNote(who: Who, contactId: string, appointmentId: string, line: string, rescheduleId: string): Promise<void> {
+  let error: string | null = null;
+  try {
+    await ghl(
+      "POST",
+      `/contacts/${enc(contactId)}/notes`,
+      { body: line, ...(who.ghl_user_id ? { userId: who.ghl_user_id } : {}) },
+      "2021-07-28",
+    );
+  } catch (e) {
+    error = redact(String((e as Error)?.message ?? e)).slice(0, 300);
+  }
+  await audit(who, "book.move.note", "cockpit_sales_appointments", appointmentId, null, { crm_note: error ? "failed" : "written" }, {
+    reschedule_id: rescheduleId,
+    ...(error ? { error } : {}),
+  });
+}
+
+/**
+ * D22: the lead's newest live, never-started instant Zoom link for this kind
+ * of call is kept by the tidy until the new start plus three hours. Its id,
+ * or null (none, or not kept: logged, never fatal).
+ */
+async function keepZoomLink(contactId: string, kind: CallKind, to: number): Promise<string | null> {
+  if (kind === "follow_up") return null;
+  try {
+    const link = (
+      await svc(
+        `cockpit_sales_zoom_links?contact_id=eq.${enc(contactId)}&call_kind=eq.${kind}&deleted_at=is.null&started_at=is.null&order=made_at.desc&limit=1&select=id`,
+      )
+    )[0];
+    if (!link) return null;
+    await svc(`cockpit_sales_zoom_links?id=eq.${enc(String(link.id))}&deleted_at=is.null`, {
+      method: "PATCH",
+      body: { keep_until: isoAt(to + 3 * 3_600_000) },
+      prefer: "return=minimal",
+    });
+    return String(link.id);
+  } catch (e) {
+    console.error("zoom link not kept", redact(String((e as Error)?.message ?? e)));
+    return null;
+  }
+}
+
+/**
+ * The rep told the lead about a call from the cockpit (D29): Copy, or their
+ * own WhatsApp opened with the message (the cockpit itself never sends).
+ * Stamped on the reschedule when there is one, and in the audit always.
+ */
+async function bookTold(who: Who, b: Row) {
+  const id = cleanText(b.appointment_id, 80);
+  if (!id) throw new Refusal("Which call?");
+  const how = String(b.how ?? "");
+  if (!(TOLD_HOW as readonly string[]).includes(how)) throw new Refusal("Say how they were told.");
+  const lang = b.lang === "ar" || b.lang === "en" ? String(b.lang) : null;
+  if (!lang) throw new Refusal("Arabic or English?");
+  const moment = cleanText(b.moment, 40) || null;
+  const appt = (await svc(`cockpit_sales_appointments?appointment_id=eq.${enc(id)}&select=appointment_id,contact_id`))[0];
+  if (!appt) throw new Refusal("That call is not in the cockpit. It may have been deleted in HighLevel.", 404);
+  const contact = String(appt.contact_id ?? "");
+  const lead = (await svc(`cockpit_sales_leads?contact_id=eq.${enc(contact)}&select=contact_id,tags,dnd`))[0] ?? null;
+  const client = await readClient(svc, contact, lead);
+  if (client.client) throw new Refusal(clientRefusal(client), 409, { code: "client" });
+  if ((how === "whatsapp" || how === "link_whatsapp") && lead?.dnd)
+    throw new Refusal("Do not disturb is on: no WhatsApp.", 409, { code: "dnd" });
+  const rid = cleanText(b.reschedule_id, 40);
+  const at = isoAt(Date.now());
+  let before: Row | null = null;
+  if (rid) {
+    if (!REQUEST_ID.test(rid)) throw new Refusal("Which reschedule?");
+    before = await rescheduleRow({ id: rid });
+    if (!before || String(before.appointment_id) !== id) throw new Refusal("That reschedule is not this call's.", 409);
+    await svc(`cockpit_sales_reschedules?id=eq.${enc(rid)}`, {
+      method: "PATCH",
+      body: { told_at: at, told_how: how, told_lang: lang },
+      prefer: "return=minimal",
+    });
+  }
+  await audit(
+    who,
+    "book.told",
+    "cockpit_sales_appointments",
+    id,
+    before ? { told_at: before.told_at ?? null, told_how: before.told_how ?? null } : null,
+    { told_at: at, told_how: how, told_lang: lang },
+    { moment, reschedule_id: rid || null, contact_id: contact },
+  );
+  return { told_at: at };
+}
+
+/**
+ * Why a mark must wait for a move (D35): the call is being rescheduled this
+ * minute, or was moved in the cockpit to a time still ahead while B2B's copy
+ * may show the old one. Unread: nothing holds the mark (as before 2026-10-11).
+ */
+async function moveHoldsMark(appointmentId: string, status: string, now: number): Promise<Refusal | null> {
+  let rows: Row[];
+  try {
+    rows = await svc(
+      `cockpit_sales_reschedules?appointment_id=eq.${enc(appointmentId)}&state=in.(moving,moved)&released_at=is.null&order=created_at.desc&limit=5&select=id,state,from_start,to_start,from_user_id,to_user_id,created_at,b2b_caught_at`,
+    );
+  } catch (e) {
+    console.error("reschedules unread for a mark", redact(String((e as Error)?.message ?? e)));
+    return null;
+  }
+  if (rows.some(r => r.state === "moving" && now - (ms(r.created_at) ?? 0) < STALE_MOVING_MS))
+    return new Refusal("This call is being rescheduled right now. Mark it in a moment.", 409, { code: "moving" });
+  if (status === "cancelled") return null;
+  const open = rows.find(r => r.state === "moved" && !r.b2b_caught_at);
+  if (!open) return null;
+  const to = ms(open.to_start);
+  const lapse = holdLapse({
+    id: String(open.id),
+    appointment_id: appointmentId,
+    from_start: String(open.from_start),
+    to_start: String(open.to_start),
+    created_at: String(open.created_at),
+  });
+  if (to !== null && now <= lapse && to > now + MARK_EARLY_MS)
+    return new Refusal(rescheduledMarkMessage(to), 409, { code: "rescheduled" });
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -5561,6 +6385,14 @@ async function moveStage(
  * and reasons, when it was last touched, its next step and its owner. A lead
  * with nothing in the last 60 days, no next step and not on the hot list is
  * quiet: counted per stage, and shown only when asked for.
+ *
+ * Signed and closed leads stay on it (the CEO, 2026-10-11: signing a client
+ * or handing them to client success must not take them off the sales tool).
+ * An active client (tagged client, or a live deal), a won opportunity or a
+ * lead in a won stage sits in the pipeline's Closed column with the signed
+ * date, the value and who closed it; never quiet, newest signing first, and
+ * counted apart from open leads (board.ts). Nothing is written to HighLevel
+ * for it, and pipeline.move refuses to move a client.
  */
 async function pipelineBoard(who: Who, b: Row) {
   const pipes = await pipelines();
@@ -5569,9 +6401,10 @@ async function pipelineBoard(who: Who, b: Row) {
   if (!pipe) throw new Refusal("HighLevel has no sales pipeline to show.", 404);
   const now = Date.now();
   const since = now - 60 * 86_400_000;
+  const mineOnly = b.scope === "mine";
   const cols =
     "contact_id,name,lead_class,stage_id,stage_name,opp_status,pipeline_id,assigned_to,revenue,readiness,lead_created_at,opp_updated_at,dnd,tags";
-  const [inPipe, loose, inbox, hotRows, states, appts, people] = await Promise.all([
+  const [inPipe, loose, inbox, hotRows, states, appts, people, deals, rep] = await Promise.all([
     svcAll(`cockpit_sales_leads?pipeline_id=eq.${enc(pipe.id)}&select=${cols}&order=contact_id`),
     svc(
       `cockpit_sales_leads?pipeline_id=is.null&lead_class=not.is.null&lead_created_at=gte.${enc(new Date(since).toISOString())}&select=${cols}&limit=1000`,
@@ -5583,6 +6416,14 @@ async function pipelineBoard(who: Who, b: Row) {
       `cockpit_sales_calendar?select=contact_id,call_type,start_at,status&start_at=gte.${enc(new Date(now).toISOString())}&order=start_at&limit=2000`,
     ),
     svc("cockpit_sales_people?select=email,name,ghl_user_id"),
+    // Every live deal that names its lead: who signed, when, for how much and
+    // who closed it. A deal with no contact id is known only by the tag.
+    svcAll(`cockpit_sales_deals?select=${DEAL_COLS}&voided=eq.false&contact_id=not.is.null&order=response_id`),
+    // "Mine" keeps a Closed card whose deal names me, as the deals spell my
+    // name (cockpit_sales_my_names: the rep's display name and aliases).
+    mineOnly && who.b2b_rep_id
+      ? svc(`cockpit_sales_reps?id=eq.${enc(String(who.b2b_rep_id))}&select=display_name,closer_aliases`).then(r => r[0] ?? null)
+      : Promise.resolve(null),
   ]);
   const inboundBy = new Map<string, number>();
   for (const i of inbox)
@@ -5595,25 +6436,60 @@ async function pipelineBoard(who: Who, b: Row) {
     if (!["cancelled", "noshow", "invalid"].includes(String(a.status ?? "")) && !apptBy.has(String(a.contact_id)))
       apptBy.set(String(a.contact_id), a);
   const ownerOf = new Map(people.filter(p => p.ghl_user_id).map(p => [String(p.ghl_user_id), String(p.name ?? p.email)]));
-  const mineOnly = b.scope === "mine";
+  const dealsBy = new Map<string, Row[]>();
+  for (const d of deals) {
+    const id = String(d.contact_id ?? "");
+    if (id) dealsBy.set(id, [...(dealsBy.get(id) ?? []), d]);
+  }
+  const closedAt = closedColumn(pipe);
+  const me = {
+    ghl_user_id: who.ghl_user_id ?? null,
+    names: myNames(who.name, rep?.display_name, (rep?.closer_aliases as unknown[] | null) ?? []),
+  };
   const showAll = Boolean(b.all);
   const quiet: Record<string, number> = {};
   const cards: Row[] = [];
+  const closed: Row[] = [];
   for (const l of [...inPipe, ...loose]) {
-    if (l.opp_status && l.opp_status !== "open") continue;
-    // An active client sits in the pipeline from their own deal; the board
-    // is the sales team's, so they are left off it (clients.ts).
-    if (isClient(l)) continue;
     const id = String(l.contact_id);
     const hot = hotBy.get(id);
     const st = stateBy.get(id);
     const appt = apptBy.get(id);
-    if (mineOnly && l.assigned_to !== who.ghl_user_id && hot?.owner_email !== who.email) continue;
     const inbound = inboundBy.get(id) ?? null;
     const touches = [inbound, ms(l.opp_updated_at), ms(st?.last_outcome_at), ms(l.lead_created_at)].filter(
       (x): x is number => x !== null && x > 0,
     );
     const lastTouch = touches.length ? Math.max(...touches) : null;
+    const owner = l.assigned_to ? (ownerOf.get(String(l.assigned_to)) ?? null) : null;
+    const leadDeals = dealsBy.get(id) ?? [];
+    const facts = clientFacts(l, leadDeals);
+    const place = placeLead(l, facts, pipe);
+    if (place.closed) {
+      // The Closed column: neither the quiet rule nor the open-status rule
+      // applies, and no heat, hot flag or next step (D49, D50).
+      if (mineOnly && !closedIsMine(l, leadDeals, me)) continue;
+      closed.push({
+        contact_id: id,
+        name: l.name ?? null,
+        lead_class: l.lead_class ?? null,
+        stage_id: place.stage_id,
+        heat: 0,
+        reasons: [],
+        hot: false,
+        last_objection: null,
+        last_touch_at: lastTouch ? new Date(lastTouch).toISOString() : null,
+        wrote_at: null,
+        next_at: null,
+        next_what: null,
+        owner,
+        dnd: Boolean(l.dnd),
+        quiet: false,
+        ...closedCard(l, facts),
+      });
+      continue;
+    }
+    if (l.opp_status && l.opp_status !== "open") continue;
+    if (mineOnly && l.assigned_to !== who.ghl_user_id && hot?.owner_email !== who.email) continue;
     const next = [
       hot?.next_at ? { at: ms(hot.next_at), what: "Hot follow-up" } : null,
       st?.callback_at ? { at: ms(st.callback_at), what: "Call back" } : null,
@@ -5655,25 +6531,34 @@ async function pipelineBoard(who: Who, b: Row) {
       wrote_at: inbound ? new Date(inbound).toISOString() : null,
       next_at: next ? new Date(next.at).toISOString() : null,
       next_what: next?.what ?? null,
-      owner: l.assigned_to ? (ownerOf.get(String(l.assigned_to)) ?? null) : null,
+      owner,
       dnd: Boolean(l.dnd),
       quiet: !active,
+      ...OPEN_FIELDS,
     });
   }
+  const closedCards = sortClosed(closed);
   return {
     pipeline: pipe,
     pipelines: pipes.map(p => ({ id: p.id, name: p.name })),
-    cards,
+    cards: [...cards, ...closedCards],
     quiet,
     loose: loose.length,
+    closed_stage: closedAt,
+    counts: closedCounts(closedCards),
   };
 }
 
-/** A rep moves a lead on the board. */
+/**
+ * A rep moves a lead on the board. An active client (tagged client, or a
+ * signed deal) is never moved from here: they sit in Closed, and a stage's
+ * HighLevel workflows could message them (D52). Nothing is written.
+ */
 async function pipelineMove(who: Who, b: Row) {
   const contact = cleanText(b.contact_id, 80);
   const stageId = cleanText(b.stage_id, 80);
   if (!contact || !stageId) throw new Refusal("Which lead, and which stage?");
+  if ((await readClient(svc, contact)).client) throw new Refusal(CLIENT_MOVE_REFUSAL, 409, { code: "client" });
   const out = await moveStage(who, contact, { stageId, pipelineId: cleanText(b.pipeline_id, 80) || undefined }, {
     source: "board",
   });
@@ -5736,9 +6621,15 @@ async function hotSave(who: Who, b: Row) {
   if (!contact) throw new Refusal("Which lead?");
   const lead = (await svc(`cockpit_sales_leads?contact_id=eq.${enc(contact)}&select=contact_id,tags`))[0];
   if (!lead) throw new Refusal("That lead is not in the cockpit.", 404);
-  if (isClient(lead)) throw new Refusal(CLIENT_REFUSAL, 409);
+  const client = await readClient(svc, contact, lead);
   const before = (await svc(`cockpit_sales_hot?contact_id=eq.${enc(contact)}&select=*`))[0] ?? null;
   const live = before && !before.removed_at ? before : null;
+  // An active client (tagged client, or a signed deal) stays off the hot
+  // list. A row already on it may still be marked closed or lost: the deal
+  // reaches the cockpit before the closer marks the row, and closing it is
+  // what takes the client off the list's counts.
+  const closing = Boolean(live) && (b.status === "closed" || b.status === "lost");
+  if (client.client && !closing) throw new Refusal(clientRefusal(client), 409, { code: "client" });
   if (live && !who.manager && live.owner_email !== who.email)
     throw new Refusal(`This lead is on ${String(live.owner_email).split("@")[0]}'s hot list. Ask them or a manager.`, 403);
   const checked = hotPatch(b, Date.now(), { email: String(who.email ?? ""), manager: Boolean(who.manager) });
@@ -6639,6 +7530,8 @@ const ACTIONS: Record<string, (who: Who, b: Row) => Promise<Row>> = {
   "book.slots": bookSlots,
   "book.create": bookCreate,
   "book.move": bookMove,
+  "book.move.check": bookMoveCheck,
+  "book.told": bookTold,
   "pipeline.stages": pipelineStages,
   "pipeline.board": pipelineBoard,
   "pipeline.move": pipelineMove,

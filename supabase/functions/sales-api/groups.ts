@@ -10,7 +10,7 @@
 
 import { cleanText, redact, type Who } from "./lib.ts";
 import { ApiRefusal } from "./liveio.ts";
-import { CLIENT_REFUSAL, isClient } from "./clients.ts";
+import { clientRefusal, readClient } from "./clients.ts";
 import { kuwaitWords } from "./dialer.ts";
 
 type Row = Record<string, unknown>;
@@ -63,13 +63,16 @@ export function makeGroups(d: GroupsDeps) {
     const contactId = cleanText(b.contact_id, 80);
     if (!contactId) throw new ApiRefusal("Which lead?", 400);
     let lead: Row | undefined;
+    let client: Awaited<ReturnType<typeof readClient>>;
     try {
       lead = (await d.svc(`cockpit_sales_leads?contact_id=eq.${enc(contactId)}&select=contact_id,name,company,phone,tags`))[0];
+      // An active client: the tag, or a signed deal (clients.ts).
+      client = await readClient(d.svc, contactId, lead ?? null);
     } catch {
       throw new ApiRefusal("The cockpit could not read the lead. Try again in a minute.", 503);
     }
     if (!lead) throw new ApiRefusal("That lead is not in the cockpit.", 404);
-    if (isClient(lead)) throw new ApiRefusal(CLIENT_REFUSAL, 409, { code: "client" });
+    if (client.client) throw new ApiRefusal(clientRefusal(client), 409, { code: "client" });
     const invite = cleanInvite(b.invite_link);
     if (invite === undefined) throw new ApiRefusal(BAD_INVITE, 400, { code: "bad_invite" });
     const name = cleanText(b.name, 100) || null;

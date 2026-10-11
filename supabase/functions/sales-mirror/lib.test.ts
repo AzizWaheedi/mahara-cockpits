@@ -1,6 +1,13 @@
 // bun test supabase/functions/sales-mirror
 import { describe, expect, test } from "bun:test";
 import {
+  applyHolds,
+  callsSql,
+  type Hold,
+  holdLapse,
+  holdStart,
+  holdsByCall,
+  meetUrl,
   dialsSql,
   dropLooksWrong,
   ghlContactRow,
@@ -288,5 +295,81 @@ describe("redact", () => {
     expect(redact("GET /x?api_key=abc123&page=2 -> 500")).toBe("GET /x?api_key=[key]&page=2 -> 500");
     expect(redact("token=zz9 failed")).toBe("token=[key] failed");
     expect(redact("Authorization: Bearer sk-live.abc_DEF")).toBe("Authorization: Bearer [key]");
+  });
+});
+
+// The same cases as sales-api/reschedule.test.ts: holdStart and meetUrl are
+// one rule kept in two files (an Edge Function cannot import from another).
+describe("a call rescheduled in the cockpit (2026-10-11)", () => {
+  const from = "2026-10-12T13:30:00.000Z";
+  const to = "2026-10-13T14:00:00.000Z";
+  const made = "2026-10-11T11:00:00.000Z";
+  const h: Hold = { id: "r1", appointment_id: "a1", from_start: from, to_start: to, from_user_id: "G-a", to_user_id: "G-a", created_at: made };
+  const now = Date.parse("2026-10-11T11:10:00Z");
+
+  test("B2B still showing the old time keeps the cockpit's new time", () => {
+    expect(holdStart({ start_at: "2026-10-12 13:30:00+00", assigned_user_id: "G-a" }, [h], now)).toEqual({
+      kind: "hold",
+      start_at: to,
+      assigned_user_id: null,
+      ids: ["r1"],
+      since: Date.parse(made),
+    });
+    const moved = { ...h, to_user_id: "G-b" };
+    const v = holdStart({ start_at: from, assigned_user_id: "G-a" }, [moved], now);
+    expect(v.kind === "hold" && v.assigned_user_id).toBe("G-b");
+  });
+
+  test("the new time is caught; a third time releases; the hold lapses", () => {
+    expect(holdStart({ start_at: "2026-10-13 14:00:00+00" }, [h], now)).toEqual({ kind: "caught", ids: ["r1"] });
+    expect(holdStart({ start_at: "2026-10-14T10:00:00Z" }, [h], now)).toEqual({ kind: "released", ids: ["r1"], why: "moved again in HighLevel" });
+    expect(holdLapse(h)).toBe(Date.parse(to) + 3_600_000);
+    expect(holdStart({ start_at: from }, [h], Date.parse(to) + 3_600_001)).toEqual({
+      kind: "released",
+      ids: ["r1"],
+      why: "lapsed: B2B never showed the new time",
+    });
+  });
+
+  test("moved twice in the cockpit: either old time holds to the newest", () => {
+    const second: Hold = { ...h, id: "r2", from_start: to, to_start: "2026-10-14T09:00:00.000Z", created_at: "2026-10-11T11:05:00.000Z" };
+    const v = holdStart({ start_at: from }, [second, h], now);
+    expect(v.kind === "hold" && v.start_at).toBe("2026-10-14T09:00:00.000Z");
+    expect(holdStart({ start_at: "2026-10-14T09:00:00Z" }, [second, h], now)).toEqual({ kind: "caught", ids: ["r1", "r2"] });
+  });
+
+  test("a read through the holds: held rows carry the cockpit's time, the rest pass, an hour's hold warns", () => {
+    const holds = holdsByCall([
+      { id: "r1", appointment_id: "a1", from_start: from, to_start: to, created_at: made },
+      { id: "r9", appointment_id: "a9", from_start: from, to_start: to, created_at: made },
+    ]);
+    const rows = [
+      { appointment_id: "a1", start_at: "2026-10-12 13:30:00+00", status: "confirmed" },
+      { appointment_id: "a9", start_at: "2026-10-13 14:00:00+00" },
+      { appointment_id: "a5", start_at: "2026-10-15 10:00:00+00" },
+    ];
+    const out = applyHolds(rows, holds, now);
+    expect(out.rows[0]).toEqual({ appointment_id: "a1", start_at: to, status: "confirmed" });
+    expect(out.rows[1]).toBe(rows[1]);
+    expect(out.rows[2]).toBe(rows[2]);
+    expect([out.held, out.caught, out.released, out.warnings]).toEqual([1, ["r9"], [], []]);
+    const later = applyHolds(rows, holds, Date.parse(made) + 61 * 60_000);
+    expect(later.warnings).toEqual(["B2B has not carried the reschedule of a1 yet"]);
+  });
+
+  test("the Zoom address and HighLevel's reschedule stamp come out of B2B's payload, guarded", () => {
+    const sql = callsSql("2026-10-01T00:00:00.000Z", "2026-10-02T00:00:00.000Z");
+    expect(sql).toContain("as meet_url");
+    expect(sql).toContain("as crm_rescheduled_at");
+    expect(sql).toContain("zoom\\.us/");
+    expect(meetUrl("https://us06web.zoom.us/j/81001879864?pwd=abc.1")).toBe("https://us06web.zoom.us/j/81001879864?pwd=abc.1");
+    expect(meetUrl(" 055 445 5823")).toBeNull();
+    expect(meetUrl("https://evil.example/zoom.us/j/1")).toBeNull();
+    const r = ghlEventRow(
+      { id: "e1", calendarId: "cal1", startTime: "2026-10-12T10:00:00+03:00", address: "https://zoom.us/j/1" },
+      { cal1: { type: "follow_up" } },
+      "x",
+    );
+    expect(r?.meet_url).toBe("https://zoom.us/j/1");
   });
 });
