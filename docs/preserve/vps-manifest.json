@@ -551,7 +551,13 @@
     "n": 58,
     "sha256": "9c3e2ecf5d72a6d33822c0fbab33a460a67d8e60af4d15be7c5134c14a4af8ee",
     "kind": "comment",
-    "text": "# cockpit guardian (hermes/cockpit-guardian): scan every 5 min, report-only until its reports prove accurate"
+    "text": "# cockpit guardian (hermes/cockpit-guardian): scan every 5 min, report-only until its reports prove accurate",
+    "changed_on_purpose": {
+     "on": "2026-10-11",
+     "text": "# cockpit guardian (hermes/cockpit-guardian): scan every 5 min and make the safe fixes (fix mode since 2026-10-11)",
+     "sha256": "fa57467bc0b3762f3d009de0c3baf7fb89d7df81c70d8ffe0de8634be84d6347",
+     "why": "fix mode: the CEO asked for a guardian that would \"Scan for any issues happening with it and fix them immediately\"; only the safe fixes in hermes/cockpit-guardian/README.md run (no secret, deploy, crontab install, or anything that reaches a lead)"
+    }
    },
    {
     "n": 59,
@@ -563,7 +569,14 @@
     "runs": "guardian.py --mode report-only --quiet run",
     "lock": "$HOME/.cockpit-guardian/run.lock",
     "in_git_crontab_manifest": true,
-    "in_git_sales_desk_readme": false
+    "in_git_sales_desk_readme": false,
+    "changed_on_purpose": {
+     "on": "2026-10-11",
+     "what": "runs guardian.py --mode fix (recorded --mode report-only)",
+     "text": "*/5 * * * *  flock -n $HOME/.cockpit-guardian/run.lock bash -c \"cd $HOME/mahara-cockpits/hermes/cockpit-guardian && set -a; . $HOME/.editor-desk/env; . /opt/data/bibi/api-keys.env; [ -f $HOME/.cockpit-guardian/env ] && . $HOME/.cockpit-guardian/env; set +a; python3 guardian.py --mode fix --quiet run\" >> $HOME/.cockpit-guardian/cron.log 2>&1",
+     "sha256": "12da24624724b8bf0da88a8827ed6c59c7206965ca02a8b1b68a83384d395fd3",
+     "why": "fix mode: the CEO asked for a guardian that would \"Scan for any issues happening with it and fix them immediately\"; only the safe fixes in hermes/cockpit-guardian/README.md run (no secret, deploy, crontab install, or anything that reaches a lead)"
+    }
    },
    {
     "n": 60,
@@ -635,7 +648,12 @@
   "guardian_cronline": {
    "file": "~/.cockpit-guardian/cronline",
    "sha256": "76d2b539939aa4df3f5b30cc78b8ebf9703233ca7ff5ea7d533855022df63f58",
-   "matches_crontab_line": 59
+   "matches_crontab_line": 59,
+   "changed_on_purpose": {
+    "on": "2026-10-11",
+    "sha256": "4a5e8783db8d8ca49061150b7c4c9484377f6f086d2effbec064727a273151b7",
+    "note": "the file holds the line plus a newline; rewritten with the fix-mode line"
+   }
   },
   "backups": {
    "~/.cockpit-guardian/backups/crontab.20261003T190937Z": {
@@ -695,7 +713,8 @@
     64
    ],
    "readme_line_not_installed": "*/5 desk.py waves (waves.lock): documented in the README and RUNBOOK but not in the live crontab; consistent with Milestone 1 shipping dark (followups.agent off). Not installed by this inventory."
-  }
+  },
+  "changed_on_purpose_note": "2026-10-11: the guardian's cron line (and its comment) move to fix mode. The verifier reads the new line as CHANGED, explained, through changed_on_purpose on the recorded line; the whole crontab's sha256 above is the 2026-10-07 one and differs from then on. ~/.cockpit-guardian/cronline (read by nothing) is rewritten with the new line at the same time."
  },
  "repo_files": {
   "summary": {
