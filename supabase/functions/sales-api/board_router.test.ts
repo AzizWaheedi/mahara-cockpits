@@ -284,6 +284,47 @@ describe("pipeline.move: a client is never moved from the board", () => {
   });
 });
 
+describe("an outcome never moves a signed client's stage (D52)", () => {
+  /** The background stage move, tags and note finishing. */
+  const settled = async () => {
+    for (let i = 0; i < 40; i++) await new Promise(r => setTimeout(r, 5));
+  };
+  const stagePuts = () => ghl.filter(g => g.method === "PUT" && g.path.startsWith("/opportunities/"));
+  /** Not interested goes to long-term nurture: the pipeline gets that stage for these tests only. */
+  async function withLongTerm(fn: () => Promise<void>): Promise<void> {
+    STAGES.push({ id: "s-long", name: "🧊Long Term Nurture", position: 10 });
+    try {
+      // pipelines() keeps HighLevel's answer ten minutes: ask with a fresh read.
+      await call("seat-manager", { action: "pipeline.stages", fresh: true });
+      await fn();
+    } finally {
+      STAGES.splice(STAGES.findIndex(st => st.id === "s-long"), 1);
+      await call("seat-manager", { action: "pipeline.stages", fresh: true });
+    }
+  }
+
+  for (const id of ["c-deal", "c-tag"]) {
+    test(`${id}: Not interested is saved, and the stage stays where it is`, async () => {
+      await withLongTerm(async () => {
+        const r = await call("seat-manager", { action: "dial.save", contact_id: id, outcome: "not_interested", note: "Already with us" });
+        expect(r.status).toBe(200);
+        await settled();
+        expect(stagePuts()).toHaveLength(0);
+        expect(db.t("cockpit_sales_stage_moves")).toHaveLength(0);
+      });
+    });
+  }
+
+  test("a voided deal is not a client: the same save moves the stage, as before", async () => {
+    await withLongTerm(async () => {
+      const r = await call("seat-manager", { action: "dial.save", contact_id: "c-void", outcome: "not_interested", note: "Not now" });
+      expect(r.status).toBe(200);
+      await settled();
+      expect(stagePuts().map(g => g.path)).toEqual(["/opportunities/opp-c-void"]);
+    });
+  });
+});
+
 describe("the other sales doors stay shut for a signed client (D54)", () => {
   const draft = (id: string, contact: string): Row => ({
     id,

@@ -27,6 +27,7 @@ import {
   mergeTeamSlots,
   moveNoteText,
   openUntil,
+  overInCrm,
   rescheduledMarkMessage,
   settle,
 } from "./reschedule.ts";
@@ -166,6 +167,18 @@ describe("who may reschedule, and when (D41 to D43)", () => {
     expect(canReschedule({ ...base, client: true, mark: "noshow" })?.code).toBe("not_yours");
     expect(canReschedule({ ...ok, client: true, mark: "noshow" })?.code).toBe("client");
     expect(canReschedule({ ...ok, mark: "showed", joined: true })?.code).toBe("over");
+  });
+});
+
+describe("HighLevel's own status before a move (D46)", () => {
+  test("cancelled, no-show, held or disqualified in HighLevel is over, whatever the cockpit's copy says", () => {
+    expect(overInCrm("cancelled")).toEqual({ code: "over", status: 409, message: "This call was cancelled in HighLevel. Book a new one instead." });
+    expect(overInCrm("noshow")?.message).toBe("This call is already marked no-show in HighLevel. Book a new one instead.");
+    expect(overInCrm("showed")?.message).toBe("This call is already marked held in HighLevel. Book a new one instead.");
+    expect(overInCrm(" Invalid ")?.message).toBe("This call is already marked disqualified in HighLevel. Book a new one instead.");
+  });
+  test("a live status, or none read, lets it move", () => {
+    for (const s of ["new", "confirmed", "booked", "", null, undefined]) expect(overInCrm(s)).toBeNull();
   });
 });
 

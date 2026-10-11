@@ -714,6 +714,9 @@ def language_for(lead: dict[str, Any], thread: list[dict[str, Any]]) -> str:
 
 
 CLIENT_CLOSED = "An active client (tagged client in HighLevel): kept out of sales follow-ups."
+# A client signed on the New Client Form whose tag has not arrived (sales-api
+# clients.ts SIGNED_DRAFT_CLOSED, the same words).
+SIGNED_CLOSED = "An active client (signed on the New Client Form): kept out of sales follow-ups."
 
 
 def is_client(lead: Optional[dict[str, Any]]) -> bool:
@@ -2022,22 +2025,31 @@ def close_gone(sb: Any, now: datetime) -> int:
 
 
 def close_clients(sb: Any, now: datetime) -> int:
-    """Open drafts for a contact tagged client, closed with the reason: an
-    active client gets no sales follow-up. The tag can arrive after a draft
-    was written, when a lead signs; sales-api refuses to send one anyway."""
+    """Open drafts for an active client, closed with the reason: an active
+    client gets no sales follow-up. Two marks make one, as in sales-api
+    clients.ts: the client tag, or a deal from the New Client Form that is
+    not voided (the CEO, 2026-10-11: a signed client stays in the pipeline's
+    Closed column and out of every sales list). The tag can arrive days after
+    the deal, so the deal closes the draft as soon as it is in the cockpit;
+    sales-api refuses to send one anyway."""
     drafts = sb.select_all("cockpit_sales_followups", "select=id,contact_id&status=eq.draft", order="id")
     if not drafts:
         return 0
-    clients: set[str] = set()
+    why: dict[str, str] = {}
     for chunk in _chunks(sorted({str(d["contact_id"]) for d in drafts})):
-        clients |= {str(lead.get("contact_id")) for lead in
-                    sb.select("cockpit_sales_leads", f"select=contact_id,tags&contact_id={_in(chunk)}") if is_client(lead)}
+        for deal in sb.select("cockpit_sales_deals", f"select=contact_id&voided=eq.false&contact_id={_in(chunk)}&limit=1000"):
+            why[str(deal.get("contact_id"))] = SIGNED_CLOSED
+        # The tag first when both: HighLevel's own word, as clients.ts says it.
+        for lead in sb.select("cockpit_sales_leads", f"select=contact_id,tags&contact_id={_in(chunk)}"):
+            if is_client(lead):
+                why[str(lead.get("contact_id"))] = CLIENT_CLOSED
     closed = 0
     for d in drafts:
-        if str(d["contact_id"]) not in clients:
+        reason = why.get(str(d["contact_id"]))
+        if not reason:
             continue
         out = sb.rest("PATCH", f"cockpit_sales_followups?id=eq.{_q(str(d['id']))}&status=eq.draft",
-                      json_body={"status": "expired", "decided_at": now.isoformat(), "error": CLIENT_CLOSED},
+                      json_body={"status": "expired", "decided_at": now.isoformat(), "error": reason},
                       prefer="return=representation")
         closed += bool(isinstance(out, list) and out)
     return closed

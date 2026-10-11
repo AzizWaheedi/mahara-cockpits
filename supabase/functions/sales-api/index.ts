@@ -120,6 +120,7 @@ import {
   moveVerdict,
   notMovedMessage,
   openUntil,
+  overInCrm,
   PUT_MAY_LAND_MS,
   PUT_OK_NOTE,
   rescheduledMarkMessage,
@@ -5731,21 +5732,30 @@ async function bookMove(who: Who, b: Row) {
     : b.attempt_id || b.item_kind
       ? "dialer"
       : "lead";
+  // HighLevel's own copy of the call, before anything is written (D46): the
+  // cockpit's copy is B2B's and can be a quarter hour behind. A call
+  // HighLevel already shows cancelled, no-show, held or disqualified is never
+  // moved, and the host stays the one HighLevel has, so a move never hands
+  // the call back to the host it had before a change made in HighLevel.
+  // Unread: the cockpit's copy decides, as before.
+  const live = await readAppointment(m.id);
+  const gone = overInCrm(live?.appointmentStatus ?? live?.appoinmentStatus);
+  if (gone) throw new Refusal(gone.message, gone.status, { code: gone.code });
+  const liveHost = live?.assignedUserId ? String(live.assignedUserId) : null;
   // The host: the same person, unless the rep pressed a "Show anyone free"
   // time that names someone else on the calendar (D7).
   const asked = cleanText(b.user_id, 80) || null;
-  if (asked && asked !== m.userId && !teamOf(m.cal).includes(asked))
+  if (asked && asked !== m.userId && asked !== liveHost && !teamOf(m.cal).includes(asked))
     throw new Refusal("That person is not on this call's calendar. Pick a time from the list.", 400, { code: "host" });
-  const toUser = asked || m.userId;
+  const toUser = asked || liveHost || m.userId;
   const end = start + m.minutes * 60_000;
   // One of HighLevel's free times for the host that day (D44). A move that
   // already landed, its answer lost, makes its own time look taken, so
-  // HighLevel's own copy is read before saying so (D46).
+  // HighLevel's own copy (read above) says whether it is there already.
   const dayStart = kuwaitAt(start, 0);
   const days = await freeSlots(m.calendarId, Math.max(now, dayStart), dayStart + 86_400_000, toUser);
   let landed = false;
   if (!slotOffered(isoAt(start), days)) {
-    const live = await readAppointment(m.id);
     if (live && sameTime(ghlTime(live.startTime), start)) landed = true;
     else throw new Refusal("That time was just taken. Pick another.", 409, { code: "taken" });
   }
@@ -5878,12 +5888,27 @@ async function moveDone(who: Who, row: Row, back: Row | null, ctx: MoveCtx, acti
   const to = ms(r.to_start) as number;
   const fromUser = (r.from_user_id as string) || null;
   const hostChanged = Boolean(toUser && toUser !== fromUser);
-  // The cockpit's copy at once (D21); the mirror keeps it until B2B carries it (D34).
-  await svc(`cockpit_sales_appointments?appointment_id=eq.${enc(id)}`, {
-    method: "PATCH",
-    body: { start_at: isoAt(to), ...(hostChanged ? { assigned_user_id: toUser } : {}), mirrored_at: isoAt(now) },
-    prefer: "return=minimal",
-  });
+  // From here on the move stands (HighLevel shows it, and its row says
+  // moved), so a write that fails below is said in the audit row and never
+  // turns the answer into an error that would hide the move and its audit.
+  const failed: string[] = [];
+  const kept = async (what: string, write: () => Promise<unknown>): Promise<void> => {
+    try {
+      await write();
+    } catch (e) {
+      failed.push(what);
+      console.error(`reschedule's ${what}`, redact(String((e as Error)?.message ?? e)));
+    }
+  };
+  // The cockpit's copy at once (D21); the mirror keeps it until B2B carries
+  // it (D34), and puts the new time on it at its next run if this write failed.
+  await kept("copy", () =>
+    svc(`cockpit_sales_appointments?appointment_id=eq.${enc(id)}`, {
+      method: "PATCH",
+      body: { start_at: isoAt(to), ...(hostChanged ? { assigned_user_id: toUser } : {}), mirrored_at: isoAt(now) },
+      prefer: "return=minimal",
+    }),
+  );
   const meet = meetUrl(back?.address);
   await keepMeetUrl(id, meet);
   const names = await namesByUser([toUser, fromUser]);
@@ -5921,21 +5946,23 @@ async function moveDone(who: Who, row: Row, back: Row | null, ctx: MoveCtx, acti
   // time the host changed has not been agreed by the lead.
   if (r.reason === "they_asked") {
     const saved = out?.attempt ?? ctx.attempt;
-    await svc("cockpit_sales_confirmations", {
-      method: "POST",
-      body: {
-        appointment_id: id,
-        contact_id: contact,
-        call_type: kind,
-        start_at: isoAt(to),
-        result: "reschedule",
-        via: ctx.attempt && !ctx.attempt.manual ? "call" : "cockpit",
-        note: (r.note as string) ?? null,
-        by_email: r.rep_email,
-        attempt_id: saved?.id ?? null,
-      },
-      prefer: "return=minimal",
-    });
+    await kept("confirmation", () =>
+      svc("cockpit_sales_confirmations", {
+        method: "POST",
+        body: {
+          appointment_id: id,
+          contact_id: contact,
+          call_type: kind,
+          start_at: isoAt(to),
+          result: "reschedule",
+          via: ctx.attempt && !ctx.attempt.manual ? "call" : "cockpit",
+          note: (r.note as string) ?? null,
+          by_email: r.rep_email,
+          attempt_id: saved?.id ?? null,
+        },
+        prefer: "return=minimal",
+      }),
+    );
   }
   // D22: the lead's instant Zoom link lives past the tidy until the new time.
   const zoom = await keepZoomLink(contact, kind, to);
@@ -5949,7 +5976,14 @@ async function moveDone(who: Who, row: Row, back: Row | null, ctx: MoveCtx, acti
     id,
     ctx.before,
     { start_at: isoAt(to), assigned_user_id: toUser, state: "moved" },
-    { ...moveMeta(r), host_changed: hostChanged, verified: true, landed: ctx.landed, zoom_kept: zoom },
+    {
+      ...moveMeta(r),
+      host_changed: hostChanged,
+      verified: true,
+      landed: ctx.landed,
+      zoom_kept: zoom,
+      ...(failed.length ? { not_written: failed } : {}),
+    },
   );
   return {
     result: "moved",
@@ -6577,13 +6611,22 @@ async function autoMove(
   ctx: { source: "dialer" | "booking"; outcome: string; attemptId: string | null },
 ): Promise<Row | null> {
   const v = await setting<{ auto_moves?: boolean; roles?: Record<string, StageRole> }>("pipeline");
-  const lead = (await svc(`cockpit_sales_leads?contact_id=eq.${enc(contactId)}&select=stage_id,stage_name`))[0];
+  const lead = (await svc(`cockpit_sales_leads?contact_id=eq.${enc(contactId)}&select=contact_id,stage_id,stage_name,tags`))[0];
   const current = lead
     ? ((v?.roles?.[String(lead.stage_id ?? "")] as StageRole | undefined) ?? stageRole(lead.stage_name as string | null))
     : null;
   const roles = rolesFor(current);
   if (!roles.length) return null;
   if (v?.auto_moves === false) return { state: "skipped", why: "automatic moves are off" };
+  // An active client (tagged client, or a signed deal) sits in Closed and no
+  // outcome moves their stage: a stage's HighLevel workflows could message
+  // them (D52, as pipeline.move refuses). Unread: left where it is.
+  try {
+    if ((await readClient(svc, contactId, lead ?? null)).client)
+      return { state: "skipped", why: "an active client stays in Closed" };
+  } catch (e) {
+    return { state: "failed", error: `whether the lead is a client could not be read: ${redact(String((e as Error).message ?? e))}` };
+  }
   try {
     return await moveStage(who, contactId, { roles }, ctx);
   } catch (e) {

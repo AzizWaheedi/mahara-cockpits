@@ -382,6 +382,33 @@ describe("book.move: the guards", () => {
     expect(db.t("cockpit_sales_reschedules")[0]?.after_start).toBe(true);
   });
 
+  test("HighLevel already shows it cancelled or held while the cockpit's copy lags: refused before any PUT", async () => {
+    // The lead cancelled through HighLevel's link a minute ago; B2B's copy still says confirmed.
+    (hl.appts.get(DEMO) as { status: string }).status = "cancelled";
+    const r = await move("setter");
+    expect(r.status).toBe(409);
+    expect(r.body).toMatchObject({ code: "over", error: "This call was cancelled in HighLevel. Book a new one instead." });
+    (hl.appts.get(DEMO) as { status: string }).status = "showed";
+    expect((await move("setter")).body).toMatchObject({
+      code: "over",
+      error: "This call is already marked held in HighLevel. Book a new one instead.",
+    });
+    expect(hl.puts).toHaveLength(0);
+    expect(db.t("cockpit_sales_reschedules")).toHaveLength(0);
+    expect(db.t("cockpit_sales_confirmations")).toHaveLength(0);
+  });
+
+  test("a host changed in HighLevel stays: the move never hands the call back to the copy's host", async () => {
+    // HighLevel gave the demo to Aziz a minute ago; B2B's copy still says Sami.
+    (hl.appts.get(DEMO) as { assignedUserId: string }).assignedUserId = "G-aziz";
+    const r = await move("setter", { start: new Date(ahead(53)).toISOString() });
+    expect(r.body.result).toBe("moved");
+    expect(hl.puts[0]?.body.assignedUserId).toBe("G-aziz");
+    expect(hl.appts.get(DEMO)?.assignedUserId).toBe("G-aziz");
+    expect(db.t("cockpit_sales_appointments").find(a => a.appointment_id === DEMO)?.assigned_user_id).toBe("G-aziz");
+    await settleBackground(() => hl.calls.some(c => c.method === "PUT" && c.path === `/contacts/${LEAD}`));
+  });
+
   test("a time past, taken, or on top of the lead's other call", async () => {
     expect((await move("setter", { start: new Date(Date.now() - MIN).toISOString() })).body.code).toBe("past");
     expect((await move("setter", { start: new Date(ahead(60)).toISOString() })).body.code).toBe("taken");
@@ -434,6 +461,27 @@ describe("book.move: what follows a move", () => {
     await settleBackground();
     expect(hl.notes).toHaveLength(1);
     expect(hl.notes[0]?.body).toBe(String(a.note));
+  });
+
+  test("a write after HighLevel moved it fails: still Rescheduled, and the audit row says what was not written", async () => {
+    const real = db.db.bind(db);
+    db.db = (path, opts) => {
+      if (path.startsWith("cockpit_sales_confirmations") && opts?.method === "POST")
+        return Promise.reject(Object.assign(new Error("database 503: down for a moment"), { status: 503 }));
+      return real(path, opts);
+    };
+    try {
+      const r = await move("setter");
+      expect(r.status).toBe(200);
+      expect(r.body.result).toBe("moved");
+    } finally {
+      db.db = real;
+    }
+    expect(db.t("cockpit_sales_reschedules")[0]?.state).toBe("moved");
+    const a = db.t("cockpit_audit_log").find(x => x.action === "book.move") as Row;
+    expect((a.metadata as Row).not_written).toEqual(["confirmation"]);
+    expect(Date.parse(String(db.t("cockpit_sales_appointments").find(x => x.appointment_id === DEMO)?.start_at))).toBe(T1);
+    await settleBackground(() => hl.notes.length > 0);
   });
 
   test("the lead's instant Zoom link is kept past the tidy until the new start plus three hours", async () => {

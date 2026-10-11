@@ -761,13 +761,25 @@ class Closing(unittest.TestCase):
         pg = FakePostgrest()
         self.draft(pg, "d-client", "cl", "nurture", channel="email")
         self.draft(pg, "d-lead", "ld", "nurture", channel="email")
+        # Signed on the New Client Form, the tag not in yet (2026-10-11): closed by the deal.
+        self.draft(pg, "d-signed", "sg", "nurture", channel="email")
+        # A voided deal is not a client: the draft stays.
+        self.draft(pg, "d-voided", "vd", "nurture", channel="email")
         pg.put("cockpit_sales_leads", {"contact_id": "cl", "tags": ["roas-qualified", "client"]})
         pg.put("cockpit_sales_leads", {"contact_id": "ld", "tags": ["roas-qualified"]})
+        pg.put("cockpit_sales_leads", {"contact_id": "sg", "tags": ["roas-qualified"]})
+        pg.put("cockpit_sales_leads", {"contact_id": "vd", "tags": ["roas-qualified"]})
+        pg.put("cockpit_sales_deals", {"response_id": "r-sg", "contact_id": "sg", "voided": False})
+        pg.put("cockpit_sales_deals", {"response_id": "r-vd", "contact_id": "vd", "voided": True})
+        # Tagged and signed: the tag's words, as sales-api says it.
+        pg.put("cockpit_sales_deals", {"response_id": "r-cl", "contact_id": "cl", "voided": False})
         with mock.patch.object(http, "request", pg):
-            self.assertEqual(fu.close_clients(Supabase("https://example.supabase.co", "k"), NOW), 1)
+            self.assertEqual(fu.close_clients(Supabase("https://example.supabase.co", "k"), NOW), 2)
         status = {r["id"]: (r["status"], r.get("error")) for r in pg.rows("cockpit_sales_followups")}
         self.assertEqual(status["d-client"], ("expired", fu.CLIENT_CLOSED))
+        self.assertEqual(status["d-signed"], ("expired", fu.SIGNED_CLOSED))
         self.assertEqual(status["d-lead"][0], "draft")
+        self.assertEqual(status["d-voided"][0], "draft")
 
     def test_a_send_that_stopped_halfway_is_freed_by_what_its_message_says(self):
         pg = FakePostgrest()

@@ -214,6 +214,27 @@ export function canReschedule(o: {
   return null;
 }
 
+/**
+ * HighLevel's own status for the call, read just before a move (D46), when
+ * it says the call is over: the cockpit's copy is B2B's and can be a quarter
+ * hour behind, so a lead who cancelled through HighLevel's link a minute ago
+ * still shows "confirmed" here. Moving that appointment would put a
+ * cancelled call at a new time (and tell the lead so) while the page says
+ * Rescheduled. Null when HighLevel's status lets it move, or is unknown.
+ */
+export function overInCrm(status: unknown): Refused | null {
+  const s = String(status ?? "").trim().toLowerCase();
+  if (!OVER.includes(s)) return null;
+  return {
+    code: "over",
+    status: 409,
+    message:
+      s === "cancelled"
+        ? "This call was cancelled in HighLevel. Book a new one instead."
+        : `This call is already marked ${OVER_WORDS[s] ?? "over"} in HighLevel. Book a new one instead.`,
+  };
+}
+
 /** A call of the lead's that a new time must not overlap. */
 export interface LiveCall {
   id: string;
