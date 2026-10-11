@@ -887,7 +887,13 @@ export const RECORDED_CONTACT_APPOINTMENTS: Row = {
   traceId: "dfe58622-5781-4ecc-8fe6-c14a69851393",
 };
 
-/** GET /calendars/{id} → calendar, for the sales calendars (limits as read; team ids invented). */
+/** A calendar's open hours as HighLevel stores them: every weekday, 00:00 to 23:55 (as the sales calendars read 2026-10-11). */
+const ALL_DAY_HOURS: Row[] = [0, 1, 2, 3, 4, 5, 6].map(d => ({
+  daysOfTheWeek: [d],
+  hours: [{ openHour: 0, openMinute: 0, closeHour: 23, closeMinute: 55 }],
+}));
+
+/** GET /calendars/{id} → calendar, for the sales calendars (limits, steps, buffers and open hours as read; team ids invented). */
 export function recordedCalendar(id: string, team: string[]): Row {
   const base: Row = {
     id,
@@ -901,11 +907,11 @@ export function recordedCalendar(id: string, team: string[]): Row {
     teamMembers: team.map(userId => ({ userId, priority: 0.5, selected: true, isZoomAdded: "true", meetingLocation: "" })),
   };
   if (id === "cFeDl0FY8iaXll61lus8" || id === "dsqmJ393Dwl9fDSbIVOI")
-    return { ...base, name: "مكالمة تعريفية", widgetSlug: "calendar-w8ek", allowReschedule: true, slotDuration: 15, slotDurationUnit: "mins", slotInterval: 20, allowBookingAfter: 2, allowBookingAfterUnit: "hours", allowBookingFor: 2, allowBookingForUnit: "days" };
+    return { ...base, name: "مكالمة تعريفية", widgetSlug: "calendar-w8ek", allowReschedule: true, slotDuration: 15, slotDurationUnit: "mins", slotInterval: 20, slotIntervalUnit: "mins", slotBuffer: 5, slotBufferUnit: "mins", preBuffer: null, preBufferUnit: "mins", allowBookingAfter: 2, allowBookingAfterUnit: "hours", allowBookingFor: 2, allowBookingForUnit: "days", countAvailableDaysOnly: true, openHours: id === "cFeDl0FY8iaXll61lus8" ? {} : ALL_DAY_HOURS };
   if (id === "jQqXS1YuFnmGZKLkrE62" || id === "NDBNz6Og4yfpdpWmHrue")
-    return { ...base, name: id === "NDBNz6Og4yfpdpWmHrue" ? ".مكالمة حصول المشاريع" : "مكالمة حصول المشاريع", allowReschedule: false, slotDuration: 45, slotDurationUnit: "mins", slotInterval: 1, allowBookingAfter: 1, allowBookingAfterUnit: "hours", allowBookingFor: 3, allowBookingForUnit: "days" };
+    return { ...base, name: id === "NDBNz6Og4yfpdpWmHrue" ? ".مكالمة حصول المشاريع" : "مكالمة حصول المشاريع", allowReschedule: false, slotDuration: 45, slotDurationUnit: "mins", slotInterval: 1, slotIntervalUnit: "hours", slotBuffer: 10, slotBufferUnit: "mins", preBuffer: null, preBufferUnit: "mins", allowBookingAfter: 1, allowBookingAfterUnit: "hours", allowBookingFor: 3, allowBookingForUnit: "days", countAvailableDaysOnly: false, openHours: ALL_DAY_HOURS };
   if (id === "JTNg1Wd62qxuT8W8sroh")
-    return { ...base, name: "Follow Up Call", allowReschedule: true, slotDuration: 15, slotDurationUnit: "mins", slotInterval: 15, allowBookingAfter: 0, allowBookingAfterUnit: "days", allowBookingForUnit: "days" };
+    return { ...base, name: "Follow Up Call", allowReschedule: true, slotDuration: 15, slotDurationUnit: "mins", slotInterval: 15, slotIntervalUnit: "mins", slotBuffer: null, slotBufferUnit: "mins", preBuffer: null, preBufferUnit: "mins", allowBookingAfter: 0, allowBookingAfterUnit: "days", allowBookingFor: null, allowBookingForUnit: "days", countAvailableDaysOnly: false, openHours: ALL_DAY_HOURS };
   return { ...base, name: "Callback request", slotDuration: 15, slotDurationUnit: "mins" };
 }
 
@@ -961,6 +967,22 @@ export class FakeHighLevel {
   /** The next n reads of an appointment have no answer. */
   unreadable = 0;
   private n = 0;
+  /** GET /calendars/schedules/search: availability schedules (2026-10-11 shape). */
+  schedules: Row[] = [];
+  /** GET /calendars/blocked-slots: a person's blocked time (their Google Calendar events), epoch ms. */
+  blocks: { id?: string; userId: string; start: number; end: number; deleted?: boolean }[] = [];
+  /**
+   * Off (the default): free-slots answers every free start it holds, as the
+   * fakes before 2026-10-11 did. On: as HighLevel does, only the calendar's
+   * public window ("book up to N days out", today as day one) without
+   * ignoreDateRange, and a POST outside it is refused unless ignoreDateRange.
+   */
+  windowed = false;
+  /** Free starts HighLevel's extended answer (ignoreDateRange=true) holds per person, when it differs from `free`. */
+  extFree = new Map<string, number[]>();
+  /** Reads that answer 500: the extended free slots, the person's calls, their blocked time, the schedules. */
+  fails = { extended: false, events: false, blocks: false, schedules: false };
+  posts: Row[] = [];
 
   constructor(public now: () => number) {}
 
@@ -981,15 +1003,37 @@ export class FakeHighLevel {
   }
 
   private busy(userId: string, start: number, end: number, except: string | null = null): boolean {
-    return [...this.appts.values()].some(
-      a => a.id !== except && a.assignedUserId === userId && !["cancelled", "noshow", "invalid"].includes(a.status) && start < a.end && a.start < end,
+    return (
+      [...this.appts.values()].some(
+        a => a.id !== except && a.assignedUserId === userId && !["cancelled", "noshow", "invalid"].includes(a.status) && start < a.end && a.start < end,
+      ) || this.blocks.some(b => !b.deleted && b.userId === userId && start < b.end && b.start < end)
     );
   }
 
+  /** The last Kuwait day of a calendar's public window (today is day one), or null when it sets no limit. */
+  windowEnd(calendarId: string): string | null {
+    const n = Number(this.calendars.get(calendarId)?.allowBookingFor);
+    if (!Number.isFinite(n) || n <= 0) return null;
+    return new Date(this.now() + KW_MS + (n - 1) * 86_400_000).toISOString().slice(0, 10);
+  }
+
+  private inWindow(calendarId: string, t: number): boolean {
+    const end = this.windowEnd(calendarId);
+    return end === null || new Date(t + KW_MS).toISOString().slice(0, 10) <= end;
+  }
+
   /** A person's free starts on a calendar between two times. */
-  freeFor(calendarId: string, userId: string, from: number, to: number, except: string | null = null): number[] {
+  freeFor(calendarId: string, userId: string, from: number, to: number, except: string | null = null, extended = false): number[] {
     const len = this.minutes(calendarId) * 60_000;
-    return (this.free.get(userId) ?? []).filter(t => t >= from && t < to && t > this.now() && !this.busy(userId, t, t + len, except));
+    const list = extended ? (this.extFree.get(userId) ?? this.free.get(userId) ?? []) : (this.free.get(userId) ?? []);
+    return list.filter(
+      t =>
+        t >= from &&
+        t < to &&
+        t > this.now() &&
+        !this.busy(userId, t, t + len, except) &&
+        (extended || !this.windowed || this.inWindow(calendarId, t)),
+    );
   }
 
   private team(calendarId: string): string[] {
@@ -1021,14 +1065,60 @@ export class FakeHighLevel {
     this.calls.push({ method, path, body });
     const [p, qs] = path.split("?") as [string, string | undefined];
     const q = new URLSearchParams(qs ?? "");
+    if (method === "GET" && p === "/calendars/schedules/search") {
+      if (this.fails.schedules) return { status: 500, body: { message: "Internal server error" } };
+      const user = q.get("userId");
+      return { status: 200, body: { schedules: this.schedules.filter(s => !user || s.userId === user), traceId: "fake" } };
+    }
+    if (method === "GET" && (p === "/calendars/events" || p === "/calendars/blocked-slots")) {
+      const user = q.get("userId");
+      const from = Number(q.get("startTime"));
+      const to = Number(q.get("endTime"));
+      if (!user || !Number.isFinite(from) || !Number.isFinite(to))
+        return { status: 422, body: { message: "calendarId, userId or groupId is required" } };
+      if (p === "/calendars/events") {
+        if (this.fails.events) return { status: 500, body: { message: "Internal server error" } };
+        const events = [...this.appts.values()]
+          .filter(a => a.assignedUserId === user && a.start < to && a.end > from)
+          .map(a => ({
+            id: a.id,
+            calendarId: a.calendarId,
+            contactId: a.contactId,
+            title: "Invented lead",
+            startTime: withOffset(a.start),
+            endTime: withOffset(a.end),
+            appointmentStatus: a.status,
+            assignedUserId: a.assignedUserId,
+            deleted: false,
+          }));
+        return { status: 200, body: { events, traceId: "fake" } };
+      }
+      if (this.fails.blocks) return { status: 500, body: { message: "Internal server error" } };
+      const events = this.blocks
+        .filter(b => b.userId === user && b.start < to && b.end > from)
+        .map((b, i) => ({
+          id: b.id ?? `block-${i}`,
+          title: "Busy",
+          startTime: withOffset(b.start),
+          endTime: withOffset(b.end),
+          assignedUserId: b.userId,
+          createdBy: { source: "google_calendar" },
+          deleted: Boolean(b.deleted),
+        }));
+      return { status: 200, body: { events, traceId: "fake" } };
+    }
     let m = /^\/calendars\/([^/]+)\/free-slots$/.exec(p);
     if (method === "GET" && m) {
       const id = decodeURIComponent(m[1] as string);
       const from = Number(q.get("startDate"));
       const to = Number(q.get("endDate"));
       const user = q.get("userId");
+      const extended = q.get("ignoreDateRange") === "true";
+      if (extended && this.fails.extended) return { status: 500, body: { message: "Internal server error" } };
+      if (extended && to - from > 31 * 86_400_000)
+        return { status: 400, body: { message: "Date range cannot be more than 31 days" } };
       const people = user ? [user] : this.team(id);
-      const starts = [...new Set(people.flatMap(u => this.freeFor(id, u, from, to)))].sort((a, b) => a - b);
+      const starts = [...new Set(people.flatMap(u => this.freeFor(id, u, from, to, null, extended)))].sort((a, b) => a - b);
       const out: Row = { traceId: "fake" };
       for (const t of starts) {
         const day = new Date(t + KW_MS).toISOString().slice(0, 10);
@@ -1057,6 +1147,9 @@ export class FakeHighLevel {
         const user = (b.assignedUserId as string | undefined) ?? a.assignedUserId;
         const mode = this.putMode;
         this.putMode = "ok";
+        // With the free-slot check off, HighLevel books over anything, but only for a named host (2026-10-11).
+        if (b.ignoreFreeSlotValidation === true && !b.assignedUserId)
+          return { status: 422, body: { message: "A team member needs to be selected. assignedUserId is missing" } };
         if (mode === "refuse" || (b.ignoreFreeSlotValidation === false && user && this.busy(user, start, end, a.id)))
           return { status: 422, body: { message: "The slot you have selected is no longer available." } };
         if (mode === "no_answer") return "no_answer";
@@ -1070,11 +1163,17 @@ export class FakeHighLevel {
     }
     if (method === "POST" && p === "/calendars/events/appointments") {
       const b = body as Row;
+      this.posts.push(b);
       const id = `fake-appt-${++this.n}`;
       const start = Date.parse(String(b.startTime));
       const end = Date.parse(String(b.endTime));
       const user = (b.assignedUserId as string | undefined) ?? this.team(String(b.calendarId))[0] ?? null;
-      if (user && this.busy(user, start, end)) return { status: 422, body: { message: "The slot you have selected is no longer available." } };
+      const skip = b.ignoreFreeSlotValidation === true;
+      if (skip && !b.assignedUserId)
+        return { status: 422, body: { message: "A team member needs to be selected. assignedUserId is missing" } };
+      if (this.windowed && b.ignoreDateRange !== true && !this.inWindow(String(b.calendarId), start))
+        return { status: 400, body: { message: "The slot you have selected is no longer available." } };
+      if (!skip && user && this.busy(user, start, end)) return { status: 422, body: { message: "The slot you have selected is no longer available." } };
       this.add({ id, contactId: String(b.contactId), calendarId: String(b.calendarId), start, end, assignedUserId: user, dateAdded: this.now() });
       return { status: 201, body: { id, calendarId: b.calendarId, contactId: b.contactId, startTime: b.startTime } };
     }
