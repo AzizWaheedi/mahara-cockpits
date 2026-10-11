@@ -5890,11 +5890,16 @@ async function bookCreate(who: Who, b: Row) {
     });
   // One of HighLevel's own times that day: as before. Otherwise a far-out
   // time past the calendar's window or a custom time, checked from fresh
-  // reads (placeAway); inside the window it was just taken.
+  // reads (placeAway); inside the window it was just taken. A far tile or a
+  // custom time names who takes it: the window is judged by that person's
+  // own times and the call goes to them (review, 2026-10-11: by the round
+  // robin's times it went out with no host, and HighLevel's round robin
+  // could hand the named person's call to a teammate).
   const dayStart = kuwaitAt(start, 0);
-  const days = await freeSlots(p.calendarId, Math.max(Date.now(), dayStart), dayStart + 86_400_000, p.userId);
+  const windowUser = asked ?? p.userId;
+  const days = await freeSlots(p.calendarId, Math.max(Date.now(), dayStart), dayStart + 86_400_000, windowUser);
   const place = slotOffered(new Date(start).toISOString(), days)
-    ? windowPlace(p.userId)
+    ? windowPlace(windowUser)
     : await placeAway({
         calendarId: p.calendarId,
         cal: p.cal,
@@ -5904,7 +5909,7 @@ async function bookCreate(who: Who, b: Row) {
         custom,
         outsideOk: b.outside_hours_ok === true,
         host: asked ?? (custom ? (p.onTeam ? me : null) : p.userId),
-        windowUser: p.userId,
+        windowUser,
         exceptId: null,
       });
 
@@ -6809,7 +6814,8 @@ async function bookCheck(who: Who, b: Row) {
     calendarId = p.calendarId;
     cal = p.cal;
     host = asked || (p.onTeam ? me : null);
-    windowUser = asked || p.userId;
+    // The host's own times, as book.create judges them (the picker sends the host it checked).
+    windowUser = host ?? p.userId;
   }
   const reach = await reachDays();
   if (reach === null)
