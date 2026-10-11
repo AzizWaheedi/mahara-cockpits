@@ -1013,11 +1013,18 @@ export function farLine(o: {
   return `The lead's booking page stops at ${dateWords(noonOf(o.windowUntil))}. Later times come from ${whose} working hours and calendar.`;
 }
 
-/** Under "Or send them the link": what the lead will see when they open it. */
+/**
+ * With the lead's link to pick a time: what they will see when they open it
+ * (only the booking page's own days), and that a later day is picked here.
+ * Review 2026-10-11: after a call is booked or moved past the booking page,
+ * the link offers only days before that call, and Tell them did not say so.
+ * Without `windowUntil` (a call row, where the calendar was not read), the
+ * same without the date.
+ */
 export function linkLine(windowUntil: string | null | undefined): string {
   return windowUntil && YMD.test(windowUntil)
-    ? `They'll see the booking page's own days, up to ${dateWords(noonOf(windowUntil))}.`
-    : "They'll see the booking page's own days.";
+    ? `They'll see only the booking page's days, up to ${dateWords(noonOf(windowUntil))}. For a later day, pick it here.`
+    : "They'll see only the booking page's days, the next few. For a later day, pick it here.";
 }
 
 /**

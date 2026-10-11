@@ -772,9 +772,11 @@ describe("Another day, a week at a time, past the booking page", () => {
     );
     expect(farLine({ windowUntil: null, who: "Ahmad" })).toBeNull();
     expect(linkLine("2026-10-13")).toBe(
-      "They'll see the booking page's own days, up to Tue 13 Oct.",
+      "They'll see only the booking page's days, up to Tue 13 Oct. For a later day, pick it here.",
     );
-    expect(linkLine(null)).toBe("They'll see the booking page's own days.");
+    expect(linkLine(null)).toBe(
+      "They'll see only the booking page's days, the next few. For a later day, pick it here.",
+    );
     // "Another day" names the reach; "no free time" only what was read.
     expect(untilWords(farSlots())).toBe("up to Tue 8 Dec");
     expect(spanUntil(farSlots())).toBe("up to Sat 24 Oct");
