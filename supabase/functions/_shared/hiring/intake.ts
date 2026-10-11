@@ -193,6 +193,11 @@ export function contactBody(
 
 export type Planned = {
   token: string;
+  /**
+   * When the applicant sent the form, so the first dry run shows plainly
+   * that it would file only what arrived after the last import.
+   */
+  submittedAt?: string;
   name: string;
   hasEmail: boolean;
   hasPhone: boolean;
@@ -276,6 +281,7 @@ async function intakeRole(ctx: Ctx, role: Role, m: Meta): Promise<RoleResult> {
       else
         out.planned.push({
           token: token.slice(0, 8),
+          submittedAt: String(item.submitted_at ?? ""),
           name: f.name,
           hasEmail: false,
           hasPhone: false,
@@ -286,6 +292,7 @@ async function intakeRole(ctx: Ctx, role: Role, m: Meta): Promise<RoleResult> {
     if (!ctx.apply) {
       out.planned.push({
         token: token.slice(0, 8),
+        submittedAt: String(item.submitted_at ?? ""),
         name: f.name || "(no name given)",
         hasEmail: Boolean(f.email),
         hasPhone: Boolean(f.phone),

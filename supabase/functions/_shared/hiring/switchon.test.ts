@@ -15,7 +15,7 @@ const typeform = [
   })],
   ["GET", /api\.typeform\.com\/forms\/zo1Zm6u6\/responses/, () => ({
     body: { items: [
-      { token: "tok-new-1", answers: [
+      { token: "tok-new-1", submitted_at: "2026-10-09T08:15:00Z", answers: [
         { field: { ref: "n", type: "short_text" }, type: "text", text: "Sara Ali" },
         { field: { ref: "e", type: "email" }, type: "email", email: "sara@example.com" },
       ] },
@@ -66,6 +66,8 @@ test("the first intake run after the switch-on is a dry run even with HIRING_APP
   assert.equal(first.dryRun, true);
   assert.equal(first.firstRun, true);
   assert.match(first.note, /^Dry run on purpose, the first intake run: 1 unseen/);
+  const plan = (first.results as { planned: { submittedAt?: string }[] }[]).flatMap(r => r.planned);
+  assert.deepEqual(plan.map(x => x.submittedAt), ["2026-10-09T08:15:00Z"], "the plan says when each was sent");
   assert.equal(writes(calls).length, 0, "nothing written to GoHighLevel");
   assert.equal(store.runs[0].apply, false, "the run row says it was a dry run");
   assert.deepEqual(store.meta.get("intake:zo1Zm6u6"), { seen: ["tok-seen"] }, "the cursor does not move");

@@ -184,6 +184,11 @@ select max(synced_at) from public.cockpit_hiring_candidates;
 select job, trigger, status, apply, started_at, result->>'read' read, result->>'added' added,
        result->>'firstRun' first_run, result->>'dryRun' dry_run, error
   from public.cockpit_hiring_runs order by started_at desc limit 10;
+-- the first run's plan, read before the next run files it (within 30 minutes): when each was sent, newest
+-- filed before was 2026-10-05, so nothing much older should be listed; if it is, unschedule mahara-hiring-intake
+select p->>'submittedAt' sent, r->>'role' role, p->>'name' name, p->>'would' would
+  from public.cockpit_hiring_runs h, jsonb_array_elements(h.result->'results') r, jsonb_array_elements(r->'planned') p
+ where h.job = 'intake' and h.apply = false and h.status = 'ok' order by h.started_at desc, 1 limit 100;
 -- the forms move on after a live run
 select key, updated_at, jsonb_array_length(value->'seen') seen from public.cockpit_hiring_meta where key like 'intake:%' order by 1;
 -- no failed provider calls
