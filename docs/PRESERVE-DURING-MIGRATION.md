@@ -63,10 +63,28 @@ The plans and specs are in `docs/live-calls/`.
 
 | Part | Where |
 | --- | --- |
-| Worker | `hermes/cockpit-guardian` on the VPS, crontab line 59, every 5 minutes, report-only. |
+| Worker | `hermes/cockpit-guardian` on the VPS, crontab line 59, every 5 minutes; report-only until 2026-10-11, then `--mode fix` (the safe fixes only; the CEO: "fix them immediately"). The verifier reads the fix-mode line as changed on purpose. |
 | Settings on the VPS | `~/.cockpit-guardian/env` with one line, `GUARDIAN_BEAT=off`. Its state (open and resolved incidents) is in `~/.cockpit-guardian`. |
 | Database | Table `cockpit_guardian_incidents` and function `cockpit_guardian_probe` (migration `20261003e_guardian_incidents`). |
 | Hermes | The `cockpit-guardian` entry in `/opt/data/bibi/workspace/reliability/fixer-projects.json` (label "Cockpit guardian", fix policy "pr"). |
+
+### Hiring (added 2026-10-11)
+
+Hiring was left out of the 2026-10-07 inventory. It ran on Convex until Convex
+stopped on 2026-10-07; its Supabase replacement is on main but was never
+switched on, so the Typeform applications stopped reaching HighLevel. The
+section `hiring` in `docs/preserve/supabase-manifest.json` is marked deployed:
+until a person switches it on, its missing parts read MISSING (that is the point:
+the CEO asked to see what would not be saved).
+
+| Part | Where |
+| --- | --- |
+| Database | Tables `cockpit_hiring_candidates`, `_applications` (the CEO reads both through the policies `cockpit_hiring_candidates_ceo` and `cockpit_hiring_applications_ceo`), `_events`, `_meta`, and from `20261009c_hiring_native` `_runs`, `_provider_health`, `_sends` and the function `cockpit_hiring_claim_run`. Migrations `20260922a`, `20260922b`, `20260924q`, `20261009c`. |
+| Database jobs | `mahara-hiring-mirror` (`1-59/10`), `mahara-hiring-engine` (`6-59/10`), `mahara-hiring-intake` (`8,38`), each posting to hiring-sync with the vault's `cockpit_sync_secret` (created by `20261009c`). |
+| Edge Functions | `hiring-sync` (`verify_jwt` off: pg_cron's cron secret is its key) and `hiring-api` (`verify_jwt` on: the CEO's Hiring tab), both v4 since 2026-10-09. |
+| Function secrets | `GHL_HIRING_PIT`, `GHL_HIRING_LOCATION`, `HIRING_APPLY` (set to `true`), `TYPEFORM_TOKEN`, `CRON_SECRET`. `HIRING_SEND_ENABLED` stays unset: no candidate message can leave. |
+| Freshness | The newest `cockpit_hiring_candidates.synced_at` under 30 minutes old (the mirror runs every 10). |
+| Watched by | The guardian's `hiring-sync` check, and `pg-cron-jobs` and `edge-functions`, which now expect the hiring jobs and functions. |
 
 ## 2. What the cutover must not remove or overwrite
 
@@ -164,7 +182,17 @@ baseline, again after each step, and once more after the last one. Run
 python3 scripts/verify-preserved.py              # one line per check, then the verdict
 python3 scripts/verify-preserved.py --problems   # only the lines that are not ok
 python3 scripts/verify-preserved.py --json       # for machines
+python3 scripts/verify-preserved.py --via composio --problems   # through Composio (see below)
 ```
+
+The Mac's management token is dead since 2026-10-09. `--via composio` (or
+`VERIFY_VIA=composio`) makes the same reads through Aziz's Composio Supabase
+connection: SQL with `read_only` true, the functions list, the secrets list
+(names and update times kept) and a function's body (module names and true/false
+only). Composio gives a body back as ESZIP, so the deployed files are judged by
+name and by their live-calls strings, not byte for byte. Each request goes
+through a private temporary folder that is removed at once, and an answer
+Composio keeps in a file is read and deleted.
 
 It compares what is live with the two records in `docs/preserve/` and prints
 one line per check: `ok`, `CHANGED`, `MISSING` or `UNKNOWN`. It covers:
@@ -176,10 +204,18 @@ one line per check: `ok`, `CHANGED`, `MISSING` or `UNKNOWN`. It covers:
   copy); the status rows of the jobs that run every few minutes (the rooms worker,
   its host check, the hourly doctor, the proposal queue, follow-ups, the sweep and
   the watchdog); the WhatsApp template rows; the vault and extension names.
+- **Hiring (2026-10-11):** the seven tables (row security on, the CEO's read
+  policy on candidates and applications, no other browser read),
+  `cockpit_hiring_claim_run`, the three jobs and their schedules, `hiring-sync`
+  with the JWT check off and `hiring-api` with it on, the five secret names, and a
+  board copy under 30 minutes old. Team hours are judged the same way, now with
+  their secret and vault names too.
 - **Edge Functions:** each one present, `ACTIVE`, version not lower, `verify_jwt`
   as recorded; the deployed source files of `sales-api`, `sales-live` and
   `sales-mirror` against the files at the tag (a deploy from an older branch gets
-  a higher version, and only its files give it away); the function secret names;
+  a higher version, and only its files give it away; a bundled deploy, one
+  `index.ts` as `scripts/dev/deploy_composio.py` sends it, is judged by bun's path
+  comment for each module or its live-calls strings); the function secret names;
   `CRON_SECRET` still holding the vault's `cockpit_sync_secret` (two digests
   compared in memory, inside a read-only transaction); our function secrets set
   again after the inventory.
@@ -226,8 +262,20 @@ The baseline on 2026-10-07, after this review: PASS, every check ok but the
 three explained ones recorded at the inventory (two sales-desk import files older
 on the VPS, two never copied there, seven Mac metadata files).
 
+**2026-10-11, through Composio** (`--via composio --problems --skip backups`;
+the bucket's backups were left out because that part reads with the service key,
+not through Composio): FAIL, 311 checks, 271 ok, 31 changed (4 not explained), 8
+missing. The 8 MISSING are all hiring (three tables, the claim function, the
+three jobs, three secret names). Not explained: the hiring board copy is 3.6 days
+old; `cockpit_audit_log` counts 120,704 rows (oldest 2026-09-22) against the
+2,207,469 the inventory estimated, and `service_role` lost MAINTAIN on it;
+`cockpit_audit_log_immutable()` no longer runs for PUBLIC, anon or authenticated;
+and the guardian's files on the VPS all differ from main (Windows line endings on
+every file since a later copy). `sales-api` v71, a Composio bundle, now reads
+"deployed as one bundle: all 13 recorded modules are in it", explained.
+
 **Dry simulations.** `python3 scripts/preserve_scenarios.py` replays the
-verifier against copies of the records changed the way 24 cutover actions would
+verifier against copies of the records changed the way 28 cutover actions would
 change them (section 7) and says which lines each one fails; with
 `--tape <file>` it starts from a live recording made with
 `python3 scripts/verify-preserved.py --record <file>` (names, digests, counts and
@@ -447,7 +495,7 @@ because the vault has no Slack webhook for it.
 | `sales-live` deployed with a plain `supabase functions deploy` | The minute job's calls are refused (401) | CHANGED `verify_jwt True`; deploy-check not ready | `live-function` fails | `live-function` and `edge-functions` fail | `deploy_fn.py ... --no-verify-jwt` |
 | An old migration re-run (`20260927a`) | `cockpit_sales_setter_deals` goes back to its old version | CHANGED, not explained | Nothing | Nothing | The seven files in order |
 | The same old SQL copied into a new migration of the cutover branch | The same | CHANGED, not explained: names the new file and the old one | Nothing | Nothing | The seven files in order |
-| A migration drops the settings guard trigger | Any writer can turn live calls on | CHANGED: trigger gone | Nothing | Nothing | The seven files in order |
+| A migration drops the settings guard trigger | Any writer can turn live calls on | CHANGED: trigger gone, not explained (since 2026-10-11 only a migration that names the trigger explains it; `20261010s`, which adds its own trigger on the table, does not) | Nothing | Nothing | The seven files in order |
 | `cockpit_sales_settings` reloaded from an older export | Switches and worker settings go back (follow-ups off) | CHANGED: each row older than recorded; switches changed | Nothing while rooms and live stay off | The same | Section 4, settings rows |
 | A table dropped and made again, empty | Its rows are gone (alerts, drafts, usage) | CHANGED: fewer rows than recorded | Nothing | Nothing | Section 4, rows |
 | `CRON_SECRET` and `IP_SALT` set to new values | Once rooms have work, sales-live refuses the minute job | CHANGED: pairing differs; IP_SALT set again | Nothing while rooms are off | The same | Section 4, secrets |
@@ -463,3 +511,7 @@ because the vault has no Slack webhook for it.
 | A function changed on purpose by a new migration on the cutover branch | The intended change | CHANGED, explained by that migration (its body is the live one) | Nothing | Nothing | Read that migration |
 | A cutover migration merged to main redefines a function the rooms use (as `20261007b` does `cockpit_get_my_access()`) | The intended change | CHANGED, explained by the file on `origin/main` | Nothing | Nothing | Read that migration |
 | That function then edited by hand | A definition no file in the repo holds | CHANGED, not explained: the file defines it, but the live body is not its | Nothing | Nothing | Re-apply the migration that should hold it |
+| `sales-api` deployed from main as one bundle (Composio, as v71 on 2026-10-10) | Nothing | CHANGED, explained: deployed as one bundle, every recorded module in it | `live-code` failed: no module names (a false alarm) | Passes: found by its code | Nothing to do |
+| `sales-api` deployed from `codex/supabase-completion-20261004` as one bundle | As the multi-file deploy above | MISSING `sales-api source`: rooms.ts, roomlogic.ts, liveio.ts, followupAgent.ts, sendrules.ts | `live-code` fails urgent | `live-code` fails urgent | `deploy_composio.py` from main |
+| The guardian's cron line moved to `--mode fix` as prepared (2026-10-11) | Nothing: the safe fixes start | CHANGED, explained: changed on purpose | Passes | Passes | The `sed` in the guardian README the other way round |
+| Hiring left as on 2026-10-11 (`20261009c` not applied, three secrets not set) | No application reaches HighLevel; the Hiring tab's buttons fail | MISSING three tables, the claim function, three jobs, three secret names; CHANGED board copy old | Nothing | `hiring-sync` fails; `pg-cron-jobs` names the three jobs | `docs/hiring/SWITCH-ON.md` |
