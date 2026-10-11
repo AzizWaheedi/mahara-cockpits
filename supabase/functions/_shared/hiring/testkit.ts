@@ -88,6 +88,22 @@ export class FakeStore implements Store {
     this.meta.set(key, structuredClone(value));
     return Promise.resolve();
   }
+  metaByPrefix(prefix: string) {
+    return Promise.resolve(
+      [...this.meta.entries()]
+        .filter(([k]) => k.startsWith(prefix))
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([key, value]) => ({ key, value: structuredClone(value), updated_at: "2026-10-09T12:00:00.000Z" })),
+    );
+  }
+  /** Forms PR #31's importer files live, by form id. */
+  liveForms = new Set<string>();
+  liveImporterFor(formId: string) {
+    return Promise.resolve(this.liveForms.has(formId) ? "hiring-intake (PR #31)" : null);
+  }
+  hasDryRun(job: Job) {
+    return Promise.resolve(this.runs.some(r => r.job === job && r.apply === false && r.status === "ok"));
+  }
   candidates() {
     return Promise.resolve([...this.cands.values()].map(r => ({ ...r })));
   }

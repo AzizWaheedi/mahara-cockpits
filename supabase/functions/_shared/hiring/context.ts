@@ -68,7 +68,8 @@ export function makeCtx(o: {
     ctx.ghl = ghlClient({
       token: pit,
       location,
-      apply: ctx.apply,
+      // Read at each write, so a run turned into a dry run is gated here too.
+      apply: () => ctx.apply,
       sendEnabled: ctx.sendEnabled,
       fetch: o.fetch,
       sleep: o.sleep,
@@ -109,10 +110,16 @@ export function missingFor(ctx: Ctx, job: Job): string | null {
 export function summary(job: Job, r: Row): string {
   if (job === "mirror")
     return `${r.added} new, ${r.moved} moved, ${r.kept} human values kept${r.contactsComplete ? "" : ", contacts read only in part"}${r.missingPipelines?.length ? `, no pipeline for ${r.missingPipelines.join(", ")}` : ""}`;
-  if (job === "intake")
+  if (job === "intake") {
+    const held = r.heldBy?.length ? `; left to the other importer: ${r.heldBy.join(", ")}` : "";
+    if (r.firstRun)
+      return `Dry run on purpose, the first intake run: ${r.read} unseen applications listed, nothing written. The next run files them${held}`;
+    if (r.asked)
+      return `Dry run, as asked: ${r.read} unseen applications listed, nothing written${held}`;
     return r.dryRun
-      ? `Dry run: ${r.read} unseen applications, nothing written (${APPLY_NAME} is not true)`
-      : `${r.read} read, ${r.added} added, ${r.skipped} skipped`;
+      ? `Dry run: ${r.read} unseen applications, nothing written (${APPLY_NAME} is not true)${held}`
+      : `${r.read} read, ${r.added} added, ${r.skipped} skipped${r.notesKept ? `, ${r.notesKept} already on file` : ""}${held}`;
+  }
   return `${r.drafted} drafted, ${r.failed} held back, ${r.considered} considered${r.lines?.length && !r.considered ? `. ${r.lines[0]}` : ""}`;
 }
 
@@ -128,7 +135,26 @@ const rowsSeen = (job: Job, r: Row): number | null => {
 
 export type JobOutcome = Row & { ok: boolean; job: Job; note: string };
 
-export async function runJob(ctx: Ctx, job: Job, trigger: Trigger): Promise<JobOutcome> {
+/**
+ * Whether this intake run must be a dry run although HIRING_APPLY is on:
+ * when it is asked for, or when intake has never finished a dry run, so the
+ * first run after the switch-on lists what it would file and files nothing.
+ * The plan is in cockpit_hiring_runs.result; the run after it files.
+ */
+async function intakeHeldDry(ctx: Ctx, asked: boolean): Promise<"asked" | "first" | null> {
+  if (!ctx.apply) return null;
+  if (asked) return "asked";
+  // When the history cannot be read, the safe answer is a dry run.
+  const done = await ctx.store.hasDryRun("intake").catch(() => false);
+  return done ? null : "first";
+}
+
+export async function runJob(
+  ctx: Ctx,
+  job: Job,
+  trigger: Trigger,
+  opts: { dryRun?: boolean } = {},
+): Promise<JobOutcome> {
   const key = `hiring-sync:${job}`;
   const at = ctx.now().toISOString();
   const missing = missingFor(ctx, job);
@@ -136,6 +162,24 @@ export async function runJob(ctx: Ctx, job: Job, trigger: Trigger): Promise<JobO
     await ctx.store.syncState(key, { last_run_at: at, ok: false, note: missing, rows_seen: null });
     return { ok: false, job, note: missing };
   }
+  const applyWas = ctx.apply;
+  const held = job === "intake" ? await intakeHeldDry(ctx, opts.dryRun === true) : null;
+  if (held) ctx.apply = false;
+  try {
+    return await runClaimed(ctx, job, trigger, key, at, held);
+  } finally {
+    ctx.apply = applyWas;
+  }
+}
+
+async function runClaimed(
+  ctx: Ctx,
+  job: Job,
+  trigger: Trigger,
+  key: string,
+  at: string,
+  held: "asked" | "first" | null,
+): Promise<JobOutcome> {
   const runId = await ctx.store.claimRun(job, trigger, ctx.actor, ctx.apply);
   if (!runId)
     return {
@@ -147,6 +191,8 @@ export async function runJob(ctx: Ctx, job: Job, trigger: Trigger): Promise<JobO
   ctx.runId = runId;
   try {
     const result = await JOBS[job](ctx);
+    if (held === "first") result.firstRun = true;
+    if (held === "asked") result.asked = true;
     const ok = result.ok !== false;
     const note = (ok ? summary(job, result) : redact(result.error ?? summary(job, result))).slice(0, 500);
     await ctx.store.finishRun(runId, ok ? "ok" : "failed", result, ok ? null : note);
@@ -187,7 +233,7 @@ export function doctor(env: Env): Row {
   if (!keys[TYPEFORM_NAME]) notes.push(`Set ${TYPEFORM_NAME}; until then the careers forms are not read.`);
   notes.push(
     applyEnabled(env)
-      ? `${APPLY_NAME} is "true": the form import and the CEO's grades write to GoHighLevel.`
+      ? `${APPLY_NAME} is "true": the form import and the CEO's grades write to GoHighLevel. The first intake run is still a dry run, on purpose; the run after it files.`
       : `${APPLY_NAME} is not "true": every GoHighLevel write is a dry run.`,
   );
   notes.push(

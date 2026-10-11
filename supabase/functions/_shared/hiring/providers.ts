@@ -82,11 +82,17 @@ export function ghlClient(
   o: ClientDeps & {
     token: string;
     location: string;
-    apply: boolean;
+    /**
+     * HIRING_APPLY, or a function that reads it at the moment of the write,
+     * so a run the caller turns into a dry run (the first intake) is gated
+     * here as well as in the job.
+     */
+    apply: boolean | (() => boolean);
     sendEnabled: boolean;
   },
 ) {
   const doFetch = o.fetch ?? fetch;
+  const applyNow = () => (typeof o.apply === "function" ? o.apply() : o.apply);
   const sleep = o.sleep ?? realSleep;
   const receipt = (method: string, path: string) => ({
     provider: "gohighlevel" as const,
@@ -158,7 +164,9 @@ export function ghlClient(
 
   return {
     location: o.location,
-    apply: o.apply,
+    get apply() {
+      return applyNow();
+    },
     sendEnabled: o.sendEnabled,
     /** A read that returns whatever GoHighLevel answered. */
     read: (path: string) => call("GET", path),
@@ -166,7 +174,7 @@ export function ghlClient(
     readOk: async (path: string) => ok(await call("GET", path), "GET", path),
     /** A contact, opportunity or note write. Dry run unless HIRING_APPLY. */
     async write(method: "POST" | "PUT", path: string, body: unknown): Promise<Any> {
-      if (!o.apply) {
+      if (!applyNow()) {
         await o.health({ ...receipt(method, path), phase: "blocked" });
         throw new GateError(
           "Dry run: GoHighLevel writes are off on the server (HIRING_APPLY is not true), so nothing was written.",

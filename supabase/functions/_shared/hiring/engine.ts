@@ -89,12 +89,12 @@ First, a short piece of real work. It is unpaid, it is deliberately small, and w
 
 {{testProject}}
 
-Second, a one to one with me. Book it here: {{oneToOneLink}}
+Second, a one-to-one with me. Book it here: {{oneToOneLink}}
 
 Send the work back before the call if you can, and we will go through it together.
 
 {{owner}}`,
-    sms: "Hi {{firstName}}, you are in the last round for {{role}}. I have emailed you a short unpaid piece of work. Book our one to one here: {{oneToOneLink}} {{owner}}",
+    sms: "Hi {{firstName}}, you are in the last round for {{role}}. I have emailed you a short unpaid piece of work. Book our one-to-one here: {{oneToOneLink}} {{owner}}",
   },
   offer: {
     subject: "An offer from {{agency}}",

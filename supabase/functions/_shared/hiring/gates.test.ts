@@ -81,6 +81,7 @@ test("intake with HIRING_APPLY files the contact, the note and the card, then mo
     ...ghlReads,
     ...typeformRoutes,
     ["POST", /\/contacts\/upsert$/, () => ({ body: { contact: { id: "c-9" } } })],
+    ["GET", /\/contacts\/c-9\/notes$/, () => ({ body: { notes: [] } })],
     ["POST", /\/contacts\/c-9\/notes$/, () => ({ body: {} })],
     ["GET", /\/opportunities\/search\?.*contact_id=c-9/, () => ({ body: { opportunities: [] } })],
     ["POST", /\/opportunities\/$/, () => ({ body: { opportunity: { id: "opp-9" } } })],

@@ -9,7 +9,25 @@
  * Dry run unless HIRING_APPLY is exactly "true". A dry run reads Typeform
  * and GoHighLevel, lists what it would write, and writes nothing: no
  * contact, no note, no card, no application row, and the form's cursor does
- * not move, so the live run that follows files the same applications.
+ * not move, so the live run that follows files the same applications. The
+ * very first intake run is a dry run even with HIRING_APPLY on (context.ts
+ * runJob), so the plan can be read in cockpit_hiring_runs before anything is
+ * filed.
+ *
+ * Nothing is filed twice:
+ * - each form remembers the responses it filed (cockpit_hiring_meta
+ *   "intake:<form>", carried over from Convex), so a run resumes where the
+ *   last one stopped;
+ * - a form that another importer files live (PR #31's
+ *   cockpit_hiring_intake_sources, mode "live") is left to it, because two
+ *   importers on one form would file every applicant twice;
+ * - the note carries the response id, and a contact that already holds that
+ *   response, or the same questionnaire word for word (a Convex note), gets
+ *   no second note;
+ * - a contact with a card on the role's board keeps that one card, and
+ *   GoHighLevel's own "duplicate opportunity" refusal is read as "already
+ *   there";
+ * - one run per job at a time (the run lock in cockpit_hiring_runs).
  */
 
 import type { Ctx } from "./context.ts";
@@ -111,10 +129,35 @@ export function mapAnswers(answers: Answer[]) {
   };
 }
 
-/** The whole questionnaire, as the note that hangs on the contact. */
-export function transcript(answers: Answer[], form: string): string {
+/** The line that ties a note to the one form response it came from. */
+export const responseMarker = (token: string) => `Form response ${token}`;
+
+/**
+ * The whole questionnaire, as the note that hangs on the contact. With a
+ * response id, its marker is the last line, so a second run can tell the
+ * response is already on the contact.
+ */
+export function transcript(answers: Answer[], form: string, token = ""): string {
   const lines = answers.filter(a => a.text.trim()).map(a => `${a.title}\n${a.text.trim()}`);
-  return [`Application, ${form}`, "", ...lines].join("\n\n");
+  const body = [`Application, ${form}`, "", ...lines].join("\n\n");
+  return token ? `${body}\n\n${responseMarker(token)}` : body;
+}
+
+const squash = (s: string) => s.replace(/\s+/g, " ").trim();
+
+/**
+ * True when this contact already holds this response: a note with its
+ * marker, or a note that is the same questionnaire (the notes Convex filed
+ * carry no marker). Pure, so the rule is in the tests.
+ */
+export function alreadyFiled(notes: { body?: unknown }[], token: string, whole: string): boolean {
+  const marker = responseMarker(token);
+  const bare = squash(whole.replace(marker, "")).slice(0, 2000);
+  return notes.some(n => {
+    const body = String(n?.body ?? "");
+    if (token && body.includes(marker)) return true;
+    return bare.length > 40 && squash(body).slice(0, 2000) === bare;
+  });
 }
 
 export const splitName = (full: string) => {
@@ -162,6 +205,10 @@ export type RoleResult = {
   read: number;
   added: number;
   skipped: number;
+  /** Responses already on the contact, so no second note was added. */
+  notesKept?: number;
+  /** Set when another importer files this form live, so this one did not. */
+  heldBy?: string;
   planned: Planned[];
   errors: string[];
 };
@@ -181,6 +228,13 @@ async function intakeRole(ctx: Ctx, role: Role, m: Meta): Promise<RoleResult> {
   };
   // The setter track has no form; everyone answers the closer's form.
   if (!form) return out;
+  // Two importers on one form file every applicant twice. PR #31's webhook
+  // importer, if it is ever switched on, owns the forms it marks "live".
+  const other = await ctx.store.liveImporterFor(form.id);
+  if (other) {
+    out.heldBy = other;
+    return out;
+  }
   const pipelineId = m.pipelines[role.key];
   const stageId = m.stageIdByKey[role.key]?.application;
   if (!pipelineId || !stageId) {
@@ -246,9 +300,14 @@ async function intakeRole(ctx: Ctx, role: Role, m: Meta): Promise<RoleResult> {
       if (!contactId) throw new Error("GoHighLevel returned no contact id");
       // The whole questionnaire twice: on the contact as a note, and in
       // Supabase for the recruiting agent, which has no GoHighLevel token.
-      const whole = transcript(answers, form.title).slice(0, 20_000);
-      await ghl.write("POST", `/contacts/${encodeURIComponent(contactId)}/notes`, { body: whole })
-        .catch(e => out.errors.push(`${token.slice(0, 8)} note: ${(e as Error).message}`));
+      const whole = transcript(answers, form.title, token).slice(0, 20_000);
+      // A response the contact already holds gets no second note. A notes
+      // read that fails stops here, so the next run tries this one again.
+      const notes = await ghl.readOk(`/contacts/${encodeURIComponent(contactId)}/notes`);
+      if (alreadyFiled(notes?.notes ?? [], token, whole)) out.notesKept = (out.notesKept ?? 0) + 1;
+      else
+        await ghl.write("POST", `/contacts/${encodeURIComponent(contactId)}/notes`, { body: whole })
+          .catch(e => out.errors.push(`${token.slice(0, 8)} note: ${(e as Error).message}`));
       await ctx.store.upsertApplication({
         contact_id: contactId,
         role: role.key,
@@ -320,9 +379,14 @@ async function intakeRole(ctx: Ctx, role: Role, m: Meta): Promise<RoleResult> {
 export type IntakeResult = {
   ok: boolean;
   dryRun: boolean;
+  /** Set by runJob when this was the first intake run, dry on purpose. */
+  firstRun?: boolean;
   read: number;
   added: number;
   skipped: number;
+  notesKept: number;
+  /** Forms another importer files live, left to it. */
+  heldBy?: string[];
   results: RoleResult[];
   error?: string;
 };
@@ -351,12 +415,15 @@ export async function runIntake(ctx: Ctx, only?: string[]): Promise<IntakeResult
     }
   }
   const errors = results.flatMap(r => r.errors.map(x => `${r.role}: ${x}`));
+  const held = results.filter(r => r.heldBy).map(r => `${r.form} (${r.heldBy})`);
   return {
     ok: errors.length === 0,
     dryRun: !ctx.apply,
     read: results.reduce((t, r) => t + r.read, 0),
     added: results.reduce((t, r) => t + r.added, 0),
     skipped: results.reduce((t, r) => t + r.skipped, 0),
+    notesKept: results.reduce((t, r) => t + (r.notesKept ?? 0), 0),
+    ...(held.length ? { heldBy: held } : {}),
     results,
     ...(errors.length ? { error: errors.join("; ").slice(0, 600) } : {}),
   };
