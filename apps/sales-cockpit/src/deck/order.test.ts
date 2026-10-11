@@ -4,8 +4,8 @@ import * as proof from "./proof";
 import { deckSlides } from "./slides";
 
 /**
- * The deck's order after the CEO's 2026-10-10 notes: the prospect's numbers
- * at the end, right before the price, and our channels inside the proof,
+ * The deck's order after the CEO's notes (2026-10-10, made literal 2026-10-11):
+ * the prospect's numbers are the last slide, and our channels open the proof,
  * as pages with no counts and nothing ringed.
  */
 
@@ -42,26 +42,26 @@ describe("the deck's order", () => {
     expect(slides).toHaveLength(36);
   });
 
-  test("our channels come right after the content slide, both in the proof", () => {
-    expect(at("channels")).toBe(at("content") + 1);
-    const proofSection = slides[at("content")].section;
+  test("our channels open the proof, right before the partners' results", () => {
+    expect(at("channels")).toBe(at("results") - 1);
+    const proofSection = slides[at("results")].section;
     expect(proofSection.en).toBe("Partners' results");
     expect(slides[at("channels")].section).toEqual(proofSection);
     expect(slides[at("channels")].railAll).toBeUndefined();
   });
 
-  test("the proof is one section, from the results to our channels", () => {
+  test("the proof is one section, from our channels to the content slide", () => {
     const inProof = slides
       .map((s, i) => (s.section.en === "Partners' results" ? i : -1))
       .filter(i => i >= 0);
-    expect(inProof[0]).toBe(at("results"));
-    expect(inProof[inProof.length - 1]).toBe(at("channels"));
+    expect(inProof[0]).toBe(at("channels"));
+    expect(inProof[inProof.length - 1]).toBe(at("content"));
     expect(inProof[inProof.length - 1] - inProof[0] + 1).toBe(inProof.length);
   });
 
-  test("their numbers come right before the investment, in the program", () => {
-    expect(at("numbers")).toBe(at("investment") - 1);
-    expect(at("numbers")).toBeGreaterThan(at("budget"));
+  test("their numbers are the last slide, right after the close, in the program", () => {
+    expect(at("numbers")).toBe(ids.length - 1);
+    expect(at("numbers")).toBe(at("close") + 1);
     const numbers = slides[at("numbers")];
     expect(numbers.section).toEqual(slides[at("investment")].section);
     expect(numbers.section.en).toBe("The program");
@@ -88,9 +88,9 @@ describe("the deck's order", () => {
     ).toEqual(["problem"]);
   });
 
-  test("the cover opens and the close ends", () => {
+  test("the cover opens and their numbers end", () => {
     expect(ids[0]).toBe("cover");
-    expect(ids[ids.length - 1]).toBe("close");
+    expect(ids[ids.length - 1]).toBe("numbers");
   });
 });
 

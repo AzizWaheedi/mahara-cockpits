@@ -2020,6 +2020,14 @@ export function deckSlides(): SlideDef[] {
       render: c => path(c),
     },
     {
+      // Our channels open the proof (the CEO, 2026-10-10: "put it at the start
+      // where we're showing the proof, so the proof can be in one section").
+      id: "channels",
+      section: S.proof,
+      title: { en: "Our channels", ar: "قنواتنا" },
+      render: c => channelsSlide(c),
+    },
+    {
       id: "results",
       section: S.proof,
       title: { en: "Partners' results", ar: "نتايج شركائنا" },
@@ -2078,13 +2086,6 @@ export function deckSlides(): SlideDef[] {
             : "The systems we run for partners, explained for free.",
           stops: CONTENT_TOUR,
         }),
-    },
-    {
-      // Our channels, with the rest of the proof (the CEO, 2026-10-10).
-      id: "channels",
-      section: S.proof,
-      title: { en: "Our channels", ar: "قنواتنا" },
-      render: c => channelsSlide(c),
     },
     {
       id: "problem",
@@ -2227,16 +2228,6 @@ export function deckSlides(): SlideDef[] {
       render: c => budgetSlide(c),
     },
     {
-      // Their numbers, at the end, right before the price (the CEO,
-      // 2026-10-10: "move their numbers to the end"): "fix only this one
-      // step" lands just before what the program costs.
-      id: "numbers",
-      section: S.program,
-      title: { en: "Your numbers", ar: "أرقامك" },
-      railAll: true,
-      render: c => numbersSlide(c),
-    },
-    {
       id: "investment",
       section: S.program,
       title: { en: "The investment", ar: "الاستثمار" },
@@ -2257,6 +2248,16 @@ export function deckSlides(): SlideDef[] {
       noRail: true,
       deep: true,
       render: c => closeSlide(c),
+    },
+    {
+      // Their numbers are the deck's last slide (the CEO, 2026-10-10: "move
+      // their numbers to the end"; 2026-10-11: before the price was not the
+      // end). The close reads them from the call's notes, not from here.
+      id: "numbers",
+      section: S.program,
+      title: { en: "Your numbers", ar: "أرقامك" },
+      railAll: true,
+      render: c => numbersSlide(c),
     },
   ];
   return all.filter(slide => !slide.hidden);
