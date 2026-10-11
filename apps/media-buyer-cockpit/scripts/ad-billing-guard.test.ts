@@ -161,6 +161,10 @@ test("Active is an exact current option; missing field and wrong list are exclud
   ).toBe(false);
   expect(activeTask(client, "another")).toBe(false);
 });
+test("the confirmed internal sandbox is excluded even when marked Active", () => {
+  expect(activeTask({ ...client, id: "86ex08t5v" }, "86ex08t5v")).toBe(false);
+  expect(activeTask({ ...client, id: "realclient2" }, "realclient2")).toBe(true);
+});
 test("every destination is validated from the exact binding", () => {
   expect(() => validateBinding(binding, client, [ad], sheet)).not.toThrow();
   expect(() =>

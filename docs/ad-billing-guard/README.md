@@ -1,6 +1,6 @@
 # Ad billing watch
 
-Status: implementation candidate. No migration, worker, schedule, or outbound test is live from this change.
+Status: live for 16 verified Active clients as of 11 October 2026, 19:45 UTC. The five-minute VPS worker, cockpit panel, guardian check and independent Supabase watchdog are installed.
 
 This service checks Meta billing for explicitly enrolled clients. It requires a current Active status on the exact Clients task before each message. It sends one incident notification to the client group, private media channel, Client task and each verified Ads Management task. Repeated polls do not repeat the notification.
 
@@ -30,32 +30,24 @@ Sources: [Meta account fields](https://github.com/facebook/facebook-python-busin
 
 “Accepted by provider” means the API returned a message or comment ID. It does not mean that a client read the WhatsApp message. Client and Ads Management comments are separate deliveries. A partial failure does not undo completed deliveries.
 
-## Verified live audit, 11 October 2026
+## Verified installation, 11 October 2026
 
-- The current manual flow, Make `8866601`, is active. Its earlier inactive status in shared notes is obsolete.
-- It selects a Sheet row by client tag/name, uses Whapi connection `12702724`, and comments on the Clients task. It does not provide the new exact-ID account registry or durable four-destination delivery ledger.
-- Its failure text promises a retry in three hours and formats the amount as USD. The new templates omit those unsupported claims.
-- The private channel is `C0AF4SDLWNL`, named `media-announcments`.
-- The existing native VPS Slack token returns `channel_not_found` for that channel. Membership/access must be fixed or an approved bot connection must be used.
-- The native runtime has Meta, ClickUp, Google and Slack credentials. It has no `AD_BILLING_WHAPI_TOKEN`. The healthy Make connection does not prove that the new worker can send.
-- Live ClickUp lists 18 Active tasks, including Zeiad Playing Account. The Sheet mirror earlier listed 17. The worker uses fresh ClickUp status and explicit enrollment, not the mirror's count.
-- The audit found usable Meta account URLs on candidate ads tasks for only three of those Active clients. These are review candidates, not approved bindings.
-- The Joe and Sera candidate account `955658453671990` reported status 3. The Alkhalil and Nuhood Najd candidate accounts reported status 1. These readings are time-specific, not a current all-client health certificate.
-- The Joe and Sera funding response exposed a masked VISA label. The Alkhalil response exposed no display label. Missing digits are omitted, never invented.
+- Runtime and database notification switches are on. All 16 bindings have current identity checks and recorded manual cutover evidence.
+- First live batch: 5 WhatsApp messages, 6 private Slack messages and 12 ClickUp comments accepted. No delivery is queued, failed or unknown.
+- The 19:45 UTC unattended poll checked 16 bindings with no failures and no duplicate notifications.
+- Private media channel: `C0AF4SDLWNL`, `media-announcments`. The existing native bot can now access it.
+- Whapi.Cloud uses the existing approved sender. The private runtime contains its token. No credentials belong in this repository.
+- Make `8866601` remains active. Both failure and recovery branches exclude only enrolled client Meta alerts. Other clients and platforms retain their manual routes. Verified revision: `2026-10-11T19:39:26.103Z`.
+- نهوض نجد now uses its verified current group. The stale Client Data group was corrected after a member matched the exact client contact.
+- Brillant Touch Company (`86ex4j8f3`) remains unenrolled. Its group is verified, but no usable Meta account ID exists in its Sheet row or two ads tasks. A fully paged scan of 45 accessible accounts and their campaigns found no exact match. Signed-in Ads Manager account searches also found no matching alias. Keep the manual route until ownership and API access are verified.
+- Zeiad Playing Account (`86ex08t5v`) is an internal sandbox. An explicit ID exclusion keeps it out of production eligibility and coverage, even when its dropdown says Active.
+- The panel is live at <https://cockpit.maharamedia.com/dashboard>. Production deployment `dpl_FLysUt5eQrtMVnWLfrSXuAHxZeSc` serves frontend source `f711d9b94f2d2fcf7ab25577536c143580c262d9`.
 
-No client, Slack, or ClickUp incident notification was sent by this implementation during the audit. No campaign, payment, manual scenario, or client record was changed.
+Provider acceptance is verified. Client device delivery and reading are not established by these receipts. Account status is time-specific.
 
-## Release prerequisites
+## Remaining coverage action
 
-1. Review the PR and approve installation. The repository requires explicit deployment approval.
-2. Verify each mapping. Keep Zeiad and other test accounts unenrolled. Check every Meta account a real client uses.
-3. Repair missing Meta URLs on the correct ads tasks after identity verification. Do not fill them from fuzzy names.
-4. Save the existing approved Whapi channel token privately as `AD_BILLING_WHAPI_TOKEN`. Confirm the intended sender and group access. Do not paste the token into Git or chat.
-5. Give the approved Slack bot access to `C0AF4SDLWNL`. Read back `conversations.info` and confirm membership.
-6. Complete the manual-flow cutover for each enrolled client. Preserve other platforms and unenrolled clients. Record evidence before setting `manual_cutover_verified`.
-7. Run the installed worker with notifications off. Inspect its roster and billing results for one full scheduled interval.
-8. Use a designated internal test group and synthetic ClickUp tasks for the transport test. Verify the WhatsApp message, Slack post and both comments by their provider IDs.
-9. Enable one approved real client. Verify all receipts, then expand the enrollment. Verify the independent watchdog too.
+Find Brillant Touch's numeric Meta account from its actual Ads Manager account or a current owner-provided account link. Verify the worker token can read that exact account. Then verify the matching campaign and ads task, repair the blank account reference, enroll disabled, validate, and complete its scoped manual handover before enabling.
 
 ## Manual-flow cutover
 
@@ -63,7 +55,7 @@ Make scenario `8866601` must not send the same Meta incident alongside this work
 
 Before enabling one client, add and read back an exact Clients-task-ID exclusion on both the `ADS_FAILED` and `ADS_BACK_LIVE` routes for that client's Meta notifications. Apply the exclusion to the WhatsApp and associated comment actions. Preserve the current routes for every other client/platform. If the form cannot supply or establish that exact ID without ambiguous name matching, correct the form/lookup first and leave the new binding blocked.
 
-Save the scenario revision and test evidence in `manual_cutover_evidence`. A Boolean alone cannot establish the handover. This change does not modify the existing scenario or claim that its exclusion is installed.
+Save the scenario revision and test evidence in `manual_cutover_evidence`. A Boolean alone cannot establish the handover. The installed 16-client handover follows these rules. New clients still require their own verified exclusion.
 
 ## Files and verification
 
@@ -71,7 +63,8 @@ Save the scenario revision and test evidence in `manual_cutover_evidence`. A Boo
 - `supabase/migrations/20261011174920_ad_billing_guard.sql`: private registry, incidents, outbox, atomic claims, audit records, scoped dashboard read.
 - `apps/media-buyer-cockpit/src/components/AdBillingWatch.tsx`: the team view.
 - `hermes/cockpit-guardian/checks/ad_billing.py`: independent stale-worker, coverage and failed-delivery detection. The guardian uses its existing alert path; it never retries a client message.
-- `apps/media-buyer-cockpit/scripts/ad-billing-guard.test.ts`: 32 tests against the real SQL in isolated PostgreSQL and synthetic provider transports.
+- `apps/media-buyer-cockpit/scripts/ad-billing-guard.test.ts`: 35 tests against the real SQL in isolated PostgreSQL and synthetic provider transports.
+- `apps/media-buyer-cockpit/scripts/ad-billing-watchdog.test.ts`: 7 independent-watchdog tests.
 - Guardian regression suite: 314 tests with Python 3.11 or later.
 - App production build and worker TypeScript check pass.
 - Desktop 1280 px and phone 390 px previews pass overflow and Arabic-digit checks. These are synthetic previews, not delivery tests.
