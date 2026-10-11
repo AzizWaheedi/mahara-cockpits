@@ -3,6 +3,7 @@ import { addDays, daysInMonth, KUWAIT_OFFSET_MS, kuwaitDay, monthStart } from ".
 import { bankCanBe, amountGap, coverWithTap, cashDuplicates, dealDuplicates, MATCH_DAYS, MATCH_GAP, nameBook } from "../manualMatch.js";
 import { groupOf, isOneOffPlan, summariseBilling } from "../billing.js";
 import { linkCtrTargetNote, targetItems } from "../../../../supabase/functions/cockpit-ceo-api/finance/targets.ts";
+import { MEDIA_FEED_SQL, MEDIA_STALE_MS, mediaClientDaysSql, mediaFeedFresh } from "../data/triage.js";
 
 const STALE_MS = 60 * 60_000;
 const TAP_STALE_MS = 3 * 60 * 60_000;
@@ -401,9 +402,14 @@ export function createMoneyAdapter(snapshot) {
       const bankFacts = bankExpenses({ ...snapshot, ...bankInput }, dates.month);
       if (!bankFacts.statements.length || !bankFacts.latestStatementDay) failSource("Bank statements", "no canonical statement has been imported");
       const statementAge = Math.round((Date.parse(today) - Date.parse(bankFacts.latestStatementDay)) / 86_400_000);
-      const bankFresh = statementAge >= 0 && statementAge <= BANK_STALE_DAYS;
-      sources.push({ name: "Bank statements and classification", freshestAt: Math.max(...bankFacts.statements.map(row => epoch(field(row, "imported_at", "importedAt")) ?? 0)) || undefined, ok: bankFresh, note: bankFresh ? undefined : `Newest statement ends ${bankFacts.latestStatementDay}; upload a current CBK statement before finance totals advance` });
-      if (!bankFresh) failSource("Bank statements", `newest statement ends ${bankFacts.latestStatementDay}, ${statementAge} days ago`);
+      // A statement dated after today is a parse error, never a fresh statement.
+      if (statementAge < 0) failSource("Bank statements", `newest statement ends ${bankFacts.latestStatementDay}, after today`);
+      // Aziz (A109): "Show 'days since the last statement' on the tab and warn
+      // past 7 days." A stale statement warns and still publishes: the cash
+      // rails do not wait on the bank, and the bank figures say how old they are.
+      const bankFresh = statementAge <= BANK_STALE_DAYS;
+      const statementNote = `Newest statement ends ${bankFacts.latestStatementDay}, ${statementAge} ${statementAge === 1 ? "day" : "days"} ago${bankFresh ? "" : `, past ${BANK_STALE_DAYS} days. Upload a current CBK statement on the Money tab`}`;
+      sources.push({ name: "Bank statements and classification", freshestAt: Math.max(...bankFacts.statements.map(row => epoch(field(row, "imported_at", "importedAt")) ?? 0)) || undefined, ok: true, note: statementNote });
 
       const whopDayRows = await sql(B2B, `/* ceo-refresh:money.cash */
         SELECT to_char(paid_on,'YYYY-MM-DD') AS day,sum(net_amount) AS cash
@@ -451,7 +457,7 @@ export function createMoneyAdapter(snapshot) {
         sql(B2B, `/* ceo-refresh:money.attribution.whop */ SELECT payment_id,to_char(paid_on,'YYYY-MM-DD') AS day,net_amount,final_amount,refunded_amount,to_char((refunded_at AT TIME ZONE 'Asia/Kuwait')::date,'YYYY-MM-DD') AS refund_day,nullif(lower(btrim(user_email)),'') AS email,nullif(btrim(billing_name),'') AS billing,nullif(btrim(user_username),'') AS username,deal_response_id,billing_reason FROM public.whop_payments WHERE status='paid' AND currency='usd' AND paid_on>=date '${dates.from12}' ORDER BY paid_on`),
         sql(B2B, `/* ceo-refresh:money.attribution.transfers */ SELECT id,to_char(received_at,'YYYY-MM-DD') AS day,amount_usd,method,nullif(btrim(client_name),'') AS client,reference,deal_response_id FROM public.transfers WHERE received_at>=date '${dates.from12}' ORDER BY received_at`),
         sql(B2B, `/* ceo-refresh:money.attribution.deals */ SELECT response_id,to_char((submitted_at AT TIME ZONE 'Asia/Kuwait')::date,'YYYY-MM-DD') AS day,nullif(lower(btrim(email)),'') AS email,nullif(btrim(business_name),'') AS business,nullif(btrim(concat_ws(' ',client_first_name,client_last_name)),'') AS contact,closer,csm,cash_collected,payment_structure,contracted_revenue AS contracted FROM public.closed_deals d WHERE submitted_at>=date '${addDays(dates.from12, -90)}' AND NOT EXISTS(SELECT 1 FROM public.record_voids rv WHERE rv.entity='closed_deal' AND rv.record_id=d.response_id) ORDER BY submitted_at`),
-        sql(B2B, `/* ceo-refresh:money.attribution.logins */ WITH docs AS (SELECT key,body FROM public.mahara_portal_documents WHERE key IN ('directory.json','client-access.json')),dir AS (SELECT e->>'id' AS client_id,e->>'clickupId' AS clickup_id FROM docs,jsonb_array_elements(CASE WHEN jsonb_typeof(body)='array' THEN body ELSE '[]'::jsonb END) e WHERE key='directory.json' AND coalesce(e->>'id','')<>'' AND coalesce(e->>'clickupId','')<>''),logins AS (SELECT lower(btrim(pr->>'email')) AS email,dir.clickup_id FROM docs CROSS JOIN LATERAL jsonb_each(CASE WHEN jsonb_typeof(body->'profiles')='object' THEN body->'profiles' ELSE '{}'::jsonb END) p CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(p.value->'principals')='array' THEN p.value->'principals' ELSE '[]'::jsonb END) pr JOIN dir ON dir.client_id=p.key WHERE key='client-access.json' AND jsonb_typeof(pr)='object' AND coalesce(btrim(pr->>'email'),'')<>'') SELECT email,min(clickup_id) AS clickup_id FROM logins GROUP BY email HAVING count(DISTINCT clickup_id)=1`),
+        sql(B2B, `/* ceo-refresh:money.attribution.logins */ WITH docs AS (SELECT key,body FROM public.mahara_portal_documents WHERE key IN ('directory.json','client-access.json')),dir AS (SELECT e->>'id' AS client_id,e->>'clickupId' AS clickup_id FROM docs,jsonb_array_elements(CASE WHEN jsonb_typeof(body)='array' THEN body ELSE '[]'::jsonb END) e WHERE key='directory.json' AND coalesce(e->>'id','')<>'' AND coalesce(e->>'clickupId','')<>''),logins AS (SELECT lower(btrim(pr->>'email')) AS email,dir.clickup_id FROM docs CROSS JOIN LATERAL jsonb_each(CASE WHEN jsonb_typeof(body->'profiles')='object' THEN body->'profiles' ELSE '{}'::jsonb END) p CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(p.value->'principals')='array' THEN p.value->'principals' ELSE '[]'::jsonb END) pr JOIN dir ON dir.client_id=p.key WHERE docs.key='client-access.json' AND jsonb_typeof(pr)='object' AND coalesce(btrim(pr->>'email'),'')<>'') SELECT email,min(clickup_id) AS clickup_id FROM logins GROUP BY email HAVING count(DISTINCT clickup_id)=1`),
         sql(B2B, `/* ceo-refresh:money.attribution.expenses */ SELECT id,to_char(incurred_at,'YYYY-MM-DD') AS day,amount_usd,category,vendor FROM public.expenses WHERE incurred_at>=date '${dates.from12}' ORDER BY incurred_at DESC LIMIT 10000`),
       ]);
       if (expenseRows.length >= 10_000) failSource("Expense transactions", "read limit was reached");
@@ -582,7 +588,9 @@ export function createMoneyAdapter(snapshot) {
       const monthTotals = attributionTotals(attributionInput.filter(row => row.day.slice(0, 7) === dates.month));
       const lastMonthTotals = attributionTotals(attributionInput.filter(row => row.day.slice(0, 7) === dates.lastMonth));
       const attribution = {
-        from: dates.from12, to: today, kickoffRead: false, tapRead: true,
+        // The CSM's kickoff form is read since 2026-10-11 (A087): the Marketing
+        // section adds its Payment Amount to front-end cash and confirms it here.
+        from: dates.from12, to: today, kickoffRead: true, tapRead: true,
         totals: { ...allTotals, out: ROUND2(outRows.reduce((sum, row) => sum + row.usd, 0)), outCount: outRows.length },
         mtd: monthTotals, lastMonth: lastMonthTotals, byPerson: attributionByPerson(attributionInput),
         transactions: transactionRows.slice(0, 1500),
@@ -592,11 +600,30 @@ export function createMoneyAdapter(snapshot) {
         day: row.day, usd: row.usd, rail: row.rail, side: row.side, kind: row.kind, person: row.person,
       }));
 
-      const [clientAdRows] = await sql(TRIAGE, `/* ceo-refresh:money.client_ads */ SELECT coalesce(sum(a.spend),0) AS spend,count(DISTINCT a.client_id) AS clients,floor(extract(epoch FROM max(a.last_synced_at))*1000)::bigint AS synced_ms FROM public.ads_daily_snapshots a WHERE a.date>=date '${dates.from12}'`);
-      if (!clientAdRows) failSource("Creative Triage client ad snapshots", "query returned no row");
-      const clientAdsAt = epoch(clientAdRows.synced_ms);
-      addSource(sources, "Creative Triage client ad snapshots", clientAdsAt, now);
-      const clientAdSpend = { amount: ROUND2(num(clientAdRows.spend)), clients: num(clientAdRows.clients) };
+      // Client ad spend over the twelve months (R2): the live media table
+      // (USD, tied to the client through its campaign's ad account), the
+      // frozen snapshot table for the ad-days the live one lacks (up to 2 Oct). The feed must be
+      // ready, whole and written within the media sync's 3-hour stale line.
+      const [mediaFeedRows, clientAdRows] = await Promise.all([
+        sql(TRIAGE, `/* ceo-refresh:money.media_feed */ ${MEDIA_FEED_SQL}`),
+        // Mahara's own accounts sit in the clients table too; they are the
+        // company's own lead generation, not client spend (as Expenses does).
+        sql(TRIAGE, `/* ceo-refresh:money.client_ads */ with days as (${mediaClientDaysSql(dates.from12, today)})
+          select d.*, regexp_replace(lower(coalesce(c.name, '')), '[^[:alnum:]]', '', 'g') in ('maharamedia', 'maharamassdesign') as own
+          from days d join public.clients c on c.id::text = d.client_id`),
+      ]);
+      let mediaFeed;
+      try { mediaFeed = mediaFeedFresh(mediaFeedRows[0], now, MEDIA_STALE_MS); }
+      catch (error) { failSource("Client ad spend (media daily statistics)", error instanceof Error ? error.message : String(error)); }
+      const usdOf = row => (row.spend_usd === null || row.spend_usd === undefined ? 0 : num(row.spend_usd));
+      const clientRows = clientAdRows.filter(row => row.own !== true);
+      const clientAdSpend = {
+        amount: ROUND2(clientRows.reduce((sum, row) => sum + usdOf(row), 0)),
+        clients: new Set(clientRows.map(row => String(row.client_id))).size,
+        ownUsd: ROUND2(clientAdRows.filter(row => row.own === true).reduce((sum, row) => sum + usdOf(row), 0)),
+        unknownCurrencyDays: clientAdRows.filter(row => row.spend_usd === null || row.spend_usd === undefined).length,
+      };
+      sources.push({ name: "Client ad spend (media daily statistics)", freshestAt: mediaFeed.at, ok: true, note: `${clientAdSpend.clients} client ad accounts, $${clientAdSpend.amount.toFixed(2)} since ${dates.from12} (Mahara's own accounts, $${clientAdSpend.ownUsd.toFixed(2)}, left out); the live table starts ${mediaFeed.firstDay}; ads it does not hold come from the frozen snapshot table up to 2 Oct, matched by Meta ad id${clientAdSpend.unknownCurrencyDays ? `; ${clientAdSpend.unknownCurrencyDays} client days in a currency with no rate left out` : ""}` });
 
       const whopRail = { label: "Whop", connected: true, ...whopCash, refundsMtd: ROUND2(num(summary.refunds_mtd)), lastPaymentAt: epoch(summary.whop_last_paid_ms) };
       const manualDayTotals = new Map();
@@ -618,16 +645,24 @@ export function createMoneyAdapter(snapshot) {
       };
       const bankDayTotals = new Map();
       for (const line of bankLines) if (line.kind === "client_payment" && line.day >= dates.from180) bankDayTotals.set(line.day, (bankDayTotals.get(line.day) ?? 0) + line.usd);
+      // The bank rail knows nothing after the newest statement ends. A day
+      // after it is missing, not $0 (since R1 a stale statement publishes):
+      // the series stops there, a window that starts after it is null, and a
+      // window that runs past it holds the statement's days only.
+      const bankTo = bankFacts.latestStatementDay;
       const bankDaily = [];
-      for (let day = dates.from180; day <= today; day = addDays(day, 1)) bankDaily.push({ date: day, value: ROUND2(bankDayTotals.get(day) ?? 0) });
-      const bankBetween = (from, to) => ROUND2(bankDaily.filter(row => row.date >= from && row.date <= to).reduce((sum, row) => sum + row.value, 0));
+      for (let day = dates.from180; day <= today && day <= bankTo; day = addDays(day, 1)) bankDaily.push({ date: day, value: ROUND2(bankDayTotals.get(day) ?? 0) });
+      const bankBetween = (from, to) => from > bankTo ? null : ROUND2(bankDaily.filter(row => row.date >= from && row.date <= to).reduce((sum, row) => sum + row.value, 0));
       const bankNewestPayment = bankLines.filter(line => line.kind === "client_payment").map(line => line.day).sort().at(-1) ?? null;
+      const bankMtd = bankBetween(monthStart(today), today);
+      // Projected over the days the statement covers this month, not over every day so far.
+      const bankDaysThisMonth = bankTo < monthStart(today) ? 0 : Math.min(dates.dayOfMonth, Number(bankTo.slice(8, 10)));
       const bankRail = {
-        label: "Bank", connected: statementRows.length > 0,
+        label: "Bank", connected: statementRows.length > 0, coveredTo: bankTo,
         today: bankBetween(today, today), yesterday: bankBetween(addDays(today, -1), addDays(today, -1)),
-        mtd: bankBetween(monthStart(today), today), lastMonthToDate: bankBetween(dates.lastMonthStart, dates.lastMonthToDateEnd),
+        mtd: bankMtd, lastMonthToDate: bankBetween(dates.lastMonthStart, dates.lastMonthToDateEnd),
         lastMonth: bankBetween(dates.lastMonthStart, dates.lastMonthEnd),
-        projectedMonth: ROUND2(bankBetween(monthStart(today), today) / dates.dayOfMonth * dates.dim),
+        projectedMonth: bankMtd === null || bankDaysThisMonth === 0 ? null : ROUND2(bankMtd / bankDaysThisMonth * dates.dim),
         refundsMtd: null, daily: bankDaily, lastPaymentAt: bankNewestPayment ? dayStart(bankNewestPayment) : null,
       };
       const connected = [whopRail, tapRail, manualRail, bankRail].filter(rail => rail.connected);
@@ -746,11 +781,25 @@ export function createMoneyAdapter(snapshot) {
         cards: billing.cards,
         syncedAt: billing.syncedAt,
       };
+      // Earlier months from the kept series (A124), the Edge rule
+      // (cockpit-ceo-api finance/adapters/money.ts): every projected point
+      // before this month, with what was collected that month beside it.
+      const series = Array.isArray(snapshot.series) ? snapshot.series : null;
+      const seriesPoints = (series ?? []).filter(row => String(field(row, "scope") ?? "") === "company")
+        .map(row => ({ metric: String(field(row, "metric") ?? ""), month: dateText(field(row, "day", "date")).slice(0, 7), value: num(field(row, "value")) }))
+        .filter(row => /^\d{4}-\d{2}$/.test(row.month));
+      const collectedByMonth = new Map(seriesPoints.filter(row => row.metric === "money.book.collected").map(row => [row.month, row.value]));
+      const bookHistory = [...new Map(seriesPoints.filter(row => row.metric === "money.book.projected" && row.month !== dates.month).map(row => [row.month, row])).values()]
+        .sort((a, b) => a.month.localeCompare(b.month))
+        .map(row => {
+          const got = collectedByMonth.get(row.month) ?? 0;
+          return { month: row.month, projected: ROUND2(row.value), collected: ROUND2(got), rate: row.value > 0 ? Math.round(got / row.value * 1000) / 1000 : null };
+        });
       const bookPayload = {
         month: dates.month, projectedMrr, projectedCards: recurring.length, collected,
         collectionRate: projectedMrr > 0 ? Math.round(collected / projectedMrr * 1000) / 1000 : null,
         averageRetainer: recurring.length ? ROUND2(projectedMrr / recurring.length) : null,
-        history: [],
+        history: bookHistory,
       };
       const manualRefundsMtd = ROUND2(manualRefunds.filter(row => row.day >= monthStart(today) && row.day <= today).reduce((sum, row) => sum + row.amountUsd, 0));
       const manualRefunds90 = ROUND2(manualRefunds.filter(row => row.day >= dates.from90 && row.day <= today).reduce((sum, row) => sum + row.amountUsd, 0));
@@ -766,6 +815,16 @@ export function createMoneyAdapter(snapshot) {
         { date: `${dates.month}-01`, metric: "money.book.projected", scope: "company", value: projectedMrr },
         { date: `${dates.month}-01`, metric: "money.book.collected", scope: "company", value: collected },
       ];
+      // Each card's LTV field, per card and per day (R4), as the Edge copy
+      // does: the earliest point per card is the LTV baseline the cockpit's
+      // LTV write adds payments to (what a person typed before the cockpit
+      // ever wrote the field), so a new card gets its baseline the day it
+      // first appears.
+      for (const row of billingRows) {
+        if (row.taskId && typeof row.ltvUsd === "number" && Number.isFinite(row.ltvUsd)) {
+          daily.push({ date: today, metric: "money.ltv.card", scope: `client:${row.taskId}`, value: ROUND2(row.ltvUsd) });
+        }
+      }
       const payload = {
         month: dates.month, dayOfMonth: dates.dayOfMonth, daysInMonth: dates.dim, cash: whopCash,
         rails: { whop: whopRail, tap: tapRail, manual: manualRail, bank: bankRail, total: totalRail },
@@ -779,7 +838,9 @@ export function createMoneyAdapter(snapshot) {
         notes: [
           { level: "info", text: "Cash totals use source-confirmed Whop, Tap, manual, and uploaded bank statement rows. Bank payout and settlement lines are not counted as client cash." },
           { level: "info", text: "Manual payments, human payer mappings, bank classifications, exclusions, and client billing snapshots came from the canonical Creative Triage finance revision." },
+          ...(bankFresh ? [] : [{ level: "warn", text: `The newest bank statement ends ${bankFacts.latestStatementDay}, ${statementAge} days ago (past ${BANK_STALE_DAYS} days). Upload this week's CBK statement on this tab; until then the bank rail and the expense lines stop at that day: the bank's later days read n/a, not $0, and the all-rails total has no bank money after it.` }]),
           { level: "warn", text: `The newest bank statement ends ${bankFacts.latestStatementDay}; its classification revision is checked again before publication.` },
+          ...(series ? [] : [{ level: "info", text: "Earlier months of the client book are not in this finance read, so the history is empty, not zero." }]),
           ...(tapCovered.size ? [{ level: "info", text: `${tapCovered.size} Tap charges are covered by bank settlement lines and were counted once.` }] : []),
           ...(manualCoveredByBank ? [{ level: "info", text: `${manualCoveredByBank} manual payments match bank client-payment lines and were counted once.` }] : []),
           ...(ctrTargetNote ? [ctrTargetNote] : []),

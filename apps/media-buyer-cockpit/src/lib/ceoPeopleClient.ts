@@ -38,7 +38,12 @@ export async function savePerson(
   const patch = Object.fromEntries(
     Object.entries(args).filter(([, v]) => v !== undefined),
   );
-  for (const key of ["monthlyCost", "commissionPct", "commissionRate"]) {
+  for (const key of [
+    "monthlyCost",
+    "commissionPct",
+    "commissionRate",
+    "commission2Rate",
+  ]) {
     if (
       Object.hasOwn(patch, key) &&
       patch[key] !== null &&
@@ -79,7 +84,7 @@ export async function setPersonPay(
   );
   if (!Number.isSafeInteger(patch.id) || Number(patch.id) <= 0)
     throw new Error("Choose a person to change pay.");
-  for (const key of ["monthlyCost", "commissionRate"]) {
+  for (const key of ["monthlyCost", "commissionRate", "commission2Rate"]) {
     const value = patch[key];
     if (
       value !== undefined &&

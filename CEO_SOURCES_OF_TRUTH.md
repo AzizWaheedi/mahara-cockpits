@@ -1,5 +1,7 @@
 # Mahara CEO cockpit: where every number actually comes from
 
+> **2026-10-11: the current map of every number is [apps/media-buyer-cockpit/src/pages/ceo/SOURCES.md](./apps/media-buyer-cockpit/src/pages/ceo/SOURCES.md)** (the native CEO worker and the CEO API, after Convex was retired). This page is the dated history of 2026-09-16.
+
 Written 2026-09-16, with the MRR and lifecycle rows updated 2026-09-18 when the cockpit started reading those fields. Everything below was checked against live data, not copied from an earlier document.
 
 **This document replaces CEO_COCKPIT_PLAN.md on two things: which system is the source of truth for each number, and the unit economics.** That plan was written on 2026-09-14 and much of what it marked "unverified" has now been verified, some of it the other way round. Keep [CEO_COCKPIT_PLAN.md](./CEO_COCKPIT_PLAN.md) for the full catalog of 232 metrics and their IDs. Where the two disagree, this one is right.

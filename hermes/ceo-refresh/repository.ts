@@ -43,6 +43,13 @@ const SOURCE_ORDER: Record<string, string> = {
 };
 
 type Feed = { rows: Row[]; stamp: number; count: number };
+/**
+ * Cockpit EODs are read for 180 days so the Management tab can rebuild its
+ * EOD counts for any window the timeframe bar picks (A127, 2026-10-11); the
+ * live counts still use the last 14 working days.
+ */
+const EOD_DAYS = 180;
+const EOD_LIMIT = 5000;
 type ReadFunction = (project: string, query: string) => Promise<Row[]>;
 
 function quote(value: string): string {
@@ -170,10 +177,14 @@ export function createRepository(read: ReadFunction): Repository {
     return { rows: campaigns, stamp: Math.max(...rows.map(row => asNumber(row.stamp_ms, "campaign sync stamp"))) };
   };
 
+  // The money columns are numeric(14,2). The SQL endpoint returns numeric as
+  // text, so without the float8 casts every consumer that checks
+  // `typeof x === "number"` (Client success LTV and MRR, the average retainer)
+  // read n/a (R5, 2026-10-11). float8 holds these two-decimal amounts exactly.
   const billing = async (): Promise<Row[]> => {
     const rows = await read(TRIAGE, `
       SELECT DISTINCT ON (clickup_task_id) clickup_task_id AS "taskId", client_name AS name, stage,
-             mrr_usd AS "mrrUsd", ltv_usd AS "ltvUsd", next_payment_usd AS "nextPaymentAmountUsd",
+             mrr_usd::float8 AS "mrrUsd", ltv_usd::float8 AS "ltvUsd", next_payment_usd::float8 AS "nextPaymentAmountUsd",
              source_currency AS currency, next_payment_date AS "nextPaymentDate", signup_date AS "signupDate",
              launch_date AS "launchDate", paused_on AS "pausedOn", churn_date AS "churnDate",
              next_renewal_date AS "nextContractRenewal", payment_plan AS "paymentPlan", payment_method AS "paymentMethod",
@@ -415,13 +426,14 @@ export function createRepository(read: ReadFunction): Repository {
                 ORDER BY p.id
                 LIMIT 1
               ) p ON true
-              WHERE r.day >= (now() AT TIME ZONE 'Asia/Kuwait')::date-40
+              WHERE r.day >= (now() AT TIME ZONE 'Asia/Kuwait')::date-${EOD_DAYS}
               ORDER BY r.submitted_at DESC
-              LIMIT 1000`),
+              LIMIT ${EOD_LIMIT + 1}`),
         read(TRIAGE, `SELECT person_key AS "personKey",status,since::text AS since,note,floor(extract(epoch FROM set_at)*1000)::bigint AS "setAt" FROM public.cockpit_team_status`),
         read(TRIAGE, `SELECT after->>'person_key' AS "personKey",after->>'status' AS status,after->>'since' AS since,floor(extract(epoch FROM created_at)*1000)::bigint AS at FROM public.cockpit_audit_log WHERE entity_type='cockpit_team_status' AND after IS NOT NULL ORDER BY created_at DESC LIMIT 2000`),
         read(TRIAGE, `SELECT p.name,p.role,p.active,p.engagement,floor(extract(epoch FROM p.added_at)*1000)::bigint AS "addedAt",floor(extract(epoch FROM m.last_seen_at)*1000)::bigint AS "lastSeenAt",m.roles FROM public.cockpit_people p LEFT JOIN public.cockpit_members m ON lower(btrim(m.email))=lower(btrim(p.email)) WHERE p.active OR m.active ORDER BY p.name LIMIT 1000`),
       ]);
+      if (eods.length > EOD_LIMIT) throw new Error(`Cockpit EOD reports for the last ${EOD_DAYS} days exceed the verified read limit of ${EOD_LIMIT}`);
       const now = Date.now();
       const today = new Date(now + 3 * 60 * 60_000).toISOString().slice(0, 10);
       const since = now - 7 * 86_400_000;
@@ -548,5 +560,10 @@ export function createRepository(read: ReadFunction): Repository {
       return rows[0];
     },
   };
+  // Delivery and Client success both read the media history; one run reads
+  // it once (the booking events alone are over 40,000 rows).
+  const loadDelivery = repository.delivery.bind(repository);
+  let deliveryRead: Promise<unknown> | undefined;
+  repository.delivery = () => (deliveryRead ??= loadDelivery());
   return repository;
 }

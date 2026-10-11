@@ -123,6 +123,9 @@ function workingPeople(context: CostContext): Sheet["people"] {
       currency: p.currency,
       basis: p.commission.basis,
       rate: p.commission.rate,
+      // The second commission line (A074), priced beside the first.
+      basis2: p.commission2.basis,
+      rate2: p.commission2.rate,
     }));
 }
 export function costsSummary(context: CostContext): CostsSummary {

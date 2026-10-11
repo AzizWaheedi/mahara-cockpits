@@ -16,6 +16,11 @@ export const COMMISSION_BASES = [
   "per_signed",
   "mrr_managed",
   "other",
+  // A074, 2026-10-11: the setter's rule, "$10 per showed qualfiwedd
+  // appointment $50 per closed deal (fully closed not onboarding fee then
+  // ghosted)". A person may carry two lines (commission2 on the roster).
+  "per_qualified_intro_shown",
+  "per_closed_deal",
 ] as const;
 export type CommissionBasis = (typeof COMMISSION_BASES)[number];
 
@@ -40,6 +45,9 @@ export const COMMISSION_LABEL: Record<CommissionBasis, string> = {
   per_signed: "per signed deal",
   mrr_managed: "of the monthly revenue of the clients they manage",
   other: "as written in the note",
+  per_qualified_intro_shown: "per qualified intro call that shows up",
+  per_closed_deal:
+    "per deal that fully closes (not a deposit and then gone: voided deals are left out)",
 };
 
 /** Short form, for a select. */
@@ -54,7 +62,27 @@ export const COMMISSION_SHORT: Record<CommissionBasis, string> = {
   per_signed: "Per signed deal",
   mrr_managed: "% of MRR they manage",
   other: "Other, see note",
+  per_qualified_intro_shown: "Per qualified intro shown",
+  per_closed_deal: "Per fully closed deal",
 };
+
+/** A basis that carries a rate (none and other do not). */
+export const takesRate = (b: CommissionBasis) => b !== "none" && b !== "other";
+
+/**
+ * Both lines in one sentence: "$10 per qualified intro call that shows up,
+ * plus $50 per deal that fully closes …", or null with no commission.
+ */
+export function commissionLines(
+  lines: { basis: CommissionBasis; rate: number | null }[],
+  currency: string,
+  note: string | null,
+): string | null {
+  const said = lines
+    .map(l => commissionText(l, currency, note))
+    .filter((x): x is string => Boolean(x));
+  return said.length ? said.join(", plus ") : null;
+}
 
 /** "10% of cash collected on deals they close", "KWD 50 per demo that shows up", "Other: ...", or null. */
 export function commissionText(

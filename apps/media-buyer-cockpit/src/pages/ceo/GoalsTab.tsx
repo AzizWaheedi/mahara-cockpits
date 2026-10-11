@@ -23,6 +23,7 @@ import { Button } from "@/components/ui/button";
 import { api, useAction } from "@/lib/cockpitApi";
 import { BOOKING_RATE_GATE } from "@/lib/kpi";
 import { cn } from "@/lib/utils";
+import { qualifiedIntroShare } from "@/types/ceo/costsModel";
 import type { Board, TargetRow } from "@/types/ceo/goals";
 import { PlanEditor } from "./goalsEdit";
 import {
@@ -328,7 +329,11 @@ function PlanBadge({ status }: { status: string }) {
 }
 
 export function GoalsTab({ sections, goTab }: CeoTabProps) {
-  void sections;
+  const growth = sections.growth?.payload ?? null;
+  const qualified = useMemo(
+    () => qualifiedIntroShare([growth?.windows.lastMonth, growth?.windows.mtd]),
+    [growth],
+  );
   const read = useAction(api.ceo.goals.board);
   const [board, setBoard] = useState<Board | null>(null);
   const [planId, setPlanId] = useState<number | undefined>(undefined);
@@ -493,6 +498,7 @@ export function GoalsTab({ sections, goTab }: CeoTabProps) {
       {planning ? (
         <NextMonth
           board={board}
+          qualifiedIntroShare={qualified?.share ?? null}
           onCosts={() => goTab("costs")}
           onClose={() => setPlanning(false)}
           onSaved={id => {

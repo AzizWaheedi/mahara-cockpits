@@ -12,6 +12,7 @@ beforeEach(async()=>{
  await db.exec(`INSERT INTO cockpit_campaigns(client_name,meta_account_id,meta_campaign_id,raw_data) VALUES('Alpha','act_222222','111111','{"campaignName":"Alpha campaign","clientName":"Alpha"}');INSERT INTO cockpit_ads(campaign_name,ad_name,meta_ad_id,raw_data) VALUES('Alpha campaign','Original ad','333333','{"campaignName":"Alpha campaign","metaAdId":"333333","creativeId":"444444"}')`);
  await db.query('INSERT INTO cockpit_native_stills(key,data) VALUES($1,$2)',['c:444444',{key:'c:444444',adId:'333333',creativeId:'444444',status:'saved',url:image}]);
  if(existsSync(new URL('../supabase/migrations/20261006a_cockpit_native_still_reads.sql',import.meta.url)))await db.exec(migration('20261006a_cockpit_native_still_reads.sql'));
+ await db.exec(migration('20261011b_native_still_creative_from_key.sql'));
 });
 afterEach(async()=>{await db.close();});
 async function read(keys:string[]){await actor(db,UID);try{return (await db.query<{value:{ok:boolean;stills:Array<{key:string;url:string|null;tinyUrl:string|null;missing:boolean;error:string|null}>}}>('SELECT cockpit_native_stills_read($1) value',[keys])).rows[0].value;}catch(error){return {ok:false,stills:[],error:error instanceof Error?error.message:'The native contract is missing'};}}
@@ -50,4 +51,18 @@ test('unknown source readiness is not a verified missing image',async()=>{
 test('duplicate requested keys return one image and oversized requests are rejected',async()=>{
  expect((await read(['c:444444','c:444444'])).stills.map(item=>item.url)).toEqual([image]);
  expect((await read(Array.from({length:201},(_,i)=>'a:'+String(100000+i)))).ok).toBe(false);
+});
+test('an ad row that names its creative only in its still key still returns the saved image',async()=>{
+ await owner(db);await db.exec("UPDATE cockpit_ads SET raw_data=(raw_data-'creativeId')||'{\"stillKey\":\"c:444444\"}' WHERE meta_ad_id='333333'");
+ const result=await read(['c:444444']);expect(result.stills[0]?.url).toBe(image);expect(result.stills[0]?.error).toBeNull();
+});
+test('a still key that names another creative is still refused',async()=>{
+ await owner(db);await db.exec("UPDATE cockpit_ads SET raw_data=(raw_data-'creativeId')||'{\"stillKey\":\"c:555555\"}' WHERE meta_ad_id='333333'");
+ const result=await read(['c:444444']);expect(result.stills[0]?.url).toBeNull();expect(result.stills[0]?.error).not.toBeNull();
+});
+test('a failed or in-flight capture reads as missing, so the page can fall back',async()=>{
+ for(const status of ['failed','captured','gone']){
+  await owner(db);await db.query("UPDATE cockpit_native_stills SET data=data||jsonb_build_object('status',$1::text) WHERE key='c:444444'",[status]);
+  const result=await read(['c:444444']);expect(result.stills[0]?.missing).toBe(true);expect(result.stills[0]?.error).toBeNull();
+ }
 });

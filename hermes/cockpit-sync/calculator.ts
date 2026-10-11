@@ -76,6 +76,7 @@ const C = {
   currency: 24,
 };
 
+const unknownCurrencies = new Set<string>();
 // Rates to USD. The tracker stores raw account currency in a column labelled USD.
 const FX: Record<string, number> = {
   USD: 1,
@@ -999,8 +1000,18 @@ export async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
       };
       byCampaign.set(key, a);
     }
-    const fx = FX[a.currency] ?? 1;
-    const cost = num(r[C.cost]) * fx;
+    // An account currency outside FX would be summed as if it were USD.
+    // None is in use (2026-10-11: 29 USD, 1 QAR, 1 SAR accounts), so a new
+    // one is reported loudly once per run instead of passing silently.
+    const fx = FX[a.currency];
+    if (fx === undefined && !unknownCurrencies.has(a.currency)) {
+      unknownCurrencies.add(a.currency);
+      recordLog(
+        "error",
+        `No USD rate for account currency ${a.currency}; its spend is counted unconverted. Add it to FX in calculator.ts.`,
+      );
+    }
+    const cost = num(r[C.cost]) * (fx ?? 1);
     if (date < a.first) a.first = date;
     a.spend30 += cost;
     a.days30.add(date);
@@ -2019,11 +2030,13 @@ export async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
         const creativeId: string | undefined = cr.id
           ? String(cr.id)
           : undefined;
+        // Full-size pictures first. thumbnail_url is Meta's 64 px preview
+        // and stays last, or video ads show a blurred square.
         const thumbUrl: string | undefined =
           cr.image_url ??
-          cr.thumbnail_url ??
           cr.object_story_spec?.video_data?.image_url ??
           cr.object_story_spec?.link_data?.picture ??
+          cr.thumbnail_url ??
           undefined;
         if (thumbUrl) pictureOk++;
         else pictureMissing++;
@@ -2056,7 +2069,12 @@ export async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
   // join them here rather than making the UI guess. Meta's own thumbnail wins
   // over the Supabase one, which is often stale or missing entirely. The
   // tracker's own ad id is the fallback join when the names differ.
-  type TreeHit = { thumbUrl?: string; metaId: string; stillKey?: string };
+  type TreeHit = {
+    thumbUrl?: string;
+    metaId: string;
+    stillKey?: string;
+    creativeId?: string;
+  };
   const treeByName = new Map<string, TreeHit>();
   const treeById = new Map<string, TreeHit>();
   for (const r of metaTree) {
@@ -2065,18 +2083,24 @@ export async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
       thumbUrl: r.thumbUrl,
       metaId: r.metaId,
       stillKey: r.stillKey,
+      creativeId: r.creativeId,
     };
     treeByName.set(`${normalize(r.campaignName)}|${normalize(r.name)}`, hit);
     treeById.set(r.metaId, hit);
   }
   let adsWithCreative = 0;
   for (const a of ads) {
+    // The ad id first: two ads with one name in a campaign otherwise share
+    // the last one's picture and still key.
     const hit =
-      treeByName.get(`${normalize(a.campaignName)}|${normalize(a.adName)}`) ??
-      (a.metaAdId ? treeById.get(a.metaAdId) : undefined);
+      (a.metaAdId ? treeById.get(a.metaAdId) : undefined) ??
+      treeByName.get(`${normalize(a.campaignName)}|${normalize(a.adName)}`);
     if (hit) {
       a.metaAdId = hit.metaId;
       a.stillKey = hit.stillKey;
+      // The saved-image read checks the ad's current creative against the
+      // still key, so the row must carry it (2026-10-11).
+      if (hit.creativeId) a.creativeId = hit.creativeId;
       if (hit.thumbUrl) a.thumbnailUrl = hit.thumbUrl;
     }
     if (a.thumbnailUrl) adsWithCreative++;

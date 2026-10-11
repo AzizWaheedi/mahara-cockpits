@@ -1,10 +1,13 @@
 import { TRIAGE, B2B, num, sql } from "../sb.js";
 import { kuwaitDay } from "../time.js";
+import { MEDIA_FEED_SQL, MEDIA_STALE_MS, mediaClientDaysSql, mediaFeedFresh } from "../data/triage.js";
 
 const ROUND2 = value => Math.round(value * 100) / 100;
 const BANK_STALE_DAYS = 7;
 // The cockpit has no complete cash-in rail, so revenue remains a floor and profit stays missing.
 const REVENUE_IS_COMPLETE = false;
+/** Mahara's own ad accounts sit in the clients table too (as at ../data/triage.js OWN_ACCOUNTS). */
+const OWN_ACCOUNT_NAMES = ["maharamedia", "maharamassdesign"];
 const UNLOAD = /top\s*up|weyay|payoneer|\bwise\b|western union|remit|\batm\b|cash withdrawal|transfer/i;
 const RECLASS_RULES = [
   { code: "bank", label: "Bank charges, card fees and payments to a bank", test: /\b(nbk|kfh|cbk)\b|kuwait finance house|national bank of kuwait|boubyan|gulf bank|burgan|non sufficient|decline fee|control card|ann\.?\s*sub\s*fee/i },
@@ -112,7 +115,10 @@ export function createExpensesAdapter(snapshot) {
       if (!latestStatement) fail("Bank statements", "the newest statement has no verified end date");
       const today = kuwaitDay();
       const statementAge = Math.round((Date.parse(today) - Date.parse(latestStatement.toDay)) / 86_400_000);
-      if (statementAge < 0 || statementAge > BANK_STALE_DAYS) fail("Bank statements", `the newest statement ends ${latestStatement.toDay}, ${statementAge} days ago`);
+      // A statement dated after today is a parse error. A stale one warns and
+      // still publishes (Aziz, A109: "warn past 7 days").
+      if (statementAge < 0) fail("Bank statements", `the newest statement ends ${latestStatement.toDay}, after today`);
+      const bankStale = statementAge > BANK_STALE_DAYS;
       const month = latestStatement.toDay.slice(0, 7);
       const monthName = `${MONTHS[Number(month.slice(5, 7)) - 1]} ${month.slice(0, 4)}`;
       const allLines = sourceLines.map(normalizeLine).filter(line => line.day.slice(0, 7) <= month);
@@ -130,18 +136,28 @@ export function createExpensesAdapter(snapshot) {
       const total = ROUND2(rawTotal + unloads);
       const spend = ROUND2(rawTotal - excludedUsd);
       const kept = monthLines.filter(line => !excludedLines.has(line.id));
-      const [revenueRows, adRows, eodRows] = await Promise.all([
+      const [revenueRows, adRows, mediaFeedRows, eodRows] = await Promise.all([
         sql(B2B, `/* ceo-refresh:expenses.revenue */ SELECT coalesce(sum(net_amount),0) AS revenue,floor(extract(epoch FROM max(synced_at))*1000)::bigint AS synced_ms FROM public.whop_payments WHERE status='paid' AND currency='usd' AND paid_on>=date '${month}-01' AND paid_on<date '${month}-01'+interval '1 month'`),
-        sql(TRIAGE, `/* ceo-refresh:expenses.client_ads */ SELECT coalesce(sum(a.spend),0) AS spend,count(DISTINCT a.client_id) AS clients,coalesce(sum(a.spend) FILTER (WHERE lower(replace(coalesce(c.name,''),' ',''))='maharamedia'),0) AS own_spend,count(DISTINCT a.client_id) FILTER (WHERE lower(replace(coalesce(c.name,''),' ',''))='maharamedia') AS own_clients,floor(extract(epoch FROM max(a.last_synced_at))*1000)::bigint AS synced_ms FROM public.ads_daily_snapshots a LEFT JOIN public.clients c ON c.id=a.client_id WHERE a.date>=date '${month}-01' AND a.date<date '${month}-01'+interval '1 month'`),
+        // Client ad spend for the statement month (R2): the live media table in
+        // USD, tied to the client through its campaign's ad account; the frozen
+        // snapshot table for the ad-days the live one lacks (up to 2 Oct).
+        sql(TRIAGE, `/* ceo-refresh:expenses.client_ads */ with days as (${mediaClientDaysSql(`${month}-01`, monthEnd(month, today))}),
+          tagged as (select d.*, lower(replace(coalesce(c.name,''),' ','')) in (${OWN_ACCOUNT_NAMES.map(name => `'${name}'`).join(",")}) as own from days d join public.clients c on c.id::text=d.client_id)
+          SELECT coalesce(sum(spend_usd) FILTER (WHERE NOT own),0) AS spend,count(DISTINCT client_id) FILTER (WHERE NOT own) AS clients,
+                 coalesce(sum(spend_usd) FILTER (WHERE own),0) AS own_spend,count(DISTINCT client_id) FILTER (WHERE own) AS own_clients,
+                 count(*) FILTER (WHERE spend_usd IS NULL) AS unknown_days,count(*) FILTER (WHERE source='frozen') AS frozen_days FROM tagged`),
+        sql(TRIAGE, `/* ceo-refresh:expenses.media_feed */ ${MEDIA_FEED_SQL}`),
         sql(B2B, `/* ceo-refresh:expenses.eods */ SELECT count(DISTINCT lower(btrim(person_name))) AS people FROM public.eod_reports WHERE report_date>=date '${month}-01' AND report_date<date '${month}-01'+interval '1 month' AND nullif(btrim(person_name),'') IS NOT NULL`),
       ]);
       const revenue = revenueRows[0] ? ROUND2(num(revenueRows[0].revenue)) : null;
       const whopAt = timestamp(revenueRows[0]?.synced_ms);
       if (whopAt === null || Date.now() - whopAt > 60 * 60_000) fail("Whop cash source", "the last successful sync is missing or older than one hour");
-      const adsAt = timestamp(adRows[0]?.synced_ms);
-      if (adsAt === null || Date.now() - adsAt > 3 * 60 * 60_000) fail("Client ad snapshots", "the last successful snapshot is missing or older than three hours");
-      if (!adRows[0]) fail("Client ad snapshots", "query returned no row");
-      const clientAdSpend = { amount: ROUND2(num(adRows[0].spend) - num(adRows[0].own_spend)), clients: num(adRows[0].clients) - num(adRows[0].own_clients) };
+      let mediaFeed;
+      try { mediaFeed = mediaFeedFresh(mediaFeedRows[0], Date.now(), MEDIA_STALE_MS); }
+      catch (error) { fail("Client ad spend (media daily statistics)", error instanceof Error ? error.message : String(error)); }
+      if (!adRows[0]) fail("Client ad spend (media daily statistics)", "query returned no row");
+      const clientAdSpend = { amount: ROUND2(num(adRows[0].spend)), clients: num(adRows[0].clients) };
+      const adUnknownDays = num(adRows[0].unknown_days);
       const peopleFilingEods = eodRows[0] ? num(eodRows[0].people) : null;
 
       const software = reportGroup(kept, "software", monthName, excludedLines);
@@ -184,16 +200,17 @@ export function createExpensesAdapter(snapshot) {
         profit: profitComplete ? { amount: ROUND2(revenue - spend), margin: revenue > 0 ? Math.round((1 - spend / revenue) * 10_000) / 10_000 : null, why: null } : { amount: null, margin: null, why: `Profit is not drawn for ${monthName} because ${missingProfit.join(" and ")}.` },
         peopleFilingEods,
         notes: [
+          ...(bankStale ? [{ level: "warn", text: `The newest bank statement ends ${latestStatement.toDay}, ${statementAge} days ago (past ${BANK_STALE_DAYS} days). Upload this week's CBK statement on the Money tab; until then these expenses stop at that day.` }] : []),
           { level: "warn", text: `These numbers cover ${monthName}; each classified expense line comes from the current canonical CBK statement snapshot.` },
           { level: "info", text: `${excludedLines.size} bank lines worth $${excludedUsd.toFixed(2)} are excluded by the saved bank classification or human exclusion list.` },
-          { level: "info", text: `Client advertising spend of $${clientAdSpend.amount.toFixed(2)} stays separate from Mahara expense lines.` },
+          { level: "info", text: `Client advertising spend of $${clientAdSpend.amount.toFixed(2)} stays separate from Mahara expense lines. It is the media buyer's Meta sync (cockpit_media_daily_stats, already in USD) for ${monthName}, tied to each client through its campaign's ad account; Mahara's own accounts are left out.${num(adRows[0].frozen_days) ? ` Ads the live table does not hold (campaigns with no card, or taken off the board) come from the frozen ads_daily_snapshots table up to 2 Oct, matched by Meta ad id and converted at the cockpit's fixed rates: ${num(adRows[0].frozen_days)} client days.` : ""}${adUnknownDays ? ` ${adUnknownDays} client days in a currency with no exchange rate are left out.` : ""}` },
         ],
       };
       const sources = [
-        { name: "Canonical CBK bank statements and exclusions", freshestAt: latestStatement.importedAt ?? undefined, ok: true, note: `${monthLines.length} classified expense lines in ${month}` },
+        { name: "Canonical CBK bank statements and exclusions", freshestAt: latestStatement.importedAt ?? undefined, ok: true, note: `${monthLines.length} classified expense lines in ${month}; newest statement ends ${latestStatement.toDay}, ${statementAge} ${statementAge === 1 ? "day" : "days"} ago${bankStale ? `, past ${BANK_STALE_DAYS} days` : ""}` },
         { name: "Canonical finance revision", freshestAt: timestamp(snapshot.updated_at) ?? undefined, ok: true, note: `revision ${num(snapshot.revision)}` },
         { name: "Whop revenue source", freshestAt: whopAt, ok: true },
-        { name: "Creative Triage client ad snapshots", freshestAt: adsAt, ok: true },
+        { name: "Client ad spend (media daily statistics)", freshestAt: mediaFeed.at, ok: true, note: `live table ${mediaFeed.firstDay} to ${mediaFeed.lastDay ?? "?"}` },
       ];
       const daily = [];
       for (const loadedMonth of payload.monthsLoaded) {

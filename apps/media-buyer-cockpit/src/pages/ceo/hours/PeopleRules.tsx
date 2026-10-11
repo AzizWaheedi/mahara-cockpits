@@ -34,6 +34,7 @@ import {
   TRACKING_LABEL,
 } from "./hoursCopy";
 import { dayLabel, monthLabel } from "./hoursFormat";
+import { MorningNoteSetting } from "./nudge";
 
 /**
  * People and rules (design 5.5): each person's tracking, pay basis and the
@@ -1069,6 +1070,8 @@ export function PeopleRules({
           says so; until then the hours figure is a shadow beside fixed pay.
         </p>
       </div>
+      {/* A372: the optional morning Slack note to the CEO, off until switched on. */}
+      <MorningNoteSetting />
       <Rules
         key={`${view.month}-${JSON.stringify(view.settings)}`}
         view={view}

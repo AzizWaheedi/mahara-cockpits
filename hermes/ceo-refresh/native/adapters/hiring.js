@@ -4,6 +4,7 @@ import { railSummary, settings } from "../hiring/settings.js";
 import { readWorkflows } from "../hiring/setup.js";
 import { ADVANCING_STAGES, EXIT_STAGES, ROLES, STAGE_SCORES, STAGES, } from "../hiring/spec.js";
 import { num, sql, TRIAGE } from "../sb.js";
+import { kuwaitDay } from "../time.js";
 /**
  * Recruiting, end to end.
  *
@@ -47,6 +48,32 @@ const score = (x) => {
     const n = Number(x);
     return Number.isFinite(n) ? n : null;
 };
+const CANDIDATE_LIMIT = 2000;
+/**
+ * Applications and hires per Kuwait day over every candidate on the board,
+ * not only the 300 live ones the list carries (A127: the Recruiting tab's
+ * "applied" and "hired" counts follow the timeframe bar). A hire is dated by
+ * the day the card moved to Hired; an applicant by the day they applied. Days
+ * with nothing are left out. Pure, for the tests.
+ */
+export function hiringSeries(rows) {
+    const applied = new Map();
+    const hired = new Map();
+    for (const r of rows) {
+        const appliedMs = num(r.applied_ms);
+        if (appliedMs > 0) {
+            const d = kuwaitDay(appliedMs);
+            applied.set(d, (applied.get(d) ?? 0) + 1);
+        }
+        const stageMs = num(r.stage_ms);
+        if (String(r.stage ?? "") === "hired" && stageMs > 0) {
+            const d = kuwaitDay(stageMs);
+            hired.set(d, (hired.get(d) ?? 0) + 1);
+        }
+    }
+    const list = (m) => [...m.entries()].map(([date, count]) => ({ date, count })).sort((a, b) => a.date.localeCompare(b.date));
+    return { appliedByDay: list(applied), hiredByDay: list(hired) };
+}
 export const hiring = {
     key: "hiring",
     label: "Recruiting",
@@ -77,7 +104,7 @@ export const hiring = {
                 extract(epoch from synced_at) * 1000 as synced_ms
          from public.cockpit_hiring_candidates
          order by stage_since desc nulls last
-         limit 2000`).catch(() => []),
+         limit ${CANDIDATE_LIMIT + 1}`).catch(() => []),
             sql(TRIAGE, `select e.candidate_id, e.role, e.kind, e.action, e.to_stage, e.detail, e.ok,
                 e.by_whom, extract(epoch from e.at) * 1000 as at_ms,
                 coalesce(c.name, '') as name
@@ -90,6 +117,15 @@ export const hiring = {
         ]);
         void engineRows;
         void formRows;
+        // The series below cover every candidate read; a cut read is said, never hidden.
+        const capped = rows.length > CANDIDATE_LIMIT;
+        if (capped) {
+            rows.length = CANDIDATE_LIMIT;
+            notes.push({
+                level: "warn",
+                text: `The board holds more than ${CANDIDATE_LIMIT} candidates and only the ${CANDIDATE_LIMIT} most recently moved were read, so applied and hired per day are a floor.`,
+            });
+        }
         const freshest = rows.reduce((t, r) => Math.max(t, num(r.synced_ms)), 0);
         sources.push({
             name: "GoHighLevel hiring board, mirrored",
@@ -263,6 +299,9 @@ export const hiring = {
                     .slice(0, 160) || String(e.action ?? e.to_stage ?? ""),
                 ok: e.ok !== false,
             })),
+            // Applied and hired per Kuwait day over every candidate read (A127).
+            ...hiringSeries(rows),
+            seriesComplete: !capped,
             totals: {
                 inFunnel: live.length,
                 applied30: all.filter(c => {

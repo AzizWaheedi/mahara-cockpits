@@ -659,3 +659,81 @@ describe("CEO Refresh Repository team() adChanges and comments handling", () => 
   });
 });
 
+
+describe("CEO Refresh Repository billing() returns money as numbers (R5) with PGlite", () => {
+  test("numeric(14,2) LTV, MRR and next payment come back as JS numbers through the real billing() SQL", async () => {
+    const { PGlite } = await import("../../apps/media-buyer-cockpit/node_modules/@electric-sql/pglite");
+    const db = new PGlite();
+    // The production column types (read 2026-10-11).
+    await db.exec(`
+      CREATE TABLE public.cockpit_client_billing_days (
+        day date NOT NULL, clickup_task_id text NOT NULL, client_name text, stage text,
+        mrr_usd numeric(14,2), ltv_usd numeric(14,2), next_payment_usd numeric(14,2),
+        source_currency character(3), next_payment_date date, signup_date date, launch_date date,
+        paused_on date, churn_date date, next_renewal_date date, payment_plan text, payment_method text,
+        contract_status text, churn_reason text, churn_type text, closer text, lead_source text,
+        captured_at timestamptz NOT NULL DEFAULT now(), source_deployment text, source_id text, source_record jsonb
+      );
+      INSERT INTO public.cockpit_client_billing_days(day, clickup_task_id, client_name, stage, mrr_usd, ltv_usd, next_payment_usd, payment_plan)
+      VALUES
+        (current_date - 1, 'task-a', 'Client A', 'Active', 1500.00, 9000.50, 1500.00, 'Monthly'),
+        (current_date, 'task-a', 'Client A', 'Active', 1750.25, 10750.75, 1750.25, 'Monthly'),
+        (current_date, 'task-b', 'Client B', 'Onboarding', NULL, 2300.00, NULL, 'Paid in full');
+    `);
+    // Without the casts PGlite, like the SQL endpoint, returns numeric as text.
+    const raw = await db.query<{ v: unknown }>("SELECT ltv_usd AS v FROM public.cockpit_client_billing_days LIMIT 1");
+    expect(typeof raw.rows[0].v).toBe("string");
+
+    const repo = createRepository(async (_project, query) => {
+      expect(query).toContain("cockpit_client_billing_days");
+      return (await db.query(query)).rows as Row[];
+    });
+    const rows = (await repo.billing()) as Row[];
+    const a = rows.find(row => row.taskId === "task-a")!;
+    const b = rows.find(row => row.taskId === "task-b")!;
+    expect(a.mrrUsd).toBe(1750.25);
+    expect(a.ltvUsd).toBe(10750.75);
+    expect(a.nextPaymentAmountUsd).toBe(1750.25);
+    expect(typeof a.ltvUsd).toBe("number");
+    expect(b.ltvUsd).toBe(2300);
+    expect(b.mrrUsd).toBeNull();
+    expect(b.nextPaymentAmountUsd).toBeNull();
+    await db.close();
+  });
+});
+
+describe("CEO Refresh Repository delivery() is read once per run", () => {
+  test("two callers share one read of the media history", async () => {
+    let dailyReads = 0;
+    const base = createFakeReader([]);
+    const repo = createRepository(async (project, query) => {
+      if (query.includes("FROM public.cockpit_media_daily_stats WHERE day>=")) dailyReads += 1;
+      return base(project, query);
+    });
+    const [first, second] = await Promise.all([repo.delivery(), repo.delivery()]);
+    expect(first).toBe(second);
+    await repo.delivery();
+    expect(dailyReads).toBe(1);
+  });
+});
+
+describe("CEO Refresh Repository team() reads 180 days of cockpit EODs", () => {
+  test("the EOD read covers 180 days and refuses a truncated read", async () => {
+    let eodQuery = "";
+    const make = (count: number) => createRepository(async (_project, query) => {
+      if (query.includes("cockpit_eod_reports")) {
+        eodQuery = query;
+        return Array.from({ length: count }, (_, i) => ({ day: "2026-10-01", name: `P${i}`, energy: null, at: Date.now(), role: "csm" }));
+      }
+      if (query.includes("cockpit_media_sources") || query.includes("cockpit_csm_sources")) {
+        return [{ ready: true, row_count: 0, actual_count: 0, source_snapshot_at: new Date().toISOString(), stamp_ms: Date.now(), rows: [] }];
+      }
+      return [];
+    });
+    const ok = (await make(3).team()) as { eods: Row[] };
+    expect(ok.eods).toHaveLength(3);
+    expect(eodQuery).toContain("::date-180");
+    expect(eodQuery).toContain("LIMIT 5001");
+    await expect(make(5001).team()).rejects.toThrow("exceed the verified read limit");
+  });
+});

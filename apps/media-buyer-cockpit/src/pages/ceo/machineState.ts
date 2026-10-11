@@ -1,5 +1,10 @@
 import { capitalize, humanize } from "@/components/ceo/format";
 import type { StatusTone } from "@/components/ceo/StatusChip";
+import {
+  type CeoSections,
+  SECTION_KEYS,
+  type SectionKey,
+} from "@/components/ceo/useCeo";
 import type { MachinePayload } from "@/types/ceo/payloads";
 
 /**
@@ -72,3 +77,32 @@ export const sourceLabel = (key: string) => SOURCE_LABELS[key] ?? humanize(key);
 /** "ceo refresh" as "CEO refresh": job keys are lower case in the ledger. */
 export const jobName = (job: string) =>
   capitalize(job).replace(/\b(ceo|kpi|ai|eod)\b/gi, w => w.toUpperCase());
+
+/**
+ * CEO sections whose last refresh failed (ok false), in tab order, by the
+ * name the server gives them. Machine and the Today strip count these, so
+ * neither says "Everything is running" while Money and Expenses have failed
+ * for days (2026-10-11: they had, since 8 Oct).
+ */
+export function sectionsFailing(
+  sections: CeoSections,
+): { key: SectionKey; label: string }[] {
+  const out: { key: SectionKey; label: string }[] = [];
+  for (const key of SECTION_KEYS) {
+    const s = sections[key];
+    if (s && !s.ok) out.push({ key, label: s.label || humanize(key) });
+  }
+  return out;
+}
+
+/**
+ * "2 CEO sections failing (Money; Expenses and P&L)", or null when none fails.
+ * Semicolons part the labels, because a label can carry its own "and".
+ */
+export function sectionsFailingText(
+  failing: { label: string }[],
+): string | null {
+  if (!failing.length) return null;
+  const n = failing.length;
+  return `${n} CEO ${n === 1 ? "section" : "sections"} failing (${failing.map(f => f.label).join("; ")})`;
+}

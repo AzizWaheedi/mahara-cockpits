@@ -15,6 +15,7 @@ import {
 } from "./hoursCopy";
 import { hm, hours, hoursDec, monthLabel, pay } from "./hoursFormat";
 import { decideDaysOf, MonthRibbon } from "./MonthRibbon";
+import { sentLine, useNudge } from "./nudge";
 
 /**
  * The month view (design 5.3): five tiles, who should be tracking now and
@@ -178,6 +179,8 @@ export function HoursMonthView({
   onGoLeave: () => void;
 }) {
   const people = useMemo(() => sortPeople(view.people), [view.people]);
+  // Whether the morning Slack note to the CEO is on (A372).
+  const nudge = useNudge();
   const t = view.totals;
   const ready = people.filter(p => p.status.kind === "ready");
   const decide = people.filter(p => p.status.kind === "needs_review");
@@ -286,7 +289,7 @@ export function HoursMonthView({
               ))}
             </ul>
             <p className="mt-1 text-xs text-muted-foreground">
-              Nothing is sent to anyone.
+              {sentLine(nudge.read)}
             </p>
           </div>
         </div>

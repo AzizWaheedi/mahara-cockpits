@@ -18,6 +18,14 @@ import {
 } from "react-router";
 import { toast } from "sonner";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
+import {
+  CallsTimeline,
+  FormsHistory,
+  NextCallLine,
+  TeamEods,
+  UnmatchedQueue,
+  useClientTimeline,
+} from "@/components/ClientCalls";
 import { ClientCheckIn } from "@/components/ClientCheckIn";
 import {
   Chip,
@@ -41,6 +49,7 @@ import { DateInput } from "@/components/ui/date-input";
 import { Textarea } from "@/components/ui/textarea";
 import { readChurnPage } from "@/lib/churnClient";
 import type { MonthRow } from "@/lib/churnCore";
+import { kuwaitDayOf, logCall, staleSentence } from "@/lib/csmCalls";
 import { opportunitiesFor, rankOpportunities } from "@/lib/csmHotList";
 import { LINK_GROUPS } from "@/lib/csmLinks";
 import {
@@ -973,14 +982,19 @@ function HotSheet({
  * when no call is logged: the newest eight. The card carries 90 days of them
  * (the Client performance page shows any period).
  */
-function sinceLastCall(c: Client): Client[] {
+function sinceLastCall(c: Client, changes: Client[] | undefined): Client[] {
   const since = c.lastCall
     ? String(c.lastCall).slice(0, 10)
     : new Date(Date.now() + 3 * 3_600_000 - 14 * 86_400_000)
         .toISOString()
         .slice(0, 10);
-  return ((c.changes ?? []) as Client[])
-    .filter(ch => String(ch.day) >= since)
+  // An item with no day is never "since your last call" (String(undefined) >= date was true).
+  return ((changes ?? []) as Client[])
+    .filter(
+      ch =>
+        /^\d{4}-\d{2}-\d{2}$/.test(String(ch.day ?? "")) &&
+        String(ch.day) >= since,
+    )
     .sort((a, b) => (b.at ?? 0) - (a.at ?? 0))
     .slice(0, 8);
 }
@@ -1076,6 +1090,9 @@ function ClientRow({
           {c.lastCall
             ? ` · last call ${shortDay(c.lastCall)}`
             : " · no call logged"}
+          {c.nextCallAt
+            ? ` · next call ${shortDay(kuwaitDayOf(c.nextCallAt))}`
+            : ""}
           {c.liveDays !== undefined ? ` · live ${c.liveDays}d` : ""}
           {c.happiness ? ` · ${displayLabel(c.happiness)}` : ""}
           {sm.code ? ` · ${sm.code}` : ""}
@@ -1157,6 +1174,11 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
     publishOpenClient(openName);
     return () => publishOpenClient(null);
   }, [openName]);
+  /** The client's calls, forms and media buyer changes from the call store. */
+  const calls = useClientTimeline(
+    auth.client,
+    clientRow ? String(clientRow.taskId) : undefined,
+  );
   /** The client's profile: their links in the header (the tabs read it too). */
   const [profile, setProfile] = useState<Client | undefined>(undefined);
   useEffect(() => {
@@ -1444,7 +1466,7 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
         ? "Ticket created on the right board"
         : kind === "left"
           ? "Left, with a reason logged"
-          : "Logged to ClickUp",
+          : "Saved, ClickUp updated",
     );
   };
 
@@ -1572,7 +1594,22 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
       ...((profile?.links ?? {}) as Record<string, string>),
     };
     const mine = commitmentRows.filter(r => r.client.taskId === c.taskId);
-    const changes = sinceLastCall(c);
+    const changes = sinceLastCall(c, calls.timeline?.changes);
+    const changesStale = calls.timeline
+      ? (staleSentence(
+          calls.timeline.health.find(h => h.key === "csm-media-changes"),
+          "csm-media-changes",
+        ) ??
+        (calls.timeline.health.find(h => h.key === "csm-media-changes")?.detail
+          ?.metaStale
+          ? staleSentence(
+              calls.timeline.health.find(h => h.key === "csm-meta-activities"),
+              "csm-meta-activities",
+            )
+          : null))
+      : calls.error
+        ? `The change history could not be read: ${calls.error}`
+        : "Loading the change history.";
     const nc = nextCall(c, langOf(c));
     const reportUrl: string | undefined = (
       (profile?.reports ?? []) as { builtAt?: number; docUrl?: string }[]
@@ -1670,6 +1707,14 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
               last call {c.lastCall ? shortDay(c.lastCall) : "never"} (
               {cad.callLabel}){cad.callOverdue ? ", due" : ""}
             </span>
+            {c.nextCallAt ? (
+              <>
+                {" · "}
+                <NextCallLine at={c.nextCallAt} kind={c.nextCallKind} />
+              </>
+            ) : (
+              " · no call booked"
+            )}
             {" · 1-1 notes "}
             {c.lastNoteOn ? shortDay(c.lastNoteOn) : "none"}
             {sm.dwy ? "" : " · report "}
@@ -1755,7 +1800,30 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
               <div className="flex flex-wrap gap-2">
                 <Button
                   size="sm"
-                  onClick={() => run(c, "Held a call", "call", { note })}
+                  onClick={async () => {
+                    if (!auth.client) return;
+                    try {
+                      const said = await logCall(
+                        auth.client,
+                        {
+                          taskId: String(c.taskId),
+                          _id: c._id,
+                          name: String(c.name),
+                        },
+                        note,
+                      );
+                      setNote("");
+                      setPanel(null);
+                      if (said.startsWith("Saved")) toast.success(said);
+                      else toast.warning(said);
+                      calls.reload();
+                      void sb.refetch();
+                    } catch (e) {
+                      toast.error(
+                        `Not saved: ${String((e as Error).message ?? e)}`,
+                      );
+                    }
+                  }}
                 >
                   Log the call and summary
                 </Button>
@@ -2083,6 +2151,22 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
             onPeriod={k => setParam("period", k)}
             afterPrep={
               <>
+                <UnmatchedQueue
+                  client={auth.client}
+                  taskId={String(c.taskId)}
+                  clientName={String(c.name)}
+                  onMatched={calls.reload}
+                />
+                {calls.error ? (
+                  <p className="rounded-xl bg-muted/40 p-3 text-xs text-muted-foreground">
+                    The call history could not be read: {calls.error}
+                  </p>
+                ) : (
+                  <CallsTimeline
+                    timeline={calls.timeline}
+                    client={auth.client}
+                  />
+                )}
                 <SectionCard
                   title="What the media buyer changed since your last call"
                   count={changes.length}
@@ -2104,9 +2188,16 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
                   }
                   flush
                 >
+                  {changesStale ? (
+                    <p className="px-4 pt-4 text-xs text-muted-foreground sm:px-6">
+                      {changesStale}
+                    </p>
+                  ) : null}
                   {changes.length === 0 ? (
                     <p className="px-4 py-4 text-sm text-muted-foreground sm:px-6">
-                      No campaign changes since then.
+                      {changesStale
+                        ? "None shown, but the history is incomplete, so this is not a confirmed zero."
+                        : "No campaign changes since then."}
                     </p>
                   ) : (
                     changes.map(
@@ -2132,6 +2223,8 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
                     )
                   )}
                 </SectionCard>
+                <TeamEods timeline={calls.timeline} />
+                <FormsHistory timeline={calls.timeline} />
                 {mine.length ? (
                   <SectionCard
                     title="What you said you would do"
