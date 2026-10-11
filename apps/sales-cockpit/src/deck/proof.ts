@@ -957,6 +957,7 @@ export const JOURNEY: Stop[] = [
         w: 828,
       },
       // Aziz, 2026-10-08: "if we hover or click it it should make it popup".
+      // The pop-up adds the deck's language (journeys.tsx, inLang).
       live: LINKS.landing,
     },
   },
@@ -1253,8 +1254,8 @@ export const CLOSING_TOUR: Stop[] = [
       ar: "٦ كورسات: البداية، الأونبوردنق، تحسين قوقل، صناعة العرض، إتقان توقيع المشاريع، والفريق والتشغيل.",
     },
     why: {
-      en: "The frameworks and scripts our best partners use to close 40 to 50% of their proposals.",
-      ar: "نفس الطرق والسكربتات اللي أنجح عملائنا يقفلون فيها ٤٠ لـ٥٠٪ من عروضهم.",
+      en: "The frameworks and scripts our best partners use to close their proposals.",
+      ar: "نفس الطرق والسكربتات اللي أنجح عملائنا يقفلون فيها عروضهم.",
     },
     media: {
       kind: "shots",
