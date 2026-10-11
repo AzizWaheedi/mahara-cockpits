@@ -5,7 +5,7 @@
  *
  *   bun hermes/csm-calls/worker.ts doctor
  *   bun hermes/csm-calls/worker.ts run [--apply] [--report <path>] [--only ghl,typeform,fathom,meta,changes]
- *   bun hermes/csm-calls/worker.ts backfill --source ghl|fathom|meta [--apply] [--report <path>]
+ *   bun hermes/csm-calls/worker.ts backfill --source ghl|fathom|meta|eods [--apply] [--report <path>]
  *   bun hermes/csm-calls/worker.ts seed [--apply]
  *   bun hermes/csm-calls/worker.ts reconcile [--apply] [--report <path>]
  *
@@ -16,6 +16,7 @@
 import { writeFileSync, readFileSync } from "node:fs";
 import { makeTransport, makeDb, writeHealth, REQUIRED, ProviderError, type Env, type Health } from "./lib";
 import { type Ctx, loadClients, ghlSource, typeformSource, fathomSource, metaSource, changesSource, unmatchedQueue, seed, reconcile } from "./sources";
+import { eodSource } from "./eods";
 
 const DAY = 86_400_000;
 
@@ -64,6 +65,9 @@ async function doctor(env: Env) {
   await probe("typeform", () => t.typeform("forms/fRokTITH/responses", { page_size: "1" }));
   await probe("meta", () => t.meta("me", { fields: "id" }));
   await probe("store", () => db.all("cockpit_csm_calls", "select=id&limit=1"));
+  await probe("eod sheet", () => t.sheetTabs());
+  await probe("slack eods", () => t.slackHistory({ channel: "C09RQS2TFST", limit: "1" }));
+  await probe("eod store", () => db.all("cockpit_csm_eod_mentions", "select=id&limit=1"));
   return { ok: Object.values(checks).every(v => v === "ok"), ...out, checks };
 }
 
@@ -115,7 +119,7 @@ async function main() {
     const last = Date.parse(ctx.stateOf(key)?.last_ok_at ?? "");
     return Number.isFinite(last) ? Math.min(last - overlapDays * DAY, now - overlapDays * DAY) : now - fallbackDays * DAY;
   };
-  const only = (arg("--only") ?? "ghl,typeform,fathom,meta,changes").split(",");
+  const only = (arg("--only") ?? "ghl,typeform,fathom,meta,changes,eods").split(",");
 
   if (cmd === "run") {
     if (only.includes("ghl")) await guard("csm-ghl-calls", () => ghlSource(ctx, now - 30 * DAY, now + 60 * DAY));
@@ -132,6 +136,8 @@ async function main() {
     if (only.includes("fathom")) await guard("csm-fathom", () => fathomSource(ctx, new Date(lookback("csm-fathom", 7, 7)).toISOString().replace(/\.\d{3}Z$/, "Z")));
     if (only.includes("meta")) await guard("csm-meta-activities", () => metaSource(ctx, lookback("csm-meta-activities", 3, 1)));
     if (only.includes("changes")) await guard("csm-media-changes", () => changesSource(ctx));
+    // EODs are rewritten or corrected after posting: re-read the last 3 days every tick.
+    if (only.includes("eods")) await guard("csm-eod-mentions", () => eodSource(ctx, Math.min(lookback("csm-eod-mentions", 3, 3), now - 3 * DAY)));
   } else if (cmd === "backfill") {
     const source = arg("--source");
     if (source === "ghl") {
@@ -140,7 +146,8 @@ async function main() {
         await guard("csm-ghl-calls", () => ghlSource(ctx, s, Math.min(s + 28 * DAY, now + 60 * DAY)));
     } else if (source === "fathom") await guard("csm-fathom", () => fathomSource(ctx, "2026-07-01T00:00:00Z", 60));
     else if (source === "meta") await guard("csm-meta-activities", () => metaSource(ctx, now - 90 * DAY));
-    else throw new Error("--source ghl|fathom|meta");
+    else if (source === "eods") await guard("csm-eod-mentions", () => eodSource(ctx, now - 90 * DAY));
+    else throw new Error("--source ghl|fathom|meta|eods");
     // One health line per source for the whole backfill: slices add up, any failed slice fails it.
     const merged = new Map<string, Health>();
     for (const h of healths) {

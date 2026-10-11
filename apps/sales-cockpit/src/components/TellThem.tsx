@@ -7,6 +7,7 @@ import {
   firstOf,
   type LeadLike,
   leadFirst,
+  linkLine,
 } from "../lib/reschedule";
 import { supabase } from "../lib/supabase";
 import { TELL_LABELS, type TellMoment, tellMessage } from "../lib/tellThem";
@@ -59,6 +60,31 @@ function useGroupLink(contactId: string, on: boolean) {
   }, [contactId, on]);
 }
 
+/**
+ * The lead's own link to pick another time for a call on the lead page's
+ * rows (book.links, D17): only for a call this seat may reschedule now, on
+ * a calendar that lets the lead reschedule (intros and Follow up call). A
+ * read that fails, or an older server, offers no link: the message itself
+ * never waits on it.
+ */
+function useRowLink(
+  contactId: string,
+  appointmentId: string | null,
+  on: boolean,
+) {
+  return useQuery<string | null>(async () => {
+    if (!on || !appointmentId) return { data: null, error: null };
+    try {
+      const r = await api<{ links?: Record<string, string> }>("book.links", {
+        contact_id: contactId,
+      });
+      return { data: r.links?.[appointmentId] ?? null, error: null };
+    } catch {
+      return { data: null, error: null };
+    }
+  }, [contactId, appointmentId, on]);
+}
+
 /** The newest instant Zoom link the cockpit made for this kind of call, still live. */
 function useInstantLink(contactId: string, kind: CallKind, on: boolean) {
   return useQuery<string | null>(async () => {
@@ -86,7 +112,9 @@ export function TellThem({
   moment: firstMoment,
   lang: leadLang,
   rescheduleId = null,
-  link = null,
+  link: given = null,
+  readLink = false,
+  linkNote = null,
   label,
   extra,
 }: {
@@ -100,6 +128,14 @@ export function TellThem({
   rescheduleId?: string | null;
   /** The lead's own link to pick another time (plan D17), when it is real. */
   link?: string | null;
+  /** A call row's Tell them: read the lead's own link for this call (book.links) when none is given. */
+  readLink?: boolean;
+  /**
+   * Under the pick-a-time message: what the lead sees on the link (linkLine
+   * with the booking page's last day, where the calendar was read); the same
+   * without the date when not given.
+   */
+  linkNote?: string | null;
   label?: string;
   /** Buttons that sit in the same row (Reschedule again, Done). */
   extra?: ReactNode;
@@ -120,6 +156,12 @@ export function TellThem({
     call.kind,
     !dnd && !call.meet_url,
   );
+  const rowLink = useRowLink(
+    lead.contact_id,
+    call.appointment_id,
+    readLink && !given && !dnd,
+  );
+  const link = given ?? rowLink.data ?? null;
 
   const first = leadFirst(lead);
   const heading =
@@ -222,6 +264,13 @@ export function TellThem({
       >
         {message}
       </p>
+      {linkMoment && link ? (
+        // The link offers only the booking page's own days: a call booked or
+        // moved past them gets no later day from it (review, 2026-10-11).
+        <p className="muted max-w-[38rem] text-xs leading-relaxed">
+          {linkNote ?? linkLine(null)}
+        </p>
+      ) : null}
       <div className="flex flex-wrap items-center gap-2">
         {digits && !blocked ? (
           <button

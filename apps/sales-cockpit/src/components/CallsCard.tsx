@@ -162,6 +162,8 @@ export function CallsCard({
               missed: isMiss ? (again ? "booked" : "open") : null,
             })}
             lang={lang}
+            // The lead's own link to pick another time, where HighLevel allows it.
+            readLink
             extra={
               <button
                 type="button"
@@ -701,6 +703,7 @@ export function RowPanel({
             bookedRecently: bookedRecently(row, Date.now()),
             missed: isMiss ? "open" : null,
           })}
+          readLink
           extra={
             <button
               type="button"

@@ -22,6 +22,7 @@ import {
   CallsTimeline,
   FormsHistory,
   NextCallLine,
+  TeamEods,
   UnmatchedQueue,
   useClientTimeline,
 } from "@/components/ClientCalls";
@@ -2222,6 +2223,7 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
                     )
                   )}
                 </SectionCard>
+                <TeamEods timeline={calls.timeline} />
                 <FormsHistory timeline={calls.timeline} />
                 {mine.length ? (
                   <SectionCard

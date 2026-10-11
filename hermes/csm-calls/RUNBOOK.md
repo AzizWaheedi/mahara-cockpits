@@ -41,3 +41,8 @@ Every provider read goes through `lib.ts` transport. Receipts land in `cockpit_c
 ## Release / rollback
 
 Stage a fresh immutable folder from a commit on GitHub `main`. Run doctor and dry run from that folder, then atomically repoint `csm-calls-current`, keeping the old release path. Add the two flock cron lines after the release passes; add the same exact lines to `hermes/cockpit-guardian/crontab.manifest`. The worker is not the guardian and must never open or close incidents. Rollback: repoint the link to the previous release and run doctor/dry-run; rows are upserted, not deleted. If a store migration is not applied, ship **nothing** that calls its RPCs.
+
+## Team EODs (csm-eod-mentions)
+- Reads the cockpit EODs (`cockpit_eod_reports`), every tab of the EOD Reports sheet (read-only service account) and the Slack EOD channels the bot is in (`#eods-csms`, `#eods-salesreps`, `#media-eods`). `#tech-eods` and `#eods-csr` are not readable by the bot; their EODs still arrive through the sheet. To add them, invite the bot and add the ids to `EOD_CHANNELS` in `eods.ts`.
+- Stores only the lines that name a client (whole-word name or alias, 4+ letters), never energy, stress or focus answers, in `cockpit_csm_eod_mentions`. A copy of the same EOD in the sheet and Slack is kept once.
+- Each tick re-reads the last 3 days (EODs get edited). Backfill: `run.sh backfill --source eods --apply` (90 days).
