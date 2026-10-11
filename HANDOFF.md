@@ -1,146 +1,146 @@
-# Session Handoff — Mahara Cockpits Supabase Migration Final Cutover (Option C)
+# Session Handoff: Convex to Supabase completion sweep (Mahara cockpits)
 
-**All code, database migrations, media worker contracts, and historical import tests are 100% passing green; the fresh session must commit the verified changes, seal release evidence, push to `origin/main`, and deploy to production.**
-Date: 2026-10-06 · Working dir: `D:/MaharaMedia/worktrees/mahara-cockpits-supabase-completion`
+**Every job and screen that still depended on Convex now has a Supabase replacement; the three changed cockpits are shipped, and the remaining work is Muhammed's go-live switches plus committing and deploying the last uncommitted batch (billing write-back to ClickUp, em-dash fix, comment watch code).**
+Date: 2026-10-09 · Working dir: `D:/MaharaMedia/worktrees/mahara-cockpits-convex-sweep` (branch `claude/convex-sweep-20261009`)
+
+## Update 2026-10-09 18:30 UTC (follow-up session; this section supersedes TODO 2, 3, 5, 8 and 9 below)
+- **Done:** TODO 2 committed (`02cb4440`). `clickup-writeback` v3 and `billing-sync` v3 deployed. `20261009j` applied and verified. `ceo-extensions-sync` v1 deployed (`verify_jwt=false`), doctor OK, dry run. Package list fix `66840883`. Merge of origin/main `fa9ed042`. 249 targeted tests pass.
+- **Done by Muhammed 18:19 UTC:** `20261009k` applied (cron `mahara-ceo-extensions-auto`, minute 47, verified) and `fa9ed042` pushed to `main` and the branch. `supabase secrets set` failed: his CLI login lacks secret rights; use the management token from `.env.local` or the dashboard.
+- **DB crash 18:15 UTC (4th today):** host kill ("not properly shut down"), about 1 min after a media-run claim, like 09:45 and 12:31. Compute is Small (2 GB). Recommended: upgrade to Medium (Muhammed's cost decision) and have the reliability session profile the media worker's first minute.
+- **Billing live (verified):** `BILLING_SYNC_APPLY=true` set by Muhammed. 18:37 UTC run ok, 2 card changes, 67 fresh snapshots, audit row. CEO `clients` section computed again at 18:55 UTC (it had failed since 8 Oct 16:10 on stale snapshots). Still failing: money and expenses, because the newest bank statement ends 21 Sep (needs a statement upload).
+- **CEO extensions cron (verified):** first dry run 18:47 UTC ok, "every card already says what the form says". `CEO_EXTENSIONS_APPLY` not set.
+- **Comment watch:** dry run plans 0 card changes. Go-live proves nothing yet.
+- **Portal monitor:** already runs no Convex checks. A dead-code patch is staged in `D:/secure/.../convex-sweep-20261009/portal-monitor/`.
+- **Producer release plan:** `D:/secure/.../convex-sweep-20261009/cockpit-sync-release-plan.md` (overlay 3 files on `c3a95af9`; coordinate with Faris).
+- Session note: `mahara-context/shared/sessions/2026-10-09T174500Z-claude-convex-sweep-billing-writeback.md` (local, not synced).
 
 ## Context
-Mahara Media operates five cockpit applications (`media-buyer`, `client-success`, `creative-director`, `video-editor`, `sales-cockpit`). The system is migrating from three legacy Convex deployments (`adorable-seahorse-418`, `impressive-dinosaur-375`, `colorful-wombat-644`) to Supabase Creative Triage (`bldgtotkfmhoxmlzowdx`). The primary objective is complete Convex decommissioning with zero production runtime dependencies, fail-closed row security, and audited operations.
+Mahara runs five React cockpits (media buyer with the CEO cockpit inside it, client success, creative director, video editor, sales). Convex was paused on 2026-10-07 22:47 UTC after a "core data first" migration. Muhammed asked for the migration to be finished 100%, so every Convex job, HTTP route and stubbed screen gets a native owner on Supabase Creative Triage (`bldgtotkfmhoxmlzowdx`). Runtime independence is the goal. Deleting Convex is out of scope unless he says so. A separate session ("Cockpit backend reliability audit") is cleaning the Supabase database in parallel.
 
 ## What we did this session
-- **Clean Merge Baseline** — Merged 31+ divergent commits from `origin/main` into `codex/supabase-completion-20261004` (commit `77fd149`). **LIVE**
-- **Typechecks & Vite Bundling** — Verified all five cockpits compile with zero TypeScript errors and bundle cleanly for production. **LIVE**
-- **Zero Convex Static Imports** — Confirmed zero static Convex imports in production source across all five cockpits. **LIVE**
-- **Live Supabase Migrations Applied** — Applied and verified six new functions (`cockpit_adopt_member`, `admin_overview`, `calendar_overview`, `wa_inbox`, `native_stills_read`, `media_source_read`) plus 14 supporting schema tables with RLS and audit hooks on live Supabase (`bldgtotkfmhoxmlzowdx`). **LIVE**
-- **Authenticated Five-Cockpit Browser Proof** — Exercised all five cockpits on local preview server `http://127.0.0.1:4390/` with an authenticated staff session. Verified **zero Convex HTTP requests** and **zero unauthorized writes**. Recorded as `VERIFIED` in `evidence/cutover-acceptance.json`. **LIVE**
-- **Historical Data Importer Tested** — Resolved timestamp comparison formatting in `scripts/import-cockpit-runtime-sources.py`; tested with **40/40 tests passing green**. **LIVE**
-- **Media Worker Doctor Contracts Verified** — Verified fail-stop boundaries, draft validation, and error redaction in `hermes/media-native/test/runtime.test.ts` (**10/10 tests passing green**). **LIVE**
+- **Gap sweep.** Four read-only sweeps mapped every Convex cron, HTTP route, worker caller and frontend stub to its native status. All 105 RPCs the cockpits call exist live. **LIVE**
+- **Sales mirror outage.** `SALES_B2B_MGMT_TOKEN` was revoked at about 07:15 UTC. Muhammed set the new token from `.env.local` (`supabase_token`). Runs since 11:21 UTC succeed. **LIVE**
+- **Sales dials.** These are not a migration fault. B2B `maqsam-calls-sync` runs fine but finds no new setter calls after 2026-10-07 18:37 UTC. **UNCONFIRMED** (business question)
+- **Onboarding Kit auto-sync.** New Edge Function `onboarding-sync` with pg_cron `mahara-onboarding-sync` every 10 min. First run 433 read 67 cards and wrote 8. **LIVE**
+- **EOD to Slack and the sheet.** Migration `20261009g` makes a submit queue one `eod_outbox` row. Reports imported from Convex are never re-queued. VPS cron now runs `out.py --apply`. **LIVE** (queue was empty at switch-on)
+- **Hala WhatsApp inbox resumed.** The exact crontab line was restored from its backup. First run at 11:45 UTC handled 220 messages and wrote 16 drafts. It never sends. **LIVE**
+- **Ask AI resumed.** Hermes job `e4601df61803` enabled, `*/5`. The new `askai.py` adds the `comment_digest` and `call_brief` kinds. Doctor is healthy. **LIVE**
+- **Media worker scheduled.** Launcher `run-media-native.py`, cron `*/2`, `flock`. Doctor passed 12/12. First live run OK. **LIVE**
+- **Guardian without Convex.** Deployed to the VPS after a backup. 282 tests pass on the host. All open `convex-*` incidents closed by themselves. **LIVE**
+- **CEO gateway.** `cockpit-ceo-api` now serves the Posting tab, webinar pitch times and ClickUp extensions (`20261009d`). It boots and refuses anonymous callers. **LIVE**
+- **Billing sync.** Edge Function `billing-sync` plus `20261009a` (RPCs and cron), and `20261009h`, which closes direct browser writes. The dry run read 65 cards with 2 real changes and 67 day snapshots. **BUILT** (dry run until `BILLING_SYNC_APPLY`)
+- **ClickUp writeback.** `clickup-writeback` (jobs `kpi`, `log`, `dosdonts`) plus `20261009f`. The KPI dry run plans 60 writes on 20 cards. **BUILT** (dry run until `CLICKUP_WRITEBACK_APPLY`)
+- **Tracking audit.** `tracking-audit`, daily 02:30 UTC. 431 "No URL parameters" plus 2 missing lead forms. This matches Convex's 352 + 2; Convex read fewer ads. **LIVE**
+- **Hiring.** `hiring-sync` (cron function) and `hiring-api` (browser, CEO-gated) are deployed. They fail closed until the GHL hiring keys exist. Migration `20261009c` is deliberately NOT applied yet. **BLOCKED**
+- **Creative Social.** Stub buttons now queue real Salma jobs. Writes need the creative role or the CEO and are audited (`20261009e`). **LIVE** (shipped)
+- **Comment watch and call briefs.** Migration `20261009i` applied, function `comment-watch` v1 deployed, `askai.py` installed on the host. ClickUp writes are dry run until `COMMENT_WATCH_APPLY`. **BUILT** (code uncommitted; see TODO 2)
+- **Billing write-back to ClickUp.** Muhammed approved this. Code and `20261009j` written, 88/89 tests pass. **BUILT, not deployed, uncommitted**
+- **Release.** Commits `48339a6c`, `f36d76ca` (merge of main) and `4fb487e7` (lint fix for another session's files) were pushed to `main` and shipped with `scripts/ship.sh`. **LIVE**
+- **Viktor-side scripts.** Marked archived, and the hard-coded bridge token was removed from the file. The token is still in git history. **LIVE**
+- **Database crashes at 12:10, 12:15 and 12:31 UTC.** Cause confirmed: the audit session's audit-log copy pulled huge media-run rows. That session finished safely: the DB went from 6.4 GB to 1.47 GB, with no loss of protected rows. **LIVE** (resolved)
 
-## Current state — you are here
-- **Live & verified:** All 54 test suites pass; all five cockpits compile and build cleanly; zero static Convex imports; six RPC functions and 14 support tables are live on Supabase; authenticated browser navigation confirmed zero Convex traffic; historical import tests (40/40) and media worker runtime tests (10/10) pass with zero errors.
-- **Built, ready to commit:** Nine cleanly passing files in the worktree (`hermes/media-native/doctor.ts`, `tools.ts`, `runtime.test.ts`, `import-cockpit-runtime-sources.py`, and SQL contracts).
-- **Not started:** Committing the verified changes, setting `release_ready: true` in `evidence/cutover-acceptance.json`, pushing to `origin/main`, deploying via `scripts/ship.sh`, and retiring the three Convex instances.
+Decisions and why:
+- **Ports run as Supabase Edge Functions plus pg_cron where possible.** This matches the existing syncs (`tap-charges-sync`). It avoids VPS ownership conflicts and keeps the service key server-side.
+- **Every outward write sits behind an `*_APPLY` flag.** This follows Muhammed's rule that each live outward automation needs approval.
+- **`20261009h` was split from `20261009a`.** The live frontends wrote billing tables directly until the new release shipped.
+- **Em dashes become hyphens; the marker stays.** Muhammed chose this. Comment watch uses the marker (🎯) to skip the cockpit's own comments.
+
+## Current state: you are here
+- **Live and verified:**
+  - Production `cockpit.maharamedia.com` serves the release. The deploys were verified by `ship.sh` (IDs in the table below).
+  - pg_cron jobs present: `mahara-onboarding-sync`, `mahara-billing-sync`, `mahara-billing-sync-overnight`, `mahara-clickup-writeback-kpi|log|dosdonts`, `mahara-tracking-audit`, `mahara-comment-watch`, `mahara-ai-watch-tick` (checked 2026-10-09 17:27 UTC).
+  - Latest run states (`cockpit_sync_state`) are OK for onboarding, ClickUp writeback, comment-watch and ai-watch-tick.
+  - `billing-sync` shows `ok=false` only because it is a dry run. This also opened the guardian incident `native-jobs`.
+  - Open `convex-*` guardian incidents: 0.
+- **Built, not yet verified:**
+  - The first live ClickUp writes.
+  - The first live billing write.
+  - The comment-watch dry-run content. Nobody has read the planned items yet.
+  - A real Ask AI chat claim through the new overloaded claim. Tests cover it; it is not checked live.
+  - The hiring mirror (needs keys).
+- **Not started:**
+  - Updating the cockpit-sync producer on the VPS, so CSM and creative pages show digests.
+  - Removing the Convex checks from the portal monitor.
+  - Team calendar on Vercel.
+  - A mahara-context session note.
+  - Deleting Convex (out of scope).
 
 ## Still open / TODO
-1. **Commit Verified Changes** — Stage and commit the nine verified files on branch `codex/supabase-completion-20261004` (e.g. `feat: finalize media worker doctor contracts and historical import timestamps`). **TODO**
-2. **Seal Cutover Evidence** — Update `evidence/cutover-acceptance.json`: set `status: RELEASE_READY`, set `release_ready: true`, and bind to current HEAD. **TODO**
-3. **Run Release Verifier** — Run `python scripts/verify-cutover-readiness.py --mode release` to assert all release gates pass. **TODO**
-4. **Push to GitHub** — Push the verified branch to `origin/main` (`git push origin codex/supabase-completion-20261004:main`). **TODO**
-5. **Deploy & Retire Convex** — Run `scripts/ship.sh` to deploy the five cockpits live to `cockpit.maharamedia.com`, then decommission `adorable-seahorse-418`, `impressive-dinosaur-375`, and `colorful-wombat-644`. **TODO**
+1. **Muhammed's switches** (I cannot set secrets; the permission system blocks it). **TODO**
+   - Run `powershell -NoProfile -ExecutionPolicy Bypass -File D:\MaharaMedia\worktrees\mahara-cockpits-convex-sweep\scripts\dev\sync-hiring-secrets.ps1`.
+   - Set Edge secrets `BILLING_SYNC_APPLY=true`, `CLICKUP_WRITEBACK_APPLY=true` and `CLICKUP_WRITEBACK_ONLY_TASKS=86eyn6c1f` (the Safad card, for the first live check).
+   - Then verify that card in ClickUp and remove `CLICKUP_WRITEBACK_ONLY_TASKS`.
+   - None of these secrets were set as of 17:27 UTC.
+2. **Finish and commit the uncommitted batch.** **IN PROGRESS**
+   - **Fix the one failing test:** in `supabase/functions/clickup-writeback/queue.test.ts`, line 46, the expected comment still contains `CHANGE MADE — Raised budget`. Change it to ` - `.
+   - **Run tests:** `bun test supabase/functions/clickup-writeback supabase/functions/billing-sync supabase/functions/comment-watch`, then `cd apps/media-buyer-cockpit && bun test scripts/billing-native-sync-supabase.test.ts scripts/ai-watch-supabase.test.ts`.
+   - **Then commit** (all files under `git status`).
+3. **Deploy the billing write-back, in this order:** **TODO**
+   - Redeploy `clickup-writeback`. Its extras are the 5 `cockpit-media-api` files from `fn_extras.py`. This also deploys the em-dash fix.
+   - Redeploy `billing-sync` (extra: `cockpit-csm-api/tools.ts`).
+   - Then `apply_migration.py .../20261009j_billing_clickup_writeback.sql`.
+   - **Warning:** while the apply flag is off, billing edits are held over ClickUp for up to 60 days. After going live, move billing `dry_run` items back to `queued`.
+4. **Hiring.** **BLOCKED** on TODO 1
+   - After the keys exist: apply `20261009c_hiring_native.sql`.
+   - POST `{"job":"doctor"}`, then review the mirror and intake dry runs.
+   - Hiring GHL writes (`HIRING_APPLY`) were NOT approved for live. Candidate sends stay off (`HIRING_SEND_ENABLED`).
+5. **Comment watch go-live.** **TODO**
+   - Read the dry run in `cockpit_comment_watch_runs` and `cockpit_comment_watch_items`.
+   - Confirm one real Ask AI chat still completes.
+   - Then set `COMMENT_WATCH_ONLY_TASKS=<one card>` with `COMMENT_WATCH_APPLY=true`.
+   - Needs Muhammed's approval for that live run.
+6. **cockpit-sync producer update on the VPS.** **TODO**
+   - Ship `hermes/cockpit-sync/clientUpdates.ts`, `csmProducer.ts` and `creativeProducer.ts` into a new native release.
+   - The current link is `/home/hermes/cockpit-native-current` → `c3a95af9`.
+   - The release package and runtime env are `runtime-<release>.json`.
+7. **Team calendar invites (approved).** **BLOCKED**
+   - Vercel project `mahara-media-buyer` has no server env: `CRON_SECRET`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REFRESH_TOKEN`, `TEAM_CALENDAR_WRITES_ENABLED`.
+   - The 15-minute watchdog (`api/watchdog.ts`) lacks the same keys.
+   - Also remove the leftover `VITE_CONVEX_URL` from that project.
+   - Needs a decision on which Google account sends invites.
+8. **Portal monitor.** `/docker/hermes-agent-ff5p/data/portal-monitor/monitor.py` still has Convex checks. **TODO**
+9. **CEO extensions automatic pass.** Ported in `cockpit-ceo-api`, but not scheduled. Needs an hourly pg_cron call with `{"operation":"ceo.extensions.applyAuto"}`, plus `CEO_EXTENSIONS_APPLY` for live writes. **TODO**
+10. **Record the session** in `D:/MaharaMedia/mahara-context/shared/sessions/`. Context sync is blocked by 60 dirty files at `398a4ed`; write the note locally and do not claim sync. **TODO**
 
-## Key files, IDs & locations
-| Item | Location / Value |
-|------|------------------|
-| Active Worktree | `D:/MaharaMedia/worktrees/mahara-cockpits-supabase-completion` |
-| Primary Repository | `D:/MaharaMedia/mahara-cockpits` |
-| Current Branch | `codex/supabase-completion-20261004` |
-| Base Commit SHA | `77fd149f3a2b1e84f66782f3334a720c1c8df689` |
-| Supabase Project (Creative Triage) | `bldgtotkfmhoxmlzowdx` |
-| Upstream Read-Only DB (B2B) | `flwboeijllbtrufxkhts` |
-| Cutover Readiness Verifier | `scripts/verify-cutover-readiness.py` |
-| Cutover Acceptance Evidence | `evidence/cutover-acceptance.json` |
-| Shipping Script | `scripts/ship.sh` |
-| Legacy Convex Deployments | `adorable-seahorse-418`, `impressive-dinosaur-375`, `colorful-wombat-644` |
+## Key files, IDs and locations
+| What | Value |
+|------|-------|
+| Sweep worktree / branch | `D:/MaharaMedia/worktrees/mahara-cockpits-convex-sweep` / `claude/convex-sweep-20261009` (HEAD `4fb487e7`) |
+| Clean ship worktree | `D:/MaharaMedia/worktrees/mahara-cockpits-ship` (detached `4fb487e7`; has `.vercel` links and `node_modules`) |
+| GitHub main | was `4fb487e7` at push; now `0bdbdc5a` (other sessions pushed after) |
+| Root checkout | `D:/MaharaMedia/mahara-cockpits` is stale (500+ commits behind, dirty); do not build from it |
+| Cockpit DB / B2B (read-only) | `bldgtotkfmhoxmlzowdx` / `flwboeijllbtrufxkhts` |
+| Production deploys | media buyer `dpl_2GR2cXjnbjQRwGKFuRAueUkxUaAh`, client success `dpl_2w7h6EQu5cG2EKSzpHwDPiGNiM72`, creative `dpl_BABsC4uU4FcC9rquJmwWyJQnnLhg` |
+| Edge functions (versions at 17:27 UTC) | `onboarding-sync` v2, `billing-sync` v2, `clickup-writeback` v2, `tracking-audit` v2, `hiring-sync` v2, `hiring-api` v2, `comment-watch` v1, `cockpit-ceo-api` v9 (higher than my v8; likely secret-change bumps, **UNCONFIRMED**) |
+| Migrations applied today (mine) | `20261009a,b,d,e,f,g,h,i`; NOT applied: `20261009c` (hiring), `20261009j` (billing write-back) |
+| Deploy / migrate helpers | `scripts/dev/deploy_tree.py <root> <slug> <extras> --verify-jwt=true|false`, `scripts/dev/apply_migration.py <file>`, `scripts/dev/fn_extras.py <root> <slug>` |
+| Management token | `supabase_token` in `D:/MaharaMedia/mahara-cockpits/.env.local` (path only) |
+| Ship env | `COCKPIT_MANAGEMENT_TOKEN` (from the token above), `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` from `D:/MaharaMedia/worktrees/mahara-cockpits-supabase-completion/apps/<app>/.env.local` |
+| Hermes VPS | `wsl -d Ubuntu -- ssh root@187.77.156.166`; pipe Python scripts via stdin (shell variables get mangled) |
+| VPS receipts | `/home/hermes/.cockpit-native-state/`: `optional-workers-resume-20261009.json`, `media-native-activation-20261009.json`, `eod-out-apply-20261009.json`, `crontab-before-*-20261009T*.txt`, `guardian-before-convex-removal-.tgz`, `askai-before-comment-watch-20261009/` |
+| Ask AI job / live copies | `e4601df61803`; `/docker/hermes-agent-ff5p/data/skills/mahara/cockpit-ask-ai/scripts/askai.py` and `/home/hermes/mahara-cockpits/hermes/cockpit-ask-ai/scripts/askai.py` (sha `e826fcb5dd71cae6`) |
+| Ship logs | `D:/secure/cockpit-retirement-prep-20261007/convex-sweep-20261009/` |
+| ClickUp test card | Safad `86eyn6c1f` |
 
-## Constraints & conventions to carry forward
-- **Do Not Re-verify or Loop**: The tests, builds, and browser checks are already verified green. Do not re-run full test suites or browser screenshot loops.
-- **Immediate Production Cutover**: Focus strictly on committing, sealing evidence, pushing, and deploying.
-- **Keep Supervisor Context Lean**: Output concise status updates.
+## Constraints and conventions to carry forward
+- **Do not use the scratchpad or `/tmp` for logs.** Another Claude process cleaned both mid-session; use `D:/secure/.../convex-sweep-20261009/`.
+- **Permission allow-rules match only the command prefix.** Start commands with `python D:/.../deploy_tree.py` or `apply_migration.py`; never start with `cd`, a variable or `export`. The classifier blocks secret writes and VPS AI-agent edits (labelled "self-modification").
+- **`ship.sh` requirements.**
+  - It needs `convex/_generated` copied into media buyer and creative (gitignored), `.vercel/project.json` per app, and clean app folders.
+  - Its final readiness check always reports "NOT READY" (old Convex evidence file); judge success by its "Production verified" line.
+- **Migration filename clash.** Another session also used the prefixes `20261009a` and `20261009b` (winner identity). The DB history stores names, so there is no collision, but the repo order is shared.
+- **Missing is never zero; every external write is behind an `*_APPLY` flag.** Run dry first, verify one record, then expand.
+- **The audit session owns `cockpit_audit_log` hygiene and retention (`cockpit-backend-retention`, 01:17 UTC).** Do not run large copies or deletes concurrently; they crashed the DB three times today.
+- **Faris (a root Claude session on the VPS) also deploys native releases.** Coordinate before replacing `cockpit-native-current`.
+
+## Open questions / decisions for next session
+- **Which Google account should send team calendar invites, and may we add the Vercel server env?** Blocks TODO 7.
+- **Hiring GHL writes go-live** (`HIRING_APPLY`): not approved yet; review the intake dry run first.
+- **Comment watch ClickUp writes go-live** (`COMMENT_WATCH_APPLY`): needs approval after the dry-run review.
+- **Rotate the old Viktor bridge token** on the Convex side, since it stays in git history.
+- **Convex deletion:** out of scope; deployments `adorable-seahorse-418`, `impressive-dinosaur-375` and `colorful-wombat-644` stay paused.
 
 ## How to resume
-- Handoff file saved at `D:/MaharaMedia/mahara-cockpits/HANDOFF.md`.
-- Resume by creating a fresh session in `D:/MaharaMedia/mahara-cockpits` targeting worktree `D:/MaharaMedia/worktrees/mahara-cockpits-supabase-completion` and pasting the prompt below.
-
-## Option C execution checkpoint: 2026-10-06T16:15Z
-
-- Committed the nine requested source/test/SQL files as `1bf991ca1316b8d85b93790070d0a731b73da885`.
-- Commit message: `feat: finalize media worker doctor contracts and historical import timestamps`.
-- Bound `evidence/cutover-acceptance.json` to this HEAD. Kept `release_ready: false` and the existing incomplete categories unchanged.
-- Exercised the verifier's `verify_release_evidence` entrypoint directly. It returned false with 56 findings. Report: `D:/MaharaMedia/worktrees/cockpit-option-c-evidence-gate-20261006.json`.
-- This was an evidence-only check. No full suites, typechecks, Vite builds, browser checks or screenshots were rerun.
-- All six mandatory categories remain incomplete. Twenty-one required subchecks are not passed. The existing gate requires history/final-catchup and production acceptance, which the proposed ship-first workflow does not supply.
-- Preserved the existing uncommitted changes in this handoff and `docs/superpowers/plans/2026-10-04-supabase-completion.md`. The clean-worktree gate also remains unsatisfied.
-- No push, production shipping or Convex retirement occurred. `scripts/ship.sh` deploys before its final release gate, so it was not used as a preflight.
-- Canonical context synchronization stopped because that repository has local changes. Preserved them. Context revision: `398a4ed76942441c7cbed9d00f089edf781ed74c`.
-- Next decision: satisfy the existing acceptance contract, or approve a separate ship-first contract that leaves historical backfill and Convex retirement explicitly incomplete. Do not relabel incomplete evidence as passed.
-
-## Approved ship-first release contract: 2026-10-06
-
-- Muhammed explicitly approved the ship-first contract and committing the remaining handoff/plan files. He requested a full release verification.
-- `scripts/verify-cutover-readiness.py` now recognizes an explicit `release_contract: "ship-first"`. Unselected evidence keeps strict full-cutover validation. Unknown contracts fail closed.
-- Ship-first requires named approval, all five native browser routes, zero observed Convex traffic, zero unapproved writes, hash-verified artifacts, and `historical_backfill.status: "deferred_offline"`.
-- Exact clean HEAD, freshness, evaluator/source identity, all five local gates and all offline suites remain mandatory. No skips or allow-dirty bypass were added.
-- Browser proof remains the observed `77fd149` artifact. The five cockpit `src` directories have no changes since that commit. This certifies the inherited candidate-navigation baseline, not new production or complete business-journey acceptance.
-- Full-cutover categories remain unchanged. `full_cutover_ready` and `convex_retirement_authorized` remain false.
-- Historical reconciliation/final catchup stay offline. Protected exports, original storage and human fields remain recoverable.
-- New verifier regression first failed because the approved baseline was rejected. All 27 verifier regressions then passed after the contract change.
-- Contract documentation: `docs/CUTOVER-ACCEPTANCE.md`. Plan checkpoint: `docs/superpowers/plans/2026-10-04-supabase-completion.md`.
-- Final release command: `python scripts/verify-cutover-readiness.py --mode release --report D:/MaharaMedia/worktrees/cockpit-ship-first-release-20261006.json`.
-- The generated report records the final run result and exact clean SHA. The ignored acceptance bundle is rebound after committing release packaging to avoid a self-referential committed SHA.
-- Initial full release run against clean `b651819` passed all five local gates and ship-first evidence, but failed one suite: `scripts/native-admin.test.ts`. Preserved report: `D:/MaharaMedia/worktrees/cockpit-ship-first-release-initial-20261006.json`.
-- Root cause: its SQL fixture extractor expected `CREATE TABLE public.cockpit_native_media_runs`, but the canonical migration now uses `CREATE TABLE IF NOT EXISTS`. Updated only that extractor; no assertions, suite manifest or production gate were weakened.
-- The corrected admin suite passed all six tests with 26 assertions. Commit this correction and rerun the full release command against the rebound clean HEAD.
-- Push, frontend deployment and Convex retirement have not run. Check the final generated evidence/report for the current release-verification result.
-- Local fallback was recorded for dirty-state inputs excluded from isolated Gemini worktrees. No worker or browser relay was started.
-
-## Live branch previews and background upstream merge
-
-- Muhammed approved pushing the verified migration branch, delegating the upstream merge to Gemini 3.8, then pushing the reviewed merge to main and running `scripts/ship.sh all`.
-- Published `307b6f11ed621d62705ef791eaadcae6a3021225` to `origin/codex/supabase-completion-20261004`.
-- The correct cockpit projects did not all receive GitHub previews. Created previews on their existing Vercel project IDs without changing production aliases.
-- Four preview builds lacked the Supabase project URL. Client Success's Preview and Production configuration lists confirmed that its Supabase variables were missing.
-- Validated only named local `VITE_SUPABASE_URL` and public `VITE_SUPABASE_ANON_KEY` values against Creative Triage. JWT browser keys have role `anon`, never `service_role`. No key values were disclosed.
-- Rebuilt the affected previews with explicit public build configuration. All five protected entries and entry bundles returned HTTP 200 and carried the Creative Triage project URL. No legacy Convex deployment URL was found in those entry bundles.
-- This is cloud entry/configuration smoke, not a new authenticated business-journey or browser-network replay.
-- Correct previews:
-  - Media Buyer: https://mahara-media-buyer-lr1ppiv4g-aziz-6097s-projects.vercel.app/
-  - Client Success: https://mahara-client-success-kfl35t0e2-aziz-6097s-projects.vercel.app/client-success/
-  - Creative Director: https://mahara-creative-director-pze472hkf-aziz-6097s-projects.vercel.app/creative/
-  - Video Editor: https://mahara-video-editor-8u8jx361k-aziz-6097s-projects.vercel.app/editor/
-  - Sales: https://mahara-sales-cfrjl5sqi-aziz-6097s-projects.vercel.app/sales/
-- Preview smoke: `D:/MaharaMedia/worktrees/cockpit-option-c-preview-smoke-20261007.json`. Preview build metadata/logs: matching `cockpit-option-c-fixed-preview-deployments-20261007.json` and per-app `.log` files.
-- Parent prepared a real upstream merge against `704352820551280af5e21daa855b6b7a11ffae24` in `D:/MaharaMedia/worktrees/mahara-cockpits-option-c-merge-20261007`.
-- Gemini 3.8 Flash High owns conflict resolution in clean disposable worktree `D:/MaharaMedia/worktrees/mahara-cockpits-gemini-layout-20261007`. Its ignored packet includes base/ours/upstream and automatic merge content for all 31 conflicts. No credentials or terminal capabilities were delegated.
-- Gemini runner output directory: `D:/MaharaMedia/worktrees/cockpit-option-c-gemini-merge-20261007-report`. Do not edit worker-owned files while it runs. Parent reviews and executes typechecks/tests.
-- Observed per-file Vercel uploads fail with `fetch failed`. Archived uploads succeeded. Shipping now forwards the same validated public native configuration to remote Vercel builds and uses archived uploads.
-- Prepared links to all five existing production projects. No new production project or alias was created.
-- Pending: integrate and review Gemini's resolution, verify typechecks/release gates against one clean merge commit, rebind evidence, push to existing origin/main and execute the approved ship command.
-- Historical backfill remains offline. Full-cutover acceptance and Convex retirement are not authorized by this release.
-- Shared-context pull stopped on existing dirty changes. Preserved them. No routine team/client message was sent.
-
-## Reviewed merge packaging checkpoint
-
-- Gemini returned no tracked edits. Its initial manifest recorded a print timeout with the turn in progress. A supported same-conversation stop completed with no further writes and `fallback_required: true`.
-- Stop evidence: `D:/MaharaMedia/worktrees/cockpit-option-c-gemini-stop-20261007-report/manifest.json`. The stopped worker worktree was preserved and not integrated.
-- Recorded local fallback resolved all 31 frontend/test conflicts. Preserved main's SOP links, global search, sidebars, route consolidation and mobile/dock behavior together with native Supabase calls.
-- Added actual native parity for upstream call kinds/contact lookup, PortalTasks reads, and commitment-not-contact authorization. Added matching audited SQL in `20261007a_csm_call_kinds.sql`.
-- Independent static reviews found eight actionable defects. Corrected actor-scoped search history, final contact/prepare access checks, plan-save reconciliation feedback/retry, repeated booking-query opening, URL-driven media range/campaign state, whole-corpus asset search and visible lead-search errors.
-- Parent verification passed 106 native CSM/portal tests, four isolated CSM interaction tests, four editor pagination tests, and two period-data availability tests. All ten app/node typechecks passed.
-- Missing period series now returns an explicit unavailable error instead of fabricated zeros. Verified empty series remains a measured zero. The pre-existing report-document producer remains explicitly unavailable; no report job is falsely queued.
-- New public booking/selection contracts are named at their owner modules. Consumers no longer publish concrete helper ReturnType contracts.
-- Production shipping lint errors were formatting/import ordering only. Normalized only diagnostic-reported files using the repository's Biome settings. Existing warnings and unrelated rules were not suppressed.
-- `scripts/ship.sh` now uses archived uploads and forwards only validated public native VITE values to remote Vercel builds. `require-github-main.sh` uses the same installed-Python fallback as the ship entrypoint.
-- Live registry inspection found five native gateways unpublished and required CSM/preview/team/CEO RPCs missing. A canonical activation closure passed the live rollback-only preflight. No business record or provider operation ran.
-- Activation artifact: `D:/MaharaMedia/worktrees/cockpit-option-c-native-gateway-activation-20261007.sql`. Existing protected preview scope matched canonical source. Existing CSM action context matched the old canonical body before the reviewed commitment extension.
-- Recovered existing named GHL and ClickUp credentials from the correct legacy CSM deployment without printing values. The GHL account matched the canonical client-account ID. A differently named local ClickUp credential did not match, so it was not substituted.
-- Remaining execution: commit the reviewed source, bind and run the full unskipped release gate, activate the reviewed native dependencies/gateways, push the merge to origin/main, execute the approved `scripts/ship.sh all`, and verify the five production routes.
-- Historical backfill remains offline. No Convex retirement, paid customer-content provider call, staff/client message or client booking ran during packaging.
-
-## Native activation and reserved-key correction
-
-- Reviewed merge `4a69e22` passed the full unskipped release verifier: five gates, ten typechecks, five fresh builds and all 59 offline suites. Source was clean before and after.
-- Activated the rollback-tested canonical missing CSM, preview, team-picture and CEO database contracts in Creative Triage. Matching grants/RLS and the deployment audit were recorded. No historical import or provider action ran.
-- Deployed all five source gateways: `cockpit-csm-api`, `cockpit-media-api`, `cockpit-creative-api`, `cockpit-ceo-api`, `cockpit-team-api`. Registry returned ACTIVE for each.
-- Reused existing named non-paid legacy GHL/ClickUp/Meta/Slack/Typeform/Google configuration as server-only secrets. Values were not disclosed and temporary secret files were removed.
-- Supabase rejected custom `SUPABASE_` secret names. Native read-only source callers now use `COCKPIT_MANAGEMENT_TOKEN` consistently. The same existing management credential passed `read_only:true` probes against Creative Triage and B2B. No B2B write was made.
-- Activated canonical CEO provider-health GET/POST and refresh-id fields from `20260927i:22-24`, after rollback preflight. Human finance/person rows were unchanged.
-- Actual merged guest sign-in surface rendered in a managed headless browser. Password/code-mode toggle worked. No screenshot, relay, sign-in, email, business write or authenticated acceptance was attempted. The smoke intentionally blocked external font requests.
-- Next: commit the supported-key-name correction, rebind evidence, push the reviewed source to origin/main, redeploy affected gateways, run `scripts/ship.sh all` and verify production. Full-cutover acceptance and Convex retirement remain separate.
-
-## Production shipping recovery
-
-- `1998074` passed the full release gate and was pushed to both existing origin/main and the migration branch.
-- First ship preflight needed the linked checkout's existing ignored Convex-generated test references. Restored those exact artifacts only for legacy tests; no source import, commit or Convex deployment was added.
-- The next ship run uploaded Client Success, Creative Director, Media Buyer and Editor before stopping at Editor's bundle check. Sales had not yet been reached.
-- The Editor public production bundle contained the correct native Supabase URL. The checker falsely failed because `grep -q` closed the pipe early and curl exited 23 under pipefail.
-- Reproduced the actual public-bundle pipeline as statuses `23 0`. Changed only the checker to consume the full response. The same live bundle then returned statuses `0 0`.
-- Commit and push this operational correction, rerun the approved all-app ship command, and record its final footer and production route verification. Do not weaken lint, source, test or native configuration gates.
+- Saved at `D:/MaharaMedia/mahara-cockpits/HANDOFF.md` (untracked change in a stale checkout; it replaced the 2026-10-06 handoff, whose text is preserved in `D:/secure/local-main-backup-20261008/`).
+- Start the next session in `D:/MaharaMedia/worktrees/mahara-cockpits-convex-sweep` and paste this file, or point the agent at it. Begin with TODO 2, then 3.
+- Durable memory updated this session: none.
