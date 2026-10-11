@@ -568,7 +568,7 @@ approval as changed. In order:
 ## Hiring
 
 The careers Typeforms into the MaharaMedia Hiring boards, the boards into the
-CEO Hiring tab, and the tab's buttons. On Supabase since 2026-10-11: Edge
+CEO Hiring tab, and the tab's buttons. On Supabase (built 2026-10-09, switched on by the steps in SWITCH-ON.md): Edge
 Functions `hiring-sync` (pg_cron `mahara-hiring-mirror` every 10 minutes,
 `mahara-hiring-engine` every 10, `mahara-hiring-intake` at :08 and :38) and
 `hiring-api` (the tab). How it was switched on, and how to switch it off, is in
@@ -576,7 +576,7 @@ Functions `hiring-sync` (pg_cron `mahara-hiring-mirror` every 10 minutes,
 
 | Symptom | Fix | Who |
 | --- | --- | --- |
-| Tab or `cockpit_sync_state` says "The hiring sub-account is not connected" | Set `GHL_HIRING_PIT` and `GHL_HIRING_LOCATION` as Edge Function secrets from the VPS runtime file (SWITCH-ON step 1) | Lead session |
+| Tab or `cockpit_sync_state` says "The hiring sub-account is not connected" | Set `GHL_HIRING_PIT` and `GHL_HIRING_LOCATION` as Edge Function secrets from the VPS runtime file (SWITCH-ON step 2) | Lead session |
 | A grade or the track switch says "Dry run: GoHighLevel writes are off" | `HIRING_APPLY` is not `true`; set it | Lead session |
 | `hiring-sync:intake` note starts "Dry run on purpose, the first intake run" | Nothing: the first run after the switch-on files nothing on purpose; the next one (30 minutes) files. Read the plan in `cockpit_hiring_runs.result` meanwhile | nobody |
 | `hiring-sync:intake` says "left to the other importer" | PR #31's importer files that form live. Only one importer may run on a form: switch one of them off for it | Lead session |
