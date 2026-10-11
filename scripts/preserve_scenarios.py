@@ -104,22 +104,36 @@ def perfect_tape(sman: Dict[str, Any], vman: Dict[str, Any], ref: str = "origin/
     t["sql bucket"] = [{"id": VP.BUCKET, "public": False}]
     t["api functions"] = [{k: f.get(k) for k in ("slug", "status", "version", "verify_jwt", "ezbr_sha256", "updated_at")}
                           for f in sman["edge_functions"]]
-    # Team hours: absent before its deploy, then present exactly as the manifest's team_hours block says (2026-10-10).
-    th = sman.get("team_hours") or {}
-    if th.get("state") == "deployed":
-        rows = [{"kind": "table", "name": n, "rls": True, "browser": False, "service": n not in th.get("no_grant_tables", [])}
-                for n in th["tables"]]
-        rows += [{"kind": "function", "name": n, "rls": None, "browser": n in th.get("ceo_functions", []), "service": True}
-                 for n in th["functions"]]
-        rows += [{"kind": "trigger", "name": n, "rls": None, "browser": None, "service": None} for n in th["triggers"]]
-        t["sql team_hours"] = rows
-        t["sql cron"] = t["sql cron"] + [{"jobname": j["jobname"], "schedule": j["schedule"], "active": True, "command_md5": "recorded"}
-                                         for j in th.get("pg_cron", [])]
-        t["api functions"] = t["api functions"] + [{"slug": e["slug"], "status": "ACTIVE", "version": 1, "verify_jwt": e["verify_jwt"],
-                                                    "ezbr_sha256": None, "updated_at": None} for e in th.get("edge_functions", [])]
-    else:
-        t["sql team_hours"] = []
     t["api secrets"] = [{"name": n, "updated_at": "2026-10-07T01:12:34.068Z"} for n in sman["edge_function_secret_names"]]
+    # The sections added after the inventory (team hours 2026-10-10, hiring 2026-10-11): absent before their
+    # deploy, then present exactly as the manifest's block says.
+    for key, _title in VP.SECTIONS:
+        sec = sman.get(key) or {}
+        if sec.get("state") != "deployed":
+            t[f"sql {key}"] = []
+            for f in sec.get("freshness") or []:
+                t[f"sql fresh {key}:{f['table']}"] = [{"newest": None, "age_min": None}]
+            continue
+        ceo_read = sec.get("ceo_read_tables") or {}
+        rows = [{"kind": "table", "name": n, "rls": True, "browser": n in ceo_read,
+                 "service": n not in sec.get("no_grant_tables", []), "policies": list(ceo_read.get(n, []))}
+                for n in sec["tables"]]
+        rows += [{"kind": "function", "name": n, "rls": None, "browser": n in sec.get("ceo_functions", []), "service": True,
+                  "policies": None} for n in sec["functions"]]
+        rows += [{"kind": "trigger", "name": n, "rls": None, "browser": None, "service": None, "policies": None}
+                 for n in sec["triggers"]]
+        t[f"sql {key}"] = rows
+        t["sql cron"] = t["sql cron"] + [{"jobname": j["jobname"], "schedule": j["schedule"], "active": True, "command_md5": "recorded"}
+                                         for j in sec.get("pg_cron", [])]
+        t["api functions"] = t["api functions"] + [{"slug": e["slug"], "status": "ACTIVE", "version": 1, "verify_jwt": e["verify_jwt"],
+                                                    "ezbr_sha256": None, "updated_at": None} for e in sec.get("edge_functions", [])]
+        have = {x["name"] for x in t["api secrets"]}
+        t["api secrets"] += [{"name": n, "updated_at": "2026-10-11T12:00:00.000Z"}
+                             for n in sec.get("function_secret_names") or [] if n not in have]
+        have = {x["name"] for x in t["sql vault"]}
+        t["sql vault"] += [{"name": n} for n in sec.get("vault_secret_names") or [] if n not in have]
+        for f in sec.get("freshness") or []:
+            t[f"sql fresh {key}:{f['table']}"] = [{"newest": "2026-10-11 12:00:00+00", "age_min": 3}]
     t["pair cron_secret"] = {"function_secret": True, "vault_secret": True, "same": True}
     for slug, names in VP.RECORDED_SOURCES.items():
         at = VP.git_files(base, [f"supabase/functions/{slug}"], flat=True)
@@ -410,10 +424,51 @@ def j3(t, ctx):
     t["sql status_rows"] = [r for r in t["sql status_rows"] if r["worker"] != "sales-api"]
 
 
+def bundle_of(t, slug: str, present) -> None:
+    """A deploy through Composio: one index.ts; a recorded module is in it when bun's path comment or its code is."""
+    f = next(f for f in t["api functions"] if f["slug"] == slug)
+    f["version"] = int(f["version"]) + 1
+    t["fnsrc " + slug] = {"files": {"index.ts": sha(f"bundle {slug} {sorted(present)}")}, "bytes": 0,
+                          "found": {n: n in present for n in VP.RECORDED_SOURCES[slug]}}
+
+
+def c3(t, ctx):
+    """The old branch again, deployed as one bundle: its own modules are in it, the live-calls ones are not."""
+    bundle_of(t, "sales-api", set(old_branch_files("sales-api")))
+
+
+def o(t, ctx):
+    """sales-api redeployed from main through Composio (one bun bundle), as v71 was on 2026-10-10."""
+    bundle_of(t, "sales-api", set(VP.RECORDED_SOURCES["sales-api"]))
+
+
+def m(t, ctx):
+    """The guardian's cron line moved to fix mode exactly as prepared (2026-10-11)."""
+    for rec in ctx.vman["crontab"]["lines"]:
+        purpose = rec.get("changed_on_purpose")
+        if rec["kind"] != "job" or not purpose:
+            continue
+        tab = t["vps"]["crontab"]
+        tab["lines"] = [cron_row(purpose["text"]) if l["sha"] == rec["sha256"] else l for l in tab["lines"]]
+        tab["sha256"] = sha(json.dumps(tab["lines"]))
+
+
+def n(t, ctx):
+    """Hiring as it stood on 2026-10-11: 20261009c never applied, three secrets never set, the board copy from
+    2026-10-08 01:40 Kuwait time. The functions are deployed."""
+    later = {"cockpit_hiring_runs", "cockpit_hiring_provider_health", "cockpit_hiring_sends"}
+    t["sql hiring"] = [r for r in t["sql hiring"] if r["name"] not in later and r["name"] != "cockpit_hiring_claim_run"]
+    t["sql cron"] = [j for j in t["sql cron"] if not j["jobname"].startswith("mahara-hiring-")]
+    t["api secrets"] = [x for x in t["api secrets"] if x["name"] not in ("GHL_HIRING_PIT", "GHL_HIRING_LOCATION",
+                                                                          "HIRING_APPLY")]
+    t["sql fresh hiring:cockpit_hiring_candidates"] = [{"newest": "2026-10-08 01:40:12.5+03", "age_min": 5180}]
+
+
 # Actions after which the run passes: nothing done; the checkout reset to current main (it carries both folders);
 # a function changed on purpose by a migration the verifier can read (in its checkout, or on the ref: k needs
-# origin/main to hold 20261007b, as it does since 2026-10-07).
-PASSING = ("baseline", "a2", "e6", "k")
+# origin/main to hold 20261007b, as it does since 2026-10-07); sales-api deployed from main as one bundle; the
+# guardian's cron line moved to fix mode as prepared.
+PASSING = ("baseline", "a2", "e6", "k", "o", "m")
 
 SCENARIOS: List[Tuple[str, str, Callable[[Dict[str, Any], Ctx], None]]] = [
     ("a1", "VPS checkout cleaned (git clean -fd, or re-cloned at its September commit): copied desk and guardian gone", a1),
@@ -422,6 +477,8 @@ SCENARIOS: List[Tuple[str, str, Callable[[Dict[str, Any], Ctx], None]]] = [
     ("b2", "crontab put back from ~/.crontab.backup (2026-09-23)", b2),
     ("c1", f"sales-api redeployed from codex/supabase-completion-20261004 ({OLD_BRANCH})", c1),
     ("c2", f"the sales cockpit shipped from the same branch ({OLD_BRANCH})", c2),
+    ("c3", f"sales-api redeployed from {OLD_BRANCH} as one bundle (through Composio)", c3),
+    ("o", "sales-api redeployed from main as one bundle (through Composio, as v71 on 2026-10-10)", o),
     ("d", "sales-live redeployed with a plain `supabase functions deploy` (verify_jwt on)", d),
     ("e1", "an old migration re-run (20260927a_sales_setter_pay replaces cockpit_sales_setter_deals)", e1),
     ("e2", "a migration drops the trigger cockpit_sales_settings_guard", e2),
@@ -440,6 +497,8 @@ SCENARIOS: List[Tuple[str, str, Callable[[Dict[str, Any], Ctx], None]]] = [
     ("j3", "the database restored to 2026-10-02 (before live calls)", j3),
     ("k", "a cutover migration on origin/main redefines cockpit_get_my_access() (as 20261007b does)", k),
     ("l", "cockpit_get_my_access() then edited by hand (20261007b on main defines it, the live body is not its)", l),
+    ("m", "the guardian's cron line moved to --mode fix as prepared (2026-10-11)", m),
+    ("n", "hiring as on 2026-10-11: 20261009c not applied, three secrets not set, the board copy from 10-08", n),
 ]
 
 

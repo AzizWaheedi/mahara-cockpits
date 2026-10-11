@@ -6,13 +6,20 @@ Run from the repository root before the cutover starts (the baseline) and again 
     python3 scripts/verify-preserved.py              one line per check, then the verdict
     python3 scripts/verify-preserved.py --problems   only the lines that are not ok, then the verdict
     python3 scripts/verify-preserved.py --json       the same, for machines
+    python3 scripts/verify-preserved.py --via composio --problems
+                                                     Creative Triage read through Aziz's Composio Supabase
+                                                     connection (the Mac's management token is dead since 2026-10-09)
 
 It compares docs/preserve/supabase-manifest.json and docs/preserve/vps-manifest.json with what is live:
 
-- Creative Triage, through the Supabase management API (SQL sent with read_only true; the functions and
-  secrets lists, secret names only): the team-hours objects of 2026-10-09 (present once deployed, row
-  security on, browser roles shut out, the keys table with no grant, both jobs, cockpit-hours-sync with the
-  JWT check off and cockpit-hours-api with it on), every recorded table and view (columns, row security, grants,
+- Creative Triage, through the Supabase management API or, with --via composio, the same reads through
+  Composio (SQL sent with read_only true; the functions and secrets lists, secret names only): the
+  team-hours objects of 2026-10-09 (present once deployed, row security on, browser roles shut out, the keys
+  table with no grant, both jobs, cockpit-hours-sync with the JWT check off and cockpit-hours-api with it on),
+  the hiring objects of 2026-10-11 (the seven cockpit_hiring_ tables, the CEO's read policy on candidates and
+  applications, cockpit_hiring_claim_run, the three mahara-hiring-* jobs, hiring-sync with the JWT check off
+  and hiring-api with it on, the five secret names, a board copy under 30 minutes old), every recorded
+  table and view (columns, row security, grants,
   triggers, policies, indexes, constraints), every recorded function (md5 of its definition), every
   recorded pg_cron job, the settings switches, the WhatsApp template rows, the vault secret names, the
   extensions, every Edge Function (slug present, version not lower, verify_jwt as recorded), the function
@@ -26,7 +33,9 @@ It compares docs/preserve/supabase-manifest.json and docs/preserve/vps-manifest.
 - The private bucket: its SHA256SUMS lists every backed-up object and each object matches its sum.
 
 It also checks what a cutover can break without removing anything: the deployed source files of sales-api,
-sales-live and sales-mirror against the files at the restore tag, CRON_SECRET still pairing with the vault's
+sales-live and sales-mirror against the files at the restore tag (a bundled deploy, one index.ts, is judged by
+each module's path comment or its live-calls strings in the bundle; through Composio, which gives the code
+back as ESZIP, by names and those strings, not bytes), CRON_SECRET still pairing with the vault's
 cockpit_sync_secret, function secrets set again after the inventory, row counts against the inventory,
 settings rows put back from an older copy, the status rows of the jobs that run every few minutes, which
 Supabase project the VPS workers and the live cockpit talk to, and that origin/main and the restore tag
@@ -46,7 +55,11 @@ Other modes:
     --project REF       check another Supabase project (after a planned move) against the same records
     --record FILE       save what every source answered (names, digests, booleans; never a secret or a row)
     --replay FILE       judge a saved recording instead of the live sources (dry simulations: change the
-                        recording, replay it; scripts/preserve_scenarios.py does this for 24 cutover actions)
+                        recording, replay it; scripts/preserve_scenarios.py does this for the cutover actions)
+    --via composio      read Creative Triage through `composio execute` (SUPABASE_BETA_RUN_SQL_QUERY with
+                        read_only, SUPABASE_LIST_FUNCTIONS, SUPABASE_LIST_SECRETS, SUPABASE_GET_FUNCTION_BODY);
+                        also VERIFY_VIA=composio. Requests go through a private temporary folder, removed at
+                        once; an answer Composio keeps in a file is read and deleted
 
 It changes nothing anywhere. On the VPS the only write is a scratch folder under /tmp for the doctor's
 write probe, removed at once. SQL goes with read_only true; the one read that needs the owner role (the
@@ -65,8 +78,10 @@ import hmac
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -112,6 +127,28 @@ RECORDED_SOURCES = {
                   "index.ts", "lib.ts", "liveio.ts", "proposals.ts", "roomlogic.ts", "rooms.ts", "sendrules.ts"),
     "sales-live": ("cron.ts", "door.ts", "handler.ts", "index.ts", "sign.ts", "slack.ts", "util.ts", "zoom.ts"),
     "sales-mirror": ("index.ts", "lib.ts"),
+}
+# What each live-calls module leaves in a bundled deploy: Composio (scripts/dev/deploy_composio.py) sends a
+# function as one bun bundle, so the API gives back a single index.ts. A recorded module counts as deployed
+# in a bundle when bun's path comment for it (functions/<slug>/<file>) or one of these strings is in the body.
+# The same list as LIVE_MARKERS in hermes/cockpit-guardian/checks/live_calls.py (a test keeps them equal);
+# checked against sales-api v71 (a bundle) and sales-live v7 on 2026-10-11.
+LIVE_MARKERS = {
+    "sales-api": {
+        "rooms.ts": ("hungSend", "PHONE_CLOSE_KIND", "room.phone_close"),
+        "roomlogic.ts": ("ROOM_STATES", "sales-api/roomlogic.ts"),
+        "liveio.ts": ("makeLiveIO", "sales-api/liveio.ts"),
+        "followupAgent.ts": ("makeFollowupAgent", "sales-api/followupAgent.ts"),
+        "sendrules.ts": ("LEAD_ZONES", "sales-api/sendrules.ts"),
+    },
+    "sales-live": {
+        "cron.ts": ("cronForwardable", "CRON_FORWARD"),
+        "door.ts": ("isPreviewBot", "doorView"),
+        "handler.ts": ("makeHandler", "STATUS_JOBS"),
+        "sign.ts": ("slackSignatureOk", "zoomSignatureOk"),
+        "slack.ts": ("parseSlack", "SLACK_COPY"),
+        "zoom.ts": ("zoomLookup", "endpoint.url_validation"),
+    },
 }
 # Status rows written on every run of a job that runs every few minutes, with how old each may get before
 # the job has stopped (minutes): the rooms worker and its host check, the hourly doctor, the proposal queue,
@@ -406,7 +443,25 @@ def parse_multipart(ctype: str, raw: bytes) -> Dict[str, bytes]:
     return out
 
 
+def modules_found(slug: str, body: bytes) -> Dict[str, bool]:
+    """For each recorded module: is its code in the body (bun's path comment for it, or one of its live-calls
+    strings)? Only these booleans are kept, never the code."""
+    marks = LIVE_MARKERS.get(slug, {})
+    return {n: f"functions/{slug}/{n}".encode() in body or any(m.encode() in body for m in marks.get(n, ()))
+            for n in RECORDED_SOURCES.get(slug, ())}
+
+
+def eszip_names(text: str) -> List[str]:
+    """The module names in a function body given back as ESZIP (what Composio's SUPABASE_GET_FUNCTION_BODY
+    returns): the specifiers source/<file> listed before the sources themselves."""
+    head = text.split("---SUPABASE-ESZIP", 1)[0][:65536]
+    names = re.findall(r"source/([A-Za-z0-9_.\-/]+\.(?:ts|tsx|js|mjs|json))", head)
+    return sorted({n.split("/")[-1] for n in names})
+
+
 class Mgmt:
+    via = "the management API"
+
     def __init__(self, ref: str, token_file: Optional[Path]) -> None:
         self.ref = ref
         self._token = ""
@@ -493,8 +548,139 @@ class Mgmt:
                                          accept="multipart/form-data", timeout=180)
             ctype = next((v for k, v in headers.items() if k.lower() == "content-type"), "")
             files = parse_multipart(ctype, raw)
-            return {"files": {n: sha256(b) for n, b in sorted(files.items())}, "bytes": len(raw)}
+            return {"files": {n: sha256(b) for n, b in sorted(files.items())}, "bytes": len(raw),
+                    "found": modules_found(slug, raw)}
         return TAPE.take("fnsrc " + slug, run)
+
+
+COMPOSIO = os.environ.get("VERIFY_COMPOSIO", "composio")
+
+
+class ComposioMgmt(Mgmt):
+    """The same reads through Aziz's Composio Supabase connection, for when the management token is dead (it
+    is on this Mac since 2026-10-09). SQL goes with read_only true (the vault digest excepted, which runs in
+    a read-only transaction as before); the functions list; the secrets list, names and update times kept;
+    a function's body, of which only module names and code booleans are kept. Every request is written to a
+    private temporary folder and removed at once; an answer Composio stores in a file is read, then deleted.
+    No value is printed or saved."""
+    via = "Composio"
+
+    def __init__(self, ref: str) -> None:
+        self.ref = ref
+        self._token = ""
+        if TAPE.mode == "replay":
+            return
+        if not shutil.which(COMPOSIO):
+            raise SourceError(f"the {COMPOSIO} command is not on PATH")
+
+    def _execute(self, slug: str, args: Dict[str, Any], timeout: int = 300) -> Any:
+        last = ""
+        for attempt in range(2):
+            folder = tempfile.mkdtemp(prefix="verify-preserved-")
+            try:
+                path = os.path.join(folder, "args.json")
+                with open(path, "w", encoding="utf-8") as fh:
+                    json.dump(args, fh)
+                p = subprocess.run([COMPOSIO, "execute", slug, "-d", "@" + path], stdin=subprocess.DEVNULL,
+                                   capture_output=True, timeout=timeout)
+            except (OSError, subprocess.SubprocessError) as e:
+                last = scrub(e, 160)
+                continue
+            finally:
+                shutil.rmtree(folder, ignore_errors=True)
+            try:
+                out = json.loads(p.stdout or b"null")
+            except ValueError:
+                out = None
+            p = None
+            if not isinstance(out, dict):
+                last = "the answer was not JSON"
+                continue
+            stored = out.get("outputFilePath")
+            if stored:
+                try:
+                    out = json.loads(Path(stored).read_text(encoding="utf-8"))
+                except (OSError, ValueError) as e:
+                    out = {"successful": False, "error": f"its stored answer could not be read: {scrub(e, 100)}"}
+                finally:
+                    drop_stored(stored)
+            if not out.get("successful"):
+                last = scrub(out.get("error") or (out.get("data") or {}).get("message"), 200)
+                continue
+            data = out.get("data")
+            return data.get("details", data) if isinstance(data, dict) else data
+        raise SourceError(f"composio {slug}: {last}")
+
+    def _rows(self, query: str, read_only: bool = True) -> List[Dict[str, Any]]:
+        det = self._execute("SUPABASE_BETA_RUN_SQL_QUERY", {"ref": self.ref, "query": query, "read_only": read_only})
+        rows = det.get("result") if isinstance(det, dict) else det
+        if not isinstance(rows, list):
+            raise SourceError(f"the SQL tool answered {type(rows).__name__}, not rows")
+        return rows
+
+    def sql(self, query: str, label: str) -> List[Dict[str, Any]]:
+        return TAPE.take("sql " + label, lambda: self._rows(query))
+
+    def functions(self) -> List[Dict[str, Any]]:
+        def run() -> List[Dict[str, Any]]:
+            listed = self._execute("SUPABASE_LIST_FUNCTIONS", {"ref": self.ref})
+            if not isinstance(listed, list):
+                raise SourceError("the functions list did not come back as a list")
+            keep = ("slug", "status", "version", "verify_jwt", "ezbr_sha256", "updated_at")
+            return [{k: f.get(k) for k in keep} for f in listed if isinstance(f, dict)]
+        return TAPE.take("api functions", run)
+
+    def _secrets_raw(self) -> List[Dict[str, Any]]:
+        listed = self._execute("SUPABASE_LIST_SECRETS", {"ref": self.ref})
+        if not isinstance(listed, list):
+            raise SourceError("the secrets list did not come back as a list")
+        return listed
+
+    def secrets(self) -> List[Dict[str, Any]]:
+        """Names and update times; the digests are dropped here."""
+        def run() -> List[Dict[str, Any]]:
+            return [{"name": s.get("name"), "updated_at": s.get("updated_at")} for s in self._secrets_raw()
+                    if isinstance(s, dict)]
+        return TAPE.take("api secrets", run)
+
+    def cron_secret_pair(self) -> Dict[str, Any]:
+        def run() -> Dict[str, Any]:
+            listed = self._secrets_raw()
+            digest = next((s.get("value") for s in listed if isinstance(s, dict) and s.get("name") == "CRON_SECRET"),
+                          None)
+            listed = None
+            rows = self._rows(Q_VAULT_DIGEST, read_only=False)   # the owner role, inside a read-only transaction
+            vault = rows[0].get("d") if rows else None
+            rows = None
+            out = {"function_secret": bool(digest), "vault_secret": bool(vault),
+                   "same": hmac.compare_digest(str(digest), str(vault)) if digest and vault else None}
+            digest = vault = None
+            return out
+        return TAPE.take("pair cron_secret", run)
+
+    def function_files(self, slug: str) -> Dict[str, Any]:
+        """Composio gives the body back as ESZIP text: module names and code booleans only (bytes cannot be
+        compared file by file this way; files map each name to None)."""
+        def run() -> Dict[str, Any]:
+            det = self._execute("SUPABASE_GET_FUNCTION_BODY", {"ref": self.ref, "function_slug": slug}, timeout=600)
+            text = det if isinstance(det, str) else json.dumps(det)
+            body = text.encode("utf-8", "replace")
+            out = {"files": {n: None for n in eszip_names(text)}, "bytes": len(body),
+                   "found": modules_found(slug, body)}
+            text = body = det = None
+            return out
+        return TAPE.take("fnsrc " + slug, run)
+
+
+def drop_stored(path: str) -> None:
+    """Delete an answer Composio stored in a file, and its adhoc_* folder once empty."""
+    try:
+        os.unlink(path)
+        parent = os.path.dirname(path)
+        if os.path.basename(parent).startswith("adhoc_"):
+            os.rmdir(parent)
+    except OSError:
+        pass
 
 
 Q_RELATIONS = """
@@ -541,22 +727,25 @@ where p.pronamespace = 'public'::regnamespace and p.prokind in ('f', 'p') and p.
 
 Q_CRON = "select jobname, schedule, active, md5(command) as command_md5 from cron.job"
 
-# Hours, leave and pay (team-hours, 2026-10-09): only names and booleans leave the database. Row security on;
-# no browser role may read a table or run a service function; cockpit_hours_keys has no grant at all.
+# The objects of a section (team-hours 2026-10-09, hiring 2026-10-11): only names and booleans leave the database.
+# Row security on; no browser role may read a table (but through a recorded CEO policy) or run a service function;
+# cockpit_hours_keys has no grant at all.
 Q_TEAM_HOURS = """
 select 'table' as kind, c.relname as name, c.relrowsecurity as rls,
   (has_table_privilege('anon', c.oid, 'SELECT') or has_table_privilege('authenticated', c.oid, 'SELECT')) as browser,
-  has_table_privilege('service_role', c.oid, 'SELECT') as service
+  has_table_privilege('service_role', c.oid, 'SELECT') as service,
+  coalesce((select array_agg(pp.policyname::text order by pp.policyname) from pg_policies pp
+             where pp.schemaname = 'public' and pp.tablename = c.relname), '{{}}'::text[]) as policies
 from pg_class c join pg_namespace n on n.oid = c.relnamespace
 where n.nspname = 'public' and c.relkind = 'r' and c.relname = any({tables})
 union all
 select 'function', p.proname, null,
   bool_or(has_function_privilege('anon', p.oid, 'EXECUTE') or has_function_privilege('authenticated', p.oid, 'EXECUTE')),
-  bool_or(has_function_privilege('service_role', p.oid, 'EXECUTE'))
+  bool_or(has_function_privilege('service_role', p.oid, 'EXECUTE')), null::text[]
 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
 where n.nspname = 'public' and p.proname = any({functions}) group by p.proname
 union all
-select 'trigger', t.tgname, null, null, null from pg_trigger t where not t.tgisinternal and t.tgname = any({triggers})
+select 'trigger', t.tgname, null, null, null, null::text[] from pg_trigger t where not t.tgisinternal and t.tgname = any({triggers})
 """
 
 # Only booleans leave the database: the switches, flattened the way the manifest wrote them
@@ -693,6 +882,7 @@ def check_relations(rep: Report, mg: Mgmt, man: Dict[str, Any], later: Later) ->
             diffs.append("columns retyped: " + ", ".join(retyped))
         trig_live = by(cur.get("triggers") or [])
         trig_explain: List[str] = []
+        trig_alone: List[str] = []    # a trigger gone or changed that no later migration names
         for t in rec.get("triggers") or []:
             lt = trig_live.get(t["name"])
             if not lt:
@@ -701,7 +891,10 @@ def check_relations(rep: Report, mg: Mgmt, man: Dict[str, Any], later: Later) ->
                 diffs.append(f"trigger {t['name']} " + ("disabled" if lt["enabled"] == "D" else "redefined"))
             else:
                 continue
-            trig_explain += later.trigger(t["name"])
+            hits = later.trigger(t["name"])
+            trig_explain += hits
+            if not hits:
+                trig_alone.append(t["name"])
         new_trig = sorted(set(trig_live) - {t["name"] for t in rec.get("triggers") or []})
         if new_trig:
             diffs.append("new triggers: " + ", ".join(new_trig))
@@ -754,7 +947,9 @@ def check_relations(rep: Report, mg: Mgmt, man: Dict[str, Any], later: Later) ->
         if strict:
             rep.add("supabase", label, CHANGED, "; ".join(strict + diffs))
         elif diffs:
-            why = explained_by(sorted(set(later.relation(name) + trig_explain)))
+            # A guard trigger dropped is explained only by a migration that names that trigger: a later migration
+            # that merely adds its own trigger on the table (20261010s on cockpit_sales_settings) explains nothing.
+            why = None if trig_alone else explained_by(sorted(set(later.relation(name) + trig_explain)))
             rep.add("supabase", label, CHANGED, "; ".join(diffs), why)
         else:
             rep.add("supabase", label, OK, summary)
@@ -970,72 +1165,128 @@ def check_edge(rep: Report, mg: Mgmt, man: Dict[str, Any]) -> None:
             rep.add("supabase", label, OK, head + " as recorded")
 
 
-def check_team_hours(rep: Report, mg: Mgmt, man: Dict[str, Any]) -> None:
-    """Hours, leave and pay. Before its first deploy (state pending_deploy) an absent object is ok, not deployed
-    yet; once deployed it is MISSING. A JWT check, row security or grant that drifts is CHANGED either way."""
-    th = man.get("team_hours")
-    if not th:
+# A section of the manifest added after the inventory (team_hours 2026-10-09, hiring 2026-10-11): what must exist
+# once it is deployed. Before its first deploy (state pending_deploy) an absent object is ok, not deployed yet;
+# once deployed it is MISSING. A JWT check, row security, grant or schedule that drifts is CHANGED either way.
+SECTIONS = (("team_hours", "team-hours"), ("hiring", "hiring"))
+_IDENT = re.compile(r"^[a-z_][a-z0-9_]*$")
+
+
+def check_section(rep: Report, mg: Mgmt, man: Dict[str, Any], key: str, title: str) -> None:
+    sec = man.get(key)
+    if not sec:
         return
-    pending = th.get("state") != "deployed"
-    absent = (OK, "not deployed yet (team-hours is pending its first deploy)") if pending else (MISSING, "")
+    pending = sec.get("state") != "deployed"
+    absent = (OK, f"not deployed yet ({title} is pending its first deploy)") if pending else (MISSING, "")
     area = "supabase"
-    rows = mg.sql(Q_TEAM_HOURS.format(tables=arr(th["tables"]), functions=arr(th["functions"]), triggers=arr(th["triggers"])),
-                  "team_hours")
+    rows = mg.sql(Q_TEAM_HOURS.format(tables=arr(sec["tables"]), functions=arr(sec["functions"]),
+                                      triggers=arr(sec["triggers"])), key)
     live = {(r["kind"], r["name"]): r for r in rows}
-    no_grant = set(th.get("no_grant_tables") or [])
-    for name in th["tables"]:
+    no_grant = set(sec.get("no_grant_tables") or [])
+    ceo_read = dict(sec.get("ceo_read_tables") or {})
+    for name in sec["tables"]:
         cur = live.get(("table", name))
-        label = f"team-hours table {name}"
+        label = f"{title} table {name}"
         if not cur:
-            rep.add(area, label, absent[0], absent[1] or "the table is gone")
+            rep.add(area, label, absent[0], absent[1] or "not there (never made, or dropped)")
             continue
         problems = []
         if not cur["rls"]:
             problems.append("row security is off")
-        if cur["browser"]:
+        if cur["browser"] and name not in ceo_read:
             problems.append("a browser role can read it")
+        if name in ceo_read:
+            have = set(cur.get("policies") or [])
+            gone = [n for n in ceo_read[name] if n not in have]
+            if gone:
+                problems.append("its CEO read policy is gone: " + ", ".join(gone))
         if name in no_grant and cur["service"]:
             problems.append("service_role can read it (it must have no grant)")
         if name not in no_grant and not cur["service"]:
             problems.append("service_role cannot read it")
-        rep.add(area, label, CHANGED if problems else OK, "; ".join(problems) or "row security on, browser roles shut out")
-    ceo = set(th.get("ceo_functions") or [])
-    for name in th["functions"]:
+        shut = "browser roles read it only through the CEO policy" if name in ceo_read else "browser roles shut out"
+        rep.add(area, label, CHANGED if problems else OK, "; ".join(problems) or f"row security on, {shut}")
+    ceo = set(sec.get("ceo_functions") or [])
+    for name in sec["functions"]:
         cur = live.get(("function", name))
-        label = f"team-hours function {name}"
+        label = f"{title} function {name}"
         if not cur:
-            rep.add(area, label, absent[0], absent[1] or "the function is gone")
+            rep.add(area, label, absent[0], absent[1] or "not there (never made, or dropped)")
             continue
         if cur["browser"] and name not in ceo:
             rep.add(area, label, CHANGED, "a browser role can run it")
         else:
             rep.add(area, label, OK, "present" + (", CEO-gated" if name in ceo else ""))
-    present_triggers = {n for (k, n) in live if k == "trigger"}
-    gone = [t for t in th["triggers"] if t not in present_triggers]
-    if gone:
-        rep.add(area, "team-hours triggers", absent[0], absent[1] or ("gone: " + ", ".join(gone)))
-    else:
-        rep.add(area, "team-hours triggers", OK, f"{len(th['triggers'])} present (history and delete guards)")
+    if sec["triggers"]:
+        present_triggers = {n for (k, n) in live if k == "trigger"}
+        gone = [t for t in sec["triggers"] if t not in present_triggers]
+        if gone:
+            rep.add(area, f"{title} triggers", absent[0], absent[1] or ("gone: " + ", ".join(gone)))
+        else:
+            rep.add(area, f"{title} triggers", OK, f"{len(sec['triggers'])} present (history and delete guards)")
     jobs = by(mg.sql(Q_CRON, "cron"), "jobname")
-    for j in th["pg_cron"]:
+    for j in sec["pg_cron"]:
         cur = jobs.get(j["jobname"])
-        label = f"team-hours pg_cron {j['jobname']}"
+        label = f"{title} pg_cron {j['jobname']}"
         if not cur:
-            rep.add(area, label, absent[0], absent[1] or "the job is gone from cron.job")
+            rep.add(area, label, absent[0], absent[1] or "not in cron.job")
         elif cur["schedule"] != j["schedule"] or not cur["active"]:
             rep.add(area, label, CHANGED, f"schedule {cur['schedule']}, active {cur['active']} (expected {j['schedule']}, active)")
         else:
             rep.add(area, label, OK, f"{j['schedule']}, active")
     fns = by(mg.functions(), "slug")
-    for e in th["edge_functions"]:
+    for e in sec["edge_functions"]:
         cur = fns.get(e["slug"])
-        label = f"team-hours Edge Function {e['slug']}"
+        label = f"{title} Edge Function {e['slug']}"
         if not cur:
             rep.add(area, label, absent[0], absent[1] or "not in the functions list")
         elif bool(cur.get("verify_jwt")) != bool(e["verify_jwt"]) or cur.get("status") != "ACTIVE":
             rep.add(area, label, CHANGED, f"status {cur.get('status')}, verify_jwt {cur.get('verify_jwt')} (must be {e['verify_jwt']})")
         else:
             rep.add(area, label, OK, f"ACTIVE v{cur.get('version')}, verify_jwt {cur.get('verify_jwt')} as required")
+    want = list(sec.get("function_secret_names") or [])
+    if want:
+        names = {x.get("name") for x in mg.secrets()}
+        gone = [n for n in want if n not in names]
+        label = f"{title} function secret names"
+        if gone:
+            rep.add(area, label, absent[0], absent[1] or ("not set: " + ", ".join(gone)))
+        else:
+            rep.add(area, label, OK, f"all {len(want)} set ({', '.join(want)}; values never read)")
+    want = list(sec.get("vault_secret_names") or [])
+    if want:
+        names = {x.get("name") for x in mg.sql(Q_VAULT, "vault")}
+        gone = [n for n in want if n not in names]
+        label = f"{title} vault secret names"
+        if gone:
+            rep.add(area, label, absent[0], absent[1] or ("gone: " + ", ".join(gone)))
+        else:
+            rep.add(area, label, OK, f"{', '.join(want)} present (names only)")
+    for f in sec.get("freshness") or []:
+        table, column, limit = f["table"], f["column"], int(f["max_age_min"])
+        label = f"{title} freshness {table}.{column}"
+        if not (_IDENT.match(table) and _IDENT.match(column)):
+            rep.add(area, label, UNKNOWN, "not a plain table or column name in the manifest")
+            continue
+        if ("table", table) not in live:
+            rep.add(area, label, absent[0], absent[1] or "not there (never made, or dropped)")
+            continue
+        r = mg.sql(f"select max({column})::text as newest, round(extract(epoch from now() - max({column})) / 60)::int "
+                   f"as age_min from public.{table}", f"fresh {key}:{table}")
+        newest, age = (r[0].get("newest"), r[0].get("age_min")) if r else (None, None)
+        what = f.get("what") or f"{table}.{column}"
+        if age is None:
+            rep.add(area, label, absent[0], absent[1] or f"{what}: no row has a {column}, so nothing has been copied")
+        elif int(age) > limit:
+            rep.add(area, label, CHANGED, f"{what}: the newest is {newest}, {int(age)} min old (limit {limit} min); "
+                                          "the job that writes it is not running")
+        else:
+            rep.add(area, label, OK, f"{what}: written {int(age)} min ago (limit {limit} min)")
+
+
+def check_team_hours(rep: Report, mg: Mgmt, man: Dict[str, Any]) -> None:
+    """Hours, leave and pay (kept by name for older callers): the team_hours section."""
+    check_section(rep, mg, man, "team_hours", "team-hours")
 
 
 def function_env_names() -> Set[str]:
@@ -1057,13 +1308,37 @@ def check_function_sources(rep: Report, mg: Mgmt, man: Dict[str, Any], ref: str,
     for slug, want in RECORDED_SOURCES.items():
         label = f"Edge Function {slug} source"
         try:
-            live = mg.function_files(slug)["files"]
+            live_rec = mg.function_files(slug)
+            live = live_rec["files"]
             at_base = git_files(base, [f"supabase/functions/{slug}"], flat=True)
             at_ref = git_files(ref, [f"supabase/functions/{slug}"], flat=True) if ref_ok else {}
         except (SourceError, OSError, subprocess.SubprocessError, KeyError, TypeError) as e:
             rep.add("supabase", label, UNKNOWN, f"could not be read: {scrub(e, 160)}")
             continue
+        found = live_rec.get("found") or {}
         gone = [n for n in want if n not in live]
+        lost = [n for n in gone if not found.get(n)]
+        hashed = bool(live) and all(v is not None for v in live.values())
+        if gone and not lost:
+            # A bundled deploy (Composio): one index.ts, every recorded module inside it by its path or its code.
+            rep.add("supabase", label, CHANGED, f"deployed as one bundle ({', '.join(sorted(live)) or 'no file name'}): "
+                    f"all {len(want)} recorded modules are in it by bun's path comment or their code, so nothing is "
+                    f"missing; a bundle cannot be compared file by file with {base[:7]}",
+                    "a bundled deploy (scripts/dev/deploy_composio.py) keeps every module in one file")
+            continue
+        if not lost and not hashed:
+            # Read through Composio (ESZIP): names and code strings are judged, bytes are not.
+            hollow = [n for n in want if n in LIVE_MARKERS.get(slug, {}) and found.get(n) is False]
+            if hollow:
+                rep.add("supabase", label, CHANGED, f"all {len(want)} recorded file names are deployed, but the live-calls "
+                        f"code of {', '.join(hollow)} is not in them (older files under the same names?)")
+            else:
+                rep.add("supabase", label, CHANGED, f"all {len(want)} recorded files are deployed by name"
+                        + (", the live-calls ones with their code" if slug in LIVE_MARKERS else ""),
+                        "read through Composio, which gives the deploy back as ESZIP: names and code strings are "
+                        "judged, bytes are not")
+            continue
+        gone = lost
         same_base = [n for n in live if at_base.get(n) == live[n]]
         same_ref = [n for n in live if n not in same_base and at_ref.get(n) == live[n]]
         differ = sorted(set(live) - set(same_base) - set(same_ref))
@@ -1625,6 +1900,15 @@ def git_files(ref: str, folders: Iterable[str] = OUR_FOLDERS, flat: bool = False
     return shas
 
 
+def deleted_in(ref: str, path: str) -> Optional[str]:
+    """The commit on ref that deleted path, or None (git's own history; nothing live is read)."""
+    try:
+        out = git("log", "-1", "--format=%h", "--diff-filter=D", ref, "--", path).decode().strip()
+    except (SourceError, OSError, subprocess.SubprocessError):
+        return None
+    return out or None
+
+
 def our_env_names() -> Set[str]:
     """Every capitalised name our two workers mention in their code: the env keys they may read."""
     names: Set[str] = set()
@@ -1719,8 +2003,12 @@ def check_vps(rep: Report, vman: Dict[str, Any], args: argparse.Namespace) -> No
             sched, cmd_sha = cron_parts(l["text"])
             what = re.search(r"desk\.py --quiet ([a-z-]+(?: --[a-z-]+(?: \d+)?)?)|guardian\.py[^\"]*run", l["text"])
             label = f"crontab line {l['n']} ({what.group(0) if what else 'ours'})"
+            purpose = l.get("changed_on_purpose") or {}
             if l["sha256"] in exact:
                 rep.add(area, label, OK, "present, byte for byte")
+            elif purpose.get("sha256") in exact:
+                rep.add(area, label, CHANGED, f"changed on purpose on {purpose.get('on')}: {purpose.get('what')}",
+                        purpose.get("why") or "changed on purpose")
             elif sha256(l["text"].strip().encode()) in commented:
                 rep.add(area, label, CHANGED, "commented out")
             elif cmd_sha in by_cmd:
@@ -1756,7 +2044,14 @@ def check_vps(rep: Report, vman: Dict[str, Any], args: argparse.Namespace) -> No
                                           "not copied to the VPS yet"), []).append(p)
                 elif cur is None and want is None:
                     if rec.get("vps_sha256") and not Path(p).name.startswith("._"):
-                        missing.append(p)  # on the VPS at the inventory, gone from both the VPS and the ref
+                        gone_in = deleted_in(args.ref, p)
+                        if gone_in:
+                            # Deleted on purpose in the ref (the guardian's checks/convex.py, 2026-10-09), and the
+                            # VPS copy follows the ref.
+                            explained.setdefault(("gone from the ref and the VPS", f"deleted in {args.ref} after the "
+                                                  f"inventory ({gone_in}); the VPS copy follows it"), []).append(p)
+                        else:
+                            missing.append(p)  # on the VPS at the inventory, gone from both the VPS and the ref
                     continue  # Mac metadata (._*) gone, or never anywhere: nothing to keep
                 elif cur is None:
                     missing.append(p)
@@ -2047,6 +2342,9 @@ def main(argv: Optional[List[str]] = None) -> int:
                     help="print the recorded text of our crontab lines (or all 65 with 'all') and stop")
     ap.add_argument("--record", metavar="FILE", help="also save what every source answered to FILE")
     ap.add_argument("--replay", metavar="FILE", help="judge a saved recording instead of the live sources")
+    ap.add_argument("--via", choices=("mgmt", "composio"), default=os.environ.get("VERIFY_VIA", "mgmt"),
+                    help="how Creative Triage is read: the management token (mgmt, the default) or Aziz's Composio "
+                         "Supabase connection (composio; the Mac's token is dead since 2026-10-09)")
     args = ap.parse_args(argv)
     skip = {s.strip() for s in args.skip.split(",") if s.strip()}
 
@@ -2079,9 +2377,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     token_file = Path(os.path.expanduser(os.environ.get("SUPABASE_MGMT_TOKEN_FILE", "~/.config/mahara/sb_mgmt_token")))
     mg_error = ""
     try:
-        mg = Mgmt(args.project, token_file)
+        mg = ComposioMgmt(args.project) if args.via == "composio" else Mgmt(args.project, token_file)
     except (OSError, SourceError) as e:
-        mg_error = f"no management token ({token_file}: {scrub(e, 80)}); set SUPABASE_MGMT_TOKEN_FILE"
+        mg_error = (f"Composio cannot be used ({scrub(e, 80)})" if args.via == "composio" else
+                    f"no management token ({token_file}: {scrub(e, 80)}); set SUPABASE_MGMT_TOKEN_FILE, or --via composio")
 
     if "supabase" in skip:
         rep.add("supabase", "Creative Triage", UNKNOWN, "left out with --skip supabase")
@@ -2099,7 +2398,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             ("vault secret names", lambda: check_vault(rep, mg, sman)),
             ("extensions", lambda: check_extensions(rep, mg, sman)),
             ("Edge Functions", lambda: check_edge(rep, mg, sman)),
-            ("team-hours", lambda: check_team_hours(rep, mg, sman)),
+            ("team-hours", lambda: check_section(rep, mg, sman, "team_hours", "team-hours")),
+            ("hiring", lambda: check_section(rep, mg, sman, "hiring", "hiring")),
             ("Edge Function sources", lambda: check_function_sources(rep, mg, sman, args.ref, ref_ok)),
             ("function secret names", lambda: check_secrets(rep, mg, sman)),
             ("CRON_SECRET pairing", lambda: check_secret_pair(rep, mg)),
@@ -2132,7 +2432,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             st = None
         try:
             # The backups stay in the recorded project's bucket whatever --project says.
-            bucket_mg = mg if mg is None or args.project == sman["project"] else Mgmt(sman["project"], token_file)
+            bucket_mg = mg if mg is None or args.project == sman["project"] else (
+                ComposioMgmt(sman["project"]) if args.via == "composio" else Mgmt(sman["project"], token_file))
             check_bucket_backups(rep, bucket_mg, st, deep=not args.shallow)
         except (SourceError, OSError) as e:
             rep.add("backups", "private bucket", UNKNOWN, f"could not be read: {scrub(e, 160)}")

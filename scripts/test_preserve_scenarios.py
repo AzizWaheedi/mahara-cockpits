@@ -179,12 +179,169 @@ class Scenarios(unittest.TestCase):
         self.assertTrue(failing(out, "MISSING", "table cockpit_sales_rooms (created)"))
         self.assertTrue(failing(out, "MISSING", "pg_cron mahara-sales-rooms-sweep"))
 
+    def test_c3_old_branch_as_one_bundle_is_still_missing(self):
+        status, detail = lines(replay("c3"))["Edge Function sales-api source"]
+        self.assertEqual(status, "MISSING")
+        for m in ("rooms.ts", "roomlogic.ts", "liveio.ts", "followupAgent.ts", "sendrules.ts"):
+            self.assertIn(m, detail)
+        self.assertNotIn("clients.ts", detail)   # in the bundle by bun's path comment
+
+    def test_o_main_as_one_bundle_is_explained_never_missing(self):
+        out = replay("o")
+        self.assertEqual(lines(out), {})
+        line = next(r for r in out["checks"] if r["check"] == "Edge Function sales-api source")
+        self.assertEqual((line["status"], line["explained"]), ("CHANGED", True))
+        self.assertIn("deployed as one bundle (index.ts)", line["detail"])
+
+    def test_m_guardian_fix_mode_line_is_explained(self):
+        out = replay("m")
+        self.assertEqual(lines(out), {})
+        line = next(r for r in out["checks"] if r["check"].startswith("crontab line 59 "))
+        self.assertEqual((line["status"], line["explained"]), ("CHANGED", True))
+        self.assertIn("--mode fix", line["detail"])
+        self.assertIn("fix them immediately", line["why"])
+
+    def test_m_a_different_guardian_line_is_still_missing(self):
+        t = copy.deepcopy(BASE)
+        rec = next(l for l in VMAN["crontab"]["lines"] if l.get("changed_on_purpose") and l["kind"] == "job")
+        other = rec["text"].replace("--mode report-only --quiet run", "--mode fix run")
+        t["vps"]["crontab"]["lines"] = [ps.cron_row(other) if l["sha"] == rec["sha256"] else l
+                                        for l in t["vps"]["crontab"]["lines"]]
+        self.assertTrue(failing(ps.run(t, "backups", "origin/main"), "MISSING", "crontab line 59 "))
+
+    def test_n_hiring_not_switched_on_reads_missing(self):
+        out = replay("n")
+        got = lines(out)
+        for want in ("hiring table cockpit_hiring_runs", "hiring table cockpit_hiring_provider_health",
+                     "hiring table cockpit_hiring_sends", "hiring function cockpit_hiring_claim_run",
+                     "hiring pg_cron mahara-hiring-mirror", "hiring pg_cron mahara-hiring-engine",
+                     "hiring pg_cron mahara-hiring-intake", "hiring function secret names"):
+            self.assertEqual(got[want][0], "MISSING", want)
+        self.assertIn("GHL_HIRING_PIT", got["hiring function secret names"][1])
+        self.assertNotIn("HIRING_SEND_ENABLED", got["hiring function secret names"][1])
+        self.assertEqual(got["hiring freshness cockpit_hiring_candidates.synced_at"][0], "CHANGED")
+        self.assertNotIn("hiring Edge Function hiring-sync", got)     # deployed on 2026-10-09
+
+    def test_hiring_ceo_policy_dropped_or_a_browser_grant_is_changed(self):
+        t = copy.deepcopy(BASE)
+        for r in t["sql hiring"]:
+            if r["name"] == "cockpit_hiring_candidates":
+                r["policies"] = []
+            if r["name"] == "cockpit_hiring_runs":
+                r["browser"] = True
+        got = lines(ps.run(t, "backups", "origin/main"))
+        self.assertIn("its CEO read policy is gone", got["hiring table cockpit_hiring_candidates"][1])
+        self.assertIn("a browser role can read it", got["hiring table cockpit_hiring_runs"][1])
+
+    def test_hiring_jwt_check_flipped_is_changed(self):
+        t = copy.deepcopy(BASE)
+        for f in t["api functions"]:
+            if f["slug"] == "hiring-sync":
+                f["verify_jwt"] = True
+        self.assertIn("must be False", lines(ps.run(t, "backups", "origin/main"))["hiring Edge Function hiring-sync"][1])
+
     def test_every_scenario_but_the_passing_ones_fails_the_run(self):
         for sid, _, _ in ps.SCENARIOS:
             if sid in ("k", "l"):
                 continue  # need origin/main to hold 20261007b; their own tests say so
             caught = bool(lines(replay(sid)))
             self.assertEqual(caught, sid not in ps.PASSING, sid)
+
+
+class ComposioDoor(unittest.TestCase):
+    """--via composio: the same reads through `composio execute`, names and booleans only in the recording."""
+
+    def setUp(self):
+        # A replay elsewhere leaves VP.TAPE answering from its recording: these read "live" (the fake CLI).
+        real, VP.TAPE = VP.TAPE, VP.Tape()
+        self.addCleanup(setattr, VP, "TAPE", real)
+
+    def door(self, answers):
+        calls = []
+
+        def run(argv, **kw):
+            slug, path = argv[2], argv[4][1:]
+            args = json.loads(Path(path).read_text())
+            calls.append((slug, args))
+            out = answers[slug](args) if callable(answers[slug]) else answers[slug]
+            return ps.subprocess.CompletedProcess(argv, 0, json.dumps(out).encode(), b"")
+        return calls, run
+
+    def test_the_four_tools_keep_names_and_flags_only(self):
+        from unittest import mock
+        bundle = ("ESZIP2.3 source/index.ts ---SUPABASE-ESZIP-VERSION-ESZIP--- "
+                  "// supabase/functions/sales-api/clients.ts\nfunction hungSend(){} const ROOM_STATES=[]; "
+                  "function makeLiveIO(){} function makeFollowupAgent(){} const LEAD_ZONES={};")
+        answers = {
+            "SUPABASE_BETA_RUN_SQL_QUERY": lambda a: {"successful": True, "data": {"details": {
+                "command": "SELECT", "result": [{"d": "e" * 64}] if "vault" in a["query"] else [{"n": 1}]}}},
+            "SUPABASE_LIST_FUNCTIONS": {"successful": True, "data": {"details": [
+                {"slug": "hiring-sync", "status": "ACTIVE", "version": 4, "verify_jwt": False, "id": "x",
+                 "entrypoint_path": "file:///tmp/x"}]}},
+            "SUPABASE_LIST_SECRETS": {"successful": True, "data": {"details": [
+                {"name": "CRON_SECRET", "value": "e" * 64, "updated_at": "2026-10-01T00:00:00Z"}]}},
+            "SUPABASE_GET_FUNCTION_BODY": {"successful": True, "data": {"details": bundle}},
+        }
+        calls, run = self.door(answers)
+        tape = VP.Tape("record")
+        real, VP.TAPE = VP.TAPE, tape
+        try:
+            with mock.patch.object(VP.shutil, "which", return_value="/usr/bin/composio"), \
+                    mock.patch.object(VP.subprocess, "run", side_effect=run):
+                m = VP.ComposioMgmt("bldgtotkfmhoxmlzowdx")
+                self.assertEqual(m.sql("select 1", "one"), [{"n": 1}])
+                self.assertEqual(m.functions()[0]["slug"], "hiring-sync")
+                self.assertNotIn("entrypoint_path", m.functions()[0])
+                self.assertEqual(m.secrets(), [{"name": "CRON_SECRET", "updated_at": "2026-10-01T00:00:00Z"}])
+                self.assertEqual(m.cron_secret_pair(), {"function_secret": True, "vault_secret": True, "same": True})
+                src = m.function_files("sales-api")
+        finally:
+            VP.TAPE = real
+        self.assertEqual(src["files"], {"index.ts": None})
+        self.assertTrue(all(src["found"][n] for n in ("rooms.ts", "roomlogic.ts", "liveio.ts", "followupAgent.ts",
+                                                      "sendrules.ts", "clients.ts")))
+        self.assertFalse(src["found"]["dialer.ts"])
+        reads = [a for s_, a in calls if s_ == "SUPABASE_BETA_RUN_SQL_QUERY"]
+        self.assertTrue(reads[0]["read_only"])                       # every SELECT read-only
+        self.assertFalse(reads[-1]["read_only"])                     # the vault digest: owner role, read-only txn
+        self.assertTrue(reads[-1]["query"].startswith("set transaction read only;"))
+        text = json.dumps(tape.data)
+        self.assertNotIn("e" * 64, text)
+        self.assertNotIn("hungSend", text)                           # no code in the recording
+
+    def test_a_stored_answer_is_read_and_deleted(self):
+        from unittest import mock
+        import tempfile
+        folder = Path(tempfile.mkdtemp()) / "adhoc_test"
+        folder.mkdir()
+        stored = folder / "out.json"
+        stored.write_text(json.dumps({"successful": True, "data": {"details": [{"name": "A", "value": "z" * 64}]}}))
+        _, run = self.door({"SUPABASE_LIST_SECRETS": {"successful": True, "storedInFile": True,
+                                                      "outputFilePath": str(stored)}})
+        with mock.patch.object(VP.shutil, "which", return_value="/usr/bin/composio"), \
+                mock.patch.object(VP.subprocess, "run", side_effect=run):
+            self.assertEqual(VP.ComposioMgmt("bldgtotkfmhoxmlzowdx").secrets(), [{"name": "A", "updated_at": None}])
+        self.assertFalse(stored.exists())
+        self.assertFalse(folder.exists())
+
+    def test_a_failed_tool_is_a_source_error_never_a_pass(self):
+        from unittest import mock
+        _, run = self.door({"SUPABASE_LIST_FUNCTIONS": {"successful": False, "error": "connection expired"}})
+        with mock.patch.object(VP.shutil, "which", return_value="/usr/bin/composio"), \
+                mock.patch.object(VP.subprocess, "run", side_effect=run):
+            with self.assertRaises(VP.SourceError):
+                VP.ComposioMgmt("bldgtotkfmhoxmlzowdx").functions()
+
+    def test_eszip_names(self):
+        text = "ESZIP2.3 \x00source/index.ts\x01source/door.ts ---SUPABASE-ESZIP-VERSION-ESZIP--- source/fake.ts"
+        self.assertEqual(VP.eszip_names(text), ["door.ts", "index.ts"])
+
+    def test_markers_match_the_guardians(self):
+        import ast
+        src = (VP.ROOT / "hermes" / "cockpit-guardian" / "checks" / "live_calls.py").read_text()
+        node = next(n for n in ast.parse(src).body if isinstance(n, ast.Assign)
+                    and getattr(n.targets[0], "id", "") == "LIVE_MARKERS")
+        self.assertEqual(ast.literal_eval(node.value), VP.LIVE_MARKERS)
 
 
 class Pieces(unittest.TestCase):
